@@ -54,57 +54,71 @@ where
         return;
     }
 
-    if width == 4 && (I32_FAST_LANE_MIN..=I32_FAST_LANE_MAX).contains(&num) {
-        if try_qsort_i32_natural_fast_lane(base, num, &compare) {
-            return;
-        }
-    }
-
-    if width == 8 && (I64_FAST_LANE_MIN..=I64_FAST_LANE_MAX).contains(&num) {
-        if try_qsort_i64_natural_fast_lane(base, num, &compare) {
-            return;
-        }
-    }
-
-    // Large integer arrays: above the comparison-sort fast-lane window the
-    // generic pdqsort pays an indirect comparator call per comparison, which
-    // loses to glibc's cache-friendly mergesort for big N. An LSD radix sort is
-    // a different complexity class entirely — O(n · key_bytes) linear passes
-    // with no per-element comparison — so it wins decisively once N is large.
-    //
-    // 2-byte keys have NO comparison fast lane, and a 2-pass radix has tiny
-    // fixed cost, so it overtakes pdqsort early and takes the lane at a much
-    // lower threshold than the 4-/8-byte keys. (Width 1 is deliberately NOT
-    // routed here: random bytes have only 256 distinct values, so pdqsort's
-    // equal-element partition already collapses to near-O(n) and beats the
-    // u64-widening radix — measured ~1.8-2.8x vs glibc on bytes already.)
-    // 1-byte keys: a dedicated counting sort (O(n + 256)) materialises the
-    // sorted bytes by filling one run per distinct value straight from a
-    // histogram — no key widening, no comparison. It beats both pdqsort and the
-    // generic u64-widening radix (which regresses on bytes). Tries the two
-    // common orders (unsigned-ascending, then signed-ascending) and verifies
-    // each against the caller's comparator before committing.
-    if width == 1 && num > U8_COUNTING_LANE_MIN {
-        if try_qsort_u8_counting_lane(base, num, &compare) {
-            return;
-        }
-    }
-
-    let radix_min = if width == 2 {
-        NARROW_RADIX_LANE_MIN
-    } else {
-        INTEGER_RADIX_LANE_MIN
-    };
-    if (width == 2 || width == 4 || width == 8) && num > radix_min {
-        if try_qsort_integer_radix_lane(base, num, width, &compare) {
-            return;
-        }
+    if try_integer_unstable_lanes(base, width, num, &compare) {
+        return;
     }
 
     // Number of imbalanced partitions tolerated before falling back to
     // heapsort. floor(log2(num)) + 1 keeps the bad-case bound at O(n·log n).
     let limit = usize::BITS - num.leading_zeros();
     pdqsort_recurse(base, width, &compare, 0, num, None, limit);
+}
+
+/// Try the verify-then-commit integer sort lanes shared by the two unstable
+/// entry points (`qsort` and `heapsort`). Returns `true` iff a lane produced a
+/// result that is genuinely non-decreasing under the caller's comparator (so it
+/// has been committed in place); `false` leaves `base` holding the original
+/// bytes for the caller's generic sort to handle.
+///
+/// Every lane is parity-safe by construction: the natural integer arrangement
+/// is committed only after an O(n) verify against the actual comparator, so a
+/// non-natural comparator (unsigned, descending, float, struct key, …) falls
+/// back with zero behavioral difference. Because equal integer keys are
+/// byte-identical, a committed result is byte-identical to any correct sort.
+/// Both callers are unstable, so the lanes' tie order is conformant for both.
+fn try_integer_unstable_lanes<F>(base: &mut [u8], width: usize, num: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    // 4-/8-byte comparison fast lanes (sort raw keys via the stdlib sort with no
+    // per-comparison FFI callback) for the mid-size window.
+    if width == 4 && (I32_FAST_LANE_MIN..=I32_FAST_LANE_MAX).contains(&num) {
+        if try_qsort_i32_natural_fast_lane(base, num, compare) {
+            return true;
+        }
+    }
+    if width == 8 && (I64_FAST_LANE_MIN..=I64_FAST_LANE_MAX).contains(&num) {
+        if try_qsort_i64_natural_fast_lane(base, num, compare) {
+            return true;
+        }
+    }
+
+    // 1-byte keys: a dedicated counting sort (O(n + 256)) — one histogram pass
+    // plus one memset run per value, no key widening. Beats both pdqsort and the
+    // generic u64-widening radix (which regresses on bytes).
+    if width == 1 && num > U8_COUNTING_LANE_MIN {
+        if try_qsort_u8_counting_lane(base, num, compare) {
+            return true;
+        }
+    }
+
+    // 2-/4-/8-byte keys above the radix threshold: an LSD radix sort, a
+    // different complexity class (O(n · key_bytes) linear passes, no per-element
+    // comparison) that wins decisively once N is large. 2-byte keys have no
+    // comparison fast lane and a 2-pass radix is cheap, so they take the lane at
+    // a much lower threshold than 4-/8-byte keys.
+    let radix_min = if width == 2 {
+        NARROW_RADIX_LANE_MIN
+    } else {
+        INTEGER_RADIX_LANE_MIN
+    };
+    if (width == 2 || width == 4 || width == 8) && num > radix_min {
+        if try_qsort_integer_radix_lane(base, num, width, compare) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Element index helper: borrows the `i`-th element as a byte slice.
@@ -916,6 +930,16 @@ where
     }
     let num = base.len() / width;
     if num < 2 {
+        return;
+    }
+
+    // `heapsort` is unstable, so the same verify-then-commit integer lanes that
+    // accelerate `qsort` apply unchanged. For integer keys these turn the
+    // cache-unfriendly O(n log n) sift-down (with a comparator callback per
+    // comparison) into an O(n) radix/counting pass; non-integer or non-natural
+    // comparators fall back to the in-place heap sort below with no behavioral
+    // difference.
+    if try_integer_unstable_lanes(base, width, num, &compare) {
         return;
     }
 
