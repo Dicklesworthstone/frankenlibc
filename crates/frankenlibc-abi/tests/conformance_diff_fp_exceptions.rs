@@ -20,6 +20,8 @@ unsafe extern "C" {
     fn nextafter(x: f64, y: f64) -> f64; fn nextafterf(x: f32, y: f32) -> f32;
     fn lgamma(x: f64)->f64; fn lgammaf(x: f32)->f32; fn exp2(x: f64)->f64; fn expm1(x: f64)->f64;
     fn atanhf(x: f32)->f32; fn log1p(x: f64)->f64; fn log1pf(x: f32)->f32;
+    fn y0(x: f64)->f64; fn y1(x: f64)->f64; fn yn(n: c_int, x: f64)->f64;
+    fn y0f(x: f32)->f32; fn y1f(x: f32)->f32; fn ynf(n: c_int, x: f32)->f32;
 }
 const HARD: c_int = 0x1D; // INVALID|DIVBYZERO|OVERFLOW|UNDERFLOW (drop noisy INEXACT)
 fn key(x: f64) -> i64 { let b = x.to_bits() as i64; if b < 0 { i64::MIN - b } else { b } }
@@ -138,5 +140,19 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chk2!("log1p(-1.5)", fl::log1p(-1.5), log1p(-1.5));
     chk2!("log1pf(-1)", fl::log1pf(-1.0), log1pf(-1.0));
     chk2!("log1pf(-2)", fl::log1pf(-2.0), log1pf(-2.0));
+
+    // Y-Bessel: pole at x=0 (DIVBYZERO), domain x<0 (INVALID). libm omits both.
+    chk2!("y0(0)", fl::y0(0.0), y0(0.0));
+    chk2!("y1(0)", fl::y1(0.0), y1(0.0));
+    chk2!("yn(2,0)", fl::yn(2,0.0), yn(2,0.0));
+    chk2!("yn(0,0)", fl::yn(0,0.0), yn(0,0.0));
+    chk2!("y0(-1)", fl::y0(-1.0), y0(-1.0));
+    chk2!("y1(-1)", fl::y1(-1.0), y1(-1.0));
+    chk2!("yn(2,-1)", fl::yn(2,-1.0), yn(2,-1.0));
+    chk2!("y0(2)", fl::y0(2.0), y0(2.0));
+    chk2!("y0f(0)", fl::y0f(0.0), y0f(0.0));
+    chk2!("y1f(0)", fl::y1f(0.0), y1f(0.0));
+    chk2!("ynf(2,0)", fl::ynf(2,0.0), ynf(2,0.0));
+    chk2!("y0f(-1)", fl::y0f(-1.0), y0f(-1.0));
     assert!(div.is_empty(), "fp-exception/value divergences vs glibc:\n  {}", div.join("\n  "));
 }

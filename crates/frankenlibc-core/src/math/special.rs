@@ -354,13 +354,27 @@ pub fn jn(n: i32, x: f64) -> f64 {
 
 /// Bessel function of the second kind, order 0.
 #[inline]
+/// Re-raise the IEEE exception glibc raises for the Y-Bessel family that libm
+/// omits: x==0 is a pole (Y(0) = -inf) -> FE_DIVBYZERO; x<0 (incl -inf) is out of
+/// domain (Y undefined for negative reals, result NaN) -> FE_INVALID. Cold path.
+#[inline]
+fn raise_y_special(x: f64) {
+    if x == 0.0 {
+        let _ = core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
+    } else if x < 0.0 {
+        let _ = core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
+    }
+}
+
 pub fn y0(x: f64) -> f64 {
+    raise_y_special(x);
     libm::y0(x)
 }
 
 /// Bessel function of the second kind, order 1.
 #[inline]
 pub fn y1(x: f64) -> f64 {
+    raise_y_special(x);
     libm::y1(x)
 }
 
@@ -374,7 +388,10 @@ pub fn yn(n: i32, x: f64) -> f64 {
         0 => y0(x),
         1 => y1(x),
         -1 => -y1(x),
-        _ => libm::yn(n, x),
+        _ => {
+            raise_y_special(x);
+            libm::yn(n, x)
+        }
     }
 }
 

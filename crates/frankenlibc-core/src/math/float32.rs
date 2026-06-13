@@ -810,13 +810,26 @@ pub fn jnf(n: i32, x: f32) -> f32 {
 
 /// Bessel function of the second kind, order 0 (f32 variant).
 #[inline]
+/// Y-Bessel pole/domain exception re-raise (f32): x==0 -> FE_DIVBYZERO,
+/// x<0 -> FE_INVALID. Mirrors the f64 `raise_y_special`.
+#[inline]
+fn raise_y_special_f32(x: f32) {
+    if x == 0.0 {
+        fe_divbyzero_f32();
+    } else if x < 0.0 {
+        fe_invalid_f32();
+    }
+}
+
 pub fn y0f(x: f32) -> f32 {
+    raise_y_special_f32(x);
     libm::y0f(x)
 }
 
 /// Bessel function of the second kind, order 1 (f32 variant).
 #[inline]
 pub fn y1f(x: f32) -> f32 {
+    raise_y_special_f32(x);
     libm::y1f(x)
 }
 
@@ -828,7 +841,10 @@ pub fn ynf(n: i32, x: f32) -> f32 {
         0 => y0f(x),
         1 => y1f(x),
         -1 => -y1f(x),
-        _ => libm::ynf(n, x),
+        _ => {
+            raise_y_special_f32(x);
+            libm::ynf(n, x)
+        }
     }
 }
 
