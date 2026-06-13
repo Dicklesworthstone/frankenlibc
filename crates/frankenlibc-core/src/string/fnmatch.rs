@@ -481,6 +481,55 @@ fn bracket_match_one(
     (matched, pi)
 }
 
+fn simple_bracket_end_for_literal_prefilter(pat: &[u8], pi0: usize) -> Option<usize> {
+    let mut pi = pi0 + 1;
+    if matches!(pat.get(pi), Some(&b'!') | Some(&b'^')) {
+        pi += 1;
+    }
+    if pat.get(pi) == Some(&b']') {
+        return None;
+    }
+    while pi < pat.len() {
+        match pat[pi] {
+            b']' => return Some(pi + 1),
+            b'[' | b'\\' => return None,
+            _ => pi += 1,
+        }
+    }
+    None
+}
+
+fn required_plain_literal_absent_flags_none(pat: &[u8], text: &[u8]) -> bool {
+    let mut pi = 0usize;
+    while pi < pat.len() {
+        match pat[pi] {
+            b'*' | b'?' => pi += 1,
+            b'[' => {
+                let Some(next_pi) = simple_bracket_end_for_literal_prefilter(pat, pi) else {
+                    return false;
+                };
+                pi = next_pi;
+            }
+            b'\\' => {
+                let Some(&lit) = pat.get(pi + 1) else {
+                    return false;
+                };
+                if !text.contains(&lit) {
+                    return true;
+                }
+                pi += 2;
+            }
+            lit => {
+                if !text.contains(&lit) {
+                    return true;
+                }
+                pi += 1;
+            }
+        }
+    }
+    false
+}
+
 fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
     let pathname = flags.contains(FnmatchFlags::PATHNAME);
     let period = flags.contains(FnmatchFlags::PERIOD);
@@ -611,6 +660,10 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
 /// flags. Returns `true` if the entire `text` matches (modulo
 /// [`FnmatchFlags::LEADING_DIR`]).
 pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
+    if flags == FnmatchFlags::NONE && required_plain_literal_absent_flags_none(pattern, text) {
+        return false;
+    }
+
     // The iterative single-backtrack matcher (`fnmatch_simple`) now handles ALL
     // flags in O(n*m) time / O(1) space — no recursion, no memo, no exponential
     // blow-up — and is faster than glibc. The recursive `fnmatch_inner` below is
@@ -1363,6 +1416,112 @@ mod tests {
         // Exact-fit alternating stars that DO match.
         assert!(m("*a*b*c*", "xxaxxbxxcxx", FnmatchFlags::NONE));
         assert!(!m("*a*b*c*d", "xxaxxbxxcxx", FnmatchFlags::NONE));
+    }
+
+    #[test]
+    fn required_plain_literal_prefilter_is_conservative() {
+        let bench_pat = b"*[ab]*[ab]*[ab]*[ab]*[ab]*c";
+        let bench_text = b"ababababababababab";
+        assert!(required_plain_literal_absent_flags_none(
+            bench_pat, bench_text
+        ));
+        assert!(!fnmatch_match(bench_pat, bench_text, FnmatchFlags::NONE));
+
+        assert!(!required_plain_literal_absent_flags_none(b"[ab]", b"b"));
+        assert!(fnmatch_match(b"[ab]", b"b", FnmatchFlags::NONE));
+
+        assert!(!required_plain_literal_absent_flags_none(
+            b"[[:digit:]]z",
+            b"abc"
+        ));
+        assert!(!required_plain_literal_absent_flags_none(b"[]ab]z", b"z"));
+
+        assert!(required_plain_literal_absent_flags_none(br"\*", b"abc"));
+        assert!(!fnmatch_match(br"\*", b"abc", FnmatchFlags::NONE));
+        assert!(!required_plain_literal_absent_flags_none(br"\*", b"*"));
+        assert!(fnmatch_match(br"\*", b"*", FnmatchFlags::NONE));
+    }
+
+    #[test]
+    fn required_plain_literal_prefilter_matches_simple_on_short_none_corpus() {
+        fn build_bytes(alpha: &[u8], len: usize, mut idx: usize, out: &mut Vec<u8>) {
+            out.clear();
+            for _ in 0..len {
+                out.push(alpha[idx % alpha.len()]);
+                idx /= alpha.len();
+            }
+        }
+
+        let pat_alpha = *b"a*b?[]\\-!c";
+        let txt_alpha = *b"abc[]*-";
+        let mut pat = Vec::new();
+        let mut txt = Vec::new();
+        for plen in 0..=3usize {
+            for pidx in 0..pat_alpha.len().pow(plen as u32) {
+                build_bytes(&pat_alpha, plen, pidx, &mut pat);
+                for tlen in 0..=3usize {
+                    for tidx in 0..txt_alpha.len().pow(tlen as u32) {
+                        build_bytes(&txt_alpha, tlen, tidx, &mut txt);
+                        assert_eq!(
+                            fnmatch_match(&pat, &txt, FnmatchFlags::NONE),
+                            fnmatch_simple(&pat, &txt, FnmatchFlags::NONE),
+                            "prefilter changed fnmatch({pat:?}, {txt:?}, flags=NONE)"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn golden_fnmatch_required_literal_corpus_sha256() {
+        use core::fmt::Write;
+        use sha2::{Digest, Sha256};
+
+        let cases: &[(&[u8], &[u8], FnmatchFlags)] = &[
+            (
+                b"*[ab]*[ab]*[ab]*[ab]*[ab]*c",
+                b"ababababababababab",
+                FnmatchFlags::NONE,
+            ),
+            (
+                b"*[ab]*[ab]*[ab]*[ab]*[ab]*c",
+                b"ababababababababc",
+                FnmatchFlags::NONE,
+            ),
+            (b"[ab]", b"b", FnmatchFlags::NONE),
+            (b"[ab]", b"c", FnmatchFlags::NONE),
+            (b"[[:digit:]]z", b"5z", FnmatchFlags::NONE),
+            (b"[[:digit:]]z", b"az", FnmatchFlags::NONE),
+            (br"\*", b"*", FnmatchFlags::NONE),
+            (br"\*", b"abc", FnmatchFlags::NONE),
+            (b"*c", b"abab", FnmatchFlags::PATHNAME),
+            (b"*c", b"abab", FnmatchFlags::PERIOD),
+            (b"*C", b"abab", FnmatchFlags::CASEFOLD),
+            (b"*C", b"ababc", FnmatchFlags::CASEFOLD),
+            (b"[]ab]z", b"]z", FnmatchFlags::NONE),
+            (b"[!ab]z", b"cz", FnmatchFlags::NONE),
+        ];
+        let mut hasher = Sha256::new();
+        for &(pat, text, flags) in cases {
+            let matched = fnmatch_match(pat, text, flags);
+            hasher.update((pat.len() as u64).to_le_bytes());
+            hasher.update(pat);
+            hasher.update((text.len() as u64).to_le_bytes());
+            hasher.update(text);
+            hasher.update(flags.bits().to_le_bytes());
+            hasher.update([matched as u8]);
+        }
+        let bytes = hasher.finalize();
+        let mut digest = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            write!(&mut digest, "{byte:02x}").unwrap();
+        }
+        println!("fnmatch required literal corpus sha256 = {digest}");
+        assert_eq!(
+            digest,
+            "6d4feb0c1506b8790756bd7cead949644dbb5d9f50feda15b1b17347fc0d048a"
+        );
     }
 
     // Exhaustive isomorphism: the iterative `fnmatch_simple` (now the sole
