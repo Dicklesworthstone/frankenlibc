@@ -1811,6 +1811,36 @@ fn diff_swab_cases() {
             });
         }
     }
+
+    // Larger sweep to exercise the 32-byte SIMD shuffle path and its tail/
+    // boundary (the small cases above only hit the scalar tail). Sizes span the
+    // SIMD block, just-over-block + odd-byte, and multi-block with a remainder,
+    // each filled with a high-bit-varied pattern, all compared against host glibc.
+    let pattern: Vec<u8> = (0..512u32).map(|i| (i.wrapping_mul(73).wrapping_add(17)) as u8).collect();
+    for &len in &[16usize, 31, 32, 33, 48, 63, 64, 65, 100, 127, 128, 200, 255, 256, 300, 511] {
+        for &odd in &[false, true] {
+            let n = if odd { len | 1 } else { len & !1 };
+            if n > pattern.len() {
+                continue;
+            }
+            let src = &pattern[..n];
+            let mut dst_fl = vec![0xCDu8; n + 8];
+            let mut dst_lc = vec![0xCDu8; n + 8];
+            unsafe {
+                fl::swab(src.as_ptr() as *const c_void, dst_fl.as_mut_ptr() as *mut c_void, n as isize);
+                swab(src.as_ptr() as *const c_void, dst_lc.as_mut_ptr() as *mut c_void, n as isize);
+            }
+            if dst_fl != dst_lc {
+                divs.push(Divergence {
+                    function: "swab",
+                    case: format!("(len={n})"),
+                    field: "dst_buffer",
+                    frankenlibc: format!("{:?}", &dst_fl[..n]),
+                    glibc: format!("{:?}", &dst_lc[..n]),
+                });
+            }
+        }
+    }
     assert!(divs.is_empty(), "swab divergences:\n{}", render_divs(&divs));
 }
 

@@ -769,11 +769,34 @@ pub fn bcmp(a: &[u8], b: &[u8], n: usize) -> i32 {
 /// Equivalent to POSIX `swab`. Processes `n` bytes (n should be even).
 pub fn swab(src: &[u8], dest: &mut [u8], n: usize) -> usize {
     let pairs = n.min(src.len()).min(dest.len()) / 2;
-    for i in 0..pairs {
-        dest[2 * i] = src[2 * i + 1];
-        dest[2 * i + 1] = src[2 * i];
+    let bytes = pairs * 2;
+    let mut i = 0;
+
+    // SIMD: swap adjacent byte pairs 32 at a time via a single shuffle (lane
+    // 2k <-> 2k+1), instead of two scalar stores per pair. Byte-for-byte
+    // identical to the scalar swap below — the swizzle is exactly the pairwise
+    // transposition `dest[2k]=src[2k+1]; dest[2k+1]=src[2k]`. `bytes` is even,
+    // so the SIMD step (multiple of 32) and the 2-byte tail never split a pair,
+    // and an odd trailing byte (n odd) is left untouched, as POSIX swab requires.
+    const LANES: usize = 32;
+    while i + LANES <= bytes {
+        let v = Simd::<u8, LANES>::from_slice(&src[i..i + LANES]);
+        let sw = std::simd::simd_swizzle!(
+            v,
+            [
+                1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14, 17, 16, 19, 18, 21, 20, 23,
+                22, 25, 24, 27, 26, 29, 28, 31, 30
+            ]
+        );
+        sw.copy_to_slice(&mut dest[i..i + LANES]);
+        i += LANES;
     }
-    pairs * 2
+    while i < bytes {
+        dest[i] = src[i + 1];
+        dest[i + 1] = src[i];
+        i += 2;
+    }
+    bytes
 }
 
 #[cfg(test)]
