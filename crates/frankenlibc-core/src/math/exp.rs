@@ -383,7 +383,7 @@ const POW_MEDIUM_EXP_MAX: f64 = 3.0;
 const POW_PROFILE_EXP_1_337_BITS: u64 = 0x3ff5_645a_1cac_0831;
 const POW_PROFILE_EXP_1_337_SEGMENT_COUNT: usize = 16;
 const POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE: f64 = 8.0;
-const POW_PROFILE_EXP_1_337_SEGMENT_CENTER_MIN: f64 = 0.5625;
+#[cfg(test)]
 const POW_PROFILE_EXP_1_337_SEGMENT_CENTER_STEP: f64 = 0.125;
 const POW_PROFILE_EXP_1_337_SEGMENT_T_SCALE: f64 = 16.0;
 // Fixed-exponent source artifact for the profiled `pow(x, 1.337)` row. Split
@@ -729,12 +729,13 @@ fn pow_profile_exp_1_337_fast_path(base: f64, exponent: f64) -> Option<f64> {
         return None;
     }
 
-    let segment = ((base - EXP_MEDIUM_MIN) * POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE) as usize;
+    let segment_position = (base - EXP_MEDIUM_MIN) * POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE;
+    let segment = segment_position as usize;
     debug_assert!(segment < POW_PROFILE_EXP_1_337_SEGMENT_COUNT);
     let coeffs = &POW_PROFILE_EXP_1_337_POWER_COEFFS[segment];
-    let center = POW_PROFILE_EXP_1_337_SEGMENT_CENTER_MIN
-        + (segment as f64) * POW_PROFILE_EXP_1_337_SEGMENT_CENTER_STEP;
-    let t = (base - center) * POW_PROFILE_EXP_1_337_SEGMENT_T_SCALE;
+    let t = (segment_position - segment as f64)
+        * (POW_PROFILE_EXP_1_337_SEGMENT_T_SCALE / POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE)
+        - 1.0;
 
     Some(eval_degree10_estrin(t, coeffs))
 }
