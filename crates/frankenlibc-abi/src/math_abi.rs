@@ -4725,45 +4725,54 @@ fn getpayloadf_impl(x: *const f32) -> f32 {
     let bits = val.to_bits();
     (bits & 0x003F_FFFF) as f32
 }
+// C23 setpayload/setpayloadsig: the payload must be a non-negative INTEGER in
+// range. A non-integer (1.5), NaN, inf or out-of-range value fails (returns 1)
+// and sets *res to +0 — glibc does NOT truncate (the old `payload as u64`
+// silently accepted 1.5 as 1 and never zeroed *res). setpayloadsig additionally
+// requires payload >= 1 (payload 0 would yield an infinity, not an sNaN).
 fn setpayload_impl(res: *mut f64, payload: f64) -> c_int {
-    let p = payload as u64;
-    if payload < 0.0 || p >= (1u64 << 51) {
-        return 1;
+    if payload >= 0.0 && payload < 2_251_799_813_685_248.0 && payload == payload.trunc() {
+        unsafe {
+            *res = f64::from_bits(0x7FF8_0000_0000_0000 | payload as u64);
+        }
+        0
+    } else {
+        unsafe { *res = 0.0 };
+        1
     }
-    unsafe {
-        *res = f64::from_bits(0x7FF8_0000_0000_0000 | p);
-    }
-    0
 }
 fn setpayloadf_impl(res: *mut f32, payload: f32) -> c_int {
-    let p = payload as u32;
-    if payload < 0.0f32 || p >= (1u32 << 22) {
-        return 1;
+    if payload >= 0.0 && payload < 4_194_304.0 && payload == payload.trunc() {
+        unsafe {
+            *res = f32::from_bits(0x7FC0_0000 | payload as u32);
+        }
+        0
+    } else {
+        unsafe { *res = 0.0 };
+        1
     }
-    unsafe {
-        *res = f32::from_bits(0x7FC0_0000 | p);
-    }
-    0
 }
 fn setpayloadsig_impl(res: *mut f64, payload: f64) -> c_int {
-    let p = payload as u64;
-    if payload < 0.0 || p == 0 || p >= (1u64 << 51) {
-        return 1;
+    if payload >= 1.0 && payload < 2_251_799_813_685_248.0 && payload == payload.trunc() {
+        unsafe {
+            *res = f64::from_bits(0x7FF0_0000_0000_0000 | payload as u64);
+        }
+        0
+    } else {
+        unsafe { *res = 0.0 };
+        1
     }
-    unsafe {
-        *res = f64::from_bits(0x7FF0_0000_0000_0000 | p);
-    }
-    0
 }
 fn setpayloadsigf_impl(res: *mut f32, payload: f32) -> c_int {
-    let p = payload as u32;
-    if payload < 0.0f32 || p == 0 || p >= (1u32 << 22) {
-        return 1;
+    if payload >= 1.0 && payload < 4_194_304.0 && payload == payload.trunc() {
+        unsafe {
+            *res = f32::from_bits(0x7F80_0000 | payload as u32);
+        }
+        0
+    } else {
+        unsafe { *res = 0.0 };
+        1
     }
-    unsafe {
-        *res = f32::from_bits(0x7F80_0000 | p);
-    }
-    0
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpayload(x: *const f64) -> f64 {
