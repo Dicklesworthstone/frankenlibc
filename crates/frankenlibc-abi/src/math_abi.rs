@@ -4419,48 +4419,60 @@ pub unsafe extern "C" fn rootnf128(x: f64, n: i64) -> f64 {
 
 // --- fmaxmag / fminmag (C23) ---
 
+// glibc fmaxmag/fminmag: the non-NaN argument wins when one is NaN, and on an
+// equal-magnitude tie the result is the larger/smaller VALUE — `if x > y`, NOT
+// fmax. fmax(+0,-0) yields +0, but glibc fmaxmag(+0,-0) is -0 (`+0 > -0` is
+// false, so it returns y). Using fmax/fmin here was a signed-zero parity bug.
 fn fmaxmag_impl(x: f64, y: f64) -> f64 {
     let ax = x.abs();
     let ay = y.abs();
-    if ax > ay {
+    if ax > ay || ay.is_nan() {
         x
-    } else if ay > ax {
+    } else if ay > ax || ax.is_nan() {
         y
+    } else if x > y {
+        x
     } else {
-        unsafe { fmax(x, y) }
+        y
     }
 }
 fn fmaxmagf_impl(x: f32, y: f32) -> f32 {
     let ax = x.abs();
     let ay = y.abs();
-    if ax > ay {
+    if ax > ay || ay.is_nan() {
         x
-    } else if ay > ax {
+    } else if ay > ax || ax.is_nan() {
         y
+    } else if x > y {
+        x
     } else {
-        unsafe { fmaxf(x, y) }
+        y
     }
 }
 fn fminmag_impl(x: f64, y: f64) -> f64 {
     let ax = x.abs();
     let ay = y.abs();
-    if ax < ay {
+    if ax < ay || ay.is_nan() {
         x
-    } else if ay < ax {
+    } else if ay < ax || ax.is_nan() {
         y
+    } else if x < y {
+        x
     } else {
-        unsafe { fmin(x, y) }
+        y
     }
 }
 fn fminmagf_impl(x: f32, y: f32) -> f32 {
     let ax = x.abs();
     let ay = y.abs();
-    if ax < ay {
+    if ax < ay || ay.is_nan() {
         x
-    } else if ay < ax {
+    } else if ay < ax || ax.is_nan() {
         y
+    } else if x < y {
+        x
     } else {
-        unsafe { fminf(x, y) }
+        y
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
