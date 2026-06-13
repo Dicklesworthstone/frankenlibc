@@ -271,22 +271,36 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
     const LANES: usize = 16;
     let zero = Simd::<u8, LANES>::splat(0);
     let ascii_max = Simd::<u8, LANES>::splat(0x80);
-    while si + LANES <= src.len() && di + LANES <= dest.len() {
-        let bytes: [u8; LANES] = src[si..si + LANES].try_into().unwrap();
-        let chunk = Simd::<u8, LANES>::from_array(bytes);
-        // Any NUL (terminator) or any byte >= 0x80 (multibyte lead) ends the run.
-        if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
-            break;
+    // SIMD ASCII runs and scalar multibyte steps are INTERLEAVED: after each
+    // scalar character the outer loop re-attempts the SIMD fast path, so a long
+    // ASCII tail following an early multibyte char (e.g. "café" + a paragraph of
+    // English) is vectorised instead of running scalar to end-of-string. Each
+    // outer iteration advances `si` by >= 1 (the scalar step always consumes a
+    // byte even if SIMD made no progress), so termination is guaranteed. Output
+    // is byte-for-byte identical to the pure scalar conversion: the SIMD run only
+    // ever consumes whole ASCII chunks, and every NUL / multibyte / error case is
+    // handled by the unchanged scalar step below.
+    loop {
+        while si + LANES <= src.len() && di + LANES <= dest.len() {
+            let bytes: [u8; LANES] = src[si..si + LANES].try_into().unwrap();
+            let chunk = Simd::<u8, LANES>::from_array(bytes);
+            // Any NUL (terminator) or any byte >= 0x80 (multibyte lead) ends the run.
+            if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+                break;
+            }
+            // Zero-extend each ASCII byte to its u32 codepoint; LLVM lowers the
+            // `as u32` map to a vector widening (e.g. vpmovzxbd).
+            let widened = Simd::<u32, LANES>::from_array(bytes.map(|b| b as u32));
+            widened.copy_to_slice(&mut dest[di..di + LANES]);
+            si += LANES;
+            di += LANES;
         }
-        // Zero-extend each ASCII byte to its u32 codepoint; LLVM lowers the
-        // `as u32` map to a vector widening (e.g. vpmovzxbd).
-        let widened = Simd::<u32, LANES>::from_array(bytes.map(|b| b as u32));
-        widened.copy_to_slice(&mut dest[di..di + LANES]);
-        si += LANES;
-        di += LANES;
-    }
 
-    while si < src.len() {
+        // One scalar step, then re-attempt the SIMD run.
+        if si >= src.len() {
+            // No NUL found, but all bytes converted.
+            return Some(di);
+        }
         if src[si] == 0 {
             // NUL terminator
             if di < dest.len() {
@@ -303,8 +317,6 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
         si += n;
         di += 1;
     }
-    // No NUL found, but all bytes converted
-    Some(di)
 }
 
 /// Length of the leading plain-ASCII run of `src`: the count of bytes `b` with
@@ -429,24 +441,35 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
     const LANES: usize = 16;
     let zero = Simd::<u32, LANES>::splat(0);
     let ascii_max = Simd::<u32, LANES>::splat(0x80);
-    while si + LANES <= src.len() && di + LANES <= dest.len() {
-        let wchars: [u32; LANES] = src[si..si + LANES].try_into().unwrap();
-        let chunk = Simd::<u32, LANES>::from_array(wchars);
-        // Any NUL (terminator) or any wc >= 0x80 (multibyte/invalid) ends the run.
-        if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
-            break;
+    // SIMD ASCII runs and scalar multibyte steps are INTERLEAVED (the inverse of
+    // mbstowcs): after each scalar character the outer loop re-attempts the SIMD
+    // fast path, so a long ASCII tail after an early wide char is vectorised
+    // instead of narrowing scalar to end-of-string. Each outer iteration advances
+    // `si` by >= 1, so termination is guaranteed; output is byte-for-byte
+    // identical (SIMD only narrows whole ASCII chunks; NUL / multibyte / error
+    // cases stay in the unchanged scalar step).
+    loop {
+        while si + LANES <= src.len() && di + LANES <= dest.len() {
+            let wchars: [u32; LANES] = src[si..si + LANES].try_into().unwrap();
+            let chunk = Simd::<u32, LANES>::from_array(wchars);
+            // Any NUL (terminator) or any wc >= 0x80 (multibyte/invalid) ends the run.
+            if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+                break;
+            }
+            // Narrow each ASCII codepoint to its single output byte.
+            // Lane-wise truncating SIMD cast (u32 -> u8, keeping the low byte) packs
+            // the whole vector at once. Identical to `w as u8` per lane, but lowers
+            // to a vector pack instead of 16 scalar truncations + an array rebuild.
+            let bytes = chunk.cast::<u8>();
+            bytes.copy_to_slice(&mut dest[di..di + LANES]);
+            si += LANES;
+            di += LANES;
         }
-        // Narrow each ASCII codepoint to its single output byte.
-        // Lane-wise truncating SIMD cast (u32 -> u8, keeping the low byte) packs
-        // the whole vector at once. Identical to `w as u8` per lane, but lowers
-        // to a vector pack instead of 16 scalar truncations + an array rebuild.
-        let bytes = chunk.cast::<u8>();
-        bytes.copy_to_slice(&mut dest[di..di + LANES]);
-        si += LANES;
-        di += LANES;
-    }
 
-    while si < src.len() {
+        // One scalar step, then re-attempt the SIMD run.
+        if si >= src.len() {
+            return Some(di);
+        }
         if src[si] == 0 {
             // NUL terminator
             if di < dest.len() {
@@ -463,7 +486,6 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
         di += n;
         si += 1;
     }
-    Some(di)
 }
 
 // Wide character classification (`<wctype.h>` `isw*` predicates).
