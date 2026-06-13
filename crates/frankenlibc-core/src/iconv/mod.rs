@@ -9817,6 +9817,90 @@ pub fn iconv(
             }
         }
 
+        // UTF-8 -> single-byte legacy target (KOI8-R / CP125x / ISO-8859-* / ...).
+        // The reverse map is O(1) (direct page table) but the generic body pays
+        // two ~100-arm dispatches (decode_char + encode_char) plus the outer-loop
+        // gate re-checks for every character. Inline a tight loop: a SIMD 2-byte
+        // window (8 code points per 16 input bytes — the dominant Latin/Cyrillic
+        // case) followed by a scalar fall-through for ASCII / 3-byte / the tail.
+        // Byte-for-byte ISOMORPHIC: for a clean 2-byte window the SIMD decode
+        // reproduces utf8_decode_step exactly (cp 0x80..=0x7FF, provably never
+        // overlong nor a surrogate, so `char::from_u32` always succeeds), and
+        // `rev.lookup` is the canonical `encode_*` output byte by construction
+        // (same invariant the per-char fast path below relies on). Any
+        // unrepresentable char or full output buffer leaves `in_pos`/`out_pos`
+        // untouched and breaks to the generic body, which reproduces the exact
+        // EILSEQ-vs-E2BIG ordering.
+        if from_enc == Encoding::Utf8
+            && !cd.emit_bom
+            && let Some(rev) = cd.to_reverse.as_ref()
+        {
+            // SIMD 2-byte run: decode 8 clean 2-byte chars, reverse-map all 8,
+            // and commit the window only if every one is representable.
+            while in_pos + 16 <= input.len()
+                && out_pos + 8 <= outbuf.len()
+                && (0xC2..=0xDF).contains(&input[in_pos])
+            {
+                let bytes: [u8; 16] = input[in_pos..in_pos + 16].try_into().unwrap();
+                let v = Simd::<u8, 16>::from_array(bytes);
+                let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
+                let conts = std::simd::simd_swizzle!(v, [1, 3, 5, 7, 9, 11, 13, 15]);
+                let leads_ok = leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
+                let conts_ok = conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
+                if !(leads_ok & conts_ok).all() {
+                    break; // not a clean 2-byte window — scalar path handles it
+                }
+                let lw = leads.cast::<u32>() & Simd::splat(0x1F);
+                let cw = conts.cast::<u32>() & Simd::splat(0x3F);
+                let cps = ((lw << Simd::splat(6)) | cw).to_array();
+                let mut mapped = [0u8; 8];
+                let mut all_ok = true;
+                for (k, &cp) in cps.iter().enumerate() {
+                    // cp is in 0x80..=0x7FF, always a valid scalar.
+                    match rev.lookup(char::from_u32(cp).unwrap()) {
+                        Some(b) => mapped[k] = b,
+                        None => {
+                            all_ok = false;
+                            break;
+                        }
+                    }
+                }
+                if !all_ok {
+                    break; // an unrepresentable char — scalar/generic body handles it
+                }
+                outbuf[out_pos..out_pos + 8].copy_from_slice(&mapped);
+                in_pos += 16;
+                out_pos += 8;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+            // Scalar fall-through: ASCII, 3-byte chars, and the sub-window tail.
+            while in_pos < input.len() && out_pos < outbuf.len() {
+                let b0 = input[in_pos];
+                let (wc, len) = if b0 < 0x80 {
+                    (u32::from(b0), 1usize)
+                } else {
+                    match crate::string::wchar::utf8_decode_step(&input[in_pos..]) {
+                        crate::string::wchar::Utf8Step::Char { wc, len } => (wc, len),
+                        _ => break,
+                    }
+                };
+                let Some(ch) = char::from_u32(wc) else {
+                    break;
+                };
+                let Some(byte) = rev.lookup(ch) else {
+                    break;
+                };
+                outbuf[out_pos] = byte;
+                in_pos += len;
+                out_pos += 1;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         // Hot-path specialization (perf): UTF-8 source is the dominant direction,
         // yet the generic body below dispatches decode_char + encode_char (two
         // ~100-arm matches plus nested calls) for every character. For the common
