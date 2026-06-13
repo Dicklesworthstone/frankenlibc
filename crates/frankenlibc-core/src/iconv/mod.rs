@@ -8518,11 +8518,28 @@ fn decode_dbcs2(
 /// `enc` table holds glibc's canonical encoding for every representable BMP code
 /// point: a packed value `< 0x100` is a single output byte, a larger value is
 /// `(b0<<8)|b1`. An absent code point is `Unrepresentable` (EILSEQ).
-fn encode_dbcs2(ch: char, out: &mut [u8], enc: &[(u32, u32)]) -> Result<usize, EncodeError> {
+/// Build a direct `code point -> packed encoding` table (`[u32; 0x10000]`) from a
+/// sorted `(cp, packed)` DBCS encode table, storing `packed + 1` so 0 means
+/// "unrepresentable" (a `packed` of 0 is a valid single output byte, so it cannot
+/// itself be the sentinel). Replaces a per-char binary search (~13-14 cache-missing
+/// probes over thousands of entries) with one O(1) index. Astral code points
+/// (>= 0x10000) are not in any 2-byte DBCS, so they are not tabled and stay
+/// `Unrepresentable` — identical to the binary search missing them.
+fn build_enc_direct(enc: &[(u32, u32)]) -> Vec<u32> {
+    let mut t = vec![0u32; 0x10000];
+    for &(cp, packed) in enc {
+        if cp < 0x10000 {
+            t[cp as usize] = packed + 1;
+        }
+    }
+    t
+}
+
+fn encode_dbcs2(ch: char, out: &mut [u8], enc_direct: &[u32]) -> Result<usize, EncodeError> {
     let cp = ch as u32;
-    match enc.binary_search_by_key(&cp, |&(c, _)| c) {
-        Ok(i) => {
-            let packed = enc[i].1;
+    if cp < 0x10000 && enc_direct[cp as usize] != 0 {
+        let packed = enc_direct[cp as usize] - 1;
+        {
             if packed < 0x100 {
                 if out.is_empty() {
                     return Err(EncodeError::NoSpace);
@@ -8538,7 +8555,8 @@ fn encode_dbcs2(ch: char, out: &mut [u8], enc: &[(u32, u32)]) -> Result<usize, E
                 Ok(2)
             }
         }
-        Err(_) => Err(EncodeError::Unrepresentable),
+    } else {
+        Err(EncodeError::Unrepresentable)
     }
 }
 
@@ -8554,7 +8572,9 @@ fn decode_shiftjis(input: &[u8]) -> Result<(char, usize), DecodeError> {
 }
 
 fn encode_shiftjis(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
-    encode_dbcs2(ch, out, &cjk_tables::SHIFT_JIS_ENC)
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_enc_direct(&cjk_tables::SHIFT_JIS_ENC));
+    encode_dbcs2(ch, out, direct)
 }
 
 fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
@@ -8569,7 +8589,9 @@ fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
 }
 
 fn encode_big5(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
-    encode_dbcs2(ch, out, &cjk_tables::BIG5_ENC)
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_enc_direct(&cjk_tables::BIG5_ENC));
+    encode_dbcs2(ch, out, direct)
 }
 
 fn decode_gbk(input: &[u8]) -> Result<(char, usize), DecodeError> {
@@ -9317,14 +9339,29 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
-        Encoding::Gbk => encode_dbcs2(ch, out, &cjk_tables::GBK_ENC),
-        Encoding::EucKr => encode_dbcs2(ch, out, &cjk_tables::EUC_KR_ENC),
-        Encoding::Cp949 => encode_dbcs2(ch, out, &cjk_tables::CP949_ENC),
-        Encoding::Gb2312 => encode_dbcs2(ch, out, &cjk_tables::GB2312_ENC),
+        Encoding::Gbk => encode_gbk(ch, out),
+        Encoding::EucKr => encode_euckr(ch, out),
+        Encoding::Cp949 => encode_cp949(ch, out),
+        Encoding::Gb2312 => encode_gb2312(ch, out),
         Encoding::Gb18030 => encode_gb18030(ch, out),
-        Encoding::Johab => encode_dbcs2(ch, out, &cjk_tables::JOHAB_ENC),
+        Encoding::Johab => encode_johab(ch, out),
     }
 }
+
+macro_rules! dbcs_encoder {
+    ($name:ident, $table:ident) => {
+        fn $name(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+            static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+            let direct = DIRECT.get_or_init(|| build_enc_direct(&cjk_tables::$table));
+            encode_dbcs2(ch, out, direct)
+        }
+    };
+}
+dbcs_encoder!(encode_gbk, GBK_ENC);
+dbcs_encoder!(encode_euckr, EUC_KR_ENC);
+dbcs_encoder!(encode_cp949, CP949_ENC);
+dbcs_encoder!(encode_gb2312, GB2312_ENC);
+dbcs_encoder!(encode_johab, JOHAB_ENC);
 
 /// Opens a character set conversion descriptor with deterministic dispatch metadata.
 ///
