@@ -71,7 +71,14 @@ pub fn logf(x: f32) -> f32 {
 
 #[inline]
 pub fn log2f(x: f32) -> f32 {
-    x.log2()
+    // MUST use the pure-Rust libm implementation, NOT `x.log2()`. The std
+    // `f32::log2` lowers to an indirect call through the `log2f` symbol; in the
+    // shipped `libc.so` that symbol is our OWN interposed `log2f`, so `x.log2()`
+    // here recurses infinitely (stack overflow). Verified via the cdylib GOT
+    // relocation: the indirect target binds to `log2f@@Base` (self). The bench
+    // never caught it because the bench binary links glibc's `log2f`. Every other
+    // f32 transcendental here uses `libm::*` for exactly this reason.
+    libm::log2f(x)
 }
 
 #[inline]
