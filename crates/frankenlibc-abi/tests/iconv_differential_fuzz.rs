@@ -338,6 +338,86 @@ fn iconv_wide_differential_fuzz_vs_glibc() {
     eprintln!("iconv wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
 }
 
+/// Wide-to-wide differential fuzz: every explicit-endianness fixed-width pair
+/// (UTF-16LE/BE, UTF-32LE/BE) converted directly to every other — the width/
+/// endian re-pack fast path. Corpora: random raw bytes (any length — incomplete
+/// tail EINVAL + surrogate/range EILSEQ + stop position) and valid wide source
+/// bytes built from random scalars incl. astral (surrogate pairs on the UTF-16
+/// side, 4-byte units on the UTF-32 side). fl and glibc must agree on the full
+/// contract (return value + errno + output bytes + *inbytesleft).
+#[test]
+fn iconv_wide_to_wide_differential_fuzz_vs_glibc() {
+    let mut r = Lcg(0x6d3c_91a7_55e2_1b09);
+    let mut divs: Vec<String> = Vec::new();
+    let mut compared: u64 = 0;
+
+    const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE"];
+
+    // Encode a code point into a wide codec's bytes (host-independent).
+    fn push_wide(v: &mut Vec<u8>, codec: &str, cp: u32) {
+        match codec {
+            "UTF-32LE" => v.extend_from_slice(&cp.to_le_bytes()),
+            "UTF-32BE" => v.extend_from_slice(&cp.to_be_bytes()),
+            "UTF-16LE" | "UTF-16BE" => {
+                let be = codec == "UTF-16BE";
+                if let Some(ch) = char::from_u32(cp) {
+                    let mut u = [0u16; 2];
+                    for unit in ch.encode_utf16(&mut u) {
+                        let b = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                        v.extend_from_slice(&b);
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    for from in WIDE {
+        let cf = CString::new(*from).unwrap();
+        for to in WIDE {
+            let ct = CString::new(*to).unwrap();
+            for _ in 0..1500 {
+                let raw: Vec<u8> = {
+                    let len = (r.next() % 18) as usize;
+                    (0..len).map(|_| r.byte()).collect()
+                };
+                let valid: Vec<u8> = {
+                    let n = (r.next() % 5) as usize;
+                    let mut v = Vec::new();
+                    for _ in 0..n {
+                        let cp = match r.next() % 8 {
+                            0 => r.next() as u32 % 0x80,                 // ASCII
+                            1 | 2 => 0x80 + r.next() as u32 % 0x780,     // BMP low
+                            3 | 4 | 5 => 0xE000 + r.next() as u32 % 0x2000, // BMP non-surrogate
+                            _ => 0x10000 + (r.next() as u32 % 0x100000), // astral
+                        };
+                        push_wide(&mut v, from, cp);
+                    }
+                    v
+                };
+                for src in [&raw, &valid] {
+                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
+                    let h = unsafe { run(iconv_open, iconv_close, iconv, &ct, &cf, src) };
+                    let (Some(f), Some(h)) = (f, h) else { continue };
+                    compared += 1;
+                    if f != h && divs.len() < 40 {
+                        divs.push(format!(
+                            "{from}->{to} src={src:02x?}\n      fl  ={f:02x?}\n      glibc={h:02x?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "wide->wide iconv diverged from host glibc (showing up to 40):\n{}",
+        divs.join("\n")
+    );
+    eprintln!("iconv wide->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+}
+
 /// CJK 2-byte codec differential fuzz: SHIFT_JIS and BIG5 <-> UTF-8 over (a)
 /// random raw bytes (exercises the decode tables + the incomplete-tail EINVAL /
 /// invalid-pair EILSEQ classification + stop position) and (b) valid UTF-8

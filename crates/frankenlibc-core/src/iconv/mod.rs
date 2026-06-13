@@ -10104,6 +10104,76 @@ pub fn iconv(
             }
         }
 
+        // Fast path: fixed-width Unicode -> fixed-width Unicode (UTF-16/UTF-32,
+        // LE/BE, any combination). The generic body dispatches decode_char +
+        // encode_char (two ~100-arm matches) + the encode_one wrapper per char for
+        // what is fundamentally a width/endian re-pack. Inline a tight loop: a
+        // 5-way decode match (cheap, predictable) + the same inline UTF-16/UTF-32
+        // target write the UTF-8-source fast path uses. Gated on EXPLICIT-endianness
+        // codecs only (the unmarked UTF-16/UTF-32 carry BOM state handled
+        // elsewhere) so there is no BOM to strip/emit. Byte-for-byte isomorphic:
+        // same per-codec decoder (incl. surrogate/range validation) + the same
+        // encode_utf16/to_*_bytes; a decode error or insufficient room leaves
+        // in_pos/out_pos untouched and breaks to the generic body for the exact
+        // EILSEQ/EINVAL/E2BIG ordering and position.
+        if matches!(
+            from_enc,
+            Encoding::Utf16Le | Encoding::Utf16Be | Encoding::Utf32Le | Encoding::Utf32Be
+        ) && matches!(
+            cd.to,
+            Encoding::Utf16Le | Encoding::Utf16Be | Encoding::Utf32Le | Encoding::Utf32Be
+        ) && !cd.emit_bom
+        {
+            while in_pos < input.len() {
+                let decoded = match from_enc {
+                    Encoding::Utf16Le => decode_utf16le(&input[in_pos..]),
+                    Encoding::Utf16Be => decode_utf16be(&input[in_pos..]),
+                    Encoding::Utf32Le => decode_utf32le(&input[in_pos..]),
+                    Encoding::Utf32Be => decode_utf32be(&input[in_pos..]),
+                    _ => unreachable!(),
+                };
+                let Ok((ch, consumed)) = decoded else {
+                    break;
+                };
+                let avail = outbuf.len() - out_pos;
+                let wrote: Option<usize> = match cd.to {
+                    Encoding::Utf32Le if avail >= 4 => {
+                        outbuf[out_pos..out_pos + 4].copy_from_slice(&(ch as u32).to_le_bytes());
+                        Some(4)
+                    }
+                    Encoding::Utf32Be if avail >= 4 => {
+                        outbuf[out_pos..out_pos + 4].copy_from_slice(&(ch as u32).to_be_bytes());
+                        Some(4)
+                    }
+                    Encoding::Utf16Le | Encoding::Utf16Be => {
+                        let mut units = [0u16; 2];
+                        let enc = ch.encode_utf16(&mut units);
+                        let needed = enc.len() * 2;
+                        if avail >= needed {
+                            let be = matches!(cd.to, Encoding::Utf16Be);
+                            for (idx, unit) in enc.iter().enumerate() {
+                                let bytes = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                                outbuf[out_pos + idx * 2] = bytes[0];
+                                outbuf[out_pos + idx * 2 + 1] = bytes[1];
+                            }
+                            Some(needed)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None, // UTF-32 target with < 4 bytes room -> generic E2BIG
+                };
+                let Some(w) = wrote else {
+                    break;
+                };
+                in_pos += consumed;
+                out_pos += w;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         let (ch, consumed) = match decode_char(from_enc, &input[in_pos..]) {
             Ok(v) => v,
             Err(DecodeError::Incomplete) => {
