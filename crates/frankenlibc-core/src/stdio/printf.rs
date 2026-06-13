@@ -1615,7 +1615,13 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     // if the parse unexpectedly fails.
     let rounded_e = alloc::format!("{:.*e}", p - 1, value);
     let Some((mantissa, exp)) = split_scientific(&rounded_e) else {
-        let exp = value.log10().floor() as i32;
+        // `libm::log10` (pure Rust), NOT `value.log10()`: the std `f64::log10`
+        // lowers to a call to the `log10` symbol, which in the shipped libc.so is
+        // our OWN interposed `log10` — a membrane round-trip (and the glibc-linked
+        // bench/test would silently bind it to glibc instead of the shipped path).
+        // Same anti-pattern as bd-2g7oyh.370 (log2f) / bd-2g7oyh.371 (erf). This
+        // branch is a near-unreachable fallback, but the convention holds.
+        let exp = libm::log10(value).floor() as i32;
         let use_f_style = exp >= -4 && exp < p as i32;
         if use_f_style {
             let frac_digits = (p as i32 - 1 - exp).max(0) as usize;
