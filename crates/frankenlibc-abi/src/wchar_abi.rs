@@ -534,6 +534,82 @@ pub unsafe extern "C" fn wcscat(dst: *mut u32, src: *const u32) -> *mut u32 {
     dst
 }
 
+/// True iff a 32-byte read at `addr` stays within `addr`'s own 4096-byte page,
+/// so a wide dual-pointer vector load cannot fault past a NUL near a page
+/// boundary. Neither `s1` nor `s2` can be pre-aligned, hence the per-read guard.
+#[inline(always)]
+fn wide32_read_within_page(addr: usize) -> bool {
+    (addr & 0xFFF) <= 0x1000 - 32
+}
+
+/// Fused portable-SIMD wide-string compare: 8 `u32` (wchar_t) lanes per 32-byte
+/// window. `bound` is in elements. Returns `(result, span_elements, hit_limit)`:
+/// `result` is the signed difference (`-1`/`0`/`+1`, wchar_t compared as i32) at
+/// the first differing element or shared NUL; `hit_limit` means `bound` elements
+/// compared equal with no NUL. Equal-and-NUL-free windows advance 8 elements;
+/// others resolve element-wise (identical to the scalar loop). Wide reads are
+/// page-cross guarded (dual pointers can't be pre-aligned). 8 lanes per window
+/// amortise the guard cost — unlike a 2-lane u64-SWAR, which lost to scalar.
+unsafe fn scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_int, usize, bool) {
+    const WLANES: usize = 8;
+    let zv = Simd::<u32, WLANES>::splat(0);
+    let mut i = 0usize;
+    loop {
+        if i + WLANES <= bound
+            && wide32_read_within_page(s1.wrapping_add(i) as usize)
+            && wide32_read_within_page(s2.wrapping_add(i) as usize)
+        {
+            // SAFETY: both 32-byte reads stay within their pages and within bound.
+            // Raw array loads (not Rust slices over C memory) mirror wcschr.
+            let va = Simd::<u32, WLANES>::from_array(unsafe {
+                core::ptr::read(s1.add(i).cast::<[u32; WLANES]>())
+            });
+            let vb = Simd::<u32, WLANES>::from_array(unsafe {
+                core::ptr::read(s2.add(i).cast::<[u32; WLANES]>())
+            });
+            if va == vb && !va.simd_eq(zv).any() {
+                i += WLANES;
+                continue;
+            }
+            for j in 0..WLANES {
+                // SAFETY: i+j < bound.
+                let a = unsafe { *s1.add(i + j) };
+                let b = unsafe { *s2.add(i + j) };
+                if a != b {
+                    return (if (a as i32) < (b as i32) { -1 } else { 1 }, i + j + 1, false);
+                }
+                if a == 0 {
+                    return (0, i + j + 1, false);
+                }
+            }
+            i += WLANES; // defensive: a flagged window always returns above.
+            continue;
+        }
+        if i >= bound {
+            return (0, bound, true);
+        }
+        // SAFETY: i < bound.
+        let a = unsafe { *s1.add(i) };
+        let b = unsafe { *s2.add(i) };
+        if a != b {
+            return (if (a as i32) < (b as i32) { -1 } else { 1 }, i + 1, false);
+        }
+        if a == 0 {
+            return (0, i + 1, false);
+        }
+        i += 1;
+    }
+}
+
+/// Benchmark/test hook for [`scan_wcscmp_simd`]. Not part of the public ABI.
+///
+/// # Safety
+/// `s1`/`s2` must be NUL-terminated, or valid for `bound` elements.
+#[doc(hidden)]
+pub unsafe fn bench_scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> c_int {
+    unsafe { scan_wcscmp_simd(s1, s2, bound).0 }
+}
+
 // ---------------------------------------------------------------------------
 // wcscmp
 // ---------------------------------------------------------------------------
@@ -575,29 +651,12 @@ pub unsafe extern "C" fn wcscmp(s1: *const u32, s2: *const u32) -> c_int {
         (None, None) => None,
     };
 
+    // Fused portable-SIMD wide compare (shared scan_wcscmp_simd), byte-identical
+    // to the old scalar element loop. `cmp_bound == None` => no limit; any
+    // hit-limit is the membrane bound, so it maps directly to `adverse`.
     let (result, adverse, span) = unsafe {
-        let mut i = 0usize;
-        let mut adverse_local = false;
-        loop {
-            if let Some(limit) = cmp_bound
-                && i >= limit
-            {
-                adverse_local = true;
-                break (0, adverse_local, i);
-            }
-            let a = *s1.add(i);
-            let b = *s2.add(i);
-            if a != b || a == 0 {
-                // Cast to i32 for signed wchar_t comparison
-                let diff = if (a as i32) < (b as i32) { -1 } else { 1 };
-                break (
-                    if a == b { 0 } else { diff },
-                    adverse_local,
-                    i.saturating_add(1),
-                );
-            }
-            i += 1;
-        }
+        let (r, span, hit_limit) = scan_wcscmp_simd(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+        (r, hit_limit, span)
     };
 
     if adverse {
@@ -653,32 +712,15 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
         (None, None) => Some(n),
     };
 
+    // Fused portable-SIMD wide compare (shared scan_wcscmp_simd); `cmp_bound` is
+    // always Some here. `adverse` only when the limit came from a membrane clamp
+    // (not n), matching the old scalar loop exactly.
+    let limit = cmp_bound.expect("wcsncmp cmp_bound is always Some");
     let (result, adverse, span) = unsafe {
-        let mut i = 0usize;
-        let mut adverse_local = false;
-        loop {
-            if let Some(limit) = cmp_bound
-                && i >= limit
-            {
-                // Reached limit (n or bounds). If limit < n and limited by bounds, it's adverse.
-                if limit < n && (lhs_bound == Some(limit) || rhs_bound == Some(limit)) {
-                    adverse_local = true;
-                }
-                break (0, adverse_local, i);
-            }
-            let a = *s1.add(i);
-            let b = *s2.add(i);
-            if a != b || a == 0 {
-                // Cast to i32 for signed wchar_t comparison
-                let diff = if (a as i32) < (b as i32) { -1 } else { 1 };
-                break (
-                    if a == b { 0 } else { diff },
-                    adverse_local,
-                    i.saturating_add(1),
-                );
-            }
-            i += 1;
-        }
+        let (r, span, hit_limit) = scan_wcscmp_simd(s1, s2, limit);
+        let adverse_local =
+            hit_limit && limit < n && (lhs_bound == Some(limit) || rhs_bound == Some(limit));
+        (r, adverse_local, span)
     };
 
     if adverse {
@@ -692,6 +734,7 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
     );
     result
 }
+
 /// Portable-SIMD scan of a NUL-terminated wide string for the first element equal
 /// to `c` OR the terminating NUL. Returns `(index, found_c)`; `c == 0` reports the
 /// NUL as a found match (matching `wcschr(s, '\0')`). Probes 8 `u32` lanes at a

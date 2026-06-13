@@ -15,10 +15,31 @@ use frankenlibc_abi::string_abi::{
     bench_scan_c_string_for_byte, bench_scan_c_string_last_byte, bench_scan_strcasecmp,
     bench_scan_strcmp,
 };
-use frankenlibc_abi::wchar_abi::bench_wide_find_or_nul_simd;
+use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, bench_wide_find_or_nul_simd};
+
+/// Pre-lever wcscmp: scalar wchar_t (u32) element-at-a-time compare to diff/NUL.
+#[inline(never)]
+unsafe fn old_scalar_wcscmp(s1: *const u32, s2: *const u32) -> i32 {
+    unsafe {
+        let mut i = 0usize;
+        loop {
+            let a = *s1.add(i);
+            let b = *s2.add(i);
+            if a != b {
+                return if (a as i32) < (b as i32) { -1 } else { 1 };
+            }
+            if a == 0 {
+                return 0;
+            }
+            i += 1;
+        }
+    }
+}
 
 unsafe extern "C" {
     fn wcschr(s: *const u32, c: u32) -> *mut u32;
+    fn wcsrchr(s: *const u32, c: u32) -> *mut u32;
+    fn wcscmp(s1: *const u32, s2: *const u32) -> i32;
 }
 
 /// Pre-lever wcschr: scalar wchar_t (u32) scan to target-or-NUL.
@@ -33,6 +54,25 @@ unsafe fn old_scalar_wcschr(s: *const u32, c: u32) -> Option<usize> {
             }
             if ch == 0 {
                 return None;
+            }
+            i += 1;
+        }
+    }
+}
+
+/// Pre-lever wcsrchr: scalar wchar_t (u32) scan to NUL, tracking last target.
+#[inline(never)]
+unsafe fn old_scalar_wcsrchr(s: *const u32, c: u32) -> Option<usize> {
+    unsafe {
+        let mut last = None;
+        let mut i = 0usize;
+        loop {
+            let ch = *s.add(i);
+            if ch == c {
+                last = Some(i);
+            }
+            if ch == 0 {
+                return last;
             }
             i += 1;
         }
@@ -547,6 +587,62 @@ fn main() {
             gl,
             old / new,
             gl / new,
+        );
+    }
+
+    println!("\nwcsrchr (absent target -> full wide scan to NUL):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12}",
+        "wchars", "old(ns)", "abi(ns)", "old/abi"
+    );
+    for &n in &sizes {
+        let mut s: Vec<u32> = vec![0x61u32; n + 1];
+        s[n] = 0;
+        let p = s.as_ptr();
+        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { old_scalar_wcsrchr(p, 0x5A) });
+        });
+        let abi = median_ns_per_op(rounds, iters, || {
+            // SAFETY: NUL-terminated wide string.
+            black_box(unsafe { wcsrchr(p, 0x5A) });
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>11.2}x",
+            n,
+            old,
+            abi,
+            old / abi,
+        );
+    }
+
+    println!("\nwcscmp (equal wide strings → full scan, wchar_t = u32):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
+        "wchars", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+    );
+    for &n in &sizes {
+        let mut a: Vec<u32> = vec![0x61u32; n + 1];
+        a[n] = 0;
+        let b = a.clone();
+        let pa = a.as_ptr();
+        let pb = b.as_ptr();
+        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { old_scalar_wcscmp(pa, pb) });
+        });
+        let new = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { bench_scan_wcscmp_simd(pa, pb, usize::MAX) });
+        });
+        let gl = median_ns_per_op(rounds, iters, || {
+            // SAFETY: both NUL-terminated wide strings.
+            black_box(unsafe { wcscmp(pa, pb) });
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            n, old, new, gl, old / new, gl / new,
         );
     }
 }
