@@ -77,7 +77,14 @@ fn erf_profile_band(x: f64) -> f64 {
 
 #[inline]
 fn erfc_profile_band_tail(x: f64) -> f64 {
-    (-x * x).exp() * polevl(x, &ERFC_P) / p1evl(x, &ERFC_Q)
+    // Use `libm::exp` (pure Rust), NOT `(-x*x).exp()`. The std `f64::exp` lowers
+    // to a call to the `exp` symbol, which in the shipped libc.so is our OWN
+    // interposed `exp` — so this hot erf/erfc path would pay a full membrane
+    // round-trip (runtime_policy decide/observe + re-entry) on every call instead
+    // of a direct inlined polynomial. Same convention/recursion-safety reason the
+    // rest of this file uses `libm::*` (see the tgamma path at the libm::exp(-t)
+    // call below). Bit-identical result.
+    libm::exp(-x * x) * polevl(x, &ERFC_P) / p1evl(x, &ERFC_Q)
 }
 
 #[inline]
