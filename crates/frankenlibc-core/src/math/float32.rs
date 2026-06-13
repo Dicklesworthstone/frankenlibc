@@ -50,6 +50,12 @@ pub fn expf(x: f32) -> f32 {
     // dominated by the rounding of the x*log2e product (~0.5*|x| ULP after exp2f
     // amplification), so |x|=5 stays <=4 ULP. Outside the interval, defer to
     // libm::expf bit-for-bit.
+    //
+    // NOTE (rejected lever, measured): routing this through the f64 `exp2` kernel
+    // (like exp10f, `libm::exp2(x as f64 * LOG2_E) as f32`) was *slower* — same
+    // worker, expf_medium 223 ns (this f32-exp2f path) vs 292 ns (f64 route), and
+    // this path already beats glibc (~304 ns). The earlier "1.70x slower" baseline
+    // was stale/noisy. Keep the f32-exp2f fast path.
     if (-5.0..=5.0).contains(&x) {
         return libm::exp2f(x * core::f32::consts::LOG2_E);
     }
@@ -549,6 +555,11 @@ pub fn exp10f(x: f32) -> f32 {
     // gate: f64 never overflows across the entire finite f32 domain, and the
     // cast maps f64 over/underflow to f32 inf/0 exactly as glibc does. Verified
     // by conformance_diff_math::diff_exp10f_within_4_ulps.
+    //
+    // NOTE (rejected lever, measured): the f32 `exp2f(x * LOG2_10_f32)` route is
+    // faster but FAILS the 4-ULP contract (5 ULP on subnormal results near
+    // x ≈ -39, where the f32 x·log2(10) rounding loses precision). The f64 route
+    // is required for accuracy here — do not switch to f32.
     (libm::exp2(x as f64 * core::f64::consts::LOG2_10)) as f32
 }
 
