@@ -18,6 +18,7 @@ unsafe extern "C" {
     fn logf(x: f32)->f32; fn log2f(x: f32)->f32; fn log10f(x: f32)->f32; fn sqrtf(x: f32)->f32;
     fn acosf(x: f32)->f32; fn acoshf(x: f32)->f32; fn tgammaf(x: f32)->f32; fn powf(x: f32,y: f32)->f32;
     fn nextafter(x: f64, y: f64) -> f64; fn nextafterf(x: f32, y: f32) -> f32;
+    fn lgamma(x: f64)->f64; fn lgammaf(x: f32)->f32; fn exp2(x: f64)->f64; fn expm1(x: f64)->f64;
 }
 const HARD: c_int = 0x1D; // INVALID|DIVBYZERO|OVERFLOW|UNDERFLOW (drop noisy INEXACT)
 fn key(x: f64) -> i64 { let b = x.to_bits() as i64; if b < 0 { i64::MIN - b } else { b } }
@@ -108,5 +109,20 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chk2!("nextafterf(0,1)", fl::nextafterf(0.0,1.0), nextafterf(0.0,1.0));
     chk2!("nextafterf(MAX,INF)", fl::nextafterf(f32::MAX,f32::INFINITY), nextafterf(f32::MAX,f32::INFINITY));
     chk2!("nextafterf(minpos,0)", fl::nextafterf(f32::MIN_POSITIVE,0.0), nextafterf(f32::MIN_POSITIVE,0.0));
+
+    // lgamma poles (DIVBYZERO at non-positive integers) + the OVERFLOW family
+    // (tgamma/exp2/pow). All currently correct vs glibc; pinned so a future
+    // change can't silently drop the flag (complements the tgamma-pole fix).
+    chk2!("lgamma(0)", fl::lgamma(0.0), lgamma(0.0));
+    chk2!("lgamma(-1)", fl::lgamma(-1.0), lgamma(-1.0));
+    chk2!("lgamma(-2)", fl::lgamma(-2.0), lgamma(-2.0));
+    chk2!("lgammaf(0)", fl::lgammaf(0.0), lgammaf(0.0));
+    chk2!("lgammaf(-1)", fl::lgammaf(-1.0), lgammaf(-1.0));
+    chk2!("tgamma(200)", fl::tgamma(200.0), tgamma(200.0));
+    chk2!("exp2(2000)", fl::exp2(2000.0), exp2(2000.0));
+    chk2!("exp2(-2000)", fl::exp2(-2000.0), exp2(-2000.0));
+    chk2!("expm1(1000)", fl::expm1(1000.0), expm1(1000.0));
+    chk2!("pow(10,400)", fl::pow(10.0,400.0), pow(10.0,400.0));
+    chk2!("pow(0.1,400)", fl::pow(0.1,400.0), pow(0.1,400.0));
     assert!(div.is_empty(), "fp-exception/value divergences vs glibc:\n  {}", div.join("\n  "));
 }
