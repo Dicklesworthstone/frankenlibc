@@ -510,6 +510,35 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
             di += LANES;
         }
 
+        // SIMD 2-byte encode fast path (inverse of mbstowcs's 2-byte decode): a run
+        // of >= 8 wide chars all in 0x80..=0x7FF each encodes to exactly two bytes
+        // (0xC0|(wc>>6), 0x80|(wc&0x3F)). No code point in that range is overlong or
+        // a UTF-16 surrogate, so a range-validated window is byte-for-byte what
+        // scalar `wctomb` produces. Build 16 output bytes by interleaving the lead
+        // and continuation lanes. Any wchar outside the range (ASCII, 3/4-byte,
+        // surrogate, out-of-range) or insufficient room (< 16 bytes) drops to the
+        // scalar step. Covers the common 2-byte scripts (Cyrillic/Greek/…).
+        while si + 8 <= src.len()
+            && di + 16 <= dest.len()
+            && (0x80..=0x7FF).contains(&src[si])
+        {
+            let ws: [u32; 8] = src[si..si + 8].try_into().unwrap();
+            let v = Simd::<u32, 8>::from_array(ws);
+            if !(v.simd_ge(Simd::splat(0x80)) & v.simd_le(Simd::splat(0x7FF))).all() {
+                break; // a non-2-byte wchar in the window — let the scalar step run
+            }
+            let leads = ((v >> Simd::splat(6)) | Simd::splat(0xC0)).cast::<u8>();
+            let conts = ((v & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+            let bytes = std::simd::simd_swizzle!(
+                leads,
+                conts,
+                [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15]
+            );
+            bytes.copy_to_slice(&mut dest[di..di + 16]);
+            si += 8;
+            di += 16;
+        }
+
         // One scalar step, then re-attempt the SIMD run.
         if si >= src.len() {
             return Some(di);
