@@ -8433,34 +8433,48 @@ fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
 /// 3 bytes `(b0<<16)|(b1<<8)|b2` (the 0x8F plane). Absent code points are
 /// `Unrepresentable` (EILSEQ).
 fn encode_eucjp(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
-    let cp = ch as u32;
-    match cjk_tables::EUC_JP_ENC.binary_search_by_key(&cp, |&(c, _)| c) {
-        Ok(i) => {
-            let packed = cjk_tables::EUC_JP_ENC[i].1;
-            if packed < 0x100 {
-                if out.is_empty() {
-                    return Err(EncodeError::NoSpace);
-                }
-                out[0] = packed as u8;
-                Ok(1)
-            } else if packed < 0x1_0000 {
-                if out.len() < 2 {
-                    return Err(EncodeError::NoSpace);
-                }
-                out[0] = (packed >> 8) as u8;
-                out[1] = (packed & 0xFF) as u8;
-                Ok(2)
-            } else {
-                if out.len() < 3 {
-                    return Err(EncodeError::NoSpace);
-                }
-                out[0] = (packed >> 16) as u8;
-                out[1] = ((packed >> 8) & 0xFF) as u8;
-                out[2] = (packed & 0xFF) as u8;
-                Ok(3)
+    // Direct `code point -> packed encoding` table (`[u32; 0x10000]`, stored as
+    // `packed + 1` so 0 means unrepresentable; a `packed` of 0 is a valid single
+    // 0x00 byte so it cannot itself be the sentinel). Replaces a per-char binary
+    // search over 13,169 entries (~14 cache-missing probes) with one O(1) index.
+    // Every EUC-JP-encodable code point is BMP (`EUC_JP_ENC` max key 0xFFE5), so
+    // the BMP-sized table is exhaustive — identical results to the binary search.
+    static ENC_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = ENC_DIRECT.get_or_init(|| {
+        let mut t = vec![0u32; 0x10000];
+        for &(cp, packed) in cjk_tables::EUC_JP_ENC.iter() {
+            if cp < 0x10000 {
+                t[cp as usize] = packed + 1;
             }
         }
-        Err(_) => Err(EncodeError::Unrepresentable),
+        t
+    });
+    let cp = ch as u32;
+    if cp >= 0x10000 || direct[cp as usize] == 0 {
+        return Err(EncodeError::Unrepresentable);
+    }
+    let packed = direct[cp as usize] - 1;
+    if packed < 0x100 {
+        if out.is_empty() {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = packed as u8;
+        Ok(1)
+    } else if packed < 0x1_0000 {
+        if out.len() < 2 {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = (packed >> 8) as u8;
+        out[1] = (packed & 0xFF) as u8;
+        Ok(2)
+    } else {
+        if out.len() < 3 {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = (packed >> 16) as u8;
+        out[1] = ((packed >> 8) & 0xFF) as u8;
+        out[2] = (packed & 0xFF) as u8;
+        Ok(3)
     }
 }
 
