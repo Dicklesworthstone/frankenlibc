@@ -321,6 +321,11 @@ pub fn j0(x: f64) -> f64 {
 /// Bessel function of the first kind, order 1.
 #[inline]
 pub fn j1(x: f64) -> f64 {
+    // J1 is odd, so J1(-inf) carries the sign of -J1(+inf) = -0.0; libm::j1(-inf)
+    // returns +0.0, but glibc returns -0.0. Match glibc.
+    if x == f64::NEG_INFINITY {
+        return -0.0;
+    }
     libm::j1(x)
 }
 
@@ -351,6 +356,14 @@ pub fn yn(n: i32, x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn j1_neg_inf_sign_matches_glibc() {
+        // J1 is odd → J1(-inf) = -0.0 (glibc); libm returns +0.0.
+        assert_eq!(j1(f64::NEG_INFINITY).to_bits(), (-0.0f64).to_bits());
+        assert_eq!(j1(f64::INFINITY).to_bits(), 0.0f64.to_bits());
+        assert!(j1(f64::NAN).is_nan());
+    }
 
     #[test]
     fn erf_sanity() {

@@ -349,6 +349,13 @@ pub fn asinhf(x: f32) -> f32 {
 
 #[inline]
 pub fn acoshf(x: f32) -> f32 {
+    // Domain is [1, +inf); for x < 1 acosh is undefined and glibc returns NaN.
+    // libm::acoshf computes a spurious finite value for large negative x (e.g.
+    // acoshf(-100) = -2.2), so guard the domain explicitly. NaN inputs fall
+    // through (NaN < 1.0 is false) to libm, which returns NaN.
+    if x < 1.0 {
+        return f32::NAN;
+    }
     libm::acoshf(x)
 }
 
@@ -717,6 +724,11 @@ pub fn j0f(x: f32) -> f32 {
 /// Bessel function of the first kind, order 1 (f32 variant).
 #[inline]
 pub fn j1f(x: f32) -> f32 {
+    // J1 is odd, so J1(-inf) carries the sign of -J1(+inf) = -0.0; libm::j1f(-inf)
+    // returns +0.0, but glibc returns -0.0. Match glibc.
+    if x == f32::NEG_INFINITY {
+        return -0.0;
+    }
     libm::j1f(x)
 }
 
@@ -832,6 +844,21 @@ pub fn significandf(x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acoshf_domain_and_j1f_sign_match_glibc() {
+        // acosh domain is [1, +inf); x < 1 must be NaN (libm returns spurious
+        // finite values for large negative x, e.g. acoshf(-100) = -2.2).
+        for x in [-100.0f32, -104.0, -1.0, 0.0, 0.5, 0.9999999, f32::NEG_INFINITY] {
+            assert!(acoshf(x).is_nan(), "acoshf({x}) must be NaN (domain x<1)");
+        }
+        assert_eq!(acoshf(1.0), 0.0);
+        assert!(acoshf(2.0).is_finite() && acoshf(2.0) > 0.0);
+        assert_eq!(acoshf(f32::INFINITY), f32::INFINITY);
+        // J1 is odd → j1f(-inf) = -0.0 (glibc); libm returns +0.0.
+        assert_eq!(j1f(f32::NEG_INFINITY).to_bits(), (-0.0f32).to_bits());
+        assert_eq!(j1f(f32::INFINITY).to_bits(), 0.0f32.to_bits());
+    }
 
     /// ULP distance for f32 with matching-sign requirement (mirrors the f64
     /// `within_ulps`). `f32::powf` resolves to host glibc `powf`.
