@@ -41,10 +41,7 @@ struct Out {
     bytes: Vec<u8>,
 }
 
-fn run(
-    f: unsafe extern "C" fn(*mut c_char, u32, *mut c_void) -> usize,
-    c32: u32,
-) -> Out {
+fn run(f: unsafe extern "C" fn(*mut c_char, u32, *mut c_void) -> usize, c32: u32) -> Out {
     let mut buf = [0u8; 16];
     // Zeroed mbstate_t (glibc's is 8 bytes; give it plenty and pass a pointer).
     let mut state = [0u8; 16];
@@ -73,19 +70,20 @@ fn run(
 /// A code point biased toward boundaries and invalid regions.
 fn gen_c32(r: &mut Lcg) -> u32 {
     match r.below(12) {
-        0 => r.below(0x80) as u32,                       // ASCII
-        1 => 0x80 + r.below(0x780) as u32,               // 2-byte
-        2 => 0x800 + r.below(0xF800) as u32,             // 3-byte (incl surrogate block)
-        3 => 0x10000 + r.below(0x100000) as u32,         // 4-byte supplementary
-        4 => 0xD800 + r.below(0x800) as u32,             // surrogate block (invalid)
-        5 => 0x110000 + r.below(0x1000) as u32,          // just over max (invalid)
-        6 => r.next() as u32,                            // any 32-bit (mostly huge/invalid)
-        7 => [0x0, 0x7F, 0x80, 0x7FF, 0x800, 0xFFFF, 0x10000, 0x10FFFF, 0x110000][r.below(9) as usize]
-            as u32,
-        8 => 0xFFFE + r.below(4) as u32,                 // noncharacters near BMP top
-        9 => 0xD7FF + r.below(4) as u32,                 // around the surrogate lower edge
-        10 => 0xDFFF + r.below(4) as u32,                // around the surrogate upper edge
-        _ => 0x10FFFD + r.below(6) as u32,               // around the max edge
+        0 => r.below(0x80) as u32,               // ASCII
+        1 => 0x80 + r.below(0x780) as u32,       // 2-byte
+        2 => 0x800 + r.below(0xF800) as u32,     // 3-byte (incl surrogate block)
+        3 => 0x10000 + r.below(0x100000) as u32, // 4-byte supplementary
+        4 => 0xD800 + r.below(0x800) as u32,     // surrogate block (invalid)
+        5 => 0x110000 + r.below(0x1000) as u32,  // just over max (invalid)
+        6 => r.next() as u32,                    // any 32-bit (mostly huge/invalid)
+        7 => [
+            0x0, 0x7F, 0x80, 0x7FF, 0x800, 0xFFFF, 0x10000, 0x10FFFF, 0x110000,
+        ][r.below(9) as usize] as u32,
+        8 => 0xFFFE + r.below(4) as u32, // noncharacters near BMP top
+        9 => 0xD7FF + r.below(4) as u32, // around the surrogate lower edge
+        10 => 0xDFFF + r.below(4) as u32, // around the surrogate upper edge
+        _ => 0x10FFFD + r.below(6) as u32, // around the max edge
     }
 }
 

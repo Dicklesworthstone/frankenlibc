@@ -66,7 +66,11 @@ fn gen_cp(r: &mut Lcg) -> u32 {
         2 => 0x800 + r.below(0xF800) as u32,
         _ => 0x10000 + r.below(0x100000) as u32,
     };
-    if (0xD800..=0xDFFF).contains(&cp) { 0x41 } else { cp }
+    if (0xD800..=0xDFFF).contains(&cp) {
+        0x41
+    } else {
+        cp
+    }
 }
 
 /// One mbsnrtowcs call's observable result.
@@ -81,7 +85,13 @@ struct Step {
 /// implementation, using the shared `nms` schedule, and return the per-call
 /// sequence.
 fn drive(
-    f: unsafe extern "C" fn(*mut libc::wchar_t, *mut *const c_char, usize, usize, *mut c_void) -> usize,
+    f: unsafe extern "C" fn(
+        *mut libc::wchar_t,
+        *mut *const c_char,
+        usize,
+        usize,
+        *mut c_void,
+    ) -> usize,
     bytes: &[u8],
     schedule: &[usize],
 ) -> Vec<Step> {
@@ -125,7 +135,11 @@ fn drive(
         } else {
             Vec::new()
         };
-        out.push(Step { rc: rc_i, src_off, wide });
+        out.push(Step {
+            rc: rc_i,
+            src_off,
+            wide,
+        });
         if rc_i < 0 {
             break; // EILSEQ
         }
@@ -158,7 +172,13 @@ fn mbsnrtowcs_resume_differential_fuzz_vs_glibc() {
         // Small windows force frequent mid-character splits; an occasional big
         // window consumes several characters at once.
         let sched: Vec<usize> = (0..8)
-            .map(|_| if r.below(5) == 0 { 1 + r.below(12) as usize } else { 1 + r.below(4) as usize })
+            .map(|_| {
+                if r.below(5) == 0 {
+                    1 + r.below(12) as usize
+                } else {
+                    1 + r.below(4) as usize
+                }
+            })
             .collect();
 
         let fl = drive(fl_mbsnrtowcs, &bytes, &sched);
@@ -178,5 +198,7 @@ fn mbsnrtowcs_resume_differential_fuzz_vs_glibc() {
         divs.len(),
         divs.join("\n")
     );
-    eprintln!("mbsnrtowcs resume differential fuzz: {compared} strings, 0 divergences vs host glibc");
+    eprintln!(
+        "mbsnrtowcs resume differential fuzz: {compared} strings, 0 divergences vs host glibc"
+    );
 }

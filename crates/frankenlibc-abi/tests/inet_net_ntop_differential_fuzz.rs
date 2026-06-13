@@ -11,15 +11,18 @@
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
-use frankenlibc_abi::glibc_internal_abi::{
-    inet_net_ntop as fl_ntop, inet_net_pton as fl_pton,
-};
+use frankenlibc_abi::glibc_internal_abi::{inet_net_ntop as fl_ntop, inet_net_pton as fl_pton};
 
 // inet_net_ntop / inet_net_pton live in libresolv, not libc.
 #[link(name = "resolv")]
 unsafe extern "C" {
-    fn inet_net_ntop(af: c_int, src: *const c_void, bits: c_int, dst: *mut c_char, size: usize)
-    -> *mut c_char;
+    fn inet_net_ntop(
+        af: c_int,
+        src: *const c_void,
+        bits: c_int,
+        dst: *mut c_char,
+        size: usize,
+    ) -> *mut c_char;
     fn inet_net_pton(af: c_int, src: *const c_char, dst: *mut c_void, size: usize) -> c_int;
 }
 
@@ -44,7 +47,13 @@ fn ntop(
 ) -> String {
     let mut buf = [0u8; 64];
     let r = unsafe {
-        f(libc::AF_INET, src.as_ptr() as *const c_void, bits, buf.as_mut_ptr() as *mut c_char, buf.len())
+        f(
+            libc::AF_INET,
+            src.as_ptr() as *const c_void,
+            bits,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
     };
     if r.is_null() {
         return "<null>".into();
@@ -58,7 +67,14 @@ fn pton(
     s: &CStr,
 ) -> (c_int, [u8; 4]) {
     let mut buf = [0u8; 4];
-    let r = unsafe { f(libc::AF_INET, s.as_ptr(), buf.as_mut_ptr() as *mut c_void, buf.len()) };
+    let r = unsafe {
+        f(
+            libc::AF_INET,
+            s.as_ptr(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+        )
+    };
     (r, buf)
 }
 
@@ -76,7 +92,9 @@ fn inet_net_ntop_differential_fuzz_vs_glibc() {
         let host = ntop(inet_net_ntop, &src, bits);
         compared += 1;
         if fl != host && divs.len() < 40 {
-            divs.push(format!("ntop src={src:02x?} bits={bits}\n    fl   ={fl:?}\n    glibc={host:?}"));
+            divs.push(format!(
+                "ntop src={src:02x?} bits={bits}\n    fl   ={fl:?}\n    glibc={host:?}"
+            ));
         }
 
         // ---- pton (round-trip glibc's own output + a random network string) ----
@@ -85,7 +103,9 @@ fn inet_net_ntop_differential_fuzz_vs_glibc() {
         // trailing junk — that is where divergences from glibc actually hide.
         let s = match r.next() % 8 {
             0 => {
-                if host == "<null>" { continue; }
+                if host == "<null>" {
+                    continue;
+                }
                 host.clone()
             }
             1 => {
@@ -116,7 +136,11 @@ fn inet_net_ntop_differential_fuzz_vs_glibc() {
                 // Uppercase 0X with uppercase hex digits.
                 let nibbles = 1 + (r.next() % 9);
                 let hex: String = (0..nibbles)
-                    .map(|_| char::from_digit((r.next() % 16) as u32, 16).unwrap().to_ascii_uppercase())
+                    .map(|_| {
+                        char::from_digit((r.next() % 16) as u32, 16)
+                            .unwrap()
+                            .to_ascii_uppercase()
+                    })
                     .collect();
                 format!("0X{hex}")
             }
@@ -152,10 +176,20 @@ fn inet_net_ntop_differential_fuzz_vs_glibc() {
             let (hor, hob) = pton(inet_net_pton, &cs);
             compared += 1;
             // Compare return (bits / -1); address bytes only when both succeeded.
-            let fl_repr = if flr >= 0 { format!("bits={flr} {flb:02x?}") } else { format!("ret={flr}") };
-            let host_repr = if hor >= 0 { format!("bits={hor} {hob:02x?}") } else { format!("ret={hor}") };
+            let fl_repr = if flr >= 0 {
+                format!("bits={flr} {flb:02x?}")
+            } else {
+                format!("ret={flr}")
+            };
+            let host_repr = if hor >= 0 {
+                format!("bits={hor} {hob:02x?}")
+            } else {
+                format!("ret={hor}")
+            };
             if fl_repr != host_repr && divs.len() < 40 {
-                divs.push(format!("pton src={s:?}\n    fl   ={fl_repr}\n    glibc={host_repr}"));
+                divs.push(format!(
+                    "pton src={s:?}\n    fl   ={fl_repr}\n    glibc={host_repr}"
+                ));
             }
         }
     }

@@ -13,8 +13,11 @@ use std::ffi::{c_char, c_int};
 use frankenlibc_abi::stdlib_abi as fl;
 
 unsafe extern "C" {
-    fn getsubopt(optionp: *mut *mut c_char, tokens: *const *mut c_char, valuep: *mut *mut c_char)
-    -> c_int;
+    fn getsubopt(
+        optionp: *mut *mut c_char,
+        tokens: *const *mut c_char,
+        valuep: *mut *mut c_char,
+    ) -> c_int;
 }
 
 struct Lcg(u64);

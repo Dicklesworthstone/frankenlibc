@@ -34,22 +34,47 @@ fn run(data: &[u8], size: usize, nmemb: usize, glibc: bool) -> Outcome {
     let mut dst = vec![b'Z'; cap];
     if glibc {
         let s = unsafe {
-            fmemopen(owned.as_mut_ptr() as *mut libc::c_void, owned.len(), mode.as_ptr() as *const libc::c_char)
+            fmemopen(
+                owned.as_mut_ptr() as *mut libc::c_void,
+                owned.len(),
+                mode.as_ptr() as *const libc::c_char,
+            )
         };
         let ret = unsafe { fread(dst.as_mut_ptr() as *mut libc::c_void, size, nmemb, s) };
         let tell = unsafe { ftell(s) } as i64;
         let eof = unsafe { feof(s) };
         unsafe { fclose(s) };
-        Outcome { ret, tell, buf: dst, eof: (eof != 0) as i32 }
+        Outcome {
+            ret,
+            tell,
+            buf: dst,
+            eof: (eof != 0) as i32,
+        }
     } else {
         let s = unsafe {
-            fl::fmemopen(owned.as_mut_ptr() as *mut libc::c_void, owned.len(), mode.as_ptr() as *const libc::c_char)
+            fl::fmemopen(
+                owned.as_mut_ptr() as *mut libc::c_void,
+                owned.len(),
+                mode.as_ptr() as *const libc::c_char,
+            )
         };
-        let ret = unsafe { fl::fread(dst.as_mut_ptr() as *mut libc::c_void, size, nmemb, s as *mut libc::c_void) };
+        let ret = unsafe {
+            fl::fread(
+                dst.as_mut_ptr() as *mut libc::c_void,
+                size,
+                nmemb,
+                s as *mut libc::c_void,
+            )
+        };
         let tell = unsafe { fl::ftell(s as *mut libc::c_void) } as i64;
         let eof = unsafe { fl::feof(s as *mut libc::c_void) };
         unsafe { fl::fclose(s as *mut libc::c_void) };
-        Outcome { ret, tell, buf: dst, eof: (eof != 0) as i32 }
+        Outcome {
+            ret,
+            tell,
+            buf: dst,
+            eof: (eof != 0) as i32,
+        }
     }
 }
 
@@ -57,16 +82,16 @@ fn run(data: &[u8], size: usize, nmemb: usize, glibc: bool) -> Outcome {
 fn fread_partial_element_matches_glibc() {
     // (data, size, nmemb)
     let cases: &[(&[u8], usize, usize)] = &[
-        (b"abcdefg", 3, 4),    // 7 bytes, want 12: 2 complete + 1 partial byte
-        (b"abcd", 3, 2),       // 4 bytes: 1 complete + 1 partial
-        (b"abcdef", 3, 2),     // exact fit: 2 complete
-        (b"xyz", 0, 5),        // size 0
-        (b"xyz", 5, 0),        // nmemb 0
-        (b"a", 4, 1),          // 1 byte, want a 4-byte element: 0 complete, 1 partial byte
-        (b"", 3, 2),           // empty
-        (b"abcdefghij", 1, 10),// byte-wise exact
-        (b"abcdefghij", 4, 3), // 10 bytes, want 12: 2 complete + 2 partial
-        (b"abcdefghij", 10, 5),// 10 bytes, want 50: 1 complete exactly
+        (b"abcdefg", 3, 4),     // 7 bytes, want 12: 2 complete + 1 partial byte
+        (b"abcd", 3, 2),        // 4 bytes: 1 complete + 1 partial
+        (b"abcdef", 3, 2),      // exact fit: 2 complete
+        (b"xyz", 0, 5),         // size 0
+        (b"xyz", 5, 0),         // nmemb 0
+        (b"a", 4, 1),           // 1 byte, want a 4-byte element: 0 complete, 1 partial byte
+        (b"", 3, 2),            // empty
+        (b"abcdefghij", 1, 10), // byte-wise exact
+        (b"abcdefghij", 4, 3),  // 10 bytes, want 12: 2 complete + 2 partial
+        (b"abcdefghij", 10, 5), // 10 bytes, want 50: 1 complete exactly
     ];
     let mut fails = Vec::new();
     for &(data, size, nmemb) in cases {
@@ -79,5 +104,9 @@ fn fread_partial_element_matches_glibc() {
             ));
         }
     }
-    assert!(fails.is_empty(), "fread diverged from glibc:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "fread diverged from glibc:\n{}",
+        fails.join("\n")
+    );
 }

@@ -19,7 +19,14 @@ fn sign(x: i32) -> i32 {
 
 // wchar_t is i32 on Linux; mix in values that span the signed boundary and that
 // land a zero only in one 32-bit lane of a u64 (exercising has_zero_u32_lane).
-const ALPHABET: [u32; 6] = [b'a' as u32, b'Z' as u32, 0x100, 0x1_0000, 0x8000_0000, 0x7FFF_FFFF];
+const ALPHABET: [u32; 6] = [
+    b'a' as u32,
+    b'Z' as u32,
+    0x100,
+    0x1_0000,
+    0x8000_0000,
+    0x7FFF_FFFF,
+];
 
 #[test]
 fn wcscmp_wcsncmp_match_glibc() {

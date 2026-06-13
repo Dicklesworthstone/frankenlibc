@@ -34,15 +34,25 @@ fn run(engine_glibc: bool) -> Vec<(&'static str, usize, Vec<u8>)> {
     let stream: *mut libc::FILE = if engine_glibc {
         unsafe { open_memstream(&mut ptr, &mut sz) }
     } else {
-        unsafe { fl::open_memstream(&mut ptr as *mut *mut libc::c_char, &mut sz) as *mut libc::FILE }
+        unsafe {
+            fl::open_memstream(&mut ptr as *mut *mut libc::c_char, &mut sz) as *mut libc::FILE
+        }
     };
-    assert!(!stream.is_null(), "open_memstream failed (glibc={engine_glibc})");
+    assert!(
+        !stream.is_null(),
+        "open_memstream failed (glibc={engine_glibc})"
+    );
 
     let puts = |s: &[u8]| {
         if engine_glibc {
             unsafe { fputs(s.as_ptr() as *const libc::c_char, stream) };
         } else {
-            unsafe { fl::fputs(s.as_ptr() as *const libc::c_char, stream as *mut libc::c_void) };
+            unsafe {
+                fl::fputs(
+                    s.as_ptr() as *const libc::c_char,
+                    stream as *mut libc::c_void,
+                )
+            };
         }
     };
     let putc = |c: i32| {
@@ -56,7 +66,13 @@ fn run(engine_glibc: bool) -> Vec<(&'static str, usize, Vec<u8>)> {
         if engine_glibc {
             unsafe { fseek(stream, off as libc::c_long, libc::SEEK_SET) };
         } else {
-            unsafe { fl::fseek(stream as *mut libc::c_void, off as libc::c_long, libc::SEEK_SET) };
+            unsafe {
+                fl::fseek(
+                    stream as *mut libc::c_void,
+                    off as libc::c_long,
+                    libc::SEEK_SET,
+                )
+            };
         }
     };
     let flush = || {

@@ -11,8 +11,8 @@
 //! success + the number of input bytes consumed (the return-pointer offset),
 //! plus that a following directive keeps parsing.
 
-use std::ffi::CString;
 use frankenlibc_abi::time_abi as flt;
+use std::ffi::CString;
 
 unsafe extern "C" {
     fn strptime(s: *const i8, f: *const i8, tm: *mut libc::tm) -> *mut i8;
@@ -41,7 +41,10 @@ fn run(eng: u8, inp: &str, fmt: &str) -> (bool, isize, i32, i32, i32) {
 fn check(inp: &str, fmt: &str) {
     let a = run(0, inp, fmt);
     let b = run(1, inp, fmt);
-    assert_eq!(a, b, "strptime({inp:?}, {fmt:?}) diverged: fl={a:?} glibc={b:?}");
+    assert_eq!(
+        a, b,
+        "strptime({inp:?}, {fmt:?}) diverged: fl={a:?} glibc={b:?}"
+    );
 }
 
 #[test]
@@ -57,9 +60,27 @@ fn strptime_tzname_matches_glibc() {
 
     // Bare %Z: names, lowercase, digits, punctuation, leading whitespace, empty.
     for inp in [
-        "UTC", "GMT", "EST", "utc", "gmt", "123", "UTC123", "UTC abc",
-        "America/New_York", "", " UTC", "  GMT", "Z", "CEST", "PDT", "foobar",
-        "A", "AbC", "123ABC", "+05:30", "GMT+1",
+        "UTC",
+        "GMT",
+        "EST",
+        "utc",
+        "gmt",
+        "123",
+        "UTC123",
+        "UTC abc",
+        "America/New_York",
+        "",
+        " UTC",
+        "  GMT",
+        "Z",
+        "CEST",
+        "PDT",
+        "foobar",
+        "A",
+        "AbC",
+        "123ABC",
+        "+05:30",
+        "GMT+1",
     ] {
         check(inp, "%Z");
     }

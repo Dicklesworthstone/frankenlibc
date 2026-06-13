@@ -31,19 +31,38 @@ use frankenlibc_abi::stdlib_abi as fl;
 
 unsafe extern "C" {
     #[link_name = "__isoc23_strtol"]
-    fn strtol(nptr: *const libc::c_char, endptr: *mut *mut libc::c_char, base: libc::c_int) -> libc::c_long;
+    fn strtol(
+        nptr: *const libc::c_char,
+        endptr: *mut *mut libc::c_char,
+        base: libc::c_int,
+    ) -> libc::c_long;
     #[link_name = "__isoc23_strtoul"]
-    fn strtoul(nptr: *const libc::c_char, endptr: *mut *mut libc::c_char, base: libc::c_int) -> libc::c_ulong;
+    fn strtoul(
+        nptr: *const libc::c_char,
+        endptr: *mut *mut libc::c_char,
+        base: libc::c_int,
+    ) -> libc::c_ulong;
     #[link_name = "__isoc23_strtoll"]
-    fn strtoll(nptr: *const libc::c_char, endptr: *mut *mut libc::c_char, base: libc::c_int) -> libc::c_longlong;
+    fn strtoll(
+        nptr: *const libc::c_char,
+        endptr: *mut *mut libc::c_char,
+        base: libc::c_int,
+    ) -> libc::c_longlong;
     #[link_name = "__isoc23_strtoull"]
-    fn strtoull(nptr: *const libc::c_char, endptr: *mut *mut libc::c_char, base: libc::c_int) -> libc::c_ulonglong;
+    fn strtoull(
+        nptr: *const libc::c_char,
+        endptr: *mut *mut libc::c_char,
+        base: libc::c_int,
+    ) -> libc::c_ulonglong;
 }
 
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0
     }
     fn below(&mut self, n: usize) -> usize {
@@ -58,17 +77,23 @@ fn gen_byte(r: &mut Lcg) -> u8 {
     match r.below(20) {
         0 | 1 => b' ',
         2 => *b"\t\n\r\x0b\x0c".get(r.below(5)).unwrap(),
-        3 => if r.below(2) == 0 { b'+' } else { b'-' },
-        4..=9 => b'0' + r.below(10) as u8,             // decimal digits (heavy)
-        10 => b'0',                                     // extra zeros (prefix bait)
-        11 => *b"xXbB".get(r.below(4)).unwrap(),        // prefix letters
-        12 | 13 => b'a' + r.below(6) as u8,             // a-f
-        14 => b'A' + r.below(6) as u8,                  // A-F
-        15 => b'g' + r.below(20) as u8,                 // g-z
-        16 => b'G' + r.below(20) as u8,                 // G-Z
+        3 => {
+            if r.below(2) == 0 {
+                b'+'
+            } else {
+                b'-'
+            }
+        }
+        4..=9 => b'0' + r.below(10) as u8, // decimal digits (heavy)
+        10 => b'0',                        // extra zeros (prefix bait)
+        11 => *b"xXbB".get(r.below(4)).unwrap(), // prefix letters
+        12 | 13 => b'a' + r.below(6) as u8, // a-f
+        14 => b'A' + r.below(6) as u8,     // A-F
+        15 => b'g' + r.below(20) as u8,    // g-z
+        16 => b'G' + r.below(20) as u8,    // G-Z
         17 => *b"._,".get(r.below(3)).unwrap(),
-        18 => 0x7f,                                     // DEL (non-digit)
-        _ => (r.next() & 0x7f) as u8 | 1,               // arbitrary printable-ish, never NUL
+        18 => 0x7f,                       // DEL (non-digit)
+        _ => (r.next() & 0x7f) as u8 | 1, // arbitrary printable-ish, never NUL
     }
 }
 

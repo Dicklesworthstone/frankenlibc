@@ -34,9 +34,21 @@ fn host(pat: &str, s: &str, cf: c_int) -> String {
         return "CERR".into();
     }
     let mut m = [M { so: -1, eo: -1 }; 2];
-    let r = unsafe { regexec(re.as_ptr() as *const c_void, cs.as_ptr(), 2, m.as_mut_ptr() as *mut c_void, 0) };
+    let r = unsafe {
+        regexec(
+            re.as_ptr() as *const c_void,
+            cs.as_ptr(),
+            2,
+            m.as_mut_ptr() as *mut c_void,
+            0,
+        )
+    };
     unsafe { regfree(re.as_mut_ptr() as *mut c_void) };
-    if r != 0 { "NM".into() } else { format!("[{},{}]", m[0].so, m[0].eo) }
+    if r != 0 {
+        "NM".into()
+    } else {
+        format!("[{},{}]", m[0].so, m[0].eo)
+    }
 }
 fn flx(pat: &str, s: &str, cf: c_int) -> String {
     let mut re = [0u8; 256];
@@ -47,9 +59,21 @@ fn flx(pat: &str, s: &str, cf: c_int) -> String {
         return "CERR".into();
     }
     let mut m = [M { so: -1, eo: -1 }; 2];
-    let r = unsafe { fl::regexec(re.as_ptr() as *const c_void, cs.as_ptr(), 2, m.as_mut_ptr() as *mut c_void, 0) };
+    let r = unsafe {
+        fl::regexec(
+            re.as_ptr() as *const c_void,
+            cs.as_ptr(),
+            2,
+            m.as_mut_ptr() as *mut c_void,
+            0,
+        )
+    };
     unsafe { fl::regfree(re.as_mut_ptr() as *mut c_void) };
-    if r != 0 { "NM".into() } else { format!("[{},{}]", m[0].so, m[0].eo) }
+    if r != 0 {
+        "NM".into()
+    } else {
+        format!("[{},{}]", m[0].so, m[0].eo)
+    }
 }
 
 fn ck(pat: &str, s: &str, cf: c_int) {
@@ -60,14 +84,30 @@ fn ck(pat: &str, s: &str, cf: c_int) {
 #[test]
 fn bre_stacked_quantifiers_match_glibc() {
     let cases = [
-        (r"a*\+", "aaa"), (r"a*\+", ""), (r"a*\?", "aaa"), (r"a*\?", ""),
-        (r"a\+\?", "aa"), (r"a\+\?", ""), (r"a\?\?", "a"), (r"a\?\?", ""),
-        (r"a\+\+", "aaa"), (r"a\?\+", "a"), (r"a\?\+", ""),
-        (r"b*\+", "b"), (r"+*\+", ""), (r"+*\+", "+"),
-        (r"\(a\)*\+", "aa"), (r"a\{2\}\+", "aa"), (r"a\{2\}\?", "aa"),
+        (r"a*\+", "aaa"),
+        (r"a*\+", ""),
+        (r"a*\?", "aaa"),
+        (r"a*\?", ""),
+        (r"a\+\?", "aa"),
+        (r"a\+\?", ""),
+        (r"a\?\?", "a"),
+        (r"a\?\?", ""),
+        (r"a\+\+", "aaa"),
+        (r"a\?\+", "a"),
+        (r"a\?\+", ""),
+        (r"b*\+", "b"),
+        (r"+*\+", ""),
+        (r"+*\+", "+"),
+        (r"\(a\)*\+", "aa"),
+        (r"a\{2\}\+", "aa"),
+        (r"a\{2\}\?", "aa"),
         // BADRPT cases: both must reject at compile time.
-        (r"a\?*", "aaa"), (r"a\+*", "aaa"), (r"a**", "aaa"),
-        (r"a*\{2\}", "aaa"), (r"a\+\{2\}", "aa"), (r"a\{2\}\{3\}", "aa"),
+        (r"a\?*", "aaa"),
+        (r"a\+*", "aaa"),
+        (r"a**", "aaa"),
+        (r"a*\{2\}", "aaa"),
+        (r"a\+\{2\}", "aa"),
+        (r"a\{2\}\{3\}", "aa"),
     ];
     for (p, s) in cases {
         ck(p, s, 0);
@@ -77,10 +117,20 @@ fn bre_stacked_quantifiers_match_glibc() {
 #[test]
 fn ere_stacked_quantifiers_match_glibc() {
     let cases = [
-        ("a*+", "aaa"), ("a*?", "aaa"), ("a+?", "aa"), ("a??", "a"),
-        ("a?+", "a"), ("a++", "aaa"), ("a**", "aaa"), ("a*{2}", "aaa"),
-        ("a{2}+", "aa"), ("a{2}?", "aa"), ("a+{2}", "aaaa"), ("a{2}{3}", "aa"),
-        ("(ab)*+", "abab"), ("a?*", "aaa"),
+        ("a*+", "aaa"),
+        ("a*?", "aaa"),
+        ("a+?", "aa"),
+        ("a??", "a"),
+        ("a?+", "a"),
+        ("a++", "aaa"),
+        ("a**", "aaa"),
+        ("a*{2}", "aaa"),
+        ("a{2}+", "aa"),
+        ("a{2}?", "aa"),
+        ("a+{2}", "aaaa"),
+        ("a{2}{3}", "aa"),
+        ("(ab)*+", "abab"),
+        ("a?*", "aaa"),
     ];
     for (p, s) in cases {
         ck(p, s, 1);

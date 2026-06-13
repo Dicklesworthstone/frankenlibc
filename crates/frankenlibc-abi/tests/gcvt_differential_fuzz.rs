@@ -13,7 +13,11 @@ use std::ffi::CStr;
 use frankenlibc_abi::stdlib_abi as fl;
 
 unsafe extern "C" {
-    fn gcvt(value: libc::c_double, ndigit: libc::c_int, buf: *mut libc::c_char) -> *mut libc::c_char;
+    fn gcvt(
+        value: libc::c_double,
+        ndigit: libc::c_int,
+        buf: *mut libc::c_char,
+    ) -> *mut libc::c_char;
 }
 
 struct Lcg(u64);
@@ -56,7 +60,11 @@ fn gen_double(r: &mut Lcg) -> f64 {
             // Arbitrary finite double from random bits, rejecting inf/nan.
             let b = r.next();
             let v = f64::from_bits(b);
-            if v.is_finite() { v } else { (b as i64) as f64 / 1000.0 }
+            if v.is_finite() {
+                v
+            } else {
+                (b as i64) as f64 / 1000.0
+            }
         }
     }
 }

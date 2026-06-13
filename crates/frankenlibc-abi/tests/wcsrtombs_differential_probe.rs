@@ -50,7 +50,14 @@ fn run(input: &[u32], dst_null: bool, len: usize, use_fl: bool) -> Outcome {
     } else {
         let mut st: libc::mbstate_t = unsafe { std::mem::zeroed() };
         // SAFETY: as above; st is a valid out param.
-        unsafe { wcsrtombs(dst, &mut src as *mut *const u32 as *mut *const libc::wchar_t, len, &mut st) }
+        unsafe {
+            wcsrtombs(
+                dst,
+                &mut src as *mut *const u32 as *mut *const libc::wchar_t,
+                len,
+                &mut st,
+            )
+        }
     };
     let rc_i = if rc == usize::MAX { -1 } else { rc as i64 };
     let src_off = if dst_null {
@@ -67,7 +74,11 @@ fn run(input: &[u32], dst_null: bool, len: usize, use_fl: bool) -> Outcome {
     } else {
         (rc_i as usize).min(len).min(out.len())
     };
-    let bytes = if dst_null { Vec::new() } else { out[..n].to_vec() };
+    let bytes = if dst_null {
+        Vec::new()
+    } else {
+        out[..n].to_vec()
+    };
     Outcome {
         rc: rc_i,
         src_off,
@@ -90,11 +101,11 @@ fn wcsrtombs_matches_host_glibc() {
         &[0],
         &[0x41, 0],
         &[0x41, 0x42, 0x43, 0],
-        &[0xE9, 0x41, 0],          // é (2 bytes) then 'A'
-        &[0x20AC, 0x42, 0],        // € (3 bytes) then 'B'
-        &[0x1_F600, 0x43, 0],      // emoji (4 bytes) then 'C'
-        &[0x41, 0xD800, 0x42, 0],  // surrogate mid-string (EILSEQ)
-        &[0x20AC, 0x20AC, 0],      // two 3-byte chars (partial-fit boundary)
+        &[0xE9, 0x41, 0],         // é (2 bytes) then 'A'
+        &[0x20AC, 0x42, 0],       // € (3 bytes) then 'B'
+        &[0x1_F600, 0x43, 0],     // emoji (4 bytes) then 'C'
+        &[0x41, 0xD800, 0x42, 0], // surrogate mid-string (EILSEQ)
+        &[0x20AC, 0x20AC, 0],     // two 3-byte chars (partial-fit boundary)
     ];
 
     let mut compared = 0u64;

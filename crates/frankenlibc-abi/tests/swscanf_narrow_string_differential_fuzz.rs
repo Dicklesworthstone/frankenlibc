@@ -57,12 +57,18 @@ fn gen_cp(r: &mut Lcg) -> char {
             1 => 0x80 + r.below(0x780) as u32,
             2 => {
                 let c = 0x800 + r.below(0xF800) as u32;
-                if (0xD800..=0xDFFF).contains(&c) { 0x4E00 } else { c }
+                if (0xD800..=0xDFFF).contains(&c) {
+                    0x4E00
+                } else {
+                    c
+                }
             }
             // Bias toward Unicode whitespace so token boundaries get exercised.
-            _ => *[0x2003u32, 0x205F, 0x3000, 0x00A0, 0x2009, 0x1680, 0x202F, 0x0085]
-                .get(r.below(8))
-                .unwrap_or(&0x2003),
+            _ => *[
+                0x2003u32, 0x205F, 0x3000, 0x00A0, 0x2009, 0x1680, 0x202F, 0x0085,
+            ]
+            .get(r.below(8))
+            .unwrap_or(&0x2003),
         };
         if let Some(c) = char::from_u32(v) {
             return c;
@@ -104,7 +110,11 @@ fn swscanf_narrow_string_differential_fuzz_vs_glibc() {
 
         // Choose %s or %c with an optional field width.
         let is_char = r.below(2) == 0;
-        let width = if r.below(2) == 0 { Some(1 + r.below(6)) } else { None };
+        let width = if r.below(2) == 0 {
+            Some(1 + r.below(6))
+        } else {
+            None
+        };
         let fmt_s = match (is_char, width) {
             (false, None) => "%s".to_string(),
             (false, Some(w)) => format!("%{w}s"),
@@ -117,12 +127,8 @@ fn swscanf_narrow_string_differential_fuzz_vs_glibc() {
         // catches the no-NUL %c case and any over/under-write.
         let mut fb = vec![0xCDu8; 64];
         let mut lb = vec![0xCDu8; 64];
-        let nfl = unsafe {
-            fl::swscanf(inp.as_ptr(), wf.as_ptr(), fb.as_mut_ptr() as *mut c_char)
-        };
-        let nlc = unsafe {
-            swscanf(inp.as_ptr(), wf.as_ptr(), lb.as_mut_ptr() as *mut c_char)
-        };
+        let nfl = unsafe { fl::swscanf(inp.as_ptr(), wf.as_ptr(), fb.as_mut_ptr() as *mut c_char) };
+        let nlc = unsafe { swscanf(inp.as_ptr(), wf.as_ptr(), lb.as_mut_ptr() as *mut c_char) };
         compared += 1;
         if (nfl != nlc || fb != lb) && divs.len() < 40 {
             let ins: String = inp[..inp.len() - 1]

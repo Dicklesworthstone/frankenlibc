@@ -66,7 +66,13 @@ fn scan_c_string_swar_matches_byte_reference() {
             assert_eq!(got, want, "unbounded align={align_off} nul_pos={nul_pos}");
 
             // Bounded at several limits straddling the NUL.
-            for &lim in &[0usize, nul_pos.saturating_sub(1), nul_pos, nul_pos + 1, nul_pos + 8] {
+            for &lim in &[
+                0usize,
+                nul_pos.saturating_sub(1),
+                nul_pos,
+                nul_pos + 1,
+                nul_pos + 8,
+            ] {
                 let got_b = unsafe { bench_scan_c_string(p, Some(lim)) };
                 let want_b = reference(&content, Some(lim));
                 assert_eq!(

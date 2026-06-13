@@ -124,7 +124,10 @@ fn run(
     let mut preg = Preg([0u8; REGEX_T_BYTES]);
     let comp = unsafe { comp_fn(preg.0.as_mut_ptr() as *mut c_void, pat.as_ptr(), cflags) };
     let mut pm = [RegMatch::default(); 3];
-    pm[0] = RegMatch { rm_so: so, rm_eo: eo };
+    pm[0] = RegMatch {
+        rm_so: so,
+        rm_eo: eo,
+    };
     let exec = if comp == 0 {
         // The buffer need not be NUL-terminated under REG_STARTEND, but pass a
         // pointer to the owned bytes; the impl reads only [..rm_eo].
@@ -161,7 +164,11 @@ fn regex_startend_differential_fuzz_vs_glibc() {
         // Region within the buffer. Allow eo up to buf.len(); so in [0, eo].
         let eo = r.below(buf.len() + 1);
         let so = r.below(eo + 1);
-        let cflags = if r.below(2) == 0 { REG_EXTENDED } else { REG_EXTENDED | REG_NEWLINE };
+        let cflags = if r.below(2) == 0 {
+            REG_EXTENDED
+        } else {
+            REG_EXTENDED | REG_NEWLINE
+        };
         let eflags = REG_STARTEND
             | match r.below(4) {
                 0 => 0,
@@ -181,7 +188,9 @@ fn regex_startend_differential_fuzz_vs_glibc() {
             cflags,
             eflags,
         );
-        let lc_run = run(regcomp, regexec, regfree, &cpat, &buf, so as i32, eo as i32, cflags, eflags);
+        let lc_run = run(
+            regcomp, regexec, regfree, &cpat, &buf, so as i32, eo as i32, cflags, eflags,
+        );
 
         if (fl_run.comp == 0) != (lc_run.comp == 0) {
             validity_skips += 1;

@@ -9,8 +9,8 @@
 //! and signed zero, across a few precisions — the inputs the gcvt/ecvt fuzzers
 //! never randomly generate.
 
-use std::ffi::{CStr, CString, c_char, c_int};
 use frankenlibc_abi::stdlib_abi as fl;
+use std::ffi::{CStr, CString, c_char, c_int};
 
 unsafe extern "C" {
     fn gcvt(v: f64, n: c_int, b: *mut c_char) -> *mut c_char;
@@ -28,7 +28,9 @@ fn gcvt_str(eng: u8, v: f64, n: c_int) -> String {
     if r.is_null() {
         "<null>".into()
     } else {
-        unsafe { CStr::from_ptr(b.as_ptr()) }.to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr(b.as_ptr()) }
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -62,11 +64,7 @@ fn cvt_special_values_match_glibc() {
 
     for (nm, v) in vals {
         for n in [6, 17, 1, 0] {
-            assert_eq!(
-                gcvt_str(0, *v, n),
-                gcvt_str(1, *v, n),
-                "gcvt({nm}, {n})"
-            );
+            assert_eq!(gcvt_str(0, *v, n), gcvt_str(1, *v, n), "gcvt({nm}, {n})");
         }
         for n in [5, 1] {
             assert_eq!(

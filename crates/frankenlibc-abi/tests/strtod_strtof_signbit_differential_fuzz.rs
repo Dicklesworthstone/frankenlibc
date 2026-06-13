@@ -47,18 +47,26 @@ enum Fp {
 }
 fn fp64(v: f64) -> Fp {
     if v.is_nan() {
-        Fp::Nan { neg: v.is_sign_negative() }
+        Fp::Nan {
+            neg: v.is_sign_negative(),
+        }
     } else if v.is_infinite() {
-        Fp::Inf { neg: v.is_sign_negative() }
+        Fp::Inf {
+            neg: v.is_sign_negative(),
+        }
     } else {
         Fp::Finite(v.to_bits())
     }
 }
 fn fp32(v: f32) -> Fp {
     if v.is_nan() {
-        Fp::Nan { neg: v.is_sign_negative() }
+        Fp::Nan {
+            neg: v.is_sign_negative(),
+        }
     } else if v.is_infinite() {
-        Fp::Inf { neg: v.is_sign_negative() }
+        Fp::Inf {
+            neg: v.is_sign_negative(),
+        }
     } else {
         Fp::Finite(v.to_bits() as u64)
     }
@@ -66,7 +74,13 @@ fn fp32(v: f32) -> Fp {
 
 fn recase(r: &mut Lcg, s: &str) -> String {
     s.chars()
-        .map(|c| if r.next() & 1 == 0 { c.to_ascii_uppercase() } else { c })
+        .map(|c| {
+            if r.next() & 1 == 0 {
+                c.to_ascii_uppercase()
+            } else {
+                c
+            }
+        })
         .collect()
 }
 

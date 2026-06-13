@@ -8,8 +8,8 @@
 //! several patterns, execution flags, and inputs — including a back-reference
 //! pattern that routes through fl's separate backtracking matcher.
 
-use std::ffi::CString;
 use frankenlibc_abi::string_abi as fl;
+use std::ffi::CString;
 
 unsafe extern "C" {
     fn regcomp(p: *mut libc::regex_t, re: *const i8, f: i32) -> i32;
@@ -35,10 +35,19 @@ fn run(eng: u8, pat: &str, cflags: i32, s: &str, eflags: i32) -> (i32, i64, i64)
         return (1000 + rc, -1, -1);
     }
     let cs = CString::new(s).unwrap();
-    let mut m = [libc::regmatch_t { rm_so: -1, rm_eo: -1 }; 1];
+    let mut m = [libc::regmatch_t {
+        rm_so: -1,
+        rm_eo: -1,
+    }; 1];
     let r = if eng == 0 {
         unsafe {
-            fl::regexec((&re as *const libc::regex_t).cast(), cs.as_ptr(), 1, m.as_mut_ptr().cast(), eflags)
+            fl::regexec(
+                (&re as *const libc::regex_t).cast(),
+                cs.as_ptr(),
+                1,
+                m.as_mut_ptr().cast(),
+                eflags,
+            )
         }
     } else {
         unsafe { regexec(&re, cs.as_ptr(), 1, m.as_mut_ptr(), eflags) }

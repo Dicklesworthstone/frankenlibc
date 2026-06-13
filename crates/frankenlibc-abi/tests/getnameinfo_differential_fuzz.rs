@@ -180,5 +180,7 @@ fn getnameinfo_numeric_differential_fuzz_vs_glibc() {
         divs.len(),
         divs.join("\n")
     );
-    eprintln!("getnameinfo numeric differential fuzz: {compared} comparisons, 0 divergences vs host glibc");
+    eprintln!(
+        "getnameinfo numeric differential fuzz: {compared} comparisons, 0 divergences vs host glibc"
+    );
 }

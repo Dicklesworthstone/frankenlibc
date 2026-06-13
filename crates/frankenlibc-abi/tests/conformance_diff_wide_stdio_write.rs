@@ -26,10 +26,18 @@ const WEOF: u32 = 0xFFFF_FFFF;
 fn open(path: &str, mode: &str, host: bool) -> *mut c_void {
     let cp = CString::new(path).unwrap();
     let m = CString::new(mode).unwrap();
-    if host { unsafe { fopen(cp.as_ptr(), m.as_ptr()) } } else { unsafe { flio::fopen(cp.as_ptr(), m.as_ptr()) } }
+    if host {
+        unsafe { fopen(cp.as_ptr(), m.as_ptr()) }
+    } else {
+        unsafe { flio::fopen(cp.as_ptr(), m.as_ptr()) }
+    }
 }
 fn close(s: *mut c_void, host: bool) {
-    if host { unsafe { fclose(s) }; } else { unsafe { flio::fclose(s) }; }
+    if host {
+        unsafe { fclose(s) };
+    } else {
+        unsafe { flio::fclose(s) };
+    }
 }
 
 /// (return-value-sequence, resulting-file-bytes) for writing `chars` via fputwc.
@@ -39,7 +47,11 @@ fn putwc_run(chars: &[u32], host: bool) -> (Vec<i64>, Vec<u8>) {
     assert!(!s.is_null());
     let mut rets = vec![];
     for &c in chars {
-        let r = if host { unsafe { fputwc(c, s) } } else { unsafe { flw::fputwc(c, s) } };
+        let r = if host {
+            unsafe { fputwc(c, s) }
+        } else {
+            unsafe { flw::fputwc(c, s) }
+        };
         rets.push(r as i32 as i64);
     }
     close(s, host);
@@ -54,7 +66,11 @@ fn putws_bytes(ws: &[i32], host: bool) -> Vec<u8> {
     assert!(!s.is_null());
     let mut v = ws.to_vec();
     v.push(0);
-    if host { unsafe { fputws(v.as_ptr(), s) }; } else { unsafe { flw::fputws(v.as_ptr(), s) }; }
+    if host {
+        unsafe { fputws(v.as_ptr(), s) };
+    } else {
+        unsafe { flw::fputws(v.as_ptr(), s) };
+    }
     close(s, host);
     let b = std::fs::read(&p).unwrap_or_default();
     let _ = std::fs::remove_file(&p);
@@ -66,8 +82,20 @@ fn unget_script(content: &[u8], host: bool) -> Vec<i64> {
     std::fs::write(&p, content).unwrap();
     let s = open(&p, "r", host);
     assert!(!s.is_null());
-    let g = |s: *mut c_void| if host { unsafe { fgetwc(s) } } else { unsafe { flw::fgetwc(s) } };
-    let u = |wc: u32, s: *mut c_void| if host { unsafe { ungetwc(wc, s) } } else { unsafe { flw::ungetwc(wc, s) } };
+    let g = |s: *mut c_void| {
+        if host {
+            unsafe { fgetwc(s) }
+        } else {
+            unsafe { flw::fgetwc(s) }
+        }
+    };
+    let u = |wc: u32, s: *mut c_void| {
+        if host {
+            unsafe { ungetwc(wc, s) }
+        } else {
+            unsafe { flw::ungetwc(wc, s) }
+        }
+    };
     let mut out = vec![];
     let c1 = g(s);
     out.push(c1 as i32 as i64);
@@ -94,23 +122,39 @@ fn wide_stdio_write_matches_glibc() {
     let char_cases: &[&[u32]] = &[
         &[97, 98, 10],
         &[0xE9, 0x20AC, 0x10348],
-        &[0x110000],          // > U+10FFFF, still a valid 4-byte RFC-2279 form
-        &[0x200000],          // 5-byte
-        &[0x4000000],         // 6-byte
-        &[0x7FFF_FFFF],       // max 6-byte
-        &[0xD800],            // surrogate -> '?'
-        &[0x8000_0000],       // > U+7FFFFFFF -> '?'
+        &[0x110000],           // > U+10FFFF, still a valid 4-byte RFC-2279 form
+        &[0x200000],           // 5-byte
+        &[0x4000000],          // 6-byte
+        &[0x7FFF_FFFF],        // max 6-byte
+        &[0xD800],             // surrogate -> '?'
+        &[0x8000_0000],        // > U+7FFFFFFF -> '?'
         &[0x41, 0xD800, 0x42], // valid, '?', valid in one stream
     ];
     for chars in char_cases {
-        assert_eq!(putwc_run(chars, false), putwc_run(chars, true), "fputwc {chars:x?}");
+        assert_eq!(
+            putwc_run(chars, false),
+            putwc_run(chars, true),
+            "fputwc {chars:x?}"
+        );
     }
 
-    for ws in [&[104i32, 105][..], &[0x20AC, 0x10348][..], &[0x41, 0xD800, 0x42][..]] {
-        assert_eq!(putws_bytes(ws, false), putws_bytes(ws, true), "fputws {ws:x?}");
+    for ws in [
+        &[104i32, 105][..],
+        &[0x20AC, 0x10348][..],
+        &[0x41, 0xD800, 0x42][..],
+    ] {
+        assert_eq!(
+            putws_bytes(ws, false),
+            putws_bytes(ws, true),
+            "fputws {ws:x?}"
+        );
     }
 
     for content in [&b"abc"[..], "\u{20ac}x".as_bytes(), &b"a\nb"[..]] {
-        assert_eq!(unget_script(content, false), unget_script(content, true), "ungetwc {content:x?}");
+        assert_eq!(
+            unget_script(content, false),
+            unget_script(content, true),
+            "ungetwc {content:x?}"
+        );
     }
 }

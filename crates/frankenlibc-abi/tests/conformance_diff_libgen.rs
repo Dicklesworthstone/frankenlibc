@@ -147,7 +147,10 @@ fn basename_null_does_not_crash() {
         unsafe { CStr::from_ptr(r_fl).to_string_lossy().into_owned() }
     };
     // GNU basename has no "." fallback; glibc would fault on NULL, fl returns "".
-    assert_eq!(s_fl, "", "GNU basename(NULL) should return a safe empty string");
+    assert_eq!(
+        s_fl, "",
+        "GNU basename(NULL) should return a safe empty string"
+    );
 }
 
 #[test]

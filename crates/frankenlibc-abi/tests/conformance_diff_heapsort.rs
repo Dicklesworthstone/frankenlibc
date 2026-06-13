@@ -46,13 +46,24 @@ fn mix(seed: u64, i: usize) -> u64 {
 
 type GlCmp = extern "C" fn(*const c_void, *const c_void) -> i32;
 
-fn check(label: &str, bytes_in: &[u8], width: usize, fl_cmp: fn(&[u8], &[u8]) -> i32, gl_cmp: GlCmp) -> Vec<u8> {
+fn check(
+    label: &str,
+    bytes_in: &[u8],
+    width: usize,
+    fl_cmp: fn(&[u8], &[u8]) -> i32,
+    gl_cmp: GlCmp,
+) -> Vec<u8> {
     let n = bytes_in.len() / width;
     let mut fl_buf = bytes_in.to_vec();
     fl_heapsort(&mut fl_buf, width, fl_cmp);
     let mut gl_buf = bytes_in.to_vec();
-    unsafe { libc::qsort(gl_buf.as_mut_ptr() as *mut c_void, n, width, Some(gl_cmp)); }
-    assert_eq!(fl_buf, gl_buf, "{label}: heapsort diverges from glibc qsort (width={width}, n={n})");
+    unsafe {
+        libc::qsort(gl_buf.as_mut_ptr() as *mut c_void, n, width, Some(gl_cmp));
+    }
+    assert_eq!(
+        fl_buf, gl_buf,
+        "{label}: heapsort diverges from glibc qsort (width={width}, n={n})"
+    );
     fl_buf
 }
 
@@ -67,7 +78,13 @@ fn heapsort_lanes_match_glibc_qsort() {
             ("rand", |s, i| mix(s, i)),
             ("dups", |s, i| mix(s, i) % 17),
             ("sorted", |_s, i| i as u64),
-            ("revmix", |s, i| if i % 2 == 0 { mix(s, i) } else { (mix(s, i) as i64).wrapping_neg() as u64 }),
+            ("revmix", |s, i| {
+                if i % 2 == 0 {
+                    mix(s, i)
+                } else {
+                    (mix(s, i) as i64).wrapping_neg() as u64
+                }
+            }),
         ];
         for (tag, g) in &dists {
             let raw: Vec<u64> = (0..n).map(|i| g(seed, i)).collect();

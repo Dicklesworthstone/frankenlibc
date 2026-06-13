@@ -111,8 +111,7 @@ fn strftime_specifier_differential_fuzz_vs_glibc() {
 
     for _ in 0..200_000 {
         // A consistent broken-down time from a random epoch (years ~1906..2160).
-        let epoch: libc::time_t =
-            ((r.next() % 8_000_000_000) as i64) - 2_000_000_000;
+        let epoch: libc::time_t = ((r.next() % 8_000_000_000) as i64) - 2_000_000_000;
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
         if unsafe { gmtime_r(&epoch, &mut tm) }.is_null() {
             continue;

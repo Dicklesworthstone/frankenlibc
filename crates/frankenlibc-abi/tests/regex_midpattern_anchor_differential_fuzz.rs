@@ -154,7 +154,15 @@ fn regex_midpattern_anchor_differential_fuzz_vs_glibc() {
             _ => REG_NOTBOL | REG_NOTEOL,
         };
 
-        let fl_run = run(fl::regcomp, fl::regexec, fl::regfree, &cpat, &cbuf, cflags, eflags);
+        let fl_run = run(
+            fl::regcomp,
+            fl::regexec,
+            fl::regfree,
+            &cpat,
+            &cbuf,
+            cflags,
+            eflags,
+        );
         let lc_run = run(regcomp, regexec, regfree, &cpat, &cbuf, cflags, eflags);
 
         if (fl_run.comp == 0) != (lc_run.comp == 0) {

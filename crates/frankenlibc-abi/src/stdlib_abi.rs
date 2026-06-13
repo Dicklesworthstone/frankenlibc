@@ -1966,8 +1966,7 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
         let consumed_bytes = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), consumed) };
         let overflowed = val.is_infinite() && !contains_inf_literal(consumed_bytes);
         let exact_subnormal = exact && val != 0.0 && val.abs() < f64::MIN_POSITIVE;
-        let underflowed =
-            !exact_subnormal && finite_float_underflowed_f64(val, consumed_bytes);
+        let underflowed = !exact_subnormal && finite_float_underflowed_f64(val, consumed_bytes);
         if overflowed || underflowed {
             unsafe { set_abi_errno(libc::ERANGE) };
         }
@@ -2092,8 +2091,7 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
     if consumed > 0 {
         let consumed_bytes = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), consumed) };
         let overflowed = value.is_infinite() && !contains_inf_literal(consumed_bytes);
-        let underflowed =
-            !exact_subnormal && finite_float_underflowed_f32(value, consumed_bytes);
+        let underflowed = !exact_subnormal && finite_float_underflowed_f32(value, consumed_bytes);
         if overflowed || underflowed {
             unsafe { set_abi_errno(libc::ERANGE) };
         }
@@ -5483,8 +5481,8 @@ pub fn realpath_resolve_userspace(input: &[u8]) -> Result<Vec<u8>, c_int> {
             if symlinks > MAX_SYMLINKS {
                 return Err(errno::ELOOP);
             }
-            let target =
-                std::fs::read_link(&candidate).map_err(|e| e.raw_os_error().unwrap_or(errno::ENOENT))?;
+            let target = std::fs::read_link(&candidate)
+                .map_err(|e| e.raw_os_error().unwrap_or(errno::ENOENT))?;
             let target_bytes = target.as_os_str().as_bytes();
             if target_bytes.first() == Some(&b'/') {
                 result = PathBuf::from("/");

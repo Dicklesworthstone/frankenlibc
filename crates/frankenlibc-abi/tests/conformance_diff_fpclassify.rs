@@ -53,12 +53,36 @@ fn fpclassify_family_matches_glibc() {
     ];
 
     for (nm, v) in vals {
-        assert_eq!(unsafe { fl::__fpclassify(*v) }, unsafe { __fpclassify(*v) }, "__fpclassify {nm}");
-        assert_eq!(unsafe { fl::__fpclassifyf(*v as f32) }, unsafe { __fpclassifyf(*v as f32) }, "__fpclassifyf {nm}");
-        assert_eq!(unsafe { fl::__isinf(*v) }, unsafe { __isinf(*v) }, "__isinf {nm}");
-        assert_eq!(unsafe { fl::__isnan(*v) }, unsafe { __isnan(*v) }, "__isnan {nm}");
-        assert_eq!(unsafe { fl::__finite(*v) }, unsafe { __finite(*v) }, "__finite {nm}");
-        assert_eq!(unsafe { fl::__issignaling(*v) }, unsafe { __issignaling(*v) }, "__issignaling {nm}");
+        assert_eq!(
+            unsafe { fl::__fpclassify(*v) },
+            unsafe { __fpclassify(*v) },
+            "__fpclassify {nm}"
+        );
+        assert_eq!(
+            unsafe { fl::__fpclassifyf(*v as f32) },
+            unsafe { __fpclassifyf(*v as f32) },
+            "__fpclassifyf {nm}"
+        );
+        assert_eq!(
+            unsafe { fl::__isinf(*v) },
+            unsafe { __isinf(*v) },
+            "__isinf {nm}"
+        );
+        assert_eq!(
+            unsafe { fl::__isnan(*v) },
+            unsafe { __isnan(*v) },
+            "__isnan {nm}"
+        );
+        assert_eq!(
+            unsafe { fl::__finite(*v) },
+            unsafe { __finite(*v) },
+            "__finite {nm}"
+        );
+        assert_eq!(
+            unsafe { fl::__issignaling(*v) },
+            unsafe { __issignaling(*v) },
+            "__issignaling {nm}"
+        );
         // signbit: boolean agreement only (exact nonzero value is unspecified).
         let fl_sb = unsafe { fl::__signbit(*v) } != 0;
         let gl_sb = unsafe { __signbit(*v) } != 0;

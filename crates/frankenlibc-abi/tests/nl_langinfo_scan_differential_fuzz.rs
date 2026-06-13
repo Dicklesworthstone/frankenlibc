@@ -104,5 +104,8 @@ fn nl_langinfo_matches_host_glibc_c_locale() {
         divs.len(),
         divs.join("\n")
     );
-    eprintln!("nl_langinfo scan: {} portable items, 0 divergences", portable_items().len());
+    eprintln!(
+        "nl_langinfo scan: {} portable items, 0 divergences",
+        portable_items().len()
+    );
 }

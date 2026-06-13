@@ -16,8 +16,8 @@
 //!   * out-of-range %j (e.g. 400): glibc accepts and wraps; fl rejects.
 //!   * ISO %V/%G are parsed but never derive the date in either engine.
 
-use std::ffi::CString;
 use frankenlibc_abi::time_abi as flt;
+use std::ffi::CString;
 
 unsafe extern "C" {
     fn strptime(s: *const i8, fmt: *const i8, tm: *mut libc::tm) -> *mut i8;
@@ -36,13 +36,23 @@ fn run(eng: u8, inp: &str, fmt: &str) -> (bool, i32, i32, i32, i32, i32) {
     } else {
         unsafe { strptime(s.as_ptr(), f.as_ptr(), &mut tm) }
     };
-    (!r.is_null(), tm.tm_mon, tm.tm_mday, tm.tm_year, tm.tm_yday, tm.tm_wday)
+    (
+        !r.is_null(),
+        tm.tm_mon,
+        tm.tm_mday,
+        tm.tm_year,
+        tm.tm_yday,
+        tm.tm_wday,
+    )
 }
 
 fn check(inp: &str, fmt: &str) {
     let a = run(0, inp, fmt);
     let b = run(1, inp, fmt);
-    assert_eq!(a, b, "strptime({inp:?}, {fmt:?}) diverged: fl={a:?} glibc={b:?}");
+    assert_eq!(
+        a, b,
+        "strptime({inp:?}, {fmt:?}) diverged: fl={a:?} glibc={b:?}"
+    );
 }
 
 #[test]
@@ -55,7 +65,15 @@ fn strptime_xday_fill_matches_glibc() {
     // Plain / partial explicit dates across a wide span (wday + yday filled).
     let years = [1970, 1999, 2000, 2001, 2004, 2020, 2023, 2024, 2025, 2100];
     for y in years {
-        for (mo, d) in [(1, 1), (2, 28), (2, 29), (3, 1), (6, 15), (12, 31), (10, 24)] {
+        for (mo, d) in [
+            (1, 1),
+            (2, 28),
+            (2, 29),
+            (3, 1),
+            (6, 15),
+            (12, 31),
+            (10, 24),
+        ] {
             check(&format!("{y}-{mo:02}-{d:02}"), "%Y-%m-%d");
             check(&format!("{mo:02}/{d:02}/{y}"), "%m/%d/%Y");
         }

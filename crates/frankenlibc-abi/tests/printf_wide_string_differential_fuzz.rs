@@ -45,12 +45,16 @@ fn buf_used(b: &[u8]) -> Vec<u8> {
 /// A code point of a chosen UTF-8 byte width (1, 2, or 3) — never a surrogate.
 fn gen_cp(r: &mut Lcg) -> u32 {
     match r.below(3) {
-        0 => 0x41 + r.below(0x39) as u32,        // 1-byte ASCII A..z-ish
-        1 => 0x80 + r.below(0x780) as u32,        // 2-byte U+0080..U+07FF
+        0 => 0x41 + r.below(0x39) as u32,  // 1-byte ASCII A..z-ish
+        1 => 0x80 + r.below(0x780) as u32, // 2-byte U+0080..U+07FF
         _ => {
             // 3-byte U+0800..U+FFFF, skipping the surrogate range.
             let v = 0x800 + r.below(0xF800) as u32;
-            if (0xD800..=0xDFFF).contains(&v) { 0x4E00 } else { v }
+            if (0xD800..=0xDFFF).contains(&v) {
+                0x4E00
+            } else {
+                v
+            }
         }
     }
 }
@@ -117,10 +121,20 @@ fn printf_wide_string_differential_fuzz_vs_glibc() {
         let mut bfl = vec![0u8; 256];
         let mut blc = vec![0u8; 256];
         let nfl = unsafe {
-            fl_snprintf(bfl.as_mut_ptr() as *mut c_char, bfl.len(), cf.as_ptr(), ws.as_ptr())
+            fl_snprintf(
+                bfl.as_mut_ptr() as *mut c_char,
+                bfl.len(),
+                cf.as_ptr(),
+                ws.as_ptr(),
+            )
         };
         let nlc = unsafe {
-            snprintf(blc.as_mut_ptr() as *mut c_char, blc.len(), cf.as_ptr(), ws.as_ptr())
+            snprintf(
+                blc.as_mut_ptr() as *mut c_char,
+                blc.len(),
+                cf.as_ptr(),
+                ws.as_ptr(),
+            )
         };
         compared += 1;
         let (sfl, slc) = (buf_used(&bfl), buf_used(&blc));
@@ -144,10 +158,20 @@ fn printf_wide_string_differential_fuzz_vs_glibc() {
         let mut blc2 = vec![0u8; 256];
         let wc = cp as c_uint;
         let nfl2 = unsafe {
-            fl_snprintf(bfl2.as_mut_ptr() as *mut c_char, bfl2.len(), cf2.as_ptr(), wc)
+            fl_snprintf(
+                bfl2.as_mut_ptr() as *mut c_char,
+                bfl2.len(),
+                cf2.as_ptr(),
+                wc,
+            )
         };
         let nlc2 = unsafe {
-            snprintf(blc2.as_mut_ptr() as *mut c_char, blc2.len(), cf2.as_ptr(), wc)
+            snprintf(
+                blc2.as_mut_ptr() as *mut c_char,
+                blc2.len(),
+                cf2.as_ptr(),
+                wc,
+            )
         };
         compared += 1;
         let (sfl2, slc2) = (buf_used(&bfl2), buf_used(&blc2));

@@ -83,7 +83,9 @@ fn wcscasecmp_differential_fuzz_vs_glibc() {
         let lc_n = unsafe { wcsncasecmp(a.as_ptr(), b.as_ptr(), n) };
         compared += 1;
         if fl_n != lc_n && divs.len() < 30 {
-            divs.push(format!("wcsncasecmp({a:?},{b:?},{n}) fl={fl_n} glibc={lc_n}"));
+            divs.push(format!(
+                "wcsncasecmp({a:?},{b:?},{n}) fl={fl_n} glibc={lc_n}"
+            ));
         }
     }
 

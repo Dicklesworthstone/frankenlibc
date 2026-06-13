@@ -41,9 +41,17 @@ fn regerror_messages_match_glibc() {
     // needed length, matching glibc.
     let mut small = [0i8; 5];
     let needed_fl = unsafe { fl::regerror(2, std::ptr::null(), small.as_mut_ptr(), small.len()) };
-    let fl_s = unsafe { std::ffi::CStr::from_ptr(small.as_ptr()) }.to_string_lossy().into_owned();
+    let fl_s = unsafe { std::ffi::CStr::from_ptr(small.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
     let mut small_g = [0i8; 5];
     let needed_gl = unsafe { regerror(2, std::ptr::null(), small_g.as_mut_ptr(), small_g.len()) };
-    let gl_s = unsafe { std::ffi::CStr::from_ptr(small_g.as_ptr()) }.to_string_lossy().into_owned();
-    assert_eq!((needed_fl, fl_s), (needed_gl, gl_s), "regerror truncation diverged");
+    let gl_s = unsafe { std::ffi::CStr::from_ptr(small_g.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        (needed_fl, fl_s),
+        (needed_gl, gl_s),
+        "regerror truncation diverged"
+    );
 }

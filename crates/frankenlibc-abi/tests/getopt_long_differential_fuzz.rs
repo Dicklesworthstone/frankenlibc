@@ -151,13 +151,22 @@ fn gen_argv(r: &mut Lcg) -> Vec<String> {
 
 /// Drive one engine over `args` to completion, returning the captured steps.
 fn run(
-    getopt_fn: unsafe extern "C" fn(c_int, *const *mut c_char, *const c_char, *const libc::option, *mut c_int) -> c_int,
+    getopt_fn: unsafe extern "C" fn(
+        c_int,
+        *const *mut c_char,
+        *const c_char,
+        *const libc::option,
+        *mut c_int,
+    ) -> c_int,
     args: &[String],
     optstr: &CStr,
     longopts: &[libc::option],
 ) -> Vec<Step> {
     let _guard = GETOPT_GLOBALS.lock().unwrap_or_else(|e| e.into_inner());
-    let cs: Vec<CString> = args.iter().map(|s| CString::new(s.as_str()).unwrap()).collect();
+    let cs: Vec<CString> = args
+        .iter()
+        .map(|s| CString::new(s.as_str()).unwrap())
+        .collect();
     let mut argv: Vec<*mut c_char> = cs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
     argv.push(std::ptr::null_mut());
     let argc = (argv.len() - 1) as c_int;
@@ -230,13 +239,29 @@ fn getopt_long_abbreviation_matches_glibc() {
         ("", vec![("file", req, b'f')], vec!["--fi", "data"]),
         ("", vec![("file", req, b'f')], vec!["--fi=data"]),
         // Exact match wins over a longer option sharing the prefix.
-        ("", vec![("ver", no, b'x'), ("verbose", no, b'v')], vec!["--ver"]),
+        (
+            "",
+            vec![("ver", no, b'x'), ("verbose", no, b'v')],
+            vec!["--ver"],
+        ),
         // Ambiguous: same val but DIFFERENT has_arg -> '?'.
-        ("", vec![("verbose", no, b'v'), ("version", req, b'v')], vec!["--ver"]),
+        (
+            "",
+            vec![("verbose", no, b'v'), ("version", req, b'v')],
+            vec!["--ver"],
+        ),
         // Ambiguous: different val -> '?'.
-        ("", vec![("verbose", no, b'v'), ("version", no, b's')], vec!["--ver"]),
+        (
+            "",
+            vec![("verbose", no, b'v'), ("version", no, b's')],
+            vec!["--ver"],
+        ),
         // Not ambiguous: identical has_arg+flag+val -> matches first.
-        ("", vec![("verbose", no, b'v'), ("verbose", no, b'v')], vec!["--ver"]),
+        (
+            "",
+            vec![("verbose", no, b'v'), ("verbose", no, b'v')],
+            vec!["--ver"],
+        ),
         // Unknown long option -> '?'.
         ("", vec![("verbose", no, b'v')], vec!["--zzz"]),
         // Abbreviation alongside a short option.
@@ -244,7 +269,10 @@ fn getopt_long_abbreviation_matches_glibc() {
     ];
 
     for (i, (optstr, longs, argv)) in cases.iter().enumerate() {
-        let _keep: Vec<CString> = longs.iter().map(|(n, _, _)| CString::new(*n).unwrap()).collect();
+        let _keep: Vec<CString> = longs
+            .iter()
+            .map(|(n, _, _)| CString::new(*n).unwrap())
+            .collect();
         let mut opts: Vec<libc::option> = longs
             .iter()
             .zip(_keep.iter())
@@ -306,7 +334,10 @@ fn getopt_long_differential_fuzz_vs_glibc() {
         compared += 1;
 
         if fl_steps != lc_steps && divs.len() < 30 {
-            let lnames: Vec<String> = keep.iter().map(|c| c.to_string_lossy().into_owned()).collect();
+            let lnames: Vec<String> = keep
+                .iter()
+                .map(|c| c.to_string_lossy().into_owned())
+                .collect();
             let msg = format!(
                 "optstr={:?} longs={:?} argv={:?}\n    fl   ={fl_steps:?}\n    glibc={lc_steps:?}",
                 optstr.to_string_lossy(),

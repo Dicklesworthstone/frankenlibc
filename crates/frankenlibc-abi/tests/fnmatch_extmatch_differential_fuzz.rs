@@ -153,7 +153,10 @@ fn fnmatch_extmatch_realistic_battery_matches_glibc() {
         let fl = unsafe { fl_fnmatch(cp.as_ptr(), cs.as_ptr(), EXTMATCH) } == 0;
         let lc = unsafe { fnmatch(cp.as_ptr(), cs.as_ptr(), EXTMATCH) } == 0;
         assert_eq!(lc, want, "glibc baseline drift for ({p:?},{s:?})");
-        assert_eq!(fl, want, "fl != glibc for ({p:?},{s:?}): fl={fl} glibc={lc}");
+        assert_eq!(
+            fl, want,
+            "fl != glibc for ({p:?},{s:?}): fl={fl} glibc={lc}"
+        );
     }
 }
 
@@ -166,8 +169,7 @@ fn fnmatch_extmatch_differential_fuzz_vs_glibc() {
     for _ in 0..400_000 {
         let pat = gen_pattern(&mut r);
         let text = gen_text(&mut r);
-        let (Ok(cpat), Ok(ctext)) = (CString::new(pat.clone()), CString::new(text.clone()))
-        else {
+        let (Ok(cpat), Ok(ctext)) = (CString::new(pat.clone()), CString::new(text.clone())) else {
             continue;
         };
         let mut flags = EXTMATCH;

@@ -14,8 +14,8 @@
 //! The process-timezone fallback under a NON-UTC TZ is out of scope (fl is
 //! UTC-only with no tz database).
 
-use std::ffi::{CString, c_char};
 use frankenlibc_abi::time_abi as fl;
+use std::ffi::{CString, c_char};
 
 unsafe extern "C" {
     fn strftime(s: *mut c_char, m: usize, f: *const c_char, tm: *const libc::tm) -> usize;
@@ -55,12 +55,20 @@ fn strftime_zone_name_matches_glibc() {
         let mut tm = base;
         tm.tm_zone = z.as_ptr();
         for fmt in ["%Z", "%H:%M %Z", "%Z!"] {
-            assert_eq!(render(0, fmt, &tm), render(1, fmt, &tm), "set zone {z:?} {fmt}");
+            assert_eq!(
+                render(0, fmt, &tm),
+                render(1, fmt, &tm),
+                "set zone {z:?} {fmt}"
+            );
         }
     }
     let mut tm = base;
     tm.tm_zone = std::ptr::null();
-    assert_eq!(render(0, "%Z", &tm), render(1, "%Z", &tm), "null zone -> UTC fallback");
+    assert_eq!(
+        render(0, "%Z", &tm),
+        render(1, "%Z", &tm),
+        "null zone -> UTC fallback"
+    );
 
     // (c) fl's own gmtime / localtime output renders the same %Z as glibc's.
     let mut fl_g: libc::tm = unsafe { std::mem::zeroed() };
@@ -73,5 +81,9 @@ fn strftime_zone_name_matches_glibc() {
     unsafe { fl::localtime_r(&t, &mut fl_l) };
     let mut gl_l: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { localtime_r(&t, &mut gl_l) };
-    assert_eq!(render(0, "%Z", &fl_l), render(1, "%Z", &gl_l), "localtime %Z");
+    assert_eq!(
+        render(0, "%Z", &fl_l),
+        render(1, "%Z", &gl_l),
+        "localtime %Z"
+    );
 }

@@ -73,7 +73,11 @@ fn raw_memcpy_matches_reference_and_glibc_over_corpus() {
     }
 
     assert_eq!(checked, 4 * 4 * 27, "corpus size drifted");
-    let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let digest: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     assert_eq!(
         digest, "02c7b754d9fc0e1ef116009552a67f0bad4b5c8e072bd0158971f288240b3917",
         "memcpy wide-copy golden corpus hash drifted: got {digest}"

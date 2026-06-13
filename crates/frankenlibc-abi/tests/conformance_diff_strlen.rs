@@ -37,10 +37,20 @@ fn strlen_strnlen_match_glibc() {
             // strlen.
             let fl = unsafe { fl_strlen(p) };
             let gl = unsafe { libc::strlen(p) };
-            assert_eq!(fl, gl, "strlen align={align_off} len={len}: fl={fl} gl={gl}");
+            assert_eq!(
+                fl, gl,
+                "strlen align={align_off} len={len}: fl={fl} gl={gl}"
+            );
 
             // strnlen over bounds straddling the terminator.
-            for &bound in &[0usize, len.saturating_sub(1), len, len + 1, len + 8, len + 200] {
+            for &bound in &[
+                0usize,
+                len.saturating_sub(1),
+                len,
+                len + 1,
+                len + 8,
+                len + 200,
+            ] {
                 let fln = unsafe { fl_strnlen(p, bound) };
                 let gln = unsafe { libc::strnlen(p, bound) };
                 assert_eq!(

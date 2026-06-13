@@ -111,10 +111,10 @@ fn a64l_l64a_differential_fuzz_vs_glibc() {
 
         // ---- l64a ----
         let v = match r.below(4) {
-            0 => r.next() as i64,                       // any 64-bit pattern
-            1 => -((r.next() % 0x1_0000_0000) as i64),  // negatives
-            2 => (r.next() % 0x1_0000_0008) as i64,     // around the 2^32 boundary
-            _ => r.below(70) as i64,                     // small values
+            0 => r.next() as i64,                      // any 64-bit pattern
+            1 => -((r.next() % 0x1_0000_0000) as i64), // negatives
+            2 => (r.next() % 0x1_0000_0008) as i64,    // around the 2^32 boundary
+            _ => r.below(70) as i64,                   // small values
         };
         let fl_s = fl_l64a_str(v);
         let lc_s = host_l64a_str(v);

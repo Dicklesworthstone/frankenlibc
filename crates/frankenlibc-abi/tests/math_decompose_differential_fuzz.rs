@@ -24,7 +24,10 @@ unsafe extern "C" {
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0
     }
     fn below(&mut self, n: usize) -> usize {
@@ -72,15 +75,22 @@ fn math_decompose_differential_fuzz_vs_glibc() {
                 if !eq(f, g) && divs.len() < 30 {
                     divs.push(format!(
                         "{}({:#018x}): fl={:#018x} glibc={:#018x}",
-                        $name, x.to_bits(), f.to_bits(), g.to_bits()
+                        $name,
+                        x.to_bits(),
+                        f.to_bits(),
+                        g.to_bits()
                     ));
                 }
             }};
         }
 
         let z = gen_f64(&mut r);
-        cmp1!("nextafter", unsafe { fl::nextafter(x, y) }, unsafe { nextafter(x, y) });
-        cmp1!("scalbn", unsafe { fl::scalbn(x, n) }, unsafe { scalbn(x, n) });
+        cmp1!("nextafter", unsafe { fl::nextafter(x, y) }, unsafe {
+            nextafter(x, y)
+        });
+        cmp1!("scalbn", unsafe { fl::scalbn(x, n) }, unsafe {
+            scalbn(x, n)
+        });
         cmp1!("ldexp", unsafe { fl::ldexp(x, n) }, unsafe { ldexp(x, n) });
         cmp1!("fma", unsafe { fl::fma(x, y, z) }, unsafe { fma(x, y, z) });
         {
@@ -102,7 +112,10 @@ fn math_decompose_differential_fuzz_vs_glibc() {
             if !ok && divs.len() < 30 {
                 divs.push(format!(
                     "remainder(x={:#018x}, y={:#018x}): fl={:#018x} glibc={:#018x}",
-                    x.to_bits(), y.to_bits(), f.to_bits(), g.to_bits()
+                    x.to_bits(),
+                    y.to_bits(),
+                    f.to_bits(),
+                    g.to_bits()
                 ));
             }
         }
@@ -129,7 +142,9 @@ fn math_decompose_differential_fuzz_vs_glibc() {
             if (!eq(fm, gm) || fe != ge) && divs.len() < 30 {
                 divs.push(format!(
                     "frexp({:#018x}): fl=(m={:#018x},e={fe}) glibc=(m={:#018x},e={ge})",
-                    x.to_bits(), fm.to_bits(), gm.to_bits()
+                    x.to_bits(),
+                    fm.to_bits(),
+                    gm.to_bits()
                 ));
             }
         }
@@ -150,7 +165,10 @@ fn math_decompose_differential_fuzz_vs_glibc() {
             if (!eq(fr, gr) || !q_ok) && divs.len() < 30 {
                 divs.push(format!(
                     "remquo({:#018x},{:#018x}): fl=(r={:#018x},q={fq}) glibc=(r={:#018x},q={gq})",
-                    x.to_bits(), y.to_bits(), fr.to_bits(), gr.to_bits()
+                    x.to_bits(),
+                    y.to_bits(),
+                    fr.to_bits(),
+                    gr.to_bits()
                 ));
             }
         }

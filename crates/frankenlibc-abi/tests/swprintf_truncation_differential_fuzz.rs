@@ -14,12 +14,7 @@ use std::ffi::CString;
 use frankenlibc_abi::wchar_abi as fl;
 
 unsafe extern "C" {
-    fn swprintf(
-        s: *mut libc::wchar_t,
-        n: usize,
-        format: *const libc::wchar_t,
-        ...
-    ) -> libc::c_int;
+    fn swprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, ...) -> libc::c_int;
 }
 
 fn widen(s: &str) -> Vec<libc::wchar_t> {

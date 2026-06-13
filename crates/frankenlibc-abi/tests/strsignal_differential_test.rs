@@ -40,5 +40,9 @@ fn strsignal_matches_glibc_full_range() {
             fails.push(format!("strsignal({sig}): fl={f:?} glibc={g:?}"));
         }
     }
-    assert!(fails.is_empty(), "strsignal diverged from glibc:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "strsignal diverged from glibc:\n{}",
+        fails.join("\n")
+    );
 }

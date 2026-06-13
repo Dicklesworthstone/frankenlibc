@@ -1528,7 +1528,10 @@ fn wcstol_parses_and_updates_endptr() {
     let invalid_base = unsafe { wcstol(input.as_ptr(), &mut end as *mut *mut libc::wchar_t, 1) };
     assert_eq!(invalid_base, 0);
     assert_eq!(errno_value(), libc::EINVAL);
-    assert_eq!(end, sentinel, "endptr must be left untouched on invalid base");
+    assert_eq!(
+        end, sentinel,
+        "endptr must be left untouched on invalid base"
+    );
 }
 
 #[test]

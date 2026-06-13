@@ -36,12 +36,22 @@ fn strchr_matches_glibc() {
             let p = unsafe { base.add(align_off) } as *const c_char;
 
             // Targets: present bytes, absent byte, high-bit bytes, and NUL.
-            for &t in &[b'a', b'b', b'c', b'd', b'e', b'z', 0x80u8, 0xFFu8, 0x00u8, 0x71u8] {
+            for &t in &[
+                b'a', b'b', b'c', b'd', b'e', b'z', 0x80u8, 0xFFu8, 0x00u8, 0x71u8,
+            ] {
                 let fl = unsafe { fl_strchr(p, t as i32) };
                 let gl = unsafe { libc::strchr(p, t as i32) };
                 // Compare as offsets from base (or both null).
-                let fl_off = if fl.is_null() { None } else { Some(fl as usize - p as usize) };
-                let gl_off = if gl.is_null() { None } else { Some(gl as usize - p as usize) };
+                let fl_off = if fl.is_null() {
+                    None
+                } else {
+                    Some(fl as usize - p as usize)
+                };
+                let gl_off = if gl.is_null() {
+                    None
+                } else {
+                    Some(gl as usize - p as usize)
+                };
                 assert_eq!(
                     fl_off, gl_off,
                     "strchr align={align_off} len={len} target={t:#x}: fl={fl_off:?} gl={gl_off:?}"

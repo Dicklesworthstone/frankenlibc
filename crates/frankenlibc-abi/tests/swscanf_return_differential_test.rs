@@ -77,5 +77,9 @@ fn swscanf_return_matches_glibc() {
     two_int!("both", "3 4", "%d %d");
     two_int!("first-fail", "x 4", "%d %d");
 
-    assert!(fails.is_empty(), "swscanf return diverged from glibc:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "swscanf return diverged from glibc:\n{}",
+        fails.join("\n")
+    );
 }

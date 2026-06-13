@@ -17,8 +17,8 @@
 //! parameter forms `${@}` `${*}` `${0}` `${!var}` `${#}` (process-state /
 //! positional params fl does not model) and arithmetic `$((expr))`.
 
-use std::ffi::{CStr, CString};
 use frankenlibc_abi::unistd_abi as flu;
+use std::ffi::{CStr, CString};
 
 #[repr(C)]
 struct WordExp {
@@ -50,13 +50,21 @@ fn words(wc: usize, wv: *mut *mut i8) -> Vec<String> {
 
 fn run(eng: u8, inp: &str) -> (i32, Vec<String>) {
     let s = CString::new(inp).unwrap();
-    let mut w = WordExp { we_wordc: 0, we_wordv: std::ptr::null_mut(), we_offs: 0 };
+    let mut w = WordExp {
+        we_wordc: 0,
+        we_wordv: std::ptr::null_mut(),
+        we_offs: 0,
+    };
     let rc = if eng == 0 {
         unsafe { flu::wordexp(s.as_ptr(), (&mut w as *mut WordExp).cast(), WRDE_NOCMD) }
     } else {
         unsafe { wordexp(s.as_ptr(), &mut w, WRDE_NOCMD) }
     };
-    let out = if rc == 0 { words(w.we_wordc, w.we_wordv) } else { vec![] };
+    let out = if rc == 0 {
+        words(w.we_wordc, w.we_wordv)
+    } else {
+        vec![]
+    };
     if rc == 0 {
         if eng == 0 {
             unsafe { flu::wordfree((&mut w as *mut WordExp).cast()) };
@@ -84,22 +92,54 @@ fn wordexp_operators_match_glibc() {
 
     // Supported POSIX forms (must keep working).
     for inp in [
-        "$FOO", "${FOO}x", "${#FOO}", "${UNSET:-d}", "${EMPTY:-d}", "${EMPTY-d}",
-        "${FOO:+y}", "${UNSET:+y}", "${FOO-x}", "${FOO+x}", "${FOO=x}", "${FOO:=x}",
-        "${FILE%.gz}", "${FILE%%.*}", "${FILE#*.}", "${FILE##*.}", "${PATHY#/usr}",
-        "${FOO%}", "${FOO#}", "${FOO:-}",
+        "$FOO",
+        "${FOO}x",
+        "${#FOO}",
+        "${UNSET:-d}",
+        "${EMPTY:-d}",
+        "${EMPTY-d}",
+        "${FOO:+y}",
+        "${UNSET:+y}",
+        "${FOO-x}",
+        "${FOO+x}",
+        "${FOO=x}",
+        "${FOO:=x}",
+        "${FILE%.gz}",
+        "${FILE%%.*}",
+        "${FILE#*.}",
+        "${FILE##*.}",
+        "${PATHY#/usr}",
+        "${FOO%}",
+        "${FOO#}",
+        "${FOO:-}",
         // `:?` / `?`: value when set, empty when unset (glibc does not abort).
-        "${FOO:?}", "${FOO?}", "${FOO:?msg}", "${UNSET:?msg}", "${UNSET?msg}",
-        "'$FOO'", "\"$FOO x\"", "a b c",
+        "${FOO:?}",
+        "${FOO?}",
+        "${FOO:?msg}",
+        "${UNSET:?msg}",
+        "${UNSET?msg}",
+        "'$FOO'",
+        "\"$FOO x\"",
+        "a b c",
     ] {
         check(inp);
     }
 
     // Bash-only operators after a real name -> WRDE_SYNTAX in both engines.
     for inp in [
-        "${FOO:1}", "${FOO:1:2}", "${FOO:2:1}", "${FOO:}", "${FOO/b/X}",
-        "${FOO//b/X}", "${FOO^}", "${FOO^^}", "${FOO,}", "${FOO,,}", "${FOO@U}",
-        "${FOO[0]}", "${FILE/tar/zip}",
+        "${FOO:1}",
+        "${FOO:1:2}",
+        "${FOO:2:1}",
+        "${FOO:}",
+        "${FOO/b/X}",
+        "${FOO//b/X}",
+        "${FOO^}",
+        "${FOO^^}",
+        "${FOO,}",
+        "${FOO,,}",
+        "${FOO@U}",
+        "${FOO[0]}",
+        "${FILE/tar/zip}",
     ] {
         check(inp);
     }

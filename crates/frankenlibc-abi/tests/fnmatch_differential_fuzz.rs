@@ -41,7 +41,13 @@ impl Lcg {
 /// POSIX class tokens injected verbatim into patterns so bracket-class parsing
 /// (`[[:alpha:]]`, negation, etc.) is exercised.
 const CLASSES: &[&str] = &[
-    "[:alpha:]", "[:digit:]", "[:alnum:]", "[:space:]", "[:upper:]", "[:lower:]", "[:punct:]",
+    "[:alpha:]",
+    "[:digit:]",
+    "[:alnum:]",
+    "[:space:]",
+    "[:upper:]",
+    "[:lower:]",
+    "[:punct:]",
 ];
 
 /// Bytes that may appear as a single bracket member / range endpoint, including

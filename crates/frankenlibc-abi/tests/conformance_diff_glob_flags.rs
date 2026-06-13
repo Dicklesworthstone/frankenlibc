@@ -9,8 +9,8 @@
 //! temp directory (regular files, a hidden file, a subdir) and compares the
 //! return code and the sorted match list for each flag and a few combinations.
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use frankenlibc_abi::string_abi as fl;
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
 #[repr(C)]
 struct GlobT {

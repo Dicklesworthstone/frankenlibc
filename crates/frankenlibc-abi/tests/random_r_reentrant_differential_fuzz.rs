@@ -32,8 +32,12 @@ struct RandomData([u8; 48]);
 unsafe extern "C" {
     fn random_r(buf: *mut RandomData, result: *mut i32) -> c_int;
     fn srandom_r(seed: c_uint, buf: *mut RandomData) -> c_int;
-    fn initstate_r(seed: c_uint, statebuf: *mut c_char, statelen: usize, buf: *mut RandomData)
-    -> c_int;
+    fn initstate_r(
+        seed: c_uint,
+        statebuf: *mut c_char,
+        statelen: usize,
+        buf: *mut RandomData,
+    ) -> c_int;
     fn setstate_r(statebuf: *mut c_char, buf: *mut RandomData) -> c_int;
 }
 
@@ -136,7 +140,11 @@ fn random_r_initstate_sequence_vs_glibc() {
             let fl_v: Vec<i32> = (0..32).map(|_| fl.draw()).collect();
             compared += 1;
             if host_v != fl_v && divs.len() < 20 {
-                let idx = fl_v.iter().zip(&host_v).position(|(a, b)| a != b).unwrap_or(0);
+                let idx = fl_v
+                    .iter()
+                    .zip(&host_v)
+                    .position(|(a, b)| a != b)
+                    .unwrap_or(0);
                 divs.push(format!(
                     "seed={seed} size={size}: first diff at call {idx}\n    fl   ={:?}\n    glibc={:?}",
                     &fl_v[idx..(idx + 4).min(fl_v.len())],

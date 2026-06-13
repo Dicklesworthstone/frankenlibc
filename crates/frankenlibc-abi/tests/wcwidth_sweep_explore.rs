@@ -37,7 +37,11 @@ fn wcwidth_full_range_matches_glibc() {
     // Key: (fl_value, glibc_value) -> count, with a few sample codepoints.
     let mut buckets: BTreeMap<(i32, i32), (u64, Vec<u32>)> = BTreeMap::new();
 
-    let sweep = |lo: u32, hi: u32, total: &mut u64, diffs: &mut u64, buckets: &mut BTreeMap<(i32, i32), (u64, Vec<u32>)>| {
+    let sweep = |lo: u32,
+                 hi: u32,
+                 total: &mut u64,
+                 diffs: &mut u64,
+                 buckets: &mut BTreeMap<(i32, i32), (u64, Vec<u32>)>| {
         for cp in lo..=hi {
             // Skip surrogates (not valid scalar values).
             if (0xD800..=0xDFFF).contains(&cp) {

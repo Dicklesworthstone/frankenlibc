@@ -46,7 +46,14 @@ unsafe fn ntop(
     src: &[u8],
 ) -> Option<String> {
     let mut buf = [0u8; 64];
-    let r = unsafe { f(af, src.as_ptr() as *const c_void, buf.as_mut_ptr() as *mut c_char, buf.len() as u32) };
+    let r = unsafe {
+        f(
+            af,
+            src.as_ptr() as *const c_void,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len() as u32,
+        )
+    };
     if r.is_null() {
         return None;
     }
@@ -91,13 +98,7 @@ fn gen_ipv6_string(r: &mut Lcg) -> String {
     }
     // Optionally append an embedded-IPv4 tail.
     if r.next() % 4 == 0 {
-        let v4 = format!(
-            "{}.{}.{}.{}",
-            r.byte(),
-            r.byte(),
-            r.byte(),
-            r.byte()
-        );
+        let v4 = format!("{}.{}.{}.{}", r.byte(), r.byte(), r.byte(), r.byte());
         if !s.is_empty() && !s.ends_with(':') {
             s.push(':');
         }
@@ -195,15 +196,34 @@ fn inet_pton_ntop_differential_fuzz_vs_glibc() {
         let v4src = if r.next() & 1 == 0 {
             hon4.clone().unwrap_or_default()
         } else {
-            format!("{}.{}.{}.{}", r.next() % 300, r.next() % 300, r.byte(), r.byte())
+            format!(
+                "{}.{}.{}.{}",
+                r.next() % 300,
+                r.next() % 300,
+                r.byte(),
+                r.byte()
+            )
         };
         if let Ok(cs) = CString::new(v4src.as_str()) {
             let (flr, flb) = unsafe { pton(fl::inet_pton, libc::AF_INET, &cs, 4) };
             let (hor, hob) = unsafe { pton(inet_pton, libc::AF_INET, &cs, 4) };
             compared += 1;
-            let fl_repr = if flr == 1 { format!("ret=1 {flb:02x?}") } else { format!("ret={flr}") };
-            let host_repr = if hor == 1 { format!("ret=1 {hob:02x?}") } else { format!("ret={hor}") };
-            record(format!("pton4 src={v4src:?}"), fl_repr, host_repr, &mut divs);
+            let fl_repr = if flr == 1 {
+                format!("ret=1 {flb:02x?}")
+            } else {
+                format!("ret={flr}")
+            };
+            let host_repr = if hor == 1 {
+                format!("ret=1 {hob:02x?}")
+            } else {
+                format!("ret={hor}")
+            };
+            record(
+                format!("pton4 src={v4src:?}"),
+                fl_repr,
+                host_repr,
+                &mut divs,
+            );
         }
     }
 
@@ -213,5 +233,7 @@ fn inet_pton_ntop_differential_fuzz_vs_glibc() {
         divs.len(),
         divs.join("\n")
     );
-    eprintln!("inet_pton/ntop differential fuzz: {compared} comparisons, 0 divergences vs host glibc");
+    eprintln!(
+        "inet_pton/ntop differential fuzz: {compared} comparisons, 0 divergences vs host glibc"
+    );
 }

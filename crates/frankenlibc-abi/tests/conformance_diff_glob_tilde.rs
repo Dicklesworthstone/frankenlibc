@@ -53,7 +53,14 @@ fn collect(g: &libc::glob_t, ret: c_int) -> Vec<String> {
 fn run_fl(pat: &str, flags: c_int) -> (c_int, Vec<String>) {
     let cp = CString::new(pat).unwrap();
     let mut g: libc::glob_t = unsafe { std::mem::zeroed() };
-    let r = unsafe { fl::glob(cp.as_ptr(), flags, None, (&mut g) as *mut libc::glob_t as *mut _) };
+    let r = unsafe {
+        fl::glob(
+            cp.as_ptr(),
+            flags,
+            None,
+            (&mut g) as *mut libc::glob_t as *mut _,
+        )
+    };
     let out = collect(&g, r);
     if r == 0 {
         unsafe { fl::globfree((&mut g) as *mut libc::glob_t as *mut _) };

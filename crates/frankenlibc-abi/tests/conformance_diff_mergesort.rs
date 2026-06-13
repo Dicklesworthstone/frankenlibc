@@ -24,7 +24,9 @@ fn mix(seed: u64, i: usize) -> u64 {
 /// stable-sort by the comparator, write back.
 fn reference_stable<F: Fn(&[u8], &[u8]) -> i32>(bytes: &[u8], width: usize, cmp: &F) -> Vec<u8> {
     let num = bytes.len() / width;
-    let mut elems: Vec<Vec<u8>> = (0..num).map(|i| bytes[i * width..(i + 1) * width].to_vec()).collect();
+    let mut elems: Vec<Vec<u8>> = (0..num)
+        .map(|i| bytes[i * width..(i + 1) * width].to_vec())
+        .collect();
     elems.sort_by(|a, b| cmp(a, b).cmp(&0));
     let mut out = Vec::with_capacity(bytes.len());
     for e in &elems {
@@ -33,11 +35,19 @@ fn reference_stable<F: Fn(&[u8], &[u8]) -> i32>(bytes: &[u8], width: usize, cmp:
     out
 }
 
-fn check<F: Fn(&[u8], &[u8]) -> i32 + Copy>(label: &str, bytes: &[u8], width: usize, cmp: F) -> Vec<u8> {
+fn check<F: Fn(&[u8], &[u8]) -> i32 + Copy>(
+    label: &str,
+    bytes: &[u8],
+    width: usize,
+    cmp: F,
+) -> Vec<u8> {
     let mut fl_buf = bytes.to_vec();
     fl_mergesort(&mut fl_buf, width, cmp);
     let want = reference_stable(bytes, width, &cmp);
-    assert_eq!(fl_buf, want, "{label}: mergesort diverges from reference stable sort");
+    assert_eq!(
+        fl_buf, want,
+        "{label}: mergesort diverges from reference stable sort"
+    );
     fl_buf
 }
 
@@ -52,7 +62,9 @@ fn cmp_key32(a: &[u8], b: &[u8]) -> i32 {
         .cmp(&i32::from_ne_bytes(b[..4].try_into().unwrap())) as i32
 }
 // width-1 unsigned
-fn cmp_u8(a: &[u8], b: &[u8]) -> i32 { (a[0] as i32) - (b[0] as i32) }
+fn cmp_u8(a: &[u8], b: &[u8]) -> i32 {
+    (a[0] as i32) - (b[0] as i32)
+}
 // width-4 low-resolution key (many ties across distinct values) -> exercises
 // stability where equal-comparing elements have DIFFERENT bytes.
 fn cmp_i32_coarse(a: &[u8], b: &[u8]) -> i32 {
@@ -70,7 +82,9 @@ fn mergesort_matches_reference_stable_sort() {
         let seed = 0x7A11_BEEFu64 ^ (n as u64);
 
         // width 4 natural + coarse-key (stability across distinct bytes)
-        let img4: Vec<u8> = (0..n).flat_map(|i| (mix(seed, i) as i32).to_ne_bytes()).collect();
+        let img4: Vec<u8> = (0..n)
+            .flat_map(|i| (mix(seed, i) as i32).to_ne_bytes())
+            .collect();
         hasher.update(check(&format!("i32/n{n}"), &img4, 4, cmp_i32));
         hasher.update(check(&format!("i32coarse/n{n}"), &img4, 4, cmp_i32_coarse));
 

@@ -59,8 +59,8 @@ fn make_tree() -> std::path::PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let files: &[&[u8]] = &[
-        b"a.txt", b"b.txt", b"c.log", b"Foo", b"bar", b"BAR", b".hidden", b".cfg",
-        b"x y.dat", b"star", b"d.LOG", b"ab", b"abc", b"1file",
+        b"a.txt", b"b.txt", b"c.log", b"Foo", b"bar", b"BAR", b".hidden", b".cfg", b"x y.dat",
+        b"star", b"d.LOG", b"ab", b"abc", b"1file",
     ];
     for f in files {
         let p = dir.join(std::ffi::OsStr::from_bytes(f));
@@ -80,15 +80,48 @@ fn make_tree() -> std::path::PathBuf {
 fn gen_pattern(r: &mut Lcg) -> Vec<u8> {
     // alphabet of literals that overlap the tree's names + metacharacters
     const TOK: &[&[u8]] = &[
-        b"*", b"?", b"a", b"b", b"c", b".", b"txt", b"log", b"[a-c]", b"[!a-c]",
-        b"[abF]", b"F", b"o", b"sub", b"Sub2", b"{a,b}", b"{Foo,bar}", b"x y",
-        b"star", b"BAR", b"1", b"]", b"[", b"\\*",
+        b"*",
+        b"?",
+        b"a",
+        b"b",
+        b"c",
+        b".",
+        b"txt",
+        b"log",
+        b"[a-c]",
+        b"[!a-c]",
+        b"[abF]",
+        b"F",
+        b"o",
+        b"sub",
+        b"Sub2",
+        b"{a,b}",
+        b"{Foo,bar}",
+        b"x y",
+        b"star",
+        b"BAR",
+        b"1",
+        b"]",
+        b"[",
+        b"\\*",
         // Rich GLOB_BRACE expansion: nesting, empty alternatives, no-comma /
         // empty groups, escaped braces, metacharacter alternatives, and the
         // non-feature `{a..c}` range (literal in glibc) — brace_expand corners.
-        b"{a,a{b,bc}}", b"{,a}", b"{a,}", b"{}", b"{c}", b"{a..c}", b"\\{a,b\\}",
-        b"{*,?}", b"{sub,Sub2}", b"{ab,abc,a}", b"{{a,b},c}", b"f{o,O}o",
-        b"{a,b}.txt", b"{.cfg,.hidden}", b"a{,b,bc}",
+        b"{a,a{b,bc}}",
+        b"{,a}",
+        b"{a,}",
+        b"{}",
+        b"{c}",
+        b"{a..c}",
+        b"\\{a,b\\}",
+        b"{*,?}",
+        b"{sub,Sub2}",
+        b"{ab,abc,a}",
+        b"{{a,b},c}",
+        b"f{o,O}o",
+        b"{a,b}.txt",
+        b"{.cfg,.hidden}",
+        b"a{,b,bc}",
     ];
     let segs = 1 + r.below(4);
     let mut out: Vec<u8> = Vec::new();
@@ -162,7 +195,12 @@ fn glob_differential_fuzz_vs_glibc() {
         let mut g_fl: libc::glob_t = unsafe { std::mem::zeroed() };
         let mut g_lc: libc::glob_t = unsafe { std::mem::zeroed() };
         let ret_fl = unsafe {
-            fl::glob(cpat.as_ptr(), flags, None, (&mut g_fl) as *mut libc::glob_t as *mut _)
+            fl::glob(
+                cpat.as_ptr(),
+                flags,
+                None,
+                (&mut g_fl) as *mut libc::glob_t as *mut _,
+            )
         };
         let ret_lc = unsafe { glob(cpat.as_ptr(), flags, None, &mut g_lc) };
 

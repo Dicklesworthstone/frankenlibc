@@ -603,7 +603,11 @@ pub unsafe fn bench_scan_c_string_for_byte(
 /// # Safety
 /// `s1`/`s2` must be NUL-terminated, or valid for `bound` bytes.
 #[doc(hidden)]
-pub unsafe fn bench_scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (usize, bool) {
+pub unsafe fn bench_scan_strcmp(
+    s1: *const c_char,
+    s2: *const c_char,
+    bound: usize,
+) -> (usize, bool) {
     unsafe { scan_strcmp(s1, s2, bound) }
 }
 
@@ -781,7 +785,11 @@ unsafe fn raw_lane_strlen_bytes(s: *const c_char, _lane_bytes: usize) -> usize {
 }
 
 #[inline(never)]
-unsafe fn raw_lane_strnlen_bytes(s: *const c_char, max: usize, _lane_bytes: usize) -> (usize, bool) {
+unsafe fn raw_lane_strnlen_bytes(
+    s: *const c_char,
+    max: usize,
+    _lane_bytes: usize,
+) -> (usize, bool) {
     // SWAR bounded NUL scan via the shared `scan_c_string`, which has the identical
     // `(index_of_nul_or_max, found_nul)` contract. Supersedes the old byte-chunked
     // loop with the proven word-at-a-time scan.
@@ -5897,9 +5905,8 @@ pub unsafe extern "C" fn regexec(
             let mut dummy = [regex::RegMatch::default(); 1];
             regex::regex_exec_bytes(compiled, sub, &mut dummy, sub_eflags)
         } else {
-            let pmatch_slice = unsafe {
-                core::slice::from_raw_parts_mut(pmatch as *mut regex::RegMatch, nmatch)
-            };
+            let pmatch_slice =
+                unsafe { core::slice::from_raw_parts_mut(pmatch as *mut regex::RegMatch, nmatch) };
             let rc = regex::regex_exec_bytes(compiled, sub, pmatch_slice, sub_eflags);
             if rc == 0 {
                 // Re-base sub-buffer-relative offsets onto `string`.
@@ -6043,7 +6050,11 @@ struct AltDirGlobFs {
 
 impl frankenlibc_core::string::glob::GlobFs for AltDirGlobFs {
     fn read_dir(&self, dir_path: &[u8]) -> Result<Vec<Vec<u8>>, c_int> {
-        let bytes = if dir_path.is_empty() { b".".to_vec() } else { dir_path.to_vec() };
+        let bytes = if dir_path.is_empty() {
+            b".".to_vec()
+        } else {
+            dir_path.to_vec()
+        };
         let Ok(cpath) = std::ffi::CString::new(bytes) else {
             return Err(frankenlibc_core::errno::ENOENT);
         };
@@ -6055,7 +6066,11 @@ impl frankenlibc_core::string::glob::GlobFs for AltDirGlobFs {
         let dir = unsafe { opendir(cpath.as_ptr()) };
         if dir.is_null() {
             let e = unsafe { *libc::__errno_location() };
-            return Err(if e != 0 { e } else { frankenlibc_core::errno::ENOENT });
+            return Err(if e != 0 {
+                e
+            } else {
+                frankenlibc_core::errno::ENOENT
+            });
         }
         let mut names = Vec::new();
         loop {
@@ -6171,12 +6186,7 @@ pub unsafe extern "C" fn glob(
         };
         glob_core::glob_expand_with_fs(&pat_bytes, flags, &mut errfn, &alt)
     } else {
-        glob_core::glob_expand_with_fs(
-            &pat_bytes,
-            flags,
-            &mut errfn,
-            &glob_core::StdGlobFs,
-        )
+        glob_core::glob_expand_with_fs(&pat_bytes, flags, &mut errfn, &glob_core::StdGlobFs)
     };
 
     match result {

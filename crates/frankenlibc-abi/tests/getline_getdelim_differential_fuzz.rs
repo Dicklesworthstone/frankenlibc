@@ -26,7 +26,10 @@ unsafe extern "C" {
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0
     }
     fn below(&mut self, n: usize) -> usize {
@@ -45,8 +48,13 @@ fn gen_data(r: &mut Lcg) -> Vec<u8> {
 fn run_fl(data: &[u8], delim: i32) -> Vec<(isize, Vec<u8>)> {
     let mut owned = data.to_vec();
     let mode = b"rb\0";
-    let stream =
-        unsafe { fl::fmemopen(owned.as_mut_ptr() as *mut libc::c_void, owned.len(), mode.as_ptr() as *const libc::c_char) };
+    let stream = unsafe {
+        fl::fmemopen(
+            owned.as_mut_ptr() as *mut libc::c_void,
+            owned.len(),
+            mode.as_ptr() as *const libc::c_char,
+        )
+    };
     assert!(!stream.is_null(), "fl::fmemopen failed");
     let mut out = Vec::new();
     let mut lineptr: *mut libc::c_char = std::ptr::null_mut();
@@ -56,7 +64,8 @@ fn run_fl(data: &[u8], delim: i32) -> Vec<(isize, Vec<u8>)> {
         if ret < 0 {
             break;
         }
-        let bytes = unsafe { std::slice::from_raw_parts(lineptr as *const u8, ret as usize) }.to_vec();
+        let bytes =
+            unsafe { std::slice::from_raw_parts(lineptr as *const u8, ret as usize) }.to_vec();
         out.push((ret, bytes));
         if out.len() > 200 {
             break;
@@ -70,7 +79,11 @@ fn run_glibc(data: &[u8], delim: i32) -> Vec<(isize, Vec<u8>)> {
     let mut owned = data.to_vec();
     let mode = b"rb\0";
     let stream = unsafe {
-        fmemopen(owned.as_mut_ptr() as *mut libc::c_void, owned.len(), mode.as_ptr() as *const libc::c_char)
+        fmemopen(
+            owned.as_mut_ptr() as *mut libc::c_void,
+            owned.len(),
+            mode.as_ptr() as *const libc::c_char,
+        )
     };
     assert!(!stream.is_null(), "glibc fmemopen failed");
     let mut out = Vec::new();
@@ -81,7 +94,8 @@ fn run_glibc(data: &[u8], delim: i32) -> Vec<(isize, Vec<u8>)> {
         if ret < 0 {
             break;
         }
-        let bytes = unsafe { std::slice::from_raw_parts(lineptr as *const u8, ret as usize) }.to_vec();
+        let bytes =
+            unsafe { std::slice::from_raw_parts(lineptr as *const u8, ret as usize) }.to_vec();
         out.push((ret, bytes));
         if out.len() > 200 {
             break;

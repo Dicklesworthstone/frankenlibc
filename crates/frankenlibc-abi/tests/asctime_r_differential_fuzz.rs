@@ -42,10 +42,16 @@ fn run(
     let mut buf = [0u8; 64];
     let r = unsafe { f(tm, buf.as_mut_ptr() as *mut std::ffi::c_char) };
     if r.is_null() {
-        Out { null: true, s: Vec::new() }
+        Out {
+            null: true,
+            s: Vec::new(),
+        }
     } else {
         let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-        Out { null: false, s: buf[..n].to_vec() }
+        Out {
+            null: false,
+            s: buf[..n].to_vec(),
+        }
     }
 }
 
@@ -64,9 +70,9 @@ fn asctime_r_differential_fuzz_vs_glibc() {
         tm.tm_mon = r.range(0, 11);
         tm.tm_wday = r.range(0, 6);
         tm.tm_year = match r.next() % 4 {
-            0 => r.range(-2100, 8200),     // around the lower & normal range
-            1 => r.range(8000, 8200),      // near the +year boundary (year ~9999)
-            2 => r.range(-2900, -2700),    // near the -year boundary (year ~-999)
+            0 => r.range(-2100, 8200),  // around the lower & normal range
+            1 => r.range(8000, 8200),   // near the +year boundary (year ~9999)
+            2 => r.range(-2900, -2700), // near the -year boundary (year ~-999)
             _ => r.range(-30000, 1_000_000),
         };
         let fl = run(fl_asctime_r, &tm);

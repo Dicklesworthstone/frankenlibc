@@ -73,7 +73,11 @@ fn run(is_fl: bool, input: &CStr, fmt: &CStr) -> Out {
     } else {
         (None, None)
     };
-    Out { ret, matched, n: nn }
+    Out {
+        ret,
+        matched,
+        n: nn,
+    }
 }
 
 #[test]
@@ -85,10 +89,8 @@ fn sscanf_char_differential_fuzz_vs_glibc() {
     for _ in 0..200_000 {
         let fmt = gen_fmt(&mut r);
         let input = gen_input(&mut r);
-        let (Ok(cfmt), Ok(cinput)) = (
-            CString::new(fmt.as_str()),
-            CString::new(input.clone()),
-        ) else {
+        let (Ok(cfmt), Ok(cinput)) = (CString::new(fmt.as_str()), CString::new(input.clone()))
+        else {
             continue;
         };
         let fl = run(true, &cinput, &cfmt);

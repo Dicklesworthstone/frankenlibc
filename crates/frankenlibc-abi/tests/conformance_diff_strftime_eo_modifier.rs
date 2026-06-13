@@ -10,8 +10,8 @@
 //! compares the rendered output across the modifier × specifier matrix
 //! (recognised, format-control, and rejected combinations).
 
-use std::ffi::{CString, c_char};
 use frankenlibc_abi::time_abi as fl;
+use std::ffi::{CString, c_char};
 
 unsafe extern "C" {
     fn strftime(s: *mut c_char, m: usize, f: *const c_char, tm: *const libc::tm) -> usize;
@@ -40,14 +40,46 @@ fn strftime_eo_modifier_matches_glibc() {
 
     let fmts = [
         // Format-control specifiers under E/O — the fixed cases.
-        "%E%", "%O%", "%En", "%On", "%Et", "%Ot", "%E%Y", "%O%m",
+        "%E%",
+        "%O%",
+        "%En",
+        "%On",
+        "%Et",
+        "%Ot",
+        "%E%Y",
+        "%O%m",
         // Recognised date specifiers under E/O (C-locale no-op -> base).
-        "%EY", "%Ey", "%EC", "%Ec", "%Ex", "%EX", "%Od", "%Oe", "%OH", "%Om",
-        "%OM", "%OS", "%OU", "%OV", "%Ow", "%OW", "%Oy", "%Eu",
+        "%EY",
+        "%Ey",
+        "%EC",
+        "%Ec",
+        "%Ex",
+        "%EX",
+        "%Od",
+        "%Oe",
+        "%OH",
+        "%Om",
+        "%OM",
+        "%OS",
+        "%OU",
+        "%OV",
+        "%Ow",
+        "%OW",
+        "%Oy",
+        "%Eu",
         // Rejected combinations -> rendered literally.
-        "%EE", "%OO", "%Ea", "%EQ", "%Oq", "%E ", "%O.", "%E", "%O",
+        "%EE",
+        "%OO",
+        "%Ea",
+        "%EQ",
+        "%Oq",
+        "%E ",
+        "%O.",
+        "%E",
+        "%O",
         // A normal embedding.
-        "%Y-%Om-%OdT%OH:%OM:%OS", "literal %E% here",
+        "%Y-%Om-%OdT%OH:%OM:%OS",
+        "literal %E% here",
     ];
     for fmt in fmts {
         let a = render(0, fmt, &tm);

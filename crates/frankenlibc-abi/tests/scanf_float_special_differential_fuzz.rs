@@ -49,9 +49,13 @@ enum Fp {
 
 fn fp(v: f64) -> Fp {
     if v.is_nan() {
-        Fp::Nan { neg: v.is_sign_negative() }
+        Fp::Nan {
+            neg: v.is_sign_negative(),
+        }
     } else if v.is_infinite() {
-        Fp::Inf { neg: v.is_sign_negative() }
+        Fp::Inf {
+            neg: v.is_sign_negative(),
+        }
     } else {
         Fp::Finite(v.to_bits())
     }
@@ -64,18 +68,24 @@ struct Out {
     n: Option<c_int>,
 }
 
-fn run(
-    is_fl: bool,
-    s: &CString,
-    fmt: &CString,
-) -> Out {
+fn run(is_fl: bool, s: &CString, fmt: &CString) -> Out {
     let mut v: f64 = 0.0;
     let mut n: c_int = -12345;
     let ret = unsafe {
         if is_fl {
-            fl_sscanf(s.as_ptr(), fmt.as_ptr(), &mut v as *mut f64, &mut n as *mut c_int)
+            fl_sscanf(
+                s.as_ptr(),
+                fmt.as_ptr(),
+                &mut v as *mut f64,
+                &mut n as *mut c_int,
+            )
         } else {
-            sscanf(s.as_ptr(), fmt.as_ptr(), &mut v as *mut f64, &mut n as *mut c_int)
+            sscanf(
+                s.as_ptr(),
+                fmt.as_ptr(),
+                &mut v as *mut f64,
+                &mut n as *mut c_int,
+            )
         }
     };
     Out {

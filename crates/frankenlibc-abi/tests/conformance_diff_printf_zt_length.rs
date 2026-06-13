@@ -12,8 +12,8 @@
 //! printed 4294967291 instead of 18446744073709551611. The scanf side was
 //! already correct; this gate pins the printf side against glibc.
 
-use std::ffi::{CString, c_char};
 use frankenlibc_abi::stdio_abi as fl;
+use std::ffi::{CString, c_char};
 
 unsafe extern "C" {
     fn snprintf(b: *mut c_char, s: usize, f: *const c_char, ...) -> i32;
@@ -39,11 +39,11 @@ fn printf_zt_length_matches_glibc() {
         -1,
         -1234,
         1234,
-        5_000_000_000,        // > u32::MAX
+        5_000_000_000, // > u32::MAX
         -5_000_000_000,
-        0xffff_ffff,          // u32::MAX
-        0x1_0000_0000,        // u32::MAX + 1
-        0xffff_ffff_ff,       // 40-bit
+        0xffff_ffff,    // u32::MAX
+        0x1_0000_0000,  // u32::MAX + 1
+        0xffff_ffff_ff, // 40-bit
         i64::MIN,
         i64::MAX,
         -5,
@@ -53,10 +53,8 @@ fn printf_zt_length_matches_glibc() {
     // flag/width combinations layered on to exercise padding around the
     // widened value.
     let fmts = [
-        "%zd", "%zi", "%zu", "%zo", "%zx", "%zX",
-        "%td", "%ti", "%tu", "%to", "%tx", "%tX",
-        "%+zd", "%020zd", "% td", "%-20tu|", "%#zx", "%#to",
-        "%015td", "%+.6zd", "%.0zd", "%20zx",
+        "%zd", "%zi", "%zu", "%zo", "%zx", "%zX", "%td", "%ti", "%tu", "%to", "%tx", "%tX", "%+zd",
+        "%020zd", "% td", "%-20tu|", "%#zx", "%#to", "%015td", "%+.6zd", "%.0zd", "%20zx",
     ];
 
     for fmt in fmts {

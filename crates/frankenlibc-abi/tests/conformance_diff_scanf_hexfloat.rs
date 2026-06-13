@@ -9,8 +9,8 @@
 //! compares the exact bit pattern (and `%n` consumed count) over the whole
 //! `0x1.hp±e` grammar, with emphasis on the subnormal boundary.
 
-use std::ffi::{CString, c_char};
 use frankenlibc_abi::stdio_abi as fl;
+use std::ffi::{CString, c_char};
 
 unsafe extern "C" {
     fn sscanf(s: *const c_char, f: *const c_char, ...) -> i32;
@@ -39,17 +39,44 @@ fn check(inp: &str) {
 fn scanf_hexfloat_matches_glibc() {
     let cases = [
         // Subnormal boundary — the regression.
-        "0x1p-1074", "0x1p-1073", "0x1.8p-1074", "0x1p-1075", "0x3p-1075",
-        "0x1p-1076", "0x2p-1075", "0x1p-2000", "-0x1p-1074", "0x1.55555p-1070",
+        "0x1p-1074",
+        "0x1p-1073",
+        "0x1.8p-1074",
+        "0x1p-1075",
+        "0x3p-1075",
+        "0x1p-1076",
+        "0x2p-1075",
+        "0x1p-2000",
+        "-0x1p-1074",
+        "0x1.55555p-1070",
         // Around DBL_MIN (smallest normal) and into subnormals.
-        "0x1p-1022", "0x1.fffffffffffffp-1023", "0x0.8p-1021",
-        "0x1.0000000000001p-1022", "0x1p-1023",
+        "0x1p-1022",
+        "0x1.fffffffffffffp-1023",
+        "0x0.8p-1021",
+        "0x1.0000000000001p-1022",
+        "0x1p-1023",
         // Normal range, specials, rounding.
-        "0x1.8p3", "0x1p-2", "0X1.Fp+4", "0x.8p1", "0x1.p0", "-0x1.8p3", "0x0p0",
-        "0xAp0", "0x1.000002p0", "0x1.fffffffffffffp1023", "0x1p1024", "-0x0p0",
-        "0x10p-4", "0X.1P4",
+        "0x1.8p3",
+        "0x1p-2",
+        "0X1.Fp+4",
+        "0x.8p1",
+        "0x1.p0",
+        "-0x1.8p3",
+        "0x0p0",
+        "0xAp0",
+        "0x1.000002p0",
+        "0x1.fffffffffffffp1023",
+        "0x1p1024",
+        "-0x0p0",
+        "0x10p-4",
+        "0X.1P4",
         // Matching failures / partial tokens.
-        "0x1.8p", "0x1p", "0x", "0xg", "0x1.8p3xyz", "  0x1.8p3",
+        "0x1.8p",
+        "0x1p",
+        "0x",
+        "0xg",
+        "0x1.8p3xyz",
+        "  0x1.8p3",
     ];
     for c in cases {
         check(c);

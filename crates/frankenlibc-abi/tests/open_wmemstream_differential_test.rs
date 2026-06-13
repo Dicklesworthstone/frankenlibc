@@ -9,8 +9,8 @@
 //! the current position (both in wide chars), so a backward seek + write shrinks
 //! the reported size while the tail wchars + NUL terminator survive.
 
-use frankenlibc_abi::wchar_abi as fl;
 use frankenlibc_abi::stdio_abi as flio;
+use frankenlibc_abi::wchar_abi as fl;
 
 unsafe extern "C" {
     fn open_wmemstream(bufp: *mut *mut libc::wchar_t, sizep: *mut usize) -> *mut libc::FILE;
@@ -36,7 +36,12 @@ fn run(glibc: bool) -> Vec<(&'static str, usize, Vec<u32>)> {
     let stream: *mut libc::FILE = if glibc {
         unsafe { open_wmemstream(&mut ptr, &mut sz) }
     } else {
-        unsafe { fl::open_wmemstream(&mut ptr as *mut *mut libc::wchar_t as *mut *mut u32, &mut sz) as *mut libc::FILE }
+        unsafe {
+            fl::open_wmemstream(
+                &mut ptr as *mut *mut libc::wchar_t as *mut *mut u32,
+                &mut sz,
+            ) as *mut libc::FILE
+        }
     };
     assert!(!stream.is_null(), "open_wmemstream failed (glibc={glibc})");
 
@@ -58,7 +63,13 @@ fn run(glibc: bool) -> Vec<(&'static str, usize, Vec<u32>)> {
         if glibc {
             unsafe { fseek(stream, off as libc::c_long, libc::SEEK_SET) };
         } else {
-            unsafe { flio::fseek(stream as *mut libc::c_void, off as libc::c_long, libc::SEEK_SET) };
+            unsafe {
+                flio::fseek(
+                    stream as *mut libc::c_void,
+                    off as libc::c_long,
+                    libc::SEEK_SET,
+                )
+            };
         }
     };
     let flush = || {

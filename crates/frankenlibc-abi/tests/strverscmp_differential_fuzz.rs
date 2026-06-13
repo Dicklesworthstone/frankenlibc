@@ -43,7 +43,9 @@ fn gen_string(r: &mut Lcg) -> Vec<u8> {
     // Heavy on '0' and digits; some letters, dots, dashes.
     const ALPHABET: &[u8] = b"00001234567899.aZ-: \x01\x7f\x80\xfe\xff";
     let len = r.below(13);
-    (0..len).map(|_| ALPHABET[r.below(ALPHABET.len())]).collect()
+    (0..len)
+        .map(|_| ALPHABET[r.below(ALPHABET.len())])
+        .collect()
 }
 
 /// A single-edit mutation of `base` (substitute / insert / delete one byte) so
@@ -61,7 +63,7 @@ fn mutate(r: &mut Lcg, base: &[u8]) -> Vec<u8> {
         1 => v.insert(pos, ALPHABET[r.below(ALPHABET.len())]), // insert
         _ => {
             v.remove(pos);
-        } // delete
+        }        // delete
     }
     v
 }

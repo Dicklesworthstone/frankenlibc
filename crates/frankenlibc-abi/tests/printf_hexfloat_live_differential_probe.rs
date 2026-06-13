@@ -76,7 +76,7 @@ fn printf_hexfloat_live_vs_glibc() {
         255.0,
         f64::MAX,
         f64::MIN_POSITIVE,
-        f64::from_bits(1),                  // smallest subnormal
+        f64::from_bits(1),                     // smallest subnormal
         f64::from_bits(0x000F_FFFF_FFFF_FFFF), // largest subnormal
         f64::from_bits(0x3FEF_FFFF_FFFF_FFFF), // 0x1.fff...p-1 (just below 1)
         f64::from_bits(0x3FFF_FFFF_FFFF_FFFF), // 0x1.fff...p+0 (just below 2) — carry stress
@@ -127,7 +127,12 @@ fn printf_hexfloat_live_vs_glibc() {
         let shown: Vec<_> = divergences
             .iter()
             .take(30)
-            .map(|(fmt, v, h, f)| format!("%{fmt} of {v:e} ({:#018x}): glibc={h:?} fl={f:?}", v.to_bits()))
+            .map(|(fmt, v, h, f)| {
+                format!(
+                    "%{fmt} of {v:e} ({:#018x}): glibc={h:?} fl={f:?}",
+                    v.to_bits()
+                )
+            })
             .collect();
         panic!(
             "printf %a diverged from host glibc on {}/{} cases (showing up to 30):\n{}",

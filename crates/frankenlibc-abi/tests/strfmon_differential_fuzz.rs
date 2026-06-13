@@ -143,7 +143,11 @@ fn strfmon_golden_c_locale() {
         let g = fl(&cf, val);
         assert_eq!(g.out.as_deref(), Some(want), "fmt={fmt:?} val={val}");
         // Also confirm the host oracle agrees with the golden string.
-        assert_eq!(host(&cf, val).out.as_deref(), Some(want), "oracle fmt={fmt:?}");
+        assert_eq!(
+            host(&cf, val).out.as_deref(),
+            Some(want),
+            "oracle fmt={fmt:?}"
+        );
     }
 }
 

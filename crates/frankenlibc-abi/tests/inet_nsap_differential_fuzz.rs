@@ -12,9 +12,7 @@
 
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 
-use frankenlibc_abi::glibc_internal_abi::{
-    inet_nsap_addr as fl_addr, inet_nsap_ntoa as fl_ntoa,
-};
+use frankenlibc_abi::glibc_internal_abi::{inet_nsap_addr as fl_addr, inet_nsap_ntoa as fl_ntoa};
 
 // inet_nsap_addr / inet_nsap_ntoa live in libresolv, not libc.
 #[link(name = "resolv")]
@@ -55,7 +53,11 @@ fn call_ntoa(
     // Generous caller buffer: each byte -> 2 hex + up to 1 sep, + NUL.
     let mut out = vec![0u8; bin.len() * 3 + 16];
     let r = unsafe {
-        f(bin.len() as c_int, bin.as_ptr() as *const c_void, out.as_mut_ptr() as *mut c_char)
+        f(
+            bin.len() as c_int,
+            bin.as_ptr() as *const c_void,
+            out.as_mut_ptr() as *mut c_char,
+        )
     };
     if r.is_null() {
         return "<null>".into();
@@ -78,7 +80,9 @@ fn inet_nsap_differential_fuzz_vs_glibc() {
         let host_s = call_ntoa(inet_nsap_ntoa, &bin);
         compared += 1;
         if fl_s != host_s && divs.len() < 40 {
-            divs.push(format!("ntoa bin={bin:02x?}\n    fl   ={fl_s:?}\n    glibc={host_s:?}"));
+            divs.push(format!(
+                "ntoa bin={bin:02x?}\n    fl   ={fl_s:?}\n    glibc={host_s:?}"
+            ));
         }
 
         // ---- addr: parse a generated hex/sep/junk string ----

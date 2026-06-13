@@ -32,14 +32,14 @@ struct Tm {
     f: [c_int; 8],
 }
 
-fn run(
-    g: unsafe extern "C" fn(*const i64, *mut libc::tm) -> *mut libc::tm,
-    epoch: i64,
-) -> Tm {
+fn run(g: unsafe extern "C" fn(*const i64, *mut libc::tm) -> *mut libc::tm, epoch: i64) -> Tm {
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let r = unsafe { g(&epoch, &mut tm) };
     if r.is_null() {
-        Tm { null: true, f: [0; 8] }
+        Tm {
+            null: true,
+            f: [0; 8],
+        }
     } else {
         Tm {
             null: false,
@@ -82,7 +82,9 @@ fn gmtime_r_wide_range_differential_fuzz_vs_glibc() {
         let host = run(gmtime_r, epoch);
         compared += 1;
         if fl != host && divs.len() < 40 {
-            divs.push(format!("epoch={epoch}\n    fl   ={fl:?}\n    glibc={host:?}"));
+            divs.push(format!(
+                "epoch={epoch}\n    fl   ={fl:?}\n    glibc={host:?}"
+            ));
         }
     }
 

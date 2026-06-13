@@ -107,19 +107,19 @@ fn realpath_matches_host_glibc() {
         format!("{b}/d/../d/f"),   // ..
         format!("{b}/d/sub/../f"), // .. through subdir
         format!("{b}/lnk_dir"),
-        format!("{b}/lnk_dir/f"),  // through symlinked dir
+        format!("{b}/lnk_dir/f"), // through symlinked dir
         format!("{b}/lnk_file"),
         format!("{b}/lnk_abs"),
-        format!("{b}/dangle"),     // -> ENOENT
-        format!("{b}/loop"),       // -> ELOOP
-        format!("{b}/nope"),       // nonexistent -> ENOENT
-        format!("{b}/d/f/x"),      // component under a file -> ENOTDIR
+        format!("{b}/dangle"), // -> ENOENT
+        format!("{b}/loop"),   // -> ELOOP
+        format!("{b}/nope"),   // nonexistent -> ENOENT
+        format!("{b}/d/f/x"),  // component under a file -> ENOTDIR
         format!("{b}/../{}/d/f", base.file_name().unwrap().to_string_lossy()),
         ".".to_string(),
         "/".to_string(),
         "//".to_string(),
         "/usr/../usr".to_string(),
-        String::new(),             // empty -> ENOENT
+        String::new(), // empty -> ENOENT
     ];
 
     let mut divergences: Vec<(String, Out, Out)> = Vec::new();

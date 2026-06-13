@@ -65,12 +65,12 @@ fn timegm_wide_range_differential_fuzz_vs_glibc() {
     for _ in 0..300_000 {
         // Out-of-range fields force the normalization paths; wide year span.
         let fields = [
-            r.range(-120, 180),         // tm_sec
-            r.range(-120, 180),         // tm_min
-            r.range(-50, 80),           // tm_hour
-            r.range(-40, 70),           // tm_mday
-            r.range(-30, 40),           // tm_mon
-            r.range(-2000, 1_000_000),  // tm_year (year - 1900)
+            r.range(-120, 180),        // tm_sec
+            r.range(-120, 180),        // tm_min
+            r.range(-50, 80),          // tm_hour
+            r.range(-40, 70),          // tm_mday
+            r.range(-30, 40),          // tm_mon
+            r.range(-2000, 1_000_000), // tm_year (year - 1900)
         ];
         let fl = run(fl_timegm, fields);
         let host = run(timegm, fields);

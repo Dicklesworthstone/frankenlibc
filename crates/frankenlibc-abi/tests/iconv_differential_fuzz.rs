@@ -59,8 +59,13 @@ struct Out {
 
 type OpenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
 type CloseFn = unsafe extern "C" fn(*mut c_void) -> std::ffi::c_int;
-type ConvFn =
-    unsafe extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
+type ConvFn = unsafe extern "C" fn(
+    *mut c_void,
+    *mut *mut c_char,
+    *mut usize,
+    *mut *mut c_char,
+    *mut usize,
+) -> usize;
 
 /// `None` means iconv_open failed (codec unsupported by this implementation).
 unsafe fn run(
@@ -164,7 +169,9 @@ fn iconv_differential_fuzz_vs_glibc() {
                 ok
             };
             if fl_ok != host_ok {
-                open_gaps.push(format!("{codec} {label}: fl_open={fl_ok} host_open={host_ok}"));
+                open_gaps.push(format!(
+                    "{codec} {label}: fl_open={fl_ok} host_open={host_ok}"
+                ));
             }
         }
 
@@ -174,7 +181,8 @@ fn iconv_differential_fuzz_vs_glibc() {
             let src: Vec<u8> = (0..len).map(|_| r.byte()).collect();
 
             for (to, from) in [(&cp, &utf8), (&utf8, &cp)] {
-                let fl_out = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, to, from, &src) };
+                let fl_out =
+                    unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, to, from, &src) };
                 let host_out = unsafe { run(iconv_open, iconv_close, iconv, to, from, &src) };
                 let (Some(f), Some(h)) = (fl_out, host_out) else {
                     continue; // codec unsupported by one side — skip
@@ -229,8 +237,14 @@ fn iconv_unmarked_bom_vs_glibc() {
         ("BE-BOM", &[0x00, 0x00, 0xFE, 0xFF, 0x00, 0x00, 0x00, 0x41]),
         ("LE-BOM only", &[0xFF, 0xFE, 0x00, 0x00]),
         ("BE-BOM only", &[0x00, 0x00, 0xFE, 0xFF]),
-        ("LE-BOM + astral", &[0xFF, 0xFE, 0x00, 0x00, 0x00, 0xF6, 0x01, 0x00]),
-        ("BE-BOM + astral", &[0x00, 0x00, 0xFE, 0xFF, 0x00, 0x01, 0xF6, 0x00]),
+        (
+            "LE-BOM + astral",
+            &[0xFF, 0xFE, 0x00, 0x00, 0x00, 0xF6, 0x01, 0x00],
+        ),
+        (
+            "BE-BOM + astral",
+            &[0x00, 0x00, 0xFE, 0xFF, 0x00, 0x01, 0xF6, 0x00],
+        ),
     ];
     let utf16: &[(&str, &[u8])] = &[
         ("no-BOM", &[0x00, 0x41]),
@@ -284,7 +298,9 @@ fn iconv_wide_differential_fuzz_vs_glibc() {
     let mut divs: Vec<String> = Vec::new();
     let mut compared: u64 = 0;
 
-    const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "UTF-32", "UTF-16"];
+    const WIDE: &[&str] = &[
+        "UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "UTF-32", "UTF-16",
+    ];
 
     for codec in WIDE {
         let w = CString::new(*codec).unwrap();
@@ -301,9 +317,9 @@ fn iconv_wide_differential_fuzz_vs_glibc() {
                     // Bias toward BMP, but reach astral + surrogate-gap edges.
                     let pick = r.next() % 8;
                     let cp = match pick {
-                        0 => r.next() as u32 % 0x80,            // ASCII
-                        1 | 2 => r.next() as u32 % 0x800,       // 2-byte
-                        3 | 4 => r.next() as u32 % 0x10000,     // 3-byte (may be surrogate -> skipped)
+                        0 => r.next() as u32 % 0x80,                 // ASCII
+                        1 | 2 => r.next() as u32 % 0x800,            // 2-byte
+                        3 | 4 => r.next() as u32 % 0x10000, // 3-byte (may be surrogate -> skipped)
                         _ => 0x10000 + (r.next() as u32 % 0x100000), // astral (surrogate pair in UTF-16)
                     };
                     push_utf8(&mut v, cp);
@@ -316,7 +332,8 @@ fn iconv_wide_differential_fuzz_vs_glibc() {
                     (&w, &utf8, format!("UTF-8->{codec}")),
                     (&utf8, &w, format!("{codec}->UTF-8")),
                 ] {
-                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, to, from, src) };
+                    let f =
+                        unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, to, from, src) };
                     let h = unsafe { run(iconv_open, iconv_close, iconv, to, from, src) };
                     let (Some(f), Some(h)) = (f, h) else { continue };
                     compared += 1;
@@ -783,7 +800,15 @@ fn iconv_cjk_differential_fuzz_vs_glibc() {
     let mut compared: u64 = 0;
 
     const CJK: &[&str] = &[
-        "SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR", "CP949", "GB2312", "GB18030", "JOHAB",
+        "SHIFT_JIS",
+        "BIG5",
+        "EUC-JP",
+        "GBK",
+        "EUC-KR",
+        "CP949",
+        "GB2312",
+        "GB18030",
+        "JOHAB",
     ];
 
     for codec in CJK {
@@ -805,9 +830,9 @@ fn iconv_cjk_differential_fuzz_vs_glibc() {
                         2 => 0xFF61 + (r.next() as u32 % 0x3F),           // half-width kana
                         3 | 4 => 0x3000 + (r.next() as u32 % 0x100),      // CJK symbols/kana
                         5 | 6 | 7 => 0x4E00 + (r.next() as u32 % 0x5200), // CJK ideographs (2-byte)
-                        8 => 0x80 + (r.next() as u32 % 0x3F00),           // low BMP (GB18030 4-byte)
-                        9 | 10 => r.next() as u32 % 0x10000,              // any BMP
-                        _ => 0x10000 + (r.next() as u32 % 0x100000),      // astral (GB18030 4-byte)
+                        8 => 0x80 + (r.next() as u32 % 0x3F00), // low BMP (GB18030 4-byte)
+                        9 | 10 => r.next() as u32 % 0x10000,    // any BMP
+                        _ => 0x10000 + (r.next() as u32 % 0x100000), // astral (GB18030 4-byte)
                     };
                     push_utf8(&mut v, cp);
                 }
@@ -816,11 +841,10 @@ fn iconv_cjk_differential_fuzz_vs_glibc() {
             // Valid codec byte sequence (host-encoded) so the decode direction
             // sees real multibyte sequences — incl. GB18030 4-byte — not just the
             // rare valid runs in random bytes.
-            let codec_bytes: Vec<u8> = unsafe {
-                run(iconv_open, iconv_close, iconv, &c, &utf8, &valid_utf8)
-            }
-            .map(|o| o.out)
-            .unwrap_or_default();
+            let codec_bytes: Vec<u8> =
+                unsafe { run(iconv_open, iconv_close, iconv, &c, &utf8, &valid_utf8) }
+                    .map(|o| o.out)
+                    .unwrap_or_default();
 
             for (src, to, from, dir) in [
                 (&raw, &c, &utf8, format!("UTF-8->{codec}")),

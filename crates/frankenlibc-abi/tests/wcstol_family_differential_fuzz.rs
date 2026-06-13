@@ -38,7 +38,10 @@ unsafe extern "C" {
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0
     }
     fn below(&mut self, n: usize) -> usize {
@@ -50,7 +53,13 @@ fn gen_wc(r: &mut Lcg) -> Wc {
     let v: u32 = match r.below(22) {
         0 | 1 => b' ' as u32,
         2 => *b"\t\n\r\x0b\x0c".get(r.below(5)).unwrap() as u32,
-        3 => if r.below(2) == 0 { b'+' as u32 } else { b'-' as u32 },
+        3 => {
+            if r.below(2) == 0 {
+                b'+' as u32
+            } else {
+                b'-' as u32
+            }
+        }
         4..=9 => b'0' as u32 + r.below(10) as u32,
         10 => b'0' as u32,
         11 => *b"xXbB".get(r.below(4)).unwrap() as u32,
@@ -113,7 +122,10 @@ fn wcstol_family_differential_fuzz_vs_glibc() {
         input.push(0); // NUL terminate
         let base = gen_base(&mut r);
         let p = input.as_ptr();
-        let shown: String = input[..input.len() - 1].iter().map(|&c| format!("{c:#x} ")).collect();
+        let shown: String = input[..input.len() - 1]
+            .iter()
+            .map(|&c| format!("{c:#x} "))
+            .collect();
 
         macro_rules! check {
             ($name:expr, $fl:path, $lc:path) => {{

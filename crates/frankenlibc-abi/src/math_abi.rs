@@ -4213,10 +4213,22 @@ pub unsafe extern "C" fn exp10m1f128(x: f64) -> f64 {
 // --- compoundn ((1+x)^n) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn compoundn(x: f64, n: i64) -> f64 {
+    // C23 7.12.7.1: compoundn(x, n) = (1+x)^n is defined only for x >= -1;
+    // x < -1 is a domain error (NaN + FE_INVALID). For x >= -1, pow already
+    // gives the exact contract: pow(anything,0)=1 (incl NaN/inf), pow(0,n<0)=
+    // inf+DBZ, NaN propagation.
+    if x < -1.0 {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
     frankenlibc_core::math::pow(1.0 + x, n as f64)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn compoundnf(x: f32, n: i64) -> f32 {
+    if x < -1.0 {
+        pi_fn_raise_invalid_f32();
+        return f32::NAN;
+    }
     frankenlibc_core::math::powf(1.0f32 + x, n as f32)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4281,19 +4293,36 @@ pub unsafe extern "C" fn pownf128(x: f64, n: i64) -> f64 {
 // --- powr (x^y for positive x) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn powr(x: f64, y: f64) -> f64 {
-    if x < 0.0 {
-        f64::NAN
-    } else {
-        frankenlibc_core::math::pow(x, y)
+    // C23 7.12.7.2: powr(x, y) = exp(y*log(x)), defined for x >= 0. Unlike pow,
+    // powr propagates NaN in BOTH args (powr(NaN,0)=NaN, not 1) and the
+    // indeterminate forms 0^0, inf^0, 1^±inf are domain errors (NaN+INVALID).
+    if x.is_nan() || y.is_nan() {
+        return f64::NAN;
     }
+    if x < 0.0 {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
+    if (x == 0.0 && y == 0.0) || (x.is_infinite() && y == 0.0) || (x == 1.0 && y.is_infinite()) {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
+    frankenlibc_core::math::pow(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn powrf(x: f32, y: f32) -> f32 {
-    if x < 0.0f32 {
-        f32::NAN
-    } else {
-        frankenlibc_core::math::powf(x, y)
+    if x.is_nan() || y.is_nan() {
+        return f32::NAN;
     }
+    if x < 0.0f32 {
+        pi_fn_raise_invalid_f32();
+        return f32::NAN;
+    }
+    if (x == 0.0 && y == 0.0) || (x.is_infinite() && y == 0.0) || (x == 1.0 && y.is_infinite()) {
+        pi_fn_raise_invalid_f32();
+        return f32::NAN;
+    }
+    frankenlibc_core::math::powf(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn powrl(x: f64, y: f64) -> f64 {
@@ -4323,17 +4352,45 @@ pub unsafe extern "C" fn powrf128(x: f64, y: f64) -> f64 {
 // --- rootn (nth root) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rootn(x: f64, n: i64) -> f64 {
+    // C23 7.12.7.4: rootn(x, n) = x^(1/n). Naive pow(x, 1/n) is wrong for
+    // negative x with ODD n (the real n-th root exists, e.g. rootn(-8,3)=-2,
+    // but pow(-8, 0.333…)=NaN). Handle the sign explicitly.
     if n == 0 {
+        pi_fn_raise_invalid_f64(); // rootn(x,0) is a domain error
         return f64::NAN;
     }
-    frankenlibc_core::math::pow(x, 1.0 / n as f64)
+    if x.is_nan() {
+        return x;
+    }
+    if x < 0.0 {
+        if n & 1 == 0 {
+            pi_fn_raise_invalid_f64(); // even root of a negative is undefined
+            return f64::NAN;
+        }
+        return -frankenlibc_core::math::pow(-x, 1.0 / n as f64);
+    }
+    let r = frankenlibc_core::math::pow(x, 1.0 / n as f64);
+    // pow(-0.0, +/-frac) loses the sign for an odd root; restore it.
+    if x == 0.0 && (n & 1 != 0) { r.copysign(x) } else { r }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rootnf(x: f32, n: i64) -> f32 {
     if n == 0 {
+        pi_fn_raise_invalid_f32();
         return f32::NAN;
     }
-    frankenlibc_core::math::powf(x, 1.0f32 / n as f32)
+    if x.is_nan() {
+        return x;
+    }
+    if x < 0.0 {
+        if n & 1 == 0 {
+            pi_fn_raise_invalid_f32();
+            return f32::NAN;
+        }
+        return -frankenlibc_core::math::powf(-x, 1.0f32 / n as f32);
+    }
+    let r = frankenlibc_core::math::powf(x, 1.0f32 / n as f32);
+    if x == 0.0 && (n & 1 != 0) { r.copysign(x) } else { r }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rootnl(x: f64, n: i64) -> f64 {

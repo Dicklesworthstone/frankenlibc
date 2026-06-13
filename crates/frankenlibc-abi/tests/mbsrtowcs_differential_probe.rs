@@ -24,9 +24,9 @@ unsafe extern "C" {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct Outcome {
-    rc: i64,             // count, or -1 for EILSEQ
+    rc: i64,                // count, or -1 for EILSEQ
     src_off: Option<isize>, // None == *src set to NULL, else byte offset from start
-    wide: Vec<u32>,      // wide chars actually written (when converting)
+    wide: Vec<u32>,         // wide chars actually written (when converting)
 }
 
 /// `input` must include its terminating NUL.
@@ -95,7 +95,11 @@ fn finish(
     } else {
         (rc_i as usize).min(len).min(wide.len())
     };
-    let captured = if dst_null { Vec::new() } else { wide[..n].to_vec() };
+    let captured = if dst_null {
+        Vec::new()
+    } else {
+        wide[..n].to_vec()
+    };
     Outcome {
         rc: rc_i,
         src_off,
@@ -118,12 +122,12 @@ fn mbsrtowcs_matches_host_glibc() {
         b"a\0",
         b"abc\0",
         b"hello world\0",
-        "café\0".as_bytes(),       // multibyte é
-        "a€b\0".as_bytes(),         // 3-byte €
-        "😀x\0".as_bytes(),         // 4-byte emoji
-        &[b'a', 0xFF, b'b', 0],     // invalid byte mid-string
-        &[0xE2, 0x82, b'a', 0],     // truncated € then ASCII (invalid continuation)
-        &[b'x', 0xC0, 0x80, 0],     // overlong NUL (invalid)
+        "café\0".as_bytes(),    // multibyte é
+        "a€b\0".as_bytes(),     // 3-byte €
+        "😀x\0".as_bytes(),     // 4-byte emoji
+        &[b'a', 0xFF, b'b', 0], // invalid byte mid-string
+        &[0xE2, 0x82, b'a', 0], // truncated € then ASCII (invalid continuation)
+        &[b'x', 0xC0, 0x80, 0], // overlong NUL (invalid)
     ];
 
     let mut compared = 0u64;

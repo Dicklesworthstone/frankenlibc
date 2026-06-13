@@ -10,9 +10,9 @@
 //! the produced bytes. fl-allocated buffers are freed with fl's allocator and
 //! glibc's with the system allocator.
 
-use std::ffi::{CString, c_char, c_void};
 use frankenlibc_abi::malloc_abi as flm;
 use frankenlibc_abi::stdio_abi as fl;
+use std::ffi::{CString, c_char, c_void};
 
 unsafe extern "C" {
     fn sscanf(s: *const c_char, f: *const c_char, ...) -> i32;
@@ -34,7 +34,9 @@ fn alloc_str(eng: u8, inp: &str, fmt: &str) -> (i32, String, String) {
         if p.is_null() {
             "<null>".to_string()
         } else {
-            unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().into_owned()
+            unsafe { std::ffi::CStr::from_ptr(p) }
+                .to_string_lossy()
+                .into_owned()
         }
     };
     let out = (r, s(p1), s(p2));
@@ -100,20 +102,34 @@ fn scanf_m_modifier_matches_glibc() {
     ] {
         let a = alloc_str(0, inp, fmt);
         let b = alloc_str(1, inp, fmt);
-        assert_eq!(a, b, "sscanf({inp:?}, {fmt:?}) [%ms] diverged: fl={a:?} glibc={b:?}");
+        assert_eq!(
+            a, b,
+            "sscanf({inp:?}, {fmt:?}) [%ms] diverged: fl={a:?} glibc={b:?}"
+        );
     }
 
     // %mc allocation (no NUL; exactly the matched count).
     for (inp, fmt, read) in [("xyz", "%mc", 1), ("xyz", "%3mc", 3), ("ab", "%5mc", 2)] {
         let a = char_bytes(0, inp, fmt, read, true);
         let b = char_bytes(1, inp, fmt, read, true);
-        assert_eq!(a, b, "sscanf({inp:?}, {fmt:?}) [%mc] diverged: fl={a:?} glibc={b:?}");
+        assert_eq!(
+            a, b,
+            "sscanf({inp:?}, {fmt:?}) [%mc] diverged: fl={a:?} glibc={b:?}"
+        );
     }
 
     // Non-alloc %Nc reads what is available when width exceeds the input.
-    for (inp, fmt, read) in [("ab", "%5c", 2), ("abcdef", "%3c", 3), ("ab", "%2c", 2), ("a", "%1c", 1)] {
+    for (inp, fmt, read) in [
+        ("ab", "%5c", 2),
+        ("abcdef", "%3c", 3),
+        ("ab", "%2c", 2),
+        ("a", "%1c", 1),
+    ] {
         let a = char_bytes(0, inp, fmt, read, false);
         let b = char_bytes(1, inp, fmt, read, false);
-        assert_eq!(a, b, "sscanf({inp:?}, {fmt:?}) [%Nc] diverged: fl={a:?} glibc={b:?}");
+        assert_eq!(
+            a, b,
+            "sscanf({inp:?}, {fmt:?}) [%Nc] diverged: fl={a:?} glibc={b:?}"
+        );
     }
 }

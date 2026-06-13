@@ -201,7 +201,10 @@ fn tsearch_inorder_and_membership_match_glibc() {
         );
         let fl_mem = membership(0, &arena, ops);
         let gl_mem = membership(1, &arena, ops);
-        assert_eq!(fl_mem, gl_mem, "curated case {ci}: tfind membership diverged");
+        assert_eq!(
+            fl_mem, gl_mem,
+            "curated case {ci}: tfind membership diverged"
+        );
     }
 
     // Randomized insert/delete scripts over the arena.
@@ -223,6 +226,9 @@ fn tsearch_inorder_and_membership_match_glibc() {
         );
         let fl_mem = membership(0, &arena, &ops);
         let gl_mem = membership(1, &arena, &ops);
-        assert_eq!(fl_mem, gl_mem, "random trial {trial}: tfind membership diverged");
+        assert_eq!(
+            fl_mem, gl_mem,
+            "random trial {trial}: tfind membership diverged"
+        );
     }
 }

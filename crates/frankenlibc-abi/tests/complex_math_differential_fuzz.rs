@@ -96,9 +96,17 @@ fn ulp(a: f64, b: f64) -> u64 {
     }
     // Map to a monotonic ordered integer space.
     let ai = a.to_bits() as i64;
-    let am = if ai < 0 { i64::MIN.wrapping_sub(ai) } else { ai };
+    let am = if ai < 0 {
+        i64::MIN.wrapping_sub(ai)
+    } else {
+        ai
+    };
     let bi = b.to_bits() as i64;
-    let bm = if bi < 0 { i64::MIN.wrapping_sub(bi) } else { bi };
+    let bm = if bi < 0 {
+        i64::MIN.wrapping_sub(bi)
+    } else {
+        bi
+    };
     am.abs_diff(bm)
 }
 

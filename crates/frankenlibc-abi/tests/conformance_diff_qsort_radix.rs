@@ -88,7 +88,9 @@ fn check(
     fl_qsort(&mut fl_buf, width, fl_cmp);
 
     let mut gl_buf = bytes_in.to_vec();
-    unsafe { libc::qsort(gl_buf.as_mut_ptr() as *mut c_void, n, width, Some(gl_cmp)); }
+    unsafe {
+        libc::qsort(gl_buf.as_mut_ptr() as *mut c_void, n, width, Some(gl_cmp));
+    }
 
     assert_eq!(
         fl_buf, gl_buf,
@@ -121,15 +123,24 @@ fn qsort_radix_lane_matches_glibc() {
         // A battery of deterministic, index-pure distributions.
         let dists: Vec<(&str, Box<dyn Fn(usize) -> i64>)> = vec![
             ("rand", Box::new(move |i| mix(seed, i) as i64)),
-            ("dups8", Box::new(move |i| (mix(seed ^ 0xABCD, i) % 8) as i64 - 4)),
+            (
+                "dups8",
+                Box::new(move |i| (mix(seed ^ 0xABCD, i) % 8) as i64 - 4),
+            ),
             ("equal", Box::new(|_| 42i64)),
             ("sorted", Box::new(|i| i as i64 - 1000)),
             ("reverse", Box::new(move |i| (n as i64) - i as i64)),
-            ("smallpos", Box::new(move |i| (mix(seed ^ 0x1357, i) % 1000) as i64)),
-            ("mixedsign", Box::new(move |i| {
-                let m = mix(seed ^ 0x2468, i) as i64;
-                if i % 2 == 0 { m } else { m.wrapping_neg() }
-            })),
+            (
+                "smallpos",
+                Box::new(move |i| (mix(seed ^ 0x1357, i) % 1000) as i64),
+            ),
+            (
+                "mixedsign",
+                Box::new(move |i| {
+                    let m = mix(seed ^ 0x2468, i) as i64;
+                    if i % 2 == 0 { m } else { m.wrapping_neg() }
+                }),
+            ),
         ];
 
         for (tag, g) in &dists {
@@ -137,14 +148,26 @@ fn qsort_radix_lane_matches_glibc() {
             let img4 = image(n, 4, |i| g(i));
             check(&format!("i32/{tag}/n{n}"), 4, &img4, fl_i32, gl_i32);
             check(&format!("u32/{tag}/n{n}"), 4, &img4, fl_u32, gl_u32);
-            check(&format!("desc32/{tag}/n{n}"), 4, &img4, fl_i32_desc, gl_i32_desc);
+            check(
+                &format!("desc32/{tag}/n{n}"),
+                4,
+                &img4,
+                fl_i32_desc,
+                gl_i32_desc,
+            );
             hasher.update(check(&format!("i32g/{tag}/n{n}"), 4, &img4, fl_i32, gl_i32));
 
             // width 8 (i64)
             let img8 = image(n, 8, |i| g(i));
             check(&format!("i64/{tag}/n{n}"), 8, &img8, fl_i64, gl_i64);
             check(&format!("u64/{tag}/n{n}"), 8, &img8, fl_u64, gl_u64);
-            check(&format!("desc64/{tag}/n{n}"), 8, &img8, fl_i64_desc, gl_i64_desc);
+            check(
+                &format!("desc64/{tag}/n{n}"),
+                8,
+                &img8,
+                fl_i64_desc,
+                gl_i64_desc,
+            );
             hasher.update(check(&format!("i64g/{tag}/n{n}"), 8, &img8, fl_i64, gl_i64));
         }
     }

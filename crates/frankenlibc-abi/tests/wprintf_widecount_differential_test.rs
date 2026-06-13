@@ -60,7 +60,13 @@ fn wprintf_return_is_wide_count_not_bytes() {
         setlocale(6 /* LC_ALL */, utf8.as_ptr());
     }
     let path = CString::new(format!("/tmp/fl_wprintf_cap_{}", std::process::id())).unwrap();
-    let tmp_fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC, 0o600) };
+    let tmp_fd = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+            0o600,
+        )
+    };
     assert!(tmp_fd >= 0, "could not open temp capture file");
 
     let mut fails: Vec<String> = Vec::new();
@@ -80,7 +86,13 @@ fn wprintf_return_is_wide_count_not_bytes() {
     }
 
     check!("ascii", "hello");
-    check!("euro x3 via %lc", "%lc%lc%lc", 0x20AC_i32, 0x20AC_i32, 0x20AC_i32);
+    check!(
+        "euro x3 via %lc",
+        "%lc%lc%lc",
+        0x20AC_i32,
+        0x20AC_i32,
+        0x20AC_i32
+    );
     check!("mixed", "a%lcb", 0x20AC_i32);
     check!("int+wc", "%d%lc", 42_i32, 0xE9_i32);
     check!("emoji", "%lc!", 0x1F600_i32);

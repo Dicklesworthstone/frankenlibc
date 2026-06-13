@@ -97,7 +97,9 @@ fn drand48_family_differential_fuzz_vs_glibc() {
                     let g = unsafe { drand48() }.to_bits();
                     compared += 1;
                     if f != g && divs.len() < 30 {
-                        divs.push(format!("{seed_desc} -> drand48 fl={f:#018x} glibc={g:#018x}"));
+                        divs.push(format!(
+                            "{seed_desc} -> drand48 fl={f:#018x} glibc={g:#018x}"
+                        ));
                     }
                 }
                 1 => {
@@ -130,14 +132,14 @@ fn drand48_family_differential_fuzz_vs_glibc() {
                     unsafe { fl::erand48(xf.as_mut_ptr()) }.to_bits(),
                     unsafe { erand48(xg.as_mut_ptr()) }.to_bits(),
                 ),
-                1 => (
-                    unsafe { fl::nrand48(xf.as_mut_ptr()) } as u64,
-                    unsafe { nrand48(xg.as_mut_ptr()) } as u64,
-                ),
-                _ => (
-                    unsafe { fl::jrand48(xf.as_mut_ptr()) } as u64,
-                    unsafe { jrand48(xg.as_mut_ptr()) } as u64,
-                ),
+                1 => (unsafe { fl::nrand48(xf.as_mut_ptr()) } as u64, unsafe {
+                    nrand48(xg.as_mut_ptr())
+                }
+                    as u64),
+                _ => (unsafe { fl::jrand48(xf.as_mut_ptr()) } as u64, unsafe {
+                    jrand48(xg.as_mut_ptr())
+                }
+                    as u64),
             };
             compared += 1;
             if (fv != gv || xf != xg) && divs.len() < 30 {

@@ -38,8 +38,16 @@ fn strrchr_matches_glibc() {
             for &t in &[b'a', b'x', b'y', b'z', b'b', 0x80u8, 0xFFu8, 0x00u8, 0x51u8] {
                 let fl = unsafe { fl_strrchr(p, t as i32) };
                 let gl = unsafe { libc::strrchr(p, t as i32) };
-                let fl_off = if fl.is_null() { None } else { Some(fl as usize - p as usize) };
-                let gl_off = if gl.is_null() { None } else { Some(gl as usize - p as usize) };
+                let fl_off = if fl.is_null() {
+                    None
+                } else {
+                    Some(fl as usize - p as usize)
+                };
+                let gl_off = if gl.is_null() {
+                    None
+                } else {
+                    Some(gl as usize - p as usize)
+                };
                 assert_eq!(
                     fl_off, gl_off,
                     "strrchr align={align_off} len={len} target={t:#x}: fl={fl_off:?} gl={gl_off:?}"

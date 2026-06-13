@@ -10,8 +10,8 @@
 //! Drives both engines over a flag matrix in the C locale and compares the
 //! return length + output bytes.
 
-use std::ffi::{CString, c_char};
 use frankenlibc_abi::unistd_abi as fl;
+use std::ffi::{CString, c_char};
 
 unsafe extern "C" {
     fn strfmon(s: *mut c_char, m: usize, f: *const c_char, ...) -> isize;
@@ -43,9 +43,26 @@ fn strfmon_sign_matches_glibc() {
         -0.0f64, 0.0, -1234.567, 1234.567, -0.001, 0.001, -1.0, 1.0, -0.5, 0.5, 99.999,
     ];
     let fmts = [
-        "%n", "%i", "%.0n", "%.4n", "%(n", "%+n", "%!n", "%!i", "%=*#8n", "%=04n",
-        "%^n", "%(#12.2n", "%-15n|", "%15n", "%#10.3n", "%!(n", "%(!n", "%.0i",
-        "%^!(#14.2n", "%=*8n",
+        "%n",
+        "%i",
+        "%.0n",
+        "%.4n",
+        "%(n",
+        "%+n",
+        "%!n",
+        "%!i",
+        "%=*#8n",
+        "%=04n",
+        "%^n",
+        "%(#12.2n",
+        "%-15n|",
+        "%15n",
+        "%#10.3n",
+        "%!(n",
+        "%(!n",
+        "%.0i",
+        "%^!(#14.2n",
+        "%=*8n",
     ];
     for fmt in fmts {
         for &v in &vals {

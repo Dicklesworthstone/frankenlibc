@@ -30,27 +30,31 @@ fn both(s: &[i32], n: usize) -> (i32, i32) {
 #[test]
 fn wcswidth_matches_glibc() {
     let loc = std::ffi::CString::new("C.UTF-8").unwrap();
-    if unsafe { setlocale(6 /* LC_ALL */, loc.as_ptr()) }.is_null() {
+    if unsafe {
+        setlocale(6 /* LC_ALL */, loc.as_ptr())
+    }
+    .is_null()
+    {
         eprintln!("C.UTF-8 unavailable; skipping");
         return;
     }
 
     // Fixed battery: each ends in NUL so it is safe at any `n`.
     let battery: &[&[i32]] = &[
-        &[0],                                   // empty
-        &[0x61, 0x62, 0x63, 0],                 // ascii
-        &[0x4e2d, 0x6587, 0],                   // wide CJK (2+2)
-        &[0x61, 0x09, 0x62, 0],                 // embedded TAB (control -> -1)
-        &[0x61, 0x0301, 0x62, 0],               // combining accent (width 0)
-        &[0x0300, 0],                           // leading combining
-        &[0x61, 0x1b, 0],                       // ESC control
-        &[0x7f, 0],                             // DEL
-        &[0xad, 0],                             // soft hyphen
-        &[0x200b, 0],                           // zero-width space
-        &[0x115f, 0],                           // hangul choseong filler
-        &[0x20ac, 0x10348, 0],                  // BMP + astral
-        &[0x61, 0x62, 0x63, 0x64, 0x65, 0],     // longer, for n-bounding
-        &[0x4e2d, 0x09, 0x6587, 0],             // wide + control + wide
+        &[0],                               // empty
+        &[0x61, 0x62, 0x63, 0],             // ascii
+        &[0x4e2d, 0x6587, 0],               // wide CJK (2+2)
+        &[0x61, 0x09, 0x62, 0],             // embedded TAB (control -> -1)
+        &[0x61, 0x0301, 0x62, 0],           // combining accent (width 0)
+        &[0x0300, 0],                       // leading combining
+        &[0x61, 0x1b, 0],                   // ESC control
+        &[0x7f, 0],                         // DEL
+        &[0xad, 0],                         // soft hyphen
+        &[0x200b, 0],                       // zero-width space
+        &[0x115f, 0],                       // hangul choseong filler
+        &[0x20ac, 0x10348, 0],              // BMP + astral
+        &[0x61, 0x62, 0x63, 0x64, 0x65, 0], // longer, for n-bounding
+        &[0x4e2d, 0x09, 0x6587, 0],         // wide + control + wide
     ];
     for s in battery {
         for n in [0usize, 1, 2, 3, 4, 5, 64] {
@@ -70,12 +74,16 @@ fn wcswidth_matches_glibc() {
     ];
     let mut state: u64 = 0x9e3779b97f4a7c15;
     let mut next = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (state >> 33) as u32
     };
     for _ in 0..200_000 {
         let len = (next() % 8) as usize;
-        let mut buf: Vec<i32> = (0..len).map(|_| alphabet[(next() as usize) % alphabet.len()]).collect();
+        let mut buf: Vec<i32> = (0..len)
+            .map(|_| alphabet[(next() as usize) % alphabet.len()])
+            .collect();
         buf.push(0); // guarantee NUL termination for the oracle's safety
         let n = (next() % 10) as usize;
         let (fl, gl) = both(&buf, n);

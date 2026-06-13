@@ -10,8 +10,8 @@
 //! surrogate (pends, returns 0), and the EILSEQ cases (lone low surrogate, a
 //! high surrogate not followed by a low one).
 
-use std::ffi::{CString, c_char, c_void};
 use frankenlibc_abi::wchar_abi as fl;
+use std::ffi::{CString, c_char, c_void};
 
 unsafe extern "C" {
     fn c16rtomb(s: *mut c_char, c16: u16, ps: *mut c_void) -> usize;

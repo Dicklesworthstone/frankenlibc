@@ -71,8 +71,8 @@ fn gen_value(r: &mut Lcg) -> f64 {
         2 => f64::INFINITY,
         3 => f64::NEG_INFINITY,
         4 => f64::NAN,
-        5 => f64::from_bits(r.next()),                  // any bit pattern
-        6 => (r.below(1_000_000) as f64) / 100.0,       // nice 2-decimal
+        5 => f64::from_bits(r.next()),            // any bit pattern
+        6 => (r.below(1_000_000) as f64) / 100.0, // nice 2-decimal
         7 => (r.below(1 << 20) as f64) / (1u64 << 10) as f64, // exact binary fractions (ties)
         8 => f64::from_bits((r.next() & 0x000f_ffff_ffff_ffff) | 0x0000_0000_0000_0001), // subnormal-ish
         _ => {

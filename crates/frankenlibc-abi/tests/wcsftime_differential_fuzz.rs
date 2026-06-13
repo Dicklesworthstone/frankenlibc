@@ -90,7 +90,10 @@ fn widen(bytes: &[u8]) -> Vec<libc::wchar_t> {
 /// `call(buf_ptr, max)` invokes the engine into the buffer; this handles the
 /// buffer allocation and result extraction so fl (tm: *const c_void) and glibc
 /// (tm: *const tm) can share it despite differing pointer types.
-fn run(max: usize, call: impl Fn(*mut libc::wchar_t, usize) -> usize) -> (usize, Vec<libc::wchar_t>) {
+fn run(
+    max: usize,
+    call: impl Fn(*mut libc::wchar_t, usize) -> usize,
+) -> (usize, Vec<libc::wchar_t>) {
     let mut buf = vec![0 as libc::wchar_t; max.max(1) + 4];
     let n = call(buf.as_mut_ptr(), max);
     if n == 0 {
@@ -126,8 +129,9 @@ fn wcsftime_differential_fuzz_vs_glibc() {
         let fl_call = |buf: *mut libc::wchar_t, max: usize| unsafe {
             fl::wcsftime(buf, max, fmt.as_ptr(), tm_ptr as *const std::ffi::c_void)
         };
-        let lc_call =
-            |buf: *mut libc::wchar_t, max: usize| unsafe { wcsftime(buf, max, fmt.as_ptr(), tm_ptr) };
+        let lc_call = |buf: *mut libc::wchar_t, max: usize| unsafe {
+            wcsftime(buf, max, fmt.as_ptr(), tm_ptr)
+        };
 
         // Natural length first (generous buffer), then straddle the boundary.
         let (nat, _) = run(256, lc_call);
@@ -147,7 +151,9 @@ fn wcsftime_differential_fuzz_vs_glibc() {
         let mismatch = fl_n != lc_n || (fl_n > 0 && fl_s != lc_s);
         if mismatch && divs.len() < 40 {
             let show = |w: &[libc::wchar_t]| -> String {
-                w.iter().map(|&c| char::from_u32(c as u32).unwrap_or('?')).collect()
+                w.iter()
+                    .map(|&c| char::from_u32(c as u32).unwrap_or('?'))
+                    .collect()
             };
             divs.push(format!(
                 "fmt={:?} max={max} natural={nat}\n    fl=({fl_n},{:?}) glibc=({lc_n},{:?})",

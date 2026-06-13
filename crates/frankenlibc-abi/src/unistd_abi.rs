@@ -2830,7 +2830,15 @@ unsafe fn getopt_internal(
     if has_long
         && !mid_bundle
         && let Some(code) = unsafe {
-            getopt_try_long(argc, argv, &argv_bytes, effective, longopts, longindex, long_only)
+            getopt_try_long(
+                argc,
+                argv,
+                &argv_bytes,
+                effective,
+                longopts,
+                longindex,
+                long_only,
+            )
         }
     {
         return code;
@@ -3090,8 +3098,16 @@ pub unsafe extern "C" fn getopt(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     };
-    let rc =
-        unsafe { getopt_internal(argc, argv, &optspec, std::ptr::null(), std::ptr::null_mut(), false) };
+    let rc = unsafe {
+        getopt_internal(
+            argc,
+            argv,
+            &optspec,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            false,
+        )
+    };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -12745,9 +12761,9 @@ fn hstrerror_message_ptr(err: c_int) -> *const c_char {
     match err {
         _ if err < 0 => c"Resolver internal error".as_ptr(),
         0 => c"Resolver Error 0 (no error)".as_ptr(),
-        1 => c"Unknown host".as_ptr(), // HOST_NOT_FOUND
+        1 => c"Unknown host".as_ptr(),             // HOST_NOT_FOUND
         2 => c"Host name lookup failure".as_ptr(), // TRY_AGAIN
-        3 => c"Unknown server error".as_ptr(), // NO_RECOVERY
+        3 => c"Unknown server error".as_ptr(),     // NO_RECOVERY
         4 => c"No address associated with name".as_ptr(), // NO_DATA / NO_ADDRESS
         _ => c"Unknown resolver error".as_ptr(),
     }
@@ -24661,7 +24677,12 @@ thread_local! {
 /// emit the remaining bytes as `(size_t)-3` without consuming input. Resumes an
 /// incomplete multibyte sequence from `ps` across calls.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mbrtoc8(pc8: *mut u8, s: *const c_char, n: usize, ps: *mut c_void) -> usize {
+pub unsafe extern "C" fn mbrtoc8(
+    pc8: *mut u8,
+    s: *const c_char,
+    n: usize,
+    ps: *mut c_void,
+) -> usize {
     use frankenlibc_core::string::wchar::{Utf8Step, utf8_decode_step};
     const INCOMPLETE: usize = usize::MAX - 1; // (size_t)-2
     const PENDING: usize = usize::MAX - 2; // (size_t)-3

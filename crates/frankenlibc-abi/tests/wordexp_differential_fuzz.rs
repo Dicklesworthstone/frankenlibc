@@ -204,9 +204,17 @@ fn wordexp_differential_fuzz_vs_glibc() {
                 "words={:?}\n    fl   = rc={} {:?}\n    glibc= rc={} {:?}",
                 String::from_utf8_lossy(&words),
                 fl_res.0,
-                fl_res.1.iter().map(|w| String::from_utf8_lossy(w).into_owned()).collect::<Vec<_>>(),
+                fl_res
+                    .1
+                    .iter()
+                    .map(|w| String::from_utf8_lossy(w).into_owned())
+                    .collect::<Vec<_>>(),
                 host_res.0,
-                host_res.1.iter().map(|w| String::from_utf8_lossy(w).into_owned()).collect::<Vec<_>>(),
+                host_res
+                    .1
+                    .iter()
+                    .map(|w| String::from_utf8_lossy(w).into_owned())
+                    .collect::<Vec<_>>(),
             ));
         }
     }

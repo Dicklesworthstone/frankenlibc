@@ -58,7 +58,11 @@ fn strcoll_strxfrm_differential_fuzz_vs_glibc() {
         let a = gen_str(&mut r);
         let mut b = if r.below(2) == 0 {
             // share a's prefix to force near-ties
-            let k = if a.is_empty() { 0 } else { r.below(a.len() + 1) };
+            let k = if a.is_empty() {
+                0
+            } else {
+                r.below(a.len() + 1)
+            };
             let mut v = a[..k].to_vec();
             v.extend(gen_str(&mut r));
             v

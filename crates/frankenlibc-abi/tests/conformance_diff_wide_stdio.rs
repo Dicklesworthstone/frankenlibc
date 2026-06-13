@@ -41,13 +41,21 @@ fn seq(path: &str, host: bool) -> Vec<i64> {
     assert!(!s.is_null(), "fopen failed for {path}");
     let mut out = vec![];
     loop {
-        let c = if host { unsafe { fgetwc(s) } } else { unsafe { flw::fgetwc(s) } };
+        let c = if host {
+            unsafe { fgetwc(s) }
+        } else {
+            unsafe { flw::fgetwc(s) }
+        };
         out.push(c as i32 as i64);
         if c == WEOF || out.len() > 256 {
             break;
         }
     }
-    if host { unsafe { fclose(s) } } else { unsafe { flio::fclose(s) } };
+    if host {
+        unsafe { fclose(s) }
+    } else {
+        unsafe { flio::fclose(s) }
+    };
     out
 }
 
@@ -71,12 +79,21 @@ fn lines(path: &str, n: c_int, host: bool, cap: usize) -> Vec<Vec<i64>> {
         if r.is_null() {
             break;
         }
-        out.push(buf.iter().take_while(|&&c| c != 0).map(|&c| c as i64).collect());
+        out.push(
+            buf.iter()
+                .take_while(|&&c| c != 0)
+                .map(|&c| c as i64)
+                .collect(),
+        );
         if out.len() >= cap {
             break;
         }
     }
-    if host { unsafe { fclose(s) } } else { unsafe { flio::fclose(s) } };
+    if host {
+        unsafe { fclose(s) }
+    } else {
+        unsafe { flio::fclose(s) }
+    };
     out
 }
 
@@ -89,7 +106,10 @@ fn wide_stdio_decode_matches_glibc() {
     }
     let cases: &[(&str, Vec<u8>)] = &[
         ("ascii_nl", b"ab\ncd\n".to_vec()),
-        ("multibyte", "a\u{e9}\u{20ac}\n\u{10348}x".as_bytes().to_vec()),
+        (
+            "multibyte",
+            "a\u{e9}\u{20ac}\n\u{10348}x".as_bytes().to_vec(),
+        ),
         ("no_final_nl", b"xyz".to_vec()),
         ("empty", b"".to_vec()),
         ("invalid", vec![b'a', 0xFF, 0xFE, b'b']),

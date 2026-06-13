@@ -35,7 +35,9 @@ fn raw_memmove_matches_glibc_over_overlap_corpus() {
             let span = len + disp.unsigned_abs() + 2 * pad;
 
             // Deterministic source content.
-            let content: Vec<u8> = (0..span).map(|k| (k as u8).wrapping_mul(31).wrapping_add(7)).collect();
+            let content: Vec<u8> = (0..span)
+                .map(|k| (k as u8).wrapping_mul(31).wrapping_add(7))
+                .collect();
 
             // src starts at `pad`; dst at `pad + disp`.
             let src_off = pad;
@@ -69,7 +71,11 @@ fn raw_memmove_matches_glibc_over_overlap_corpus() {
     }
 
     assert_eq!(checked, 23 * 13, "corpus size drifted");
-    let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let digest: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     assert_eq!(
         digest, "64e17e8879f1b8ba42f52cbc0992f5ecf8d4d67f17f677dafe2258d986045585",
         "memmove wide-move golden corpus hash drifted: got {digest}"

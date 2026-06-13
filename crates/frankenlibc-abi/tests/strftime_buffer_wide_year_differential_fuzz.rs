@@ -46,7 +46,11 @@ fn run(
 ) -> Out {
     let mut buf = vec![b'#'; max.max(1) + 8];
     let ret = unsafe { f(buf.as_mut_ptr() as *mut c_char, max, fmt.as_ptr(), tm) };
-    let s = if ret > 0 { buf[..ret.min(buf.len())].to_vec() } else { Vec::new() };
+    let s = if ret > 0 {
+        buf[..ret.min(buf.len())].to_vec()
+    } else {
+        Vec::new()
+    };
     Out { ret, s }
 }
 
@@ -57,7 +61,9 @@ fn gen_fmt(r: &mut Lcg) -> String {
         "%Y", "%C", "%y", "%m", "%d", "%H", "%M", "%S", "%%", "x", "-", ":", " ", "%Y%C",
     ];
     let n = 1 + r.below(4);
-    (0..n).map(|_| PIECES[r.below(PIECES.len() as u64) as usize]).collect()
+    (0..n)
+        .map(|_| PIECES[r.below(PIECES.len() as u64) as usize])
+        .collect()
 }
 
 #[test]
@@ -103,5 +109,7 @@ fn strftime_buffer_wide_year_differential_fuzz_vs_glibc() {
         divs.len(),
         divs.join("\n")
     );
-    eprintln!("strftime buffer wide-year fuzz: {compared} comparisons, 0 divergences vs host glibc");
+    eprintln!(
+        "strftime buffer wide-year fuzz: {compared} comparisons, 0 divergences vs host glibc"
+    );
 }

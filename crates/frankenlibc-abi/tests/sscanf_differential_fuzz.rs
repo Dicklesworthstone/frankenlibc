@@ -50,40 +50,48 @@ macro_rules! run_int {
     ($scanf:path, $s:expr, $fmt:expr) => {{
         let mut v: c_int = 0;
         let mut n: c_int = -12345;
-        let ret = unsafe {
-            $scanf($s, $fmt, &mut v as *mut c_int, &mut n as *mut c_int)
-        };
-        Out { ret, val: (ret == 1).then(|| format!("i{v}")), n: (ret == 1).then_some(n) }
+        let ret = unsafe { $scanf($s, $fmt, &mut v as *mut c_int, &mut n as *mut c_int) };
+        Out {
+            ret,
+            val: (ret == 1).then(|| format!("i{v}")),
+            n: (ret == 1).then_some(n),
+        }
     }};
 }
 macro_rules! run_uint {
     ($scanf:path, $s:expr, $fmt:expr) => {{
         let mut v: c_uint = 0;
         let mut n: c_int = -12345;
-        let ret = unsafe {
-            $scanf($s, $fmt, &mut v as *mut c_uint, &mut n as *mut c_int)
-        };
-        Out { ret, val: (ret == 1).then(|| format!("u{v}")), n: (ret == 1).then_some(n) }
+        let ret = unsafe { $scanf($s, $fmt, &mut v as *mut c_uint, &mut n as *mut c_int) };
+        Out {
+            ret,
+            val: (ret == 1).then(|| format!("u{v}")),
+            n: (ret == 1).then_some(n),
+        }
     }};
 }
 macro_rules! run_long {
     ($scanf:path, $s:expr, $fmt:expr) => {{
         let mut v: c_long = 0;
         let mut n: c_int = -12345;
-        let ret = unsafe {
-            $scanf($s, $fmt, &mut v as *mut c_long, &mut n as *mut c_int)
-        };
-        Out { ret, val: (ret == 1).then(|| format!("l{v}")), n: (ret == 1).then_some(n) }
+        let ret = unsafe { $scanf($s, $fmt, &mut v as *mut c_long, &mut n as *mut c_int) };
+        Out {
+            ret,
+            val: (ret == 1).then(|| format!("l{v}")),
+            n: (ret == 1).then_some(n),
+        }
     }};
 }
 macro_rules! run_dbl {
     ($scanf:path, $s:expr, $fmt:expr) => {{
         let mut v: f64 = 0.0;
         let mut n: c_int = -12345;
-        let ret = unsafe {
-            $scanf($s, $fmt, &mut v as *mut f64, &mut n as *mut c_int)
-        };
-        Out { ret, val: (ret == 1).then(|| format!("f{:016x}", v.to_bits())), n: (ret == 1).then_some(n) }
+        let ret = unsafe { $scanf($s, $fmt, &mut v as *mut f64, &mut n as *mut c_int) };
+        Out {
+            ret,
+            val: (ret == 1).then(|| format!("f{:016x}", v.to_bits())),
+            n: (ret == 1).then_some(n),
+        }
     }};
 }
 macro_rules! run_str {
@@ -91,7 +99,12 @@ macro_rules! run_str {
         let mut buf = [0u8; 64];
         let mut n: c_int = -12345;
         let ret = unsafe {
-            $scanf($s, $fmt, buf.as_mut_ptr() as *mut c_char, &mut n as *mut c_int)
+            $scanf(
+                $s,
+                $fmt,
+                buf.as_mut_ptr() as *mut c_char,
+                &mut n as *mut c_int,
+            )
         };
         let m = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
         Out {

@@ -29,13 +29,27 @@ fn run<T: Copy + Default + std::fmt::Debug + PartialEq>(
     init: T,
 ) -> (i32, T, bool) {
     let cf = CString::new(fmt).unwrap();
-    let mut g = Guard { before: 0xAAAA_AAAA_AAAA_AAAA, val: init, after: 0x5555_5555_5555_5555 };
+    let mut g = Guard {
+        before: 0xAAAA_AAAA_AAAA_AAAA,
+        val: init,
+        after: 0x5555_5555_5555_5555,
+    };
     let mut buf = [0u8; 64];
     let ret = unsafe {
         if glibc {
-            snprintf(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), cf.as_ptr(), &mut g.val as *mut T)
+            snprintf(
+                buf.as_mut_ptr() as *mut libc::c_char,
+                buf.len(),
+                cf.as_ptr(),
+                &mut g.val as *mut T,
+            )
         } else {
-            fl::snprintf(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), cf.as_ptr(), &mut g.val as *mut T)
+            fl::snprintf(
+                buf.as_mut_ptr() as *mut libc::c_char,
+                buf.len(),
+                cf.as_ptr(),
+                &mut g.val as *mut T,
+            )
         }
     };
     let intact = g.before == 0xAAAA_AAAA_AAAA_AAAA && g.after == 0x5555_5555_5555_5555;
@@ -64,5 +78,9 @@ fn printf_n_length_modifiers_match_glibc() {
     check!("%n", i32);
     check!("longer string here %n", i32);
 
-    assert!(fails.is_empty(), "printf %n diverged from glibc:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "printf %n diverged from glibc:\n{}",
+        fails.join("\n")
+    );
 }

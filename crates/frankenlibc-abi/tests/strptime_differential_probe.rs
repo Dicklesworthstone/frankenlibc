@@ -308,7 +308,10 @@ fn strptime_live_roundtrip_vs_glibc() {
             }
         }
     }
-    eprintln!("strptime live roundtrip: {checked} comparisons, {} divergence(s)", diffs.len());
+    eprintln!(
+        "strptime live roundtrip: {checked} comparisons, {} divergence(s)",
+        diffs.len()
+    );
     assert!(
         diffs.is_empty(),
         "strptime live round-trip divergences ({}):\n{}",

@@ -61,7 +61,11 @@ fn gen_cp(r: &mut Lcg) -> u32 {
         2 => 0x800 + r.below(0xF800) as u32,
         _ => 0x10000 + r.below(0x100000) as u32,
     };
-    if (0xD800..=0xDFFF).contains(&cp) { 0x41 } else { cp }
+    if (0xD800..=0xDFFF).contains(&cp) {
+        0x41
+    } else {
+        cp
+    }
 }
 
 /// Drive a full mbrtoc8 conversion over `bytes`, returning the (return-as-i64,
@@ -93,10 +97,10 @@ fn drive(
         let ri = ret as i64;
         out.push((ri, c8));
         match ri {
-            -3 => {}                  // buffered output byte; no input consumed
-            -2 => break,              // incomplete tail
-            -1 => break,              // EILSEQ
-            0 => break,               // NUL
+            -3 => {}     // buffered output byte; no input consumed
+            -2 => break, // incomplete tail
+            -1 => break, // EILSEQ
+            0 => break,  // NUL
             k if k > 0 => i += k as usize,
             _ => break,
         }

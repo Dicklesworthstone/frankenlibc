@@ -176,13 +176,23 @@ fn realpath_differential_fuzz_vs_glibc() {
         };
         let f = run_fl(&c);
         if h != f && prim_divs.len() < 30 {
-            let m = format!("path={:?}  fl={}  glibc={}", path.replace(&base, "B"), rel(&f), rel(&h));
+            let m = format!(
+                "path={:?}  fl={}  glibc={}",
+                path.replace(&base, "B"),
+                rel(&f),
+                rel(&h)
+            );
             eprintln!("PRIMARY DIV {m}");
             prim_divs.push(m);
         }
         let fb = run_fl_fallback(&path);
         if h != fb && fb_divs.len() < 30 {
-            let m = format!("path={:?}  fl={}  glibc={}", path.replace(&base, "B"), rel(&fb), rel(&h));
+            let m = format!(
+                "path={:?}  fl={}  glibc={}",
+                path.replace(&base, "B"),
+                rel(&fb),
+                rel(&h)
+            );
             eprintln!("FALLBACK DIV {m}");
             fb_divs.push(m);
         }
@@ -199,5 +209,7 @@ fn realpath_differential_fuzz_vs_glibc() {
         "realpath (userspace fallback) diverged from host glibc ({compared} compared):\n{}",
         fb_divs.join("\n")
     );
-    eprintln!("realpath differential fuzz: {compared} comparisons, 0 divergences (primary + fallback)");
+    eprintln!(
+        "realpath differential fuzz: {compared} comparisons, 0 divergences (primary + fallback)"
+    );
 }

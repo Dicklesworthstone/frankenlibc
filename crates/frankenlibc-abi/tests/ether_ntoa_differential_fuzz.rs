@@ -40,7 +40,12 @@ fn ntoa(
     addr: &[u8; 6],
 ) -> String {
     let mut buf = [0u8; 32];
-    let r = unsafe { f(addr.as_ptr() as *const c_void, buf.as_mut_ptr() as *mut c_char) };
+    let r = unsafe {
+        f(
+            addr.as_ptr() as *const c_void,
+            buf.as_mut_ptr() as *mut c_char,
+        )
+    };
     if r.is_null() {
         return "<null>".into();
     }
@@ -71,7 +76,9 @@ fn ether_ntoa_differential_fuzz_vs_glibc() {
         let host = ntoa(ether_ntoa_r, &addr);
         compared += 1;
         if fl != host && divs.len() < 40 {
-            divs.push(format!("ntoa addr={addr:02x?}\n    fl   ={fl:?}\n    glibc={host:?}"));
+            divs.push(format!(
+                "ntoa addr={addr:02x?}\n    fl   ={fl:?}\n    glibc={host:?}"
+            ));
         }
 
         // ---- ether_aton_r (feed back glibc's own ntoa output + raw strings) ----
@@ -100,5 +107,7 @@ fn ether_ntoa_differential_fuzz_vs_glibc() {
         divs.len(),
         divs.join("\n")
     );
-    eprintln!("ether ntoa/aton differential fuzz: {compared} comparisons, 0 divergences vs host glibc");
+    eprintln!(
+        "ether ntoa/aton differential fuzz: {compared} comparisons, 0 divergences vs host glibc"
+    );
 }

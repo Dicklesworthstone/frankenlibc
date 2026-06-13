@@ -111,13 +111,13 @@ fn gen_buf(r: &mut Lcg) -> Vec<u8> {
             // by fl and glibc.
             0 | 1 | 2 | 3 => {
                 let cp = match r.below(8) {
-                    0 => r.below(0x80) as u32,               // ASCII (may include NUL)
-                    1 => 0x80 + r.below(0x780) as u32,       // 2-byte
-                    2 => 0x800 + r.below(0xF800) as u32,     // 3-byte (incl surrogates)
-                    3 => 0x10000 + r.below(0x100000) as u32, // 4-byte (incl >10FFFF)
-                    4 => 0xD800 + r.below(0x800) as u32,     // surrogate range
-                    5 => 0x110000 + r.below(0x1000) as u32,  // beyond max (still 4-byte)
-                    6 => 0x20_0000 + r.below(0x3E0_0000) as u32, // 5-byte (RFC 2279)
+                    0 => r.below(0x80) as u32,                     // ASCII (may include NUL)
+                    1 => 0x80 + r.below(0x780) as u32,             // 2-byte
+                    2 => 0x800 + r.below(0xF800) as u32,           // 3-byte (incl surrogates)
+                    3 => 0x10000 + r.below(0x100000) as u32,       // 4-byte (incl >10FFFF)
+                    4 => 0xD800 + r.below(0x800) as u32,           // surrogate range
+                    5 => 0x110000 + r.below(0x1000) as u32,        // beyond max (still 4-byte)
+                    6 => 0x20_0000 + r.below(0x3E0_0000) as u32,   // 5-byte (RFC 2279)
                     _ => 0x400_0000 + r.below(0x3C00_0000) as u32, // 6-byte (RFC 2279)
                 };
                 encode(cp, &mut buf);
@@ -185,7 +185,9 @@ fn mbrtowc_stateful_differential_fuzz_vs_glibc() {
             let h = classify(host_call(&mut wh, &buf, avail, &mut sh), wh);
             compared += 1;
             if f != h && divs.len() < 30 {
-                divs.push(format!("ONESHOT buf={buf:02x?} n={avail}  fl={f:?}  glibc={h:?}"));
+                divs.push(format!(
+                    "ONESHOT buf={buf:02x?} n={avail}  fl={f:?}  glibc={h:?}"
+                ));
             }
         }
 

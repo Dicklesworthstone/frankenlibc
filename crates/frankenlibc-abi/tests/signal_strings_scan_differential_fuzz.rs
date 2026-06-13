@@ -11,8 +11,8 @@
 
 use std::ffi::{CStr, c_char, c_int};
 
-use frankenlibc_abi::string_abi::strsignal as fl_strsignal;
 use frankenlibc_abi::signal_abi::{sigabbrev_np as fl_sigabbrev_np, sigdescr_np as fl_sigdescr_np};
+use frankenlibc_abi::string_abi::strsignal as fl_strsignal;
 
 unsafe extern "C" {
     fn strsignal(sig: c_int) -> *mut c_char;

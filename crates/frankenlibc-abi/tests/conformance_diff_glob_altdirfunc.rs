@@ -108,7 +108,14 @@ fn run_fl(pat: &str, flags: c_int, dir: &str) -> (c_int, Vec<String>) {
     let cp = CString::new(pat).unwrap();
     let mut g: GlobT = unsafe { std::mem::zeroed() };
     install_callbacks(&mut g);
-    let r = unsafe { fl::glob(cp.as_ptr(), flags, None, (&mut g) as *mut GlobT as *mut c_void) };
+    let r = unsafe {
+        fl::glob(
+            cp.as_ptr(),
+            flags,
+            None,
+            (&mut g) as *mut GlobT as *mut c_void,
+        )
+    };
     let out = collect(&g, r, dir);
     if r == 0 {
         unsafe { fl::globfree((&mut g) as *mut GlobT as *mut c_void) };
@@ -120,7 +127,14 @@ fn run_host(pat: &str, flags: c_int, dir: &str) -> (c_int, Vec<String>) {
     let cp = CString::new(pat).unwrap();
     let mut g: GlobT = unsafe { std::mem::zeroed() };
     install_callbacks(&mut g);
-    let r = unsafe { glob(cp.as_ptr(), flags, None, (&mut g) as *mut GlobT as *mut c_void) };
+    let r = unsafe {
+        glob(
+            cp.as_ptr(),
+            flags,
+            None,
+            (&mut g) as *mut GlobT as *mut c_void,
+        )
+    };
     let out = collect(&g, r, dir);
     if r == 0 {
         unsafe { globfree((&mut g) as *mut GlobT as *mut c_void) };
@@ -154,7 +168,10 @@ fn glob_altdirfunc_matches_glibc() {
         let full = format!("{dprefix}{pat}");
         let f = run_fl(&full, flags, &dprefix);
         let h = run_host(&full, flags, &dprefix);
-        assert_eq!(f, h, "glob({pat:?}, {flags:#x}) ALTDIRFUNC diverged: fl={f:?} glibc={h:?}");
+        assert_eq!(
+            f, h,
+            "glob({pat:?}, {flags:#x}) ALTDIRFUNC diverged: fl={f:?} glibc={h:?}"
+        );
     }
 
     // Sanity: the marker file must actually be filtered (proves callbacks ran).
@@ -163,7 +180,10 @@ fn glob_altdirfunc_matches_glibc() {
         !paths.iter().any(|p| p.starts_with('x')),
         "GLOB_ALTDIRFUNC readdir filter not honoured (std::fs bypass?): {paths:?}"
     );
-    assert!(paths.contains(&"a.txt".to_string()), "expected a.txt in {paths:?}");
+    assert!(
+        paths.contains(&"a.txt".to_string()),
+        "expected a.txt in {paths:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

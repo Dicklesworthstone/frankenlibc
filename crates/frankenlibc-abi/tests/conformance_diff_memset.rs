@@ -86,7 +86,11 @@ fn raw_memset_matches_reference_and_glibc_over_corpus() {
     }
 
     assert_eq!(checked, 8 * 28 * 7, "corpus size drifted");
-    let digest: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let digest: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     assert_eq!(
         digest, "1fa3233a628c430eece9a1aa5e5cea436af032ed80117d495bda4d58a0e47517",
         "memset wide-fill golden corpus hash drifted: got {digest}"

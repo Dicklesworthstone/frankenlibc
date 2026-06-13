@@ -96,7 +96,9 @@ fn gen_pattern(r: &mut Lcg) -> String {
 fn gen_subject(r: &mut Lcg) -> String {
     const ATOM: &[u8] = b"*ab0c.*";
     let len = r.below(8);
-    (0..len).map(|_| ATOM[r.below(ATOM.len())] as char).collect()
+    (0..len)
+        .map(|_| ATOM[r.below(ATOM.len())] as char)
+        .collect()
 }
 
 struct Run {

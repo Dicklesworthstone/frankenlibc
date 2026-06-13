@@ -67,5 +67,9 @@ fn asprintf_matches_glibc() {
     case!("pct", "100%% done");
     case!("float", "%.3f", 3.14159f64);
 
-    assert!(fails.is_empty(), "asprintf diverged from glibc:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "asprintf diverged from glibc:\n{}",
+        fails.join("\n")
+    );
 }

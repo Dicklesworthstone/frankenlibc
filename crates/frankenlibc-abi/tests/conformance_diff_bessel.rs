@@ -77,5 +77,8 @@ fn bessel_absolute_parity_with_glibc() {
         );
     }
     let (fv, gv) = (unsafe { fl::j0(2.405) }, unsafe { j0(2.405) });
-    assert!((fv - gv).abs() < ABS_TOL, "j0(2.405): fl={fv:e} glibc={gv:e}");
+    assert!(
+        (fv - gv).abs() < ABS_TOL,
+        "j0(2.405): fl={fv:e} glibc={gv:e}"
+    );
 }

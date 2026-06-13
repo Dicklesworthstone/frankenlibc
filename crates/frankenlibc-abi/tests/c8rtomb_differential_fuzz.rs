@@ -60,7 +60,11 @@ fn gen_cp(r: &mut Lcg) -> u32 {
         2 => 0x800 + r.below(0xF800) as u32,
         _ => 0x10000 + r.below(0x100000) as u32,
     };
-    if (0xD800..=0xDFFF).contains(&cp) { 0x41 } else { cp }
+    if (0xD800..=0xDFFF).contains(&cp) {
+        0x41
+    } else {
+        cp
+    }
 }
 
 /// Feed each byte of `bytes` to one c8rtomb implementation with a shared
@@ -73,8 +77,13 @@ fn drive(
     let mut out = Vec::new();
     for &c8 in bytes {
         let mut buf = [0u8; 8];
-        let ret =
-            unsafe { f(buf.as_mut_ptr() as *mut c_char, c8, st.as_mut_ptr() as *mut c_void) };
+        let ret = unsafe {
+            f(
+                buf.as_mut_ptr() as *mut c_char,
+                c8,
+                st.as_mut_ptr() as *mut c_void,
+            )
+        };
         let ri = ret as i64;
         let written = if (1..=4).contains(&ri) {
             buf[..ri as usize].to_vec()

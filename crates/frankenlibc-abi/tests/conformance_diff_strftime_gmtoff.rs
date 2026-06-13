@@ -13,8 +13,8 @@
 //! `tm_zone` pointer and, when null, falls back to the process timezone — both
 //! beyond fl's UTC-only, never-dereference-tm_zone model.
 
-use std::ffi::{CString, c_char};
 use frankenlibc_abi::time_abi as fl;
+use std::ffi::{CString, c_char};
 
 unsafe extern "C" {
     fn strftime(s: *mut c_char, m: usize, f: *const c_char, tm: *const libc::tm) -> usize;

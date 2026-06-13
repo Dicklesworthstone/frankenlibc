@@ -66,12 +66,12 @@ fn getdate_default_fill_matches_glibc() {
         "Tuesday",             // weekday-only
         "Wednesday",
         "Sunday",
-        "1999-12-31",          // full date (2-digit-ish year path via %Y)
-        "12/25/2030 06:30",    // full date + time
-        "02/30/2024",          // impossible date -> error 8
-        "13/45/2024",          // bad month -> no template matches -> error 7
-        "garbage zzz",         // no match -> 7
-        "",                    // empty -> error
+        "1999-12-31",       // full date (2-digit-ish year path via %Y)
+        "12/25/2030 06:30", // full date + time
+        "02/30/2024",       // impossible date -> error 8
+        "13/45/2024",       // bad month -> no template matches -> error 7
+        "garbage zzz",      // no match -> 7
+        "",                 // empty -> error
     ];
 
     for inp in inputs {
@@ -80,7 +80,10 @@ fn getdate_default_fill_matches_glibc() {
         let mut gl_tm: libc::tm = unsafe { std::mem::zeroed() };
         let fl_rc = unsafe { flu::getdate_r(c.as_ptr(), (&mut fl_tm as *mut libc::tm).cast()) };
         let gl_rc = unsafe { getdate_r(c.as_ptr(), &mut gl_tm) };
-        assert_eq!(fl_rc, gl_rc, "getdate_r({inp:?}) return code: fl={fl_rc} glibc={gl_rc}");
+        assert_eq!(
+            fl_rc, gl_rc,
+            "getdate_r({inp:?}) return code: fl={fl_rc} glibc={gl_rc}"
+        );
         if gl_rc == 0 {
             assert_eq!(
                 fields(&fl_tm),
@@ -90,7 +93,10 @@ fn getdate_default_fill_matches_glibc() {
                 fields(&gl_tm),
             );
             // tm_isdst must agree too (UTC -> 0 for both).
-            assert_eq!(fl_tm.tm_isdst, gl_tm.tm_isdst, "getdate_r({inp:?}) tm_isdst");
+            assert_eq!(
+                fl_tm.tm_isdst, gl_tm.tm_isdst,
+                "getdate_r({inp:?}) tm_isdst"
+            );
         }
     }
 

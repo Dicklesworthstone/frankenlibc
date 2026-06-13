@@ -44,13 +44,22 @@ fn fl_run(input: &[u8], fmt: &[u8]) -> Option<(usize, [c_int; 6])> {
     fb.push(0);
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let r = unsafe {
-        time_abi::strptime(ib.as_ptr() as *const c_char, fb.as_ptr() as *const c_char, &mut tm)
+        time_abi::strptime(
+            ib.as_ptr() as *const c_char,
+            fb.as_ptr() as *const c_char,
+            &mut tm,
+        )
     };
     if r.is_null() {
         return None;
     }
     let consumed = (r as usize) - (ib.as_ptr() as usize);
-    Some((consumed, [tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec]))
+    Some((
+        consumed,
+        [
+            tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+        ],
+    ))
 }
 
 fn host_run(input: &[u8], fmt: &[u8]) -> Option<(usize, [c_int; 6])> {
@@ -59,20 +68,47 @@ fn host_run(input: &[u8], fmt: &[u8]) -> Option<(usize, [c_int; 6])> {
     let mut fb = fmt.to_vec();
     fb.push(0);
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    let r = unsafe { strptime(ib.as_ptr() as *const c_char, fb.as_ptr() as *const c_char, &mut tm) };
+    let r = unsafe {
+        strptime(
+            ib.as_ptr() as *const c_char,
+            fb.as_ptr() as *const c_char,
+            &mut tm,
+        )
+    };
     if r.is_null() {
         return None;
     }
     let consumed = (r as usize) - (ib.as_ptr() as usize);
-    Some((consumed, [tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec]))
+    Some((
+        consumed,
+        [
+            tm.tm_year, tm.tm_mon, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec,
+        ],
+    ))
 }
 
 const MONTHS: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August", "September",
-    "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 const DAYS: [&str; 7] = [
-    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
 ];
 
 /// Randomly recase and re-form a name: lower / UPPER / as-is, as the full name,
@@ -124,8 +160,16 @@ fn ws(r: &mut Lcg) -> &'static str {
 fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
     let year = r.below(200) + 1900;
     let mon1 = r.below(12) + 1;
-    let mday = if r.below(8) == 0 { r.below(40) } else { r.below(28) + 1 }; // sometimes out of range
-    let hour = if r.below(8) == 0 { r.below(30) } else { r.below(24) };
+    let mday = if r.below(8) == 0 {
+        r.below(40)
+    } else {
+        r.below(28) + 1
+    }; // sometimes out of range
+    let hour = if r.below(8) == 0 {
+        r.below(30)
+    } else {
+        r.below(24)
+    };
     let min = r.below(60);
     let sec = r.below(62); // include leap-second 60/61
     let yy = year % 100;
@@ -140,7 +184,14 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
         ),
         1 => (
             "%d %B %Y".into(),
-            format!("{}{}{}{}{}", num(r, mday), ws(r), mon_name, ws(r), num(r, year)),
+            format!(
+                "{}{}{}{}{}",
+                num(r, mday),
+                ws(r),
+                mon_name,
+                ws(r),
+                num(r, year)
+            ),
         ),
         2 => (
             "%H:%M:%S".into(),
@@ -156,7 +207,15 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
                 if r.below(2) == 0 { "AM" } else { "pm" }
             ),
         ),
-        4 => ("%b %d".into(), format!("{}{}{}", recase(r, MONTHS[(mon1 - 1) as usize]), ws(r), num(r, mday))),
+        4 => (
+            "%b %d".into(),
+            format!(
+                "{}{}{}",
+                recase(r, MONTHS[(mon1 - 1) as usize]),
+                ws(r),
+                num(r, mday)
+            ),
+        ),
         5 => ("%a".into(), day_name.clone()),
         6 => ("%y".into(), num(r, yy)), // century-pivot edge
         7 => (
@@ -165,11 +224,20 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
         ),
         8 => {
             let jday = r.below(366) + 1; // %j valid [1,366]
-            ("%Y %j".into(), format!("{}{}{}", num(r, year), ws(r), num(r, jday)))
+            (
+                "%Y %j".into(),
+                format!("{}{}{}", num(r, year), ws(r), num(r, jday)),
+            )
         }
         9 => (
             "%A, %d %B %Y".into(),
-            format!("{}, {} {} {}", day_name, num(r, mday), mon_name, num(r, year)),
+            format!(
+                "{}, {} {} {}",
+                day_name,
+                num(r, mday),
+                mon_name,
+                num(r, year)
+            ),
         ),
         10 => (
             // century + 2-digit year
@@ -182,7 +250,14 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
             let wday = r.below(7);
             (
                 "%Y-%m-%d %w".into(),
-                format!("{}-{}-{}{}{}", num(r, year), num(r, mon1), num(r, mday), ws(r), wday),
+                format!(
+                    "{}-{}-{}{}{}",
+                    num(r, year),
+                    num(r, mon1),
+                    num(r, mday),
+                    ws(r),
+                    wday
+                ),
             )
         }
         12 => (
@@ -195,7 +270,14 @@ fn gen_case(r: &mut Lcg) -> (Vec<u8>, Vec<u8>) {
             let wday = 1 + r.below(7);
             (
                 "%Y-%m-%d %u".into(),
-                format!("{}-{}-{}{}{}", num(r, year), num(r, mon1), num(r, mday), ws(r), wday),
+                format!(
+                    "{}-{}-{}{}{}",
+                    num(r, year),
+                    num(r, mon1),
+                    num(r, mday),
+                    ws(r),
+                    wday
+                ),
             )
         }
         14 => {

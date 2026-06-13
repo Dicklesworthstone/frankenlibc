@@ -92,7 +92,9 @@ fn gen_subject(r: &mut Lcg) -> String {
     // Multi-line: newlines are frequent so REG_NEWLINE / NOTBOL / NOTEOL flip.
     const ATOM: &[u8] = b"ab0\nab\n";
     let len = r.below(12);
-    (0..len).map(|_| ATOM[r.below(ATOM.len())] as char).collect()
+    (0..len)
+        .map(|_| ATOM[r.below(ATOM.len())] as char)
+        .collect()
 }
 
 struct Run {

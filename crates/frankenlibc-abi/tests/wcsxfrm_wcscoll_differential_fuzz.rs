@@ -35,7 +35,9 @@ impl Lcg {
 fn gen_ws(r: &mut Lcg) -> Vec<libc::wchar_t> {
     const POOL: &[u32] = &[0x61, 0x62, 0x63, 0x41, 0x100, 0x3B1, 0x4E00];
     let len = r.below(10);
-    let mut v: Vec<libc::wchar_t> = (0..len).map(|_| POOL[r.below(POOL.len())] as libc::wchar_t).collect();
+    let mut v: Vec<libc::wchar_t> = (0..len)
+        .map(|_| POOL[r.below(POOL.len())] as libc::wchar_t)
+        .collect();
     v.push(0);
     v
 }

@@ -1086,7 +1086,8 @@ fn strptime_day_of_week(tm_year: i64, tm_mon: i64, tm_mday: i64) -> i64 {
     const MON_YDAY0: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
     let corr_year = 1900 + tm_year - i64::from(tm_mon < 2);
     let q = corr_year.div_euclid(4);
-    let wday = -473 + 365 * (tm_year - 70) + q - q.div_euclid(25) + q.div_euclid(25).div_euclid(4)
+    let wday = -473 + 365 * (tm_year - 70) + q - q.div_euclid(25)
+        + q.div_euclid(25).div_euclid(4)
         + MON_YDAY0[tm_mon.clamp(0, 11) as usize]
         + tm_mday
         - 1;
@@ -1380,8 +1381,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'a' | b'A' => {
                     // Full weekday name or standard 3-letter abbreviation.
-                    if let Some((idx, new_si)) =
-                        match_name_table(input, si, &FULL_DAYS, &ABBR_DAYS)
+                    if let Some((idx, new_si)) = match_name_table(input, si, &FULL_DAYS, &ABBR_DAYS)
                     {
                         unsafe { (*tm).tm_wday = idx as i32 };
                         have_wday = true;
@@ -1501,7 +1501,11 @@ pub unsafe extern "C" fn strptime(
                         _ => c"%I:%M:%S %p",
                     };
                     let result = unsafe {
-                        strptime(input_ptr.add(si) as *const std::ffi::c_char, sub.as_ptr(), tm)
+                        strptime(
+                            input_ptr.add(si) as *const std::ffi::c_char,
+                            sub.as_ptr(),
+                            tm,
+                        )
                     };
                     if result.is_null() {
                         return std::ptr::null_mut();
@@ -1824,7 +1828,11 @@ pub unsafe extern "C" fn strptime(
             (u as i64, (7 - jan1).rem_euclid(7), save_wday)
         } else {
             // %W: weeks start Monday; weekday offset is Mon = 0 .. Sun = 6.
-            (week_w.unwrap() as i64, (8 - jan1).rem_euclid(7), (save_wday + 6).rem_euclid(7))
+            (
+                week_w.unwrap() as i64,
+                (8 - jan1).rem_euclid(7),
+                (save_wday + 6).rem_euclid(7),
+            )
         };
         // 1-based day of year (with tm_mon = 0).
         let mday_raw = 1 + marker_offset + (week - 1) * 7 + wday_offset;
@@ -1855,7 +1863,11 @@ pub unsafe extern "C" fn strptime(
     // or %j is kept as given, not recomputed. (Was a gap: fl set neither field.)
     if have_year || have_mon || have_mday || have_yday || date_determinate {
         let (y, mon, mday) = unsafe {
-            ((*tm).tm_year as i64, (*tm).tm_mon as i64, (*tm).tm_mday as i64)
+            (
+                (*tm).tm_year as i64,
+                (*tm).tm_mon as i64,
+                (*tm).tm_mday as i64,
+            )
         };
         if !have_wday {
             unsafe { (*tm).tm_wday = strptime_day_of_week(y, mon, mday) as i32 };

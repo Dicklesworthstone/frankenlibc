@@ -26,11 +26,11 @@ unsafe extern "C" {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum MbResult {
-    Nul,             // returned 0
-    Ileq,            // (size_t)-1, EILSEQ
-    Incomplete,      // (size_t)-2
-    Ok(usize, u32),  // consumed N bytes, decoded wc
-    Other(usize),    // anything unexpected
+    Nul,            // returned 0
+    Ileq,           // (size_t)-1, EILSEQ
+    Incomplete,     // (size_t)-2
+    Ok(usize, u32), // consumed N bytes, decoded wc
+    Other(usize),   // anything unexpected
 }
 
 fn classify(rc: usize, wc: libc::wchar_t) -> MbResult {
@@ -113,12 +113,12 @@ fn mbrtowc_matches_host_glibc_over_utf8_surface() {
 
     // 3. Valid multi-byte sequences fully present (n = full length).
     let valids: &[&[u8]] = &[
-        b"A",                          // U+0041
-        &[0xC3, 0xA9],                 // U+00E9 é
-        &[0xE2, 0x82, 0xAC],           // U+20AC €
-        &[0xF0, 0x9F, 0x98, 0x80],     // U+1F600 😀
-        &[0xEF, 0xBB, 0xBF],           // U+FEFF BOM
-        &[0xF4, 0x8F, 0xBF, 0xBF],     // U+10FFFF (max valid)
+        b"A",                      // U+0041
+        &[0xC3, 0xA9],             // U+00E9 é
+        &[0xE2, 0x82, 0xAC],       // U+20AC €
+        &[0xF0, 0x9F, 0x98, 0x80], // U+1F600 😀
+        &[0xEF, 0xBB, 0xBF],       // U+FEFF BOM
+        &[0xF4, 0x8F, 0xBF, 0xBF], // U+10FFFF (max valid)
     ];
     for v in valids {
         check(v, v.len());

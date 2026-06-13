@@ -13,7 +13,9 @@ use std::os::raw::c_char;
 #[test]
 fn strncpy_stpncpy_match_glibc() {
     let mut checked = 0u64;
-    let lengths = [0usize, 1, 7, 8, 15, 16, 17, 31, 33, 63, 64, 100, 128, 255, 300];
+    let lengths = [
+        0usize, 1, 7, 8, 15, 16, 17, 31, 33, 63, 64, 100, 128, 255, 300,
+    ];
     let ns = [0usize, 1, 8, 16, 33, 64, 100, 128, 256, 301];
 
     for &src_off in &[0usize, 1, 3, 7] {
@@ -32,7 +34,8 @@ fn strncpy_stpncpy_match_glibc() {
                     // Destination buffers preset to 0xAA so any unwritten byte shows.
                     let mut fl = vec![0xAAu8; dst_off + n + 1];
                     let mut gl = vec![0xAAu8; dst_off + n + 1];
-                    let fl_end = unsafe { fl_strncpy(fl.as_mut_ptr().add(dst_off) as *mut c_char, src, n) };
+                    let fl_end =
+                        unsafe { fl_strncpy(fl.as_mut_ptr().add(dst_off) as *mut c_char, src, n) };
                     let gl_ret = unsafe {
                         libc::strncpy(gl.as_mut_ptr().add(dst_off) as *mut c_char, src, n)
                     };
@@ -49,7 +52,10 @@ fn strncpy_stpncpy_match_glibc() {
                     let gl_base = unsafe { gl2.as_mut_ptr().add(dst_off) };
                     let fe = unsafe { fl_stpncpy(fl_base as *mut c_char, src, n) };
                     let ge = unsafe { libc::stpncpy(gl_base as *mut c_char, src, n) };
-                    assert_eq!(fl2, gl2, "stpncpy buf src_off={src_off} dst_off={dst_off} len={len} n={n}");
+                    assert_eq!(
+                        fl2, gl2,
+                        "stpncpy buf src_off={src_off} dst_off={dst_off} len={len} n={n}"
+                    );
                     assert_eq!(
                         fe as usize - fl_base as usize,
                         ge as usize - gl_base as usize,

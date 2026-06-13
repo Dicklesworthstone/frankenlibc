@@ -84,8 +84,24 @@ fn wcrtomb_matches_host_glibc_over_codepoint_surface() {
 
     // 1. Boundary code points around every UTF-8 length threshold.
     let boundaries: &[i64] = &[
-        0x00, 0x01, 0x7F, 0x80, 0x81, 0x7FF, 0x800, 0x801, 0xFFFF, 0x1_0000, 0x1_0001, 0x1F_FFFF,
-        0x20_0000, 0x20_0001, 0x3FF_FFFF, 0x400_0000, 0x400_0001, 0x7FFF_FFFF,
+        0x00,
+        0x01,
+        0x7F,
+        0x80,
+        0x81,
+        0x7FF,
+        0x800,
+        0x801,
+        0xFFFF,
+        0x1_0000,
+        0x1_0001,
+        0x1F_FFFF,
+        0x20_0000,
+        0x20_0001,
+        0x3FF_FFFF,
+        0x400_0000,
+        0x400_0001,
+        0x7FFF_FFFF,
     ];
     for &b in boundaries {
         check(b);

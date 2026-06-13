@@ -20,7 +20,10 @@ unsafe extern "C" {
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0
     }
     fn below(&mut self, n: usize) -> usize {
@@ -43,8 +46,8 @@ fn gen_format(r: &mut Lcg) -> (Vec<u8>, usize) {
     let mut bound = 0usize; // non-suppressed conversions
     for _ in 0..ntok {
         match r.below(8) {
-            0 => f.push(b' '),                 // whitespace (matches any run)
-            1 => f.extend_from_slice(b"x"),    // literal that must match input 'x'
+            0 => f.push(b' '),              // whitespace (matches any run)
+            1 => f.extend_from_slice(b"x"), // literal that must match input 'x'
             2 if bound < 3 => {
                 // suppressed conversion (consumes input, no arg)
                 f.push(b'%');
@@ -93,12 +96,22 @@ fn swscanf_int_differential_fuzz_vs_glibc() {
         let mut af = [-7i32; 3];
         let mut ag = [-7i32; 3];
         let rf = unsafe {
-            fl::swscanf(inp.as_ptr(), fmt.as_ptr(),
-                &mut af[0] as *mut i32, &mut af[1] as *mut i32, &mut af[2] as *mut i32)
+            fl::swscanf(
+                inp.as_ptr(),
+                fmt.as_ptr(),
+                &mut af[0] as *mut i32,
+                &mut af[1] as *mut i32,
+                &mut af[2] as *mut i32,
+            )
         };
         let rg = unsafe {
-            swscanf(inp.as_ptr(), fmt.as_ptr(),
-                &mut ag[0] as *mut i32, &mut ag[1] as *mut i32, &mut ag[2] as *mut i32)
+            swscanf(
+                inp.as_ptr(),
+                fmt.as_ptr(),
+                &mut ag[0] as *mut i32,
+                &mut ag[1] as *mut i32,
+                &mut ag[2] as *mut i32,
+            )
         };
         compared += 1;
 
@@ -109,7 +122,8 @@ fn swscanf_int_differential_fuzz_vs_glibc() {
                 "fmt={:?} input={:?} fl=(ret={rf},{:?}) glibc=(ret={rg},{:?})",
                 String::from_utf8_lossy(&fmt_bytes),
                 String::from_utf8_lossy(&input),
-                af, ag,
+                af,
+                ag,
             ));
         }
     }

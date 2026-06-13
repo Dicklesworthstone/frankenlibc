@@ -53,8 +53,13 @@ fn check(label: &str, bytes_in: &[u8], fl_cmp: fn(&[u8], &[u8]) -> i32, gl_cmp: 
     let mut fl_buf = bytes_in.to_vec();
     fl_qsort(&mut fl_buf, 2, fl_cmp);
     let mut gl_buf = bytes_in.to_vec();
-    unsafe { libc::qsort(gl_buf.as_mut_ptr() as *mut c_void, n, 2, Some(gl_cmp)); }
-    assert_eq!(fl_buf, gl_buf, "{label}: fl qsort bytes diverge from glibc (n={n})");
+    unsafe {
+        libc::qsort(gl_buf.as_mut_ptr() as *mut c_void, n, 2, Some(gl_cmp));
+    }
+    assert_eq!(
+        fl_buf, gl_buf,
+        "{label}: fl qsort bytes diverge from glibc (n={n})"
+    );
     fl_buf
 }
 
@@ -76,21 +81,38 @@ fn qsort_radix16_lane_matches_glibc() {
         let seed = 0x51E2_D3C4u64 ^ (n as u64);
         let dists: Vec<(&str, Box<dyn Fn(usize) -> i16>)> = vec![
             ("rand", Box::new(move |i| mix(seed, i) as i16)),
-            ("dups8", Box::new(move |i| (mix(seed ^ 0xAB, i) % 8) as i16 - 4)),
+            (
+                "dups8",
+                Box::new(move |i| (mix(seed ^ 0xAB, i) % 8) as i16 - 4),
+            ),
             ("equal", Box::new(|_| 1234i16)),
             ("sorted", Box::new(|i| (i as i16).wrapping_sub(5000))),
-            ("reverse", Box::new(move |i| (n as i16).wrapping_sub(i as i16))),
-            ("smallpos", Box::new(move |i| (mix(seed ^ 0x13, i) % 500) as i16)),
-            ("mixedsign", Box::new(move |i| {
-                let m = mix(seed ^ 0x24, i) as i16;
-                if i % 2 == 0 { m } else { m.wrapping_neg() }
-            })),
+            (
+                "reverse",
+                Box::new(move |i| (n as i16).wrapping_sub(i as i16)),
+            ),
+            (
+                "smallpos",
+                Box::new(move |i| (mix(seed ^ 0x13, i) % 500) as i16),
+            ),
+            (
+                "mixedsign",
+                Box::new(move |i| {
+                    let m = mix(seed ^ 0x24, i) as i16;
+                    if i % 2 == 0 { m } else { m.wrapping_neg() }
+                }),
+            ),
         ];
         for (tag, g) in &dists {
             let img = image(n, |i| g(i));
             check(&format!("i16/{tag}/n{n}"), &img, fl_i16, gl_i16);
             check(&format!("u16/{tag}/n{n}"), &img, fl_u16, gl_u16);
-            check(&format!("desc16/{tag}/n{n}"), &img, fl_i16_desc, gl_i16_desc);
+            check(
+                &format!("desc16/{tag}/n{n}"),
+                &img,
+                fl_i16_desc,
+                gl_i16_desc,
+            );
             hasher.update(check(&format!("i16g/{tag}/n{n}"), &img, fl_i16, gl_i16));
         }
     }

@@ -33,10 +33,20 @@ fn run(data: &[u8], ns: &[i32], glibc: bool) -> Vec<Step> {
     let mut owned = data.to_vec();
     let mode = b"rb\0";
     let stream: *mut libc::FILE = if glibc {
-        unsafe { fmemopen(owned.as_mut_ptr() as *mut libc::c_void, owned.len(), mode.as_ptr() as *const libc::c_char) }
+        unsafe {
+            fmemopen(
+                owned.as_mut_ptr() as *mut libc::c_void,
+                owned.len(),
+                mode.as_ptr() as *const libc::c_char,
+            )
+        }
     } else {
         unsafe {
-            fl::fmemopen(owned.as_mut_ptr() as *mut libc::c_void, owned.len(), mode.as_ptr() as *const libc::c_char) as *mut libc::FILE
+            fl::fmemopen(
+                owned.as_mut_ptr() as *mut libc::c_void,
+                owned.len(),
+                mode.as_ptr() as *const libc::c_char,
+            ) as *mut libc::FILE
         }
     };
     assert!(!stream.is_null());
@@ -46,7 +56,13 @@ fn run(data: &[u8], ns: &[i32], glibc: bool) -> Vec<Step> {
         let ret = if glibc {
             unsafe { fgets(buf.as_mut_ptr() as *mut libc::c_char, n, stream) }
         } else {
-            unsafe { fl::fgets(buf.as_mut_ptr() as *mut libc::c_char, n, stream as *mut libc::c_void) }
+            unsafe {
+                fl::fgets(
+                    buf.as_mut_ptr() as *mut libc::c_char,
+                    n,
+                    stream as *mut libc::c_void,
+                )
+            }
         };
         let tell = if glibc {
             unsafe { ftell(stream) }
@@ -90,5 +106,9 @@ fn fgets_matches_glibc() {
             ));
         }
     }
-    assert!(fails.is_empty(), "fgets diverged from glibc:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "fgets diverged from glibc:\n{}",
+        fails.join("\n")
+    );
 }

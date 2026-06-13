@@ -27,7 +27,11 @@ fn fmemopen_size0_read_is_valid_eof() {
     let g = unsafe { fmemopen(empty.as_mut_ptr() as *mut libc::c_void, 0, mode.as_ptr()) };
     // fl
     let f = unsafe {
-        fl::fmemopen(empty.as_mut_ptr() as *mut libc::c_void, 0, mode.as_ptr() as *const libc::c_char)
+        fl::fmemopen(
+            empty.as_mut_ptr() as *mut libc::c_void,
+            0,
+            mode.as_ptr() as *const libc::c_char,
+        )
     };
     assert!(!g.is_null(), "glibc fmemopen(size=0) should succeed");
     assert!(
@@ -55,14 +59,17 @@ fn fmemopen_write_nul_terminates_like_glibc() {
             let cs = CString::new(payload).unwrap();
 
             let mut gbuf = vec![b'Z'; cap];
-            let g =
-                unsafe { fmemopen(gbuf.as_mut_ptr() as *mut libc::c_void, cap, mode.as_ptr()) };
+            let g = unsafe { fmemopen(gbuf.as_mut_ptr() as *mut libc::c_void, cap, mode.as_ptr()) };
             let gret = unsafe { fputs(cs.as_ptr(), g) };
             unsafe { fflush(g) };
 
             let mut fbuf = vec![b'Z'; cap];
             let f = unsafe {
-                fl::fmemopen(fbuf.as_mut_ptr() as *mut libc::c_void, cap, mode.as_ptr() as *const libc::c_char)
+                fl::fmemopen(
+                    fbuf.as_mut_ptr() as *mut libc::c_void,
+                    cap,
+                    mode.as_ptr() as *const libc::c_char,
+                )
             };
             let fret = unsafe { fl::fputs(cs.as_ptr(), f as *mut libc::c_void) };
             unsafe { fl::fflush(f as *mut libc::c_void) };

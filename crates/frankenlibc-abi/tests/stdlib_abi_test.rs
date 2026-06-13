@@ -4090,7 +4090,10 @@ fn random_r_accepts_valid_tracked_state_and_result() {
         // srandom_r reseeds the bound generator; the same seed replays exactly.
         assert_eq!(srandom_r(123, buf.cast()), 0);
         assert_eq!(random_r(buf.cast(), result), 0);
-        assert_eq!(*result, first, "srandom_r(123) must replay the seed sequence");
+        assert_eq!(
+            *result, first,
+            "srandom_r(123) must replay the seed sequence"
+        );
 
         frankenlibc_abi::malloc_abi::free(result.cast());
         frankenlibc_abi::malloc_abi::free(statebuf.cast());

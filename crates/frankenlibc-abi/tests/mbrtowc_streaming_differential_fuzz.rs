@@ -62,7 +62,11 @@ fn gen_cp(r: &mut Lcg) -> u32 {
         _ => 0x10000 + r.below(0x100000) as u32,
     };
     // Skip surrogates (not valid scalar values).
-    if (0xD800..=0xDFFF).contains(&cp) { 0x41 } else { cp }
+    if (0xD800..=0xDFFF).contains(&cp) {
+        0x41
+    } else {
+        cp
+    }
 }
 
 /// Feed `bytes` to one mbrtowc implementation in chunks of 1..=2 bytes with a
@@ -95,9 +99,9 @@ fn stream(
         let wc_field = if ri >= 0 { wc as i64 } else { -1 };
         out.push((ri, wc_field));
         match ri {
-            -2 => i += chunk,            // incomplete: whole chunk consumed
-            -1 => break,                 // EILSEQ: stop (errno state differs)
-            0 => break,                  // NUL
+            -2 => i += chunk, // incomplete: whole chunk consumed
+            -1 => break,      // EILSEQ: stop (errno state differs)
+            0 => break,       // NUL
             k if k >= 0 => i += k as usize,
             _ => break,
         }
@@ -140,5 +144,7 @@ fn mbrtowc_streaming_differential_fuzz_vs_glibc() {
         divs.len(),
         divs.join("\n")
     );
-    eprintln!("mbrtowc streaming differential fuzz: {compared} strings, 0 divergences vs host glibc");
+    eprintln!(
+        "mbrtowc streaming differential fuzz: {compared} strings, 0 divergences vs host glibc"
+    );
 }

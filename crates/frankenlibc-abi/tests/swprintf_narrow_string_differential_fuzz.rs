@@ -54,7 +54,9 @@ fn used(buf: &[Wc], n: c_int) -> Vec<Wc> {
 }
 
 fn to_s(v: &[Wc]) -> String {
-    v.iter().map(|&c| char::from_u32(c as u32).unwrap_or('?')).collect()
+    v.iter()
+        .map(|&c| char::from_u32(c as u32).unwrap_or('?'))
+        .collect()
 }
 
 /// A code point of UTF-8 byte width 1, 2, or 3 (never a surrogate).
@@ -64,7 +66,11 @@ fn gen_cp(r: &mut Lcg) -> char {
         1 => 0x80 + r.below(0x780) as u32,
         _ => {
             let c = 0x800 + r.below(0xF800) as u32;
-            if (0xD800..=0xDFFF).contains(&c) { 0x4E00 } else { c }
+            if (0xD800..=0xDFFF).contains(&c) {
+                0x4E00
+            } else {
+                c
+            }
         }
     };
     char::from_u32(v).unwrap_or('?')
@@ -115,10 +121,22 @@ fn swprintf_narrow_string_differential_fuzz_vs_glibc() {
         let wf = wfmt(&fmt);
         let mut fb = vec![0 as Wc; 256];
         let mut lb = vec![0 as Wc; 256];
-        let nfl =
-            unsafe { fl::swprintf(fb.as_mut_ptr(), 256, wf.as_ptr(), carg.as_ptr() as *const c_char) };
-        let nlc =
-            unsafe { swprintf(lb.as_mut_ptr(), 256, wf.as_ptr(), carg.as_ptr() as *const c_char) };
+        let nfl = unsafe {
+            fl::swprintf(
+                fb.as_mut_ptr(),
+                256,
+                wf.as_ptr(),
+                carg.as_ptr() as *const c_char,
+            )
+        };
+        let nlc = unsafe {
+            swprintf(
+                lb.as_mut_ptr(),
+                256,
+                wf.as_ptr(),
+                carg.as_ptr() as *const c_char,
+            )
+        };
         compared += 1;
         let (fs, ls) = (used(&fb, nfl), used(&lb, nlc));
         if (nfl != nlc || fs != ls) && divs.len() < 40 {

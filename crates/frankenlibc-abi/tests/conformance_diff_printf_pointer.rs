@@ -10,8 +10,8 @@
 //! width and left-justify. This gate compares the rendered string for a flag
 //! matrix over several pointer values, including NULL.
 
-use std::ffi::{CString, c_char, c_void};
 use frankenlibc_abi::stdio_abi as fl;
+use std::ffi::{CString, c_char, c_void};
 
 unsafe extern "C" {
     fn snprintf(b: *mut c_char, s: usize, f: *const c_char, ...) -> i32;
@@ -38,9 +38,8 @@ fn printf_pointer_flags_match_glibc() {
         0xffff_ffff_ffff_ffff_usize as *const c_void,
     ];
     let fmts = [
-        "%p", "%20p", "%-20p|", "%020p", "[%5p]", "%+p", "% p", "%#p", "%#020p",
-        "%+020p", "% 020p", "%-+20p|", "%.10p", "%.0p", "%015p", "% .8p", "%+.5p",
-        "%+-25p|", "%025p", "%1p",
+        "%p", "%20p", "%-20p|", "%020p", "[%5p]", "%+p", "% p", "%#p", "%#020p", "%+020p",
+        "% 020p", "%-+20p|", "%.10p", "%.0p", "%015p", "% .8p", "%+.5p", "%+-25p|", "%025p", "%1p",
     ];
     for fmt in fmts {
         for &p in ptrs {

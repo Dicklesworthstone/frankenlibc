@@ -50,13 +50,20 @@ fn set_glibc_errno(e: i32) {
 #[test]
 fn perror_matches_glibc() {
     let path = CString::new(format!("/tmp/fl_perror_{}", std::process::id())).unwrap();
-    let tmp_fd =
-        unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC, 0o600) };
+    let tmp_fd = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+            0o600,
+        )
+    };
     assert!(tmp_fd >= 0);
 
     let prefixes: &[Option<&str>] = &[None, Some(""), Some("prog"), Some("a/b")];
     // Spread: common, EAGAIN(11), high (40,75,95,131,133), unknown (200, 4095, -1, 0).
-    let errnos = [1, 2, 11, 13, 22, 34, 40, 75, 95, 110, 131, 133, 200, 4095, -1, 0];
+    let errnos = [
+        1, 2, 11, 13, 22, 34, 40, 75, 95, 110, 131, 133, 200, 4095, -1, 0,
+    ];
 
     let mut fails = Vec::new();
     for &e in &errnos {
@@ -87,5 +94,9 @@ fn perror_matches_glibc() {
         libc::unlink(path.as_ptr());
     }
 
-    assert!(fails.is_empty(), "perror diverged from glibc:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "perror diverged from glibc:\n{}",
+        fails.join("\n")
+    );
 }

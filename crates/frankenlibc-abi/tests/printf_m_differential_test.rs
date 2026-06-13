@@ -24,7 +24,13 @@ fn render_fl(fmt: &str, errno: i32) -> (i32, Vec<u8>) {
     unsafe { *frankenlibc_abi::errno_abi::__errno_location() = errno };
     let cf = CString::new(fmt).unwrap();
     let mut buf = vec![0u8; 256];
-    let r = unsafe { fl::snprintf(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), cf.as_ptr()) };
+    let r = unsafe {
+        fl::snprintf(
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            cf.as_ptr(),
+        )
+    };
     let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     (r, buf[..n].to_vec())
 }
@@ -33,14 +39,22 @@ fn render_glibc(fmt: &str, errno: i32) -> (i32, Vec<u8>) {
     set_errno(errno);
     let cf = CString::new(fmt).unwrap();
     let mut buf = vec![0u8; 256];
-    let r = unsafe { snprintf(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), cf.as_ptr()) };
+    let r = unsafe {
+        snprintf(
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            cf.as_ptr(),
+        )
+    };
     let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     (r, buf[..n].to_vec())
 }
 
 #[test]
 fn printf_m_matches_glibc() {
-    let fmts = ["%m", "[%m]", "x=%m=y", "[%20m]", "[%-20m]", "[%.3m]", "[%.0m]", "[%8.4m]", "%m %m"];
+    let fmts = [
+        "%m", "[%m]", "x=%m=y", "[%20m]", "[%-20m]", "[%.3m]", "[%.0m]", "[%8.4m]", "%m %m",
+    ];
     // A spread of errno values incl. 0 ("Success") and an unknown code.
     let errnos = [0, 1, 2, 11, 13, 22, 34, 110, 4095];
     let mut fails = Vec::new();
@@ -59,5 +73,9 @@ fn printf_m_matches_glibc() {
             }
         }
     }
-    assert!(fails.is_empty(), "printf %m diverged from glibc:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "printf %m diverged from glibc:\n{}",
+        fails.join("\n")
+    );
 }

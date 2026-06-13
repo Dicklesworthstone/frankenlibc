@@ -75,7 +75,11 @@ fn run_mbsn(input: &[u8], nms: usize, dst_null: bool, len: usize, use_fl: bool) 
     } else {
         (rc_i as usize).min(len).min(wide.len())
     };
-    let out = if dst_null { Vec::new() } else { wide[..n].to_vec() };
+    let out = if dst_null {
+        Vec::new()
+    } else {
+        wide[..n].to_vec()
+    };
     Outcome {
         rc: rc_i,
         src_off,
@@ -157,10 +161,10 @@ fn mbsnrtowcs_matches_host_glibc() {
     let inputs: &[&[u8]] = &[
         b"\0",
         b"abc\0",
-        "a€b\0".as_bytes(),    // ASCII, 3-byte, ASCII
+        "a€b\0".as_bytes(), // ASCII, 3-byte, ASCII
         "café\0".as_bytes(),
-        "😀x\0".as_bytes(),    // 4-byte then ASCII
-        &[b'a', 0xFF, 0],       // invalid byte
+        "😀x\0".as_bytes(), // 4-byte then ASCII
+        &[b'a', 0xFF, 0],   // invalid byte
     ];
     let mut compared = 0u64;
     let mut div: Vec<(Vec<u8>, usize, bool, usize, Outcome, Outcome)> = Vec::new();
@@ -197,10 +201,10 @@ fn wcsnrtombs_matches_host_glibc() {
     let inputs: &[&[u32]] = &[
         &[0],
         &[0x41, 0x42, 0],
-        &[0xE9, 0x41, 0],       // 2-byte then ASCII
-        &[0x20AC, 0x42, 0],     // 3-byte then ASCII
-        &[0x1_F600, 0x43, 0],   // 4-byte then ASCII
-        &[0x20_0000, 0x44, 0],  // 5-byte form (RFC 2279) — overflow-path stress
+        &[0xE9, 0x41, 0],         // 2-byte then ASCII
+        &[0x20AC, 0x42, 0],       // 3-byte then ASCII
+        &[0x1_F600, 0x43, 0],     // 4-byte then ASCII
+        &[0x20_0000, 0x44, 0],    // 5-byte form (RFC 2279) — overflow-path stress
         &[0x41, 0xD800, 0x42, 0], // surrogate mid-string
     ];
     let mut compared = 0u64;

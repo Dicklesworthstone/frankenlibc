@@ -35,13 +35,19 @@ fn swar_ascii_lower_matches_scalar_for_all_bytes_and_lanes() {
             );
             // Other lanes must be untouched (they were 0).
             let cleared = folded & !(0xFFu64 << (lane * 8));
-            assert_eq!(cleared, 0, "swar lower leaked into other lanes for byte={b:#x} lane={lane}");
+            assert_eq!(
+                cleared, 0,
+                "swar lower leaked into other lanes for byte={b:#x} lane={lane}"
+            );
         }
     }
     // A full mixed word.
     let w = u64::from_ne_bytes(*b"AbZ@[a1\xff");
     let got = test_swar_ascii_lower(w).to_ne_bytes();
-    let want: Vec<u8> = b"AbZ@[a1\xff".iter().map(|c| c.to_ascii_lowercase()).collect();
+    let want: Vec<u8> = b"AbZ@[a1\xff"
+        .iter()
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
     assert_eq!(&got[..], &want[..], "swar lower mixed word");
 }
 

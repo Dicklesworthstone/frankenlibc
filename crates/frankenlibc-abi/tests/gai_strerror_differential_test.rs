@@ -16,11 +16,19 @@ unsafe extern "C" {
 fn gai_strerror_matches_glibc() {
     let mut fails = Vec::new();
     for code in -20..=5 {
-        let f = unsafe { CStr::from_ptr(fl::gai_strerror(code)) }.to_string_lossy().into_owned();
-        let g = unsafe { CStr::from_ptr(gai_strerror(code)) }.to_string_lossy().into_owned();
+        let f = unsafe { CStr::from_ptr(fl::gai_strerror(code)) }
+            .to_string_lossy()
+            .into_owned();
+        let g = unsafe { CStr::from_ptr(gai_strerror(code)) }
+            .to_string_lossy()
+            .into_owned();
         if f != g {
             fails.push(format!("gai_strerror({code}): fl={f:?} glibc={g:?}"));
         }
     }
-    assert!(fails.is_empty(), "gai_strerror diverged from glibc:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "gai_strerror diverged from glibc:\n{}",
+        fails.join("\n")
+    );
 }
