@@ -717,7 +717,7 @@ impl StdioStream {
             if rem.is_empty() {
                 return ReadUntil::Eof;
             }
-            let outcome = match rem.iter().position(|&b| b == delim) {
+            let outcome = match crate::string::mem::memchr(rem, delim, rem.len()) {
                 Some(k) => {
                     out.extend_from_slice(&rem[..=k]);
                     backing.consume(k + 1);
@@ -737,7 +737,7 @@ impl StdioStream {
             if buffered.is_empty() {
                 return ReadUntil::NeedRefill;
             }
-            match buffered.iter().position(|&b| b == delim) {
+            match crate::string::mem::memchr(buffered, delim, buffered.len()) {
                 Some(k) => {
                     out.extend_from_slice(&buffered[..=k]);
                     self.buffer.consume(k + 1);
@@ -819,7 +819,7 @@ impl StdioStream {
                 return (written, ReadUntil::Eof);
             }
             let scan_len = rem_len.min(limit);
-            let (n, found) = match rem[..scan_len].iter().position(|&b| b == delim) {
+            let (n, found) = match crate::string::mem::memchr(rem, delim, scan_len) {
                 Some(k) => (k + 1, true),
                 None => (scan_len, false),
             };
@@ -842,7 +842,7 @@ impl StdioStream {
                 return (written, ReadUntil::NeedRefill);
             }
             let scan_len = buffered.len().min(limit);
-            let (n, found) = match buffered[..scan_len].iter().position(|&b| b == delim) {
+            let (n, found) = match crate::string::mem::memchr(buffered, delim, scan_len) {
                 Some(k) => (k + 1, true),
                 None => (scan_len, false),
             };
