@@ -903,6 +903,16 @@ pub fn pow(base: f64, exponent: f64) -> f64 {
     // bases, large/non-integer exponents, etc. defer to libm for exact IEEE
     // special-case semantics.
     if base.is_finite() && exponent.is_finite() {
+        // pow(±0, y) for finite y < 0 is a pole (result ±inf): glibc raises
+        // FE_DIVBYZERO — EXCEPT y == -1.0, which glibc special-cases as a bare
+        // reciprocal and leaves flag-free (verified vs host glibc). The fast-path
+        // `1.0/result` does not reliably emit a hardware divide for these
+        // constant-folded inputs, so re-raise it explicitly. Value unchanged.
+        if base == 0.0 && exponent < 0.0 && exponent != -1.0 {
+            let _ = core::hint::black_box(
+                core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64),
+            );
+        }
         let n = exponent as i64;
         if n as f64 == exponent && n.unsigned_abs() <= POWI_MAX_EXP {
             return powi_squaring(base, n);

@@ -19,6 +19,13 @@ fn fe_invalid_f32() {
     let _ = core::hint::black_box(core::hint::black_box(0.0f32) / core::hint::black_box(0.0f32));
 }
 
+#[inline]
+fn fe_underflow_f32() {
+    let _ = core::hint::black_box(
+        core::hint::black_box(f32::MIN_POSITIVE) * core::hint::black_box(f32::MIN_POSITIVE),
+    );
+}
+
 // --- Trigonometric ---
 
 #[inline]
@@ -617,12 +624,18 @@ pub fn nexttowardf(x: f32, y: f64) -> f32 {
 
 #[inline]
 pub fn ilogbf(x: f32) -> i32 {
+    // C99 7.12.6.5: ilogb(0), ilogb(±inf), ilogb(NaN) raise FE_INVALID.
+    if x == 0.0 || !x.is_finite() {
+        fe_invalid_f32();
+    }
     libm::ilogbf(x)
 }
 
 #[inline]
 pub fn logbf(x: f32) -> f32 {
     if x == 0.0 {
+        // logb(0) = -inf is a pole: glibc raises FE_DIVBYZERO.
+        fe_divbyzero_f32();
         return f32::NEG_INFINITY;
     }
     if x.is_infinite() {
@@ -643,7 +656,14 @@ pub fn erff(x: f32) -> f32 {
 
 #[inline]
 pub fn erfcf(x: f32) -> f32 {
-    libm::erfcf(x)
+    let r = libm::erfcf(x);
+    // erfc(x) for large finite positive x underflows toward 0; glibc raises
+    // FE_UNDERFLOW on the subnormal/zero result, libm omits it. erfc(+inf)=0
+    // is an exact limit (no underflow), so exclude non-finite x.
+    if x.is_finite() && x > 0.0 && r < f32::MIN_POSITIVE {
+        fe_underflow_f32();
+    }
+    r
 }
 
 #[inline]

@@ -22,6 +22,8 @@ unsafe extern "C" {
     fn atanhf(x: f32)->f32; fn log1p(x: f64)->f64; fn log1pf(x: f32)->f32;
     fn y0(x: f64)->f64; fn y1(x: f64)->f64; fn yn(n: c_int, x: f64)->f64;
     fn y0f(x: f32)->f32; fn y1f(x: f32)->f32; fn ynf(n: c_int, x: f32)->f32;
+    fn ilogb(x: f64)->c_int; fn ilogbf(x: f32)->c_int; fn logb(x: f64)->f64;
+    fn erfc(x: f64)->f64; fn erfcf(x: f32)->f32;
 }
 const HARD: c_int = 0x1D; // INVALID|DIVBYZERO|OVERFLOW|UNDERFLOW (drop noisy INEXACT)
 fn key(x: f64) -> i64 { let b = x.to_bits() as i64; if b < 0 { i64::MIN - b } else { b } }
@@ -154,5 +156,36 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chk2!("y1f(0)", fl::y1f(0.0), y1f(0.0));
     chk2!("ynf(2,0)", fl::ynf(2,0.0), ynf(2,0.0));
     chk2!("y0f(-1)", fl::y0f(-1.0), y0f(-1.0));
+
+    // ilogb/logb: C99 7.12.6.5 — ilogb(0)/(±inf)/(NaN) raise FE_INVALID;
+    // logb(0) is a pole -> FE_DIVBYZERO. libm returns the magic value, no flag.
+    chk!("ilogb(0)", fl::ilogb(0.0) as f64, ilogb(0.0) as f64);
+    chk!("ilogb(inf)", fl::ilogb(f64::INFINITY) as f64, ilogb(f64::INFINITY) as f64);
+    chk!("ilogb(-inf)", fl::ilogb(f64::NEG_INFINITY) as f64, ilogb(f64::NEG_INFINITY) as f64);
+    chk!("ilogb(nan)", fl::ilogb(f64::NAN) as f64, ilogb(f64::NAN) as f64);
+    chk!("ilogb(8)", fl::ilogb(8.0) as f64, ilogb(8.0) as f64); // control: no flag
+    chk!("ilogbf(0)", fl::ilogbf(0.0) as f64, ilogbf(0.0) as f64);
+    chk!("ilogbf(inf)", fl::ilogbf(f32::INFINITY) as f64, ilogbf(f32::INFINITY) as f64);
+    chk!("ilogbf(nan)", fl::ilogbf(f32::NAN) as f64, ilogbf(f32::NAN) as f64);
+    chk!("logb(0)", fl::logb(0.0), logb(0.0));
+    chk!("logb(inf)", fl::logb(f64::INFINITY), logb(f64::INFINITY)); // control: no flag
+    chk!("logb(8)", fl::logb(8.0), logb(8.0)); // control: no flag
+
+    // erfc large-x underflow -> FE_UNDERFLOW (libm omits); +inf is exact (no flag).
+    chk!("erfc(710)", fl::erfc(710.0), erfc(710.0));
+    chk!("erfc(28)", fl::erfc(28.0), erfc(28.0));
+    chk!("erfc(inf)", fl::erfc(f64::INFINITY), erfc(f64::INFINITY)); // exact 0, no flag
+    chk!("erfc(0)", fl::erfc(0.0), erfc(0.0)); // control: 1.0, no flag
+    chk!("erfcf(100)", fl::erfcf(100.0) as f64, erfcf(100.0) as f64);
+    chk!("erfcf(inf)", fl::erfcf(f32::INFINITY) as f64, erfcf(f32::INFINITY) as f64);
+
+    // pow(0, y<0) pole -> FE_DIVBYZERO, EXCEPT y==-1.0 (glibc reciprocal special-case).
+    chk!("pow(0,-1)", fl::pow(0.0,-1.0), pow(0.0,-1.0)); // glibc: NO flag
+    chk!("pow(0,-2)", fl::pow(0.0,-2.0), pow(0.0,-2.0)); // DIVBYZERO
+    chk!("pow(0,-3)", fl::pow(0.0,-3.0), pow(0.0,-3.0)); // DIVBYZERO
+    chk!("pow(0,-0.5)", fl::pow(0.0,-0.5), pow(0.0,-0.5)); // DIVBYZERO
+    chk!("pow(-0,-3)", fl::pow(-0.0,-3.0), pow(-0.0,-3.0)); // -inf, DIVBYZERO
+    chk!("pow(-0,-1)", fl::pow(-0.0,-1.0), pow(-0.0,-1.0)); // -inf, NO flag
+
     assert!(div.is_empty(), "fp-exception/value divergences vs glibc:\n  {}", div.join("\n  "));
 }

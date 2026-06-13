@@ -302,11 +302,20 @@ pub fn lgamma(x: f64) -> f64 {
 /// Complementary error function: 1 - erf(x).
 #[inline]
 pub fn erfc(x: f64) -> f64 {
-    if is_erfc_profile_grid_tail(x) {
+    let r = if is_erfc_profile_grid_tail(x) {
         erfc_profile_band_tail(x)
     } else {
         libm::erfc(x)
+    };
+    // erfc(x) for large finite positive x underflows toward 0; glibc raises
+    // FE_UNDERFLOW on the subnormal/zero result, libm omits it. erfc(+inf)=0
+    // is an exact limit (no underflow), so exclude non-finite x.
+    if x.is_finite() && x > 0.0 && r < f64::MIN_POSITIVE {
+        let _ = core::hint::black_box(
+            core::hint::black_box(f64::MIN_POSITIVE) * core::hint::black_box(f64::MIN_POSITIVE),
+        );
     }
+    r
 }
 
 /// Reentrant lgamma: returns `(lgamma(x), signgam)` where `signgam` is +1 or -1.

@@ -592,9 +592,28 @@ pub fn nexttowardl_long_double_bits(
     }
 }
 
+/// Re-raise FE_INVALID via a safe force_eval op (cold path only). libm's
+/// software ilogb returns FP_ILOGB0/FP_ILOGBNAN for 0/inf/nan but omits the
+/// C99 7.6.2 domain flag glibc raises.
+#[inline]
+fn fe_invalid_f64() {
+    let _ = core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
+}
+
+/// Re-raise FE_DIVBYZERO via a safe force_eval op (cold path only).
+#[inline]
+fn fe_divbyzero_f64() {
+    let _ = core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
+}
+
 /// Extract unbiased exponent as `i32` (FP_ILOGBNAN / FP_ILOGB0 for special values).
 #[inline]
 pub fn ilogb(x: f64) -> i32 {
+    // C99 7.12.6.5: ilogb(0), ilogb(±inf), ilogb(NaN) raise FE_INVALID. libm
+    // returns the right magic value but omits the flag.
+    if x == 0.0 || !x.is_finite() {
+        fe_invalid_f64();
+    }
     libm::ilogb(x)
 }
 
@@ -602,6 +621,8 @@ pub fn ilogb(x: f64) -> i32 {
 #[inline]
 pub fn logb(x: f64) -> f64 {
     if x == 0.0 {
+        // logb(0) = -inf is a pole: glibc raises FE_DIVBYZERO.
+        fe_divbyzero_f64();
         return f64::NEG_INFINITY;
     }
     if x.is_infinite() {
