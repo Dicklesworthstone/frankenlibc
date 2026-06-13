@@ -905,8 +905,9 @@ fn diff_exp10_within_4_ulps() {
 
 #[test]
 fn diff_exp10f_within_4_ulps() {
-    // exp10f routes 10^x = 2^(x·log2 10) through an f64 exp2 then rounds once to
-    // f32 — must stay within 4 ULP of glibc across the full finite f32 domain.
+    // exp10f uses a certified profile-band table/residual kernel on [0.5, 2.5]
+    // and the f64 exp2 fallback elsewhere; both paths must stay within 4 ULP of
+    // glibc across the full finite f32 domain.
     fn f32_ulps(a: f32, b: f32) -> i64 {
         if a.is_nan() && b.is_nan() {
             return 0; // any NaN matches any NaN for a math result
@@ -933,7 +934,10 @@ fn diff_exp10f_within_4_ulps() {
     }
     for &x in &[
         0.0_f32,
+        0.5,
         1.0,
+        1.5,
+        2.5,
         7.0,
         15.0,
         20.0,

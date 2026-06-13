@@ -548,19 +548,78 @@ pub fn exp10f(x: f32) -> f32 {
     if x.is_finite() && x == x.trunc() && (-10.0..=10.0).contains(&x) {
         return 10.0_f32.powi(x as i32);
     }
+    if x.is_finite() && (0.5..=2.5).contains(&x) {
+        return exp10f_profile_band(x);
+    }
     // 10^x = 2^(x·log2 10), evaluated entirely in f64 via the fast exp2 kernel
-    // (the slow libm::expf this replaced ran ~1.3x behind glibc). f64 carries
-    // 29 extra bits, so the single trailing f64→f32 rounding is essentially
-    // correct (far inside 4 ULP) with no extended-precision constant or range
-    // gate: f64 never overflows across the entire finite f32 domain, and the
-    // cast maps f64 over/underflow to f32 inf/0 exactly as glibc does. Verified
-    // by conformance_diff_math::diff_exp10f_within_4_ulps.
+    // outside the profiled medium-positive band. f64 carries 29 extra bits, so
+    // the single trailing f64→f32 rounding is essentially correct (far inside 4
+    // ULP) with no extended-precision constant or wide-domain range gate: f64
+    // never overflows across the entire finite f32 domain, and the cast maps f64
+    // over/underflow to f32 inf/0 exactly as glibc does. Verified by
+    // conformance_diff_math::diff_exp10f_within_4_ulps.
     //
     // NOTE (rejected lever, measured): the f32 `exp2f(x * LOG2_10_f32)` route is
     // faster but FAILS the 4-ULP contract (5 ULP on subnormal results near
-    // x ≈ -39, where the f32 x·log2(10) rounding loses precision). The f64 route
-    // is required for accuracy here — do not switch to f32.
+    // x ≈ -39, where the f32 x·log2(10) rounding loses precision). Keep that
+    // low-range traffic on the f64 fallback; do not switch the full domain to f32.
     (libm::exp2(x as f64 * core::f64::consts::LOG2_10)) as f32
+}
+
+#[inline]
+fn exp10f_profile_band(x: f32) -> f32 {
+    const TABLE_START: i32 = 8;
+    const CENTER_STEP: f64 = 0.0625;
+    const TABLE: [f64; 33] = [
+        3.162_277_660_168_379_5,
+        3.651_741_272_548_377,
+        4.216_965_034_285_822,
+        4.869_675_251_658_631,
+        5.623_413_251_903_491,
+        6.493_816_315_762_113,
+        7.498_942_093_324_558,
+        8.659_643_233_600_654,
+        10.0,
+        11.547_819_846_894_581,
+        13.335_214_321_633_24,
+        15.399_265_260_594_92,
+        17.782_794_100_389_23,
+        20.535_250_264_571_46,
+        23.713_737_056_616_55,
+        27.384_196_342_643_612,
+        31.622_776_601_683_793,
+        36.517_412_725_483_77,
+        42.169_650_342_858_226,
+        48.696_752_516_586_31,
+        56.234_132_519_034_91,
+        64.938_163_157_621_13,
+        74.989_420_933_245_58,
+        86.596_432_336_006_53,
+        100.0,
+        115.478_198_468_945_82,
+        133.352_143_216_332_4,
+        153.992_652_605_949_2,
+        177.827_941_003_892_28,
+        205.352_502_645_714_6,
+        237.137_370_566_165_52,
+        273.841_963_426_436_1,
+        316.227_766_016_837_96,
+    ];
+    const C0: f64 = 1.0;
+    const C1: f64 = core::f64::consts::LN_10;
+    const C2: f64 = 2.650_949_055_239_199_7;
+    const C3: f64 = 2.034_678_592_293_477;
+    const C4: f64 = 1.171_255_148_912_267_6;
+    const C5: f64 = 0.539_382_929_195_581_7;
+
+    let bucket = (x * 16.0 + 0.5) as i32;
+    let index = (bucket - TABLE_START) as usize;
+    debug_assert!(index < TABLE.len());
+    let r = x as f64 - (bucket as f64) * CENTER_STEP;
+    let r2 = r * r;
+    let r4 = r2 * r2;
+    let residual = (C0 + C1 * r) + r2 * (C2 + C3 * r) + r4 * (C4 + C5 * r);
+    (TABLE[index] * residual) as f32
 }
 
 /// Bessel function of the first kind, order 0 (f32 variant).
@@ -1192,6 +1251,90 @@ mod tests {
         assert!(exp10f(40.0).is_infinite());
         assert_eq!(exp10f(-50.0), 0.0);
         println!("exp10f worst ULP = {worst}");
+    }
+
+    #[test]
+    fn exp10f_profile_band_within_4_ulps() {
+        let mut worst = 0u32;
+        let mut worst_x = 0.0f32;
+        for k in 0..64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = exp10f(x);
+            let want = libm::exp10f(x);
+            let u = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
+            if u > worst {
+                worst = u;
+                worst_x = x;
+            }
+            assert!(u <= 4, "exp10f({x})={got:?} vs {want:?} ({u} ULP)");
+        }
+
+        let mut state = 0x2468_ace1_u32;
+        for _ in 0..1_000_000 {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            let x = 0.5 + (state >> 8) as f32 * (2.0 / (1u32 << 24) as f32);
+            let got = exp10f(x);
+            let want = libm::exp10f(x);
+            let u = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
+            if u > worst {
+                worst = u;
+                worst_x = x;
+            }
+            assert!(u <= 4, "exp10f({x})={got:?} vs {want:?} ({u} ULP)");
+        }
+        println!("exp10f profile band worst ULP = {worst} at {worst_x}");
+    }
+
+    #[test]
+    fn exp10f_profile_band_preserves_fallback_bits() {
+        for &x in &[
+            -50.0f32,
+            -39.0,
+            -10.5,
+            -0.5,
+            0.499_999_97,
+            2.500_000_2,
+            10.5,
+            39.0,
+            40.0,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
+            let got = exp10f(x);
+            let want = (libm::exp2(x as f64 * core::f64::consts::LOG2_10)) as f32;
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "exp10f fallback drifted for {x}"
+            );
+        }
+    }
+
+    #[test]
+    fn golden_exp10f_profile_band_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        for k in 0..64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = exp10f(x);
+            let want = libm::exp10f(x);
+            let u = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
+            assert!(u <= 4, "exp10f({x})={got:?} vs {want:?} ({u} ULP)");
+            hasher.update(x.to_bits().to_le_bytes());
+            hasher.update(got.to_bits().to_le_bytes());
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "d27316211664f96669fdc0dd45c618aeba051833b5876979af94beca3ba1df38",
+            "exp10f profile-band golden corpus hash drifted: got {digest}"
+        );
     }
 
     #[test]
