@@ -45,7 +45,12 @@ impl Lcg {
 /// glibc iconv: convert `src` fully; returns the output bytes, or None if the
 /// conversion errored (EILSEQ/EINVAL) partway (we compare the error decision).
 fn glibc_conv(to: &[u8], src: &[u8]) -> Option<Vec<u8>> {
-    let cd = unsafe { iconv_open(to.as_ptr() as *const c_char, b"UTF-8\0".as_ptr() as *const c_char) };
+    let cd = unsafe {
+        iconv_open(
+            to.as_ptr() as *const c_char,
+            b"UTF-8\0".as_ptr() as *const c_char,
+        )
+    };
     assert!(cd as isize != -1);
     let mut out = vec![0u8; src.len() * 4 + 16];
     let mut ip = src.as_ptr() as *mut c_char;
@@ -128,7 +133,7 @@ fn iconv_utf8_to_utf32_simd_matches_glibc() {
                     s.push(0x98);
                     s.push(0x80 + r.below(0x40) as u8);
                 }
-                _ => s.push(0xC2 + r.below(0x40) as u8), // lone byte (often malformed)
+                _ => s.push((0xC2u16 + r.below(0x3e) as u16) as u8), // lone byte
             }
         }
         // No trailing NUL: iconv converts the whole byte slice (glibc uses il).
@@ -146,6 +151,109 @@ fn iconv_utf8_to_utf32_simd_matches_glibc() {
     assert!(
         divs.is_empty(),
         "iconv UTF-8->UTF-32 SIMD path diverged from glibc on some of {compared} cases (up to 20):\n{}",
+        divs.join("\n")
+    );
+}
+
+// ---- Encode direction: UTF-32LE/BE -> UTF-8 (the SIMD encode fast path) ----
+
+fn glibc_conv_from(from: &[u8], to: &[u8], src: &[u8]) -> Option<Vec<u8>> {
+    let cd = unsafe { iconv_open(to.as_ptr() as *const c_char, from.as_ptr() as *const c_char) };
+    assert!(cd as isize != -1);
+    let mut out = vec![0u8; src.len() * 2 + 16];
+    let mut ip = src.as_ptr() as *mut c_char;
+    let mut il = src.len();
+    let mut op = out.as_mut_ptr() as *mut c_char;
+    let mut ol = out.len();
+    let r = unsafe { iconv(cd, &mut ip, &mut il, &mut op, &mut ol) };
+    unsafe { iconv_close(cd) };
+    if r == usize::MAX {
+        None
+    } else {
+        let w = out.len() - ol;
+        out.truncate(w);
+        Some(out)
+    }
+}
+
+fn fl_conv_from(from: &[u8], to: &[u8], src: &[u8]) -> Option<Vec<u8>> {
+    let mut cd = fl_iconv_open(&to[..to.len() - 1], &from[..from.len() - 1])?;
+    let mut out = vec![0u8; src.len() * 2 + 16];
+    match fl_iconv(&mut cd, Some(src), &mut out) {
+        Ok(r) => {
+            out.truncate(r.out_written);
+            Some(out)
+        }
+        Err(_) => None,
+    }
+}
+
+#[test]
+fn iconv_utf32_to_utf8_simd_matches_glibc() {
+    let mut r = Lcg(0x5151_aaaa_3333_9999);
+    let mut compared = 0u64;
+    let mut divs = Vec::new();
+
+    for _ in 0..120_000 {
+        // Build a random code-point stream, biased to 2-byte / 3-byte runs.
+        let mut cps: Vec<u32> = Vec::new();
+        let segs = r.below(18);
+        for _ in 0..segs {
+            match r.below(10) {
+                0..=4 => {
+                    for _ in 0..(1 + r.below(12)) {
+                        cps.push((0x80 + r.below(0x780)) as u32); // 2-byte
+                    }
+                }
+                5..=7 => {
+                    for _ in 0..(1 + r.below(12)) {
+                        // 3-byte BMP non-surrogate
+                        let c = 0x800 + r.below(0xF800);
+                        if (0xD800..=0xDFFF).contains(&c) {
+                            cps.push(0x4E00);
+                        } else {
+                            cps.push(c as u32);
+                        }
+                    }
+                }
+                8 => cps.push((1 + r.below(0x7F)) as u32), // ASCII
+                _ => cps.push((0x1_0000 + r.below(0x10_0000)) as u32), // astral
+            }
+        }
+        for (from, bytes) in [
+            (
+                &b"UTF-32LE\0"[..],
+                cps.iter()
+                    .flat_map(|c| c.to_le_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+            (
+                &b"UTF-32BE\0"[..],
+                cps.iter()
+                    .flat_map(|c| c.to_be_bytes())
+                    .collect::<Vec<u8>>(),
+            ),
+        ] {
+            let fl = fl_conv_from(from, b"UTF-8\0", &bytes);
+            let gl = glibc_conv_from(from, b"UTF-8\0", &bytes);
+            compared += 1;
+            if fl != gl && divs.len() < 20 {
+                divs.push(format!(
+                    "from={} ncp={} fl_ok={} gl_ok={} (fl={:?} gl={:?})",
+                    String::from_utf8_lossy(&from[..from.len() - 1]),
+                    cps.len(),
+                    fl.is_some(),
+                    gl.is_some(),
+                    fl.as_ref().map(|v| v.len()),
+                    gl.as_ref().map(|v| v.len())
+                ));
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "iconv UTF-32->UTF-8 SIMD encode diverged from glibc on some of {compared} cases (up to 20):\n{}",
         divs.join("\n")
     );
 }

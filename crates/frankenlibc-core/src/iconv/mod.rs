@@ -9504,10 +9504,8 @@ pub fn iconv(
                 let v = Simd::<u8, 16>::from_array(bytes);
                 let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
                 let conts = std::simd::simd_swizzle!(v, [1, 3, 5, 7, 9, 11, 13, 15]);
-                let leads_ok =
-                    leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
-                let conts_ok =
-                    conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
+                let leads_ok = leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
+                let conts_ok = conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
                 if !(leads_ok & conts_ok).all() {
                     break; // not a clean 2-byte window — scalar path handles it
                 }
@@ -9516,10 +9514,18 @@ pub fn iconv(
                 let wc = (lw << Simd::splat(6)) | cw;
                 for (k, &cp) in wc.to_array().iter().enumerate() {
                     if u16_out {
-                        let b = if be { (cp as u16).to_be_bytes() } else { (cp as u16).to_le_bytes() };
+                        let b = if be {
+                            (cp as u16).to_be_bytes()
+                        } else {
+                            (cp as u16).to_le_bytes()
+                        };
                         outbuf[out_pos + k * 2..out_pos + k * 2 + 2].copy_from_slice(&b);
                     } else {
-                        let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
+                        let b = if be {
+                            cp.to_be_bytes()
+                        } else {
+                            cp.to_le_bytes()
+                        };
                         outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
                     }
                 }
@@ -9561,12 +9567,9 @@ pub fn iconv(
                 let leads = std::simd::simd_swizzle!(v, [0, 3, 6, 9]);
                 let cont1 = std::simd::simd_swizzle!(v, [1, 4, 7, 10]);
                 let cont2 = std::simd::simd_swizzle!(v, [2, 5, 8, 11]);
-                let leads_ok =
-                    leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xEF));
-                let cont1_ok =
-                    cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
-                let cont2_ok =
-                    cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
+                let leads_ok = leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xEF));
+                let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
+                let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
                 let overlong_ok =
                     !leads.simd_eq(Simd::splat(0xE0)) | cont1.simd_ge(Simd::splat(0xA0));
                 let surrogate_ok =
@@ -9580,10 +9583,18 @@ pub fn iconv(
                 let wc = (lw << Simd::splat(12)) | (c1w << Simd::splat(6)) | c2w;
                 for (k, &cp) in wc.to_array().iter().enumerate() {
                     if u16_out {
-                        let b = if be { (cp as u16).to_be_bytes() } else { (cp as u16).to_le_bytes() };
+                        let b = if be {
+                            (cp as u16).to_be_bytes()
+                        } else {
+                            (cp as u16).to_le_bytes()
+                        };
                         outbuf[out_pos + k * 2..out_pos + k * 2 + 2].copy_from_slice(&b);
                     } else {
-                        let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
+                        let b = if be {
+                            cp.to_be_bytes()
+                        } else {
+                            cp.to_le_bytes()
+                        };
                         outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
                     }
                 }
@@ -9596,6 +9607,81 @@ pub fn iconv(
         // bounds check is the outer `while` top), so stop here when drained.
         if in_pos >= input.len() {
             break;
+        }
+
+        // SIMD UTF-8 ENCODE: UTF-32LE/BE source -> UTF-8 target. Mirrors the
+        // wcstombs 2-byte (8 code points -> 16 bytes) and 3-byte (4 -> 12 bytes)
+        // SIMD encoders, but reads the code points from the fixed-width UTF-32
+        // source. A cheap peek of the first code point routes to the matching
+        // width; anything outside the uniform-width range (ASCII, astral,
+        // surrogate, out-of-range) or short output falls to the generic
+        // decode_char + encode_one body, preserving exact error/truncation.
+        if matches!(from_enc, Encoding::Utf32Le | Encoding::Utf32Be) && cd.to == Encoding::Utf8 {
+            let sbe = matches!(from_enc, Encoding::Utf32Be);
+            let cp_at = |p: usize| -> u32 {
+                let b: [u8; 4] = input[p..p + 4].try_into().unwrap();
+                if sbe {
+                    u32::from_be_bytes(b)
+                } else {
+                    u32::from_le_bytes(b)
+                }
+            };
+            // 2-byte output run (code points 0x80..=0x7FF).
+            while in_pos + 32 <= input.len()
+                && out_pos + 16 <= outbuf.len()
+                && (0x80..=0x7FF).contains(&cp_at(in_pos))
+            {
+                let cps: [u32; 8] = std::array::from_fn(|k| cp_at(in_pos + 4 * k));
+                let v = Simd::<u32, 8>::from_array(cps);
+                if !(v.simd_ge(Simd::splat(0x80)) & v.simd_le(Simd::splat(0x7FF))).all() {
+                    break;
+                }
+                let leads = ((v >> Simd::splat(6)) | Simd::splat(0xC0)).cast::<u8>();
+                let conts = ((v & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+                let bytes = std::simd::simd_swizzle!(
+                    leads,
+                    conts,
+                    [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15]
+                );
+                bytes.copy_to_slice(&mut outbuf[out_pos..out_pos + 16]);
+                in_pos += 32;
+                out_pos += 16;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+            // 3-byte output run (BMP non-surrogate 0x800..=0xFFFF).
+            while in_pos + 16 <= input.len()
+                && out_pos + 12 <= outbuf.len()
+                && (0x800..=0xFFFF).contains(&cp_at(in_pos))
+            {
+                let cps: [u32; 4] = std::array::from_fn(|k| cp_at(in_pos + 4 * k));
+                let v = Simd::<u32, 4>::from_array(cps);
+                let bmp_ok = v.simd_ge(Simd::splat(0x0800)) & v.simd_le(Simd::splat(0xFFFF));
+                let sur_ok = v.simd_lt(Simd::splat(0xD800)) | v.simd_gt(Simd::splat(0xDFFF));
+                if !(bmp_ok & sur_ok).all() {
+                    break;
+                }
+                let leads = ((v >> Simd::splat(12)) | Simd::splat(0xE0)).cast::<u8>();
+                let mids =
+                    (((v >> Simd::splat(6)) & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+                let tails = ((v & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+                let lead_mid = std::simd::simd_swizzle!(leads, mids, [0, 4, 1, 5, 2, 6, 3, 7]);
+                let zero = Simd::<u8, 4>::splat(0);
+                let tails_padded = std::simd::simd_swizzle!(tails, zero, [0, 4, 1, 4, 2, 4, 3, 4]);
+                let bytes = std::simd::simd_swizzle!(
+                    lead_mid,
+                    tails_padded,
+                    [0, 1, 8, 2, 3, 10, 4, 5, 12, 6, 7, 14, 0, 0, 0, 0]
+                );
+                let packed = bytes.to_array();
+                outbuf[out_pos..out_pos + 12].copy_from_slice(&packed[..12]);
+                in_pos += 16;
+                out_pos += 12;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
         }
 
         // Hot-path specialization (perf): UTF-8 source is the dominant direction,
