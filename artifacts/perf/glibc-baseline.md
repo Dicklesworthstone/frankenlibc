@@ -83,10 +83,22 @@ allocator, and was the source of the bogus 2628x figure.)
   non-mem gap — transcendental-fusion bound (composing two safe-Rust kernels vs
   glibc's single fused asm routine). Tracked in `bd-e4jb7k`; a fully-fused
   minimax `pow` is the only lever and is low-EV (~1.4x best case).
-- **Named next algorithmic swing:** single-pass unanchored PikeVM for the regex
-  *search* path (currently O(n²·m) per-start `run_from` for no-prefilter patterns)
-  → O(n·m), gated by the 2320-pattern differential fuzz vs glibc for POSIX
-  leftmost-longest correctness.
+- **Regex single-pass search — DONE (was the named next swing).** The unanchored
+  *search* path no longer probes every start with `run_from` (O(n²·m)); a single
+  merged unanchored sweep (`PikeVm::leftmost_start`, `regex.rs`) finds the leftmost
+  matching start in O(n·m), then one `run_from` at that start recovers captures.
+  A debug-only assertion pins this isomorphic to the old per-start probe, and the
+  regex differential fuzz vs glibc gates POSIX leftmost-longest correctness.
+  Confirmed against fnmatch/regex bench groups (fl beats glibc on the adversarial
+  backtracking cases).
+- **Named next algorithmic swing:** POSIX **tagged-NFA submatch** for nested/empty
+  quantified groups (`bd-1djvkw`). Whole-match parity is already exact; only the
+  *submatch offsets* of empty/nullable groups under nested quantifiers diverge from
+  glibc (the 200k-case `regex_empty_iter_capture_differential_fuzz` oracle, `#[ignore]`d).
+  Single-level is fixed (`RepeatExitGuard` + hidden progress slots); deep nesting
+  (`(.(b*)*)*`, `((a*)+b?)*`) needs real implicit tag-priority disambiguation, not
+  another local repeat guard — a multi-session VM change, NOT a one-lever tweak.
+  This is the only substantive remaining gap; the rest of the surface is parity or win.
 
 ## Validation Commands
 
