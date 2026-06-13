@@ -3578,12 +3578,68 @@ pub unsafe extern "C" fn atan2pif128(x: f64, y: f64) -> f64 {
     unsafe { atan2pi(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Re-raise FE_INVALID on the cold pi-function domain path (x = ±inf).
+#[inline]
+fn pi_fn_raise_invalid_f64() {
+    let _ = core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
+}
+#[inline]
+fn pi_fn_raise_invalid_f32() {
+    let _ = core::hint::black_box(core::hint::black_box(0.0_f32) / core::hint::black_box(0.0_f32));
+}
+
+// C23 pi-scaled trig: sinpi(x)=sin(pi*x), cospi(x)=cos(pi*x), tanpi(x)=tan(pi*x),
+// computed via the exact identity f(n+r) with n=round(x), r=x-n in [-0.5,0.5]
+// (exact by Sterbenz for |x|<2^53). This yields EXACT results at integer and
+// half-integer arguments (sinpi(1)=+0, cospi(0.5)=+0, tanpi(0.5)=+inf) and
+// stays correct for huge arguments where the naive sin(x*PI) loses all
+// precision. |x|>=2^53 is always an even integer: sinpi=±0, cospi=1, tanpi=±0.
 pub unsafe extern "C" fn cospi(x: f64) -> f64 {
-    unsafe { cos(x * std::f64::consts::PI) }
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
+    if x.abs() >= 9007199254740992.0 {
+        return 1.0; // even integer → cos(pi*even)=+1
+    }
+    let n = x.round();
+    let r = x - n;
+    let n_odd = (n as i64) & 1 != 0;
+    if r == 0.0 {
+        return if n_odd { -1.0 } else { 1.0 };
+    }
+    if r == 0.5 || r == -0.5 {
+        return 0.0; // cos at odd multiple of pi/2 is +0
+    }
+    let c = frankenlibc_core::math::cos(r * std::f64::consts::PI);
+    if n_odd { -c } else { c }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cospif(x: f32) -> f32 {
-    unsafe { cosf(x * std::f32::consts::PI) }
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        pi_fn_raise_invalid_f32();
+        return f32::NAN;
+    }
+    if x.abs() >= 16777216.0 {
+        return 1.0;
+    }
+    let n = x.round();
+    let r = x - n;
+    let n_odd = (n as i64) & 1 != 0;
+    if r == 0.0 {
+        return if n_odd { -1.0 } else { 1.0 };
+    }
+    if r == 0.5 || r == -0.5 {
+        return 0.0;
+    }
+    let c = frankenlibc_core::math::cosf(r * std::f32::consts::PI);
+    if n_odd { -c } else { c }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cospil(x: f64) -> f64 {
@@ -3611,11 +3667,54 @@ pub unsafe extern "C" fn cospif128(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpi(x: f64) -> f64 {
-    unsafe { sin(x * std::f64::consts::PI) }
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
+    if x.abs() >= 9007199254740992.0 {
+        // even integer → sin(pi*even)=±0 with sign of x
+        return if x.is_sign_negative() { -0.0 } else { 0.0 };
+    }
+    let n = x.round();
+    let r = x - n;
+    let n_odd = (n as i64) & 1 != 0;
+    if r == 0.0 {
+        return if x.is_sign_negative() { -0.0 } else { 0.0 };
+    }
+    if r == 0.5 || r == -0.5 {
+        let m = if r > 0.0 { 1.0 } else { -1.0 };
+        return if n_odd { -m } else { m };
+    }
+    let s = frankenlibc_core::math::sin(r * std::f64::consts::PI);
+    if n_odd { -s } else { s }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpif(x: f32) -> f32 {
-    unsafe { sinf(x * std::f32::consts::PI) }
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        pi_fn_raise_invalid_f32();
+        return f32::NAN;
+    }
+    if x.abs() >= 16777216.0 {
+        return if x.is_sign_negative() { -0.0 } else { 0.0 };
+    }
+    let n = x.round();
+    let r = x - n;
+    let n_odd = (n as i64) & 1 != 0;
+    if r == 0.0 {
+        return if x.is_sign_negative() { -0.0 } else { 0.0 };
+    }
+    if r == 0.5 || r == -0.5 {
+        let m = if r > 0.0 { 1.0 } else { -1.0 };
+        return if n_odd { -m } else { m };
+    }
+    let s = frankenlibc_core::math::sinf(r * std::f32::consts::PI);
+    if n_odd { -s } else { s }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpil(x: f64) -> f64 {
@@ -3643,11 +3742,32 @@ pub unsafe extern "C" fn sinpif128(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpi(x: f64) -> f64 {
-    unsafe { tan(x * std::f64::consts::PI) }
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        pi_fn_raise_invalid_f64();
+        return f64::NAN;
+    }
+    // tanpi = sinpi/cospi: the (-1)^n factors cancel, the half-integer pole
+    // becomes ±1/±0 (auto-raising FE_DIVBYZERO → ±inf), and the integer zero
+    // becomes ±0/±1 with the correct sign.
+    let s = unsafe { sinpi(x) };
+    let c = unsafe { cospi(x) };
+    s / c
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpif(x: f32) -> f32 {
-    unsafe { tanf(x * std::f32::consts::PI) }
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        pi_fn_raise_invalid_f32();
+        return f32::NAN;
+    }
+    let s = unsafe { sinpif(x) };
+    let c = unsafe { cospif(x) };
+    s / c
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpil(x: f64) -> f64 {
