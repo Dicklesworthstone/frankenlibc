@@ -386,10 +386,11 @@ const POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE: f64 = 8.0;
 const POW_PROFILE_EXP_1_337_SEGMENT_CENTER_MIN: f64 = 0.5625;
 const POW_PROFILE_EXP_1_337_SEGMENT_CENTER_STEP: f64 = 0.125;
 const POW_PROFILE_EXP_1_337_SEGMENT_T_SCALE: f64 = 16.0;
-// Fixed-exponent artifact for the profiled `pow(x, 1.337)` row. Split
-// [0.5, 2.5) into 16 uniform segments and evaluate a degree-10 Chebyshev series
-// per segment with Clenshaw recurrence. This replaces the older centered
-// binomial artifact with fewer runtime polynomial steps and a tighter ULP proof.
+// Fixed-exponent source artifact for the profiled `pow(x, 1.337)` row. Split
+// [0.5, 2.5) into 16 uniform segments. The coefficients are Chebyshev terms so
+// the proof remains compact; they are transformed to power basis at compile
+// time so the runtime path can use a lower-dependency Estrin polynomial instead
+// of a Clenshaw recurrence.
 const POW_PROFILE_EXP_1_337_COEFFS: [[f64; 11]; POW_PROFILE_EXP_1_337_SEGMENT_COUNT] = [
     [
         f64::from_bits(0x3fddb22c878aca0b),
@@ -601,6 +602,66 @@ const POW_PROFILE_EXP_1_337_COEFFS: [[f64; 11]; POW_PROFILE_EXP_1_337_SEGMENT_CO
     ],
 ];
 
+const POW_PROFILE_EXP_1_337_POWER_COEFFS: [[f64; 11]; POW_PROFILE_EXP_1_337_SEGMENT_COUNT] =
+    pow_profile_exp_1_337_power_coeffs();
+
+const fn pow_profile_exp_1_337_power_coeffs() -> [[f64; 11]; POW_PROFILE_EXP_1_337_SEGMENT_COUNT] {
+    let mut power = [[0.0; 11]; POW_PROFILE_EXP_1_337_SEGMENT_COUNT];
+    let mut segment = 0;
+    while segment < POW_PROFILE_EXP_1_337_SEGMENT_COUNT {
+        power[segment] = chebyshev_series_to_power(POW_PROFILE_EXP_1_337_COEFFS[segment]);
+        segment += 1;
+    }
+    power
+}
+
+const fn chebyshev_series_to_power(cheb: [f64; 11]) -> [f64; 11] {
+    let mut out = [0.0; 11];
+
+    let mut t_prev_prev = [0.0; 11];
+    t_prev_prev[0] = 1.0;
+    out[0] += cheb[0];
+
+    let mut t_prev = [0.0; 11];
+    t_prev[1] = 1.0;
+    out[1] += cheb[1];
+
+    let mut degree = 2;
+    while degree < 11 {
+        let mut current = [0.0; 11];
+        let mut coeff_index = 1;
+        while coeff_index < 11 {
+            current[coeff_index] += 2.0 * t_prev[coeff_index - 1];
+            coeff_index += 1;
+        }
+
+        coeff_index = 0;
+        while coeff_index < 11 {
+            current[coeff_index] -= t_prev_prev[coeff_index];
+            out[coeff_index] += cheb[degree] * current[coeff_index];
+            coeff_index += 1;
+        }
+
+        t_prev_prev = t_prev;
+        t_prev = current;
+        degree += 1;
+    }
+
+    out
+}
+
+#[inline]
+fn eval_degree10_estrin(t: f64, coeffs: &[f64; 11]) -> f64 {
+    let t2 = t * t;
+    let p0 = coeffs[0] + t * coeffs[1];
+    let p1 = coeffs[2] + t * coeffs[3];
+    let p2 = coeffs[4] + t * coeffs[5];
+    let p3 = coeffs[6] + t * coeffs[7];
+    let p4 = coeffs[8] + t * coeffs[9];
+
+    p0 + t2 * (p1 + t2 * (p2 + t2 * (p3 + t2 * (p4 + t2 * coeffs[10]))))
+}
+
 /// Range over which `exp(x) = exp2(x * log2e)` stays within 4 ULP of glibc.
 /// The error is dominated by the rounding of the `x*log2e` product (~0.5*|x|
 /// ULP after exp2 amplification), so it stays <=4 ULP up to |x| = 5 and jumps
@@ -670,20 +731,12 @@ fn pow_profile_exp_1_337_fast_path(base: f64, exponent: f64) -> Option<f64> {
 
     let segment = ((base - EXP_MEDIUM_MIN) * POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE) as usize;
     debug_assert!(segment < POW_PROFILE_EXP_1_337_SEGMENT_COUNT);
-    let coeffs = &POW_PROFILE_EXP_1_337_COEFFS[segment];
+    let coeffs = &POW_PROFILE_EXP_1_337_POWER_COEFFS[segment];
     let center = POW_PROFILE_EXP_1_337_SEGMENT_CENTER_MIN
         + (segment as f64) * POW_PROFILE_EXP_1_337_SEGMENT_CENTER_STEP;
     let t = (base - center) * POW_PROFILE_EXP_1_337_SEGMENT_T_SCALE;
 
-    let mut b1 = 0.0;
-    let mut b2 = 0.0;
-    for &coeff in coeffs[1..].iter().rev() {
-        let b0 = 2.0 * t * b1 - b2 + coeff;
-        b2 = b1;
-        b1 = b0;
-    }
-
-    Some(t * b1 - b2 + coeffs[0])
+    Some(eval_degree10_estrin(t, coeffs))
 }
 
 /// Fast path for positive finite medium bases and bounded non-special
@@ -1052,7 +1105,7 @@ mod tests {
     }
 
     #[test]
-    fn pow_profile_exp_1_337_chebyshev_within_4_ulps() {
+    fn pow_profile_exp_1_337_estrin_within_4_ulps() {
         let exponent = f64::from_bits(POW_PROFILE_EXP_1_337_BITS);
         let mut worst_ulps = 0_u64;
         let mut worst_base = 0.0_f64;
@@ -1164,7 +1217,7 @@ mod tests {
             .map(|x| format!("{x:02x}"))
             .collect();
         assert_eq!(
-            digest, "62246c649119c6ac47cec2e3de93c5e9f400bfbb5b9c0fc007a5825e750220fe",
+            digest, "a55ce2571c9313994a6f82d9a0361017d72f8588f0a0ed9ef616e72f59ca002d",
             "pow 1.337 golden corpus hash drifted: got {digest}"
         );
     }
