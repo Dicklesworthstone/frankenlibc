@@ -8382,6 +8382,8 @@ fn encode_cp1125(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
 ///     that is always illegal (immediate EILSEQ, e.g. 0xFF); a present pair is
 ///     looked up in `EUC_JP_DBCS2` (miss => EILSEQ).
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DBCS2_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    static DBCS3_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let Some(&b0) = input.first() else {
         return Err(DecodeError::Incomplete);
     };
@@ -8402,11 +8404,12 @@ fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
             return Err(DecodeError::Incomplete);
         };
         let key = (u16::from(b1) << 8) | u16::from(b2);
-        return match cjk_tables::EUC_JP_DBCS3.binary_search_by_key(&key, |&(k, _)| k) {
-            Ok(i) => char::from_u32(cjk_tables::EUC_JP_DBCS3[i].1)
-                .map(|c| (c, 3))
-                .ok_or(DecodeError::Invalid),
-            Err(_) => Err(DecodeError::Invalid),
+        let direct = DBCS3_DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::EUC_JP_DBCS3));
+        let cp = direct[key as usize];
+        return if cp != 0 {
+            char::from_u32(cp).map(|c| (c, 3)).ok_or(DecodeError::Invalid)
+        } else {
+            Err(DecodeError::Invalid)
         };
     }
     if !cjk_tables::EUC_JP_LEAD2_DEFER[b0 as usize] {
@@ -8416,11 +8419,12 @@ fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
         return Err(DecodeError::Incomplete);
     };
     let key = (u16::from(b0) << 8) | u16::from(b1);
-    match cjk_tables::EUC_JP_DBCS2.binary_search_by_key(&key, |&(k, _)| k) {
-        Ok(i) => char::from_u32(cjk_tables::EUC_JP_DBCS2[i].1)
-            .map(|c| (c, 2))
-            .ok_or(DecodeError::Invalid),
-        Err(_) => Err(DecodeError::Invalid),
+    let direct = DBCS2_DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::EUC_JP_DBCS2));
+    let cp = direct[key as usize];
+    if cp != 0 {
+        char::from_u32(cp).map(|c| (c, 2)).ok_or(DecodeError::Invalid)
+    } else {
+        Err(DecodeError::Invalid)
     }
 }
 
@@ -8466,11 +8470,23 @@ fn encode_eucjp(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
 /// the sorted `dbcs` table. A lead with no following byte is `Incomplete`
 /// (EINVAL); an unknown lead or unknown pair is `Invalid` (EILSEQ) — matching
 /// glibc's gconv exactly by construction.
+/// Build a direct `2-byte key -> code point` table (`[u32; 0x10000]`, 0 = invalid)
+/// from a sorted `(key, cp)` DBCS table, so a decoder can do one O(1) index
+/// instead of a binary search (~15 cache-missing probes) per character. No DBCS
+/// 2-byte form decodes to U+0000, so 0 is a safe "not a valid pair" sentinel.
+fn build_dbcs_direct(table: &[(u16, u32)]) -> Vec<u32> {
+    let mut t = vec![0u32; 0x10000];
+    for &(k, cp) in table {
+        t[k as usize] = cp;
+    }
+    t
+}
+
 fn decode_dbcs2(
     input: &[u8],
     one_byte: &[i32; 256],
     is_lead: &[bool; 256],
-    dbcs: &[(u16, u32)],
+    dbcs_direct: &[u32],
 ) -> Result<(char, usize), DecodeError> {
     let Some(&b0) = input.first() else {
         return Err(DecodeError::Incomplete);
@@ -8488,11 +8504,11 @@ fn decode_dbcs2(
         return Err(DecodeError::Incomplete);
     };
     let key = (u16::from(b0) << 8) | u16::from(b1);
-    match dbcs.binary_search_by_key(&key, |&(k, _)| k) {
-        Ok(i) => char::from_u32(dbcs[i].1)
-            .map(|c| (c, 2))
-            .ok_or(DecodeError::Invalid),
-        Err(_) => Err(DecodeError::Invalid),
+    let cp = dbcs_direct[key as usize];
+    if cp != 0 {
+        char::from_u32(cp).map(|c| (c, 2)).ok_or(DecodeError::Invalid)
+    } else {
+        Err(DecodeError::Invalid)
     }
 }
 
@@ -8527,11 +8543,13 @@ fn encode_dbcs2(ch: char, out: &mut [u8], enc: &[(u32, u32)]) -> Result<usize, E
 }
 
 fn decode_shiftjis(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::SHIFT_JIS_DBCS));
     decode_dbcs2(
         input,
         &cjk_tables::SHIFT_JIS_ONE_BYTE,
         &cjk_tables::SHIFT_JIS_IS_LEAD,
-        &cjk_tables::SHIFT_JIS_DBCS,
+        direct,
     )
 }
 
@@ -8540,16 +8558,29 @@ fn encode_shiftjis(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
 }
 
 fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::BIG5_DBCS));
     decode_dbcs2(
         input,
         &cjk_tables::BIG5_ONE_BYTE,
         &cjk_tables::BIG5_IS_LEAD,
-        &cjk_tables::BIG5_DBCS,
+        direct,
     )
 }
 
 fn encode_big5(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     encode_dbcs2(ch, out, &cjk_tables::BIG5_ENC)
+}
+
+fn decode_gbk(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::GBK_DBCS));
+    decode_dbcs2(
+        input,
+        &cjk_tables::GBK_ONE_BYTE,
+        &cjk_tables::GBK_IS_LEAD,
+        direct,
+    )
 }
 
 /// Probe whether the conversion `from -> to` is an ASCII byte-identity over
@@ -9045,38 +9076,37 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Big5 => decode_big5(input),
-        Encoding::Gbk => decode_dbcs2(
-            input,
-            &cjk_tables::GBK_ONE_BYTE,
-            &cjk_tables::GBK_IS_LEAD,
-            &cjk_tables::GBK_DBCS,
-        ),
-        Encoding::EucKr => decode_dbcs2(
-            input,
-            &cjk_tables::EUC_KR_ONE_BYTE,
-            &cjk_tables::EUC_KR_IS_LEAD,
-            &cjk_tables::EUC_KR_DBCS,
-        ),
-        Encoding::Cp949 => decode_dbcs2(
-            input,
-            &cjk_tables::CP949_ONE_BYTE,
-            &cjk_tables::CP949_IS_LEAD,
-            &cjk_tables::CP949_DBCS,
-        ),
-        Encoding::Gb2312 => decode_dbcs2(
-            input,
-            &cjk_tables::GB2312_ONE_BYTE,
-            &cjk_tables::GB2312_IS_LEAD,
-            &cjk_tables::GB2312_DBCS,
-        ),
+        Encoding::Gbk => decode_gbk(input),
+        Encoding::EucKr => decode_euckr(input),
+        Encoding::Cp949 => decode_cp949(input),
+        Encoding::Gb2312 => decode_gb2312(input),
         Encoding::Gb18030 => decode_gb18030(input),
-        Encoding::Johab => decode_dbcs2(
-            input,
-            &cjk_tables::JOHAB_ONE_BYTE,
-            &cjk_tables::JOHAB_IS_LEAD,
-            &cjk_tables::JOHAB_DBCS,
-        ),
+        Encoding::Johab => decode_johab(input),
     }
+}
+
+fn decode_euckr(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::EUC_KR_DBCS));
+    decode_dbcs2(input, &cjk_tables::EUC_KR_ONE_BYTE, &cjk_tables::EUC_KR_IS_LEAD, direct)
+}
+
+fn decode_cp949(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::CP949_DBCS));
+    decode_dbcs2(input, &cjk_tables::CP949_ONE_BYTE, &cjk_tables::CP949_IS_LEAD, direct)
+}
+
+fn decode_gb2312(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::GB2312_DBCS));
+    decode_dbcs2(input, &cjk_tables::GB2312_ONE_BYTE, &cjk_tables::GB2312_IS_LEAD, direct)
+}
+
+fn decode_johab(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::JOHAB_DBCS));
+    decode_dbcs2(input, &cjk_tables::JOHAB_ONE_BYTE, &cjk_tables::JOHAB_IS_LEAD, direct)
 }
 
 fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
@@ -9816,15 +9846,33 @@ pub fn iconv(
             }
         }
 
-        // Fast path: GB18030 -> UTF-8. Inline decode_gb18030 (now an O(1) direct
-        // table) + a direct UTF-8 encode, so the steady state skips both 100-arm
-        // dispatches (decode_char + encode_char) and the encode_one wrapper. Any
-        // decode error or insufficient room (< 4 bytes, the max UTF-8 length) drops
-        // to the generic body below for the exact EILSEQ/EINVAL/E2BIG ordering.
-        // Byte-for-byte identical: same decoder + the same char::encode_utf8.
-        if from_enc == Encoding::Gb18030 && cd.to == Encoding::Utf8 {
+        // Fast path: DBCS -> UTF-8. Inline the (now direct-table O(1)) per-codec
+        // decoder + a direct UTF-8 encode, so the steady state skips both 100-arm
+        // dispatches (decode_char + encode_char) and the encode_one wrapper. The
+        // small `from_enc` match is the only dispatch. Any decode error or
+        // insufficient room (< 4 bytes, the max UTF-8 length) drops to the generic
+        // body below for the exact EILSEQ/EINVAL/E2BIG ordering. Byte-for-byte
+        // identical: same decoder + the same char::encode_utf8.
+        if cd.to == Encoding::Utf8
+            && matches!(
+                from_enc,
+                Encoding::Gb18030
+                    | Encoding::ShiftJis
+                    | Encoding::Big5
+                    | Encoding::Gbk
+                    | Encoding::EucJp
+            )
+        {
             while in_pos < input.len() && out_pos + 4 <= outbuf.len() {
-                let Ok((ch, consumed)) = decode_gb18030(&input[in_pos..]) else {
+                let decoded = match from_enc {
+                    Encoding::Gb18030 => decode_gb18030(&input[in_pos..]),
+                    Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
+                    Encoding::Big5 => decode_big5(&input[in_pos..]),
+                    Encoding::Gbk => decode_gbk(&input[in_pos..]),
+                    Encoding::EucJp => decode_eucjp(&input[in_pos..]),
+                    _ => unreachable!(),
+                };
+                let Ok((ch, consumed)) = decoded else {
                     break;
                 };
                 let mut buf = [0u8; 4];
