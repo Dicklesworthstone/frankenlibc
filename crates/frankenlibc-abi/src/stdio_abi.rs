@@ -1660,22 +1660,22 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
         return libc::EOF;
     };
 
-    // Memory-backed streams: read directly from backing.
+    // Memory-backed streams: read directly from backing (no per-getc Vec).
     if s.is_mem_backed() {
-        let data = s.mem_read(1);
-        if data.is_empty() {
+        let mut b = [0u8; 1];
+        if s.mem_read_into(&mut b) == 0 {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
             return libc::EOF;
         }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
-        return data[0] as c_int;
+        return b[0] as c_int;
     }
 
-    // Try buffered read first.
-    let data = s.buffered_read(1);
-    if !data.is_empty() {
+    // Try buffered read first (into a stack byte, no per-getc Vec).
+    let mut b = [0u8; 1];
+    if s.buffered_read_into(&mut b) > 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
-        return data[0] as c_int;
+        return b[0] as c_int;
     }
 
     // Refill from fd.
