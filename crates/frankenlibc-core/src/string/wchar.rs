@@ -302,6 +302,40 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
             di += LANES;
         }
 
+        // SIMD 2-byte fast path: a run of >= 8 well-formed 2-byte UTF-8 sequences
+        // decodes 8 code points per 16-byte vector. A 2-byte char is lead
+        // 0xC2..=0xDF + continuation 0x80..=0xBF, yielding a code point in
+        // 0x80..=0x7FF — never overlong (lead >= 0xC2 forces wc >= 0x80) and never
+        // a UTF-16 surrogate (wc <= 0x7FF < 0xD800). So a window whose even lanes
+        // are all valid leads and odd lanes all valid continuations is 8 valid
+        // 2-byte chars needing no further validation, and produces byte-for-byte
+        // what the scalar `mbtowc` would. Covers the common 2-byte scripts
+        // (Cyrillic / Greek / Hebrew / Arabic / Latin-extended). Any non-clean
+        // window (ASCII, 3/4-byte, malformed, NUL, or a sequence straddling the
+        // 16-byte boundary) fails the mask test and drops to the scalar step.
+        while si + 16 <= src.len()
+            && di + 8 <= dest.len()
+            && (0xC2..=0xDF).contains(&src[si])
+        {
+            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
+            let v = Simd::<u8, 16>::from_array(bytes);
+            let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
+            let conts = std::simd::simd_swizzle!(v, [1, 3, 5, 7, 9, 11, 13, 15]);
+            let leads_ok =
+                leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
+            let conts_ok =
+                conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
+            if !(leads_ok & conts_ok).all() {
+                break; // not a clean 2-byte window — let the scalar step handle it
+            }
+            let lw = leads.cast::<u32>() & Simd::splat(0x1F);
+            let cw = conts.cast::<u32>() & Simd::splat(0x3F);
+            let wc = (lw << Simd::splat(6)) | cw;
+            wc.copy_to_slice(&mut dest[di..di + 8]);
+            si += 16;
+            di += 8;
+        }
+
         // One scalar step, then re-attempt the SIMD run.
         if si >= src.len() {
             // No NUL found, but all bytes converted.
