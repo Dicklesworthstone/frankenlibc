@@ -16,6 +16,39 @@ use frankenlibc_abi::string_abi::{
     bench_scan_strcmp,
 };
 
+/// Pre-lever strncpy copy+pad: byte-at-a-time copy to NUL then byte NUL-pad.
+#[inline(never)]
+unsafe fn old_byte_strncpy(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        let mut i = 0usize;
+        while i < n {
+            let ch = *src.add(i);
+            *dst.add(i) = ch;
+            i += 1;
+            if ch == 0 {
+                break;
+            }
+        }
+        while i < n {
+            *dst.add(i) = 0;
+            i += 1;
+        }
+    }
+}
+
+/// New-lever strncpy: SWAR scan + wide copy + wide pad (the shipped composition).
+#[inline(never)]
+unsafe fn new_strncpy(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        let k = bench_scan_c_string(src.cast::<std::os::raw::c_char>(), Some(n)).0;
+        let copy_len = k.min(n);
+        bench_raw_memcpy_bytes(dst, src, copy_len);
+        if copy_len < n {
+            bench_raw_memset_bytes(dst.add(copy_len), 0, n - copy_len);
+        }
+    }
+}
+
 /// Pre-lever strncasecmp scan: byte-at-a-time tolower compare to first diff/NUL.
 #[inline(never)]
 unsafe fn old_byte_strcasecmp(
@@ -374,6 +407,38 @@ fn main() {
         let gl = median_ns_per_op(rounds, iters, || {
             // SAFETY: both NUL-terminated.
             black_box(unsafe { libc::strcasecmp(pa, pb) });
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            n, old, new, gl, old / new, gl / new,
+        );
+    }
+
+    println!("\nstrncpy (copy-heavy: strlen==n, full copy no pad):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
+        "n", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+    );
+    for &n in &sizes {
+        let mut src = vec![0x61u8; n + 1];
+        src[n] = 0;
+        let mut dst = vec![0u8; n + 1];
+        let sp = src.as_ptr();
+        let dp = dst.as_mut_ptr();
+        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            unsafe { old_byte_strncpy(dp, sp, n) };
+            black_box(dst[0]);
+        });
+        let new = median_ns_per_op(rounds, iters, || {
+            unsafe { new_strncpy(dp, sp, n) };
+            black_box(dst[0]);
+        });
+        let gl = median_ns_per_op(rounds, iters, || {
+            // SAFETY: src NUL-terminated, dst valid for n bytes.
+            unsafe { libc::strncpy(dp.cast::<std::os::raw::c_char>(), sp.cast::<std::os::raw::c_char>(), n) };
+            black_box(dst[0]);
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",

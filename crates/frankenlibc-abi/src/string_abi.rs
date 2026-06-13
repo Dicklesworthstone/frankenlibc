@@ -2651,19 +2651,18 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
     }
 
     // SAFETY: bounded by safe_dst_len and safe_src_len.
+    // SWAR scan for the NUL, then a wide block copy of the prefix and a wide NUL
+    // pad of the remainder — composing the proven scan_c_string / raw_memcpy_bytes
+    // / raw_memset_bytes primitives instead of the byte-at-a-time copy+pad loop.
+    // `k` is the source NUL index (or safe_src_len if none within bound); the copy
+    // is clamped to safe_dst_len, and everything after it is NUL-filled — exactly
+    // what the scalar loop produced.
     unsafe {
-        let mut i = 0usize;
-        while i < safe_dst_len {
-            let ch = if i < safe_src_len { *src.add(i) } else { 0 };
-            *dst.add(i) = ch;
-            i += 1;
-            if ch == 0 {
-                break;
-            }
-        }
-        while i < safe_dst_len {
-            *dst.add(i) = 0;
-            i += 1;
+        let k = scan_c_string(src, Some(safe_src_len)).0;
+        let copy_len = k.min(safe_dst_len);
+        raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+        if copy_len < safe_dst_len {
+            raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, safe_dst_len - copy_len);
         }
     }
     runtime_policy::observe(
