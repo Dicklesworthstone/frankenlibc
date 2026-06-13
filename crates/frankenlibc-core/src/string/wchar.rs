@@ -313,18 +313,13 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
         // (Cyrillic / Greek / Hebrew / Arabic / Latin-extended). Any non-clean
         // window (ASCII, 3/4-byte, malformed, NUL, or a sequence straddling the
         // 16-byte boundary) fails the mask test and drops to the scalar step.
-        while si + 16 <= src.len()
-            && di + 8 <= dest.len()
-            && (0xC2..=0xDF).contains(&src[si])
-        {
+        while si + 16 <= src.len() && di + 8 <= dest.len() && (0xC2..=0xDF).contains(&src[si]) {
             let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
             let v = Simd::<u8, 16>::from_array(bytes);
             let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
             let conts = std::simd::simd_swizzle!(v, [1, 3, 5, 7, 9, 11, 13, 15]);
-            let leads_ok =
-                leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
-            let conts_ok =
-                conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
+            let leads_ok = leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
+            let conts_ok = conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
             if !(leads_ok & conts_ok).all() {
                 break; // not a clean 2-byte window — let the scalar step handle it
             }
@@ -334,6 +329,35 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
             wc.copy_to_slice(&mut dest[di..di + 8]);
             si += 16;
             di += 8;
+        }
+
+        // SIMD 3-byte fast path: a clean 12-byte window decodes four UTF-8
+        // codepoints. Validate the full RFC 3629 3-byte shape before writing:
+        // lead E0..EF, both continuations 80..BF, no E0 overlong second byte
+        // below A0, and no ED surrogate second byte above 9F. Any mixed-width,
+        // malformed, NUL, or boundary-straddling input drops to the scalar
+        // `mbtowc` path, preserving the exact success/error contract.
+        while si + 16 <= src.len() && di + 4 <= dest.len() && (0xE0..=0xEF).contains(&src[si]) {
+            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
+            let v = Simd::<u8, 16>::from_array(bytes);
+            let leads = std::simd::simd_swizzle!(v, [0, 3, 6, 9]);
+            let cont1 = std::simd::simd_swizzle!(v, [1, 4, 7, 10]);
+            let cont2 = std::simd::simd_swizzle!(v, [2, 5, 8, 11]);
+            let leads_ok = leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xEF));
+            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
+            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
+            let overlong_ok = !leads.simd_eq(Simd::splat(0xE0)) | cont1.simd_ge(Simd::splat(0xA0));
+            let surrogate_ok = !leads.simd_eq(Simd::splat(0xED)) | cont1.simd_le(Simd::splat(0x9F));
+            if !(leads_ok & cont1_ok & cont2_ok & overlong_ok & surrogate_ok).all() {
+                break;
+            }
+            let lw = leads.cast::<u32>() & Simd::splat(0x0F);
+            let c1w = cont1.cast::<u32>() & Simd::splat(0x3F);
+            let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
+            let wc = (lw << Simd::splat(12)) | (c1w << Simd::splat(6)) | c2w;
+            wc.copy_to_slice(&mut dest[di..di + 4]);
+            si += 12;
+            di += 4;
         }
 
         // One scalar step, then re-attempt the SIMD run.
@@ -518,10 +542,7 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
         // and continuation lanes. Any wchar outside the range (ASCII, 3/4-byte,
         // surrogate, out-of-range) or insufficient room (< 16 bytes) drops to the
         // scalar step. Covers the common 2-byte scripts (Cyrillic/Greek/…).
-        while si + 8 <= src.len()
-            && di + 16 <= dest.len()
-            && (0x80..=0x7FF).contains(&src[si])
-        {
+        while si + 8 <= src.len() && di + 16 <= dest.len() && (0x80..=0x7FF).contains(&src[si]) {
             let ws: [u32; 8] = src[si..si + 8].try_into().unwrap();
             let v = Simd::<u32, 8>::from_array(ws);
             if !(v.simd_ge(Simd::splat(0x80)) & v.simd_le(Simd::splat(0x7FF))).all() {
@@ -882,6 +903,25 @@ mod tests {
         for pos in 0..40usize {
             let mut v: Vec<u8> = (0..40).map(|_| b'x').collect();
             v.splice(pos..pos, [0xE2, 0x82, 0xAC]);
+            corpus.push(v);
+        }
+        // Pure 3-byte runs around the 12-byte SIMD window and 16-byte load
+        // boundary, including CJK and the edge ranges that exclude overlongs
+        // and surrogates.
+        for len in 0..40usize {
+            let mut v = Vec::with_capacity(len * 3);
+            for i in 0..len {
+                let wc = match i % 5 {
+                    0 => 0x0800u32,
+                    1 => 0x20AC,
+                    2 => 0x4E00 + (i as u32 % 0x100),
+                    3 => 0xD7FF,
+                    _ => 0xE000,
+                };
+                let ch = char::from_u32(wc).unwrap();
+                let mut buf = [0u8; 4];
+                v.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+            }
             corpus.push(v);
         }
         // Multibyte-heavy and mixed (snowman ☃ = E2 98 83, é = C3 A9).

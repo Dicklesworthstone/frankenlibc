@@ -1,18 +1,19 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)] // live host-glibc mbstowcs oracle
 
-//! Differential fuzz for the SIMD 2-byte UTF-8 decode fast path in
+//! Differential fuzz for the SIMD multibyte UTF-8 decode fast paths in
 //! `frankenlibc_core::string::wchar::mbstowcs` (bd-w7mtzu).
 //!
 //! The fast path decodes runs of >= 8 well-formed 2-byte sequences (lead
 //! 0xC2..=0xDF + continuation 0x80..=0xBF) 8 code points per 16-byte vector. It
-//! must be byte-for-byte identical to a scalar decode. This fuzzes 2-byte-heavy
-//! inputs — interleaved with ASCII, 3/4-byte sequences, NUL, malformed bytes,
-//! and sequences straddling the 16-byte SIMD window — against the LIVE host
-//! glibc `mbstowcs` oracle (C.UTF-8), comparing the full wide-char output and
-//! the success/error decision on every case.
+//! also decodes clean 3-byte runs four code points per 12-byte window. Both
+//! paths must be byte-for-byte identical to scalar decode. This fuzzes
+//! 2-byte- and 3-byte-heavy inputs — interleaved with ASCII, 4-byte sequences,
+//! NUL, malformed bytes, and sequences straddling SIMD windows — against the
+//! LIVE host glibc `mbstowcs` oracle (C.UTF-8), comparing the full wide-char
+//! output and the success/error decision on every case.
 
-use std::ffi::{c_char, c_void};
+use std::ffi::c_char;
 
 unsafe extern "C" {
     fn mbstowcs(dst: *mut i32, src: *const c_char, n: usize) -> usize;
@@ -41,6 +42,20 @@ fn push_2byte(r: &mut Lcg, out: &mut Vec<u8>) {
     out.push(cont);
 }
 
+/// Push a random well-formed 3-byte UTF-8 sequence (the CJK-targeted case).
+fn push_3byte(r: &mut Lcg, out: &mut Vec<u8>) {
+    let wc = match r.below(6) {
+        0 => 0x0800 + r.below(0x200) as u32,
+        1 => 0x20AC,
+        2 | 3 => 0x4E00 + r.below(0x5200) as u32,
+        4 => 0xD000 + r.below(0x800) as u32,
+        _ => 0xE000 + r.below(0x1000) as u32,
+    };
+    let ch = char::from_u32(wc).unwrap();
+    let mut buf = [0u8; 4];
+    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+}
+
 fn glibc_mbstowcs(src: &[u8]) -> Option<Vec<i32>> {
     // src must be NUL-terminated for glibc.
     let mut dst = vec![0i32; src.len() + 1];
@@ -64,7 +79,9 @@ fn fl_mbstowcs(src: &[u8]) -> Option<Vec<i32>> {
 
 #[test]
 fn mbstowcs_simd_2byte_matches_glibc() {
-    unsafe { setlocale(6 /*LC_ALL*/, b"C.UTF-8\0".as_ptr() as *const c_char) };
+    unsafe {
+        setlocale(6 /*LC_ALL*/, b"C.UTF-8\0".as_ptr() as *const c_char)
+    };
 
     let mut r = Lcg(0x1234_5678_9abc_def1);
     let mut divs: Vec<String> = Vec::new();
@@ -75,24 +92,24 @@ fn mbstowcs_simd_2byte_matches_glibc() {
         let segs = r.below(20);
         for _ in 0..segs {
             match r.below(10) {
-                // Bias heavily toward 2-byte sequences (the SIMD path), in runs.
-                0..=5 => {
+                // Bias toward the SIMD multibyte paths, in runs.
+                0..=3 => {
                     let run = 1 + r.below(12);
                     for _ in 0..run {
                         push_2byte(&mut r, &mut s);
                     }
                 }
-                6 => {
+                4..=6 => {
+                    let run = 1 + r.below(12);
+                    for _ in 0..run {
+                        push_3byte(&mut r, &mut s);
+                    }
+                }
+                7 => {
                     // ASCII run (1..=10 bytes, never NUL).
                     for _ in 0..(1 + r.below(10)) {
                         s.push(1 + r.below(0x7F) as u8);
                     }
-                }
-                7 => {
-                    // 3-byte sequence (well-formed): lead 0xE1, two continuations.
-                    s.push(0xE1);
-                    s.push(0x80 + r.below(0x40) as u8);
-                    s.push(0x80 + r.below(0x40) as u8);
                 }
                 8 => {
                     // 4-byte sequence (well-formed astral): U+1F600-ish.
@@ -104,7 +121,7 @@ fn mbstowcs_simd_2byte_matches_glibc() {
                 _ => {
                     // Inject a single arbitrary byte (often malformed): stresses the
                     // SIMD mask-fail -> scalar handoff and error parity.
-                    s.push(0xC2 + r.below(0x40) as u8);
+                    s.push(0x80u8.wrapping_add(r.below(0x80) as u8));
                 }
             }
         }
@@ -125,7 +142,7 @@ fn mbstowcs_simd_2byte_matches_glibc() {
 
     assert!(
         divs.is_empty(),
-        "mbstowcs SIMD 2-byte path diverged from glibc on some of {compared} cases (up to 20):\n{}",
+        "mbstowcs SIMD multibyte path diverged from glibc on some of {compared} cases (up to 20):\n{}",
         divs.join("\n")
     );
 }
