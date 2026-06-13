@@ -538,7 +538,12 @@ pub unsafe extern "C" fn fmax(x: f64, y: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fdim(x: f64, y: f64) -> f64 {
-    frankenlibc_core::math::fdim(x, y)
+    let out = frankenlibc_core::math::fdim(x, y);
+    // fdim overflow (finite inputs, infinite difference) is a range error.
+    if x.is_finite() && y.is_finite() && out.is_infinite() {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -722,7 +727,11 @@ pub unsafe extern "C" fn jn(n: c_int, x: f64) -> f64 {
 pub unsafe extern "C" fn y0(x: f64) -> f64 {
     let out = unary_entry(x, 12, frankenlibc_core::math::y0);
     // y0(x) for x <= 0 is domain error
-    if x <= 0.0 && x.is_finite() {
+    if x == 0.0 {
+        // Y_n(0) = -inf is a pole: glibc reports a range error (ERANGE), not a
+        // domain error. Only x < 0 (Y undefined for negative reals) is EDOM.
+        set_range_errno();
+    } else if x < 0.0 && x.is_finite() {
         set_domain_errno();
     }
     out
@@ -731,7 +740,11 @@ pub unsafe extern "C" fn y0(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y1(x: f64) -> f64 {
     let out = unary_entry(x, 12, frankenlibc_core::math::y1);
-    if x <= 0.0 && x.is_finite() {
+    if x == 0.0 {
+        // Y_n(0) = -inf is a pole: glibc reports a range error (ERANGE), not a
+        // domain error. Only x < 0 (Y undefined for negative reals) is EDOM.
+        set_range_errno();
+    } else if x < 0.0 && x.is_finite() {
         set_domain_errno();
     }
     out
@@ -749,7 +762,11 @@ pub unsafe extern "C" fn yn(n: c_int, x: f64) -> f64 {
         0,
     );
     let raw = frankenlibc_core::math::yn(n, x);
-    if x <= 0.0 && x.is_finite() {
+    if x == 0.0 {
+        // Y_n(0) = -inf is a pole: glibc reports a range error (ERANGE), not a
+        // domain error. Only x < 0 (Y undefined for negative reals) is EDOM.
+        set_range_errno();
+    } else if x < 0.0 && x.is_finite() {
         set_domain_errno();
     }
     runtime_policy::observe(
@@ -1230,7 +1247,12 @@ pub unsafe extern "C" fn copysignf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fdimf(x: f32, y: f32) -> f32 {
-    binary_entry_f32(x, y, 3, frankenlibc_core::math::fdimf)
+    let out = binary_entry_f32(x, y, 3, frankenlibc_core::math::fdimf);
+    // fdim overflow (finite inputs, infinite difference) is a range error.
+    if x.is_finite() && y.is_finite() && out.is_infinite() {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1551,7 +1573,11 @@ pub unsafe extern "C" fn jnf(n: c_int, x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y0f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 12, frankenlibc_core::math::y0f);
-    if x <= 0.0 && x.is_finite() {
+    if x == 0.0 {
+        // Y_n(0) = -inf is a pole: glibc reports a range error (ERANGE), not a
+        // domain error. Only x < 0 (Y undefined for negative reals) is EDOM.
+        set_range_errno();
+    } else if x < 0.0 && x.is_finite() {
         set_domain_errno();
     }
     out
@@ -1560,7 +1586,11 @@ pub unsafe extern "C" fn y0f(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y1f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 12, frankenlibc_core::math::y1f);
-    if x <= 0.0 && x.is_finite() {
+    if x == 0.0 {
+        // Y_n(0) = -inf is a pole: glibc reports a range error (ERANGE), not a
+        // domain error. Only x < 0 (Y undefined for negative reals) is EDOM.
+        set_range_errno();
+    } else if x < 0.0 && x.is_finite() {
         set_domain_errno();
     }
     out
@@ -1578,7 +1608,11 @@ pub unsafe extern "C" fn ynf(n: c_int, x: f32) -> f32 {
         0,
     );
     let raw = frankenlibc_core::math::ynf(n, x);
-    if x <= 0.0 && x.is_finite() {
+    if x == 0.0 {
+        // Y_n(0) = -inf is a pole: glibc reports a range error (ERANGE), not a
+        // domain error. Only x < 0 (Y undefined for negative reals) is EDOM.
+        set_range_errno();
+    } else if x < 0.0 && x.is_finite() {
         set_domain_errno();
     }
     runtime_policy::observe(
@@ -2216,7 +2250,10 @@ fn c_sinh(rx: f64, ix: f64) -> (f64, f64) {
                 let re = if rx.is_sign_negative() { -rc } else { rc };
                 return (re, rs);
             }
-            return (math::sinh(rx) * math::cos(ix), math::cosh(rx) * math::sin(ix));
+            return (
+                math::sinh(rx) * math::cos(ix),
+                math::cosh(rx) * math::sin(ix),
+            );
         }
         // ix is inf or NaN, rx finite.
         if rx == 0.0 {
@@ -2265,7 +2302,10 @@ fn c_cosh(rx: f64, ix: f64) -> (f64, f64) {
                 let im = if rx.is_sign_negative() { -rs } else { rs };
                 return (rc, im);
             }
-            return (math::cosh(rx) * math::cos(ix), math::sinh(rx) * math::sin(ix));
+            return (
+                math::cosh(rx) * math::cos(ix),
+                math::sinh(rx) * math::sin(ix),
+            );
         }
         // ix is inf or NaN, rx finite.
         if rx == 0.0 {
@@ -2290,7 +2330,14 @@ fn c_cosh(rx: f64, ix: f64) -> (f64, f64) {
         return (f64::INFINITY, f64::NAN);
     }
     // rx is NaN.
-    (f64::NAN, if ix == 0.0 { f64::copysign(0.0, ix) } else { f64::NAN })
+    (
+        f64::NAN,
+        if ix == 0.0 {
+            f64::copysign(0.0, ix)
+        } else {
+            f64::NAN
+        },
+    )
 }
 
 // --- creal / cimag / conj / carg / cabs ---
@@ -8324,12 +8371,14 @@ mod tests {
     }
 
     #[test]
-    fn y0_domain_error_at_zero() {
+    fn y0_range_error_at_zero() {
         set_errno_for_test(0);
         // SAFETY: ABI entrypoint accepts plain f64 input.
         let v = unsafe { y0(0.0) };
         assert!(v.is_infinite());
-        assert_eq!(abi_errno(), libc::EDOM);
+        // Y0(0) = -inf is a pole: glibc reports a RANGE error (ERANGE), not a
+        // domain error. Only x < 0 (Y undefined for negative reals) is EDOM.
+        assert_eq!(abi_errno(), libc::ERANGE);
     }
 
     #[test]
