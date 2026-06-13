@@ -3,7 +3,7 @@
 //! Implements `<iconv.h>` functions for converting between character encodings.
 
 use crate::errno;
-use std::simd::{Simd, cmp::SimdPartialOrd};
+use std::simd::{Simd, cmp::SimdPartialOrd, num::SimdUint};
 
 mod cjk_tables;
 
@@ -9467,6 +9467,57 @@ pub fn iconv(
                 out_pos += 1;
                 continue;
             }
+        }
+
+        // SIMD 2-byte fast path: decode a run of >= 8 well-formed 2-byte UTF-8
+        // sequences into UTF-32, 8 code points per 16-byte window. A 2-byte char
+        // (lead 0xC2..=0xDF + continuation 0x80..=0xBF) yields a code point in
+        // 0x80..=0x7FF — provably never overlong (lead >= 0xC2 => wc >= 0x80) nor a
+        // surrogate (wc <= 0x7FF) — so a byte-range-validated window needs no
+        // further checks and is byte-for-byte what the scalar decode+encode below
+        // produces. Only the fixed-width UTF-32 targets use it; everything else
+        // (incl. a non-clean window) drops to the scalar fast path and then the
+        // generic body, preserving the exact EILSEQ/EINVAL/E2BIG ordering.
+        // The `(0xC2..=0xDF)` lead test is first so non-2-byte input (ASCII handled
+        // above, 3/4-byte CJK/astral) short-circuits before any other work — zero
+        // added cost on those paths.
+        if (0xC2..=0xDF).contains(&input[in_pos])
+            && from_enc == Encoding::Utf8
+            && !cd.emit_bom
+            && matches!(cd.to, Encoding::Utf32Le | Encoding::Utf32Be)
+        {
+            let be = matches!(cd.to, Encoding::Utf32Be);
+            while in_pos + 16 <= input.len()
+                && out_pos + 32 <= outbuf.len()
+                && (0xC2..=0xDF).contains(&input[in_pos])
+            {
+                let bytes: [u8; 16] = input[in_pos..in_pos + 16].try_into().unwrap();
+                let v = Simd::<u8, 16>::from_array(bytes);
+                let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
+                let conts = std::simd::simd_swizzle!(v, [1, 3, 5, 7, 9, 11, 13, 15]);
+                let leads_ok =
+                    leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
+                let conts_ok =
+                    conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
+                if !(leads_ok & conts_ok).all() {
+                    break; // not a clean 2-byte window — scalar path handles it
+                }
+                let lw = leads.cast::<u32>() & Simd::splat(0x1F);
+                let cw = conts.cast::<u32>() & Simd::splat(0x3F);
+                let wc = (lw << Simd::splat(6)) | cw;
+                for (k, &cp) in wc.to_array().iter().enumerate() {
+                    let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
+                    outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
+                }
+                in_pos += 16;
+                out_pos += 32;
+            }
+        }
+        // The SIMD block may have consumed the rest of the input; the scalar fast
+        // path and generic body below index `input[in_pos]` unguarded (the only
+        // bounds check is the outer `while` top), so stop here when drained.
+        if in_pos >= input.len() {
+            break;
         }
 
         // Hot-path specialization (perf): UTF-8 source is the dominant direction,
