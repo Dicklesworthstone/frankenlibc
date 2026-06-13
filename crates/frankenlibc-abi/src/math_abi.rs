@@ -4859,67 +4859,179 @@ const FP_INT_TONEARESTFROMZERO: c_int = 3;
 #[allow(dead_code)]
 const FP_INT_TONEAREST: c_int = 4;
 
-fn fromfp_impl(x: f64, rnd: c_int, width: u32) -> f64 {
-    if x.is_nan() || x.is_infinite() {
-        return f64::NAN;
-    }
-    let r = match rnd {
+/// Raise FE_INEXACT via a safe force_eval (1/3 is inexact). Used by the
+/// fromfpx/ufromfpx variants when the kept (in-range) result differs from x.
+#[inline]
+fn raise_inexact_f64() {
+    let _ = core::hint::black_box(core::hint::black_box(1.0_f64) / core::hint::black_box(3.0_f64));
+}
+
+/// 2^n for n in 0..=64, exact and FE-flag-free (bit construction). `2f64.powi(n)`
+/// with a runtime n lowers to a libm pow call that raises FE_INEXACT even though
+/// 2^n is exact, which would pollute fromfp's flag contract.
+#[inline]
+fn pow2_exact(n: u32) -> f64 {
+    f64::from_bits((1023u64 + n as u64) << 52)
+}
+
+/// Round in the requested FP_INT direction WITHOUT raising FP exceptions.
+/// `fromfp` must raise only FE_INVALID (the *x variants add FE_INEXACT
+/// explicitly), so the rounding itself must be flag-free. ceil/floor/trunc
+/// lower to suppress-precision roundsd; round-half-away/even are built from
+/// trunc + exact integer arithmetic (x - trunc(x) is exact; adding ±1 to an
+/// integer-valued f64 is exact). `f64::round` is NOT used: it raises INEXACT.
+#[inline]
+fn fromfp_round(x: f64, rnd: c_int) -> f64 {
+    match rnd {
         FP_INT_UPWARD => x.ceil(),
         FP_INT_DOWNWARD => x.floor(),
         FP_INT_TOWARDZERO => x.trunc(),
-        FP_INT_TONEARESTFROMZERO => x.round(),
+        FP_INT_TONEARESTFROMZERO => {
+            let t = x.trunc();
+            if (x - t).abs() >= 0.5 { t + x.signum() } else { t }
+        }
         _ => {
-            let r = x.round();
-            if (x - r).abs() == 0.5 {
-                if (r as i64) % 2 != 0 {
-                    r - r.signum()
-                } else {
-                    r
-                }
+            // FP_INT_TONEAREST: round half to even.
+            let t = x.trunc();
+            let af = (x - t).abs();
+            if af < 0.5 {
+                t
+            } else if af > 0.5 {
+                t + x.signum()
+            } else if (t as i64) % 2 == 0 {
+                t // tie: t already even
             } else {
-                r
+                t + x.signum()
             }
         }
-    };
-    if width == 0 || width > 64 {
-        return f64::NAN;
     }
-    let max = if width >= 64 {
-        i64::MAX
+}
+
+/// Shared core for fromfp/fromfpx. Matches glibc: round x in the requested
+/// direction to a signed integer of `width` bits; NaN/±inf and out-of-range
+/// results raise FE_INVALID and return glibc's clamp (max for NaN/+inf/overflow,
+/// min for -inf/underflow). With `inexact`, also raise FE_INEXACT when the kept
+/// result differs from x (the fromfpx variant).
+const FE_INVALID_BIT: c_int = 0x01;
+const FE_INEXACT_BIT: c_int = 0x20;
+
+unsafe extern "C" {
+    fn feraiseexcept(excepts: c_int) -> c_int;
+    fn feclearexcept(excepts: c_int) -> c_int;
+    fn fetestexcept(excepts: c_int) -> c_int;
+}
+
+/// Set the FP exception state for the fromfp family to EXACTLY the caller's
+/// pre-existing flags plus `want` (FE_INVALID/FE_INEXACT). The decision logic
+/// itself performs FP arithmetic (rounding, 2^w construction) that can raise
+/// spurious flags; computing the intended flags as pure booleans and then
+/// stamping them here makes the contract exact regardless.
+#[inline]
+fn fromfp_set_flags(entry: c_int, want: c_int) {
+    unsafe {
+        feclearexcept(FE_INVALID_BIT | FE_INEXACT_BIT);
+        let f = (entry & (FE_INVALID_BIT | FE_INEXACT_BIT)) | want;
+        if f != 0 {
+            feraiseexcept(f);
+        }
+    }
+}
+
+fn fromfp_core(x: f64, rnd: c_int, width: u32, inexact: bool) -> f64 {
+    let entry = unsafe { fetestexcept(FE_INVALID_BIT | FE_INEXACT_BIT) };
+    let w = width.min(64);
+    if w == 0 {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return 0.0;
+    }
+    let thresh_hi = pow2_exact(w - 1); // 2^(w-1): first out-of-range high value
+    // max = 2^(w-1)-1, exact iff w <= 54; for wider w it rounds to 2^(w-1)
+    // (= thresh_hi), exactly what glibc returns — and that rounding means a high
+    // overflow raises FE_INEXACT alongside FE_INVALID. The min is exact.
+    let hi_inexact = if w > 54 { FE_INEXACT_BIT } else { 0 };
+    let clamp_hi = if w <= 54 { thresh_hi - 1.0 } else { thresh_hi };
+    let clamp_lo = -thresh_hi; // min = -2^(w-1)
+    let (value, want) = if x.is_nan() {
+        (clamp_hi, FE_INVALID_BIT | hi_inexact)
+    } else if x.is_infinite() {
+        if x > 0.0 {
+            (clamp_hi, FE_INVALID_BIT | hi_inexact)
+        } else {
+            (clamp_lo, FE_INVALID_BIT)
+        }
     } else {
-        (1i64 << (width - 1)) - 1
+        let r = fromfp_round(x, rnd);
+        if r >= thresh_hi {
+            (clamp_hi, FE_INVALID_BIT | hi_inexact)
+        } else if r < clamp_lo {
+            (clamp_lo, FE_INVALID_BIT)
+        } else {
+            let inx = if inexact && r != x { FE_INEXACT_BIT } else { 0 };
+            (if r == 0.0 { 0.0 } else { r }, inx) // glibc normalises a zero to +0
+        }
     };
-    let min = if width >= 64 {
-        i64::MIN
+    fromfp_set_flags(entry, want);
+    value
+}
+
+/// Shared core for ufromfp/ufromfpx. Unsigned range [0, 2^width-1]; negatives
+/// that round into range are valid (e.g. ufromfp(-0.4, UPWARD) = 0).
+fn ufromfp_core(x: f64, rnd: c_int, width: u32, inexact: bool) -> f64 {
+    let entry = unsafe { fetestexcept(FE_INVALID_BIT | FE_INEXACT_BIT) };
+    let w = width.min(64);
+    if w == 0 {
+        fromfp_set_flags(entry, FE_INVALID_BIT);
+        return 0.0;
+    }
+    let thresh_hi = pow2_exact(w); // 2^w
+    let hi_inexact = if w > 53 { FE_INEXACT_BIT } else { 0 };
+    let clamp_hi = if w <= 53 { thresh_hi - 1.0 } else { thresh_hi };
+    let (value, want) = if x.is_nan() {
+        (clamp_hi, FE_INVALID_BIT | hi_inexact)
+    } else if x.is_infinite() {
+        if x > 0.0 {
+            (clamp_hi, FE_INVALID_BIT | hi_inexact)
+        } else {
+            (0.0, FE_INVALID_BIT)
+        }
     } else {
-        -(1i64 << (width - 1))
+        let r = fromfp_round(x, rnd);
+        if r >= thresh_hi {
+            (clamp_hi, FE_INVALID_BIT | hi_inexact)
+        } else if r < 0.0 {
+            (0.0, FE_INVALID_BIT)
+        } else {
+            let inx = if inexact && r != x { FE_INEXACT_BIT } else { 0 };
+            (if r == 0.0 { 0.0 } else { r }, inx) // normalise -0 -> +0
+        }
     };
-    let ri = r as i64;
-    if ri < min || ri > max { f64::NAN } else { r }
+    fromfp_set_flags(entry, want);
+    value
+}
+
+fn fromfp_impl(x: f64, rnd: c_int, width: u32) -> f64 {
+    fromfp_core(x, rnd, width, false)
+}
+fn fromfpx_impl(x: f64, rnd: c_int, width: u32) -> f64 {
+    fromfp_core(x, rnd, width, true)
 }
 fn fromfpf_impl(x: f32, rnd: c_int, width: u32) -> f32 {
-    fromfp_impl(x as f64, rnd, width) as f32
+    fromfp_core(x as f64, rnd, width, false) as f32
+}
+fn fromfpxf_impl(x: f32, rnd: c_int, width: u32) -> f32 {
+    fromfp_core(x as f64, rnd, width, true) as f32
 }
 fn ufromfp_impl(x: f64, rnd: c_int, width: u32) -> f64 {
-    if x.is_nan() || x.is_infinite() || x < 0.0 {
-        return f64::NAN;
-    }
-    let r = fromfp_impl(x, rnd, 64);
-    if r.is_nan() || r < 0.0 {
-        return f64::NAN;
-    }
-    if width == 0 || width > 64 {
-        return f64::NAN;
-    }
-    let max = if width >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << width) - 1
-    };
-    if (r as u64) > max { f64::NAN } else { r }
+    ufromfp_core(x, rnd, width, false)
+}
+fn ufromfpx_impl(x: f64, rnd: c_int, width: u32) -> f64 {
+    ufromfp_core(x, rnd, width, true)
 }
 fn ufromfpf_impl(x: f32, rnd: c_int, width: u32) -> f32 {
-    ufromfp_impl(x as f64, rnd, width) as f32
+    ufromfp_core(x as f64, rnd, width, false) as f32
+}
+fn ufromfpxf_impl(x: f32, rnd: c_int, width: u32) -> f32 {
+    ufromfp_core(x as f64, rnd, width, true) as f32
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4988,11 +5100,11 @@ pub unsafe extern "C" fn ufromfpf128(x: f64, rnd: c_int, width: u32) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fromfpx(x: f64, rnd: c_int, width: u32) -> f64 {
-    fromfp_impl(x, rnd, width)
+    fromfpx_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fromfpxf(x: f32, rnd: c_int, width: u32) -> f32 {
-    fromfpf_impl(x, rnd, width)
+    fromfpxf_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fromfpxl(x: f64, rnd: c_int, width: u32) -> f64 {
@@ -5020,11 +5132,11 @@ pub unsafe extern "C" fn fromfpxf128(x: f64, rnd: c_int, width: u32) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ufromfpx(x: f64, rnd: c_int, width: u32) -> f64 {
-    ufromfp_impl(x, rnd, width)
+    ufromfpx_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ufromfpxf(x: f32, rnd: c_int, width: u32) -> f32 {
-    ufromfpf_impl(x, rnd, width)
+    ufromfpxf_impl(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ufromfpxl(x: f64, rnd: c_int, width: u32) -> f64 {
