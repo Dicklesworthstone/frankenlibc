@@ -119,6 +119,34 @@ fn math_errno_matches_glibc() {
     chk!("scalbn(1,-100000)", ERANGE, fa::scalbn(1.0, -100000));
     chk!("ldexp(1,-100000)", ERANGE, fa::ldexp(1.0, -100000));
 
+    // --- nextafter / nexttoward range errors (glibc rule) ---
+    // overflow: finite -> infinite result
+    chk!("nextafter(dmax,inf)", ERANGE, fa::nextafter(f64::MAX, f64::INFINITY));
+    chk!("nextafter(-dmax,-inf)", ERANGE, fa::nextafter(-f64::MAX, f64::NEG_INFINITY));
+    chk!("nextafterf(fmax,inf)", ERANGE, fa::nextafterf(f32::MAX, f32::INFINITY));
+    chk!("nexttoward(dmax,inf)", ERANGE, fa::nexttoward(f64::MAX, f64::INFINITY));
+    chk!("nexttowardf(fmax,inf)", ERANGE, fa::nexttowardf(f32::MAX, f64::INFINITY));
+    // underflow: magnitude decreases into subnormal/zero
+    chk!("nextafter(5e-324,0)", ERANGE, fa::nextafter(5e-324, 0.0));
+    chk!("nextafter(min_norm,0)", ERANGE, fa::nextafter(2.2250738585072014e-308, 0.0));
+    chk!("nexttoward(5e-324,0)", ERANGE, fa::nexttoward(5e-324, 0.0));
+    // NOT a range error: nextafter(0, y) grows from 0 to smallest subnormal
+    chk!("nextafter(0,1)", 0, fa::nextafter(0.0, 1.0));
+    chk!("nextafter(1,2)", 0, fa::nextafter(1.0, 2.0));
+
+    // --- significand(0): EDOM (no normalized mantissa) ---
+    chk!("significand(0)", EDOM, fa::significand(0.0));
+    chk!("significandf(0)", EDOM, fa::significandf(0.0));
+
+    // --- logb(0): glibc raises FE flag only, errno stays 0 (NOT ERANGE) ---
+    chk!("logb(0)", 0, fa::logb(0.0));
+    chk!("logbf(0)", 0, fa::logbf(0.0));
+    chk!("logb(inf)", 0, fa::logb(f64::INFINITY));
+
+    // --- drem domain errors ---
+    chk!("drem(1,0)", EDOM, fa::drem(1.0, 0.0));
+    chk!("drem(inf,1)", EDOM, fa::drem(f64::INFINITY, 1.0));
+
     // --- Controls: no error ---
     chk!("sin(0.5)", 0, fa::sin(0.5));
     chk!("sqrt(4)", 0, fa::sqrt(4.0));

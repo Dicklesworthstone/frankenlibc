@@ -45,6 +45,34 @@ fn set_range_errno() {
     unsafe { set_abi_errno(libc::ERANGE) };
 }
 
+/// nextafter/nexttoward range-error rule, matching glibc: ERANGE on overflow
+/// (finite x -> infinite result) and on underflow (result subnormal-or-zero AND
+/// magnitude decreased). nextafter(0, y) -> smallest subnormal is NOT an
+/// underflow (magnitude increased from 0), so it sets no errno.
+#[inline]
+fn nextafter_range_error_f64(x: f64, r: f64) -> bool {
+    if x.is_nan() || r.is_nan() {
+        return false;
+    }
+    if x.is_finite() && r.is_infinite() {
+        return true; // overflow
+    }
+    let sub_or_zero = r == 0.0 || r.abs() < f64::MIN_POSITIVE;
+    sub_or_zero && r.abs() < x.abs() // underflow (magnitude decreased)
+}
+
+#[inline]
+fn nextafter_range_error_f32(x: f32, r: f32) -> bool {
+    if x.is_nan() || r.is_nan() {
+        return false;
+    }
+    if x.is_finite() && r.is_infinite() {
+        return true;
+    }
+    let sub_or_zero = r == 0.0 || r.abs() < f32::MIN_POSITIVE;
+    sub_or_zero && r.abs() < x.abs()
+}
+
 #[inline]
 fn scaling_range_error_f64(x: f64, out: f64) -> bool {
     x.is_finite() && x != 0.0 && (out.is_infinite() || out == 0.0)
@@ -613,7 +641,11 @@ pub unsafe extern "C" fn scalbln(x: f64, n: i64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nextafter(x: f64, y: f64) -> f64 {
-    frankenlibc_core::math::nextafter(x, y)
+    let out = frankenlibc_core::math::nextafter(x, y);
+    if nextafter_range_error_f64(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 /// C99 `nexttoward`: next representable f64 toward a long-double direction.
@@ -623,7 +655,11 @@ pub unsafe extern "C" fn nextafter(x: f64, y: f64) -> f64 {
     unsafe(no_mangle)
 )]
 pub unsafe extern "C" fn nexttoward(x: f64, y: f64) -> f64 {
-    frankenlibc_core::math::nexttoward(x, y)
+    let out = frankenlibc_core::math::nexttoward(x, y);
+    if nextafter_range_error_f64(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -633,9 +669,8 @@ pub unsafe extern "C" fn ilogb(x: f64) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logb(x: f64) -> f64 {
-    if x == 0.0 {
-        set_range_errno(); // pole error: logb(0) = -Infinity
-    }
+    // glibc raises the FE_DIVBYZERO flag for logb(0) (handled in core) but does
+    // NOT set errno — leave errno untouched to match.
     frankenlibc_core::math::logb(x)
 }
 
@@ -811,6 +846,10 @@ pub unsafe extern "C" fn gamma(x: f64) -> f64 {
 /// Extract significand scaled to [1, 2).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn significand(x: f64) -> f64 {
+    // significand(0) has no normalized mantissa: glibc reports EDOM.
+    if x == 0.0 {
+        set_domain_errno();
+    }
     frankenlibc_core::math::significand(x)
 }
 
@@ -1159,11 +1198,8 @@ pub unsafe extern "C" fn log1pf(x: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logbf(x: f32) -> f32 {
-    let out = unary_entry_f32(x, 4, frankenlibc_core::math::logbf);
-    if x == 0.0 {
-        set_range_errno();
-    }
-    out
+    // glibc does not set errno for logbf(0) (only the FE_DIVBYZERO flag).
+    unary_entry_f32(x, 4, frankenlibc_core::math::logbf)
 }
 
 // --- Special functions f32 ---
@@ -1405,7 +1441,11 @@ pub unsafe extern "C" fn scalblnf(x: f32, n: c_long) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nextafterf(x: f32, y: f32) -> f32 {
-    binary_entry_f32(x, y, 3, frankenlibc_core::math::nextafterf)
+    let out = binary_entry_f32(x, y, 3, frankenlibc_core::math::nextafterf);
+    if nextafter_range_error_f32(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 /// C99 `nexttowardf`: next representable f32 toward a long-double direction.
@@ -1414,7 +1454,11 @@ pub unsafe extern "C" fn nextafterf(x: f32, y: f32) -> f32 {
     unsafe(no_mangle)
 )]
 pub unsafe extern "C" fn nexttowardf(x: f32, y: f64) -> f32 {
-    frankenlibc_core::math::nexttowardf(x, y)
+    let out = frankenlibc_core::math::nexttowardf(x, y);
+    if nextafter_range_error_f32(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg(all(target_arch = "x86_64", any(not(debug_assertions), test)))]
@@ -1650,6 +1694,10 @@ pub unsafe extern "C" fn gammaf(x: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn significandf(x: f32) -> f32 {
+    // significand(0) has no normalized mantissa: glibc reports EDOM.
+    if x == 0.0 {
+        set_domain_errno();
+    }
     unary_entry_f32(x, 3, frankenlibc_core::math::significandf)
 }
 
