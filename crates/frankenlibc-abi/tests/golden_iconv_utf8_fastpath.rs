@@ -28,6 +28,16 @@ fn corpus() -> Vec<u8> {
     s.into_bytes()
 }
 
+fn koi8r_corpus() -> Vec<u8> {
+    let mut s = String::new();
+    for i in 0..512 {
+        s.push_str("token");
+        s.push(char::from_u32(0x0410 + (i % 0x40)).unwrap()); // А..я
+        s.push(char::from_u32(0x0410 + ((i * 17) % 0x40)).unwrap());
+    }
+    s.into_bytes()
+}
+
 fn convert(to: &[u8], src: &[u8]) -> Vec<u8> {
     let mut cd = iconv_open(to, b"UTF-8").expect("iconv_open");
     let mut out = vec![0u8; src.len() * 4 + 16];
@@ -47,17 +57,49 @@ fn iconv_utf8_fastpath_golden_sha256() {
     let src = corpus();
     // (target, pinned sha256 of the converted bytes).
     let pins: &[(&[u8], &str)] = &[
-        (b"UTF-32LE", "9382fecee5c337ccff5db539b234eea072d55cac913068cd7b9c992d43379cb3"),
-        (b"UTF-32BE", "5fd675572d6cd289805314c18263fc0f1a612657bd6fe3db8648ed9799a32836"),
-        (b"UTF-16LE", "a894b8ad38008d8a86c591b35d4ef280758b3ccaaadabfad77b4a2e77fe81645"),
-        (b"UTF-16BE", "5f57cff0b2b725f9a1160cc00fee638092cb4c17bb9292f9228c304f640affa6"),
+        (
+            b"UTF-32LE",
+            "9382fecee5c337ccff5db539b234eea072d55cac913068cd7b9c992d43379cb3",
+        ),
+        (
+            b"UTF-32BE",
+            "5fd675572d6cd289805314c18263fc0f1a612657bd6fe3db8648ed9799a32836",
+        ),
+        (
+            b"UTF-16LE",
+            "a894b8ad38008d8a86c591b35d4ef280758b3ccaaadabfad77b4a2e77fe81645",
+        ),
+        (
+            b"UTF-16BE",
+            "5f57cff0b2b725f9a1160cc00fee638092cb4c17bb9292f9228c304f640affa6",
+        ),
     ];
     for (to, pin) in pins {
         let out = convert(to, &src);
         let got = hex(&out);
-        eprintln!("{}: sha256={got} ({}B)", String::from_utf8_lossy(to), out.len());
+        eprintln!(
+            "{}: sha256={got} ({}B)",
+            String::from_utf8_lossy(to),
+            out.len()
+        );
         if !pin.starts_with("__P") {
-            assert_eq!(&got, pin, "iconv UTF-8->{} golden drifted", String::from_utf8_lossy(to));
+            assert_eq!(
+                &got,
+                pin,
+                "iconv UTF-8->{} golden drifted",
+                String::from_utf8_lossy(to)
+            );
         }
+    }
+}
+
+#[test]
+fn iconv_utf8_to_koi8r_golden_sha256() {
+    let out = convert(b"KOI8-R", &koi8r_corpus());
+    let got = hex(&out);
+    eprintln!("KOI8-R: sha256={got} ({}B)", out.len());
+    let pin = "05ea74b960f361549e1add14afdf2a3ba6c48df9229b0687b0a0e3c880e65fbb";
+    if !pin.starts_with("__P") {
+        assert_eq!(&got, pin, "iconv UTF-8->KOI8-R golden drifted");
     }
 }

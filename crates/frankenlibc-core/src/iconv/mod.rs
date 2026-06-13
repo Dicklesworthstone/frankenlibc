@@ -1269,10 +1269,11 @@ pub struct IconvDescriptor {
     /// decode_char + the O(128) linear reverse-search inside encode_*. `None`
     /// when either endpoint is multibyte. See [`build_sb_translation`].
     sb_translation: Option<[i16; 256]>,
-    /// Cached at open time when `to` is a single-byte codec: a sorted
-    /// codepoint -> byte reverse map, so encoding a decoded char (from ANY
-    /// source, e.g. UTF-8) is an O(log n) binary search instead of the O(128)
-    /// linear scan inside encode_*. `None` when `to` is multibyte. See
+    /// Cached at open time when `to` is a single-byte codec: a codepoint ->
+    /// byte reverse map, so encoding a decoded char (from ANY source, e.g.
+    /// UTF-8) is an O(1) direct BMP-page lookup for common codepages, falling
+    /// back to O(log n) binary search instead of the O(128) linear scan inside
+    /// encode_*. `None` when `to` is multibyte. See
     /// [`build_to_reverse`].
     to_reverse: Option<SingleByteReverse>,
     /// Unmarked `UTF-16`/`UTF-32` source only: a leading Byte Order Mark has not
@@ -1287,13 +1288,23 @@ pub struct IconvDescriptor {
     from_unmarked_be: bool,
 }
 
-/// Sorted codepoint -> output-byte reverse map for a single-byte target codec.
+const REVERSE_DIRECT_PAGES: usize = 8;
+const REVERSE_DIRECT_MISSING: u8 = u8::MAX;
+
+/// Codepoint -> output-byte reverse map for a single-byte target codec.
 /// Codepoints `< 0x80` are the implicit ASCII identity (matching the `cp < 0x80`
 /// shortcut in every single-byte `encode_*`); only `>= 0x80` codepoints that
-/// `encode_*` would emit (canonical first-match byte) are stored, sorted by
-/// codepoint for binary search.
+/// `encode_*` would emit (canonical first-match byte) are stored.
+///
+/// Most legacy single-byte targets are sparse over a handful of BMP pages
+/// (KOI8-R: Cyrillic plus box drawing). `direct_page_slot` maps a Unicode high
+/// byte to one of the cached 256-byte pages, and `direct_page_byte[slot][low]`
+/// stores the output byte (`0` = absent). The sorted arrays remain a fallback
+/// for unusually wide page spreads and non-BMP codepoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SingleByteReverse {
+    direct_page_slot: [u8; 256],
+    direct_page_byte: [[u8; 256]; REVERSE_DIRECT_PAGES],
     high_cp: [u32; 128],
     high_byte: [u8; 128],
     high_len: u16,
@@ -1308,6 +1319,16 @@ impl SingleByteReverse {
         let cp = ch as u32;
         if cp < 0x80 {
             return Some(cp as u8);
+        }
+        if cp <= u32::from(u16::MAX) {
+            let page = (cp >> 8) as usize;
+            let slot = self.direct_page_slot[page];
+            if slot != REVERSE_DIRECT_MISSING {
+                let byte = self.direct_page_byte[slot as usize][(cp & 0xFF) as usize];
+                if byte != 0 {
+                    return Some(byte);
+                }
+            }
         }
         let hi = &self.high_cp[..self.high_len as usize];
         match hi.binary_search(&cp) {
@@ -8621,9 +8642,10 @@ fn leading_ascii_len(s: &[u8]) -> usize {
 }
 
 /// Build a codepoint -> byte reverse map for a single-byte target codec, so the
-/// conversion loop can encode in O(log n) instead of the O(128) linear search in
-/// `encode_*`. Returns `None` if `to` is multibyte (some byte decodes Incomplete
-/// or consumes != 1).
+/// conversion loop can encode common BMP codepoints through an O(1) direct page
+/// table, with O(log n) binary-search fallback instead of the O(128) linear
+/// search in `encode_*`. Returns `None` if `to` is multibyte (some byte decodes
+/// Incomplete or consumes != 1).
 ///
 /// Each high byte `b` (0x80..=0xFF) is included only when it round-trips —
 /// `decode(b) = cp` (cp >= 0x80) and `encode(cp) = b` — so the map reproduces
@@ -8659,7 +8681,29 @@ fn build_to_reverse(to: Encoding) -> Option<SingleByteReverse> {
         high_cp[i] = cp;
         high_byte[i] = b;
     }
+    let mut direct_page_slot = [REVERSE_DIRECT_MISSING; 256];
+    let mut direct_page_byte = [[0u8; 256]; REVERSE_DIRECT_PAGES];
+    let mut direct_page_count = 0u8;
+    for &(cp, b) in &entries {
+        if cp > u32::from(u16::MAX) {
+            continue;
+        }
+        debug_assert_ne!(b, 0);
+        let page = (cp >> 8) as usize;
+        let mut slot = direct_page_slot[page];
+        if slot == REVERSE_DIRECT_MISSING {
+            if usize::from(direct_page_count) == REVERSE_DIRECT_PAGES {
+                continue;
+            }
+            slot = direct_page_count;
+            direct_page_slot[page] = slot;
+            direct_page_count += 1;
+        }
+        direct_page_byte[slot as usize][(cp & 0xFF) as usize] = b;
+    }
     Some(SingleByteReverse {
+        direct_page_slot,
+        direct_page_byte,
         high_cp,
         high_byte,
         high_len: entries.len() as u16,
@@ -9468,7 +9512,11 @@ pub fn iconv(
                         if avail >= needed {
                             let be = matches!(cd.to, Encoding::Utf16Be);
                             for (idx, unit) in enc.iter().enumerate() {
-                                let bytes = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                                let bytes = if be {
+                                    unit.to_be_bytes()
+                                } else {
+                                    unit.to_le_bytes()
+                                };
                                 outbuf[out_pos + idx * 2] = bytes[0];
                                 outbuf[out_pos + idx * 2 + 1] = bytes[1];
                             }
@@ -9704,6 +9752,9 @@ mod tests {
                 .to_reverse
                 .is_some()
         );
+        let koi8r_reverse = iconv_open(b"KOI8-R", b"UTF-8").unwrap().to_reverse.unwrap();
+        assert_ne!(koi8r_reverse.direct_page_slot[0x04], REVERSE_DIRECT_MISSING);
+        assert_eq!(koi8r_reverse.lookup('А'), Some(0xE1));
         assert!(
             iconv_open(b"CP1251", b"UTF-8")
                 .unwrap()
