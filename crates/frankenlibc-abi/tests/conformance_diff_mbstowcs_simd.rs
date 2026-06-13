@@ -6,9 +6,9 @@
 //!
 //! The fast path decodes runs of >= 8 well-formed 2-byte sequences (lead
 //! 0xC2..=0xDF + continuation 0x80..=0xBF) 8 code points per 16-byte vector. It
-//! also decodes clean 3-byte runs four code points per 12-byte window. Both
-//! paths must be byte-for-byte identical to scalar decode. This fuzzes
-//! 2-byte- and 3-byte-heavy inputs — interleaved with ASCII, 4-byte sequences,
+//! also decodes clean 3-byte and 4-byte runs four code points per SIMD window.
+//! All paths must be byte-for-byte identical to scalar decode. This fuzzes
+//! 2-byte-, 3-byte-, and 4-byte-heavy inputs — interleaved with ASCII,
 //! NUL, malformed bytes, and sequences straddling SIMD windows — against the
 //! LIVE host glibc `mbstowcs` oracle (C.UTF-8), comparing the full wide-char
 //! output and the success/error decision on every case.
@@ -56,6 +56,19 @@ fn push_3byte(r: &mut Lcg, out: &mut Vec<u8>) {
     out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
 }
 
+/// Push a random well-formed 4-byte UTF-8 sequence (the astral-targeted case).
+fn push_4byte(r: &mut Lcg, out: &mut Vec<u8>) {
+    let wc = match r.below(5) {
+        0 => 0x1_0000,
+        1 | 2 => 0x1F600 + r.below(0x80) as u32,
+        3 => 0x10_FFFF,
+        _ => 0x10000 + r.below(0x100000) as u32,
+    };
+    let ch = char::from_u32(wc).unwrap();
+    let mut buf = [0u8; 4];
+    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+}
+
 fn glibc_mbstowcs(src: &[u8]) -> Option<Vec<i32>> {
     // src must be NUL-terminated for glibc.
     let mut dst = vec![0i32; src.len() + 1];
@@ -91,7 +104,7 @@ fn mbstowcs_simd_2byte_matches_glibc() {
         let mut s: Vec<u8> = Vec::new();
         let segs = r.below(20);
         for _ in 0..segs {
-            match r.below(10) {
+            match r.below(12) {
                 // Bias toward the SIMD multibyte paths, in runs.
                 0..=3 => {
                     let run = 1 + r.below(12);
@@ -106,17 +119,20 @@ fn mbstowcs_simd_2byte_matches_glibc() {
                     }
                 }
                 7 => {
+                    let run = 1 + r.below(12);
+                    for _ in 0..run {
+                        push_4byte(&mut r, &mut s);
+                    }
+                }
+                8 => {
                     // ASCII run (1..=10 bytes, never NUL).
                     for _ in 0..(1 + r.below(10)) {
                         s.push(1 + r.below(0x7F) as u8);
                     }
                 }
-                8 => {
+                9 => {
                     // 4-byte sequence (well-formed astral): U+1F600-ish.
-                    s.push(0xF0);
-                    s.push(0x9F);
-                    s.push(0x98);
-                    s.push(0x80 + r.below(0x40) as u8);
+                    push_4byte(&mut r, &mut s);
                 }
                 _ => {
                     // Inject a single arbitrary byte (often malformed): stresses the

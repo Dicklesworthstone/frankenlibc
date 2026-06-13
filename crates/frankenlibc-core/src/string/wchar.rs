@@ -3,7 +3,7 @@
 //! Implements `<wchar.h>` / `<stdlib.h>` conversion functions assuming UTF-8
 //! encoding. This is appropriate for the "C.UTF-8" / "POSIX.UTF-8" locale.
 
-use std::simd::{cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint, Simd};
+use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint};
 
 /// Unicode "REPLACEMENT CHARACTER" — emitted by [`decode_utf8_lossy`]
 /// for malformed sequences instead of returning an error.
@@ -357,6 +357,37 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
             let wc = (lw << Simd::splat(12)) | (c1w << Simd::splat(6)) | c2w;
             wc.copy_to_slice(&mut dest[di..di + 4]);
             si += 12;
+            di += 4;
+        }
+
+        // SIMD 4-byte fast path: a clean 16-byte window decodes four UTF-8
+        // codepoints. This mirrors the scalar `utf8_decode_step` contract:
+        // F0..=F7 leads, plain continuation bytes, and no overlong F0 sequence.
+        // Code points above U+10FFFF are intentionally still accepted here when
+        // encoded by F5..=F7, matching the existing glibc-compatible scalar path.
+        while si + 16 <= src.len() && di + 4 <= dest.len() && (0xF0..=0xF7).contains(&src[si]) {
+            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
+            let v = Simd::<u8, 16>::from_array(bytes);
+            let leads = std::simd::simd_swizzle!(v, [0, 4, 8, 12]);
+            let cont1 = std::simd::simd_swizzle!(v, [1, 5, 9, 13]);
+            let cont2 = std::simd::simd_swizzle!(v, [2, 6, 10, 14]);
+            let cont3 = std::simd::simd_swizzle!(v, [3, 7, 11, 15]);
+            let leads_ok = leads.simd_ge(Simd::splat(0xF0)) & leads.simd_le(Simd::splat(0xF7));
+            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
+            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
+            let cont3_ok = cont3.simd_ge(Simd::splat(0x80)) & cont3.simd_le(Simd::splat(0xBF));
+            let overlong_ok = !leads.simd_eq(Simd::splat(0xF0)) | cont1.simd_ge(Simd::splat(0x90));
+            if !(leads_ok & cont1_ok & cont2_ok & cont3_ok & overlong_ok).all() {
+                break;
+            }
+            let lw = leads.cast::<u32>() & Simd::splat(0x07);
+            let c1w = cont1.cast::<u32>() & Simd::splat(0x3F);
+            let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
+            let c3w = cont3.cast::<u32>() & Simd::splat(0x3F);
+            let wc =
+                (lw << Simd::splat(18)) | (c1w << Simd::splat(12)) | (c2w << Simd::splat(6)) | c3w;
+            wc.copy_to_slice(&mut dest[di..di + 4]);
+            si += 16;
             di += 4;
         }
 
@@ -1020,6 +1051,26 @@ mod tests {
             }
             corpus.push(v);
         }
+        // Pure 4-byte runs around the 16-byte SIMD window. Include scalar
+        // decoder-compatible values above U+10FFFF because glibc's converter and
+        // `utf8_decode_step` accept F5..=F7 4-byte forms.
+        for len in 0..40usize {
+            let mut v = Vec::with_capacity(len * 4);
+            for i in 0..len {
+                let wc = match i % 5 {
+                    0 => 0x1_0000u32,
+                    1 => 0x1F600 + (i as u32 % 0x80),
+                    2 => 0x10_FFFF,
+                    3 => 0x11_0000 + (i as u32 % 0x100),
+                    _ => 0x1F_FFFF,
+                };
+                let mut buf = [0u8; 6];
+                let n = wctomb(wc, &mut buf).unwrap();
+                assert_eq!(n, 4);
+                v.extend_from_slice(&buf[..n]);
+            }
+            corpus.push(v);
+        }
         // Multibyte-heavy and mixed (snowman ☃ = E2 98 83, é = C3 A9).
         corpus.push(b"caf\xc3\xa9 \xe2\x98\x83 \xe2\x82\xac done".to_vec());
         // Pseudo-random soup (LCG) including high bytes / invalid sequences.
@@ -1187,10 +1238,10 @@ mod tests {
         assert_eq!(wcwidth(0x0F71), 0); // TIBETAN VOWEL SIGN AA
         assert_eq!(wcwidth(0x3099), 0); // COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK
         assert_eq!(wcwidth(0xFE20), 0); // Combining Half Marks
-                                        // Line/paragraph separators (Zl, Zp).
+        // Line/paragraph separators (Zl, Zp).
         assert_eq!(wcwidth(0x2028), -1); // LINE SEPARATOR
         assert_eq!(wcwidth(0x2029), -1); // PARAGRAPH SEPARATOR
-                                         // Language tag chars (Cf, treated as -1 by glibc).
+        // Language tag chars (Cf, treated as -1 by glibc).
         assert_eq!(wcwidth(0xE0000), -1);
     }
 
@@ -1404,13 +1455,13 @@ mod tests {
 
         // Turkish dotless i (U+0131) → ASCII I
         assert_eq!(towupper(0x0131), 0x0049); // ı → I
-                                              // Turkish dotted I (U+0130) lowercases to i + combining dot (U+0307),
-                                              // but glibc drops the combining mark and returns just 'i'.
+        // Turkish dotted I (U+0130) lowercases to i + combining dot (U+0307),
+        // but glibc drops the combining mark and returns just 'i'.
         assert_eq!(towlower(0x0130), 0x0069); // İ → i
 
         // German sharp s stays unchanged (1:N mapping to multiple base letters)
         assert_eq!(towupper(0x00DF), 0x00DF); // ß unchanged (→ SS dropped)
-                                              // Capital sharp s (U+1E9E) → lowercase ß (1:1)
+        // Capital sharp s (U+1E9E) → lowercase ß (1:1)
         assert_eq!(towlower(0x1E9E), 0x00DF); // ẞ → ß
 
         // Ligatures stay unchanged (expand to multiple base letters)
