@@ -1360,18 +1360,13 @@ pub unsafe extern "C" fn wmemcmp(s1: *const u32, s2: *const u32, n: usize) -> c_
         }
     }
 
+    // Delegate to the SIMD core wmemcmp (unrolled Simd<u32,N> equality panels)
+    // instead of the scalar element loop; identical signed-wchar_t semantics
+    // (-1/0/1 on the first differing element, all-equal => 0).
     let result = unsafe {
         let a = std::slice::from_raw_parts(s1, cmp_len);
         let b = std::slice::from_raw_parts(s2, cmp_len);
-        let mut res = 0;
-        for i in 0..cmp_len {
-            if a[i] != b[i] {
-                // wchar_t is signed (i32) on Linux; compare as signed values.
-                res = if (a[i] as i32) < (b[i] as i32) { -1 } else { 1 };
-                break;
-            }
-        }
-        res
+        frankenlibc_core::string::wide::wmemcmp(a, b, cmp_len)
     };
 
     runtime_policy::observe(

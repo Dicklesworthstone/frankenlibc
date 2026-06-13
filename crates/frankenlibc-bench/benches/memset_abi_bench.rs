@@ -69,6 +69,18 @@ unsafe extern "C" {
     fn wcscmp(s1: *const u32, s2: *const u32) -> i32;
     fn wcscasecmp(s1: *const u32, s2: *const u32) -> i32;
     fn wcsstr(haystack: *const u32, needle: *const u32) -> *mut u32;
+    fn wmemcmp(s1: *const u32, s2: *const u32, n: usize) -> i32;
+}
+
+/// Pre-lever wmemcmp: scalar wchar_t (u32) element-at-a-time bounded compare.
+#[inline(never)]
+fn old_scalar_wmemcmp(a: &[u32], b: &[u32]) -> i32 {
+    for i in 0..a.len() {
+        if a[i] != b[i] {
+            return if (a[i] as i32) < (b[i] as i32) { -1 } else { 1 };
+        }
+    }
+    0
 }
 
 /// Pre-lever wcsstr: brute-force O(n*m) double-loop (absent needle => full scan).
@@ -802,6 +814,34 @@ fn main() {
         let gl = median_ns_per_op(rounds, iters, || {
             // SAFETY: both NUL-terminated wide strings.
             black_box(unsafe { wcsstr(hp, np) });
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            n, old, new, gl, old / new, gl / new,
+        );
+    }
+
+    println!("\nwmemcmp (equal wide buffers => full scan, wchar_t = u32):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
+        "wchars", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+    );
+    for &n in &sizes {
+        let a: Vec<u32> = vec![0x61u32; n];
+        let b = a.clone();
+        let pa = a.as_ptr();
+        let pb = b.as_ptr();
+        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            black_box(old_scalar_wmemcmp(&a, &b));
+        });
+        let new = median_ns_per_op(rounds, iters, || {
+            black_box(frankenlibc_core::string::wide::wmemcmp(&a, &b, n));
+        });
+        let gl = median_ns_per_op(rounds, iters, || {
+            // SAFETY: both buffers valid for n wchars.
+            black_box(unsafe { wmemcmp(pa, pb, n) });
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
