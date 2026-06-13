@@ -132,7 +132,12 @@ fn iconv_utf8_to_utf32_simd_matches_glibc() {
             }
         }
         // No trailing NUL: iconv converts the whole byte slice (glibc uses il).
-        for to in [&b"UTF-32LE\0"[..], &b"UTF-32BE\0"[..]] {
+        for to in [
+            &b"UTF-32LE\0"[..],
+            &b"UTF-32BE\0"[..],
+            &b"UTF-16LE\0"[..],
+            &b"UTF-16BE\0"[..],
+        ] {
             check(to, &s, &mut divs);
             compared += 1;
         }

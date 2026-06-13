@@ -9481,14 +9481,23 @@ pub fn iconv(
         // The `(0xC2..=0xDF)` lead test is first so non-2-byte input (ASCII handled
         // above, 3/4-byte CJK/astral) short-circuits before any other work — zero
         // added cost on those paths.
+        // Fixed-width Unicode targets: UTF-32 (4 bytes/char) and UTF-16 (2
+        // bytes/char). A 2-byte source code point is 0x80..=0x7FF — a BMP scalar,
+        // so its UTF-16 form is a single code unit equal to the code point (no
+        // surrogate pair), identical to the scalar `encode_utf16` below.
         if (0xC2..=0xDF).contains(&input[in_pos])
             && from_enc == Encoding::Utf8
             && !cd.emit_bom
-            && matches!(cd.to, Encoding::Utf32Le | Encoding::Utf32Be)
+            && matches!(
+                cd.to,
+                Encoding::Utf32Le | Encoding::Utf32Be | Encoding::Utf16Le | Encoding::Utf16Be
+            )
         {
-            let be = matches!(cd.to, Encoding::Utf32Be);
+            let be = matches!(cd.to, Encoding::Utf32Be | Encoding::Utf16Be);
+            let u16_out = matches!(cd.to, Encoding::Utf16Le | Encoding::Utf16Be);
+            let obpc = if u16_out { 2 } else { 4 }; // output bytes per char
             while in_pos + 16 <= input.len()
-                && out_pos + 32 <= outbuf.len()
+                && out_pos + 8 * obpc <= outbuf.len()
                 && (0xC2..=0xDF).contains(&input[in_pos])
             {
                 let bytes: [u8; 16] = input[in_pos..in_pos + 16].try_into().unwrap();
@@ -9506,11 +9515,16 @@ pub fn iconv(
                 let cw = conts.cast::<u32>() & Simd::splat(0x3F);
                 let wc = (lw << Simd::splat(6)) | cw;
                 for (k, &cp) in wc.to_array().iter().enumerate() {
-                    let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
-                    outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
+                    if u16_out {
+                        let b = if be { (cp as u16).to_be_bytes() } else { (cp as u16).to_le_bytes() };
+                        outbuf[out_pos + k * 2..out_pos + k * 2 + 2].copy_from_slice(&b);
+                    } else {
+                        let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
+                        outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
+                    }
                 }
                 in_pos += 16;
-                out_pos += 32;
+                out_pos += 8 * obpc;
             }
         }
         // The 2-byte SIMD block above may have drained the input; the 3-byte block
@@ -9524,14 +9538,22 @@ pub fn iconv(
         // full RFC 3629 3-byte shape — lead E0..EF, both continuations 80..BF, no
         // E0 overlong (cont1 >= A0), no ED surrogate (cont1 <= 9F) — then assemble.
         // Lead-byte test first so non-3-byte input short-circuits with zero cost.
+        // A validated 3-byte source code point is a BMP non-surrogate scalar
+        // (0x800..=0xFFFF minus surrogates), so its UTF-16 form is one code unit
+        // equal to the code point — same as the scalar `encode_utf16` below.
         if (0xE0..=0xEF).contains(&input[in_pos])
             && from_enc == Encoding::Utf8
             && !cd.emit_bom
-            && matches!(cd.to, Encoding::Utf32Le | Encoding::Utf32Be)
+            && matches!(
+                cd.to,
+                Encoding::Utf32Le | Encoding::Utf32Be | Encoding::Utf16Le | Encoding::Utf16Be
+            )
         {
-            let be = matches!(cd.to, Encoding::Utf32Be);
+            let be = matches!(cd.to, Encoding::Utf32Be | Encoding::Utf16Be);
+            let u16_out = matches!(cd.to, Encoding::Utf16Le | Encoding::Utf16Be);
+            let obpc = if u16_out { 2 } else { 4 };
             while in_pos + 16 <= input.len()
-                && out_pos + 16 <= outbuf.len()
+                && out_pos + 4 * obpc <= outbuf.len()
                 && (0xE0..=0xEF).contains(&input[in_pos])
             {
                 let bytes: [u8; 16] = input[in_pos..in_pos + 16].try_into().unwrap();
@@ -9557,11 +9579,16 @@ pub fn iconv(
                 let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
                 let wc = (lw << Simd::splat(12)) | (c1w << Simd::splat(6)) | c2w;
                 for (k, &cp) in wc.to_array().iter().enumerate() {
-                    let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
-                    outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
+                    if u16_out {
+                        let b = if be { (cp as u16).to_be_bytes() } else { (cp as u16).to_le_bytes() };
+                        outbuf[out_pos + k * 2..out_pos + k * 2 + 2].copy_from_slice(&b);
+                    } else {
+                        let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
+                        outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
+                    }
                 }
                 in_pos += 12;
-                out_pos += 16;
+                out_pos += 4 * obpc;
             }
         }
         // The SIMD blocks may have consumed the rest of the input; the scalar fast
