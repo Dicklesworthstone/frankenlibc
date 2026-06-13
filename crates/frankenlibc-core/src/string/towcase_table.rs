@@ -17,18 +17,75 @@
 /// returns `wc` unchanged when no single-character mapping exists.
 #[inline]
 pub(crate) fn towupper(wc: u32) -> u32 {
+    // BMP served by a lazily-built direct `[u32; 0x10000]` map (each entry is the
+    // binary-search result for that code point), replacing a per-char
+    // `binary_search_by_key` over 1477 deltas; astral takes the search directly.
+    if wc < 0x10000 {
+        static BMP_UPPER: std::sync::OnceLock<Box<[u32; 0x10000]>> = std::sync::OnceLock::new();
+        let table = BMP_UPPER.get_or_init(|| {
+            let mut t = Box::new([0u32; 0x10000]);
+            for (cp, slot) in t.iter_mut().enumerate() {
+                *slot = towupper_search(cp as u32);
+            }
+            t
+        });
+        return table[wc as usize];
+    }
+    towupper_search(wc)
+}
+
+/// Glibc UTF-8-locale `towlower(wc)`.
+#[inline]
+pub(crate) fn towlower(wc: u32) -> u32 {
+    if wc < 0x10000 {
+        static BMP_LOWER: std::sync::OnceLock<Box<[u32; 0x10000]>> = std::sync::OnceLock::new();
+        let table = BMP_LOWER.get_or_init(|| {
+            let mut t = Box::new([0u32; 0x10000]);
+            for (cp, slot) in t.iter_mut().enumerate() {
+                *slot = towlower_search(cp as u32);
+            }
+            t
+        });
+        return table[wc as usize];
+    }
+    towlower_search(wc)
+}
+
+/// Exact `towupper` via the sorted delta table — the canonical result the BMP
+/// direct map is built from, and the path astral scalars take directly.
+#[inline]
+fn towupper_search(wc: u32) -> u32 {
     match TOUPPER_DELTAS.binary_search_by_key(&wc, |&(k, _)| k) {
         Ok(i) => TOUPPER_DELTAS[i].1,
         Err(_) => wc,
     }
 }
 
-/// Glibc UTF-8-locale `towlower(wc)`.
+/// Exact `towlower` via the sorted delta table.
 #[inline]
-pub(crate) fn towlower(wc: u32) -> u32 {
+fn towlower_search(wc: u32) -> u32 {
     match TOLOWER_DELTAS.binary_search_by_key(&wc, |&(k, _)| k) {
         Ok(i) => TOLOWER_DELTAS[i].1,
         Err(_) => wc,
+    }
+}
+
+#[cfg(test)]
+mod direct_table_tests {
+    use super::*;
+
+    // Golden isomorphism: the direct BMP maps (and the astral path) must return
+    // byte-for-byte what the pure delta-table binary search produces for EVERY
+    // code point 0..=0x10FFFF, plus out-of-range probes.
+    #[test]
+    fn towcase_direct_tables_match_binary_search() {
+        for cp in 0..=0x10FFFFu32 {
+            assert_eq!(towupper(cp), towupper_search(cp), "towupper mismatch at U+{cp:04X}");
+            assert_eq!(towlower(cp), towlower_search(cp), "towlower mismatch at U+{cp:04X}");
+        }
+        // Out-of-range scalars map to themselves under both search and table path.
+        assert_eq!(towupper(0x11_0000), 0x11_0000);
+        assert_eq!(towlower(0x11_0000), 0x11_0000);
     }
 }
 
