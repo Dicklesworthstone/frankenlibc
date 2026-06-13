@@ -1058,8 +1058,11 @@ pub unsafe extern "C" fn powf(x: f32, y: f32) -> f32 {
     if x.is_finite() && y.is_finite() {
         if x < 0.0 && y.fract() != 0.0 {
             set_domain_errno();
-        } else if out.is_infinite() || (x == 0.0 && y < 0.0) || (out == 0.0 && y > 0.0 && x != 0.0)
-        {
+        } else if out.is_infinite() || (x == 0.0 && y < 0.0) || (out == 0.0 && x != 0.0) {
+            // Range error: overflow (inf), pole at x==0 with y<0, or underflow
+            // to zero. Mirrors f64 `pow`; the underflow case applies regardless
+            // of the exponent's sign (an earlier `y > 0.0` guard wrongly skipped
+            // negative-exponent underflow, e.g. powf(2, -200), which glibc flags).
             set_range_errno();
         }
     }
@@ -8086,6 +8089,33 @@ mod tests {
         let y = std::hint::black_box(2.0_f64);
         // SAFETY: ABI entrypoint accepts plain f64 input.
         let out = unsafe { pow(x, y) };
+        std::hint::black_box(out);
+        assert_eq!(out, 0.0);
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn powf_underflow_negative_exponent_sets_range_errno() {
+        // Regression: powf's underflow branch used to require `y > 0.0`, which
+        // wrongly skipped negative-exponent underflow. glibc flags ERANGE for
+        // powf(2, -200) -> 0 (matches f64 pow).
+        set_errno_for_test(0);
+        let x = std::hint::black_box(2.0_f32);
+        let y = std::hint::black_box(-200.0_f32);
+        // SAFETY: ABI entrypoint accepts plain f32 input.
+        let out = unsafe { powf(x, y) };
+        std::hint::black_box(out);
+        assert_eq!(out, 0.0);
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn powf_underflow_positive_exponent_sets_range_errno() {
+        set_errno_for_test(0);
+        let x = std::hint::black_box(0.5_f32);
+        let y = std::hint::black_box(200.0_f32);
+        // SAFETY: ABI entrypoint accepts plain f32 input.
+        let out = unsafe { powf(x, y) };
         std::hint::black_box(out);
         assert_eq!(out, 0.0);
         assert_eq!(abi_errno(), libc::ERANGE);
