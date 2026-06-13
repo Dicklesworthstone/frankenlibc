@@ -5508,13 +5508,35 @@ pub unsafe extern "C" fn fsubl(x: f64, y: f64) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ffma(x: f64, y: f64, z: f64) -> f32 {
-    let r = unsafe { fma(x, y, z) };
-    r as f32
+    use frankenlibc_core::math::fma as fma64;
+    // C23 ffma: round the EXACT x*y+z a SINGLE time to f32. `fma(x,y,z) as f32`
+    // double-rounds. Recover the sign of the exact residual via Boldo–Muller
+    // ErrFma, then apply round-to-odd (see narrow_round_odd).
+    let r = fma64(x, y, z);
+    if !r.is_finite() {
+        return r as f32;
+    }
+    // 2Prod: x*y = u1 + u2 exact (u1 finite here, since r is finite).
+    let u1 = x * y;
+    let u2 = fma64(x, y, -u1);
+    // 2Sum(z, u2) = (a1, a2)
+    let a1 = z + u2;
+    let bz = a1 - z;
+    let a2 = (z - (a1 - bz)) + (u2 - bz);
+    // 2Sum(u1, a1) = (b1, b2)
+    let b1 = u1 + a1;
+    let bu = b1 - u1;
+    let b2 = (u1 - (b1 - bu)) + (a1 - bu);
+    let gamma = (b1 - r) + b2;
+    // FastTwoSum(gamma, a2) = (e1, e2): exact x*y+z = r + e1 + e2.
+    let e1 = gamma + a2;
+    let e2 = a2 - (e1 - gamma);
+    let resid = if e1 != 0.0 { e1 } else { e2 };
+    narrow_round_odd(r, resid)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ffmal(x: f64, y: f64, z: f64) -> f32 {
-    let r = unsafe { fma(x, y, z) };
-    r as f32
+    unsafe { ffma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn daddl(x: f64, y: f64) -> f64 {

@@ -22,6 +22,11 @@ fn sym1(h: *mut c_void, n: &std::ffi::CStr) -> extern "C" fn(f64) -> f32 {
     assert!(!p.is_null(), "missing {n:?}");
     unsafe { core::mem::transmute(p) }
 }
+fn sym3(h: *mut c_void, n: &std::ffi::CStr) -> extern "C" fn(f64, f64, f64) -> f32 {
+    let p = unsafe { dlsym(h, n.as_ptr()) };
+    assert!(!p.is_null(), "missing {n:?}");
+    unsafe { core::mem::transmute(p) }
+}
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u64 {
@@ -52,6 +57,7 @@ fn c23_narrow_matches_glibc() {
     let g_fmul = sym2(h, c"fmul");
     let g_fdiv = sym2(h, c"fdiv");
     let g_fsqrt = sym1(h, c"fsqrt");
+    let g_ffma = sym3(h, c"ffma");
 
     let mut div: Vec<String> = Vec::new();
     macro_rules! chk2 {
@@ -72,6 +78,15 @@ fn c23_narrow_matches_glibc() {
             }
         }};
     }
+    macro_rules! chk3 {
+        ($name:literal, $flf:path, $gf:expr, $x:expr, $y:expr, $z:expr) => {{
+            let fv = unsafe { $flf($x, $y, $z) };
+            let gv = $gf($x, $y, $z);
+            if fv.to_bits() != gv.to_bits() && !(fv.is_nan() && gv.is_nan()) {
+                div.push(format!("{}({:e},{:e},{:e}): fl={:08x} glibc={:08x}", $name, $x, $y, $z, fv.to_bits(), gv.to_bits()));
+            }
+        }};
+    }
 
     // Hand-constructed double-rounding witnesses.
     chk2!("fadd", fl::fadd, g_fadd, 1.0 + (2f64.powi(-24)), (2f64.powi(-53)));
@@ -80,6 +95,9 @@ fn c23_narrow_matches_glibc() {
     chk2!("fmul", fl::fmul, g_fmul, 1.0 + (2f64.powi(-24)), 1.0 + (2f64.powi(-24)));
     chk2!("fdiv", fl::fdiv, g_fdiv, 1.0, 3.0);
     chk1!("fsqrt", fl::fsqrt, g_fsqrt, 2.0);
+    // ffma witness: x*y+z = 1 + 2^-24 + 2^-53 (the fma double-rounds to 1.0).
+    chk3!("ffma", fl::ffma, g_ffma, 1.0, 1.0, (2f64.powi(-24)) + (2f64.powi(-53)));
+    chk3!("ffma", fl::ffma, g_ffma, 1.0 + (2f64.powi(-24)), 1.0 + (2f64.powi(-24)), -1.0);
 
     // Special values.
     let sv = [0.0f64, -0.0, 1.0, -1.0, f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 1e300, 4.0, 0.25];
@@ -89,6 +107,8 @@ fn c23_narrow_matches_glibc() {
             chk2!("fsub", fl::fsub, g_fsub, a, b);
             chk2!("fmul", fl::fmul, g_fmul, a, b);
             chk2!("fdiv", fl::fdiv, g_fdiv, a, b);
+            chk3!("ffma", fl::ffma, g_ffma, a, b, 1.0);
+            chk3!("ffma", fl::ffma, g_ffma, a, 1.0, b);
         }
         chk1!("fsqrt", fl::fsqrt, g_fsqrt, a);
     }
@@ -106,6 +126,11 @@ fn c23_narrow_matches_glibc() {
         chk2!("fdiv", fl::fdiv, g_fdiv, x2, y2);
         let xs = r.f64_near1();
         chk1!("fsqrt", fl::fsqrt, g_fsqrt, xs);
+        // ffma: x*y near 1, z a tiny perturbation → results near f32 halfways.
+        let fx = r.f64_near1();
+        let fy = 1.0 + r.tiny();
+        let fz = r.tiny();
+        chk3!("ffma", fl::ffma, g_ffma, fx, fy, fz);
         if div.len() > 20 {
             break;
         }
