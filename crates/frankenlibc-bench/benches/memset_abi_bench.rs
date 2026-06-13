@@ -24,7 +24,11 @@ use frankenlibc_abi::wchar_abi::{
 unsafe fn old_scalar_wcscasecmp(s1: *const u32, s2: *const u32) -> i32 {
     #[inline(always)]
     fn lower(c: u32) -> u32 {
-        if (0x41..=0x5A).contains(&c) { c + 0x20 } else { c }
+        if (0x41..=0x5A).contains(&c) {
+            c + 0x20
+        } else {
+            c
+        }
     }
     unsafe {
         let mut i = 0usize;
@@ -64,6 +68,61 @@ unsafe extern "C" {
     fn wcsrchr(s: *const u32, c: u32) -> *mut u32;
     fn wcscmp(s1: *const u32, s2: *const u32) -> i32;
     fn wcscasecmp(s1: *const u32, s2: *const u32) -> i32;
+    fn wcsstr(haystack: *const u32, needle: *const u32) -> *mut u32;
+}
+
+/// Pre-lever wcsstr: brute-force O(n*m) double-loop (absent needle => full scan).
+#[inline(never)]
+unsafe fn old_bruteforce_wcsstr(hay: *const u32, hay_len: usize, needle: &[u32]) -> *const u32 {
+    unsafe {
+        let m = needle.len();
+        if m == 0 {
+            return hay;
+        }
+        let mut h = 0usize;
+        while h + m <= hay_len {
+            let mut k = 0usize;
+            while k < m && *hay.add(h + k) == needle[k] {
+                k += 1;
+            }
+            if k == m {
+                return hay.add(h);
+            }
+            h += 1;
+        }
+        std::ptr::null()
+    }
+}
+
+/// New-lever wcsstr: SIMD first-element prefilter (mirrors the shipped wcsstr).
+#[inline(never)]
+unsafe fn new_prefilter_wcsstr(hay: *const u32, hay_len: usize, needle: &[u32]) -> *const u32 {
+    unsafe {
+        let m = needle.len();
+        if m == 0 {
+            return hay;
+        }
+        let n0 = needle[0];
+        let mut h = 0usize;
+        loop {
+            let (idx, found) = bench_wide_find_or_nul_simd(hay.add(h), n0);
+            if !found {
+                return std::ptr::null();
+            }
+            let pos = h + idx;
+            if pos + m > hay_len {
+                return std::ptr::null();
+            }
+            let mut k = 1usize;
+            while k < m && *hay.add(pos + k) == needle[k] {
+                k += 1;
+            }
+            if k == m {
+                return hay.add(pos);
+            }
+            h = pos + 1;
+        }
+    }
 }
 
 /// Pre-lever wcschr: scalar wchar_t (u32) scan to target-or-NUL.
@@ -707,6 +766,42 @@ fn main() {
         let gl = median_ns_per_op(rounds, iters, || {
             // SAFETY: both NUL-terminated wide strings.
             black_box(unsafe { wcscasecmp(pa, pb) });
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
+        );
+    }
+
+    println!("\nwcsstr (absent 4-elem needle, needle[0] rare => full scan, wchar_t=u32):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
+        "wchars", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+    );
+    let needle: Vec<u32> = b"QRST".iter().map(|&x| x as u32).collect();
+    let mut needle_w = needle.clone();
+    needle_w.push(0);
+    for &n in &sizes {
+        let mut hay: Vec<u32> = vec![0x61u32; n + 1]; // 'a' * n; needle[0]='Q' absent
+        hay[n] = 0;
+        let hp = hay.as_ptr();
+        let np = needle_w.as_ptr();
+        let iters = (2_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { old_bruteforce_wcsstr(hp, n, &needle) });
+        });
+        let new = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { new_prefilter_wcsstr(hp, n, &needle) });
+        });
+        let gl = median_ns_per_op(rounds, iters, || {
+            // SAFETY: both NUL-terminated wide strings.
+            black_box(unsafe { wcsstr(hp, np) });
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
