@@ -10404,6 +10404,66 @@ pub fn iconv(
             }
         }
 
+        // Fast path: fixed-width Unicode (UTF-16/UTF-32, explicit endianness) ->
+        // DBCS legacy codec. Decode each unit with the per-codec decoder, then call
+        // the (direct-table O(1)) per-codec encoder directly, skipping the two
+        // ~100-arm dispatches + encode_one. The mirror of the DBCS -> wide and the
+        // UTF-8 -> DBCS fast paths. Byte-for-byte isomorphic: same decoder + the
+        // same encode_* the dispatch would pick; an unrepresentable char, a decode
+        // error, or insufficient room breaks to the generic body for the exact
+        // EILSEQ/EINVAL/E2BIG ordering. Gated on explicit endianness.
+        if matches!(
+            from_enc,
+            Encoding::Utf16Le | Encoding::Utf16Be | Encoding::Utf32Le | Encoding::Utf32Be
+        ) && !cd.emit_bom
+            && matches!(
+                cd.to,
+                Encoding::Gb18030
+                    | Encoding::ShiftJis
+                    | Encoding::Big5
+                    | Encoding::Gbk
+                    | Encoding::EucJp
+                    | Encoding::EucKr
+                    | Encoding::Cp949
+                    | Encoding::Gb2312
+                    | Encoding::Johab
+            )
+        {
+            while in_pos < input.len() {
+                let decoded = match from_enc {
+                    Encoding::Utf16Le => decode_utf16le(&input[in_pos..]),
+                    Encoding::Utf16Be => decode_utf16be(&input[in_pos..]),
+                    Encoding::Utf32Le => decode_utf32le(&input[in_pos..]),
+                    Encoding::Utf32Be => decode_utf32be(&input[in_pos..]),
+                    _ => unreachable!(),
+                };
+                let Ok((ch, consumed)) = decoded else {
+                    break;
+                };
+                let out = &mut outbuf[out_pos..];
+                let r = match cd.to {
+                    Encoding::Gb18030 => encode_gb18030(ch, out),
+                    Encoding::ShiftJis => encode_shiftjis(ch, out),
+                    Encoding::Big5 => encode_big5(ch, out),
+                    Encoding::Gbk => encode_gbk(ch, out),
+                    Encoding::EucJp => encode_eucjp(ch, out),
+                    Encoding::EucKr => encode_euckr(ch, out),
+                    Encoding::Cp949 => encode_cp949(ch, out),
+                    Encoding::Gb2312 => encode_gb2312(ch, out),
+                    Encoding::Johab => encode_johab(ch, out),
+                    _ => unreachable!(),
+                };
+                let Ok(w) = r else {
+                    break;
+                };
+                in_pos += consumed;
+                out_pos += w;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         let (ch, consumed) = match decode_char(from_enc, &input[in_pos..]) {
             Ok(v) => v,
             Err(DecodeError::Incomplete) => {

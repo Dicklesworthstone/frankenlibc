@@ -546,6 +546,86 @@ fn iconv_wide_to_single_byte_differential_fuzz_vs_glibc() {
     eprintln!("iconv wide->single-byte differential fuzz: {compared} conversions, 0 divergences vs host glibc");
 }
 
+/// Wide (UTF-16/UTF-32 LE/BE) -> DBCS legacy codec differential fuzz: gates the
+/// wide -> DBCS fast path (per-codec decode + direct per-codec encode). Corpora:
+/// random raw wide bytes and valid wide source biased to CJK/astral, converted to
+/// every DBCS codec, compared against host glibc on the full contract.
+#[test]
+fn iconv_wide_to_dbcs_differential_fuzz_vs_glibc() {
+    let mut r = Lcg(0x7e41_d2a8_36b9_5c0f);
+    let mut divs: Vec<String> = Vec::new();
+    let mut compared: u64 = 0;
+
+    const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE"];
+    const DBCS: &[&str] = &[
+        "SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR", "CP949", "GB2312", "GB18030", "JOHAB",
+    ];
+
+    fn push_wide(v: &mut Vec<u8>, codec: &str, cp: u32) {
+        match codec {
+            "UTF-32LE" => v.extend_from_slice(&cp.to_le_bytes()),
+            "UTF-32BE" => v.extend_from_slice(&cp.to_be_bytes()),
+            "UTF-16LE" | "UTF-16BE" => {
+                let be = codec == "UTF-16BE";
+                if let Some(ch) = char::from_u32(cp) {
+                    let mut u = [0u16; 2];
+                    for unit in ch.encode_utf16(&mut u) {
+                        let b = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                        v.extend_from_slice(&b);
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    for from in WIDE {
+        let cf = CString::new(*from).unwrap();
+        for to in DBCS {
+            let ct = CString::new(*to).unwrap();
+            for _ in 0..1200 {
+                let raw: Vec<u8> = {
+                    let len = (r.next() % 16) as usize;
+                    (0..len).map(|_| r.byte()).collect()
+                };
+                let valid: Vec<u8> = {
+                    let n = (r.next() % 6) as usize;
+                    let mut v = Vec::new();
+                    for _ in 0..n {
+                        let cp = match r.next() % 8 {
+                            0 | 1 => r.next() as u32 % 0x80,                  // ASCII
+                            2 | 3 | 4 => 0x4E00 + (r.next() as u32 % 0x5200), // CJK ideographs
+                            5 => 0x3000 + (r.next() as u32 % 0x100),          // CJK symbols/kana
+                            6 => r.next() as u32 % 0x10000,                   // any BMP
+                            _ => 0x10000 + (r.next() as u32 % 0x100000),      // astral
+                        };
+                        push_wide(&mut v, from, cp);
+                    }
+                    v
+                };
+                for src in [&raw, &valid] {
+                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
+                    let h = unsafe { run(iconv_open, iconv_close, iconv, &ct, &cf, src) };
+                    let (Some(f), Some(h)) = (f, h) else { continue };
+                    compared += 1;
+                    if f != h && divs.len() < 40 {
+                        divs.push(format!(
+                            "{from}->{to} src={src:02x?}\n      fl  ={f:02x?}\n      glibc={h:02x?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "wide->DBCS iconv diverged from host glibc (showing up to 40):\n{}",
+        divs.join("\n")
+    );
+    eprintln!("iconv wide->DBCS differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+}
+
 /// DBCS legacy codec -> wide (UTF-16/UTF-32 LE/BE) differential fuzz: gates the
 /// DBCS -> UTF-16/UTF-32 fast path (per-codec decoder + inline wide write, incl.
 /// GB18030 astral -> surrogate pair on the UTF-16 side). Corpora: random raw
