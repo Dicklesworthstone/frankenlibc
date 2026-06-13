@@ -10155,6 +10155,85 @@ pub fn iconv(
             }
         }
 
+        // Fast path: DBCS legacy codec -> UTF-16 / UTF-32 (explicit endianness).
+        // Decode each char with the (direct-table O(1)) per-codec decoder, then the
+        // same inline UTF-16/UTF-32 write the wide<->wide path uses. `encode_utf16`
+        // emits GB18030's astral output as a surrogate pair. Byte-for-byte
+        // identical: same decoder + the same encode_utf16 / to_*_bytes; a decode
+        // error or insufficient room breaks to the generic body for the exact
+        // EILSEQ/EINVAL/E2BIG ordering. Gated on explicit endianness (unmarked
+        // UTF-16/UTF-32 emit a BOM, handled elsewhere).
+        if matches!(
+            from_enc,
+            Encoding::Gb18030
+                | Encoding::ShiftJis
+                | Encoding::Big5
+                | Encoding::Gbk
+                | Encoding::EucJp
+                | Encoding::EucKr
+                | Encoding::Cp949
+                | Encoding::Gb2312
+                | Encoding::Johab
+        ) && matches!(
+            cd.to,
+            Encoding::Utf16Le | Encoding::Utf16Be | Encoding::Utf32Le | Encoding::Utf32Be
+        ) && !cd.emit_bom
+        {
+            while in_pos < input.len() {
+                let decoded = match from_enc {
+                    Encoding::Gb18030 => decode_gb18030(&input[in_pos..]),
+                    Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
+                    Encoding::Big5 => decode_big5(&input[in_pos..]),
+                    Encoding::Gbk => decode_gbk(&input[in_pos..]),
+                    Encoding::EucJp => decode_eucjp(&input[in_pos..]),
+                    Encoding::EucKr => decode_euckr(&input[in_pos..]),
+                    Encoding::Cp949 => decode_cp949(&input[in_pos..]),
+                    Encoding::Gb2312 => decode_gb2312(&input[in_pos..]),
+                    Encoding::Johab => decode_johab(&input[in_pos..]),
+                    _ => unreachable!(),
+                };
+                let Ok((ch, consumed)) = decoded else {
+                    break;
+                };
+                let avail = outbuf.len() - out_pos;
+                let wrote: Option<usize> = match cd.to {
+                    Encoding::Utf32Le if avail >= 4 => {
+                        outbuf[out_pos..out_pos + 4].copy_from_slice(&(ch as u32).to_le_bytes());
+                        Some(4)
+                    }
+                    Encoding::Utf32Be if avail >= 4 => {
+                        outbuf[out_pos..out_pos + 4].copy_from_slice(&(ch as u32).to_be_bytes());
+                        Some(4)
+                    }
+                    Encoding::Utf16Le | Encoding::Utf16Be => {
+                        let mut units = [0u16; 2];
+                        let enc = ch.encode_utf16(&mut units);
+                        let needed = enc.len() * 2;
+                        if avail >= needed {
+                            let be = matches!(cd.to, Encoding::Utf16Be);
+                            for (idx, unit) in enc.iter().enumerate() {
+                                let bytes = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                                outbuf[out_pos + idx * 2] = bytes[0];
+                                outbuf[out_pos + idx * 2 + 1] = bytes[1];
+                            }
+                            Some(needed)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None, // UTF-32 target with < 4 bytes room -> generic E2BIG
+                };
+                let Some(w) = wrote else {
+                    break;
+                };
+                in_pos += consumed;
+                out_pos += w;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         // Fast path: fixed-width Unicode -> fixed-width Unicode (UTF-16/UTF-32,
         // LE/BE, any combination). The generic body dispatches decode_char +
         // encode_char (two ~100-arm matches) + the encode_one wrapper per char for

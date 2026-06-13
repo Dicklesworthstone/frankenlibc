@@ -465,6 +465,78 @@ fn iconv_single_byte_to_wide_differential_fuzz_vs_glibc() {
     eprintln!("iconv single-byte->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
 }
 
+/// DBCS legacy codec -> wide (UTF-16/UTF-32 LE/BE) differential fuzz: gates the
+/// DBCS -> UTF-16/UTF-32 fast path (per-codec decoder + inline wide write, incl.
+/// GB18030 astral -> surrogate pair on the UTF-16 side). Corpora: random raw
+/// bytes (incomplete-tail EINVAL + invalid-pair EILSEQ at the exact stop) and
+/// host-encoded valid DBCS bytes (real multibyte sequences, incl. GB18030 4-byte
+/// astral). fl and glibc must agree on the full contract.
+#[test]
+fn iconv_dbcs_to_wide_differential_fuzz_vs_glibc() {
+    let utf8 = CString::new("UTF-8").unwrap();
+    let mut r = Lcg(0x93b1_4e7c_0d52_a6f3);
+    let mut divs: Vec<String> = Vec::new();
+    let mut compared: u64 = 0;
+
+    const DBCS: &[&str] = &[
+        "SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR", "CP949", "GB2312", "GB18030", "JOHAB",
+    ];
+    const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE"];
+
+    for from in DBCS {
+        let cf = CString::new(*from).unwrap();
+        // Build a valid byte sequence in `from` by host-encoding random scalars
+        // (incl. astral so GB18030 4-byte forms appear).
+        for to in WIDE {
+            let ct = CString::new(*to).unwrap();
+            for _ in 0..1200 {
+                let raw: Vec<u8> = {
+                    let len = (r.next() % 10) as usize;
+                    (0..len).map(|_| r.byte()).collect()
+                };
+                let valid: Vec<u8> = {
+                    let n = (r.next() % 5) as usize;
+                    let mut u8src = Vec::new();
+                    for _ in 0..n {
+                        let cp = match r.next() % 10 {
+                            0 | 1 => r.next() as u32 % 0x80,                  // ASCII
+                            2 | 3 | 4 => 0x4E00 + (r.next() as u32 % 0x5200), // CJK ideographs
+                            5 => 0x3000 + (r.next() as u32 % 0x100),          // CJK symbols/kana
+                            6 => 0xFF61 + (r.next() as u32 % 0x3F),           // half-width kana
+                            7 | 8 => r.next() as u32 % 0x10000,               // any BMP
+                            _ => 0x10000 + (r.next() as u32 % 0x100000),      // astral (GB18030)
+                        };
+                        push_utf8(&mut u8src, cp);
+                    }
+                    // UTF-8 -> from (host), to get valid `from` bytes.
+                    match unsafe { run(iconv_open, iconv_close, iconv, &cf, &utf8, &u8src) } {
+                        Some(o) => o.out,
+                        None => Vec::new(),
+                    }
+                };
+                for src in [&raw, &valid] {
+                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
+                    let h = unsafe { run(iconv_open, iconv_close, iconv, &ct, &cf, src) };
+                    let (Some(f), Some(h)) = (f, h) else { continue };
+                    compared += 1;
+                    if f != h && divs.len() < 40 {
+                        divs.push(format!(
+                            "{from}->{to} src={src:02x?}\n      fl  ={f:02x?}\n      glibc={h:02x?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "DBCS->wide iconv diverged from host glibc (showing up to 40):\n{}",
+        divs.join("\n")
+    );
+    eprintln!("iconv DBCS->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+}
+
 /// CJK 2-byte codec differential fuzz: SHIFT_JIS and BIG5 <-> UTF-8 over (a)
 /// random raw bytes (exercises the decode tables + the incomplete-tail EINVAL /
 /// invalid-pair EILSEQ classification + stop position) and (b) valid UTF-8
