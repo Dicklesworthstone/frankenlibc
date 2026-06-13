@@ -7,7 +7,7 @@
 
 use std::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use frankenlibc_core::string::{mbstowcs, wcstombs};
 
 fn bench_mbstowcs(c: &mut Criterion) {
@@ -45,6 +45,9 @@ fn bench_mbstowcs(c: &mut Criterion) {
 fn bench_wcstombs(c: &mut Criterion) {
     // ~1 KiB of ASCII codepoints.
     let ascii: Vec<u32> = (0..1024).map(|i| 0x61 + (i % 26) as u32).collect();
+    // Pure 3-byte BMP codepoints. This is the remaining multibyte encode lane
+    // after the 2-byte SIMD path landed.
+    let cjk_3byte: Vec<u32> = (0..1024).map(|i| 0x4E00 + (i % 0x100) as u32).collect();
     // Mixed: ASCII runs interleaved with 2/3-byte codepoints.
     let mut mixed: Vec<u32> = Vec::new();
     for i in 0..128 {
@@ -53,7 +56,11 @@ fn bench_wcstombs(c: &mut Criterion) {
         mixed.push(0x20); // space
     }
 
-    let cases: &[(&str, &[u32])] = &[("ascii_1k", &ascii), ("mixed_utf8", &mixed)];
+    let cases: &[(&str, &[u32])] = &[
+        ("ascii_1k", &ascii),
+        ("cjk_3byte", &cjk_3byte),
+        ("mixed_utf8", &mixed),
+    ];
 
     let mut group = c.benchmark_group("wchar_wcstombs");
     for &(name, src) in cases {

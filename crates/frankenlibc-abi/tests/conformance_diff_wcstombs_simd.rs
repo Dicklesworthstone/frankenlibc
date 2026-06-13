@@ -1,18 +1,19 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)] // live host-glibc wcstombs oracle
 
-//! Differential fuzz for the SIMD 2-byte UTF-8 *encode* fast path in
+//! Differential fuzz for the SIMD 2-byte and 3-byte UTF-8 *encode* fast paths in
 //! `frankenlibc_core::string::wchar::wcstombs` (bd-w7mtzu).
 //!
 //! The fast path encodes runs of >= 8 wide chars all in 0x80..=0x7FF — each to
 //! exactly two UTF-8 bytes — 8 chars per 16-byte vector. It must be byte-for-byte
-//! identical to scalar `wctomb`. This fuzzes 2-byte-heavy wide-char arrays
-//! (interleaved with ASCII, 3/4-byte code points, surrogates, out-of-range
-//! values, and runs straddling the 8-char SIMD window) against the LIVE host
-//! glibc `wcstombs` oracle (C.UTF-8), comparing the full byte output and the
-//! success/error decision on every case.
+//! identical to scalar `wctomb`. The 3-byte path does the same for clean BMP
+//! non-surrogate runs in 0x0800..=0xFFFF, four wide chars per 12 output bytes.
+//! This fuzzes 2/3-byte-heavy wide-char arrays (interleaved with ASCII, 4-byte
+//! code points, surrogates, out-of-range values, and runs straddling both SIMD
+//! window sizes) against the LIVE host glibc `wcstombs` oracle (C.UTF-8),
+//! comparing the full byte output and the success/error decision on every case.
 
-use std::ffi::{c_char, c_void};
+use std::ffi::c_char;
 
 unsafe extern "C" {
     fn wcstombs(dst: *mut c_char, src: *const i32, n: usize) -> usize;
@@ -51,9 +52,21 @@ fn fl_wcstombs(src: &[i32]) -> Option<Vec<u8>> {
     frankenlibc_core::string::wchar::wcstombs(&mut dst, &su).map(|n| dst[..n].to_vec())
 }
 
+fn valid_3byte_codepoint(r: &mut Lcg) -> i32 {
+    match r.below(5) {
+        0 => 0x0800 + r.below(0x4000) as i32,
+        1 => 0x4E00 + r.below(0x1200) as i32,
+        2 => 0xE000 + r.below(0x2000) as i32,
+        3 => 0xD7FF,
+        _ => 0xFFFF,
+    }
+}
+
 #[test]
-fn wcstombs_simd_2byte_matches_glibc() {
-    unsafe { setlocale(6 /*LC_ALL*/, b"C.UTF-8\0".as_ptr() as *const c_char) };
+fn wcstombs_simd_2byte_and_3byte_matches_glibc() {
+    unsafe {
+        setlocale(6 /*LC_ALL*/, b"C.UTF-8\0".as_ptr() as *const c_char)
+    };
 
     let mut r = Lcg(0xfeed_face_dead_beef);
     let mut divs: Vec<String> = Vec::new();
@@ -65,19 +78,25 @@ fn wcstombs_simd_2byte_matches_glibc() {
         for _ in 0..segs {
             match r.below(10) {
                 // Bias toward 2-byte code points (the SIMD path), in runs.
-                0..=5 => {
+                0..=3 => {
                     let run = 1 + r.below(12);
                     for _ in 0..run {
                         s.push((0x80 + r.below(0x780)) as i32); // 0x80..=0x7FF
                     }
                 }
-                6 => {
+                // Bias toward valid 3-byte BMP code points, in runs.
+                4..=7 => {
+                    let run = 1 + r.below(12);
+                    for _ in 0..run {
+                        s.push(valid_3byte_codepoint(&mut r));
+                    }
+                }
+                8 => {
                     for _ in 0..(1 + r.below(10)) {
                         s.push((1 + r.below(0x7F)) as i32); // ASCII
                     }
                 }
-                7 => s.push((0x0800 + r.below(0xF800)) as i32), // 3-byte BMP (skip surrogates below)
-                8 => s.push((0x1_0000 + r.below(0x10_0000)) as i32), // 4-byte astral
+                9 if r.below(2) == 0 => s.push((0x1_0000 + r.below(0x10_0000)) as i32), // 4-byte astral
                 _ => {
                     // Edge values: surrogates / out-of-range (glibc & fl both error).
                     match r.below(3) {

@@ -89,3 +89,84 @@ Next admissible routes should use a materially different primitive: a packed
 byte-lane encoder that constructs one `u8x16`/shuffle store with a masked
 12-byte copy, a shared UTF-8 encode microkernel reused by `wcsrtombs`, or the
 4-byte astral lane if a focused profile shows it is now dominant.
+---
+
+# bd-w7mtzu - wcstombs 3-byte packed SIMD encode keep
+
+## Target
+
+- Bead: `bd-w7mtzu`
+- Lane: `wcstombs` pure 3-byte BMP / CJK encode.
+- Baseline/post worker: `vmi1153651`
+- Lever: encode a clean 4-codepoint BMP non-surrogate window into four UTF-8 triples with portable SIMD, falling back to the existing scalar `wctomb` path for every ASCII, 2-byte, astral, surrogate, out-of-range, NUL, short-output, or mixed-width window.
+
+This retained route is materially different from the rejected scalar-store
+candidate above: it computes lead/middle/tail byte lanes, packs them through
+`simd_swizzle!` into one `u8x16`, and copies the first 12 bytes. It does not
+retry scalar per-lane stores after SIMD byte-class computation.
+
+## Baseline
+
+Focused Criterion case was added to `wchar_bench` before the production encoder change.
+
+RCH baseline on `vmi1153651`:
+
+- Command: `cargo bench -j 1 -p frankenlibc-bench --bench wchar_bench -- wchar_wcstombs/cjk_3byte`
+- `wchar_wcstombs/cjk_3byte`: `[11.194 us 11.849 us 12.990 us]`
+- Throughput: `[78.828 Melem/s 86.419 Melem/s 91.477 Melem/s]`
+- Workload: 1024 CJK BMP codepoints, all 3-byte UTF-8 output.
+
+## Isomorphism
+
+- Output order is unchanged: the SIMD path writes `lead, middle, tail` bytes for each of four codepoints in source order.
+- Error behavior is unchanged: the SIMD path only fires when all four codepoints are in `0x0800..=0xFFFF` and not in `0xD800..=0xDFFF`.
+- NUL, ASCII, 2-byte, 4-byte astral, surrogate, out-of-range, mixed-window, and short-output cases fall through to the existing scalar `wctomb` step.
+- Truncation behavior is unchanged: the SIMD path requires 12 output bytes before firing; otherwise scalar handles the exact remaining capacity.
+- Floating point and RNG are not involved.
+
+## Proof
+
+Local:
+
+- `cargo test -j 1 -p frankenlibc-core --lib wcstombs_simd_isomorphic_to_scalar -- --nocapture --test-threads=1`: passed.
+- `cargo test -j 1 -p frankenlibc-abi --test conformance_diff_wcstombs_simd -- --nocapture --test-threads=1`: passed.
+- `cargo test -j 1 -p frankenlibc-abi --test golden_wchar_conv_reentry -- --nocapture --test-threads=1`: passed.
+- `rustfmt --check crates/frankenlibc-core/src/string/wchar.rs crates/frankenlibc-abi/tests/conformance_diff_wcstombs_simd.rs crates/frankenlibc-bench/benches/wchar_bench.rs`: passed.
+- `cargo check -j 1 -p frankenlibc-core --lib`: passed.
+- `cargo check -j 1 -p frankenlibc-abi --test conformance_diff_wcstombs_simd`: passed with the existing `wchar_abi.rs` `work_local` unused-assignment warning.
+- `cargo check -j 1 -p frankenlibc-bench --bench wchar_bench`: passed.
+
+RCH:
+
+- `cargo test -j 1 -p frankenlibc-core --lib wcstombs_simd_isomorphic_to_scalar -- --nocapture --test-threads=1`: passed on `vmi1227854`.
+- `cargo test -j 1 -p frankenlibc-abi --test conformance_diff_wcstombs_simd -- --nocapture --test-threads=1`: passed on `vmi1227854`.
+- `cargo test -j 1 -p frankenlibc-abi --test golden_wchar_conv_reentry -- --nocapture --test-threads=1`: passed on `vmi1227854`.
+- Golden SHA: `mbstowcs wide sha256=e52563fe0c036cc2d97d9b14a28d8d0e3adeec307686eecf8122466ca95dab50`.
+- Golden SHA: `wcstombs back sha256=5f71c2382d1655e56994e4022f3e88be237d22350f6af9bd744680ec108aad6e`.
+
+Known environment noise:
+
+- RCH workers report the existing missing SMT solver warning.
+- ABI builds report the existing `wchar_abi.rs` `work_local` unused-assignment warning.
+- Focused `cargo clippy -j 1 -p frankenlibc-core --lib -- -D warnings` remains blocked by pre-existing lint debt in `math/exp.rs`, `stdlib/sort.rs`, `string/fnmatch.rs`, and `string/regex.rs`; no reported clippy error was in this pass's touched wchar encoder/test/bench files.
+- Package-wide `cargo fmt --check -p frankenlibc-core -p frankenlibc-abi -p frankenlibc-bench` remains blocked by unrelated existing formatting drift outside this pass; touched-file rustfmt passed.
+
+## Post
+
+RCH post on `vmi1153651`:
+
+- Command: `cargo bench -j 1 -p frankenlibc-bench --bench wchar_bench -- wchar_wcstombs/cjk_3byte`
+- `wchar_wcstombs/cjk_3byte`: `[966.19 ns 1.0170 us 1.0763 us]`
+- Throughput: `[951.44 Melem/s 1.0069 Gelem/s 1.0598 Gelem/s]`
+
+Same-worker improvement:
+
+- Middle estimate: `11.849 us -> 1.0170 us`, `11.65x` faster.
+- Per-codepoint middle estimate: `11.571 ns/wc -> 0.993 ns/wc`.
+- Throughput middle estimate: `86.419 Melem/s -> 1.0069 Gelem/s`.
+
+## Score
+
+Kept. Score `(Impact 5.0 x Confidence 5.0) / Effort 2.0 = 12.5`.
+
+Remaining route on `bd-w7mtzu`: 4-byte astral encode/decode paths remain open; do not call the bead fully closed until that lane is separately profiled and addressed.

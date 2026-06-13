@@ -3,7 +3,7 @@
 //! Implements `<wchar.h>` / `<stdlib.h>` conversion functions assuming UTF-8
 //! encoding. This is appropriate for the "C.UTF-8" / "POSIX.UTF-8" locale.
 
-use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint};
+use std::simd::{cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint, Simd};
 
 /// Unicode "REPLACEMENT CHARACTER" — emitted by [`decode_utf8_lossy`]
 /// for malformed sequences instead of returning an error.
@@ -560,6 +560,38 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
             di += 16;
         }
 
+        // SIMD 3-byte encode fast path for BMP non-surrogate runs. Each clean
+        // window maps four code points in 0x0800..=0xFFFF, excluding UTF-16
+        // surrogates, to four fixed-width UTF-8 triples. ASCII, 2-byte, astral,
+        // surrogate, out-of-range, and short-output cases fall through to the
+        // scalar wctomb step, preserving its exact error and truncation behavior.
+        while si + 4 <= src.len() && di + 12 <= dest.len() && (0x0800..=0xFFFF).contains(&src[si]) {
+            let ws: [u32; 4] = src[si..si + 4].try_into().unwrap();
+            let v = Simd::<u32, 4>::from_array(ws);
+            let bmp_ok = v.simd_ge(Simd::splat(0x0800)) & v.simd_le(Simd::splat(0xFFFF));
+            let surrogate_ok = v.simd_lt(Simd::splat(0xD800)) | v.simd_gt(Simd::splat(0xDFFF));
+            if !(bmp_ok & surrogate_ok).all() {
+                break;
+            }
+
+            let leads = ((v >> Simd::splat(12)) | Simd::splat(0xE0)).cast::<u8>();
+            let mids =
+                (((v >> Simd::splat(6)) & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+            let tails = ((v & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+            let lead_mid = std::simd::simd_swizzle!(leads, mids, [0, 4, 1, 5, 2, 6, 3, 7]);
+            let zero = Simd::<u8, 4>::splat(0);
+            let tails_padded = std::simd::simd_swizzle!(tails, zero, [0, 4, 1, 4, 2, 4, 3, 4]);
+            let bytes = std::simd::simd_swizzle!(
+                lead_mid,
+                tails_padded,
+                [0, 1, 8, 2, 3, 10, 4, 5, 12, 6, 7, 14, 0, 0, 0, 0]
+            );
+            let packed = bytes.to_array();
+            dest[di..di + 12].copy_from_slice(&packed[..12]);
+            si += 4;
+            di += 12;
+        }
+
         // One scalar step, then re-attempt the SIMD run.
         if si >= src.len() {
             return Some(di);
@@ -771,6 +803,21 @@ mod tests {
                 v.insert(pos, mb);
                 corpus.push(v);
             }
+        }
+        // Pure 3-byte BMP runs around the 4-codepoint SIMD window, including
+        // the legal boundaries adjacent to overlongs and surrogate exclusions.
+        for len in 0..40usize {
+            let mut v = Vec::with_capacity(len);
+            for i in 0..len {
+                v.push(match i % 5 {
+                    0 => 0x0800,
+                    1 => 0x20AC,
+                    2 => 0x4E00 + (i as u32 % 0x100),
+                    3 => 0xD7FF,
+                    _ => 0xE000,
+                });
+            }
+            corpus.push(v);
         }
         // Surrogates / out-of-range values wctomb rejects (must bail to scalar
         // and return None identically).
@@ -1091,10 +1138,10 @@ mod tests {
         assert_eq!(wcwidth(0x0F71), 0); // TIBETAN VOWEL SIGN AA
         assert_eq!(wcwidth(0x3099), 0); // COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK
         assert_eq!(wcwidth(0xFE20), 0); // Combining Half Marks
-        // Line/paragraph separators (Zl, Zp).
+                                        // Line/paragraph separators (Zl, Zp).
         assert_eq!(wcwidth(0x2028), -1); // LINE SEPARATOR
         assert_eq!(wcwidth(0x2029), -1); // PARAGRAPH SEPARATOR
-        // Language tag chars (Cf, treated as -1 by glibc).
+                                         // Language tag chars (Cf, treated as -1 by glibc).
         assert_eq!(wcwidth(0xE0000), -1);
     }
 
@@ -1308,13 +1355,13 @@ mod tests {
 
         // Turkish dotless i (U+0131) → ASCII I
         assert_eq!(towupper(0x0131), 0x0049); // ı → I
-        // Turkish dotted I (U+0130) lowercases to i + combining dot (U+0307),
-        // but glibc drops the combining mark and returns just 'i'.
+                                              // Turkish dotted I (U+0130) lowercases to i + combining dot (U+0307),
+                                              // but glibc drops the combining mark and returns just 'i'.
         assert_eq!(towlower(0x0130), 0x0069); // İ → i
 
         // German sharp s stays unchanged (1:N mapping to multiple base letters)
         assert_eq!(towupper(0x00DF), 0x00DF); // ß unchanged (→ SS dropped)
-        // Capital sharp s (U+1E9E) → lowercase ß (1:1)
+                                              // Capital sharp s (U+1E9E) → lowercase ß (1:1)
         assert_eq!(towlower(0x1E9E), 0x00DF); // ẞ → ß
 
         // Ligatures stay unchanged (expand to multiple base letters)
