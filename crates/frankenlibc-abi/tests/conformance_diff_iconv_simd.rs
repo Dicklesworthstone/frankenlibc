@@ -233,6 +233,30 @@ fn iconv_utf32_to_utf8_simd_matches_glibc() {
                     .flat_map(|c| c.to_be_bytes())
                     .collect::<Vec<u8>>(),
             ),
+            (
+                // UTF-16LE: each code point as 1 (BMP) or 2 (astral surrogate
+                // pair) units — exercises the SIMD BMP path + scalar pair handling.
+                &b"UTF-16LE\0"[..],
+                {
+                    let mut u: Vec<u16> = Vec::new();
+                    for &c in &cps {
+                        let mut buf = [0u16; 2];
+                        u.extend_from_slice(char::from_u32(c).unwrap().encode_utf16(&mut buf));
+                    }
+                    u.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()
+                },
+            ),
+            (
+                &b"UTF-16BE\0"[..],
+                {
+                    let mut u: Vec<u16> = Vec::new();
+                    for &c in &cps {
+                        let mut buf = [0u16; 2];
+                        u.extend_from_slice(char::from_u32(c).unwrap().encode_utf16(&mut buf));
+                    }
+                    u.iter().flat_map(|x| x.to_be_bytes()).collect::<Vec<u8>>()
+                },
+            ),
         ] {
             let fl = fl_conv_from(from, b"UTF-8\0", &bytes);
             let gl = glibc_conv_from(from, b"UTF-8\0", &bytes);

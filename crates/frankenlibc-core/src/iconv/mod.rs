@@ -9609,29 +9609,41 @@ pub fn iconv(
             break;
         }
 
-        // SIMD UTF-8 ENCODE: UTF-32LE/BE source -> UTF-8 target. Mirrors the
-        // wcstombs 2-byte (8 code points -> 16 bytes) and 3-byte (4 -> 12 bytes)
-        // SIMD encoders, but reads the code points from the fixed-width UTF-32
-        // source. A cheap peek of the first code point routes to the matching
-        // width; anything outside the uniform-width range (ASCII, astral,
-        // surrogate, out-of-range) or short output falls to the generic
-        // decode_char + encode_one body, preserving exact error/truncation.
-        if matches!(from_enc, Encoding::Utf32Le | Encoding::Utf32Be) && cd.to == Encoding::Utf8 {
-            let sbe = matches!(from_enc, Encoding::Utf32Be);
+        // SIMD UTF-8 ENCODE: fixed-width UTF-32/UTF-16 source -> UTF-8 target.
+        // Mirrors the wcstombs 2-byte (8 code points -> 16 bytes) and 3-byte
+        // (4 -> 12 bytes) SIMD encoders, reading code points from the source units
+        // (`scp` bytes each: 4 for UTF-32, 2 for UTF-16 — where a BMP scalar is a
+        // single unit equal to the code point). A cheap peek of the first code
+        // point routes to the matching width; anything outside the uniform-width
+        // range (ASCII, astral, surrogate, out-of-range) or short output falls to
+        // the generic decode_char + encode_one body — so UTF-16 surrogate pairs
+        // (astral) and lone surrogates are handled exactly by the scalar path.
+        if matches!(
+            from_enc,
+            Encoding::Utf32Le | Encoding::Utf32Be | Encoding::Utf16Le | Encoding::Utf16Be
+        ) && cd.to == Encoding::Utf8
+        {
+            let sbe = matches!(from_enc, Encoding::Utf32Be | Encoding::Utf16Be);
+            let scp = if matches!(from_enc, Encoding::Utf16Le | Encoding::Utf16Be) {
+                2usize
+            } else {
+                4usize
+            };
             let cp_at = |p: usize| -> u32 {
-                let b: [u8; 4] = input[p..p + 4].try_into().unwrap();
-                if sbe {
-                    u32::from_be_bytes(b)
+                if scp == 2 {
+                    let b: [u8; 2] = input[p..p + 2].try_into().unwrap();
+                    u32::from(if sbe { u16::from_be_bytes(b) } else { u16::from_le_bytes(b) })
                 } else {
-                    u32::from_le_bytes(b)
+                    let b: [u8; 4] = input[p..p + 4].try_into().unwrap();
+                    if sbe { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) }
                 }
             };
             // 2-byte output run (code points 0x80..=0x7FF).
-            while in_pos + 32 <= input.len()
+            while in_pos + 8 * scp <= input.len()
                 && out_pos + 16 <= outbuf.len()
                 && (0x80..=0x7FF).contains(&cp_at(in_pos))
             {
-                let cps: [u32; 8] = std::array::from_fn(|k| cp_at(in_pos + 4 * k));
+                let cps: [u32; 8] = std::array::from_fn(|k| cp_at(in_pos + scp * k));
                 let v = Simd::<u32, 8>::from_array(cps);
                 if !(v.simd_ge(Simd::splat(0x80)) & v.simd_le(Simd::splat(0x7FF))).all() {
                     break;
@@ -9644,18 +9656,18 @@ pub fn iconv(
                     [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15]
                 );
                 bytes.copy_to_slice(&mut outbuf[out_pos..out_pos + 16]);
-                in_pos += 32;
+                in_pos += 8 * scp;
                 out_pos += 16;
             }
             if in_pos >= input.len() {
                 break;
             }
             // 3-byte output run (BMP non-surrogate 0x800..=0xFFFF).
-            while in_pos + 16 <= input.len()
+            while in_pos + 4 * scp <= input.len()
                 && out_pos + 12 <= outbuf.len()
                 && (0x800..=0xFFFF).contains(&cp_at(in_pos))
             {
-                let cps: [u32; 4] = std::array::from_fn(|k| cp_at(in_pos + 4 * k));
+                let cps: [u32; 4] = std::array::from_fn(|k| cp_at(in_pos + scp * k));
                 let v = Simd::<u32, 4>::from_array(cps);
                 let bmp_ok = v.simd_ge(Simd::splat(0x0800)) & v.simd_le(Simd::splat(0xFFFF));
                 let sur_ok = v.simd_lt(Simd::splat(0xD800)) | v.simd_gt(Simd::splat(0xDFFF));
@@ -9676,7 +9688,7 @@ pub fn iconv(
                 );
                 let packed = bytes.to_array();
                 outbuf[out_pos..out_pos + 12].copy_from_slice(&packed[..12]);
-                in_pos += 16;
+                in_pos += 4 * scp;
                 out_pos += 12;
             }
             if in_pos >= input.len() {
