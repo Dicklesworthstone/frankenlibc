@@ -1276,6 +1276,14 @@ pub struct IconvDescriptor {
     /// encode_*. `None` when `to` is multibyte. See
     /// [`build_to_reverse`].
     to_reverse: Option<SingleByteReverse>,
+    /// Cached at open time when `from` is a single-byte codec: each input byte's
+    /// pre-encoded UTF-8 form (`bytes[b][..len[b]]`, `len[b] == 0` for an
+    /// undefined byte). Lets a single-byte -> UTF-8 conversion emit each byte
+    /// with one table load + a short copy, skipping the per-char decode_char/
+    /// encode_char dispatch AND `char::encode_utf8`'s width branch. `None` when
+    /// `from` is multibyte. Symmetric counterpart of [`build_to_reverse`]; see
+    /// [`build_from_decode`].
+    from_decode: Option<SingleByteToUtf8>,
     /// Unmarked `UTF-16`/`UTF-32` source only: a leading Byte Order Mark has not
     /// yet been consumed. glibc's BOM-bearing converters strip an initial BOM and
     /// switch endianness from it (no BOM => the platform-native LE default), so we
@@ -8718,6 +8726,45 @@ fn leading_ascii_len(s: &[u8]) -> usize {
 /// `decode(b) = cp` (cp >= 0x80) and `encode(cp) = b` — so the map reproduces
 /// `encode_*`'s canonical first-match exactly and silently drops undefined /
 /// non-canonical bytes (which `lookup` then reports as unrepresentable).
+/// Per-input-byte pre-encoded UTF-8 form for a single-byte source codec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SingleByteToUtf8 {
+    /// UTF-8 bytes for input byte `b`, valid for `bytes[b][..len[b]]`.
+    bytes: [[u8; 4]; 256],
+    /// UTF-8 length for input byte `b`; `0` marks an undefined/invalid byte.
+    len: [u8; 256],
+}
+
+/// Build the `input_byte -> UTF-8` table for a single-byte source codec, so a
+/// single-byte -> UTF-8 loop emits each byte with one table load + a short copy
+/// (no decode_char/encode_char dispatch, no `char::encode_utf8` width branch).
+/// Returns `None` if `from` is multibyte (some byte decodes `Incomplete` or
+/// consumes != 1 byte). Each entry is exactly `decode_char(from, &[b])` followed
+/// by `char::encode_utf8` (`len == 0` for an undefined byte), so a consumer is
+/// byte-for-byte identical to the generic decode + UTF-8 encode path. Symmetric
+/// counterpart of [`build_to_reverse`].
+fn build_from_decode(from: Encoding) -> Option<SingleByteToUtf8> {
+    let mut table = SingleByteToUtf8 {
+        bytes: [[0u8; 4]; 256],
+        len: [0u8; 256],
+    };
+    for b in 0u16..=0xFF {
+        match decode_char(from, &[b as u8]) {
+            Ok((ch, 1)) => {
+                let mut buf = [0u8; 4];
+                let enc = ch.encode_utf8(&mut buf);
+                let l = enc.len();
+                table.bytes[b as usize][..l].copy_from_slice(&buf[..l]);
+                table.len[b as usize] = l as u8;
+            }
+            // `from` is multibyte (lead byte needs a continuation / wide unit).
+            Ok((_, _)) | Err(DecodeError::Incomplete) => return None,
+            Err(DecodeError::Invalid) => table.len[b as usize] = 0,
+        }
+    }
+    Some(table)
+}
+
 fn build_to_reverse(to: Encoding) -> Option<SingleByteReverse> {
     let mut entries: Vec<(u32, u8)> = Vec::with_capacity(128);
     let mut buf = [0u8; 8];
@@ -9422,6 +9469,7 @@ pub fn iconv_open_detailed(
             fast_ascii: pair_is_ascii_identity(from, to),
             sb_translation: build_sb_translation(from, to),
             to_reverse: build_to_reverse(to),
+            from_decode: build_from_decode(from),
             from_bom_pending: matches!(from, Encoding::Utf32 | Encoding::Utf16),
             from_unmarked_be: false,
         },
@@ -10022,6 +10070,33 @@ pub fn iconv(
                 let enc = ch.encode_utf8(&mut buf).len();
                 outbuf[out_pos..out_pos + enc].copy_from_slice(&buf[..enc]);
                 in_pos += consumed;
+                out_pos += enc;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
+        // Fast path: single-byte legacy codec -> UTF-8 (KOI8-R / CP125x /
+        // ISO-8859-* / CP437 / ...). Decode each byte with the cached O(1)
+        // `from_decode` table + an inline `char::encode_utf8`, skipping the two
+        // ~100-arm dispatches (decode_char + encode_char) and the encode_one
+        // wrapper per char. Byte-for-byte identical: `from_decode[b]` is exactly
+        // `decode_char(from, &[b])`'s code point (so `char::from_u32` always
+        // succeeds) and the encode is the same `char::encode_utf8`. An undefined
+        // byte (`-1`) or insufficient room (< 4 bytes) breaks to the generic body
+        // for the exact EILSEQ/E2BIG ordering and position.
+        if cd.to == Encoding::Utf8
+            && let Some(decode) = cd.from_decode.as_ref()
+        {
+            while in_pos < input.len() && out_pos + 4 <= outbuf.len() {
+                let b = input[in_pos] as usize;
+                let enc = decode.len[b] as usize;
+                if enc == 0 {
+                    break;
+                }
+                outbuf[out_pos..out_pos + enc].copy_from_slice(&decode.bytes[b][..enc]);
+                in_pos += 1;
                 out_pos += enc;
             }
             if in_pos >= input.len() {
