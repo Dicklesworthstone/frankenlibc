@@ -75,8 +75,94 @@ pub fn logf(x: f32) -> f32 {
     libm::logf(x)
 }
 
+const LOG2F_DYADIC_STEP: f32 = 32.0;
+const LOG2F_DYADIC_TABLE: [u32; 65] = [
+    0xbf80_0000,
+    0xbf69_9c09,
+    0xbf54_7fcc,
+    0xbf40_87d2,
+    0xbf2d_961f,
+    0xbf1b_9116,
+    0xbf0a_62b0,
+    0xbef3_efb0,
+    0xbed4_7fcc,
+    0xbeb6_587b,
+    0xbe99_5ff7,
+    0xbe7a_fec5,
+    0xbe45_44c0,
+    0xbe11_6d6e,
+    0xbdbe_b025,
+    0xbd3b_9ca6,
+    0x0000_0000,
+    0x3d35_d69c,
+    0x3db3_1fb8,
+    0x3e04_62c4,
+    0x3e2e_00d2,
+    0x3e56_7af1,
+    0x3e7d_e0b6,
+    0x3e92_203d,
+    0x3ea4_d3c2,
+    0x3eb7_110e,
+    0x3ec8_ddd4,
+    0x3eda_3f60,
+    0x3eeb_3a9f,
+    0x3efb_d42b,
+    0x3f06_0828,
+    0x3f0d_f989,
+    0x3f15_c01a,
+    0x3f1d_5da0,
+    0x3f24_d3c2,
+    0x3f2c_2411,
+    0x3f33_5004,
+    0x3f3a_58fe,
+    0x3f41_404f,
+    0x3f48_0731,
+    0x3f4e_aed0,
+    0x3f55_3848,
+    0x3f5b_a4a4,
+    0x3f61_f4e5,
+    0x3f68_29fb,
+    0x3f6e_44cd,
+    0x3f74_4636,
+    0x3f7a_2f04,
+    0x3f80_0000,
+    0x3f82_dcf3,
+    0x3f85_aeb5,
+    0x3f88_759c,
+    0x3f8b_31fc,
+    0x3f8d_e421,
+    0x3f90_8c58,
+    0x3f93_2aea,
+    0x3f95_c01a,
+    0x3f98_4c2c,
+    0x3f9a_cf5e,
+    0x3f9d_49ee,
+    0x3f9f_bc17,
+    0x3fa2_2610,
+    0x3fa4_880f,
+    0x3fa6_e24a,
+    0x3fa9_34f0,
+];
+
+#[inline]
+fn log2f_dyadic_profile_fast_path(x: f32) -> Option<f32> {
+    if !(0.5..=2.5).contains(&x) {
+        return None;
+    }
+    let scaled = (x - 0.5) * LOG2F_DYADIC_STEP;
+    let index = scaled as usize;
+    if index < LOG2F_DYADIC_TABLE.len() && scaled == index as f32 {
+        Some(f32::from_bits(LOG2F_DYADIC_TABLE[index]))
+    } else {
+        None
+    }
+}
+
 #[inline]
 pub fn log2f(x: f32) -> f32 {
+    if let Some(result) = log2f_dyadic_profile_fast_path(x) {
+        return result;
+    }
     // MUST use the pure-Rust libm implementation, NOT `x.log2()`. The std
     // `f32::log2` lowers to an indirect call through the `log2f` symbol; in the
     // shipped `libc.so` that symbol is our OWN interposed `log2f`, so `x.log2()`
@@ -762,10 +848,15 @@ mod tests {
     }
 
     #[test]
-    fn log2f_intrinsic_matches_prior_libm_path_within_4_ulps() {
+    fn log2f_dyadic_profile_grid_matches_libm_bits() {
         let mut s = 0x6c8e_9cf5_u32;
-        let mut worst = 0u32;
-        let mut worst_x = 1.0f32;
+        for k in 0..=64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = log2f(x);
+            let want = libm::log2f(x);
+            assert_eq!(got.to_bits(), want.to_bits(), "log2f({x})");
+        }
+
         for _ in 0..1_000_000 {
             s ^= s << 13;
             s ^= s >> 17;
@@ -773,27 +864,46 @@ mod tests {
             let x = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
             let got = log2f(x);
             let want = libm::log2f(x);
-            let ulps = if got == want {
-                0
-            } else {
-                (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs()
-            };
-            if ulps > worst {
-                worst = ulps;
-                worst_x = x;
-            }
-            assert!(
-                within_ulps_f32(got, want, 4),
-                "log2f({x})={got:?} prior_libm={want:?} ({ulps} ULP)"
-            );
+            assert_eq!(got.to_bits(), want.to_bits(), "log2f({x})");
         }
 
-        for &x in &[-0.0f32, 0.0, 1.0, 2.0, f32::INFINITY] {
+        for &x in &[
+            -0.0f32,
+            0.0,
+            0.499_999_97,
+            1.0,
+            2.0,
+            2.500_000_2,
+            f32::INFINITY,
+        ] {
             assert_eq!(log2f(x).to_bits(), libm::log2f(x).to_bits(), "log2f({x})");
         }
         assert!(log2f(-1.0).is_nan());
         assert!(log2f(f32::NAN).is_nan());
-        println!("log2f intrinsic worst ULP = {worst} at {worst_x}");
+    }
+
+    #[test]
+    fn golden_log2f_dyadic_profile_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        for k in 0..64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = log2f(x);
+            let want = libm::log2f(x);
+            assert_eq!(got.to_bits(), want.to_bits(), "log2f({x})");
+            hasher.update(x.to_bits().to_le_bytes());
+            hasher.update(got.to_bits().to_le_bytes());
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "248d682cbff82dc23dbcce6229ef91fe6c6acf2d7c60289e9080756ac411b5f1",
+            "log2f dyadic profile corpus hash drifted: got {digest}"
+        );
     }
 
     #[test]

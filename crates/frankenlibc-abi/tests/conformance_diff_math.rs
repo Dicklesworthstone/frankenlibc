@@ -46,6 +46,7 @@ unsafe extern "C" {
     fn exp10(x: f64) -> f64;
     fn exp10f(x: f32) -> f32;
     fn expm1f(x: f32) -> f32;
+    fn log2f(x: f32) -> f32;
     fn sinh(x: f64) -> f64;
     fn cosh(x: f64) -> f64;
     fn tanh(x: f64) -> f64;
@@ -956,6 +957,75 @@ fn diff_exp10f_within_4_ulps() {
     assert!(
         bad.is_empty(),
         "exp10f divergences (worst {worst}):\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
+fn diff_log2f_dyadic_profile_grid_within_4_ulps() {
+    fn f32_ulps(a: f32, b: f32) -> i64 {
+        if a.is_nan() && b.is_nan() {
+            return 0;
+        }
+        if a == b {
+            return 0;
+        }
+        if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            return i64::MAX;
+        }
+        (a.to_bits() as i64 - b.to_bits() as i64).abs()
+    }
+
+    let mut worst = 0i64;
+    let mut bad = Vec::new();
+    for k in 0..=64 {
+        let x = 0.5 + (k as f32) * 0.031_25;
+        let (got, want) = (unsafe { fl::log2f(x) }, unsafe { log2f(x) });
+        let u = f32_ulps(got, want);
+        worst = worst.max(u);
+        if u > 4 {
+            bad.push(format!("log2f({x}) fl={got:?} glibc={want:?} ({u} ULP)"));
+        }
+    }
+
+    let mut state = 0x725b_7d93_u32;
+    for _ in 0..200_000 {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        let x = 0.5 + (state >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
+        let (got, want) = (unsafe { fl::log2f(x) }, unsafe { log2f(x) });
+        let u = f32_ulps(got, want);
+        worst = worst.max(u);
+        if u > 4 {
+            bad.push(format!("log2f({x}) fl={got:?} glibc={want:?} ({u} ULP)"));
+            if bad.len() >= 16 {
+                break;
+            }
+        }
+    }
+
+    for &x in &[
+        -1.0_f32,
+        -0.0,
+        0.0,
+        0.499_999_97,
+        1.0,
+        2.0,
+        2.500_000_2,
+        f32::INFINITY,
+        f32::NAN,
+    ] {
+        let (got, want) = (unsafe { fl::log2f(x) }, unsafe { log2f(x) });
+        let u = f32_ulps(got, want);
+        if u > 4 {
+            bad.push(format!("log2f({x:?}) fl={got:?} glibc={want:?} ({u} ULP)"));
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "log2f divergences (worst {worst}):\n{}",
         bad.join("\n")
     );
 }
