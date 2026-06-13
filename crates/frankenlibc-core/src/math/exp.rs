@@ -42,6 +42,16 @@ pub fn log(x: f64) -> f64 {
     if x.is_normal() && x > 0.0 {
         return log2_kernel(x) * std::f64::consts::LN_2;
     }
+    // libm::log returns the correct value for special inputs but does NOT raise
+    // the C99/IEEE floating-point exception glibc raises. Re-raise it via a
+    // hardware op on this cold special-input path (safe; the hot path returned
+    // above): log(±0) = -inf -> FE_DIVBYZERO (pole); log(x<0) = NaN ->
+    // FE_INVALID (domain). NaN and +inf inputs raise nothing, matching glibc.
+    if x == 0.0 {
+        let _ = core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
+    } else if x < 0.0 {
+        let _ = core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
+    }
     libm::log(x)
 }
 

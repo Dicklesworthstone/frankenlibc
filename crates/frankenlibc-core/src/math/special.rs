@@ -189,6 +189,13 @@ pub fn tgamma(x: f64) -> f64 {
     if x > 0.0 && x <= 13.0 {
         tgamma_reduced(x)
     } else {
+        // Negative-integer poles: glibc raises FE_INVALID (result NaN); libm
+        // returns NaN without the flag. Re-raise on this cold path via a hardware
+        // 0/0 (NaN + FE_INVALID). (tgamma(0) is handled by libm with FE_DIVBYZERO
+        // already; positive/large/non-integer args raise nothing here.)
+        if x < 0.0 && x.is_finite() && x == x.floor() {
+            let _ = core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
+        }
         libm::tgamma(x)
     }
 }
