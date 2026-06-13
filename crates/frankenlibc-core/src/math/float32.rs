@@ -3,6 +3,22 @@
 //! Mirrors the f64 functions from `float.rs`, `trig.rs`, and `exp.rs`
 //! for the `*f` suffix variants (`sinf`, `cosf`, `sqrtf`, etc.).
 
+// --- IEEE exception re-raise helpers ---
+//
+// libm's f32 software paths return the correct value for poles/domain inputs but
+// omit the C99/IEEE exception glibc raises. These re-raise it via a safe hardware
+// op (force_eval-style), used only on cold special-input branches.
+
+#[inline]
+fn fe_divbyzero_f32() {
+    let _ = core::hint::black_box(core::hint::black_box(-1.0f32) / core::hint::black_box(0.0f32));
+}
+
+#[inline]
+fn fe_invalid_f32() {
+    let _ = core::hint::black_box(core::hint::black_box(0.0f32) / core::hint::black_box(0.0f32));
+}
+
 // --- Trigonometric ---
 
 #[inline]
@@ -27,6 +43,11 @@ pub fn asinf(x: f32) -> f32 {
 
 #[inline]
 pub fn acosf(x: f32) -> f32 {
+    // Domain [-1, 1]; glibc raises FE_INVALID outside it (libm::acosf returns NaN
+    // without the flag — note the f64 acos already raises it, libm is asymmetric).
+    if x < -1.0 || x > 1.0 {
+        fe_invalid_f32();
+    }
     libm::acosf(x)
 }
 
@@ -72,6 +93,13 @@ pub fn expf(x: f32) -> f32 {
 
 #[inline]
 pub fn logf(x: f32) -> f32 {
+    // glibc raises FE_DIVBYZERO at the log(±0) pole and FE_INVALID for x<0;
+    // libm::logf returns the value (-inf / NaN) without the flag.
+    if x == 0.0 {
+        fe_divbyzero_f32();
+    } else if x < 0.0 {
+        fe_invalid_f32();
+    }
     libm::logf(x)
 }
 
@@ -163,6 +191,11 @@ pub fn log2f(x: f32) -> f32 {
     if let Some(result) = log2f_dyadic_profile_fast_path(x) {
         return result;
     }
+    if x == 0.0 {
+        fe_divbyzero_f32();
+    } else if x < 0.0 {
+        fe_invalid_f32();
+    }
     // MUST use the pure-Rust libm implementation, NOT `x.log2()`. The std
     // `f32::log2` lowers to an indirect call through the `log2f` symbol; in the
     // shipped `libc.so` that symbol is our OWN interposed `log2f`, so `x.log2()`
@@ -177,6 +210,11 @@ pub fn log2f(x: f32) -> f32 {
 pub fn log10f(x: f32) -> f32 {
     if let Some(log2x) = log2f_dyadic_profile_fast_path(x) {
         return log2x * core::f32::consts::LOG10_2;
+    }
+    if x == 0.0 {
+        fe_divbyzero_f32();
+    } else if x < 0.0 {
+        fe_invalid_f32();
     }
     libm::log10f(x)
 }
@@ -355,9 +393,11 @@ pub fn acoshf(x: f32) -> f32 {
     // Domain is [1, +inf); for x < 1 acosh is undefined and glibc returns NaN.
     // libm::acoshf computes a spurious finite value for large negative x (e.g.
     // acoshf(-100) = -2.2), so guard the domain explicitly. NaN inputs fall
-    // through (NaN < 1.0 is false) to libm, which returns NaN.
+    // through (NaN < 1.0 is false) to libm, which returns NaN. glibc also raises
+    // FE_INVALID for the out-of-domain case, so produce the NaN via 0/0 (which
+    // sets the flag) rather than a bare NaN constant.
     if x < 1.0 {
-        return f32::NAN;
+        return core::hint::black_box(core::hint::black_box(0.0f32) / core::hint::black_box(0.0f32));
     }
     libm::acoshf(x)
 }
@@ -599,6 +639,11 @@ pub fn lgammaf(x: f32) -> f32 {
 
 #[inline]
 pub fn tgammaf(x: f32) -> f32 {
+    // Negative-integer poles: glibc raises FE_INVALID (NaN); libm::tgammaf omits
+    // the flag. (tgammaf(0) is handled by libm with FE_DIVBYZERO.)
+    if x < 0.0 && x.is_finite() && x == x.floor() {
+        fe_invalid_f32();
+    }
     libm::tgammaf(x)
 }
 

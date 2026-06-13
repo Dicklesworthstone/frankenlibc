@@ -15,6 +15,8 @@ unsafe extern "C" {
     fn sqrt(x: f64) -> f64; fn log(x: f64) -> f64; fn log2(x: f64) -> f64; fn log10(x: f64) -> f64;
     fn exp(x: f64) -> f64; fn pow(x: f64, y: f64) -> f64; fn acos(x: f64) -> f64; fn asin(x: f64) -> f64;
     fn acosh(x: f64) -> f64; fn atanh(x: f64) -> f64; fn tgamma(x: f64) -> f64; fn fmod(x: f64, y: f64) -> f64;
+    fn logf(x: f32)->f32; fn log2f(x: f32)->f32; fn log10f(x: f32)->f32; fn sqrtf(x: f32)->f32;
+    fn acosf(x: f32)->f32; fn acoshf(x: f32)->f32; fn tgammaf(x: f32)->f32; fn powf(x: f32,y: f32)->f32;
 }
 const HARD: c_int = 0x1D; // INVALID|DIVBYZERO|OVERFLOW|UNDERFLOW (drop noisy INEXACT)
 fn key(x: f64) -> i64 { let b = x.to_bits() as i64; if b < 0 { i64::MIN - b } else { b } }
@@ -63,5 +65,29 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chk!("tgamma(-5)", fl::tgamma(-5.0), tgamma(-5.0));
     chk!("tgamma(-2.5)", fl::tgamma(-2.5), tgamma(-2.5));
     chk!("fmod(1,0)", fl::fmod(1.0,0.0), fmod(1.0,0.0));
+
+    // f32 variants (libm f32 omits the same flags; fl re-raises)
+    macro_rules! chkf { ($lbl:literal, $flf:expr, $gf:expr) => {{
+        unsafe { feclearexcept(HARD); }
+        let _ = std::hint::black_box($flf);
+        let ff = unsafe { fetestexcept(HARD) };
+        unsafe { feclearexcept(HARD); }
+        let _ = std::hint::black_box(unsafe { $gf });
+        let gf = unsafe { fetestexcept(HARD) };
+        if (ff & HARD) != (gf & HARD) {
+            div.push(format!("{} flags: fl={:#x} glibc={:#x}", $lbl, ff & HARD, gf & HARD));
+        }
+    }}; }
+    chkf!("logf(0)", fl::logf(0.0), logf(0.0));
+    chkf!("logf(-1)", fl::logf(-1.0), logf(-1.0));
+    chkf!("log2f(0)", fl::log2f(0.0), log2f(0.0));
+    chkf!("log2f(-1)", fl::log2f(-1.0), log2f(-1.0));
+    chkf!("log10f(-2)", fl::log10f(-2.0), log10f(-2.0));
+    chkf!("sqrtf(-1)", fl::sqrtf(-1.0), sqrtf(-1.0));
+    chkf!("acosf(2)", fl::acosf(2.0), acosf(2.0));
+    chkf!("acoshf(0.5)", fl::acoshf(0.5), acoshf(0.5));
+    chkf!("tgammaf(-1)", fl::tgammaf(-1.0), tgammaf(-1.0));
+    chkf!("tgammaf(-5)", fl::tgammaf(-5.0), tgammaf(-5.0));
+    chkf!("powf(0,-1)", fl::powf(0.0,-1.0), powf(0.0,-1.0));
     assert!(div.is_empty(), "fp-exception/value divergences vs glibc:\n  {}", div.join("\n  "));
 }
