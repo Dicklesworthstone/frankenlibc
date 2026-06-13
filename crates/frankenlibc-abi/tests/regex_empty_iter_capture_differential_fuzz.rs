@@ -2,16 +2,22 @@
 #![allow(unsafe_code)] // live host-glibc regcomp/regexec oracle
 
 //! Characterization fuzzer (live host-glibc oracle) for POSIX submatch offsets
-//! of EMPTY / NULLABLE groups under quantifiers — documents the KNOWN gap
-//! bd-1djvkw. `#[ignore]`d because it currently FAILS: the whole-match decision
-//! (group 0) matches glibc, but the submatch offsets of empty/nullable quantified
-//! groups diverge — glibc records the participating empty span [p,p] (e.g. `()*`
-//! → group1=[p,p], `.()*a` on "ba" → group1=[1,1], `(a*)*b?` on "b" → group1=[0,0]),
-//! while frankenlibc's Pike VM drops them to [-1,-1]. The correct POSIX rule (a
-//! `*`/`+` may take at most one empty iteration, only as the first, without a
-//! trailing empty overwriting a non-empty capture) needs per-thread loop-progress
-//! tracking — a real VM change, not a structural one-liner (a naive restructure
-//! regresses `..(b*)+`; see bd-1djvkw). Un-ignore to drive 200k cases when fixing.
+//! of EMPTY / NULLABLE groups under quantifiers — bd-1djvkw.
+//!
+//! SINGLE-LEVEL empty/nullable submatch now matches glibc exactly (the
+//! `RepeatExitGuard` fix: `.()*a` on "ba" → group1=[1,1], `(a*)*b?` on "b" →
+//! group1=[0,0]). The remaining NESTED divergences are a glibc ARTIFACT that
+//! frankenlibc deliberately does NOT mirror (document-don't-mirror, same policy
+//! as the twalk tree-shape, ecvt rounding, and remquo quirks): glibc reports a
+//! repeated group's span as the distance from its first iteration's start to its
+//! last iteration's end — a span the group's subpattern cannot match in a SINGLE
+//! iteration (e.g. `(.(b*)*)*` on "aaaa." → glibc group1=[0,5], though one
+//! iteration of `(.(b*)*)` matches exactly one char). frankenlibc reports the
+//! genuine POSIX last-iteration span ([4,5]). Whole-match (group 0) parity is
+//! exact across all 200k cases (0 group-0 divergences; only ~46 submatch-only).
+//! The determination + regression pin live in
+//! `conformance_diff_regex_nested_submatch.rs`. This stays `#[ignore]`d because
+//! it characterizes the glibc artifact, not a frankenlibc bug.
 //!
 //! Grammar is deliberately ERE concatenation of {literal, `.`, group, and the
 //! three quantifiers} with NO top-level alternation and NO backreferences, so it
@@ -141,7 +147,7 @@ fn run(
 }
 
 #[test]
-#[ignore = "bd-1djvkw PARTIAL: single-level empty/nullable-group submatch now matches glibc (RepeatExitGuard); deeply-NESTED loop-in-loop empty iterations (e.g. (.(b*)*)*) still diverge — un-ignore when the nested case lands"]
+#[ignore = "bd-1djvkw RESOLVED (document-don't-mirror): single-level empty/nullable submatch matches glibc (RepeatExitGuard). The remaining NESTED-loop divergences are a glibc ARTIFACT, not a fl bug — glibc reports group spans impossible for a single iteration (e.g. (.(b*)*)* on 'aaaa.' gives g1=[0,5] though the group matches 1 char/iteration); fl reports the POSIX-principled last-iteration span. Whole-match (group 0) parity is exact across all 200k cases (0 divergences; only ~46 submatch-only). Pinned + proven in conformance_diff_regex_nested_submatch.rs. Stays #[ignore]d: it characterizes the glibc artifact, which fl deliberately does NOT mirror (same policy as twalk/ecvt/remquo quirks)"]
 fn regex_empty_iter_capture_differential_fuzz_vs_glibc() {
     let mut r = Lcg(0xc2b2_ae3d_27d4_eb4f);
     let mut divs: Vec<String> = Vec::new();
