@@ -47,6 +47,7 @@ unsafe extern "C" {
     fn exp10f(x: f32) -> f32;
     fn expm1f(x: f32) -> f32;
     fn log2f(x: f32) -> f32;
+    fn log10f(x: f32) -> f32;
     fn sinh(x: f64) -> f64;
     fn cosh(x: f64) -> f64;
     fn tanh(x: f64) -> f64;
@@ -1031,6 +1032,58 @@ fn diff_log2f_dyadic_profile_grid_within_4_ulps() {
 }
 
 #[test]
+fn diff_log10f_dyadic_profile_grid_within_4_ulps() {
+    fn f32_ulps(a: f32, b: f32) -> i64 {
+        if a.is_nan() && b.is_nan() {
+            return 0;
+        }
+        if a == b {
+            return 0;
+        }
+        if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+            return i64::MAX;
+        }
+        (a.to_bits() as i64 - b.to_bits() as i64).abs()
+    }
+
+    let mut worst = 0i64;
+    let mut bad = Vec::new();
+    for k in 0..=64 {
+        let x = 0.5 + (k as f32) * 0.031_25;
+        let (got, want) = (unsafe { fl::log10f(x) }, unsafe { log10f(x) });
+        let u = f32_ulps(got, want);
+        worst = worst.max(u);
+        if u > 4 {
+            bad.push(format!("log10f({x}) fl={got:?} glibc={want:?} ({u} ULP)"));
+        }
+    }
+
+    for &x in &[
+        -1.0_f32,
+        -0.0,
+        0.0,
+        0.499_999_97,
+        1.0,
+        2.0,
+        2.500_000_2,
+        f32::INFINITY,
+        f32::NAN,
+    ] {
+        let (got, want) = (unsafe { fl::log10f(x) }, unsafe { log10f(x) });
+        let u = f32_ulps(got, want);
+        if u > 4 {
+            bad.push(format!("log10f({x:?}) fl={got:?} glibc={want:?} ({u} ULP)"));
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "log10f divergences (worst {worst}):\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
 fn diff_expm1f_positive_medium_within_4_ulps() {
     fn f32_ulps(a: f32, b: f32) -> i64 {
         if a.is_nan() && b.is_nan() {
@@ -1244,6 +1297,6 @@ fn diff_hyperbolic_within_4_ulps() {
 #[test]
 fn math_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"math.h core\",\"reference\":\"glibc\",\"functions\":23,\"divergences\":0,\"ulp_tolerance\":4}}",
+        "{{\"family\":\"math.h core\",\"reference\":\"glibc\",\"functions\":24,\"divergences\":0,\"ulp_tolerance\":4}}",
     );
 }

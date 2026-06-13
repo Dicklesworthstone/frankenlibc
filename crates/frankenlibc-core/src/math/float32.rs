@@ -175,6 +175,9 @@ pub fn log2f(x: f32) -> f32 {
 
 #[inline]
 pub fn log10f(x: f32) -> f32 {
+    if let Some(log2x) = log2f_dyadic_profile_fast_path(x) {
+        return log2x * core::f32::consts::LOG10_2;
+    }
     libm::log10f(x)
 }
 
@@ -930,6 +933,68 @@ mod tests {
         assert_eq!(
             digest, "248d682cbff82dc23dbcce6229ef91fe6c6acf2d7c60289e9080756ac411b5f1",
             "log2f dyadic profile corpus hash drifted: got {digest}"
+        );
+    }
+
+    #[test]
+    fn log10f_dyadic_profile_grid_within_4_ulps() {
+        let mut worst = 0u32;
+        for k in 0..=64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = log10f(x);
+            let want = x.log10();
+            let ulps = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
+            worst = worst.max(ulps);
+            assert!(
+                within_ulps_f32(got, want, 4),
+                "log10f({x}) = {got:?} but glibc = {want:?} ({ulps} ULP)"
+            );
+        }
+
+        for &x in &[
+            -1.0f32,
+            -0.0,
+            0.0,
+            0.500_001,
+            0.531_251,
+            2.500_001,
+            f32::INFINITY,
+            f32::NAN,
+        ] {
+            let got = log10f(x);
+            let want = libm::log10f(x);
+            if got.is_nan() && want.is_nan() {
+                continue;
+            }
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "log10f fallback drifted at {x:?}"
+            );
+        }
+        println!("log10f dyadic profile grid worst ULP = {worst}");
+    }
+
+    #[test]
+    fn golden_log10f_dyadic_profile_corpus_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        for k in 0..64 {
+            let x = 0.5 + (k as f32) * 0.031_25;
+            let got = log10f(x);
+            hasher.update(x.to_bits().to_le_bytes());
+            hasher.update(got.to_bits().to_le_bytes());
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        println!("log10f dyadic profile corpus sha256 = {digest}");
+        assert_eq!(
+            digest, "d7fd22a304b20df2cf355da32d9cf28877f90e34d6b552155d434bb8e2d585fc",
+            "log10f dyadic profile corpus hash drifted: got {digest}"
         );
     }
 
