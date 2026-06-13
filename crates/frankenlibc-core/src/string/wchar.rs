@@ -281,7 +281,13 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
     // ever consumes whole ASCII chunks, and every NUL / multibyte / error case is
     // handled by the unchanged scalar step below.
     loop {
-        while si + LANES <= src.len() && di + LANES <= dest.len() {
+        // The `src[si] < 0x80` guard skips the SIMD load+compare entirely when the
+        // current byte is a multibyte lead (>= 0x80): the chunk would contain that
+        // byte and break on the first iteration anyway, so probing it is pure waste
+        // on multibyte-heavy text (e.g. CJK / Cyrillic). Identical result — the run
+        // only ever advances on whole ASCII chunks. (Bounds check first: `si +
+        // LANES <= src.len()` guarantees `si < src.len()`, so `src[si]` is in range.)
+        while si + LANES <= src.len() && src[si] < 0x80 && di + LANES <= dest.len() {
             let bytes: [u8; LANES] = src[si..si + LANES].try_into().unwrap();
             let chunk = Simd::<u8, LANES>::from_array(bytes);
             // Any NUL (terminator) or any byte >= 0x80 (multibyte lead) ends the run.
@@ -449,7 +455,11 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
     // identical (SIMD only narrows whole ASCII chunks; NUL / multibyte / error
     // cases stay in the unchanged scalar step).
     loop {
-        while si + LANES <= src.len() && di + LANES <= dest.len() {
+        // The `src[si] < 0x80` guard skips the SIMD load+compare when the current
+        // wide char needs multibyte encoding (>= 0x80): the chunk would break on it
+        // immediately, so probing is pure waste on multibyte-heavy text. Identical
+        // result. (Bounds check first keeps `src[si]` in range.)
+        while si + LANES <= src.len() && src[si] < 0x80 && di + LANES <= dest.len() {
             let wchars: [u32; LANES] = src[si..si + LANES].try_into().unwrap();
             let chunk = Simd::<u32, LANES>::from_array(wchars);
             // Any NUL (terminator) or any wc >= 0x80 (multibyte/invalid) ends the run.

@@ -91,14 +91,21 @@ allocator, and was the source of the bogus 2628x figure.)
   regex differential fuzz vs glibc gates POSIX leftmost-longest correctness.
   Confirmed against fnmatch/regex bench groups (fl beats glibc on the adversarial
   backtracking cases).
-- **Named next algorithmic swing:** POSIX **tagged-NFA submatch** for nested/empty
-  quantified groups (`bd-1djvkw`). Whole-match parity is already exact; only the
-  *submatch offsets* of empty/nullable groups under nested quantifiers diverge from
-  glibc (the 200k-case `regex_empty_iter_capture_differential_fuzz` oracle, `#[ignore]`d).
-  Single-level is fixed (`RepeatExitGuard` + hidden progress slots); deep nesting
-  (`(.(b*)*)*`, `((a*)+b?)*`) needs real implicit tag-priority disambiguation, not
-  another local repeat guard — a multi-session VM change, NOT a one-lever tweak.
-  This is the only substantive remaining gap; the rest of the surface is parity or win.
+- **Regex nested/empty submatch (`bd-1djvkw`) — RESOLVED, not a gap.** The nested
+  divergence is a glibc *artifact* (it reports group spans impossible for a single
+  iteration, e.g. `(.(b*)*)*` on "aaaa." → g1=[0,5]); fl is POSIX-principled
+  (last-iteration). Whole-match parity is exact. Document-don't-mirror (like
+  twalk/ecvt/remquo); pinned by `conformance_diff_regex_nested_submatch.rs`.
+- **Named next algorithmic swing:** **SIMD UTF-8 multibyte decoder** (Lemire-style)
+  for the `mb*`/`wc*` conversion family (`bd-w7mtzu`). The ASCII fast paths are SIMD
+  and the bounded/restartable variants now match glibc, but the *multibyte* decode is
+  still scalar per-char (`utf8_decode_step`): measured fl 1.3–1.8× slower than glibc's
+  gconv on Cyrillic (2-byte) / CJK (3-byte) text (`mbstowcs` 1.33 vs 0.73 ns/byte). A
+  high-nibble lead-length lookup + shuffle-assemble decoder (fallback to scalar for
+  4-byte/errors/chunk-boundary) is the lever; multi-session, correctness-critical,
+  gated by the wchar differential fuzzes. Overlaps iconv UTF-8 (`bd-48uzu9`) — a
+  shared decoder primitive serves both. A `src[si]<0x80` guard already removed the
+  wasted re-entrant ASCII SIMD probe on multibyte lead bytes (~1.12×, isomorphic).
 
 ## Validation Commands
 
