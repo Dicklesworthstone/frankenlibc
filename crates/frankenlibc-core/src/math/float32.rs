@@ -738,7 +738,15 @@ pub fn j1f(x: f32) -> f32 {
 /// Bessel function of the first kind, order `n` (f32 variant).
 #[inline]
 pub fn jnf(n: i32, x: f32) -> f32 {
-    libm::jnf(n, x)
+    // Mirror f64 jn: route orders 0/±1 through j0f/j1f (j1f's signed-zero-at-(-inf)
+    // fix) + the identity J_{-n} = (-1)^n J_n. Identical to libm::jnf for finite x;
+    // |n| >= 2 stays on libm::jnf.
+    match n {
+        0 => j0f(x),
+        1 => j1f(x),
+        -1 => -j1f(x),
+        _ => libm::jnf(n, x),
+    }
 }
 
 /// Bessel function of the second kind, order 0 (f32 variant).
@@ -756,7 +764,13 @@ pub fn y1f(x: f32) -> f32 {
 /// Bessel function of the second kind, order `n` (f32 variant).
 #[inline]
 pub fn ynf(n: i32, x: f32) -> f32 {
-    libm::ynf(n, x)
+    // Mirror f64 yn: orders 0/±1 via y0f/y1f + the identity Y_{-n} = (-1)^n Y_n.
+    match n {
+        0 => y0f(x),
+        1 => y1f(x),
+        -1 => -y1f(x),
+        _ => libm::ynf(n, x),
+    }
 }
 
 /// BSD/SUSv2 `finitef()`: returns non-zero if `x` is neither infinite nor NaN.

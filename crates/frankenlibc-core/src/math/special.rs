@@ -332,7 +332,17 @@ pub fn j1(x: f64) -> f64 {
 /// Bessel function of the first kind, order `n`.
 #[inline]
 pub fn jn(n: i32, x: f64) -> f64 {
-    libm::jn(n, x)
+    // Route orders 0/±1 through j0/j1 so the corrected signed-zero behaviour at
+    // ±inf (J1 is odd: libm returns +0 where glibc returns -0) propagates, and
+    // apply the identity J_{-n}(x) = (-1)^n J_n(x) for n = -1. For finite x this
+    // is identical to libm::jn (which reduces to ±j1 internally); |n| >= 2 already
+    // matches glibc, so it stays on libm::jn.
+    match n {
+        0 => j0(x),
+        1 => j1(x),
+        -1 => -j1(x),
+        _ => libm::jn(n, x),
+    }
 }
 
 /// Bessel function of the second kind, order 0.
@@ -350,7 +360,15 @@ pub fn y1(x: f64) -> f64 {
 /// Bessel function of the second kind, order `n`.
 #[inline]
 pub fn yn(n: i32, x: f64) -> f64 {
-    libm::yn(n, x)
+    // Same as jn: orders 0/±1 via y0/y1 + the identity Y_{-n} = (-1)^n Y_n, so the
+    // glibc signed-zero-at-+inf convention (yn(-1, +inf) = -0) is matched. Finite x
+    // is identical to libm::yn; |n| >= 2 stays on libm::yn.
+    match n {
+        0 => y0(x),
+        1 => y1(x),
+        -1 => -y1(x),
+        _ => libm::yn(n, x),
+    }
 }
 
 #[cfg(test)]
