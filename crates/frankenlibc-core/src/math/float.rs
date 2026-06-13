@@ -174,7 +174,19 @@ pub fn scalbln(x: f64, n: i64) -> f64 {
 /// Return the next representable float after `x` toward `y`.
 #[inline]
 pub fn nextafter(x: f64, y: f64) -> f64 {
-    libm::nextafter(x, y)
+    let r = libm::nextafter(x, y);
+    // C99/IEEE F.10.8.3: nextafter raises FE_OVERFLOW (+INEXACT) when x is finite
+    // and the result is infinite, and FE_UNDERFLOW (+INEXACT) when the result is
+    // subnormal or zero (and differs from x). libm omits these flags; re-raise via
+    // a hardware op (safe; only on these boundary results).
+    if x.is_finite() && r.is_infinite() {
+        let _ = core::hint::black_box(core::hint::black_box(f64::MAX) * core::hint::black_box(f64::MAX));
+    } else if r != x && r.abs() < f64::MIN_POSITIVE {
+        let _ = core::hint::black_box(
+            core::hint::black_box(f64::MIN_POSITIVE) * core::hint::black_box(f64::MIN_POSITIVE),
+        );
+    }
+    r
 }
 
 /// Return the next representable `f64` after `x` toward `y` (long double direction).

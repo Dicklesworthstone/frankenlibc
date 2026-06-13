@@ -17,6 +17,7 @@ unsafe extern "C" {
     fn acosh(x: f64) -> f64; fn atanh(x: f64) -> f64; fn tgamma(x: f64) -> f64; fn fmod(x: f64, y: f64) -> f64;
     fn logf(x: f32)->f32; fn log2f(x: f32)->f32; fn log10f(x: f32)->f32; fn sqrtf(x: f32)->f32;
     fn acosf(x: f32)->f32; fn acoshf(x: f32)->f32; fn tgammaf(x: f32)->f32; fn powf(x: f32,y: f32)->f32;
+    fn nextafter(x: f64, y: f64) -> f64; fn nextafterf(x: f32, y: f32) -> f32;
 }
 const HARD: c_int = 0x1D; // INVALID|DIVBYZERO|OVERFLOW|UNDERFLOW (drop noisy INEXACT)
 fn key(x: f64) -> i64 { let b = x.to_bits() as i64; if b < 0 { i64::MIN - b } else { b } }
@@ -89,5 +90,23 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chkf!("tgammaf(-1)", fl::tgammaf(-1.0), tgammaf(-1.0));
     chkf!("tgammaf(-5)", fl::tgammaf(-5.0), tgammaf(-5.0));
     chkf!("powf(0,-1)", fl::powf(0.0,-1.0), powf(0.0,-1.0));
+
+    // nextafter / nextafterf: C99 F.10.8.3 OVERFLOW (finite->inf) + UNDERFLOW
+    // (result subnormal/zero). The flag-only macros reuse chkf; for f64 wrap via
+    // a closure-free direct call.
+    macro_rules! chk2 { ($lbl:literal, $flf:expr, $gf:expr) => {{
+        unsafe { feclearexcept(HARD); } let _ = std::hint::black_box($flf); let ff = unsafe { fetestexcept(HARD) };
+        unsafe { feclearexcept(HARD); } let _ = std::hint::black_box(unsafe { $gf }); let gf = unsafe { fetestexcept(HARD) };
+        if (ff & HARD) != (gf & HARD) { div.push(format!("{} flags: fl={:#x} glibc={:#x}", $lbl, ff & HARD, gf & HARD)); }
+    }}; }
+    chk2!("nextafter(0,1)", fl::nextafter(0.0,1.0), nextafter(0.0,1.0));
+    chk2!("nextafter(0,-1)", fl::nextafter(0.0,-1.0), nextafter(0.0,-1.0));
+    chk2!("nextafter(MAX,INF)", fl::nextafter(f64::MAX,f64::INFINITY), nextafter(f64::MAX,f64::INFINITY));
+    chk2!("nextafter(minpos,0)", fl::nextafter(f64::MIN_POSITIVE,0.0), nextafter(f64::MIN_POSITIVE,0.0));
+    chk2!("nextafter(5,5)", fl::nextafter(5.0,5.0), nextafter(5.0,5.0));
+    chk2!("nextafter(1,2)", fl::nextafter(1.0,2.0), nextafter(1.0,2.0));
+    chk2!("nextafterf(0,1)", fl::nextafterf(0.0,1.0), nextafterf(0.0,1.0));
+    chk2!("nextafterf(MAX,INF)", fl::nextafterf(f32::MAX,f32::INFINITY), nextafterf(f32::MAX,f32::INFINITY));
+    chk2!("nextafterf(minpos,0)", fl::nextafterf(f32::MIN_POSITIVE,0.0), nextafterf(f32::MIN_POSITIVE,0.0));
     assert!(div.is_empty(), "fp-exception/value divergences vs glibc:\n  {}", div.join("\n  "));
 }

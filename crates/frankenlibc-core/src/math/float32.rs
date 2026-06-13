@@ -577,7 +577,17 @@ pub fn scalblnf(x: f32, n: i64) -> f32 {
 
 #[inline]
 pub fn nextafterf(x: f32, y: f32) -> f32 {
-    libm::nextafterf(x, y)
+    let r = libm::nextafterf(x, y);
+    // C99/IEEE: FE_OVERFLOW when finite -> infinite; FE_UNDERFLOW when the result
+    // is subnormal/zero and differs from x. libm omits these; re-raise.
+    if x.is_finite() && r.is_infinite() {
+        let _ = core::hint::black_box(core::hint::black_box(f32::MAX) * core::hint::black_box(f32::MAX));
+    } else if r != x && r.abs() < f32::MIN_POSITIVE {
+        let _ = core::hint::black_box(
+            core::hint::black_box(f32::MIN_POSITIVE) * core::hint::black_box(f32::MIN_POSITIVE),
+        );
+    }
+    r
 }
 
 /// Return the next representable `f32` after `x` toward `y` (long double direction).
