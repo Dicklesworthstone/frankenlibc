@@ -5,7 +5,7 @@
 //!
 use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
 use std::mem::size_of;
-use std::simd::{Simd, cmp::SimdPartialEq};
+use std::simd::{Select, Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::stdio::StdioStream;
@@ -576,7 +576,11 @@ unsafe fn scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_i
                 let a = unsafe { *s1.add(i + j) };
                 let b = unsafe { *s2.add(i + j) };
                 if a != b {
-                    return (if (a as i32) < (b as i32) { -1 } else { 1 }, i + j + 1, false);
+                    return (
+                        if (a as i32) < (b as i32) { -1 } else { 1 },
+                        i + j + 1,
+                        false,
+                    );
                 }
                 if a == 0 {
                     return (0, i + j + 1, false);
@@ -791,6 +795,56 @@ pub unsafe fn bench_wide_find_or_nul_simd(s: *const u32, c: u32) -> (usize, bool
     unsafe { wide_find_or_nul_simd(s, c) }
 }
 
+/// Portable-SIMD scan for the last `c` before the first NUL in a wide string.
+/// Returns `(last_index, span_including_nul)`. It uses the same aligned
+/// c-or-NUL panel discipline as [`wide_find_or_nul_simd`] and only resolves
+/// lanes scalar when a panel contains either the target or the terminator.
+unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, usize) {
+    if c == 0 {
+        // SAFETY: caller guarantees a valid NUL-terminated string.
+        let (idx, _) = unsafe { wide_find_or_nul_simd(s, 0) };
+        return (Some(idx), idx.saturating_add(1));
+    }
+
+    const LANES: usize = 8;
+    let mut last = None;
+    let mut i = 0usize;
+    let head = ((32 - ((s as usize) & 31)) & 31) / 4;
+    while i < head {
+        // SAFETY: caller guarantees a valid NUL-terminated string.
+        let ch = unsafe { *s.add(i) };
+        if ch == c {
+            last = Some(i);
+        }
+        if ch == 0 {
+            return (last, i.saturating_add(1));
+        }
+        i += 1;
+    }
+
+    let cv = Simd::<u32, LANES>::splat(c);
+    let zv = Simd::<u32, LANES>::splat(0);
+    loop {
+        // SAFETY: `s + i` is 32-byte aligned, so this 32-byte load stays inside
+        // the current page; the string is NUL-terminated within a mapped page.
+        let words = unsafe { core::ptr::read(s.add(i).cast::<[u32; LANES]>()) };
+        let v = Simd::<u32, LANES>::from_array(words);
+        if (v.simd_eq(cv) | v.simd_eq(zv)).any() {
+            for j in 0..LANES {
+                // SAFETY: within the just-read window; a c-or-NUL exists at/ before j==7.
+                let ch = unsafe { *s.add(i + j) };
+                if ch == c {
+                    last = Some(i + j);
+                }
+                if ch == 0 {
+                    return (last, i + j + 1);
+                }
+            }
+        }
+        i += LANES;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // wcschr
 // ---------------------------------------------------------------------------
@@ -893,22 +947,31 @@ pub unsafe extern "C" fn wcsrchr(s: *const u32, c: u32) -> *mut u32 {
     };
 
     let (result, adverse, span) = unsafe {
-        let mut result_local: *mut u32 = std::ptr::null_mut();
-        let mut i = 0usize;
-        loop {
-            if let Some(limit) = bound
-                && i >= limit
-            {
-                break (result_local, true, i);
+        if bound.is_none() {
+            let (last, span) = wide_last_before_nul_simd(s, c);
+            (
+                last.map_or(std::ptr::null_mut(), |idx| s.add(idx) as *mut u32),
+                false,
+                span,
+            )
+        } else {
+            let mut result_local: *mut u32 = std::ptr::null_mut();
+            let mut i = 0usize;
+            loop {
+                if let Some(limit) = bound
+                    && i >= limit
+                {
+                    break (result_local, true, i);
+                }
+                let ch = *s.add(i);
+                if ch == c {
+                    result_local = s.add(i) as *mut u32;
+                }
+                if ch == 0 {
+                    break (result_local, false, i.saturating_add(1));
+                }
+                i += 1;
             }
-            let ch = *s.add(i);
-            if ch == c {
-                result_local = s.add(i) as *mut u32;
-            }
-            if ch == 0 {
-                break (result_local, false, i.saturating_add(1));
-            }
-            i += 1;
         }
     };
     if adverse {
@@ -3836,6 +3899,79 @@ fn abi_towlower(c: u32) -> u32 {
     }
 }
 
+/// Branchless SIMD ASCII lowercase over 8 `u32` (wchar_t) lanes — folds only
+/// `'A'..='Z'` to `'a'..='z'` (C/POSIX-locale `towlower`, matching
+/// [`abi_towlower`]). SIMD lanes are independent, so the per-lane range test
+/// `(0x41 <= v <= 0x5A)` needs no borrow-safety guard (unlike the narrow SWAR
+/// case-fold): a mask selects `0x20` to add.
+#[inline(always)]
+fn wide_ascii_lower_simd(v: Simd<u32, 8>) -> Simd<u32, 8> {
+    let is_upper = v.simd_ge(Simd::splat(0x41)) & v.simd_le(Simd::splat(0x5A));
+    is_upper.select(v + Simd::splat(0x20), v)
+}
+
+/// Fused portable-SIMD wide case-insensitive compare: 8 `u32` lanes per 32-byte
+/// window, ASCII-folded. `bound` in elements. Returns `(result, span, hit_limit)`
+/// where `result` is the folded-codepoint difference `towlower(a)-towlower(b)` at
+/// the first folded-differing element or NUL-stop (matching glibc's wint_t
+/// arithmetic, not a bare sign). Equal-folded-and-NUL-free windows advance 8;
+/// others resolve element-wise (identical to the scalar [`abi_towlower`] loop).
+/// Dual-pointer reads are page-cross guarded like [`scan_wcscmp_simd`].
+unsafe fn scan_wcscasecmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_int, usize, bool) {
+    const WLANES: usize = 8;
+    let zv = Simd::<u32, WLANES>::splat(0);
+    let mut i = 0usize;
+    loop {
+        if i + WLANES <= bound
+            && wide32_read_within_page(s1.wrapping_add(i) as usize)
+            && wide32_read_within_page(s2.wrapping_add(i) as usize)
+        {
+            // SAFETY: both 32-byte reads stay within their pages and within bound.
+            let va = Simd::<u32, WLANES>::from_array(unsafe {
+                core::ptr::read(s1.add(i).cast::<[u32; WLANES]>())
+            });
+            let vb = Simd::<u32, WLANES>::from_array(unsafe {
+                core::ptr::read(s2.add(i).cast::<[u32; WLANES]>())
+            });
+            if wide_ascii_lower_simd(va) == wide_ascii_lower_simd(vb) && !va.simd_eq(zv).any() {
+                i += WLANES;
+                continue;
+            }
+            for j in 0..WLANES {
+                // SAFETY: i+j < bound.
+                let raw = unsafe { *s1.add(i + j) };
+                let a = abi_towlower(raw);
+                let b = abi_towlower(unsafe { *s2.add(i + j) });
+                if a != b || raw == 0 {
+                    return (a.wrapping_sub(b) as i32, i + j + 1, false);
+                }
+            }
+            i += WLANES; // defensive: a flagged window always returns above.
+            continue;
+        }
+        if i >= bound {
+            return (0, bound, true);
+        }
+        // SAFETY: i < bound.
+        let raw = unsafe { *s1.add(i) };
+        let a = abi_towlower(raw);
+        let b = abi_towlower(unsafe { *s2.add(i) });
+        if a != b || raw == 0 {
+            return (a.wrapping_sub(b) as i32, i + 1, false);
+        }
+        i += 1;
+    }
+}
+
+/// Benchmark/test hook for [`scan_wcscasecmp_simd`]. Not part of the public ABI.
+///
+/// # Safety
+/// `s1`/`s2` must be NUL-terminated, or valid for `bound` elements.
+#[doc(hidden)]
+pub unsafe fn bench_scan_wcscasecmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> c_int {
+    unsafe { scan_wcscasecmp_simd(s1, s2, bound).0 }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcscasecmp(s1: *const u32, s2: *const u32) -> c_int {
     if s1.is_null() || s2.is_null() {
@@ -3873,26 +4009,12 @@ pub unsafe extern "C" fn wcscasecmp(s1: *const u32, s2: *const u32) -> c_int {
         (None, None) => None,
     };
 
+    // Fused portable-SIMD ASCII-folded wide compare (shared scan_wcscasecmp_simd),
+    // byte-identical to the old scalar abi_towlower loop. `cmp_bound == None` => no
+    // limit; any hit-limit is the membrane bound, so it maps directly to `adverse`.
     let (result, adverse, span) = unsafe {
-        let mut i = 0usize;
-        let mut adverse_local = false;
-        loop {
-            if let Some(limit) = cmp_bound
-                && i >= limit
-            {
-                adverse_local = true;
-                break (0, adverse_local, i);
-            }
-            let a = abi_towlower(*s1.add(i));
-            let b = abi_towlower(*s2.add(i));
-            if a != b || *s1.add(i) == 0 {
-                // glibc returns the folded-codepoint difference (towlower(c1) -
-                // towlower(c2)) via wint_t arithmetic, NOT a bare ±1 sign; it is
-                // 0 when the folded chars are equal (the NUL-stop case).
-                break (a.wrapping_sub(b) as i32, adverse_local, i.saturating_add(1));
-            }
-            i += 1;
-        }
+        let (r, span, hit_limit) = scan_wcscasecmp_simd(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+        (r, hit_limit, span)
     };
 
     if adverse {
@@ -3948,28 +4070,13 @@ pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -
         (None, None) => Some(n),
     };
 
+    // Fused portable-SIMD ASCII-folded wide compare (shared scan_wcscasecmp_simd);
+    // `cmp_bound` is always Some here. `adverse` only when the limit is reached
+    // before n (a membrane clamp), matching the old scalar loop exactly.
+    let limit = cmp_bound.expect("wcsncasecmp cmp_bound is always Some");
     let (result, adverse, span) = unsafe {
-        let mut i = 0usize;
-        let mut adverse_local = false;
-        loop {
-            if let Some(limit) = cmp_bound
-                && i >= limit
-            {
-                if i < n {
-                    adverse_local = true;
-                }
-                break (0, adverse_local, i);
-            }
-            let a = abi_towlower(*s1.add(i));
-            let b = abi_towlower(*s2.add(i));
-            if a != b || *s1.add(i) == 0 {
-                // glibc returns the folded-codepoint difference (towlower(c1) -
-                // towlower(c2)) via wint_t arithmetic, NOT a bare ±1 sign; it is
-                // 0 when the folded chars are equal (the NUL-stop case).
-                break (a.wrapping_sub(b) as i32, adverse_local, i.saturating_add(1));
-            }
-            i += 1;
-        }
+        let (r, span, hit_limit) = scan_wcscasecmp_simd(s1, s2, limit);
+        (r, hit_limit && limit < n, span)
     };
 
     if adverse {

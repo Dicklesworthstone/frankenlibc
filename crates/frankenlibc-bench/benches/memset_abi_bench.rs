@@ -15,7 +15,30 @@ use frankenlibc_abi::string_abi::{
     bench_scan_c_string_for_byte, bench_scan_c_string_last_byte, bench_scan_strcasecmp,
     bench_scan_strcmp,
 };
-use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, bench_wide_find_or_nul_simd};
+use frankenlibc_abi::wchar_abi::{
+    bench_scan_wcscasecmp_simd, bench_scan_wcscmp_simd, bench_wide_find_or_nul_simd,
+};
+
+/// Pre-lever wcscasecmp: scalar wchar_t (u32) ASCII-folded compare to diff/NUL.
+#[inline(never)]
+unsafe fn old_scalar_wcscasecmp(s1: *const u32, s2: *const u32) -> i32 {
+    #[inline(always)]
+    fn lower(c: u32) -> u32 {
+        if (0x41..=0x5A).contains(&c) { c + 0x20 } else { c }
+    }
+    unsafe {
+        let mut i = 0usize;
+        loop {
+            let raw = *s1.add(i);
+            let a = lower(raw);
+            let b = lower(*s2.add(i));
+            if a != b || raw == 0 {
+                return a.wrapping_sub(b) as i32;
+            }
+            i += 1;
+        }
+    }
+}
 
 /// Pre-lever wcscmp: scalar wchar_t (u32) element-at-a-time compare to diff/NUL.
 #[inline(never)]
@@ -40,6 +63,7 @@ unsafe extern "C" {
     fn wcschr(s: *const u32, c: u32) -> *mut u32;
     fn wcsrchr(s: *const u32, c: u32) -> *mut u32;
     fn wcscmp(s1: *const u32, s2: *const u32) -> i32;
+    fn wcscasecmp(s1: *const u32, s2: *const u32) -> i32;
 }
 
 /// Pre-lever wcschr: scalar wchar_t (u32) scan to target-or-NUL.
@@ -639,6 +663,41 @@ fn main() {
         let gl = median_ns_per_op(rounds, iters, || {
             // SAFETY: both NUL-terminated wide strings.
             black_box(unsafe { wcscmp(pa, pb) });
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
+        );
+    }
+
+    println!("\nwcscasecmp (equal-mod-case wide strings → full scan, wchar_t = u32):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
+        "wchars", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+    );
+    for &n in &sizes {
+        let mut a: Vec<u32> = vec![0x41u32; n + 1]; // 'A'
+        a[n] = 0;
+        let mut b: Vec<u32> = vec![0x61u32; n + 1]; // 'a' (equal mod case)
+        b[n] = 0;
+        let pa = a.as_ptr();
+        let pb = b.as_ptr();
+        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { old_scalar_wcscasecmp(pa, pb) });
+        });
+        let new = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { bench_scan_wcscasecmp_simd(pa, pb, usize::MAX) });
+        });
+        let gl = median_ns_per_op(rounds, iters, || {
+            // SAFETY: both NUL-terminated wide strings.
+            black_box(unsafe { wcscasecmp(pa, pb) });
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
