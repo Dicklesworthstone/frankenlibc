@@ -3159,6 +3159,27 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
         compiled.icase,
     );
 
+    // REG_NOSUB fast path: only the boolean match/no-match decision is
+    // observable (pmatch is never filled), so skip the O(n*m) leftmost_start +
+    // run_from offset search and answer with the exact membership pass — a lazy
+    // DFA for position-independent patterns. `any_match` has neither false
+    // negatives nor false positives (reaching an `Accept` proves a real match
+    // path exists; it is already trusted as `execute`'s sound prescan), so it
+    // agrees with `execute().is_some()` on every input. Skipped when a literal
+    // prefix is present: `execute` already jumps straight to occurrences via
+    // SIMD memmem there, which beats seeding a thread at every position.
+    if compiled.nosub && compiled.literal_prefix.is_none() {
+        let notbol = eflags & REG_NOTBOL != 0;
+        let noteol = eflags & REG_NOTEOL != 0;
+        let mut visited = vec![0u64; compiled.nfa.len()];
+        let mut generation = 0u64;
+        return if vm.any_match(notbol, noteol, &mut visited, &mut generation) {
+            Some(Vec::new())
+        } else {
+            None
+        };
+    }
+
     vm.execute()
 }
 
