@@ -8821,6 +8821,26 @@ fn decode_gb18030(input: &[u8]) -> Result<(char, usize), DecodeError> {
 /// BMP via the 2-byte table (`GB18030_ENC2`) then the 4-byte RLE segments
 /// (`GB18030_ENC4`, sorted by code point). GB18030 covers all of Unicode, so the
 /// only `Unrepresentable` cases are surrogates / above U+10FFFF.
+/// Direct `code point -> GB18030 2-byte key` table for the BMP (0x80..=0xFFFF),
+/// lazily built once from the sorted `GB18030_ENC2` array. A key of 0 means "not
+/// 2-byte-encodable" (real GB18030 2-byte keys are >= 0x8140, never 0), so the
+/// caller falls through to the 4-byte segments. This replaces a binary search
+/// over 23,940 entries (~15 cache-missing probes per char) with one O(1) index,
+/// matching glibc's static-table lookup. Built identically to the binary search,
+/// so the result is byte-for-byte the same.
+fn gb18030_enc2_direct() -> &'static [u16] {
+    static TABLE: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = vec![0u16; (0x10000 - 0x80) as usize];
+        for &(cp, key) in cjk_tables::GB18030_ENC2.iter() {
+            if (0x80..0x10000).contains(&cp) {
+                t[(cp - 0x80) as usize] = key;
+            }
+        }
+        t
+    })
+}
+
 fn encode_gb18030(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     let cp = ch as u32;
     if cp < 0x80 {
@@ -8836,8 +8856,10 @@ fn encode_gb18030(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         }
         return gb18030_emit4(GB18030_SUPP_L_LO + (cp - 0x10000), out);
     }
-    if let Ok(i) = cjk_tables::GB18030_ENC2.binary_search_by_key(&cp, |&(c, _)| c) {
-        let key = cjk_tables::GB18030_ENC2[i].1;
+    // O(1) direct-table lookup for the BMP 2-byte form (cp is 0x80..=0xFFFF here,
+    // since < 0x80 and >= 0x10000 are handled above). 0 = not 2-byte-encodable.
+    let key = gb18030_enc2_direct()[(cp - 0x80) as usize];
+    if key != 0 {
         if out.len() < 2 {
             return Err(EncodeError::NoSpace);
         }
@@ -9757,7 +9779,15 @@ pub fn iconv(
                             outbuf[out_pos] = byte;
                             1
                         }),
-                        _ => None,
+                        Some(_) => None, // single-byte target, no room -> generic
+                        // Multibyte target (DBCS: GB18030 / Shift-JIS / EUC-JP /
+                        // Big5, or UTF-8 passthrough): encode the already-decoded
+                        // char inline via the same `encode_one` the generic body
+                        // uses, so the steady state decodes ONCE instead of
+                        // decoding here, discarding, and re-decoding below. An
+                        // encode error (unrepresentable / no space) yields None and
+                        // falls through to the generic body for the exact ordering.
+                        None => encode_one(cd, ch, &mut outbuf[out_pos..]).ok(),
                     },
                 };
                 if let Some(w) = wrote {
