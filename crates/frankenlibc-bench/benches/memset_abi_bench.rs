@@ -15,6 +15,29 @@ use frankenlibc_abi::string_abi::{
     bench_scan_c_string_for_byte, bench_scan_c_string_last_byte, bench_scan_strcasecmp,
     bench_scan_strcmp,
 };
+use frankenlibc_abi::wchar_abi::bench_wide_find_or_nul_simd;
+
+unsafe extern "C" {
+    fn wcschr(s: *const u32, c: u32) -> *mut u32;
+}
+
+/// Pre-lever wcschr: scalar wchar_t (u32) scan to target-or-NUL.
+#[inline(never)]
+unsafe fn old_scalar_wcschr(s: *const u32, c: u32) -> Option<usize> {
+    unsafe {
+        let mut i = 0usize;
+        loop {
+            let ch = *s.add(i);
+            if ch == c {
+                return Some(i);
+            }
+            if ch == 0 {
+                return None;
+            }
+            i += 1;
+        }
+    }
+}
 
 /// Pre-lever strncpy copy+pad: byte-at-a-time copy to NUL then byte NUL-pad.
 #[inline(never)]
@@ -92,7 +115,10 @@ unsafe fn old_byte_strrchr(p: *const std::os::raw::c_char, target: u8) -> Option
 
 /// Pre-lever strcmp scan: byte-at-a-time compare to first diff/NUL.
 #[inline(never)]
-unsafe fn old_byte_strcmp(p1: *const std::os::raw::c_char, p2: *const std::os::raw::c_char) -> usize {
+unsafe fn old_byte_strcmp(
+    p1: *const std::os::raw::c_char,
+    p2: *const std::os::raw::c_char,
+) -> usize {
     unsafe {
         let mut i = 0usize;
         loop {
@@ -237,7 +263,12 @@ fn main() {
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
-            n, old, new, gl, old / new, gl / new,
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
         );
     }
 
@@ -268,7 +299,12 @@ fn main() {
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
-            n, old, new, gl, old / new, gl / new,
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
         );
     }
 
@@ -296,7 +332,12 @@ fn main() {
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
-            n, old, new, gl, old / new, gl / new,
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
         );
     }
 
@@ -324,7 +365,12 @@ fn main() {
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
-            n, old, new, gl, old / new, gl / new,
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
         );
     }
 
@@ -353,7 +399,12 @@ fn main() {
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
-            n, old, new, gl, old / new, gl / new,
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
         );
     }
 
@@ -380,7 +431,12 @@ fn main() {
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
-            n, old, new, gl, old / new, gl / new,
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
         );
     }
 
@@ -410,7 +466,12 @@ fn main() {
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
-            n, old, new, gl, old / new, gl / new,
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
         );
     }
 
@@ -437,12 +498,55 @@ fn main() {
         });
         let gl = median_ns_per_op(rounds, iters, || {
             // SAFETY: src NUL-terminated, dst valid for n bytes.
-            unsafe { libc::strncpy(dp.cast::<std::os::raw::c_char>(), sp.cast::<std::os::raw::c_char>(), n) };
+            unsafe {
+                libc::strncpy(
+                    dp.cast::<std::os::raw::c_char>(),
+                    sp.cast::<std::os::raw::c_char>(),
+                    n,
+                )
+            };
             black_box(dst[0]);
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
-            n, old, new, gl, old / new, gl / new,
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
+        );
+    }
+
+    println!("\nwcschr (absent target -> full wide scan to NUL):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
+        "wchars", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+    );
+    for &n in &sizes {
+        let mut s: Vec<u32> = vec![0x61u32; n + 1];
+        s[n] = 0;
+        let p = s.as_ptr();
+        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { old_scalar_wcschr(p, 0x5A) });
+        });
+        let new = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { bench_wide_find_or_nul_simd(p, 0x5A) });
+        });
+        let gl = median_ns_per_op(rounds, iters, || {
+            // SAFETY: NUL-terminated wide string.
+            black_box(unsafe { wcschr(p, 0x5A) });
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
         );
     }
 }

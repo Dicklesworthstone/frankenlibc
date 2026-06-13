@@ -5,6 +5,7 @@
 //!
 use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
 use std::mem::size_of;
+use std::simd::{Simd, cmp::SimdPartialEq};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::stdio::StdioStream;
@@ -691,6 +692,62 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
     );
     result
 }
+/// Portable-SIMD scan of a NUL-terminated wide string for the first element equal
+/// to `c` OR the terminating NUL. Returns `(index, found_c)`; `c == 0` reports the
+/// NUL as a found match (matching `wcschr(s, '\0')`). Probes 8 `u32` lanes at a
+/// time with `simd_eq(c) | simd_eq(0)`, resolving the exact element only inside a
+/// flagged window. The pointer is aligned to 32 bytes first so each vector load
+/// stays within one page and cannot fault past the NUL — the wide analogue of the
+/// align-to-8 discipline used by the narrow SWAR scans.
+unsafe fn wide_find_or_nul_simd(s: *const u32, c: u32) -> (usize, bool) {
+    const LANES: usize = 8;
+    let mut i = 0usize;
+    // Element-wise head until `s + i` is 32-byte aligned.
+    let head = ((32 - ((s as usize) & 31)) & 31) / 4;
+    while i < head {
+        // SAFETY: caller guarantees a valid NUL-terminated string.
+        let ch = unsafe { *s.add(i) };
+        if ch == c {
+            return (i, true);
+        }
+        if ch == 0 {
+            return (i, false);
+        }
+        i += 1;
+    }
+    let cv = Simd::<u32, LANES>::splat(c);
+    let zv = Simd::<u32, LANES>::splat(0);
+    loop {
+        // SAFETY: `s + i` is 32-byte aligned, so this 32-byte load stays inside
+        // the current page; the string is NUL-terminated within a mapped page.
+        // Use a raw array load rather than forming a Rust slice over C memory.
+        let words = unsafe { core::ptr::read(s.add(i).cast::<[u32; LANES]>()) };
+        let v = Simd::<u32, LANES>::from_array(words);
+        if (v.simd_eq(cv) | v.simd_eq(zv)).any() {
+            for j in 0..LANES {
+                // SAFETY: within the just-read window; a c-or-NUL exists at/ before j==7.
+                let ch = unsafe { *s.add(i + j) };
+                if ch == c {
+                    return (i + j, true);
+                }
+                if ch == 0 {
+                    return (i + j, false);
+                }
+            }
+        }
+        i += LANES;
+    }
+}
+
+/// Benchmark/test hook for [`wide_find_or_nul_simd`]. Not part of the public ABI.
+///
+/// # Safety
+/// `s` must be a valid NUL-terminated wide string.
+#[doc(hidden)]
+pub unsafe fn bench_wide_find_or_nul_simd(s: *const u32, c: u32) -> (usize, bool) {
+    unsafe { wide_find_or_nul_simd(s, c) }
+}
+
 // ---------------------------------------------------------------------------
 // wcschr
 // ---------------------------------------------------------------------------
@@ -722,22 +779,32 @@ pub unsafe extern "C" fn wcschr(s: *const u32, c: u32) -> *mut u32 {
 
     // SAFETY: strict mode preserves raw wcschr behavior; hardened mode bounds scan.
     let (out, adverse, span) = unsafe {
-        let mut i = 0usize;
-        loop {
-            if let Some(limit) = bound
-                && i >= limit
-            {
-                break (std::ptr::null_mut(), true, i);
+        if bound.is_none() {
+            // Common path: SIMD scan for `c`-or-NUL (byte-identical to the scalar
+            // loop, including c=='\0' returning the terminator).
+            let (idx, found) = wide_find_or_nul_simd(s, c);
+            if found {
+                (s.add(idx) as *mut u32, false, idx.saturating_add(1))
+            } else {
+                (std::ptr::null_mut(), false, idx.saturating_add(1))
             }
-            let ch = *s.add(i);
-            if ch == c {
-                break (s.add(i) as *mut u32, false, i.saturating_add(1));
+        } else {
+            let mut i = 0usize;
+            loop {
+                if let Some(limit) = bound
+                    && i >= limit
+                {
+                    break (std::ptr::null_mut(), true, i);
+                }
+                let ch = *s.add(i);
+                if ch == c {
+                    break (s.add(i) as *mut u32, false, i.saturating_add(1));
+                }
+                if ch == 0 {
+                    break (std::ptr::null_mut(), false, i.saturating_add(1));
+                }
+                i += 1;
             }
-            if ch == 0 {
-                // If c was 0, we would have matched above. So here it's not found.
-                break (std::ptr::null_mut(), false, i.saturating_add(1));
-            }
-            i += 1;
         }
     };
 
@@ -4572,7 +4639,12 @@ unsafe fn c16_pending_set(ps: *mut c_void, value: u32) {
         return;
     }
     // SAFETY: `ps` is a valid `mbstate_t` (>= 8 bytes) per the C contract.
-    unsafe { (ps as *mut u8).add(6).cast::<u16>().write_unaligned(value as u16) };
+    unsafe {
+        (ps as *mut u8)
+            .add(6)
+            .cast::<u16>()
+            .write_unaligned(value as u16)
+    };
 }
 
 /// Load mbrtowc's partial-multibyte state from bytes [0..6] of `ps`: byte 0 is

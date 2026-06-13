@@ -1,4 +1,5 @@
 #![feature(c_variadic)]
+#![feature(portable_simd)]
 #![cfg_attr(target_arch = "x86_64", feature(rtm_target_feature))]
 #![cfg_attr(target_arch = "x86_64", feature(stdarch_x86_rtm))]
 #![feature(thread_local)]
