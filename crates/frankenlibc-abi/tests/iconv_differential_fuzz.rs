@@ -418,6 +418,53 @@ fn iconv_wide_to_wide_differential_fuzz_vs_glibc() {
     eprintln!("iconv wide->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
 }
 
+/// Single-byte legacy codec -> wide (UTF-16/UTF-32 LE/BE) differential fuzz:
+/// gates the single-byte -> UTF-16/UTF-32 fast path (from_decode.cp single-unit
+/// write). Random byte streams (every byte 0x00..=0xFF, incl. undefined bytes
+/// that must classify as EILSEQ at the exact stop position) over each single-byte
+/// codepage to each explicit wide codec, compared against host glibc on the full
+/// contract (return value + errno + output bytes + *inbytesleft).
+#[test]
+fn iconv_single_byte_to_wide_differential_fuzz_vs_glibc() {
+    let mut r = Lcg(0x1f3d_7b95_42c6_08ea);
+    let mut divs: Vec<String> = Vec::new();
+    let mut compared: u64 = 0;
+
+    const SB: &[&str] = &[
+        "KOI8-R", "ISO-8859-1", "ISO-8859-5", "ISO-8859-15", "CP1251", "CP1252", "CP437",
+    ];
+    const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE"];
+
+    for from in SB {
+        let cf = CString::new(*from).unwrap();
+        for to in WIDE {
+            let ct = CString::new(*to).unwrap();
+            for _ in 0..1500 {
+                let src: Vec<u8> = {
+                    let len = (r.next() % 24) as usize;
+                    (0..len).map(|_| r.byte()).collect()
+                };
+                let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, &src) };
+                let h = unsafe { run(iconv_open, iconv_close, iconv, &ct, &cf, &src) };
+                let (Some(f), Some(h)) = (f, h) else { continue };
+                compared += 1;
+                if f != h && divs.len() < 40 {
+                    divs.push(format!(
+                        "{from}->{to} src={src:02x?}\n      fl  ={f:02x?}\n      glibc={h:02x?}"
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "single-byte->wide iconv diverged from host glibc (showing up to 40):\n{}",
+        divs.join("\n")
+    );
+    eprintln!("iconv single-byte->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+}
+
 /// CJK 2-byte codec differential fuzz: SHIFT_JIS and BIG5 <-> UTF-8 over (a)
 /// random raw bytes (exercises the decode tables + the incomplete-tail EINVAL /
 /// invalid-pair EILSEQ classification + stop position) and (b) valid UTF-8

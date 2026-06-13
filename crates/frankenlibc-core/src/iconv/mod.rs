@@ -8733,6 +8733,10 @@ struct SingleByteToUtf8 {
     bytes: [[u8; 4]; 256],
     /// UTF-8 length for input byte `b`; `0` marks an undefined/invalid byte.
     len: [u8; 256],
+    /// Decoded code point for input byte `b` (`-1` = undefined/invalid byte).
+    /// Every legacy single-byte codec maps into the BMP, so this also feeds the
+    /// single-byte -> UTF-16/UTF-32 fast path with a single-unit write.
+    cp: [i32; 256],
 }
 
 /// Build the `input_byte -> UTF-8` table for a single-byte source codec, so a
@@ -8747,6 +8751,7 @@ fn build_from_decode(from: Encoding) -> Option<SingleByteToUtf8> {
     let mut table = SingleByteToUtf8 {
         bytes: [[0u8; 4]; 256],
         len: [0u8; 256],
+        cp: [-1i32; 256],
     };
     for b in 0u16..=0xFF {
         match decode_char(from, &[b as u8]) {
@@ -8756,10 +8761,14 @@ fn build_from_decode(from: Encoding) -> Option<SingleByteToUtf8> {
                 let l = enc.len();
                 table.bytes[b as usize][..l].copy_from_slice(&buf[..l]);
                 table.len[b as usize] = l as u8;
+                table.cp[b as usize] = ch as i32;
             }
             // `from` is multibyte (lead byte needs a continuation / wide unit).
             Ok((_, _)) | Err(DecodeError::Incomplete) => return None,
-            Err(DecodeError::Invalid) => table.len[b as usize] = 0,
+            Err(DecodeError::Invalid) => {
+                table.len[b as usize] = 0;
+                table.cp[b as usize] = -1;
+            }
         }
     }
     Some(table)
@@ -10098,6 +10107,48 @@ pub fn iconv(
                 outbuf[out_pos..out_pos + enc].copy_from_slice(&decode.bytes[b][..enc]);
                 in_pos += 1;
                 out_pos += enc;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
+        // Fast path: single-byte legacy codec -> UTF-16 / UTF-32 (explicit
+        // endianness). Decode each byte with the cached O(1) `from_decode.cp`
+        // table + a single-unit inline write, skipping the two ~100-arm dispatches
+        // + encode_one. Every legacy single-byte codec maps into the BMP, so the
+        // code point is always a single UTF-16 unit (no surrogate pair) and a
+        // valid scalar. Byte-for-byte identical: `cp[b]` is `decode_char(from,
+        // &[b])`'s code point and the write matches encode_char's UTF-16/UTF-32
+        // output. An undefined byte (`-1`) or short output tail breaks to the
+        // generic body for the exact EILSEQ/E2BIG ordering. Gated on explicit
+        // endianness (unmarked UTF-16/UTF-32 emit a BOM, handled elsewhere).
+        if let Some(decode) = cd.from_decode.as_ref()
+            && matches!(
+                cd.to,
+                Encoding::Utf16Le | Encoding::Utf16Be | Encoding::Utf32Le | Encoding::Utf32Be
+            )
+            && !cd.emit_bom
+        {
+            let tw = if matches!(cd.to, Encoding::Utf16Le | Encoding::Utf16Be) { 2 } else { 4 };
+            let tbe = matches!(cd.to, Encoding::Utf16Be | Encoding::Utf32Be);
+            while in_pos < input.len() && out_pos + tw <= outbuf.len() {
+                let cp = decode.cp[input[in_pos] as usize];
+                if cp < 0 {
+                    break;
+                }
+                let cp = cp as u32;
+                let p = out_pos;
+                if tw == 2 {
+                    let b = if tbe { (cp as u16).to_be_bytes() } else { (cp as u16).to_le_bytes() };
+                    outbuf[p] = b[0];
+                    outbuf[p + 1] = b[1];
+                } else {
+                    let b = if tbe { cp.to_be_bytes() } else { cp.to_le_bytes() };
+                    outbuf[p..p + 4].copy_from_slice(&b);
+                }
+                in_pos += 1;
+                out_pos += tw;
             }
             if in_pos >= input.len() {
                 break;
