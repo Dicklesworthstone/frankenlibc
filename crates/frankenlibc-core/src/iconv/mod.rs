@@ -8760,6 +8760,23 @@ fn gb18030_emit4(l: u32, out: &mut [u8]) -> Result<usize, EncodeError> {
 /// BMP gaps by the `GB18030_DEC4` RLE segments), otherwise a 2-byte GBK-superset
 /// char via `GB18030_DBCS2`. A truncated valid sequence is `Incomplete` (EINVAL);
 /// an out-of-range continuation byte or unmapped index is `Invalid` (EILSEQ).
+/// Direct `2-byte key -> code point` table for GB18030's two-byte form, lazily
+/// built once from the sorted `GB18030_DBCS2` array. A value of 0 means "not a
+/// valid 2-byte sequence" (no GB18030 2-byte form decodes to U+0000). Replaces a
+/// binary search over the table (~15 cache-missing probes per char) with one
+/// O(1) index, matching glibc's static-table decode. Built identically to the
+/// binary search, so the result is byte-for-byte the same.
+fn gb18030_dbcs2_direct() -> &'static [u32] {
+    static TABLE: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = vec![0u32; 0x10000];
+        for &(key, cp) in cjk_tables::GB18030_DBCS2.iter() {
+            t[key as usize] = cp;
+        }
+        t
+    })
+}
+
 fn decode_gb18030(input: &[u8]) -> Result<(char, usize), DecodeError> {
     let Some(&b0) = input.first() else {
         return Err(DecodeError::Incomplete);
@@ -8809,11 +8826,12 @@ fn decode_gb18030(input: &[u8]) -> Result<(char, usize), DecodeError> {
         return Err(DecodeError::Invalid);
     }
     let key = (u16::from(b0) << 8) | u16::from(b1);
-    match cjk_tables::GB18030_DBCS2.binary_search_by_key(&key, |&(k, _)| k) {
-        Ok(i) => char::from_u32(cjk_tables::GB18030_DBCS2[i].1)
-            .map(|c| (c, 2))
-            .ok_or(DecodeError::Invalid),
-        Err(_) => Err(DecodeError::Invalid),
+    // O(1) direct-table lookup (0 = not a valid 2-byte sequence).
+    let cp = gb18030_dbcs2_direct()[key as usize];
+    if cp != 0 {
+        char::from_u32(cp).map(|c| (c, 2)).ok_or(DecodeError::Invalid)
+    } else {
+        Err(DecodeError::Invalid)
     }
 }
 
@@ -9795,6 +9813,28 @@ pub fn iconv(
                     out_pos += w;
                     continue;
                 }
+            }
+        }
+
+        // Fast path: GB18030 -> UTF-8. Inline decode_gb18030 (now an O(1) direct
+        // table) + a direct UTF-8 encode, so the steady state skips both 100-arm
+        // dispatches (decode_char + encode_char) and the encode_one wrapper. Any
+        // decode error or insufficient room (< 4 bytes, the max UTF-8 length) drops
+        // to the generic body below for the exact EILSEQ/EINVAL/E2BIG ordering.
+        // Byte-for-byte identical: same decoder + the same char::encode_utf8.
+        if from_enc == Encoding::Gb18030 && cd.to == Encoding::Utf8 {
+            while in_pos < input.len() && out_pos + 4 <= outbuf.len() {
+                let Ok((ch, consumed)) = decode_gb18030(&input[in_pos..]) else {
+                    break;
+                };
+                let mut buf = [0u8; 4];
+                let enc = ch.encode_utf8(&mut buf).len();
+                outbuf[out_pos..out_pos + enc].copy_from_slice(&buf[..enc]);
+                in_pos += consumed;
+                out_pos += enc;
+            }
+            if in_pos >= input.len() {
+                break;
             }
         }
 
