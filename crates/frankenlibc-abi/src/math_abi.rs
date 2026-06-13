@@ -3850,8 +3850,9 @@ pub unsafe extern "C" fn roundevenf128(x: f64) -> f64 {
 // --- nextdown / nextup ---
 
 fn nextdown_impl(x: f64) -> f64 {
-    if x.is_nan() {
-        return x;
+    let xb = x.to_bits();
+    if (xb & 0x7ff0_0000_0000_0000) == 0x7ff0_0000_0000_0000 && (xb & 0x000f_ffff_ffff_ffff) != 0 {
+        return f64::from_bits(xb | 0x0008_0000_0000_0000); // quiet a signaling NaN
     }
     if x == f64::NEG_INFINITY {
         return f64::NEG_INFINITY;
@@ -3864,8 +3865,9 @@ fn nextdown_impl(x: f64) -> f64 {
     f64::from_bits(next)
 }
 fn nextdownf_impl(x: f32) -> f32 {
-    if x.is_nan() {
-        return x;
+    let xb = x.to_bits();
+    if (xb & 0x7f80_0000) == 0x7f80_0000 && (xb & 0x007f_ffff) != 0 {
+        return f32::from_bits(xb | 0x0040_0000); // quiet a signaling NaN
     }
     if x == f32::NEG_INFINITY {
         return f32::NEG_INFINITY;
@@ -3878,8 +3880,9 @@ fn nextdownf_impl(x: f32) -> f32 {
     f32::from_bits(next)
 }
 fn nextup_impl(x: f64) -> f64 {
-    if x.is_nan() {
-        return x;
+    let xb = x.to_bits();
+    if (xb & 0x7ff0_0000_0000_0000) == 0x7ff0_0000_0000_0000 && (xb & 0x000f_ffff_ffff_ffff) != 0 {
+        return f64::from_bits(xb | 0x0008_0000_0000_0000); // quiet a signaling NaN
     }
     if x == f64::INFINITY {
         return f64::INFINITY;
@@ -3892,8 +3895,9 @@ fn nextup_impl(x: f64) -> f64 {
     f64::from_bits(next)
 }
 fn nextupf_impl(x: f32) -> f32 {
-    if x.is_nan() {
-        return x;
+    let xb = x.to_bits();
+    if (xb & 0x7f80_0000) == 0x7f80_0000 && (xb & 0x007f_ffff) != 0 {
+        return f32::from_bits(xb | 0x0040_0000); // quiet a signaling NaN
     }
     if x == f32::INFINITY {
         return f32::INFINITY;
@@ -4641,22 +4645,34 @@ pub unsafe extern "C" fn totalordermagf128(x: *const f64, y: *const f64) -> c_in
 // --- canonicalize (C23 IEEE 754) ---
 
 fn canonicalize_impl(cx: *mut f64, x: *const f64) -> c_int {
-    let val = unsafe { *x };
+    // Every IEEE binary64 value is canonical, so canonicalize always succeeds
+    // (returns 0). The only transformation glibc applies is quieting a
+    // signaling NaN (set the mantissa MSB) — preserving sign and payload.
+    let mut bits = unsafe { *x }.to_bits();
+    let is_nan = (bits & 0x7ff0_0000_0000_0000) == 0x7ff0_0000_0000_0000
+        && (bits & 0x000f_ffff_ffff_ffff) != 0;
+    if is_nan {
+        bits |= 0x0008_0000_0000_0000; // quiet bit
+    }
     if !cx.is_null() {
         unsafe {
-            *cx = val;
+            *cx = f64::from_bits(bits);
         }
     }
-    if val.is_nan() { 1 } else { 0 }
+    0
 }
 fn canonicalizef_impl(cx: *mut f32, x: *const f32) -> c_int {
-    let val = unsafe { *x };
+    let mut bits = unsafe { *x }.to_bits();
+    let is_nan = (bits & 0x7f80_0000) == 0x7f80_0000 && (bits & 0x007f_ffff) != 0;
+    if is_nan {
+        bits |= 0x0040_0000; // quiet bit
+    }
     if !cx.is_null() {
         unsafe {
-            *cx = val;
+            *cx = f32::from_bits(bits);
         }
     }
-    if val.is_nan() { 1 } else { 0 }
+    0
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn canonicalize(cx: *mut f64, x: *const f64) -> c_int {
