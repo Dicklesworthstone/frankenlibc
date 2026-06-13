@@ -9425,6 +9425,74 @@ pub fn iconv(
             }
         }
 
+        // Hot-path specialization (perf): UTF-8 source is the dominant direction,
+        // yet the generic body below dispatches decode_char + encode_char (two
+        // ~100-arm matches plus nested calls) for every character. For the common
+        // UTF-8 -> fixed-width-Unicode and UTF-8 -> single-byte targets, inline
+        // the UTF-8 decode and the encode so the steady state is a tight loop.
+        // This is byte-for-byte ISOMORPHIC to the generic path: it uses the SAME
+        // `utf8_decode_step` + `char::from_u32` validation and the SAME encode
+        // logic, and ANY non-trivial outcome (incomplete/invalid sequence,
+        // out-of-range scalar, unrepresentable char, insufficient output, or a
+        // pending BOM) leaves `in_pos`/`out_pos` untouched and falls through to
+        // the generic body, which reproduces the exact EILSEQ/EINVAL/E2BIG
+        // ordering. Placed after the ASCII/sb_translation fast paths so their
+        // SIMD bulk-copy still wins for ASCII-transparent pairs.
+        if from_enc == Encoding::Utf8 && !cd.emit_bom {
+            let b0 = input[in_pos];
+            let decoded = if b0 < 0x80 {
+                Some((u32::from(b0), 1usize))
+            } else {
+                match crate::string::wchar::utf8_decode_step(&input[in_pos..]) {
+                    crate::string::wchar::Utf8Step::Char { wc, len } => Some((wc, len)),
+                    _ => None,
+                }
+            };
+            if let Some((wc, len)) = decoded
+                && let Some(ch) = char::from_u32(wc)
+            {
+                let avail = outbuf.len() - out_pos;
+                let wrote: Option<usize> = match cd.to {
+                    Encoding::Utf32Le if avail >= 4 => {
+                        outbuf[out_pos..out_pos + 4].copy_from_slice(&(ch as u32).to_le_bytes());
+                        Some(4)
+                    }
+                    Encoding::Utf32Be if avail >= 4 => {
+                        outbuf[out_pos..out_pos + 4].copy_from_slice(&(ch as u32).to_be_bytes());
+                        Some(4)
+                    }
+                    Encoding::Utf16Le | Encoding::Utf16Be => {
+                        let mut units = [0u16; 2];
+                        let enc = ch.encode_utf16(&mut units);
+                        let needed = enc.len() * 2;
+                        if avail >= needed {
+                            let be = matches!(cd.to, Encoding::Utf16Be);
+                            for (idx, unit) in enc.iter().enumerate() {
+                                let bytes = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                                outbuf[out_pos + idx * 2] = bytes[0];
+                                outbuf[out_pos + idx * 2 + 1] = bytes[1];
+                            }
+                            Some(needed)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => match cd.to_reverse.as_ref() {
+                        Some(rev) if avail >= 1 => rev.lookup(ch).map(|byte| {
+                            outbuf[out_pos] = byte;
+                            1
+                        }),
+                        _ => None,
+                    },
+                };
+                if let Some(w) = wrote {
+                    in_pos += len;
+                    out_pos += w;
+                    continue;
+                }
+            }
+        }
+
         let (ch, consumed) = match decode_char(from_enc, &input[in_pos..]) {
             Ok(v) => v,
             Err(DecodeError::Incomplete) => {
