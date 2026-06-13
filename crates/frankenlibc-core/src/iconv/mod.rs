@@ -9971,6 +9971,67 @@ pub fn iconv(
         // the generic body, which reproduces the exact EILSEQ/EINVAL/E2BIG
         // ordering. Placed after the ASCII/sb_translation fast paths so their
         // SIMD bulk-copy still wins for ASCII-transparent pairs.
+        // Fast path: UTF-8 -> DBCS legacy codec. Decode each char inline, then
+        // call the (direct-table O(1)) per-codec encoder directly in a tight loop,
+        // skipping the per-char encode_char (~100-arm match) + encode_one wrapper
+        // AND the outer-loop re-entry (re-checking every preceding fast-path gate)
+        // the generic UTF-8-source path below pays. Byte-for-byte isomorphic: same
+        // utf8_decode_step + char::from_u32 decode and the same encode_* the
+        // encode_char dispatch would select; a decode error, an unrepresentable
+        // char, or insufficient room leaves in_pos/out_pos untouched and breaks to
+        // the generic body for the exact EILSEQ/EINVAL/E2BIG ordering.
+        if from_enc == Encoding::Utf8
+            && !cd.emit_bom
+            && matches!(
+                cd.to,
+                Encoding::Gb18030
+                    | Encoding::ShiftJis
+                    | Encoding::Big5
+                    | Encoding::Gbk
+                    | Encoding::EucJp
+                    | Encoding::EucKr
+                    | Encoding::Cp949
+                    | Encoding::Gb2312
+                    | Encoding::Johab
+            )
+        {
+            while in_pos < input.len() {
+                let b0 = input[in_pos];
+                let (wc, len) = if b0 < 0x80 {
+                    (u32::from(b0), 1usize)
+                } else {
+                    match crate::string::wchar::utf8_decode_step(&input[in_pos..]) {
+                        crate::string::wchar::Utf8Step::Char { wc, len } => (wc, len),
+                        _ => break,
+                    }
+                };
+                let Some(ch) = char::from_u32(wc) else {
+                    break;
+                };
+                let out = &mut outbuf[out_pos..];
+                let r = match cd.to {
+                    Encoding::Gb18030 => encode_gb18030(ch, out),
+                    Encoding::ShiftJis => encode_shiftjis(ch, out),
+                    Encoding::Big5 => encode_big5(ch, out),
+                    Encoding::Gbk => encode_gbk(ch, out),
+                    Encoding::EucJp => encode_eucjp(ch, out),
+                    Encoding::EucKr => encode_euckr(ch, out),
+                    Encoding::Cp949 => encode_cp949(ch, out),
+                    Encoding::Gb2312 => encode_gb2312(ch, out),
+                    Encoding::Johab => encode_johab(ch, out),
+                    _ => unreachable!(),
+                };
+                let Ok(w) = r else {
+                    break;
+                };
+                in_pos += len;
+                out_pos += w;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         if from_enc == Encoding::Utf8 && !cd.emit_bom {
             let b0 = input[in_pos];
             let decoded = if b0 < 0x80 {
