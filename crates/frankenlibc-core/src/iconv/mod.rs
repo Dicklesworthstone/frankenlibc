@@ -9912,6 +9912,10 @@ pub fn iconv(
                     | Encoding::Big5
                     | Encoding::Gbk
                     | Encoding::EucJp
+                    | Encoding::EucKr
+                    | Encoding::Cp949
+                    | Encoding::Gb2312
+                    | Encoding::Johab
             )
         {
             while in_pos < input.len() && out_pos + 4 <= outbuf.len() {
@@ -9921,6 +9925,10 @@ pub fn iconv(
                     Encoding::Big5 => decode_big5(&input[in_pos..]),
                     Encoding::Gbk => decode_gbk(&input[in_pos..]),
                     Encoding::EucJp => decode_eucjp(&input[in_pos..]),
+                    Encoding::EucKr => decode_euckr(&input[in_pos..]),
+                    Encoding::Cp949 => decode_cp949(&input[in_pos..]),
+                    Encoding::Gb2312 => decode_gb2312(&input[in_pos..]),
+                    Encoding::Johab => decode_johab(&input[in_pos..]),
                     _ => unreachable!(),
                 };
                 let Ok((ch, consumed)) = decoded else {
