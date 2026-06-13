@@ -963,6 +963,63 @@ fn diff_exp10f_within_4_ulps() {
 }
 
 #[test]
+fn diff_log2_dyadic_profile_grid_within_4_ulps() {
+    let mut worst = 0i64;
+    let mut bad = Vec::new();
+    for k in 0..=64 {
+        let x = 0.5 + (k as f64) * 0.031_25;
+        let (got, want) = (unsafe { fl::log2(x) }, unsafe { log2(x) });
+        let u = ulps_apart(got, want);
+        worst = worst.max(u);
+        if u > 4 {
+            bad.push(format!("log2({x}) fl={got:?} glibc={want:?} ({u} ULP)"));
+        }
+    }
+
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    for _ in 0..200_000 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let x = 0.5 + ((state >> 12) as f64) * (2.0 / ((1u64 << 52) as f64));
+        let (got, want) = (unsafe { fl::log2(x) }, unsafe { log2(x) });
+        let u = ulps_apart(got, want);
+        worst = worst.max(u);
+        if u > 4 {
+            bad.push(format!("log2({x}) fl={got:?} glibc={want:?} ({u} ULP)"));
+            if bad.len() >= 16 {
+                break;
+            }
+        }
+    }
+
+    for &x in &[
+        -1.0_f64,
+        -0.0,
+        0.0,
+        0.5,
+        1.0,
+        2.0,
+        f64::from_bits(2.5_f64.to_bits() + 1),
+        f64::INFINITY,
+        f64::NAN,
+    ] {
+        let (got, want) = (unsafe { fl::log2(x) }, unsafe { log2(x) });
+        let u = ulps_apart(got, want);
+        worst = worst.max(u);
+        if u > 4 {
+            bad.push(format!("log2({x:?}) fl={got:?} glibc={want:?} ({u} ULP)"));
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "log2 divergences (worst {worst}):\n{}",
+        bad.join("\n")
+    );
+}
+
+#[test]
 fn diff_log2f_dyadic_profile_grid_within_4_ulps() {
     fn f32_ulps(a: f32, b: f32) -> i64 {
         if a.is_nan() && b.is_nan() {

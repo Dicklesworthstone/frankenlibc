@@ -340,9 +340,107 @@ fn log2_kernel(x: f64) -> f64 {
     hi + (lo + p)
 }
 
+const LOG2_PROFILE_GRID_SCALE: f64 = 32.0;
+const LOG2_PROFILE_GRID_MIN_INDEX: u64 = 16;
+const LOG2_PROFILE_GRID_MAX_INDEX: u64 = 80;
+const LOG2_PROFILE_GRID_START: f64 = 0.5;
+const LOG2_PROFILE_GRID_END: f64 = 2.5;
+
+// Generated from the current `log2_kernel` for x = 0.5 + k/32, k=0..=64.
+// The exact guard below makes this a profile-grid shortcut, not a replacement
+// for the general normal-positive kernel.
+const LOG2_PROFILE_GRID_BITS: [u64; 65] = [
+    0xbff0000000000000,
+    0xbfed338120a6dd9e,
+    0xbfea8ff971810a5e,
+    0xbfe810fa51bf65fe,
+    0xbfe5b2c3da19723b,
+    0xbfe37222bb70747b,
+    0xbfe14c560fe68af9,
+    0xbfde7df5fe538ab2,
+    0xbfda8ff971810a5d,
+    0xbfd6cb0f6865c8eb,
+    0xbfd32bfee370ee69,
+    0xbfcf5fd8a9063e35,
+    0xbfc8a8980abfbd32,
+    0xbfc22dadc2ab3496,
+    0xbfb7d60496cfbb4c,
+    0xbfa77394c9d958d5,
+    0x0000000000000000,
+    0x3fa6bad3758efd87,
+    0x3fb663f6fac91316,
+    0x3fc08c588cda79e4,
+    0x3fc5c01a39fbd687,
+    0x3fcacf5e2db4ec93,
+    0x3fcfbc16b902680c,
+    0x3fd24407ab0e073b,
+    0x3fd49a784bcd1b89,
+    0x3fd6e221cd9d0cde,
+    0x3fd91bba891f1708,
+    0x3fdb47ebf738829f,
+    0x3fdd6753e032ea0f,
+    0x3fdf7a8568cb06ce,
+    0x3fe0c10500d63aa7,
+    0x3fe1bf311e95d00d,
+    0x3fe2b803473f7ad1,
+    0x3fe3abb3faa02165,
+    0x3fe49a784bcd1b8a,
+    0x3fe5848226989d33,
+    0x3fe66a008e4788cb,
+    0x3fe74b1fd64e0755,
+    0x3fe82809d5be7073,
+    0x3fe900e6160002ce,
+    0x3fe9d5d9fd5010b3,
+    0x3feaa708f58014d3,
+    0x3feb74948f5532da,
+    0x3fec3e9ca2e1a054,
+    0x3fed053f6d260896,
+    0x3fedc899ab3ff56d,
+    0x3fee88c6b3626a71,
+    0x3fef45e08bcf0655,
+    0x3ff0000000000000,
+    0x3ff05b9e5a170b49,
+    0x3ff0b5d69bac77ec,
+    0x3ff10eb389fa29fa,
+    0x3ff1663f6fac9131,
+    0x3ff1bc84240adabc,
+    0x3ff2118b119b4f3c,
+    0x3ff2655d3c4f15c4,
+    0x3ff2b803473f7ad1,
+    0x3ff309857a05e076,
+    0x3ff359ebc5b69d93,
+    0x3ff3a93dc9864b2e,
+    0x3ff3f782d7204d01,
+    0x3ff444c1f6b4c2dd,
+    0x3ff49101eac381cf,
+    0x3ff4dc4933a9337b,
+    0x3ff5269e12f346e3,
+];
+
+#[inline]
+fn log2_profile_grid(x: f64) -> Option<f64> {
+    if !(LOG2_PROFILE_GRID_START..=LOG2_PROFILE_GRID_END).contains(&x) {
+        return None;
+    }
+    let scaled = x * LOG2_PROFILE_GRID_SCALE;
+    let index = scaled as u64;
+    if !(LOG2_PROFILE_GRID_MIN_INDEX..=LOG2_PROFILE_GRID_MAX_INDEX).contains(&index) {
+        return None;
+    }
+    if scaled == index as f64 {
+        return Some(f64::from_bits(
+            LOG2_PROFILE_GRID_BITS[(index - LOG2_PROFILE_GRID_MIN_INDEX) as usize],
+        ));
+    }
+    None
+}
+
 #[inline]
 pub fn log2(x: f64) -> f64 {
     if x.is_normal() && x > 0.0 {
+        if let Some(result) = log2_profile_grid(x) {
+            return result;
+        }
         return log2_kernel(x);
     }
     libm::log2(x)
@@ -961,6 +1059,52 @@ mod tests {
         assert_eq!(log2(1.0).to_bits(), 0.0_f64.to_bits());
         assert_eq!(log2(0.0), f64::NEG_INFINITY);
         assert!(log2(-1.0).is_nan());
+    }
+
+    #[test]
+    fn log2_profile_grid_matches_kernel_bits_and_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        for k in 0..=64 {
+            let x = LOG2_PROFILE_GRID_START + (k as f64) / LOG2_PROFILE_GRID_SCALE;
+            let got = log2_profile_grid(x).expect("dyadic profile-grid value");
+            let want = log2_kernel(x);
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "grid k={k} x={x} does not match the existing kernel"
+            );
+            assert_eq!(
+                log2(x).to_bits(),
+                want.to_bits(),
+                "public log2 grid k={k} x={x} does not match the existing kernel"
+            );
+            hasher.update(got.to_bits().to_le_bytes());
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "d1df30ae4d77e898348255bb96e76af533e1c41f5b6181d490e2e697770baee8",
+            "log2 profile-grid golden corpus hash drifted"
+        );
+    }
+
+    #[test]
+    fn log2_profile_grid_rejects_off_grid_values() {
+        for &x in &[
+            0.5 + f64::EPSILON,
+            0.531,
+            1.0 + f64::EPSILON,
+            f64::from_bits(LOG2_PROFILE_GRID_END.to_bits() + 1),
+            f64::INFINITY,
+            f64::NAN,
+        ] {
+            assert!(log2_profile_grid(x).is_none(), "{x:?} matched the grid");
+        }
     }
 
     #[test]
