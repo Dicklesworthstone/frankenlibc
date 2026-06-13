@@ -262,9 +262,43 @@ fn median_ns_per_op(rounds: usize, iters: u64, mut f: impl FnMut()) -> f64 {
     samples[samples.len() / 2]
 }
 
+fn bench_wcsrchr_table(sizes: &[usize], rounds: usize) {
+    println!("\nwcsrchr (absent target -> full wide scan to NUL):");
+    println!(
+        "{:>8} | {:>12} | {:>12} | {:>12}",
+        "wchars", "old(ns)", "abi(ns)", "old/abi"
+    );
+    for &n in sizes {
+        let mut s: Vec<u32> = vec![0x61u32; n + 1];
+        s[n] = 0;
+        let p = s.as_ptr();
+        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
+
+        let old = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { old_scalar_wcsrchr(p, 0x5A) });
+        });
+        let abi = median_ns_per_op(rounds, iters, || {
+            // SAFETY: NUL-terminated wide string.
+            black_box(unsafe { wcsrchr(p, 0x5A) });
+        });
+        println!(
+            "{:>8} | {:>12.1} | {:>12.1} | {:>11.2}x",
+            n,
+            old,
+            abi,
+            old / abi,
+        );
+    }
+}
+
 fn main() {
     let sizes = [16usize, 64, 256, 1024, 4096, 16384, 65536];
     let rounds = 15;
+    if std::env::var("FRANKENLIBC_ABI_BENCH_ONLY").as_deref() == Ok("wcsrchr") {
+        bench_wcsrchr_table(&sizes, rounds);
+        return;
+    }
+
     println!(
         "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
         "bytes", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
@@ -614,32 +648,7 @@ fn main() {
         );
     }
 
-    println!("\nwcsrchr (absent target -> full wide scan to NUL):");
-    println!(
-        "{:>8} | {:>12} | {:>12} | {:>12}",
-        "wchars", "old(ns)", "abi(ns)", "old/abi"
-    );
-    for &n in &sizes {
-        let mut s: Vec<u32> = vec![0x61u32; n + 1];
-        s[n] = 0;
-        let p = s.as_ptr();
-        let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
-
-        let old = median_ns_per_op(rounds, iters, || {
-            black_box(unsafe { old_scalar_wcsrchr(p, 0x5A) });
-        });
-        let abi = median_ns_per_op(rounds, iters, || {
-            // SAFETY: NUL-terminated wide string.
-            black_box(unsafe { wcsrchr(p, 0x5A) });
-        });
-        println!(
-            "{:>8} | {:>12.1} | {:>12.1} | {:>11.2}x",
-            n,
-            old,
-            abi,
-            old / abi,
-        );
-    }
+    bench_wcsrchr_table(&sizes, rounds);
 
     println!("\nwcscmp (equal wide strings → full scan, wchar_t = u32):");
     println!(
