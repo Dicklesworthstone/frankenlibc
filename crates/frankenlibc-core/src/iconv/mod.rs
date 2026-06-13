@@ -10464,6 +10464,91 @@ pub fn iconv(
             }
         }
 
+        // Fast path: legacy (single-byte OR DBCS) -> DBCS legacy codec. Covers the
+        // legacy<->legacy transcodings the per-direction Unicode paths above miss
+        // (e.g. Shift-JIS <-> EUC-JP, KOI8-R -> Shift-JIS). Decode each char with
+        // the cached single-byte cp table (1 byte) or the per-codec DBCS decoder,
+        // then encode via the direct-table O(1) per-codec encoder — skipping the
+        // two ~100-arm dispatches + encode_one + outer-loop re-entry. Byte-for-byte
+        // isomorphic: same decoders + the same encode_* the dispatch would pick; an
+        // undefined byte, unrepresentable char, decode error, or short room breaks
+        // to the generic body for the exact EILSEQ/EINVAL/E2BIG ordering.
+        let from_is_dbcs = matches!(
+            from_enc,
+            Encoding::Gb18030
+                | Encoding::ShiftJis
+                | Encoding::Big5
+                | Encoding::Gbk
+                | Encoding::EucJp
+                | Encoding::EucKr
+                | Encoding::Cp949
+                | Encoding::Gb2312
+                | Encoding::Johab
+        );
+        if matches!(
+            cd.to,
+            Encoding::Gb18030
+                | Encoding::ShiftJis
+                | Encoding::Big5
+                | Encoding::Gbk
+                | Encoding::EucJp
+                | Encoding::EucKr
+                | Encoding::Cp949
+                | Encoding::Gb2312
+                | Encoding::Johab
+        ) && !cd.emit_bom
+            && (cd.from_decode.is_some() || from_is_dbcs)
+        {
+            while in_pos < input.len() {
+                let (ch, consumed) = if let Some(d) = cd.from_decode.as_ref() {
+                    let cp = d.cp[input[in_pos] as usize];
+                    if cp < 0 {
+                        break;
+                    }
+                    // cp came from decode_char, so it is a valid scalar.
+                    (char::from_u32(cp as u32).unwrap(), 1usize)
+                } else {
+                    let decoded = match from_enc {
+                        Encoding::Gb18030 => decode_gb18030(&input[in_pos..]),
+                        Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
+                        Encoding::Big5 => decode_big5(&input[in_pos..]),
+                        Encoding::Gbk => decode_gbk(&input[in_pos..]),
+                        Encoding::EucJp => decode_eucjp(&input[in_pos..]),
+                        Encoding::EucKr => decode_euckr(&input[in_pos..]),
+                        Encoding::Cp949 => decode_cp949(&input[in_pos..]),
+                        Encoding::Gb2312 => decode_gb2312(&input[in_pos..]),
+                        Encoding::Johab => decode_johab(&input[in_pos..]),
+                        _ => unreachable!(),
+                    };
+                    match decoded {
+                        Ok(v) => v,
+                        Err(_) => break,
+                    }
+                };
+                let out = &mut outbuf[out_pos..];
+                let r = match cd.to {
+                    Encoding::Gb18030 => encode_gb18030(ch, out),
+                    Encoding::ShiftJis => encode_shiftjis(ch, out),
+                    Encoding::Big5 => encode_big5(ch, out),
+                    Encoding::Gbk => encode_gbk(ch, out),
+                    Encoding::EucJp => encode_eucjp(ch, out),
+                    Encoding::EucKr => encode_euckr(ch, out),
+                    Encoding::Cp949 => encode_cp949(ch, out),
+                    Encoding::Gb2312 => encode_gb2312(ch, out),
+                    Encoding::Johab => encode_johab(ch, out),
+                    _ => unreachable!(),
+                };
+                let Ok(w) = r else {
+                    break;
+                };
+                in_pos += consumed;
+                out_pos += w;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         let (ch, consumed) = match decode_char(from_enc, &input[in_pos..]) {
             Ok(v) => v,
             Err(DecodeError::Incomplete) => {
