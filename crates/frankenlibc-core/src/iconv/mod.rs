@@ -3,7 +3,7 @@
 //! Implements `<iconv.h>` functions for converting between character encodings.
 
 use crate::errno;
-use std::simd::{Simd, cmp::SimdPartialOrd, num::SimdUint};
+use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint};
 
 mod cjk_tables;
 
@@ -9513,7 +9513,58 @@ pub fn iconv(
                 out_pos += 32;
             }
         }
-        // The SIMD block may have consumed the rest of the input; the scalar fast
+        // The 2-byte SIMD block above may have drained the input; the 3-byte block
+        // indexes `input[in_pos]` in its guard, so stop here when empty.
+        if in_pos >= input.len() {
+            break;
+        }
+
+        // SIMD 3-byte fast path (ported from mbstowcs): a clean 12-byte window (4
+        // sequences, read from a 16-byte load) decodes 4 code points. Validate the
+        // full RFC 3629 3-byte shape — lead E0..EF, both continuations 80..BF, no
+        // E0 overlong (cont1 >= A0), no ED surrogate (cont1 <= 9F) — then assemble.
+        // Lead-byte test first so non-3-byte input short-circuits with zero cost.
+        if (0xE0..=0xEF).contains(&input[in_pos])
+            && from_enc == Encoding::Utf8
+            && !cd.emit_bom
+            && matches!(cd.to, Encoding::Utf32Le | Encoding::Utf32Be)
+        {
+            let be = matches!(cd.to, Encoding::Utf32Be);
+            while in_pos + 16 <= input.len()
+                && out_pos + 16 <= outbuf.len()
+                && (0xE0..=0xEF).contains(&input[in_pos])
+            {
+                let bytes: [u8; 16] = input[in_pos..in_pos + 16].try_into().unwrap();
+                let v = Simd::<u8, 16>::from_array(bytes);
+                let leads = std::simd::simd_swizzle!(v, [0, 3, 6, 9]);
+                let cont1 = std::simd::simd_swizzle!(v, [1, 4, 7, 10]);
+                let cont2 = std::simd::simd_swizzle!(v, [2, 5, 8, 11]);
+                let leads_ok =
+                    leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xEF));
+                let cont1_ok =
+                    cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
+                let cont2_ok =
+                    cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
+                let overlong_ok =
+                    !leads.simd_eq(Simd::splat(0xE0)) | cont1.simd_ge(Simd::splat(0xA0));
+                let surrogate_ok =
+                    !leads.simd_eq(Simd::splat(0xED)) | cont1.simd_le(Simd::splat(0x9F));
+                if !(leads_ok & cont1_ok & cont2_ok & overlong_ok & surrogate_ok).all() {
+                    break; // not a clean 3-byte window — scalar path handles it
+                }
+                let lw = leads.cast::<u32>() & Simd::splat(0x0F);
+                let c1w = cont1.cast::<u32>() & Simd::splat(0x3F);
+                let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
+                let wc = (lw << Simd::splat(12)) | (c1w << Simd::splat(6)) | c2w;
+                for (k, &cp) in wc.to_array().iter().enumerate() {
+                    let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
+                    outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
+                }
+                in_pos += 12;
+                out_pos += 16;
+            }
+        }
+        // The SIMD blocks may have consumed the rest of the input; the scalar fast
         // path and generic body below index `input[in_pos]` unguarded (the only
         // bounds check is the outer `while` top), so stop here when drained.
         if in_pos >= input.len() {
