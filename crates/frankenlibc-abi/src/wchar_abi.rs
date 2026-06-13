@@ -4412,9 +4412,48 @@ pub unsafe extern "C" fn mbsnrtowcs(
     let mut s = unsafe { *src };
     let mut written = 0usize;
     let mut consumed = 0usize;
+    // The SIMD ASCII fast path is valid only from an INITIAL conversion state.
+    // If a partial multibyte sequence is pending (from an earlier nms-truncated
+    // call), the next byte must be a continuation (>= 0x80); an ASCII byte there
+    // is EILSEQ, which only the scalar `mbrtowc` detects. With `ps == NULL` fl
+    // keeps no partial across calls (see `mbrtowc`), so the state is always
+    // initial; with `ps != NULL` the partial-count byte ([0]) is 0 when initial.
+    // After any complete character the state returns to initial.
+    // SAFETY: when non-null, `ps` is a valid `mbstate_t` (>= 8 bytes) per the C
+    // contract, so byte 0 (the mbrtowc partial count) is readable.
+    let mut state_initial = ps.is_null() || unsafe { *(ps as *const u8) == 0 };
 
     while consumed < nms && (dst.is_null() || written < len) {
         let remaining = nms - consumed;
+
+        // SIMD-widen the leading ASCII run (each byte 0x01..=0x7F is exactly one
+        // wide char), bounded by the nms window and destination capacity. This
+        // bypasses the per-character ABI `mbrtowc` (membrane + state machinery)
+        // for ASCII, which dominates real text. Byte-for-byte identical: only
+        // bytes < 0x80 are consumed, which `mbrtowc` maps 1:1 to the same
+        // codepoint, and the run stops at the first NUL / multibyte lead so every
+        // terminator / multibyte / error case stays in the scalar step below.
+        if state_initial {
+            // SAFETY: `s` points to at least `remaining` readable bytes — the same
+            // window `mbrtowc` is given below.
+            let src_window = unsafe { std::slice::from_raw_parts(s as *const u8, remaining) };
+            let k = if dst.is_null() {
+                wchar_core::ascii_prefix_len(src_window)
+            } else {
+                // SAFETY: `dst` has >= `len` wchar_t slots and `written < len` here.
+                let dst_window = unsafe {
+                    std::slice::from_raw_parts_mut(dst.add(written) as *mut u32, len - written)
+                };
+                wchar_core::mbs_ascii_prefix(dst_window, src_window)
+            };
+            if k > 0 {
+                consumed += k;
+                written += k;
+                s = unsafe { s.add(k) };
+                continue;
+            }
+        }
+
         let mut wc: libc::wchar_t = 0;
         let ret = unsafe { mbrtowc(&mut wc, s, remaining, ps) };
         match ret {
@@ -4433,6 +4472,9 @@ pub unsafe extern "C" fn mbsnrtowcs(
                 written += 1;
                 consumed += r;
                 s = unsafe { s.add(r) };
+                // A complete character was decoded: the conversion state is
+                // initial again, so the SIMD fast path is valid next iteration.
+                state_initial = true;
             }
             r if r == usize::MAX - 1 => {
                 // MB_INCOMPLETE: the `nms`-byte source window ends in the middle
@@ -4474,6 +4516,32 @@ pub unsafe extern "C" fn wcsnrtombs(
     let max_wchars = source_bound.map(|bound| bound.min(nwc)).unwrap_or(nwc);
 
     while wchars_consumed < max_wchars {
+        // SIMD-narrow the leading ASCII wide-char run (each 0x01..=0x7F wchar
+        // encodes to exactly one byte), bounded by the source wchar window and
+        // the destination byte capacity. wcrtomb is stateless per wchar for
+        // UTF-8, so this is valid regardless of `ps`. It stops at the first NUL /
+        // non-ASCII / dest-full, leaving those for the scalar step — so output is
+        // byte-for-byte identical (an ASCII wchar narrows 1:1 to the same byte)
+        // and the bd-2g7oyh.186 dest-full / EILSEQ-on-truncation logic is intact.
+        let remaining_wc = max_wchars - wchars_consumed;
+        // SAFETY: `s` points to at least `remaining_wc` readable wide chars.
+        let src_window = unsafe { std::slice::from_raw_parts(s as *const u32, remaining_wc) };
+        let k = if dst.is_null() {
+            wchar_core::wcs_ascii_prefix_len(src_window)
+        } else {
+            // SAFETY: `dst` has >= `len` bytes; `written <= len`.
+            let dst_window = unsafe {
+                std::slice::from_raw_parts_mut(dst.add(written) as *mut u8, len - written)
+            };
+            wchar_core::wcs_ascii_prefix(dst_window, src_window)
+        };
+        if k > 0 {
+            written += k; // one byte per ASCII wide char
+            wchars_consumed += k;
+            s = unsafe { s.add(k) };
+            continue;
+        }
+
         let wc = unsafe { *s };
         if wc == 0 {
             if !dst.is_null() {
