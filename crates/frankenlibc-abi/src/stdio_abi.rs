@@ -2362,9 +2362,8 @@ pub unsafe extern "C" fn fread(
 
     // Memory-backed streams: read directly from the backing.
     if s.is_mem_backed() {
-        let data = s.mem_read(total);
-        let n = data.len();
-        dst[..n].copy_from_slice(&data);
+        // Read straight into the caller's buffer — no throwaway Vec per fread.
+        let n = s.mem_read_into(&mut dst[..total]);
         runtime_policy::observe(
             ApiFamily::Stdio,
             decision.profile,
@@ -2375,10 +2374,8 @@ pub unsafe extern "C" fn fread(
     }
 
     while read_total < total {
-        let buffered = s.buffered_read(total - read_total);
-        if !buffered.is_empty() {
-            let n = buffered.len();
-            dst[read_total..read_total + n].copy_from_slice(&buffered);
+        let n = s.buffered_read_into(&mut dst[read_total..total]);
+        if n > 0 {
             read_total += n;
             continue;
         }

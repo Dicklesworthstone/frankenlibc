@@ -633,6 +633,54 @@ impl StdioStream {
         result
     }
 
+    /// Zero-allocation sibling of [`buffered_read`](Self::buffered_read): fills
+    /// `dst` from the ungetc byte, pushback queue, then the read buffer, and
+    /// returns the number of bytes written. Behaviour is byte-for-byte identical
+    /// to `buffered_read(dst.len())` followed by a copy into `dst` — but it writes
+    /// straight into the caller's buffer, so `fread` no longer allocates a
+    /// throwaway `Vec` per call (which, in the shipped `libc.so`, would route
+    /// through the security-membrane allocator at ~100 ns each).
+    pub fn buffered_read_into(&mut self, dst: &mut [u8]) -> usize {
+        if dst.is_empty() {
+            return 0;
+        }
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return 0;
+        }
+        self.flags.io_started = true;
+
+        let mut w = 0usize;
+
+        if let Some(b) = self.ungetc_byte.take() {
+            dst[w] = b;
+            w += 1;
+            if w == dst.len() {
+                self.advance_offset(w);
+                return w;
+            }
+        }
+
+        while w < dst.len() {
+            let Some(b) = self.read_pushback.pop_front() else {
+                break;
+            };
+            dst[w] = b;
+            w += 1;
+        }
+        if w == dst.len() {
+            self.advance_offset(w);
+            return w;
+        }
+
+        let data = self.buffer.read(dst.len() - w);
+        let n = data.len();
+        dst[w..w + n].copy_from_slice(data);
+        w += n;
+        self.advance_offset(w);
+        w
+    }
+
     /// Number of bytes available for reading without I/O.
     pub fn readable_buffered(&self) -> usize {
         self.ungetc_byte.is_some() as usize + self.read_pushback.len() + self.buffer.readable()
@@ -999,6 +1047,54 @@ impl StdioStream {
             self.offset = backing.position() as i64;
         }
         result
+    }
+
+    /// Zero-allocation sibling of [`mem_read`](Self::mem_read): fills `dst` from
+    /// the ungetc byte then the memory backing, returning the number of bytes
+    /// written. Byte-for-byte identical to `mem_read(dst.len())` + copy, but
+    /// writes straight into the caller's buffer (no per-`fread` `Vec`).
+    pub fn mem_read_into(&mut self, dst: &mut [u8]) -> usize {
+        if dst.is_empty() {
+            return 0;
+        }
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return 0;
+        }
+        self.flags.io_started = true;
+
+        let mut w = 0usize;
+
+        if let Some(b) = self.ungetc_byte.take() {
+            dst[w] = b;
+            w += 1;
+            if w == dst.len() {
+                if let Some(ref backing) = self.mem_backing {
+                    self.offset = backing.position() as i64;
+                } else {
+                    self.advance_offset(1);
+                }
+                return w;
+            }
+        }
+
+        let mut hit_eof = false;
+        if let Some(ref mut backing) = self.mem_backing {
+            // peek + consume is zero-copy (the owned `backing.read` would allocate);
+            // copying the slice ends the immutable borrow before `consume`.
+            let avail = backing.peek();
+            let want = dst.len() - w;
+            let n = avail.len().min(want);
+            dst[w..w + n].copy_from_slice(&avail[..n]);
+            hit_eof = n < want;
+            backing.consume(n);
+            w += n;
+            self.offset = backing.position() as i64;
+        }
+        if hit_eof {
+            self.flags.eof = true;
+        }
+        w
     }
 
     /// Seek within a memory-backed stream.
