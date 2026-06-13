@@ -343,6 +343,21 @@ fn strcmp_exact_256_equal_nul_terminated(left: &[u8], right: &[u8]) -> bool {
     !acc.any()
 }
 
+#[inline(always)]
+fn strncmp_exact_256_equal_prefix(left: &[u8], right: &[u8]) -> bool {
+    debug_assert_eq!(left.len(), STRLEN_BLOCK);
+    debug_assert_eq!(right.len(), STRLEN_BLOCK);
+
+    let mut acc = Mask::<i8, STRLEN_SIMD_LANES>::splat(false);
+    for k in 0..4 {
+        let lo = k * STRLEN_SIMD_LANES;
+        let l = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&left[lo..lo + STRLEN_SIMD_LANES]);
+        let r = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&right[lo..lo + STRLEN_SIMD_LANES]);
+        acc |= l.simd_ne(r);
+    }
+    !acc.any()
+}
+
 /// Branchless ASCII A-Z -> a-z fold of a 32-byte panel, exactly matching
 /// `u8::to_ascii_lowercase` (only bytes in `b'A'..=b'Z'` are shifted by `0x20`;
 /// everything else, including NUL, is unchanged).
@@ -599,6 +614,14 @@ pub fn strcmp(s1: &[u8], s2: &[u8]) -> i32 {
 ///
 /// Equivalent to C `strncmp`. Like [`strcmp`], but stops after `n` bytes.
 pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
+    if n == STRLEN_BLOCK
+        && s1.len() >= STRLEN_BLOCK
+        && s2.len() >= STRLEN_BLOCK
+        && strncmp_exact_256_equal_prefix(&s1[..STRLEN_BLOCK], &s2[..STRLEN_BLOCK])
+    {
+        return 0;
+    }
+
     // Bytes we may inspect from both slices: bounded by `n` and the shorter
     // buffer. Vectorized panels only run over indices present in both slices;
     // out-of-range indices are resolved as logical NUL by the scalar tail,
