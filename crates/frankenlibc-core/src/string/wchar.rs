@@ -592,6 +592,39 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
             di += 12;
         }
 
+        // SIMD 4-byte encode fast path for scalar wctomb's RFC 2279 4-byte
+        // branch. Each clean window maps four code points in
+        // 0x1_0000..0x20_0000 to exactly sixteen output bytes. ASCII, 2/3-byte,
+        // 5/6-byte, invalid, NUL, mixed-window, and short-output cases fall
+        // through to scalar `wctomb`, preserving glibc-compatible semantics.
+        while si + 4 <= src.len()
+            && di + 16 <= dest.len()
+            && (0x1_0000..0x20_0000).contains(&src[si])
+        {
+            let ws: [u32; 4] = src[si..si + 4].try_into().unwrap();
+            let v = Simd::<u32, 4>::from_array(ws);
+            if !(v.simd_ge(Simd::splat(0x1_0000)) & v.simd_lt(Simd::splat(0x20_0000))).all() {
+                break;
+            }
+
+            let leads = ((v >> Simd::splat(18)) | Simd::splat(0xF0)).cast::<u8>();
+            let cont1 =
+                (((v >> Simd::splat(12)) & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+            let cont2 =
+                (((v >> Simd::splat(6)) & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+            let cont3 = ((v & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+            let lead_cont1 = std::simd::simd_swizzle!(leads, cont1, [0, 4, 1, 5, 2, 6, 3, 7]);
+            let cont2_cont3 = std::simd::simd_swizzle!(cont2, cont3, [0, 4, 1, 5, 2, 6, 3, 7]);
+            let bytes = std::simd::simd_swizzle!(
+                lead_cont1,
+                cont2_cont3,
+                [0, 1, 8, 9, 2, 3, 10, 11, 4, 5, 12, 13, 6, 7, 14, 15]
+            );
+            bytes.copy_to_slice(&mut dest[di..di + 16]);
+            si += 4;
+            di += 16;
+        }
+
         // One scalar step, then re-attempt the SIMD run.
         if si >= src.len() {
             return Some(di);
@@ -815,6 +848,22 @@ mod tests {
                     2 => 0x4E00 + (i as u32 % 0x100),
                     3 => 0xD7FF,
                     _ => 0xE000,
+                });
+            }
+            corpus.push(v);
+        }
+        // Pure 4-byte runs around the 4-codepoint SIMD window. The upper cases
+        // intentionally cover scalar wctomb's glibc-compatible RFC 2279 range,
+        // not just Unicode scalar values through U+10FFFF.
+        for len in 0..40usize {
+            let mut v = Vec::with_capacity(len);
+            for i in 0..len {
+                v.push(match i % 5 {
+                    0 => 0x1_0000,
+                    1 => 0x1F600 + (i as u32 % 0x80),
+                    2 => 0x10_FFFF,
+                    3 => 0x11_0000 + (i as u32 % 0x100),
+                    _ => 0x1F_FFFF,
                 });
             }
             corpus.push(v);

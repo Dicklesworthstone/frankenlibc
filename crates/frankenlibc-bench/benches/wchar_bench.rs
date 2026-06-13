@@ -25,8 +25,22 @@ fn bench_mbstowcs(c: &mut Criterion) {
         }
         mixed.push(b' ');
     }
+    // Pure 4-byte astral codepoints. This isolates the remaining scalar
+    // multibyte decode lane after 2-byte and 3-byte SIMD windows landed.
+    let mut astral_4byte: Vec<u8> = Vec::with_capacity(1024 * 4);
+    for i in 0..1024 {
+        let cp = 0x1F600 + (i % 0x80) as u32;
+        astral_4byte.push(0xF0 | (cp >> 18) as u8);
+        astral_4byte.push(0x80 | ((cp >> 12) & 0x3F) as u8);
+        astral_4byte.push(0x80 | ((cp >> 6) & 0x3F) as u8);
+        astral_4byte.push(0x80 | (cp & 0x3F) as u8);
+    }
 
-    let cases: &[(&str, &[u8])] = &[("ascii_1k", &ascii), ("mixed_utf8", &mixed)];
+    let cases: &[(&str, &[u8])] = &[
+        ("ascii_1k", &ascii),
+        ("astral_4byte", &astral_4byte),
+        ("mixed_utf8", &mixed),
+    ];
 
     let mut group = c.benchmark_group("wchar_mbstowcs");
     for &(name, src) in cases {
@@ -48,6 +62,9 @@ fn bench_wcstombs(c: &mut Criterion) {
     // Pure 3-byte BMP codepoints. This is the remaining multibyte encode lane
     // after the 2-byte SIMD path landed.
     let cjk_3byte: Vec<u32> = (0..1024).map(|i| 0x4E00 + (i % 0x100) as u32).collect();
+    // Pure 4-byte astral codepoints. This isolates the remaining scalar
+    // multibyte encode lane after 2-byte and 3-byte SIMD windows landed.
+    let astral_4byte: Vec<u32> = (0..1024).map(|i| 0x1F600 + (i % 0x80) as u32).collect();
     // Mixed: ASCII runs interleaved with 2/3-byte codepoints.
     let mut mixed: Vec<u32> = Vec::new();
     for i in 0..128 {
@@ -58,6 +75,7 @@ fn bench_wcstombs(c: &mut Criterion) {
 
     let cases: &[(&str, &[u32])] = &[
         ("ascii_1k", &ascii),
+        ("astral_4byte", &astral_4byte),
         ("cjk_3byte", &cjk_3byte),
         ("mixed_utf8", &mixed),
     ];
