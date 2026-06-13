@@ -785,6 +785,30 @@ pub fn towlower(wc: u32) -> u32 {
 /// The lookup is a branchless binary search; values above `U+10FFFF` (e.g. a
 /// negative `wchar_t` widened to `u32`) are not scalar values, so `-1`.
 pub fn wcwidth(wc: u32) -> i32 {
+    // The BMP (the overwhelmingly common case for terminal width work) is served
+    // by a lazily-built direct `[i8; 0x10000]` lookup, replacing a per-character
+    // `partition_point` binary search over 2144 transitions (~11 scattered,
+    // cache-missing probes). Built once by calling `wcwidth_transitions` for
+    // every BMP code point, so each entry is byte-for-byte what the binary search
+    // returns — and astral code points still take that exact path. O(1) per char,
+    // single hot cache line for runs of nearby characters.
+    if wc < 0x10000 {
+        static BMP_WIDTH: std::sync::OnceLock<Box<[i8; 0x10000]>> = std::sync::OnceLock::new();
+        let table = BMP_WIDTH.get_or_init(|| {
+            let mut t = Box::new([0i8; 0x10000]);
+            for (cp, slot) in t.iter_mut().enumerate() {
+                *slot = wcwidth_transitions(cp as u32) as i8;
+            }
+            t
+        });
+        return table[wc as usize] as i32;
+    }
+    wcwidth_transitions(wc)
+}
+
+/// Exact width via the sorted transition table — the canonical result the BMP
+/// direct table is built from, and the path astral code points take directly.
+fn wcwidth_transitions(wc: u32) -> i32 {
     if wc > 0x10FFFF {
         return -1;
     }
@@ -1197,6 +1221,26 @@ mod tests {
     #[test]
     fn wcwidth_cjk() {
         assert_eq!(wcwidth(0x4E16), 2); // 世
+    }
+
+    // Golden isomorphism: the direct BMP table (and the astral path) must return
+    // byte-for-byte what the pure transition-table binary search produces for
+    // EVERY code point 0..=0x10FFFF (plus an out-of-range probe).
+    #[test]
+    fn wcwidth_direct_table_matches_binary_search() {
+        fn reference(wc: u32) -> i32 {
+            if wc > 0x10FFFF {
+                return -1;
+            }
+            let table = &super::super::wcwidth_table::WIDTH_TRANSITIONS;
+            let idx = table.partition_point(|&(start, _)| start <= wc);
+            table[idx - 1].1 as i32
+        }
+        for cp in 0..=0x10FFFFu32 {
+            assert_eq!(wcwidth(cp), reference(cp), "wcwidth mismatch at U+{cp:04X}");
+        }
+        assert_eq!(wcwidth(0x11_0000), -1);
+        assert_eq!(wcwidth(0xFFFF_FFFF), -1);
     }
 
     #[test]
