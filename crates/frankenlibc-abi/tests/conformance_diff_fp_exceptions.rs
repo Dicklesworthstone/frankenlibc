@@ -19,6 +19,7 @@ unsafe extern "C" {
     fn acosf(x: f32)->f32; fn acoshf(x: f32)->f32; fn tgammaf(x: f32)->f32; fn powf(x: f32,y: f32)->f32;
     fn nextafter(x: f64, y: f64) -> f64; fn nextafterf(x: f32, y: f32) -> f32;
     fn lgamma(x: f64)->f64; fn lgammaf(x: f32)->f32; fn exp2(x: f64)->f64; fn expm1(x: f64)->f64;
+    fn atanhf(x: f32)->f32; fn log1p(x: f64)->f64; fn log1pf(x: f32)->f32;
 }
 const HARD: c_int = 0x1D; // INVALID|DIVBYZERO|OVERFLOW|UNDERFLOW (drop noisy INEXACT)
 fn key(x: f64) -> i64 { let b = x.to_bits() as i64; if b < 0 { i64::MIN - b } else { b } }
@@ -124,5 +125,18 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chk2!("expm1(1000)", fl::expm1(1000.0), expm1(1000.0));
     chk2!("pow(10,400)", fl::pow(10.0,400.0), pow(10.0,400.0));
     chk2!("pow(0.1,400)", fl::pow(0.1,400.0), pow(0.1,400.0));
+
+    // atanh / log1p poles (DIVBYZERO) + domain (INVALID): log1p(-1)/log1pf(-1)
+    // were under-raising the pole flag (fixed); the rest pin currently-correct
+    // behavior (libm raises atanh poles + log1p domain).
+    chk2!("atanh(1)", fl::atanh(1.0), atanh(1.0));
+    chk2!("atanh(-1)", fl::atanh(-1.0), atanh(-1.0));
+    chk2!("atanh(2)", fl::atanh(2.0), atanh(2.0));
+    chk2!("atanhf(1)", fl::atanhf(1.0), atanhf(1.0));
+    chk2!("log1p(-1)", fl::log1p(-1.0), log1p(-1.0));
+    chk2!("log1p(-2)", fl::log1p(-2.0), log1p(-2.0));
+    chk2!("log1p(-1.5)", fl::log1p(-1.5), log1p(-1.5));
+    chk2!("log1pf(-1)", fl::log1pf(-1.0), log1pf(-1.0));
+    chk2!("log1pf(-2)", fl::log1pf(-2.0), log1pf(-2.0));
     assert!(div.is_empty(), "fp-exception/value divergences vs glibc:\n  {}", div.join("\n  "));
 }

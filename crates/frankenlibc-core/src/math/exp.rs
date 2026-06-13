@@ -481,6 +481,11 @@ pub fn log10(x: f64) -> f64 {
 
 #[inline]
 pub fn log1p(x: f64) -> f64 {
+    // log1p(-1) = log(0) = -inf is a pole: glibc raises FE_DIVBYZERO, libm omits
+    // it. (x < -1 domain errors raise FE_INVALID, which libm already does.)
+    if x == -1.0 {
+        let _ = core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
+    }
     libm::log1p(x)
 }
 

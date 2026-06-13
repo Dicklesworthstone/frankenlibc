@@ -427,6 +427,10 @@ pub fn expm1f(x: f32) -> f32 {
 
 #[inline]
 pub fn log1pf(x: f32) -> f32 {
+    // log1pf(-1) = -inf is a pole: glibc raises FE_DIVBYZERO, libm omits it.
+    if x == -1.0 {
+        fe_divbyzero_f32();
+    }
     libm::log1pf(x)
 }
 
