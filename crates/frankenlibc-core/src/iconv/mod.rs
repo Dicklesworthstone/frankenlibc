@@ -10365,6 +10365,45 @@ pub fn iconv(
             }
         }
 
+        // Fast path: fixed-width Unicode (UTF-16/UTF-32, explicit endianness) ->
+        // single-byte legacy codec. Decode each unit with the per-codec decoder,
+        // then map the char to its output byte via the cached O(1) `to_reverse`
+        // table, skipping the two ~100-arm dispatches (decode_char + encode_char)
+        // + encode_one. The mirror of the single-byte -> wide fast path. Byte-for-
+        // byte isomorphic: same decoder + `to_reverse.lookup` is exactly what
+        // encode_char would emit for a single-byte target; an unrepresentable char,
+        // a decode error, or a full buffer breaks to the generic body for the exact
+        // EILSEQ/EINVAL/E2BIG ordering. Gated on explicit endianness (unmarked
+        // UTF-16/UTF-32 carry BOM state handled elsewhere).
+        if matches!(
+            from_enc,
+            Encoding::Utf16Le | Encoding::Utf16Be | Encoding::Utf32Le | Encoding::Utf32Be
+        ) && !cd.emit_bom
+            && let Some(rev) = cd.to_reverse.as_ref()
+        {
+            while in_pos < input.len() && out_pos < outbuf.len() {
+                let decoded = match from_enc {
+                    Encoding::Utf16Le => decode_utf16le(&input[in_pos..]),
+                    Encoding::Utf16Be => decode_utf16be(&input[in_pos..]),
+                    Encoding::Utf32Le => decode_utf32le(&input[in_pos..]),
+                    Encoding::Utf32Be => decode_utf32be(&input[in_pos..]),
+                    _ => unreachable!(),
+                };
+                let Ok((ch, consumed)) = decoded else {
+                    break;
+                };
+                let Some(byte) = rev.lookup(ch) else {
+                    break;
+                };
+                outbuf[out_pos] = byte;
+                in_pos += consumed;
+                out_pos += 1;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         let (ch, consumed) = match decode_char(from_enc, &input[in_pos..]) {
             Ok(v) => v,
             Err(DecodeError::Incomplete) => {

@@ -465,6 +465,87 @@ fn iconv_single_byte_to_wide_differential_fuzz_vs_glibc() {
     eprintln!("iconv single-byte->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
 }
 
+/// Wide (UTF-16/UTF-32 LE/BE) -> single-byte legacy codec differential fuzz:
+/// gates the wide -> single-byte fast path (per-codec decode + to_reverse byte
+/// map). Corpora: random raw wide bytes (exercises decode EINVAL/EILSEQ + the
+/// unrepresentable -> EILSEQ stop position) and valid wide source built from
+/// scalars biased to Latin/Cyrillic (lookup-hit path), each converted to every
+/// single-byte codepage, compared against host glibc on the full contract.
+#[test]
+fn iconv_wide_to_single_byte_differential_fuzz_vs_glibc() {
+    let mut r = Lcg(0x2c8a_56e1_9b3f_47d0);
+    let mut divs: Vec<String> = Vec::new();
+    let mut compared: u64 = 0;
+
+    const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE"];
+    const SB: &[&str] = &[
+        "KOI8-R", "ISO-8859-1", "ISO-8859-5", "ISO-8859-15", "CP1251", "CP1252", "CP437",
+    ];
+
+    fn push_wide(v: &mut Vec<u8>, codec: &str, cp: u32) {
+        match codec {
+            "UTF-32LE" => v.extend_from_slice(&cp.to_le_bytes()),
+            "UTF-32BE" => v.extend_from_slice(&cp.to_be_bytes()),
+            "UTF-16LE" | "UTF-16BE" => {
+                let be = codec == "UTF-16BE";
+                if let Some(ch) = char::from_u32(cp) {
+                    let mut u = [0u16; 2];
+                    for unit in ch.encode_utf16(&mut u) {
+                        let b = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                        v.extend_from_slice(&b);
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    for from in WIDE {
+        let cf = CString::new(*from).unwrap();
+        for to in SB {
+            let ct = CString::new(*to).unwrap();
+            for _ in 0..1500 {
+                let raw: Vec<u8> = {
+                    let len = (r.next() % 20) as usize;
+                    (0..len).map(|_| r.byte()).collect()
+                };
+                let valid: Vec<u8> = {
+                    let n = (r.next() % 6) as usize;
+                    let mut v = Vec::new();
+                    for _ in 0..n {
+                        let cp = match r.next() % 6 {
+                            0 => r.next() as u32 % 0x80,             // ASCII
+                            1 | 2 => 0x400 + (r.next() as u32 % 0x60), // Cyrillic (KOI8/CP125x/8859-5)
+                            3 => 0xA0 + (r.next() as u32 % 0x60),    // Latin-1 supplement
+                            _ => r.next() as u32 % 0x10000,          // any BMP (often unrepresentable)
+                        };
+                        push_wide(&mut v, from, cp);
+                    }
+                    v
+                };
+                for src in [&raw, &valid] {
+                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
+                    let h = unsafe { run(iconv_open, iconv_close, iconv, &ct, &cf, src) };
+                    let (Some(f), Some(h)) = (f, h) else { continue };
+                    compared += 1;
+                    if f != h && divs.len() < 40 {
+                        divs.push(format!(
+                            "{from}->{to} src={src:02x?}\n      fl  ={f:02x?}\n      glibc={h:02x?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "wide->single-byte iconv diverged from host glibc (showing up to 40):\n{}",
+        divs.join("\n")
+    );
+    eprintln!("iconv wide->single-byte differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+}
+
 /// DBCS legacy codec -> wide (UTF-16/UTF-32 LE/BE) differential fuzz: gates the
 /// DBCS -> UTF-16/UTF-32 fast path (per-codec decoder + inline wide write, incl.
 /// GB18030 astral -> surrogate pair on the UTF-16 side). Corpora: random raw
