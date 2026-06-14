@@ -960,6 +960,22 @@ unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, boo
     match bound {
         Some(limit) => {
             let mut i = 0usize;
+            // Wide 32-byte portable-SIMD NUL scan (AVX width, like glibc's
+            // strnlen). Bounded mode guarantees `limit` readable bytes, so a
+            // 32-byte load is in-bounds whenever i+32 <= limit. NUL-free panels
+            // advance 32; a panel containing a NUL drops to the 8-byte SWAR /
+            // scalar tail below, which returns the exact NUL index unchanged.
+            while i + 32 <= limit {
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                // SAFETY: [i, i+32) ⊆ [0, limit); `limit` bytes are readable.
+                let v =
+                    Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+                if v.simd_eq(Simd::splat(0)).any() {
+                    break;
+                }
+                i += 32;
+            }
             while i + 8 <= limit {
                 // SAFETY: [i, i+8) ⊆ [0, limit); caller guarantees `limit` readable bytes.
                 let w = unsafe { core::ptr::read_unaligned(p.add(i).cast::<u64>()) };
