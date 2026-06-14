@@ -6933,37 +6933,155 @@ pub unsafe extern "C" fn vtimes(current: *mut c_void, child: *mut c_void) -> c_i
     -1
 }
 
-// Legacy BSD regex (2 symbols) — shared compiled pattern state
+// Legacy BSD/V7 regex (re_comp/re_exec) — shared compiled-pattern state. These
+// route through the GNU `re_compile_pattern`/`re_search` engine (which honours
+// the GNU syntax, e.g. bare `+`/`?` are quantifiers) — NOT POSIX regcomp BRE
+// where `+` is literal — so they match glibc, e.g. re_comp("[0-9]+");
+// re_exec("abc123") == 1. The 256-byte buffer holds a re_pattern_buffer.
 static RE_COMPILED_BUF: std::sync::Mutex<[u8; 256]> = std::sync::Mutex::new([0u8; 256]);
-static RE_ERROR_BUF: std::sync::Mutex<[u8; 128]> = std::sync::Mutex::new([0u8; 128]);
-// re_comp: compile regex pattern, returns NULL on success or error string
+
+/// Translate a V7/BSD re_comp pattern (default GNU syntax: bare `+`/`?` are
+/// quantifiers) into the equivalent POSIX BRE that fl's engine compiles: a bare
+/// `+` quantifying a preceding atom becomes `\{1,\}`, `?` becomes `\{0,1\}`.
+/// A `+`/`?` that is inside a bracket expression, backslash-escaped, or has no
+/// preceding atom (start / after `\(` / `\|`) stays literal — matching glibc.
+fn v7_pattern_to_bre(pat: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(pat.len() + 8);
+    let mut i = 0;
+    let mut prev_atom = false; // a quantifiable atom immediately precedes here
+    while i < pat.len() {
+        match pat[i] {
+            b'\\' => {
+                if i + 1 < pat.len() {
+                    let n = pat[i + 1];
+                    // In glibc syntax 0 the BARE +/? are the quantifiers, so an
+                    // escaped \+ / \? is a LITERAL +/?. fl's BRE has the opposite
+                    // (\+ = quantifier), so emit the bare char (literal in our BRE).
+                    if matches!(n, b'+' | b'?') {
+                        out.push(n);
+                    } else {
+                        out.push(b'\\');
+                        out.push(n);
+                    }
+                    // \( opens a group / \| alternates -> no atom yet; everything
+                    // else (\), \literal, \{...\}, literal +/?) leaves an atom.
+                    prev_atom = !matches!(n, b'(' | b'|');
+                    i += 2;
+                } else {
+                    out.push(b'\\');
+                    i += 1;
+                }
+            }
+            b'[' => {
+                // Copy the whole bracket expression verbatim (incl. a leading ^
+                // and/or ], and POSIX [: :] / [= =] / [. .] sub-brackets).
+                out.push(b'[');
+                i += 1;
+                if i < pat.len() && pat[i] == b'^' {
+                    out.push(b'^');
+                    i += 1;
+                }
+                if i < pat.len() && pat[i] == b']' {
+                    out.push(b']');
+                    i += 1;
+                }
+                while i < pat.len() && pat[i] != b']' {
+                    if pat[i] == b'['
+                        && i + 1 < pat.len()
+                        && matches!(pat[i + 1], b':' | b'=' | b'.')
+                    {
+                        let kind = pat[i + 1];
+                        out.push(b'[');
+                        out.push(kind);
+                        i += 2;
+                        while i + 1 < pat.len() && !(pat[i] == kind && pat[i + 1] == b']') {
+                            out.push(pat[i]);
+                            i += 1;
+                        }
+                        if i + 1 < pat.len() {
+                            out.push(kind);
+                            out.push(b']');
+                            i += 2;
+                        }
+                    } else {
+                        out.push(pat[i]);
+                        i += 1;
+                    }
+                }
+                if i < pat.len() {
+                    out.push(b']');
+                    i += 1;
+                }
+                prev_atom = true;
+            }
+            b'+' if prev_atom => {
+                out.extend_from_slice(b"\\{1,\\}");
+                i += 1;
+            }
+            b'?' if prev_atom => {
+                out.extend_from_slice(b"\\{0,1\\}");
+                i += 1;
+            }
+            c @ (b'^') => {
+                out.push(c);
+                prev_atom = false;
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                // +/? with no preceding atom are literal; *, ., $, literals are atoms.
+                prev_atom = true;
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// re_comp: compile `pattern`; NULL on success, or a static error string. A
+/// NULL pattern reuses the previously compiled one (error if none yet).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn re_comp(pattern: *const c_char) -> *mut c_char {
-    if pattern.is_null() {
-        return std::ptr::null_mut();
-    }
     let mut buf = RE_COMPILED_BUF.lock().unwrap_or_else(|e| e.into_inner());
-    let mut err = RE_ERROR_BUF.lock().unwrap_or_else(|e| e.into_inner());
-    let regex_ptr = buf.as_mut_ptr() as *mut c_void;
-    let rc = unsafe { super::string_abi::regcomp(regex_ptr, pattern, 0) };
-    if rc == 0 {
-        std::ptr::null_mut()
-    } else {
-        let msg = b"Invalid regular expression\0";
-        err[..msg.len()].copy_from_slice(msg);
-        err.as_mut_ptr() as *mut c_char
+    let buf_ptr = buf.as_mut_ptr() as *mut c_void;
+    if pattern.is_null() {
+        // GNU: reuse the previous pattern. The re_pattern_buffer's first field
+        // is the compiled-handle pointer; a zero means nothing was compiled.
+        let has_prev = unsafe { *(buf_ptr as *const usize) } != 0;
+        return if has_prev {
+            std::ptr::null_mut()
+        } else {
+            c"No previous regular expression".as_ptr() as *mut c_char
+        };
     }
+    let raw = unsafe { std::ffi::CStr::from_ptr(pattern).to_bytes() };
+    let bre = v7_pattern_to_bre(raw);
+    let err =
+        unsafe { super::string_abi::re_compile_pattern(bre.as_ptr() as *const c_char, bre.len(), buf_ptr) };
+    err.cast_mut()
 }
-// re_exec: execute last compiled regex against string, returns 1 on match
+
+/// re_exec: match the last compiled pattern against `string`. Returns 1 on
+/// match, 0 on no match, -1 on error (glibc semantics).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn re_exec(string: *const c_char) -> c_int {
     if string.is_null() {
-        return 0;
+        return -1;
     }
     let buf = RE_COMPILED_BUF.lock().unwrap_or_else(|e| e.into_inner());
-    let regex_ptr = buf.as_ptr() as *const c_void;
-    let rc = unsafe { super::string_abi::regexec(regex_ptr, string, 0, std::ptr::null_mut(), 0) };
-    if rc == 0 { 1 } else { 0 }
+    let buf_ptr = buf.as_ptr() as *const c_void;
+    let len = unsafe { std::ffi::CStr::from_ptr(string).to_bytes().len() } as c_int;
+    // re_search returns the match offset (>=0), -1 (no match) or -2 (error).
+    let r = unsafe {
+        super::string_abi::re_search(buf_ptr, string, len, 0, len, std::ptr::null_mut())
+    };
+    if r >= 0 {
+        1
+    } else if r == -1 {
+        0
+    } else {
+        -1
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut re_syntax_options: c_ulong = 0;
