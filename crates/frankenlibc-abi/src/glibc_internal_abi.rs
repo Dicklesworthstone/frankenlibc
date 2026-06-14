@@ -6954,17 +6954,19 @@ fn v7_pattern_to_bre(pat: &[u8]) -> Vec<u8> {
             b'\\' => {
                 if i + 1 < pat.len() {
                     let n = pat[i + 1];
-                    // In glibc syntax 0 the BARE +/? are the quantifiers, so an
-                    // escaped \+ / \? is a LITERAL +/?. fl's BRE has the opposite
-                    // (\+ = quantifier), so emit the bare char (literal in our BRE).
-                    if matches!(n, b'+' | b'?') {
+                    // glibc's syntax 0 has bare +/? as quantifiers and no
+                    // intervals, so escaped \+ \? \{ \} are all LITERAL. fl's BRE
+                    // has the opposite convention (\+ quantifies, \{ opens an
+                    // interval), but its BARE +/?/{/} are literal — so drop the
+                    // backslash to get the glibc-literal meaning.
+                    if matches!(n, b'+' | b'?' | b'{' | b'}') {
                         out.push(n);
                     } else {
                         out.push(b'\\');
                         out.push(n);
                     }
                     // \( opens a group / \| alternates -> no atom yet; everything
-                    // else (\), \literal, \{...\}, literal +/?) leaves an atom.
+                    // else leaves a quantifiable atom in place.
                     prev_atom = !matches!(n, b'(' | b'|');
                     i += 2;
                 } else {

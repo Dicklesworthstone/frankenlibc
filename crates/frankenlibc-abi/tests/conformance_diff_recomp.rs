@@ -5,10 +5,10 @@
 //! compiles. Expected results were captured from a gcc oracle calling the real
 //! glibc re_comp/re_exec.
 //!
-//! NOTE: glibc's syntax-0 dialect does NOT support intervals `\{n,m\}` or POSIX
-//! `[[:class:]]` (they are taken literally), whereas fl's BRE engine does — so
-//! those constructs are deliberately NOT covered here (a pre-existing
-//! engine-superset limitation, tracked separately).
+//! Intervals (`\{n,m\}` / bare `{n,m}`) are literal in syntax 0 and the
+//! preprocessor now reproduces that. The one remaining engine-superset gap is
+//! POSIX `[[:class:]]`: glibc syntax 0 takes it literally while fl's BRE engine
+//! recognises it, so those constructs are deliberately NOT covered here.
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
 use frankenlibc_abi::glibc_internal_abi as g;
@@ -30,6 +30,10 @@ const CASES: &[(&str, &str, i32)] = &[
     ("colou?r", "color", 1), ("colou?r", "colour", 1),
     ("a?", "x", 1), ("go+gle", "gooogle", 1), ("go+gle", "gogle", 1),
     ("[]a]", "]", 1), ("x[]a]y", "x]y", 1),
+    // glibc syntax-0 has NO intervals: \{n,m\} and bare {n,m} are literal braces.
+    ("a\\{2,3\\}", "a{2,3}", 1), ("a\\{2,3\\}", "aaa", 0),
+    ("a{2}", "a{2}", 1), ("a{2}", "aa", 0),
+    ("x\\{1\\}y", "x{1}y", 1), ("x\\{1\\}y", "xy", 0),
 ];
 
 #[test]
