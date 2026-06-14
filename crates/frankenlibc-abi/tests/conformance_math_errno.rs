@@ -84,6 +84,15 @@ fn math_errno_matches_glibc() {
     chk!("remainder(nan,0)", 0, fa::remainder(f64::NAN, 0.0));
     chk!("remainderf(inf,inf)", EDOM, fa::remainderf(f32::INFINITY, f32::INFINITY));
     chk!("remainderf(nan,0)", 0, fa::remainderf(f32::NAN, 0.0));
+    // remquo/remquof: C99, NO errno wrapper in glibc -> errno 0 even for domain inputs.
+    {
+        let mut q: c_int = 0;
+        chk!("remquo(5,0)", 0, fa::remquo(5.0, 0.0, &mut q));
+        chk!("remquo(inf,5)", 0, fa::remquo(f64::INFINITY, 5.0, &mut q));
+        chk!("remquo(inf,inf)", 0, fa::remquo(f64::INFINITY, f64::INFINITY, &mut q));
+        chk!("remquof(5,0)", 0, fa::remquof(5.0, 0.0, &mut q));
+        chk!("remquof(inf,5)", 0, fa::remquof(f32::INFINITY, 5.0, &mut q));
+    }
     chk!("pow(-2,0.5)", EDOM, fa::pow(-2.0, 0.5));
     chk!("y0(-1)", EDOM, fa::y0(-1.0));
     chk!("y1(-1)", EDOM, fa::y1(-1.0));

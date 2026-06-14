@@ -688,9 +688,9 @@ pub unsafe extern "C" fn remquo(x: f64, y: f64, quo: *mut c_int) -> f64 {
         // SAFETY: caller guarantees `quo` points to valid writable `int`.
         unsafe { *quo = q };
     }
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
-        set_domain_errno();
-    }
+    // Unlike fmod/remainder (SVID functions with an errno wrapper), C99 remquo
+    // has NO errno wrapper in glibc: it sets errno on no input (only the
+    // FE_INVALID flag for domain cases). fl previously set a spurious EDOM.
     rem
 }
 
@@ -1562,9 +1562,7 @@ pub unsafe extern "C" fn remquof(x: f32, y: f32, quo: *mut c_int) -> f32 {
         // SAFETY: caller guarantees `quo` points to valid writable `int`.
         unsafe { *quo = q };
     }
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
-        set_domain_errno();
-    }
+    // C99 remquof has no errno wrapper in glibc (see remquo).
     rem
 }
 
