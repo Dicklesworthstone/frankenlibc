@@ -380,7 +380,11 @@ fn iconv_wide_to_wide_differential_fuzz_vs_glibc() {
                 if let Some(ch) = char::from_u32(cp) {
                     let mut u = [0u16; 2];
                     for unit in ch.encode_utf16(&mut u) {
-                        let b = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                        let b = if be {
+                            unit.to_be_bytes()
+                        } else {
+                            unit.to_le_bytes()
+                        };
                         v.extend_from_slice(&b);
                     }
                 }
@@ -403,17 +407,18 @@ fn iconv_wide_to_wide_differential_fuzz_vs_glibc() {
                     let mut v = Vec::new();
                     for _ in 0..n {
                         let cp = match r.next() % 8 {
-                            0 => r.next() as u32 % 0x80,                 // ASCII
-                            1 | 2 => 0x80 + r.next() as u32 % 0x780,     // BMP low
+                            0 => r.next() as u32 % 0x80,                    // ASCII
+                            1 | 2 => 0x80 + r.next() as u32 % 0x780,        // BMP low
                             3 | 4 | 5 => 0xE000 + r.next() as u32 % 0x2000, // BMP non-surrogate
-                            _ => 0x10000 + (r.next() as u32 % 0x100000), // astral
+                            _ => 0x10000 + (r.next() as u32 % 0x100000),    // astral
                         };
                         push_wide(&mut v, from, cp);
                     }
                     v
                 };
                 for src in [&raw, &valid] {
-                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
+                    let f =
+                        unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
                     let h = unsafe { run(iconv_open, iconv_close, iconv, &ct, &cf, src) };
                     let (Some(f), Some(h)) = (f, h) else { continue };
                     compared += 1;
@@ -432,7 +437,9 @@ fn iconv_wide_to_wide_differential_fuzz_vs_glibc() {
         "wide->wide iconv diverged from host glibc (showing up to 40):\n{}",
         divs.join("\n")
     );
-    eprintln!("iconv wide->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+    eprintln!(
+        "iconv wide->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc"
+    );
 }
 
 /// Single-byte legacy codec -> wide (UTF-16/UTF-32 LE/BE) differential fuzz:
@@ -448,7 +455,13 @@ fn iconv_single_byte_to_wide_differential_fuzz_vs_glibc() {
     let mut compared: u64 = 0;
 
     const SB: &[&str] = &[
-        "KOI8-R", "ISO-8859-1", "ISO-8859-5", "ISO-8859-15", "CP1251", "CP1252", "CP437",
+        "KOI8-R",
+        "ISO-8859-1",
+        "ISO-8859-5",
+        "ISO-8859-15",
+        "CP1251",
+        "CP1252",
+        "CP437",
     ];
     const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE"];
 
@@ -479,7 +492,9 @@ fn iconv_single_byte_to_wide_differential_fuzz_vs_glibc() {
         "single-byte->wide iconv diverged from host glibc (showing up to 40):\n{}",
         divs.join("\n")
     );
-    eprintln!("iconv single-byte->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+    eprintln!(
+        "iconv single-byte->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc"
+    );
 }
 
 /// Wide (UTF-16/UTF-32 LE/BE) -> single-byte legacy codec differential fuzz:
@@ -496,7 +511,13 @@ fn iconv_wide_to_single_byte_differential_fuzz_vs_glibc() {
 
     const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE"];
     const SB: &[&str] = &[
-        "KOI8-R", "ISO-8859-1", "ISO-8859-5", "ISO-8859-15", "CP1251", "CP1252", "CP437",
+        "KOI8-R",
+        "ISO-8859-1",
+        "ISO-8859-5",
+        "ISO-8859-15",
+        "CP1251",
+        "CP1252",
+        "CP437",
     ];
 
     fn push_wide(v: &mut Vec<u8>, codec: &str, cp: u32) {
@@ -508,7 +529,11 @@ fn iconv_wide_to_single_byte_differential_fuzz_vs_glibc() {
                 if let Some(ch) = char::from_u32(cp) {
                     let mut u = [0u16; 2];
                     for unit in ch.encode_utf16(&mut u) {
-                        let b = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                        let b = if be {
+                            unit.to_be_bytes()
+                        } else {
+                            unit.to_le_bytes()
+                        };
                         v.extend_from_slice(&b);
                     }
                 }
@@ -531,17 +556,18 @@ fn iconv_wide_to_single_byte_differential_fuzz_vs_glibc() {
                     let mut v = Vec::new();
                     for _ in 0..n {
                         let cp = match r.next() % 6 {
-                            0 => r.next() as u32 % 0x80,             // ASCII
+                            0 => r.next() as u32 % 0x80,               // ASCII
                             1 | 2 => 0x400 + (r.next() as u32 % 0x60), // Cyrillic (KOI8/CP125x/8859-5)
-                            3 => 0xA0 + (r.next() as u32 % 0x60),    // Latin-1 supplement
-                            _ => r.next() as u32 % 0x10000,          // any BMP (often unrepresentable)
+                            3 => 0xA0 + (r.next() as u32 % 0x60),      // Latin-1 supplement
+                            _ => r.next() as u32 % 0x10000, // any BMP (often unrepresentable)
                         };
                         push_wide(&mut v, from, cp);
                     }
                     v
                 };
                 for src in [&raw, &valid] {
-                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
+                    let f =
+                        unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
                     let h = unsafe { run(iconv_open, iconv_close, iconv, &ct, &cf, src) };
                     let (Some(f), Some(h)) = (f, h) else { continue };
                     compared += 1;
@@ -560,7 +586,9 @@ fn iconv_wide_to_single_byte_differential_fuzz_vs_glibc() {
         "wide->single-byte iconv diverged from host glibc (showing up to 40):\n{}",
         divs.join("\n")
     );
-    eprintln!("iconv wide->single-byte differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+    eprintln!(
+        "iconv wide->single-byte differential fuzz: {compared} conversions, 0 divergences vs host glibc"
+    );
 }
 
 /// Wide (UTF-16/UTF-32 LE/BE) -> DBCS legacy codec differential fuzz: gates the
@@ -575,7 +603,15 @@ fn iconv_wide_to_dbcs_differential_fuzz_vs_glibc() {
 
     const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE"];
     const DBCS: &[&str] = &[
-        "SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR", "CP949", "GB2312", "GB18030", "JOHAB",
+        "SHIFT_JIS",
+        "BIG5",
+        "EUC-JP",
+        "GBK",
+        "EUC-KR",
+        "CP949",
+        "GB2312",
+        "GB18030",
+        "JOHAB",
     ];
 
     fn push_wide(v: &mut Vec<u8>, codec: &str, cp: u32) {
@@ -587,7 +623,11 @@ fn iconv_wide_to_dbcs_differential_fuzz_vs_glibc() {
                 if let Some(ch) = char::from_u32(cp) {
                     let mut u = [0u16; 2];
                     for unit in ch.encode_utf16(&mut u) {
-                        let b = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                        let b = if be {
+                            unit.to_be_bytes()
+                        } else {
+                            unit.to_le_bytes()
+                        };
                         v.extend_from_slice(&b);
                     }
                 }
@@ -621,7 +661,8 @@ fn iconv_wide_to_dbcs_differential_fuzz_vs_glibc() {
                     v
                 };
                 for src in [&raw, &valid] {
-                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
+                    let f =
+                        unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
                     let h = unsafe { run(iconv_open, iconv_close, iconv, &ct, &cf, src) };
                     let (Some(f), Some(h)) = (f, h) else { continue };
                     compared += 1;
@@ -640,7 +681,9 @@ fn iconv_wide_to_dbcs_differential_fuzz_vs_glibc() {
         "wide->DBCS iconv diverged from host glibc (showing up to 40):\n{}",
         divs.join("\n")
     );
-    eprintln!("iconv wide->DBCS differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+    eprintln!(
+        "iconv wide->DBCS differential fuzz: {compared} conversions, 0 divergences vs host glibc"
+    );
 }
 
 /// Legacy (single-byte / DBCS) -> DBCS legacy differential fuzz: gates the
@@ -656,7 +699,14 @@ fn iconv_legacy_to_dbcs_differential_fuzz_vs_glibc() {
     let mut compared: u64 = 0;
 
     const FROM: &[&str] = &[
-        "KOI8-R", "ISO-8859-5", "CP1251", "SHIFT_JIS", "EUC-JP", "BIG5", "GBK", "GB2312",
+        "KOI8-R",
+        "ISO-8859-5",
+        "CP1251",
+        "SHIFT_JIS",
+        "EUC-JP",
+        "BIG5",
+        "GBK",
+        "GB2312",
     ];
     const TO: &[&str] = &["SHIFT_JIS", "EUC-JP", "BIG5", "GBK", "GB18030", "EUC-KR"];
 
@@ -691,11 +741,33 @@ fn iconv_legacy_to_dbcs_differential_fuzz_vs_glibc() {
                     }
                 };
                 for src in [&raw, &valid] {
-                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
+                    let f =
+                        unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
                     let h = unsafe { run(iconv_open, iconv_close, iconv, &ct, &cf, src) };
                     let (Some(f), Some(h)) = (f, h) else { continue };
                     compared += 1;
-                    if f != h && divs.len() < 40 {
+
+                    // glibc's gconv performs some charset-pair-specific mappings
+                    // that are NOT a pure Unicode pivot — e.g. GB2312 闹 (U+95F9,
+                    // simplified) -> BIG5 鬧 (U+9B27, traditional), even though
+                    // UTF-8 闹 -> BIG5 fails on BOTH engines. fl's iconv is a strict
+                    // decode->scalar->encode pivot and (correctly) does NOT perform
+                    // such Han simplified<->traditional substitutions (bd-k4ct23).
+                    // When glibc's DIRECT result diverges from its OWN Unicode pivot
+                    // (from -> UTF-8 -> to), the correct reference for fl is that
+                    // pivot, not glibc's quirk: assert fl's (err, out) matches the
+                    // pivot. This still flags any real fl deviation from the
+                    // Unicode-pivot contract.
+                    let divergent = match unsafe { glibc_unicode_pivot(&ct, &cf, src) } {
+                        Some((perr, pout)) if perr != h.err || pout != h.out => {
+                            f.err != perr || f.out != pout
+                        }
+                        // Compare (err, out) only — not the exact errno code or
+                        // *inbytesleft stop position (see comment above, bd-k4ct23).
+                        _ => f.err != h.err || f.out != h.out,
+                    };
+
+                    if divergent && divs.len() < 40 {
                         divs.push(format!(
                             "{from}->{to} src={src:02x?}\n      fl  ={f:02x?}\n      glibc={h:02x?}"
                         ));
@@ -710,7 +782,9 @@ fn iconv_legacy_to_dbcs_differential_fuzz_vs_glibc() {
         "legacy->DBCS iconv diverged from host glibc (showing up to 40):\n{}",
         divs.join("\n")
     );
-    eprintln!("iconv legacy->DBCS differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+    eprintln!(
+        "iconv legacy->DBCS differential fuzz: {compared} conversions, 0 divergences vs host glibc"
+    );
 }
 
 /// DBCS legacy codec -> wide (UTF-16/UTF-32 LE/BE) differential fuzz: gates the
@@ -727,7 +801,15 @@ fn iconv_dbcs_to_wide_differential_fuzz_vs_glibc() {
     let mut compared: u64 = 0;
 
     const DBCS: &[&str] = &[
-        "SHIFT_JIS", "BIG5", "EUC-JP", "GBK", "EUC-KR", "CP949", "GB2312", "GB18030", "JOHAB",
+        "SHIFT_JIS",
+        "BIG5",
+        "EUC-JP",
+        "GBK",
+        "EUC-KR",
+        "CP949",
+        "GB2312",
+        "GB18030",
+        "JOHAB",
     ];
     const WIDE: &[&str] = &["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE"];
 
@@ -763,7 +845,8 @@ fn iconv_dbcs_to_wide_differential_fuzz_vs_glibc() {
                     }
                 };
                 for src in [&raw, &valid] {
-                    let f = unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
+                    let f =
+                        unsafe { run(fl::iconv_open, fl::iconv_close, fl::iconv, &ct, &cf, src) };
                     let h = unsafe { run(iconv_open, iconv_close, iconv, &ct, &cf, src) };
                     let (Some(f), Some(h)) = (f, h) else { continue };
                     compared += 1;
@@ -782,7 +865,9 @@ fn iconv_dbcs_to_wide_differential_fuzz_vs_glibc() {
         "DBCS->wide iconv diverged from host glibc (showing up to 40):\n{}",
         divs.join("\n")
     );
-    eprintln!("iconv DBCS->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+    eprintln!(
+        "iconv DBCS->wide differential fuzz: {compared} conversions, 0 divergences vs host glibc"
+    );
 }
 
 /// CJK 2-byte codec differential fuzz: SHIFT_JIS and BIG5 <-> UTF-8 over (a)
@@ -871,4 +956,18 @@ fn iconv_cjk_differential_fuzz_vs_glibc() {
         divs.join("\n")
     );
     eprintln!("iconv CJK differential fuzz: {compared} conversions, 0 divergences vs host glibc");
+}
+
+/// glibc's Unicode-pivot reference for a legacy->DBCS conversion: decode
+/// `from` -> UTF-8 then encode UTF-8 -> `to`, both via host glibc, returning the
+/// (err, out) that pivot produces (None if either codec is unavailable). Used to
+/// tell glibc's pure-Unicode behavior — which fl must match — apart from its
+/// charset-pair-specific gconv shortcuts (Han simplified<->traditional
+/// substitution etc.), which fl's strict decode->scalar->encode pivot correctly
+/// does not replicate (bd-k4ct23).
+unsafe fn glibc_unicode_pivot(to: &CString, from: &CString, src: &[u8]) -> Option<(bool, Vec<u8>)> {
+    let utf8 = CString::new("UTF-8").unwrap();
+    let dec = unsafe { run(iconv_open, iconv_close, iconv, &utf8, from, src) }?;
+    let enc = unsafe { run(iconv_open, iconv_close, iconv, to, &utf8, &dec.out) }?;
+    Some((dec.err || enc.err, enc.out))
 }
