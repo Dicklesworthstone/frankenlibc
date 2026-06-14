@@ -84,6 +84,10 @@ enum Encoding {
     /// glibc's bare "UCS-2" / "UCS-2LE"; `Ucs2Be` is "UCS-2BE".
     Ucs2Le,
     Ucs2Be,
+    /// UTF-7 (RFC 2152): 7-bit-safe encoding. Stateful (Modified Base64 shift
+    /// sequences encoding UTF-16BE). Handled by a dedicated whole-buffer branch
+    /// in [`iconv`], not the per-char decode_char/encode_char path.
+    Utf7,
     Utf32,
     Utf32Be,
     Utf32Le,
@@ -228,7 +232,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 139] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -299,6 +303,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
         canonical: "UCS-2BE",
         normalized: "UCS2BE",
         aliases: &["UCS2BE"],
+    },
+    CodecSpec {
+        encoding: Encoding::Utf7,
+        canonical: "UTF-7",
+        normalized: "UTF7",
+        aliases: &["UTF7", "UNICODE11UTF7", "CSUNICODE11UTF7"],
     },
     CodecSpec {
         encoding: Encoding::Utf32,
@@ -9123,6 +9133,9 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Utf16 => decode_utf16le(input),
         Encoding::Ucs2Le => decode_ucs2le(input),
         Encoding::Ucs2Be => decode_ucs2be(input),
+        // UTF-7 is handled by the dedicated whole-buffer path in `iconv`; this
+        // per-char entry is never reached.
+        Encoding::Utf7 => Err(DecodeError::Invalid),
         Encoding::Utf32 => decode_utf32(input),
         Encoding::Utf32Be => decode_utf32be(input),
         Encoding::Utf32Le => decode_utf32le(input),
@@ -9383,6 +9396,9 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
             out[1] = bytes[1];
             Ok(2)
         }
+        // UTF-7 is handled by the dedicated whole-buffer path in `iconv`; this
+        // per-char entry is never reached.
+        Encoding::Utf7 => Err(EncodeError::Unrepresentable),
         Encoding::Utf32 => {
             if out.len() < 4 {
                 return Err(EncodeError::NoSpace);
@@ -9619,6 +9635,268 @@ pub fn iconv_open(tocode: &[u8], fromcode: &[u8]) -> Option<IconvDescriptor> {
 ///
 /// Equivalent to C `iconv`. Converts bytes from `inbuf` and writes to `outbuf`.
 /// Returns deterministic conversion progress and either success or errno-style failure.
+/// Modified-Base64 alphabet for UTF-7 (RFC 2152): standard base64 (A-Za-z0-9+/),
+/// no padding.
+const UTF7_B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+#[inline]
+fn utf7_b64_val(c: u8) -> Option<u32> {
+    match c {
+        b'A'..=b'Z' => Some((c - b'A') as u32),
+        b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+        b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
+}
+
+/// UTF-7 "directly encoded" set (RFC 2152 Set D, the chars glibc emits literally
+/// rather than via a +base64- shift): alphanumerics, `'(),-./:?`, and
+/// space/tab/CR/LF. Everything else (incl. Set O punctuation) is base64-encoded.
+#[inline]
+fn utf7_is_direct(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(
+            b,
+            b'\''
+                | b'('
+                | b')'
+                | b','
+                | b'-'
+                | b'.'
+                | b'/'
+                | b':'
+                | b'?'
+                | b' '
+                | b'\t'
+                | b'\r'
+                | b'\n'
+        )
+}
+
+/// Encode a scalar sequence to UTF-7. Direct-set chars pass through; `+` becomes
+/// `+-`; any run of other chars becomes `+` <Modified-Base64 of their UTF-16BE
+/// code units> `-`. Matches glibc's gconv UTF-7 output (verified vs the host).
+fn utf7_encode(chars: &[char]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(chars.len() * 2);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if (c as u32) < 0x80 && utf7_is_direct(c as u8) {
+            out.push(c as u8);
+            i += 1;
+        } else if c == '+' {
+            out.push(b'+');
+            out.push(b'-');
+            i += 1;
+        } else {
+            out.push(b'+');
+            let mut bits: u32 = 0;
+            let mut nb: u32 = 0;
+            while i < chars.len()
+                && !((chars[i] as u32) < 0x80
+                    && (utf7_is_direct(chars[i] as u8) || chars[i] == '+'))
+            {
+                let cp = chars[i] as u32;
+                let (units, n): ([u16; 2], usize) = if cp >= 0x10000 {
+                    let v = cp - 0x10000;
+                    (
+                        [(0xD800 + (v >> 10)) as u16, (0xDC00 + (v & 0x3FF)) as u16],
+                        2,
+                    )
+                } else {
+                    ([cp as u16, 0], 1)
+                };
+                for &unit in &units[..n] {
+                    bits = (bits << 16) | unit as u32;
+                    nb += 16;
+                    while nb >= 6 {
+                        nb -= 6;
+                        out.push(UTF7_B64[((bits >> nb) & 0x3F) as usize]);
+                    }
+                }
+                i += 1;
+            }
+            if nb > 0 {
+                out.push(UTF7_B64[((bits << (6 - nb)) & 0x3F) as usize]);
+            }
+            // The closing '-' is only required when it is needed to terminate the
+            // shift unambiguously: at end of input, or when the next character's
+            // byte is itself in the Modified-Base64 alphabet (A-Za-z0-9+/, which
+            // includes alphanumerics, '+' and '/'). When the run is followed by a
+            // non-base64 direct char (space, '(', '!', etc.) glibc omits the '-'.
+            let need_dash = i >= chars.len()
+                || ((chars[i] as u32) < 0x80 && utf7_b64_val(chars[i] as u8).is_some());
+            if need_dash {
+                out.push(b'-');
+            }
+        }
+    }
+    out
+}
+
+/// Whole-buffer UTF-7 conversion (one side is `Encoding::Utf7`). UTF-7 is a
+/// stateful shift codec; this handles it per-call rather than via the per-char
+/// decode_char/encode_char loop. For a UTF-7 SOURCE the decode is incremental
+/// (a direct byte or a complete `+...-` shift run is one unit, so E2BIG stops at
+/// a unit boundary); for a UTF-7 TARGET the whole UTF-7 byte string is built and
+/// then written (E2BIG if it does not fit — fine for the usual generous-buffer
+/// single call; a mid-shift split across calls is not yet supported).
+fn utf7_convert(
+    cd: &IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    if cd.from == Encoding::Utf7 {
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        // Reused per-unit scratch: a single `+...-` shift run can decode to many
+        // scalars, so this must grow (a fixed array would truncate long runs).
+        let mut unit_chars: Vec<char> = Vec::new();
+        while in_pos < input.len() {
+            let unit_start = in_pos;
+            unit_chars.clear();
+            let c = input[in_pos];
+            if c == b'+' {
+                in_pos += 1;
+                if in_pos < input.len() && input[in_pos] == b'-' {
+                    unit_chars.push('+');
+                    in_pos += 1;
+                } else {
+                    let mut bits: u32 = 0;
+                    let mut nb: u32 = 0;
+                    let mut hi: Option<u32> = None;
+                    while in_pos < input.len() {
+                        let Some(v) = utf7_b64_val(input[in_pos]) else {
+                            break;
+                        };
+                        bits = (bits << 6) | v;
+                        nb += 6;
+                        in_pos += 1;
+                        if nb >= 16 {
+                            nb -= 16;
+                            let u = (bits >> nb) & 0xFFFF;
+                            if (0xD800..=0xDBFF).contains(&u) {
+                                if hi.is_some() {
+                                    return Err(eilseq(unit_start, out_pos));
+                                }
+                                hi = Some(u);
+                            } else if (0xDC00..=0xDFFF).contains(&u) {
+                                let Some(h) = hi.take() else {
+                                    return Err(eilseq(unit_start, out_pos));
+                                };
+                                let cp = 0x10000 + ((h - 0xD800) << 10) + (u - 0xDC00);
+                                match char::from_u32(cp) {
+                                    Some(ch) => unit_chars.push(ch),
+                                    None => return Err(eilseq(unit_start, out_pos)),
+                                }
+                            } else {
+                                if hi.is_some() {
+                                    return Err(eilseq(unit_start, out_pos));
+                                }
+                                match char::from_u32(u) {
+                                    Some(ch) => unit_chars.push(ch),
+                                    None => return Err(eilseq(unit_start, out_pos)),
+                                }
+                            }
+                        }
+                    }
+                    if hi.is_some() {
+                        return Err(eilseq(unit_start, out_pos));
+                    }
+                    if nb > 0 && (bits & ((1u32 << nb) - 1)) != 0 {
+                        return Err(eilseq(unit_start, out_pos));
+                    }
+                    if in_pos < input.len() && input[in_pos] == b'-' {
+                        in_pos += 1;
+                    }
+                }
+            } else if c < 0x80 {
+                unit_chars.push(c as char);
+                in_pos += 1;
+            } else {
+                return Err(eilseq(unit_start, out_pos));
+            }
+            // Encode this unit's char(s) to `to`. E2BIG/EILSEQ report the output
+            // position BEFORE the unit so a re-presented call redoes it cleanly.
+            let unit_out_start = out_pos;
+            for &ch in &unit_chars {
+                match encode_char(cd.to, ch, &mut outbuf[out_pos..]) {
+                    Ok(w) => out_pos += w,
+                    Err(EncodeError::NoSpace) => {
+                        return Err(IconvError {
+                            code: ICONV_E2BIG,
+                            in_consumed: unit_start,
+                            out_written: unit_out_start,
+                        });
+                    }
+                    Err(EncodeError::Unrepresentable) => {
+                        return Err(eilseq(unit_start, unit_out_start));
+                    }
+                }
+            }
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
+    // to == Utf7: decode all of `from`, then UTF-7-encode (whole buffer).
+    let mut chars: Vec<char> = Vec::new();
+    let mut in_pos = 0usize;
+    let mut err_after = None;
+    while in_pos < input.len() {
+        match decode_char(cd.from, &input[in_pos..]) {
+            Ok((ch, consumed)) => {
+                chars.push(ch);
+                in_pos += consumed;
+            }
+            Err(DecodeError::Incomplete) => {
+                err_after = Some((ICONV_EINVAL, in_pos));
+                break;
+            }
+            Err(DecodeError::Invalid) => {
+                err_after = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        }
+    }
+    // Encode whatever decoded cleanly (glibc emits the good prefix before the error).
+    let u7 = utf7_encode(&chars);
+    if u7.len() > outbuf.len() {
+        return Err(IconvError {
+            code: ICONV_E2BIG,
+            in_consumed: 0,
+            out_written: 0,
+        });
+    }
+    outbuf[..u7.len()].copy_from_slice(&u7);
+    if let Some((code, pos)) = err_after {
+        return Err(IconvError {
+            code,
+            in_consumed: pos,
+            out_written: u7.len(),
+        });
+    }
+    Ok(IconvResult {
+        non_reversible: 0,
+        in_consumed: in_pos,
+        out_written: u7.len(),
+    })
+}
+
+#[inline]
+fn eilseq(in_consumed: usize, out_written: usize) -> IconvError {
+    IconvError {
+        code: ICONV_EILSEQ,
+        in_consumed,
+        out_written,
+    }
+}
+
 pub fn iconv(
     cd: &mut IconvDescriptor,
     inbuf: Option<&[u8]>,
@@ -9664,6 +9942,12 @@ pub fn iconv(
             });
         }
     };
+
+    // UTF-7 (either side) is a stateful shift codec handled by a dedicated
+    // whole-buffer path rather than the per-char decode_char/encode_char loop.
+    if cd.from == Encoding::Utf7 || cd.to == Encoding::Utf7 {
+        return utf7_convert(cd, input, outbuf);
+    }
 
     // NOTE: the destination BOM (unmarked `UTF-32`) is emitted LAZILY, just
     // before the first successfully-converted character is written (see the loop
@@ -11039,7 +11323,9 @@ mod tests {
 
     #[test]
     fn iconv_open_detailed_reports_unsupported_policy() {
-        let err = iconv_open_detailed(b"UTF-8", b"UTF-7").expect_err("unknown codec must fail");
+        // (UTF-7 used to be the example here; it is now a supported codec.)
+        let err = iconv_open_detailed(b"UTF-8", b"ZZ-NO-SUCH-CODEC")
+            .expect_err("unknown codec must fail");
         assert_eq!(err.policy, IconvFallbackPolicy::UnsupportedCodec);
         assert_eq!(
             err.dispatch.from_dispatch_path,
