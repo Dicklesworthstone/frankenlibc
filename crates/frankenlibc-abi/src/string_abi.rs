@@ -1209,6 +1209,24 @@ unsafe fn scan_c_string_last_byte(
                 i += 1;
             }
             loop {
+                // Wide 32-byte portable-SIMD skip (glibc's strrchr works a vector
+                // at a time; the 8-byte SWAR below was the bottleneck). A panel
+                // with NEITHER the target byte NOR a NUL cannot change `last` or
+                // terminate the scan, so advance it whole; any panel with a target
+                // or NUL (or one that would cross the page) drops to the SWAR tail,
+                // which updates `last` and resolves the NUL exactly — unchanged.
+                if (p as usize + i) & 0xFFF <= 0x1000 - 32 {
+                    use core::simd::Simd;
+                    use core::simd::cmp::SimdPartialEq;
+                    // SAFETY: the 32-byte window stays within the current page.
+                    let v =
+                        Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+                    let hit = v.simd_eq(Simd::splat(target)) | v.simd_eq(Simd::splat(0));
+                    if !hit.any() {
+                        i += 32;
+                        continue;
+                    }
+                }
                 // SAFETY: p+i is 8-aligned; the aligned read stays inside the page.
                 let w = unsafe { *p.add(i).cast::<u64>() };
                 if swar_word_has_zero(w) {
