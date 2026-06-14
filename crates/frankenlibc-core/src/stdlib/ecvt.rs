@@ -287,16 +287,64 @@ fn rounded_decimal_exp(abs: f64, ndigit: usize) -> i32 {
     }
 }
 
+/// A `core::fmt::Write` target backed by a fixed stack buffer, so the float
+/// rendering below produces the same bytes as `format!` without the per-call
+/// heap allocation. 384 bytes covers any gcvt-range fixed/scientific output
+/// (≤ ~17 integer digits + '.' + ≤ 20 fraction digits); the leaf functions fall
+/// back to a heap `format!` if it ever overflowed (it cannot in that range).
+struct StackStr {
+    buf: [u8; 384],
+    len: usize,
+}
+impl StackStr {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            buf: [0; 384],
+            len: 0,
+        }
+    }
+    #[inline]
+    fn as_str(&self) -> &str {
+        // Only `core::fmt` UTF-8 fragments are ever written here; the validation
+        // over these few dozen ASCII bytes is negligible vs the saved heap alloc.
+        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
+    }
+}
+impl core::fmt::Write for StackStr {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let b = s.as_bytes();
+        let end = self.len.checked_add(b.len()).ok_or(core::fmt::Error)?;
+        if end > self.buf.len() {
+            return Err(core::fmt::Error);
+        }
+        self.buf[self.len..end].copy_from_slice(b);
+        self.len = end;
+        Ok(())
+    }
+}
+
 fn format_fixed(value: f64, ndigit: usize, exp: i32) -> String {
+    use core::fmt::Write;
     let frac = (ndigit as i32 - 1 - exp).max(0) as usize;
-    let formatted = format!("{:.prec$}", value, prec = frac);
-    strip_trailing_zeros(&formatted)
+    let mut sb = StackStr::new();
+    if write!(sb, "{value:.frac$}").is_ok() {
+        strip_trailing_zeros(sb.as_str())
+    } else {
+        strip_trailing_zeros(&format!("{value:.frac$}"))
+    }
 }
 
 fn format_scientific(value: f64, ndigit: usize) -> String {
+    use core::fmt::Write;
     let frac = ndigit.saturating_sub(1);
-    let rust_form = format!("{:.prec$e}", value, prec = frac);
-    rust_e_to_glibc_e(&rust_form)
+    let mut sb = StackStr::new();
+    if write!(sb, "{value:.frac$e}").is_ok() {
+        rust_e_to_glibc_e(sb.as_str())
+    } else {
+        rust_e_to_glibc_e(&format!("{value:.frac$e}"))
+    }
 }
 
 /// Render `value` as printf-style `%.<ndigit>g` (significant digits +
