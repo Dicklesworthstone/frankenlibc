@@ -342,6 +342,75 @@ pub unsafe extern "C" fn fesetexceptflag(flagp: *const u16, excepts: c_int) -> c
 }
 
 // ---------------------------------------------------------------------------
+// GNU/C23 exception-flag and trap-mask extensions
+//
+// The FE_* exception constants map directly onto x87 control/status bits 0-5
+// (a SET control-word bit MASKS the exception) and onto MXCSR flag bits 0-5 /
+// mask bits 7-12. feenableexcept/fedisableexcept return the PREVIOUSLY enabled
+// (unmasked) set; fegetexcept returns the current enabled set.
+// ---------------------------------------------------------------------------
+
+/// Set the given exception flags without raising a trap. Returns 0.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fesetexcept(excepts: c_int) -> c_int {
+    let mask = (excepts as u32) & HW_ALL_EXCEPT;
+    unsafe {
+        let mut mxcsr = read_mxcsr();
+        mxcsr |= mask;
+        write_mxcsr(mxcsr);
+    }
+    0
+}
+
+/// Test which of `excepts` are set in the saved `*flagp` (fexcept_t = u16).
+/// Returns the subset (the FE_* bits), 0 if none or flagp is null.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fetestexceptflag(flagp: *const u16, excepts: c_int) -> c_int {
+    if flagp.is_null() || !tracked_object_fits(flagp) {
+        return 0;
+    }
+    let saved = unsafe { *flagp } as u32;
+    (saved & (excepts as u32) & HW_ALL_EXCEPT) as c_int
+}
+
+/// Return the set of exceptions currently enabled (unmasked) for trapping.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fegetexcept() -> c_int {
+    let cw = unsafe { read_x87_cw() } as u32;
+    (((!cw) & HW_ALL_EXCEPT)) as c_int
+}
+
+/// Enable trapping for `excepts` (clear their mask bits in the x87 CW and
+/// MXCSR). Returns the previously enabled set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn feenableexcept(excepts: c_int) -> c_int {
+    let old = unsafe { fegetexcept() };
+    let mask = (excepts as u32) & HW_ALL_EXCEPT;
+    unsafe {
+        let cw = read_x87_cw();
+        write_x87_cw(cw & !(mask as u16));
+        let mxcsr = read_mxcsr();
+        write_mxcsr(mxcsr & !(mask << 7));
+    }
+    old
+}
+
+/// Disable trapping for `excepts` (set their mask bits). Returns the previously
+/// enabled set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fedisableexcept(excepts: c_int) -> c_int {
+    let old = unsafe { fegetexcept() };
+    let mask = (excepts as u32) & HW_ALL_EXCEPT;
+    unsafe {
+        let cw = read_x87_cw();
+        write_x87_cw(cw | (mask as u16));
+        let mxcsr = read_mxcsr();
+        write_mxcsr(mxcsr | (mask << 7));
+    }
+    old
+}
+
+// ---------------------------------------------------------------------------
 // Environment save/restore
 // ---------------------------------------------------------------------------
 

@@ -6030,26 +6030,8 @@ pub static _LIB_VERSION: c_int = 0;
 // fenv extensions (glibc-specific) - delegate to host fenv
 // =========================================================================
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fedisableexcept(_excepts: c_int) -> c_int {
-    -1
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn feenableexcept(_excepts: c_int) -> c_int {
-    -1
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fegetexcept() -> c_int {
-    -1
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fesetexcept(_excepts: c_int) -> c_int {
-    -1
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fetestexceptflag(_flagp: *const c_int, _excepts: c_int) -> c_int {
-    -1
-}
+// fedisableexcept / feenableexcept / fegetexcept / fesetexcept /
+// fetestexceptflag are implemented in fenv_abi.rs (real MXCSR/x87 manipulation).
 
 #[repr(C)]
 pub struct FeMode {
