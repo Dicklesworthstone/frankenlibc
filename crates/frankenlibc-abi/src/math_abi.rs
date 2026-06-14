@@ -533,9 +533,33 @@ pub unsafe extern "C" fn erfc(x: f64) -> f64 {
 // Rounding / conversion
 // ---------------------------------------------------------------------------
 
+/// `nearbyint` rounds to integer in the CURRENT rounding mode but, unlike
+/// `rint`, must NOT raise FE_INEXACT — that suppression is the sole difference
+/// between the two. fl's kernel delegates to `libm::rint` (which honors the
+/// mode for the value but raises FE_INEXACT), so we compute the value then
+/// clear FE_INEXACT iff it was not already set before the call. Pre-existing
+/// flags and any FE_INVALID (e.g. a signaling-NaN argument) are preserved.
+/// Pinned by conformance_diff_nearbyint_flags.
+fn nearbyint_no_inexact(x: f64) -> f64 {
+    let had_inexact = unsafe { fetestexcept(FE_INEXACT_BIT) } & FE_INEXACT_BIT;
+    let r = frankenlibc_core::math::nearbyint(x);
+    if had_inexact == 0 {
+        unsafe { feclearexcept(FE_INEXACT_BIT) };
+    }
+    r
+}
+fn nearbyintf_no_inexact(x: f32) -> f32 {
+    let had_inexact = unsafe { fetestexcept(FE_INEXACT_BIT) } & FE_INEXACT_BIT;
+    let r = frankenlibc_core::math::nearbyintf(x);
+    if had_inexact == 0 {
+        unsafe { feclearexcept(FE_INEXACT_BIT) };
+    }
+    r
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nearbyint(x: f64) -> f64 {
-    unary_entry(x, 3, frankenlibc_core::math::nearbyint)
+    unary_entry(x, 3, nearbyint_no_inexact)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -693,6 +717,48 @@ pub unsafe extern "C" fn scalbln(x: f64, n: i64) -> f64 {
         set_range_errno();
     }
     out
+}
+
+#[inline]
+pub(crate) fn scalb_svid_impl(x: f64, exp: f64) -> f64 {
+    if x.is_nan() || exp.is_nan() {
+        return x * exp;
+    }
+    if !exp.is_finite() {
+        return if exp > 0.0 { x * exp } else { x / (-exp) };
+    }
+    if exp != exp.trunc() {
+        return (exp - exp) / (exp - exp);
+    }
+    let n = if exp > 65000.0 {
+        65000
+    } else if exp < -65000.0 {
+        -65000
+    } else {
+        exp as i32
+    };
+    frankenlibc_core::math::scalbn(x, n)
+}
+
+#[inline]
+pub(crate) fn scalbf_svid_impl(x: f32, exp: f32) -> f32 {
+    if x.is_nan() || exp.is_nan() {
+        return x * exp;
+    }
+    if !exp.is_finite() {
+        return if exp > 0.0 { x * exp } else { x / (-exp) };
+    }
+    if exp != exp.trunc() {
+        return (exp - exp) / (exp - exp);
+    }
+    let n = if exp > 65000.0 {
+        65000
+    } else if exp < -65000.0 {
+        -65000
+    } else {
+        exp as i32
+    };
+    frankenlibc_core::math::scalbnf(x, n)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1461,7 +1527,7 @@ pub unsafe extern "C" fn rintf(x: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nearbyintf(x: f32) -> f32 {
-    unary_entry_f32(x, 3, frankenlibc_core::math::nearbyintf)
+    unary_entry_f32(x, 3, nearbyintf_no_inexact)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3930,7 +3996,11 @@ fn roundeven_impl(x: f64) -> f64 {
     // Round up when above the halfway point, or exactly halfway with an odd
     // integer (ties to even). Integer add carries naturally into the exponent.
     let round_up = frac > half || (frac == half && (int_part & (1u64 << frac_bits)) != 0);
-    let out = if round_up { int_part + (1u64 << frac_bits) } else { int_part };
+    let out = if round_up {
+        int_part + (1u64 << frac_bits)
+    } else {
+        int_part
+    };
     f64::from_bits(out)
 }
 fn roundevenf_impl(x: f32) -> f32 {
@@ -3953,7 +4023,11 @@ fn roundevenf_impl(x: f32) -> f32 {
     let int_part = bits & !frac_mask;
     let frac = bits & frac_mask;
     let round_up = frac > half || (frac == half && (int_part & (1u32 << frac_bits)) != 0);
-    let out = if round_up { int_part + (1u32 << frac_bits) } else { int_part };
+    let out = if round_up {
+        int_part + (1u32 << frac_bits)
+    } else {
+        int_part
+    };
     f32::from_bits(out)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5730,7 +5804,7 @@ pub unsafe extern "C" fn sincosl(x: f64, s: *mut f64, c: *mut f64) {
 pub unsafe extern "C" fn scalbl(x: f64, y: f64) -> f64 {
     // Same SVID `__ieee754_scalb` semantics as `scalb`: a non-integer exponent
     // must yield NaN+FE_INVALID, not a truncated `y as i32` scale.
-    unsafe { crate::unistd_abi::scalb(x, y) }
+    scalb_svid_impl(x, y)
 }
 
 // =========================================================================
