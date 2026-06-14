@@ -48,7 +48,7 @@ fn getdate_default_fill_matches_glibc() {
     let dmsk = format!("/tmp/fl_getdate_gate_{}.txt", std::process::id());
     std::fs::write(
         &dmsk,
-        "%m/%d/%Y\n%H:%M\n%H:%M:%S\n%Y-%m-%d %H:%M:%S\n%B %d\n%A\n%m/%d\n%Y-%m-%d\n%m/%d/%Y %H:%M\n",
+        "%m/%d/%Y\n%H:%M\n%H:%M:%S\n%Y-%m-%d %H:%M:%S\n%B %d\n%A\n%m/%d\n%Y-%m-%d\n%m/%d/%Y %H:%M\n%Y\n",
     )
     .unwrap();
     unsafe { std::env::set_var("DATEMSK", &dmsk) };
@@ -59,7 +59,10 @@ fn getdate_default_fill_matches_glibc() {
         "12/25/2030",          // full date, time defaults to current
         "2030-06-15 08:00:00", // full datetime
         "23:59:58",            // time-only, future today
-        "08:15",               // time-only (h:m), sec -> 0
+        "08:15",               // time-only (h:m), sec -> 0; no hour-roll vs now
+        "2024",                // year-only -> mon/mday/time from now, year=124
+        "1999",                // year-only, past year
+        "2027",                // year-only, future year
         "January 05",          // month+day, year -> current
         "07/04",               // month+day, year -> current
         "Monday",              // weekday-only -> next occurrence

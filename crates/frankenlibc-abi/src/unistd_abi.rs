@@ -24450,7 +24450,8 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
                     // Matched. Fill unspecified fields from the current local
                     // time per POSIX/glibc rules; returns 8 on an impossible
                     // calendar date (e.g. February 30).
-                    return unsafe { getdate_apply_defaults(result) };
+                    let wday_in_template = getdate_template_has_weekday(&template);
+                    return unsafe { getdate_apply_defaults(result, wday_in_template) };
                 }
             }
         }
@@ -24505,7 +24506,33 @@ fn getdate_days_in_month(month: i32, year: i32) -> i32 {
 /// Note: `tm_isdst` and any DST-driven adjustment come from glibc's *local*
 /// mktime; frankenlibc's mktime is UTC-only (documented TZ scope), so this
 /// matches glibc exactly under TZ=UTC. See bd-2g7oyh.288.
-unsafe fn getdate_apply_defaults(result: *mut libc::tm) -> c_int {
+/// Returns true if a getdate DATEMSK template contains a weekday directive
+/// (%a/%A/%w/%u, with optional E/O modifier). getdate can no longer rely on a
+/// surviving tm_wday sentinel to detect "a weekday was specified", because
+/// strptime now (correctly, like glibc) recomputes tm_wday whenever a
+/// year/month/day field is parsed — which would otherwise make a year-only
+/// input like "2024" look like a weekday spec and reset the year to "now".
+fn getdate_template_has_weekday(template: &[u8]) -> bool {
+    let mut i = 0;
+    while i < template.len() {
+        if template[i] == b'%' {
+            let mut j = i + 1;
+            if j < template.len() && matches!(template[j], b'E' | b'O') {
+                j += 1;
+            }
+            match template.get(j) {
+                Some(b'a') | Some(b'A') | Some(b'w') | Some(b'u') => return true,
+                _ => {}
+            }
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
+unsafe fn getdate_apply_defaults(result: *mut libc::tm, weekday_in_template: bool) -> c_int {
     // Current local time.
     let now_secs = unsafe { crate::time_abi::time(std::ptr::null_mut()) };
     let mut now: libc::tm = unsafe { std::mem::zeroed() };
@@ -24528,7 +24555,11 @@ unsafe fn getdate_apply_defaults(result: *mut libc::tm) -> c_int {
     let mday_set = p_mday != 0;
     let mon_set = p_mon != -1;
     let year_set = p_year != i32::MIN;
-    let wday_set = p_wday != -1;
+    // A weekday counts as "specified" only when the template actually contained a
+    // weekday directive — NOT merely because strptime recomputed tm_wday from the
+    // parsed date (see getdate_template_has_weekday).
+    let _ = p_wday;
+    let wday_set = weekday_in_template;
 
     // Time fields.
     let any_time = sec_set || min_set || hour_set;
@@ -24560,7 +24591,6 @@ unsafe fn getdate_apply_defaults(result: *mut libc::tm) -> c_int {
         }
     }
 
-    let pure_time_only = !date_given && !wday_set && !year_set;
     if wday_set && !date_given {
         // Weekday-only: next occurrence (today if today's weekday matches).
         year = now.tm_year;
@@ -24585,8 +24615,12 @@ unsafe fn getdate_apply_defaults(result: *mut libc::tm) -> c_int {
         (*result).tm_wday = 0;
         (*result).tm_yday = 0;
 
-        // Time-only with the time already past today -> roll to tomorrow.
-        if pure_time_only && any_time && (hour, min, sec) < (now.tm_hour, now.tm_min, now.tm_sec) {
+        // Time-only with the *hour* already past today -> roll to tomorrow.
+        // glibc (time/getdate.c) advances the day iff the parsed hour is strictly
+        // before the current hour (`tp->tm_hour - tm.tm_hour < 0`); it compares at
+        // hour granularity only, NOT the full (hour,min,sec) tuple, and gates on a
+        // set hour with no month/mday/weekday given.
+        if !date_given && !wday_set && hour_set && hour < now.tm_hour {
             (*result).tm_mday += 1;
         }
 
