@@ -548,14 +548,31 @@ pub unsafe extern "C" fn llrint(x: f64) -> i64 {
     frankenlibc_core::math::llrint(x)
 }
 
+/// Convert an already-integral `f64` to `i64` with glibc's x86 `cvtsd2si`
+/// semantics: out-of-range / NaN yields the "integer indefinite" `i64::MIN`.
+/// `r` is integral (produced by [`round_exact`]), so the cast raises no
+/// FE_INEXACT, and the range guard means no out-of-range conversion is ever
+/// attempted. Used by lround/llround/lroundf/llroundf so they stay exception-
+/// free — C F.10.6.5 specifies the l*round family does NOT raise FE_INEXACT,
+/// but `frankenlibc_core::math::lround` routes through `libm::round` whose
+/// `+0.5` arithmetic spuriously raised it.
+fn integral_f64_to_i64(r: f64) -> i64 {
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if r.is_nan() || !(-TWO_POW_63..TWO_POW_63).contains(&r) {
+        i64::MIN
+    } else {
+        r as i64
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lround(x: f64) -> i64 {
-    frankenlibc_core::math::lround(x)
+    integral_f64_to_i64(round_exact(x))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llround(x: f64) -> i64 {
-    frankenlibc_core::math::llround(x)
+    integral_f64_to_i64(round_exact(x))
 }
 
 // ---------------------------------------------------------------------------
@@ -1459,12 +1476,12 @@ pub unsafe extern "C" fn llrintf(x: f32) -> i64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lroundf(x: f32) -> c_long {
-    frankenlibc_core::math::lroundf(x) as c_long
+    integral_f64_to_i64(roundf_exact(x) as f64) as c_long
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llroundf(x: f32) -> i64 {
-    frankenlibc_core::math::llroundf(x)
+    integral_f64_to_i64(roundf_exact(x) as f64)
 }
 
 // --- Float decomposition f32 ---
