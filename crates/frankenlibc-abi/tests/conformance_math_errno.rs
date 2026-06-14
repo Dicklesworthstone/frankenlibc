@@ -71,7 +71,19 @@ fn math_errno_matches_glibc() {
     chk!("sqrt(-1)", EDOM, fa::sqrt(-1.0));
     chk!("tgamma(-1)", EDOM, fa::tgamma(-1.0));
     chk!("fmod(1,0)", EDOM, fa::fmod(1.0, 0.0));
+    // fmod EDOM edges (same glibc rule as drem): inf%inf is EDOM, NaN operand is not.
+    chk!("fmod(inf,5)", EDOM, fa::fmod(f64::INFINITY, 5.0));
+    chk!("fmod(inf,inf)", EDOM, fa::fmod(f64::INFINITY, f64::INFINITY));
+    chk!("fmod(nan,0)", 0, fa::fmod(f64::NAN, 0.0));
+    chk!("fmod(inf,nan)", 0, fa::fmod(f64::INFINITY, f64::NAN));
+    chk!("fmod(5,inf)", 0, fa::fmod(5.0, f64::INFINITY));
+    chk!("fmodf(inf,inf)", EDOM, fa::fmodf(f32::INFINITY, f32::INFINITY));
+    chk!("fmodf(nan,0)", 0, fa::fmodf(f32::NAN, 0.0));
     chk!("remainder(1,0)", EDOM, fa::remainder(1.0, 0.0));
+    chk!("remainder(inf,inf)", EDOM, fa::remainder(f64::INFINITY, f64::INFINITY));
+    chk!("remainder(nan,0)", 0, fa::remainder(f64::NAN, 0.0));
+    chk!("remainderf(inf,inf)", EDOM, fa::remainderf(f32::INFINITY, f32::INFINITY));
+    chk!("remainderf(nan,0)", 0, fa::remainderf(f32::NAN, 0.0));
     chk!("pow(-2,0.5)", EDOM, fa::pow(-2.0, 0.5));
     chk!("y0(-1)", EDOM, fa::y0(-1.0));
     chk!("y1(-1)", EDOM, fa::y1(-1.0));

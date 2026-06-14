@@ -417,7 +417,9 @@ pub unsafe extern "C" fn rint(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmod(x: f64, y: f64) -> f64 {
     let out = binary_entry(x, y, 6, frankenlibc_core::math::fmod);
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+    // glibc EDOM rule: x infinite OR y zero, with neither operand NaN. The old
+    // guard missed fmod(±inf,±inf) and wrongly set EDOM for fmod(NaN, 0).
+    if !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0) {
         set_domain_errno();
     }
     out
@@ -426,7 +428,8 @@ pub unsafe extern "C" fn fmod(x: f64, y: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn remainder(x: f64, y: f64) -> f64 {
     let out = binary_entry(x, y, 6, frankenlibc_core::math::remainder);
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+    // glibc EDOM rule: x infinite OR y zero, neither operand NaN (see fmod).
+    if !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0) {
         set_domain_errno();
     }
     out
@@ -1118,7 +1121,8 @@ pub unsafe extern "C" fn truncf(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmodf(x: f32, y: f32) -> f32 {
     let out = binary_entry_f32(x, y, 6, frankenlibc_core::math::fmodf);
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+    // Same glibc EDOM rule as fmod (see fmod for the two prior-guard bugs).
+    if !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0) {
         set_domain_errno();
     }
     out
@@ -1362,7 +1366,8 @@ pub unsafe extern "C" fn fmaf(x: f32, y: f32, z: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn remainderf(x: f32, y: f32) -> f32 {
     let out = binary_entry_f32(x, y, 5, frankenlibc_core::math::remainderf);
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+    // Same glibc EDOM rule as fmod/remainder.
+    if !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0) {
         set_domain_errno();
     }
     out
