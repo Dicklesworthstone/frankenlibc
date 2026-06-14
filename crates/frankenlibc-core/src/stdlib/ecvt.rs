@@ -230,15 +230,22 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
         // no rounding (for both small and >2^53 values).
         let int_str = format!("{floor_v:.0}");
         let int_digits = int_str.len();
-        let has_fraction = abs_val != floor_v;
-        // Round at the 10^|ndigit| place (capped at the integer width). If that
-        // collapses the value to zero (e.g. fcvt(5,-1): 5 rounds to 0 at 10^1),
-        // glibc keeps the leading significant digit instead — back off one place.
-        let places = ((-ndigit) as usize).min(int_digits);
-        let mut digits = round_int_decimal(int_str.as_bytes(), places, has_fraction);
-        if digits.iter().all(|&c| c == b'0') {
-            digits = round_int_decimal(int_str.as_bytes(), int_digits - 1, has_fraction);
-        }
+        // Round at the 10^|ndigit| place, but never past int_digits-1 places: the
+        // leading significant digit always survives, so fcvt(5,-1)="5" (not 0) and
+        // fcvt(55,-2)="60" (round to 10s, not 100s). A carry may still widen the
+        // result (fcvt(9.99,-1)="10", fcvt(999,-1)="1000").
+        let places = ((-ndigit) as usize).min(int_digits - 1);
+        let digits = if places == 0 {
+            // Rounding to the UNITS place must round the fractional part too
+            // (9.99 -> "10", 7 -> "7"). `{:.0}` rounds half-to-even like glibc.
+            format!("{abs_val:.0}").into_bytes()
+        } else {
+            // Place >= 10: the fraction is below it (only an exact-half tie-break),
+            // so round the EXACT integer string — no float-division precision loss
+            // for huge magnitudes.
+            let has_fraction = abs_val != floor_v;
+            round_int_decimal(int_str.as_bytes(), places, has_fraction)
+        };
         let decpt = digits.len() as i32;
         return (digits, decpt, negative);
     }

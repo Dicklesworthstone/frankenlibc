@@ -5114,13 +5114,17 @@ pub unsafe extern "C" fn fcvt_r(
             0
         }
     };
-    let requested = ndigit.max(0).min(MAX_LEGACY_CVT_DIGITS as i32);
+    // Clamp only the HIGH side. A NEGATIVE ndigit is meaningful — core fcvt
+    // rounds the INTEGER part to the 10^|ndigit| place (fcvt_r(123456,-3)=
+    // "123000") — so it must reach core, NOT be clamped to 0 (which would skip
+    // the rounding and diverge from both fcvt and glibc; this also fixes qfcvt,
+    // which delegates here). bd-2g7oyh.101.
+    let requested = ndigit.min(MAX_LEGACY_CVT_DIGITS as i32);
     // Delegate to the corrected core fcvt: handles leading-zero
     // stripping for sub-1 magnitudes (digits="1" decpt=-3 for
-    // 0.0001234 with ndigit=4) and the rounded-to-zero case
-    // (digits="" decpt=-ndigit when |value| < 0.5e-ndigit). The
-    // previous in-place impl emitted "00001" decpt=1 and "00000"
-    // decpt=1 for those cases respectively.
+    // 0.0001234 with ndigit=4), the rounded-to-zero case (digits=""
+    // decpt=-ndigit when |value| < 0.5e-ndigit), and negative-ndigit
+    // integer rounding.
     let (digits, dp, _neg) = frankenlibc_core::stdlib::fcvt(value, requested);
     let required = fcvt_r_required_capacity(value, requested, digits.len());
     unsafe { copy_legacy_cvt_digits(buf, effective_buflen, &digits) };
