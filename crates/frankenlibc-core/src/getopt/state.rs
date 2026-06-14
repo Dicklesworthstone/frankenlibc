@@ -8,7 +8,7 @@
 //! The abi layer [`getopt`-shim](crate) marshals the global externs
 //! to/from this state across each call.
 
-use super::parse::{GetoptArgMode, getopt_arg_mode, getopt_prefers_colon};
+use super::parse::{GetoptArgMode, getopt_arg_mode, getopt_is_w_extension, getopt_prefers_colon};
 
 /// Reference to a byte within `argv`, used to encode `optarg` and
 /// the bundled-short-option scan position without raw pointers.
@@ -72,6 +72,13 @@ pub enum StepOutcome {
         code: i32,
         diagnostic: Option<GetoptDiagnostic>,
     },
+    /// A GNU `W;`-extension option (e.g. `-W foo`): the scanner consumed `arg`
+    /// (the rest of the bundle, or the next argv element) as a long-option
+    /// specification (`name` or `name=value`). The ABI layer must resolve `arg`
+    /// against its `longopts` table — `step_short` has no access to it. `optind`
+    /// has already advanced to the slot a space-separated long-option argument
+    /// would come from.
+    LongRoute { arg: ArgRef },
 }
 
 impl StepOutcome {
@@ -93,6 +100,7 @@ impl StepOutcome {
         match self {
             Self::Done => None,
             Self::Found { code, .. } => Some(code),
+            Self::LongRoute { .. } => None,
         }
     }
 }
@@ -183,6 +191,44 @@ pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> St
         b'?' as i32
     };
 
+    // GNU `W;` extension: `-W foo` is processed as the long option `--foo`. The
+    // scanner consumes the argument exactly as for a required-argument option,
+    // then hands it to the ABI layer (which owns the longopts table) via
+    // `LongRoute`. This branch is reached ONLY when the optstring actually marks
+    // `option` with a trailing `;`, so non-`W;` optstrings are unaffected.
+    if getopt_is_w_extension(optspec, option) {
+        if !at_end {
+            // Inline form `-Wfoo`: the spec is the rest of this argv element.
+            let arg = ArgRef {
+                argv_idx: nc.argv_idx,
+                byte_offset: after_pos,
+            };
+            state.optarg = Some(arg);
+            state.optind += 1;
+            state.nextchar = None;
+            return StepOutcome::LongRoute { arg };
+        }
+        // Separated form `-W foo`: the spec is the next argv element.
+        if state.optind + 1 >= argv.len() {
+            state.optopt = option;
+            state.optind += 1;
+            state.nextchar = None;
+            return StepOutcome::diagnostic(
+                missing_code,
+                GetoptDiagnostic::MissingArgument(option),
+            );
+        }
+        state.optind += 1;
+        let arg = ArgRef {
+            argv_idx: state.optind,
+            byte_offset: 0,
+        };
+        state.optarg = Some(arg);
+        state.optind += 1;
+        state.nextchar = None;
+        return StepOutcome::LongRoute { arg };
+    }
+
     match getopt_arg_mode(optspec, option) {
         None => {
             // Unknown option.
@@ -256,16 +302,26 @@ mod tests {
         let mut codes = Vec::new();
         let mut args: Vec<Option<String>> = Vec::new();
         loop {
+            let record_arg = |args: &mut Vec<Option<String>>, st: &GetoptState| {
+                args.push(st.optarg.map(|a| {
+                    let s = argv[a.argv_idx];
+                    std::str::from_utf8(&s[a.byte_offset..])
+                        .unwrap_or("")
+                        .to_string()
+                }));
+            };
             match step_short(&argv, optspec, &mut state) {
                 StepOutcome::Done => break,
                 StepOutcome::Found { code, .. } => {
                     codes.push(code);
-                    args.push(state.optarg.map(|a| {
-                        let s = argv[a.argv_idx];
-                        std::str::from_utf8(&s[a.byte_offset..])
-                            .unwrap_or("")
-                            .to_string()
-                    }));
+                    record_arg(&mut args, &state);
+                }
+                // The pure scanner emits the consumed long-option spec as the
+                // arg; long resolution happens in the ABI layer, so for unit
+                // tests we just record a sentinel code and the routed spec.
+                StepOutcome::LongRoute { .. } => {
+                    codes.push(-2);
+                    record_arg(&mut args, &state);
                 }
             }
             if codes.len() > 32 {
@@ -273,6 +329,46 @@ mod tests {
             }
         }
         (codes, state, args)
+    }
+
+    #[test]
+    fn w_extension_separated_routes_next_arg() {
+        // "-W foo x" with "W;ab:": scanner consumes "foo" as the long spec and
+        // leaves optind at the slot a space-separated long arg would come from.
+        let argv: Vec<&[u8]> = ["prog", "-W", "foo", "x"].iter().map(|s| s.as_bytes()).collect();
+        let mut state = GetoptState::default();
+        match step_short(&argv, b"W;ab:", &mut state) {
+            StepOutcome::LongRoute { arg } => {
+                assert_eq!(&argv[arg.argv_idx][arg.byte_offset..], b"foo");
+                assert_eq!(state.optind, 3); // points at "x"
+            }
+            other => panic!("expected LongRoute, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn w_extension_inline_routes_rest_of_bundle() {
+        // "-Wfoo=q" with "W;ab:": spec is the rest of the element ("foo=q").
+        let argv: Vec<&[u8]> = ["prog", "-Wfoo=q"].iter().map(|s| s.as_bytes()).collect();
+        let mut state = GetoptState::default();
+        match step_short(&argv, b"W;ab:", &mut state) {
+            StepOutcome::LongRoute { arg } => {
+                assert_eq!(&argv[arg.argv_idx][arg.byte_offset..], b"foo=q");
+                assert_eq!(state.optind, 2); // past the -W element
+            }
+            other => panic!("expected LongRoute, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn w_extension_missing_arg_reports_error() {
+        // "-W" at end with leading ':' optspec -> ':' missing-arg.
+        let argv: Vec<&[u8]> = ["prog", "-W"].iter().map(|s| s.as_bytes()).collect();
+        let mut state = GetoptState::default();
+        match step_short(&argv, b":W;ab", &mut state) {
+            StepOutcome::Found { code, .. } => assert_eq!(code, b':' as i32),
+            other => panic!("expected missing-arg ':', got {other:?}"),
+        }
     }
 
     #[test]

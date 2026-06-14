@@ -199,9 +199,17 @@ fn run(
         } else {
             Some(unsafe { CStr::from_ptr(oa) }.to_string_lossy().into_owned())
         };
+        // POSIX defines `optopt` only after a '?' or ':' return; on a successful
+        // option it is unspecified (glibc leaves internal scratch state there,
+        // e.g. after a `-W`-routed long option), so normalize it out otherwise.
+        let optopt_significant = r == b'?' as c_int || r == b':' as c_int;
         steps.push(Step {
             ret: r,
-            optopt: unsafe { optopt },
+            optopt: if optopt_significant {
+                unsafe { optopt }
+            } else {
+                0
+            },
             optind: unsafe { optind },
             longindex,
             optarg: optarg_s,
@@ -266,6 +274,41 @@ fn getopt_long_abbreviation_matches_glibc() {
         ("", vec![("verbose", no, b'v')], vec!["--zzz"]),
         // Abbreviation alongside a short option.
         ("a", vec![("verbose", no, b'v')], vec!["-a", "--verb"]),
+        // --- GNU `W;` extension: `-W foo` is processed as `--foo`. ---
+        // Separated form, required-arg long takes the following argv.
+        ("W;", vec![("file", req, b'f')], vec!["-W", "file", "data"]),
+        // Inline `-Wname=value`.
+        ("W;", vec![("file", req, b'f')], vec!["-Wfile=q"]),
+        // Separated form, no-argument long option.
+        ("W;", vec![("verbose", no, b'v')], vec!["-W", "verbose"]),
+        // Abbreviation through `-W`.
+        ("W;", vec![("verbose", no, b'v')], vec!["-W", "verb"]),
+        // Unknown long via `-W` -> '?'.
+        ("W;", vec![("verbose", no, b'v')], vec!["-W", "zzz"]),
+        // Required-arg long via `-W` with no argument available -> '?'.
+        ("W;", vec![("file", req, b'f')], vec!["-W", "file"]),
+        // Leading ':' makes the missing W-routed required arg report ':'.
+        (":W;", vec![("file", req, b'f')], vec!["-W", "file"]),
+        // Ambiguous abbreviation through `-W` -> '?'.
+        (
+            "W;",
+            vec![("verbose", no, b'v'), ("version", no, b's')],
+            vec!["-W", "ver"],
+        ),
+        // `-W` alongside an ordinary short option.
+        (
+            "W;a",
+            vec![("file", req, b'f')],
+            vec!["-a", "-W", "file", "x"],
+        ),
+        // `-aW foo` — `-W` mid-bundle after a short option.
+        (
+            "W;a",
+            vec![("verbose", no, b'v')],
+            vec!["-aW", "verbose"],
+        ),
+        // `--name=value` on a no-arg long routed via `-W` -> '?'.
+        ("W;", vec![("verbose", no, b'v')], vec!["-Wverbose=x"]),
     ];
 
     for (i, (optstr, longs, argv)) in cases.iter().enumerate() {

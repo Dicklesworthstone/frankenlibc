@@ -2924,6 +2924,11 @@ unsafe fn getopt_internal(
             );
             code
         }
+        // GNU `W;` extension: `-W foo` -> resolve `foo` as the long option
+        // `--foo` against the caller's longopts table.
+        StepOutcome::LongRoute { arg } => unsafe {
+            getopt_route_w_long(arg, argc, argv, &argv_bytes, effective, longopts, longindex)
+        },
     }
 }
 
@@ -3109,6 +3114,170 @@ unsafe fn getopt_try_long(
         GETOPT_NEXTCHAR = None;
     }
     Some(b'?' as c_int)
+}
+
+/// Resolve a GNU `W;`-extension routed long option.
+///
+/// `step_short` returned [`StepOutcome::LongRoute`]: it consumed `-W`'s argument
+/// (`arg`, a `name` or `name=value` spec) and left `libc_optind` pointing at the
+/// slot a space-separated long-option argument would come from. This resolves
+/// `arg` against `longopts` with the SAME semantics as [`getopt_try_long`]
+/// (exact match wins, then unambiguous prefix; required arg comes inline after
+/// `=` or from the next argv slot; missing arg yields `:`/`?`). It is a separate
+/// function rather than a shared helper because the two paths use a different
+/// `optind` convention: here the routed spec is already consumed, so a
+/// space-separated argument comes from `libc_optind` itself, not `+ 1`.
+unsafe fn getopt_route_w_long(
+    arg: ArgRef,
+    argc: c_int,
+    argv: *const *mut c_char,
+    argv_bytes: &[Vec<u8>],
+    optspec: &[u8],
+    longopts: *const libc::option,
+    longindex: *mut c_int,
+) -> c_int {
+    let missing_code = if getopt_core::getopt_prefers_colon(optspec) {
+        b':' as c_int
+    } else {
+        b'?' as c_int
+    };
+    // `space_arg_idx` is where a space-separated long argument is taken from;
+    // `step_short` already advanced libc_optind to exactly that slot.
+    let space_arg_idx = unsafe { libc_optind };
+
+    // Helper: finalize an error/no-match return, leaving optind put.
+    let reject = || {
+        unsafe {
+            libc_optarg = std::ptr::null_mut();
+            libc_optopt = 0;
+            libc_optind = space_arg_idx;
+            GETOPT_NEXTCHAR = None;
+        }
+        b'?' as c_int
+    };
+
+    let Some(spec) = argv_bytes
+        .get(arg.argv_idx)
+        .and_then(|e| e.get(arg.byte_offset..))
+    else {
+        return reject();
+    };
+    let split_idx = spec.iter().position(|&b| b == b'=').unwrap_or(spec.len());
+    let name = &spec[..split_idx];
+    let inline_value = if split_idx < spec.len() {
+        let base = unsafe { *argv.add(arg.argv_idx) };
+        if base.is_null() {
+            std::ptr::null()
+        } else {
+            unsafe { base.add(arg.byte_offset + split_idx + 1) }
+        }
+    } else {
+        std::ptr::null()
+    };
+
+    if longopts.is_null() || name.is_empty() {
+        return reject();
+    }
+
+    // Resolve: exact match wins; otherwise unambiguous-prefix abbreviation, with
+    // glibc's "same (has_arg, flag, val) collapses to one option" rule.
+    let mut exact: Option<usize> = None;
+    let mut prefix_hits: Vec<usize> = Vec::new();
+    let mut scan = 0usize;
+    loop {
+        let opt_ptr = unsafe { longopts.add(scan) };
+        let long_name = unsafe { (*opt_ptr).name };
+        if long_name.is_null() {
+            break;
+        }
+        let Some(candidate) = (unsafe { read_c_string_bytes(long_name) }) else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        };
+        if candidate.as_slice() == name {
+            exact = Some(scan);
+            break;
+        }
+        if candidate.len() > name.len() && candidate.starts_with(name) {
+            prefix_hits.push(scan);
+        }
+        scan += 1;
+    }
+    let matched_idx = if let Some(e) = exact {
+        e
+    } else if prefix_hits.len() == 1 {
+        prefix_hits[0]
+    } else if prefix_hits.len() > 1 {
+        let first = unsafe { *longopts.add(prefix_hits[0]) };
+        let all_same = prefix_hits.iter().all(|&i| {
+            let o = unsafe { *longopts.add(i) };
+            o.has_arg == first.has_arg && o.flag == first.flag && o.val == first.val
+        });
+        if all_same {
+            prefix_hits[0]
+        } else {
+            return reject(); // ambiguous abbreviation
+        }
+    } else {
+        return reject(); // unknown long option
+    };
+
+    let opt_ptr = unsafe { longopts.add(matched_idx) };
+    unsafe {
+        libc_optarg = std::ptr::null_mut();
+        libc_optopt = 0;
+        GETOPT_NEXTCHAR = None;
+    }
+    let mut final_idx = space_arg_idx;
+    match unsafe { (*opt_ptr).has_arg } {
+        0 if !inline_value.is_null() && unsafe { *inline_value != 0 } => {
+            // `--name=value` on a no-argument option -> '?'.
+            unsafe {
+                libc_optopt = (*opt_ptr).val;
+                libc_optind = final_idx;
+            }
+            return b'?' as c_int;
+        }
+        1 => {
+            if !inline_value.is_null() && unsafe { *inline_value != 0 } {
+                unsafe { libc_optarg = inline_value as *mut c_char };
+            } else {
+                if space_arg_idx >= argc {
+                    unsafe {
+                        libc_optopt = (*opt_ptr).val;
+                        libc_optind = final_idx;
+                    }
+                    return missing_code;
+                }
+                let value = unsafe { *argv.add(space_arg_idx as usize) };
+                if value.is_null() {
+                    unsafe {
+                        libc_optopt = (*opt_ptr).val;
+                        libc_optind = final_idx;
+                    }
+                    return missing_code;
+                }
+                unsafe { libc_optarg = value };
+                final_idx += 1;
+            }
+        }
+        2 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
+            libc_optarg = inline_value as *mut c_char;
+        },
+        _ => {}
+    }
+    unsafe { libc_optind = final_idx };
+    // glibc only assigns *longindex on a successful match (the missing-argument
+    // error paths above leave the caller's value, conventionally -1, untouched).
+    if !longindex.is_null() {
+        unsafe { *longindex = matched_idx as c_int };
+    }
+    let flag_ptr = unsafe { (*opt_ptr).flag };
+    if !flag_ptr.is_null() {
+        unsafe { *flag_ptr = (*opt_ptr).val };
+        return 0;
+    }
+    unsafe { (*opt_ptr).val }
 }
 
 /// POSIX `getopt` — parse command-line options.

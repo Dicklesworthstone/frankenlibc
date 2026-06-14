@@ -52,9 +52,41 @@ pub fn getopt_arg_mode(optspec: &[u8], option: u8) -> Option<GetoptArgMode> {
     None
 }
 
+/// Returns `true` when `option` appears in `optspec` immediately followed by
+/// `;` — the GNU `W;` extension marker. When set, `-option ARG` / `-optionARG`
+/// is processed as the long option `--ARG` (the canonical spelling is `W;`).
+///
+/// Mirrors [`getopt_arg_mode`]'s first-occurrence, `:`-skipping scan so the two
+/// agree on which optspec byte a given option character refers to.
+#[inline]
+pub fn getopt_is_w_extension(optspec: &[u8], option: u8) -> bool {
+    for (idx, &byte) in optspec.iter().enumerate() {
+        if byte == b':' {
+            continue;
+        }
+        if byte != option {
+            continue;
+        }
+        return optspec.get(idx + 1).copied() == Some(b';');
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn w_extension_detected_only_with_trailing_semicolon() {
+        assert!(getopt_is_w_extension(b"W;ab:", b'W'));
+        assert!(getopt_is_w_extension(b"ab:W;c", b'W'));
+        assert!(!getopt_is_w_extension(b"W;ab:", b'a'));
+        assert!(!getopt_is_w_extension(b"Wab:", b'W')); // no ';'
+        assert!(!getopt_is_w_extension(b"W:ab", b'W')); // ':' not ';'
+        assert!(!getopt_is_w_extension(b"abc", b'W')); // absent
+        // Any character may carry the marker, not just 'W'.
+        assert!(getopt_is_w_extension(b"X;ab", b'X'));
+    }
 
     #[test]
     fn prefers_colon_when_optspec_starts_with_colon() {
