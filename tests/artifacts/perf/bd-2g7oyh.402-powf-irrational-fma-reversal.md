@@ -1,4 +1,14 @@
-# bd-2g7oyh.402 - powf_irrational FMA reversal keep
+# bd-2g7oyh.402 - powf_irrational FMA reversal superseded
+
+## Superseded Verdict
+
+This artifact is retained for audit history, but its `KEPT` verdict is
+superseded by `tests/artifacts/perf/bd-2g7oyh.402-powf-defused-fma-rejected.md`.
+A fresh same-worker rerun on current head (`6fdeee859`, RCH `vmi1153651`) found
+the same source hunk proof-clean but slower: FrankenLibC p50/mean regressed
+from `1017.959/1051.790 ns` to `1101.726/1136.004 ns`. The source was restored
+to the accepted `f64::mul_add` Estrin evaluator, and `bd-2g7oyh.402` was closed
+as rejected.
 
 ## Target
 
