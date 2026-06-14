@@ -3691,6 +3691,9 @@ fn pathconf_value(name: c_int) -> Option<libc::c_long> {
         libc::_PC_CHOWN_RESTRICTED => Some(1),
         libc::_PC_NO_TRUNC => Some(1),
         libc::_PC_VDISABLE => Some(0),
+        // POSIX requires the FS to support symlinks ("/" -> ".." etc.); glibc
+        // returns 1 on Linux. This used to fall through to the EINVAL default.
+        libc::_PC_2_SYMLINKS => Some(1),
         _ => None,
     }
 }
@@ -3795,6 +3798,21 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
     if name == libc::_PC_LINK_MAX {
         let v = unsafe { pc_link_max_for_path(path) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return v;
+    }
+
+    // glibc reports these record/allocation limits as the filesystem block size
+    // (statvfs f_bsize). fl previously returned -1 (EINVAL) for them.
+    if matches!(
+        name,
+        libc::_PC_REC_MIN_XFER_SIZE | libc::_PC_REC_XFER_ALIGN | libc::_PC_ALLOC_SIZE_MIN
+    ) {
+        let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
+        let v = match unsafe { syscall::sys_statfs(path as *const u8, fs.as_mut_ptr()) } {
+            Ok(()) => unsafe { fs.assume_init() }.f_bsize as libc::c_long,
+            Err(_) => -1,
+        };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
         return v;
     }
     let out = match pathconf_value(name) {
