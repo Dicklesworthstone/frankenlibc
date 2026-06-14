@@ -183,18 +183,28 @@ fn sscanf_differential_fuzz_vs_glibc() {
     let mut divs: Vec<String> = Vec::new();
     let mut compared: u64 = 0;
 
+    // C23 added the `0b`/`0B` binary prefix to base-0 integer parsing; glibc
+    // adopted it in 2.38, and fl implements it. Detect at runtime whether the
+    // linked host glibc honors it: if so, fl and host agree and `%i`+`0b` inputs
+    // are actively gated below; on an older host that parses "0b1" as octal 0,
+    // they are excluded (the documented fl-extension parity decision,
+    // bd-2g7oyh.403's sibling bd-2g7oyh.203).
+    let host_supports_0b = {
+        let probe = CString::new("0b1").unwrap();
+        let fmt = CString::new("%i%n").unwrap();
+        render(false, Kind::Int, &probe, &fmt) == render(true, Kind::Int, &probe, &fmt)
+    };
+
     for _ in 0..6000 {
         let input = gen_input(&mut r);
         let Ok(cs) = CString::new(input.as_str()) else {
             continue;
         };
         for &(fmt, kind) in FORMATS {
-            // fl deliberately implements the C23 `0b` binary prefix in `%i`
-            // (pinned by core scanf unit tests); the host glibc on the worker
-            // predates that and parses "0b5" as octal 0 then stops at 'b'. That
-            // is a documented fl-extension-vs-host parity decision
-            // (bd-2g7oyh.203), not a defect — exclude those inputs for `%i`.
-            if fmt == "%i%n" && input.to_ascii_lowercase().contains("0b") {
+            // fl implements the C23 `0b` binary prefix in `%i`. Only exclude
+            // these inputs when the linked host glibc is too old to honor it
+            // (pre-2.38); on a modern host fl and glibc agree and this is gated.
+            if fmt == "%i%n" && !host_supports_0b && input.to_ascii_lowercase().contains("0b") {
                 continue;
             }
             let cf = CString::new(fmt).unwrap();
