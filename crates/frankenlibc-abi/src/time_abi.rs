@@ -1145,6 +1145,11 @@ pub unsafe extern "C" fn strptime(
     let mut fi = 0usize; // position in format
     let mut century: Option<i32> = None;
     let mut is_pm: Option<bool> = None;
+    // glibc applies the AM/PM 12-hour adjustment ONLY when the hour was parsed
+    // from a 12-hour clock spec (%I/%l). With %H (24-hour) or no hour at all, a
+    // stray %p is recorded but never alters tm_hour. Tracking this avoids
+    // mangling e.g. strptime("13 PM","%H %p") (stays 13) or "%p" alone (stays 0).
+    let mut have_12h = false;
     // glibc derives the calendar date (tm_mon/tm_mday) from a parsed day-of-year
     // (%j) at end-of-parse when no explicit month/day was given. Track which were
     // seen so we can mirror that (bd-2g7oyh.257).
@@ -1312,6 +1317,7 @@ pub unsafe extern "C" fn strptime(
                             return std::ptr::null_mut();
                         }
                         unsafe { (*tm).tm_hour = val % 12 };
+                        have_12h = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -1773,8 +1779,13 @@ pub unsafe extern "C" fn strptime(
         unsafe { (*tm).tm_year = c * 100 + year_in_century - 1900 };
     }
 
-    // Post-processing: apply AM/PM
-    if let Some(pm) = is_pm
+    // Post-processing: apply AM/PM, but only for a 12-hour (%I) hour. The %I
+    // handler already stored `val % 12`, so 12 AM -> 0 and 12 PM -> 0 before this
+    // step; adding 12 for PM then yields the right 24-hour value, while AM needs
+    // no change. A %p paired with %H, or standing alone, must not touch tm_hour
+    // (glibc parity).
+    if have_12h
+        && let Some(pm) = is_pm
         && pm
     {
         let h = unsafe { (*tm).tm_hour };
@@ -1857,11 +1868,13 @@ pub unsafe extern "C" fn strptime(
 
     // End-of-parse: glibc sets `want_xday` — and so recomputes the day-of-week
     // and day-of-year from the broken-down date — whenever a YEAR (%Y/%y/%C),
-    // MONTH (%m/%b/%B/%h), DAY (%d/%e) or DAY-OF-YEAR (%j) field was parsed (or a
-    // date was derived above). A weekday alone (%a/%A/%w/%u), an ISO field alone
-    // (%V/%G/%g) or time-only does NOT trigger it. An explicitly parsed weekday
-    // or %j is kept as given, not recomputed. (Was a gap: fl set neither field.)
-    if have_year || have_mon || have_mday || have_yday || date_determinate {
+    // MONTH (%m/%b/%B/%h) or DAY (%d/%e) field was parsed, or a calendar date was
+    // derived above (from %Y+%j or %Y+%U/%W+weekday). A weekday alone
+    // (%a/%A/%w/%u), an ISO field alone (%V/%G/%g), a bare day-of-year (%j with
+    // no year) or time-only does NOT trigger it: glibc leaves tm_wday/tm_yday
+    // untouched for `strptime("166","%j")`. An explicitly parsed weekday or %j is
+    // kept as given, not recomputed.
+    if have_year || have_mon || have_mday || date_determinate {
         let (y, mon, mday) = unsafe {
             (
                 (*tm).tm_year as i64,
