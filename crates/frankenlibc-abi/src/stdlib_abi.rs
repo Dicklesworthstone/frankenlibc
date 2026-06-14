@@ -3144,21 +3144,30 @@ pub unsafe extern "C" fn l64a(value: c_long) -> *mut c_char {
     // Static buffer for returned string (matching glibc's static buffer).
     static mut BUF: [u8; 8] = [0; 8];
 
+    // SVID base-64 alphabet (index 0='.', 1='/', 2-11='0'-'9', 12-37='A'-'Z',
+    // 38-63='a'-'z'), matching frankenlibc_core::stdlib::base64.
+    const ALPHABET: &[u8; 64] =
+        b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
-        unsafe {
-            let p = std::ptr::addr_of_mut!(BUF);
-            (*p)[0] = 0;
-            return p as *mut u8 as *mut c_char;
-        }
-    }
-    let encoded = frankenlibc_core::stdlib::l64a(value);
     unsafe {
         let p = std::ptr::addr_of_mut!(BUF);
         let buf = &mut *p;
-        let len = encoded.len().min(7);
-        buf[..len].copy_from_slice(&encoded[..len]);
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+            buf[0] = 0;
+            return p as *mut u8 as *mut c_char;
+        }
+        // Encode the low 32 bits as base-64 directly into the static buffer,
+        // byte-identical to the old `core::l64a` -> Vec -> copy path but without
+        // the per-call heap allocation (glibc uses a static buffer, no alloc).
+        let mut v = (value as u32) as u64;
+        let mut len = 0usize;
+        while v != 0 && len < 6 {
+            buf[len] = ALPHABET[(v & 0x3F) as usize];
+            v >>= 6;
+            len += 1;
+        }
         buf[len] = 0;
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
         p as *mut u8 as *mut c_char
