@@ -25948,14 +25948,56 @@ pub unsafe extern "C" fn isnan(x: f64) -> c_int {
     if x.is_nan() { 1 } else { 0 }
 }
 
+/// Obsolete SVID `scalb(x, fn)` — like `scalbn` but the binary exponent is a
+/// floating value. Replicates glibc's `__ieee754_scalb` exactly: a NON-INTEGER
+/// exponent yields NaN + FE_INVALID (the naive `x * 2^exp` returned a bogus
+/// finite value, e.g. `scalb(3, 2.5)` -> 16.97 instead of NaN, and
+/// `scalb(0, 2.5)` -> 0 instead of NaN), and an infinite exponent uses the
+/// `x*fn` / `x/(-fn)` forms so e.g. `scalb(inf, -inf)` -> NaN+INVALID.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalb(x: f64, exp: f64) -> f64 {
-    x * (2.0f64).powf(exp)
+    if x.is_nan() || exp.is_nan() {
+        return x * exp;
+    }
+    if !exp.is_finite() {
+        // exp is ±inf: x*inf for +inf (0*inf -> NaN+INVALID), x/inf for -inf.
+        return if exp > 0.0 { x * exp } else { x / (-exp) };
+    }
+    // Non-integer exponent -> NaN + FE_INVALID, raised by 0/0 like glibc.
+    if exp != exp.trunc() {
+        return (exp - exp) / (exp - exp);
+    }
+    // Clamp the magnitude to glibc's ±65000 guard before the i32 cast.
+    let n = if exp > 65000.0 {
+        65000
+    } else if exp < -65000.0 {
+        -65000
+    } else {
+        exp as i32
+    };
+    frankenlibc_core::math::scalbn(x, n)
 }
 
+/// `scalbf` — single-precision SVID `scalb`. Same `__ieee754_scalbf` semantics.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbf(x: f32, exp: f32) -> f32 {
-    x * (2.0f32).powf(exp)
+    if x.is_nan() || exp.is_nan() {
+        return x * exp;
+    }
+    if !exp.is_finite() {
+        return if exp > 0.0 { x * exp } else { x / (-exp) };
+    }
+    if exp != exp.trunc() {
+        return (exp - exp) / (exp - exp);
+    }
+    let n = if exp > 65000.0 {
+        65000
+    } else if exp < -65000.0 {
+        -65000
+    } else {
+        exp as i32
+    };
+    frankenlibc_core::math::scalbnf(x, n)
 }
 
 // ===========================================================================

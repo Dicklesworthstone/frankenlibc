@@ -5536,7 +5536,9 @@ pub unsafe extern "C" fn sincosl(x: f64, s: *mut f64, c: *mut f64) {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbl(x: f64, y: f64) -> f64 {
-    frankenlibc_core::math::scalbn(x, y as i32)
+    // Same SVID `__ieee754_scalb` semantics as `scalb`: a non-integer exponent
+    // must yield NaN+FE_INVALID, not a truncated `y as i32` scale.
+    unsafe { crate::unistd_abi::scalb(x, y) }
 }
 
 // =========================================================================
