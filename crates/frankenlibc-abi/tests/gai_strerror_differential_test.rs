@@ -15,7 +15,12 @@ unsafe extern "C" {
 #[test]
 fn gai_strerror_matches_glibc() {
     let mut fails = Vec::new();
-    for code in -20..=5 {
+    // -20..=5 covers the standard EAI_* codes and the unknown fallback;
+    // -110..=-95 covers the GNU getaddrinfo_a / IDN extensions
+    // (EAI_INPROGRESS=-100 .. EAI_IDN_ENCODE=-105), which the original range
+    // missed.
+    let codes = (-20..=5).chain(-110..=-95);
+    for code in codes {
         let f = unsafe { CStr::from_ptr(fl::gai_strerror(code)) }
             .to_string_lossy()
             .into_owned();

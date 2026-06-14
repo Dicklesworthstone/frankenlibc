@@ -2117,6 +2117,15 @@ pub unsafe extern "C" fn gai_strerror(errcode: c_int) -> *const c_char {
         "Memory allocation failure" => c"Memory allocation failure".as_ptr(),
         "System error" => c"System error".as_ptr(),
         "Result too large for supplied buffer" => c"Result too large for supplied buffer".as_ptr(),
+        // GNU extensions (getaddrinfo_a / IDN).
+        "Processing request in progress" => c"Processing request in progress".as_ptr(),
+        "Request canceled" => c"Request canceled".as_ptr(),
+        "Request not canceled" => c"Request not canceled".as_ptr(),
+        "All requests done" => c"All requests done".as_ptr(),
+        "Interrupted by a signal" => c"Interrupted by a signal".as_ptr(),
+        "Parameter string not correctly encoded" => {
+            c"Parameter string not correctly encoded".as_ptr()
+        }
         _ => c"Unknown error".as_ptr(),
     }
 }

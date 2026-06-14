@@ -25,6 +25,15 @@ pub const EAI_MEMORY: i32 = -10;
 pub const EAI_SYSTEM: i32 = -11;
 pub const EAI_OVERFLOW: i32 = -12;
 
+// GNU extensions used by the asynchronous `getaddrinfo_a` family and the IDN
+// conversion path. glibc's `gai_strerror` has dedicated messages for these.
+pub const EAI_INPROGRESS: i32 = -100;
+pub const EAI_CANCELED: i32 = -101;
+pub const EAI_NOTCANCELED: i32 = -102;
+pub const EAI_ALLDONE: i32 = -103;
+pub const EAI_INTR: i32 = -104;
+pub const EAI_IDN_ENCODE: i32 = -105;
+
 /// Canonical glibc message for a `getaddrinfo` error code.
 ///
 /// Returns `"Success"` for `0`, the matching message for each known
@@ -45,6 +54,13 @@ pub fn gai_strerror_text(errcode: i32) -> &'static str {
         EAI_MEMORY => "Memory allocation failure",
         EAI_SYSTEM => "System error",
         EAI_OVERFLOW => "Result too large for supplied buffer",
+        // GNU extensions (getaddrinfo_a / IDN).
+        EAI_INPROGRESS => "Processing request in progress",
+        EAI_CANCELED => "Request canceled",
+        EAI_NOTCANCELED => "Request not canceled",
+        EAI_ALLDONE => "All requests done",
+        EAI_INTR => "Interrupted by a signal",
+        EAI_IDN_ENCODE => "Parameter string not correctly encoded",
         _ => "Unknown error",
     }
 }
