@@ -1965,10 +1965,7 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
     // parser reports the result exact. (bd-2g7oyh.187, CONFORMANCE: numeric diff)
     if consumed > 0 {
         let consumed_bytes = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), consumed) };
-        let overflowed = val.is_infinite() && !contains_inf_literal(consumed_bytes);
-        let exact_subnormal = exact && val != 0.0 && val.abs() < f64::MIN_POSITIVE;
-        let underflowed = !exact_subnormal && finite_float_underflowed_f64(val, consumed_bytes);
-        if overflowed || underflowed {
+        if strtod_result_is_erange(val, consumed_bytes, exact) {
             unsafe { set_abi_errno(libc::ERANGE) };
         }
     }
@@ -2006,6 +2003,28 @@ fn finite_float_underflowed_f32(value: f32, consumed: &[u8]) -> bool {
     value.is_finite()
         && value.abs() < f32::MIN_POSITIVE
         && contains_nonzero_significand_digit(consumed)
+}
+
+/// Whether a parsed `f64` strtod/wcstod result must raise `ERANGE`: overflow to
+/// ±inf without a literal `inf` in the consumed text, or an inexact underflow
+/// (an exactly-representable subnormal does NOT count — glibc only flags inexact
+/// underflow). `exact` is `strtod_impl`'s exactness flag. Shared by strtod and
+/// wcstod so the narrow and wide parsers agree (glibc 2.38+ raises ERANGE on the
+/// wide path too — it previously suppressed it, a divergence fl used to mirror).
+pub(crate) fn strtod_result_is_erange(value: f64, consumed: &[u8], exact: bool) -> bool {
+    let overflowed = value.is_infinite() && !contains_inf_literal(consumed);
+    let exact_subnormal = exact && value != 0.0 && value.abs() < f64::MIN_POSITIVE;
+    let underflowed = !exact_subnormal && finite_float_underflowed_f64(value, consumed);
+    overflowed || underflowed
+}
+
+/// `f32` counterpart of [`strtod_result_is_erange`] for strtof/wcstof.
+/// `exact_subnormal` is `strtof_impl`'s flag (true when the result is an exactly
+/// representable subnormal, which is not an underflow).
+pub(crate) fn strtof_result_is_erange(value: f32, consumed: &[u8], exact_subnormal: bool) -> bool {
+    let overflowed = value.is_infinite() && !contains_inf_literal(consumed);
+    let underflowed = !exact_subnormal && finite_float_underflowed_f32(value, consumed);
+    overflowed || underflowed
 }
 
 /// Whether the consumed prefix has a non-zero significand digit.
@@ -2091,9 +2110,7 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
     // (bd-2g7oyh.187)
     if consumed > 0 {
         let consumed_bytes = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), consumed) };
-        let overflowed = value.is_infinite() && !contains_inf_literal(consumed_bytes);
-        let underflowed = !exact_subnormal && finite_float_underflowed_f32(value, consumed_bytes);
-        if overflowed || underflowed {
+        if strtof_result_is_erange(value, consumed_bytes, exact_subnormal) {
             unsafe { set_abi_errno(libc::ERANGE) };
         }
     }

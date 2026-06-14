@@ -2653,11 +2653,21 @@ pub unsafe extern "C" fn wcstod(
     // SAFETY: bounded by measured wide-string length.
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
     let projected = project_wide_ascii(slice);
-    let (value, consumed, _) = frankenlibc_core::stdlib::conversion::strtod_impl(&projected);
+    let (value, consumed, exact) = frankenlibc_core::stdlib::conversion::strtod_impl(&projected);
 
     if !endptr.is_null() {
         // SAFETY: consumed is bounded by projected input length.
         unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed.min(len)) };
+    }
+
+    // glibc 2.38+ raises ERANGE on wide float over/underflow (previously only the
+    // narrow strtod did; fl used to mirror that asymmetry). Match the current
+    // host: apply the same ERANGE rule strtod uses, over the consumed prefix.
+    if consumed > 0 {
+        let consumed_ascii = &projected[..consumed.min(projected.len())];
+        if crate::stdlib_abi::strtod_result_is_erange(value, consumed_ascii, exact) {
+            unsafe { set_abi_errno(libc::ERANGE) };
+        }
     }
 
     value
@@ -3624,11 +3634,20 @@ pub unsafe extern "C" fn wcstof(
     // SAFETY: bounded by measured wide-string length.
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
     let projected = project_wide_ascii(slice);
-    let (value, consumed, _) = frankenlibc_core::stdlib::conversion::strtof_impl(&projected);
+    let (value, consumed, exact_subnormal) =
+        frankenlibc_core::stdlib::conversion::strtof_impl(&projected);
 
     if !endptr.is_null() {
         // SAFETY: consumed is bounded by projected input length.
         unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed.min(len)) };
+    }
+
+    // glibc 2.38+ raises ERANGE on wide float over/underflow (see wcstod).
+    if consumed > 0 {
+        let consumed_ascii = &projected[..consumed.min(projected.len())];
+        if crate::stdlib_abi::strtof_result_is_erange(value, consumed_ascii, exact_subnormal) {
+            unsafe { set_abi_errno(libc::ERANGE) };
+        }
     }
 
     value
