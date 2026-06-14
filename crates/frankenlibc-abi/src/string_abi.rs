@@ -1232,6 +1232,29 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
     let p2 = s2.cast::<u8>();
     let mut i = 0usize;
     loop {
+        // Wide 32-byte portable-SIMD fast path: skip whole equal, NUL-free panels
+        // at AVX width (glibc's strcmp/strncmp step 16-32 bytes; the 8-byte SWAR
+        // below was the bottleneck — strncmp was ~1.5x slower). A flagged panel
+        // falls through to the SWAR/scalar tail, which resolves the exact first
+        // differing-or-NUL index, so the returned (index, hit_limit) is unchanged.
+        if i + 32 <= bound
+            && (p1 as usize + i) & 0xFFF <= 0x1000 - 32
+            && (p2 as usize + i) & 0xFFF <= 0x1000 - 32
+        {
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            // SAFETY: both 32-byte reads stay within their mapped pages and bound.
+            let va =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p1.add(i), 32) });
+            let vb =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p2.add(i), 32) });
+            let flagged = va.simd_ne(vb) | va.simd_eq(Simd::splat(0));
+            if !flagged.any() {
+                i += 32;
+                continue;
+            }
+            // Flagged panel: resolve exactly via the narrower paths below.
+        }
         if i + 8 <= bound
             && wide_read_within_page(p1 as usize + i)
             && wide_read_within_page(p2 as usize + i)
