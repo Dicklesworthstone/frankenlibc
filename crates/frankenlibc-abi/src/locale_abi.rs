@@ -271,6 +271,17 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
         libc::YESEXPR => b"^[yY]\0",
         libc::NOEXPR => b"^[nN]\0",
         libc::CRNCYSTR => b"-\0", // glibc C locale: "-" (currency precedes, no sign)
+        // Char-valued LC_MONETARY items. In the C locale glibc returns a pointer
+        // to a single CHAR_MAX byte (0xFF) meaning "unspecified" — mirroring the
+        // matching `char` fields of `struct lconv`. fl previously fell through to
+        // EMPTY_LOCALE_STR, so a caller read 0 (e.g. "0 fractional digits")
+        // instead of the unspecified sentinel.
+        // The `libc` crate does not export these nl_item constants. Their codes
+        // are eight consecutive LC_MONETARY items _NL_ITEM(__LC_MONETARY, 7..=14):
+        //   INT_FRAC_DIGITS=262151, FRAC_DIGITS=262152, P_CS_PRECEDES=262153,
+        //   P_SEP_BY_SPACE=262154, N_CS_PRECEDES=262155, N_SEP_BY_SPACE=262156,
+        //   P_SIGN_POSN=262157, N_SIGN_POSN=262158.
+        262151..=262158 => b"\xff\0",
         _ => EMPTY_LOCALE_STR,
     };
     runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
