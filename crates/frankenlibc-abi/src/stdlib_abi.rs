@@ -5201,18 +5201,25 @@ pub extern "C" fn imaxabs(j: i64) -> i64 {
     j.wrapping_abs()
 }
 
-/// `imaxdiv` — return quotient and remainder of intmax_t division.
-/// glibc layout: { quot: i64, rem: i64 }
+/// C `imaxdiv_t` result type (intmax_t == long long == i64 on x86-64).
+#[repr(C)]
+pub struct CImaxdiv {
+    pub quot: i64,
+    pub rem: i64,
+}
+
+/// `imaxdiv` — quotient and remainder of intmax_t division. Returned BY VALUE
+/// (a 16-byte two-int struct -> RAX:RDX per SysV), matching the C signature
+/// `imaxdiv_t imaxdiv(intmax_t, intmax_t)` and the div/ldiv/lldiv siblings. The
+/// previous `(numer, denom, *mut i64)` sret form was an ABI mismatch: a C caller
+/// passes no hidden pointer for a register-returned struct, so the function read
+/// garbage as `result` and corrupted memory.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn imaxdiv(numer: i64, denom: i64, result: *mut i64) {
-    if denom == 0 {
-        return;
-    }
-    if !result.is_null() {
-        unsafe {
-            *result = numer / denom;
-            *result.add(1) = numer % denom;
-        }
+pub extern "C" fn imaxdiv(numer: i64, denom: i64) -> CImaxdiv {
+    let r = frankenlibc_core::stdlib::lldiv(numer, denom);
+    CImaxdiv {
+        quot: r.quot,
+        rem: r.rem,
     }
 }
 
