@@ -7,7 +7,7 @@ use std::mem;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use frankenlibc_core::malloc::MallocState;
+use frankenlibc_core::malloc::{MallocState, thread_cache::MAGAZINE_CAPACITY};
 use frankenlibc_core::stdio::printf::{
     FormatSegment, FormatSpec, format_float, parse_format_string,
 };
@@ -742,6 +742,99 @@ fn bench_malloc_free_256(c: &mut Criterion) {
                 if !ptr.is_null() {
                     libc::free(ptr);
                 }
+            }
+        },
+    );
+
+    group.finish();
+}
+
+fn bench_malloc_cache_pressure_256(c: &mut Criterion) {
+    const PRESSURE_OBJECTS: usize = MAGAZINE_CAPACITY + 1;
+
+    let mut group = c.benchmark_group("glibc_baseline_malloc_cache_pressure_256");
+
+    let mut state = MallocState::new();
+    let mut next_ptr = 0x6000_0000_usize;
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "malloc_cache_pressure_256",
+            impl_label: "frankenlibc_core_state",
+            api_family: "malloc",
+            symbol: "malloc/free",
+            workload: "65 object 256 byte allocate-free-reallocate cycle",
+            parity_proof_ref: "crates/frankenlibc-core/src/malloc",
+        },
+        || {
+            let mut ptrs = [0_usize; PRESSURE_OBJECTS];
+            for ptr in &mut ptrs {
+                *ptr = state
+                    .malloc(256, |size| {
+                        next_ptr = next_ptr.wrapping_add(size.max(1));
+                        Some(next_ptr)
+                    })
+                    .expect("benchmark allocation");
+            }
+            for &ptr in &ptrs {
+                state.free(ptr, 256, |_| {});
+            }
+
+            let mut ptrs = [0_usize; PRESSURE_OBJECTS];
+            for ptr in &mut ptrs {
+                *ptr = state
+                    .malloc(256, |size| {
+                        next_ptr = next_ptr.wrapping_add(size.max(1));
+                        Some(next_ptr)
+                    })
+                    .expect("benchmark reallocation");
+            }
+            for &ptr in &ptrs {
+                state.free(ptr, 256, |_| {});
+            }
+
+            if state.lifecycle_logs().len() > 2048 {
+                let _ = state.drain_lifecycle_logs();
+            }
+            black_box(ptrs[0]);
+        },
+    );
+
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "malloc_cache_pressure_256",
+            impl_label: "host_glibc",
+            api_family: "malloc",
+            symbol: "malloc/free",
+            workload: "65 object 256 byte allocate-free-reallocate cycle",
+            parity_proof_ref: "crates/frankenlibc-core/src/malloc",
+        },
+        || {
+            let mut ptrs = [std::ptr::null_mut::<c_void>(); PRESSURE_OBJECTS];
+            // SAFETY: every non-null allocation in this iteration is freed exactly once.
+            unsafe {
+                for ptr in &mut ptrs {
+                    *ptr = libc::malloc(256);
+                    black_box(*ptr);
+                }
+                for &ptr in &ptrs {
+                    if !ptr.is_null() {
+                        libc::free(ptr);
+                    }
+                }
+
+                let mut ptrs = [std::ptr::null_mut::<c_void>(); PRESSURE_OBJECTS];
+                for ptr in &mut ptrs {
+                    *ptr = libc::malloc(256);
+                    black_box(*ptr);
+                }
+                for &ptr in &ptrs {
+                    if !ptr.is_null() {
+                        libc::free(ptr);
+                    }
+                }
+                black_box(ptrs[0]);
             }
         },
     );
@@ -2383,6 +2476,7 @@ criterion_group! {
         bench_scanf,
         bench_malloc_free_64,
         bench_malloc_free_256,
+        bench_malloc_cache_pressure_256,
         bench_malloc_free_large,
         bench_printf_float,
         bench_qsort_128_i32,
