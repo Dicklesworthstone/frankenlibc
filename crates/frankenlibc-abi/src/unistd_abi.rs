@@ -3857,6 +3857,21 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
         return v;
     }
+
+    // Record/allocation limits = filesystem block size (statvfs f_bsize), via the
+    // fd's fstatfs — mirrors the per-path statfs branch in pathconf.
+    if matches!(
+        name,
+        libc::_PC_REC_MIN_XFER_SIZE | libc::_PC_REC_XFER_ALIGN | libc::_PC_ALLOC_SIZE_MIN
+    ) {
+        let mut fs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
+        let v = match unsafe { syscall::sys_fstatfs(fd, fs.as_mut_ptr()) } {
+            Ok(()) => unsafe { fs.assume_init() }.f_bsize as libc::c_long,
+            Err(_) => -1,
+        };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
+        return v;
+    }
     let out = match pathconf_value(name) {
         Some(v) => v,
         None => {

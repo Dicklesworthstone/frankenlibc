@@ -38,3 +38,36 @@ fn pathconf_matches_glibc() {
     }
     assert!(div.is_empty(), "pathconf divergences vs glibc ({}):\n  {}", div.len(), div.join("\n  "));
 }
+
+#[test]
+fn fpathconf_matches_glibc() {
+    use std::os::raw::c_void;
+    unsafe extern "C" {
+        fn fpathconf(fd: c_int, n: c_int) -> c_long;
+        fn open(p: *const c_char, fl: c_int) -> c_int;
+        fn close(fd: c_int) -> c_int;
+    }
+    let _ = std::ptr::null::<c_void>();
+    let p = CString::new("/tmp").unwrap();
+    let fd = unsafe { open(p.as_ptr(), 0) };
+    assert!(fd >= 0, "open(/tmp) failed");
+    let keys: &[(&str, c_int)] = &[
+        ("_PC_LINK_MAX", libc::_PC_LINK_MAX), ("_PC_NAME_MAX", libc::_PC_NAME_MAX),
+        ("_PC_PATH_MAX", libc::_PC_PATH_MAX), ("_PC_PIPE_BUF", libc::_PC_PIPE_BUF),
+        ("_PC_CHOWN_RESTRICTED", libc::_PC_CHOWN_RESTRICTED), ("_PC_NO_TRUNC", libc::_PC_NO_TRUNC),
+        ("_PC_REC_MIN_XFER_SIZE", libc::_PC_REC_MIN_XFER_SIZE),
+        ("_PC_REC_XFER_ALIGN", libc::_PC_REC_XFER_ALIGN),
+        ("_PC_ALLOC_SIZE_MIN", libc::_PC_ALLOC_SIZE_MIN),
+        ("_PC_2_SYMLINKS", libc::_PC_2_SYMLINKS),
+    ];
+    let mut div = Vec::new();
+    for &(n, k) in keys {
+        let f = unsafe { fu::fpathconf(fd, k) };
+        let g = unsafe { fpathconf(fd, k) };
+        if f != g {
+            div.push(format!("{n}: fl={f} glibc={g}"));
+        }
+    }
+    unsafe { close(fd) };
+    assert!(div.is_empty(), "fpathconf divergences vs glibc ({}):\n  {}", div.len(), div.join("\n  "));
+}
