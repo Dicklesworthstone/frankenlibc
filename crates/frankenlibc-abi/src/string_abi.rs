@@ -1302,6 +1302,34 @@ unsafe fn scan_strcasecmp(s1: *const c_char, s2: *const c_char, bound: usize) ->
     let p2 = s2.cast::<u8>();
     let mut i = 0usize;
     loop {
+        // Wide 32-byte portable-SIMD fast path: skip whole panels that are equal
+        // after ASCII case-folding and NUL-free, at AVX width (glibc's strcasecmp
+        // steps 16-32 bytes; the 8-byte SWAR below was the bottleneck). A flagged
+        // panel falls through to the SWAR/scalar tail, which resolves the exact
+        // first differing-or-NUL index — so the returned result is unchanged.
+        if i + 32 <= bound
+            && (p1 as usize + i) & 0xFFF <= 0x1000 - 32
+            && (p2 as usize + i) & 0xFFF <= 0x1000 - 32
+        {
+            use core::simd::cmp::{SimdPartialEq, SimdPartialOrd};
+            use core::simd::{Select, Simd};
+            // SAFETY: both 32-byte reads stay within their mapped pages and bound.
+            let va =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p1.add(i), 32) });
+            let vb =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p2.add(i), 32) });
+            let fold = |v: Simd<u8, 32>| {
+                let up = v.simd_ge(Simd::splat(b'A')) & v.simd_le(Simd::splat(b'Z'));
+                up.select(v + Simd::splat(0x20), v)
+            };
+            let z = Simd::<u8, 32>::splat(0);
+            let flagged = fold(va).simd_ne(fold(vb)) | va.simd_eq(z);
+            if !flagged.any() {
+                i += 32;
+                continue;
+            }
+            // Flagged panel: resolve exactly via the narrower paths below.
+        }
         if i + 8 <= bound
             && wide_read_within_page(p1 as usize + i)
             && wide_read_within_page(p2 as usize + i)
