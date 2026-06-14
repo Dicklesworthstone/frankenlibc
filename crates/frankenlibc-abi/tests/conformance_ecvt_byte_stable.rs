@@ -28,5 +28,8 @@ fn ecvt_fcvt_golden_byte_stable(){
   let hex:String=h.finalize().iter().map(|b|format!("{b:02x}")).collect();
   eprintln!("ECVT GOLDEN n={n} sha256={hex}");
   assert_eq!(n,80365);
-  assert_eq!(hex,"f9f43caacc5d3fe2fb5ac1b5ed24e5135dc666677bb50630ceecf105153e306e","ecvt/fcvt output changed");
+  // Updated for the ecvt ndigit<=0 decpt fix (bd-2g7oyh.101): ecvt(v,0) now
+  // reports decpt=floor(log10|v|)+1 (glibc 2.42 parity) instead of a hardcoded
+  // 0, changing the nd==0 outputs. fcvt and nd>0 are unchanged.
+  assert_eq!(hex,"f060b908a01660087aa15efd2ff4fa8b120c229c73bee9d81256a05c28b3ea3c","ecvt/fcvt output changed");
 }

@@ -44,12 +44,34 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
     }
 
     let ndigit = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
-    if ndigit == 0 {
-        return (Vec::new(), 0, negative);
-    }
 
     if abs_val == 0.0 {
+        // Zero: `ndigit` zero digits (none for ndigit==0) with decpt=1.
         return (vec![b'0'; ndigit], 1, negative);
+    }
+
+    if ndigit == 0 {
+        // No significant digits requested: glibc returns an empty digit string
+        // but still reports where the decimal point falls — decpt =
+        // floor(log10(|value|)) + 1, the UNROUNDED magnitude (so ecvt(9.99,0)
+        // gives decpt 1, NOT 2). Derive it from the shortest scientific
+        // exponent, which reflects the true magnitude without rounding up into
+        // the next decade. (Old behavior hardcoded decpt 0 — bd-2g7oyh.101.)
+        use core::fmt::Write as _;
+        let mut sb = StackStr::new();
+        let mut heap = String::new();
+        let sci: &str = if write!(sb, "{abs_val:e}").is_ok() {
+            sb.as_str()
+        } else {
+            let _ = write!(heap, "{abs_val:e}");
+            heap.as_str()
+        };
+        let exp = sci
+            .rsplit('e')
+            .next()
+            .and_then(|e| e.parse::<i32>().ok())
+            .unwrap_or(0);
+        return (Vec::new(), exp + 1, negative);
     }
 
     // Use Rust's formatting to get digits into a stack buffer (byte-identical
