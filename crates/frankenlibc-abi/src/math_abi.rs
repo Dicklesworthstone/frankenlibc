@@ -4037,13 +4037,31 @@ pub unsafe extern "C" fn rsqrtf128(x: f64) -> f64 {
 // --- llogb (long ilogb) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llogb(x: f64) -> c_long {
-    let r = unsafe { ilogb(x) };
-    r as c_long
+    // `llogb` shares `ilogb`'s exponent result for finite normal/subnormal
+    // inputs, but its special-case sentinels are the `long` variants, not the
+    // `int` ones: glibc returns FP_LLOGB0 (LONG_MIN) for 0, FP_LLOGBNAN
+    // (LONG_MIN) for NaN, and LONG_MAX for infinity — whereas a plain
+    // `ilogb(x) as c_long` would widen INT_MIN/INT_MAX and report the wrong
+    // sentinel. ilogb already raised FE_INVALID for these inputs.
+    map_ilogb_to_llogb(unsafe { ilogb(x) })
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llogbf(x: f32) -> c_long {
-    let r = unsafe { ilogbf(x) };
-    r as c_long
+    map_ilogb_to_llogb(unsafe { ilogbf(x) })
+}
+
+/// Widen an `ilogb` result to the `llogb` return type, translating the
+/// `int`-width special sentinels (FP_ILOGB0/FP_ILOGBNAN = INT_MIN, infinity =
+/// INT_MAX) to their `long`-width counterparts. Finite exponents (|e| <= 16383
+/// even for long double) are far from the i32 extremes, so only the sentinels
+/// are remapped.
+#[inline]
+fn map_ilogb_to_llogb(r: c_int) -> c_long {
+    match r {
+        c_int::MIN => c_long::MIN, // FP_ILOGB0 / FP_ILOGBNAN -> FP_LLOGB0 / FP_LLOGBNAN
+        c_int::MAX => c_long::MAX, // infinity
+        other => other as c_long,
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llogbl(x: f64) -> c_long {
