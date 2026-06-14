@@ -27,6 +27,72 @@ fn nonfinite_cvt(value: f64) -> (Vec<u8>, i32, bool) {
     (format!("{sign}{body}").into_bytes(), 0, false)
 }
 
+/// The base-10 exponent of a positive finite `abs_val` (= floor(log10(abs_val))),
+/// read from the shortest scientific formatting so it reflects the TRUE magnitude
+/// without rounding a near-decade value up: `123.0` -> 2, `9.99` -> 0,
+/// `0.001` -> -3. Used for the decimal-point position in the no-/negative-digit
+/// `ecvt`/`fcvt` paths.
+fn decimal_exponent(abs_val: f64) -> i32 {
+    use core::fmt::Write as _;
+    let mut sb = StackStr::new();
+    let mut heap = String::new();
+    let sci: &str = if write!(sb, "{abs_val:e}").is_ok() {
+        sb.as_str()
+    } else {
+        let _ = write!(heap, "{abs_val:e}");
+        heap.as_str()
+    };
+    sci.rsplit('e')
+        .next()
+        .and_then(|e| e.parse::<i32>().ok())
+        .unwrap_or(0)
+}
+
+/// Round an exact non-negative integer decimal string `s` by dropping its last
+/// `drop` digits, half-to-even. `has_fraction` = the original value carried a
+/// nonzero fractional part below the integer, which breaks an exact-half tie
+/// toward rounding up. The dropped positions are zeroed (so the width is
+/// preserved), and a carry-out widens the result by one digit (round "999"
+/// dropping 1 -> "1000"). `drop` must be < `s.len()` (at least one kept digit).
+fn round_int_decimal(s: &[u8], drop: usize, has_fraction: bool) -> Vec<u8> {
+    if drop == 0 {
+        return s.to_vec();
+    }
+    let keep = s.len() - drop;
+    let mut kept: Vec<u8> = s[..keep].to_vec();
+    let first = s[keep] - b'0';
+    let round_up = match first.cmp(&5) {
+        core::cmp::Ordering::Greater => true,
+        core::cmp::Ordering::Less => false,
+        core::cmp::Ordering::Equal => {
+            if s[keep + 1..].iter().any(|&d| d != b'0') || has_fraction {
+                true
+            } else {
+                // Exact half -> round to even (round up iff the last kept digit is odd).
+                kept.last().is_some_and(|&d| (d - b'0') % 2 == 1)
+            }
+        }
+    };
+    if round_up {
+        let mut i = kept.len();
+        loop {
+            if i == 0 {
+                kept.insert(0, b'1');
+                break;
+            }
+            i -= 1;
+            if kept[i] == b'9' {
+                kept[i] = b'0';
+            } else {
+                kept[i] += 1;
+                break;
+            }
+        }
+    }
+    kept.resize(kept.len() + drop, b'0');
+    kept
+}
+
 /// `ecvt` — convert double to string in scientific notation form.
 ///
 /// Returns `(digits, decimal_point_position, is_negative)`.
@@ -54,24 +120,8 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
         // No significant digits requested: glibc returns an empty digit string
         // but still reports where the decimal point falls — decpt =
         // floor(log10(|value|)) + 1, the UNROUNDED magnitude (so ecvt(9.99,0)
-        // gives decpt 1, NOT 2). Derive it from the shortest scientific
-        // exponent, which reflects the true magnitude without rounding up into
-        // the next decade. (Old behavior hardcoded decpt 0 — bd-2g7oyh.101.)
-        use core::fmt::Write as _;
-        let mut sb = StackStr::new();
-        let mut heap = String::new();
-        let sci: &str = if write!(sb, "{abs_val:e}").is_ok() {
-            sb.as_str()
-        } else {
-            let _ = write!(heap, "{abs_val:e}");
-            heap.as_str()
-        };
-        let exp = sci
-            .rsplit('e')
-            .next()
-            .and_then(|e| e.parse::<i32>().ok())
-            .unwrap_or(0);
-        return (Vec::new(), exp + 1, negative);
+        // gives decpt 1, NOT 2). (Old behavior hardcoded decpt 0 — bd-2g7oyh.101.)
+        return (Vec::new(), decimal_exponent(abs_val) + 1, negative);
     }
 
     // Use Rust's formatting to get digits into a stack buffer (byte-identical
@@ -160,6 +210,37 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
 
     if !value.is_finite() {
         return nonfinite_cvt(value);
+    }
+
+    if ndigit < 0 {
+        // Negative ndigit rounds the INTEGER part to the 10^|ndigit| place
+        // (glibc: fcvt(123456,-3)="123000"). |value| < 1 has no integer digit to
+        // round into, so it collapses to "0" with decpt 1. The rounding place is
+        // clamped to keep the leading digit — at most int_digits-1 places — so a
+        // large |ndigit| settles at one significant digit (fcvt(123456,-10)=
+        // "100000", not "0"). Rounding is a single half-to-even pass over the
+        // EXACT integer decimal string (so huge magnitudes like 1e308 round
+        // bit-for-bit like glibc, with no float-division precision loss); a
+        // carry widens the result (fcvt(999,-1)="1000"). bd-2g7oyh.101.
+        if abs_val < 1.0 {
+            return (vec![b'0'], 1, negative);
+        }
+        let floor_v = abs_val.floor();
+        // `floor_v` is integral, so `{:.0}` yields its exact decimal digits with
+        // no rounding (for both small and >2^53 values).
+        let int_str = format!("{floor_v:.0}");
+        let int_digits = int_str.len();
+        let has_fraction = abs_val != floor_v;
+        // Round at the 10^|ndigit| place (capped at the integer width). If that
+        // collapses the value to zero (e.g. fcvt(5,-1): 5 rounds to 0 at 10^1),
+        // glibc keeps the leading significant digit instead — back off one place.
+        let places = ((-ndigit) as usize).min(int_digits);
+        let mut digits = round_int_decimal(int_str.as_bytes(), places, has_fraction);
+        if digits.iter().all(|&c| c == b'0') {
+            digits = round_int_decimal(int_str.as_bytes(), int_digits - 1, has_fraction);
+        }
+        let decpt = digits.len() as i32;
+        return (digits, decpt, negative);
     }
 
     let ndigit = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);

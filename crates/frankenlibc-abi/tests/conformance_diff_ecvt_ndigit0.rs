@@ -40,11 +40,28 @@ fn ecvt_fcvt_ndigit_le_zero_matches_glibc() {
                 div.push(format!("ecvt({v:e},{n}): host={h:?} fl={f:?}"));
             }
         }
-        // fcvt: only ndigit == 0 (negative fcvt is the separate rounding quirk).
-        let h = tup(true, v, 0, true);
-        let f = tup(false, v, 0, true);
-        if h != f {
-            div.push(format!("fcvt({v:e},0): host={h:?} fl={f:?}"));
+        // fcvt ndigit == 0 (all magnitudes).
+        {
+            let h = tup(true, v, 0, true);
+            let f = tup(false, v, 0, true);
+            if h != f {
+                div.push(format!("fcvt({v:e},0): host={h:?} fl={f:?}"));
+            }
+        }
+        // fcvt NEGATIVE ndigit rounds the integer to the 10^|n| place (clamped to
+        // one significant digit). Only diffed for |v| < 1e15: glibc's deprecated
+        // fcvt is IMPRECISE beyond ~17 significant digits (e.g. fcvt(1e308,-1)
+        // emits a non-exact expansion), whereas fl rounds the EXACT integer, so
+        // huge magnitudes are a documented glibc-imprecision divergence where fl
+        // is more correct (same class as the ecvt rounding surface).
+        if v.abs() < 1e15 {
+            for &n in &[-1, -2, -3, -5, -10, -100] {
+                let h = tup(true, v, n, true);
+                let f = tup(false, v, n, true);
+                if h != f {
+                    div.push(format!("fcvt({v:e},{n}): host={h:?} fl={f:?}"));
+                }
+            }
         }
     }
     assert!(div.is_empty(), "ecvt/fcvt ndigit<=0 divergences:\n{}", div.join("\n"));
