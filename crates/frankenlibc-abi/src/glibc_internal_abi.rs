@@ -6811,18 +6811,22 @@ pub unsafe extern "C" fn tr_break() {}
 pub unsafe extern "C" fn ttyslot() -> c_int {
     -1
 }
-// --- Native abs for unsigned types (identity function) ---
+// NetBSD uabs(3) family: take a SIGNED integer and return its absolute value as
+// the corresponding UNSIGNED type. The whole point is that the unsigned return
+// can represent |INT_MIN| (etc.) without the signed-abs UB. The previous code
+// mistakenly treated these as "abs for unsigned types" — an identity over an
+// unsigned arg — so e.g. uabs(-5) returned 4294967291 instead of 5.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn uabs(n: c_uint) -> c_uint {
-    n
+pub unsafe extern "C" fn uabs(j: c_int) -> c_uint {
+    j.unsigned_abs()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn uimaxabs(n: u64) -> u64 {
-    n
+pub unsafe extern "C" fn uimaxabs(j: i64) -> u64 {
+    j.unsigned_abs()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ulabs(n: c_ulong) -> c_ulong {
-    n
+pub unsafe extern "C" fn ulabs(j: c_long) -> c_ulong {
+    j.unsigned_abs()
 }
 // ulimit: native — legacy POSIX resource limit
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6862,8 +6866,8 @@ pub unsafe extern "C" fn ulimit(cmd: c_int, newlimit: c_long) -> c_long {
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ullabs(n: u64) -> u64 {
-    n
+pub unsafe extern "C" fn ullabs(j: i64) -> u64 {
+    j.unsigned_abs()
 }
 /// uselib: deprecated Linux syscall (x86_64 only)
 #[cfg(target_arch = "x86_64")]
