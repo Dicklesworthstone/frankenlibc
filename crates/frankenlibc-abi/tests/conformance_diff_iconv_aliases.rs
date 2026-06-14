@@ -68,6 +68,13 @@ fn iconv_aliases_open_and_convert_like_glibc() {
         ("UNICODEBIG", "A\u{e9}"),
         ("csUnicode", "A\u{e9}"),
         ("WCHAR_T", "A\u{e9}"),
+        // ISO-8859-N underscore forms glibc accepts (the dead "8859_N" aliases
+        // never matched before — they normalize to "8859N").
+        ("8859_1", "caf\u{e9}"),
+        ("8859_2", "a\u{105}"),
+        ("8859_5", "\u{416}"),
+        ("8859_7", "\u{3b1}"),
+        ("8859_9", "\u{11e}"),
     ];
     let mut fails = Vec::new();
     for &(alias, sample) in cases {
