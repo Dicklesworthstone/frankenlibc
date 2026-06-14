@@ -2521,7 +2521,13 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
 /// Caller must ensure `dst` is large enough to hold `src` including the null terminator,
 /// and that the buffers do not overlap.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+/// Shared single-scan core for `strcpy`/`stpcpy`. Scans the source length once,
+/// copies the payload, writes the terminator, and returns the END pointer (the
+/// written NUL position, `dst + copied_payload` — the `stpcpy` result) wrapped in
+/// `Some`. Returns `None` only when the membrane denies the call. `strcpy` then
+/// returns the original `dst`; `stpcpy` returns the end pointer directly, so it no
+/// longer re-scans the just-copied string with a second `strlen` pass.
+unsafe fn strcpy_core(dst: *mut c_char, src: *const c_char) -> Option<*mut c_char> {
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() {
         record_string_stage_outcome(
@@ -2530,7 +2536,7 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
             recent_page,
             Some(stage_index(&ordering, CheckStage::Null)),
         );
-        return dst;
+        return Some(dst);
     }
 
     let (mode, decision) = runtime_policy::decide(
@@ -2549,7 +2555,7 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
             Some(stage_index(&ordering, CheckStage::Arena)),
         );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
-        return std::ptr::null_mut();
+        return None;
     }
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
@@ -2600,12 +2606,11 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
                 }
             }
         } else {
-            // Common (non-repair) path: SWAR-scan the source length, then copy the
-            // payload with the wide block memcpy and append the terminator. This is
-            // two cache-friendly passes (SWAR scan + wide copy) instead of one
-            // byte-at-a-time fused loop, byte-identical to it for any NUL-terminated
-            // source.
-            let (src_len, _) = scan_c_string(src, None);
+            // Common (non-repair) path: reuse the single source-length scan from
+            // above (src_bound is None here, so the outer scan already computed the
+            // exact length — re-scanning was redundant), then copy the payload with
+            // the wide block memcpy and append the terminator. Byte-identical to the
+            // byte-at-a-time fused loop for any NUL-terminated source.
             if src_len > 0 {
                 raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len);
             }
@@ -2626,7 +2631,16 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
         recent_page,
         Some(stage_index(&ordering, CheckStage::Bounds)),
     );
-    dst
+    // End pointer = the written-NUL position (`stpcpy` result). copied_len counts
+    // the payload plus the terminator, so the NUL sits at dst + (copied_len - 1).
+    Some(dst.add(copied_len.saturating_sub(1)))
+}
+
+pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    match unsafe { strcpy_core(dst, src) } {
+        Some(_) => dst,
+        None => std::ptr::null_mut(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2642,20 +2656,12 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
 /// both pointers are valid.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
-    if dst.is_null() || src.is_null() {
-        return dst;
+    // Single shared scan: `strcpy_core` already knows where it wrote the NUL, so
+    // stpcpy no longer re-scans the copied string with a second strlen pass.
+    match unsafe { strcpy_core(dst, src) } {
+        Some(end) => end,
+        None => std::ptr::null_mut(),
     }
-
-    // SAFETY: pointer validity and bounds are validated by the delegated ABI helper.
-    let copied = unsafe { strcpy(dst, src) };
-    if copied.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    // SAFETY: `strcpy` above produced a NUL-terminated destination in non-deny paths.
-    let len = unsafe { strlen(dst) };
-    // SAFETY: `len` is measured from `dst`, so offset is within the destination string.
-    unsafe { dst.add(len) }
 }
 
 // ---------------------------------------------------------------------------
