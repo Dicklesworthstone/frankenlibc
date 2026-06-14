@@ -833,9 +833,15 @@ pub unsafe extern "C" fn drem(x: f64, y: f64) -> f64 {
     out
 }
 
-/// BSD `gamma()` — alias for `lgamma()`.
+/// BSD `gamma()` — alias for `lgamma()`. Like `lgamma`, it sets the global
+/// `signgam` to the sign of Γ(x); fl previously left signgam stale.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gamma(x: f64) -> f64 {
+    let (_, sign) = frankenlibc_core::math::lgamma_r(x);
+    unsafe {
+        signgam = sign;
+        __signgam = sign;
+    }
     let out = unary_entry(x, 10, frankenlibc_core::math::gamma);
     if x.is_finite() && (x == 0.0 || (x < 0.0 && is_integral_f64(x)) || out.is_infinite()) {
         set_range_errno();
@@ -1687,6 +1693,12 @@ pub unsafe extern "C" fn dremf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gammaf(x: f32) -> f32 {
+    // BSD gammaf aliases lgammaf: set the global signgam to sign of Γ(x).
+    let (_, sign) = frankenlibc_core::math::lgammaf_r(x);
+    unsafe {
+        signgam = sign;
+        __signgam = sign;
+    }
     let out = unary_entry_f32(x, 8, frankenlibc_core::math::gammaf);
     // lgamma poles at non-positive integers
     if x.is_finite() && x <= 0.0 && x.fract() == 0.0 {
