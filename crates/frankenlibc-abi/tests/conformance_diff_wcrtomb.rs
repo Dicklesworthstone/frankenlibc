@@ -139,27 +139,52 @@ fn diff_wcrtomb_4byte_range_supplementary_planes() {
 }
 
 #[test]
-fn fl_wcrtomb_invalid_codepoints_rejected_per_rfc_3629() {
-    // U+110000 and above are not Unicode (RFC 3629 caps UTF-8 at
-    // U+10FFFF). fl correctly rejects these. glibc historically
-    // encodes them as 4 or 6-byte sequences (legacy ISO 10646 UTF-8
-    // pre-RFC 3629), which is non-conformant — we DON'T diff on
-    // this surface, only verify fl is strict.
+fn fl_wcrtomb_high_codepoints_match_glibc() {
+    // glibc's UTF-8 wcrtomb is RFC 2279, not RFC 3629: it encodes code points
+    // beyond U+10FFFF as 4-6 byte sequences (legacy ISO 10646), capping at
+    // U+7FFFFFFF and rejecting surrogates / anything larger. fl deliberately
+    // mirrors this (string/wchar.rs wctomb is "verified against host glibc").
+    // So this surface IS diffable — assert fl == glibc byte-for-byte and on the
+    // ±EILSEQ boundary, rather than the (incorrect) RFC-3629 strictness the test
+    // used to assume. Verified on glibc 2.42: U+110000 -> f4 90 80 80,
+    // U+1FFFFF -> 4 bytes, U+200000 -> 5 bytes, U+7FFFFFFF -> 6 bytes,
+    // U+80000000 and U+FFFFFFFF -> rejected, surrogates -> rejected.
     with_utf8(|| {
-        for wc in [0x110000u32, 0x12_3456, 0xFFFF_FFFF] {
+        for wc in [
+            0x10_FFFFu32, // last Unicode scalar
+            0x11_0000,    // first non-Unicode (still encoded, RFC 2279)
+            0x12_3456,
+            0x1F_FFFF,    // last 4-byte
+            0x20_0000,    // first 5-byte
+            0x3FF_FFFF,   // last 5-byte
+            0x400_0000,   // first 6-byte
+            0x7FFF_FFFF,  // last encodable
+            0x8000_0000,  // first rejected
+            0xFFFF_FFFF,  // rejected
+            0xD800,       // surrogate, rejected
+            0xDFFF,       // surrogate, rejected
+        ] {
             let mut fl_buf = [0u8; 8];
+            let mut gl_buf = [0u8; 8];
             let fl_n = unsafe {
-                fl::wcrtomb(
-                    fl_buf.as_mut_ptr() as *mut c_char,
-                    wc as i32,
-                    std::ptr::null_mut(),
-                )
+                fl::wcrtomb(fl_buf.as_mut_ptr() as *mut c_char, wc as i32, std::ptr::null_mut())
+            };
+            let gl_n = unsafe {
+                wcrtomb(gl_buf.as_mut_ptr() as *mut c_char, wc as libc::wchar_t, std::ptr::null_mut())
             };
             assert_eq!(
-                fl_n,
-                usize::MAX,
-                "fl::wcrtomb must reject invalid codepoint U+{wc:06X} per RFC 3629"
+                fl_n, gl_n,
+                "wcrtomb(U+{wc:06X}) return: fl={fl_n} glibc={gl_n}"
             );
+            if fl_n != usize::MAX {
+                assert_eq!(
+                    fl_buf[..fl_n],
+                    gl_buf[..gl_n],
+                    "wcrtomb(U+{wc:06X}) bytes diverged: fl={:02x?} glibc={:02x?}",
+                    &fl_buf[..fl_n],
+                    &gl_buf[..gl_n]
+                );
+            }
         }
     });
 }
