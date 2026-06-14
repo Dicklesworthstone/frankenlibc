@@ -248,6 +248,8 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
             "US",
             "CP367",
             "IBM367",
+            "ANSIX3.4",
+            "ISOIR6",
         ],
     },
     CodecSpec {
@@ -262,25 +264,26 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
             "ISOIR100",
             "CP819",
             "IBM819",
+            "L1",
         ],
     },
     CodecSpec {
         encoding: Encoding::Utf16Le,
         canonical: "UTF-16LE",
         normalized: "UTF16LE",
-        aliases: &["UTF16LE"],
+        aliases: &["UTF16LE", "UNICODELITTLE"],
     },
     CodecSpec {
         encoding: Encoding::Utf16Be,
         canonical: "UTF-16BE",
         normalized: "UTF16BE",
-        aliases: &["UTF16BE"],
+        aliases: &["UTF16BE", "UNICODEBIG"],
     },
     CodecSpec {
         encoding: Encoding::Utf16,
         canonical: "UTF-16",
         normalized: "UTF16",
-        aliases: &["UTF16"],
+        aliases: &["UTF16", "CSUNICODE"],
     },
     // glibc's bare "UCS-2" and "UCS-2LE" are little-endian BMP-only UTF-16 with
     // no surrogate pairing; "UCS-2BE" is the big-endian form. (On x86 glibc the
@@ -318,7 +321,8 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
         encoding: Encoding::Utf32Le,
         canonical: "UTF-32LE",
         normalized: "UTF32LE",
-        aliases: &["UTF32LE", "UCS4LE"],
+        // WCHAR_T (glibc's internal wchar_t codec) is UTF-32LE on x86_64.
+        aliases: &["UTF32LE", "UCS4LE", "WCHART"],
     },
     CodecSpec {
         encoding: Encoding::Koi8R,
@@ -950,6 +954,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
             "IBM912",
             "8859_2",
             "ISOIR101",
+            "L2",
         ],
     },
     CodecSpec {
@@ -1052,6 +1057,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
             "8859_9",
             "ISOIR148",
             "ECMA128",
+            "L5",
         ],
     },
     CodecSpec {
@@ -1125,7 +1131,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
         encoding: Encoding::ShiftJis,
         canonical: "SHIFT_JIS",
         normalized: "SHIFTJIS",
-        aliases: &["SHIFTJIS", "SJIS", "CP932", "MS_KANJI", "CSSHIFTJIS"],
+        aliases: &["SHIFTJIS", "SJIS", "CP932", "MSKANJI", "CSSHIFTJIS"],
     },
     CodecSpec {
         encoding: Encoding::Big5,
