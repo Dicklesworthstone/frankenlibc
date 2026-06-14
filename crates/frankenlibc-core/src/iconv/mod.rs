@@ -1344,6 +1344,21 @@ pub struct IconvDescriptor {
     /// the BOM has been inspected: `true` = big-endian (a `FE FF` / `00 00 FE FF`
     /// BOM was seen), `false` = little-endian (an LE BOM or no BOM — native).
     from_unmarked_be: bool,
+    /// UTF-7 SOURCE decoder shift state, persisted across `iconv()` calls so a
+    /// Modified-Base64 shift sequence (`+...-`) may be split over several input
+    /// buffers (bd-s41n4a). `utf7_active` = inside a `+`-introduced base64 run;
+    /// `utf7_bits`/`utf7_nbits` = the partial bit accumulator (< 16 bits between
+    /// emitted UTF-16 units); `utf7_hi` = a pending high surrogate (-1 = none);
+    /// `utf7_shift_empty` = the run was just opened by `+` with no base64 byte yet
+    /// (so a following `-` means the literal `+`); `utf7_pending` = one decoded
+    /// scalar that could not be written because the output buffer was full
+    /// (-1 = none), flushed before consuming more input on the next call.
+    utf7_active: bool,
+    utf7_bits: u32,
+    utf7_nbits: u32,
+    utf7_hi: i32,
+    utf7_shift_empty: bool,
+    utf7_pending: i32,
 }
 
 const REVERSE_DIRECT_PAGES: usize = 8;
@@ -9616,6 +9631,12 @@ pub fn iconv_open_detailed(
             from_decode: build_from_decode(from),
             from_bom_pending: matches!(from, Encoding::Utf32 | Encoding::Utf16),
             from_unmarked_be: false,
+            utf7_active: false,
+            utf7_bits: 0,
+            utf7_nbits: 0,
+            utf7_hi: -1,
+            utf7_shift_empty: false,
+            utf7_pending: -1,
         },
         dispatch,
     ))
@@ -9736,114 +9757,226 @@ fn utf7_encode(chars: &[char]) -> Vec<u8> {
     out
 }
 
-/// Whole-buffer UTF-7 conversion (one side is `Encoding::Utf7`). UTF-7 is a
-/// stateful shift codec; this handles it per-call rather than via the per-char
-/// decode_char/encode_char loop. For a UTF-7 SOURCE the decode is incremental
-/// (a direct byte or a complete `+...-` shift run is one unit, so E2BIG stops at
-/// a unit boundary); for a UTF-7 TARGET the whole UTF-7 byte string is built and
-/// then written (E2BIG if it does not fit — fine for the usual generous-buffer
-/// single call; a mid-shift split across calls is not yet supported).
+/// Streaming UTF-7 SOURCE decoder (bd-s41n4a). Unlike the old whole-buffer path,
+/// this is a byte-level state machine that persists its Modified-Base64 shift
+/// state in `cd`, so a `+...-` run (or even a surrogate pair, or the literal
+/// `+-`) may be split across several `iconv()` input buffers. Each decoded scalar
+/// is encoded to `cd.to` immediately, so at most one already-decoded scalar is
+/// held over when the OUTPUT buffer fills (`cd.utf7_pending`), flushed before
+/// consuming more input on the next call. Call [`utf7_decode_flush`] on a NULL
+/// inbuf to finalize the trailing shift state. Behavior on a complete single
+/// buffer + flush is identical to the old path (verified by the UTF-7 gate).
+fn utf7_decode_streaming(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut in_pos = 0usize;
+    let mut out_pos = 0usize;
+
+    // Persisted shift state.
+    let mut active = cd.utf7_active;
+    let mut bits = cd.utf7_bits;
+    let mut nbits = cd.utf7_nbits;
+    let mut hi: Option<u32> = if cd.utf7_hi < 0 {
+        None
+    } else {
+        Some(cd.utf7_hi as u32)
+    };
+    let mut shift_empty = cd.utf7_shift_empty;
+
+    macro_rules! save_state {
+        () => {{
+            cd.utf7_active = active;
+            cd.utf7_bits = bits;
+            cd.utf7_nbits = nbits;
+            cd.utf7_hi = hi.map_or(-1, |h| h as i32);
+            cd.utf7_shift_empty = shift_empty;
+        }};
+    }
+
+    // Flush a scalar held over from a previous call's full output buffer before
+    // consuming any more input.
+    if cd.utf7_pending >= 0 {
+        let ch = char::from_u32(cd.utf7_pending as u32).unwrap_or('\u{FFFD}');
+        match encode_char(cd.to, ch, &mut outbuf[out_pos..]) {
+            Ok(w) => {
+                out_pos += w;
+                cd.utf7_pending = -1;
+            }
+            Err(_) => {
+                return Err(IconvError {
+                    code: ICONV_E2BIG,
+                    in_consumed: 0,
+                    out_written: 0,
+                });
+            }
+        }
+    }
+
+    // Emit a decoded scalar; on a full output buffer, persist all state INCLUDING
+    // the undeliverable scalar and stop with E2BIG (the input that produced it is
+    // already counted as consumed).
+    macro_rules! emit {
+        ($ch:expr) => {{
+            let ch: char = $ch;
+            match encode_char(cd.to, ch, &mut outbuf[out_pos..]) {
+                Ok(w) => out_pos += w,
+                Err(EncodeError::NoSpace) => {
+                    save_state!();
+                    cd.utf7_pending = ch as i32;
+                    return Err(IconvError {
+                        code: ICONV_E2BIG,
+                        in_consumed: in_pos,
+                        out_written: out_pos,
+                    });
+                }
+                Err(EncodeError::Unrepresentable) => {
+                    save_state!();
+                    return Err(eilseq(in_pos, out_pos));
+                }
+            }
+        }};
+    }
+
+    while in_pos < input.len() {
+        let c = input[in_pos];
+        if active {
+            if let Some(v) = utf7_b64_val(c) {
+                shift_empty = false;
+                bits = (bits << 6) | v;
+                nbits += 6;
+                in_pos += 1;
+                while nbits >= 16 {
+                    nbits -= 16;
+                    let u = (bits >> nbits) & 0xFFFF;
+                    if (0xD800..=0xDBFF).contains(&u) {
+                        if hi.is_some() {
+                            save_state!();
+                            return Err(eilseq(in_pos, out_pos));
+                        }
+                        hi = Some(u);
+                    } else if (0xDC00..=0xDFFF).contains(&u) {
+                        let Some(h) = hi.take() else {
+                            save_state!();
+                            return Err(eilseq(in_pos, out_pos));
+                        };
+                        let cp = 0x10000 + ((h - 0xD800) << 10) + (u - 0xDC00);
+                        let Some(ch) = char::from_u32(cp) else {
+                            save_state!();
+                            return Err(eilseq(in_pos, out_pos));
+                        };
+                        emit!(ch);
+                    } else {
+                        if hi.is_some() {
+                            save_state!();
+                            return Err(eilseq(in_pos, out_pos));
+                        }
+                        let Some(ch) = char::from_u32(u) else {
+                            save_state!();
+                            return Err(eilseq(in_pos, out_pos));
+                        };
+                        emit!(ch);
+                    }
+                }
+            } else {
+                // A non-base64 byte terminates the shift sequence.
+                if hi.is_some() {
+                    save_state!();
+                    return Err(eilseq(in_pos, out_pos));
+                }
+                if nbits > 0 && (bits & ((1u32 << nbits) - 1)) != 0 {
+                    save_state!();
+                    return Err(eilseq(in_pos, out_pos));
+                }
+                let was_empty = shift_empty;
+                active = false;
+                bits = 0;
+                nbits = 0;
+                shift_empty = false;
+                if c == b'-' {
+                    // The `-` is absorbed; `+-` (empty run) is the literal `+`.
+                    in_pos += 1;
+                    if was_empty {
+                        emit!('+');
+                    }
+                }
+                // Otherwise leave `c` for the next iteration as a direct byte.
+            }
+        } else if c == b'+' {
+            // Open a shift sequence; a following `-` makes it the literal `+`.
+            active = true;
+            bits = 0;
+            nbits = 0;
+            shift_empty = true;
+            in_pos += 1;
+        } else if c < 0x80 {
+            in_pos += 1;
+            emit!(c as char);
+        } else {
+            save_state!();
+            return Err(eilseq(in_pos, out_pos));
+        }
+    }
+
+    save_state!();
+    Ok(IconvResult {
+        non_reversible: 0,
+        in_consumed: in_pos,
+        out_written: out_pos,
+    })
+}
+
+/// Finalize UTF-7 SOURCE decode state on a NULL-inbuf flush: deliver any held
+/// scalar, validate the trailing shift state (no dangling high surrogate, and
+/// any leftover Modified-Base64 bits must be zero padding), and reset it.
+fn utf7_decode_flush(
+    cd: &mut IconvDescriptor,
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut out_pos = 0usize;
+    if cd.utf7_pending >= 0 {
+        let ch = char::from_u32(cd.utf7_pending as u32).unwrap_or('\u{FFFD}');
+        match encode_char(cd.to, ch, &mut outbuf[out_pos..]) {
+            Ok(w) => {
+                out_pos += w;
+                cd.utf7_pending = -1;
+            }
+            Err(_) => {
+                return Err(IconvError {
+                    code: ICONV_E2BIG,
+                    in_consumed: 0,
+                    out_written: 0,
+                });
+            }
+        }
+    }
+    if cd.utf7_hi >= 0 {
+        return Err(eilseq(0, out_pos));
+    }
+    if cd.utf7_active && cd.utf7_nbits > 0 && (cd.utf7_bits & ((1u32 << cd.utf7_nbits) - 1)) != 0 {
+        return Err(eilseq(0, out_pos));
+    }
+    cd.utf7_active = false;
+    cd.utf7_bits = 0;
+    cd.utf7_nbits = 0;
+    cd.utf7_shift_empty = false;
+    Ok(IconvResult {
+        non_reversible: 0,
+        in_consumed: 0,
+        out_written: out_pos,
+    })
+}
+
+/// Whole-buffer UTF-7 conversion. A UTF-7 SOURCE is handled by the streaming
+/// [`utf7_decode_streaming`]; this remains for a UTF-7 TARGET, where the whole
+/// UTF-7 byte string is built and then written (E2BIG if it does not fit — fine
+/// for the usual generous-buffer single call).
 fn utf7_convert(
     cd: &IconvDescriptor,
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
-    if cd.from == Encoding::Utf7 {
-        let mut in_pos = 0usize;
-        let mut out_pos = 0usize;
-        // Reused per-unit scratch: a single `+...-` shift run can decode to many
-        // scalars, so this must grow (a fixed array would truncate long runs).
-        let mut unit_chars: Vec<char> = Vec::new();
-        while in_pos < input.len() {
-            let unit_start = in_pos;
-            unit_chars.clear();
-            let c = input[in_pos];
-            if c == b'+' {
-                in_pos += 1;
-                if in_pos < input.len() && input[in_pos] == b'-' {
-                    unit_chars.push('+');
-                    in_pos += 1;
-                } else {
-                    let mut bits: u32 = 0;
-                    let mut nb: u32 = 0;
-                    let mut hi: Option<u32> = None;
-                    while in_pos < input.len() {
-                        let Some(v) = utf7_b64_val(input[in_pos]) else {
-                            break;
-                        };
-                        bits = (bits << 6) | v;
-                        nb += 6;
-                        in_pos += 1;
-                        if nb >= 16 {
-                            nb -= 16;
-                            let u = (bits >> nb) & 0xFFFF;
-                            if (0xD800..=0xDBFF).contains(&u) {
-                                if hi.is_some() {
-                                    return Err(eilseq(unit_start, out_pos));
-                                }
-                                hi = Some(u);
-                            } else if (0xDC00..=0xDFFF).contains(&u) {
-                                let Some(h) = hi.take() else {
-                                    return Err(eilseq(unit_start, out_pos));
-                                };
-                                let cp = 0x10000 + ((h - 0xD800) << 10) + (u - 0xDC00);
-                                match char::from_u32(cp) {
-                                    Some(ch) => unit_chars.push(ch),
-                                    None => return Err(eilseq(unit_start, out_pos)),
-                                }
-                            } else {
-                                if hi.is_some() {
-                                    return Err(eilseq(unit_start, out_pos));
-                                }
-                                match char::from_u32(u) {
-                                    Some(ch) => unit_chars.push(ch),
-                                    None => return Err(eilseq(unit_start, out_pos)),
-                                }
-                            }
-                        }
-                    }
-                    if hi.is_some() {
-                        return Err(eilseq(unit_start, out_pos));
-                    }
-                    if nb > 0 && (bits & ((1u32 << nb) - 1)) != 0 {
-                        return Err(eilseq(unit_start, out_pos));
-                    }
-                    if in_pos < input.len() && input[in_pos] == b'-' {
-                        in_pos += 1;
-                    }
-                }
-            } else if c < 0x80 {
-                unit_chars.push(c as char);
-                in_pos += 1;
-            } else {
-                return Err(eilseq(unit_start, out_pos));
-            }
-            // Encode this unit's char(s) to `to`. E2BIG/EILSEQ report the output
-            // position BEFORE the unit so a re-presented call redoes it cleanly.
-            let unit_out_start = out_pos;
-            for &ch in &unit_chars {
-                match encode_char(cd.to, ch, &mut outbuf[out_pos..]) {
-                    Ok(w) => out_pos += w,
-                    Err(EncodeError::NoSpace) => {
-                        return Err(IconvError {
-                            code: ICONV_E2BIG,
-                            in_consumed: unit_start,
-                            out_written: unit_out_start,
-                        });
-                    }
-                    Err(EncodeError::Unrepresentable) => {
-                        return Err(eilseq(unit_start, unit_out_start));
-                    }
-                }
-            }
-        }
-        return Ok(IconvResult {
-            non_reversible: 0,
-            in_consumed: in_pos,
-            out_written: out_pos,
-        });
-    }
-
     // to == Utf7: decode all of `from`, then UTF-7-encode (whole buffer).
     let mut chars: Vec<char> = Vec::new();
     let mut in_pos = 0usize;
@@ -9911,6 +10044,10 @@ pub fn iconv(
     let input = match inbuf {
         Some(b) => b,
         None => {
+            // UTF-7 SOURCE: finalize any persisted decode shift state (bd-s41n4a).
+            if cd.from == Encoding::Utf7 {
+                return utf7_decode_flush(cd, outbuf);
+            }
             if cd.emit_bom && !outbuf.is_empty() {
                 let bom = match cd.to {
                     Encoding::Utf16 => &[0xFF, 0xFE][..],
@@ -9945,7 +10082,10 @@ pub fn iconv(
 
     // UTF-7 (either side) is a stateful shift codec handled by a dedicated
     // whole-buffer path rather than the per-char decode_char/encode_char loop.
-    if cd.from == Encoding::Utf7 || cd.to == Encoding::Utf7 {
+    if cd.from == Encoding::Utf7 {
+        return utf7_decode_streaming(cd, input, outbuf);
+    }
+    if cd.to == Encoding::Utf7 {
         return utf7_convert(cd, input, outbuf);
     }
 
