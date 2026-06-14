@@ -466,9 +466,17 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                         i += 1;
                     }
                 }
-                if i < fmt.len() && fmt[i] == b']' {
-                    i += 1;
+                // A scanset MUST be closed by ']'. If the format ends first
+                // (e.g. "%[^]", where the ']' right after '^' is a literal
+                // member, not the closer), the conversion specification is
+                // malformed: glibc stops scanning at the invalid directive and
+                // returns the conversions completed so far (sscanf("^abc","%[^]")
+                // -> 0, NOT a match of "^abc").
+                let terminated = i < fmt.len() && fmt[i] == b']';
+                if !terminated {
+                    break;
                 }
+                i += 1;
                 spec.conversion = b'[';
                 spec.scanset = Some(ScanSet { negated, chars });
             } else {
