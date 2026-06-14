@@ -72,6 +72,20 @@ pub fn format_fmtmsg_message(
     tag: Option<&[u8]>,
 ) -> Vec<u8> {
     let sev = severity_name(severity).map(str::as_bytes);
+    format_fmtmsg_message_named(label, sev, text, action, tag)
+}
+
+/// Same as [`format_fmtmsg_message`] but with the severity LABEL resolved by the
+/// caller, so that custom severities registered via `addseverity` (which live in
+/// the ABI layer, not this crate) can supply their own name. Pass `None` for
+/// `MM_NOSEV` (severity 0), where no severity component is emitted.
+pub fn format_fmtmsg_message_named(
+    label: Option<&[u8]>,
+    sev: Option<&[u8]>,
+    text: Option<&[u8]>,
+    action: Option<&[u8]>,
+    tag: Option<&[u8]>,
+) -> Vec<u8> {
     let later_after_label = sev.is_some() || text.is_some() || action.is_some() || tag.is_some();
     let later_after_severity = text.is_some() || action.is_some() || tag.is_some();
     let mut out = Vec::with_capacity(

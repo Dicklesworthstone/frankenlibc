@@ -22,6 +22,7 @@ unsafe extern "C" {
         action: *const c_char,
         tag: *const c_char,
     ) -> c_int;
+    fn addseverity(severity: c_int, string: *const c_char) -> c_int;
 }
 
 static FMTMSG_LOCK: Mutex<()> = Mutex::new(());
@@ -232,6 +233,85 @@ fn diff_fmtmsg_prints_glibc_message_shapes() {
         },
     ] {
         assert_matches_glibc(case);
+    }
+}
+
+#[test]
+fn diff_fmtmsg_custom_severity_via_addseverity() {
+    let _lock = FMTMSG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _msgverb = MsgverbGuard::clear();
+
+    // addseverity return-code parity over add / update / remove / reserved-range.
+    // Each call is issued to BOTH engines (independent process-global registries
+    // that we keep in lock-step) and the return codes are compared.
+    let label = nul_terminated("CRITICAL");
+    let label2 = nul_terminated("FATAL");
+    let addseq: &[(c_int, Option<&[u8]>)] = &[
+        (6, Some(&label)),  // add custom -> MM_OK
+        (6, Some(&label2)), // change existing -> MM_OK
+        (6, None),          // remove existing -> MM_OK
+        (6, None),          // remove again (now absent) -> MM_NOTOK
+        (0, Some(&label)),  // MM_NOSEV reserved -> MM_NOTOK
+        (-1, Some(&label)), // negative reserved -> MM_NOTOK
+        (1, Some(&label)),  // predefined HALT reserved -> MM_NOTOK
+        (4, None),          // remove predefined INFO -> MM_NOTOK
+    ];
+    for &(sev, s) in addseq {
+        let ptr = s.map_or(std::ptr::null(), |b| b.as_ptr().cast());
+        let fl_rc = unsafe { fl::addseverity(sev, ptr) };
+        let gl_rc = unsafe { addseverity(sev, ptr) };
+        assert_eq!(
+            fl_rc, gl_rc,
+            "addseverity({sev}, {s:?}) diverged: fl={fl_rc} glibc={gl_rc}"
+        );
+    }
+
+    // Register a custom severity 5 -> "CRITICAL" on both engines, then confirm
+    // fmtmsg prints the custom name (byte-exact) and returns MM_OK for it, while
+    // an unrelated still-unregistered code (9) is rejected identically.
+    let crit = nul_terminated("CRITICAL");
+    assert_eq!(
+        unsafe { fl::addseverity(5, crit.as_ptr().cast()) },
+        unsafe { addseverity(5, crit.as_ptr().cast()) },
+        "addseverity(5, CRITICAL) setup diverged"
+    );
+    for case in [
+        FmtmsgCase {
+            name: "custom severity prints registered name",
+            classification: MM_PRINT,
+            label: Some("UX:app"),
+            severity: 5,
+            text: Some("meltdown"),
+            action: Some("scram"),
+            tag: Some("util:015"),
+        },
+        FmtmsgCase {
+            name: "custom severity with null text",
+            classification: MM_PRINT,
+            label: Some("UX:app"),
+            severity: 5,
+            text: None,
+            action: Some("scram"),
+            tag: Some("util:016"),
+        },
+        FmtmsgCase {
+            name: "unregistered severity 9 still rejected",
+            classification: MM_PRINT,
+            label: Some("UX:app"),
+            severity: 9,
+            text: Some("x"),
+            action: Some("y"),
+            tag: Some("util:017"),
+        },
+    ] {
+        assert_matches_glibc(case);
+    }
+
+    // Clean up so the global registries return to baseline (the
+    // `rejects_invalid_label_and_severity` test expects severity 5 unregistered).
+    unsafe {
+        fl::addseverity(5, std::ptr::null());
+        addseverity(5, std::ptr::null());
     }
 }
 

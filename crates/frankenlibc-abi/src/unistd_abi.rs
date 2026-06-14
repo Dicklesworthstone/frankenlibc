@@ -20053,10 +20053,16 @@ pub unsafe extern "C" fn fmtmsg(
             return -1;
         }
     };
-    if !frankenlibc_core::fmtmsg::valid_severity(severity)
-        || label_bytes
-            .as_deref()
-            .is_some_and(|label| !frankenlibc_core::fmtmsg::valid_label(label))
+    // Resolve the severity to its printed label (predefined 0..=4 or a custom
+    // class registered via addseverity); an unknown severity is MM_NOTOK, just
+    // like an ill-formed label.
+    let sev_name = match fmtmsg_resolve_severity(severity) {
+        Ok(name) => name,
+        Err(()) => return -1,
+    };
+    if label_bytes
+        .as_deref()
+        .is_some_and(|label| !frankenlibc_core::fmtmsg::valid_label(label))
     {
         return -1;
     }
@@ -20082,9 +20088,9 @@ pub unsafe extern "C" fn fmtmsg(
                 return -1;
             }
         };
-        let out = frankenlibc_core::fmtmsg::format_fmtmsg_message(
+        let out = frankenlibc_core::fmtmsg::format_fmtmsg_message_named(
             label_bytes.as_deref(),
-            severity,
+            sev_name.as_deref(),
             text_bytes.as_deref(),
             action_bytes.as_deref(),
             tag_bytes.as_deref(),
@@ -20494,11 +20500,80 @@ pub unsafe extern "C" fn bsd_signal(sig: c_int, handler: libc::sighandler_t) -> 
     unsafe { crate::signal_abi::signal(sig, handler) }
 }
 
-/// XSI `addseverity` — add/modify message severity level.
+/// User-registered custom severity classes for `fmtmsg`/`addseverity`
+/// (severity code -> printed label). The four XSI severities (HALT=1, ERROR=2,
+/// WARNING=3, INFO=4) and MM_NOSEV=0 are predefined and live in
+/// `frankenlibc_core::fmtmsg`; only severities > MM_INFO can be registered here.
+static FMTMSG_SEVERITIES: std::sync::Mutex<Vec<(c_int, Vec<u8>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// MM_INFO — the highest predefined severity; anything <= it is reserved.
+const FMTMSG_MM_INFO: c_int = 4;
+const FMTMSG_MM_OK: c_int = 0;
+const FMTMSG_MM_NOTOK: c_int = -1;
+
+/// XSI `addseverity` — add, change, or remove a `fmtmsg` severity class.
+///
+/// Mirrors glibc (stdlib/fmtmsg.c): a non-null `string` adds severity `severity`
+/// (or updates it if already registered); a null `string` removes it. The four
+/// predefined severities (1..=4) and MM_NOSEV (0) cannot be added to or removed
+/// (severity <= MM_INFO is reserved). Returns MM_OK (0) / MM_NOTOK (-1).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn addseverity(_severity: c_int, _string: *const c_char) -> c_int {
-    // Stub: severity management for fmtmsg. No-op is safe.
-    0
+pub unsafe extern "C" fn addseverity(severity: c_int, string: *const c_char) -> c_int {
+    let mut reg = FMTMSG_SEVERITIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let existing = reg.iter().position(|(s, _)| *s == severity);
+
+    if string.is_null() {
+        // Removal: cannot remove a predefined/reserved class, and the class must
+        // already be registered.
+        if severity <= FMTMSG_MM_INFO {
+            return FMTMSG_MM_NOTOK;
+        }
+        match existing {
+            Some(idx) => {
+                reg.remove(idx);
+                FMTMSG_MM_OK
+            }
+            None => FMTMSG_MM_NOTOK,
+        }
+    } else {
+        let bytes = unsafe { scan_c_string(string, None) };
+        let label = unsafe { std::slice::from_raw_parts(string as *const u8, bytes.0) }.to_vec();
+        if let Some(idx) = existing {
+            // Re-registering an existing custom severity updates its label.
+            reg[idx].1 = label;
+            FMTMSG_MM_OK
+        } else if severity <= FMTMSG_MM_INFO {
+            // Reserved range (0..=4) cannot be (re)defined.
+            FMTMSG_MM_NOTOK
+        } else {
+            reg.push((severity, label));
+            FMTMSG_MM_OK
+        }
+    }
+}
+
+/// Resolve a `fmtmsg` severity code to its printed label.
+///
+/// Returns `Ok(None)` for MM_NOSEV (0, valid, no label printed), `Ok(Some(name))`
+/// for a predefined or registered custom severity, and `Err(())` when the code is
+/// neither predefined nor registered (invalid -> `fmtmsg` must fail with MM_NOTOK).
+fn fmtmsg_resolve_severity(severity: c_int) -> Result<Option<Vec<u8>>, ()> {
+    if severity == 0 {
+        return Ok(None); // MM_NOSEV: valid, prints no severity component
+    }
+    if let Some(name) = frankenlibc_core::fmtmsg::severity_name(severity) {
+        return Ok(Some(name.as_bytes().to_vec()));
+    }
+    let reg = FMTMSG_SEVERITIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    reg.iter()
+        .find(|(s, _)| *s == severity)
+        .map(|(_, label)| Some(label.clone()))
+        .ok_or(())
 }
 
 // ===========================================================================
