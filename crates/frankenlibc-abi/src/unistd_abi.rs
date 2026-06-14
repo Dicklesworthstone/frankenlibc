@@ -2501,7 +2501,9 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_2_VERSION => 200809,
         libc::_SC_VERSION => 200809,
         libc::_SC_THREAD_SAFE_FUNCTIONS => 1,
-        libc::_SC_THREADS => 1,
+        // _SC_THREADS reports the supported _POSIX_THREADS version (200809L),
+        // not a boolean — glibc returns 200809; fl previously returned 1.
+        libc::_SC_THREADS => 200809,
         libc::_SC_THREAD_KEYS_MAX => 1024,
         libc::_SC_THREAD_STACK_MIN => libc::PTHREAD_STACK_MIN as libc::c_long,
         libc::_SC_THREAD_THREADS_MAX => -1i64 as libc::c_long, // unlimited
@@ -2521,6 +2523,47 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_PRIORITY_SCHEDULING => 1,
         libc::_SC_FSYNC => 1,
         libc::_SC_ASYNCHRONOUS_IO => 1,
+        // POSIX feature flags and utility limits glibc reports as definite
+        // constants; these were previously falling through to the EINVAL default
+        // (returning -1 as if the key were unknown), diverging from glibc.
+        libc::_SC_JOB_CONTROL => 1,
+        libc::_SC_SAVED_IDS => 1,
+        libc::_SC_BC_BASE_MAX => 99,
+        libc::_SC_BC_DIM_MAX => 2048,
+        libc::_SC_BC_SCALE_MAX => 99,
+        libc::_SC_BC_STRING_MAX => 1000,
+        libc::_SC_COLL_WEIGHTS_MAX => 255,
+        libc::_SC_EXPR_NEST_MAX => 32,
+        libc::_SC_2_C_BIND => 200809,
+        libc::_SC_2_C_DEV => 200809,
+        libc::_SC_2_LOCALEDEF => 200809,
+        libc::_SC_2_SW_DEV => 200809,
+        // Realtime / message-queue / AIO limits (glibc's fixed Linux values).
+        libc::_SC_ATEXIT_MAX => libc::c_int::MAX as libc::c_long,
+        libc::_SC_SEM_VALUE_MAX => libc::c_int::MAX as libc::c_long,
+        libc::_SC_DELAYTIMER_MAX => libc::c_int::MAX as libc::c_long,
+        libc::_SC_MQ_PRIO_MAX => 32768,
+        libc::_SC_RTSIG_MAX => 32,
+        libc::_SC_AIO_PRIO_DELTA_MAX => 20,
+        libc::_SC_SIGQUEUE_MAX => {
+            // glibc reports the RLIMIT_SIGPENDING soft limit (the max number of
+            // queued realtime signals). Read it the same way _SC_OPEN_MAX reads
+            // RLIMIT_NOFILE; fall back to the _POSIX_SIGQUEUE_MAX minimum (32).
+            let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
+            match unsafe {
+                syscall::sys_getrlimit(libc::RLIMIT_SIGPENDING as i32, rlim.as_mut_ptr() as *mut u8)
+            } {
+                Ok(()) => {
+                    let rlim = unsafe { rlim.assume_init() };
+                    if rlim.rlim_cur == libc::RLIM_INFINITY {
+                        -1
+                    } else {
+                        rlim.rlim_cur as libc::c_long
+                    }
+                }
+                Err(_) => 32,
+            }
+        }
         _ => {
             unsafe { set_abi_errno(errno::EINVAL) };
             -1

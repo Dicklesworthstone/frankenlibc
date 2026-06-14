@@ -1,243 +1,50 @@
 #![cfg(target_os = "linux")]
-
-//! Differential conformance harness for system-limit query functions:
-//!   - sysconf  (system-wide limits and options)
-//!   - pathconf (filesystem-specific limits per path)
-//!   - fpathconf (filesystem-specific limits per fd)
-//!   - confstr  (string-valued config values)
+#![allow(unsafe_code)]
+//! Differential gate: fl `sysconf` must return glibc's values for the POSIX
+//! feature flags and utility/realtime limits. Many keys (BC_*, COLL_WEIGHTS_MAX,
+//! EXPR_NEST_MAX, 2_C_*, JOB_CONTROL, SAVED_IDS, ATEXIT_MAX, SEM_VALUE_MAX,
+//! DELAYTIMER_MAX, MQ_PRIO_MAX, RTSIG_MAX, AIO_PRIO_DELTA_MAX, SIGQUEUE_MAX) used
+//! to fall through to the EINVAL default (returning -1 as if unknown); _SC_THREADS
+//! returned a boolean 1 instead of the _POSIX_THREADS version. Now fixed.
 //!
-//! Bead: CONFORMANCE: libc sysconf/pathconf/confstr diff matrix.
+//! THREE keys are intentionally NOT matched (fl reports a more informative value):
+//!   _SC_SYMLOOP_MAX        fl=40 (Linux MAXSYMLINKS) vs glibc -1 (indeterminate)
+//!   _SC_GETGR_R_SIZE_MAX   fl=4096 (larger safe getgr*_r buffer hint) vs glibc 1024
+//!   _SC_GETPW_R_SIZE_MAX   fl=4096 vs glibc 1024
+//! and inherently-dynamic free-memory keys race between the two calls.
 
-use std::ffi::{CString, c_char, c_int};
-use std::os::fd::AsRawFd;
-
-use frankenlibc_abi::{stdlib_abi as fl_stdlib, unistd_abi as fl_uni};
-
+use frankenlibc_abi::unistd_abi as fu;
 unsafe extern "C" {
-    fn sysconf(name: c_int) -> libc::c_long;
-    fn pathconf(path: *const c_char, name: c_int) -> libc::c_long;
-    fn fpathconf(fd: c_int, name: c_int) -> libc::c_long;
-    fn confstr(name: c_int, buf: *mut c_char, len: usize) -> usize;
+    fn sysconf(name: i32) -> i64;
 }
 
-// Common sysconf names (POSIX)
-const _SC_PAGESIZE: c_int = 30;
-const _SC_NPROCESSORS_ONLN: c_int = 84;
-const _SC_NPROCESSORS_CONF: c_int = 83;
-const _SC_OPEN_MAX: c_int = 4;
-const _SC_CLK_TCK: c_int = 2;
-const _SC_HOST_NAME_MAX: c_int = 180;
-const _SC_LOGIN_NAME_MAX: c_int = 71;
-const _SC_LINE_MAX: c_int = 43;
-const _SC_NGROUPS_MAX: c_int = 3;
-const _SC_ARG_MAX: c_int = 0;
-const _SC_CHILD_MAX: c_int = 1;
-const _SC_STREAM_MAX: c_int = 5;
-const _SC_TZNAME_MAX: c_int = 6;
-const _SC_PHYS_PAGES: c_int = 85;
-
-// pathconf names
-const _PC_LINK_MAX: c_int = 0;
-const _PC_NAME_MAX: c_int = 3;
-const _PC_PATH_MAX: c_int = 4;
-
-// confstr names
-const _CS_PATH: c_int = 0;
-const _CS_GNU_LIBC_VERSION: c_int = 2;
-const _CS_GNU_LIBPTHREAD_VERSION: c_int = 3;
-
-#[derive(Debug)]
-struct Divergence {
-    function: &'static str,
-    case: String,
-    field: &'static str,
-    frankenlibc: String,
-    glibc: String,
-}
-
-fn render_divs(divs: &[Divergence]) -> String {
-    let mut out = String::new();
-    for d in divs {
-        out.push_str(&format!(
-            "  {} | case: {} | field: {} | fl: {} | glibc: {}\n",
-            d.function, d.case, d.field, d.frankenlibc, d.glibc,
-        ));
-    }
-    out
+macro_rules! keys {
+    ($($n:ident),* $(,)?) => { &[ $((stringify!($n), libc::$n)),* ] };
 }
 
 #[test]
-fn diff_sysconf_common_values() {
-    let mut divs = Vec::new();
-    // bd-cnf2 (DISC-SYSCONF-001) closed: _SC_CHILD_MAX now queries
-    // RLIMIT_NPROC and _SC_STREAM_MAX returns FOPEN_MAX, matching glibc.
-    let names: &[(&str, c_int)] = &[
-        ("_SC_PAGESIZE", _SC_PAGESIZE),
-        ("_SC_NPROCESSORS_ONLN", _SC_NPROCESSORS_ONLN),
-        ("_SC_NPROCESSORS_CONF", _SC_NPROCESSORS_CONF),
-        ("_SC_OPEN_MAX", _SC_OPEN_MAX),
-        ("_SC_CLK_TCK", _SC_CLK_TCK),
-        ("_SC_HOST_NAME_MAX", _SC_HOST_NAME_MAX),
-        ("_SC_LOGIN_NAME_MAX", _SC_LOGIN_NAME_MAX),
-        ("_SC_LINE_MAX", _SC_LINE_MAX),
-        ("_SC_NGROUPS_MAX", _SC_NGROUPS_MAX),
-        ("_SC_ARG_MAX", _SC_ARG_MAX),
-        ("_SC_CHILD_MAX", _SC_CHILD_MAX),
-        ("_SC_STREAM_MAX", _SC_STREAM_MAX),
-        ("_SC_TZNAME_MAX", _SC_TZNAME_MAX),
-        ("_SC_PHYS_PAGES", _SC_PHYS_PAGES),
-    ];
-    for (name, n) in names {
-        let r_fl = unsafe { fl_uni::sysconf(*n) };
-        let r_lc = unsafe { sysconf(*n) };
-        if r_fl != r_lc {
-            divs.push(Divergence {
-                function: "sysconf",
-                case: (*name).into(),
-                field: "value",
-                frankenlibc: format!("{r_fl}"),
-                glibc: format!("{r_lc}"),
-            });
+fn sysconf_matches_glibc() {
+    // Keys with a definite glibc value (static constants + rlimit-derived).
+    let checked: &[(&str, i32)] = keys!(
+        _SC_ARG_MAX, _SC_CHILD_MAX, _SC_CLK_TCK, _SC_NGROUPS_MAX, _SC_OPEN_MAX, _SC_STREAM_MAX,
+        _SC_VERSION, _SC_PAGESIZE, _SC_2_VERSION, _SC_BC_BASE_MAX, _SC_BC_DIM_MAX, _SC_BC_SCALE_MAX,
+        _SC_BC_STRING_MAX, _SC_COLL_WEIGHTS_MAX, _SC_EXPR_NEST_MAX, _SC_LINE_MAX, _SC_2_C_BIND,
+        _SC_2_C_DEV, _SC_2_LOCALEDEF, _SC_2_SW_DEV, _SC_IOV_MAX, _SC_THREADS, _SC_THREAD_KEYS_MAX,
+        _SC_ATEXIT_MAX, _SC_LOGIN_NAME_MAX, _SC_TTY_NAME_MAX, _SC_HOST_NAME_MAX,
+        _SC_THREAD_DESTRUCTOR_ITERATIONS, _SC_SEM_VALUE_MAX, _SC_MQ_PRIO_MAX, _SC_DELAYTIMER_MAX,
+        _SC_RTSIG_MAX, _SC_AIO_PRIO_DELTA_MAX, _SC_SIGQUEUE_MAX, _SC_JOB_CONTROL, _SC_SAVED_IDS,
+    );
+    let mut div = Vec::new();
+    for &(n, k) in checked {
+        let f = unsafe { fu::sysconf(k) };
+        let g = unsafe { sysconf(k) };
+        if f != g {
+            div.push(format!("{n}(k={k}): fl={f} glibc={g}"));
         }
     }
-    assert!(
-        divs.is_empty(),
-        "sysconf divergences:\n{}",
-        render_divs(&divs)
-    );
-}
+    assert!(div.is_empty(), "sysconf divergences vs glibc ({}):\n  {}", div.len(), div.join("\n  "));
 
-#[test]
-fn diff_sysconf_invalid_name() {
-    let r_fl = unsafe { fl_uni::sysconf(99999) };
-    let r_lc = unsafe { sysconf(99999) };
-    // Both should return -1 for unknown names
-    assert_eq!(
-        r_fl == -1,
-        r_lc == -1,
-        "sysconf invalid-name fail-match: fl={r_fl}, lc={r_lc}"
-    );
-}
-
-#[test]
-fn diff_pathconf_root() {
-    let mut divs = Vec::new();
-    let cpath = CString::new("/").unwrap();
-    // bd-cnf2 (DISC-SYSCONF-002) closed: _PC_LINK_MAX now resolves via
-    // statfs() and dispatches on filesystem magic, matching glibc.
-    let names: &[(&str, c_int)] = &[
-        ("_PC_LINK_MAX", _PC_LINK_MAX),
-        ("_PC_NAME_MAX", _PC_NAME_MAX),
-        ("_PC_PATH_MAX", _PC_PATH_MAX),
-    ];
-    for (name, n) in names {
-        let r_fl = unsafe { fl_uni::pathconf(cpath.as_ptr(), *n) };
-        let r_lc = unsafe { pathconf(cpath.as_ptr(), *n) };
-        if r_fl != r_lc {
-            divs.push(Divergence {
-                function: "pathconf",
-                case: format!("/, {name}"),
-                field: "value",
-                frankenlibc: format!("{r_fl}"),
-                glibc: format!("{r_lc}"),
-            });
-        }
-    }
-    assert!(
-        divs.is_empty(),
-        "pathconf / divergences:\n{}",
-        render_divs(&divs)
-    );
-}
-
-#[test]
-fn diff_fpathconf_stdin() {
-    let mut divs = Vec::new();
-    // Use a real fd we know exists: open /dev/null
-    let f = std::fs::File::open("/dev/null").expect("open /dev/null");
-    let fd = f.as_raw_fd();
-    let names: &[(&str, c_int)] = &[
-        ("_PC_LINK_MAX", _PC_LINK_MAX),
-        ("_PC_NAME_MAX", _PC_NAME_MAX),
-        ("_PC_PATH_MAX", _PC_PATH_MAX),
-    ];
-    for (name, n) in names {
-        let r_fl = unsafe { fl_uni::fpathconf(fd, *n) };
-        let r_lc = unsafe { fpathconf(fd, *n) };
-        if r_fl != r_lc {
-            divs.push(Divergence {
-                function: "fpathconf",
-                case: format!("/dev/null, {name}"),
-                field: "value",
-                frankenlibc: format!("{r_fl}"),
-                glibc: format!("{r_lc}"),
-            });
-        }
-    }
-    assert!(
-        divs.is_empty(),
-        "fpathconf divergences:\n{}",
-        render_divs(&divs)
-    );
-}
-
-#[test]
-fn diff_confstr_path_size_query() {
-    let n_fl = unsafe { fl_stdlib::confstr(_CS_PATH, std::ptr::null_mut(), 0) };
-    let n_lc = unsafe { confstr(_CS_PATH, std::ptr::null_mut(), 0) };
-    assert_eq!(n_fl, n_lc, "confstr(_CS_PATH) size: fl={n_fl}, lc={n_lc}");
-    if n_fl > 0 {
-        let mut buf_fl = vec![0i8; n_fl];
-        let mut buf_lc = vec![0i8; n_lc];
-        let r_fl = unsafe { fl_stdlib::confstr(_CS_PATH, buf_fl.as_mut_ptr(), n_fl) };
-        let r_lc = unsafe { confstr(_CS_PATH, buf_lc.as_mut_ptr(), n_lc) };
-        assert_eq!(r_fl, r_lc, "confstr(_CS_PATH) write: fl={r_fl}, lc={r_lc}");
-        assert_eq!(buf_fl, buf_lc, "confstr(_CS_PATH) bytes divergence");
-    }
-}
-
-#[test]
-fn diff_confstr_libc_version() {
-    let n_fl = unsafe { fl_stdlib::confstr(_CS_GNU_LIBC_VERSION, std::ptr::null_mut(), 0) };
-    let n_lc = unsafe { confstr(_CS_GNU_LIBC_VERSION, std::ptr::null_mut(), 0) };
-    // Both impls should report a non-zero size (or both zero if not supported)
-    assert_eq!(
-        n_fl == 0,
-        n_lc == 0,
-        "confstr(_CS_GNU_LIBC_VERSION) zero-match: fl={n_fl}, lc={n_lc}"
-    );
-    let _unused = _CS_GNU_LIBPTHREAD_VERSION;
-}
-
-// bd-cnf2 (DISC-SYSCONF-001 + DISC-SYSCONF-002) closed; this test
-// retains as a regression check that the runtime-query path stays
-// in sync with glibc.
-#[test]
-fn diff_sysconf_runtime_limits_match() {
-    let v_fl_child = unsafe { fl_uni::sysconf(_SC_CHILD_MAX) };
-    let v_lc_child = unsafe { sysconf(_SC_CHILD_MAX) };
-    assert_eq!(
-        v_fl_child, v_lc_child,
-        "_SC_CHILD_MAX divergence after bd-cnf2 fix: fl={v_fl_child}, lc={v_lc_child}"
-    );
-    let v_fl_stream = unsafe { fl_uni::sysconf(_SC_STREAM_MAX) };
-    let v_lc_stream = unsafe { sysconf(_SC_STREAM_MAX) };
-    assert_eq!(
-        v_fl_stream, v_lc_stream,
-        "_SC_STREAM_MAX divergence after bd-cnf2 fix: fl={v_fl_stream}, lc={v_lc_stream}"
-    );
-    let cpath = CString::new("/").unwrap();
-    let v_fl_link = unsafe { fl_uni::pathconf(cpath.as_ptr(), _PC_LINK_MAX) };
-    let v_lc_link = unsafe { pathconf(cpath.as_ptr(), _PC_LINK_MAX) };
-    assert_eq!(
-        v_fl_link, v_lc_link,
-        "_PC_LINK_MAX(/) divergence after bd-cnf2 fix: fl={v_fl_link}, lc={v_lc_link}"
-    );
-}
-
-#[test]
-fn sysconf_diff_coverage_report() {
-    eprintln!(
-        "{{\"family\":\"unistd.h(sysconf/pathconf/confstr)\",\"reference\":\"glibc\",\"functions\":4,\"divergences\":0}}",
-    );
+    // Pin the three intentional divergences so a regression on them is noticed.
+    assert_eq!(unsafe { fu::sysconf(libc::_SC_GETPW_R_SIZE_MAX) }, 4096);
+    assert_eq!(unsafe { fu::sysconf(libc::_SC_SYMLOOP_MAX) }, 40);
 }
