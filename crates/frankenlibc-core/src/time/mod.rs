@@ -223,18 +223,50 @@ pub fn format_asctime(bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
     // day field is `%3d` (no preceding literal space), so a 3-digit day
     // packs flush against the month name ("Jan100"). Year has no width
     // specifier — single-digit years print as "1", not "   1".
-    let s = format!(
-        "{} {}{:>3} {:02}:{:02}:{:02} {}\n",
-        std::str::from_utf8(WDAY_NAMES[wday]).unwrap_or("???"),
-        std::str::from_utf8(MON_NAMES[mon]).unwrap_or("???"),
-        bd.tm_mday,
-        bd.tm_hour,
-        bd.tm_min,
-        bd.tm_sec,
-        year,
-    );
-
-    let bytes = s.as_bytes();
+    // Format into a fixed stack buffer with the SAME format args (so the output
+    // is byte-identical to the old `format!` path) but without the per-call heap
+    // String allocation — asctime/ctime were ~2.8x slower than glibc purely from
+    // that malloc plus the formatting machinery's allocation.
+    struct StackFmt {
+        buf: [u8; 64],
+        pos: usize,
+    }
+    impl core::fmt::Write for StackFmt {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            let b = s.as_bytes();
+            let end = self.pos.checked_add(b.len()).ok_or(core::fmt::Error)?;
+            if end > self.buf.len() {
+                return Err(core::fmt::Error);
+            }
+            self.buf[self.pos..end].copy_from_slice(b);
+            self.pos = end;
+            Ok(())
+        }
+    }
+    let mut sf = StackFmt {
+        buf: [0u8; 64],
+        pos: 0,
+    };
+    // A year too wide for the 64-byte scratch (impossible for any real epoch)
+    // errors out; treat that exactly like the old > 26-byte overflow path below.
+    if core::fmt::write(
+        &mut sf,
+        format_args!(
+            "{} {}{:>3} {:02}:{:02}:{:02} {}\n",
+            std::str::from_utf8(WDAY_NAMES[wday]).unwrap_or("???"),
+            std::str::from_utf8(MON_NAMES[mon]).unwrap_or("???"),
+            bd.tm_mday,
+            bd.tm_hour,
+            bd.tm_min,
+            bd.tm_sec,
+            year,
+        ),
+    )
+    .is_err()
+    {
+        return 0;
+    }
+    let bytes = &sf.buf[..sf.pos];
     // glibc's asctime/asctime_r bound the output to the 26-byte contract buffer
     // and return NULL (EOVERFLOW) rather than TRUNCATE when it would not fit —
     // e.g. a year outside [-999, 9999] (a 5+ char "%d") makes the string 26 bytes
