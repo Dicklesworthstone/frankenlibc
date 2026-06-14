@@ -286,13 +286,18 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 136] = [
         encoding: Encoding::Utf32Be,
         canonical: "UTF-32BE",
         normalized: "UTF32BE",
-        aliases: &["UTF32BE"],
+        // glibc's bare "UCS-4" and "UCS-4BE" are fixed big-endian UTF-32 with no
+        // BOM — identical to UTF-32BE for every valid Unicode scalar. (glibc also
+        // accepts the >U+10FFFF / extended-UTF-8 range that a Rust `char` cannot
+        // represent, so fl is Unicode-strict there, the documented divergence in
+        // bd-zdxuly.)
+        aliases: &["UTF32BE", "UCS4", "UCS4BE"],
     },
     CodecSpec {
         encoding: Encoding::Utf32Le,
         canonical: "UTF-32LE",
         normalized: "UTF32LE",
-        aliases: &["UTF32LE"],
+        aliases: &["UTF32LE", "UCS4LE"],
     },
     CodecSpec {
         encoding: Encoding::Koi8R,
@@ -8415,7 +8420,9 @@ fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
         let direct = DBCS3_DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::EUC_JP_DBCS3));
         let cp = direct[key as usize];
         return if cp != 0 {
-            char::from_u32(cp).map(|c| (c, 3)).ok_or(DecodeError::Invalid)
+            char::from_u32(cp)
+                .map(|c| (c, 3))
+                .ok_or(DecodeError::Invalid)
         } else {
             Err(DecodeError::Invalid)
         };
@@ -8430,7 +8437,9 @@ fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
     let direct = DBCS2_DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::EUC_JP_DBCS2));
     let cp = direct[key as usize];
     if cp != 0 {
-        char::from_u32(cp).map(|c| (c, 2)).ok_or(DecodeError::Invalid)
+        char::from_u32(cp)
+            .map(|c| (c, 2))
+            .ok_or(DecodeError::Invalid)
     } else {
         Err(DecodeError::Invalid)
     }
@@ -8528,7 +8537,9 @@ fn decode_dbcs2(
     let key = (u16::from(b0) << 8) | u16::from(b1);
     let cp = dbcs_direct[key as usize];
     if cp != 0 {
-        char::from_u32(cp).map(|c| (c, 2)).ok_or(DecodeError::Invalid)
+        char::from_u32(cp)
+            .map(|c| (c, 2))
+            .ok_or(DecodeError::Invalid)
     } else {
         Err(DecodeError::Invalid)
     }
@@ -8952,7 +8963,9 @@ fn decode_gb18030(input: &[u8]) -> Result<(char, usize), DecodeError> {
     // O(1) direct-table lookup (0 = not a valid 2-byte sequence).
     let cp = gb18030_dbcs2_direct()[key as usize];
     if cp != 0 {
-        char::from_u32(cp).map(|c| (c, 2)).ok_or(DecodeError::Invalid)
+        char::from_u32(cp)
+            .map(|c| (c, 2))
+            .ok_or(DecodeError::Invalid)
     } else {
         Err(DecodeError::Invalid)
     }
@@ -9180,25 +9193,45 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
 fn decode_euckr(input: &[u8]) -> Result<(char, usize), DecodeError> {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::EUC_KR_DBCS));
-    decode_dbcs2(input, &cjk_tables::EUC_KR_ONE_BYTE, &cjk_tables::EUC_KR_IS_LEAD, direct)
+    decode_dbcs2(
+        input,
+        &cjk_tables::EUC_KR_ONE_BYTE,
+        &cjk_tables::EUC_KR_IS_LEAD,
+        direct,
+    )
 }
 
 fn decode_cp949(input: &[u8]) -> Result<(char, usize), DecodeError> {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::CP949_DBCS));
-    decode_dbcs2(input, &cjk_tables::CP949_ONE_BYTE, &cjk_tables::CP949_IS_LEAD, direct)
+    decode_dbcs2(
+        input,
+        &cjk_tables::CP949_ONE_BYTE,
+        &cjk_tables::CP949_IS_LEAD,
+        direct,
+    )
 }
 
 fn decode_gb2312(input: &[u8]) -> Result<(char, usize), DecodeError> {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::GB2312_DBCS));
-    decode_dbcs2(input, &cjk_tables::GB2312_ONE_BYTE, &cjk_tables::GB2312_IS_LEAD, direct)
+    decode_dbcs2(
+        input,
+        &cjk_tables::GB2312_ONE_BYTE,
+        &cjk_tables::GB2312_IS_LEAD,
+        direct,
+    )
 }
 
 fn decode_johab(input: &[u8]) -> Result<(char, usize), DecodeError> {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::JOHAB_DBCS));
-    decode_dbcs2(input, &cjk_tables::JOHAB_ONE_BYTE, &cjk_tables::JOHAB_IS_LEAD, direct)
+    decode_dbcs2(
+        input,
+        &cjk_tables::JOHAB_ONE_BYTE,
+        &cjk_tables::JOHAB_IS_LEAD,
+        direct,
+    )
 }
 
 fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
@@ -9810,10 +9843,18 @@ pub fn iconv(
             let cp_at = |p: usize| -> u32 {
                 if scp == 2 {
                     let b: [u8; 2] = input[p..p + 2].try_into().unwrap();
-                    u32::from(if sbe { u16::from_be_bytes(b) } else { u16::from_le_bytes(b) })
+                    u32::from(if sbe {
+                        u16::from_be_bytes(b)
+                    } else {
+                        u16::from_le_bytes(b)
+                    })
                 } else {
                     let b: [u8; 4] = input[p..p + 4].try_into().unwrap();
-                    if sbe { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) }
+                    if sbe {
+                        u32::from_be_bytes(b)
+                    } else {
+                        u32::from_le_bytes(b)
+                    }
                 }
             };
             // 2-byte output run (code points 0x80..=0x7FF).
@@ -10191,7 +10232,11 @@ pub fn iconv(
             )
             && !cd.emit_bom
         {
-            let tw = if matches!(cd.to, Encoding::Utf16Le | Encoding::Utf16Be) { 2 } else { 4 };
+            let tw = if matches!(cd.to, Encoding::Utf16Le | Encoding::Utf16Be) {
+                2
+            } else {
+                4
+            };
             let tbe = matches!(cd.to, Encoding::Utf16Be | Encoding::Utf32Be);
             while in_pos < input.len() && out_pos + tw <= outbuf.len() {
                 let cp = decode.cp[input[in_pos] as usize];
@@ -10201,11 +10246,19 @@ pub fn iconv(
                 let cp = cp as u32;
                 let p = out_pos;
                 if tw == 2 {
-                    let b = if tbe { (cp as u16).to_be_bytes() } else { (cp as u16).to_le_bytes() };
+                    let b = if tbe {
+                        (cp as u16).to_be_bytes()
+                    } else {
+                        (cp as u16).to_le_bytes()
+                    };
                     outbuf[p] = b[0];
                     outbuf[p + 1] = b[1];
                 } else {
-                    let b = if tbe { cp.to_be_bytes() } else { cp.to_le_bytes() };
+                    let b = if tbe {
+                        cp.to_be_bytes()
+                    } else {
+                        cp.to_le_bytes()
+                    };
                     outbuf[p..p + 4].copy_from_slice(&b);
                 }
                 in_pos += 1;
@@ -10273,7 +10326,11 @@ pub fn iconv(
                         if avail >= needed {
                             let be = matches!(cd.to, Encoding::Utf16Be);
                             for (idx, unit) in enc.iter().enumerate() {
-                                let bytes = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                                let bytes = if be {
+                                    unit.to_be_bytes()
+                                } else {
+                                    unit.to_le_bytes()
+                                };
                                 outbuf[out_pos + idx * 2] = bytes[0];
                                 outbuf[out_pos + idx * 2 + 1] = bytes[1];
                             }
@@ -10343,7 +10400,11 @@ pub fn iconv(
                         if avail >= needed {
                             let be = matches!(cd.to, Encoding::Utf16Be);
                             for (idx, unit) in enc.iter().enumerate() {
-                                let bytes = if be { unit.to_be_bytes() } else { unit.to_le_bytes() };
+                                let bytes = if be {
+                                    unit.to_be_bytes()
+                                } else {
+                                    unit.to_le_bytes()
+                                };
                                 outbuf[out_pos + idx * 2] = bytes[0];
                                 outbuf[out_pos + idx * 2 + 1] = bytes[1];
                             }
