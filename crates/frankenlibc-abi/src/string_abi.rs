@@ -2676,7 +2676,13 @@ pub unsafe extern "C" fn stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
 ///
 /// Caller must ensure `dst` is at least `n` bytes and `src` is a valid string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+/// Shared single-scan core for `strncpy`/`stpncpy`. Runs the membrane bookkeeping
+/// and the source scan/copy/pad once and returns `Some(offset)`, where `offset` is
+/// the index of the terminating NUL within the written region (== `strnlen(dst,n)`
+/// in the common path) — the `stpncpy` result. Returns `None` only on membrane
+/// deny. `strncpy` returns the original `dst`; `stpncpy` returns `dst + offset`, so
+/// it no longer re-scans the just-written destination with a second `strnlen` pass.
+unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option<usize> {
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() || n == 0 {
         if dst.is_null() || src.is_null() {
@@ -2687,7 +2693,7 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
                 Some(stage_index(&ordering, CheckStage::Null)),
             );
         }
-        return dst;
+        return Some(0);
     }
 
     let (mode, decision) = runtime_policy::decide(
@@ -2711,7 +2717,7 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
             runtime_policy::scaled_cost(8, n),
             true,
         );
-        return std::ptr::null_mut();
+        return None;
     }
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
@@ -2762,7 +2768,7 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
             runtime_policy::scaled_cost(8, n),
             true,
         );
-        return dst;
+        return Some(0);
     }
 
     // SAFETY: bounded by safe_dst_len and safe_src_len.
@@ -2772,14 +2778,15 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
     // `k` is the source NUL index (or safe_src_len if none within bound); the copy
     // is clamped to safe_dst_len, and everything after it is NUL-filled — exactly
     // what the scalar loop produced.
-    unsafe {
+    let copy_len = unsafe {
         let k = scan_c_string(src, Some(safe_src_len)).0;
         let copy_len = k.min(safe_dst_len);
         raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
         if copy_len < safe_dst_len {
             raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, safe_dst_len - copy_len);
         }
-    }
+        copy_len
+    };
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -2792,7 +2799,16 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
         recent_page,
         Some(stage_index(&ordering, CheckStage::Bounds)),
     );
-    dst
+    // Offset of the terminating NUL in the written region (== strnlen(dst, n) in
+    // the common path): src NUL index clamped to the destination capacity.
+    Some(copy_len)
+}
+
+pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    match unsafe { strncpy_core(dst, src, n) } {
+        Some(_) => dst,
+        None => std::ptr::null_mut(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2815,18 +2831,13 @@ pub unsafe extern "C" fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize)
         return dst;
     }
 
-    // SAFETY: pointer validity and copy bounds are validated by the delegated ABI helper.
-    let copied = unsafe { strncpy(dst, src, n) };
-    if copied.is_null() {
-        return std::ptr::null_mut();
+    // Single shared scan: `strncpy_core` returns the terminating-NUL offset it
+    // just wrote, so stpncpy no longer re-scans the destination with strnlen.
+    match unsafe { strncpy_core(dst, src, n) } {
+        // SAFETY: offset is bounded by `n` (and any clamped membrane bound).
+        Some(offset) => unsafe { dst.add(offset) },
+        None => std::ptr::null_mut(),
     }
-
-    // SAFETY: bounded scan by `n` matches `stpncpy` return contract.
-    // By measuring `dst` instead of `src`, we automatically respect any
-    // bounds clamping that `strncpy` applied in hardened mode.
-    let offset = unsafe { strnlen(dst, n) };
-    // SAFETY: offset is bounded by `n` (and clamped membrane bounds).
-    unsafe { dst.add(offset) }
 }
 
 // ---------------------------------------------------------------------------
