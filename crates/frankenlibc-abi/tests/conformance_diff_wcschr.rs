@@ -125,7 +125,7 @@ fn wcschr_golden_sha256_is_stable() {
     }
 
     let digest = hasher.finalize();
-    let hex = format!("{digest:x}");
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
     eprintln!("wcschr golden sha256: {hex}");
     assert_eq!(checked, 5120);
     assert_eq!(
