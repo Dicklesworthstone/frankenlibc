@@ -3112,7 +3112,17 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
 ///
 /// Caller must ensure `s` is a valid null-terminated string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
+/// Shared single-scan core for `strchr`/`strchrnul`. Runs the membrane
+/// bookkeeping and the `target`-or-NUL scan exactly once and returns
+/// `Some((located, found))`:
+///   * `located` points at the first `target` byte, or at the terminating NUL
+///     (or the bounded-truncation point) — i.e. the `strchrnul` result;
+///   * `found` is true iff `located` is a real `target` byte (not the NUL/limit),
+///     i.e. `strchr` returns `located` when `found`, else NULL.
+/// Returns `None` only when `s` is NULL or the membrane denies the call (the
+/// caller picks the fallback). Folding both entry points onto this eliminates
+/// strchrnul's old strchr()+strlen() double scan on a miss.
+unsafe fn strchr_locate(s: *const c_char, c: c_int) -> Option<(*mut c_char, bool)> {
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if s.is_null() {
         record_string_stage_outcome(
@@ -3121,7 +3131,7 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
             recent_page,
             Some(stage_index(&ordering, CheckStage::Null)),
         );
-        return std::ptr::null_mut();
+        return None;
     }
 
     let target = c as c_char;
@@ -3141,7 +3151,7 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
             Some(stage_index(&ordering, CheckStage::Arena)),
         );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
-        return std::ptr::null_mut();
+        return None;
     }
 
     let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
@@ -3150,17 +3160,17 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
         None
     };
 
-    // SAFETY: strict mode preserves raw strchr behavior; hardened mode bounds scan.
-    // SWAR word-at-a-time scan for `target`-or-NUL (shared scan_c_string_for_byte),
-    // byte-identical to the old byte loop including target=='\0' (returns the NUL).
-    let (out, adverse, span) = unsafe {
+    // SAFETY: strict mode preserves raw behavior; hardened mode bounds the scan.
+    // SWAR scan for `target`-or-NUL (shared scan_c_string_for_byte), byte-identical
+    // to the old loop including target=='\0' (returns the NUL).
+    let (located, found, adverse, span) = unsafe {
         let (i, found_target, hit_limit) = scan_c_string_for_byte(s, target as u8, bound);
+        // `s.add(i)` is the target / NUL / truncation position in every case.
+        let ptr = s.add(i) as *mut c_char;
         if hit_limit {
-            (std::ptr::null_mut(), true, i)
-        } else if found_target {
-            (s.add(i) as *mut c_char, false, i.saturating_add(1))
+            (ptr, false, true, i)
         } else {
-            (std::ptr::null_mut(), false, i.saturating_add(1))
+            (ptr, found_target, false, i.saturating_add(1))
         }
     };
 
@@ -3179,7 +3189,14 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
         runtime_policy::scaled_cost(6, span),
         adverse,
     );
-    out
+    Some((located, found))
+}
+
+pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
+    match unsafe { strchr_locate(s, c) } {
+        Some((located, true)) => located,
+        _ => std::ptr::null_mut(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3198,16 +3215,14 @@ pub unsafe extern "C" fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char {
         return std::ptr::null_mut();
     }
 
-    // SAFETY: delegated ABI helper validates scan behavior through the membrane.
-    let found = unsafe { strchr(s, c) };
-    if !found.is_null() {
-        return found;
+    // Single shared scan: `strchr_locate` returns the target-or-NUL position
+    // directly, so a miss no longer re-scans the whole string with strlen.
+    match unsafe { strchr_locate(s, c) } {
+        Some((located, _found)) => located,
+        // Membrane-denied: preserve the previous degraded-mode result (the old
+        // strchr()=>NULL then strlen()=>0 path returned `s`).
+        None => s as *mut c_char,
     }
-
-    // SAFETY: delegated ABI helper computes the terminating NUL index.
-    let len = unsafe { strlen(s) };
-    // SAFETY: len is measured from `s`, so the resulting pointer is within the string object.
-    unsafe { s.add(len) as *mut c_char }
 }
 
 /// glibc reserved-namespace alias for [`strchrnul`]. Some headers
