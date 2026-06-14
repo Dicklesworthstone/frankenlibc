@@ -61,7 +61,40 @@ fn fenv_trap_extensions_match_glibc() {
         eq!("fetestexceptflag(DBZ)", fe::fetestexceptflag(&saved, FE_DIVBYZERO), 0);
         eq!("fetestexceptflag(ALL)", fe::fetestexceptflag(&saved, FE_ALL), FE_OVERFLOW | FE_INVALID); // 9
         eq!("fetestexceptflag(null)", fe::fetestexceptflag(std::ptr::null(), FE_ALL), 0);
+        fe::fedisableexcept(FE_ALL);
+        feclearexcept(FE_ALL);
 
+        // --- fegetmode / fesetmode ---
+        const FE_UPWARD: c_int = 0x800;
+        const FE_DOWNWARD: c_int = 0x400;
+        const FE_TONEAREST: c_int = 0x000;
+        let fe_dfl_mode = usize::MAX as *const fe::FeMode;
+
+        fe::fesetround(FE_UPWARD);
+        fe::feenableexcept(FE_INVALID | FE_OVERFLOW);
+        let mut saved = std::mem::MaybeUninit::<fe::FeMode>::uninit();
+        eq!("fegetmode ret", fe::fegetmode(saved.as_mut_ptr()), 0);
+        // change everything
+        fe::fesetround(FE_DOWNWARD);
+        fe::fedisableexcept(FE_ALL);
+        fe::feenableexcept(FE_DIVBYZERO);
+        // restore
+        eq!("fesetmode ret", fe::fesetmode(saved.as_ptr()), 0);
+        eq!("fesetmode round restored", fe::fegetround(), FE_UPWARD);
+        eq!("fesetmode en restored", fe::fegetexcept(), FE_INVALID | FE_OVERFLOW);
+        // fesetmode must NOT clear a raised status flag
+        feclearexcept(FE_ALL);
+        feraiseexcept(FE_INEXACT);
+        fe::fesetmode(saved.as_ptr());
+        eq!("fesetmode preserves INEXACT", (fetestexcept(FE_INEXACT) != 0) as c_int, 1);
+        // FE_DFL_MODE resets to round-nearest, all masked
+        fe::fesetround(FE_DOWNWARD);
+        fe::feenableexcept(FE_OVERFLOW);
+        eq!("fesetmode(FE_DFL_MODE) ret", fe::fesetmode(fe_dfl_mode), 0);
+        eq!("FE_DFL round", fe::fegetround(), FE_TONEAREST);
+        eq!("FE_DFL en", fe::fegetexcept(), 0);
+
+        fe::fedisableexcept(FE_ALL);
         feclearexcept(FE_ALL);
     }
     assert!(d.is_empty(), "fenv trap-extension divergences ({}):\n  {}", d.len(), d.join("\n  "));

@@ -6031,20 +6031,8 @@ pub static _LIB_VERSION: c_int = 0;
 // =========================================================================
 
 // fedisableexcept / feenableexcept / fegetexcept / fesetexcept /
-// fetestexceptflag are implemented in fenv_abi.rs (real MXCSR/x87 manipulation).
-
-#[repr(C)]
-pub struct FeMode {
-    _data: [u8; 8],
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fegetmode(_modep: *mut FeMode) -> c_int {
-    -1
-}
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fesetmode(_modep: *const FeMode) -> c_int {
-    -1
-}
+// fetestexceptflag / fegetmode / fesetmode are implemented in fenv_abi.rs
+// (real MXCSR/x87 manipulation).
 
 // =========================================================================
 // TS 18661 / C23 type-generic math width aliases

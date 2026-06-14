@@ -411,6 +411,61 @@ pub unsafe extern "C" fn fedisableexcept(excepts: c_int) -> c_int {
 }
 
 // ---------------------------------------------------------------------------
+// Dynamic FP mode (rounding + trap enables, NOT the status flags): fegetmode /
+// fesetmode (C23). femode_t holds the x87 control word and the MXCSR control
+// bits; fesetmode preserves the current exception STATUS flags.
+// ---------------------------------------------------------------------------
+
+#[repr(C)]
+pub struct FeMode {
+    x87_cw: u16,
+    _pad: u16,
+    mxcsr: u32,
+}
+
+/// MXCSR status flag bits (0-5); everything else in MXCSR is "mode".
+const MXCSR_STATUS: u32 = 0x3F;
+/// FE_DFL_MODE is `(const femode_t *) -1`.
+fn is_dfl_mode(modep: *const FeMode) -> bool {
+    modep as usize == usize::MAX
+}
+
+/// Save the current dynamic FP mode to `*modep`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fegetmode(modep: *mut FeMode) -> c_int {
+    if modep.is_null() || !tracked_object_fits(modep.cast_const()) {
+        return -1;
+    }
+    unsafe {
+        (*modep).x87_cw = read_x87_cw();
+        (*modep)._pad = 0;
+        (*modep).mxcsr = read_mxcsr();
+    }
+    0
+}
+
+/// Restore the dynamic FP mode from `*modep` (or reset to default when modep is
+/// FE_DFL_MODE). The exception status flags are left untouched.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fesetmode(modep: *const FeMode) -> c_int {
+    let (cw, ctrl) = if is_dfl_mode(modep) {
+        (X87_DEFAULT_CW, MXCSR_DEFAULT)
+    } else if modep.is_null() || !tracked_object_fits(modep) {
+        return -1;
+    } else {
+        let m = unsafe { &*modep };
+        (m.x87_cw, m.mxcsr)
+    };
+    unsafe {
+        write_x87_cw(cw);
+        // Keep the current status flags (bits 0-5); take the mode bits from ctrl.
+        let cur = read_mxcsr();
+        write_mxcsr((cur & MXCSR_STATUS) | (ctrl & !MXCSR_STATUS));
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
 // Environment save/restore
 // ---------------------------------------------------------------------------
 
