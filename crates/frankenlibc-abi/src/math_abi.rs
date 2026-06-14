@@ -399,9 +399,45 @@ pub unsafe extern "C" fn floor(x: f64) -> f64 {
     unary_entry(x, 4, frankenlibc_core::math::floor)
 }
 
+/// Round to nearest integer, ties AWAY from zero (C `round`), in the integer
+/// (bit) domain so it raises NO floating-point exceptions — matching glibc.
+///
+/// `frankenlibc_core::math::round` delegates to `libm::round`, whose `+0.5`
+/// arithmetic spuriously raises FE_INEXACT on every non-integer argument;
+/// glibc's `round` is an exact integral operation that raises nothing. We
+/// override the kernel here (rather than in core) because the f32 sibling lives
+/// in a core file currently reserved by another agent — keeping both kernels
+/// together in the ABI layer is the conflict-free, symmetric home. Pinned by
+/// `conformance_diff_round_exact_flags`.
+fn round_exact(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000_0000_0000;
+    let e = ((bits >> 52) & 0x7ff) as i32;
+    if e >= 1023 + 52 {
+        // |x| >= 2^52 (and inf/NaN): already integral.
+        return x;
+    }
+    if e < 1023 {
+        // |x| < 1: ±0 (|x| < 0.5) or ±1 (|x| >= 0.5, ties away from zero).
+        let mag = f64::from_bits(bits & 0x7fff_ffff_ffff_ffff);
+        let r = if mag >= 0.5 { 1.0_f64 } else { 0.0_f64 };
+        return f64::from_bits(r.to_bits() | sign);
+    }
+    let frac_bits = 1075 - e;
+    let half = 1u64 << (frac_bits - 1);
+    let frac_mask = (1u64 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let out = if (bits & frac_mask) >= half {
+        int_part + (1u64 << frac_bits)
+    } else {
+        int_part
+    };
+    f64::from_bits(out)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn round(x: f64) -> f64 {
-    unary_entry(x, 4, frankenlibc_core::math::round)
+    unary_entry(x, 4, round_exact)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1108,9 +1144,35 @@ pub unsafe extern "C" fn floorf(x: f32) -> f32 {
     unary_entry_f32(x, 3, frankenlibc_core::math::floorf)
 }
 
+/// f32 sibling of [`round_exact`]: ties away from zero, exception-free. See
+/// that function for why the kernel lives in the ABI layer.
+fn roundf_exact(x: f32) -> f32 {
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000;
+    let e = ((bits >> 23) & 0xff) as i32;
+    if e >= 127 + 23 {
+        return x;
+    }
+    if e < 127 {
+        let mag = f32::from_bits(bits & 0x7fff_ffff);
+        let r = if mag >= 0.5 { 1.0_f32 } else { 0.0_f32 };
+        return f32::from_bits(r.to_bits() | sign);
+    }
+    let frac_bits = 150 - e;
+    let half = 1u32 << (frac_bits - 1);
+    let frac_mask = (1u32 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let out = if (bits & frac_mask) >= half {
+        int_part + (1u32 << frac_bits)
+    } else {
+        int_part
+    };
+    f32::from_bits(out)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn roundf(x: f32) -> f32 {
-    unary_entry_f32(x, 3, frankenlibc_core::math::roundf)
+    unary_entry_f32(x, 3, roundf_exact)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
