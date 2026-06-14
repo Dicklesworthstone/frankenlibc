@@ -78,6 +78,12 @@ enum Encoding {
     /// Unmarked `UTF-16`: BOM-based endianness (decode strips/honors a leading
     /// BOM, defaulting to native LE; encode emits an LE BOM), mirroring `Utf32`.
     Utf16,
+    /// UCS-2: a fixed-width 16-bit BMP-only codec. Unlike UTF-16 it does NOT
+    /// pair surrogates — a surrogate code unit is invalid on decode and a
+    /// non-BMP scalar is unrepresentable on encode (glibc EILSEQ). `Ucs2Le` is
+    /// glibc's bare "UCS-2" / "UCS-2LE"; `Ucs2Be` is "UCS-2BE".
+    Ucs2Le,
+    Ucs2Be,
     Utf32,
     Utf32Be,
     Utf32Le,
@@ -222,7 +228,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 136] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -275,6 +281,21 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 136] = [
         canonical: "UTF-16",
         normalized: "UTF16",
         aliases: &["UTF16"],
+    },
+    // glibc's bare "UCS-2" and "UCS-2LE" are little-endian BMP-only UTF-16 with
+    // no surrogate pairing; "UCS-2BE" is the big-endian form. (On x86 glibc the
+    // unmarked UCS-2 is little-endian — verified against the host.)
+    CodecSpec {
+        encoding: Encoding::Ucs2Le,
+        canonical: "UCS-2LE",
+        normalized: "UCS2LE",
+        aliases: &["UCS2LE", "UCS2"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ucs2Be,
+        canonical: "UCS-2BE",
+        normalized: "UCS2BE",
+        aliases: &["UCS2BE"],
     },
     CodecSpec {
         encoding: Encoding::Utf32,
@@ -1505,6 +1526,35 @@ fn decode_utf8(input: &[u8]) -> Result<(char, usize), DecodeError> {
         crate::string::wchar::Utf8Step::Incomplete => Err(DecodeError::Incomplete),
         crate::string::wchar::Utf8Step::Invalid => Err(DecodeError::Invalid),
     }
+}
+
+/// UCS-2 decode (one fixed 16-bit unit per scalar, NO surrogate pairing — a
+/// surrogate code unit is invalid, matching glibc's UCS-2 gconv). `LE` selects
+/// little-endian (glibc bare "UCS-2"/"UCS-2LE"), else big-endian ("UCS-2BE").
+fn decode_ucs2<const LE: bool>(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.len() < 2 {
+        return Err(DecodeError::Incomplete);
+    }
+    let u = if LE {
+        u16::from_le_bytes([input[0], input[1]])
+    } else {
+        u16::from_be_bytes([input[0], input[1]])
+    };
+    if (0xD800..=0xDFFF).contains(&u) {
+        return Err(DecodeError::Invalid);
+    }
+    match char::from_u32(u32::from(u)) {
+        Some(ch) => Ok((ch, 2)),
+        None => Err(DecodeError::Invalid),
+    }
+}
+
+fn decode_ucs2le(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    decode_ucs2::<true>(input)
+}
+
+fn decode_ucs2be(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    decode_ucs2::<false>(input)
 }
 
 fn decode_utf16le(input: &[u8]) -> Result<(char, usize), DecodeError> {
@@ -9057,6 +9107,8 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         // applied by the convert loop (which dispatches to Utf16Be when a BE BOM
         // was seen), exactly like the unmarked Utf32 path.
         Encoding::Utf16 => decode_utf16le(input),
+        Encoding::Ucs2Le => decode_ucs2le(input),
+        Encoding::Ucs2Be => decode_ucs2be(input),
         Encoding::Utf32 => decode_utf32(input),
         Encoding::Utf32Be => decode_utf32be(input),
         Encoding::Utf32Le => decode_utf32le(input),
@@ -9296,6 +9348,26 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
                 out[idx * 2 + 1] = bytes[1];
             }
             Ok(needed)
+        }
+        // UCS-2: one fixed 16-bit unit; a non-BMP scalar (> U+FFFF) is
+        // unrepresentable (glibc EILSEQ). No surrogate pairing.
+        Encoding::Ucs2Le | Encoding::Ucs2Be => {
+            let cp = ch as u32;
+            if cp > 0xFFFF {
+                return Err(EncodeError::Unrepresentable);
+            }
+            if out.len() < 2 {
+                return Err(EncodeError::NoSpace);
+            }
+            let unit = cp as u16;
+            let bytes = if matches!(enc, Encoding::Ucs2Be) {
+                unit.to_be_bytes()
+            } else {
+                unit.to_le_bytes()
+            };
+            out[0] = bytes[0];
+            out[1] = bytes[1];
+            Ok(2)
         }
         Encoding::Utf32 => {
             if out.len() < 4 {
