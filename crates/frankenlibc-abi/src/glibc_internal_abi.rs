@@ -4743,14 +4743,18 @@ pub unsafe extern "C" fn cfgetibaud(termios_p: *const c_void) -> c_uint {
 pub unsafe extern "C" fn cfgetobaud(termios_p: *const c_void) -> c_uint {
     unsafe { crate::termios_abi::cfgetospeed(termios_p.cast()) }
 }
-// cfsetbaud: set both input and output baud
+// cfsetbaud: set BOTH input and output baud to the same value. glibc's prototype
+// is `int cfsetbaud(struct termios *, baud_t baud)` — a SINGLE baud argument
+// (<termios.h>:82), NOT a separate (ibaud, obaud) pair. The old 3-argument form
+// was an ABI mismatch: a C caller passing the documented 2 arguments left fl
+// reading a garbage register for the phantom `obaud`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cfsetbaud(termios_p: *mut c_void, ibaud: c_uint, obaud: c_uint) -> c_int {
-    let r1 = unsafe { crate::termios_abi::cfsetispeed(termios_p.cast(), ibaud) };
+pub unsafe extern "C" fn cfsetbaud(termios_p: *mut c_void, baud: c_uint) -> c_int {
+    let r1 = unsafe { crate::termios_abi::cfsetispeed(termios_p.cast(), baud) };
     if r1 != 0 {
         return r1;
     }
-    unsafe { crate::termios_abi::cfsetospeed(termios_p.cast(), obaud) }
+    unsafe { crate::termios_abi::cfsetospeed(termios_p.cast(), baud) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfsetibaud(termios_p: *mut c_void, speed: c_uint) -> c_int {
