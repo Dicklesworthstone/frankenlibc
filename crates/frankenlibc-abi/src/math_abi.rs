@@ -3820,23 +3820,62 @@ pub unsafe extern "C" fn tanpif128(x: f64) -> f64 {
 
 // --- roundeven ---
 
+// Round to nearest integer, ties to EVEN, implemented purely in the integer
+// (bit) domain. Unlike a float-arithmetic formulation (x.round() + tie fixup +
+// `as i64` casts), this raises NO floating-point exceptions: glibc's roundeven
+// is the IEEE roundToIntegralTiesToEven operation, which never signals
+// FE_INEXACT (even on non-integers) nor FE_INVALID (on infinities). The earlier
+// implementation produced bit-exact results but spuriously raised FE_INEXACT on
+// every non-integer and FE_INVALID on ±inf (the float->int cast), diverging from
+// glibc's exception-free contract.
 fn roundeven_impl(x: f64) -> f64 {
-    let r = x.round();
-    if (x - r).abs() == 0.5 {
-        let r2 = if x > 0.0 { x.floor() } else { x.ceil() };
-        if (r2 as i64) % 2 == 0 { r2 } else { r }
-    } else {
-        r
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000_0000_0000;
+    let e = ((bits >> 52) & 0x7ff) as i32;
+    // |x| >= 2^52 (and inf/NaN): already integral, return unchanged.
+    if e >= 1023 + 52 {
+        return x;
     }
+    // |x| < 1: result is ±0 (|x| <= 0.5, ties-to-even rounds 0.5 to 0) or ±1.
+    if e < 1023 {
+        let mag = f64::from_bits(bits & 0x7fff_ffff_ffff_ffff);
+        let r = if mag > 0.5 { 1.0_f64 } else { 0.0_f64 };
+        return f64::from_bits(r.to_bits() | sign);
+    }
+    // 1 <= |x| < 2^52: split mantissa into integer/fractional bits.
+    let frac_bits = 1075 - e; // 1..=52 fractional mantissa bits
+    let half = 1u64 << (frac_bits - 1);
+    let frac_mask = (1u64 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    // Round up when above the halfway point, or exactly halfway with an odd
+    // integer (ties to even). Integer add carries naturally into the exponent.
+    let round_up = frac > half || (frac == half && (int_part & (1u64 << frac_bits)) != 0);
+    let out = if round_up { int_part + (1u64 << frac_bits) } else { int_part };
+    f64::from_bits(out)
 }
 fn roundevenf_impl(x: f32) -> f32 {
-    let r = x.round();
-    if (x - r).abs() == 0.5f32 {
-        let r2 = if x > 0.0f32 { x.floor() } else { x.ceil() };
-        if (r2 as i32) % 2 == 0 { r2 } else { r }
-    } else {
-        r
+    let bits = x.to_bits();
+    let sign = bits & 0x8000_0000;
+    let e = ((bits >> 23) & 0xff) as i32;
+    // |x| >= 2^23 (and inf/NaN): already integral.
+    if e >= 127 + 23 {
+        return x;
     }
+    // |x| < 1: ±0 or ±1.
+    if e < 127 {
+        let mag = f32::from_bits(bits & 0x7fff_ffff);
+        let r = if mag > 0.5 { 1.0_f32 } else { 0.0_f32 };
+        return f32::from_bits(r.to_bits() | sign);
+    }
+    let frac_bits = 150 - e; // 1..=23 fractional mantissa bits
+    let half = 1u32 << (frac_bits - 1);
+    let frac_mask = (1u32 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    let round_up = frac > half || (frac == half && (int_part & (1u32 << frac_bits)) != 0);
+    let out = if round_up { int_part + (1u32 << frac_bits) } else { int_part };
+    f32::from_bits(out)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn roundeven(x: f64) -> f64 {
