@@ -827,7 +827,11 @@ pub unsafe extern "C" fn finite(x: f64) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn drem(x: f64, y: f64) -> f64 {
     let out = binary_entry(x, y, 6, frankenlibc_core::math::drem);
-    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+    // glibc EDOM rule for remainder: a genuine domain error (x infinite OR y
+    // zero) with NEITHER operand NaN. The old guard both missed drem(±inf,±inf)
+    // (it required y finite) and wrongly set EDOM for drem(NaN, 0) (a NaN
+    // operand must leave errno at 0).
+    if !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0) {
         set_domain_errno();
     }
     out
@@ -1688,7 +1692,12 @@ pub unsafe extern "C" fn finitef(x: f32) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dremf(x: f32, y: f32) -> f32 {
-    binary_entry_f32(x, y, 4, frankenlibc_core::math::dremf)
+    let out = binary_entry_f32(x, y, 4, frankenlibc_core::math::dremf);
+    // Same glibc EDOM rule as drem; dremf previously set no errno at all.
+    if !x.is_nan() && !y.is_nan() && (x.is_infinite() || y == 0.0) {
+        set_domain_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

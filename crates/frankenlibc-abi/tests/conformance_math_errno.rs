@@ -143,9 +143,25 @@ fn math_errno_matches_glibc() {
     chk!("logbf(0)", 0, fa::logbf(0.0));
     chk!("logb(inf)", 0, fa::logb(f64::INFINITY));
 
-    // --- drem domain errors ---
+    // --- drem / dremf domain errors (glibc: x infinite OR y zero, no NaN operand) ---
     chk!("drem(1,0)", EDOM, fa::drem(1.0, 0.0));
     chk!("drem(inf,1)", EDOM, fa::drem(f64::INFINITY, 1.0));
+    // Previously MISSED: both operands infinite (old guard required y finite).
+    chk!("drem(inf,inf)", EDOM, fa::drem(f64::INFINITY, f64::INFINITY));
+    chk!("drem(-inf,-inf)", EDOM, fa::drem(f64::NEG_INFINITY, f64::NEG_INFINITY));
+    // Previously WRONG: a NaN operand must leave errno 0, even with y==0.
+    chk!("drem(nan,0)", 0, fa::drem(f64::NAN, 0.0));
+    chk!("drem(5,nan)", 0, fa::drem(5.0, f64::NAN));
+    chk!("drem(inf,nan)", 0, fa::drem(f64::INFINITY, f64::NAN));
+    chk!("drem(5,inf)", 0, fa::drem(5.0, f64::INFINITY)); // finite remainder, no error
+    chk!("drem(5,3)", 0, fa::drem(5.0, 3.0));
+    // dremf previously set NO errno at all.
+    chk!("dremf(1,0)", EDOM, fa::dremf(1.0, 0.0));
+    chk!("dremf(inf,1)", EDOM, fa::dremf(f32::INFINITY, 1.0));
+    chk!("dremf(inf,inf)", EDOM, fa::dremf(f32::INFINITY, f32::INFINITY));
+    chk!("dremf(nan,0)", 0, fa::dremf(f32::NAN, 0.0));
+    chk!("dremf(5,nan)", 0, fa::dremf(5.0, f32::NAN));
+    chk!("dremf(5,3)", 0, fa::dremf(5.0, 3.0));
 
     // --- Controls: no error ---
     chk!("sin(0.5)", 0, fa::sin(0.5));
