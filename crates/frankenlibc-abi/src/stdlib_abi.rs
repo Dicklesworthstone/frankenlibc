@@ -511,12 +511,13 @@ pub unsafe extern "C" fn atoi(nptr: *const c_char) -> c_int {
         return 0;
     }
 
+    let known = known_remaining(nptr as usize);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         nptr as usize,
         0,
         false,
-        known_remaining(nptr as usize).is_none(),
+        known.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -525,7 +526,7 @@ pub unsafe extern "C" fn atoi(nptr: *const c_char) -> c_int {
     }
 
     let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(nptr as usize)
+        known
     } else {
         None
     };
