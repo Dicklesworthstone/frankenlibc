@@ -300,6 +300,57 @@ fn bench_strcmp_256_equal(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_getenv_miss(c: &mut Criterion) {
+    let mut group = c.benchmark_group("glibc_baseline_getenv_miss");
+
+    #[cfg(feature = "abi-bench")]
+    {
+        let name = b"FRANKENLIBC_BD_6J8KG9_GETENV_PROFILE_MISS\0";
+        // SAFETY: name is NUL-terminated and does not outlive this call.
+        unsafe { libc::unsetenv(name.as_ptr().cast()) };
+        // SAFETY: name is NUL-terminated.
+        assert!(unsafe { frankenlibc_abi::stdlib_abi::getenv(name.as_ptr().cast()) }.is_null());
+        // SAFETY: name is NUL-terminated.
+        assert!(unsafe { libc::getenv(name.as_ptr().cast()) }.is_null());
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getenv_miss",
+                impl_label: "frankenlibc_abi",
+                api_family: "stdlib",
+                symbol: "getenv",
+                workload: "missing environment variable scan",
+                parity_proof_ref: "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
+            },
+            || {
+                // SAFETY: name is NUL-terminated.
+                let value = unsafe { frankenlibc_abi::stdlib_abi::getenv(name.as_ptr().cast()) };
+                black_box(value);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getenv_miss",
+                impl_label: "host_glibc",
+                api_family: "stdlib",
+                symbol: "getenv",
+                workload: "missing environment variable scan",
+                parity_proof_ref: "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
+            },
+            || {
+                // SAFETY: name is NUL-terminated.
+                let value = unsafe { libc::getenv(name.as_ptr().cast()) };
+                black_box(value);
+            },
+        );
+    }
+
+    group.finish();
+}
+
 fn bench_scanf(c: &mut Criterion) {
     use frankenlibc_core::stdio::scanf::{parse_scanf_format, scan_input};
     let dirs = parse_scanf_format(b"%lld");
@@ -2326,6 +2377,7 @@ criterion_group! {
         bench_memset_4096,
         bench_strlen_4096,
         bench_strcmp_256_equal,
+        bench_getenv_miss,
         bench_memcmp,
         bench_strtol,
         bench_scanf,
