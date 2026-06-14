@@ -75,6 +75,10 @@ fn iconv_aliases_open_and_convert_like_glibc() {
         ("8859_5", "\u{416}"),
         ("8859_7", "\u{3b1}"),
         ("8859_9", "\u{11e}"),
+        // L6 -> ISO-8859-10, L7 -> ISO-8859-13, ISO-10646/UTF-8 -> UTF-8.
+        ("L6", "\u{100}z"),
+        ("L7", "\u{104}z"),
+        ("ISO-10646/UTF-8", "caf\u{e9}\u{4e2d}"),
     ];
     let mut fails = Vec::new();
     for &(alias, sample) in cases {

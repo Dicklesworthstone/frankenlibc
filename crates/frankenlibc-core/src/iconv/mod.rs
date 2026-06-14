@@ -233,7 +233,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
         normalized: "UTF8",
-        aliases: &["UTF8"],
+        aliases: &["UTF8", "ISO10646/UTF8"],
     },
     CodecSpec {
         encoding: Encoding::Ascii,
@@ -1070,7 +1070,14 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
         encoding: Encoding::Iso885910,
         canonical: "ISO-8859-10",
         normalized: "ISO885910",
-        aliases: &["ISO885910", "LATIN6", "CSISOLATIN6", "NORDIC", "ISOIR157"],
+        aliases: &[
+            "ISO885910",
+            "LATIN6",
+            "L6",
+            "CSISOLATIN6",
+            "NORDIC",
+            "ISOIR157",
+        ],
     },
     CodecSpec {
         encoding: Encoding::Iso885911,
@@ -1085,6 +1092,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 138] = [
         aliases: &[
             "ISO885913",
             "LATIN7",
+            "L7",
             "CSISOLATIN7",
             "BALTICRIM",
             "ISOIR179",
