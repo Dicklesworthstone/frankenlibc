@@ -52,9 +52,19 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
         return (vec![b'0'; ndigit], 1, negative);
     }
 
-    // Use Rust's formatting to get digits.
-    // Format with enough precision.
-    let formatted = format!("{:.prec$e}", abs_val, prec = ndigit.saturating_sub(1));
+    // Use Rust's formatting to get digits into a stack buffer (byte-identical
+    // to the old heap `format!`, no per-call allocation; `heap` stays unused on
+    // the common path and only materializes on the impossible >384-byte overflow).
+    use core::fmt::Write as _;
+    let prec = ndigit.saturating_sub(1);
+    let mut sb = StackStr::new();
+    let mut heap = String::new();
+    let formatted: &str = if write!(sb, "{abs_val:.prec$e}").is_ok() {
+        sb.as_str()
+    } else {
+        let _ = write!(heap, "{abs_val:.prec$e}");
+        heap.as_str()
+    };
     // Parse the scientific notation: "d.dddde+dd"
     let mut digits = Vec::with_capacity(ndigit);
     let mut exponent: i32 = 0;
@@ -140,14 +150,25 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
     }
 
     // Round to ndigit fractional places. Rust's "{:.N$}" rounds to
-    // nearest-even at the boundary, matching glibc fcvt.
-    let formatted = format!("{:.prec$}", abs_val, prec = ndigit);
+    // nearest-even at the boundary, matching glibc fcvt. Render into a stack
+    // buffer (byte-identical to the old heap `format!`); a value large enough to
+    // exceed the 384-byte scratch (e.g. 1e308 with a fractional `%f`) falls back
+    // to a heap String; correctness over speed for that rare case.
+    use core::fmt::Write as _;
+    let mut sb = StackStr::new();
+    let mut heap = String::new();
+    let formatted: &str = if write!(sb, "{abs_val:.ndigit$}").is_ok() {
+        sb.as_str()
+    } else {
+        let _ = write!(heap, "{abs_val:.ndigit$}");
+        heap.as_str()
+    };
 
     // Split at the decimal point. ndigit=0 produces no decimal point;
     // treat the whole string as integer in that case.
     let (int_part, frac_part) = match formatted.find('.') {
         Some(dot) => (&formatted[..dot], &formatted[dot + 1..]),
-        None => (formatted.as_str(), ""),
+        None => (formatted, ""),
     };
 
     if int_part != "0" {
@@ -262,25 +283,32 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     // values whose rounding carries into a new power of ten must follow
     // their rounded magnitude: 9.9999e-5 rounds to 1e-4 (X = -4, fixed,
     // "0.0001"), 999999.9 rounds to 1e6 (X = 6, scientific, "1e+06").
-    let abs = value.abs();
-    let exp = rounded_decimal_exp(abs, ndigit);
+    use core::fmt::Write as _;
+    let frac = ndigit.saturating_sub(1);
+    let mut sci_stack = StackStr::new();
+    let mut sci_heap = String::new();
+    let sci: &str = if write!(sci_stack, "{value:.frac$e}").is_ok() {
+        sci_stack.as_str()
+    } else {
+        let _ = write!(sci_heap, "{value:.frac$e}");
+        sci_heap.as_str()
+    };
+    let exp = decimal_exp_from_scientific(sci);
 
     if exp < -4 || exp >= ndigit as i32 {
-        format_scientific(value, ndigit)
+        rust_e_to_glibc_e(sci)
     } else {
         format_fixed(value, ndigit, exp)
     }
 }
 
 /// Decimal exponent X of `abs` after rounding to `ndigit` significant
-/// digits — exactly what a `%e` conversion would print. Computed by
-/// formatting once in scientific notation (which performs the same
-/// round-half-to-even at the boundary) and parsing the exponent field.
-/// This sidesteps both the floor(log10) off-by-one near exact powers of
-/// ten and the rounding-carry that shifts the exponent of the rounded
-/// value relative to the raw one.
-fn rounded_decimal_exp(abs: f64, ndigit: usize) -> i32 {
-    let sci = format!("{:.prec$e}", abs, prec = ndigit.saturating_sub(1));
+/// digits: exactly what a `%e` conversion would print. Computed by
+/// parsing the exponent field from the already-rendered `%e` probe. This
+/// sidesteps both the floor(log10) off-by-one near exact powers of ten and the
+/// rounding-carry that shifts the exponent of the rounded value relative to the
+/// raw one.
+fn decimal_exp_from_scientific(sci: &str) -> i32 {
     match sci.find('e') {
         Some(pos) => sci[pos + 1..].parse::<i32>().unwrap_or(0),
         None => 0,
@@ -333,17 +361,6 @@ fn format_fixed(value: f64, ndigit: usize, exp: i32) -> String {
         strip_trailing_zeros(sb.as_str())
     } else {
         strip_trailing_zeros(&format!("{value:.frac$}"))
-    }
-}
-
-fn format_scientific(value: f64, ndigit: usize) -> String {
-    use core::fmt::Write;
-    let frac = ndigit.saturating_sub(1);
-    let mut sb = StackStr::new();
-    if write!(sb, "{value:.frac$e}").is_ok() {
-        rust_e_to_glibc_e(sb.as_str())
-    } else {
-        rust_e_to_glibc_e(&format!("{value:.frac$e}"))
     }
 }
 
