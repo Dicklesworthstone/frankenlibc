@@ -982,6 +982,38 @@ fn parse_digits(input: &[u8], pos: usize, max_digits: usize) -> Option<(i32, usi
     if count == 0 { None } else { Some((val, p)) }
 }
 
+/// Like [`parse_digits`] but mirrors glibc's `get_number`: it stops consuming
+/// digits as soon as reading another one would push the accumulated value past
+/// the field maximum `to`. This is what lets `strptime("34", "%m")` yield 3
+/// (month 3, leaving "4") instead of a range error — and makes packed numeric
+/// formats like `%m%d` split "312" into 3 / 12. For fields whose maximum is
+/// large enough that the width bound always trips first (e.g. %y/%C with to=99,
+/// %Y with to=9999) this is identical to `parse_digits`.
+fn parse_digits_bounded(
+    input: &[u8],
+    pos: usize,
+    max_digits: usize,
+    to: i32,
+) -> Option<(i32, usize)> {
+    let mut val: i32 = 0;
+    let mut count = 0usize;
+    let mut p = pos;
+    while count < max_digits && p < input.len() {
+        let ch = input[p];
+        if !ch.is_ascii_digit() {
+            break;
+        }
+        val = val * 10 + (ch - b'0') as i32;
+        p += 1;
+        count += 1;
+        // glibc continues only while another digit keeps val * 10 <= to.
+        if val * 10 > to {
+            break;
+        }
+    }
+    if count == 0 { None } else { Some((val, p)) }
+}
+
 /// Skip leading ASCII whitespace from `input[pos..]`.
 fn skip_ws(input: &[u8], mut pos: usize) -> usize {
     while input.get(pos).is_some_and(u8::is_ascii_whitespace) {
@@ -1268,7 +1300,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'm' => {
                     // Month [01,12] — glibc rejects out-of-range numeric values.
-                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 12) {
                         if !(1..=12).contains(&val) {
                             return std::ptr::null_mut();
                         }
@@ -1283,7 +1315,7 @@ pub unsafe extern "C" fn strptime(
                     // Day of month [01,31] (%e allows leading space).
                     // glibc rejects out-of-range numeric values.
                     si = skip_ws(input, si);
-                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 31) {
                         if !(1..=31).contains(&val) {
                             return std::ptr::null_mut();
                         }
@@ -1296,7 +1328,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'H' => {
                     // Hour (24-hour) [00,23] — glibc rejects 24..=99.
-                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 23) {
                         if !(0..=23).contains(&val) {
                             return std::ptr::null_mut();
                         }
@@ -1312,7 +1344,7 @@ pub unsafe extern "C" fn strptime(
                     // simply add 12 for PM and leave AM unchanged: that
                     // gives 12 AM → 0 (midnight) and 12 PM → 12 (noon)
                     // without a special case at finalization.
-                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 12) {
                         if !(1..=12).contains(&val) {
                             return std::ptr::null_mut();
                         }
@@ -1337,7 +1369,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'M' => {
                     // Minute [00,59] — glibc rejects 60..=99.
-                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 59) {
                         if val > 59 {
                             return std::ptr::null_mut();
                         }
@@ -1349,7 +1381,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'S' => {
                     // Second [00,61] — glibc accepts 0-61 (60-61 for leap seconds).
-                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 61) {
                         if val > 61 {
                             return std::ptr::null_mut();
                         }
@@ -1361,7 +1393,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'j' => {
                     // Day of year [001,366] — glibc rejects 000 and 367..=999.
-                    if let Some((val, new_si)) = parse_digits(input, si, 3) {
+                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 3, 366) {
                         if !(1..=366).contains(&val) {
                             return std::ptr::null_mut();
                         }
@@ -1602,7 +1634,7 @@ pub unsafe extern "C" fn strptime(
                 b'U' => {
                     // Week number (Sunday-starting weeks, 00-53). Combined with a
                     // weekday and year, glibc derives the calendar date.
-                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 53) {
                         if val > 53 {
                             return std::ptr::null_mut();
                         }
@@ -1614,7 +1646,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'W' => {
                     // Week number (Monday-starting weeks, 00-53).
-                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 53) {
                         if val > 53 {
                             return std::ptr::null_mut();
                         }
@@ -1627,7 +1659,7 @@ pub unsafe extern "C" fn strptime(
                 b'V' => {
                     // ISO 8601 week number (01-53). Parsed and validated but, like
                     // glibc, not used to derive the calendar date (bd-2g7oyh.260).
-                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 53) {
                         if !(1..=53).contains(&val) {
                             return std::ptr::null_mut();
                         }
