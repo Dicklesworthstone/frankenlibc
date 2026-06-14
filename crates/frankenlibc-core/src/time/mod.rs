@@ -473,7 +473,6 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         }};
     }
 
-
     while i < fmt.len() {
         if fmt[i] != b'%' {
             push!(fmt[i]);
@@ -556,7 +555,11 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 }
                 break;
             }
-            let table = if modifier == b'E' { E_MODIFIABLE } else { O_MODIFIABLE };
+            let table = if modifier == b'E' {
+                E_MODIFIABLE
+            } else {
+                O_MODIFIABLE
+            };
             if !table.contains(&fmt[i]) {
                 // Rejected combination: emit the literal `%…<mod><spec>`.
                 for &b in &fmt[spec_start..=i] {
@@ -623,8 +626,11 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                     }
                     if let Some(w) = width_override {
                         if tmp.len() < w {
-                            let padc =
-                                if matches!(pad_override, Some(Pad::Zero)) { b'0' } else { b' ' };
+                            let padc = if matches!(pad_override, Some(Pad::Zero)) {
+                                b'0'
+                            } else {
+                                b' '
+                            };
                             for _ in 0..(w - tmp.len()) {
                                 push!(padc);
                             }
@@ -658,8 +664,11 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                     }
                     if let Some(w) = width_override {
                         if tmp.len() < w {
-                            let padc =
-                                if matches!(pad_override, Some(Pad::Zero)) { b'0' } else { b' ' };
+                            let padc = if matches!(pad_override, Some(Pad::Zero)) {
+                                b'0'
+                            } else {
+                                b' '
+                            };
                             for _ in 0..(w - tmp.len()) {
                                 push!(padc);
                             }
@@ -671,21 +680,41 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         }
 
         match fmt[i] {
+            // glibc emits a literal "?" when tm_wday / tm_mon is outside its
+            // valid range (0..=6 / 0..=11) instead of wrapping into a wrong name
+            // — matched here for malformed-tm parity (fl previously rem_euclid'd
+            // the index, so tm_wday=8 wrongly printed "Mon").
             b'a' => {
-                let wday = bd.tm_wday.rem_euclid(7) as usize;
-                push_str_field!(WDAY_NAMES[wday], true, true);
+                let name: &[u8] = if (0..=6).contains(&bd.tm_wday) {
+                    WDAY_NAMES[bd.tm_wday as usize]
+                } else {
+                    b"?"
+                };
+                push_str_field!(name, true, true);
             }
             b'A' => {
-                let wday = bd.tm_wday.rem_euclid(7) as usize;
-                push_str_field!(WDAY_FULL_NAMES[wday].as_bytes(), true, true);
+                let name: &[u8] = if (0..=6).contains(&bd.tm_wday) {
+                    WDAY_FULL_NAMES[bd.tm_wday as usize].as_bytes()
+                } else {
+                    b"?"
+                };
+                push_str_field!(name, true, true);
             }
             b'b' | b'h' => {
-                let mon = bd.tm_mon.rem_euclid(12) as usize;
-                push_str_field!(MON_NAMES[mon], true, true);
+                let name: &[u8] = if (0..=11).contains(&bd.tm_mon) {
+                    MON_NAMES[bd.tm_mon as usize]
+                } else {
+                    b"?"
+                };
+                push_str_field!(name, true, true);
             }
             b'B' => {
-                let mon = bd.tm_mon.rem_euclid(12) as usize;
-                push_str_field!(MON_FULL_NAMES[mon].as_bytes(), true, true);
+                let name: &[u8] = if (0..=11).contains(&bd.tm_mon) {
+                    MON_FULL_NAMES[bd.tm_mon as usize].as_bytes()
+                } else {
+                    b"?"
+                };
+                push_str_field!(name, true, true);
             }
             b'c' => {
                 // Preferred date/time, C locale: "%a %b %e %H:%M:%S %Y".
@@ -845,7 +874,11 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 // (gmtime sets "GMT", localtime "UTC"); when unset, fl's only
                 // timezone is UTC, so fall back to "UTC" (matching glibc under
                 // TZ=UTC and fl's own localtime).
-                let end = bd.zone.iter().position(|&b| b == 0).unwrap_or(bd.zone.len());
+                let end = bd
+                    .zone
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(bd.zone.len());
                 let zone: &[u8] = if end == 0 { b"UTC" } else { &bd.zone[..end] };
                 push_str_field!(zone, true, false);
             }
