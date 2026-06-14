@@ -33,7 +33,10 @@ pub fn getopt_prefers_colon(optspec: &[u8]) -> bool {
 #[inline]
 pub fn getopt_arg_mode(optspec: &[u8], option: u8) -> Option<GetoptArgMode> {
     for (idx, &byte) in optspec.iter().enumerate() {
-        if byte == b':' {
+        // ':' and ';' are optstring metacharacters, never selectable options
+        // (glibc forces `c == ':' || c == ';'` to the unknown-option path). ';'
+        // is the GNU `W;` long-route marker; ':' marks argument modes.
+        if byte == b':' || byte == b';' {
             continue;
         }
         if byte != option {
@@ -75,6 +78,17 @@ pub fn getopt_is_w_extension(optspec: &[u8], option: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semicolon_is_never_a_selectable_option() {
+        // glibc forces `c == ';'` to the unknown-option path; ';' is only the
+        // `W;` marker, never `-;`.
+        assert_eq!(getopt_arg_mode(b"W;ab", b';'), None);
+        assert_eq!(getopt_arg_mode(b";", b';'), None);
+        // The marker does not disturb a real option that follows it.
+        assert_eq!(getopt_arg_mode(b"W;ab:", b'b'), Some(GetoptArgMode::Required));
+        assert_eq!(getopt_arg_mode(b"W;ab", b'a'), Some(GetoptArgMode::None));
+    }
 
     #[test]
     fn w_extension_detected_only_with_trailing_semicolon() {

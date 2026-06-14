@@ -309,6 +309,9 @@ fn getopt_long_abbreviation_matches_glibc() {
         ),
         // `--name=value` on a no-arg long routed via `-W` -> '?'.
         ("W;", vec![("verbose", no, b'v')], vec!["-Wverbose=x"]),
+        // A literal `-;` is NOT a selectable option even with `W;` present:
+        // glibc forces `c == ';'` to the unknown-option path.
+        ("W;ab", vec![("verbose", no, b'v')], vec!["-;"]),
     ];
 
     for (i, (optstr, longs, argv)) in cases.iter().enumerate() {
