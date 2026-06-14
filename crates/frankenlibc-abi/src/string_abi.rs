@@ -1010,6 +1010,22 @@ unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, boo
                 i += 1;
             }
             loop {
+                // Wide 32-byte portable-SIMD NUL scan when the read stays in-page
+                // (32-byte window does not cross the page boundary). NUL-free
+                // panels advance 32; a panel with a NUL drops to the 8-byte SWAR
+                // resolve below, so the returned index is unchanged.
+                if (p as usize + i) & 0xFFF <= 0x1000 - 32 {
+                    use core::simd::Simd;
+                    use core::simd::cmp::SimdPartialEq;
+                    // SAFETY: the 32-byte window stays within the current mapped page.
+                    let v = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i), 32)
+                    });
+                    if !v.simd_eq(Simd::splat(0)).any() {
+                        i += 32;
+                        continue;
+                    }
+                }
                 // SAFETY: p+i is 8-aligned, so this aligned 8-byte read stays inside
                 // the current page; the string is NUL-terminated within a mapped page.
                 let w = unsafe { *p.add(i).cast::<u64>() };
