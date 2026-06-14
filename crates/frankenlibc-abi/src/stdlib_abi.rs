@@ -3620,10 +3620,29 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
     // _CS_GNU_LIBC_VERSION = 2 on Linux/glibc
     // _CS_GNU_LIBPTHREAD_VERSION = 3
     // _CS_PATH = 0
+    // Values mirror host glibc on x86_64 (LP64). The POSIX programming-environment
+    // and LFS flag strings are platform constants (verified byte-exact via a
+    // confstr(0..1300) brute-probe of host glibc): the only non-empty entries are
+    // the width-restricted-env names, the `-m64` CFLAGS/LDFLAGS for the LP64_OFF64
+    // environments, the LFS64 `-D_LARGEFILE64_SOURCE`, and POSIXLY_CORRECT=1.
+    // Keys 2/3 intentionally report "2.38" (frankenlibc's declared glibc-compat
+    // level), not the host's running version.
     let value: &[u8] = match name {
-        0 => b"/bin:/usr/bin\0", // _CS_PATH (matches glibc)
-        2 => b"glibc 2.38\0",    // _CS_GNU_LIBC_VERSION
-        3 => b"NPTL 2.38\0",     // _CS_GNU_LIBPTHREAD_VERSION
+        0 => b"/bin:/usr/bin\0",         // _CS_PATH
+        1 => b"POSIX_V6_LP64_OFF64\0",   // _CS_V6_WIDTH_RESTRICTED_ENVS
+        2 => b"glibc 2.38\0",            // _CS_GNU_LIBC_VERSION
+        3 => b"NPTL 2.38\0",             // _CS_GNU_LIBPTHREAD_VERSION
+        4 => b"XBS5_LP64_OFF64\0",       // _CS_V5_WIDTH_RESTRICTED_ENVS
+        5 => b"POSIX_V7_LP64_OFF64\0",   // _CS_V7_WIDTH_RESTRICTED_ENVS
+        // LFS / LFS64 compiler flags (_CS_LFS_* = 1000..=1003, _CS_LFS64_* = 1004..=1007).
+        1004 | 1007 => b"-D_LARGEFILE64_SOURCE\0", // LFS64 CFLAGS / LINTFLAGS
+        1000..=1007 => b"\0",
+        // POSIX_V6 / V7 programming-environment flags (_CS_POSIX_V6_* / _CS_POSIX_V7_* = 1100..=1147)
+        // and the V6/V7 ENV strings (1148/1149). On LP64 x86_64 only the LP64_OFF64
+        // CFLAGS/LDFLAGS carry `-m64`; every other environment flag is empty.
+        1148 | 1149 => b"POSIXLY_CORRECT=1\0",            // _CS_V6_ENV / _CS_V7_ENV
+        1108 | 1109 | 1124 | 1125 | 1140 | 1141 => b"-m64\0", // LP64_OFF64 CFLAGS/LDFLAGS
+        1100..=1147 => b"\0",
         _ => {
             unsafe { crate::errno_abi::set_abi_errno_local(libc::EINVAL) };
             return 0;
