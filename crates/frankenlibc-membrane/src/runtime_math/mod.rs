@@ -1392,6 +1392,9 @@ impl RuntimeMathKernel {
         if do_resample {
             self.resample_high_order_kernels(mode, ctx);
         }
+        if let Some(decision) = self.try_strict_nominal_allow_decision(mode, sequence, ctx) {
+            return decision;
+        }
         if let Some(decision) = self.try_hardened_nominal_pointer_decision(mode, sequence, ctx) {
             return decision;
         }
@@ -2305,6 +2308,192 @@ impl RuntimeMathKernel {
         }
 
         decision
+    }
+
+    fn try_strict_nominal_allow_decision(
+        &self,
+        mode: SafetyLevel,
+        sequence: u64,
+        ctx: RuntimeContext,
+    ) -> Option<RuntimeDecision> {
+        if !matches!(mode, SafetyLevel::Strict) {
+            return None;
+        }
+        if observe_feedback_enabled() {
+            return None;
+        }
+        if !matches!(ctx.family, ApiFamily::PointerValidation)
+            || ctx.bloom_negative
+            || ctx.is_write
+            || ctx.requested_bytes != 0
+            || ctx.contention_hint != 0
+        {
+            return None;
+        }
+        if sequence <= 4
+            || sequence.is_multiple_of(16)
+            || sequence.is_multiple_of(512)
+            || sequence.is_multiple_of(4096)
+            || sequence.is_multiple_of(16384)
+        {
+            return None;
+        }
+        let family_idx = usize::from(ctx.family as u8);
+        if !self.strict_nominal_cached_state_clear(family_idx) {
+            return None;
+        }
+
+        let fast_wcl = TROPICAL_METRICS.fast_wcl_ns.load(Ordering::Relaxed);
+        let full_wcl = TROPICAL_METRICS.full_wcl_ns.load(Ordering::Relaxed);
+        if fast_wcl > FAST_PATH_BUDGET_NS || full_wcl > FULL_PATH_BUDGET_NS {
+            return None;
+        }
+
+        let base_risk_ppm = self.risk.upper_bound_ppm(ctx.family);
+        let ident_ppm = self.cached_design_ident_ppm.load(Ordering::Relaxed) as u32;
+        let design_bonus = if ident_ppm < 150_000 {
+            95_000u32
+        } else if ident_ppm < 300_000 {
+            40_000u32
+        } else {
+            0u32
+        };
+        let risk_upper_bound_ppm =
+            (u64::from(base_risk_ppm) + u64::from(design_bonus)).min(1_000_000) as u32;
+        let limits = self.controller.limits(mode);
+        if risk_upper_bound_ppm >= limits.full_validation_trigger_ppm {
+            return None;
+        }
+        if self.cached_design_selected.load(Ordering::Relaxed) <= 2
+            && risk_upper_bound_ppm >= limits.full_validation_trigger_ppm / 2
+        {
+            return None;
+        }
+        if self.pareto.is_budget_exhausted(mode, ctx.family) {
+            return None;
+        }
+        if !self.barrier.admissible(
+            &ctx,
+            mode,
+            ValidationProfile::Fast,
+            risk_upper_bound_ppm,
+            limits,
+        ) {
+            return None;
+        }
+
+        self.cached_overload_policy_tag
+            .store(OVERLOAD_POLICY_NONE, Ordering::Relaxed);
+        self.cached_policy_action_dist[0].fetch_add(1, Ordering::Relaxed);
+        self.record_decision_telemetry(
+            mode,
+            ctx.family,
+            ValidationProfile::Fast,
+            MembraneAction::Allow,
+        );
+        Some(RuntimeDecision {
+            profile: ValidationProfile::Fast,
+            action: MembraneAction::Allow,
+            policy_id: compute_policy_id(
+                mode,
+                ctx.family,
+                ValidationProfile::Fast,
+                MembraneAction::Allow,
+            ),
+            risk_upper_bound_ppm,
+            evidence_seqno: 0,
+        })
+    }
+
+    fn strict_nominal_cached_state_clear(&self, family_idx: usize) -> bool {
+        if self.policy_lookup.is_some()
+            || self.cached_risk_bonus_ppm.load(Ordering::Relaxed) != 0
+            || self.cohomology.fault_count() != 0
+            || self.cached_pressure_regime.load(Ordering::Relaxed) != PRESSURE_REGIME_NOMINAL
+            || self.cached_pressure_epoch.load(Ordering::Relaxed) == 0
+            || self.cached_design_budget_ns.load(Ordering::Relaxed) == 0
+            || self.cached_sobol_augmented_mask.load(Ordering::Relaxed) != 0
+            || self.cached_fusion_bonus_ppm.load(Ordering::Relaxed) != 0
+        {
+            return false;
+        }
+
+        if self.cached_anytime_state[family_idx].load(Ordering::Relaxed) != 0
+            || self.cached_cvar_state[family_idx].load(Ordering::Relaxed) != 0
+            || self.cached_ld_state[family_idx].load(Ordering::Relaxed) != 0
+        {
+            return false;
+        }
+
+        self.cached_spectral_phase.load(Ordering::Relaxed) == 0
+            && self.cached_signature_state.load(Ordering::Relaxed) == 0
+            && self.cached_topological_state.load(Ordering::Relaxed) == 0
+            && self.cached_bridge_state.load(Ordering::Relaxed) == 0
+            && self.cached_hji_state.load(Ordering::Relaxed) == 0
+            && self.cached_mfg_state.load(Ordering::Relaxed) == 0
+            && self.cached_padic_state.load(Ordering::Relaxed) == 0
+            && self.cached_symplectic_state.load(Ordering::Relaxed) == 0
+            && self.cached_sparse_state.load(Ordering::Relaxed) == 0
+            && self.cached_equivariant_state.load(Ordering::Relaxed) == 0
+            && self.cached_topos_state.load(Ordering::Relaxed) == 0
+            && self.cached_audit_state.load(Ordering::Relaxed) == 0
+            && self.cached_changepoint_state.load(Ordering::Relaxed) == 0
+            && self.cached_conformal_state.load(Ordering::Relaxed) == 0
+            && self.cached_loss_minimizer_state.load(Ordering::Relaxed) == 0
+            && self.cached_coupling_state.load(Ordering::Relaxed) == 0
+            && self.cached_microlocal_state.load(Ordering::Relaxed) == 0
+            && self.cached_serre_state.load(Ordering::Relaxed) == 0
+            && self.cached_clifford_state.load(Ordering::Relaxed) == 0
+            && self.cached_ktheory_state.load(Ordering::Relaxed) == 0
+            && self.cached_covering_state.load(Ordering::Relaxed) == 0
+            && self.cached_tstructure_state.load(Ordering::Relaxed) == 0
+            && self.cached_admm_state.load(Ordering::Relaxed) == 0
+            && self.cached_atiyah_bott_state.load(Ordering::Relaxed) == 0
+            && self.cached_obstruction_state.load(Ordering::Relaxed) == 0
+            && self.cached_operator_norm_state.load(Ordering::Relaxed) == 0
+            && self.cached_pomdp_state.load(Ordering::Relaxed) == 0
+            && self.cached_sos_state.load(Ordering::Relaxed) == 0
+            && self.cached_sos_barrier_state.load(Ordering::Relaxed)
+                < SosBarrierState::Warning as u8
+            && self.cached_provenance_state.load(Ordering::Relaxed) == 0
+            && self.cached_grobner_state.load(Ordering::Relaxed) == 0
+            && self.cached_grothendieck_state.load(Ordering::Relaxed) == 0
+            && self.cached_info_geometry_state.load(Ordering::Relaxed) == 0
+            && self.cached_kernel_mmd_state.load(Ordering::Relaxed) == 0
+            && self.cached_malliavin_state.load(Ordering::Relaxed) == 0
+            && self
+                .cached_matrix_concentration_state
+                .load(Ordering::Relaxed)
+                == 0
+            && self.cached_nerve_state.load(Ordering::Relaxed) == 0
+            && self.cached_wasserstein_state.load(Ordering::Relaxed) == 0
+            && self.cached_pac_bayes_state.load(Ordering::Relaxed) == 0
+            && self.cached_stein_state.load(Ordering::Relaxed) == 0
+            && self.cached_lyapunov_state.load(Ordering::Relaxed) == 0
+            && self.cached_rademacher_state.load(Ordering::Relaxed) == 0
+            && self.cached_transfer_entropy_state.load(Ordering::Relaxed) == 0
+            && self.cached_hodge_state.load(Ordering::Relaxed) == 0
+            && self.cached_doob_state.load(Ordering::Relaxed) == 0
+            && self.cached_fano_state.load(Ordering::Relaxed) == 0
+            && self.cached_dobrushin_state.load(Ordering::Relaxed) == 0
+            && self.cached_azuma_state.load(Ordering::Relaxed) == 0
+            && self.cached_renewal_state.load(Ordering::Relaxed) == 0
+            && self.cached_lz_state.load(Ordering::Relaxed) == 0
+            && self.cached_spectral_gap_state.load(Ordering::Relaxed) == 0
+            && self.cached_submodular_state.load(Ordering::Relaxed) == 0
+            && self.cached_bifurcation_state.load(Ordering::Relaxed) == 0
+            && self.cached_entropy_rate_state.load(Ordering::Relaxed) == 0
+            && self.cached_ito_qv_state.load(Ordering::Relaxed) == 0
+            && self.cached_borel_cantelli_state.load(Ordering::Relaxed) == 0
+            && self.cached_ou_state.load(Ordering::Relaxed) == 0
+            && self.cached_hurst_state.load(Ordering::Relaxed) == 0
+            && self.cached_dispersion_state.load(Ordering::Relaxed) == 0
+            && self.cached_birkhoff_state.load(Ordering::Relaxed) == 0
+            && self.cached_alpha_investing_state.load(Ordering::Relaxed) == 0
+            && self.cached_approachability_state.load(Ordering::Relaxed) < 3
+            && self.cached_localization_state.load(Ordering::Relaxed) == 0
+            && self.cached_localization_arm.load(Ordering::Relaxed) < 2
+            && self.cached_redundancy_state.load(Ordering::Relaxed) == 0
     }
 
     fn try_hardened_nominal_pointer_decision(
@@ -8368,6 +8557,54 @@ mod tests {
         );
         assert_eq!(after.overload_policy_tag, OVERLOAD_POLICY_NONE);
         assert_eq!(after.evidence_seqno, before.evidence_seqno);
+    }
+
+    #[test]
+    fn strict_nominal_pointer_shortcut_preserves_visible_state() {
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+
+        for _ in 0..4 {
+            let _ = kernel.decide(SafetyLevel::Strict, ctx);
+        }
+
+        let before = kernel.snapshot(SafetyLevel::Strict);
+        let decision = kernel.decide(SafetyLevel::Strict, ctx);
+        let after = kernel.snapshot(SafetyLevel::Strict);
+
+        assert_eq!(decision.profile, ValidationProfile::Fast);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert_eq!(decision.evidence_seqno, 0);
+        assert!(decision.risk_upper_bound_ppm < before.full_validation_trigger_ppm);
+        assert_eq!(after.decisions, before.decisions + 1);
+        assert_eq!(
+            after.policy_action_dist[0],
+            before.policy_action_dist[0] + 1,
+            "shortcut must preserve Allow action accounting"
+        );
+        assert_eq!(after.overload_policy_tag, OVERLOAD_POLICY_NONE);
+        assert_eq!(after.evidence_seqno, before.evidence_seqno);
+    }
+
+    #[test]
+    fn strict_nominal_pointer_shortcut_yields_to_high_risk() {
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+
+        for _ in 0..4 {
+            let _ = kernel.decide(SafetyLevel::Strict, ctx);
+        }
+
+        kernel
+            .cached_risk_bonus_ppm
+            .store(400_000, Ordering::Relaxed);
+
+        let decision = kernel.decide(SafetyLevel::Strict, ctx);
+        assert_ne!(
+            decision.action,
+            MembraneAction::Allow,
+            "high-risk nominal strict context must not take the Allow shortcut"
+        );
     }
 
     /// Fusion SIGNALS consistency: the number of severity vector slots assigned
