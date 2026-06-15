@@ -19,6 +19,8 @@ fn bdt(fields: [i32; 8]) -> BrokenDownTime {
         tm_wday: wday,
         tm_yday: yday,
         tm_isdst: 0,
+        tm_gmtoff: 0,
+        zone: [0; 16],
     }
 }
 
@@ -206,7 +208,7 @@ fn strftime_live_differential_sweep() {
     }
     // LC_ALL == 6 on glibc; the strftime probe is defined for the C locale.
     unsafe {
-        setlocale(6, b"C\0".as_ptr());
+        setlocale(6, c"C".as_ptr().cast());
     }
 
     // Timezone-independent specifiers only (skip %Z/%z/%s which depend on tm_gmtoff).
@@ -294,6 +296,8 @@ fn strftime_live_differential_sweep() {
                     tm_wday: norm.wday,
                     tm_yday: norm.yday,
                     tm_isdst: 0,
+                    tm_gmtoff: 0,
+                    zone: [0; 16],
                 };
                 for &fmt in specs {
                     let mut gbuf = [0u8; 256];

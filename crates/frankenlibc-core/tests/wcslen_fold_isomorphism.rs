@@ -28,7 +28,7 @@ impl Lcg {
 fn wcslen_matches_scalar_reference_and_golden() {
     let mut r = Lcg(0x0123_4567_89ab_cdef);
     let mut hash: u64 = 0xcbf29ce484222325;
-    let mut mix = |x: u64, h: &mut u64| {
+    let mix = |x: u64, h: &mut u64| {
         *h ^= x;
         *h = h.wrapping_mul(0x100000001b3);
     };
@@ -48,7 +48,9 @@ fn wcslen_matches_scalar_reference_and_golden() {
         // NUL placed at every position (and just past the end) for a few seeds.
         for _ in 0..6 {
             let nul_pos = (r.next() as usize) % (len + 1);
-            let mut buf: Vec<u32> = (0..len).map(|_| 1 + (r.next() as u32 % 0x10_FFFE)).collect();
+            let mut buf: Vec<u32> = (0..len)
+                .map(|_| 1 + (r.next() as u32 % 0x10_FFFE))
+                .collect();
             if nul_pos < len {
                 buf[nul_pos] = 0;
             }

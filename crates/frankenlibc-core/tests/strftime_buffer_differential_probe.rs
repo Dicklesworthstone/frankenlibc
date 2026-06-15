@@ -20,6 +20,8 @@ fn t0() -> BrokenDownTime {
         tm_wday: 4,
         tm_yday: 154,
         tm_isdst: 0,
+        tm_gmtoff: 0,
+        zone: [0; 16],
     }
 }
 

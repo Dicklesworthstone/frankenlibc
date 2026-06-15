@@ -30,7 +30,7 @@ impl Lcg {
 fn wcsnlen_matches_scalar_reference_and_golden() {
     let mut r = Lcg(0xfeed_face_dead_2025);
     let mut hash: u64 = 0xcbf29ce484222325;
-    let mut mix = |x: u64, h: &mut u64| {
+    let mix = |x: u64, h: &mut u64| {
         *h ^= x;
         *h = h.wrapping_mul(0x100000001b3);
     };
@@ -44,20 +44,30 @@ fn wcsnlen_matches_scalar_reference_and_golden() {
         let full: Vec<u32> = (0..len).map(|i| 1 + (i as u32 % 0x10_FFFE)).collect();
         for &m in &[0usize, 1, len / 2, len, len + 1, usize::MAX] {
             let got = wcsnlen(&full, m);
-            assert_eq!(got, ref_wcsnlen(&full, m), "wcsnlen no-NUL len={len} maxlen={m}");
+            assert_eq!(
+                got,
+                ref_wcsnlen(&full, m),
+                "wcsnlen no-NUL len={len} maxlen={m}"
+            );
             mix(got as u64, &mut hash);
         }
 
         // NUL at a random position, with a random maxlen bound.
         for _ in 0..6 {
             let nul_pos = (r.next() as usize) % (len + 1);
-            let mut buf: Vec<u32> = (0..len).map(|_| 1 + (r.next() as u32 % 0x10_FFFE)).collect();
+            let mut buf: Vec<u32> = (0..len)
+                .map(|_| 1 + (r.next() as u32 % 0x10_FFFE))
+                .collect();
             if nul_pos < len {
                 buf[nul_pos] = 0;
             }
             let m = (r.next() as usize) % (len + 2);
             let got = wcsnlen(&buf, m);
-            assert_eq!(got, ref_wcsnlen(&buf, m), "wcsnlen len={len} nul={nul_pos} maxlen={m}");
+            assert_eq!(
+                got,
+                ref_wcsnlen(&buf, m),
+                "wcsnlen len={len} nul={nul_pos} maxlen={m}"
+            );
             mix(got as u64, &mut hash);
         }
     }
