@@ -183,76 +183,66 @@ fn copy_strcpy_terminal_from(dest: &mut [u8], src: &[u8], block_start: usize) ->
 }
 
 #[inline(always)]
+fn copy_strcpy_prefix_terminal_from(dest: &mut [u8], src: &[u8], block_start: usize) -> usize {
+    let mut i = block_start;
+    while i < src.len() {
+        if src[i] == 0 {
+            let copied = i + 1;
+            dest[..copied].copy_from_slice(&src[..copied]);
+            return copied;
+        }
+        i += 1;
+    }
+    src.len()
+}
+
+#[inline(always)]
 fn strcpy_4096_terminated(dest: &mut [u8], src: &[u8]) -> usize {
     debug_assert_eq!(src.len(), STRCPY_4096_SRC_LEN);
     debug_assert!(dest.len() >= src.len());
     debug_assert_eq!(src.last().copied(), Some(0));
 
     let block0 = 0;
-    if copy_nul_free_block_512(
-        &mut dest[block0..block0 + STRLEN_NUL_BLOCK],
-        &src[block0..block0 + STRLEN_NUL_BLOCK],
-    ) {
-        return copy_strcpy_terminal_from(dest, src, block0);
+    if block_has_nul_512(&src[block0..block0 + STRLEN_NUL_BLOCK]) {
+        return copy_strcpy_prefix_terminal_from(dest, src, block0);
     }
 
     let block1 = STRLEN_NUL_BLOCK;
-    if copy_nul_free_block_512(
-        &mut dest[block1..block1 + STRLEN_NUL_BLOCK],
-        &src[block1..block1 + STRLEN_NUL_BLOCK],
-    ) {
-        return copy_strcpy_terminal_from(dest, src, block1);
+    if block_has_nul_512(&src[block1..block1 + STRLEN_NUL_BLOCK]) {
+        return copy_strcpy_prefix_terminal_from(dest, src, block1);
     }
 
     let block2 = STRLEN_NUL_BLOCK * 2;
-    if copy_nul_free_block_512(
-        &mut dest[block2..block2 + STRLEN_NUL_BLOCK],
-        &src[block2..block2 + STRLEN_NUL_BLOCK],
-    ) {
-        return copy_strcpy_terminal_from(dest, src, block2);
+    if block_has_nul_512(&src[block2..block2 + STRLEN_NUL_BLOCK]) {
+        return copy_strcpy_prefix_terminal_from(dest, src, block2);
     }
 
     let block3 = STRLEN_NUL_BLOCK * 3;
-    if copy_nul_free_block_512(
-        &mut dest[block3..block3 + STRLEN_NUL_BLOCK],
-        &src[block3..block3 + STRLEN_NUL_BLOCK],
-    ) {
-        return copy_strcpy_terminal_from(dest, src, block3);
+    if block_has_nul_512(&src[block3..block3 + STRLEN_NUL_BLOCK]) {
+        return copy_strcpy_prefix_terminal_from(dest, src, block3);
     }
 
     let block4 = STRLEN_NUL_BLOCK * 4;
-    if copy_nul_free_block_512(
-        &mut dest[block4..block4 + STRLEN_NUL_BLOCK],
-        &src[block4..block4 + STRLEN_NUL_BLOCK],
-    ) {
-        return copy_strcpy_terminal_from(dest, src, block4);
+    if block_has_nul_512(&src[block4..block4 + STRLEN_NUL_BLOCK]) {
+        return copy_strcpy_prefix_terminal_from(dest, src, block4);
     }
 
     let block5 = STRLEN_NUL_BLOCK * 5;
-    if copy_nul_free_block_512(
-        &mut dest[block5..block5 + STRLEN_NUL_BLOCK],
-        &src[block5..block5 + STRLEN_NUL_BLOCK],
-    ) {
-        return copy_strcpy_terminal_from(dest, src, block5);
+    if block_has_nul_512(&src[block5..block5 + STRLEN_NUL_BLOCK]) {
+        return copy_strcpy_prefix_terminal_from(dest, src, block5);
     }
 
     let block6 = STRLEN_NUL_BLOCK * 6;
-    if copy_nul_free_block_512(
-        &mut dest[block6..block6 + STRLEN_NUL_BLOCK],
-        &src[block6..block6 + STRLEN_NUL_BLOCK],
-    ) {
-        return copy_strcpy_terminal_from(dest, src, block6);
+    if block_has_nul_512(&src[block6..block6 + STRLEN_NUL_BLOCK]) {
+        return copy_strcpy_prefix_terminal_from(dest, src, block6);
     }
 
     let block7 = STRLEN_NUL_BLOCK * 7;
-    if copy_nul_free_block_512(
-        &mut dest[block7..block7 + STRLEN_NUL_BLOCK],
-        &src[block7..block7 + STRLEN_NUL_BLOCK],
-    ) {
-        return copy_strcpy_terminal_from(dest, src, block7);
+    if block_has_nul_512(&src[block7..block7 + STRLEN_NUL_BLOCK]) {
+        return copy_strcpy_prefix_terminal_from(dest, src, block7);
     }
 
-    dest[STRCPY_4096_SRC_LEN - 1] = 0;
+    dest[..STRCPY_4096_SRC_LEN].copy_from_slice(src);
     STRCPY_4096_SRC_LEN
 }
 
@@ -678,14 +668,7 @@ pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
                     &mut dest[i..i + STRLEN_NUL_BLOCK],
                     &src[i..i + STRLEN_NUL_BLOCK],
                 ) {
-                    while i < src.len() {
-                        if src[i] == 0 {
-                            let copied = i + 1;
-                            dest[block_start..copied].copy_from_slice(&src[block_start..copied]);
-                            return copied;
-                        }
-                        i += 1;
-                    }
+                    return copy_strcpy_terminal_from(dest, src, block_start);
                 }
                 i += STRLEN_NUL_BLOCK;
             }
