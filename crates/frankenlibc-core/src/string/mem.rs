@@ -212,7 +212,8 @@ fn ne_simd_folded_256(a: &[u8], b: &[u8]) -> bool {
     let b3 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(
         &b[MEMCMP_WIDE_LANES * 3..MEMCMP_EXACT_256_BYTES],
     );
-    (a0.simd_ne(b0) | a1.simd_ne(b1) | a2.simd_ne(b2) | a3.simd_ne(b3)).any()
+    let diff = (a0 ^ b0) | (a1 ^ b1) | (a2 ^ b2) | (a3 ^ b3);
+    diff.simd_ne(Simd::splat(0)).any()
 }
 
 /// Exact 4096-byte equality certificate for the profiled equal-buffer row.
