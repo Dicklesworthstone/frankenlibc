@@ -321,14 +321,14 @@ pub(crate) fn fill_passwd_from_entry(entry: &frankenlibc_core::pwd::Passwd) -> *
     with_pwd_storage(|storage| storage.fill_from(entry))
 }
 
-fn lookup_passwd_by_name(name: &[u8]) -> Option<frankenlibc_core::pwd::Passwd> {
+pub(crate) fn lookup_passwd_by_name(name: &[u8]) -> Option<frankenlibc_core::pwd::Passwd> {
     with_pwd_storage(|storage| {
         storage.refresh_cache();
         frankenlibc_core::pwd::lookup_by_name(storage.current_content(), name)
     })
 }
 
-fn lookup_passwd_by_uid(uid: u32) -> Option<frankenlibc_core::pwd::Passwd> {
+pub(crate) fn lookup_passwd_by_uid(uid: u32) -> Option<frankenlibc_core::pwd::Passwd> {
     with_pwd_storage(|storage| {
         storage.refresh_cache();
         frankenlibc_core::pwd::lookup_by_uid(storage.current_content(), uid)

@@ -6891,7 +6891,11 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
     scan
 }
 
-/// Perform tilde expansion on a word.
+/// Perform tilde expansion on a word, matching glibc wordexp:
+///   * `~`/`~/suffix`     → `$HOME` (falling back to the current user's
+///                          passwd home dir when HOME is unset);
+///   * `~user`/`~user/sfx` → that user's `pw_dir` via /etc/passwd;
+///   * an unknown user, or an unresolvable `~`, is left literal.
 fn expand_tilde(word: &str) -> String {
     if !word.starts_with('~') {
         return word.to_string();
@@ -6902,12 +6906,25 @@ fn expand_tilde(word: &str) -> String {
         None => (rest, ""),
     };
     if user.is_empty() {
-        // ~ alone → $HOME
+        // ~ alone / ~/suffix → $HOME, else the current user's pw_dir.
         if let Ok(home) = std::env::var("HOME") {
             return format!("{home}{suffix}");
         }
+        let uid = unsafe { libc::getuid() };
+        if let Some(pw) = crate::pwd_abi::lookup_passwd_by_uid(uid)
+            && let Ok(dir) = String::from_utf8(pw.pw_dir)
+        {
+            return format!("{dir}{suffix}");
+        }
+        return word.to_string();
     }
-    // ~user → lookup (simplified: just return as-is if we can't resolve)
+    // ~user → that user's home directory from /etc/passwd; if the user is not
+    // found, glibc leaves the word untouched.
+    if let Some(pw) = crate::pwd_abi::lookup_passwd_by_name(user.as_bytes())
+        && let Ok(dir) = String::from_utf8(pw.pw_dir)
+    {
+        return format!("{dir}{suffix}");
+    }
     word.to_string()
 }
 
