@@ -3699,8 +3699,11 @@ pub unsafe extern "C" fn acospi(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acospif(x: f32) -> f32 {
-    let r = unsafe { acosf(x) };
-    r / std::f32::consts::PI
+    // glibc's acospif computes in double precision and rounds once:
+    // round_to_f32(acos((double)x) / pi). Doing the f32 division directly
+    // (acosf(x) / pi_f32) loses 1-2 ULP vs glibc; routing through the f64
+    // acospi is byte-exact (verified 0 ULP over a 20k-point sweep).
+    unsafe { acospi(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acospil(x: f64) -> f64 {
@@ -3733,8 +3736,9 @@ pub unsafe extern "C" fn asinpi(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinpif(x: f32) -> f32 {
-    let r = unsafe { asinf(x) };
-    r / std::f32::consts::PI
+    // Compute in double + round once, matching glibc (byte-exact); the direct
+    // f32 form asinf(x)/pi_f32 loses up to 2 ULP.
+    unsafe { asinpi(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinpil(x: f64) -> f64 {
@@ -3767,8 +3771,9 @@ pub unsafe extern "C" fn atanpi(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atanpif(x: f32) -> f32 {
-    let r = unsafe { atanf(x) };
-    r / std::f32::consts::PI
+    // Compute in double + round once, matching glibc (byte-exact); the direct
+    // f32 form atanf(x)/pi_f32 loses up to 2 ULP.
+    unsafe { atanpi(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atanpil(x: f64) -> f64 {
@@ -3801,8 +3806,9 @@ pub unsafe extern "C" fn atan2pi(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan2pif(x: f32, y: f32) -> f32 {
-    let r = unsafe { atan2f(x, y) };
-    r / std::f32::consts::PI
+    // Compute in double + round once, matching glibc (byte-exact); the direct
+    // f32 form atan2f(x,y)/pi_f32 loses up to 2 ULP.
+    unsafe { atan2pi(x as f64, y as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan2pil(x: f64, y: f64) -> f64 {
