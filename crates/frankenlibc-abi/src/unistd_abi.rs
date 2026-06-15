@@ -13886,6 +13886,8 @@ pub unsafe extern "C" fn getmntent_r(
         };
 
         // Check whether all four NUL-terminated strings fit in caller's buffer.
+        // Octal unescaping only ever shrinks a field, so the raw lengths are a
+        // safe upper bound on the bytes actually written.
         let needed = fields.fsname.len()
             + 1
             + fields.dir.len()
@@ -13898,16 +13900,19 @@ pub unsafe extern "C" fn getmntent_r(
             continue;
         }
 
-        // Pack NUL-terminated strings into caller buffer.
+        // Pack NUL-terminated strings into caller buffer, decoding glibc's octal
+        // escapes (\040 etc.) as we copy — getmntent_r returns the unescaped
+        // field values.
         let buf_u8 = buf as *mut u8;
         let mut off = 0usize;
         let mut pack = |bytes: &[u8]| -> *mut c_char {
             let p = unsafe { buf_u8.add(off) } as *mut c_char;
+            let dst = unsafe { std::slice::from_raw_parts_mut(buf_u8.add(off), bytes.len()) };
+            let written = frankenlibc_core::mntent::unescape_mntent_field(bytes, dst);
             unsafe {
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_u8.add(off), bytes.len());
-                *buf_u8.add(off + bytes.len()) = 0;
+                *buf_u8.add(off + written) = 0;
             }
-            off += bytes.len() + 1;
+            off += written + 1;
             p
         };
         let fsname_ptr = pack(fields.fsname);

@@ -15,5 +15,6 @@
 pub mod parse;
 
 pub use parse::{
-    MntFields, format_mntent_line, has_mnt_opt, parse_mntent_freq_passno, parse_mntent_line,
+    MntFields, escape_mntent_field, format_mntent_line, has_mnt_opt, parse_mntent_freq_passno,
+    parse_mntent_line, unescape_mntent_field,
 };
