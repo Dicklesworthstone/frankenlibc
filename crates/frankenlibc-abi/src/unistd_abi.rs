@@ -17896,6 +17896,35 @@ fn with_serv_iter_state<R>(callback: impl FnOnce(&mut ServIterState) -> R) -> R 
     }
 }
 
+/// Write NUL-terminated alias strings into `buf[off..buf_len]` and populate
+/// `ptrs` (NULL-terminated) with pointers to them, mirroring glibc's
+/// s_aliases/p_aliases tables. Truncates silently when either the byte
+/// budget or the pointer table is exhausted. `buf` is a raw pointer into a
+/// distinct field from `ptrs`, so the writes do not alias.
+unsafe fn pack_aliases_into(
+    buf: *mut u8,
+    buf_len: usize,
+    mut off: usize,
+    ptrs: &mut [*mut c_char],
+    aliases: &[Vec<u8>],
+) {
+    let cap = ptrs.len().saturating_sub(1);
+    let mut n = 0usize;
+    for alias in aliases {
+        if n >= cap || off + alias.len() + 1 > buf_len {
+            break;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(alias.as_ptr(), buf.add(off), alias.len());
+            *buf.add(off + alias.len()) = 0;
+        }
+        ptrs[n] = unsafe { buf.add(off) } as *mut c_char;
+        off += alias.len() + 1;
+        n += 1;
+    }
+    ptrs[n] = std::ptr::null_mut();
+}
+
 /// Parse the next service entry into the entry_buf.
 ///
 /// struct servent layout (x86_64, 32 bytes):
@@ -17953,16 +17982,20 @@ unsafe fn serv_iter_next(state: &mut ServIterState) -> *mut c_void {
             );
             *buf.add(off + entry.protocol.len()) = 0;
         }
+        off += entry.protocol.len() + 1;
 
-        // Aliases: NULL-terminated
-        state.aliases_ptrs[0] = std::ptr::null_mut();
+        // Aliases (glibc fills s_aliases from the trailing /etc/services fields)
+        let buf_len = state.entry_buf.len();
+        unsafe {
+            pack_aliases_into(buf, buf_len, off, &mut state.aliases_ptrs, &entry.aliases);
+        }
 
         // Fill struct servent
         let ptrs = buf as *mut *mut c_char;
         unsafe {
             *ptrs = name_ptr; // s_name
             *(ptrs.add(1) as *mut *mut *mut c_char) = state.aliases_ptrs.as_mut_ptr(); // s_aliases
-            *(buf.add(16) as *mut c_int) = (entry.port as c_int).to_be(); // s_port (NBO)
+            *(buf.add(16) as *mut c_int) = entry.port.to_be() as c_int; // s_port (NBO: htons)
             *(buf.add(24) as *mut *mut c_char) = proto_ptr; // s_proto
         }
 
@@ -18225,7 +18258,7 @@ struct ProtoIterState {
     line_buf: Vec<u8>,
     /// Thread-local protoent + string data for non-reentrant getprotoent.
     entry_buf: [u8; 512],
-    aliases_ptrs: [*mut c_char; 2], // NULL-terminated alias list (empty)
+    aliases_ptrs: [*mut c_char; 16], // NULL-terminated alias pointer table
 }
 
 impl ProtoIterState {
@@ -18234,7 +18267,7 @@ impl ProtoIterState {
             reader: None,
             line_buf: Vec::new(),
             entry_buf: [0u8; 512],
-            aliases_ptrs: [std::ptr::null_mut(); 2],
+            aliases_ptrs: [std::ptr::null_mut(); 16],
         }
     }
 }
@@ -18325,6 +18358,9 @@ unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
             None => continue,
         };
 
+        // Remaining tokens are aliases (glibc fills p_aliases from them).
+        let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
+
         // struct protoent is 24 bytes; strings packed after
         let str_offset = 24usize;
         let needed = str_offset + name.len() + 1;
@@ -18341,8 +18377,12 @@ unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
             *buf.add(str_offset + name.len()) = 0;
         }
 
-        // Set up NULL-terminated aliases list (empty for now)
-        state.aliases_ptrs[0] = std::ptr::null_mut();
+        // Aliases, packed after the name string.
+        let alias_off = str_offset + name.len() + 1;
+        let buf_len = state.entry_buf.len();
+        unsafe {
+            pack_aliases_into(buf, buf_len, alias_off, &mut state.aliases_ptrs, &aliases);
+        }
 
         // Fill struct protoent
         let ptrs = buf as *mut *mut c_char;
