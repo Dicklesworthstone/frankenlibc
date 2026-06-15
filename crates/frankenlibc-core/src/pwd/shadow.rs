@@ -45,28 +45,54 @@ pub struct ShadowLineFields<'a> {
     pub flag: u64,
 }
 
-/// Parse a shadow numeric field per glibc convention.
-///
-/// Returns `-1` for an empty or non-numeric field — the canonical
-/// "unset" sentinel that round-trips through [`format_shadow_line`].
-pub fn parse_shadow_numeric(s: &[u8]) -> i64 {
-    if s.is_empty() {
-        return -1;
+/// Skip leading whitespace and one optional `+`, matching the prefix `strtoul`
+/// (which glibc's shadow parser uses) accepts before the digits. Returns the
+/// remaining bytes, which must then be all decimal digits.
+fn strtoul_digits(s: &[u8]) -> &[u8] {
+    let mut t = s;
+    while let [first, rest @ ..] = t {
+        if *first == b' ' || (0x09..=0x0D).contains(first) {
+            t = rest;
+        } else {
+            break;
+        }
     }
-    core::str::from_utf8(s)
-        .ok()
-        .and_then(|t| t.parse::<i64>().ok())
-        .unwrap_or(-1)
+    if let [b'+', rest @ ..] = t {
+        t = rest;
+    }
+    t
 }
 
-fn parse_shadow_flag(s: &[u8]) -> u64 {
+/// Parse a shadow numeric field per glibc convention.
+///
+/// glibc parses these fields with `strtoul` and requires the whole field to be
+/// consumed: an EMPTY field is the "unset" sentinel `-1`, but a non-empty field
+/// must be a non-negative decimal integer (a leading `+` and whitespace are
+/// allowed). Anything else — `"abc"`, a literal `"-1"`, trailing junk `"5x"` —
+/// makes glibc reject the entire entry, so this returns `None` there.
+pub fn parse_shadow_numeric(s: &[u8]) -> Option<i64> {
     if s.is_empty() {
-        return u64::MAX;
+        return Some(-1);
     }
-    core::str::from_utf8(s)
-        .ok()
-        .and_then(|t| t.parse::<u64>().ok())
-        .unwrap_or(u64::MAX)
+    let digits = strtoul_digits(s);
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    core::str::from_utf8(digits).ok()?.parse::<i64>().ok()
+}
+
+/// Parse the optional shadow `flag` field. An empty field is `~0UL`; otherwise
+/// the same `strtoul` rule as [`parse_shadow_numeric`] applies (`None` rejects
+/// the entry).
+fn parse_shadow_flag(s: &[u8]) -> Option<u64> {
+    if s.is_empty() {
+        return Some(u64::MAX);
+    }
+    let digits = strtoul_digits(s);
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    core::str::from_utf8(digits).ok()?.parse::<u64>().ok()
 }
 
 /// Parse a single line from /etc/shadow.
@@ -89,14 +115,15 @@ pub fn parse_shadow_line(line: &[u8]) -> Option<ShadowEntry> {
     Some(ShadowEntry {
         name: parts[0].to_vec(),
         passwd: parts[1].to_vec(),
-        lstchg: parse_shadow_numeric(parts[2]),
-        min: parse_shadow_numeric(parts[3]),
-        max: parse_shadow_numeric(parts[4]),
-        warn: parse_shadow_numeric(parts[5]),
-        inact: parse_shadow_numeric(parts[6]),
-        expire: parse_shadow_numeric(parts[7]),
+        lstchg: parse_shadow_numeric(parts[2])?,
+        min: parse_shadow_numeric(parts[3])?,
+        max: parse_shadow_numeric(parts[4])?,
+        warn: parse_shadow_numeric(parts[5])?,
+        inact: parse_shadow_numeric(parts[6])?,
+        expire: parse_shadow_numeric(parts[7])?,
         flag: if parts.len() > 8 {
-            parse_shadow_flag(parts[8])
+            // A non-empty, non-numeric flag field rejects the entry too.
+            parse_shadow_flag(parts[8])?
         } else {
             // Glibc convention: missing reserved field decodes to ~0UL
             // ("field unset"), and format_shadow_line renders that as
@@ -367,28 +394,35 @@ mod tests {
 
     #[test]
     fn numeric_empty_is_minus_one() {
-        assert_eq!(parse_shadow_numeric(b""), -1);
+        assert_eq!(parse_shadow_numeric(b""), Some(-1));
     }
 
     #[test]
     fn numeric_zero() {
-        assert_eq!(parse_shadow_numeric(b"0"), 0);
+        assert_eq!(parse_shadow_numeric(b"0"), Some(0));
     }
 
     #[test]
     fn numeric_positive() {
-        assert_eq!(parse_shadow_numeric(b"19500"), 19500);
+        assert_eq!(parse_shadow_numeric(b"19500"), Some(19500));
+        // glibc strtoul accepts a leading '+' and whitespace.
+        assert_eq!(parse_shadow_numeric(b"+5"), Some(5));
+        assert_eq!(parse_shadow_numeric(b" 5"), Some(5));
     }
 
     #[test]
-    fn numeric_negative() {
-        assert_eq!(parse_shadow_numeric(b"-7"), -7);
+    fn numeric_negative_is_rejected() {
+        // glibc parses these fields with strtoul, so a literal "-1"/"-7" is NOT
+        // accepted (the -1 sentinel comes only from an EMPTY field).
+        assert_eq!(parse_shadow_numeric(b"-7"), None);
+        assert_eq!(parse_shadow_numeric(b"-1"), None);
     }
 
     #[test]
-    fn numeric_garbage_falls_back_to_minus_one() {
-        assert_eq!(parse_shadow_numeric(b"abc"), -1);
-        assert_eq!(parse_shadow_numeric(b"12x"), -1);
+    fn numeric_garbage_is_rejected() {
+        // Non-empty non-numeric / trailing-junk fields reject the whole entry.
+        assert_eq!(parse_shadow_numeric(b"abc"), None);
+        assert_eq!(parse_shadow_numeric(b"12x"), None);
     }
 
     // ---- parse_shadow_line ----
@@ -458,10 +492,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_garbage_numeric_falls_back_to_minus_one() {
-        let e = parse_shadow_line(b"u:x:abc:xyz:99:0:0:0").unwrap();
+    fn parse_garbage_numeric_rejects_entry() {
+        // A non-empty, non-numeric numeric field makes glibc reject the entry.
+        assert!(parse_shadow_line(b"u:x:abc:xyz:99:0:0:0").is_none());
+        assert!(parse_shadow_line(b"u:x:5x:0:99:0:0:0").is_none());
+        // empty numeric fields are still fine (decode to -1).
+        let e = parse_shadow_line(b"u:x::0:99:0:0:0").unwrap();
         assert_eq!(e.lstchg, -1);
-        assert_eq!(e.min, -1);
         assert_eq!(e.max, 99);
     }
 

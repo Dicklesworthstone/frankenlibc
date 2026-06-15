@@ -6721,24 +6721,61 @@ pub unsafe extern "C" fn sgetspent_r(
     }
     off += passwd_len;
     let _ = off;
-    // Parse numeric fields
-    let parse_long = |idx: usize| -> c_long {
-        fields
-            .get(idx)
-            .and_then(|s| s.parse::<c_long>().ok())
-            .unwrap_or(-1)
+    // Parse numeric fields the way glibc does (strtoul, whole-field consumed):
+    // an empty/absent field is the -1 "unset" sentinel, but a present non-empty
+    // field must be a non-negative decimal (a leading '+'/whitespace is allowed).
+    // A garbage field ("abc"), a literal "-1", or trailing junk ("5x") rejects
+    // the entire entry — glibc returns NULL there, not a -1 fallback.
+    fn shadow_strtoul(s: &str) -> Option<u64> {
+        let mut b = s.as_bytes();
+        while let [first, rest @ ..] = b {
+            if *first == b' ' || (0x09..=0x0D).contains(first) {
+                b = rest;
+            } else {
+                break;
+            }
+        }
+        if let [b'+', rest @ ..] = b {
+            b = rest;
+        }
+        if b.is_empty() || !b.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        core::str::from_utf8(b).ok()?.parse::<u64>().ok()
+    }
+    let parse_long = |idx: usize| -> Option<c_long> {
+        match fields.get(idx) {
+            None => Some(-1),
+            Some(s) if s.is_empty() => Some(-1),
+            Some(s) => shadow_strtoul(s).map(|v| v as c_long),
+        }
+    };
+    let (Some(lstchg), Some(min), Some(max), Some(warn), Some(inact), Some(expire)) = (
+        parse_long(2),
+        parse_long(3),
+        parse_long(4),
+        parse_long(5),
+        parse_long(6),
+        parse_long(7),
+    ) else {
+        return libc::EINVAL;
+    };
+    let flag = match fields.get(8) {
+        None => c_ulong::MAX,
+        Some(s) if s.is_empty() => c_ulong::MAX,
+        Some(s) => match shadow_strtoul(s) {
+            Some(v) => v as c_ulong,
+            None => return libc::EINVAL,
+        },
     };
     unsafe {
-        (*sp).sp_lstchg = parse_long(2);
-        (*sp).sp_min = parse_long(3);
-        (*sp).sp_max = parse_long(4);
-        (*sp).sp_warn = parse_long(5);
-        (*sp).sp_inact = parse_long(6);
-        (*sp).sp_expire = parse_long(7);
-        (*sp).sp_flag = fields
-            .get(8)
-            .and_then(|s| s.parse::<c_ulong>().ok())
-            .unwrap_or(c_ulong::MAX);
+        (*sp).sp_lstchg = lstchg;
+        (*sp).sp_min = min;
+        (*sp).sp_max = max;
+        (*sp).sp_warn = warn;
+        (*sp).sp_inact = inact;
+        (*sp).sp_expire = expire;
+        (*sp).sp_flag = flag;
         *(spbufp as *mut *mut libc::spwd) = sp;
     }
     0
