@@ -181,12 +181,7 @@ fn posix_class_match(name: &[u8], c: u8) -> Option<bool> {
 /// leading `[` as an ordinary literal byte. A structurally-closed but
 /// unrecognized sub-expression (unknown class name, multi-byte collating
 /// element) is consumed and matches nothing — as glibc rejects it too.
-fn parse_bracket_subexpr(
-    pat: &[u8],
-    open: usize,
-    kind: u8,
-    c: u8,
-) -> Option<(usize, bool)> {
+fn parse_bracket_subexpr(pat: &[u8], open: usize, kind: u8, c: u8) -> Option<(usize, bool)> {
     let content_start = open + 2;
     let mut j = content_start;
     loop {
@@ -259,8 +254,16 @@ fn in_bracket_range(
     casefold: bool,
 ) -> bool {
     if casefold {
-        let lo = if low_coll { low } else { low.to_ascii_lowercase() };
-        let hi = if high_coll { high } else { high.to_ascii_lowercase() };
+        let lo = if low_coll {
+            low
+        } else {
+            low.to_ascii_lowercase()
+        };
+        let hi = if high_coll {
+            high
+        } else {
+            high.to_ascii_lowercase()
+        };
         let cl = c.to_ascii_lowercase();
         lo <= hi && cl >= lo && cl <= hi
     } else {
@@ -307,7 +310,10 @@ fn parse_range_endpoint(pat: &[u8], pi: usize, noescape: bool) -> (Option<(u8, b
     }
     let mut high = pat.get(pi).copied().unwrap_or(0);
     let mut q = pi + 1;
-    if high == b'\\' && !noescape && let Some(&b) = pat.get(q) {
+    if high == b'\\'
+        && !noescape
+        && let Some(&b) = pat.get(q)
+    {
         high = b;
         q += 1;
     }
@@ -696,17 +702,15 @@ fn pattern_has_extglob(pat: &[u8], noescape: bool) -> bool {
     false
 }
 
+type ParsedExtglobGroup = (u8, Vec<(usize, usize)>, usize);
+
 /// Parse an extglob group whose operator char is at `pat[pi]` and `pat[pi+1] ==
 /// '('`. Returns `(op, alternatives, next_pi)` where each alternative is a
 /// `(start, end)` byte range into `pat` (the `|`-separated sub-patterns) and
 /// `next_pi` is the index just past the closing `)`. Returns `None` if the group
 /// is unterminated — the caller then treats the operator char as a literal,
 /// matching glibc, which falls back to ordinary matching on a malformed group.
-fn parse_extglob_group(
-    pat: &[u8],
-    pi: usize,
-    noescape: bool,
-) -> Option<(u8, Vec<(usize, usize)>, usize)> {
+fn parse_extglob_group(pat: &[u8], pi: usize, noescape: bool) -> Option<ParsedExtglobGroup> {
     let op = pat[pi];
     let mut j = pi + 2; // past `X(`
     let mut depth = 1usize;
@@ -762,7 +766,14 @@ fn parse_extglob_group(
 /// the same group matches standalone (`@(b|)` on "") — see bd-4aqdre. The flag
 /// is set on entry to a `*` expansion and propagates through subsequent
 /// consuming tokens; sub-pattern interiors (`sub_full_match`) reset it.
-fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFlags, star: bool) -> bool {
+fn ext_match_at(
+    pat: &[u8],
+    pi: usize,
+    text: &[u8],
+    si: usize,
+    flags: FnmatchFlags,
+    star: bool,
+) -> bool {
     let pathname = flags.contains(FnmatchFlags::PATHNAME);
     let period = flags.contains(FnmatchFlags::PERIOD);
     let noescape = flags.contains(FnmatchFlags::NOESCAPE);
@@ -794,12 +805,14 @@ fn ext_match_at(pat: &[u8], pi: usize, text: &[u8], si: usize, flags: FnmatchFla
     let pc = pat[pi];
 
     // Extglob group?
-    if matches!(pc, b'?' | b'*' | b'+' | b'@' | b'!') && pat.get(pi + 1) == Some(&b'(') {
-        if let Some((op, alts, next_pi)) = parse_extglob_group(pat, pi, noescape) {
-            return ext_group_at(op, &alts, pat, next_pi, text, si, flags, star);
-        }
-        // Unterminated: fall through and treat `pc` as an ordinary token.
+    if let Some((op, alts, next_pi)) = (matches!(pc, b'?' | b'*' | b'+' | b'@' | b'!')
+        && pat.get(pi + 1) == Some(&b'('))
+    .then(|| parse_extglob_group(pat, pi, noescape))
+    .flatten()
+    {
+        return ext_group_at(op, &alts, pat, next_pi, text, si, flags, star);
     }
+    // Unterminated extglob groups fall through and treat `pc` as an ordinary token.
 
     match pc {
         b'?' => {
@@ -916,7 +929,8 @@ fn ext_group_at(
     let rest = |s: usize| ext_match_at(pat, rest_pi, text, s, flags, false);
     // Does some alternative match the slice text[si..e] exactly?
     let alt_hits = |s: usize, e: usize| -> bool {
-        alts.iter().any(|&(as_, ae)| sub_full_match(&pat[as_..ae], text, s, e, flags))
+        alts.iter()
+            .any(|&(as_, ae)| sub_full_match(&pat[as_..ae], text, s, e, flags))
     };
     // glibc rejects a `@`/`+` group completing a starred match by an empty-width
     // alternative at end of text: at `si == text.len()` only an empty alternative
@@ -1209,7 +1223,9 @@ fn fnmatch_inner(
                             pi = npi;
                             match high {
                                 Some((high, high_coll))
-                                    if in_bracket_range(c, low, true, high, high_coll, casefold) =>
+                                    if in_bracket_range(
+                                        c, low, true, high, high_coll, casefold,
+                                    ) =>
                                 {
                                     matched = true;
                                 }
@@ -1229,8 +1245,7 @@ fn fnmatch_inner(
                         if bc == b'['
                             && let Some(&kind) = pat.get(pi + 1)
                             && matches!(kind, b':' | b'.' | b'=')
-                            && let Some((next_pi, member)) =
-                                parse_bracket_subexpr(pat, pi, kind, c)
+                            && let Some((next_pi, member)) = parse_bracket_subexpr(pat, pi, kind, c)
                         {
                             if member {
                                 matched = true;
@@ -1262,7 +1277,9 @@ fn fnmatch_inner(
                             pi = npi;
                             match high {
                                 Some((high, high_coll))
-                                    if in_bracket_range(c, low, false, high, high_coll, casefold) =>
+                                    if in_bracket_range(
+                                        c, low, false, high, high_coll, casefold,
+                                    ) =>
                                 {
                                     matched = true;
                                 }

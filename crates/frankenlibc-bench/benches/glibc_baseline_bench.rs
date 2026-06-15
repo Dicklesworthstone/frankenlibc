@@ -301,7 +301,9 @@ fn bench_strcmp_256_equal(c: &mut Criterion) {
 }
 
 fn bench_getenv_miss(c: &mut Criterion) {
-    let mut group = c.benchmark_group("glibc_baseline_getenv_miss");
+    let group = c.benchmark_group("glibc_baseline_getenv_miss");
+    #[cfg(feature = "abi-bench")]
+    let mut group = group;
 
     #[cfg(feature = "abi-bench")]
     {

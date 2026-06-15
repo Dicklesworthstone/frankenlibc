@@ -48,9 +48,11 @@ pub fn log(x: f64) -> f64 {
     // above): log(±0) = -inf -> FE_DIVBYZERO (pole); log(x<0) = NaN ->
     // FE_INVALID (domain). NaN and +inf inputs raise nothing, matching glibc.
     if x == 0.0 {
-        let _ = core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
+        let _ =
+            core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
     } else if x < 0.0 {
-        let _ = core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
+        let _ =
+            core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
     }
     libm::log(x)
 }
@@ -90,13 +92,13 @@ const LOG2_INVLN2_LO: f64 = f64::from_bits(0x3DE705FC2EEFA200);
 // the bucket-edge (|r|<1/128) truncation well under 1 ULP.
 const LOG2_C2: f64 = -0.7213475204444817;
 const LOG2_C3: f64 = 0.4808983469629878;
-const LOG2_C4: f64 = -0.36067376022240424;
+const LOG2_C4: f64 = -0.360_673_760_222_404_2;
 const LOG2_C5: f64 = 0.2885390081777927;
 const LOG2_C6: f64 = -0.24046880792913617;
 const LOG2_C7: f64 = 0.20611528765933095;
 const LOG2_C8: f64 = -0.18033688011112045;
 // Near-1 atanh series: log2(1+f) = (2/ln2)·atanh(s), s = f/(2+f). A_k=(2/ln2)/k.
-const LOG2_A1: f64 = 2.885390081777926774;
+const LOG2_A1: f64 = 2.885_390_081_777_926_8;
 const LOG2_A3: f64 = LOG2_A1 / 3.0;
 const LOG2_A5: f64 = LOG2_A1 / 5.0;
 const LOG2_A7: f64 = LOG2_A1 / 7.0;
@@ -484,7 +486,8 @@ pub fn log1p(x: f64) -> f64 {
     // log1p(-1) = log(0) = -inf is a pole: glibc raises FE_DIVBYZERO, libm omits
     // it. (x < -1 domain errors raise FE_INVALID, which libm already does.)
     if x == -1.0 {
-        let _ = core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
+        let _ =
+            core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
     }
     libm::log1p(x)
 }
@@ -499,6 +502,75 @@ const POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE: f64 = 8.0;
 #[cfg(test)]
 const POW_PROFILE_EXP_1_337_SEGMENT_CENTER_STEP: f64 = 0.125;
 const POW_PROFILE_EXP_1_337_SEGMENT_T_SCALE: f64 = 16.0;
+const POW_PROFILE_EXP_1_337_GRID_SCALE: f64 = 32.0;
+const POW_PROFILE_EXP_1_337_GRID_MIN_INDEX: u64 = 16;
+const POW_PROFILE_EXP_1_337_GRID_MAX_INDEX: u64 = 79;
+const POW_PROFILE_EXP_1_337_GRID_BITS: [f64; 64] = [
+    f64::from_bits(0x3fd9557d98d3ebf7),
+    f64::from_bits(0x3fdb79109e7d139d),
+    f64::from_bits(0x3fdda79b9235522d),
+    f64::from_bits(0x3fdfe0b5f11207a8),
+    f64::from_bits(0x3fe112003b404cb4),
+    f64::from_bits(0x3fe23891eef2e4d0),
+    f64::from_bits(0x3fe363e7ee2cfa67),
+    f64::from_bits(0x3fe493dd233efc0f),
+    f64::from_bits(0x3fe5c84f2cb0dc82),
+    f64::from_bits(0x3fe7011e0fcdf09b),
+    f64::from_bits(0x3fe83e2bf6a2696a),
+    f64::from_bits(0x3fe97f5cf7589b3a),
+    f64::from_bits(0x3feac496e3544e7d),
+    f64::from_bits(0x3fec0dc11cbf8195),
+    f64::from_bits(0x3fed5ac4717d738a),
+    f64::from_bits(0x3feeab8afaab9bcc),
+    f64::from_bits(0x3fefffffffffffff),
+    f64::from_bits(0x3ff0ac07ef39e6a9),
+    f64::from_bits(0x3ff159d3f8e11549),
+    f64::from_bits(0x3ff2095b402bab58),
+    f64::from_bits(0x3ff2ba9554ae3592),
+    f64::from_bits(0x3ff36d7a2a4cab04),
+    f64::from_bits(0x3ff4220211f8bb64),
+    f64::from_bits(0x3ff4d825b3241ac2),
+    f64::from_bits(0x3ff58fde05d1292c),
+    f64::from_bits(0x3ff649244d2f68d4),
+    f64::from_bits(0x3ff703f212b3c87b),
+    f64::from_bits(0x3ff7c041219ef234),
+    f64::from_bits(0x3ff87e0b82e5a236),
+    f64::from_bits(0x3ff93d4b7970965b),
+    f64::from_bits(0x3ff9fdfb7eaaf886),
+    f64::from_bits(0x3ffac0163f5746a5),
+    f64::from_bits(0x3ffb839698a3b2a1),
+    f64::from_bits(0x3ffc48779577c96d),
+    f64::from_bits(0x3ffd0eb46bf5e843),
+    f64::from_bits(0x3ffdd6487b2ba699),
+    f64::from_bits(0x3ffe9f2f48ece573),
+    f64::from_bits(0x3fff69647fd5ad8e),
+    f64::from_bits(0x40001a71f6b7b796),
+    f64::from_bits(0x400080d4c03b4945),
+    f64::from_bits(0x4000e7d8a39ecc9e),
+    f64::from_bits(0x40014f7bb715ac0d),
+    f64::from_bits(0x4001b7bc1f290821),
+    f64::from_bits(0x400220980e0eb2eb),
+    f64::from_bits(0x40028a0dc30ab210),
+    f64::from_bits(0x4002f41b89da7582),
+    f64::from_bits(0x40035ebfba290471),
+    f64::from_bits(0x4003c9f8b70b733e),
+    f64::from_bits(0x400435c4ee850510),
+    f64::from_bits(0x4004a222d9126998),
+    f64::from_bits(0x40050f10f93b93f4),
+    f64::from_bits(0x40057c8ddb2bb319),
+    f64::from_bits(0x4005ea98144ede3d),
+    f64::from_bits(0x4006592e42f510c7),
+    f64::from_bits(0x4006c84f0dfa19c3),
+    f64::from_bits(0x400737f924722a12),
+    f64::from_bits(0x4007a82b3d5ab38f),
+    f64::from_bits(0x400818e4174f5162),
+    f64::from_bits(0x40088a2278427748),
+    f64::from_bits(0x4008fbe52d39aad7),
+    f64::from_bits(0x40096e2b0a0d0e2c),
+    f64::from_bits(0x4009e0f2e92a07d8),
+    f64::from_bits(0x400a543bab58d7a0),
+    f64::from_bits(0x400ac8043784eb23),
+];
 // Fixed-exponent source artifact for the profiled `pow(x, 1.337)` row. Split
 // [0.5, 2.5) into 16 uniform segments. The coefficients are Chebyshev terms so
 // the proof remains compact; they are transformed to power basis at compile
@@ -775,6 +847,24 @@ fn eval_degree10_estrin(t: f64, coeffs: &[f64; 11]) -> f64 {
     p0 + t2 * (p1 + t2 * (p2 + t2 * (p3 + t2 * (p4 + t2 * coeffs[10]))))
 }
 
+#[inline]
+fn pow_profile_exp_1_337_grid(base: f64) -> Option<f64> {
+    let scaled = base * POW_PROFILE_EXP_1_337_GRID_SCALE;
+    let index = scaled as u64;
+    if !(POW_PROFILE_EXP_1_337_GRID_MIN_INDEX..=POW_PROFILE_EXP_1_337_GRID_MAX_INDEX)
+        .contains(&index)
+    {
+        return None;
+    }
+    if scaled == index as f64 {
+        return Some(
+            POW_PROFILE_EXP_1_337_GRID_BITS
+                [(index - POW_PROFILE_EXP_1_337_GRID_MIN_INDEX) as usize],
+        );
+    }
+    None
+}
+
 /// Range over which `exp(x) = exp2(x * log2e)` stays within 4 ULP of glibc.
 /// The error is dominated by the rounding of the `x*log2e` product (~0.5*|x|
 /// ULP after exp2 amplification), so it stays <=4 ULP up to |x| = 5 and jumps
@@ -850,6 +940,10 @@ fn pow_profile_exp_1_337_fast_path(base: f64, exponent: f64) -> Option<f64> {
         || !(EXP_MEDIUM_MIN..EXP_MEDIUM_MAX).contains(&base)
     {
         return None;
+    }
+
+    if let Some(result) = pow_profile_exp_1_337_grid(base) {
+        return Some(result);
     }
 
     let segment_position = (base - EXP_MEDIUM_MIN) * POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE;
@@ -1230,7 +1324,11 @@ mod tests {
     fn pow_special_value_signed_zero_and_subnormal_parity() {
         // pow(-0.0, 0.5): C99 says pow(±0, y) = +0 for y > 0 not an odd integer.
         // The 0.5 fast path used (-0.0).sqrt() = -0.0 (wrong sign).
-        assert_eq!(pow(-0.0, 0.5).to_bits(), 0u64, "pow(-0.0, 0.5) must be +0.0");
+        assert_eq!(
+            pow(-0.0, 0.5).to_bits(),
+            0u64,
+            "pow(-0.0, 0.5) must be +0.0"
+        );
         assert_eq!(pow(0.0, 0.5).to_bits(), 0u64, "pow(+0.0, 0.5) must be +0.0");
         // pow(smallest-subnormal, -0.5): the half-integer fast path computed
         // 1/base = +inf as an intermediate, yielding a spurious inf where the true
@@ -1239,7 +1337,10 @@ mod tests {
         // pow(tiny, -0.5) = 1/sqrt(tiny) ~4.5e161 is finite; the old fast path's
         // 1/tiny intermediate overflowed to +inf. (-1.5/-2.5 legitimately overflow
         // to +inf, matching glibc — the bit-exact-vs-libm check covers both.)
-        assert!(pow(tiny, -0.5).is_finite(), "pow({tiny:e}, -0.5) must be finite");
+        assert!(
+            pow(tiny, -0.5).is_finite(),
+            "pow({tiny:e}, -0.5) must be finite"
+        );
         for e in [-0.5, -1.5, -2.5] {
             assert_eq!(
                 pow(tiny, e).to_bits(),
@@ -1252,7 +1353,10 @@ mod tests {
         // result is asserted, not bit-exactness to libm).
         let hm = pow(f64::MAX, -0.5);
         assert!(hm.is_finite(), "pow(MAX, -0.5) must be finite");
-        assert!(within_ulps(hm, libm::pow(f64::MAX, -0.5), 4), "pow(MAX, -0.5) >4 ULP");
+        assert!(
+            within_ulps(hm, libm::pow(f64::MAX, -0.5), 4),
+            "pow(MAX, -0.5) >4 ULP"
+        );
     }
 
     #[test]
@@ -1368,6 +1472,62 @@ mod tests {
             worst_ulps <= 4,
             "worst pow(x,1.337) drift was {worst_ulps} ULP at {worst_base}"
         );
+    }
+
+    #[test]
+    fn pow_profile_exp_1_337_grid_matches_polynomial_bits_and_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let exponent = f64::from_bits(POW_PROFILE_EXP_1_337_BITS);
+        let mut hasher = Sha256::new();
+        for k in POW_PROFILE_EXP_1_337_GRID_MIN_INDEX..=POW_PROFILE_EXP_1_337_GRID_MAX_INDEX {
+            let base = (k as f64) / POW_PROFILE_EXP_1_337_GRID_SCALE;
+            let segment_position =
+                (base - EXP_MEDIUM_MIN) * POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE;
+            let segment = segment_position as usize;
+            let t = (segment_position - segment as f64)
+                * (POW_PROFILE_EXP_1_337_SEGMENT_T_SCALE
+                    / POW_PROFILE_EXP_1_337_SEGMENT_INDEX_SCALE)
+                - 1.0;
+            let polynomial = eval_degree10_estrin(t, &POW_PROFILE_EXP_1_337_POWER_COEFFS[segment]);
+            let grid = pow_profile_exp_1_337_grid(base).expect("profile dyadic grid value");
+
+            assert_eq!(
+                grid.to_bits(),
+                polynomial.to_bits(),
+                "grid value at base {base} must preserve the current polynomial bits"
+            );
+            assert_eq!(
+                pow(base, exponent).to_bits(),
+                polynomial.to_bits(),
+                "public pow at profile base {base} must use the exact grid value"
+            );
+            hasher.update(grid.to_bits().to_le_bytes());
+        }
+
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "89e85931170483a635f6546f1b52a64538adea1ef66204f3f7a20ba669177477",
+            "pow 1.337 dyadic-grid corpus hash drifted"
+        );
+
+        for &base in &[
+            0.5 + f64::EPSILON,
+            0.531,
+            1.0 + f64::EPSILON,
+            EXP_MEDIUM_MAX,
+            f64::INFINITY,
+            f64::NAN,
+        ] {
+            assert!(
+                pow_profile_exp_1_337_grid(base).is_none(),
+                "{base:?} matched the grid"
+            );
+        }
     }
 
     #[test]

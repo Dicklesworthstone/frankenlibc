@@ -930,13 +930,13 @@ mod tests {
 
     #[test]
     fn test_tilde_expansion() {
-        if let Ok(home) = std::env::var("HOME") {
-            if !home.is_empty() {
-                let expected = format!("{home}/test");
-                match expand_tilde(b"~/test") {
-                    TildeExpansion::Expanded(v) => assert_eq!(v, expected.as_bytes()),
-                    TildeExpansion::Unresolved => panic!("~ with HOME set should expand"),
-                }
+        if let Ok(home) = std::env::var("HOME")
+            && !home.is_empty()
+        {
+            let expected = format!("{home}/test");
+            match expand_tilde(b"~/test") {
+                TildeExpansion::Expanded(v) => assert_eq!(v, expected.as_bytes()),
+                TildeExpansion::Unresolved => panic!("~ with HOME set should expand"),
             }
         }
         // `~user` for a definitely-absent user is unresolved.
@@ -945,16 +945,15 @@ mod tests {
             TildeExpansion::Unresolved
         ));
         // `~root` resolves on a standard system (root always has a passwd entry).
-        if let Ok(content) = std::fs::read("/etc/passwd") {
-            if let Some(pw) = crate::pwd::lookup_by_name(&content, b"root") {
-                if !pw.pw_dir.is_empty() {
-                    let mut expected = pw.pw_dir.clone();
-                    expected.extend_from_slice(b"/x");
-                    match expand_tilde(b"~root/x") {
-                        TildeExpansion::Expanded(v) => assert_eq!(v, expected),
-                        TildeExpansion::Unresolved => panic!("~root should resolve"),
-                    }
-                }
+        if let Ok(content) = std::fs::read("/etc/passwd")
+            && let Some(pw) = crate::pwd::lookup_by_name(&content, b"root")
+            && !pw.pw_dir.is_empty()
+        {
+            let mut expected = pw.pw_dir.clone();
+            expected.extend_from_slice(b"/x");
+            match expand_tilde(b"~root/x") {
+                TildeExpansion::Expanded(v) => assert_eq!(v, expected),
+                TildeExpansion::Unresolved => panic!("~root should resolve"),
             }
         }
     }
@@ -1010,9 +1009,15 @@ mod tests {
         // Wildcard + slash -> ONLY the directory, marked (the file is excluded).
         assert_eq!(names(glob_expand(&pat("/*/"), 0).unwrap()), vec!["d/"]);
         // No-match wildcard + slash + NOCHECK -> pattern with the slash stripped.
-        assert_eq!(names(glob_expand(&pat("/BA?/"), GLOB_NOCHECK).unwrap()), vec!["BA?"]);
+        assert_eq!(
+            names(glob_expand(&pat("/BA?/"), GLOB_NOCHECK).unwrap()),
+            vec!["BA?"]
+        );
         // No-match literal + slash + NOCHECK -> pattern with the slash stripped.
-        assert_eq!(names(glob_expand(&pat("/zzz/"), GLOB_NOCHECK).unwrap()), vec!["zzz"]);
+        assert_eq!(
+            names(glob_expand(&pat("/zzz/"), GLOB_NOCHECK).unwrap()),
+            vec!["zzz"]
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

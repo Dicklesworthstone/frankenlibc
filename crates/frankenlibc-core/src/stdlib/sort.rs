@@ -82,24 +82,24 @@ where
 {
     // 4-/8-byte comparison fast lanes (sort raw keys via the stdlib sort with no
     // per-comparison FFI callback) for the mid-size window.
-    if width == 4 && (I32_FAST_LANE_MIN..=I32_FAST_LANE_MAX).contains(&num) {
-        if try_qsort_i32_natural_fast_lane(base, num, compare) {
-            return true;
-        }
+    if width == 4
+        && (I32_FAST_LANE_MIN..=I32_FAST_LANE_MAX).contains(&num)
+        && try_qsort_i32_natural_fast_lane(base, num, compare)
+    {
+        return true;
     }
-    if width == 8 && (I64_FAST_LANE_MIN..=I64_FAST_LANE_MAX).contains(&num) {
-        if try_qsort_i64_natural_fast_lane(base, num, compare) {
-            return true;
-        }
+    if width == 8
+        && (I64_FAST_LANE_MIN..=I64_FAST_LANE_MAX).contains(&num)
+        && try_qsort_i64_natural_fast_lane(base, num, compare)
+    {
+        return true;
     }
 
     // 1-byte keys: a dedicated counting sort (O(n + 256)) — one histogram pass
     // plus one memset run per value, no key widening. Beats both pdqsort and the
     // generic u64-widening radix (which regresses on bytes).
-    if width == 1 && num > U8_COUNTING_LANE_MIN {
-        if try_qsort_u8_counting_lane(base, num, compare) {
-            return true;
-        }
+    if width == 1 && num > U8_COUNTING_LANE_MIN && try_qsort_u8_counting_lane(base, num, compare) {
+        return true;
     }
 
     // 2-/4-/8-byte keys above the radix threshold: an LSD radix sort, a
@@ -112,10 +112,11 @@ where
     } else {
         INTEGER_RADIX_LANE_MIN
     };
-    if (width == 2 || width == 4 || width == 8) && num > radix_min {
-        if try_qsort_integer_radix_lane(base, num, width, compare) {
-            return true;
-        }
+    if (width == 2 || width == 4 || width == 8)
+        && num > radix_min
+        && try_qsort_integer_radix_lane(base, num, width, compare)
+    {
+        return true;
     }
 
     false
@@ -323,12 +324,7 @@ where
 /// (unsigned, descending, float, struct field, …) fails the single linear
 /// verify pass; the saved original bytes are restored and the caller falls back
 /// to the generic pdqsort with zero behavioral difference.
-fn try_qsort_integer_radix_lane<F>(
-    base: &mut [u8],
-    num: usize,
-    width: usize,
-    compare: &F,
-) -> bool
+fn try_qsort_integer_radix_lane<F>(base: &mut [u8], num: usize, width: usize, compare: &F) -> bool
 where
     F: Fn(&[u8], &[u8]) -> i32,
 {
@@ -392,7 +388,7 @@ fn radix_sort_u64_lsd(keys: &mut Vec<u64>, passes: usize) {
         }
         // Skip passes where every key shares the same digit (e.g. unused high
         // bytes of small-magnitude integers) — the order is already settled.
-        if count.iter().any(|&c| c == n) {
+        if count.contains(&n) {
             continue;
         }
         let mut sum = 0usize;

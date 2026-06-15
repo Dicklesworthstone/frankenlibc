@@ -52,7 +52,7 @@ pub fn asinf(x: f32) -> f32 {
 pub fn acosf(x: f32) -> f32 {
     // Domain [-1, 1]; glibc raises FE_INVALID outside it (libm::acosf returns NaN
     // without the flag — note the f64 acos already raises it, libm is asymmetric).
-    if x < -1.0 || x > 1.0 {
+    if !(-1.0..=1.0).contains(&x) {
         fe_invalid_f32();
     }
     libm::acosf(x)
@@ -404,7 +404,9 @@ pub fn acoshf(x: f32) -> f32 {
     // FE_INVALID for the out-of-domain case, so produce the NaN via 0/0 (which
     // sets the flag) rather than a bare NaN constant.
     if x < 1.0 {
-        return core::hint::black_box(core::hint::black_box(0.0f32) / core::hint::black_box(0.0f32));
+        return core::hint::black_box(
+            core::hint::black_box(0.0f32) / core::hint::black_box(0.0f32),
+        );
     }
     libm::acoshf(x)
 }
@@ -592,7 +594,9 @@ pub fn nextafterf(x: f32, y: f32) -> f32 {
     // C99/IEEE: FE_OVERFLOW when finite -> infinite; FE_UNDERFLOW when the result
     // is subnormal/zero and differs from x. libm omits these; re-raise.
     if x.is_finite() && r.is_infinite() {
-        let _ = core::hint::black_box(core::hint::black_box(f32::MAX) * core::hint::black_box(f32::MAX));
+        let _ = core::hint::black_box(
+            core::hint::black_box(f32::MAX) * core::hint::black_box(f32::MAX),
+        );
     } else if r != x && r.abs() < f32::MIN_POSITIVE {
         let _ = core::hint::black_box(
             core::hint::black_box(f32::MIN_POSITIVE) * core::hint::black_box(f32::MIN_POSITIVE),
@@ -829,7 +833,6 @@ pub fn jnf(n: i32, x: f32) -> f32 {
 }
 
 /// Bessel function of the second kind, order 0 (f32 variant).
-#[inline]
 /// Y-Bessel pole/domain exception re-raise (f32): x==0 -> FE_DIVBYZERO,
 /// x<0 -> FE_INVALID. Mirrors the f64 `raise_y_special`.
 #[inline]
@@ -961,7 +964,15 @@ mod tests {
     fn acoshf_domain_and_j1f_sign_match_glibc() {
         // acosh domain is [1, +inf); x < 1 must be NaN (libm returns spurious
         // finite values for large negative x, e.g. acoshf(-100) = -2.2).
-        for x in [-100.0f32, -104.0, -1.0, 0.0, 0.5, 0.9999999, f32::NEG_INFINITY] {
+        for x in [
+            -100.0f32,
+            -104.0,
+            -1.0,
+            0.0,
+            0.5,
+            0.9999999,
+            f32::NEG_INFINITY,
+        ] {
             assert!(acoshf(x).is_nan(), "acoshf({x}) must be NaN (domain x<1)");
         }
         assert_eq!(acoshf(1.0), 0.0);

@@ -194,7 +194,9 @@ pub fn tgamma(x: f64) -> f64 {
         // 0/0 (NaN + FE_INVALID). (tgamma(0) is handled by libm with FE_DIVBYZERO
         // already; positive/large/non-integer args raise nothing here.)
         if x < 0.0 && x.is_finite() && x == x.floor() {
-            let _ = core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
+            let _ = core::hint::black_box(
+                core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64),
+            );
         }
         libm::tgamma(x)
     }
@@ -362,16 +364,17 @@ pub fn jn(n: i32, x: f64) -> f64 {
 }
 
 /// Bessel function of the second kind, order 0.
-#[inline]
 /// Re-raise the IEEE exception glibc raises for the Y-Bessel family that libm
 /// omits: x==0 is a pole (Y(0) = -inf) -> FE_DIVBYZERO; x<0 (incl -inf) is out of
 /// domain (Y undefined for negative reals, result NaN) -> FE_INVALID. Cold path.
 #[inline]
 fn raise_y_special(x: f64) {
     if x == 0.0 {
-        let _ = core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
+        let _ =
+            core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
     } else if x < 0.0 {
-        let _ = core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
+        let _ =
+            core::hint::black_box(core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64));
     }
 }
 

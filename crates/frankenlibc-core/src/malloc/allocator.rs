@@ -639,20 +639,40 @@ impl MallocState {
         let mut ptr = ptr;
 
         let Some(bin) = size_class::small_bin_index(size) else {
-            let removed = if self
+            let removed_alloc = if self
                 .large_fast_active
                 .as_ref()
                 .is_some_and(|alloc| alloc.base == ptr)
             {
-                let _ = self
-                    .large_fast_active
-                    .take()
-                    .expect("fast active slot existed");
-                true
+                Some(
+                    self.large_fast_active
+                        .take()
+                        .expect("fast active slot existed"),
+                )
             } else {
-                self.large_allocations.free(ptr)
+                let alloc = self.large_allocations.lookup(ptr).cloned();
+                if alloc.is_some() {
+                    let removed = self.large_allocations.free(ptr);
+                    debug_assert!(removed);
+                }
+                alloc
             };
-            self.total_allocated = self.total_allocated.saturating_sub(size);
+
+            let Some(removed_alloc) = removed_alloc else {
+                self.record_lifecycle(
+                    AllocatorLogLevel::Warn,
+                    "free",
+                    "free",
+                    Some(ptr),
+                    Some(size),
+                    Some(NUM_SIZE_CLASSES),
+                    "unknown_free_pointer",
+                    "path=large_allocator;metadata_missing",
+                );
+                return;
+            };
+
+            self.total_allocated = self.total_allocated.saturating_sub(removed_alloc.user_size);
             self.active_count = self.active_count.saturating_sub(1);
             free_fn(ptr);
             self.record_lifecycle(
@@ -660,14 +680,10 @@ impl MallocState {
                 "free",
                 "free",
                 Some(ptr),
-                Some(size),
+                Some(removed_alloc.user_size),
                 Some(NUM_SIZE_CLASSES),
                 "success",
-                if removed {
-                    "path=large_allocator;metadata_removed"
-                } else {
-                    "path=large_allocator;metadata_missing"
-                },
+                "path=large_allocator;metadata_removed",
             );
             return;
         };
@@ -1386,6 +1402,33 @@ mod tests {
         assert_eq!(state.total_large_mapped(), 0);
         assert_eq!(backend_allocations, 1);
         assert_eq!(state.total_allocated(), 0);
+    }
+
+    #[test]
+    fn test_large_free_unknown_pointer_does_not_release_backend_or_accounting() {
+        let mut state = MallocState::new();
+        let size = size_class::MAX_SMALL_SIZE + 1;
+        let ptr = state.malloc(size, test_alloc).unwrap();
+        let unknown = ptr.wrapping_add(size).max(1);
+        let mut backend_called = false;
+
+        state.free(unknown, size, |_| {
+            backend_called = true;
+        });
+
+        assert!(!backend_called);
+        assert_eq!(state.active_count(), 1);
+        assert_eq!(state.total_allocated(), size);
+        assert_eq!(state.active_large_count(), 1);
+        assert!(state.large_allocation(ptr).is_some());
+        let last = state
+            .lifecycle_logs()
+            .last()
+            .expect("unknown large free must record a warning");
+        assert_eq!(last.outcome, "unknown_free_pointer");
+        assert_eq!(last.details, "path=large_allocator;metadata_missing");
+
+        state.free(ptr, size, |p| test_free(p, size));
     }
 
     #[test]

@@ -768,15 +768,27 @@ impl<'a> Parser<'a> {
                 match self.peek() {
                     Some(b'*') => {
                         self.advance();
-                        node = Ast::Repeat { inner: Box::new(node), min: 0, max: None };
+                        node = Ast::Repeat {
+                            inner: Box::new(node),
+                            min: 0,
+                            max: None,
+                        };
                     }
                     Some(b'+') => {
                         self.advance();
-                        node = Ast::Repeat { inner: Box::new(node), min: 1, max: None };
+                        node = Ast::Repeat {
+                            inner: Box::new(node),
+                            min: 1,
+                            max: None,
+                        };
                     }
                     Some(b'?') => {
                         self.advance();
-                        node = Ast::Repeat { inner: Box::new(node), min: 0, max: Some(1) };
+                        node = Ast::Repeat {
+                            inner: Box::new(node),
+                            min: 0,
+                            max: Some(1),
+                        };
                     }
                     Some(b'{') => {
                         node = self.parse_brace_quantifier(node)?;
@@ -801,7 +813,11 @@ impl<'a> Parser<'a> {
                             return Ok(node);
                         }
                         self.advance();
-                        node = Ast::Repeat { inner: Box::new(node), min: 0, max: None };
+                        node = Ast::Repeat {
+                            inner: Box::new(node),
+                            min: 0,
+                            max: None,
+                        };
                         quantified = true;
                     }
                     _ => {
@@ -820,12 +836,20 @@ impl<'a> Parser<'a> {
                                 }
                                 b'+' => {
                                     self.pos += 2; // skip \+
-                                    node = Ast::Repeat { inner: Box::new(node), min: 1, max: None };
+                                    node = Ast::Repeat {
+                                        inner: Box::new(node),
+                                        min: 1,
+                                        max: None,
+                                    };
                                     quantified = true;
                                 }
                                 b'?' => {
                                     self.pos += 2; // skip \?
-                                    node = Ast::Repeat { inner: Box::new(node), min: 0, max: Some(1) };
+                                    node = Ast::Repeat {
+                                        inner: Box::new(node),
+                                        min: 0,
+                                        max: Some(1),
+                                    };
                                     quantified = true;
                                 }
                                 _ => return Ok(node),
@@ -1742,10 +1766,10 @@ impl<'a> PikeVm<'a> {
                         Vec::with_capacity(state_pcs[state as usize].len() + 1);
                     entries.push(0); // unanchored: re-seed the start PC every step
                     for &pc in state_pcs[state as usize].iter() {
-                        if let NfaInstr::Match(mk) = &self.nfa[pc] {
-                            if self.matches_byte(mk, b) {
-                                entries.push(pc + 1);
-                            }
+                        if let NfaInstr::Match(mk) = &self.nfa[pc]
+                            && self.matches_byte(mk, b)
+                        {
+                            entries.push(pc + 1);
                         }
                     }
                     let frontier = self.dfa_frontier(&entries, &mut scratch, visited, generation);
@@ -1777,12 +1801,12 @@ impl<'a> PikeVm<'a> {
         visited: &mut [u64],
         generation: &mut u64,
     ) -> bool {
-        if self.is_pos_independent() {
-            if let Some(result) = self.any_match_dfa(visited, generation) {
-                return result;
-            }
-            // DFA hit the state cap; fall back to the bounded NFA simulation.
+        if self.is_pos_independent()
+            && let Some(result) = self.any_match_dfa(visited, generation)
+        {
+            return result;
         }
+        // DFA hit the state cap; fall back to the bounded NFA simulation.
         self.any_match_nfa(notbol, noteol, visited, generation)
     }
 
@@ -2021,7 +2045,11 @@ impl<'a> PikeVm<'a> {
                         );
                     }
                 }
-                MatchKind::WordBoundary { .. } | MatchKind::WordStart | MatchKind::WordEnd | MatchKind::BufferStart | MatchKind::BufferEnd => {
+                MatchKind::WordBoundary { .. }
+                | MatchKind::WordStart
+                | MatchKind::WordEnd
+                | MatchKind::BufferStart
+                | MatchKind::BufferEnd => {
                     if self.check_word_assertion(mk, sp) {
                         self.lm_closure(
                             pc + 1,
@@ -2109,7 +2137,7 @@ impl<'a> PikeVm<'a> {
             sp += 1;
             // Seed a fresh start at the new position only if it could still beat
             // the best-known start (a later start can never be more leftmost).
-            if best.map_or(true, |b| sp < b) {
+            if best.is_none_or(|b| sp < b) {
                 self.lm_closure(
                     0,
                     sp,
@@ -2129,10 +2157,11 @@ impl<'a> PikeVm<'a> {
             // the sweep must continue even when `current` is momentarily empty:
             // a fresh start seeded at a later position may still match (e.g.
             // `^world` only becomes viable just after the newline).
-            if let Some(b) = best {
-                if sp >= b && !current.iter().any(|&(_, s)| s < b) {
-                    return Some(b);
-                }
+            if let Some(b) = best
+                && sp >= b
+                && !current.iter().any(|&(_, s)| s < b)
+            {
+                return Some(b);
             }
         }
     }
@@ -2342,7 +2371,11 @@ impl<'a> PikeVm<'a> {
                             self.add_thread_inner(threads, new_t, sp, anchors, depth + 1, closure);
                         }
                     }
-                    MatchKind::WordBoundary { .. } | MatchKind::WordStart | MatchKind::WordEnd | MatchKind::BufferStart | MatchKind::BufferEnd => {
+                    MatchKind::WordBoundary { .. }
+                    | MatchKind::WordStart
+                    | MatchKind::WordEnd
+                    | MatchKind::BufferStart
+                    | MatchKind::BufferEnd => {
                         if self.check_word_assertion(mk, sp) {
                             let new_t = Thread {
                                 pc: t.pc + 1,
@@ -3243,7 +3276,8 @@ mod tests {
     #[test]
     fn empty_iter_submatch_offsets_match_glibc() {
         // (pattern, input, [(group, so, eo) ...]) — REG_EXTENDED.
-        let cases: &[(&str, &str, &[(usize, i32, i32)])] = &[
+        type SubmatchCase = (&'static str, &'static str, &'static [(usize, i32, i32)]);
+        let cases: &[SubmatchCase] = &[
             (".()*a", "ba", &[(0, 0, 2), (1, 1, 1)]),
             ("(a?)*", ".baaa", &[(0, 0, 0), (1, 0, 0)]),
             ("(a*)*b?", "b", &[(0, 0, 1), (1, 0, 0)]),
