@@ -2134,11 +2134,43 @@ pub unsafe extern "C" fn gai_strerror(errcode: c_int) -> *const c_char {
 // Legacy network database — native implementations
 // ---------------------------------------------------------------------------
 
+/// Maximum aliases retained for a single netdb (servent/protoent) result,
+/// plus the byte budget for their NUL-terminated strings. glibc imposes its
+/// own (larger) limits via the caller buffer; the non-reentrant getXbyY
+/// path uses fixed TLS storage, so we cap generously — real /etc/services
+/// and /etc/protocols rows carry only a handful of aliases.
+const NETDB_MAX_ALIASES: usize = 31;
+const NETDB_ALIAS_BYTES: usize = 1024;
+
+/// Copy `aliases` into the `buf`/`ptrs` storage pair, NUL-terminating each
+/// string and the pointer table. Truncates silently if either budget is
+/// exhausted (glibc likewise stops at its buffer limit). `buf` and `ptrs`
+/// are distinct slices, so the pointer writes do not alias the byte writes.
+fn fill_alias_table(buf: &mut [c_char], ptrs: &mut [*mut c_char], aliases: &[Vec<u8>]) {
+    let cap = ptrs.len().saturating_sub(1);
+    let mut off = 0usize;
+    let mut n = 0usize;
+    for alias in aliases {
+        if n >= cap || off + alias.len() + 1 > buf.len() {
+            break;
+        }
+        for (i, &b) in alias.iter().enumerate() {
+            buf[off + i] = b as c_char;
+        }
+        buf[off + alias.len()] = 0;
+        ptrs[n] = buf[off..].as_mut_ptr();
+        off += alias.len() + 1;
+        n += 1;
+    }
+    ptrs[n] = ptr::null_mut();
+}
+
 /// Thread-local storage for servent results.
 struct ServentTlsStorage {
     name: [c_char; 256],
     proto: [c_char; 32],
-    aliases: [*mut c_char; 1],
+    alias_buf: [c_char; NETDB_ALIAS_BYTES],
+    aliases: [*mut c_char; NETDB_MAX_ALIASES + 1],
     servent: libc::servent,
 }
 
@@ -2147,7 +2179,8 @@ impl ServentTlsStorage {
         Self {
             name: [0; 256],
             proto: [0; 32],
-            aliases: [ptr::null_mut(); 1],
+            alias_buf: [0; NETDB_ALIAS_BYTES],
+            aliases: [ptr::null_mut(); NETDB_MAX_ALIASES + 1],
             servent: libc::servent {
                 s_name: ptr::null_mut(),
                 s_aliases: ptr::null_mut(),
@@ -2193,7 +2226,8 @@ fn with_tls_servent<R>(callback: impl FnOnce(&mut ServentTlsStorage) -> R) -> R 
 /// Thread-local storage for protoent results.
 struct ProtoentTlsStorage {
     name: [c_char; 256],
-    aliases: [*mut c_char; 1],
+    alias_buf: [c_char; NETDB_ALIAS_BYTES],
+    aliases: [*mut c_char; NETDB_MAX_ALIASES + 1],
     protoent: libc::protoent,
 }
 
@@ -2201,7 +2235,8 @@ impl ProtoentTlsStorage {
     fn new() -> Self {
         Self {
             name: [0; 256],
-            aliases: [ptr::null_mut(); 1],
+            alias_buf: [0; NETDB_ALIAS_BYTES],
+            aliases: [ptr::null_mut(); NETDB_MAX_ALIASES + 1],
             protoent: libc::protoent {
                 p_name: ptr::null_mut(),
                 p_aliases: ptr::null_mut(),
@@ -2565,48 +2600,41 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
         }
     };
 
-    // Use core parser to find the service
-    let port = match frankenlibc_core::resolv::lookup_service(&content, name_bytes, proto_filter) {
-        Some(p) => p,
+    // Find the full matching entry so we can return glibc-faithful fields:
+    // the CANONICAL name (not the queried alias) plus the entry's aliases.
+    let entry = match content.split(|&b| b == b'\n').find_map(|line| {
+        let entry = frankenlibc_core::resolv::parse_services_line(line)?;
+        let name_match = entry.name.eq_ignore_ascii_case(name_bytes)
+            || entry
+                .aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(name_bytes));
+        if !name_match {
+            return None;
+        }
+        if let Some(pf) = proto_filter
+            && !entry.protocol.eq_ignore_ascii_case(pf)
+        {
+            return None;
+        }
+        Some(entry)
+    }) {
+        Some(e) => e,
         None => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
             return ptr::null_mut();
         }
     };
 
-    // Find the protocol string for this entry
-    let proto_bytes: Vec<u8> = if let Some(pf) = proto_filter {
-        pf.to_vec()
-    } else {
-        // Re-scan to find the actual protocol
-        content
-            .split(|&b| b == b'\n')
-            .find_map(|line| {
-                let entry = frankenlibc_core::resolv::parse_services_line(line)?;
-                if entry.port == port
-                    && (entry.name.eq_ignore_ascii_case(name_bytes)
-                        || entry
-                            .aliases
-                            .iter()
-                            .any(|alias| alias.eq_ignore_ascii_case(name_bytes)))
-                {
-                    Some(entry.protocol)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| b"tcp".to_vec())
-    };
-
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
     with_tls_servent(|storage| {
-        copy_to_cchar_buf(&mut storage.name, name_bytes);
-        copy_to_cchar_buf(&mut storage.proto, &proto_bytes);
-        storage.aliases[0] = ptr::null_mut();
+        copy_to_cchar_buf(&mut storage.name, &entry.name);
+        copy_to_cchar_buf(&mut storage.proto, &entry.protocol);
+        fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
         storage.servent = libc::servent {
             s_name: storage.name.as_mut_ptr(),
             s_aliases: storage.aliases.as_mut_ptr(),
-            s_port: (port as u16).to_be() as c_int,
+            s_port: entry.port.to_be() as c_int,
             s_proto: storage.proto.as_mut_ptr(),
         };
         (&mut storage.servent as *mut libc::servent).cast::<c_void>()
@@ -2649,8 +2677,8 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
         }
     };
 
-    // Find the service entry matching this port
-    let (svc_name, svc_proto) = match content.split(|&b| b == b'\n').find_map(|line| {
+    // Find the service entry matching this port (and proto filter).
+    let entry = match content.split(|&b| b == b'\n').find_map(|line| {
         let entry = frankenlibc_core::resolv::parse_services_line(line)?;
         if entry.port != port_host {
             return None;
@@ -2660,7 +2688,7 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
         {
             return None;
         }
-        Some((entry.name, entry.protocol))
+        Some(entry)
     }) {
         Some(entry) => entry,
         None => {
@@ -2673,9 +2701,9 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
 
     with_tls_servent(|storage| {
-        copy_to_cchar_buf(&mut storage.name, &svc_name);
-        copy_to_cchar_buf(&mut storage.proto, &svc_proto);
-        storage.aliases[0] = ptr::null_mut();
+        copy_to_cchar_buf(&mut storage.name, &entry.name);
+        copy_to_cchar_buf(&mut storage.proto, &entry.protocol);
+        fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
         storage.servent = libc::servent {
             s_name: storage.name.as_mut_ptr(),
             s_aliases: storage.aliases.as_mut_ptr(),
@@ -2738,7 +2766,7 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
 
     with_tls_protoent(|storage| {
         copy_to_cchar_buf(&mut storage.name, &entry.name);
-        storage.aliases[0] = ptr::null_mut();
+        fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
         storage.protoent = libc::protoent {
             p_name: storage.name.as_mut_ptr(),
             p_aliases: storage.aliases.as_mut_ptr(),
@@ -2785,7 +2813,7 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
 
     with_tls_protoent(|storage| {
         copy_to_cchar_buf(&mut storage.name, &entry.name);
-        storage.aliases[0] = ptr::null_mut();
+        fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
         storage.protoent = libc::protoent {
             p_name: storage.name.as_mut_ptr(),
             p_aliases: storage.aliases.as_mut_ptr(),
