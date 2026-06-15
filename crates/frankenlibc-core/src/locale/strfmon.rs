@@ -92,10 +92,18 @@ fn parse_spec(format: &[u8], i: &mut usize) -> Option<Spec> {
             }
             Some(b'^') | Some(b'!') => *i += 1, // no-ops in the C locale
             Some(b'+') => {
+                // glibc rejects a repeated '+' (EINVAL). Duplicate '=', '^',
+                // '!', '-' are allowed; only '+' and '(' may not repeat.
+                if use_plus {
+                    return None;
+                }
                 use_plus = true;
                 *i += 1;
             }
             Some(b'(') => {
+                if use_parens {
+                    return None; // glibc rejects a repeated '('
+                }
                 use_parens = true;
                 *i += 1;
             }
@@ -158,6 +166,20 @@ fn read_uint(format: &[u8], i: &mut usize) -> Option<usize> {
 
 /// Render the signed monetary value (without field-width padding).
 fn render_value(value: f64, prec: usize, spec: &Spec) -> Vec<u8> {
+    // glibc renders NaN as the lowercase "nan" (Rust's `format!` gives "NaN"),
+    // with a leading '-' iff the NaN's sign bit is set — never parenthesised,
+    // since the parens branch keys off `value < 0.0` which is false for NaN
+    // (e.g. `%(n` of -nan yields "-nan", not "(nan)"). Field-width padding is
+    // applied by the caller. (glibc's left/right-precision interaction with NaN
+    // uses an internal numeric-width computation that is not mirrored here.)
+    if value.is_nan() {
+        let mut field = Vec::new();
+        if value.is_sign_negative() {
+            field.push(b'-');
+        }
+        field.extend_from_slice(b"nan");
+        return field;
+    }
     // glibc classifies negativity by `value < 0.0` (a STRICT compare), so a
     // negative zero is treated as positive for the parenthesis/sign-placement
     // decision — yet its `-` still appears, because glibc renders the value's
