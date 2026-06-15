@@ -654,6 +654,7 @@ pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 /// # Panics
 ///
 /// Panics if `dest` is too small to hold the source string plus NUL.
+#[inline(always)]
 pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
     if src.last().copied() == Some(0) && dest.len() >= src.len() {
         if src.len() == STRCPY_4096_SRC_LEN {
