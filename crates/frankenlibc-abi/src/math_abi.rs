@@ -3876,27 +3876,12 @@ pub unsafe extern "C" fn cospi(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cospif(x: f32) -> f32 {
-    if x.is_nan() {
-        return x;
-    }
-    if x.is_infinite() {
-        pi_fn_raise_invalid_f32();
-        return f32::NAN;
-    }
-    if x.abs() >= 16777216.0 {
-        return 1.0;
-    }
-    let n = x.round();
-    let r = x - n;
-    let n_odd = (n as i64) & 1 != 0;
-    if r == 0.0 {
-        return if n_odd { -1.0 } else { 1.0 };
-    }
-    if r == 0.5 || r == -0.5 {
-        return 0.0;
-    }
-    let c = frankenlibc_core::math::cosf(r * std::f32::consts::PI);
-    if n_odd { -c } else { c }
+    // glibc computes cospif in double precision and rounds once. Doing the
+    // arg-reduction in f32 loses enormous ULP near cospi's zeros (x = k+0.5),
+    // where cosf amplifies the f32 `r*pi` rounding error (up to ~28000 ULP).
+    // Routing through the f64 cospi is byte-exact vs glibc (0 ULP over a
+    // 400k-point sweep), and the f64 path handles NaN/inf/large-x identically.
+    unsafe { cospi(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cospil(x: f64) -> f64 {
@@ -3950,28 +3935,10 @@ pub unsafe extern "C" fn sinpi(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpif(x: f32) -> f32 {
-    if x.is_nan() {
-        return x;
-    }
-    if x.is_infinite() {
-        pi_fn_raise_invalid_f32();
-        return f32::NAN;
-    }
-    if x.abs() >= 16777216.0 {
-        return if x.is_sign_negative() { -0.0 } else { 0.0 };
-    }
-    let n = x.round();
-    let r = x - n;
-    let n_odd = (n as i64) & 1 != 0;
-    if r == 0.0 {
-        return if x.is_sign_negative() { -0.0 } else { 0.0 };
-    }
-    if r == 0.5 || r == -0.5 {
-        let m = if r > 0.0 { 1.0 } else { -1.0 };
-        return if n_odd { -m } else { m };
-    }
-    let s = frankenlibc_core::math::sinf(r * std::f32::consts::PI);
-    if n_odd { -s } else { s }
+    // Compute in double + round once, matching glibc (byte-exact, 0 ULP); the
+    // direct f32 arg-reduction is up to ~1 ULP off. The f64 sinpi handles
+    // NaN/inf (FE_INVALID)/large-x and signed-zero identically.
+    unsafe { sinpi(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpil(x: f64) -> f64 {
@@ -4015,16 +3982,10 @@ pub unsafe extern "C" fn tanpi(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpif(x: f32) -> f32 {
-    if x.is_nan() {
-        return x;
-    }
-    if x.is_infinite() {
-        pi_fn_raise_invalid_f32();
-        return f32::NAN;
-    }
-    let s = unsafe { sinpif(x) };
-    let c = unsafe { cospif(x) };
-    s / c
+    // Compute in double + round once, matching glibc (byte-exact, 0 ULP); the
+    // direct f32 path loses huge ULP near tanpi's poles. The f64 tanpi raises
+    // FE_DIVBYZERO at the poles and FE_INVALID on inf.
+    unsafe { tanpi(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpil(x: f64) -> f64 {
