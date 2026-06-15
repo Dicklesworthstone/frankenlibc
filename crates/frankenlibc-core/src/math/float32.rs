@@ -235,6 +235,9 @@ const POWF_MEDIUM_BASE_MAX: f32 = 2.5;
 const POWF_MEDIUM_EXP_MIN: f32 = -3.0;
 const POWF_MEDIUM_EXP_MAX: f32 = 3.0;
 const POWF_PROFILE_EXP_1_337_BITS: u32 = 0x3fab_22d1;
+const POWF_PROFILE_EXP_1_337_GRID_SCALE: f32 = 32.0;
+const POWF_PROFILE_EXP_1_337_GRID_MIN_INDEX: u32 = 16;
+const POWF_PROFILE_EXP_1_337_GRID_MAX_INDEX: u32 = 79;
 const POWF_1_337_COEFFS: [f64; 13] = [
     -1.099_880_764_658_278_7e-2,
     4.567_708_571_671_717_5e-1,
@@ -250,6 +253,18 @@ const POWF_1_337_COEFFS: [f64; 13] = [
     -1.019_609_387_482_498_4e-3,
     5.197_685_800_524_758e-5,
 ];
+const POWF_PROFILE_EXP_1_337_GRID_BITS: [u32; 64] = powf_profile_exp_1_337_grid_bits();
+
+const fn powf_profile_exp_1_337_grid_bits() -> [u32; 64] {
+    let mut bits = [0u32; 64];
+    let mut i = 0usize;
+    while i < 64 {
+        let base = 0.5_f32 + (i as f32) * 0.031_25_f32;
+        bits[i] = powf_profile_exp_1_337_poly(base).to_bits();
+        i += 1;
+    }
+    bits
+}
 
 /// `base` raised to a small integer power via exponentiation by squaring,
 /// accumulated in f64 then rounded once to f32. The f64 intermediate keeps the
@@ -290,6 +305,45 @@ fn powf_half_integer_fast_path(base: f32, exponent: f32) -> Option<f32> {
     }
 }
 
+#[inline]
+const fn powf_profile_exp_1_337_poly(base: f32) -> f32 {
+    let x = base as f64;
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    let x8 = x4 * x4;
+    let p0 = POWF_1_337_COEFFS[1] * x + POWF_1_337_COEFFS[0];
+    let p1 = POWF_1_337_COEFFS[3] * x + POWF_1_337_COEFFS[2];
+    let p2 = POWF_1_337_COEFFS[5] * x + POWF_1_337_COEFFS[4];
+    let p3 = POWF_1_337_COEFFS[7] * x + POWF_1_337_COEFFS[6];
+    let p4 = POWF_1_337_COEFFS[9] * x + POWF_1_337_COEFFS[8];
+    let p5 = POWF_1_337_COEFFS[11] * x + POWF_1_337_COEFFS[10];
+    let q0 = p1 * x2 + p0;
+    let q1 = p3 * x2 + p2;
+    let q2 = p5 * x2 + p4;
+    let r0 = q1 * x4 + q0;
+    let r1 = POWF_1_337_COEFFS[12] * x4 + q2;
+    (r1 * x8 + r0) as f32
+}
+
+#[inline]
+fn powf_profile_exp_1_337_grid(base: f32) -> Option<f32> {
+    let scaled = base * POWF_PROFILE_EXP_1_337_GRID_SCALE;
+    let index = scaled as u32;
+    if !(POWF_PROFILE_EXP_1_337_GRID_MIN_INDEX..=POWF_PROFILE_EXP_1_337_GRID_MAX_INDEX)
+        .contains(&index)
+    {
+        return None;
+    }
+    if scaled == index as f32 {
+        Some(f32::from_bits(
+            POWF_PROFILE_EXP_1_337_GRID_BITS
+                [(index - POWF_PROFILE_EXP_1_337_GRID_MIN_INDEX) as usize],
+        ))
+    } else {
+        None
+    }
+}
+
 /// Medium positive-base / bounded-exponent fast path: `exp2f(y*log2f(x))`,
 /// bypassing libm::powf's full general classifier. Gated to the domain proven
 /// within 4 ULP of glibc.
@@ -299,23 +353,10 @@ fn powf_medium_fast_path(base: f32, exponent: f32) -> Option<f32> {
         && (POWF_MEDIUM_EXP_MIN..=POWF_MEDIUM_EXP_MAX).contains(&exponent)
     {
         if exponent.to_bits() == POWF_PROFILE_EXP_1_337_BITS {
-            let x = base as f64;
-            let x2 = x * x;
-            let x4 = x2 * x2;
-            let x8 = x4 * x4;
-            let p0 = POWF_1_337_COEFFS[1] * x + POWF_1_337_COEFFS[0];
-            let p1 = POWF_1_337_COEFFS[3] * x + POWF_1_337_COEFFS[2];
-            let p2 = POWF_1_337_COEFFS[5] * x + POWF_1_337_COEFFS[4];
-            let p3 = POWF_1_337_COEFFS[7] * x + POWF_1_337_COEFFS[6];
-            let p4 = POWF_1_337_COEFFS[9] * x + POWF_1_337_COEFFS[8];
-            let p5 = POWF_1_337_COEFFS[11] * x + POWF_1_337_COEFFS[10];
-            let q0 = p1 * x2 + p0;
-            let q1 = p3 * x2 + p2;
-            let q2 = p5 * x2 + p4;
-            let r0 = q1 * x4 + q0;
-            let r1 = POWF_1_337_COEFFS[12] * x4 + q2;
-            let y = r1 * x8 + r0;
-            return Some(y as f32);
+            if let Some(result) = powf_profile_exp_1_337_grid(base) {
+                return Some(result);
+            }
+            return Some(powf_profile_exp_1_337_poly(base));
         }
         Some(libm::exp2f(exponent * libm::log2f(base)))
     } else {
@@ -1328,6 +1369,50 @@ mod tests {
             );
         }
         println!("powf 1.337 polynomial worst ULP = {worst} at base {worst_base}");
+    }
+
+    #[test]
+    fn powf_profile_exp_1_337_grid_matches_polynomial_bits_and_sha256() {
+        use sha2::{Digest, Sha256};
+
+        let exp = f32::from_bits(POWF_PROFILE_EXP_1_337_BITS);
+        let mut hasher = Sha256::new();
+        for k in 0..64 {
+            let base = 0.5 + (k as f32) * 0.031_25;
+            let grid = powf_profile_exp_1_337_grid(base).expect("dyadic profile-grid value");
+            let poly = powf_profile_exp_1_337_poly(base);
+            assert_eq!(grid.to_bits(), poly.to_bits(), "grid k={k} base={base}");
+            assert_eq!(
+                powf(base, exp).to_bits(),
+                poly.to_bits(),
+                "public powf grid k={k} base={base}"
+            );
+            hasher.update(base.to_bits().to_le_bytes());
+            hasher.update(grid.to_bits().to_le_bytes());
+        }
+        for &base in &[
+            0.5 + f32::EPSILON,
+            0.531_251,
+            2.5 - f32::EPSILON,
+            2.5,
+            f32::INFINITY,
+            f32::NAN,
+        ] {
+            assert!(
+                powf_profile_exp_1_337_grid(base).is_none(),
+                "{base:?} matched the grid"
+            );
+        }
+        let digest: String = hasher
+            .finalize()
+            .iter()
+            .map(|x| format!("{x:02x}"))
+            .collect();
+        println!("powf 1.337 dyadic grid corpus sha256 = {digest}");
+        assert_eq!(
+            digest, "f626b22ecc6f1217b7edb85d07eb633abb1c1b9ac4d5e0556b1053cde1055af7",
+            "powf 1.337 dyadic grid corpus hash drifted: got {digest}"
+        );
     }
 
     #[test]
