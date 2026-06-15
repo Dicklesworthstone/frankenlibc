@@ -239,7 +239,12 @@ fn getopt_long_abbreviation_matches_glibc() {
     let no = NO_ARGUMENT;
     let req = REQUIRED_ARGUMENT;
     // (optstring, [(name, has_arg, val)], argv-after-prog)
-    let cases: Vec<(&str, Vec<(&str, c_int, u8)>, Vec<&str>)> = vec![
+    type LongCase = (
+        &'static str,
+        Vec<(&'static str, c_int, u8)>,
+        Vec<&'static str>,
+    );
+    let cases: Vec<LongCase> = vec![
         // Unique prefix -> matches.
         ("", vec![("verbose", no, b'v')], vec!["--verb"]),
         ("", vec![("verbose", no, b'v')], vec!["--v"]),
@@ -302,11 +307,7 @@ fn getopt_long_abbreviation_matches_glibc() {
             vec!["-a", "-W", "file", "x"],
         ),
         // `-aW foo` — `-W` mid-bundle after a short option.
-        (
-            "W;a",
-            vec![("verbose", no, b'v')],
-            vec!["-aW", "verbose"],
-        ),
+        ("W;a", vec![("verbose", no, b'v')], vec!["-aW", "verbose"]),
         // `--name=value` on a no-arg long routed via `-W` -> '?'.
         ("W;", vec![("verbose", no, b'v')], vec!["-Wverbose=x"]),
         // A literal `-;` is NOT a selectable option even with `W;` present:

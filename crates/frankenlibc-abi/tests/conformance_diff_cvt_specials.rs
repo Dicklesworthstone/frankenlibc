@@ -10,7 +10,7 @@
 //! never randomly generate.
 
 use frankenlibc_abi::stdlib_abi as fl;
-use std::ffi::{CStr, CString, c_char, c_int};
+use std::ffi::{CStr, c_char, c_int};
 
 unsafe extern "C" {
     fn gcvt(v: f64, n: c_int, b: *mut c_char) -> *mut c_char;

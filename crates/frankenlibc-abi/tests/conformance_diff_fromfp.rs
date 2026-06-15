@@ -123900,12 +123900,10 @@ fn fromfp_family_matches_glibc_integer_abi() {
         let raised = unsafe { fetestexcept(FE_INVALID | FE_INEXACT) };
         let got_flags = (if raised & FE_INVALID != 0 { 1 } else { 0 })
             | (if raised & FE_INEXACT != 0 { 2 } else { 0 });
-        if got != want_bits || got_flags != want_flags {
-            if fails.len() < 40 {
-                fails.push(format!(
-                    "{name}(x={xbits:#018x}, mode={mode}, width={width}): got value={got:#018x} flags={got_flags}, want value={want_bits:#018x} flags={want_flags}"
-                ));
-            }
+        if (got != want_bits || got_flags != want_flags) && fails.len() < 40 {
+            fails.push(format!(
+                "{name}(x={xbits:#018x}, mode={mode}, width={width}): got value={got:#018x} flags={got_flags}, want value={want_bits:#018x} flags={want_flags}"
+            ));
         }
     }
     assert!(

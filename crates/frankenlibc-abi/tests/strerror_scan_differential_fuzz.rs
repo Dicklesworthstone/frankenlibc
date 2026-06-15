@@ -41,12 +41,12 @@ fn strerror_family_matches_host_glibc() {
         if f != h {
             divs.push(format!("strerror({e}): fl={f:?} glibc={h:?}"));
         }
-        let f = s(unsafe { fl_strerrorname_np(e) });
+        let f = s(fl_strerrorname_np(e));
         let h = s(unsafe { strerrorname_np(e) });
         if f != h {
             divs.push(format!("strerrorname_np({e}): fl={f:?} glibc={h:?}"));
         }
-        let f = s(unsafe { fl_strerrordesc_np(e) });
+        let f = s(fl_strerrordesc_np(e));
         let h = s(unsafe { strerrordesc_np(e) });
         if f != h {
             divs.push(format!("strerrordesc_np({e}): fl={f:?} glibc={h:?}"));

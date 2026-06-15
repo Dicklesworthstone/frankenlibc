@@ -12,7 +12,6 @@
 
 use std::ffi::{CString, c_char, c_int};
 
-use frankenlibc_abi::time_abi as fl_time;
 use frankenlibc_abi::wchar_abi as fl;
 
 unsafe extern "C" {

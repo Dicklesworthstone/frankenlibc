@@ -45,12 +45,7 @@ impl Lcg {
 /// glibc iconv: convert `src` fully; returns the output bytes, or None if the
 /// conversion errored (EILSEQ/EINVAL) partway (we compare the error decision).
 fn glibc_conv(to: &[u8], src: &[u8]) -> Option<Vec<u8>> {
-    let cd = unsafe {
-        iconv_open(
-            to.as_ptr() as *const c_char,
-            b"UTF-8\0".as_ptr() as *const c_char,
-        )
-    };
+    let cd = unsafe { iconv_open(to.as_ptr() as *const c_char, c"UTF-8".as_ptr()) };
     assert!(cd as isize != -1);
     let mut out = vec![0u8; src.len() * 4 + 16];
     let mut ip = src.as_ptr() as *mut c_char;
@@ -246,17 +241,14 @@ fn iconv_utf32_to_utf8_simd_matches_glibc() {
                     u.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>()
                 },
             ),
-            (
-                &b"UTF-16BE\0"[..],
-                {
-                    let mut u: Vec<u16> = Vec::new();
-                    for &c in &cps {
-                        let mut buf = [0u16; 2];
-                        u.extend_from_slice(char::from_u32(c).unwrap().encode_utf16(&mut buf));
-                    }
-                    u.iter().flat_map(|x| x.to_be_bytes()).collect::<Vec<u8>>()
-                },
-            ),
+            (&b"UTF-16BE\0"[..], {
+                let mut u: Vec<u16> = Vec::new();
+                for &c in &cps {
+                    let mut buf = [0u16; 2];
+                    u.extend_from_slice(char::from_u32(c).unwrap().encode_utf16(&mut buf));
+                }
+                u.iter().flat_map(|x| x.to_be_bytes()).collect::<Vec<u8>>()
+            }),
         ] {
             let fl = fl_conv_from(from, b"UTF-8\0", &bytes);
             let gl = glibc_conv_from(from, b"UTF-8\0", &bytes);

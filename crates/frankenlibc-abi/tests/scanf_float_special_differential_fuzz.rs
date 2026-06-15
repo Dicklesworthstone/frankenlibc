@@ -13,6 +13,7 @@
 //!     its sign is checked — bit-pattern signbit, invisible to `== `),
 //!   - the `%n` consumed-character count (so `nan(123)` payload consumption is
 //!     checked).
+//!
 //! NaN mantissa payloads are NOT bit-compared (glibc's payload encoding is an
 //! impl detail); class + signbit + consumed length are the parity contract.
 
@@ -142,7 +143,7 @@ fn gen_input(r: &mut Lcg) -> String {
     }
     // Occasionally append trailing garbage to probe the consumed-length cutoff.
     if r.below(3) == 0 {
-        let tail = [b'x', b'1', b'.', b'z', b' '];
+        let tail = *b"x1.z ";
         let n = r.below(3);
         for _ in 0..n {
             s.push(tail[r.below(tail.len())] as char);

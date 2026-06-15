@@ -22,8 +22,10 @@
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
 
-use frankenlibc_abi::{errno_abi, malloc_abi as mal, math_abi as ma, stdlib_abi as sa, string_abi as stra};
-use std::ffi::{c_char, c_int, c_void, CString};
+use frankenlibc_abi::{
+    errno_abi, malloc_abi as mal, math_abi as ma, stdlib_abi as sa, string_abi as stra,
+};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::hint::black_box;
 
 const SENTINEL: c_int = 0x5A5A;
@@ -49,6 +51,15 @@ fn errno_preserved_on_success() {
         ($label:literal, $call:expr) => {{
             set_sentinel();
             let _ = unsafe { $call };
+            if errno_now() != SENTINEL {
+                violations.push($label);
+            }
+        }};
+    }
+    macro_rules! check_safe {
+        ($label:literal, $call:expr) => {{
+            set_sentinel();
+            let _ = $call;
             if errno_now() != SENTINEL {
                 violations.push($label);
             }
@@ -81,12 +92,18 @@ fn errno_preserved_on_success() {
     let mut endp2: *mut c_char = std::ptr::null_mut();
     check!("strtod", sa::strtod(c_flt.as_ptr(), &mut endp2));
     check!("atoi", sa::atoi(c_num.as_ptr()));
-    check!("abs", { sa::abs(black_box(-5)) });
+    check_safe!("abs", sa::abs(black_box(-5)));
     let block = unsafe { mal::malloc(64) };
-    check!("malloc", { black_box(block); 0usize });
+    check_safe!("malloc", {
+        black_box(block);
+        0usize
+    });
     let block2 = unsafe { mal::realloc(block, 128) };
-    check!("realloc", { black_box(block2) as usize });
-    check!("free", { mal::free(block2); 0usize });
+    check_safe!("realloc", black_box(block2) as usize);
+    check!("free", {
+        mal::free(block2);
+        0usize
+    });
     let mut arr = [5i32, 3, 1, 4, 2];
     check!("qsort", {
         sa::qsort(arr.as_mut_ptr() as *mut c_void, 5, 4, Some(cmp_i32));
@@ -96,23 +113,40 @@ fn errno_preserved_on_success() {
     // --- string / memory ---
     let hello = CString::new("hello").unwrap();
     check!("strlen", stra::strlen(hello.as_ptr()));
-    check!("strchr", stra::strchr(hello.as_ptr(), b'l' as c_int) as usize);
+    check!(
+        "strchr",
+        stra::strchr(hello.as_ptr(), b'l' as c_int) as usize
+    );
     let abc = CString::new("abc").unwrap();
     let abd = CString::new("abd").unwrap();
     check!("strcmp", stra::strcmp(abc.as_ptr(), abd.as_ptr()));
     let mut dst = [0i8; 8];
-    check!("strcpy", stra::strcpy(dst.as_mut_ptr(), abc.as_ptr()) as usize);
+    check!(
+        "strcpy",
+        stra::strcpy(dst.as_mut_ptr(), abc.as_ptr()) as usize
+    );
     let src = [7u8; 32];
     let mut buf = [0u8; 32];
-    check!("memcpy", {
-        stra::memcpy(buf.as_mut_ptr() as *mut c_void, src.as_ptr() as *const c_void, 32) as usize
-    });
-    check!("memmove", {
-        stra::memmove(buf.as_mut_ptr() as *mut c_void, src.as_ptr() as *const c_void, 16) as usize
-    });
-    check!("memset", {
+    check!(
+        "memcpy",
+        stra::memcpy(
+            buf.as_mut_ptr() as *mut c_void,
+            src.as_ptr() as *const c_void,
+            32
+        ) as usize
+    );
+    check!(
+        "memmove",
+        stra::memmove(
+            buf.as_mut_ptr() as *mut c_void,
+            src.as_ptr() as *const c_void,
+            16
+        ) as usize
+    );
+    check!(
+        "memset",
         stra::memset(buf.as_mut_ptr() as *mut c_void, 0, 32) as usize
-    });
+    );
 
     assert!(
         violations.is_empty(),

@@ -82,7 +82,7 @@ fn run(engine_glibc: bool) -> Vec<(&'static str, usize, Vec<u8>)> {
             unsafe { fl::fflush(stream as *mut libc::c_void) };
         }
     };
-    let snapshot = |ptr: *mut libc::c_char, sz: usize| -> Vec<u8> {
+    let snapshot = |ptr: *mut libc::c_char, _sz: usize| -> Vec<u8> {
         if ptr.is_null() {
             return Vec::new();
         }

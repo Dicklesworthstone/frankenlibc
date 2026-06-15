@@ -220,8 +220,8 @@ fn cjk_table_gen() {
         let mut lead_len = [0u8; 256];
         lead_len[0x8E] = 2;
         lead_len[0x8F] = 3;
-        for b0 in 0xA1..=0xFE {
-            lead_len[b0] = 2;
+        for len in lead_len.iter_mut().take(0xFE + 1).skip(0xA1) {
+            *len = 2;
         }
         let mut dbcs2: Vec<(u16, u32)> = Vec::new();
         for b0 in 0u16..256 {
@@ -261,10 +261,10 @@ fn cjk_table_gen() {
         //    e.g. 0xFF).
         let mut ss3_row_valid = [false; 256];
         for b1 in 0u16..256 {
-            if let Err(e) = unsafe { dec(&from, &utf8, &[0x8F, b1 as u8]) } {
-                if e == libc::EINVAL {
-                    ss3_row_valid[b1 as usize] = true;
-                }
+            if let Err(e) = unsafe { dec(&from, &utf8, &[0x8F, b1 as u8]) }
+                && e == libc::EINVAL
+            {
+                ss3_row_valid[b1 as usize] = true;
             }
         }
         let mut lead2_defer = [false; 256];
@@ -272,10 +272,10 @@ fn cjk_table_gen() {
             if b0 == 0x8F {
                 continue;
             }
-            if let Err(e) = unsafe { dec(&from, &utf8, &[b0 as u8]) } {
-                if e == libc::EINVAL {
-                    lead2_defer[b0 as usize] = true;
-                }
+            if let Err(e) = unsafe { dec(&from, &utf8, &[b0 as u8]) }
+                && e == libc::EINVAL
+            {
+                lead2_defer[b0 as usize] = true;
             }
         }
         // Encode (full BMP). packed: <0x100 => 1 byte, <0x10000 => 2, else 3.
@@ -433,11 +433,12 @@ fn cjk_table_gen() {
         // RLE the 4-byte BMP pairs into segments contiguous in BOTH cp and linear.
         let mut segs: Vec<(u32, u32, u32)> = Vec::new(); // (cp_start, l_start, len)
         for (cp, l) in four {
-            if let Some(last) = segs.last_mut() {
-                if cp == last.0 + last.2 && l == last.1 + last.2 {
-                    last.2 += 1;
-                    continue;
-                }
+            if let Some(last) = segs.last_mut()
+                && cp == last.0 + last.2
+                && l == last.1 + last.2
+            {
+                last.2 += 1;
+                continue;
             }
             segs.push((cp, l, 1));
         }

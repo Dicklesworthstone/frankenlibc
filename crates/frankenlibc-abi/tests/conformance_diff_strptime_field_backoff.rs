@@ -17,8 +17,10 @@ unsafe extern "C" {
     fn setlocale(c: c_int, n: *const c_char) -> *mut c_char;
 }
 
+type GoldenCase = (&'static str, &'static str, i64, i32, i32, i32, i32, i32);
+
 // (input, format, consumed, hour, min, sec, mday, mon)
-const GOLDEN: &[(&str, &str, i64, i32, i32, i32, i32, i32)] = &[
+const GOLDEN: &[GoldenCase] = &[
     ("34", "%m", 1, 0, 0, 0, 0, 2),
     ("312", "%m%d", 3, 0, 0, 0, 12, 2),
     ("3112", "%d%m", 4, 0, 0, 0, 31, 11),
@@ -35,7 +37,7 @@ const GOLDEN: &[(&str, &str, i64, i32, i32, i32, i32, i32)] = &[
 
 #[test]
 fn strptime_numeric_field_backoff_matches_glibc() {
-    unsafe { setlocale(libc::LC_ALL, b"C\0".as_ptr() as *const c_char) };
+    unsafe { setlocale(libc::LC_ALL, c"C".as_ptr()) };
     let mut fails = Vec::new();
     for &(input, fmt, consumed, hour, min, sec, mday, mon) in GOLDEN {
         let ci = std::ffi::CString::new(input).unwrap();

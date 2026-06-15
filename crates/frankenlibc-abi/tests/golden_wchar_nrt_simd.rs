@@ -11,7 +11,7 @@
 //! identical; this pins a SHA-256 over a mixed corpus and checks the round trip,
 //! complementing the live-glibc `conformance_diff_wchar` and `wchar_abi_test`.
 
-use std::ffi::{c_char, c_void};
+use std::ffi::c_char;
 
 use sha2::{Digest, Sha256};
 

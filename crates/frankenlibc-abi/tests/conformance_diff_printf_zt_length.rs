@@ -41,9 +41,9 @@ fn printf_zt_length_matches_glibc() {
         1234,
         5_000_000_000, // > u32::MAX
         -5_000_000_000,
-        0xffff_ffff,    // u32::MAX
-        0x1_0000_0000,  // u32::MAX + 1
-        0xffff_ffff_ff, // 40-bit
+        0xffff_ffff,      // u32::MAX
+        0x1_0000_0000,    // u32::MAX + 1
+        0x00ff_ffff_ffff, // 40-bit
         i64::MIN,
         i64::MAX,
         -5,

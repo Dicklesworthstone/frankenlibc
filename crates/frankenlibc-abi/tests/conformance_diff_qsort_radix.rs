@@ -7,6 +7,7 @@
 //!   * the natural signed comparator (radix happy path),
 //!   * an unsigned comparator (radix verify fails -> generic fallback),
 //!   * a descending comparator (radix verify fails -> generic fallback),
+//!
 //! over element counts spanning the radix threshold and a range of input
 //! distributions — random, duplicate-heavy, all-equal, sorted, reverse,
 //! small-magnitude (exercises the constant-digit pass skip), and mixed sign
@@ -73,6 +74,7 @@ fn mix(seed: u64, i: usize) -> u64 {
 }
 
 type GlCmp = extern "C" fn(*const c_void, *const c_void) -> i32;
+type DistFn = Box<dyn Fn(usize) -> i64>;
 
 /// Sort `bytes_in` with both engines under matching comparators; assert the
 /// output bytes are identical. Returns the fl-sorted bytes for golden hashing.
@@ -121,7 +123,7 @@ fn qsort_radix_lane_matches_glibc() {
         let seed = 0x9E37_79B9u64 ^ (n as u64);
 
         // A battery of deterministic, index-pure distributions.
-        let dists: Vec<(&str, Box<dyn Fn(usize) -> i64>)> = vec![
+        let dists: Vec<(&str, DistFn)> = vec![
             ("rand", Box::new(move |i| mix(seed, i) as i64)),
             (
                 "dups8",
@@ -145,7 +147,7 @@ fn qsort_radix_lane_matches_glibc() {
 
         for (tag, g) in &dists {
             // width 4 (i32)
-            let img4 = image(n, 4, |i| g(i));
+            let img4 = image(n, 4, g.as_ref());
             check(&format!("i32/{tag}/n{n}"), 4, &img4, fl_i32, gl_i32);
             check(&format!("u32/{tag}/n{n}"), 4, &img4, fl_u32, gl_u32);
             check(
@@ -158,7 +160,7 @@ fn qsort_radix_lane_matches_glibc() {
             hasher.update(check(&format!("i32g/{tag}/n{n}"), 4, &img4, fl_i32, gl_i32));
 
             // width 8 (i64)
-            let img8 = image(n, 8, |i| g(i));
+            let img8 = image(n, 8, g.as_ref());
             check(&format!("i64/{tag}/n{n}"), 8, &img8, fl_i64, gl_i64);
             check(&format!("u64/{tag}/n{n}"), 8, &img8, fl_u64, gl_u64);
             check(

@@ -55,8 +55,8 @@ fn run(f: unsafe extern "C" fn(*mut c_char, u32, *mut c_void) -> usize, c32: u32
     };
     let errno = unsafe { *__errno_location() };
     let ret_i = ret as i64; // (size_t)-1 -> -1
-    let bytes = if ret_i >= 0 && (ret as usize) <= buf.len() {
-        buf[..ret as usize].to_vec()
+    let bytes = if ret_i >= 0 && ret <= buf.len() {
+        buf[..ret].to_vec()
     } else {
         Vec::new()
     };

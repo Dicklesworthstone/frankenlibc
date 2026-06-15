@@ -5,6 +5,7 @@
 //!   - llogb(±0)  -> FP_LLOGB0   (LONG_MIN)
 //!   - llogb(NaN) -> FP_LLOGBNAN (LONG_MIN on this platform)
 //!   - llogb(±inf)-> LONG_MAX
+//!
 //! A naive `ilogb(x) as long` widens the INT_MIN/INT_MAX sentinels and reports
 //! the wrong value — that was the bug this gate pins. Each special input must
 //! also raise FE_INVALID (inherited from the inner ilogb call), matching glibc.
@@ -45,9 +46,21 @@ fn llogb_special_values_match_glibc() {
         assert_eq!(ff, hf, "llogbf({xf:e}): fl={ff} host={hf}");
     }
     // The platform sentinels must be the long-width extremes, not the int ones.
-    assert_eq!(unsafe { fl_llogb(0.0) }, c_long::MIN, "llogb(0) = FP_LLOGB0");
-    assert_eq!(unsafe { fl_llogb(f64::NAN) }, c_long::MIN, "llogb(NaN) = FP_LLOGBNAN");
-    assert_eq!(unsafe { fl_llogb(f64::INFINITY) }, c_long::MAX, "llogb(inf) = LONG_MAX");
+    assert_eq!(
+        unsafe { fl_llogb(0.0) },
+        c_long::MIN,
+        "llogb(0) = FP_LLOGB0"
+    );
+    assert_eq!(
+        unsafe { fl_llogb(f64::NAN) },
+        c_long::MIN,
+        "llogb(NaN) = FP_LLOGBNAN"
+    );
+    assert_eq!(
+        unsafe { fl_llogb(f64::INFINITY) },
+        c_long::MAX,
+        "llogb(inf) = LONG_MAX"
+    );
 }
 
 #[test]
@@ -74,7 +87,11 @@ fn llogb_finite_sweep_matches_glibc() {
             diffs.push(format!("llogb({x:e}): fl={f} host={h}"));
         }
     }
-    assert!(diffs.is_empty(), "llogb finite sweep diverged:\n{}", diffs.join("\n"));
+    assert!(
+        diffs.is_empty(),
+        "llogb finite sweep diverged:\n{}",
+        diffs.join("\n")
+    );
 }
 
 #[test]

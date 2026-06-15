@@ -51,7 +51,7 @@ impl Lcg {
 fn gen_consuming_atom(r: &mut Lcg, out: &mut Vec<u8>) {
     const LIT: &[u8] = b"abc";
     match r.below(6) {
-        0 | 1 | 2 | 3 => out.push(LIT[r.below(LIT.len())]),
+        0..=3 => out.push(LIT[r.below(LIT.len())]),
         4 => out.push(b'?'),
         _ => out.extend_from_slice(b"[a-c]"),
     }

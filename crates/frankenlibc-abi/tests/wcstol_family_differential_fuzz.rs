@@ -119,7 +119,7 @@ fn wcstol_family_differential_fuzz_vs_glibc() {
 
     for _ in 0..250_000 {
         let mut input = gen_input(&mut r);
-        input.push(0); // NUL terminate
+        input.extend(std::iter::once(0)); // NUL terminate
         let base = gen_base(&mut r);
         let p = input.as_ptr();
         let shown: String = input[..input.len() - 1]

@@ -12,6 +12,7 @@
 //!   * an equivalence class or a POSIX class may NOT (-> REG_ERANGE);
 //!   * empty / multi-character (named, e.g. `[[.tab.]]`) bodies -> REG_ECOLLATE;
 //!   * a body with no closing `=]` / `.]` -> REG_EBRACK.
+//!
 //! This gate compiles each pattern with both engines and compares the compile
 //! return code and, on success, the match/no-match verdict for a fixed corpus.
 

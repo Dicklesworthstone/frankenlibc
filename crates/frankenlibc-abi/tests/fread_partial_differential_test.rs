@@ -58,17 +58,10 @@ fn run(data: &[u8], size: usize, nmemb: usize, glibc: bool) -> Outcome {
                 mode.as_ptr() as *const libc::c_char,
             )
         };
-        let ret = unsafe {
-            fl::fread(
-                dst.as_mut_ptr() as *mut libc::c_void,
-                size,
-                nmemb,
-                s as *mut libc::c_void,
-            )
-        };
-        let tell = unsafe { fl::ftell(s as *mut libc::c_void) } as i64;
-        let eof = unsafe { fl::feof(s as *mut libc::c_void) };
-        unsafe { fl::fclose(s as *mut libc::c_void) };
+        let ret = unsafe { fl::fread(dst.as_mut_ptr() as *mut libc::c_void, size, nmemb, s) };
+        let tell = unsafe { fl::ftell(s) } as i64;
+        let eof = unsafe { fl::feof(s) };
+        unsafe { fl::fclose(s) };
         Outcome {
             ret,
             tell,

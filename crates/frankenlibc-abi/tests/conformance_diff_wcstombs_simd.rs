@@ -77,7 +77,7 @@ fn valid_4byte_codepoint(r: &mut Lcg) -> i32 {
 #[test]
 fn wcstombs_simd_2byte_3byte_and_4byte_matches_glibc() {
     unsafe {
-        setlocale(6 /*LC_ALL*/, b"C.UTF-8\0".as_ptr() as *const c_char)
+        setlocale(6 /*LC_ALL*/, c"C.UTF-8".as_ptr())
     };
 
     let mut r = Lcg(0xfeed_face_dead_beef);

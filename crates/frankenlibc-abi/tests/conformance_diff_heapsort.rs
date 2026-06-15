@@ -14,6 +14,8 @@ use frankenlibc_core::stdlib::sort::heapsort as fl_heapsort;
 use sha2::{Digest, Sha256};
 use std::ffi::c_void;
 
+type DistFn = fn(u64, usize) -> u64;
+
 macro_rules! cmp_pair {
     ($glname:ident, $flname:ident, $ty:ty, $ord:expr) => {
         extern "C" fn $glname(a: *const c_void, b: *const c_void) -> i32 {
@@ -74,7 +76,7 @@ fn heapsort_lanes_match_glibc_qsort() {
 
     for &n in &sizes {
         let seed = 0xC0DE_F00Du64 ^ (n as u64);
-        let dists: [(&str, fn(u64, usize) -> u64); 4] = [
+        let dists: [(&str, DistFn); 4] = [
             ("rand", |s, i| mix(s, i)),
             ("dups", |s, i| mix(s, i) % 17),
             ("sorted", |_s, i| i as u64),

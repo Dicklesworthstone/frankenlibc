@@ -7,6 +7,7 @@
 //!   * an unsigned-char comparator (unsigned-ascending happy path),
 //!   * a signed-char comparator (signed-ascending path: 0x80..=0xFF first),
 //!   * a descending comparator (both natural orders fail -> pdqsort fallback),
+//!
 //! across element counts spanning the 256 threshold into large N, over random,
 //! duplicate-heavy, all-equal, sorted, reverse, and few-value distributions.
 #![cfg(target_os = "linux")]
@@ -15,6 +16,8 @@
 use frankenlibc_core::stdlib::qsort as fl_qsort;
 use sha2::{Digest, Sha256};
 use std::ffi::c_void;
+
+type DistGen = Box<dyn Fn(usize) -> u8>;
 
 extern "C" fn gl_u8(a: *const c_void, b: *const c_void) -> i32 {
     let (x, y) = unsafe { (*(a as *const u8), *(b as *const u8)) };
@@ -69,7 +72,7 @@ fn qsort_count8_lane_matches_glibc() {
 
     for &n in &sizes {
         let seed = 0x2BD3_C4E5u64 ^ (n as u64);
-        let dists: Vec<(&str, Box<dyn Fn(usize) -> u8>)> = vec![
+        let dists: Vec<(&str, DistGen)> = vec![
             ("rand", Box::new(move |i| mix(seed, i) as u8)),
             ("dups4", Box::new(move |i| (mix(seed ^ 0xAB, i) % 4) as u8)),
             ("equal", Box::new(|_| 0xA5u8)),
@@ -91,7 +94,7 @@ fn qsort_count8_lane_matches_glibc() {
             ),
         ];
         for (tag, g) in &dists {
-            let img: Vec<u8> = (0..n).map(|i| g(i)).collect();
+            let img: Vec<u8> = (0..n).map(g.as_ref()).collect();
             check(&format!("u8/{tag}/n{n}"), &img, fl_u8, gl_u8);
             check(&format!("i8/{tag}/n{n}"), &img, fl_i8, gl_i8);
             check(&format!("desc/{tag}/n{n}"), &img, fl_u8_desc, gl_u8_desc);

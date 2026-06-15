@@ -201,7 +201,7 @@ fn strptime_live_roundtrip_vs_glibc() {
         fn strptime(s: *const c_char, fmt: *const c_char, tm: *mut libc::tm) -> *mut c_char;
     }
     unsafe {
-        setlocale(6, b"C\0".as_ptr() as *const c_char);
+        setlocale(6, c"C".as_ptr());
     }
 
     // Symmetric specifiers whose strftime output strptime parses back into the six

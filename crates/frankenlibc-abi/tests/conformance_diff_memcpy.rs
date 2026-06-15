@@ -46,9 +46,7 @@ fn raw_memcpy_matches_reference_and_glibc_over_corpus() {
                     );
                 }
                 // Scalar reference.
-                for k in 0..len {
-                    rf[dst_off + k] = src[src_off + k];
-                }
+                rf[dst_off..(dst_off + len)].copy_from_slice(&src[src_off..(src_off + len)]);
                 // Host glibc memcpy.
                 unsafe {
                     libc::memcpy(

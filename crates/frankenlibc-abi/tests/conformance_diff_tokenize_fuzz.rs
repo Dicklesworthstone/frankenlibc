@@ -11,9 +11,9 @@
 //! engine is driven on its own fresh buffer copy and the token sequences are
 //! compared directly — no symbol-sharing caveats.
 
+use frankenlibc_abi::string_abi as fa;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use frankenlibc_abi::string_abi as fa;
 
 unsafe extern "C" {
     fn strtok_r(s: *mut c_char, d: *const c_char, sp: *mut *mut c_char) -> *mut c_char;
@@ -65,7 +65,7 @@ fn sep_seq(f: Sep, src: &[u8], delim: &[u8]) -> Vec<Option<Vec<u8>>> {
 
 #[test]
 fn tokenize_differential_fuzz_vs_glibc() {
-    let alpha = [b'a', b'b', b'c', b',', b' ', b'-', b'_', b';', b'x', b','];
+    let alpha = *b"abc, -_;x,";
     let delimsets: &[&[u8]] = &[b",", b", ", b"-_ ", b";", b"abc", b" ", b",;", b"xyz", b""];
     let mut seed: u64 = 0xC0FFEE;
     let mut rng = || {
@@ -78,25 +78,46 @@ fn tokenize_differential_fuzz_vs_glibc() {
     let (mut td, mut sd) = (0u32, 0u32);
     for _ in 0..20000 {
         let len = (rng() as usize) % 12;
-        let src: Vec<u8> = (0..len).map(|_| alpha[(rng() as usize) % alpha.len()]).collect();
+        let src: Vec<u8> = (0..len)
+            .map(|_| alpha[(rng() as usize) % alpha.len()])
+            .collect();
         let delim = delimsets[(rng() as usize) % delimsets.len()];
-        let (ft, ht) = (tok_seq(fa::strtok_r, &src, delim), tok_seq(strtok_r, &src, delim));
+        let (ft, ht) = (
+            tok_seq(fa::strtok_r, &src, delim),
+            tok_seq(strtok_r, &src, delim),
+        );
         if ft != ht {
             td += 1;
             if div.len() < 10 {
-                div.push(format!("strtok_r src={:?} delim={:?}\n    fl={:?}\n    gl={:?}",
-                    String::from_utf8_lossy(&src), String::from_utf8_lossy(delim), ft, ht));
+                div.push(format!(
+                    "strtok_r src={:?} delim={:?}\n    fl={:?}\n    gl={:?}",
+                    String::from_utf8_lossy(&src),
+                    String::from_utf8_lossy(delim),
+                    ft,
+                    ht
+                ));
             }
         }
-        let (fs, hs) = (sep_seq(fa::strsep, &src, delim), sep_seq(strsep, &src, delim));
+        let (fs, hs) = (
+            sep_seq(fa::strsep, &src, delim),
+            sep_seq(strsep, &src, delim),
+        );
         if fs != hs {
             sd += 1;
             if div.len() < 10 {
-                div.push(format!("strsep src={:?} delim={:?}\n    fl={:?}\n    gl={:?}",
-                    String::from_utf8_lossy(&src), String::from_utf8_lossy(delim), fs, hs));
+                div.push(format!(
+                    "strsep src={:?} delim={:?}\n    fl={:?}\n    gl={:?}",
+                    String::from_utf8_lossy(&src),
+                    String::from_utf8_lossy(delim),
+                    fs,
+                    hs
+                ));
             }
         }
     }
-    assert!(td == 0 && sd == 0,
-        "tokenizer divergences (strtok_r={td}, strsep={sd}):\n  {}", div.join("\n  "));
+    assert!(
+        td == 0 && sd == 0,
+        "tokenizer divergences (strtok_r={td}, strsep={sd}):\n  {}",
+        div.join("\n  ")
+    );
 }

@@ -37,7 +37,7 @@ fn parse(input: &str, fmt: &str) -> libc::tm {
 
 #[test]
 fn strptime_ampm_hour_adjustment_matches_glibc() {
-    unsafe { setlocale(libc::LC_ALL, b"C\0".as_ptr() as *const c_char) };
+    unsafe { setlocale(libc::LC_ALL, c"C".as_ptr()) };
     // (input, format, expected tm_hour)
     let cases: &[(&str, &str, i32)] = &[
         ("PM", "%p", 0), // %p alone: no hour to adjust
@@ -65,7 +65,7 @@ fn strptime_ampm_hour_adjustment_matches_glibc() {
 
 #[test]
 fn strptime_day_of_year_recompute_matches_glibc() {
-    unsafe { setlocale(libc::LC_ALL, b"C\0".as_ptr() as *const c_char) };
+    unsafe { setlocale(libc::LC_ALL, c"C".as_ptr()) };
 
     // %j alone: tm_yday set, tm_wday left untouched (stays 0 from the zeroed tm).
     let tm = parse("166", "%j");

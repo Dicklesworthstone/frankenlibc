@@ -31,6 +31,7 @@ fn read_out(ret: i32, p: *mut libc::c_char) -> Out {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn asprintf_matches_glibc() {
     let mut fails = Vec::new();
 

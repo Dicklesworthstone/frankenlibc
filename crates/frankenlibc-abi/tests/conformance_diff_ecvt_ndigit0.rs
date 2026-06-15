@@ -6,8 +6,8 @@
 //! clean sub-case fl now matches byte-for-byte vs glibc 2.42. (The separate
 //! fcvt-with-NEGATIVE-ndigit integer-rounding quirk — fcvt(123456,-3)=123000,
 //! with glibc clamp oddities at large |n| — stays out of scope on the bead.)
-use std::ffi::{CStr, c_char, c_int};
 use frankenlibc_abi::stdlib_abi as fl;
+use std::ffi::{CStr, c_char, c_int};
 unsafe extern "C" {
     fn ecvt(v: f64, n: c_int, dp: *mut c_int, sg: *mut c_int) -> *mut c_char;
     fn fcvt(v: f64, n: c_int, dp: *mut c_int, sg: *mut c_int) -> *mut c_char;
@@ -21,14 +21,19 @@ fn tup(host: bool, v: f64, n: c_int, fc: bool) -> (String, c_int, c_int) {
         (false, false) => unsafe { fl::ecvt(v, n, &mut dp, &mut sg) },
         (false, true) => unsafe { fl::fcvt(v, n, &mut dp, &mut sg) },
     };
-    let s = if r.is_null() { "<null>".into() } else { unsafe { CStr::from_ptr(r) }.to_string_lossy().into_owned() };
+    let s = if r.is_null() {
+        "<null>".into()
+    } else {
+        unsafe { CStr::from_ptr(r) }.to_string_lossy().into_owned()
+    };
     (s, dp, sg)
 }
 #[test]
+#[allow(clippy::approx_constant)]
 fn ecvt_fcvt_ndigit_le_zero_matches_glibc() {
     let vals: &[f64] = &[
-        1.0, 3.14159, 0.5, 100.0, 0.001, 9.99, 0.0, -0.0, 123456.0, 0.0001234,
-        99.5, 1e20, 1e-20, -5.0, 0.15, 9.9999999, 2.5, 1e308, 5e-324,
+        1.0, 3.14159, 0.5, 100.0, 0.001, 9.99, 0.0, -0.0, 123456.0, 0.0001234, 99.5, 1e20, 1e-20,
+        -5.0, 0.15, 9.9999999, 2.5, 1e308, 5e-324,
     ];
     let mut div = Vec::new();
     for &v in vals {
@@ -64,5 +69,9 @@ fn ecvt_fcvt_ndigit_le_zero_matches_glibc() {
             }
         }
     }
-    assert!(div.is_empty(), "ecvt/fcvt ndigit<=0 divergences:\n{}", div.join("\n"));
+    assert!(
+        div.is_empty(),
+        "ecvt/fcvt ndigit<=0 divergences:\n{}",
+        div.join("\n")
+    );
 }

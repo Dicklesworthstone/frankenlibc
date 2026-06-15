@@ -32,7 +32,7 @@ fn render(eng: u8, fmt: &str, p: *const c_void) -> String {
 fn printf_pointer_flags_match_glibc() {
     let ptrs: &[*const c_void] = &[
         std::ptr::null(),
-        1 as *const c_void,
+        std::ptr::dangling::<c_void>(),
         0x1234 as *const c_void,
         0xdead_beef_usize as *const c_void,
         0xffff_ffff_ffff_ffff_usize as *const c_void,

@@ -34,7 +34,7 @@ fn tm_with(wday: i32, mon: i32) -> libc::tm {
 
 #[test]
 fn strftime_out_of_range_wday_mon_emit_question_mark() {
-    unsafe { setlocale(libc::LC_ALL, b"C\0".as_ptr() as *const c_char) };
+    unsafe { setlocale(libc::LC_ALL, c"C".as_ptr()) };
 
     // Out-of-range weekday -> "?" for %a and %A (7 and -1 are both invalid).
     for bad in [7, 8, 99, -1, -100] {

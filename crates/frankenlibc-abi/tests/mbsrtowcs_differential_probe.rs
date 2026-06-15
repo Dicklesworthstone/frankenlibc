@@ -60,7 +60,7 @@ fn run_fl(input: &[u8], dst_null: bool, len: usize) -> Outcome {
     let rc = unsafe {
         fl::mbsrtowcs(
             dst as *mut libc::wchar_t,
-            &mut src as *mut *const libc::c_char as *mut *const std::ffi::c_char,
+            &mut src as *mut *const libc::c_char,
             len,
             std::ptr::null_mut(),
         )

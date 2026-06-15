@@ -118,7 +118,7 @@ const NON_ASCII: &[i32] = &[
 fn gen_case(r: &mut Lcg) -> Vec<i32> {
     let mut v: Vec<i32> = Vec::new();
     match r.below(10) {
-        0 | 1 | 2 => {
+        0..=2 => {
             // Decimal float with variable mantissa/exponent.
             maybe_ws(r, &mut v);
             maybe_sign(r, &mut v);
@@ -210,7 +210,7 @@ fn gen_case(r: &mut Lcg) -> Vec<i32> {
             push_ascii(&mut v, ".");
             push_ascii(&mut v, &digits(r, 8));
             // trailing letters/punct
-            let tail = [b'a', b'b', b'x', b'p', b'e', b'.', b'-'];
+            let tail = *b"abxpe.-";
             let n = r.below(4);
             for _ in 0..n {
                 v.push(tail[r.below(tail.len() as u64) as usize] as i32);

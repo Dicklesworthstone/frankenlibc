@@ -19,8 +19,8 @@ unsafe extern "C" {
 }
 
 const XS: &[f64] = &[
-    0.5, 1.0, 1.5, 2.5, 3.0, 5.0, 0.1, 0.9, 4.2, 10.0, 100.0,
-    -0.5, -1.5, -2.5, -3.5, -0.1, -0.9, -2.1, -4.7, -0.001,
+    0.5, 1.0, 1.5, 2.5, 3.0, 5.0, 0.1, 0.9, 4.2, 10.0, 100.0, -0.5, -1.5, -2.5, -3.5, -0.1, -0.9,
+    -2.1, -4.7, -0.001,
 ];
 
 #[test]
@@ -35,9 +35,9 @@ fn gamma_signgam_matches_glibc() {
         };
         // fl gamma + fl's signgam.
         let (fv, fs) = unsafe {
-            *(&raw mut fl_signgam) = 0x5a5a;
+            fl_signgam = 0x5a5a;
             let v = fl_gamma(x);
-            (v, *(&raw const fl_signgam))
+            (v, fl_signgam)
         };
         if fs != hs {
             div.push(format!("gamma({x}): fl signgam={fs}, glibc signgam={hs}"));
@@ -58,9 +58,9 @@ fn gamma_signgam_matches_glibc() {
             (v, signgam)
         };
         let (fv, fs) = unsafe {
-            *(&raw mut fl_signgam) = 0x5a5a;
+            fl_signgam = 0x5a5a;
             let v = fl_gammaf(xf);
-            (v, *(&raw const fl_signgam))
+            (v, fl_signgam)
         };
         if fs != hs {
             div.push(format!("gammaf({xf}): fl signgam={fs}, glibc signgam={hs}"));

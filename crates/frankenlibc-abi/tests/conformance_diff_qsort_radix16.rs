@@ -7,6 +7,7 @@
 //!   * the natural signed i16 comparator (radix happy path),
 //!   * an unsigned u16 comparator (radix verify fails -> generic fallback),
 //!   * a descending comparator (radix verify fails -> generic fallback),
+//!
 //! across element counts spanning the 256 threshold into large N, over random,
 //! duplicate-heavy, all-equal, sorted, reverse, small-magnitude, and mixed-sign
 //! distributions (where signed vs unsigned 16-bit order diverge).
@@ -47,6 +48,7 @@ fn mix(seed: u64, i: usize) -> u64 {
 }
 
 type GlCmp = extern "C" fn(*const c_void, *const c_void) -> i32;
+type DistFn = Box<dyn Fn(usize) -> i16>;
 
 fn check(label: &str, bytes_in: &[u8], fl_cmp: fn(&[u8], &[u8]) -> i32, gl_cmp: GlCmp) -> Vec<u8> {
     let n = bytes_in.len() / 2;
@@ -79,7 +81,7 @@ fn qsort_radix16_lane_matches_glibc() {
 
     for &n in &sizes {
         let seed = 0x51E2_D3C4u64 ^ (n as u64);
-        let dists: Vec<(&str, Box<dyn Fn(usize) -> i16>)> = vec![
+        let dists: Vec<(&str, DistFn)> = vec![
             ("rand", Box::new(move |i| mix(seed, i) as i16)),
             (
                 "dups8",
@@ -104,7 +106,7 @@ fn qsort_radix16_lane_matches_glibc() {
             ),
         ];
         for (tag, g) in &dists {
-            let img = image(n, |i| g(i));
+            let img = image(n, g.as_ref());
             check(&format!("i16/{tag}/n{n}"), &img, fl_i16, gl_i16);
             check(&format!("u16/{tag}/n{n}"), &img, fl_u16, gl_u16);
             check(

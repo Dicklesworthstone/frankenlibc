@@ -97,7 +97,7 @@ fn gen_ipv6_string(r: &mut Lcg) -> String {
         s.insert_str(pos, "::");
     }
     // Optionally append an embedded-IPv4 tail.
-    if r.next() % 4 == 0 {
+    if r.next().is_multiple_of(4) {
         let v4 = format!("{}.{}.{}.{}", r.byte(), r.byte(), r.byte(), r.byte());
         if !s.is_empty() && !s.ends_with(':') {
             s.push(':');
@@ -105,8 +105,9 @@ fn gen_ipv6_string(r: &mut Lcg) -> String {
         s.push_str(&v4);
     }
     // Occasional stray byte to exercise rejection.
-    if r.next() % 8 == 0 {
-        let stray = [b'g', b'z', b' ', b'%', b'/', b'-', b'x', b'\t'][(r.next() % 8) as usize];
+    if r.next().is_multiple_of(8) {
+        let stray_pool = *b"gz %/-x\t";
+        let stray = stray_pool[(r.next() % 8) as usize];
         let pos = (r.next() as usize) % (s.len() + 1);
         s.insert(pos, stray as char);
     }
@@ -119,7 +120,7 @@ fn inet_pton_ntop_differential_fuzz_vs_glibc() {
     let mut divs: Vec<String> = Vec::new();
     let mut compared: u64 = 0;
 
-    let mut record = |label: String, fl_s: String, host_s: String, divs: &mut Vec<String>| {
+    let record = |label: String, fl_s: String, host_s: String, divs: &mut Vec<String>| {
         if fl_s != host_s && divs.len() < 40 {
             divs.push(format!("{label}\n    fl   ={fl_s}\n    glibc={host_s}"));
         }

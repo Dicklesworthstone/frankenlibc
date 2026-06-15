@@ -115,7 +115,7 @@ fn swscanf_int_differential_fuzz_vs_glibc() {
         };
         compared += 1;
 
-        let assigned = rf.max(0).min(3) as usize;
+        let assigned = rf.clamp(0, 3) as usize;
         let slot_mismatch = rf == rg && af[..assigned] != ag[..assigned];
         if (rf != rg || slot_mismatch) && divs.len() < 40 {
             divs.push(format!(

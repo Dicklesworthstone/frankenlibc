@@ -130,7 +130,7 @@ fn getnameinfo_numeric_differential_fuzz_vs_glibc() {
                 }
             }
             // Occasionally force an IPv4-mapped prefix ::ffff:a.b.c.d.
-            if r.next() % 5 == 0 {
+            if r.next().is_multiple_of(5) {
                 a6[..10].fill(0);
                 a6[10] = 0xff;
                 a6[11] = 0xff;
@@ -155,7 +155,7 @@ fn getnameinfo_numeric_differential_fuzz_vs_glibc() {
             // Scope id: often 0, sometimes a small interface index.
             // Scope id: often 0, sometimes a small interface index (1 is
             // usually "lo", exercising the if_indextoname name path).
-            sin6.sin6_scope_id = if r.next() % 3 == 0 {
+            sin6.sin6_scope_id = if r.next().is_multiple_of(3) {
                 (r.next() % 5) as u32
             } else {
                 0

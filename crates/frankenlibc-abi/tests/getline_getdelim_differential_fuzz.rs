@@ -13,7 +13,6 @@ use frankenlibc_abi::stdio_abi as fl;
 
 unsafe extern "C" {
     fn fmemopen(buf: *mut libc::c_void, size: usize, mode: *const libc::c_char) -> *mut libc::FILE;
-    fn getline(lineptr: *mut *mut libc::c_char, n: *mut usize, stream: *mut libc::FILE) -> isize;
     fn getdelim(
         lineptr: *mut *mut libc::c_char,
         n: *mut usize,
@@ -60,7 +59,7 @@ fn run_fl(data: &[u8], delim: i32) -> Vec<(isize, Vec<u8>)> {
     let mut lineptr: *mut libc::c_char = std::ptr::null_mut();
     let mut n: usize = 0;
     loop {
-        let ret = unsafe { fl::getdelim(&mut lineptr, &mut n, delim, stream as *mut libc::c_void) };
+        let ret = unsafe { fl::getdelim(&mut lineptr, &mut n, delim, stream) };
         if ret < 0 {
             break;
         }
@@ -71,7 +70,7 @@ fn run_fl(data: &[u8], delim: i32) -> Vec<(isize, Vec<u8>)> {
             break;
         }
     }
-    unsafe { fl::fclose(stream as *mut libc::c_void) };
+    unsafe { fl::fclose(stream) };
     out // lineptr is fl-heap; leak it (test process exits)
 }
 

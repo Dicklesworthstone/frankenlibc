@@ -109,7 +109,7 @@ fn gen_buf(r: &mut Lcg) -> Vec<u8> {
             // across incremental calls after the mbstate partial-region fix
             // (bd-kryp2k). Surrogate / >U+10FFFF ranges are handled identically
             // by fl and glibc.
-            0 | 1 | 2 | 3 => {
+            0..=3 => {
                 let cp = match r.below(8) {
                     0 => r.below(0x80) as u32,                     // ASCII (may include NUL)
                     1 => 0x80 + r.below(0x780) as u32,             // 2-byte

@@ -30,7 +30,10 @@ fn sym3(h: *mut c_void, n: &std::ffi::CStr) -> extern "C" fn(f64, f64, f64) -> f
 struct Lcg(u64);
 impl Lcg {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0
     }
     fn f64_near1(&mut self) -> f64 {
@@ -65,7 +68,14 @@ fn c23_narrow_matches_glibc() {
             let fv = unsafe { $flf($x, $y) };
             let gv = $gf($x, $y);
             if fv.to_bits() != gv.to_bits() && !(fv.is_nan() && gv.is_nan()) {
-                div.push(format!("{}({:e},{:e}): fl={:08x} glibc={:08x}", $name, $x, $y, fv.to_bits(), gv.to_bits()));
+                div.push(format!(
+                    "{}({:e},{:e}): fl={:08x} glibc={:08x}",
+                    $name,
+                    $x,
+                    $y,
+                    fv.to_bits(),
+                    gv.to_bits()
+                ));
             }
         }};
     }
@@ -74,7 +84,13 @@ fn c23_narrow_matches_glibc() {
             let fv = unsafe { $flf($x) };
             let gv = $gf($x);
             if fv.to_bits() != gv.to_bits() && !(fv.is_nan() && gv.is_nan()) {
-                div.push(format!("{}({:e}): fl={:08x} glibc={:08x}", $name, $x, fv.to_bits(), gv.to_bits()));
+                div.push(format!(
+                    "{}({:e}): fl={:08x} glibc={:08x}",
+                    $name,
+                    $x,
+                    fv.to_bits(),
+                    gv.to_bits()
+                ));
             }
         }};
     }
@@ -83,24 +99,81 @@ fn c23_narrow_matches_glibc() {
             let fv = unsafe { $flf($x, $y, $z) };
             let gv = $gf($x, $y, $z);
             if fv.to_bits() != gv.to_bits() && !(fv.is_nan() && gv.is_nan()) {
-                div.push(format!("{}({:e},{:e},{:e}): fl={:08x} glibc={:08x}", $name, $x, $y, $z, fv.to_bits(), gv.to_bits()));
+                div.push(format!(
+                    "{}({:e},{:e},{:e}): fl={:08x} glibc={:08x}",
+                    $name,
+                    $x,
+                    $y,
+                    $z,
+                    fv.to_bits(),
+                    gv.to_bits()
+                ));
             }
         }};
     }
 
     // Hand-constructed double-rounding witnesses.
-    chk2!("fadd", fl::fadd, g_fadd, 1.0 + (2f64.powi(-24)), (2f64.powi(-53)));
-    chk2!("fadd", fl::fadd, g_fadd, 1.0 + (2f64.powi(-23)) + (2f64.powi(-24)), (2f64.powi(-53)));
-    chk2!("fsub", fl::fsub, g_fsub, 1.0 + (2f64.powi(-23)), (2f64.powi(-24)) + (2f64.powi(-53)));
-    chk2!("fmul", fl::fmul, g_fmul, 1.0 + (2f64.powi(-24)), 1.0 + (2f64.powi(-24)));
+    chk2!(
+        "fadd",
+        fl::fadd,
+        g_fadd,
+        1.0 + (2f64.powi(-24)),
+        2f64.powi(-53)
+    );
+    chk2!(
+        "fadd",
+        fl::fadd,
+        g_fadd,
+        1.0 + (2f64.powi(-23)) + (2f64.powi(-24)),
+        2f64.powi(-53)
+    );
+    chk2!(
+        "fsub",
+        fl::fsub,
+        g_fsub,
+        1.0 + (2f64.powi(-23)),
+        (2f64.powi(-24)) + (2f64.powi(-53))
+    );
+    chk2!(
+        "fmul",
+        fl::fmul,
+        g_fmul,
+        1.0 + (2f64.powi(-24)),
+        1.0 + (2f64.powi(-24))
+    );
     chk2!("fdiv", fl::fdiv, g_fdiv, 1.0, 3.0);
     chk1!("fsqrt", fl::fsqrt, g_fsqrt, 2.0);
     // ffma witness: x*y+z = 1 + 2^-24 + 2^-53 (the fma double-rounds to 1.0).
-    chk3!("ffma", fl::ffma, g_ffma, 1.0, 1.0, (2f64.powi(-24)) + (2f64.powi(-53)));
-    chk3!("ffma", fl::ffma, g_ffma, 1.0 + (2f64.powi(-24)), 1.0 + (2f64.powi(-24)), -1.0);
+    chk3!(
+        "ffma",
+        fl::ffma,
+        g_ffma,
+        1.0,
+        1.0,
+        (2f64.powi(-24)) + (2f64.powi(-53))
+    );
+    chk3!(
+        "ffma",
+        fl::ffma,
+        g_ffma,
+        1.0 + (2f64.powi(-24)),
+        1.0 + (2f64.powi(-24)),
+        -1.0
+    );
 
     // Special values.
-    let sv = [0.0f64, -0.0, 1.0, -1.0, f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 1e300, 4.0, 0.25];
+    let sv = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        1e300,
+        4.0,
+        0.25,
+    ];
     for &a in &sv {
         for &b in &sv {
             chk2!("fadd", fl::fadd, g_fadd, a, b);
@@ -136,5 +209,10 @@ fn c23_narrow_matches_glibc() {
         }
     }
 
-    assert!(div.is_empty(), "C23 narrowing divergences vs glibc ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "C23 narrowing divergences vs glibc ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

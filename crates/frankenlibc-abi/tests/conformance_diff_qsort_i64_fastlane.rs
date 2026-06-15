@@ -7,6 +7,7 @@
 //!   * the natural signed-i64 comparator (the lane's happy path),
 //!   * an unsigned-u64 comparator (lane verify fails -> generic fallback),
 //!   * a descending comparator (lane verify fails -> generic fallback),
+//!
 //! across element counts spanning below, inside, and above the lane's
 //! `[64, 2048]` activation window, including duplicate-heavy inputs where tie
 //! order is unspecified but the emitted bytes are nonetheless fully determined.

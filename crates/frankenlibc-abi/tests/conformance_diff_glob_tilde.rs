@@ -6,6 +6,7 @@
 //!   - `~user` / `~user/...` → that user's /etc/passwd home directory.
 //!   - GLOB_TILDE_CHECK → GLOB_NOMATCH when the `~`/`~user` cannot be resolved
 //!     (vs plain GLOB_TILDE, which leaves the tilde literal).
+//!
 //! `~` / `~/...` (the $HOME case) was already handled and is re-pinned here.
 
 use std::ffi::{CString, c_char, c_int};

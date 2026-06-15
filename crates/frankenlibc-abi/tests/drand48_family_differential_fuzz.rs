@@ -49,15 +49,14 @@ fn drand48_family_differential_fuzz_vs_glibc() {
     for _ in 0..50_000 {
         // --- Seed both engines identically, three different ways. ---
         let seed_kind = r.below(3);
-        let seed_desc;
-        match seed_kind {
+        let seed_desc = match seed_kind {
             0 => {
                 let s = r.next() as i64; // full 64-bit; glibc uses low 32 bits
                 unsafe {
                     fl::srand48(s);
                     srand48(s);
                 }
-                seed_desc = format!("srand48({s:#x})");
+                format!("srand48({s:#x})")
             }
             1 => {
                 let mut a = [r.u16(), r.u16(), r.u16()];
@@ -66,7 +65,7 @@ fn drand48_family_differential_fuzz_vs_glibc() {
                     fl::seed48(a.as_mut_ptr());
                     seed48(b.as_mut_ptr());
                 }
-                seed_desc = format!("seed48({a:?})");
+                format!("seed48({a:?})")
             }
             _ => {
                 // lcong48: 7 u16 — Xi[0..3], a[3..6], c[6].
@@ -84,9 +83,9 @@ fn drand48_family_differential_fuzz_vs_glibc() {
                     fl::lcong48(a.as_mut_ptr());
                     lcong48(b.as_mut_ptr());
                 }
-                seed_desc = format!("lcong48({a:?})");
+                format!("lcong48({a:?})")
             }
-        }
+        };
 
         // --- Draw a short random sequence from the global generators. ---
         let draws = 1 + r.below(6);

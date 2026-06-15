@@ -93,7 +93,7 @@ fn fl_mbstowcs(src: &[u8]) -> Option<Vec<i32>> {
 #[test]
 fn mbstowcs_simd_2byte_matches_glibc() {
     unsafe {
-        setlocale(6 /*LC_ALL*/, b"C.UTF-8\0".as_ptr() as *const c_char)
+        setlocale(6 /*LC_ALL*/, c"C.UTF-8".as_ptr())
     };
 
     let mut r = Lcg(0x1234_5678_9abc_def1);

@@ -59,10 +59,39 @@ fn rpmatch_differential_fuzz_vs_glibc() {
 
     // 1) Curated edge cases (the documented C-locale battery + tricky tails).
     let curated: &[&[u8]] = &[
-        b"yes", b"Yes", b"YES", b"y", b"Y", b"no", b"No", b"n", b"N", b"maybe",
-        b"", b"yep", b"nope", b"1", b"0", b"+", b"ja", b"oui", b" yes", b"\ty",
-        b"yarr", b"Narr", b"yY", b"nN", b"Y123", b"NaN", b"\xff", b"\xc3\xa9",
-        b"\x01y", b"z", b"yes\xff", b"YEAH", b"NIX",
+        b"yes",
+        b"Yes",
+        b"YES",
+        b"y",
+        b"Y",
+        b"no",
+        b"No",
+        b"n",
+        b"N",
+        b"maybe",
+        b"",
+        b"yep",
+        b"nope",
+        b"1",
+        b"0",
+        b"+",
+        b"ja",
+        b"oui",
+        b" yes",
+        b"\ty",
+        b"yarr",
+        b"Narr",
+        b"yY",
+        b"nN",
+        b"Y123",
+        b"NaN",
+        b"\xff",
+        b"\xc3\xa9",
+        b"\x01y",
+        b"z",
+        b"yes\xff",
+        b"YEAH",
+        b"NIX",
     ];
     for &c in curated {
         check(c, &mut divs);
@@ -81,7 +110,7 @@ fn rpmatch_differential_fuzz_vs_glibc() {
             1 => 1 + (r.below(255) as u8),          // any non-NUL byte
             _ => {
                 // around the yes/no letters and their neighbours
-                let pool = [b'y', b'Y', b'n', b'N', b'x', b'z', b'Z', b'm', b'o'];
+                let pool = *b"yYnNxzZmo";
                 pool[r.below(pool.len() as u64) as usize]
             }
         };

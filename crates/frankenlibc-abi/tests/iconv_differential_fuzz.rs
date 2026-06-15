@@ -407,10 +407,10 @@ fn iconv_wide_to_wide_differential_fuzz_vs_glibc() {
                     let mut v = Vec::new();
                     for _ in 0..n {
                         let cp = match r.next() % 8 {
-                            0 => r.next() as u32 % 0x80,                    // ASCII
-                            1 | 2 => 0x80 + r.next() as u32 % 0x780,        // BMP low
-                            3 | 4 | 5 => 0xE000 + r.next() as u32 % 0x2000, // BMP non-surrogate
-                            _ => 0x10000 + (r.next() as u32 % 0x100000),    // astral
+                            0 => r.next() as u32 % 0x80,                 // ASCII
+                            1 | 2 => 0x80 + r.next() as u32 % 0x780,     // BMP low
+                            3..=5 => 0xE000 + r.next() as u32 % 0x2000,  // BMP non-surrogate
+                            _ => 0x10000 + (r.next() as u32 % 0x100000), // astral
                         };
                         push_wide(&mut v, from, cp);
                     }
@@ -650,11 +650,11 @@ fn iconv_wide_to_dbcs_differential_fuzz_vs_glibc() {
                     let mut v = Vec::new();
                     for _ in 0..n {
                         let cp = match r.next() % 8 {
-                            0 | 1 => r.next() as u32 % 0x80,                  // ASCII
-                            2 | 3 | 4 => 0x4E00 + (r.next() as u32 % 0x5200), // CJK ideographs
-                            5 => 0x3000 + (r.next() as u32 % 0x100),          // CJK symbols/kana
-                            6 => r.next() as u32 % 0x10000,                   // any BMP
-                            _ => 0x10000 + (r.next() as u32 % 0x100000),      // astral
+                            0 | 1 => r.next() as u32 % 0x80,              // ASCII
+                            2..=4 => 0x4E00 + (r.next() as u32 % 0x5200), // CJK ideographs
+                            5 => 0x3000 + (r.next() as u32 % 0x100),      // CJK symbols/kana
+                            6 => r.next() as u32 % 0x10000,               // any BMP
+                            _ => 0x10000 + (r.next() as u32 % 0x100000),  // astral
                         };
                         push_wide(&mut v, from, cp);
                     }
@@ -729,7 +729,7 @@ fn iconv_legacy_to_dbcs_differential_fuzz_vs_glibc() {
                     for _ in 0..n {
                         let cp = match r.next() % 8 {
                             0 | 1 => r.next() as u32 % 0x80,
-                            2 | 3 | 4 => 0x4E00 + (r.next() as u32 % 0x5200),
+                            2..=4 => 0x4E00 + (r.next() as u32 % 0x5200),
                             5 => 0x400 + (r.next() as u32 % 0x60),
                             _ => r.next() as u32 % 0x10000,
                         };
@@ -829,12 +829,12 @@ fn iconv_dbcs_to_wide_differential_fuzz_vs_glibc() {
                     let mut u8src = Vec::new();
                     for _ in 0..n {
                         let cp = match r.next() % 10 {
-                            0 | 1 => r.next() as u32 % 0x80,                  // ASCII
-                            2 | 3 | 4 => 0x4E00 + (r.next() as u32 % 0x5200), // CJK ideographs
-                            5 => 0x3000 + (r.next() as u32 % 0x100),          // CJK symbols/kana
-                            6 => 0xFF61 + (r.next() as u32 % 0x3F),           // half-width kana
-                            7 | 8 => r.next() as u32 % 0x10000,               // any BMP
-                            _ => 0x10000 + (r.next() as u32 % 0x100000),      // astral (GB18030)
+                            0 | 1 => r.next() as u32 % 0x80,              // ASCII
+                            2..=4 => 0x4E00 + (r.next() as u32 % 0x5200), // CJK ideographs
+                            5 => 0x3000 + (r.next() as u32 % 0x100),      // CJK symbols/kana
+                            6 => 0xFF61 + (r.next() as u32 % 0x3F),       // half-width kana
+                            7 | 8 => r.next() as u32 % 0x10000,           // any BMP
+                            _ => 0x10000 + (r.next() as u32 % 0x100000),  // astral (GB18030)
                         };
                         push_utf8(&mut u8src, cp);
                     }
@@ -911,13 +911,13 @@ fn iconv_cjk_differential_fuzz_vs_glibc() {
                     // (Latin/Greek/...), arbitrary BMP, and astral planes all map
                     // to 4-byte GB18030; surrogates are skipped by push_utf8.
                     let cp = match r.next() % 12 {
-                        0 | 1 => r.next() as u32 % 0x80,                  // ASCII
-                        2 => 0xFF61 + (r.next() as u32 % 0x3F),           // half-width kana
-                        3 | 4 => 0x3000 + (r.next() as u32 % 0x100),      // CJK symbols/kana
-                        5 | 6 | 7 => 0x4E00 + (r.next() as u32 % 0x5200), // CJK ideographs (2-byte)
-                        8 => 0x80 + (r.next() as u32 % 0x3F00), // low BMP (GB18030 4-byte)
-                        9 | 10 => r.next() as u32 % 0x10000,    // any BMP
-                        _ => 0x10000 + (r.next() as u32 % 0x100000), // astral (GB18030 4-byte)
+                        0 | 1 => r.next() as u32 % 0x80,              // ASCII
+                        2 => 0xFF61 + (r.next() as u32 % 0x3F),       // half-width kana
+                        3 | 4 => 0x3000 + (r.next() as u32 % 0x100),  // CJK symbols/kana
+                        5..=7 => 0x4E00 + (r.next() as u32 % 0x5200), // CJK ideographs (2-byte)
+                        8 => 0x80 + (r.next() as u32 % 0x3F00),       // low BMP (GB18030 4-byte)
+                        9 | 10 => r.next() as u32 % 0x10000,          // any BMP
+                        _ => 0x10000 + (r.next() as u32 % 0x100000),  // astral (GB18030 4-byte)
                     };
                     push_utf8(&mut v, cp);
                 }

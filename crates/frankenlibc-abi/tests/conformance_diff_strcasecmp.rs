@@ -150,7 +150,7 @@ fn strcasecmp_does_not_overread_past_guard_page() {
                 *start.add(k) = b'A';
             }
             *start.add(nul_back - 1) = 0;
-            let other = b"aaaaaaaaaaaaaaaaaaaa\0".as_ptr().cast::<c_char>();
+            let other = c"aaaaaaaaaaaaaaaaaaaa".as_ptr();
             let sp = start.cast::<c_char>();
             let _ = fl_strcasecmp(sp, other);
             let _ = fl_strcasecmp(other, sp);

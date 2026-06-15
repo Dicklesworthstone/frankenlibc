@@ -57,7 +57,7 @@ fn run_mbsn(input: &[u8], nms: usize, dst_null: bool, len: usize, use_fl: bool) 
         unsafe {
             fl::mbsnrtowcs(
                 dst as *mut libc::wchar_t,
-                &mut src as *mut *const libc::c_char as *mut *const std::ffi::c_char,
+                &mut src as *mut *const libc::c_char,
                 nms,
                 len,
                 std::ptr::null_mut(),

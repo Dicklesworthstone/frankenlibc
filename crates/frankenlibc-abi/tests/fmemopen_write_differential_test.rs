@@ -39,12 +39,12 @@ fn fmemopen_size0_read_is_valid_eof() {
         "fl fmemopen(size=0) must match glibc and return a valid (empty) stream, not NULL"
     );
     let gc = unsafe { fgetc(g) };
-    let fc = unsafe { fl::fgetc(f as *mut libc::c_void) };
+    let fc = unsafe { fl::fgetc(f) };
     assert_eq!(gc, libc::EOF, "glibc size-0 read should be EOF");
     assert_eq!(fc, libc::EOF, "fl size-0 read should be EOF, got {fc}");
     unsafe {
         fclose(g);
-        fl::fclose(f as *mut libc::c_void);
+        fl::fclose(f);
     }
 }
 
@@ -71,12 +71,12 @@ fn fmemopen_write_nul_terminates_like_glibc() {
                     mode.as_ptr() as *const libc::c_char,
                 )
             };
-            let fret = unsafe { fl::fputs(cs.as_ptr(), f as *mut libc::c_void) };
-            unsafe { fl::fflush(f as *mut libc::c_void) };
+            let fret = unsafe { fl::fputs(cs.as_ptr(), f) };
+            unsafe { fl::fflush(f) };
 
             unsafe {
                 fclose(g);
-                fl::fclose(f as *mut libc::c_void);
+                fl::fclose(f);
             }
 
             assert_eq!(

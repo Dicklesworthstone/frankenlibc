@@ -110,37 +110,53 @@ struct Run {
     pm: [RegMatch; 3],
 }
 
-fn run(
-    comp_fn: unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_int,
-    exec_fn: unsafe extern "C" fn(*const c_void, *const c_char, usize, *mut c_void, c_int) -> c_int,
-    free_fn: unsafe extern "C" fn(*mut c_void),
-    pat: &CString,
-    buf: &[u8],
+type RegCompFn = unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_int;
+type RegExecFn =
+    unsafe extern "C" fn(*const c_void, *const c_char, usize, *mut c_void, c_int) -> c_int;
+type RegFreeFn = unsafe extern "C" fn(*mut c_void);
+
+#[derive(Clone, Copy)]
+struct RegexEngine {
+    comp: RegCompFn,
+    exec: RegExecFn,
+    free: RegFreeFn,
+}
+
+#[derive(Clone, Copy)]
+struct RunParams {
     so: i32,
     eo: i32,
     cflags: c_int,
     eflags: c_int,
-) -> Run {
+}
+
+fn run(engine: RegexEngine, pat: &CString, buf: &[u8], params: RunParams) -> Run {
     let mut preg = Preg([0u8; REGEX_T_BYTES]);
-    let comp = unsafe { comp_fn(preg.0.as_mut_ptr() as *mut c_void, pat.as_ptr(), cflags) };
+    let comp = unsafe {
+        (engine.comp)(
+            preg.0.as_mut_ptr() as *mut c_void,
+            pat.as_ptr(),
+            params.cflags,
+        )
+    };
     let mut pm = [RegMatch::default(); 3];
     pm[0] = RegMatch {
-        rm_so: so,
-        rm_eo: eo,
+        rm_so: params.so,
+        rm_eo: params.eo,
     };
     let exec = if comp == 0 {
         // The buffer need not be NUL-terminated under REG_STARTEND, but pass a
         // pointer to the owned bytes; the impl reads only [..rm_eo].
         let e = unsafe {
-            exec_fn(
+            (engine.exec)(
                 preg.0.as_ptr() as *const c_void,
                 buf.as_ptr() as *const c_char,
                 3,
                 pm.as_mut_ptr() as *mut c_void,
-                eflags,
+                params.eflags,
             )
         };
-        unsafe { free_fn(preg.0.as_mut_ptr() as *mut c_void) };
+        unsafe { (engine.free)(preg.0.as_mut_ptr() as *mut c_void) };
         e
     } else {
         -1
@@ -154,6 +170,16 @@ fn regex_startend_differential_fuzz_vs_glibc() {
     let mut divs: Vec<String> = Vec::new();
     let mut compared = 0u64;
     let mut validity_skips = 0u64;
+    let fl_engine = RegexEngine {
+        comp: fl::regcomp,
+        exec: fl::regexec,
+        free: fl::regfree,
+    };
+    let lc_engine = RegexEngine {
+        comp: regcomp,
+        exec: regexec,
+        free: regfree,
+    };
 
     for _ in 0..200_000 {
         let pat = gen_pattern(&mut r);
@@ -177,20 +203,15 @@ fn regex_startend_differential_fuzz_vs_glibc() {
                 _ => REG_NOTBOL | REG_NOTEOL,
             };
 
-        let fl_run = run(
-            fl::regcomp,
-            fl::regexec,
-            fl::regfree,
-            &cpat,
-            &buf,
-            so as i32,
-            eo as i32,
+        let params = RunParams {
+            so: so as i32,
+            eo: eo as i32,
             cflags,
             eflags,
-        );
-        let lc_run = run(
-            regcomp, regexec, regfree, &cpat, &buf, so as i32, eo as i32, cflags, eflags,
-        );
+        };
+
+        let fl_run = run(fl_engine, &cpat, &buf, params);
+        let lc_run = run(lc_engine, &cpat, &buf, params);
 
         if (fl_run.comp == 0) != (lc_run.comp == 0) {
             validity_skips += 1;
