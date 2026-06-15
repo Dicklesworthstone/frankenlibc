@@ -4369,8 +4369,9 @@ pub unsafe extern "C" fn log2p1(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2p1f(x: f32) -> f32 {
-    let r = unsafe { log1pf(x) };
-    r / std::f32::consts::LN_2
+    // glibc computes in double + rounds once; the f32 path (log1pf(x)/LN_2_f32)
+    // is ~2 ULP off. Routing through f64 log2p1 is byte-exact (0 ULP).
+    unsafe { log2p1(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2p1l(x: f64) -> f64 {
@@ -4403,8 +4404,9 @@ pub unsafe extern "C" fn log10p1(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10p1f(x: f32) -> f32 {
-    let r = unsafe { log1pf(x) };
-    r / std::f32::consts::LN_10
+    // Compute in double + round once, matching glibc (byte-exact); the f32 path
+    // (log1pf(x)/LN_10_f32) is ~2 ULP off.
+    unsafe { log10p1(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10p1l(x: f64) -> f64 {
@@ -4448,11 +4450,10 @@ pub unsafe extern "C" fn exp2m1(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2m1f(x: f32) -> f32 {
-    if x.abs() < 1.0 {
-        unsafe { expm1f(x * std::f32::consts::LN_2) }
-    } else {
-        unsafe { exp2f(x) - 1.0 }
-    }
+    // Compute in double + round once, matching glibc (byte-exact); the f32
+    // split path is ~2 ULP off. The f64 exp2m1 keeps the C23 overflow/underflow
+    // and clamping semantics.
+    unsafe { exp2m1(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2m1l(x: f64) -> f64 {
@@ -4491,11 +4492,9 @@ pub unsafe extern "C" fn exp10m1(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10m1f(x: f32) -> f32 {
-    if x.abs() < 0.5 {
-        unsafe { expm1f(x * std::f32::consts::LN_10) }
-    } else {
-        unsafe { exp10f(x) - 1.0 }
-    }
+    // Compute in double + round once, matching glibc (byte-exact); the f32
+    // split path is ~3 ULP off.
+    unsafe { exp10m1(x as f64) as f32 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10m1l(x: f64) -> f64 {
