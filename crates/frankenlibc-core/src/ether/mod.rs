@@ -100,28 +100,32 @@ pub fn format_ether_addr(addr: &EtherAddr, out: &mut [u8]) -> usize {
 /// `None` for lines that don't have both a parseable MAC and a
 /// non-empty hostname.
 pub fn parse_ether_line(line: &[u8]) -> Option<(EtherAddr, &[u8])> {
-    // Skip leading whitespace.
-    let s = trim_leading_ws(line);
-    if s.is_empty() {
+    // glibc's `ether_line` does NOT skip leading whitespace: the very first
+    // byte must begin the address, so a line like "  01:.. host" is rejected
+    // (verified against host glibc — leading-ws lines return -1).
+    if line.is_empty() {
         return None;
     }
     // MAC field ends at next whitespace.
-    let mac_end = s
+    let mac_end = line
         .iter()
         .position(|&b| b == b' ' || b == b'\t')
-        .unwrap_or(s.len());
-    if mac_end == 0 || mac_end >= s.len() {
+        .unwrap_or(line.len());
+    if mac_end == 0 || mac_end >= line.len() {
         return None;
     }
-    let addr = parse_ether_addr(&s[..mac_end])?;
+    let addr = parse_ether_addr(&line[..mac_end])?;
     // Skip whitespace before hostname.
-    let rest = &s[mac_end..];
+    let rest = &line[mac_end..];
     let host_start = rest.iter().position(|&b| b != b' ' && b != b'\t')?;
     let host_bytes = &rest[host_start..];
-    // Hostname ends at whitespace / newline / NUL.
+    // glibc terminates the hostname at the first '#' (inline comment),
+    // whitespace, or EOL byte, and rejects a missing/comment-only hostname.
     let host_len = host_bytes
         .iter()
-        .position(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' || b == 0)
+        .position(|&b| {
+            b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' || b == 0 || b == b'#'
+        })
         .unwrap_or(host_bytes.len());
     if host_len == 0 {
         return None;
@@ -137,14 +141,6 @@ fn parse_hex_nibble(byte: u8) -> Option<u8> {
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
-}
-
-fn trim_leading_ws(s: &[u8]) -> &[u8] {
-    let start = s
-        .iter()
-        .position(|&b| b != b' ' && b != b'\t')
-        .unwrap_or(s.len());
-    &s[start..]
 }
 
 #[cfg(test)]
@@ -296,10 +292,25 @@ mod tests {
     }
 
     #[test]
-    fn ether_line_with_leading_whitespace() {
-        let (addr, host) = parse_ether_line(b"   01:02:03:04:05:06   myhost").unwrap();
+    fn ether_line_rejects_leading_whitespace() {
+        // glibc's ether_line does not skip leading whitespace — the first byte
+        // must be a hex digit, so a leading-space line is rejected.
+        assert!(parse_ether_line(b"   01:02:03:04:05:06   myhost").is_none());
+        // Internal whitespace between MAC and host is still fine.
+        let (addr, host) = parse_ether_line(b"01:02:03:04:05:06   myhost").unwrap();
         assert_eq!(addr, [1, 2, 3, 4, 5, 6]);
         assert_eq!(host, b"myhost");
+    }
+
+    #[test]
+    fn ether_line_stops_hostname_at_comment() {
+        // glibc terminates the hostname at an inline '#' comment.
+        let (_, host) = parse_ether_line(b"01:02:03:04:05:06 host#comment").unwrap();
+        assert_eq!(host, b"host");
+        let (_, host) = parse_ether_line(b"01:02:03:04:05:06 host # spaced").unwrap();
+        assert_eq!(host, b"host");
+        // A comment-only "hostname" is rejected.
+        assert!(parse_ether_line(b"01:02:03:04:05:06 #onlycomment").is_none());
     }
 
     #[test]
