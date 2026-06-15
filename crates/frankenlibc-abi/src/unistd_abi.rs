@@ -25613,6 +25613,7 @@ pub unsafe extern "C" fn getnetent_r(
 unsafe fn fill_protoent_r(
     name: &[u8],
     proto: c_int,
+    aliases: &[Vec<u8>],
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
@@ -25624,23 +25625,13 @@ unsafe fn fill_protoent_r(
         return libc::EINVAL;
     }
 
-    // Need room for: name + NUL + aligned null-terminated alias pointer.
+    // Layout: name\0 alias strings\0.. <align> NULL-terminated ptr table.
     let effective_buflen = tracked_output_capacity(buf, buflen);
-    let alias_ptr_size = core::mem::size_of::<*mut c_char>();
-    let alias_ptr_align = core::mem::align_of::<*mut c_char>();
     let name_len = match name.len().checked_add(1) {
         Some(len) => len,
         None => return libc::ERANGE,
     };
-    let alias_offset = match aligned_output_offset(buf, name_len, alias_ptr_align) {
-        Some(offset) => offset,
-        None => return libc::ERANGE,
-    };
-    let needed = match alias_offset.checked_add(alias_ptr_size) {
-        Some(needed) => needed,
-        None => return libc::ERANGE,
-    };
-    if needed > effective_buflen {
+    if name_len > effective_buflen {
         return libc::ERANGE;
     }
 
@@ -25651,16 +25642,17 @@ unsafe fn fill_protoent_r(
         *buf_u8.add(name.len()) = 0;
     }
 
-    // Aliases: NULL-terminated list after p_name (just a single NULL ptr).
-    unsafe {
-        *(buf_u8.add(alias_offset) as *mut *mut c_char) = std::ptr::null_mut();
-    }
+    let aliases_ptr =
+        match unsafe { crate::inet_abi::pack_caller_aliases(buf, effective_buflen, name_len, aliases) } {
+            Some(p) => p,
+            None => return libc::ERANGE,
+        };
 
     // Fill struct protoent.
     let ent = result_buf.cast::<libc::protoent>();
     unsafe {
         (*ent).p_name = buf;
-        (*ent).p_aliases = buf_u8.add(alias_offset) as *mut *mut c_char;
+        (*ent).p_aliases = aliases_ptr;
         (*ent).p_proto = proto;
     }
 
@@ -25699,32 +25691,22 @@ pub unsafe extern "C" fn getprotobyname_r(
         Err(_) => return 0, // not found, result stays NULL (glibc behavior)
     };
 
-    for line in content.split(|&b| b == b'\n') {
-        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-            &line[..pos]
-        } else {
-            line
-        };
-        let mut fields = line
-            .split(|&b| b == b' ' || b == b'\t')
-            .filter(|f| !f.is_empty());
-        let pname = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        let pnum_str = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        if pname.eq_ignore_ascii_case(needle.as_slice())
-            && let Some(num) = std::str::from_utf8(pnum_str)
-                .ok()
-                .and_then(|s| s.parse::<c_int>().ok())
-        {
-            return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
-        }
+    // Use the shared parser so name+alias matching, the canonical name, and
+    // the alias list all agree with the non-reentrant getprotobyname.
+    match frankenlibc_core::resolv::lookup_protocol_by_name(&content, needle.as_slice()) {
+        Some(entry) => unsafe {
+            fill_protoent_r(
+                &entry.name,
+                entry.number,
+                &entry.aliases,
+                result_buf,
+                buf,
+                buflen,
+                result,
+            )
+        },
+        None => 0, // not found, result stays NULL (glibc behavior)
     }
-    0 // not found, result stays NULL (glibc behavior)
 }
 
 /// `getprotobynumber_r` — reentrant protocol lookup by number.
@@ -25754,32 +25736,20 @@ pub unsafe extern "C" fn getprotobynumber_r(
         Err(_) => return 0,
     };
 
-    for line in content.split(|&b| b == b'\n') {
-        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-            &line[..pos]
-        } else {
-            line
-        };
-        let mut fields = line
-            .split(|&b| b == b' ' || b == b'\t')
-            .filter(|f| !f.is_empty());
-        let pname = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        let pnum_str = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        if let Some(num) = std::str::from_utf8(pnum_str)
-            .ok()
-            .and_then(|s| s.parse::<c_int>().ok())
-            .filter(|&n| n == proto)
-        {
-            return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
-        }
+    match frankenlibc_core::resolv::lookup_protocol_by_number(&content, proto) {
+        Some(entry) => unsafe {
+            fill_protoent_r(
+                &entry.name,
+                entry.number,
+                &entry.aliases,
+                result_buf,
+                buf,
+                buflen,
+                result,
+            )
+        },
+        None => 0,
     }
-    0
 }
 
 /// `getprotoent_r` — reentrant sequential protocol entry read.
@@ -25845,7 +25815,10 @@ pub unsafe extern "C" fn getprotoent_r(
                 .ok()
                 .and_then(|s| s.parse::<c_int>().ok())
             {
-                return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
+                let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
+                return unsafe {
+                    fill_protoent_r(pname, num, &aliases, result_buf, buf, buflen, result)
+                };
             }
         }
     })
