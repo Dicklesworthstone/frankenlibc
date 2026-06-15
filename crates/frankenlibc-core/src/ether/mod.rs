@@ -19,10 +19,14 @@ pub const ETHER_ADDR_TEXT_LEN: usize = 17;
 
 /// Parse a textual Ethernet address.
 ///
-/// Accepts `xx:xx:xx:xx:xx:xx` with one or two hex digits per octet.
-/// Returns `None` if any octet is missing, malformed, or if there is
-/// trailing garbage after the sixth octet. Hex digits are
-/// case-insensitive.
+/// Accepts `xx:xx:xx:xx:xx:xx` with one or two hex digits per octet, matching
+/// glibc `ether_aton_r`. glibc stops once six octets are read and does NOT
+/// require the string to end there: after a two-hex-digit sixth octet any
+/// trailing content is ignored (`01:02:03:04:05:06:07` -> `…:06`), and after a
+/// single-digit sixth octet the next byte must be NUL or whitespace — otherwise
+/// glibc would have tried to read it as the second hex digit and failed
+/// (`…:6x` -> NULL, but `…:6 ` -> OK, `…:6a` -> `…:6a`). Returns `None` if any
+/// octet is missing or malformed. Hex digits are case-insensitive.
 pub fn parse_ether_addr(bytes: &[u8]) -> Option<EtherAddr> {
     let mut octets = [0u8; 6];
     let mut idx = 0usize;
@@ -33,11 +37,13 @@ pub fn parse_ether_addr(bytes: &[u8]) -> Option<EtherAddr> {
         let high = parse_hex_nibble(bytes[idx])?;
         idx += 1;
         let mut value = high;
+        let mut two_digits = false;
         if idx < bytes.len()
             && let Some(low) = parse_hex_nibble(bytes[idx])
         {
             value = (high << 4) | low;
             idx += 1;
+            two_digits = true;
         }
         *oct = value;
         if slot < 5 {
@@ -45,12 +51,23 @@ pub fn parse_ether_addr(bytes: &[u8]) -> Option<EtherAddr> {
                 return None;
             }
             idx += 1;
+        } else if !two_digits && idx < bytes.len() && !is_glibc_space(bytes[idx]) {
+            // Single-digit last octet followed by a non-whitespace byte: glibc
+            // (mis)reads that byte as the second hex digit and rejects it. A
+            // two-digit last octet, or a whitespace/end terminator, is accepted
+            // and any further trailing bytes are ignored.
+            return None;
         }
     }
-    if idx != bytes.len() {
-        return None;
-    }
     Some(octets)
+}
+
+/// glibc `isspace` set for ASCII: space plus the 0x09..=0x0D control whitespace
+/// (`\t \n \v \f \r`). Rust's `is_ascii_whitespace` omits `\v` (0x0B), which
+/// glibc accepts as an `ether_aton` terminator.
+#[inline]
+fn is_glibc_space(c: u8) -> bool {
+    c == b' ' || (0x09..=0x0D).contains(&c)
 }
 
 /// Format an Ethernet address into `out` using glibc's `ether_ntoa` form —
@@ -180,15 +197,34 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_too_many_octets() {
-        // Trailing ":xx" after the 6th octet is garbage.
-        assert!(parse_ether_addr(b"01:02:03:04:05:06:07").is_none());
+    fn parse_ignores_trailing_after_two_digit_last_octet() {
+        // glibc stops after six octets; a two-digit sixth octet ignores any
+        // trailing bytes, including a further ":07" or junk.
+        assert_eq!(
+            parse_ether_addr(b"01:02:03:04:05:06:07"),
+            Some([0x01, 0x02, 0x03, 0x04, 0x05, 0x06])
+        );
+        assert_eq!(
+            parse_ether_addr(b"01:02:03:04:05:06x"),
+            Some([0x01, 0x02, 0x03, 0x04, 0x05, 0x06])
+        );
+        // Whitespace terminator after the last octet (incl. \v, which glibc's
+        // isspace accepts but Rust's is_ascii_whitespace does not).
+        assert_eq!(
+            parse_ether_addr(b"1:2:3:4:5:6\n"),
+            Some([1, 2, 3, 4, 5, 6])
+        );
+        assert_eq!(parse_ether_addr(b"1:2:3:4:5:6\x0b"), Some([1, 2, 3, 4, 5, 6]));
+        // A hex byte after a single-digit last octet is read as the 2nd digit.
+        assert_eq!(parse_ether_addr(b"1:2:3:4:5:6a"), Some([1, 2, 3, 4, 5, 0x6a]));
     }
 
     #[test]
-    fn parse_rejects_trailing_garbage() {
-        assert!(parse_ether_addr(b"01:02:03:04:05:06x").is_none());
-        assert!(parse_ether_addr(b"01:02:03:04:05:06\n").is_none());
+    fn parse_rejects_single_digit_last_octet_with_nonspace_junk() {
+        // Single-digit last octet followed by a non-hex, non-whitespace byte:
+        // glibc tries to read it as the second hex digit and fails.
+        assert!(parse_ether_addr(b"1:2:3:4:5:6x").is_none());
+        assert!(parse_ether_addr(b"1:2:3:4:5:6:").is_none());
     }
 
     #[test]
