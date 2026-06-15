@@ -293,38 +293,70 @@ pub fn parse_networks_line(line: &[u8]) -> Option<NetworkEntry> {
     })
 }
 
-/// Parse a /etc/networks number field.
+/// Parse a /etc/networks number field, matching glibc's `inet_network`.
 ///
-/// Accepts either a plain unsigned decimal or partial dotted-quad.
-/// Returns `None` if any octet exceeds 255 or non-numeric content
-/// appears.
+/// glibc's `nss_files` parser feeds the number token to `inet_network`,
+/// so this must reproduce its exact semantics — NOT the left-padded
+/// dotted-quad behavior of `inet_aton`:
+///
+/// * Each `.`-separated component is parsed in base-16 (`0x` prefix),
+///   base-8 (leading `0`), or base-10, and must be `<= 0xff`.
+/// * The result is right-aligned: components are folded
+///   `result = (result << 8) | component` in order, so a single token
+///   `127` yields `0x0000_007f` (not `0x7f00_0000`) and `127.0` yields
+///   `0x0000_7f00`.
+/// * At most four components are allowed; empty components (e.g. a
+///   trailing `.`) and out-of-range values reject the whole field.
 pub fn parse_network_number(s: &str) -> Option<u32> {
     if s.is_empty() {
         return None;
     }
-    if !s.contains('.') {
-        return parse_ascii_decimal_u32(s);
-    }
-    let mut octets = [0u32; 4];
+    let mut result: u32 = 0;
     let mut count = 0usize;
     for part in s.split('.') {
         if count >= 4 {
             return None;
         }
-        let v = parse_ascii_decimal_u32(part)?;
-        if v > 255 {
-            return None;
-        }
-        octets[count] = v;
+        let v = parse_network_component(part)?;
+        result = (result << 8) | v;
         count += 1;
     }
-    Some(match count {
-        1 => octets[0] << 24,
-        2 => (octets[0] << 24) | (octets[1] << 16),
-        3 => (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8),
-        4 => (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3],
-        _ => return None,
-    })
+    Some(result)
+}
+
+/// Parse one `inet_network` component: base-16/8/10 with a `<= 0xff` cap.
+fn parse_network_component(part: &str) -> Option<u32> {
+    let b = part.as_bytes();
+    if b.is_empty() {
+        return None;
+    }
+    let (radix, digits): (u32, &[u8]) = if b.len() >= 2 && b[0] == b'0' && (b[1] | 0x20) == b'x' {
+        (16, &b[2..])
+    } else if b.len() > 1 && b[0] == b'0' {
+        (8, &b[1..])
+    } else {
+        (10, b)
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut value: u32 = 0;
+    for &c in digits {
+        let digit = match c {
+            b'0'..=b'9' => (c - b'0') as u32,
+            b'a'..=b'f' => (c - b'a' + 10) as u32,
+            b'A'..=b'F' => (c - b'A' + 10) as u32,
+            _ => return None,
+        };
+        if digit >= radix {
+            return None;
+        }
+        value = value.checked_mul(radix)?.checked_add(digit)?;
+        if value > 0xff {
+            return None;
+        }
+    }
+    Some(value)
 }
 
 fn parse_ascii_decimal_u32(s: &str) -> Option<u32> {
@@ -1885,7 +1917,13 @@ mod tests {
     fn netnum_plain_decimal() {
         assert_eq!(parse_network_number("0"), Some(0));
         assert_eq!(parse_network_number("42"), Some(42));
-        assert_eq!(parse_network_number("4294967295"), Some(u32::MAX));
+        // A single component is capped at 0xff, exactly like glibc's
+        // inet_network("4294967295") -> INADDR_NONE.
+        assert_eq!(parse_network_number("4294967295"), None);
+        assert_eq!(parse_network_number("256"), None);
+        // Base detection: leading 0 is octal, 0x is hex.
+        assert_eq!(parse_network_number("0177"), Some(0x7f));
+        assert_eq!(parse_network_number("0x7f"), Some(0x7f));
     }
 
     #[test]
@@ -1896,14 +1934,14 @@ mod tests {
 
     #[test]
     fn netnum_dotted_two_octet() {
-        // 10.1 -> (10<<24)|(1<<16) = 0x0a010000
-        assert_eq!(parse_network_number("10.1"), Some(0x0a01_0000));
+        // inet_network is right-aligned: 10.1 -> (10<<8)|1 = 0x0a01.
+        assert_eq!(parse_network_number("10.1"), Some(0x0a01));
     }
 
     #[test]
     fn netnum_dotted_three_octet() {
-        // 192.168.1 -> (192<<24)|(168<<16)|(1<<8) = 0xc0a80100
-        assert_eq!(parse_network_number("192.168.1"), Some(0xc0a8_0100));
+        // 192.168.1 -> (192<<16)|(168<<8)|1 = 0x00c0_a801.
+        assert_eq!(parse_network_number("192.168.1"), Some(0x00c0_a801));
     }
 
     #[test]
@@ -1968,9 +2006,10 @@ mod tests {
 
     #[test]
     fn network_with_dotted_quad() {
+        // inet_network("169.254") is right-aligned -> (169<<8)|254 = 0xa9fe.
         let e = parse_networks_line(b"link-local 169.254").unwrap();
         assert_eq!(e.name, b"link-local");
-        assert_eq!(e.number, (169u32 << 24) | (254 << 16));
+        assert_eq!(e.number, (169u32 << 8) | 254);
     }
 
     #[test]
