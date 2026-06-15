@@ -14711,32 +14711,46 @@ fn with_getpass_buf<R>(callback: impl FnOnce(&mut [c_char; GETPASS_MAX]) -> R) -
     }
 }
 
-/// POSIX `getpass` — read a password from /dev/tty with echo disabled.
+/// POSIX `getpass` — read a password with terminal echo disabled.
+///
+/// Prefers `/dev/tty` (read input from and write the prompt to the controlling
+/// terminal). When `/dev/tty` cannot be opened — daemons, cron, `setsid`,
+/// containers with no controlling terminal — glibc does NOT fail: it falls back
+/// to reading from stdin (fd 0) and writing the prompt to stderr (fd 2), with no
+/// echo toggle (the `tcgetattr` simply fails on a non-tty). fl now mirrors that
+/// fallback instead of returning NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
     let tty = b"/dev/tty\0";
-    let fd = match unsafe { syscall::sys_open(tty.as_ptr(), libc::O_RDWR | libc::O_NOCTTY, 0) } {
-        Ok(fd) => fd,
-        Err(_) => return std::ptr::null_mut(),
-    };
+    // (in_fd, out_fd, owns_fd): own a freshly-opened /dev/tty, else borrow the
+    // stdin/stderr fds (which must NOT be closed here).
+    let (in_fd, out_fd, owns_fd) =
+        match unsafe { syscall::sys_open(tty.as_ptr(), libc::O_RDWR | libc::O_NOCTTY, 0) } {
+            Ok(fd) => (fd, fd, true),
+            Err(_) => (0, 2, false),
+        };
 
-    // Write prompt
+    // Write prompt to the output channel.
     if !prompt.is_null() {
         let Some(prompt_bytes) = (unsafe { read_c_string_bytes(prompt) }) else {
             unsafe { set_abi_errno(libc::EINVAL) };
-            let _ = syscall::sys_close(fd);
+            if owns_fd {
+                let _ = syscall::sys_close(in_fd);
+            }
             return std::ptr::null_mut();
         };
-        let _ = unsafe { syscall::sys_write(fd, prompt_bytes.as_ptr(), prompt_bytes.len()) };
+        let _ = unsafe { syscall::sys_write(out_fd, prompt_bytes.as_ptr(), prompt_bytes.len()) };
     }
 
-    // Disable echo via ioctl (TCGETS=0x5401, TCSETS=0x5402)
+    // Disable echo via ioctl (TCGETS=0x5401, TCSETS=0x5402) on the INPUT fd.
+    // On the stdin fallback this tcgetattr fails on a non-tty, so echo handling
+    // is skipped entirely — matching glibc.
     const TCGETS: usize = 0x5401;
     const TCSETS: usize = 0x5402;
     const ECHO_FLAG: u32 = 0o10; // ECHO in termios c_lflag
     let mut termios_buf = [0u8; 60]; // struct termios size on Linux
     let saved_ok =
-        unsafe { syscall::sys_ioctl(fd, TCGETS, termios_buf.as_mut_ptr() as usize) }.is_ok();
+        unsafe { syscall::sys_ioctl(in_fd, TCGETS, termios_buf.as_mut_ptr() as usize) }.is_ok();
 
     if saved_ok {
         let mut modified = termios_buf;
@@ -14749,15 +14763,15 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
         );
         let new_lflag = lflag & !ECHO_FLAG;
         modified[lflag_offset..lflag_offset + 4].copy_from_slice(&new_lflag.to_ne_bytes());
-        let _ = unsafe { syscall::sys_ioctl(fd, TCSETS, modified.as_ptr() as usize) };
+        let _ = unsafe { syscall::sys_ioctl(in_fd, TCSETS, modified.as_ptr() as usize) };
     }
 
-    // Read password
+    // Read password from the input channel.
     let result = with_getpass_buf(|buf| {
         let mut pos = 0usize;
         loop {
             let mut ch = 0u8;
-            let n = match unsafe { syscall::sys_read(fd, &mut ch as *mut u8, 1) } {
+            let n = match unsafe { syscall::sys_read(in_fd, &mut ch as *mut u8, 1) } {
                 Ok(n) => n as isize,
                 Err(_) => -1,
             };
@@ -14773,14 +14787,17 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
         buf.as_mut_ptr()
     });
 
-    // Restore terminal settings
+    // Restore terminal settings + emit the swallowed newline only when echo was
+    // actually disabled (i.e. a real tty). On the stdin fallback glibc writes no
+    // trailing newline.
     if saved_ok {
-        let _ = unsafe { syscall::sys_ioctl(fd, TCSETS, termios_buf.as_ptr() as usize) };
-        // Print newline since echo was off
-        let _ = unsafe { syscall::sys_write(fd, b"\n".as_ptr(), 1) };
+        let _ = unsafe { syscall::sys_ioctl(in_fd, TCSETS, termios_buf.as_ptr() as usize) };
+        let _ = unsafe { syscall::sys_write(out_fd, b"\n".as_ptr(), 1) };
     }
 
-    let _ = syscall::sys_close(fd);
+    if owns_fd {
+        let _ = syscall::sys_close(in_fd);
+    }
     result
 }
 
