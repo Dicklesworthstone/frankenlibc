@@ -25,6 +25,14 @@ pub fn memcpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 ///
 /// Returns the number of bytes actually copied.
 pub fn memmove(dest: &mut [u8], src: &[u8], n: usize) -> usize {
+    if n == MEMMOVE_EXACT_4096_BYTES
+        && dest.len() == MEMMOVE_EXACT_4096_BYTES
+        && src.len() == MEMMOVE_EXACT_4096_BYTES
+    {
+        dest.copy_from_slice(src);
+        return MEMMOVE_EXACT_4096_BYTES;
+    }
+
     let count = n.min(dest.len()).min(src.len());
     if count == MEMMOVE_EXACT_4096_BYTES && copy_exact_4096_array(dest, src) {
         return count;
@@ -963,6 +971,29 @@ mod tests {
         assert_eq!(
             digest, "92ae7e54d1615da62e9a7750fdcd6280b788ce3e85e0bd993fca3d7e3b2747dc",
             "memmove exact-4096 golden changed"
+        );
+    }
+
+    #[test]
+    fn memmove_exact_4096_full_slice_preserves_payload() {
+        use sha2::{Digest, Sha256};
+
+        let src: Vec<u8> = (0..MEMMOVE_EXACT_4096_BYTES)
+            .map(|i| ((i * 37 + 11) & 0xff) as u8)
+            .collect();
+        let mut dest = [0u8; MEMMOVE_EXACT_4096_BYTES];
+
+        let copied = memmove(&mut dest, &src, MEMMOVE_EXACT_4096_BYTES);
+        assert_eq!(copied, MEMMOVE_EXACT_4096_BYTES);
+        assert_eq!(&dest[..], &src[..]);
+
+        let digest: String = Sha256::digest(dest)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "4e441a3533bb2c10cd5649981d395744213e09a336746b5a3458fee4057205ec",
+            "memmove exact full-slice golden changed"
         );
     }
 
