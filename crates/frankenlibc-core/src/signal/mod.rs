@@ -31,6 +31,16 @@ pub fn valid_signal(signum: i32) -> bool {
     (1..=MAX_SIGNAL).contains(&signum)
 }
 
+/// Signals glibc reserves for its own threading internals (SIGCANCEL = 32,
+/// SIGSETXID = 33), which is why the first usable real-time signal `SIGRTMIN`
+/// is 34. glibc's `sigaddset`/`sigdelset` reject these with EINVAL, while
+/// `sigfillset` leaves their bits clear. (`sigismember` does NOT reject them —
+/// it just reports 0, since the bit is never legitimately set.)
+#[inline]
+pub fn glibc_reserved_signal(signum: i32) -> bool {
+    signum == 32 || signum == 33
+}
+
 /// Returns `true` if `signum` can have a user-defined handler installed.
 ///
 /// SIGKILL and SIGSTOP cannot be caught, blocked, or ignored.

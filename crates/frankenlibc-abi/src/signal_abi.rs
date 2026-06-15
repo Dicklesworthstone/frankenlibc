@@ -983,9 +983,13 @@ pub unsafe extern "C" fn sigfillset(set: *mut libc::sigset_t) -> c_int {
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
-    // Set all bits in the sigset_t structure.
+    // Set all bits in the sigset_t structure, then clear the two signals glibc
+    // reserves internally (32 = SIGCANCEL -> bit 31, 33 = SIGSETXID -> bit 32 of
+    // word 0), matching glibc's sigfillset (word[0] == 0xfffffffe7fffffff).
     unsafe {
         std::ptr::write_bytes(set as *mut u8, 0xFF, std::mem::size_of::<libc::sigset_t>());
+        let words = set as *mut libc::c_ulong;
+        *words &= !((1u64 << 31) | (1u64 << 32)) as libc::c_ulong;
     }
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
     0
@@ -1011,7 +1015,12 @@ pub unsafe extern "C" fn sigaddset(set: *mut libc::sigset_t, signum: c_int) -> c
         return -1;
     }
 
-    if set.is_null() || !signal_core::valid_signal(signum) {
+    // glibc rejects out-of-range signals AND the two reserved internal signals
+    // 32/33 (SIGCANCEL/SIGSETXID) with EINVAL.
+    if set.is_null()
+        || !signal_core::valid_signal(signum)
+        || signal_core::glibc_reserved_signal(signum)
+    {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
@@ -1048,7 +1057,12 @@ pub unsafe extern "C" fn sigdelset(set: *mut libc::sigset_t, signum: c_int) -> c
         return -1;
     }
 
-    if set.is_null() || !signal_core::valid_signal(signum) {
+    // glibc rejects out-of-range signals AND the two reserved internal signals
+    // 32/33 (SIGCANCEL/SIGSETXID) with EINVAL.
+    if set.is_null()
+        || !signal_core::valid_signal(signum)
+        || signal_core::glibc_reserved_signal(signum)
+    {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
