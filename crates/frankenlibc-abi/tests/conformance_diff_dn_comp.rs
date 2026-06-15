@@ -49,6 +49,71 @@ fn build(dn_comp: DnCompFn, names: &[&str]) -> (Vec<u8>, Vec<c_int>) {
     (msg[..off].to_vec(), rets)
 }
 
+type NsCompressFn =
+    unsafe extern "C" fn(*const c_char, *mut u8, usize, *mut *const u8, *mut *const u8) -> c_int;
+
+/// Same as `build`, but drives ns_name_compress (presentation src, size_t
+/// dstsiz, const-element dnptrs array).
+fn build_compress(f: NsCompressFn, names: &[&str]) -> (Vec<u8>, Vec<c_int>) {
+    let mut msg = vec![0u8; 8192];
+    let base = msg.as_mut_ptr();
+    const NPTR: usize = 64;
+    let mut dnptrs = [std::ptr::null::<u8>(); NPTR];
+    dnptrs[0] = base; // origin
+    dnptrs[1] = std::ptr::null();
+    let lastdnptr = unsafe { dnptrs.as_mut_ptr().add(NPTR) };
+
+    let mut off = 0usize;
+    let mut rets = Vec::new();
+    for name in names {
+        let cn = CString::new(*name).unwrap();
+        let dst = unsafe { base.add(off) };
+        let avail = msg.len() - off;
+        let r = unsafe { f(cn.as_ptr(), dst, avail, dnptrs.as_mut_ptr(), lastdnptr) };
+        rets.push(r);
+        if r > 0 {
+            off += r as usize;
+        } else {
+            break;
+        }
+    }
+    (msg[..off].to_vec(), rets)
+}
+
+#[test]
+fn ns_name_compress_matches_glibc() {
+    let g: NsCompressFn = unsafe {
+        let lib = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
+        assert!(!lib.is_null(), "dlopen libc.so.6 failed");
+        let s = dlsym(lib, c"ns_name_compress".as_ptr());
+        assert!(!s.is_null(), "dlsym ns_name_compress failed");
+        std::mem::transmute::<*mut c_void, NsCompressFn>(s)
+    };
+    // fl's ns_name_compress has ABI-identical (c_void-typed) parameters.
+    let f: NsCompressFn = unsafe {
+        std::mem::transmute::<_, NsCompressFn>(
+            frankenlibc_abi::glibc_internal_abi::ns_name_compress
+                as unsafe extern "C" fn(*const c_char, *mut c_void, usize, *mut *const c_void, *mut *const c_void) -> c_int,
+        )
+    };
+
+    let seqs: &[&[&str]] = &[
+        &["www.example.com", "mail.example.com", "example.com"],
+        &["a.b.c", "x.b.c", "b.c"],
+        &["one.com", "two.org", "three.net"],
+        &["Example.COM", "x.example.com"],
+    ];
+    let mut mismatches = Vec::new();
+    for (i, seq) in seqs.iter().enumerate() {
+        let (gm, gr) = build_compress(g, seq);
+        let (fm, fr) = build_compress(f, seq);
+        if gr != fr || gm != fm {
+            mismatches.push(format!("seq#{i} {seq:?}: rets g={gr:?} f={fr:?}\n g={gm:02x?}\n f={fm:02x?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "ns_name_compress diverged:\n{}", mismatches.join("\n"));
+}
+
 #[test]
 fn dn_comp_matches_glibc() {
     let g: DnCompFn = unsafe {
