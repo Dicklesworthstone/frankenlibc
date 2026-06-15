@@ -6045,7 +6045,9 @@ pub unsafe extern "C" fn dfmal(x: f64, y: f64, z: f64) -> f64 {
 // Type-generic narrowing operations
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32addf32x(x: f64, y: f64) -> f32 {
-    (x + y) as f32
+    // _Float32x is `double` on x86_64, so this equals f32addf64/fadd; route
+    // through fadd for correct single rounding.
+    unsafe { fadd(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32addf64(x: f64, y: f64) -> f32 {
@@ -6091,7 +6093,7 @@ pub unsafe extern "C" fn f64xaddf128(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32divf32x(x: f64, y: f64) -> f32 {
-    (x / y) as f32
+    unsafe { fdiv(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32divf64(x: f64, y: f64) -> f32 {
@@ -6132,7 +6134,7 @@ pub unsafe extern "C" fn f64xdivf128(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32mulf32x(x: f64, y: f64) -> f32 {
-    (x * y) as f32
+    unsafe { fmul(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32mulf64(x: f64, y: f64) -> f32 {
@@ -6173,8 +6175,7 @@ pub unsafe extern "C" fn f64xmulf128(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32sqrtf32x(x: f64) -> f32 {
-    let r = unsafe { sqrt(x) };
-    r as f32
+    unsafe { fsqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32sqrtf64(x: f64) -> f32 {
@@ -6215,7 +6216,7 @@ pub unsafe extern "C" fn f64xsqrtf128(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32subf32x(x: f64, y: f64) -> f32 {
-    (x - y) as f32
+    unsafe { fsub(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32subf64(x: f64, y: f64) -> f32 {
@@ -6256,8 +6257,7 @@ pub unsafe extern "C" fn f64xsubf128(x: f64, y: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32fmaf32x(x: f64, y: f64, z: f64) -> f32 {
-    let r = unsafe { fma(x, y, z) };
-    r as f32
+    unsafe { ffma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32fmaf64(x: f64, y: f64, z: f64) -> f32 {

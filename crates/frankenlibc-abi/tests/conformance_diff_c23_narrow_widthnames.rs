@@ -117,6 +117,46 @@ fn c23_narrow_widthnames_match_glibc() {
     );
 }
 
+/// _Float32x is `double` on x86_64, so the f32*f32x narrowing spellings are
+/// exactly the f64-source operation and ARE comparable against glibc (no
+/// extended-precision limitation). They must be byte-exact, not double-rounded.
+#[test]
+fn widthnames_f32x_match_glibc() {
+    let h = unsafe { dlopen(c"libm.so.6".as_ptr(), RTLD_NOW) };
+    assert!(!h.is_null(), "dlopen libm.so.6 failed");
+    let g_add: B = unsafe { s(h, c"f32addf32x") };
+    let g_sub: B = unsafe { s(h, c"f32subf32x") };
+    let g_mul: B = unsafe { s(h, c"f32mulf32x") };
+    let g_div: B = unsafe { s(h, c"f32divf32x") };
+    let g_sqrt: U = unsafe { s(h, c"f32sqrtf32x") };
+    let g_fma: T = unsafe { s(h, c"f32fmaf32x") };
+
+    let mut bad: Vec<String> = Vec::new();
+    let mut r = Rng(0x0bad_c0ffee_u64.wrapping_mul(2654435761));
+    for _ in 0..1_500_000 {
+        let a = r.f64();
+        let b = r.f64();
+        let c = r.f64();
+        macro_rules! ck2 {
+            ($ok:expr, $m:expr) => {
+                if !$ok {
+                    bad.push($m);
+                }
+            };
+        }
+        ck2!(eqb(unsafe { fl::f32addf32x(a, b) }, g_add(a, b)), format!("add32x({a:e},{b:e})"));
+        ck2!(eqb(unsafe { fl::f32subf32x(a, b) }, g_sub(a, b)), format!("sub32x({a:e},{b:e})"));
+        ck2!(eqb(unsafe { fl::f32mulf32x(a, b) }, g_mul(a, b)), format!("mul32x({a:e},{b:e})"));
+        ck2!(eqb(unsafe { fl::f32divf32x(a, b) }, g_div(a, b)), format!("div32x({a:e},{b:e})"));
+        ck2!(eqb(unsafe { fl::f32sqrtf32x(a.abs()) }, g_sqrt(a.abs())), format!("sqrt32x({a:e})"));
+        ck2!(eqb(unsafe { fl::f32fmaf32x(a, b, c) }, g_fma(a, b, c)), format!("fma32x({a:e},{b:e},{c:e})"));
+        if !bad.is_empty() {
+            break;
+        }
+    }
+    assert!(bad.is_empty(), "f32x narrowing diverged from glibc; first: {}", bad.first().map(String::as_str).unwrap_or(""));
+}
+
 /// The `_FromType` = f64x / f128 spellings narrow from types fl represents as
 /// f64, so they are the SAME operation as the f64-source spellings and must
 /// produce identical results (no double-rounding). glibc cannot be used as the
