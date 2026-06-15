@@ -1700,10 +1700,31 @@ pub unsafe extern "C" fn ns_name_skip(ptrptr: *mut *const c_void, eom: *const c_
     }
 }
 
+/// True if a presentation DNS name is fully qualified — i.e. it ends with an
+/// UNESCAPED trailing dot (the root label). This is what glibc/BIND
+/// `ns_name_pton` reports via its 0/1 return value: `"a.b."` → true,
+/// `"a.b"` → false, `"."` → true, `""` → false, and an escaped trailing dot
+/// such as `"x\\."` → false (the `.` is a literal label byte, not a separator).
+fn dns_name_fully_qualified(name: &[u8]) -> bool {
+    if name.last() != Some(&b'.') {
+        return false;
+    }
+    // Count consecutive backslashes immediately preceding the trailing '.'.
+    // An even count means the '.' is unescaped (a real root separator).
+    let mut backslashes = 0usize;
+    let mut i = name.len() - 1;
+    while i > 0 && name[i - 1] == b'\\' {
+        backslashes += 1;
+        i -= 1;
+    }
+    backslashes % 2 == 0
+}
+
 /// `ns_name_ntop` — convert uncompressed wire-format labels to dotted text (RFC 1035).
 ///
 /// Walks length-prefixed labels, emits "label1.label2." with escaping for
-/// special characters. Returns number of chars written (excluding NUL), or -1.
+/// special characters. Returns the number of bytes written INCLUDING the NUL
+/// terminator (matching glibc/BIND `ns_name_ntop`), or -1.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_name_ntop(
     src: *const c_void,
@@ -1725,7 +1746,9 @@ pub unsafe extern "C" fn ns_name_ntop(
     let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
     let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_ntop(wire, out) {
-        Ok(n) => n as c_int,
+        // glibc/BIND returns the byte count INCLUDING the NUL terminator;
+        // core name_ntop reports the string length (NUL index), so add 1.
+        Ok(n) => (n + 1) as c_int,
         Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
             -1
@@ -1737,8 +1760,10 @@ pub unsafe extern "C" fn ns_name_ntop(
 /// `ns_name_pton` — convert dotted text to uncompressed wire-format labels (RFC 1035).
 ///
 /// Thin shim over `frankenlibc_core::resolv::dns_name::name_pton`.
-/// Returns -1 on error (with errno set to EMSGSIZE for buffer-too-small,
-/// EINVAL for malformed input), number of bytes written on success.
+/// Matches glibc/BIND `ns_name_pton`: returns -1 on error (errno EMSGSIZE for
+/// buffer-too-small, EINVAL for malformed input), `1` if the name was fully
+/// qualified (unescaped trailing dot), `0` otherwise. The wire bytes are
+/// written to `dst` in both success cases.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_name_pton(
     src: *const c_char,
@@ -1755,7 +1780,10 @@ pub unsafe extern "C" fn ns_name_pton(
     let effective_dstsiz = effective_output_len(dst, dstsiz);
     let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_pton(&name_bytes, out) {
-        Ok(n) => n as c_int,
+        // glibc/BIND ns_name_pton returns 1 for a fully-qualified name (the
+        // input ended in an unescaped root dot) and 0 otherwise — NOT the
+        // wire byte count.
+        Ok(_) => i32::from(dns_name_fully_qualified(&name_bytes)),
         Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
             -1
@@ -8499,7 +8527,8 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
     let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
     let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_ntop(wire, out) {
-        Ok(n) => n as c_int,
+        // glibc returns the byte count INCLUDING the NUL terminator.
+        Ok(n) => (n + 1) as c_int,
         Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
             -1
@@ -8530,13 +8559,10 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
     let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
     let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_pton(&name_bytes, out) {
-        Ok(_) => {
-            if name_bytes.last() == Some(&b'.') {
-                1
-            } else {
-                0
-            }
-        }
+        // 1 = fully qualified (unescaped trailing dot), 0 = not. An escaped
+        // trailing dot (e.g. "x\\.") is a literal label byte, not a root
+        // separator, so it reports 0.
+        Ok(_) => i32::from(dns_name_fully_qualified(&name_bytes)),
         Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
             -1

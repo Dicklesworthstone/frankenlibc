@@ -847,14 +847,20 @@ fn ns_name_pton_encodes_domain_to_wire() {
     let name = CString::new("example.com").unwrap();
     let mut buf = [0u8; 64];
     let ret = unsafe { ns_name_pton(name.as_ptr(), buf.as_mut_ptr() as *mut _, buf.len()) };
-    assert!(ret > 0, "ns_name_pton returned {ret}");
+    // glibc/BIND ns_name_pton returns 0 (not fully qualified: no trailing dot)
+    // or 1 (fully qualified) — NOT the wire byte count.
+    assert_eq!(ret, 0, "ns_name_pton(\"example.com\") should report not-FQDN");
     // Expected wire: \x07example\x03com\x00
     assert_eq!(buf[0], 7); // "example" length
     assert_eq!(&buf[1..8], b"example");
     assert_eq!(buf[8], 3); // "com" length
     assert_eq!(&buf[9..12], b"com");
     assert_eq!(buf[12], 0); // root terminator
-    assert_eq!(ret, 13);
+    // A fully-qualified name (trailing dot) reports 1.
+    let fq = CString::new("example.com.").unwrap();
+    let mut fqbuf = [0u8; 64];
+    let fqret = unsafe { ns_name_pton(fq.as_ptr(), fqbuf.as_mut_ptr() as *mut _, fqbuf.len()) };
+    assert_eq!(fqret, 1, "ns_name_pton(\"example.com.\") should report FQDN");
 }
 
 #[test]
@@ -981,9 +987,11 @@ fn resolver_wire_input_functions_bound_tracked_names() {
         *root = 0;
 
         let mut text = [0u8; 8];
+        // glibc ns_name_ntop returns the byte count INCLUDING the NUL: root
+        // renders "." (1 char) + NUL => 2.
         assert_eq!(
             ns_name_ntop(root.cast(), text.as_mut_ptr().cast(), text.len()),
-            1
+            2
         );
         let rendered = std::ffi::CStr::from_ptr(text.as_ptr().cast());
         assert_eq!(rendered.to_bytes(), b".");
@@ -991,7 +999,7 @@ fn resolver_wire_input_functions_bound_tracked_names() {
         let mut internal_text = [0u8; 8];
         assert_eq!(
             __ns_name_ntop(root, internal_text.as_mut_ptr().cast(), internal_text.len()),
-            1
+            2
         );
         let rendered = std::ffi::CStr::from_ptr(internal_text.as_ptr().cast());
         assert_eq!(rendered.to_bytes(), b".");
@@ -1104,8 +1112,10 @@ fn ns_name_ntop_null_returns_error() {
 fn ns_name_pton_ntop_roundtrip() {
     let name = CString::new("sub.example.org").unwrap();
     let mut wire = [0u8; 64];
-    let wire_len = unsafe { ns_name_pton(name.as_ptr(), wire.as_mut_ptr() as *mut _, wire.len()) };
-    assert!(wire_len > 0);
+    // ns_name_pton returns the FQDN flag, not a length: "sub.example.org" has
+    // no trailing dot, so it reports 0 (not fully qualified).
+    let fq = unsafe { ns_name_pton(name.as_ptr(), wire.as_mut_ptr() as *mut _, wire.len()) };
+    assert_eq!(fq, 0);
 
     let mut text = [0u8; 256];
     let text_len = unsafe {
