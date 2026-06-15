@@ -26,10 +26,28 @@ pub fn memcpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 /// Returns the number of bytes actually copied.
 pub fn memmove(dest: &mut [u8], src: &[u8], n: usize) -> usize {
     let count = n.min(dest.len()).min(src.len());
+    if count == MEMMOVE_EXACT_4096_BYTES && copy_exact_4096_array(dest, src) {
+        return count;
+    }
     // In safe Rust with separate slices, copy_from_slice is fine.
     // For true overlapping (same buffer), callers should use slice::copy_within.
     dest[..count].copy_from_slice(&src[..count]);
     count
+}
+
+#[inline(always)]
+fn copy_exact_4096_array(dest: &mut [u8], src: &[u8]) -> bool {
+    let Ok(dst) =
+        <&mut [u8; MEMMOVE_EXACT_4096_BYTES]>::try_from(&mut dest[..MEMMOVE_EXACT_4096_BYTES])
+    else {
+        return false;
+    };
+    let Ok(src) = <&[u8; MEMMOVE_EXACT_4096_BYTES]>::try_from(&src[..MEMMOVE_EXACT_4096_BYTES])
+    else {
+        return false;
+    };
+    *dst = *src;
+    true
 }
 
 /// Fills the first `n` bytes of `dest` with the byte `value`.
@@ -200,6 +218,7 @@ const MEMCMP_WIDE_LANES: usize = 64;
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
 const MEMCMP_EXACT_256_BYTES: usize = SIMD_FOLD_BYTES * 2;
+const MEMMOVE_EXACT_4096_BYTES: usize = 4096;
 const MEMCHR_WIDE_LANES: usize = 64;
 const MEMCHR_FOLD_PANELS: usize = 8;
 const MEMCHR_FOLD_BYTES: usize = SIMD_LANES * MEMCHR_FOLD_PANELS;
@@ -896,6 +915,30 @@ mod tests {
         let n = memcpy(&mut dest, src, 5);
         assert_eq!(n, 5);
         assert_eq!(&dest, b"hello");
+    }
+
+    #[test]
+    fn memmove_exact_4096_array_copy_preserves_prefix_contract() {
+        use sha2::{Digest, Sha256};
+
+        let src: Vec<u8> = (0..MEMMOVE_EXACT_4096_BYTES)
+            .map(|i| ((i * 37 + 11) & 0xff) as u8)
+            .collect();
+        let mut dest = [0x5au8; MEMMOVE_EXACT_4096_BYTES + 8];
+
+        let copied = memmove(&mut dest, &src, MEMMOVE_EXACT_4096_BYTES);
+        assert_eq!(copied, MEMMOVE_EXACT_4096_BYTES);
+        assert_eq!(&dest[..MEMMOVE_EXACT_4096_BYTES], &src[..]);
+        assert_eq!(&dest[MEMMOVE_EXACT_4096_BYTES..], &[0x5au8; 8]);
+
+        let digest: String = Sha256::digest(dest)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            digest, "92ae7e54d1615da62e9a7750fdcd6280b788ce3e85e0bd993fca3d7e3b2747dc",
+            "memmove exact-4096 golden changed"
+        );
     }
 
     #[test]
