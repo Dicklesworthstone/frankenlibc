@@ -1132,17 +1132,18 @@ unsafe fn pack_gshadow_into_buf(entry: &Gshadow, buf: *mut u8, buflen: usize) ->
 
     let sgrp_size = core::mem::size_of::<Sgrp>();
 
-    // Split comma-separated lists.
-    let adm_list: Vec<&[u8]> = if entry.sg_adm.is_empty() {
-        vec![]
-    } else {
-        entry.sg_adm.split(|&b| b == b',').collect()
-    };
-    let mem_list: Vec<&[u8]> = if entry.sg_mem.is_empty() {
-        vec![]
-    } else {
-        entry.sg_mem.split(|&b| b == b',').collect()
-    };
+    // Split comma-separated lists, dropping empty tokens — glibc never yields an
+    // empty admin/member name, so trailing/leading/doubled commas collapse away.
+    let adm_list: Vec<&[u8]> = entry
+        .sg_adm
+        .split(|&b| b == b',')
+        .filter(|m| !m.is_empty())
+        .collect();
+    let mem_list: Vec<&[u8]> = entry
+        .sg_mem
+        .split(|&b| b == b',')
+        .filter(|m| !m.is_empty())
+        .collect();
 
     // Calculate total space needed.
     // Pointer arrays need alignment, so account for worst-case padding.

@@ -29,20 +29,28 @@ pub fn parse_gshadow_line(line: &[u8]) -> Option<Gshadow> {
     }
 
     let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
-    if fields.len() != 4 {
-        return None;
-    }
 
-    // Group name must be non-empty.
+    // glibc requires only a non-empty group name; passwd, the administrator
+    // list, and the member list are all optional. When extra colons appear,
+    // glibc's last field absorbs them, so the member list is everything past the
+    // third colon ("g:x:a:b:c" -> members "b:c", later comma-split).
     if fields[0].is_empty() {
         return None;
     }
 
+    let sg_passwd = fields.get(1).copied().unwrap_or(b"").to_vec();
+    let sg_adm = fields.get(2).copied().unwrap_or(b"").to_vec();
+    let sg_mem = if fields.len() > 3 {
+        fields[3..].join(b":".as_slice())
+    } else {
+        Vec::new()
+    };
+
     Some(Gshadow {
         sg_namp: fields[0].to_vec(),
-        sg_passwd: fields[1].to_vec(),
-        sg_adm: fields[2].to_vec(),
-        sg_mem: fields[3].to_vec(),
+        sg_passwd,
+        sg_adm,
+        sg_mem,
     })
 }
 
@@ -103,13 +111,23 @@ mod tests {
     }
 
     #[test]
-    fn reject_too_few_fields() {
-        assert!(parse_gshadow_line(b"root:*:").is_none());
+    fn accepts_short_lines() {
+        // glibc needs only a non-empty name; passwd/admins/members are optional.
+        let e = parse_gshadow_line(b"root:*:").unwrap(); // 3 fields
+        assert_eq!((e.sg_adm.as_slice(), e.sg_mem.as_slice()), (&b""[..], &b""[..]));
+        let f = parse_gshadow_line(b"root").unwrap(); // 1 field
+        assert_eq!(f.sg_namp, b"root");
+        assert_eq!((f.sg_passwd.as_slice(), f.sg_adm.as_slice(), f.sg_mem.as_slice()), (&b""[..], &b""[..], &b""[..]));
     }
 
     #[test]
-    fn reject_too_many_fields() {
-        assert!(parse_gshadow_line(b"root:*:::extra").is_none());
+    fn extra_colons_absorbed_into_members() {
+        // glibc's last field absorbs trailing colons (members = past 3rd colon).
+        let e = parse_gshadow_line(b"g:x:a:b:c").unwrap();
+        assert_eq!(e.sg_adm, b"a");
+        assert_eq!(e.sg_mem, b"b:c");
+        let f = parse_gshadow_line(b"root:*:::extra").unwrap();
+        assert_eq!(f.sg_mem, b":extra");
     }
 
     #[test]
