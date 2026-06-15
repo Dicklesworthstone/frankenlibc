@@ -18050,7 +18050,7 @@ struct NetIterState {
     reader: Option<std::io::BufReader<std::fs::File>>,
     line_buf: Vec<u8>,
     entry_buf: [u8; 512],
-    aliases_ptrs: [*mut c_char; 2],
+    aliases_ptrs: [*mut c_char; 16],
 }
 
 impl NetIterState {
@@ -18059,7 +18059,7 @@ impl NetIterState {
             reader: None,
             line_buf: Vec::new(),
             entry_buf: [0u8; 512],
-            aliases_ptrs: [std::ptr::null_mut(); 2],
+            aliases_ptrs: [std::ptr::null_mut(); 16],
         }
     }
 }
@@ -18103,9 +18103,8 @@ fn with_net_iter_state<R>(callback: impl FnOnce(&mut NetIterState) -> R) -> R {
 /// returns the canonical (name, number) tuple in the form the local
 /// netent fillers consume. Returns `None` for blank/comment/malformed
 /// lines.
-fn parse_networks_line(line: &[u8]) -> Option<(Vec<u8>, u32)> {
-    let entry = frankenlibc_core::resolv::parse_networks_line(line)?;
-    Some((entry.name, entry.number))
+fn parse_networks_line(line: &[u8]) -> Option<frankenlibc_core::resolv::NetworkEntry> {
+    frankenlibc_core::resolv::parse_networks_line(line)
 }
 
 /// Fill a netent struct in the entry buffer.
@@ -18115,7 +18114,12 @@ fn parse_networks_line(line: &[u8]) -> Option<(Vec<u8>, u32)> {
 ///   n_aliases:  *mut *mut c_char (offset 8)
 ///   n_addrtype: c_int          (offset 16)
 ///   n_net:      u32            (offset 20)
-unsafe fn fill_netent_buf(state: &mut NetIterState, name: &[u8], net: u32) -> *mut c_void {
+unsafe fn fill_netent_buf(
+    state: &mut NetIterState,
+    name: &[u8],
+    net: u32,
+    aliases: &[Vec<u8>],
+) -> *mut c_void {
     let str_offset = 24usize;
     let needed = str_offset + name.len() + 1;
     if needed > state.entry_buf.len() {
@@ -18127,7 +18131,10 @@ unsafe fn fill_netent_buf(state: &mut NetIterState, name: &[u8], net: u32) -> *m
         std::ptr::copy_nonoverlapping(name.as_ptr(), buf.add(str_offset), name.len());
         *buf.add(str_offset + name.len()) = 0;
     }
-    state.aliases_ptrs[0] = std::ptr::null_mut();
+    let buf_len = state.entry_buf.len();
+    unsafe {
+        pack_aliases_into(buf, buf_len, str_offset + name.len() + 1, &mut state.aliases_ptrs, aliases);
+    }
 
     let ptrs = buf as *mut *mut c_char;
     unsafe {
@@ -18153,13 +18160,11 @@ unsafe fn net_iter_next(state: &mut NetIterState) -> *mut c_void {
             Err(_) => return std::ptr::null_mut(),
             Ok(_) => {}
         }
-        // Parse and extract values before passing state to fill_netent_buf
-        if let Some((name, net)) = parse_networks_line(&state.line_buf) {
-            // Copy name to stack to avoid borrowing state.line_buf through fill
-            let mut name_copy = [0u8; 256];
-            let nlen = name.len().min(255);
-            name_copy[..nlen].copy_from_slice(&name[..nlen]);
-            let result = unsafe { fill_netent_buf(state, &name_copy[..nlen], net) };
+        // parse_networks_line returns an owned entry, so it no longer borrows
+        // state.line_buf once it returns — pass its fields straight through.
+        if let Some(entry) = parse_networks_line(&state.line_buf) {
+            let result =
+                unsafe { fill_netent_buf(state, &entry.name, entry.number, &entry.aliases) };
             if !result.is_null() {
                 return result;
             }
@@ -18213,10 +18218,13 @@ pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
         Err(_) => return std::ptr::null_mut(),
     };
     for line in content.split(|&b| b == b'\n') {
-        if let Some((pname, net)) = parse_networks_line(line)
-            && pname.eq_ignore_ascii_case(&needle)
+        if let Some(entry) = parse_networks_line(line)
+            && (entry.name.eq_ignore_ascii_case(&needle)
+                || entry.aliases.iter().any(|a| a.eq_ignore_ascii_case(&needle)))
         {
-            return with_net_iter_state(|state| unsafe { fill_netent_buf(state, &pname, net) });
+            return with_net_iter_state(|state| unsafe {
+                fill_netent_buf(state, &entry.name, entry.number, &entry.aliases)
+            });
         }
     }
     std::ptr::null_mut()
@@ -18238,10 +18246,12 @@ pub unsafe extern "C" fn getnetbyaddr(net: u32, addrtype: c_int) -> *mut c_void 
         Err(_) => return std::ptr::null_mut(),
     };
     for line in content.split(|&b| b == b'\n') {
-        if let Some((pname, pnet)) = parse_networks_line(line)
-            && pnet == net
+        if let Some(entry) = parse_networks_line(line)
+            && entry.number == net
         {
-            return with_net_iter_state(|state| unsafe { fill_netent_buf(state, &pname, pnet) });
+            return with_net_iter_state(|state| unsafe {
+                fill_netent_buf(state, &entry.name, entry.number, &entry.aliases)
+            });
         }
     }
     std::ptr::null_mut()
@@ -25436,6 +25446,7 @@ pub unsafe extern "C" fn gethostent_r(
 unsafe fn fill_netent_r(
     name: &[u8],
     net: u32,
+    aliases: &[Vec<u8>],
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
@@ -25448,21 +25459,11 @@ unsafe fn fill_netent_r(
     }
 
     let effective_buflen = tracked_output_capacity(buf, buflen);
-    let alias_ptr_size = core::mem::size_of::<*mut c_char>();
-    let alias_ptr_align = core::mem::align_of::<*mut c_char>();
     let name_len = match name.len().checked_add(1) {
         Some(len) => len,
         None => return libc::ERANGE,
     };
-    let alias_offset = match aligned_output_offset(buf, name_len, alias_ptr_align) {
-        Some(offset) => offset,
-        None => return libc::ERANGE,
-    };
-    let needed = match alias_offset.checked_add(alias_ptr_size) {
-        Some(needed) => needed,
-        None => return libc::ERANGE,
-    };
-    if needed > effective_buflen {
+    if name_len > effective_buflen {
         return libc::ERANGE;
     }
 
@@ -25472,13 +25473,17 @@ unsafe fn fill_netent_r(
         std::ptr::copy_nonoverlapping(name.as_ptr(), buf_u8, name.len());
         *buf_u8.add(name.len()) = 0;
     }
-    // NULL-terminated aliases
-    unsafe { *(buf_u8.add(alias_offset) as *mut *mut c_char) = std::ptr::null_mut() };
+
+    let aliases_ptr =
+        match unsafe { crate::inet_abi::pack_caller_aliases(buf, effective_buflen, name_len, aliases) } {
+            Some(p) => p,
+            None => return libc::ERANGE,
+        };
 
     let ent = result_buf.cast::<NetEnt>();
     unsafe {
         (*ent).n_name = buf;
-        (*ent).n_aliases = buf_u8.add(alias_offset) as *mut *mut c_char;
+        (*ent).n_aliases = aliases_ptr;
         (*ent).n_addrtype = libc::AF_INET;
         (*ent).n_net = net;
     }
@@ -25515,10 +25520,12 @@ pub unsafe extern "C" fn getnetbyaddr_r(
         Err(_) => return 0,
     };
     for line in content.split(|&b| b == b'\n') {
-        if let Some((pname, pnet)) = parse_networks_line(line)
-            && pnet == net
+        if let Some(entry) = parse_networks_line(line)
+            && entry.number == net
         {
-            return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
+            return unsafe {
+                fill_netent_r(&entry.name, entry.number, &entry.aliases, result_buf, buf, buflen, result)
+            };
         }
     }
     0
@@ -25553,10 +25560,13 @@ pub unsafe extern "C" fn getnetbyname_r(
         Err(_) => return 0,
     };
     for line in content.split(|&b| b == b'\n') {
-        if let Some((pname, pnet)) = parse_networks_line(line)
-            && pname.eq_ignore_ascii_case(needle.as_slice())
+        if let Some(entry) = parse_networks_line(line)
+            && (entry.name.eq_ignore_ascii_case(needle.as_slice())
+                || entry.aliases.iter().any(|a| a.eq_ignore_ascii_case(needle.as_slice())))
         {
-            return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
+            return unsafe {
+                fill_netent_r(&entry.name, entry.number, &entry.aliases, result_buf, buf, buflen, result)
+            };
         }
     }
     0
@@ -25599,8 +25609,10 @@ pub unsafe extern "C" fn getnetent_r(
                 Err(_) => return libc::ENOENT,
                 Ok(_) => {}
             }
-            if let Some((pname, pnet)) = parse_networks_line(&state.line_buf) {
-                return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
+            if let Some(entry) = parse_networks_line(&state.line_buf) {
+                return unsafe {
+                    fill_netent_r(&entry.name, entry.number, &entry.aliases, result_buf, buf, buflen, result)
+                };
             }
         }
     })
