@@ -81,6 +81,10 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
         return memcmp_exact_16_mask(a, b);
     }
 
+    if count == MEMCMP_EXACT_4096_BYTES && memcmp_exact_4096_xor_accum_equal(a, b) {
+        return core::cmp::Ordering::Equal;
+    }
+
     if count == MEMCMP_EXACT_256_BYTES && !ne_simd_folded_256(a, b) {
         return core::cmp::Ordering::Equal;
     }
@@ -203,6 +207,26 @@ fn ne_simd_folded_256(a: &[u8], b: &[u8]) -> bool {
     (a0.simd_ne(b0) | a1.simd_ne(b1) | a2.simd_ne(b2) | a3.simd_ne(b3)).any()
 }
 
+/// Exact 4096-byte equality certificate for the profiled equal-buffer row.
+/// It never decides ordering: a non-zero accumulator falls through to the
+/// existing ordered resolver, so first-difference semantics stay unchanged.
+#[inline(always)]
+fn memcmp_exact_4096_xor_accum_equal(a: &[u8], b: &[u8]) -> bool {
+    debug_assert_eq!(a.len(), MEMCMP_EXACT_4096_BYTES);
+    debug_assert_eq!(b.len(), MEMCMP_EXACT_4096_BYTES);
+
+    let mut acc = Simd::<u8, MEMCMP_WIDE_LANES>::splat(0);
+    let mut i = 0usize;
+    while i < MEMCMP_EXACT_4096_BYTES {
+        let av = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[i..i + MEMCMP_WIDE_LANES]);
+        let bv = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[i..i + MEMCMP_WIDE_LANES]);
+        acc |= av ^ bv;
+        i += MEMCMP_WIDE_LANES;
+    }
+
+    acc.simd_eq(Simd::splat(0)).all()
+}
+
 #[inline]
 fn u64_from_chunk(chunk: &[u8]) -> u64 {
     let mut bytes = [0u8; 8];
@@ -218,6 +242,7 @@ const MEMCMP_WIDE_LANES: usize = 64;
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
 const MEMCMP_EXACT_256_BYTES: usize = SIMD_FOLD_BYTES * 2;
+const MEMCMP_EXACT_4096_BYTES: usize = 4096;
 const MEMMOVE_EXACT_4096_BYTES: usize = 4096;
 const MEMCHR_WIDE_LANES: usize = 64;
 const MEMCHR_FOLD_PANELS: usize = 8;
@@ -1064,6 +1089,32 @@ mod tests {
                 "difference at index {index}"
             );
             b[index] = 0x41;
+        }
+    }
+
+    #[test]
+    fn test_memcmp_exact_4096_certificate_preserves_ordering() {
+        let a: Vec<u8> = (0..MEMCMP_EXACT_4096_BYTES)
+            .map(|i| ((i * 17 + 31) & 0xff) as u8)
+            .collect();
+        assert_eq!(
+            memcmp(&a, &a, MEMCMP_EXACT_4096_BYTES),
+            core::cmp::Ordering::Equal
+        );
+
+        for index in [0usize, 1, 63, 64, 127, 128, 255, 256, 2047, 2048, 4095] {
+            let mut b = a.clone();
+            b[index] = a[index].wrapping_add(1);
+            assert_eq!(
+                memcmp(&a, &b, MEMCMP_EXACT_4096_BYTES),
+                a.as_slice().cmp(b.as_slice()),
+                "difference at index {index}"
+            );
+            assert_eq!(
+                memcmp(&b, &a, MEMCMP_EXACT_4096_BYTES),
+                b.as_slice().cmp(a.as_slice()),
+                "reverse difference at index {index}"
+            );
         }
     }
 
