@@ -63,7 +63,11 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
     }
 
     let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
-    if fields.len() != 7 {
+    // glibc requires only the first four fields (name:passwd:uid:gid); gecos,
+    // dir, and shell are optional and default to empty. When more than seven
+    // fields appear, the final field (shell) absorbs the extra colons, so
+    // "u:x:1:2:3:4:5:6:7" yields shell "5:6:7".
+    if fields.len() < 4 {
         return None;
     }
 
@@ -75,22 +79,45 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
         return None;
     }
 
+    let gecos = fields.get(4).copied().unwrap_or(b"");
+    let dir = fields.get(5).copied().unwrap_or(b"");
+    let shell = if fields.len() > 6 {
+        fields[6..].join(b":".as_slice())
+    } else {
+        Vec::new()
+    };
+
     Some(Passwd {
         pw_name: fields[0].to_vec(),
         pw_passwd: fields[1].to_vec(),
         pw_uid: uid,
         pw_gid: gid,
-        pw_gecos: fields[4].to_vec(),
-        pw_dir: fields[5].to_vec(),
-        pw_shell: fields[6].to_vec(),
+        pw_gecos: gecos.to_vec(),
+        pw_dir: dir.to_vec(),
+        pw_shell: shell,
     })
 }
 
+/// Parse a uid/gid field the way glibc does (`strtoul`, base 10): skip leading
+/// whitespace and an optional `+`, then require the rest to be all digits and
+/// fully consumed. Rejects "", a sign-only field, hex (`0x10`), and trailing
+/// junk — matching glibc, which errors the whole entry on those.
 fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
-    if field.is_empty() || !field.iter().all(u8::is_ascii_digit) {
+    let mut s = field;
+    while let [first, rest @ ..] = s {
+        if *first == b' ' || (0x09..=0x0D).contains(first) {
+            s = rest;
+        } else {
+            break;
+        }
+    }
+    if let [b'+', rest @ ..] = s {
+        s = rest;
+    }
+    if s.is_empty() || !s.iter().all(u8::is_ascii_digit) {
         return None;
     }
-    core::str::from_utf8(field).ok()?.parse::<u32>().ok()
+    core::str::from_utf8(s).ok()?.parse::<u32>().ok()
 }
 
 /// Look up a passwd entry by username.
@@ -248,14 +275,34 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     }
 
     #[test]
-    fn reject_wrong_field_count() {
-        assert!(parse_passwd_line(b"root:x:0:0:root:/root").is_none()); // 6 fields
-        assert!(parse_passwd_line(b"root:x:0:0:root:/root:/bin/bash:extra").is_none()); // 8 fields
+    fn accepts_fewer_than_seven_fields() {
+        // glibc needs only name:passwd:uid:gid; gecos/dir/shell default empty.
+        let e = parse_passwd_line(b"root:x:0:0:root:/root").unwrap(); // 6 fields
+        assert_eq!(e.pw_gecos, b"root");
+        assert_eq!(e.pw_dir, b"/root");
+        assert_eq!(e.pw_shell, b"");
+        let f = parse_passwd_line(b"u:x:1:2").unwrap(); // 4 fields
+        assert_eq!((f.pw_gecos.as_slice(), f.pw_dir.as_slice(), f.pw_shell.as_slice()), (&b""[..], &b""[..], &b""[..]));
+    }
+
+    #[test]
+    fn extra_colons_absorbed_into_shell() {
+        // glibc's last field (shell) absorbs trailing colons.
+        let e = parse_passwd_line(b"root:x:0:0:root:/root:/bin/bash:extra").unwrap();
+        assert_eq!(e.pw_shell, b"/bin/bash:extra");
+        let f = parse_passwd_line(b"u:x:1:2:3:4:5:6:7").unwrap();
+        assert_eq!(f.pw_shell, b"5:6:7");
+    }
+
+    #[test]
+    fn reject_too_few_fields() {
+        assert!(parse_passwd_line(b"root:x:0").is_none()); // 3 fields
     }
 
     #[test]
     fn reject_non_numeric_uid() {
         assert!(parse_passwd_line(b"root:x:abc:0:root:/root:/bin/bash").is_none());
+        assert!(parse_passwd_line(b"root:x:0x10:0:root:/root:/bin/bash").is_none());
     }
 
     #[test]
@@ -264,9 +311,19 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     }
 
     #[test]
-    fn reject_signed_uid_gid() {
-        assert!(parse_passwd_line(b"user:x:+1000:1000:user:/home/user:/bin/sh").is_none());
-        assert!(parse_passwd_line(b"user:x:1000:+1000:user:/home/user:/bin/sh").is_none());
+    fn reject_empty_uid_gid() {
+        // An empty uid/gid field is a parse error in glibc (not -1).
+        assert!(parse_passwd_line(b"root:x::0:root:/root:/bin/sh").is_none());
+        assert!(parse_passwd_line(b"root:x:0::root:/root:/bin/sh").is_none());
+    }
+
+    #[test]
+    fn accepts_leading_plus_and_space_in_uid_gid() {
+        // glibc parses uid/gid via strtoul, which accepts a leading '+' and
+        // leading whitespace.
+        assert_eq!(parse_passwd_line(b"user:x:+1000:1000:u:/h:/bin/sh").unwrap().pw_uid, 1000);
+        assert_eq!(parse_passwd_line(b"user:x:1000:+1000:u:/h:/bin/sh").unwrap().pw_gid, 1000);
+        assert_eq!(parse_passwd_line(b"user:x: 1000:5:u:/h:/bin/sh").unwrap().pw_uid, 1000);
     }
 
     #[test]
