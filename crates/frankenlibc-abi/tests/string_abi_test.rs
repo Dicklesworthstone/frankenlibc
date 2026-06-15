@@ -897,20 +897,25 @@ fn strerror_unknown_errno_includes_number() {
 }
 
 #[test]
-fn strerror_r_populates_buffer() {
+fn strerror_r_returns_static_message_for_known_errno() {
+    // GNU strerror_r returns a `char *` to a static message for a known
+    // errno (buf is left untouched), not an int.
     let mut buf = [0_i8; 128];
-    let rc = unsafe { strerror_r(libc::EACCES, buf.as_mut_ptr(), buf.len()) };
-    assert_eq!(rc, 0);
-    let s = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    let p = unsafe { strerror_r(libc::EACCES, buf.as_mut_ptr(), buf.len()) };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
     assert!(!s.to_bytes().is_empty());
+    // glibc hands back a static string, not the caller buffer.
+    assert_ne!(p, buf.as_mut_ptr());
 }
 
 #[test]
-fn strerror_r_unknown_errno_returns_einval_and_message() {
+fn strerror_r_unknown_errno_formats_into_buffer() {
+    // For an unknown errno the GNU variant formats into buf and returns buf.
     let mut buf = [0_i8; 128];
-    let rc = unsafe { strerror_r(99999, buf.as_mut_ptr(), buf.len()) };
-    assert_eq!(rc, libc::EINVAL);
-    let s = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    let p = unsafe { strerror_r(99999, buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(p, buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(p) };
     assert_eq!(s.to_bytes(), b"Unknown error 99999");
 }
 

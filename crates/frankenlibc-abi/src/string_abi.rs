@@ -4826,36 +4826,43 @@ fn with_strsignal_buffer<R>(callback: impl FnOnce(&mut [u8; 64]) -> R) -> R {
 // strerror_r
 // ---------------------------------------------------------------------------
 
-/// POSIX `strerror_r` (XSI-compliant) -- fills `buf` with the error message for `errnum`.
+/// GNU `strerror_r` -- returns a pointer to the error message for `errnum`.
 ///
-/// Returns 0 on success, or an errno value on failure.
+/// This is glibc's default (`_GNU_SOURCE`) variant and the one exported under
+/// the bare `strerror_r` symbol: it returns a `char *`, NOT an `int`. For a
+/// known errno it returns a pointer to a static, immutable message string and
+/// leaves `buf` untouched (matching glibc, which hands back the static string
+/// and ignores `buf`); for an unknown errno it formats "Unknown error N" into
+/// `buf` (truncated to `buflen`) and returns `buf`. The XSI/POSIX
+/// int-returning variant is [`crate::stdlib_abi::__xpg_strerror_r`].
+///
+/// fl previously exported the XSI (int) behavior under this symbol, so a
+/// `_GNU_SOURCE` caller (the common case) read the int return as a pointer and
+/// got garbage. Verified against the host glibc.
 ///
 /// # Safety
 ///
 /// Caller must ensure `buf` is valid for `buflen` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: usize) -> c_int {
-    if buf.is_null() || buflen == 0 {
-        return frankenlibc_core::errno::EINVAL;
+pub unsafe extern "C" fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: usize) -> *mut c_char {
+    // Known errno: return the static description pointer; `buf` is unused.
+    let desc = strerrordesc_np(errnum);
+    if !desc.is_null() {
+        return desc as *mut c_char;
     }
-
-    let (msg, unknown_errno) = rendered_strerror_message(errnum);
+    // Unknown errno: format "Unknown error N" into the caller buffer.
+    if buf.is_null() || buflen == 0 {
+        return buf;
+    }
+    let msg = format!("Unknown error {errnum}");
     let msg_bytes = msg.as_bytes();
     let copy_len = msg_bytes.len().min(buflen - 1);
-
     // SAFETY: caller guarantees `buf` is valid for `buflen` bytes.
     unsafe {
         raw_memcpy_bytes(buf.cast::<u8>(), msg_bytes.as_ptr(), copy_len);
         *buf.add(copy_len) = 0;
     }
-
-    if unknown_errno {
-        frankenlibc_core::errno::EINVAL
-    } else if msg_bytes.len() >= buflen {
-        frankenlibc_core::errno::ERANGE
-    } else {
-        0
-    }
+    buf
 }
 
 // ---------------------------------------------------------------------------
@@ -8654,8 +8661,10 @@ pub unsafe extern "C" fn __strtok_r(
     unsafe { strtok_r(s, delim, saveptr) }
 }
 
+/// glibc-internal `__strerror_r` — the GNU `char *`-returning alias of
+/// `strerror_r` (NOT the XSI int variant, which is `__xpg_strerror_r`).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __strerror_r(errnum: c_int, buf: *mut c_char, buflen: usize) -> c_int {
+pub unsafe extern "C" fn __strerror_r(errnum: c_int, buf: *mut c_char, buflen: usize) -> *mut c_char {
     unsafe { strerror_r(errnum, buf, buflen) }
 }
 
