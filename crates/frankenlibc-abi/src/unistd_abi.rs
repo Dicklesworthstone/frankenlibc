@@ -18191,7 +18191,15 @@ pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
 
 /// `getnetbyaddr` — look up network by address in /etc/networks.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getnetbyaddr(net: u32, _type: c_int) -> *mut c_void {
+pub unsafe extern "C" fn getnetbyaddr(net: u32, addrtype: c_int) -> *mut c_void {
+    // glibc's files backend matches when `n_net == net` AND
+    // `(type == AF_UNSPEC || n_addrtype == type)`. Every /etc/networks
+    // entry has addrtype AF_INET, so only AF_INET or the AF_UNSPEC(0)
+    // wildcard can match (verified against host glibc: types 0 and 2
+    // match, all others -> NULL).
+    if addrtype != libc::AF_INET && addrtype != libc::AF_UNSPEC {
+        return std::ptr::null_mut();
+    }
     let content = match std::fs::read(NETWORKS_PATH) {
         Ok(c) => c,
         Err(_) => return std::ptr::null_mut(),
@@ -25442,7 +25450,7 @@ unsafe fn fill_netent_r(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetbyaddr_r(
     net: u32,
-    _type: c_int,
+    addrtype: c_int,
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
@@ -25455,6 +25463,12 @@ pub unsafe extern "C" fn getnetbyaddr_r(
     unsafe { *result = std::ptr::null_mut() };
     if result_buf.is_null() || buf.is_null() || !tracked_object_fits::<NetEnt>(result_buf.cast()) {
         return libc::EINVAL;
+    }
+    // Match glibc: an entry matches when net matches AND
+    // (type == AF_UNSPEC || addrtype == AF_INET) — the AF_UNSPEC(0)
+    // wildcard plus the only family /etc/networks entries carry.
+    if addrtype != libc::AF_INET && addrtype != libc::AF_UNSPEC {
+        return 0;
     }
     let content = match std::fs::read(NETWORKS_PATH) {
         Ok(c) => c,
