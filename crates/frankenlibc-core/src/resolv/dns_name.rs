@@ -382,6 +382,209 @@ pub fn name_pack(src: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
     }
 }
 
+#[inline]
+fn mklower(b: u8) -> u8 {
+    if b.is_ascii_uppercase() {
+        b + 32
+    } else {
+        b
+    }
+}
+
+/// Search the already-written message `msg` for a name (or suffix) that matches
+/// the uncompressed wire name `domain`, considering the stored name start
+/// offsets in `dnptrs`. Returns the message offset to point at on a match.
+///
+/// This is a faithful port of BIND/glibc `dn_find`: the comparison is
+/// case-insensitive, it walks each suffix of every stored name, and it follows
+/// compression pointers encountered *inside* the stored names. `Err` mirrors
+/// glibc's EMSGSIZE return (an illegal label type while scanning).
+fn dn_find(domain: &[u8], msg: &[u8], dnptrs: &[usize]) -> Result<Option<usize>, NameError> {
+    for &start in dnptrs {
+        let mut sp = start;
+        // Try matching `domain` against each suffix of this stored name.
+        while sp < msg.len()
+            && msg[sp] != 0
+            && (msg[sp] & NS_CMPRSFLGS) == 0
+            && sp < 0x4000
+        {
+            match suffix_matches(domain, msg, sp)? {
+                true => return Ok(Some(sp)),
+                false => {}
+            }
+            // Advance to the next label of this stored name.
+            sp += msg[sp] as usize + 1;
+        }
+    }
+    Ok(None)
+}
+
+/// Does `domain` (uncompressed wire) match the name stored in `msg` starting at
+/// `start`, following compression pointers within `msg`? Mirrors the inner loop
+/// of BIND `dn_find`.
+fn suffix_matches(domain: &[u8], msg: &[u8], start: usize) -> Result<bool, NameError> {
+    let mut dn = 0usize; // index into domain
+    let mut cp = start; // index into msg
+    let mut guard = 0usize; // bound pointer-following to avoid loops
+    loop {
+        guard += 1;
+        if guard > 2 * NS_MAXCDNAME {
+            return Ok(false);
+        }
+        let n = match msg.get(cp) {
+            Some(&b) => b,
+            None => return Ok(false),
+        };
+        cp += 1;
+        if n == 0 {
+            // Stored name reached root without a domain-root coincidence.
+            return Ok(false);
+        }
+        match n & NS_CMPRSFLGS {
+            0 => {
+                let len = n as usize;
+                // Compare the label length byte.
+                match domain.get(dn) {
+                    Some(&dlen) if dlen == n => {}
+                    _ => return Ok(false),
+                }
+                dn += 1;
+                // Compare label bytes, case-insensitively.
+                for _ in 0..len {
+                    let a = match domain.get(dn) {
+                        Some(&b) => b,
+                        None => return Ok(false),
+                    };
+                    let b = match msg.get(cp) {
+                        Some(&b) => b,
+                        None => return Ok(false),
+                    };
+                    if mklower(a) != mklower(b) {
+                        return Ok(false);
+                    }
+                    dn += 1;
+                    cp += 1;
+                }
+                // After matching a label: are both at root?
+                let dnext = domain.get(dn).copied();
+                let cnext = msg.get(cp).copied();
+                if dnext == Some(0) && cnext == Some(0) {
+                    return Ok(true);
+                }
+                if dnext != Some(0) {
+                    // Domain has more labels; keep matching the stored name.
+                    continue;
+                }
+                // Domain is at root but the stored name is not.
+                return Ok(false);
+            }
+            NS_CMPRSFLGS => {
+                // Indirection: follow the pointer within msg.
+                let lo = match msg.get(cp) {
+                    Some(&b) => b,
+                    None => return Ok(false),
+                };
+                cp = (((n & 0x3F) as usize) << 8) | lo as usize;
+            }
+            _ => return Err(NameError::CompressionPointer),
+        }
+    }
+}
+
+/// Pack the uncompressed wire-format name `src` into `out`, emitting RFC 1035
+/// compression pointers against names already present in the message prefix
+/// `msg` (at the byte offsets listed in `dnptrs`). `out_off` is the offset at
+/// which `out` lives within the overall message (used for the `< 0x4000`
+/// pointer-range limit and for the offset of any newly recorded name). When
+/// `compress` is false, this degrades to a plain copy (no pointer search and
+/// no name recorded).
+///
+/// Returns `(bytes_written, recorded_offset)` where `recorded_offset` is
+/// `Some(out_off)` when the full name was newly emitted (not pointer-compressed
+/// away) and `out_off < 0x4000`, indicating the caller should record this name
+/// for future compression. Faithful port of BIND/glibc `ns_name_pack`.
+pub fn name_pack_compressed(
+    src: &[u8],
+    out: &mut [u8],
+    msg: &[u8],
+    dnptrs: &[usize],
+    out_off: usize,
+    compress: bool,
+) -> Result<(usize, Option<usize>), NameError> {
+    if out.is_empty() {
+        return Err(NameError::OutputTooSmall);
+    }
+    // Validate that `src` is a legal uncompressed wire name (glibc does this
+    // up front and returns EMSGSIZE/EINVAL before writing anything).
+    {
+        let mut si = 0usize;
+        let mut total = 0usize;
+        loop {
+            let n = *src.get(si).ok_or(NameError::InvalidLabel)?;
+            if (n & NS_CMPRSFLGS) != 0 {
+                return Err(NameError::CompressionPointer);
+            }
+            let l0 = n as usize;
+            if l0 > NS_MAXLABEL {
+                return Err(NameError::InvalidLabel);
+            }
+            total += l0 + 1;
+            if total > NS_MAXCDNAME {
+                return Err(NameError::InvalidLabel);
+            }
+            si += l0 + 1;
+            if n == 0 {
+                break;
+            }
+            if si >= src.len() {
+                return Err(NameError::InvalidLabel);
+            }
+        }
+    }
+
+    let mut srcp = 0usize;
+    let mut dstp = 0usize;
+    let mut recorded: Option<usize> = None;
+    let mut first = true;
+
+    loop {
+        let n = src[srcp];
+        if n != 0 && compress {
+            if let Some(off) = dn_find(&src[srcp..], msg, dnptrs)? {
+                // Emit a compression pointer to the match and finish.
+                if dstp + 2 > out.len() {
+                    return Err(NameError::OutputTooSmall);
+                }
+                out[dstp] = ((off >> 8) as u8) | NS_CMPRSFLGS;
+                out[dstp + 1] = (off & 0xFF) as u8;
+                dstp += 2;
+                return Ok((dstp, recorded));
+            }
+            // Not found — record the full name once (at its start offset).
+            if first && (out_off + dstp) < 0x4000 {
+                recorded = Some(out_off + dstp);
+                first = false;
+            }
+        }
+        // Copy this label (length byte + bytes; or the root terminator).
+        // glibc errors when the bytes would not fit (`dstp + 1 + n > dstsiz`);
+        // a name that exactly fills the buffer is accepted (verified against
+        // the host: dn_comp of a 9-byte name into a 9-byte buffer succeeds).
+        let len = n as usize;
+        let end = dstp + 1 + len;
+        if end > out.len() {
+            return Err(NameError::OutputTooSmall);
+        }
+        out[dstp..end].copy_from_slice(&src[srcp..srcp + 1 + len]);
+        srcp += len + 1;
+        dstp += len + 1;
+        if n == 0 {
+            break;
+        }
+    }
+    Ok((dstp, recorded))
+}
+
 /// Walk past one wire-format DNS name in `buf`, returning the number
 /// of bytes consumed. A compression pointer is treated as a single
 /// 2-byte unit (the pointer is NOT followed). The root terminator

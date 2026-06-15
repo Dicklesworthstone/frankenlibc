@@ -20986,12 +20986,100 @@ pub unsafe extern "C" fn dn_expand(
     wire_len.unwrap_or(0) as c_int
 }
 
+/// Shared engine for the resolver name-packers (`dn_comp`, `ns_name_pack`,
+/// `ns_name_compress` and their `__`-prefixed twins): pack the uncompressed
+/// wire name `src_wire` into `dst[..dstsiz]`, emitting RFC 1035 compression
+/// pointers against names already recorded in `dnptrs`, and record the new
+/// name when glibc would. Returns bytes written, or -1 (errno EMSGSIZE).
+///
+/// `dnptrs[0]` is the message origin; subsequent entries (up to `lastdnptr` or
+/// a NULL) point at names already emitted. Both arrays may be NULL to disable
+/// compression. Faithful to BIND/glibc `ns_name_pack` + `dn_find`.
+///
+/// # Safety
+/// `dst` must be valid for `dstsiz` bytes; when compression is enabled the
+/// region `[dnptrs[0], dst)` must be readable (the message written so far), per
+/// the resolver dn_comp contract.
+pub(crate) unsafe fn pack_name_with_dnptrs(
+    src_wire: &[u8],
+    dst: *mut u8,
+    dstsiz: usize,
+    dnptrs: *mut *mut u8,
+    lastdnptr: *mut *mut u8,
+) -> c_int {
+    if dst.is_null() || dstsiz == 0 {
+        return -1;
+    }
+
+    let mut compress = false;
+    let mut msg_origin: *mut u8 = std::ptr::null_mut();
+    let mut out_off = 0usize;
+    let mut offsets: Vec<usize> = Vec::new();
+
+    if !dnptrs.is_null() {
+        let origin = unsafe { *dnptrs };
+        if !origin.is_null() {
+            let diff = (dst as isize).wrapping_sub(origin as isize);
+            // Defensive: only enable compression for a sane forward offset.
+            if diff >= 0 && (diff as usize) <= 0x1_0000 {
+                out_off = diff as usize;
+                msg_origin = origin;
+                compress = true;
+                // Gather offsets of names recorded so far (dnptrs[1..]).
+                let mut p = unsafe { dnptrs.add(1) };
+                while lastdnptr.is_null() || p < lastdnptr {
+                    let entry = unsafe { *p };
+                    if entry.is_null() {
+                        break;
+                    }
+                    let d = (entry as isize).wrapping_sub(origin as isize);
+                    if d >= 0 && (d as usize) < out_off {
+                        offsets.push(d as usize);
+                    }
+                    p = unsafe { p.add(1) };
+                }
+            }
+        }
+    }
+
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
+    // `msg_prefix` = [origin, dst) and `out` = [dst, dst+dstsiz) are disjoint.
+    let msg_prefix: &[u8] = if compress {
+        unsafe { std::slice::from_raw_parts(msg_origin, out_off) }
+    } else {
+        &[]
+    };
+
+    match frankenlibc_core::resolv::dns_name::name_pack_compressed(
+        src_wire, out, msg_prefix, &offsets, out_off, compress,
+    ) {
+        Ok((written, recorded)) => {
+            if recorded.is_some() && !dnptrs.is_null() && !lastdnptr.is_null() {
+                unsafe {
+                    let mut slot = dnptrs.add(1);
+                    while slot < lastdnptr && !(*slot).is_null() {
+                        slot = slot.add(1);
+                    }
+                    // glibc records only when there is room for the entry AND a
+                    // trailing NULL terminator (`cpp < lastdnptr - 1`).
+                    if slot < lastdnptr.sub(1) {
+                        *slot = dst;
+                        *(slot.add(1)) = std::ptr::null_mut();
+                    }
+                }
+            }
+            written as c_int
+        }
+        Err(_) => -1,
+    }
+}
+
 /// `dn_comp` — compress a domain name into DNS wire format (RFC 1035).
 ///
-/// Native implementation: converts a dotted domain name (`exp_dn`) into
-/// wire-format labels in `comp_dn[..length]`, optionally adding compression
-/// pointers using previously seen names in `dnptrs`.
-/// Returns the number of bytes written to `comp_dn`, or -1 on error.
+/// Converts a presentation domain name (`exp_dn`) to wire-format labels in
+/// `comp_dn[..length]`, emitting compression pointers for suffixes already
+/// present in the message via `dnptrs` (BIND/glibc semantics). Returns the
+/// number of bytes written to `comp_dn`, or -1 on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dn_comp(
     exp_dn: *const c_char,
@@ -21007,68 +21095,20 @@ pub unsafe extern "C" fn dn_comp(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     };
-    let name_bytes = name_bytes.as_slice();
-    let out = unsafe { std::slice::from_raw_parts_mut(comp_dn, length as usize) };
-
-    // Handle root domain ("" or ".").
-    if name_bytes.is_empty() || (name_bytes.len() == 1 && name_bytes[0] == b'.') {
-        if out.is_empty() {
+    // Presentation -> uncompressed wire (handles \. and \DDD escapes, like
+    // glibc's ns_name_pton inside ns_name_compress).
+    let mut wire = [0u8; 256]; // NS_MAXCDNAME
+    let wire_len = match frankenlibc_core::resolv::dns_name::name_pton(name_bytes.as_slice(), &mut wire)
+    {
+        Ok(n) => n,
+        Err(_) => {
+            unsafe { set_abi_errno(errno::EINVAL) };
             return -1;
         }
-        out[0] = 0;
-        return 1;
-    }
-
-    // Split into labels.
-    let name_str = if name_bytes.last() == Some(&b'.') {
-        &name_bytes[..name_bytes.len() - 1]
-    } else {
-        name_bytes
     };
-
-    let mut out_off = 0usize;
-    for label in name_str.split(|&b| b == b'.') {
-        if label.is_empty() || label.len() > 63 {
-            return -1;
-        }
-        // Need: 1 (length) + label.len() bytes + at least 1 more for root terminator.
-        if out_off + 1 + label.len() + 1 > out.len() {
-            return -1;
-        }
-        out[out_off] = label.len() as u8;
-        out_off += 1;
-        out[out_off..out_off + label.len()].copy_from_slice(label);
-        out_off += label.len();
+    unsafe {
+        pack_name_with_dnptrs(&wire[..wire_len], comp_dn, length as usize, dnptrs, lastdnptr)
     }
-
-    // Root terminator.
-    if out_off >= out.len() {
-        return -1;
-    }
-    out[out_off] = 0;
-    out_off += 1;
-
-    // If dnptrs is provided and there's room, record this name for future compression.
-    // (Simple implementation: we don't do compression pointer matching, just record.)
-    if !dnptrs.is_null() && !lastdnptr.is_null() {
-        // Find first NULL slot in dnptrs array.
-        let mut slot = dnptrs;
-        unsafe {
-            while slot < lastdnptr && !(*slot).is_null() {
-                slot = slot.add(1);
-            }
-            if slot < lastdnptr {
-                *slot = comp_dn;
-                // NULL-terminate the array if there's room.
-                let next = slot.add(1);
-                if next < lastdnptr {
-                    *next = std::ptr::null_mut();
-                }
-            }
-        }
-    }
-
-    out_off as c_int
 }
 
 // ===========================================================================

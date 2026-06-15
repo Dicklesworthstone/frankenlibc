@@ -1848,11 +1848,19 @@ pub unsafe extern "C" fn ns_name_pack(
     };
     let src_slice = unsafe { std::slice::from_raw_parts(src, src_len) };
     let effective_dstlen = effective_output_len(dst.cast(), dstlen as usize);
-    let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstlen) };
-    match frankenlibc_core::resolv::dns_name::name_pack(src_slice, out) {
-        Ok(n) => n as c_int,
-        Err(_) => -1,
+    let r = unsafe {
+        crate::unistd_abi::pack_name_with_dnptrs(
+            src_slice,
+            dst,
+            effective_dstlen,
+            _dnptrs as *mut *mut u8,
+            _lastdnptr as *mut *mut u8,
+        )
+    };
+    if r < 0 {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
     }
+    r
 }
 
 /// `ns_name_compress` — convert dotted text to compressed wire format (RFC 1035).
@@ -8631,14 +8639,19 @@ pub unsafe extern "C" fn __ns_name_pack(
     };
     let src_slice = unsafe { std::slice::from_raw_parts(src, src_len) };
     let effective_dstsiz = effective_output_len(dst.cast(), dstsiz as usize);
-    let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstsiz) };
-    match frankenlibc_core::resolv::dns_name::name_pack(src_slice, out) {
-        Ok(n) => n as c_int,
-        Err(_) => {
-            unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            -1
-        }
+    let r = unsafe {
+        crate::unistd_abi::pack_name_with_dnptrs(
+            src_slice,
+            dst,
+            effective_dstsiz,
+            _dnptrs as *mut *mut u8,
+            _lastdnptr as *mut *mut u8,
+        )
+    };
+    if r < 0 {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
     }
+    r
 }
 
 /// `__ns_name_uncompress` — uncompress DNS name (wrapper around unpack+ntop).
