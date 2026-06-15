@@ -42,7 +42,11 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
     }
 
     let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
-    if fields.len() != 4 {
+    // glibc requires only the first three fields (name:passwd:gid); the member
+    // list is optional. When extra colons appear, glibc's last field absorbs
+    // them (the members token is everything past the second colon), so a line
+    // like `g:x:4:m1:m2` yields the single member "m1:m2".
+    if fields.len() < 3 {
         return None;
     }
 
@@ -52,14 +56,15 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
         return None;
     }
 
-    let members = if fields[3].is_empty() {
-        Vec::new()
-    } else {
-        fields[3]
-            .split(|&b| b == b',')
-            .map(|m| m.to_vec())
-            .collect()
-    };
+    // Rejoin any colon-split tail into the raw members field, then comma-split.
+    // glibc drops empty member tokens (a member name is never ""), so a trailing
+    // / leading / doubled comma never produces an empty entry.
+    let member_raw: Vec<u8> = fields.get(3..).unwrap_or(&[]).join(b":".as_slice());
+    let members: Vec<Vec<u8>> = member_raw
+        .split(|&b| b == b',')
+        .filter(|m| !m.is_empty())
+        .map(|m| m.to_vec())
+        .collect();
 
     Some(Group {
         gr_name: fields[0].to_vec(),
@@ -69,11 +74,26 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
     })
 }
 
+/// Parse a uid/gid field the way glibc does (`strtoul`, base 10): skip leading
+/// whitespace and an optional `+`, then require the rest to be all digits and
+/// fully consumed. Rejects "", a sign-only field, hex (`0x10`), and trailing
+/// junk — matching glibc, which errors the whole entry on those.
 fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
-    if field.is_empty() || !field.iter().all(u8::is_ascii_digit) {
+    let mut s = field;
+    while let [first, rest @ ..] = s {
+        if *first == b' ' || (0x09..=0x0D).contains(first) {
+            s = rest;
+        } else {
+            break;
+        }
+    }
+    if let [b'+', rest @ ..] = s {
+        s = rest;
+    }
+    if s.is_empty() || !s.iter().all(u8::is_ascii_digit) {
         return None;
     }
-    core::str::from_utf8(field).ok()?.parse::<u32>().ok()
+    core::str::from_utf8(s).ok()?.parse::<u32>().ok()
 }
 
 /// Look up a group entry by name.
@@ -251,9 +271,25 @@ ubuntu:x:1000:
     }
 
     #[test]
-    fn reject_wrong_field_count() {
-        assert!(parse_group_line(b"root:x:0").is_none()); // 3 fields
-        assert!(parse_group_line(b"root:x:0:members:extra").is_none()); // 5 fields
+    fn accepts_three_fields_no_member_list() {
+        // glibc requires only name:passwd:gid; the member list is optional.
+        let entry = parse_group_line(b"root:x:0").unwrap();
+        assert_eq!(entry.gr_gid, 0);
+        assert!(entry.gr_mem.is_empty());
+    }
+
+    #[test]
+    fn extra_colons_absorbed_into_members_field() {
+        // glibc's last field absorbs trailing colons, so the members token is
+        // everything past the second colon, then comma-split.
+        let entry = parse_group_line(b"root:x:4:m1:m2").unwrap();
+        assert_eq!(entry.gr_gid, 4);
+        assert_eq!(entry.gr_mem, vec![b"m1:m2".to_vec()]);
+    }
+
+    #[test]
+    fn reject_too_few_fields() {
+        assert!(parse_group_line(b"root:x").is_none()); // 2 fields
     }
 
     #[test]
@@ -262,8 +298,10 @@ ubuntu:x:1000:
     }
 
     #[test]
-    fn reject_signed_gid() {
-        assert!(parse_group_line(b"root:x:+0:").is_none());
+    fn accepts_leading_plus_in_gid() {
+        // glibc parses gid via strtoul, which accepts a leading '+'.
+        let entry = parse_group_line(b"root:x:+0:").unwrap();
+        assert_eq!(entry.gr_gid, 0);
     }
 
     #[test]
@@ -350,11 +388,21 @@ ubuntu:x:1000:
     }
 
     #[test]
-    fn member_with_trailing_comma_produces_empty_entry() {
-        // glibc treats trailing commas as producing an empty member name
-        let entry = parse_group_line(b"test:x:50:a,b,").unwrap();
-        assert_eq!(entry.gr_mem.len(), 3);
-        assert_eq!(entry.gr_mem[2], b"");
+    fn empty_member_tokens_are_dropped() {
+        // glibc never yields an empty member name: trailing/leading/doubled
+        // commas are dropped rather than producing "" entries.
+        assert_eq!(
+            parse_group_line(b"test:x:50:a,b,").unwrap().gr_mem,
+            vec![b"a".to_vec(), b"b".to_vec()]
+        );
+        assert_eq!(
+            parse_group_line(b"test:x:50:,a").unwrap().gr_mem,
+            vec![b"a".to_vec()]
+        );
+        assert_eq!(
+            parse_group_line(b"test:x:50:a,,b").unwrap().gr_mem,
+            vec![b"a".to_vec(), b"b".to_vec()]
+        );
     }
 
     #[test]
