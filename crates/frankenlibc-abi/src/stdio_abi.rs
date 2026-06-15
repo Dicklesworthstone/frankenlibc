@@ -3310,13 +3310,21 @@ unsafe fn render_printf_impl(
                     let (msg, _) = crate::string_abi::rendered_strerror_message(e);
                     format_str(msg.as_bytes(), &resolved_spec, &mut buf);
                 } else if resolved_spec.stores_count() {
-                    // %n: store count of bytes written so far.
+                    // %n: store count of units written so far. For narrow
+                    // printf that is bytes; for wide printf (swprintf/wprintf/…)
+                    // the C standard counts WIDE CHARACTERS, not the UTF-8 bytes
+                    // of fl's internal accumulator — so count Unicode scalar
+                    // values (every non-continuation byte begins one).
                     // Respects length modifier: %hhn→i8, %hn→i16,
                     // %n→i32, %ln→i64, %lln→i64, %zn→isize, %jn→i64.
                     if let Some(raw_ptr) = read_arg(value_position, &mut arg_idx) {
                         let ptr_val = raw_ptr as usize;
                         if ptr_val != 0 {
-                            let count = buf.len();
+                            let count = if wide_output {
+                                buf.iter().filter(|&&b| (b & 0xC0) != 0x80).count()
+                            } else {
+                                buf.len()
+                            };
                             let size = match resolved_spec.length {
                                 LengthMod::Hh => 1,
                                 LengthMod::H => 2,
