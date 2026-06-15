@@ -6049,7 +6049,10 @@ pub unsafe extern "C" fn f32addf32x(x: f64, y: f64) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32addf64(x: f64, y: f64) -> f32 {
-    (x + y) as f32
+    // Identical operation to `fadd` (f32 = round(x+y)). Route through it so this
+    // explicit-width spelling gets the correct single rounding (round-to-odd),
+    // not the double-rounding `(x+y) as f32`.
+    unsafe { fadd(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32addf64x(x: f64, y: f64) -> f32 {
@@ -6089,7 +6092,8 @@ pub unsafe extern "C" fn f32divf32x(x: f64, y: f64) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32divf64(x: f64, y: f64) -> f32 {
-    (x / y) as f32
+    // Route through `fdiv` for correct single rounding (round-to-odd).
+    unsafe { fdiv(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32divf64x(x: f64, y: f64) -> f32 {
@@ -6129,7 +6133,8 @@ pub unsafe extern "C" fn f32mulf32x(x: f64, y: f64) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32mulf64(x: f64, y: f64) -> f32 {
-    (x * y) as f32
+    // Route through `fmul` for correct single rounding (round-to-odd).
+    unsafe { fmul(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32mulf64x(x: f64, y: f64) -> f32 {
@@ -6170,8 +6175,8 @@ pub unsafe extern "C" fn f32sqrtf32x(x: f64) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32sqrtf64(x: f64) -> f32 {
-    let r = unsafe { sqrt(x) };
-    r as f32
+    // Route through `fsqrt` for correct single rounding (round-to-odd).
+    unsafe { fsqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32sqrtf64x(x: f64) -> f32 {
@@ -6213,7 +6218,8 @@ pub unsafe extern "C" fn f32subf32x(x: f64, y: f64) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32subf64(x: f64, y: f64) -> f32 {
-    (x - y) as f32
+    // Route through `fsub` for correct single rounding (round-to-odd).
+    unsafe { fsub(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32subf64x(x: f64, y: f64) -> f32 {
@@ -6254,8 +6260,8 @@ pub unsafe extern "C" fn f32fmaf32x(x: f64, y: f64, z: f64) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32fmaf64(x: f64, y: f64, z: f64) -> f32 {
-    let r = unsafe { fma(x, y, z) };
-    r as f32
+    // Route through `ffma` for correct single rounding (round-to-odd).
+    unsafe { ffma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32fmaf64x(x: f64, y: f64, z: f64) -> f32 {
