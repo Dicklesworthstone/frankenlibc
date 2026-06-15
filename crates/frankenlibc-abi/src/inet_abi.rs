@@ -34,6 +34,50 @@ fn aligned_buffer_offset(base: *const c_char, min_offset: usize, align: usize) -
     min_offset.checked_add(padding)
 }
 
+/// Pack `aliases` into the caller buffer `buf` (capacity `buflen`) starting at
+/// byte offset `str_off`: writes each alias string NUL-terminated, then an
+/// aligned, NULL-terminated pointer table, and returns a pointer to that table
+/// (suitable for s_aliases / n_aliases). Returns `None` (→ ERANGE) if the
+/// buffer cannot hold both the strings and the table. Self-contained so both
+/// the servent and network/protocol reentrant paths can share it.
+///
+/// # Safety
+/// `buf` must be valid for `buflen` bytes.
+pub(crate) unsafe fn pack_caller_aliases(
+    buf: *mut c_char,
+    buflen: usize,
+    str_off: usize,
+    aliases: &[Vec<u8>],
+) -> Option<*mut *mut c_char> {
+    let mut off = str_off;
+    let mut offsets: Vec<usize> = Vec::with_capacity(aliases.len());
+    for alias in aliases {
+        let end = off.checked_add(alias.len())?.checked_add(1)?;
+        if end > buflen {
+            return None;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(alias.as_ptr() as *const c_char, buf.add(off), alias.len());
+            *buf.add(off + alias.len()) = 0;
+        }
+        offsets.push(off);
+        off = end;
+    }
+    let ptr_align = std::mem::align_of::<*mut c_char>();
+    let arr_off = aligned_buffer_offset(buf, off, ptr_align)?;
+    let ptr_size = std::mem::size_of::<*mut c_char>();
+    let total = arr_off.checked_add(ptr_size.checked_mul(offsets.len().checked_add(1)?)?)?;
+    if total > buflen {
+        return None;
+    }
+    let arr = unsafe { buf.add(arr_off) as *mut *mut c_char };
+    for (i, &so) in offsets.iter().enumerate() {
+        unsafe { *arr.add(i) = buf.add(so) as *mut c_char };
+    }
+    unsafe { *arr.add(offsets.len()) = std::ptr::null_mut() };
+    Some(arr)
+}
+
 #[inline]
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
@@ -622,32 +666,20 @@ pub unsafe extern "C" fn getservbyname_r(
         {
             return None;
         }
-        Some((entry.name, entry.port, entry.protocol))
+        Some(entry)
     });
 
-    let (svc_name, port, svc_proto) = match entry {
+    let entry = match entry {
         Some(e) => e,
         None => return 0,
     };
+    let (svc_name, port, svc_proto) = (&entry.name, entry.port, &entry.protocol);
 
-    // Write name + proto into caller's buffer
+    // Layout in caller buffer: name\0 proto\0 alias strings\0 <align> ptr[].
     let name_len = svc_name.len() + 1; // +NUL
     let proto_len = svc_proto.len() + 1;
-    let aliases_offset = match aligned_buffer_offset(
-        buf,
-        name_len + proto_len,
-        std::mem::align_of::<*mut c_char>(),
-    ) {
-        Some(offset) => offset,
-        None => return libc::ERANGE,
-    };
-    let aliases_size = std::mem::size_of::<*mut c_char>();
-    let needed = match aliases_offset.checked_add(aliases_size) {
-        Some(needed) => needed,
-        None => return libc::ERANGE,
-    };
     let effective_buflen = effective_c_buffer_len(buf, buflen);
-    if needed > effective_buflen {
+    if name_len + proto_len > effective_buflen {
         return libc::ERANGE;
     }
 
@@ -667,8 +699,12 @@ pub unsafe extern "C" fn getservbyname_r(
         *proto_ptr.add(svc_proto.len()) = 0;
     }
 
-    let aliases_ptr = unsafe { buf.add(aliases_offset) as *mut *mut c_char };
-    unsafe { *aliases_ptr = std::ptr::null_mut() };
+    let aliases_ptr = match unsafe {
+        pack_caller_aliases(buf, effective_buflen, name_len + proto_len, &entry.aliases)
+    } {
+        Some(p) => p,
+        None => return libc::ERANGE,
+    };
 
     let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
     servent.s_name = name_ptr;
@@ -730,31 +766,19 @@ pub unsafe extern "C" fn getservbyport_r(
         {
             return None;
         }
-        Some((entry.name, entry.port, entry.protocol))
+        Some(entry)
     });
 
-    let (svc_name, _, svc_proto) = match entry {
+    let entry = match entry {
         Some(e) => e,
         None => return 0,
     };
+    let (svc_name, svc_proto) = (&entry.name, &entry.protocol);
 
     let name_len = svc_name.len() + 1;
     let proto_len = svc_proto.len() + 1;
-    let aliases_offset = match aligned_buffer_offset(
-        buf,
-        name_len + proto_len,
-        std::mem::align_of::<*mut c_char>(),
-    ) {
-        Some(offset) => offset,
-        None => return libc::ERANGE,
-    };
-    let aliases_size = std::mem::size_of::<*mut c_char>();
-    let needed = match aliases_offset.checked_add(aliases_size) {
-        Some(needed) => needed,
-        None => return libc::ERANGE,
-    };
     let effective_buflen = effective_c_buffer_len(buf, buflen);
-    if needed > effective_buflen {
+    if name_len + proto_len > effective_buflen {
         return libc::ERANGE;
     }
 
@@ -774,8 +798,12 @@ pub unsafe extern "C" fn getservbyport_r(
         *proto_ptr.add(svc_proto.len()) = 0;
     }
 
-    let aliases_ptr = unsafe { buf.add(aliases_offset) as *mut *mut c_char };
-    unsafe { *aliases_ptr = std::ptr::null_mut() };
+    let aliases_ptr = match unsafe {
+        pack_caller_aliases(buf, effective_buflen, name_len + proto_len, &entry.aliases)
+    } {
+        Some(p) => p,
+        None => return libc::ERANGE,
+    };
 
     let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
     servent.s_name = name_ptr;
