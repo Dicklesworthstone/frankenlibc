@@ -728,7 +728,7 @@ pub(crate) fn scalb_svid_impl(x: f64, exp: f64) -> f64 {
         return if exp > 0.0 { x * exp } else { x / (-exp) };
     }
     if exp != exp.trunc() {
-        return (exp - exp) / (exp - exp);
+        return core::hint::black_box(0.0_f64) / core::hint::black_box(-0.0_f64);
     }
     let n = if exp > 65000.0 {
         65000
@@ -741,6 +741,7 @@ pub(crate) fn scalb_svid_impl(x: f64, exp: f64) -> f64 {
 }
 
 #[inline]
+#[cfg_attr(test, allow(dead_code))]
 pub(crate) fn scalbf_svid_impl(x: f32, exp: f32) -> f32 {
     if x.is_nan() || exp.is_nan() {
         return x * exp;
@@ -749,7 +750,7 @@ pub(crate) fn scalbf_svid_impl(x: f32, exp: f32) -> f32 {
         return if exp > 0.0 { x * exp } else { x / (-exp) };
     }
     if exp != exp.trunc() {
-        return (exp - exp) / (exp - exp);
+        return core::hint::black_box(0.0_f32) / core::hint::black_box(-0.0_f32);
     }
     let n = if exp > 65000.0 {
         65000
@@ -982,7 +983,14 @@ pub unsafe extern "C" fn significand(x: f64) -> f64 {
     if x == 0.0 {
         set_domain_errno();
     }
-    frankenlibc_core::math::significand(x)
+    let out = frankenlibc_core::math::significand(x);
+    // glibc significand(x) = scalbn(x, -ilogb(x)); ilogb(0/inf/NaN) raises
+    // FE_INVALID, which propagates. fl's core leaves the flag unset, so re-raise
+    // it on the cold path for the three special-input classes.
+    if x == 0.0 || !x.is_finite() {
+        pi_fn_raise_invalid_f64();
+    }
+    out
 }
 
 /// GNU `exp10()` — base-10 exponential.
@@ -1870,7 +1878,17 @@ pub unsafe extern "C" fn significandf(x: f32) -> f32 {
     if x == 0.0 {
         set_domain_errno();
     }
-    unary_entry_f32(x, 3, frankenlibc_core::math::significandf)
+    let out = unary_entry_f32(x, 3, frankenlibc_core::math::significandf);
+    // ilogbf(0/inf/NaN) raises FE_INVALID inside glibc's significandf; mirror it.
+    // glibc's f32 path additionally raises FE_INEXACT on ±inf (the scalbnf scale
+    // of an infinite operand), unlike the f64 significand path.
+    if x == 0.0 || !x.is_finite() {
+        pi_fn_raise_invalid_f32();
+        if x.is_infinite() {
+            raise_inexact_f64();
+        }
+    }
+    out
 }
 
 /// `pow10f` is a GNU extension alias for `exp10f`.
@@ -4973,7 +4991,7 @@ fn getpayloadf_impl(x: *const f32) -> f32 {
 // silently accepted 1.5 as 1 and never zeroed *res). setpayloadsig additionally
 // requires payload >= 1 (payload 0 would yield an infinity, not an sNaN).
 fn setpayload_impl(res: *mut f64, payload: f64) -> c_int {
-    if payload >= 0.0 && payload < 2_251_799_813_685_248.0 && payload == payload.trunc() {
+    if (0.0..2_251_799_813_685_248.0).contains(&payload) && payload == payload.trunc() {
         unsafe {
             *res = f64::from_bits(0x7FF8_0000_0000_0000 | payload as u64);
         }
@@ -4984,7 +5002,7 @@ fn setpayload_impl(res: *mut f64, payload: f64) -> c_int {
     }
 }
 fn setpayloadf_impl(res: *mut f32, payload: f32) -> c_int {
-    if payload >= 0.0 && payload < 4_194_304.0 && payload == payload.trunc() {
+    if (0.0..4_194_304.0).contains(&payload) && payload == payload.trunc() {
         unsafe {
             *res = f32::from_bits(0x7FC0_0000 | payload as u32);
         }
@@ -4995,7 +5013,7 @@ fn setpayloadf_impl(res: *mut f32, payload: f32) -> c_int {
     }
 }
 fn setpayloadsig_impl(res: *mut f64, payload: f64) -> c_int {
-    if payload >= 1.0 && payload < 2_251_799_813_685_248.0 && payload == payload.trunc() {
+    if (1.0..2_251_799_813_685_248.0).contains(&payload) && payload == payload.trunc() {
         unsafe {
             *res = f64::from_bits(0x7FF0_0000_0000_0000 | payload as u64);
         }
@@ -5006,7 +5024,7 @@ fn setpayloadsig_impl(res: *mut f64, payload: f64) -> c_int {
     }
 }
 fn setpayloadsigf_impl(res: *mut f32, payload: f32) -> c_int {
-    if payload >= 1.0 && payload < 4_194_304.0 && payload == payload.trunc() {
+    if (1.0..4_194_304.0).contains(&payload) && payload == payload.trunc() {
         unsafe {
             *res = f32::from_bits(0x7F80_0000 | payload as u32);
         }
@@ -5129,6 +5147,7 @@ const FP_INT_TONEAREST: c_int = 4;
 /// Raise FE_INEXACT via a safe force_eval (1/3 is inexact). Used by the
 /// fromfpx/ufromfpx variants when the kept (in-range) result differs from x.
 #[inline]
+#[allow(dead_code)]
 fn raise_inexact_f64() {
     let _ = core::hint::black_box(core::hint::black_box(1.0_f64) / core::hint::black_box(3.0_f64));
 }
