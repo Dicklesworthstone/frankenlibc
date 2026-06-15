@@ -116,3 +116,38 @@ fn c23_narrow_widthnames_match_glibc() {
         mismatches.first().map(String::as_str).unwrap_or("")
     );
 }
+
+/// The `_FromType` = f64x / f128 spellings narrow from types fl represents as
+/// f64, so they are the SAME operation as the f64-source spellings and must
+/// produce identical results (no double-rounding). glibc cannot be used as the
+/// oracle here (it operates on true 80/128-bit inputs — fl's documented
+/// extended-precision limitation), so this is an internal-consistency gate that
+/// guards against any of these regressing to `(x OP y) as f32`.
+#[test]
+fn widthnames_f64x_f128_match_f64_siblings() {
+    let mut bad: Vec<String> = Vec::new();
+    let mut r = Rng(0xfeed_face_dead_beef);
+    for _ in 0..1_000_000 {
+        let a = r.f64();
+        let b = r.f64();
+        let c = r.f64();
+        unsafe {
+            if !eqb(fl::f32addf64x(a, b), fl::f32addf64(a, b)) { bad.push(format!("addf64x({a:e},{b:e})")); }
+            if !eqb(fl::f32addf128(a, b), fl::f32addf64(a, b)) { bad.push(format!("addf128({a:e},{b:e})")); }
+            if !eqb(fl::f32subf64x(a, b), fl::f32subf64(a, b)) { bad.push(format!("subf64x({a:e},{b:e})")); }
+            if !eqb(fl::f32subf128(a, b), fl::f32subf64(a, b)) { bad.push(format!("subf128({a:e},{b:e})")); }
+            if !eqb(fl::f32mulf64x(a, b), fl::f32mulf64(a, b)) { bad.push(format!("mulf64x({a:e},{b:e})")); }
+            if !eqb(fl::f32mulf128(a, b), fl::f32mulf64(a, b)) { bad.push(format!("mulf128({a:e},{b:e})")); }
+            if !eqb(fl::f32divf64x(a, b), fl::f32divf64(a, b)) { bad.push(format!("divf64x({a:e},{b:e})")); }
+            if !eqb(fl::f32divf128(a, b), fl::f32divf64(a, b)) { bad.push(format!("divf128({a:e},{b:e})")); }
+            if !eqb(fl::f32sqrtf64x(a.abs()), fl::f32sqrtf64(a.abs())) { bad.push(format!("sqrtf64x({a:e})")); }
+            if !eqb(fl::f32sqrtf128(a.abs()), fl::f32sqrtf64(a.abs())) { bad.push(format!("sqrtf128({a:e})")); }
+            if !eqb(fl::f32fmaf64x(a, b, c), fl::f32fmaf64(a, b, c)) { bad.push(format!("fmaf64x({a:e},{b:e},{c:e})")); }
+            if !eqb(fl::f32fmaf128(a, b, c), fl::f32fmaf64(a, b, c)) { bad.push(format!("fmaf128({a:e},{b:e},{c:e})")); }
+        }
+        if !bad.is_empty() {
+            break;
+        }
+    }
+    assert!(bad.is_empty(), "f64x/f128 narrowing inconsistent with f64 sibling; first: {}", bad.first().map(String::as_str).unwrap_or(""));
+}
