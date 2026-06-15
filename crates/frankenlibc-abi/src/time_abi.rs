@@ -25,6 +25,12 @@ type VdsoClockGettimeFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_
 type VdsoGettimeofdayFn = unsafe extern "C" fn(*mut libc::timeval, *mut libc::timezone) -> c_int;
 
 const ASCTIME_R_BUF_BYTES: usize = 26;
+/// Buffer for the non-reentrant `asctime`/`ctime`. glibc's static buffer is
+/// wider than the 26-byte reentrant contract — it succeeds for years that
+/// overflow 26 bytes (e.g. 10000+), bounded only by `tm_year + 1900` not
+/// overflowing `int`. The longest such string is 62 chars (all fields at their
+/// widest), so 64 holds it plus the NUL.
+const ASCTIME_FULL_BUF_BYTES: usize = 64;
 const TIME_T_BYTES: usize = core::mem::size_of::<i64>();
 const TM_BYTES: usize = core::mem::size_of::<libc::tm>();
 
@@ -788,8 +794,8 @@ pub unsafe extern "C" fn strftime(
 struct TimeTls {
     gmtime_buf: libc::tm,
     localtime_buf: libc::tm,
-    asctime_buf: [u8; ASCTIME_R_BUF_BYTES],
-    ctime_buf: [u8; ASCTIME_R_BUF_BYTES],
+    asctime_buf: [u8; ASCTIME_FULL_BUF_BYTES],
+    ctime_buf: [u8; ASCTIME_FULL_BUF_BYTES],
 }
 
 // SAFETY: `TimeTls` is keyed by kernel thread id inside `OwnedTlsCache`. The
@@ -806,8 +812,8 @@ fn new_time_tls() -> TimeTls {
         gmtime_buf: unsafe { std::mem::zeroed() },
         // SAFETY: Same POD zero-initialization rationale as `gmtime_buf`.
         localtime_buf: unsafe { std::mem::zeroed() },
-        asctime_buf: [0; ASCTIME_R_BUF_BYTES],
-        ctime_buf: [0; ASCTIME_R_BUF_BYTES],
+        asctime_buf: [0; ASCTIME_FULL_BUF_BYTES],
+        ctime_buf: [0; ASCTIME_FULL_BUF_BYTES],
     }
 }
 
@@ -819,8 +825,8 @@ static TIME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<TimeTls> =
 std::thread_local! {
     static GMTIME_BUF: std::cell::UnsafeCell<libc::tm> = const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
     static LOCALTIME_BUF: std::cell::UnsafeCell<libc::tm> = const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
-    static ASCTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_R_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_R_BUF_BYTES]) };
-    static CTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_R_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_R_BUF_BYTES]) };
+    static ASCTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_FULL_BUF_BYTES]) };
+    static CTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_FULL_BUF_BYTES]) };
 }
 
 #[inline]
@@ -858,7 +864,7 @@ fn with_localtime_buf<R>(f: impl FnOnce(&mut libc::tm) -> R) -> R {
 }
 
 #[inline]
-fn with_asctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_R_BUF_BYTES]) -> R) -> R {
+fn with_asctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_FULL_BUF_BYTES]) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
         TIME_OWNED_TLS.with(|tls| f(&mut tls.asctime_buf))
@@ -875,7 +881,7 @@ fn with_asctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_R_BUF_BYTES]) -> R) -> R
 }
 
 #[inline]
-fn with_ctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_R_BUF_BYTES]) -> R) -> R {
+fn with_ctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_FULL_BUF_BYTES]) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
         TIME_OWNED_TLS.with(|tls| f(&mut tls.ctime_buf))
@@ -931,13 +937,16 @@ pub unsafe extern "C" fn asctime(tm: *const libc::tm) -> *mut std::ffi::c_char {
     if tm.is_null() || !tracked_required_object_fits(tm) {
         return std::ptr::null_mut();
     }
+    // Unlike asctime_r (capped at the 26-byte contract buffer), the non-reentrant
+    // form uses glibc's wider static buffer and succeeds for years that overflow
+    // 26 bytes — so format into the wide buffer with format_asctime_full.
+    let bd = unsafe { read_tm(tm) };
     with_asctime_buf(|buf| {
-        let ptr = buf.as_mut_ptr() as *mut std::ffi::c_char;
-        let result = unsafe { asctime_r(tm, ptr) };
-        if result.is_null() {
+        let n = time_core::format_asctime_full(&bd, buf);
+        if n == 0 {
             std::ptr::null_mut()
         } else {
-            ptr
+            buf.as_mut_ptr() as *mut std::ffi::c_char
         }
     })
 }
@@ -948,13 +957,18 @@ pub unsafe extern "C" fn ctime(timer: *const i64) -> *mut std::ffi::c_char {
     if timer.is_null() || !tracked_required_object_fits(timer) {
         return std::ptr::null_mut();
     }
+    // ctime == asctime(localtime(timer)); like asctime, the non-reentrant form
+    // uses the wider buffer (no 26-byte cap) via format_asctime_full.
+    let epoch = unsafe { *timer };
+    let Some(bd) = time_core::epoch_to_broken_down_checked(epoch) else {
+        return std::ptr::null_mut();
+    };
     with_ctime_buf(|buf| {
-        let ptr = buf.as_mut_ptr() as *mut std::ffi::c_char;
-        let result = unsafe { ctime_r(timer, ptr) };
-        if result.is_null() {
+        let n = time_core::format_asctime_full(&bd, buf);
+        if n == 0 {
             std::ptr::null_mut()
         } else {
-            ptr
+            buf.as_mut_ptr() as *mut std::ffi::c_char
         }
     })
 }

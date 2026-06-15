@@ -206,18 +206,49 @@ const MON_NAMES: [&[u8; 3]; 12] = [
 
 /// Format broken-down time as asctime string: "Day Mon DD HH:MM:SS YYYY\n\0".
 ///
-/// Writes at most `buf_len` bytes into `buf` (including NUL terminator).
+/// This is the capped form used by the reentrant `asctime_r`/`ctime_r`: glibc
+/// bounds those to the 26-byte contract buffer and returns NULL (EOVERFLOW)
+/// rather than truncate when the result would not fit (e.g. a year outside
+/// [-999, 9999]). The non-reentrant `asctime`/`ctime` use [`format_asctime_full`]
+/// instead, which has no 26-byte ceiling (glibc's static buffer is wider).
+///
+/// Writes at most `buf.len()` bytes into `buf` (including NUL terminator).
 /// Returns the number of bytes written (excluding NUL), or 0 on error.
-/// The canonical asctime output is exactly 26 bytes: 24 chars + '\n' + '\0'.
 pub fn format_asctime(bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
+    format_asctime_inner(bd, buf, true)
+}
+
+/// Like [`format_asctime`] but without the 26-byte ceiling — bounded only by
+/// `buf.len()`. Used by the non-reentrant `asctime`/`ctime`, which glibc lets
+/// succeed for years that overflow the 26-byte reentrant buffer (e.g. 10000+).
+pub fn format_asctime_full(bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
+    format_asctime_inner(bd, buf, false)
+}
+
+fn format_asctime_inner(bd: &BrokenDownTime, buf: &mut [u8], cap_26: bool) -> usize {
     // Need at least 26 bytes (24 chars + newline + NUL)
     if buf.len() < 26 {
         return 0;
     }
 
-    let wday = bd.tm_wday.rem_euclid(7) as usize;
-    let mon = bd.tm_mon.rem_euclid(12) as usize;
-    let year = bd.tm_year as i64 + 1900;
+    // glibc prints "???" for an out-of-range weekday/month rather than wrapping
+    // the index. (The old rem_euclid always landed in-bounds, so the "???"
+    // fallback below never fired.)
+    let wday_name = match bd.tm_wday {
+        0..=6 => std::str::from_utf8(WDAY_NAMES[bd.tm_wday as usize]).unwrap_or("???"),
+        _ => "???",
+    };
+    let mon_name = match bd.tm_mon {
+        0..=11 => std::str::from_utf8(MON_NAMES[bd.tm_mon as usize]).unwrap_or("???"),
+        _ => "???",
+    };
+    // glibc computes the printed year as `tm_year + 1900` in an `int` and returns
+    // NULL (EOVERFLOW) when that addition overflows — independent of buffer size.
+    // tm_year is the C `int` field, so mirror the i32 overflow exactly.
+    let year = match bd.tm_year.checked_add(1900) {
+        Some(y) => y as i64,
+        None => return 0,
+    };
 
     // POSIX/glibc format: `"%.3s %.3s%3d %.2d:%.2d:%.2d %d\n"`. Note the
     // day field is `%3d` (no preceding literal space), so a 3-digit day
@@ -253,13 +284,7 @@ pub fn format_asctime(bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
         &mut sf,
         format_args!(
             "{} {}{:>3} {:02}:{:02}:{:02} {}\n",
-            std::str::from_utf8(WDAY_NAMES[wday]).unwrap_or("???"),
-            std::str::from_utf8(MON_NAMES[mon]).unwrap_or("???"),
-            bd.tm_mday,
-            bd.tm_hour,
-            bd.tm_min,
-            bd.tm_sec,
-            year,
+            wday_name, mon_name, bd.tm_mday, bd.tm_hour, bd.tm_min, bd.tm_sec, year,
         ),
     )
     .is_err()
@@ -267,11 +292,13 @@ pub fn format_asctime(bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
         return 0;
     }
     let bytes = &sf.buf[..sf.pos];
-    // glibc's asctime/asctime_r bound the output to the 26-byte contract buffer
-    // and return NULL (EOVERFLOW) rather than TRUNCATE when it would not fit —
-    // e.g. a year outside [-999, 9999] (a 5+ char "%d") makes the string 26 bytes
-    // (27 with NUL). Found by asctime_r_differential_fuzz.
-    if bytes.len() + 1 > 26 {
+    // Reentrant path: glibc bounds the output to the 26-byte contract buffer and
+    // returns NULL (EOVERFLOW) rather than TRUNCATE when it would not fit — e.g.
+    // a year outside [-999, 9999] (a 5+ char "%d") makes the string 26 bytes (27
+    // with NUL). Found by asctime_r_differential_fuzz. The non-reentrant path
+    // (cap_26 == false) is bounded only by the caller buffer.
+    let limit = if cap_26 { 26 } else { buf.len() };
+    if bytes.len() + 1 > limit {
         return 0;
     }
     let copy_len = bytes.len().min(buf.len() - 1);
