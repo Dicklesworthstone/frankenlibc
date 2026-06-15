@@ -663,6 +663,13 @@ pub unsafe extern "C" fn fmin(x: f64, y: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmax(x: f64, y: f64) -> f64 {
+    // glibc's fmax lowers to the hardware MAXSD instruction, which on a signed-
+    // zero tie (both operands ±0) returns the SECOND operand. libm's fmax
+    // returns the first, so fmax(-0,+0) gave -0 where glibc gives +0. Mirror
+    // the MAXSD tie-break. Pinned by conformance_diff_exact_unary_flags.
+    if x == 0.0 && y == 0.0 {
+        return y;
+    }
     frankenlibc_core::math::fmax(x, y)
 }
 
@@ -1491,6 +1498,11 @@ pub unsafe extern "C" fn fdimf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaxf(x: f32, y: f32) -> f32 {
+    // glibc fmaxf lowers to MAXSS: a signed-zero tie returns the SECOND operand
+    // (see fmax). libm's fmaxf returns the first.
+    if x == 0.0 && y == 0.0 {
+        return y;
+    }
     binary_entry_f32(x, y, 2, frankenlibc_core::math::fmaxf)
 }
 
