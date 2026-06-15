@@ -20711,9 +20711,7 @@ const FMTMSG_MM_NOTOK: c_int = -1;
 /// (severity <= MM_INFO is reserved). Returns MM_OK (0) / MM_NOTOK (-1).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn addseverity(severity: c_int, string: *const c_char) -> c_int {
-    let mut reg = FMTMSG_SEVERITIES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut reg = FMTMSG_SEVERITIES.lock().unwrap_or_else(|e| e.into_inner());
     let existing = reg.iter().position(|(s, _)| *s == severity);
 
     if string.is_null() {
@@ -20758,9 +20756,7 @@ fn fmtmsg_resolve_severity(severity: c_int) -> Result<Option<Vec<u8>>, ()> {
     if let Some(name) = frankenlibc_core::fmtmsg::severity_name(severity) {
         return Ok(Some(name.as_bytes().to_vec()));
     }
-    let reg = FMTMSG_SEVERITIES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let reg = FMTMSG_SEVERITIES.lock().unwrap_or_else(|e| e.into_inner());
     reg.iter()
         .find(|(s, _)| *s == severity)
         .map(|(_, label)| Some(label.clone()))
@@ -26325,55 +26321,20 @@ pub unsafe extern "C" fn isnan(x: f64) -> c_int {
 }
 
 /// Obsolete SVID `scalb(x, fn)` — like `scalbn` but the binary exponent is a
-/// floating value. Replicates glibc's `__ieee754_scalb` exactly: a NON-INTEGER
-/// exponent yields NaN + FE_INVALID (the naive `x * 2^exp` returned a bogus
-/// finite value, e.g. `scalb(3, 2.5)` -> 16.97 instead of NaN, and
-/// `scalb(0, 2.5)` -> 0 instead of NaN), and an infinite exponent uses the
-/// `x*fn` / `x/(-fn)` forms so e.g. `scalb(inf, -inf)` -> NaN+INVALID.
+/// floating value. Mirrors glibc's public SVID contract: a NON-INTEGER exponent
+/// yields NaN + FE_INVALID + EDOM (the naive `x * 2^exp` returned a bogus finite
+/// value, e.g. `scalb(3, 2.5)` -> 16.97 instead of NaN), integer exponents report
+/// ERANGE on finite nonzero overflow/underflow, and infinite exponents use the
+/// `x*fn` / `x/(-fn)` forms so e.g. `scalb(inf, -inf)` -> NaN+INVALID+EDOM.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalb(x: f64, exp: f64) -> f64 {
-    if x.is_nan() || exp.is_nan() {
-        return x * exp;
-    }
-    if !exp.is_finite() {
-        // exp is ±inf: x*inf for +inf (0*inf -> NaN+INVALID), x/inf for -inf.
-        return if exp > 0.0 { x * exp } else { x / (-exp) };
-    }
-    // Non-integer exponent -> NaN + FE_INVALID, raised by 0/0 like glibc.
-    if exp != exp.trunc() {
-        return (exp - exp) / (exp - exp);
-    }
-    // Clamp the magnitude to glibc's ±65000 guard before the i32 cast.
-    let n = if exp > 65000.0 {
-        65000
-    } else if exp < -65000.0 {
-        -65000
-    } else {
-        exp as i32
-    };
-    frankenlibc_core::math::scalbn(x, n)
+    crate::math_abi::scalb_svid_impl(x, exp)
 }
 
 /// `scalbf` — single-precision SVID `scalb`. Same `__ieee754_scalbf` semantics.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbf(x: f32, exp: f32) -> f32 {
-    if x.is_nan() || exp.is_nan() {
-        return x * exp;
-    }
-    if !exp.is_finite() {
-        return if exp > 0.0 { x * exp } else { x / (-exp) };
-    }
-    if exp != exp.trunc() {
-        return (exp - exp) / (exp - exp);
-    }
-    let n = if exp > 65000.0 {
-        65000
-    } else if exp < -65000.0 {
-        -65000
-    } else {
-        exp as i32
-    };
-    frankenlibc_core::math::scalbnf(x, n)
+    crate::math_abi::scalbf_svid_impl(x, exp)
 }
 
 // ===========================================================================

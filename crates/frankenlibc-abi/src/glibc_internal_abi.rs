@@ -7032,7 +7032,7 @@ fn v7_pattern_to_bre(pat: &[u8]) -> Vec<u8> {
                 out.extend_from_slice(b"\\{0,1\\}");
                 i += 1;
             }
-            c @ (b'^') => {
+            c @ b'^' => {
                 out.push(c);
                 prev_atom = false;
                 i += 1;
@@ -7066,8 +7066,9 @@ pub unsafe extern "C" fn re_comp(pattern: *const c_char) -> *mut c_char {
     }
     let raw = unsafe { std::ffi::CStr::from_ptr(pattern).to_bytes() };
     let bre = v7_pattern_to_bre(raw);
-    let err =
-        unsafe { super::string_abi::re_compile_pattern(bre.as_ptr() as *const c_char, bre.len(), buf_ptr) };
+    let err = unsafe {
+        super::string_abi::re_compile_pattern(bre.as_ptr() as *const c_char, bre.len(), buf_ptr)
+    };
     err.cast_mut()
 }
 
@@ -7082,9 +7083,8 @@ pub unsafe extern "C" fn re_exec(string: *const c_char) -> c_int {
     let buf_ptr = buf.as_ptr() as *const c_void;
     let len = unsafe { std::ffi::CStr::from_ptr(string).to_bytes().len() } as c_int;
     // re_search returns the match offset (>=0), -1 (no match) or -2 (error).
-    let r = unsafe {
-        super::string_abi::re_search(buf_ptr, string, len, 0, len, std::ptr::null_mut())
-    };
+    let r =
+        unsafe { super::string_abi::re_search(buf_ptr, string, len, 0, len, std::ptr::null_mut()) };
     if r >= 0 {
         1
     } else if r == -1 {

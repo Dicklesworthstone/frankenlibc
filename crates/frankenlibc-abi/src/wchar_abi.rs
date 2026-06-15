@@ -1066,7 +1066,6 @@ pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mu
                     break;
                 }
                 h = pos + 1;
-                work_local = pos.saturating_add(needle_len);
             }
         } else if hay_len >= needle_len {
             let mut h = 0usize;
@@ -3966,7 +3965,11 @@ fn wide_ascii_lower_simd(v: Simd<u32, 8>) -> Simd<u32, 8> {
 /// arithmetic, not a bare sign). Equal-folded-and-NUL-free windows advance 8;
 /// others resolve element-wise (identical to the scalar [`abi_towlower`] loop).
 /// Dual-pointer reads are page-cross guarded like [`scan_wcscmp_simd`].
-unsafe fn scan_wcscasecmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_int, usize, bool) {
+unsafe fn scan_wcscasecmp_simd(
+    s1: *const u32,
+    s2: *const u32,
+    bound: usize,
+) -> (c_int, usize, bool) {
     const WLANES: usize = 8;
     let zv = Simd::<u32, WLANES>::splat(0);
     let mut i = 0usize;

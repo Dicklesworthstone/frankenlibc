@@ -380,7 +380,7 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
             tm_wday: (*tm).tm_wday,
             tm_yday: (*tm).tm_yday,
             tm_isdst: (*tm).tm_isdst,
-            tm_gmtoff: (*tm).tm_gmtoff as i64,
+            tm_gmtoff: (*tm).tm_gmtoff,
             // tm_zone is NOT dereferenced here: read_tm feeds mktime/timegm/
             // asctime too, and a caller may pass an uninitialised tm_zone to
             // those. Only `strftime` (whose contract reads tm_zone for %Z)

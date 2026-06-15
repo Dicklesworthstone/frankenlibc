@@ -754,9 +754,14 @@ pub(crate) fn scalb_svid_impl(x: f64, exp: f64) -> f64 {
         return x * exp;
     }
     if !exp.is_finite() {
-        return if exp > 0.0 { x * exp } else { x / (-exp) };
+        let out = if exp > 0.0 { x * exp } else { x / (-exp) };
+        if out.is_nan() {
+            set_domain_errno();
+        }
+        return out;
     }
     if exp != exp.trunc() {
+        set_domain_errno();
         return core::hint::black_box(0.0_f64) / core::hint::black_box(-0.0_f64);
     }
     let n = if exp > 65000.0 {
@@ -766,7 +771,11 @@ pub(crate) fn scalb_svid_impl(x: f64, exp: f64) -> f64 {
     } else {
         exp as i32
     };
-    frankenlibc_core::math::scalbn(x, n)
+    let out = frankenlibc_core::math::scalbn(x, n);
+    if scaling_range_error_f64(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 #[inline]
@@ -776,9 +785,14 @@ pub(crate) fn scalbf_svid_impl(x: f32, exp: f32) -> f32 {
         return x * exp;
     }
     if !exp.is_finite() {
-        return if exp > 0.0 { x * exp } else { x / (-exp) };
+        let out = if exp > 0.0 { x * exp } else { x / (-exp) };
+        if out.is_nan() {
+            set_domain_errno();
+        }
+        return out;
     }
     if exp != exp.trunc() {
+        set_domain_errno();
         return core::hint::black_box(0.0_f32) / core::hint::black_box(-0.0_f32);
     }
     let n = if exp > 65000.0 {
@@ -788,7 +802,11 @@ pub(crate) fn scalbf_svid_impl(x: f32, exp: f32) -> f32 {
     } else {
         exp as i32
     };
-    frankenlibc_core::math::scalbnf(x, n)
+    let out = frankenlibc_core::math::scalbnf(x, n);
+    if scaling_range_error_f32(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5892,8 +5910,8 @@ pub unsafe extern "C" fn sincosl(x: f64, s: *mut f64, c: *mut f64) {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbl(x: f64, y: f64) -> f64 {
-    // Same SVID `__ieee754_scalb` semantics as `scalb`: a non-integer exponent
-    // must yield NaN+FE_INVALID, not a truncated `y as i32` scale.
+    // Same public SVID semantics as `scalb`: non-integer exponents report
+    // EDOM+FE_INVALID, and finite integer overflow/underflow reports ERANGE.
     scalb_svid_impl(x, y)
 }
 

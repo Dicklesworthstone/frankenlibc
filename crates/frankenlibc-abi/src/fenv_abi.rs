@@ -377,7 +377,7 @@ pub unsafe extern "C" fn fetestexceptflag(flagp: *const u16, excepts: c_int) -> 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fegetexcept() -> c_int {
     let cw = unsafe { read_x87_cw() } as u32;
-    (((!cw) & HW_ALL_EXCEPT)) as c_int
+    ((!cw) & HW_ALL_EXCEPT) as c_int
 }
 
 /// Enable trapping for `excepts` (clear their mask bits in the x87 CW and

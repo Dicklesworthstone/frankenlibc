@@ -969,8 +969,9 @@ unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, boo
                 use core::simd::Simd;
                 use core::simd::cmp::SimdPartialEq;
                 // SAFETY: [i, i+32) ⊆ [0, limit); `limit` bytes are readable.
-                let v =
-                    Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+                let v = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
                 if v.simd_eq(Simd::splat(0)).any() {
                     break;
                 }
@@ -1219,8 +1220,9 @@ unsafe fn scan_c_string_last_byte(
                     use core::simd::Simd;
                     use core::simd::cmp::SimdPartialEq;
                     // SAFETY: the 32-byte window stays within the current page.
-                    let v =
-                        Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+                    let v = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i), 32)
+                    });
                     let hit = v.simd_eq(Simd::splat(target)) | v.simd_eq(Simd::splat(0));
                     if !hit.any() {
                         i += 32;
@@ -2633,7 +2635,9 @@ unsafe fn strcpy_core(dst: *mut c_char, src: *const c_char) -> Option<*mut c_cha
     );
     // End pointer = the written-NUL position (`stpcpy` result). copied_len counts
     // the payload plus the terminator, so the NUL sits at dst + (copied_len - 1).
-    Some(dst.add(copied_len.saturating_sub(1)))
+    // SAFETY: `dst` was checked for null above and the copy wrote exactly
+    // `copied_len` bytes, including the terminator at this offset.
+    Some(unsafe { dst.add(copied_len.saturating_sub(1)) })
 }
 
 pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
@@ -3136,6 +3140,7 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
 ///     (or the bounded-truncation point) — i.e. the `strchrnul` result;
 ///   * `found` is true iff `located` is a real `target` byte (not the NUL/limit),
 ///     i.e. `strchr` returns `located` when `found`, else NULL.
+///
 /// Returns `None` only when `s` is NULL or the membrane denies the call (the
 /// caller picks the fallback). Folding both entry points onto this eliminates
 /// strchrnul's old strchr()+strlen() double scan on a miss.
