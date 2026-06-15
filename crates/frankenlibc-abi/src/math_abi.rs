@@ -4449,11 +4449,25 @@ pub unsafe extern "C" fn log10p1f128(x: f64) -> f64 {
 // --- exp2m1, exp10m1 (C23) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2m1(x: f64) -> f64 {
-    unsafe { expm1(x * std::f64::consts::LN_2) }
+    // C23 2^x - 1. The naive expm1(x*LN_2) amplifies the LN_2 round-off in the
+    // argument reduction by the exponential, diverging from glibc by hundreds of
+    // ULP for large |x| (e.g. 703 ULP at x~956). Away from 0, 2^x is far from 1 so
+    // exp2(x) - 1 is benign and tracks glibc's correctly-rounded exp2 to 0 ULP;
+    // only inside |x| < 1 (where 1 is within an ULP of the result) is expm1 needed
+    // to avoid catastrophic cancellation. NaN/inf flow through exp2 unchanged.
+    if x.abs() < 1.0 {
+        unsafe { expm1(x * std::f64::consts::LN_2) }
+    } else {
+        unsafe { exp2(x) - 1.0 }
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2m1f(x: f32) -> f32 {
-    unsafe { expm1f(x * std::f32::consts::LN_2) }
+    if x.abs() < 1.0 {
+        unsafe { expm1f(x * std::f32::consts::LN_2) }
+    } else {
+        unsafe { exp2f(x) - 1.0 }
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2m1l(x: f64) -> f64 {
@@ -4481,11 +4495,22 @@ pub unsafe extern "C" fn exp2m1f128(x: f64) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10m1(x: f64) -> f64 {
-    unsafe { expm1(x * std::f64::consts::LN_10) }
+    // C23 10^x - 1. Same argument-reduction hazard as exp2m1 (naive form diverges
+    // ~1080 ULP at x~301). exp10(x) - 1 matches glibc to 0 ULP for |x| >= 0.5;
+    // inside that band expm1(x*LN_10) avoids the near-1 cancellation.
+    if x.abs() < 0.5 {
+        unsafe { expm1(x * std::f64::consts::LN_10) }
+    } else {
+        unsafe { exp10(x) - 1.0 }
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10m1f(x: f32) -> f32 {
-    unsafe { expm1f(x * std::f32::consts::LN_10) }
+    if x.abs() < 0.5 {
+        unsafe { expm1f(x * std::f32::consts::LN_10) }
+    } else {
+        unsafe { exp10f(x) - 1.0 }
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10m1l(x: f64) -> f64 {
