@@ -896,6 +896,10 @@ const POWI_MAX_EXP: u64 = 8;
 
 #[inline]
 pub fn pow(base: f64, exponent: f64) -> f64 {
+    if let Some(result) = pow_profile_exp_1_337_fast_path(base, exponent) {
+        return result;
+    }
+
     // Fast path: small integer exponents (and y == 0.5) on a finite base.
     // libm::pow always routes through the general log2/exp2 path (~3.3x slower
     // than glibc); exponentiation by squaring is ~10x faster and, bounded to
