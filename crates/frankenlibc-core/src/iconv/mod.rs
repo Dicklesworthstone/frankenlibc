@@ -6,6 +6,7 @@ use crate::errno;
 use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint};
 
 mod cjk_tables;
+mod euc_jp_ms_tables;
 mod cp932_tables;
 mod iso6937_tables;
 mod euctw_tables;
@@ -487,6 +488,8 @@ enum Encoding {
     Iso885915,
     Iso885916,
     EucJp,
+    /// EUC-JP-MS (= EUCJP-OPEN/WIN): EUC-JP superset with NEC/IBM extensions.
+    EucJpMs,
     /// EUC-TW (CNS 11643): variable-length Taiwanese — 1-byte ASCII, 2-byte CNS
     /// plane 1 (G1), and 4-byte SS2 (`0x8E` + plane + 2 cells) for planes 1-16.
     EucTw,
@@ -524,7 +527,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 278] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 279] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2241,6 +2244,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 278] = [
         canonical: "EUC-JP",
         normalized: "EUCJP",
         aliases: &["EUCJP", "CSEUCPKDFMTJAPANESE", "UJIS"],
+    },
+    CodecSpec {
+        encoding: Encoding::EucJpMs,
+        canonical: "EUC-JP-MS",
+        normalized: "EUCJPMS",
+        aliases: &["EUCJPOPEN", "EUCJPWIN"],
     },
     CodecSpec {
         encoding: Encoding::EucTw,
@@ -17905,6 +17914,93 @@ fn encode_eucjp(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     }
 }
 
+// EUC-JP-MS (= EUCJP-OPEN/WIN): EUC-JP superset (NEC/IBM extensions, 940 PUA
+// cells in the SS3 plane). Same 1/2/3-byte structure as EUC-JP; mirrors
+// decode_eucjp/encode_eucjp over the euc_jp_ms_tables.
+fn decode_eucjpms(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DBCS2_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    static DBCS3_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let Some(&b0) = input.first() else {
+        return Err(DecodeError::Incomplete);
+    };
+    let ob = euc_jp_ms_tables::EUC_JP_MS_ONE_BYTE[b0 as usize];
+    if ob >= 0 {
+        return char::from_u32(ob as u32).map(|c| (c, 1)).ok_or(DecodeError::Invalid);
+    }
+    if b0 == 0x8F {
+        let Some(&b1) = input.get(1) else {
+            return Err(DecodeError::Incomplete);
+        };
+        if !euc_jp_ms_tables::EUC_JP_MS_SS3_ROW_VALID[b1 as usize] {
+            return Err(DecodeError::Invalid);
+        }
+        let Some(&b2) = input.get(2) else {
+            return Err(DecodeError::Incomplete);
+        };
+        let key = (u16::from(b1) << 8) | u16::from(b2);
+        let direct = DBCS3_DIRECT.get_or_init(|| build_dbcs_direct(&euc_jp_ms_tables::EUC_JP_MS_DBCS3));
+        let cp = direct[key as usize];
+        return if cp != 0 {
+            char::from_u32(cp).map(|c| (c, 3)).ok_or(DecodeError::Invalid)
+        } else {
+            Err(DecodeError::Invalid)
+        };
+    }
+    if !euc_jp_ms_tables::EUC_JP_MS_LEAD2_DEFER[b0 as usize] {
+        return Err(DecodeError::Invalid);
+    }
+    let Some(&b1) = input.get(1) else {
+        return Err(DecodeError::Incomplete);
+    };
+    let key = (u16::from(b0) << 8) | u16::from(b1);
+    let direct = DBCS2_DIRECT.get_or_init(|| build_dbcs_direct(&euc_jp_ms_tables::EUC_JP_MS_DBCS2));
+    let cp = direct[key as usize];
+    if cp != 0 {
+        char::from_u32(cp).map(|c| (c, 2)).ok_or(DecodeError::Invalid)
+    } else {
+        Err(DecodeError::Invalid)
+    }
+}
+fn encode_eucjpms(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    static ENC_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = ENC_DIRECT.get_or_init(|| {
+        let mut t = vec![0u32; 0x10000];
+        for &(cp, packed) in euc_jp_ms_tables::EUC_JP_MS_ENC.iter() {
+            if cp < 0x10000 {
+                t[cp as usize] = packed + 1;
+            }
+        }
+        t
+    });
+    let cp = ch as u32;
+    if cp >= 0x10000 || direct[cp as usize] == 0 {
+        return Err(EncodeError::Unrepresentable);
+    }
+    let packed = direct[cp as usize] - 1;
+    if packed < 0x100 {
+        if out.is_empty() {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = packed as u8;
+        Ok(1)
+    } else if packed < 0x1_0000 {
+        if out.len() < 2 {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = (packed >> 8) as u8;
+        out[1] = (packed & 0xFF) as u8;
+        Ok(2)
+    } else {
+        if out.len() < 3 {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = (packed >> 16) as u8;
+        out[1] = ((packed >> 8) & 0xFF) as u8;
+        out[2] = (packed & 0xFF) as u8;
+        Ok(3)
+    }
+}
+
 /// EUC-TW (CNS 11643) decoder, glibc-exact (see [`euctw_tables`]). Variable
 /// length: 1-byte ASCII (`EUC_TW_ONE_BYTE`); 2-byte G1 CNS plane 1
 /// (`EUC_TW_DBCS2`, lead in `EUC_TW_LEAD2_DEFER`); 4-byte SS2 `0x8E` + plane
@@ -18900,6 +18996,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
+        Encoding::EucJpMs => decode_eucjpms(input),
         Encoding::EucTw => decode_euctw(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Cp932 => decode_cp932(input),
@@ -19324,6 +19421,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
+        Encoding::EucJpMs => encode_eucjpms(ch, out),
         Encoding::EucTw => encode_euctw(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Cp932 => encode_cp932(ch, out),
