@@ -2672,6 +2672,10 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
     ("OSF00010106", "UTF-32BE"),
     ("OSF05010001", "UTF-8"),
     ("ISOIR193", "UTF-8"),
+    // OSF charset-registry codes that resolve to codecs fl already implements
+    // (gate-verified byte-identical): 0005000A = US-ASCII, 0004000A = EUC-KR.
+    ("OSF0005000A", "ASCII"),
+    ("OSF0004000A", "EUC-KR"),
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.
