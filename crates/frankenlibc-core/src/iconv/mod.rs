@@ -93,6 +93,9 @@ enum Encoding {
     /// sequences encoding UTF-16BE). Handled by a dedicated whole-buffer branch
     /// in [`iconv`], not the per-char decode_char/encode_char path.
     Utf7,
+    /// UTF-7-IMAP (RFC 3501 modified UTF-7): like UTF-7 but shift-in is `&`, the
+    /// 63rd base64 char is `,`, and all printable ASCII except `&` is direct.
+    Utf7Imap,
     /// ISO-2022-KR (RFC 1557): stateful 7-bit Korean encoding. A
     /// `ESC $ ) C` designator at buffer start, then SO (0x0E) shifts into
     /// KSC 5601 double-byte mode (= EUC-KR with the high bit cleared on each
@@ -527,7 +530,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 279] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 280] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -605,6 +608,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 279] = [
         canonical: "UTF-7",
         normalized: "UTF7",
         aliases: &["UTF7", "UNICODE11UTF7", "CSUNICODE11UTF7"],
+    },
+    CodecSpec {
+        encoding: Encoding::Utf7Imap,
+        canonical: "UTF-7-IMAP",
+        normalized: "UTF7IMAP",
+        aliases: &[],
     },
     CodecSpec {
         encoding: Encoding::Utf32,
@@ -18740,7 +18749,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Ucs2Be => decode_ucs2be(input),
         // UTF-7 is handled by the dedicated whole-buffer path in `iconv`; this
         // per-char entry is never reached.
-        Encoding::Utf7 => Err(DecodeError::Invalid),
+        Encoding::Utf7 | Encoding::Utf7Imap => Err(DecodeError::Invalid),
         // ISO-2022-KR is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Kr => Err(DecodeError::Invalid),
         Encoding::Utf32 => decode_utf32(input),
@@ -19144,7 +19153,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         }
         // UTF-7 is handled by the dedicated whole-buffer path in `iconv`; this
         // per-char entry is never reached.
-        Encoding::Utf7 => Err(EncodeError::Unrepresentable),
+        Encoding::Utf7 | Encoding::Utf7Imap => Err(EncodeError::Unrepresentable),
         // ISO-2022-KR is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Kr => Err(EncodeError::Unrepresentable),
         Encoding::Utf32 => {
@@ -19571,28 +19580,76 @@ fn utf7_is_direct(b: u8) -> bool {
         )
 }
 
+/// UTF-7-IMAP (RFC 3501 modified UTF-7) Modified-Base64 alphabet: the 63rd char
+/// is `,` (comma) instead of `/`.
+const UTF7_IMAP_B64: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+,";
+
+#[inline]
+fn utf7imap_b64_val(c: u8) -> Option<u32> {
+    match c {
+        b'A'..=b'Z' => Some((c - b'A') as u32),
+        b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+        b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+        b'+' => Some(62),
+        b',' => Some(63),
+        _ => None,
+    }
+}
+
+/// UTF-7-IMAP directly-encoded set: every printable US-ASCII char (0x20-0x7E)
+/// except `&` (the shift-in char). Controls and non-ASCII go via Modified-Base64.
+#[inline]
+fn utf7imap_is_direct(b: u8) -> bool {
+    (0x20..=0x7E).contains(&b) && b != b'&'
+}
+
+/// Parameterization of the UTF-7 codec to cover its IMAP variant (RFC 3501):
+/// the shift-in char is `&` not `+`, the 63rd base64 char is `,` not `/`, and the
+/// direct set is all printable ASCII except `&`.
+struct Utf7Cfg {
+    shift_in: u8,
+    b64: &'static [u8; 64],
+    b64_val: fn(u8) -> Option<u32>,
+    is_direct: fn(u8) -> bool,
+}
+const UTF7_CFG: Utf7Cfg = Utf7Cfg {
+    shift_in: b'+',
+    b64: UTF7_B64,
+    b64_val: utf7_b64_val,
+    is_direct: utf7_is_direct,
+};
+const UTF7_IMAP_CFG: Utf7Cfg = Utf7Cfg {
+    shift_in: b'&',
+    b64: UTF7_IMAP_B64,
+    b64_val: utf7imap_b64_val,
+    is_direct: utf7imap_is_direct,
+};
+
 /// Encode a scalar sequence to UTF-7. Direct-set chars pass through; `+` becomes
 /// `+-`; any run of other chars becomes `+` <Modified-Base64 of their UTF-16BE
 /// code units> `-`. Matches glibc's gconv UTF-7 output (verified vs the host).
-fn utf7_encode(chars: &[char]) -> Vec<u8> {
+fn utf7_encode(chars: &[char], cfg: &Utf7Cfg) -> Vec<u8> {
+    let shift = cfg.shift_in;
     let mut out = Vec::with_capacity(chars.len() * 2);
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
-        if (c as u32) < 0x80 && utf7_is_direct(c as u8) {
+        if (c as u32) < 0x80 && (cfg.is_direct)(c as u8) {
             out.push(c as u8);
             i += 1;
-        } else if c == '+' {
-            out.push(b'+');
+        } else if (c as u32) < 0x80 && c as u8 == shift {
+            // The shift-in char itself is written as `<shift>-` (e.g. `+-`/`&-`).
+            out.push(shift);
             out.push(b'-');
             i += 1;
         } else {
-            out.push(b'+');
+            out.push(shift);
             let mut bits: u32 = 0;
             let mut nb: u32 = 0;
             while i < chars.len()
                 && !((chars[i] as u32) < 0x80
-                    && (utf7_is_direct(chars[i] as u8) || chars[i] == '+'))
+                    && ((cfg.is_direct)(chars[i] as u8) || chars[i] as u8 == shift))
             {
                 let cp = chars[i] as u32;
                 let (units, n): ([u16; 2], usize) = if cp >= 0x10000 {
@@ -19609,21 +19666,23 @@ fn utf7_encode(chars: &[char]) -> Vec<u8> {
                     nb += 16;
                     while nb >= 6 {
                         nb -= 6;
-                        out.push(UTF7_B64[((bits >> nb) & 0x3F) as usize]);
+                        out.push(cfg.b64[((bits >> nb) & 0x3F) as usize]);
                     }
                 }
                 i += 1;
             }
             if nb > 0 {
-                out.push(UTF7_B64[((bits << (6 - nb)) & 0x3F) as usize]);
+                out.push(cfg.b64[((bits << (6 - nb)) & 0x3F) as usize]);
             }
             // The closing '-' is only required when it is needed to terminate the
-            // shift unambiguously: at end of input, or when the next character's
-            // byte is itself in the Modified-Base64 alphabet (A-Za-z0-9+/, which
-            // includes alphanumerics, '+' and '/'). When the run is followed by a
-            // non-base64 direct char (space, '(', '!', etc.) glibc omits the '-'.
+            // shift unambiguously: at end of input, when the next character's byte
+            // is itself in the Modified-Base64 alphabet, or when it is the shift-in
+            // char (which opens a fresh shift run — for UTF-7 the shift char '+' is
+            // already in the base64 alphabet, but IMAP's '&' is not). When the run
+            // is followed by a non-base64 direct char glibc omits the '-'.
             let need_dash = i >= chars.len()
-                || ((chars[i] as u32) < 0x80 && utf7_b64_val(chars[i] as u8).is_some());
+                || ((chars[i] as u32) < 0x80
+                    && ((cfg.b64_val)(chars[i] as u8).is_some() || chars[i] as u8 == shift));
             if need_dash {
                 out.push(b'-');
             }
@@ -19645,6 +19704,7 @@ fn utf7_decode_streaming(
     cd: &mut IconvDescriptor,
     input: &[u8],
     outbuf: &mut [u8],
+    cfg: &Utf7Cfg,
 ) -> Result<IconvResult, IconvError> {
     let mut in_pos = 0usize;
     let mut out_pos = 0usize;
@@ -19717,7 +19777,7 @@ fn utf7_decode_streaming(
     while in_pos < input.len() {
         let c = input[in_pos];
         if active {
-            if let Some(v) = utf7_b64_val(c) {
+            if let Some(v) = (cfg.b64_val)(c) {
                 shift_empty = false;
                 bits = (bits << 6) | v;
                 nbits += 6;
@@ -19770,16 +19830,17 @@ fn utf7_decode_streaming(
                 nbits = 0;
                 shift_empty = false;
                 if c == b'-' {
-                    // The `-` is absorbed; `+-` (empty run) is the literal `+`.
+                    // The `-` is absorbed; `<shift>-` (empty run) is the literal
+                    // shift char (`+` for UTF-7, `&` for UTF-7-IMAP).
                     in_pos += 1;
                     if was_empty {
-                        emit!('+');
+                        emit!(cfg.shift_in as char);
                     }
                 }
                 // Otherwise leave `c` for the next iteration as a direct byte.
             }
-        } else if c == b'+' {
-            // Open a shift sequence; a following `-` makes it the literal `+`.
+        } else if c == cfg.shift_in {
+            // Open a shift sequence; a following `-` makes it the literal shift char.
             active = true;
             bits = 0;
             nbits = 0;
@@ -19851,8 +19912,9 @@ fn utf7_convert(
     cd: &IconvDescriptor,
     input: &[u8],
     outbuf: &mut [u8],
+    cfg: &Utf7Cfg,
 ) -> Result<IconvResult, IconvError> {
-    // to == Utf7: decode all of `from`, then UTF-7-encode (whole buffer).
+    // to == Utf7/Utf7Imap: decode all of `from`, then UTF-7-encode (whole buffer).
     let mut chars: Vec<char> = Vec::new();
     let mut in_pos = 0usize;
     let mut err_after = None;
@@ -19873,7 +19935,7 @@ fn utf7_convert(
         }
     }
     // Encode whatever decoded cleanly (glibc emits the good prefix before the error).
-    let u7 = utf7_encode(&chars);
+    let u7 = utf7_encode(&chars, cfg);
     if u7.len() > outbuf.len() {
         return Err(IconvError {
             code: ICONV_E2BIG,
@@ -20116,7 +20178,7 @@ pub fn iconv(
         Some(b) => b,
         None => {
             // UTF-7 SOURCE: finalize any persisted decode shift state (bd-s41n4a).
-            if cd.from == Encoding::Utf7 {
+            if cd.from == Encoding::Utf7 || cd.from == Encoding::Utf7Imap {
                 return utf7_decode_flush(cd, outbuf);
             }
             // ISO-2022-KR DEST: a reset returns the stream to ASCII — glibc
@@ -20164,13 +20226,15 @@ pub fn iconv(
         }
     };
 
-    // UTF-7 (either side) is a stateful shift codec handled by a dedicated
-    // whole-buffer path rather than the per-char decode_char/encode_char loop.
-    if cd.from == Encoding::Utf7 {
-        return utf7_decode_streaming(cd, input, outbuf);
+    // UTF-7 / UTF-7-IMAP (either side) are stateful shift codecs handled by a
+    // dedicated whole-buffer path rather than the per-char decode/encode loop.
+    if cd.from == Encoding::Utf7 || cd.from == Encoding::Utf7Imap {
+        let cfg = if cd.from == Encoding::Utf7Imap { &UTF7_IMAP_CFG } else { &UTF7_CFG };
+        return utf7_decode_streaming(cd, input, outbuf, cfg);
     }
-    if cd.to == Encoding::Utf7 {
-        return utf7_convert(cd, input, outbuf);
+    if cd.to == Encoding::Utf7 || cd.to == Encoding::Utf7Imap {
+        let cfg = if cd.to == Encoding::Utf7Imap { &UTF7_IMAP_CFG } else { &UTF7_CFG };
+        return utf7_convert(cd, input, outbuf, cfg);
     }
     // ISO-2022-KR (either side) is a stateful shift codec, handled whole-buffer.
     if cd.from == Encoding::Iso2022Kr {
