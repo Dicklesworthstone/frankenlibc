@@ -92,9 +92,16 @@ fn cjk_table_gen() {
         "CP949",
         "GB2312",
         "JOHAB",
+        // Combining-prefix 2-byte sets (ISO-6937 / T.61 family): bytes 0xC1-0xCF
+        // are combining-accent leads whose (lead, letter) pair decodes to one
+        // precomposed code point — structurally a 2-byte DBCS for the generator.
+        "ISO_6937",
+        "ISO_6937-2",
+        "T.61",
+        "ANSI_X3.110",
     ] {
         let from = CString::new(codec).unwrap();
-        let ident = codec.to_ascii_uppercase().replace('-', "_");
+        let ident = codec.to_ascii_uppercase().replace(['-', '.'], "_");
 
         let mut one_byte = [-1i32; 256]; // 1-byte char codepoint, or -1
         let mut is_lead = [false; 256]; // b0 is a (incomplete) multibyte lead

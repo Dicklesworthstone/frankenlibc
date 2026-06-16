@@ -7,6 +7,7 @@ use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint};
 
 mod cjk_tables;
 mod cp932_tables;
+mod iso6937_tables;
 mod euctw_tables;
 mod ibm943_tables;
 
@@ -494,6 +495,11 @@ enum Encoding {
     /// NEC/IBM extension rows and the wave-dash/tilde + ASCII (0x5C, 0x7E)
     /// remappings. Distinct from pure JIS [`Encoding::ShiftJis`].
     Cp932,
+    /// ISO-6937 / T.61 combining-prefix 2-byte sets (0xC1-0xCF accent leads).
+    Iso6937,
+    Iso6937_2,
+    T61,
+    AnsiX3110,
     /// IBM-943 (= CSIBM943): a Shift_JIS variant distinct from CP932 — it maps
     /// 0x8160 to U+301C (wave dash) not U+FF5E, among other NEC/IBM-row cells.
     Ibm943,
@@ -518,7 +524,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 274] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 278] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2260,6 +2266,37 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 274] = [
         // Names glibc resolves to the CP932/WINDOWS-31J codec (verified each maps
         // U+FF5E->0x8160, the Shift_JIS discriminator).
         aliases: &["MS932", "WINDOWS31J", "SJISWIN"],
+    },
+    CodecSpec {
+        encoding: Encoding::Iso6937,
+        canonical: "ISO_6937",
+        normalized: "ISO6937",
+        aliases: &["ISO6937:1992", "ISOIR156"],
+    },
+    CodecSpec {
+        encoding: Encoding::Iso6937_2,
+        canonical: "ISO_6937-2",
+        normalized: "ISO69372",
+        aliases: &["ISO69372:1983", "ISOIR90"],
+    },
+    CodecSpec {
+        encoding: Encoding::T61,
+        canonical: "T.61",
+        normalized: "T.61",
+        aliases: &["T.618BIT", "ISOIR103", "CSISO103T618BIT"],
+    },
+    CodecSpec {
+        encoding: Encoding::AnsiX3110,
+        canonical: "ANSI_X3.110",
+        normalized: "ANSIX3.110",
+        aliases: &[
+            "ANSIX3.1101983",
+            "CSAT500",
+            "CSAT5001983",
+            "ISOIR99",
+            "NAPLPS",
+            "CSISO99NAPLPS",
+        ],
     },
     CodecSpec {
         encoding: Encoding::Ibm943,
@@ -18082,6 +18119,49 @@ fn encode_cp932(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     encode_dbcs2(ch, out, direct)
 }
 
+// ISO-6937 / T.61 family: combining-prefix 2-byte sets (0xC1-0xCF leads), driven
+// by the shared 2-byte DBCS primitives over glibc-exact tables in iso6937_tables.
+fn decode_iso6937(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = D.get_or_init(|| build_dbcs_direct(&iso6937_tables::ISO_6937_DBCS));
+    decode_dbcs2(input, &iso6937_tables::ISO_6937_ONE_BYTE, &iso6937_tables::ISO_6937_IS_LEAD, direct)
+}
+fn encode_iso6937(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = D.get_or_init(|| build_enc_direct(&iso6937_tables::ISO_6937_ENC));
+    encode_dbcs2(ch, out, direct)
+}
+fn decode_iso6937_2(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = D.get_or_init(|| build_dbcs_direct(&iso6937_tables::ISO_6937_2_DBCS));
+    decode_dbcs2(input, &iso6937_tables::ISO_6937_2_ONE_BYTE, &iso6937_tables::ISO_6937_2_IS_LEAD, direct)
+}
+fn encode_iso6937_2(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = D.get_or_init(|| build_enc_direct(&iso6937_tables::ISO_6937_2_ENC));
+    encode_dbcs2(ch, out, direct)
+}
+fn decode_t61(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = D.get_or_init(|| build_dbcs_direct(&iso6937_tables::T_61_DBCS));
+    decode_dbcs2(input, &iso6937_tables::T_61_ONE_BYTE, &iso6937_tables::T_61_IS_LEAD, direct)
+}
+fn encode_t61(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = D.get_or_init(|| build_enc_direct(&iso6937_tables::T_61_ENC));
+    encode_dbcs2(ch, out, direct)
+}
+fn decode_ansi_x3_110(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = D.get_or_init(|| build_dbcs_direct(&iso6937_tables::ANSI_X3_110_DBCS));
+    decode_dbcs2(input, &iso6937_tables::ANSI_X3_110_ONE_BYTE, &iso6937_tables::ANSI_X3_110_IS_LEAD, direct)
+}
+fn encode_ansi_x3_110(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = D.get_or_init(|| build_enc_direct(&iso6937_tables::ANSI_X3_110_ENC));
+    encode_dbcs2(ch, out, direct)
+}
+
 fn decode_ibm943(input: &[u8]) -> Result<(char, usize), DecodeError> {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let direct = DIRECT.get_or_init(|| build_dbcs_direct(&ibm943_tables::IBM943_DBCS));
@@ -18816,6 +18896,10 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::EucTw => decode_euctw(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Cp932 => decode_cp932(input),
+        Encoding::Iso6937 => decode_iso6937(input),
+        Encoding::Iso6937_2 => decode_iso6937_2(input),
+        Encoding::T61 => decode_t61(input),
+        Encoding::AnsiX3110 => decode_ansi_x3_110(input),
         Encoding::Ibm943 => decode_ibm943(input),
         Encoding::Big5 => decode_big5(input),
         Encoding::Gbk => decode_gbk(input),
@@ -19236,6 +19320,10 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::EucTw => encode_euctw(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Cp932 => encode_cp932(ch, out),
+        Encoding::Iso6937 => encode_iso6937(ch, out),
+        Encoding::Iso6937_2 => encode_iso6937_2(ch, out),
+        Encoding::T61 => encode_t61(ch, out),
+        Encoding::AnsiX3110 => encode_ansi_x3_110(ch, out),
         Encoding::Ibm943 => encode_ibm943(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
         Encoding::Gbk => encode_gbk(ch, out),
