@@ -200,6 +200,16 @@ const MORE_EBCDIC: &[(&str, &[&str])] = &[
     ("CP500", &["IBM500", "CSIBM500", "EBCDIC-CP-BE", "EBCDIC-CP-CH"]),
     ("CP1047", &["IBM1047"]),
     ("CP1140", &["IBM1140", "CSIBM1140"]),
+    ("CP273", &["CSIBM273", "IBM273"]),
+    ("CP278", &["CSIBM278", "EBCDIC-CP-FI", "EBCDIC-CP-SE", "IBM278"]),
+    ("CP280", &["CSIBM280", "EBCDIC-CP-IT", "IBM280"]),
+    ("CP284", &["CSIBM284", "EBCDIC-CP-ES", "IBM284"]),
+    ("CP285", &["CSIBM285", "EBCDIC-CP-GB", "IBM285"]),
+    ("CP297", &["CSIBM297", "EBCDIC-CP-FR", "IBM297"]),
+    ("CP871", &["CSIBM871", "EBCDIC-CP-IS", "IBM871"]),
+    ("CP870", &["CSIBM870", "EBCDIC-CP-ROECE", "EBCDIC-CP-YU", "IBM870"]),
+    ("CP875", &["IBM875"]),
+    ("EBCDIC-CP-DK", &["CSIBM277", "EBCDIC-CP-NO", "IBM277"]),
 ];
 
 #[test]
