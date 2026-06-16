@@ -26,6 +26,7 @@ mod ibm943_tables;
 mod eucjisx0213_tables;
 mod big5hkscs_tables;
 mod sjisx0213_tables;
+mod tscii_tables;
 
 /// Core iconv error code: output buffer has insufficient capacity.
 pub const ICONV_E2BIG: i32 = errno::E2BIG;
@@ -577,6 +578,13 @@ enum Encoding {
     /// BIG5-HKSCS: Big5 + Hong Kong supplementary — direct 2-byte DBCS with
     /// astral cells and a few combining cells (same shape as SHIFT_JISX0213).
     Big5Hkscs,
+    /// TSCII (Tamil): single-byte VISUAL-ORDER codec. 63 byte values decode to
+    /// 2-4 code points; preposed vowels (E/EE/AI) reorder after the following
+    /// consonant, compose with AA/AU marks, and fuse with consonant+pulli
+    /// clusters. Decode is maximal-munch over the byte stream (units bake in
+    /// glibc's reorder/combine); encode is maximal-munch over the code-point
+    /// stream. Handled by a dedicated whole-buffer branch in [`iconv`].
+    Tscii,
     Big5,
     Gbk,
     EucKr,
@@ -598,7 +606,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 298] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 299] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2477,6 +2485,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 298] = [
         encoding: Encoding::Big5Hkscs,
         canonical: "BIG5-HKSCS",
         normalized: "BIG5HKSCS",
+        aliases: &[],
+    },
+    CodecSpec {
+        encoding: Encoding::Tscii,
+        canonical: "TSCII",
+        normalized: "TSCII",
         aliases: &[],
     },
     CodecSpec {
@@ -18998,6 +19012,8 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         | Encoding::Ibm1399 => Err(DecodeError::Invalid),
         // SHIFT_JISX0213 (multi-codepoint + astral) is handled whole-buffer.
         Encoding::ShiftJisx0213 | Encoding::EucJisx0213 | Encoding::Big5Hkscs => Err(DecodeError::Invalid),
+        // TSCII (visual-order multi-codepoint reorder/combine) is handled whole-buffer.
+        Encoding::Tscii => Err(DecodeError::Invalid),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(DecodeError::Invalid),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -19422,6 +19438,8 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         | Encoding::Ibm1390
         | Encoding::Ibm1399 => Err(EncodeError::Unrepresentable),
         Encoding::ShiftJisx0213 | Encoding::EucJisx0213 | Encoding::Big5Hkscs => Err(EncodeError::Unrepresentable),
+        // TSCII (visual-order maximal-munch) is handled whole-buffer.
+        Encoding::Tscii => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -21925,6 +21943,233 @@ fn big5hkscs_convert(
     )
 }
 
+/// Pack a code-point sequence (`len` 1..=4, each cp < 2^21) into a u128 key so the
+/// variable-length encode table can be probed by exact prefix length.
+#[inline]
+fn tscii_pack(cps: &[u32]) -> u128 {
+    let mut key = cps.len() as u128;
+    for &cp in cps {
+        key = (key << 21) | cp as u128;
+    }
+    key
+}
+/// Maximal-munch encode dictionary for TSCII (`to == Tscii`): code-point sequence
+/// (1..=4 cps) -> the visual-order byte string. Keyed by [`tscii_pack`].
+fn tscii_encode_map() -> &'static std::collections::HashMap<u128, &'static [u8]> {
+    static M: std::sync::OnceLock<std::collections::HashMap<u128, &'static [u8]>> =
+        std::sync::OnceLock::new();
+    M.get_or_init(|| {
+        tscii_tables::TSCII_ENCODE
+            .iter()
+            .map(|(cps, bytes)| (tscii_pack(cps), *bytes))
+            .collect()
+    })
+}
+
+/// TSCII DECODE (`from == Tscii`): faithful port of glibc's `tscii.c` FROM_LOOP
+/// (a stateful visual-order Tamil decoder). glibc buffers ONE pending UCS4 char
+/// (`pending`) plus a "consonant-seen" flag (`bit3`, glibc's `1 << 3`). The four
+/// combining rules:
+///
+/// - preposed vowels E/EE/AI (bytes 0xA6/0xA7/0xA8 -> U+0BC6/7/8) are buffered
+///   and reorder AFTER the following consonant (0xB8-0xC9);
+/// - a buffered E/EE composes with the following AA (0xA1) / AU length mark
+///   (0xAA) into O/OO/AU (U+0BCA/0BCB/0BCC);
+/// - the SRI ligatures 0x8A/0x8B emit their consonant then buffer a PULLI
+///   (U+0BCD) that, if followed by the U/UU vowel sign (0xA4/0xA5), becomes
+///   U+0BC1/0BC2 instead;
+/// - 0x82/0x87/0x8C are fixed multi-char ligatures (SRII / KSSA / KSSA+pulli).
+///
+/// Any buffered char is flushed when no combination applies and once more at end
+/// of input. An empty `TSCII_DECODE` slice (bytes 0xA0/0xFF) is an invalid byte.
+fn tscii_decode(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut chars: Vec<char> = Vec::new();
+    let mut i = 0usize;
+    let mut consumed_end = 0usize;
+    let mut err: Option<i32> = None;
+    // glibc's buffered state: `pending` is the last UCS4 char awaiting output
+    // (0 = nothing buffered); `bit3` mirrors glibc's `*statep & (1 << 3)`.
+    let mut pending: u32 = 0;
+    let mut bit3 = false;
+    let push =
+        |chars: &mut Vec<char>, cp: u32| chars.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+    let push_all = |chars: &mut Vec<char>, cps: &[u32]| {
+        for &cp in cps {
+            chars.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+        }
+    };
+    while i < input.len() {
+        let ch = input[i] as u32;
+        if pending != 0 {
+            let last = pending;
+            if last == 0x0BCD && bit3 {
+                // Pending PULLI (from 0x8A/0x8B) + vowel sign U/UU -> U+0BC1/0BC2.
+                if ch == 0xa4 || ch == 0xa5 {
+                    push(&mut chars, ch + 0xb1d);
+                    pending = 0;
+                    bit3 = false;
+                    i += 1;
+                    consumed_end = i;
+                    continue;
+                }
+            } else if (0x0BC6..=0x0BC8).contains(&last) {
+                // Preposed vowel composition with AA / AU length mark.
+                if (last == 0x0BC6 && ch == 0xa1)
+                    || (last == 0x0BC7 && (ch == 0xa1 || ch == 0xaa))
+                {
+                    push(&mut chars, last + 4 + if ch != 0xa1 { 1 } else { 0 });
+                    pending = 0;
+                    bit3 = false;
+                    i += 1;
+                    consumed_end = i;
+                    continue;
+                }
+                // Consonant after a preposed vowel: emit the consonant now and
+                // keep the vowel buffered so it reorders after it (set bit3).
+                if (0xb8..=0xc9).contains(&ch) && !bit3 {
+                    push(&mut chars, tscii_tables::TSCII_DECODE[ch as usize][0]);
+                    bit3 = true;
+                    i += 1;
+                    consumed_end = i;
+                    continue;
+                }
+            }
+            // No combination applies: flush the buffered char and reprocess `ch`.
+            push(&mut chars, last);
+            pending = 0;
+            bit3 = false;
+            continue;
+        }
+        if ch < 0x80 {
+            push(&mut chars, ch);
+            i += 1;
+            consumed_end = i;
+            continue;
+        }
+        match ch {
+            0xa6..=0xa8 => {
+                // Preposed vowel E/EE/AI: buffer U+0BC6/0BC7/0BC8.
+                pending = ch + 0x0b20;
+                bit3 = false;
+            }
+            0x8a..=0x8b => {
+                // SRI ligature consonant U+0BB8/0BB9, then a removable pending pulli.
+                push(&mut chars, ch + 0x0b2e);
+                pending = 0x0BCD;
+                bit3 = true;
+            }
+            0x82 => push_all(&mut chars, &[0x0BB8, 0x0BCD, 0x0BB0, 0x0BC0]),
+            0x87 => push_all(&mut chars, &[0x0B95, 0x0BCD, 0x0BB7]),
+            0x8c => push_all(&mut chars, &[0x0B95, 0x0BCD, 0x0BB7, 0x0BCD]),
+            _ => {
+                let cps = tscii_tables::TSCII_DECODE[ch as usize];
+                if cps.is_empty() {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                for &cp in cps {
+                    push(&mut chars, cp);
+                }
+            }
+        }
+        i += 1;
+        consumed_end = i;
+    }
+    // Flush any buffered char at end of input (glibc's EMIT_SHIFT_TO_INIT).
+    if err.is_none() && pending != 0 {
+        push(&mut chars, pending);
+    }
+    let mut out: Vec<u8> = Vec::new();
+    let mut tmp = [0u8; 8];
+    for &ch in &chars {
+        match encode_char(cd.to, ch, &mut tmp) {
+            Ok(n) => out.extend_from_slice(&tmp[..n]),
+            Err(_) => {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+        }
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    if let Some(code) = err {
+        return Err(IconvError { code, in_consumed: consumed_end, out_written: out.len() });
+    }
+    Ok(IconvResult { non_reversible: 0, in_consumed: consumed_end, out_written: out.len() })
+}
+
+/// TSCII ENCODE (`to == Tscii`): decode the source to scalars, then maximal-munch
+/// the code-point stream (longest matching 4..1-cp key wins) into the visual-order
+/// byte string via `TSCII_ENCODE`.
+fn tscii_convert(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let enc = tscii_encode_map();
+    let mut out: Vec<u8> = Vec::new();
+    let mut in_pos = 0usize;
+    let mut err: Option<(i32, usize)> = None;
+    while in_pos < input.len() {
+        // Peek up to 4 code points ahead, recording the byte position after each.
+        let mut peek_cps: [u32; 4] = [0; 4];
+        let mut peek_end: [usize; 4] = [0; 4];
+        let mut n_peek = 0usize;
+        let mut p = in_pos;
+        while n_peek < 4 && p < input.len() {
+            match decode_char(cd.from, &input[p..]) {
+                Ok((c, consumed)) => {
+                    peek_cps[n_peek] = c as u32;
+                    p += consumed;
+                    peek_end[n_peek] = p;
+                    n_peek += 1;
+                }
+                Err(_) => break,
+            }
+        }
+        // The first code point must decode cleanly; otherwise report its error.
+        if n_peek == 0 {
+            err = match decode_char(cd.from, &input[in_pos..]) {
+                Err(DecodeError::Incomplete) => Some((ICONV_EINVAL, in_pos)),
+                _ => Some((ICONV_EILSEQ, in_pos)),
+            };
+            break;
+        }
+        // Longest matching key wins (maximal munch).
+        let mut matched: Option<(&'static [u8], usize)> = None;
+        for l in (1..=n_peek).rev() {
+            if let Some(&bytes) = enc.get(&tscii_pack(&peek_cps[..l])) {
+                matched = Some((bytes, peek_end[l - 1]));
+                break;
+            }
+        }
+        match matched {
+            Some((bytes, end)) => {
+                out.extend_from_slice(bytes);
+                in_pos = end;
+            }
+            None => {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        }
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    if let Some((code, pos)) = err {
+        return Err(IconvError { code, in_consumed: pos, out_written: out.len() });
+    }
+    Ok(IconvResult { non_reversible: 0, in_consumed: in_pos, out_written: out.len() })
+}
+
 fn eucjx_p1_direct() -> &'static Vec<u32> {
     static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     D.get_or_init(|| build_dbcs_direct(&eucjisx0213_tables::EUCJX_P1))
@@ -22642,6 +22887,16 @@ pub fn iconv(
     }
     if cd.to == Encoding::Big5Hkscs {
         return big5hkscs_convert(cd, input, outbuf);
+    }
+    // TSCII (either side): single-byte visual-order Tamil codec. Decode is
+    // maximal-munch over the byte stream (multi-byte units bake in glibc's
+    // preposed-vowel reorder / AA-AU composition / pulli fusion); encode is
+    // maximal-munch over the code-point stream. Whole-buffer.
+    if cd.from == Encoding::Tscii {
+        return tscii_decode(cd, input, outbuf);
+    }
+    if cd.to == Encoding::Tscii {
+        return tscii_convert(cd, input, outbuf);
     }
     // ISO-2022-JP (either side) is a stateful escape codec, handled whole-buffer.
     if cd.from == Encoding::Iso2022Jp {
