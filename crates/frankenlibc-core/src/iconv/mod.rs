@@ -4328,11 +4328,7 @@ fn decode_rk1048(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = RK1048_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -4647,11 +4643,7 @@ fn decode_cp851(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP851_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -5531,11 +5523,7 @@ fn decode_riscoslatin1(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = RISCOSLATIN1_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -5746,11 +5734,7 @@ fn decode_macgreek(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACGREEK_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6361,11 +6345,7 @@ fn decode_cp720(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP720_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6423,11 +6403,7 @@ fn decode_machebrew(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACHEBREW_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6485,11 +6461,7 @@ fn decode_macarabic(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACARABIC_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6547,11 +6519,7 @@ fn decode_macthai(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACTHAI_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6611,11 +6579,7 @@ fn decode_macfarsi(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACFARSI_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6673,11 +6637,7 @@ fn decode_macdevanagari(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACDEVANAGARI_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6735,11 +6695,7 @@ fn decode_macgurmukhi(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACGURMUKHI_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6797,11 +6753,7 @@ fn decode_macgujarati(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACGUJARATI_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6859,11 +6811,7 @@ fn decode_mackannada(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACKANNADA_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6921,11 +6869,7 @@ fn decode_mactelugu(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACTELUGU_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -6983,11 +6927,7 @@ fn decode_macoriya(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACORIYA_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -7045,11 +6985,7 @@ fn decode_macbengali(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACBENGALI_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -7107,11 +7043,7 @@ fn decode_macmalayalam(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACMALAYALAM_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -7169,11 +7101,7 @@ fn decode_mactamil(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = MACTAMIL_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -7231,11 +7159,7 @@ fn decode_cp1006(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP1006_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -7287,11 +7211,7 @@ fn decode_cp1008(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP1008_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -7343,11 +7263,7 @@ fn decode_cp1046(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP1046_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
@@ -12239,11 +12155,7 @@ fn decode_cp1125(input: &[u8]) -> Result<(char, usize), DecodeError> {
         Ok((char::from(b), 1))
     } else {
         let cp = CP1125_TO_UNICODE[(b - 0x80) as usize];
-        if cp == 0xFFFF {
-            Ok(('\u{FFFD}', 1))
-        } else {
-            map_single_byte(cp)
-        }
+        map_single_byte(cp)
     }
 }
 
