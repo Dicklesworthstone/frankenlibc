@@ -2365,18 +2365,20 @@ fn inet6_opt_write_pad(buf: &mut [u8], off: usize, padlen: usize) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet6_opt_init(extbuf: *mut c_void, extlen: c_int) -> c_int {
     if extbuf.is_null() {
-        return 2; // Header is 2 bytes.
+        return 2; // sizeof(struct ip6_hbh)
     }
-    if extlen < 2 {
+    // glibc requires a positive multiple of 8, at most 256*8 bytes.
+    if extlen <= 0 || extlen % 8 != 0 || extlen > 256 * 8 {
         return -1;
     }
     if tracked_output_too_short(extbuf, 2) {
         return -1;
     }
-    let buf = extbuf as *mut u8;
+    // Header Ext Length, in 8-octet units minus the first 8. glibc bases this on
+    // the BUFFER length (not the eventual used length) and leaves the next-header
+    // byte (ip6h_nxt) untouched.
     unsafe {
-        *buf = 0; // Next Header (filled by kernel).
-        *buf.add(1) = 0; // Header Ext Length (0 = 8 bytes total, but we're building).
+        *(extbuf as *mut u8).add(1) = (extlen / 8 - 1) as u8;
     }
     2
 }
@@ -2392,11 +2394,21 @@ pub unsafe extern "C" fn inet6_opt_append(
     extlen: c_int,
     offset: c_int,
     typ: u8,
-    len: SizeT,
+    // glibc's prototype types this `socklen_t` (32-bit), NOT size_t — declaring
+    // it `usize` would read the undefined upper 32 bits of the argument register.
+    len: u32,
     align: u8,
     databufp: *mut *mut c_void,
 ) -> c_int {
-    if offset < 2 || len > 255 || align == 0 || (align & (align - 1)) != 0 || align > 8 {
+    // glibc rejects align > len as well (an option cannot be aligned more
+    // strictly than its own data length).
+    if offset < 2
+        || len > 255
+        || align == 0
+        || (align & (align - 1)) != 0
+        || align > 8
+        || align as u32 > len
+    {
         return -1;
     }
     // Types 0 and 1 are reserved for padding.
@@ -2405,8 +2417,10 @@ pub unsafe extern "C" fn inet6_opt_append(
     }
     let off = offset as usize;
     let al = align as usize;
-    let padlen = inet6_opt_pad(off, al);
-    let needed = padlen + 2 + len; // 2 for type+length bytes
+    // glibc aligns the option DATA, which starts after the 2-byte ip6_opt header:
+    // npad = (align - (offset + 2) % align) & (align - 1).
+    let padlen = inet6_opt_pad(off + 2, al);
+    let needed = padlen + 2 + len as usize; // 2 for type+length bytes
     let new_off = off + needed;
 
     if extbuf.is_null() {
@@ -2459,12 +2473,9 @@ pub unsafe extern "C" fn inet6_opt_finish(
     }
     let buf = unsafe { std::slice::from_raw_parts_mut(extbuf as *mut u8, effective_extlen) };
     inet6_opt_write_pad(buf, off, padlen);
-    // Update Header Ext Length: (total - 8) / 8, in 8-octet units not counting first 8.
-    if total >= 8 {
-        buf[1] = ((total - 8) / 8) as u8;
-    } else {
-        buf[1] = 0;
-    }
+    // glibc's inet6_opt_finish only appends trailing padding; it does NOT touch
+    // the Header Ext Length field (that was set by inet6_opt_init from the buffer
+    // size). Writing it here would diverge from glibc.
     total as c_int
 }
 
@@ -2535,7 +2546,10 @@ pub unsafe extern "C" fn inet6_opt_next(
     extlen: c_int,
     offset: c_int,
     typep: *mut u8,
-    lenp: *mut SizeT,
+    // glibc's prototype types this `socklen_t *` (32-bit) — using `*mut usize`
+    // here would write 8 bytes into a caller's 4-byte socklen_t, corrupting the
+    // adjacent 4 bytes.
+    lenp: *mut u32,
     databufp: *mut *mut c_void,
 ) -> c_int {
     if extbuf.is_null() || offset < 2 || extlen < 2 {
@@ -2545,7 +2559,7 @@ pub unsafe extern "C" fn inet6_opt_next(
         || (!typep.is_null()
             && tracked_region_too_short_addr(typep as usize, core::mem::size_of::<u8>()))
         || (!lenp.is_null()
-            && tracked_region_too_short_addr(lenp as usize, core::mem::size_of::<SizeT>()))
+            && tracked_region_too_short_addr(lenp as usize, core::mem::size_of::<u32>()))
         || (!databufp.is_null()
             && tracked_region_too_short_addr(
                 databufp as usize,
@@ -2584,7 +2598,7 @@ pub unsafe extern "C" fn inet6_opt_next(
             unsafe { *typep = t };
         }
         if !lenp.is_null() {
-            unsafe { *lenp = l };
+            unsafe { *lenp = l as u32 };
         }
         if !databufp.is_null() {
             unsafe { *databufp = (extbuf as *mut u8).add(pos + 2) as *mut c_void };
@@ -2602,7 +2616,7 @@ pub unsafe extern "C" fn inet6_opt_find(
     extlen: c_int,
     offset: c_int,
     typ: u8,
-    lenp: *mut SizeT,
+    lenp: *mut u32, // socklen_t * (see inet6_opt_next)
     databufp: *mut *mut c_void,
 ) -> c_int {
     let mut cur_off = offset;
