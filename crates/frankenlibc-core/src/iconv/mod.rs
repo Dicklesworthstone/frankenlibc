@@ -2482,15 +2482,17 @@ fn encode_koi8r(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
 
 /// KOI8-U (Ukrainian) differs from KOI8-R at 8 positions.
 /// This table lists (byte, unicode) pairs for the differing positions.
+// Per RFC 2319 / glibc: the LOWER-case Ukrainian letters sit at 0xA4-0xAD and
+// the UPPER-case at 0xB4-0xBD (fl previously had the two rows swapped).
 const KOI8U_DIFFS: [(u8, u16); 8] = [
-    (0xA4, 0x0404), // Є (Ukrainian Ye)
-    (0xA6, 0x0406), // І (Ukrainian I)
-    (0xA7, 0x0407), // Ї (Ukrainian Yi)
-    (0xAD, 0x0490), // Ґ (Ukrainian Ghe with upturn)
-    (0xB4, 0x0454), // є (Ukrainian ye)
-    (0xB6, 0x0456), // і (Ukrainian i)
-    (0xB7, 0x0457), // ї (Ukrainian yi)
-    (0xBD, 0x0491), // ґ (Ukrainian ghe with upturn)
+    (0xA4, 0x0454), // є (Ukrainian small ye)
+    (0xA6, 0x0456), // і (Ukrainian small i)
+    (0xA7, 0x0457), // ї (Ukrainian small yi)
+    (0xAD, 0x0491), // ґ (Ukrainian small ghe with upturn)
+    (0xB4, 0x0404), // Є (Ukrainian capital Ye)
+    (0xB6, 0x0406), // І (Ukrainian capital I)
+    (0xB7, 0x0407), // Ї (Ukrainian capital Yi)
+    (0xBD, 0x0490), // Ґ (Ukrainian capital Ghe with upturn)
 ];
 
 fn decode_koi8u(input: &[u8]) -> Result<(char, usize), DecodeError> {

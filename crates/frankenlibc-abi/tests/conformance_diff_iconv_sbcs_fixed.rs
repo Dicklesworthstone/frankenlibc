@@ -66,7 +66,7 @@ fn fe(name:&str,cp:u32)->Option<Vec<u8>>{
     let r=unsafe{fl::iconv(cd,&mut ip,&mut il,&mut op,&mut ol)};unsafe{fl::iconv_close(cd)};
     (r!=INVALID&&il==0).then(||o[..8-ol].to_vec())
 }
-const CODECS:&[&str]=&["ARMSCII-8","MACCYRILLIC","MIK"];
+const CODECS:&[&str]=&["ARMSCII-8","MACCYRILLIC","MIK","KOI8-U"];
 #[test]
 fn regenerated_sbcs_match_glibc(){
     let gg=g();
