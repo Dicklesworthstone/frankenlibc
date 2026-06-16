@@ -134,7 +134,7 @@ fn fl_encode(name: &str, cp: u32) -> Option<Vec<u8>> {
 fn mb_aliases_match_glibc_both_directions() {
     let gg = g();
     let ins = inputs();
-    for name in ["CP950", "CSWINDOWS31J"] {
+    for name in ["CP950", "CSWINDOWS31J", "CN-GB", "GB13000", "MSCP1361"] {
         let gd = g_decode(&gg, name, &ins);
         let fd = fl_decode(name, &ins);
         assert_eq!(fd, gd, "decode map for multibyte alias {name} differs from glibc");

@@ -2544,6 +2544,11 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
     // CSWINDOWS31J names the CP932 (Windows-31J) codec.
     ("CP950", "BIG5"),
     ("CSWINDOWS31J", "CP932"),
+    // CN-GB == GB2312, GB13000 == GBK, MSCP1361 == JOHAB (probe-verified 0-diff
+    // over the full 1+2-byte DBCS space, both directions).
+    ("CNGB", "GB2312"),
+    ("GB13000", "GBK"),
+    ("MSCP1361", "JOHAB"),
     // Further byte-identical aliases (probe-verified full-256 decode match) for
     // ASCII, the EBCDIC pages, CSN_369103, TCVN and friends — IBM/CS/OSF/ISO-IR
     // designations glibc accepts that fl rejected.
