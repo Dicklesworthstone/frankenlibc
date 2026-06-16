@@ -10,8 +10,15 @@ mod euc_jp_ms_tables;
 mod cp932_tables;
 mod iso6937_tables;
 mod euctw_tables;
+mod ibm1364_tables;
+mod ibm1371_tables;
+mod ibm1388_tables;
 mod ibm930_tables;
 mod ibm932_tables;
+mod ibm933_tables;
+mod ibm935_tables;
+mod ibm937_tables;
+mod ibm939_tables;
 mod ibm943_tables;
 
 /// Core iconv error code: output buffer has insufficient capacity.
@@ -539,6 +546,15 @@ enum Encoding {
     /// SO (0x0E) / SI (0x0F) shifting into IBM host double-byte (DBCS-HOST).
     /// Handled by a dedicated whole-buffer branch in [`iconv`], like ISO-2022-KR.
     Ibm930,
+    /// IBM EBCDIC DBCS code pages sharing the IBM-930 SO/SI structure (Korean,
+    /// Simplified/Traditional Chinese, Japanese variants and their extensions).
+    Ibm933,
+    Ibm935,
+    Ibm937,
+    Ibm939,
+    Ibm1364,
+    Ibm1371,
+    Ibm1388,
     Big5,
     Gbk,
     EucKr,
@@ -560,7 +576,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 285] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 292] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2368,6 +2384,48 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 285] = [
         normalized: "IBM930",
         // glibc: IBM930 / IBM-930 / CP930 / CSIBM930.
         aliases: &["CP930", "CSIBM930"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm933,
+        canonical: "IBM-933",
+        normalized: "IBM933",
+        aliases: &["CP933", "CSIBM933"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm935,
+        canonical: "IBM-935",
+        normalized: "IBM935",
+        aliases: &["CP935", "CSIBM935"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm937,
+        canonical: "IBM-937",
+        normalized: "IBM937",
+        aliases: &["CP937", "CSIBM937"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm939,
+        canonical: "IBM-939",
+        normalized: "IBM939",
+        aliases: &["CP939", "CSIBM939"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm1364,
+        canonical: "IBM-1364",
+        normalized: "IBM1364",
+        aliases: &["CP1364", "CSIBM1364"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm1371,
+        canonical: "IBM-1371",
+        normalized: "IBM1371",
+        aliases: &["CP1371", "CSIBM1371"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm1388,
+        canonical: "IBM-1388",
+        normalized: "IBM1388",
+        aliases: &["CP1388", "CSIBM1388"],
     },
     CodecSpec {
         encoding: Encoding::Big5,
@@ -18867,8 +18925,15 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Utf7 | Encoding::Utf7Imap => Err(DecodeError::Invalid),
         // ISO-2022-KR is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Kr => Err(DecodeError::Invalid),
-        // IBM-930 (EBCDIC SO/SI) is handled by a dedicated whole-buffer path.
-        Encoding::Ibm930 => Err(DecodeError::Invalid),
+        // IBM EBCDIC DBCS pages (SO/SI) are handled by a dedicated whole-buffer path.
+        Encoding::Ibm930
+        | Encoding::Ibm933
+        | Encoding::Ibm935
+        | Encoding::Ibm937
+        | Encoding::Ibm939
+        | Encoding::Ibm1364
+        | Encoding::Ibm1371
+        | Encoding::Ibm1388 => Err(DecodeError::Invalid),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(DecodeError::Invalid),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -19280,8 +19345,15 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Utf7 | Encoding::Utf7Imap => Err(EncodeError::Unrepresentable),
         // ISO-2022-KR is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Kr => Err(EncodeError::Unrepresentable),
-        // IBM-930 (EBCDIC SO/SI) is handled by a dedicated whole-buffer path.
-        Encoding::Ibm930 => Err(EncodeError::Unrepresentable),
+        // IBM EBCDIC DBCS pages (SO/SI) are handled by a dedicated whole-buffer path.
+        Encoding::Ibm930
+        | Encoding::Ibm933
+        | Encoding::Ibm935
+        | Encoding::Ibm937
+        | Encoding::Ibm939
+        | Encoding::Ibm1364
+        | Encoding::Ibm1371
+        | Encoding::Ibm1388 => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -21292,29 +21364,70 @@ fn iso2022cn_decode(
     })
 }
 
-fn ibm930_dbcs_direct() -> &'static Vec<u32> {
-    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    D.get_or_init(|| build_dbcs_direct(&ibm930_tables::IBM930_DBCS))
-}
-fn ibm930_sbcs_enc() -> &'static std::collections::HashMap<u32, u8> {
-    static M: std::sync::OnceLock<std::collections::HashMap<u32, u8>> = std::sync::OnceLock::new();
-    M.get_or_init(|| ibm930_tables::IBM930_SBCS_ENC.iter().copied().collect())
-}
-fn ibm930_dbcs_enc() -> &'static std::collections::HashMap<u32, u16> {
-    static M: std::sync::OnceLock<std::collections::HashMap<u32, u16>> = std::sync::OnceLock::new();
-    M.get_or_init(|| ibm930_tables::IBM930_DBCS_ENC.iter().copied().collect())
+/// The four lookup structures backing one IBM EBCDIC DBCS code page.
+struct EbcdicTables {
+    sbcs: &'static [i32; 256],
+    dbcs_direct: &'static Vec<u32>,
+    sbcs_enc: &'static std::collections::HashMap<u32, u8>,
+    dbcs_enc: &'static std::collections::HashMap<u32, u16>,
 }
 
-/// IBM-930 DECODE (`from == Ibm930`): single-byte EBCDIC host code (`IBM930_SBCS`)
-/// with SO (0x0E) / SI (0x0F) shifting into the IBM host double-byte set
-/// (`IBM930_DBCS`). The SO/SI shift state persists across calls; the decoded
-/// scalars are then encoded to `cd.to`. Handled whole-buffer like ISO-2022-KR.
-fn ibm930_decode(
+/// Generate a per-page accessor that builds (once) the DBCS direct-decode map
+/// and the two encode hash maps from the page's generated static tables.
+macro_rules! ebcdic_page {
+    ($fn:ident, $m:ident, $sbcs:ident, $dbcs:ident, $senc:ident, $denc:ident) => {
+        fn $fn() -> EbcdicTables {
+            static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+            static SE: std::sync::OnceLock<std::collections::HashMap<u32, u8>> =
+                std::sync::OnceLock::new();
+            static DE: std::sync::OnceLock<std::collections::HashMap<u32, u16>> =
+                std::sync::OnceLock::new();
+            EbcdicTables {
+                sbcs: &$m::$sbcs,
+                dbcs_direct: DIRECT.get_or_init(|| build_dbcs_direct(&$m::$dbcs)),
+                sbcs_enc: SE.get_or_init(|| $m::$senc.iter().copied().collect()),
+                dbcs_enc: DE.get_or_init(|| $m::$denc.iter().copied().collect()),
+            }
+        }
+    };
+}
+
+ebcdic_page!(ebcdic_ibm930, ibm930_tables, IBM930_SBCS, IBM930_DBCS, IBM930_SBCS_ENC, IBM930_DBCS_ENC);
+ebcdic_page!(ebcdic_ibm933, ibm933_tables, IBM933_SBCS, IBM933_DBCS, IBM933_SBCS_ENC, IBM933_DBCS_ENC);
+ebcdic_page!(ebcdic_ibm935, ibm935_tables, IBM935_SBCS, IBM935_DBCS, IBM935_SBCS_ENC, IBM935_DBCS_ENC);
+ebcdic_page!(ebcdic_ibm937, ibm937_tables, IBM937_SBCS, IBM937_DBCS, IBM937_SBCS_ENC, IBM937_DBCS_ENC);
+ebcdic_page!(ebcdic_ibm939, ibm939_tables, IBM939_SBCS, IBM939_DBCS, IBM939_SBCS_ENC, IBM939_DBCS_ENC);
+ebcdic_page!(ebcdic_ibm1364, ibm1364_tables, IBM1364_SBCS, IBM1364_DBCS, IBM1364_SBCS_ENC, IBM1364_DBCS_ENC);
+ebcdic_page!(ebcdic_ibm1371, ibm1371_tables, IBM1371_SBCS, IBM1371_DBCS, IBM1371_SBCS_ENC, IBM1371_DBCS_ENC);
+ebcdic_page!(ebcdic_ibm1388, ibm1388_tables, IBM1388_SBCS, IBM1388_DBCS, IBM1388_SBCS_ENC, IBM1388_DBCS_ENC);
+
+/// Map an EBCDIC DBCS encoding to its lookup tables (None for non-EBCDIC).
+fn ebcdic_tables_for(enc: Encoding) -> Option<EbcdicTables> {
+    Some(match enc {
+        Encoding::Ibm930 => ebcdic_ibm930(),
+        Encoding::Ibm933 => ebcdic_ibm933(),
+        Encoding::Ibm935 => ebcdic_ibm935(),
+        Encoding::Ibm937 => ebcdic_ibm937(),
+        Encoding::Ibm939 => ebcdic_ibm939(),
+        Encoding::Ibm1364 => ebcdic_ibm1364(),
+        Encoding::Ibm1371 => ebcdic_ibm1371(),
+        Encoding::Ibm1388 => ebcdic_ibm1388(),
+        _ => return None,
+    })
+}
+
+/// IBM EBCDIC DBCS DECODE (`from` is one of the IBM-93x/13xx pages): single-byte
+/// EBCDIC host code (`t.sbcs`) with SO (0x0E) / SI (0x0F) shifting into the IBM
+/// host double-byte set (`t.dbcs_direct`). The SO/SI shift state persists across
+/// calls; the decoded scalars are then encoded to `cd.to`. Whole-buffer, like
+/// ISO-2022-KR; all pages share the structure and the shift-state field.
+fn ibm_ebcdic_decode(
     cd: &mut IconvDescriptor,
     input: &[u8],
     outbuf: &mut [u8],
+    t: &EbcdicTables,
 ) -> Result<IconvResult, IconvError> {
-    let direct = ibm930_dbcs_direct();
+    let direct = t.dbcs_direct;
     let mut chars: Vec<char> = Vec::new();
     let mut shifted = cd.ibm930_in_shifted;
     let mut i = 0usize;
@@ -21355,7 +21468,7 @@ fn ibm930_decode(
             i += 2;
             consumed_end = i;
         } else {
-            let cp = ibm930_tables::IBM930_SBCS[b as usize];
+            let cp = t.sbcs[b as usize];
             if cp < 0 {
                 err = Some(ICONV_EILSEQ);
                 break;
@@ -21387,17 +21500,18 @@ fn ibm930_decode(
     Ok(IconvResult { non_reversible: 0, in_consumed: consumed_end, out_written: out.len() })
 }
 
-/// IBM-930 ENCODE (`to == Ibm930`): decode the source to scalars, then emit the
-/// single-byte EBCDIC code when available (SI first if shifted), otherwise the
-/// host double-byte (SO first if not shifted). The return to single-byte (SI) is
-/// emitted on the reset (NULL inbuf) call.
-fn ibm930_convert(
+/// IBM EBCDIC DBCS ENCODE (`to` is one of the IBM-93x/13xx pages): decode the
+/// source to scalars, then emit the single-byte EBCDIC code when available (SI
+/// first if shifted), otherwise the host double-byte (SO first if not shifted).
+/// The return to single-byte (SI) is emitted on the reset (NULL inbuf) call.
+fn ibm_ebcdic_convert(
     cd: &mut IconvDescriptor,
     input: &[u8],
     outbuf: &mut [u8],
+    t: &EbcdicTables,
 ) -> Result<IconvResult, IconvError> {
-    let se = ibm930_sbcs_enc();
-    let de = ibm930_dbcs_enc();
+    let se = t.sbcs_enc;
+    let de = t.dbcs_enc;
     let mut out: Vec<u8> = Vec::new();
     let mut shifted = cd.ibm930_out_shifted;
     let mut in_pos = 0usize;
@@ -21485,8 +21599,8 @@ pub fn iconv(
                 }
                 return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
             }
-            // IBM-930 DEST: a reset emits SI (0x0F) if still in double-byte mode.
-            if cd.to == Encoding::Ibm930 {
+            // IBM EBCDIC DBCS DEST: a reset emits SI (0x0F) if still shifted.
+            if ebcdic_tables_for(cd.to).is_some() {
                 if cd.ibm930_out_shifted {
                     if outbuf.is_empty() {
                         return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
@@ -21586,12 +21700,13 @@ pub fn iconv(
     if cd.to == Encoding::Iso2022Kr {
         return iso2022kr_convert(cd, input, outbuf);
     }
-    // IBM-930 (either side): EBCDIC single-byte + SO/SI double-byte, whole-buffer.
-    if cd.from == Encoding::Ibm930 {
-        return ibm930_decode(cd, input, outbuf);
+    // IBM EBCDIC DBCS pages (either side): single-byte + SO/SI double-byte,
+    // whole-buffer; all pages share the generic codec keyed by their tables.
+    if let Some(t) = ebcdic_tables_for(cd.from) {
+        return ibm_ebcdic_decode(cd, input, outbuf, &t);
     }
-    if cd.to == Encoding::Ibm930 {
-        return ibm930_convert(cd, input, outbuf);
+    if let Some(t) = ebcdic_tables_for(cd.to) {
+        return ibm_ebcdic_convert(cd, input, outbuf, &t);
     }
     // ISO-2022-JP (either side) is a stateful escape codec, handled whole-buffer.
     if cd.from == Encoding::Iso2022Jp {
