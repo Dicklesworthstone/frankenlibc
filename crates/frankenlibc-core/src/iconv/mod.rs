@@ -2558,6 +2558,14 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
     ("OSF10020115", "EBCDIC-CP-DK"),
     ("TCVN5712", "TCVN"),
     ("TCVN57121:1993", "TCVN"),
+    // ISO-10646 / UCS designations — UCS-4 is byte-identical to UTF-32BE and
+    // ISO-10646/UCS2 to UCS-2LE (probe-verified both directions incl. astral).
+    ("CSUCS4", "UTF-32BE"),
+    ("106461:1993", "UTF-32BE"),
+    ("106461:1993/UCS4", "UTF-32BE"),
+    ("ISO10646/UCS4", "UTF-32BE"),
+    ("ISO10646", "UTF-32BE"),
+    ("ISO10646/UCS2", "UCS-2LE"),
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.
