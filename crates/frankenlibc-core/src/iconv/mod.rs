@@ -7,6 +7,7 @@ use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint};
 
 mod cjk_tables;
 mod cp932_tables;
+mod euctw_tables;
 mod ibm943_tables;
 
 /// Core iconv error code: output buffer has insufficient capacity.
@@ -222,6 +223,9 @@ enum Encoding {
     Iso885915,
     Iso885916,
     EucJp,
+    /// EUC-TW (CNS 11643): variable-length Taiwanese — 1-byte ASCII, 2-byte CNS
+    /// plane 1 (G1), and 4-byte SS2 (`0x8E` + plane + 2 cells) for planes 1-16.
+    EucTw,
     ShiftJis,
     /// Microsoft CP932 (= WINDOWS-31J / MS932): a Shift_JIS superset with the
     /// NEC/IBM extension rows and the wave-dash/tilde + ASCII (0x5C, 0x7E)
@@ -251,7 +255,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 143] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 144] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -1177,6 +1181,13 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 143] = [
         canonical: "EUC-JP",
         normalized: "EUCJP",
         aliases: &["EUCJP", "CSEUCPKDFMTJAPANESE", "UJIS"],
+    },
+    CodecSpec {
+        encoding: Encoding::EucTw,
+        canonical: "EUC-TW",
+        normalized: "EUCTW",
+        // glibc spells it EUC-TW / EUCTW (both normalize to EUCTW).
+        aliases: &["CSEUCTW"],
     },
     CodecSpec {
         encoding: Encoding::ShiftJis,
@@ -8813,6 +8824,95 @@ fn encode_eucjp(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     }
 }
 
+/// EUC-TW (CNS 11643) decoder, glibc-exact (see [`euctw_tables`]). Variable
+/// length: 1-byte ASCII (`EUC_TW_ONE_BYTE`); 2-byte G1 CNS plane 1
+/// (`EUC_TW_DBCS2`, lead in `EUC_TW_LEAD2_DEFER`); 4-byte SS2 `0x8E` + plane
+/// byte + 2 cell bytes (`EUC_TW_DBCS4`, key `(plane_index<<16)|(c1<<8)|c2`).
+/// glibc's incomplete-vs-EILSEQ rule (probed): an invalid plane byte is EILSEQ
+/// as soon as it is seen (2 bytes), but cell bytes are NOT validated until all
+/// four bytes are present — a truncated SS2 with a valid plane is EINVAL
+/// regardless of the (so-far) cell bytes.
+fn decode_euctw(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    let Some(&b0) = input.first() else {
+        return Err(DecodeError::Incomplete);
+    };
+    let ob = euctw_tables::EUC_TW_ONE_BYTE[b0 as usize];
+    if ob >= 0 {
+        return char::from_u32(ob as u32)
+            .map(|c| (c, 1))
+            .ok_or(DecodeError::Invalid);
+    }
+    if b0 == 0x8E {
+        let Some(&pb) = input.get(1) else {
+            return Err(DecodeError::Incomplete);
+        };
+        if !euctw_tables::EUC_TW_SS2_PLANE_VALID[pb as usize] {
+            return Err(DecodeError::Invalid);
+        }
+        let Some(&c1) = input.get(2) else {
+            return Err(DecodeError::Incomplete);
+        };
+        let Some(&c2) = input.get(3) else {
+            return Err(DecodeError::Incomplete);
+        };
+        let key = (u32::from(pb - 0xA1) << 16) | (u32::from(c1) << 8) | u32::from(c2);
+        return match euctw_tables::EUC_TW_DBCS4.binary_search_by_key(&key, |&(k, _)| k) {
+            Ok(i) => char::from_u32(euctw_tables::EUC_TW_DBCS4[i].1)
+                .map(|c| (c, 4))
+                .ok_or(DecodeError::Invalid),
+            Err(_) => Err(DecodeError::Invalid),
+        };
+    }
+    if !euctw_tables::EUC_TW_LEAD2_DEFER[b0 as usize] {
+        return Err(DecodeError::Invalid);
+    }
+    let Some(&b1) = input.get(1) else {
+        return Err(DecodeError::Incomplete);
+    };
+    let key = (u16::from(b0) << 8) | u16::from(b1);
+    match euctw_tables::EUC_TW_DBCS2.binary_search_by_key(&key, |&(k, _)| k) {
+        Ok(i) => char::from_u32(euctw_tables::EUC_TW_DBCS2[i].1)
+            .map(|c| (c, 2))
+            .ok_or(DecodeError::Invalid),
+        Err(_) => Err(DecodeError::Invalid),
+    }
+}
+
+/// EUC-TW encoder, glibc-exact via the `code point -> packed` table
+/// (`EUC_TW_ENC`, sorted by code point — keys span beyond the BMP since CNS
+/// plane 15 maps into CJK Ext B). `packed < 0x100` is 1 byte, `< 0x10000` is
+/// 2 bytes `(b0<<8)|b1`, otherwise a 4-byte SS2 form whose top byte is `0x8E`.
+fn encode_euctw(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    let cp = ch as u32;
+    let packed = match euctw_tables::EUC_TW_ENC.binary_search_by_key(&cp, |&(c, _)| c) {
+        Ok(i) => euctw_tables::EUC_TW_ENC[i].1,
+        Err(_) => return Err(EncodeError::Unrepresentable),
+    };
+    if packed < 0x100 {
+        if out.is_empty() {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = packed as u8;
+        Ok(1)
+    } else if packed < 0x1_0000 {
+        if out.len() < 2 {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = (packed >> 8) as u8;
+        out[1] = (packed & 0xFF) as u8;
+        Ok(2)
+    } else {
+        if out.len() < 4 {
+            return Err(EncodeError::NoSpace);
+        }
+        out[0] = (packed >> 24) as u8;
+        out[1] = ((packed >> 16) & 0xFF) as u8;
+        out[2] = ((packed >> 8) & 0xFF) as u8;
+        out[3] = (packed & 0xFF) as u8;
+        Ok(4)
+    }
+}
+
 /// Generic 2-byte-DBCS decoder (Shift-JIS, BIG5) driven by glibc-exact tables
 /// (see [`cjk_tables`]). `one_byte[b0] >= 0` is a single-byte char (ASCII / kana);
 /// `is_lead[b0]` marks a double-byte lead whose `(b0<<8)|b1` key is looked up in
@@ -9539,6 +9639,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp856 => decode_cp856(input),
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
+        Encoding::EucTw => decode_euctw(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Cp932 => decode_cp932(input),
         Encoding::Ibm943 => decode_ibm943(input),
@@ -9828,6 +9929,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp856 => encode_cp856(ch, out),
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
+        Encoding::EucTw => encode_euctw(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Cp932 => encode_cp932(ch, out),
         Encoding::Ibm943 => encode_ibm943(ch, out),
