@@ -2566,6 +2566,15 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
     ("ISO10646/UCS4", "UTF-32BE"),
     ("ISO10646", "UTF-32BE"),
     ("ISO10646/UCS2", "UCS-2LE"),
+    // OSF UCS/UTF designations + ISO-IR-193 (UTF-8), probe-verified both directions.
+    ("OSF00010100", "UCS-2LE"),
+    ("OSF00010101", "UCS-2LE"),
+    ("OSF00010102", "UCS-2LE"),
+    ("OSF00010104", "UTF-32BE"),
+    ("OSF00010105", "UTF-32BE"),
+    ("OSF00010106", "UTF-32BE"),
+    ("OSF05010001", "UTF-8"),
+    ("ISOIR193", "UTF-8"),
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.

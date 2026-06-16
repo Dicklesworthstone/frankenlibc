@@ -80,6 +80,14 @@ const ALIASES: &[(&str, bool)] = &[
     ("ISO-10646/UCS4", true),
     ("ISO-10646", true),
     ("ISO-10646/UCS2", false),
+    ("OSF00010100", false),
+    ("OSF00010101", false),
+    ("OSF00010102", false),
+    ("OSF00010104", true),
+    ("OSF00010105", true),
+    ("OSF00010106", true),
+    ("OSF05010001", true),
+    ("ISO-IR-193", true),
 ];
 
 #[test]
