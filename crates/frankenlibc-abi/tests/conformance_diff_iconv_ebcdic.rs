@@ -163,3 +163,64 @@ fn cp037_aliases_resolve_and_match() {
         assert_eq!(fl_decode(name), g_decode(&gg, name), "alias {name} vs glibc");
     }
 }
+
+fn g_encode_n(gg: &G, name: &str, cp: u32) -> Option<Vec<u8>> {
+    let c = char::from_u32(cp)?;
+    let cn = CString::new(name).unwrap();
+    let cd = (gg.open)(cn.as_ptr(), c"UTF-8".as_ptr());
+    assert!(cd as usize != INVALID);
+    let mut src = c.to_string().into_bytes();
+    let mut out = [0u8; 8];
+    let mut ip = src.as_mut_ptr() as *mut c_char;
+    let mut il = src.len();
+    let mut op = out.as_mut_ptr() as *mut c_char;
+    let mut ol = 8usize;
+    let r = (gg.conv)(cd, &mut ip, &mut il, &mut op, &mut ol);
+    (gg.close)(cd);
+    (r != INVALID && il == 0).then(|| out[..8 - ol].to_vec())
+}
+fn fl_encode_n(name: &str, cp: u32) -> Option<Vec<u8>> {
+    let c = char::from_u32(cp)?;
+    let cn = CString::new(name).unwrap();
+    let cd = unsafe { fl::iconv_open(cn.as_ptr(), c"UTF-8".as_ptr()) };
+    assert!(cd as usize != INVALID && !cd.is_null());
+    let mut src = c.to_string().into_bytes();
+    let mut out = [0u8; 8];
+    let mut ip = src.as_mut_ptr() as *mut c_char;
+    let mut il = src.len();
+    let mut op = out.as_mut_ptr() as *mut c_char;
+    let mut ol = 8usize;
+    let r = unsafe { fl::iconv(cd, &mut ip, &mut il, &mut op, &mut ol) };
+    unsafe { fl::iconv_close(cd) };
+    (r != INVALID && il == 0).then(|| out[..8 - ol].to_vec())
+}
+
+// Additional EBCDIC pages on the same full-256 path as CP037.
+const MORE_EBCDIC: &[(&str, &[&str])] = &[
+    ("CP500", &["IBM500", "CSIBM500", "EBCDIC-CP-BE", "EBCDIC-CP-CH"]),
+    ("CP1047", &["IBM1047"]),
+    ("CP1140", &["IBM1140", "CSIBM1140"]),
+];
+
+#[test]
+fn more_ebcdic_pages_match_glibc() {
+    let gg = g();
+    for (canon, aliases) in MORE_EBCDIC {
+        let gd = g_decode(&gg, canon);
+        assert_eq!(fl_decode(canon), gd, "{canon} decode differs from glibc");
+        for cp in 0u32..=0xFFFF {
+            if (0xD800..=0xDFFF).contains(&cp) {
+                continue;
+            }
+            assert_eq!(
+                fl_encode_n(canon, cp),
+                g_encode_n(&gg, canon, cp),
+                "{canon} encode U+{cp:04X} differs from glibc"
+            );
+        }
+        for &a in *aliases {
+            assert_eq!(fl_decode(a), gd, "alias {a} differs from {canon}");
+            assert_eq!(fl_decode(a), g_decode(&gg, a), "alias {a} vs glibc");
+        }
+    }
+}
