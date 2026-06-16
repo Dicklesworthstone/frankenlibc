@@ -214,6 +214,7 @@ const ALIASES: &[&str] = &[
     "TIS620.2529-1",
     "TIS620.2533-0",
     "OSF0005000A",
+    "CSISO90",
 ];
 
 #[test]

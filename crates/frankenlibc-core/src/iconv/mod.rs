@@ -2685,9 +2685,14 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
     ("OSF05010001", "UTF-8"),
     ("ISOIR193", "UTF-8"),
     // OSF charset-registry codes that resolve to codecs fl already implements
-    // (gate-verified byte-identical): 0005000A = US-ASCII, 0004000A = EUC-KR.
+    // (gate-verified byte-identical): 0005000A = US-ASCII, 0004000A = EUC-KR,
+    // 00030010 = EUC-JP (0 of 18184 cells differ; distinct from EUC-JP-MS).
     ("OSF0005000A", "ASCII"),
     ("OSF0004000A", "EUC-KR"),
+    ("OSF00030010", "EUC-JP"),
+    // CSISO90 (ISO-IR-90) is byte-identical to ISO_6937-2 (0 of 4096 cells,
+    // including the 0xC1-0xCF combining-accent pairs).
+    ("CSISO90", "ISO_6937-2"),
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.
