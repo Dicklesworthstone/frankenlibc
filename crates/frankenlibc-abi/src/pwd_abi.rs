@@ -1442,8 +1442,85 @@ pub unsafe extern "C" fn sgetsgent_r(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn putsgent(_sgrp: *const c_void, _stream: *mut c_void) -> c_int {
-    -1 // not supported
+pub unsafe extern "C" fn putsgent(sgrp: *const c_void, stream: *mut c_void) -> c_int {
+    if sgrp.is_null() || stream.is_null() {
+        return -1;
+    }
+    // struct sgrp { char *sg_namp; char *sg_passwd; char **sg_adm; char **sg_mem; }.
+    // glibc renders a NULL string field as an empty field (verified against the
+    // host: a NULL sg_passwd yields "name::adm:mem") and comma-joins the admin /
+    // member name lists.
+    const SLOT_SCAN_CAP: usize = 1 << 20;
+    let base = sgrp as *const *const c_char;
+    let namp = unsafe { *base };
+    let passwd = unsafe { *base.add(1) };
+    let adm = unsafe { *base.add(2) as *const *const c_char };
+    let mem = unsafe { *base.add(3) as *const *const c_char };
+
+    let mut line: Vec<u8> = Vec::with_capacity(64);
+    // Append a single string field (NULL -> empty); returns false on a malformed
+    // (unterminated) string so the caller can report EINVAL.
+    let push_field = |line: &mut Vec<u8>, p: *const c_char| -> bool {
+        if p.is_null() {
+            return true;
+        }
+        match unsafe { bounded_cstr_bytes(p) } {
+            Some(b) => {
+                line.extend_from_slice(b);
+                true
+            }
+            None => false,
+        }
+    };
+    // Append a comma-joined NULL-terminated name list (NULL list -> empty).
+    let push_list = |line: &mut Vec<u8>, mut lp: *const *const c_char| -> bool {
+        if lp.is_null() {
+            return true;
+        }
+        let slots = known_remaining(lp as usize)
+            .map_or(SLOT_SCAN_CAP, |r| r / std::mem::size_of::<*const c_char>());
+        for i in 0..slots {
+            let entry = unsafe { *lp };
+            if entry.is_null() {
+                return true;
+            }
+            match unsafe { bounded_cstr_bytes(entry) } {
+                Some(b) => {
+                    if i > 0 {
+                        line.push(b',');
+                    }
+                    line.extend_from_slice(b);
+                }
+                None => return false,
+            }
+            lp = unsafe { lp.add(1) };
+        }
+        false // never reached the NULL terminator within the scan bound
+    };
+
+    if !push_field(&mut line, namp) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    line.push(b':');
+    if !push_field(&mut line, passwd) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    line.push(b':');
+    if !push_list(&mut line, adm) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    line.push(b':');
+    if !push_list(&mut line, mem) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    line.push(b'\n');
+
+    let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), stream) };
+    if written == line.len() { 0 } else { -1 }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
