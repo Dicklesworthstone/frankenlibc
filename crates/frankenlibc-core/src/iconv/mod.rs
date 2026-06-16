@@ -284,6 +284,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 142] = [
             "CP819",
             "IBM819",
             "L1",
+            "ISO88591:1987",
         ],
     },
     CodecSpec {
@@ -1005,6 +1006,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 142] = [
             "IBM913",
             "88593",
             "ISOIR109",
+            "L3",
         ],
     },
     CodecSpec {
@@ -1020,6 +1022,7 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 142] = [
             "IBM914",
             "88594",
             "ISOIR110",
+            "L4",
         ],
     },
     CodecSpec {
