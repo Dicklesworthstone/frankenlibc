@@ -27,6 +27,7 @@ mod eucjisx0213_tables;
 mod big5hkscs_tables;
 mod sjisx0213_tables;
 mod tscii_tables;
+mod iso_ir_165_tables;
 
 /// Core iconv error code: output buffer has insufficient capacity.
 pub const ICONV_E2BIG: i32 = errno::E2BIG;
@@ -143,6 +144,13 @@ enum Encoding {
     /// reached one character at a time via SS2 (`ESC N`). A newline (0x0A) resets
     /// the designations. Handled by a dedicated whole-buffer branch in [`iconv`].
     Iso2022Cn,
+    /// ISO-2022-CN-EXT (RFC 1922): extends ISO-2022-CN with ISO-IR-165 as a G1
+    /// SO charset (`ESC $ ) E`) and CNS 11643 planes 3-7 in G3 via SS3 (`ESC O`,
+    /// designated `ESC $ + I/J/K/L/M`). DECODE treats SS2/SS3 as true single
+    /// shifts; ENCODE mirrors glibc's sticky `set` model (the shift persists
+    /// until SI/ASCII), priority GB2312 > ISO-IR-165 > CNS-1 > CNS-2 > CNS-3..7,
+    /// announcements cleared on newline. Whole-buffer branch in [`iconv`].
+    Iso2022CnExt,
     Utf32,
     Utf32Be,
     Utf32Le,
@@ -616,7 +624,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 301] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 302] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2596,14 +2604,17 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 301] = [
         normalized: "ISO2022CN",
         aliases: &["ISO2022CN", "CSISO2022CN"],
     },
-];
-
-const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 1] = [
-    ExcludedCodecSpec {
+    CodecSpec {
+        encoding: Encoding::Iso2022CnExt,
         canonical: "ISO-2022-CN-EXT",
         normalized: "ISO2022CNEXT",
+        aliases: &["ISO2022CNEXT"],
     },
 ];
+
+// All previously out-of-scope codecs are now implemented; the excluded tables
+// are empty (kept so the policy plumbing and its tests stay exercisable).
+const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 0] = [];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
 pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 55] = [
@@ -2861,9 +2872,9 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
     ("CSISO90", "ISO_6937-2"),
 ];
 
-/// Known out-of-scope codec families for phase-1 implementation.
-pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 1] =
-    ["ISO-2022-CN-EXT"];
+/// Known out-of-scope codec families for phase-1 implementation. Now empty —
+/// every former member (last was ISO-2022-CN-EXT) is implemented and byte-exact.
+pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 0] = [];
 
 /// Opaque conversion descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2963,6 +2974,21 @@ pub struct IconvDescriptor {
     iso2022cn_out_shifted: bool,
     iso2022cn_in_g1: u8,
     iso2022cn_in_shifted: bool,
+    /// ISO-2022-CN-EXT (bd-etxccg). DECODE: `_in_g1` = SO charset (1=GB2312,
+    /// 2=CNS-1, 3=ISO-IR-165), `_in_g3` = the CNS plane (3..=7, 0=none)
+    /// designated to G3, `_in_shifted` = SO active. ENCODE mirrors glibc's
+    /// `set`/`ann` model: `_out_set` is the current charset (0=ASCII, 1=GB,
+    /// 2=CNS-1, 3=IR165, 4=CNS-2, 5..=9 = CNS planes 3..=7) and doubles as the
+    /// shift state (non-ASCII => shifted-out); `_out_ann_*` are the per-slot
+    /// designation announcements, cleared on newline.
+    iso2022cnext_in_g1: u8,
+    iso2022cnext_in_g1act: u8,
+    iso2022cnext_in_g3: u8,
+    iso2022cnext_in_shifted: bool,
+    iso2022cnext_out_set: u8,
+    iso2022cnext_out_ann_so: u8,
+    iso2022cnext_out_ann_ss2: bool,
+    iso2022cnext_out_ann_ss3: u8,
     /// IBM-930 SO/SI shift state, persisted across calls: `*_out_shifted` /
     /// `*_in_shifted` = currently in the double-byte (SO) mode. On encode a reset
     /// (NULL inbuf) emits SI if still shifted, like ISO-2022-KR.
@@ -19061,6 +19087,8 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso2022Jp3 => Err(DecodeError::Invalid),
         // ISO-2022-CN is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Cn => Err(DecodeError::Invalid),
+        // ISO-2022-CN-EXT is likewise handled by a dedicated whole-buffer path.
+        Encoding::Iso2022CnExt => Err(DecodeError::Invalid),
         Encoding::Utf32 => decode_utf32(input),
         Encoding::Utf32Be => decode_utf32be(input),
         Encoding::Utf32Le => decode_utf32le(input),
@@ -19514,6 +19542,8 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso2022Jp3 => Err(EncodeError::Unrepresentable),
         // ISO-2022-CN is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Cn => Err(EncodeError::Unrepresentable),
+        // ISO-2022-CN-EXT is likewise handled by a dedicated whole-buffer path.
+        Encoding::Iso2022CnExt => Err(EncodeError::Unrepresentable),
         Encoding::Utf32 => {
             if out.len() < 4 {
                 return Err(EncodeError::NoSpace);
@@ -19893,6 +19923,14 @@ pub fn iconv_open_detailed(
             iso2022cn_out_shifted: false,
             iso2022cn_in_g1: 1,
             iso2022cn_in_shifted: false,
+            iso2022cnext_in_g1: 0,
+            iso2022cnext_in_g1act: 0,
+            iso2022cnext_in_g3: 0,
+            iso2022cnext_in_shifted: false,
+            iso2022cnext_out_set: 0,
+            iso2022cnext_out_ann_so: 0,
+            iso2022cnext_out_ann_ss2: false,
+            iso2022cnext_out_ann_ss3: 0,
             ibm930_out_shifted: false,
             ibm930_in_shifted: false,
         },
@@ -21520,6 +21558,415 @@ fn iso2022cn_decode(
     })
 }
 
+/// ISO-IR-165 ku-ten (GL bytes 0x21..=0x7E) -> Unicode scalar.
+fn decode_isoir165(c0: u8, c1: u8) -> Option<char> {
+    let key = (u16::from(c0) << 8) | u16::from(c1);
+    match iso_ir_165_tables::ISO_IR_165_DECODE.binary_search_by_key(&key, |&(k, _)| k) {
+        Ok(i) => char::from_u32(iso_ir_165_tables::ISO_IR_165_DECODE[i].1),
+        Err(_) => None,
+    }
+}
+/// Unicode scalar -> ISO-IR-165 ku-ten GL bytes (0x21..=0x7E each).
+fn encode_isoir165(ch: char) -> Option<[u8; 2]> {
+    let cp = ch as u32;
+    match iso_ir_165_tables::ISO_IR_165_ENC.binary_search_by_key(&cp, |&(c, _)| c) {
+        Ok(i) => {
+            let k = iso_ir_165_tables::ISO_IR_165_ENC[i].1;
+            Some([(k >> 8) as u8, (k & 0xFF) as u8])
+        }
+        Err(_) => None,
+    }
+}
+
+/// ISO-2022-CN-EXT DECODE (`from == Iso2022CnExt`). Extends ISO-2022-CN: G1 adds
+/// ISO-IR-165 (`ESC $ ) E`); G3 holds CNS 11643 planes 3-7 (`ESC $ + I/J/K/L/M`)
+/// reached one char at a time via SS3 (`ESC O`). SS2/SS3 are TRUE single shifts
+/// (glibc's decoder reverts to the SO/ASCII state after one char — even though
+/// its encoder makes them sticky). A newline (in ASCII) resets G1 to GB2312 and
+/// clears G3.
+fn iso2022cnext_decode(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut chars: Vec<char> = Vec::new();
+    // `g1` is the ANNOUNCED G1 (updated by `ESC $ ) X` at any time); `g1act` is
+    // the ACTIVE G1 used while shifted, captured from `g1` only at SO — a glibc
+    // quirk: a designator issued while already SO-shifted does not change the
+    // running decode set until the next SI->SO cycle.
+    let mut g1 = cd.iso2022cnext_in_g1; // 0 none, 1 GB2312, 2 CNS plane 1, 3 ISO-IR-165
+    let mut g1act = cd.iso2022cnext_in_g1act;
+    let mut g3 = cd.iso2022cnext_in_g3; // 0 none, 3..=7 CNS plane in G3
+    let mut shifted = cd.iso2022cnext_in_shifted;
+    let mut i = 0usize;
+    let mut consumed_end = 0usize;
+    let mut err: Option<i32> = None;
+    let gl = |b: u8| (0x21..=0x7E).contains(&b);
+    while i < input.len() {
+        let b = input[i];
+        if b == 0x1B {
+            let have = input.len() - i;
+            if have < 2 {
+                err = Some(ICONV_EINVAL);
+                break;
+            }
+            let b1 = input[i + 1];
+            // SS2 (ESC N): one CNS plane 2 char (G2, the default).
+            if b1 == 0x4E {
+                if have < 4 {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                // glibc consumes the ESC N (inptr += 2) BEFORE decoding the
+                // ku-ten, so an invalid CNS-2 cell errors with ESC N consumed.
+                i += 2;
+                consumed_end = i;
+                let (c0, c1) = (input[i], input[i + 1]);
+                if gl(c0)
+                    && gl(c1)
+                    && let Ok((ch, 4)) = decode_euctw(&[0x8E, 0xA2, c0 | 0x80, c1 | 0x80])
+                {
+                    chars.push(ch);
+                    i += 2;
+                    consumed_end = i;
+                    continue;
+                }
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            // SS3 (ESC O): one char from the plane designated to G3.
+            if b1 == 0x4F {
+                // Incomplete (need ESC O + 2 bytes) takes priority; unlike SS2,
+                // glibc does NOT consume ESC O when the SS3 char is invalid.
+                if have < 4 {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                if g3 == 0 {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                let (c0, c1) = (input[i + 2], input[i + 3]);
+                if !gl(c0) || !gl(c1) {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                let plane_byte = 0xA1 + (g3 - 1); // plane N -> SS2 selector 0xA1+(N-1)
+                match decode_euctw(&[0x8E, plane_byte, c0 | 0x80, c1 | 0x80]) {
+                    Ok((ch, 4)) => {
+                        chars.push(ch);
+                        i += 4;
+                        consumed_end = i;
+                        continue;
+                    }
+                    _ => {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+            }
+            // Unlike ISO-2022-CN, the EXT decoder processes designators while
+            // SO-shifted too (glibc keeps the shift and re-designates in place).
+            if b1 == 0x24 {
+                if have < 3 {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let b2 = input[i + 2];
+                if b2 == 0x29 || b2 == 0x2A || b2 == 0x2B {
+                    if have < 4 {
+                        err = Some(ICONV_EINVAL);
+                        break;
+                    }
+                    match (b2, input[i + 3]) {
+                        (0x29, 0x41) => g1 = 1, // GB2312 -> G1
+                        (0x29, 0x47) => g1 = 2, // CNS plane 1 -> G1
+                        (0x29, 0x45) => g1 = 3, // ISO-IR-165 -> G1
+                        (0x2A, 0x48) => {}      // CNS plane 2 -> G2 (default; no-op)
+                        (0x2B, 0x49) => g3 = 3, // CNS plane 3 -> G3
+                        (0x2B, 0x4A) => g3 = 4, // plane 4
+                        (0x2B, 0x4B) => g3 = 5, // plane 5
+                        (0x2B, 0x4C) => g3 = 6, // plane 6
+                        (0x2B, 0x4D) => g3 = 7, // plane 7
+                        _ => {
+                            chars.push('\u{1B}');
+                            i += 1;
+                            consumed_end = i;
+                            continue;
+                        }
+                    }
+                    i += 4;
+                    consumed_end = i;
+                    continue;
+                }
+                chars.push('\u{1B}');
+                i += 1;
+                consumed_end = i;
+                continue;
+            }
+            chars.push('\u{1B}');
+            i += 1;
+            consumed_end = i;
+            continue;
+        }
+        if b == 0x0E {
+            // SO consumes one byte; shifting into an UNANNOUNCED G1 is EILSEQ
+            // (glibc has no default SO charset — `ESC $ ) X` must precede SO).
+            i += 1;
+            consumed_end = i;
+            if g1 == 0 {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            g1act = g1; // capture the announced G1 as the active set on shift-out
+            shifted = true;
+            continue;
+        }
+        if b == 0x0F {
+            shifted = false;
+            i += 1;
+            consumed_end = i;
+            continue;
+        }
+        if shifted {
+            if !gl(b) {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            if i + 1 >= input.len() {
+                err = Some(ICONV_EINVAL);
+                break;
+            }
+            let b1 = input[i + 1];
+            if !gl(b1) {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            let euc = [b | 0x80, b1 | 0x80];
+            let decoded = match g1act {
+                2 => decode_euctw(&euc),
+                3 => decode_isoir165(b, b1).map(|c| (c, 2)).ok_or(DecodeError::Invalid),
+                _ => decode_gb2312(&euc),
+            };
+            match decoded {
+                Ok((ch, 2)) => {
+                    chars.push(ch);
+                    i += 2;
+                    consumed_end = i;
+                }
+                _ => {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+            }
+        } else if b < 0x80 {
+            // ASCII passthrough — unlike ISO-2022-CN, the EXT decoder accepts
+            // 0x7F (DEL) as a plain byte.
+            chars.push(b as char);
+            i += 1;
+            consumed_end = i;
+            // Unlike the encoder (which re-announces after a newline), the glibc
+            // decoder keeps its G1/G3 announcements across a newline.
+        } else {
+            err = Some(ICONV_EILSEQ);
+            break;
+        }
+    }
+    let mut out: Vec<u8> = Vec::new();
+    let mut tmp = [0u8; 8];
+    for &ch in &chars {
+        match encode_char(cd.to, ch, &mut tmp) {
+            Ok(n) => out.extend_from_slice(&tmp[..n]),
+            Err(_) => {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+        }
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    cd.iso2022cnext_in_g1 = g1;
+    cd.iso2022cnext_in_g1act = g1act;
+    cd.iso2022cnext_in_g3 = g3;
+    cd.iso2022cnext_in_shifted = shifted;
+    if let Some(code) = err {
+        return Err(IconvError { code, in_consumed: consumed_end, out_written: out.len() });
+    }
+    Ok(IconvResult { non_reversible: 0, in_consumed: consumed_end, out_written: out.len() })
+}
+
+/// ISO-2022-CN-EXT ENCODE (`to == Iso2022CnExt`). Mirrors glibc's `set`/`ann`
+/// model: `set` is the current charset (0 ASCII, 1 GB2312, 2 CNS-1, 3 ISO-IR-165,
+/// 4 CNS-2, 5..=9 CNS planes 3..=7) and doubles as the shift state — SO (`0x0E`)
+/// is emitted only when leaving ASCII, while SS2/SS3 (`ESC N`/`ESC O`) are
+/// emitted whenever the set changes and then stay sticky (glibc's quirk). Per
+/// char: lazy-stay in the current set, else priority GB > IR165 > CNS-1 > CNS-2 >
+/// CNS-3..7. Announcements (`ann_*`) are cleared on newline; a flush emits SI.
+fn iso2022cnext_convert(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut set = cd.iso2022cnext_out_set;
+    let mut ann_so = cd.iso2022cnext_out_ann_so; // 0 none, 1 GB, 2 CNS-1, 3 IR165
+    let mut ann_ss2 = cd.iso2022cnext_out_ann_ss2; // CNS-2 designated
+    let mut ann_ss3 = cd.iso2022cnext_out_ann_ss3; // 0 none, 3..=7 plane in G3
+    let mut in_pos = 0usize;
+    let mut err: Option<(i32, usize)> = None;
+    // ku-ten bytes for `ch` in a specific set code, or None if unrepresentable.
+    let repr_in = |setcode: u8, ch: char| -> Option<[u8; 2]> {
+        let mut t = [0u8; 8];
+        match setcode {
+            1 => match encode_gb2312(ch, &mut t) {
+                Ok(2) if (0xA1..=0xFE).contains(&t[0]) && (0xA1..=0xFE).contains(&t[1]) => {
+                    Some([t[0] & 0x7F, t[1] & 0x7F])
+                }
+                _ => None,
+            },
+            3 => encode_isoir165(ch),
+            2 => match encode_euctw(ch, &mut t) {
+                Ok(2) if (0xA1..=0xFE).contains(&t[0]) && (0xA1..=0xFE).contains(&t[1]) => {
+                    Some([t[0] & 0x7F, t[1] & 0x7F])
+                }
+                _ => None,
+            },
+            // CNS-2 (4) and CNS planes 3..=7 (5..=9) live in the EUC-TW SS2 form
+            // `0x8E <0xA1+plane-1> b0 b1`; the set code maps to a specific plane.
+            4..=9 => {
+                let want_plane = if setcode == 4 { 2 } else { setcode - 2 };
+                match encode_euctw(ch, &mut t) {
+                    Ok(4) if t[0] == 0x8E && t[1] == 0xA1 + (want_plane - 1) => {
+                        Some([t[2] & 0x7F, t[3] & 0x7F])
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    };
+    while in_pos < input.len() {
+        let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+            Ok(v) => v,
+            Err(DecodeError::Incomplete) => {
+                err = Some((ICONV_EINVAL, in_pos));
+                break;
+            }
+            Err(DecodeError::Invalid) => {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        };
+        let cp = ch as u32;
+        if cp < 0x80 {
+            if set != 0 {
+                out.push(0x0F); // SI back to ASCII
+                set = 0;
+            }
+            out.push(cp as u8);
+            if cp == 0x0A {
+                ann_so = 0;
+                ann_ss2 = false;
+                ann_ss3 = 0;
+            }
+            in_pos += consumed;
+            continue;
+        }
+        // glibc's TO_LOOP selection (iso-2022-cn-ext.c), escape-minimizing:
+        // (1) a PRIMARY SO set chosen by the current set / announced SO set;
+        // (2) else CNS-2 (SS2); (3) else the other two SO sets (GB, IR165, CNS-1
+        // minus the primary, in that order); (4) else CNS planes 3-7 (SS3).
+        // Set codes: 1=GB 2=CNS-1 3=IR165 4=CNS-2 5..=9=CNS planes 3..=7.
+        // NB: glibc's IR165 primary test (`(ann & SO_ann) == ISO_IR_165_set`)
+        // compares a shifted announcement to an unshifted set constant and so is
+        // always false — IR165 becomes primary ONLY when it is the active set,
+        // never via its announcement. We reproduce that quirk for byte-exactness.
+        let primary = if set == 1 || (ann_so != 2 && ann_so != 3) {
+            1 // GB2312
+        } else if set == 3 {
+            3 // ISO-IR-165
+        } else {
+            2 // CNS-1
+        };
+        let mut uset = 0u8;
+        let mut bytes = [0u8; 2];
+        if let Some(b) = repr_in(primary, ch) {
+            uset = primary;
+            bytes = b;
+        } else if let Some(b) = repr_in(4, ch) {
+            uset = 4; // CNS-2 via SS2
+            bytes = b;
+        } else {
+            for sc in [1u8, 3, 2, 5, 6, 7, 8, 9] {
+                if sc == primary && sc <= 3 {
+                    continue; // already tried the primary SO set
+                }
+                if let Some(b) = repr_in(sc, ch) {
+                    uset = sc;
+                    bytes = b;
+                    break;
+                }
+            }
+            if uset == 0 {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        }
+        if set != uset {
+            // Designation (announce the charset for its SO/SS2/SS3 slot if new).
+            if (1..=3).contains(&uset) {
+                if ann_so != uset {
+                    let f = match uset {
+                        1 => 0x41, // ESC $ ) A  GB2312
+                        2 => 0x47, // ESC $ ) G  CNS plane 1
+                        _ => 0x45, // ESC $ ) E  ISO-IR-165
+                    };
+                    out.extend_from_slice(&[0x1B, 0x24, 0x29, f]);
+                    ann_so = uset;
+                }
+            } else if uset == 4 {
+                if !ann_ss2 {
+                    out.extend_from_slice(&[0x1B, 0x24, 0x2A, 0x48]); // ESC $ * H
+                    ann_ss2 = true;
+                }
+            } else {
+                let plane = uset - 2; // 5..=9 -> CNS planes 3..=7
+                if ann_ss3 != plane {
+                    let f = 0x49 + (plane - 3); // ESC $ + I/J/K/L/M
+                    out.extend_from_slice(&[0x1B, 0x24, 0x2B, f]);
+                    ann_ss3 = plane;
+                }
+            }
+            // Shift: SS2/SS3 every set change; SO only when leaving ASCII.
+            if uset == 4 {
+                out.extend_from_slice(&[0x1B, 0x4E]); // SS2
+            } else if uset >= 5 {
+                out.extend_from_slice(&[0x1B, 0x4F]); // SS3
+            } else if set == 0 {
+                out.push(0x0E); // SO
+            }
+            set = uset;
+        }
+        out.push(bytes[0]);
+        out.push(bytes[1]);
+        in_pos += consumed;
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    cd.iso2022cnext_out_set = set;
+    cd.iso2022cnext_out_ann_so = ann_so;
+    cd.iso2022cnext_out_ann_ss2 = ann_ss2;
+    cd.iso2022cnext_out_ann_ss3 = ann_ss3;
+    if let Some((code, pos)) = err {
+        return Err(IconvError { code, in_consumed: pos, out_written: out.len() });
+    }
+    Ok(IconvResult { non_reversible: 0, in_consumed: in_pos, out_written: out.len() })
+}
+
 /// The lookup structures backing one IBM EBCDIC DBCS code page. `dbcs_multi` /
 /// `dbcs_multi_enc` cover the rare cells that decode to more than one code point
 /// (JIS X 0213 kana + combining mark on IBM-1390/1399); empty for other pages.
@@ -22876,6 +23323,27 @@ pub fn iconv(
                 }
                 return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
             }
+            // ISO-2022-CN-EXT DEST: glibc resets to ASCII at end of input, emitting
+            // SI whenever the current `set` is non-ASCII (the announcements are
+            // already cleared lazily); then clears all encode state.
+            if cd.to == Encoding::Iso2022CnExt {
+                if cd.iso2022cnext_out_set != 0
+                    || cd.iso2022cnext_out_ann_so != 0
+                    || cd.iso2022cnext_out_ann_ss2
+                    || cd.iso2022cnext_out_ann_ss3 != 0
+                {
+                    if outbuf.is_empty() {
+                        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+                    }
+                    outbuf[0] = 0x0F;
+                    cd.iso2022cnext_out_set = 0;
+                    cd.iso2022cnext_out_ann_so = 0;
+                    cd.iso2022cnext_out_ann_ss2 = false;
+                    cd.iso2022cnext_out_ann_ss3 = 0;
+                    return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 1 });
+                }
+                return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
+            }
             if cd.emit_bom && !outbuf.is_empty() {
                 let bom = match cd.to {
                     Encoding::Utf16 | Encoding::Unicode => &[0xFF, 0xFE][..],
@@ -22993,6 +23461,13 @@ pub fn iconv(
     }
     if cd.to == Encoding::Iso2022Cn {
         return iso2022cn_convert(cd, input, outbuf);
+    }
+    // ISO-2022-CN-EXT (either side): SO/SI + SS2/SS3 stateful codec, whole-buffer.
+    if cd.from == Encoding::Iso2022CnExt {
+        return iso2022cnext_decode(cd, input, outbuf);
+    }
+    if cd.to == Encoding::Iso2022CnExt {
+        return iso2022cnext_convert(cd, input, outbuf);
     }
 
     // NOTE: the destination BOM (unmarked `UTF-32`) is emitted LAZILY, just
@@ -24375,15 +24850,16 @@ mod tests {
     }
 
     #[test]
-    fn iconv_open_detailed_reports_excluded_family_policy() {
-        let err =
-            iconv_open_detailed(b"UTF-8", b"ISO-2022-CN-EXT").expect_err("excluded codec must fail");
-        assert_eq!(err.policy, IconvFallbackPolicy::ExcludedCodecFamily);
-        assert_eq!(err.dispatch.from_codec, "ISO-2022-CN-EXT");
-        assert_eq!(
-            err.dispatch.from_dispatch_path,
-            CodecDispatchPath::ExcludedFamily
-        );
+    fn iconv_open_isoir165_and_cnext_now_supported() {
+        // ISO-2022-CN-EXT was the last excluded family; it is now implemented,
+        // so the excluded-codec lists are empty and the descriptor opens.
+        assert!(ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES.is_empty());
+        assert!(iconv_open(b"UTF-8", b"ISO-2022-CN-EXT").is_some());
+        assert!(iconv_open(b"ISO-2022-CN-EXT", b"UTF-8").is_some());
+        let (_, meta) =
+            iconv_open_detailed(b"UTF-8", b"ISO-2022-CN-EXT").expect("EXT codec must open");
+        assert_eq!(meta.from_codec, "ISO-2022-CN-EXT");
+        assert_eq!(meta.from_dispatch_path, CodecDispatchPath::IncludedCanonical);
     }
 
     #[test]
