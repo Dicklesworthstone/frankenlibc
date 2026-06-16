@@ -2548,6 +2548,8 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
     // over the full 1+2-byte DBCS space, both directions).
     ("CNGB", "GB2312"),
     ("GB13000", "GBK"),
+    // SJIS-OPEN is byte-identical to CP932 over the full Shift_JIS space (0 diffs).
+    ("SJISOPEN", "CP932"),
     ("MSCP1361", "JOHAB"),
     // Further byte-identical aliases (probe-verified full-256 decode match) for
     // ASCII, the EBCDIC pages, CSN_369103, TCVN and friends — IBM/CS/OSF/ISO-IR
