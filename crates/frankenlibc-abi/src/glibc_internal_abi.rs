@@ -2626,76 +2626,254 @@ pub unsafe extern "C" fn inet6_opt_find(
 // of deprecated API without breaking linkage.
 // ---------------------------------------------------------------------------
 
-/// `inet6_option_space` — compute CMSG space for option data (deprecated RFC 2292).
-///
-/// Returns CMSG_SPACE for the given data length, rounded to 8-byte boundary.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn inet6_option_space(datalen: c_int) -> c_int {
-    if datalen < 0 {
-        return 0;
-    }
-    // CMSG_SPACE analog: header(2) + data, padded to 8 bytes.
-    let total = 2 + datalen as usize;
-    let padded = (total + 7) & !7;
-    padded as c_int
+// RFC 2292 IPv6 Hop-by-Hop / Destination option helpers. Faithful port of
+// glibc's inet/inet6_option.c (deprecated by RFC 3542 but still shipped and
+// fully functional). The cmsghdr layout on this target is
+// `{ size_t cmsg_len; int cmsg_level; int cmsg_type; }` (16 bytes, the data
+// area follows at offset 16); `struct ip6_ext { u8 ip6e_nxt; u8 ip6e_len; }`.
+const I6O_CMSG_HDR: usize = 16; // CMSG_LEN(0) / CMSG_DATA offset
+const I6O_IP6_EXT: usize = 2; // sizeof(struct ip6_ext)
+const I6O_PAD1: u8 = 0; // IP6OPT_PAD1
+const I6O_PADN: u8 = 1; // IP6OPT_PADN
+const I6O_IPPROTO_IPV6: c_int = 41;
+const I6O_HOPOPTS: c_int = 54; // IPV6_HOPOPTS
+const I6O_DSTOPTS: c_int = 59; // IPV6_DSTOPTS
+
+#[inline]
+unsafe fn i6o_cmsg_len(cmsg: *const u8) -> usize {
+    unsafe { (cmsg as *const usize).read() }
+}
+#[inline]
+unsafe fn i6o_set_cmsg_len(cmsg: *mut u8, v: usize) {
+    unsafe { (cmsg as *mut usize).write(v) };
 }
 
-/// `inet6_option_init` — initialize cmsg for IPv6 options (deprecated RFC 2292).
-///
-/// Returns -1 (deprecated API not supported).
+/// glibc `add_pad`: writes a Pad1/PadN option of `len` bytes at the current end
+/// of the option area and grows `cmsg_len` by `len`.
+unsafe fn i6o_add_pad(cmsg: *mut u8, len: usize) {
+    unsafe {
+        let clen = i6o_cmsg_len(cmsg);
+        // p = CMSG_DATA(cmsg) + (cmsg_len - CMSG_LEN(0)) = cmsg + cmsg_len.
+        let p = cmsg.add(clen);
+        if len == 1 {
+            *p = I6O_PAD1;
+        } else if len != 0 {
+            *p = I6O_PADN;
+            *p.add(1) = (len - 2) as u8;
+            core::ptr::write_bytes(p.add(2), 0, len - 2);
+        }
+        i6o_set_cmsg_len(cmsg, clen + len);
+    }
+}
+
+/// glibc `option_alloc`: reserve `datalen` bytes (aligned `multx`n + `plusy`)
+/// for a new option and update the extension-header length. Returns the start of
+/// the reserved option space, or NULL on a bad alignment / overflow.
+unsafe fn i6o_option_alloc(cmsg: *mut u8, datalen: c_int, multx: c_int, plusy: c_int) -> *mut u8 {
+    unsafe {
+        if (multx != 1 && multx != 2 && multx != 4 && multx != 8) || !(0..=7).contains(&plusy) {
+            return core::ptr::null_mut();
+        }
+        let mut dsize = i6o_cmsg_len(cmsg) - I6O_CMSG_HDR;
+        if dsize == 0 {
+            i6o_set_cmsg_len(cmsg, i6o_cmsg_len(cmsg) + I6O_IP6_EXT);
+            dsize = I6O_IP6_EXT;
+        }
+        let m = multx as usize;
+        i6o_add_pad(cmsg, ((m - (dsize & (m - 1))) & (m - 1)) + plusy as usize);
+
+        // result = CMSG_DATA + (cmsg_len - CMSG_LEN(0)) = cmsg + cmsg_len.
+        let result = cmsg.add(i6o_cmsg_len(cmsg));
+        i6o_set_cmsg_len(cmsg, i6o_cmsg_len(cmsg) + datalen as usize);
+
+        dsize = i6o_cmsg_len(cmsg) - I6O_CMSG_HDR;
+        i6o_add_pad(cmsg, (8 - (dsize & 7)) & 7);
+
+        let len8b = (i6o_cmsg_len(cmsg) - I6O_CMSG_HDR) / 8 - 1;
+        if len8b >= 256 {
+            return core::ptr::null_mut();
+        }
+        // ie->ip6e_len = len8b (second byte of the ip6_ext at CMSG_DATA).
+        *cmsg.add(I6O_CMSG_HDR + 1) = len8b as u8;
+        result
+    }
+}
+
+/// glibc `get_opt_end`: given the start of an option, store the address just
+/// past it in `*result`. Returns 0 on success or -1 if the option runs past
+/// `endp` (a Pad1 is one byte; every other option is `len`+2 bytes).
+unsafe fn i6o_get_opt_end(result: &mut *const u8, startp: *const u8, endp: *const u8) -> c_int {
+    unsafe {
+        if startp >= endp {
+            return -1;
+        }
+        if *startp == I6O_PAD1 {
+            *result = startp.add(1);
+            return 0;
+        }
+        if startp.add(2) > endp || startp.add((*startp.add(1)) as usize + 2) > endp {
+            return -1;
+        }
+        *result = startp.add((*startp.add(1)) as usize + 2);
+        0
+    }
+}
+
+/// `inet6_option_space` (RFC 2292 6.3.1): bytes needed to hold an option as
+/// ancillary data — `CMSG_SPACE(roundup(nbytes + sizeof(ip6_ext), 8))`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_option_space(nbytes: c_int) -> c_int {
+    // glibc applies no negative guard; reproduce its arithmetic directly.
+    let n = nbytes as isize + I6O_IP6_EXT as isize;
+    let roundup = (n + 7) & !7;
+    // CMSG_SPACE(l) = CMSG_ALIGN(sizeof(cmsghdr)) + CMSG_ALIGN(l); roundup is
+    // already 8-aligned, so CMSG_ALIGN(roundup) == roundup.
+    (I6O_CMSG_HDR as isize + roundup) as c_int
+}
+
+/// `inet6_option_init` (RFC 2292 6.3.2): initialise a cmsghdr for Hop-by-Hop or
+/// Destination options. `cmsgp` is `struct cmsghdr **` (an OUT pointer).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet6_option_init(
-    _cmsg: *mut c_void,
-    _cmsglenp: *mut c_int,
-    _typ: c_int,
+    bp: *mut c_void,
+    cmsgp: *mut *mut c_void,
+    typ: c_int,
 ) -> c_int {
-    -1
+    if typ != I6O_HOPOPTS && typ != I6O_DSTOPTS {
+        return -1;
+    }
+    let newp = bp.cast::<u8>();
+    unsafe {
+        i6o_set_cmsg_len(newp, I6O_CMSG_HDR); // CMSG_LEN(0)
+        *(newp.add(8) as *mut c_int) = I6O_IPPROTO_IPV6; // cmsg_level
+        *(newp.add(12) as *mut c_int) = typ; // cmsg_type
+        *cmsgp = bp;
+    }
+    0
 }
 
-/// `inet6_option_append` — append option to cmsg (deprecated RFC 2292).
-///
-/// Returns -1 (deprecated API not supported).
+/// `inet6_option_append` (RFC 2292 6.3.3): append the option pointed to by
+/// `typep` (type byte, length byte, then data) to a cmsg.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet6_option_append(
-    _cmsg: *mut c_void,
-    _typep: *const u8,
-    _multx: c_int,
-    _plusy: c_int,
+    cmsg: *mut c_void,
+    typep: *const u8,
+    multx: c_int,
+    plusy: c_int,
 ) -> c_int {
-    -1
+    unsafe {
+        let len = if *typep == I6O_PAD1 {
+            1
+        } else {
+            *typep.add(1) as c_int + 2
+        };
+        let ptr = i6o_option_alloc(cmsg.cast::<u8>(), len, multx, plusy);
+        if ptr.is_null() {
+            return -1;
+        }
+        core::ptr::copy_nonoverlapping(typep, ptr, len as usize);
+        0
+    }
 }
 
-/// `inet6_option_alloc` — allocate space in cmsg (deprecated RFC 2292).
-///
-/// Returns NULL (deprecated API not supported).
+/// `inet6_option_alloc` (RFC 2292 6.3.4): reserve room for an option and return
+/// a pointer to its (caller-filled) type byte, or NULL on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet6_option_alloc(
-    _cmsg: *mut c_void,
-    _datalen: c_int,
-    _multx: c_int,
-    _plusy: c_int,
+    cmsg: *mut c_void,
+    datalen: c_int,
+    multx: c_int,
+    plusy: c_int,
 ) -> *mut u8 {
-    std::ptr::null_mut()
+    unsafe { i6o_option_alloc(cmsg.cast::<u8>(), datalen, multx, plusy) }
 }
 
-/// `inet6_option_next` — iterate options in cmsg (deprecated RFC 2292).
-///
-/// Returns -1 (deprecated API not supported).
+/// `inet6_option_next` (RFC 2292 6.3.5): advance `*tptrp` to the next option.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn inet6_option_next(_cmsg: *const c_void, _tptrp: *mut *mut u8) -> c_int {
-    -1
+pub unsafe extern "C" fn inet6_option_next(cmsg: *const c_void, tptrp: *mut *mut u8) -> c_int {
+    unsafe {
+        let c = cmsg.cast::<u8>();
+        let level = *(c.add(8) as *const c_int);
+        let typ = *(c.add(12) as *const c_int);
+        if level != I6O_IPPROTO_IPV6 || (typ != I6O_HOPOPTS && typ != I6O_DSTOPTS) {
+            return -1;
+        }
+        let clen = i6o_cmsg_len(c);
+        let ip6e = c.add(I6O_CMSG_HDR); // CMSG_DATA
+        let ip6e_len = *ip6e.add(1) as usize;
+        if clen < I6O_CMSG_HDR + I6O_IP6_EXT || clen < I6O_CMSG_HDR + (ip6e_len + 1) * 8 {
+            return -1;
+        }
+        let endp = ip6e.add((ip6e_len + 1) * 8) as *const u8;
+        let first = ip6e.add(I6O_IP6_EXT) as *const u8; // ip6e + 1
+        let mut result: *const u8;
+        if (*tptrp).is_null() {
+            result = first;
+        } else {
+            if (*tptrp as *const u8) < first {
+                return -1;
+            }
+            result = core::ptr::null();
+            if i6o_get_opt_end(&mut result, *tptrp as *const u8, endp) != 0 {
+                return -1;
+            }
+        }
+        *tptrp = result as *mut u8;
+        // Verify the option we landed on is itself fully in-bounds (glibc returns
+        // this directly); use a throwaway out-pointer since only the rc matters.
+        let start = result;
+        let mut tail: *const u8 = core::ptr::null();
+        i6o_get_opt_end(&mut tail, start, endp)
+    }
 }
 
-/// `inet6_option_find` — find option in cmsg by type (deprecated RFC 2292).
-///
-/// Returns -1 (deprecated API not supported).
+/// `inet6_option_find` (RFC 2292 6.3.6): like `inet6_option_next` but scans for
+/// the option whose type byte equals `typ`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet6_option_find(
-    _cmsg: *const c_void,
-    _tptrp: *mut *mut u8,
-    _typ: c_int,
+    cmsg: *const c_void,
+    tptrp: *mut *mut u8,
+    typ: c_int,
 ) -> c_int {
-    -1
+    unsafe {
+        let c = cmsg.cast::<u8>();
+        let level = *(c.add(8) as *const c_int);
+        let ctyp = *(c.add(12) as *const c_int);
+        if level != I6O_IPPROTO_IPV6 || (ctyp != I6O_HOPOPTS && ctyp != I6O_DSTOPTS) {
+            return -1;
+        }
+        let clen = i6o_cmsg_len(c);
+        let ip6e = c.add(I6O_CMSG_HDR);
+        let ip6e_len = *ip6e.add(1) as usize;
+        if clen < I6O_CMSG_HDR + I6O_IP6_EXT || clen < I6O_CMSG_HDR + (ip6e_len + 1) * 8 {
+            return -1;
+        }
+        let endp = ip6e.add((ip6e_len + 1) * 8) as *const u8;
+        let mut next: *const u8;
+        if (*tptrp).is_null() {
+            next = ip6e.add(I6O_IP6_EXT) as *const u8;
+        } else {
+            if (*tptrp as *const u8) < ip6e.add(I6O_IP6_EXT) as *const u8 {
+                return -1;
+            }
+            next = core::ptr::null();
+            if i6o_get_opt_end(&mut next, *tptrp as *const u8, endp) != 0 {
+                return -1;
+            }
+        }
+        let mut result: *const u8;
+        loop {
+            result = next;
+            if i6o_get_opt_end(&mut next, result, endp) != 0 {
+                return -1;
+            }
+            if *result == typ as u8 {
+                break;
+            }
+        }
+        *tptrp = result as *mut u8;
+        0
+    }
 }
 
 // ---------------------------------------------------------------------------
