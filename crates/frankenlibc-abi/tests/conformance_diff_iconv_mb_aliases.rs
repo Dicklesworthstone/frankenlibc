@@ -136,6 +136,7 @@ fn mb_aliases_match_glibc_both_directions() {
     let ins = inputs();
     for name in [
         "CP950", "CSWINDOWS31J", "CN-GB", "GB13000", "MSCP1361", "SJIS-OPEN", "OSF0004000A",
+        "IBM-932", "CSIBM932",
     ] {
         let gd = g_decode(&gg, name, &ins);
         let fd = fl_decode(name, &ins);

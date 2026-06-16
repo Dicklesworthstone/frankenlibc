@@ -10,6 +10,7 @@ mod euc_jp_ms_tables;
 mod cp932_tables;
 mod iso6937_tables;
 mod euctw_tables;
+mod ibm932_tables;
 mod ibm943_tables;
 
 /// Core iconv error code: output buffer has insufficient capacity.
@@ -530,6 +531,9 @@ enum Encoding {
     /// IBM-943 (= CSIBM943): a Shift_JIS variant distinct from CP932 — it maps
     /// 0x8160 to U+301C (wave dash) not U+FF5E, among other NEC/IBM-row cells.
     Ibm943,
+    /// IBM-932 (= CSIBM932): an older Shift_JIS variant distinct from IBM-943 —
+    /// it lacks the NEC/IBM extension rows (~515 double-byte cells differ).
+    Ibm932,
     Big5,
     Gbk,
     EucKr,
@@ -551,7 +555,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 283] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 284] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2344,6 +2348,14 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 283] = [
         // glibc spells this IBM943 / IBM-943 / CSIBM943; the first two normalize
         // to the canonical, CSIBM943 is the remaining alias.
         aliases: &["CSIBM943"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm932,
+        canonical: "IBM-932",
+        normalized: "IBM932",
+        // glibc spells this IBM932 / IBM-932 / CSIBM932; the first two normalize
+        // to the canonical, CSIBM932 is the remaining alias.
+        aliases: &["CSIBM932"],
     },
     CodecSpec {
         encoding: Encoding::Big5,
@@ -18355,6 +18367,23 @@ fn encode_ibm943(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     encode_dbcs2(ch, out, direct)
 }
 
+fn decode_ibm932(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&ibm932_tables::IBM_932_DBCS));
+    decode_dbcs2(
+        input,
+        &ibm932_tables::IBM_932_ONE_BYTE,
+        &ibm932_tables::IBM_932_IS_LEAD,
+        direct,
+    )
+}
+
+fn encode_ibm932(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_enc_direct(&ibm932_tables::IBM_932_ENC));
+    encode_dbcs2(ch, out, direct)
+}
+
 fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::BIG5_DBCS));
@@ -19084,6 +19113,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::T61 => decode_t61(input),
         Encoding::AnsiX3110 => decode_ansi_x3_110(input),
         Encoding::Ibm943 => decode_ibm943(input),
+        Encoding::Ibm932 => decode_ibm932(input),
         Encoding::Big5 => decode_big5(input),
         Encoding::Gbk => decode_gbk(input),
         Encoding::EucKr => decode_euckr(input),
@@ -19515,6 +19545,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::T61 => encode_t61(ch, out),
         Encoding::AnsiX3110 => encode_ansi_x3_110(ch, out),
         Encoding::Ibm943 => encode_ibm943(ch, out),
+        Encoding::Ibm932 => encode_ibm932(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
         Encoding::Gbk => encode_gbk(ch, out),
         Encoding::EucKr => encode_euckr(ch, out),
@@ -21861,6 +21892,7 @@ pub fn iconv(
                     Encoding::ShiftJis => encode_shiftjis(ch, out),
                     Encoding::Cp932 => encode_cp932(ch, out),
                     Encoding::Ibm943 => encode_ibm943(ch, out),
+                    Encoding::Ibm932 => encode_ibm932(ch, out),
                     Encoding::Big5 => encode_big5(ch, out),
                     Encoding::Gbk => encode_gbk(ch, out),
                     Encoding::EucJp => encode_eucjp(ch, out),
@@ -21975,6 +22007,7 @@ pub fn iconv(
                     Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
                     Encoding::Cp932 => decode_cp932(&input[in_pos..]),
                     Encoding::Ibm943 => decode_ibm943(&input[in_pos..]),
+                    Encoding::Ibm932 => decode_ibm932(&input[in_pos..]),
                     Encoding::Big5 => decode_big5(&input[in_pos..]),
                     Encoding::Gbk => decode_gbk(&input[in_pos..]),
                     Encoding::EucJp => decode_eucjp(&input[in_pos..]),
@@ -22109,6 +22142,7 @@ pub fn iconv(
                     Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
                     Encoding::Cp932 => decode_cp932(&input[in_pos..]),
                     Encoding::Ibm943 => decode_ibm943(&input[in_pos..]),
+                    Encoding::Ibm932 => decode_ibm932(&input[in_pos..]),
                     Encoding::Big5 => decode_big5(&input[in_pos..]),
                     Encoding::Gbk => decode_gbk(&input[in_pos..]),
                     Encoding::EucJp => decode_eucjp(&input[in_pos..]),
@@ -22319,6 +22353,7 @@ pub fn iconv(
                     Encoding::ShiftJis => encode_shiftjis(ch, out),
                     Encoding::Cp932 => encode_cp932(ch, out),
                     Encoding::Ibm943 => encode_ibm943(ch, out),
+                    Encoding::Ibm932 => encode_ibm932(ch, out),
                     Encoding::Big5 => encode_big5(ch, out),
                     Encoding::Gbk => encode_gbk(ch, out),
                     Encoding::EucJp => encode_eucjp(ch, out),
@@ -22388,6 +22423,7 @@ pub fn iconv(
                         Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
                     Encoding::Cp932 => decode_cp932(&input[in_pos..]),
                     Encoding::Ibm943 => decode_ibm943(&input[in_pos..]),
+                    Encoding::Ibm932 => decode_ibm932(&input[in_pos..]),
                         Encoding::Big5 => decode_big5(&input[in_pos..]),
                         Encoding::Gbk => decode_gbk(&input[in_pos..]),
                         Encoding::EucJp => decode_eucjp(&input[in_pos..]),
@@ -22408,6 +22444,7 @@ pub fn iconv(
                     Encoding::ShiftJis => encode_shiftjis(ch, out),
                     Encoding::Cp932 => encode_cp932(ch, out),
                     Encoding::Ibm943 => encode_ibm943(ch, out),
+                    Encoding::Ibm932 => encode_ibm932(ch, out),
                     Encoding::Big5 => encode_big5(ch, out),
                     Encoding::Gbk => encode_gbk(ch, out),
                     Encoding::EucJp => encode_eucjp(ch, out),

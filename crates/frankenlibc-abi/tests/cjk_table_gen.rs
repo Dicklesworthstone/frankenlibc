@@ -86,6 +86,7 @@ fn cjk_table_gen() {
         "SHIFT_JIS",
         "CP932",
         "IBM943",
+        "IBM-932",
         "BIG5",
         "GBK",
         "EUC-KR",
