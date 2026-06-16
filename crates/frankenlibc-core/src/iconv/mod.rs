@@ -117,6 +117,12 @@ enum Encoding {
     /// (ASCII > JIS-Roman > JIS X 0208 > JIS X 0212 > GB2312 > KSC > Latin-1 G2 >
     /// Greek G2). Handled by a dedicated whole-buffer branch in [`iconv`].
     Iso2022Jp2,
+    /// ISO-2022-CN (RFC 1922): a stateful SO/SI codec. G1 (reached via SO 0x0E,
+    /// left via SI 0x0F) holds GB2312 (`ESC $ ) A`, the default) or CNS 11643
+    /// plane 1 (`ESC $ ) G`); G2 (`ESC $ * H`, default CNS 11643 plane 2) is
+    /// reached one character at a time via SS2 (`ESC N`). A newline (0x0A) resets
+    /// the designations. Handled by a dedicated whole-buffer branch in [`iconv`].
+    Iso2022Cn,
     Utf32,
     Utf32Be,
     Utf32Le,
@@ -545,7 +551,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 282] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 283] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2405,6 +2411,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 282] = [
         normalized: "ISO2022JP2",
         aliases: &["ISO2022JP2", "CSISO2022JP2"],
     },
+    CodecSpec {
+        encoding: Encoding::Iso2022Cn,
+        canonical: "ISO-2022-CN",
+        normalized: "ISO2022CN",
+        aliases: &["ISO2022CN", "CSISO2022CN"],
+    },
 ];
 
 const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 2] = [
@@ -2748,6 +2760,16 @@ pub struct IconvDescriptor {
     iso2022jp2_out_g2: u8,
     iso2022jp2_in_g0: u8,
     iso2022jp2_in_g2: u8,
+    /// ISO-2022-CN designation/shift state, persisted across calls (reset by a
+    /// newline or a flush). Encode: `*_out_g1` 0=undesignated, 1=GB2312, 2=CNS
+    /// plane 1; `*_out_g2` = `ESC $ * H` (CNS plane 2) emitted; `*_out_shifted`
+    /// = currently in SO. Decode: `*_in_g1` 1=GB2312 (default), 2=CNS plane 1;
+    /// `*_in_shifted` = in SO. A flush emits SI if any designation is active.
+    iso2022cn_out_g1: u8,
+    iso2022cn_out_g2: bool,
+    iso2022cn_out_shifted: bool,
+    iso2022cn_in_g1: u8,
+    iso2022cn_in_shifted: bool,
 }
 
 const REVERSE_DIRECT_PAGES: usize = 8;
@@ -18794,6 +18816,8 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso2022Jp => Err(DecodeError::Invalid),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp2 => Err(DecodeError::Invalid),
+        // ISO-2022-CN is likewise handled by a dedicated whole-buffer path.
+        Encoding::Iso2022Cn => Err(DecodeError::Invalid),
         Encoding::Utf32 => decode_utf32(input),
         Encoding::Utf32Be => decode_utf32be(input),
         Encoding::Utf32Le => decode_utf32le(input),
@@ -19202,6 +19226,8 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso2022Jp => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp2 => Err(EncodeError::Unrepresentable),
+        // ISO-2022-CN is likewise handled by a dedicated whole-buffer path.
+        Encoding::Iso2022Cn => Err(EncodeError::Unrepresentable),
         Encoding::Utf32 => {
             if out.len() < 4 {
                 return Err(EncodeError::NoSpace);
@@ -19573,6 +19599,11 @@ pub fn iconv_open_detailed(
             iso2022jp2_out_g2: 0,
             iso2022jp2_in_g0: 0,
             iso2022jp2_in_g2: 0,
+            iso2022cn_out_g1: 0,
+            iso2022cn_out_g2: false,
+            iso2022cn_out_shifted: false,
+            iso2022cn_in_g1: 1,
+            iso2022cn_in_shifted: false,
         },
         dispatch,
     ))
@@ -20864,6 +20895,340 @@ fn iso2022jp2_decode(
     })
 }
 
+/// ISO-2022-CN ENCODE (`to == Iso2022Cn`). ASCII passes through (with SI first
+/// if shifted); a newline additionally resets the line designations. CJK scalars
+/// stay in the current G1 charset when it can represent them (lazy switch),
+/// else use GB2312 (`ESC $ ) A`) then CNS 11643 plane 1 (`ESC $ ) G`) by
+/// priority — each entered via SO; CNS plane 2 goes through G2 (`ESC $ * H`)
+/// one char at a time via SS2 (`ESC N`). The return to ASCII (SI) is emitted on
+/// the reset (NULL inbuf) call.
+fn iso2022cn_convert(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut g1 = cd.iso2022cn_out_g1; // 0 none, 1 GB2312, 2 CNS plane 1
+    let mut g2 = cd.iso2022cn_out_g2; // CNS plane 2 designated (ESC $ * H)
+    let mut shifted = cd.iso2022cn_out_shifted;
+    let mut in_pos = 0usize;
+    let mut err: Option<(i32, usize)> = None;
+    // Encode `ch` into GB2312 (1) / CNS plane 1 (2) ku-ten bytes if possible.
+    let gb = |ch: char| -> Option<[u8; 2]> {
+        let mut t = [0u8; 8];
+        match encode_gb2312(ch, &mut t) {
+            Ok(2) if (0xA1..=0xFE).contains(&t[0]) && (0xA1..=0xFE).contains(&t[1]) => {
+                Some([t[0] & 0x7F, t[1] & 0x7F])
+            }
+            _ => None,
+        }
+    };
+    let cns1 = |ch: char| -> Option<[u8; 2]> {
+        let mut t = [0u8; 8];
+        match encode_euctw(ch, &mut t) {
+            Ok(2) if (0xA1..=0xFE).contains(&t[0]) && (0xA1..=0xFE).contains(&t[1]) => {
+                Some([t[0] & 0x7F, t[1] & 0x7F])
+            }
+            _ => None,
+        }
+    };
+    let cns2 = |ch: char| -> Option<[u8; 2]> {
+        let mut t = [0u8; 8];
+        match encode_euctw(ch, &mut t) {
+            Ok(4) if t[0] == 0x8E && t[1] == 0xA2 => Some([t[2] & 0x7F, t[3] & 0x7F]),
+            _ => None,
+        }
+    };
+    while in_pos < input.len() {
+        let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+            Ok(v) => v,
+            Err(DecodeError::Incomplete) => {
+                err = Some((ICONV_EINVAL, in_pos));
+                break;
+            }
+            Err(DecodeError::Invalid) => {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        };
+        let cp = ch as u32;
+        if cp < 0x80 {
+            if shifted {
+                out.push(0x0F);
+                shifted = false;
+            }
+            out.push(cp as u8);
+            if cp == 0x0A {
+                // Newline resets the line's designations (glibc re-designates
+                // on the next line).
+                g1 = 0;
+                g2 = false;
+            }
+            in_pos += consumed;
+            continue;
+        }
+        // Emit `bytes` in G1 charset `set`, designating/shifting as needed.
+        let mut emit_g1 = |out: &mut Vec<u8>, set: u8, bytes: [u8; 2], g1: &mut u8, shifted: &mut bool| {
+            if *g1 != set {
+                out.extend_from_slice(if set == 1 {
+                    &[0x1B, 0x24, 0x29, 0x41]
+                } else {
+                    &[0x1B, 0x24, 0x29, 0x47]
+                });
+                *g1 = set;
+            }
+            if !*shifted {
+                out.push(0x0E);
+                *shifted = true;
+            }
+            out.push(bytes[0]);
+            out.push(bytes[1]);
+        };
+        // 1. Lazy stay in the current G1 set.
+        if g1 == 1 {
+            if let Some(b) = gb(ch) {
+                emit_g1(&mut out, 1, b, &mut g1, &mut shifted);
+                in_pos += consumed;
+                continue;
+            }
+        } else if g1 == 2 {
+            if let Some(b) = cns1(ch) {
+                emit_g1(&mut out, 2, b, &mut g1, &mut shifted);
+                in_pos += consumed;
+                continue;
+            }
+        }
+        // 2. Priority: GB2312, then CNS plane 1, then CNS plane 2 (G2/SS2).
+        if let Some(b) = gb(ch) {
+            emit_g1(&mut out, 1, b, &mut g1, &mut shifted);
+        } else if let Some(b) = cns1(ch) {
+            emit_g1(&mut out, 2, b, &mut g1, &mut shifted);
+        } else if let Some(b) = cns2(ch) {
+            if !g2 {
+                out.extend_from_slice(&[0x1B, 0x24, 0x2A, 0x48]); // ESC $ * H
+                g2 = true;
+            }
+            out.extend_from_slice(&[0x1B, 0x4E]); // SS2
+            out.push(b[0]);
+            out.push(b[1]);
+        } else {
+            err = Some((ICONV_EILSEQ, in_pos));
+            break;
+        }
+        in_pos += consumed;
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError {
+            code: ICONV_E2BIG,
+            in_consumed: 0,
+            out_written: 0,
+        });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    cd.iso2022cn_out_g1 = g1;
+    cd.iso2022cn_out_g2 = g2;
+    cd.iso2022cn_out_shifted = shifted;
+    if let Some((code, pos)) = err {
+        return Err(IconvError {
+            code,
+            in_consumed: pos,
+            out_written: out.len(),
+        });
+    }
+    Ok(IconvResult {
+        non_reversible: 0,
+        in_consumed: in_pos,
+        out_written: out.len(),
+    })
+}
+
+/// ISO-2022-CN DECODE (`from == Iso2022Cn`). G1 defaults to GB2312 and is
+/// selected by `ESC $ ) A` / `ESC $ ) G` (CNS plane 1); G2 is CNS plane 2
+/// (`ESC $ * H`, the default). SO/SI toggle the G1 shift; SS2 (`ESC N`) shifts
+/// one G2 character. A newline (in ASCII shift) resets the designations; a
+/// control byte while shifted into G1 is EILSEQ. Every ESC needs ≥2 bytes of
+/// look-ahead, 4 for the `ESC $` designators; an unrecognized escape is a
+/// literal U+001B consuming only the ESC byte.
+fn iso2022cn_decode(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut chars: Vec<char> = Vec::new();
+    let mut g1 = cd.iso2022cn_in_g1; // 1 GB2312 (default), 2 CNS plane 1
+    let mut shifted = cd.iso2022cn_in_shifted;
+    let mut i = 0usize;
+    let mut consumed_end = 0usize;
+    let mut err: Option<i32> = None;
+    while i < input.len() {
+        let b = input[i];
+        if b == 0x1B {
+            let have = input.len() - i;
+            if have < 2 {
+                err = Some(ICONV_EINVAL);
+                break;
+            }
+            let b1 = input[i + 1];
+            if b1 == 0x4E {
+                // SS2: one CNS plane 2 char (two ku-ten bytes) — needs 4 bytes.
+                // A single shift is valid whether or not we are shifted into G1.
+                if have < 4 {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let (c0, c1) = (input[i + 2], input[i + 3]);
+                if !(0x21..=0x7E).contains(&c0) || !(0x21..=0x7E).contains(&c1) {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                match decode_euctw(&[0x8E, 0xA2, c0 | 0x80, c1 | 0x80]) {
+                    Ok((ch, 4)) => {
+                        chars.push(ch);
+                        i += 4;
+                        consumed_end = i;
+                        continue;
+                    }
+                    _ => {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+            }
+            // Any other escape (designators, unrecognized) is illegal while
+            // shifted into G1 — glibc errors rather than recovering.
+            if shifted {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            // ESC $ designators: `ESC $ ) A/G` and `ESC $ * H`. glibc only needs
+            // the 4th byte when the 3rd is ')' or '*'; any other 3rd byte makes
+            // the sequence unrecognized at 3 bytes (literal recovery).
+            if b1 == 0x24 {
+                if have < 3 {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let b2 = input[i + 2];
+                if b2 == 0x29 || b2 == 0x2A {
+                    if have < 4 {
+                        err = Some(ICONV_EINVAL);
+                        break;
+                    }
+                    match (b2, input[i + 3]) {
+                        (0x29, 0x41) => g1 = 1, // GB2312 -> G1
+                        (0x29, 0x47) => g1 = 2, // CNS plane 1 -> G1
+                        (0x2A, 0x48) => {}      // CNS plane 2 -> G2 (default; no-op)
+                        _ => {
+                            chars.push('\u{1B}');
+                            i += 1;
+                            consumed_end = i;
+                            continue;
+                        }
+                    }
+                    i += 4;
+                    consumed_end = i;
+                    continue;
+                }
+                // ESC $ <not ) or *> -> unrecognized -> literal recovery.
+                chars.push('\u{1B}');
+                i += 1;
+                consumed_end = i;
+                continue;
+            }
+            // Unrecognized escape: literal U+001B, consume one byte.
+            chars.push('\u{1B}');
+            i += 1;
+            consumed_end = i;
+            continue;
+        }
+        if b == 0x0E {
+            shifted = true;
+            i += 1;
+            consumed_end = i;
+            continue;
+        }
+        if b == 0x0F {
+            shifted = false;
+            i += 1;
+            consumed_end = i;
+            continue;
+        }
+        if shifted {
+            // G1 double-byte mode: a control/space/high byte here is illegal.
+            if !(0x21..=0x7E).contains(&b) {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            if i + 1 >= input.len() {
+                err = Some(ICONV_EINVAL);
+                break;
+            }
+            let b1 = input[i + 1];
+            if !(0x21..=0x7E).contains(&b1) {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            let euc = [b | 0x80, b1 | 0x80];
+            let decoded = if g1 == 2 { decode_euctw(&euc) } else { decode_gb2312(&euc) };
+            match decoded {
+                Ok((ch, 2)) => {
+                    chars.push(ch);
+                    i += 2;
+                    consumed_end = i;
+                }
+                _ => {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+            }
+        } else if b < 0x7F {
+            // ASCII mode: 0x00..=0x7E pass through; glibc rejects DEL (0x7F).
+            chars.push(b as char);
+            i += 1;
+            consumed_end = i;
+            if b == 0x0A {
+                g1 = 1; // newline resets the line designation to the default
+            }
+        } else {
+            err = Some(ICONV_EILSEQ);
+            break;
+        }
+    }
+    let mut out: Vec<u8> = Vec::new();
+    let mut tmp = [0u8; 8];
+    for &ch in &chars {
+        match encode_char(cd.to, ch, &mut tmp) {
+            Ok(n) => out.extend_from_slice(&tmp[..n]),
+            Err(_) => {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+        }
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError {
+            code: ICONV_E2BIG,
+            in_consumed: 0,
+            out_written: 0,
+        });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    cd.iso2022cn_in_g1 = g1;
+    cd.iso2022cn_in_shifted = shifted;
+    if let Some(code) = err {
+        return Err(IconvError {
+            code,
+            in_consumed: consumed_end,
+            out_written: out.len(),
+        });
+    }
+    Ok(IconvResult {
+        non_reversible: 0,
+        in_consumed: consumed_end,
+        out_written: out.len(),
+    })
+}
+
 #[inline]
 fn eilseq(in_consumed: usize, out_written: usize) -> IconvError {
     IconvError {
@@ -20926,6 +21291,21 @@ pub fn iconv(
                     outbuf[..3].copy_from_slice(&[0x1B, 0x28, 0x42]);
                     cd.iso2022jp2_out_g0 = 0;
                     return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 3 });
+                }
+                return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
+            }
+            // ISO-2022-CN DEST: a reset emits SI if any G1/G2 designation is
+            // active (matching glibc's reset-to-initial), then clears the state.
+            if cd.to == Encoding::Iso2022Cn {
+                if cd.iso2022cn_out_g1 != 0 || cd.iso2022cn_out_g2 || cd.iso2022cn_out_shifted {
+                    if outbuf.is_empty() {
+                        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+                    }
+                    outbuf[0] = 0x0F;
+                    cd.iso2022cn_out_g1 = 0;
+                    cd.iso2022cn_out_g2 = false;
+                    cd.iso2022cn_out_shifted = false;
+                    return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 1 });
                 }
                 return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
             }
@@ -20992,6 +21372,13 @@ pub fn iconv(
     }
     if cd.to == Encoding::Iso2022Jp2 {
         return iso2022jp2_convert(cd, input, outbuf);
+    }
+    // ISO-2022-CN (either side) is a stateful SO/SI codec, handled whole-buffer.
+    if cd.from == Encoding::Iso2022Cn {
+        return iso2022cn_decode(cd, input, outbuf);
+    }
+    if cd.to == Encoding::Iso2022Cn {
+        return iso2022cn_convert(cd, input, outbuf);
     }
 
     // NOTE: the destination BOM (unmarked `UTF-32`) is emitted LAZILY, just
