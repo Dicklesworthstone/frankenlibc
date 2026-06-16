@@ -10,6 +10,7 @@ mod euc_jp_ms_tables;
 mod cp932_tables;
 mod iso6937_tables;
 mod euctw_tables;
+mod ibm930_tables;
 mod ibm932_tables;
 mod ibm943_tables;
 
@@ -534,6 +535,10 @@ enum Encoding {
     /// IBM-932 (= CSIBM932): an older Shift_JIS variant distinct from IBM-943 —
     /// it lacks the NEC/IBM extension rows (~515 double-byte cells differ).
     Ibm932,
+    /// IBM-930 (= CP930, CSIBM930): Japanese EBCDIC — single-byte host code with
+    /// SO (0x0E) / SI (0x0F) shifting into IBM host double-byte (DBCS-HOST).
+    /// Handled by a dedicated whole-buffer branch in [`iconv`], like ISO-2022-KR.
+    Ibm930,
     Big5,
     Gbk,
     EucKr,
@@ -555,7 +560,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 284] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 285] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2358,6 +2363,13 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 284] = [
         aliases: &["CSIBM932"],
     },
     CodecSpec {
+        encoding: Encoding::Ibm930,
+        canonical: "IBM-930",
+        normalized: "IBM930",
+        // glibc: IBM930 / IBM-930 / CP930 / CSIBM930.
+        aliases: &["CP930", "CSIBM930"],
+    },
+    CodecSpec {
         encoding: Encoding::Big5,
         canonical: "BIG5",
         normalized: "BIG5",
@@ -2791,6 +2803,11 @@ pub struct IconvDescriptor {
     iso2022cn_out_shifted: bool,
     iso2022cn_in_g1: u8,
     iso2022cn_in_shifted: bool,
+    /// IBM-930 SO/SI shift state, persisted across calls: `*_out_shifted` /
+    /// `*_in_shifted` = currently in the double-byte (SO) mode. On encode a reset
+    /// (NULL inbuf) emits SI if still shifted, like ISO-2022-KR.
+    ibm930_out_shifted: bool,
+    ibm930_in_shifted: bool,
 }
 
 const REVERSE_DIRECT_PAGES: usize = 8;
@@ -18850,6 +18867,8 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Utf7 | Encoding::Utf7Imap => Err(DecodeError::Invalid),
         // ISO-2022-KR is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Kr => Err(DecodeError::Invalid),
+        // IBM-930 (EBCDIC SO/SI) is handled by a dedicated whole-buffer path.
+        Encoding::Ibm930 => Err(DecodeError::Invalid),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(DecodeError::Invalid),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -19261,6 +19280,8 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Utf7 | Encoding::Utf7Imap => Err(EncodeError::Unrepresentable),
         // ISO-2022-KR is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Kr => Err(EncodeError::Unrepresentable),
+        // IBM-930 (EBCDIC SO/SI) is handled by a dedicated whole-buffer path.
+        Encoding::Ibm930 => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -19644,6 +19665,8 @@ pub fn iconv_open_detailed(
             iso2022cn_out_shifted: false,
             iso2022cn_in_g1: 1,
             iso2022cn_in_shifted: false,
+            ibm930_out_shifted: false,
+            ibm930_in_shifted: false,
         },
         dispatch,
     ))
@@ -21269,6 +21292,159 @@ fn iso2022cn_decode(
     })
 }
 
+fn ibm930_dbcs_direct() -> &'static Vec<u32> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    D.get_or_init(|| build_dbcs_direct(&ibm930_tables::IBM930_DBCS))
+}
+fn ibm930_sbcs_enc() -> &'static std::collections::HashMap<u32, u8> {
+    static M: std::sync::OnceLock<std::collections::HashMap<u32, u8>> = std::sync::OnceLock::new();
+    M.get_or_init(|| ibm930_tables::IBM930_SBCS_ENC.iter().copied().collect())
+}
+fn ibm930_dbcs_enc() -> &'static std::collections::HashMap<u32, u16> {
+    static M: std::sync::OnceLock<std::collections::HashMap<u32, u16>> = std::sync::OnceLock::new();
+    M.get_or_init(|| ibm930_tables::IBM930_DBCS_ENC.iter().copied().collect())
+}
+
+/// IBM-930 DECODE (`from == Ibm930`): single-byte EBCDIC host code (`IBM930_SBCS`)
+/// with SO (0x0E) / SI (0x0F) shifting into the IBM host double-byte set
+/// (`IBM930_DBCS`). The SO/SI shift state persists across calls; the decoded
+/// scalars are then encoded to `cd.to`. Handled whole-buffer like ISO-2022-KR.
+fn ibm930_decode(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let direct = ibm930_dbcs_direct();
+    let mut chars: Vec<char> = Vec::new();
+    let mut shifted = cd.ibm930_in_shifted;
+    let mut i = 0usize;
+    let mut consumed_end = 0usize;
+    let mut err: Option<i32> = None;
+    while i < input.len() {
+        let b = input[i];
+        if b == 0x0E {
+            shifted = true;
+            i += 1;
+            consumed_end = i;
+            continue;
+        }
+        if b == 0x0F {
+            shifted = false;
+            i += 1;
+            consumed_end = i;
+            continue;
+        }
+        if shifted {
+            if i + 1 >= input.len() {
+                err = Some(ICONV_EINVAL);
+                break;
+            }
+            let key = ((b as u16) << 8) | input[i + 1] as u16;
+            let cp = direct[key as usize];
+            if cp == 0 {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            match char::from_u32(cp) {
+                Some(ch) => chars.push(ch),
+                None => {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+            }
+            i += 2;
+            consumed_end = i;
+        } else {
+            let cp = ibm930_tables::IBM930_SBCS[b as usize];
+            if cp < 0 {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            chars.push(char::from_u32(cp as u32).unwrap_or('\u{FFFD}'));
+            i += 1;
+            consumed_end = i;
+        }
+    }
+    cd.ibm930_in_shifted = shifted;
+    let mut out: Vec<u8> = Vec::new();
+    let mut tmp = [0u8; 8];
+    for &ch in &chars {
+        match encode_char(cd.to, ch, &mut tmp) {
+            Ok(n) => out.extend_from_slice(&tmp[..n]),
+            Err(_) => {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+        }
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    if let Some(code) = err {
+        return Err(IconvError { code, in_consumed: consumed_end, out_written: out.len() });
+    }
+    Ok(IconvResult { non_reversible: 0, in_consumed: consumed_end, out_written: out.len() })
+}
+
+/// IBM-930 ENCODE (`to == Ibm930`): decode the source to scalars, then emit the
+/// single-byte EBCDIC code when available (SI first if shifted), otherwise the
+/// host double-byte (SO first if not shifted). The return to single-byte (SI) is
+/// emitted on the reset (NULL inbuf) call.
+fn ibm930_convert(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let se = ibm930_sbcs_enc();
+    let de = ibm930_dbcs_enc();
+    let mut out: Vec<u8> = Vec::new();
+    let mut shifted = cd.ibm930_out_shifted;
+    let mut in_pos = 0usize;
+    let mut err: Option<(i32, usize)> = None;
+    while in_pos < input.len() {
+        let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+            Ok(v) => v,
+            Err(DecodeError::Incomplete) => {
+                err = Some((ICONV_EINVAL, in_pos));
+                break;
+            }
+            Err(DecodeError::Invalid) => {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        };
+        let cp = ch as u32;
+        if let Some(&b) = se.get(&cp) {
+            if shifted {
+                out.push(0x0F);
+                shifted = false;
+            }
+            out.push(b);
+        } else if let Some(&k) = de.get(&cp) {
+            if !shifted {
+                out.push(0x0E);
+                shifted = true;
+            }
+            out.push((k >> 8) as u8);
+            out.push((k & 0xFF) as u8);
+        } else {
+            err = Some((ICONV_EILSEQ, in_pos));
+            break;
+        }
+        in_pos += consumed;
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    cd.ibm930_out_shifted = shifted;
+    if let Some((code, pos)) = err {
+        return Err(IconvError { code, in_consumed: pos, out_written: out.len() });
+    }
+    Ok(IconvResult { non_reversible: 0, in_consumed: in_pos, out_written: out.len() })
+}
+
 #[inline]
 fn eilseq(in_consumed: usize, out_written: usize) -> IconvError {
     IconvError {
@@ -21305,6 +21481,18 @@ pub fn iconv(
                     }
                     outbuf[0] = 0x0F;
                     cd.iso2022kr_out_ksc = false;
+                    return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 1 });
+                }
+                return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
+            }
+            // IBM-930 DEST: a reset emits SI (0x0F) if still in double-byte mode.
+            if cd.to == Encoding::Ibm930 {
+                if cd.ibm930_out_shifted {
+                    if outbuf.is_empty() {
+                        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+                    }
+                    outbuf[0] = 0x0F;
+                    cd.ibm930_out_shifted = false;
                     return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 1 });
                 }
                 return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
@@ -21397,6 +21585,13 @@ pub fn iconv(
     }
     if cd.to == Encoding::Iso2022Kr {
         return iso2022kr_convert(cd, input, outbuf);
+    }
+    // IBM-930 (either side): EBCDIC single-byte + SO/SI double-byte, whole-buffer.
+    if cd.from == Encoding::Ibm930 {
+        return ibm930_decode(cd, input, outbuf);
+    }
+    if cd.to == Encoding::Ibm930 {
+        return ibm930_convert(cd, input, outbuf);
     }
     // ISO-2022-JP (either side) is a stateful escape codec, handled whole-buffer.
     if cd.from == Encoding::Iso2022Jp {
