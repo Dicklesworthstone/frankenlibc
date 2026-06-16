@@ -445,6 +445,7 @@ fn byte_membership_table(bytes: &[u8]) -> [bool; 256] {
 ///
 /// Equivalent to C `strlen`. Scans `s` for the first `0x00` byte and returns
 /// its index. If no NUL is found, returns the full slice length.
+#[inline(always)]
 #[allow(unsafe_code)]
 pub fn strlen(s: &[u8]) -> usize {
     const WORD_SIZE: usize = size_of::<usize>();
