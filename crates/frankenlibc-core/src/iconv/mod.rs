@@ -1425,6 +1425,11 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
     ("CP1282", "MACCENTRALEUROPE"),
     ("TIS620.25291", "TIS-620"),
     ("TIS620.25330", "TIS-620"),
+    // Multibyte-codec aliases (probe-verified 0-diff over the full 1+2-byte DBCS
+    // space in both directions): glibc's CP950 is byte-identical to its BIG5, and
+    // CSWINDOWS31J names the CP932 (Windows-31J) codec.
+    ("CP950", "BIG5"),
+    ("CSWINDOWS31J", "CP932"),
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.
