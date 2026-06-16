@@ -22,6 +22,7 @@ mod ibm935_tables;
 mod ibm937_tables;
 mod ibm939_tables;
 mod ibm943_tables;
+mod eucjisx0213_tables;
 mod sjisx0213_tables;
 
 /// Core iconv error code: output buffer has insufficient capacity.
@@ -564,6 +565,9 @@ enum Encoding {
     /// 2-byte JIS X 0213 planes 1/2 (plane 2 reaches the SIP/astral), and ~25
     /// combining cells that decode to two code points. Whole-buffer branch.
     ShiftJisx0213,
+    /// EUC-JISX0213 (EUC-JIS-2004): ASCII, SS2 (0x8E) half-width kana, plane 1
+    /// (0xA1-0xFE pairs), SS3 (0x8F) plane 2 (astral); ~25 combining cells.
+    EucJisx0213,
     Big5,
     Gbk,
     EucKr,
@@ -585,7 +589,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 295] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 296] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2452,6 +2456,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 295] = [
         encoding: Encoding::ShiftJisx0213,
         canonical: "SHIFT_JISX0213",
         normalized: "SHIFTJISX0213",
+        aliases: &[],
+    },
+    CodecSpec {
+        encoding: Encoding::EucJisx0213,
+        canonical: "EUC-JISX0213",
+        normalized: "EUCJISX0213",
         aliases: &[],
     },
     CodecSpec {
@@ -18964,7 +18974,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         | Encoding::Ibm1390
         | Encoding::Ibm1399 => Err(DecodeError::Invalid),
         // SHIFT_JISX0213 (multi-codepoint + astral) is handled whole-buffer.
-        Encoding::ShiftJisx0213 => Err(DecodeError::Invalid),
+        Encoding::ShiftJisx0213 | Encoding::EucJisx0213 => Err(DecodeError::Invalid),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(DecodeError::Invalid),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -19387,7 +19397,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         | Encoding::Ibm1388
         | Encoding::Ibm1390
         | Encoding::Ibm1399 => Err(EncodeError::Unrepresentable),
-        Encoding::ShiftJisx0213 => Err(EncodeError::Unrepresentable),
+        Encoding::ShiftJisx0213 | Encoding::EucJisx0213 => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -21814,6 +21824,204 @@ fn sjisx0213_convert(
     Ok(IconvResult { non_reversible: 0, in_consumed: in_pos, out_written: out.len() })
 }
 
+fn eucjx_p1_direct() -> &'static Vec<u32> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    D.get_or_init(|| build_dbcs_direct(&eucjisx0213_tables::EUCJX_P1))
+}
+fn eucjx_p2_direct() -> &'static Vec<u32> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    D.get_or_init(|| build_dbcs_direct(&eucjisx0213_tables::EUCJX_P2))
+}
+fn eucjx_enc() -> &'static std::collections::HashMap<u32, (u8, u8, u8, u8)> {
+    static M: std::sync::OnceLock<std::collections::HashMap<u32, (u8, u8, u8, u8)>> =
+        std::sync::OnceLock::new();
+    M.get_or_init(|| {
+        eucjisx0213_tables::EUCJX_ENC
+            .iter()
+            .map(|&(cp, l, a, b, c)| (cp, (l, a, b, c)))
+            .collect()
+    })
+}
+
+/// EUC-JISX0213 DECODE (`from == EucJisx0213`): ASCII; SS2 (0x8E)+half-width
+/// kana; plane 1 (`EUCJX_P1`, 0xA1-0xFE pairs); SS3 (0x8F)+plane 2 (`EUCJX_P2`,
+/// astral). 25 plane-1 cells produce two code points (`EUCJX_P1_MULTI`).
+fn eucjisx0213_decode(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let p1 = eucjx_p1_direct();
+    let p2 = eucjx_p2_direct();
+    let mut chars: Vec<char> = Vec::new();
+    let mut i = 0usize;
+    let mut consumed_end = 0usize;
+    let mut err: Option<i32> = None;
+    let push = |chars: &mut Vec<char>, cp: u32| chars.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+    while i < input.len() {
+        let b = input[i];
+        if b < 0x80 {
+            let cp = eucjisx0213_tables::EUCJX_ONE_BYTE[b as usize];
+            if cp < 0 {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            push(&mut chars, cp as u32);
+            i += 1;
+            consumed_end = i;
+        } else if b == 0x8E {
+            if i + 1 >= input.len() {
+                err = Some(ICONV_EINVAL);
+                break;
+            }
+            let cp = eucjisx0213_tables::EUCJX_SS2[input[i + 1] as usize];
+            if cp < 0 {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            push(&mut chars, cp as u32);
+            i += 2;
+            consumed_end = i;
+        } else if b == 0x8F {
+            if i + 2 >= input.len() {
+                err = Some(ICONV_EINVAL);
+                break;
+            }
+            let key = ((input[i + 1] as u16) << 8) | input[i + 2] as u16;
+            let cp = p2[key as usize];
+            if cp == 0 {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            push(&mut chars, cp);
+            i += 3;
+            consumed_end = i;
+        } else if (0xA1..=0xFE).contains(&b) {
+            if i + 1 >= input.len() {
+                err = Some(ICONV_EINVAL);
+                break;
+            }
+            let key = ((b as u16) << 8) | input[i + 1] as u16;
+            if let Some(&(_, cps)) =
+                eucjisx0213_tables::EUCJX_P1_MULTI.iter().find(|&&(k, _)| k == key)
+            {
+                for &cp in cps {
+                    push(&mut chars, cp);
+                }
+                i += 2;
+                consumed_end = i;
+                continue;
+            }
+            let cp = p1[key as usize];
+            if cp == 0 {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            push(&mut chars, cp);
+            i += 2;
+            consumed_end = i;
+        } else {
+            err = Some(ICONV_EILSEQ);
+            break;
+        }
+    }
+    let mut out: Vec<u8> = Vec::new();
+    let mut tmp = [0u8; 8];
+    for &ch in &chars {
+        match encode_char(cd.to, ch, &mut tmp) {
+            Ok(n) => out.extend_from_slice(&tmp[..n]),
+            Err(_) => {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+        }
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    if let Some(code) = err {
+        return Err(IconvError { code, in_consumed: consumed_end, out_written: out.len() });
+    }
+    Ok(IconvResult { non_reversible: 0, in_consumed: consumed_end, out_written: out.len() })
+}
+
+/// EUC-JISX0213 ENCODE (`to == EucJisx0213`): decode the source to scalars, then
+/// maximal-munch the combining sequences (`EUCJX_MULTI_ENC`) first, otherwise
+/// emit the 1/2/3-byte EUC form from `EUCJX_ENC`.
+fn eucjisx0213_convert(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let enc = eucjx_enc();
+    let mut out: Vec<u8> = Vec::new();
+    let mut in_pos = 0usize;
+    let mut err: Option<(i32, usize)> = None;
+    while in_pos < input.len() {
+        let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+            Ok(v) => v,
+            Err(DecodeError::Incomplete) => {
+                err = Some((ICONV_EINVAL, in_pos));
+                break;
+            }
+            Err(DecodeError::Invalid) => {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        };
+        let cp = ch as u32;
+        // Combining sequences (base + combining mark) -> one cell.
+        let mut matched: Option<(&'static [u8], usize)> = None;
+        for &(seq, bytes) in eucjisx0213_tables::EUCJX_MULTI_ENC.iter() {
+            if seq.first() != Some(&cp) {
+                continue;
+            }
+            let mut p = in_pos + consumed;
+            let mut ok = true;
+            for &want in &seq[1..] {
+                match decode_char(cd.from, &input[p..]) {
+                    Ok((c2, n2)) if c2 as u32 == want => p += n2,
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                matched = Some((bytes, p));
+                break;
+            }
+        }
+        if let Some((bytes, end)) = matched {
+            out.extend_from_slice(bytes);
+            in_pos = end;
+            continue;
+        }
+        if let Some(&(l, a, b, c)) = enc.get(&cp) {
+            out.push(a);
+            if l >= 2 {
+                out.push(b);
+            }
+            if l >= 3 {
+                out.push(c);
+            }
+        } else {
+            err = Some((ICONV_EILSEQ, in_pos));
+            break;
+        }
+        in_pos += consumed;
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    if let Some((code, pos)) = err {
+        return Err(IconvError { code, in_consumed: pos, out_written: out.len() });
+    }
+    Ok(IconvResult { non_reversible: 0, in_consumed: in_pos, out_written: out.len() })
+}
+
 #[inline]
 fn eilseq(in_consumed: usize, out_written: usize) -> IconvError {
     IconvError {
@@ -21970,6 +22178,14 @@ pub fn iconv(
     }
     if cd.to == Encoding::ShiftJisx0213 {
         return sjisx0213_convert(cd, input, outbuf);
+    }
+    // EUC-JISX0213 (either side): variable-length EUC (SS2 kana, plane 1, SS3
+    // plane 2 with astral) plus combining cells — whole-buffer.
+    if cd.from == Encoding::EucJisx0213 {
+        return eucjisx0213_decode(cd, input, outbuf);
+    }
+    if cd.to == Encoding::EucJisx0213 {
+        return eucjisx0213_convert(cd, input, outbuf);
     }
     // ISO-2022-JP (either side) is a stateful escape codec, handled whole-buffer.
     if cd.from == Encoding::Iso2022Jp {
