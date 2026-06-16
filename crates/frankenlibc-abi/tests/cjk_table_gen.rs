@@ -84,6 +84,7 @@ fn cjk_table_gen() {
     let utf8 = CString::new("UTF-8").unwrap();
     for codec in [
         "SHIFT_JIS",
+        "CP932",
         "BIG5",
         "GBK",
         "EUC-KR",

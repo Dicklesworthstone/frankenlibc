@@ -6,6 +6,7 @@ use crate::errno;
 use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint};
 
 mod cjk_tables;
+mod cp932_tables;
 
 /// Core iconv error code: output buffer has insufficient capacity.
 pub const ICONV_E2BIG: i32 = errno::E2BIG;
@@ -217,6 +218,10 @@ enum Encoding {
     Iso885916,
     EucJp,
     ShiftJis,
+    /// Microsoft CP932 (= WINDOWS-31J / MS932): a Shift_JIS superset with the
+    /// NEC/IBM extension rows and the wave-dash/tilde + ASCII (0x5C, 0x7E)
+    /// remappings. Distinct from pure JIS [`Encoding::ShiftJis`].
+    Cp932,
     Big5,
     Gbk,
     EucKr,
@@ -238,7 +243,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 140] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 141] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -1155,7 +1160,19 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 140] = [
         encoding: Encoding::ShiftJis,
         canonical: "SHIFT_JIS",
         normalized: "SHIFTJIS",
-        aliases: &["SHIFTJIS", "SJIS", "CP932", "MSKANJI", "CSSHIFTJIS"],
+        // Pure JIS X 0208 Shift_JIS only (glibc's MS_KANJI is this variant: it
+        // rejects U+FF5E and maps 0x5C->U+00A5). CP932/MS932/WINDOWS-31J (the
+        // Microsoft superset) are a SEPARATE codec below — glibc distinguishes
+        // them (0x5C is U+005C and U+FF5E maps to 0x8160 there).
+        aliases: &["SHIFTJIS", "SJIS", "MSKANJI", "CSSHIFTJIS"],
+    },
+    CodecSpec {
+        encoding: Encoding::Cp932,
+        canonical: "CP932",
+        normalized: "CP932",
+        // Names glibc resolves to the CP932/WINDOWS-31J codec (verified each maps
+        // U+FF5E->0x8160, the Shift_JIS discriminator).
+        aliases: &["MS932", "WINDOWS31J", "SJISWIN"],
     },
     CodecSpec {
         encoding: Encoding::Big5,
@@ -8720,6 +8737,23 @@ fn encode_shiftjis(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     encode_dbcs2(ch, out, direct)
 }
 
+fn decode_cp932(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cp932_tables::CP932_DBCS));
+    decode_dbcs2(
+        input,
+        &cp932_tables::CP932_ONE_BYTE,
+        &cp932_tables::CP932_IS_LEAD,
+        direct,
+    )
+}
+
+fn encode_cp932(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_enc_direct(&cp932_tables::CP932_ENC));
+    encode_dbcs2(ch, out, direct)
+}
+
 fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::BIG5_DBCS));
@@ -9297,6 +9331,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp1125 => decode_cp1125(input),
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
+        Encoding::Cp932 => decode_cp932(input),
         Encoding::Big5 => decode_big5(input),
         Encoding::Gbk => decode_gbk(input),
         Encoding::EucKr => decode_euckr(input),
@@ -9583,6 +9618,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp1125 => encode_cp1125(ch, out),
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
+        Encoding::Cp932 => encode_cp932(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
         Encoding::Gbk => encode_gbk(ch, out),
         Encoding::EucKr => encode_euckr(ch, out),
@@ -10807,6 +10843,7 @@ pub fn iconv(
                 let r = match cd.to {
                     Encoding::Gb18030 => encode_gb18030(ch, out),
                     Encoding::ShiftJis => encode_shiftjis(ch, out),
+                    Encoding::Cp932 => encode_cp932(ch, out),
                     Encoding::Big5 => encode_big5(ch, out),
                     Encoding::Gbk => encode_gbk(ch, out),
                     Encoding::EucJp => encode_eucjp(ch, out),
@@ -10919,6 +10956,7 @@ pub fn iconv(
                 let decoded = match from_enc {
                     Encoding::Gb18030 => decode_gb18030(&input[in_pos..]),
                     Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
+                    Encoding::Cp932 => decode_cp932(&input[in_pos..]),
                     Encoding::Big5 => decode_big5(&input[in_pos..]),
                     Encoding::Gbk => decode_gbk(&input[in_pos..]),
                     Encoding::EucJp => decode_eucjp(&input[in_pos..]),
@@ -11051,6 +11089,7 @@ pub fn iconv(
                 let decoded = match from_enc {
                     Encoding::Gb18030 => decode_gb18030(&input[in_pos..]),
                     Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
+                    Encoding::Cp932 => decode_cp932(&input[in_pos..]),
                     Encoding::Big5 => decode_big5(&input[in_pos..]),
                     Encoding::Gbk => decode_gbk(&input[in_pos..]),
                     Encoding::EucJp => decode_eucjp(&input[in_pos..]),
@@ -11259,6 +11298,7 @@ pub fn iconv(
                 let r = match cd.to {
                     Encoding::Gb18030 => encode_gb18030(ch, out),
                     Encoding::ShiftJis => encode_shiftjis(ch, out),
+                    Encoding::Cp932 => encode_cp932(ch, out),
                     Encoding::Big5 => encode_big5(ch, out),
                     Encoding::Gbk => encode_gbk(ch, out),
                     Encoding::EucJp => encode_eucjp(ch, out),
@@ -11326,6 +11366,7 @@ pub fn iconv(
                     let decoded = match from_enc {
                         Encoding::Gb18030 => decode_gb18030(&input[in_pos..]),
                         Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
+                    Encoding::Cp932 => decode_cp932(&input[in_pos..]),
                         Encoding::Big5 => decode_big5(&input[in_pos..]),
                         Encoding::Gbk => decode_gbk(&input[in_pos..]),
                         Encoding::EucJp => decode_eucjp(&input[in_pos..]),
@@ -11344,6 +11385,7 @@ pub fn iconv(
                 let r = match cd.to {
                     Encoding::Gb18030 => encode_gb18030(ch, out),
                     Encoding::ShiftJis => encode_shiftjis(ch, out),
+                    Encoding::Cp932 => encode_cp932(ch, out),
                     Encoding::Big5 => encode_big5(ch, out),
                     Encoding::Gbk => encode_gbk(ch, out),
                     Encoding::EucJp => encode_eucjp(ch, out),
