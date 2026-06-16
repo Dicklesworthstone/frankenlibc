@@ -15,6 +15,7 @@ mod ibm1371_tables;
 mod ibm1388_tables;
 mod ibm1390_tables;
 mod ibm1399_tables;
+mod iso2022jp3_tables;
 mod ibm930_tables;
 mod ibm932_tables;
 mod ibm933_tables;
@@ -130,6 +131,10 @@ enum Encoding {
     /// (ASCII > JIS-Roman > JIS X 0208 > JIS X 0212 > GB2312 > KSC > Latin-1 G2 >
     /// Greek G2). Handled by a dedicated whole-buffer branch in [`iconv`].
     Iso2022Jp2,
+    /// ISO-2022-JP-3 (RFC 2237): ISO-2022-JP plus JIS X 0213 plane 1
+    /// (ESC $ ( O / ESC $ ( Q for the 2000/2004 editions) and plane 2
+    /// (ESC $ ( P, astral) and half-width kana (ESC ( I). Whole-buffer branch.
+    Iso2022Jp3,
     /// ISO-2022-CN (RFC 1922): a stateful SO/SI codec. G1 (reached via SO 0x0E,
     /// left via SI 0x0F) holds GB2312 (`ESC $ ) A`, the default) or CNS 11643
     /// plane 1 (`ESC $ ) G`); G2 (`ESC $ * H`, default CNS 11643 plane 2) is
@@ -589,7 +594,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 296] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 297] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2531,6 +2536,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 296] = [
         aliases: &["ISO2022JP2", "CSISO2022JP2"],
     },
     CodecSpec {
+        encoding: Encoding::Iso2022Jp3,
+        canonical: "ISO-2022-JP-3",
+        normalized: "ISO2022JP3",
+        aliases: &["ISO2022JP3", "CSISO2022JP3"],
+    },
+    CodecSpec {
         encoding: Encoding::Iso2022Cn,
         canonical: "ISO-2022-CN",
         normalized: "ISO2022CN",
@@ -2880,6 +2891,12 @@ pub struct IconvDescriptor {
     /// G0 to ASCII when not already there, matching glibc.
     iso2022jp_out_set: u8,
     iso2022jp_in_set: u8,
+    /// ISO-2022-JP-3 designation state, persisted across calls. 0=ASCII,
+    /// 1=JIS-Roman, 2=JIS X 0208, 3=JIS X 0213:2000 plane 1 (ESC $ ( O), 4=JIS
+    /// X 0213:2004 plane 1 (ESC $ ( Q), 5=JIS X 0213 plane 2 (ESC $ ( P),
+    /// 6=half-width kana (ESC ( I). Reset to ASCII on a NULL-inbuf flush.
+    iso2022jp3_out_set: u8,
+    iso2022jp3_in_set: u8,
     /// ISO-2022-JP-2 designation state, persisted across calls. `*_g0`: 0=ASCII,
     /// 1=JIS-Roman, 2=JIS X 0208, 3=JIS X 0212, 4=GB2312, 5=KSC 5601. `*_g2`:
     /// 0=none, 1=ISO-8859-1, 2=ISO-8859-7 (reached via SS2). On encode a reset
@@ -18979,6 +18996,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Iso2022Jp => Err(DecodeError::Invalid),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp2 => Err(DecodeError::Invalid),
+        Encoding::Iso2022Jp3 => Err(DecodeError::Invalid),
         // ISO-2022-CN is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Cn => Err(DecodeError::Invalid),
         Encoding::Utf32 => decode_utf32(input),
@@ -19402,6 +19420,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Iso2022Jp => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp2 => Err(EncodeError::Unrepresentable),
+        Encoding::Iso2022Jp3 => Err(EncodeError::Unrepresentable),
         // ISO-2022-CN is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Cn => Err(EncodeError::Unrepresentable),
         Encoding::Utf32 => {
@@ -19772,6 +19791,8 @@ pub fn iconv_open_detailed(
             iso2022kr_in_ksc: false,
             iso2022jp_out_set: 0,
             iso2022jp_in_set: 0,
+            iso2022jp3_out_set: 0,
+            iso2022jp3_in_set: 0,
             iso2022jp2_out_g0: 0,
             iso2022jp2_out_g2: 0,
             iso2022jp2_in_g0: 0,
@@ -22022,6 +22043,343 @@ fn eucjisx0213_convert(
     Ok(IconvResult { non_reversible: 0, in_consumed: in_pos, out_written: out.len() })
 }
 
+/// Designator byte sequence for an ISO-2022-JP-3 set id (see `JP3_ENC`).
+fn jp3_designator(set: u8) -> &'static [u8] {
+    match set {
+        0 => &[0x1B, 0x28, 0x42],       // ESC ( B  ASCII
+        1 => &[0x1B, 0x28, 0x4A],       // ESC ( J  JIS-Roman
+        2 => &[0x1B, 0x24, 0x42],       // ESC $ B  JIS X 0208
+        3 => &[0x1B, 0x24, 0x28, 0x4F], // ESC $ ( O  JIS X 0213:2000 plane 1
+        4 => &[0x1B, 0x24, 0x28, 0x51], // ESC $ ( Q  JIS X 0213:2004 plane 1
+        5 => &[0x1B, 0x24, 0x28, 0x50], // ESC $ ( P  JIS X 0213 plane 2
+        _ => &[0x1B, 0x28, 0x49],       // ESC ( I  half-width kana
+    }
+}
+
+fn jp3_enc_map() -> &'static std::collections::HashMap<u32, (u8, u8, u8)> {
+    static M: std::sync::OnceLock<std::collections::HashMap<u32, (u8, u8, u8)>> =
+        std::sync::OnceLock::new();
+    M.get_or_init(|| {
+        iso2022jp3_tables::JP3_ENC_TBL
+            .iter()
+            .map(|&(cp, id, b0, b1)| (cp, (id, b0, b1)))
+            .collect()
+    })
+}
+
+/// ISO-2022-JP-3 DECODE (`from == Iso2022Jp3`): escape state machine over ASCII,
+/// JIS-Roman, JIS X 0208 (`ESC $ B`), JIS X 0213 plane 1 (`ESC $ ( O` / `Q`, both
+/// mapped through the EUC-JISX0213 plane-1 tables), plane 2 (`ESC $ ( P`, astral)
+/// and half-width kana (`ESC ( I`). 25 plane-1 cells produce two scalars.
+fn iso2022jp3_decode(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let p1 = eucjx_p1_direct();
+    let p2 = eucjx_p2_direct();
+    let mut chars: Vec<char> = Vec::new();
+    let mut set = cd.iso2022jp3_in_set;
+    let mut i = 0usize;
+    let mut consumed_end = 0usize;
+    let mut err: Option<i32> = None;
+    let push = |chars: &mut Vec<char>, cp: u32| chars.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+    while i < input.len() {
+        let b = input[i];
+        if b == 0x1B {
+            if i + 3 > input.len() {
+                err = Some(ICONV_EINVAL);
+                break;
+            }
+            let (b1, b2) = (input[i + 1], input[i + 2]);
+            if b1 == 0x24 && b2 == 0x28 {
+                if i + 4 > input.len() {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                match input[i + 3] {
+                    0x4F | 0x51 => set = 3, // ESC $ ( O / Q -> JIS X 0213 plane 1
+                    0x50 => set = 4,        // ESC $ ( P -> plane 2
+                    _ => {
+                        chars.push('\u{1B}');
+                        i += 1;
+                        consumed_end = i;
+                        continue;
+                    }
+                }
+                i += 4;
+                consumed_end = i;
+                continue;
+            }
+            match (b1, b2) {
+                (0x28, 0x42) => set = 0,
+                (0x28, 0x4A) => set = 1,
+                (0x28, 0x49) => set = 5, // ESC ( I -> half-width kana
+                (0x24, 0x40) | (0x24, 0x42) => set = 2,
+                _ => {
+                    chars.push('\u{1B}');
+                    i += 1;
+                    consumed_end = i;
+                    continue;
+                }
+            }
+            i += 3;
+            consumed_end = i;
+            continue;
+        }
+        match set {
+            0 => {
+                if b < 0x80 {
+                    push(&mut chars, b as u32);
+                    i += 1;
+                    consumed_end = i;
+                } else {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+            }
+            1 => {
+                let cp = match b {
+                    0x5C => 0xA5,
+                    0x7E => 0x203E,
+                    _ if b < 0x80 => b as u32,
+                    _ => {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                };
+                push(&mut chars, cp);
+                i += 1;
+                consumed_end = i;
+            }
+            5 => {
+                // half-width kana: 0x21..=0x5F -> U+FF61..; controls/space/DEL
+                // (<=0x20, 0x7F) pass through; 0x60..=0x7E and >=0x80 are EILSEQ.
+                if (0x21..=0x5F).contains(&b) {
+                    push(&mut chars, 0xFF61 + (b as u32 - 0x21));
+                    i += 1;
+                    consumed_end = i;
+                } else if b <= 0x20 || b == 0x7F {
+                    push(&mut chars, b as u32);
+                    i += 1;
+                    consumed_end = i;
+                } else {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+            }
+            _ => {
+                // 2 = JIS X 0208, 3 = plane 1, 4 = plane 2.
+                if (0x21..=0x7E).contains(&b) {
+                    if i + 1 >= input.len() {
+                        err = Some(ICONV_EINVAL);
+                        break;
+                    }
+                    let b1 = input[i + 1];
+                    if !(0x21..=0x7E).contains(&b1) {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                    let euc_key = (((b | 0x80) as u16) << 8) | (b1 | 0x80) as u16;
+                    let ok = match set {
+                        2 => match decode_eucjp(&[b | 0x80, b1 | 0x80]) {
+                            Ok((ch, 2)) => {
+                                chars.push(ch);
+                                true
+                            }
+                            _ => false,
+                        },
+                        3 => {
+                            if let Some(&(_, cps)) = eucjisx0213_tables::EUCJX_P1_MULTI
+                                .iter()
+                                .find(|&&(k, _)| k == euc_key)
+                            {
+                                for &cp in cps {
+                                    push(&mut chars, cp);
+                                }
+                                true
+                            } else {
+                                let cp = p1[euc_key as usize];
+                                if cp != 0 {
+                                    push(&mut chars, cp);
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                        }
+                        _ => {
+                            let cp = p2[euc_key as usize];
+                            if cp != 0 {
+                                push(&mut chars, cp);
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                    };
+                    if !ok {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                    i += 2;
+                    consumed_end = i;
+                } else if b < 0x80 {
+                    push(&mut chars, b as u32);
+                    i += 1;
+                    consumed_end = i;
+                } else {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+            }
+        }
+    }
+    cd.iso2022jp3_in_set = set;
+    let mut out: Vec<u8> = Vec::new();
+    let mut tmp = [0u8; 8];
+    for &ch in &chars {
+        match encode_char(cd.to, ch, &mut tmp) {
+            Ok(n) => out.extend_from_slice(&tmp[..n]),
+            Err(_) => {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+        }
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    if let Some(code) = err {
+        return Err(IconvError { code, in_consumed: consumed_end, out_written: out.len() });
+    }
+    Ok(IconvResult { non_reversible: 0, in_consumed: consumed_end, out_written: out.len() })
+}
+
+/// ISO-2022-JP-3 ENCODE (`to == Iso2022Jp3`): per-scalar designator + ku-ten
+/// from `JP3_ENC`, with glibc's lazy set switching — a scalar already
+/// representable in the current set stays there (JIS X 0208 stays in a plane-1
+/// designation; a 2000 plane-1 designation also serves 0208/2000 scalars while
+/// a 2004-only scalar forces `ESC $ ( Q`). Combining sequences munch first.
+fn iso2022jp3_convert(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let enc = jp3_enc_map();
+    let mut out: Vec<u8> = Vec::new();
+    let mut set = cd.iso2022jp3_out_set;
+    let mut in_pos = 0usize;
+    let mut err: Option<(i32, usize)> = None;
+    // Choose the target set for a scalar whose canonical designation is `cid`,
+    // honouring glibc's lazy-stay across the JIS X 0208 / plane-1 designations.
+    let target_set = |cur: u8, cid: u8| -> u8 {
+        match cid {
+            2 => {
+                if cur == 2 || cur == 3 || cur == 4 {
+                    cur
+                } else {
+                    2
+                }
+            }
+            3 => {
+                if cur == 3 || cur == 4 {
+                    cur
+                } else {
+                    3
+                }
+            }
+            other => other,
+        }
+    };
+    while in_pos < input.len() {
+        let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+            Ok(v) => v,
+            Err(DecodeError::Incomplete) => {
+                err = Some((ICONV_EINVAL, in_pos));
+                break;
+            }
+            Err(DecodeError::Invalid) => {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        };
+        let cp = ch as u32;
+        // 1. Combining sequences (base + combining mark) -> one plane-1 cell.
+        let mut matched: Option<(u8, u8, u8, usize)> = None;
+        for &(seq, cid, b0, b1) in iso2022jp3_tables::JP3_MULTI_ENC.iter() {
+            if seq.first() != Some(&cp) {
+                continue;
+            }
+            let mut p = in_pos + consumed;
+            let mut ok = true;
+            for &want in &seq[1..] {
+                match decode_char(cd.from, &input[p..]) {
+                    Ok((c2, n2)) if c2 as u32 == want => p += n2,
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                matched = Some((cid, b0, b1, p));
+                break;
+            }
+        }
+        if let Some((cid, b0, b1, end)) = matched {
+            let t = target_set(set, cid);
+            if set != t {
+                out.extend_from_slice(jp3_designator(t));
+                set = t;
+            }
+            out.push(b0);
+            out.push(b1);
+            in_pos = end;
+            continue;
+        }
+        if cp == 0xA5 || cp == 0x203E {
+            if set != 1 {
+                out.extend_from_slice(&[0x1B, 0x28, 0x4A]);
+                set = 1;
+            }
+            out.push(if cp == 0xA5 { 0x5C } else { 0x7E });
+        } else if cp < 0x80 {
+            let b = cp as u8;
+            let roman_ok = set == 1 && (0x21..=0x7E).contains(&b) && b != 0x5C && b != 0x7E;
+            if !roman_ok && set != 0 {
+                out.extend_from_slice(&[0x1B, 0x28, 0x42]);
+                set = 0;
+            }
+            out.push(b);
+        } else if let Some(&(cid, b0, b1)) = enc.get(&cp) {
+            let t = target_set(set, cid);
+            if set != t {
+                out.extend_from_slice(jp3_designator(t));
+                set = t;
+            }
+            out.push(b0);
+            if matches!(cid, 2 | 3 | 4 | 5) {
+                out.push(b1);
+            }
+        } else {
+            err = Some((ICONV_EILSEQ, in_pos));
+            break;
+        }
+        in_pos += consumed;
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    cd.iso2022jp3_out_set = set;
+    if let Some((code, pos)) = err {
+        return Err(IconvError { code, in_consumed: pos, out_written: out.len() });
+    }
+    Ok(IconvResult { non_reversible: 0, in_consumed: in_pos, out_written: out.len() })
+}
+
 #[inline]
 fn eilseq(in_consumed: usize, out_written: usize) -> IconvError {
     IconvError {
@@ -22083,6 +22441,18 @@ pub fn iconv(
                     }
                     outbuf[..3].copy_from_slice(&[0x1B, 0x28, 0x42]);
                     cd.iso2022jp_out_set = 0;
+                    return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 3 });
+                }
+                return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
+            }
+            // ISO-2022-JP-3 DEST: a reset returns the designation to ASCII.
+            if cd.to == Encoding::Iso2022Jp3 {
+                if cd.iso2022jp3_out_set != 0 {
+                    if outbuf.len() < 3 {
+                        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+                    }
+                    outbuf[..3].copy_from_slice(&[0x1B, 0x28, 0x42]);
+                    cd.iso2022jp3_out_set = 0;
                     return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 3 });
                 }
                 return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
@@ -22193,6 +22563,13 @@ pub fn iconv(
     }
     if cd.to == Encoding::Iso2022Jp {
         return iso2022jp_convert(cd, input, outbuf);
+    }
+    // ISO-2022-JP-3 (either side): JIS X 0213 via ESC designators, whole-buffer.
+    if cd.from == Encoding::Iso2022Jp3 {
+        return iso2022jp3_decode(cd, input, outbuf);
+    }
+    if cd.to == Encoding::Iso2022Jp3 {
+        return iso2022jp3_convert(cd, input, outbuf);
     }
     // ISO-2022-JP-2 (either side) likewise — adds GB2312/KSC/JISX0212 G0 sets
     // plus ISO-8859-1/7 via the G2 single-shift (SS2).
