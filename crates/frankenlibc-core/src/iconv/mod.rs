@@ -24,6 +24,7 @@ mod ibm937_tables;
 mod ibm939_tables;
 mod ibm943_tables;
 mod eucjisx0213_tables;
+mod big5hkscs_tables;
 mod sjisx0213_tables;
 
 /// Core iconv error code: output buffer has insufficient capacity.
@@ -573,6 +574,9 @@ enum Encoding {
     /// EUC-JISX0213 (EUC-JIS-2004): ASCII, SS2 (0x8E) half-width kana, plane 1
     /// (0xA1-0xFE pairs), SS3 (0x8F) plane 2 (astral); ~25 combining cells.
     EucJisx0213,
+    /// BIG5-HKSCS: Big5 + Hong Kong supplementary — direct 2-byte DBCS with
+    /// astral cells and a few combining cells (same shape as SHIFT_JISX0213).
+    Big5Hkscs,
     Big5,
     Gbk,
     EucKr,
@@ -594,7 +598,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 297] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 298] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2470,6 +2474,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 297] = [
         aliases: &[],
     },
     CodecSpec {
+        encoding: Encoding::Big5Hkscs,
+        canonical: "BIG5-HKSCS",
+        normalized: "BIG5HKSCS",
+        aliases: &[],
+    },
+    CodecSpec {
         encoding: Encoding::Big5,
         canonical: "BIG5",
         normalized: "BIG5",
@@ -2549,14 +2559,10 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 297] = [
     },
 ];
 
-const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 2] = [
+const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 1] = [
     ExcludedCodecSpec {
         canonical: "ISO-2022-CN-EXT",
         normalized: "ISO2022CNEXT",
-    },
-    ExcludedCodecSpec {
-        canonical: "BIG5-HKSCS",
-        normalized: "BIG5HKSCS",
     },
 ];
 
@@ -2814,8 +2820,8 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.
-pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 2] =
-    ["ISO-2022-CN-EXT", "BIG5-HKSCS"];
+pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 1] =
+    ["ISO-2022-CN-EXT"];
 
 /// Opaque conversion descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18991,7 +18997,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         | Encoding::Ibm1390
         | Encoding::Ibm1399 => Err(DecodeError::Invalid),
         // SHIFT_JISX0213 (multi-codepoint + astral) is handled whole-buffer.
-        Encoding::ShiftJisx0213 | Encoding::EucJisx0213 => Err(DecodeError::Invalid),
+        Encoding::ShiftJisx0213 | Encoding::EucJisx0213 | Encoding::Big5Hkscs => Err(DecodeError::Invalid),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(DecodeError::Invalid),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -19415,7 +19421,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         | Encoding::Ibm1388
         | Encoding::Ibm1390
         | Encoding::Ibm1399 => Err(EncodeError::Unrepresentable),
-        Encoding::ShiftJisx0213 | Encoding::EucJisx0213 => Err(EncodeError::Unrepresentable),
+        Encoding::ShiftJisx0213 | Encoding::EucJisx0213 | Encoding::Big5Hkscs => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -21698,31 +21704,32 @@ fn sjisx0213_enc2() -> &'static std::collections::HashMap<u32, u16> {
     M.get_or_init(|| sjisx0213_tables::SJISX_ENC2.iter().copied().collect())
 }
 
-/// SHIFT_JISX0213 DECODE (`from == ShiftJisx0213`): ASCII / half-width kana
-/// single bytes and 2-byte JIS X 0213 cells (`SJISX_DBCS`, including astral
-/// plane-2 cells); ~25 cells produce two code points (`SJISX_DBCS_MULTI`).
-/// Whole-buffer because a cell may emit multiple scalars.
-fn sjisx0213_decode(
+/// Generic decode for a direct 2-byte DBCS codec (SHIFT_JISX0213, BIG5-HKSCS):
+/// single bytes via `one_byte`, lead bytes via `is_lead` + the `direct` cell map
+/// (astral u32 values supported), with a `multi` exception table for cells that
+/// produce more than one scalar. Whole-buffer; the scalars encode to `cd.to`.
+fn dbcs_x_decode(
     cd: &mut IconvDescriptor,
     input: &[u8],
     outbuf: &mut [u8],
+    one_byte: &[i32; 256],
+    is_lead: &[bool; 256],
+    direct: &[u32],
+    multi: &[(u16, &'static [u32])],
 ) -> Result<IconvResult, IconvError> {
-    let direct = sjisx0213_dbcs_direct();
     let mut chars: Vec<char> = Vec::new();
     let mut i = 0usize;
     let mut consumed_end = 0usize;
     let mut err: Option<i32> = None;
     while i < input.len() {
         let b = input[i];
-        if sjisx0213_tables::SJISX_IS_LEAD[b as usize] {
+        if is_lead[b as usize] {
             if i + 1 >= input.len() {
                 err = Some(ICONV_EINVAL);
                 break;
             }
             let key = ((b as u16) << 8) | input[i + 1] as u16;
-            if let Some(&(_, cps)) =
-                sjisx0213_tables::SJISX_DBCS_MULTI.iter().find(|&&(k, _)| k == key)
-            {
+            if let Some(&(_, cps)) = multi.iter().find(|&&(k, _)| k == key) {
                 for &cp in cps {
                     chars.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
                 }
@@ -21739,7 +21746,7 @@ fn sjisx0213_decode(
             i += 2;
             consumed_end = i;
         } else {
-            let cp = sjisx0213_tables::SJISX_ONE_BYTE[b as usize];
+            let cp = one_byte[b as usize];
             if cp < 0 {
                 err = Some(ICONV_EILSEQ);
                 break;
@@ -21770,16 +21777,17 @@ fn sjisx0213_decode(
     Ok(IconvResult { non_reversible: 0, in_consumed: consumed_end, out_written: out.len() })
 }
 
-/// SHIFT_JISX0213 ENCODE (`to == ShiftJisx0213`): decode the source to scalars,
-/// then maximal-munch the ~25 combining sequences first, otherwise emit the
-/// single-byte (`SJISX_ENC1`) or 2-byte (`SJISX_ENC2`, including astral) cell.
-fn sjisx0213_convert(
+/// Generic encode for a direct 2-byte DBCS codec: maximal-munch the combining
+/// sequences first, otherwise emit the single-byte (`e1`) or 2-byte (`e2`,
+/// including astral source scalars) cell.
+fn dbcs_x_convert(
     cd: &mut IconvDescriptor,
     input: &[u8],
     outbuf: &mut [u8],
+    e1: &std::collections::HashMap<u32, u8>,
+    e2: &std::collections::HashMap<u32, u16>,
+    multi_enc: &[(&'static [u32], u16)],
 ) -> Result<IconvResult, IconvError> {
-    let e1 = sjisx0213_enc1();
-    let e2 = sjisx0213_enc2();
     let mut out: Vec<u8> = Vec::new();
     let mut in_pos = 0usize;
     let mut err: Option<(i32, usize)> = None;
@@ -21798,7 +21806,7 @@ fn sjisx0213_convert(
         let cp = ch as u32;
         // Combining sequences (base scalar + combining mark) -> one cell.
         let mut matched: Option<(u16, usize)> = None;
-        for &(seq, k) in sjisx0213_tables::SJISX_MULTI_ENC.iter() {
+        for &(seq, k) in multi_enc.iter() {
             if seq.first() != Some(&cp) {
                 continue;
             }
@@ -21843,6 +21851,78 @@ fn sjisx0213_convert(
         return Err(IconvError { code, in_consumed: pos, out_written: out.len() });
     }
     Ok(IconvResult { non_reversible: 0, in_consumed: in_pos, out_written: out.len() })
+}
+
+fn sjisx0213_decode(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    dbcs_x_decode(
+        cd,
+        input,
+        outbuf,
+        &sjisx0213_tables::SJISX_ONE_BYTE,
+        &sjisx0213_tables::SJISX_IS_LEAD,
+        sjisx0213_dbcs_direct(),
+        &sjisx0213_tables::SJISX_DBCS_MULTI,
+    )
+}
+fn sjisx0213_convert(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    dbcs_x_convert(
+        cd,
+        input,
+        outbuf,
+        sjisx0213_enc1(),
+        sjisx0213_enc2(),
+        &sjisx0213_tables::SJISX_MULTI_ENC,
+    )
+}
+
+fn big5hkscs_dbcs_direct() -> &'static Vec<u32> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    D.get_or_init(|| build_dbcs_direct(&big5hkscs_tables::BIG5HKSCS_DBCS))
+}
+fn big5hkscs_enc1() -> &'static std::collections::HashMap<u32, u8> {
+    static M: std::sync::OnceLock<std::collections::HashMap<u32, u8>> = std::sync::OnceLock::new();
+    M.get_or_init(|| big5hkscs_tables::BIG5HKSCS_ENC1.iter().copied().collect())
+}
+fn big5hkscs_enc2() -> &'static std::collections::HashMap<u32, u16> {
+    static M: std::sync::OnceLock<std::collections::HashMap<u32, u16>> = std::sync::OnceLock::new();
+    M.get_or_init(|| big5hkscs_tables::BIG5HKSCS_ENC2.iter().copied().collect())
+}
+fn big5hkscs_decode(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    dbcs_x_decode(
+        cd,
+        input,
+        outbuf,
+        &big5hkscs_tables::BIG5HKSCS_ONE_BYTE,
+        &big5hkscs_tables::BIG5HKSCS_IS_LEAD,
+        big5hkscs_dbcs_direct(),
+        &big5hkscs_tables::BIG5HKSCS_DBCS_MULTI,
+    )
+}
+fn big5hkscs_convert(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    dbcs_x_convert(
+        cd,
+        input,
+        outbuf,
+        big5hkscs_enc1(),
+        big5hkscs_enc2(),
+        &big5hkscs_tables::BIG5HKSCS_MULTI_ENC,
+    )
 }
 
 fn eucjx_p1_direct() -> &'static Vec<u32> {
@@ -22556,6 +22636,12 @@ pub fn iconv(
     }
     if cd.to == Encoding::EucJisx0213 {
         return eucjisx0213_convert(cd, input, outbuf);
+    }
+    if cd.from == Encoding::Big5Hkscs {
+        return big5hkscs_decode(cd, input, outbuf);
+    }
+    if cd.to == Encoding::Big5Hkscs {
+        return big5hkscs_convert(cd, input, outbuf);
     }
     // ISO-2022-JP (either side) is a stateful escape codec, handled whole-buffer.
     if cd.from == Encoding::Iso2022Jp {
@@ -23968,9 +24054,9 @@ mod tests {
     #[test]
     fn iconv_open_detailed_reports_excluded_family_policy() {
         let err =
-            iconv_open_detailed(b"UTF-8", b"BIG5-HKSCS").expect_err("excluded codec must fail");
+            iconv_open_detailed(b"UTF-8", b"ISO-2022-CN-EXT").expect_err("excluded codec must fail");
         assert_eq!(err.policy, IconvFallbackPolicy::ExcludedCodecFamily);
-        assert_eq!(err.dispatch.from_codec, "BIG5-HKSCS");
+        assert_eq!(err.dispatch.from_codec, "ISO-2022-CN-EXT");
         assert_eq!(
             err.dispatch.from_dispatch_path,
             CodecDispatchPath::ExcludedFamily
