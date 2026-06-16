@@ -578,6 +578,12 @@ enum Encoding {
     /// BIG5-HKSCS: Big5 + Hong Kong supplementary — direct 2-byte DBCS with
     /// astral cells and a few combining cells (same shape as SHIFT_JISX0213).
     Big5Hkscs,
+    /// glibc's "UNICODE" charset: UCS-2 (BMP-only, 16-bit units) with a leading
+    /// BOM and BOM-resolved endianness (decode strips/honors a BOM, native LE
+    /// default; encode emits an LE BOM), exactly like unmarked `Utf16` EXCEPT it
+    /// never surrogate-pairs — astral scalars are unrepresentable on encode and
+    /// surrogate code units are illegal on decode (it is UCS-2, not UTF-16).
+    Unicode,
     /// ISO/TR 11548-1 (Braille patterns): a single-byte codec mapping each byte
     /// `b` directly to U+2800+`b` (the full 256-glyph Unicode Braille block).
     /// Encode accepts only U+2800-U+28FF. Per-char codec (no whole-buffer path).
@@ -610,7 +616,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 300] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 301] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2495,6 +2501,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 300] = [
         encoding: Encoding::Tscii,
         canonical: "TSCII",
         normalized: "TSCII",
+        aliases: &[],
+    },
+    CodecSpec {
+        encoding: Encoding::Unicode,
+        canonical: "UNICODE",
+        normalized: "UNICODE",
         aliases: &[],
     },
     CodecSpec {
@@ -19019,6 +19031,9 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Utf16 => decode_utf16le(input),
         Encoding::Ucs2Le => decode_ucs2le(input),
         Encoding::Ucs2Be => decode_ucs2be(input),
+        // glibc "UNICODE": UCS-2 with a BOM. Unmarked, so LE by default; the
+        // convert loop swaps to Ucs2Be when a BE BOM was resolved (see `from_enc`).
+        Encoding::Unicode => decode_ucs2le(input),
         // UTF-7 is handled by the dedicated whole-buffer path in `iconv`; this
         // per-char entry is never reached.
         Encoding::Utf7 | Encoding::Utf7Imap => Err(DecodeError::Invalid),
@@ -19395,6 +19410,21 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
             }
             out[0] = cp as u8;
             Ok(1)
+        }
+        // glibc "UNICODE": UCS-2 (BMP-only) little-endian; the leading LE BOM is
+        // emitted separately by the convert loop. Astral scalars are unrepresentable.
+        Encoding::Unicode => {
+            let cp = ch as u32;
+            if cp > 0xFFFF {
+                return Err(EncodeError::Unrepresentable);
+            }
+            if out.len() < 2 {
+                return Err(EncodeError::NoSpace);
+            }
+            let unit = (cp as u16).to_le_bytes();
+            out[0] = unit[0];
+            out[1] = unit[1];
+            Ok(2)
         }
         // ISO/TR 11548-1 Braille: only the U+2800-U+28FF block is representable.
         Encoding::Braille => {
@@ -19833,13 +19863,13 @@ pub fn iconv_open_detailed(
         IconvDescriptor {
             from,
             to,
-            emit_bom: matches!(to, Encoding::Utf32 | Encoding::Utf16),
+            emit_bom: matches!(to, Encoding::Utf32 | Encoding::Utf16 | Encoding::Unicode),
             dispatch,
             fast_ascii: pair_is_ascii_identity(from, to),
             sb_translation: build_sb_translation(from, to),
             to_reverse: build_to_reverse(to),
             from_decode: build_from_decode(from),
-            from_bom_pending: matches!(from, Encoding::Utf32 | Encoding::Utf16),
+            from_bom_pending: matches!(from, Encoding::Utf32 | Encoding::Utf16 | Encoding::Unicode),
             from_unmarked_be: false,
             utf7_active: false,
             utf7_bits: 0,
@@ -22848,7 +22878,7 @@ pub fn iconv(
             }
             if cd.emit_bom && !outbuf.is_empty() {
                 let bom = match cd.to {
-                    Encoding::Utf16 => &[0xFF, 0xFE][..],
+                    Encoding::Utf16 | Encoding::Unicode => &[0xFF, 0xFE][..],
                     Encoding::Utf32 => &[0xFF, 0xFE, 0x00, 0x00][..],
                     _ => &[][..],
                 };
@@ -22996,7 +23026,7 @@ pub fn iconv(
                 }
                 cd.from_bom_pending = false;
             }
-            Encoding::Utf16 if input.len() - in_pos >= 2 => {
+            Encoding::Utf16 | Encoding::Unicode if input.len() - in_pos >= 2 => {
                 match input[in_pos..in_pos + 2] {
                     [0xFF, 0xFE] => {
                         cd.from_unmarked_be = false;
@@ -23020,6 +23050,7 @@ pub fn iconv(
     let from_enc = match cd.from {
         Encoding::Utf32 if cd.from_unmarked_be => Encoding::Utf32Be,
         Encoding::Utf16 if cd.from_unmarked_be => Encoding::Utf16Be,
+        Encoding::Unicode if cd.from_unmarked_be => Encoding::Ucs2Be,
         other => other,
     };
 
@@ -24038,7 +24069,7 @@ pub fn iconv(
         if cd.emit_bom {
             let bom: &[u8] = match cd.to {
                 Encoding::Utf32 => &[0xFF, 0xFE, 0x00, 0x00],
-                Encoding::Utf16 => &[0xFF, 0xFE],
+                Encoding::Utf16 | Encoding::Unicode => &[0xFF, 0xFE],
                 _ => &[],
             };
             if !bom.is_empty() {

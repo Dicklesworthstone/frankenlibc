@@ -1,7 +1,9 @@
-//! Differential gate vs live host glibc for two charsets fl previously rejected
-//! (found by the iconv name-coverage probe):
+//! Differential gate vs live host glibc for three charsets fl previously
+//! rejected (found by the iconv name-coverage probe):
 //!   * ISO/TR_11548-1 (Unicode Braille): byte b <-> U+2800+b, all 256 bytes;
 //!     encode rejects any non-Braille scalar;
+//!   * UNICODE: glibc's UCS-2 + BOM charset (BMP-only — astral unrepresentable,
+//!     surrogate code units illegal; LE default with BOM-resolved endianness);
 //!   * OSF100203B5: an OSF registry alias for 7-bit ASCII.
 //! glibc is reached via dlsym so its symbols bypass fl's no_mangle interposition.
 #![cfg(target_os = "linux")]
@@ -142,6 +144,38 @@ fn braille_alias_names_accepted() {
         assert_eq!(gr, fr, "Braille alias {name} diverged");
         assert!(gr.is_some(), "glibc unexpectedly rejected {name}");
     }
+}
+
+#[test]
+fn unicode_ucs2_bom_matches_glibc() {
+    let g = glibc();
+    let mut mism = Vec::new();
+    // Encode side: BMP text (with BOM), empty, and astral (must be rejected by
+    // both — glibc's UNICODE is UCS-2, not UTF-16).
+    for s in ["", "A", "Hello, world!", "\u{20AC}\u{00FF}\u{0BCD}\u{FFFD}", "\u{1F600}", "ab\u{1F4A9}cd"] {
+        let ge = g_full(&g, "UNICODE", "UTF-8", s.as_bytes());
+        let fe = f_full("UNICODE", "UTF-8", s.as_bytes());
+        if ge != fe {
+            mism.push(format!("encode {s:?}: glibc={ge:02x?} fl={fe:02x?}"));
+        }
+    }
+    // Decode side: LE BOM, BE BOM, no BOM (native LE), and a lone surrogate code
+    // unit (illegal in UCS-2 -> both reject).
+    let cases: &[&[u8]] = &[
+        &[0xFF, 0xFE, 0x41, 0x00, 0xAC, 0x20], // LE BOM + A + euro
+        &[0xFE, 0xFF, 0x00, 0x41, 0x20, 0xAC], // BE BOM + A + euro
+        &[0x41, 0x00, 0x42, 0x00],             // no BOM (native LE)
+        &[0xFF, 0xFE, 0x3D, 0xD8, 0x00, 0xDE], // LE BOM + surrogate pair (illegal)
+        &[0x3D, 0xD8],                         // lone high surrogate (illegal)
+    ];
+    for inp in cases {
+        let gr = g_full(&g, "UTF-8", "UNICODE", inp);
+        let fr = f_full("UTF-8", "UNICODE", inp);
+        if gr != fr {
+            mism.push(format!("decode {inp:02x?}: glibc={gr:02x?} fl={fr:02x?}"));
+        }
+    }
+    assert!(mism.is_empty(), "UNICODE diverged: {mism:?}");
 }
 
 #[test]
