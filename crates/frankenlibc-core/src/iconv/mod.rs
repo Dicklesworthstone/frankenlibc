@@ -578,6 +578,10 @@ enum Encoding {
     /// BIG5-HKSCS: Big5 + Hong Kong supplementary — direct 2-byte DBCS with
     /// astral cells and a few combining cells (same shape as SHIFT_JISX0213).
     Big5Hkscs,
+    /// ISO/TR 11548-1 (Braille patterns): a single-byte codec mapping each byte
+    /// `b` directly to U+2800+`b` (the full 256-glyph Unicode Braille block).
+    /// Encode accepts only U+2800-U+28FF. Per-char codec (no whole-buffer path).
+    Braille,
     /// TSCII (Tamil): single-byte VISUAL-ORDER codec. 63 byte values decode to
     /// 2-4 code points; preposed vowels (E/EE/AI) reorder after the following
     /// consonant, compose with AA/AU marks, and fuse with consonant+pulli
@@ -606,7 +610,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 299] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 300] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2494,6 +2498,15 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 299] = [
         aliases: &[],
     },
     CodecSpec {
+        encoding: Encoding::Braille,
+        canonical: "ISO/TR_11548-1",
+        // `normalize_encoding_label` strips `-`/`_` but keeps `/`, so the
+        // canonical form normalizes with the slash retained; "ISO11548-1" and
+        // "ISO_11548-1" both fold to the slash-free alias below.
+        normalized: "ISO/TR115481",
+        aliases: &["ISO115481"],
+    },
+    CodecSpec {
         encoding: Encoding::Big5,
         canonical: "BIG5",
         normalized: "BIG5",
@@ -2675,6 +2688,9 @@ pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 18] = [
 /// supplements the per-codec `aliases` arrays; it is consulted by
 /// `classify_encoding` only after the canonical/per-spec-alias lookups miss.
 const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
+    // "OSF100203B5" is an OSF registry alias for 7-bit ASCII (probe-verified
+    // byte-identical to ANSI_X3.4-1968 over all 256 bytes, both directions).
+    ("OSF100203B5", "ASCII"),
     ("OS2LATIN1", "CP1004"),
     ("CSIBM1124", "CP1124"),
     ("IBM848", "CP1125"),
@@ -18986,6 +19002,15 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
                 Ok((char::from(input[0]), 1))
             }
         }
+        // ISO/TR 11548-1 Braille: byte b -> U+2800 + b (all 256 bytes valid).
+        Encoding::Braille => {
+            if input.is_empty() {
+                Err(DecodeError::Incomplete)
+            } else {
+                // 0x2800..=0x28FF is always a valid scalar value.
+                Ok((char::from_u32(0x2800 + input[0] as u32).unwrap(), 1))
+            }
+        }
         Encoding::Utf16Le => decode_utf16le(input),
         Encoding::Utf16Be => decode_utf16be(input),
         // Unmarked UTF-16 decodes LE by default; the BOM-resolved endianness is
@@ -19369,6 +19394,18 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
                 return Err(EncodeError::NoSpace);
             }
             out[0] = cp as u8;
+            Ok(1)
+        }
+        // ISO/TR 11548-1 Braille: only the U+2800-U+28FF block is representable.
+        Encoding::Braille => {
+            let cp = ch as u32;
+            if !(0x2800..=0x28FF).contains(&cp) {
+                return Err(EncodeError::Unrepresentable);
+            }
+            if out.is_empty() {
+                return Err(EncodeError::NoSpace);
+            }
+            out[0] = (cp - 0x2800) as u8;
             Ok(1)
         }
         // Unmarked `Utf16` encodes LE units (its LE BOM is emitted separately by
