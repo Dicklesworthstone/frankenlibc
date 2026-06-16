@@ -88,6 +88,12 @@ enum Encoding {
     /// sequences encoding UTF-16BE). Handled by a dedicated whole-buffer branch
     /// in [`iconv`], not the per-char decode_char/encode_char path.
     Utf7,
+    /// ISO-2022-KR (RFC 1557): stateful 7-bit Korean encoding. A
+    /// `ESC $ ) C` designator at buffer start, then SO (0x0E) shifts into
+    /// KSC 5601 double-byte mode (= EUC-KR with the high bit cleared on each
+    /// byte) and SI (0x0F) returns to ASCII. Handled by a dedicated
+    /// whole-buffer branch in [`iconv`].
+    Iso2022Kr,
     Utf32,
     Utf32Be,
     Utf32Le,
@@ -232,7 +238,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 139] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 140] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -1199,6 +1205,12 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 139] = [
         normalized: "JOHAB",
         aliases: &["CP1361", "MS1361"],
     },
+    CodecSpec {
+        encoding: Encoding::Iso2022Kr,
+        canonical: "ISO-2022-KR",
+        normalized: "ISO2022KR",
+        aliases: &["ISO2022KR", "CSISO2022KR"],
+    },
 ];
 
 const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 3] = [
@@ -1359,6 +1371,15 @@ pub struct IconvDescriptor {
     utf7_hi: i32,
     utf7_shift_empty: bool,
     utf7_pending: i32,
+    /// ISO-2022-KR ENCODE state (to == Iso2022Kr): `iso2022kr_designated` =
+    /// the `ESC $ ) C` designator has been emitted at the stream start;
+    /// `iso2022kr_out_ksc` = currently in SO (KSC 5601) shift mode, so a reset
+    /// (NULL inbuf) must emit SI to return to ASCII — matching glibc.
+    iso2022kr_designated: bool,
+    iso2022kr_out_ksc: bool,
+    /// ISO-2022-KR DECODE state (from == Iso2022Kr): currently inside an
+    /// SO-introduced KSC 5601 double-byte run, persisted across `iconv()` calls.
+    iso2022kr_in_ksc: bool,
 }
 
 const REVERSE_DIRECT_PAGES: usize = 8;
@@ -9151,6 +9172,8 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         // UTF-7 is handled by the dedicated whole-buffer path in `iconv`; this
         // per-char entry is never reached.
         Encoding::Utf7 => Err(DecodeError::Invalid),
+        // ISO-2022-KR is likewise handled by a dedicated whole-buffer path.
+        Encoding::Iso2022Kr => Err(DecodeError::Invalid),
         Encoding::Utf32 => decode_utf32(input),
         Encoding::Utf32Be => decode_utf32be(input),
         Encoding::Utf32Le => decode_utf32le(input),
@@ -9414,6 +9437,8 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         // UTF-7 is handled by the dedicated whole-buffer path in `iconv`; this
         // per-char entry is never reached.
         Encoding::Utf7 => Err(EncodeError::Unrepresentable),
+        // ISO-2022-KR is likewise handled by a dedicated whole-buffer path.
+        Encoding::Iso2022Kr => Err(EncodeError::Unrepresentable),
         Encoding::Utf32 => {
             if out.len() < 4 {
                 return Err(EncodeError::NoSpace);
@@ -9637,6 +9662,9 @@ pub fn iconv_open_detailed(
             utf7_hi: -1,
             utf7_shift_empty: false,
             utf7_pending: -1,
+            iso2022kr_designated: false,
+            iso2022kr_out_ksc: false,
+            iso2022kr_in_ksc: false,
         },
         dispatch,
     ))
@@ -10021,6 +10049,202 @@ fn utf7_convert(
     })
 }
 
+/// ISO-2022-KR designator: `ESC $ ) C` (designates KSC 5601 as G1).
+const ISO2022KR_DESIGNATOR: [u8; 4] = [0x1B, 0x24, 0x29, 0x43];
+
+/// ISO-2022-KR ENCODE (`to == Iso2022Kr`): decode the source to scalars and
+/// emit ISO-2022-KR. The designator is written once at stream start; SO (0x0E)
+/// opens a KSC 5601 run (= EUC-KR with the high bit cleared on each byte) and
+/// SI (0x0F) returns to ASCII. No trailing SI is emitted at end-of-input — only
+/// on a reset (NULL inbuf) — matching glibc. All-or-nothing on E2BIG, mirroring
+/// `utf7_convert`; shift state is committed only when the output is written.
+fn iso2022kr_convert(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut designated = cd.iso2022kr_designated;
+    let mut ksc = cd.iso2022kr_out_ksc;
+    if !designated {
+        out.extend_from_slice(&ISO2022KR_DESIGNATOR);
+        designated = true;
+    }
+    let mut in_pos = 0usize;
+    let mut err: Option<(i32, usize)> = None;
+    while in_pos < input.len() {
+        let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+            Ok(v) => v,
+            Err(DecodeError::Incomplete) => {
+                err = Some((ICONV_EINVAL, in_pos));
+                break;
+            }
+            Err(DecodeError::Invalid) => {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        };
+        let cp = ch as u32;
+        if cp < 0x80 {
+            if ksc {
+                out.push(0x0F);
+                ksc = false;
+            }
+            out.push(cp as u8);
+        } else {
+            let mut tmp = [0u8; 8];
+            if matches!(encode_euckr(ch, &mut tmp), Ok(2)) {
+                if !ksc {
+                    out.push(0x0E);
+                    ksc = true;
+                }
+                out.push(tmp[0] & 0x7F);
+                out.push(tmp[1] & 0x7F);
+            } else {
+                // Not representable in KSC 5601 -> glibc EILSEQ at this scalar.
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        }
+        in_pos += consumed;
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError {
+            code: ICONV_E2BIG,
+            in_consumed: 0,
+            out_written: 0,
+        });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    cd.iso2022kr_designated = designated;
+    cd.iso2022kr_out_ksc = ksc;
+    if let Some((code, pos)) = err {
+        return Err(IconvError {
+            code,
+            in_consumed: pos,
+            out_written: out.len(),
+        });
+    }
+    Ok(IconvResult {
+        non_reversible: 0,
+        in_consumed: in_pos,
+        out_written: out.len(),
+    })
+}
+
+/// ISO-2022-KR DECODE (`from == Iso2022Kr`): parse the shift stream to scalars,
+/// then encode each to `cd.to`. The `ESC $ ) C` designator is consumed and
+/// ignored; SO/SI toggle KSC 5601 double-byte mode (each KSC byte ORed with
+/// 0x80 forms the EUC-KR byte pair). All-or-nothing on E2BIG; the SO/SI shift
+/// state persists across calls.
+fn iso2022kr_decode(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut chars: Vec<char> = Vec::new();
+    let mut ksc = cd.iso2022kr_in_ksc;
+    let mut i = 0usize;
+    let mut consumed_end = 0usize; // input position fully decoded so far
+    let mut err: Option<i32> = None;
+    while i < input.len() {
+        let b = input[i];
+        if b == 0x1B {
+            // Only the KSC 5601 designator is valid here.
+            let rest = &input[i..];
+            if rest.len() < ISO2022KR_DESIGNATOR.len() {
+                if ISO2022KR_DESIGNATOR.starts_with(rest) {
+                    err = Some(ICONV_EINVAL); // incomplete designator
+                } else {
+                    err = Some(ICONV_EILSEQ);
+                }
+                break;
+            }
+            if rest[..4] == ISO2022KR_DESIGNATOR {
+                i += 4;
+                consumed_end = i;
+                continue;
+            }
+            err = Some(ICONV_EILSEQ);
+            break;
+        }
+        if b == 0x0E {
+            ksc = true;
+            i += 1;
+            consumed_end = i;
+            continue;
+        }
+        if b == 0x0F {
+            ksc = false;
+            i += 1;
+            consumed_end = i;
+            continue;
+        }
+        if !ksc {
+            if b < 0x80 {
+                chars.push(b as char);
+                i += 1;
+                consumed_end = i;
+            } else {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+        } else {
+            if i + 1 >= input.len() {
+                err = Some(ICONV_EINVAL); // incomplete double byte
+                break;
+            }
+            let euc = [input[i] | 0x80, input[i + 1] | 0x80];
+            match decode_euckr(&euc) {
+                Ok((ch, 2)) => {
+                    chars.push(ch);
+                    i += 2;
+                    consumed_end = i;
+                }
+                _ => {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+            }
+        }
+    }
+    // Encode the decoded scalars to the destination codec.
+    let mut out: Vec<u8> = Vec::new();
+    let mut tmp = [0u8; 8];
+    for &ch in &chars {
+        match encode_char(cd.to, ch, &mut tmp) {
+            Ok(n) => out.extend_from_slice(&tmp[..n]),
+            Err(_) => {
+                // Unrepresentable in destination: extremely rare for UTF-8;
+                // surface as EILSEQ at the start (positions already coarse).
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+        }
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError {
+            code: ICONV_E2BIG,
+            in_consumed: 0,
+            out_written: 0,
+        });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    cd.iso2022kr_in_ksc = ksc;
+    if let Some(code) = err {
+        return Err(IconvError {
+            code,
+            in_consumed: consumed_end,
+            out_written: out.len(),
+        });
+    }
+    Ok(IconvResult {
+        non_reversible: 0,
+        in_consumed: consumed_end,
+        out_written: out.len(),
+    })
+}
+
 #[inline]
 fn eilseq(in_consumed: usize, out_written: usize) -> IconvError {
     IconvError {
@@ -10047,6 +10271,19 @@ pub fn iconv(
             // UTF-7 SOURCE: finalize any persisted decode shift state (bd-s41n4a).
             if cd.from == Encoding::Utf7 {
                 return utf7_decode_flush(cd, outbuf);
+            }
+            // ISO-2022-KR DEST: a reset returns the stream to ASCII — glibc
+            // emits a trailing SI (0x0F) if still in the SO (KSC) shift mode.
+            if cd.to == Encoding::Iso2022Kr {
+                if cd.iso2022kr_out_ksc {
+                    if outbuf.is_empty() {
+                        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+                    }
+                    outbuf[0] = 0x0F;
+                    cd.iso2022kr_out_ksc = false;
+                    return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 1 });
+                }
+                return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
             }
             if cd.emit_bom && !outbuf.is_empty() {
                 let bom = match cd.to {
@@ -10087,6 +10324,13 @@ pub fn iconv(
     }
     if cd.to == Encoding::Utf7 {
         return utf7_convert(cd, input, outbuf);
+    }
+    // ISO-2022-KR (either side) is a stateful shift codec, handled whole-buffer.
+    if cd.from == Encoding::Iso2022Kr {
+        return iso2022kr_decode(cd, input, outbuf);
+    }
+    if cd.to == Encoding::Iso2022Kr {
+        return iso2022kr_convert(cd, input, outbuf);
     }
 
     // NOTE: the destination BOM (unmarked `UTF-32`) is emitted LAZILY, just
