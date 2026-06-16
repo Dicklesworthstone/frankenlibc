@@ -112,6 +112,10 @@ enum Encoding {
     Cp1257,
     Cp1258,
     Cp874,
+    /// Pure TIS-620 (Thai, TIS 620-2533) — the ISO-registered Thai set, which
+    /// (unlike CP874/WINDOWS-874) leaves 0x80-0xA0 UNDEFINED. glibc distinguishes
+    /// them (CP874 maps 0x80->U+20AC, 0xA0->U+00A0; TIS-620 rejects both).
+    Tis620,
     Cp866,
     Cp862,
     Cp863,
@@ -243,7 +247,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 141] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 142] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -421,7 +425,18 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 141] = [
         encoding: Encoding::Cp874,
         canonical: "CP874",
         normalized: "CP874",
-        aliases: &["WINDOWS874", "874", "TIS620"],
+        // TIS620 is NOT an alias here: glibc's TIS-620 is the pure ISO Thai set
+        // (separate codec below) — CP874/WINDOWS-874 add the Windows 0x80-0xA0
+        // extras (U+20AC, NBSP, …) that TIS-620 leaves undefined.
+        aliases: &["WINDOWS874", "874"],
+    },
+    CodecSpec {
+        encoding: Encoding::Tis620,
+        canonical: "TIS-620",
+        normalized: "TIS620",
+        // "TIS-620-0" normalizes to "TIS6200". (ISO-8859-11 is a DIFFERENT set —
+        // it maps 0xA0 to NBSP — so it is intentionally not aliased here.)
+        aliases: &["TIS6200"],
     },
     CodecSpec {
         encoding: Encoding::Cp866,
@@ -2445,6 +2460,63 @@ fn encode_cp874(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
         return Ok(1);
     }
     for (idx, &unicode) in CP874_TO_UNICODE.iter().enumerate() {
+        if unicode != 0xFFFF && u32::from(unicode) == cp {
+            out[0] = (idx as u8) + 0x80;
+            return Ok(1);
+        }
+    }
+    Err(EncodeError::Unrepresentable)
+}
+
+/// Pure TIS-620 (TIS 620-2533) for bytes 0x80-0xFF — generated from host glibc
+/// `iconv("UTF-32LE","TIS-620")`. Differs from CP874 only in 0x80-0xA0 (all
+/// UNDEFINED here; CP874 adds the Windows extras + NBSP); 0xA1-0xFF are the
+/// identical Thai block. `0xFFFF` marks an undefined byte.
+const TIS620_TO_UNICODE: [u16; 128] = [
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // 80-87
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // 88-8F
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // 90-97
+    0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // 98-9F
+    0xFFFF, 0x0E01, 0x0E02, 0x0E03, 0x0E04, 0x0E05, 0x0E06, 0x0E07, // A0-A7
+    0x0E08, 0x0E09, 0x0E0A, 0x0E0B, 0x0E0C, 0x0E0D, 0x0E0E, 0x0E0F, // A8-AF
+    0x0E10, 0x0E11, 0x0E12, 0x0E13, 0x0E14, 0x0E15, 0x0E16, 0x0E17, // B0-B7
+    0x0E18, 0x0E19, 0x0E1A, 0x0E1B, 0x0E1C, 0x0E1D, 0x0E1E, 0x0E1F, // B8-BF
+    0x0E20, 0x0E21, 0x0E22, 0x0E23, 0x0E24, 0x0E25, 0x0E26, 0x0E27, // C0-C7
+    0x0E28, 0x0E29, 0x0E2A, 0x0E2B, 0x0E2C, 0x0E2D, 0x0E2E, 0x0E2F, // C8-CF
+    0x0E30, 0x0E31, 0x0E32, 0x0E33, 0x0E34, 0x0E35, 0x0E36, 0x0E37, // D0-D7
+    0x0E38, 0x0E39, 0x0E3A, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x0E3F, // D8-DF
+    0x0E40, 0x0E41, 0x0E42, 0x0E43, 0x0E44, 0x0E45, 0x0E46, 0x0E47, // E0-E7
+    0x0E48, 0x0E49, 0x0E4A, 0x0E4B, 0x0E4C, 0x0E4D, 0x0E4E, 0x0E4F, // E8-EF
+    0x0E50, 0x0E51, 0x0E52, 0x0E53, 0x0E54, 0x0E55, 0x0E56, 0x0E57, // F0-F7
+    0x0E58, 0x0E59, 0x0E5A, 0x0E5B, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, // F8-FF
+];
+
+fn decode_tis620(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    if input.is_empty() {
+        return Err(DecodeError::Incomplete);
+    }
+    let b = input[0];
+    if b < 0x80 {
+        Ok((char::from(b), 1))
+    } else {
+        let cp = TIS620_TO_UNICODE[(b - 0x80) as usize];
+        if cp == 0xFFFF {
+            return Err(DecodeError::Invalid);
+        }
+        map_single_byte(cp)
+    }
+}
+
+fn encode_tis620(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    if out.is_empty() {
+        return Err(EncodeError::NoSpace);
+    }
+    let cp = ch as u32;
+    if cp < 0x80 {
+        out[0] = cp as u8;
+        return Ok(1);
+    }
+    for (idx, &unicode) in TIS620_TO_UNICODE.iter().enumerate() {
         if unicode != 0xFFFF && u32::from(unicode) == cp {
             out[0] = (idx as u8) + 0x80;
             return Ok(1);
@@ -9224,6 +9296,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Cp1257 => decode_cp1257(input),
         Encoding::Cp1258 => decode_cp1258(input),
         Encoding::Cp874 => decode_cp874(input),
+        Encoding::Tis620 => decode_tis620(input),
         Encoding::Cp866 => decode_cp866(input),
         Encoding::Cp862 => decode_cp862(input),
         Encoding::Cp863 => decode_cp863(input),
@@ -9511,6 +9584,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Cp1257 => encode_cp1257(ch, out),
         Encoding::Cp1258 => encode_cp1258(ch, out),
         Encoding::Cp874 => encode_cp874(ch, out),
+        Encoding::Tis620 => encode_tis620(ch, out),
         Encoding::Cp866 => encode_cp866(ch, out),
         Encoding::Cp862 => encode_cp862(ch, out),
         Encoding::Cp863 => encode_cp863(ch, out),
