@@ -143,19 +143,19 @@ fn memcmp_exact_16_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(a.len(), MEMCMP_EXACT_16_BYTES);
     debug_assert_eq!(b.len(), MEMCMP_EXACT_16_BYTES);
 
-    let diff_mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(a)
-        .simd_ne(Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(b))
-        .to_bitmask();
-    if diff_mask == 0 {
+    if u128_from_exact_16(a) == u128_from_exact_16(b) {
         return core::cmp::Ordering::Equal;
     }
 
-    let first = diff_mask.trailing_zeros() as usize;
-    if a[first] < b[first] {
-        core::cmp::Ordering::Less
-    } else {
-        core::cmp::Ordering::Greater
-    }
+    compare_bytes(a, b)
+}
+
+#[inline(always)]
+fn u128_from_exact_16(chunk: &[u8]) -> u128 {
+    debug_assert_eq!(chunk.len(), MEMCMP_EXACT_16_BYTES);
+    let bytes = <&[u8; MEMCMP_EXACT_16_BYTES]>::try_from(chunk)
+        .expect("exact-16 memcmp chunk must be 16 bytes");
+    u128::from_ne_bytes(*bytes)
 }
 
 /// True iff the two 32-byte panels are byte-for-byte equal. Safe portable SIMD
