@@ -7,6 +7,7 @@ use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint};
 
 mod cjk_tables;
 mod cp932_tables;
+mod ibm943_tables;
 
 /// Core iconv error code: output buffer has insufficient capacity.
 pub const ICONV_E2BIG: i32 = errno::E2BIG;
@@ -226,6 +227,9 @@ enum Encoding {
     /// NEC/IBM extension rows and the wave-dash/tilde + ASCII (0x5C, 0x7E)
     /// remappings. Distinct from pure JIS [`Encoding::ShiftJis`].
     Cp932,
+    /// IBM-943 (= CSIBM943): a Shift_JIS variant distinct from CP932 — it maps
+    /// 0x8160 to U+301C (wave dash) not U+FF5E, among other NEC/IBM-row cells.
+    Ibm943,
     Big5,
     Gbk,
     EucKr,
@@ -247,7 +251,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 142] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 143] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -1191,6 +1195,14 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 142] = [
         // Names glibc resolves to the CP932/WINDOWS-31J codec (verified each maps
         // U+FF5E->0x8160, the Shift_JIS discriminator).
         aliases: &["MS932", "WINDOWS31J", "SJISWIN"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm943,
+        canonical: "IBM-943",
+        normalized: "IBM943",
+        // glibc spells this IBM943 / IBM-943 / CSIBM943; the first two normalize
+        // to the canonical, CSIBM943 is the remaining alias.
+        aliases: &["CSIBM943"],
     },
     CodecSpec {
         encoding: Encoding::Big5,
@@ -8933,6 +8945,23 @@ fn encode_cp932(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     encode_dbcs2(ch, out, direct)
 }
 
+fn decode_ibm943(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&ibm943_tables::IBM943_DBCS));
+    decode_dbcs2(
+        input,
+        &ibm943_tables::IBM943_ONE_BYTE,
+        &ibm943_tables::IBM943_IS_LEAD,
+        direct,
+    )
+}
+
+fn encode_ibm943(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = DIRECT.get_or_init(|| build_enc_direct(&ibm943_tables::IBM943_ENC));
+    encode_dbcs2(ch, out, direct)
+}
+
 fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::BIG5_DBCS));
@@ -9512,6 +9541,7 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::EucJp => decode_eucjp(input),
         Encoding::ShiftJis => decode_shiftjis(input),
         Encoding::Cp932 => decode_cp932(input),
+        Encoding::Ibm943 => decode_ibm943(input),
         Encoding::Big5 => decode_big5(input),
         Encoding::Gbk => decode_gbk(input),
         Encoding::EucKr => decode_euckr(input),
@@ -9800,6 +9830,7 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::EucJp => encode_eucjp(ch, out),
         Encoding::ShiftJis => encode_shiftjis(ch, out),
         Encoding::Cp932 => encode_cp932(ch, out),
+        Encoding::Ibm943 => encode_ibm943(ch, out),
         Encoding::Big5 => encode_big5(ch, out),
         Encoding::Gbk => encode_gbk(ch, out),
         Encoding::EucKr => encode_euckr(ch, out),
@@ -11025,6 +11056,7 @@ pub fn iconv(
                     Encoding::Gb18030 => encode_gb18030(ch, out),
                     Encoding::ShiftJis => encode_shiftjis(ch, out),
                     Encoding::Cp932 => encode_cp932(ch, out),
+                    Encoding::Ibm943 => encode_ibm943(ch, out),
                     Encoding::Big5 => encode_big5(ch, out),
                     Encoding::Gbk => encode_gbk(ch, out),
                     Encoding::EucJp => encode_eucjp(ch, out),
@@ -11138,6 +11170,7 @@ pub fn iconv(
                     Encoding::Gb18030 => decode_gb18030(&input[in_pos..]),
                     Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
                     Encoding::Cp932 => decode_cp932(&input[in_pos..]),
+                    Encoding::Ibm943 => decode_ibm943(&input[in_pos..]),
                     Encoding::Big5 => decode_big5(&input[in_pos..]),
                     Encoding::Gbk => decode_gbk(&input[in_pos..]),
                     Encoding::EucJp => decode_eucjp(&input[in_pos..]),
@@ -11271,6 +11304,7 @@ pub fn iconv(
                     Encoding::Gb18030 => decode_gb18030(&input[in_pos..]),
                     Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
                     Encoding::Cp932 => decode_cp932(&input[in_pos..]),
+                    Encoding::Ibm943 => decode_ibm943(&input[in_pos..]),
                     Encoding::Big5 => decode_big5(&input[in_pos..]),
                     Encoding::Gbk => decode_gbk(&input[in_pos..]),
                     Encoding::EucJp => decode_eucjp(&input[in_pos..]),
@@ -11480,6 +11514,7 @@ pub fn iconv(
                     Encoding::Gb18030 => encode_gb18030(ch, out),
                     Encoding::ShiftJis => encode_shiftjis(ch, out),
                     Encoding::Cp932 => encode_cp932(ch, out),
+                    Encoding::Ibm943 => encode_ibm943(ch, out),
                     Encoding::Big5 => encode_big5(ch, out),
                     Encoding::Gbk => encode_gbk(ch, out),
                     Encoding::EucJp => encode_eucjp(ch, out),
@@ -11548,6 +11583,7 @@ pub fn iconv(
                         Encoding::Gb18030 => decode_gb18030(&input[in_pos..]),
                         Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
                     Encoding::Cp932 => decode_cp932(&input[in_pos..]),
+                    Encoding::Ibm943 => decode_ibm943(&input[in_pos..]),
                         Encoding::Big5 => decode_big5(&input[in_pos..]),
                         Encoding::Gbk => decode_gbk(&input[in_pos..]),
                         Encoding::EucJp => decode_eucjp(&input[in_pos..]),
@@ -11567,6 +11603,7 @@ pub fn iconv(
                     Encoding::Gb18030 => encode_gb18030(ch, out),
                     Encoding::ShiftJis => encode_shiftjis(ch, out),
                     Encoding::Cp932 => encode_cp932(ch, out),
+                    Encoding::Ibm943 => encode_ibm943(ch, out),
                     Encoding::Big5 => encode_big5(ch, out),
                     Encoding::Gbk => encode_gbk(ch, out),
                     Encoding::EucJp => encode_eucjp(ch, out),

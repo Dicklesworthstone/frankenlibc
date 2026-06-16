@@ -85,6 +85,7 @@ fn cjk_table_gen() {
     for codec in [
         "SHIFT_JIS",
         "CP932",
+        "IBM943",
         "BIG5",
         "GBK",
         "EUC-KR",
