@@ -102,6 +102,13 @@ enum Encoding {
     /// byte) and SI (0x0F) returns to ASCII. Handled by a dedicated
     /// whole-buffer branch in [`iconv`].
     Iso2022Kr,
+    /// ISO-2022-JP (RFC 1468): a stateful 7-bit escape codec. G0 starts in
+    /// ASCII; `ESC ( B` selects ASCII, `ESC ( J` JIS X 0201-Roman (0x5C => ¥,
+    /// 0x7E => ‾), `ESC $ @` / `ESC $ B` JIS X 0208 (1978/1983, mapped identically
+    /// via the EUC-JP code-set-1 table with the high bit cleared on each byte).
+    /// Half-width kana (`ESC ( I`) is NOT part of plain ISO-2022-JP. Handled by a
+    /// dedicated whole-buffer branch in [`iconv`].
+    Iso2022Jp,
     Utf32,
     Utf32Be,
     Utf32Le,
@@ -530,7 +537,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 280] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 281] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2378,16 +2385,18 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 280] = [
         normalized: "ISO2022KR",
         aliases: &["ISO2022KR", "CSISO2022KR"],
     },
+    CodecSpec {
+        encoding: Encoding::Iso2022Jp,
+        canonical: "ISO-2022-JP",
+        normalized: "ISO2022JP",
+        aliases: &["ISO2022JP", "CSISO2022JP"],
+    },
 ];
 
-const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 3] = [
+const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 2] = [
     ExcludedCodecSpec {
         canonical: "ISO-2022-CN-EXT",
         normalized: "ISO2022CNEXT",
-    },
-    ExcludedCodecSpec {
-        canonical: "ISO-2022-JP",
-        normalized: "ISO2022JP",
     },
     ExcludedCodecSpec {
         canonical: "BIG5-HKSCS",
@@ -2640,8 +2649,8 @@ const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
 ];
 
 /// Known out-of-scope codec families for phase-1 implementation.
-pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 3] =
-    ["ISO-2022-CN-EXT", "ISO-2022-JP", "BIG5-HKSCS"];
+pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 2] =
+    ["ISO-2022-CN-EXT", "BIG5-HKSCS"];
 
 /// Opaque conversion descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2710,6 +2719,13 @@ pub struct IconvDescriptor {
     /// ISO-2022-KR DECODE state (from == Iso2022Kr): currently inside an
     /// SO-introduced KSC 5601 double-byte run, persisted across `iconv()` calls.
     iso2022kr_in_ksc: bool,
+    /// ISO-2022-JP G0 designation state, persisted across calls. Encode side
+    /// (to == Iso2022Jp) uses `iso2022jp_out_set`; decode side (from ==
+    /// Iso2022Jp) uses `iso2022jp_in_set`. 0 = ASCII, 1 = JIS X 0201-Roman,
+    /// 2 = JIS X 0208. On encode a reset (NULL inbuf) emits `ESC ( B` to return
+    /// G0 to ASCII when not already there, matching glibc.
+    iso2022jp_out_set: u8,
+    iso2022jp_in_set: u8,
 }
 
 const REVERSE_DIRECT_PAGES: usize = 8;
@@ -18752,6 +18768,8 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         Encoding::Utf7 | Encoding::Utf7Imap => Err(DecodeError::Invalid),
         // ISO-2022-KR is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Kr => Err(DecodeError::Invalid),
+        // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
+        Encoding::Iso2022Jp => Err(DecodeError::Invalid),
         Encoding::Utf32 => decode_utf32(input),
         Encoding::Utf32Be => decode_utf32be(input),
         Encoding::Utf32Le => decode_utf32le(input),
@@ -19156,6 +19174,8 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         Encoding::Utf7 | Encoding::Utf7Imap => Err(EncodeError::Unrepresentable),
         // ISO-2022-KR is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Kr => Err(EncodeError::Unrepresentable),
+        // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
+        Encoding::Iso2022Jp => Err(EncodeError::Unrepresentable),
         Encoding::Utf32 => {
             if out.len() < 4 {
                 return Err(EncodeError::NoSpace);
@@ -19521,6 +19541,8 @@ pub fn iconv_open_detailed(
             iso2022kr_designated: false,
             iso2022kr_out_ksc: false,
             iso2022kr_in_ksc: false,
+            iso2022jp_out_set: 0,
+            iso2022jp_in_set: 0,
         },
         dispatch,
     ))
@@ -20154,6 +20176,243 @@ fn iso2022kr_decode(
     })
 }
 
+/// ISO-2022-JP ENCODE (`to == Iso2022Jp`): decode the source to scalars, then
+/// emit a 7-bit escape stream. G0 starts in ASCII; the designation is switched
+/// (and an `ESC ( B` / `ESC ( J` / `ESC $ B` emitted) only when the current set
+/// cannot represent the scalar — matching glibc's lazy switching, e.g. a plain
+/// ASCII letter after `ESC ( J` stays in JIS-Roman. Representability:
+///   * ASCII set  -> every scalar `< 0x80`;
+///   * JIS-Roman  -> graphic `0x21..=0x7E` except `0x5C`/`0x7E`, plus ¥ (U+00A5
+///     -> 0x5C) and ‾ (U+203E -> 0x7E);
+///   * JIS X 0208 -> any scalar that EUC-JP encodes in code-set 1 (both bytes
+///     `0xA1..=0xFE`), emitted as the ku-ten pair with the high bit cleared.
+/// Half-width kana, JIS X 0212 (EUC 3-byte), and non-EUC scalars are
+/// unrepresentable -> EILSEQ at that scalar. The return to ASCII is emitted on
+/// the reset (NULL inbuf) call in [`iconv`], like glibc.
+fn iso2022jp_convert(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut set = cd.iso2022jp_out_set; // 0 = ASCII, 1 = JIS-Roman, 2 = JIS X 0208
+    let mut in_pos = 0usize;
+    let mut err: Option<(i32, usize)> = None;
+    while in_pos < input.len() {
+        let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+            Ok(v) => v,
+            Err(DecodeError::Incomplete) => {
+                err = Some((ICONV_EINVAL, in_pos));
+                break;
+            }
+            Err(DecodeError::Invalid) => {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+        };
+        let cp = ch as u32;
+        if cp == 0xA5 || cp == 0x203E {
+            // ¥ / ‾ — only JIS-Roman can represent these.
+            if set != 1 {
+                out.extend_from_slice(&[0x1B, 0x28, 0x4A]);
+                set = 1;
+            }
+            out.push(if cp == 0xA5 { 0x5C } else { 0x7E });
+        } else if cp < 0x80 {
+            let b = cp as u8;
+            // JIS-Roman keeps only graphic 0x21..=0x7E (minus the 0x5C/0x7E
+            // remaps); controls, space, DEL and backslash/tilde need ASCII.
+            let roman_ok = set == 1 && (0x21..=0x7E).contains(&b) && b != 0x5C && b != 0x7E;
+            if !roman_ok && set != 0 {
+                out.extend_from_slice(&[0x1B, 0x28, 0x42]);
+                set = 0;
+            }
+            out.push(b);
+        } else {
+            let mut tmp = [0u8; 8];
+            match encode_eucjp(ch, &mut tmp) {
+                Ok(2)
+                    if (0xA1..=0xFE).contains(&tmp[0]) && (0xA1..=0xFE).contains(&tmp[1]) =>
+                {
+                    if set != 2 {
+                        out.extend_from_slice(&[0x1B, 0x24, 0x42]);
+                        set = 2;
+                    }
+                    out.push(tmp[0] & 0x7F);
+                    out.push(tmp[1] & 0x7F);
+                }
+                // Half-width kana (EUC 0x8E lead), JIS X 0212 (0x8F, 3 bytes),
+                // or not EUC-encodable at all: unrepresentable in plain JP.
+                _ => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            }
+        }
+        in_pos += consumed;
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError {
+            code: ICONV_E2BIG,
+            in_consumed: 0,
+            out_written: 0,
+        });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    cd.iso2022jp_out_set = set;
+    if let Some((code, pos)) = err {
+        return Err(IconvError {
+            code,
+            in_consumed: pos,
+            out_written: out.len(),
+        });
+    }
+    Ok(IconvResult {
+        non_reversible: 0,
+        in_consumed: in_pos,
+        out_written: out.len(),
+    })
+}
+
+/// ISO-2022-JP DECODE (`from == Iso2022Jp`): parse the escape stream to scalars,
+/// then encode each to `cd.to`. G0 designation persists across calls. The four
+/// recognized 3-byte designators are `ESC ( B` (ASCII), `ESC ( J` (JIS-Roman),
+/// and `ESC $ @` / `ESC $ B` (JIS X 0208, 1978/1983 mapped identically). Every
+/// `ESC` needs 3 bytes of look-ahead; with fewer it is EINVAL (incomplete). An
+/// `ESC` whose next two bytes are not a recognized designator is emitted as a
+/// literal U+001B and only that one byte is consumed — the following bytes are
+/// re-parsed in the current set, exactly like glibc's gconv. In JIS X 0208 mode
+/// each `0x21..=0x7E` byte begins a ku-ten pair (looked up through the EUC-JP
+/// code-set-1 table with the high bit set on both bytes); other `< 0x80` bytes
+/// (controls, space, DEL) pass through literally; `>= 0x80` is EILSEQ.
+fn iso2022jp_decode(
+    cd: &mut IconvDescriptor,
+    input: &[u8],
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let mut chars: Vec<char> = Vec::new();
+    let mut set = cd.iso2022jp_in_set;
+    let mut i = 0usize;
+    let mut consumed_end = 0usize;
+    let mut err: Option<i32> = None;
+    while i < input.len() {
+        let b = input[i];
+        if b == 0x1B {
+            if i + 3 > input.len() {
+                err = Some(ICONV_EINVAL); // need 3 bytes to classify any escape
+                break;
+            }
+            match (input[i + 1], input[i + 2]) {
+                (0x28, 0x42) => set = 0, // ESC ( B -> ASCII
+                (0x28, 0x4A) => set = 1, // ESC ( J -> JIS X 0201 Roman
+                (0x24, 0x40) | (0x24, 0x42) => set = 2, // ESC $ @ / $ B -> JIS X 0208
+                _ => {
+                    // Unrecognized escape: glibc emits the ESC as a literal and
+                    // re-parses from the next byte in the current set.
+                    chars.push('\u{1B}');
+                    i += 1;
+                    consumed_end = i;
+                    continue;
+                }
+            }
+            i += 3;
+            consumed_end = i;
+            continue;
+        }
+        match set {
+            0 => {
+                if b < 0x80 {
+                    chars.push(b as char);
+                    i += 1;
+                    consumed_end = i;
+                } else {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+            }
+            1 => {
+                let ch = match b {
+                    0x5C => '\u{A5}',
+                    0x7E => '\u{203E}',
+                    _ if b < 0x80 => b as char,
+                    _ => {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                };
+                chars.push(ch);
+                i += 1;
+                consumed_end = i;
+            }
+            _ => {
+                if (0x21..=0x7E).contains(&b) {
+                    if i + 1 >= input.len() {
+                        err = Some(ICONV_EINVAL); // incomplete double byte
+                        break;
+                    }
+                    let b1 = input[i + 1];
+                    if !(0x21..=0x7E).contains(&b1) {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                    match decode_eucjp(&[b | 0x80, b1 | 0x80]) {
+                        Ok((ch, 2)) => {
+                            chars.push(ch);
+                            i += 2;
+                            consumed_end = i;
+                        }
+                        _ => {
+                            err = Some(ICONV_EILSEQ);
+                            break;
+                        }
+                    }
+                } else if b < 0x80 {
+                    // Controls, space and DEL pass through in 0208 mode.
+                    chars.push(b as char);
+                    i += 1;
+                    consumed_end = i;
+                } else {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+            }
+        }
+    }
+    // Encode the decoded scalars to the destination codec.
+    let mut out: Vec<u8> = Vec::new();
+    let mut tmp = [0u8; 8];
+    for &ch in &chars {
+        match encode_char(cd.to, ch, &mut tmp) {
+            Ok(n) => out.extend_from_slice(&tmp[..n]),
+            Err(_) => {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+        }
+    }
+    if out.len() > outbuf.len() {
+        return Err(IconvError {
+            code: ICONV_E2BIG,
+            in_consumed: 0,
+            out_written: 0,
+        });
+    }
+    outbuf[..out.len()].copy_from_slice(&out);
+    cd.iso2022jp_in_set = set;
+    if let Some(code) = err {
+        return Err(IconvError {
+            code,
+            in_consumed: consumed_end,
+            out_written: out.len(),
+        });
+    }
+    Ok(IconvResult {
+        non_reversible: 0,
+        in_consumed: consumed_end,
+        out_written: out.len(),
+    })
+}
+
 #[inline]
 fn eilseq(in_consumed: usize, out_written: usize) -> IconvError {
     IconvError {
@@ -20191,6 +20450,19 @@ pub fn iconv(
                     outbuf[0] = 0x0F;
                     cd.iso2022kr_out_ksc = false;
                     return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 1 });
+                }
+                return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
+            }
+            // ISO-2022-JP DEST: a reset returns G0 to ASCII — glibc emits a
+            // trailing `ESC ( B` if the current designation is not ASCII.
+            if cd.to == Encoding::Iso2022Jp {
+                if cd.iso2022jp_out_set != 0 {
+                    if outbuf.len() < 3 {
+                        return Err(IconvError { code: ICONV_E2BIG, in_consumed: 0, out_written: 0 });
+                    }
+                    outbuf[..3].copy_from_slice(&[0x1B, 0x28, 0x42]);
+                    cd.iso2022jp_out_set = 0;
+                    return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 3 });
                 }
                 return Ok(IconvResult { non_reversible: 0, in_consumed: 0, out_written: 0 });
             }
@@ -20242,6 +20514,13 @@ pub fn iconv(
     }
     if cd.to == Encoding::Iso2022Kr {
         return iso2022kr_convert(cd, input, outbuf);
+    }
+    // ISO-2022-JP (either side) is a stateful escape codec, handled whole-buffer.
+    if cd.from == Encoding::Iso2022Jp {
+        return iso2022jp_decode(cd, input, outbuf);
+    }
+    if cd.to == Encoding::Iso2022Jp {
+        return iso2022jp_convert(cd, input, outbuf);
     }
 
     // NOTE: the destination BOM (unmarked `UTF-32`) is emitted LAZILY, just
