@@ -13,6 +13,8 @@ mod euctw_tables;
 mod ibm1364_tables;
 mod ibm1371_tables;
 mod ibm1388_tables;
+mod ibm1390_tables;
+mod ibm1399_tables;
 mod ibm930_tables;
 mod ibm932_tables;
 mod ibm933_tables;
@@ -555,6 +557,8 @@ enum Encoding {
     Ibm1364,
     Ibm1371,
     Ibm1388,
+    Ibm1390,
+    Ibm1399,
     Big5,
     Gbk,
     EucKr,
@@ -576,7 +580,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 292] = [
+const PHASE1_CODEC_TABLE: [CodecSpec; 294] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -2426,6 +2430,18 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 292] = [
         canonical: "IBM-1388",
         normalized: "IBM1388",
         aliases: &["CP1388", "CSIBM1388"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm1390,
+        canonical: "IBM-1390",
+        normalized: "IBM1390",
+        aliases: &["CP1390", "CSIBM1390"],
+    },
+    CodecSpec {
+        encoding: Encoding::Ibm1399,
+        canonical: "IBM-1399",
+        normalized: "IBM1399",
+        aliases: &["CP1399", "CSIBM1399"],
     },
     CodecSpec {
         encoding: Encoding::Big5,
@@ -18933,7 +18949,9 @@ fn decode_char(enc: Encoding, input: &[u8]) -> Result<(char, usize), DecodeError
         | Encoding::Ibm939
         | Encoding::Ibm1364
         | Encoding::Ibm1371
-        | Encoding::Ibm1388 => Err(DecodeError::Invalid),
+        | Encoding::Ibm1388
+        | Encoding::Ibm1390
+        | Encoding::Ibm1399 => Err(DecodeError::Invalid),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(DecodeError::Invalid),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -19353,7 +19371,9 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
         | Encoding::Ibm939
         | Encoding::Ibm1364
         | Encoding::Ibm1371
-        | Encoding::Ibm1388 => Err(EncodeError::Unrepresentable),
+        | Encoding::Ibm1388
+        | Encoding::Ibm1390
+        | Encoding::Ibm1399 => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP is likewise handled by a dedicated whole-buffer path.
         Encoding::Iso2022Jp => Err(EncodeError::Unrepresentable),
         // ISO-2022-JP-2 is likewise handled by a dedicated whole-buffer path.
@@ -21364,18 +21384,27 @@ fn iso2022cn_decode(
     })
 }
 
-/// The four lookup structures backing one IBM EBCDIC DBCS code page.
+/// The lookup structures backing one IBM EBCDIC DBCS code page. `dbcs_multi` /
+/// `dbcs_multi_enc` cover the rare cells that decode to more than one code point
+/// (JIS X 0213 kana + combining mark on IBM-1390/1399); empty for other pages.
 struct EbcdicTables {
     sbcs: &'static [i32; 256],
     dbcs_direct: &'static Vec<u32>,
     sbcs_enc: &'static std::collections::HashMap<u32, u8>,
     dbcs_enc: &'static std::collections::HashMap<u32, u16>,
+    dbcs_multi: &'static [(u16, &'static [u32])],
+    dbcs_multi_enc: &'static [(&'static [u32], u16)],
 }
 
 /// Generate a per-page accessor that builds (once) the DBCS direct-decode map
-/// and the two encode hash maps from the page's generated static tables.
+/// and the two encode hash maps from the page's generated static tables. The
+/// six-arg form supplies the multi-code-point decode/encode tables; the
+/// four-table form defaults them to empty.
 macro_rules! ebcdic_page {
     ($fn:ident, $m:ident, $sbcs:ident, $dbcs:ident, $senc:ident, $denc:ident) => {
+        ebcdic_page!($fn, $m, $sbcs, $dbcs, $senc, $denc, &[], &[]);
+    };
+    ($fn:ident, $m:ident, $sbcs:ident, $dbcs:ident, $senc:ident, $denc:ident, $mult:expr, $multenc:expr) => {
         fn $fn() -> EbcdicTables {
             static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
             static SE: std::sync::OnceLock<std::collections::HashMap<u32, u8>> =
@@ -21387,6 +21416,8 @@ macro_rules! ebcdic_page {
                 dbcs_direct: DIRECT.get_or_init(|| build_dbcs_direct(&$m::$dbcs)),
                 sbcs_enc: SE.get_or_init(|| $m::$senc.iter().copied().collect()),
                 dbcs_enc: DE.get_or_init(|| $m::$denc.iter().copied().collect()),
+                dbcs_multi: $mult,
+                dbcs_multi_enc: $multenc,
             }
         }
     };
@@ -21400,6 +21431,8 @@ ebcdic_page!(ebcdic_ibm939, ibm939_tables, IBM939_SBCS, IBM939_DBCS, IBM939_SBCS
 ebcdic_page!(ebcdic_ibm1364, ibm1364_tables, IBM1364_SBCS, IBM1364_DBCS, IBM1364_SBCS_ENC, IBM1364_DBCS_ENC);
 ebcdic_page!(ebcdic_ibm1371, ibm1371_tables, IBM1371_SBCS, IBM1371_DBCS, IBM1371_SBCS_ENC, IBM1371_DBCS_ENC);
 ebcdic_page!(ebcdic_ibm1388, ibm1388_tables, IBM1388_SBCS, IBM1388_DBCS, IBM1388_SBCS_ENC, IBM1388_DBCS_ENC);
+ebcdic_page!(ebcdic_ibm1390, ibm1390_tables, IBM1390_SBCS, IBM1390_DBCS, IBM1390_SBCS_ENC, IBM1390_DBCS_ENC, &ibm1390_tables::IBM1390_DBCS_MULTI, &ibm1390_tables::IBM1390_DBCS_MULTI_ENC);
+ebcdic_page!(ebcdic_ibm1399, ibm1399_tables, IBM1399_SBCS, IBM1399_DBCS, IBM1399_SBCS_ENC, IBM1399_DBCS_ENC, &ibm1399_tables::IBM1399_DBCS_MULTI, &ibm1399_tables::IBM1399_DBCS_MULTI_ENC);
 
 /// Map an EBCDIC DBCS encoding to its lookup tables (None for non-EBCDIC).
 fn ebcdic_tables_for(enc: Encoding) -> Option<EbcdicTables> {
@@ -21412,6 +21445,8 @@ fn ebcdic_tables_for(enc: Encoding) -> Option<EbcdicTables> {
         Encoding::Ibm1364 => ebcdic_ibm1364(),
         Encoding::Ibm1371 => ebcdic_ibm1371(),
         Encoding::Ibm1388 => ebcdic_ibm1388(),
+        Encoding::Ibm1390 => ebcdic_ibm1390(),
+        Encoding::Ibm1399 => ebcdic_ibm1399(),
         _ => return None,
     })
 }
@@ -21453,6 +21488,15 @@ fn ibm_ebcdic_decode(
                 break;
             }
             let key = ((b as u16) << 8) | input[i + 1] as u16;
+            // Rare multi-code-point cells (IBM-1390/1399 kana + combining mark).
+            if let Some(&(_, cps)) = t.dbcs_multi.iter().find(|&&(k, _)| k == key) {
+                for &cp in cps {
+                    chars.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+                }
+                i += 2;
+                consumed_end = i;
+                continue;
+            }
             let cp = direct[key as usize];
             if cp == 0 {
                 err = Some(ICONV_EILSEQ);
@@ -21529,6 +21573,43 @@ fn ibm_ebcdic_convert(
             }
         };
         let cp = ch as u32;
+        // Multi-code-point cells (IBM-1390/1399): a base scalar followed by the
+        // combining mark maps to one host double-byte cell — try the longest
+        // such sequence first (no-op when the page has no multi-cell table).
+        if !t.dbcs_multi_enc.is_empty() {
+            let mut matched: Option<(u16, usize)> = None;
+            for &(seq, k) in t.dbcs_multi_enc.iter() {
+                if seq.first() != Some(&cp) {
+                    continue;
+                }
+                // Confirm the following scalars match seq[1..].
+                let mut p = in_pos + consumed;
+                let mut ok = true;
+                for &want in &seq[1..] {
+                    match decode_char(cd.from, &input[p..]) {
+                        Ok((c2, n2)) if c2 as u32 == want => p += n2,
+                        _ => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                if ok {
+                    matched = Some((k, p));
+                    break;
+                }
+            }
+            if let Some((k, end)) = matched {
+                if !shifted {
+                    out.push(0x0E);
+                    shifted = true;
+                }
+                out.push((k >> 8) as u8);
+                out.push((k & 0xFF) as u8);
+                in_pos = end;
+                continue;
+            }
+        }
         if let Some(&b) = se.get(&cp) {
             if shifted {
                 out.push(0x0F);

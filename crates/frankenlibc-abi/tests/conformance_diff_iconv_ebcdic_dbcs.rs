@@ -133,6 +133,7 @@ fn f_full(to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
 
 const PAGES: &[&str] = &[
     "IBM-930", "IBM-933", "IBM-935", "IBM-937", "IBM-939", "IBM-1364", "IBM-1371", "IBM-1388",
+    "IBM-1390", "IBM-1399",
 ];
 
 #[test]
