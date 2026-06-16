@@ -1344,6 +1344,89 @@ pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 18] = [
     ("BIGFIVE", "BIG5"),
 ];
 
+/// Supplemental glibc charset-name aliases for codecs fl already implements.
+///
+/// Each `(alias_normalized, canonical)` pair was discovered by a differential
+/// probe (`fl::iconv_open` vs the live host glibc, see
+/// `conformance_diff_iconv_glibc_aliases`): glibc accepts `alias` as a name for
+/// a codec whose full `0x00..=0xFF` single-byte decode signature is byte-for-byte
+/// identical to fl's `canonical` codec, so the alias is a safe, byte-exact name
+/// for the existing codec — programs using these exact spellings (IBM/CS/OSF/Lxx
+/// designations, ISO versioned names like `ISO_8859-15:1998`) opened on glibc but
+/// failed on fl. Keys are pre-normalized to the form `normalize_encoding_label`
+/// produces (uppercase, `-`/`_`/space stripped, `:` and `.` retained). This
+/// supplements the per-codec `aliases` arrays; it is consulted by
+/// `classify_encoding` only after the canonical/per-spec-alias lookups miss.
+const ICONV_GLIBC_ALIAS_SUPPLEMENT: &[(&str, &str)] = &[
+    ("OS2LATIN1", "CP1004"),
+    ("CSIBM1124", "CP1124"),
+    ("IBM848", "CP1125"),
+    ("RUSCII", "CP1125"),
+    ("CSIBM1129", "CP1129"),
+    ("CSIBM11621162", "CP1162"),
+    ("CSIBM1163", "CP1163"),
+    ("CP9448", "CP1256"),
+    ("CSIBM9448", "CP1256"),
+    ("IBM9448", "CP1256"),
+    ("OSF100201B5", "CP437"),
+    ("OSF10020352", "CP850"),
+    ("OSF10020354", "CP852"),
+    ("OSF10020357", "CP855"),
+    ("OSF10020359", "CP857"),
+    ("CSPC858MULTILINGUAL", "CP858"),
+    ("CPIBM861", "CP861"),
+    ("OSF1002035D", "CP861"),
+    ("OSF1002035E", "CP862"),
+    ("OSF1002035F", "CP863"),
+    ("866NAV", "CP866NAV"),
+    ("CPAR", "CP868"),
+    ("OSF10020364", "CP868"),
+    ("CPGR", "CP869"),
+    ("OSF10020365", "CP869"),
+    ("IBM874", "CP874"),
+    ("CPHU", "CWI"),
+    ("CSDECMCS", "DEC-MCS"),
+    ("OSF10010004", "HP-GREEK8"),
+    ("OSF10010001", "HP-ROMAN8"),
+    ("R9", "HP-ROMAN9"),
+    ("OSF10010006", "HP-TURKISH8"),
+    ("CSIBM901", "IBM-901"),
+    ("CSIBM902", "IBM-902"),
+    ("OSF00010001", "ISO-8859-1"),
+    ("ISO885910:1992", "ISO-8859-10"),
+    ("OSF0001000A", "ISO-8859-10"),
+    ("CP921", "ISO-8859-13"),
+    ("CSIBM921", "ISO-8859-13"),
+    ("IBM921", "ISO-8859-13"),
+    ("ISO885914:1998", "ISO-8859-14"),
+    ("L8", "ISO-8859-14"),
+    ("ISO885915:1998", "ISO-8859-15"),
+    ("ISO885916:2001", "ISO-8859-16"),
+    ("L10", "ISO-8859-16"),
+    ("ISO88592:1987", "ISO-8859-2"),
+    ("OSF00010002", "ISO-8859-2"),
+    ("ISO88593:1988", "ISO-8859-3"),
+    ("OSF00010003", "ISO-8859-3"),
+    ("ISO88594:1988", "ISO-8859-4"),
+    ("OSF00010004", "ISO-8859-4"),
+    ("ISO88595:1988", "ISO-8859-5"),
+    ("OSF00010005", "ISO-8859-5"),
+    ("ISO88596:1987", "ISO-8859-6"),
+    ("OSF00010006", "ISO-8859-6"),
+    ("ISO88597:1987", "ISO-8859-7"),
+    ("ISO88597:2003", "ISO-8859-7"),
+    ("OSF00010007", "ISO-8859-7"),
+    ("ISO88598:1988", "ISO-8859-8"),
+    ("OSF00010008", "ISO-8859-8"),
+    ("ISO88599:1989", "ISO-8859-9"),
+    ("OSF00010009", "ISO-8859-9"),
+    ("TS5881", "ISO-8859-9"),
+    ("CSIBM1167", "KOI8-RU"),
+    ("CP1282", "MACCENTRALEUROPE"),
+    ("TIS620.25291", "TIS-620"),
+    ("TIS620.25330", "TIS-620"),
+];
+
 /// Known out-of-scope codec families for phase-1 implementation.
 pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 3] =
     ["ISO-2022-CN-EXT", "ISO-2022-JP", "BIG5-HKSCS"];
@@ -1570,6 +1653,22 @@ fn classify_encoding(raw: &[u8]) -> EncodingLookup {
                 canonical: spec.canonical,
                 dispatch_path: CodecDispatchPath::IncludedAlias,
             };
+        }
+    }
+
+    // Supplemental glibc aliases for already-implemented codecs (probe-verified
+    // byte-identical). Consulted only after the canonical/per-spec-alias misses.
+    for &(alias, canon) in ICONV_GLIBC_ALIAS_SUPPLEMENT {
+        if canonical.as_slice() == alias.as_bytes() {
+            for spec in PHASE1_CODEC_TABLE {
+                if spec.canonical == canon {
+                    return EncodingLookup {
+                        encoding: Some(spec.encoding),
+                        canonical: spec.canonical,
+                        dispatch_path: CodecDispatchPath::IncludedAlias,
+                    };
+                }
+            }
         }
     }
 
