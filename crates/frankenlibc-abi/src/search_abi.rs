@@ -435,6 +435,20 @@ pub unsafe extern "C" fn tdelete(
 }
 
 /// POSIX `twalk` — traverse a binary tree.
+///
+/// BY-DESIGN SHAPE DIVERGENCE (bd-2g7oyh.311, resolved as conformant): the
+/// `level` (depth) reported here and the leaf-vs-internal classification of
+/// each node depend on the *shape* of the managed tree, which POSIX leaves
+/// unspecified. FrankenLibC backs `tsearch` with a balanced left-leaning
+/// red-black tree (`frankenlibc-core` search/rb_tree.rs), whereas glibc uses a
+/// classic parent-pointer red-black tree; for the same insertion order the two
+/// build different (both valid) trees, so the depths/classifications differ
+/// (e.g. insert 1..7: glibc root depth 2, fl root depth — balanced). This is
+/// NOT a bug and must NOT be "fixed" by mirroring glibc's exact RB rebalancing:
+/// the observable *set* contract (in-order key sequence, membership, delete
+/// correctness) is byte-identical to glibc and pinned by
+/// `conformance_diff_tsearch`; fl's own deterministic depth/shape is pinned by
+/// `tsearch_twalk_shape_pin`. fl's balanced tree is the more useful guarantee.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn twalk(
     root: *const c_void,
