@@ -7676,8 +7676,8 @@ pub unsafe extern "C" fn tanf64x(x: f64) -> f64 {
     unsafe { tan(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tanf128(x: f64) -> f64 {
-    unsafe { tan(x) }
+pub unsafe extern "C" fn tanf128(x: f128) -> f128 {
+    tanl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanhf32(x: f32) -> f32 {
@@ -10863,6 +10863,101 @@ fn cosl_f128(x: f128) -> f128 {
         2 => -c,
         _ => s,
     }
+}
+
+/// tan/cot kernel for binary128 — verbatim port of glibc `__kernel_tanl`
+/// (k_tanl.c): tan(x+y) for the reduced argument via x + x³·T(x²)/U(x²), with a
+/// pi/4 fold for |x|>=0.674 and the accurate -1/(x+r) cotangent form when iy=-1.
+#[allow(clippy::excessive_precision)]
+fn kernel_tanl_f128(x: f128, y: f128, iy: i32) -> f128 {
+    const ONE: f128 = 1.0f128;
+    const PIO4HI: f128 = 7.8539816339744830961566084581987569936977E-1f128;
+    const PIO4LO: f128 = 2.1679525325309452561992610065108379921906E-35f128;
+    const TH: f128 = 3.333333333333333333333333333333333333333E-1f128;
+    const T0: f128 = -1.813014711743583437742363284336855889393E7f128;
+    const T1: f128 = 1.320767960008972224312740075083259247618E6f128;
+    const T2: f128 = -2.626775478255838182468651821863299023956E4f128;
+    const T3: f128 = 1.764573356488504935415411383687150199315E2f128;
+    const T4: f128 = -3.333267763822178690794678978979803526092E-1f128;
+    const U0: f128 = -1.359761033807687578306772463253710042010E8f128;
+    const U1: f128 = 6.494370630656893175666729313065113194784E7f128;
+    const U2: f128 = -4.180787672237927475505536849168729386782E6f128;
+    const U3: f128 = 8.031643765106170040139966622980914621521E4f128;
+    const U4: f128 = -5.323131271912475695157127875560667378597E2f128;
+    let clr_lo64 = |v: f128| f128::from_bits(v.to_bits() & (!0u128 << 64));
+
+    let w0 = (x.to_bits() >> 96) as u32;
+    let ix = w0 & 0x7fff_ffff;
+    if ix < 0x3fc6_0000 {
+        // |x| < 2^-57; (int)x == 0 here.
+        if (ix | ((x.to_bits() & ((1u128 << 96) - 1)) != 0) as u32) == 0 && (iy + 1) == 0 {
+            return ONE / x.abs(); // x==0 && iy==-1: cot(0) = +inf
+        } else if iy == 1 {
+            return x;
+        } else {
+            return -ONE / x;
+        }
+    }
+
+    let mut x = x;
+    let mut y = y;
+    let mut sign = 1;
+    if ix >= 0x3ffe_5942 {
+        if w0 & 0x8000_0000 != 0 {
+            x = -x;
+            y = -y;
+            sign = -1;
+        }
+        let z = PIO4HI - x;
+        let w = PIO4LO - y;
+        x = z + w;
+        y = 0.0;
+    }
+    let z = x * x;
+    let mut r = T0 + z * (T1 + z * (T2 + z * (T3 + z * T4)));
+    let v = U0 + z * (U1 + z * (U2 + z * (U3 + z * (U4 + z))));
+    r /= v;
+    let s = z * x;
+    r = y + z * (s * r + y);
+    r += TH * s;
+    let w = x + r;
+    if ix >= 0x3ffe_5942 {
+        let v = iy as f128;
+        let mut w = v - 2.0 * (x - (w * w / (w + v) - r));
+        if sign < 0 {
+            w = -w;
+        }
+        return w;
+    }
+    if iy == 1 {
+        w
+    } else {
+        // accurate -1/(x+r)
+        let u1 = clr_lo64(w);
+        let v = r - (u1 - x);
+        let z = -1.0 / w;
+        let u = clr_lo64(z);
+        let s = 1.0 + u * u1;
+        u + z * (s + u * v)
+    }
+}
+
+/// tan for binary128 — glibc s_tanl: kernel for |x|<=pi/4, else reduce mod pi/2
+/// with iy = +1 (n even) / -1 (n odd) selecting tan vs the cotangent form.
+fn tanl_f128(x: f128) -> f128 {
+    let ix = (x.to_bits() >> 64) as i64 & 0x7fff_ffff_ffff_ffff;
+    if ix <= 0x3ffe_921f_b544_42d1 {
+        return kernel_tanl_f128(x, 0.0, 1);
+    }
+    if ix >= 0x7fff_0000_0000_0000 {
+        if is_inf_f128(x) {
+            set_domain_errno();
+            return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+        }
+        return x - x;
+    }
+    let (n, y0, y1) = rem_pio2l_f128(x);
+    kernel_tanl_f128(y0, y1, 1 - ((n & 1) << 1))
 }
 
 // --- scalbln-like (f, c_long → f) ---
