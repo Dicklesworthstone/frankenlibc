@@ -4875,8 +4875,8 @@ pub unsafe extern "C" fn compoundnf64x(x: f64, n: i64) -> f64 {
     unsafe { compoundn(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn compoundnf128(x: f64, n: i64) -> f64 {
-    unsafe { compoundn(x, n) }
+pub unsafe extern "C" fn compoundnf128(x: f128, n: i64) -> f128 {
+    compoundn_f128(x, n)
 }
 
 // --- pown (x^n integer) ---
@@ -10317,6 +10317,121 @@ fn exp10l_f128(arg: f128) -> f128 {
     let exp_high = arg_high * log10_high;
     let exp_low = arg_high * log10_low + arg_low * M_LN10;
     expl_f128(exp_high) * expl_f128(exp_low)
+}
+
+/// (1+x)^y for binary128 integer y — verbatim port of glibc's `__compoundn`
+/// (s_compoundn.c). Split 1+x into hi/lo (sign of lo == sign of x), pown(xhi,y),
+/// then multiply by (1+xlo/xhi)^y via a compensated log1p(xlo/xhi) sum and exp.
+/// NUM_PARTS=1 for binary128 (113-bit), so the multi-part machinery collapses to
+/// a single 6-element mul3_split + compensated summation. Built on the
+/// byte-exact powl_f128 + expl_f128 → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn compoundn_f128(x: f128, y: i64) -> f128 {
+    const NEG_QNAN: u128 = (0xffff_u128 << 112) | (1u128 << 111);
+    const EPS_P65: f128 = f128::from_bits(16206u128 << 112); // 2^-112 · 2^-65 = 2^-177
+    const EPS_P33: f128 = f128::from_bits(16238u128 << 112); // 2^-112 · 2^-33 = 2^-145
+    fn add_split(a: f128, b: f128) -> (f128, f128) {
+        let hi = a + b;
+        let lo = (a - hi) + b;
+        (hi, lo)
+    }
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    let cmp_abs = |p: &f128, q: &f128| p.abs().partial_cmp(&q.abs()).unwrap();
+
+    if is_signaling_f128(x) {
+        return x + x;
+    }
+    if x < -1.0 {
+        set_domain_errno();
+        return f128::from_bits(NEG_QNAN);
+    }
+    if y == 0 {
+        return 1.0;
+    }
+    if x.is_nan() {
+        return x;
+    }
+    if x == -1.0 {
+        if y > 0 {
+            return 0.0;
+        }
+        set_range_errno();
+        return 1.0 / 0.0;
+    }
+    if x.is_infinite() {
+        return if y > 0 { x } else { 0.0 }; // x>-1 ⇒ +inf
+    }
+    if y == 1 {
+        let ret = 1.0 + x;
+        if ret.is_infinite() {
+            set_range_errno();
+        }
+        return ret;
+    }
+
+    // X finite > -1, Y not 0 or 1.
+    let (mut xhi, mut xlo) = if x >= 1.0 { add_split(x, 1.0) } else { add_split(1.0, x) };
+    if xlo != 0.0 && (sb(xlo) != sb(x)) {
+        let xhi_n = if sb(x) { xhi.next_up() } else { xhi.next_down() };
+        xlo += xhi - xhi_n;
+        xhi = xhi_n;
+    }
+    let mut ret = powl_f128(xhi, y as f128); // __pown(xhi, y)
+    let big_enough = |num: f128| if xhi >= 1.0 { num.abs() >= xhi * EPS_P65 } else { xhi <= num.abs() / EPS_P65 };
+    if ret.is_finite() && ret != 0.0 && big_enough(xlo) {
+        let qhi = xlo / xhi;
+        let xlo_rem = (-qhi).mul_add(xhi, xlo); // fma(-qhi, xhi, xlo)
+        let qlo = if big_enough(xlo_rem) { xlo_rem / xhi } else { 0.0 };
+        let nqhi2 = if qhi.abs() >= EPS_P33 { qhi * qhi * -0.5 } else { 0.0 };
+
+        // mul3_split: parts add up to a·(qhi + qlo + nqhi2). NUM_PARTS == 1.
+        let a = y as f128;
+        let mut parts = [0.0f128; 6];
+        parts[0] = a * qhi;
+        parts[1] = a.mul_add(qhi, -parts[0]);
+        parts[2] = a * qlo;
+        parts[3] = a.mul_add(qlo, -parts[2]);
+        parts[4] = a * nqhi2;
+        parts[5] = a.mul_add(nqhi2, -parts[4]);
+        parts.sort_by(cmp_abs);
+        // Compensated cascade up.
+        for i in 0..=4 {
+            let (hi, lo) = add_split(parts[i + 1], parts[i]);
+            parts[i + 1] = hi;
+            parts[i] = lo;
+            parts[i + 1..6].sort_by(cmp_abs);
+        }
+        // Compensated cascade down, packing into the top.
+        let mut dstpos: usize = 5;
+        for i in 1..=5usize {
+            let src = 5 - i;
+            if parts[dstpos] == 0.0 {
+                parts[dstpos] = parts[src];
+                parts[src] = 0.0;
+            } else {
+                let (hi, lo) = add_split(parts[dstpos], parts[src]);
+                parts[dstpos] = hi;
+                parts[src] = lo;
+                if parts[src] != 0.0 {
+                    if src + 1 < dstpos {
+                        parts[dstpos - 1] = parts[src];
+                        parts[src] = 0.0;
+                    }
+                    dstpos -= 1;
+                }
+            }
+        }
+        ret *= expl_f128(parts[5]) * expl_f128(parts[4]);
+    }
+    if ret.is_infinite() {
+        ret = f128::MAX * f128::MAX;
+    } else if ret == 0.0 {
+        ret = f128::MIN_POSITIVE * f128::MIN_POSITIVE;
+    }
+    if ret.is_infinite() || ret == 0.0 {
+        set_range_errno();
+    }
+    ret
 }
 
 // --- scalbln-like (f, c_long → f) ---
