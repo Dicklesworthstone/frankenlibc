@@ -11025,8 +11025,95 @@ pub unsafe extern "C" fn clogf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn clogf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { clog(z) }
+/// x²+y²-1 for binary128 in extended precision — port of glibc `__x2y2m1l`
+/// (compensated sum of the split products and -1). Same machinery as compoundn.
+#[allow(clippy::excessive_precision)]
+fn x2y2m1_f128(x: f128, y: f128) -> f128 {
+    fn add_split(a: f128, b: f128) -> (f128, f128) {
+        let hi = a + b;
+        (hi, (a - hi) + b)
+    }
+    let cmp_abs = |p: &f128, q: &f128| p.abs().partial_cmp(&q.abs()).unwrap();
+    let mut vals = [0.0f128; 5];
+    vals[1] = x * x;
+    vals[0] = x.mul_add(x, -vals[1]);
+    vals[3] = y * y;
+    vals[2] = y.mul_add(y, -vals[3]);
+    vals[4] = -1.0;
+    vals.sort_by(cmp_abs);
+    for i in 0..=3 {
+        let (hi, lo) = add_split(vals[i + 1], vals[i]);
+        vals[i + 1] = hi;
+        vals[i] = lo;
+        vals[i + 1..5].sort_by(cmp_abs);
+    }
+    vals[4] + vals[3] + vals[2] + vals[1] + vals[0]
+}
+
+/// Complex natural log for binary128 — port of glibc's s_clog template:
+/// Re = log|z| via range-split log1p/log (with the x2y2m1 and scaling tricks),
+/// Im = atan2(im, re). Built on byte-exact log1pl/logl/hypot/atan2/scalbn →
+/// byte-exact.
+#[allow(clippy::excessive_precision)]
+fn clog_f128(z: CFloat128Complex) -> CFloat128Complex {
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+    const EPS_HALF: f128 = f128::from_bits(16270u128 << 112); // 2^-113
+    let rx = z.re;
+    let ix = z.im;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+
+    if rx == 0.0 && ix == 0.0 {
+        let mut imag = if sb(rx) { PI } else { 0.0 };
+        imag = imag.copysign(ix);
+        return CFloat128Complex { re: -1.0 / rx.abs(), im: imag };
+    }
+    if !rx.is_nan() && !ix.is_nan() {
+        let mut absx = rx.abs();
+        let mut absy = ix.abs();
+        let mut scale = 0i32;
+        if absx < absy {
+            core::mem::swap(&mut absx, &mut absy);
+        }
+        if absx > f128::MAX / 2.0 {
+            scale = -1;
+            absx = scalbn_f128(absx, -1);
+            absy = if absy >= f128::MIN_POSITIVE * 2.0 { scalbn_f128(absy, -1) } else { 0.0 };
+        } else if absx < f128::MIN_POSITIVE && absy < f128::MIN_POSITIVE {
+            scale = 113;
+            absx = scalbn_f128(absx, 113);
+            absy = scalbn_f128(absy, 113);
+        }
+        let real;
+        if absx == 1.0 && scale == 0 {
+            real = log1pl_f128(absy * absy) / 2.0;
+        } else if absx > 1.0 && absx < 2.0 && absy < 1.0 && scale == 0 {
+            let mut d2m1 = (absx - 1.0) * (absx + 1.0);
+            if absy >= EPS {
+                d2m1 += absy * absy;
+            }
+            real = log1pl_f128(d2m1) / 2.0;
+        } else if absx < 1.0 && absx >= 0.5 && absy < EPS_HALF && scale == 0 {
+            let d2m1 = (absx - 1.0) * (absx + 1.0);
+            real = log1pl_f128(d2m1) / 2.0;
+        } else if absx < 1.0 && absx >= 0.5 && scale == 0 && absx * absx + absy * absy >= 0.5 {
+            let d2m1 = x2y2m1_f128(absx, absy);
+            real = log1pl_f128(d2m1) / 2.0;
+        } else {
+            let d = hypot_f128(absx, absy);
+            real = logl_f128(d) - (scale as f128) * LN2;
+        }
+        return CFloat128Complex { re: real, im: atan2_f128(ix, rx) };
+    }
+    // NaN somewhere (not the both-zero / both-finite cases).
+    let real = if rx.is_infinite() || ix.is_infinite() { f128::INFINITY } else { f128::NAN };
+    CFloat128Complex { re: real, im: f128::NAN }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clogf128(z: CFloat128Complex) -> CFloat128Complex {
+    clog_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn conjf32(z: CFloatComplex) -> CFloatComplex {
