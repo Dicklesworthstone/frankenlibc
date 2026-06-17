@@ -45,6 +45,22 @@ fn set_range_errno() {
     unsafe { set_abi_errno(libc::ERANGE) };
 }
 
+/// Unbiased base-2 exponent of a finite, nonzero binary128 value (its `logb`),
+/// handling subnormals via the mantissa's leading-zero count. Caller guarantees
+/// the value is finite and nonzero.
+#[inline]
+fn f128_unbiased_exp(bits: u128) -> i32 {
+    let exp_field = ((bits >> 112) & 0x7fff) as i32;
+    if exp_field == 0 {
+        // Subnormal: value = mantissa * 2^-16494; the leading set bit fixes the
+        // exponent. mantissa is a 112-bit value held in a u128.
+        let mant = bits & ((1u128 << 112) - 1);
+        -16367 - (mant.leading_zeros() as i32)
+    } else {
+        exp_field - 16383
+    }
+}
+
 /// nextafter/nexttoward range-error rule, matching glibc: ERANGE on overflow
 /// (finite x -> infinite result) and on underflow (result subnormal-or-zero AND
 /// magnitude decreased). nextafter(0, y) -> smallest subnormal is NOT an
@@ -4325,8 +4341,19 @@ pub unsafe extern "C" fn llogbf64x(x: f64) -> c_long {
     unsafe { llogb(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn llogbf128(x: f64) -> c_long {
-    unsafe { llogb(x) }
+pub unsafe extern "C" fn llogbf128(x: f128) -> c_long {
+    let bits = x.to_bits();
+    let exp_field = (bits >> 112) & 0x7fff;
+    let mant = bits & ((1u128 << 112) - 1);
+    if exp_field == 0x7fff {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return if mant == 0 { c_long::MAX } else { c_long::MIN }; // inf, nan (FP_LLOGBNAN)
+    }
+    if exp_field == 0 && mant == 0 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return c_long::MIN; // FP_LLOGB0
+    }
+    f128_unbiased_exp(bits) as c_long
 }
 
 // --- logp1, log2p1, log10p1 (C23 aliases) ---
@@ -6902,8 +6929,17 @@ pub unsafe extern "C" fn logbf64x(x: f64) -> f64 {
     unsafe { logb(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn logbf128(x: f64) -> f64 {
-    unsafe { logb(x) }
+pub unsafe extern "C" fn logbf128(x: f128) -> f128 {
+    let bits = x.to_bits();
+    let exp_field = (bits >> 112) & 0x7fff;
+    let mant = bits & ((1u128 << 112) - 1);
+    if exp_field == 0x7fff {
+        return if mant == 0 { x.abs() } else { x }; // inf -> +inf, nan -> nan
+    }
+    if exp_field == 0 && mant == 0 {
+        return f128::from_bits(0xffff_u128 << 112); // logb(0) = -inf
+    }
+    f128_unbiased_exp(bits) as f128
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nearbyintf32(x: f32) -> f32 {
@@ -7392,8 +7428,19 @@ pub unsafe extern "C" fn ilogbf64x(x: f64) -> c_int {
     unsafe { ilogb(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ilogbf128(x: f64) -> c_int {
-    unsafe { ilogb(x) }
+pub unsafe extern "C" fn ilogbf128(x: f128) -> c_int {
+    let bits = x.to_bits();
+    let exp_field = (bits >> 112) & 0x7fff;
+    let mant = bits & ((1u128 << 112) - 1);
+    if exp_field == 0x7fff {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return if mant == 0 { c_int::MAX } else { c_int::MIN }; // inf -> INT_MAX, nan -> FP_ILOGBNAN
+    }
+    if exp_field == 0 && mant == 0 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return c_int::MIN; // FP_ILOGB0
+    }
+    f128_unbiased_exp(bits)
 }
 
 // --- unary → c_long ---
@@ -7536,8 +7583,8 @@ pub unsafe extern "C" fn ldexpf64x(x: f64, n: c_int) -> f64 {
     unsafe { ldexp(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ldexpf128(x: f64, n: c_int) -> f64 {
-    unsafe { ldexp(x, n) }
+pub unsafe extern "C" fn ldexpf128(x: f128, n: c_int) -> f128 {
+    scalbn_f128(x, n as i64)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbnf32(x: f32, n: c_int) -> f32 {
@@ -7556,8 +7603,48 @@ pub unsafe extern "C" fn scalbnf64x(x: f64, n: c_int) -> f64 {
     unsafe { scalbn(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn scalbnf128(x: f64, n: c_int) -> f64 {
-    unsafe { scalbn(x, n) }
+pub unsafe extern "C" fn scalbnf128(x: f128, n: c_int) -> f128 {
+    scalbn_f128(x, n as i64)
+}
+
+/// x * 2^n for binary128, via glibc's staged FP-multiply (so the FPU performs
+/// the single correct rounding for subnormal/overflow results), then ERANGE on
+/// an inf or zero result coming from a finite nonzero x.
+fn scalbn_f128(x: f128, n: i64) -> f128 {
+    let p_big = f128::from_bits(0x7ffe_u128 << 112); // 2^16383
+    let p_min = f128::from_bits(1u128 << 112); // 2^-16382 (smallest normal)
+    let p_renorm = f128::from_bits((113u128 + 16383) << 112); // 2^113
+    let orig_nonzero_finite = x != 0.0 && x.is_finite();
+    let mut x = x;
+    let mut n = n;
+    if n > 16383 {
+        x *= p_big;
+        n -= 16383;
+        if n > 16383 {
+            x *= p_big;
+            n -= 16383;
+            if n > 16383 {
+                n = 16383;
+            }
+        }
+    } else if n < -16382 {
+        x *= p_min * p_renorm;
+        n += 16382 - 113;
+        if n < -16382 {
+            x *= p_min * p_renorm;
+            n += 16382 - 113;
+            if n < -16382 {
+                n = -16382;
+            }
+        }
+    }
+    let scale = f128::from_bits(((n + 16383) as u128) << 112);
+    let r = x * scale;
+    // glibc range error: overflow to inf, or a nonzero value flushed to zero.
+    if orig_nonzero_finite && (r.is_infinite() || r == 0.0) {
+        set_range_errno();
+    }
+    r
 }
 
 // --- scalbln-like (f, c_long → f) ---
@@ -7578,8 +7665,8 @@ pub unsafe extern "C" fn scalblnf64x(x: f64, n: c_long) -> f64 {
     unsafe { scalbln(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn scalblnf128(x: f64, n: c_long) -> f64 {
-    unsafe { scalbln(x, n) }
+pub unsafe extern "C" fn scalblnf128(x: f128, n: c_long) -> f128 {
+    scalbn_f128(x, n as i64)
 }
 
 // --- modf-like (f, *mut f → f) ---
