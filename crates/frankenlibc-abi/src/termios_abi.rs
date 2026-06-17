@@ -848,15 +848,19 @@ pub unsafe extern "C" fn cfsetispeed(termios_p: *mut libc::termios, speed: u32) 
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
+    // glibc's cfsetispeed accepts ONLY a recognized `Bxxx` baud-rate constant.
+    // Any other argument — `BOTHER`, a raw numeric baud (e.g. 9600), or garbage
+    // — is rejected with EINVAL, leaving the structure untouched. (fl previously
+    // substituted BOTHER and returned 0, diverging on both the return value and
+    // the resulting c_cflag bits.) bd-wc9fye.
+    if !termios_core::valid_baud_rate(speed) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
     let before = unsafe { std::ptr::read(termios_p) };
-    let input_code = if termios_core::valid_baud_rate(speed) {
-        speed as libc::speed_t
-    } else {
-        libc::BOTHER
-    };
     unsafe {
         (*termios_p).c_cflag = ((*termios_p).c_cflag & !(libc::CIBAUD as libc::tcflag_t))
-            | input_speed_bits(input_code);
+            | input_speed_bits(speed as libc::speed_t);
         (*termios_p).c_ispeed = speed as libc::speed_t;
     }
     let after = unsafe { std::ptr::read(termios_p) };
@@ -900,15 +904,18 @@ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) 
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
+    // glibc's cfsetospeed accepts ONLY a recognized `Bxxx` baud-rate constant;
+    // BOTHER, a raw numeric baud, or garbage is rejected with EINVAL and the
+    // structure is left unchanged (see cfsetispeed above). bd-wc9fye.
+    if !termios_core::valid_baud_rate(speed) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
+        return -1;
+    }
     let before = unsafe { std::ptr::read(termios_p) };
-    let output_code = if termios_core::valid_baud_rate(speed) {
-        speed as libc::speed_t
-    } else {
-        libc::BOTHER
-    };
     unsafe {
         let next = ((*termios_p).c_cflag & !(libc::CBAUD as libc::tcflag_t))
-            | output_code as libc::tcflag_t;
+            | speed as libc::tcflag_t;
         (*termios_p).c_cflag = next as libc::tcflag_t;
         (*termios_p).c_ospeed = speed as libc::speed_t;
     }
