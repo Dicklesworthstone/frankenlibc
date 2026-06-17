@@ -195,13 +195,24 @@ pub unsafe extern "C" fn ppoll(
         return reject_efault();
     }
 
+    // The kernel ppoll WRITES the remaining time back into the timeout struct.
+    // POSIX (and glibc) require ppoll to leave the caller's timeout unmodified,
+    // so we pass a local copy to the syscall — never the caller's pointer.
+    let mut local_ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let ts_ptr = if timeout_ts.is_null() {
+        std::ptr::null::<u8>()
+    } else {
+        local_ts = unsafe { *timeout_ts };
+        &local_ts as *const libc::timespec as *const u8
+    };
+
     // Use SYS_ppoll with sigset size parameter.
     let sigset_size = core::mem::size_of::<libc::c_ulong>();
     let (rc, adverse) = match unsafe {
         raw_syscall::sys_ppoll(
             fds as *mut u8,
             actual_nfds as usize,
-            timeout_ts as *const u8,
+            ts_ptr,
             sigmask as *const u8,
             sigset_size,
         )
@@ -397,13 +408,24 @@ pub unsafe extern "C" fn pselect(
         &sig_data as *const [usize; 2]
     };
 
+    // The kernel pselect6 WRITES the remaining time back into the timeout
+    // struct. POSIX (and glibc) require pselect to leave the caller's timeout
+    // unmodified, so we pass a local copy — never the caller's pointer.
+    let mut local_ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let ts_ptr = if timeout.is_null() {
+        std::ptr::null::<u8>()
+    } else {
+        local_ts = unsafe { *timeout };
+        &local_ts as *const libc::timespec as *const u8
+    };
+
     let (rc, adverse) = match unsafe {
         raw_syscall::sys_pselect6(
             actual_nfds,
             readfds as *mut u8,
             writefds as *mut u8,
             exceptfds as *mut u8,
-            timeout as *const u8,
+            ts_ptr,
             sig_ptr as *const u8,
         )
     } {
