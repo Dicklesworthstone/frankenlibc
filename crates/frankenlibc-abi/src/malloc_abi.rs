@@ -2606,10 +2606,18 @@ pub unsafe extern "C" fn cfree(ptr: *mut c_void) {
 
 /// GNU `mallopt` -- set allocator tuning parameters.
 ///
-/// Since FrankenLibC uses its own allocator with fixed policy, this is a
-/// compatibility stub that accepts any parameter and returns 1 (success).
+/// FrankenLibC uses its own allocator with a fixed policy, so the tuning itself
+/// is a no-op — but glibc's RETURN contract is preserved: only M_MXFAST
+/// (param 1) is range-validated (value must lie in [0, MAX_FAST_SIZE], glibc's
+/// `80 * SIZE_SZ / 4` = 160 on LP64), otherwise mallopt returns 0 (failure).
+/// Every other parameter is accepted (returns 1), matching glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mallopt(_param: c_int, _value: c_int) -> c_int {
+pub unsafe extern "C" fn mallopt(param: c_int, value: c_int) -> c_int {
+    const M_MXFAST: c_int = 1;
+    let max_fast_size = 80 * std::mem::size_of::<usize>() as c_int / 4;
+    if param == M_MXFAST && !(0..=max_fast_size).contains(&value) {
+        return 0;
+    }
     1
 }
 
