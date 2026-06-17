@@ -1382,21 +1382,30 @@ pub unsafe extern "C" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) ->
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     // SAFETY: rt_sigtimedwait blocks until a signal from `set` is pending.
     // With null timeout, it blocks indefinitely. Returns the signal number.
-    match unsafe {
-        raw_syscall::sys_rt_sigtimedwait(
-            set as *const u8,
-            std::ptr::null_mut(),
-            std::ptr::null(),
-            kernel_sigset_size,
-        )
-    } {
-        Ok(signo) if signo > 0 => {
-            // SAFETY: sig is non-null; we checked above.
-            unsafe { *sig = signo };
-            0
+    //
+    // POSIX/glibc sigwait does NOT report EINTR to the caller: if the wait is
+    // interrupted by a signal not in `set` (a handler ran), the kernel returns
+    // EINTR but glibc restarts the wait. We mirror that by looping — sigwait's
+    // only defined error is EINVAL. (rt_sigtimedwait can return EINTR even when
+    // SA_RESTART is set, so this loop is required for parity.)
+    loop {
+        match unsafe {
+            raw_syscall::sys_rt_sigtimedwait(
+                set as *const u8,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                kernel_sigset_size,
+            )
+        } {
+            Ok(signo) if signo > 0 => {
+                // SAFETY: sig is non-null; we checked above.
+                unsafe { *sig = signo };
+                return 0;
+            }
+            Ok(_) => continue,
+            Err(e) if e == libc::EINTR => continue,
+            Err(e) => return e,
         }
-        Ok(_) => libc::EINTR,
-        Err(e) => e,
     }
 }
 
