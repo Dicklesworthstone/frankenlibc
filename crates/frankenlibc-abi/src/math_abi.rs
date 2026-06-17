@@ -11007,6 +11007,111 @@ fn kernel_tanl_f128(x: f128, y: f128, iy: i32) -> f128 {
     }
 }
 
+/// sincos with glibc's subnormal shortcut: for |v| <= smallest normal, sin==v
+/// and cos==1 (avoids spurious work); else the byte-exact sinl/cosl.
+#[inline]
+fn sincos_pair_f128(v: f128) -> (f128, f128) {
+    if v.abs() > f128::MIN_POSITIVE {
+        (sinl_f128(v), cosl_f128(v))
+    } else {
+        (v, 1.0)
+    }
+}
+
+/// `rx - rx` matching glibc's x86 NaN sign: inf-inf is the negative qNaN, a NaN
+/// operand propagates.
+#[inline]
+fn sub_self_nan_f128(rx: f128) -> f128 {
+    if rx.is_infinite() {
+        f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
+    } else {
+        rx - rx
+    }
+}
+
+/// Complex sine for binary128 — port of glibc's s_csin template:
+/// sin(re)·cosh(im) + i·cos(re)·sinh(im) with overflow staging by exp(t) and the
+/// full inf/NaN lattice. Built on byte-exact sincos/sinh/cosh/exp → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn csin_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 11355.0f128;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    let negate = sb(x.re);
+    let im = x.im;
+    let rx = x.re.abs();
+    let re_fin = x.re.is_finite();
+
+    let (re, imo);
+    if im.is_finite() {
+        if re_fin {
+            let (mut sinix, mut cosix) = sincos_pair_f128(rx);
+            if negate {
+                sinix = -sinix;
+            }
+            if im.abs() > T {
+                let exp_t = expl_f128(T);
+                let mut ixv = im.abs();
+                if sb(im) {
+                    cosix = -cosix;
+                }
+                ixv -= T;
+                sinix *= exp_t / 2.0;
+                cosix *= exp_t / 2.0;
+                if ixv > T {
+                    ixv -= T;
+                    sinix *= exp_t;
+                    cosix *= exp_t;
+                }
+                if ixv > T {
+                    re = f128::MAX * sinix;
+                    imo = f128::MAX * cosix;
+                } else {
+                    let ev = expl_f128(ixv);
+                    re = ev * sinix;
+                    imo = ev * cosix;
+                }
+            } else {
+                re = coshl_f128(im) * sinix;
+                imo = sinhl_f128(im) * cosix;
+            }
+        } else if im == 0.0 {
+            re = sub_self_nan_f128(rx);
+            imo = im;
+        } else {
+            re = f128::NAN;
+            imo = f128::NAN;
+        }
+    } else if im.is_infinite() {
+        if x.re == 0.0 {
+            re = (0.0f128).copysign(if negate { -1.0 } else { 1.0 });
+            imo = im;
+        } else if re_fin {
+            let (sinix, cosix) = sincos_pair_f128(rx);
+            let mut rr = f128::INFINITY.copysign(sinix);
+            let mut ii = f128::INFINITY.copysign(cosix);
+            if negate {
+                rr = -rr;
+            }
+            if sb(im) {
+                ii = -ii;
+            }
+            re = rr;
+            imo = ii;
+        } else {
+            re = sub_self_nan_f128(rx);
+            imo = f128::INFINITY;
+        }
+    } else {
+        re = if x.re == 0.0 {
+            (0.0f128).copysign(if negate { -1.0 } else { 1.0 })
+        } else {
+            f128::NAN
+        };
+        imo = f128::NAN;
+    }
+    CFloat128Complex { re, im: imo }
+}
+
 /// Complex exponential for binary128 — port of glibc's s_cexp template:
 /// e^z = e^re·(cos(im) + i·sin(im)) with overflow staging by exp(t) (t =
 /// floor((MAX_EXP-1)·ln2)) and the full inf/NaN lattice. Built on the byte-exact
@@ -11968,8 +12073,8 @@ pub unsafe extern "C" fn csinf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csin(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn csinf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { csin(z) }
+pub unsafe extern "C" fn csinf128(z: CFloat128Complex) -> CFloat128Complex {
+    csin_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn csinhf32(z: CFloatComplex) -> CFloatComplex {
