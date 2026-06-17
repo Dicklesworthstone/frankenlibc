@@ -7756,8 +7756,33 @@ pub unsafe extern "C" fn remquof64x(x: f64, y: f64, quo: *mut c_int) -> f64 {
     unsafe { remquo(x, y, quo) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn remquof128(x: f64, y: f64, quo: *mut c_int) -> f64 {
-    unsafe { remquo(x, y, quo) }
+pub unsafe extern "C" fn remquof128(x: f128, y: f128, quo: *mut c_int) -> f128 {
+    let ax = x.abs();
+    let ay = y.abs();
+    // Domain / NaN cases: glibc leaves *quo untouched and sets no errno.
+    if x.is_nan() || y.is_nan() {
+        return x + y;
+    }
+    if ay == 0.0 || ax.is_infinite() {
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // negative qNaN
+    }
+    // Low quotient bits = floor(fmod(ax, 8*ay)/ay) (<=7 exact subtractions),
+    // then round-to-nearest-even adjustment, with the sign of x/y. (8*ay may
+    // overflow to inf, but then ax/ay < 8 so the loop still runs < 8 times.)
+    let mut m = ax % (ay * 8.0f128);
+    let mut qt: i32 = 0;
+    while m >= ay {
+        m -= ay;
+        qt += 1;
+    }
+    let two_r = m + m; // m is now fmod(ax, ay)
+    let round_up = two_r > ay || (two_r == ay && (qt & 1) == 1);
+    // glibc keeps the low 3 quotient bits then adds the round-up carry WITHOUT
+    // re-masking, so the stored value can be 8 (or -8).
+    let n_mod8 = if round_up { qt + 1 } else { qt };
+    let neg_q = x.is_sign_negative() != y.is_sign_negative();
+    unsafe { *quo = if neg_q { -n_mod8 } else { n_mod8 } };
+    remainder_f128(x, y)
 }
 
 // --- sincos-like (f, *mut f, *mut f → void) ---

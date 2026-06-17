@@ -10,6 +10,7 @@ use std::ffi::c_int;
 unsafe extern "C" {
     fn fmodf128(x: f128, y: f128) -> f128;
     fn remainderf128(x: f128, y: f128) -> f128;
+    fn remquof128(x: f128, y: f128, q: *mut c_int) -> f128;
 }
 fn el() -> *mut c_int {
     unsafe { libc::__errno_location() }
@@ -60,5 +61,23 @@ fn f128_fmod_remainder_match_glibc() {
             }
         }
     }
+    // remquo: remainder value + errno + quotient low bits.
+    for &x in &vals {
+        for &y in &vals {
+            // Same sentinel: domain cases leave *quo untouched in both engines.
+            let mut gq: c_int = 0x5a5a;
+            let mut fq: c_int = 0x5a5a;
+            unsafe { *el() = 0 };
+            let g = unsafe { remquof128(x, y, &mut gq) }.to_bits();
+            let ge = unsafe { *el() };
+            unsafe { *el() = 0 };
+            let f = unsafe { ma::remquof128(x, y, &mut fq) }.to_bits();
+            let fe = unsafe { *el() };
+            if g != f || ge != fe || gq != fq {
+                mism.push(format!("remquo x={:#034x} y={:#034x}: glibc=({g:#034x},q={gq},e={ge}) fl=({f:#034x},q={fq},e={fe})", x.to_bits(), y.to_bits()));
+            }
+        }
+    }
+
     assert!(mism.is_empty(), "f128 fmod/remainder diverged ({}):\n{}", mism.len(), mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
 }
