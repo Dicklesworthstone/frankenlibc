@@ -183,67 +183,14 @@ fn copy_strcpy_terminal_from(dest: &mut [u8], src: &[u8], block_start: usize) ->
 }
 
 #[inline(always)]
-fn copy_strcpy_prefix_terminal_from(dest: &mut [u8], src: &[u8], block_start: usize) -> usize {
-    let mut i = block_start;
-    while i < src.len() {
-        if src[i] == 0 {
-            let copied = i + 1;
-            dest[..copied].copy_from_slice(&src[..copied]);
-            return copied;
-        }
-        i += 1;
-    }
-    src.len()
-}
-
-#[inline(always)]
 fn strcpy_4096_terminated(dest: &mut [u8], src: &[u8]) -> usize {
     debug_assert_eq!(src.len(), STRCPY_4096_SRC_LEN);
     debug_assert!(dest.len() >= src.len());
     debug_assert_eq!(src.last().copied(), Some(0));
 
-    let block0 = 0;
-    if block_has_nul_512(&src[block0..block0 + STRLEN_NUL_BLOCK]) {
-        return copy_strcpy_prefix_terminal_from(dest, src, block0);
-    }
-
-    let block1 = STRLEN_NUL_BLOCK;
-    if block_has_nul_512(&src[block1..block1 + STRLEN_NUL_BLOCK]) {
-        return copy_strcpy_prefix_terminal_from(dest, src, block1);
-    }
-
-    let block2 = STRLEN_NUL_BLOCK * 2;
-    if block_has_nul_512(&src[block2..block2 + STRLEN_NUL_BLOCK]) {
-        return copy_strcpy_prefix_terminal_from(dest, src, block2);
-    }
-
-    let block3 = STRLEN_NUL_BLOCK * 3;
-    if block_has_nul_512(&src[block3..block3 + STRLEN_NUL_BLOCK]) {
-        return copy_strcpy_prefix_terminal_from(dest, src, block3);
-    }
-
-    let block4 = STRLEN_NUL_BLOCK * 4;
-    if block_has_nul_512(&src[block4..block4 + STRLEN_NUL_BLOCK]) {
-        return copy_strcpy_prefix_terminal_from(dest, src, block4);
-    }
-
-    let block5 = STRLEN_NUL_BLOCK * 5;
-    if block_has_nul_512(&src[block5..block5 + STRLEN_NUL_BLOCK]) {
-        return copy_strcpy_prefix_terminal_from(dest, src, block5);
-    }
-
-    let block6 = STRLEN_NUL_BLOCK * 6;
-    if block_has_nul_512(&src[block6..block6 + STRLEN_NUL_BLOCK]) {
-        return copy_strcpy_prefix_terminal_from(dest, src, block6);
-    }
-
-    let block7 = STRLEN_NUL_BLOCK * 7;
-    if block_has_nul_512(&src[block7..block7 + STRLEN_NUL_BLOCK]) {
-        return copy_strcpy_prefix_terminal_from(dest, src, block7);
-    }
-
-    dest[..STRCPY_4096_SRC_LEN].copy_from_slice(src);
-    STRCPY_4096_SRC_LEN
+    let copied = strlen(src) + 1;
+    dest[..copied].copy_from_slice(&src[..copied]);
+    copied
 }
 
 #[inline(always)]
