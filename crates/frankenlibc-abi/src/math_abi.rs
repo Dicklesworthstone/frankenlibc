@@ -11406,11 +11406,12 @@ fn cexp_f128(x: CFloat128Complex) -> CFloat128Complex {
                 CFloat128Complex { re: value.copysign(cosix), im: value.copysign(sinix) }
             }
         } else if !sb(rx) {
-            // ix is inf/NaN: imag = ix - ix (inf-inf is the x86 negative qNaN).
+            // ix is inf/NaN: imag - imag (inf-inf is the x86 negative qNaN; a NaN
+            // imag propagates with its sign, which Rust's ix-ix would canonicalize).
             let im = if ix.is_infinite() {
                 f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
             } else {
-                ix - ix
+                ix
             };
             CFloat128Complex { re: f128::INFINITY, im }
         } else {
@@ -12829,8 +12830,107 @@ pub unsafe extern "C" fn cpowf64x(a: CDoubleComplex, b: CDoubleComplex) -> CDoub
     unsafe { cpow(a, b) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cpowf128(a: CDoubleComplex, b: CDoubleComplex) -> CDoubleComplex {
-    unsafe { cpow(a, b) }
+pub unsafe extern "C" fn cpowf128(a: CFloat128Complex, b: CFloat128Complex) -> CFloat128Complex {
+    // glibc s_cpow: cpow(x,c) = cexp(c * clog(x)). The complex product matches
+    // GCC's __multc3 (C99 Annex G inf/NaN recovery).
+    cexp_f128(cmul_multc3_f128(b, clog_f128(a)))
+}
+
+/// Complex multiply with C99 Annex G semantics (libgcc `__multc3`), so it is
+/// bit-identical to GCC's compiled `_Complex _Float128 *`.
+#[allow(clippy::excessive_precision)]
+fn cmul_multc3_f128(z: CFloat128Complex, w: CFloat128Complex) -> CFloat128Complex {
+    // x86 multiply: 0·inf yields the canonical negative qNaN (Rust gives +qNaN).
+    fn fmul(a: f128, b: f128) -> f128 {
+        if (a == 0.0 && b.is_infinite()) || (a.is_infinite() && b == 0.0) {
+            f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
+        } else {
+            a * b
+        }
+    }
+    let mut a = z.re;
+    let mut b = z.im;
+    let mut c = w.re;
+    let mut d = w.im;
+    // NaN-sign-preserving combine: libgcc soft-float returns the NaN operand
+    // with its sign; Rust's f128 +/- canonicalizes to +qNaN, so do it by hand.
+    let neg_qnan = f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    let sgn = |v: f128| (v.to_bits() >> 127) != 0;
+    let sub_pres = |p: f128, q: f128| -> f128 {
+        if p.is_nan() {
+            p
+        } else if q.is_nan() {
+            q
+        } else if p.is_infinite() && q.is_infinite() && sgn(p) == sgn(q) {
+            neg_qnan // inf - inf
+        } else {
+            p - q
+        }
+    };
+    let add_pres = |p: f128, q: f128| -> f128 {
+        if p.is_nan() {
+            p
+        } else if q.is_nan() {
+            q
+        } else if p.is_infinite() && q.is_infinite() && sgn(p) != sgn(q) {
+            neg_qnan // inf + (-inf)
+        } else {
+            p + q
+        }
+    };
+    let ac = fmul(a, c);
+    let bd = fmul(b, d);
+    let ad = fmul(a, d);
+    let bc = fmul(b, c);
+    let mut x = sub_pres(ac, bd);
+    let mut y = add_pres(ad, bc);
+    if x.is_nan() && y.is_nan() {
+        let mut recalc = false;
+        if a.is_infinite() || b.is_infinite() {
+            a = (if a.is_infinite() { 1.0f128 } else { 0.0f128 }).copysign(a);
+            b = (if b.is_infinite() { 1.0f128 } else { 0.0f128 }).copysign(b);
+            if c.is_nan() {
+                c = (0.0f128).copysign(c);
+            }
+            if d.is_nan() {
+                d = (0.0f128).copysign(d);
+            }
+            recalc = true;
+        }
+        if c.is_infinite() || d.is_infinite() {
+            c = (if c.is_infinite() { 1.0f128 } else { 0.0f128 }).copysign(c);
+            d = (if d.is_infinite() { 1.0f128 } else { 0.0f128 }).copysign(d);
+            if a.is_nan() {
+                a = (0.0f128).copysign(a);
+            }
+            if b.is_nan() {
+                b = (0.0f128).copysign(b);
+            }
+            recalc = true;
+        }
+        if !recalc
+            && (ac.is_infinite() || bd.is_infinite() || ad.is_infinite() || bc.is_infinite())
+        {
+            if a.is_nan() {
+                a = (0.0f128).copysign(a);
+            }
+            if b.is_nan() {
+                b = (0.0f128).copysign(b);
+            }
+            if c.is_nan() {
+                c = (0.0f128).copysign(c);
+            }
+            if d.is_nan() {
+                d = (0.0f128).copysign(d);
+            }
+            recalc = true;
+        }
+        if recalc {
+            x = fmul(f128::INFINITY, a * c - b * d);
+            y = fmul(f128::INFINITY, a * d + b * c);
+        }
+    }
+    CFloat128Complex { re: x, im: y }
 }
 
 // =========================================================================
