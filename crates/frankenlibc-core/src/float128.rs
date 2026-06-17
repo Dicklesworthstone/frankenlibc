@@ -32,10 +32,176 @@ impl BigUint {
         self.limbs.is_empty()
     }
 
+    fn is_odd(&self) -> bool {
+        self.limbs.first().is_some_and(|&l| l & 1 == 1)
+    }
+
     fn normalize(&mut self) {
         while self.limbs.last() == Some(&0) {
             self.limbs.pop();
         }
+    }
+
+    fn one() -> Self {
+        BigUint { limbs: vec![1] }
+    }
+
+    /// Number of significant bits (0 for the value zero).
+    fn bit_len(&self) -> usize {
+        match self.limbs.last() {
+            None => 0,
+            Some(&top) => (self.limbs.len() - 1) * 32 + (32 - top.leading_zeros() as usize),
+        }
+    }
+
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        use core::cmp::Ordering;
+        if self.limbs.len() != other.limbs.len() {
+            return self.limbs.len().cmp(&other.limbs.len());
+        }
+        for i in (0..self.limbs.len()).rev() {
+            if self.limbs[i] != other.limbs[i] {
+                return self.limbs[i].cmp(&other.limbs[i]);
+            }
+        }
+        Ordering::Equal
+    }
+
+    /// `self += x` (small).
+    fn add_small(&mut self, x: u32) {
+        let mut carry = x as u64;
+        let mut i = 0;
+        while carry != 0 {
+            if i == self.limbs.len() {
+                self.limbs.push(0);
+            }
+            let cur = self.limbs[i] as u64 + carry;
+            self.limbs[i] = (cur & 0xffff_ffff) as u32;
+            carry = cur >> 32;
+            i += 1;
+        }
+    }
+
+    /// `self -= other`, assuming `self >= other`.
+    fn sub_assign(&mut self, other: &Self) {
+        let mut borrow = 0i64;
+        for i in 0..self.limbs.len() {
+            let o = if i < other.limbs.len() { other.limbs[i] as i64 } else { 0 };
+            let mut d = self.limbs[i] as i64 - o - borrow;
+            if d < 0 {
+                d += 1 << 32;
+                borrow = 1;
+            } else {
+                borrow = 0;
+            }
+            self.limbs[i] = d as u32;
+        }
+        self.normalize();
+    }
+
+    /// `self *= 2` (shift left one bit, in place).
+    fn shl1_inplace(&mut self) {
+        let mut carry = 0u32;
+        for l in self.limbs.iter_mut() {
+            let nc = *l >> 31;
+            *l = (*l << 1) | carry;
+            carry = nc;
+        }
+        if carry != 0 {
+            self.limbs.push(carry);
+        }
+    }
+
+    fn get_bit(&self, i: usize) -> bool {
+        let (w, b) = (i / 32, i % 32);
+        self.limbs.get(w).is_some_and(|&l| (l >> b) & 1 == 1)
+    }
+
+    fn set_bit(&mut self, i: usize) {
+        let (w, b) = (i / 32, i % 32);
+        while self.limbs.len() <= w {
+            self.limbs.push(0);
+        }
+        self.limbs[w] |= 1 << b;
+    }
+
+    fn set_bit0(&mut self) {
+        if self.limbs.is_empty() {
+            self.limbs.push(1);
+        } else {
+            self.limbs[0] |= 1;
+        }
+    }
+
+    /// Truncating division with remainder via binary long division.
+    /// Returns (quotient, remainder). `d` must be nonzero.
+    fn divrem(&self, d: &BigUint) -> (BigUint, BigUint) {
+        use core::cmp::Ordering;
+        if self.cmp(d) == Ordering::Less {
+            return (BigUint { limbs: Vec::new() }, self.clone());
+        }
+        let n = self.bit_len();
+        let mut q = BigUint { limbs: vec![0; n.div_ceil(32)] };
+        let mut r = BigUint { limbs: Vec::new() };
+        for i in (0..n).rev() {
+            r.shl1_inplace();
+            if self.get_bit(i) {
+                r.set_bit0();
+            }
+            if r.cmp(d) != Ordering::Less {
+                r.sub_assign(d);
+                q.set_bit(i);
+            }
+        }
+        q.normalize();
+        (q, r)
+    }
+
+    /// `round(self / d)` with round-half-to-even. `d` must be nonzero.
+    fn round_div(&self, d: &BigUint) -> BigUint {
+        use core::cmp::Ordering;
+        let (mut q, r) = self.divrem(d);
+        let mut r2 = r;
+        r2.shl1_inplace();
+        match r2.cmp(d) {
+            Ordering::Greater => q.add_small(1),
+            Ordering::Less => {}
+            Ordering::Equal => {
+                if q.is_odd() {
+                    q.add_small(1);
+                }
+            }
+        }
+        q
+    }
+
+    /// `self * 10^p`.
+    fn mul_pow10(self, p: u32) -> Self {
+        self.mul_pow5(p).shl_bits(p)
+    }
+
+    fn from_decimal(digits: &[u8]) -> BigUint {
+        let mut b = BigUint { limbs: Vec::new() };
+        let len = digits.len();
+        let mut i = len % 9;
+        if i > 0 {
+            let mut v = 0u32;
+            for &d in &digits[..i] {
+                v = v * 10 + (d - b'0') as u32;
+            }
+            b.limbs.push(v);
+            b.normalize();
+        }
+        while i < len {
+            let mut v = 0u32;
+            for &d in &digits[i..i + 9] {
+                v = v * 10 + (d - b'0') as u32;
+            }
+            b.mul_small(1_000_000_000);
+            b.add_small(v);
+            i += 9;
+        }
+        b
     }
 
     /// `self << bits`.
@@ -206,6 +372,75 @@ pub fn classify_binary128(bits: u128) -> F128Class {
         exp10 += 1;
     }
     F128Class::Finite { negative, digits, exp10 }
+}
+
+/// Correctly-rounded (round-half-to-even) IEEE-754 binary128 bit pattern for
+/// the value `(-1)^negative · S · 10^dexp`, where `S` is the nonnegative integer
+/// formed by the ASCII decimal `digits` (most-significant first). Handles
+/// normal, subnormal, signed zero, and overflow-to-infinity — the core of a
+/// correctly-rounded strtof128 (bd-nkr0ga).
+pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
+    let sign = if negative { 1u128 << 127 } else { 0 };
+    // Drop leading zeros; an all-zero significand is a signed zero.
+    let lead = match digits.iter().position(|&d| d != b'0') {
+        Some(s) => s,
+        None => return sign,
+    };
+    let mut digits = &digits[lead..];
+    // Drop trailing zeros into the exponent to keep S small.
+    let mut dexp = dexp;
+    let mut end = digits.len();
+    while end > 1 && digits[end - 1] == b'0' {
+        end -= 1;
+        dexp += 1;
+    }
+    digits = &digits[..end];
+
+    let s = BigUint::from_decimal(digits);
+    // value = num/den, exact.
+    let (num, den) = if dexp >= 0 {
+        (s.mul_pow10(dexp as u32), BigUint::one())
+    } else {
+        (s, BigUint::one().mul_pow10((-dexp) as u32))
+    };
+
+    // Helper: low 128 bits of a (<=128-bit) BigUint.
+    let low128 = |b: &BigUint| -> u128 {
+        let g = |i: usize| b.limbs.get(i).map_or(0u128, |&l| l as u128);
+        g(0) | (g(1) << 32) | (g(2) << 64) | (g(3) << 96)
+    };
+
+    // Find k so that m = round(value / 2^k) is a 113-bit normal significand.
+    let mut k = num.bit_len() as i64 - den.bit_len() as i64 - 113;
+    let mut m = BigUint { limbs: Vec::new() };
+    for _ in 0..6 {
+        m = if k >= 0 {
+            num.round_div(&den.clone().shl_bits(k as u32))
+        } else {
+            num.clone().shl_bits((-k) as u32).round_div(&den)
+        };
+        match m.bit_len().cmp(&113) {
+            core::cmp::Ordering::Less => k -= 1,
+            core::cmp::Ordering::Greater => k += 1,
+            core::cmp::Ordering::Equal => break,
+        }
+    }
+
+    let exp_field = k + 16495;
+    if exp_field >= 0x7fff {
+        return sign | (0x7fffu128 << 112); // overflow -> infinity
+    }
+    if exp_field >= 1 {
+        // Normal: strip the implicit leading bit from the 113-bit significand.
+        let frac = low128(&m) & ((1u128 << 112) - 1);
+        return sign | ((exp_field as u128) << 112) | frac;
+    }
+
+    // Subnormal: round value onto the subnormal grid (ulp = 2^-16494). The ulp
+    // count placed in the low 112 bits lets a carry into bit 112 promote to the
+    // smallest normal automatically.
+    let m_sub = num.shl_bits(16494).round_div(&den);
+    sign | (low128(&m_sub) & ((1u128 << 113) - 1))
 }
 
 /// Round a canonical significand (`digits`, `exp10`) — where the value equals
@@ -642,6 +877,30 @@ mod tests {
         assert_eq!(fmt(bits(0, 0, 0), b'e', None), "0.000000e+00"); // 0.0
         assert_eq!(fmt(bits(0, 0, 0), b'a', None), "0x0p+0");
         assert_eq!(fmt(bits(0, 0x4000, 1 << 111), b'a', Some(0)), "0x2p+1"); // 3.0 %.0a
+    }
+
+    #[test]
+    fn parses_decimal_to_bits() {
+        // Exactly-representable values: known bit patterns.
+        assert_eq!(decimal_to_binary128(false, b"1", 0), bits(0, 0x3FFF, 0)); // 1.0
+        assert_eq!(decimal_to_binary128(false, b"2", 0), bits(0, 0x4000, 0)); // 2.0
+        assert_eq!(decimal_to_binary128(false, b"5", -1), bits(0, 0x3FFE, 0)); // 0.5
+        assert_eq!(decimal_to_binary128(false, b"25", -2), bits(0, 0x3FFD, 0)); // 0.25
+        assert_eq!(decimal_to_binary128(false, b"3", 0), bits(0, 0x4000, 1 << 111)); // 3.0
+        assert_eq!(decimal_to_binary128(false, b"10", 0), bits(0, 0x4002, 1 << 110)); // 10.0
+        assert_eq!(decimal_to_binary128(false, b"1000", -3), bits(0, 0x3FFF, 0)); // 1.0 (1000e-3)
+        // Signed zero.
+        assert_eq!(decimal_to_binary128(false, b"0", 0), 0);
+        assert_eq!(decimal_to_binary128(true, b"0", 0), 1u128 << 127);
+        assert_eq!(decimal_to_binary128(true, b"1", 0), bits(1, 0x3FFF, 0)); // -1.0
+        // Overflow -> +/-inf.
+        assert_eq!(decimal_to_binary128(false, b"1", 5000), bits(0, 0x7FFF, 0));
+        assert_eq!(decimal_to_binary128(true, b"1", 5000), bits(1, 0x7FFF, 0));
+        // Round-trip a known decimal expansion back to its source bits: 2^-120
+        // formats to this exact decimal (see exact_tiny_normal test), so parsing
+        // it must reproduce 2^-120's bits.
+        let tiny = "752316384526264005099991383822237233803945956334136013765601092018187046051025390625";
+        assert_eq!(decimal_to_binary128(false, tiny.as_bytes(), -120), bits(0, 0x3F87, 0));
     }
 
     #[test]
