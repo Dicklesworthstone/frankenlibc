@@ -7,45 +7,46 @@
 - Profile: `glibc_baseline_memmove_4096`
 - Reason: pass168 local routing profile showed `memmove_4096` still slower on the current head (`38.875/42.372 ns` p50/mean vs host `32.948/36.317 ns`).
 - Constraint: `ts1`/remote RCH is offline, so this pass used local crate-scoped Cargo/Criterion with isolated target directories and `-j 1`.
+- Checkout: clean detached worktree `/data/tmp/frankenlibc-pass171-clean-20260617T074538Z` at `45cfd09d4`. The shared checkout had unrelated uncommitted `mem.rs` dirt, so clean-worktree evidence is authoritative for this artifact.
 
 ## Focused Baseline
 
 Command:
 
 ```bash
-env AGENT_NAME=BoldFalcon RCH_REQUIRE_REMOTE=0 FRANKENLIBC_BENCH_PIN=1 CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/data/tmp/frankenlibc-pass171-memmove-baseline-target CRITERION_HOME=/data/tmp/frankenlibc-pass171-memmove-baseline-criterion cargo bench -j 1 -p frankenlibc-bench --bench glibc_baseline_bench -- glibc_baseline_memmove_4096 --noplot --sample-size 100 --warm-up-time 1 --measurement-time 3
+env AGENT_NAME=BoldFalcon RCH_REQUIRE_REMOTE=0 FRANKENLIBC_BENCH_PIN=1 CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/data/tmp/frankenlibc-pass171-clean-baseline-target CRITERION_HOME=/data/tmp/frankenlibc-pass171-clean-baseline-criterion cargo bench -j 1 -p frankenlibc-bench --bench glibc_baseline_bench -- glibc_baseline_memmove_4096 --noplot --sample-size 100 --warm-up-time 1 --measurement-time 3
 ```
 
 Result:
 
-- FrankenLibC Criterion interval: `[38.956 ns 39.690 ns 40.502 ns]`
-- FrankenLibC p50/mean: `38.159/41.634 ns`
-- Host glibc Criterion interval: `[34.469 ns 35.188 ns 35.898 ns]`
-- Host glibc p50/mean: `33.397/36.983 ns`
-- Ratio: `1.143x` p50, `1.126x` mean
-- Log SHA-256: `aeba11e933d565ccf0c403ccc1242d7b200aef94b85a2615653c8e9126683e04`
+- FrankenLibC Criterion interval: `[41.027 ns 41.859 ns 42.689 ns]`
+- FrankenLibC p50/mean: `39.300/41.972 ns`
+- Host glibc Criterion interval: `[35.022 ns 35.689 ns 36.373 ns]`
+- Host glibc p50/mean: `33.843/36.323 ns`
+- Ratio: `1.161x` p50, `1.156x` mean
+- Log SHA-256: `d9b47e42bdb2242eb038d1bd0a71da6bc4a1536a0ab52343593bdb226ecb84a7`
 
 ## Codegen Gate
 
 Command:
 
 ```bash
-env AGENT_NAME=BoldFalcon CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/data/tmp/frankenlibc-pass171-memmove-codegen-target RUSTFLAGS="--emit=llvm-ir,asm" cargo build -j 1 -p frankenlibc-core --lib --profile bench
+env AGENT_NAME=BoldFalcon CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/data/tmp/frankenlibc-pass171-clean-codegen-target RUSTFLAGS="--emit=llvm-ir,asm" cargo build -j 1 -p frankenlibc-core --lib --profile bench
 ```
 
 Result:
 
-- Codegen log SHA-256: `c45ab87e18d0ee503991267cd13baa45ef5534bf0dd11b7f65d636b1fe952b2f`
-- Source SHA-256 (`crates/frankenlibc-core/src/string/mem.rs`): `7a5a805155bcef52063389dd55e439af8e6dab5160dff49974eb784d429a671d`
-- LLVM IR: `/data/tmp/frankenlibc-pass171-memmove-codegen-target/release/deps/frankenlibc_core-6253bb5504e3510e.ll`
-- Assembly: `/data/tmp/frankenlibc-pass171-memmove-codegen-target/release/deps/frankenlibc_core-6253bb5504e3510e.s`
+- Codegen log SHA-256: `d6681260603f0a8b13c7708e7a44c9179edd1e801d28717d26680309da50261f`
+- Source SHA-256 (`crates/frankenlibc-core/src/string/mem.rs`): `78b1a298993e2ed8983de3425dbf1675132cd978179fce0a9a3fa84933c7c41d`
+- LLVM IR: `/data/tmp/frankenlibc-pass171-clean-codegen-target/release/deps/frankenlibc_core-740e8827c32a4be2.ll`
+- Assembly: `/data/tmp/frankenlibc-pass171-clean-codegen-target/release/deps/frankenlibc_core-740e8827c32a4be2.s`
 
 The optimized `frankenlibc_core::string::mem::memmove` symbol already has both retained exact-4096 lowering families:
 
-- Full-slice exact branch: lines `203915-203931` branch on `n == 4096 && dest.len() == 4096 && src.len() == 4096`, then call `llvm.memcpy(..., i64 4096, false)`.
-- Clamped exact-count fallback: lines `203933-203939` call `llvm.memcpy(..., i64 4096, false)` from the `copy_exact_4096_array` path.
-- Generic fallback: lines `203949-203950` call dynamic-length `llvm.memcpy(..., %count, false)`.
-- Assembly symbol lines `196841-196884` collapse both exact branches into one `movl $4096` / `callq *memcpy@GOTPCREL(%rip)` path, with dynamic-count fallback only after the exact-count branch fails.
+- Full-slice exact branch: lines `203852-203868` branch on `n == 4096 && dest.len() == 4096 && src.len() == 4096`, then call `llvm.memcpy(..., i64 4096, false)`.
+- Clamped exact-count fallback: lines `203870-203876` call `llvm.memcpy(..., i64 4096, false)` from the `copy_exact_4096_array` path.
+- Generic fallback: lines `203886-203887` call dynamic-length `llvm.memcpy(..., %count, false)`.
+- Assembly symbol lines `196785-196828` collapse both exact branches into one `movl $4096` / `callq *memcpy@GOTPCREL(%rip)` path, with dynamic-count fallback only after the exact-count branch fails.
 
 ## No-Repeat Screen
 
