@@ -16130,11 +16130,33 @@ pub unsafe extern "C" fn ptrace(
     addr: *mut c_void,
     data: *mut c_void,
 ) -> c_long {
-    match unsafe { syscall::sys_ptrace(request, pid, addr as usize, data as usize) } {
-        Ok(v) => v as c_long,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
+    // glibc bridges the PEEK requests (PEEKTEXT=1/PEEKDATA=2/PEEKUSER=3): the
+    // kernel writes the peeked word through the `data` pointer and returns 0, but
+    // the C API expects the word as the RETURN value. So glibc redirects `data`
+    // to a local, returns that word, and clears errno (the word may legitimately
+    // be -1). Without this, ptrace(PTRACE_PEEKDATA, .., NULL) faults / returns 0.
+    let is_peek = (1..=3).contains(&request);
+    if is_peek {
+        let mut word: c_long = 0;
+        match unsafe {
+            syscall::sys_ptrace(request, pid, addr as usize, &mut word as *mut c_long as usize)
+        } {
+            Ok(_) => {
+                unsafe { set_abi_errno(0) };
+                word
+            }
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        }
+    } else {
+        match unsafe { syscall::sys_ptrace(request, pid, addr as usize, data as usize) } {
+            Ok(v) => v as c_long,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
         }
     }
 }
