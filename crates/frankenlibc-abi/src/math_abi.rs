@@ -5306,8 +5306,17 @@ pub unsafe extern "C" fn setpayloadf64x(res: *mut f64, pl: f64) -> c_int {
     setpayload_impl(res, pl)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setpayloadf128(res: *mut f64, pl: f64) -> c_int {
-    setpayload_impl(res, pl)
+pub unsafe extern "C" fn setpayloadf128(res: *mut f128, pl: f128) -> c_int {
+    // Quiet NaN with payload pl (an integer in [0, 2^111)); else *res = +0, rc 1.
+    let two111 = f128::from_bits((111u128 + 16383) << 112);
+    if pl.is_finite() && pl >= 0.0 && pl == pl.trunc() && pl < two111 {
+        let payload = pl as u128;
+        unsafe { *res = f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111) | payload) };
+        0
+    } else {
+        unsafe { *res = 0.0 };
+        1
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpayloadsig(res: *mut f64, pl: f64) -> c_int {
@@ -5338,8 +5347,18 @@ pub unsafe extern "C" fn setpayloadsigf64x(res: *mut f64, pl: f64) -> c_int {
     setpayloadsig_impl(res, pl)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setpayloadsigf128(res: *mut f64, pl: f64) -> c_int {
-    setpayloadsig_impl(res, pl)
+pub unsafe extern "C" fn setpayloadsigf128(res: *mut f128, pl: f128) -> c_int {
+    // Signaling NaN with payload pl (an integer in [1, 2^111) — must be nonzero
+    // so the result is a NaN, not infinity); else *res = +0, rc 1.
+    let two111 = f128::from_bits((111u128 + 16383) << 112);
+    if pl.is_finite() && pl >= 1.0 && pl == pl.trunc() && pl < two111 {
+        let payload = pl as u128;
+        unsafe { *res = f128::from_bits((0x7fff_u128 << 112) | payload) };
+        0
+    } else {
+        unsafe { *res = 0.0 };
+        1
+    }
 }
 
 // --- fromfp / ufromfp / fromfpx / ufromfpx (C23) ---
