@@ -6815,8 +6815,8 @@ pub unsafe extern "C" fn cbrtf64x(x: f64) -> f64 {
     unsafe { cbrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cbrtf128(x: f64) -> f64 {
-    unsafe { cbrt(x) }
+pub unsafe extern "C" fn cbrtf128(x: f128) -> f128 {
+    cbrt_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ceilf32(x: f32) -> f32 {
@@ -7907,6 +7907,83 @@ fn scalbn_f128(x: f128, n: i64) -> f128 {
         set_range_errno();
     }
     r
+}
+
+/// Cube root for binary128 — verbatim port of glibc's ldbl-128 `__cbrtl`
+/// (Cephes/Moshier, sysdeps/ieee754/ldbl-128/s_cbrtl.c): extract power of two
+/// with frexp, a degree-5 polynomial on the mantissa in [0.5,1), multiply by
+/// cbrt(2^{e mod 3}), reapply the exponent with ldexp, then three Newton
+/// iterations `x -= (x - z/x²)/3`. Uses only IEEE-correctly-rounded f128
+/// `+ - * /` plus exact frexp/ldexp, so it is byte-exact vs glibc cbrtf128.
+fn cbrt_f128(x: f128) -> f128 {
+    const CBRT2: f128 = 1.259921049894873164767210607278228350570251f128;
+    const CBRT4: f128 = 1.587401051968199474751705639272308260391493f128;
+    const CBRT2I: f128 = 0.7937005259840997373758528196361541301957467f128;
+    const CBRT4I: f128 = 0.6299605249474365823836053036391141752851257f128;
+    const THIRD: f128 = 0.3333333333333333333333333333333333333333f128;
+
+    if !x.is_finite() {
+        return x + x;
+    }
+    if x == 0.0 {
+        return x; // preserves the sign of zero
+    }
+    let (mut x, sign) = if x > 0.0 { (x, 1) } else { (-x, -1) };
+    let z = x;
+
+    // frexp: split into mantissa in [0.5,1) and a power-of-two exponent e.
+    let mut e: i32;
+    {
+        let bits = x.to_bits();
+        let ef = ((bits >> 112) & 0x7fff) as i32;
+        let (norm_bits, base_exp) = if ef == 0 {
+            let xn = x * f128::from_bits((113u128 + 16383) << 112); // *2^113
+            (xn.to_bits(), ((xn.to_bits() >> 112) & 0x7fff) as i32 - 113)
+        } else {
+            (bits, ef)
+        };
+        e = base_exp - 16382;
+        x = f128::from_bits((norm_bits & !(0x7fffu128 << 112)) | (0x3FFEu128 << 112));
+    }
+
+    // Approximate cube root of the mantissa, peak relative error 1.2e-6.
+    x = ((((1.3584464340920900529734e-1f128 * x
+        - 6.3986917220457538402318e-1f128) * x
+        + 1.2875551670318751538055e0f128) * x
+        - 1.4897083391357284957891e0f128) * x
+        + 1.3304961236013647092521e0f128) * x
+        + 3.7568280825958912391243e-1f128;
+
+    // exponent divided by 3, scaling the mantissa by cbrt(2^rem).
+    let rem;
+    if e >= 0 {
+        rem = e % 3;
+        e /= 3;
+        if rem == 1 {
+            x *= CBRT2;
+        } else if rem == 2 {
+            x *= CBRT4;
+        }
+    } else {
+        e = -e;
+        rem = e % 3;
+        e /= 3;
+        if rem == 1 {
+            x *= CBRT2I;
+        } else if rem == 2 {
+            x *= CBRT4I;
+        }
+        e = -e;
+    }
+
+    x = scalbn_f128(x, e as i64);
+
+    // Newton iteration, three times.
+    x -= (x - (z / (x * x))) * THIRD;
+    x -= (x - (z / (x * x))) * THIRD;
+    x -= (x - (z / (x * x))) * THIRD;
+
+    if sign < 0 { -x } else { x }
 }
 
 // --- scalbln-like (f, c_long → f) ---
