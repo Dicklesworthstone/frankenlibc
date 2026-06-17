@@ -3720,14 +3720,20 @@ pub struct HashEntry {
 /// `getloadavg` — get system load averages from /proc/loadavg.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getloadavg(loadavg: *mut c_double, nelem: c_int) -> c_int {
-    if loadavg.is_null() || nelem <= 0 {
-        return -1;
-    }
-    let n = std::cmp::min(nelem, 3) as usize;
     let content = match std::fs::read_to_string("/proc/loadavg") {
         Ok(s) => s,
         Err(_) => return -1,
     };
+    // glibc opens /proc/loadavg first, then loops `for i in 0..min(nelem,3)` — so
+    // nelem <= 0 fills nothing and returns 0 (NOT -1), and the buffer is only
+    // dereferenced when nelem > 0.
+    if nelem <= 0 {
+        return 0;
+    }
+    if loadavg.is_null() {
+        return -1;
+    }
+    let n = std::cmp::min(nelem, 3) as usize;
     let parts: Vec<&str> = content.split_whitespace().collect();
     if parts.len() < 3 {
         return -1;
