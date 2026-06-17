@@ -122,6 +122,15 @@ STATUS_PROMOTION_RANK = {
     "RawSyscall": 4,
 }
 ALTERNATE_PATTERN_MODULES = {"glibc_internal_abi", "rpc_abi"}
+CROSS_MODULE_SOURCE_LOCATORS = {
+    ("math_abi", "fedisableexcept"): "fenv_abi",
+    ("math_abi", "feenableexcept"): "fenv_abi",
+    ("math_abi", "fegetexcept"): "fenv_abi",
+    ("math_abi", "fegetmode"): "fenv_abi",
+    ("math_abi", "fesetexcept"): "fenv_abi",
+    ("math_abi", "fesetmode"): "fenv_abi",
+    ("math_abi", "fetestexceptflag"): "fenv_abi",
+}
 PROMOTION_PROOF_WARNING = "host delegation census covered by promotion proof manifest"
 FN_NAME_PATTERN = re.compile(r'\bfn\s+([A-Za-z_]\w*)\s*\(')
 HOST_RESOLVE_BLOCK_USE_PATTERN = re.compile(
@@ -609,6 +618,11 @@ def read_module_source(module_name):
     if not src_path.is_file():
         return None
     return src_path.read_text(encoding="utf-8")
+
+
+def source_module_for_symbol(module_name, symbol):
+    """Return the ABI source module that owns a cataloged symbol body."""
+    return CROSS_MODULE_SOURCE_LOCATORS.get((module_name, symbol), module_name)
 
 
 def extract_host_resolve_aliases(source):
@@ -1130,16 +1144,17 @@ def main():
         sym = entry["symbol"]
         st = entry.get("status", "unknown")
         module = entry.get("module", "unknown")
+        source_module = source_module_for_symbol(module, sym)
 
-        if module not in module_cache:
-            module_cache[module] = read_module_source(module)
-            module_analysis_cache[module] = (
-                analyze_module_source(module_cache[module])
-                if module_cache[module] is not None
+        if source_module not in module_cache:
+            module_cache[source_module] = read_module_source(source_module)
+            module_analysis_cache[source_module] = (
+                analyze_module_source(module_cache[source_module])
+                if module_cache[source_module] is not None
                 else {}
             )
 
-        source = module_cache[module]
+        source = module_cache[source_module]
         if source is None:
             status_skipped += 1
             findings = ["module source not found"]
@@ -1159,7 +1174,7 @@ def main():
             st,
             module,
             source,
-            module_analysis_cache.get(module, {}),
+            module_analysis_cache.get(source_module, {}),
             host_delegation_by_symbol.get(sym),
             promotion_proofs.get(sym),
         )

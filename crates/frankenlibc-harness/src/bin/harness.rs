@@ -5209,6 +5209,7 @@ fn run_fixture_verification_isolated(
 
         for case in cases {
             for exec_mode in verify_case_execution_modes(&case.mode) {
+                #[cfg(feature = "asupersync-tooling")]
                 let start = Instant::now();
                 let execution = match run_conformance_case_subprocess(
                     exe,
@@ -5222,6 +5223,7 @@ fn run_fixture_verification_isolated(
                     Err(MatrixCaseSubprocessError::Crash(err)) => CaseExecution::Crash(err),
                     Err(MatrixCaseSubprocessError::Error(err)) => CaseExecution::Error(err),
                 };
+                #[cfg(feature = "asupersync-tooling")]
                 let duration_ms = start.elapsed().as_millis() as u64;
                 let result =
                     verify_result_from_case_execution(campaign, set, case, &exec_mode, execution);

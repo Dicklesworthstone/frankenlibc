@@ -288,6 +288,15 @@ const MATH_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "y1",
     "yn",
 ];
+const FENV_CROSS_MODULE_SOURCE_SYMBOLS: &[&str] = &[
+    "fedisableexcept",
+    "feenableexcept",
+    "fegetexcept",
+    "fegetmode",
+    "fesetexcept",
+    "fesetmode",
+    "fetestexceptflag",
+];
 const ERR_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "err", "errc", "errx", "verr", "verrc", "verrx", "vwarn", "vwarnc", "vwarnx", "warn", "warnc",
     "warnx",
@@ -545,6 +554,45 @@ fn maintenance_report_generates_successfully() {
         stable_report_sections(&generated),
         stable_report_sections(&canonical),
         "generated maintenance report stable sections drift from canonical artifact"
+    );
+}
+
+#[test]
+fn generated_report_resolves_math_cataloged_fenv_sources() {
+    let generated_path = unique_generated_report_path("fenv_cross_module_source_locator");
+    let output = generate_maintenance_report(&generated_path);
+    assert!(
+        output.status.success(),
+        "Maintenance validator failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&generated_path);
+    let issues = report["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+
+    let offenders: Vec<&str> = issues
+        .iter()
+        .filter_map(|issue| {
+            let candidate = issue["symbol"].as_str()?;
+            if !FENV_CROSS_MODULE_SOURCE_SYMBOLS.contains(&candidate) {
+                return None;
+            }
+            let missing_body = issue["findings"].as_array().is_some_and(|findings| {
+                findings.iter().any(|finding| {
+                    finding
+                        .as_str()
+                        .is_some_and(|text| text.starts_with("function body not found"))
+                })
+            });
+            missing_body.then_some(candidate)
+        })
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "fenv symbols should be resolved through fenv_abi.rs, not reported as missing-body: {offenders:?}"
     );
 }
 

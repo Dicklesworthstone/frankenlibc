@@ -46,7 +46,7 @@ libc = "0.2.185"
 frankenlibc-membrane = { path = "crates/frankenlibc-membrane" }
 frankenlibc-core = { path = "crates/frankenlibc-core" }
 frankenlibc-abi = { path = "crates/frankenlibc-abi" }
-frankenlibc-fixture-exec = { path = "crates/frankenlibc-fixture-exec" }
+frankenlibc-fixture-exec = { path = "crates/frankenlibc-fixture-exec", default-features = false }
 
 # Companion crates (build tooling only)
 asupersync-conformance = "0.3.4"
