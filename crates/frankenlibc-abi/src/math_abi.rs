@@ -4479,8 +4479,19 @@ pub unsafe extern "C" fn rsqrtf64x(x: f64) -> f64 {
     unsafe { rsqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rsqrtf128(x: f64) -> f64 {
-    unsafe { rsqrt(x) }
+pub unsafe extern "C" fn rsqrtf128(x: f128) -> f128 {
+    // glibc s_rsqrt: errno on islessequal(x,0) (false for NaN), then 1/sqrt(x).
+    if x <= 0.0 {
+        if x < 0.0 {
+            set_domain_errno();
+            // sqrtl(negative) is the canonical NEGATIVE qNaN on glibc; 1/that
+            // propagates the same NaN. (Rust's f128 sqrt yields a +qNaN, so we
+            // produce glibc's bit pattern explicitly.)
+            return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+        }
+        set_range_errno();
+    }
+    1.0 / x.sqrt()
 }
 
 // --- llogb (long ilogb) ---
