@@ -5369,8 +5369,16 @@ pub unsafe extern "C" fn getpayloadf64x(x: *const f64) -> f64 {
     getpayload_impl(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getpayloadf128(x: *const f64) -> f64 {
-    getpayload_impl(x)
+pub unsafe extern "C" fn getpayloadf128(x: *const f128) -> f128 {
+    let bits = unsafe { (*x).to_bits() };
+    let exp = (bits >> 112) & 0x7fff;
+    let mant = bits & ((1u128 << 112) - 1);
+    if exp == 0x7fff && mant != 0 {
+        // NaN: payload is the significand bits below the quiet bit (bit 111).
+        (mant & ((1u128 << 111) - 1)) as f128
+    } else {
+        -1.0
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpayload(res: *mut f64, pl: f64) -> c_int {
@@ -8043,8 +8051,47 @@ pub unsafe extern "C" fn nanf64x(tagp: *const std::ffi::c_char) -> f64 {
     unsafe { nan(tagp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nanf128(tagp: *const std::ffi::c_char) -> f64 {
-    unsafe { nan(tagp) }
+pub unsafe extern "C" fn nanf128(tagp: *const std::ffi::c_char) -> f128 {
+    // Quiet NaN whose payload is the base-0 integer parsed from `tagp` (stopping
+    // at the first invalid digit; empty/NULL/invalid -> payload 0).
+    let mut payload: u128 = 0;
+    if !tagp.is_null() {
+        let mut seq: Vec<u8> = Vec::new();
+        let mut p = tagp.cast::<u8>();
+        for _ in 0..128 {
+            let c = unsafe { *p };
+            if c == 0 {
+                break;
+            }
+            seq.push(c);
+            p = unsafe { p.add(1) };
+        }
+        let (base, digits): (u128, &[u8]) =
+            if seq.len() >= 2 && seq[0] == b'0' && (seq[1] | 0x20) == b'x' {
+                (16, &seq[2..])
+            } else if seq.len() > 1 && seq[0] == b'0' {
+                (8, &seq[1..])
+            } else {
+                (10, &seq[..])
+            };
+        // glibc requires the ENTIRE tag to be a valid integer; any invalid char
+        // (or an empty digit sequence) yields payload 0, not a parsed prefix.
+        let mut val: u128 = 0;
+        let mut valid = !digits.is_empty();
+        for &c in digits {
+            match (c as char).to_digit(base as u32) {
+                Some(d) => val = val.wrapping_mul(base).wrapping_add(d as u128),
+                None => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid {
+            payload = val;
+        }
+    }
+    f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111) | (payload & ((1u128 << 111) - 1)))
 }
 
 // --- int-first (c_int, f → f) ---
