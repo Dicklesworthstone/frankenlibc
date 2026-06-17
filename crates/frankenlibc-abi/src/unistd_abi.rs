@@ -14459,11 +14459,17 @@ pub unsafe extern "C" fn getgrouplist(
     }
 
     unsafe { *ngroups = result.len() as c_int };
+    // glibc copies MIN(found, *ngroups) group IDs into the caller's buffer
+    // unconditionally — including when it overflows and returns -1 — so a
+    // caller that inspects the partial result (or the common "fill what fits"
+    // pattern) sees the same prefix glibc would write. fl previously left the
+    // buffer untouched on overflow.
+    let to_write = result.len().min(max_groups);
+    for (i, &gid) in result.iter().take(to_write).enumerate() {
+        unsafe { *groups.add(i) = gid };
+    }
     if result.len() > max_groups {
         return -1;
-    }
-    for (i, &gid) in result.iter().enumerate() {
-        unsafe { *groups.add(i) = gid };
     }
     result.len() as c_int
 }
