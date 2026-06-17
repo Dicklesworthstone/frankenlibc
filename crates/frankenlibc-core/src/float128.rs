@@ -403,13 +403,22 @@ pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
     } else {
         (s, BigUint::one().mul_pow10((-dexp) as u32))
     };
+    rational_to_binary128(sign, &num, &den)
+}
 
-    // Helper: low 128 bits of a (<=128-bit) BigUint.
-    let low128 = |b: &BigUint| -> u128 {
-        let g = |i: usize| b.limbs.get(i).map_or(0u128, |&l| l as u128);
-        g(0) | (g(1) << 32) | (g(2) << 64) | (g(3) << 96)
-    };
+/// Low 128 bits of a (<=128-bit) BigUint.
+fn low128(b: &BigUint) -> u128 {
+    let g = |i: usize| b.limbs.get(i).map_or(0u128, |&l| l as u128);
+    g(0) | (g(1) << 32) | (g(2) << 64) | (g(3) << 96)
+}
 
+/// Correctly-rounded binary128 bits for the positive rational `num/den`, with
+/// `sign` (0 or 1<<127) applied. `num` may be zero (-> signed zero); `den` must
+/// be nonzero. Shared by the decimal and hex parsers.
+fn rational_to_binary128(sign: u128, num: &BigUint, den: &BigUint) -> u128 {
+    if num.is_zero() {
+        return sign;
+    }
     // Find k so that m = round(value / 2^k) is a 113-bit normal significand.
     let mut k = num.bit_len() as i64 - den.bit_len() as i64 - 113;
     let mut m = BigUint { limbs: Vec::new() };
@@ -417,7 +426,7 @@ pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
         m = if k >= 0 {
             num.round_div(&den.clone().shl_bits(k as u32))
         } else {
-            num.clone().shl_bits((-k) as u32).round_div(&den)
+            num.clone().shl_bits((-k) as u32).round_div(den)
         };
         match m.bit_len().cmp(&113) {
             core::cmp::Ordering::Less => k -= 1,
@@ -439,8 +448,36 @@ pub fn decimal_to_binary128(negative: bool, digits: &[u8], dexp: i32) -> u128 {
     // Subnormal: round value onto the subnormal grid (ulp = 2^-16494). The ulp
     // count placed in the low 112 bits lets a carry into bit 112 promote to the
     // smallest normal automatically.
-    let m_sub = num.shl_bits(16494).round_div(&den);
+    let m_sub = num.clone().shl_bits(16494).round_div(den);
     sign | (low128(&m_sub) & ((1u128 << 113) - 1))
+}
+
+/// Correctly-rounded binary128 bits for a hexadecimal-float significand:
+/// `(-1)^negative · M · 2^(binexp - 4·frac_hex_len)`, where `M` is the integer
+/// formed by `int_hex` ++ `frac_hex` (ASCII hex digits) and `binexp` is the
+/// value of the `p` exponent. Handles overflow/subnormal/zero like the decimal
+/// path.
+pub fn hex_to_binary128(negative: bool, int_hex: &[u8], frac_hex: &[u8], binexp: i64) -> u128 {
+    let sign = if negative { 1u128 << 127 } else { 0 };
+    let mut m = BigUint { limbs: Vec::new() };
+    let mut any = false;
+    for &h in int_hex.iter().chain(frac_hex.iter()) {
+        let d = (h as char).to_digit(16).unwrap_or(0);
+        m.mul_small(16);
+        m.add_small(d);
+        any |= d != 0;
+    }
+    if !any {
+        return sign;
+    }
+    // value = M · 2^e2.
+    let e2 = binexp - 4 * frac_hex.len() as i64;
+    let (num, den) = if e2 >= 0 {
+        (m.shl_bits(e2 as u32), BigUint::one())
+    } else {
+        (m, BigUint::one().shl_bits((-e2) as u32))
+    };
+    rational_to_binary128(sign, &num, &den)
 }
 
 /// Round a canonical significand (`digits`, `exp10`) — where the value equals
@@ -901,6 +938,21 @@ mod tests {
         // it must reproduce 2^-120's bits.
         let tiny = "752316384526264005099991383822237233803945956334136013765601092018187046051025390625";
         assert_eq!(decimal_to_binary128(false, tiny.as_bytes(), -120), bits(0, 0x3F87, 0));
+    }
+
+    #[test]
+    fn parses_hex_to_bits() {
+        assert_eq!(hex_to_binary128(false, b"1", b"", 0), bits(0, 0x3FFF, 0)); // 0x1p0 = 1
+        assert_eq!(hex_to_binary128(false, b"1", b"", 1), bits(0, 0x4000, 0)); // 0x1p1 = 2
+        assert_eq!(hex_to_binary128(false, b"1", b"8", 1), bits(0, 0x4000, 1 << 111)); // 0x1.8p1 = 3
+        assert_eq!(hex_to_binary128(false, b"0", b"1", 0), bits(0, 0x3FFB, 0)); // 0x0.1 = 2^-4
+        assert_eq!(hex_to_binary128(true, b"1", b"", 0), bits(1, 0x3FFF, 0)); // -1
+        assert_eq!(hex_to_binary128(false, b"0", b"0", 0), 0); // zero
+        // 0x1.(28 f's)p0: exactly 113 significant bits, no rounding -> all-ones mantissa.
+        assert_eq!(
+            hex_to_binary128(false, b"1", b"ffffffffffffffffffffffffffff", 0),
+            bits(0, 0x3FFF, (1u128 << 112) - 1)
+        );
     }
 
     #[test]
