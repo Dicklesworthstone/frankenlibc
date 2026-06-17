@@ -15867,23 +15867,13 @@ pub unsafe extern "C" fn strfry(string: *mut c_char) -> *mut c_char {
 // ---------------------------------------------------------------------------
 
 /// GNU `getpt` — open a pseudoterminal master.
+///
+/// glibc defines this as exactly `posix_openpt(O_RDWR)` — `/dev/ptmx` opened with
+/// O_RDWR and NOTHING else. The previous O_NOCTTY|O_CLOEXEC additions diverged
+/// observably: glibc's getpt fd has FD_CLOEXEC clear, so it survives exec().
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpt() -> c_int {
-    static PTMX: &[u8] = b"/dev/ptmx\0";
-    match unsafe {
-        syscall::sys_openat(
-            libc::AT_FDCWD,
-            PTMX.as_ptr(),
-            libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
-            0,
-        )
-    } {
-        Ok(fd) => fd,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { posix_openpt(libc::O_RDWR) }
 }
 
 /// POSIX `ptsname_r` — get slave PTY name (reentrant).
