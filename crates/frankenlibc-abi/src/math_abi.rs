@@ -11115,6 +11115,100 @@ fn clog_f128(z: CFloat128Complex) -> CFloat128Complex {
 pub unsafe extern "C" fn clogf128(z: CFloat128Complex) -> CFloat128Complex {
     clog_f128(z)
 }
+
+/// Complex square root for binary128 — port of glibc's s_csqrt template:
+/// scale to avoid over/underflow, d = hypot(re,im), then r,s from
+/// sqrt(0.5·(d±re)) using the identity 2·Re·Im = Im x to dodge cancellation.
+/// Built on byte-exact hypot/sqrt/scalbn → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn csqrt_f128(z: CFloat128Complex) -> CFloat128Complex {
+    let rx = z.re;
+    let ix = z.im;
+    if rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite() {
+        let (re, im);
+        if ix.is_infinite() {
+            re = f128::INFINITY;
+            im = ix;
+        } else if rx.is_infinite() {
+            if rx < 0.0 {
+                re = if ix.is_nan() { f128::NAN } else { 0.0 };
+                im = f128::INFINITY.copysign(ix);
+            } else {
+                re = rx;
+                im = if ix.is_nan() { f128::NAN } else { (0.0f128).copysign(ix) };
+            }
+        } else {
+            re = f128::NAN;
+            im = f128::NAN;
+        }
+        return CFloat128Complex { re, im };
+    }
+
+    let (re, im);
+    if ix == 0.0 {
+        if rx < 0.0 {
+            re = 0.0;
+            im = (-rx).sqrt().copysign(ix);
+        } else {
+            re = rx.sqrt().abs();
+            im = (0.0f128).copysign(ix);
+        }
+    } else if rx == 0.0 {
+        let r = if ix.abs() >= 2.0 * f128::MIN_POSITIVE {
+            (0.5 * ix.abs()).sqrt()
+        } else {
+            0.5 * (2.0 * ix.abs()).sqrt()
+        };
+        re = r;
+        im = r.copysign(ix);
+    } else {
+        let mut xr = rx;
+        let mut xi = ix;
+        let mut scale = 0i32;
+        if rx.abs() > f128::MAX / 4.0 {
+            scale = 1;
+            xr = scalbn_f128(rx, -2);
+            xi = scalbn_f128(ix, -2);
+        } else if ix.abs() > f128::MAX / 4.0 {
+            scale = 1;
+            xr = if rx.abs() >= 4.0 * f128::MIN_POSITIVE { scalbn_f128(rx, -2) } else { 0.0 };
+            xi = scalbn_f128(ix, -2);
+        } else if rx.abs() < 2.0 * f128::MIN_POSITIVE && ix.abs() < 2.0 * f128::MIN_POSITIVE {
+            scale = -57; // -((MANT_DIG+1)/2) = -(114/2)
+            xr = scalbn_f128(rx, 114); // -2*scale
+            xi = scalbn_f128(ix, 114);
+        }
+        let d = hypot_f128(xr, xi);
+        let mut r;
+        let mut s;
+        if xr > 0.0 {
+            r = (0.5 * (d + xr)).sqrt();
+            if scale == 1 && xi.abs() < 1.0 {
+                s = xi / r;
+                r = scalbn_f128(r, scale as i64);
+                scale = 0;
+            } else {
+                s = 0.5 * (xi / r);
+            }
+        } else {
+            s = (0.5 * (d - xr)).sqrt();
+            if scale == 1 && xi.abs() < 1.0 {
+                r = (xi / s).abs();
+                s = scalbn_f128(s, scale as i64);
+                scale = 0;
+            } else {
+                r = (0.5 * (xi / s)).abs();
+            }
+        }
+        if scale != 0 {
+            r = scalbn_f128(r, scale as i64);
+            s = scalbn_f128(s, scale as i64);
+        }
+        re = r;
+        im = s.copysign(ix);
+    }
+    CFloat128Complex { re, im }
+}
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn conjf32(z: CFloatComplex) -> CFloatComplex {
     unsafe { conjf(z) }
@@ -11220,8 +11314,8 @@ pub unsafe extern "C" fn csqrtf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csqrt(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn csqrtf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { csqrt(z) }
+pub unsafe extern "C" fn csqrtf128(z: CFloat128Complex) -> CFloat128Complex {
+    csqrt_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctanf32(z: CFloatComplex) -> CFloatComplex {
