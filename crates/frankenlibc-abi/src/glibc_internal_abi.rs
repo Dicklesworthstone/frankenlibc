@@ -649,8 +649,10 @@ pub unsafe extern "C" fn __strtof128_internal(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
     _group: c_int,
-) -> f64 {
-    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+) -> f128 {
+    // The `group` (thousands-grouping) flag is ignored, matching glibc for the
+    // non-locale path.
+    f128::from_bits(unsafe { strtof128_bits(nptr, endptr) })
 }
 
 // __wcstof128_internal: wide-string variant of f128 parsing.
@@ -862,18 +864,239 @@ pub unsafe extern "C" fn strtof64x_l(
     let _ = loc;
     unsafe { crate::stdlib_abi::strtold(nptr, endptr) }
 }
+/// Correctly-rounded `strtof128` core: parses the strtod grammar (whitespace,
+/// sign, inf/infinity, nan[(...)], hex `0x..p..`, decimal `..e..`), sets
+/// `*endptr` to the first unconsumed byte (or `nptr` if no conversion), sets
+/// errno ERANGE on overflow/underflow, and returns the binary128 bit pattern.
+unsafe fn strtof128_bits(nptr: *const c_char, endptr: *mut *mut c_char) -> u128 {
+    use frankenlibc_core::float128::{decimal_to_binary128, hex_to_binary128};
+    let set_end = |i: usize| {
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.add(i) as *mut c_char };
+        }
+    };
+    if nptr.is_null() {
+        return 0;
+    }
+    let at = |i: usize| -> u8 { unsafe { *nptr.add(i) as u8 } };
+    let ieq = |b: u8, c: u8| b.to_ascii_lowercase() == c;
+    let bytes = |a: usize, b: usize| -> Vec<u8> { (a..b).map(&at).collect() };
+
+    let mut i = 0usize;
+    while matches!(at(i), b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c) {
+        i += 1;
+    }
+    let mut neg = false;
+    match at(i) {
+        b'+' => i += 1,
+        b'-' => {
+            neg = true;
+            i += 1;
+        }
+        _ => {}
+    }
+    let sign: u128 = if neg { 1u128 << 127 } else { 0 };
+
+    // inf / infinity
+    if ieq(at(i), b'i') && ieq(at(i + 1), b'n') && ieq(at(i + 2), b'f') {
+        let mut j = i + 3;
+        if ieq(at(j), b'i')
+            && ieq(at(j + 1), b'n')
+            && ieq(at(j + 2), b'i')
+            && ieq(at(j + 3), b't')
+            && ieq(at(j + 4), b'y')
+        {
+            j += 5;
+        }
+        set_end(j);
+        return sign | (0x7fffu128 << 112);
+    }
+    // nan[(n-char-sequence)]
+    if ieq(at(i), b'n') && ieq(at(i + 1), b'a') && ieq(at(i + 2), b'n') {
+        let mut j = i + 3;
+        let mut payload: u128 = 0;
+        if at(j) == b'(' {
+            let seq_start = j + 1;
+            let mut k = seq_start;
+            while at(k) != 0 && (at(k).is_ascii_alphanumeric() || at(k) == b'_') {
+                k += 1;
+            }
+            if at(k) == b')' {
+                payload = parse_nan_payload(&bytes(seq_start, k));
+                j = k + 1;
+            }
+        }
+        set_end(j);
+        return sign | (0x7fffu128 << 112) | (1u128 << 111) | (payload & ((1u128 << 111) - 1));
+    }
+
+    // hex float: 0x H* [. H*] [pP [+-] D+]
+    if at(i) == b'0' && ieq(at(i + 1), b'x') {
+        let int_start = i + 2;
+        let mut j = int_start;
+        while at(j).is_ascii_hexdigit() {
+            j += 1;
+        }
+        let int_end = j;
+        let (mut frac_start, mut frac_end) = (j, j);
+        if at(j) == b'.' {
+            j += 1;
+            frac_start = j;
+            while at(j).is_ascii_hexdigit() {
+                j += 1;
+            }
+            frac_end = j;
+        }
+        if int_end != int_start || frac_end != frac_start {
+            let mut binexp: i64 = 0;
+            let mut after = j;
+            if ieq(at(j), b'p') {
+                let mut e = j + 1;
+                let mut eneg = false;
+                match at(e) {
+                    b'+' => e += 1,
+                    b'-' => {
+                        eneg = true;
+                        e += 1;
+                    }
+                    _ => {}
+                }
+                let ed = e;
+                let mut val: i64 = 0;
+                while at(e).is_ascii_digit() {
+                    val = val.saturating_mul(10).saturating_add((at(e) - b'0') as i64);
+                    e += 1;
+                }
+                if e > ed {
+                    binexp = if eneg { -val } else { val };
+                    after = e;
+                }
+            }
+            set_end(after);
+            let ih = bytes(int_start, int_end);
+            let fh = bytes(frac_start, frac_end);
+            let nonzero = ih.iter().chain(fh.iter()).any(|&d| d != b'0');
+            let bits = hex_to_binary128(neg, &ih, &fh, binexp);
+            set_strtof128_errno(bits, sign, nonzero);
+            return bits;
+        }
+        // "0x" with no hex digits: the "0" is a decimal zero (fall through).
+    }
+
+    // decimal: D* [. D*] [eE [+-] D+]
+    let int_start = i;
+    while at(i).is_ascii_digit() {
+        i += 1;
+    }
+    let int_end = i;
+    let (mut frac_start, mut frac_end) = (i, i);
+    if at(i) == b'.' {
+        i += 1;
+        frac_start = i;
+        while at(i).is_ascii_digit() {
+            i += 1;
+        }
+        frac_end = i;
+    }
+    if int_end == int_start && frac_end == frac_start {
+        set_end(0); // no conversion: endptr = original nptr
+        return 0;
+    }
+    let mut dexp_e: i64 = 0;
+    let mut after = i;
+    if ieq(at(i), b'e') {
+        let mut e = i + 1;
+        let mut eneg = false;
+        match at(e) {
+            b'+' => e += 1,
+            b'-' => {
+                eneg = true;
+                e += 1;
+            }
+            _ => {}
+        }
+        let ed = e;
+        let mut val: i64 = 0;
+        while at(e).is_ascii_digit() {
+            val = val.saturating_mul(10).saturating_add((at(e) - b'0') as i64);
+            e += 1;
+        }
+        if e > ed {
+            dexp_e = if eneg { -val } else { val };
+            after = e;
+        }
+    }
+    set_end(after);
+
+    let mut digits = bytes(int_start, int_end);
+    digits.extend_from_slice(&bytes(frac_start, frac_end));
+    let dexp_total = dexp_e - (frac_end - frac_start) as i64;
+    // Order-of-magnitude guard: bound the big-integer work and short-circuit
+    // values clearly outside binary128's range (~10^4932 .. 10^-4966).
+    let order = digits.len() as i64 + dexp_total;
+    if order > 5000 {
+        unsafe { set_abi_errno(libc::ERANGE) };
+        return sign | (0x7fffu128 << 112);
+    }
+    if order < -5100 {
+        unsafe { set_abi_errno(libc::ERANGE) };
+        return sign; // underflow to signed zero
+    }
+    let nonzero = digits.iter().any(|&d| d != b'0');
+    let bits = decimal_to_binary128(neg, &digits, dexp_total as i32);
+    set_strtof128_errno(bits, sign, nonzero);
+    bits
+}
+
+/// Parse a `nan(...)` n-char-sequence as a base-0 unsigned integer (glibc uses
+/// the payload as the NaN mantissa bits), stopping at the first invalid digit.
+fn parse_nan_payload(seq: &[u8]) -> u128 {
+    if seq.is_empty() {
+        return 0;
+    }
+    let (base, digits): (u128, &[u8]) = if seq.len() >= 2 && seq[0] == b'0' && (seq[1] | 0x20) == b'x' {
+        (16, &seq[2..])
+    } else if seq[0] == b'0' && seq.len() > 1 {
+        (8, &seq[1..])
+    } else {
+        (10, seq)
+    };
+    let mut v: u128 = 0;
+    for &c in digits {
+        match (c as char).to_digit(base as u32) {
+            Some(d) => v = v.wrapping_mul(base).wrapping_add(d as u128),
+            None => break,
+        }
+    }
+    v
+}
+
+/// Set errno ERANGE for a strtof128 range error, matching glibc: overflow to
+/// infinity, underflow to a subnormal, or a nonzero value flushed to zero.
+fn set_strtof128_errno(bits: u128, sign: u128, input_nonzero: bool) {
+    let exp_field = (bits >> 112) & 0x7fff;
+    let mantissa = bits & ((1u128 << 112) - 1);
+    if exp_field == 0x7fff && mantissa == 0 {
+        unsafe { set_abi_errno(libc::ERANGE) }; // overflow -> inf
+    } else if exp_field == 0 && mantissa != 0 {
+        unsafe { set_abi_errno(libc::ERANGE) }; // underflow -> subnormal
+    } else if bits == sign && input_nonzero {
+        unsafe { set_abi_errno(libc::ERANGE) }; // nonzero value flushed to zero
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn strtof128(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
-    unsafe { crate::stdlib_abi::strtold(nptr, endptr) }
+pub unsafe extern "C" fn strtof128(nptr: *const c_char, endptr: *mut *mut c_char) -> f128 {
+    f128::from_bits(unsafe { strtof128_bits(nptr, endptr) })
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtof128_l(
     nptr: *const c_char,
     endptr: *mut *mut c_char,
     loc: *mut c_void,
-) -> f64 {
+) -> f128 {
     let _ = loc;
-    unsafe { crate::stdlib_abi::strtold(nptr, endptr) }
+    f128::from_bits(unsafe { strtof128_bits(nptr, endptr) })
 }
 
 // wcstof32 → wcstof, wcstof64/f32x → wcstod, wcstof64x/f128 → wcstold
@@ -929,18 +1152,49 @@ pub unsafe extern "C" fn wcstof64x_l(
     let _ = loc;
     unsafe { crate::wchar_abi::wcstold(nptr.cast(), endptr.cast()) }
 }
+/// Wide `strtof128`: the float grammar is pure ASCII, so copy the leading ASCII
+/// run into a narrow buffer, parse with strtof128_bits, and map the consumed
+/// byte count back to wide chars (1:1). A non-ASCII wide char terminates the
+/// number. errno is set by strtof128_bits.
+unsafe fn wcstof128_bits(nptr: *const WcharT, endptr: *mut *mut WcharT) -> u128 {
+    if nptr.is_null() {
+        return 0;
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    let mut n = 0usize;
+    loop {
+        let w = unsafe { *nptr.add(n) };
+        if w <= 0 || w >= 128 {
+            break;
+        }
+        buf.push(w as u8);
+        n += 1;
+        if buf.len() >= 1_000_000 {
+            break;
+        }
+    }
+    buf.push(0);
+    let mut nend: *mut c_char = std::ptr::null_mut();
+    let bits = unsafe { strtof128_bits(buf.as_ptr() as *const c_char, &mut nend) };
+    if !endptr.is_null() {
+        let off = nend as usize - buf.as_ptr() as usize;
+        unsafe { *endptr = nptr.add(off) as *mut WcharT };
+    }
+    bits
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wcstof128(nptr: *const WcharT, endptr: *mut *mut WcharT) -> f64 {
-    unsafe { crate::wchar_abi::wcstold(nptr.cast(), endptr.cast()) }
+pub unsafe extern "C" fn wcstof128(nptr: *const WcharT, endptr: *mut *mut WcharT) -> f128 {
+    f128::from_bits(unsafe { wcstof128_bits(nptr, endptr) })
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstof128_l(
     nptr: *const WcharT,
     endptr: *mut *mut WcharT,
     loc: *mut c_void,
-) -> f64 {
+) -> f128 {
     let _ = loc;
-    unsafe { crate::wchar_abi::wcstold(nptr.cast(), endptr.cast()) }
+    f128::from_bits(unsafe { wcstof128_bits(nptr, endptr) })
 }
 
 // Wide string extras
