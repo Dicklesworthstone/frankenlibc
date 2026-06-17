@@ -17,7 +17,7 @@ Result:
 
 - Exit: `0`
 - Log: `/data/tmp/frankenlibc-pass172-routing.log`
-- Log SHA-256: `14b30c7f8f3b27a6e8393266ec6b96ca78bc4665d0235836c59932421faec246`
+- Log SHA-256: `e64ae271d6f33b58dfc32cd856e672775f7f268bf62ef724e43e415fe5ea4506`
 - Note: the log contains embedded NUL bytes from benchmark output; rows below use the NUL-normalized `GLIBC_BASELINE_BENCH` lines.
 
 ## Current Residual Table
@@ -26,15 +26,21 @@ Result:
 | --- | ---: | ---: | ---: | --- |
 | `memcmp_4096` | `69.660 / 74.952` | `46.757 / 57.868` | `1.490x / 1.295x` | Fresh no-repeat/codegen route-out from pass 162/163; do not repeat source families. |
 | `strlen_4096` | `28.259 / 30.459` | `20.478 / 22.857` | `1.380x / 1.333x` | Next focused gate: material and not part of the current memcmp/memmove/strcpy/memchr route-out streak. |
-| `memmove_4096` | `41.070 / 55.998` | `35.111 / 40.281` | `1.170x / 1.390x` | Fresh pass171 no-code route-out; codegen already collapses exact-4096 paths to `memcpy`. |
-| `strcpy_4096` | `64.641 / 66.184` | `45.881 / 59.593` | `1.409x / 1.111x` | Fresh pass169 no-code route-out; codegen matches prior exact-4097 artifact. |
-| `memchr_absent` | `23.155 / 24.618` | `19.717 / 21.121` | `1.174x / 1.166x` | Fresh pass167 no-code route-out after repeated rejected memchr families. |
+| `memmove_4096` | `38.566 / 43.577` | `32.549 / 35.247` | `1.185x / 1.236x` | Fresh pass171 no-code route-out; codegen already collapses exact-4096 paths to `memcpy`. |
+| `strcpy_4096` | `53.807 / 58.271` | `39.878 / 42.865` | `1.349x / 1.359x` | Fresh pass169 no-code route-out; codegen matches prior exact-4097 artifact. |
+| `memchr_absent` | `22.158 / 24.195` | `19.550 / 21.243` | `1.133x / 1.139x` | Fresh pass167 no-code route-out after repeated rejected memchr families. |
 | `printf_g_6` | `143.001 / 157.161` | `136.663 / 144.544` | `1.046x / 1.087x` | Small residual; not selected ahead of `strlen_4096`. |
 | `memcmp_256` | `5.551 / 6.835` | `5.400 / 6.292` | `1.028x / 1.086x` | Small current residual plus fresh pass170 codegen route-out. |
-| `exp10` | `329.787 / 349.471` | `330.506 / 343.859` | `0.998x / 1.016x` | No focused edit target on current evidence. |
+| `exp10` | `316.587 / 327.994` | `321.777 / 348.941` | `0.984x / 0.940x` | Faster than host on p50/mean. |
 | `memset_4096` | `33.224 / 36.499` | `34.572 / 36.559` | `0.961x / 0.998x` | Already at or ahead of host on p50/mean in this pass. |
-| `powf_irrational` | `366.967 / 384.643` | `388.314 / 401.295` | `0.945x / 0.959x` | Faster than host. |
-| `log`, `log2`, `log10`, `log1p`, `exp10f`, `log10f`, `log2f` | See log | See log | FrankenLibC faster on p50/mean | No focused edit target. |
+| `powf_irrational` | `382.706 / 400.134` | `360.878 / 405.726` | `1.060x / 0.986x` | Mixed p50/mean, no focused edit target ahead of `strlen_4096`. |
+| `log` | `338.881 / 385.268` | `328.369 / 354.578` | `1.032x / 1.087x` | Small residual, not selected. |
+| `log2` | `169.750 / 178.240` | `318.379 / 331.076` | `0.533x / 0.538x` | Faster than host. |
+| `log10` | `395.771 / 423.294` | `475.849 / 491.070` | `0.831x / 0.862x` | Faster than host. |
+| `log1p` | `428.205 / 446.021` | `493.313 / 508.340` | `0.868x / 0.877x` | Faster than host. |
+| `exp10f` | `247.586 / 255.401` | `305.523 / 316.013` | `0.810x / 0.808x` | Faster than host. |
+| `log10f` | `167.028 / 178.798` | `331.633 / 342.647` | `0.504x / 0.522x` | Faster than host. |
+| `log2f` | `168.324 / 172.497` | `306.910 / 327.629` | `0.548x / 0.526x` | Faster than host. |
 
 ## Behavior Proof
 
