@@ -2125,6 +2125,73 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
 }
 
 // ---------------------------------------------------------------------------
+// system() POSIX signal handling
+//
+// POSIX requires system() to ignore SIGINT and SIGQUIT in the calling process
+// and to block SIGCHLD while waiting for the command, restoring all three
+// afterward (glibc implements this via posix_spawn with SETSIGDEF + SETSIGMASK).
+// Without it, a SIGINT during system() wrongly fires the caller's handler and a
+// caller's SIGCHLD handler can reap the command's child out from under us.
+// ---------------------------------------------------------------------------
+
+/// Kernel `struct sigaction` layout (the kernel order is handler, flags,
+/// restorer, then an 8-byte mask — distinct from the libc userspace struct).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct KernelSigaction {
+    handler: usize,
+    flags: usize,
+    restorer: usize,
+    mask: u64,
+}
+
+/// Kernel sigset size in bytes (a single 64-bit word covers signals 1..64).
+const KSIG_SETSIZE: usize = core::mem::size_of::<u64>();
+
+/// Install SIG_IGN for `sig`, returning the previous kernel disposition (so it
+/// can be restored verbatim, preserving any restorer/flags the caller set).
+unsafe fn system_ignore_signal(sig: c_int) -> Option<KernelSigaction> {
+    let act = KernelSigaction { handler: libc::SIG_IGN, flags: 0, restorer: 0, mask: 0 };
+    let mut old = KernelSigaction { handler: 0, flags: 0, restorer: 0, mask: 0 };
+    match unsafe {
+        raw_syscall::sys_rt_sigaction(
+            sig,
+            &act as *const _ as *const u8,
+            &mut old as *mut _ as *mut u8,
+            KSIG_SETSIZE,
+        )
+    } {
+        Ok(()) => Some(old),
+        Err(_) => None,
+    }
+}
+
+/// Restore a previously-saved kernel disposition for `sig`.
+unsafe fn system_restore_signal(sig: c_int, act: &KernelSigaction) {
+    let _ = unsafe {
+        raw_syscall::sys_rt_sigaction(
+            sig,
+            act as *const _ as *const u8,
+            ptr::null_mut(),
+            KSIG_SETSIZE,
+        )
+    };
+}
+
+/// Reset `sig` to SIG_DFL (used in the child before exec).
+unsafe fn system_default_signal(sig: c_int) {
+    let act = KernelSigaction { handler: libc::SIG_DFL, flags: 0, restorer: 0, mask: 0 };
+    let _ = unsafe {
+        raw_syscall::sys_rt_sigaction(
+            sig,
+            &act as *const _ as *const u8,
+            ptr::null_mut(),
+            KSIG_SETSIZE,
+        )
+    };
+}
+
+// ---------------------------------------------------------------------------
 // system
 // ---------------------------------------------------------------------------
 
@@ -2167,10 +2234,41 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
         return -1;
     }
 
+    // POSIX: ignore SIGINT/SIGQUIT and block SIGCHLD in the parent for the
+    // duration of the command, restoring them afterward. Save the previous
+    // dispositions and mask (copied into the child by fork) to restore.
+    let saved_int = unsafe { system_ignore_signal(libc::SIGINT) };
+    let saved_quit = unsafe { system_ignore_signal(libc::SIGQUIT) };
+    let block_mask: u64 = 1u64 << ((libc::SIGCHLD - 1) as u64);
+    let mut saved_mask: u64 = 0;
+    let _ = unsafe {
+        raw_syscall::sys_rt_sigprocmask(
+            libc::SIG_BLOCK,
+            &block_mask as *const u64 as *const u8,
+            &mut saved_mask as *mut u64 as *mut u8,
+            KSIG_SETSIZE,
+        )
+    };
+    let restore_parent = || unsafe {
+        if let Some(a) = saved_int {
+            system_restore_signal(libc::SIGINT, &a);
+        }
+        if let Some(a) = saved_quit {
+            system_restore_signal(libc::SIGQUIT, &a);
+        }
+        let _ = raw_syscall::sys_rt_sigprocmask(
+            libc::SIG_SETMASK,
+            &saved_mask as *const u64 as *const u8,
+            ptr::null_mut(),
+            KSIG_SETSIZE,
+        );
+    };
+
     // SAFETY: fork via clone(SIGCHLD).
     let pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
         Ok(p) => p,
         Err(e) => {
+            restore_parent();
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
             return -1;
@@ -2178,7 +2276,19 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
     };
 
     if pid == 0 {
-        // Child process: exec /bin/sh -c command.
+        // Child process: restore default signal handling and the caller's
+        // original mask (matching glibc's posix_spawn SETSIGDEF/SETSIGMASK) so
+        // the shell behaves normally, then exec /bin/sh -c command.
+        unsafe {
+            system_default_signal(libc::SIGINT);
+            system_default_signal(libc::SIGQUIT);
+            let _ = raw_syscall::sys_rt_sigprocmask(
+                libc::SIG_SETMASK,
+                &saved_mask as *const u64 as *const u8,
+                ptr::null_mut(),
+                KSIG_SETSIZE,
+            );
+        }
         let sh = c"/bin/sh".as_ptr();
         let dash_c = c"-c".as_ptr();
         let argv: [*const c_char; 4] = [sh, dash_c, command, ptr::null()];
@@ -2204,6 +2314,7 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
             Ok(waited_pid) if waited_pid == pid => break,
             Ok(_) => continue, // Spurious wakeup, keep waiting
             Err(e) if e != libc::EINTR => {
+                restore_parent();
                 unsafe { set_abi_errno(e) };
                 runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
                 return -1;
@@ -2212,6 +2323,7 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
         }
     }
 
+    restore_parent();
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, false);
     wstatus
 }
