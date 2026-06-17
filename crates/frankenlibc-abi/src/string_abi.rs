@@ -6150,7 +6150,10 @@ impl frankenlibc_core::string::glob::GlobFs for AltDirGlobFs {
         // NUL-terminated C string and outlives the call.
         let dir = unsafe { opendir(cpath.as_ptr()) };
         if dir.is_null() {
-            let e = unsafe { *libc::__errno_location() };
+            #[cfg(feature = "standalone")]
+            let e = unsafe { *crate::errno_abi::__errno_location() };
+            #[cfg(not(feature = "standalone"))]
+            let e = crate::host_resolve::host_errno(frankenlibc_core::errno::ENOENT);
             return Err(if e != 0 {
                 e
             } else {

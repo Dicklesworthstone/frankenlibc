@@ -6944,7 +6944,7 @@ fn expand_tilde(word: &str) -> String {
         if let Ok(home) = std::env::var("HOME") {
             return format!("{home}{suffix}");
         }
-        let uid = unsafe { libc::getuid() };
+        let uid = syscall::sys_getuid();
         if let Some(pw) = crate::pwd_abi::lookup_passwd_by_uid(uid)
             && let Ok(dir) = String::from_utf8(pw.pw_dir)
         {
