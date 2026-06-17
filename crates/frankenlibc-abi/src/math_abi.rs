@@ -7290,8 +7290,10 @@ pub unsafe extern "C" fn fmodf64x(x: f64, y: f64) -> f64 {
     unsafe { fmod(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmodf128(x: f64, y: f64) -> f64 {
-    unsafe { fmod(x, y) }
+pub unsafe extern "C" fn fmodf128(x: f128, y: f128) -> f128 {
+    // The f128 `%` operator is the IEEE fmod (exact remainder); glibc fmod sets
+    // no errno (FE_INVALID only) for the nan-producing cases, matching this.
+    x % y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hypotf32(x: f32, y: f32) -> f32 {
@@ -7382,9 +7384,43 @@ pub unsafe extern "C" fn remainderf64(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn remainderf64x(x: f64, y: f64) -> f64 {
     unsafe { remainder(x, y) }
 }
+/// IEEE remainder for binary128: x - n*y where n = round-to-nearest-even(x/y).
+/// Exact (built from fmod + an exact tie-break), no rounding.
+fn remainder_f128(x: f128, y: f128) -> f128 {
+    let ax = x.abs();
+    let ay = y.abs();
+    let mut r = ax % ay; // fmod: r in [0, ay)
+    let two_r = r + r; // exact (no overflow: r < ay)
+    if two_r > ay {
+        r -= ay;
+    } else if two_r == ay {
+        // Tie -> round to even quotient. The quotient n is even iff
+        // fmod(ax, 2*ay) < ay (mod-2y keeps the low quotient bit).
+        let two_ay = ay + ay;
+        if !(ax % two_ay < ay) {
+            r -= ay;
+        }
+    }
+    if x.is_sign_negative() {
+        -r
+    } else {
+        r
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn remainderf128(x: f64, y: f64) -> f64 {
-    unsafe { remainder(x, y) }
+pub unsafe extern "C" fn remainderf128(x: f128, y: f128) -> f128 {
+    let ax = x.abs();
+    let ay = y.abs();
+    if x.is_nan() || y.is_nan() {
+        return x + y; // NaN propagation, no errno
+    }
+    if ay == 0.0 || ax.is_infinite() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        // glibc returns a negative quiet NaN for the domain error.
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+    remainder_f128(x, y)
 }
 
 // --- ternary real ---
@@ -7666,7 +7702,7 @@ pub unsafe extern "C" fn scalblnf64x(x: f64, n: c_long) -> f64 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalblnf128(x: f128, n: c_long) -> f128 {
-    scalbn_f128(x, n as i64)
+    scalbn_f128(x, n)
 }
 
 // --- modf-like (f, *mut f → f) ---
