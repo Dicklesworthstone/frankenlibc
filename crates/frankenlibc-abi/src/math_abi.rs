@@ -4823,8 +4823,24 @@ pub unsafe extern "C" fn fmaxmagf64x(x: f64, y: f64) -> f64 {
     unsafe { fmaxmag(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaxmagf128(x: f64, y: f64) -> f64 {
-    unsafe { fmaxmag(x, y) }
+pub unsafe extern "C" fn fmaxmagf128(x: f128, y: f128) -> f128 {
+    // Greater magnitude; equal magnitude or a NaN operand defers to fmax.
+    if x.is_nan() {
+        return if y.is_nan() { x } else { y };
+    }
+    if y.is_nan() {
+        return x;
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax > ay {
+        x
+    } else if ay > ax {
+        y
+    } else if x > y {
+        x
+    } else {
+        y
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminmag(x: f64, y: f64) -> f64 {
@@ -4855,8 +4871,24 @@ pub unsafe extern "C" fn fminmagf64x(x: f64, y: f64) -> f64 {
     unsafe { fminmag(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminmagf128(x: f64, y: f64) -> f64 {
-    unsafe { fminmag(x, y) }
+pub unsafe extern "C" fn fminmagf128(x: f128, y: f128) -> f128 {
+    // Lesser magnitude; equal magnitude or a NaN operand defers to fmin.
+    if x.is_nan() {
+        return if y.is_nan() { x } else { y };
+    }
+    if y.is_nan() {
+        return x;
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax < ay {
+        x
+    } else if ay < ax {
+        y
+    } else if x < y {
+        x
+    } else {
+        y
+    }
 }
 
 // --- totalorder / totalordermag (IEEE 754-2019) ---
@@ -7134,8 +7166,19 @@ pub unsafe extern "C" fn fdimf64x(x: f64, y: f64) -> f64 {
     unsafe { fdim(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fdimf128(x: f64, y: f64) -> f64 {
-    unsafe { fdim(x, y) }
+pub unsafe extern "C" fn fdimf128(x: f128, y: f128) -> f128 {
+    if x.is_nan() || y.is_nan() {
+        return x + y; // NaN propagation
+    }
+    if x > y {
+        let d = x - y;
+        if d.is_infinite() && x.is_finite() && y.is_finite() {
+            set_range_errno();
+        }
+        d
+    } else {
+        0.0
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaxf32(x: f32, y: f32) -> f32 {
@@ -7154,8 +7197,18 @@ pub unsafe extern "C" fn fmaxf64x(x: f64, y: f64) -> f64 {
     unsafe { fmax(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaxf128(x: f64, y: f64) -> f64 {
-    unsafe { fmax(x, y) }
+pub unsafe extern "C" fn fmaxf128(x: f128, y: f128) -> f128 {
+    // glibc: isgreaterequal(x,y) ? x : y (returns the first arg on a ±0 tie,
+    // unlike Rust's .max() which prefers +0).
+    if x.is_nan() {
+        y
+    } else if y.is_nan() {
+        x
+    } else if x < y {
+        y
+    } else {
+        x
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminf32(x: f32, y: f32) -> f32 {
@@ -7174,8 +7227,17 @@ pub unsafe extern "C" fn fminf64x(x: f64, y: f64) -> f64 {
     unsafe { fmin(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminf128(x: f64, y: f64) -> f64 {
-    unsafe { fmin(x, y) }
+pub unsafe extern "C" fn fminf128(x: f128, y: f128) -> f128 {
+    // glibc: x < y ? x : y (returns the second arg on a ±0 tie).
+    if x.is_nan() {
+        y
+    } else if y.is_nan() {
+        x
+    } else if x < y {
+        x
+    } else {
+        y
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmodf32(x: f32, y: f32) -> f32 {
@@ -7234,8 +7296,21 @@ pub unsafe extern "C" fn nextafterf64x(x: f64, y: f64) -> f64 {
     unsafe { nextafter(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nextafterf128(x: f64, y: f64) -> f64 {
-    unsafe { nextafter(x, y) }
+pub unsafe extern "C" fn nextafterf128(x: f128, y: f128) -> f128 {
+    if x.is_nan() || y.is_nan() {
+        return x + y;
+    }
+    if x == y {
+        return y;
+    }
+    let r = if x < y { x.next_up() } else { x.next_down() };
+    // glibc raises ERANGE when the result's exponent field is 0 (subnormal or
+    // zero) or it overflowed a finite x to infinity.
+    let r_exp = (r.to_bits() >> 112) & 0x7fff;
+    if (x.is_finite() && r.is_infinite()) || (r_exp == 0 && x != 0.0) {
+        set_range_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn powf32(x: f32, y: f32) -> f32 {
@@ -7511,8 +7586,19 @@ pub unsafe extern "C" fn modff64x(x: f64, iptr: *mut f64) -> f64 {
     unsafe { modf(x, iptr) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn modff128(x: f64, iptr: *mut f64) -> f64 {
-    unsafe { modf(x, iptr) }
+pub unsafe extern "C" fn modff128(x: f128, iptr: *mut f128) -> f128 {
+    if x.is_nan() {
+        unsafe { *iptr = x };
+        return x;
+    }
+    if x.is_infinite() {
+        unsafe { *iptr = x };
+        return f128::from_bits(x.to_bits() & (1u128 << 127)); // signed zero
+    }
+    let t = x.trunc();
+    unsafe { *iptr = t };
+    // The fractional part carries x's sign (so -0 for negative whole numbers).
+    (x - t).copysign(x)
 }
 
 // --- remquo-like (f, f, *mut c_int → f) ---
