@@ -11934,6 +11934,15 @@ pub unsafe extern "C" fn posix_fallocate(
 /// `posix_madvise` — POSIX advisory information on memory usage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_madvise(addr: *mut c_void, len: usize, advice: c_int) -> c_int {
+    // Linux's MADV_DONTNEED is DESTRUCTIVE (it zero-fills private anonymous pages
+    // on the next access), but POSIX_MADV_DONTNEED is merely advisory. glibc
+    // therefore IGNORES POSIX_MADV_DONTNEED entirely — returning 0 without any
+    // syscall (even for an invalid address) — rather than destroy the caller's
+    // data. (POSIX_MADV_DONTNEED == MADV_DONTNEED == 4 on Linux, so a passthrough
+    // would silently zero memory.)
+    if advice == libc::POSIX_MADV_DONTNEED {
+        return 0;
+    }
     let (_, decision) = runtime_policy::decide(
         ApiFamily::IoFd,
         addr as usize,
