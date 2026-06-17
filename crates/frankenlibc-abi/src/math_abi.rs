@@ -6893,8 +6893,8 @@ pub unsafe extern "C" fn asinf64x(x: f64) -> f64 {
     unsafe { asin(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn asinf128(x: f64) -> f64 {
-    unsafe { asin(x) }
+pub unsafe extern "C" fn asinf128(x: f128) -> f128 {
+    asin_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinhf32(x: f32) -> f32 {
@@ -8448,6 +8448,162 @@ fn atan2_f128(y: f128, x: f128) -> f128 {
         2 => PI - (z - PI_LO),                                   // atan(+,-)
         _ => (z - PI_LO) - PI,                                   // atan(-,-)
     }
+}
+
+/// Arcsine for binary128 — verbatim port of glibc's ldbl-128 Sun/fdlibm
+/// `__ieee754_asinl` (e_asinl.c). Three rational approximations by range
+/// (|x|<0.5 via pS/qS, [0.5625±] via rS/sS, |x|>=0.625 via sqrt((1-|x|)/2) +
+/// pS/qS with a hi/lo split of the sqrt). Self-contained (only sqrtl +
+/// algebraic f128 ops); polynomials written as sequential Horner statements
+/// that reproduce glibc's exact mul-then-add operation order, so byte-exact.
+#[allow(clippy::excessive_precision)]
+fn asin_f128(x: f128) -> f128 {
+    const PIO2_HI: f128 = 1.5707963267948966192313216916397514420986f128;
+    const PIO2_LO: f128 = 4.3359050650618905123985220130216759843812E-35f128;
+    const PIO4_HI: f128 = 7.8539816339744830961566084581987569936977E-1f128;
+    const PS0: f128 = -8.358099012470680544198472400254596543711E2f128;
+    const PS1: f128 = 3.674973957689619490312782828051860366493E3f128;
+    const PS2: f128 = -6.730729094812979665807581609853656623219E3f128;
+    const PS3: f128 = 6.643843795209060298375552684423454077633E3f128;
+    const PS4: f128 = -3.817341990928606692235481812252049415993E3f128;
+    const PS5: f128 = 1.284635388402653715636722822195716476156E3f128;
+    const PS6: f128 = -2.410736125231549204856567737329112037867E2f128;
+    const PS7: f128 = 2.219191969382402856557594215833622156220E1f128;
+    const PS8: f128 = -7.249056260830627156600112195061001036533E-1f128;
+    const PS9: f128 = 1.055923570937755300061509030361395604448E-3f128;
+    const QS0: f128 = -5.014859407482408326519083440151745519205E3f128;
+    const QS1: f128 = 2.430653047950480068881028451580393430537E4f128;
+    const QS2: f128 = -4.997904737193653607449250593976069726962E4f128;
+    const QS3: f128 = 5.675712336110456923807959930107347511086E4f128;
+    const QS4: f128 = -3.881523118339661268482937768522572588022E4f128;
+    const QS5: f128 = 1.634202194895541569749717032234510811216E4f128;
+    const QS6: f128 = -4.151452662440709301601820849901296953752E3f128;
+    const QS7: f128 = 5.956050864057192019085175976175695342168E2f128;
+    const QS8: f128 = -4.175375777334867025769346564600396877176E1f128;
+    const RS0: f128 = -5.619049346208901520945464704848780243887E0f128;
+    const RS1: f128 = 4.460504162777731472539175700169871920352E1f128;
+    const RS2: f128 = -1.317669505315409261479577040530751477488E2f128;
+    const RS3: f128 = 1.626532582423661989632442410808596009227E2f128;
+    const RS4: f128 = -3.144806644195158614904369445440583873264E1f128;
+    const RS5: f128 = -9.806674443470740708765165604769099559553E1f128;
+    const RS6: f128 = 5.708468492052010816555762842394927806920E1f128;
+    const RS7: f128 = 1.396540499232262112248553357962639431922E1f128;
+    const RS8: f128 = -1.126243289311910363001762058295832610344E1f128;
+    const RS9: f128 = -4.956179821329901954211277873774472383512E-1f128;
+    const RS10: f128 = 3.313227657082367169241333738391762525780E-1f128;
+    const SS0: f128 = -4.645814742084009935700221277307007679325E0f128;
+    const SS1: f128 = 3.879074822457694323970438316317961918430E1f128;
+    const SS2: f128 = -1.221986588013474694623973554726201001066E2f128;
+    const SS3: f128 = 1.658821150347718105012079876756201905822E2f128;
+    const SS4: f128 = -4.804379630977558197953176474426239748977E1f128;
+    const SS5: f128 = -1.004296417397316948114344573811562952793E2f128;
+    const SS6: f128 = 7.530281592861320234941101403870010111138E1f128;
+    const SS7: f128 = 1.270735595411673647119592092304357226607E1f128;
+    const SS8: f128 = -1.815144839646376500705105967064792930282E1f128;
+    const SS9: f128 = -7.821597334910963922204235247786840828217E-2f128;
+    const ASINR5625: f128 = 5.9740641664535021430381036628424864397707E-1f128;
+
+    let xb = x.to_bits();
+    let w0 = (xb >> 96) as u32;
+    let neg = w0 & 0x8000_0000 != 0;
+    let ix = w0 & 0x7fff_ffff;
+    let absx = f128::from_bits(xb & !(1u128 << 127)); // |x|
+
+    if ix >= 0x3fff_0000 {
+        // |x| >= 1
+        if ix == 0x3fff_0000 && (xb & ((1u128 << 96) - 1)) == 0 {
+            return x * PIO2_HI + x * PIO2_LO; // asin(±1) = ±pi/2
+        }
+        if x.is_nan() {
+            return (x - x) / (x - x); // propagate the input NaN
+        }
+        // asin(|x|>1): glibc's (x-x)/(x-x) is the canonical NEGATIVE qNaN on x86.
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+
+    let mut flag = false;
+    let t;
+    if ix < 0x3ffe_0000 {
+        // |x| < 0.5
+        if ix < 0x3fc6_0000 {
+            return x; // |x| < 2^-57: asin(x) == x
+        }
+        t = x * x;
+        flag = true;
+    } else if ix < 0x3ffe_4000 {
+        // |x| < 0.625: asin(0.5625 + tt) = asinr5625 + tt·rS(tt)/sS(tt)
+        let tt = absx - 0.5625;
+        let mut p = RS10 * tt + RS9;
+        p = p * tt + RS8;
+        p = p * tt + RS7;
+        p = p * tt + RS6;
+        p = p * tt + RS5;
+        p = p * tt + RS4;
+        p = p * tt + RS3;
+        p = p * tt + RS2;
+        p = p * tt + RS1;
+        p = p * tt + RS0;
+        p = p * tt;
+        let mut q = tt + SS9;
+        q = q * tt + SS8;
+        q = q * tt + SS7;
+        q = q * tt + SS6;
+        q = q * tt + SS5;
+        q = q * tt + SS4;
+        q = q * tt + SS3;
+        q = q * tt + SS2;
+        q = q * tt + SS1;
+        q = q * tt + SS0;
+        let r = ASINR5625 + p / q;
+        return if neg { -r } else { r };
+    } else {
+        // 1 > |x| >= 0.625
+        let w = 1.0 - absx;
+        t = w * 0.5;
+    }
+
+    // pS/qS rational on t.
+    let mut p = PS9 * t + PS8;
+    p = p * t + PS7;
+    p = p * t + PS6;
+    p = p * t + PS5;
+    p = p * t + PS4;
+    p = p * t + PS3;
+    p = p * t + PS2;
+    p = p * t + PS1;
+    p = p * t + PS0;
+    p = p * t;
+    let mut q = t + QS8;
+    q = q * t + QS7;
+    q = q * t + QS6;
+    q = q * t + QS5;
+    q = q * t + QS4;
+    q = q * t + QS3;
+    q = q * t + QS2;
+    q = q * t + QS1;
+    q = q * t + QS0;
+
+    if flag {
+        let w = p / q;
+        return x + x * w;
+    }
+
+    let s = t.sqrt();
+    let tres;
+    if ix >= 0x3ffe_f333 {
+        // |x| > 0.975
+        let w = p / q;
+        tres = PIO2_HI - (2.0 * (s + s * w) - PIO2_LO);
+    } else {
+        // hi/lo split of s: clear the low 64 mantissa bits.
+        let w = f128::from_bits(s.to_bits() & (!0u128 << 64));
+        let c = (t - w * w) / (s + w);
+        let r = p / q;
+        let pp = 2.0 * s * r - (PIO2_LO - 2.0 * c);
+        let qq = PIO4_HI - 2.0 * w;
+        tres = PIO4_HI - (pp - qq);
+    }
+    if neg { -tres } else { tres }
 }
 
 // --- scalbln-like (f, c_long → f) ---
