@@ -11249,6 +11249,111 @@ fn ccos_f128(x: CFloat128Complex) -> CFloat128Complex {
     ccosh_f128(CFloat128Complex { re: -x.im, im: x.re })
 }
 
+/// Complex hyperbolic tangent for binary128 — port of glibc's s_ctanh template:
+/// tanh(x+iy) = (sinh x·cosh x + i·sin y·cos y)/(sinh²x + cos²y), with the
+/// subnormal-result staging for |re|>t and the full inf/NaN lattice. Built on
+/// byte-exact sincos/sinh/cosh/exp → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn ctanh_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 5677.0f128; // (int)((MAX_EXP-1)*ln2/2)
+    const EPS: f128 = f128::from_bits(16271u128 << 112);
+    let rx = x.re;
+    let im = x.im;
+    if !rx.is_finite() || !im.is_finite() {
+        if rx.is_infinite() {
+            let rre = (1.0f128).copysign(rx);
+            let rim = if im.is_finite() && im.abs() > 1.0 {
+                (0.0f128).copysign(sinl_f128(im) * cosl_f128(im))
+            } else {
+                (0.0f128).copysign(im)
+            };
+            return CFloat128Complex { re: rre, im: rim };
+        } else if im == 0.0 {
+            return x;
+        } else {
+            let rre = if rx == 0.0 { rx } else { f128::NAN };
+            return CFloat128Complex { re: rre, im: f128::NAN };
+        }
+    }
+    let (sinix, cosix) = sincos_pair_f128(im);
+    if rx.abs() > T {
+        let exp_2t = expl_f128(2.0 * T);
+        let rre = (1.0f128).copysign(rx);
+        let mut rim = 4.0 * sinix * cosix;
+        let rxv = rx.abs() - T;
+        rim /= exp_2t;
+        if rxv > T {
+            rim /= exp_2t;
+        } else {
+            rim /= expl_f128(2.0 * rxv);
+        }
+        CFloat128Complex { re: rre, im: rim }
+    } else {
+        let (sinhrx, coshrx) = if rx.abs() > f128::MIN_POSITIVE {
+            (sinhl_f128(rx), coshl_f128(rx))
+        } else {
+            (rx, 1.0)
+        };
+        let den = if sinhrx.abs() > cosix.abs() * EPS {
+            sinhrx * sinhrx + cosix * cosix
+        } else {
+            cosix * cosix
+        };
+        CFloat128Complex { re: sinhrx * coshrx / den, im: sinix * cosix / den }
+    }
+}
+
+/// Complex tangent for binary128 — port of glibc's s_ctan template (re↔im mirror
+/// of ctanh). Built on byte-exact sincos/sinh/cosh/exp → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn ctan_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 5677.0f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112);
+    let rx = x.re;
+    let im = x.im;
+    if !rx.is_finite() || !im.is_finite() {
+        if im.is_infinite() {
+            let rre = if rx.is_finite() && rx.abs() > 1.0 {
+                (0.0f128).copysign(sinl_f128(rx) * cosl_f128(rx))
+            } else {
+                (0.0f128).copysign(rx)
+            };
+            return CFloat128Complex { re: rre, im: (1.0f128).copysign(im) };
+        } else if rx == 0.0 {
+            return x;
+        } else {
+            let rim = if im == 0.0 { im } else { f128::NAN };
+            return CFloat128Complex { re: f128::NAN, im: rim };
+        }
+    }
+    let (sinrx, cosrx) = sincos_pair_f128(rx);
+    if im.abs() > T {
+        let exp_2t = expl_f128(2.0 * T);
+        let rim = (1.0f128).copysign(im);
+        let mut rre = 4.0 * sinrx * cosrx;
+        let imv = im.abs() - T;
+        rre /= exp_2t;
+        if imv > T {
+            rre /= exp_2t;
+        } else {
+            rre /= expl_f128(2.0 * imv);
+        }
+        CFloat128Complex { re: rre, im: rim }
+    } else {
+        let (sinhix, coshix) = if im.abs() > f128::MIN_POSITIVE {
+            (sinhl_f128(im), coshl_f128(im))
+        } else {
+            (im, 1.0)
+        };
+        let den = if sinhix.abs() > cosrx.abs() * EPS {
+            cosrx * cosrx + sinhix * sinhix
+        } else {
+            cosrx * cosrx
+        };
+        CFloat128Complex { re: sinrx * cosrx / den, im: sinhix * coshix / den }
+    }
+}
+
 /// Complex exponential for binary128 — port of glibc's s_cexp template:
 /// e^z = e^re·(cos(im) + i·sin(im)) with overflow staging by exp(t) (t =
 /// floor((MAX_EXP-1)·ln2)) and the full inf/NaN lattice. Built on the byte-exact
@@ -12682,8 +12787,8 @@ pub unsafe extern "C" fn ctanf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctan(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ctanf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { ctan(z) }
+pub unsafe extern "C" fn ctanf128(z: CFloat128Complex) -> CFloat128Complex {
+    ctan_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctanhf32(z: CFloatComplex) -> CFloatComplex {
@@ -12702,8 +12807,8 @@ pub unsafe extern "C" fn ctanhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctanh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ctanhf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { ctanh(z) }
+pub unsafe extern "C" fn ctanhf128(z: CFloat128Complex) -> CFloat128Complex {
+    ctanh_f128(z)
 }
 
 // --- complex binary → complex ---
