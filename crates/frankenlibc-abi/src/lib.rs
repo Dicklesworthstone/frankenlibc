@@ -80,6 +80,7 @@ pub mod ctype_abi;
 pub mod errno_abi;
 pub mod locale_abi;
 pub mod math_abi;
+mod expl_table;
 pub mod startup_helpers;
 pub mod stdbit_abi;
 

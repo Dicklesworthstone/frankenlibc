@@ -7125,8 +7125,14 @@ pub unsafe extern "C" fn expf64x(x: f64) -> f64 {
     unsafe { exp(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn expf128(x: f64) -> f64 {
-    unsafe { exp(x) }
+pub unsafe extern "C" fn expf128(x: f128) -> f128 {
+    let r = expl_f128(x);
+    // glibc's exp wrapper: ERANGE on overflow (finite x → inf) / underflow
+    // (finite x → 0). x == -inf → 0 legitimately (x not finite, no errno).
+    if x.is_finite() && (r.is_infinite() || r == 0.0) {
+        set_range_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10f32(x: f32) -> f32 {
@@ -8849,6 +8855,102 @@ fn acos_f128(x: f128) -> f128 {
     let r = s + (w + s * p / q);
     let w2 = if neg { PIO2_HI + (PIO2_LO - r) } else { r };
     2.0 * w2
+}
+
+/// Add `k` to the 15-bit biased exponent field of a binary128, matching glibc's
+/// `ieee.exponent += k` bitfield arithmetic (wraps mod 2^15). Callers keep the
+/// result in the normal range (the `unsafe`/scale split in expl guarantees it).
+#[inline]
+fn add_exp_field_f128(v: f128, k: i32) -> f128 {
+    let bits = v.to_bits();
+    let exp = ((bits >> 112) & 0x7fff) as i32;
+    let new_exp = ((exp + k) as u32 & 0x7fff) as u128;
+    f128::from_bits((bits & !(0x7fff_u128 << 112)) | (new_exp << 112))
+}
+
+/// e^x for binary128 — verbatim port of glibc's ldbl-128 `__ieee754_expl`
+/// (e_expl.c): reduce x = n·ln2 + (arg1 table) + (arg2 table) + r with two
+/// 256/32768-spaced tables (t_expl.h), evaluate a degree-7 Chebyshev poly for
+/// e^r-1, recombine 2^n · e^(arg1) · e^(arg2) via direct exponent-field adds.
+/// The fenv save/restore (round-to-nearest, exception hold) is omitted: the
+/// default environment is already round-to-nearest and only the value is gated.
+/// Uses only algebraic f128 ops + the table, so byte-exact in default rounding.
+#[allow(clippy::excessive_precision)]
+fn expl_f128(x: f128) -> f128 {
+    use crate::expl_table::{EXPL_TABLE, T_EXPL_ARG1, T_EXPL_ARG2, T_EXPL_RES1, T_EXPL_RES2};
+    const HIMARK: f128 = 11356.523406294143949491931077970765f128;
+    const LOMARK: f128 = -11433.4627433362978788372438434526231f128;
+    const THREEP96: f128 = 237684487542793012780631851008.0f128;
+    const THREEP103: f128 = 30423614405477505635920876929024.0f128;
+    const THREEP111: f128 = 7788445287802241442795744493830144.0f128;
+    const M_1_LN2: f128 = 1.44269504088896340735992468100189204f128;
+    const M_LN2_0: f128 = 0.693147180559945309417232121457981864f128;
+    const M_LN2_1: f128 = -1.94704509238074995158795957333327386E-31f128;
+    const TINY: f128 = 1.0e-4900f128;
+    const TWO16383: f128 = 5.94865747678615882542879663314003565E+4931f128;
+    const TWO8: f128 = 256.0f128;
+    const TWO15: f128 = 32768.0f128;
+    const P1: f128 = 0.5f128;
+    const P2: f128 = 1.66666666666666666666666666666666683E-01f128;
+    const P3: f128 = 4.16666666666666666666654902320001674E-02f128;
+    const P4: f128 = 8.33333333333333333333314659767198461E-03f128;
+    const P5: f128 = 1.38888888889899438565058018857254025E-03f128;
+    const P6: f128 = 1.98412698413981650382436541785404286E-04f128;
+
+    if x < HIMARK && x > LOMARK {
+        // Calculate n.
+        let mut n = x * M_1_LN2 + THREEP111;
+        n -= THREEP111;
+        let mut x = x - n * M_LN2_0;
+        let mut xl = n * M_LN2_1;
+
+        // Calculate t/256, then tval1.
+        let mut t = x + THREEP103;
+        t -= THREEP103;
+        let tval1 = (t * TWO8) as i32;
+        x -= EXPL_TABLE[(T_EXPL_ARG1 as i32 + 2 * tval1) as usize];
+        xl -= EXPL_TABLE[(T_EXPL_ARG1 as i32 + 2 * tval1 + 1) as usize];
+
+        // Calculate t/32768, then tval2.
+        t = x + THREEP96;
+        t -= THREEP96;
+        let tval2 = (t * TWO15) as i32;
+        x -= EXPL_TABLE[(T_EXPL_ARG2 as i32 + 2 * tval2) as usize];
+        xl -= EXPL_TABLE[(T_EXPL_ARG2 as i32 + 2 * tval2 + 1) as usize];
+
+        x += xl;
+
+        // ex2 = 2^n_0 · e^(arg1) · e^(arg2).
+        let mut ex2 = EXPL_TABLE[(T_EXPL_RES1 as i32 + tval1) as usize]
+            * EXPL_TABLE[(T_EXPL_RES2 as i32 + tval2) as usize];
+        let n_i = n as i32;
+        // 'unsafe_n' is true iff n_1 != 0 (i.e. |n| would overflow a single add).
+        let unsafe_n = n_i.abs() >= 15000;
+        let shift = if unsafe_n { 1 } else { 0 };
+        ex2 = add_exp_field_f128(ex2, n_i >> shift);
+        // scale = 2^n_1.
+        let scale = add_exp_field_f128(1.0, n_i - (n_i >> shift));
+
+        // Degree-7 Chebyshev poly for e^x2 - 1.
+        let x22 = x + x * x * (P1 + x * (P2 + x * (P3 + x * (P4 + x * (P5 + x * P6)))));
+
+        let result = x22 * ex2 + ex2;
+        if !unsafe_n {
+            result
+        } else {
+            result * scale // math_check_force_underflow_nonneg: flag only
+        }
+    } else if x < HIMARK {
+        // x <= lomark (incl -inf).
+        if x.is_infinite() {
+            0.0 // e^-inf = 0
+        } else {
+            TINY * TINY // underflow
+        }
+    } else {
+        // x >= himark, or x is NaN/+inf: overflow / propagate.
+        TWO16383 * x
+    }
 }
 
 // --- scalbln-like (f, c_long → f) ---
