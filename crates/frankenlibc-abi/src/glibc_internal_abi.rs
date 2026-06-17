@@ -6716,6 +6716,37 @@ pub unsafe extern "C" fn setlogin(name: *const c_char) -> c_int {
     }
     -1
 }
+/// glibc's `__get_sol`: pick the protocol socket level for an MCAST_MSFILTER
+/// operation from the group address family and its length. Mirrors glibc's
+/// `sol_map` exactly — a `grouplen == struct-size` match is required, a family
+/// match wins outright, otherwise the FIRST size match is used (table order
+/// matters); no match returns -1. (MCAST_MSFILTER lives at the protocol level,
+/// NOT SOL_SOCKET.)
+fn mcast_get_sol(af: u16, len: u32) -> c_int {
+    // (sol, family, sizeof(sockaddr_*)) in glibc's array order.
+    const SOL_MAP: [(c_int, u16, u32); 7] = [
+        (0, 2, 16),    // SOL_IP,     AF_INET,       sockaddr_in
+        (41, 10, 28),  // SOL_IPV6,   AF_INET6,      sockaddr_in6
+        (257, 3, 16),  // SOL_AX25,   AF_AX25,       sockaddr_ax25
+        (256, 4, 16),  // SOL_IPX,    AF_IPX,        sockaddr_ipx
+        (258, 5, 16),  // SOL_ATALK,  AF_APPLETALK,  sockaddr_at
+        (260, 11, 28), // SOL_ROSE,   AF_ROSE,       sockaddr_rose
+        (263, 17, 20), // SOL_PACKET, AF_PACKET,     sockaddr_ll
+    ];
+    let mut first_size_sol: c_int = -1;
+    for (sol, family, size) in SOL_MAP {
+        if len == size {
+            if af == family {
+                return sol;
+            }
+            if first_size_sol == -1 {
+                first_size_sol = sol;
+            }
+        }
+    }
+    first_size_sol
+}
+
 // setsourcefilter: AF-independent multicast source filter via setsockopt(MCAST_MSFILTER)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setsourcefilter(
@@ -6750,9 +6781,18 @@ pub unsafe extern "C" fn setsourcefilter(
                 numsrc as usize * ss_size,
             );
         }
+        // MCAST_MSFILTER lives at the protocol level (SOL_IP / SOL_IPV6 / ...),
+        // selected from the group family + grouplen exactly like glibc; SOL_SOCKET
+        // would be rejected by the kernel.
+        let family = (group as *const u16).read_unaligned();
+        let sol = mcast_get_sol(family, grouplen);
+        if sol == -1 {
+            crate::errno_abi::set_abi_errno(libc::EINVAL);
+            return -1;
+        }
         crate::socket_abi::setsockopt(
             s,
-            libc::SOL_SOCKET,
+            sol,
             MCAST_MSFILTER,
             buf.as_ptr() as *const c_void,
             buf_size as u32,
@@ -6786,11 +6826,18 @@ pub unsafe extern "C" fn getsourcefilter(
         let copy_len = std::cmp::min(grouplen as usize, ss_size);
         std::ptr::copy_nonoverlapping(group as *const u8, buf.as_mut_ptr().add(8), copy_len);
     }
+    // Protocol-level select (see setsourcefilter); SOL_SOCKET is wrong here.
+    let family = unsafe { (group as *const u16).read_unaligned() };
+    let sol = mcast_get_sol(family, grouplen);
+    if sol == -1 {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
     let mut optlen: u32 = buf_size as u32;
     let rc = unsafe {
         crate::socket_abi::getsockopt(
             s,
-            libc::SOL_SOCKET,
+            sol,
             MCAST_MSFILTER,
             buf.as_mut_ptr() as *mut c_void,
             &mut optlen,
