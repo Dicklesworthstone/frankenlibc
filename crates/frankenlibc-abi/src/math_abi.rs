@@ -7287,8 +7287,8 @@ pub unsafe extern "C" fn erff64x(x: f64) -> f64 {
     unsafe { erf(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn erff128(x: f64) -> f64 {
-    unsafe { erf(x) }
+pub unsafe extern "C" fn erff128(x: f128) -> f128 {
+    erfl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn erfcf32(x: f32) -> f32 {
@@ -7307,8 +7307,8 @@ pub unsafe extern "C" fn erfcf64x(x: f64) -> f64 {
     unsafe { erfc(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn erfcf128(x: f64) -> f64 {
-    unsafe { erfc(x) }
+pub unsafe extern "C" fn erfcf128(x: f128) -> f128 {
+    erfcl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn expf32(x: f32) -> f32 {
@@ -11443,6 +11443,147 @@ fn tanl_f128(x: f128) -> f128 {
     }
     let (n, y0, y1) = rem_pio2l_f128(x);
     kernel_tanl_f128(y0, y1, 1 - ((n & 1) << 1))
+}
+
+/// erf for binary128 — verbatim port of glibc's ldbl-128 `__erfl` (s_erfl.c):
+/// |x|<0.875 via x + x·TN1/TD1, [0.875,1) via erf_const + TN2/TD2, |x|>=1 via
+/// 1 - erfcl. Self-contained (neval/deval + expl) → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn erfl_f128(x: f128) -> f128 {
+    use crate::erf_tables::{TD1, TD2, TN1, TN2};
+    const EFX: f128 = 1.2837916709551257389615890312154517168810E-1f128;
+    const ERF_CONST: f128 = 0.845062911510467529296875f128;
+    let bits = x.to_bits();
+    let w0 = (bits >> 96) as u32;
+    let neg = w0 & 0x8000_0000 != 0;
+    let ix = w0 & 0x7fff_ffff;
+    if ix >= 0x7fff_0000 {
+        let i: i32 = if neg { 2 } else { 0 };
+        return (1 - i) as f128 + 1.0 / x; // erf(±inf)=±1, erf(nan)=nan
+    }
+    if ix >= 0x3fff_0000 {
+        // |x| >= 1
+        if ix >= 0x4003_0000 && !neg {
+            return 1.0; // x >= 16
+        }
+        return 1.0 - erfcl_f128(x);
+    }
+    let a = f128::from_bits(bits & !(1u128 << 127)); // |x|
+    let mut y;
+    if ix < 0x3ffe_c000 {
+        // a < 0.875
+        if ix < 0x3fc6_0000 {
+            // |x| < 2^-57
+            if ix < 0x0008_0000 {
+                return 0.0625 * (16.0 * x + (16.0 * EFX) * x);
+            }
+            return x + EFX * x;
+        }
+        let z = x * x;
+        y = a + a * neval_f128(z, &TN1) / deval_f128(z, &TD1);
+    } else {
+        let a = a - 1.0;
+        y = ERF_CONST + neval_f128(a, &TN2) / deval_f128(a, &TD2);
+    }
+    if neg {
+        y = -y;
+    }
+    y
+}
+
+/// erfc for binary128 — verbatim port of glibc's ldbl-128 `__erfcl` (s_erfl.c):
+/// |x|<1/4 via 1-erfl, [1/4,1.25) via 8 sub-interval rationals about k/8,
+/// [1.25,107) via exp(-z²-0.5625)·exp(...)·p/x with a hi/lo split, else
+/// over/underflow. Self-contained (neval/deval + expl) → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn erfcl_f128(x: f128) -> f128 {
+    use crate::erf_tables::*;
+    const TINY: f128 = 1e-4931f128;
+    const TWO: f128 = 2.0f128;
+    const C13A: f128 = 0.723663330078125f128;
+    const C13B: f128 = 1.0279753638067014931732235184287934646022E-5f128;
+    const C14A: f128 = 0.5958709716796875f128;
+    const C14B: f128 = 1.2118885490201676174914080878232469565953E-5f128;
+    const C15A: f128 = 0.4794921875f128;
+    const C15B: f128 = 7.9346869534623172533461080354712635484242E-6f128;
+    const C16A: f128 = 0.3767547607421875f128;
+    const C16B: f128 = 4.3570693945275513594941232097252997287766E-6f128;
+    const C17A: f128 = 0.2888336181640625f128;
+    const C17B: f128 = 1.0748182422368401062165408589222625794046E-5f128;
+    const C18A: f128 = 0.215911865234375f128;
+    const C18B: f128 = 1.3073705765341685464282101150637224028267E-5f128;
+    const C19A: f128 = 0.15728759765625f128;
+    const C19B: f128 = 1.1609394035130658779364917390740703933002E-5f128;
+    const C20A: f128 = 0.111602783203125f128;
+    const C20B: f128 = 8.9850951672359304215530728365232161564636E-6f128;
+
+    let bits = x.to_bits();
+    let w0 = (bits >> 96) as u32;
+    let neg = w0 & 0x8000_0000 != 0;
+    let ix = w0 & 0x7fff_ffff;
+    let absx = f128::from_bits(bits & !(1u128 << 127));
+
+    if ix >= 0x7fff_0000 {
+        return (if neg { 2.0 } else { 0.0 }) + 1.0 / x;
+    }
+    if ix < 0x3ffd_0000 {
+        // |x| < 1/4
+        if ix < 0x3f8d_0000 {
+            return 1.0 - x; // |x| < 2^-114
+        }
+        return 1.0 - erfl_f128(x);
+    }
+    if ix < 0x3fff_4000 {
+        // [1/4, 1.25)
+        let xa = absx;
+        let i = (8.0 * xa) as i32;
+        let y = match i {
+            2 => { let z = xa - 0.25; C13B + z * neval_f128(z, &RNr13) / deval_f128(z, &RDr13) + C13A }
+            3 => { let z = xa - 0.375; C14B + z * neval_f128(z, &RNr14) / deval_f128(z, &RDr14) + C14A }
+            4 => { let z = xa - 0.5; C15B + z * neval_f128(z, &RNr15) / deval_f128(z, &RDr15) + C15A }
+            5 => { let z = xa - 0.625; C16B + z * neval_f128(z, &RNr16) / deval_f128(z, &RDr16) + C16A }
+            6 => { let z = xa - 0.75; C17B + z * neval_f128(z, &RNr17) / deval_f128(z, &RDr17) + C17A }
+            7 => { let z = xa - 0.875; C18B + z * neval_f128(z, &RNr18) / deval_f128(z, &RDr18) + C18A }
+            8 => { let z = xa - 1.0; C19B + z * neval_f128(z, &RNr19) / deval_f128(z, &RDr19) + C19A }
+            _ => { let z = xa - 1.125; C20B + z * neval_f128(z, &RNr20) / deval_f128(z, &RDr20) + C20A }
+        };
+        return if neg { 2.0 - y } else { y };
+    }
+    if ix < 0x4005_ac00 {
+        // 1.25 < |x| < 107
+        if ix >= 0x4002_2000 && neg {
+            return TWO - TINY; // x < -9
+        }
+        let xa = absx;
+        let z = 1.0 / (xa * xa);
+        let i = (8.0 / xa) as i32;
+        let p = match i {
+            1 => neval_f128(z, &RNr2) / deval_f128(z, &RDr2),
+            2 => neval_f128(z, &RNr3) / deval_f128(z, &RDr3),
+            3 => neval_f128(z, &RNr4) / deval_f128(z, &RDr4),
+            4 => neval_f128(z, &RNr5) / deval_f128(z, &RDr5),
+            5 => neval_f128(z, &RNr6) / deval_f128(z, &RDr6),
+            6 => neval_f128(z, &RNr7) / deval_f128(z, &RDr7),
+            7 => neval_f128(z, &RNr8) / deval_f128(z, &RDr8),
+            _ => neval_f128(z, &RNr1) / deval_f128(z, &RDr1),
+        };
+        let zz = f128::from_bits(xa.to_bits() & (!0u128 << 57)); // hi part
+        let r = expl_f128(-zz * zz - 0.5625) * expl_f128((zz - xa) * (zz + xa) + p);
+        if !neg {
+            let ret = r / xa;
+            if ret == 0.0 {
+                set_range_errno();
+            }
+            ret
+        } else {
+            TWO - r / xa
+        }
+    } else if !neg {
+        set_range_errno();
+        TINY * TINY
+    } else {
+        TWO - TINY
+    }
 }
 
 // --- scalbln-like (f, c_long → f) ---
