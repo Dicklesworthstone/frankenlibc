@@ -3782,14 +3782,16 @@ unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
     }
 
     let mut pty_num: c_int = 0;
-    // SAFETY: ioctl writes PTY slave index into `pty_num` on success.
+    // SAFETY: ioctl writes PTY slave index into `pty_num` on success. glibc maps
+    // the non-pty-master EINVAL to ENOTTY (so ptsname on a slave fails ENOTTY).
     unsafe {
         syscall::sys_ioctl(
             fd,
             libc::TIOCGPTN as usize,
             &mut pty_num as *mut c_int as usize,
         )
-    }?;
+    }
+    .map_err(|e| if e == errno::EINVAL { errno::ENOTTY } else { e })?;
 
     let path = format!("/dev/pts/{pty_num}");
     let c_path = CString::new(path).map_err(|_| errno::EINVAL)?;
@@ -15887,20 +15889,20 @@ pub unsafe extern "C" fn getpt() -> c_int {
 /// POSIX `ptsname_r` — get slave PTY name (reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int {
-    let effective_buflen = tracked_output_capacity(buf, buflen);
-    if buf.is_null() || buflen == 0 {
+    if buf.is_null() {
         unsafe { set_abi_errno(libc::EINVAL) };
         return libc::EINVAL;
     }
-    if effective_buflen == 0 {
-        unsafe { set_abi_errno(libc::ERANGE) };
-        return libc::ERANGE;
-    }
+    // glibc does the TIOCGPTN ioctl BEFORE checking buflen — so a non-master fd
+    // yields ENOTTY (it maps the ioctl's EINVAL to ENOTTY), and buflen==0 on a
+    // valid master yields ERANGE (from the length check), not EINVAL.
+    let effective_buflen = tracked_output_capacity(buf, buflen);
     let mut pty_num: c_uint = 0;
     const TIOCGPTN: usize = 0x80045430;
     if let Err(e) =
         unsafe { syscall::sys_ioctl(fd, TIOCGPTN, &mut pty_num as *mut c_uint as usize) }
     {
+        let e = if e == libc::EINVAL { libc::ENOTTY } else { e };
         unsafe { set_abi_errno(e) };
         return e;
     }
