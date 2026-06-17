@@ -2012,7 +2012,24 @@ pub unsafe extern "C" fn fchmodat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_fchmodat(dirfd, path as *const u8, mode, flags) } {
+    // glibc accepts only AT_SYMLINK_NOFOLLOW for fchmodat and routes it through
+    // the flag-aware fchmodat2 syscall — the classic 3-arg fchmodat syscall
+    // silently IGNORES the flags word, so passing AT_SYMLINK_NOFOLLOW there would
+    // wrongly follow a symlink (chmod the target) and an invalid flag would be
+    // accepted instead of rejected. Mirror glibc: reject unknown flags with
+    // EINVAL, use fchmodat2 for AT_SYMLINK_NOFOLLOW (the kernel returns
+    // EOPNOTSUPP for chmod-on-symlink), and the classic path only for flags == 0.
+    if flags & !libc::AT_SYMLINK_NOFOLLOW != 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let res = if flags == 0 {
+        unsafe { syscall::sys_fchmodat(dirfd, path as *const u8, mode, 0) }
+    } else {
+        unsafe { syscall::sys_fchmodat2(dirfd, path as *const u8, mode, flags) }
+    };
+    let rc = match res {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
