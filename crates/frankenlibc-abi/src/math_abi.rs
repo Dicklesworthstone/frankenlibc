@@ -5074,8 +5074,50 @@ pub unsafe extern "C" fn rootnf64x(x: f64, n: i64) -> f64 {
     unsafe { rootn(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rootnf128(x: f64, n: i64) -> f64 {
-    unsafe { rootn(x, n) }
+pub unsafe extern "C" fn rootnf128(x: f128, y: i64) -> f128 {
+    // glibc s_rootn: x^(1/y) for integer y, sign-preserving, via powl with an
+    // extended-precision 1/y split. NaN qNaN = x86 negative pattern.
+    const NEG_QNAN: u128 = (0xffff_u128 << 112) | (1u128 << 111);
+    if y == 0 {
+        set_domain_errno(); // domain error even for NaN x
+        return f128::from_bits(NEG_QNAN);
+    }
+    if x.is_nan() {
+        return x + x;
+    }
+    if x < 0.0 && (y & 1) == 0 {
+        set_domain_errno();
+        return f128::from_bits(NEG_QNAN);
+    }
+    if x.is_infinite() {
+        return if y > 0 { x } else { 1.0 / x }; // X<0 ⇒ Y odd
+    }
+    if x == 0.0 {
+        if y > 0 {
+            return if (y & 1) == 0 { 0.0 } else { x };
+        } else {
+            set_range_errno();
+            return 1.0 / (if (y & 1) == 0 { 0.0 } else { x });
+        }
+    }
+    if y == 1 {
+        return x;
+    }
+    if y == -1 {
+        let ret = 1.0 / x;
+        if ret.is_infinite() {
+            set_range_errno();
+        }
+        return ret;
+    }
+    let ax = x.abs();
+    let yf = y as f128;
+    if y >= 4 * 16384 || y <= -4 * 16384 {
+        return powl_f128(ax, 1.0 / yf).copysign(x);
+    }
+    let qhi = 1.0 / yf;
+    let qlo = (-qhi).mul_add(yf, 1.0) / yf; // fma(-qhi, y, 1) / y
+    (powl_f128(ax, qhi) * powl_f128(ax, qlo)).copysign(x)
 }
 
 // --- fmaxmag / fminmag (C23) ---
