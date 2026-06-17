@@ -10985,8 +10985,39 @@ pub unsafe extern "C" fn sincosf64x(x: f64, s: *mut f64, c: *mut f64) {
     unsafe { sincos(x, s, c) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sincosf128(x: f64, s: *mut f64, c: *mut f64) {
-    unsafe { sincos(x, s, c) }
+pub unsafe extern "C" fn sincosf128(x: f128, s: *mut f128, c: *mut f128) {
+    // glibc s_sincosl.
+    let ix = (x.to_bits() >> 64) as i64 & 0x7fff_ffff_ffff_ffff;
+    let (sv, cv);
+    if ix <= 0x3ffe_921f_b544_42d1 {
+        let (a, b) = kernel_sincosl_f128(x, 0.0, 0);
+        sv = a;
+        cv = b;
+    } else if ix >= 0x7fff_0000_0000_0000 {
+        let r = if is_inf_f128(x) {
+            set_domain_errno();
+            f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)) // x86 neg qNaN
+        } else {
+            x - x
+        };
+        sv = r;
+        cv = r;
+    } else {
+        let (n, y0, y1) = rem_pio2l_f128(x);
+        let (a, b) = kernel_sincosl_f128(y0, y1, 1);
+        let (s2, c2) = match n & 3 {
+            0 => (a, b),
+            1 => (b, -a),
+            2 => (-a, -b),
+            _ => (-b, a),
+        };
+        sv = s2;
+        cv = c2;
+    }
+    unsafe {
+        *s = sv;
+        *c = cv;
+    }
 }
 
 // --- nan-like (*const c_char → f) ---
