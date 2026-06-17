@@ -7201,8 +7201,12 @@ pub unsafe extern "C" fn exp10f64x(x: f64) -> f64 {
     unsafe { exp10(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp10f128(x: f64) -> f64 {
-    unsafe { exp10(x) }
+pub unsafe extern "C" fn exp10f128(x: f128) -> f128 {
+    let r = exp10l_f128(x);
+    if x.is_finite() && (r.is_infinite() || r == 0.0) {
+        set_range_errno(); // overflow / underflow
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2f32(x: f32) -> f32 {
@@ -9884,6 +9888,38 @@ fn asinhl_f128(x: f128) -> f128 {
         log1pl_f128(absx + t / (1.0 + (1.0 + t).sqrt())) // |x| <= 2
     };
     if sign & 0x8000_0000 != 0 { -w } else { w }
+}
+
+/// 10^x for binary128 — verbatim port of glibc's ldbl-128 `__ieee754_exp10l`
+/// (e_exp10l.c): split arg into hi/lo (clearing the low 57 mantissa bits), form
+/// arg·ln(10) in extended precision, and return expl(hi)·expl(lo). Built on the
+/// byte-exact expl_f128 → byte-exact. The two ln(10)-split constants are the
+/// exact f128 values of glibc's hex-float literals.
+#[allow(clippy::excessive_precision)]
+fn exp10l_f128(arg: f128) -> f128 {
+    // log10_high = 0x2.4d763776aaa2bp0, log10_low = 0x5.ba95b58ae0b4c28a38a3fb3e7698p-60
+    let log10_high = f128::from_bits(0x400026bb1bbb55515800000000000000u128);
+    let log10_low = f128::from_bits(0x3fc56ea56d62b82d30a28e28fecf9da6u128);
+    const M_LN10: f128 = 2.302585092994045684017991454684364208f128;
+
+    if !arg.is_finite() {
+        return expl_f128(arg); // inf→+inf (or 0 via expl(-inf)), NaN→NaN
+    }
+    if arg < -4974.0 {
+        return f128::MIN_POSITIVE * f128::MIN_POSITIVE; // underflow → 0
+    }
+    if arg > 4933.0 {
+        return f128::MAX * f128::MAX; // overflow → inf
+    }
+    if arg.abs() < f128::from_bits(16267u128 << 112) {
+        return 1.0; // |arg| < 2^-116
+    }
+
+    let arg_high = f128::from_bits(arg.to_bits() & ((!0u128 << 64) | 0xfe00_0000_0000_0000));
+    let arg_low = arg - arg_high;
+    let exp_high = arg_high * log10_high;
+    let exp_low = arg_high * log10_low + arg_low * M_LN10;
+    expl_f128(exp_high) * expl_f128(exp_low)
 }
 
 // --- scalbln-like (f, c_long → f) ---
