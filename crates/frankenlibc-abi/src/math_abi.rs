@@ -6912,8 +6912,12 @@ pub unsafe extern "C" fn acoshf64x(x: f64) -> f64 {
     unsafe { acosh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn acoshf128(x: f64) -> f64 {
-    unsafe { acosh(x) }
+pub unsafe extern "C" fn acoshf128(x: f128) -> f128 {
+    // glibc acosh wrapper: EDOM for x<1 (genuine NaN inputs carry no errno).
+    if x < 1.0 {
+        set_domain_errno();
+    }
+    acoshl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinf32(x: f32) -> f32 {
@@ -6952,8 +6956,8 @@ pub unsafe extern "C" fn asinhf64x(x: f64) -> f64 {
     unsafe { asinh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn asinhf128(x: f64) -> f64 {
-    unsafe { asinh(x) }
+pub unsafe extern "C" fn asinhf128(x: f128) -> f128 {
+    asinhl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atanf32(x: f32) -> f32 {
@@ -6992,8 +6996,15 @@ pub unsafe extern "C" fn atanhf64x(x: f64) -> f64 {
     unsafe { atanh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn atanhf128(x: f64) -> f64 {
-    unsafe { atanh(x) }
+pub unsafe extern "C" fn atanhf128(x: f128) -> f128 {
+    // glibc atanh wrapper: ERANGE pole at |x|==1, EDOM for |x|>1.
+    let ax = x.abs();
+    if ax == 1.0 {
+        set_range_errno();
+    } else if ax > 1.0 {
+        set_domain_errno();
+    }
+    atanhl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cbrtf32(x: f32) -> f32 {
@@ -9560,6 +9571,95 @@ fn log1pl_f128(xm1: f128) -> f128 {
     zr += xr;
     zr += (e as f128) * C1;
     zr
+}
+
+/// Inverse hyperbolic tangent for binary128 — port of glibc `__ieee754_atanhl`
+/// (e_atanhl.c): atanh via 0.5·log1p. Built on byte-exact log1pl_f128 →
+/// byte-exact. ±1 is a pole (±inf), |x|>1 is NaN (negative qNaN on x86).
+#[allow(clippy::excessive_precision)]
+fn atanhl_f128(x: f128) -> f128 {
+    let xb = x.to_bits();
+    let jx = (xb >> 96) as u32;
+    let ix = jx & 0x7fff_ffff;
+    let absx = f128::from_bits(xb & !(1u128 << 127));
+    if ix >= 0x3fff_0000 {
+        if absx == 1.0 {
+            return x / 0.0; // atanh(±1) = ±inf
+        }
+        if x.is_nan() {
+            return (x - x) / (x - x);
+        }
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // |x|>1 NaN
+    }
+    if ix < 0x3fc6_0000 {
+        return x; // |x| < 2^-57
+    }
+    let t = if ix < 0x3ffe_0000 {
+        let t2 = absx + absx;
+        0.5 * log1pl_f128(t2 + t2 * absx / (1.0 - absx))
+    } else {
+        0.5 * log1pl_f128((absx + absx) / (1.0 - absx))
+    };
+    if jx & 0x8000_0000 != 0 { -t } else { t }
+}
+
+/// Inverse hyperbolic cosine for binary128 — port of glibc `__ieee754_acoshl`
+/// (e_acoshl.c): logl(2x) for huge, logl/log1pl mid forms with sqrtl. Built on
+/// byte-exact logl_f128 + log1pl_f128 → byte-exact. x<1 is NaN (EDOM).
+#[allow(clippy::excessive_precision)]
+fn acoshl_f128(x: f128) -> f128 {
+    const LN2: f128 = 0.6931471805599453094172321214581766f128;
+    let bits = x.to_bits();
+    let hx = (bits >> 64) as i64;
+    let lx = bits as u64;
+    if hx < 0x3fff_0000_0000_0000 {
+        // x < 1 (incl negatives); NaN inputs propagate, else negative qNaN.
+        if x.is_nan() {
+            return (x - x) / (x - x);
+        }
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    } else if hx >= 0x4035_0000_0000_0000 {
+        if hx >= 0x7fff_0000_0000_0000 {
+            return x + x; // inf/NaN
+        }
+        return logl_f128(x) + LN2; // acosh(huge) = log(2x)
+    } else if hx == 0x3fff_0000_0000_0000 && lx == 0 {
+        return 0.0; // acosh(1) = 0
+    } else if hx > 0x4000_0000_0000_0000 {
+        let t = x * x;
+        logl_f128(2.0 * x - 1.0 / (x + (t - 1.0).sqrt()))
+    } else {
+        let t = x - 1.0;
+        log1pl_f128(t + (2.0 * t + t * t).sqrt())
+    }
+}
+
+/// Inverse hyperbolic sine for binary128 — port of glibc `__asinhl`
+/// (s_asinhl.c): logl(2x)+ln2 for huge, logl/log1pl mid forms with sqrtl. Built
+/// on byte-exact logl_f128 + log1pl_f128 → byte-exact. No errno (entire-domain).
+#[allow(clippy::excessive_precision)]
+fn asinhl_f128(x: f128) -> f128 {
+    const LN2: f128 = 6.931471805599453094172321214581765681e-1f128;
+    let xb = x.to_bits();
+    let sign = (xb >> 96) as u32;
+    let ix = sign & 0x7fff_ffff;
+    if ix == 0x7fff_0000 {
+        return x + x; // inf/NaN
+    }
+    if ix < 0x3fc7_0000 {
+        return x; // |x| < 2^-56
+    }
+    let absx = f128::from_bits(xb & !(1u128 << 127));
+    let w = if ix > 0x4035_0000 {
+        logl_f128(absx) + LN2 // |x| > 2^54
+    } else if ix > 0x4000_0000 {
+        let t = absx;
+        logl_f128(2.0 * t + 1.0 / ((x * x + 1.0).sqrt() + t)) // 2 < |x| <= 2^54
+    } else {
+        let t = x * x;
+        log1pl_f128(absx + t / (1.0 + (1.0 + t).sqrt())) // |x| <= 2
+    };
+    if sign & 0x8000_0000 != 0 { -w } else { w }
 }
 
 // --- scalbln-like (f, c_long → f) ---
