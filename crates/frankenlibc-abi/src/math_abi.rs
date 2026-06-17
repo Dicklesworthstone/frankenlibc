@@ -61,6 +61,37 @@ fn f128_unbiased_exp(bits: u128) -> i32 {
     }
 }
 
+/// Round to integral, nearest-even — for `rintf128`. glibc's `__rintf128` rounds
+/// to nearest-even REGARDLESS of the dynamic FP rounding mode (verified: under
+/// FE_DOWNWARD, rintf128(1.5) is still 2.0), unlike nearbyint/lrint/llrint which
+/// do honor the mode. We match that quirk.
+fn round_f128_nearest(x: f128) -> f128 {
+    x.round_ties_even()
+}
+
+/// Round to integral in the current FP rounding direction — for
+/// nearbyint/lrint/llrint, which (unlike rintf128) honor the FE_* mode.
+fn round_f128_current_mode(x: f128) -> f128 {
+    // x86 FE_*: TONEAREST=0, DOWNWARD=0x400, UPWARD=0x800, TOWARDZERO=0xc00.
+    match unsafe { crate::fenv_abi::fegetround() } {
+        0x400 => x.floor(),
+        0x800 => x.ceil(),
+        0xc00 => x.trunc(),
+        _ => x.round_ties_even(),
+    }
+}
+
+/// Convert an already-integral binary128 to i64, saturating like glibc's
+/// lround/lrint: NaN and positive overflow -> i64::MAX, negative overflow ->
+/// i64::MIN (no errno; FE_INVALID only).
+fn f128_to_i64_sat(r: f128) -> i64 {
+    if r.is_nan() {
+        i64::MAX
+    } else {
+        r as i64 // saturating float->int cast
+    }
+}
+
 /// nextafter/nexttoward range-error rule, matching glibc: ERANGE on overflow
 /// (finite x -> infinite result) and on underflow (result subnormal-or-zero AND
 /// magnitude decreased). nextafter(0, y) -> smallest subnormal is NOT an
@@ -6447,8 +6478,13 @@ pub unsafe extern "C" fn __iseqsigl(x: f64, y: f64) -> c_int {
     if x == y { 1 } else { 0 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __iseqsigf128(x: f64, y: f64) -> c_int {
-    if x == y { 1 } else { 0 }
+pub unsafe extern "C" fn __iseqsigf128(x: f128, y: f128) -> c_int {
+    // Signaling equality: a NaN operand is a domain error (EDOM + FE_INVALID).
+    if x.is_nan() || y.is_nan() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return 0;
+    }
+    (x == y) as c_int
 }
 
 fn is_signaling_nan_f64(x: f64) -> bool {
@@ -7024,8 +7060,8 @@ pub unsafe extern "C" fn nearbyintf64x(x: f64) -> f64 {
     unsafe { nearbyint(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nearbyintf128(x: f64) -> f64 {
-    unsafe { nearbyint(x) }
+pub unsafe extern "C" fn nearbyintf128(x: f128) -> f128 {
+    round_f128_current_mode(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rintf32(x: f32) -> f32 {
@@ -7044,8 +7080,8 @@ pub unsafe extern "C" fn rintf64x(x: f64) -> f64 {
     unsafe { rint(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rintf128(x: f64) -> f64 {
-    unsafe { rint(x) }
+pub unsafe extern "C" fn rintf128(x: f128) -> f128 {
+    round_f128_nearest(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn roundf32(x: f32) -> f32 {
@@ -7563,8 +7599,8 @@ pub unsafe extern "C" fn lrintf64x(x: f64) -> c_long {
     unsafe { lrint(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lrintf128(x: f64) -> c_long {
-    unsafe { lrint(x) }
+pub unsafe extern "C" fn lrintf128(x: f128) -> c_long {
+    f128_to_i64_sat(round_f128_current_mode(x))
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lroundf32(x: f32) -> c_long {
@@ -7583,8 +7619,8 @@ pub unsafe extern "C" fn lroundf64x(x: f64) -> c_long {
     unsafe { lround(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lroundf128(x: f64) -> c_long {
-    unsafe { lround(x) }
+pub unsafe extern "C" fn lroundf128(x: f128) -> c_long {
+    f128_to_i64_sat(x.round())
 }
 
 // --- unary → i64 ---
@@ -7605,8 +7641,8 @@ pub unsafe extern "C" fn llrintf64x(x: f64) -> i64 {
     unsafe { llrint(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn llrintf128(x: f64) -> i64 {
-    unsafe { llrint(x) }
+pub unsafe extern "C" fn llrintf128(x: f128) -> i64 {
+    f128_to_i64_sat(round_f128_current_mode(x))
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llroundf32(x: f32) -> i64 {
@@ -7625,8 +7661,8 @@ pub unsafe extern "C" fn llroundf64x(x: f64) -> i64 {
     unsafe { llround(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn llroundf128(x: f64) -> i64 {
-    unsafe { llround(x) }
+pub unsafe extern "C" fn llroundf128(x: f128) -> i64 {
+    f128_to_i64_sat(x.round())
 }
 
 // --- frexp-like (f, *mut c_int → f) ---
