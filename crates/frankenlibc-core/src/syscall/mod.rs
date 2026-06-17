@@ -3836,13 +3836,21 @@ pub unsafe fn sys_preadv2(
     offset: i64,
     flags: i32,
 ) -> Result<isize, i32> {
+    // The kernel preadv2 is a 6-arg syscall: (fd, iov, iovcnt, pos_l, pos_h,
+    // flags). The offset is split into a low/high pair; on LP64 the kernel uses
+    // pos_l as the full offset and ignores pos_h (offset == -1 selects the
+    // current file offset, which round-trips through pos_l). `flags` is the
+    // distinct 6th argument — passing it as the 5th (the old syscall5 form) put
+    // it in the pos_h slot and left the real flags register uninitialized,
+    // dropping the caller's flags and risking a spurious EOPNOTSUPP.
     let ret = unsafe {
-        raw::syscall5(
+        raw::syscall6(
             SYS_PREADV2,
             fd as usize,
             iov as usize,
             iovcnt as usize,
             offset as usize,
+            0,
             flags as usize,
         )
     };
@@ -3862,13 +3870,16 @@ pub unsafe fn sys_pwritev2(
     offset: i64,
     flags: i32,
 ) -> Result<isize, i32> {
+    // 6-arg kernel syscall (fd, iov, iovcnt, pos_l, pos_h, flags) — see
+    // sys_preadv2: flags is the 6th argument, not the 5th.
     let ret = unsafe {
-        raw::syscall5(
+        raw::syscall6(
             SYS_PWRITEV2,
             fd as usize,
             iov as usize,
             iovcnt as usize,
             offset as usize,
+            0,
             flags as usize,
         )
     };
