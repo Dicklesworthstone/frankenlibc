@@ -10945,8 +10945,8 @@ pub unsafe extern "C" fn catanhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catanh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn catanhf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { catanh(z) }
+pub unsafe extern "C" fn catanhf128(z: CFloat128Complex) -> CFloat128Complex {
+    catanh_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ccosf32(z: CFloatComplex) -> CFloatComplex {
@@ -11316,6 +11316,88 @@ pub unsafe extern "C" fn csqrtf64x(z: CDoubleComplex) -> CDoubleComplex {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn csqrtf128(z: CFloat128Complex) -> CFloat128Complex {
     csqrt_f128(z)
+}
+
+/// Complex inverse hyperbolic tangent for binary128 — port of glibc's s_catanh
+/// template. Self-contained on byte-exact log/log1p/hypot/atan2/x2y2m1 →
+/// byte-exact, including the full inf/NaN/zero lattice and the large-operand and
+/// near-unit-circle precision branches.
+#[allow(clippy::excessive_precision)]
+fn catanh_f128(z: CFloat128Complex) -> CFloat128Complex {
+    const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
+    const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+    const INV16EPS: f128 = f128::from_bits(16499u128 << 112); // 16/EPS = 2^116
+    const EPS2: f128 = f128::from_bits(16159u128 << 112); // EPS*EPS = 2^-224
+    const EPS_HALF: f128 = f128::from_bits(16270u128 << 112); // EPS/2 = 2^-113
+    let rx = z.re;
+    let ix = z.im;
+
+    if rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite() {
+        let (re, im);
+        if ix.is_infinite() {
+            re = (0.0f128).copysign(rx);
+            im = PI_2.copysign(ix);
+        } else if rx.is_infinite() || rx == 0.0 {
+            re = (0.0f128).copysign(rx);
+            im = if !ix.is_nan() { PI_2.copysign(ix) } else { f128::NAN };
+        } else {
+            re = f128::NAN;
+            im = f128::NAN;
+        }
+        return CFloat128Complex { re, im };
+    }
+    if rx == 0.0 && ix == 0.0 {
+        return z;
+    }
+
+    let re;
+    let im;
+    if rx.abs() >= INV16EPS || ix.abs() >= INV16EPS {
+        im = PI_2.copysign(ix);
+        re = if ix.abs() <= 1.0 {
+            1.0 / rx
+        } else if rx.abs() <= 1.0 {
+            rx / ix / ix
+        } else {
+            let h = hypot_f128(rx / 2.0, ix / 2.0);
+            rx / h / h / 4.0
+        };
+    } else {
+        if rx.abs() == 1.0 && ix.abs() < EPS2 {
+            re = (0.5f128).copysign(rx) * (LN2 - logl_f128(ix.abs()));
+        } else {
+            let i2 = if ix.abs() >= EPS2 { ix * ix } else { 0.0 };
+            let mut num = 1.0 + rx;
+            num = i2 + num * num;
+            let den = 1.0 - rx;
+            let den = i2 + den * den;
+            let f = num / den;
+            if f < 0.5 {
+                re = 0.25 * logl_f128(f);
+            } else {
+                let num4 = 4.0 * rx;
+                re = 0.25 * log1pl_f128(num4 / den);
+            }
+        }
+        let mut absx = rx.abs();
+        let mut absy = ix.abs();
+        if absx < absy {
+            core::mem::swap(&mut absx, &mut absy);
+        }
+        let den_i = if absy < EPS_HALF {
+            let d = (1.0 - absx) * (1.0 + absx);
+            if d == 0.0 { 0.0 } else { d } // glibc canonicalizes -0 → +0 here only
+        } else if absx >= 1.0 {
+            (1.0 - absx) * (1.0 + absx) - absy * absy
+        } else if absx >= 0.75 || absy >= 0.5 {
+            -x2y2m1_f128(absx, absy)
+        } else {
+            (1.0 - absx) * (1.0 + absx) - absy * absy
+        };
+        im = 0.5 * atan2_f128(2.0 * ix, den_i);
+    }
+    CFloat128Complex { re, im }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctanf32(z: CFloatComplex) -> CFloatComplex {
