@@ -6203,6 +6203,153 @@ fn narrow_round_odd(t: f64, resid: f64) -> f32 {
     ro as f32
 }
 
+/// Round-to-odd for binary128: given the round-to-nearest f128 result `t` and
+/// the exact residual `resid` (sign of E - t; resid==0 ⟺ E is exactly t), nudge
+/// `t` to an odd-significand f128 on E's side. Casting the result to f64 or f32
+/// then gives the single correctly-rounded narrow value — f128's 113 bits
+/// exceed 2·53+2, so the otherwise-double rounding (f128→f64/f32 cast) is
+/// defeated. This is the wide-operand analogue of `narrow_round_odd`, used by
+/// the C23 `fN{op}f128` narrowing functions.
+#[inline]
+fn narrow_round_odd_f128(t: f128, resid: f128) -> f128 {
+    if !t.is_finite() || resid == 0.0 {
+        return t;
+    }
+    if t == 0.0 {
+        // Underflow to zero: the round-to-odd value is the smallest subnormal
+        // toward E (sign matches the residual; +0/-0 are consistent with it).
+        let sign = if resid < 0.0 { 1u128 << 127 } else { 0 };
+        return f128::from_bits(sign | 1);
+    }
+    if t.to_bits() & 1 == 1 {
+        return t; // already odd
+    }
+    // Step one ULP toward E. Toward +inf raises the bit pattern for positive t
+    // and lowers it for negative t (the format is monotone in bits per sign).
+    let bits = t.to_bits();
+    let positive = bits >> 127 == 0;
+    let toward_pos = resid > 0.0;
+    let nb = if toward_pos == positive { bits + 1 } else { bits - 1 };
+    f128::from_bits(nb)
+}
+
+/// On x86_64/glibc an invalid operation on non-NaN operands yields the
+/// canonical NEGATIVE qNaN (0xffff8…), whereas Rust's f128 software arithmetic
+/// yields a positive qNaN. When `r` is NaN but no operand was NaN (a freshly
+/// raised invalid op), return glibc's negative qNaN; otherwise pass `r` through
+/// unchanged (NaN-propagation and finite/inf results are already correct).
+#[inline]
+fn fixup_invalid_nan_f128(r: f128, operand_nan: bool) -> f128 {
+    if r.is_nan() && !operand_nan {
+        f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
+    } else {
+        r
+    }
+}
+
+// C23 narrowing from binary128 operands: compute the operation in f128 (one
+// correct rounding to f128), recover the exact residual, then round-to-odd so
+// the f64/f32 cast lands on the single correctly-rounded narrow result.
+#[inline]
+fn nadd_ro_f128(x: f128, y: f128) -> f128 {
+    let s = x + y;
+    if s.is_nan() {
+        return fixup_invalid_nan_f128(s, x.is_nan() || y.is_nan());
+    }
+    let bb = s - x; // 2Sum (Knuth): exact residual of x+y
+    let resid = (x - (s - bb)) + (y - bb);
+    narrow_round_odd_f128(s, resid)
+}
+#[inline]
+fn nsub_ro_f128(x: f128, y: f128) -> f128 {
+    let ny = -y;
+    let s = x + ny;
+    if s.is_nan() {
+        return fixup_invalid_nan_f128(s, x.is_nan() || y.is_nan());
+    }
+    let bb = s - x;
+    let resid = (x - (s - bb)) + (ny - bb);
+    narrow_round_odd_f128(s, resid)
+}
+#[inline]
+fn nmul_ro_f128(x: f128, y: f128) -> f128 {
+    let p = x * y;
+    if !p.is_finite() {
+        // overflow/NaN in f128 ⇒ also overflow/NaN narrowed
+        return fixup_invalid_nan_f128(p, x.is_nan() || y.is_nan());
+    }
+    let resid = x.mul_add(y, -p); // exact x*y - p
+    narrow_round_odd_f128(p, resid)
+}
+#[inline]
+fn ndiv_ro_f128(x: f128, y: f128) -> f128 {
+    let q = x / y;
+    if !q.is_finite() || q == 0.0 {
+        return fixup_invalid_nan_f128(q, x.is_nan() || y.is_nan());
+    }
+    let r = (-q).mul_add(y, x); // x - q*y, exact residual numerator
+    if !r.is_finite() {
+        return q;
+    }
+    // sign(E - q) = sign(r / y) = sign(r) * sign(y)
+    let resid = if r == 0.0 {
+        0.0
+    } else if (r > 0.0) == (y > 0.0) {
+        1.0
+    } else {
+        -1.0
+    };
+    narrow_round_odd_f128(q, resid)
+}
+#[inline]
+fn nsqrt_ro_f128(x: f128) -> f128 {
+    let s = x.sqrt();
+    if !s.is_finite() || s == 0.0 {
+        return fixup_invalid_nan_f128(s, x.is_nan());
+    }
+    let r = (-s).mul_add(s, x); // x - s^2; sign(E - s) = sign(r) since s>0
+    narrow_round_odd_f128(s, r)
+}
+#[inline]
+fn nfma_ro_f128(x: f128, y: f128, z: f128) -> f128 {
+    // 0·inf (either order) is an invalid operation: x86/glibc yield the
+    // canonical NEGATIVE qNaN regardless of the addend z.
+    if (x == 0.0 && y.is_infinite()) || (x.is_infinite() && y == 0.0) {
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+    let r = x.mul_add(y, z); // correctly-rounded f128 fma
+    if !r.is_finite() {
+        return fixup_invalid_nan_f128(r, x.is_nan() || y.is_nan() || z.is_nan());
+    }
+    let u1 = x * y;
+    if !u1.is_finite() {
+        return r;
+    }
+    // ErrFma (Boldo–Muller): exact x*y+z = r + e1 + e2.
+    let u2 = x.mul_add(y, -u1); // exact x*y - u1
+    let a1 = z + u2;
+    let bz = a1 - z;
+    let a2 = (z - (a1 - bz)) + (u2 - bz);
+    let b1 = u1 + a1;
+    let bu = b1 - u1;
+    let b2 = (u1 - (b1 - bu)) + (a1 - bu);
+    let gamma = (b1 - r) + b2;
+    let e1 = gamma + a2;
+    let e2 = a2 - (e1 - gamma);
+    let mut resid = if e1 != 0.0 { e1 } else { e2 };
+    // When x·y underflows f128 entirely (flushed to 0) but is mathematically
+    // nonzero, the ErrFma above loses it — yet its sign still tips a round-to-
+    // odd tie (exact result exactly on a narrow midpoint). Restore that sign.
+    if resid == 0.0 && u1 == 0.0 && x != 0.0 && y != 0.0 && x.is_finite() && y.is_finite() {
+        resid = if (x > 0.0) == (y > 0.0) {
+            f128::MIN_POSITIVE
+        } else {
+            -f128::MIN_POSITIVE
+        };
+    }
+    narrow_round_odd_f128(r, resid)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fadd(x: f64, y: f64) -> f32 {
     let s = x + y;
@@ -6354,9 +6501,8 @@ pub unsafe extern "C" fn f32addf64x(x: f64, y: f64) -> f32 {
     unsafe { fadd(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32addf128(x: f64, y: f64) -> f32 {
-    // _Float128 is f64 in fl; route through fadd for correct single rounding.
-    unsafe { fadd(x, y) }
+pub unsafe extern "C" fn f32addf128(x: f128, y: f128) -> f32 {
+    nadd_ro_f128(x, y) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xaddf64(x: f64, y: f64) -> f64 {
@@ -6367,16 +6513,17 @@ pub unsafe extern "C" fn f32xaddf64x(x: f64, y: f64) -> f64 {
     x + y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xaddf128(x: f64, y: f64) -> f64 {
-    x + y
+pub unsafe extern "C" fn f32xaddf128(x: f128, y: f128) -> f64 {
+    // _Float32x is `double` (f64) on x86_64.
+    nadd_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64addf64x(x: f64, y: f64) -> f64 {
     x + y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64addf128(x: f64, y: f64) -> f64 {
-    x + y
+pub unsafe extern "C" fn f64addf128(x: f128, y: f128) -> f64 {
+    nadd_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xaddf128(x: f64, y: f64) -> f64 {
@@ -6396,8 +6543,8 @@ pub unsafe extern "C" fn f32divf64x(x: f64, y: f64) -> f32 {
     unsafe { fdiv(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32divf128(x: f64, y: f64) -> f32 {
-    unsafe { fdiv(x, y) }
+pub unsafe extern "C" fn f32divf128(x: f128, y: f128) -> f32 {
+    ndiv_ro_f128(x, y) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xdivf64(x: f64, y: f64) -> f64 {
@@ -6408,16 +6555,16 @@ pub unsafe extern "C" fn f32xdivf64x(x: f64, y: f64) -> f64 {
     x / y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xdivf128(x: f64, y: f64) -> f64 {
-    x / y
+pub unsafe extern "C" fn f32xdivf128(x: f128, y: f128) -> f64 {
+    ndiv_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64divf64x(x: f64, y: f64) -> f64 {
     x / y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64divf128(x: f64, y: f64) -> f64 {
-    x / y
+pub unsafe extern "C" fn f64divf128(x: f128, y: f128) -> f64 {
+    ndiv_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xdivf128(x: f64, y: f64) -> f64 {
@@ -6437,8 +6584,8 @@ pub unsafe extern "C" fn f32mulf64x(x: f64, y: f64) -> f32 {
     unsafe { fmul(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32mulf128(x: f64, y: f64) -> f32 {
-    unsafe { fmul(x, y) }
+pub unsafe extern "C" fn f32mulf128(x: f128, y: f128) -> f32 {
+    nmul_ro_f128(x, y) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xmulf64(x: f64, y: f64) -> f64 {
@@ -6449,16 +6596,16 @@ pub unsafe extern "C" fn f32xmulf64x(x: f64, y: f64) -> f64 {
     x * y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xmulf128(x: f64, y: f64) -> f64 {
-    x * y
+pub unsafe extern "C" fn f32xmulf128(x: f128, y: f128) -> f64 {
+    nmul_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64mulf64x(x: f64, y: f64) -> f64 {
     x * y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64mulf128(x: f64, y: f64) -> f64 {
-    x * y
+pub unsafe extern "C" fn f64mulf128(x: f128, y: f128) -> f64 {
+    nmul_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xmulf128(x: f64, y: f64) -> f64 {
@@ -6478,8 +6625,8 @@ pub unsafe extern "C" fn f32sqrtf64x(x: f64) -> f32 {
     unsafe { fsqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32sqrtf128(x: f64) -> f32 {
-    unsafe { fsqrt(x) }
+pub unsafe extern "C" fn f32sqrtf128(x: f128) -> f32 {
+    nsqrt_ro_f128(x) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xsqrtf64(x: f64) -> f64 {
@@ -6490,16 +6637,16 @@ pub unsafe extern "C" fn f32xsqrtf64x(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xsqrtf128(x: f64) -> f64 {
-    unsafe { sqrt(x) }
+pub unsafe extern "C" fn f32xsqrtf128(x: f128) -> f64 {
+    nsqrt_ro_f128(x) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64sqrtf64x(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64sqrtf128(x: f64) -> f64 {
-    unsafe { sqrt(x) }
+pub unsafe extern "C" fn f64sqrtf128(x: f128) -> f64 {
+    nsqrt_ro_f128(x) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xsqrtf128(x: f64) -> f64 {
@@ -6519,8 +6666,8 @@ pub unsafe extern "C" fn f32subf64x(x: f64, y: f64) -> f32 {
     unsafe { fsub(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32subf128(x: f64, y: f64) -> f32 {
-    unsafe { fsub(x, y) }
+pub unsafe extern "C" fn f32subf128(x: f128, y: f128) -> f32 {
+    nsub_ro_f128(x, y) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xsubf64(x: f64, y: f64) -> f64 {
@@ -6531,16 +6678,16 @@ pub unsafe extern "C" fn f32xsubf64x(x: f64, y: f64) -> f64 {
     x - y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xsubf128(x: f64, y: f64) -> f64 {
-    x - y
+pub unsafe extern "C" fn f32xsubf128(x: f128, y: f128) -> f64 {
+    nsub_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64subf64x(x: f64, y: f64) -> f64 {
     x - y
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64subf128(x: f64, y: f64) -> f64 {
-    x - y
+pub unsafe extern "C" fn f64subf128(x: f128, y: f128) -> f64 {
+    nsub_ro_f128(x, y) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xsubf128(x: f64, y: f64) -> f64 {
@@ -6560,8 +6707,8 @@ pub unsafe extern "C" fn f32fmaf64x(x: f64, y: f64, z: f64) -> f32 {
     unsafe { ffma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32fmaf128(x: f64, y: f64, z: f64) -> f32 {
-    unsafe { ffma(x, y, z) }
+pub unsafe extern "C" fn f32fmaf128(x: f128, y: f128, z: f128) -> f32 {
+    nfma_ro_f128(x, y, z) as f32
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f32xfmaf64(x: f64, y: f64, z: f64) -> f64 {
@@ -6572,16 +6719,16 @@ pub unsafe extern "C" fn f32xfmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f32xfmaf128(x: f64, y: f64, z: f64) -> f64 {
-    unsafe { fma(x, y, z) }
+pub unsafe extern "C" fn f32xfmaf128(x: f128, y: f128, z: f128) -> f64 {
+    nfma_ro_f128(x, y, z) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64fmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn f64fmaf128(x: f64, y: f64, z: f64) -> f64 {
-    unsafe { fma(x, y, z) }
+pub unsafe extern "C" fn f64fmaf128(x: f128, y: f128, z: f128) -> f64 {
+    nfma_ro_f128(x, y, z) as f64
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn f64xfmaf128(x: f64, y: f64, z: f64) -> f64 {
