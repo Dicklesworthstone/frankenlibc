@@ -4072,7 +4072,11 @@ pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
 
     let target = current.saturating_add(inc).clamp(-20, 19);
     if let Err(e) = syscall::sys_setpriority(libc::PRIO_PROCESS as c_int, 0, target) {
-        unsafe { set_abi_errno(e) };
+        // POSIX nice() reports a permission failure as EPERM, but the kernel's
+        // setpriority returns EACCES when an unprivileged process tries to lower
+        // its nice value. glibc remaps EACCES -> EPERM here; mirror that.
+        let mapped = if e == libc::EACCES { libc::EPERM } else { e };
+        unsafe { set_abi_errno(mapped) };
         return -1;
     }
 
