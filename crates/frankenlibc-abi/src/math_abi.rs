@@ -6353,8 +6353,12 @@ pub unsafe extern "C" fn __issignalingl(x: f64) -> c_int {
     if is_signaling_nan_f64(x) { 1 } else { 0 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __issignalingf128(x: f64) -> c_int {
-    if is_signaling_nan_f64(x) { 1 } else { 0 }
+pub unsafe extern "C" fn __issignalingf128(x: f128) -> c_int {
+    // Signaling NaN: max exponent, nonzero mantissa, quiet bit (bit 111) clear.
+    let b = x.to_bits();
+    let exp = (b >> 112) & 0x7fff;
+    let mant = b & ((1u128 << 112) - 1);
+    (exp == 0x7fff && mant != 0 && (mant >> 111) & 1 == 0) as c_int
 }
 
 #[allow(non_upper_case_globals)]
@@ -6726,8 +6730,8 @@ pub unsafe extern "C" fn fabsf64x(x: f64) -> f64 {
     unsafe { fabs(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fabsf128(x: f64) -> f64 {
-    unsafe { fabs(x) }
+pub unsafe extern "C" fn fabsf128(x: f128) -> f128 {
+    f128::from_bits(x.to_bits() & !(1u128 << 127))
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn floorf32(x: f32) -> f32 {
@@ -7108,8 +7112,9 @@ pub unsafe extern "C" fn copysignf64x(x: f64, y: f64) -> f64 {
     unsafe { copysign(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn copysignf128(x: f64, y: f64) -> f64 {
-    unsafe { copysign(x, y) }
+pub unsafe extern "C" fn copysignf128(x: f128, y: f128) -> f128 {
+    let sign = y.to_bits() & (1u128 << 127);
+    f128::from_bits((x.to_bits() & !(1u128 << 127)) | sign)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fdimf32(x: f32, y: f32) -> f32 {
@@ -8374,8 +8379,8 @@ pub unsafe extern "C" fn __gammaf128_r_finite(x: f64, signgamp: *mut c_int) -> f
 
 // __finite classification variants (f128)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __finitef128(x: f64) -> c_int {
-    frankenlibc_core::math::finite(x)
+pub unsafe extern "C" fn __finitef128(x: f128) -> c_int {
+    (((x.to_bits() >> 112) & 0x7fff) != 0x7fff) as c_int
 }
 
 #[cfg(test)]

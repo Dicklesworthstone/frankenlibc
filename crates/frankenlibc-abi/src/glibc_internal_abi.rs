@@ -4570,32 +4570,44 @@ pub unsafe extern "C" fn __finitel(x: f64) -> c_int {
     x.is_finite() as c_int
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isnanf128(x: f64) -> c_int {
-    x.is_nan() as c_int
+pub unsafe extern "C" fn __isnanf128(x: f128) -> c_int {
+    let b = x.to_bits();
+    (((b >> 112) & 0x7fff) == 0x7fff && (b & ((1u128 << 112) - 1)) != 0) as c_int
 }
 
-/// glibc `__fpclassifyf128(x)` — classify _Float128. Rust lacks
-/// stable f128 so we widen-to-f64 and forward (matches the
-/// __isnanf128 convention in this file).
+/// glibc `__fpclassifyf128(x)` — classify _Float128 (bit-exact).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fpclassifyf128(x: f64) -> c_int {
-    frankenlibc_core::math::fpclassify(x)
+pub unsafe extern "C" fn __fpclassifyf128(x: f128) -> c_int {
+    // Linux: FP_NAN=0, FP_INFINITE=1, FP_ZERO=2, FP_SUBNORMAL=3, FP_NORMAL=4.
+    let b = x.to_bits();
+    let exp = (b >> 112) & 0x7fff;
+    let mant = b & ((1u128 << 112) - 1);
+    if exp == 0x7fff {
+        if mant == 0 { 1 } else { 0 }
+    } else if exp == 0 {
+        if mant == 0 { 2 } else { 3 }
+    } else {
+        4
+    }
 }
 
 /// glibc `__isinff128(x)` — _Float128 isinf. +1/-1/0.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isinff128(x: f64) -> c_int {
-    if x.is_infinite() {
-        if x.is_sign_positive() { 1 } else { -1 }
+pub unsafe extern "C" fn __isinff128(x: f128) -> c_int {
+    let b = x.to_bits();
+    if ((b >> 112) & 0x7fff) == 0x7fff && (b & ((1u128 << 112) - 1)) == 0 {
+        if (b >> 127) == 1 { -1 } else { 1 }
     } else {
         0
     }
 }
 
-/// glibc `__signbitf128(x)` — _Float128 signbit predicate.
+/// glibc `__signbitf128(x)` — _Float128 signbit predicate. glibc returns the
+/// sign bit kept at position 3 (i.e. nonzero value 8 for negative, 0 otherwise),
+/// not normalized to 1; match that encoding for byte-exact parity.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __signbitf128(x: f64) -> c_int {
-    x.is_sign_negative() as c_int
+pub unsafe extern "C" fn __signbitf128(x: f128) -> c_int {
+    ((x.to_bits() >> 124) & 8) as c_int
 }
 
 // ==========================================================================
