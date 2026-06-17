@@ -5359,7 +5359,7 @@ pub unsafe extern "C" fn getdirentries(
     let base = if basep.is_null() {
         0
     } else {
-        unsafe { raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0) }
+        raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0)
     };
     match unsafe { raw_syscall::sys_getdents64(fd, buf as *mut u8, nbytes) } {
         Ok(n) => {
@@ -5384,7 +5384,7 @@ pub unsafe extern "C" fn getdirentries64(
     let base = if basep.is_null() {
         0
     } else {
-        unsafe { raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0) }
+        raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0)
     };
     match unsafe { raw_syscall::sys_getdents64(fd, buf as *mut u8, nbytes) } {
         Ok(n) => {
