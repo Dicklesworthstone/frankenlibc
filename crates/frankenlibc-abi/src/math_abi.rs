@@ -2177,6 +2177,15 @@ pub struct CDoubleComplex {
     pub im: f64,
 }
 
+/// ABI-compatible `_Complex _Float128` (verified to match the C ABI: a 32-byte
+/// repr(C) struct of two f128 passes/returns identically to glibc's type).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CFloat128Complex {
+    pub re: f128,
+    pub im: f128,
+}
+
 /// ABI-compatible `float complex`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -8220,8 +8229,8 @@ pub unsafe extern "C" fn cimagf64x(z: CDoubleComplex) -> f64 {
     unsafe { cimag(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cimagf128(z: CDoubleComplex) -> f64 {
-    unsafe { cimag(z) }
+pub unsafe extern "C" fn cimagf128(z: CFloat128Complex) -> f128 {
+    z.im
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn crealf32(z: CFloatComplex) -> f32 {
@@ -8240,8 +8249,8 @@ pub unsafe extern "C" fn crealf64x(z: CDoubleComplex) -> f64 {
     unsafe { creal(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn crealf128(z: CDoubleComplex) -> f64 {
-    unsafe { creal(z) }
+pub unsafe extern "C" fn crealf128(z: CFloat128Complex) -> f128 {
+    z.re
 }
 
 // --- complex → complex ---
@@ -8462,8 +8471,9 @@ pub unsafe extern "C" fn conjf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { conj(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn conjf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { conj(z) }
+pub unsafe extern "C" fn conjf128(z: CFloat128Complex) -> CFloat128Complex {
+    // Negate the imaginary part (flip its sign bit, so NaN/inf signs flip too).
+    CFloat128Complex { re: z.re, im: f128::from_bits(z.im.to_bits() ^ (1u128 << 127)) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cprojf32(z: CFloatComplex) -> CFloatComplex {
@@ -8482,8 +8492,15 @@ pub unsafe extern "C" fn cprojf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cproj(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cprojf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { cproj(z) }
+pub unsafe extern "C" fn cprojf128(z: CFloat128Complex) -> CFloat128Complex {
+    // Projection onto the Riemann sphere: if either part is infinite, the result
+    // is (+inf, copysign(0, im)); otherwise z is unchanged.
+    if z.re.is_infinite() || z.im.is_infinite() {
+        let im0 = f128::from_bits(z.im.to_bits() & (1u128 << 127)); // signed zero
+        CFloat128Complex { re: f128::from_bits(0x7fff_u128 << 112), im: im0 }
+    } else {
+        z
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn csinf32(z: CFloatComplex) -> CFloatComplex {
