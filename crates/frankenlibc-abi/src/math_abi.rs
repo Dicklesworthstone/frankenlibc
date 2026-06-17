@@ -7545,8 +7545,8 @@ pub unsafe extern "C" fn atan2f64x(x: f64, y: f64) -> f64 {
     unsafe { atan2(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn atan2f128(x: f64, y: f64) -> f64 {
-    unsafe { atan2(x, y) }
+pub unsafe extern "C" fn atan2f128(y: f128, x: f128) -> f128 {
+    atan2_f128(y, x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn copysignf32(x: f32, y: f32) -> f32 {
@@ -8365,6 +8365,89 @@ fn atan_f128(x: f128) -> f128 {
     let u = t * u * p / q + t;
     let u = ATAN_TBL_F128[k] + u;
     if sign { -u } else { u }
+}
+
+/// Two-argument arctangent for binary128 — verbatim port of glibc's ldbl-128
+/// `__ieee754_atan2l` (sysdeps/ieee754/ldbl-128/e_atan2l.c). All the IEEE
+/// special cases, then quadrant placement of `__atanl(|y/x|)`. Depends only on
+/// the byte-exact `atan_f128` plus algebraic f128 ops, so it is byte-exact.
+fn atan2_f128(y: f128, x: f128) -> f128 {
+    const TINY: f128 = 1.0e-4900f128;
+    const PI_O_4: f128 = 7.85398163397448309615660845819875699e-01f128;
+    const PI_O_2: f128 = 1.57079632679489661923132169163975140e+00f128;
+    const PI: f128 = 3.14159265358979323846264338327950280e+00f128;
+    const PI_LO: f128 = 8.67181013012378102479704402604335225e-35f128;
+    let zero = 0.0f128;
+
+    let xb = x.to_bits();
+    let yb = y.to_bits();
+    let hx = (xb >> 64) as i64;
+    let lx = xb as u64;
+    let hy = (yb >> 64) as i64;
+    let ly = yb as u64;
+    let ix = hx & 0x7fff_ffff_ffff_ffff;
+    let iy = hy & 0x7fff_ffff_ffff_ffff;
+
+    // x or y is NaN.
+    if (ix as u64 | ((lx | lx.wrapping_neg()) >> 63)) > 0x7fff_0000_0000_0000
+        || (iy as u64 | ((ly | ly.wrapping_neg()) >> 63)) > 0x7fff_0000_0000_0000
+    {
+        return x + y;
+    }
+    if hx == 0x3fff_0000_0000_0000 && lx == 0 {
+        return atan_f128(y); // x == 1.0
+    }
+    let m = ((hy >> 63) & 1) | ((hx >> 62) & 2); // 2*sign(x)+sign(y)
+
+    // y == 0.
+    if iy == 0 && ly == 0 {
+        return match m {
+            0 | 1 => y,         // atan(+-0,+anything) = +-0
+            2 => PI + TINY,     // atan(+0,-anything) = pi
+            _ => -PI - TINY,    // atan(-0,-anything) = -pi
+        };
+    }
+    // x == 0.
+    if ix == 0 && lx == 0 {
+        return if hy < 0 { -PI_O_2 - TINY } else { PI_O_2 + TINY };
+    }
+    // x is INF.
+    if ix == 0x7fff_0000_0000_0000 {
+        if iy == 0x7fff_0000_0000_0000 {
+            return match m {
+                0 => PI_O_4 + TINY,
+                1 => -PI_O_4 - TINY,
+                2 => 3.0 * PI_O_4 + TINY,
+                _ => -3.0 * PI_O_4 - TINY,
+            };
+        }
+        return match m {
+            0 => zero,
+            1 => -zero,
+            2 => PI + TINY,
+            _ => -PI - TINY,
+        };
+    }
+    // y is INF.
+    if iy == 0x7fff_0000_0000_0000 {
+        return if hy < 0 { -PI_O_2 - TINY } else { PI_O_2 + TINY };
+    }
+
+    // Compute y/x.
+    let k = (iy - ix) >> 48;
+    let z = if k > 120 {
+        PI_O_2 + 0.5 * PI_LO // |y/x| > 2^120
+    } else if hx < 0 && k < -120 {
+        zero // |y|/x < -2^120
+    } else {
+        atan_f128((y / x).abs())
+    };
+    match m {
+        0 => z,                                                  // atan(+,+)
+        1 => f128::from_bits(z.to_bits() ^ (1u128 << 127)),      // atan(-,+) = -z
+        2 => PI - (z - PI_LO),                                   // atan(+,-)
+        _ => (z - PI_LO) - PI,                                   // atan(-,-)
+    }
 }
 
 // --- scalbln-like (f, c_long → f) ---
