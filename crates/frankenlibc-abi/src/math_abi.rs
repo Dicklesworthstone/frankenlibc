@@ -7065,8 +7065,12 @@ pub unsafe extern "C" fn coshf64x(x: f64) -> f64 {
     unsafe { cosh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn coshf128(x: f64) -> f64 {
-    unsafe { cosh(x) }
+pub unsafe extern "C" fn coshf128(x: f128) -> f128 {
+    let r = coshl_f128(x);
+    if x.is_finite() && r.is_infinite() {
+        set_range_errno(); // overflow
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn erff32(x: f32) -> f32 {
@@ -7471,8 +7475,12 @@ pub unsafe extern "C" fn sinhf64x(x: f64) -> f64 {
     unsafe { sinh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sinhf128(x: f64) -> f64 {
-    unsafe { sinh(x) }
+pub unsafe extern "C" fn sinhf128(x: f128) -> f128 {
+    let r = sinhl_f128(x);
+    if x.is_finite() && r.is_infinite() {
+        set_range_errno(); // overflow
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sqrtf32(x: f32) -> f32 {
@@ -9265,6 +9273,79 @@ fn expm1l_f128(x: f128) -> f128 {
     // exp(x)-1 = 2^k (qx+1) - 1 = 2^k qx + 2^k - 1.
     let p2k = scalbn_f128(1.0, k as i64);
     p2k * qx + (p2k - 1.0)
+}
+
+/// Hyperbolic cosine for binary128 — verbatim port of glibc ldbl-128
+/// `__ieee754_coshl` (e_coshl.c): range-split cosh via expm1l (small) / expl
+/// (mid/large) / expl(x/2)² (near overflow). Built on byte-exact expm1l_f128 +
+/// expl_f128 → byte-exact. Overflow returns +inf.
+#[allow(clippy::excessive_precision)]
+fn coshl_f128(x: f128) -> f128 {
+    const HUGE: f128 = 1.0e4900f128;
+    const OVF_THRESH: f128 = 1.1357216553474703894801348310092223067821E4f128;
+    let xb = x.to_bits();
+    let ex = (xb >> 96) as u32 & 0x7fff_ffff;
+    let absx = f128::from_bits(xb & !(1u128 << 127));
+    if ex >= 0x7fff_0000 {
+        return x * x; // |x| for ±inf/NaN
+    }
+    if ex < 0x3ffd_62e4 {
+        if ex < 0x3fb8_0000 {
+            return 1.0; // cosh(tiny) = 1
+        }
+        let t = expm1l_f128(absx);
+        let w = 1.0 + t;
+        return 1.0 + (t * t) / (w + w);
+    }
+    if ex < 0x4004_4000 {
+        let t = expl_f128(absx);
+        return 0.5 * t + 0.5 / t;
+    }
+    if ex <= 0x400c_62e3 {
+        return 0.5 * expl_f128(absx);
+    }
+    if absx <= OVF_THRESH {
+        let w = expl_f128(0.5 * absx);
+        let t = 0.5 * w;
+        return t * w;
+    }
+    HUGE * HUGE // overflow
+}
+
+/// Hyperbolic sine for binary128 — verbatim port of glibc ldbl-128
+/// `__ieee754_sinhl` (e_sinhl.c): sign·0.5·range-split via expm1l / expl. Built
+/// on byte-exact expm1l_f128 + expl_f128 → byte-exact. Overflow returns ±inf.
+#[allow(clippy::excessive_precision)]
+fn sinhl_f128(x: f128) -> f128 {
+    const SHUGE: f128 = 1.0e4931f128;
+    const OVF_THRESH: f128 = 1.1357216553474703894801348310092223067821E4f128;
+    let xb = x.to_bits();
+    let jx = (xb >> 96) as u32;
+    let ix = jx & 0x7fff_ffff;
+    if ix >= 0x7fff_0000 {
+        return x + x; // inf/nan
+    }
+    let h: f128 = if jx & 0x8000_0000 != 0 { -0.5 } else { 0.5 };
+    let absx = f128::from_bits(xb & !(1u128 << 127));
+    if ix <= 0x4004_4000 {
+        if ix < 0x3fc6_0000 {
+            return x; // sinh(tiny) = x (shuge + x > 1 always holds)
+        }
+        let t = expm1l_f128(absx);
+        if ix < 0x3fff_0000 {
+            return h * (2.0 * t - t * t / (t + 1.0));
+        }
+        return h * (t + t / (t + 1.0));
+    }
+    if ix <= 0x400c_62e3 {
+        return h * expl_f128(absx);
+    }
+    if absx <= OVF_THRESH {
+        let w = expl_f128(0.5 * absx);
+        let t = h * w;
+        return t * w;
+    }
+    x * SHUGE // overflow
 }
 
 // --- scalbln-like (f, c_long → f) ---
