@@ -208,6 +208,61 @@ pub fn classify_binary128(bits: u128) -> F128Class {
     F128Class::Finite { negative, digits, exp10 }
 }
 
+/// Round a canonical significand (`digits`, `exp10`) — where the value equals
+/// `(digits as integer) · 10^exp10` — to at most `max_sig` significant decimal
+/// digits using round-half-to-even, returning a new canonical `(digits, exp10)`
+/// (trailing zeros stripped). `max_sig` must be >= 1.
+///
+/// This is the rounding primitive shared by the `%e`/`%g` conversions; `%f`
+/// rounding to a fixed number of fractional places maps onto it by choosing
+/// `max_sig` from the value's magnitude.
+pub fn round_to_sig_digits(digits: &[u8], exp10: i32, max_sig: usize) -> (Vec<u8>, i32) {
+    let n = digits.len();
+    if max_sig == 0 || n <= max_sig {
+        return (digits.to_vec(), exp10);
+    }
+    let dropped = n - max_sig;
+    let mut kept: Vec<u8> = digits[..max_sig].to_vec();
+    let round_digit = digits[max_sig];
+    let round_up = if round_digit > b'5' {
+        true
+    } else if round_digit < b'5' {
+        false
+    } else if digits[max_sig + 1..].iter().any(|&d| d != b'0') {
+        true
+    } else {
+        // Exact tie: round to even (round up iff the last kept digit is odd).
+        (kept[max_sig - 1] - b'0') % 2 == 1
+    };
+    let mut new_exp10 = exp10 + dropped as i32;
+    if round_up {
+        let mut i = max_sig;
+        loop {
+            if i == 0 {
+                // Carry out of the most-significant digit: 99..9 -> 100..0.
+                // Keep `max_sig` significant digits by dropping the new trailing
+                // zero and bumping the exponent.
+                kept.insert(0, b'1');
+                kept.pop();
+                new_exp10 += 1;
+                break;
+            }
+            i -= 1;
+            if kept[i] == b'9' {
+                kept[i] = b'0';
+            } else {
+                kept[i] += 1;
+                break;
+            }
+        }
+    }
+    while kept.len() > 1 && kept.last() == Some(&b'0') {
+        kept.pop();
+        new_exp10 += 1;
+    }
+    (kept, new_exp10)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,6 +310,32 @@ mod tests {
         assert!(d.starts_with("64751751194380251109"));
         assert!(d.ends_with("41301822662353515625"));
         assert_eq!(e, -16494);
+    }
+
+    fn round(d: &str, exp10: i32, max_sig: usize) -> (String, i32) {
+        let (r, e) = round_to_sig_digits(d.as_bytes(), exp10, max_sig);
+        (String::from_utf8(r).unwrap(), e)
+    }
+
+    #[test]
+    fn rounds_half_to_even() {
+        // No rounding needed.
+        assert_eq!(round("12345", 0, 5), ("12345".into(), 0));
+        assert_eq!(round("12345", 0, 9), ("12345".into(), 0));
+        // > 5 rounds up.
+        assert_eq!(round("126", 0, 2), ("13".into(), 1));
+        // < 5 truncates.
+        assert_eq!(round("124", 0, 2), ("12".into(), 1));
+        // Exact tie, last kept digit even -> stay; odd -> up.
+        assert_eq!(round("125", 0, 2), ("12".into(), 1)); // 12 even
+        assert_eq!(round("135", 0, 2), ("14".into(), 1)); // 13 odd -> 14
+        // Tie with trailing nonzero -> always up.
+        assert_eq!(round("1251", 0, 2), ("13".into(), 2));
+        // Carry out of all-nines, with trailing-zero strip.
+        assert_eq!(round("999500", 0, 3), ("1".into(), 6)); // -> 1_000_000
+        assert_eq!(round("9996", 0, 3), ("1".into(), 4)); // 1000 -> 1e4
+        // exp10 is preserved/offset, not assumed zero.
+        assert_eq!(round("1999", -3, 1), ("2".into(), 0)); // 1.999 -> 2
     }
 
     #[test]
