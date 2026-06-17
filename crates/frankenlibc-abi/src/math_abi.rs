@@ -7352,8 +7352,14 @@ pub unsafe extern "C" fn log10f64x(x: f64) -> f64 {
     unsafe { log10(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log10f128(x: f64) -> f64 {
-    unsafe { log10(x) }
+pub unsafe extern "C" fn log10f128(x: f128) -> f128 {
+    let r = log10l_f128(x);
+    if x == 0.0 {
+        set_range_errno(); // pole
+    } else if x < 0.0 {
+        set_domain_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log1pf32(x: f32) -> f32 {
@@ -7399,8 +7405,14 @@ pub unsafe extern "C" fn log2f64x(x: f64) -> f64 {
     unsafe { log2(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log2f128(x: f64) -> f64 {
-    unsafe { log2(x) }
+pub unsafe extern "C" fn log2f128(x: f128) -> f128 {
+    let r = log2l_f128(x);
+    if x == 0.0 {
+        set_range_errno(); // pole
+    } else if x < 0.0 {
+        set_domain_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logbf32(x: f32) -> f32 {
@@ -9599,6 +9611,190 @@ fn log1pl_f128(xm1: f128) -> f128 {
     zr += xr;
     zr += (e as f128) * C1;
     zr
+}
+
+/// Shared Cephes log coefficients (glibc ldbl-128 e_log2l.c / e_log10l.c):
+/// ln(1+x) = x - x²/2 + x³·P(x)/Q(x) and log(x) = z + z³·R(z²)/S(z²). Ascending
+/// index = ascending power; Q,S are monic (implicit leading 1).
+#[rustfmt::skip]
+static LOGB_P: [f128; 13] = [
+    1.313572404063446165910279910527789794488E4f128,
+    7.771154681358524243729929227226708890930E4f128,
+    2.014652742082537582487669938141683759923E5f128,
+    3.007007295140399532324943111654767187848E5f128,
+    2.854829159639697837788887080758954924001E5f128,
+    1.797628303815655343403735250238293741397E5f128,
+    7.594356839258970405033155585486712125861E4f128,
+    2.128857716871515081352991964243375186031E4f128,
+    3.824952356185897735160588078446136783779E3f128,
+    4.114517881637811823002128927449878962058E2f128,
+    2.321125933898420063925789532045674660756E1f128,
+    4.998469661968096229986658302195402690910E-1f128,
+    1.538612243596254322971797716843006400388E-6f128,
+];
+#[rustfmt::skip]
+static LOGB_Q: [f128; 12] = [
+    3.940717212190338497730839731583397586124E4f128,
+    2.626900195321832660448791748036714883242E5f128,
+    7.777690340007566932935753241556479363645E5f128,
+    1.347518538384329112529391120390701166528E6f128,
+    1.514882452993549494932585972882995548426E6f128,
+    1.158019977462989115839826904108208787040E6f128,
+    6.132189329546557743179177159925690841200E5f128,
+    2.248234257620569139969141618556349415120E5f128,
+    5.605842085972455027590989944010492125825E4f128,
+    9.147150349299596453976674231612674085381E3f128,
+    9.104928120962988414618126155557301584078E2f128,
+    4.839208193348159620282142911143429644326E1f128,
+];
+#[rustfmt::skip]
+static LOGB_R: [f128; 6] = [
+    1.418134209872192732479751274970992665513E5f128,
+    -8.977257995689735303686582344659576526998E4f128,
+    2.048819892795278657810231591630928516206E4f128,
+    -2.024301798136027039250415126250455056397E3f128,
+    8.057002716646055371965756206836056074715E1f128,
+    -8.828896441624934385266096344596648080902E-1f128,
+];
+#[rustfmt::skip]
+static LOGB_S: [f128; 6] = [
+    1.701761051846631278975701529965589676574E6f128,
+    -1.332535117259762928288745111081235577029E6f128,
+    4.001557694070773974936904547424676279307E5f128,
+    -5.748542087379434595104154610899551484314E4f128,
+    3.998526750980007367835804959888064681098E3f128,
+    -1.186359407982897997337150403816839480438E2f128,
+];
+
+/// Horner: p[n]·xⁿ + … + p[0]. Matches glibc's `neval`.
+#[inline]
+fn neval_f128(x: f128, p: &[f128]) -> f128 {
+    let n = p.len() - 1;
+    let mut y = p[n];
+    for i in (0..n).rev() {
+        y = y * x + p[i];
+    }
+    y
+}
+/// Monic Horner: xⁿ⁺¹ + p[n]·xⁿ + … + p[0]. Matches glibc's `deval`.
+#[inline]
+fn deval_f128(x: f128, p: &[f128]) -> f128 {
+    let n = p.len() - 1;
+    let mut y = x + p[n];
+    for i in (0..n).rev() {
+        y = y * x + p[i];
+    }
+    y
+}
+
+/// Shared Cephes log reduction (glibc ldbl-128 e_log2l/e_log10l): handle the
+/// IEEE special cases, then frexp + the R/S (|e|>2) or P/Q form. Returns
+/// Err(special-value) for 0/neg/inf/NaN/1, else Ok((y, xm, e)) — the reduced
+/// log of the fraction `y`, the reduced argument `xm`, and the binary exponent
+/// `e`, which each `logN` then combines with its own base constants.
+#[allow(clippy::excessive_precision)]
+fn cephes_log_reduce_f128(x: f128) -> Result<(f128, f128, i32), f128> {
+    const SQRTH: f128 = 7.071067811865475244008443621048490392848359E-1f128;
+    let bits = x.to_bits();
+    let hx = (bits >> 64) as i64;
+    let lx = bits as u64;
+    if (hx & 0x7fff_ffff_ffff_ffff) == 0 && lx == 0 {
+        return Err(-1.0 / x.abs()); // logN(±0) = -inf
+    }
+    if hx < 0 {
+        if x.is_nan() {
+            return Err((x - x) / (x - x));
+        }
+        return Err(f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))); // x<0 NaN
+    }
+    if hx >= 0x7fff_0000_0000_0000 {
+        return Err(x + x); // +inf / NaN
+    }
+    if x == 1.0 {
+        return Err(0.0);
+    }
+
+    // frexp into [0.5,1).
+    let xb = x.to_bits();
+    let ef = ((xb >> 112) & 0x7fff) as i32;
+    let mut e;
+    let mut xm;
+    if ef == 0 {
+        let xn = x * f128::from_bits((113u128 + 16383) << 112);
+        e = ((xn.to_bits() >> 112) & 0x7fff) as i32 - 113 - 16382;
+        xm = f128::from_bits((xn.to_bits() & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
+    } else {
+        e = ef - 16382;
+        xm = f128::from_bits((xb & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
+    }
+
+    let y;
+    if e > 2 || e < -2 {
+        let yy;
+        if xm < SQRTH {
+            e -= 1;
+            let z = xm - 0.5;
+            yy = 0.5 * z + 0.5;
+            xm = z / yy;
+        } else {
+            let mut z = xm - 0.5;
+            z -= 0.5;
+            yy = 0.5 * xm + 0.5;
+            xm = z / yy;
+        }
+        let z = xm * xm;
+        y = xm * (z * neval_f128(z, &LOGB_R) / deval_f128(z, &LOGB_S));
+    } else {
+        if xm < SQRTH {
+            e -= 1;
+            xm = 2.0 * xm - 1.0;
+        } else {
+            xm -= 1.0;
+        }
+        let z = xm * xm;
+        let yy = xm * (z * neval_f128(xm, &LOGB_P) / deval_f128(xm, &LOGB_Q));
+        y = yy - 0.5 * z;
+    }
+    Ok((y, xm, e))
+}
+
+/// log2 for binary128 — glibc ldbl-128 `__ieee754_log2l`: combine via
+/// LOG2EA = log2(e)-1 plus the integer exponent. Byte-exact.
+#[allow(clippy::excessive_precision)]
+fn log2l_f128(x: f128) -> f128 {
+    const LOG2EA: f128 = 4.4269504088896340735992468100189213742664595E-1f128;
+    let (y, xm, e) = match cephes_log_reduce_f128(x) {
+        Ok(t) => t,
+        Err(v) => return v,
+    };
+    let mut z = y * LOG2EA;
+    z += xm * LOG2EA;
+    z += y;
+    z += xm;
+    z += e as f128;
+    z
+}
+
+/// log10 for binary128 — glibc ldbl-128 `__ieee754_log10l`: combine via
+/// log10(e) split (L10EA+L10EB) and log10(2) split (L102A+L102B). Byte-exact.
+#[allow(clippy::excessive_precision)]
+fn log10l_f128(x: f128) -> f128 {
+    const L102A: f128 = 0.3125f128;
+    const L102B: f128 = -1.14700043360188047862611052755069732318101185E-2f128;
+    const L10EA: f128 = 0.5f128;
+    const L10EB: f128 = -6.570551809674817234887108108339491770560299E-2f128;
+    let (y, xm, e) = match cephes_log_reduce_f128(x) {
+        Ok(t) => t,
+        Err(v) => return v,
+    };
+    let ef = e as f128;
+    let mut z = y * L10EB;
+    z += xm * L10EB;
+    z += ef * L102B;
+    z += y * L10EA;
+    z += xm * L10EA;
+    z += ef * L102A;
+    z
 }
 
 /// Inverse hyperbolic tangent for binary128 — port of glibc `__ieee754_atanhl`
