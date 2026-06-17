@@ -4108,8 +4108,8 @@ pub unsafe extern "C" fn roundevenf64x(x: f64) -> f64 {
     unsafe { roundeven(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn roundevenf128(x: f64) -> f64 {
-    unsafe { roundeven(x) }
+pub unsafe extern "C" fn roundevenf128(x: f128) -> f128 {
+    x.round_ties_even()
 }
 
 // --- nextdown / nextup ---
@@ -6550,8 +6550,8 @@ pub unsafe extern "C" fn ceilf64x(x: f64) -> f64 {
     unsafe { ceil(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ceilf128(x: f64) -> f64 {
-    unsafe { ceil(x) }
+pub unsafe extern "C" fn ceilf128(x: f128) -> f128 {
+    x.ceil()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cosf32(x: f32) -> f32 {
@@ -6750,8 +6750,8 @@ pub unsafe extern "C" fn floorf64x(x: f64) -> f64 {
     unsafe { floor(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn floorf128(x: f64) -> f64 {
-    unsafe { floor(x) }
+pub unsafe extern "C" fn floorf128(x: f128) -> f128 {
+    x.floor()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgammaf32(x: f32) -> f32 {
@@ -6930,8 +6930,8 @@ pub unsafe extern "C" fn roundf64x(x: f64) -> f64 {
     unsafe { round(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn roundf128(x: f64) -> f64 {
-    unsafe { round(x) }
+pub unsafe extern "C" fn roundf128(x: f128) -> f128 {
+    x.round()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinf32(x: f32) -> f32 {
@@ -6990,8 +6990,9 @@ pub unsafe extern "C" fn sqrtf64x(x: f64) -> f64 {
     unsafe { sqrt(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sqrtf128(x: f64) -> f64 {
-    unsafe { sqrt(x) }
+pub unsafe extern "C" fn sqrtf128(x: f128) -> f128 {
+    // The f128 sqrt intrinsic is IEEE correctly-rounded (byte-exact vs glibc).
+    x.sqrt()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanf32(x: f32) -> f32 {
@@ -7070,8 +7071,8 @@ pub unsafe extern "C" fn truncf64x(x: f64) -> f64 {
     unsafe { trunc(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn truncf128(x: f64) -> f64 {
-    unsafe { trunc(x) }
+pub unsafe extern "C" fn truncf128(x: f128) -> f128 {
+    x.trunc()
 }
 
 // --- binary real (f64,f64→f64, f32,f32→f32) ---
@@ -7295,8 +7296,9 @@ pub unsafe extern "C" fn fmaf64x(x: f64, y: f64, z: f64) -> f64 {
     unsafe { fma(x, y, z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaf128(x: f64, y: f64, z: f64) -> f64 {
-    unsafe { fma(x, y, z) }
+pub unsafe extern "C" fn fmaf128(x: f128, y: f128, z: f128) -> f128 {
+    // The f128 fused-multiply-add intrinsic is IEEE correctly-rounded.
+    x.mul_add(y, z)
 }
 
 // --- unary → c_int ---
