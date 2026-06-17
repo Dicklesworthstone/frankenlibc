@@ -7191,8 +7191,12 @@ pub unsafe extern "C" fn expm1f64x(x: f64) -> f64 {
     unsafe { expm1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn expm1f128(x: f64) -> f64 {
-    unsafe { expm1(x) }
+pub unsafe extern "C" fn expm1f128(x: f128) -> f128 {
+    let r = expm1l_f128(x);
+    if x.is_finite() && r.is_infinite() {
+        set_range_errno(); // overflow
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fabsf32(x: f32) -> f32 {
@@ -9173,6 +9177,94 @@ fn expl_f128(x: f128) -> f128 {
         // x >= himark, or x is NaN/+inf: overflow / propagate.
         TWO16383 * x
     }
+}
+
+/// e^x - 1 for binary128 — verbatim port of glibc's ldbl-128 `__expm1l`
+/// (s_expm1l.c, Cephes): for x>=64 plain expl; else reduce x = ln2·(k+r) and
+/// evaluate exp(r)-1 via a P/Q rational, then 2^k·(qx+1)-1. Self-contained given
+/// the byte-exact expl_f128; only algebraic f128 ops otherwise → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn expm1l_f128(x: f128) -> f128 {
+    const P0: f128 = 2.943520915569954073888921213330863757240E8f128;
+    const P1: f128 = -5.722847283900608941516165725053359168840E7f128;
+    const P2: f128 = 8.944630806357575461578107295909719817253E6f128;
+    const P3: f128 = -7.212432713558031519943281748462837065308E5f128;
+    const P4: f128 = 4.578962475841642634225390068461943438441E4f128;
+    const P5: f128 = -1.716772506388927649032068540558788106762E3f128;
+    const P6: f128 = 4.401308817383362136048032038528753151144E1f128;
+    const P7: f128 = -4.888737542888633647784737721812546636240E-1f128;
+    const Q0: f128 = 1.766112549341972444333352727998584753865E9f128;
+    const Q1: f128 = -7.848989743695296475743081255027098295771E8f128;
+    const Q2: f128 = 1.615869009634292424463780387327037251069E8f128;
+    const Q3: f128 = -2.019684072836541751428967854947019415698E7f128;
+    const Q4: f128 = 1.682912729190313538934190635536631941751E6f128;
+    const Q5: f128 = -9.615511549171441430850103489315371768998E4f128;
+    const Q6: f128 = 3.697714952261803935521187272204485251835E3f128;
+    const Q7: f128 = -8.802340681794263968892934703309274564037E1f128;
+    const C1: f128 = 6.93145751953125E-1f128;
+    const C2: f128 = 1.428606820309417232121458176568075500134E-6f128;
+    const MINARG: f128 = -7.9018778583833765273564461846232128760607E1f128;
+    const BIG: f128 = 1e4932f128;
+
+    let xb = x.to_bits();
+    let w0 = (xb >> 96) as u32;
+    let sign = w0 & 0x8000_0000 != 0;
+    let ix = w0 & 0x7fff_ffff;
+
+    // Positive and exp large: exp(x)-1 == exp(x) in f128.
+    if !sign && ix >= 0x4006_0000 {
+        return expl_f128(x);
+    }
+    // inf / NaN (positive inf already handled above, so this is -inf or NaN).
+    if ix >= 0x7fff_0000 {
+        if (xb & ((1u128 << 112) - 1)) == 0 {
+            return -1.0; // expm1(-inf) = -1
+        }
+        return x + x; // NaN
+    }
+    // expm1(±0) = ±0.
+    if ix == 0 && (xb & ((1u128 << 112) - 1)) == 0 {
+        return x;
+    }
+    // Very negative: result -> -1.
+    if x < MINARG {
+        return 4.0 / BIG - 1.0;
+    }
+    // Tiny: expm1(x) == x.
+    if x.abs() < f128::from_bits(16270u128 << 112) {
+        return x; // |x| < 2^-113
+    }
+
+    // Reduce x = ln2 (k + remainder), |remainder| <= 1/2.
+    let ln2 = C1 + C2;
+    let pf = (0.5 + x / ln2).floor();
+    let k = pf as i32;
+    let mut xr = x - pf * C1;
+    xr -= pf * C2;
+
+    // exp(remainder ln2) - 1 via P/Q.
+    let mut px = P7 * xr + P6;
+    px = px * xr + P5;
+    px = px * xr + P4;
+    px = px * xr + P3;
+    px = px * xr + P2;
+    px = px * xr + P1;
+    px = px * xr + P0;
+    px *= xr;
+    let mut qx = xr + Q7;
+    qx = qx * xr + Q6;
+    qx = qx * xr + Q5;
+    qx = qx * xr + Q4;
+    qx = qx * xr + Q3;
+    qx = qx * xr + Q2;
+    qx = qx * xr + Q1;
+    qx = qx * xr + Q0;
+    let xx = xr * xr;
+    let qx = xr + (0.5 * xx + xx * px / qx);
+
+    // exp(x)-1 = 2^k (qx+1) - 1 = 2^k qx + 2^k - 1.
+    let p2k = scalbn_f128(1.0, k as i64);
+    p2k * qx + (p2k - 1.0)
 }
 
 // --- scalbln-like (f, c_long → f) ---
