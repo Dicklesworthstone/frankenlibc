@@ -7231,9 +7231,7 @@ pub unsafe extern "C" fn fminf128(x: f128, y: f128) -> f128 {
     // glibc: x < y ? x : y (returns the second arg on a ±0 tie).
     if x.is_nan() {
         y
-    } else if y.is_nan() {
-        x
-    } else if x < y {
+    } else if y.is_nan() || x < y {
         x
     } else {
         y
@@ -7500,8 +7498,24 @@ pub unsafe extern "C" fn frexpf64x(x: f64, exp: *mut c_int) -> f64 {
     unsafe { frexp(x, exp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn frexpf128(x: f64, exp: *mut c_int) -> f64 {
-    unsafe { frexp(x, exp) }
+pub unsafe extern "C" fn frexpf128(x: f128, exp: *mut c_int) -> f128 {
+    let bits = x.to_bits();
+    let e = ((bits >> 112) & 0x7fff) as i32;
+    if e == 0x7fff || x == 0.0 {
+        // inf / nan / signed zero: *exp = 0, value unchanged.
+        unsafe { *exp = 0 };
+        return x;
+    }
+    let (norm_bits, base_exp) = if e == 0 {
+        // Subnormal: renormalize via x * 2^113, then back out the 113.
+        let xn = x * f128::from_bits((113u128 + 16383) << 112);
+        (xn.to_bits(), ((xn.to_bits() >> 112) & 0x7fff) as i32 - 113)
+    } else {
+        (bits, e)
+    };
+    unsafe { *exp = base_exp - 16382 };
+    // Mantissa in [0.5, 1): force the exponent field to 0x3FFE.
+    f128::from_bits((norm_bits & !(0x7fffu128 << 112)) | (0x3FFEu128 << 112))
 }
 
 // --- ldexp/scalbn-like (f, c_int → f) ---

@@ -15,6 +15,7 @@ unsafe extern "C" {
     fn fdimf128(x: f128, y: f128) -> f128;
     fn nextafterf128(x: f128, y: f128) -> f128;
     fn modff128(x: f128, iptr: *mut f128) -> f128;
+    fn frexpf128(x: f128, e: *mut c_int) -> f128;
 }
 fn el() -> *mut c_int {
     unsafe { libc::__errno_location() }
@@ -94,6 +95,17 @@ fn f128_minmax_dim_nextafter_match_glibc() {
         let f = unsafe { ma::modff128(x, &mut fi) }.to_bits();
         if g != f || gi.to_bits() != fi.to_bits() {
             mism.push(format!("modf x={:#034x}: glibc=(frac={g:#034x},int={:#034x}) fl=(frac={f:#034x},int={:#034x})", x.to_bits(), gi.to_bits(), fi.to_bits()));
+        }
+    }
+
+    // frexp: return mantissa + *exp out-param.
+    for &x in &vals {
+        let mut ge: c_int = 12345;
+        let mut fe: c_int = 6789;
+        let g = unsafe { frexpf128(x, &mut ge) }.to_bits();
+        let f = unsafe { ma::frexpf128(x, &mut fe) }.to_bits();
+        if g != f || ge != fe {
+            mism.push(format!("frexp x={:#034x}: glibc=(m={g:#034x},e={ge}) fl=(m={f:#034x},e={fe})", x.to_bits()));
         }
     }
 
