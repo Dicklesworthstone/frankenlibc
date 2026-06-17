@@ -77,6 +77,7 @@ pub mod elf;
 pub mod err;
 pub mod errno;
 pub mod ether;
+pub mod float128;
 pub mod fmtmsg;
 pub mod ftw;
 pub mod getopt;
