@@ -703,14 +703,110 @@ pub unsafe extern "C" fn strfromf64x(
 ) -> c_int {
     unsafe { crate::string_abi::strfroml(str, n, fmt, fp) }
 }
+/// Parse a `strfrom`-style `%[flags][width][.precision]CONV` format string into
+/// a `FmtSpec` (defaults to `%g` if the conversion can't be parsed).
+unsafe fn parse_f128_fmt(fmt: *const c_char) -> frankenlibc_core::float128::FmtSpec {
+    use frankenlibc_core::float128::FmtSpec;
+    let mut spec = FmtSpec {
+        conv: b'g',
+        precision: None,
+        width: 0,
+        left: false,
+        plus: false,
+        space: false,
+        alt: false,
+        zero: false,
+    };
+    if fmt.is_null() {
+        return spec;
+    }
+    let mut buf = Vec::new();
+    let mut p = fmt.cast::<u8>();
+    for _ in 0..256 {
+        let c = unsafe { *p };
+        if c == 0 {
+            break;
+        }
+        buf.push(c);
+        p = unsafe { p.add(1) };
+    }
+    let mut i = 0;
+    while i < buf.len() && buf[i] != b'%' {
+        i += 1;
+    }
+    if i >= buf.len() {
+        return spec;
+    }
+    i += 1; // past '%'
+    loop {
+        match buf.get(i) {
+            Some(b'-') => spec.left = true,
+            Some(b'+') => spec.plus = true,
+            Some(b' ') => spec.space = true,
+            Some(b'#') => spec.alt = true,
+            Some(b'0') => spec.zero = true,
+            _ => break,
+        }
+        i += 1;
+    }
+    let mut w = 0usize;
+    let mut have_w = false;
+    while let Some(&c) = buf.get(i) {
+        if c.is_ascii_digit() {
+            w = w * 10 + (c - b'0') as usize;
+            i += 1;
+            have_w = true;
+        } else {
+            break;
+        }
+    }
+    if have_w {
+        spec.width = w;
+    }
+    if buf.get(i) == Some(&b'.') {
+        i += 1;
+        let mut pr = 0usize;
+        while let Some(&c) = buf.get(i) {
+            if c.is_ascii_digit() {
+                pr = pr * 10 + (c - b'0') as usize;
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        spec.precision = Some(pr);
+    }
+    if let Some(&c) = buf.get(i)
+        && matches!(c, b'a' | b'A' | b'e' | b'E' | b'f' | b'F' | b'g' | b'G')
+    {
+        spec.conv = c;
+    }
+    spec
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strfromf128(
     str: *mut c_char,
     n: SizeT,
     fmt: *const c_char,
-    fp: f64,
+    fp: f128,
 ) -> c_int {
-    unsafe { crate::string_abi::strfroml(str, n, fmt, fp) }
+    // _Float128 is passed in the full 128-bit SSE register; decompose its bits
+    // and format byte-exactly like glibc via the exact-decimal core. (The old
+    // f64-typed stub read only the low 64 bits -> garbage.)
+    let bits = fp.to_bits();
+    let spec = unsafe { parse_f128_fmt(fmt) };
+    let body = frankenlibc_core::float128::format_binary128(bits, &spec);
+    let total = body.len();
+    if n > 0 && !str.is_null() {
+        let cap = n - 1;
+        let w = total.min(cap);
+        unsafe {
+            core::ptr::copy_nonoverlapping(body.as_ptr(), str.cast::<u8>(), w);
+            *str.add(w) = 0;
+        }
+    }
+    total as c_int
 }
 
 // strtof32 → strtof, strtof64/f32x → strtod, strtof64x/f128 → strtold
