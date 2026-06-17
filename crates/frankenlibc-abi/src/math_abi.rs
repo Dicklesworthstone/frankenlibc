@@ -4814,8 +4814,23 @@ pub unsafe extern "C" fn exp10m1f64x(x: f64) -> f64 {
     unsafe { exp10m1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp10m1f128(x: f64) -> f64 {
-    unsafe { exp10m1(x) }
+pub unsafe extern "C" fn exp10m1f128(x: f128) -> f128 {
+    // glibc s_exp10m1_template: small |x| via expm1(ln10·x), large via exp10.
+    const M_LN10: f128 = 2.302585092994045684017991454684364208f128;
+    if x >= -0.5 && x <= 0.5 {
+        expm1l_f128(M_LN10 * x)
+    } else if x > 39.0 {
+        // M_MANT_DIG/3 + 2 = 113/3 + 2 = 39
+        let ret = exp10l_f128(x);
+        if !ret.is_finite() && x.is_finite() {
+            set_range_errno();
+        }
+        ret
+    } else if x < -39.0 {
+        -1.0
+    } else {
+        exp10l_f128(x) - 1.0
+    }
 }
 
 // --- compoundn ((1+x)^n) ---
