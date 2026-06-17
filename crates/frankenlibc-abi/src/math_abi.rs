@@ -6853,8 +6853,8 @@ pub unsafe extern "C" fn acosf64x(x: f64) -> f64 {
     unsafe { acos(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn acosf128(x: f64) -> f64 {
-    unsafe { acos(x) }
+pub unsafe extern "C" fn acosf128(x: f128) -> f128 {
+    acos_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acoshf32(x: f32) -> f32 {
@@ -8604,6 +8604,219 @@ fn asin_f128(x: f128) -> f128 {
         tres = PIO4_HI - (pp - qq);
     }
     if neg { -tres } else { tres }
+}
+
+/// Arccosine for binary128 — verbatim port of glibc's ldbl-128 `__ieee754_acosl`
+/// (e_acosl.c). Five range branches: |x|<2^-113 → pi/2; |x|<0.4375 via
+/// pS/qS (acos = pi/2 - asin); [0.4375±] via P/Q; [0.5625±] via rS/sS (acos-
+/// specific signs); |x|>=0.625 via acos = 2·asin(sqrt((1-|x|)/2)) with an
+/// extended-precision sqrt correction. Self-contained (only sqrtl + algebraic
+/// f128); sequential-Horner polynomials reproduce glibc's op order → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn acos_f128(x: f128) -> f128 {
+    const PIO2_HI: f128 = 1.5707963267948966192313216916397514420986f128;
+    const PIO2_LO: f128 = 4.3359050650618905123985220130216759843812E-35f128;
+    const RS0: f128 = 5.619049346208901520945464704848780243887E0f128;
+    const RS1: f128 = -4.460504162777731472539175700169871920352E1f128;
+    const RS2: f128 = 1.317669505315409261479577040530751477488E2f128;
+    const RS3: f128 = -1.626532582423661989632442410808596009227E2f128;
+    const RS4: f128 = 3.144806644195158614904369445440583873264E1f128;
+    const RS5: f128 = 9.806674443470740708765165604769099559553E1f128;
+    const RS6: f128 = -5.708468492052010816555762842394927806920E1f128;
+    const RS7: f128 = -1.396540499232262112248553357962639431922E1f128;
+    const RS8: f128 = 1.126243289311910363001762058295832610344E1f128;
+    const RS9: f128 = 4.956179821329901954211277873774472383512E-1f128;
+    const RS10: f128 = -3.313227657082367169241333738391762525780E-1f128;
+    const SS0: f128 = -4.645814742084009935700221277307007679325E0f128;
+    const SS1: f128 = 3.879074822457694323970438316317961918430E1f128;
+    const SS2: f128 = -1.221986588013474694623973554726201001066E2f128;
+    const SS3: f128 = 1.658821150347718105012079876756201905822E2f128;
+    const SS4: f128 = -4.804379630977558197953176474426239748977E1f128;
+    const SS5: f128 = -1.004296417397316948114344573811562952793E2f128;
+    const SS6: f128 = 7.530281592861320234941101403870010111138E1f128;
+    const SS7: f128 = 1.270735595411673647119592092304357226607E1f128;
+    const SS8: f128 = -1.815144839646376500705105967064792930282E1f128;
+    const SS9: f128 = -7.821597334910963922204235247786840828217E-2f128;
+    const ACOSR5625: f128 = 9.7338991014954640492751132535550279812151E-1f128;
+    const PIMACOSR5625: f128 = 2.1682027434402468335351320579240000860757E0f128;
+    const P0: f128 = 2.177690192235413635229046633751390484892E0f128;
+    const P1: f128 = -2.848698225706605746657192566166142909573E1f128;
+    const P2: f128 = 1.040076477655245590871244795403659880304E2f128;
+    const P3: f128 = -1.400087608918906358323551402881238180553E2f128;
+    const P4: f128 = 2.221047917671449176051896400503615543757E1f128;
+    const P5: f128 = 9.643714856395587663736110523917499638702E1f128;
+    const P6: f128 = -5.158406639829833829027457284942389079196E1f128;
+    const P7: f128 = -1.578651828337585944715290382181219741813E1f128;
+    const P8: f128 = 1.093632715903802870546857764647931045906E1f128;
+    const P9: f128 = 5.448925479898460003048760932274085300103E-1f128;
+    const P10: f128 = -3.315886001095605268470690485170092986337E-1f128;
+    const Q0: f128 = -1.958219113487162405143608843774587557016E0f128;
+    const Q1: f128 = 2.614577866876185080678907676023269360520E1f128;
+    const Q2: f128 = -9.990858606464150981009763389881793660938E1f128;
+    const Q3: f128 = 1.443958741356995763628660823395334281596E2f128;
+    const Q4: f128 = -3.206441012484232867657763518369723873129E1f128;
+    const Q5: f128 = -1.048560885341833443564920145642588991492E2f128;
+    const Q6: f128 = 6.745883931909770880159915641984874746358E1f128;
+    const Q7: f128 = 1.806809656342804436118449982647641392951E1f128;
+    const Q8: f128 = -1.770150690652438294290020775359580915464E1f128;
+    const Q9: f128 = -5.659156469628629327045433069052560211164E-1f128;
+    const ACOSR4375: f128 = 1.1179797320499710475919903296900511518755E0f128;
+    const PIMACOSR4375: f128 = 2.0236129215398221908706530535894517323217E0f128;
+    const PS0: f128 = -8.358099012470680544198472400254596543711E2f128;
+    const PS1: f128 = 3.674973957689619490312782828051860366493E3f128;
+    const PS2: f128 = -6.730729094812979665807581609853656623219E3f128;
+    const PS3: f128 = 6.643843795209060298375552684423454077633E3f128;
+    const PS4: f128 = -3.817341990928606692235481812252049415993E3f128;
+    const PS5: f128 = 1.284635388402653715636722822195716476156E3f128;
+    const PS6: f128 = -2.410736125231549204856567737329112037867E2f128;
+    const PS7: f128 = 2.219191969382402856557594215833622156220E1f128;
+    const PS8: f128 = -7.249056260830627156600112195061001036533E-1f128;
+    const PS9: f128 = 1.055923570937755300061509030361395604448E-3f128;
+    const QS0: f128 = -5.014859407482408326519083440151745519205E3f128;
+    const QS1: f128 = 2.430653047950480068881028451580393430537E4f128;
+    const QS2: f128 = -4.997904737193653607449250593976069726962E4f128;
+    const QS3: f128 = 5.675712336110456923807959930107347511086E4f128;
+    const QS4: f128 = -3.881523118339661268482937768522572588022E4f128;
+    const QS5: f128 = 1.634202194895541569749717032234510811216E4f128;
+    const QS6: f128 = -4.151452662440709301601820849901296953752E3f128;
+    const QS7: f128 = 5.956050864057192019085175976175695342168E2f128;
+    const QS8: f128 = -4.175375777334867025769346564600396877176E1f128;
+
+    let xb = x.to_bits();
+    let w0 = (xb >> 96) as u32;
+    let neg = w0 & 0x8000_0000 != 0;
+    let ix = w0 & 0x7fff_ffff;
+    let absx = f128::from_bits(xb & !(1u128 << 127)); // |x|
+
+    if ix >= 0x3fff_0000 {
+        // |x| >= 1
+        if ix == 0x3fff_0000 && (xb & ((1u128 << 96) - 1)) == 0 {
+            // |x| == 1
+            return if !neg { 0.0 } else { 2.0 * PIO2_HI + 2.0 * PIO2_LO }; // acos(1)=0 / acos(-1)=pi
+        }
+        if x.is_nan() {
+            return (x - x) / (x - x);
+        }
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // acos(|x|>1) NaN
+    }
+
+    if ix < 0x3ffe_0000 {
+        // |x| < 0.5
+        if ix < 0x3f8e_0000 {
+            return PIO2_HI + PIO2_LO; // |x| < 2^-113
+        }
+        if ix < 0x3ffd_e000 {
+            // |x| < 0.4375 — acos via asin(x).
+            let z = x * x;
+            let mut p = PS9 * z + PS8;
+            p = p * z + PS7;
+            p = p * z + PS6;
+            p = p * z + PS5;
+            p = p * z + PS4;
+            p = p * z + PS3;
+            p = p * z + PS2;
+            p = p * z + PS1;
+            p = p * z + PS0;
+            p = p * z;
+            let mut q = z + QS8;
+            q = q * z + QS7;
+            q = q * z + QS6;
+            q = q * z + QS5;
+            q = q * z + QS4;
+            q = q * z + QS3;
+            q = q * z + QS2;
+            q = q * z + QS1;
+            q = q * z + QS0;
+            let r = x + x * p / q;
+            return PIO2_HI - (r - PIO2_LO);
+        }
+        // 0.4375 <= |x| < 0.5 via P/Q.
+        let t = absx - 0.4375;
+        let mut p = P10 * t + P9;
+        p = p * t + P8;
+        p = p * t + P7;
+        p = p * t + P6;
+        p = p * t + P5;
+        p = p * t + P4;
+        p = p * t + P3;
+        p = p * t + P2;
+        p = p * t + P1;
+        p = p * t + P0;
+        p = p * t;
+        let mut q = t + Q9;
+        q = q * t + Q8;
+        q = q * t + Q7;
+        q = q * t + Q6;
+        q = q * t + Q5;
+        q = q * t + Q4;
+        q = q * t + Q3;
+        q = q * t + Q2;
+        q = q * t + Q1;
+        q = q * t + Q0;
+        let r = p / q;
+        return if neg { PIMACOSR4375 - r } else { ACOSR4375 + r };
+    }
+
+    if ix < 0x3ffe_4000 {
+        // |x| < 0.625 via rS/sS.
+        let t = absx - 0.5625;
+        let mut p = RS10 * t + RS9;
+        p = p * t + RS8;
+        p = p * t + RS7;
+        p = p * t + RS6;
+        p = p * t + RS5;
+        p = p * t + RS4;
+        p = p * t + RS3;
+        p = p * t + RS2;
+        p = p * t + RS1;
+        p = p * t + RS0;
+        p = p * t;
+        let mut q = t + SS9;
+        q = q * t + SS8;
+        q = q * t + SS7;
+        q = q * t + SS6;
+        q = q * t + SS5;
+        q = q * t + SS4;
+        q = q * t + SS3;
+        q = q * t + SS2;
+        q = q * t + SS1;
+        q = q * t + SS0;
+        let pq = p / q;
+        return if neg { PIMACOSR5625 - pq } else { ACOSR5625 + pq };
+    }
+
+    // |x| >= 0.625 via acos = 2·asin(sqrt((1-|x|)/2)).
+    let z = (1.0 - absx) * 0.5;
+    let s = z.sqrt();
+    // Extended-precision sqrt correction (split f1 = high 64 bits of s).
+    let f1 = f128::from_bits(s.to_bits() & (!0u128 << 64));
+    let f2 = s - f1;
+    let mut w = z - f1 * f1;
+    w = w - 2.0 * f1 * f2;
+    w = w - f2 * f2;
+    w = w / (2.0 * s);
+    let mut p = PS9 * z + PS8;
+    p = p * z + PS7;
+    p = p * z + PS6;
+    p = p * z + PS5;
+    p = p * z + PS4;
+    p = p * z + PS3;
+    p = p * z + PS2;
+    p = p * z + PS1;
+    p = p * z + PS0;
+    p = p * z;
+    let mut q = z + QS8;
+    q = q * z + QS7;
+    q = q * z + QS6;
+    q = q * z + QS5;
+    q = q * z + QS4;
+    q = q * z + QS3;
+    q = q * z + QS2;
+    q = q * z + QS1;
+    q = q * z + QS0;
+    let r = s + (w + s * p / q);
+    let w2 = if neg { PIO2_HI + (PIO2_LO - r) } else { r };
+    2.0 * w2
 }
 
 // --- scalbln-like (f, c_long → f) ---
