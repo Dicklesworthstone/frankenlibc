@@ -11926,6 +11926,113 @@ pub unsafe extern "C" fn lockf(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int
     out
 }
 
+/// glibc's generic `posix_fallocate` fallback emulation
+/// (`sysdeps/posix/posix_fallocate.c`), used when the `fallocate(2)` syscall
+/// reports `EOPNOTSUPP` — filesystems lacking native `fallocate` support, such
+/// as some network filesystems. It forces backing-store allocation by touching
+/// one byte in every filesystem block across `[offset, offset+len)`, reading
+/// each block first so already-allocated data is never clobbered and writing a
+/// zero byte only into holes. The file is extended to `offset+len`, existing
+/// data is preserved, and the file is never shrunk. Returns an errno (0 on
+/// success), matching glibc's errno-direct (not `-1`/`errno`) contract.
+///
+/// Exposed (Rust-visible, no C symbol) so the differential conformance gate can
+/// drive the fallback path directly — tmpfs/ext4 support native `fallocate`, so
+/// it would otherwise never execute on the test host.
+#[allow(unsafe_code)]
+pub unsafe fn internal_fallocate_emulate(
+    fd: c_int,
+    offset: libc::off_t,
+    mut len: libc::off_t,
+) -> c_int {
+    // offset/len negativity is validated by the caller, but glibc's standalone
+    // emulation re-checks it; mirror that for self-containment.
+    if offset < 0 || len < 0 {
+        return libc::EINVAL;
+    }
+    // Overflow check: offset + len must not wrap past off_t's max (glibc casts
+    // the unsigned sum back to signed and rejects a negative result).
+    if ((offset as u64).wrapping_add(len as u64) as i64) < 0 {
+        return libc::EFBIG;
+    }
+    // `pwrite` would misbehave in O_APPEND mode (every write lands at EOF rather
+    // than the requested offset), so glibc rejects append-mode descriptors and
+    // maps any F_GETFL failure to EBADF.
+    match unsafe { syscall::sys_fcntl(fd, libc::F_GETFL, 0) } {
+        Ok(flags) if (flags & libc::O_APPEND) == 0 => {}
+        _ => return libc::EBADF,
+    }
+    // Must be a regular file. glibc maps an fstat failure to EBADF (not errno).
+    let mut st: libc::stat = unsafe { core::mem::zeroed() };
+    if unsafe { syscall::sys_fstat(fd, (&mut st as *mut libc::stat).cast()) }.is_err() {
+        return libc::EBADF;
+    }
+    let fmt = st.st_mode & libc::S_IFMT;
+    if fmt == libc::S_IFIFO {
+        return libc::ESPIPE;
+    }
+    if fmt != libc::S_IFREG {
+        return libc::ENODEV;
+    }
+    let st_size = st.st_size as i64;
+
+    if len == 0 {
+        // A zero-length request can only extend (never shrink) the file.
+        if st_size < offset {
+            return match unsafe { syscall::sys_ftruncate(fd, offset) } {
+                Ok(()) => 0,
+                Err(e) => e,
+            };
+        }
+        return 0;
+    }
+
+    // Write stride: the filesystem block size, capped at 4096. NFS may report a
+    // much larger block size that would leave holes after the loop, so glibc
+    // caps it; a zero block size falls back to 512.
+    let increment: i64 = {
+        let mut f: syscall::StatFs = unsafe { core::mem::zeroed() };
+        if let Err(e) = unsafe { syscall::sys_fstatfs(fd, &mut f as *mut syscall::StatFs) } {
+            return e;
+        }
+        if f.f_bsize == 0 {
+            512
+        } else if f.f_bsize < 4096 {
+            f.f_bsize
+        } else {
+            4096
+        }
+    };
+
+    // Touch one byte per block. The first probe is aligned to the final byte of
+    // the leading partial block, then steps by `increment`.
+    let mut off = offset + (len - 1) % increment;
+    while len > 0 {
+        len -= increment;
+        let mut need_write = true;
+        if off < st_size {
+            let mut c: u8 = 0;
+            match unsafe { syscall::sys_pread64(fd, &mut c as *mut u8, 1, off) } {
+                // A non-zero byte means the block is already allocated — skip it.
+                Ok(rsize) => need_write = !(rsize == 1 && c != 0),
+                Err(e) => return e,
+            }
+        }
+        if need_write {
+            let zero: u8 = 0;
+            match unsafe { syscall::sys_pwrite64(fd, &zero as *const u8, 1, off) } {
+                Ok(1) => {}
+                // A 1-byte pwrite to a regular file writes 1 or errors; a short
+                // count is degenerate. glibc returns errno; surface EIO.
+                Ok(_) => return libc::EIO,
+                Err(e) => return e,
+            }
+        }
+        off += increment;
+    }
+    0
+}
+
 /// `posix_fallocate` — allocate file space.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_fallocate(
@@ -11946,6 +12053,11 @@ pub unsafe extern "C" fn posix_fallocate(
 
     let rc = match syscall::sys_fallocate(fd, 0, offset, len) {
         Ok(()) => 0,
+        // glibc (sysdeps/unix/sysv/linux/posix_fallocate.c) falls back to a
+        // generic zero-fill emulation ONLY on EOPNOTSUPP — filesystems without
+        // native fallocate support. Every other error, ENOSYS included, is
+        // returned to the caller unchanged.
+        Err(e) if e == libc::EOPNOTSUPP => unsafe { internal_fallocate_emulate(fd, offset, len) },
         Err(e) => e,
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
