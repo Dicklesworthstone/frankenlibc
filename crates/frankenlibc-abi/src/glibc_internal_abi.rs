@@ -5354,11 +5354,20 @@ pub unsafe extern "C" fn getdirentries(
     nbytes: SizeT,
     basep: *mut c_long,
 ) -> SSizeT {
-    if !basep.is_null() {
-        unsafe { *basep = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0) as c_long };
-    }
+    // glibc captures the pre-read offset but writes *basep ONLY on a successful
+    // read; on error the caller's *basep must stay untouched.
+    let base = if basep.is_null() {
+        0
+    } else {
+        unsafe { raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0) }
+    };
     match unsafe { raw_syscall::sys_getdents64(fd, buf as *mut u8, nbytes) } {
-        Ok(n) => n as SSizeT,
+        Ok(n) => {
+            if !basep.is_null() {
+                unsafe { *basep = base as c_long };
+            }
+            n as SSizeT
+        }
         Err(e) => {
             unsafe { crate::errno_abi::set_abi_errno(e) };
             -1
@@ -5372,11 +5381,18 @@ pub unsafe extern "C" fn getdirentries64(
     nbytes: SizeT,
     basep: *mut i64,
 ) -> SSizeT {
-    if !basep.is_null() {
-        unsafe { *basep = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0) };
-    }
+    let base = if basep.is_null() {
+        0
+    } else {
+        unsafe { raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0) }
+    };
     match unsafe { raw_syscall::sys_getdents64(fd, buf as *mut u8, nbytes) } {
-        Ok(n) => n as SSizeT,
+        Ok(n) => {
+            if !basep.is_null() {
+                unsafe { *basep = base };
+            }
+            n as SSizeT
+        }
         Err(e) => {
             unsafe { crate::errno_abi::set_abi_errno(e) };
             -1
