@@ -3934,8 +3934,15 @@ pub unsafe extern "C" fn acospif64x(x: f64) -> f64 {
     unsafe { acospi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn acospif128(x: f64) -> f64 {
-    unsafe { acospi(x) }
+pub unsafe extern "C" fn acospif128(x: f128) -> f128 {
+    // glibc s_acospi_template: acos(x)/pi, EDOM if |x|>1, clamp to [.,1].
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    if x.abs() > 1.0 {
+        set_domain_errno();
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+    let ret = acos_f128(x) / PI;
+    if ret > 1.0 { 1.0 } else { ret }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinpi(x: f64) -> f64 {
@@ -3969,8 +3976,21 @@ pub unsafe extern "C" fn asinpif64x(x: f64) -> f64 {
     unsafe { asinpi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn asinpif128(x: f64) -> f64 {
-    unsafe { asinpi(x) }
+pub unsafe extern "C" fn asinpif128(x: f128) -> f128 {
+    // glibc s_asinpi_template: EDOM if |x|>1, else asin(x)/pi, clamp to ±0.5.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    if !(x.abs() <= 1.0) {
+        if x.is_nan() {
+            return (x - x) / (x - x); // propagate input NaN
+        }
+        set_domain_errno();
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+    let ret = asin_f128(x) / PI;
+    if x != 0.0 && ret == 0.0 {
+        set_range_errno();
+    }
+    if ret.abs() > 0.5 { (0.5f128).copysign(ret) } else { ret }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atanpi(x: f64) -> f64 {
@@ -4004,8 +4024,14 @@ pub unsafe extern "C" fn atanpif64x(x: f64) -> f64 {
     unsafe { atanpi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn atanpif128(x: f64) -> f64 {
-    unsafe { atanpi(x) }
+pub unsafe extern "C" fn atanpif128(x: f128) -> f128 {
+    // glibc s_atanpi_template: atan(x)/pi, ERANGE on nonzero→0 underflow, ±0.5 clamp.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    let ret = atan_f128(x) / PI;
+    if x != 0.0 && ret == 0.0 {
+        set_range_errno();
+    }
+    if ret.abs() > 0.5 { (0.5f128).copysign(ret) } else { ret }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan2pi(x: f64, y: f64) -> f64 {
@@ -4039,8 +4065,14 @@ pub unsafe extern "C" fn atan2pif64x(x: f64, y: f64) -> f64 {
     unsafe { atan2pi(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn atan2pif128(x: f64, y: f64) -> f64 {
-    unsafe { atan2pi(x, y) }
+pub unsafe extern "C" fn atan2pif128(y: f128, x: f128) -> f128 {
+    // glibc s_atan2pi_template: atan2(y,x)/pi, ERANGE underflow, ±1 clamp.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    let ret = atan2_f128(y, x) / PI;
+    if ret == 0.0 && y != 0.0 && x.is_finite() {
+        set_range_errno();
+    }
+    if ret.abs() > 1.0 { (1.0f128).copysign(ret) } else { ret }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 /// Re-raise FE_INVALID on the cold pi-function domain path (x = ±inf).
