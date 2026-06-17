@@ -4663,8 +4663,20 @@ pub unsafe extern "C" fn log2p1f64x(x: f64) -> f64 {
     unsafe { log2p1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log2p1f128(x: f64) -> f64 {
-    unsafe { log2p1(x) }
+pub unsafe extern "C" fn log2p1f128(x: f128) -> f128 {
+    // glibc s_log2p1_template: log2(e)·log1p(x), linear near 0.
+    const LOG2E: f128 = 1.442695040888963407359924681001892137f128;
+    if x <= -1.0 {
+        if x == -1.0 {
+            set_range_errno();
+        } else {
+            set_domain_errno();
+        }
+    }
+    if x.abs() < f128::from_bits(16269u128 << 112) {
+        return LOG2E * x; // |x| < EPSILON/4 = 2^-114
+    }
+    LOG2E * log1pl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10p1(x: f64) -> f64 {
@@ -4698,8 +4710,24 @@ pub unsafe extern "C" fn log10p1f64x(x: f64) -> f64 {
     unsafe { log10p1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log10p1f128(x: f64) -> f64 {
-    unsafe { log10p1(x) }
+pub unsafe extern "C" fn log10p1f128(x: f128) -> f128 {
+    // glibc s_log10p1_template: log10(e)·log1p(x), linear near 0.
+    const LOG10E: f128 = 0.434294481903251827651128918916605082f128;
+    if x <= -1.0 {
+        if x == -1.0 {
+            set_range_errno();
+        } else {
+            set_domain_errno();
+        }
+    }
+    if x.abs() < f128::from_bits(16269u128 << 112) {
+        let ret = LOG10E * x; // |x| < EPSILON/4
+        if x != 0.0 && ret == 0.0 {
+            set_range_errno();
+        }
+        return ret;
+    }
+    LOG10E * log1pl_f128(x)
 }
 
 // --- exp2m1, exp10m1 (C23) ---
