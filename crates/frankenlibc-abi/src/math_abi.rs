@@ -4144,8 +4144,26 @@ pub unsafe extern "C" fn cospif64x(x: f64) -> f64 {
     unsafe { cospi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cospif128(x: f64) -> f64 {
-    unsafe { cospi(x) }
+pub unsafe extern "C" fn cospif128(x: f128) -> f128 {
+    // glibc s_cospi_template, on the byte-exact sinl/cosl.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+    if x.abs() < EPS {
+        return 1.0;
+    }
+    if x.is_infinite() {
+        set_domain_errno();
+    }
+    let xr = (x - 2.0 * (0.5 * x).round()).abs();
+    if xr <= 0.25 {
+        cosl_f128(PI * xr)
+    } else if xr == 0.5 {
+        0.0
+    } else if xr <= 0.75 {
+        sinl_f128(PI * (0.5 - xr))
+    } else {
+        -cosl_f128(PI * (1.0 - xr))
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpi(x: f64) -> f64 {
@@ -4201,8 +4219,28 @@ pub unsafe extern "C" fn sinpif64x(x: f64) -> f64 {
     unsafe { sinpi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sinpif128(x: f64) -> f64 {
-    unsafe { sinpi(x) }
+pub unsafe extern "C" fn sinpif128(x: f128) -> f128 {
+    // glibc s_sinpi_template, on the byte-exact sinl/cosl.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112);
+    if x.abs() < EPS {
+        return PI * x;
+    }
+    if x.is_infinite() {
+        set_domain_errno();
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // x86 neg qNaN
+    }
+    let y = x - 2.0 * (0.5 * x).round();
+    let absy = y.abs();
+    if absy == 0.0 || absy == 1.0 {
+        (0.0f128).copysign(x)
+    } else if absy <= 0.25 {
+        sinl_f128(PI * y)
+    } else if absy <= 0.75 {
+        cosl_f128(PI * (0.5 - absy)).copysign(y)
+    } else {
+        sinl_f128(PI * (1.0 - absy)).copysign(y)
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpi(x: f64) -> f64 {
@@ -4248,8 +4286,35 @@ pub unsafe extern "C" fn tanpif64x(x: f64) -> f64 {
     unsafe { tanpi(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tanpif128(x: f64) -> f64 {
-    unsafe { tanpi(x) }
+pub unsafe extern "C" fn tanpif128(x: f128) -> f128 {
+    // glibc s_tanpi_template, on the byte-exact tanl.
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112);
+    if x.abs() < EPS {
+        return PI * x;
+    }
+    if x.is_infinite() {
+        set_domain_errno();
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // x86 neg qNaN
+    }
+    let mut y = x - 2.0 * (0.5 * x).round();
+    let mut absy = y.abs();
+    if absy == 0.0 {
+        return (0.0f128).copysign(x);
+    } else if absy == 1.0 {
+        return (0.0f128).copysign(-x);
+    } else if absy == 0.5 {
+        set_range_errno();
+        return 1.0 / (0.0f128).copysign(y);
+    } else if absy > 0.5 {
+        y -= (1.0f128).copysign(y);
+        absy = y.abs();
+    }
+    if absy <= 0.25 {
+        tanl_f128(PI * y)
+    } else {
+        (1.0 / tanl_f128(PI * (0.5 - absy))).copysign(y)
+    }
 }
 
 // --- roundeven ---
