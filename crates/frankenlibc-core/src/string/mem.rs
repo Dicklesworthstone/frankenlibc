@@ -253,6 +253,7 @@ const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
 const MEMCMP_EXACT_256_BYTES: usize = SIMD_FOLD_BYTES * 2;
 const MEMCMP_EXACT_4096_BYTES: usize = 4096;
 const MEMMOVE_EXACT_4096_BYTES: usize = 4096;
+const MEMCHR_EXACT_4096_BYTES: usize = 4096;
 const MEMCHR_WIDE_LANES: usize = 64;
 const MEMCHR_FOLD_PANELS: usize = 8;
 const MEMCHR_FOLD_BYTES: usize = SIMD_LANES * MEMCHR_FOLD_PANELS;
@@ -330,6 +331,23 @@ fn has_byte_memchr_folded(block: &[u8], byte: u8) -> bool {
     (p0 | p1 | p2 | p3).any()
 }
 
+#[inline(always)]
+fn memchr_exact_4096_absent(haystack: &[u8], needle: u8) -> bool {
+    debug_assert_eq!(haystack.len(), MEMCHR_EXACT_4096_BYTES);
+
+    let needle = Simd::<u8, MEMCHR_WIDE_LANES>::splat(needle);
+    let zero = Simd::<u8, MEMCHR_WIDE_LANES>::splat(0);
+    let mut hits = zero.simd_ne(zero);
+    let mut i = 0usize;
+    while i < MEMCHR_EXACT_4096_BYTES {
+        let chunk = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&haystack[i..i + MEMCHR_WIDE_LANES]);
+        hits |= (chunk ^ needle).simd_eq(zero);
+        i += MEMCHR_WIDE_LANES;
+    }
+
+    !hits.any()
+}
+
 #[inline]
 fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     for (&av, &bv) in a.iter().zip(b.iter()) {
@@ -355,6 +373,11 @@ fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
+
+    if count == MEMCHR_EXACT_4096_BYTES && memchr_exact_4096_absent(hs, needle) {
+        return None;
+    }
+
     let mut base = 0usize;
 
     while count - base >= MEMCHR_FOLD_BYTES {
