@@ -10782,8 +10782,9 @@ pub unsafe extern "C" fn cargf64x(z: CDoubleComplex) -> f64 {
     unsafe { carg(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cargf128(z: CDoubleComplex) -> f64 {
-    unsafe { carg(z) }
+pub unsafe extern "C" fn cargf128(z: CFloat128Complex) -> f128 {
+    // carg(z) = atan2(cimag(z), creal(z)) — glibc's cargl.
+    atan2_f128(z.im, z.re)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cimagf32(z: CFloatComplex) -> f32 {
