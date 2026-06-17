@@ -7540,8 +7540,8 @@ pub unsafe extern "C" fn tanhf64x(x: f64) -> f64 {
     unsafe { tanh(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tanhf128(x: f64) -> f64 {
-    unsafe { tanh(x) }
+pub unsafe extern "C" fn tanhf128(x: f128) -> f128 {
+    tanhl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tgammaf32(x: f32) -> f32 {
@@ -9346,6 +9346,45 @@ fn sinhl_f128(x: f128) -> f128 {
         return t * w;
     }
     x * SHUGE // overflow
+}
+
+/// Hyperbolic tangent for binary128 — verbatim port of glibc ldbl-128 `__tanhl`
+/// (s_tanhl.c): tanh via expm1l(±2|x|), saturating to ±1 for |x|>=40. Built on
+/// byte-exact expm1l_f128 → byte-exact. No errno (tanh never over/underflows to
+/// a range error).
+#[allow(clippy::excessive_precision)]
+fn tanhl_f128(x: f128) -> f128 {
+    const TINY: f128 = 1.0e-4900f128;
+    let xb = x.to_bits();
+    let jx = (xb >> 96) as u32;
+    let ix = jx & 0x7fff_ffff;
+    let neg = jx & 0x8000_0000 != 0;
+
+    if ix >= 0x7fff_0000 {
+        // tanh(±inf) = ±1; tanh(NaN) = NaN.
+        return if neg { 1.0 / x - 1.0 } else { 1.0 / x + 1.0 };
+    }
+
+    let z;
+    if ix < 0x4004_4000 {
+        if x == 0.0 {
+            return x; // ±0
+        }
+        if ix < 0x3fc6_0000 {
+            return x * (1.0 + TINY); // |x| < 2^-57
+        }
+        let absx = f128::from_bits(xb & !(1u128 << 127));
+        if ix >= 0x3fff_0000 {
+            let t = expm1l_f128(2.0 * absx);
+            z = 1.0 - 2.0 / (t + 2.0);
+        } else {
+            let t = expm1l_f128(-2.0 * absx);
+            z = -t / (t + 2.0);
+        }
+    } else {
+        z = 1.0 - TINY; // |x| > 40 → ±1
+    }
+    if neg { -z } else { z }
 }
 
 // --- scalbln-like (f, c_long → f) ---
