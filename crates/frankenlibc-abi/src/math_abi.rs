@@ -4621,8 +4621,15 @@ pub unsafe extern "C" fn logp1f64x(x: f64) -> f64 {
     unsafe { logp1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn logp1f128(x: f64) -> f64 {
-    unsafe { logp1(x) }
+pub unsafe extern "C" fn logp1f128(x: f128) -> f128 {
+    // C23 logp1 is an exact alias of log1p.
+    let r = log1pl_f128(x);
+    if x == -1.0 {
+        set_range_errno();
+    } else if x < -1.0 {
+        set_domain_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2p1(x: f64) -> f64 {
@@ -7326,8 +7333,15 @@ pub unsafe extern "C" fn log1pf64x(x: f64) -> f64 {
     unsafe { log1p(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log1pf128(x: f64) -> f64 {
-    unsafe { log1p(x) }
+pub unsafe extern "C" fn log1pf128(x: f128) -> f128 {
+    let r = log1pl_f128(x);
+    // glibc log1p wrapper: ERANGE pole at x==-1, EDOM for x<-1.
+    if x == -1.0 {
+        set_range_errno();
+    } else if x < -1.0 {
+        set_domain_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2f32(x: f32) -> f32 {
@@ -9385,6 +9399,167 @@ fn tanhl_f128(x: f128) -> f128 {
         z = 1.0 - TINY; // |x| > 40 → ±1
     }
     if neg { -z } else { z }
+}
+
+/// log(1+x) for binary128 — verbatim port of glibc's ldbl-128 `__log1pl`
+/// (s_log1pl.c, Cephes): for |e|>2 the z=2(x-1)/(x+1) form with the R/S
+/// rational, otherwise log(1+x)=x-.5x²+x³·P(x)/Q(x). Self-contained (frexp +
+/// algebraic f128 ops) → byte-exact. Sequential-Horner polynomials.
+#[allow(clippy::excessive_precision)]
+fn log1pl_f128(xm1: f128) -> f128 {
+    const P12: f128 = 1.538612243596254322971797716843006400388E-6f128;
+    const P11: f128 = 4.998469661968096229986658302195402690910E-1f128;
+    const P10: f128 = 2.321125933898420063925789532045674660756E1f128;
+    const P9: f128 = 4.114517881637811823002128927449878962058E2f128;
+    const P8: f128 = 3.824952356185897735160588078446136783779E3f128;
+    const P7: f128 = 2.128857716871515081352991964243375186031E4f128;
+    const P6: f128 = 7.594356839258970405033155585486712125861E4f128;
+    const P5: f128 = 1.797628303815655343403735250238293741397E5f128;
+    const P4: f128 = 2.854829159639697837788887080758954924001E5f128;
+    const P3: f128 = 3.007007295140399532324943111654767187848E5f128;
+    const P2: f128 = 2.014652742082537582487669938141683759923E5f128;
+    const P1: f128 = 7.771154681358524243729929227226708890930E4f128;
+    const P0: f128 = 1.313572404063446165910279910527789794488E4f128;
+    const Q11: f128 = 4.839208193348159620282142911143429644326E1f128;
+    const Q10: f128 = 9.104928120962988414618126155557301584078E2f128;
+    const Q9: f128 = 9.147150349299596453976674231612674085381E3f128;
+    const Q8: f128 = 5.605842085972455027590989944010492125825E4f128;
+    const Q7: f128 = 2.248234257620569139969141618556349415120E5f128;
+    const Q6: f128 = 6.132189329546557743179177159925690841200E5f128;
+    const Q5: f128 = 1.158019977462989115839826904108208787040E6f128;
+    const Q4: f128 = 1.514882452993549494932585972882995548426E6f128;
+    const Q3: f128 = 1.347518538384329112529391120390701166528E6f128;
+    const Q2: f128 = 7.777690340007566932935753241556479363645E5f128;
+    const Q1: f128 = 2.626900195321832660448791748036714883242E5f128;
+    const Q0: f128 = 3.940717212190338497730839731583397586124E4f128;
+    const R5: f128 = -8.828896441624934385266096344596648080902E-1f128;
+    const R4: f128 = 8.057002716646055371965756206836056074715E1f128;
+    const R3: f128 = -2.024301798136027039250415126250455056397E3f128;
+    const R2: f128 = 2.048819892795278657810231591630928516206E4f128;
+    const R1: f128 = -8.977257995689735303686582344659576526998E4f128;
+    const R0: f128 = 1.418134209872192732479751274970992665513E5f128;
+    const S5: f128 = -1.186359407982897997337150403816839480438E2f128;
+    const S4: f128 = 3.998526750980007367835804959888064681098E3f128;
+    const S3: f128 = -5.748542087379434595104154610899551484314E4f128;
+    const S2: f128 = 4.001557694070773974936904547424676279307E5f128;
+    const S1: f128 = -1.332535117259762928288745111081235577029E6f128;
+    const S0: f128 = 1.701761051846631278975701529965589676574E6f128;
+    const C1: f128 = 6.93145751953125E-1f128;
+    const C2: f128 = 1.428606820309417232121458176568075500134E-6f128;
+    const SQRTH: f128 = 0.7071067811865475244008443621048490392848f128;
+
+    let xb = xm1.to_bits();
+    let hx = (xb >> 96) as u32;
+    if (hx & 0x7fff_ffff) >= 0x7fff_0000 {
+        // +inf→+inf, NaN→NaN; -inf→NaN (glibc's -inf+inf is the negative qNaN).
+        if xm1.is_infinite() && (hx & 0x8000_0000) != 0 {
+            return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+        }
+        return xm1 + xm1.abs();
+    }
+    if (hx & 0x7fff_ffff) == 0 && (xb & ((1u128 << 96) - 1)) == 0 {
+        return xm1; // ±0
+    }
+    if (hx & 0x7fff_ffff) < 0x3f8e_0000 {
+        return xm1; // tiny: (int)xm1 == 0
+    }
+
+    let mut x = if xm1 >= f128::from_bits(16496u128 << 112) { xm1 } else { xm1 + 1.0 };
+    if x <= 0.0 {
+        if x == 0.0 {
+            return -1.0 / 0.0; // log1p(-1) = -inf
+        }
+        // x < -1 → NaN (glibc's 0/(x-x) is the canonical NEGATIVE qNaN on x86).
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+
+    // frexp x (>0) into [0.5,1).
+    let bits = x.to_bits();
+    let ef = ((bits >> 112) & 0x7fff) as i32;
+    let mut e;
+    if ef == 0 {
+        let xn = x * f128::from_bits((113u128 + 16383) << 112);
+        e = ((xn.to_bits() >> 112) & 0x7fff) as i32 - 113 - 16382;
+        x = f128::from_bits((xn.to_bits() & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
+    } else {
+        e = ef - 16382;
+        x = f128::from_bits((bits & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
+    }
+
+    if e > 2 || e < -2 {
+        let y;
+        let zz;
+        if x < SQRTH {
+            e -= 1;
+            let z = x - 0.5;
+            y = 0.5 * z + 0.5;
+            zz = z;
+        } else {
+            let mut z = x - 0.5;
+            z -= 0.5;
+            y = 0.5 * x + 0.5;
+            zz = z;
+        }
+        let xr = zz / y;
+        let z = xr * xr;
+        let mut r = R5 * z + R4;
+        r = r * z + R3;
+        r = r * z + R2;
+        r = r * z + R1;
+        r = r * z + R0;
+        let mut s = z + S5;
+        s = s * z + S4;
+        s = s * z + S3;
+        s = s * z + S2;
+        s = s * z + S1;
+        s = s * z + S0;
+        let mut zr = xr * (z * r / s);
+        zr += (e as f128) * C2;
+        zr += xr;
+        zr += (e as f128) * C1;
+        return zr;
+    }
+
+    // log(1+x) = x - .5x^2 + x^3 P(x)/Q(x).
+    let xr = if x < SQRTH {
+        e -= 1;
+        if e != 0 { 2.0 * x - 1.0 } else { xm1 }
+    } else if e != 0 {
+        x - 1.0
+    } else {
+        xm1
+    };
+    let z = xr * xr;
+    let mut r = P12 * xr + P11;
+    r = r * xr + P10;
+    r = r * xr + P9;
+    r = r * xr + P8;
+    r = r * xr + P7;
+    r = r * xr + P6;
+    r = r * xr + P5;
+    r = r * xr + P4;
+    r = r * xr + P3;
+    r = r * xr + P2;
+    r = r * xr + P1;
+    r = r * xr + P0;
+    let mut s = xr + Q11;
+    s = s * xr + Q10;
+    s = s * xr + Q9;
+    s = s * xr + Q8;
+    s = s * xr + Q7;
+    s = s * xr + Q6;
+    s = s * xr + Q5;
+    s = s * xr + Q4;
+    s = s * xr + Q3;
+    s = s * xr + Q2;
+    s = s * xr + Q1;
+    s = s * xr + Q0;
+    let mut y = xr * (z * r / s);
+    y += (e as f128) * C2;
+    let mut zr = y - 0.5 * z;
+    zr += xr;
+    zr += (e as f128) * C1;
+    zr
 }
 
 // --- scalbln-like (f, c_long → f) ---
