@@ -7538,8 +7538,13 @@ pub unsafe extern "C" fn hypotf64x(x: f64, y: f64) -> f64 {
     unsafe { hypot(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn hypotf128(x: f64, y: f64) -> f64 {
-    unsafe { hypot(x, y) }
+pub unsafe extern "C" fn hypotf128(x: f128, y: f128) -> f128 {
+    let r = hypot_f128(x, y);
+    // glibc's hypot wrapper sets ERANGE when finite operands overflow to inf.
+    if r.is_infinite() && x.is_finite() && y.is_finite() {
+        set_range_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nextafterf32(x: f32, y: f32) -> f32 {
@@ -7986,6 +7991,77 @@ fn cbrt_f128(x: f128) -> f128 {
     if sign < 0 { -x } else { x }
 }
 
+/// True iff `x` is a signaling NaN (binary128): NaN with the quiet bit clear.
+fn is_signaling_f128(x: f128) -> bool {
+    let b = x.to_bits();
+    (b >> 112) & 0x7fff == 0x7fff
+        && (b & ((1u128 << 112) - 1)) != 0
+        && (b & (1u128 << 111)) == 0
+}
+
+/// Borges' "MyHypot3" correction kernel (arXiv:1904.09481). Inputs must be
+/// pre-adjusted so ax >= ay >= 0 and squaring ax, ay, (ax-ay) neither overflows
+/// nor underflows. Uses f128 sqrt + correctly-rounded `+ - * /`.
+fn hypot_kernel_f128(ax: f128, ay: f128) -> f128 {
+    let mut h = (ax * ax + ay * ay).sqrt();
+    let (t1, t2);
+    if h <= 2.0 * ay {
+        let delta = h - ay;
+        t1 = ax * (2.0 * delta - ax);
+        t2 = (delta - 2.0 * (ax - ay)) * delta;
+    } else {
+        let delta = h - ax;
+        t1 = 2.0 * delta * (ax - 2.0 * ay);
+        t2 = (4.0 * delta - ay) * ay + delta * delta;
+    }
+    h -= (t1 + t2) / (2.0 * h);
+    h
+}
+
+/// Euclidean distance for binary128 — verbatim port of glibc's ldbl-128
+/// `__ieee754_hypotl` (Borges' MyHypot3): scale huge/tiny/widely-varying
+/// operands into a safe range, run the correction kernel, unscale. Byte-exact
+/// vs glibc; does NOT set errno (the finite alias — the errno wrapper layers on
+/// top in `hypotf128`).
+fn hypot_f128(x: f128, y: f128) -> f128 {
+    let scale = f128::from_bits(8080u128 << 112); // 2^-8303
+    let large_val = f128::from_bits((24574u128 << 112) | 0x6a09_e667_f3bc_c908_b2fb_1366_ea95); // 0x1.6a09e667f3bcc908b2fb1366ea95p+8191
+    let tiny_val = f128::from_bits(8192u128 << 112); // 2^-8191
+    let eps = f128::from_bits(16269u128 << 112); // 2^-114
+
+    if !x.is_finite() || !y.is_finite() {
+        if (x.is_infinite() || y.is_infinite()) && !is_signaling_f128(x) && !is_signaling_f128(y) {
+            return f128::INFINITY;
+        }
+        return x + y;
+    }
+
+    let x = x.abs();
+    let y = y.abs();
+    let ax = if x < y { y } else { x };
+    let ay = if x < y { x } else { y };
+
+    // ax huge: scale both down.
+    if ax > large_val {
+        if ay <= ax * eps {
+            return ax + ay;
+        }
+        return hypot_kernel_f128(ax * scale, ay * scale) / scale;
+    }
+    // ay tiny: scale both up.
+    if ay < tiny_val {
+        if ax >= ay / eps {
+            return ax + ay;
+        }
+        return hypot_kernel_f128(ax / scale, ay / scale) * scale;
+    }
+    // Common case.
+    if ay <= ax * eps {
+        return ax + ay;
+    }
+    hypot_kernel_f128(ax, ay)
+}
+
 // --- scalbln-like (f, c_long → f) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalblnf32(x: f32, n: c_long) -> f32 {
@@ -8313,8 +8389,9 @@ pub unsafe extern "C" fn cabsf64x(z: CDoubleComplex) -> f64 {
     unsafe { cabs(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cabsf128(z: CDoubleComplex) -> f64 {
-    unsafe { cabs(z) }
+pub unsafe extern "C" fn cabsf128(z: CFloat128Complex) -> f128 {
+    // cabs delegates to the finite hypot alias (no errno).
+    hypot_f128(z.re, z.im)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cargf32(z: CFloatComplex) -> f32 {
