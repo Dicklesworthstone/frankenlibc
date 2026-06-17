@@ -95,6 +95,25 @@ pub unsafe extern "C" fn dup2(oldfd: c_int, newfd: c_int) -> c_int {
         return -1;
     }
 
+    // POSIX dup2(fd, fd) returns fd unchanged when fd is valid (EBADF if not).
+    // On arches without a native dup2 syscall (e.g. aarch64) sys_dup2 routes
+    // through dup3, which returns EINVAL for equal fds — so special-case it
+    // exactly as glibc does: validate the fd via fcntl and return newfd, or
+    // EBADF. Behavior-equivalent to x86_64's native dup2.
+    if oldfd == newfd {
+        return match unsafe { syscall::sys_fcntl(oldfd, libc::F_GETFL, 0) } {
+            Ok(_) => {
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+                newfd
+            }
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+                -1
+            }
+        };
+    }
+
     match syscall::sys_dup2(oldfd, newfd) {
         Ok(fd) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
