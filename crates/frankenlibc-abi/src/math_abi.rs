@@ -10845,8 +10845,8 @@ pub unsafe extern "C" fn cacosf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacos(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cacosf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { cacos(z) }
+pub unsafe extern "C" fn cacosf128(z: CFloat128Complex) -> CFloat128Complex {
+    cacos_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cacoshf32(z: CFloatComplex) -> CFloatComplex {
@@ -10865,8 +10865,8 @@ pub unsafe extern "C" fn cacoshf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacosh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cacoshf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { cacosh(z) }
+pub unsafe extern "C" fn cacoshf128(z: CFloat128Complex) -> CFloat128Complex {
+    cacosh_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn casinf32(z: CFloatComplex) -> CFloatComplex {
@@ -10885,8 +10885,8 @@ pub unsafe extern "C" fn casinf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casin(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn casinf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { casin(z) }
+pub unsafe extern "C" fn casinf128(z: CFloat128Complex) -> CFloat128Complex {
+    casin_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn casinhf32(z: CFloatComplex) -> CFloatComplex {
@@ -10905,8 +10905,8 @@ pub unsafe extern "C" fn casinhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casinh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn casinhf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { casinh(z) }
+pub unsafe extern "C" fn casinhf128(z: CFloat128Complex) -> CFloat128Complex {
+    casinh_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn catanf32(z: CFloatComplex) -> CFloatComplex {
@@ -11398,6 +11398,251 @@ fn catanh_f128(z: CFloat128Complex) -> CFloat128Complex {
         im = 0.5 * atan2_f128(2.0 * ix, den_i);
     }
     CFloat128Complex { re, im }
+}
+
+/// Shared kernel for complex inverse sine/cosine (binary128) — verbatim port of
+/// glibc's `__kernel_casinh` (k_casinh_template.c): reduce to the first quadrant
+/// and compute casinh via many precision-preserving branches built on
+/// log/log1p/hypot/sqrt/atan2/clog/csqrt (all byte-exact). `adj` selects the
+/// real-axis-adjusted variant used by casin/cacos/cacosh. Byte-exact.
+#[allow(clippy::excessive_precision)]
+fn kernel_casinh_f128(x: CFloat128Complex, adj: bool) -> CFloat128Complex {
+    const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
+    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
+    const INV_EPS: f128 = f128::from_bits(16495u128 << 112); // 1/EPS = 2^112
+    const EPS_8: f128 = f128::from_bits(16268u128 << 112); // EPS/8 = 2^-115
+    const EPS2: f128 = f128::from_bits(16159u128 << 112); // EPS² = 2^-224
+    let imx = x.im; // original signed imaginary part
+    let rx = x.re.abs();
+    let ix = x.im.abs();
+    let rre: f128;
+    let rim: f128;
+
+    if rx >= INV_EPS || ix >= INV_EPS {
+        let (mut yre, mut yim) = (rx, ix);
+        if adj {
+            let t = yre;
+            yre = yim.copysign(imx);
+            yim = t;
+        }
+        let r = clog_f128(CFloat128Complex { re: yre, im: yim });
+        rre = r.re + LN2;
+        rim = r.im;
+    } else if rx >= 0.5 && ix < EPS_8 {
+        let s = hypot_f128(1.0, rx);
+        rre = logl_f128(rx + s);
+        rim = if adj { atan2_f128(s, imx) } else { atan2_f128(ix, s) };
+    } else if rx < EPS_8 && ix >= 1.5 {
+        let s = ((ix + 1.0) * (ix - 1.0)).sqrt();
+        rre = logl_f128(ix + s);
+        rim = if adj { atan2_f128(rx, s.copysign(imx)) } else { atan2_f128(s, rx) };
+    } else if ix > 1.0 && ix < 1.5 && rx < 0.5 {
+        if rx < EPS2 {
+            let ix2m1 = (ix + 1.0) * (ix - 1.0);
+            let s = ix2m1.sqrt();
+            rre = log1pl_f128(2.0 * (ix2m1 + ix * s)) / 2.0;
+            rim = if adj { atan2_f128(rx, s.copysign(imx)) } else { atan2_f128(s, rx) };
+        } else {
+            let ix2m1 = (ix + 1.0) * (ix - 1.0);
+            let rx2 = rx * rx;
+            let f = rx2 * (2.0 + rx2 + 2.0 * ix * ix);
+            let d = (ix2m1 * ix2m1 + f).sqrt();
+            let dp = d + ix2m1;
+            let dm = f / dp;
+            let r1 = ((dm + rx2) / 2.0).sqrt();
+            let r2 = rx * ix / r1;
+            rre = log1pl_f128(rx2 + dp + 2.0 * (rx * r1 + ix * r2)) / 2.0;
+            rim = if adj {
+                atan2_f128(rx + r1, (ix + r2).copysign(imx))
+            } else {
+                atan2_f128(ix + r2, rx + r1)
+            };
+        }
+    } else if ix == 1.0 && rx < 0.5 {
+        if rx < EPS_8 {
+            rre = log1pl_f128(2.0 * (rx + rx.sqrt())) / 2.0;
+            rim = if adj {
+                atan2_f128(rx.sqrt(), (1.0f128).copysign(imx))
+            } else {
+                atan2_f128(1.0, rx.sqrt())
+            };
+        } else {
+            let d = rx * (4.0 + rx * rx).sqrt();
+            let s1 = ((d + rx * rx) / 2.0).sqrt();
+            let s2 = ((d - rx * rx) / 2.0).sqrt();
+            rre = log1pl_f128(rx * rx + d + 2.0 * (rx * s1 + s2)) / 2.0;
+            rim = if adj {
+                atan2_f128(rx + s1, (1.0 + s2).copysign(imx))
+            } else {
+                atan2_f128(1.0 + s2, rx + s1)
+            };
+        }
+    } else if ix < 1.0 && rx < 0.5 {
+        if ix >= EPS {
+            if rx < EPS2 {
+                let onemix2 = (1.0 + ix) * (1.0 - ix);
+                let s = onemix2.sqrt();
+                rre = log1pl_f128(2.0 * rx / s) / 2.0;
+                rim = if adj { atan2_f128(s, imx) } else { atan2_f128(ix, s) };
+            } else {
+                let onemix2 = (1.0 + ix) * (1.0 - ix);
+                let rx2 = rx * rx;
+                let f = rx2 * (2.0 + rx2 + 2.0 * ix * ix);
+                let d = (onemix2 * onemix2 + f).sqrt();
+                let dp = d + onemix2;
+                let dm = f / dp;
+                let r1 = ((dp + rx2) / 2.0).sqrt();
+                let r2 = rx * ix / r1;
+                rre = log1pl_f128(rx2 + dm + 2.0 * (rx * r1 + ix * r2)) / 2.0;
+                rim = if adj {
+                    atan2_f128(rx + r1, (ix + r2).copysign(imx))
+                } else {
+                    atan2_f128(ix + r2, rx + r1)
+                };
+            }
+        } else {
+            let s = hypot_f128(1.0, rx);
+            rre = log1pl_f128(2.0 * rx * (rx + s)) / 2.0;
+            rim = if adj { atan2_f128(s, imx) } else { atan2_f128(ix, s) };
+        }
+    } else {
+        let yre0 = (rx - ix) * (rx + ix) + 1.0;
+        let yim0 = 2.0 * rx * ix;
+        let ys = csqrt_f128(CFloat128Complex { re: yre0, im: yim0 });
+        let (mut yre, mut yim) = (ys.re + rx, ys.im + ix);
+        if adj {
+            let t = yre;
+            yre = yim.copysign(imx);
+            yim = t;
+        }
+        let r = clog_f128(CFloat128Complex { re: yre, im: yim });
+        rre = r.re;
+        rim = r.im;
+    }
+
+    CFloat128Complex {
+        re: rre.copysign(x.re),
+        im: rim.copysign(if adj { 1.0 } else { imx }),
+    }
+}
+
+/// Complex inverse hyperbolic sine — glibc s_casinh dispatcher over the kernel.
+#[allow(clippy::excessive_precision)]
+fn casinh_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
+    const PI_4: f128 = 0.785398163397448309615660845819875721049f128;
+    let rx = x.re;
+    let ix = x.im;
+    if rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite() {
+        let (re, im);
+        if ix.is_infinite() {
+            re = f128::INFINITY.copysign(rx);
+            im = if rx.is_nan() {
+                f128::NAN
+            } else {
+                (if rx.is_infinite() { PI_4 } else { PI_2 }).copysign(ix)
+            };
+        } else if rx.is_nan() || rx.is_infinite() {
+            re = rx;
+            im = if (rx.is_infinite() && !ix.is_nan() && !ix.is_infinite())
+                || (rx.is_nan() && ix == 0.0)
+            {
+                (0.0f128).copysign(ix)
+            } else {
+                f128::NAN
+            };
+        } else {
+            re = f128::NAN;
+            im = f128::NAN;
+        }
+        return CFloat128Complex { re, im };
+    }
+    if rx == 0.0 && ix == 0.0 {
+        return x;
+    }
+    kernel_casinh_f128(x, false)
+}
+
+/// Complex inverse sine — glibc s_casin: casin(z) = via casinh(-i z) rotated.
+#[allow(clippy::excessive_precision)]
+fn casin_f128(x: CFloat128Complex) -> CFloat128Complex {
+    let rx = x.re;
+    let ix = x.im;
+    if rx.is_nan() || ix.is_nan() {
+        if rx == 0.0 {
+            return x;
+        } else if rx.is_infinite() || ix.is_infinite() {
+            return CFloat128Complex { re: f128::NAN, im: f128::INFINITY.copysign(ix) };
+        } else {
+            return CFloat128Complex { re: f128::NAN, im: f128::NAN };
+        }
+    }
+    let y = casinh_f128(CFloat128Complex { re: -ix, im: rx });
+    CFloat128Complex { re: y.im, im: -y.re }
+}
+
+/// Complex inverse hyperbolic cosine — glibc s_cacosh dispatcher over the kernel.
+#[allow(clippy::excessive_precision)]
+fn cacosh_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const PI: f128 = 3.141592653589793238462643383279502884f128;
+    const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
+    const PI_4: f128 = 0.785398163397448309615660845819875721049f128;
+    let rx = x.re;
+    let ix = x.im;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    if rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite() {
+        let (re, im);
+        if ix.is_infinite() {
+            re = f128::INFINITY;
+            im = if rx.is_nan() {
+                f128::NAN
+            } else if rx.is_infinite() {
+                (if rx < 0.0 { PI - PI_4 } else { PI_4 }).copysign(ix)
+            } else {
+                PI_2.copysign(ix)
+            };
+        } else if rx.is_infinite() {
+            re = f128::INFINITY;
+            im = if !ix.is_nan() && !ix.is_infinite() {
+                (if sb(rx) { PI } else { 0.0 }).copysign(ix)
+            } else {
+                f128::NAN
+            };
+        } else {
+            re = f128::NAN;
+            im = if rx == 0.0 { PI_2 } else { f128::NAN };
+        }
+        return CFloat128Complex { re, im };
+    }
+    if rx == 0.0 && ix == 0.0 {
+        return CFloat128Complex { re: 0.0, im: PI_2.copysign(ix) };
+    }
+    let y = kernel_casinh_f128(CFloat128Complex { re: -ix, im: rx }, true);
+    if sb(ix) {
+        CFloat128Complex { re: y.re, im: -y.im }
+    } else {
+        CFloat128Complex { re: -y.re, im: y.im }
+    }
+}
+
+/// Complex inverse cosine — glibc s_cacos: PI/2 - casin(z) on the special path,
+/// else via the kernel.
+#[allow(clippy::excessive_precision)]
+fn cacos_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
+    let rx = x.re;
+    let ix = x.im;
+    let nan_or_inf = rx.is_nan() || rx.is_infinite() || ix.is_nan() || ix.is_infinite();
+    if nan_or_inf || (rx == 0.0 && ix == 0.0) {
+        let y = casin_f128(x);
+        let mut re = PI_2 - y.re;
+        if re == 0.0 {
+            re = 0.0;
+        }
+        return CFloat128Complex { re, im: -y.im };
+    }
+    let y = kernel_casinh_f128(CFloat128Complex { re: -ix, im: rx }, true);
+    CFloat128Complex { re: y.im, im: y.re }
 }
 
 /// Complex inverse tangent for binary128 — port of glibc's s_catan template
