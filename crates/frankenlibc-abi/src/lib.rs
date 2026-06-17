@@ -81,6 +81,7 @@ pub mod errno_abi;
 pub mod locale_abi;
 pub mod math_abi;
 mod expl_table;
+mod trig_tables;
 pub mod startup_helpers;
 pub mod stdbit_abi;
 

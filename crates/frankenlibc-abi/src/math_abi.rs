@@ -7178,8 +7178,8 @@ pub unsafe extern "C" fn cosf64x(x: f64) -> f64 {
     unsafe { cos(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cosf128(x: f64) -> f64 {
-    unsafe { cos(x) }
+pub unsafe extern "C" fn cosf128(x: f128) -> f128 {
+    cosl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn coshf32(x: f32) -> f32 {
@@ -7611,8 +7611,8 @@ pub unsafe extern "C" fn sinf64x(x: f64) -> f64 {
     unsafe { sin(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sinf128(x: f64) -> f64 {
-    unsafe { sin(x) }
+pub unsafe extern "C" fn sinf128(x: f128) -> f128 {
+    sinl_f128(x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinhf32(x: f32) -> f32 {
@@ -10432,6 +10432,437 @@ fn compoundn_f128(x: f128, y: i64) -> f128 {
         set_range_errno();
     }
     ret
+}
+
+/// Payne–Hanek style reduction kernel — verbatim port of glibc/fdlibm
+/// `__kernel_rem_pio2` (dbl-64 k_rem_pio2.c). Computes x·(2/pi) mod 1 in f64
+/// multi-precision (24-bit limbs) using the caller's `ipio2` table; returns the
+/// low 3 bits of the integer part and writes the fractional remainder into `y`.
+#[allow(clippy::needless_range_loop)]
+fn kernel_rem_pio2(x: &[f64], y: &mut [f64], e0: i32, nx: i32, prec: i32) -> i32 {
+    use crate::trig_tables::TWO_OVER_PI as IPIO2;
+    use frankenlibc_core::math::scalbn as fscalbn;
+    const INIT_JK: [i32; 4] = [2, 3, 4, 6];
+    const PIO2: [f64; 8] = [
+        1.57079625129699707031e+00,
+        7.54978941586159635335e-08,
+        5.39030252995776476554e-15,
+        3.28200341580791294123e-22,
+        1.27065575308067607349e-29,
+        1.22933308981111328932e-36,
+        2.73370053816464559624e-44,
+        2.16741683877804819444e-51,
+    ];
+    const TWO24: f64 = 1.67772160000000000000e+07;
+    const TWON24: f64 = 5.96046447753906250000e-08;
+
+    let mut iq = [0i32; 20];
+    let mut f = [0.0f64; 20];
+    let mut fq = [0.0f64; 20];
+    let mut q = [0.0f64; 20];
+
+    let jk = INIT_JK[prec as usize];
+    let jp = jk;
+    let jx = nx - 1;
+    let mut jv = (e0 - 3) / 24;
+    if jv < 0 {
+        jv = 0;
+    }
+    let mut q0 = e0 - 24 * (jv + 1);
+
+    // f[0..=jx+jk]
+    let mut j = jv - jx;
+    let m = jx + jk;
+    for i in 0..=m {
+        f[i as usize] = if j < 0 { 0.0 } else { IPIO2[j as usize] as f64 };
+        j += 1;
+    }
+    // q[0..=jk]
+    for i in 0..=jk {
+        let mut fw = 0.0;
+        for jj in 0..=jx {
+            fw += x[jj as usize] * f[(jx + i - jj) as usize];
+        }
+        q[i as usize] = fw;
+    }
+
+    let mut jz = jk;
+    let mut z;
+    let mut n;
+    let mut ih;
+    loop {
+        // distill q[] into iq[] reversingly
+        let mut i = 0i32;
+        let mut jj = jz;
+        z = q[jz as usize];
+        while jj > 0 {
+            let fw = ((TWON24 * z) as i32) as f64;
+            iq[i as usize] = (z - TWO24 * fw) as i32;
+            z = q[(jj - 1) as usize] + fw;
+            i += 1;
+            jj -= 1;
+        }
+        // compute n
+        z = fscalbn(z, q0);
+        z -= 8.0 * (z * 0.125).floor();
+        n = z as i32;
+        z -= n as f64;
+        ih = 0;
+        if q0 > 0 {
+            let ii = iq[(jz - 1) as usize] >> (24 - q0);
+            n += ii;
+            iq[(jz - 1) as usize] -= ii << (24 - q0);
+            ih = iq[(jz - 1) as usize] >> (23 - q0);
+        } else if q0 == 0 {
+            ih = iq[(jz - 1) as usize] >> 23;
+        } else if z >= 0.5 {
+            ih = 2;
+        }
+
+        if ih > 0 {
+            n += 1;
+            let mut carry = 0;
+            for i in 0..jz {
+                let jb = iq[i as usize];
+                if carry == 0 {
+                    if jb != 0 {
+                        carry = 1;
+                        iq[i as usize] = 0x1000000 - jb;
+                    }
+                } else {
+                    iq[i as usize] = 0xffffff - jb;
+                }
+            }
+            if q0 > 0 {
+                match q0 {
+                    1 => iq[(jz - 1) as usize] &= 0x7fffff,
+                    2 => iq[(jz - 1) as usize] &= 0x3fffff,
+                    _ => {}
+                }
+            }
+            if ih == 2 {
+                z = 1.0 - z;
+                if carry != 0 {
+                    z -= fscalbn(1.0, q0);
+                }
+            }
+        }
+
+        if z == 0.0 {
+            let mut jbit = 0;
+            let mut i = jz - 1;
+            while i >= jk {
+                jbit |= iq[i as usize];
+                i -= 1;
+            }
+            if jbit == 0 {
+                let mut k = 1;
+                while iq[(jk - k) as usize] == 0 {
+                    k += 1;
+                }
+                for i in (jz + 1)..=(jz + k) {
+                    f[(jx + i) as usize] = IPIO2[(jv + i) as usize] as f64;
+                    let mut fw = 0.0;
+                    for jj in 0..=jx {
+                        fw += x[jj as usize] * f[(jx + i - jj) as usize];
+                    }
+                    q[i as usize] = fw;
+                }
+                jz += k;
+                continue;
+            }
+        }
+        break;
+    }
+
+    // chop off zero terms
+    if z == 0.0 {
+        jz -= 1;
+        q0 -= 24;
+        while iq[jz as usize] == 0 {
+            jz -= 1;
+            q0 -= 24;
+        }
+    } else {
+        z = fscalbn(z, -q0);
+        if z >= TWO24 {
+            let fw = ((TWON24 * z) as i32) as f64;
+            iq[jz as usize] = (z - TWO24 * fw) as i32;
+            jz += 1;
+            q0 += 24;
+            iq[jz as usize] = fw as i32;
+        } else {
+            iq[jz as usize] = z as i32;
+        }
+    }
+
+    // convert integer chunks to fp
+    let mut fw = fscalbn(1.0, q0);
+    let mut i = jz;
+    while i >= 0 {
+        q[i as usize] = fw * (iq[i as usize] as f64);
+        fw *= TWON24;
+        i -= 1;
+    }
+    // PIo2 * q
+    let mut i = jz;
+    while i >= 0 {
+        let mut s = 0.0;
+        let mut k = 0;
+        while k <= jp && k <= jz - i {
+            s += PIO2[k as usize] * q[(i + k) as usize];
+            k += 1;
+        }
+        fq[(jz - i) as usize] = s;
+        i -= 1;
+    }
+
+    // compress fq[] into y[]
+    match prec {
+        0 => {
+            let mut s = 0.0;
+            let mut i = jz;
+            while i >= 0 {
+                s += fq[i as usize];
+                i -= 1;
+            }
+            y[0] = if ih == 0 { s } else { -s };
+        }
+        1 | 2 => {
+            let mut fv = 0.0;
+            let mut i = jz;
+            while i >= 0 {
+                fv += fq[i as usize];
+                i -= 1;
+            }
+            y[0] = if ih == 0 { fv } else { -fv };
+            fv = fq[0] - fv;
+            for i in 1..=jz {
+                fv += fq[i as usize];
+            }
+            y[1] = if ih == 0 { fv } else { -fv };
+        }
+        _ => {
+            let mut i = jz;
+            while i > 0 {
+                let fv = fq[(i - 1) as usize] + fq[i as usize];
+                fq[i as usize] += fq[(i - 1) as usize] - fv;
+                fq[(i - 1) as usize] = fv;
+                i -= 1;
+            }
+            let mut i = jz;
+            while i > 1 {
+                let fv = fq[(i - 1) as usize] + fq[i as usize];
+                fq[i as usize] += fq[(i - 1) as usize] - fv;
+                fq[(i - 1) as usize] = fv;
+                i -= 1;
+            }
+            let mut fw2 = 0.0;
+            let mut i = jz;
+            while i >= 2 {
+                fw2 += fq[i as usize];
+                i -= 1;
+            }
+            if ih == 0 {
+                y[0] = fq[0];
+                y[1] = fq[1];
+                y[2] = fw2;
+            } else {
+                y[0] = -fq[0];
+                y[1] = -fq[1];
+                y[2] = -fw2;
+            }
+        }
+    }
+    n & 7
+}
+
+/// sin/cos kernel for binary128 on a reduced argument x (+ tail y) — verbatim
+/// port of glibc `__kernel_sincosl` (k_sincosl.c): degree-16/17 Chebyshev for
+/// |x| < 0.1484375, else a table lookup (SINCOSL_TABLE, 83 points) of sin/cos at
+/// a nearby h plus a degree-10/11 correction for l = x - h. Returns (sin, cos).
+#[allow(clippy::excessive_precision)]
+fn kernel_sincosl_f128(x: f128, y: f128, iy: i32) -> (f128, f128) {
+    use crate::trig_tables::SINCOSL_TABLE as TBL;
+    const ONE: f128 = 1.0f128;
+    const SCOS1: f128 = -5.00000000000000000000000000000000000E-01f128;
+    const SCOS2: f128 = 4.16666666666666666666666666556146073E-02f128;
+    const SCOS3: f128 = -1.38888888888888888888309442601939728E-03f128;
+    const SCOS4: f128 = 2.48015873015862382987049502531095061E-05f128;
+    const SCOS5: f128 = -2.75573112601362126593516899592158083E-07f128;
+    const COS1: f128 = -4.99999999999999999999999999999999759E-01f128;
+    const COS2: f128 = 4.16666666666666666666666666651287795E-02f128;
+    const COS3: f128 = -1.38888888888888888888888742314300284E-03f128;
+    const COS4: f128 = 2.48015873015873015867694002851118210E-05f128;
+    const COS5: f128 = -2.75573192239858811636614709689300351E-07f128;
+    const COS6: f128 = 2.08767569877762248667431926878073669E-09f128;
+    const COS7: f128 = -1.14707451049343817400420280514614892E-11f128;
+    const COS8: f128 = 4.77810092804389587579843296923533297E-14f128;
+    const SSIN1: f128 = -1.66666666666666666666666666666666659E-01f128;
+    const SSIN2: f128 = 8.33333333333333333333333333146298442E-03f128;
+    const SSIN3: f128 = -1.98412698412698412697726277416810661E-04f128;
+    const SSIN4: f128 = 2.75573192239848624174178393552189149E-06f128;
+    const SSIN5: f128 = -2.50521016467996193495359189395805639E-08f128;
+    const SIN1: f128 = -1.66666666666666666666666666666666538e-01f128;
+    const SIN2: f128 = 8.33333333333333333333333333307532934e-03f128;
+    const SIN3: f128 = -1.98412698412698412698412534478712057e-04f128;
+    const SIN4: f128 = 2.75573192239858906520896496653095890e-06f128;
+    const SIN5: f128 = -2.50521083854417116999224301266655662e-08f128;
+    const SIN6: f128 = 1.60590438367608957516841576404938118e-10f128;
+    const SIN7: f128 = -7.64716343504264506714019494041582610e-13f128;
+    const SIN8: f128 = 2.81068754939739570236322404393398135e-15f128;
+    // SINCOSL_COS_HI=0, COS_LO=1, SIN_HI=2, SIN_LO=3.
+
+    let ix64 = (x.to_bits() >> 64) as i64;
+    let tix = (((ix64 as u64) >> 32) as u32) & !0x8000_0000;
+    if tix < 0x3ffc_3000 {
+        // |x| < 0.1484375
+        if tix < 0x3fc6_0000 {
+            return (x, ONE); // |x| < 2^-57: (int)x == 0
+        }
+        let z = x * x;
+        let sinx = x + x * (z * (SIN1 + z * (SIN2 + z * (SIN3 + z * (SIN4
+            + z * (SIN5 + z * (SIN6 + z * (SIN7 + z * SIN8))))))));
+        let cosx = ONE + z * (COS1 + z * (COS2 + z * (COS3 + z * (COS4
+            + z * (COS5 + z * (COS6 + z * (COS7 + z * COS8)))))));
+        return (sinx, cosx);
+    }
+
+    let index0 = 0x3ffe_u32.wrapping_sub(tix >> 16);
+    let hix = (tix.wrapping_add(0x200u32 << index0)) & (0xfffffc00u32 << index0);
+    let (mut xr, mut yr) = (x, y);
+    if ix64 < 0 {
+        xr = -xr;
+        yr = -yr;
+    }
+    let index: usize = match index0 {
+        0 => (((45u32 << 10).wrapping_add(hix).wrapping_sub(0x3ffe0000)) >> 8) as usize,
+        1 => (((13u32 << 11).wrapping_add(hix).wrapping_sub(0x3ffd0000)) >> 9) as usize,
+        _ => ((hix.wrapping_sub(0x3ffc3000)) >> 10) as usize,
+    };
+
+    let h = f128::from_bits((hix as u128) << 96);
+    let l = if iy != 0 { yr - (h - xr) } else { xr - h };
+    let z = l * l;
+    let sin_l = l * (ONE + z * (SSIN1 + z * (SSIN2 + z * (SSIN3 + z * (SSIN4 + z * SSIN5)))));
+    let cos_l_m1 = z * (SCOS1 + z * (SCOS2 + z * (SCOS3 + z * (SCOS4 + z * SCOS5))));
+
+    let cos_hi = TBL[index];
+    let cos_lo = TBL[index + 1];
+    let sin_hi = TBL[index + 2];
+    let sin_lo = TBL[index + 3];
+    let zz = sin_hi + (sin_lo + (sin_hi * cos_l_m1) + (cos_hi * sin_l));
+    let sinx = if ix64 < 0 { -zz } else { zz };
+    let cosx = cos_hi + (cos_lo - (sin_hi * sin_l - cos_hi * cos_l_m1));
+    (sinx, cosx)
+}
+
+/// Reduce x mod pi/2 for binary128 — port of glibc `__ieee754_rem_pio2l`:
+/// fast Cody–Waite for |x| < 3pi/4, else the multi-precision kernel. Returns
+/// (n mod 4, y_hi, y_lo) with x = n·(pi/2) + (y_hi + y_lo).
+fn rem_pio2l_f128(x: f128) -> (i32, f128, f128) {
+    const PI_2_1: f128 = f128::from_bits(0x3fff921fb54442d18469898cc51701b8u128);
+    const PI_2_1T: f128 = f128::from_bits(0x3f8ccd129024e088a67cc74020bbea64u128);
+    let bits = x.to_bits();
+    let hx = (bits >> 64) as i64;
+    let lx = bits as u64;
+    let ix = hx & 0x7fff_ffff_ffff_ffff;
+
+    if ix <= 0x3ffe_921f_b544_42d1 {
+        return (0, x, 0.0); // |x| <= pi/4
+    }
+    if ix < 0x4000_2d97_c7f3_321d {
+        // |x| in (pi/4, 3pi/4): one Cody–Waite step.
+        if hx > 0 {
+            let z = x - PI_2_1;
+            let y0 = z - PI_2_1T;
+            return (1, y0, (z - y0) - PI_2_1T);
+        } else {
+            let z = x + PI_2_1;
+            let y0 = z + PI_2_1T;
+            return (-1, y0, (z - y0) + PI_2_1T);
+        }
+    }
+    if ix >= 0x7fff_0000_0000_0000 {
+        let y0 = x - x; // inf/nan
+        return (0, y0, y0);
+    }
+
+    // Large argument: split the 113-bit mantissa into five 24-bit doubles.
+    let exp = (ix >> 48) - 16383 - 23;
+    let ixu = ix as u64;
+    let mut tx = [0.0f64; 8];
+    tx[0] = (((ixu >> 25) & 0x7fffff) | 0x800000) as f64;
+    tx[1] = ((ixu >> 1) & 0xffffff) as f64;
+    tx[2] = (((ixu << 23) | (lx >> 41)) & 0xffffff) as f64;
+    tx[3] = ((lx >> 17) & 0xffffff) as f64;
+    tx[4] = ((lx << 7) & 0xffffff) as f64;
+    let nx = if (lx << 7) & 0xffffff != 0 { 5 } else { 4 };
+    let n = {
+        let (txin, txout) = tx.split_at_mut(5);
+        kernel_rem_pio2(txin, txout, exp as i32, nx, 3)
+    };
+    let t = (tx[6] as f128) + (tx[7] as f128);
+    let w = tx[5] as f128;
+    if hx >= 0 {
+        let y0 = w + t;
+        (n, y0, t - (y0 - w))
+    } else {
+        let y0 = -(w + t);
+        (-n, y0, -t - (y0 + w))
+    }
+}
+
+/// True iff `x` is +/- infinity (binary128) — for the trig EDOM check.
+#[inline]
+fn is_inf_f128(x: f128) -> bool {
+    (x.to_bits() & !(1u128 << 127)) == (0x7fff_u128 << 112)
+}
+
+/// sin for binary128 — glibc s_sinl: kernel for |x|<=pi/4, else reduce mod pi/2.
+fn sinl_f128(x: f128) -> f128 {
+    let ix = (x.to_bits() >> 64) as i64 & 0x7fff_ffff_ffff_ffff;
+    if ix <= 0x3ffe_921f_b544_42d1 {
+        return kernel_sincosl_f128(x, 0.0, 0).0;
+    }
+    if ix >= 0x7fff_0000_0000_0000 {
+        if is_inf_f128(x) {
+            set_domain_errno();
+            return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // x86 neg qNaN
+        }
+        return x - x; // NaN propagate
+    }
+    let (n, y0, y1) = rem_pio2l_f128(x);
+    let (s, c) = kernel_sincosl_f128(y0, y1, 1);
+    match n & 3 {
+        0 => s,
+        1 => c,
+        2 => -s,
+        _ => -c,
+    }
+}
+
+/// cos for binary128 — glibc s_cosl.
+fn cosl_f128(x: f128) -> f128 {
+    let ix = (x.to_bits() >> 64) as i64 & 0x7fff_ffff_ffff_ffff;
+    if ix <= 0x3ffe_921f_b544_42d1 {
+        return kernel_sincosl_f128(x, 0.0, 0).1;
+    }
+    if ix >= 0x7fff_0000_0000_0000 {
+        if is_inf_f128(x) {
+            set_domain_errno();
+            return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // x86 neg qNaN
+        }
+        return x - x; // NaN propagate
+    }
+    let (n, y0, y1) = rem_pio2l_f128(x);
+    let (s, c) = kernel_sincosl_f128(y0, y1, 1);
+    match n & 3 {
+        0 => c,
+        1 => -s,
+        2 => -c,
+        _ => s,
+    }
 }
 
 // --- scalbln-like (f, c_long → f) ---
