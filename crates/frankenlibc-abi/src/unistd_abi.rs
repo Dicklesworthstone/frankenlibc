@@ -20720,13 +20720,10 @@ pub unsafe extern "C" fn clock_getcpuclockid(
     if clock_id.is_null() {
         return libc::EINVAL;
     }
-    // If pid is 0, use CLOCK_PROCESS_CPUTIME_ID directly.
-    if pid == 0 {
-        unsafe { *clock_id = libc::CLOCK_PROCESS_CPUTIME_ID };
-        return 0;
-    }
-    // Kernel CPUCLOCK formula: clock_id = ~pid << 3 | CPUCLOCK_SCHED (=2)
-    // This encodes the PID into the clock ID for process-specific CPU time.
+    // Kernel CPUCLOCK formula: clock_id = ~pid << 3 | CPUCLOCK_SCHED (=2),
+    // encoding the PID into the clock ID. glibc applies this for EVERY pid,
+    // INCLUDING 0 (the calling process) — it does NOT substitute
+    // CLOCK_PROCESS_CPUTIME_ID, so clock_getcpuclockid(0) yields 0xFFFFFFFA, not 2.
     let cid: libc::clockid_t = (!pid as libc::clockid_t) << 3 | 2;
     // Validate the clock exists by calling clock_getres.
     let mut ts = libc::timespec {
