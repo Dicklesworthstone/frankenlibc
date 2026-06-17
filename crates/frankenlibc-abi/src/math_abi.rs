@@ -11112,6 +11112,143 @@ fn csin_f128(x: CFloat128Complex) -> CFloat128Complex {
     CFloat128Complex { re, im: imo }
 }
 
+/// Complex hyperbolic cosine for binary128 — port of glibc's s_ccosh template:
+/// cosh(re)·cos(im) + i·sinh(re)·sin(im), overflow-staged, full inf/NaN lattice.
+/// Built on byte-exact sincos/sinh/cosh/exp → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn ccosh_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 11355.0f128;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    let rx = x.re;
+    let im = x.im;
+    let (re, imo);
+    if rx.is_finite() {
+        if im.is_finite() {
+            let (mut sinix, mut cosix) = sincos_pair_f128(im);
+            if rx.abs() > T {
+                let exp_t = expl_f128(T);
+                let mut rxv = rx.abs();
+                if sb(rx) {
+                    sinix = -sinix;
+                }
+                rxv -= T;
+                sinix *= exp_t / 2.0;
+                cosix *= exp_t / 2.0;
+                if rxv > T {
+                    rxv -= T;
+                    sinix *= exp_t;
+                    cosix *= exp_t;
+                }
+                if rxv > T {
+                    re = f128::MAX * cosix;
+                    imo = f128::MAX * sinix;
+                } else {
+                    let ev = expl_f128(rxv);
+                    re = ev * cosix;
+                    imo = ev * sinix;
+                }
+            } else {
+                re = coshl_f128(rx) * cosix;
+                imo = sinhl_f128(rx) * sinix;
+            }
+        } else {
+            imo = if rx == 0.0 { 0.0 } else { f128::NAN };
+            re = sub_self_nan_f128(im);
+        }
+    } else if rx.is_infinite() {
+        if im.is_finite() && im != 0.0 {
+            let (sinix, cosix) = sincos_pair_f128(im);
+            re = f128::INFINITY.copysign(cosix);
+            imo = f128::INFINITY.copysign(sinix) * (1.0f128).copysign(rx);
+        } else if im == 0.0 {
+            re = f128::INFINITY;
+            imo = im * (1.0f128).copysign(rx);
+        } else {
+            re = f128::INFINITY;
+            imo = sub_self_nan_f128(im);
+        }
+    } else {
+        re = f128::NAN;
+        imo = if im == 0.0 { im } else { f128::NAN };
+    }
+    CFloat128Complex { re, im: imo }
+}
+
+/// Complex hyperbolic sine for binary128 — port of glibc's s_csinh template.
+/// Built on byte-exact sincos/sinh/cosh/exp → byte-exact.
+#[allow(clippy::excessive_precision)]
+fn csinh_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 11355.0f128;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    let negate = sb(x.re);
+    let rx = x.re.abs();
+    let im = x.im;
+    let (re, imo);
+    if rx.is_finite() {
+        if im.is_finite() {
+            let (mut sinix, mut cosix) = sincos_pair_f128(im);
+            if negate {
+                cosix = -cosix;
+            }
+            if rx > T {
+                let exp_t = expl_f128(T);
+                let mut rxv = rx;
+                rxv -= T;
+                sinix *= exp_t / 2.0;
+                cosix *= exp_t / 2.0;
+                if rxv > T {
+                    rxv -= T;
+                    sinix *= exp_t;
+                    cosix *= exp_t;
+                }
+                if rxv > T {
+                    re = f128::MAX * cosix;
+                    imo = f128::MAX * sinix;
+                } else {
+                    let ev = expl_f128(rxv);
+                    re = ev * cosix;
+                    imo = ev * sinix;
+                }
+            } else {
+                re = sinhl_f128(rx) * cosix;
+                imo = coshl_f128(rx) * sinix;
+            }
+        } else if x.re == 0.0 {
+            re = (0.0f128).copysign(if negate { -1.0 } else { 1.0 });
+            imo = sub_self_nan_f128(im);
+        } else {
+            re = f128::NAN;
+            imo = f128::NAN;
+        }
+    } else if rx.is_infinite() {
+        if im.is_finite() && im != 0.0 {
+            let (sinix, cosix) = sincos_pair_f128(im);
+            let mut rr = f128::INFINITY.copysign(cosix);
+            let ii = f128::INFINITY.copysign(sinix);
+            if negate {
+                rr = -rr;
+            }
+            re = rr;
+            imo = ii;
+        } else if im == 0.0 {
+            re = if negate { -f128::INFINITY } else { f128::INFINITY };
+            imo = im;
+        } else {
+            re = f128::INFINITY;
+            imo = sub_self_nan_f128(im);
+        }
+    } else {
+        re = f128::NAN;
+        imo = if im == 0.0 { im } else { f128::NAN };
+    }
+    CFloat128Complex { re, im: imo }
+}
+
+/// Complex cosine — glibc s_ccos: ccos(z) = ccosh(-im + i·re).
+fn ccos_f128(x: CFloat128Complex) -> CFloat128Complex {
+    ccosh_f128(CFloat128Complex { re: -x.im, im: x.re })
+}
+
 /// Complex exponential for binary128 — port of glibc's s_cexp template:
 /// e^z = e^re·(cos(im) + i·sin(im)) with overflow staging by exp(t) (t =
 /// floor((MAX_EXP-1)·ln2)) and the full inf/NaN lattice. Built on the byte-exact
@@ -11764,8 +11901,8 @@ pub unsafe extern "C" fn ccosf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccos(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ccosf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { ccos(z) }
+pub unsafe extern "C" fn ccosf128(z: CFloat128Complex) -> CFloat128Complex {
+    ccos_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ccoshf32(z: CFloatComplex) -> CFloatComplex {
@@ -11784,8 +11921,8 @@ pub unsafe extern "C" fn ccoshf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccosh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ccoshf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { ccosh(z) }
+pub unsafe extern "C" fn ccoshf128(z: CFloat128Complex) -> CFloat128Complex {
+    ccosh_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cexpf32(z: CFloatComplex) -> CFloatComplex {
@@ -12093,8 +12230,8 @@ pub unsafe extern "C" fn csinhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csinh(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn csinhf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { csinh(z) }
+pub unsafe extern "C" fn csinhf128(z: CFloat128Complex) -> CFloat128Complex {
+    csinh_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn csqrtf32(z: CFloatComplex) -> CFloatComplex {
