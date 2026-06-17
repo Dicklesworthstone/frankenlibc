@@ -4968,8 +4968,29 @@ pub unsafe extern "C" fn powrf64x(x: f64, y: f64) -> f64 {
     unsafe { powr(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn powrf128(x: f64, y: f64) -> f64 {
-    unsafe { powr(x, y) }
+pub unsafe extern "C" fn powrf128(x: f128, y: f128) -> f128 {
+    // glibc s_powr: powr(x,y) = |x|^y (x>0 required), exp(y·log x) semantics.
+    if x < 0.0
+        || (x == 0.0 && y == 0.0)
+        || (x == 1.0 && y.is_infinite())
+        || (x.is_infinite() && y == 0.0)
+    {
+        set_domain_errno();
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)); // neg qNaN
+    }
+    if x.is_nan() || y.is_nan() {
+        return x + y;
+    }
+    let x = x.abs();
+    let ret = powl_f128(x, y);
+    if !ret.is_finite() {
+        if x.is_finite() && y.is_finite() {
+            set_range_errno();
+        }
+    } else if ret == 0.0 && x.is_finite() && x != 0.0 && y.is_finite() {
+        set_range_errno();
+    }
+    ret
 }
 
 // --- rootn (nth root) ---
