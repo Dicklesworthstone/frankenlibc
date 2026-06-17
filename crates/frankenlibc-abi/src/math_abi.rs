@@ -7397,7 +7397,7 @@ fn remainder_f128(x: f128, y: f128) -> f128 {
         // Tie -> round to even quotient. The quotient n is even iff
         // fmod(ax, 2*ay) < ay (mod-2y keeps the low quotient bit).
         let two_ay = ay + ay;
-        if !(ax % two_ay < ay) {
+        if ax % two_ay >= ay {
             r -= ay;
         }
     }
