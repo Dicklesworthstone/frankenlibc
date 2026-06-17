@@ -188,9 +188,20 @@ fn strcpy_4096_terminated(dest: &mut [u8], src: &[u8]) -> usize {
     debug_assert!(dest.len() >= src.len());
     debug_assert_eq!(src.last().copied(), Some(0));
 
-    let copied = strlen(src) + 1;
-    dest[..copied].copy_from_slice(&src[..copied]);
-    copied
+    let mut block_start = 0usize;
+    while block_start + STRLEN_NUL_BLOCK < STRCPY_4096_SRC_LEN {
+        let block_end = block_start + STRLEN_NUL_BLOCK;
+        if copy_nul_free_block_512(
+            &mut dest[block_start..block_end],
+            &src[block_start..block_end],
+        ) {
+            return copy_strcpy_terminal_from(dest, src, block_start);
+        }
+        block_start = block_end;
+    }
+
+    dest[STRCPY_4096_SRC_LEN - 1] = 0;
+    STRCPY_4096_SRC_LEN
 }
 
 #[inline(always)]
