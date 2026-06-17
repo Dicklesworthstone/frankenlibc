@@ -11007,6 +11007,78 @@ fn kernel_tanl_f128(x: f128, y: f128, iy: i32) -> f128 {
     }
 }
 
+/// Complex exponential for binary128 — port of glibc's s_cexp template:
+/// e^z = e^re·(cos(im) + i·sin(im)) with overflow staging by exp(t) (t =
+/// floor((MAX_EXP-1)·ln2)) and the full inf/NaN lattice. Built on the byte-exact
+/// expl/sinl/cosl → byte-exact (FE_INVALID flag-raising omitted; value gated).
+#[allow(clippy::excessive_precision)]
+fn cexp_f128(x: CFloat128Complex) -> CFloat128Complex {
+    const T: f128 = 11355.0f128; // (int)((MAX_EXP-1)*ln2) = (int)(16383*0.693147…) = 11355
+    let rx = x.re;
+    let ix = x.im;
+    let sb = |v: f128| (v.to_bits() >> 127) != 0;
+    let sincos = |im: f128| -> (f128, f128) {
+        if im.abs() > f128::MIN_POSITIVE {
+            (sinl_f128(im), cosl_f128(im))
+        } else {
+            (im, 1.0)
+        }
+    };
+
+    if rx.is_finite() {
+        if ix.is_finite() {
+            let (mut sinix, mut cosix) = sincos(ix);
+            let mut rxx = rx;
+            if rxx > T {
+                let exp_t = expl_f128(T);
+                rxx -= T;
+                sinix *= exp_t;
+                cosix *= exp_t;
+                if rxx > T {
+                    rxx -= T;
+                    sinix *= exp_t;
+                    cosix *= exp_t;
+                }
+            }
+            if rxx > T {
+                CFloat128Complex { re: f128::MAX * cosix, im: f128::MAX * sinix }
+            } else {
+                let ev = expl_f128(rxx);
+                CFloat128Complex { re: ev * cosix, im: ev * sinix }
+            }
+        } else {
+            CFloat128Complex { re: f128::NAN, im: f128::NAN }
+        }
+    } else if rx.is_infinite() {
+        if ix.is_finite() {
+            let value = if sb(rx) { 0.0 } else { f128::INFINITY };
+            if ix == 0.0 {
+                CFloat128Complex { re: value, im: ix }
+            } else {
+                let (sinix, cosix) = sincos(ix);
+                CFloat128Complex { re: value.copysign(cosix), im: value.copysign(sinix) }
+            }
+        } else if !sb(rx) {
+            // ix is inf/NaN: imag = ix - ix (inf-inf is the x86 negative qNaN).
+            let im = if ix.is_infinite() {
+                f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
+            } else {
+                ix - ix
+            };
+            CFloat128Complex { re: f128::INFINITY, im }
+        } else {
+            CFloat128Complex { re: 0.0, im: (0.0f128).copysign(ix) }
+        }
+    } else {
+        // real NaN
+        if ix == 0.0 {
+            CFloat128Complex { re: f128::NAN, im: ix }
+        } else {
+            CFloat128Complex { re: f128::NAN, im: f128::NAN }
+        }
+    }
+}
+
 /// tan for binary128 — glibc s_tanl: kernel for |x|<=pi/4, else reduce mod pi/2
 /// with iy = +1 (n even) / -1 (n odd) selecting tan vs the cotangent form.
 fn tanl_f128(x: f128) -> f128 {
@@ -11627,8 +11699,8 @@ pub unsafe extern "C" fn cexpf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cexp(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cexpf128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { cexp(z) }
+pub unsafe extern "C" fn cexpf128(z: CFloat128Complex) -> CFloat128Complex {
+    cexp_f128(z)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clogf32(z: CFloatComplex) -> CFloatComplex {
