@@ -7895,8 +7895,21 @@ pub unsafe extern "C" fn powf64x(x: f64, y: f64) -> f64 {
     unsafe { pow(x, y) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn powf128(x: f64, y: f64) -> f64 {
-    unsafe { pow(x, y) }
+pub unsafe extern "C" fn powf128(x: f128, y: f128) -> f128 {
+    let z = powl_f128(x, y);
+    // glibc w_pow wrapper: EDOM (neg**non-int), ERANGE (pole/overflow/underflow).
+    if !z.is_finite() {
+        if x.is_finite() && y.is_finite() {
+            if z.is_nan() {
+                set_domain_errno();
+            } else {
+                set_range_errno();
+            }
+        }
+    } else if z == 0.0 && x.is_finite() && x != 0.0 && y.is_finite() {
+        set_range_errno();
+    }
+    z
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn remainderf32(x: f32, y: f32) -> f32 {
@@ -9903,6 +9916,303 @@ fn asinhl_f128(x: f128) -> f128 {
         log1pl_f128(absx + t / (1.0 + (1.0 + t).sqrt())) // |x| <= 2
     };
     if sign & 0x8000_0000 != 0 { -w } else { w }
+}
+
+/// Clear the low 59 mantissa bits of a binary128 (glibc's `w3=0; w2&=0xf8000000`
+/// hi/lo split, keeping ~53 high significand bits).
+#[inline]
+fn pow_hi59_f128(v: f128) -> f128 {
+    f128::from_bits(v.to_bits() & (!0u128 << 59))
+}
+/// Top 32 bits of a binary128 as a signed word (glibc `parts32.w0`).
+#[inline]
+fn pow_w0_f128(v: f128) -> i32 {
+    (v.to_bits() >> 96) as i32
+}
+/// Replace the top 32 bits of a binary128 with `w` (glibc `parts32.w0 = w`).
+#[inline]
+fn pow_setw0_f128(v: f128, w: u32) -> f128 {
+    f128::from_bits((v.to_bits() & ((1u128 << 96) - 1)) | ((w as u128) << 96))
+}
+
+/// x^y for binary128 — verbatim port of glibc's ldbl-128 `__ieee754_powl`
+/// (e_powl.c, fdlibm-style): the full special-case lattice, then log2(x) in two
+/// pieces via the LN/LD rational and 2/(3·log2) scaling, y·log2(x) in simulated
+/// extended precision, and 2^n·exp(y'·log2) via the PN/PD rational. Self-
+/// contained (only sqrtl/scalbn + algebraic f128) → byte-exact. Uses only
+/// decimal coefficients + word-level hi/lo splits (pow_hi59_f128).
+#[allow(clippy::excessive_precision)]
+fn powl_f128(x: f128, y: f128) -> f128 {
+    const BP: [f128; 2] = [1.0, 1.5];
+    const DP_H: [f128; 2] = [0.0, 5.8496250072115607565592654282227158546448E-1f128];
+    const DP_L: [f128; 2] = [0.0, 1.0579781240112554492329533686862998106046E-16f128];
+    const ZERO: f128 = 0.0;
+    const ONE: f128 = 1.0;
+    const TWO: f128 = 2.0;
+    const TWO113: f128 = 1.0384593717069655257060992658440192E34f128;
+    const HUGE: f128 = 1.0e3000f128;
+    const TINY: f128 = 1.0e-3000f128;
+    const LN: [f128; 5] = [
+        -3.0779177200290054398792536829702930623200E1f128,
+        6.5135778082209159921251824580292116201640E1f128,
+        -4.6312921812152436921591152809994014413540E1f128,
+        1.2510208195629420304615674658258363295208E1f128,
+        -9.9266909031921425609179910128531667336670E-1f128,
+    ];
+    const LD: [f128; 5] = [
+        -5.129862866715009066465422805058933131960E1f128,
+        1.452015077564081884387441590064272782044E2f128,
+        -1.524043275549860505277434040464085593165E2f128,
+        7.236063513651544224319663428634139768808E1f128,
+        -1.494198912340228235853027849917095580053E1f128,
+    ];
+    const PN: [f128; 5] = [
+        5.081801691915377692446852383385968225675E8f128,
+        9.360895299872484512023336636427675327355E6f128,
+        4.213701282274196030811629773097579432957E4f128,
+        5.201006511142748908655720086041570288182E1f128,
+        9.088368420359444263703202925095675982530E-3f128,
+    ];
+    const PD: [f128; 4] = [
+        3.049081015149226615468111430031590411682E9f128,
+        1.069833887183886839966085436512368982758E8f128,
+        8.259257717868875207333991924545445705394E5f128,
+        1.872583833284143212651746812884298360922E3f128,
+    ];
+    const LG2: f128 = 6.9314718055994530941723212145817656807550E-1f128;
+    const LG2_H: f128 = 6.9314718055994528622676398299518041312695E-1f128;
+    const LG2_L: f128 = 2.3190468138462996154948554638754786504121E-17f128;
+    const OVT: f128 = 8.0085662595372944372e-0017f128;
+    const CP: f128 = 9.6179669392597560490661645400126142495110E-1f128;
+    const CP_H: f128 = 9.6179669392597555432899980587535537779331E-1f128;
+    const CP_L: f128 = 5.0577616648125906047157785230014751039424E-17f128;
+
+    let xbits = x.to_bits();
+    let ybits = y.to_bits();
+    let hx = pow_w0_f128(x);
+    let mut ix = (hx as u32) & 0x7fff_ffff;
+    let hy = pow_w0_f128(y);
+    let iy = (hy as u32) & 0x7fff_ffff;
+    let x_low96_nz = (xbits & ((1u128 << 96) - 1)) != 0;
+    let y_low96_nz = (ybits & ((1u128 << 96) - 1)) != 0;
+
+    // y == 0: x**0 = 1 (unless x sNaN).
+    if iy == 0 && !y_low96_nz && !is_signaling_f128(x) {
+        return ONE;
+    }
+    // 1**y = 1; -1**+-inf = 1.
+    if x == ONE && !is_signaling_f128(y) {
+        return ONE;
+    }
+    if x == -1.0 && iy == 0x7fff_0000 && !y_low96_nz {
+        return ONE;
+    }
+    // +-NaN -> x+y.
+    if ix > 0x7fff_0000
+        || (ix == 0x7fff_0000 && x_low96_nz)
+        || iy > 0x7fff_0000
+        || (iy == 0x7fff_0000 && y_low96_nz)
+    {
+        return x + y;
+    }
+
+    // yisint: 0 not-int, 1 odd int, 2 even int (only matters for x<0).
+    let mut yisint = 0;
+    if hx < 0 {
+        if iy >= 0x4070_0000 {
+            yisint = 2;
+        } else if iy >= 0x3fff_0000 {
+            if y.floor() == y {
+                let z = 0.5 * y;
+                yisint = if z.floor() == z { 2 } else { 1 };
+            }
+        }
+    }
+
+    // special value of y
+    if !y_low96_nz {
+        if iy == 0x7fff_0000 {
+            if ix == 0x3fff_0000 && !x_low96_nz {
+                // +-1**inf = NaN (x86 negative qNaN; NaN inputs handled above).
+                return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+            } else if ix >= 0x3fff_0000 {
+                return if hy >= 0 { y } else { ZERO };
+            } else {
+                return if hy < 0 { -y } else { ZERO };
+            }
+        }
+        if iy == 0x3fff_0000 {
+            return if hy < 0 { ONE / x } else { x };
+        }
+        if hy == 0x4000_0000 {
+            return x * x; // y == 2
+        }
+        if hy == 0x3ffe_0000 && hx >= 0 {
+            return x.sqrt(); // y == 0.5, x >= +0
+        }
+    }
+
+    let mut ax = x.abs();
+    // special value of x (x is +-0, +-inf, +-1)
+    if !x_low96_nz && (ix == 0x7fff_0000 || ix == 0 || ix == 0x3fff_0000) {
+        let mut z = ax;
+        if hy < 0 {
+            z = ONE / z;
+        }
+        if hx < 0 {
+            if ix == 0x3fff_0000 && yisint == 0 {
+                // (-1)**non-int = NaN (x86 negative qNaN).
+                z = f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+            } else if yisint == 1 {
+                z = -z;
+            }
+        }
+        return z;
+    }
+
+    // (x<0)**(non-int) = NaN (x86 negative qNaN; NaN inputs handled above).
+    if (((hx as u32) >> 31).wrapping_sub(1) | (yisint as u32)) == 0 {
+        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
+    }
+
+    // sign of result (-ve ** odd) = -1.
+    let mut sgn = ONE;
+    if (((hx as u32) >> 31).wrapping_sub(1) | ((yisint as u32).wrapping_sub(1))) == 0 {
+        sgn = -ONE;
+    }
+
+    // |y| huge -> over/underflow if x not close to 1.
+    if iy > 0x401d_654b {
+        if iy > 0x407d_654b {
+            if ix <= 0x3ffe_ffff {
+                return if hy < 0 { HUGE * HUGE } else { TINY * TINY };
+            }
+            if ix >= 0x3fff_0000 {
+                return if hy > 0 { HUGE * HUGE } else { TINY * TINY };
+            }
+        }
+        if ix < 0x3ffe_ffff {
+            return if hy < 0 { sgn * HUGE * HUGE } else { sgn * TINY * TINY };
+        }
+        if ix > 0x3fff_0000 {
+            return if hy > 0 { sgn * HUGE * HUGE } else { sgn * TINY * TINY };
+        }
+    }
+
+    let mut y = y;
+    let ay = if y > ZERO { y } else { -y };
+    let p128 = f128::from_bits(16255u128 << 112); // 2^-128
+    if ay < p128 {
+        y = if y < ZERO { -p128 } else { p128 };
+    }
+
+    let mut n: i32 = 0;
+    // subnormal x
+    if ix < 0x0001_0000 {
+        ax *= TWO113;
+        n -= 113;
+        ix = pow_w0_f128(ax) as u32;
+    }
+    n += ((ix >> 16) as i32) - 0x3fff;
+    let j = (ix & 0x0000_ffff) as i32;
+    // determine interval
+    ix = (j as u32) | 0x3fff_0000;
+    let k: usize;
+    if j <= 0x3988 {
+        k = 0; // |x| < sqrt(3/2)
+    } else if j < 0xbb67 {
+        k = 1; // |x| < sqrt(3)
+    } else {
+        k = 0;
+        n += 1;
+        ix -= 0x0001_0000;
+    }
+    ax = pow_setw0_f128(ax, ix);
+
+    // s = (x-bp)/(x+bp)
+    let mut u = ax - BP[k];
+    let v = ONE / (ax + BP[k]);
+    let s = u * v;
+    let mut s_h = pow_hi59_f128(s);
+    // t_h = ax + bp[k] high
+    let mut t_h = pow_hi59_f128(ax + BP[k]);
+    let mut t_l = ax - (t_h - BP[k]);
+    let mut s_l = v * ((u - s_h * t_h) - s_h * t_l);
+    // log(ax)
+    let mut s2 = s * s;
+    u = LN[0] + s2 * (LN[1] + s2 * (LN[2] + s2 * (LN[3] + s2 * LN[4])));
+    let mut vv = LD[0] + s2 * (LD[1] + s2 * (LD[2] + s2 * (LD[3] + s2 * (LD[4] + s2))));
+    let mut r = s2 * s2 * u / vv;
+    r += s_l * (s_h + s);
+    s2 = s_h * s_h;
+    t_h = pow_hi59_f128(3.0 + s2 + r);
+    t_l = r - ((t_h - 3.0) - s2);
+    // u+v = s*(1+...)
+    u = s_h * t_h;
+    let mut v2 = s_l * t_h + t_l * s;
+    // 2/(3log2)*(s+...)
+    let mut p_h = pow_hi59_f128(u + v2);
+    let mut p_l = v2 - (p_h - u);
+    let z_h = CP_H * p_h;
+    let z_l = CP_L * p_h + p_l * CP + DP_L[k];
+    // log2(ax) = n + dp_h + z_h + z_l
+    let t: f128 = n as f128;
+    let mut t1 = pow_hi59_f128(((z_h + z_l) + DP_H[k]) + t);
+    let t2 = z_l - (((t1 - t) - DP_H[k]) - z_h);
+
+    // split y into y1+y2 and compute (y1+y2)*(t1+t2)
+    let y1 = pow_hi59_f128(y);
+    p_l = (y - y1) * t1 + y * t2;
+    p_h = y1 * t1;
+    let mut z = p_l + p_h;
+    let mut j2 = pow_w0_f128(z);
+    let z_low96_nz = (z.to_bits() & ((1u128 << 96) - 1)) != 0;
+    if j2 >= 0x400d_0000 {
+        // z >= 16384
+        if (j2 != 0x400d_0000) || z_low96_nz {
+            return sgn * HUGE * HUGE; // overflow
+        } else if p_l + OVT > z - p_h {
+            return sgn * HUGE * HUGE;
+        }
+    } else if (j2 & 0x7fff_ffff) >= 0x400d_01b9 {
+        // z <= -16495
+        if (((j2 as u32).wrapping_sub(0xc00d_01bc)) != 0) || z_low96_nz {
+            return sgn * TINY * TINY; // underflow
+        } else if p_l <= z - p_h {
+            return sgn * TINY * TINY;
+        }
+    }
+
+    // compute 2**(p_h+p_l)
+    let i = j2 & 0x7fff_ffff;
+    let _k2 = (i >> 16).wrapping_sub(0x3fff);
+    n = 0;
+    if i > 0x3ffe_0000 {
+        // |z| > 0.5: n = [z + 0.5]
+        n = (z + 0.5).floor() as i32;
+        let tn: f128 = n as f128;
+        p_h -= tn;
+    }
+    let mut t = pow_hi59_f128(p_l + p_h);
+    u = t * LG2_H;
+    let v = (p_l - (t - p_h)) * LG2 + t * LG2_L;
+    z = u + v;
+    let w = v - (z - u);
+    // exp(z)
+    t = z * z;
+    u = PN[0] + t * (PN[1] + t * (PN[2] + t * (PN[3] + t * PN[4])));
+    let vexp = PD[0] + t * (PD[1] + t * (PD[2] + t * (PD[3] + t)));
+    t1 = z - t * u / vexp;
+    r = (z * t1) / (t1 - TWO) - (w + z * w);
+    z = ONE - (r - z);
+    j2 = pow_w0_f128(z);
+    j2 = j2.wrapping_add(n << 16);
+    if (j2 >> 16) <= 0 {
+        z = scalbn_f128(z, n as i64); // subnormal output
+    } else {
+        z = pow_setw0_f128(z, j2 as u32);
+    }
+    sgn * z
 }
 
 /// 10^x for binary128 — verbatim port of glibc's ldbl-128 `__ieee754_exp10l`
