@@ -4569,7 +4569,18 @@ pub unsafe extern "C" fn sched_getaffinity(
     mask: *mut c_void,
 ) -> c_int {
     match unsafe { syscall::sys_sched_getaffinity(pid, cpusetsize, mask as *mut u8) } {
-        Ok(_) => 0,
+        Ok(written) => {
+            // The kernel only writes `written` bytes; glibc zero-fills the rest
+            // of the caller's mask so high CPUs read as clear (CPU_ISSET == 0),
+            // rather than leaving stale buffer contents.
+            let written = written.max(0) as usize;
+            if !mask.is_null() && written < cpusetsize {
+                unsafe {
+                    std::ptr::write_bytes((mask as *mut u8).add(written), 0, cpusetsize - written)
+                };
+            }
+            0
+        }
         Err(e) => {
             unsafe { set_abi_errno(e) };
             -1
