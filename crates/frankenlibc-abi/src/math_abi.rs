@@ -4909,8 +4909,17 @@ pub unsafe extern "C" fn pownf64x(x: f64, n: i64) -> f64 {
     unsafe { pown(x, n) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pownf128(x: f64, n: i64) -> f64 {
-    unsafe { pown(x, n) }
+pub unsafe extern "C" fn pownf128(x: f128, n: i64) -> f128 {
+    // glibc s_pown: for MANT_DIG(113) >= 63, pown(x,n) = pow(x, (f128)n) exactly.
+    let ret = powl_f128(x, n as f128);
+    if !ret.is_finite() {
+        if x.is_finite() {
+            set_range_errno();
+        }
+    } else if ret == 0.0 && x.is_finite() && x != 0.0 {
+        set_range_errno();
+    }
+    ret
 }
 
 // --- powr (x^y for positive x) ---
