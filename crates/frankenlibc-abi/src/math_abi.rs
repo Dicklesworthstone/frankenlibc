@@ -92,6 +92,92 @@ fn f128_to_i64_sat(r: f128) -> i64 {
     }
 }
 
+/// Round a binary128 to integral per a C23 `FP_INT_*` direction argument:
+/// 0=UPWARD, 1=DOWNWARD, 2=TOWARDZERO, 3=TONEARESTFROMZERO (half away from zero),
+/// 4=TONEAREST (half to even). Used by the fromfp family.
+fn round_dir_f128(x: f128, rnd: c_int) -> f128 {
+    match rnd {
+        0 => x.ceil(),
+        1 => x.floor(),
+        2 => x.trunc(),
+        3 => x.round(),
+        _ => x.round_ties_even(),
+    }
+}
+
+/// `fromfp`/`fromfpx` core for binary128 -> intmax_t. Rounds per `rnd`, then if
+/// the result is out of the signed `width`-bit range (or x is non-finite),
+/// raises EDOM and SATURATES (positive/NaN -> max, negative -> min), matching
+/// glibc. (fromfpx additionally raises FE_INEXACT, which we leave to the FPU.)
+fn fromfp_signed_f128(x: f128, rnd: c_int, width: u32) -> i64 {
+    if width == 0 {
+        // A 0-bit integer has no representable values: always a range error.
+        unsafe { set_abi_errno(libc::EDOM) };
+        return 0;
+    }
+    let smax: i64 = if width >= 64 {
+        i64::MAX
+    } else {
+        (1i64 << (width - 1)) - 1
+    };
+    let smin: i64 = if width >= 64 {
+        i64::MIN
+    } else {
+        -(1i64 << (width - 1))
+    };
+    if x.is_nan() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return smax;
+    }
+    let r = round_dir_f128(x, rnd);
+    if r.is_infinite() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return if r > 0.0 { smax } else { smin };
+    }
+    if r > smax as f128 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return smax;
+    }
+    if r < smin as f128 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return smin;
+    }
+    r as i64
+}
+
+/// `ufromfp`/`ufromfpx` core for binary128 -> uintmax_t. Negative results clamp
+/// to 0, overflow clamps to the unsigned `width`-bit max, both with EDOM.
+fn fromfp_unsigned_f128(x: f128, rnd: c_int, width: u32) -> u64 {
+    if width == 0 {
+        // A 0-bit integer has no representable values: always a range error.
+        unsafe { set_abi_errno(libc::EDOM) };
+        return 0;
+    }
+    let umax: u64 = if width >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << width) - 1
+    };
+    if x.is_nan() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return umax;
+    }
+    let r = round_dir_f128(x, rnd);
+    if r.is_infinite() {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return if r > 0.0 { umax } else { 0 };
+    }
+    if r < 0.0 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return 0;
+    }
+    if r > umax as f128 {
+        unsafe { set_abi_errno(libc::EDOM) };
+        return umax;
+    }
+    r as u64
+}
+
 /// nextafter/nexttoward range-error rule, matching glibc: ERANGE on overflow
 /// (finite x -> infinite result) and on underflow (result subnormal-or-zero AND
 /// magnitude decreased). nextafter(0, y) -> smallest subnormal is NOT an
@@ -5603,8 +5689,8 @@ pub unsafe extern "C" fn fromfpf64x(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpf128(x: f64, rnd: c_int, width: u32) -> i64 {
-    unsafe { fromfp(x, rnd, width) }
+pub unsafe extern "C" fn fromfpf128(x: f128, rnd: c_int, width: u32) -> i64 {
+    fromfp_signed_f128(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ufromfp(x: f64, rnd: c_int, width: u32) -> u64 {
@@ -5635,8 +5721,8 @@ pub unsafe extern "C" fn ufromfpf64x(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfp(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpf128(x: f64, rnd: c_int, width: u32) -> u64 {
-    unsafe { ufromfp(x, rnd, width) }
+pub unsafe extern "C" fn ufromfpf128(x: f128, rnd: c_int, width: u32) -> u64 {
+    fromfp_unsigned_f128(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fromfpx(x: f64, rnd: c_int, width: u32) -> i64 {
@@ -5667,8 +5753,9 @@ pub unsafe extern "C" fn fromfpxf64x(x: f64, rnd: c_int, width: u32) -> i64 {
     unsafe { fromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fromfpxf128(x: f64, rnd: c_int, width: u32) -> i64 {
-    unsafe { fromfpx(x, rnd, width) }
+pub unsafe extern "C" fn fromfpxf128(x: f128, rnd: c_int, width: u32) -> i64 {
+    // Same value/errno as fromfp; the distinguishing FE_INEXACT flag is omitted.
+    fromfp_signed_f128(x, rnd, width)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ufromfpx(x: f64, rnd: c_int, width: u32) -> u64 {
@@ -5699,8 +5786,9 @@ pub unsafe extern "C" fn ufromfpxf64x(x: f64, rnd: c_int, width: u32) -> u64 {
     unsafe { ufromfpx(x, rnd, width) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ufromfpxf128(x: f64, rnd: c_int, width: u32) -> u64 {
-    unsafe { ufromfpx(x, rnd, width) }
+pub unsafe extern "C" fn ufromfpxf128(x: f128, rnd: c_int, width: u32) -> u64 {
+    // Same value/errno as ufromfp; FE_INEXACT flag omitted.
+    fromfp_unsigned_f128(x, rnd, width)
 }
 
 // --- clog10 (complex log base 10) ---
