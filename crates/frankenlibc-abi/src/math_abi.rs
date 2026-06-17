@@ -3454,8 +3454,9 @@ pub unsafe extern "C" fn fmaximumf64x(x: f64, y: f64) -> f64 {
     fmaximum_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaximumf128(x: f64, y: f64) -> f64 {
-    fmaximum_impl(x, y)
+pub unsafe extern "C" fn fmaximumf128(x: f128, y: f128) -> f128 {
+    // C23 fmaximum = IEEE-754-2019 maximum: NaN-propagating, +0 > -0.
+    x.maximum(y)
 }
 
 // --- fmaximum_num exports ---
@@ -3489,8 +3490,15 @@ pub unsafe extern "C" fn fmaximum_numf64x(x: f64, y: f64) -> f64 {
     fmaximum_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaximum_numf128(x: f64, y: f64) -> f64 {
-    fmaximum_num_impl(x, y)
+pub unsafe extern "C" fn fmaximum_numf128(x: f128, y: f128) -> f128 {
+    // C23 fmaximum_num: like fmaximum but a NaN operand is ignored.
+    if x.is_nan() {
+        y
+    } else if y.is_nan() {
+        x
+    } else {
+        x.maximum(y)
+    }
 }
 
 // --- fmaximum_mag exports ---
@@ -3524,8 +3532,19 @@ pub unsafe extern "C" fn fmaximum_magf64x(x: f64, y: f64) -> f64 {
     fmaximum_mag_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaximum_magf128(x: f64, y: f64) -> f64 {
-    fmaximum_mag_impl(x, y)
+pub unsafe extern "C" fn fmaximum_magf128(x: f128, y: f128) -> f128 {
+    // Greater magnitude; NaN propagates; equal magnitude defers to fmaximum.
+    if x.is_nan() || y.is_nan() {
+        return x.maximum(y);
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax > ay {
+        x
+    } else if ay > ax {
+        y
+    } else {
+        x.maximum(y)
+    }
 }
 
 // --- fmaximum_mag_num exports ---
@@ -3559,8 +3578,22 @@ pub unsafe extern "C" fn fmaximum_mag_numf64x(x: f64, y: f64) -> f64 {
     fmaximum_mag_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmaximum_mag_numf128(x: f64, y: f64) -> f64 {
-    fmaximum_mag_num_impl(x, y)
+pub unsafe extern "C" fn fmaximum_mag_numf128(x: f128, y: f128) -> f128 {
+    // Greater magnitude, NaN ignored; equal magnitude defers to fmaximum_num.
+    if x.is_nan() {
+        return y;
+    }
+    if y.is_nan() {
+        return x;
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax > ay {
+        x
+    } else if ay > ax {
+        y
+    } else {
+        x.maximum(y)
+    }
 }
 
 // --- fminimum exports ---
@@ -3594,8 +3627,9 @@ pub unsafe extern "C" fn fminimumf64x(x: f64, y: f64) -> f64 {
     fminimum_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminimumf128(x: f64, y: f64) -> f64 {
-    fminimum_impl(x, y)
+pub unsafe extern "C" fn fminimumf128(x: f128, y: f128) -> f128 {
+    // C23 fminimum = IEEE-754-2019 minimum: NaN-propagating, -0 < +0.
+    x.minimum(y)
 }
 
 // --- fminimum_num exports ---
@@ -3629,8 +3663,15 @@ pub unsafe extern "C" fn fminimum_numf64x(x: f64, y: f64) -> f64 {
     fminimum_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminimum_numf128(x: f64, y: f64) -> f64 {
-    fminimum_num_impl(x, y)
+pub unsafe extern "C" fn fminimum_numf128(x: f128, y: f128) -> f128 {
+    // C23 fminimum_num: like fminimum but a NaN operand is ignored.
+    if x.is_nan() {
+        y
+    } else if y.is_nan() {
+        x
+    } else {
+        x.minimum(y)
+    }
 }
 
 // --- fminimum_mag exports ---
@@ -3664,8 +3705,19 @@ pub unsafe extern "C" fn fminimum_magf64x(x: f64, y: f64) -> f64 {
     fminimum_mag_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminimum_magf128(x: f64, y: f64) -> f64 {
-    fminimum_mag_impl(x, y)
+pub unsafe extern "C" fn fminimum_magf128(x: f128, y: f128) -> f128 {
+    // Lesser magnitude; NaN propagates; equal magnitude defers to fminimum.
+    if x.is_nan() || y.is_nan() {
+        return x.minimum(y);
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax < ay {
+        x
+    } else if ay < ax {
+        y
+    } else {
+        x.minimum(y)
+    }
 }
 
 // --- fminimum_mag_num exports ---
@@ -3699,8 +3751,22 @@ pub unsafe extern "C" fn fminimum_mag_numf64x(x: f64, y: f64) -> f64 {
     fminimum_mag_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fminimum_mag_numf128(x: f64, y: f64) -> f64 {
-    fminimum_mag_num_impl(x, y)
+pub unsafe extern "C" fn fminimum_mag_numf128(x: f128, y: f128) -> f128 {
+    // Lesser magnitude, NaN ignored; equal magnitude defers to fminimum_num.
+    if x.is_nan() {
+        return y;
+    }
+    if y.is_nan() {
+        return x;
+    }
+    let (ax, ay) = (x.abs(), y.abs());
+    if ax < ay {
+        x
+    } else if ay < ax {
+        y
+    } else {
+        x.minimum(y)
+    }
 }
 
 // =========================================================================
@@ -4219,8 +4285,8 @@ pub unsafe extern "C" fn nextdownf64x(x: f64) -> f64 {
     unsafe { nextdown(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nextdownf128(x: f64) -> f64 {
-    unsafe { nextdown(x) }
+pub unsafe extern "C" fn nextdownf128(x: f128) -> f128 {
+    x.next_down()
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nextup(x: f64) -> f64 {
@@ -4251,8 +4317,8 @@ pub unsafe extern "C" fn nextupf64x(x: f64) -> f64 {
     unsafe { nextup(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nextupf128(x: f64) -> f64 {
-    unsafe { nextup(x) }
+pub unsafe extern "C" fn nextupf128(x: f128) -> f128 {
+    x.next_up()
 }
 
 // --- rsqrt (1/sqrt) ---
