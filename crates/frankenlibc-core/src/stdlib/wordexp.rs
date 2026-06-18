@@ -296,6 +296,403 @@ pub fn expand_braced_param(
     }
 }
 
+// ---------------------------------------------------------------------------
+// POSIX arithmetic expansion: the body of `$(( ... ))`
+// ---------------------------------------------------------------------------
+
+/// Evaluate a POSIX arithmetic expression (the inner text of `$(( ... ))`).
+///
+/// Supports integer literals (decimal, `0x`/`0X` hex, leading-`0` octal),
+/// variables (bare `name`, `$name`, or `${name}` resolved via `lookup`; unset
+/// or empty is `0`, a non-numeric value is recursively evaluated), parentheses,
+/// the unary operators `+ - ! ~`, and the binary operators
+/// `* / % + - << >> < <= > >= == != & ^ | && ||` plus the ternary `?:`, with C
+/// precedence. Arithmetic is performed in wrapping `i64` (POSIX `intmax_t`).
+/// `&&`/`||`/`?:` short-circuit. Division/modulo by zero and any malformed
+/// expression yield [`ExpandError::Syntax`] (glibc's `WRDE_SYNTAX`).
+pub fn eval_arith<F>(expr: &str, lookup: &F) -> Result<i64, ExpandError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    // An empty body — `$(( ))` — evaluates to 0 (matches glibc/POSIX shells).
+    if expr.trim().is_empty() {
+        return Ok(0);
+    }
+    let toks = arith_tokenize(expr)?;
+    let mut p = ArithParser { toks: &toks, pos: 0 };
+    let node = p.parse_expr()?;
+    if p.pos != p.toks.len() {
+        return Err(ExpandError::Syntax);
+    }
+    arith_eval(&node, lookup, 0, true)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ATok {
+    Num(i64),
+    Var(String),
+    Plus, Minus, Star, Slash, Percent,
+    Shl, Shr, Lt, Le, Gt, Ge, Eq, Ne,
+    Amp, Caret, Pipe, AmpAmp, PipePipe,
+    Not, Tilde, Quest, Colon, LParen, RParen,
+}
+
+fn arith_parse_num(b: &[u8], start: usize) -> Result<(i64, usize), ExpandError> {
+    let mut i = start;
+    if b[i] == b'0' && i + 1 < b.len() && (b[i + 1] == b'x' || b[i + 1] == b'X') {
+        i += 2;
+        let hs = i;
+        while i < b.len() && b[i].is_ascii_hexdigit() {
+            i += 1;
+        }
+        if i == hs {
+            return Err(ExpandError::Syntax);
+        }
+        let v = i64::from_str_radix(core::str::from_utf8(&b[hs..i]).unwrap_or(""), 16)
+            .map_err(|_| ExpandError::Syntax)?;
+        return Ok((v, i));
+    }
+    if b[i] == b'0' {
+        i += 1;
+        let os = i;
+        while i < b.len() && (b'0'..=b'7').contains(&b[i]) {
+            i += 1;
+        }
+        if os == i {
+            return Ok((0, i));
+        }
+        let v = i64::from_str_radix(core::str::from_utf8(&b[os..i]).unwrap_or(""), 8)
+            .map_err(|_| ExpandError::Syntax)?;
+        return Ok((v, i));
+    }
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    let v = core::str::from_utf8(&b[start..i])
+        .unwrap_or("")
+        .parse::<i64>()
+        .map_err(|_| ExpandError::Syntax)?;
+    Ok((v, i))
+}
+
+fn arith_tokenize(s: &str) -> Result<Vec<ATok>, ExpandError> {
+    let b = s.as_bytes();
+    let mut i = 0usize;
+    let mut out = Vec::new();
+    while i < b.len() {
+        let c = b[i];
+        if c.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        match c {
+            b'+' => { out.push(ATok::Plus); i += 1; }
+            b'-' => { out.push(ATok::Minus); i += 1; }
+            b'*' => { out.push(ATok::Star); i += 1; }
+            b'/' => { out.push(ATok::Slash); i += 1; }
+            b'%' => { out.push(ATok::Percent); i += 1; }
+            b'~' => { out.push(ATok::Tilde); i += 1; }
+            b'(' => { out.push(ATok::LParen); i += 1; }
+            b')' => { out.push(ATok::RParen); i += 1; }
+            b'^' => { out.push(ATok::Caret); i += 1; }
+            b'?' => { out.push(ATok::Quest); i += 1; }
+            b':' => { out.push(ATok::Colon); i += 1; }
+            b'<' => {
+                if i + 1 < b.len() && b[i + 1] == b'<' { out.push(ATok::Shl); i += 2; }
+                else if i + 1 < b.len() && b[i + 1] == b'=' { out.push(ATok::Le); i += 2; }
+                else { out.push(ATok::Lt); i += 1; }
+            }
+            b'>' => {
+                if i + 1 < b.len() && b[i + 1] == b'>' { out.push(ATok::Shr); i += 2; }
+                else if i + 1 < b.len() && b[i + 1] == b'=' { out.push(ATok::Ge); i += 2; }
+                else { out.push(ATok::Gt); i += 1; }
+            }
+            b'=' => {
+                if i + 1 < b.len() && b[i + 1] == b'=' { out.push(ATok::Eq); i += 2; }
+                else { return Err(ExpandError::Syntax); } // bare `=` (assignment) unsupported
+            }
+            b'!' => {
+                if i + 1 < b.len() && b[i + 1] == b'=' { out.push(ATok::Ne); i += 2; }
+                else { out.push(ATok::Not); i += 1; }
+            }
+            b'&' => {
+                if i + 1 < b.len() && b[i + 1] == b'&' { out.push(ATok::AmpAmp); i += 2; }
+                else { out.push(ATok::Amp); i += 1; }
+            }
+            b'|' => {
+                if i + 1 < b.len() && b[i + 1] == b'|' { out.push(ATok::PipePipe); i += 2; }
+                else { out.push(ATok::Pipe); i += 1; }
+            }
+            b'0'..=b'9' => {
+                let (v, ni) = arith_parse_num(b, i)?;
+                out.push(ATok::Num(v));
+                i = ni;
+            }
+            b'$' => {
+                i += 1;
+                if i < b.len() && b[i] == b'{' {
+                    i += 1;
+                    let st = i;
+                    while i < b.len() && b[i] != b'}' {
+                        i += 1;
+                    }
+                    if i >= b.len() {
+                        return Err(ExpandError::Syntax);
+                    }
+                    let name = String::from_utf8_lossy(&b[st..i]).into_owned();
+                    i += 1;
+                    out.push(ATok::Var(name));
+                } else {
+                    let st = i;
+                    while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                        i += 1;
+                    }
+                    if st == i {
+                        return Err(ExpandError::Syntax);
+                    }
+                    out.push(ATok::Var(String::from_utf8_lossy(&b[st..i]).into_owned()));
+                }
+            }
+            _ if c.is_ascii_alphabetic() || c == b'_' => {
+                let st = i;
+                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                    i += 1;
+                }
+                out.push(ATok::Var(String::from_utf8_lossy(&b[st..i]).into_owned()));
+            }
+            _ => return Err(ExpandError::Syntax),
+        }
+    }
+    Ok(out)
+}
+
+enum ANode {
+    Num(i64),
+    Var(String),
+    Unary(ATok, Box<ANode>),
+    Bin(ATok, Box<ANode>, Box<ANode>),
+    Ternary(Box<ANode>, Box<ANode>, Box<ANode>),
+}
+
+struct ArithParser<'a> {
+    toks: &'a [ATok],
+    pos: usize,
+}
+
+impl ArithParser<'_> {
+    fn peek(&self) -> Option<&ATok> {
+        self.toks.get(self.pos)
+    }
+    fn eat(&mut self, t: &ATok) -> bool {
+        if self.toks.get(self.pos) == Some(t) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
+    // expr := ternary
+    fn parse_expr(&mut self) -> Result<ANode, ExpandError> {
+        let cond = self.parse_lor()?;
+        if self.eat(&ATok::Quest) {
+            let then = self.parse_expr()?;
+            if !self.eat(&ATok::Colon) {
+                return Err(ExpandError::Syntax);
+            }
+            let els = self.parse_expr()?;
+            Ok(ANode::Ternary(Box::new(cond), Box::new(then), Box::new(els)))
+        } else {
+            Ok(cond)
+        }
+    }
+    fn parse_binlevel(
+        &mut self,
+        ops: &[ATok],
+        next: fn(&mut Self) -> Result<ANode, ExpandError>,
+    ) -> Result<ANode, ExpandError> {
+        let mut lhs = next(self)?;
+        loop {
+            let mut matched = false;
+            for op in ops {
+                if self.eat(op) {
+                    let rhs = next(self)?;
+                    lhs = ANode::Bin(op.clone(), Box::new(lhs), Box::new(rhs));
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                return Ok(lhs);
+            }
+        }
+    }
+    fn parse_lor(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_binlevel(&[ATok::PipePipe], Self::parse_land)
+    }
+    fn parse_land(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_binlevel(&[ATok::AmpAmp], Self::parse_bor)
+    }
+    fn parse_bor(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_binlevel(&[ATok::Pipe], Self::parse_bxor)
+    }
+    fn parse_bxor(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_binlevel(&[ATok::Caret], Self::parse_band)
+    }
+    fn parse_band(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_binlevel(&[ATok::Amp], Self::parse_eq)
+    }
+    fn parse_eq(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_binlevel(&[ATok::Eq, ATok::Ne], Self::parse_rel)
+    }
+    fn parse_rel(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_binlevel(&[ATok::Lt, ATok::Le, ATok::Gt, ATok::Ge], Self::parse_shift)
+    }
+    fn parse_shift(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_binlevel(&[ATok::Shl, ATok::Shr], Self::parse_add)
+    }
+    fn parse_add(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_binlevel(&[ATok::Plus, ATok::Minus], Self::parse_mul)
+    }
+    fn parse_mul(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_binlevel(&[ATok::Star, ATok::Slash, ATok::Percent], Self::parse_unary)
+    }
+    fn parse_unary(&mut self) -> Result<ANode, ExpandError> {
+        match self.peek() {
+            Some(ATok::Plus) => { self.pos += 1; self.parse_unary() }
+            Some(ATok::Minus) => { self.pos += 1; Ok(ANode::Unary(ATok::Minus, Box::new(self.parse_unary()?))) }
+            Some(ATok::Not) => { self.pos += 1; Ok(ANode::Unary(ATok::Not, Box::new(self.parse_unary()?))) }
+            Some(ATok::Tilde) => { self.pos += 1; Ok(ANode::Unary(ATok::Tilde, Box::new(self.parse_unary()?))) }
+            _ => self.parse_primary(),
+        }
+    }
+    fn parse_primary(&mut self) -> Result<ANode, ExpandError> {
+        match self.peek().cloned() {
+            Some(ATok::Num(n)) => { self.pos += 1; Ok(ANode::Num(n)) }
+            Some(ATok::Var(name)) => { self.pos += 1; Ok(ANode::Var(name)) }
+            Some(ATok::LParen) => {
+                self.pos += 1;
+                let e = self.parse_expr()?;
+                if !self.eat(&ATok::RParen) {
+                    return Err(ExpandError::Syntax);
+                }
+                Ok(e)
+            }
+            _ => Err(ExpandError::Syntax),
+        }
+    }
+}
+
+fn arith_eval<F>(node: &ANode, lookup: &F, depth: u32, live: bool) -> Result<i64, ExpandError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if depth > 32 {
+        return Err(ExpandError::Syntax);
+    }
+    match node {
+        ANode::Num(n) => Ok(*n),
+        ANode::Var(name) => match lookup(name) {
+            None => Ok(0),
+            Some(v) if v.trim().is_empty() => Ok(0),
+            Some(v) => {
+                // A variable's value is itself an arithmetic expression
+                // (commonly just an integer literal).
+                eval_arith_depth(v.trim(), lookup, depth + 1)
+            }
+        },
+        ANode::Unary(op, e) => {
+            let v = arith_eval(e, lookup, depth + 1, live)?;
+            Ok(match op {
+                ATok::Minus => v.wrapping_neg(),
+                ATok::Not => (v == 0) as i64,
+                ATok::Tilde => !v,
+                _ => return Err(ExpandError::Syntax),
+            })
+        }
+        ANode::Ternary(c, t, f) => {
+            let cv = arith_eval(c, lookup, depth + 1, live)?;
+            if cv != 0 {
+                arith_eval(t, lookup, depth + 1, live)
+            } else {
+                arith_eval(f, lookup, depth + 1, live)
+            }
+        }
+        ANode::Bin(op, l, r) => {
+            // Short-circuit logical operators.
+            if matches!(op, ATok::AmpAmp) {
+                let lv = arith_eval(l, lookup, depth + 1, live)?;
+                if lv == 0 {
+                    // RHS is dead: parse-checked already, don't evaluate.
+                    let _ = arith_eval(r, lookup, depth + 1, false);
+                    return Ok(0);
+                }
+                let rv = arith_eval(r, lookup, depth + 1, live)?;
+                return Ok((rv != 0) as i64);
+            }
+            if matches!(op, ATok::PipePipe) {
+                let lv = arith_eval(l, lookup, depth + 1, live)?;
+                if lv != 0 {
+                    let _ = arith_eval(r, lookup, depth + 1, false);
+                    return Ok(1);
+                }
+                let rv = arith_eval(r, lookup, depth + 1, live)?;
+                return Ok((rv != 0) as i64);
+            }
+            let lv = arith_eval(l, lookup, depth + 1, live)?;
+            let rv = arith_eval(r, lookup, depth + 1, live)?;
+            Ok(match op {
+                ATok::Star => lv.wrapping_mul(rv),
+                ATok::Slash => {
+                    if rv == 0 {
+                        if live { return Err(ExpandError::Syntax); }
+                        0
+                    } else {
+                        lv.wrapping_div(rv)
+                    }
+                }
+                ATok::Percent => {
+                    if rv == 0 {
+                        if live { return Err(ExpandError::Syntax); }
+                        0
+                    } else {
+                        lv.wrapping_rem(rv)
+                    }
+                }
+                ATok::Plus => lv.wrapping_add(rv),
+                ATok::Minus => lv.wrapping_sub(rv),
+                ATok::Shl => lv.wrapping_shl(rv as u32),
+                ATok::Shr => lv.wrapping_shr(rv as u32),
+                ATok::Lt => (lv < rv) as i64,
+                ATok::Le => (lv <= rv) as i64,
+                ATok::Gt => (lv > rv) as i64,
+                ATok::Ge => (lv >= rv) as i64,
+                ATok::Eq => (lv == rv) as i64,
+                ATok::Ne => (lv != rv) as i64,
+                ATok::Amp => lv & rv,
+                ATok::Caret => lv ^ rv,
+                ATok::Pipe => lv | rv,
+                _ => return Err(ExpandError::Syntax),
+            })
+        }
+    }
+}
+
+fn eval_arith_depth<F>(expr: &str, lookup: &F, depth: u32) -> Result<i64, ExpandError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if depth > 32 {
+        return Err(ExpandError::Syntax);
+    }
+    let toks = arith_tokenize(expr)?;
+    let mut p = ArithParser { toks: &toks, pos: 0 };
+    let node = p.parse_expr()?;
+    if p.pos != p.toks.len() {
+        return Err(ExpandError::Syntax);
+    }
+    arith_eval(&node, lookup, depth, true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

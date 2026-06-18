@@ -6935,6 +6935,33 @@ fn scan_braced_parameter_end(s: &[u8], open_brace: usize) -> Option<usize> {
 }
 
 /// Scan `wordexp` input while honoring shell quoting and escaping context.
+/// If `s[dollar..]` begins with `$((` this is arithmetic expansion (NOT command
+/// substitution, and allowed under `WRDE_NOCMD`); returns the index just past
+/// the matching `))`. Otherwise returns `None`. An unterminated `$((` returns
+/// `Some(s.len())` so the scanner skips to the end rather than misfiring on an
+/// inner `(` as a bad character.
+fn arith_skip(s: &[u8], dollar: usize) -> Option<usize> {
+    if dollar + 2 < s.len() && s[dollar + 1] == b'(' && s[dollar + 2] == b'(' {
+        let mut depth = 2i32;
+        let mut p = dollar + 3;
+        while p < s.len() {
+            match s[p] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(p + 1);
+                    }
+                }
+                _ => {}
+            }
+            p += 1;
+        }
+        return Some(s.len());
+    }
+    None
+}
+
 fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
     let mut scan = WordexpSyntaxScan {
         has_bad_char: false,
@@ -6983,6 +7010,10 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
             if byte == b'$' && i + 1 < s.len() {
                 match s[i + 1] {
                     b'(' => {
+                        if let Some(next) = arith_skip(s, i) {
+                            i = next;
+                            continue;
+                        }
                         scan.has_command_substitution = true;
                         return scan;
                     }
@@ -7014,6 +7045,10 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
         if byte == b'$' && i + 1 < s.len() {
             match s[i + 1] {
                 b'(' => {
+                    if let Some(next) = arith_skip(s, i) {
+                        i = next;
+                        continue;
+                    }
                     scan.has_command_substitution = true;
                     return scan;
                 }
@@ -7142,6 +7177,49 @@ fn expand_vars_with_split_mask_dyn(
             i += 1;
             if i >= bytes.len() {
                 push_masked_char(&mut result, &mut split_mask, '$', false);
+                continue;
+            }
+            if bytes[i] == b'(' && i + 1 < bytes.len() && bytes[i + 1] == b'(' {
+                // `$(( expr ))` — POSIX arithmetic expansion. Find the matching
+                // `))` (tracking nested parens), evaluate the inner expression
+                // as integer arithmetic, and substitute the decimal result.
+                let inner_start = i + 2;
+                let mut depth = 2i32;
+                let mut pos = inner_start;
+                let mut close = None;
+                while pos < bytes.len() {
+                    match bytes[pos] {
+                        b'(' => depth += 1,
+                        b')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = Some(pos);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    pos += 1;
+                }
+                let Some(close) = close else {
+                    return Err(WRDE_SYNTAX);
+                };
+                let inner = core::str::from_utf8(&bytes[inner_start..close - 1]).unwrap_or("");
+                i = close + 1;
+                let lookup = |name: &str| std::env::var(name).ok();
+                match frankenlibc_core::stdlib::wordexp::eval_arith(inner, &lookup) {
+                    Ok(val) => {
+                        for ch in val.to_string().chars() {
+                            push_masked_char(
+                                &mut result,
+                                &mut split_mask,
+                                ch,
+                                split_unquoted_expansions,
+                            );
+                        }
+                    }
+                    Err(_) => return Err(WRDE_SYNTAX),
+                }
                 continue;
             }
             if bytes[i] == b'{' {
