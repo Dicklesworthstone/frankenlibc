@@ -23,17 +23,18 @@ use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
     ether_aton_r, ether_ntoa, ether_ntoa_r, eventfd_read, eventfd_write, fpathconf, fsconfig,
     fsmount, fsopen, fspick, fstat64, fstatat64, ftruncate64, getcpu, getdomainname,
-    getdtablesize, gethostid, getlogin, getlogin_r, getopt, getopt_long, getpagesize, getresgid,
-    getresuid, grantpt, herror, hstrerror, lockf, lseek64, lstat64, mkdtemp, mount_setattr,
-    move_mount, mq_close, mq_getattr, mq_open, mq_receive, mq_send, mq_setattr, mq_unlink, msgctl,
-    msgget, msgrcv, msgsnd, nice, open_tree, open64, pathconf, pidfd_getfd, pidfd_open,
-    pidfd_send_signal, posix_fadvise, posix_fallocate, posix_madvise, posix_openpt, pread64,
-    ptsname, pwrite64, renameat2, sched_get_priority_max, sched_get_priority_min,
-    sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler, sched_rr_get_interval,
-    sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget, semop, setdomainname,
-    sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget, signalfd4, sigqueue,
-    sigtimedwait, sigwaitinfo, stat64, sysconf, sysinfo, timer_create, timer_delete,
-    timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r, unlockpt,
+    getdtablesize, getegid, geteuid, getgid, gethostid, getlogin, getlogin_r, getopt, getopt_long,
+    getpagesize, getpid, getppid, getresgid, getresuid, getuid, grantpt, herror, hstrerror, lockf,
+    lseek64, lstat64, mkdtemp, mount_setattr, move_mount, mq_close, mq_getattr, mq_open,
+    mq_receive, mq_send, mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open_tree,
+    open64, pathconf, pidfd_getfd, pidfd_open, pidfd_send_signal, posix_fadvise, posix_fallocate,
+    posix_madvise, posix_openpt, pread64, ptsname, pwrite64, renameat2, sched_get_priority_max,
+    sched_get_priority_min, sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler,
+    sched_rr_get_interval, sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget,
+    semop, setdomainname, sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget,
+    signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf, sysinfo, timer_create,
+    timer_delete, timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r,
+    unlockpt,
 };
 use frankenlibc_abi::unistd_abi::{arc4random_addrandom, arc4random_stir};
 use frankenlibc_core::syscall as raw_syscall;
@@ -1302,6 +1303,16 @@ fn getdtablesize_matches_host_open_file_limit() {
     assert!(host > 0);
     assert_eq!(host_sysconf, host as libc::c_long);
     assert_eq!(abi, host);
+}
+
+#[test]
+fn scalar_identity_wrappers_match_host_libc() {
+    assert_eq!(unsafe { getpid() }, unsafe { libc::getpid() });
+    assert_eq!(unsafe { getppid() }, unsafe { libc::getppid() });
+    assert_eq!(unsafe { getuid() }, unsafe { libc::getuid() });
+    assert_eq!(unsafe { geteuid() }, unsafe { libc::geteuid() });
+    assert_eq!(unsafe { getgid() }, unsafe { libc::getgid() });
+    assert_eq!(unsafe { getegid() }, unsafe { libc::getegid() });
 }
 
 #[test]
