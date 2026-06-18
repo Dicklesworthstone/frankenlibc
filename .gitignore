@@ -207,3 +207,12 @@ tmp.*.ec
 .skill-loop-progress.md
 .skill-loop-progress-*.md
 *.mcp.json
+
+# === Ephemeral build & scratch artifacts (multi-repo cleanup 2026-06-18) ===
+# Stray out-of-tree compile outputs (normal builds live under target/, already ignored).
+*.rlib
+rust_out
+# One-off local CARGO_TARGET_DIR override directories (e.g. criterion micro-benches).
+**/local-target/
+# Scratch probe/bench tests (zz_ prefix; never committed — 0 ever tracked).
+**/tests/zz_*.rs
