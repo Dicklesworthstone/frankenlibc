@@ -99,6 +99,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     _pthread_cleanup_pop_restore,
     _pthread_cleanup_push,
     _pthread_cleanup_push_defer,
+    dysize,
     getpw,
     inet6_opt_append,
     inet6_opt_find,
@@ -166,6 +167,41 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::ptr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+unsafe extern "C" {
+    #[link_name = "dysize"]
+    fn host_dysize(year: c_int) -> c_int;
+}
+
+#[test]
+fn dysize_matches_host_leap_year_sweep() {
+    for year in [
+        c_int::MIN,
+        -2400,
+        -2100,
+        -400,
+        -100,
+        -4,
+        -1,
+        0,
+        1,
+        4,
+        100,
+        400,
+        1900,
+        1999,
+        2000,
+        2004,
+        2024,
+        2100,
+        2400,
+        c_int::MAX,
+    ] {
+        let host = unsafe { host_dysize(year) };
+        let abi = unsafe { dysize(year) };
+        assert_eq!(abi, host, "dysize({year})");
+    }
+}
 
 // ===========================================================================
 // DNS name validators
