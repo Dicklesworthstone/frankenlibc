@@ -698,6 +698,22 @@ fn sprintf_chk_safe() {
 }
 
 #[test]
+fn sprintf_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("sprintf_chk overflow", || {
+        let mut buf = [0u8; 4];
+        let fmt = CString::new("longstring").unwrap();
+        unsafe {
+            __sprintf_chk(
+                buf.as_mut_ptr().cast(),
+                0,
+                buf.len(),
+                fmt.as_ptr(),
+            );
+        }
+    });
+}
+
+#[test]
 fn snprintf_chk_truncates() {
     let mut buf = [0u8; 8];
     let fmt = CString::new("longstring").unwrap();
