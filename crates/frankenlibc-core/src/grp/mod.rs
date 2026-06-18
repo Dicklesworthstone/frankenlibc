@@ -41,25 +41,24 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
         return None;
     }
 
-    let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
     // glibc requires only the first three fields (name:passwd:gid); the member
     // list is optional. When extra colons appear, glibc's last field absorbs
-    // them (the members token is everything past the second colon), so a line
+    // them (the members token is everything past the third colon), so a line
     // like `g:x:4:m1:m2` yields the single member "m1:m2".
-    if fields.len() < 3 {
+    let mut fields = line.splitn(4, |&b| b == b':');
+    let name = fields.next()?;
+    let passwd = fields.next()?;
+    let gid_field = fields.next()?;
+    let member_raw = fields.next().unwrap_or(b"");
+
+    let gid = parse_u32_decimal(gid_field)?;
+
+    if name.is_empty() {
         return None;
     }
 
-    let gid = parse_u32_decimal(fields[2])?;
-
-    if fields[0].is_empty() {
-        return None;
-    }
-
-    // Rejoin any colon-split tail into the raw members field, then comma-split.
     // glibc drops empty member tokens (a member name is never ""), so a trailing
     // / leading / doubled comma never produces an empty entry.
-    let member_raw: Vec<u8> = fields.get(3..).unwrap_or(&[]).join(b":".as_slice());
     let members: Vec<Vec<u8>> = member_raw
         .split(|&b| b == b',')
         .filter(|m| !m.is_empty())
@@ -67,8 +66,8 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
         .collect();
 
     Some(Group {
-        gr_name: fields[0].to_vec(),
-        gr_passwd: fields[1].to_vec(),
+        gr_name: name.to_vec(),
+        gr_passwd: passwd.to_vec(),
         gr_gid: gid,
         gr_mem: members,
     })
@@ -410,6 +409,16 @@ ubuntu:x:1000:
         assert_eq!(
             parse_group_line(b"test:x:50:a,,b").unwrap().gr_mem,
             vec![b"a".to_vec(), b"b".to_vec()]
+        );
+    }
+
+    #[test]
+    fn extra_colon_tail_preserves_empty_member_filtering() {
+        let entry = parse_group_line(b"team:x:50:alice:ops,,bob:db,,").unwrap();
+
+        assert_eq!(
+            entry.gr_mem,
+            vec![b"alice:ops".to_vec(), b"bob:db".to_vec()]
         );
     }
 
