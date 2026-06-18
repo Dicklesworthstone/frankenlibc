@@ -1551,4 +1551,36 @@ mod sort_variant_tests {
             .collect();
         assert_eq!(got, keys, "wide-element qsort diverged");
     }
+
+    #[test]
+    fn swap_elements_exchanges_full_elements_across_widths() {
+        // swap_elements underlies heapsort's sift_down; the integer radix lanes
+        // bypass that comparison path, so pin the whole-element exchange
+        // directly across widths (including odd, non-power-of-two). It must swap
+        // exactly the two width-byte elements and leave the others untouched.
+        let fill = |i: usize, k: usize| (0x10u8.wrapping_mul(i as u8 + 1)).wrapping_add(k as u8);
+        for &width in &[1usize, 3, 4, 8, 16, 24] {
+            let n = 5;
+            let mut buf = vec![0u8; n * width];
+            for i in 0..n {
+                for k in 0..width {
+                    buf[i * width + k] = fill(i, k);
+                }
+            }
+            swap_elements(&mut buf, width, 1, 3);
+            // Elements 1 and 3 exchanged; 0, 2, 4 untouched.
+            let order = [0usize, 3, 2, 1, 4];
+            let mut want = vec![0u8; n * width];
+            for (dst, &src) in order.iter().enumerate() {
+                for k in 0..width {
+                    want[dst * width + k] = fill(src, k);
+                }
+            }
+            assert_eq!(buf, want, "swap_elements wrong for width {width}");
+        }
+        // a == b is a no-op.
+        let mut buf = vec![1u8, 2, 3, 4];
+        swap_elements(&mut buf, 2, 0, 0);
+        assert_eq!(buf, vec![1, 2, 3, 4], "swap_elements(a, a) must be a no-op");
+    }
 }
