@@ -508,16 +508,20 @@ pub unsafe extern "C" fn newlocale(
         return std::ptr::null_mut();
     }
 
-    let accept = if locale.is_null() {
-        true
-    } else {
-        // Bounded read rejects non-NUL-terminated pointers at the boundary
-        // instead of walking memory through CStr::from_ptr. (bd-z4k96)
-        match unsafe { read_bounded_cstr(locale) } {
-            Some(name) => locale_core::is_c_locale(&name),
-            None => false,
-        }
+    if locale.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
+        return std::ptr::null_mut();
+    }
+
+    // Bounded read rejects non-NUL-terminated pointers at the boundary
+    // instead of walking memory through CStr::from_ptr. (bd-z4k96)
+    let Some(name) = (unsafe { read_bounded_cstr(locale) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
+        return std::ptr::null_mut();
     };
+    let accept = locale_core::is_c_locale(&name);
 
     let _ = base;
 
@@ -528,6 +532,7 @@ pub unsafe extern "C" fn newlocale(
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
         c_locale_handle()
     } else {
+        unsafe { set_abi_errno(libc::ENOENT) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
         std::ptr::null_mut()
     }
@@ -812,6 +817,37 @@ mod tests {
         assert_eq!(
             unsafe { *crate::errno_abi::__errno_location() },
             libc::EINVAL
+        );
+    }
+
+    #[test]
+    fn newlocale_null_locale_sets_einval() {
+        unsafe { set_abi_errno(0) };
+        // SAFETY: Null locale pointer exercises the ABI error path.
+        let loc = unsafe { newlocale(libc::LC_ALL_MASK, std::ptr::null(), std::ptr::null_mut()) };
+        assert!(loc.is_null());
+        assert_eq!(
+            unsafe { *crate::errno_abi::__errno_location() },
+            libc::EINVAL
+        );
+    }
+
+    #[test]
+    fn newlocale_unavailable_locale_sets_enoent() {
+        let missing = b"frankenlibc.definitely_missing.UTF-8\0";
+        unsafe { set_abi_errno(0) };
+        // SAFETY: The locale string is NUL-terminated and names an unavailable locale.
+        let loc = unsafe {
+            newlocale(
+                libc::LC_ALL_MASK,
+                missing.as_ptr() as *const c_char,
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(loc.is_null());
+        assert_eq!(
+            unsafe { *crate::errno_abi::__errno_location() },
+            libc::ENOENT
         );
     }
 
