@@ -835,6 +835,14 @@ pub unsafe extern "C" fn posix_spawnattr_setflags(
     attrp: *mut c_void,
     flags: libc::c_short,
 ) -> c_int {
+    // glibc rejects any bits outside the known flag set with EINVAL. ALL_FLAGS
+    // (0x1FF) = RESETIDS|SETPGROUP|SETSIGDEF|SETSIGMASK|SETSCHEDPARAM|
+    // SETSCHEDULER|USEVFORK|SETSID|SETCGROUP. fl previously stored any value.
+    // bd-lkvixl.
+    const ALL_FLAGS: libc::c_short = 0x1FF;
+    if flags & !ALL_FLAGS != 0 {
+        return libc::EINVAL;
+    }
     let Some(attr) = (unsafe { read_spawn_attrs_mut(attrp) }) else {
         return libc::EINVAL;
     };
