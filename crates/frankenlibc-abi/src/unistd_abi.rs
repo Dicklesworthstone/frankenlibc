@@ -2505,7 +2505,10 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_STREAM_MAX => 16, // FOPEN_MAX (matches glibc)
         libc::_SC_IOV_MAX => 1024,
         libc::_SC_PHYS_PAGES => runtime_meminfo_pages("MemTotal:").unwrap_or(-1),
-        libc::_SC_AVPHYS_PAGES => runtime_meminfo_pages("MemAvailable:").unwrap_or(-1),
+        // glibc sysconf(_SC_AVPHYS_PAGES) == __get_avphys_pages == sysinfo
+        // freeram (/proc/meminfo "MemFree"), not the larger "MemAvailable"
+        // estimate. bd-l18p7s.
+        libc::_SC_AVPHYS_PAGES => runtime_meminfo_pages("MemFree:").unwrap_or(-1),
         libc::_SC_NGROUPS_MAX => {
             runtime_procfs_long("/proc/sys/kernel/ngroups_max").unwrap_or(65536)
         }
