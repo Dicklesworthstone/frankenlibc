@@ -571,6 +571,14 @@ fn read_chk_safe() {
 }
 
 #[test]
+fn read_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("read_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __read_chk(-1, buf.as_mut_ptr().cast(), 16, buf.len()) };
+    });
+}
+
+#[test]
 fn pread_chk_safe() {
     // Create a temp file
     let path = CString::new("/tmp/fortify_pread_test").unwrap();
@@ -598,6 +606,14 @@ fn pread_chk_safe() {
 }
 
 #[test]
+fn pread_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("pread_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __pread_chk(-1, buf.as_mut_ptr().cast(), 16, 0, buf.len()) };
+    });
+}
+
+#[test]
 fn pread64_chk_safe() {
     let path = CString::new("/tmp/fortify_pread64_test").unwrap();
     let fd = unsafe {
@@ -621,6 +637,14 @@ fn pread64_chk_safe() {
         libc::close(fd);
         libc::unlink(path.as_ptr());
     }
+}
+
+#[test]
+fn pread64_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("pread64_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __pread64_chk(-1, buf.as_mut_ptr().cast(), 16, 0, buf.len()) };
+    });
 }
 
 // ===========================================================================
