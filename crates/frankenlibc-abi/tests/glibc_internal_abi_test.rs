@@ -100,6 +100,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     _pthread_cleanup_push,
     _pthread_cleanup_push_defer,
     dysize,
+    fchflags,
     getpw,
     gtty,
     inet6_opt_append,
@@ -174,6 +175,8 @@ use std::time::{Duration, Instant};
 unsafe extern "C" {
     #[link_name = "dysize"]
     fn host_dysize(year: c_int) -> c_int;
+    #[link_name = "fchflags"]
+    fn host_fchflags(fd: c_int, flags: libc::c_ulong) -> c_int;
     #[link_name = "gtty"]
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
     #[link_name = "stty"]
@@ -212,6 +215,45 @@ fn dysize_matches_host_leap_year_sweep() {
         let host = unsafe { host_dysize(year) };
         let abi = unsafe { dysize(year) };
         assert_eq!(abi, host, "dysize({year})");
+    }
+}
+
+#[test]
+fn fchflags_negative_fd_matches_host_einval() {
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_result = host_fchflags(-1, 0);
+        let host_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_result = fchflags(-1, 0);
+        let fl_errno = errno_value();
+
+        assert_eq!((fl_result, fl_errno), (host_result, host_errno));
+        assert_eq!((fl_result, fl_errno), (-1, libc::EINVAL));
+    }
+}
+
+#[test]
+fn fchflags_valid_fd_matches_host_enosys() {
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0, "open /dev/null failed");
+
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_result = host_fchflags(fd, 0);
+        let host_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_result = fchflags(fd, 0);
+        let fl_errno = errno_value();
+        let _ = libc::close(fd);
+
+        assert_eq!((fl_result, fl_errno), (host_result, host_errno));
+        assert_eq!((fl_result, fl_errno), (-1, libc::ENOSYS));
     }
 }
 

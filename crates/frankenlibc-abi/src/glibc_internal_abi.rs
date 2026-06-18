@@ -5632,7 +5632,11 @@ pub unsafe extern "C" fn fattach(fd: c_int, path: *const c_char) -> c_int {
 // fchflags: BSD — not supported on Linux, return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fchflags(fd: c_int, flags: c_ulong) -> c_int {
-    let _ = (fd, flags);
+    let _ = flags;
+    if fd < 0 {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
     unsafe {
         crate::errno_abi::set_abi_errno(libc::ENOSYS);
     }
