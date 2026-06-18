@@ -57,3 +57,10 @@ for this lever.
   passed.
 - Per campaign instruction, no tests, `rch`, or Criterion benchmark run was
   executed in this code-first turn.
+
+## Landing note
+
+The source/bench/artifact payload landed in shared commit
+`545d57ee9c3ee1b110cf86444737fe920e13d42f` after a concurrent commit picked up
+the staged index. This follow-up ledger keeps the `bd-2g7oyh.485` audit trail
+explicit without rewriting the peer-owned commit.
