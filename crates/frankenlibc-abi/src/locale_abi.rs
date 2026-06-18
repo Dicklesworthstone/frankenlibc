@@ -168,6 +168,7 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
         C_LOCALE_NAME.as_ptr() as *const c_char
     } else {
+        unsafe { set_abi_errno(libc::ENOENT) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
         std::ptr::null()
     }
@@ -737,6 +738,19 @@ mod tests {
         assert_eq!(
             unsafe { *crate::errno_abi::__errno_location() },
             libc::EINVAL
+        );
+    }
+
+    #[test]
+    fn setlocale_unavailable_locale_sets_enoent() {
+        let missing = b"frankenlibc.definitely_missing.UTF-8\0";
+        unsafe { set_abi_errno(0) };
+        // SAFETY: The locale string is NUL-terminated and names an unavailable locale.
+        let result = unsafe { setlocale(locale_core::LC_ALL, missing.as_ptr() as *const c_char) };
+        assert!(result.is_null());
+        assert_eq!(
+            unsafe { *crate::errno_abi::__errno_location() },
+            libc::ENOENT
         );
     }
 
