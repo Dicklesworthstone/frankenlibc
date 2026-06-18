@@ -1012,6 +1012,12 @@ fn parse_digits_bounded(
     let mut val: i32 = 0;
     let mut count = 0usize;
     let mut p = pos;
+    // glibc's get_number macro skips leading whitespace before the digits for
+    // every numeric directive (so e.g. blank-padded `%k`/`%l` and any field with
+    // leading spaces parse). Mirror that.
+    while p < input.len() && input[p].is_ascii_whitespace() {
+        p += 1;
+    }
     while count < max_digits && p < input.len() {
         let ch = input[p];
         if !ch.is_ascii_digit() {
@@ -1340,8 +1346,9 @@ pub unsafe extern "C" fn strptime(
                         return std::ptr::null_mut();
                     }
                 }
-                b'H' => {
-                    // Hour (24-hour) [00,23] — glibc rejects 24..=99.
+                b'H' | b'k' => {
+                    // Hour (24-hour) [00,23] — glibc rejects 24..=99. `%k` is
+                    // the GNU blank-padded synonym (glibc: `case 'k': case 'H'`).
                     if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 23) {
                         if !(0..=23).contains(&val) {
                             return std::ptr::null_mut();
@@ -1352,8 +1359,9 @@ pub unsafe extern "C" fn strptime(
                         return std::ptr::null_mut();
                     }
                 }
-                b'I' => {
-                    // Hour (12-hour) [01,12]. glibc rejects 0 and 13..=99.
+                b'I' | b'l' => {
+                    // Hour (12-hour) [01,12]. glibc rejects 0 and 13..=99. `%l`
+                    // is the GNU blank-padded synonym (glibc: `case 'l': case 'I'`).
                     // We store `val % 12` so the AM/PM post-processing can
                     // simply add 12 for PM and leave AM unchanged: that
                     // gives 12 AM → 0 (midnight) and 12 PM → 12 (noon)
