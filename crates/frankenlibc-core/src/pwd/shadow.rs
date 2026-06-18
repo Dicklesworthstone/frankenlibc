@@ -75,10 +75,7 @@ pub fn parse_shadow_numeric(s: &[u8]) -> Option<i64> {
         return Some(-1);
     }
     let digits = strtoul_digits(s);
-    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
-        return None;
-    }
-    core::str::from_utf8(digits).ok()?.parse::<i64>().ok()
+    parse_decimal_i64_digits(digits)
 }
 
 /// Parse the optional shadow `flag` field. An empty field is `~0UL`; otherwise
@@ -89,10 +86,39 @@ fn parse_shadow_flag(s: &[u8]) -> Option<u64> {
         return Some(u64::MAX);
     }
     let digits = strtoul_digits(s);
-    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+    parse_decimal_u64_digits(digits)
+}
+
+fn parse_decimal_i64_digits(digits: &[u8]) -> Option<i64> {
+    if digits.is_empty() {
         return None;
     }
-    core::str::from_utf8(digits).ok()?.parse::<u64>().ok()
+    let mut value = 0i64;
+    for &byte in digits {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        value = value
+            .checked_mul(10)?
+            .checked_add(i64::from(byte - b'0'))?;
+    }
+    Some(value)
+}
+
+fn parse_decimal_u64_digits(digits: &[u8]) -> Option<u64> {
+    if digits.is_empty() {
+        return None;
+    }
+    let mut value = 0u64;
+    for &byte in digits {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        value = value
+            .checked_mul(10)?
+            .checked_add(u64::from(byte - b'0'))?;
+    }
+    Some(value)
 }
 
 /// Parse a single line from /etc/shadow.
@@ -107,23 +133,28 @@ pub fn parse_shadow_line(line: &[u8]) -> Option<ShadowEntry> {
         return None;
     }
 
-    let parts: Vec<&[u8]> = line.split(|&b| b == b':').collect();
-    if parts.len() < 8 {
-        return None;
-    }
+    let mut fields = line.split(|&b| b == b':');
+    let name = fields.next()?;
+    let passwd = fields.next()?;
+    let lstchg = fields.next()?;
+    let min = fields.next()?;
+    let max = fields.next()?;
+    let warn = fields.next()?;
+    let inact = fields.next()?;
+    let expire = fields.next()?;
 
     Some(ShadowEntry {
-        name: parts[0].to_vec(),
-        passwd: parts[1].to_vec(),
-        lstchg: parse_shadow_numeric(parts[2])?,
-        min: parse_shadow_numeric(parts[3])?,
-        max: parse_shadow_numeric(parts[4])?,
-        warn: parse_shadow_numeric(parts[5])?,
-        inact: parse_shadow_numeric(parts[6])?,
-        expire: parse_shadow_numeric(parts[7])?,
-        flag: if parts.len() > 8 {
+        name: name.to_vec(),
+        passwd: passwd.to_vec(),
+        lstchg: parse_shadow_numeric(lstchg)?,
+        min: parse_shadow_numeric(min)?,
+        max: parse_shadow_numeric(max)?,
+        warn: parse_shadow_numeric(warn)?,
+        inact: parse_shadow_numeric(inact)?,
+        expire: parse_shadow_numeric(expire)?,
+        flag: if let Some(flag) = fields.next() {
             // A non-empty, non-numeric flag field rejects the entry too.
-            parse_shadow_flag(parts[8])?
+            parse_shadow_flag(flag)?
         } else {
             // Glibc convention: missing reserved field decodes to ~0UL
             // ("field unset"), and format_shadow_line renders that as
@@ -425,6 +456,15 @@ mod tests {
         assert_eq!(parse_shadow_numeric(b"12x"), None);
     }
 
+    #[test]
+    fn numeric_overflow_is_rejected() {
+        assert_eq!(
+            parse_shadow_numeric(b"9223372036854775807"),
+            Some(i64::MAX)
+        );
+        assert_eq!(parse_shadow_numeric(b"9223372036854775808"), None);
+    }
+
     // ---- parse_shadow_line ----
 
     #[test]
@@ -449,6 +489,27 @@ mod tests {
         let e = parse_shadow_line(line).unwrap();
         assert_eq!(e.flag, 42);
         assert_eq!(e.lstchg, 19000);
+    }
+
+    #[test]
+    fn parse_ignores_fields_after_flag() {
+        let line = b"u:x:0:0:0:0:0:0:42:ignored:tail";
+        let e = parse_shadow_line(line).unwrap();
+        assert_eq!(e.flag, 42);
+        assert_eq!(e.expire, 0);
+    }
+
+    #[test]
+    fn parse_rejects_flag_overflow() {
+        assert_eq!(
+            parse_shadow_line(b"u:x:0:0:0:0:0:0:18446744073709551615")
+                .unwrap()
+                .flag,
+            u64::MAX
+        );
+        assert!(
+            parse_shadow_line(b"u:x:0:0:0:0:0:0:18446744073709551616").is_none()
+        );
     }
 
     #[test]

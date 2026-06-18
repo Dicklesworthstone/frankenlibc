@@ -117,6 +117,7 @@ const PROTOCOLS_LINE: &[u8] = b"tcp     6       TCP             # transmission c
 const NETWORKS_LINE: &[u8] = b"link-local      169.254.0.0     localnet";
 const ALIASES_LINE: &[u8] = b"postmaster: root, admin, oncall@example.com";
 const PASSWD_LINE: &[u8] = b"ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash";
+const SHADOW_LINE: &[u8] = b"ubuntu:$y$j9T$rounds=100000$salt$hash:19800:0:99999:7:::";
 const PROC_NET_ROUTE: &[u8] = b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n\
 lo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n\
 eth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
@@ -199,6 +200,18 @@ fn bench_parse_passwd_line() {
     );
 }
 
+fn bench_parse_shadow_line() {
+    measure(
+        "parse_shadow_line_typical",
+        SAMPLES,
+        ITERS_PER_SAMPLE,
+        || {
+            let r = pwd::shadow::parse_shadow_line(black_box(SHADOW_LINE));
+            black_box(r);
+        },
+    );
+}
+
 fn bench_parse_proc_net_route_has_ipv4() {
     measure(
         "parse_proc_net_route_has_ipv4_typical",
@@ -231,6 +244,7 @@ fn main() {
     bench_parse_networks_line();
     bench_parse_aliases_line();
     bench_parse_passwd_line();
+    bench_parse_shadow_line();
     bench_parse_proc_net_route_has_ipv4();
     bench_parse_netgroup_triples();
 }
