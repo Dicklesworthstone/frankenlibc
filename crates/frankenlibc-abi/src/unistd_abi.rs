@@ -2509,7 +2509,10 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_GETGR_R_SIZE_MAX => 4096,
         libc::_SC_LOGIN_NAME_MAX => 256,
         libc::_SC_TTY_NAME_MAX => 32,
-        libc::_SC_SYMLOOP_MAX => 40,
+        // Linux does not define SYMLOOP_MAX, so glibc's sysconf returns -1
+        // (indeterminate / no fixed limit) — getconf SYMLOOP_MAX reports
+        // "undefined". fl previously returned a fabricated 40. bd-j850j3.
+        libc::_SC_SYMLOOP_MAX => -1,
         libc::_SC_RE_DUP_MAX => 32767,
         libc::_SC_2_VERSION => 200809,
         libc::_SC_VERSION => 200809,
