@@ -726,6 +726,14 @@ fn confstr_chk_safe() {
 }
 
 #[test]
+fn confstr_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("confstr_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __confstr_chk(0, buf.as_mut_ptr().cast(), 256, buf.len()) };
+    });
+}
+
+#[test]
 fn getdomainname_chk_safe() {
     let mut buf = [0u8; 256];
     let ret = unsafe { __getdomainname_chk(buf.as_mut_ptr().cast(), 256, 256) };
