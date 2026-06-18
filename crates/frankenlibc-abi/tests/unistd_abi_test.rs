@@ -2652,6 +2652,8 @@ fn empty_argp_storage() -> [usize; 7] {
     [0; 7]
 }
 
+const ARGP_NO_EXIT: c_uint = 0x20;
+
 #[allow(dead_code)]
 #[repr(C)]
 struct FixtureArgpState {
@@ -2743,6 +2745,45 @@ fn capture_argp_stream_output(
         "fclose failed: {}",
         std::io::Error::last_os_error()
     );
+
+    let mut output = String::new();
+    let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    read_end.read_to_string(&mut output)?;
+    Ok(output)
+}
+
+fn capture_argp_child_exit(
+    expected_status: c_int,
+    child: impl FnOnce(*mut libc::FILE),
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut fds = [0; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe {
+            let _ = libc::close(fds[0]);
+            let mode = c"w";
+            let stream = libc::fdopen(fds[1], mode.as_ptr());
+            if stream.is_null() {
+                libc::_exit(126);
+            }
+            libc::setvbuf(stream, std::ptr::null_mut(), libc::_IONBF, 0);
+            child(stream);
+            libc::_exit(127);
+        }
+    }
+
+    unsafe {
+        let _ = libc::close(fds[1]);
+    }
+
+    let mut status: c_int = 0;
+    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert!(libc::WIFEXITED(status), "child did not exit normally: {status}");
+    assert_eq!(libc::WEXITSTATUS(status), expected_status);
 
     let mut output = String::new();
     let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
@@ -3035,6 +3076,7 @@ fn abi_argp_error_renders_formatted_diagnostic_to_state_error_stream() {
     let fmt = CString::new("bad %s %d").unwrap();
     let option = CString::new("option").unwrap();
     let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+    state.flags = ARGP_NO_EXIT;
 
     clear_errno();
     let output = capture_argp_stream_output(|stream| unsafe {
@@ -3058,6 +3100,7 @@ fn abi_argp_error_normalizes_negative_star_width_and_precision() {
     let fmt = CString::new("bad |%*d| %.*s").unwrap();
     let word = CString::new("abcdef").unwrap();
     let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+    state.flags = ARGP_NO_EXIT;
 
     clear_errno();
     let output = capture_argp_stream_output(|stream| unsafe {
@@ -3098,6 +3141,48 @@ fn abi_argp_failure_renders_formatted_diagnostic_and_errno_suffix() {
 
     assert_eq!(output, "diag-demo: failed item 5: Invalid argument\n");
     assert_eq!(errno_value(), 0);
+}
+
+#[test]
+fn abi_argp_error_exits_with_configured_status_in_child() {
+    let name = CString::new("exit-demo").unwrap();
+    let fmt = CString::new("fatal %d").unwrap();
+
+    let output = capture_argp_child_exit(73, |stream| unsafe {
+        frankenlibc_abi::glibc_internal_abi::argp_err_exit_status = 73;
+        let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_error(
+            (&mut state as *mut FixtureArgpState).cast(),
+            fmt.as_ptr(),
+            3 as c_int,
+        );
+    })
+    .unwrap();
+
+    assert_eq!(output, "exit-demo: fatal 3\n");
+}
+
+#[test]
+fn abi_argp_failure_exits_with_status_in_child() {
+    let name = CString::new("failure-demo").unwrap();
+    let fmt = CString::new("failed %s").unwrap();
+    let item = CString::new("item").unwrap();
+
+    let output = capture_argp_child_exit(74, |stream| unsafe {
+        let mut state = fixture_argp_state(std::ptr::null(), name.as_ptr().cast_mut());
+        state.err_stream = stream;
+        frankenlibc_abi::unistd_abi::argp_failure(
+            (&mut state as *mut FixtureArgpState).cast(),
+            74,
+            libc::ENOENT,
+            fmt.as_ptr(),
+            item.as_ptr(),
+        );
+    })
+    .unwrap();
+
+    assert_eq!(output, "failure-demo: failed item: No such file or directory\n");
 }
 
 #[test]

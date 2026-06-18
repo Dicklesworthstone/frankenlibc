@@ -23086,6 +23086,7 @@ const ARGP_HELP_POST_DOC: c_uint = 0x20;
 const ARGP_HELP_BUG_ADDR: c_uint = 0x40;
 const ARGP_HELP_EXIT_ERR: c_uint = 0x100;
 const ARGP_HELP_EXIT_OK: c_uint = 0x200;
+const ARGP_NO_EXIT: c_uint = 0x20;
 const ARGP_TEXT_SCAN_LIMIT: usize = 16 * 1024;
 const ARGP_HELP_STATE_NON_RENDERING_FLAGS: c_uint =
     ARGP_HELP_SEE | ARGP_HELP_EXIT_ERR | ARGP_HELP_EXIT_OK;
@@ -23247,6 +23248,18 @@ unsafe fn argp_write_diagnostic(state: *mut c_void, message: &[u8], errnum: c_in
     unsafe { argp_write_bytes(stream, &line) }
 }
 
+#[inline]
+unsafe fn argp_exit_if_requested(state: *mut c_void, status: c_int) {
+    if status == 0 || state.is_null() {
+        return;
+    }
+
+    let state = unsafe { &*(state as *const ArgpStateHeader) };
+    if state.flags & ARGP_NO_EXIT == 0 {
+        unsafe { crate::stdlib_abi::exit(status) };
+    }
+}
+
 /// `argp_parse` — parse arguments using argp framework.
 ///
 /// Native phase-1 support handles the common zeroed `struct argp` case as a
@@ -23335,13 +23348,15 @@ pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut 
     if !unsafe { argp_write_diagnostic(state, &rendered, 0) } {
         unsafe { set_abi_errno(libc::EIO) };
     }
+    let status = unsafe { crate::glibc_internal_abi::argp_err_exit_status };
+    unsafe { argp_exit_if_requested(state, status) };
 }
 
 /// `argp_failure` — report a bounded formatted parsing failure diagnostic.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_failure(
     state: *mut c_void,
-    _status: c_int,
+    status: c_int,
     errnum: c_int,
     fmt: *const c_char,
     mut args: ...
@@ -23362,6 +23377,7 @@ pub unsafe extern "C" fn argp_failure(
     if !unsafe { argp_write_diagnostic(state, &rendered, errnum) } {
         unsafe { set_abi_errno(libc::EIO) };
     }
+    unsafe { argp_exit_if_requested(state, status) };
 }
 
 /// `argp_state_help` — print bounded phase-1 help from state.
