@@ -4228,6 +4228,7 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
     };
     let _ = raw_syscall::sys_close(fd);
     if n <= 0 {
+        unsafe { set_abi_errno(libc::ENOENT) };
         return 0;
     }
     let entries = n as usize / entry_size;
@@ -4235,13 +4236,14 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
         let offset = i * entry_size;
         let at = c_ulong::from_ne_bytes(buf[offset..offset + 8].try_into().unwrap_or([0; 8]));
         let av = c_ulong::from_ne_bytes(buf[offset + 8..offset + 16].try_into().unwrap_or([0; 8]));
-        if at == type_ {
-            return av;
-        }
         if at == 0 {
             break; // AT_NULL terminates
         }
+        if at == type_ {
+            return av;
+        }
     }
+    unsafe { set_abi_errno(libc::ENOENT) };
     0
 }
 

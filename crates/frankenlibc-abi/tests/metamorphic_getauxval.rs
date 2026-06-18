@@ -13,6 +13,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
+use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::stdlib_abi as fl;
 
 #[test]
@@ -71,8 +72,14 @@ fn metamorphic_getauxval_egid_matches_getegid() {
 #[test]
 fn metamorphic_getauxval_unknown_at_returns_zero() {
     // 99999 is far beyond any defined AT_* constant.
+    unsafe { *__errno_location() = 0 };
     let v = unsafe { fl::getauxval(99999) };
     assert_eq!(v, 0, "unknown AT_* should return 0");
+    assert_eq!(
+        unsafe { *__errno_location() },
+        libc::ENOENT,
+        "unknown AT_* should set ENOENT"
+    );
 }
 
 #[test]
