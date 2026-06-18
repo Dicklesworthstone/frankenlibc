@@ -28,7 +28,8 @@ const WIDE_COMPARE_UNROLL_LANES: usize = WIDE_COMPARE_SIMD_LANES * 2;
 const WIDE_RANGE_MEMBERSHIP_MIN_LEN: usize = WIDE_COMPARE_SIMD_LANES * 32;
 
 /// Minimum scan length before paying to certify a repeated accepted wide char.
-const WIDE_MEMBER_REPEAT_MIN_LEN: usize = WIDE_COMPARE_UNROLL_LANES * 8;
+const WIDE_MEMBER_REPEAT_LANES: usize = WIDE_FIND_LONG_SIMD_LANES;
+const WIDE_MEMBER_REPEAT_MIN_LEN: usize = WIDE_MEMBER_REPEAT_LANES * 4;
 
 /// Minimum bounded case-fold compare length before paying to detect repeated
 /// fold-equal wide-character pairs.
@@ -1131,9 +1132,9 @@ fn wide_panel_no_members_no_nul(chunk: &[u32], set: &[u32]) -> bool {
 
 #[inline(always)]
 fn repeated_wide_member_panel(chunk: &[u32], member: u32) -> bool {
-    debug_assert_eq!(chunk.len(), WIDE_COMPARE_UNROLL_LANES);
+    debug_assert_eq!(chunk.len(), WIDE_MEMBER_REPEAT_LANES);
     debug_assert_ne!(member, 0);
-    let lanes = Simd::<u32, WIDE_COMPARE_UNROLL_LANES>::from_slice(chunk);
+    let lanes = Simd::<u32, WIDE_MEMBER_REPEAT_LANES>::from_slice(chunk);
     lanes.simd_eq(Simd::splat(member)).all()
 }
 
@@ -1154,11 +1155,11 @@ pub fn wcsspn(s: &[u32], accept: &[u32]) -> usize {
     if s.len() >= WIDE_MEMBER_REPEAT_MIN_LEN {
         let repeated = s[0];
         if repeated != 0 && accept_set.contains(&repeated) {
-            while i + WIDE_COMPARE_UNROLL_LANES <= s.len() {
-                if !repeated_wide_member_panel(&s[i..i + WIDE_COMPARE_UNROLL_LANES], repeated) {
+            while i + WIDE_MEMBER_REPEAT_LANES <= s.len() {
+                if !repeated_wide_member_panel(&s[i..i + WIDE_MEMBER_REPEAT_LANES], repeated) {
                     break;
                 }
-                i += WIDE_COMPARE_UNROLL_LANES;
+                i += WIDE_MEMBER_REPEAT_LANES;
             }
         }
     }
@@ -2349,13 +2350,32 @@ mod tests {
 
     #[test]
     fn test_wcsspn_repeated_member_run_stops_at_first_nonmember() {
-        let mut s = vec![b'1' as u32; WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_COMPARE_UNROLL_LANES];
+        let mut s = vec![b'1' as u32; WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES];
         s.push(b'x' as u32);
         s.push(0);
         let accept = [b'0' as u32, b'1' as u32, b'2' as u32, b'3' as u32, 0];
         assert_eq!(
             wcsspn(&s, &accept),
-            WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_COMPARE_UNROLL_LANES
+            WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES
+        );
+    }
+
+    #[test]
+    fn test_wcsspn_repeated_member_folded_panel_boundary() {
+        let mut s = vec![b'1' as u32; WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES];
+        s.push(b'1' as u32);
+        s.push(b'x' as u32);
+        s.push(0);
+        let accept = [b'0' as u32, b'1' as u32, b'2' as u32, b'3' as u32, 0];
+        assert_eq!(
+            wcsspn(&s, &accept),
+            WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES + 1
+        );
+
+        s[WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES - 1] = b'x' as u32;
+        assert_eq!(
+            wcsspn(&s, &accept),
+            WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES - 1
         );
     }
 

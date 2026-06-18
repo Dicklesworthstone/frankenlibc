@@ -262,13 +262,67 @@
       "proof_status": "pending",
       "acceptance_reason": "Code-first batch-test pending: fixed folded reverse block accounting and added a focused boundary guard; benchmark/conformance not run by directive.",
       "notes": "Retry only if focused same-worker memrchr/memrchr-using string workloads attribute a clearly-above-noise share to folded reverse scanning."
+    },
+    {
+      "trace_id": "bd-2g7oyh::strict::cand-wcsspn-repeated-member-64-panel::001",
+      "candidate_id": "cand-wcsspn-repeated-member-64-panel",
+      "bead_id": "bd-2g7oyh",
+      "module": "frankenlibc-core/string/wide",
+      "symbol": "wcsspn",
+      "code_refs": [
+        "crates/frankenlibc-core/src/string/wide.rs",
+        "crates/frankenlibc-bench/benches/string_bench.rs"
+      ],
+      "measurement": {
+        "metric": "batch_test_pending_p50_ns_op",
+        "mode": "strict",
+        "before": 0.0,
+        "after": 0.0,
+        "perf_delta_pct": 0.0,
+        "evidence_refs": [
+          "crates/frankenlibc-core/src/string/wide.rs",
+          "CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core"
+        ]
+      },
+      "behavior_checks": [
+        {
+          "check_id": "crate_scoped_compile",
+          "check_command": "CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core",
+          "artifact_ref": "/data/projects/.rch-targets/frankenlibc-cod-a",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "pass"
+        },
+        {
+          "check_id": "wcsspn_repeated_member_folded_panel_boundary_guard",
+          "check_command": "cargo test -p frankenlibc-core string::wide::tests::test_wcsspn_repeated_member_folded_panel_boundary",
+          "artifact_ref": "crates/frankenlibc-core/src/string/wide.rs",
+          "input_classes": [
+            "boundary"
+          ],
+          "status": "skipped"
+        },
+        {
+          "check_id": "focused_benchmark_vs_scalar_and_glibc",
+          "check_command": "cargo bench -p frankenlibc-bench --bench string_bench wcsspn_full -- --save-baseline after",
+          "artifact_ref": "crates/frankenlibc-bench/benches/string_bench.rs",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "skipped"
+        }
+      ],
+      "proof_status": "pending",
+      "acceptance_reason": "Code-first batch-test pending: widened repeated-member wcsspn certification to the existing 64-wide panel and added a folded-panel boundary guard; benchmark/conformance not run by directive.",
+      "notes": "Negative-evidence rule: reject and do not retry this lane if same-worker wcsspn_full Criterion does not beat the prior 32-lane repeated-member panel by at least the ledger threshold without fixture regressions."
     }
   ],
   "summary": {
-    "total_candidates": 4,
+    "total_candidates": 5,
     "verified": 1,
     "rejected": 1,
-    "pending": 2,
+    "pending": 3,
     "waived": 0,
     "required_log_fields": 5,
     "required_input_classes": 4
