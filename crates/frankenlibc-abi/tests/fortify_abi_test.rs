@@ -1327,6 +1327,14 @@ fn recv_chk_on_socketpair() {
     }
 }
 
+#[test]
+fn recv_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("recv_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __recv_chk(-1, buf.as_mut_ptr().cast(), 16, buf.len(), 0) };
+    });
+}
+
 // ===========================================================================
 // __recvfrom_chk
 // ===========================================================================
@@ -1359,6 +1367,24 @@ fn recvfrom_chk_on_socketpair() {
         libc::close(fds[0]);
         libc::close(fds[1]);
     }
+}
+
+#[test]
+fn recvfrom_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("recvfrom_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe {
+            __recvfrom_chk(
+                -1,
+                buf.as_mut_ptr().cast(),
+                16,
+                buf.len(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+    });
 }
 
 // ===========================================================================
