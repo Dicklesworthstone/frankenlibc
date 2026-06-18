@@ -760,8 +760,11 @@ pub unsafe extern "C" fn __ptsname_r_chk(
     fd: c_int,
     buf: *mut c_char,
     buflen: usize,
-    _nreal: usize,
+    nreal: usize,
 ) -> c_int {
+    if nreal != usize::MAX && buflen > nreal {
+        unsafe { __chk_fail() }
+    }
     unsafe { crate::unistd_abi::ptsname_r(fd, buf, buflen) }
 }
 

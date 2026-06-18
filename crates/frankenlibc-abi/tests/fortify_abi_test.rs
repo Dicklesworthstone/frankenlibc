@@ -1284,6 +1284,14 @@ fn ptsname_r_chk_invalid_fd() {
 }
 
 #[test]
+fn ptsname_r_chk_short_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("ptsname_r_chk short real buffer", || {
+        let mut buf = [0u8; 1];
+        unsafe { __ptsname_r_chk(-1, buf.as_mut_ptr().cast(), 256, buf.len()) };
+    });
+}
+
+#[test]
 fn ptsname_r_chk_on_pty() {
     let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
     if master < 0 {
