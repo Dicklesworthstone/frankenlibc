@@ -26,12 +26,7 @@ mod g {
     unsafe extern "C" {
         pub fn strstr(h: *const c_char, n: *const c_char) -> *mut c_char;
         pub fn strcasestr(h: *const c_char, n: *const c_char) -> *mut c_char;
-        pub fn memmem(
-            h: *const c_void,
-            hl: usize,
-            n: *const c_void,
-            nl: usize,
-        ) -> *mut c_void;
+        pub fn memmem(h: *const c_void, hl: usize, n: *const c_void, nl: usize) -> *mut c_void;
         pub fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void;
         pub fn strchr(s: *const c_char, c: c_int) -> *mut c_char;
         pub fn strrchr(s: *const c_char, c: c_int) -> *mut c_char;
@@ -152,6 +147,32 @@ fn strstr_memmem_strcasestr_match_glibc() {
             off(f_ss.cast(), hay.as_ptr().cast()),
             off(f_mm.cast(), hb.as_ptr().cast()),
             "strstr vs memmem disagree hay={hay:?} needle={needle:?}"
+        );
+    }
+}
+
+#[test]
+fn strcasestr_ascii_casefold_cases_match_glibc() {
+    let cases: &[(&[u8], &[u8])] = &[
+        (b"AbCdEfGh\0", b"cDe\0"),
+        (b"prefixNeedleSuffix\0", b"needLE\0"),
+        (b"HTTPHeaderContent\0", b"header\0"),
+        (b"MiXeD ascii CASE\0", b"ASCII case\0"),
+        (b"no letters here 123\0", b"HERE 123\0"),
+        (b"abcXYZ\0", b"xyz\0"),
+        (b"abcXYZ\0", b"xYzq\0"),
+        (b"Casefold tail\0", b"TAIL\0"),
+        (b"short\0", b"LONGNEEDLE\0"),
+        (b"empty needle\0", b"\0"),
+    ];
+
+    for (hay, needle) in cases {
+        let g_ci = unsafe { g::strcasestr(hay.as_ptr().cast(), needle.as_ptr().cast()) };
+        let f_ci = unsafe { fl::strcasestr(hay.as_ptr().cast(), needle.as_ptr().cast()) };
+        assert_eq!(
+            off(f_ci.cast(), hay.as_ptr().cast()),
+            off(g_ci.cast(), hay.as_ptr().cast()),
+            "strcasestr ASCII casefold mismatch hay={hay:?} needle={needle:?}"
         );
     }
 }
@@ -294,11 +315,11 @@ fn rawmemchr_matches_memchr_when_present() {
 fn empty_and_edge_cases_match_glibc() {
     // Empty haystack, empty needle, needle longer than haystack, single byte.
     let cases: &[(&[u8], &[u8])] = &[
-        (b"\0", b"\0"),       // both empty
-        (b"abc\0", b"\0"),    // empty needle -> haystack
-        (b"\0", b"x\0"),      // empty haystack, non-empty needle
+        (b"\0", b"\0"),        // both empty
+        (b"abc\0", b"\0"),     // empty needle -> haystack
+        (b"\0", b"x\0"),       // empty haystack, non-empty needle
         (b"abc\0", b"abcd\0"), // needle longer
-        (b"aaaa\0", b"aa\0"), // overlapping repeats
+        (b"aaaa\0", b"aa\0"),  // overlapping repeats
         (b"abcabc\0", b"bca\0"),
         (b"x\0", b"x\0"),
     ];
