@@ -1558,6 +1558,56 @@ fn fread_chk_reads_data() {
     }
 }
 
+#[test]
+fn fread_chk_short_reported_buffer_length_still_reads() {
+    let path = CString::new("/tmp/fortify_fread_short_buflen_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = b"ABCD";
+    unsafe { libc::fwrite(data.as_ptr().cast(), 1, data.len(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { __fread_chk(buf.as_mut_ptr().cast(), 1, 1, data.len(), fp.cast()) };
+    assert_eq!(n, data.len());
+    assert_eq!(&buf[..data.len()], data);
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
+fn fread_unlocked_chk_short_reported_buffer_length_still_reads() {
+    let path = CString::new("/tmp/fortify_fread_unlocked_short_buflen_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = b"WXYZ";
+    unsafe { libc::fwrite(data.as_ptr().cast(), 1, data.len(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { __fread_unlocked_chk(buf.as_mut_ptr().cast(), 1, 1, data.len(), fp.cast()) };
+    assert_eq!(n, data.len());
+    assert_eq!(&buf[..data.len()], data);
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
 // ===========================================================================
 // __recv_chk (socket recv)
 // ===========================================================================
