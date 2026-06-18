@@ -578,6 +578,15 @@ pub(crate) fn stream_set_orientation(stream: *mut c_void, mode: c_int) -> Option
     reg.streams.get_mut(&id).map(|s| s.set_orientation(mode))
 }
 
+/// `__fsetlocking`: query/set the stream's locking mode, returning the mode in
+/// effect before the call (1 = INTERNAL, 2 = BYCALLER). `None` if fl does not
+/// own the stream.
+pub(crate) fn stream_set_locking(stream: *mut c_void, typ: c_int) -> Option<c_int> {
+    let id = canonical_stream_id(stream);
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.get_mut(&id).map(|s| s.set_locking(typ))
+}
+
 #[inline]
 #[cfg_attr(feature = "standalone", allow(unused_variables))]
 fn sync_native_stdio_buffering(stream: *mut c_void, mode: BufMode, buf: *mut c_char, size: usize) {

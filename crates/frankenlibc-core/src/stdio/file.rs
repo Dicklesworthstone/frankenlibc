@@ -44,6 +44,9 @@ pub struct StreamFlags {
     /// Stream orientation for `fwide`: 0 = unset, >0 = wide, <0 = byte.
     /// Sticky once set to a non-zero value.
     pub orientation: i32,
+    /// `__fsetlocking` mode: false = FSETLOCKING_INTERNAL (the default), true =
+    /// FSETLOCKING_BYCALLER.
+    pub locking_bycaller: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -532,6 +535,20 @@ impl StdioStream {
             self.flags.orientation = if mode > 0 { 1 } else { -1 };
         }
         self.flags.orientation
+    }
+
+    /// `__fsetlocking`: FSETLOCKING_QUERY(0) only reports the current locking
+    /// mode; INTERNAL(1)/BYCALLER(2) change it. Returns the mode that was in
+    /// effect BEFORE the call (glibc returns the previous mode on a set and the
+    /// current mode on a query), encoded as 1 (INTERNAL) or 2 (BYCALLER).
+    pub fn set_locking(&mut self, typ: i32) -> i32 {
+        let prev = if self.flags.locking_bycaller { 2 } else { 1 };
+        match typ {
+            1 => self.flags.locking_bycaller = false, // FSETLOCKING_INTERNAL
+            2 => self.flags.locking_bycaller = true,  // FSETLOCKING_BYCALLER
+            _ => {}                                   // FSETLOCKING_QUERY / other
+        }
+        prev
     }
 
     /// Check if EOF has been reached.
