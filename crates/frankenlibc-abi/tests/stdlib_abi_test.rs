@@ -1065,6 +1065,24 @@ fn confstr_path_reports_required_length_and_copies_value() {
 }
 
 #[test]
+fn confstr_path_matches_host_required_length_and_value() {
+    let host_needed = unsafe { libc::confstr(libc::_CS_PATH, ptr::null_mut(), 0) };
+    let abi_needed = unsafe { confstr(libc::_CS_PATH, ptr::null_mut(), 0) };
+    assert_eq!(abi_needed, host_needed);
+
+    let mut host_buf = vec![0 as c_char; host_needed];
+    let mut abi_buf = vec![0 as c_char; abi_needed];
+    let host_returned =
+        unsafe { libc::confstr(libc::_CS_PATH, host_buf.as_mut_ptr(), host_buf.len()) };
+    let abi_returned = unsafe { confstr(libc::_CS_PATH, abi_buf.as_mut_ptr(), abi_buf.len()) };
+    assert_eq!(abi_returned, host_returned);
+
+    let host_value = unsafe { CStr::from_ptr(host_buf.as_ptr()) };
+    let abi_value = unsafe { CStr::from_ptr(abi_buf.as_ptr()) };
+    assert_eq!(abi_value.to_bytes(), host_value.to_bytes());
+}
+
+#[test]
 fn confstr_rejects_unknown_name_with_einval() {
     // SAFETY: __errno_location points to this thread-local errno.
     unsafe {
