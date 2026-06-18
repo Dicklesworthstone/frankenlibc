@@ -48,6 +48,8 @@ unsafe extern "C" {
         attr: *mut libc::pthread_mutexattr_t,
         prioceiling: c_int,
     ) -> c_int;
+    #[link_name = "pthread_mutex_consistent"]
+    fn host_pthread_mutex_consistent(mutex: *mut libc::pthread_mutex_t) -> c_int;
 }
 
 // ===========================================================================
@@ -4573,15 +4575,20 @@ fn thread_create_rejects_destroyed_managed_attr() {
 // ===========================================================================
 
 #[test]
-fn mutex_consistent_does_not_crash() {
+fn mutex_consistent_rejects_non_robust_mutex_like_host() {
     unsafe {
         let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
-        pthread_mutex_init(&mut mutex, ptr::null());
+        let mut host_mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(pthread_mutex_init(&mut mutex, ptr::null()), 0);
+        assert_eq!(libc::pthread_mutex_init(&mut host_mutex, ptr::null()), 0);
 
         let rc = pthread_mutex_consistent(&mut mutex);
-        assert_eq!(rc, 0, "mutex_consistent is currently a compatibility no-op");
+        let host_rc = host_pthread_mutex_consistent(&mut host_mutex);
+        assert_eq!(rc, host_rc);
+        assert_eq!(rc, libc::EINVAL);
 
-        pthread_mutex_destroy(&mut mutex);
+        assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+        assert_eq!(libc::pthread_mutex_destroy(&mut host_mutex), 0);
     }
 }
 

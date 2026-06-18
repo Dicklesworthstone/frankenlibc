@@ -5679,9 +5679,11 @@ pub unsafe extern "C" fn pthread_mutex_consistent(mutex: *mut libc::pthread_mute
     if mutex.is_null() {
         return libc::EINVAL;
     }
-    // Our native mutexes don't track robust/owner-died state separately.
-    // Accept the call as a no-op for compatibility (the mutex is already usable).
-    0
+    // Robust mutex initialization is currently rejected by pthread_mutex_init,
+    // so native mutexes cannot enter the EOWNERDEAD state. Match glibc's
+    // contract for non-robust or not-owner-dead mutexes instead of reporting a
+    // successful repair that did not happen.
+    libc::EINVAL
 }
 
 /// GNU `pthread_mutex_clocklock` — lock with specific clock timeout.
