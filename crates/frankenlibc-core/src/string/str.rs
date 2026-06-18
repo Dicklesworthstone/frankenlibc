@@ -406,11 +406,27 @@ fn has_ascii_folded_byte_or_nul_simd_32(chunk: &[u8], folded: u8) -> bool {
     }
 
     let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-    lanes.simd_eq(Simd::splat(0)).any()
-        || lanes.simd_eq(Simd::splat(folded)).any()
-        || lanes
-            .simd_eq(Simd::splat(folded.to_ascii_uppercase()))
-            .any()
+    let hit = lanes.simd_eq(Simd::splat(0))
+        | lanes.simd_eq(Simd::splat(folded))
+        | lanes.simd_eq(Simd::splat(folded.to_ascii_uppercase()));
+    hit.any()
+}
+
+#[inline(always)]
+fn has_ascii_folded_byte_or_nul_simd_folded_128(block: &[u8], folded: u8) -> bool {
+    debug_assert_eq!(block.len(), SIMD_FOLD_BYTES);
+    debug_assert!(folded.is_ascii_lowercase());
+
+    let lower = Simd::<u8, SIMD_LANES>::splat(folded);
+    let upper = Simd::<u8, SIMD_LANES>::splat(folded.to_ascii_uppercase());
+    let zero = Simd::<u8, SIMD_LANES>::splat(0);
+    let mut acc = Mask::<i8, SIMD_LANES>::splat(false);
+    for k in 0..SIMD_FOLD_PANELS {
+        let lo = k * SIMD_LANES;
+        let lanes = Simd::<u8, SIMD_LANES>::from_slice(&block[lo..lo + SIMD_LANES]);
+        acc |= lanes.simd_eq(zero) | lanes.simd_eq(lower) | lanes.simd_eq(upper);
+    }
+    acc.any()
 }
 
 #[inline]
@@ -851,10 +867,22 @@ fn find_ascii_folded_byte_or_nul(s: &[u8], folded: u8) -> usize {
     }
 
     let upper = folded.to_ascii_uppercase();
-    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
     let mut base = 0usize;
 
-    for chunk in simd_chunks.by_ref() {
+    while base + SIMD_FOLD_BYTES <= s.len() {
+        let block = &s[base..base + SIMD_FOLD_BYTES];
+        if has_ascii_folded_byte_or_nul_simd_folded_128(block, folded) {
+            for (j, &byte) in block.iter().enumerate() {
+                if byte == 0 || byte == folded || byte == upper {
+                    return base + j;
+                }
+            }
+        }
+        base += SIMD_FOLD_BYTES;
+    }
+
+    while base + SIMD_LANES <= s.len() {
+        let chunk = &s[base..base + SIMD_LANES];
         if has_ascii_folded_byte_or_nul_simd_32(chunk, folded) {
             for (j, &byte) in chunk.iter().enumerate() {
                 if byte == 0 || byte == folded || byte == upper {
@@ -865,10 +893,12 @@ fn find_ascii_folded_byte_or_nul(s: &[u8], folded: u8) -> usize {
         base += SIMD_LANES;
     }
 
-    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+    while base < s.len() {
+        let byte = s[base];
         if byte == 0 || byte == folded || byte == upper {
-            return base + j;
+            return base;
         }
+        base += 1;
     }
 
     s.len()
@@ -3152,6 +3182,23 @@ mod tests {
     fn test_strcasestr_simd_panel_non_ascii_first_byte_is_exact() {
         assert_eq!(strcasestr(&[0xC0, b'q', 0], &[0xC0, b'Q', 0]), Some(0));
         assert_eq!(strcasestr(&[0xE0, b'q', 0], &[0xC0, b'q', 0]), None);
+    }
+
+    #[test]
+    fn test_ascii_folded_finder_folded_block_preserves_first_nul_or_candidate() {
+        let mut haystack = vec![b'A'; SIMD_FOLD_BYTES * 2 + 17];
+        haystack[SIMD_FOLD_BYTES + 5] = b'Q';
+        haystack[SIMD_FOLD_BYTES + 12] = 0;
+        assert_eq!(
+            find_ascii_folded_byte_or_nul(&haystack, b'q'),
+            SIMD_FOLD_BYTES + 5
+        );
+
+        haystack[SIMD_LANES + 3] = 0;
+        assert_eq!(
+            find_ascii_folded_byte_or_nul(&haystack, b'q'),
+            SIMD_LANES + 3
+        );
     }
 
     #[test]

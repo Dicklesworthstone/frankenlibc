@@ -424,13 +424,67 @@
       "proof_status": "pending",
       "acceptance_reason": "Code-first batch-test pending: added a 64-wide equal-prefix preflight for long wmemcmp buffers while preserving first-difference signed ordering through the existing resolver; benchmark/conformance not run by directive.",
       "notes": "Negative-evidence rule: reject and do not retry this equal-prefix lane if same-worker wmemcmp_equal Criterion fails to beat the prior 32-wide unrolled scanner by the ledger threshold, if mismatch-heavy cases regress beyond noise, or if wide-string fixtures drift."
+    },
+    {
+      "trace_id": "bd-2g7oyh::strict::cand-strcasestr-folded-icase-anchor-scan::001",
+      "candidate_id": "cand-strcasestr-folded-icase-anchor-scan",
+      "bead_id": "bd-2g7oyh",
+      "module": "frankenlibc-core/string/str",
+      "symbol": "strcasestr",
+      "code_refs": [
+        "crates/frankenlibc-core/src/string/str.rs",
+        "crates/frankenlibc-bench/benches/string_bench.rs"
+      ],
+      "measurement": {
+        "metric": "batch_test_pending_p50_ns_op",
+        "mode": "strict",
+        "before": 0.0,
+        "after": 0.0,
+        "perf_delta_pct": 0.0,
+        "evidence_refs": [
+          "crates/frankenlibc-core/src/string/str.rs",
+          "AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core"
+        ]
+      },
+      "behavior_checks": [
+        {
+          "check_id": "crate_scoped_compile",
+          "check_command": "AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core",
+          "artifact_ref": "/data/projects/.rch-targets/frankenlibc-cod-a",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "pass"
+        },
+        {
+          "check_id": "folded_icase_anchor_boundary_guard",
+          "check_command": "cargo test -p frankenlibc-core string::str::tests::test_ascii_folded_finder_folded_block_preserves_first_nul_or_candidate",
+          "artifact_ref": "crates/frankenlibc-core/src/string/str.rs",
+          "input_classes": [
+            "boundary"
+          ],
+          "status": "skipped"
+        },
+        {
+          "check_id": "focused_benchmark_vs_original",
+          "check_command": "cargo bench -p frankenlibc-bench --bench string_bench strcasestr_absent -- --save-baseline after",
+          "artifact_ref": "crates/frankenlibc-bench/benches/string_bench.rs",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "skipped"
+        }
+      ],
+      "proof_status": "pending",
+      "acceptance_reason": "Code-first batch-test pending: widened the ASCII-folded strcasestr anchor detector to 128-byte miss panels while preserving first-hit scalar resolution; benchmark/conformance not run by directive.",
+      "notes": "Negative-evidence rule: reject and do not retry this folded icase anchor lane if same-worker strcasestr_absent Criterion fails to beat the prior 32-byte anchor scanner by the ledger threshold, if small-size cases regress beyond noise, or if strcasestr differential fixtures drift."
     }
   ],
   "summary": {
-    "total_candidates": 7,
+    "total_candidates": 8,
     "verified": 1,
     "rejected": 1,
-    "pending": 5,
+    "pending": 6,
     "waived": 0,
     "required_log_fields": 5,
     "required_input_classes": 4
