@@ -2520,6 +2520,18 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         // fl had no arm, so this fell through to the EINVAL default (-1).
         // bd-mjct6o.
         libc::_SC_XOPEN_VERSION => 700,
+        // X/Open feature flags glibc reports as supported (verified via
+        // `getconf -a`): each had no arm and fell through to the EINVAL default
+        // (-1) where glibc returns a positive value. bd-mjct6o.
+        libc::_SC_XOPEN_UNIX => 1,
+        libc::_SC_XOPEN_ENH_I18N => 1,
+        libc::_SC_XOPEN_SHM => 1,
+        libc::_SC_XOPEN_LEGACY => 1,
+        libc::_SC_XOPEN_REALTIME => 1,
+        libc::_SC_XOPEN_REALTIME_THREADS => 1,
+        libc::_SC_XOPEN_XCU_VERSION => 4,
+        libc::_SC_REGEXP => 1,
+        libc::_SC_SHELL => 1,
         libc::_SC_THREAD_SAFE_FUNCTIONS => 1,
         // _SC_THREADS reports the supported _POSIX_THREADS version (200809L),
         // not a boolean — glibc returns 200809; fl previously returned 1.
