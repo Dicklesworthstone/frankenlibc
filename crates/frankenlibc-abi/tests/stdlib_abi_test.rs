@@ -1186,12 +1186,13 @@ fn getpagesize_matches_sysconf_table_value() {
 #[test]
 fn getpagesize_matches_host_page_size() {
     let abi_page_size = unsafe { getpagesize() };
-    let host_page_size = unsafe { libc::getpagesize() };
-    let host_sysconf_page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    // glibc's getpagesize() returns the same value as sysconf(_SC_PAGESIZE)
+    // (both read GLRO(dl_pagesize)); the libc crate doesn't bind getpagesize,
+    // so use the sysconf value as the host oracle. (bd-jf0obh build fix)
+    let host_page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
 
     assert!(host_page_size > 0);
-    assert_eq!(host_sysconf_page_size, host_page_size as libc::c_long);
-    assert_eq!(abi_page_size, host_page_size);
+    assert_eq!(abi_page_size as libc::c_long, host_page_size);
 }
 
 #[test]
