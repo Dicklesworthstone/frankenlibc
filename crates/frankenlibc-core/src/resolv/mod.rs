@@ -163,8 +163,7 @@ pub fn parse_services_line(line: &[u8]) -> Option<ServiceEntry> {
     let aliases: Vec<Vec<u8>> = fields.map(|field| field.to_vec()).collect();
 
     let slash_pos = port_proto.iter().position(|&b| b == b'/')?;
-    let port_str = core::str::from_utf8(&port_proto[..slash_pos]).ok()?;
-    let port = u16::try_from(parse_ascii_decimal_u32(port_str)?).ok()?;
+    let port = u16::try_from(parse_ascii_decimal_u32(&port_proto[..slash_pos])?).ok()?;
     let proto = &port_proto[slash_pos + 1..];
     if proto.is_empty() || proto.contains(&b'/') {
         return None;
@@ -212,8 +211,7 @@ pub fn parse_protocols_line(line: &[u8]) -> Option<ProtocolEntry> {
         .split(|&b| is_resolver_field_separator(b))
         .filter(|f| !f.is_empty());
     let name = fields.next()?;
-    let number_str = core::str::from_utf8(fields.next()?).ok()?;
-    let number = i32::try_from(parse_ascii_decimal_u32(number_str)?).ok()?;
+    let number = i32::try_from(parse_ascii_decimal_u32(fields.next()?)?).ok()?;
     let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
     Some(ProtocolEntry {
         name: name.to_vec(),
@@ -359,11 +357,18 @@ fn parse_network_component(part: &str) -> Option<u32> {
     Some(value)
 }
 
-fn parse_ascii_decimal_u32(s: &str) -> Option<u32> {
-    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+fn parse_ascii_decimal_u32(bytes: &[u8]) -> Option<u32> {
+    if bytes.is_empty() {
         return None;
     }
-    s.parse().ok()
+    let mut value = 0u32;
+    for &b in bytes {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        value = value.checked_mul(10)?.checked_add((b - b'0') as u32)?;
+    }
+    Some(value)
 }
 
 fn network_name_matches(entry: &NetworkEntry, name: &[u8]) -> bool {
@@ -1978,6 +1983,19 @@ mod tests {
     #[test]
     fn netnum_rejects_empty() {
         assert_eq!(parse_network_number(""), None);
+    }
+
+    #[test]
+    fn decimal_u32_byte_parser_rejects_signs_non_digits_and_overflow() {
+        assert_eq!(parse_ascii_decimal_u32(b"0"), Some(0));
+        assert_eq!(parse_ascii_decimal_u32(b"80"), Some(80));
+        assert_eq!(parse_ascii_decimal_u32(b"4294967295"), Some(u32::MAX));
+        assert_eq!(parse_ascii_decimal_u32(b""), None);
+        assert_eq!(parse_ascii_decimal_u32(b"+6"), None);
+        assert_eq!(parse_ascii_decimal_u32(b"-1"), None);
+        assert_eq!(parse_ascii_decimal_u32(b"6/tcp"), None);
+        assert_eq!(parse_ascii_decimal_u32(b"4294967296"), None);
+        assert_eq!(parse_ascii_decimal_u32(&[b'6', 0xff]), None);
     }
 
     #[test]
