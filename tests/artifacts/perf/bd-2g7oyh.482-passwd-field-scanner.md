@@ -33,5 +33,6 @@
 ## Pending Verdict
 
 - Status: code-first batch-test pending.
+- Landing note: source changes were swept into shared commit `2c04ac56a423d8cf772486f49ad2b32ad5939f54`; this artifact remains the bead-specific negative-evidence ledger and verdict anchor.
 - Keep only if the later same-worker benchmark shows `parse_passwd_line_typical` improvement with no passwd conformance regression.
 - Reject and restore this lever if the focused row regresses or any differential/conformance guard fails.
