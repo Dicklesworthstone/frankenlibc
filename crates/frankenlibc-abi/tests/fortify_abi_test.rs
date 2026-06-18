@@ -1136,6 +1136,27 @@ fn poll_chk_nfds_over_real_buffer_aborts_child_process() {
 }
 
 #[test]
+fn poll_chk_nfds_byte_count_overflow_aborts_child_process() {
+    assert_child_sigabrt("poll_chk nfds byte count overflow", || {
+        let mut pfd = libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        };
+        let overflowing_nfds =
+            (usize::MAX / std::mem::size_of::<libc::pollfd>() + 1) as u64;
+        unsafe {
+            __poll_chk(
+                (&mut pfd as *mut libc::pollfd).cast(),
+                overflowing_nfds,
+                0,
+                usize::MAX,
+            )
+        };
+    });
+}
+
+#[test]
 fn ppoll_chk_safe() {
     let mut fds = [0i32; 2];
     assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
@@ -1183,6 +1204,28 @@ fn ppoll_chk_nfds_over_real_buffer_aborts_child_process() {
                 std::ptr::null(),
                 std::ptr::null(),
                 fdslen,
+            )
+        };
+    });
+}
+
+#[test]
+fn ppoll_chk_nfds_byte_count_overflow_aborts_child_process() {
+    assert_child_sigabrt("ppoll_chk nfds byte count overflow", || {
+        let mut pfd = libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        };
+        let overflowing_nfds =
+            (usize::MAX / std::mem::size_of::<libc::pollfd>() + 1) as u64;
+        unsafe {
+            __ppoll_chk(
+                (&mut pfd as *mut libc::pollfd).cast(),
+                overflowing_nfds,
+                std::ptr::null(),
+                std::ptr::null(),
+                usize::MAX,
             )
         };
     });
