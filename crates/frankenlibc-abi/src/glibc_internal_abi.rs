@@ -7694,14 +7694,36 @@ pub unsafe extern "C" fn vhangup() -> c_int {
         }
     }
 }
-// vlimit: obsolete BSD resource limit — return ENOSYS
+#[inline]
+fn vlimit_resource_to_rlimit(resource: c_int) -> Option<c_int> {
+    match resource {
+        1 => Some(libc::RLIMIT_CPU as c_int),
+        2 => Some(libc::RLIMIT_FSIZE as c_int),
+        3 => Some(libc::RLIMIT_DATA as c_int),
+        4 => Some(libc::RLIMIT_STACK as c_int),
+        5 => Some(libc::RLIMIT_CORE as c_int),
+        6 => Some(libc::RLIMIT_RSS as c_int),
+        _ => None,
+    }
+}
+
+// vlimit: obsolete BSD interface; set the mapped RLIMIT soft limit.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vlimit(resource: c_int, value: c_int) -> c_int {
-    let _ = (resource, value);
-    unsafe {
-        crate::errno_abi::set_abi_errno(libc::ENOSYS);
+    let Some(resource) = vlimit_resource_to_rlimit(resource) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { crate::resource_abi::getrlimit(resource, &mut limit) } < 0 {
+        return -1;
     }
-    -1
+    limit.rlim_cur = value as libc::rlim_t;
+    unsafe { crate::resource_abi::setrlimit(resource, &limit) }
 }
 // vtimes: obsolete BSD process times — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

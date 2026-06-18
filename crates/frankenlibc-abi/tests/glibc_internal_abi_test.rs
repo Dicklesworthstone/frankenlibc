@@ -160,6 +160,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     sgetspent_r,
     stty,
     tr_break,
+    vlimit,
     wcswcs,
     xprt_register,
     xprt_unregister,
@@ -177,7 +178,12 @@ unsafe extern "C" {
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
     #[link_name = "stty"]
     fn host_stty(fd: c_int, params: *const c_void) -> c_int;
+    #[link_name = "vlimit"]
+    fn host_vlimit(resource: c_int, value: c_int) -> c_int;
 }
+
+const LIM_NORAISE: c_int = 0;
+const LIM_CORE: c_int = 5;
 
 #[test]
 fn dysize_matches_host_leap_year_sweep() {
@@ -244,6 +250,63 @@ fn sgtty_legacy_stubs_match_host_enosys() {
         );
         assert_eq!((fl_stty_result, fl_stty_errno), (-1, libc::ENOSYS));
     }
+}
+
+#[test]
+fn vlimit_rejects_invalid_resources_like_host() {
+    for resource in [LIM_NORAISE, -1, 999] {
+        unsafe {
+            *libc::__errno_location() = 0;
+            let host_result = host_vlimit(resource, 0);
+            let host_errno = *libc::__errno_location();
+
+            clear_errno();
+            *libc::__errno_location() = 0;
+            let fl_result = vlimit(resource, 0);
+            let fl_errno = errno_value();
+
+            assert_eq!((fl_result, fl_errno), (host_result, host_errno));
+            assert_eq!((fl_result, fl_errno), (-1, libc::EINVAL));
+        }
+    }
+}
+
+fn assert_core_vlimit_child(label: &str, use_host: bool, value: c_int, expected: libc::rlim_t) {
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed for {label}");
+
+    if pid == 0 {
+        unsafe {
+            let result = if use_host {
+                host_vlimit(LIM_CORE, value)
+            } else {
+                vlimit(LIM_CORE, value)
+            };
+            if result != 0 {
+                libc::_exit(10);
+            }
+            let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+            if libc::getrlimit(libc::RLIMIT_CORE, limit.as_mut_ptr()) != 0 {
+                libc::_exit(11);
+            }
+            let limit = limit.assume_init();
+            if limit.rlim_cur != expected {
+                libc::_exit(12);
+            }
+            libc::_exit(0);
+        }
+    }
+
+    let mut status: c_int = 0;
+    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert!(libc::WIFEXITED(status), "{label} child did not exit normally");
+    assert_eq!(libc::WEXITSTATUS(status), 0, "{label} child failed");
+}
+
+#[test]
+fn vlimit_sets_soft_limit_like_host_in_child() {
+    assert_core_vlimit_child("host vlimit LIM_CORE zero", true, 0, 0);
+    assert_core_vlimit_child("frankenlibc vlimit LIM_CORE zero", false, 0, 0);
 }
 
 // ===========================================================================
