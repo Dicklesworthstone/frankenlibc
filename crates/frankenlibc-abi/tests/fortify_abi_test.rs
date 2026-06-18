@@ -9,7 +9,16 @@
 use std::ffi::{CString, c_char, c_int, c_long, c_void};
 
 // Re-export fortified functions from the ABI crate.
+use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::fortify_abi::*;
+
+fn clear_errno() {
+    unsafe { *__errno_location() = 0 };
+}
+
+fn errno_value() -> c_int {
+    unsafe { *__errno_location() }
+}
 
 fn assert_child_sigabrt(label: &str, child: impl FnOnce()) {
     let pid = unsafe { libc::fork() };
@@ -636,6 +645,22 @@ fn getwd_chk_safe() {
     assert!(!ret.is_null());
     let cwd = unsafe { std::ffi::CStr::from_ptr(ret) };
     assert!(cwd.to_str().unwrap().starts_with('/'));
+}
+
+#[test]
+fn getwd_chk_null_buffer_follows_getwd_error_contract() {
+    clear_errno();
+    let ret = unsafe { __getwd_chk(std::ptr::null_mut(), 4096) };
+    assert!(ret.is_null());
+    assert_eq!(errno_value(), libc::EINVAL);
+}
+
+#[test]
+fn getwd_chk_short_buffer_aborts_child_process() {
+    assert_child_sigabrt("getwd_chk short buffer", || {
+        let mut buf = [0u8; 1];
+        unsafe { __getwd_chk(buf.as_mut_ptr().cast(), buf.len()) };
+    });
 }
 
 #[test]
