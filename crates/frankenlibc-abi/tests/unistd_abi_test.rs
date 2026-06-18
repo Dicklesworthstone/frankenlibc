@@ -45,6 +45,9 @@ static ARGP_GLOBAL_LOCK: Mutex<()> = Mutex::new(());
 /// Serializes wordexp host-vs-ABI tests that mutate process environment.
 static WORDEXP_ENV_LOCK: Mutex<()> = Mutex::new(());
 
+/// Serializes tests that point passwd lookups at a fixture path.
+static PASSWD_ENV_LOCK: Mutex<()> = Mutex::new(());
+
 struct HostaliasesEnvGuard {
     previous: Option<std::ffi::OsString>,
 }
@@ -5221,21 +5224,47 @@ fn geteuid_returns_valid_uid() {
 fn cuserid_null_uses_internal_stable_buffer() {
     let first = unsafe { cuserid(std::ptr::null_mut()) };
     assert!(!first.is_null());
-    let expected = if unsafe { libc::getuid() } == 0 {
-        "root"
-    } else {
-        "user"
-    };
     let first_text = unsafe { CStr::from_ptr(first) }
         .to_str()
         .expect("cuserid internal buffer must contain utf-8");
-    assert_eq!(first_text, expected);
+    assert!(
+        !first_text.is_empty(),
+        "cuserid internal buffer must contain a login name"
+    );
 
     let second = unsafe { cuserid(std::ptr::null_mut()) };
     assert_eq!(
         second, first,
         "cuserid(NULL) should reuse the caller-thread internal buffer"
     );
+}
+
+#[test]
+fn cuserid_resolves_current_uid_from_passwd_backend() {
+    let _lock = PASSWD_ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let uid = unsafe { getuid() };
+    let gid = unsafe { getgid() };
+    let path = temp_path("cuserid_passwd");
+    let path_str = path.as_c_str().to_str().unwrap();
+    std::fs::write(
+        path_str,
+        format!("frankencuserid:x:{uid}:{gid}:Franken cuserid:/tmp:/bin/sh\n"),
+    )
+    .unwrap();
+    let _guard = EnvVarGuard::set("FRANKENLIBC_PASSWD_PATH", path_str);
+
+    let mut caller_buf = [0 as c_char; 32];
+    let caller_ptr = unsafe { cuserid(caller_buf.as_mut_ptr()) };
+    assert_eq!(caller_ptr, caller_buf.as_mut_ptr());
+    let caller_name = unsafe { CStr::from_ptr(caller_ptr) };
+    assert_eq!(caller_name.to_bytes(), b"frankencuserid");
+
+    let static_ptr = unsafe { cuserid(std::ptr::null_mut()) };
+    assert!(!static_ptr.is_null());
+    let static_name = unsafe { CStr::from_ptr(static_ptr) };
+    assert_eq!(static_name.to_bytes(), b"frankencuserid");
+
+    let _ = std::fs::remove_file(path_str);
 }
 
 #[test]
