@@ -1473,6 +1473,75 @@ const fn build_dec_pairs() -> [u8; 200] {
     table
 }
 
+/// Two-ASCII-digit lookup tables for hex bytes `0x00`..=`0xFF`
+/// (`HEX_PAIRS_*[2*b..2*b+2]` is the two hex chars of byte `b`), built at
+/// compile time. Used by [`render_hex`] to emit two hex digits per byte with no
+/// division — `%x`/`%X`/`%p` are the hot hexadecimal printf paths.
+static HEX_PAIRS_LOWER: [u8; 512] = build_hex_pairs(false);
+static HEX_PAIRS_UPPER: [u8; 512] = build_hex_pairs(true);
+
+const fn build_hex_pairs(upper: bool) -> [u8; 512] {
+    let mut table = [0u8; 512];
+    let a = if upper { b'A' } else { b'a' };
+    let mut b = 0usize;
+    while b < 256 {
+        let hi = (b >> 4) as u8;
+        let lo = (b & 0xF) as u8;
+        table[2 * b] = if hi < 10 { b'0' + hi } else { a + (hi - 10) };
+        table[2 * b + 1] = if lo < 10 { b'0' + lo } else { a + (lo - 10) };
+        b += 1;
+    }
+    table
+}
+
+/// Specialised base-16 renderer: emits two hex digits per iteration via
+/// [`HEX_PAIRS_LOWER`]/[`HEX_PAIRS_UPPER`], consuming one byte (`value & 0xFF`,
+/// `value >>= 8`) per step — no division at all (cf. the general loop's runtime
+/// `DIV`). Requires `value > 0` (the zero case is handled by the caller).
+/// Byte-for-byte identical output to the general loop with `base == 16`.
+fn render_hex(mut value: u64, uppercase: bool, buf: &mut [u8; 64]) -> usize {
+    let tbl = if uppercase { &HEX_PAIRS_UPPER } else { &HEX_PAIRS_LOWER };
+    let mut pos = 64;
+    while value >= 256 {
+        let b = (value & 0xFF) as usize;
+        value >>= 8;
+        pos -= 2;
+        buf[pos] = tbl[2 * b];
+        buf[pos + 1] = tbl[2 * b + 1];
+    }
+    // value is now 1..=255 (one full byte left, possibly with a leading nibble).
+    if value >= 16 {
+        let b = value as usize;
+        pos -= 2;
+        buf[pos] = tbl[2 * b];
+        buf[pos + 1] = tbl[2 * b + 1];
+    } else {
+        // Single hex digit: low-nibble char of `value` (high nibble is 0).
+        pos -= 1;
+        buf[pos] = tbl[2 * (value as usize) + 1];
+    }
+    64 - pos
+}
+
+/// Generic power-of-two base renderer (handles `%o` base 8, `%b` base 2, etc.):
+/// the digit is `value & (base-1)` and the shift is `base.trailing_zeros()`, so
+/// the per-digit runtime `DIV`/`REM` of the general loop becomes a mask + shift.
+/// Requires `value > 0` and `base.is_power_of_two()`. Byte-for-byte identical
+/// output to the general loop.
+fn render_pow2(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64]) -> usize {
+    let shift = base.trailing_zeros();
+    let mask = base - 1;
+    let alpha = if uppercase { b'A' } else { b'a' };
+    let mut pos = 64;
+    while value > 0 && pos > 0 {
+        pos -= 1;
+        let digit = (value & mask) as u8;
+        buf[pos] = if digit < 10 { b'0' + digit } else { alpha + (digit - 10) };
+        value >>= shift;
+    }
+    64 - pos
+}
+
 /// Specialised decimal renderer (base 10): emits two digits per iteration via
 /// [`DEC_PAIRS`] with a compile-time divisor of 100, so the compiler lowers the
 /// division to a magic-multiply instead of the runtime `DIV` that the
@@ -1510,6 +1579,15 @@ fn render_digits(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64])
     if value == 0 {
         buf[63] = b'0';
         return 1;
+    }
+    // Non-decimal printf bases (%x/%X=16, %o=8, %b=2) are all powers of two, so
+    // replace the per-digit runtime DIV with mask+shift; hex additionally uses a
+    // byte-pair LUT (two digits per iteration). Output is byte-identical.
+    if base == 16 {
+        return render_hex(value, uppercase, buf);
+    }
+    if base.is_power_of_two() {
+        return render_pow2(value, base, uppercase, buf);
     }
     let alpha = if uppercase { b'A' } else { b'a' };
     let mut pos = 64;
@@ -1970,6 +2048,60 @@ mod tests {
                 &lut[64 - nl..],
                 "render_digits(10) mismatch for {v}"
             );
+        }
+    }
+
+    // Reference general-base renderer (runtime DIV loop) — the exact code the
+    // render_hex / render_pow2 fast paths replace, kept here to prove they are
+    // byte-for-byte isomorphic for the power-of-two printf bases.
+    fn render_digits_reference(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64]) -> usize {
+        if value == 0 {
+            buf[63] = b'0';
+            return 1;
+        }
+        let alpha = if uppercase { b'A' } else { b'a' };
+        let mut pos = 64;
+        while value > 0 && pos > 0 {
+            pos -= 1;
+            let digit = (value % base) as u8;
+            buf[pos] = if digit < 10 { b'0' + digit } else { alpha + (digit - 10) };
+            value /= base;
+        }
+        64 - pos
+    }
+
+    #[test]
+    fn render_hex_and_pow2_isomorphic_to_reference() {
+        // Deterministic xorshift over a wide value space, plus boundary probes.
+        let mut probes: Vec<u64> = vec![
+            0, 1, 9, 15, 16, 17, 255, 256, 257, 0xFF, 0x100, 0xFFFF, 0x10000,
+            0xABCD, 0xDEADBEEF, 0xFFFF_FFFF, 0x1_0000_0000, u64::MAX, u64::MAX - 1,
+            0x8000_0000_0000_0000, 0x0FED_CBA9_8765_4321,
+        ];
+        let mut state: u64 = 0x1234_5678_9abc_def1;
+        for _ in 0..50_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            probes.push(state);
+            probes.push(state & 0xFF);
+            probes.push(state & 0xFFFF);
+        }
+        for &v in &probes {
+            for &base in &[2u64, 8, 16] {
+                for &up in &[false, true] {
+                    let mut fast = [0u8; 64];
+                    let mut reff = [0u8; 64];
+                    let nf = render_digits(v, base, up, &mut fast);
+                    let nr = render_digits_reference(v, base, up, &mut reff);
+                    assert_eq!(nf, nr, "digit count mismatch v={v} base={base} up={up}");
+                    assert_eq!(
+                        &fast[64 - nf..],
+                        &reff[64 - nr..],
+                        "fast vs reference digits mismatch v={v} base={base} up={up}"
+                    );
+                }
+            }
         }
     }
 
