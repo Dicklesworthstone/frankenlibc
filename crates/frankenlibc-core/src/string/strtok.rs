@@ -5,7 +5,9 @@
 //! In this safe Rust model, `strtok` replaces delimiter bytes in the buffer
 //! with NUL bytes and returns token boundaries as `(start, len)` pairs.
 
-/// Returns true if byte `b` is in the NUL-terminated `delimiters` set.
+/// Returns true if byte `b` is in the NUL-terminated `delimiters` set. Retained
+/// only as the reference semantics that [`DelimSet`]'s guard test checks against.
+#[cfg(test)]
 fn is_delim(b: u8, delimiters: &[u8]) -> bool {
     for &d in delimiters {
         if d == 0 {
@@ -16,6 +18,33 @@ fn is_delim(b: u8, delimiters: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// A 256-bit membership bitmap of the delimiter set, built once per tokenization
+/// call so each input byte is tested in O(1) (`bit b`) instead of re-scanning the
+/// delimiter string per character — turning the scan from O(input × delims) into
+/// O(input + delims). NUL terminates the delimiter list and is never a member, so
+/// bit 0 is left clear (matching [`is_delim`]).
+struct DelimSet {
+    words: [u64; 4],
+}
+
+impl DelimSet {
+    fn new(delimiters: &[u8]) -> Self {
+        let mut words = [0u64; 4];
+        for &d in delimiters {
+            if d == 0 {
+                break;
+            }
+            words[(d >> 6) as usize] |= 1u64 << (d & 63);
+        }
+        Self { words }
+    }
+
+    #[inline]
+    fn contains(&self, b: u8) -> bool {
+        (self.words[(b >> 6) as usize] >> (b & 63)) & 1 != 0
+    }
 }
 
 /// Tokenizes a NUL-terminated byte string (thread-unsafe legacy version).
@@ -45,9 +74,10 @@ pub fn strtok(s: &mut [u8], delimiters: &[u8]) -> Option<(usize, usize)> {
 fn strtok_at(s: &mut [u8], delimiters: &[u8], offset: usize) -> Option<(usize, usize)> {
     let len = s.len();
     let mut pos = offset;
+    let delims = DelimSet::new(delimiters);
 
     // Skip leading delimiters and NUL bytes
-    while pos < len && s[pos] != 0 && is_delim(s[pos], delimiters) {
+    while pos < len && s[pos] != 0 && delims.contains(s[pos]) {
         pos += 1;
     }
 
@@ -59,7 +89,7 @@ fn strtok_at(s: &mut [u8], delimiters: &[u8], offset: usize) -> Option<(usize, u
     let token_start = pos;
 
     // Find end of token
-    while pos < len && s[pos] != 0 && !is_delim(s[pos], delimiters) {
+    while pos < len && s[pos] != 0 && !delims.contains(s[pos]) {
         pos += 1;
     }
 
@@ -87,9 +117,10 @@ fn strtok_at(s: &mut [u8], delimiters: &[u8], offset: usize) -> Option<(usize, u
 pub fn strtok_r(s: &mut [u8], delimiters: &[u8], save_ptr: usize) -> Option<(usize, usize, usize)> {
     let len = s.len();
     let mut pos = save_ptr;
+    let delims = DelimSet::new(delimiters);
 
     // Skip leading delimiters and NUL bytes
-    while pos < len && s[pos] != 0 && is_delim(s[pos], delimiters) {
+    while pos < len && s[pos] != 0 && delims.contains(s[pos]) {
         pos += 1;
     }
 
@@ -101,7 +132,7 @@ pub fn strtok_r(s: &mut [u8], delimiters: &[u8], save_ptr: usize) -> Option<(usi
     let token_start = pos;
 
     // Find end of token
-    while pos < len && s[pos] != 0 && !is_delim(s[pos], delimiters) {
+    while pos < len && s[pos] != 0 && !delims.contains(s[pos]) {
         pos += 1;
     }
 
@@ -119,6 +150,31 @@ pub fn strtok_r(s: &mut [u8], delimiters: &[u8], save_ptr: usize) -> Option<(usi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delimset_matches_is_delim_reference() {
+        // The bitmap must encode exactly the same membership as the reference
+        // is_delim loop, for every possible input byte and across delimiter sets
+        // that span word boundaries (bytes 63/64/127/128/255).
+        let delim_sets: &[&[u8]] = &[
+            b"\0",
+            b" \t\n\0",
+            b",;:\0",
+            b"abcXYZ \0",
+            b"\x3f\x40\x7f\x80\xff\0", // 63,64,127,128,255
+            b"\xff\xfe\xfd\0",
+        ];
+        for delims in delim_sets {
+            let set = DelimSet::new(delims);
+            for b in 0..=255u8 {
+                assert_eq!(
+                    set.contains(b),
+                    is_delim(b, delims),
+                    "DelimSet mismatch for byte {b} in delims {delims:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_strtok_r_basic() {
