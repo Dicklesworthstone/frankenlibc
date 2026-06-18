@@ -1064,6 +1064,18 @@ unsafe fn read_file_actions_mut(fa_ptr: *mut c_void) -> Option<&'static mut Spaw
 unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
     let flags = attr.flags as c_int;
 
+    // POSIX_SPAWN_SETSID (glibc >= 2.26, value 0x80; not exposed by the libc
+    // crate): the child starts a new session. glibc applies it FIRST, before
+    // SETPGROUP (setsid makes the child a session+group leader, and a later
+    // SETPGROUP can still move it). fl ignored the flag entirely, so the child
+    // stayed in the parent's session. bd-h0ht3b.
+    const POSIX_SPAWN_SETSID: c_int = 0x80;
+    if flags & POSIX_SPAWN_SETSID != 0
+        && let Err(e) = raw_syscall::sys_setsid()
+    {
+        return e;
+    }
+
     if flags & libc::POSIX_SPAWN_SETPGROUP != 0
         && let Err(e) = raw_syscall::sys_setpgid(0, attr.pgroup)
     {
