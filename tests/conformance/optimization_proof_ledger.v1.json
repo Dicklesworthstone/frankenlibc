@@ -370,13 +370,67 @@
       "proof_status": "pending",
       "acceptance_reason": "Code-first batch-test pending: added a 64-wide long-input reverse wmemrchr scan while preserving the 16-wide short/remainder panel and added a long-panel boundary guard; benchmark/conformance not run by directive.",
       "notes": "Negative-evidence rule: reject and do not retry this long reverse-panel lane if same-worker wmemrchr_absent Criterion does not meet the ledger improvement threshold, if small-size cases regress, or if wide-string fixtures drift."
+    },
+    {
+      "trace_id": "bd-2g7oyh::strict::cand-wmemcmp-equal-prefix-64-panel::001",
+      "candidate_id": "cand-wmemcmp-long-equal-prefix-64-panel",
+      "bead_id": "bd-2g7oyh",
+      "module": "frankenlibc-core/string/wide",
+      "symbol": "wmemcmp",
+      "code_refs": [
+        "crates/frankenlibc-core/src/string/wide.rs",
+        "crates/frankenlibc-bench/benches/string_bench.rs"
+      ],
+      "measurement": {
+        "metric": "batch_test_pending_p50_ns_op",
+        "mode": "strict",
+        "before": 0.0,
+        "after": 0.0,
+        "perf_delta_pct": 0.0,
+        "evidence_refs": [
+          "crates/frankenlibc-core/src/string/wide.rs",
+          "CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core"
+        ]
+      },
+      "behavior_checks": [
+        {
+          "check_id": "crate_scoped_compile",
+          "check_command": "CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core",
+          "artifact_ref": "/data/projects/.rch-targets/frankenlibc-cod-a",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "pass"
+        },
+        {
+          "check_id": "wmemcmp_long_equal_prefix_panel_boundary_guard",
+          "check_command": "cargo test -p frankenlibc-core string::wide::tests::test_wmemcmp_long_equal_prefix_panel_boundary",
+          "artifact_ref": "crates/frankenlibc-core/src/string/wide.rs",
+          "input_classes": [
+            "boundary"
+          ],
+          "status": "skipped"
+        },
+        {
+          "check_id": "focused_benchmark_vs_glibc",
+          "check_command": "cargo bench -p frankenlibc-bench --bench string_bench wmemcmp_equal -- --save-baseline after",
+          "artifact_ref": "crates/frankenlibc-bench/benches/string_bench.rs",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "skipped"
+        }
+      ],
+      "proof_status": "pending",
+      "acceptance_reason": "Code-first batch-test pending: added a 64-wide equal-prefix preflight for long wmemcmp buffers while preserving first-difference signed ordering through the existing resolver; benchmark/conformance not run by directive.",
+      "notes": "Negative-evidence rule: reject and do not retry this equal-prefix lane if same-worker wmemcmp_equal Criterion fails to beat the prior 32-wide unrolled scanner by the ledger threshold, if mismatch-heavy cases regress beyond noise, or if wide-string fixtures drift."
     }
   ],
   "summary": {
-    "total_candidates": 6,
+    "total_candidates": 7,
     "verified": 1,
     "rejected": 1,
-    "pending": 4,
+    "pending": 5,
     "waived": 0,
     "required_log_fields": 5,
     "required_input_classes": 4

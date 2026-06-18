@@ -188,6 +188,18 @@ fn equal_prefix_wide(a: &[u32], b: &[u32], n: usize) -> bool {
         .all(|(left, right)| left == right)
 }
 
+/// Returns `true` iff the two long `wmemcmp` panels are exactly equal. Unlike
+/// the NUL-terminated compare helpers, this intentionally ignores NUL because
+/// `wmemcmp` compares raw wide-code-unit arrays over an explicit length.
+#[inline(always)]
+fn equal_wide_long_panel(a: &[u32], b: &[u32]) -> bool {
+    debug_assert_eq!(a.len(), WIDE_EQUAL_PREFIX_LANES);
+    debug_assert_eq!(b.len(), WIDE_EQUAL_PREFIX_LANES);
+    let av = Simd::<u32, WIDE_EQUAL_PREFIX_LANES>::from_slice(a);
+    let bv = Simd::<u32, WIDE_EQUAL_PREFIX_LANES>::from_slice(b);
+    av.simd_eq(bv).all()
+}
+
 #[inline(always)]
 fn resolve_wmemcmp_panel(a_chunk: &[u32], b_chunk: &[u32]) -> Option<i32> {
     debug_assert_eq!(a_chunk.len(), b_chunk.len());
@@ -900,17 +912,29 @@ pub fn wmemset(dest: &mut [u32], c: u32, n: usize) -> usize {
 /// Equivalent to C `wmemcmp`.
 /// Performs signed comparison (treating `u32` as `i32`) to match Linux `wchar_t`.
 ///
-/// Scans `WIDE_COMPARE_SIMD_LANES` elements per step with a portable-SIMD equality
-/// probe, then resolves the first differing index within the first mismatching
-/// panel left-to-right. Behaviour is identical to the scalar element-by-element
-/// signed comparison over the first `n.min(s1.len()).min(s2.len())` elements.
+/// Skips long equal prefixes with a 64-wide portable-SIMD equality probe, then
+/// scans `WIDE_COMPARE_SIMD_LANES` elements per step and resolves the first
+/// differing index within the first mismatching panel left-to-right. Behaviour
+/// is identical to the scalar element-by-element signed comparison over the
+/// first `n.min(s1.len()).min(s2.len())` elements.
 pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     let count = n.min(s1.len()).min(s2.len());
     let a_all = &s1[..count];
     let b_all = &s2[..count];
 
-    let mut a_pairs = a_all.chunks_exact(WIDE_COMPARE_UNROLL_LANES);
-    let mut b_pairs = b_all.chunks_exact(WIDE_COMPARE_UNROLL_LANES);
+    let mut equal_prefix = 0usize;
+    if count >= WIDE_EQUAL_PREFIX_MIN_LEN {
+        while equal_prefix + WIDE_EQUAL_PREFIX_LANES <= count {
+            let next = equal_prefix + WIDE_EQUAL_PREFIX_LANES;
+            if !equal_wide_long_panel(&a_all[equal_prefix..next], &b_all[equal_prefix..next]) {
+                break;
+            }
+            equal_prefix = next;
+        }
+    }
+
+    let mut a_pairs = a_all[equal_prefix..].chunks_exact(WIDE_COMPARE_UNROLL_LANES);
+    let mut b_pairs = b_all[equal_prefix..].chunks_exact(WIDE_COMPARE_UNROLL_LANES);
 
     for (a_pair, b_pair) in a_pairs.by_ref().zip(b_pairs.by_ref()) {
         let (a_first, a_second) = a_pair.split_at(WIDE_COMPARE_SIMD_LANES);
@@ -2310,6 +2334,34 @@ mod tests {
         let mut c = a.clone();
         c[10] = 999;
         assert_eq!(wmemcmp(&a, &c, 8), 0);
+    }
+
+    #[test]
+    fn test_wmemcmp_long_equal_prefix_panel_boundary() {
+        let len = WIDE_EQUAL_PREFIX_MIN_LEN + WIDE_EQUAL_PREFIX_LANES + 19;
+        let a: Vec<u32> = (0..len)
+            .map(|i| 0x1000_u32 + (i as u32 % 251))
+            .collect();
+        assert_eq!(wmemcmp(&a, &a, len), 0);
+
+        for diff_at in [
+            0usize,
+            WIDE_EQUAL_PREFIX_LANES - 1,
+            WIDE_EQUAL_PREFIX_LANES,
+            WIDE_EQUAL_PREFIX_MIN_LEN - 1,
+            WIDE_EQUAL_PREFIX_MIN_LEN,
+            WIDE_EQUAL_PREFIX_MIN_LEN + WIDE_EQUAL_PREFIX_LANES - 1,
+            len - 1,
+        ] {
+            let mut b = a.clone();
+            b[diff_at] = a[diff_at] + 1;
+            assert_eq!(wmemcmp(&a, &b, len), -1, "diff_at={diff_at}");
+            assert_eq!(wmemcmp(&b, &a, len), 1, "diff_at={diff_at}");
+        }
+
+        let mut clipped = a.clone();
+        clipped[WIDE_EQUAL_PREFIX_MIN_LEN + 5] = 0;
+        assert_eq!(wmemcmp(&a, &clipped, WIDE_EQUAL_PREFIX_MIN_LEN), 0);
     }
 
     #[test]
