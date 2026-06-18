@@ -7076,8 +7076,10 @@ fn strtonum_negative_in_range() {
 fn strtonum_too_small_sets_canonical_message() {
     let s = c"5";
     let mut errstr: *const c_char = ptr::null();
+    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), 10, 20, &mut errstr) };
     assert_eq!(v, 0);
+    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"too small");
@@ -7087,8 +7089,10 @@ fn strtonum_too_small_sets_canonical_message() {
 fn strtonum_too_large_sets_canonical_message() {
     let s = c"50";
     let mut errstr: *const c_char = ptr::null();
+    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), 0, 10, &mut errstr) };
     assert_eq!(v, 0);
+    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"too large");
@@ -7098,8 +7102,10 @@ fn strtonum_too_large_sets_canonical_message() {
 fn strtonum_invalid_input_sets_canonical_message() {
     let s = c"not-a-number";
     let mut errstr: *const c_char = ptr::null();
+    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), 0, 100, &mut errstr) };
     assert_eq!(v, 0);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"invalid");
@@ -7109,8 +7115,10 @@ fn strtonum_invalid_input_sets_canonical_message() {
 fn strtonum_trailing_garbage_is_invalid() {
     let s = c"42x";
     let mut errstr: *const c_char = ptr::null();
+    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), 0, 100, &mut errstr) };
     assert_eq!(v, 0);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"invalid");
@@ -7121,8 +7129,10 @@ fn strtonum_invalid_range_uses_invalid_message() {
     // OpenBSD: when minval > maxval, errstr is "invalid".
     let s = c"42";
     let mut errstr: *const c_char = ptr::null();
+    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), 100, 10, &mut errstr) };
     assert_eq!(v, 0);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"invalid");
@@ -7137,15 +7147,19 @@ fn strtonum_null_errstr_is_safe() {
     assert_eq!(v, 42);
 
     let bad = c"abc";
+    unsafe { *__errno_location() = 0 };
     let v2 = unsafe { strtonum(bad.as_ptr(), 0, 100, ptr::null_mut()) };
     assert_eq!(v2, 0);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]
 fn strtonum_null_nptr_returns_zero_with_invalid() {
     let mut errstr: *const c_char = ptr::null();
+    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(ptr::null(), 0, 100, &mut errstr) };
     assert_eq!(v, 0);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"invalid");
@@ -7181,8 +7195,10 @@ fn strtonum_full_i64_range() {
 fn strtonum_overflow_returns_too_large() {
     let s = c"99999999999999999999";
     let mut errstr: *const c_char = ptr::null();
+    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), i64::MIN, i64::MAX, &mut errstr) };
     assert_eq!(v, 0);
+    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"too large");
 }

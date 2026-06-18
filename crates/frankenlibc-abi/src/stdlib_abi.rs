@@ -6056,6 +6056,7 @@ pub unsafe extern "C" fn strtonum(
     static ERR_TOO_LARGE: &[u8] = b"too large\0";
 
     if nptr.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
         if !errstr.is_null() {
             // SAFETY: caller-supplied writable slot.
             unsafe { *errstr = ERR_INVALID.as_ptr() as *const c_char };
@@ -6064,6 +6065,7 @@ pub unsafe extern "C" fn strtonum(
     }
 
     let Some(bytes) = (unsafe { read_bounded_cstr_bytes(nptr) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
         if !errstr.is_null() {
             unsafe { *errstr = ERR_INVALID.as_ptr() as *const c_char };
         }
@@ -6079,12 +6081,13 @@ pub unsafe extern "C" fn strtonum(
             v
         }
         Err(e) => {
-            let msg: &[u8] = match e {
-                core_st::StrtonumError::Invalid => ERR_INVALID,
-                core_st::StrtonumError::TooSmall => ERR_TOO_SMALL,
-                core_st::StrtonumError::TooLarge => ERR_TOO_LARGE,
-                core_st::StrtonumError::InvalidRange => ERR_INVALID,
+            let (msg, err): (&[u8], c_int) = match e {
+                core_st::StrtonumError::Invalid => (ERR_INVALID, libc::EINVAL),
+                core_st::StrtonumError::TooSmall => (ERR_TOO_SMALL, libc::ERANGE),
+                core_st::StrtonumError::TooLarge => (ERR_TOO_LARGE, libc::ERANGE),
+                core_st::StrtonumError::InvalidRange => (ERR_INVALID, libc::EINVAL),
             };
+            unsafe { set_abi_errno(err) };
             if !errstr.is_null() {
                 // SAFETY: caller-supplied writable slot.
                 unsafe { *errstr = msg.as_ptr() as *const c_char };
