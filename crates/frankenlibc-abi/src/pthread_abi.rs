@@ -3372,6 +3372,10 @@ fn attr_stack_size_env_lookup_enabled() -> bool {
 
 /// POSIX `PTHREAD_SCOPE_SYSTEM` — system contention scope (1:1 threading model).
 const PTHREAD_SCOPE_SYSTEM: c_int = 0;
+/// POSIX `PTHREAD_SCOPE_PROCESS` — process contention scope (unsupported on
+/// Linux/NPTL; a valid value rejected with ENOTSUP, unlike an invalid value
+/// which is EINVAL).
+const PTHREAD_SCOPE_PROCESS: c_int = 1;
 
 /// Minimum stack size: PTHREAD_STACK_MIN (typically 16 KiB on Linux x86_64).
 const ATTR_MIN_STACK_SIZE: usize = 16384;
@@ -5089,10 +5093,14 @@ pub unsafe extern "C" fn pthread_attr_setscope(
     if managed_attr_data_ptr(attr).is_none() {
         return libc::EINVAL;
     }
+    // glibc: SYSTEM -> 0, PROCESS -> ENOTSUP (valid but unsupported on Linux),
+    // any other value -> EINVAL.
     if scope == PTHREAD_SCOPE_SYSTEM {
         0
-    } else {
+    } else if scope == PTHREAD_SCOPE_PROCESS {
         libc::ENOTSUP
+    } else {
+        libc::EINVAL
     }
 }
 
