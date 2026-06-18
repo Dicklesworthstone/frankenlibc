@@ -6181,19 +6181,18 @@ pub unsafe extern "C" fn klogctl(typ: c_int, bufp: *mut c_char, len: c_int) -> c
 // lchmod: native — fchmodat with AT_SYMLINK_NOFOLLOW
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lchmod(pathname: *const c_char, mode: c_uint) -> c_int {
-    match unsafe {
-        raw_syscall::sys_fchmodat(
+    // lchmod must NOT follow symlinks. The classic fchmodat syscall has no flags
+    // argument, so the previous direct call silently dropped AT_SYMLINK_NOFOLLOW
+    // and chmod'd the symlink TARGET. Delegate to the flag-aware fchmodat ABI
+    // wrapper (routes AT_SYMLINK_NOFOLLOW through the fchmodat2 syscall; the
+    // kernel returns EOPNOTSUPP for chmod-on-symlink, matching glibc). bd-f29d1s.
+    unsafe {
+        crate::unistd_abi::fchmodat(
             libc::AT_FDCWD,
-            pathname as *const u8,
-            mode,
+            pathname,
+            mode as libc::mode_t,
             libc::AT_SYMLINK_NOFOLLOW,
         )
-    } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
     }
 }
 // ldexpl: native — x * 2^exp via repeated doubling/halving
