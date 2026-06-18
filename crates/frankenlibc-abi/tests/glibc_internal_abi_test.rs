@@ -125,6 +125,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     mcount,
     moncontrol,
     monstartup,
+    nfsservctl,
     ns_name_compress,
     ns_name_ntop,
     ns_name_pack,
@@ -166,10 +167,14 @@ use frankenlibc_abi::glibc_internal_abi::{
     ruserpass,
     sgetspent_r,
     setlogin,
+    sprofil,
     sstk,
     stty,
+    sysctl,
     tr_break,
+    ustat,
     vlimit,
+    vtimes,
     wcswcs,
     xprt_register,
     xprt_unregister,
@@ -195,6 +200,8 @@ unsafe extern "C" {
     fn host_get_kernel_syms(table: *mut c_void) -> c_int;
     #[link_name = "gtty"]
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
+    #[link_name = "nfsservctl"]
+    fn host_nfsservctl(cmd: c_int, argp: *mut c_void, resp: *mut c_void) -> c_int;
     #[link_name = "query_module"]
     fn host_query_module(
         name: *const c_char,
@@ -209,10 +216,30 @@ unsafe extern "C" {
     fn host_revoke(path: *const c_char) -> c_int;
     #[link_name = "setlogin"]
     fn host_setlogin(name: *const c_char) -> c_int;
+    #[link_name = "sprofil"]
+    fn host_sprofil(
+        profp: *mut c_void,
+        profcnt: c_int,
+        tvp: *mut c_void,
+        flags: libc::c_uint,
+    ) -> c_int;
     #[link_name = "sstk"]
     fn host_sstk(increment: c_int) -> c_int;
+    #[link_name = "sysctl"]
+    fn host_sysctl(
+        args: *mut c_int,
+        nlen: c_int,
+        oldval: *mut c_void,
+        oldlenp: *mut libc::size_t,
+        newval: *mut c_void,
+        newlen: libc::size_t,
+    ) -> c_int;
+    #[link_name = "ustat"]
+    fn host_ustat(dev: libc::dev_t, ubuf: *mut c_void) -> c_int;
     #[link_name = "vlimit"]
     fn host_vlimit(resource: c_int, value: c_int) -> c_int;
+    #[link_name = "vtimes"]
+    fn host_vtimes(current: *mut c_void, child: *mut c_void) -> c_int;
 }
 
 const LIM_NORAISE: c_int = 0;
@@ -447,6 +474,103 @@ fn obsolete_module_syscall_stubs_match_host_enosys() {
             (host_query_result, host_query_errno)
         );
         assert_eq!((fl_query_result, fl_query_errno), (-1, libc::ENOSYS));
+    }
+}
+
+#[test]
+fn obsolete_kernel_accounting_stubs_match_host_enosys() {
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_ustat_result = host_ustat(0, ptr::null_mut());
+        let host_ustat_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_ustat_result = ustat(0, ptr::null_mut());
+        let fl_ustat_errno = errno_value();
+
+        assert_eq!(
+            (fl_ustat_result, fl_ustat_errno),
+            (host_ustat_result, host_ustat_errno)
+        );
+        assert_eq!((fl_ustat_result, fl_ustat_errno), (-1, libc::ENOSYS));
+
+        *libc::__errno_location() = 0;
+        let host_vtimes_result = host_vtimes(ptr::null_mut(), ptr::null_mut());
+        let host_vtimes_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_vtimes_result = vtimes(ptr::null_mut(), ptr::null_mut());
+        let fl_vtimes_errno = errno_value();
+
+        assert_eq!(
+            (fl_vtimes_result, fl_vtimes_errno),
+            (host_vtimes_result, host_vtimes_errno)
+        );
+        assert_eq!((fl_vtimes_result, fl_vtimes_errno), (-1, libc::ENOSYS));
+
+        *libc::__errno_location() = 0;
+        let host_nfs_result = host_nfsservctl(0, ptr::null_mut(), ptr::null_mut());
+        let host_nfs_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_nfs_result = nfsservctl(0, ptr::null_mut(), ptr::null_mut());
+        let fl_nfs_errno = errno_value();
+
+        assert_eq!(
+            (fl_nfs_result, fl_nfs_errno),
+            (host_nfs_result, host_nfs_errno)
+        );
+        assert_eq!((fl_nfs_result, fl_nfs_errno), (-1, libc::ENOSYS));
+
+        *libc::__errno_location() = 0;
+        let host_sprofil_result = host_sprofil(ptr::null_mut(), 0, ptr::null_mut(), 0);
+        let host_sprofil_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_sprofil_result = sprofil(ptr::null_mut(), 0, ptr::null_mut(), 0);
+        let fl_sprofil_errno = errno_value();
+
+        assert_eq!(
+            (fl_sprofil_result, fl_sprofil_errno),
+            (host_sprofil_result, host_sprofil_errno)
+        );
+        assert_eq!(
+            (fl_sprofil_result, fl_sprofil_errno),
+            (-1, libc::ENOSYS)
+        );
+
+        *libc::__errno_location() = 0;
+        let host_sysctl_result = host_sysctl(
+            ptr::null_mut(),
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            0,
+        );
+        let host_sysctl_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_sysctl_result = sysctl(
+            ptr::null_mut(),
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            0,
+        );
+        let fl_sysctl_errno = errno_value();
+
+        assert_eq!(
+            (fl_sysctl_result, fl_sysctl_errno),
+            (host_sysctl_result, host_sysctl_errno)
+        );
+        assert_eq!((fl_sysctl_result, fl_sysctl_errno), (-1, libc::ENOSYS));
     }
 }
 
