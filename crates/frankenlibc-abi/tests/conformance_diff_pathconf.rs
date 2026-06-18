@@ -3,9 +3,9 @@
 //! Differential gate: fl `pathconf` must match glibc. _PC_2_SYMLINKS and the
 //! record/allocation limits (_PC_REC_MIN_XFER_SIZE / _PC_REC_XFER_ALIGN /
 //! _PC_ALLOC_SIZE_MIN, which glibc derives from statvfs f_bsize) used to fall
-//! through to EINVAL (returning -1). _PC_FILESIZEBITS is intentionally excluded:
-//! glibc maps it from the filesystem f_type magic and fl returns -1 (POSIX
-//! "indeterminate"), a deliberate divergence.
+//! through to EINVAL (returning -1). _PC_FILESIZEBITS is now also covered: fl
+//! maps it from the filesystem f_type magic (fs_filesizebits_for_type, mirroring
+//! glibc __statfs_filesize_max), so it must match glibc on the test fs. bd-eqcn80.
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_long};
@@ -26,6 +26,7 @@ fn pathconf_matches_glibc() {
         ("_PC_REC_XFER_ALIGN", libc::_PC_REC_XFER_ALIGN),
         ("_PC_ALLOC_SIZE_MIN", libc::_PC_ALLOC_SIZE_MIN),
         ("_PC_2_SYMLINKS", libc::_PC_2_SYMLINKS),
+        ("_PC_FILESIZEBITS", libc::_PC_FILESIZEBITS),
     ];
     let path = CString::new("/tmp").unwrap();
     let mut div = Vec::new();
@@ -59,6 +60,7 @@ fn fpathconf_matches_glibc() {
         ("_PC_REC_XFER_ALIGN", libc::_PC_REC_XFER_ALIGN),
         ("_PC_ALLOC_SIZE_MIN", libc::_PC_ALLOC_SIZE_MIN),
         ("_PC_2_SYMLINKS", libc::_PC_2_SYMLINKS),
+        ("_PC_FILESIZEBITS", libc::_PC_FILESIZEBITS),
     ];
     let mut div = Vec::new();
     for &(n, k) in keys {
