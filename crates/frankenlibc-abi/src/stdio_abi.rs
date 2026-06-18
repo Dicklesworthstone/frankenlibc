@@ -3280,6 +3280,73 @@ fn printf_result_to_c_int(total_len: usize) -> c_int {
 /// We interpret each value according to the format spec's conversion and length modifier.
 ///
 /// Returns the formatted byte vector.
+/// Thread-local reuse pool for the printf output buffer. Every copy-out printf
+/// (snprintf/sprintf/fprintf/printf/dprintf + v*) builds its result in a fresh
+/// `Vec` then discards it after copying to the destination — one alloc+free per
+/// call. The pool keeps a single reusable buffer so the steady-state per-call
+/// allocation is eliminated. Correctness is independent of pooling: the buffer
+/// is cleared on take (no stale bytes), [`ScratchVec`]'s `Drop` returns it only
+/// after all borrows end (borrow-checker enforced), and a missed return merely
+/// falls back to a fresh allocation.
+mod printf_out_pool {
+    use std::cell::Cell;
+    thread_local! {
+        static POOL: Cell<Option<Vec<u8>>> = const { Cell::new(None) };
+    }
+    pub(super) fn take() -> Vec<u8> {
+        POOL.with(|p| p.take()).map_or_else(
+            || Vec::with_capacity(256),
+            |mut v| {
+                v.clear();
+                v
+            },
+        )
+    }
+    pub(super) fn give(v: Vec<u8>) {
+        POOL.with(|p| {
+            // Single slot: keep whichever buffer has the larger capacity.
+            let keep = match p.take() {
+                Some(existing) if existing.capacity() >= v.capacity() => existing,
+                _ => v,
+            };
+            p.set(Some(keep));
+        });
+    }
+}
+
+/// A printf output buffer borrowed from [`printf_out_pool`]. Derefs to the inner
+/// `Vec<u8>` so existing callers that only read it (`.len()`, `.as_ptr()`,
+/// `&buf[..]`) are unaffected; on `Drop` the allocation returns to the pool for
+/// the next call. Callers that need to take ownership (e.g. `asprintf`) use
+/// [`ScratchVec::into_vec`], which removes the buffer from the pooling path.
+pub(crate) struct ScratchVec(Option<Vec<u8>>);
+
+impl ScratchVec {
+    fn new(v: Vec<u8>) -> Self {
+        ScratchVec(Some(v))
+    }
+    /// Take ownership of the underlying `Vec`, opting this buffer out of the
+    /// pool (its `Drop` will then be a no-op).
+    pub(crate) fn into_vec(mut self) -> Vec<u8> {
+        self.0.take().unwrap_or_default()
+    }
+}
+
+impl std::ops::Deref for ScratchVec {
+    type Target = Vec<u8>;
+    fn deref(&self) -> &Vec<u8> {
+        self.0.as_ref().expect("ScratchVec accessed after into_vec")
+    }
+}
+
+impl Drop for ScratchVec {
+    fn drop(&mut self) {
+        if let Some(v) = self.0.take() {
+            printf_out_pool::give(v);
+        }
+    }
+}
+
 ///
 /// Narrow entry point: `%ls` precision/width are BYTE counts (C99 §7.19.6.1).
 pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize) -> Vec<u8> {
@@ -3298,7 +3365,7 @@ pub(crate) unsafe fn render_wprintf(
 ) -> Vec<u8> {
     // Callers (wprintf/swprintf family) already parsed the format for argument
     // counting/extraction; render the pre-parsed segments rather than re-parsing.
-    unsafe { render_segments(segments, args, max_args, true) }
+    unsafe { render_segments(segments, args, max_args, true).into_vec() }
 }
 
 unsafe fn render_printf_impl(
@@ -3311,7 +3378,7 @@ unsafe fn render_printf_impl(
     // that already parsed the format (snprintf et al. parse it for arg counting)
     // can call render_segments directly and skip this redundant second parse.
     let segments = parse_format_string(fmt);
-    unsafe { render_segments(&segments, args, max_args, wide_output) }
+    unsafe { render_segments(&segments, args, max_args, wide_output).into_vec() }
 }
 
 /// Render already-parsed `segments` into a fresh buffer. Split out from
@@ -3323,8 +3390,8 @@ pub(crate) unsafe fn render_segments(
     args: *const u64,
     max_args: usize,
     wide_output: bool,
-) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(256);
+) -> ScratchVec {
+    let mut buf = printf_out_pool::take();
     let uses_positional = core_positional_printf_arg_plan(segments).is_some();
     let mut arg_idx = 0usize;
 
@@ -3600,7 +3667,7 @@ pub(crate) unsafe fn render_segments(
             }
         }
     }
-    buf
+    ScratchVec::new(buf)
 }
 
 pub(crate) fn write_all_fd(fd: c_int, data: &[u8]) -> bool {
