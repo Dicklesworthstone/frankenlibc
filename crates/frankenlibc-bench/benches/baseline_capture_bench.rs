@@ -316,6 +316,53 @@ fn bench_stdlib_abs(c: &mut Criterion) {
     group.finish();
 }
 
+#[inline(never)]
+fn scan_getopt_short_bundle(argv: &[&[u8]], optspec: &[u8]) -> i32 {
+    use frankenlibc_core::getopt::{GetoptState, StepOutcome, step_short};
+
+    let mut state = GetoptState::default();
+    let mut checksum = 0i32;
+    loop {
+        match step_short(argv, optspec, &mut state) {
+            StepOutcome::Done => break,
+            StepOutcome::Found { code, .. } => {
+                checksum = checksum.wrapping_mul(31).wrapping_add(code);
+            }
+            StepOutcome::LongRoute { arg } => {
+                let bytes = argv[arg.argv_idx];
+                let routed = bytes.get(arg.byte_offset).copied().unwrap_or_default();
+                checksum = checksum.wrapping_mul(31).wrapping_add(i32::from(routed));
+            }
+        }
+    }
+    checksum ^ state.optind as i32
+}
+
+fn bench_stdlib_getopt(c: &mut Criterion) {
+    let mode = mode_label();
+    let mut group = c.benchmark_group("stdlib_getopt");
+    let argv: [&[u8]; 7] = [
+        b"prog",
+        b"-abc",
+        b"-dVALUE",
+        b"-W",
+        b"color=auto",
+        b"-ef",
+        b"operand",
+    ];
+    let optspec = b"abc:d:efW;";
+
+    for _ in 0..10_000 {
+        black_box(scan_getopt_short_bundle(black_box(&argv), black_box(optspec)));
+    }
+
+    bench_symbol(&mut group, mode, "getopt_short_bundle_typical", "getopt", || {
+        black_box(scan_getopt_short_bundle(black_box(&argv), black_box(optspec)));
+    });
+
+    group.finish();
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // ERRNO FAMILY BENCHMARKS
 // ═══════════════════════════════════════════════════════════════════
@@ -416,7 +463,7 @@ criterion_group!(
         .warm_up_time(Duration::from_millis(1))
         .measurement_time(Duration::from_millis(500))
         .sample_size(50);
-    targets = bench_stdlib_atoi, bench_stdlib_abs
+    targets = bench_stdlib_atoi, bench_stdlib_abs, bench_stdlib_getopt
 );
 
 criterion_group!(

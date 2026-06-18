@@ -8,7 +8,7 @@
 //! The abi layer [`getopt`-shim](crate) marshals the global externs
 //! to/from this state across each call.
 
-use super::parse::{GetoptArgMode, getopt_arg_mode, getopt_is_w_extension, getopt_prefers_colon};
+use super::parse::{GetoptArgMode, getopt_prefers_colon, getopt_spec_match};
 
 /// Reference to a byte within `argv`, used to encode `optarg` and
 /// the bundled-short-option scan position without raw pointers.
@@ -196,7 +196,9 @@ pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> St
     // then hands it to the ABI layer (which owns the longopts table) via
     // `LongRoute`. This branch is reached ONLY when the optstring actually marks
     // `option` with a trailing `;`, so non-`W;` optstrings are unaffected.
-    if getopt_is_w_extension(optspec, option) {
+    let optspec_match = getopt_spec_match(optspec, option);
+
+    if optspec_match.is_some_and(|m| m.w_extension) {
         if !at_end {
             // Inline form `-Wfoo`: the spec is the rest of this argv element.
             let arg = ArgRef {
@@ -229,7 +231,7 @@ pub fn step_short(argv: &[&[u8]], optspec: &[u8], state: &mut GetoptState) -> St
         return StepOutcome::LongRoute { arg };
     }
 
-    match getopt_arg_mode(optspec, option) {
+    match optspec_match.map(|m| m.arg_mode) {
         None => {
             // Unknown option.
             state.optopt = option;
@@ -435,6 +437,24 @@ mod tests {
         let (codes, state, _) = run(&["prog", "-:"], "a:b");
         assert_eq!(codes, vec![b'?' as i32]);
         assert_eq!(state.optopt, b':');
+    }
+
+    #[test]
+    fn semicolon_metadata_is_not_a_selectable_option() {
+        let (codes, state, _) = run(&["prog", "-;"], "W;ab");
+        assert_eq!(codes, vec![b'?' as i32]);
+        assert_eq!(state.optopt, b';');
+    }
+
+    #[test]
+    fn first_duplicate_match_controls_w_extension_and_arg_mode() {
+        let (codes, _, args) = run(&["prog", "-W", "name=value"], "W;W:");
+        assert_eq!(codes, vec![-2]);
+        assert_eq!(args[0].as_deref(), Some("name=value"));
+
+        let (codes, _, args) = run(&["prog", "-aval"], "a:a::");
+        assert_eq!(codes, vec![b'a' as i32]);
+        assert_eq!(args[0].as_deref(), Some("val"));
     }
 
     #[test]

@@ -16,6 +16,15 @@ pub enum GetoptArgMode {
     Optional,
 }
 
+/// Fused classification for one optstring byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GetoptSpecMatch {
+    /// Argument mode selected by the first matching option byte.
+    pub arg_mode: GetoptArgMode,
+    /// GNU `W;`-style long-option route marker for the same byte.
+    pub w_extension: bool,
+}
+
 /// Returns `true` when `optspec` starts with `:`. POSIX: a leading
 /// colon makes getopt return `':'` (instead of `'?'`) for missing
 /// required arguments and silences the default error message.
@@ -32,6 +41,13 @@ pub fn getopt_prefers_colon(optspec: &[u8]) -> bool {
 ///   - `"X::"`   → [`GetoptArgMode::Optional`] (GNU)
 #[inline]
 pub fn getopt_arg_mode(optspec: &[u8], option: u8) -> Option<GetoptArgMode> {
+    getopt_spec_match(optspec, option).map(|m| m.arg_mode)
+}
+
+/// Look up an option byte once and classify both its argument mode and GNU
+/// `W;`-style long-option route marker.
+#[inline]
+pub(crate) fn getopt_spec_match(optspec: &[u8], option: u8) -> Option<GetoptSpecMatch> {
     for (idx, &byte) in optspec.iter().enumerate() {
         // ':' and ';' are optstring metacharacters, never selectable options
         // (glibc forces `c == ':' || c == ';'` to the unknown-option path). ';'
@@ -44,12 +60,16 @@ pub fn getopt_arg_mode(optspec: &[u8], option: u8) -> Option<GetoptArgMode> {
         }
         let requires = optspec.get(idx + 1).copied() == Some(b':');
         let optional = optspec.get(idx + 2).copied() == Some(b':');
-        return Some(if requires && optional {
+        let arg_mode = if requires && optional {
             GetoptArgMode::Optional
         } else if requires {
             GetoptArgMode::Required
         } else {
             GetoptArgMode::None
+        };
+        return Some(GetoptSpecMatch {
+            arg_mode,
+            w_extension: optspec.get(idx + 1).copied() == Some(b';'),
         });
     }
     None
@@ -63,16 +83,7 @@ pub fn getopt_arg_mode(optspec: &[u8], option: u8) -> Option<GetoptArgMode> {
 /// agree on which optspec byte a given option character refers to.
 #[inline]
 pub fn getopt_is_w_extension(optspec: &[u8], option: u8) -> bool {
-    for (idx, &byte) in optspec.iter().enumerate() {
-        if byte == b':' {
-            continue;
-        }
-        if byte != option {
-            continue;
-        }
-        return optspec.get(idx + 1).copied() == Some(b';');
-    }
-    false
+    getopt_spec_match(optspec, option).is_some_and(|m| m.w_extension)
 }
 
 #[cfg(test)]
@@ -85,6 +96,7 @@ mod tests {
         // `W;` marker, never `-;`.
         assert_eq!(getopt_arg_mode(b"W;ab", b';'), None);
         assert_eq!(getopt_arg_mode(b";", b';'), None);
+        assert!(!getopt_is_w_extension(b";;", b';'));
         // The marker does not disturb a real option that follows it.
         assert_eq!(getopt_arg_mode(b"W;ab:", b'b'), Some(GetoptArgMode::Required));
         assert_eq!(getopt_arg_mode(b"W;ab", b'a'), Some(GetoptArgMode::None));
@@ -100,6 +112,17 @@ mod tests {
         assert!(!getopt_is_w_extension(b"abc", b'W')); // absent
         // Any character may carry the marker, not just 'W'.
         assert!(getopt_is_w_extension(b"X;ab", b'X'));
+    }
+
+    #[test]
+    fn fused_lookup_preserves_first_match_for_duplicates() {
+        let w = getopt_spec_match(b"W;W:a", b'W').expect("first W selected");
+        assert_eq!(w.arg_mode, GetoptArgMode::None);
+        assert!(w.w_extension);
+
+        let a = getopt_spec_match(b"a:a::", b'a').expect("first a selected");
+        assert_eq!(a.arg_mode, GetoptArgMode::Required);
+        assert!(!a.w_extension);
     }
 
     #[test]
