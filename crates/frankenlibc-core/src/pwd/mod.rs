@@ -62,39 +62,37 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
         return None;
     }
 
-    let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
     // glibc requires only the first four fields (name:passwd:uid:gid); gecos,
-    // dir, and shell are optional and default to empty. When more than seven
-    // fields appear, the final field (shell) absorbs the extra colons, so
-    // "u:x:1:2:3:4:5:6:7" yields shell "5:6:7".
-    if fields.len() < 4 {
-        return None;
-    }
+    // dir, and shell are optional and default to empty. `splitn(7)` preserves
+    // the old "shell absorbs extra colons" contract without collecting every
+    // field or rebuilding the tail, so "u:x:1:2:3:4:5:6:7" yields shell
+    // "5:6:7".
+    let mut fields = line.splitn(7, |&b| b == b':');
+    let name = fields.next()?;
+    let passwd = fields.next()?;
+    let uid_field = fields.next()?;
+    let gid_field = fields.next()?;
 
-    let uid = parse_u32_decimal(fields[2])?;
-    let gid = parse_u32_decimal(fields[3])?;
+    let uid = parse_u32_decimal(uid_field)?;
+    let gid = parse_u32_decimal(gid_field)?;
 
     // Name must be non-empty
-    if fields[0].is_empty() {
+    if name.is_empty() {
         return None;
     }
 
-    let gecos = fields.get(4).copied().unwrap_or(b"");
-    let dir = fields.get(5).copied().unwrap_or(b"");
-    let shell = if fields.len() > 6 {
-        fields[6..].join(b":".as_slice())
-    } else {
-        Vec::new()
-    };
+    let gecos = fields.next().unwrap_or(b"");
+    let dir = fields.next().unwrap_or(b"");
+    let shell = fields.next().unwrap_or(b"");
 
     Some(Passwd {
-        pw_name: fields[0].to_vec(),
-        pw_passwd: fields[1].to_vec(),
+        pw_name: name.to_vec(),
+        pw_passwd: passwd.to_vec(),
         pw_uid: uid,
         pw_gid: gid,
         pw_gecos: gecos.to_vec(),
         pw_dir: dir.to_vec(),
-        pw_shell: shell,
+        pw_shell: shell.to_vec(),
     })
 }
 
@@ -114,10 +112,18 @@ fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
     if let [b'+', rest @ ..] = s {
         s = rest;
     }
-    if s.is_empty() || !s.iter().all(u8::is_ascii_digit) {
+    if s.is_empty() {
         return None;
     }
-    core::str::from_utf8(s).ok()?.parse::<u32>().ok()
+    let mut value = 0u32;
+    for &byte in s {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        let digit = u32::from(byte - b'0');
+        value = value.checked_mul(10)?.checked_add(digit)?;
+    }
+    Some(value)
 }
 
 /// Look up a passwd entry by username.
@@ -304,6 +310,22 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     }
 
     #[test]
+    fn splitn_scanner_preserves_empty_optionals_and_shell_tail() {
+        let minimal = parse_passwd_line(b"u:x:1:2").unwrap();
+        assert_eq!(minimal.pw_gecos, b"");
+        assert_eq!(minimal.pw_dir, b"");
+        assert_eq!(minimal.pw_shell, b"");
+
+        let empty_optionals = parse_passwd_line(b"u:x:1:2:::").unwrap();
+        assert_eq!(empty_optionals.pw_gecos, b"");
+        assert_eq!(empty_optionals.pw_dir, b"");
+        assert_eq!(empty_optionals.pw_shell, b"");
+
+        let shell_tail = parse_passwd_line(b"u:x:1:2:gecos:/home/u:/bin/sh:arg:tail").unwrap();
+        assert_eq!(shell_tail.pw_shell, b"/bin/sh:arg:tail");
+    }
+
+    #[test]
     fn reject_too_few_fields() {
         assert!(parse_passwd_line(b"root:x:0").is_none()); // 3 fields
     }
@@ -418,6 +440,14 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
         let entry = parse_passwd_line(b"biguser:x:4294967295:4294967295::/:/bin/sh").unwrap();
         assert_eq!(entry.pw_uid, u32::MAX);
         assert_eq!(entry.pw_gid, u32::MAX);
+    }
+
+    #[test]
+    fn uid_gid_byte_parser_rejects_junk_sign_and_overflow() {
+        assert!(parse_passwd_line(b"root:x:1000 :0:root:/root:/bin/sh").is_none());
+        assert!(parse_passwd_line(b"root:x:-1:0:root:/root:/bin/sh").is_none());
+        assert!(parse_passwd_line(b"root:x:4294967296:0:root:/root:/bin/sh").is_none());
+        assert!(parse_passwd_line(b"root:x:0:4294967296:root:/root:/bin/sh").is_none());
     }
 
     #[test]

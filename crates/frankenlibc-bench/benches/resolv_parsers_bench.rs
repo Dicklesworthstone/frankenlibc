@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use frankenlibc_core::aliases;
 use frankenlibc_core::netgroup;
+use frankenlibc_core::pwd;
 use frankenlibc_core::resolv;
 
 const SAMPLES: usize = 100;
@@ -115,6 +116,7 @@ const SERVICES_LINE: &[u8] = b"http            80/tcp   www www-http   # World W
 const PROTOCOLS_LINE: &[u8] = b"tcp     6       TCP             # transmission control protocol";
 const NETWORKS_LINE: &[u8] = b"link-local      169.254.0.0     localnet";
 const ALIASES_LINE: &[u8] = b"postmaster: root, admin, oncall@example.com";
+const PASSWD_LINE: &[u8] = b"ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash";
 const PROC_NET_ROUTE: &[u8] = b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n\
 lo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n\
 eth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
@@ -185,6 +187,18 @@ fn bench_parse_aliases_line() {
     );
 }
 
+fn bench_parse_passwd_line() {
+    measure(
+        "parse_passwd_line_typical",
+        SAMPLES,
+        ITERS_PER_SAMPLE,
+        || {
+            let r = pwd::parse_passwd_line(black_box(PASSWD_LINE));
+            black_box(r);
+        },
+    );
+}
+
 fn bench_parse_proc_net_route_has_ipv4() {
     measure(
         "parse_proc_net_route_has_ipv4_typical",
@@ -216,6 +230,7 @@ fn main() {
     bench_parse_protocols_line();
     bench_parse_networks_line();
     bench_parse_aliases_line();
+    bench_parse_passwd_line();
     bench_parse_proc_net_route_has_ipv4();
     bench_parse_netgroup_triples();
 }
