@@ -156,6 +156,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     res_send,
     rexec,
     rexec_af,
+    revoke,
     ruserok,
     ruserok_af,
     ruserpass,
@@ -185,6 +186,8 @@ unsafe extern "C" {
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
     #[link_name = "stty"]
     fn host_stty(fd: c_int, params: *const c_void) -> c_int;
+    #[link_name = "revoke"]
+    fn host_revoke(path: *const c_char) -> c_int;
     #[link_name = "setlogin"]
     fn host_setlogin(name: *const c_char) -> c_int;
     #[link_name = "vlimit"]
@@ -301,6 +304,25 @@ fn bsd_path_and_login_stubs_match_host_enosys() {
             (fl_setlogin_result, fl_setlogin_errno),
             (-1, libc::ENOSYS)
         );
+    }
+}
+
+#[test]
+fn revoke_stub_matches_host_enosys() {
+    let path = CString::new("/nonexistent/frankenlibc-revoke").unwrap();
+
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_result = host_revoke(path.as_ptr());
+        let host_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_result = revoke(path.as_ptr());
+        let fl_errno = errno_value();
+
+        assert_eq!((fl_result, fl_errno), (host_result, host_errno));
+        assert_eq!((fl_result, fl_errno), (-1, libc::ENOSYS));
     }
 }
 
