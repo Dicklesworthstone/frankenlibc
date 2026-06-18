@@ -983,11 +983,6 @@ fn parse_digits(input: &[u8], pos: usize, max_digits: usize) -> Option<(i32, usi
     let mut val: i32 = 0;
     let mut count = 0usize;
     let mut p = pos;
-    // glibc's get_number skips leading whitespace before the digits for every
-    // numeric directive (%Y/%C/%y included). Mirror that.
-    while p < input.len() && input[p].is_ascii_whitespace() {
-        p += 1;
-    }
     while count < max_digits && p < input.len() {
         let ch = input[p];
         if ch.is_ascii_digit() {
@@ -1017,12 +1012,6 @@ fn parse_digits_bounded(
     let mut val: i32 = 0;
     let mut count = 0usize;
     let mut p = pos;
-    // glibc's get_number macro skips leading whitespace before the digits for
-    // every numeric directive (so e.g. blank-padded `%k`/`%l` and any field with
-    // leading spaces parse). Mirror that.
-    while p < input.len() && input[p].is_ascii_whitespace() {
-        p += 1;
-    }
     while count < max_digits && p < input.len() {
         let ch = input[p];
         if !ch.is_ascii_digit() {
@@ -1288,6 +1277,8 @@ pub unsafe extern "C" fn strptime(
                     | b'w'
                     | b'u'
                     | b'z'
+                    | b'k'
+                    | b'l'
             ) {
                 si = skip_ws(input, si);
             }
