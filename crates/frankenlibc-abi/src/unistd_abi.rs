@@ -25446,9 +25446,33 @@ pub unsafe extern "C" fn mbrtoc8(
 // pkey extras
 // ===========================================================================
 
+const PKEY_REGISTER_COUNT: c_int = 16;
+const PKEY_RIGHTS_MASK: c_int = 0x3;
+
+#[inline]
+fn checked_pkey_register_index(pkey: c_int) -> Option<u32> {
+    if !(0..PKEY_REGISTER_COUNT).contains(&pkey) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return None;
+    }
+    Some(pkey as u32)
+}
+
+#[inline]
+fn pkey_rights_are_valid(rights: c_int) -> bool {
+    if rights & !PKEY_RIGHTS_MASK != 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return false;
+    }
+    true
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[cfg(target_arch = "x86_64")]
 pub unsafe extern "C" fn pkey_get(pkey: c_int) -> c_int {
+    let Some(register_index) = checked_pkey_register_index(pkey) else {
+        return -1;
+    };
     // Read PKRU register via RDPKRU
     // Fallback: use the syscall interface
     let pkru: u32;
@@ -25462,13 +25486,19 @@ pub unsafe extern "C" fn pkey_get(pkey: c_int) -> c_int {
         );
     }
     // Extract the 2 bits for this pkey
-    let shift = pkey as u32 * 2;
+    let shift = register_index * 2;
     ((pkru >> shift) & 0x3) as c_int
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[cfg(target_arch = "x86_64")]
 pub unsafe extern "C" fn pkey_set(pkey: c_int, rights: c_int) -> c_int {
+    let Some(register_index) = checked_pkey_register_index(pkey) else {
+        return -1;
+    };
+    if !pkey_rights_are_valid(rights) {
+        return -1;
+    }
     let mut pkru: u32;
     let edx: u32;
     unsafe {
@@ -25480,7 +25510,7 @@ pub unsafe extern "C" fn pkey_set(pkey: c_int, rights: c_int) -> c_int {
             out("edx") edx,
         );
     }
-    let shift = pkey as u32 * 2;
+    let shift = register_index * 2;
     pkru &= !(0x3 << shift);
     pkru |= (rights as u32 & 0x3) << shift;
     unsafe {
