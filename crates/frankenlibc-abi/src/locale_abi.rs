@@ -142,6 +142,7 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
 
     // Validate category.
     if !locale_core::valid_category(category) {
+        unsafe { set_abi_errno(libc::EINVAL) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 5, true);
         return std::ptr::null();
     }
@@ -724,6 +725,19 @@ mod tests {
         assert!(!result.is_null());
         let name = unsafe { CStr::from_ptr(result) }.to_bytes();
         assert_eq!(name, b"C");
+    }
+
+    #[test]
+    fn setlocale_invalid_category_sets_einval() {
+        let c_name = b"C\0";
+        unsafe { set_abi_errno(0) };
+        // SAFETY: The locale string is NUL-terminated; the category is invalid.
+        let result = unsafe { setlocale(-1, c_name.as_ptr() as *const c_char) };
+        assert!(result.is_null());
+        assert_eq!(
+            unsafe { *crate::errno_abi::__errno_location() },
+            libc::EINVAL
+        );
     }
 
     #[test]
