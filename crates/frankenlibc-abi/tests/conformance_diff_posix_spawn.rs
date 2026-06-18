@@ -35,6 +35,7 @@ unsafe extern "C" {
     fn posix_spawn_file_actions_destroy(file_actions: *mut c_void) -> c_int;
     fn posix_spawnattr_init(attrp: *mut c_void) -> c_int;
     fn posix_spawnattr_destroy(attrp: *mut c_void) -> c_int;
+    fn posix_spawnattr_setflags(attrp: *mut c_void, flags: libc::c_short) -> c_int;
 }
 
 const FA_BYTES: usize = 128;
@@ -264,6 +265,34 @@ fn diff_attr_init_destroy_round_trip() {
     let r_destroy_lc = unsafe { posix_spawnattr_destroy(a.as_mut_ptr() as *mut c_void) };
     assert_eq!(r_init_lc, 0, "lc init");
     assert_eq!(r_destroy_lc, 0, "lc destroy");
+}
+
+/// posix_spawnattr_setflags must reject flag words containing bits outside the
+/// known set (glibc returns EINVAL; fl previously stored any value). bd-lkvixl.
+#[test]
+fn diff_spawnattr_setflags_validates_flags() {
+    // ALL_FLAGS == 0x1FF (RESETIDS..SETSID..SETCGROUP). Bits at/above 0x200 are
+    // invalid; the all-valid word is accepted.
+    let cases: &[libc::c_short] = &[
+        0,
+        0x01,        // RESETIDS
+        0x1FF,       // every defined flag
+        0x80,        // SETSID
+        0x200,       // first invalid bit -> EINVAL
+        0x400,       // invalid
+        0x1FF | 0x200, // valid bits + one invalid -> EINVAL
+    ];
+    for &flags in cases {
+        let mut a_fl = vec![0u8; ATTR_BYTES];
+        let mut a_g = vec![0u8; ATTR_BYTES];
+        assert_eq!(unsafe { fl::posix_spawnattr_init(a_fl.as_mut_ptr() as *mut c_void) }, 0);
+        assert_eq!(unsafe { posix_spawnattr_init(a_g.as_mut_ptr() as *mut c_void) }, 0);
+        let r_fl = unsafe { fl::posix_spawnattr_setflags(a_fl.as_mut_ptr() as *mut c_void, flags) };
+        let r_g = unsafe { posix_spawnattr_setflags(a_g.as_mut_ptr() as *mut c_void, flags) };
+        assert_eq!(r_fl, r_g, "setflags(0x{flags:x}): fl={r_fl} glibc={r_g}");
+        unsafe { fl::posix_spawnattr_destroy(a_fl.as_mut_ptr() as *mut c_void) };
+        unsafe { posix_spawnattr_destroy(a_g.as_mut_ptr() as *mut c_void) };
+    }
 }
 
 #[test]
