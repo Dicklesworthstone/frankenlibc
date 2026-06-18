@@ -3,16 +3,20 @@
 
 //! Differential coverage for x86_64 pkey invalid-argument handling.
 //!
-//! Invalid pkey IDs and rights masks must fail before touching PKRU. This keeps
-//! the error path deterministic even on hosts where valid pkey operations are
-//! unavailable or would mutate process-local access state.
+//! Invalid pkey IDs, rights masks, allocation flags, and mprotect keys must
+//! fail before touching PKRU or consuming protection keys. This keeps the error
+//! path deterministic even on hosts where valid pkey operations are unavailable
+//! or would mutate process-local access state.
 
-use std::ffi::c_int;
+use std::ffi::{c_int, c_uint, c_void};
 
 use frankenlibc_abi::{errno_abi, unistd_abi as fl};
 
 unsafe extern "C" {
+    fn pkey_alloc(flags: c_uint, access_rights: c_uint) -> c_int;
+    fn pkey_free(pkey: c_int) -> c_int;
     fn pkey_get(pkey: c_int) -> c_int;
+    fn pkey_mprotect(addr: *mut c_void, len: usize, prot: c_int, pkey: c_int) -> c_int;
     fn pkey_set(pkey: c_int, rights: c_int) -> c_int;
 }
 
@@ -107,4 +111,58 @@ fn pkey_invalid_arguments_match_glibc_einval() {
             case.name()
         );
     }
+}
+
+#[test]
+fn pkey_alloc_free_mprotect_invalid_arguments_match_glibc() {
+    clear_errnos();
+    let glibc_ret = unsafe { pkey_alloc(1, 0) };
+    let glibc_err = host_errno();
+    clear_errnos();
+    let fl_ret = unsafe { fl::pkey_alloc(1, 0) };
+    let fl_err = fl_errno();
+    assert_eq!(fl_ret, -1, "pkey_alloc(invalid flags) should fail");
+    assert_eq!(glibc_ret, -1, "host pkey_alloc(invalid flags) should fail");
+    assert_eq!(
+        (fl_ret, fl_err),
+        (glibc_ret, glibc_err),
+        "pkey_alloc(invalid flags): fl=({fl_ret}, {fl_err}) \
+         glibc=({glibc_ret}, {glibc_err})"
+    );
+
+    clear_errnos();
+    let glibc_ret = unsafe { pkey_free(-1) };
+    let glibc_err = host_errno();
+    clear_errnos();
+    let fl_ret = unsafe { fl::pkey_free(-1) };
+    let fl_err = fl_errno();
+    assert_eq!(fl_ret, -1, "pkey_free(-1) should fail");
+    assert_eq!(glibc_ret, -1, "host pkey_free(-1) should fail");
+    assert_eq!(
+        (fl_ret, fl_err),
+        (glibc_ret, glibc_err),
+        "pkey_free(-1): fl=({fl_ret}, {fl_err}) glibc=({glibc_ret}, {glibc_err})"
+    );
+
+    clear_errnos();
+    let glibc_ret =
+        unsafe { pkey_mprotect(std::ptr::null_mut(), 4096, libc::PROT_READ, -1) };
+    let glibc_err = host_errno();
+    clear_errnos();
+    let fl_ret = unsafe { fl::pkey_mprotect(std::ptr::null_mut(), 4096, libc::PROT_READ, -1) };
+    let fl_err = fl_errno();
+    assert_eq!(
+        fl_ret, -1,
+        "pkey_mprotect(NULL, invalid pkey) should fail"
+    );
+    assert_eq!(
+        glibc_ret, -1,
+        "host pkey_mprotect(NULL, invalid pkey) should fail"
+    );
+    assert_eq!(
+        (fl_ret, fl_err),
+        (glibc_ret, glibc_err),
+        "pkey_mprotect(NULL, invalid pkey): fl=({fl_ret}, {fl_err}) \
+         glibc=({glibc_ret}, {glibc_err})"
+    );
 }

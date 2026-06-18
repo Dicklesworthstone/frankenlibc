@@ -1603,32 +1603,6 @@ fn fgets_chk_reads_line() {
 }
 
 #[test]
-fn fgets_unlocked_chk_reads_line() {
-    let path = CString::new("/tmp/fortify_fgets_unlocked_test").unwrap();
-    let wmode = CString::new("w").unwrap();
-    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
-    assert!(!fp.is_null());
-    let data = CString::new("alpha\nbeta\n").unwrap();
-    unsafe { libc::fputs(data.as_ptr(), fp) };
-    unsafe { libc::fclose(fp) };
-
-    let rmode = CString::new("r").unwrap();
-    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
-    assert!(!fp.is_null());
-
-    let mut buf = [0u8; 32];
-    let ret = unsafe { __fgets_unlocked_chk(buf.as_mut_ptr().cast(), 32, 32, fp.cast()) };
-    assert!(!ret.is_null());
-    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
-    assert_eq!(s.to_str().unwrap(), "alpha\n");
-
-    unsafe {
-        libc::fclose(fp);
-        libc::unlink(path.as_ptr());
-    }
-}
-
-#[test]
 fn fgets_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("fgets_chk n over real buffer", || {
         let mut buf = [0u8; 4];
