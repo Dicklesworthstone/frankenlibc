@@ -2516,6 +2516,10 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_RE_DUP_MAX => 32767,
         libc::_SC_2_VERSION => 200809,
         libc::_SC_VERSION => 200809,
+        // X/Open issue 7 (XPG7 / SUSv4): glibc returns _XOPEN_VERSION == 700.
+        // fl had no arm, so this fell through to the EINVAL default (-1).
+        // bd-mjct6o.
+        libc::_SC_XOPEN_VERSION => 700,
         libc::_SC_THREAD_SAFE_FUNCTIONS => 1,
         // _SC_THREADS reports the supported _POSIX_THREADS version (200809L),
         // not a boolean — glibc returns 200809; fl previously returned 1.
