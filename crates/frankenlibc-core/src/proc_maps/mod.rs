@@ -38,24 +38,54 @@ pub struct MapsEntry<'a> {
 }
 
 fn parse_hex_usize(field: &str) -> Option<usize> {
-    if field.is_empty() || !field.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
+    let mut value = 0usize;
+    for b in field.bytes() {
+        let digit = hex_value(b)? as usize;
+        value = value.checked_mul(16)?.checked_add(digit)?;
     }
-    usize::from_str_radix(field, 16).ok()
+    if field.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn parse_hex_u64(field: &str) -> Option<u64> {
-    if field.is_empty() || !field.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
+    let mut value = 0u64;
+    for b in field.bytes() {
+        let digit = hex_value(b)? as u64;
+        value = value.checked_mul(16)?.checked_add(digit)?;
     }
-    u64::from_str_radix(field, 16).ok()
+    if field.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn parse_decimal_u64(field: &str) -> Option<u64> {
-    if field.is_empty() || !field.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+    let mut value = 0u64;
+    for b in field.bytes() {
+        let digit = b.checked_sub(b'0')?;
+        if digit > 9 {
+            return None;
+        }
+        value = value.checked_mul(10)?.checked_add(digit as u64)?;
     }
-    field.parse::<u64>().ok()
+    if field.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn hex_value(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Peel the five mandatory whitespace-separated fields off the front
@@ -291,6 +321,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_rejects_numeric_overflow() {
+        assert!(
+            parse_maps_line("10000000000000000-10000000000001000 r--p 0 00:00 0").is_none()
+        );
+        assert!(
+            parse_maps_line("400000-401000 r--p 10000000000000000 00:00 0").is_none()
+        );
+        assert!(
+            parse_maps_line(
+                "400000-401000 r--p 0 00:00 18446744073709551616 /bin/cat"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn parse_handles_high_64bit_addresses() {
         let line = "ffffffff80000000-ffffffff80100000 r-xp 00000000 00:00 0 [kernel]";
         let e = parse_maps_line(line).unwrap();
@@ -335,6 +381,13 @@ mod tests {
     fn range_rejects_non_hex() {
         assert!(parse_maps_range("xyz-401000 r--p 0 00:00 0").is_none());
         assert!(parse_maps_range("400000-xyz r--p 0 00:00 0").is_none());
+    }
+
+    #[test]
+    fn range_rejects_numeric_overflow() {
+        assert!(
+            parse_maps_range("10000000000000000-10000000000001000 r--p 0 00:00 0").is_none()
+        );
     }
 
     #[test]
