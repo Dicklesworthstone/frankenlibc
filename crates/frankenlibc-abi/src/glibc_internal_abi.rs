@@ -1666,29 +1666,44 @@ pub unsafe extern "C" fn __res_state() -> *mut c_void {
 // res_*ok: DNS name validation (RFC 1035/952 character checks)
 // ==========================================================================
 
+fn hostname_labels_ok(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+
+    let mut label_len: usize = 0;
+    let mut last = b'.';
+    for &c in bytes {
+        if c == b'.' {
+            if label_len == 0 || last == b'-' {
+                return false;
+            }
+            label_len = 0;
+            last = c;
+        } else if c.is_ascii_alphanumeric() || c == b'-' {
+            if label_len == 0 && c == b'-' {
+                return false;
+            }
+            label_len += 1;
+            if label_len > 63 {
+                return false;
+            }
+            last = c;
+        } else {
+            return false;
+        }
+    }
+
+    label_len != 0 && last != b'-'
+}
+
 // res_hnok: hostname — letters, digits, hyphens only (RFC 952)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_hnok(dn: *const c_char) -> c_int {
     let Some(bytes) = (unsafe { dns_c_string_bytes(dn) }) else {
         return 0;
     };
-    let mut len: usize = 0;
-    for &c in &bytes {
-        if c == b'.' {
-            if len == 0 {
-                return 0; // Empty label
-            }
-            len = 0;
-        } else if c.is_ascii_alphanumeric() || c == b'-' {
-            len += 1;
-            if len > 63 {
-                return 0; // Label too long
-            }
-        } else {
-            return 0; // Invalid character for hostname
-        }
-    }
-    1
+    c_int::from(hostname_labels_ok(&bytes))
 }
 
 // res_dnok: domain name — like hostname but allows underscores

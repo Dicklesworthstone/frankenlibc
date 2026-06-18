@@ -917,6 +917,22 @@ fn res_hnok_rejects_invalid_hostnames() {
 }
 
 #[test]
+fn res_hnok_matches_host_label_boundaries() {
+    for raw in [
+        "",
+        "-bad.example",
+        "bad-.example",
+        "example.com.",
+        "two..dots",
+    ] {
+        let name = CString::new(raw).unwrap();
+        let host = unsafe { host_res_hnok(name.as_ptr()) };
+        let fl = unsafe { res_hnok(name.as_ptr()) };
+        assert_eq!(fl, host, "res_hnok({raw:?})");
+    }
+}
+
+#[test]
 fn res_dnok_accepts_underscores() {
     for raw in ["_sip._tcp.example.com", "example.com"] {
         let name = CString::new(raw).unwrap();
@@ -924,6 +940,16 @@ fn res_dnok_accepts_underscores() {
         let fl = unsafe { res_dnok(name.as_ptr()) };
         assert_eq!(fl, host, "res_dnok({raw})");
         assert_eq!(fl, 1, "res_dnok({raw}) expected acceptance");
+    }
+}
+
+#[test]
+fn res_dnok_matches_host_empty_label_rejections() {
+    for raw in ["two..dots", "bad name"] {
+        let name = CString::new(raw).unwrap();
+        let host = unsafe { host_res_dnok(name.as_ptr()) };
+        let fl = unsafe { res_dnok(name.as_ptr()) };
+        assert_eq!(fl, host, "res_dnok({raw:?})");
     }
 }
 
