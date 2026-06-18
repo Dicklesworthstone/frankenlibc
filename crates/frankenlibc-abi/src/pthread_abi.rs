@@ -3930,14 +3930,28 @@ pub unsafe extern "C" fn pthread_condattr_getclock(
 
 // --- Rwlock attributes --- native implementation
 //
-// pthread_rwlockattr_t is 8 bytes. We store the kind (reader/writer preference)
-// in the first c_int. Default is PREFER_READER.
+// pthread_rwlockattr_t is 8 bytes. We pack the attribute state into the first
+// c_int: bit 0 = pshared, bits 1-2 = the reader/writer-preference kind (0/1/2),
+// bit 8 = a validity marker set by init. Default is PREFER_READER (kind 0).
 
 const RWLOCKATTR_VALID_BIT: c_int = 1 << 8;
 const RWLOCKATTR_PSHARED_BIT: c_int = 1 << 0;
+const RWLOCKATTR_KIND_SHIFT: c_int = 1;
+const RWLOCKATTR_KIND_MASK: c_int = 0b11 << RWLOCKATTR_KIND_SHIFT; // bits 1-2
 
-fn rwlockattr_word_valid(word: c_int) -> bool {
+pub(crate) fn rwlockattr_word_valid(word: c_int) -> bool {
     word & RWLOCKATTR_VALID_BIT != 0
+}
+
+/// Replace the kind field (bits 1-2) of an encoded rwlockattr word, preserving
+/// the validity and pshared bits. `kind` must already be range-checked (0..=2).
+pub(crate) fn rwlockattr_with_kind(word: c_int, kind: c_int) -> c_int {
+    (word & !RWLOCKATTR_KIND_MASK) | ((kind << RWLOCKATTR_KIND_SHIFT) & RWLOCKATTR_KIND_MASK)
+}
+
+/// Extract the reader/writer-preference kind (0/1/2) from an encoded word.
+pub(crate) fn rwlockattr_kind(word: c_int) -> c_int {
+    (word & RWLOCKATTR_KIND_MASK) >> RWLOCKATTR_KIND_SHIFT
 }
 
 fn encode_rwlockattr(pshared: c_int) -> Option<c_int> {
@@ -5512,9 +5526,12 @@ pub unsafe extern "C" fn pthread_rwlockattr_setpshared(
     let Some(next_word) = encode_rwlockattr(pshared) else {
         return libc::EINVAL;
     };
+    // Preserve the kind field (bits 1-2) across a pshared change — re-encoding
+    // only rebuilds the validity + pshared bits.
+    let kind_bits = word & RWLOCKATTR_KIND_MASK;
     // SAFETY: attr is non-null.
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
-    *word = next_word;
+    *word = next_word | kind_bits;
     0
 }
 

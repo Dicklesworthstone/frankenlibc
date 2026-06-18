@@ -385,8 +385,14 @@ pub unsafe extern "C" fn pthread_rwlockattr_getkind_np(
     if attr.is_null() || kind.is_null() {
         return libc::EINVAL;
     }
-    // Default: prefer readers (PTHREAD_RWLOCK_PREFER_READER_NP = 0)
-    unsafe { *kind = 0 };
+    // Return the preference stored by setkind_np (default PREFER_READER = 0).
+    // glibc round-trips the kind through the attribute object; fl previously
+    // always returned 0 regardless of what was set. bd-cykuni.
+    let word = unsafe { *(attr as *const c_int) };
+    if !super::pthread_abi::rwlockattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    unsafe { *kind = super::pthread_abi::rwlockattr_kind(word) };
     0
 }
 // pthread_rwlockattr_setkind_np: set rwlock scheduling preference
@@ -395,7 +401,14 @@ pub unsafe extern "C" fn pthread_rwlockattr_setkind_np(attr: *mut c_void, kind: 
     if attr.is_null() || !(0..=2).contains(&kind) {
         return libc::EINVAL;
     }
-    // Accept but our rwlock uses a fixed strategy
+    // Store the preference in the attribute so getkind_np round-trips it, like
+    // glibc. (fl's rwlock itself uses a fixed strategy, but the attribute API
+    // must still report back what was set.) bd-cykuni.
+    let word = unsafe { *(attr as *const c_int) };
+    if !super::pthread_abi::rwlockattr_word_valid(word) {
+        return libc::EINVAL;
+    }
+    unsafe { *(attr as *mut c_int) = super::pthread_abi::rwlockattr_with_kind(word, kind) };
     0
 }
 // pthread_setschedprio: native — set thread scheduling priority
