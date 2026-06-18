@@ -101,13 +101,52 @@ pub fn parse_hosts_line(line: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
         return None;
     }
 
-    // Validate the address is a real IP
-    let addr_str = core::str::from_utf8(addr_field).ok()?;
-    if addr_str.parse::<Ipv4Addr>().is_ok() || addr_str.parse::<Ipv6Addr>().is_ok() {
+    // Validate the address is a real IP. IPv4 hosts rows dominate the hot
+    // /etc/hosts path, so keep them on bytes and reserve UTF-8 parsing for IPv6.
+    let valid_addr = is_valid_ipv4_addr_bytes(addr_field)
+        || core::str::from_utf8(addr_field)
+            .ok()
+            .is_some_and(|addr| addr.parse::<Ipv6Addr>().is_ok());
+    if valid_addr {
         Some((addr_field.to_vec(), hostnames))
     } else {
         None
     }
+}
+
+fn is_valid_ipv4_addr_bytes(bytes: &[u8]) -> bool {
+    let mut index = 0usize;
+    for part in 0..4 {
+        let start = index;
+        let mut value = 0u32;
+        while let Some(&b) = bytes.get(index) {
+            if b == b'.' {
+                break;
+            }
+            if !b.is_ascii_digit() {
+                return false;
+            }
+            value = value * 10 + u32::from(b - b'0');
+            if value > 255 {
+                return false;
+            }
+            index += 1;
+        }
+        if index == start {
+            return false;
+        }
+        if index - start > 1 && bytes[start] == b'0' {
+            return false;
+        }
+        if part == 3 {
+            return index == bytes.len();
+        }
+        if bytes.get(index) != Some(&b'.') {
+            return false;
+        }
+        index += 1;
+    }
+    false
 }
 
 /// Look up a hostname in /etc/hosts content.
@@ -813,6 +852,38 @@ mod tests {
     }
 
     #[test]
+    fn ipv4_byte_validator_matches_std_plain_dotted_contract() {
+        for sample in [
+            "0.0.0.0",
+            "127.0.0.1",
+            "192.168.1.1",
+            "255.255.255.255",
+        ] {
+            assert!(sample.parse::<std::net::Ipv4Addr>().is_ok());
+            assert!(is_valid_ipv4_addr_bytes(sample.as_bytes()));
+        }
+
+        for sample in [
+            "",
+            "1",
+            "1.2.3",
+            "1.2.3.4.5",
+            "1..2.3",
+            "256.0.0.1",
+            "+1.2.3.4",
+            "-1.2.3.4",
+            "01.2.3.4",
+            "1.02.3.4",
+            "1.2.03.4",
+            "1.2.3.004",
+            "1.2.3.4x",
+        ] {
+            assert!(sample.parse::<std::net::Ipv4Addr>().is_err());
+            assert!(!is_valid_ipv4_addr_bytes(sample.as_bytes()));
+        }
+    }
+
+    #[test]
     fn parse_hosts_ipv6() {
         let (addr, names) = parse_hosts_line(b"::1\tlocalhost6").unwrap();
         assert_eq!(addr, b"::1");
@@ -852,6 +923,11 @@ mod tests {
     #[test]
     fn parse_hosts_invalid_addr() {
         assert!(parse_hosts_line(b"not-an-ip hostname").is_none());
+    }
+
+    #[test]
+    fn parse_hosts_rejects_non_utf8_non_ipv4_address() {
+        assert!(parse_hosts_line(&[b'1', b'2', 0xff, b' ', b'h', b'o', b's', b't']).is_none());
     }
 
     // ---- lookup_hosts ----
