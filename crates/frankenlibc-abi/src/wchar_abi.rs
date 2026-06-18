@@ -4402,14 +4402,24 @@ pub unsafe extern "C" fn wcstold_l(
 // ===========================================================================
 
 /// `mbsinit` — test initial shift state.
-/// For UTF-8 (stateless encoding), always returns 1 (initial state).
+/// Returns nonzero iff `ps` is in the initial conversion state (or is NULL).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mbsinit(ps: *const c_void) -> c_int {
     if ps.is_null() {
         return 1;
     }
-    // UTF-8 is a stateless encoding; mbstate_t is always in initial state.
-    1
+    // UTF-8 itself is stateless, but FrankenLibC's restartable converters DO
+    // accumulate cross-call state in `*ps`: mbrtowc stores a pending partial
+    // multibyte prefix as a leading count byte at offset 0 (0 = none), and
+    // mbrtoc16/c16rtomb store a pending UTF-16 high surrogate as a u16 in bytes
+    // [6..8] (0 = none). glibc's mbsinit returns 0 ("not initial") whenever a
+    // conversion is mid-sequence, so we must too — returning 1 unconditionally
+    // was wrong and broke callers probing for incomplete input. bd-28s12s.
+    // SAFETY: ps is a valid mbstate_t (>= 8 bytes) per the C contract.
+    let raw = unsafe { (ps as *const u8).cast::<[u8; 8]>().read_unaligned() };
+    let partial_pending = raw[0] != 0;
+    let surrogate_pending = raw[6] != 0 || raw[7] != 0;
+    if partial_pending || surrogate_pending { 0 } else { 1 }
 }
 
 /// `mbrlen` — determine number of bytes in next multibyte character.
