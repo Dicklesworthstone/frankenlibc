@@ -7509,7 +7509,7 @@ pub unsafe extern "C" fn __times(buf: *mut c_void) -> c_long {
 // tr_break: obsolete regex debugging hook — no-op
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tr_break() {}
-// ttyslot: legacy — always returns -1 on modern Linux
+// ttyslot: legacy — glibc returns 0 when no utmp slot is found.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ttyslot() -> c_int {
     // glibc (misc/ttyslot.c, 4.3BSD) scans fds 0,1,2 for a terminal name via

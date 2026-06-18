@@ -5,6 +5,7 @@
 //!   - realpath / canonicalize_file_name (resolve symlinks + ..)
 //!   - isatty (detect terminal fd)
 //!   - ttyname / ttyname_r (resolve fd → /dev/pts/N)
+//!   - ttyslot (legacy utmp slot lookup)
 //!
 //! Bead: CONFORMANCE: libc realpath+isatty+ttyname diff matrix.
 
@@ -12,7 +13,7 @@ use std::ffi::{CStr, CString, c_char, c_int};
 use std::os::fd::AsRawFd;
 
 use frankenlibc_abi::errno_abi::__errno_location;
-use frankenlibc_abi::{stdlib_abi as fl_stdlib, unistd_abi as fl_uni};
+use frankenlibc_abi::{glibc_internal_abi as fl_gi, stdlib_abi as fl_stdlib, unistd_abi as fl_uni};
 
 unsafe extern "C" {
     fn realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char;
@@ -20,6 +21,7 @@ unsafe extern "C" {
     fn isatty(fd: c_int) -> c_int;
     fn ttyname(fd: c_int) -> *mut c_char;
     fn ttyname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int;
+    fn ttyslot() -> c_int;
     fn posix_openpt(flags: c_int) -> c_int;
     fn grantpt(fd: c_int) -> c_int;
     fn unlockpt(fd: c_int) -> c_int;
@@ -266,8 +268,19 @@ fn diff_ttyname_r_real_pty() {
 }
 
 #[test]
+fn diff_ttyslot_not_found_returns_zero() {
+    let r_fl = unsafe { fl_gi::ttyslot() };
+    let r_lc = unsafe { ttyslot() };
+    assert_eq!(
+        r_fl, r_lc,
+        "ttyslot not-found contract: fl={r_fl}, lc={r_lc}"
+    );
+    assert_eq!(r_fl, 0, "glibc returns 0 when no tty slot is found");
+}
+
+#[test]
 fn realpath_tty_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"realpath+isatty+ttyname\",\"reference\":\"glibc\",\"functions\":5,\"divergences\":0}}",
+        "{{\"family\":\"realpath+isatty+ttyname+ttyslot\",\"reference\":\"glibc\",\"functions\":6,\"divergences\":0}}",
     );
 }
