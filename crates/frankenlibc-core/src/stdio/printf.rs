@@ -598,17 +598,26 @@ pub enum FormatSegment<'a> {
     Spec(FormatSpec),
 }
 
-/// Parsed printf segments with a no-heap fast path for one-segment formats.
+/// Inline capacity before spilling to the heap. Most format strings have only a
+/// handful of segments (a few literals interleaved with conversions), so 8
+/// inline slots keep the common multi-segment case (e.g. `"%s: %d\n"`)
+/// allocation-free. `FormatSegment` is `Copy`, so the inline array needs no
+/// `unsafe`/`MaybeUninit`.
+const INLINE_SEGMENTS: usize = 8;
+
+/// Parsed printf segments with a no-heap fast path for small formats.
 #[derive(Debug, Clone)]
 pub struct FormatSegments<'a> {
-    first: Option<FormatSegment<'a>>,
+    inline: [FormatSegment<'a>; INLINE_SEGMENTS],
+    inline_len: usize,
     heap: Option<Vec<FormatSegment<'a>>>,
 }
 
 impl<'a> FormatSegments<'a> {
     pub fn new() -> Self {
         Self {
-            first: None,
+            inline: [FormatSegment::Percent; INLINE_SEGMENTS],
+            inline_len: 0,
             heap: None,
         }
     }
@@ -616,7 +625,7 @@ impl<'a> FormatSegments<'a> {
     pub fn as_slice(&self) -> &[FormatSegment<'a>] {
         match &self.heap {
             Some(heap) => heap.as_slice(),
-            None => self.first.as_slice(),
+            None => &self.inline[..self.inline_len],
         }
     }
 
@@ -626,13 +635,16 @@ impl<'a> FormatSegments<'a> {
             return;
         }
 
-        if self.first.is_none() {
-            self.first = Some(segment);
+        if self.inline_len < INLINE_SEGMENTS {
+            self.inline[self.inline_len] = segment;
+            self.inline_len += 1;
             return;
         }
 
-        let mut heap = Vec::with_capacity(8);
-        heap.push(self.first.take().expect("first segment present"));
+        // Inline slots exhausted — spill the inline run plus this segment to the
+        // heap (rare: formats with more than INLINE_SEGMENTS segments).
+        let mut heap = Vec::with_capacity(INLINE_SEGMENTS * 2);
+        heap.extend_from_slice(&self.inline[..self.inline_len]);
         heap.push(segment);
         self.heap = Some(heap);
     }
@@ -653,7 +665,11 @@ impl<'a> Deref for FormatSegments<'a> {
 }
 
 pub enum FormatSegmentsIntoIter<'a> {
-    One(std::option::IntoIter<FormatSegment<'a>>),
+    Inline {
+        segs: [FormatSegment<'a>; INLINE_SEGMENTS],
+        len: usize,
+        idx: usize,
+    },
     Heap(std::vec::IntoIter<FormatSegment<'a>>),
 }
 
@@ -662,7 +678,15 @@ impl<'a> Iterator for FormatSegmentsIntoIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::One(iter) => iter.next(),
+            Self::Inline { segs, len, idx } => {
+                if *idx < *len {
+                    let seg = segs[*idx];
+                    *idx += 1;
+                    Some(seg)
+                } else {
+                    None
+                }
+            }
             Self::Heap(iter) => iter.next(),
         }
     }
@@ -675,7 +699,11 @@ impl<'a> IntoIterator for FormatSegments<'a> {
     fn into_iter(self) -> Self::IntoIter {
         match self.heap {
             Some(heap) => FormatSegmentsIntoIter::Heap(heap.into_iter()),
-            None => FormatSegmentsIntoIter::One(self.first.into_iter()),
+            None => FormatSegmentsIntoIter::Inline {
+                segs: self.inline,
+                len: self.inline_len,
+                idx: 0,
+            },
         }
     }
 }
@@ -2099,6 +2127,42 @@ mod tests {
             value /= base;
         }
         64 - pos
+    }
+
+    #[test]
+    fn format_segments_inline_and_spill_preserve_order() {
+        // Push n literal segments and verify as_slice + into_iter return them in
+        // order across the inline/heap boundary (INLINE_SEGMENTS).
+        let labels: Vec<Vec<u8>> = (0..40).map(|i| alloc::format!("seg{i}").into_bytes()).collect();
+        for n in 0..=labels.len() {
+            let mut segs = FormatSegments::new();
+            for lab in labels.iter().take(n) {
+                segs.push(FormatSegment::Literal(lab));
+            }
+            // as_slice order
+            let via_slice: Vec<&[u8]> = segs
+                .as_slice()
+                .iter()
+                .map(|s| match s {
+                    FormatSegment::Literal(b) => *b,
+                    _ => b"?".as_slice(),
+                })
+                .collect();
+            let expected: Vec<&[u8]> = labels.iter().take(n).map(|v| v.as_slice()).collect();
+            assert_eq!(via_slice, expected, "as_slice order mismatch for n={n}");
+            assert_eq!(segs.as_slice().len(), n, "len mismatch n={n}");
+            // into_iter (owned) order
+            let via_iter: Vec<Vec<u8>> = segs
+                .clone()
+                .into_iter()
+                .map(|s| match s {
+                    FormatSegment::Literal(b) => b.to_vec(),
+                    _ => b"?".to_vec(),
+                })
+                .collect();
+            let expected_owned: Vec<Vec<u8>> = labels.iter().take(n).cloned().collect();
+            assert_eq!(via_iter, expected_owned, "into_iter order mismatch for n={n}");
+        }
     }
 
     #[test]
