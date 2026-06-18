@@ -5963,6 +5963,11 @@ pub unsafe extern "C" fn __gettid() -> c_int {
 // getwd: deprecated — forward to getcwd syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getwd(buf: *mut c_char) -> *mut c_char {
+    if buf.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
     // PATH_MAX is typically 4096 on Linux
     match unsafe { raw_syscall::sys_getcwd(buf as *mut u8, 4096) } {
         Ok(_) => buf,
