@@ -7499,7 +7499,33 @@ pub unsafe extern "C" fn tr_break() {}
 // ttyslot: legacy — always returns -1 on modern Linux
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ttyslot() -> c_int {
-    -1
+    // glibc (misc/ttyslot.c, 4.3BSD) scans fds 0,1,2 for a terminal name via
+    // ttyname_r and looks it up in the /etc/ttys database (getttyent), returning
+    // the 1-based slot index, or 0 when the terminal is not found. Linux has no
+    // /etc/ttys (getttyent yields nothing), so glibc always returns 0 here. fl
+    // previously returned -1 (wrong on the documented not-found contract). Mirror
+    // the fd probe — so the residual errno from a non-tty descriptor matches
+    // glibc (ENOTTY when there is no controlling terminal) — then return 0 since
+    // fl has no ttyent database to search.
+    let mut name = [0 as c_char; 32]; // _SC_TTY_NAME_MAX + 1
+    let mut last_err = 0;
+    for fd in 0..3 {
+        // fl's ttyname_r is the POSIX `_r` form: it RETURNS the error code and
+        // does not set errno. glibc's internal __ttyname_r sets errno as a side
+        // effect, so the last failing probe leaves errno = ENOTTY when there is
+        // no controlling terminal. Replicate that residual errno below.
+        let rc = unsafe { crate::unistd_abi::ttyname_r(fd, name.as_mut_ptr(), name.len()) };
+        if rc == 0 {
+            // glibc would search /etc/ttys for this name; fl has no such table,
+            // so the lookup finds nothing and we fall through to 0.
+            return 0;
+        }
+        last_err = rc;
+    }
+    if last_err != 0 {
+        unsafe { crate::errno_abi::set_abi_errno(last_err) };
+    }
+    0
 }
 // NetBSD uabs(3) family: take a SIGNED integer and return its absolute value as
 // the corresponding UNSIGNED type. The whole point is that the unsigned return
