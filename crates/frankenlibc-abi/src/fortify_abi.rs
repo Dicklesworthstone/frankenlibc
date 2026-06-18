@@ -15,6 +15,7 @@ type WcharT = c_int; // wchar_t is int32 on Linux/x86_64
 type NfdsT = u64; // nfds_t on x86_64
 const WCHAR_SIZE: usize = core::mem::size_of::<WcharT>();
 const FORTIFY_PATH_MAX: usize = 4096;
+const FORTIFY_MB_LEN_MAX: usize = 16;
 
 #[inline]
 fn wide_units_from_bytes(bytes: usize) -> usize {
@@ -1113,7 +1114,10 @@ pub unsafe extern "C" fn __wcsnrtombs_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wctomb_chk(s: *mut c_char, wchar: WcharT, _buflen: usize) -> c_int {
+pub unsafe extern "C" fn __wctomb_chk(s: *mut c_char, wchar: WcharT, buflen: usize) -> c_int {
+    if !s.is_null() && buflen != usize::MAX && buflen < FORTIFY_MB_LEN_MAX {
+        unsafe { __chk_fail() }
+    }
     unsafe { wctomb(s, wchar) }
 }
 

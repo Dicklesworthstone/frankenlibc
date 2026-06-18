@@ -924,10 +924,18 @@ fn wcstombs_chk_safe() {
 
 #[test]
 fn wctomb_chk_safe() {
-    let mut buf = [0u8; 8];
-    let n = unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, 8) };
+    let mut buf = [0u8; 16];
+    let n = unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, buf.len()) };
     assert!(n > 0);
     assert_eq!(buf[0], b'Q');
+}
+
+#[test]
+fn wctomb_chk_short_buffer_aborts_child_process() {
+    assert_child_sigabrt("wctomb_chk short buffer", || {
+        let mut buf = [0u8; 1];
+        unsafe { __wctomb_chk(buf.as_mut_ptr().cast(), b'Q' as WcharT, buf.len()) };
+    });
 }
 
 #[test]
