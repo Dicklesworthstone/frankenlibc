@@ -7675,6 +7675,7 @@ fn humanize_getscale_returns_scale_without_writing() {
 fn humanize_buffer_too_small_returns_minus_one() {
     let mut buf = [0u8; 2]; // can't fit "4 K\0"
     let suffix = c"";
+    unsafe { *__errno_location() = 0 };
     let n = unsafe {
         humanize_number(
             buf.as_mut_ptr() as *mut c_char,
@@ -7686,19 +7687,23 @@ fn humanize_buffer_too_small_returns_minus_one() {
         )
     };
     assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
 }
 
 #[test]
 fn humanize_null_buf_returns_minus_one() {
     let suffix = c"";
+    unsafe { *__errno_location() = 0 };
     let n = unsafe { humanize_number(ptr::null_mut(), 32, 4096, suffix.as_ptr(), HN_AUTOSCALE, 0) };
     assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]
 fn humanize_zero_len_returns_minus_one() {
     let mut buf = [0u8; 32];
     let suffix = c"";
+    unsafe { *__errno_location() = 0 };
     let n = unsafe {
         humanize_number(
             buf.as_mut_ptr() as *mut c_char,
@@ -7710,6 +7715,26 @@ fn humanize_zero_len_returns_minus_one() {
         )
     };
     assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn humanize_invalid_scale_returns_minus_one_with_errno() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    unsafe { *__errno_location() = 0 };
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            4096,
+            suffix.as_ptr(),
+            -99,
+            0,
+        )
+    };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]

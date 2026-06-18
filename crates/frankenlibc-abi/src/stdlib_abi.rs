@@ -6262,7 +6262,11 @@ const HN_C_AUTOSCALE: c_int = 0x20;
 /// On success returns the number of bytes written excluding the
 /// trailing NUL (or, when `scale == HN_GETSCALE`, the auto-scale
 /// level). Returns -1 on failure (NULL pointers, buffer too small,
-/// invalid scale).
+/// invalid scale) with errno set to:
+///
+/// * `EINVAL` — NULL/zero-length buffer, unterminated suffix, or
+///   invalid scale.
+/// * `ERANGE` — output buffer cannot hold the rendered string plus NUL.
 ///
 /// # Safety
 ///
@@ -6281,6 +6285,7 @@ pub unsafe extern "C" fn humanize_number(
     use frankenlibc_core::stdlib::humanize_number as core_hn;
 
     if buf.is_null() || len == 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
 
@@ -6298,6 +6303,7 @@ pub unsafe extern "C" fn humanize_number(
         None
     } else {
         let Some(bytes) = (unsafe { read_bounded_cstr_bytes(suffix) }) else {
+            unsafe { set_abi_errno(libc::EINVAL) };
             return -1;
         };
         Some(bytes)
@@ -6308,7 +6314,14 @@ pub unsafe extern "C" fn humanize_number(
 
     match core_hn::format(buf_slice, bytes, suffix_bytes, scale_internal, core_flags) {
         Ok(n) => n as c_int,
-        Err(_) => -1,
+        Err(core_hn::HumanizeError::InvalidScale) => {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            -1
+        }
+        Err(core_hn::HumanizeError::BufferTooSmall) => {
+            unsafe { set_abi_errno(libc::ERANGE) };
+            -1
+        }
     }
 }
 
