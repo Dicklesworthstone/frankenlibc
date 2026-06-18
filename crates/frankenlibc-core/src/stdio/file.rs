@@ -1163,11 +1163,11 @@ impl StdioStream {
     /// Seek within a memory-backed stream.
     /// Returns the new position on success, or -1 on failure.
     pub fn mem_seek(&mut self, offset: i64, whence: i32) -> i64 {
-        self.ungetc_byte = None;
-        self.read_pushback.clear();
-        self.flags.eof = false;
         if let Some(ref mut backing) = self.mem_backing {
             if let Some(new_pos) = backing.seek(offset, whence) {
+                self.ungetc_byte = None;
+                self.read_pushback.clear();
+                self.flags.eof = false;
                 self.offset = new_pos;
                 new_pos
             } else {
@@ -1688,6 +1688,21 @@ mod tests {
         assert!(s.is_eof());
         s.mem_seek(0, 0);
         assert!(!s.is_eof());
+    }
+
+    #[test]
+    fn test_stream_mem_failed_seek_preserves_eof() {
+        let data = vec![0u8; 8];
+        let flags = OpenFlags {
+            readable: true,
+            writable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new_mem_fixed(data, 0, flags);
+        s.set_eof();
+        assert_eq!(s.mem_seek(9, 0), -1);
+        assert!(s.is_eof());
+        assert_eq!(s.offset(), 0);
     }
 
     #[test]
