@@ -3301,9 +3301,25 @@ unsafe fn render_printf_impl(
     max_args: usize,
     wide_output: bool,
 ) -> Vec<u8> {
+    // Parse once here; render_segments does the work, so printf-family callers
+    // that already parsed the format (snprintf et al. parse it for arg counting)
+    // can call render_segments directly and skip this redundant second parse.
     let segments = parse_format_string(fmt);
+    unsafe { render_segments(&segments, args, max_args, wide_output) }
+}
+
+/// Render already-parsed `segments` into a fresh buffer. Split out from
+/// [`render_printf_impl`] so the printf-family entry points can reuse the
+/// `FormatSegments` they parsed for argument counting instead of re-parsing the
+/// format string a second time on every call.
+pub(crate) unsafe fn render_segments(
+    segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
+    args: *const u64,
+    max_args: usize,
+    wide_output: bool,
+) -> Vec<u8> {
     let mut buf = Vec::with_capacity(256);
-    let uses_positional = core_positional_printf_arg_plan(&segments).is_some();
+    let uses_positional = core_positional_printf_arg_plan(segments).is_some();
     let mut arg_idx = 0usize;
 
     let read_arg = |position: Option<usize>, next_idx: &mut usize| -> Option<u64> {
@@ -3317,7 +3333,7 @@ unsafe fn render_printf_impl(
         (idx < max_args).then(|| unsafe { *args.add(idx) })
     };
 
-    for seg in &segments {
+    for seg in segments.iter() {
         match seg {
             FormatSegment::Literal(lit) => buf.extend_from_slice(lit),
             FormatSegment::Percent => buf.push(b'%'),
@@ -3632,7 +3648,8 @@ pub unsafe extern "C" fn snprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    // Reuse the segments parsed above instead of re-parsing in render_printf.
+    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
     let total_len = rendered.len();
 
     let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
@@ -3705,7 +3722,8 @@ pub unsafe extern "C" fn sprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    // Reuse the segments parsed above instead of re-parsing in render_printf.
+    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
     let total_len = rendered.len();
 
     let mut copy_len = total_len;
@@ -3775,7 +3793,8 @@ pub unsafe extern "C" fn fprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    // Reuse the segments parsed above instead of re-parsing in render_printf.
+    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
     let total_len = rendered.len();
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
@@ -3932,7 +3951,8 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    // Reuse the segments parsed above instead of re-parsing in render_printf.
+    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
     let total_len = rendered.len();
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
@@ -4083,7 +4103,8 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    // Reuse the segments parsed above instead of re-parsing in render_printf.
+    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
     let total_len = rendered.len();
 
     let adverse = !write_all_fd(fd, &rendered);
@@ -4126,7 +4147,8 @@ pub unsafe extern "C" fn asprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    // Reuse the segments parsed above instead of re-parsing in render_printf.
+    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
     let total_len = rendered.len();
     let alloc_size = total_len.saturating_add(1);
 
