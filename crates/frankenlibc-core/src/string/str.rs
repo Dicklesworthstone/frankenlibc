@@ -1752,6 +1752,25 @@ pub fn strsep(s: &mut [u8], delim: &[u8]) -> Option<usize> {
         }
         return None;
     }
+    // 2- and 3-delimiter sets (e.g. "\r\n", ", ", "::") are common; route them
+    // through the SIMD find_any_of4 by padding the unused slot(s) with a repeated
+    // delimiter, instead of the byte-by-byte linear .contains general path below.
+    if delim_len == 2 {
+        let index = find_any_of4_or_nul(s, delim[0], delim[1], delim[0], delim[1]);
+        if index < s.len() && s[index] != 0 {
+            s[index] = 0;
+            return Some(index);
+        }
+        return None;
+    }
+    if delim_len == 3 {
+        let index = find_any_of4_or_nul(s, delim[0], delim[1], delim[2], delim[2]);
+        if index < s.len() && s[index] != 0 {
+            s[index] = 0;
+            return Some(index);
+        }
+        return None;
+    }
     if delim_len == 4 {
         let index = find_any_of4_or_nul(s, delim[0], delim[1], delim[2], delim[3]);
         if index < s.len() && s[index] != 0 {
@@ -3303,6 +3322,40 @@ mod tests {
 
         assert_eq!(strsep(&mut nul_first, b":;|\t\0"), None);
         assert_eq!(nul_first[SIMD_LANES + 9], b'|');
+    }
+
+    #[test]
+    fn test_strsep_two_three_delim_simd_matches_reference() {
+        // The len-2/3 SIMD-routed paths must find the same first delimiter-or-NUL
+        // as a byte-by-byte reference, across a long buffer (exercises the SIMD
+        // bulk scan) for each delimiter and the no-match case.
+        fn reference(s: &[u8], delims: &[u8]) -> Option<usize> {
+            for (i, &b) in s.iter().enumerate() {
+                if b == 0 {
+                    return None;
+                }
+                if delims[..delims.len() - 1].contains(&b) {
+                    return Some(i);
+                }
+            }
+            None
+        }
+        for delims in [b"\r\n\0".as_slice(), b", \0".as_slice(), b"::\0".as_slice(), b";|:\0".as_slice()] {
+            for hit in [7usize, SIMD_LANES + 3, SIMD_LANES * 2 + 1, 999] {
+                let mut buf = vec![b'x'; SIMD_LANES * 3 + 10];
+                let last = delims[..delims.len() - 1].len() - 1;
+                if hit < buf.len() {
+                    buf[hit] = delims[last.min(delims.len() - 2)]; // a real delimiter byte
+                }
+                let mut a = buf.clone();
+                let got = strsep(&mut a, delims);
+                let want = reference(&buf, delims);
+                assert_eq!(got, want, "strsep delims={delims:?} hit={hit}: got={got:?} want={want:?}");
+                if let Some(idx) = got {
+                    assert_eq!(a[idx], 0, "delimiter overwritten with NUL");
+                }
+            }
+        }
     }
 
     #[test]
