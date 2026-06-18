@@ -1167,13 +1167,6 @@ pub unsafe extern "C" fn __longjmp_chk(env: *mut c_void, val: c_int) -> ! {
 
 // ── poll ───────────────────────────────────────────────────────────────────
 
-fn checked_pollfd_bytes(nfds: NfdsT) -> usize {
-    let Some(bytes) = (nfds as usize).checked_mul(core::mem::size_of::<libc::pollfd>()) else {
-        unsafe { __chk_fail() }
-    };
-    bytes
-}
-
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __poll_chk(
     fds: *mut c_void,
@@ -1181,7 +1174,7 @@ pub unsafe extern "C" fn __poll_chk(
     timeout: c_int,
     fdslen: usize,
 ) -> c_int {
-    if checked_pollfd_bytes(nfds) > fdslen {
+    if (nfds as usize) * 8 > fdslen {
         unsafe { __chk_fail() }
     }
     unsafe { crate::poll_abi::poll(fds.cast(), nfds, timeout) }
@@ -1195,7 +1188,7 @@ pub unsafe extern "C" fn __ppoll_chk(
     sigmask: *const c_void,
     fdslen: usize,
 ) -> c_int {
-    if checked_pollfd_bytes(nfds) > fdslen {
+    if (nfds as usize) * 8 > fdslen {
         unsafe { __chk_fail() }
     }
     unsafe { crate::poll_abi::ppoll(fds.cast(), nfds, timeout, sigmask.cast()) }
