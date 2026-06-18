@@ -3897,8 +3897,14 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
         }
     };
 
+    // glibc: when error_print_progname is set it REPLACES the "progname: "
+    // prefix (the hook writes its own text to stderr); otherwise print the
+    // default prefix. bd-xqg5il.
+    let progname_hook = unsafe { crate::glibc_internal_abi::error_print_progname };
     let mut out = String::new();
-    let _ = write!(out, "{progname}: ");
+    if progname_hook.is_null() {
+        let _ = write!(out, "{progname}: ");
+    }
 
     // Format the message
     if !fmt.is_null() {
@@ -3937,6 +3943,12 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
     }
 
     let _ = writeln!(out);
+    // Invoke the progname hook (if any) before the message body so its output
+    // precedes the rest on stderr, matching glibc's call ordering.
+    if !progname_hook.is_null() {
+        let hook: extern "C" fn() = unsafe { std::mem::transmute(progname_hook) };
+        hook();
+    }
     let _ = crate::stdio_abi::write_all_fd(libc::STDERR_FILENO, out.as_bytes());
 
     if status != 0 {
@@ -4003,8 +4015,13 @@ pub unsafe extern "C" fn error_at_line(
         }
     };
 
+    // glibc replaces the "progname:" prefix with the error_print_progname hook
+    // when set; the file:line part is still printed afterwards. bd-xqg5il.
+    let progname_hook = unsafe { crate::glibc_internal_abi::error_print_progname };
     let mut out = String::new();
-    let _ = write!(out, "{progname}:");
+    if progname_hook.is_null() {
+        let _ = write!(out, "{progname}:");
+    }
 
     if !filename.is_null()
         && let Some(filename_bytes) = unsafe { read_bounded_cstr_bytes(filename) }
@@ -4036,6 +4053,10 @@ pub unsafe extern "C" fn error_at_line(
     }
 
     let _ = writeln!(out);
+    if !progname_hook.is_null() {
+        let hook: extern "C" fn() = unsafe { std::mem::transmute(progname_hook) };
+        hook();
+    }
     let _ = crate::stdio_abi::write_all_fd(libc::STDERR_FILENO, out.as_bytes());
 
     if status != 0 {
