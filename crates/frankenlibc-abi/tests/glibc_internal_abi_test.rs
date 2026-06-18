@@ -103,8 +103,12 @@ use frankenlibc_abi::glibc_internal_abi::{
     _pthread_cleanup_push,
     _pthread_cleanup_push_defer,
     dysize,
+    fattach,
     fchflags,
+    fdetach,
     get_kernel_syms,
+    getmsg,
+    getpmsg,
     getpw,
     gtty,
     inet6_opt_append,
@@ -138,7 +142,9 @@ use frankenlibc_abi::glibc_internal_abi::{
     printf_size_info,
     profil,
     pthread_kill_other_threads_np,
+    putmsg,
     putgrent,
+    putpmsg,
     putpwent,
     query_module,
     rcmd,
@@ -194,12 +200,46 @@ unsafe extern "C" {
     fn host_create_module(name: *const c_char, size: libc::size_t) -> libc::c_long;
     #[link_name = "dysize"]
     fn host_dysize(year: c_int) -> c_int;
+    #[link_name = "fattach"]
+    fn host_fattach(fd: c_int, path: *const c_char) -> c_int;
     #[link_name = "fchflags"]
     fn host_fchflags(fd: c_int, flags: libc::c_ulong) -> c_int;
+    #[link_name = "fdetach"]
+    fn host_fdetach(path: *const c_char) -> c_int;
     #[link_name = "get_kernel_syms"]
     fn host_get_kernel_syms(table: *mut c_void) -> c_int;
+    #[link_name = "getmsg"]
+    fn host_getmsg(
+        fd: c_int,
+        ctlptr: *mut c_void,
+        dataptr: *mut c_void,
+        flags: *mut c_int,
+    ) -> c_int;
+    #[link_name = "getpmsg"]
+    fn host_getpmsg(
+        fd: c_int,
+        ctlptr: *mut c_void,
+        dataptr: *mut c_void,
+        bandp: *mut c_int,
+        flags: *mut c_int,
+    ) -> c_int;
     #[link_name = "gtty"]
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
+    #[link_name = "putmsg"]
+    fn host_putmsg(
+        fd: c_int,
+        ctlptr: *const c_void,
+        dataptr: *const c_void,
+        flags: c_int,
+    ) -> c_int;
+    #[link_name = "putpmsg"]
+    fn host_putpmsg(
+        fd: c_int,
+        ctlptr: *const c_void,
+        dataptr: *const c_void,
+        band: c_int,
+        flags: c_int,
+    ) -> c_int;
     #[link_name = "nfsservctl"]
     fn host_nfsservctl(cmd: c_int, argp: *mut c_void, resp: *mut c_void) -> c_int;
     #[link_name = "query_module"]
@@ -571,6 +611,118 @@ fn obsolete_kernel_accounting_stubs_match_host_enosys() {
             (host_sysctl_result, host_sysctl_errno)
         );
         assert_eq!((fl_sysctl_result, fl_sysctl_errno), (-1, libc::ENOSYS));
+    }
+}
+
+#[test]
+fn streams_compatibility_stubs_match_host_enosys() {
+    let path = CString::new("/tmp/frankenlibc_stream_probe").unwrap();
+    let mut flags = 0;
+    let mut band = 0;
+
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_fattach_result = host_fattach(0, path.as_ptr());
+        let host_fattach_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_fattach_result = fattach(0, path.as_ptr());
+        let fl_fattach_errno = errno_value();
+
+        assert_eq!(
+            (fl_fattach_result, fl_fattach_errno),
+            (host_fattach_result, host_fattach_errno)
+        );
+        assert_eq!(
+            (fl_fattach_result, fl_fattach_errno),
+            (-1, libc::ENOSYS)
+        );
+
+        *libc::__errno_location() = 0;
+        let host_fdetach_result = host_fdetach(path.as_ptr());
+        let host_fdetach_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_fdetach_result = fdetach(path.as_ptr());
+        let fl_fdetach_errno = errno_value();
+
+        assert_eq!(
+            (fl_fdetach_result, fl_fdetach_errno),
+            (host_fdetach_result, host_fdetach_errno)
+        );
+        assert_eq!(
+            (fl_fdetach_result, fl_fdetach_errno),
+            (-1, libc::ENOSYS)
+        );
+
+        *libc::__errno_location() = 0;
+        let host_getmsg_result = host_getmsg(0, ptr::null_mut(), ptr::null_mut(), &mut flags);
+        let host_getmsg_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_getmsg_result = getmsg(0, ptr::null_mut(), ptr::null_mut(), &mut flags);
+        let fl_getmsg_errno = errno_value();
+
+        assert_eq!(
+            (fl_getmsg_result, fl_getmsg_errno),
+            (host_getmsg_result, host_getmsg_errno)
+        );
+        assert_eq!((fl_getmsg_result, fl_getmsg_errno), (-1, libc::ENOSYS));
+
+        *libc::__errno_location() = 0;
+        let host_getpmsg_result =
+            host_getpmsg(0, ptr::null_mut(), ptr::null_mut(), &mut band, &mut flags);
+        let host_getpmsg_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_getpmsg_result = getpmsg(0, ptr::null_mut(), ptr::null_mut(), &mut band, &mut flags);
+        let fl_getpmsg_errno = errno_value();
+
+        assert_eq!(
+            (fl_getpmsg_result, fl_getpmsg_errno),
+            (host_getpmsg_result, host_getpmsg_errno)
+        );
+        assert_eq!(
+            (fl_getpmsg_result, fl_getpmsg_errno),
+            (-1, libc::ENOSYS)
+        );
+
+        *libc::__errno_location() = 0;
+        let host_putmsg_result = host_putmsg(0, ptr::null(), ptr::null(), 0);
+        let host_putmsg_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_putmsg_result = putmsg(0, ptr::null(), ptr::null(), 0);
+        let fl_putmsg_errno = errno_value();
+
+        assert_eq!(
+            (fl_putmsg_result, fl_putmsg_errno),
+            (host_putmsg_result, host_putmsg_errno)
+        );
+        assert_eq!((fl_putmsg_result, fl_putmsg_errno), (-1, libc::ENOSYS));
+
+        *libc::__errno_location() = 0;
+        let host_putpmsg_result = host_putpmsg(0, ptr::null(), ptr::null(), 0, 0);
+        let host_putpmsg_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_putpmsg_result = putpmsg(0, ptr::null(), ptr::null(), 0, 0);
+        let fl_putpmsg_errno = errno_value();
+
+        assert_eq!(
+            (fl_putpmsg_result, fl_putpmsg_errno),
+            (host_putpmsg_result, host_putpmsg_errno)
+        );
+        assert_eq!(
+            (fl_putpmsg_result, fl_putpmsg_errno),
+            (-1, libc::ENOSYS)
+        );
     }
 }
 
