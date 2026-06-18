@@ -4243,11 +4243,14 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Bare "%s" fast path: write the string straight to the fd, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    };
+    let total_len = bytes.len();
 
-    let adverse = !write_all_fd(fd, &rendered);
+    let adverse = !write_all_fd(fd, bytes);
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
