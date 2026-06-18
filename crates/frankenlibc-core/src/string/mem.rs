@@ -299,19 +299,6 @@ fn first_byte_simd_32(chunk: &[u8], byte: u8) -> Option<usize> {
 }
 
 #[inline(always)]
-fn has_byte_simd_folded(block: &[u8], byte: u8) -> bool {
-    debug_assert_eq!(block.len(), SIMD_FOLD_BYTES);
-    let needle = Simd::splat(byte);
-    let p0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]).simd_eq(needle);
-    let p1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..SIMD_LANES * 2]).simd_eq(needle);
-    let p2 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 2..SIMD_LANES * 3]).simd_eq(needle);
-    let p3 =
-        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 3..SIMD_FOLD_BYTES]).simd_eq(needle);
-    (p0 | p1 | p2 | p3).any()
-}
-
-#[inline(always)]
 fn has_byte_memchr_folded(block: &[u8], byte: u8) -> bool {
     debug_assert_eq!(block.len(), MEMCHR_FOLD_BYTES);
     let needle = Simd::splat(byte);
@@ -430,11 +417,11 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
 pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
-    let mut simd_blocks = hs.rchunks_exact(SIMD_FOLD_BYTES);
+    let mut simd_blocks = hs.rchunks_exact(MEMCHR_FOLD_BYTES);
     let mut end = count;
 
     for block in simd_blocks.by_ref() {
-        if has_byte_simd_folded(block, needle) {
+        if has_byte_memchr_folded(block, needle) {
             let mut panel_end = end;
             for chunk in block.rchunks_exact(SIMD_LANES) {
                 if has_byte_simd_32(chunk, needle)
@@ -1228,12 +1215,12 @@ mod tests {
 
     #[test]
     fn test_memrchr_folded_simd_block_resolves_last_match() {
-        let mut haystack = vec![b'A'; SIMD_FOLD_BYTES + SIMD_LANES];
+        let mut haystack = vec![b'A'; MEMCHR_FOLD_BYTES + SIMD_LANES];
         haystack[SIMD_LANES + 9] = b'Z';
-        haystack[SIMD_LANES * 3 + 17] = b'Z';
+        haystack[SIMD_LANES * 7 + 17] = b'Z';
         assert_eq!(
             memrchr(&haystack, b'Z', haystack.len()),
-            Some(SIMD_LANES * 3 + 17)
+            Some(SIMD_LANES * 7 + 17)
         );
     }
 
