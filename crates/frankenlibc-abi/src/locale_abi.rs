@@ -647,6 +647,10 @@ pub unsafe extern "C" fn catopen(name: *const c_char, _oflag: c_int) -> nl_catd 
         unsafe { set_abi_errno(libc::EINVAL) };
         return INVALID_NL_CATD;
     };
+    if name_bytes.is_empty() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return INVALID_NL_CATD;
+    }
     let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&name_bytes));
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
@@ -873,5 +877,18 @@ mod tests {
         // SAFETY: Valid locale handle.
         unsafe { freelocale(handle) };
         // No crash, no-op verified.
+    }
+
+    #[test]
+    fn catopen_empty_name_sets_einval() {
+        let empty = b"\0";
+        unsafe { set_abi_errno(0) };
+        // SAFETY: The catalog name pointer is NUL-terminated.
+        let catd = unsafe { catopen(empty.as_ptr() as *const c_char, 0) };
+        assert_eq!(catd, INVALID_NL_CATD);
+        assert_eq!(
+            unsafe { *crate::errno_abi::__errno_location() },
+            libc::EINVAL
+        );
     }
 }
