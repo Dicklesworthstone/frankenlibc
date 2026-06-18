@@ -1072,6 +1072,19 @@ unsafe fn read_file_actions_mut(fa_ptr: *mut c_void) -> Option<&'static mut Spaw
 unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
     let flags = attr.flags as c_int;
 
+    // Flag-application order note (verified against glibc 2.42 spawni.c). glibc
+    // applies: SETSIGDEF -> SETSCHED{PARAM,ULER} -> SETSID -> SETPGROUP ->
+    // RESETIDS -> (SETSIGMASK last, right before exec). fl's textual order below
+    // differs, but the two sub-orderings that actually affect correctness are
+    // preserved: (1) SETSID precedes SETPGROUP (a session leader cannot later
+    // change its pgid, so setpgid must run after setsid creates the new
+    // session); (2) SETSCHED* precedes RESETIDS (the scheduler is set while the
+    // child still holds the parent's privileges, before they are dropped). The
+    // remaining differences (SETSIGDEF vs SETSIGMASK timing) are independent of
+    // every other step and yield the same final child state, so reordering them
+    // to match glibc verbatim is unnecessary. Do not move SETSID below
+    // SETPGROUP or RESETIDS above SETSCHED*.
+
     // POSIX_SPAWN_SETSID (glibc >= 2.26, value 0x80; not exposed by the libc
     // crate): the child starts a new session. glibc applies it FIRST, before
     // SETPGROUP (setsid makes the child a session+group leader, and a later
