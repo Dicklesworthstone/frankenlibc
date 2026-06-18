@@ -983,6 +983,11 @@ fn parse_digits(input: &[u8], pos: usize, max_digits: usize) -> Option<(i32, usi
     let mut val: i32 = 0;
     let mut count = 0usize;
     let mut p = pos;
+    // glibc's get_number skips leading whitespace before the digits for every
+    // numeric directive (%Y/%C/%y included). Mirror that.
+    while p < input.len() && input[p].is_ascii_whitespace() {
+        p += 1;
+    }
     while count < max_digits && p < input.len() {
         let ch = input[p];
         if ch.is_ascii_digit() {
