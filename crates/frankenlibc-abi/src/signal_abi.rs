@@ -930,9 +930,20 @@ pub unsafe extern "C" fn pthread_sigmask(
     set: *const libc::sigset_t,
     oldset: *mut libc::sigset_t,
 ) -> c_int {
-    // On Linux, pthread_sigmask is identical to sigprocmask — both operate on
-    // the calling thread's signal mask via rt_sigprocmask.
-    unsafe { sigprocmask(how, set, oldset) }
+    // pthread_sigmask operates on the same per-thread mask as sigprocmask, BUT
+    // uses the pthread return convention: 0 on success, a POSITIVE error number
+    // on failure, with the global errno left UNCHANGED (glibc returns the raw
+    // syscall errno, never -1). sigprocmask uses the -1/errno convention, so
+    // translate: capture the error number and restore the caller's errno.
+    let saved = unsafe { *crate::errno_abi::__errno_location() };
+    let rc = unsafe { sigprocmask(how, set, oldset) };
+    if rc == 0 {
+        0
+    } else {
+        let err = unsafe { *crate::errno_abi::__errno_location() };
+        unsafe { set_abi_errno(saved) };
+        err
+    }
 }
 
 // ---------------------------------------------------------------------------
