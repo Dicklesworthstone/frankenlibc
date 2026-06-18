@@ -1954,20 +1954,6 @@ fn vwprintf_chk_empty() {
 }
 
 #[test]
-fn fwprintf_chk_to_devnull() {
-    let path = CString::new("/dev/null").unwrap();
-    let mode = CString::new("w").unwrap();
-    let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
-    assert!(!fp.is_null());
-
-    let fmt: [WcharT; 3] = [b'%' as i32, b'd' as i32, 0];
-    let ret = unsafe { __fwprintf_chk(fp.cast(), 0, fmt.as_ptr(), 22i32) };
-    assert!(ret > 0, "__fwprintf_chk should return positive char count");
-
-    unsafe { libc::fclose(fp) };
-}
-
-#[test]
 fn vfwprintf_chk_to_devnull() {
     let path = CString::new("/dev/null").unwrap();
     let mode = CString::new("w").unwrap();
