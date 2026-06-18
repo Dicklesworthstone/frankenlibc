@@ -126,6 +126,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     inet6_rth_space,
     iruserok,
     iruserok_af,
+    isastream,
     mcount,
     moncontrol,
     monstartup,
@@ -225,6 +226,8 @@ unsafe extern "C" {
     ) -> c_int;
     #[link_name = "gtty"]
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
+    #[link_name = "isastream"]
+    fn host_isastream(fd: c_int) -> c_int;
     #[link_name = "putmsg"]
     fn host_putmsg(
         fd: c_int,
@@ -723,6 +726,29 @@ fn streams_compatibility_stubs_match_host_enosys() {
             (fl_putpmsg_result, fl_putpmsg_errno),
             (-1, libc::ENOSYS)
         );
+    }
+}
+
+#[test]
+fn isastream_matches_host_default_for_regular_and_invalid_fds() {
+    for fd in [0, -1] {
+        unsafe {
+            *libc::__errno_location() = 0;
+            let host_result = host_isastream(fd);
+            let host_errno = *libc::__errno_location();
+
+            clear_errno();
+            *libc::__errno_location() = 0;
+            let fl_result = isastream(fd);
+            let fl_errno = errno_value();
+
+            assert_eq!(
+                (fl_result, fl_errno),
+                (host_result, host_errno),
+                "isastream({fd}) should match host libc"
+            );
+            assert_eq!((fl_result, fl_errno), (0, 0));
+        }
     }
 }
 
