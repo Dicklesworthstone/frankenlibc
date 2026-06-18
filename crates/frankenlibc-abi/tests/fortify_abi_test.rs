@@ -699,6 +699,15 @@ fn realpath_chk_safe() {
 }
 
 #[test]
+fn realpath_chk_short_resolved_buffer_aborts_child_process() {
+    assert_child_sigabrt("realpath_chk short resolved buffer", || {
+        let path = CString::new("/tmp").unwrap();
+        let mut buf = [0u8; 1];
+        unsafe { __realpath_chk(path.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+    });
+}
+
+#[test]
 fn gethostname_chk_safe() {
     let mut buf = [0u8; 256];
     let ret = unsafe { __gethostname_chk(buf.as_mut_ptr().cast(), 256, 256) };

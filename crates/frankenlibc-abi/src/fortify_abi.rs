@@ -14,7 +14,7 @@ use crate::malloc_abi::known_remaining;
 type WcharT = c_int; // wchar_t is int32 on Linux/x86_64
 type NfdsT = u64; // nfds_t on x86_64
 const WCHAR_SIZE: usize = core::mem::size_of::<WcharT>();
-const GETWD_PATH_MAX: usize = 4096;
+const FORTIFY_PATH_MAX: usize = 4096;
 
 #[inline]
 fn wide_units_from_bytes(bytes: usize) -> usize {
@@ -646,8 +646,11 @@ pub unsafe extern "C" fn __recvfrom_chk(
 pub unsafe extern "C" fn __realpath_chk(
     path: *const c_char,
     resolved: *mut c_char,
-    _resolvedlen: usize,
+    resolvedlen: usize,
 ) -> *mut c_char {
+    if !resolved.is_null() && resolvedlen != usize::MAX && resolvedlen < FORTIFY_PATH_MAX {
+        unsafe { __chk_fail() }
+    }
     unsafe { crate::stdlib_abi::realpath(path, resolved) }
 }
 
@@ -661,7 +664,7 @@ pub unsafe extern "C" fn __getcwd_chk(buf: *mut c_char, len: usize, buflen: usiz
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getwd_chk(buf: *mut c_char, buflen: usize) -> *mut c_char {
-    if buflen != usize::MAX && buflen < GETWD_PATH_MAX {
+    if buflen != usize::MAX && buflen < FORTIFY_PATH_MAX {
         unsafe { __chk_fail() }
     }
     unsafe { crate::glibc_internal_abi::getwd(buf) }
