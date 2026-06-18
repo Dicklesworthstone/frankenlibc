@@ -478,13 +478,67 @@
       "proof_status": "pending",
       "acceptance_reason": "Code-first batch-test pending: widened the ASCII-folded strcasestr anchor detector to 128-byte miss panels while preserving first-hit scalar resolution; benchmark/conformance not run by directive.",
       "notes": "Negative-evidence rule: reject and do not retry this folded icase anchor lane if same-worker strcasestr_absent Criterion fails to beat the prior 32-byte anchor scanner by the ledger threshold, if small-size cases regress beyond noise, or if strcasestr differential fixtures drift."
+    },
+    {
+      "trace_id": "bd-2g7oyh::strict::cand-strcspn-four-byte-private-mask-fusion::001",
+      "candidate_id": "cand-strcspn-four-byte-private-mask-fusion",
+      "bead_id": "bd-2g7oyh",
+      "module": "frankenlibc-core/string/str",
+      "symbol": "strcspn",
+      "code_refs": [
+        "crates/frankenlibc-core/src/string/str.rs",
+        "crates/frankenlibc-bench/benches/string_bench.rs"
+      ],
+      "measurement": {
+        "metric": "batch_test_pending_p50_ns_op",
+        "mode": "strict",
+        "before": 0.0,
+        "after": 0.0,
+        "perf_delta_pct": 0.0,
+        "evidence_refs": [
+          "crates/frankenlibc-core/src/string/str.rs",
+          "AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core"
+        ]
+      },
+      "behavior_checks": [
+        {
+          "check_id": "crate_scoped_compile",
+          "check_command": "AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core",
+          "artifact_ref": "/data/projects/.rch-targets/frankenlibc-cod-a",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "pass"
+        },
+        {
+          "check_id": "strcspn_four_reject_fused_mask_boundary_guard",
+          "check_command": "cargo test -p frankenlibc-core string::str::tests::test_strcspn_four_reject_fused_mask_preserves_first_stop_order",
+          "artifact_ref": "crates/frankenlibc-core/src/string/str.rs",
+          "input_classes": [
+            "boundary"
+          ],
+          "status": "skipped"
+        },
+        {
+          "check_id": "focused_benchmark_vs_original",
+          "check_command": "cargo bench -p frankenlibc-bench --bench string_bench strcspn_general_absent -- --save-baseline after",
+          "artifact_ref": "crates/frankenlibc-bench/benches/string_bench.rs",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "skipped"
+        }
+      ],
+      "proof_status": "pending",
+      "acceptance_reason": "Code-first batch-test pending: split strcspn's four-byte reject scan onto a private fused SIMD mask while leaving the prior strpbrk path unchanged; benchmark/conformance not run by directive.",
+      "notes": "Negative-evidence rule: reject and do not retry this private strcspn fusion if same-worker strcspn_general_absent Criterion does not beat the prior five-reduction scanner by the ledger threshold, if any set-order/NUL guard drifts, or if small-size cases regress. Do not extend this to strpbrk without a separate same-worker proof because bd-2g7oyh.158 recorded a strpbrk_general_absent regression for the shared helper fusion."
     }
   ],
   "summary": {
-    "total_candidates": 8,
+    "total_candidates": 9,
     "verified": 1,
     "rejected": 1,
-    "pending": 6,
+    "pending": 7,
     "waived": 0,
     "required_log_fields": 5,
     "required_input_classes": 4

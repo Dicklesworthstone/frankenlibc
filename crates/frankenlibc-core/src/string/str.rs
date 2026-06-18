@@ -388,6 +388,17 @@ fn has_any_of4_or_nul_simd_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> b
 }
 
 #[inline(always)]
+fn has_any_of4_or_nul_simd_fused_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+    let member = lanes.simd_eq(Simd::splat(b0))
+        | lanes.simd_eq(Simd::splat(b1))
+        | lanes.simd_eq(Simd::splat(b2))
+        | lanes.simd_eq(Simd::splat(b3));
+    (lanes.simd_eq(Simd::splat(0)) | member).any()
+}
+
+#[inline(always)]
 fn has_non_any_of4_or_nul_simd_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
     debug_assert_eq!(chunk.len(), SIMD_LANES);
     let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
@@ -910,6 +921,30 @@ fn find_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
 
     for chunk in simd_chunks.by_ref() {
         if has_any_of4_or_nul_simd_32(chunk, b0, b1, b2, b3) {
+            for (j, &byte) in chunk.iter().enumerate() {
+                if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
+                    return base + j;
+                }
+            }
+        }
+        base += SIMD_LANES;
+    }
+
+    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+        if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
+            return base + j;
+        }
+    }
+
+    s.len()
+}
+
+fn find_any_of4_or_nul_fused(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
+    let mut simd_chunks = s.chunks_exact(SIMD_LANES);
+    let mut base = 0usize;
+
+    for chunk in simd_chunks.by_ref() {
+        if has_any_of4_or_nul_simd_fused_32(chunk, b0, b1, b2, b3) {
             for (j, &byte) in chunk.iter().enumerate() {
                 if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
                     return base + j;
@@ -1495,7 +1530,7 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
             }
             return s.len();
         }
-        4 => return find_any_of4_or_nul(s, reject[0], reject[1], reject[2], reject[3]),
+        4 => return find_any_of4_or_nul_fused(s, reject[0], reject[1], reject[2], reject[3]),
         _ => {}
     }
 
@@ -2643,6 +2678,17 @@ mod tests {
         s[70] = b'X';
 
         assert_eq!(strcspn(&s, b"WXYZ\0"), 29);
+    }
+
+    #[test]
+    fn test_strcspn_four_reject_fused_mask_preserves_first_stop_order() {
+        let mut s = vec![b'A'; SIMD_LANES * 3 + 5];
+        s[SIMD_LANES + 7] = b'Y';
+        s[SIMD_LANES * 2 + 3] = 0;
+        assert_eq!(strcspn(&s, b"WXYZ\0"), SIMD_LANES + 7);
+
+        s[SIMD_LANES + 4] = 0;
+        assert_eq!(strcspn(&s, b"WXYZ\0"), SIMD_LANES + 4);
     }
 
     #[test]
