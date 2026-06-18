@@ -24332,7 +24332,10 @@ pub unsafe extern "C" fn getutmpx(_u: *const c_void, _ux: *mut c_void) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigblock(mask: c_int) -> c_int {
     let mut old_set: u64 = 0;
-    let new_set = mask as u64;
+    // Zero-extend the low 32 bits (glibc's sigset_set_old_mask does
+    // `(unsigned int) mask`). A plain `mask as u64` would SIGN-extend a mask
+    // with bit 31 set, wrongly blocking signals 33-64. bd-z1wq9a.
+    let new_set = (mask as u32) as u64;
     match unsafe {
         syscall::sys_rt_sigprocmask(
             libc::SIG_BLOCK,
@@ -24359,7 +24362,10 @@ pub unsafe extern "C" fn siggetmask() -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigsetmask(mask: c_int) -> c_int {
     let mut old_set: u64 = 0;
-    let new_set = mask as u64;
+    // Zero-extend the low 32 bits (glibc's sigset_set_old_mask does
+    // `(unsigned int) mask`). A plain `mask as u64` would SIGN-extend a mask
+    // with bit 31 set, wrongly blocking signals 33-64. bd-z1wq9a.
+    let new_set = (mask as u32) as u64;
     match unsafe {
         syscall::sys_rt_sigprocmask(
             libc::SIG_SETMASK,
