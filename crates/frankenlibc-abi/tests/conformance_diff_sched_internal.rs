@@ -11,6 +11,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     __sched_getparam as fl_sched_getparam,
     __sched_getscheduler as fl_sched_getscheduler,
     __sched_setscheduler as fl_sched_setscheduler,
+    __sched_yield as fl_sched_yield,
 };
 use std::ffi::{c_int, c_void};
 
@@ -29,6 +30,8 @@ unsafe extern "C" {
         policy: c_int,
         param: *const libc::sched_param,
     ) -> c_int;
+    #[link_name = "__sched_yield"]
+    fn host_sched_yield() -> c_int;
 }
 
 fn host_errno() -> c_int {
@@ -105,6 +108,21 @@ fn internal_sched_priority_invalid_policy_matches_host_errno() {
          glibc=({host_max}, {host_max_err})"
     );
     assert_eq!((fl_max, fl_max_err), (-1, libc::EINVAL));
+}
+
+#[test]
+fn internal_sched_yield_matches_host_success_contract() {
+    clear_host_errno();
+    let host_result = unsafe { host_sched_yield() };
+
+    clear_fl_errno();
+    let fl_result = unsafe { fl_sched_yield() };
+
+    assert_eq!(
+        fl_result, host_result,
+        "__sched_yield return mismatch: fl={fl_result} glibc={host_result}"
+    );
+    assert_eq!(fl_result, 0);
 }
 
 #[test]
