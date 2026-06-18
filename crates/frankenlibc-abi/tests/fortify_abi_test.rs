@@ -809,6 +809,14 @@ fn getgroups_chk_safe() {
 }
 
 #[test]
+fn getgroups_chk_size_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("getgroups_chk size over real buffer", || {
+        let mut groups = [0u32; 1];
+        unsafe { __getgroups_chk(2, groups.as_mut_ptr(), core::mem::size_of_val(&groups)) };
+    });
+}
+
+#[test]
 fn ttyname_r_chk_not_a_tty() {
     let mut buf = [0u8; 256];
     // fd=0 (stdin) in test environment is likely not a tty
