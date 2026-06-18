@@ -1054,12 +1054,37 @@ fn mbstowcs_chk_safe() {
 }
 
 #[test]
+fn mbstowcs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("mbstowcs_chk n over real buffer", || {
+        let src = CString::new("abcd").unwrap();
+        let mut dest = [0 as WcharT; 2];
+        unsafe {
+            __mbstowcs_chk(
+                dest.as_mut_ptr(),
+                src.as_ptr(),
+                4,
+                std::mem::size_of_val(&dest),
+            )
+        };
+    });
+}
+
+#[test]
 fn wcstombs_chk_safe() {
     let src: [WcharT; 4] = [b'x' as i32, b'y' as i32, b'z' as i32, 0];
     let mut dest = [0u8; 16];
     let n = unsafe { __wcstombs_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 16, 16) };
     assert_eq!(n, 3);
     assert_eq!(&dest[..3], b"xyz");
+}
+
+#[test]
+fn wcstombs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcstombs_chk n over real buffer", || {
+        let src: [WcharT; 2] = [b'x' as WcharT, 0];
+        let mut dest = [0u8; 2];
+        unsafe { __wcstombs_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 8, dest.len()) };
+    });
 }
 
 #[test]
@@ -1098,6 +1123,24 @@ fn mbsrtowcs_chk_safe() {
 }
 
 #[test]
+fn mbsrtowcs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("mbsrtowcs_chk n over real buffer", || {
+        let src_str = CString::new("abcd").unwrap();
+        let mut src_ptr: *const c_char = src_str.as_ptr();
+        let mut dest = [0 as WcharT; 2];
+        unsafe {
+            __mbsrtowcs_chk(
+                dest.as_mut_ptr(),
+                &mut src_ptr,
+                4,
+                std::ptr::null_mut(),
+                std::mem::size_of_val(&dest),
+            )
+        };
+    });
+}
+
+#[test]
 fn wcsrtombs_chk_safe() {
     let src_arr: [WcharT; 3] = [b'A' as i32, b'B' as i32, 0];
     let mut src_ptr: *const WcharT = src_arr.as_ptr();
@@ -1113,6 +1156,24 @@ fn wcsrtombs_chk_safe() {
     };
     assert_eq!(n, 2);
     assert_eq!(&dest[..2], b"AB");
+}
+
+#[test]
+fn wcsrtombs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcsrtombs_chk n over real buffer", || {
+        let src_arr: [WcharT; 2] = [b'A' as WcharT, 0];
+        let mut src_ptr: *const WcharT = src_arr.as_ptr();
+        let mut dest = [0u8; 2];
+        unsafe {
+            __wcsrtombs_chk(
+                dest.as_mut_ptr().cast(),
+                &mut src_ptr as *mut *const WcharT,
+                8,
+                std::ptr::null_mut(),
+                dest.len(),
+            )
+        };
+    });
 }
 
 // ===========================================================================
@@ -1548,6 +1609,25 @@ fn mbsnrtowcs_chk_basic() {
     assert_eq!(dest[2], b'c' as i32);
 }
 
+#[test]
+fn mbsnrtowcs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("mbsnrtowcs_chk n over real buffer", || {
+        let src_str = CString::new("abcd").unwrap();
+        let mut src_ptr: *const c_char = src_str.as_ptr();
+        let mut dest = [0 as WcharT; 2];
+        unsafe {
+            __mbsnrtowcs_chk(
+                dest.as_mut_ptr(),
+                &mut src_ptr,
+                4,
+                4,
+                std::ptr::null_mut(),
+                std::mem::size_of_val(&dest),
+            )
+        };
+    });
+}
+
 // ===========================================================================
 // __wcsnrtombs_chk
 // ===========================================================================
@@ -1569,6 +1649,25 @@ fn wcsnrtombs_chk_basic() {
     };
     assert_eq!(n, 3);
     assert_eq!(&dest[..3], b"XYZ");
+}
+
+#[test]
+fn wcsnrtombs_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcsnrtombs_chk n over real buffer", || {
+        let src_arr: [WcharT; 2] = [b'X' as WcharT, 0];
+        let mut src_ptr: *const WcharT = src_arr.as_ptr();
+        let mut dest = [0u8; 2];
+        unsafe {
+            __wcsnrtombs_chk(
+                dest.as_mut_ptr().cast(),
+                &mut src_ptr as *mut *const WcharT,
+                1,
+                8,
+                std::ptr::null_mut(),
+                dest.len(),
+            )
+        };
+    });
 }
 
 #[test]
