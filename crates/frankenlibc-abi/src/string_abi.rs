@@ -8794,11 +8794,184 @@ pub unsafe extern "C" fn __strsep_3c(
     unsafe { strsep(stringp, buf.as_ptr()) }
 }
 
+#[derive(Clone, Copy)]
+enum ConstSetScanMode {
+    SpanAccepted,
+    SpanRejected,
+    FindMember,
+}
+
+#[inline]
+fn const_set_from_args(args: &[c_int]) -> ([u8; 3], usize) {
+    let mut set = [0u8; 3];
+    let mut len = 0usize;
+    for &arg in args {
+        let byte = (arg as c_char) as u8;
+        if byte == 0 {
+            break;
+        }
+        set[len] = byte;
+        len += 1;
+    }
+    (set, len)
+}
+
+#[inline]
+fn const_set_contains(set: &[u8], byte: u8) -> bool {
+    set.iter().any(|&candidate| candidate == byte)
+}
+
+#[inline]
+unsafe fn scan_const_set(
+    s: *const c_char,
+    set: &[u8],
+    mode: ConstSetScanMode,
+    bound: Option<usize>,
+) -> (usize, bool) {
+    let mut index = 0usize;
+    loop {
+        if bound.is_some_and(|limit| index >= limit) {
+            return (index, false);
+        }
+
+        // SAFETY: the caller supplied a C string pointer; when the allocation
+        // is tracked, `bound` prevents reads beyond the known allocation.
+        let byte = unsafe { *s.add(index) as u8 };
+        if byte == 0 {
+            return (index, false);
+        }
+
+        let member = const_set_contains(set, byte);
+        match mode {
+            ConstSetScanMode::SpanAccepted if !member => return (index, false),
+            ConstSetScanMode::SpanRejected if member => return (index, true),
+            ConstSetScanMode::FindMember if member => return (index, true),
+            _ => {}
+        }
+
+        index += 1;
+    }
+}
+
+#[inline]
+unsafe fn const_set_span(s: *const c_char, set: &[u8], mode: ConstSetScanMode) -> usize {
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
+    if s.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    if matches!(mode, ConstSetScanMode::SpanAccepted) && set.is_empty() {
+        return 0;
+    }
+
+    let known_bound = known_remaining(s as usize);
+    let (mode_config, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_bound.is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode_config.heals_enabled(), decision.action);
+    let (result, _) = unsafe { scan_const_set(s, set, mode, known_bound) };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, result),
+        repair && known_bound.is_some(),
+    );
+    result
+}
+
+#[inline]
+unsafe fn const_set_pbrk(s: *const c_char, set: &[u8]) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
+    if s.is_null() || set.is_empty() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let known_bound = known_remaining(s as usize);
+    let (mode_config, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_bound.is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode_config.heals_enabled(), decision.action);
+    let (index, found) =
+        unsafe { scan_const_set(s, set, ConstSetScanMode::FindMember, known_bound) };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, index),
+        repair && known_bound.is_some(),
+    );
+
+    if found {
+        // SAFETY: `scan_const_set` only returns `found` for an index it read
+        // from the caller-provided C string.
+        unsafe { s.add(index) as *mut c_char }
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
 /// `__strpbrk_c2` — strpbrk optimized for 2-char accept set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __strpbrk_c2(s: *const c_char, a1: c_int, a2: c_int) -> *mut c_char {
-    let accept: [c_char; 3] = [a1 as c_char, a2 as c_char, 0];
-    unsafe { strpbrk(s, accept.as_ptr()) }
+    let (set, len) = const_set_from_args(&[a1, a2]);
+    unsafe { const_set_pbrk(s, &set[..len]) }
 }
 
 /// `__strpbrk_c3` — strpbrk optimized for 3-char accept set.
@@ -8809,50 +8982,50 @@ pub unsafe extern "C" fn __strpbrk_c3(
     a2: c_int,
     a3: c_int,
 ) -> *mut c_char {
-    let accept: [c_char; 4] = [a1 as c_char, a2 as c_char, a3 as c_char, 0];
-    unsafe { strpbrk(s, accept.as_ptr()) }
+    let (set, len) = const_set_from_args(&[a1, a2, a3]);
+    unsafe { const_set_pbrk(s, &set[..len]) }
 }
 
 /// `__strcspn_c1` — strcspn optimized for 1-char reject set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __strcspn_c1(s: *const c_char, r: c_int) -> usize {
-    let reject: [c_char; 2] = [r as c_char, 0];
-    unsafe { strcspn(s, reject.as_ptr()) }
+    let (set, len) = const_set_from_args(&[r]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanRejected) }
 }
 
 /// `__strcspn_c2` — strcspn optimized for 2-char reject set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __strcspn_c2(s: *const c_char, r1: c_int, r2: c_int) -> usize {
-    let reject: [c_char; 3] = [r1 as c_char, r2 as c_char, 0];
-    unsafe { strcspn(s, reject.as_ptr()) }
+    let (set, len) = const_set_from_args(&[r1, r2]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanRejected) }
 }
 
 /// `__strcspn_c3` — strcspn optimized for 3-char reject set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __strcspn_c3(s: *const c_char, r1: c_int, r2: c_int, r3: c_int) -> usize {
-    let reject: [c_char; 4] = [r1 as c_char, r2 as c_char, r3 as c_char, 0];
-    unsafe { strcspn(s, reject.as_ptr()) }
+    let (set, len) = const_set_from_args(&[r1, r2, r3]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanRejected) }
 }
 
 /// `__strspn_c1` — strspn optimized for 1-char accept set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __strspn_c1(s: *const c_char, a: c_int) -> usize {
-    let accept: [c_char; 2] = [a as c_char, 0];
-    unsafe { strspn(s, accept.as_ptr()) }
+    let (set, len) = const_set_from_args(&[a]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanAccepted) }
 }
 
 /// `__strspn_c2` — strspn optimized for 2-char accept set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __strspn_c2(s: *const c_char, a1: c_int, a2: c_int) -> usize {
-    let accept: [c_char; 3] = [a1 as c_char, a2 as c_char, 0];
-    unsafe { strspn(s, accept.as_ptr()) }
+    let (set, len) = const_set_from_args(&[a1, a2]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanAccepted) }
 }
 
 /// `__strspn_c3` — strspn optimized for 3-char accept set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __strspn_c3(s: *const c_char, a1: c_int, a2: c_int, a3: c_int) -> usize {
-    let accept: [c_char; 4] = [a1 as c_char, a2 as c_char, a3 as c_char, 0];
-    unsafe { strspn(s, accept.as_ptr()) }
+    let (set, len) = const_set_from_args(&[a1, a2, a3]);
+    unsafe { const_set_span(s, &set[..len], ConstSetScanMode::SpanAccepted) }
 }
 
 /// `__strtok_r_1c` — strtok_r optimized for single-char delimiter.
