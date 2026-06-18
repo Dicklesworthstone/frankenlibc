@@ -347,6 +347,17 @@ unsafe extern "C" fn call_vsnprintf_chk(
     unsafe { __vsnprintf_chk(buf, maxlen, 0, buflen, fmt, ap) }
 }
 
+unsafe extern "C" fn call_vswprintf_chk(
+    buf: *mut WcharT,
+    maxlen: usize,
+    buflen: usize,
+    fmt: *const WcharT,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { __vswprintf_chk(buf, maxlen, 0, buflen, fmt, ap) }
+}
+
 unsafe extern "C" fn call_vfprintf_chk(
     stream: *mut c_void,
     fmt: *const c_char,
@@ -410,6 +421,15 @@ fn wcscpy_chk_safe() {
 }
 
 #[test]
+fn wcscpy_chk_src_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcscpy_chk src over real buffer", || {
+        let src: [WcharT; 4] = [b'H' as WcharT, b'i' as WcharT, b'!' as WcharT, 0];
+        let mut dest = [0 as WcharT; 2];
+        unsafe { __wcscpy_chk(dest.as_mut_ptr(), src.as_ptr(), std::mem::size_of_val(&dest)) };
+    });
+}
+
+#[test]
 fn wcsncpy_chk_safe() {
     let src: [WcharT; 3] = [b'A' as i32, b'B' as i32, 0];
     let mut dest = [0xFFi32; 4];
@@ -420,6 +440,15 @@ fn wcsncpy_chk_safe() {
     assert_eq!(dest[1], b'B' as i32);
     assert_eq!(dest[2], 0); // null terminator from src
     assert_eq!(dest[3], 0); // padding
+}
+
+#[test]
+fn wcsncpy_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcsncpy_chk n over real buffer", || {
+        let src: [WcharT; 4] = [b'A' as WcharT, b'B' as WcharT, b'C' as WcharT, 0];
+        let mut dest = [0 as WcharT; 2];
+        unsafe { __wcsncpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, std::mem::size_of_val(&dest)) };
+    });
 }
 
 #[test]
@@ -435,6 +464,15 @@ fn wcscat_chk_safe() {
     assert_eq!(dest[1], b'Y' as i32);
     assert_eq!(dest[2], b'Z' as i32);
     assert_eq!(dest[3], 0);
+}
+
+#[test]
+fn wcscat_chk_src_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcscat_chk src over real buffer", || {
+        let mut dest = [b'A' as WcharT, 0];
+        let src: [WcharT; 2] = [b'B' as WcharT, 0];
+        unsafe { __wcscat_chk(dest.as_mut_ptr(), src.as_ptr(), std::mem::size_of_val(&dest)) };
+    });
 }
 
 #[test]
@@ -454,12 +492,30 @@ fn wcsncat_chk_safe() {
 }
 
 #[test]
+fn wcsncat_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wcsncat_chk n over real buffer", || {
+        let mut dest = [b'A' as WcharT, 0];
+        let src: [WcharT; 2] = [b'B' as WcharT, 0];
+        unsafe { __wcsncat_chk(dest.as_mut_ptr(), src.as_ptr(), 1, std::mem::size_of_val(&dest)) };
+    });
+}
+
+#[test]
 fn wmemcpy_chk_safe() {
     let src: [WcharT; 3] = [100, 200, 300];
     let mut dest = [0i32; 4];
     let ret = unsafe { __wmemcpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, 4 * 4) };
     assert_eq!(ret, dest.as_mut_ptr());
     assert_eq!(&dest[..3], &[100, 200, 300]);
+}
+
+#[test]
+fn wmemcpy_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wmemcpy_chk n over real buffer", || {
+        let src: [WcharT; 3] = [100, 200, 300];
+        let mut dest = [0 as WcharT; 2];
+        unsafe { __wmemcpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, std::mem::size_of_val(&dest)) };
+    });
 }
 
 #[test]
@@ -478,11 +534,28 @@ fn wmemmove_chk_safe() {
 }
 
 #[test]
+fn wmemmove_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wmemmove_chk n over real buffer", || {
+        let src: [WcharT; 3] = [1, 2, 3];
+        let mut dest = [0 as WcharT; 2];
+        unsafe { __wmemmove_chk(dest.as_mut_ptr(), src.as_ptr(), 3, std::mem::size_of_val(&dest)) };
+    });
+}
+
+#[test]
 fn wmemset_chk_safe() {
     let mut buf = [0i32; 5];
     let ret = unsafe { __wmemset_chk(buf.as_mut_ptr(), 42, 5, 5 * 4) };
     assert_eq!(ret, buf.as_mut_ptr());
     assert_eq!(buf, [42; 5]);
+}
+
+#[test]
+fn wmemset_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("wmemset_chk n over real buffer", || {
+        let mut dest = [0 as WcharT; 2];
+        unsafe { __wmemset_chk(dest.as_mut_ptr(), 42, 3, std::mem::size_of_val(&dest)) };
+    });
 }
 
 // ===========================================================================
@@ -1728,6 +1801,39 @@ fn swprintf_chk_basic() {
     assert_eq!(dest[1], b'9' as i32);
     assert_eq!(dest[2], b'!' as i32);
     assert_eq!(dest[3], 0);
+}
+
+#[test]
+fn swprintf_chk_maxlen_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("swprintf_chk maxlen over real buffer", || {
+        let mut dest = [0 as WcharT; 2];
+        let fmt: [WcharT; 1] = [0];
+        unsafe {
+            __swprintf_chk(
+                dest.as_mut_ptr(),
+                3,
+                0,
+                std::mem::size_of_val(&dest),
+                fmt.as_ptr(),
+            )
+        };
+    });
+}
+
+#[test]
+fn vswprintf_chk_maxlen_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("vswprintf_chk maxlen over real buffer", || {
+        let mut dest = [0 as WcharT; 2];
+        let fmt: [WcharT; 1] = [0];
+        unsafe {
+            call_vswprintf_chk(
+                dest.as_mut_ptr(),
+                3,
+                std::mem::size_of_val(&dest),
+                fmt.as_ptr(),
+            )
+        };
+    });
 }
 
 // ===========================================================================
