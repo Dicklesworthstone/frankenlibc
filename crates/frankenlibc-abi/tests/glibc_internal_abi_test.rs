@@ -85,6 +85,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     __woverflow,
     __wuflow,
     __wunderflow,
+    chflags,
     _dl_find_object,
     _dl_mcount_wrapper,
     _dl_mcount_wrapper_check,
@@ -159,6 +160,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     ruserok_af,
     ruserpass,
     sgetspent_r,
+    setlogin,
     stty,
     tr_break,
     vlimit,
@@ -173,6 +175,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 unsafe extern "C" {
+    #[link_name = "chflags"]
+    fn host_chflags(path: *const c_char, flags: libc::c_ulong) -> c_int;
     #[link_name = "dysize"]
     fn host_dysize(year: c_int) -> c_int;
     #[link_name = "fchflags"]
@@ -181,6 +185,8 @@ unsafe extern "C" {
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
     #[link_name = "stty"]
     fn host_stty(fd: c_int, params: *const c_void) -> c_int;
+    #[link_name = "setlogin"]
+    fn host_setlogin(name: *const c_char) -> c_int;
     #[link_name = "vlimit"]
     fn host_vlimit(resource: c_int, value: c_int) -> c_int;
 }
@@ -254,6 +260,47 @@ fn fchflags_valid_fd_matches_host_enosys() {
 
         assert_eq!((fl_result, fl_errno), (host_result, host_errno));
         assert_eq!((fl_result, fl_errno), (-1, libc::ENOSYS));
+    }
+}
+
+#[test]
+fn bsd_path_and_login_stubs_match_host_enosys() {
+    let path = CString::new("/nonexistent/frankenlibc-chflags").unwrap();
+    let login = CString::new("frankenlibc").unwrap();
+
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_chflags_result = host_chflags(path.as_ptr(), 0);
+        let host_chflags_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_chflags_result = chflags(path.as_ptr(), 0);
+        let fl_chflags_errno = errno_value();
+
+        assert_eq!(
+            (fl_chflags_result, fl_chflags_errno),
+            (host_chflags_result, host_chflags_errno)
+        );
+        assert_eq!((fl_chflags_result, fl_chflags_errno), (-1, libc::ENOSYS));
+
+        *libc::__errno_location() = 0;
+        let host_setlogin_result = host_setlogin(login.as_ptr());
+        let host_setlogin_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_setlogin_result = setlogin(login.as_ptr());
+        let fl_setlogin_errno = errno_value();
+
+        assert_eq!(
+            (fl_setlogin_result, fl_setlogin_errno),
+            (host_setlogin_result, host_setlogin_errno)
+        );
+        assert_eq!(
+            (fl_setlogin_result, fl_setlogin_errno),
+            (-1, libc::ENOSYS)
+        );
     }
 }
 
