@@ -45,7 +45,7 @@ const WIDE_EQUAL_PREFIX_MIN_LEN: usize = WIDE_EQUAL_PREFIX_LANES * 4;
 const WIDE_MEMCHR_SIMD_LANES: usize = 16;
 
 /// Number of `u32` wide characters searched per reverse `wmemrchr` panel.
-const WIDE_REVERSE_SIMD_LANES: usize = 16;
+const WIDE_REVERSE_SIMD_LANES: usize = WIDE_FIND_LONG_SIMD_LANES;
 
 /// Returns `true` if `chunk` (exactly [`WIDE_FIND_SIMD_LANES`] elements) contains the
 /// wide character `needle` or a terminating NUL. Used as a cheap panel filter
@@ -2726,7 +2726,8 @@ mod tests {
 
     #[test]
     fn test_wmemrchr_simd_panel_boundary_and_remainder() {
-        // 20 elements: two full rear panels + a 4-element front remainder.
+        // A short scan below the SIMD panel width must use the same scalar
+        // oracle semantics as a long reverse panel scan.
         let mut s: Vec<u32> = vec![1u32; 20];
         // Last occurrence must win across panels and remainder.
         s[2] = 9; // remainder region
@@ -2742,6 +2743,23 @@ mod tests {
         assert_eq!(wmemrchr(&s, 7, 4), None);
         // Match only in the remainder.
         assert_eq!(wmemrchr(&s, 9, 4), Some(2));
+    }
+
+    #[test]
+    fn test_wmemrchr_long_reverse_panel_boundary_and_remainder() {
+        let mut s: Vec<u32> = vec![1u32; WIDE_REVERSE_SIMD_LANES * 2 + 5];
+        let n = s.len();
+        let front_remainder_hit = 3;
+        let middle_panel_hit = WIDE_REVERSE_SIMD_LANES + 7;
+        let rear_panel_hit = n - 2;
+        s[front_remainder_hit] = 9;
+        s[middle_panel_hit] = 9;
+        s[rear_panel_hit] = 9;
+
+        assert_eq!(wmemrchr(&s, 9, n), Some(rear_panel_hit));
+        assert_eq!(wmemrchr(&s, 9, rear_panel_hit), Some(middle_panel_hit));
+        assert_eq!(wmemrchr(&s, 9, middle_panel_hit), Some(front_remainder_hit));
+        assert_eq!(wmemrchr(&s, 7, n), None);
     }
 
     #[test]
