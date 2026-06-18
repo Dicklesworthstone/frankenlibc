@@ -8355,8 +8355,16 @@ pub unsafe extern "C" fn crypt_checksalt(setting: *const c_char) -> c_int {
     let Some(bytes) = (unsafe { read_c_string_bytes(setting) }) else {
         return 1;
     };
-    if bytes.starts_with(b"$1$") || bytes.starts_with(b"$5$") || bytes.starts_with(b"$6$") {
+    // libxcrypt classifies a recognized salt: CRYPT_SALT_OK(0),
+    // CRYPT_SALT_INVALID(1), CRYPT_SALT_METHOD_DISABLED(2),
+    // CRYPT_SALT_METHOD_LEGACY(3). $5$/$6$ (SHA-256/512) are OK; $1$ (MD5) is a
+    // recognized-but-legacy method -> 3 (verified vs host). Schemes fl cannot
+    // hash (DES, yescrypt, ...) are reported INVALID rather than claiming a
+    // usability fl can't honour (bd-c6ykz1). bd-iu39zz.
+    if bytes.starts_with(b"$5$") || bytes.starts_with(b"$6$") {
         0
+    } else if bytes.starts_with(b"$1$") {
+        3
     } else {
         1
     }
