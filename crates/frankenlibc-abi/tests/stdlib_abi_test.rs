@@ -1183,6 +1183,17 @@ fn getpagesize_matches_sysconf_table_value() {
 }
 
 #[test]
+fn getpagesize_matches_host_page_size() {
+    let abi_page_size = unsafe { getpagesize() };
+    let host_page_size = unsafe { libc::getpagesize() };
+    let host_sysconf_page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+
+    assert!(host_page_size > 0);
+    assert_eq!(host_sysconf_page_size, host_page_size as libc::c_long);
+    assert_eq!(abi_page_size, host_page_size);
+}
+
+#[test]
 fn getdomainname_matches_uname_and_supports_truncation() {
     let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
     // SAFETY: provides writable pointer for uname output.
