@@ -639,6 +639,14 @@ fn getcwd_chk_safe() {
 }
 
 #[test]
+fn getcwd_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("getcwd_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __getcwd_chk(buf.as_mut_ptr().cast(), 4096, buf.len()) };
+    });
+}
+
+#[test]
 fn getwd_chk_safe() {
     let mut buf = [0u8; 4096];
     let ret = unsafe { __getwd_chk(buf.as_mut_ptr().cast(), 4096) };
@@ -743,6 +751,14 @@ fn gethostname_chk_safe() {
 }
 
 #[test]
+fn gethostname_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("gethostname_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __gethostname_chk(buf.as_mut_ptr().cast(), 256, buf.len()) };
+    });
+}
+
+#[test]
 fn confstr_chk_safe() {
     let mut buf = [0u8; 256];
     // _CS_PATH = 0 on Linux
@@ -765,6 +781,14 @@ fn getdomainname_chk_safe() {
     let ret = unsafe { __getdomainname_chk(buf.as_mut_ptr().cast(), 256, 256) };
     // May return 0 (success) or -1 (no domain set), both are valid
     assert!(ret == 0 || ret == -1);
+}
+
+#[test]
+fn getdomainname_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("getdomainname_chk len over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __getdomainname_chk(buf.as_mut_ptr().cast(), 256, buf.len()) };
+    });
 }
 
 // ===========================================================================

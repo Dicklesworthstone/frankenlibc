@@ -21038,8 +21038,40 @@ pub unsafe extern "C" fn euidaccess(path: *const c_char, mode: c_int) -> c_int {
 /// Linux `closefrom` — close all fd >= lowfd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn closefrom(lowfd: c_int) {
-    // close_range syscall (kernel 5.9+)
-    let _ = syscall::sys_close_range(lowfd as u32, !0u32, 0);
+    let l = lowfd.max(0);
+    // Preferred path: close_range (kernel 5.9+) closes the whole [l, ~0] range
+    // in one call.
+    if unsafe { syscall::sys_close_range(l as u32, !0u32, 0) }.is_ok() {
+        return;
+    }
+    // Fallback for kernels without close_range (it returns ENOSYS): glibc's
+    // __closefrom_fallback closes every descriptor at or above lowfd. fl
+    // previously discarded the error and silently closed nothing — leaving
+    // inherited fds open (a real leak before exec). Close each fd in
+    // [l, RLIMIT_NOFILE) individually; EBADF on unopened fds is harmless.
+    // bd-6br349.
+    let max_fd: c_int = {
+        let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
+        match unsafe {
+            syscall::sys_getrlimit(libc::RLIMIT_NOFILE as i32, rlim.as_mut_ptr() as *mut u8)
+        } {
+            Ok(()) => {
+                let r = unsafe { rlim.assume_init() };
+                if r.rlim_cur == libc::RLIM_INFINITY {
+                    65536
+                } else {
+                    // Cap the loop bound; valid fds are < rlim_cur.
+                    r.rlim_cur.min(1 << 20) as c_int
+                }
+            }
+            Err(_) => 4096,
+        }
+    };
+    let mut fd = l;
+    while fd < max_fd {
+        let _ = syscall::sys_close(fd);
+        fd += 1;
+    }
 }
 
 /// POSIX `clock_getcpuclockid` — get CPU-time clock for a process.
