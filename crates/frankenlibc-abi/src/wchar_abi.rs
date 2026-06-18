@@ -2218,6 +2218,15 @@ pub unsafe extern "C" fn wcrtomb(
         return 1;
     }
 
+    // ASCII fast path: a wchar in 0x00..=0x7F encodes to the single byte equal to
+    // its value in every supported locale (C and UTF-8 agree), so skip the encoder
+    // and scratch buffer. `wc as u32` keeps negative wchars off this path.
+    if (wc as u32) < 0x80 {
+        // SAFETY: caller guarantees `s` points to writable storage for >= 1 byte.
+        unsafe { *(s as *mut u8) = wc as u8 };
+        return 1;
+    }
+
     match wchar_core::wctomb(wc as u32, &mut tmp) {
         Some(len) => {
             // SAFETY: caller guarantees `s` points to writable storage for the resulting sequence.
