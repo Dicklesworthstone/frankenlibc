@@ -2,8 +2,13 @@
 
 //! Integration tests for stdlib extensions: gnu_get_libc_version, confstr.
 
-use frankenlibc_abi::stdlib_abi::{confstr, gnu_get_libc_version};
+use frankenlibc_abi::stdlib_abi::{confstr, gnu_get_libc_release, gnu_get_libc_version};
 use std::ffi::{CStr, c_char};
+
+unsafe extern "C" {
+    #[link_name = "gnu_get_libc_release"]
+    fn host_gnu_get_libc_release() -> *const c_char;
+}
 
 // ---------------------------------------------------------------------------
 // gnu_get_libc_version
@@ -26,6 +31,25 @@ fn test_gnu_get_libc_version_value() {
         ver_str
     );
     assert_eq!(ver_str, "2.38");
+}
+
+#[test]
+fn test_gnu_get_libc_release_matches_host() {
+    let host = unsafe { host_gnu_get_libc_release() };
+    let abi = unsafe { gnu_get_libc_release() };
+    assert!(!host.is_null(), "host gnu_get_libc_release returned NULL");
+    assert!(!abi.is_null(), "abi gnu_get_libc_release returned NULL");
+
+    let host_str = unsafe { CStr::from_ptr(host) }.to_str().unwrap();
+    let abi_str = unsafe { CStr::from_ptr(abi) }.to_str().unwrap();
+    assert_eq!(abi_str, host_str);
+}
+
+#[test]
+fn test_gnu_get_libc_release_stable_across_calls() {
+    let first = unsafe { gnu_get_libc_release() };
+    let second = unsafe { gnu_get_libc_release() };
+    assert_eq!(first, second, "release string should use static storage");
 }
 
 // ---------------------------------------------------------------------------
