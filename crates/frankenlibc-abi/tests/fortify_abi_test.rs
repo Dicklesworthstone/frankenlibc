@@ -1662,3 +1662,33 @@ fn fgetws_chk_reads_wide_chars() {
         libc::unlink(path.as_ptr());
     }
 }
+
+#[test]
+fn fgetws_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("fgetws_chk n over real buffer", || {
+        let mut buf = [0 as WcharT; 4];
+        unsafe {
+            __fgetws_chk(
+                buf.as_mut_ptr(),
+                core::mem::size_of_val(&buf),
+                8,
+                std::ptr::null_mut(),
+            )
+        };
+    });
+}
+
+#[test]
+fn fgetws_unlocked_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("fgetws_unlocked_chk n over real buffer", || {
+        let mut buf = [0 as WcharT; 4];
+        unsafe {
+            __fgetws_unlocked_chk(
+                buf.as_mut_ptr(),
+                core::mem::size_of_val(&buf),
+                8,
+                std::ptr::null_mut(),
+            )
+        };
+    });
+}
