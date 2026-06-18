@@ -198,8 +198,10 @@ pub enum ScanDirective {
     Literal(u8),
     /// Whitespace directive: skip zero or more whitespace chars.
     Whitespace,
-    /// A conversion specifier.
-    Spec(Box<ScanSpec>),
+    /// A conversion specifier. Stored inline (not boxed): with a pre-sized
+    /// directive `Vec` the whole format then parses in a single allocation
+    /// instead of one extra heap box per conversion specifier.
+    Spec(ScanSpec),
 }
 
 /// A parsed scanf conversion specifier.
@@ -323,7 +325,9 @@ pub struct ScanSet {
 
 /// Parse a scanf format string into a list of directives.
 pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
-    let mut directives = Vec::new();
+    // Pre-size for the common case (a handful of directives) so the inline
+    // ScanSpec elements are placed without reallocation/copy churn.
+    let mut directives = Vec::with_capacity(8);
     let mut i = 0;
 
     while i < fmt.len() {
@@ -501,7 +505,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 break;
             }
 
-            directives.push(ScanDirective::Spec(Box::new(spec)));
+            directives.push(ScanDirective::Spec(spec));
         } else if is_c_space(fmt[i]) {
             directives.push(ScanDirective::Whitespace);
             i += 1;
