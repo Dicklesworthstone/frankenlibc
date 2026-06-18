@@ -281,8 +281,7 @@ pub fn parse_networks_line(line: &[u8]) -> Option<NetworkEntry> {
         .split(|&b| is_resolver_field_separator(b))
         .filter(|f| !f.is_empty());
     let name = fields.next()?;
-    let num_str = core::str::from_utf8(fields.next()?).ok()?;
-    let number = parse_network_number(num_str)?;
+    let number = parse_network_number_bytes(fields.next()?)?;
     let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
     Some(NetworkEntry {
         name: name.to_vec(),
@@ -306,35 +305,37 @@ pub fn parse_networks_line(line: &[u8]) -> Option<NetworkEntry> {
 /// * At most four components are allowed; empty components (e.g. a
 ///   trailing `.`) and out-of-range values reject the whole field.
 pub fn parse_network_number(s: &str) -> Option<u32> {
-    if s.is_empty() {
+    parse_network_number_bytes(s.as_bytes())
+}
+
+fn parse_network_number_bytes(bytes: &[u8]) -> Option<u32> {
+    if bytes.is_empty() {
         return None;
     }
     let mut result: u32 = 0;
-    let mut count = 0usize;
-    for part in s.split('.') {
+    for (count, part) in bytes.split(|&b| b == b'.').enumerate() {
         if count >= 4 {
             return None;
         }
-        let v = parse_network_component(part)?;
+        let v = parse_network_component_bytes(part)?;
         result = (result << 8) | v;
-        count += 1;
     }
     Some(result)
 }
 
 /// Parse one `inet_network` component: base-16/8/10 with a `<= 0xff` cap.
-fn parse_network_component(part: &str) -> Option<u32> {
-    let b = part.as_bytes();
-    if b.is_empty() {
+fn parse_network_component_bytes(bytes: &[u8]) -> Option<u32> {
+    if bytes.is_empty() {
         return None;
     }
-    let (radix, digits): (u32, &[u8]) = if b.len() >= 2 && b[0] == b'0' && (b[1] | 0x20) == b'x' {
-        (16, &b[2..])
-    } else if b.len() > 1 && b[0] == b'0' {
-        (8, &b[1..])
-    } else {
-        (10, b)
-    };
+    let (radix, digits): (u32, &[u8]) =
+        if bytes.len() >= 2 && bytes[0] == b'0' && (bytes[1] | 0x20) == b'x' {
+            (16, &bytes[2..])
+        } else if bytes.len() > 1 && bytes[0] == b'0' {
+            (8, &bytes[1..])
+        } else {
+            (10, bytes)
+        };
     if digits.is_empty() {
         return None;
     }
@@ -1986,6 +1987,25 @@ mod tests {
     }
 
     #[test]
+    fn netnum_byte_parser_matches_inet_network_ascii_contract() {
+        assert_eq!(parse_network_number_bytes(b"0"), Some(0));
+        assert_eq!(parse_network_number_bytes(b"0177"), Some(0x7f));
+        assert_eq!(parse_network_number_bytes(b"0X7F"), Some(0x7f));
+        assert_eq!(parse_network_number_bytes(b"10.1"), Some(0x0a01));
+        assert_eq!(
+            parse_network_number_bytes(b"127.0.0.1"),
+            Some(0x7f00_0001)
+        );
+        assert_eq!(parse_network_number_bytes(b""), None);
+        assert_eq!(parse_network_number_bytes(b"10."), None);
+        assert_eq!(parse_network_number_bytes(b"1.2.3.4.5"), None);
+        assert_eq!(parse_network_number_bytes(b"+10"), None);
+        assert_eq!(parse_network_number_bytes(b"10.-1"), None);
+        assert_eq!(parse_network_number_bytes(b"10.256"), None);
+        assert_eq!(parse_network_number_bytes(&[b'1', b'0', 0xff]), None);
+    }
+
+    #[test]
     fn decimal_u32_byte_parser_rejects_signs_non_digits_and_overflow() {
         assert_eq!(parse_ascii_decimal_u32(b"0"), Some(0));
         assert_eq!(parse_ascii_decimal_u32(b"80"), Some(80));
@@ -2060,6 +2080,9 @@ mod tests {
     fn network_rejects_invalid_number() {
         assert!(parse_networks_line(b"foo bar").is_none());
         assert!(parse_networks_line(b"foo 256.0.0.0").is_none());
+        assert!(
+            parse_networks_line(&[b'f', b'o', b'o', b' ', b'1', b'0', 0xff]).is_none()
+        );
     }
 
     #[test]
