@@ -541,6 +541,10 @@ pub(crate) struct StreamExtInfo {
     pub line_buffered: bool,
     pub buf_size: usize,
     pub pending: usize,
+    /// glibc `__freading`: read-only OR the last operation was a read.
+    pub reading: bool,
+    /// glibc `__fwriting`: write-only OR the last operation was a write.
+    pub writing: bool,
 }
 
 /// Resolve a `FILE*` to its `stdio_ext` introspection state, or `None` if fl
@@ -548,12 +552,20 @@ pub(crate) struct StreamExtInfo {
 pub(crate) fn stream_ext_info(stream: *mut c_void) -> Option<StreamExtInfo> {
     let id = canonical_stream_id(stream);
     let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.get(&id).map(|s| StreamExtInfo {
-        readable: s.is_readable(),
-        writable: s.is_writable(),
-        line_buffered: matches!(s.buf_mode(), BufMode::Line),
-        buf_size: s.buffer_capacity(),
-        pending: s.pending_flush().len(),
+    reg.streams.get(&id).map(|s| {
+        let readable = s.is_readable();
+        let writable = s.is_writable();
+        StreamExtInfo {
+            readable,
+            writable,
+            line_buffered: matches!(s.buf_mode(), BufMode::Line),
+            buf_size: s.buffer_capacity(),
+            pending: s.pending_flush().len(),
+            // glibc: read-only stream, or last op was a read.
+            reading: readable && (!writable || s.last_was_read()),
+            // glibc: write-only stream, or last op was a write.
+            writing: writable && (!readable || s.last_was_write()),
+        }
     })
 }
 

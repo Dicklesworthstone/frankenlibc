@@ -37,6 +37,10 @@ pub struct StreamFlags {
     pub error: bool,
     /// True if any read or write has occurred.
     pub io_started: bool,
+    /// Direction of the most recent I/O operation: true if it was a write,
+    /// false if a read. Only meaningful when `io_started` is set. Drives
+    /// `__freading`/`__fwriting` parity with glibc.
+    pub last_write: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -504,6 +508,18 @@ impl StdioStream {
         self.open_flags.truncate
     }
 
+    /// True iff the most recent I/O operation on this stream was a read.
+    /// (False before any operation.) Used by `__freading`.
+    pub fn last_was_read(&self) -> bool {
+        self.flags.io_started && !self.flags.last_write
+    }
+
+    /// True iff the most recent I/O operation on this stream was a write.
+    /// (False before any operation.) Used by `__fwriting`.
+    pub fn last_was_write(&self) -> bool {
+        self.flags.io_started && self.flags.last_write
+    }
+
     /// Check if EOF has been reached.
     pub fn is_eof(&self) -> bool {
         self.flags.eof
@@ -570,6 +586,7 @@ impl StdioStream {
             return None;
         }
         self.flags.io_started = true;
+        self.flags.last_write = true;
         self.flags.eof = false;
         Some(self.buffer.write(data))
     }
@@ -600,6 +617,7 @@ impl StdioStream {
             return Vec::new();
         }
         self.flags.io_started = true;
+        self.flags.last_write = false;
 
         let mut result = Vec::new();
         let mut remaining = count;
@@ -649,6 +667,7 @@ impl StdioStream {
             return 0;
         }
         self.flags.io_started = true;
+        self.flags.last_write = false;
 
         let mut w = 0usize;
 
@@ -738,6 +757,7 @@ impl StdioStream {
             return ReadUntil::Eof;
         }
         self.flags.io_started = true;
+        self.flags.last_write = false;
 
         // A pending ungetc byte is logically first (mirrors buffered_read/mem_read).
         if let Some(b) = self.ungetc_byte.take() {
@@ -823,6 +843,7 @@ impl StdioStream {
             return (0, ReadUntil::Eof);
         }
         self.flags.io_started = true;
+        self.flags.last_write = false;
 
         let mut written = 0usize;
 
@@ -991,6 +1012,7 @@ impl StdioStream {
             return 0;
         }
         self.flags.io_started = true;
+        self.flags.last_write = true;
         self.flags.eof = false;
         if let Some(ref mut backing) = self.mem_backing {
             let n = backing.write(data);
@@ -1020,6 +1042,7 @@ impl StdioStream {
             return Vec::new();
         }
         self.flags.io_started = true;
+        self.flags.last_write = false;
 
         let mut result = Vec::new();
         let mut remaining = count;
@@ -1062,6 +1085,7 @@ impl StdioStream {
             return 0;
         }
         self.flags.io_started = true;
+        self.flags.last_write = false;
 
         let mut w = 0usize;
 

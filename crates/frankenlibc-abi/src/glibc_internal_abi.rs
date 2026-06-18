@@ -3947,8 +3947,12 @@ pub unsafe extern "C" fn __freadable(fp: *mut c_void) -> c_int {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __freading(fp: *mut c_void) -> c_int {
-    let _ = fp;
-    0 // not currently reading
+    // Nonzero iff the stream is read-only or its last operation was a read.
+    // bd-2x73ye.
+    match crate::stdio_abi::stream_ext_info(fp) {
+        Some(i) => i.reading as c_int,
+        None => 0,
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fsetlocking(fp: *mut c_void, typ: c_int) -> c_int {
@@ -3965,8 +3969,12 @@ pub unsafe extern "C" fn __fwritable(fp: *mut c_void) -> c_int {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fwriting(fp: *mut c_void) -> c_int {
-    let _ = fp;
-    0 // not currently writing
+    // Nonzero iff the stream is write-only or its last operation was a write.
+    // bd-2x73ye.
+    match crate::stdio_abi::stream_ext_info(fp) {
+        Some(i) => i.writing as c_int,
+        None => 0,
+    }
 }
 // __getauxval: native — read from /proc/self/auxv
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
