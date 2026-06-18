@@ -267,6 +267,13 @@ unsafe extern "C" {
         tvp: *mut c_void,
         flags: libc::c_uint,
     ) -> c_int;
+    #[link_name = "profil"]
+    fn host_profil(
+        buf: *mut c_void,
+        bufsiz: libc::size_t,
+        offset: libc::size_t,
+        scale: libc::c_uint,
+    ) -> c_int;
     #[link_name = "sstk"]
     fn host_sstk(increment: c_int) -> c_int;
     #[link_name = "sysctl"]
@@ -5680,7 +5687,20 @@ fn profiling_entry_hooks_are_no_ops() {
 #[test]
 fn profiling_frequency_and_profil_safe_defaults_are_stable() {
     assert_eq!(unsafe { __profile_frequency() }, 100);
-    assert_eq!(unsafe { profil(ptr::null_mut(), 0, 0, 0) }, 0);
+
+    unsafe {
+        *libc::__errno_location() = libc::EAGAIN;
+        let host_result = host_profil(ptr::null_mut(), 0, 0, 0);
+        let host_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = libc::EAGAIN;
+        let fl_result = profil(ptr::null_mut(), 0, 0, 0);
+        let fl_errno = errno_value();
+
+        assert_eq!((fl_result, fl_errno), (host_result, host_errno));
+        assert_eq!((fl_result, fl_errno), (0, libc::EAGAIN));
+    }
 }
 
 // ---------------------------------------------------------------------------
