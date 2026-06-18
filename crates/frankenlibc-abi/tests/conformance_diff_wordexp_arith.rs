@@ -134,3 +134,27 @@ fn wordexp_nocmd_allows_arith_rejects_cmdsub() {
         assert_eq!(f.0, gg.0, "WRDE_NOCMD {cmd:?} rc: fl={} glibc={}", f.0, gg.0);
     }
 }
+
+/// fl's $((...)) is POSIX arithmetic, like glibc's wordexp — it must REJECT
+/// bash-only extensions, with the same return code as glibc (not silently
+/// accept them). Pins the reject-path error-parity (bd-6a9tuc / bd-yb9f9r).
+#[test]
+fn wordexp_arith_rejects_bash_extensions_like_glibc() {
+    let cases = [
+        "$((2**3))",     // exponentiation: bash-only, not POSIX arithmetic
+        "$((16#ff))",    // base#number: bash-only
+        "$((08))",       // invalid octal digit
+        "$((1 +))",      // dangling operator
+        "$((* 3))",      // leading binary operator
+        "$((2+(3))",     // unbalanced parentheses
+        "$((1 2))",      // two operands, no operator
+        "$((/0))",       // leading slash
+    ];
+    for s in cases {
+        let f = run_fl(s, 0);
+        let gg = run_glibc(s, 0);
+        // Compare the full (rc, words) outcome — fl must reject exactly when and
+        // how glibc does (same rc; no words on failure).
+        assert_eq!(f, gg, "wordexp({s:?}) reject-parity: fl={f:?} glibc={gg:?}");
+    }
+}
