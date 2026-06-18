@@ -64,12 +64,6 @@ fn sigabbrev_bytes(sig: c_int) -> Option<&'static [u8]> {
     SIGNAL_ABBREVS.get(sig as usize).copied()
 }
 
-fn sigabbrev_str(sig: c_int) -> Option<&'static str> {
-    let bytes = sigabbrev_bytes(sig)?;
-    let text = bytes.strip_suffix(b"\0")?;
-    std::str::from_utf8(text).ok()
-}
-
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1530,8 +1524,10 @@ pub unsafe extern "C" fn psiginfo(info: *const libc::siginfo_t, msg: *const std:
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return;
     }
-    let sig = unsafe { (*info).si_signo };
-    let desc = sigabbrev_str(sig).unwrap_or("Unknown signal");
+    // Optional "<msg>: " prefix (omitted when msg is NULL or empty). Validate
+    // the caller pointer per fl's safety model; bail without printing if it is
+    // not NUL-terminated within the known bounds.
+    let mut out = String::new();
     if !msg.is_null() {
         let (msg_len, terminated) = unsafe {
             crate::util::scan_c_string(msg, crate::malloc_abi::known_remaining(msg as usize))
@@ -1540,19 +1536,191 @@ pub unsafe extern "C" fn psiginfo(info: *const libc::siginfo_t, msg: *const std:
             runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
             return;
         }
-        let msg_bytes = unsafe { std::slice::from_raw_parts(msg as *const u8, msg_len) };
-        if let Ok(s) = std::str::from_utf8(msg_bytes) {
-            let out = format!("{s}: SIG{desc}\n");
-            unsafe {
-                crate::unistd_abi::sys_write_fd(libc::STDERR_FILENO, out.as_ptr().cast(), out.len())
-            };
-            runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
-            return;
+        if msg_len > 0 {
+            let msg_bytes = unsafe { std::slice::from_raw_parts(msg as *const u8, msg_len) };
+            if let Ok(s) = std::str::from_utf8(msg_bytes) {
+                out.push_str(s);
+                out.push_str(": ");
+            }
         }
     }
-    let out = format!("SIG{desc}\n");
+
+    out.push_str(&format_psiginfo_body(info));
     unsafe { crate::unistd_abi::sys_write_fd(libc::STDERR_FILENO, out.as_ptr().cast(), out.len()) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+}
+
+/// Format the signal-description portion of `psiginfo` output (everything after
+/// the optional "<msg>: " prefix, including the trailing newline), byte-exact
+/// vs glibc's `psiginfo` (stdio-common/psiginfo.c, C locale). bd-765exy.
+fn format_psiginfo_body(info: *const libc::siginfo_t) -> String {
+    // si_signo / si_code are public struct fields; the union payload
+    // (si_pid/si_uid/si_status/si_addr/si_band) lives at fixed offsets in the
+    // kernel `siginfo_t` layout, identical across the LP64 targets fl supports.
+    let signo = unsafe { (*info).si_signo };
+    let code = unsafe { (*info).si_code };
+    let base = info as *const u8;
+    let read_i32 = |off: usize| unsafe { (base.add(off) as *const i32).read_unaligned() };
+    let read_u32 = |off: usize| unsafe { (base.add(off) as *const u32).read_unaligned() };
+    let read_usize = |off: usize| unsafe { (base.add(off) as *const usize).read_unaligned() };
+    let read_i64 = |off: usize| unsafe { (base.add(off) as *const i64).read_unaligned() };
+
+    // Description from fl's __sys_siglist-equivalent table (signals 1..=31).
+    let desc: Option<&str> = {
+        let p = unsafe { sigdescr_np(signo) };
+        if p.is_null() {
+            None
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(p) }.to_str().ok()
+        }
+    };
+    let rtmin = unsafe { libc::SIGRTMIN() };
+    let rtmax = unsafe { libc::SIGRTMAX() };
+    // glibc's RT range is half-open: [SIGRTMIN, SIGRTMAX). SIGRTMAX itself
+    // prints as "Unknown signal N".
+    let is_rt = signo >= rtmin && signo < rtmax;
+
+    if desc.is_none() && !is_rt {
+        return format!("Unknown signal {signo}\n");
+    }
+
+    let mut out = String::new();
+    match desc {
+        Some(d) => out.push_str(&format!("{d} (")),
+        None => {
+            // Real-time signal: glibc names it relative to the nearer end.
+            let name = if signo - rtmin < rtmax - signo {
+                if signo == rtmin {
+                    "SIGRTMIN".to_string()
+                } else {
+                    format!("SIGRTMIN+{}", signo - rtmin)
+                }
+            } else if signo == rtmax {
+                "SIGRTMAX".to_string()
+            } else {
+                format!("SIGRTMAX-{}", rtmax - signo)
+            };
+            out.push_str(&name);
+            out.push_str(" (");
+        }
+    }
+
+    // si_code -> description: per-signal code tables (1-based) take priority,
+    // else the SI_* sender classes; otherwise the raw numeric code.
+    match psiginfo_code_string(signo, code) {
+        Some(s) => {
+            out.push_str(s);
+            out.push(' ');
+        }
+        None => out.push_str(&format!("{code} ")),
+    }
+
+    // Trailing payload + closing paren, by signal class.
+    if signo == libc::SIGILL
+        || signo == libc::SIGFPE
+        || signo == libc::SIGSEGV
+        || signo == libc::SIGBUS
+    {
+        // glibc prints the fault address with %p: "(nil)" for NULL.
+        let addr = read_usize(16);
+        let p = if addr == 0 {
+            "(nil)".to_string()
+        } else {
+            format!("0x{addr:x}")
+        };
+        out.push_str(&format!("[{p}])\n"));
+    } else if signo == libc::SIGCHLD {
+        let pid = read_i32(16) as i64;
+        let uid = read_u32(20) as i64;
+        let status = read_i32(24);
+        out.push_str(&format!("{pid} {status} {uid})\n"));
+    } else if signo == libc::SIGPOLL {
+        let band = read_i64(16);
+        out.push_str(&format!("{band})\n"));
+    } else {
+        let pid = read_i32(16) as i64;
+        let uid = read_u32(20) as i64;
+        out.push_str(&format!("{pid} {uid})\n"));
+    }
+    out
+}
+
+/// glibc's `si_code`-to-string mapping (stdio-common/psiginfo-data.h, C locale).
+/// The per-signal tables are 1-based on `si_code`; values outside them fall back
+/// to the SI_* sender classes. (The "Floating-poing" spelling is glibc's own.)
+fn psiginfo_code_string(signo: c_int, code: c_int) -> Option<&'static str> {
+    const ILL: &[&str] = &[
+        "Illegal opcode",
+        "Illegal operand",
+        "Illegal addressing mode",
+        "Illegal trap",
+        "Privileged opcode",
+        "Privileged register",
+        "Coprocessor error",
+        "Internal stack error",
+    ];
+    const FPE: &[&str] = &[
+        "Integer divide by zero",
+        "Integer overflow",
+        "Floating-point divide by zero",
+        "Floating-point overflow",
+        "Floating-point underflow",
+        "Floating-poing inexact result",
+        "Invalid floating-point operation",
+        "Subscript out of range",
+    ];
+    const SEGV: &[&str] = &[
+        "Address not mapped to object",
+        "Invalid permissions for mapped object",
+    ];
+    const BUS: &[&str] = &[
+        "Invalid address alignment",
+        "Nonexisting physical address",
+        "Object-specific hardware error",
+    ];
+    const TRAP: &[&str] = &["Process breakpoint", "Process trace trap"];
+    const CHLD: &[&str] = &[
+        "Child has exited",
+        "Child has terminated abnormally and did not create a core file",
+        "Child has terminated abnormally and created a core file",
+        "Traced child has trapped",
+        "Child has stopped",
+        "Stopped child has continued",
+    ];
+    const POLL: &[&str] = &[
+        "Data input available",
+        "Output buffers available",
+        "Input message available",
+        "I/O error",
+        "High priority input available",
+        "Device disconnected",
+    ];
+    let table: &[&str] = match signo {
+        libc::SIGILL => ILL,
+        libc::SIGFPE => FPE,
+        libc::SIGSEGV => SEGV,
+        libc::SIGBUS => BUS,
+        libc::SIGTRAP => TRAP,
+        libc::SIGCHLD => CHLD,
+        libc::SIGPOLL => POLL,
+        _ => &[],
+    };
+    if !table.is_empty() && code >= 1 && (code as usize) <= table.len() {
+        return Some(table[(code - 1) as usize]);
+    }
+    // SI_* sender classes (Linux values).
+    Some(match code {
+        0 => "Signal sent by kill()",                 // SI_USER
+        -1 => "Signal sent by sigqueue()",            // SI_QUEUE
+        -2 => "Signal generated by the expiration of a timer", // SI_TIMER
+        -4 => "Signal generated by the completion of an asynchronous I/O request", // SI_ASYNCIO
+        -3 => "Signal generated by the arrival of a message on an empty message queue", // SI_MESGQ
+        -6 => "Signal sent by tkill()",               // SI_TKILL
+        -60 => "Signal generated by the completion of an asynchronous name lookup request", // SI_ASYNCNL
+        -5 => "Signal generated by the completion of an I/O request", // SI_SIGIO
+        0x80 => "Signal sent by the kernel",          // SI_KERNEL
+        _ => return None,
+    })
 }
 
 /// `sigabbrev_np` — return abbreviated signal name (GNU extension).
