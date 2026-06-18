@@ -95,7 +95,12 @@ pub fn has_mnt_opt(opts: &[u8], needle: &[u8]) -> Option<usize> {
             continue;
         }
         let at_start = i == 0 || opts[i - 1] == b',';
-        let at_end = i + needle.len() == opts.len() || opts[i + needle.len()] == b',';
+        // glibc __hasmntopt accepts the match when followed by NUL, ',' OR '='
+        // — the last so a bare option name matches a "name=value" option (e.g.
+        // hasmntopt(opts, "uid") on "rw,uid=1000"). bd-emgdrv.
+        let at_end = i + needle.len() == opts.len()
+            || opts[i + needle.len()] == b','
+            || opts[i + needle.len()] == b'=';
         if at_start && at_end {
             return Some(i);
         }
