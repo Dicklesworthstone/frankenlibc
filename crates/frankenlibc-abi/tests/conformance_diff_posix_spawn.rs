@@ -33,6 +33,12 @@ unsafe extern "C" {
     ) -> c_int;
     fn posix_spawn_file_actions_init(file_actions: *mut c_void) -> c_int;
     fn posix_spawn_file_actions_destroy(file_actions: *mut c_void) -> c_int;
+    fn posix_spawn_file_actions_addclose(file_actions: *mut c_void, fd: c_int) -> c_int;
+    fn posix_spawn_file_actions_adddup2(
+        file_actions: *mut c_void,
+        oldfd: c_int,
+        newfd: c_int,
+    ) -> c_int;
     fn posix_spawnattr_init(attrp: *mut c_void) -> c_int;
     fn posix_spawnattr_destroy(attrp: *mut c_void) -> c_int;
     fn posix_spawnattr_setflags(attrp: *mut c_void, flags: libc::c_short) -> c_int;
@@ -292,6 +298,27 @@ fn diff_spawnattr_setflags_validates_flags() {
         assert_eq!(r_fl, r_g, "setflags(0x{flags:x}): fl={r_fl} glibc={r_g}");
         unsafe { fl::posix_spawnattr_destroy(a_fl.as_mut_ptr() as *mut c_void) };
         unsafe { posix_spawnattr_destroy(a_g.as_mut_ptr() as *mut c_void) };
+    }
+}
+
+/// The file-action adders must reject a negative fd with EBADF (not EINVAL),
+/// matching glibc's __spawn_valid_fd. bd-r1cvsg.
+#[test]
+fn diff_file_actions_addclose_negative_fd_is_ebadf() {
+    for fd in [-1i32, 5] {
+        let mut fa_fl = vec![0u8; FA_BYTES];
+        let mut fa_g = vec![0u8; FA_BYTES];
+        assert_eq!(unsafe { fl::posix_spawn_file_actions_init(fa_fl.as_mut_ptr() as *mut c_void) }, 0);
+        assert_eq!(unsafe { posix_spawn_file_actions_init(fa_g.as_mut_ptr() as *mut c_void) }, 0);
+        let r_fl = unsafe { fl::posix_spawn_file_actions_addclose(fa_fl.as_mut_ptr() as *mut c_void, fd) };
+        let r_g = unsafe { posix_spawn_file_actions_addclose(fa_g.as_mut_ptr() as *mut c_void, fd) };
+        assert_eq!(r_fl, r_g, "addclose(fd={fd}): fl={r_fl} glibc={r_g}");
+        // adddup2 with a negative oldfd must also match.
+        let d_fl = unsafe { fl::posix_spawn_file_actions_adddup2(fa_fl.as_mut_ptr() as *mut c_void, fd, 1) };
+        let d_g = unsafe { posix_spawn_file_actions_adddup2(fa_g.as_mut_ptr() as *mut c_void, fd, 1) };
+        assert_eq!(d_fl, d_g, "adddup2(oldfd={fd}): fl={d_fl} glibc={d_g}");
+        unsafe { fl::posix_spawn_file_actions_destroy(fa_fl.as_mut_ptr() as *mut c_void) };
+        unsafe { posix_spawn_file_actions_destroy(fa_g.as_mut_ptr() as *mut c_void) };
     }
 }
 
