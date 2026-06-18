@@ -234,6 +234,8 @@ unsafe extern "C" {
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
     #[link_name = "res_hnok"]
     fn host_res_hnok(dn: *const c_char) -> c_int;
+    #[link_name = "res_dnok"]
+    fn host_res_dnok(dn: *const c_char) -> c_int;
     #[link_name = "isastream"]
     fn host_isastream(fd: c_int) -> c_int;
     #[link_name = "putmsg"]
@@ -912,11 +914,13 @@ fn res_hnok_rejects_invalid_hostnames() {
 
 #[test]
 fn res_dnok_accepts_underscores() {
-    let with_underscore = CString::new("_sip._tcp.example.com").unwrap();
-    assert_eq!(unsafe { res_dnok(with_underscore.as_ptr()) }, 1);
-
-    let normal = CString::new("example.com").unwrap();
-    assert_eq!(unsafe { res_dnok(normal.as_ptr()) }, 1);
+    for raw in ["_sip._tcp.example.com", "example.com"] {
+        let name = CString::new(raw).unwrap();
+        let host = unsafe { host_res_dnok(name.as_ptr()) };
+        let fl = unsafe { res_dnok(name.as_ptr()) };
+        assert_eq!(fl, host, "res_dnok({raw})");
+        assert_eq!(fl, 1, "res_dnok({raw}) expected acceptance");
+    }
 }
 
 #[test]
