@@ -652,6 +652,10 @@ pub unsafe extern "C" fn catopen(name: *const c_char, _oflag: c_int) -> nl_catd 
         return INVALID_NL_CATD;
     }
     let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&name_bytes));
+    if path.is_dir() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return INVALID_NL_CATD;
+    }
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -885,6 +889,19 @@ mod tests {
         unsafe { set_abi_errno(0) };
         // SAFETY: The catalog name pointer is NUL-terminated.
         let catd = unsafe { catopen(empty.as_ptr() as *const c_char, 0) };
+        assert_eq!(catd, INVALID_NL_CATD);
+        assert_eq!(
+            unsafe { *crate::errno_abi::__errno_location() },
+            libc::EINVAL
+        );
+    }
+
+    #[test]
+    fn catopen_directory_name_sets_einval() {
+        let current_dir = b".\0";
+        unsafe { set_abi_errno(0) };
+        // SAFETY: The catalog name pointer is NUL-terminated.
+        let catd = unsafe { catopen(current_dir.as_ptr() as *const c_char, 0) };
         assert_eq!(catd, INVALID_NL_CATD);
         assert_eq!(
             unsafe { *crate::errno_abi::__errno_location() },
