@@ -1130,6 +1130,29 @@ fn sigignore_sigusr1() {
 }
 
 #[test]
+fn obsolete_signal_wrappers_reject_invalid_signal_with_errno() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let cases: &[(&str, unsafe extern "C" fn(c_int) -> c_int)] = &[
+        ("sighold", sighold),
+        ("sigrelse", sigrelse),
+        ("sigignore", sigignore),
+    ];
+
+    for (name, func) in cases {
+        unsafe { *__errno_location() = 0 };
+
+        let rc = unsafe { func(0) };
+
+        assert_eq!(rc, -1, "{name}(0) should fail");
+        assert_eq!(
+            unsafe { *__errno_location() },
+            errno::EINVAL,
+            "{name}(0) should set EINVAL"
+        );
+    }
+}
+
+#[test]
 fn siginterrupt_sigusr1() {
     let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
     // siginterrupt modifies SA_RESTART flag; just verify it doesn't fail

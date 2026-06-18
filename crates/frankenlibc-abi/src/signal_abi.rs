@@ -1452,7 +1452,9 @@ pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
 pub unsafe extern "C" fn sighold(sig: c_int) -> c_int {
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe { sigemptyset(&mut set) };
-    unsafe { sigaddset(&mut set, sig) };
+    if unsafe { sigaddset(&mut set, sig) } != 0 {
+        return -1;
+    }
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     match unsafe {
         raw_syscall::sys_rt_sigprocmask(
@@ -1463,7 +1465,10 @@ pub unsafe extern "C" fn sighold(sig: c_int) -> c_int {
         )
     } {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -1472,7 +1477,9 @@ pub unsafe extern "C" fn sighold(sig: c_int) -> c_int {
 pub unsafe extern "C" fn sigrelse(sig: c_int) -> c_int {
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe { sigemptyset(&mut set) };
-    unsafe { sigaddset(&mut set, sig) };
+    if unsafe { sigaddset(&mut set, sig) } != 0 {
+        return -1;
+    }
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     match unsafe {
         raw_syscall::sys_rt_sigprocmask(
@@ -1483,7 +1490,10 @@ pub unsafe extern "C" fn sigrelse(sig: c_int) -> c_int {
         )
     } {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -1503,7 +1513,10 @@ pub unsafe extern "C" fn sigignore(sig: c_int) -> c_int {
         )
     } {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
