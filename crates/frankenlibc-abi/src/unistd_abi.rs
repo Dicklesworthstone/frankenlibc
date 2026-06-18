@@ -3898,6 +3898,54 @@ unsafe fn pc_link_max_for_fd(fd: c_int) -> libc::c_long {
     }
 }
 
+#[inline]
+/// Per-filesystem _PC_FILESIZEBITS, mirroring glibc's __statfs_filesize_max
+/// (sysdeps/unix/sysv/linux/pathconf.c). f_type magic from <linux/magic.h>.
+fn fs_filesizebits_for_type(f_type: i64) -> libc::c_long {
+    const EXT2_SUPER_MAGIC: i64 = 0xEF53; // ext2/3/4
+    const XFS_SUPER_MAGIC: i64 = 0x58465342;
+    const REISERFS_SUPER_MAGIC: i64 = 0x52654973;
+    const NTFS_SB_MAGIC: i64 = 0x5346544E;
+    const UDF_SUPER_MAGIC: i64 = 0x15013346;
+    const JFS_SUPER_MAGIC: i64 = 0x3153464A;
+    const CGROUP_SUPER_MAGIC: i64 = 0x27e0eb;
+    const SMB_SUPER_MAGIC: i64 = 0x517B;
+    const BTRFS_SUPER_MAGIC: i64 = 0x9123683E;
+    const F2FS_SUPER_MAGIC: i64 = 0xF2F52010;
+    const MSDOS_SUPER_MAGIC: i64 = 0x4d44;
+    const JFFS2_SUPER_MAGIC: i64 = 0x72b6;
+    const ROMFS_MAGIC: i64 = 0x7275;
+    match f_type {
+        F2FS_SUPER_MAGIC => 256,
+        BTRFS_SUPER_MAGIC => 255,
+        EXT2_SUPER_MAGIC | XFS_SUPER_MAGIC | REISERFS_SUPER_MAGIC | NTFS_SB_MAGIC
+        | UDF_SUPER_MAGIC | JFS_SUPER_MAGIC | CGROUP_SUPER_MAGIC | SMB_SUPER_MAGIC => 64,
+        MSDOS_SUPER_MAGIC | JFFS2_SUPER_MAGIC | ROMFS_MAGIC => 32,
+        _ => 32, // glibc's default
+    }
+}
+
+/// Resolve _PC_FILESIZEBITS via statfs; glibc returns 32 if statfs is
+/// unsupported (ENOSYS) and -1 on any other error.
+unsafe fn pc_filesizebits_for_path(path: *const c_char) -> libc::c_long {
+    let mut sf = std::mem::MaybeUninit::<frankenlibc_core::syscall::StatFs>::zeroed();
+    match unsafe { syscall::sys_statfs(path as *const u8, sf.as_mut_ptr()) } {
+        Ok(()) => fs_filesizebits_for_type(unsafe { sf.assume_init() }.f_type),
+        Err(e) if e == libc::ENOSYS => 32,
+        Err(_) => -1,
+    }
+}
+
+/// Resolve _PC_FILESIZEBITS for an fd via fstatfs.
+unsafe fn pc_filesizebits_for_fd(fd: c_int) -> libc::c_long {
+    let mut sf = std::mem::MaybeUninit::<frankenlibc_core::syscall::StatFs>::zeroed();
+    match unsafe { syscall::sys_fstatfs(fd, sf.as_mut_ptr()) } {
+        Ok(()) => fs_filesizebits_for_type(unsafe { sf.assume_init() }.f_type),
+        Err(e) if e == libc::ENOSYS => 32,
+        Err(_) => -1,
+    }
+}
+
 fn pathconf_value(name: c_int) -> Option<libc::c_long> {
     match name {
         // _PC_LINK_MAX is resolved via per-path/per-fd statfs in the
@@ -4022,6 +4070,14 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
         return v;
     }
 
+    // _PC_FILESIZEBITS is filesystem-dependent (glibc __statfs_filesize_max);
+    // fl previously fell through to the EINVAL default (-1). bd-eqcn80.
+    if name == libc::_PC_FILESIZEBITS {
+        let v = unsafe { pc_filesizebits_for_path(path) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
+        return v;
+    }
+
     // glibc reports these record/allocation limits as the filesystem block size
     // (statvfs f_bsize). fl previously returned -1 (EINVAL) for them.
     if matches!(
@@ -4076,6 +4132,14 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
     if name == libc::_PC_LINK_MAX {
         let v = unsafe { pc_link_max_for_fd(fd) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return v;
+    }
+
+    // _PC_FILESIZEBITS is filesystem-dependent; mirror the per-path branch in
+    // pathconf via fstatfs. bd-eqcn80.
+    if name == libc::_PC_FILESIZEBITS {
+        let v = unsafe { pc_filesizebits_for_fd(fd) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, v < 0);
         return v;
     }
 
