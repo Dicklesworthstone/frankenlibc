@@ -2257,6 +2257,23 @@ pub unsafe extern "C" fn mbrtowc(
         return MB_INCOMPLETE;
     }
 
+    // ASCII fast path: with no state object there can be no pending partial
+    // sequence, and a byte < 0x80 is a complete single-byte character whose value
+    // equals its codepoint in every supported locale (C and UTF-8 agree on
+    // 0x00..=0x7F). Skip the partial-state reassembly buffer and the RFC-3629
+    // decoder — byte-identical result for the (very common) ASCII case.
+    if ps.is_null() {
+        // SAFETY: caller guarantees `s` points to at least `n` (>= 1) bytes.
+        let b0 = unsafe { *(s as *const u8) };
+        if b0 < 0x80 {
+            if !pwc.is_null() {
+                // SAFETY: pwc is a caller-provided out pointer.
+                unsafe { *pwc = b0 as libc::wchar_t };
+            }
+            return if b0 == 0 { 0 } else { 1 };
+        }
+    }
+
     // Reassemble any partial multibyte sequence stored in `ps` from a previous
     // call (POSIX requires resuming an incomplete sequence across calls), then
     // append up to a full char's worth of the new bytes.
