@@ -3215,7 +3215,7 @@ pub unsafe extern "C" fn swprintf(
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
 
     // swprintf: if the output (including NUL) would exceed n, return -1 — but
     // glibc still writes the TRUNCATED prefix (min(n-1, produced) wide chars)
@@ -3244,7 +3244,7 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
     // C: wprintf returns the number of WIDE CHARACTERS transmitted, not the byte
     // length of the (UTF-8) rendering — they differ for any multibyte output.
     let wide_count = narrow_to_wide_count(&rendered);
@@ -3273,7 +3273,7 @@ pub unsafe extern "C" fn fwprintf(
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
     // fwprintf returns the number of WIDE CHARACTERS written, not bytes.
     let wide_count = narrow_to_wide_count(&rendered);
 
@@ -3304,7 +3304,7 @@ pub unsafe extern "C" fn vswprintf(
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
     let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
 
     // On truncation glibc writes the truncated prefix + NUL (not just an empty
     // buffer) and returns -1; mirror swprintf.
@@ -3334,7 +3334,7 @@ pub unsafe extern "C" fn vwprintf(
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
     let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
     // vwprintf returns the number of WIDE CHARACTERS written, not bytes.
     let wide_count = narrow_to_wide_count(&rendered);
 
@@ -3362,7 +3362,7 @@ pub unsafe extern "C" fn vfwprintf(
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
     let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
     // vfwprintf returns the number of WIDE CHARACTERS written, not bytes.
     let wide_count = narrow_to_wide_count(&rendered);
 

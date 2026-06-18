@@ -3291,8 +3291,14 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
 /// `%ls` precision and field width count WIDE CHARACTERS (C standard wide
 /// printf), not bytes, so the multibyte truncation/padding is computed in
 /// wide-character units here.
-pub(crate) unsafe fn render_wprintf(fmt: &[u8], args: *const u64, max_args: usize) -> Vec<u8> {
-    unsafe { render_printf_impl(fmt, args, max_args, true) }
+pub(crate) unsafe fn render_wprintf(
+    segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
+    args: *const u64,
+    max_args: usize,
+) -> Vec<u8> {
+    // Callers (wprintf/swprintf family) already parsed the format for argument
+    // counting/extraction; render the pre-parsed segments rather than re-parsing.
+    unsafe { render_segments(segments, args, max_args, true) }
 }
 
 unsafe fn render_printf_impl(
