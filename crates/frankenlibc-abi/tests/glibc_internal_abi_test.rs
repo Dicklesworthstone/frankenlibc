@@ -179,6 +179,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     stty,
     sysctl,
     tr_break,
+    uselib,
     ustat,
     vlimit,
     vtimes,
@@ -277,6 +278,8 @@ unsafe extern "C" {
         newval: *mut c_void,
         newlen: libc::size_t,
     ) -> c_int;
+    #[link_name = "uselib"]
+    fn host_uselib(library: *const c_char) -> c_int;
     #[link_name = "ustat"]
     fn host_ustat(dev: libc::dev_t, ubuf: *mut c_void) -> c_int;
     #[link_name = "vlimit"]
@@ -749,6 +752,25 @@ fn isastream_matches_host_default_for_regular_and_invalid_fds() {
             );
             assert_eq!((fl_result, fl_errno), (0, 0));
         }
+    }
+}
+
+#[test]
+fn uselib_deprecated_syscall_matches_host_enosys() {
+    let path = CString::new("/nonexistent/frankenlibc_uselib_probe.so").unwrap();
+
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_result = host_uselib(path.as_ptr());
+        let host_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_result = uselib(path.as_ptr());
+        let fl_errno = errno_value();
+
+        assert_eq!((fl_result, fl_errno), (host_result, host_errno));
+        assert_eq!((fl_result, fl_errno), (-1, libc::ENOSYS));
     }
 }
 
