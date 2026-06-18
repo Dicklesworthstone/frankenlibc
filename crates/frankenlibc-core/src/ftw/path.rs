@@ -35,10 +35,11 @@ impl WalkType {
 }
 
 /// Flag bits, matching glibc `<ftw.h>`:
-///   FTW_PHYS  = 1   don't follow symlinks
-///   FTW_MOUNT = 2   stay on the same filesystem (compare st_dev)
-///   FTW_CHDIR = 4   chdir into each directory before recursing
-///   FTW_DEPTH = 8   visit a directory after its contents (post-order)
+///   FTW_PHYS         = 1   don't follow symlinks
+///   FTW_MOUNT        = 2   stay on the same filesystem (compare st_dev)
+///   FTW_CHDIR        = 4   chdir into each directory before recursing
+///   FTW_DEPTH        = 8   visit a directory after its contents (post-order)
+///   FTW_ACTIONRETVAL = 16  interpret callback returns as FTW_* actions
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WalkFlags {
     bits: u32,
@@ -50,6 +51,7 @@ impl WalkFlags {
     pub const MOUNT: WalkFlags = WalkFlags { bits: 2 };
     pub const CHDIR: WalkFlags = WalkFlags { bits: 4 };
     pub const DEPTH: WalkFlags = WalkFlags { bits: 8 };
+    pub const ACTIONRETVAL: WalkFlags = WalkFlags { bits: 16 };
 
     pub const fn from_bits(b: u32) -> Self {
         WalkFlags { bits: b }
@@ -130,6 +132,7 @@ mod tests {
         assert_eq!(WalkFlags::MOUNT.bits(), 2);
         assert_eq!(WalkFlags::CHDIR.bits(), 4);
         assert_eq!(WalkFlags::DEPTH.bits(), 8);
+        assert_eq!(WalkFlags::ACTIONRETVAL.bits(), 16);
     }
 
     #[test]

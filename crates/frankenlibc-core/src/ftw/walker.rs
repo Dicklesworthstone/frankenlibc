@@ -67,7 +67,49 @@ where
         None => return -1,
     };
     let root_dev = root_stat.dev_id();
-    walk_rec(root, fs, flags, &mut visit, 0, root_dev)
+    match walk_rec(root, fs, flags, &mut visit, 0, root_dev) {
+        WalkControl::Stop(r) => r,
+        WalkControl::Continue | WalkControl::SkipSubtree | WalkControl::SkipSiblings => 0,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalkControl {
+    Continue,
+    SkipSubtree,
+    SkipSiblings,
+    Stop(i32),
+}
+
+fn visit_control<S, V>(
+    path: &[u8],
+    stat: &S,
+    typeflag: WalkType,
+    level: usize,
+    base: usize,
+    flags: WalkFlags,
+    visit: &mut V,
+) -> WalkControl
+where
+    V: FnMut(&[u8], &S, WalkType, usize, usize) -> i32,
+{
+    let r = visit(path, stat, typeflag, level, base);
+    if !flags.contains(WalkFlags::ACTIONRETVAL) {
+        return if r == 0 {
+            WalkControl::Continue
+        } else {
+            WalkControl::Stop(r)
+        };
+    }
+
+    match r {
+        0 => WalkControl::Continue,
+        1 => WalkControl::Stop(1),
+        2 if typeflag == WalkType::Dir => WalkControl::SkipSubtree,
+        2 => WalkControl::Continue,
+        3 => WalkControl::SkipSiblings,
+        other => WalkControl::Stop(other),
+    }
 }
 
 fn walk_rec<F, V>(
@@ -77,7 +119,7 @@ fn walk_rec<F, V>(
     visit: &mut V,
     depth: usize,
     root_dev: u64,
-) -> i32
+) -> WalkControl
 where
     F: FsOps,
     V: FnMut(&[u8], &F::Stat, WalkType, usize, usize) -> i32,
@@ -97,7 +139,15 @@ where
             // FTW_NS — pass a default (all-zeros) stat. POSIX leaves
             // the contents undefined when typeflag is FTW_NS.
             let dummy = F::Stat::default();
-            return visit(path, &dummy, WalkType::StatFailed, level, base);
+            return visit_control(
+                path,
+                &dummy,
+                WalkType::StatFailed,
+                level,
+                base,
+                flags,
+                visit,
+            );
         }
     };
 
@@ -108,23 +158,25 @@ where
         } else {
             WalkType::DanglingSymlink
         };
-        return visit(path, &stat, typeflag, level, base);
+        return visit_control(path, &stat, typeflag, level, base, flags, visit);
     }
 
     if !stat.is_dir() {
-        return visit(path, &stat, WalkType::File, level, base);
+        return visit_control(path, &stat, WalkType::File, level, base, flags, visit);
     }
 
     // FTW_MOUNT: don't recurse into a different filesystem.
     if depth > 0 && flags.contains(WalkFlags::MOUNT) && stat.dev_id() != root_dev {
-        return 0;
+        return WalkControl::Continue;
     }
 
     // Pre-order visit (default).
     if !flags.contains(WalkFlags::DEPTH) {
-        let r = visit(path, &stat, WalkType::Dir, level, base);
-        if r != 0 {
-            return r;
+        match visit_control(path, &stat, WalkType::Dir, level, base, flags, visit) {
+            WalkControl::Continue => {}
+            WalkControl::SkipSubtree => return WalkControl::Continue,
+            WalkControl::SkipSiblings => return WalkControl::SkipSiblings,
+            WalkControl::Stop(r) => return WalkControl::Stop(r),
         }
     }
 
@@ -135,26 +187,32 @@ where
         entries.push(name.to_vec());
     });
     if !opened {
-        return visit(path, &stat, WalkType::DirNoRead, level, base);
+        return visit_control(path, &stat, WalkType::DirNoRead, level, base, flags, visit);
     }
 
     for name in &entries {
         let child = build_child_path(path, name);
-        let r = walk_rec(&child, fs, flags, visit, depth + 1, root_dev);
-        if r != 0 {
-            return r;
+        match walk_rec(&child, fs, flags, visit, depth + 1, root_dev) {
+            WalkControl::Continue | WalkControl::SkipSubtree => {}
+            WalkControl::SkipSiblings => break,
+            WalkControl::Stop(r) => return WalkControl::Stop(r),
         }
     }
 
     // Post-order visit (FTW_DEPTH).
     if flags.contains(WalkFlags::DEPTH) {
-        let r = visit(path, &stat, WalkType::DirPostOrder, level, base);
-        if r != 0 {
-            return r;
-        }
+        return visit_control(
+            path,
+            &stat,
+            WalkType::DirPostOrder,
+            level,
+            base,
+            flags,
+            visit,
+        );
     }
 
-    0
+    WalkControl::Continue
 }
 
 #[cfg(test)]
@@ -333,6 +391,47 @@ mod tests {
         });
         assert_eq!(r, 42);
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn walk_actionretval_stop_returns_ftw_stop() {
+        let fs = build_simple_fs();
+        let mut visits = Vec::new();
+        let r = walk_tree(b"/root", &fs, WalkFlags::ACTIONRETVAL, |p, _, _, _, _| {
+            visits.push(p.to_vec());
+            if p == b"/root/b.txt" { 1 } else { 0 }
+        });
+        assert_eq!(r, 1);
+        assert!(visits.iter().any(|p| p == b"/root/a.txt"));
+        assert!(visits.iter().any(|p| p == b"/root/b.txt"));
+        assert!(!visits.iter().any(|p| p == b"/root/sub"));
+    }
+
+    #[test]
+    fn walk_actionretval_skip_subtree_skips_directory_children() {
+        let fs = build_simple_fs();
+        let mut visits = Vec::new();
+        let r = walk_tree(b"/root", &fs, WalkFlags::ACTIONRETVAL, |p, _, _, _, _| {
+            visits.push(p.to_vec());
+            if p == b"/root/sub" { 2 } else { 0 }
+        });
+        assert_eq!(r, 0);
+        assert!(visits.iter().any(|p| p == b"/root/sub"));
+        assert!(!visits.iter().any(|p| p == b"/root/sub/c.txt"));
+    }
+
+    #[test]
+    fn walk_actionretval_skip_siblings_skips_remaining_entries_in_parent() {
+        let fs = build_simple_fs();
+        let mut visits = Vec::new();
+        let r = walk_tree(b"/root", &fs, WalkFlags::ACTIONRETVAL, |p, _, _, _, _| {
+            visits.push(p.to_vec());
+            if p == b"/root/a.txt" { 3 } else { 0 }
+        });
+        assert_eq!(r, 0);
+        assert!(visits.iter().any(|p| p == b"/root/a.txt"));
+        assert!(!visits.iter().any(|p| p == b"/root/b.txt"));
+        assert!(!visits.iter().any(|p| p == b"/root/sub"));
     }
 
     #[test]
