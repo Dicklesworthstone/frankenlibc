@@ -28,29 +28,25 @@ pub fn parse_gshadow_line(line: &[u8]) -> Option<Gshadow> {
         return None;
     }
 
-    let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
-
     // glibc requires only a non-empty group name; passwd, the administrator
     // list, and the member list are all optional. When extra colons appear,
     // glibc's last field absorbs them, so the member list is everything past the
     // third colon ("g:x:a:b:c" -> members "b:c", later comma-split).
-    if fields[0].is_empty() {
+    let mut fields = line.splitn(4, |&b| b == b':');
+    let sg_namp = fields.next()?;
+    if sg_namp.is_empty() {
         return None;
     }
 
-    let sg_passwd = fields.get(1).copied().unwrap_or(b"").to_vec();
-    let sg_adm = fields.get(2).copied().unwrap_or(b"").to_vec();
-    let sg_mem = if fields.len() > 3 {
-        fields[3..].join(b":".as_slice())
-    } else {
-        Vec::new()
-    };
+    let sg_passwd = fields.next().unwrap_or(b"");
+    let sg_adm = fields.next().unwrap_or(b"");
+    let sg_mem = fields.next().unwrap_or(b"");
 
     Some(Gshadow {
-        sg_namp: fields[0].to_vec(),
-        sg_passwd,
-        sg_adm,
-        sg_mem,
+        sg_namp: sg_namp.to_vec(),
+        sg_passwd: sg_passwd.to_vec(),
+        sg_adm: sg_adm.to_vec(),
+        sg_mem: sg_mem.to_vec(),
     })
 }
 
@@ -128,6 +124,25 @@ mod tests {
         assert_eq!(e.sg_mem, b"b:c");
         let f = parse_gshadow_line(b"root:*:::extra").unwrap();
         assert_eq!(f.sg_mem, b":extra");
+    }
+
+    #[test]
+    fn splitn_scanner_preserves_short_lines_and_tail() {
+        let one = parse_gshadow_line(b"wheel").unwrap();
+        assert_eq!(one.sg_namp, b"wheel");
+        assert_eq!(one.sg_passwd, b"");
+        assert_eq!(one.sg_adm, b"");
+        assert_eq!(one.sg_mem, b"");
+
+        let empty_optionals = parse_gshadow_line(b"wheel:::").unwrap();
+        assert_eq!(empty_optionals.sg_passwd, b"");
+        assert_eq!(empty_optionals.sg_adm, b"");
+        assert_eq!(empty_optionals.sg_mem, b"");
+
+        let tail = parse_gshadow_line(b"wheel:!:root::alice:bob").unwrap();
+        assert_eq!(tail.sg_passwd, b"!");
+        assert_eq!(tail.sg_adm, b"root");
+        assert_eq!(tail.sg_mem, b":alice:bob");
     }
 
     #[test]
