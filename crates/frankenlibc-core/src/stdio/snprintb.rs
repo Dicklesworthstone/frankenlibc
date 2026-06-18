@@ -41,15 +41,13 @@ pub fn format_snprintb(fmt: &[u8], val: u64) -> Vec<u8> {
         _ => return Vec::new(),
     }
 
-    let names = collect_set_names(&fmt[1..], val);
-    if !names.is_empty() {
-        out.push(b'<');
-        for (i, name) in names.iter().enumerate() {
-            if i > 0 {
-                out.push(b',');
-            }
-            out.extend_from_slice(name);
-        }
+    let mut group_open = false;
+    visit_set_names(&fmt[1..], val, |name| {
+        out.push(if group_open { b',' } else { b'<' });
+        out.extend_from_slice(name);
+        group_open = true;
+    });
+    if group_open {
         out.push(b'>');
     }
     out
@@ -74,17 +72,13 @@ pub fn format_snprintb_m(fmt: &[u8], val: u64, max_per_line: usize) -> Vec<u8> {
         _ => return Vec::new(),
     }
 
-    let names = collect_set_names(&fmt[1..], val);
     let mut out: Vec<u8> = Vec::new();
     out.extend_from_slice(&prefix);
-    if names.is_empty() {
-        return out;
-    }
 
     let mut line_len = prefix.len();
     let mut group_open = false;
 
-    for name in &names {
+    visit_set_names(&fmt[1..], val, |name| {
         // Length we'd add: '<' or ',' + name + ('>' if we need to
         // close before the boundary check). We compute the running
         // length after appending and decide to wrap if it exceeds.
@@ -111,7 +105,7 @@ pub fn format_snprintb_m(fmt: &[u8], val: u64, max_per_line: usize) -> Vec<u8> {
             line_len += name.len();
             group_open = true;
         }
-    }
+    });
 
     if group_open {
         out.push(b'>');
@@ -161,11 +155,9 @@ fn write_hex(out: &mut Vec<u8>, val: u64) {
     }
 }
 
-/// Walk `body` (the format string after the base byte), collect the
-/// names whose corresponding bit is set in `val`, and return them
+/// Walk `body` (the format string after the base byte) and visit set-bit names
 /// in format-string order.
-fn collect_set_names(body: &[u8], val: u64) -> Vec<&[u8]> {
-    let mut names: Vec<&[u8]> = Vec::new();
+fn visit_set_names(body: &[u8], val: u64, mut visit: impl FnMut(&[u8])) {
     let mut i = 0usize;
     while i < body.len() {
         let b = body[i];
@@ -185,7 +177,7 @@ fn collect_set_names(body: &[u8], val: u64) -> Vec<&[u8]> {
                 name_end += 1;
             }
             if bit < 64 && (val & (1u64 << bit)) != 0 {
-                names.push(&body[i + 1..name_end]);
+                visit(&body[i + 1..name_end]);
             }
             i = name_end;
         } else {
@@ -193,7 +185,6 @@ fn collect_set_names(body: &[u8], val: u64) -> Vec<&[u8]> {
             i += 1;
         }
     }
-    names
 }
 
 #[cfg(test)]
@@ -258,6 +249,15 @@ mod tests {
         let fmt = b"\x10\x40HIGH"; // bit 64 — out of range, ignored
         let out = format_snprintb(fmt, u64::MAX);
         assert_eq!(out, format!("0x{:x}", u64::MAX).into_bytes());
+    }
+
+    #[test]
+    fn streaming_name_scan_preserves_nul_stop_and_strays() {
+        let fmt = b"\x10stray\x01ONE\x02TWO\0\x03THREE";
+        assert_eq!(format_snprintb(fmt, 0b111), b"0x7<ONE,TWO>".to_vec());
+
+        let multi = format_snprintb_m(fmt, 0b111, 9);
+        assert_eq!(multi, b"0x7<ONE>\n0x7<TWO>".to_vec());
     }
 
     #[test]

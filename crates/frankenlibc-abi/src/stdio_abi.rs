@@ -3721,9 +3721,27 @@ pub unsafe extern "C" fn snprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Fast path for the ubiquitous bare "%s": copy the single string argument
+    // straight to the destination, skipping the render engine and its
+    // intermediate buffer copy. Only an exact, flag/width/precision-less "%s"
+    // qualifies; a NULL argument falls through so render emits glibc's "(null)".
+    // src_ptr stays valid for the copy: for the bare path it points into the
+    // caller's NUL-terminated string; otherwise `_rendered_hold` keeps the
+    // pooled render buffer alive.
+    let _rendered_hold;
+    let (src_ptr, total_len) =
+        if fmt_bytes == b"%s" && extract_count >= 1 && !(arg_buf[0] as *const u8).is_null() {
+            // SAFETY: the %s contract guarantees a NUL-terminated string.
+            let bytes = unsafe { c_str_bytes(arg_buf[0] as *const c_char) };
+            (bytes.as_ptr(), bytes.len())
+        } else {
+            // Reuse the segments parsed above instead of re-parsing in render_printf.
+            let rendered =
+                unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+            let parts = (rendered.as_ptr(), rendered.len());
+            _rendered_hold = rendered;
+            parts
+        };
 
     let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
     let mut adverse = false;
@@ -3757,7 +3775,7 @@ pub unsafe extern "C" fn snprintf(
 
     if has_room {
         unsafe {
-            std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
+            std::ptr::copy_nonoverlapping(src_ptr, str_buf as *mut u8, copy_len);
             *str_buf.add(copy_len) = 0;
         }
     }
@@ -3795,9 +3813,22 @@ pub unsafe extern "C" fn sprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Fast path for the ubiquitous bare "%s" (see snprintf): copy the string
+    // argument straight to the destination, skipping the render engine and its
+    // intermediate buffer copy. NULL falls through so render emits "(null)".
+    let _rendered_hold;
+    let (src_ptr, total_len) =
+        if fmt_bytes == b"%s" && extract_count >= 1 && !(arg_buf[0] as *const u8).is_null() {
+            // SAFETY: the %s contract guarantees a NUL-terminated string.
+            let bytes = unsafe { c_str_bytes(arg_buf[0] as *const c_char) };
+            (bytes.as_ptr(), bytes.len())
+        } else {
+            let rendered =
+                unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+            let parts = (rendered.as_ptr(), rendered.len());
+            _rendered_hold = rendered;
+            parts
+        };
 
     let mut copy_len = total_len;
     let mut adverse = false;
@@ -3828,7 +3859,7 @@ pub unsafe extern "C" fn sprintf(
 
     if has_room {
         unsafe {
-            std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
+            std::ptr::copy_nonoverlapping(src_ptr, str_buf as *mut u8, copy_len);
             *str_buf.add(copy_len) = 0;
         }
     }
@@ -4407,9 +4438,27 @@ pub unsafe extern "C" fn vsnprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Fast path for the ubiquitous bare "%s": copy the single string argument
+    // straight to the destination, skipping the render engine and its
+    // intermediate buffer copy. Only an exact, flag/width/precision-less "%s"
+    // qualifies; a NULL argument falls through so render emits glibc's "(null)".
+    // src_ptr stays valid for the copy: for the bare path it points into the
+    // caller's NUL-terminated string; otherwise `_rendered_hold` keeps the
+    // pooled render buffer alive.
+    let _rendered_hold;
+    let (src_ptr, total_len) =
+        if fmt_bytes == b"%s" && extract_count >= 1 && !(arg_buf[0] as *const u8).is_null() {
+            // SAFETY: the %s contract guarantees a NUL-terminated string.
+            let bytes = unsafe { c_str_bytes(arg_buf[0] as *const c_char) };
+            (bytes.as_ptr(), bytes.len())
+        } else {
+            // Reuse the segments parsed above instead of re-parsing in render_printf.
+            let rendered =
+                unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+            let parts = (rendered.as_ptr(), rendered.len());
+            _rendered_hold = rendered;
+            parts
+        };
 
     let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
     let mut adverse = false;
@@ -4443,7 +4492,7 @@ pub unsafe extern "C" fn vsnprintf(
 
     if has_room {
         unsafe {
-            std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
+            std::ptr::copy_nonoverlapping(src_ptr, str_buf as *mut u8, copy_len);
             *str_buf.add(copy_len) = 0;
         }
     }
@@ -4490,9 +4539,22 @@ pub unsafe extern "C" fn vsprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Fast path for the ubiquitous bare "%s" (see snprintf): copy the string
+    // argument straight to the destination, skipping the render engine and its
+    // intermediate buffer copy. NULL falls through so render emits "(null)".
+    let _rendered_hold;
+    let (src_ptr, total_len) =
+        if fmt_bytes == b"%s" && extract_count >= 1 && !(arg_buf[0] as *const u8).is_null() {
+            // SAFETY: the %s contract guarantees a NUL-terminated string.
+            let bytes = unsafe { c_str_bytes(arg_buf[0] as *const c_char) };
+            (bytes.as_ptr(), bytes.len())
+        } else {
+            let rendered =
+                unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+            let parts = (rendered.as_ptr(), rendered.len());
+            _rendered_hold = rendered;
+            parts
+        };
 
     let mut copy_len = total_len;
     let mut adverse = false;
@@ -4523,7 +4585,7 @@ pub unsafe extern "C" fn vsprintf(
 
     if has_room {
         unsafe {
-            std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
+            std::ptr::copy_nonoverlapping(src_ptr, str_buf as *mut u8, copy_len);
             *str_buf.add(copy_len) = 0;
         }
     }

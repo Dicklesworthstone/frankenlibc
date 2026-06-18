@@ -5,7 +5,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::stdio::{
     BufMode, FormatFlags, FormatSpec, LengthMod, OpenFlags, Precision, StdioStream, Width,
-    format_signed, format_str, format_unsigned, parse_format_string,
+    format_signed, format_str, format_unsigned, parse_format_string, snprintb::format_snprintb,
 };
 
 fn write_only_flags() -> OpenFlags {
@@ -132,6 +132,35 @@ fn bench_int_digit_generation(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_snprintb_named_bits(c: &mut Criterion) {
+    const FLAGS_FMT: &[u8] = b"\x10\x01UP\x02BROADCAST\x03DEBUG\x04LOOPBACK\x05POINTOPOINT\x06RUNNING\x07NOARP\x08PROMISC\x09NOTRAILERS\x0aALLMULTI\x0bMASTER\x0cMULTICAST";
+    const VALUES: [u64; 8] = [
+        0,
+        0b1,
+        0b11,
+        0b101101,
+        0b11111111,
+        0b100100100100,
+        0b111111111111,
+        u64::MAX,
+    ];
+
+    let mut group = c.benchmark_group("stdio_snprintb");
+    group.throughput(Throughput::Elements(VALUES.len() as u64));
+    group.bench_function("named_bits_stream_12", |b| {
+        b.iter(|| {
+            let mut total_len = 0usize;
+            for &value in &VALUES {
+                let out = format_snprintb(black_box(FLAGS_FMT), black_box(value));
+                total_len += out.len();
+                black_box(out);
+            }
+            black_box(total_len);
+        });
+    });
+    group.finish();
+}
+
 fn bench_stream_buffering(c: &mut Criterion) {
     let payload = [b'x'; 256];
     let mut group = c.benchmark_group("stdio_stream_buffer");
@@ -178,6 +207,7 @@ criterion_group!(
     bench_printf_parse,
     bench_printf_render,
     bench_int_digit_generation,
+    bench_snprintb_named_bits,
     bench_stream_buffering
 );
 criterion_main!(benches);
