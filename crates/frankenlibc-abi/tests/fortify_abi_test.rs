@@ -122,6 +122,22 @@ fn memmove_chk_overlapping() {
 }
 
 #[test]
+fn memmove_chk_overflow_aborts_child_process() {
+    assert_child_sigabrt("memmove_chk overflow", || {
+        let src = [1u8, 2, 3, 4];
+        let mut dest = [0u8; 2];
+        unsafe {
+            __memmove_chk(
+                dest.as_mut_ptr().cast(),
+                src.as_ptr().cast(),
+                src.len(),
+                dest.len(),
+            );
+        }
+    });
+}
+
+#[test]
 fn memset_chk_fills() {
     let mut buf = [0u8; 16];
     unsafe {
