@@ -964,9 +964,10 @@ fn swap_elements(base: &mut [u8], width: usize, a: usize, b: usize) {
     let (left, right) = base.split_at_mut(hi * width);
     let lo_slice = &mut left[lo * width..(lo + 1) * width];
     let hi_slice = &mut right[..width];
-    for i in 0..width {
-        core::mem::swap(&mut lo_slice[i], &mut hi_slice[i]);
-    }
+    // Vectorized whole-slice exchange (memswap-class), not a per-byte loop —
+    // matches swap_chunks. Byte-identical: the two width-byte elements are
+    // swapped. Hot in the heapsort/sift_down fallback for adversarial inputs.
+    lo_slice.swap_with_slice(hi_slice);
 }
 
 fn sift_down<F>(base: &mut [u8], width: usize, compare: &F, mut root: usize, end: usize)
