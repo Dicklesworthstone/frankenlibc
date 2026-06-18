@@ -45,7 +45,9 @@ const WIDE_EQUAL_PREFIX_MIN_LEN: usize = WIDE_EQUAL_PREFIX_LANES * 4;
 const WIDE_MEMCHR_SIMD_LANES: usize = 16;
 
 /// Number of `u32` wide characters searched per reverse `wmemrchr` panel.
-const WIDE_REVERSE_SIMD_LANES: usize = WIDE_FIND_LONG_SIMD_LANES;
+const WIDE_REVERSE_SIMD_LANES: usize = 16;
+const WIDE_REVERSE_LONG_SIMD_LANES: usize = WIDE_FIND_LONG_SIMD_LANES;
+const WIDE_REVERSE_LONG_MIN_LEN: usize = WIDE_REVERSE_LONG_SIMD_LANES * 4;
 
 /// Returns `true` if `chunk` (exactly [`WIDE_FIND_SIMD_LANES`] elements) contains the
 /// wide character `needle` or a terminating NUL. Used as a cheap panel filter
@@ -1490,17 +1492,33 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
 ///
 /// Equivalent to GNU `wmemrchr`. Searches backwards.
 ///
-/// Scans `WIDE_REVERSE_SIMD_LANES` elements per step from the end with a portable-SIMD
-/// equality probe, then resolves the last matching index within the first
-/// (rear-most) candidate panel right-to-left. Behaviour is identical to a
+/// Scans long inputs with 64-wide reverse panels, keeps short inputs on the
+/// narrower reverse panel, then resolves the first (rear-most) candidate panel
+/// right-to-left. Behaviour is identical to a
 /// scalar `(0..n.min(s.len())).rev().find(|&i| s[i] == c)` reverse scan.
 pub fn wmemrchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     let count = n.min(s.len());
     let scan = &s[..count];
-    let target = Simd::<u32, WIDE_REVERSE_SIMD_LANES>::splat(c);
     let mut end = count;
 
-    for chunk in scan.rchunks_exact(WIDE_REVERSE_SIMD_LANES) {
+    if count >= WIDE_REVERSE_LONG_MIN_LEN {
+        let target = Simd::<u32, WIDE_REVERSE_LONG_SIMD_LANES>::splat(c);
+        for chunk in scan.rchunks_exact(WIDE_REVERSE_LONG_SIMD_LANES) {
+            let start = end - WIDE_REVERSE_LONG_SIMD_LANES;
+            let lanes = Simd::<u32, WIDE_REVERSE_LONG_SIMD_LANES>::from_slice(chunk);
+            if lanes.simd_eq(target).any() {
+                for j in (0..WIDE_REVERSE_LONG_SIMD_LANES).rev() {
+                    if chunk[j] == c {
+                        return Some(start + j);
+                    }
+                }
+            }
+            end = start;
+        }
+    }
+
+    let target = Simd::<u32, WIDE_REVERSE_SIMD_LANES>::splat(c);
+    for chunk in scan[..end].rchunks_exact(WIDE_REVERSE_SIMD_LANES) {
         let start = end - WIDE_REVERSE_SIMD_LANES;
         let lanes = Simd::<u32, WIDE_REVERSE_SIMD_LANES>::from_slice(chunk);
         if lanes.simd_eq(target).any() {
@@ -2747,10 +2765,10 @@ mod tests {
 
     #[test]
     fn test_wmemrchr_long_reverse_panel_boundary_and_remainder() {
-        let mut s: Vec<u32> = vec![1u32; WIDE_REVERSE_SIMD_LANES * 2 + 5];
+        let mut s: Vec<u32> = vec![1u32; WIDE_REVERSE_LONG_SIMD_LANES * 2 + 5];
         let n = s.len();
         let front_remainder_hit = 3;
-        let middle_panel_hit = WIDE_REVERSE_SIMD_LANES + 7;
+        let middle_panel_hit = WIDE_REVERSE_LONG_SIMD_LANES + 7;
         let rear_panel_hit = n - 2;
         s[front_remainder_hit] = 9;
         s[middle_panel_hit] = 9;
