@@ -573,11 +573,21 @@ pub fn parse_proc_net_route_has_ipv4(content: &[u8]) -> bool {
 }
 
 fn parse_proc_net_route_flags(field: &[u8]) -> Option<u32> {
-    let field = core::str::from_utf8(field).ok()?;
-    if field.is_empty() || !field.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if field.is_empty() {
         return None;
     }
-    u32::from_str_radix(field, 16).ok()
+
+    let mut value = 0u32;
+    for &b in field {
+        let digit = match b {
+            b'0'..=b'9' => u32::from(b - b'0'),
+            b'a'..=b'f' => u32::from(b - b'a') + 10,
+            b'A'..=b'F' => u32::from(b - b'A') + 10,
+            _ => return None,
+        };
+        value = value.checked_mul(16)?.checked_add(digit)?;
+    }
+    Some(value)
 }
 
 /// Parse `/proc/net/if_inet6` content and report whether a non-loopback IPv6 address exists.
@@ -1182,6 +1192,21 @@ mod tests {
         let signed_minus =
             b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t-0001\t0\t0\t0\t00000000\t0\t0\t0\n";
         assert!(!parse_proc_net_route_has_ipv4(signed_minus));
+    }
+
+    #[test]
+    fn proc_net_route_flags_byte_parser_matches_u32_hex_contract() {
+        assert_eq!(parse_proc_net_route_flags(b"0"), Some(0));
+        assert_eq!(parse_proc_net_route_flags(b"0001"), Some(1));
+        assert_eq!(parse_proc_net_route_flags(b"0003"), Some(3));
+        assert_eq!(parse_proc_net_route_flags(b"00aF"), Some(0xaf));
+        assert_eq!(parse_proc_net_route_flags(b"FFFFFFFF"), Some(u32::MAX));
+        assert_eq!(parse_proc_net_route_flags(b""), None);
+        assert_eq!(parse_proc_net_route_flags(b"+0001"), None);
+        assert_eq!(parse_proc_net_route_flags(b"-0001"), None);
+        assert_eq!(parse_proc_net_route_flags(b"000g"), None);
+        assert_eq!(parse_proc_net_route_flags(b"100000000"), None);
+        assert_eq!(parse_proc_net_route_flags(&[b'0', b'0', 0xff]), None);
     }
 
     #[test]

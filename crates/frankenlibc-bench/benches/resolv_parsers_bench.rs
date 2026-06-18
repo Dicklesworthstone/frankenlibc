@@ -115,6 +115,9 @@ const SERVICES_LINE: &[u8] = b"http            80/tcp   www www-http   # World W
 const PROTOCOLS_LINE: &[u8] = b"tcp     6       TCP             # transmission control protocol";
 const NETWORKS_LINE: &[u8] = b"link-local      169.254.0.0     localnet";
 const ALIASES_LINE: &[u8] = b"postmaster: root, admin, oncall@example.com";
+const PROC_NET_ROUTE: &[u8] = b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n\
+lo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n\
+eth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
 const NETGROUP_CONTENT: &[u8] = b"# /etc/netgroup snippet\n\
 admins (host1,alice,example.com) (host2,bob,example.com)\n\
 ops (host3,charlie,example.com)\n\
@@ -182,6 +185,18 @@ fn bench_parse_aliases_line() {
     );
 }
 
+fn bench_parse_proc_net_route_has_ipv4() {
+    measure(
+        "parse_proc_net_route_has_ipv4_typical",
+        SAMPLES,
+        ITERS_PER_SAMPLE,
+        || {
+            let r = resolv::parse_proc_net_route_has_ipv4(black_box(PROC_NET_ROUTE));
+            black_box(r);
+        },
+    );
+}
+
 fn bench_parse_netgroup_triples() {
     measure(
         "parse_netgroup_triples_match",
@@ -201,5 +216,6 @@ fn main() {
     bench_parse_protocols_line();
     bench_parse_networks_line();
     bench_parse_aliases_line();
+    bench_parse_proc_net_route_has_ipv4();
     bench_parse_netgroup_triples();
 }
