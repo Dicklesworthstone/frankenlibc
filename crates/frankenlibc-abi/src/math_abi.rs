@@ -4860,8 +4860,13 @@ pub unsafe extern "C" fn exp2m1f64x(x: f64) -> f64 {
     unsafe { exp2m1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp2m1f128(x: f64) -> f64 {
-    unsafe { exp2m1(x) }
+pub unsafe extern "C" fn exp2m1f128(x: f128) -> f128 {
+    const LN2: f128 = 0.6931471805599453094172321214581765680755f128;
+    if x.abs() < 1.0 {
+        expm1l_f128(x * LN2)
+    } else {
+        (unsafe { exp2f128(x) }) - 1.0
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10m1(x: f64) -> f64 {
@@ -6164,8 +6169,10 @@ pub unsafe extern "C" fn clog10f64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog10(z) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn clog10f128(z: CDoubleComplex) -> CDoubleComplex {
-    unsafe { clog10(z) }
+pub unsafe extern "C" fn clog10f128(z: CFloat128Complex) -> CFloat128Complex {
+    const LN10: f128 = 2.302585092994045684017991454684364208f128;
+    let r = clog_f128(z);
+    CFloat128Complex { re: r.re / LN10, im: r.im / LN10 }
 }
 
 // --- lgamma*_r width variants ---
@@ -6190,8 +6197,10 @@ pub unsafe extern "C" fn lgammaf64x_r(x: f64, signgamp: *mut c_int) -> f64 {
     unsafe { lgamma_r(x, signgamp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lgammaf128_r(x: f64, signgamp: *mut c_int) -> f64 {
-    unsafe { lgamma_r(x, signgamp) }
+pub unsafe extern "C" fn lgammaf128_r(x: f128, signgamp: *mut c_int) -> f128 {
+    // ABI-correct binary128 surface; the Bessel/gamma quad kernels are still a
+    // tracked parity gap, so preserve the existing f64 implementation quality.
+    unsafe { lgamma_r(x as f64, signgamp) as f128 }
 }
 
 // =========================================================================
@@ -7450,8 +7459,13 @@ pub unsafe extern "C" fn exp2f64x(x: f64) -> f64 {
     unsafe { exp2(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp2f128(x: f64) -> f64 {
-    unsafe { exp2(x) }
+pub unsafe extern "C" fn exp2f128(x: f128) -> f128 {
+    const LN2: f128 = 0.6931471805599453094172321214581765680755f128;
+    let r = expl_f128(x * LN2);
+    if x.is_finite() && (r.is_infinite() || r == 0.0) {
+        set_range_errno();
+    }
+    r
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn expm1f32(x: f32) -> f32 {
@@ -7534,8 +7548,8 @@ pub unsafe extern "C" fn lgammaf64x(x: f64) -> f64 {
     unsafe { lgamma(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lgammaf128(x: f64) -> f64 {
-    unsafe { lgamma(x) }
+pub unsafe extern "C" fn lgammaf128(x: f128) -> f128 {
+    unsafe { lgamma(x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logf32(x: f32) -> f32 {
@@ -7854,8 +7868,8 @@ pub unsafe extern "C" fn tgammaf64x(x: f64) -> f64 {
     unsafe { tgamma(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tgammaf128(x: f64) -> f64 {
-    unsafe { tgamma(x) }
+pub unsafe extern "C" fn tgammaf128(x: f128) -> f128 {
+    unsafe { tgamma(x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn truncf32(x: f32) -> f32 {
@@ -11893,8 +11907,8 @@ pub unsafe extern "C" fn jnf64x(n: c_int, x: f64) -> f64 {
     unsafe { jn(n, x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn jnf128(n: c_int, x: f64) -> f64 {
-    unsafe { jn(n, x) }
+pub unsafe extern "C" fn jnf128(n: c_int, x: f128) -> f128 {
+    unsafe { jn(n, x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ynf32(n: c_int, x: f32) -> f32 {
@@ -11913,8 +11927,8 @@ pub unsafe extern "C" fn ynf64x(n: c_int, x: f64) -> f64 {
     unsafe { yn(n, x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ynf128(n: c_int, x: f64) -> f64 {
-    unsafe { yn(n, x) }
+pub unsafe extern "C" fn ynf128(n: c_int, x: f128) -> f128 {
+    unsafe { yn(n, x as f64) as f128 }
 }
 
 // --- Bessel no-int (f64→f64, f32→f32) ---
@@ -11935,8 +11949,8 @@ pub unsafe extern "C" fn j0f64x(x: f64) -> f64 {
     unsafe { j0(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn j0f128(x: f64) -> f64 {
-    unsafe { j0(x) }
+pub unsafe extern "C" fn j0f128(x: f128) -> f128 {
+    unsafe { j0(x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn j1f32(x: f32) -> f32 {
@@ -11955,8 +11969,8 @@ pub unsafe extern "C" fn j1f64x(x: f64) -> f64 {
     unsafe { j1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn j1f128(x: f64) -> f64 {
-    unsafe { j1(x) }
+pub unsafe extern "C" fn j1f128(x: f128) -> f128 {
+    unsafe { j1(x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y0f32(x: f32) -> f32 {
@@ -11975,8 +11989,8 @@ pub unsafe extern "C" fn y0f64x(x: f64) -> f64 {
     unsafe { y0(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn y0f128(x: f64) -> f64 {
-    unsafe { y0(x) }
+pub unsafe extern "C" fn y0f128(x: f128) -> f128 {
+    unsafe { y0(x as f64) as f128 }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y1f32(x: f32) -> f32 {
@@ -11995,8 +12009,8 @@ pub unsafe extern "C" fn y1f64x(x: f64) -> f64 {
     unsafe { y1(x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn y1f128(x: f64) -> f64 {
-    unsafe { y1(x) }
+pub unsafe extern "C" fn y1f128(x: f128) -> f128 {
+    unsafe { y1(x as f64) as f128 }
 }
 
 // --- complex → real ---
@@ -13172,11 +13186,29 @@ macro_rules! finite_unary_f32 {
     };
 }
 
+macro_rules! finite_unary_f128 {
+    ($name:ident, $target:path) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(x: f128) -> f128 {
+            unsafe { $target(x) }
+        }
+    };
+}
+
 macro_rules! finite_binary_f64 {
     ($name:ident, $target:path) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name(x: f64, y: f64) -> f64 {
             $target(x, y)
+        }
+    };
+}
+
+macro_rules! finite_binary_f128 {
+    ($name:ident, $target:path) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(x: f128, y: f128) -> f128 {
+            unsafe { $target(x, y) }
         }
     };
 }
@@ -13247,24 +13279,25 @@ finite_unary_f64!(__j1l_finite, frankenlibc_core::math::j1);
 finite_unary_f64!(__y0l_finite, frankenlibc_core::math::y0);
 finite_unary_f64!(__y1l_finite, frankenlibc_core::math::y1);
 
-// f128 _finite aliases (mapped to f64, Rust lacks f128)
-finite_unary_f64!(__acosf128_finite, frankenlibc_core::math::acos);
-finite_unary_f64!(__acoshf128_finite, frankenlibc_core::math::acosh);
-finite_unary_f64!(__asinf128_finite, frankenlibc_core::math::asin);
-finite_unary_f64!(__atanhf128_finite, frankenlibc_core::math::atanh);
-finite_unary_f64!(__coshf128_finite, frankenlibc_core::math::cosh);
-finite_unary_f64!(__expf128_finite, frankenlibc_core::math::exp);
-finite_unary_f64!(__exp2f128_finite, frankenlibc_core::math::exp2);
-finite_unary_f64!(__exp10f128_finite, frankenlibc_core::math::exp10);
-finite_unary_f64!(__logf128_finite, frankenlibc_core::math::log);
-finite_unary_f64!(__log2f128_finite, frankenlibc_core::math::log2);
-finite_unary_f64!(__log10f128_finite, frankenlibc_core::math::log10);
-finite_unary_f64!(__sinhf128_finite, frankenlibc_core::math::sinh);
-finite_unary_f64!(__sqrtf128_finite, frankenlibc_core::math::sqrt);
-finite_unary_f64!(__j0f128_finite, frankenlibc_core::math::j0);
-finite_unary_f64!(__j1f128_finite, frankenlibc_core::math::j1);
-finite_unary_f64!(__y0f128_finite, frankenlibc_core::math::y0);
-finite_unary_f64!(__y1f128_finite, frankenlibc_core::math::y1);
+// f128 _finite aliases keep the binary128 ABI. Functions without a quad kernel
+// still delegate through their public wrapper, which documents the precision gap.
+finite_unary_f128!(__acosf128_finite, crate::math_abi::acosf128);
+finite_unary_f128!(__acoshf128_finite, crate::math_abi::acoshf128);
+finite_unary_f128!(__asinf128_finite, crate::math_abi::asinf128);
+finite_unary_f128!(__atanhf128_finite, crate::math_abi::atanhf128);
+finite_unary_f128!(__coshf128_finite, crate::math_abi::coshf128);
+finite_unary_f128!(__expf128_finite, crate::math_abi::expf128);
+finite_unary_f128!(__exp2f128_finite, crate::math_abi::exp2f128);
+finite_unary_f128!(__exp10f128_finite, crate::math_abi::exp10f128);
+finite_unary_f128!(__logf128_finite, crate::math_abi::logf128);
+finite_unary_f128!(__log2f128_finite, crate::math_abi::log2f128);
+finite_unary_f128!(__log10f128_finite, crate::math_abi::log10f128);
+finite_unary_f128!(__sinhf128_finite, crate::math_abi::sinhf128);
+finite_unary_f128!(__sqrtf128_finite, crate::math_abi::sqrtf128);
+finite_unary_f128!(__j0f128_finite, crate::math_abi::j0f128);
+finite_unary_f128!(__j1f128_finite, crate::math_abi::j1f128);
+finite_unary_f128!(__y0f128_finite, crate::math_abi::y0f128);
+finite_unary_f128!(__y1f128_finite, crate::math_abi::y1f128);
 
 // Binary f64 _finite aliases
 finite_binary_f64!(__atan2_finite, frankenlibc_core::math::atan2);
@@ -13301,11 +13334,11 @@ pub unsafe extern "C" fn __scalbl_finite(x: f64, y: f64) -> f64 {
 }
 
 // Binary f128 _finite aliases
-finite_binary_f64!(__atan2f128_finite, frankenlibc_core::math::atan2);
-finite_binary_f64!(__fmodf128_finite, frankenlibc_core::math::fmod);
-finite_binary_f64!(__hypotf128_finite, frankenlibc_core::math::hypot);
-finite_binary_f64!(__powf128_finite, frankenlibc_core::math::pow);
-finite_binary_f64!(__remainderf128_finite, frankenlibc_core::math::remainder);
+finite_binary_f128!(__atan2f128_finite, crate::math_abi::atan2f128);
+finite_binary_f128!(__fmodf128_finite, crate::math_abi::fmodf128);
+finite_binary_f128!(__hypotf128_finite, crate::math_abi::hypotf128);
+finite_binary_f128!(__powf128_finite, crate::math_abi::powf128);
+finite_binary_f128!(__remainderf128_finite, crate::math_abi::remainderf128);
 
 // jn/yn take (int, double) signature
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -13321,8 +13354,8 @@ pub unsafe extern "C" fn __jnl_finite(n: c_int, x: f64) -> f64 {
     frankenlibc_core::math::jn(n, x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __jnf128_finite(n: c_int, x: f64) -> f64 {
-    frankenlibc_core::math::jn(n, x)
+pub unsafe extern "C" fn __jnf128_finite(n: c_int, x: f128) -> f128 {
+    unsafe { jnf128(n, x) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __yn_finite(n: c_int, x: f64) -> f64 {
@@ -13337,8 +13370,8 @@ pub unsafe extern "C" fn __ynl_finite(n: c_int, x: f64) -> f64 {
     frankenlibc_core::math::yn(n, x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __ynf128_finite(n: c_int, x: f64) -> f64 {
-    frankenlibc_core::math::yn(n, x)
+pub unsafe extern "C" fn __ynf128_finite(n: c_int, x: f128) -> f128 {
+    unsafe { ynf128(n, x) }
 }
 
 // lgamma_r/gamma_r _finite aliases take (double, *int) -> double
@@ -13355,8 +13388,8 @@ pub unsafe extern "C" fn __lgammal_r_finite(x: f64, signgamp: *mut c_int) -> f64
     unsafe { crate::math_abi::lgamma_r(x, signgamp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __lgammaf128_r_finite(x: f64, signgamp: *mut c_int) -> f64 {
-    unsafe { crate::math_abi::lgamma_r(x, signgamp) }
+pub unsafe extern "C" fn __lgammaf128_r_finite(x: f128, signgamp: *mut c_int) -> f128 {
+    unsafe { crate::math_abi::lgammaf128_r(x, signgamp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __gamma_r_finite(x: f64, signgamp: *mut c_int) -> f64 {
@@ -13371,8 +13404,8 @@ pub unsafe extern "C" fn __gammal_r_finite(x: f64, signgamp: *mut c_int) -> f64 
     unsafe { crate::math_abi::lgamma_r(x, signgamp) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __gammaf128_r_finite(x: f64, signgamp: *mut c_int) -> f64 {
-    unsafe { crate::math_abi::lgamma_r(x, signgamp) }
+pub unsafe extern "C" fn __gammaf128_r_finite(x: f128, signgamp: *mut c_int) -> f128 {
+    unsafe { crate::math_abi::lgammaf128_r(x, signgamp) }
 }
 
 // __finite classification variants (f128)
