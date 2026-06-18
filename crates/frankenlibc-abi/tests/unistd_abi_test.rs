@@ -187,9 +187,9 @@ use frankenlibc_abi::unistd_abi::{
     readpassphrase, rename, rmdir, sem_close, sem_open, sem_unlink, semctl, semop, setfsent,
     sethostent, setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent,
     setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat,
-    strfmon, strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare, updwtmp,
-    updwtmpx, usleep, utmpname, vsyslog, wctrans, wordexp as abi_wordexp, wordfree as abi_wordfree,
-    write,
+    strfmon, strfmon_l, strfry, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare,
+    updwtmp, updwtmpx, usleep, utmpname, vsyslog, wctrans, wordexp as abi_wordexp,
+    wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -9265,6 +9265,45 @@ fn under_strerror_l_matches_strerror_l() {
 // ===========================================================================
 // __xpg_basename / strfry bounded C-string scans
 // ===========================================================================
+
+#[test]
+fn strfry_preserves_pointer_length_nul_and_byte_multiset() {
+    for input in [
+        &b""[..],
+        &b"x"[..],
+        &b"abcdef"[..],
+        &b"aabbccdd"[..],
+        &b"0123456789"[..],
+    ] {
+        let mut buf = input.to_vec();
+        buf.push(0);
+        let raw = buf.as_mut_ptr().cast::<c_char>();
+
+        let ret = unsafe { strfry(raw) };
+        assert_eq!(ret, raw, "strfry should return its input pointer");
+        assert_eq!(
+            buf[input.len()],
+            0,
+            "strfry should preserve the original NUL terminator for {input:?}"
+        );
+
+        let output = unsafe { CStr::from_ptr(raw) }.to_bytes().to_vec();
+        assert_eq!(
+            output.len(),
+            input.len(),
+            "strfry should preserve C-string length for {input:?}"
+        );
+
+        let mut expected = input.to_vec();
+        let mut observed = output;
+        expected.sort_unstable();
+        observed.sort_unstable();
+        assert_eq!(
+            observed, expected,
+            "strfry should only permute existing bytes for {input:?}"
+        );
+    }
+}
 
 #[test]
 #[ignore = "requires real hardened mode bounds checking (bd-q3snos)"]
