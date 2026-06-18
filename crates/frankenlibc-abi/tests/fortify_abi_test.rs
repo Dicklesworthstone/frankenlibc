@@ -148,6 +148,15 @@ fn memset_chk_fills() {
 }
 
 #[test]
+fn memset_chk_exact_fit_fills_entire_buffer() {
+    let mut buf = [0u8; 4];
+    unsafe {
+        __memset_chk(buf.as_mut_ptr().cast(), 0xA5, buf.len(), buf.len());
+    }
+    assert_eq!(buf, [0xA5; 4]);
+}
+
+#[test]
 fn memset_chk_overflow_aborts_child_process() {
     assert_child_sigabrt("memset_chk overflow", || {
         let mut buf = [0u8; 2];
