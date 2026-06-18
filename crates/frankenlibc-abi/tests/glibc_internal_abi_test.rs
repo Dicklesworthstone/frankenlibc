@@ -236,6 +236,10 @@ unsafe extern "C" {
     fn host_res_hnok(dn: *const c_char) -> c_int;
     #[link_name = "res_dnok"]
     fn host_res_dnok(dn: *const c_char) -> c_int;
+    #[link_name = "res_mailok"]
+    fn host_res_mailok(dn: *const c_char) -> c_int;
+    #[link_name = "res_ownok"]
+    fn host_res_ownok(dn: *const c_char) -> c_int;
     #[link_name = "isastream"]
     fn host_isastream(fd: c_int) -> c_int;
     #[link_name = "putmsg"]
@@ -924,24 +928,28 @@ fn res_dnok_accepts_underscores() {
 }
 
 #[test]
-fn res_mailok_accepts_mailbox_label() {
-    // res_mailok allows more chars in first label (mailbox part) but NOT '@'
-    // In DNS mail notation, user.example.com represents user@example.com
-    let maildom = CString::new("user.example.com").unwrap();
-    assert_eq!(unsafe { res_mailok(maildom.as_ptr()) }, 1);
-
-    // First label can contain chars that hostnames can't (like +, etc.)
-    let plus = CString::new("user+tag.example.com").unwrap();
-    assert_eq!(unsafe { res_mailok(plus.as_ptr()) }, 1);
+fn res_mailok_matches_host_mailbox_labels() {
+    for raw in [
+        "user.example.com",
+        "user+tag.example.com",
+        "user@example.com",
+        "bad name",
+    ] {
+        let name = CString::new(raw).unwrap();
+        let host = unsafe { host_res_mailok(name.as_ptr()) };
+        let fl = unsafe { res_mailok(name.as_ptr()) };
+        assert_eq!(fl, host, "res_mailok({raw})");
+    }
 }
 
 #[test]
-fn res_ownok_delegates_to_dnok() {
-    let valid = CString::new("_srv.example.com").unwrap();
-    assert_eq!(unsafe { res_ownok(valid.as_ptr()) }, 1);
-
-    let invalid = CString::new("bad name").unwrap();
-    assert_eq!(unsafe { res_ownok(invalid.as_ptr()) }, 0);
+fn res_ownok_matches_host_owner_names() {
+    for raw in ["_srv.example.com", "example.com", "user@example.com", "bad name"] {
+        let name = CString::new(raw).unwrap();
+        let host = unsafe { host_res_ownok(name.as_ptr()) };
+        let fl = unsafe { res_ownok(name.as_ptr()) };
+        assert_eq!(fl, host, "res_ownok({raw})");
+    }
 }
 
 // ===========================================================================
