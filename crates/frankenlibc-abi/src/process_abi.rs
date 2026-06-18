@@ -1588,8 +1588,13 @@ pub unsafe extern "C" fn posix_spawn_file_actions_addclose(
     file_actions: *mut c_void,
     fd: c_int,
 ) -> c_int {
-    if file_actions.is_null() || fd < 0 {
+    if file_actions.is_null() {
         return libc::EINVAL;
+    }
+    // glibc's file-action adders reject a negative fd with EBADF (not EINVAL).
+    // bd-r1cvsg.
+    if fd < 0 {
+        return libc::EBADF;
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
@@ -1605,8 +1610,11 @@ pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(
     oldfd: c_int,
     newfd: c_int,
 ) -> c_int {
-    if file_actions.is_null() || oldfd < 0 || newfd < 0 {
+    if file_actions.is_null() {
         return libc::EINVAL;
+    }
+    if oldfd < 0 || newfd < 0 {
+        return libc::EBADF; // glibc: __spawn_valid_fd -> EBADF. bd-r1cvsg.
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
@@ -1624,8 +1632,11 @@ pub unsafe extern "C" fn posix_spawn_file_actions_addopen(
     oflag: c_int,
     mode: libc::mode_t,
 ) -> c_int {
-    if file_actions.is_null() || fd < 0 || path.is_null() {
+    if file_actions.is_null() || path.is_null() {
         return libc::EINVAL;
+    }
+    if fd < 0 {
+        return libc::EBADF; // glibc: invalid fd -> EBADF. bd-r1cvsg.
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
@@ -1687,8 +1698,13 @@ pub unsafe extern "C" fn posix_spawn_file_actions_addfchdir_np(
     file_actions: *mut c_void,
     fd: c_int,
 ) -> c_int {
-    if file_actions.is_null() || fd < 0 {
+    if file_actions.is_null() {
         return libc::EINVAL;
+    }
+    // glibc's file-action adders reject a negative fd with EBADF (not EINVAL).
+    // bd-r1cvsg.
+    if fd < 0 {
+        return libc::EBADF;
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
@@ -1701,8 +1717,11 @@ pub unsafe fn posix_spawn_file_actions_addclosefrom_np_impl(
     file_actions: *mut c_void,
     from: c_int,
 ) -> c_int {
-    if file_actions.is_null() || from < 0 {
+    if file_actions.is_null() {
         return libc::EINVAL;
+    }
+    if from < 0 {
+        return libc::EBADF; // glibc addclosefrom_np: from < 0 -> EBADF. bd-r1cvsg.
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
@@ -1715,8 +1734,13 @@ pub unsafe fn posix_spawn_file_actions_addtcsetpgrp_np_impl(
     file_actions: *mut c_void,
     fd: c_int,
 ) -> c_int {
-    if file_actions.is_null() || fd < 0 {
+    if file_actions.is_null() {
         return libc::EINVAL;
+    }
+    // glibc's file-action adders reject a negative fd with EBADF (not EINVAL).
+    // bd-r1cvsg.
+    if fd < 0 {
+        return libc::EBADF;
     }
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
