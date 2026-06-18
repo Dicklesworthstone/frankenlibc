@@ -1604,6 +1604,26 @@ fn fgets_unlocked_chk_n_over_real_buffer_aborts_child_process() {
     });
 }
 
+#[test]
+fn gets_chk_line_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("gets_chk line over real buffer", || {
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+
+        let input = b"toolong\n";
+        assert_eq!(
+            unsafe { libc::write(fds[1], input.as_ptr().cast(), input.len()) },
+            input.len() as isize
+        );
+        unsafe { libc::close(fds[1]) };
+        assert_eq!(unsafe { libc::dup2(fds[0], libc::STDIN_FILENO) }, libc::STDIN_FILENO);
+        unsafe { libc::close(fds[0]) };
+
+        let mut buf = [0u8; 4];
+        unsafe { __gets_chk(buf.as_mut_ptr().cast(), buf.len()) };
+    });
+}
+
 // ===========================================================================
 // __fread_chk
 // ===========================================================================
