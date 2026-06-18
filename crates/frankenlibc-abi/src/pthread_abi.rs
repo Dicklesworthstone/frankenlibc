@@ -5707,6 +5707,13 @@ pub unsafe extern "C" fn pthread_mutex_clocklock(
     if mutex.is_null() || abstime.is_null() {
         return libc::EINVAL;
     }
+    // glibc (lll_futex_supported_clockid) accepts ONLY CLOCK_REALTIME and
+    // CLOCK_MONOTONIC for the clock-variant waits; any other clock (BOOTTIME,
+    // PROCESS_CPUTIME_ID, ...) is EINVAL even though clock_gettime accepts it.
+    // bd-44y7sl.
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        return libc::EINVAL;
+    }
     if clockid == libc::CLOCK_REALTIME {
         return unsafe { pthread_mutex_timedlock(mutex, abstime) };
     }
@@ -5778,6 +5785,9 @@ pub unsafe extern "C" fn pthread_rwlock_clockrdlock(
     if rwlock.is_null() || abstime.is_null() {
         return libc::EINVAL;
     }
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        return libc::EINVAL; // bd-44y7sl: only REALTIME/MONOTONIC supported
+    }
     if clockid == libc::CLOCK_REALTIME {
         return unsafe { pthread_rwlock_timedrdlock(rwlock, abstime) };
     }
@@ -5799,6 +5809,9 @@ pub unsafe extern "C" fn pthread_rwlock_clockwrlock(
 ) -> c_int {
     if rwlock.is_null() || abstime.is_null() {
         return libc::EINVAL;
+    }
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        return libc::EINVAL; // bd-44y7sl: only REALTIME/MONOTONIC supported
     }
     if clockid == libc::CLOCK_REALTIME {
         return unsafe { pthread_rwlock_timedwrlock(rwlock, abstime) };
@@ -5823,6 +5836,9 @@ pub unsafe extern "C" fn pthread_cond_clockwait(
 ) -> c_int {
     if cond.is_null() || mutex.is_null() || abstime.is_null() {
         return libc::EINVAL;
+    }
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        return libc::EINVAL; // bd-44y7sl: only REALTIME/MONOTONIC supported
     }
     if !absolute_timespec_valid(abstime) {
         return libc::EINVAL;

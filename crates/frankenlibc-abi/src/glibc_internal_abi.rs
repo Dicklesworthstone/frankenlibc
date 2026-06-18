@@ -6984,6 +6984,12 @@ pub unsafe extern "C" fn sem_clockwait(
     clockid: c_int,
     abstime: *const c_void,
 ) -> c_int {
+    // glibc allows only CLOCK_REALTIME/CLOCK_MONOTONIC for sem_clockwait
+    // (lll_futex_supported_clockid); any other clock is EINVAL. bd-44y7sl.
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
     // Use futex FUTEX_WAIT_BITSET with clock selection
     // sem_t is an int at offset 0; if value > 0, decrement and return
     let sem_val = sem as *mut std::sync::atomic::AtomicI32;
