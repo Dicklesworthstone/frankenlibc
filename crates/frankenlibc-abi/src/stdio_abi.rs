@@ -587,6 +587,20 @@ pub(crate) fn stream_set_locking(stream: *mut c_void, typ: c_int) -> Option<c_in
     reg.streams.get_mut(&id).map(|s| s.set_locking(typ))
 }
 
+/// `__fpurge`: discard the stream's buffered (unread/unflushed) data. Returns
+/// true if fl owns the stream and purged it.
+pub(crate) fn stream_purge(stream: *mut c_void) -> bool {
+    let id = canonical_stream_id(stream);
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    match reg.streams.get_mut(&id) {
+        Some(s) => {
+            s.purge();
+            true
+        }
+        None => false,
+    }
+}
+
 #[inline]
 #[cfg_attr(feature = "standalone", allow(unused_variables))]
 fn sync_native_stdio_buffering(stream: *mut c_void, mode: BufMode, buf: *mut c_char, size: usize) {

@@ -3934,8 +3934,10 @@ pub unsafe extern "C" fn __fpending(fp: *mut c_void) -> SizeT {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fpurge(fp: *mut c_void) {
-    let _ = fp;
-    // discard buffered data — no-op since we don't control the buffer
+    // Discard the stream's buffered data (unread input + unflushed output),
+    // like glibc. fl owns the buffer via the stream registry; the previous
+    // no-op silently kept buffered bytes. bd-k3hkhg.
+    crate::stdio_abi::stream_purge(fp);
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __freadable(fp: *mut c_void) -> c_int {

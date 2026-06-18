@@ -537,6 +537,14 @@ impl StdioStream {
         self.flags.orientation
     }
 
+    /// `__fpurge`: discard all buffered data — unread input and unflushed
+    /// output, plus any pushed-back bytes — without writing it out.
+    pub fn purge(&mut self) {
+        self.buffer.reset();
+        self.ungetc_byte = None;
+        self.read_pushback.clear();
+    }
+
     /// `__fsetlocking`: FSETLOCKING_QUERY(0) only reports the current locking
     /// mode; INTERNAL(1)/BYCALLER(2) change it. Returns the mode that was in
     /// effect BEFORE the call (glibc returns the previous mode on a set and the
