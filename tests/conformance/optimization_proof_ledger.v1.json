@@ -209,13 +209,66 @@
       ],
       "proof_status": "pending",
       "acceptance_reason": "Pending additional oversize/null_ptr coverage and hardened replay."
+    },
+    {
+      "trace_id": "bd-2g7oyh::strict::cand-memrchr-fold-end-accounting::001",
+      "candidate_id": "cand-memrchr-fold-end-accounting",
+      "bead_id": "bd-2g7oyh",
+      "module": "frankenlibc-core/string/mem",
+      "symbol": "memrchr",
+      "code_refs": [
+        "crates/frankenlibc-core/src/string/mem.rs"
+      ],
+      "measurement": {
+        "metric": "batch_test_pending_p50_ns_op",
+        "mode": "strict",
+        "before": 0.0,
+        "after": 0.0,
+        "perf_delta_pct": 0.0,
+        "evidence_refs": [
+          "crates/frankenlibc-core/src/string/mem.rs",
+          "CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core"
+        ]
+      },
+      "behavior_checks": [
+        {
+          "check_id": "crate_scoped_compile",
+          "check_command": "CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core",
+          "artifact_ref": "/data/projects/.rch-targets/frankenlibc-cod-a",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "pass"
+        },
+        {
+          "check_id": "memrchr_folded_reverse_boundary_guard",
+          "check_command": "cargo test -p frankenlibc-core string::mem::tests::test_memrchr_folded_reverse_skips_full_tail_block_with_correct_index",
+          "artifact_ref": "crates/frankenlibc-core/src/string/mem.rs",
+          "input_classes": [
+            "boundary"
+          ],
+          "status": "skipped"
+        },
+        {
+          "check_id": "focused_benchmark_vs_glibc",
+          "check_command": "cargo bench -p frankenlibc-bench --bench string_bench memrchr -- --save-baseline after",
+          "artifact_ref": "crates/frankenlibc-bench/benches/string_bench.rs",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "skipped"
+        }
+      ],
+      "proof_status": "pending",
+      "acceptance_reason": "Code-first batch-test pending: fixed folded reverse block accounting and added a focused boundary guard; benchmark/conformance not run by directive.",
+      "notes": "Retry only if focused same-worker memrchr/memrchr-using string workloads attribute a clearly-above-noise share to folded reverse scanning."
     }
   ],
   "summary": {
-    "total_candidates": 3,
+    "total_candidates": 4,
     "verified": 1,
     "rejected": 1,
-    "pending": 1,
+    "pending": 2,
     "waived": 0,
     "required_log_fields": 5,
     "required_input_classes": 4

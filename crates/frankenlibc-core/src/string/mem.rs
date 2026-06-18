@@ -432,7 +432,7 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
                 panel_end -= SIMD_LANES;
             }
         }
-        end -= SIMD_FOLD_BYTES;
+        end -= MEMCHR_FOLD_BYTES;
     }
 
     let hs = simd_blocks.remainder();
@@ -1222,6 +1222,27 @@ mod tests {
             memrchr(&haystack, b'Z', haystack.len()),
             Some(SIMD_LANES * 7 + 17)
         );
+    }
+
+    #[test]
+    fn test_memrchr_folded_reverse_skips_full_tail_block_with_correct_index() {
+        let len = MEMCHR_FOLD_BYTES * 2 + SIMD_LANES / 2;
+        let mut haystack = vec![b'A'; len];
+        let positions = [
+            SIMD_LANES + 3,
+            MEMCHR_FOLD_BYTES - 1,
+            MEMCHR_FOLD_BYTES + SIMD_LANES + 5,
+        ];
+
+        for &pos in &positions {
+            haystack.fill(b'A');
+            haystack[pos] = b'Z';
+            assert_eq!(
+                memrchr(&haystack, b'Z', haystack.len()),
+                Some(pos),
+                "folded reverse index mismatch after tail-block skip at {pos}"
+            );
+        }
     }
 
     #[test]
