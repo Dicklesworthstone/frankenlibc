@@ -34,6 +34,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     __inet_pton_length,
     __inet6_scopeid_pton,
     __libc_init_first,
+    __libc_sa_len,
     __merge_grp,
     __mktemp,
     __monstartup,
@@ -204,6 +205,8 @@ unsafe extern "C" {
     fn host_dysize(year: c_int) -> c_int;
     #[link_name = "__profile_frequency"]
     fn host_profile_frequency() -> c_int;
+    #[link_name = "__libc_sa_len"]
+    fn host_libc_sa_len(af: u16) -> c_int;
     #[link_name = "fattach"]
     fn host_fattach(fd: c_int, path: *const c_char) -> c_int;
     #[link_name = "fchflags"]
@@ -5513,6 +5516,30 @@ fn inet_net_round_trip_via_abi() {
 // ---------------------------------------------------------------------------
 
 use frankenlibc_abi::glibc_internal_abi::{__libc_alloca_cutoff, __libc_use_alloca};
+
+#[test]
+fn libc_sa_len_matches_host_socket_family_table() {
+    for (family, expected) in [
+        (
+            libc::AF_UNIX as u16,
+            std::mem::size_of::<libc::sockaddr_un>() as c_int,
+        ),
+        (
+            libc::AF_INET as u16,
+            std::mem::size_of::<libc::sockaddr_in>() as c_int,
+        ),
+        (
+            libc::AF_INET6 as u16,
+            std::mem::size_of::<libc::sockaddr_in6>() as c_int,
+        ),
+        (u16::MAX, 0),
+    ] {
+        let host = unsafe { host_libc_sa_len(family) };
+        let fl = unsafe { __libc_sa_len(family) };
+        assert_eq!(fl, host, "__libc_sa_len({family})");
+        assert_eq!(fl, expected, "__libc_sa_len({family}) expected size");
+    }
+}
 
 #[test]
 fn libc_alloca_cutoff_returns_one_for_small_sizes() {
