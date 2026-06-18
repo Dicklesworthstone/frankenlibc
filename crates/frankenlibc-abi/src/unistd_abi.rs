@@ -16287,7 +16287,12 @@ pub unsafe extern "C" fn ptrace(
     if is_peek {
         let mut word: c_long = 0;
         match unsafe {
-            syscall::sys_ptrace(request, pid, addr as usize, &mut word as *mut c_long as usize)
+            syscall::sys_ptrace(
+                request,
+                pid,
+                addr as usize,
+                &mut word as *mut c_long as usize,
+            )
         } {
             Ok(_) => {
                 unsafe { set_abi_errno(0) };
@@ -18323,7 +18328,13 @@ unsafe fn fill_netent_buf(
     }
     let buf_len = state.entry_buf.len();
     unsafe {
-        pack_aliases_into(buf, buf_len, str_offset + name.len() + 1, &mut state.aliases_ptrs, aliases);
+        pack_aliases_into(
+            buf,
+            buf_len,
+            str_offset + name.len() + 1,
+            &mut state.aliases_ptrs,
+            aliases,
+        );
     }
 
     let ptrs = buf as *mut *mut c_char;
@@ -18410,7 +18421,10 @@ pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
     for line in content.split(|&b| b == b'\n') {
         if let Some(entry) = parse_networks_line(line)
             && (entry.name.eq_ignore_ascii_case(&needle)
-                || entry.aliases.iter().any(|a| a.eq_ignore_ascii_case(&needle)))
+                || entry
+                    .aliases
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case(&needle)))
         {
             return with_net_iter_state(|state| unsafe {
                 fill_netent_buf(state, &entry.name, entry.number, &entry.aliases)
@@ -21285,16 +21299,22 @@ pub unsafe extern "C" fn dn_comp(
     // Presentation -> uncompressed wire (handles \. and \DDD escapes, like
     // glibc's ns_name_pton inside ns_name_compress).
     let mut wire = [0u8; 256]; // NS_MAXCDNAME
-    let wire_len = match frankenlibc_core::resolv::dns_name::name_pton(name_bytes.as_slice(), &mut wire)
-    {
-        Ok(n) => n,
-        Err(_) => {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            return -1;
-        }
-    };
+    let wire_len =
+        match frankenlibc_core::resolv::dns_name::name_pton(name_bytes.as_slice(), &mut wire) {
+            Ok(n) => n,
+            Err(_) => {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                return -1;
+            }
+        };
     unsafe {
-        pack_name_with_dnptrs(&wire[..wire_len], comp_dn, length as usize, dnptrs, lastdnptr)
+        pack_name_with_dnptrs(
+            &wire[..wire_len],
+            comp_dn,
+            length as usize,
+            dnptrs,
+            lastdnptr,
+        )
     }
 }
 
@@ -25701,11 +25721,12 @@ unsafe fn fill_netent_r(
         *buf_u8.add(name.len()) = 0;
     }
 
-    let aliases_ptr =
-        match unsafe { crate::inet_abi::pack_caller_aliases(buf, effective_buflen, name_len, aliases) } {
-            Some(p) => p,
-            None => return libc::ERANGE,
-        };
+    let aliases_ptr = match unsafe {
+        crate::inet_abi::pack_caller_aliases(buf, effective_buflen, name_len, aliases)
+    } {
+        Some(p) => p,
+        None => return libc::ERANGE,
+    };
 
     let ent = result_buf.cast::<NetEnt>();
     unsafe {
@@ -25751,7 +25772,15 @@ pub unsafe extern "C" fn getnetbyaddr_r(
             && entry.number == net
         {
             return unsafe {
-                fill_netent_r(&entry.name, entry.number, &entry.aliases, result_buf, buf, buflen, result)
+                fill_netent_r(
+                    &entry.name,
+                    entry.number,
+                    &entry.aliases,
+                    result_buf,
+                    buf,
+                    buflen,
+                    result,
+                )
             };
         }
     }
@@ -25789,10 +25818,21 @@ pub unsafe extern "C" fn getnetbyname_r(
     for line in content.split(|&b| b == b'\n') {
         if let Some(entry) = parse_networks_line(line)
             && (entry.name.eq_ignore_ascii_case(needle.as_slice())
-                || entry.aliases.iter().any(|a| a.eq_ignore_ascii_case(needle.as_slice())))
+                || entry
+                    .aliases
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case(needle.as_slice())))
         {
             return unsafe {
-                fill_netent_r(&entry.name, entry.number, &entry.aliases, result_buf, buf, buflen, result)
+                fill_netent_r(
+                    &entry.name,
+                    entry.number,
+                    &entry.aliases,
+                    result_buf,
+                    buf,
+                    buflen,
+                    result,
+                )
             };
         }
     }
@@ -25838,7 +25878,15 @@ pub unsafe extern "C" fn getnetent_r(
             }
             if let Some(entry) = parse_networks_line(&state.line_buf) {
                 return unsafe {
-                    fill_netent_r(&entry.name, entry.number, &entry.aliases, result_buf, buf, buflen, result)
+                    fill_netent_r(
+                        &entry.name,
+                        entry.number,
+                        &entry.aliases,
+                        result_buf,
+                        buf,
+                        buflen,
+                        result,
+                    )
                 };
             }
         }
@@ -25881,11 +25929,12 @@ unsafe fn fill_protoent_r(
         *buf_u8.add(name.len()) = 0;
     }
 
-    let aliases_ptr =
-        match unsafe { crate::inet_abi::pack_caller_aliases(buf, effective_buflen, name_len, aliases) } {
-            Some(p) => p,
-            None => return libc::ERANGE,
-        };
+    let aliases_ptr = match unsafe {
+        crate::inet_abi::pack_caller_aliases(buf, effective_buflen, name_len, aliases)
+    } {
+        Some(p) => p,
+        None => return libc::ERANGE,
+    };
 
     // Fill struct protoent.
     let ent = result_buf.cast::<libc::protoent>();
