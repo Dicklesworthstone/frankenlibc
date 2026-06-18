@@ -101,6 +101,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     _pthread_cleanup_push_defer,
     dysize,
     getpw,
+    gtty,
     inet6_opt_append,
     inet6_opt_find,
     inet6_opt_finish,
@@ -157,6 +158,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     ruserok_af,
     ruserpass,
     sgetspent_r,
+    stty,
     tr_break,
     wcswcs,
     xprt_register,
@@ -171,6 +173,10 @@ use std::time::{Duration, Instant};
 unsafe extern "C" {
     #[link_name = "dysize"]
     fn host_dysize(year: c_int) -> c_int;
+    #[link_name = "gtty"]
+    fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
+    #[link_name = "stty"]
+    fn host_stty(fd: c_int, params: *const c_void) -> c_int;
 }
 
 #[test]
@@ -200,6 +206,43 @@ fn dysize_matches_host_leap_year_sweep() {
         let host = unsafe { host_dysize(year) };
         let abi = unsafe { dysize(year) };
         assert_eq!(abi, host, "dysize({year})");
+    }
+}
+
+#[test]
+fn sgtty_legacy_stubs_match_host_enosys() {
+    let mut params = [0u8; 64];
+
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_gtty_result = host_gtty(0, params.as_mut_ptr().cast());
+        let host_gtty_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_gtty_result = gtty(0, params.as_mut_ptr().cast());
+        let fl_gtty_errno = errno_value();
+
+        assert_eq!(
+            (fl_gtty_result, fl_gtty_errno),
+            (host_gtty_result, host_gtty_errno)
+        );
+        assert_eq!((fl_gtty_result, fl_gtty_errno), (-1, libc::ENOSYS));
+
+        *libc::__errno_location() = 0;
+        let host_stty_result = host_stty(0, params.as_ptr().cast());
+        let host_stty_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_stty_result = stty(0, params.as_ptr().cast());
+        let fl_stty_errno = errno_value();
+
+        assert_eq!(
+            (fl_stty_result, fl_stty_errno),
+            (host_stty_result, host_stty_errno)
+        );
+        assert_eq!((fl_stty_result, fl_stty_errno), (-1, libc::ENOSYS));
     }
 }
 
