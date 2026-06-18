@@ -2505,8 +2505,11 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_NGROUPS_MAX => {
             runtime_procfs_long("/proc/sys/kernel/ngroups_max").unwrap_or(65536)
         }
-        libc::_SC_GETPW_R_SIZE_MAX => 4096,
-        libc::_SC_GETGR_R_SIZE_MAX => 4096,
+        // glibc returns NSS_BUFLEN_PASSWD / NSS_BUFLEN_GROUP (both 1024) for
+        // these suggested getpwnam_r/getgrnam_r buffer sizes (sysconf.c returns
+        // those macros). fl returned 4096. bd-o283z7.
+        libc::_SC_GETPW_R_SIZE_MAX => 1024,
+        libc::_SC_GETGR_R_SIZE_MAX => 1024,
         libc::_SC_LOGIN_NAME_MAX => 256,
         libc::_SC_TTY_NAME_MAX => 32,
         // Linux does not define SYMLOOP_MAX, so glibc's sysconf returns -1
