@@ -3878,8 +3878,12 @@ pub unsafe extern "C" fn __endmntent(fp: *mut c_void) -> c_int {
 // we forward to libc for the ones that inspect it, or return safe defaults.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fbufsize(fp: *mut c_void) -> SizeT {
-    let _ = fp;
-    libc::BUFSIZ as SizeT // default buffer size
+    // Report the stream's actual buffer capacity (reflects setvbuf), not a
+    // constant. bd-bap2cl.
+    match crate::stdio_abi::stream_ext_info(fp) {
+        Some(i) => i.buf_size as SizeT,
+        None => libc::BUFSIZ as SizeT,
+    }
 }
 // __fcntl: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3905,8 +3909,11 @@ pub unsafe extern "C" fn __fdelt_warn(d: c_long) -> c_long {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __flbf(fp: *mut c_void) -> c_int {
-    let _ = fp;
-    0 // not line-buffered by default
+    // Nonzero iff the stream is line-buffered. bd-bap2cl.
+    match crate::stdio_abi::stream_ext_info(fp) {
+        Some(i) => i.line_buffered as c_int,
+        None => 0,
+    }
 }
 // __fork: glibc-internal alias of fork() — must run pthread_atfork handlers,
 // the membrane pipeline atfork_prepare guard, and acquire ENVIRON_LOCK before
@@ -3919,8 +3926,11 @@ pub unsafe extern "C" fn __fork() -> c_int {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fpending(fp: *mut c_void) -> SizeT {
-    let _ = fp;
-    0 // no bytes pending
+    // Number of bytes buffered for output but not yet flushed. bd-bap2cl.
+    match crate::stdio_abi::stream_ext_info(fp) {
+        Some(i) => i.pending as SizeT,
+        None => 0,
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fpurge(fp: *mut c_void) {
@@ -3929,8 +3939,11 @@ pub unsafe extern "C" fn __fpurge(fp: *mut c_void) {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __freadable(fp: *mut c_void) -> c_int {
-    let _ = fp;
-    1 // assume readable
+    // Nonzero iff the stream was opened for reading. bd-bap2cl.
+    match crate::stdio_abi::stream_ext_info(fp) {
+        Some(i) => i.readable as c_int,
+        None => 1,
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __freading(fp: *mut c_void) -> c_int {
@@ -3944,8 +3957,11 @@ pub unsafe extern "C" fn __fsetlocking(fp: *mut c_void, typ: c_int) -> c_int {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fwritable(fp: *mut c_void) -> c_int {
-    let _ = fp;
-    1 // assume writable
+    // Nonzero iff the stream was opened for writing. bd-bap2cl.
+    match crate::stdio_abi::stream_ext_info(fp) {
+        Some(i) => i.writable as c_int,
+        None => 1,
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fwriting(fp: *mut c_void) -> c_int {

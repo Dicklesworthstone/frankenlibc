@@ -533,6 +533,30 @@ fn canonical_stream_id(stream: *mut c_void) -> usize {
     standard_stream_id(stream).unwrap_or(stream as usize)
 }
 
+/// Snapshot of a stream's state for the `stdio_ext.h` introspection helpers
+/// (`__freadable`/`__fwritable`/`__flbf`/`__fbufsize`/`__fpending`).
+pub(crate) struct StreamExtInfo {
+    pub readable: bool,
+    pub writable: bool,
+    pub line_buffered: bool,
+    pub buf_size: usize,
+    pub pending: usize,
+}
+
+/// Resolve a `FILE*` to its `stdio_ext` introspection state, or `None` if fl
+/// does not own the stream (caller falls back to a permissive default).
+pub(crate) fn stream_ext_info(stream: *mut c_void) -> Option<StreamExtInfo> {
+    let id = canonical_stream_id(stream);
+    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.get(&id).map(|s| StreamExtInfo {
+        readable: s.is_readable(),
+        writable: s.is_writable(),
+        line_buffered: matches!(s.buf_mode(), BufMode::Line),
+        buf_size: s.buffer_capacity(),
+        pending: s.pending_flush().len(),
+    })
+}
+
 #[inline]
 #[cfg_attr(feature = "standalone", allow(unused_variables))]
 fn sync_native_stdio_buffering(stream: *mut c_void, mode: BufMode, buf: *mut c_char, size: usize) {
