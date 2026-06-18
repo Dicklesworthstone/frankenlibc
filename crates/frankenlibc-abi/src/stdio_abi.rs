@@ -3670,6 +3670,36 @@ pub(crate) unsafe fn render_segments(
     ScratchVec::new(buf)
 }
 
+/// Returns the bytes a printf-family call must emit, taking the bare-"%s" fast
+/// path when possible: for an exact, non-NULL `%s` the caller's NUL-terminated
+/// string is returned directly (no render, no intermediate buffer); otherwise
+/// the format is rendered into `*hold` (kept alive by the caller) and that
+/// buffer is returned. Output is identical to rendering "%s" (which just copies
+/// the string); a NULL argument falls through to render so glibc's "(null)" is
+/// still produced.
+///
+/// # Safety
+/// `args` must point to at least `extract_count` extracted argument slots, and a
+/// bare-`%s` argument must be a valid NUL-terminated string per the C contract.
+unsafe fn bare_s_or_render<'a>(
+    fmt_bytes: &[u8],
+    segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
+    args: *const u64,
+    extract_count: usize,
+    hold: &'a mut Option<ScratchVec>,
+) -> &'a [u8] {
+    if fmt_bytes == b"%s" && extract_count >= 1 {
+        let p = unsafe { *args } as *const u8;
+        if !p.is_null() {
+            let len = unsafe { c_str_bytes(p as *const c_char) }.len();
+            // SAFETY: the %s string is valid for the whole call (>= 'a).
+            return unsafe { std::slice::from_raw_parts(p, len) };
+        }
+    }
+    *hold = Some(unsafe { render_segments(segments, args, extract_count, false) });
+    hold.as_deref().unwrap()
+}
+
 pub(crate) fn write_all_fd(fd: c_int, data: &[u8]) -> bool {
     let mut written = 0usize;
     while written < data.len() {
@@ -3897,14 +3927,17 @@ pub unsafe extern "C" fn fprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Bare "%s" fast path: emit the string straight to the stream, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    };
+    let total_len = bytes.len();
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
-            let written = s.mem_write(&rendered);
+            let written = s.mem_write(bytes);
             let adverse = written < total_len;
             if adverse {
                 s.set_error();
@@ -3922,7 +3955,7 @@ pub unsafe extern "C" fn fprintf(
             };
         }
 
-        let write_result = match s.buffer_write(&rendered) {
+        let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
                 runtime_policy::observe(
@@ -4002,7 +4035,7 @@ pub unsafe extern "C" fn fprintf(
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
-                unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stream) };
+                unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
             if written > 0 {
                 mark_host_io_started(stream);
             }
@@ -4010,9 +4043,9 @@ pub unsafe extern "C" fn fprintf(
                 ApiFamily::Stdio,
                 decision.profile,
                 runtime_policy::scaled_cost(15, total_len),
-                written < rendered.len(),
+                written < bytes.len(),
             );
-            return if written == rendered.len() {
+            return if written == bytes.len() {
                 printf_result_to_c_int(total_len)
             } else {
                 -1
@@ -4055,14 +4088,17 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Bare "%s" fast path: emit the string straight to the stream, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    };
+    let total_len = bytes.len();
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
-            let written = s.mem_write(&rendered);
+            let written = s.mem_write(bytes);
             let adverse = written < total_len;
             if adverse {
                 s.set_error();
@@ -4080,7 +4116,7 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
             };
         }
 
-        let write_result = match s.buffer_write(&rendered) {
+        let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
                 runtime_policy::observe(
@@ -4159,7 +4195,7 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
-                unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stdout_ptr) };
+                unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stdout_ptr) };
             if written > 0 {
                 mark_host_io_started(stdout_ptr);
             }
@@ -4167,9 +4203,9 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
                 ApiFamily::Stdio,
                 decision.profile,
                 runtime_policy::scaled_cost(15, total_len),
-                written < rendered.len(),
+                written < bytes.len(),
             );
-            return if written == rendered.len() {
+            return if written == bytes.len() {
                 printf_result_to_c_int(total_len)
             } else {
                 -1
@@ -4622,14 +4658,17 @@ pub unsafe extern "C" fn vfprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Bare "%s" fast path: emit the string straight to the stream, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    };
+    let total_len = bytes.len();
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
-            let written = s.mem_write(&rendered);
+            let written = s.mem_write(bytes);
             let adverse = written < total_len;
             if adverse {
                 s.set_error();
@@ -4647,7 +4686,7 @@ pub unsafe extern "C" fn vfprintf(
             };
         }
 
-        let write_result = match s.buffer_write(&rendered) {
+        let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
                 runtime_policy::observe(
@@ -4726,7 +4765,7 @@ pub unsafe extern "C" fn vfprintf(
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
-                unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stream) };
+                unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
             if written > 0 {
                 mark_host_io_started(stream);
             }
@@ -4734,9 +4773,9 @@ pub unsafe extern "C" fn vfprintf(
                 ApiFamily::Stdio,
                 decision.profile,
                 runtime_policy::scaled_cost(15, total_len),
-                written < rendered.len(),
+                written < bytes.len(),
             );
-            return if written == rendered.len() {
+            return if written == bytes.len() {
                 printf_result_to_c_int(total_len)
             } else {
                 -1
@@ -4776,14 +4815,17 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Bare "%s" fast path: emit the string straight to the stream, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    };
+    let total_len = bytes.len();
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
-            let written = s.mem_write(&rendered);
+            let written = s.mem_write(bytes);
             let adverse = written < total_len;
             if adverse {
                 s.set_error();
@@ -4801,7 +4843,7 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
             };
         }
 
-        let write_result = match s.buffer_write(&rendered) {
+        let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
                 runtime_policy::observe(
@@ -4880,7 +4922,7 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
-                unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stdout_ptr) };
+                unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stdout_ptr) };
             if written > 0 {
                 mark_host_io_started(stdout_ptr);
             }
@@ -4888,9 +4930,9 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
                 ApiFamily::Stdio,
                 decision.profile,
                 runtime_policy::scaled_cost(15, total_len),
-                written < rendered.len(),
+                written < bytes.len(),
             );
-            return if written == rendered.len() {
+            return if written == bytes.len() {
                 printf_result_to_c_int(total_len)
             } else {
                 -1
