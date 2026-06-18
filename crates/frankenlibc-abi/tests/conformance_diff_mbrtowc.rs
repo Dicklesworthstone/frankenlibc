@@ -1,9 +1,11 @@
 #![cfg(target_os = "linux")]
 
-//! Differential conformance harness for `mbrtowc(3)` in UTF-8 locale.
+//! Differential conformance harness for `mbrtowc(3)`/`mbrlen(3)` in UTF-8 locale.
 //!
 //! `mbrtowc` decodes one multibyte char to a wide char. We test the
-//! full UTF-8 acceptance/rejection grid against glibc.
+//! full UTF-8 acceptance/rejection grid against glibc. `mbrlen` is the
+//! length-only wrapper over the same conversion state machine, so this also
+//! locks down its sentinel returns.
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
@@ -14,6 +16,7 @@ use frankenlibc_abi::wchar_abi as fl;
 
 unsafe extern "C" {
     fn mbrtowc(pwc: *mut libc::wchar_t, s: *const c_char, n: usize, ps: *mut c_void) -> usize;
+    fn mbrlen(s: *const c_char, n: usize, ps: *mut c_void) -> usize;
 }
 
 static LOCALE_LOCK: Mutex<()> = Mutex::new(());
@@ -66,6 +69,28 @@ fn decode_both(bytes: &[u8]) -> ((isize, u32), (isize, u32)) {
     ((fl_signed, fl_wc as u32), (lc_signed, lc_wc as u32))
 }
 
+#[repr(align(8))]
+struct MbStateStorage([u8; std::mem::size_of::<libc::mbstate_t>()]);
+
+impl MbStateStorage {
+    fn new() -> Self {
+        Self([0; std::mem::size_of::<libc::mbstate_t>()])
+    }
+
+    fn as_mut_c_void(&mut self) -> *mut c_void {
+        self.0.as_mut_ptr().cast()
+    }
+}
+
+fn mbrlen_both(bytes: &[u8], n: usize) -> (usize, usize) {
+    let mut fl_state = MbStateStorage::new();
+    let mut lc_state = MbStateStorage::new();
+    let ptr = bytes.as_ptr() as *const c_char;
+    let fl_n = unsafe { fl::mbrlen(ptr, n, fl_state.as_mut_c_void()) };
+    let lc_n = unsafe { mbrlen(ptr, n, lc_state.as_mut_c_void()) };
+    (fl_n, lc_n)
+}
+
 #[test]
 fn diff_mbrtowc_ascii_byte() {
     with_utf8(|| {
@@ -77,6 +102,59 @@ fn diff_mbrtowc_ascii_byte() {
             assert_eq!(fl_r.0, 1);
             assert_eq!(fl_r.1, b as u32);
         }
+    });
+}
+
+#[test]
+fn diff_mbrlen_completed_utf8_lengths() {
+    with_utf8(|| {
+        let cases: &[(&str, &[u8], usize, usize)] = &[
+            ("ascii", b"A", 1, 1),
+            ("nul", b"\0", 1, 0),
+            ("two_byte", &[0xC2, 0xA2], 2, 2),
+            ("three_byte", &[0xE2, 0x82, 0xAC], 3, 3),
+            ("four_byte", &[0xF0, 0x9F, 0x98, 0x80], 4, 4),
+            ("max_codepoint", &[0xF4, 0x8F, 0xBF, 0xBF], 4, 4),
+        ];
+
+        for &(label, bytes, n, expected) in cases {
+            let (fl_n, lc_n) = mbrlen_both(bytes, n);
+            assert_eq!(fl_n, lc_n, "mbrlen({label}) length: fl={fl_n} lc={lc_n}");
+            assert_eq!(fl_n, expected, "mbrlen({label}) expected length");
+        }
+    });
+}
+
+#[test]
+fn diff_mbrlen_sentinel_returns() {
+    with_utf8(|| {
+        let cases: &[(&str, &[u8], usize, usize)] = &[
+            ("zero_bound", b"A", 0, usize::MAX - 1),
+            ("partial_two_byte", &[0xC2], 1, usize::MAX - 1),
+            ("partial_three_byte_1", &[0xE2], 1, usize::MAX - 1),
+            ("partial_three_byte_2", &[0xE2, 0x82], 2, usize::MAX - 1),
+            ("invalid_lead", &[0xFF], 1, usize::MAX),
+            ("invalid_continuation", &[0x80], 1, usize::MAX),
+            ("overlong_nul", &[0xC0, 0x80], 2, usize::MAX),
+        ];
+
+        for &(label, bytes, n, expected) in cases {
+            let (fl_n, lc_n) = mbrlen_both(bytes, n);
+            assert_eq!(fl_n, lc_n, "mbrlen({label}) sentinel: fl={fl_n} lc={lc_n}");
+            assert_eq!(fl_n, expected, "mbrlen({label}) expected sentinel");
+        }
+    });
+}
+
+#[test]
+fn diff_mbrlen_null_source_resets_state() {
+    with_utf8(|| {
+        let mut fl_state = MbStateStorage::new();
+        let mut lc_state = MbStateStorage::new();
+        let fl_n = unsafe { fl::mbrlen(std::ptr::null(), 0, fl_state.as_mut_c_void()) };
+        let lc_n = unsafe { mbrlen(std::ptr::null(), 0, lc_state.as_mut_c_void()) };
+        assert_eq!(fl_n, lc_n, "mbrlen(NULL) reset: fl={fl_n} lc={lc_n}");
+        assert_eq!(fl_n, 0);
     });
 }
 
@@ -228,6 +306,6 @@ fn diff_mbrtowc_n_zero_returns_minus_two() {
 #[test]
 fn mbrtowc_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"libc mbrtowc\",\"reference\":\"glibc-utf8\",\"functions\":1,\"divergences\":0}}",
+        "{{\"family\":\"libc mbrtowc + mbrlen\",\"reference\":\"glibc-utf8\",\"functions\":2,\"divergences\":0}}",
     );
 }
