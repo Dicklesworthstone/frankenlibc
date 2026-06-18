@@ -23248,6 +23248,96 @@ unsafe fn argp_write_diagnostic(state: *mut c_void, message: &[u8], errnum: c_in
     unsafe { argp_write_bytes(stream, &line) }
 }
 
+type ArgpVersionHook = unsafe extern "C" fn(*mut libc::FILE, *mut ArgpStateHeader);
+
+#[inline]
+unsafe fn argp_default_stdout() -> *mut libc::FILE {
+    unsafe { crate::stdio_abi::stdout.cast::<libc::FILE>() }
+}
+
+#[inline]
+unsafe fn argp_default_stderr() -> *mut libc::FILE {
+    unsafe { crate::stdio_abi::stderr.cast::<libc::FILE>() }
+}
+
+unsafe fn argp_write_version(state: &mut ArgpStateHeader) -> bool {
+    let hook = unsafe { crate::glibc_internal_abi::argp_program_version_hook };
+    if !hook.is_null() {
+        let hook: ArgpVersionHook = unsafe { core::mem::transmute(hook) };
+        unsafe { hook(state.out_stream, state) };
+        return true;
+    }
+
+    let version = unsafe { crate::glibc_internal_abi::argp_program_version };
+    let Some(version) = (unsafe { argp_read_text(version) }) else {
+        return false;
+    };
+    if version.is_empty() {
+        return false;
+    }
+    unsafe { argp_write_text_line(state.out_stream, &version) }
+}
+
+unsafe fn argp_handle_builtin_version(
+    argp: *const c_void,
+    argc: c_int,
+    argv: *mut *mut c_char,
+    flags: c_uint,
+    arg_index: *mut c_int,
+    input: *mut c_void,
+) -> Option<c_int> {
+    if argc <= 1 || argv.is_null() {
+        return None;
+    }
+    let version = unsafe { crate::glibc_internal_abi::argp_program_version };
+    let hook = unsafe { crate::glibc_internal_abi::argp_program_version_hook };
+    if version.is_null() && hook.is_null() {
+        return None;
+    }
+
+    for i in 1..(argc as usize) {
+        let arg = unsafe { *argv.add(i) };
+        let Some(bytes) = (unsafe { argp_read_text(arg) }) else {
+            continue;
+        };
+        if bytes != b"--version" {
+            continue;
+        }
+
+        let name = unsafe { *argv }.cast::<c_char>();
+        let mut state = ArgpStateHeader {
+            root_argp: argp,
+            argc,
+            argv,
+            next: i as c_int + 1,
+            flags,
+            arg_num: 0,
+            quoted: 0,
+            input,
+            child_inputs: core::ptr::null_mut(),
+            hook: core::ptr::null_mut(),
+            name,
+            err_stream: unsafe { argp_default_stderr() },
+            out_stream: unsafe { argp_default_stdout() },
+            pstate: core::ptr::null_mut(),
+        };
+
+        if !unsafe { argp_write_version(&mut state) } {
+            unsafe { set_abi_errno(libc::EIO) };
+            return Some(libc::EIO);
+        }
+        if !arg_index.is_null() {
+            unsafe { *arg_index = state.next };
+        }
+        if flags & ARGP_NO_EXIT == 0 {
+            unsafe { crate::stdlib_abi::exit(0) };
+        }
+        return Some(0);
+    }
+
+    None
+}
+
 #[inline]
 unsafe fn argp_exit_if_requested(state: *mut c_void, status: c_int) {
     if status == 0 || state.is_null() {
@@ -23269,13 +23359,19 @@ pub unsafe extern "C" fn argp_parse(
     argp: *const c_void,
     argc: c_int,
     argv: *mut *mut c_char,
-    _flags: libc::c_uint,
+    flags: libc::c_uint,
     arg_index: *mut c_int,
-    _input: *mut c_void,
+    input: *mut c_void,
 ) -> c_int {
     if argp.is_null() || argc < 0 || (argc > 0 && argv.is_null()) {
         unsafe { set_abi_errno(libc::EINVAL) };
         return libc::EINVAL;
+    }
+
+    if let Some(rc) =
+        unsafe { argp_handle_builtin_version(argp, argc, argv, flags, arg_index, input) }
+    {
+        return rc;
     }
 
     let header = unsafe { &*(argp as *const ArgpHeader) };

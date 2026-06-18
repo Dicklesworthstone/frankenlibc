@@ -2712,6 +2712,44 @@ impl Drop for ArgpBugAddressGuard {
     }
 }
 
+struct ArgpVersionGlobalsGuard {
+    previous_version: *const c_char,
+    previous_hook: *mut c_void,
+}
+
+impl ArgpVersionGlobalsGuard {
+    fn set(version: *const c_char, hook: *mut c_void) -> Self {
+        let previous_version =
+            unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_version };
+        let previous_hook =
+            unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_version_hook };
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::argp_program_version = version;
+            frankenlibc_abi::glibc_internal_abi::argp_program_version_hook = hook;
+        }
+        Self {
+            previous_version,
+            previous_hook,
+        }
+    }
+}
+
+impl Drop for ArgpVersionGlobalsGuard {
+    fn drop(&mut self) {
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::argp_program_version = self.previous_version;
+            frankenlibc_abi::glibc_internal_abi::argp_program_version_hook = self.previous_hook;
+        }
+    }
+}
+
+unsafe extern "C" fn argp_test_version_hook(stream: *mut libc::FILE, _state: *mut c_void) {
+    let msg = b"hooked version\n";
+    unsafe {
+        frankenlibc_abi::stdio_abi::fwrite(msg.as_ptr().cast(), 1, msg.len(), stream.cast());
+    }
+}
+
 fn capture_argp_stream_output(
     write: impl FnOnce(*mut libc::FILE),
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -2745,6 +2783,45 @@ fn capture_argp_stream_output(
         "fclose failed: {}",
         std::io::Error::last_os_error()
     );
+
+    let mut output = String::new();
+    let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    read_end.read_to_string(&mut output)?;
+    Ok(output)
+}
+
+fn capture_argp_stdout_child_status(
+    expected_status: c_int,
+    returned_status: c_int,
+    child: impl FnOnce(),
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut fds = [0; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe {
+            let _ = libc::close(fds[0]);
+            if libc::dup2(fds[1], libc::STDOUT_FILENO) < 0 {
+                libc::_exit(126);
+            }
+            let _ = libc::close(fds[1]);
+            child();
+            let _ = frankenlibc_abi::stdio_abi::fflush(std::ptr::null_mut());
+            libc::_exit(returned_status);
+        }
+    }
+
+    unsafe {
+        let _ = libc::close(fds[1]);
+    }
+
+    let mut status: c_int = 0;
+    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert!(libc::WIFEXITED(status), "child did not exit normally: {status}");
+    assert_eq!(libc::WEXITSTATUS(status), expected_status);
 
     let mut output = String::new();
     let mut read_end = unsafe { std::fs::File::from_raw_fd(fds[0]) };
@@ -2874,6 +2951,73 @@ fn abi_argp_parse_nonempty_argp_remains_explicitly_unsupported() {
     assert_eq!(rc, libc::EINVAL);
     assert_eq!(errno_value(), libc::EINVAL);
     assert_eq!(index, -1);
+}
+
+#[test]
+fn abi_argp_parse_version_prints_configured_version_and_exits() {
+    let _guard = ARGP_GLOBAL_LOCK.lock().unwrap();
+    let version = CString::new("argp-demo 1.2").unwrap();
+    let _globals = ArgpVersionGlobalsGuard::set(version.as_ptr(), std::ptr::null_mut());
+
+    let output = capture_argp_stdout_child_status(0, 127, || unsafe {
+        let argp_struct = empty_argp_storage();
+        let prog = CString::new("argp-demo").unwrap();
+        let version_arg = CString::new("--version").unwrap();
+        let mut argv = [
+            prog.as_ptr() as *mut c_char,
+            version_arg.as_ptr() as *mut c_char,
+            std::ptr::null_mut(),
+        ];
+
+        let _ = frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            2,
+            argv.as_mut_ptr(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+    })
+    .unwrap();
+
+    assert_eq!(output, "argp-demo 1.2\n");
+}
+
+#[test]
+fn abi_argp_parse_version_hook_overrides_version_string_without_exit_when_requested() {
+    let _guard = ARGP_GLOBAL_LOCK.lock().unwrap();
+    let version = CString::new("ignored-version").unwrap();
+    let _globals = ArgpVersionGlobalsGuard::set(
+        version.as_ptr(),
+        argp_test_version_hook as *mut c_void,
+    );
+
+    let output = capture_argp_stdout_child_status(0, 125, || unsafe {
+        let argp_struct = empty_argp_storage();
+        let prog = CString::new("argp-demo").unwrap();
+        let version_arg = CString::new("--version").unwrap();
+        let mut argv = [
+            prog.as_ptr() as *mut c_char,
+            version_arg.as_ptr() as *mut c_char,
+            std::ptr::null_mut(),
+        ];
+        let mut index: c_int = -1;
+
+        let rc = frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            2,
+            argv.as_mut_ptr(),
+            ARGP_NO_EXIT,
+            &mut index,
+            std::ptr::null_mut(),
+        );
+        if rc != 0 || index != 2 {
+            libc::_exit(125);
+        }
+    })
+    .unwrap();
+
+    assert_eq!(output, "hooked version\n");
 }
 
 #[test]
