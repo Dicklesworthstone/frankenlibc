@@ -6,6 +6,8 @@
 
 use frankenlibc_abi::errno_abi::__errno_location as fl_errno_location;
 use frankenlibc_abi::glibc_internal_abi::{
+    __sched_get_priority_max as fl_sched_get_priority_max,
+    __sched_get_priority_min as fl_sched_get_priority_min,
     __sched_getparam as fl_sched_getparam,
     __sched_getscheduler as fl_sched_getscheduler,
     __sched_setscheduler as fl_sched_setscheduler,
@@ -13,6 +15,10 @@ use frankenlibc_abi::glibc_internal_abi::{
 use std::ffi::{c_int, c_void};
 
 unsafe extern "C" {
+    #[link_name = "__sched_get_priority_max"]
+    fn host_sched_get_priority_max(policy: c_int) -> c_int;
+    #[link_name = "__sched_get_priority_min"]
+    fn host_sched_get_priority_min(policy: c_int) -> c_int;
     #[link_name = "__sched_getparam"]
     fn host_sched_getparam(pid: c_int, param: *mut libc::sched_param) -> c_int;
     #[link_name = "__sched_getscheduler"]
@@ -39,6 +45,66 @@ fn clear_host_errno() {
 
 fn clear_fl_errno() {
     unsafe { *fl_errno_location() = 0 };
+}
+
+#[test]
+fn internal_sched_priority_bounds_match_host_policies() {
+    for policy in [
+        libc::SCHED_OTHER,
+        libc::SCHED_FIFO,
+        libc::SCHED_RR,
+        libc::SCHED_BATCH,
+        libc::SCHED_IDLE,
+    ] {
+        let host_min = unsafe { host_sched_get_priority_min(policy) };
+        let fl_min = unsafe { fl_sched_get_priority_min(policy) };
+        assert_eq!(
+            fl_min, host_min,
+            "__sched_get_priority_min({policy}) return mismatch"
+        );
+
+        let host_max = unsafe { host_sched_get_priority_max(policy) };
+        let fl_max = unsafe { fl_sched_get_priority_max(policy) };
+        assert_eq!(
+            fl_max, host_max,
+            "__sched_get_priority_max({policy}) return mismatch"
+        );
+    }
+}
+
+#[test]
+fn internal_sched_priority_invalid_policy_matches_host_errno() {
+    clear_host_errno();
+    let host_min = unsafe { host_sched_get_priority_min(-1) };
+    let host_min_err = host_errno();
+
+    clear_fl_errno();
+    let fl_min = unsafe { fl_sched_get_priority_min(-1) };
+    let fl_min_err = fl_errno();
+
+    assert_eq!(
+        (fl_min, fl_min_err),
+        (host_min, host_min_err),
+        "__sched_get_priority_min(-1): fl=({fl_min}, {fl_min_err}) \
+         glibc=({host_min}, {host_min_err})"
+    );
+    assert_eq!((fl_min, fl_min_err), (-1, libc::EINVAL));
+
+    clear_host_errno();
+    let host_max = unsafe { host_sched_get_priority_max(-1) };
+    let host_max_err = host_errno();
+
+    clear_fl_errno();
+    let fl_max = unsafe { fl_sched_get_priority_max(-1) };
+    let fl_max_err = fl_errno();
+
+    assert_eq!(
+        (fl_max, fl_max_err),
+        (host_max, host_max_err),
+        "__sched_get_priority_max(-1): fl=({fl_max}, {fl_max_err}) \
+         glibc=({host_max}, {host_max_err})"
+    );
+    assert_eq!((fl_max, fl_max_err), (-1, libc::EINVAL));
 }
 
 #[test]
