@@ -973,6 +973,19 @@ fn poll_chk_safe() {
 }
 
 #[test]
+fn poll_chk_nfds_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("poll_chk nfds over real buffer", || {
+        let mut pfd = libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        };
+        let fdslen = std::mem::size_of::<libc::pollfd>();
+        unsafe { __poll_chk((&mut pfd as *mut libc::pollfd).cast(), 2, 0, fdslen) };
+    });
+}
+
+#[test]
 fn ppoll_chk_safe() {
     let mut fds = [0i32; 2];
     assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
@@ -1002,6 +1015,27 @@ fn ppoll_chk_safe() {
         libc::close(fds[0]);
         libc::close(fds[1]);
     }
+}
+
+#[test]
+fn ppoll_chk_nfds_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("ppoll_chk nfds over real buffer", || {
+        let mut pfd = libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        };
+        let fdslen = std::mem::size_of::<libc::pollfd>();
+        unsafe {
+            __ppoll_chk(
+                (&mut pfd as *mut libc::pollfd).cast(),
+                2,
+                std::ptr::null(),
+                std::ptr::null(),
+                fdslen,
+            )
+        };
+    });
 }
 
 // ===========================================================================
