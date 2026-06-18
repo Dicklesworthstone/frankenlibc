@@ -347,13 +347,17 @@ const PBRK_CASES: &[(&[u8], &[u8])] = &[
     (b"", b""),
     (b"hello", b""), // empty accept set: spans 0
     (b"", b"abc"),
-    (b"hello", b"aeiou"),       // first vowel
-    (b"hello", b"xyz"),         // none match
-    (b"123abc", b"0123456789"), // digit prefix
-    (b"abcdef", b"fedcba"),     // every char in accept
-    (b"abc def", b" "),         // single delimiter
-    (b"  leading", b" "),       // leading whitespace
-    (b"\t\n\r ", b" \t\n\r"),   // all whitespace
+    (b"hello", b"aeiou"),        // first vowel
+    (b"hello", b"xyz"),          // none match
+    (b"123abc", b"0123456789"),  // digit prefix
+    (b"abcdef", b"fedcba"),      // every char in accept
+    (b"abc def", b" "),          // single delimiter
+    (b"  leading", b" "),        // leading whitespace
+    (b"\t\n\r ", b" \t\n\r"),    // all whitespace
+    (b"\x80abc", b"\x80"),       // high-bit byte at start
+    (b"ab\xfez", b"\xfe"),       // high-bit byte after ASCII prefix
+    (b"\x80\xffA", b"\x80\xff"), // high-bit prefix span
+    (b"abc\xff", b"\xfe"),       // high-bit reject set absent
 ];
 
 #[test]
