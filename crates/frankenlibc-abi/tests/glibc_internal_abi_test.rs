@@ -232,6 +232,8 @@ unsafe extern "C" {
     ) -> c_int;
     #[link_name = "gtty"]
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
+    #[link_name = "res_hnok"]
+    fn host_res_hnok(dn: *const c_char) -> c_int;
     #[link_name = "isastream"]
     fn host_isastream(fd: c_int) -> c_int;
     #[link_name = "putmsg"]
@@ -886,23 +888,24 @@ fn vlimit_sets_soft_limit_like_host_in_child() {
 
 #[test]
 fn res_hnok_accepts_valid_hostnames() {
-    let valid = CString::new("example.com").unwrap();
-    assert_eq!(unsafe { res_hnok(valid.as_ptr()) }, 1);
-
-    let with_hyphen = CString::new("my-host.example.com").unwrap();
-    assert_eq!(unsafe { res_hnok(with_hyphen.as_ptr()) }, 1);
-
-    let single = CString::new("localhost").unwrap();
-    assert_eq!(unsafe { res_hnok(single.as_ptr()) }, 1);
+    for raw in ["example.com", "my-host.example.com", "localhost"] {
+        let name = CString::new(raw).unwrap();
+        let host = unsafe { host_res_hnok(name.as_ptr()) };
+        let fl = unsafe { res_hnok(name.as_ptr()) };
+        assert_eq!(fl, host, "res_hnok({raw})");
+        assert_eq!(fl, 1, "res_hnok({raw}) expected acceptance");
+    }
 }
 
 #[test]
 fn res_hnok_rejects_invalid_hostnames() {
-    let underscore = CString::new("bad_host.com").unwrap();
-    assert_eq!(unsafe { res_hnok(underscore.as_ptr()) }, 0);
-
-    let space = CString::new("bad host").unwrap();
-    assert_eq!(unsafe { res_hnok(space.as_ptr()) }, 0);
+    for raw in ["bad_host.com", "bad host"] {
+        let name = CString::new(raw).unwrap();
+        let host = unsafe { host_res_hnok(name.as_ptr()) };
+        let fl = unsafe { res_hnok(name.as_ptr()) };
+        assert_eq!(fl, host, "res_hnok({raw})");
+        assert_eq!(fl, 0, "res_hnok({raw}) expected rejection");
+    }
 
     assert_eq!(unsafe { res_hnok(ptr::null()) }, 0);
 }
