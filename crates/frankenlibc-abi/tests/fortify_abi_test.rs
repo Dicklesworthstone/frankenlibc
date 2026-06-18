@@ -1332,6 +1332,24 @@ fn fgets_chk_reads_line() {
     }
 }
 
+#[test]
+fn fgets_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("fgets_chk n over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe { __fgets_chk(buf.as_mut_ptr().cast(), buf.len(), 16, std::ptr::null_mut()) };
+    });
+}
+
+#[test]
+fn fgets_unlocked_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("fgets_unlocked_chk n over real buffer", || {
+        let mut buf = [0u8; 4];
+        unsafe {
+            __fgets_unlocked_chk(buf.as_mut_ptr().cast(), buf.len(), 16, std::ptr::null_mut())
+        };
+    });
+}
+
 // ===========================================================================
 // __fread_chk
 // ===========================================================================
