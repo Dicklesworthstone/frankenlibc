@@ -316,7 +316,31 @@ impl ScanOperationKind {
 #[derive(Debug, Clone)]
 pub struct ScanSet {
     pub negated: bool,
-    pub chars: [bool; 256],
+    /// 256-bit membership bitmap (`words[c>>6] >> (c&63) & 1`). Replaces the old
+    /// `[bool; 256]` (257 B): since `ScanSpec` is now stored inline in the
+    /// directive list, the 32-byte bitmap keeps every directive element small.
+    words: [u64; 4],
+}
+
+impl ScanSet {
+    /// Build from a parse-time `[bool; 256]` membership array.
+    fn from_bool_array(negated: bool, chars: &[bool; 256]) -> Self {
+        let mut words = [0u64; 4];
+        let mut c = 0usize;
+        while c < 256 {
+            if chars[c] {
+                words[c >> 6] |= 1u64 << (c & 63);
+            }
+            c += 1;
+        }
+        Self { negated, words }
+    }
+
+    /// Whether byte `c` is a member of the set (before negation is applied).
+    #[inline]
+    pub fn contains(&self, c: u8) -> bool {
+        (self.words[(c >> 6) as usize] >> (c & 63)) & 1 != 0
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +506,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 }
                 i += 1;
                 spec.conversion = b'[';
-                spec.scanset = Some(ScanSet { negated, chars });
+                spec.scanset = Some(ScanSet::from_bool_array(negated, &chars));
             } else {
                 // `%S` and `%C` are SVID aliases for `%ls` and `%lc` (wide
                 // string / wide char): normalise to (s|c, length `L`) so they
@@ -1425,7 +1449,7 @@ fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
 
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
-        let in_set = scanset.chars[c as usize];
+        let in_set = scanset.contains(c);
         let accept = if scanset.negated { !in_set } else { in_set };
         if !accept {
             break;
@@ -1532,6 +1556,26 @@ mod tests {
     }
 
     #[test]
+    fn scanset_bitmap_matches_bool_array() {
+        // Exhaustively prove the 256-bit bitmap encodes the same membership as
+        // the parse-time [bool; 256] array, including word-boundary bytes.
+        for seed in [0u64, 1, 0x5555_5555_5555_5555, 0xFFFF_FFFF_FFFF_FFFF, 0x0123_4567_89ab_cdef] {
+            let mut arr = [false; 256];
+            let mut s = seed | 1;
+            for (i, slot) in arr.iter_mut().enumerate() {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                *slot = (s & 1 == 0) || matches!(i, 0 | 63 | 64 | 127 | 128 | 255);
+            }
+            let set = ScanSet::from_bool_array(false, &arr);
+            for c in 0..=255u8 {
+                assert_eq!(set.contains(c), arr[c as usize], "membership mismatch at c={c} seed={seed:#x}");
+            }
+        }
+    }
+
+    #[test]
     fn test_parse_scanset() {
         let dirs = parse_scanf_format(b"%[abc]");
         assert_eq!(dirs.len(), 1);
@@ -1539,10 +1583,10 @@ mod tests {
             assert_eq!(s.conversion, b'[');
             let ss = s.scanset.as_ref().unwrap();
             assert!(!ss.negated);
-            assert!(ss.chars[b'a' as usize]);
-            assert!(ss.chars[b'b' as usize]);
-            assert!(ss.chars[b'c' as usize]);
-            assert!(!ss.chars[b'd' as usize]);
+            assert!(ss.contains(b'a'));
+            assert!(ss.contains(b'b'));
+            assert!(ss.contains(b'c'));
+            assert!(!ss.contains(b'd'));
         } else {
             panic!("expected Spec");
         }
@@ -1554,7 +1598,7 @@ mod tests {
         if let ScanDirective::Spec(ref s) = dirs[0] {
             let ss = s.scanset.as_ref().unwrap();
             assert!(ss.negated);
-            assert!(ss.chars[b'a' as usize]);
+            assert!(ss.contains(b'a'));
         } else {
             panic!("expected Spec");
         }
