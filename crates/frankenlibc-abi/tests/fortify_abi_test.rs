@@ -733,6 +733,23 @@ fn snprintf_chk_truncates() {
     assert_eq!(s.to_str().unwrap(), "longstr");
 }
 
+#[test]
+fn snprintf_chk_maxlen_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("snprintf_chk maxlen over real buffer", || {
+        let mut buf = [0u8; 4];
+        let fmt = CString::new("x").unwrap();
+        unsafe {
+            __snprintf_chk(
+                buf.as_mut_ptr().cast(),
+                buf.len() + 1,
+                0,
+                buf.len(),
+                fmt.as_ptr(),
+            );
+        }
+    });
+}
+
 // ===========================================================================
 // Read/pread operations: __read_chk, __pread_chk, __pread64_chk
 // ===========================================================================
