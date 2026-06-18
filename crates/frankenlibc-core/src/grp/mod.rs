@@ -143,7 +143,15 @@ pub fn format_group_line(
     out.push(b':');
     out.extend_from_slice(passwd);
     out.push(b':');
-    write_u32_decimal(out, gid);
+    // glibc putgrent special-cases NIS-style entries (name begins with '+' or
+    // '-'): the gid field is written EMPTY when its value is 0, so a parsed NIS
+    // group line round-trips unchanged. Mirrors the source-confirmed putpwent
+    // behaviour (bd-nuuk1l); ordinary entries always write the number.
+    // bd-0vv4zb.
+    let nis = matches!(name.first(), Some(b'+') | Some(b'-'));
+    if !(nis && gid == 0) {
+        write_u32_decimal(out, gid);
+    }
     out.push(b':');
     for (i, m) in members.iter().enumerate() {
         if i > 0 {
