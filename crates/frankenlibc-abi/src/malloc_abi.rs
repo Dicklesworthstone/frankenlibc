@@ -2200,6 +2200,26 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         }
     };
 
+    // In-place shrink / same-size fast path: the live block's capacity is at
+    // least its previous logical size (`old_size`), which is >= the requested
+    // `size`, so it already satisfies the request — return it unchanged with no
+    // alloc/copy/free. The first `size` bytes are preserved (they are a prefix of
+    // the existing contents), and keeping the tracked size at `old_size` is safe:
+    // a later realloc copies at most `min(old_size, new)` bytes, never losing the
+    // caller's data. This also matches glibc, which shrinks realloc in place.
+    // (In-place GROWTH into the block's size-class slack is bd-tkcv3c: it must
+    // update the tracked size, so it needs a test-capable turn.)
+    if size <= old_size {
+        runtime_policy::observe(
+            ApiFamily::Allocator,
+            decision.profile,
+            runtime_policy::scaled_cost(4, size),
+            false,
+        );
+        record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
+        return ptr;
+    }
+
     // Allocate new block
     let new_ptr = match pipeline.allocate(size) {
         Some(p) => p,
