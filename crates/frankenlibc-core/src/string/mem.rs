@@ -65,9 +65,7 @@ fn copy_exact_4096_array(dest: &mut [u8], src: &[u8]) -> bool {
 /// Returns the number of bytes actually set.
 pub fn memset(dest: &mut [u8], value: u8, n: usize) -> usize {
     let count = n.min(dest.len());
-    for byte in &mut dest[..count] {
-        *byte = value;
-    }
+    dest[..count].fill(value);
     count
 }
 
@@ -1033,6 +1031,14 @@ mod tests {
         let mut buf = [0u8; 8];
         memset(&mut buf, b'X', 3);
         assert_eq!(&buf, b"XXX\0\0\0\0\0");
+    }
+
+    #[test]
+    fn test_memset_fill_clamps_to_buffer_len() {
+        let mut buf = [b'?'; 4];
+        let written = memset(&mut buf, b'Z', 99);
+        assert_eq!(written, buf.len());
+        assert_eq!(&buf, b"ZZZZ");
     }
 
     #[test]
