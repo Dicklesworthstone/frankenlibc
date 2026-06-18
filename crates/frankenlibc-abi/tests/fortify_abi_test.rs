@@ -996,11 +996,27 @@ fn open_2_safe() {
 }
 
 #[test]
+fn open_2_creat_without_mode_aborts_child_process() {
+    assert_child_sigabrt("open_2 O_CREAT without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe { __open_2(path.as_ptr(), libc::O_CREAT | libc::O_RDONLY) };
+    });
+}
+
+#[test]
 fn open64_2_safe() {
     let path = CString::new("/dev/null").unwrap();
     let fd = unsafe { __open64_2(path.as_ptr(), libc::O_RDONLY) };
     assert!(fd >= 0, "open64 /dev/null should succeed");
     unsafe { libc::close(fd) };
+}
+
+#[test]
+fn open64_2_creat_without_mode_aborts_child_process() {
+    assert_child_sigabrt("open64_2 O_CREAT without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe { __open64_2(path.as_ptr(), libc::O_CREAT | libc::O_RDONLY) };
+    });
 }
 
 #[test]
@@ -1012,11 +1028,27 @@ fn openat_2_safe() {
 }
 
 #[test]
+fn openat_2_creat_without_mode_aborts_child_process() {
+    assert_child_sigabrt("openat_2 O_CREAT without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe { __openat_2(libc::AT_FDCWD, path.as_ptr(), libc::O_CREAT | libc::O_RDONLY) };
+    });
+}
+
+#[test]
 fn openat64_2_safe() {
     let path = CString::new("/dev/null").unwrap();
     let fd = unsafe { __openat64_2(libc::AT_FDCWD, path.as_ptr(), libc::O_RDONLY) };
     assert!(fd >= 0, "openat64 /dev/null should succeed");
     unsafe { libc::close(fd) };
+}
+
+#[test]
+fn openat64_2_creat_without_mode_aborts_child_process() {
+    assert_child_sigabrt("openat64_2 O_CREAT without mode", || {
+        let path = CString::new("/tmp").unwrap();
+        unsafe { __openat64_2(libc::AT_FDCWD, path.as_ptr(), libc::O_CREAT | libc::O_RDONLY) };
+    });
 }
 
 // ===========================================================================
@@ -1551,6 +1583,56 @@ fn fread_chk_reads_data() {
     let n = unsafe { __fread_chk(buf.as_mut_ptr().cast(), 16, 1, 10, fp.cast()) };
     assert_eq!(n, 10);
     assert_eq!(&buf[..10], b"ABCDEFGHIJ");
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
+fn fread_chk_short_reported_buffer_length_still_reads() {
+    let path = CString::new("/tmp/fortify_fread_short_buflen_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = b"ABCD";
+    unsafe { libc::fwrite(data.as_ptr().cast(), 1, data.len(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { __fread_chk(buf.as_mut_ptr().cast(), 1, 1, data.len(), fp.cast()) };
+    assert_eq!(n, data.len());
+    assert_eq!(&buf[..data.len()], data);
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
+fn fread_unlocked_chk_short_reported_buffer_length_still_reads() {
+    let path = CString::new("/tmp/fortify_fread_unlocked_short_buflen_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = b"WXYZ";
+    unsafe { libc::fwrite(data.as_ptr().cast(), 1, data.len(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { __fread_unlocked_chk(buf.as_mut_ptr().cast(), 1, 1, data.len(), fp.cast()) };
+    assert_eq!(n, data.len());
+    assert_eq!(&buf[..data.len()], data);
 
     unsafe {
         libc::fclose(fp);

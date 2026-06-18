@@ -1229,9 +1229,16 @@ pub unsafe extern "C" fn __vsyslog_chk(
 
 // ── open _2 variants (raw syscalls) ────────────────────────────────────────
 
+fn open_flags_need_mode(oflag: c_int) -> bool {
+    (oflag & libc::O_CREAT) != 0 || (oflag & libc::O_TMPFILE) == libc::O_TMPFILE
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __open_2(path: *const c_char, oflag: c_int) -> c_int {
     // _2 variants: O_CREAT not set, so mode=0 is ignored
+    if open_flags_need_mode(oflag) {
+        unsafe { __chk_fail() }
+    }
     match unsafe { raw_syscall::sys_open(path as *const u8, oflag, 0) } {
         Ok(fd) => fd,
         Err(e) => {
@@ -1243,6 +1250,9 @@ pub unsafe extern "C" fn __open_2(path: *const c_char, oflag: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __open64_2(path: *const c_char, oflag: c_int) -> c_int {
+    if open_flags_need_mode(oflag) {
+        unsafe { __chk_fail() }
+    }
     match unsafe { raw_syscall::sys_open(path as *const u8, oflag | libc::O_LARGEFILE, 0) } {
         Ok(fd) => fd,
         Err(e) => {
@@ -1254,6 +1264,9 @@ pub unsafe extern "C" fn __open64_2(path: *const c_char, oflag: c_int) -> c_int 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __openat_2(dirfd: c_int, path: *const c_char, oflag: c_int) -> c_int {
+    if open_flags_need_mode(oflag) {
+        unsafe { __chk_fail() }
+    }
     match unsafe { raw_syscall::sys_openat(dirfd, path as *const u8, oflag, 0) } {
         Ok(fd) => fd,
         Err(e) => {
@@ -1265,6 +1278,9 @@ pub unsafe extern "C" fn __openat_2(dirfd: c_int, path: *const c_char, oflag: c_
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __openat64_2(dirfd: c_int, path: *const c_char, oflag: c_int) -> c_int {
+    if open_flags_need_mode(oflag) {
+        unsafe { __chk_fail() }
+    }
     match unsafe { raw_syscall::sys_openat(dirfd, path as *const u8, oflag | libc::O_LARGEFILE, 0) }
     {
         Ok(fd) => fd,
