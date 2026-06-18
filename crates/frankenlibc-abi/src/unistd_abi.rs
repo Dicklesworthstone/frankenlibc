@@ -905,8 +905,16 @@ pub unsafe extern "C" fn setuid(uid: libc::uid_t) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn seteuid(euid: libc::uid_t) -> c_int {
-    // seteuid(euid) == setreuid(-1, euid)
-    match syscall::sys_setreuid(libc::uid_t::MAX, euid) {
+    // glibc seteuid rejects (uid_t)-1 with EINVAL and issues
+    // setresuid(-1, euid, -1) — NOT setreuid(-1, euid). setreuid additionally
+    // moves the saved-set-uid to euid whenever euid != the real uid (a kernel
+    // quirk), which would defeat a later attempt to restore the original euid.
+    // bd-nb3egy.
+    if euid == libc::uid_t::MAX {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    match syscall::sys_setresuid(libc::uid_t::MAX, euid, libc::uid_t::MAX) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -939,8 +947,14 @@ pub unsafe extern "C" fn setgid(gid: libc::gid_t) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setegid(egid: libc::gid_t) -> c_int {
-    // setegid(egid) == setregid(-1, egid)
-    match syscall::sys_setregid(libc::gid_t::MAX, egid) {
+    // glibc setegid rejects (gid_t)-1 with EINVAL and issues
+    // setresgid(-1, egid, -1) — NOT setregid(-1, egid), which would also move
+    // the saved-set-gid when egid != the real gid. bd-nb3egy.
+    if egid == libc::gid_t::MAX {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    match syscall::sys_setresgid(libc::gid_t::MAX, egid, libc::gid_t::MAX) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
