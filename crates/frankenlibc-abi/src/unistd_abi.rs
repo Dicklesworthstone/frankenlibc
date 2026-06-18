@@ -6889,9 +6889,13 @@ pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
 // ---------------------------------------------------------------------------
 //
 // Supports: tilde expansion (~user), environment variable expansion ($VAR, ${VAR}),
-// pathname expansion (glob), field splitting on IFS, and WRDE_NOCMD safety.
-// Command substitution ($(...) and `...`) is rejected when WRDE_NOCMD is set
-// and executed via /bin/sh -c "echo ..." otherwise.
+// arithmetic expansion ($((expr)), full POSIX integer operators), pathname
+// expansion (glob), field splitting on IFS, and WRDE_NOCMD safety.
+// Command substitution ($(...) and `...`) is rejected ENTIRELY for safety
+// (returns WRDE_CMDSUB regardless of WRDE_NOCMD) — wordexp command substitution
+// is a known injection vector, so this implementation never forks /bin/sh.
+// Note: $((...)) is arithmetic, NOT command substitution, and is permitted
+// (including under WRDE_NOCMD).
 
 // POSIX wordexp_t layout (matches glibc x86_64):
 // struct wordexp_t { size_t we_wordc; char **we_wordv; size_t we_offs; };
@@ -7439,8 +7443,9 @@ fn push_wordexp_masked_fields(
 
 /// POSIX `wordexp` — perform shell-like word expansion.
 ///
-/// Native implementation supporting tilde, variable, and pathname (glob) expansion.
-/// Command substitution requires WRDE_NOCMD to be unset and uses /bin/sh.
+/// Native implementation supporting tilde, variable, arithmetic ($((...))), and
+/// pathname (glob) expansion. Command substitution ($(...)/backticks) is
+/// rejected entirely for safety (WRDE_CMDSUB), never forking /bin/sh.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wordexp(
     words: *const c_char,
