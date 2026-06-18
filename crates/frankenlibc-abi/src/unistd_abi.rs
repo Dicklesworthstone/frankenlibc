@@ -24548,10 +24548,75 @@ pub unsafe extern "C" fn sysv_signal(
     }
 }
 
-/// `sigset` — reliable signal (XSI extension).
+/// `sigset` — reliable signal disposition (XSI). Unlike `sysv_signal` (one-shot
+/// SA_RESETHAND|SA_NODEFER), `sigset` installs a PERSISTENT handler that is
+/// blocked during its own execution (sa_flags == 0), handles the SIG_HOLD
+/// disposition (block the signal), unblocks the signal otherwise, and returns
+/// SIG_HOLD when the signal had been blocked. Mirrors glibc sysdeps/posix/
+/// sigset.c. bd-566mlx.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigset(sig: c_int, disp: libc::sighandler_t) -> libc::sighandler_t {
-    unsafe { sysv_signal(sig, disp) }
+    const SIG_HOLD: libc::sighandler_t = 2; // glibc <signal.h>
+    if sig <= 0 || sig > 64 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return libc::SIG_ERR;
+    }
+    let bit: u64 = 1u64 << ((sig - 1) as u32);
+    let mut oset: u64 = 0;
+
+    if disp == SIG_HOLD {
+        // Add the signal to the current mask.
+        if unsafe {
+            syscall::sys_rt_sigprocmask(
+                libc::SIG_BLOCK,
+                (&bit as *const u64).cast(),
+                (&mut oset as *mut u64).cast(),
+                std::mem::size_of::<u64>(),
+            )
+        }
+        .is_err()
+        {
+            return libc::SIG_ERR;
+        }
+        // Already blocked -> report SIG_HOLD; else return the current handler.
+        if oset & bit != 0 {
+            return SIG_HOLD;
+        }
+        let mut oact: libc::sigaction = unsafe { std::mem::zeroed() };
+        if unsafe { crate::signal_abi::sigaction(sig, std::ptr::null(), &mut oact) } < 0 {
+            return libc::SIG_ERR;
+        }
+        return oact.sa_sigaction;
+    }
+
+    // Install a persistent handler (sa_flags == 0: not reset on delivery, and
+    // the signal is blocked while the handler runs).
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = disp;
+    act.sa_flags = 0;
+    let mut oact: libc::sigaction = unsafe { std::mem::zeroed() };
+    if unsafe { crate::signal_abi::sigaction(sig, &act, &mut oact) } < 0 {
+        return libc::SIG_ERR;
+    }
+    // Remove the signal from the current mask.
+    if unsafe {
+        syscall::sys_rt_sigprocmask(
+            libc::SIG_UNBLOCK,
+            (&bit as *const u64).cast(),
+            (&mut oset as *mut u64).cast(),
+            std::mem::size_of::<u64>(),
+        )
+    }
+    .is_err()
+    {
+        return libc::SIG_ERR;
+    }
+    // If the signal had been blocked, glibc returns SIG_HOLD, else the old handler.
+    if oset & bit != 0 {
+        SIG_HOLD
+    } else {
+        oact.sa_sigaction
+    }
 }
 
 // ===========================================================================
