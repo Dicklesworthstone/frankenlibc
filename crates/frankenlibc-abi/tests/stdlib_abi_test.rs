@@ -2880,6 +2880,27 @@ fn ctermid_writes_into_caller_buffer() {
 }
 
 #[test]
+fn ctermid_matches_host_static_and_caller_buffers() {
+    let host_static = unsafe { libc::ctermid(ptr::null_mut()) };
+    let abi_static = unsafe { ctermid(ptr::null_mut()) };
+    assert!(!host_static.is_null());
+    assert!(!abi_static.is_null());
+    let host_static_value = unsafe { CStr::from_ptr(host_static) };
+    let abi_static_value = unsafe { CStr::from_ptr(abi_static) };
+    assert_eq!(abi_static_value.to_bytes(), host_static_value.to_bytes());
+
+    let mut host_buf = [0 as c_char; 32];
+    let mut abi_buf = [0 as c_char; 32];
+    let host_out = unsafe { libc::ctermid(host_buf.as_mut_ptr()) };
+    let abi_out = unsafe { ctermid(abi_buf.as_mut_ptr()) };
+    assert_eq!(host_out, host_buf.as_mut_ptr());
+    assert_eq!(abi_out, abi_buf.as_mut_ptr());
+    let host_buf_value = unsafe { CStr::from_ptr(host_buf.as_ptr()) };
+    let abi_buf_value = unsafe { CStr::from_ptr(abi_buf.as_ptr()) };
+    assert_eq!(abi_buf_value.to_bytes(), host_buf_value.to_bytes());
+}
+
+#[test]
 fn get_nprocs_helpers_match_sysconf_values() {
     let online = get_nprocs();
     let conf = get_nprocs_conf();
