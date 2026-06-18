@@ -1139,6 +1139,21 @@ fn siginterrupt_sigusr1() {
     assert_eq!(rc, 0, "siginterrupt(SIGUSR1, 0) should succeed");
 }
 
+#[test]
+fn siginterrupt_invalid_signal_sets_errno() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    unsafe { *__errno_location() = 0 };
+
+    let rc = unsafe { siginterrupt(0, 1) };
+
+    assert_eq!(rc, -1, "siginterrupt(0, 1) should fail");
+    assert_eq!(
+        unsafe { *__errno_location() },
+        errno::EINVAL,
+        "invalid siginterrupt signal should preserve EINVAL"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // raise — null signal semantics (bd-gii3)
 // ---------------------------------------------------------------------------

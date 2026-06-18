@@ -1413,7 +1413,7 @@ pub unsafe extern "C" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) ->
 pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
     let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
     // SAFETY: get current action for the signal.
-    if unsafe {
+    if let Err(e) = unsafe {
         raw_syscall::sys_rt_sigaction(
             sig,
             std::ptr::null(),
@@ -1421,8 +1421,8 @@ pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
             std::mem::size_of::<libc::c_ulong>(),
         )
     }
-    .is_err()
     {
+        unsafe { set_abi_errno(e) };
         return -1;
     }
     if flag != 0 {
@@ -1440,7 +1440,10 @@ pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
         )
     } {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
