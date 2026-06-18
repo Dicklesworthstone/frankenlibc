@@ -16263,17 +16263,39 @@ pub unsafe extern "C" fn sockatmark(sockfd: c_int) -> c_int {
 /// POSIX `tempnam` — create a unique temporary file name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut c_char {
-    let dir_bytes = if dir.is_null() {
-        std::borrow::Cow::Borrowed(b"/tmp".as_slice())
-    } else {
-        match unsafe { read_c_string_bytes(dir) } {
-            Some(bytes) => std::borrow::Cow::Owned(bytes),
-            None => {
-                unsafe { set_abi_errno(libc::EINVAL) };
-                std::borrow::Cow::Borrowed(b"/tmp".as_slice())
-            }
+    // glibc tempnam routes through __path_search(try_tmpdir=1): the directory
+    // is chosen by precedence $TMPDIR (via secure_getenv) > the `dir` argument
+    // > P_tmpdir ("/tmp"), and each candidate is used only if it is an existing
+    // directory; if none is, errno=ENOENT and the call fails. fl previously
+    // ignored TMPDIR and skipped the existence checks. bd-7rbh4r.
+    use std::os::unix::ffi::OsStrExt as _;
+    let is_existing_dir = |p: &[u8]| -> bool {
+        !p.is_empty() && std::path::Path::new(std::ffi::OsStr::from_bytes(p)).is_dir()
+    };
+    let tmpdir_env: Option<Vec<u8>> = {
+        let p = unsafe { crate::stdlib_abi::secure_getenv(b"TMPDIR\0".as_ptr() as *const c_char) };
+        if p.is_null() {
+            None
+        } else {
+            unsafe { read_c_string_bytes(p) }
         }
     };
+    let dir_arg: Option<Vec<u8>> = if dir.is_null() {
+        None
+    } else {
+        unsafe { read_c_string_bytes(dir) }
+    };
+    let chosen_dir: Vec<u8> = if let Some(t) = tmpdir_env.filter(|t| is_existing_dir(t)) {
+        t
+    } else if let Some(d) = dir_arg.filter(|d| is_existing_dir(d)) {
+        d
+    } else if is_existing_dir(b"/tmp") {
+        b"/tmp".to_vec()
+    } else {
+        unsafe { set_abi_errno(libc::ENOENT) };
+        return std::ptr::null_mut();
+    };
+    let dir_bytes: Vec<u8> = chosen_dir;
     let pfx_bytes = if pfx.is_null() {
         std::borrow::Cow::Borrowed(b"tmp".as_slice())
     } else {
