@@ -8335,14 +8335,14 @@ pub unsafe extern "C" fn crypt_preferred_method() -> *const c_char {
     CRYPT_PREFERRED_METHOD_STATIC.as_ptr() as *const c_char
 }
 
-/// libcrypt `crypt_checksalt(setting) -> int` — validate that
-/// `setting` begins with a recognized crypt prefix. Returns
-/// `CRYPT_SALT_OK = 0` for `$1$` (MD5), `$5$` (SHA-256), and `$6$`
-/// (SHA-512); returns `CRYPT_SALT_INVALID = 1` for any other
-/// prefix or NULL input. (libxcrypt also defines
-/// `CRYPT_SALT_METHOD_LEGACY = 2` and `CRYPT_SALT_METHOD_DISABLED
-/// = 3` for older / disabled algorithms; we don't classify those
-/// separately.)
+/// libcrypt `crypt_checksalt(setting) -> int` — classify a crypt salt setting,
+/// matching host libxcrypt's constants: `CRYPT_SALT_OK = 0`,
+/// `CRYPT_SALT_INVALID = 1`, `CRYPT_SALT_METHOD_DISABLED = 2`,
+/// `CRYPT_SALT_METHOD_LEGACY = 3`. We return `OK(0)` for `$5$` (SHA-256) and
+/// `$6$` (SHA-512), `METHOD_LEGACY(3)` for `$1$` (MD5, like the host), and
+/// `INVALID(1)` for any other prefix or NULL input — including schemes the host
+/// supports but fl cannot hash yet (DES, yescrypt, bcrypt: bd-c6ykz1), which we
+/// report INVALID rather than claiming a usability we can't honour.
 ///
 /// # Safety
 ///
