@@ -672,6 +672,15 @@ fn readlink_chk_safe() {
 }
 
 #[test]
+fn readlink_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("readlink_chk len over real buffer", || {
+        let path = CString::new("/proc/self/exe").unwrap();
+        let mut buf = [0u8; 4];
+        unsafe { __readlink_chk(path.as_ptr(), buf.as_mut_ptr().cast(), 4096, buf.len()) };
+    });
+}
+
+#[test]
 fn readlinkat_chk_safe() {
     let path = CString::new("/proc/self/exe").unwrap();
     let mut buf = [0u8; 4096];
@@ -685,6 +694,23 @@ fn readlinkat_chk_safe() {
         )
     };
     assert!(n > 0, "readlinkat /proc/self/exe should succeed");
+}
+
+#[test]
+fn readlinkat_chk_len_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("readlinkat_chk len over real buffer", || {
+        let path = CString::new("/proc/self/exe").unwrap();
+        let mut buf = [0u8; 4];
+        unsafe {
+            __readlinkat_chk(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                buf.as_mut_ptr().cast(),
+                4096,
+                buf.len(),
+            )
+        };
+    });
 }
 
 #[test]
