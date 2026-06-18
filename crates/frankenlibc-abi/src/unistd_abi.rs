@@ -8243,6 +8243,20 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
         return std::ptr::null_mut();
     };
 
+    // Host libcrypt (libxcrypt) NEVER returns NULL: for any setting it cannot
+    // produce a hash for (unsupported scheme, traditional DES, or malformed
+    // salt) it returns a "failure token" — "*0", or "*1" when the setting
+    // already begins with "*0" — so the result can never compare equal to a
+    // valid stored hash and a caller's strcmp won't dereference NULL. It also
+    // sets EINVAL. Mirror that. bd-r9ihvq. (DES/yescrypt/bcrypt hashing itself
+    // is still unsupported — bd-c6ykz1.)
+    let failure_token = |buf: &mut [u8; 256]| -> *mut c_char {
+        let token: &[u8] = if salt_bytes.starts_with(b"*0") { b"*1" } else { b"*0" };
+        buf[..token.len()].copy_from_slice(token);
+        buf[token.len()] = 0;
+        buf.as_mut_ptr() as *mut c_char
+    };
+
     let result = if salt_bytes.starts_with(b"$6$") {
         crypt_sha512(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$5$") {
@@ -8250,9 +8264,9 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
     } else if salt_bytes.starts_with(b"$1$") {
         crypt_md5(&key_bytes, &salt_bytes)
     } else {
-        // Traditional DES or unknown — return error (DES is obsolete and insecure)
+        // Unsupported scheme / traditional DES.
         unsafe { set_abi_errno(errno::EINVAL) };
-        return std::ptr::null_mut();
+        return with_crypt_buf(failure_token);
     };
 
     match result {
@@ -8263,8 +8277,9 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
             buf.as_mut_ptr() as *mut c_char
         }),
         None => {
+            // Malformed salt for a supported scheme.
             unsafe { set_abi_errno(errno::EINVAL) };
-            std::ptr::null_mut()
+            with_crypt_buf(failure_token)
         }
     }
 }
