@@ -983,17 +983,48 @@ fn printf_route(conversion: u8) -> Option<PrintfRoute> {
 ///
 /// Yields `FormatSegment::Literal` for literal runs and `FormatSegment::Spec`
 /// for each `%`-directive. `%%` yields `FormatSegment::Percent`.
+/// Index of the first `%` in `hay`, or `None`. Word-at-a-time (SWAR) scan: eight
+/// bytes per iteration via the classic zero-byte detection trick, replacing the
+/// per-byte literal scan in the format parser — a real win for the long literal
+/// runs typical of structured logging (`"…service=auth request_id=… %s …"`).
+/// Byte-for-byte equivalent to `hay.iter().position(|&b| b == b'%')`.
+#[inline]
+fn find_percent(hay: &[u8]) -> Option<usize> {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    const NEEDLE: u64 = 0x2525_2525_2525_2525; // '%' (0x25) broadcast to every byte
+    let mut i = 0;
+    while i + 8 <= hay.len() {
+        // SAFETY-free: bounded slice; LE so the lowest-address byte is least sig.
+        let w = u64::from_le_bytes([
+            hay[i], hay[i + 1], hay[i + 2], hay[i + 3],
+            hay[i + 4], hay[i + 5], hay[i + 6], hay[i + 7],
+        ]);
+        let x = w ^ NEEDLE; // a zero byte exactly where a '%' sits
+        let m = x.wrapping_sub(ONES) & !x & HIGHS; // high bit set per zero byte
+        if m != 0 {
+            return Some(i + (m.trailing_zeros() / 8) as usize);
+        }
+        i += 8;
+    }
+    while i < hay.len() {
+        if hay[i] == b'%' {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
 pub fn parse_format_string(fmt: &[u8]) -> FormatSegments<'_> {
     let mut segments = FormatSegments::new();
     let mut pos = 0;
     let len = fmt.len();
 
     while pos < len {
-        // Find the next '%' or end of string.
+        // Find the next '%' or end of string (SWAR scan over the literal run).
         let start = pos;
-        while pos < len && fmt[pos] != b'%' {
-            pos += 1;
-        }
+        pos += find_percent(&fmt[pos..]).unwrap_or(len - pos);
         if pos > start {
             segments.push(FormatSegment::Literal(&fmt[start..pos]));
         }
@@ -2068,6 +2099,45 @@ mod tests {
             value /= base;
         }
         64 - pos
+    }
+
+    #[test]
+    fn find_percent_matches_naive_scan() {
+        // Boundary inputs: empty, no match, match at every position, multiple,
+        // and chunk-boundary cases (around the 8-byte SWAR stride).
+        let mut cases: Vec<Vec<u8>> = vec![
+            vec![],
+            b"no percent here at all".to_vec(),
+            b"%".to_vec(),
+            b"%abc".to_vec(),
+            b"abc%".to_vec(),
+            b"abcdefg%hijk".to_vec(),   // % at index 7 (last of first word)
+            b"abcdefgh%ijk".to_vec(),   // % at index 8 (first of second word)
+            b"0123456789abcdef%".to_vec(),
+            b"a%b%c%".to_vec(),
+        ];
+        // % at each position of a 40-byte buffer.
+        for p in 0..40usize {
+            let mut v = vec![b'x'; 40];
+            v[p] = b'%';
+            cases.push(v);
+        }
+        // Deterministic pseudo-random buffers, some seeded with '%'.
+        let mut state: u64 = 0xC0FFEE_1234_5678;
+        for _ in 0..20_000 {
+            state ^= state << 13; state ^= state >> 7; state ^= state << 17;
+            let n = (state as usize) % 64;
+            let mut v: Vec<u8> = (0..n).map(|k| ((state >> (k % 56)) as u8) | 1).collect();
+            if state & 1 == 0 && n > 0 {
+                v[(state as usize >> 8) % n] = b'%';
+            }
+            cases.push(v);
+        }
+        for c in &cases {
+            let fast = find_percent(c);
+            let naive = c.iter().position(|&b| b == b'%');
+            assert_eq!(fast, naive, "find_percent mismatch for {c:?}");
+        }
     }
 
     #[test]
