@@ -3946,6 +3946,13 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
     }
 }
 
+/// Tracks the (file, line) of the previous `error_at_line` call so that, when
+/// `error_one_per_line` is set, a repeated message for the same location is
+/// suppressed — mirroring glibc's `old_file_name`/`old_line_number` statics.
+/// Initialised to (NULL file, line 0) exactly like glibc's zero-init statics.
+static ERR_AT_LINE_STATE: std::sync::Mutex<(Option<Vec<u8>>, c_uint)> =
+    std::sync::Mutex::new((None, 0));
+
 /// `error_at_line` — GNU error reporting with file/line info.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn error_at_line(
@@ -3957,6 +3964,31 @@ pub unsafe extern "C" fn error_at_line(
     mut args: ...
 ) {
     use std::fmt::Write as _;
+
+    // GNU error_at_line: when error_one_per_line is non-zero, suppress a
+    // message whose file+line match the immediately preceding call — print
+    // nothing AND do not bump error_message_count. glibc compares the file by
+    // pointer-or-strcmp; we compare NULL-ness + content (same effect for the
+    // documented behaviour). bd-enxo3y.
+    if unsafe { crate::glibc_internal_abi::error_one_per_line } != 0 {
+        let new_file: Option<Vec<u8>> = if filename.is_null() {
+            None
+        } else {
+            unsafe { read_bounded_cstr_bytes(filename) }
+        };
+        let mut state = ERR_AT_LINE_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        let same_location = state.1 == linenum
+            && match (&state.0, &new_file) {
+                (None, None) => true,
+                (Some(old), Some(new)) => old == new,
+                _ => false,
+            };
+        if same_location {
+            return;
+        }
+        state.0 = new_file;
+        state.1 = linenum;
+    }
 
     unsafe { error_message_count += 1 };
 
