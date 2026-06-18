@@ -1,0 +1,109 @@
+#![cfg(target_os = "linux")]
+#![allow(unsafe_code)] // live host-glibc __sched_* oracle
+
+//! Differential coverage for glibc's internal `__sched_*` aliases. These
+//! aliases must preserve the public scheduler errno contract on syscall errors.
+
+use frankenlibc_abi::errno_abi::__errno_location as fl_errno_location;
+use frankenlibc_abi::glibc_internal_abi::{
+    __sched_getparam as fl_sched_getparam,
+    __sched_getscheduler as fl_sched_getscheduler,
+    __sched_setscheduler as fl_sched_setscheduler,
+};
+use std::ffi::{c_int, c_void};
+
+unsafe extern "C" {
+    #[link_name = "__sched_getparam"]
+    fn host_sched_getparam(pid: c_int, param: *mut libc::sched_param) -> c_int;
+    #[link_name = "__sched_getscheduler"]
+    fn host_sched_getscheduler(pid: c_int) -> c_int;
+    #[link_name = "__sched_setscheduler"]
+    fn host_sched_setscheduler(
+        pid: c_int,
+        policy: c_int,
+        param: *const libc::sched_param,
+    ) -> c_int;
+}
+
+fn host_errno() -> c_int {
+    unsafe { *libc::__errno_location() }
+}
+
+fn fl_errno() -> c_int {
+    unsafe { *fl_errno_location() }
+}
+
+fn clear_host_errno() {
+    unsafe { *libc::__errno_location() = 0 };
+}
+
+fn clear_fl_errno() {
+    unsafe { *fl_errno_location() = 0 };
+}
+
+#[test]
+fn internal_sched_getscheduler_invalid_pid_matches_host_errno() {
+    clear_host_errno();
+    let host_result = unsafe { host_sched_getscheduler(-1) };
+    let host_err = host_errno();
+
+    clear_fl_errno();
+    let fl_result = unsafe { fl_sched_getscheduler(-1) };
+    let fl_err = fl_errno();
+
+    assert_eq!(
+        (fl_result, fl_err),
+        (host_result, host_err),
+        "__sched_getscheduler(-1): fl=({fl_result}, {fl_err}) glibc=({host_result}, {host_err})"
+    );
+    assert_eq!((fl_result, fl_err), (-1, libc::EINVAL));
+}
+
+#[test]
+fn internal_sched_getparam_invalid_pid_matches_host_errno() {
+    let mut host_param = libc::sched_param { sched_priority: 0 };
+    let mut fl_param = libc::sched_param { sched_priority: 0 };
+
+    clear_host_errno();
+    let host_result = unsafe { host_sched_getparam(-1, &mut host_param) };
+    let host_err = host_errno();
+
+    clear_fl_errno();
+    let fl_result = unsafe {
+        fl_sched_getparam(-1, (&mut fl_param as *mut libc::sched_param).cast())
+    };
+    let fl_err = fl_errno();
+
+    assert_eq!(
+        (fl_result, fl_err),
+        (host_result, host_err),
+        "__sched_getparam(-1): fl=({fl_result}, {fl_err}) glibc=({host_result}, {host_err})"
+    );
+    assert_eq!((fl_result, fl_err), (-1, libc::EINVAL));
+}
+
+#[test]
+fn internal_sched_setscheduler_invalid_pid_matches_host_errno() {
+    let param = libc::sched_param { sched_priority: 0 };
+
+    clear_host_errno();
+    let host_result = unsafe { host_sched_setscheduler(-1, libc::SCHED_OTHER, &param) };
+    let host_err = host_errno();
+
+    clear_fl_errno();
+    let fl_result = unsafe {
+        fl_sched_setscheduler(
+            -1,
+            libc::SCHED_OTHER,
+            (&param as *const libc::sched_param).cast::<c_void>(),
+        )
+    };
+    let fl_err = fl_errno();
+
+    assert_eq!(
+        (fl_result, fl_err),
+        (host_result, host_err),
+        "__sched_setscheduler(-1): fl=({fl_result}, {fl_err}) glibc=({host_result}, {host_err})"
+    );
+    assert_eq!((fl_result, fl_err), (-1, libc::EINVAL));
+}

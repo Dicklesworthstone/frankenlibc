@@ -447,12 +447,21 @@ pub unsafe extern "C" fn __sched_get_priority_min(policy: c_int) -> c_int {
 pub unsafe extern "C" fn __sched_getparam(pid: c_int, param: *mut c_void) -> c_int {
     match unsafe { raw_syscall::sys_sched_getparam(pid, param as *mut u8) } {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_getscheduler(pid: c_int) -> c_int {
-    raw_syscall::sys_sched_getscheduler(pid).unwrap_or(-1)
+    match raw_syscall::sys_sched_getscheduler(pid) {
+        Ok(policy) => policy,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_setscheduler(
@@ -462,7 +471,10 @@ pub unsafe extern "C" fn __sched_setscheduler(
 ) -> c_int {
     match unsafe { raw_syscall::sys_sched_setscheduler(pid, policy, param as *const u8) } {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
