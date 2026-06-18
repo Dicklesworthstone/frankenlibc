@@ -2115,6 +2115,33 @@ fn fgetws_chk_reads_wide_chars() {
 }
 
 #[test]
+fn fgetws_unlocked_chk_reads_wide_chars() {
+    let path = CString::new("/tmp/fortify_fgetws_unlocked_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = CString::new("wide\n").unwrap();
+    unsafe { libc::fputs(data.as_ptr(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0i32; 32];
+    let ret = unsafe { __fgetws_unlocked_chk(buf.as_mut_ptr(), 32 * 4, 32, fp.cast()) };
+    if !ret.is_null() {
+        assert_eq!(buf[0], b'w' as i32);
+        assert_eq!(buf[1], b'i' as i32);
+    }
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+#[test]
 fn fgetws_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("fgetws_chk n over real buffer", || {
         let mut buf = [0 as WcharT; 4];
