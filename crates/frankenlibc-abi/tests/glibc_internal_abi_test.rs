@@ -87,6 +87,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     __wunderflow,
     bdflush,
     chflags,
+    create_module,
     _dl_find_object,
     _dl_mcount_wrapper,
     _dl_mcount_wrapper_check,
@@ -103,6 +104,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     _pthread_cleanup_push_defer,
     dysize,
     fchflags,
+    get_kernel_syms,
     getpw,
     gtty,
     inet6_opt_append,
@@ -137,6 +139,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     pthread_kill_other_threads_np,
     putgrent,
     putpwent,
+    query_module,
     rcmd,
     rcmd_af,
     register_printf_function,
@@ -182,12 +185,24 @@ unsafe extern "C" {
     fn host_bdflush(func: c_int, data: libc::c_long) -> c_int;
     #[link_name = "chflags"]
     fn host_chflags(path: *const c_char, flags: libc::c_ulong) -> c_int;
+    #[link_name = "create_module"]
+    fn host_create_module(name: *const c_char, size: libc::size_t) -> libc::c_long;
     #[link_name = "dysize"]
     fn host_dysize(year: c_int) -> c_int;
     #[link_name = "fchflags"]
     fn host_fchflags(fd: c_int, flags: libc::c_ulong) -> c_int;
+    #[link_name = "get_kernel_syms"]
+    fn host_get_kernel_syms(table: *mut c_void) -> c_int;
     #[link_name = "gtty"]
     fn host_gtty(fd: c_int, params: *mut c_void) -> c_int;
+    #[link_name = "query_module"]
+    fn host_query_module(
+        name: *const c_char,
+        which: c_int,
+        buf: *mut c_void,
+        bufsize: libc::size_t,
+        ret: *mut libc::size_t,
+    ) -> c_int;
     #[link_name = "stty"]
     fn host_stty(fd: c_int, params: *const c_void) -> c_int;
     #[link_name = "revoke"]
@@ -367,6 +382,71 @@ fn obsolete_linux_stubs_match_host_enosys() {
             (host_sstk_result, host_sstk_errno)
         );
         assert_eq!((fl_sstk_result, fl_sstk_errno), (-1, libc::ENOSYS));
+    }
+}
+
+#[test]
+fn obsolete_module_syscall_stubs_match_host_enosys() {
+    let module_name = CString::new("frankenlibc_probe").unwrap();
+    let mut ret_size = libc::size_t::MAX;
+
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_create_result = host_create_module(module_name.as_ptr(), 0);
+        let host_create_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_create_result = create_module(module_name.as_ptr(), 0);
+        let fl_create_errno = errno_value();
+
+        assert_eq!(
+            (fl_create_result, fl_create_errno),
+            (host_create_result, host_create_errno)
+        );
+        assert_eq!((fl_create_result, fl_create_errno), (-1, libc::ENOSYS));
+
+        *libc::__errno_location() = 0;
+        let host_syms_result = host_get_kernel_syms(ptr::null_mut());
+        let host_syms_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_syms_result = get_kernel_syms(ptr::null_mut());
+        let fl_syms_errno = errno_value();
+
+        assert_eq!(
+            (fl_syms_result, fl_syms_errno),
+            (host_syms_result, host_syms_errno)
+        );
+        assert_eq!((fl_syms_result, fl_syms_errno), (-1, libc::ENOSYS));
+
+        *libc::__errno_location() = 0;
+        let host_query_result = host_query_module(
+            module_name.as_ptr(),
+            0,
+            ptr::null_mut(),
+            0,
+            &mut ret_size,
+        );
+        let host_query_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_query_result = query_module(
+            module_name.as_ptr(),
+            0,
+            ptr::null_mut(),
+            0,
+            &mut ret_size,
+        );
+        let fl_query_errno = errno_value();
+
+        assert_eq!(
+            (fl_query_result, fl_query_errno),
+            (host_query_result, host_query_errno)
+        );
+        assert_eq!((fl_query_result, fl_query_errno), (-1, libc::ENOSYS));
     }
 }
 
