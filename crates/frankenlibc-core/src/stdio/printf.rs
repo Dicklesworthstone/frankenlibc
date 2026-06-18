@@ -1245,6 +1245,18 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
 
 /// Render a floating-point value to `buf` according to `spec`.
 ///
+/// Minimal `core::fmt::Write` sink appending UTF-8 bytes to a `Vec<u8>`, so
+/// float digit generation can write straight into the output buffer instead of
+/// through a temporary heap `String`.
+struct VecWriter<'a>(&'a mut Vec<u8>);
+
+impl core::fmt::Write for VecWriter<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
+}
+
 /// Supports `%f`/`%F`, `%e`/`%E`, and `%g`/`%G` conversions.
 /// Uses Rust's `format!` machinery internally for digit generation,
 /// then applies POSIX width/flag rules.
@@ -1300,6 +1312,32 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
 
     let negative = value.is_sign_negative();
     let abs = value.abs();
+
+    // Fast path: bare fixed-point %f with precision>=1 and no field width.
+    // For precision>=1, format_f is exactly `format!("{:.prec$}", abs)` (alt_form
+    // is a no-op once a fractional point is present); with no width there is no
+    // padding. So emit the sign byte and write the digits straight into `buf`,
+    // skipping the temporary String and the padding pipeline. Byte-identical to
+    // the general path (sign + body, no pad); precision==0 keeps the general path
+    // because format_f pre-rounds there.
+    if precision >= 1
+        && resolve_width(spec) == 0
+        && matches!(
+            spec.raw_render_kind(),
+            Some(RawValueRenderKind::Float(FloatFormatKind::Fixed))
+        )
+    {
+        use core::fmt::Write as _;
+        if negative {
+            buf.push(b'-');
+        } else if spec.flags.force_sign {
+            buf.push(b'+');
+        } else if spec.flags.space_sign {
+            buf.push(b' ');
+        }
+        let _ = write!(VecWriter(buf), "{:.prec$}", abs, prec = precision);
+        return;
+    }
 
     // Generate digit string.
     let body = match spec.raw_render_kind() {
