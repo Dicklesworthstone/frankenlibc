@@ -532,13 +532,78 @@
       "proof_status": "pending",
       "acceptance_reason": "Code-first batch-test pending: split strcspn's four-byte reject scan onto a private fused SIMD mask while leaving the prior strpbrk path unchanged; benchmark/conformance not run by directive.",
       "notes": "Negative-evidence rule: reject and do not retry this private strcspn fusion if same-worker strcspn_general_absent Criterion does not beat the prior five-reduction scanner by the ledger threshold, if any set-order/NUL guard drifts, or if small-size cases regress. Do not extend this to strpbrk without a separate same-worker proof because bd-2g7oyh.158 recorded a strpbrk_general_absent regression for the shared helper fusion."
+    },
+    {
+      "trace_id": "bd-2g7oyh::strict::cand-strsep-four-delim-simd-split::001",
+      "candidate_id": "cand-strsep-four-delim-simd-split",
+      "bead_id": "bd-2g7oyh",
+      "module": "frankenlibc-core/string/str",
+      "symbol": "strsep",
+      "code_refs": [
+        "crates/frankenlibc-core/src/string/str.rs",
+        "crates/frankenlibc-bench/benches/string_bench.rs"
+      ],
+      "measurement": {
+        "metric": "batch_test_pending_p50_ns_op",
+        "mode": "strict",
+        "before": 0.0,
+        "after": 0.0,
+        "perf_delta_pct": 0.0,
+        "evidence_refs": [
+          "crates/frankenlibc-core/src/string/str.rs",
+          "crates/frankenlibc-bench/benches/string_bench.rs",
+          "AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core",
+          "AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-bench"
+        ]
+      },
+      "behavior_checks": [
+        {
+          "check_id": "core_crate_scoped_compile",
+          "check_command": "AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core",
+          "artifact_ref": "/data/projects/.rch-targets/frankenlibc-cod-a",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "pass"
+        },
+        {
+          "check_id": "bench_crate_scoped_compile",
+          "check_command": "AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-bench",
+          "artifact_ref": "/data/projects/.rch-targets/frankenlibc-cod-a",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "pass"
+        },
+        {
+          "check_id": "strsep_four_delimiter_first_stop_guard",
+          "check_command": "cargo test -p frankenlibc-core string::str::tests::test_strsep_four_delimiter_bulk_scan_preserves_first_stop_order",
+          "artifact_ref": "crates/frankenlibc-core/src/string/str.rs",
+          "input_classes": [
+            "boundary"
+          ],
+          "status": "skipped"
+        },
+        {
+          "check_id": "focused_benchmark_vs_original",
+          "check_command": "cargo bench -p frankenlibc-bench --bench string_bench strsep_general_absent -- --save-baseline after",
+          "artifact_ref": "crates/frankenlibc-bench/benches/string_bench.rs",
+          "input_classes": [
+            "in_bounds"
+          ],
+          "status": "skipped"
+        }
+      ],
+      "proof_status": "pending",
+      "acceptance_reason": "Code-first batch-test pending: routed four-delimiter strsep scans through the existing safe SIMD any-of-four-or-NUL primitive and added a direct strsep_general_absent Criterion target; benchmark/conformance not run by directive.",
+      "notes": "Negative-evidence rule: reject and do not retry this four-delimiter strsep SIMD split if same-worker strsep_general_absent Criterion fails to beat the prior scalar delim_set.contains loop by the ledger threshold, if first-delimiter-vs-NUL ordering drifts, or if single-delimiter strsep_absent regresses beyond noise. Do not generalize to larger delimiter tables without a separate byte-set benchmark proof."
     }
   ],
   "summary": {
-    "total_candidates": 9,
+    "total_candidates": 10,
     "verified": 1,
     "rejected": 1,
-    "pending": 7,
+    "pending": 8,
     "waived": 0,
     "required_log_fields": 5,
     "required_input_classes": 4

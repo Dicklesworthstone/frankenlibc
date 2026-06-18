@@ -1752,6 +1752,14 @@ pub fn strsep(s: &mut [u8], delim: &[u8]) -> Option<usize> {
         }
         return None;
     }
+    if delim_len == 4 {
+        let index = find_any_of4_or_nul(s, delim[0], delim[1], delim[2], delim[3]);
+        if index < s.len() && s[index] != 0 {
+            s[index] = 0;
+            return Some(index);
+        }
+        return None;
+    }
 
     let delim_set = &delim[..delim_len];
 
@@ -3274,6 +3282,27 @@ mod tests {
         assert_eq!(s[53], 0);
         assert_eq!(s[52], b'a');
         assert_eq!(s[54], b'a');
+    }
+
+    #[test]
+    fn test_strsep_four_delimiter_bulk_scan_preserves_first_stop_order() {
+        let mut s = vec![b'a'; SIMD_LANES * 3 + 5];
+        s[SIMD_LANES + 9] = b'|';
+        s[SIMD_LANES * 2 + 1] = 0;
+
+        let result = strsep(&mut s, b":;|\t\0");
+
+        assert_eq!(result, Some(SIMD_LANES + 9));
+        assert_eq!(s[SIMD_LANES + 9], 0);
+        assert_eq!(s[SIMD_LANES + 8], b'a');
+        assert_eq!(s[SIMD_LANES + 10], b'a');
+
+        let mut nul_first = vec![b'a'; SIMD_LANES * 3 + 5];
+        nul_first[SIMD_LANES + 4] = 0;
+        nul_first[SIMD_LANES + 9] = b'|';
+
+        assert_eq!(strsep(&mut nul_first, b":;|\t\0"), None);
+        assert_eq!(nul_first[SIMD_LANES + 9], b'|');
     }
 
     #[test]
