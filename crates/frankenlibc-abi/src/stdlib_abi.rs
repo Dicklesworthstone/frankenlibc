@@ -4092,9 +4092,13 @@ pub extern "C" fn get_phys_pages() -> c_long {
 /// `get_avphys_pages` — return number of available physical memory pages.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn get_avphys_pages() -> c_long {
+    // glibc's __get_avphys_pages returns sysinfo(2).freeram — the raw free RAM,
+    // i.e. /proc/meminfo "MemFree" — NOT "MemAvailable" (a larger kernel
+    // estimate that counts reclaimable cache). Using MemAvailable overcounted
+    // available pages by a wide margin. bd-l18p7s.
     if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
         for line in content.lines() {
-            if line.starts_with("MemAvailable:") {
+            if line.starts_with("MemFree:") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 2
                     && let Ok(kb) = parts[1].parse::<c_long>()
