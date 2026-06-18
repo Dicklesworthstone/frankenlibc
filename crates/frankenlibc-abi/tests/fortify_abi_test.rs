@@ -43,6 +43,22 @@ fn assert_child_sigabrt(label: &str, child: impl FnOnce()) {
     );
 }
 
+#[test]
+fn chk_fail_aborts_child_process() {
+    assert_child_sigabrt("chk_fail", || unsafe { __chk_fail() });
+}
+
+#[test]
+fn stack_chk_fail_aborts_child_process() {
+    assert_child_sigabrt("stack_chk_fail", || unsafe { __stack_chk_fail() });
+}
+
+#[test]
+fn fortify_fail_aborts_child_process() {
+    let msg = c"explicit fortify failure";
+    assert_child_sigabrt("fortify_fail", || unsafe { __fortify_fail(msg.as_ptr()) });
+}
+
 // ===========================================================================
 // Memory operations: __memcpy_chk, __memmove_chk, __memset_chk,
 //                    __explicit_bzero_chk
@@ -1951,6 +1967,20 @@ fn vwprintf_chk_empty() {
         ret == 0 || ret == -1,
         "__vwprintf_chk should either print an empty wide string or report stream orientation failure"
     );
+}
+
+#[test]
+fn fwprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let mode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let fmt: [WcharT; 3] = [b'%' as i32, b'd' as i32, 0];
+    let ret = unsafe { __fwprintf_chk(fp.cast(), 0, fmt.as_ptr(), 22i32) };
+    assert!(ret > 0, "__fwprintf_chk should return positive char count");
+
+    unsafe { libc::fclose(fp) };
 }
 
 #[test]
