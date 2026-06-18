@@ -87,7 +87,18 @@ fn wordexp_arith_with_variables_matches_glibc() {
         g::setenv(c"WE_AR_X".as_ptr(), c"5".as_ptr(), 1);
         g::setenv(c"WE_AR_Y".as_ptr(), c"3".as_ptr(), 1);
     }
-    for s in ["$((WE_AR_X+1))", "$(($WE_AR_X*2))", "$((WE_AR_X*WE_AR_Y))", "$((WE_AR_UNSET+7))"] {
+    for s in [
+        "$((WE_AR_X+1))",
+        "$(($WE_AR_X*2))",
+        "$((WE_AR_X*WE_AR_Y))",
+        "$((WE_AR_UNSET+7))",
+        // parameter expansion inside arithmetic (bd-4f7oo7): $ / ${} forms are
+        // expanded before evaluation; bare names resolved by the evaluator.
+        "$(( ${WE_AR_X:-99} + 1 ))",
+        "$(( ${WE_AR_UNSET:-5} + 1 ))",
+        "$(( ${WE_AR_X} * 2 ))",
+        "$(( $WE_AR_X + $WE_AR_Y ))",
+    ] {
         let f = run_fl(s, 0);
         let gg = run_glibc(s, 0);
         assert_eq!(f, gg, "wordexp({s:?}) with vars: fl={f:?} glibc={gg:?}");

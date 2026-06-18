@@ -7210,8 +7210,13 @@ fn expand_vars_with_split_mask_dyn(
                 };
                 let inner = core::str::from_utf8(&bytes[inner_start..close - 1]).unwrap_or("");
                 i = close + 1;
+                // glibc expands `$`/`${...}` parameter (and nested arithmetic)
+                // forms in the arithmetic text BEFORE evaluating it, so e.g.
+                // `$(( ${x:-5} + 1 ))` works. Bare names (`x`) are left for the
+                // evaluator to resolve. Unset vars are 0 here, never an error.
+                let pre = expand_vars_with_split_mask_dyn(inner, false, false)?.0;
                 let lookup = |name: &str| std::env::var(name).ok();
-                match frankenlibc_core::stdlib::wordexp::eval_arith(inner, &lookup) {
+                match frankenlibc_core::stdlib::wordexp::eval_arith(&pre, &lookup) {
                     Ok(val) => {
                         for ch in val.to_string().chars() {
                             push_masked_char(
