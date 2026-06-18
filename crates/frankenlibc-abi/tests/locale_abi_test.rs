@@ -493,9 +493,13 @@ fn newlocale_empty_string_succeeds() {
 }
 
 #[test]
-fn newlocale_null_locale_succeeds() {
+fn newlocale_null_locale_fails_like_glibc() {
+    // glibc's newlocale rejects a NULL locale name: `if (locale == NULL)
+    // ERROR_RETURN` sets EINVAL and returns NULL — newlocale cannot be used to
+    // query the current locale name. fl matches this (bd-id0azv); the old test
+    // asserted fl's pre-fix non-glibc behaviour (returning non-null).
     let loc = unsafe { newlocale(libc::LC_ALL_MASK, ptr::null(), ptr::null_mut()) };
-    assert!(!loc.is_null());
+    assert!(loc.is_null(), "newlocale(NULL name) must fail like glibc");
 }
 
 #[test]
