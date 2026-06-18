@@ -1106,6 +1106,33 @@ fn pathconf_and_fpathconf_validate_inputs() {
 }
 
 #[test]
+fn pathconf_and_fpathconf_match_host_for_root_limits() {
+    let root = c"/";
+    for name in [libc::_PC_NAME_MAX, libc::_PC_PATH_MAX] {
+        let host = unsafe { libc::pathconf(root.as_ptr(), name) };
+        assert!(
+            host > 0,
+            "host pathconf(/, {name}) should expose a positive stable limit"
+        );
+        let abi = unsafe { pathconf(root.as_ptr(), name) };
+        assert_eq!(abi, host, "pathconf(/, {name}) should match host libc");
+    }
+
+    let fd = unsafe { libc::open(root.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+    assert!(fd >= 0, "opening / as a directory should succeed");
+    for name in [libc::_PC_NAME_MAX, libc::_PC_PATH_MAX] {
+        let host = unsafe { libc::fpathconf(fd, name) };
+        assert!(
+            host > 0,
+            "host fpathconf(/, {name}) should expose a positive stable limit"
+        );
+        let abi = unsafe { fpathconf(fd, name) };
+        assert_eq!(abi, host, "fpathconf(/, {name}) should match host libc");
+    }
+    let _ = unsafe { libc::close(fd) };
+}
+
+#[test]
 fn nice_zero_increment_matches_getpriority_state() {
     // SAFETY: __errno_location points to this thread-local errno.
     unsafe {
