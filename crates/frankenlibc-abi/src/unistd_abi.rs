@@ -2436,22 +2436,15 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
     match name {
         libc::_SC_PAGESIZE => runtime_page_size() as libc::c_long,
         libc::_SC_CLK_TCK => 100,
-        libc::_SC_NPROCESSORS_ONLN | libc::_SC_NPROCESSORS_CONF => {
-            // Read from /sys/devices/system/cpu/online or fallback.
-            // Simple approach: use SYS_sched_getaffinity to count CPUs.
-            let mut mask = [0u8; 512]; // 4096 CPUs max (supports large NUMA systems)
-            let rc = unsafe { syscall::sys_sched_getaffinity(0, mask.len(), mask.as_mut_ptr()) };
-            if let Ok(bytes) = rc {
-                let n = mask[..bytes as usize]
-                    .iter()
-                    .map(|b| b.count_ones() as libc::c_long)
-                    .sum();
-                if n > 0 {
-                    return n;
-                }
-            }
-            1
-        }
+        // glibc maps these to __get_nprocs (online CPUs, from
+        // /sys/devices/system/cpu/online) and __get_nprocs_conf (configured
+        // CPUs, from .../cpu/present) respectively — NOT the process affinity
+        // mask. fl conflated the two and counted sched_getaffinity, which
+        // differs from the online/present counts when CPUs are offline or the
+        // process is pinned. Delegate to the matching get_nprocs* helpers.
+        // bd-n1uzcb.
+        libc::_SC_NPROCESSORS_ONLN => crate::stdlib_abi::get_nprocs() as libc::c_long,
+        libc::_SC_NPROCESSORS_CONF => crate::stdlib_abi::get_nprocs_conf() as libc::c_long,
         libc::_SC_OPEN_MAX => {
             // Try to get from getrlimit.
             let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
