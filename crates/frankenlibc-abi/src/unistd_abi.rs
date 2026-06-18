@@ -2536,6 +2536,21 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         // _SC_THREADS reports the supported _POSIX_THREADS version (200809L),
         // not a boolean — glibc returns 200809; fl previously returned 1.
         libc::_SC_THREADS => 200809,
+        // POSIX thread/realtime option flags glibc reports as supported at the
+        // 200809L level (verified via `getconf -a`); fl had no arm so each fell
+        // through to the EINVAL default (-1). bd-mjct6o.
+        libc::_SC_THREAD_ATTR_STACKADDR => 200809,
+        libc::_SC_THREAD_ATTR_STACKSIZE => 200809,
+        libc::_SC_THREAD_PRIORITY_SCHEDULING => 200809,
+        libc::_SC_THREAD_PRIO_INHERIT => 200809,
+        libc::_SC_THREAD_PRIO_PROTECT => 200809,
+        libc::_SC_THREAD_PROCESS_SHARED => 200809,
+        libc::_SC_BARRIERS => 200809,
+        libc::_SC_CLOCK_SELECTION => 200809,
+        libc::_SC_READER_WRITER_LOCKS => 200809,
+        libc::_SC_SPIN_LOCKS => 200809,
+        libc::_SC_SPAWN => 200809,
+        libc::_SC_TIMEOUTS => 200809,
         libc::_SC_THREAD_KEYS_MAX => 1024,
         libc::_SC_THREAD_STACK_MIN => libc::PTHREAD_STACK_MIN as libc::c_long,
         libc::_SC_THREAD_THREADS_MAX => -1i64 as libc::c_long, // unlimited
