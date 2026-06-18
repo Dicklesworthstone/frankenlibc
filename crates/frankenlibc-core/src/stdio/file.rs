@@ -41,6 +41,9 @@ pub struct StreamFlags {
     /// false if a read. Only meaningful when `io_started` is set. Drives
     /// `__freading`/`__fwriting` parity with glibc.
     pub last_write: bool,
+    /// Stream orientation for `fwide`: 0 = unset, >0 = wide, <0 = byte.
+    /// Sticky once set to a non-zero value.
+    pub orientation: i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +521,17 @@ impl StdioStream {
     /// (False before any operation.) Used by `__fwriting`.
     pub fn last_was_write(&self) -> bool {
         self.flags.io_started && self.flags.last_write
+    }
+
+    /// `fwide` semantics: if the orientation is still unset and `mode` is
+    /// non-zero, fix it (wide for mode > 0, byte for mode < 0); orientation is
+    /// sticky thereafter. Returns the resulting orientation (>0 wide, <0 byte,
+    /// 0 unset).
+    pub fn set_orientation(&mut self, mode: i32) -> i32 {
+        if self.flags.orientation == 0 && mode != 0 {
+            self.flags.orientation = if mode > 0 { 1 } else { -1 };
+        }
+        self.flags.orientation
     }
 
     /// Check if EOF has been reached.

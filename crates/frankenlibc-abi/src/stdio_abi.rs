@@ -569,6 +569,15 @@ pub(crate) fn stream_ext_info(stream: *mut c_void) -> Option<StreamExtInfo> {
     })
 }
 
+/// `fwide`: apply the orientation `mode` to a stream (sticky once set) and
+/// return the resulting orientation (>0 wide, <0 byte, 0 unset). Returns `None`
+/// if fl does not own the stream.
+pub(crate) fn stream_set_orientation(stream: *mut c_void, mode: c_int) -> Option<c_int> {
+    let id = canonical_stream_id(stream);
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.get_mut(&id).map(|s| s.set_orientation(mode))
+}
+
 #[inline]
 #[cfg_attr(feature = "standalone", allow(unused_variables))]
 fn sync_native_stdio_buffering(stream: *mut c_void, mode: BufMode, buf: *mut c_char, size: usize) {

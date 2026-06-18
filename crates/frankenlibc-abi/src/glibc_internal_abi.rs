@@ -5729,12 +5729,18 @@ pub unsafe extern "C" fn futimesat(
 // fwide: native — always return 0 (unset, compatible with byte-oriented streams)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fwide(stream: *mut c_void, mode: c_int) -> c_int {
+    // open_wmemstream streams are wide-oriented by construction (and sticky).
     if let Some(orientation) = crate::wchar_abi::fwide_orientation(stream) {
-        let _ = mode;
         return orientation;
     }
-    let _ = (stream, mode);
-    0 // stream orientation not set
+    // Otherwise apply `mode` to the stream's orientation (sets it if still
+    // unset and mode != 0; sticky thereafter) and return the result. Previously
+    // `mode` was ignored entirely, so fwide(s, +1)/fwide(s, -1) never oriented
+    // the stream and always returned 0. bd-ifu9ll.
+    match crate::stdio_abi::stream_set_orientation(stream, mode) {
+        Some(orientation) => orientation,
+        None => 0, // stream not owned by fl: orientation unknown
+    }
 }
 // get_kernel_syms: removed in Linux 2.6 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
