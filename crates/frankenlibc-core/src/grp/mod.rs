@@ -89,10 +89,19 @@ fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
     if let [b'+', rest @ ..] = s {
         s = rest;
     }
-    if s.is_empty() || !s.iter().all(u8::is_ascii_digit) {
+    if s.is_empty() {
         return None;
     }
-    core::str::from_utf8(s).ok()?.parse::<u32>().ok()
+
+    let mut value = 0u32;
+    for &byte in s {
+        let digit = byte.checked_sub(b'0')?;
+        if digit > 9 {
+            return None;
+        }
+        value = value.checked_mul(10)?.checked_add(u32::from(digit))?;
+    }
+    Some(value)
 }
 
 /// Look up a group entry by name.
@@ -392,6 +401,17 @@ ubuntu:x:1000:
     fn large_gid() {
         let entry = parse_group_line(b"biggroup:x:4294967295:").unwrap();
         assert_eq!(entry.gr_gid, u32::MAX);
+    }
+
+    #[test]
+    fn reject_gid_overflow_sign_and_trailing_junk() {
+        assert!(parse_group_line(b"root:x:4294967296:").is_none());
+        assert!(parse_group_line(b"root:x:-1:").is_none());
+        assert!(parse_group_line(b"root:x:1x:").is_none());
+        assert!(parse_group_line(b"root:x:1 :").is_none());
+
+        let entry = parse_group_line(b"root:x: \t+42:").unwrap();
+        assert_eq!(entry.gr_gid, 42);
     }
 
     #[test]

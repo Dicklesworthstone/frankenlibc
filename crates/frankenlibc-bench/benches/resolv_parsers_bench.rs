@@ -15,6 +15,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use frankenlibc_core::aliases;
+use frankenlibc_core::grp;
 use frankenlibc_core::netgroup;
 use frankenlibc_core::proc_maps;
 use frankenlibc_core::pwd;
@@ -118,6 +119,7 @@ const SERVICES_LINE: &[u8] = b"http            80/tcp   www www-http   # World W
 const PROTOCOLS_LINE: &[u8] = b"tcp     6       TCP             # transmission control protocol";
 const NETWORKS_LINE: &[u8] = b"link-local      169.254.0.0     localnet";
 const ALIASES_LINE: &[u8] = b"postmaster: root, admin, oncall@example.com";
+const GROUP_LINE: &[u8] = b"adm:x:4:syslog,ubuntu,operator";
 const PASSWD_LINE: &[u8] = b"ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash";
 const SHADOW_LINE: &[u8] = b"ubuntu:$y$j9T$rounds=100000$salt$hash:19800:0:99999:7:::";
 const RPC_LINE: &[u8] = b"portmapper      100000  portmap sunrpc rpcbind";
@@ -188,6 +190,18 @@ fn bench_parse_aliases_line() {
         ITERS_PER_SAMPLE,
         || {
             let r = aliases::parse_aliases_line(black_box(ALIASES_LINE));
+            black_box(r);
+        },
+    );
+}
+
+fn bench_parse_group_line() {
+    measure(
+        "parse_group_line_typical",
+        SAMPLES,
+        ITERS_PER_SAMPLE,
+        || {
+            let r = grp::parse_group_line(black_box(GROUP_LINE));
             black_box(r);
         },
     );
@@ -272,6 +286,7 @@ fn main() {
     bench_parse_protocols_line();
     bench_parse_networks_line();
     bench_parse_aliases_line();
+    bench_parse_group_line();
     bench_parse_passwd_line();
     bench_parse_shadow_line();
     bench_parse_rpc_line();
