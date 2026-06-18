@@ -1957,7 +1957,22 @@ pub unsafe extern "C" fn strptime(
 /// (Olson database parsing, DST rules) that is out of scope.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tzset() {
-    // No-op: FrankenLibC is UTC-only.
+    // FrankenLibC is UTC-only, but glibc's tzset() always populates the public
+    // timezone globals — in particular tzname[0] must be a valid, non-NULL
+    // string (the `tzset(); puts(tzname[0])` idiom is common and would deref
+    // NULL here). Populate them with the UTC values. bd-vxpc1y.
+    static UTC: &[u8] = b"UTC\0";
+    let p = UTC.as_ptr() as *mut std::ffi::c_char;
+    unsafe {
+        crate::glibc_internal_abi::tzname[0] = p;
+        crate::glibc_internal_abi::tzname[1] = p;
+        crate::glibc_internal_abi::__tzname[0] = p;
+        crate::glibc_internal_abi::__tzname[1] = p;
+        crate::glibc_internal_abi::timezone = 0;
+        crate::glibc_internal_abi::__timezone = 0;
+        crate::glibc_internal_abi::daylight = 0;
+        crate::glibc_internal_abi::__daylight = 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
