@@ -5,8 +5,10 @@
 //! wcsxfrm_l (bd-4b4mpl) — previously uncovered. strxfrm_l transforms src into
 //! dest (at most n units) for collation and returns the full transformed
 //! length; in a "C" locale the transform is the identity copy. fl delegates to
-//! strxfrm/wcsxfrm; it must match host glibc on the return length AND the bytes
-//! written (including truncation when n is too small). No mocks.
+//! strxfrm/wcsxfrm; it must match host glibc on the return length always, and
+//! on the bytes written when the result fits (n > src len). When the return is
+//! >= n the C standard leaves dest contents INDETERMINATE, so the buffer is not
+//! compared in that case (only the length). No mocks.
 
 use std::ffi::{c_char, c_int, c_void, CString};
 
@@ -42,9 +44,9 @@ fn strxfrm_l_matches_glibc() {
                 )
             };
             assert_eq!(f, g, "strxfrm_l({s:?}, n={n}) return");
-            if n > 0 {
-                // Both wrote at most n bytes; compare the whole buffer (untouched
-                // tail stays FILL in both).
+            // Buffer is only determinate when the full result + NUL fit (return
+            // < n). When n <= src len the C standard leaves dest indeterminate.
+            if n > s.len() {
                 assert_eq!(fd, gd, "strxfrm_l({s:?}, n={n}) buffer");
             }
         }
@@ -68,7 +70,8 @@ fn wcsxfrm_l_matches_glibc() {
                 frankenlibc_abi::wchar_abi::wcsxfrm_l(fd.as_mut_ptr(), src.as_ptr(), n, loc as *mut c_void)
             };
             assert_eq!(f, g, "wcsxfrm_l({s:?}, n={n}) return");
-            if n > 0 {
+            // Determinate only when the result + NUL fit (return < n).
+            if n > s.chars().count() {
                 assert_eq!(fd, gd, "wcsxfrm_l({s:?}, n={n}) buffer");
             }
         }
