@@ -3882,6 +3882,15 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
 
     unsafe { error_message_count += 1 };
 
+    // glibc's error() calls flush_stdout() (an unconditional fflush(stdout) in
+    // the _LIBC build) before writing to stderr, so buffered program output is
+    // ordered ahead of the diagnostic. bd-7zdmvd.
+    unsafe {
+        crate::stdio_abi::fflush(crate::io_internal_abi::native_stdio_stream_ptr(
+            libc::STDOUT_FILENO,
+        ));
+    }
+
     let progname = {
         let p = get_program_short_name();
         if p.is_null() {
@@ -4003,6 +4012,14 @@ pub unsafe extern "C" fn error_at_line(
     }
 
     unsafe { error_message_count += 1 };
+
+    // Match glibc: flush stdout before writing the diagnostic to stderr
+    // (only reached when the message is not suppressed). bd-7zdmvd.
+    unsafe {
+        crate::stdio_abi::fflush(crate::io_internal_abi::native_stdio_stream_ptr(
+            libc::STDOUT_FILENO,
+        ));
+    }
 
     let progname = {
         let p = get_program_short_name();
