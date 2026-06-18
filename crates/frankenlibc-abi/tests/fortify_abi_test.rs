@@ -182,6 +182,15 @@ fn strncpy_chk_safe() {
 }
 
 #[test]
+fn strncpy_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("strncpy_chk n over real buffer", || {
+        let src = c"world";
+        let mut dest = [0u8; 2];
+        unsafe { __strncpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 4, dest.len()) };
+    });
+}
+
+#[test]
 fn strcat_chk_safe() {
     let mut dest = [0u8; 32];
     dest[0] = b'A';
@@ -195,6 +204,15 @@ fn strcat_chk_safe() {
 }
 
 #[test]
+fn strcat_chk_src_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("strcat_chk src over real buffer", || {
+        let mut dest = [b'A', 0];
+        let src = c"B";
+        unsafe { __strcat_chk(dest.as_mut_ptr().cast(), src.as_ptr(), dest.len()) };
+    });
+}
+
+#[test]
 fn strncat_chk_safe() {
     let mut dest = [0u8; 32];
     dest[0] = b'X';
@@ -205,6 +223,15 @@ fn strncat_chk_safe() {
         __strncat_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 2, 32);
     }
     assert_eq!(&dest[..4], b"XYZ\0");
+}
+
+#[test]
+fn strncat_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("strncat_chk n over real buffer", || {
+        let mut dest = [b'A', 0];
+        let src = c"B";
+        unsafe { __strncat_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 1, dest.len()) };
+    });
 }
 
 #[test]
@@ -297,6 +324,15 @@ fn stpcpy_chk_returns_end() {
 }
 
 #[test]
+fn stpcpy_chk_src_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("stpcpy_chk src over real buffer", || {
+        let src = c"toolong";
+        let mut dest = [0u8; 4];
+        unsafe { __stpcpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), dest.len()) };
+    });
+}
+
+#[test]
 fn stpncpy_chk_returns_position() {
     let src = CString::new("ab").unwrap();
     let mut dest = [0xFFu8; 8];
@@ -316,6 +352,15 @@ fn stpncpy_chk_exact_fill() {
     let offset = unsafe { end.offset_from(dest.as_ptr().cast::<c_char>()) };
     assert_eq!(offset, 5);
     assert_eq!(&dest, b"abcde");
+}
+
+#[test]
+fn stpncpy_chk_n_over_real_buffer_aborts_child_process() {
+    assert_child_sigabrt("stpncpy_chk n over real buffer", || {
+        let src = c"abcd";
+        let mut dest = [0u8; 2];
+        unsafe { __stpncpy_chk(dest.as_mut_ptr().cast(), src.as_ptr(), 4, dest.len()) };
+    });
 }
 
 // ===========================================================================
