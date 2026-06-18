@@ -4290,9 +4290,12 @@ pub unsafe extern "C" fn asprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Bare "%s" fast path: use the string directly, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    };
+    let total_len = bytes.len();
     let alloc_size = total_len.saturating_add(1);
 
     // SAFETY: allocation size is computed from rendered payload and includes trailing NUL byte.
@@ -4304,7 +4307,7 @@ pub unsafe extern "C" fn asprintf(
     }
 
     unsafe {
-        std::ptr::copy_nonoverlapping(rendered.as_ptr(), out.cast::<u8>(), total_len);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast::<u8>(), total_len);
         *out.add(total_len) = 0;
         *strp = out;
     }
@@ -4972,15 +4975,18 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_v
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Bare "%s" fast path: use the string directly, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    };
+    let total_len = bytes.len();
 
     let mut written = 0usize;
     let mut adverse = false;
     while written < total_len {
         let rc =
-            unsafe { sys_write_fd(fd, rendered[written..].as_ptr().cast(), total_len - written) };
+            unsafe { sys_write_fd(fd, bytes[written..].as_ptr().cast(), total_len - written) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if e == errno::EINTR {
@@ -5032,9 +5038,12 @@ pub unsafe extern "C" fn vasprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-    let total_len = rendered.len();
+    // Bare "%s" fast path: use the string directly, else render.
+    let mut _bare_hold = None;
+    let bytes = unsafe {
+        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    };
+    let total_len = bytes.len();
     let alloc_size = total_len.saturating_add(1);
 
     let out = unsafe { malloc(alloc_size).cast::<c_char>() };
@@ -5045,7 +5054,7 @@ pub unsafe extern "C" fn vasprintf(
     }
 
     unsafe {
-        std::ptr::copy_nonoverlapping(rendered.as_ptr(), out.cast::<u8>(), total_len);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast::<u8>(), total_len);
         *out.add(total_len) = 0;
         *strp = out;
     }
