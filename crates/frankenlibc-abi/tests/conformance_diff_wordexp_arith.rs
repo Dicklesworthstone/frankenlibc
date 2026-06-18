@@ -86,6 +86,9 @@ fn wordexp_arithmetic_matches_glibc() {
         "$((dd=10, --dd))", "$((ee=2, ee+=3))", "$((ff=10, ff%=3))",
         "$((gg=1, gg<<=4))", "$((hh=5, hh++, hh))", "$((1,2,3))",
         "$((ii=7, ii-=2, ii*=3))", "$((jj=0, jj||5))", "$((kk=8, kk>>=1))",
+        // assignment precedence: rhs is a full expression / ternary; multi-assign
+        "$((ll = 2 + 3 * 4))", "$((mm = 1 ? 7 : 9))", "$((nn=1, oo=2, nn+oo))",
+        "$((pp = qq = 5))", "$((rr=10, rr>>=1, rr))", "$((ss = 3 < 5))",
     ];
     for s in cases {
         let f = run_fl(s, 0);
