@@ -23,17 +23,17 @@ use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
     ether_aton_r, ether_ntoa, ether_ntoa_r, eventfd_read, eventfd_write, fpathconf, fsconfig,
     fsmount, fsopen, fspick, fstat64, fstatat64, ftruncate64, getcpu, getdomainname, gethostid,
-    getlogin, getlogin_r, getopt, getopt_long, getpagesize, grantpt, herror, hstrerror, lockf,
-    lseek64, lstat64, mkdtemp, mount_setattr, move_mount, mq_close, mq_getattr, mq_open,
-    mq_receive, mq_send, mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open_tree,
-    open64, pathconf, pidfd_getfd, pidfd_open, pidfd_send_signal, posix_fadvise, posix_fallocate,
-    posix_madvise, posix_openpt, pread64, ptsname, pwrite64, renameat2, sched_get_priority_max,
-    sched_get_priority_min, sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler,
-    sched_rr_get_interval, sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget,
-    semop, setdomainname, sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget,
-    signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf, sysinfo, timer_create,
-    timer_delete, timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r,
-    unlockpt,
+    getlogin, getlogin_r, getopt, getopt_long, getpagesize, getresgid, getresuid, grantpt,
+    herror, hstrerror, lockf, lseek64, lstat64, mkdtemp, mount_setattr, move_mount, mq_close,
+    mq_getattr, mq_open, mq_receive, mq_send, mq_setattr, mq_unlink, msgctl, msgget, msgrcv,
+    msgsnd, nice, open_tree, open64, pathconf, pidfd_getfd, pidfd_open, pidfd_send_signal,
+    posix_fadvise, posix_fallocate, posix_madvise, posix_openpt, pread64, ptsname, pwrite64,
+    renameat2, sched_get_priority_max, sched_get_priority_min, sched_getaffinity, sched_getcpu,
+    sched_getparam, sched_getscheduler, sched_rr_get_interval, sched_setaffinity, sched_setparam,
+    sched_setscheduler, semctl, semget, semop, setdomainname, sethostname, shm_open, shm_unlink,
+    shmat, shmctl, shmdt, shmget, signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf,
+    sysinfo, timer_create, timer_delete, timer_getoverrun, timer_gettime, timer_settime, truncate64,
+    ttyname, ttyname_r, unlockpt,
 };
 use frankenlibc_abi::unistd_abi::{arc4random_addrandom, arc4random_stir};
 use frankenlibc_core::syscall as raw_syscall;
@@ -1247,6 +1247,50 @@ fn getdomainname_null_pointer_matches_host_errno() {
     assert_eq!(host, -1);
     assert_eq!(abi_errno, host_errno);
     assert_eq!(abi_errno, libc::EFAULT);
+}
+
+#[test]
+fn getresuid_and_getresgid_match_host_credentials() {
+    let mut abi_uid = [libc::uid_t::MAX; 3];
+    let mut host_uid = [libc::uid_t::MAX; 3];
+    let abi_uid_rc = unsafe {
+        getresuid(
+            &mut abi_uid[0] as *mut libc::uid_t,
+            &mut abi_uid[1] as *mut libc::uid_t,
+            &mut abi_uid[2] as *mut libc::uid_t,
+        )
+    };
+    let host_uid_rc = unsafe {
+        libc::getresuid(
+            &mut host_uid[0] as *mut libc::uid_t,
+            &mut host_uid[1] as *mut libc::uid_t,
+            &mut host_uid[2] as *mut libc::uid_t,
+        )
+    };
+
+    let mut abi_gid = [libc::gid_t::MAX; 3];
+    let mut host_gid = [libc::gid_t::MAX; 3];
+    let abi_gid_rc = unsafe {
+        getresgid(
+            &mut abi_gid[0] as *mut libc::gid_t,
+            &mut abi_gid[1] as *mut libc::gid_t,
+            &mut abi_gid[2] as *mut libc::gid_t,
+        )
+    };
+    let host_gid_rc = unsafe {
+        libc::getresgid(
+            &mut host_gid[0] as *mut libc::gid_t,
+            &mut host_gid[1] as *mut libc::gid_t,
+            &mut host_gid[2] as *mut libc::gid_t,
+        )
+    };
+
+    assert_eq!(abi_uid_rc, host_uid_rc);
+    assert_eq!(abi_uid_rc, 0);
+    assert_eq!(abi_uid, host_uid);
+    assert_eq!(abi_gid_rc, host_gid_rc);
+    assert_eq!(abi_gid_rc, 0);
+    assert_eq!(abi_gid, host_gid);
 }
 
 #[test]
