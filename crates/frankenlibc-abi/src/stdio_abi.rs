@@ -3682,7 +3682,7 @@ pub(crate) unsafe fn render_segments(
 /// `args` must point to at least `extract_count` extracted argument slots, and a
 /// bare-`%s` argument must be a valid NUL-terminated string per the C contract.
 unsafe fn bare_s_or_render<'a>(
-    fmt_bytes: &[u8],
+    fmt_bytes: &'a [u8],
     segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
     args: *const u64,
     extract_count: usize,
@@ -3695,6 +3695,12 @@ unsafe fn bare_s_or_render<'a>(
             // SAFETY: the %s string is valid for the whole call (>= 'a).
             return unsafe { std::slice::from_raw_parts(p, len) };
         }
+    }
+    // No '%' anywhere: no conversions and no `%%` escapes, so the format string
+    // is emitted verbatim (ubiquitous fixed-message / banner output). Return it
+    // directly, skipping the parse-into-segments and the render buffer.
+    if !fmt_bytes.contains(&b'%') {
+        return fmt_bytes;
     }
     *hold = Some(unsafe { render_segments(segments, args, extract_count, false) });
     hold.as_deref().unwrap()
