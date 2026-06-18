@@ -161,9 +161,18 @@ pub fn format_passwd_line(fields: PasswdLineFields<'_>, out: &mut Vec<u8>) {
     out.push(b':');
     out.extend_from_slice(fields.passwd);
     out.push(b':');
-    write_u32_decimal(out, fields.uid);
+    // glibc putpwent special-cases NIS-style entries (name begins with '+' or
+    // '-'): the uid and gid fields are written EMPTY when their value is 0
+    // (e.g. "+user:x::::::"), so a parsed NIS line round-trips unchanged. For
+    // ordinary entries both numbers are always written. bd-nuuk1l.
+    let nis = matches!(fields.name.first(), Some(b'+') | Some(b'-'));
+    if !(nis && fields.uid == 0) {
+        write_u32_decimal(out, fields.uid);
+    }
     out.push(b':');
-    write_u32_decimal(out, fields.gid);
+    if !(nis && fields.gid == 0) {
+        write_u32_decimal(out, fields.gid);
+    }
     out.push(b':');
     out.extend_from_slice(fields.gecos);
     out.push(b':');
