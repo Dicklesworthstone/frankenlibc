@@ -202,6 +202,8 @@ unsafe extern "C" {
     fn host_create_module(name: *const c_char, size: libc::size_t) -> libc::c_long;
     #[link_name = "dysize"]
     fn host_dysize(year: c_int) -> c_int;
+    #[link_name = "__profile_frequency"]
+    fn host_profile_frequency() -> c_int;
     #[link_name = "fattach"]
     fn host_fattach(fd: c_int, path: *const c_char) -> c_int;
     #[link_name = "fchflags"]
@@ -5686,7 +5688,10 @@ fn profiling_entry_hooks_are_no_ops() {
 
 #[test]
 fn profiling_frequency_and_profil_safe_defaults_are_stable() {
-    assert_eq!(unsafe { __profile_frequency() }, 100);
+    let host_frequency = unsafe { host_profile_frequency() };
+    let fl_frequency = unsafe { __profile_frequency() };
+    assert_eq!(fl_frequency, host_frequency);
+    assert_eq!(fl_frequency, 100);
 
     unsafe {
         *libc::__errno_location() = libc::EAGAIN;
