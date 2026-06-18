@@ -1230,6 +1230,26 @@ fn getdomainname_matches_uname_and_supports_truncation() {
 }
 
 #[test]
+fn getdomainname_null_pointer_matches_host_errno() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host = unsafe { libc::getdomainname(ptr::null_mut(), 1) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi = unsafe { getdomainname(ptr::null_mut(), 1) };
+    let abi_errno = unsafe { *__errno_location() };
+
+    assert_eq!(abi, host);
+    assert_eq!(host, -1);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EFAULT);
+}
+
+#[test]
 fn gethostid_is_deterministic() {
     // SAFETY: gethostid has no pointer preconditions.
     let first = unsafe { gethostid() };
