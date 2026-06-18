@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+#![feature(f128)]
 #![allow(unsafe_code)] // live host-glibc totalorder oracle
 
 //! IEEE-754 `totalorder`/`totalordermag` parity vs host glibc.
@@ -22,6 +23,8 @@ unsafe extern "C" {
     fn totalordermag(x: *const f64, y: *const f64) -> i32;
     fn totalorderf(x: *const f32, y: *const f32) -> i32;
     fn totalordermagf(x: *const f32, y: *const f32) -> i32;
+    fn totalorderf128(x: *const f128, y: *const f128) -> i32;
+    fn totalordermagf128(x: *const f128, y: *const f128) -> i32;
 }
 
 fn vals64() -> Vec<f64> {
@@ -46,6 +49,33 @@ fn vals64() -> Vec<f64> {
         -5e-324, // -smallest subnormal
         1e300,
         -1e300,
+    ]
+}
+
+fn vals128() -> Vec<f128> {
+    vec![
+        0.0,
+        -0.0f128,
+        1.0,
+        -1.0,
+        2.5,
+        -2.5,
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
+        f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // +qNaN
+        f128::from_bits((0xffff_u128 << 112) | (1u128 << 111)), // -qNaN
+        f128::from_bits((0x7fff_u128 << 112) | 1), // +sNaN
+        f128::from_bits((0xffff_u128 << 112) | 1), // -sNaN
+        f128::from_bits((0x7fff_u128 << 112) | (1u128 << 110)), // +sNaN payload
+        f128::from_bits((0xffff_u128 << 112) | (1u128 << 110)), // -sNaN payload
+        f128::MIN_POSITIVE,
+        -f128::MIN_POSITIVE,
+        f128::from_bits(1),                           // +smallest subnormal
+        f128::from_bits((1u128 << 127) | 1),          // -smallest subnormal
+        f128::from_bits(0x4000_4000u128 << 96),       // finite large-ish value
+        f128::from_bits((0xc000_4000u128) << 96),     // negative large-ish value
+        f128::from_bits(0x7ffe_u128 << 112),          // near-largest finite
+        f128::from_bits((0xfffe_u128 << 112) | 0x55), // negative near-largest
     ]
 }
 
@@ -92,6 +122,29 @@ fn totalorder_matches_glibc_over_special_matrix() {
                     "totalordermagf({:#010x},{:#010x}): glibc={hmf} fl={fmf}",
                     xf.to_bits(),
                     yf.to_bits()
+                ));
+            }
+        }
+    }
+    let xs128 = vals128();
+    for &x in &xs128 {
+        for &y in &xs128 {
+            let h = unsafe { totalorderf128(&x, &y) };
+            let f = unsafe { fl::totalorderf128(&x, &y) };
+            if (h != 0) != (f != 0) {
+                diffs.push(format!(
+                    "totalorderf128({:#034x},{:#034x}): glibc={h} fl={f}",
+                    x.to_bits(),
+                    y.to_bits()
+                ));
+            }
+            let hm = unsafe { totalordermagf128(&x, &y) };
+            let fm = unsafe { fl::totalordermagf128(&x, &y) };
+            if (hm != 0) != (fm != 0) {
+                diffs.push(format!(
+                    "totalordermagf128({:#034x},{:#034x}): glibc={hm} fl={fm}",
+                    x.to_bits(),
+                    y.to_bits()
                 ));
             }
         }

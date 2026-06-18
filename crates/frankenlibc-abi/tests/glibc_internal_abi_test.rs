@@ -1,4 +1,4 @@
-#![feature(c_variadic)]
+#![feature(c_variadic, f128)]
 #![cfg(target_os = "linux")]
 
 //! Integration tests for glibc_internal_abi entrypoints.
@@ -849,7 +849,10 @@ fn ns_name_pton_encodes_domain_to_wire() {
     let ret = unsafe { ns_name_pton(name.as_ptr(), buf.as_mut_ptr() as *mut _, buf.len()) };
     // glibc/BIND ns_name_pton returns 0 (not fully qualified: no trailing dot)
     // or 1 (fully qualified) — NOT the wire byte count.
-    assert_eq!(ret, 0, "ns_name_pton(\"example.com\") should report not-FQDN");
+    assert_eq!(
+        ret, 0,
+        "ns_name_pton(\"example.com\") should report not-FQDN"
+    );
     // Expected wire: \x07example\x03com\x00
     assert_eq!(buf[0], 7); // "example" length
     assert_eq!(&buf[1..8], b"example");
@@ -860,7 +863,10 @@ fn ns_name_pton_encodes_domain_to_wire() {
     let fq = CString::new("example.com.").unwrap();
     let mut fqbuf = [0u8; 64];
     let fqret = unsafe { ns_name_pton(fq.as_ptr(), fqbuf.as_mut_ptr() as *mut _, fqbuf.len()) };
-    assert_eq!(fqret, 1, "ns_name_pton(\"example.com.\") should report FQDN");
+    assert_eq!(
+        fqret, 1,
+        "ns_name_pton(\"example.com.\") should report FQDN"
+    );
 }
 
 #[test]
@@ -1386,7 +1392,7 @@ fn inet6_opt_helpers_reject_tracked_short_buffers() {
         assert!(databuf.is_null());
 
         let mut opt_type = 0u8;
-        let mut opt_len = 0usize;
+        let mut opt_len = 0u32;
         assert_eq!(
             inet6_opt_next(ext, 64, 2, &mut opt_type, &mut opt_len, ptr::null_mut()),
             -1
@@ -1421,7 +1427,7 @@ fn inet6_opt_helpers_reject_tracked_short_buffers() {
         );
         let total = inet6_opt_finish(buf.as_mut_ptr().cast(), buf.len() as c_int, off);
 
-        let short_lenp = malloc_tracked_zeroed_bytes(1).cast::<usize>();
+        let short_lenp = malloc_tracked_zeroed_bytes(1).cast::<u32>();
         let mut opt_type = 0u8;
         assert_eq!(
             inet6_opt_next(
@@ -1438,7 +1444,7 @@ fn inet6_opt_helpers_reject_tracked_short_buffers() {
         frankenlibc_abi::malloc_abi::free(short_lenp.cast());
 
         let short_databufp = malloc_tracked_zeroed_bytes(1).cast::<*mut c_void>();
-        let mut opt_len = 0usize;
+        let mut opt_len = 0u32;
         assert_eq!(
             inet6_opt_find(
                 buf.as_mut_ptr().cast(),
@@ -1533,7 +1539,7 @@ fn inet6_opt_next_iterates_options() {
 
     // Iterate: should find type 10 first, then type 20.
     let mut typ: u8 = 0;
-    let mut len: usize = 0;
+    let mut len: u32 = 0;
     let next1 = unsafe {
         inet6_opt_next(
             buf.as_mut_ptr() as *mut _,
@@ -1591,7 +1597,7 @@ fn inet6_opt_find_locates_option_by_type() {
     let total = unsafe { inet6_opt_finish(buf.as_mut_ptr() as *mut _, buf.len() as i32, off3) };
 
     // Find type 20, skipping type 10.
-    let mut len: usize = 0;
+    let mut len: u32 = 0;
     let found = unsafe {
         inet6_opt_find(
             buf.as_mut_ptr() as *mut _,
@@ -2576,7 +2582,7 @@ fn strtof128_internal_parses_number() {
     let input = CString::new("3.25").unwrap();
     let mut endptr: *mut libc::c_char = ptr::null_mut();
     let val = unsafe { __strtof128_internal(input.as_ptr(), &mut endptr, 0) };
-    assert!((val - 3.25).abs() < 1e-10);
+    assert!((val - 3.25f128).abs() < 1e-10f128);
     assert!(!endptr.is_null());
 }
 
@@ -2585,7 +2591,7 @@ fn strtof128_internal_null_returns_zero() {
     let input = CString::new("").unwrap();
     let mut endptr: *mut libc::c_char = ptr::null_mut();
     let val = unsafe { __strtof128_internal(input.as_ptr(), &mut endptr, 0) };
-    assert_eq!(val, 0.0);
+    assert_eq!(val, 0.0f128);
 }
 
 #[test]
@@ -5103,29 +5109,29 @@ fn libc_mallinfo_reports_nonzero_arena_or_uordblks() {
 fn fpclassifyf128_classifies_nan_inf_zero_normal() {
     use frankenlibc_abi::glibc_internal_abi::__fpclassifyf128;
     // FP_NAN = 0, FP_INFINITE = 1, FP_ZERO = 2, FP_SUBNORMAL = 3, FP_NORMAL = 4
-    assert_eq!(unsafe { __fpclassifyf128(f64::NAN) }, 0);
-    assert_eq!(unsafe { __fpclassifyf128(f64::INFINITY) }, 1);
-    assert_eq!(unsafe { __fpclassifyf128(0.0_f64) }, 2);
-    assert_eq!(unsafe { __fpclassifyf128(1.0_f64) }, 4);
+    assert_eq!(unsafe { __fpclassifyf128(f128::NAN) }, 0);
+    assert_eq!(unsafe { __fpclassifyf128(f128::INFINITY) }, 1);
+    assert_eq!(unsafe { __fpclassifyf128(0.0f128) }, 2);
+    assert_eq!(unsafe { __fpclassifyf128(1.0f128) }, 4);
 }
 
 #[test]
 fn isinff128_returns_signed_one_for_inf_zero_otherwise() {
     use frankenlibc_abi::glibc_internal_abi::__isinff128;
-    assert_eq!(unsafe { __isinff128(f64::INFINITY) }, 1);
-    assert_eq!(unsafe { __isinff128(f64::NEG_INFINITY) }, -1);
-    assert_eq!(unsafe { __isinff128(0.0_f64) }, 0);
-    assert_eq!(unsafe { __isinff128(1.0_f64) }, 0);
-    assert_eq!(unsafe { __isinff128(f64::NAN) }, 0);
+    assert_eq!(unsafe { __isinff128(f128::INFINITY) }, 1);
+    assert_eq!(unsafe { __isinff128(f128::NEG_INFINITY) }, -1);
+    assert_eq!(unsafe { __isinff128(0.0f128) }, 0);
+    assert_eq!(unsafe { __isinff128(1.0f128) }, 0);
+    assert_eq!(unsafe { __isinff128(f128::NAN) }, 0);
 }
 
 #[test]
 fn signbitf128_distinguishes_positive_and_negative_zero() {
     use frankenlibc_abi::glibc_internal_abi::__signbitf128;
-    assert_eq!(unsafe { __signbitf128(1.0_f64) }, 0);
-    assert_eq!(unsafe { __signbitf128(-1.0_f64) }, 1);
-    assert_eq!(unsafe { __signbitf128(0.0_f64) }, 0);
-    assert_eq!(unsafe { __signbitf128(-0.0_f64) }, 1);
+    assert_eq!(unsafe { __signbitf128(1.0f128) }, 0);
+    assert_eq!(unsafe { __signbitf128(-1.0f128) }, 8);
+    assert_eq!(unsafe { __signbitf128(0.0f128) }, 0);
+    assert_eq!(unsafe { __signbitf128(-0.0f128) }, 8);
 }
 
 // ---------------------------------------------------------------------------

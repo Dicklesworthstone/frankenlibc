@@ -5,6 +5,7 @@
 //! ±0, ±inf, the subnormal/zero boundary, MAX, quiet NaN, and SIGNALING NaN
 //! (which nextup/nextdown/canonicalize all quiet — set the mantissa MSB).
 #![cfg(target_os = "linux")]
+#![feature(f128)]
 #![allow(unsafe_code)]
 use frankenlibc_abi::math_abi as fl;
 
@@ -72,6 +73,88 @@ const CN32: &[(u32, i32, u32)] = &[
     (0x7f7fffff, 0, 0x7f7fffff),
     (0x7fa00000, 0, 0x7fe00000),
 ];
+const CN128: &[(u128, i32, u128)] = &[
+    (
+        0x00000000000000000000000000000000,
+        0,
+        0x00000000000000000000000000000000,
+    ),
+    (
+        0x80000000000000000000000000000000,
+        0,
+        0x80000000000000000000000000000000,
+    ),
+    (
+        0x3fff0000000000000000000000000000,
+        0,
+        0x3fff0000000000000000000000000000,
+    ),
+    (
+        0xbfff0000000000000000000000000000,
+        0,
+        0xbfff0000000000000000000000000000,
+    ),
+    (
+        0x7fff0000000000000000000000000000,
+        0,
+        0x7fff0000000000000000000000000000,
+    ),
+    (
+        0xffff0000000000000000000000000000,
+        0,
+        0xffff0000000000000000000000000000,
+    ),
+    (
+        0x7fff8000000000000000000000000000,
+        0,
+        0x7fff8000000000000000000000000000,
+    ),
+    (
+        0xffff8000000000000000000000000000,
+        0,
+        0xffff8000000000000000000000000000,
+    ),
+    (
+        0x00000000000000000000000000000001,
+        0,
+        0x00000000000000000000000000000001,
+    ),
+    (
+        0x80000000000000000000000000000001,
+        0,
+        0x80000000000000000000000000000001,
+    ),
+    (
+        0x00010000000000000000000000000000,
+        0,
+        0x00010000000000000000000000000000,
+    ),
+    (
+        0x7ffeffffffffffffffffffffffffffff,
+        0,
+        0x7ffeffffffffffffffffffffffffffff,
+    ),
+    (
+        0xfffeffffffffffffffffffffffffff,
+        0,
+        0xfffeffffffffffffffffffffffffff,
+    ),
+    (
+        0x3ffe0000000000000000000000000000,
+        0,
+        0x3ffe0000000000000000000000000000,
+    ),
+    (
+        0x7fff4000000000000000000000000000,
+        0,
+        0x7fffc000000000000000000000000000,
+    ),
+    (
+        0xffff4000000000000000000000000000,
+        0,
+        0xffffc000000000000000000000000000,
+    ),
+];
 
 #[test]
 fn nextup_canonicalize_matches_glibc() {
@@ -80,29 +163,76 @@ fn nextup_canonicalize_matches_glibc() {
         let x = f64::from_bits(xb);
         let fu = unsafe { fl::nextup(x) }.to_bits();
         let fd = unsafe { fl::nextdown(x) }.to_bits();
-        if fu != up { div.push(format!("nextup(0x{:016x}): fl=0x{:016x} glibc=0x{:016x}", xb, fu, up)); }
-        if fd != dn { div.push(format!("nextdown(0x{:016x}): fl=0x{:016x} glibc=0x{:016x}", xb, fd, dn)); }
+        if fu != up {
+            div.push(format!(
+                "nextup(0x{:016x}): fl=0x{:016x} glibc=0x{:016x}",
+                xb, fu, up
+            ));
+        }
+        if fd != dn {
+            div.push(format!(
+                "nextdown(0x{:016x}): fl=0x{:016x} glibc=0x{:016x}",
+                xb, fd, dn
+            ));
+        }
     }
     for &(xb, up, dn) in NU32 {
         let x = f32::from_bits(xb);
         let fu = unsafe { fl::nextupf(x) }.to_bits();
         let fd = unsafe { fl::nextdownf(x) }.to_bits();
-        if fu != up { div.push(format!("nextupf(0x{:08x}): fl=0x{:08x} glibc=0x{:08x}", xb, fu, up)); }
-        if fd != dn { div.push(format!("nextdownf(0x{:08x}): fl=0x{:08x} glibc=0x{:08x}", xb, fd, dn)); }
+        if fu != up {
+            div.push(format!(
+                "nextupf(0x{:08x}): fl=0x{:08x} glibc=0x{:08x}",
+                xb, fu, up
+            ));
+        }
+        if fd != dn {
+            div.push(format!(
+                "nextdownf(0x{:08x}): fl=0x{:08x} glibc=0x{:08x}",
+                xb, fd, dn
+            ));
+        }
     }
     for &(xb, ret, out) in CN64 {
         let x = f64::from_bits(xb);
         let mut o = 99.0f64;
         let r = unsafe { fl::canonicalize(&mut o, &x) };
         let ob = o.to_bits();
-        if r != ret || ob != out { div.push(format!("canonicalize(0x{:016x}): fl=ret{}/0x{:016x} glibc=ret{}/0x{:016x}", xb, r, ob, ret, out)); }
+        if r != ret || ob != out {
+            div.push(format!(
+                "canonicalize(0x{:016x}): fl=ret{}/0x{:016x} glibc=ret{}/0x{:016x}",
+                xb, r, ob, ret, out
+            ));
+        }
     }
     for &(xb, ret, out) in CN32 {
         let x = f32::from_bits(xb);
         let mut o = 99.0f32;
         let r = unsafe { fl::canonicalizef(&mut o, &x) };
         let ob = o.to_bits();
-        if r != ret || ob != out { div.push(format!("canonicalizef(0x{:08x}): fl=ret{}/0x{:08x} glibc=ret{}/0x{:08x}", xb, r, ob, ret, out)); }
+        if r != ret || ob != out {
+            div.push(format!(
+                "canonicalizef(0x{:08x}): fl=ret{}/0x{:08x} glibc=ret{}/0x{:08x}",
+                xb, r, ob, ret, out
+            ));
+        }
     }
-    assert!(div.is_empty(), "nextup/canonicalize divergences vs glibc ({}):\n  {}", div.len(), div.join("\n  "));
+    for &(xb, ret, out) in CN128 {
+        let x = f128::from_bits(xb);
+        let mut o = 99.0f128;
+        let r = unsafe { fl::canonicalizef128(&mut o, &x) };
+        let ob = o.to_bits();
+        if r != ret || ob != out {
+            div.push(format!(
+                "canonicalizef128(0x{:032x}): fl=ret{}/0x{:032x} glibc=ret{}/0x{:032x}",
+                xb, r, ob, ret, out
+            ));
+        }
+    }
+    assert!(
+        div.is_empty(),
+        "nextup/canonicalize divergences vs glibc ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

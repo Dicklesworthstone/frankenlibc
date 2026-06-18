@@ -1,4 +1,5 @@
 #![cfg(target_os = "linux")]
+#![feature(f128)]
 
 //! Integration tests for `<math.h>` ABI entrypoints.
 //!
@@ -1217,9 +1218,9 @@ fn math_internal_classification_aliases_cover_wide_and_f128_shims() {
     assert_eq!(unsafe { __fpclassifyl(f64::from_bits(1)) }, 3);
     assert_eq!(unsafe { __fpclassifyl(1.0) }, 4);
 
-    assert_eq!(unsafe { __finitef128(1.0) }, 1);
-    assert_eq!(unsafe { __finitef128(f64::NEG_INFINITY) }, 0);
-    assert_eq!(unsafe { __finitef128(f64::NAN) }, 0);
+    assert_eq!(unsafe { __finitef128(1.0f128) }, 1);
+    assert_eq!(unsafe { __finitef128(f128::NEG_INFINITY) }, 0);
+    assert_eq!(unsafe { __finitef128(f128::NAN) }, 0);
 
     assert_eq!(unsafe { __iscanonicall(f64::NAN) }, 1);
     assert_eq!(unsafe { __iscanonicall(f64::INFINITY) }, 1);
@@ -1243,9 +1244,9 @@ fn math_internal_iseqsig_aliases_match_ordered_equality() {
     assert_eq!(unsafe { __iseqsigl(1.0, -1.0) }, 0);
     assert_eq!(unsafe { __iseqsigl(f64::NAN, f64::NAN) }, 0);
 
-    assert_eq!(unsafe { __iseqsigf128(1.0, 1.0) }, 1);
-    assert_eq!(unsafe { __iseqsigf128(1.0, -1.0) }, 0);
-    assert_eq!(unsafe { __iseqsigf128(f64::NAN, f64::NAN) }, 0);
+    assert_eq!(unsafe { __iseqsigf128(1.0f128, 1.0f128) }, 1);
+    assert_eq!(unsafe { __iseqsigf128(1.0f128, -1.0f128) }, 0);
+    assert_eq!(unsafe { __iseqsigf128(f128::NAN, f128::NAN) }, 0);
 }
 
 // ---------------------------------------------------------------------------

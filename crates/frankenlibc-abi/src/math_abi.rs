@@ -69,11 +69,33 @@ fn round_f128_nearest(x: f128) -> f128 {
     x.round_ties_even()
 }
 
+#[cfg(test)]
+unsafe extern "C" {
+    fn fegetround() -> c_int;
+}
+
+#[inline]
+fn active_rounding_mode() -> c_int {
+    #[cfg(not(test))]
+    {
+        // SAFETY: Reads the process-local floating-point environment without
+        // mutating it.
+        unsafe { crate::fenv_abi::fegetround() }
+    }
+
+    #[cfg(test)]
+    {
+        // SAFETY: Unit-test builds intentionally hide `fenv_abi` to avoid
+        // exporting libc-shadowing symbols, so read the host fenv oracle.
+        unsafe { fegetround() }
+    }
+}
+
 /// Round to integral in the current FP rounding direction — for
 /// nearbyint/lrint/llrint, which (unlike rintf128) honor the FE_* mode.
 fn round_f128_current_mode(x: f128) -> f128 {
     // x86 FE_*: TONEAREST=0, DOWNWARD=0x400, UPWARD=0x800, TOWARDZERO=0xc00.
-    match unsafe { crate::fenv_abi::fegetround() } {
+    match active_rounding_mode() {
         0x400 => x.floor(),
         0x800 => x.ceil(),
         0xc00 => x.trunc(),
@@ -5363,6 +5385,26 @@ fn totalorderf_impl(x: *const f32, y: *const f32) -> c_int {
     let b_tc = if bi < 0 { bi ^ i32::MAX } else { bi };
     if a_tc <= b_tc { 1 } else { 0 }
 }
+fn totalorderf128_impl(x: *const f128, y: *const f128) -> c_int {
+    const SIGN_MASK: u128 = 1u128 << 127;
+
+    // SAFETY: C totalorderf128 has glibc's pointer contract: both arguments
+    // must point to valid binary128 objects for the duration of the call.
+    let a = unsafe { *x }.to_bits();
+    // SAFETY: same pointer contract as above for the second operand.
+    let b = unsafe { *y }.to_bits();
+    let a_key = if (a & SIGN_MASK) != 0 {
+        !a
+    } else {
+        a | SIGN_MASK
+    };
+    let b_key = if (b & SIGN_MASK) != 0 {
+        !b
+    } else {
+        b | SIGN_MASK
+    };
+    if a_key <= b_key { 1 } else { 0 }
+}
 fn totalordermag_impl(x: *const f64, y: *const f64) -> c_int {
     let a = unsafe { (*x).abs() };
     let b = unsafe { (*y).abs() };
@@ -5372,6 +5414,16 @@ fn totalordermagf_impl(x: *const f32, y: *const f32) -> c_int {
     let a = unsafe { (*x).abs() };
     let b = unsafe { (*y).abs() };
     totalorderf_impl(&a as *const f32, &b as *const f32)
+}
+fn totalordermagf128_impl(x: *const f128, y: *const f128) -> c_int {
+    const SIGN_MASK: u128 = 1u128 << 127;
+
+    // SAFETY: C totalordermagf128 has glibc's pointer contract: both arguments
+    // must point to valid binary128 objects for the duration of the call.
+    let a = f128::from_bits(unsafe { *x }.to_bits() & !SIGN_MASK);
+    // SAFETY: same pointer contract as above for the second operand.
+    let b = f128::from_bits(unsafe { *y }.to_bits() & !SIGN_MASK);
+    totalorderf128_impl(&a as *const f128, &b as *const f128)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn totalorder(x: *const f64, y: *const f64) -> c_int {
@@ -5402,8 +5454,8 @@ pub unsafe extern "C" fn totalorderf64x(x: *const f64, y: *const f64) -> c_int {
     totalorder_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn totalorderf128(x: *const f64, y: *const f64) -> c_int {
-    totalorder_impl(x, y)
+pub unsafe extern "C" fn totalorderf128(x: *const f128, y: *const f128) -> c_int {
+    totalorderf128_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn totalordermag(x: *const f64, y: *const f64) -> c_int {
@@ -5434,8 +5486,8 @@ pub unsafe extern "C" fn totalordermagf64x(x: *const f64, y: *const f64) -> c_in
     totalordermag_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn totalordermagf128(x: *const f64, y: *const f64) -> c_int {
-    totalordermag_impl(x, y)
+pub unsafe extern "C" fn totalordermagf128(x: *const f128, y: *const f128) -> c_int {
+    totalordermagf128_impl(x, y)
 }
 
 // --- canonicalize (C23 IEEE 754) ---
@@ -5470,6 +5522,27 @@ fn canonicalizef_impl(cx: *mut f32, x: *const f32) -> c_int {
     }
     0
 }
+fn canonicalizef128_impl(cx: *mut f128, x: *const f128) -> c_int {
+    const EXP_MASK: u128 = 0x7fff_u128 << 112;
+    const FRAC_MASK: u128 = (1u128 << 112) - 1;
+    const QUIET_BIT: u128 = 1u128 << 111;
+
+    // SAFETY: C canonicalizef128 requires `x` to point to a valid binary128
+    // input object. A null `cx` is allowed and handled below.
+    let mut bits = unsafe { *x }.to_bits();
+    let is_nan = (bits & EXP_MASK) == EXP_MASK && (bits & FRAC_MASK) != 0;
+    if is_nan {
+        bits |= QUIET_BIT;
+    }
+    if !cx.is_null() {
+        // SAFETY: `cx` was checked non-null above; the C API requires it to
+        // point to writable binary128 storage when supplied.
+        unsafe {
+            *cx = f128::from_bits(bits);
+        }
+    }
+    0
+}
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn canonicalize(cx: *mut f64, x: *const f64) -> c_int {
     canonicalize_impl(cx, x)
@@ -5499,8 +5572,8 @@ pub unsafe extern "C" fn canonicalizef64x(cx: *mut f64, x: *const f64) -> c_int 
     canonicalize_impl(cx, x)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn canonicalizef128(cx: *mut f64, x: *const f64) -> c_int {
-    canonicalize_impl(cx, x)
+pub unsafe extern "C" fn canonicalizef128(cx: *mut f128, x: *const f128) -> c_int {
+    canonicalizef128_impl(cx, x)
 }
 
 // --- getpayload / setpayload / setpayloadsig (C23) ---
@@ -14069,10 +14142,10 @@ mod tests {
         assert_eq!(quo & 0x7, 3 & 0x7);
         assert_eq!(abi_errno(), 0);
 
-        // domain error: y == 0
+        // glibc raises FE_INVALID for y == 0, but leaves errno unchanged.
         set_errno_for_test(0);
         let _ = unsafe { remquo(1.0, 0.0, std::ptr::null_mut()) };
-        assert_eq!(abi_errno(), libc::EDOM);
+        assert_eq!(abi_errno(), 0);
     }
 
     #[test]
