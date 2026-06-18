@@ -85,6 +85,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     __woverflow,
     __wuflow,
     __wunderflow,
+    bdflush,
     chflags,
     _dl_find_object,
     _dl_mcount_wrapper,
@@ -162,6 +163,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     ruserpass,
     sgetspent_r,
     setlogin,
+    sstk,
     stty,
     tr_break,
     vlimit,
@@ -176,6 +178,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 unsafe extern "C" {
+    #[link_name = "bdflush"]
+    fn host_bdflush(func: c_int, data: libc::c_long) -> c_int;
     #[link_name = "chflags"]
     fn host_chflags(path: *const c_char, flags: libc::c_ulong) -> c_int;
     #[link_name = "dysize"]
@@ -190,6 +194,8 @@ unsafe extern "C" {
     fn host_revoke(path: *const c_char) -> c_int;
     #[link_name = "setlogin"]
     fn host_setlogin(name: *const c_char) -> c_int;
+    #[link_name = "sstk"]
+    fn host_sstk(increment: c_int) -> c_int;
     #[link_name = "vlimit"]
     fn host_vlimit(resource: c_int, value: c_int) -> c_int;
 }
@@ -323,6 +329,44 @@ fn revoke_stub_matches_host_enosys() {
 
         assert_eq!((fl_result, fl_errno), (host_result, host_errno));
         assert_eq!((fl_result, fl_errno), (-1, libc::ENOSYS));
+    }
+}
+
+#[test]
+fn obsolete_linux_stubs_match_host_enosys() {
+    unsafe {
+        *libc::__errno_location() = 0;
+        let host_bdflush_result = host_bdflush(0, 0);
+        let host_bdflush_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_bdflush_result = bdflush(0, 0);
+        let fl_bdflush_errno = errno_value();
+
+        assert_eq!(
+            (fl_bdflush_result, fl_bdflush_errno),
+            (host_bdflush_result, host_bdflush_errno)
+        );
+        assert_eq!(
+            (fl_bdflush_result, fl_bdflush_errno),
+            (-1, libc::ENOSYS)
+        );
+
+        *libc::__errno_location() = 0;
+        let host_sstk_result = host_sstk(0);
+        let host_sstk_errno = *libc::__errno_location();
+
+        clear_errno();
+        *libc::__errno_location() = 0;
+        let fl_sstk_result = sstk(0);
+        let fl_sstk_errno = errno_value();
+
+        assert_eq!(
+            (fl_sstk_result, fl_sstk_errno),
+            (host_sstk_result, host_sstk_errno)
+        );
+        assert_eq!((fl_sstk_result, fl_sstk_errno), (-1, libc::ENOSYS));
     }
 }
 
