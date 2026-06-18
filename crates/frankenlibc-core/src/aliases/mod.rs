@@ -28,35 +28,15 @@ pub struct AliasEntry {
 /// Returns `None` for blank, comment-only, or malformed lines (no `:`,
 /// empty name).
 pub fn parse_aliases_line(line: &[u8]) -> Option<AliasEntry> {
-    // Strip inline comments
-    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-        &line[..pos]
-    } else {
-        line
-    };
-    // Strip trailing whitespace and EOL bytes
-    let line = trim_trailing_ws(line);
-
-    // Find colon separator
-    let colon = line.iter().position(|&b| b == b':')?;
+    let (line, colon) = line_body_and_colon(line)?;
     let name = trim_ascii(&line[..colon]);
     if name.is_empty() {
         return None;
     }
 
-    // Parse comma-separated members after colon
-    let rest = &line[colon + 1..];
-    let members: Vec<Vec<u8>> = rest
-        .split(|&b| b == b',')
-        .filter_map(|m| {
-            let m = trim_ascii(m);
-            if m.is_empty() { None } else { Some(m.to_vec()) }
-        })
-        .collect();
-
     Some(AliasEntry {
         name: name.to_vec(),
-        members,
+        members: parse_alias_members(&line[colon + 1..]),
     })
 }
 
@@ -87,12 +67,56 @@ pub fn parse_all_aliases(content: &[u8]) -> Vec<AliasEntry> {
     out
 }
 
-fn trim_trailing_ws(s: &[u8]) -> &[u8] {
-    let mut end = s.len();
-    while end > 0 && matches!(s[end - 1], b' ' | b'\t' | b'\n' | b'\r') {
+fn line_body_and_colon(line: &[u8]) -> Option<(&[u8], usize)> {
+    let mut end = line.len();
+    let mut colon = None;
+
+    for (idx, &byte) in line.iter().enumerate() {
+        match byte {
+            b'#' => {
+                end = idx;
+                break;
+            }
+            b':' if colon.is_none() => colon = Some(idx),
+            _ => {}
+        }
+    }
+
+    while end > 0 && matches!(line[end - 1], b' ' | b'\t' | b'\n' | b'\r') {
         end -= 1;
     }
-    &s[..end]
+
+    let colon = colon?;
+    if colon >= end {
+        return None;
+    }
+    Some((&line[..end], colon))
+}
+
+fn parse_alias_members(rest: &[u8]) -> Vec<Vec<u8>> {
+    if rest.is_empty() {
+        return Vec::new();
+    }
+
+    let mut members = Vec::new();
+    let mut start = 0;
+    let mut idx = 0;
+
+    while idx <= rest.len() {
+        if idx == rest.len() || rest[idx] == b',' {
+            let member = trim_ascii(&rest[start..idx]);
+            if !member.is_empty() {
+                if members.is_empty() {
+                    members.reserve(4);
+                }
+                members.push(member.to_vec());
+            }
+            start = idx + 1;
+        }
+        idx += 1;
+    }
+
+    members
 }
 
 fn trim_ascii(s: &[u8]) -> &[u8] {
@@ -187,6 +211,12 @@ mod tests {
     #[test]
     fn parse_filters_empty_members() {
         let e = parse_aliases_line(b"x: a,,,b,").unwrap();
+        assert_eq!(e.members, vec![b"a".to_vec(), b"b".to_vec()]);
+    }
+
+    #[test]
+    fn parse_filters_whitespace_only_members() {
+        let e = parse_aliases_line(b"x:  a,   ,\t,b  ,  ").unwrap();
         assert_eq!(e.members, vec![b"a".to_vec(), b"b".to_vec()]);
     }
 
