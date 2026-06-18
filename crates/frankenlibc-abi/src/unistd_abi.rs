@@ -2555,21 +2555,24 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_THREAD_STACK_MIN => libc::PTHREAD_STACK_MIN as libc::c_long,
         libc::_SC_THREAD_THREADS_MAX => -1i64 as libc::c_long, // unlimited
         libc::_SC_THREAD_DESTRUCTOR_ITERATIONS => 4,
-        libc::_SC_MONOTONIC_CLOCK => 1,
-        libc::_SC_CPUTIME => 1,
-        libc::_SC_THREAD_CPUTIME => 1,
-        libc::_SC_MAPPED_FILES => 1,
-        libc::_SC_MEMLOCK => 1,
-        libc::_SC_MEMLOCK_RANGE => 1,
-        libc::_SC_MEMORY_PROTECTION => 1,
-        libc::_SC_SEMAPHORES => 1,
-        libc::_SC_SHARED_MEMORY_OBJECTS => 1,
-        libc::_SC_SYNCHRONIZED_IO => 1,
-        libc::_SC_TIMERS => 1,
-        libc::_SC_REALTIME_SIGNALS => 1,
-        libc::_SC_PRIORITY_SCHEDULING => 1,
-        libc::_SC_FSYNC => 1,
-        libc::_SC_ASYNCHRONOUS_IO => 1,
+        // These _POSIX_* options report the SUPPORTED VERSION (200809L), not a
+        // boolean 1 — glibc returns 200809 for each (verified via `getconf -a`).
+        // Returning 1 broke callers that gate on `>= 200112L`. bd-mjct6o.
+        libc::_SC_MONOTONIC_CLOCK => 200809,
+        libc::_SC_CPUTIME => 200809,
+        libc::_SC_THREAD_CPUTIME => 200809,
+        libc::_SC_MAPPED_FILES => 200809,
+        libc::_SC_MEMLOCK => 200809,
+        libc::_SC_MEMLOCK_RANGE => 200809,
+        libc::_SC_MEMORY_PROTECTION => 200809,
+        libc::_SC_SEMAPHORES => 200809,
+        libc::_SC_SHARED_MEMORY_OBJECTS => 200809,
+        libc::_SC_SYNCHRONIZED_IO => 200809,
+        libc::_SC_TIMERS => 200809,
+        libc::_SC_REALTIME_SIGNALS => 200809,
+        libc::_SC_PRIORITY_SCHEDULING => 200809,
+        libc::_SC_FSYNC => 200809,
+        libc::_SC_ASYNCHRONOUS_IO => 200809,
         // POSIX feature flags and utility limits glibc reports as definite
         // constants; these were previously falling through to the EINVAL default
         // (returning -1 as if the key were unknown), diverging from glibc.
