@@ -20865,7 +20865,68 @@ pub unsafe extern "C" fn pututxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     };
 
     let record_size = std::mem::size_of::<libc::utmpx>();
-    let _ = syscall::sys_lseek(fd, 0, libc::SEEK_END);
+
+    // glibc pututxline overwrites an existing matching record in place (and
+    // only appends when there is no match) — fl previously always appended,
+    // accumulating duplicate entries. Mirror glibc's match rules: RUN_LVL/
+    // BOOT_TIME/OLD_TIME/NEW_TIME match by ut_type alone; the process types
+    // (INIT/LOGIN/USER/DEAD_PROCESS) match when BOTH records are process types
+    // AND ut_id is equal (__utmp_equal). glibc searches from the current shared
+    // position; fl has no shared utmp fd, so search from the start for the
+    // first match (same observable no-duplicates result). bd-mx8ikd.
+    let new_type = unsafe { (*ut).ut_type };
+    let new_id = unsafe { (*ut).ut_id };
+    let by_type_only = matches!(
+        new_type,
+        libc::RUN_LVL | libc::BOOT_TIME | libc::OLD_TIME | libc::NEW_TIME
+    );
+    let new_is_process = matches!(
+        new_type,
+        libc::INIT_PROCESS | libc::LOGIN_PROCESS | libc::USER_PROCESS | libc::DEAD_PROCESS
+    );
+
+    // Scan existing records for the first match.
+    let mut match_offset: Option<i64> = None;
+    if by_type_only || new_is_process {
+        let _ = syscall::sys_lseek(fd, 0, libc::SEEK_SET);
+        let mut offset: i64 = 0;
+        loop {
+            let mut rec: libc::utmpx = unsafe { std::mem::zeroed() };
+            match unsafe {
+                syscall::sys_read(fd, &mut rec as *mut libc::utmpx as *mut u8, record_size)
+            } {
+                Ok(n) if n as usize == record_size => {
+                    let ft = rec.ut_type;
+                    let matched = if by_type_only {
+                        ft == new_type
+                    } else {
+                        matches!(
+                            ft,
+                            libc::INIT_PROCESS
+                                | libc::LOGIN_PROCESS
+                                | libc::USER_PROCESS
+                                | libc::DEAD_PROCESS
+                        ) && rec.ut_id == new_id
+                    };
+                    if matched {
+                        match_offset = Some(offset);
+                        break;
+                    }
+                    offset += record_size as i64;
+                }
+                _ => break, // EOF or short read
+            }
+        }
+    }
+
+    match match_offset {
+        Some(off) => {
+            let _ = syscall::sys_lseek(fd, off, libc::SEEK_SET);
+        }
+        None => {
+            let _ = syscall::sys_lseek(fd, 0, libc::SEEK_END);
+        }
+    }
     let written = match unsafe { syscall::sys_write(fd, ut as *const u8, record_size) } {
         Ok(n) => n as isize,
         Err(_) => -1,
