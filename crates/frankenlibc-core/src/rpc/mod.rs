@@ -37,14 +37,51 @@ pub fn parse_rpc_line(line: &[u8]) -> Option<RpcEntry> {
         .split(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
         .filter(|f| !f.is_empty());
     let name = fields.next()?;
-    let num_str = core::str::from_utf8(fields.next()?).ok()?;
-    let number: i32 = num_str.parse().ok()?;
+    let number = parse_rpc_number(fields.next()?)?;
     let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
     Some(RpcEntry {
         name: name.to_vec(),
         number,
         aliases,
     })
+}
+
+fn parse_rpc_number(s: &[u8]) -> Option<i32> {
+    let (&first, rest) = s.split_first()?;
+    let (negative, digits) = match first {
+        b'-' => (true, rest),
+        b'+' => (false, rest),
+        _ => (false, s),
+    };
+    if digits.is_empty() {
+        return None;
+    }
+
+    let limit = if negative {
+        i32::MAX as i64 + 1
+    } else {
+        i32::MAX as i64
+    };
+    let mut value = 0i64;
+    for &byte in digits {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        value = value * 10 + i64::from(byte - b'0');
+        if value > limit {
+            return None;
+        }
+    }
+
+    if negative {
+        if value == limit {
+            Some(i32::MIN)
+        } else {
+            Some(-(value as i32))
+        }
+    } else {
+        Some(value as i32)
+    }
 }
 
 fn rpc_name_matches(entry: &RpcEntry, name: &[u8]) -> bool {
@@ -199,6 +236,24 @@ mod tests {
         // glibc uses `int r_number` so negative is technically representable.
         let e = parse_rpc_line(b"weird -1").unwrap();
         assert_eq!(e.number, -1);
+    }
+
+    #[test]
+    fn parse_accepts_signed_program_number_limits() {
+        assert_eq!(parse_rpc_line(b"max 2147483647").unwrap().number, i32::MAX);
+        assert_eq!(
+            parse_rpc_line(b"min -2147483648").unwrap().number,
+            i32::MIN
+        );
+        assert_eq!(parse_rpc_line(b"plus +123").unwrap().number, 123);
+    }
+
+    #[test]
+    fn parse_rejects_program_number_overflow_and_bare_sign() {
+        assert!(parse_rpc_line(b"too-big 2147483648").is_none());
+        assert!(parse_rpc_line(b"too-small -2147483649").is_none());
+        assert!(parse_rpc_line(b"bare-plus +").is_none());
+        assert!(parse_rpc_line(b"bare-minus -").is_none());
     }
 
     #[test]
