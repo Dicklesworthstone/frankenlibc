@@ -81,6 +81,11 @@ fn wordexp_arithmetic_matches_glibc() {
         "$((1 ? 2 ? 3 : 4 : 5))", "$((100 % 7 + 1))", "$((1<<2<<2))",
         // hex/octal mixed
         "$((0xff & 0x0f))", "$((010 + 0x10))",
+        // assignment / compound-assignment / increment / comma (bd-6a9tuc)
+        "$((aa=5))", "$((aa=5, aa*2))", "$((bb=3, ++bb))", "$((cc=10, cc--))",
+        "$((dd=10, --dd))", "$((ee=2, ee+=3))", "$((ff=10, ff%=3))",
+        "$((gg=1, gg<<=4))", "$((hh=5, hh++, hh))", "$((1,2,3))",
+        "$((ii=7, ii-=2, ii*=3))", "$((jj=0, jj||5))", "$((kk=8, kk>>=1))",
     ];
     for s in cases {
         let f = run_fl(s, 0);

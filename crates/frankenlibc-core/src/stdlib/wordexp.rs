@@ -305,11 +305,12 @@ pub fn expand_braced_param(
 /// Supports integer literals (decimal, `0x`/`0X` hex, leading-`0` octal),
 /// variables (bare `name`, `$name`, or `${name}` resolved via `lookup`; unset
 /// or empty is `0`, a non-numeric value is recursively evaluated), parentheses,
-/// the unary operators `+ - ! ~`, and the binary operators
-/// `* / % + - << >> < <= > >= == != & ^ | && ||` plus the ternary `?:`, with C
-/// precedence. Arithmetic is performed in wrapping `i64` (POSIX `intmax_t`).
-/// `&&`/`||`/`?:` short-circuit. Division/modulo by zero and any malformed
-/// expression yield [`ExpandError::Syntax`] (glibc's `WRDE_SYNTAX`).
+/// the unary operators `+ - ! ~`, pre/post increment/decrement (`++`/`--`), the
+/// binary operators `* / % + - << >> < <= > >= == != & ^ | && ||`, the ternary
+/// `?:`, assignment (`=` and the compound `+= -= *= /= %= <<= >>= &= ^= |=`),
+/// and the comma operator, with C precedence. Arithmetic is wrapping `i64`
+/// (POSIX `intmax_t`); `&&`/`||`/`?:` short-circuit. Division/modulo by zero and
+/// any malformed expression yield [`ExpandError::Syntax`] (glibc `WRDE_SYNTAX`).
 pub fn eval_arith<F>(expr: &str, lookup: &F) -> Result<i64, ExpandError>
 where
     F: Fn(&str) -> Option<String>,
@@ -324,7 +325,11 @@ where
     if p.pos != p.toks.len() {
         return Err(ExpandError::Syntax);
     }
-    arith_eval(&node, lookup, 0, true)
+    // Assignment targets live in this per-expression map (wordexp runs in a
+    // subshell, so they are not observable to the caller — only within the
+    // expression, e.g. `x = 5, x * 2`).
+    let mut vars = std::collections::HashMap::new();
+    arith_eval(&node, lookup, &mut vars, 0)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -335,6 +340,10 @@ enum ATok {
     Shl, Shr, Lt, Le, Gt, Ge, Eq, Ne,
     Amp, Caret, Pipe, AmpAmp, PipePipe,
     Not, Tilde, Quest, Colon, LParen, RParen,
+    // Assignment (bd-6a9tuc): plain `=` and the compound forms; `Assign(op)`
+    // carries the underlying binary op for compound assignment (`None` = plain).
+    Assign(Option<Box<ATok>>),
+    Incr, Decr, Comma,
 }
 
 fn arith_parse_num(b: &[u8], start: usize) -> Result<(i64, usize), ExpandError> {
@@ -386,41 +395,66 @@ fn arith_tokenize(s: &str) -> Result<Vec<ATok>, ExpandError> {
             continue;
         }
         match c {
-            b'+' => { out.push(ATok::Plus); i += 1; }
-            b'-' => { out.push(ATok::Minus); i += 1; }
-            b'*' => { out.push(ATok::Star); i += 1; }
-            b'/' => { out.push(ATok::Slash); i += 1; }
-            b'%' => { out.push(ATok::Percent); i += 1; }
+            b'+' => {
+                if b.get(i + 1) == Some(&b'+') { out.push(ATok::Incr); i += 2; }
+                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Plus)))); i += 2; }
+                else { out.push(ATok::Plus); i += 1; }
+            }
+            b'-' => {
+                if b.get(i + 1) == Some(&b'-') { out.push(ATok::Decr); i += 2; }
+                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Minus)))); i += 2; }
+                else { out.push(ATok::Minus); i += 1; }
+            }
+            b'*' => {
+                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Star)))); i += 2; }
+                else { out.push(ATok::Star); i += 1; }
+            }
+            b'/' => {
+                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Slash)))); i += 2; }
+                else { out.push(ATok::Slash); i += 1; }
+            }
+            b'%' => {
+                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Percent)))); i += 2; }
+                else { out.push(ATok::Percent); i += 1; }
+            }
             b'~' => { out.push(ATok::Tilde); i += 1; }
             b'(' => { out.push(ATok::LParen); i += 1; }
             b')' => { out.push(ATok::RParen); i += 1; }
-            b'^' => { out.push(ATok::Caret); i += 1; }
+            b',' => { out.push(ATok::Comma); i += 1; }
+            b'^' => {
+                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Caret)))); i += 2; }
+                else { out.push(ATok::Caret); i += 1; }
+            }
             b'?' => { out.push(ATok::Quest); i += 1; }
             b':' => { out.push(ATok::Colon); i += 1; }
             b'<' => {
-                if i + 1 < b.len() && b[i + 1] == b'<' { out.push(ATok::Shl); i += 2; }
-                else if i + 1 < b.len() && b[i + 1] == b'=' { out.push(ATok::Le); i += 2; }
+                if b.get(i + 1) == Some(&b'<') && b.get(i + 2) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Shl)))); i += 3; }
+                else if b.get(i + 1) == Some(&b'<') { out.push(ATok::Shl); i += 2; }
+                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Le); i += 2; }
                 else { out.push(ATok::Lt); i += 1; }
             }
             b'>' => {
-                if i + 1 < b.len() && b[i + 1] == b'>' { out.push(ATok::Shr); i += 2; }
-                else if i + 1 < b.len() && b[i + 1] == b'=' { out.push(ATok::Ge); i += 2; }
+                if b.get(i + 1) == Some(&b'>') && b.get(i + 2) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Shr)))); i += 3; }
+                else if b.get(i + 1) == Some(&b'>') { out.push(ATok::Shr); i += 2; }
+                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Ge); i += 2; }
                 else { out.push(ATok::Gt); i += 1; }
             }
             b'=' => {
-                if i + 1 < b.len() && b[i + 1] == b'=' { out.push(ATok::Eq); i += 2; }
-                else { return Err(ExpandError::Syntax); } // bare `=` (assignment) unsupported
+                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Eq); i += 2; }
+                else { out.push(ATok::Assign(None)); i += 1; }
             }
             b'!' => {
-                if i + 1 < b.len() && b[i + 1] == b'=' { out.push(ATok::Ne); i += 2; }
+                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Ne); i += 2; }
                 else { out.push(ATok::Not); i += 1; }
             }
             b'&' => {
-                if i + 1 < b.len() && b[i + 1] == b'&' { out.push(ATok::AmpAmp); i += 2; }
+                if b.get(i + 1) == Some(&b'&') { out.push(ATok::AmpAmp); i += 2; }
+                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Amp)))); i += 2; }
                 else { out.push(ATok::Amp); i += 1; }
             }
             b'|' => {
-                if i + 1 < b.len() && b[i + 1] == b'|' { out.push(ATok::PipePipe); i += 2; }
+                if b.get(i + 1) == Some(&b'|') { out.push(ATok::PipePipe); i += 2; }
+                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Pipe)))); i += 2; }
                 else { out.push(ATok::Pipe); i += 1; }
             }
             b'0'..=b'9' => {
@@ -472,6 +506,14 @@ enum ANode {
     Unary(ATok, Box<ANode>),
     Bin(ATok, Box<ANode>, Box<ANode>),
     Ternary(Box<ANode>, Box<ANode>, Box<ANode>),
+    /// `name (op)= rhs` — assignment; `op` is `None` for plain `=` or the
+    /// underlying binary op for compound assignment.
+    Assign(String, Option<ATok>, Box<ANode>),
+    /// `lhs , rhs` — evaluate both, value is `rhs`.
+    Comma(Box<ANode>, Box<ANode>),
+    /// `++name`/`--name` (prefix=true) or `name++`/`name--` (prefix=false);
+    /// `delta` is +1 or -1.
+    IncrDec(String, i64, bool),
 }
 
 struct ArithParser<'a> {
@@ -491,15 +533,38 @@ impl ArithParser<'_> {
             false
         }
     }
-    // expr := ternary
+    // expr := comma (lowest precedence) > assignment > ternary > ...
     fn parse_expr(&mut self) -> Result<ANode, ExpandError> {
+        self.parse_comma()
+    }
+    fn parse_comma(&mut self) -> Result<ANode, ExpandError> {
+        let mut lhs = self.parse_assign()?;
+        while self.eat(&ATok::Comma) {
+            let rhs = self.parse_assign()?;
+            lhs = ANode::Comma(Box::new(lhs), Box::new(rhs));
+        }
+        Ok(lhs)
+    }
+    fn parse_assign(&mut self) -> Result<ANode, ExpandError> {
+        // Assignment is `NAME (op)= rhs` (right-associative). It requires a bare
+        // variable lvalue immediately followed by an assignment token.
+        if let Some(ATok::Var(name)) = self.peek().cloned()
+            && let Some(ATok::Assign(op)) = self.toks.get(self.pos + 1).cloned()
+        {
+            self.pos += 2;
+            let rhs = self.parse_assign()?;
+            return Ok(ANode::Assign(name, op.map(|b| *b), Box::new(rhs)));
+        }
+        self.parse_ternary()
+    }
+    fn parse_ternary(&mut self) -> Result<ANode, ExpandError> {
         let cond = self.parse_lor()?;
         if self.eat(&ATok::Quest) {
-            let then = self.parse_expr()?;
+            let then = self.parse_assign()?;
             if !self.eat(&ATok::Colon) {
                 return Err(ExpandError::Syntax);
             }
-            let els = self.parse_expr()?;
+            let els = self.parse_assign()?;
             Ok(ANode::Ternary(Box::new(cond), Box::new(then), Box::new(els)))
         } else {
             Ok(cond)
@@ -562,13 +627,32 @@ impl ArithParser<'_> {
             Some(ATok::Minus) => { self.pos += 1; Ok(ANode::Unary(ATok::Minus, Box::new(self.parse_unary()?))) }
             Some(ATok::Not) => { self.pos += 1; Ok(ANode::Unary(ATok::Not, Box::new(self.parse_unary()?))) }
             Some(ATok::Tilde) => { self.pos += 1; Ok(ANode::Unary(ATok::Tilde, Box::new(self.parse_unary()?))) }
+            Some(ATok::Incr) | Some(ATok::Decr) => {
+                let delta = if matches!(self.peek(), Some(ATok::Incr)) { 1 } else { -1 };
+                self.pos += 1;
+                if let Some(ATok::Var(name)) = self.peek().cloned() {
+                    self.pos += 1;
+                    Ok(ANode::IncrDec(name, delta, true))
+                } else {
+                    Err(ExpandError::Syntax)
+                }
+            }
             _ => self.parse_primary(),
         }
     }
     fn parse_primary(&mut self) -> Result<ANode, ExpandError> {
         match self.peek().cloned() {
             Some(ATok::Num(n)) => { self.pos += 1; Ok(ANode::Num(n)) }
-            Some(ATok::Var(name)) => { self.pos += 1; Ok(ANode::Var(name)) }
+            Some(ATok::Var(name)) => {
+                self.pos += 1;
+                if matches!(self.peek(), Some(ATok::Incr) | Some(ATok::Decr)) {
+                    let delta = if matches!(self.peek(), Some(ATok::Incr)) { 1 } else { -1 };
+                    self.pos += 1;
+                    Ok(ANode::IncrDec(name, delta, false))
+                } else {
+                    Ok(ANode::Var(name))
+                }
+            }
             Some(ATok::LParen) => {
                 self.pos += 1;
                 let e = self.parse_expr()?;
@@ -582,26 +666,79 @@ impl ArithParser<'_> {
     }
 }
 
-fn arith_eval<F>(node: &ANode, lookup: &F, depth: u32, live: bool) -> Result<i64, ExpandError>
+/// Read a variable's integer value: an assignment made earlier in this
+/// expression (in `vars`) wins; otherwise the environment value via `lookup`
+/// (unset/empty = 0, a non-numeric value is recursively evaluated).
+fn read_var<F>(
+    name: &str,
+    lookup: &F,
+    vars: &std::collections::HashMap<String, i64>,
+    depth: u32,
+) -> Result<i64, ExpandError>
 where
     F: Fn(&str) -> Option<String>,
 {
-    if depth > 32 {
+    if let Some(v) = vars.get(name) {
+        return Ok(*v);
+    }
+    match lookup(name) {
+        None => Ok(0),
+        Some(v) if v.trim().is_empty() => Ok(0),
+        Some(v) => eval_arith_depth(v.trim(), lookup, depth + 1),
+    }
+}
+
+/// Apply a non-short-circuit binary operator in wrapping i64. Division or
+/// modulo by zero is a syntax error (glibc's WRDE_SYNTAX).
+fn apply_bin(op: &ATok, lv: i64, rv: i64) -> Result<i64, ExpandError> {
+    Ok(match op {
+        ATok::Star => lv.wrapping_mul(rv),
+        ATok::Slash => {
+            if rv == 0 {
+                return Err(ExpandError::Syntax);
+            }
+            lv.wrapping_div(rv)
+        }
+        ATok::Percent => {
+            if rv == 0 {
+                return Err(ExpandError::Syntax);
+            }
+            lv.wrapping_rem(rv)
+        }
+        ATok::Plus => lv.wrapping_add(rv),
+        ATok::Minus => lv.wrapping_sub(rv),
+        ATok::Shl => lv.wrapping_shl(rv as u32),
+        ATok::Shr => lv.wrapping_shr(rv as u32),
+        ATok::Lt => (lv < rv) as i64,
+        ATok::Le => (lv <= rv) as i64,
+        ATok::Gt => (lv > rv) as i64,
+        ATok::Ge => (lv >= rv) as i64,
+        ATok::Eq => (lv == rv) as i64,
+        ATok::Ne => (lv != rv) as i64,
+        ATok::Amp => lv & rv,
+        ATok::Caret => lv ^ rv,
+        ATok::Pipe => lv | rv,
+        _ => return Err(ExpandError::Syntax),
+    })
+}
+
+fn arith_eval<F>(
+    node: &ANode,
+    lookup: &F,
+    vars: &mut std::collections::HashMap<String, i64>,
+    depth: u32,
+) -> Result<i64, ExpandError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if depth > 64 {
         return Err(ExpandError::Syntax);
     }
     match node {
         ANode::Num(n) => Ok(*n),
-        ANode::Var(name) => match lookup(name) {
-            None => Ok(0),
-            Some(v) if v.trim().is_empty() => Ok(0),
-            Some(v) => {
-                // A variable's value is itself an arithmetic expression
-                // (commonly just an integer literal).
-                eval_arith_depth(v.trim(), lookup, depth + 1)
-            }
-        },
+        ANode::Var(name) => read_var(name, lookup, vars, depth),
         ANode::Unary(op, e) => {
-            let v = arith_eval(e, lookup, depth + 1, live)?;
+            let v = arith_eval(e, lookup, vars, depth + 1)?;
             Ok(match op {
                 ATok::Minus => v.wrapping_neg(),
                 ATok::Not => (v == 0) as i64,
@@ -610,69 +747,58 @@ where
             })
         }
         ANode::Ternary(c, t, f) => {
-            let cv = arith_eval(c, lookup, depth + 1, live)?;
+            // Only the taken branch is evaluated (no dead-branch side effects).
+            let cv = arith_eval(c, lookup, vars, depth + 1)?;
             if cv != 0 {
-                arith_eval(t, lookup, depth + 1, live)
+                arith_eval(t, lookup, vars, depth + 1)
             } else {
-                arith_eval(f, lookup, depth + 1, live)
+                arith_eval(f, lookup, vars, depth + 1)
             }
         }
         ANode::Bin(op, l, r) => {
-            // Short-circuit logical operators.
+            // Short-circuit logical operators: the RHS is not evaluated when the
+            // result is already determined (so its side effects don't occur).
             if matches!(op, ATok::AmpAmp) {
-                let lv = arith_eval(l, lookup, depth + 1, live)?;
+                let lv = arith_eval(l, lookup, vars, depth + 1)?;
                 if lv == 0 {
-                    // RHS is dead: parse-checked already, don't evaluate.
-                    let _ = arith_eval(r, lookup, depth + 1, false);
                     return Ok(0);
                 }
-                let rv = arith_eval(r, lookup, depth + 1, live)?;
+                let rv = arith_eval(r, lookup, vars, depth + 1)?;
                 return Ok((rv != 0) as i64);
             }
             if matches!(op, ATok::PipePipe) {
-                let lv = arith_eval(l, lookup, depth + 1, live)?;
+                let lv = arith_eval(l, lookup, vars, depth + 1)?;
                 if lv != 0 {
-                    let _ = arith_eval(r, lookup, depth + 1, false);
                     return Ok(1);
                 }
-                let rv = arith_eval(r, lookup, depth + 1, live)?;
+                let rv = arith_eval(r, lookup, vars, depth + 1)?;
                 return Ok((rv != 0) as i64);
             }
-            let lv = arith_eval(l, lookup, depth + 1, live)?;
-            let rv = arith_eval(r, lookup, depth + 1, live)?;
-            Ok(match op {
-                ATok::Star => lv.wrapping_mul(rv),
-                ATok::Slash => {
-                    if rv == 0 {
-                        if live { return Err(ExpandError::Syntax); }
-                        0
-                    } else {
-                        lv.wrapping_div(rv)
-                    }
+            let lv = arith_eval(l, lookup, vars, depth + 1)?;
+            let rv = arith_eval(r, lookup, vars, depth + 1)?;
+            apply_bin(op, lv, rv)
+        }
+        ANode::Assign(name, op, rhs) => {
+            let rv = arith_eval(rhs, lookup, vars, depth + 1)?;
+            let new = match op {
+                None => rv,
+                Some(binop) => {
+                    let cur = read_var(name, lookup, vars, depth)?;
+                    apply_bin(binop, cur, rv)?
                 }
-                ATok::Percent => {
-                    if rv == 0 {
-                        if live { return Err(ExpandError::Syntax); }
-                        0
-                    } else {
-                        lv.wrapping_rem(rv)
-                    }
-                }
-                ATok::Plus => lv.wrapping_add(rv),
-                ATok::Minus => lv.wrapping_sub(rv),
-                ATok::Shl => lv.wrapping_shl(rv as u32),
-                ATok::Shr => lv.wrapping_shr(rv as u32),
-                ATok::Lt => (lv < rv) as i64,
-                ATok::Le => (lv <= rv) as i64,
-                ATok::Gt => (lv > rv) as i64,
-                ATok::Ge => (lv >= rv) as i64,
-                ATok::Eq => (lv == rv) as i64,
-                ATok::Ne => (lv != rv) as i64,
-                ATok::Amp => lv & rv,
-                ATok::Caret => lv ^ rv,
-                ATok::Pipe => lv | rv,
-                _ => return Err(ExpandError::Syntax),
-            })
+            };
+            vars.insert(name.clone(), new);
+            Ok(new)
+        }
+        ANode::Comma(l, r) => {
+            arith_eval(l, lookup, vars, depth + 1)?;
+            arith_eval(r, lookup, vars, depth + 1)
+        }
+        ANode::IncrDec(name, delta, prefix) => {
+            let cur = read_var(name, lookup, vars, depth)?;
+            let new = cur.wrapping_add(*delta);
+            vars.insert(name.clone(), new);
+            Ok(if *prefix { new } else { cur })
         }
     }
 }
@@ -681,7 +807,7 @@ fn eval_arith_depth<F>(expr: &str, lookup: &F, depth: u32) -> Result<i64, Expand
 where
     F: Fn(&str) -> Option<String>,
 {
-    if depth > 32 {
+    if depth > 64 {
         return Err(ExpandError::Syntax);
     }
     let toks = arith_tokenize(expr)?;
@@ -690,7 +816,9 @@ where
     if p.pos != p.toks.len() {
         return Err(ExpandError::Syntax);
     }
-    arith_eval(&node, lookup, depth, true)
+    // A recursively-evaluated variable value gets its own assignment scope.
+    let mut vars = std::collections::HashMap::new();
+    arith_eval(&node, lookup, &mut vars, depth)
 }
 
 #[cfg(test)]
