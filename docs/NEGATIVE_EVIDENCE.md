@@ -179,6 +179,32 @@ which is a broad membrane-core refactor — filed thinking on bd-f874go, not
 attempted unilaterally. **Net: the deployed allocator is ~2× the bare host on a
 busy heap, and that 2× has no single fixable hotspot.**
 
+## 2026-06-19 `bd-djtvqq` getc_unlocked "1.8× slower" is a Rust-bench LTO-inlining ARTIFACT, not a real gap (BlackThrush)
+
+bd-djtvqq claimed `getc_unlocked` ~1.8× slower than `fgetc` (9.56 ms vs 5.22 ms).
+Reproduced on `ovh-a` `stdio_glibc_baseline_bench` (4 KiB fmemopen sweep), HEAD:
+`fgetc`/fl **5.39 ms**, `fgetc_unlocked`/fl **9.33 ms**, and crucially
+`fgetc_unlocked`/**glibc 9.33 ms** (a tie), `fgetc`/glibc 9.37 ms.
+
+`getc_unlocked → getc → fgetc` and `fgetc_unlocked → fgetc` are all pure
+trampolines. Hypothesis: the extra `#[no_mangle]` symbol hops cost a PLT thunk
+per byte. **Tested + DISPROVEN:** extracted the shared body into a private
+`#[inline] fgetc_impl` and routed every alias through a *direct* (non-PLT) call —
+conformance GREEN (stdio_unlocked_io/query, fmemopen, fread all pass) but the
+bench was **unchanged** (`fgetc_unlocked`/fl still 9.38 ms). So the call-hop/PLT
+cost is negligible. Reverted (neutral, pure churn).
+
+**Real finding:** since both fl funcs are now identical code yet measure 5.48 vs
+9.38 ms, the difference is **thin-LTO inlining luck** — the bench's `fl::fgetc`
+call site gets cross-crate-inlined+optimized into the loop (5.4 ms), while
+`fl::fgetc_unlocked` is left as a symbol call (9.4 ms). The glibc arms (extern
+symbol, never inlinable) are both ~9.3 ms. **Implication:** for realistic,
+non-inlinable C callers fl `getc`/`fgetc` is at **parity with glibc (~9.3 ms)**,
+NOT 1.7× faster — the `fgetc` "win" (bd-2jgvp9) and the `getc_unlocked` "loss"
+(bd-djtvqq) are the SAME artifact with opposite sign. Corroborates this file's
+standing caveat that Rust-to-Rust benches inline fl but call glibc `extern`,
+systematically flattering fl. bd-djtvqq is not a real gap; downgraded.
+
 ## 2026-06-19 `bd-4crkqx` aliases scanner measured reject
 
 Focused gauntlet target: the code-first single-pass `/etc/aliases` member
