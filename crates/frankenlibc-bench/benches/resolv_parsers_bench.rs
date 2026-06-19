@@ -130,6 +130,7 @@ lo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n\
 eth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
 const RESOLV_CONF_OPTIONS: &[u8] =
     b"options ndots:4 timeout:2 attempts:3 rotate use-vc\nnameserver 1.1.1.1\n";
+const RESOLVER_QUERY_NAME: &str = "api.service.prod.cluster.example.com";
 const NETGROUP_CONTENT: &[u8] = b"# /etc/netgroup snippet\n\
 admins (host1,alice,example.com) (host2,bob,example.com)\n\
 ops (host3,charlie,example.com)\n\
@@ -281,6 +282,19 @@ fn bench_parse_resolv_conf_options() {
     );
 }
 
+fn bench_resolver_should_try_absolute_first() {
+    let config = resolv::ResolverConfig::parse(b"options ndots:2\n");
+    measure(
+        "resolver_should_try_absolute_first_typical",
+        SAMPLES,
+        ITERS_PER_SAMPLE,
+        || {
+            let r = config.should_try_absolute_first(black_box(RESOLVER_QUERY_NAME));
+            black_box(r);
+        },
+    );
+}
+
 fn bench_parse_netgroup_triples() {
     measure(
         "parse_netgroup_triples_match",
@@ -307,5 +321,6 @@ fn main() {
     bench_parse_maps_line();
     bench_parse_proc_net_route_has_ipv4();
     bench_parse_resolv_conf_options();
+    bench_resolver_should_try_absolute_first();
     bench_parse_netgroup_triples();
 }

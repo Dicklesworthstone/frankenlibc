@@ -210,8 +210,20 @@ impl ResolverConfig {
     ///
     /// Returns true if the name has >= ndots dots.
     pub fn should_try_absolute_first(&self, name: &str) -> bool {
-        let dots = name.bytes().filter(|&b| b == b'.').count();
-        dots >= self.ndots as usize
+        if self.ndots == 0 {
+            return true;
+        }
+
+        let mut dots = 0u32;
+        for byte in name.bytes() {
+            if byte == b'.' {
+                dots += 1;
+                if dots >= self.ndots {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -466,6 +478,18 @@ options ndots:2 timeout:3 attempts:2 rotate
 
         // Two dots - try absolute first
         assert!(config.should_try_absolute_first("host.example.com"));
+    }
+
+    #[test]
+    fn test_should_try_absolute_first_early_exit_edges() {
+        let config = ResolverConfig::parse(b"options ndots:0\n");
+        assert!(config.should_try_absolute_first("localhost"));
+        assert!(config.should_try_absolute_first(""));
+
+        let config = ResolverConfig::parse(b"options ndots:2\n");
+        assert!(config.should_try_absolute_first("api.service.prod.example.com"));
+        assert!(!config.should_try_absolute_first("api.service"));
+        assert!(!config.should_try_absolute_first("api-service-prod-example-com"));
     }
 
     #[test]
