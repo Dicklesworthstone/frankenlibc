@@ -1112,6 +1112,25 @@ unsafe fn scan_c_string_for_byte(
                 i += 1;
             }
             loop {
+                // Wide 32-byte portable-SIMD scan for `target` OR NUL (AVX width,
+                // like glibc strchr), taken only when the 32-byte window stays in
+                // the current page (offset <= 0x1000-32). NUL/target-free panels
+                // advance 32; a panel containing either drops to the 8-byte SWAR
+                // resolve below, so the returned index is unchanged. Mirrors the
+                // NUL-only page-safe scan in `scan_c_str_len`.
+                if (p as usize + i) & 0xFFF <= 0x1000 - 32 {
+                    use core::simd::Simd;
+                    use core::simd::cmp::SimdPartialEq;
+                    // SAFETY: the 32-byte window stays within the current mapped page.
+                    let v = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i), 32)
+                    });
+                    let hits = v.simd_eq(Simd::splat(0)) | v.simd_eq(Simd::splat(target));
+                    if !hits.any() {
+                        i += 32;
+                        continue;
+                    }
+                }
                 // SAFETY: p+i is 8-aligned, so this aligned 8-byte read stays inside
                 // the current page; the string is NUL-terminated within a mapped page.
                 let w = unsafe { *p.add(i).cast::<u64>() };
@@ -8667,7 +8686,11 @@ pub unsafe extern "C" fn __strtok_r(
 /// glibc-internal `__strerror_r` — the GNU `char *`-returning alias of
 /// `strerror_r` (NOT the XSI int variant, which is `__xpg_strerror_r`).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __strerror_r(errnum: c_int, buf: *mut c_char, buflen: usize) -> *mut c_char {
+pub unsafe extern "C" fn __strerror_r(
+    errnum: c_int,
+    buf: *mut c_char,
+    buflen: usize,
+) -> *mut c_char {
     unsafe { strerror_r(errnum, buf, buflen) }
 }
 

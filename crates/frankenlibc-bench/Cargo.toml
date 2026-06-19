@@ -93,6 +93,11 @@ name = "exp2_f64_glibc_bench"
 harness = false
 
 [[bench]]
+name = "strchr_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
 name = "elimination_bench"
 harness = false
 
