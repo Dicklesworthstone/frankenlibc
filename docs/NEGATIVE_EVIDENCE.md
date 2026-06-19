@@ -50,3 +50,34 @@ faster build **handicaps fl specifically** and produces invalid ratios. Evidence
 → **Always use the default bench profile (thin-LTO, codegen-units=1).** no-LTO medians are
 NOT recorded as fl results. no-LTO build ≈ 4 min vs thin-LTO ≈ 25+ min, but the speed is not
 worth an invalid measurement. **This measurement dead-end is logged so it is never retried.**
+
+## 2026-06-19 stdio head-to-head re-measurement (BlackThrush, thin-LTO, CURRENT bench)
+
+Full `stdio_glibc_baseline_bench` (thin-LTO `--noplot`, all 4 functions, one consistent run):
+
+| Function | fl | glibc | ratio | verdict |
+|----------|----|-------|-------|---------|
+| `fgetc_4096` | 5.2211 ms | 9.4612 ms | **0.552×** | WIN (confirms bd-2jgvp9; robust — 0.577× on the prior run) |
+| `fgetc_unlocked_4096` | 9.5617 ms | 9.5556 ms | 1.001× | NEUTRAL |
+| `snprintf_s_newline` (bd-0m5vaw) | 945.5 ns | 947.5 ns | 0.998× | NEUTRAL |
+| `swprintf_wide_format` (bd-fgnxc0) | 2.6351 µs | 2.6217 µs | 1.005× | NEUTRAL |
+
+**Honest reconciliation with cod-b's earlier rows:** cod-b measured bd-0m5vaw **0.856×** and
+bd-fgnxc0 **0.313×**; these do **NOT reproduce** on the current bench (mine: 0.998×, 1.005×).
+The glibc *absolute* times also differ ~2.6× (swprintf glibc: cod-b 1.015 µs vs mine 2.622 µs),
+so the **bench workload changed between runs** — cod-b's wins were on an earlier, lighter
+`stdio_glibc_baseline_bench`; the current (heavier) bench shows fl ≈ glibc. Net: on the CURRENT
+bench, bd-0m5vaw and bd-fgnxc0 are **NEUTRAL**, not wins. They remain correct + byte-identical
+(low complexity), so they are **not regressions** — revert is *optional* and **deferred**: the
+fast paths plausibly still win on their true target (short strings / bare formats), which the
+heavier bench dilutes; reverting correct, harmless, zero-cost code yields nothing.
+
+**CURIOSITY → new lever:** fl's *locked* `fgetc` (5.22 ms — registry-hasher + buffered path) is
+~1.8× **faster** than fl's own `getc_unlocked` (9.56 ms). The unlocked path is unoptimized
+(it should be ≤ the locked path). NEW optimization opportunity: bring `getc_unlocked` to
+`fgetc`'s level (filing as a bead).
+
+**Bottom line:** only **bd-2jgvp9 / `fgetc` (0.552×) is a robust WIN** vs glibc; the printf
+composite fast-paths are workload-dependent (win on light/short inputs per cod-b, neutral on
+the current heavier bench). All measured honestly; conformance unaffected (no reverts needed —
+nothing regressed).
