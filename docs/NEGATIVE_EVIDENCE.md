@@ -54,7 +54,46 @@ retried and real wins are confirmed with numbers.
 | 2026-06-19 | strchr **length-escalated** folded-128 tier (`bd-4rxozm`) | `strchr_glibc_bench` 256 KiB (vs committed 32B, ~identical glibc control) | 2537 ns (escalated) | 3980 ns (32B) | 0.64x | **WIN** | The folded reject's retry predicate, realized: gate the folded 4×32=128B tier on `i >= 128` so short strings terminate in the 32B/SWAR tiers and never pay it. **1.35–1.57x faster than the committed 32B at large sizes** (16K 1.35x, 64K 1.41x, 256K 1.57x) with **no short-string regression** (64 B 5.93x vs 5.80x = in-noise). fl/glibc at 256K 1.88x→**1.20x** (near parity), 64K 1.79x→1.26x. Conformance green (strchr/strchrnul gates); page-safety re-proven (`strchr_guard_page_safety`, folded tier exercised near the boundary). Supersedes the reverted un-gated folded row above. |
 | 2026-06-19 | strlen folded-128 tier on `scan_c_string` (`bd-4ibo52`) | `strlen_glibc_bench` (folded vs 32B, ~identical glibc control) | 567/1451/4871 ns (folded) | 569/1433/4805 ns (32B) | ~1.00x | **NEUTRAL → REVERTED** | The escalated folded tier that won 1.35–1.57x for strchr is **NEUTRAL for strlen** (16K/64K/256K all within noise) — reverted. Unlike strchr's 2-comparison panel, strlen's single-NUL-comparison scan is already reduction-light, and the deployed strlen cost is dominated elsewhere. **Gap finding (kept the bench):** deployed `string_abi::strlen` is **~2.1x slower than glibc at 256K** (4805 vs 2312 ns) and **~35x at 1 KiB** (288 vs 8 ns) — the small-size cost is per-call membrane + `select_string_simd_dispatch` overhead (architectural, same class as deployed-malloc 50x / strchr small-size), the large-size ~2x is 32B portable_simd vs glibc's wider/unrolled AVX. Not closable by folding. New reusable `strlen_glibc_bench`; guard-page test extended to cover strlen. |
 | 2026-06-19 | strlen skip dead `select_string_simd_dispatch` certify (`bd-strlen-dead-dispatch-certify`) | `strlen_glibc_bench` (no-dispatch vs dispatch, same glibc control) | 31.7/288.1/548 ns (no-disp) | 31.9/288.5/569 ns (disp) | ~1.00x | **NEUTRAL → REVERTED** | The strlen path computes `select_string_simd_dispatch` + a Clifford-isomorphism certification whose `lane_bytes` is **provably discarded** by `raw_lane_strlen_bytes` — looked like expensive dead computation. Removing it is **behavior-neutral** (all strlen gates green) but **perf-NEUTRAL**: the certify is *cheap* (std-cached `is_x86_feature_detected` + a fixed `len_hint=64` proof). The real ~30ns/call overhead (vs glibc 2.5ns) is `entrypoint_scope` tracing-span creation + `known_remaining` lookup — the membrane entrypoint machinery, architectural (bd-deployed-malloc-membrane-50x class). Reverted (no gain + drops the dispatch observability log). Corrects an earlier over-eager hypothesis that the certify was the bottleneck. |
+| 2026-06-19 | strlen **hoist fast path above `entrypoint_scope`** (entrypoint-tax lever, BlackThrush) | `strlen_glibc_bench` 64 B, same-worker A/B (`ovh-a`, mt=4, thin-LTO) | 27.045 ns (cand) | 27.112 ns (HEAD) | **1.00x** (fl/glibc 12.49x vs 12.57x) | **NEUTRAL → not landed** | Directly tests the line-above hypothesis. The strict-mode raw-scan fast path returns **without ever reading** the `TraceContext` that `entrypoint_scope` installs (only hardened-mode `decide`/PCC paths consult it; `known_remaining`/`select_string_simd_dispatch` don't touch it), so hoisting it above the scope provably elides a TLS trace-seq RMW + 24-arm symbol str-match + two TLS writes per call — **behavior-identical**. Measured **perfectly neutral** (Δp50 = 0.07 ns, fl/glibc ratio unchanged). **Confirms** `entrypoint_scope` is NOT the strlen bottleneck (consistent with the "membrane ~8–11 ns/call" correction below). Reverted; do not retry per-symbol entrypoint hoists as a strlen lever. |
+| 2026-06-19 | **lock-free `fallback_remaining`/`fallback_size` reads** (`known_remaining` lever, BlackThrush) | `strlen_glibc_bench` 64 B, same-worker A/B (`ovh-a`, mt=4, thin-LTO) | 39.329 ns (cand, fl/glibc **12.30x**) | 27.112 ns (HEAD, fl/glibc **12.57x**) | **0.98x** ratio (neutral; abs. run was ~48% noisier — glibc 3.20 vs 2.16 ns same-run) | **NEUTRAL → REVERTED** | Tests the other half of the line-above hypothesis. The read probes never mutate the table, so they don't need the writer spinlock: inserts publish `SIZES`(Relaxed)→`PTRS`(Release), so an `Acquire` load of `PTRS` that sees a published key also sees its `SIZES` — **sound** lock elision, distinct from the rejected per-slot-CAS *insert* rewrite (writers keep the lock). Removes an uncontended CAS+release-store from every `known_remaining` read (string ops + free). **Single-thread NEUTRAL** (ratio 0.98, within noise); the uncontended spinlock is too cheap to see here. A multi-thread reader-contention benefit is plausible but **unmeasured**, so reverted under the MEASURED discipline. Retry only with a multi-threaded contention bench. |
 <!-- rows appended as benches complete -->
+
+## 2026-06-19 deployed calloc/malloc scorecard refresh + small/large size anomaly (BlackThrush)
+
+Same-worker `ovh-a` thin-LTO `calloc_glibc_bench` at HEAD (mt=3), p50 ns/op
+(`fl` = deployed `calloc(1,n)+free`; `fl_old` = `malloc(n)+memset+free`; `glibc`
+via `dlmopen` isolated namespace):
+
+| size | fl (calloc) | fl_old (malloc) | glibc | fl/glibc |
+|---|---|---|---|---|
+| 16 B | 39.9 | **3452.9** | 4.8 | 8.3x |
+| 256 B | 1195.6 | 1197.3 | 16.7 | 71.6x |
+| 4096 B | 1233.8 | 1227.7 | 42.5 | 29.0x |
+| 65536 B | 1664.5 | — | — | — |
+
+Two **non-fixed-cost anomalies** that contradict a "per-call membrane tax"
+explanation (the membrane is ~8–11 ns/call per the correction below):
+
+1. **`fl` calloc jumps 39.9 ns → 1195.6 ns between 16 B and 256 B** (≈30x for a
+   16x size step) while glibc moves only 4.8 → 16.7 ns. The fl-specific ~1155 ns
+   penalty appears *above ~16 B* and is size-independent thereafter — the shape
+   of an open-addressing **probe/tombstone degradation in the global
+   `FALLBACK_ALLOC_*` table under alloc/free churn** (clustered glibc addresses →
+   long probe chains under the writer spinlock), not the allocator and not a
+   fixed entrypoint cost.
+2. **`fl_old` malloc(16) = 3452.9 ns vs `fl` calloc(1,16) = 39.9 ns** — the only
+   code delta is malloc's `proof_carried_fast_path_active` + `decide`/`observe`
+   path (calloc's strict host fast-path returns *before* those), and it is
+   pathological *only at 16 B* (at 256 B malloc≈calloc≈1197 ns). Allocation-
+   pattern/probe-length dependent, not fixed overhead.
+
+**Lead (filed):** the real deployed-malloc lever is the `FALLBACK_ALLOC_*`
+table's behaviour under churn, not the entrypoint machinery. A prior **per-slot
+CAS insert rewrite REGRESSED** (see the rejected-attempts table) — so the next
+attempt must be a *different* shape (e.g. a per-thread last-freed (ptr,size)
+absorber in front of the global table, or tombstone-rehash compaction), proven
+on a churn bench with a same-worker A/B before landing. Read-path lock elision
+(above) is sound but single-thread-neutral.
 
 ## 2026-06-19 `bd-4crkqx` aliases scanner measured reject
 
