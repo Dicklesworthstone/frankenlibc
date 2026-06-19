@@ -560,15 +560,13 @@ fn addrinfo_from_text_address(
 #[must_use]
 pub fn parse_proc_net_route_has_ipv4(content: &[u8]) -> bool {
     for line in content.split(|&b| b == b'\n').skip(1) {
-        let mut fields = line
-            .split(|&b| b == b' ' || b == b'\t')
-            .filter(|field| !field.is_empty());
-        let Some(iface) = fields.next() else {
+        let mut cursor = 0usize;
+        let Some(iface) = next_procfs_space_tab_field(line, &mut cursor) else {
             continue;
         };
-        let _destination = fields.next();
-        let _gateway = fields.next();
-        let Some(flags) = fields.next() else {
+        let _destination = next_procfs_space_tab_field(line, &mut cursor);
+        let _gateway = next_procfs_space_tab_field(line, &mut cursor);
+        let Some(flags) = next_procfs_space_tab_field(line, &mut cursor) else {
             continue;
         };
 
@@ -1228,6 +1226,22 @@ mod tests {
         let signed_minus =
             b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t-0001\t0\t0\t0\t00000000\t0\t0\t0\n";
         assert!(!parse_proc_net_route_has_ipv4(signed_minus));
+    }
+
+    #[test]
+    fn parse_proc_net_route_field_scanner_edges() {
+        let mixed_spacing =
+            b"Iface\tDestination Gateway Flags\n  eth0\t00000000  \t01010101\t0001 extra fields ignored\n";
+        assert!(parse_proc_net_route_has_ipv4(mixed_spacing));
+
+        let missing_flags = b"Iface Destination Gateway Flags\neth0 00000000 01010101\n";
+        assert!(!parse_proc_net_route_has_ipv4(missing_flags));
+
+        let only_loopback = b"Iface Destination Gateway Flags\nlo 00000000 00000000 0001 trailing\n";
+        assert!(!parse_proc_net_route_has_ipv4(only_loopback));
+
+        let down_route = b"Iface Destination Gateway Flags\neth0 00000000 01010101 0000 trailing\n";
+        assert!(!parse_proc_net_route_has_ipv4(down_route));
     }
 
     #[test]
