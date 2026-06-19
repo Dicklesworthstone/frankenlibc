@@ -257,3 +257,35 @@ bench's 256-equal full-scan (glibc 86 ns) hides this — a workload caveat to ke
 **NET:** fl is **competitive (parity-to-faster) than glibc on the deployed path**; its core
 algorithms are 2–4× faster but the per-call membrane caps that to parity on hot small functions.
 Closing the membrane fast-path (bd-n40in2) is the single highest-leverage deployed-perf lever.
+
+## 2026-06-19 RIGOR CORRECTION — the "~180 ns membrane" was a per-batch misread; membrane is ~2-3 ns/call
+
+Two errors in the earlier math-membrane analysis, found while measuring short-strcmp:
+
+1. **Per-batch misread.** `bench_math`/`bench_math_abi` sum **64 inputs per criterion iteration**, so
+   the reported 676 ns (deployed) / 496 ns (core) are BATCH totals → **membrane ≈ (676−496)/64 ≈
+   2.85 ns/call**, NOT ~180 ns. The membrane is LIGHT. (Confirmed independently: deployed `memset_64`
+   0.7 ns, `strcmp` ≈ glibc within ~2 ns — all consistent with a ~0–3 ns/call membrane.)
+2. **Cross-run confounding.** The core-vs-deployed math gap compared SEPARATE rch runs on different
+   workers with different glibc baselines (core-run glibc sin ≈ 15.9 ns/call vs abi-run ≈ 10.5 ns/call).
+   So "the membrane erases the core win" is NOT cleanly established — it conflates membrane cost with
+   worker variance. A same-run core+abi+glibc measurement is required (building it).
+
+**The short-strcmp prediction also FAILED:** `strcmp_short_mismatch_abi` = **1.040× NEUTRAL** (fl
+55.8 ns vs glibc 53.7 ns), not the big loss I predicted — because glibc's short strcmp here is
+53.7 ns (call/harness floor), not ~3 ns, and the deployed membrane is ~2 ns (light), not ~82 ns.
+
+**CORRECTED deployed mem/string (within-run-valid, run b8fe9o723):**
+| fn | fl_abi | glibc | ratio | verdict |
+|----|--------|-------|-------|---------|
+| strlen_4096 | 92.5 ns | 375.2 ns | **0.247×** | WIN |
+| memset_64 | 0.7 ns | 0.7 ns | 0.983× | NEUTRAL |
+| strcmp_256_equal | 59.2 ns | 58.9 ns | 1.006× | NEUTRAL |
+| memset_4096 | 662 ns | 645 ns | 1.026× | NEUTRAL |
+| strcmp_short_mismatch | 55.8 ns | 53.7 ns | 1.040× | NEUTRAL |
+
+**NET (corrected):** the deployed membrane is LIGHT (~2–3 ns/call), not a heavy ceiling. Deployed fl
+is parity-to-win (strlen/fgetc WIN; memset/strcmp/math NEUTRAL) with NO losses. Whether the light
+membrane meaningfully erodes the FAST math wins needs a SAME-RUN core+abi+glibc measurement —
+pending. bd-n40in2's premise (~180 ns) is corrected to ~2–3 ns/call; its value is now uncertain
+until the same-run delta is measured. This is an honest correction of my own propagated misread.
