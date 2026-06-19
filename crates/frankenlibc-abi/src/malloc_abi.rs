@@ -817,6 +817,25 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
     }
 }
 
+/// Bench-only probe: the bare host (main-namespace, real glibc) `calloc` that
+/// the deployed `calloc` delegates to in strict mode, with NO membrane
+/// bookkeeping (no fallback-table insert, no stats, no decide/observe). Lets a
+/// head-to-head bench separate the membrane's own per-call cost from the cost of
+/// the host allocator operating on the busy main-namespace heap. Diagnostic for
+/// bd-f874go; do not use outside benches.
+#[doc(hidden)]
+#[must_use]
+pub unsafe fn native_calloc_probe_for_bench(nmemb: usize, size: usize) -> *mut c_void {
+    unsafe { native_libc_calloc(nmemb, size) }
+}
+
+/// Bench-only probe: bare host (main-namespace) `free`. See
+/// [`native_calloc_probe_for_bench`].
+#[doc(hidden)]
+pub unsafe fn native_free_probe_for_bench(ptr: *mut c_void) {
+    unsafe { native_libc_free(ptr) };
+}
+
 #[inline]
 unsafe fn native_libc_posix_memalign(
     memptr: *mut *mut c_void,

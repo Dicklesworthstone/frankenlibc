@@ -125,6 +125,41 @@ bd-f874go.
 |------|--------------|-------|----|----|-------|---------|--------|
 | 2026-06-19 | free: skip `check_ownership` PageOracle query for fallback-tracked frees (`bd-f874go`, BlackThrush) | `calloc_glibc_bench` 256 B (same-worker `ovh-a`, glibc-stable in-run) | 1147.9 ns | 16.67 ns | fl 256 B **0.960x** vs prior fl (4096 B 0.960x, 16 B 0.965x) | **MARGINAL WIN → landed** | Honest: ratio-vs-prior-fl 0.96 is just under the 0.95 WIN bar, but it is a *reproducible* (3 sizes, glibc stable 16.671 vs 16.674 ns) **non-regression that strictly removes work** — a `PageOracle` RwLock query gone from every deployed strict free of a tracked pointer (the common case), with multi-thread lock-contention upside. Behavior-preserving: such pointers always satisfied `!check_ownership` under the old gate; conformance GREEN (malloc_abi 53/0, foreign_adoption 4/0, malloc_edges/aligned_alloc/realloc_shrink all pass). Does not address the ~960 ns calloc-side residual (needs profiling). |
 
+## 2026-06-19 ⭐ the deployed-calloc "50–71× gap" is MOSTLY a baseline-isolation artifact, NOT membrane overhead (BlackThrush, bd-f874go)
+
+`perf` is unavailable on the workers (`perf_event_paranoid=4`), so instead of a
+flamegraph I added a third bench arm to `calloc_glibc_bench`: **`fl_native`** =
+the bare main-namespace host glibc `calloc`/`free` that the deployed strict path
+delegates to, with **NO membrane bookkeeping** (new `#[doc(hidden)]`
+`native_calloc_probe_for_bench`/`native_free_probe_for_bench` in `malloc_abi.rs`).
+This three-way split (same-worker `ovh-a`, mt=3) finally decomposes the gap:
+
+| size | `fl` deployed | `fl_native` (bare host, no membrane) | `glibc` (dlmopen isolated) |
+|---|---|---|---|
+| 256 B | 1143.2 ns | **566.1 ns** | 16.7 ns |
+| 4096 B | 1190.0 ns | **600.2 ns** | 41.2 ns |
+
+**Decomposition of the headline 256 B "71×":**
+- **~35×** of it (16.7 → 566 ns) is the **bare host glibc allocator running on
+  the fl-loaded process's MAIN-namespace heap** — *zero* fl membrane code. fl
+  routes ordinary allocations through its own path, so the main glibc arena's
+  256 B tcache stays cold and every `calloc` takes glibc's slow path. The
+  `glibc` baseline column uses a **pristine `dlmopen(LM_ID_NEWLM)` heap** that the
+  bench keeps hot — an unrealistically favorable comparator.
+- **~2×** (566 → 1143 ns) is the **actual membrane bookkeeping** (fallback-table
+  insert + flat-combining stats + strict-path guards).
+
+So the oft-quoted "deployed malloc 50–71× slower than glibc" **massively
+overstates the membrane's real cost (~2×)**; roughly half the gap is a
+measurement-methodology artifact of the isolated-heap baseline. (The `fl` 16 B =
+39 ns figure is an init-state/bump-alloc artifact of the first-measured arm —
+`fl_native` 16 B is 543 ns, i.e. the host main-arena cost is ~flat ~550 ns across
+sizes.) Apparatus kept in-tree (additive `fl_native` arm + probes) as the honest
+way to measure membrane-vs-host cost; conformance unaffected (no existing path
+changed). The remaining fl-controllable lever is the ~2× membrane (~577 ns), not
+the headline 71× — and a fair vs-glibc target must compare against `fl_native`
+(busy main heap), not the pristine dlmopen heap. Updated bd-f874go.
+
 ## 2026-06-19 `bd-4crkqx` aliases scanner measured reject
 
 Focused gauntlet target: the code-first single-pass `/etc/aliases` member

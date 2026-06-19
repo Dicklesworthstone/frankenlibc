@@ -167,6 +167,30 @@ fn bench_calloc(c: &mut Criterion) {
         });
         fl_old_stats.borrow().report("fl_old", size);
 
+        // FrankenLibC NATIVE host path (bd-f874go diagnostic): the bare
+        // main-namespace glibc `calloc`/`free` that the deployed strict path
+        // delegates to, with NO membrane bookkeeping. Isolates the membrane's
+        // own per-call cost (= fl vs fl_native) from the cost of the host
+        // allocator running on the busy main-namespace heap (= fl_native vs
+        // glibc, where `glibc` uses a pristine dlmopen-isolated heap).
+        let fl_native_stats = std::cell::RefCell::new(Stats::default());
+        group.bench_with_input(BenchmarkId::new("fl_native", size), &size, |b, &sz| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let p = unsafe {
+                        frankenlibc_abi::malloc_abi::native_calloc_probe_for_bench(1, sz)
+                    };
+                    black_box(p);
+                    unsafe { frankenlibc_abi::malloc_abi::native_free_probe_for_bench(p) };
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                fl_native_stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        fl_native_stats.borrow().report("fl_native", size);
+
         // Host glibc calloc (isolated namespace).
         let glibc_stats = std::cell::RefCell::new(Stats::default());
         group.bench_with_input(BenchmarkId::new("glibc", size), &size, |b, &sz| {
