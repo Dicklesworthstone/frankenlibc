@@ -55,3 +55,21 @@ prior code (fl-new beats fl-old everywhere), so nothing is reverted.
 - **NEUTRAL:** snprintf `%s\n`, swprintf wide, fgetc_unlocked.
 - **LOSSES (gaps filed):** strchr (`bd-4rxozm` P2), memcpy@64K + strlen@large (`bd-4ibo52` P3).
 - **New lever from measurement:** getc_unlocked (`bd-djtvqq`).
+
+## 2026-06-19 COMPREHENSIVE head-to-head (67 functions, glibc_baseline_bench, thin-LTO)
+
+**Headline: fl beats glibc on ~58 of 67 measured functions.** Full table in
+`docs/NEGATIVE_EVIDENCE.md`. Categories:
+
+- **WINS (fl faster):** strstr (0.001×), malloc (0.008×), strcmp/strlen/memcmp/scanf/strtol,
+  memcpy_4096 (0.486×), memchr/memmove, **all ~25 libm math fns 2–4× faster** (exp/log/sin/cos/pow…).
+- **NEUTRAL:** bare-%f (printf_f_6 0.953×), qsort (0.992×), memset_4096 (1.037×), strchr small (1.038×), getenv.
+- **LOSSES:** `powf` (2.2–2.7×, **new** → P2 bead), `strcpy_4096` (1.345×), and large-size
+  `strchr`/`memcpy`/`strlen` (glibc AVX scales better at ≥16 KB — bd-4rxozm/bd-4ibo52, size-specific).
+
+**Revised release posture:** fl is broadly **competitive-to-faster than glibc** across string, small/
+medium mem, malloc, scanf, and scalar math. The earlier "not release-competitive on strchr" is
+**softened** — strchr is neutral at typical (short) sizes; only large-buffer scans lose. Remaining
+genuine gaps to close before a perf-release claim: **`powf`** (clear loss), `strcpy`, and large-size
+SIMD scaling (strchr/memcpy/strlen). The two earlier printf "wins" (bd-0m5vaw/bd-fgnxc0) are NEUTRAL
+on the current bench. No regressions vs fl's own prior code → nothing reverted.
