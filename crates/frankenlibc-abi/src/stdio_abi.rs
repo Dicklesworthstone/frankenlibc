@@ -3745,13 +3745,10 @@ unsafe fn bare_s_or_render<'a>(
     extract_count: usize,
     hold: &'a mut Option<ScratchVec>,
 ) -> &'a [u8] {
-    if fmt_bytes == b"%s" && extract_count >= 1 {
-        let p = unsafe { *args } as *const u8;
-        if !p.is_null() {
-            let len = unsafe { c_str_bytes(p as *const c_char) }.len();
-            // SAFETY: the %s string is valid for the whole call (>= 'a).
-            return unsafe { std::slice::from_raw_parts(p, len) };
-        }
+    if let Some(DirectPrintfPayload::String(bytes)) =
+        unsafe { direct_printf_string_payload(fmt_bytes, args, extract_count) }
+    {
+        return bytes;
     }
     // No '%' anywhere: no conversions and no `%%` escapes, so the format string
     // is emitted verbatim (ubiquitous fixed-message / banner output). Return it
@@ -3761,6 +3758,109 @@ unsafe fn bare_s_or_render<'a>(
     }
     *hold = Some(unsafe { render_segments(segments, args, extract_count, false) });
     hold.as_deref().unwrap()
+}
+
+#[derive(Clone, Copy)]
+enum DirectPrintfPayload<'a> {
+    String(&'a [u8]),
+    StringNewline(&'a [u8]),
+}
+
+/// Return the zero-copy payload for exact non-NULL `%s` and `%s\n` formats.
+///
+/// The newline form is intentionally represented as two slices instead of
+/// materializing `string + "\n"`; callers decide whether their destination can
+/// preserve the old single-buffer failure semantics before using it.
+unsafe fn direct_printf_string_payload<'a>(
+    fmt_bytes: &[u8],
+    args: *const u64,
+    extract_count: usize,
+) -> Option<DirectPrintfPayload<'a>> {
+    if extract_count < 1 || !(fmt_bytes == b"%s" || fmt_bytes == b"%s\n") {
+        return None;
+    }
+    let p = unsafe { *args } as *const u8;
+    if p.is_null() {
+        return None;
+    }
+    let len = unsafe { c_str_bytes(p as *const c_char) }.len();
+    // SAFETY: the %s contract guarantees a NUL-terminated string that remains
+    // valid for the duration of the printf-family call.
+    let bytes = unsafe { std::slice::from_raw_parts(p, len) };
+    if fmt_bytes == b"%s\n" {
+        Some(DirectPrintfPayload::StringNewline(bytes))
+    } else {
+        Some(DirectPrintfPayload::String(bytes))
+    }
+}
+
+unsafe fn copy_direct_printf_payload(
+    dst: *mut c_char,
+    src: &[u8],
+    append_newline: bool,
+    copy_len: usize,
+) {
+    let string_copy = copy_len.min(src.len());
+    if string_copy > 0 {
+        unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), dst.cast::<u8>(), string_copy) };
+    }
+    if append_newline && copy_len > src.len() {
+        unsafe { *dst.add(src.len()) = b'\n' as c_char };
+    }
+    unsafe { *dst.add(copy_len) = 0 };
+}
+
+unsafe fn try_write_direct_s_newline_stream(
+    id: usize,
+    payload: &[u8],
+) -> Option<bool> {
+    let total_len = payload.len().saturating_add(1);
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let s = reg.streams.get_mut(&id)?;
+
+    if s.is_mem_backed() {
+        let mut written = s.mem_write(payload);
+        if written == payload.len() {
+            written = written.saturating_add(s.mem_write(b"\n"));
+        }
+        let adverse = written < total_len;
+        if adverse {
+            s.set_error();
+        }
+        return Some(!adverse);
+    }
+
+    if !matches!(s.buf_mode(), BufMode::Full) {
+        return None;
+    }
+    let pending = s.pending_flush().len();
+    if pending.saturating_add(total_len) > s.buffer_capacity() {
+        return None;
+    }
+
+    let first = match s.buffer_write(payload) {
+        Some(result) if !result.flush_needed => result.buffered,
+        _ => {
+            s.set_error();
+            return Some(false);
+        }
+    };
+    let second = match s.buffer_write(b"\n") {
+        Some(result) if !result.flush_needed => result.buffered,
+        _ => {
+            s.set_error();
+            return Some(false);
+        }
+    };
+
+    let accepted = first.saturating_add(second);
+    if accepted == total_len {
+        s.set_offset(s.offset().saturating_add(total_len as i64));
+        Some(true)
+    } else {
+        s.set_error();
+        Some(false)
+    }
 }
 
 pub(crate) fn write_all_fd(fd: c_int, data: &[u8]) -> bool {
@@ -3814,26 +3914,26 @@ pub unsafe extern "C" fn snprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    // Fast path for the ubiquitous bare "%s": copy the single string argument
-    // straight to the destination, skipping the render engine and its
-    // intermediate buffer copy. Only an exact, flag/width/precision-less "%s"
-    // qualifies; a NULL argument falls through so render emits glibc's "(null)".
-    // src_ptr stays valid for the copy: for the bare path it points into the
-    // caller's NUL-terminated string; otherwise `_rendered_hold` keeps the
-    // pooled render buffer alive.
+    // Fast path for ubiquitous exact "%s" and "%s\n": copy the string
+    // argument straight to the destination, skipping the render engine and
+    // intermediate buffer copy. NULL falls through so render emits "(null)".
     let _rendered_hold;
-    let (src_ptr, total_len) =
-        if fmt_bytes == b"%s" && extract_count >= 1 && !(arg_buf[0] as *const u8).is_null() {
-            // SAFETY: the %s contract guarantees a NUL-terminated string.
-            let bytes = unsafe { c_str_bytes(arg_buf[0] as *const c_char) };
-            (bytes.as_ptr(), bytes.len())
-        } else {
-            // Reuse the segments parsed above instead of re-parsing in render_printf.
-            let rendered =
-                unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-            let parts = (rendered.as_ptr(), rendered.len());
-            _rendered_hold = rendered;
-            parts
+    let (src_ptr, src_len, append_newline, total_len) =
+        match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
+            Some(DirectPrintfPayload::String(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), false, bytes.len())
+            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), true, bytes.len().saturating_add(1))
+            }
+            None => {
+                // Reuse the segments parsed above instead of re-parsing in render_printf.
+                let rendered =
+                    unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+                let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
+                _rendered_hold = rendered;
+                parts
+            }
         };
 
     let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
@@ -3868,8 +3968,8 @@ pub unsafe extern "C" fn snprintf(
 
     if has_room {
         unsafe {
-            std::ptr::copy_nonoverlapping(src_ptr, str_buf as *mut u8, copy_len);
-            *str_buf.add(copy_len) = 0;
+            let src = std::slice::from_raw_parts(src_ptr, src_len);
+            copy_direct_printf_payload(str_buf, src, append_newline, copy_len);
         }
     }
 
@@ -3906,21 +4006,25 @@ pub unsafe extern "C" fn sprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    // Fast path for the ubiquitous bare "%s" (see snprintf): copy the string
+    // Fast path for exact "%s" and "%s\n" (see snprintf): copy the string
     // argument straight to the destination, skipping the render engine and its
     // intermediate buffer copy. NULL falls through so render emits "(null)".
     let _rendered_hold;
-    let (src_ptr, total_len) =
-        if fmt_bytes == b"%s" && extract_count >= 1 && !(arg_buf[0] as *const u8).is_null() {
-            // SAFETY: the %s contract guarantees a NUL-terminated string.
-            let bytes = unsafe { c_str_bytes(arg_buf[0] as *const c_char) };
-            (bytes.as_ptr(), bytes.len())
-        } else {
-            let rendered =
-                unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-            let parts = (rendered.as_ptr(), rendered.len());
-            _rendered_hold = rendered;
-            parts
+    let (src_ptr, src_len, append_newline, total_len) =
+        match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
+            Some(DirectPrintfPayload::String(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), false, bytes.len())
+            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), true, bytes.len().saturating_add(1))
+            }
+            None => {
+                let rendered =
+                    unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+                let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
+                _rendered_hold = rendered;
+                parts
+            }
         };
 
     let mut copy_len = total_len;
@@ -3952,8 +4056,8 @@ pub unsafe extern "C" fn sprintf(
 
     if has_room {
         unsafe {
-            std::ptr::copy_nonoverlapping(src_ptr, str_buf as *mut u8, copy_len);
-            *str_buf.add(copy_len) = 0;
+            let src = std::slice::from_raw_parts(src_ptr, src_len);
+            copy_direct_printf_payload(str_buf, src, append_newline, copy_len);
         }
     }
 
@@ -3990,10 +4094,38 @@ pub unsafe extern "C" fn fprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
+    let direct_payload =
+        unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
+        let total_len = bytes.len().saturating_add(1);
+        if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                !success,
+            );
+            return if success {
+                printf_result_to_c_int(total_len)
+            } else {
+                -1
+            };
+        }
+    }
+
     // Bare "%s" fast path: emit the string straight to the stream, else render.
     let mut _bare_hold = None;
-    let bytes = unsafe {
-        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    let bytes = match direct_payload {
+        Some(DirectPrintfPayload::String(bytes)) => bytes,
+        _ => unsafe {
+            bare_s_or_render(
+                fmt_bytes,
+                &segments,
+                arg_buf.as_ptr(),
+                extract_count,
+                &mut _bare_hold,
+            )
+        },
     };
     let total_len = bytes.len();
 
@@ -4151,10 +4283,38 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
+    let direct_payload =
+        unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
+        let total_len = bytes.len().saturating_add(1);
+        if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                !success,
+            );
+            return if success {
+                printf_result_to_c_int(total_len)
+            } else {
+                -1
+            };
+        }
+    }
+
     // Bare "%s" fast path: emit the string straight to the stream, else render.
     let mut _bare_hold = None;
-    let bytes = unsafe {
-        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    let bytes = match direct_payload {
+        Some(DirectPrintfPayload::String(bytes)) => bytes,
+        _ => unsafe {
+            bare_s_or_render(
+                fmt_bytes,
+                &segments,
+                arg_buf.as_ptr(),
+                extract_count,
+                &mut _bare_hold,
+            )
+        },
     };
     let total_len = bytes.len();
 
@@ -4543,26 +4703,26 @@ pub unsafe extern "C" fn vsnprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    // Fast path for the ubiquitous bare "%s": copy the single string argument
-    // straight to the destination, skipping the render engine and its
-    // intermediate buffer copy. Only an exact, flag/width/precision-less "%s"
-    // qualifies; a NULL argument falls through so render emits glibc's "(null)".
-    // src_ptr stays valid for the copy: for the bare path it points into the
-    // caller's NUL-terminated string; otherwise `_rendered_hold` keeps the
-    // pooled render buffer alive.
+    // Fast path for ubiquitous exact "%s" and "%s\n": copy the string
+    // argument straight to the destination, skipping the render engine and
+    // intermediate buffer copy. NULL falls through so render emits "(null)".
     let _rendered_hold;
-    let (src_ptr, total_len) =
-        if fmt_bytes == b"%s" && extract_count >= 1 && !(arg_buf[0] as *const u8).is_null() {
-            // SAFETY: the %s contract guarantees a NUL-terminated string.
-            let bytes = unsafe { c_str_bytes(arg_buf[0] as *const c_char) };
-            (bytes.as_ptr(), bytes.len())
-        } else {
-            // Reuse the segments parsed above instead of re-parsing in render_printf.
-            let rendered =
-                unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-            let parts = (rendered.as_ptr(), rendered.len());
-            _rendered_hold = rendered;
-            parts
+    let (src_ptr, src_len, append_newline, total_len) =
+        match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
+            Some(DirectPrintfPayload::String(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), false, bytes.len())
+            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), true, bytes.len().saturating_add(1))
+            }
+            None => {
+                // Reuse the segments parsed above instead of re-parsing in render_printf.
+                let rendered =
+                    unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+                let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
+                _rendered_hold = rendered;
+                parts
+            }
         };
 
     let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
@@ -4597,8 +4757,8 @@ pub unsafe extern "C" fn vsnprintf(
 
     if has_room {
         unsafe {
-            std::ptr::copy_nonoverlapping(src_ptr, str_buf as *mut u8, copy_len);
-            *str_buf.add(copy_len) = 0;
+            let src = std::slice::from_raw_parts(src_ptr, src_len);
+            copy_direct_printf_payload(str_buf, src, append_newline, copy_len);
         }
     }
 
@@ -4644,21 +4804,25 @@ pub unsafe extern "C" fn vsprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    // Fast path for the ubiquitous bare "%s" (see snprintf): copy the string
+    // Fast path for exact "%s" and "%s\n" (see snprintf): copy the string
     // argument straight to the destination, skipping the render engine and its
     // intermediate buffer copy. NULL falls through so render emits "(null)".
     let _rendered_hold;
-    let (src_ptr, total_len) =
-        if fmt_bytes == b"%s" && extract_count >= 1 && !(arg_buf[0] as *const u8).is_null() {
-            // SAFETY: the %s contract guarantees a NUL-terminated string.
-            let bytes = unsafe { c_str_bytes(arg_buf[0] as *const c_char) };
-            (bytes.as_ptr(), bytes.len())
-        } else {
-            let rendered =
-                unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
-            let parts = (rendered.as_ptr(), rendered.len());
-            _rendered_hold = rendered;
-            parts
+    let (src_ptr, src_len, append_newline, total_len) =
+        match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
+            Some(DirectPrintfPayload::String(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), false, bytes.len())
+            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => {
+                (bytes.as_ptr(), bytes.len(), true, bytes.len().saturating_add(1))
+            }
+            None => {
+                let rendered =
+                    unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+                let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
+                _rendered_hold = rendered;
+                parts
+            }
         };
 
     let mut copy_len = total_len;
@@ -4690,8 +4854,8 @@ pub unsafe extern "C" fn vsprintf(
 
     if has_room {
         unsafe {
-            std::ptr::copy_nonoverlapping(src_ptr, str_buf as *mut u8, copy_len);
-            *str_buf.add(copy_len) = 0;
+            let src = std::slice::from_raw_parts(src_ptr, src_len);
+            copy_direct_printf_payload(str_buf, src, append_newline, copy_len);
         }
     }
 
@@ -4727,10 +4891,38 @@ pub unsafe extern "C" fn vfprintf(
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
+    let direct_payload =
+        unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
+        let total_len = bytes.len().saturating_add(1);
+        if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                !success,
+            );
+            return if success {
+                printf_result_to_c_int(total_len)
+            } else {
+                -1
+            };
+        }
+    }
+
     // Bare "%s" fast path: emit the string straight to the stream, else render.
     let mut _bare_hold = None;
-    let bytes = unsafe {
-        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    let bytes = match direct_payload {
+        Some(DirectPrintfPayload::String(bytes)) => bytes,
+        _ => unsafe {
+            bare_s_or_render(
+                fmt_bytes,
+                &segments,
+                arg_buf.as_ptr(),
+                extract_count,
+                &mut _bare_hold,
+            )
+        },
     };
     let total_len = bytes.len();
 
@@ -4884,10 +5076,38 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
     let mut arg_buf = [0u64; MAX_VA_ARGS];
     unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
+    let direct_payload =
+        unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    if let Some(DirectPrintfPayload::StringNewline(bytes)) = direct_payload {
+        let total_len = bytes.len().saturating_add(1);
+        if let Some(success) = unsafe { try_write_direct_s_newline_stream(id, bytes) } {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                !success,
+            );
+            return if success {
+                printf_result_to_c_int(total_len)
+            } else {
+                -1
+            };
+        }
+    }
+
     // Bare "%s" fast path: emit the string straight to the stream, else render.
     let mut _bare_hold = None;
-    let bytes = unsafe {
-        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+    let bytes = match direct_payload {
+        Some(DirectPrintfPayload::String(bytes)) => bytes,
+        _ => unsafe {
+            bare_s_or_render(
+                fmt_bytes,
+                &segments,
+                arg_buf.as_ptr(),
+                extract_count,
+                &mut _bare_hold,
+            )
+        },
     };
     let total_len = bytes.len();
 
@@ -9308,5 +9528,63 @@ mod tests {
         let ids = sorted_stream_ids(&reg);
         assert!(ids.windows(2).all(|pair| pair[0] <= pair[1]));
         assert!(ids.starts_with(&[STDIN_SENTINEL, STDOUT_SENTINEL, STDERR_SENTINEL]));
+    }
+
+    #[test]
+    fn printf_direct_payload_classifies_string_newline_only_for_nonnull_s() {
+        let text = b"status=ok\0";
+        let args = [text.as_ptr() as u64];
+
+        let payload = unsafe { direct_printf_string_payload(b"%s\n", args.as_ptr(), 1) };
+        match payload {
+            Some(DirectPrintfPayload::StringNewline(bytes)) => assert_eq!(bytes, b"status=ok"),
+            _ => panic!("expected direct %s newline payload"),
+        }
+
+        let null_args = [0u64];
+        assert!(
+            unsafe { direct_printf_string_payload(b"%s\n", null_args.as_ptr(), 1) }.is_none()
+        );
+        assert!(unsafe { direct_printf_string_payload(b"[%s]\n", args.as_ptr(), 1) }.is_none());
+    }
+
+    #[test]
+    fn printf_direct_payload_copy_preserves_snprintf_truncation_boundary() {
+        let mut buf = [0u8; 8];
+        unsafe {
+            copy_direct_printf_payload(buf.as_mut_ptr().cast(), b"abcdef", true, 7);
+        }
+        assert_eq!(&buf, b"abcdef\n\0");
+
+        let mut truncated = [0u8; 4];
+        unsafe {
+            copy_direct_printf_payload(truncated.as_mut_ptr().cast(), b"abcdef", true, 3);
+        }
+        assert_eq!(&truncated, b"abc\0");
+    }
+
+    #[test]
+    fn printf_direct_newline_stream_only_absorbs_full_buffered_without_flush() {
+        let writable = OpenFlags {
+            writable: true,
+            ..Default::default()
+        };
+        let full_id = register_stream(StdioStream::with_mode(-1, writable, BufMode::Full));
+
+        assert_eq!(
+            unsafe { try_write_direct_s_newline_stream(full_id, b"status=ok") },
+            Some(true)
+        );
+        let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let stream = reg.streams.get(&full_id).expect("registered full stream");
+        assert_eq!(stream.pending_flush(), b"status=ok\n");
+        assert_eq!(stream.offset(), 10);
+        drop(reg);
+
+        let line_id = register_stream(StdioStream::with_mode(-1, writable, BufMode::Line));
+        assert_eq!(
+            unsafe { try_write_direct_s_newline_stream(line_id, b"status=ok") },
+            None
+        );
     }
 }

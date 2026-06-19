@@ -118,12 +118,50 @@ fn bench_fgetc_unlocked(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_snprintf_s_newline(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stdio_glibc_baseline_snprintf_s_newline");
+    let payload = CString::new("frankenlibc canonical log line payload").expect("payload");
+    let fmt = c"%s\n";
+
+    group.bench_function("frankenlibc_abi", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 128];
+            let rc = unsafe {
+                fl::snprintf(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt.as_ptr(),
+                    payload.as_ptr(),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+
+    group.bench_function("host_glibc", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 128];
+            let rc = unsafe {
+                libc::snprintf(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt.as_ptr(),
+                    payload.as_ptr(),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(20)
         .warm_up_time(Duration::from_millis(150))
         .measurement_time(Duration::from_millis(400));
-    targets = bench_fgetc, bench_fgetc_unlocked
+    targets = bench_fgetc, bench_fgetc_unlocked, bench_snprintf_s_newline
 }
 criterion_main!(benches);
