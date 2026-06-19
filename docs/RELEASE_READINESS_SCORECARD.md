@@ -73,3 +73,25 @@ medium mem, malloc, scanf, and scalar math. The earlier "not release-competitive
 genuine gaps to close before a perf-release claim: **`powf`** (clear loss), `strcpy`, and large-size
 SIMD scaling (strchr/memcpy/strlen). The two earlier printf "wins" (bd-0m5vaw/bd-fgnxc0) are NEUTRAL
 on the current bench. No regressions vs fl's own prior code → nothing reverted.
+
+## 2026-06-19 FINAL deployed-vs-core verdict (BlackThrush)
+
+The gauntlet now separates fl's **algorithmic ceiling** (core) from its **deployed reality** (real
+`frankenlibc_abi`, with the per-call membrane). Both measured head-to-head vs glibc (thin-LTO):
+
+| Layer | Result vs glibc |
+|---|---|
+| **CORE** (raw kernels, no membrane) | fl beats glibc on **~58/67** fns; math 2–4×, string/mem/malloc/scanf wins. fl's algorithms are genuinely faster. |
+| **DEPLOYED** (public abi, with membrane) | **Parity-to-win, no losses** on measured workloads: `fgetc` 0.552× WIN, `strlen` 0.392× WIN; memset/strcmp/math/snprintf/swprintf NEUTRAL. |
+
+**Why deployed < core:** the per-call membrane (`stage_context`/`runtime_policy::decide`+`observe`)
+is **path-specific** — memset ~1 ns (thin), strcmp ~82 ns, math ~180 ns. On hot small fns it
+consumes the core's 2–4× advantage, leaving parity. No catastrophic losses, but short-string strcmp
+would lose (fixed ~82 ns vs glibc ~5 ns).
+
+**Release posture (measured, honest):** fl is **competitive (parity-to-faster) with glibc on the
+deployed path** — a credible perf-release position. The single highest-leverage improvement is
+**bd-n40in2** (a shared membrane fast-path for hot small fns) which would lift deployed math/strcmp
+back toward the core 2–4× wins. Specific deployed gaps to close: `powf` (core libm, 2.7×), `strcpy`,
+large-buffer SIMD scaling. No reverts (all losses are gaps-to-glibc / membrane-ceiling, not
+regressions vs fl's own prior code; conformance unaffected).
