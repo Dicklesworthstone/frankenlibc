@@ -183,44 +183,21 @@ fn copy_strcpy_terminal_from(dest: &mut [u8], src: &[u8], block_start: usize) ->
 }
 
 #[inline(always)]
-fn copy_strcpy_4096_block(dest: &mut [u8], src: &[u8], block_start: usize) -> Option<usize> {
-    let block_end = block_start + STRLEN_NUL_BLOCK;
-    if copy_nul_free_block_512(&mut dest[block_start..block_end], &src[block_start..block_end]) {
-        Some(copy_strcpy_terminal_from(dest, src, block_start))
-    } else {
-        None
-    }
-}
-
-#[inline(always)]
 fn strcpy_4096_terminated(dest: &mut [u8], src: &[u8]) -> usize {
     debug_assert_eq!(src.len(), STRCPY_4096_SRC_LEN);
     debug_assert!(dest.len() >= src.len());
     debug_assert_eq!(src.last().copied(), Some(0));
 
-    if let Some(copied) = copy_strcpy_4096_block(dest, src, 0) {
-        return copied;
-    }
-    if let Some(copied) = copy_strcpy_4096_block(dest, src, STRLEN_NUL_BLOCK) {
-        return copied;
-    }
-    if let Some(copied) = copy_strcpy_4096_block(dest, src, STRLEN_NUL_BLOCK * 2) {
-        return copied;
-    }
-    if let Some(copied) = copy_strcpy_4096_block(dest, src, STRLEN_NUL_BLOCK * 3) {
-        return copied;
-    }
-    if let Some(copied) = copy_strcpy_4096_block(dest, src, STRLEN_NUL_BLOCK * 4) {
-        return copied;
-    }
-    if let Some(copied) = copy_strcpy_4096_block(dest, src, STRLEN_NUL_BLOCK * 5) {
-        return copied;
-    }
-    if let Some(copied) = copy_strcpy_4096_block(dest, src, STRLEN_NUL_BLOCK * 6) {
-        return copied;
-    }
-    if let Some(copied) = copy_strcpy_4096_block(dest, src, STRLEN_NUL_BLOCK * 7) {
-        return copied;
+    let mut block_start = 0usize;
+    while block_start + STRLEN_NUL_BLOCK < STRCPY_4096_SRC_LEN {
+        let block_end = block_start + STRLEN_NUL_BLOCK;
+        if copy_nul_free_block_512(
+            &mut dest[block_start..block_end],
+            &src[block_start..block_end],
+        ) {
+            return copy_strcpy_terminal_from(dest, src, block_start);
+        }
+        block_start = block_end;
     }
 
     dest[STRCPY_4096_SRC_LEN - 1] = 0;

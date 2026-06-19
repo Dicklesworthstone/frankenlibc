@@ -6,9 +6,9 @@ Last updated: 2026-06-19 by `cod-b` / `BlackThrush`.
 
 | Area | Score | Evidence | Risk |
 |---|---:|---|---|
-| Measured perf backlog conversion | 2 / many pending | `bd-0m5vaw` and `bd-fgnxc0` converted from code-first pending to measured head-to-head wins vs host glibc. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, and peer-owned leaves. |
+| Measured perf backlog conversion | 3 / many pending | `bd-0m5vaw`, `bd-fgnxc0`, and `bd-2g7oyh.478` converted from code-first pending to measured head-to-head evidence vs host glibc. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, and peer-owned leaves. |
 | Negative-evidence ledger | 1 / committed ledger | `docs/NEGATIVE_EVIDENCE.md` now records win/loss/neutral policy and the first two measured rows with glibc ratios. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended. |
-| Revert discipline | Green for measured cluster | No revert needed: both measured rows beat host glibc with ratios 0.856x and 0.313x. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
+| Revert discipline | Green for measured cluster | Winning rows kept; losing `bd-2g7oyh.478` exact-block `strcpy_4096` unroll was reverted after a 1.250x p50 loss vs glibc. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
 | Conformance guard | Partial green | `cargo check -p frankenlibc-abi` passed with known warning debt. Criterion bench binaries built and ran successfully. | `cargo test -p frankenlibc-abi` is blocked by pre-existing `zz_scratch_divmin` scratch-test compile errors; `stdio_abi`/`wchar_abi` inline tests are gated out of `--lib` test mode. |
 | Release posture | Not ready | Two real wins recorded, no new source regression in this pass. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, and conformance/bench gates are repeatable. |
 
@@ -93,8 +93,21 @@ would lose (fixed ~82 ns vs glibc ~5 ns).
 deployed path** — a credible perf-release position. The single highest-leverage improvement is
 **bd-n40in2** (a shared membrane fast-path for hot small fns) which would lift deployed math/strcmp
 back toward the core 2–4× wins. Specific deployed gaps to close: `powf` (core libm, 2.7×), `strcpy`,
-large-buffer SIMD scaling. No reverts (all losses are gaps-to-glibc / membrane-ceiling, not
-regressions vs fl's own prior code; conformance unaffected).
+large-buffer SIMD scaling. For that deployed-vs-core sweep, no source revert was needed because
+the losses were gaps-to-glibc / membrane-ceiling, not regressions vs fl's own prior code.
+
+## 2026-06-19 `bd-2g7oyh.478` measured reject
+
+The exact `strcpy_4096` eight-block unroll was converted from code-first pending to measured
+head-to-head evidence and rejected.
+
+| Bead | Workload | FrankenLibC | glibc | Ratio | Verdict | Action |
+|---|---|---:|---:|---:|---|---|
+| `bd-2g7oyh.478` | `glibc_baseline_strcpy_4096` (`hz1`, thin-LTO) | 68.555 ns | 54.857 ns | 1.250x | LOSS | Reverted to the prior counted block loop. |
+
+Focused post-revert guards passed (`cargo check -p frankenlibc-core` and the two
+`test_strcpy_exact_4096_path*` tests). `strcpy_4096` remains a genuine glibc gap after the revert;
+retry only with a materially different generated/backend primitive.
 
 ### 2026-06-19 deployed-math DEFINITIVELY resolved (same-run, BlackThrush)
 

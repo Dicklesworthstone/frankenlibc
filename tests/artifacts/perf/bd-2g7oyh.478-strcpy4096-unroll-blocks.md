@@ -2,7 +2,7 @@
 
 Date: 2026-06-18
 Agent: BlackThrush / cod-b
-Status: CODE-FIRST, BATCH TEST PENDING
+Status: REJECTED AND REVERTED 2026-06-19
 
 ## Target
 
@@ -78,15 +78,38 @@ Existing early-NUL guard remains in place:
 - Floating-point, allocation, errno, locale, RNG, and ordering/tie-breaking
   outside the copied bytes are not touched.
 
-## Benchmark Status
+## Benchmark Verdict
 
-Pending by instruction. Required later classification:
+Rejected by focused Criterion after rch benches were allowed.
 
-- Focused same-worker `glibc_baseline_strcpy_4096` baseline/post Criterion.
-- Mark `verified` only if both p50 and mean improve by at least the active keep
-  threshold with stable host control.
-- Mark `rejected` and revert if p50 or mean regresses, if the Criterion center
-  worsens, or if the result is within noise.
+Candidate command:
+
+```bash
+AGENT_NAME=BlackThrush \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-b/criterion-bd-2g7oyh-478-20260619T0314 \
+rch exec -- cargo bench -p frankenlibc-bench --bench glibc_baseline_bench -- \
+  glibc_baseline_strcpy_4096 --noplot --sample-size 80 --warm-up-time 1 --measurement-time 3
+```
+
+Worker: `hz1`.
+
+| implementation | p50 ns/op | mean ns/op |
+| --- | ---: | ---: |
+| FrankenLibC core candidate | 68.555 | 72.159 |
+| host glibc | 54.857 | 65.354 |
+| ratio fl/glibc | 1.250x | 1.104x |
+
+Verdict: **LOSS**. `>1` is slower, and the candidate also worsened the
+pre-candidate FrankenLibC center recorded above (`65.900 / 67.242 ns`). The
+unroll therefore failed the keep gate and was manually reverted back to the
+counted loop.
+
+Post-revert checks:
+
+- `AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b cargo check -p frankenlibc-core`: passed with pre-existing iconv warnings.
+- `AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b cargo test -p frankenlibc-core string::str::tests::test_strcpy_exact_4096_path -- --nocapture`: 2 focused tests passed.
+- Cross-worker post-revert routing checks still show `strcpy_4096` slower than glibc (`ovh-a` p50 ratio `1.289x`; `vmi1149989` p50 ratio `1.513x` with noisy FL tail), so this remains an open glibc gap after the revert.
 
 Retry-condition predicate: retry this family only after a focused benchmark
 proves straight-line codegen is the bottleneck and the emitted IR/assembly
