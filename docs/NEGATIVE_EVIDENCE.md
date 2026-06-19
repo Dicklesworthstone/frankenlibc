@@ -81,3 +81,23 @@ heavier bench dilutes; reverting correct, harmless, zero-cost code yields nothin
 composite fast-paths are workload-dependent (win on light/short inputs per cod-b, neutral on
 the current heavier bench). All measured honestly; conformance unaffected (no reverts needed —
 nothing regressed).
+
+## 2026-06-19 mem/string head-to-head — memset_abi_bench (BlackThrush, thin-LTO)
+
+This bench reports fl-new vs glibc directly (`vs glibc` column; >1 = fl faster). Per function,
+small (64 B) → large (64 KB):
+
+| Function | 64 B | 4096 B | 65536 B | verdict |
+|----------|------|--------|---------|---------|
+| memset | 5.56× | 1.14× | 1.00× | **WIN** (≥ glibc at every size; fl self-improved up to 6.76× old→new) |
+| memmove (fwd) | 10.15× | 1.20× | 1.02× | **WIN** (every size) |
+| memcpy (raw bulk) | 11.22× | 1.23× | **0.55×** | WIN small/med, **LOSS @64 KB** (fl 2208 ns vs glibc 1204 ns) |
+| scan_c_string (strlen/NUL) | 6.44× | 0.90× | 0.85× | WIN small, **LOSS @≥4 KB** |
+| strchr (absent full scan) | **0.22×** | **0.05×** | **0.06×** | **LOSS — glibc 2–16× faster at all sizes** |
+
+- **WINS:** memset, memmove — fl beats glibc across all sizes (small-buffer dispatch + SIMD).
+- **LOSSES vs glibc's hand-tuned AVX (gaps, filed):** `strchr` (severe — fl ~7 GB/s vs glibc
+  ~111 GB/s at 64 KB), `memcpy` @64 KB, `strlen` @≥4 KB.
+- **No reverts:** the "new" path beats fl's own "old" everywhere relevant (the optimizations are
+  real self-improvements); the losses are *gaps to glibc's AVX*, not regressions — reverting
+  would make fl strictly slower. The fix is to close the gap (better large-size SIMD), not revert.
