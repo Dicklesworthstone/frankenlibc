@@ -385,6 +385,25 @@ pub fn powf(base: f32, exponent: f32) -> f32 {
         if let Some(result) = powf_medium_fast_path(base, exponent) {
             return result;
         }
+        // General positive-base fast path: powf(x,y) = exp(y*ln(x)) evaluated in
+        // f64. fl's f64 `exp` and `log` both beat glibc on their fast-path
+        // domains (and otherwise defer to libm, still correct); the f64
+        // intermediate keeps the f32 result well within the 4-ULP glibc parity
+        // contract (fl's f64 log is <=4 ULP over the full dynamic range, i.e.
+        // ~2^-50 relative — negligible once rounded to f32). Only positive
+        // finite bases reach here (negative/zero bases and the remaining special
+        // IEEE cases already fell through to libm::powf below). The result is
+        // accepted only when it rounds to a finite, normal f32: overflow,
+        // underflow, and subnormal outputs — where glibc raises FE_OVERFLOW /
+        // FE_UNDERFLOW and sets errno — are deferred to libm::powf for exact
+        // exception/errno semantics.
+        if base > 0.0 {
+            let r = crate::math::exp::exp(exponent as f64 * crate::math::exp::log(base as f64));
+            let rf = r as f32;
+            if rf.is_finite() && rf.abs() >= f32::MIN_POSITIVE {
+                return rf;
+            }
+        }
     }
     libm::powf(base, exponent)
 }

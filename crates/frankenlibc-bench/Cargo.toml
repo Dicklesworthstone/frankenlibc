@@ -81,6 +81,10 @@ harness = false
 required-features = ["abi-bench"]
 
 [[bench]]
+name = "powf_glibc_bench"
+harness = false
+
+[[bench]]
 name = "elimination_bench"
 harness = false
 
