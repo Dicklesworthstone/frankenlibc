@@ -608,28 +608,26 @@ fn parse_proc_net_route_flags(field: &[u8]) -> Option<u32> {
 #[must_use]
 pub fn parse_proc_net_if_inet6_has_ipv6(content: &[u8]) -> bool {
     for line in content.split(|&b| b == b'\n') {
-        let mut fields = line
-            .split(|&b| b == b' ' || b == b'\t')
-            .filter(|field| !field.is_empty());
-        let Some(addr) = fields.next() else {
+        let mut cursor = 0usize;
+        let Some(addr) = next_procfs_space_tab_field(line, &mut cursor) else {
             continue;
         };
-        let Some(ifindex) = fields.next() else {
+        let Some(ifindex) = next_procfs_space_tab_field(line, &mut cursor) else {
             continue;
         };
-        let Some(prefix_len) = fields.next() else {
+        let Some(prefix_len) = next_procfs_space_tab_field(line, &mut cursor) else {
             continue;
         };
-        let Some(scope) = fields.next() else {
+        let Some(scope) = next_procfs_space_tab_field(line, &mut cursor) else {
             continue;
         };
-        let Some(flags) = fields.next() else {
+        let Some(flags) = next_procfs_space_tab_field(line, &mut cursor) else {
             continue;
         };
-        let Some(iface) = fields.next() else {
+        let Some(iface) = next_procfs_space_tab_field(line, &mut cursor) else {
             continue;
         };
-        if fields.next().is_some()
+        if next_procfs_space_tab_field(line, &mut cursor).is_some()
             || !is_ascii_hex_exact_len(addr, 32)
             || !is_ascii_hex_nonempty(ifindex)
             || !is_ascii_hex_nonempty(prefix_len)
@@ -643,6 +641,19 @@ pub fn parse_proc_net_if_inet6_has_ipv6(content: &[u8]) -> bool {
         }
     }
     false
+}
+
+fn next_procfs_space_tab_field<'a>(line: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {
+    while *cursor < line.len() && (line[*cursor] == b' ' || line[*cursor] == b'\t') {
+        *cursor += 1;
+    }
+
+    let start = *cursor;
+    while *cursor < line.len() && line[*cursor] != b' ' && line[*cursor] != b'\t' {
+        *cursor += 1;
+    }
+
+    (start != *cursor).then_some(&line[start..*cursor])
 }
 
 fn is_ascii_hex_exact_len(field: &[u8], len: usize) -> bool {
@@ -1256,6 +1267,22 @@ mod tests {
         ] {
             assert!(!parse_proc_net_if_inet6_has_ipv6(row));
         }
+    }
+
+    #[test]
+    fn parse_proc_net_if_inet6_field_scanner_edges() {
+        let mixed_spacing = b"fe800000000000000000000000000001\t02  \t40\t20 80\t eth0\n";
+        assert!(parse_proc_net_if_inet6_has_ipv6(mixed_spacing));
+
+        let loopback_then_global = b"00000000000000000000000000000001 01 80 10 80 lo\n\
+fe800000000000000000000000000002 02 40 20 80 wlan0\n";
+        assert!(parse_proc_net_if_inet6_has_ipv6(loopback_then_global));
+
+        let extra_field = b"fe800000000000000000000000000001 02 40 20 80 eth0 tail\n";
+        assert!(!parse_proc_net_if_inet6_has_ipv6(extra_field));
+
+        let missing_flags = b"fe800000000000000000000000000001 02 40 20 eth0\n";
+        assert!(!parse_proc_net_if_inet6_has_ipv6(missing_flags));
     }
 
     #[test]

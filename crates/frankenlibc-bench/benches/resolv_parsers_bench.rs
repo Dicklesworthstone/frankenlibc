@@ -128,6 +128,8 @@ const PROC_MAPS_LINE: &str =
 const PROC_NET_ROUTE: &[u8] = b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n\
 lo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n\
 eth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
+const PROC_NET_IF_INET6: &[u8] = b"00000000000000000000000000000001 01 80 10 80       lo\n\
+fe800000000000000000000000000001 02 40 20 80   eth0\n";
 const RESOLV_CONF_OPTIONS: &[u8] =
     b"options ndots:4 timeout:2 attempts:3 rotate use-vc\nnameserver 1.1.1.1\n";
 const RESOLVER_QUERY_NAME: &str = "api.service.prod.cluster.example.com";
@@ -270,6 +272,18 @@ fn bench_parse_proc_net_route_has_ipv4() {
     );
 }
 
+fn bench_parse_proc_net_if_inet6_has_ipv6() {
+    measure(
+        "parse_proc_net_if_inet6_has_ipv6_typical",
+        SAMPLES,
+        ITERS_PER_SAMPLE,
+        || {
+            let r = resolv::parse_proc_net_if_inet6_has_ipv6(black_box(PROC_NET_IF_INET6));
+            black_box(r);
+        },
+    );
+}
+
 fn bench_parse_resolv_conf_options() {
     measure(
         "parse_resolv_conf_options_typical",
@@ -320,6 +334,7 @@ fn main() {
     bench_parse_rpc_line();
     bench_parse_maps_line();
     bench_parse_proc_net_route_has_ipv4();
+    bench_parse_proc_net_if_inet6_has_ipv6();
     bench_parse_resolv_conf_options();
     bench_resolver_should_try_absolute_first();
     bench_parse_netgroup_triples();
