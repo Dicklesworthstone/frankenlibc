@@ -2527,6 +2527,55 @@ fn bench_math_abi(c: &mut Criterion) {
     group.finish();
 }
 
+// Deployed-ABI mem/string head-to-head: benches the real PUBLIC `frankenlibc_abi`
+// entry points (string_abi::memset/strcmp/strlen) which carry the membrane
+// (stage_context + runtime_policy::decide), vs glibc. Resolves whether the
+// membrane erodes the small-op wins (as it does for math) on the deployed path.
+fn bench_memstring_abi(c: &mut Criterion) {
+    #[allow(unused_mut)]
+    let mut group = c.benchmark_group("glibc_baseline_memstring_abi");
+    #[cfg(feature = "abi-bench")]
+    {
+        use frankenlibc_abi::string_abi;
+        use std::os::raw::{c_char, c_void};
+
+        let mut s = vec![0x41u8; 4097];
+        s[4096] = 0;
+        let sp = s.as_ptr() as *const c_char;
+        let mut a = vec![0x42u8; 257];
+        a[256] = 0;
+        let b = a.clone();
+        let ap = a.as_ptr() as *const c_char;
+        let bp = b.as_ptr() as *const c_char;
+        let mut m = vec![0u8; 4096];
+        let mp = m.as_mut_ptr() as *mut c_void;
+
+        macro_rules! pair_ms {
+            ($id:expr, $sym:expr, $fl:expr, $gl:expr) => {{
+                bench_op(&mut group, BenchMeta { profile_id: $id, impl_label: "frankenlibc_abi",
+                    api_family: "string", symbol: $sym, workload: "deployed public abi (membrane)",
+                    parity_proof_ref: "crates/frankenlibc-abi/src/string_abi.rs" }, $fl);
+                bench_op(&mut group, BenchMeta { profile_id: $id, impl_label: "host_glibc",
+                    api_family: "string", symbol: $sym, workload: "deployed public abi (membrane)",
+                    parity_proof_ref: "crates/frankenlibc-abi/src/string_abi.rs" }, $gl);
+            }};
+        }
+        pair_ms!("strlen_4096_abi", "strlen",
+            || { black_box(unsafe { string_abi::strlen(black_box(sp)) }); },
+            || { black_box(unsafe { libc::strlen(black_box(sp)) }); });
+        pair_ms!("strcmp_256_equal_abi", "strcmp",
+            || { black_box(unsafe { string_abi::strcmp(black_box(ap), black_box(bp)) }); },
+            || { black_box(unsafe { libc::strcmp(black_box(ap), black_box(bp)) }); });
+        pair_ms!("memset_64_abi", "memset",
+            || { black_box(unsafe { string_abi::memset(black_box(mp), 0x5A, 64) }); },
+            || { black_box(unsafe { libc::memset(black_box(mp), 0x5A, 64) }); });
+        pair_ms!("memset_4096_abi", "memset",
+            || { black_box(unsafe { string_abi::memset(black_box(mp), 0x5A, 4096) }); },
+            || { black_box(unsafe { libc::memset(black_box(mp), 0x5A, 4096) }); });
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
@@ -2559,6 +2608,7 @@ criterion_group! {
         bench_strpbrk_absent,
         bench_math,
         bench_math_abi,
+        bench_memstring_abi,
         bench_memmem_absent,
         bench_strstr_absent,
         bench_strcasestr_absent,
