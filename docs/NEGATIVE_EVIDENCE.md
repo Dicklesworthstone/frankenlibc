@@ -152,3 +152,21 @@ follow-up). All available paired infrastructure has been measured honestly.
 - 2 earlier-claimed printf wins reconciled to NEUTRAL on the current bench.
 - Critical LTO methodology trap logged (no-LTO invalidates fl).
 - No reverts: all losses are gaps-to-glibc, not regressions vs fl's own prior code.
+
+## 2026-06-19 CRITICAL caveat — the 67-fn head-to-head measures fl CORE, not the deployed ABI
+
+Verified the bench's impl labels: **38 `frankenlibc_core` + 4 `frankenlibc_core_state` vs only 1
+`frankenlibc_abi`** (getenv). So nearly all the "fl wins" measure fl's **pure core algorithms**,
+NOT the deployed `frankenlibc_abi` path that adds the per-call **membrane / runtime-policy /
+registry** overhead. Tellingly, the ONE real-ABI data point — `getenv` via `frankenlibc_abi` — was
+**NEUTRAL (1.011×)**, and `malloc` uses `frankenlibc_core_state` (a simplified allocate-free state,
+not the real `frankenlibc_abi::malloc` with arena+membrane), so its "100×" is not the deployed
+allocator.
+
+**IMPLICATION (release-readiness):** fl's **core algorithms are competitive-to-faster than glibc**
+— a real, strong result. But the **deployed fl ABI** (the `.so` callers actually use) carries a
+fixed per-call membrane cost that the core benches exclude; the getenv-abi-neutral point shows that
+cost can erase a core win on cheap functions. A true deployed-vs-glibc claim needs **abi-labelled**
+head-to-heads (measure `frankenlibc_abi::*` directly), which is the key remaining measurement gap.
+The stdio/memset clusters I measured DO use the abi path (`fl::fgetc`, `fl::snprintf`) — those
+(fgetc 0.552× WIN, snprintf/swprintf NEUTRAL, memset/memmove WIN) are deployed-representative.
