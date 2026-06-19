@@ -127,3 +127,28 @@ loses at large. So bd-4rxozm/bd-4ibo52 are **large-size** gaps, not all-size.
 **NET RELEASE PICTURE: fl BEATS glibc on the large majority of the surface** (string, small/medium
 mem, malloc, scanf, math) with a few specific gaps: `powf` (2.7×, new — filing), `strcpy` (1.35×),
 and large-size `strchr`/`memcpy`/`strlen`.
+
+## 2026-06-19 measurement caveats + head-to-head coverage status (BlackThrush)
+
+**Honest caveats for the 67-fn head-to-head:**
+- The bench links fl **statically (LTO-inlined)** vs glibc **dynamically (PLT)**. PLT overhead is
+  ~sub-ns steady-state, so it does NOT explain the wins on slow functions (math ~300 ns) — those
+  are robust. For very fast functions (strcmp 5 ns, strchr 41 ns) interpret the absolute ratio with care.
+- Some fast-function wins are **workload-specific fl fast-paths** — e.g. `strcmp_256_equal` (0.051×)
+  hits fl's `strcmp_exact_256_equal_nul_terminated` short-circuit; general strcmp may differ.
+- **Robust wins** (large margin and/or slow fn and/or size-swept): math (2–4×), malloc, strstr,
+  memcpy/memmove small-med, fgetc (0.552×).
+
+**Head-to-head coverage = COMPLETE for existing paired benches:** `glibc_baseline_bench` (67 fns),
+`stdio_glibc_baseline_bench` (4), `memset_abi_bench` (5, size-swept). The remaining bench files
+(`iconv_bench`, `string_bench`, `wchar_bench`, `malloc_bench`) are **fl-only** (no glibc comparison
+built in) — extending them to head-to-head requires adding glibc baselines (bench-building; a
+follow-up). All available paired infrastructure has been measured honestly.
+
+**SESSION SUMMARY (BlackThrush, gauntlet/measurement phase):**
+- fl beats glibc on ~58/67 functions; robust wins across string/mem-small/malloc/scanf/scalar-math.
+- Genuine losses pinned + filed: `powf` 2.2–2.7× (bd-z8p3mx), `strcpy` 1.35×, large-size
+  strchr/memcpy/strlen (bd-4rxozm/bd-4ibo52), getc_unlocked unoptimized (bd-djtvqq).
+- 2 earlier-claimed printf wins reconciled to NEUTRAL on the current bench.
+- Critical LTO methodology trap logged (no-LTO invalidates fl).
+- No reverts: all losses are gaps-to-glibc, not regressions vs fl's own prior code.
