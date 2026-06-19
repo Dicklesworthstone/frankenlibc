@@ -92,21 +92,6 @@ impl ProbePlan {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ProbeCandidate {
-    probe: Probe,
-    score: f64,
-    cost_ns: u64,
-}
-
-impl ProbeCandidate {
-    const EMPTY: Self = Self {
-        probe: Probe::Spectral,
-        score: 0.0,
-        cost_ns: 0,
-    };
-}
-
 /// Snapshot exported to runtime telemetry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DesignSummary {
@@ -207,8 +192,7 @@ impl OptimalDesignController {
         } else {
             0.0
         };
-        let mut candidates = [ProbeCandidate::EMPTY; Probe::COUNT];
-        let mut candidate_len = 0usize;
+        let mut candidates: Vec<(Probe, f64, u64)> = Vec::with_capacity(Probe::COUNT);
         for probe in Probe::ALL {
             if (mask & probe.bit()) != 0 {
                 continue;
@@ -232,20 +216,14 @@ impl OptimalDesignController {
                 (logdet_spd(&trial) - base_logdet).max(0.0)
             };
             let score = gain / (cost_ns as f64 + 1.0);
-            candidates[candidate_len] = ProbeCandidate {
-                probe,
-                score,
-                cost_ns,
-            };
-            candidate_len += 1;
+            candidates.push((probe, score, cost_ns));
         }
 
-        let candidates = &mut candidates[..candidate_len];
-        sort_candidates_by_score_desc(candidates);
-        for candidate in candidates.iter() {
-            let next = expected_cost_ns.saturating_add(candidate.cost_ns);
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+        for (probe, _, cost_ns) in candidates {
+            let next = expected_cost_ns.saturating_add(cost_ns);
             if next <= budget_ns {
-                add_probe(&mut mask, &mut expected_cost_ns, candidate.probe);
+                add_probe(&mut mask, &mut expected_cost_ns, probe);
             }
         }
 
@@ -315,10 +293,6 @@ fn rank_one_update(matrix: &mut [[f64; LATENT_DIM]; LATENT_DIM], v: [f64; LATENT
             matrix[i][j] += w * v[i] * v[j];
         }
     }
-}
-
-fn sort_candidates_by_score_desc(candidates: &mut [ProbeCandidate]) {
-    candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
 }
 
 fn cholesky_spd(
@@ -428,46 +402,6 @@ fn probe_features(probe: Probe) -> [f64; LATENT_DIM] {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn candidate_sort_preserves_equal_score_probe_order() {
-        let mut candidates = [
-            ProbeCandidate {
-                probe: Probe::Spectral,
-                score: 1.0,
-                cost_ns: 20,
-            },
-            ProbeCandidate {
-                probe: Probe::RoughPath,
-                score: 2.0,
-                cost_ns: 28,
-            },
-            ProbeCandidate {
-                probe: Probe::Persistence,
-                score: 1.0,
-                cost_ns: 30,
-            },
-            ProbeCandidate {
-                probe: Probe::Anytime,
-                score: 2.0,
-                cost_ns: 8,
-            },
-        ];
-
-        sort_candidates_by_score_desc(&mut candidates);
-
-        let sorted = candidates.map(|candidate| candidate.probe);
-        assert_eq!(
-            sorted,
-            [
-                Probe::RoughPath,
-                Probe::Anytime,
-                Probe::Spectral,
-                Probe::Persistence
-            ],
-            "stable equal-score ordering must match the previous Vec::sort_by path"
-        );
-    }
 
     #[test]
     fn plan_respects_budget() {
