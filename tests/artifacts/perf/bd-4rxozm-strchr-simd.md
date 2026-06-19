@@ -55,3 +55,26 @@ rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
 Controlled before/after on the same worker (SWAR baseline run with the SIMD panel
 temporarily removed, then re-applied). glibc via `dlmopen(LM_ID_NEWLM)` to avoid
 fl's `no_mangle` interposition.
+
+## Follow-up: length-escalated folded-128 tier (KEPT, supersedes 32B)
+
+An un-gated folded 4×32=128B tier (one `.any()` per 128 B) was measured first and
+**rejected** — it closed the large-size gap further but regressed short strings
+(64 B normalized 5.80x→8.18x) by doing 128-byte work for sub-128 strings. The
+fix, as the reject's retry predicate proposed: **gate the folded tier on
+`i >= 128`** so short strings terminate in the 32B/SWAR tiers and never reach it.
+
+Re-measured vs the committed 32B (near-identical glibc control both runs):
+
+| size | committed 32B fl | escalated folded fl | speedup | fl/glibc 32B→folded |
+|-----:|-----------------:|--------------------:|--------:|---------------------|
+| 64     | 16.3   | 17.9   | ~neutral (noise) | 5.80 → 5.93 |
+| 1024   | 49.8   | 46.7   | ~neutral | 5.36 → 5.64 |
+| 16384  | 269.0  | 199.8  | **1.35x** | 2.46 → **1.84** |
+| 65536  | 955.5  | 677.0  | **1.41x** | 1.79 → **1.26** |
+| 262144 | 3980.5 | 2537.0 | **1.57x** | 1.88 → **1.20** |
+
+WIN: 1.35–1.57x faster than the 32B tier at large sizes, **no short-string
+regression**, 256K now **1.20x glibc** (near parity). Correctness (strchr/
+strchrnul gates) and page-safety (`strchr_guard_page_safety`, folded tier
+exercised near the page boundary) both green.

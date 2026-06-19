@@ -1112,6 +1112,41 @@ unsafe fn scan_c_string_for_byte(
                 i += 1;
             }
             loop {
+                // Length-escalated folded 4x32 = 128-byte tier: one `.any()`
+                // reduction per 128 bytes for the bulk of *long* strings. Gated on
+                // `i >= 128` so short strings (the common case) terminate in the
+                // 32-byte/SWAR tiers below and never pay the folded overhead — this
+                // is the escalation guard that fixed the short-string regression of
+                // the un-gated folded tier (measured reject, bd-4rxozm). A folded
+                // hit falls through to the tiers below, which resolve the exact
+                // first match — index unchanged.
+                if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
+                    use core::simd::Simd;
+                    use core::simd::cmp::SimdPartialEq;
+                    let tv = Simd::<u8, 32>::splat(target);
+                    let zv = Simd::<u8, 32>::splat(0);
+                    // SAFETY: [i, i+128) stays within the current mapped page.
+                    let v0 = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i), 32)
+                    });
+                    let v1 = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i + 32), 32)
+                    });
+                    let v2 = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i + 64), 32)
+                    });
+                    let v3 = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i + 96), 32)
+                    });
+                    let any = (v0.simd_eq(tv) | v0.simd_eq(zv))
+                        | (v1.simd_eq(tv) | v1.simd_eq(zv))
+                        | (v2.simd_eq(tv) | v2.simd_eq(zv))
+                        | (v3.simd_eq(tv) | v3.simd_eq(zv));
+                    if !any.any() {
+                        i += 128;
+                        continue;
+                    }
+                }
                 // Wide 32-byte portable-SIMD scan for `target` OR NUL (AVX width,
                 // like glibc strchr), taken only when the 32-byte window stays in
                 // the current page (offset <= 0x1000-32). NUL/target-free panels
