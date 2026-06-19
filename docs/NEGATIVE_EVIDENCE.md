@@ -199,3 +199,29 @@ deployed one — the runtime-policy membrane on the math path consumes the entir
 the single most important honesty correction of the session: **deployed fl math = glibc parity.**
 LEVER (filing): cheapen/fast-path `unary_entry`'s decide+observe for pure finite-math inputs to
 recover the core win for the deployed path (design tradeoff: membrane adaptivity vs per-call cost).
+
+## 2026-06-19 CORRECTION — memset_abi_bench measures RAW CORE primitives, NOT deployed public fns
+
+Verified the source: `memset_abi_bench` calls `frankenlibc_abi::string_abi::bench_raw_memset_bytes`
+/ `bench_raw_memcpy_bytes` / `bench_scan_c_string` — **bench-only raw-primitive exposers** that
+SKIP the membrane. So the memset/memmove/memcpy/strlen "wins" recorded above are **CORE-primitive
+wins (thin path), NOT the deployed public `memset`/`memcpy`/`strlen`**. I over-attributed them as
+"deployed" earlier — corrected here.
+
+The deployed PUBLIC functions DO carry the membrane: `string_abi::strcmp` has `stage_context_two`
++ `runtime_policy::decide` (string_abi.rs:2337), like math's `unary_entry` (~150–200 ns/call). So
+deployed public mem/string is **UNMEASURED**, and by analogy to the proven math finding the
+membrane likely erodes small-size wins (a ~180 ns membrane dwarfs a 3–19 ns core op → deployed
+small `memset`/`strcmp` could be NEUTRAL-to-LOSS).
+
+**CONFIRMED deployed-representative (public abi, with membrane):**
+- `fgetc` 0.552× WIN, `fgetc_unlocked` 1.001× NEUTRAL (stdio).
+- `snprintf_s_newline` 0.998×, `swprintf` 1.005× NEUTRAL (stdio).
+- math exp/sin/cos/log/exp2/log2 0.98–1.03× NEUTRAL (membrane erased the 2–4× core win).
+
+**CORE-only (raw, no membrane) = fl's algorithmic ceiling, NOT deployed:** glibc_baseline 67 fns
+(~58/67 wins), memset_abi raw primitives (memset/memmove win).
+
+**KEY REMAINING MEASUREMENT:** bench the DEPLOYED PUBLIC mem/string (`string_abi::memset`/`strcmp`/
+`strlen` WITH membrane) vs glibc — strcmp-has-membrane + the math-membrane cost predict deployed
+small ops are at risk. This is the next decisive head-to-head.
