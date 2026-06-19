@@ -6,10 +6,10 @@ Last updated: 2026-06-19 by `cod-a` / `BlackThrush`.
 
 | Area | Score | Evidence | Risk |
 |---|---:|---|---|
-| Measured perf backlog conversion | 15 / many pending | Added cod-a parser-batch classification for `bd-2g7oyh.480`, `.484`, `.486`, `.488`, `.489`, `.490`, `.491`, `bd-v4t889`, `bd-rpc-byte-program-number-wq60gz`, plus `bd-2g7oyh.479` runtime-design stack candidates. Parser rows are internal old-vs-new; `.479` is same-worker runtime-kernel old-vs-new. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, runtime membrane, and peer-owned leaves. Deployed ABI vs glibc evidence is still required for release perf claims. |
-| Negative-evidence ledger | 1 committed ledger + bead-local rejects | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and the cod-a parser batch. `tests/artifacts/perf/bd-2g7oyh.479-runtime-design-stack-candidates.md` records the same-worker stack-candidate reject and retry predicate. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended when it is not peer-owned dirty. |
-| Revert discipline | Green for measured cluster | Winning rows kept; losing/neutral parser source shapes were reversed without deleting evidence artifacts or benchmark rows. Prior glibc losses (`bd-2g7oyh.478`, `bd-2g7oyh.482`) remain reverted. `bd-2g7oyh.479` stack candidates were reverted after hz2 p95/p99 regressions. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
-| Conformance guard | Partial green | Focused parser guards passed previously. For `.479`, touched-file rustfmt and `cargo check -p frankenlibc-membrane --lib` passed. | Full core tests are blocked by unrelated iconv/glob failures; workspace check/clippy by missing packaged files in `asupersync-conformance 0.3.4`; workspace fmt by broad formatting drift. |
+| Measured perf backlog conversion | 16 / many pending | Added cod-a parser-batch classification for `bd-2g7oyh.480`, `.484`, `.486`, `.488`, `.489`, `.490`, `.491`, `bd-v4t889`, `bd-rpc-byte-program-number-wq60gz`, plus `bd-2g7oyh.479` runtime-design stack candidates and `bd-li0so3` hosts field scanner. Parser rows are internal old-vs-new; `.479` is same-worker runtime-kernel old-vs-new. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, runtime membrane, and peer-owned leaves. Deployed ABI vs glibc evidence is still required for release perf claims. |
+| Negative-evidence ledger | 1 committed ledger + bead-local rejects | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and the cod-a parser batch. `tests/artifacts/perf/bd-2g7oyh.479-runtime-design-stack-candidates.md` and `tests/artifacts/perf/bd-li0so3-hosts-field-scanner.md` record same-worker rejects and retry predicates. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended when it is not peer-owned dirty. |
+| Revert discipline | Green for measured cluster | Winning rows kept; losing/neutral parser source shapes were reversed without deleting evidence artifacts or benchmark rows. Prior glibc losses (`bd-2g7oyh.478`, `bd-2g7oyh.482`) remain reverted. `bd-2g7oyh.479` stack candidates and `bd-li0so3` hosts scanner were reverted after same-worker regressions. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
+| Conformance guard | Partial green | Focused parser guards passed previously. For `.479`, touched-file rustfmt and `cargo check -p frankenlibc-membrane --lib` passed. For `bd-li0so3`, touched-file rustfmt, 10 hosts parser tests, and `cargo check -p frankenlibc-core` passed. | Full core tests are blocked by unrelated iconv/glob failures; workspace check/clippy by missing packaged files in `asupersync-conformance 0.3.4`; workspace fmt by broad formatting drift. |
 | Release posture | Not ready | Additional getopt and group lookup wins recorded, plus real `getgrgid(0)` neutral and passwd lookup losses routed deeper. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, and conformance/bench gates are repeatable. |
 
 ## 2026-06-19 measured stdio cluster
@@ -29,6 +29,17 @@ to same-worker rch evidence and rejected.
 | `runtime_math_kernels/design_choose_plan/strict` p50 (`hz2`) | 367.188 ns | 370.153 ns | 1.008x | NEUTRAL/LOSS | Reverted to heap `Vec`. |
 | same row custom mean (`hz2`) | 372.889 ns | 471.061 ns | 1.263x | LOSS | Reverted. |
 | same row p95 / p99 (`hz2`) | 418.648 ns / 438.791 ns | 1058.839 ns / 1356.561 ns | 2.529x / 3.092x | LOSS | Do not retry fixed `[ProbeCandidate; 17]` layout. |
+
+## 2026-06-19 `bd-li0so3` measured reject
+
+The `/etc/hosts` hostname field scanner was converted from code-first pending
+to same-worker rch evidence and rejected.
+
+| Workload | Baseline split/filter/collect | Candidate field scanner | Ratio | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| `parse_hosts_line_typical` p50 (`vmi1149989`) | 74.106 ns | 92.461 ns | 1.248x | LOSS | Reverted to split/filter/collect. |
+| same row mean (`vmi1149989`) | 69.717 ns | 94.178 ns | 1.351x | LOSS | Reverted. |
+| same row p95 / p99 (`vmi1149989`) | 80.096 ns / 88.041 ns | 104.067 ns / 111.742 ns | 1.299x / 1.269x | LOSS | Do not retry this scanner family without a fresh allocation-dominant profile. |
 
 ## Blocking follow-ups
 

@@ -79,17 +79,6 @@ fn is_resolver_field_separator(b: u8) -> bool {
     b.is_ascii_whitespace()
 }
 
-fn next_resolver_field<'a>(line: &'a [u8], index: &mut usize) -> Option<&'a [u8]> {
-    while *index < line.len() && is_resolver_field_separator(line[*index]) {
-        *index += 1;
-    }
-    let start = *index;
-    while *index < line.len() && !is_resolver_field_separator(line[*index]) {
-        *index += 1;
-    }
-    (start != *index).then_some(&line[start..*index])
-}
-
 /// Parse a single line from /etc/hosts.
 ///
 /// Format: `<address> <hostname> [<alias>...]`
@@ -102,8 +91,15 @@ pub fn parse_hosts_line(line: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
         line
     };
 
-    let mut field_index = 0usize;
-    let addr_field = next_resolver_field(line, &mut field_index)?;
+    let mut fields = line
+        .split(|&b| is_resolver_field_separator(b))
+        .filter(|f| !f.is_empty());
+
+    let addr_field = fields.next()?;
+    let hostnames: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
+    if hostnames.is_empty() {
+        return None;
+    }
 
     // Validate the address is a real IP. IPv4 hosts rows dominate the hot
     // /etc/hosts path, so keep them on bytes and reserve UTF-8 parsing for IPv6.
@@ -111,20 +107,10 @@ pub fn parse_hosts_line(line: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
         || core::str::from_utf8(addr_field)
             .ok()
             .is_some_and(|addr| addr.parse::<Ipv6Addr>().is_ok());
-    if !valid_addr {
-        None
-    } else {
-        let mut hostnames = Vec::new();
-        while let Some(field) = next_resolver_field(line, &mut field_index) {
-            if hostnames.is_empty() {
-                hostnames.reserve(2);
-            }
-            hostnames.push(field.to_vec());
-        }
-        if hostnames.is_empty() {
-            return None;
-        }
+    if valid_addr {
         Some((addr_field.to_vec(), hostnames))
+    } else {
+        None
     }
 }
 
@@ -937,17 +923,6 @@ mod tests {
         let (addr, names) = parse_hosts_line(b"10.0.0.1 myhost # my server").unwrap();
         assert_eq!(addr, b"10.0.0.1");
         assert_eq!(names, vec![b"myhost".to_vec()]);
-    }
-
-    #[test]
-    fn parse_hosts_field_scanner_preserves_comments_and_empty_fields() {
-        let (addr, names) =
-            parse_hosts_line(b"\t127.0.0.1 \t host1  \t host2\t# ignored tail").unwrap();
-        assert_eq!(addr, b"127.0.0.1");
-        assert_eq!(names, vec![b"host1".to_vec(), b"host2".to_vec()]);
-
-        assert!(parse_hosts_line(b"127.0.0.1 \t # no hostname before comment").is_none());
-        assert!(parse_hosts_line(b"not-an-ip host1 host2").is_none());
     }
 
     #[test]
