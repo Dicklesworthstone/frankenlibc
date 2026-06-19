@@ -1,8 +1,10 @@
 # FrankenLibC Perf Negative-Evidence Ledger
 
-Measured head-to-head **vs host glibc** for perf optimizations that were committed
-"code-first, batch-test pending". Records **every** result — win, loss, or neutral —
-so dead ends are never retried and real wins are confirmed with numbers.
+Measured perf evidence for optimizations that were committed "code-first,
+batch-test pending". Most rows are head-to-head **vs host glibc**; controlled
+old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
+Records **every** result — win, loss, or neutral — so dead ends are never
+retried and real wins are confirmed with numbers.
 
 ## Method
 
@@ -35,7 +37,58 @@ so dead ends are never retried and real wins are confirmed with numbers.
 | 2026-06-19 | calloc `alloc_zeroed` fresh-mmap skip (`bd-7ak6cm`) | `calloc_glibc_bench` 1 MiB (new vs old) | 13028.9 ns (new) | 12522.4 ns (old) | 1.040x | LOSS | Reverted. `ovh-a`, single-process controlled new-vs-old (calloc/alloc_zeroed vs malloc+write_bytes). NEUTRAL 256 B–4 MiB (band 0.98–1.04), slight loss at 1 MiB. Root cause: arena forces `align=32 > MIN_ALIGN(16)`, so Rust `System::alloc_zeroed` never forwards to libc `calloc` — it does `alloc`+`write_bytes` identically to baseline, so the mmap-zeroed skip is unreachable. Kept reusable bench harness; see `tests/artifacts/perf/bd-7ak6cm-calloc-alloc-zeroed.md`. glibc 1 MiB p50 11792.4 ns (~6% under `fl_old`; fixed membrane overhead, not memset). |
 | 2026-06-19 | general `powf` f64 `exp(y·ln x)` route (`bd-z8p3mx`) | `powf_glibc_bench` general_big_e | 30.85 ns (fl) | 7.89 ns (glibc) | 3.91x | LOSS-vs-glibc / **WIN-vs-fl_old 0.689x** | KEPT — strict improvement, no regression. fl general powf 1.4–1.6x faster than the prior `libm::powf` fallback (general_big_e 0.689x, general_small_1p7 0.609x, general_big_pi 0.726x vs fl_old) but still ~3.9x slower than glibc's fused f32 kernel (two f64 transcendentals vs one fused f32). Accuracy ≤1 ULP over 6981 inputs (new gate `conformance_diff_powf_general`); overflow/underflow/subnormal defer to libm so errno/FE parity holds. Follow-up bead filed for the fused-kernel port. See `tests/artifacts/perf/bd-z8p3mx-powf-general-f64-route.md`. |
 | 2026-06-19 | fused single-pass f32 `powf` kernel — glibc `__ieee754_powf` port (`bd-z8p3mx` / `bd-fused-f32-powf-kernel`) | `powf_glibc_bench` general_big_e | 9.27 ns (fl) | 7.53 ns (glibc) | 1.23x | **near-parity / WIN-vs-fl_old 0.206x** | KEPT — supersedes the f64 route above. Ported ARM optimized-routines `powf.c` + tables (same algorithm glibc ships). **4.8x faster than the prior libm fallback** (general 0.205–0.206x, medium 0.215x vs fl_old) and within **1.23x of glibc**, down from the f64 route's 3.9x. **Bit-exact (0 ULP)** over 6981 inputs — it is glibc's algorithm. Placing it ahead of the int/medium gauntlet also halved the medium-box path (18.9→9.4 ns) and neutralized the exponent-1.337 overfit grid. Residual 1.23x is Rust call/branch overhead vs glibc leaf asm. Conformance green (powf_general bit-exact, 1.337 gate, errno, fp_exceptions). See `tests/artifacts/perf/bd-z8p3mx-powf-general-f64-route.md`. |
+| 2026-06-19 | `/etc/aliases` manual member scanner (`bd-4crkqx`) | `resolv_parsers_bench` `parse_aliases_line_typical` (old-vs-new, no host glibc) | 106.877 ns (candidate) | 91.103 ns (baseline) | 1.173x | LOSS | Reverted to split/filter/collect. Same-worker `hz2`; mean 1.272x slower, p95 1.803x slower, p99 1.996x slower. Retry only with a new SIMD/memchr-backed multi-delimiter primitive or a long-row workload profile. |
 <!-- rows appended as benches complete -->
+
+## 2026-06-19 `bd-4crkqx` aliases scanner measured reject
+
+Focused gauntlet target: the code-first single-pass `/etc/aliases` member
+scanner in `crates/frankenlibc-core/src/aliases/mod.rs`.
+
+```bash
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cc \
+FRANKENLIBC_RESOLV_BENCH_MODE=strict \
+RCH_VERBOSE=1 \
+rch exec -- cargo bench -p frankenlibc-bench --bench resolv_parsers_bench --profile release
+```
+
+- Worker: `hz2` (`root@178.104.77.29`) for both baseline and candidate.
+- Baseline worktree: `/data/projects/.scratch/frankenlibc-cc-bd4crkqx-baseline-20260619T174620Z`
+  at `f819823d8^` (`7cdf69121`).
+- Candidate worktree: `/data/projects/.scratch/frankenlibc-cc-bd4crkqx-candidate-20260619T174620Z`
+  at `f819823d8`.
+- RCH did not forward the requested mode label; the bench printed `mode=raw`
+  for both runs, so this is like-for-like old-vs-new evidence but not a
+  strict-mode-labeled row.
+
+Focused row: `parse_aliases_line_typical`.
+
+| Metric | Baseline split/filter/collect | Candidate manual scanner | Candidate / baseline |
+|---|---:|---:|---:|
+| p50 ns/op | 91.103 | 106.877 | 1.173x slower |
+| mean ns/op | 91.762 | 116.684 | 1.272x slower |
+| p95 ns/op | 95.303 | 171.807 | 1.803x slower |
+| p99 ns/op | 96.391 | 192.406 | 1.996x slower |
+| throughput ops/s | 10,897,706.887 | 8,570,123.415 | 0.786x |
+
+Action: **reverted** the manual comma scanner and restored the prior
+split/filter/collect parser. The added whitespace-only-member unit guard stays
+because it is valid for the restored parser.
+
+Post-revert validation:
+
+- `rustfmt --check --edition 2024 crates/frankenlibc-core/src/aliases/mod.rs`:
+  passed.
+- `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cc cargo test -p frankenlibc-core aliases --lib -- --nocapture`:
+  30 passed, 0 failed, 3149 filtered.
+- `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cc cargo check -p frankenlibc-core`:
+  passed with existing unrelated iconv warnings.
+
+Retry-condition predicate: do not retry this manual scanner/reserve-shape family
+for short `/etc/aliases` rows. Return only with a materially different
+SIMD/memchr-backed multi-delimiter primitive shared across parser families, or
+with a profile proving long aliases rows dominate enough to amortize setup and
+branch costs.
 
 ## 2026-06-19 stdio cod-b gauntlet notes
 
