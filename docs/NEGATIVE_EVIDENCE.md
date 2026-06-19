@@ -21,7 +21,7 @@ so dead ends are never retried and real wins are confirmed with numbers.
 |------|--------------|-------|----|----|-------|---------|--------|
 | 2026-06-19 | `%s\n` direct payload fast path (`bd-0m5vaw`) | `stdio_glibc_baseline_snprintf_s_newline` | 471.49 ns | 550.41 ns | 0.856x | WIN | Keep. Head-to-head Criterion on `vmi1227854`, cache miss; conservative CI ratio still < 0.90. |
 | 2026-06-19 | Wide printf format TLS pool (`bd-fgnxc0`) | `stdio_glibc_baseline_swprintf_wide_format` | 317.94 ns | 1.0154 us | 0.313x | WIN | Keep. Head-to-head Criterion on `vmi1227854`, cache miss; outliers noted but conservative CI ratio still < 0.34. |
-| _pending_ | stdio registry local hasher (bd-2jgvp9) | stdio_glibc_baseline_fgetc_4096 | — | — | — | — | — |
+| 2026-06-19 | stdio registry local hasher (bd-2jgvp9) | stdio_glibc_baseline_fgetc_4096 | _re-run_ | _re-run_ | — | PENDING-LTO | thin-LTO re-run in flight (BlackThrush, frankenlibc-cc). A no-LTO run was DISCARDED as invalid for fl — see METHODOLOGY below. |
 
 <!-- rows appended as benches complete -->
 
@@ -34,3 +34,19 @@ so dead ends are never retried and real wins are confirmed with numbers.
 - Validation: `AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b cargo check -p frankenlibc-abi` passed locally with pre-existing warning debt.
 - Test caveat: `cargo test -p frankenlibc-abi ...` without `--lib` is blocked by pre-existing `zz_scratch_divmin` integration-test compile errors. `cargo test -p frankenlibc-abi --lib -- --list` shows `stdio_abi` and `wchar_abi` inline tests are not present because those modules are `#[cfg(not(test))]` in `crates/frankenlibc-abi/src/lib.rs`.
 - RCH caveat: an attempted `--lib` guard run on `ovh-b` failed in `blake3` build script with SIGILL before crate compilation; not counted as conformance evidence.
+
+## METHODOLOGY — CRITICAL: bench fl WITH thin-LTO (no-LTO invalidates fl ratios)
+
+fl depends on cross-crate **LTO inlining** (`abi` → `core`); host glibc is a precompiled
+system library that needs no LTO. Disabling LTO (`CARGO_PROFILE_BENCH_LTO=false`) for a
+faster build **handicaps fl specifically** and produces invalid ratios. Evidence
+(BlackThrush, no-LTO run on `frankenlibc-cc`, remote build finished in 240s):
+
+- `swprintf_wide_format`: fl 2.769 µs / glibc 2.787 µs = **0.994× (spurious NEUTRAL)** —
+  directly contradicts cod-b's thin-LTO **0.313× WIN** on the identical bench.
+- `snprintf_s_newline`: fl 1.623 µs / glibc 1.656 µs = **0.981×** vs cod-b's thin-LTO **0.856×**.
+- `fgetc_unlocked_4096`: fl 11.26 ms / glibc 9.73 ms = **1.157× (spurious LOSS)**.
+
+→ **Always use the default bench profile (thin-LTO, codegen-units=1).** no-LTO medians are
+NOT recorded as fl results. no-LTO build ≈ 4 min vs thin-LTO ≈ 25+ min, but the speed is not
+worth an invalid measurement. **This measurement dead-end is logged so it is never retried.**
