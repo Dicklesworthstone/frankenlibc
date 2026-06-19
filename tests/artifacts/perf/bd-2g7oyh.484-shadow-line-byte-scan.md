@@ -37,3 +37,16 @@ checked byte-level decimal accumulation.
 
 `crates/frankenlibc-bench/benches/resolv_parsers_bench.rs` now emits
 `parse_shadow_line_typical` for the later same-worker batch gate.
+
+## 2026-06-19 BOLD-VERIFY verdict
+
+Same-worker `vmi1153651` parser batch:
+
+- Baseline source `00cf7152d1f659397dec42616a8e660a64a8c849` with the bench row backported:
+  p50 `390.734 ns`, mean `393.690 ns`.
+- Candidate source: p50 `145.133 ns`, mean `187.200 ns`.
+- Ratio old/new: p50 `0.371x`, mean `0.475x`.
+- Post-reversal source confirmation: p50 `114.707 ns`, mean `120.211 ns`.
+
+Verdict: **WIN, kept**. This is internal core-parser evidence, not a host-glibc
+ratio. Focused `pwd::shadow::tests::parse_` guard passed 13 tests.

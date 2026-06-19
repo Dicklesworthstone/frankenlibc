@@ -541,3 +541,50 @@ Retry-condition predicate: do not retry passwd colon-field scanner or byte-decim
 reshaping as a standalone performance lever. The next passwd/NSS perf work should
 target lookup/cache behavior, especially the `getpwuid(0)` scan path, with a
 fresh deployed ABI vs glibc benchmark.
+
+## 2026-06-19 cod-a parser batch measured classification
+
+This batch used `resolv_parsers_bench`, which is a FrankenLibC-core parser
+microbench with no host-glibc comparator. These rows are therefore **not**
+ratio-vs-glibc evidence; they are old-source vs current-source keep/reject
+evidence for pending code-first parser leaves.
+
+Method:
+
+- Baseline source: `00cf7152d1f659397dec42616a8e660a64a8c849`, with only
+  the benchmark rows backported into a detached scratch worktree.
+- Worker: `vmi1153651` for baseline, candidate, and post-reversal confirmation.
+- Baseline command used `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a-parser-base`
+  and `CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-a/criterion-parser-base-harnessbackport-00cf7152d-20260619`.
+- Candidate command used `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`
+  and `CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-a/criterion-parser-head-ec77915a8-20260619`.
+- Post-reversal confirmation used
+  `CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-a/criterion-parser-reverted-ec77915a8-20260619`.
+
+| Bead / row | Baseline p50 / mean | Candidate p50 / mean | Ratio p50 / mean | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| `bd-2g7oyh.484` shadow byte scan, `parse_shadow_line_typical` | 390.734 ns / 393.690 ns | 145.133 ns / 187.200 ns | 0.371x / 0.475x | WIN | Keep. Post-reversal source still measured 114.707 ns / 120.211 ns. |
+| `bd-2g7oyh.489` ndots early exit, `resolver_should_try_absolute_first_typical` | 11.271 ns / 10.927 ns | 8.834 ns / 8.958 ns | 0.784x / 0.820x | WIN | Keep. Post-reversal source measured 8.825 ns / 8.580 ns. |
+| `bd-2g7oyh.480` + `.491` proc route flags/field scan, `parse_proc_net_route_has_ipv4_typical` | 193.540 ns / 194.125 ns | 186.230 ns / 189.373 ns | 0.962x / 0.976x | WEAK WIN | Keep as a combined route-parser batch. Post-reversal source measured 164.474 ns / 165.508 ns. |
+| `bd-2g7oyh.486` proc maps byte numeric, `parse_maps_line_typical` | 173.755 ns / 175.686 ns | 243.944 ns / 235.462 ns | 1.404x / 1.340x | LOSS | Reverted only the numeric-parser source shape; kept overflow guards and bench row. |
+| `bd-rpc-byte-program-number-wq60gz` RPC byte number parse, `parse_rpc_line_typical` | 166.474 ns / 168.749 ns | 164.140 ns / 179.322 ns | 0.986x / 1.063x | NEUTRAL/LOSS | Reverted only the byte-number source shape; p50 was noise, mean/tail regressed. |
+| `bd-v4t889` + `bd-2g7oyh.488` resolv.conf numeric/field scanners, `parse_resolv_conf_options_typical` | 262.342 ns / 270.402 ns | 310.177 ns / 317.729 ns | 1.182x / 1.175x | LOSS | Reverted both source shapes; kept resolver option contract guards. |
+| `bd-2g7oyh.490` if_inet6 field scanner, `parse_proc_net_if_inet6_has_ipv6_typical` | 226.138 ns / 242.667 ns | 305.105 ns / 306.780 ns | 1.349x / 1.264x | LOSS | Reverted only the if_inet6 field-scanner source shape; kept behavior guards. |
+
+Validation:
+
+- `cargo test -p frankenlibc-core resolv::tests::parse_proc_net`: 6 passed.
+- `cargo test -p frankenlibc-core pwd::shadow::tests::parse_`: 13 passed.
+- `cargo test -p frankenlibc-core proc_maps::tests::parse_`: 17 passed.
+- `cargo test -p frankenlibc-core rpc::tests::parse_`: 13 passed.
+- `cargo test -p frankenlibc-core resolv::config::tests::test_should_try_absolute_first`: 2 passed.
+- `cargo test -p frankenlibc-core resolv::config::tests::test_parse_line_byte_field_scanner_spacing_and_caps`: 1 passed.
+- Targeted `rustfmt --edition 2024 --check` passed on the four parser files touched by the reversion.
+- Full `cargo test -p frankenlibc-core` is blocked by unrelated iconv/glob failures
+  (3167 passed, 11 failed).
+- `cargo check --workspace --all-targets` is blocked by unrelated
+  `crates/frankenlibc-abi/tests/zz_scratch_divmin.rs` compile errors.
+- `cargo fmt --check` is blocked by broad pre-existing formatting drift in
+  generated/math/iconv and unrelated files.
+- `cargo clippy --workspace --all-targets -- -D warnings` is blocked before
+  local lints by missing packaged files in `asupersync-conformance 0.3.4`.

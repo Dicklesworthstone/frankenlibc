@@ -84,3 +84,18 @@ AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a 
 Result after implementation: both passed. Existing unrelated warnings remain in
 `iconv` (`unused_mut` in `emit_g1`, unused `EUCJX_P2_MULTI`) plus the build
 script notice that no SMT solver was found for the stdio proof.
+
+## 2026-06-19 BOLD-VERIFY verdict
+
+Same-worker `vmi1153651` parser batch:
+
+- Baseline source `00cf7152d1f659397dec42616a8e660a64a8c849` with the bench row
+  backported: p50 `173.755 ns`, mean `175.686 ns`.
+- Candidate source: p50 `243.944 ns`, mean `235.462 ns`.
+- Ratio old/new: p50 `1.404x`, mean `1.340x`.
+
+Verdict: **LOSS, rejected**. Reverted only the source shape back to the prior
+pre-scan plus `from_str_radix` / `str::parse` numeric helpers. Kept overflow
+tests and the bench row as regression guards. This is internal core-parser
+evidence, not a host-glibc ratio. Focused `proc_maps::tests::parse_` guard
+passed 17 tests.

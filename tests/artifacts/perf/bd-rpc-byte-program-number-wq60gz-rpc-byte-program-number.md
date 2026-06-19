@@ -37,3 +37,18 @@ Replace `/etc/rpc` parser program-number conversion from
 
 `crates/frankenlibc-bench/benches/resolv_parsers_bench.rs` now emits
 `parse_rpc_line_typical` for the later same-worker batch gate.
+
+## 2026-06-19 BOLD-VERIFY verdict
+
+Same-worker `vmi1153651` parser batch:
+
+- Baseline source `00cf7152d1f659397dec42616a8e660a64a8c849` with the bench row
+  backported: p50 `166.474 ns`, mean `168.749 ns`.
+- Candidate source: p50 `164.140 ns`, mean `179.322 ns`.
+- Ratio old/new: p50 `0.986x`, mean `1.063x`.
+
+Verdict: **NEUTRAL/LOSS, rejected**. The tiny p50 movement was not worth keeping
+because mean and tail regressed. Reverted only the byte-number parser source
+shape back to `from_utf8(...).parse::<i32>()`; kept signed/overflow guards and
+the bench row. This is internal core-parser evidence, not a host-glibc ratio.
+Focused `rpc::tests::parse_` guard passed 13 tests.

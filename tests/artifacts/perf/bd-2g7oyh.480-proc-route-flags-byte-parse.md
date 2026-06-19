@@ -75,3 +75,19 @@ CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p fr
 Result after implementation: both passed. Existing unrelated warnings remain in
 `iconv` (`unused_mut` in `emit_g1`, unused `EUCJX_P2_MULTI`) plus the build
 script notice that no SMT solver was found for the stdio proof.
+
+## 2026-06-19 BOLD-VERIFY verdict
+
+This bead shares the route-row timing with `bd-2g7oyh.491`; the batch could not
+separate flag parsing from field extraction without reintroducing extra source
+variants, so the verdict is for the combined route parser.
+
+- Baseline source `00cf7152d1f659397dec42616a8e660a64a8c849` with the bench row
+  backported: p50 `193.540 ns`, mean `194.125 ns`.
+- Candidate source: p50 `186.230 ns`, mean `189.373 ns`.
+- Ratio old/new: p50 `0.962x`, mean `0.976x`.
+- Post-reversal source confirmation: p50 `164.474 ns`, mean `165.508 ns`.
+
+Verdict: **weak WIN, kept as combined route-parser batch**. This is internal
+core-parser evidence, not a host-glibc ratio. Focused proc route/if_inet6 tests
+passed 6 tests.

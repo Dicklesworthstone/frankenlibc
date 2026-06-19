@@ -52,3 +52,18 @@ Not run by campaign instruction:
 - Criterion benchmarks
 - `rch`
 - tests/conformance
+
+## 2026-06-19 BOLD-VERIFY verdict
+
+Same-worker `vmi1153651` parser batch:
+
+- Baseline source `00cf7152d1f659397dec42616a8e660a64a8c849` with the bench row
+  backported: p50 `262.342 ns`, mean `270.402 ns`.
+- Candidate source with this field scanner plus `bd-v4t889` numeric parser:
+  p50 `310.177 ns`, mean `317.729 ns`.
+- Ratio old/new: p50 `1.182x`, mean `1.175x`.
+
+Verdict: **LOSS, rejected**. Reverted the indexed field-scanner source shape
+back to the prior split/filter iterator; kept the spacing/cap behavior guard and
+bench row. This is internal core-parser evidence, not a host-glibc ratio.
+Focused resolver config guards passed.

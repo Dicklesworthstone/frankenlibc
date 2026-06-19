@@ -39,3 +39,18 @@ memcmp, log2f, and netgroup retry families.
 
 - `AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core`: passed
 - Full tests, `rch`, and Criterion: intentionally not run in this code-first batch per campaign instruction.
+
+## 2026-06-19 BOLD-VERIFY verdict
+
+This bead shares the route-row timing with `bd-2g7oyh.480`; the batch verdict
+is for the combined proc-route flags and fixed-field scanner source.
+
+- Baseline source `00cf7152d1f659397dec42616a8e660a64a8c849` with the bench row
+  backported: p50 `193.540 ns`, mean `194.125 ns`.
+- Candidate source: p50 `186.230 ns`, mean `189.373 ns`.
+- Ratio old/new: p50 `0.962x`, mean `0.976x`.
+- Post-reversal source confirmation: p50 `164.474 ns`, mean `165.508 ns`.
+
+Verdict: **weak WIN, kept as combined route-parser batch**. This is internal
+core-parser evidence, not a host-glibc ratio. Focused proc route/if_inet6 tests
+passed 6 tests.

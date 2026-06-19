@@ -38,3 +38,17 @@ as saturated, noisy, or actively owned.
 - `AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core`: passed
 - `AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-bench --bench resolv_parsers_bench`: passed
 - Full tests, `rch`, and Criterion: intentionally not run in this code-first batch per campaign instruction.
+
+## 2026-06-19 BOLD-VERIFY verdict
+
+Same-worker `vmi1153651` parser batch:
+
+- Baseline source `00cf7152d1f659397dec42616a8e660a64a8c849` with the bench row
+  backported: p50 `226.138 ns`, mean `242.667 ns`.
+- Candidate source: p50 `305.105 ns`, mean `306.780 ns`.
+- Ratio old/new: p50 `1.349x`, mean `1.264x`.
+
+Verdict: **LOSS, rejected**. Reverted only the if_inet6 indexed field-scanner
+source shape back to the prior split/filter iterator; kept the behavior guard
+and bench row. This is internal core-parser evidence, not a host-glibc ratio.
+Focused proc route/if_inet6 tests passed 6 tests.

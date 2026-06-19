@@ -606,26 +606,28 @@ fn parse_proc_net_route_flags(field: &[u8]) -> Option<u32> {
 #[must_use]
 pub fn parse_proc_net_if_inet6_has_ipv6(content: &[u8]) -> bool {
     for line in content.split(|&b| b == b'\n') {
-        let mut cursor = 0usize;
-        let Some(addr) = next_procfs_space_tab_field(line, &mut cursor) else {
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|field| !field.is_empty());
+        let Some(addr) = fields.next() else {
             continue;
         };
-        let Some(ifindex) = next_procfs_space_tab_field(line, &mut cursor) else {
+        let Some(ifindex) = fields.next() else {
             continue;
         };
-        let Some(prefix_len) = next_procfs_space_tab_field(line, &mut cursor) else {
+        let Some(prefix_len) = fields.next() else {
             continue;
         };
-        let Some(scope) = next_procfs_space_tab_field(line, &mut cursor) else {
+        let Some(scope) = fields.next() else {
             continue;
         };
-        let Some(flags) = next_procfs_space_tab_field(line, &mut cursor) else {
+        let Some(flags) = fields.next() else {
             continue;
         };
-        let Some(iface) = next_procfs_space_tab_field(line, &mut cursor) else {
+        let Some(iface) = fields.next() else {
             continue;
         };
-        if next_procfs_space_tab_field(line, &mut cursor).is_some()
+        if fields.next().is_some()
             || !is_ascii_hex_exact_len(addr, 32)
             || !is_ascii_hex_nonempty(ifindex)
             || !is_ascii_hex_nonempty(prefix_len)
@@ -886,12 +888,7 @@ mod tests {
 
     #[test]
     fn ipv4_byte_validator_matches_std_plain_dotted_contract() {
-        for sample in [
-            "0.0.0.0",
-            "127.0.0.1",
-            "192.168.1.1",
-            "255.255.255.255",
-        ] {
+        for sample in ["0.0.0.0", "127.0.0.1", "192.168.1.1", "255.255.255.255"] {
             assert!(sample.parse::<std::net::Ipv4Addr>().is_ok());
             assert!(is_valid_ipv4_addr_bytes(sample.as_bytes()));
         }
@@ -1237,7 +1234,8 @@ mod tests {
         let missing_flags = b"Iface Destination Gateway Flags\neth0 00000000 01010101\n";
         assert!(!parse_proc_net_route_has_ipv4(missing_flags));
 
-        let only_loopback = b"Iface Destination Gateway Flags\nlo 00000000 00000000 0001 trailing\n";
+        let only_loopback =
+            b"Iface Destination Gateway Flags\nlo 00000000 00000000 0001 trailing\n";
         assert!(!parse_proc_net_route_has_ipv4(only_loopback));
 
         let down_route = b"Iface Destination Gateway Flags\neth0 00000000 01010101 0000 trailing\n";
@@ -2159,10 +2157,7 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
         assert_eq!(parse_network_number_bytes(b"0177"), Some(0x7f));
         assert_eq!(parse_network_number_bytes(b"0X7F"), Some(0x7f));
         assert_eq!(parse_network_number_bytes(b"10.1"), Some(0x0a01));
-        assert_eq!(
-            parse_network_number_bytes(b"127.0.0.1"),
-            Some(0x7f00_0001)
-        );
+        assert_eq!(parse_network_number_bytes(b"127.0.0.1"), Some(0x7f00_0001));
         assert_eq!(parse_network_number_bytes(b""), None);
         assert_eq!(parse_network_number_bytes(b"10."), None);
         assert_eq!(parse_network_number_bytes(b"1.2.3.4.5"), None);
@@ -2247,9 +2242,7 @@ fe800000000000000000000000000002 02 40 20 80 wlan0\n";
     fn network_rejects_invalid_number() {
         assert!(parse_networks_line(b"foo bar").is_none());
         assert!(parse_networks_line(b"foo 256.0.0.0").is_none());
-        assert!(
-            parse_networks_line(&[b'f', b'o', b'o', b' ', b'1', b'0', 0xff]).is_none()
-        );
+        assert!(parse_networks_line(&[b'f', b'o', b'o', b' ', b'1', b'0', 0xff]).is_none());
     }
 
     #[test]

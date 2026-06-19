@@ -6,10 +6,10 @@ Last updated: 2026-06-19 by `cod-a` / `BlackThrush`.
 
 | Area | Score | Evidence | Risk |
 |---|---:|---|---|
-| Measured perf backlog conversion | 7 / many pending | `bd-0m5vaw`, `bd-fgnxc0`, `bd-2g7oyh.478`, `bd-2g7oyh.487`, `bd-9ran7n`, `bd-2g7oyh.481`, and `bd-2g7oyh.482` converted from code-first pending to measured head-to-head evidence vs host glibc. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, and peer-owned leaves. |
-| Negative-evidence ledger | 1 / committed ledger | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and now includes resolver services/protocols ratios for `bd-9ran7n`, corrected-host getopt evidence for `bd-2g7oyh.487`, mixed group lookup evidence for `bd-2g7oyh.481`, and passwd lookup losses for `bd-2g7oyh.482`. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended. |
-| Revert discipline | Green for measured cluster | Winning rows kept; losing `bd-2g7oyh.478` exact-block `strcpy_4096` unroll was reverted after a 1.250x p50 loss vs glibc. Losing `bd-2g7oyh.482` passwd parser scanner was reverted after 1.089x/3.163x deployed losses. `bd-2g7oyh.487` getopt fused lookup is a measured keep at 0.556x. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
-| Conformance guard | Partial green | `cargo check -p frankenlibc-abi` and the `bd-9ran7n` resolver parser + ABI differential guards passed with known warning debt. Criterion bench binaries built and ran successfully. `cargo test -p frankenlibc-core getopt --lib` passed 39 tests for the kept fused lookup. Group parser/ABI guards passed after signed gid rows were rejected again. Post-revert `pwd::` guards passed 79 tests for `bd-2g7oyh.482`. | Workspace hygiene is still blocked by pre-existing fmt/clippy debt in bench/core files; older `cargo test -p frankenlibc-abi` blockers around scratch probes remain a separate release-readiness risk. `cargo-clippy` is missing from the selected nightly on the rch worker. |
+| Measured perf backlog conversion | 14 / many pending | Added cod-a parser-batch classification for `bd-2g7oyh.480`, `.484`, `.486`, `.488`, `.489`, `.490`, `.491`, `bd-v4t889`, and `bd-rpc-byte-program-number-wq60gz`. These are internal old-vs-new parser rows, not host-glibc ratios. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, and peer-owned leaves. Deployed ABI vs glibc evidence is still required for any release perf claim. |
+| Negative-evidence ledger | 1 / committed ledger | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and now includes the cod-a parser batch: keep shadow, ndots, route; reject/revert proc maps, RPC byte number, resolv.conf numeric/field scanners, and if_inet6 field scanner. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended. |
+| Revert discipline | Green for measured cluster | Winning rows kept; losing/neutral parser source shapes were reversed without deleting evidence artifacts or benchmark rows. Prior glibc losses (`bd-2g7oyh.478`, `bd-2g7oyh.482`) remain reverted. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
+| Conformance guard | Partial green | Focused parser guards passed: proc route/if_inet6 6 tests, shadow parse 13, proc maps parse 17, RPC parse 13, resolver ndots 2, resolver field-spacing 1. Targeted rustfmt passed on touched parser files. | Full core tests are blocked by unrelated iconv/glob failures; workspace check by `zz_scratch_divmin`; workspace fmt by broad formatting drift; workspace clippy by missing packaged files in `asupersync-conformance 0.3.4`. |
 | Release posture | Not ready | Additional getopt and group lookup wins recorded, plus real `getgrgid(0)` neutral and passwd lookup losses routed deeper. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, and conformance/bench gates are repeatable. |
 
 ## 2026-06-19 measured stdio cluster
@@ -164,6 +164,23 @@ Post-revert focused conformance stayed green: `cargo test -p frankenlibc-core
 pwd:: --lib` passed 79 tests, and the updated `baseline_capture_bench` check
 passed with known pre-existing warning debt. Clippy remains blocked on rch by
 missing `cargo-clippy` for the selected nightly toolchain.
+
+## 2026-06-19 cod-a parser batch measured classification
+
+Internal core parser old-vs-new gate on `vmi1153651`; not host-glibc evidence.
+
+| Bead / row | Baseline | Candidate | Ratio | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| `bd-2g7oyh.484` `parse_shadow_line_typical` | 390.734 ns | 145.133 ns | 0.371x | WIN | Keep. |
+| `bd-2g7oyh.489` `resolver_should_try_absolute_first_typical` | 11.271 ns | 8.834 ns | 0.784x | WIN | Keep. |
+| `bd-2g7oyh.480` + `.491` `parse_proc_net_route_has_ipv4_typical` | 193.540 ns | 186.230 ns | 0.962x | WEAK WIN | Keep combined route batch; post-reversal source measured 164.474 ns. |
+| `bd-2g7oyh.486` `parse_maps_line_typical` | 173.755 ns | 243.944 ns | 1.404x | LOSS | Source reverted. |
+| `bd-rpc-byte-program-number-wq60gz` `parse_rpc_line_typical` | 166.474 ns | 164.140 ns | 0.986x p50 / 1.063x mean | NEUTRAL/LOSS | Source reverted. |
+| `bd-v4t889` + `bd-2g7oyh.488` `parse_resolv_conf_options_typical` | 262.342 ns | 310.177 ns | 1.182x | LOSS | Source reverted. |
+| `bd-2g7oyh.490` `parse_proc_net_if_inet6_has_ipv6_typical` | 226.138 ns | 305.105 ns | 1.349x | LOSS | Source reverted. |
+
+Validation summary: focused parser tests passed; full workspace gates remain
+blocked by unrelated pre-existing failures listed in the current gate snapshot.
 
 ### 2026-06-19 deployed-math DEFINITIVELY resolved (same-run, BlackThrush)
 

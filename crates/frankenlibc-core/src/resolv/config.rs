@@ -123,8 +123,12 @@ impl ResolverConfig {
             return;
         }
 
-        let mut cursor = 0;
-        let keyword = match next_field(line, &mut cursor) {
+        // Split on whitespace
+        let mut parts = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|p| !p.is_empty());
+
+        let keyword = match parts.next() {
             Some(k) => k,
             None => return,
         };
@@ -132,14 +136,14 @@ impl ResolverConfig {
         match keyword {
             b"nameserver" => {
                 if self.nameservers.len() < MAX_NAMESERVERS
-                    && let Some(addr) = next_field(line, &mut cursor)
+                    && let Some(addr) = parts.next()
                     && let Ok(ip) = parse_ip_addr(addr)
                 {
                     self.nameservers.push(ip);
                 }
             }
             b"domain" => {
-                if let Some(name) = next_field(line, &mut cursor)
+                if let Some(name) = parts.next()
                     && let Ok(s) = core::str::from_utf8(name)
                 {
                     self.domain = Some(s.to_string());
@@ -148,19 +152,14 @@ impl ResolverConfig {
             }
             b"search" => {
                 self.search.clear();
-                let mut fields_seen = 0;
-                while fields_seen < MAX_SEARCH_DOMAINS {
-                    let Some(name) = next_field(line, &mut cursor) else {
-                        break;
-                    };
+                for name in parts.take(MAX_SEARCH_DOMAINS) {
                     if let Ok(s) = core::str::from_utf8(name) {
                         self.search.push(s.to_string());
                     }
-                    fields_seen += 1;
                 }
             }
             b"options" => {
-                while let Some(opt) = next_field(line, &mut cursor) {
+                for opt in parts {
                     self.parse_option(opt);
                 }
             }
@@ -237,49 +236,10 @@ fn parse_ip_addr(bytes: &[u8]) -> Result<IpAddr, ()> {
     s.parse().map_err(|_| ())
 }
 
-#[inline]
-fn is_field_separator(byte: u8) -> bool {
-    byte == b' ' || byte == b'\t'
-}
-
-fn next_field<'a>(line: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {
-    while *cursor < line.len() && is_field_separator(line[*cursor]) {
-        *cursor += 1;
-    }
-
-    let start = *cursor;
-    while *cursor < line.len() && !is_field_separator(line[*cursor]) {
-        *cursor += 1;
-    }
-
-    if start == *cursor {
-        None
-    } else {
-        Some(&line[start..*cursor])
-    }
-}
-
 /// Parse a u32 from bytes.
 fn parse_u32(bytes: &[u8]) -> Result<u32, ()> {
-    let digits = match bytes.split_first() {
-        Some((b'+', rest)) => rest,
-        _ => bytes,
-    };
-    if digits.is_empty() {
-        return Err(());
-    }
-
-    let mut value = 0u32;
-    for &byte in digits {
-        if !byte.is_ascii_digit() {
-            return Err(());
-        }
-        value = value
-            .checked_mul(10)
-            .and_then(|n| n.checked_add((byte - b'0') as u32))
-            .ok_or(())?;
-    }
-    Ok(value)
+    let s = core::str::from_utf8(bytes).map_err(|_| ())?;
+    s.parse().map_err(|_| ())
 }
 
 /// Trim leading and trailing ASCII whitespace.
@@ -454,14 +414,14 @@ options ndots:2 timeout:3 attempts:2 rotate
         assert!(config.rotate);
         assert!(config.use_vc);
 
-        let config = ResolverConfig::parse(
-            b"search one two three four five six seven eight\n",
+        let config = ResolverConfig::parse(b"search one two three four five six seven eight\n");
+        assert_eq!(
+            config.search,
+            vec!["one", "two", "three", "four", "five", "six"]
         );
-        assert_eq!(config.search, vec!["one", "two", "three", "four", "five", "six"]);
 
-        let config = ResolverConfig::parse(
-            b"search stale.example old.example\ndomain\tcorp.example\n",
-        );
+        let config =
+            ResolverConfig::parse(b"search stale.example old.example\ndomain\tcorp.example\n");
         assert_eq!(config.domain, Some("corp.example".to_string()));
         assert_eq!(config.search, vec!["corp.example".to_string()]);
     }

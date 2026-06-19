@@ -36,3 +36,17 @@ threshold has been reached, not count every remaining label separator.
 - `AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core`: passed
 - `AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-bench --bench resolv_parsers_bench`: passed
 - Full tests, `rch`, and Criterion: intentionally not run in this code-first batch per campaign instruction.
+
+## 2026-06-19 BOLD-VERIFY verdict
+
+Same-worker `vmi1153651` parser batch:
+
+- Baseline source `00cf7152d1f659397dec42616a8e660a64a8c849` with the bench row backported:
+  p50 `11.271 ns`, mean `10.927 ns`.
+- Candidate source: p50 `8.834 ns`, mean `8.958 ns`.
+- Ratio old/new: p50 `0.784x`, mean `0.820x`.
+- Post-reversal source confirmation: p50 `8.825 ns`, mean `8.580 ns`.
+
+Verdict: **WIN, kept**. This is internal core-parser/control-path evidence, not
+a host-glibc ratio. Focused `ResolverConfig::should_try_absolute_first` tests
+passed 2 tests.
