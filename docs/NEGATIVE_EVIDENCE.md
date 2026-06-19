@@ -95,6 +95,36 @@ absorber in front of the global table, or tombstone-rehash compaction), proven
 on a churn bench with a same-worker A/B before landing. Read-path lock elision
 (above) is sound but single-thread-neutral.
 
+## 2026-06-19 deployed calloc 1155 ns root-cause hunt — table & check_ownership RULED OUT, free-reorder landed (BlackThrush, bd-f874go)
+
+Decisive same-worker `ovh-a` A/B experiments to attribute the ~1155 ns deployed
+calloc/free penalty (calloc p50 256 B 1195.6 ns vs glibc 16.7 ns = 71.6x). All
+runs `calloc_glibc_bench`, mt=3, glibc arm as same-run noise normalizer.
+
+| Experiment | calloc 256 B p50 | vs HEAD | conclusion |
+|---|---|---|---|
+| HEAD baseline (262144-slot table) | 1195.6 ns | — | — |
+| **Shrink `FALLBACK_ALLOC_TABLE_SLOTS` 262144 → 16384** (fits L2) | 1199.2 ns | +0.3% | **RULES OUT the fallback table** size/cache as the cost — last section's "probe/tombstone/cache degradation" hypothesis is **wrong**. Diagnostic only, reverted. |
+| **Free reorder: skip `check_ownership` (PageOracle::query) for fallback-tracked frees** | 1147.9 ns | **−4.0%** | `check_ownership`/`PageOracle::query` is only **~4% (~47 ns)** of the cost — also not the big lever. Landed (see below). |
+
+So the bench is **calloc-dominated**: free is ~150 ns (of which check_ownership
+~47 ns); the remaining **~1000 ns lives in the `calloc` strict host path**
+(`native_libc_calloc` ≈ 17 ns + `fallback_insert_sized` ≈ spinlock + ` record_alloc_stats`).
+Summing every readable piece (native calloc/free ~27, fallback insert/remove ~14,
+`FlatCombiningStats` HTM/lock + full `state.snapshot()` per op ~100, check_ownership
+~47) ≈ **~190 ns** — leaving **~960 ns unexplained by code reading**. The 16 B
+calloc (39.9 ns) uniquely escapes it; ≥256 B all sit at ~1150–1660 ns. Cause is
+NOT the entrypoint tax, NOT the fallback table, NOT check_ownership. **Next step
+is an actual flamegraph (`perf record`) of the 256 B calloc loop** — the cost is
+in something a static read can't see (candidate: `FlatCombiningStats` HTM-abort
+storm if TSX is fused-off on the worker, building+discarding a full snapshot per
+op; or glibc address-rotation interacting with a per-call structure). Updated on
+bd-f874go.
+
+| Date | Lever / bead | Bench | fl | glibc | ratio | verdict | action |
+|------|--------------|-------|----|----|-------|---------|--------|
+| 2026-06-19 | free: skip `check_ownership` PageOracle query for fallback-tracked frees (`bd-f874go`, BlackThrush) | `calloc_glibc_bench` 256 B (same-worker `ovh-a`, glibc-stable in-run) | 1147.9 ns | 16.67 ns | fl 256 B **0.960x** vs prior fl (4096 B 0.960x, 16 B 0.965x) | **MARGINAL WIN → landed** | Honest: ratio-vs-prior-fl 0.96 is just under the 0.95 WIN bar, but it is a *reproducible* (3 sizes, glibc stable 16.671 vs 16.674 ns) **non-regression that strictly removes work** — a `PageOracle` RwLock query gone from every deployed strict free of a tracked pointer (the common case), with multi-thread lock-contention upside. Behavior-preserving: such pointers always satisfied `!check_ownership` under the old gate; conformance GREEN (malloc_abi 53/0, foreign_adoption 4/0, malloc_edges/aligned_alloc/realloc_shrink all pass). Does not address the ~960 ns calloc-side residual (needs profiling). |
+
 ## 2026-06-19 `bd-4crkqx` aliases scanner measured reject
 
 Focused gauntlet target: the code-first single-pass `/etc/aliases` member

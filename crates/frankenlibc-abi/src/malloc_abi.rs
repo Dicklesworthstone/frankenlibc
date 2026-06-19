@@ -1767,16 +1767,29 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         let _ = fallback_remove(ptr);
         return;
     }
-    if strict_allocator_host_path_active() && !check_ownership(ptr as usize) {
-        let tracked_size = fallback_remove_sized(ptr);
-        // SAFETY: strict-mode preserves host allocator semantics. Some glibc
-        // internals allocate without crossing our public malloc symbol, so
-        // unknown pointers must still be returned to the host allocator.
-        unsafe { native_libc_free(ptr) };
-        if let Some(size) = tracked_size {
+    if strict_allocator_host_path_active() {
+        // Fast path (bd-f874go): a pointer present in the native-fallback table
+        // is by construction a host-allocator allocation (it was inserted by the
+        // strict malloc/calloc/bootstrap path), and arena allocations are never
+        // inserted there — so a hit lets us free natively WITHOUT the
+        // `check_ownership` PageOracle query. This removes `PageOracle::query`
+        // from every deployed strict-mode free of a tracked pointer (the common
+        // case). Behavior-preserving: such pointers always satisfied
+        // `!check_ownership(ptr)` under the old combined gate.
+        if let Some(size) = fallback_remove_sized(ptr) {
+            // SAFETY: tracked native-fallback allocation returned to the host.
+            unsafe { native_libc_free(ptr) };
             record_free_stats(size);
+            return;
         }
-        return;
+        if !check_ownership(ptr as usize) {
+            // SAFETY: strict-mode preserves host allocator semantics. Some glibc
+            // internals allocate without crossing our public malloc symbol, so
+            // unknown pointers must still be returned to the host allocator.
+            unsafe { native_libc_free(ptr) };
+            return;
+        }
+        // Arena-owned pointer: fall through to the membrane free path below.
     }
     let _trace_scope = runtime_policy::entrypoint_scope("free");
     let _signal_guard =
