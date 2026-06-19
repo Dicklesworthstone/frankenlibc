@@ -85,6 +85,10 @@ name = "powf_glibc_bench"
 harness = false
 
 [[bench]]
+name = "exp_log_glibc_bench"
+harness = false
+
+[[bench]]
 name = "elimination_bench"
 harness = false
 

@@ -87,6 +87,12 @@ pub fn expf(x: f32) -> f32 {
     if (-5.0..=5.0).contains(&x) {
         return libm::exp2f(x * core::f32::consts::LOG2_E);
     }
+    // General fused kernel (ARM optimized-routines / glibc `__ieee754_expf`,
+    // 0.5 ULP) for the rest of the finite-normal range; overflow/underflow/
+    // subnormal/inf/nan defer to libm::expf for exact FE + errno semantics.
+    if x.abs() < 87.0 {
+        return expf_kernel(x);
+    }
     libm::expf(x)
 }
 
@@ -195,8 +201,13 @@ fn log2f_dyadic_profile_fast_path(x: f32) -> Option<f32> {
 
 #[inline]
 pub fn log2f(x: f32) -> f32 {
-    if let Some(result) = log2f_dyadic_profile_fast_path(x) {
-        return result;
+    // Fused single-pass kernel (ARM optimized-routines / glibc `__ieee754_log2f`,
+    // 0.26 ULP) for positive normal finite x — bit-exact to glibc and faster than
+    // the prior dyadic-profile grid + `libm::log2f` fallback. Subnormal, zero,
+    // negative, inf and nan fall through to the FE-flag + libm path below.
+    let ix = x.to_bits();
+    if ix.wrapping_sub(0x0080_0000) < (0x7f80_0000 - 0x0080_0000) {
+        return log2f_kernel(ix);
     }
     if x == 0.0 {
         fe_divbyzero_f32();
@@ -524,6 +535,84 @@ fn powf_fused_general(base: f32, exponent: f32) -> Option<f32> {
     }
 }
 
+/// log2f fused kernel polynomial (ARM optimized-routines `__log2f_data.poly`,
+/// degree 4). The `tab` it pairs with is byte-identical to `POWF_LOG2_TAB`
+/// (same invc/logc, `POWF_SCALE = 1`), so that table is reused.
+const LOG2F_POLY: [u64; 4] = [
+    0xbfd712b6f70a7e4d,
+    0x3fdecabf496832e0,
+    0xbfe715479ffae3de,
+    0x3ff715475f35c8b8,
+];
+
+/// `log2(x)` for the bit pattern `ix` of a positive normal float, rounded to
+/// f32. Faithful port of ARM `log2f` (the standalone single-precision log2,
+/// glibc `__ieee754_log2f`, 0.26 ULP).
+#[inline]
+fn log2f_kernel(ix: u32) -> f32 {
+    let tmp = ix.wrapping_sub(POWF_LOG2_OFF);
+    let i = ((tmp >> (23 - POWF_LOG2_TABLE_BITS)) % 16) as usize;
+    let top = tmp & 0xff80_0000;
+    let iz = ix.wrapping_sub(top);
+    let k = (tmp as i32) >> 23; // arithmetic shift
+    let (invc_bits, logc_bits) = POWF_LOG2_TAB[i];
+    let invc = f64::from_bits(invc_bits);
+    let logc = f64::from_bits(logc_bits);
+    let z = f32::from_bits(iz) as f64;
+
+    // log2(x) = log1p(z/c-1)/ln2 + log2(c) + k.
+    let r = z * invc - 1.0;
+    let y0 = logc + f64::from(k);
+    let a0 = f64::from_bits(LOG2F_POLY[0]);
+    let a1 = f64::from_bits(LOG2F_POLY[1]);
+    let a2 = f64::from_bits(LOG2F_POLY[2]);
+    let a3 = f64::from_bits(LOG2F_POLY[3]);
+    let r2 = r * r;
+    let y = a1 * r + a2;
+    let y = a0 * r2 + y;
+    let p = a3 * r + y0;
+    let y = y * r2 + p;
+    y as f32
+}
+
+// expf fused kernel constants (ARM optimized-routines `expf`, glibc
+// `__ieee754_expf`, 0.5 ULP). Reuses `POWF_EXP2_TAB`; the polynomial and shift
+// are the N-scaled variants (`poly_scaled`, unscaled `shift = 0x1.8p+52`).
+const EXPF_INVLN2_SCALED: f64 = f64::from_bits(0x4047_1547_652b_82fe); // log2(e) * 32
+const EXPF_SHIFT: f64 = f64::from_bits(0x4338_0000_0000_0000); // 0x1.8p+52
+const EXPF_POLY_SCALED: [u64; 3] = [
+    0x3ebc_6af8_4b91_2394,
+    0x3f2e_bfce_50fa_c4f3,
+    0x3f96_2e42_ff0c_52d6,
+];
+
+/// `e^x` rounded to f32. Faithful port of ARM `expf` (non-TOINT path). Caller
+/// guarantees `|x| < 88` so the result is a finite normal f32 and the table
+/// index arithmetic cannot overflow.
+#[inline]
+fn expf_kernel(x: f32) -> f32 {
+    let xd = f64::from(x);
+    // x*N/Ln2 = k + r with r in [-1/2, 1/2] and int k.
+    let z = EXPF_INVLN2_SCALED * xd;
+    let kd = z + EXPF_SHIFT;
+    let ki = kd.to_bits();
+    let kd = kd - EXPF_SHIFT;
+    let r = z - kd;
+
+    // exp(x) = 2^(k/N) * 2^(r/N) ~= s * (C0*r^3 + C1*r^2 + C2*r + 1).
+    let t = POWF_EXP2_TAB[(ki % 32) as usize];
+    let t = t.wrapping_add(ki << (52 - POWF_EXP2_TABLE_BITS));
+    let s = f64::from_bits(t);
+    let c0 = f64::from_bits(EXPF_POLY_SCALED[0]);
+    let c1 = f64::from_bits(EXPF_POLY_SCALED[1]);
+    let c2 = f64::from_bits(EXPF_POLY_SCALED[2]);
+    let z2 = c0 * r + c1;
+    let r2 = r * r;
+    let y = c2 * r + 1.0;
+    let y = z2 * r2 + y;
+    (y * s) as f32
+}
+
 #[inline]
 pub fn powf(base: f32, exponent: f32) -> f32 {
     // Fast paths mirroring the f64 `pow`: libm::powf always routes through its
@@ -639,6 +728,14 @@ pub fn atanhf(x: f32) -> f32 {
 
 #[inline]
 pub fn exp2f(x: f32) -> f32 {
+    // Fused single-pass kernel (ARM optimized-routines / glibc `__ieee754_exp2f`,
+    // 0.5 ULP) — the same `2^xd` table pass used by the powf exp2 stage. Used for
+    // the normal-result interior |x| < 126, where 2^x is a finite normal f32 and
+    // `xd = x` is exact. Overflow, underflow, subnormal, inf and nan defer to
+    // `libm::exp2f` for exact FE_OVERFLOW/FE_UNDERFLOW + errno semantics.
+    if x.abs() < 126.0 {
+        return powf_exp2_inline(f64::from(x));
+    }
     libm::exp2f(x)
 }
 

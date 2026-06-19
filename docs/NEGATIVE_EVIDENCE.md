@@ -34,10 +34,17 @@ retried and real wins are confirmed with numbers.
 | 2026-06-19 | `/etc/group` splitn colon-tail parser (`bd-2g7oyh.481`, final source) | `glibc_baseline_grp_lookup/getgrgid_0` | 24.631 us | 24.435 us | 1.008x | NEUTRAL | Do not count as a win. Route the gid lookup/cache path deeper; retained splitn parser because the same deployed parser lever gives a clear `getgrnam` win. |
 | 2026-06-19 | gid hot-result cache + gid-only C stat fingerprint (`bd-2g7oyh.492`) | `glibc_baseline_grp_lookup/getgrnam_root` | 9.791 us | 24.739 us | 0.396x | WIN | Guard held on `hz2`: keeping the direct stat probe on gid lookup only preserves the prior name-lookup win. |
 | 2026-06-19 | gid hot-result cache + gid-only C stat fingerprint (`bd-2g7oyh.492`) | `glibc_baseline_grp_lookup/getgrgid_0` | 14.687 us | 15.179 us | 0.968x | NEUTRAL | Partial keep, not p50 domination. FrankenLibC p50 improved from the previous `hz2` corrected-source 24.631 us to 14.687 us; mean ratio 0.939x and p95 ratio 0.931x vs glibc. Route remaining p50 gap deeper. |
+| 2026-06-19 | default `/etc/group` hot-hit stat skip (`bd-2g7oyh.493`, candidate A) | `glibc_baseline_grp_lookup/getgrnam_root` | 9.798 us | 25.077 us | 0.391x | WIN | Guard only. Rejected/not landed because target `getgrgid_0` lost same-run p50. |
+| 2026-06-19 | default `/etc/group` hot-hit stat skip (`bd-2g7oyh.493`, candidate A) | `glibc_baseline_grp_lookup/getgrgid_0` | 10.056 us | 9.029 us | 1.114x | LOSS | Rejected/not landed. Same-run `hz2` target p50 and mean/tail stayed slower than glibc despite absolute FL improvement versus the neutral baseline. |
+| 2026-06-19 | default hot-hit stat skip + libc `getenv` probe (`bd-2g7oyh.493`, candidate B) | `glibc_baseline_grp_lookup/getgrnam_root` | 16.181 us | 40.272 us | 0.402x | WIN | Cross-worker guard only; `rch` routed to `hz1` despite an `hz2` preference. Rejected/not landed because target `getgrgid_0` lost same-run p50. |
+| 2026-06-19 | default hot-hit stat skip + libc `getenv` probe (`bd-2g7oyh.493`, candidate B) | `glibc_baseline_grp_lookup/getgrgid_0` | 16.152 us | 10.022 us | 1.612x | LOSS | Rejected/not landed. Same-run `hz1` loss; do not retry default-only stat/env bypass as the residual fix. |
 | 2026-06-19 | calloc `alloc_zeroed` fresh-mmap skip (`bd-7ak6cm`) | `calloc_glibc_bench` 1 MiB (new vs old) | 13028.9 ns (new) | 12522.4 ns (old) | 1.040x | LOSS | Reverted. `ovh-a`, single-process controlled new-vs-old (calloc/alloc_zeroed vs malloc+write_bytes). NEUTRAL 256 B–4 MiB (band 0.98–1.04), slight loss at 1 MiB. Root cause: arena forces `align=32 > MIN_ALIGN(16)`, so Rust `System::alloc_zeroed` never forwards to libc `calloc` — it does `alloc`+`write_bytes` identically to baseline, so the mmap-zeroed skip is unreachable. Kept reusable bench harness; see `tests/artifacts/perf/bd-7ak6cm-calloc-alloc-zeroed.md`. glibc 1 MiB p50 11792.4 ns (~6% under `fl_old`; fixed membrane overhead, not memset). |
 | 2026-06-19 | general `powf` f64 `exp(y·ln x)` route (`bd-z8p3mx`) | `powf_glibc_bench` general_big_e | 30.85 ns (fl) | 7.89 ns (glibc) | 3.91x | LOSS-vs-glibc / **WIN-vs-fl_old 0.689x** | KEPT — strict improvement, no regression. fl general powf 1.4–1.6x faster than the prior `libm::powf` fallback (general_big_e 0.689x, general_small_1p7 0.609x, general_big_pi 0.726x vs fl_old) but still ~3.9x slower than glibc's fused f32 kernel (two f64 transcendentals vs one fused f32). Accuracy ≤1 ULP over 6981 inputs (new gate `conformance_diff_powf_general`); overflow/underflow/subnormal defer to libm so errno/FE parity holds. Follow-up bead filed for the fused-kernel port. See `tests/artifacts/perf/bd-z8p3mx-powf-general-f64-route.md`. |
 | 2026-06-19 | fused single-pass f32 `powf` kernel — glibc `__ieee754_powf` port (`bd-z8p3mx` / `bd-fused-f32-powf-kernel`) | `powf_glibc_bench` general_big_e | 9.27 ns (fl) | 7.53 ns (glibc) | 1.23x | **near-parity / WIN-vs-fl_old 0.206x** | KEPT — supersedes the f64 route above. Ported ARM optimized-routines `powf.c` + tables (same algorithm glibc ships). **4.8x faster than the prior libm fallback** (general 0.205–0.206x, medium 0.215x vs fl_old) and within **1.23x of glibc**, down from the f64 route's 3.9x. **Bit-exact (0 ULP)** over 6981 inputs — it is glibc's algorithm. Placing it ahead of the int/medium gauntlet also halved the medium-box path (18.9→9.4 ns) and neutralized the exponent-1.337 overfit grid. Residual 1.23x is Rust call/branch overhead vs glibc leaf asm. Conformance green (powf_general bit-exact, 1.337 gate, errno, fp_exceptions). See `tests/artifacts/perf/bd-z8p3mx-powf-general-f64-route.md`. |
 | 2026-06-19 | `/etc/aliases` manual member scanner (`bd-4crkqx`) | `resolv_parsers_bench` `parse_aliases_line_typical` (old-vs-new, no host glibc) | 106.877 ns (candidate) | 91.103 ns (baseline) | 1.173x | LOSS | Reverted to split/filter/collect. Same-worker `hz2`; mean 1.272x slower, p95 1.803x slower, p99 1.996x slower. Retry only with a new SIMD/memchr-backed multi-delimiter primitive or a long-row workload profile. |
+| 2026-06-19 | fused f32 `exp2f` kernel — glibc `__ieee754_exp2f` port (`bd-fused-f32-exp-log-kernels`) | `exp_log_glibc_bench` exp2f | 2.36 ns (fl) | 5.22 ns (glibc) | 0.45x | **WIN** | Ported ARM optimized-routines `exp2f.c` (reuses the in-tree exp2 table from powf). 2.2x faster than glibc, 1.3x over libm (3.13 ns). **Bit-exact (0 ULP)** over 22 493 inputs (`conformance_diff_exp2f_general`). Caveat: part of the glibc margin is `math::` inlining (vs glibc's opaque extern call); the robust result is the libm win + glibc-identical algorithm/accuracy. See `tests/artifacts/perf/bd-fused-f32-exp-log-kernels.md`. |
+| 2026-06-19 | fused f32 `log2f` kernel — glibc `__ieee754_log2f` port (`bd-fused-f32-exp-log-kernels`) | `exp_log_glibc_bench` log2f | 2.68 ns (fl) | 5.62 ns (glibc) | 0.48x | **WIN** | Ported ARM `log2f.c` (reuses `POWF_LOG2_TAB` + standalone deg-4 poly), replacing the dyadic-profile overfit grid. 2.1x faster than glibc and libm (5.71 ns). **Bit-exact (0 ULP)** over 216 369 inputs. Same inlining caveat. |
+| 2026-06-19 | fused f32 `expf` kernel — glibc `__ieee754_expf` port (`bd-fused-f32-exp-log-kernels`) | `exp_log_glibc_bench` expf (x>5) | 3.01 ns (fl) | 5.46 ns (glibc) | 0.55x | **WIN** | Ported ARM `expf.c` (reuses the exp2 table + scaled poly) for 5<|x|<87; the existing [-5,5] path is kept. 1.8x faster than glibc, 2.5x over libm (7.51 ns). Bit-exact in the kernel range. Same inlining caveat. |
 <!-- rows appended as benches complete -->
 
 ## 2026-06-19 `bd-4crkqx` aliases scanner measured reject
@@ -616,6 +623,98 @@ Retry-condition predicate: do not retry group-line parser reshaping or a
 hot-result-only gid cache. Return only with a materially cheaper fingerprint
 probe, a correctness-preserving cache invalidation primitive, or a new measured
 NSS lookup structure that clears the p50 win gate.
+
+## 2026-06-19 `bd-2g7oyh.493` default hot-hit stat bypass measured reject
+
+Focused gauntlet target: the residual `getgrgid(0)` p50 gap after
+`bd-2g7oyh.492`, without retrying the group-line parser or hot-result-only
+cache. The rejected lever tried an immutable-default-source fast path: after
+checking the `FRANKENLIBC_GROUP_PATH` override, repeated default `/etc/group`
+gid hits already materialized in TLS returned before the per-call file
+fingerprint/stat probe. Candidate B additionally replaced the common unset-path
+Rust environment lookup with a libc `getenv` probe.
+
+Baseline command from clean `e2d4018c72ae`:
+
+```bash
+RCH_WORKER=hz2 RCH_PREFERRED_WORKER=hz2 RCH_WORKERS=hz2 RCH_REQUIRE_REMOTE=1 \
+RCH_VISIBILITY=summary RCH_QUEUE_WHEN_BUSY=1 RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS=900 \
+rch exec -- env AGENT_NAME=BlackThrush FRANKENLIBC_BENCH_PIN=1 CARGO_BUILD_JOBS=1 \
+  CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b-493-baseline \
+  CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-b-493-baseline/criterion-bd-2g7oyh-493-baseline-hz2-20260619T0602 \
+  cargo bench -j 1 -p frankenlibc-bench --features abi-bench \
+  --bench glibc_baseline_bench -- glibc_baseline_grp_lookup \
+  --noplot --sample-size 80 --warm-up-time 1 --measurement-time 3
+```
+
+- Worker: `hz2`.
+- `getgrnam("root")`: FrankenLibC p50 `9.522 us`, host glibc p50
+  `23.909 us`, ratio `0.398x`; **WIN**.
+- `getgrgid(0)`: FrankenLibC p50 `15.068 us`, host glibc p50 `14.968 us`,
+  ratio `1.007x`; **NEUTRAL**.
+
+Candidate A command:
+
+```bash
+RCH_WORKER=hz2 RCH_PREFERRED_WORKER=hz2 RCH_WORKERS=hz2 RCH_REQUIRE_REMOTE=1 \
+RCH_VISIBILITY=summary RCH_QUEUE_WHEN_BUSY=1 RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS=900 \
+rch exec -- env AGENT_NAME=BlackThrush FRANKENLIBC_BENCH_PIN=1 CARGO_BUILD_JOBS=1 \
+  CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+  CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-b/criterion-bd-2g7oyh-493-default-hot-skipstat-hz2-20260619T0610 \
+  cargo bench -j 1 -p frankenlibc-bench --features abi-bench \
+  --bench glibc_baseline_bench -- glibc_baseline_grp_lookup \
+  --noplot --sample-size 80 --warm-up-time 1 --measurement-time 3
+```
+
+- Worker: `hz2`.
+- `getgrnam("root")` guard: FrankenLibC p50 `9.798 us`, host glibc p50
+  `25.077 us`, ratio `0.391x`; **WIN**.
+- `getgrgid(0)`: FrankenLibC p50 `10.056 us`, host glibc p50 `9.029 us`,
+  ratio `1.114x`; mean ratio `1.115x`; p95 ratio `1.111x`; p99 ratio `1.115x`;
+  **LOSS**.
+- Candidate A improved FrankenLibC absolute p50 versus the clean `hz2`
+  baseline, but glibc was faster in the same run and the target lost the
+  ledger win gate. **Rejected/not landed.**
+
+Candidate B command:
+
+```bash
+RCH_WORKER=hz2 RCH_PREFERRED_WORKER=hz2 RCH_WORKERS=hz2 RCH_REQUIRE_REMOTE=1 \
+RCH_VISIBILITY=summary RCH_QUEUE_WHEN_BUSY=1 RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS=900 \
+rch exec -- env AGENT_NAME=BlackThrush FRANKENLIBC_BENCH_PIN=1 CARGO_BUILD_JOBS=1 \
+  CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+  CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-b/criterion-bd-2g7oyh-493-getenv-hot-skipstat-hz2-20260619T0618 \
+  cargo bench -j 1 -p frankenlibc-bench --features abi-bench \
+  --bench glibc_baseline_bench -- glibc_baseline_grp_lookup \
+  --noplot --sample-size 80 --warm-up-time 1 --measurement-time 3
+```
+
+- Worker actually selected by `rch`: `hz1`, despite the `hz2` preference.
+  Absolute time is not compared to the `hz2` baseline; only same-run ratios are
+  used.
+- `getgrnam("root")` guard: FrankenLibC p50 `16.181 us`, host glibc p50
+  `40.272 us`, ratio `0.402x`; **WIN**.
+- `getgrgid(0)`: FrankenLibC p50 `16.152 us`, host glibc p50 `10.022 us`,
+  ratio `1.612x`; mean ratio `1.613x`; p95 ratio `1.422x`; p99 ratio `1.379x`;
+  **LOSS**.
+- Candidate B is also **rejected/not landed**. The libc `getenv` probe did not
+  make the default-only stat bypass a keeper.
+
+Validation:
+
+- `rustfmt --edition 2024 --check crates/frankenlibc-abi/src/grp_abi.rs crates/frankenlibc-abi/tests/grp_abi_test.rs`:
+  passed for both candidates in the scratch worktree.
+- `cargo test -p frankenlibc-abi --test grp_abi_test getgrgid_hot_lookup_reuses_tls_result_and_invalidates_on_reload -- --nocapture`:
+  passed for both candidates; custom `FRANKENLIBC_GROUP_PATH` file-rewrite
+  invalidation stayed exact.
+- The source candidates were kept out of `main`, so no post-reject code revert
+  was required in the main checkout.
+
+Retry-condition predicate: do not retry default-source-only stat/env bypasses
+for `getgrgid(0)`. The next p50 attempt should build a materially different
+NSS structure, such as a per-generation gid index over the parsed group snapshot
+or a shared immutable metadata epoch that removes lookup work without relying on
+default-path special casing.
 
 ## 2026-06-19 `bd-2g7oyh.482` passwd parser measured reject + revert
 
