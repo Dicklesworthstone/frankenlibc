@@ -95,3 +95,13 @@ deployed path** — a credible perf-release position. The single highest-leverag
 back toward the core 2–4× wins. Specific deployed gaps to close: `powf` (core libm, 2.7×), `strcpy`,
 large-buffer SIMD scaling. No reverts (all losses are gaps-to-glibc / membrane-ceiling, not
 regressions vs fl's own prior code; conformance unaffected).
+
+### 2026-06-19 deployed-math DEFINITIVELY resolved (same-run, BlackThrush)
+
+Clean same-run core+abi+glibc (`bench_math_abi` 3-way, one worker) confirms the deployed-math
+picture with no cross-run confounding: **core math 2–4× faster** than glibc (3.6–7.8 ns vs 12.5–19 ns);
+the `unary_entry` membrane adds **~8–11 ns/call**, bringing **deployed math to glibc parity** (NEUTRAL,
+0.97–1.02×). Earlier "~180 ns" was a per-batch misread — corrected. **bd-n40in2 (P2) is the validated
+top deployed-perf lever:** cheapen the membrane (memset's path proves ~1 ns achievable) → recover
+~2× on deployed math. Method note: per-call membrane delta MUST be measured same-run (worker
+variance otherwise dominates); cross-run core-vs-deployed comparisons are invalid.
