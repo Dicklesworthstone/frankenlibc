@@ -16,9 +16,20 @@ keeps the public helper APIs as wrappers.
 
 ## Benchmark Target
 
-`baseline_capture_bench` now includes `getopt_short_bundle_typical`, a realistic
-CLI startup scan over bundled short options, attached required args, GNU `W;`
-routing, and a terminal operand.
+`baseline_capture_bench` now includes:
+
+- `getopt_short_bundle_typical`: FrankenLibC-only CLI startup scan over bundled
+  short options, attached required args, GNU `W;` routing, and a terminal
+  operand.
+- `getopt_short_bundle_glibc_comparable`: same short-option stream, measured
+  head-to-head against host glibc `getopt`.
+
+The host glibc path is loaded with `dlmopen(LM_ID_NEWLM, "libc.so.6", ...)` and
+the harness resets both the isolated libc `opt*` symbols and the process-visible
+`opt*` symbols. This is required because the bench binary links
+`frankenlibc_abi`, which exports `optind`/`optarg`/`opterr`/`optopt` and can
+otherwise interpose glibc's state variables. A preflight asserts both the option
+stream checksum and final `optind` before Criterion timing starts.
 
 ## Negative Evidence Ledger
 
@@ -32,8 +43,43 @@ routing, and a terminal operand.
 - Avoided already-owned NSS parser leaves: hosts, services, protocols,
   networks, aliases, group, passwd, shadow, gshadow, rpc, proc route, proc maps.
 
-## Pending Verdict
+## Measured Verdict
 
-Code-first validation is limited to crate-scoped `cargo check`. Keep/reject
-must be decided later by same-worker Criterion timing against the pre-change
-parent and any host/original comparison available for CLI parser workloads.
+Command:
+
+```bash
+AGENT_NAME=cod-a \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a \
+rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench baseline_capture_bench getopt_short_bundle_glibc_comparable -- --noplot
+```
+
+Worker: `ovh-a`; default bench profile (thin-LTO).
+
+| Mode | p50 ns/op | mean ns/op | p95 ns/op |
+|---|---:|---:|---:|
+| FrankenLibC core, fused lookup | 93.699 | 96.687 | 166.625 |
+| Host glibc `getopt` | 168.676 | 188.519 | 194.829 |
+
+Ratio vs glibc: `0.556x` p50 (`93.699 / 168.676`), lower is better.
+
+Verdict: **WIN**. Keep the fused lookup.
+
+## Harness Negative Evidence
+
+The first host-glibc attempts are not recorded as perf evidence:
+
+- `dlopen("libc.so.6")` + `dlsym("optind")` observed libc's own `optind`, while
+  glibc `getopt` advanced the process-visible interposed `optind`; final
+  `optind` parity failed.
+- `RTLD_DEEPBIND` was rejected by the remote worker when loading `libc.so.6`.
+- A post-revert context run with the corrected host reset also beat glibc
+  (`61.777 ns` vs `105.433 ns`, ratio `0.586x` on `hz2`), but that was the
+  two-scan baseline, not this fused candidate.
+
+## Validation
+
+- `rustfmt --edition 2024 --check crates/frankenlibc-core/src/getopt/parse.rs crates/frankenlibc-core/src/getopt/state.rs crates/frankenlibc-bench/benches/baseline_capture_bench.rs`: passed.
+- `AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec -- cargo test -p frankenlibc-core getopt --lib`: 39 passed.
+- `AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec -- cargo check -p frankenlibc-bench --features abi-bench --bench baseline_capture_bench`: passed before final harness correction; final Criterion run rebuilt and executed the bench target successfully.
+- `AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec -- cargo clippy -p frankenlibc-core --lib -- -D warnings`: blocked because `cargo-clippy` is not installed for `nightly-2026-04-28-x86_64-unknown-linux-gnu` on the selected worker.

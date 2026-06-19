@@ -23,6 +23,7 @@ so dead ends are never retried and real wins are confirmed with numbers.
 | 2026-06-19 | Wide printf format TLS pool (`bd-fgnxc0`) | `stdio_glibc_baseline_swprintf_wide_format` | 317.94 ns | 1.0154 us | 0.313x | WIN | Keep. Head-to-head Criterion on `vmi1227854`, cache miss; outliers noted but conservative CI ratio still < 0.34. |
 | 2026-06-19 | stdio registry local hasher (bd-2jgvp9) | stdio_glibc_baseline_fgetc_4096 | 5.5212 ms | 9.5712 ms | 0.577x | WIN | Keep. thin-LTO Criterion (BlackThrush, frankenlibc-cc, 72s warm build). fl buffered fgetc ~1.73x faster than glibc (registry local-hasher + buffered-getc path). VALIDATES the methodology finding — the no-LTO run had shown a spurious 1.157x "loss" on fgetc_unlocked. Conformance: cargo check green + order-audit clear (no test pins flush order). |
 | 2026-06-19 | exact `strcpy_4096` eight-block unroll (`bd-2g7oyh.478`) | `glibc_baseline_strcpy_4096` | 68.555 ns | 54.857 ns | 1.250x | LOSS | Reverted. Focused thin-LTO rch Criterion on `hz1`; mean also slower (72.159 ns vs 65.354 ns, 1.104x). Restored the prior counted loop; focused guards + `cargo check -p frankenlibc-core` passed. |
+| 2026-06-19 | fused getopt optstring lookup (`bd-2g7oyh.487`) | `getopt_short_bundle_glibc_comparable` | 93.699 ns | 168.676 ns | 0.556x | WIN | Keep. Corrected host harness uses `dlmopen` plus process/global `opt*` reset to avoid FrankenLibC `optind` interposition; preflight asserts checksum and final `optind`. Focused getopt tests passed. |
 | 2026-06-19 | NSS services decimal byte parser (`bd-9ran7n`) | `glibc_baseline_resolv_services_protocols/getservbyname_http_tcp` | 28.532 us | 435.582 us | 0.0655x | WIN | Keep. Real ABI `getservbyname("http","tcp")` against host glibc on `hz1`; mean ratio 0.0692x. |
 | 2026-06-19 | NSS protocols decimal byte parser (`bd-9ran7n`) | `glibc_baseline_resolv_services_protocols/getprotobyname_tcp` | 125.854 us | 129.508 us | 0.9718x | NEUTRAL | Keep as part of same resolver parser lever: no regression, mean ratio 0.9639x, and services lookup is a large deployed ABI win. |
 
@@ -78,6 +79,48 @@ Retry-condition predicate: do not retry exact-block unrolling for `strcpy_4096`.
 Return only with a materially different generated/backend primitive or a
 different ABI-level `strcpy` path after a fresh focused profile proves that is
 the bottleneck.
+
+## 2026-06-19 `bd-2g7oyh.487` getopt fused lookup keep
+
+Focused gauntlet target: the code-first fused optstring lookup in
+`crates/frankenlibc-core/src/getopt/{parse,state}.rs`.
+
+Candidate run:
+
+```bash
+AGENT_NAME=cod-a \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a \
+rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench baseline_capture_bench getopt_short_bundle_glibc_comparable -- --noplot
+```
+
+- Worker: `ovh-a`.
+- FrankenLibC core fused lookup: p50 `93.699 ns`, mean `96.687 ns`.
+- Host glibc `getopt`: p50 `168.676 ns`, mean `188.519 ns`.
+- Ratio vs glibc: p50 `0.556x`, mean `0.513x` (`<1` is faster).
+- Verdict: **WIN**. The fused lookup stays.
+
+Harness notes:
+
+- The host glibc path uses `dlmopen(LM_ID_NEWLM, "libc.so.6", ...)` and resets
+  both isolated libc and process-visible `optarg`/`opterr`/`optind`/`optopt`.
+  This avoids `frankenlibc_abi`'s exported `optind` interposing glibc's state.
+- A preflight asserts option-stream checksum and final `optind` parity before
+  Criterion timing starts.
+- Earlier `dlopen`/`RTLD_DEEPBIND` attempts are **not** counted as perf
+  evidence: one observed mismatched `optind`, and `RTLD_DEEPBIND` failed to load
+  libc on the remote worker.
+- Post-revert context with the corrected host harness also beat glibc on `hz2`
+  (`61.777 ns` vs `105.433 ns`, ratio `0.586x`), but that was the two-scan
+  baseline, not the fused candidate.
+
+Validation:
+
+- `rustfmt --edition 2024 --check` on the touched getopt and bench files passed.
+- `cargo test -p frankenlibc-core getopt --lib` via `rch`: 39 passed.
+- `cargo clippy -p frankenlibc-core --lib -- -D warnings` via `rch`: blocked
+  because `cargo-clippy` is not installed for the selected nightly toolchain on
+  the worker.
 
 ## 2026-06-19 `bd-9ran7n` NSS decimal parser measured keep
 

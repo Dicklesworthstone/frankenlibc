@@ -337,7 +337,10 @@ mod tests {
     fn w_extension_separated_routes_next_arg() {
         // "-W foo x" with "W;ab:": scanner consumes "foo" as the long spec and
         // leaves optind at the slot a space-separated long arg would come from.
-        let argv: Vec<&[u8]> = ["prog", "-W", "foo", "x"].iter().map(|s| s.as_bytes()).collect();
+        let argv: Vec<&[u8]> = ["prog", "-W", "foo", "x"]
+            .iter()
+            .map(|s| s.as_bytes())
+            .collect();
         let mut state = GetoptState::default();
         match step_short(&argv, b"W;ab:", &mut state) {
             StepOutcome::LongRoute { arg } => {

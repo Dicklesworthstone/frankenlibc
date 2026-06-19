@@ -6,6 +6,8 @@
 
 use std::cell::RefCell;
 use std::hint::black_box;
+use std::os::raw::{c_char, c_int};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main, measurement::WallTime};
@@ -318,6 +320,12 @@ fn bench_stdlib_abs(c: &mut Criterion) {
 
 #[inline(never)]
 fn scan_getopt_short_bundle(argv: &[&[u8]], optspec: &[u8]) -> i32 {
+    let (checksum, optind) = scan_getopt_short_bundle_codes(argv, optspec);
+    checksum ^ optind as i32
+}
+
+#[inline(never)]
+fn scan_getopt_short_bundle_codes(argv: &[&[u8]], optspec: &[u8]) -> (i32, usize) {
     use frankenlibc_core::getopt::{GetoptState, StepOutcome, step_short};
 
     let mut state = GetoptState::default();
@@ -335,7 +343,151 @@ fn scan_getopt_short_bundle(argv: &[&[u8]], optspec: &[u8]) -> i32 {
             }
         }
     }
-    checksum ^ state.optind as i32
+    (checksum, state.optind)
+}
+
+#[inline(never)]
+fn scan_getopt_short_bundle_glibc_comparable() -> i32 {
+    let argv: [&[u8]; 6] = [b"prog", b"-ab", b"-cVALUE", b"-dVALUE", b"-ef", b"operand"];
+    scan_getopt_short_bundle_codes(&argv, b"abc:d:ef").0
+}
+
+type HostGetoptFn = unsafe extern "C" fn(c_int, *const *mut c_char, *const c_char) -> c_int;
+
+struct HostGetopt {
+    getopt: HostGetoptFn,
+    optarg: usize,
+    opterr: usize,
+    optind: usize,
+    optopt: usize,
+    process_optarg: usize,
+    process_opterr: usize,
+    process_optind: usize,
+    process_optopt: usize,
+}
+
+fn host_getopt() -> &'static HostGetopt {
+    static HOST_GETOPT: OnceLock<HostGetopt> = OnceLock::new();
+    HOST_GETOPT.get_or_init(load_host_getopt)
+}
+
+fn load_host_getopt() -> HostGetopt {
+    unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(
+            !handle.is_null(),
+            "failed to dlmopen host libc.so.6 in isolated namespace"
+        );
+
+        let getopt = libc::dlsym(handle, b"getopt\0".as_ptr().cast());
+        assert!(!getopt.is_null(), "failed to resolve host glibc getopt");
+
+        HostGetopt {
+            getopt: std::mem::transmute::<*mut libc::c_void, HostGetoptFn>(getopt),
+            optarg: dlsym_required(handle, b"optarg\0", "optarg") as usize,
+            opterr: dlsym_required(handle, b"opterr\0", "opterr") as usize,
+            optind: dlsym_required(handle, b"optind\0", "optind") as usize,
+            optopt: dlsym_required(handle, b"optopt\0", "optopt") as usize,
+            process_optarg: dlsym_optional(std::ptr::null_mut(), b"optarg\0") as usize,
+            process_opterr: dlsym_optional(std::ptr::null_mut(), b"opterr\0") as usize,
+            process_optind: dlsym_optional(std::ptr::null_mut(), b"optind\0") as usize,
+            process_optopt: dlsym_optional(std::ptr::null_mut(), b"optopt\0") as usize,
+        }
+    }
+}
+
+unsafe fn dlsym_required(
+    handle: *mut libc::c_void,
+    symbol: &'static [u8],
+    label: &str,
+) -> *mut libc::c_void {
+    let ptr = unsafe { libc::dlsym(handle, symbol.as_ptr().cast()) };
+    assert!(
+        !ptr.is_null(),
+        "failed to resolve host glibc symbol {label}"
+    );
+    ptr
+}
+
+unsafe fn dlsym_optional(handle: *mut libc::c_void, symbol: &'static [u8]) -> *mut libc::c_void {
+    unsafe { libc::dlsym(handle, symbol.as_ptr().cast()) }
+}
+
+unsafe fn store_optional_i32(ptr: usize, value: c_int) {
+    if ptr != 0 {
+        unsafe {
+            *(ptr as *mut c_int) = value;
+        }
+    }
+}
+
+unsafe fn store_optional_ptr(ptr: usize, value: *mut c_char) {
+    if ptr != 0 {
+        unsafe {
+            *(ptr as *mut *mut c_char) = value;
+        }
+    }
+}
+
+unsafe fn load_optional_i32(ptr: usize) -> Option<c_int> {
+    if ptr == 0 {
+        None
+    } else {
+        Some(unsafe { *(ptr as *mut c_int) })
+    }
+}
+
+#[inline(never)]
+fn scan_host_glibc_getopt_short_bundle() -> i32 {
+    scan_host_glibc_getopt_short_bundle_state().0
+}
+
+#[inline(never)]
+fn scan_host_glibc_getopt_short_bundle_state() -> (i32, c_int) {
+    let host = host_getopt();
+    let mut argv = [
+        b"prog\0".as_ptr() as *mut c_char,
+        b"-ab\0".as_ptr() as *mut c_char,
+        b"-cVALUE\0".as_ptr() as *mut c_char,
+        b"-dVALUE\0".as_ptr() as *mut c_char,
+        b"-ef\0".as_ptr() as *mut c_char,
+        b"operand\0".as_ptr() as *mut c_char,
+        std::ptr::null_mut(),
+    ];
+    let argc = (argv.len() - 1) as c_int;
+    let optspec = b"abc:d:ef\0";
+    let mut checksum = 0i32;
+
+    unsafe {
+        *(host.optarg as *mut *mut c_char) = std::ptr::null_mut();
+        *(host.opterr as *mut c_int) = 0;
+        // GNU getopt uses optind=0 to reset both optind and its hidden scanner
+        // state before a fresh argv pass. The benchmark process also links
+        // frankenlibc_abi's exported opt* globals, so reset both libc's handle
+        // symbols and the process-visible symbols to avoid interposition state.
+        *(host.optind as *mut c_int) = 0;
+        *(host.optopt as *mut c_int) = 0;
+        store_optional_ptr(host.process_optarg, std::ptr::null_mut());
+        store_optional_i32(host.process_opterr, 0);
+        store_optional_i32(host.process_optind, 0);
+        store_optional_i32(host.process_optopt, 0);
+
+        loop {
+            let code = (host.getopt)(argc, argv.as_mut_ptr(), optspec.as_ptr().cast());
+            if code == -1 {
+                break;
+            }
+            checksum = checksum.wrapping_mul(31).wrapping_add(code);
+        }
+
+        let libc_optind = *(host.optind as *mut c_int);
+        let process_optind = load_optional_i32(host.process_optind).unwrap_or(0);
+        (checksum, libc_optind.max(process_optind))
+    }
 }
 
 fn bench_stdlib_getopt(c: &mut Criterion) {
@@ -353,12 +505,55 @@ fn bench_stdlib_getopt(c: &mut Criterion) {
     let optspec = b"abc:d:efW;";
 
     for _ in 0..10_000 {
-        black_box(scan_getopt_short_bundle(black_box(&argv), black_box(optspec)));
+        black_box(scan_getopt_short_bundle(
+            black_box(&argv),
+            black_box(optspec),
+        ));
     }
 
-    bench_symbol(&mut group, mode, "getopt_short_bundle_typical", "getopt", || {
-        black_box(scan_getopt_short_bundle(black_box(&argv), black_box(optspec)));
-    });
+    bench_symbol(
+        &mut group,
+        mode,
+        "getopt_short_bundle_typical",
+        "getopt",
+        || {
+            black_box(scan_getopt_short_bundle(
+                black_box(&argv),
+                black_box(optspec),
+            ));
+        },
+    );
+
+    let fl_workload: [&[u8]; 6] = [b"prog", b"-ab", b"-cVALUE", b"-dVALUE", b"-ef", b"operand"];
+    let (fl_checksum, fl_optind) = scan_getopt_short_bundle_codes(&fl_workload, b"abc:d:ef");
+    let (glibc_checksum, glibc_optind) = scan_host_glibc_getopt_short_bundle_state();
+    assert_eq!(
+        fl_checksum, glibc_checksum,
+        "FrankenLibC and host glibc getopt comparable workload diverged"
+    );
+    assert_eq!(
+        fl_optind as c_int, glibc_optind,
+        "FrankenLibC and host glibc getopt final optind diverged"
+    );
+
+    bench_symbol(
+        &mut group,
+        "frankenlibc_core",
+        "getopt_short_bundle_glibc_comparable",
+        "getopt",
+        || {
+            black_box(scan_getopt_short_bundle_glibc_comparable());
+        },
+    );
+    bench_symbol(
+        &mut group,
+        "host_glibc",
+        "getopt_short_bundle_glibc_comparable",
+        "getopt",
+        || {
+            black_box(scan_host_glibc_getopt_short_bundle());
+        },
+    );
 
     group.finish();
 }

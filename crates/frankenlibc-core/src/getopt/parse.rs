@@ -98,7 +98,10 @@ mod tests {
         assert_eq!(getopt_arg_mode(b";", b';'), None);
         assert!(!getopt_is_w_extension(b";;", b';'));
         // The marker does not disturb a real option that follows it.
-        assert_eq!(getopt_arg_mode(b"W;ab:", b'b'), Some(GetoptArgMode::Required));
+        assert_eq!(
+            getopt_arg_mode(b"W;ab:", b'b'),
+            Some(GetoptArgMode::Required)
+        );
         assert_eq!(getopt_arg_mode(b"W;ab", b'a'), Some(GetoptArgMode::None));
     }
 
