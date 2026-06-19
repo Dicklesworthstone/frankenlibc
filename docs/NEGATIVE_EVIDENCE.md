@@ -289,3 +289,28 @@ is parity-to-win (strlen/fgetc WIN; memset/strcmp/math NEUTRAL) with NO losses. 
 membrane meaningfully erodes the FAST math wins needs a SAME-RUN core+abi+glibc measurement —
 pending. bd-n40in2's premise (~180 ns) is corrected to ~2–3 ns/call; its value is now uncertain
 until the same-run delta is measured. This is an honest correction of my own propagated misread.
+
+## 2026-06-19 CLEAN same-run core+abi+glibc math — membrane VALIDATED at ~8–11 ns/call (not 180)
+
+Same-run (ONE worker, `bench_math_abi` 3-way), per-call ns (batch/64):
+
+| fn | core | deployed abi | glibc | abi/glibc | membrane (abi−core) |
+|----|------|--------------|-------|-----------|---------------------|
+| exp  | 4.49 | 15.51 | 15.30 | 1.014 NEUT | 11.0 |
+| sin  | 7.61 | 15.36 | 15.74 | 0.976 NEUT |  7.8 |
+| cos  | 7.66 | 16.12 | 15.90 | 1.014 NEUT |  8.5 |
+| log  | 7.76 | 18.54 | 19.08 | 0.972 NEUT | 10.8 |
+| exp2 | 3.76 | 14.92 | 15.09 | 0.989 NEUT | 11.2 |
+| log2 | 3.59 | 12.83 | 12.54 | 1.023 NEUT |  9.3 |
+
+**RESOLVED (no cross-run confounding now):**
+- **CORE math is genuinely 2–4× faster than glibc** (3.6–7.8 ns vs 12.5–19 ns) — the algorithmic win is REAL.
+- The `unary_entry` membrane adds **~8–11 ns/call**, bringing DEPLOYED abi math to glibc **parity (NEUTRAL)**.
+- So my ORIGINAL conclusion (the membrane erases the core math win) is **CORRECT**; only the magnitude
+  was wrong (~9 ns/call, not the per-batch-misread 180 ns). The cross-run confounding worry is now
+  eliminated — this is one worker, core+abi+glibc side by side.
+
+**bd-n40in2 VALIDATED (corrected magnitude):** cheapening `unary_entry`'s decide+observe (memset's
+path proves a ~1 ns membrane is achievable) would recover **~2× on deployed math** (core 4–8 ns vs
+glibc 13–19 ns). HIGH-value, now grounded in clean same-run numbers. This is the definitive
+deployed-math result.
