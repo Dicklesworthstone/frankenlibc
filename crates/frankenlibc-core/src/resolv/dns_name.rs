@@ -384,11 +384,7 @@ pub fn name_pack(src: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
 
 #[inline]
 fn mklower(b: u8) -> u8 {
-    if b.is_ascii_uppercase() {
-        b + 32
-    } else {
-        b
-    }
+    if b.is_ascii_uppercase() { b + 32 } else { b }
 }
 
 /// Search the already-written message `msg` for a name (or suffix) that matches
@@ -403,11 +399,7 @@ fn dn_find(domain: &[u8], msg: &[u8], dnptrs: &[usize]) -> Result<Option<usize>,
     for &start in dnptrs {
         let mut sp = start;
         // Try matching `domain` against each suffix of this stored name.
-        while sp < msg.len()
-            && msg[sp] != 0
-            && (msg[sp] & NS_CMPRSFLGS) == 0
-            && sp < 0x4000
-        {
+        while sp < msg.len() && msg[sp] != 0 && (msg[sp] & NS_CMPRSFLGS) == 0 && sp < 0x4000 {
             match suffix_matches(domain, msg, sp)? {
                 true => return Ok(Some(sp)),
                 false => {}
