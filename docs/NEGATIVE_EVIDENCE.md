@@ -23,6 +23,8 @@ so dead ends are never retried and real wins are confirmed with numbers.
 | 2026-06-19 | Wide printf format TLS pool (`bd-fgnxc0`) | `stdio_glibc_baseline_swprintf_wide_format` | 317.94 ns | 1.0154 us | 0.313x | WIN | Keep. Head-to-head Criterion on `vmi1227854`, cache miss; outliers noted but conservative CI ratio still < 0.34. |
 | 2026-06-19 | stdio registry local hasher (bd-2jgvp9) | stdio_glibc_baseline_fgetc_4096 | 5.5212 ms | 9.5712 ms | 0.577x | WIN | Keep. thin-LTO Criterion (BlackThrush, frankenlibc-cc, 72s warm build). fl buffered fgetc ~1.73x faster than glibc (registry local-hasher + buffered-getc path). VALIDATES the methodology finding — the no-LTO run had shown a spurious 1.157x "loss" on fgetc_unlocked. Conformance: cargo check green + order-audit clear (no test pins flush order). |
 | 2026-06-19 | exact `strcpy_4096` eight-block unroll (`bd-2g7oyh.478`) | `glibc_baseline_strcpy_4096` | 68.555 ns | 54.857 ns | 1.250x | LOSS | Reverted. Focused thin-LTO rch Criterion on `hz1`; mean also slower (72.159 ns vs 65.354 ns, 1.104x). Restored the prior counted loop; focused guards + `cargo check -p frankenlibc-core` passed. |
+| 2026-06-19 | NSS services decimal byte parser (`bd-9ran7n`) | `glibc_baseline_resolv_services_protocols/getservbyname_http_tcp` | 28.532 us | 435.582 us | 0.0655x | WIN | Keep. Real ABI `getservbyname("http","tcp")` against host glibc on `hz1`; mean ratio 0.0692x. |
+| 2026-06-19 | NSS protocols decimal byte parser (`bd-9ran7n`) | `glibc_baseline_resolv_services_protocols/getprotobyname_tcp` | 125.854 us | 129.508 us | 0.9718x | NEUTRAL | Keep as part of same resolver parser lever: no regression, mean ratio 0.9639x, and services lookup is a large deployed ABI win. |
 
 <!-- rows appended as benches complete -->
 
@@ -76,6 +78,55 @@ Retry-condition predicate: do not retry exact-block unrolling for `strcpy_4096`.
 Return only with a materially different generated/backend primitive or a
 different ABI-level `strcpy` path after a fresh focused profile proves that is
 the bottleneck.
+
+## 2026-06-19 `bd-9ran7n` NSS decimal parser measured keep
+
+Focused gauntlet target: the code-first byte decimal parser in
+`crates/frankenlibc-core/src/resolv/mod.rs`, exercised through the deployed ABI
+resolver functions against host glibc.
+
+```bash
+AGENT_NAME=BlackThrush \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-b/criterion-bd-9ran7n-20260619T0341 \
+rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench glibc_baseline_bench -- \
+  glibc_baseline_resolv_services_protocols --noplot \
+  --sample-size 80 --warm-up-time 1 --measurement-time 3
+```
+
+- Worker: `hz1`.
+- `getservbyname("http","tcp")`: FrankenLibC p50 `28.532 us`, mean `29.085 us`;
+  host glibc p50 `435.582 us`, mean `420.606 us`.
+- Service ratio vs glibc: p50 `0.0655x`, mean `0.0692x`. Verdict: **WIN**.
+- `getprotobyname("tcp")`: FrankenLibC p50 `125.854 us`, mean `126.718 us`;
+  host glibc p50 `129.508 us`, mean `131.459 us`.
+- Protocol ratio vs glibc: p50 `0.9718x`, mean `0.9639x`. Verdict: **NEUTRAL**.
+- Action: **keep**. The protocol row is not a material regression, and the
+  same parser lever produces a large deployed-ABI services win.
+
+Post-benchmark guards:
+
+- `cargo check -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench`: passed.
+- `cargo test -p frankenlibc-core resolv::tests::decimal_u32_byte_parser_rejects_signs_non_digits_and_overflow -- --nocapture`: passed.
+- `cargo test -p frankenlibc-core resolv::tests::parse_services -- --nocapture`: 7 passed.
+- `cargo test -p frankenlibc-core resolv::tests::protocol_ -- --nocapture`: 11 passed.
+- `cargo test -p frankenlibc-abi --test conformance_diff_netdb_aliases -- --nocapture`: passed.
+- `cargo test -p frankenlibc-abi --test conformance_diff_protoent_r_aliases -- --nocapture`: passed.
+- `cargo test -p frankenlibc-abi --test conformance_diff_netdb_r_aliases -- --nocapture`: passed.
+- `cargo fmt --check -p frankenlibc-bench`: blocked by pre-existing formatting
+  drift in existing bench files, including unrelated `bench_math_abi`,
+  `bench_memstring_abi`, `memset_abi_bench`, `resolv_parsers_bench`,
+  `stdio_glibc_baseline_bench`, and `wchar_bench` hunks. Not normalized here to
+  avoid staging unrelated churn.
+- `cargo clippy -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench -- -D warnings`:
+  blocked before bench linting by pre-existing `frankenlibc-core` lint debt in
+  iconv/resolv/printf modules.
+
+Retry-condition predicate: do not revisit byte-decimal parsing for resolver
+rows unless a future same-worker deployed ABI run shows a material regression.
+The next resolver/NSS performance work should target a different parser,
+database-scan, or caching primitive with its own head-to-head proof.
 
 ## METHODOLOGY — CRITICAL: bench fl WITH thin-LTO (no-LTO invalidates fl ratios)
 

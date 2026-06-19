@@ -6,10 +6,10 @@ Last updated: 2026-06-19 by `cod-b` / `BlackThrush`.
 
 | Area | Score | Evidence | Risk |
 |---|---:|---|---|
-| Measured perf backlog conversion | 3 / many pending | `bd-0m5vaw`, `bd-fgnxc0`, and `bd-2g7oyh.478` converted from code-first pending to measured head-to-head evidence vs host glibc. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, and peer-owned leaves. |
-| Negative-evidence ledger | 1 / committed ledger | `docs/NEGATIVE_EVIDENCE.md` now records win/loss/neutral policy and the first two measured rows with glibc ratios. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended. |
+| Measured perf backlog conversion | 4 / many pending | `bd-0m5vaw`, `bd-fgnxc0`, `bd-2g7oyh.478`, and `bd-9ran7n` converted from code-first pending to measured head-to-head evidence vs host glibc. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, and peer-owned leaves. |
+| Negative-evidence ledger | 1 / committed ledger | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and now includes resolver services/protocols ratios for `bd-9ran7n`. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended. |
 | Revert discipline | Green for measured cluster | Winning rows kept; losing `bd-2g7oyh.478` exact-block `strcpy_4096` unroll was reverted after a 1.250x p50 loss vs glibc. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
-| Conformance guard | Partial green | `cargo check -p frankenlibc-abi` passed with known warning debt. Criterion bench binaries built and ran successfully. | `cargo test -p frankenlibc-abi` is blocked by pre-existing `zz_scratch_divmin` scratch-test compile errors; `stdio_abi`/`wchar_abi` inline tests are gated out of `--lib` test mode. |
+| Conformance guard | Partial green | `cargo check -p frankenlibc-abi` and the `bd-9ran7n` resolver parser + ABI differential guards passed with known warning debt. Criterion bench binaries built and ran successfully. | Workspace hygiene is still blocked by pre-existing fmt/clippy debt in bench/core files; older `cargo test -p frankenlibc-abi` blockers around scratch probes remain a separate release-readiness risk. |
 | Release posture | Not ready | Two real wins recorded, no new source regression in this pass. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, and conformance/bench gates are repeatable. |
 
 ## 2026-06-19 measured stdio cluster
@@ -108,6 +108,20 @@ head-to-head evidence and rejected.
 Focused post-revert guards passed (`cargo check -p frankenlibc-core` and the two
 `test_strcpy_exact_4096_path*` tests). `strcpy_4096` remains a genuine glibc gap after the revert;
 retry only with a materially different generated/backend primitive.
+
+## 2026-06-19 `bd-9ran7n` resolver decimal parser measured keep
+
+The NSS service/protocol byte-decimal parser was converted from code-first pending to deployed
+ABI evidence vs host glibc on `hz1`.
+
+| Workload | FrankenLibC | glibc | Ratio | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| `getservbyname("http","tcp")` | 28.532 us | 435.582 us | 0.0655x | WIN | Keep. |
+| `getprotobyname("tcp")` | 125.854 us | 129.508 us | 0.9718x | NEUTRAL | Keep; no regression and same lever has a large services win. |
+
+Conformance stayed green for the focused path: resolver parser unit filters passed, and the
+`conformance_diff_netdb_aliases`, `conformance_diff_protoent_r_aliases`, and
+`conformance_diff_netdb_r_aliases` ABI differential tests matched glibc.
 
 ### 2026-06-19 deployed-math DEFINITIVELY resolved (same-run, BlackThrush)
 

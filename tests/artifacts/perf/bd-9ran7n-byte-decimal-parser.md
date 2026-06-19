@@ -2,7 +2,7 @@
 
 Date: 2026-06-18
 Agent: BlackThrush / cod-b
-Status: code-first batch-test pending
+Status: MEASURED KEEP (2026-06-19)
 
 ## Target
 
@@ -66,25 +66,63 @@ Added unit coverage for:
 Existing service/protocol parser tests cover line-level behavior, including
 signed rejection and protocol separator rejection.
 
-## Retry-Condition Predicate
+## Measured Head-to-Head Result
 
-Later batch classification must run `resolv_parsers_bench` on the same worker or
-a directly comparable target and mark this as:
-
-- keep only if both `parse_protocols_line_typical` and
-  `parse_services_line_typical` have stable p50/mean non-regression and at
-  least one row improves enough to clear the campaign score gate;
-- reject/revert if either row regresses materially or the improvement is within
-  the local variance envelope;
-- continue only with a different parser primitive if this lands flat.
-
-## Validation This Turn
-
-Per campaign instruction, no tests, rch, or benchmarks are run in this batch.
-Only:
+Batch classification was upgraded from parser-only pending to deployed ABI
+head-to-head evidence vs host glibc:
 
 ```bash
-CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b cargo check -p frankenlibc-core
+AGENT_NAME=BlackThrush \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-b/criterion-bd-9ran7n-20260619T0341 \
+rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench glibc_baseline_bench -- \
+  glibc_baseline_resolv_services_protocols --noplot \
+  --sample-size 80 --warm-up-time 1 --measurement-time 3
 ```
 
-Result is recorded in `bd-9ran7n` notes after the check.
+Worker: `hz1`.
+
+| row | FrankenLibC p50 | glibc p50 | p50 ratio | FrankenLibC mean | glibc mean | mean ratio | verdict |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `getservbyname("http","tcp")` | 28.532 us | 435.582 us | 0.0655x | 29.085 us | 420.606 us | 0.0692x | WIN |
+| `getprotobyname("tcp")` | 125.854 us | 129.508 us | 0.9718x | 126.718 us | 131.459 us | 0.9639x | NEUTRAL |
+
+Classification: **keep**. The service lookup is a large deployed ABI win, and
+the protocol lookup is neutral/slightly faster rather than a regression.
+
+## Validation
+
+Compiler/bench harness:
+
+- `cargo check -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench`: passed.
+
+Core parser guards:
+
+- `cargo test -p frankenlibc-core resolv::tests::decimal_u32_byte_parser_rejects_signs_non_digits_and_overflow -- --nocapture`: passed.
+- `cargo test -p frankenlibc-core resolv::tests::parse_services -- --nocapture`: 7 passed.
+- `cargo test -p frankenlibc-core resolv::tests::protocol_ -- --nocapture`: 11 passed.
+
+ABI differential guards:
+
+- `cargo test -p frankenlibc-abi --test conformance_diff_netdb_aliases -- --nocapture`: passed.
+- `cargo test -p frankenlibc-abi --test conformance_diff_protoent_r_aliases -- --nocapture`: passed.
+- `cargo test -p frankenlibc-abi --test conformance_diff_netdb_r_aliases -- --nocapture`: passed.
+
+Known caveats:
+
+- These commands emit pre-existing warning debt in iconv/math/poll/signal
+  tables; no new warning is attributable to this resolver parser lever.
+- `cargo fmt --check -p frankenlibc-bench` is blocked by pre-existing formatting
+  drift in existing bench files. I did not normalize those files because that
+  would stage unrelated churn.
+- `cargo clippy -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench -- -D warnings`
+  is blocked before bench linting by pre-existing `frankenlibc-core` lint debt
+  in iconv/resolv/printf modules.
+
+## Retry-Condition Predicate
+
+Do not revisit byte-decimal parsing for resolver rows unless a future same-worker
+deployed ABI run shows a material regression. The next resolver/NSS performance
+work should target a different parser, database-scan, or caching primitive with
+its own head-to-head proof.

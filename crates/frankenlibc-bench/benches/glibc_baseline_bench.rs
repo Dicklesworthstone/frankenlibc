@@ -353,6 +353,139 @@ fn bench_getenv_miss(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
+    let group = c.benchmark_group("glibc_baseline_resolv_services_protocols");
+    #[cfg(feature = "abi-bench")]
+    let mut group = group;
+
+    #[cfg(feature = "abi-bench")]
+    {
+        let service = c"http";
+        let proto = c"tcp";
+
+        let fl_service = unsafe {
+            frankenlibc_abi::resolv_abi::getservbyname(service.as_ptr(), proto.as_ptr())
+                as *mut libc::servent
+        };
+        let host_service = unsafe { libc::getservbyname(service.as_ptr(), proto.as_ptr()) };
+        assert!(
+            !fl_service.is_null(),
+            "FrankenLibC getservbyname returned NULL"
+        );
+        assert!(
+            !host_service.is_null(),
+            "host glibc getservbyname returned NULL"
+        );
+        assert_eq!(
+            unsafe { (*fl_service).s_port },
+            unsafe { (*host_service).s_port },
+            "getservbyname service port parity"
+        );
+
+        let fl_proto = unsafe {
+            frankenlibc_abi::resolv_abi::getprotobyname(proto.as_ptr()) as *mut libc::protoent
+        };
+        let host_proto = unsafe { libc::getprotobyname(proto.as_ptr()) };
+        assert!(
+            !fl_proto.is_null(),
+            "FrankenLibC getprotobyname returned NULL"
+        );
+        assert!(
+            !host_proto.is_null(),
+            "host glibc getprotobyname returned NULL"
+        );
+        assert_eq!(
+            unsafe { (*fl_proto).p_proto },
+            unsafe { (*host_proto).p_proto },
+            "getprotobyname protocol number parity"
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getservbyname_http_tcp",
+                impl_label: "frankenlibc_abi",
+                api_family: "resolver",
+                symbol: "getservbyname",
+                workload: "lookup http/tcp through /etc/services",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let entry = unsafe {
+                    frankenlibc_abi::resolv_abi::getservbyname(service.as_ptr(), proto.as_ptr())
+                        as *mut libc::servent
+                };
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).s_port });
+                }
+                black_box(entry);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getservbyname_http_tcp",
+                impl_label: "host_glibc",
+                api_family: "resolver",
+                symbol: "getservbyname",
+                workload: "lookup http/tcp through /etc/services",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let entry = unsafe { libc::getservbyname(service.as_ptr(), proto.as_ptr()) };
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).s_port });
+                }
+                black_box(entry);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getprotobyname_tcp",
+                impl_label: "frankenlibc_abi",
+                api_family: "resolver",
+                symbol: "getprotobyname",
+                workload: "lookup tcp through /etc/protocols",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let entry = unsafe {
+                    frankenlibc_abi::resolv_abi::getprotobyname(proto.as_ptr())
+                        as *mut libc::protoent
+                };
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).p_proto });
+                }
+                black_box(entry);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getprotobyname_tcp",
+                impl_label: "host_glibc",
+                api_family: "resolver",
+                symbol: "getprotobyname",
+                workload: "lookup tcp through /etc/protocols",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let entry = unsafe { libc::getprotobyname(proto.as_ptr()) };
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).p_proto });
+                }
+                black_box(entry);
+            },
+        );
+    }
+
+    group.finish();
+}
+
 fn bench_scanf(c: &mut Criterion) {
     use frankenlibc_core::stdio::scanf::{parse_scanf_format, scan_input};
     let dirs = parse_scanf_format(b"%lld");
@@ -2620,6 +2753,7 @@ criterion_group! {
         bench_strlen_4096,
         bench_strcmp_256_equal,
         bench_getenv_miss,
+        bench_resolv_services_protocols_abi,
         bench_memcmp,
         bench_strtol,
         bench_scanf,
