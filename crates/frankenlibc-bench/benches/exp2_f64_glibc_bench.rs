@@ -6,8 +6,9 @@
 
 use std::time::{Duration, Instant};
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_core::math;
+use std::hint::black_box;
 
 unsafe extern "C" {
     #[link_name = "exp2"]

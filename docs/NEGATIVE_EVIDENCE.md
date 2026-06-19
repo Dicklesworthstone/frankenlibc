@@ -856,3 +856,30 @@ Validation:
   generated/math/iconv and unrelated files.
 - `cargo clippy --workspace --all-targets -- -D warnings` is blocked before
   local lints by missing packaged files in `asupersync-conformance 0.3.4`.
+
+## 2026-06-19 `bd-fused-f64-pow-exp-log-kernels-iw3rwz` f64 exp2 keep
+
+The f64 `exp2` subtask was converted from libm delegation to an ARM/glibc
+`__ieee754_exp2`-style table kernel and measured head-to-head on `vmi1227854`.
+
+| Workload | FrankenLibC | Comparator | Ratio | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| dedicated `exp2_f64`, fused core vs old libm fallback | 2.4008 ns p50 / 2.5758 ns mean | 3.0104 ns p50 / 3.3109 ns mean | 0.798x / 0.778x | WIN | Keep fused f64 exp2 kernel. |
+| dedicated `exp2_f64`, fused core vs host glibc | 2.4008 ns p50 / 2.5758 ns mean | 4.8920 ns p50 / 7.7200 ns mean | 0.491x / 0.334x | WIN | Keep. |
+| `glibc_baseline_math/exp2`, core vs host glibc | 163.950 ns p50 / 162.282 ns mean | 621.670 ns p50 / 651.402 ns mean | 0.264x / 0.249x | WIN | Keep. |
+| `glibc_baseline_math_abi/exp2_abi`, deployed ABI vs host glibc | 610.605 ns p50 / 656.530 ns mean | 662.209 ns p50 / 657.528 ns mean | 0.922x / 0.998x | WIN p50 / NEUTRAL mean | Keep; membrane absorbs most core gain on deployed path. |
+
+Win/loss/neutral score: 4 win dimensions, 0 losses, 1 neutral mean dimension.
+
+Conformance stayed green for the focused path:
+`cargo test -p frankenlibc-abi --test conformance_diff_exp2_f64_general -- --nocapture`
+passed 1 test over 221,546 interior inputs, worst 1 ULP vs host glibc, with
+boundary/special inputs exact.
+After the final clippy cleanup of the range guard, a dedicated final-source
+sanity run on `ovh-a` confirmed the same shape: fused core 2.1742 ns p50 /
+2.3905 ns mean, old libm 2.6395 / 2.7566, host glibc 4.4255 / 6.7257.
+
+Retry-condition predicate: do not reroute f64 pow through the standalone
+`math::exp2` kernel alone; the current `pow_medium_log2_exp2_fast_path` remains
+on its measured libm composition. The remaining f64 pow opportunity is a true
+single-routine fused log+exp port with its own conformance gate.

@@ -239,3 +239,21 @@ the `unary_entry` membrane adds **~8–11 ns/call**, bringing **deployed math to
 top deployed-perf lever:** cheapen the membrane (memset's path proves ~1 ns achievable) → recover
 ~2× on deployed math. Method note: per-call membrane delta MUST be measured same-run (worker
 variance otherwise dominates); cross-run core-vs-deployed comparisons are invalid.
+
+### 2026-06-19 `bd-fused-f64-pow-exp-log-kernels-iw3rwz` f64 exp2 keep
+
+F64 `exp2` now uses an ARM/glibc-style 128-entry table kernel on the normal-result
+interior, falling back to `libm::exp2` for denormal-tiny, overflow, underflow,
+inf, and NaN cases.
+
+| Row | FrankenLibC | Comparator | Ratio | Verdict |
+|---|---:|---:|---:|---|
+| dedicated core vs old libm fallback | 2.4008 ns p50 / 2.5758 ns mean | 3.0104 ns p50 / 3.3109 ns mean | 0.798x / 0.778x | WIN |
+| dedicated core vs host glibc | 2.4008 ns p50 / 2.5758 ns mean | 4.8920 ns p50 / 7.7200 ns mean | 0.491x / 0.334x | WIN |
+| standard core `glibc_baseline_math/exp2` vs host glibc | 163.950 ns p50 / 162.282 ns mean | 621.670 ns p50 / 651.402 ns mean | 0.264x / 0.249x | WIN |
+| deployed ABI `glibc_baseline_math_abi/exp2_abi` vs host glibc | 610.605 ns p50 / 656.530 ns mean | 662.209 ns p50 / 657.528 ns mean | 0.922x / 0.998x | WIN p50 / NEUTRAL mean |
+
+Conformance: `conformance_diff_exp2_f64_general` passed 221,546 interior inputs
+within 4 ULP vs host glibc, worst 1 ULP; boundary/special inputs exact.
+Remaining route: f64 `pow` still needs a true fused log+exp port; standalone
+`math::exp2` is not a sufficient retry lever for that path.

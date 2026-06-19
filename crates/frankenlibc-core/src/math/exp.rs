@@ -16,7 +16,7 @@ pub fn exp2(x: f64) -> f64 {
     // for exact FE/errno semantics (the `>= MIN_POSITIVE` guard excludes the
     // ARM `abstop == 0` special case; `< 1022` keeps 2^x a finite normal f64).
     let ax = x.abs();
-    if ax >= f64::MIN_POSITIVE && ax < 1022.0 {
+    if (f64::MIN_POSITIVE..1022.0).contains(&ax) {
         return exp2_kernel(x);
     }
     libm::exp2(x)
