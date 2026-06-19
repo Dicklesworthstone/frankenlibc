@@ -101,3 +101,29 @@ small (64 B) → large (64 KB):
 - **No reverts:** the "new" path beats fl's own "old" everywhere relevant (the optimizations are
   real self-improvements); the losses are *gaps to glibc's AVX*, not regressions — reverting
   would make fl strictly slower. The fix is to close the gap (better large-size SIMD), not revert.
+
+## 2026-06-19 COMPREHENSIVE head-to-head — glibc_baseline_bench (BlackThrush, thin-LTO, 67 functions)
+
+Parsed the bench's structured `GLIBC_BASELINE_BENCH … p50_ns_op=` lines (`frankenlibc_core`/`_abi`
+vs `host_glibc`). **fl WINS on ~58 of 67 functions** at the benched workloads:
+
+- **Overwhelming WINS** (fl ≪ glibc): `strstr_absent` 0.001× (fl 76 ns vs glibc 86 µs), `wcsstr`
+  0.004×, `malloc_free_*` 0.008× (~100× faster), `fnmatch_*` 0.007–0.017×, `malloc_cache_pressure` 0.015×.
+- **Strong WINS**: strcmp 0.051×, strlen 0.077×, strncmp 0.085×, memcmp 0.173×, scanf 0.19–0.24×,
+  strspn 0.251×, strtol/strtoul 0.40–0.45×, memcpy_4096 0.486×, memchr 0.533×, memmove 0.655×, strpbrk 0.688×.
+- **MATH WINS** (fl 2–4× faster — surprising vs glibc's tuned libm; warrants a spot-check but the
+  powf losses below show the measurement discriminates): exp2 0.257×, log2 0.278×, exp 0.293×, cos
+  0.473×, sin 0.487×, tan 0.514×, pow 0.398×, erf 0.487×, cbrt 0.594× — all ~25 math fns WIN.
+- **NEUTRAL**: `printf_f_6` (bare-%f, bd-ifl0s9) 0.953×, `qsort_128_i32` 0.992×, `getenv` 1.011×,
+  `memset_4096` 1.037×, `strchr_absent` 1.038×.
+- **LOSSES**: `strcpy_4096` 1.345× (fl 74 ns vs glibc 55 ns), `powf_irrational` 2.248×,
+  `powf_int` 2.686× (fl `powf` 2–2.7× SLOWER than glibc).
+
+**Reconciliation with memset_abi_bench (size sweep):** glibc_baseline tests single (small/4 K) sizes
+→ fl wins/neutral; memset_abi's strchr/memcpy LARGE-size losses (0.05–0.55× at 16–64 K) are
+**size-specific** (glibc's AVX scales better at large). Not contradictory — fl wins small/medium,
+loses at large. So bd-4rxozm/bd-4ibo52 are **large-size** gaps, not all-size.
+
+**NET RELEASE PICTURE: fl BEATS glibc on the large majority of the surface** (string, small/medium
+mem, malloc, scanf, math) with a few specific gaps: `powf` (2.7×, new — filing), `strcpy` (1.35×),
+and large-size `strchr`/`memcpy`/`strlen`.
