@@ -120,6 +120,39 @@ fn getgrgid_zero() {
 }
 
 #[test]
+fn getgrgid_hot_lookup_reuses_tls_result_and_invalidates_on_reload() {
+    with_group_file(b"daemon:x:0:\nroot:x:0:\nusers:x:100:alice\n", || {
+        let first = unsafe { getgrgid(0) };
+        assert!(!first.is_null());
+        let first_name = unsafe { CStr::from_ptr((*first).gr_name) };
+        assert_eq!(
+            first_name.to_bytes(),
+            b"daemon",
+            "duplicate gids must preserve first-match semantics"
+        );
+
+        let second = unsafe { getgrgid(0) };
+        assert_eq!(
+            second, first,
+            "repeated same-gid lookup should reuse the TLS group result"
+        );
+
+        let path = std::env::var_os("FRANKENLIBC_GROUP_PATH").expect("group path should be set");
+        std::fs::write(&path, b"root:x:0:\nusers:x:100:alice\nextra:x:101:\n")
+            .expect("rewrite temp group");
+
+        let updated = unsafe { getgrgid(0) };
+        assert!(!updated.is_null());
+        let updated_name = unsafe { CStr::from_ptr((*updated).gr_name) };
+        assert_eq!(
+            updated_name.to_bytes(),
+            b"root",
+            "file reload must invalidate the hot gid lookup"
+        );
+    });
+}
+
+#[test]
 fn getgrnam_nonexistent() {
     with_group_lock(|| {
         let name = CString::new("nonexistent_group_xyz_99999").unwrap();

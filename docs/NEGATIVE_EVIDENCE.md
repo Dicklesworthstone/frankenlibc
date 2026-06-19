@@ -30,6 +30,8 @@ so dead ends are never retried and real wins are confirmed with numbers.
 | 2026-06-19 | `/etc/group` splitn colon-tail parser (`bd-2g7oyh.481`, pre-correction) | `glibc_baseline_grp_lookup/getgrgid_0` | 23.447 us | 21.284 us | 1.102x | LOSS | Earlier `hz1` run before signed-gid correction; recorded as negative evidence and forced a final-source rerun. |
 | 2026-06-19 | `/etc/group` splitn colon-tail parser (`bd-2g7oyh.481`, final source) | `glibc_baseline_grp_lookup/getgrnam_root` | 9.788 us | 24.779 us | 0.395x | WIN | Partial keep. Real ABI `getgrnam("root")` against host glibc on `hz2`; mean ratio 0.393x. Conformance green after rejecting signed gid fields again. |
 | 2026-06-19 | `/etc/group` splitn colon-tail parser (`bd-2g7oyh.481`, final source) | `glibc_baseline_grp_lookup/getgrgid_0` | 24.631 us | 24.435 us | 1.008x | NEUTRAL | Do not count as a win. Route the gid lookup/cache path deeper; retained splitn parser because the same deployed parser lever gives a clear `getgrnam` win. |
+| 2026-06-19 | gid hot-result cache + gid-only C stat fingerprint (`bd-2g7oyh.492`) | `glibc_baseline_grp_lookup/getgrnam_root` | 9.791 us | 24.739 us | 0.396x | WIN | Guard held on `hz2`: keeping the direct stat probe on gid lookup only preserves the prior name-lookup win. |
+| 2026-06-19 | gid hot-result cache + gid-only C stat fingerprint (`bd-2g7oyh.492`) | `glibc_baseline_grp_lookup/getgrgid_0` | 14.687 us | 15.179 us | 0.968x | NEUTRAL | Partial keep, not p50 domination. FrankenLibC p50 improved from the previous `hz2` corrected-source 24.631 us to 14.687 us; mean ratio 0.939x and p95 ratio 0.931x vs glibc. Route remaining p50 gap deeper. |
 
 <!-- rows appended as benches complete -->
 
@@ -498,6 +500,67 @@ Validation:
 Retry-condition predicate: do not retry colon-tail parser reshaping for the
 `getgrgid(0)` neutral/gap. The next lever must target gid lookup/cache behavior
 or another profile-backed path.
+
+## 2026-06-19 `bd-2g7oyh.492` gid hot-result cache partial keep
+
+Focused gauntlet target: the follow-up `getgrgid(0)` neutral gap from
+`bd-2g7oyh.481`, without retrying the group-line parser. The kept lever caches
+the most recent successful gid lookup for the current file generation and uses a
+gid-only C `stat` fingerprint probe so the name lookup guard stays on the prior
+metadata path.
+
+Final candidate command:
+
+```bash
+RCH_WORKER=hz1 RCH_PREFERRED_WORKER=hz1 RCH_WORKERS=hz1 RCH_REQUIRE_REMOTE=1 \
+RCH_VISIBILITY=summary RCH_QUEUE_WHEN_BUSY=1 RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS=900 \
+rch exec -- env AGENT_NAME=BlackThrush FRANKENLIBC_BENCH_PIN=1 CARGO_BUILD_JOBS=1 \
+  CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b-candidate-hz1 \
+  CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-b-candidate-hz1/criterion-bd-2g7oyh-492-candidate-gidstat-hz1-20260619T0540 \
+  cargo bench -j 1 -p frankenlibc-bench --features abi-bench \
+  --bench glibc_baseline_bench -- glibc_baseline_grp_lookup \
+  --noplot --sample-size 80 --warm-up-time 1 --measurement-time 3
+```
+
+- Worker actually selected by `rch`: `hz2`.
+- `getgrnam("root")` guard: FrankenLibC p50 `9.791 us`, host glibc p50
+  `24.739 us`, ratio `0.396x`; mean ratio `0.391x`; **WIN**.
+- `getgrgid(0)`: FrankenLibC p50 `14.687 us`, host glibc p50 `15.179 us`,
+  ratio `0.968x`; mean ratio `0.939x`; p95 ratio `0.931x`; p99 ratio `0.890x`;
+  **p50 NEUTRAL, mean/tail WIN**.
+- Same-worker prior corrected-source p50 was `24.631 us` for FrankenLibC on
+  `hz2`, so the implementation removes about `40.4%` of FrankenLibC's own
+  deployed gid lookup latency, but it does not yet clear the ledger's p50 win
+  gate against glibc.
+
+Negative evidence:
+
+- Hot-result cache alone was insufficient on a controlled `hz1` candidate:
+  FrankenLibC `28.450 us` vs glibc `18.726 us`, ratio `1.519x`, with worse p95.
+- Applying the direct C stat probe to all group refreshes made `getgrgid` faster
+  but regressed the `getgrnam` guard; the kept version restricts that probe to
+  the gid lookup path.
+- This is a partial keep, not a domination claim. The next p50 attempt should
+  target the remaining per-call fingerprint/stat cost or a different NSS cache
+  primitive.
+
+Validation:
+
+- `rustfmt --edition 2024 --check crates/frankenlibc-abi/src/grp_abi.rs crates/frankenlibc-abi/tests/grp_abi_test.rs`: passed.
+- `cargo test -p frankenlibc-abi --test grp_abi_test getgrgid_hot_lookup_reuses_tls_result_and_invalidates_on_reload -- --nocapture`: passed.
+- Earlier focused guards in the same turn also passed:
+  `cargo check -p frankenlibc-abi`;
+  `cargo test -p frankenlibc-abi --test grp_abi_test getgr -- --nocapture`;
+  `cargo test -p frankenlibc-abi --test conformance_diff_getbyid_r -- --nocapture`;
+  `cargo test -p frankenlibc-abi --test conformance_diff_getgrent -- --nocapture`.
+- Workspace `cargo fmt --check` and clippy are still blocked by broad
+  pre-existing unrelated drift/warnings outside this bead; they are not counted
+  as this change's focused validation.
+
+Retry-condition predicate: do not retry group-line parser reshaping or a
+hot-result-only gid cache. Return only with a materially cheaper fingerprint
+probe, a correctness-preserving cache invalidation primitive, or a new measured
+NSS lookup structure that clears the p50 win gate.
 
 ## 2026-06-19 `bd-2g7oyh.482` passwd parser measured reject + revert
 

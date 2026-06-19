@@ -8,7 +8,9 @@
 
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
-use std::ffi::{c_char, c_int};
+use std::ffi::{CString, c_char, c_int};
+use std::mem::MaybeUninit;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::time::UNIX_EPOCH;
@@ -78,6 +80,13 @@ struct CacheMetrics {
     invalidations: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CachedGidLookup {
+    gid: u32,
+    generation: u64,
+    entry: frankenlibc_core::grp::Group,
+}
+
 /// Thread-local storage for the most recent group result.
 struct GrpStorage {
     gr: libc::group,
@@ -87,6 +96,8 @@ struct GrpStorage {
     mem_ptrs: Vec<*mut c_char>,
     /// File path for group backend (defaults to /etc/group).
     source_path: PathBuf,
+    /// Cached C-compatible source path for the hot fingerprint probe.
+    source_path_cstr: Option<CString>,
     /// Cached file content.
     file_cache: Option<Vec<u8>>,
     /// Fingerprint for the cached file snapshot.
@@ -106,6 +117,11 @@ struct GrpStorage {
     cache_metrics: CacheMetrics,
     /// Most recent backend I/O error encountered while refreshing the cache.
     last_io_error: Option<c_int>,
+    /// Last successful gid lookup for this cached file generation.
+    last_gid_lookup: Option<CachedGidLookup>,
+    /// The gid/generation currently materialized in `gr`, `buf`, and
+    /// `mem_ptrs`, when it came from `fill_gid_lookup`.
+    current_gid_result: Option<(u32, u64)>,
 }
 
 #[cfg(feature = "owned-tls-cache")]
@@ -121,11 +137,14 @@ impl GrpStorage {
     }
 
     fn new_with_path(path: impl Into<PathBuf>) -> Self {
+        let source_path = path.into();
+        let source_path_cstr = Self::path_cstring(&source_path);
         Self {
             gr: unsafe { std::mem::zeroed() },
             buf: Vec::new(),
             mem_ptrs: Vec::new(),
-            source_path: path.into(),
+            source_path,
+            source_path_cstr,
             file_cache: None,
             cache_fingerprint: None,
             cache_generation: 0,
@@ -135,7 +154,13 @@ impl GrpStorage {
             iter_idx: 0,
             cache_metrics: CacheMetrics::default(),
             last_io_error: None,
+            last_gid_lookup: None,
+            current_gid_result: None,
         }
+    }
+
+    fn path_cstring(path: &Path) -> Option<CString> {
+        CString::new(path.as_os_str().as_bytes()).ok()
     }
 
     fn configured_source_path() -> PathBuf {
@@ -152,16 +177,39 @@ impl GrpStorage {
         }
 
         self.source_path = configured;
+        self.source_path_cstr = Self::path_cstring(&self.source_path);
         if self.file_cache.is_some() || !self.entries.is_empty() {
             self.cache_metrics.invalidations += 1;
         }
         self.file_cache = None;
         self.cache_fingerprint = None;
         self.entries.clear();
+        self.clear_lookup_cache();
         self.iter_idx = 0;
         self.entries_generation = 0;
         self.last_parse_stats = frankenlibc_core::grp::ParseStats::default();
         self.last_io_error = None;
+    }
+
+    fn file_fingerprint_cstr(path: &CString) -> Option<FileFingerprint> {
+        let mut statbuf = MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: `path` is NUL-terminated and `statbuf` points to valid,
+        // writable storage for libc to initialize.
+        let rc = unsafe { libc::stat(path.as_ptr(), statbuf.as_mut_ptr()) };
+        if rc != 0 {
+            return None;
+        }
+
+        // SAFETY: libc::stat returned success, so the whole stat buffer is initialized.
+        let statbuf = unsafe { statbuf.assume_init() };
+        let len = u64::try_from(statbuf.st_size).ok()?;
+        let sec = u128::try_from(statbuf.st_mtime).ok()?;
+        let nsec = u128::try_from(statbuf.st_mtime_nsec).ok()?;
+
+        Some(FileFingerprint {
+            len,
+            modified_ns: sec.saturating_mul(1_000_000_000).saturating_add(nsec),
+        })
     }
 
     fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
@@ -178,14 +226,33 @@ impl GrpStorage {
         })
     }
 
+    fn current_file_fingerprint(&self, prefer_c_stat: bool) -> Option<FileFingerprint> {
+        if prefer_c_stat {
+            self.source_path_cstr
+                .as_ref()
+                .and_then(Self::file_fingerprint_cstr)
+                .or_else(|| Self::file_fingerprint(&self.source_path))
+        } else {
+            Self::file_fingerprint(&self.source_path)
+        }
+    }
+
     /// Refresh cache from disk when fingerprint changes.
     ///
     /// Invalidation policy:
     /// - cache hit: retain parsed entries/cursor
     /// - reload or read failure: drop parsed entries and reset cursor
     fn refresh_cache(&mut self) {
+        self.refresh_cache_with_probe(false);
+    }
+
+    fn refresh_cache_fast_stat(&mut self) {
+        self.refresh_cache_with_probe(true);
+    }
+
+    fn refresh_cache_with_probe(&mut self, prefer_c_stat: bool) {
         self.refresh_source_path_from_env();
-        let current_fp = Self::file_fingerprint(&self.source_path);
+        let current_fp = self.current_file_fingerprint(prefer_c_stat);
 
         if let (Some(_), Some(cached_fp), Some(now_fp)) =
             (&self.file_cache, self.cache_fingerprint, current_fp)
@@ -200,7 +267,8 @@ impl GrpStorage {
 
         match std::fs::read(&self.source_path) {
             Ok(bytes) => {
-                let next_fp = Self::file_fingerprint(&self.source_path)
+                let next_fp = self
+                    .current_file_fingerprint(prefer_c_stat)
                     .or(current_fp)
                     .unwrap_or(FileFingerprint {
                         len: bytes.len() as u64,
@@ -216,6 +284,7 @@ impl GrpStorage {
 
                 if had_cache {
                     self.entries.clear();
+                    self.clear_lookup_cache();
                     self.iter_idx = 0;
                     self.entries_generation = 0;
                     self.last_parse_stats = frankenlibc_core::grp::ParseStats::default();
@@ -229,6 +298,7 @@ impl GrpStorage {
                 self.file_cache = None;
                 self.cache_fingerprint = None;
                 self.entries.clear();
+                self.clear_lookup_cache();
                 self.iter_idx = 0;
                 self.entries_generation = 0;
                 self.last_parse_stats = frankenlibc_core::grp::ParseStats::default();
@@ -257,8 +327,67 @@ impl GrpStorage {
         self.entries_generation = self.cache_generation;
     }
 
+    fn clear_lookup_cache(&mut self) {
+        self.last_gid_lookup = None;
+        self.current_gid_result = None;
+    }
+
+    fn lookup_by_gid_cached(&mut self, gid: u32) -> Option<frankenlibc_core::grp::Group> {
+        self.refresh_cache_fast_stat();
+        if let Some(cached) = &self.last_gid_lookup
+            && cached.gid == gid
+            && cached.generation == self.cache_generation
+        {
+            return Some(cached.entry.clone());
+        }
+
+        let entry = frankenlibc_core::grp::lookup_by_gid(self.current_content(), gid)?;
+        self.last_gid_lookup = Some(CachedGidLookup {
+            gid,
+            generation: self.cache_generation,
+            entry: entry.clone(),
+        });
+        Some(entry)
+    }
+
+    fn fill_gid_lookup(&mut self, gid: u32) -> *mut libc::group {
+        self.refresh_cache_fast_stat();
+        if let Some(cached) = &self.last_gid_lookup
+            && cached.gid == gid
+            && cached.generation == self.cache_generation
+        {
+            if self.current_gid_result == Some((gid, self.cache_generation)) {
+                return &mut self.gr as *mut libc::group;
+            }
+
+            let entry = cached.entry.clone();
+            let result = self.fill_from(&entry);
+            self.current_gid_result = Some((gid, self.cache_generation));
+            return result;
+        }
+
+        match frankenlibc_core::grp::lookup_by_gid(self.current_content(), gid) {
+            Some(entry) => {
+                self.last_gid_lookup = Some(CachedGidLookup {
+                    gid,
+                    generation: self.cache_generation,
+                    entry: entry.clone(),
+                });
+                let result = self.fill_from(&entry);
+                self.current_gid_result = Some((gid, self.cache_generation));
+                result
+            }
+            None => {
+                self.current_gid_result = None;
+                ptr::null_mut()
+            }
+        }
+    }
+
     /// Populate the C struct from a parsed entry.
     fn fill_from(&mut self, entry: &frankenlibc_core::grp::Group) -> *mut libc::group {
+        self.current_gid_result = None;
+
         // Build buffer: name\0passwd\0member0\0member1\0...
         self.buf.clear();
         let name_off = 0;
@@ -341,10 +470,7 @@ fn lookup_group_by_name(name: &[u8]) -> Option<frankenlibc_core::grp::Group> {
 }
 
 fn lookup_group_by_gid(gid: u32) -> Option<frankenlibc_core::grp::Group> {
-    with_grp_storage(|storage| {
-        storage.refresh_cache();
-        frankenlibc_core::grp::lookup_by_gid(storage.current_content(), gid)
-    })
+    with_grp_storage(|storage| storage.lookup_by_gid_cached(gid))
 }
 
 fn group_backend_io_error() -> Option<c_int> {
@@ -362,13 +488,7 @@ fn do_getgrnam(name: &[u8]) -> *mut libc::group {
 }
 
 fn do_getgrgid(gid: u32) -> *mut libc::group {
-    with_grp_storage(|storage| {
-        storage.refresh_cache();
-        match frankenlibc_core::grp::lookup_by_gid(storage.current_content(), gid) {
-            Some(entry) => storage.fill_from(&entry),
-            None => ptr::null_mut(),
-        }
-    })
+    with_grp_storage(|storage| storage.fill_gid_lookup(gid))
 }
 
 /// POSIX `getgrnam` — look up group entry by name.
@@ -437,6 +557,7 @@ pub unsafe extern "C" fn endgrent() {
             storage.cache_metrics.invalidations += 1;
         }
         storage.entries.clear();
+        storage.clear_lookup_cache();
         storage.iter_idx = 0;
         storage.file_cache = None;
         storage.cache_fingerprint = None;
