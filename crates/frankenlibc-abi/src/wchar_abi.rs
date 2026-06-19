@@ -2916,13 +2916,42 @@ macro_rules! wscanf_write_one {
 // Native wide I/O helpers
 // ===========================================================================
 
-/// Read a NUL-terminated wide string into a Vec of bytes (UTF-8 encoding).
-/// Format specifiers are all ASCII, so this is safe for format string conversion.
-unsafe fn wide_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
-    if wcs.is_null() {
-        return Vec::new();
+thread_local! {
+    static WPRINTF_FORMAT_BUF: std::cell::RefCell<Vec<u8>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+struct PooledWideFormat {
+    buf: Vec<u8>,
+}
+
+impl PooledWideFormat {
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        &self.buf
     }
-    let mut buf = Vec::new();
+}
+
+impl Drop for PooledWideFormat {
+    fn drop(&mut self) {
+        let mut buf = std::mem::take(&mut self.buf);
+        buf.clear();
+        WPRINTF_FORMAT_BUF.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.capacity() < buf.capacity() {
+                *slot = buf;
+            }
+        });
+    }
+}
+
+/// Read a NUL-terminated wide string into UTF-8 bytes.
+/// Format specifiers are all ASCII, so this is safe for format string conversion.
+unsafe fn wide_to_narrow_into(wcs: *const libc::wchar_t, buf: &mut Vec<u8>) {
+    buf.clear();
+    if wcs.is_null() {
+        return;
+    }
     let mut p = wcs;
     loop {
         let wc = unsafe { *p } as u32;
@@ -2950,7 +2979,65 @@ unsafe fn wide_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
         }
         p = unsafe { p.add(1) };
     }
+}
+
+/// Read a NUL-terminated wide string into a Vec of bytes (UTF-8 encoding).
+unsafe fn wide_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
+    let mut buf = Vec::new();
+    unsafe { wide_to_narrow_into(wcs, &mut buf) };
     buf
+}
+
+unsafe fn wide_to_narrow_pooled(wcs: *const libc::wchar_t) -> PooledWideFormat {
+    let mut buf = WPRINTF_FORMAT_BUF.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
+    unsafe { wide_to_narrow_into(wcs, &mut buf) };
+    PooledWideFormat { buf }
+}
+
+#[cfg(test)]
+mod wide_format_pool_tests {
+    use super::*;
+
+    fn wide(chars: &[u32]) -> Vec<libc::wchar_t> {
+        let mut out: Vec<libc::wchar_t> =
+            chars.iter().map(|&ch| ch as libc::wchar_t).collect();
+        out.push(0);
+        out
+    }
+
+    #[test]
+    fn pooled_wide_format_matches_fresh_converter_and_reuses_capacity() {
+        let fmt = wide(&[
+            b'%' as u32,
+            b'l' as u32,
+            b's' as u32,
+            b' ' as u32,
+            0x03bb,
+            b' ' as u32,
+            b'%' as u32,
+            b'd' as u32,
+        ]);
+
+        let fresh = unsafe { wide_to_narrow(fmt.as_ptr()) };
+        let pooled = unsafe { wide_to_narrow_pooled(fmt.as_ptr()) };
+        let pooled_cap = pooled.buf.capacity();
+        assert_eq!(pooled.as_bytes(), fresh.as_slice());
+        drop(pooled);
+
+        let retained_cap = WPRINTF_FORMAT_BUF.with(|slot| slot.borrow().capacity());
+        assert!(retained_cap >= fresh.len());
+        assert!(retained_cap >= pooled_cap);
+    }
+
+    #[test]
+    fn pooled_wide_format_preserves_invalid_codepoint_replacement() {
+        let fmt = wide(&[b'<' as u32, 0x11_0000, b'>' as u32]);
+        let fresh = unsafe { wide_to_narrow(fmt.as_ptr()) };
+        let pooled = unsafe { wide_to_narrow_pooled(fmt.as_ptr()) };
+
+        assert_eq!(fresh, b"<\xEF\xBF\xBD>");
+        assert_eq!(pooled.as_bytes(), fresh.as_slice());
+    }
 }
 
 /// Convert narrow (UTF-8) bytes to wide chars, writing into a wchar_t buffer.
@@ -3234,8 +3321,8 @@ pub unsafe extern "C" fn swprintf(
     if format.is_null() {
         return -1;
     }
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let segments = parse_format_string(&fmt_narrow);
+    let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
@@ -3263,8 +3350,8 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
     if format.is_null() {
         return -1;
     }
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let segments = parse_format_string(&fmt_narrow);
+    let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
@@ -3292,8 +3379,8 @@ pub unsafe extern "C" fn fwprintf(
     if format.is_null() || stream.is_null() {
         return -1;
     }
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let segments = parse_format_string(&fmt_narrow);
+    let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
@@ -3323,8 +3410,8 @@ pub unsafe extern "C" fn vswprintf(
     if format.is_null() {
         return -1;
     }
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let segments = parse_format_string(&fmt_narrow);
+    let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
@@ -3353,8 +3440,8 @@ pub unsafe extern "C" fn vwprintf(
     if format.is_null() {
         return -1;
     }
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let segments = parse_format_string(&fmt_narrow);
+    let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
@@ -3381,8 +3468,8 @@ pub unsafe extern "C" fn vfwprintf(
     if format.is_null() || stream.is_null() {
         return -1;
     }
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let segments = parse_format_string(&fmt_narrow);
+    let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };

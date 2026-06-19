@@ -25,6 +25,13 @@ unsafe extern "C" {
     // Host glibc inline-fast-path getc (skips the per-FILE lock). The libc crate
     // does not surface this, so bind the host symbol directly.
     fn getc_unlocked(stream: *mut libc::FILE) -> c_int;
+    #[link_name = "swprintf"]
+    fn host_swprintf(
+        s: *mut libc::wchar_t,
+        n: usize,
+        format: *const libc::wchar_t,
+        ...
+    ) -> c_int;
 }
 
 const N: usize = 4096;
@@ -156,12 +163,61 @@ fn bench_snprintf_s_newline(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_swprintf_wide_format(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stdio_glibc_baseline_swprintf_wide_format");
+    let fmt: [libc::wchar_t; 10] = [
+        b'v' as libc::wchar_t,
+        b'a' as libc::wchar_t,
+        b'l' as libc::wchar_t,
+        b'u' as libc::wchar_t,
+        b'e' as libc::wchar_t,
+        b'=' as libc::wchar_t,
+        b'%' as libc::wchar_t,
+        b'd' as libc::wchar_t,
+        b'\n' as libc::wchar_t,
+        0,
+    ];
+
+    group.bench_function("frankenlibc_abi", |b| {
+        b.iter(|| {
+            let mut buf = [0 as libc::wchar_t; 32];
+            let rc = unsafe {
+                frankenlibc_abi::wchar_abi::swprintf(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt.as_ptr(),
+                    12345 as c_int,
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+
+    group.bench_function("host_glibc", |b| {
+        b.iter(|| {
+            let mut buf = [0 as libc::wchar_t; 32];
+            let rc = unsafe {
+                host_swprintf(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt.as_ptr(),
+                    12345 as c_int,
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(20)
         .warm_up_time(Duration::from_millis(150))
         .measurement_time(Duration::from_millis(400));
-    targets = bench_fgetc, bench_fgetc_unlocked, bench_snprintf_s_newline
+    targets = bench_fgetc, bench_fgetc_unlocked, bench_snprintf_s_newline,
+        bench_swprintf_wide_format
 }
 criterion_main!(benches);
