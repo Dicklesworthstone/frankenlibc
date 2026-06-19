@@ -226,8 +226,25 @@ fn parse_ip_addr(bytes: &[u8]) -> Result<IpAddr, ()> {
 
 /// Parse a u32 from bytes.
 fn parse_u32(bytes: &[u8]) -> Result<u32, ()> {
-    let s = core::str::from_utf8(bytes).map_err(|_| ())?;
-    s.parse().map_err(|_| ())
+    let digits = match bytes.split_first() {
+        Some((b'+', rest)) => rest,
+        _ => bytes,
+    };
+    if digits.is_empty() {
+        return Err(());
+    }
+
+    let mut value = 0u32;
+    for &byte in digits {
+        if !byte.is_ascii_digit() {
+            return Err(());
+        }
+        value = value
+            .checked_mul(10)
+            .and_then(|n| n.checked_add((byte - b'0') as u32))
+            .ok_or(())?;
+    }
+    Ok(value)
 }
 
 /// Trim leading and trailing ASCII whitespace.
@@ -442,6 +459,26 @@ options ndots:2 timeout:3 attempts:2 rotate
         assert_eq!(config.attempts, 1);
         let config = ResolverConfig::parse(b"options attempts:100\n");
         assert_eq!(config.attempts, 5);
+    }
+
+    #[test]
+    fn test_options_numeric_byte_parser_edges() {
+        let config = ResolverConfig::parse(b"options ndots:+4 timeout:+6 attempts:+3\n");
+        assert_eq!(config.ndots, 4);
+        assert_eq!(config.timeout, 6);
+        assert_eq!(config.attempts, 3);
+
+        let config = ResolverConfig::parse(b"options ndots:4x timeout:-2 attempts:+\n");
+        assert_eq!(config.ndots, DEFAULT_NDOTS);
+        assert_eq!(config.timeout, DEFAULT_TIMEOUT_SECS);
+        assert_eq!(config.attempts, DEFAULT_ATTEMPTS);
+
+        let config = ResolverConfig::parse(
+            b"options ndots:4294967296 timeout:999999999999 attempts:999999999999\n",
+        );
+        assert_eq!(config.ndots, DEFAULT_NDOTS);
+        assert_eq!(config.timeout, DEFAULT_TIMEOUT_SECS);
+        assert_eq!(config.attempts, DEFAULT_ATTEMPTS);
     }
 
     // -----------------------------------------------------------------
