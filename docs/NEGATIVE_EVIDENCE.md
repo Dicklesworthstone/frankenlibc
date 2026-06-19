@@ -887,3 +887,49 @@ Retry-condition predicate: do not reroute f64 pow through the standalone
 `math::exp2` kernel alone; the current `pow_medium_log2_exp2_fast_path` remains
 on its measured libm composition. The remaining f64 pow opportunity is a true
 single-routine fused log+exp port with its own conformance gate.
+
+## 2026-06-19 `bd-deployed-malloc-membrane-50x-vmuu73` deployed calloc rejects
+
+Focused gauntlet target: deployed ABI `calloc` + `free` versus isolated host
+glibc in `calloc_glibc_bench`.
+
+Method:
+
+- Worker: `vmi1293453`.
+- Target dir: `/data/projects/.rch-targets/frankenlibc-cod-a`.
+- Command:
+
+```bash
+AGENT_NAME=BlackThrush \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a \
+RCH_VERBOSE=1 \
+RCH_WORKER=vmi1293453 \
+RCH_WORKERS=vmi1293453 \
+RCH_PREFERRED_WORKER=vmi1293453 \
+rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench calloc_glibc_bench -- --measurement-time 2 --warm-up-time 1 --noplot
+```
+
+Current-head baseline still shows a real deployed allocator gap: p50+mean score
+2 wins, 0 neutral, 12 losses versus host glibc. The largest p50 losses are 256B
+`22.16x`, 16B `10.86x`, and 4096B `8.29x`.
+
+Rejected attempts:
+
+| Attempt | Key evidence | Verdict | Action |
+|---|---|---|---|
+| Lock-free fallback table with per-slot CAS reservation | 16B FL regressed from 123.295 ns p50 / 146.359 ns mean to 153.918 ns / 195.183 ns; 256B FL regressed from 780.699 ns / 810.707 ns to 854.457 ns / 943.974 ns. | LOSS | Reverted. |
+| Strict-mode `free` skips `check_ownership` before host free | Candidate p50+mean score vs glibc: 1 win, 1 neutral, 12 losses. Criterion reported regressions for `fl/1048576`; 4 MiB regressed to 101202.424 ns p50 / 147881.717 ns mean versus current-head 86130.730 ns / 110318.416 ns. | LOSS | Reverted. |
+
+Focused checks passed during the experiment:
+`rustfmt --edition 2024 --check crates/frankenlibc-abi/src/malloc_abi.rs`,
+`cargo test -p frankenlibc-abi --test malloc_abi_test -- --nocapture`,
+`cargo check -p frankenlibc-bench --features abi-bench --bench calloc_glibc_bench`,
+and `cargo check -p frankenlibc-abi --lib`.
+Post-revert final-tree confirmation repeated the malloc ABI test and
+`calloc_glibc_bench` check successfully.
+
+Retry-condition predicate: do not retry a global fallback-table CAS rewrite or
+strict free-path ownership elision as standalone allocator levers. Next work
+should isolate `calloc` zero-fill versus `free` metadata cost and then benchmark
+a deeper metadata/allocator deployment change.

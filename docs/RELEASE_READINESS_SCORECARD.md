@@ -257,3 +257,23 @@ Conformance: `conformance_diff_exp2_f64_general` passed 221,546 interior inputs
 within 4 ULP vs host glibc, worst 1 ULP; boundary/special inputs exact.
 Remaining route: f64 `pow` still needs a true fused log+exp port; standalone
 `math::exp2` is not a sufficient retry lever for that path.
+
+### 2026-06-19 deployed calloc status (BlackThrush / cod-a)
+
+Same-worker deployed ABI `calloc` + `free` gauntlet on `vmi1293453` confirms the
+allocator surface is still not release-dominant against glibc for small sizes:
+current-head p50+mean score is **2 wins, 0 neutral, 12 losses**. Worst p50
+ratios are 256B `22.16x`, 16B `10.86x`, and 4096B `8.29x`.
+
+Two bold allocator levers were measured and rejected with source reverted before
+commit:
+
+| Lever | Score / evidence | Release action |
+|---|---|---|
+| Lock-free fallback allocation table reservation | Regressed 16B FL to 153.918 ns p50 / 195.183 ns mean and 256B FL to 854.457 ns / 943.974 ns. | Do not ship. |
+| Strict free-path ownership probe elision | Candidate score vs glibc was 1 win, 1 neutral, 12 losses; 4 MiB regressed to 101202.424 ns p50 / 147881.717 ns mean. | Do not ship. |
+
+Release posture: deployed math can be parity-to-faster, but deployed allocator
+small-size `calloc/free` remains a blocker for "dominates glibc" claims. The
+next allocator work should split zero-fill from metadata cost and pursue a
+deeper metadata/allocator deployment change, not another branch-local tweak.
