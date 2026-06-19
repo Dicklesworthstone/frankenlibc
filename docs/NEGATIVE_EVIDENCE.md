@@ -170,3 +170,32 @@ cost can erase a core win on cheap functions. A true deployed-vs-glibc claim nee
 head-to-heads (measure `frankenlibc_abi::*` directly), which is the key remaining measurement gap.
 The stdio/memset clusters I measured DO use the abi path (`fl::fgetc`, `fl::snprintf`) — those
 (fgetc 0.552× WIN, snprintf/swprintf NEUTRAL, memset/memmove WIN) are deployed-representative.
+
+## 2026-06-19 DEPLOYED-ABI math head-to-head — the membrane ERASES the core win (BlackThrush, thin-LTO)
+
+Built `bench_math_abi`: the real `frankenlibc_abi` math entry points (through `unary_entry`'s
+`runtime_policy::decide`+`observe` membrane, per call) vs glibc.
+
+| fn | deployed fl_abi | glibc | deployed ratio | (core ratio for contrast) |
+|----|-----------------|-------|----------------|----------------------------|
+| exp  | 679 ns | 679 ns | **1.000× NEUTRAL** | core 0.293× |
+| sin  | 676 ns | 675 ns | **1.002× NEUTRAL** | core 0.487× |
+| cos  | 706 ns | 721 ns | **0.979× NEUTRAL** | core 0.473× |
+| log  | 803 ns | 805 ns | **0.998× NEUTRAL** | core 0.366× |
+| exp2 | 686 ns | 666 ns | **1.031× NEUTRAL** | core 0.257× |
+| log2 | 572 ns | 559 ns | **1.023× NEUTRAL** | core 0.278× |
+
+**DECISIVE:** the math ABI membrane (`unary_entry`) adds **~150–200 ns/call**, which ERASES the
+core's 2–4× win → **deployed fl math is parity (NEUTRAL) with glibc**, not faster. E.g. core sin
+496 ns → deployed sin_abi 676 ns ≈ glibc 675 ns; the membrane cost ≈ the core's advantage.
+
+**CONTRAST — the membrane cost is PATH-SPECIFIC:** `memset_abi` (also an ABI path) is 2.8 ns at
+64 B (WIN 6.84×) and `fgetc` (abi) WINS 0.552× — those paths are thin. Only the math path
+(`unary_entry`) carries the full decide/observe cost. So **deployed fl is MIXED**: thin-path fns
+(memset/memmove/fgetc) WIN; membrane-heavy fns (math) NEUTRAL.
+
+**RELEASE IMPLICATION:** the "fl math 2–4× faster than glibc" result is a CORE-kernel fact, NOT a
+deployed one — the runtime-policy membrane on the math path consumes the entire advantage. This is
+the single most important honesty correction of the session: **deployed fl math = glibc parity.**
+LEVER (filing): cheapen/fast-path `unary_entry`'s decide+observe for pure finite-math inputs to
+recover the core win for the deployed path (design tradeoff: membrane adaptivity vs per-call cost).
