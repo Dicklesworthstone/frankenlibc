@@ -1,16 +1,16 @@
 # FrankenLibC Release Readiness Scorecard
 
-Last updated: 2026-06-19 by `cod-a` / `BlackThrush`.
+Last updated: 2026-06-19 by `cod-b` / `BlackThrush`.
 
 ## Current gate snapshot
 
 | Area | Score | Evidence | Risk |
 |---|---:|---|---|
-| Measured perf backlog conversion | 5 / many pending | `bd-0m5vaw`, `bd-fgnxc0`, `bd-2g7oyh.478`, `bd-2g7oyh.487`, and `bd-9ran7n` converted from code-first pending to measured head-to-head evidence vs host glibc. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, and peer-owned leaves. |
-| Negative-evidence ledger | 1 / committed ledger | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and now includes resolver services/protocols ratios for `bd-9ran7n` plus corrected-host getopt evidence for `bd-2g7oyh.487`. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended. |
+| Measured perf backlog conversion | 6 / many pending | `bd-0m5vaw`, `bd-fgnxc0`, `bd-2g7oyh.478`, `bd-2g7oyh.487`, `bd-9ran7n`, and `bd-2g7oyh.481` converted from code-first pending to measured head-to-head evidence vs host glibc. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, and peer-owned leaves. |
+| Negative-evidence ledger | 1 / committed ledger | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and now includes resolver services/protocols ratios for `bd-9ran7n`, corrected-host getopt evidence for `bd-2g7oyh.487`, and mixed group lookup evidence for `bd-2g7oyh.481`. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended. |
 | Revert discipline | Green for measured cluster | Winning rows kept; losing `bd-2g7oyh.478` exact-block `strcpy_4096` unroll was reverted after a 1.250x p50 loss vs glibc. `bd-2g7oyh.487` getopt fused lookup is a measured keep at 0.556x. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
-| Conformance guard | Partial green | `cargo check -p frankenlibc-abi` and the `bd-9ran7n` resolver parser + ABI differential guards passed with known warning debt. Criterion bench binaries built and ran successfully. `cargo test -p frankenlibc-core getopt --lib` passed 39 tests for the kept fused lookup. | Workspace hygiene is still blocked by pre-existing fmt/clippy debt in bench/core files; older `cargo test -p frankenlibc-abi` blockers around scratch probes remain a separate release-readiness risk. `cargo-clippy` is missing from the selected nightly on the rch worker. |
-| Release posture | Not ready | Additional getopt win recorded; no new source regression in this pass. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, and conformance/bench gates are repeatable. |
+| Conformance guard | Partial green | `cargo check -p frankenlibc-abi` and the `bd-9ran7n` resolver parser + ABI differential guards passed with known warning debt. Criterion bench binaries built and ran successfully. `cargo test -p frankenlibc-core getopt --lib` passed 39 tests for the kept fused lookup. Group parser/ABI guards passed after signed gid rows were rejected again. | Workspace hygiene is still blocked by pre-existing fmt/clippy debt in bench/core files; older `cargo test -p frankenlibc-abi` blockers around scratch probes remain a separate release-readiness risk. `cargo-clippy` is missing from the selected nightly on the rch worker. |
+| Release posture | Not ready | Additional getopt and group lookup wins recorded, plus a real `getgrgid(0)` neutral/gap routed deeper. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, and conformance/bench gates are repeatable. |
 
 ## 2026-06-19 measured stdio cluster
 
@@ -138,6 +138,17 @@ ABI evidence vs host glibc on `hz1`.
 Conformance stayed green for the focused path: resolver parser unit filters passed, and the
 `conformance_diff_netdb_aliases`, `conformance_diff_protoent_r_aliases`, and
 `conformance_diff_netdb_r_aliases` ABI differential tests matched glibc.
+
+## 2026-06-19 `bd-2g7oyh.481` group parser measured partial keep
+
+| Workload | FrankenLibC | glibc | Ratio | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| `getgrnam("root")` | 9.788 us | 24.779 us | 0.395x | WIN | Keep the splitn group parser as a partial deployed win. |
+| `getgrgid(0)` | 24.631 us | 24.435 us | 1.008x | NEUTRAL | Route gid lookup/cache path deeper; do not retry colon-tail parser reshaping for this gap. |
+
+Conformance stayed green after the gauntlet rejected signed gid fields again:
+core group parser tests passed, `grp_abi_test getgr` passed, and group
+differential tests passed.
 
 ### 2026-06-19 deployed-math DEFINITIVELY resolved (same-run, BlackThrush)
 

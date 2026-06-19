@@ -5,7 +5,7 @@
 - `bd-2g7oyh.481`
 - Title: `perf: single-pass /etc/group colon-tail parser`
 - Assignee: `cod-b`
-- Status after this batch: `in_progress`
+- Status after this batch: `measured partial keep`
 
 ## Routing Evidence
 
@@ -33,8 +33,8 @@ required owned output fields are unchanged.
 ## Behavior Guard
 
 Existing inline group tests already cover blank/comment rejection, too few
-fields, empty names, optional member list, CRLF trimming, large `gid`, leading
-`+` in `gid`, duplicate lookup order, and empty comma-token filtering.
+fields, empty names, optional member list, CRLF trimming, large `gid`, signed
+`gid` rejection, duplicate lookup order, and empty comma-token filtering.
 
 Added guard:
 
@@ -55,28 +55,61 @@ Added guard:
 | `parse_networks_line` byte numeric parse | Already landed under `bd-xxrfvu`, batch verdict pending. | Not touched. |
 | `parse_hosts_line` IPv4 byte validation | Already landed under `bd-43e21q`, batch verdict pending. | Not touched. |
 | `parse_aliases_line` member scanner | Already landed under `bd-4crkqx`, batch verdict pending. | Not touched. |
-| `parse_group_line` colon-field Vec plus tail join removal | This batch. | Pending focused benchmark verdict. |
+| `parse_group_line` colon-field Vec plus tail join removal | This batch. | Measured partial keep: deployed `getgrnam("root")` wins vs glibc; deployed `getgrgid(0)` is neutral and routed deeper. |
+
+## Measured Head-To-Head Evidence
+
+Command:
+
+```text
+AGENT_NAME=BlackThrush \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-b/criterion-bd-2g7oyh-481-final-20260619T0414 \
+rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench glibc_baseline_bench -- glibc_baseline_grp_lookup \
+  --noplot --sample-size 80 --warm-up-time 1 --measurement-time 3
+```
+
+Worker: `hz2`; release bench profile; rch rewrote the target dir to
+`/data/projects/frankenlibc/.rch-target-hz2-pool-2740363b0b76e0a08f9b35b4f209a994`.
+
+| Workload | FrankenLibC p50 | glibc p50 | Ratio vs glibc | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| `getgrnam("root")` through `/etc/group` | 9.788 us | 24.779 us | 0.395x | WIN | Keep the splitn parser as a partial deployed win. |
+| `getgrgid(0)` through `/etc/group` | 24.631 us | 24.435 us | 1.008x | NEUTRAL | Do not count as a win; route the gid lookup path deeper. |
+
+Criterion means:
+
+- `getgrnam("root")`: FrankenLibC `9.989 us`, glibc `25.431 us`, ratio
+  `0.393x`.
+- `getgrgid(0)`: FrankenLibC `25.114 us`, glibc `24.827 us`, ratio `1.012x`.
+
+The benchmark preflight asserted non-null results, gid parity, and group-name
+parity before timing.
 
 ## Validation
 
-Campaign instruction for this batch permits only:
+- PASS: `cargo check -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench`.
+- PASS: `cargo test -p frankenlibc-core grp::tests:: -- --nocapture`: 37 passed.
+- PASS: `cargo test -p frankenlibc-abi --test grp_abi_test getgr -- --nocapture`: 35 passed, 5 ignored.
+- PASS: `cargo test -p frankenlibc-abi --test conformance_diff_getbyid_r -- --nocapture`: 3 passed.
+- PASS: `cargo test -p frankenlibc-abi --test conformance_diff_getgrent -- --nocapture`: 1 passed.
+- Existing unrelated warnings remained in `iconv`, `math_abi`, `poll_abi`,
+  `signal_abi`, `unistd_abi`, and `erf_tables`.
 
-```text
-CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b cargo check -p frankenlibc-core
-```
+Conformance correction found by this gauntlet: the adjacent group gid byte parser
+accepted `+27`, which made `getgrnam_getgrgid_ignore_signed_gid_rows` fail. The
+byte parser was kept, but signed gid fields are rejected again so NSS group
+lookups skip those rows.
 
-No test, rch, criterion benchmark, or conformance run is performed in this
-code-first batch.
+Earlier same-turn `hz1` evidence before that conformance correction is retained
+in the central ledger: `getgrnam("root")` was a win at `0.717x`, while
+`getgrgid(0)` was a loss at `1.102x`. The corrected-source `hz2` rerun above is
+the final keep/reject input for the shipped code.
 
-Result:
+## Keep / Reject Decision
 
-- PASS: `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b cargo check -p frankenlibc-core`
-- Existing unrelated warnings remained in `iconv`: `emit_g1` does not need
-  `mut`, and `EUCJX_P2_MULTI` is unused.
-
-## Keep / Reject Rule For Batch Validation
-
-Keep only if a later focused benchmark on the same comparable worker shows the
-group parser row improves and the group parser conformance/unit guard remains
-green. Reject and revert or route deeper if the row is neutral/slower, if this
-change is lost in noise, or if any parser behavior diverges.
+Keep the splitn colon-tail parser as a **partial** deployed win because
+`getgrnam("root")` beats host glibc by `0.395x` p50 and the conformance guard is
+green. Record `getgrgid(0)` as real negative evidence (`1.008x` neutral) and do not
+retry colon-tail parsing for that gap; route the gid lookup/cache path deeper.

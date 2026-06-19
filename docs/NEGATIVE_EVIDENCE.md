@@ -26,6 +26,10 @@ so dead ends are never retried and real wins are confirmed with numbers.
 | 2026-06-19 | fused getopt optstring lookup (`bd-2g7oyh.487`) | `getopt_short_bundle_glibc_comparable` | 93.699 ns | 168.676 ns | 0.556x | WIN | Keep. Corrected host harness uses `dlmopen` plus process/global `opt*` reset to avoid FrankenLibC `optind` interposition; preflight asserts checksum and final `optind`. Focused getopt tests passed. |
 | 2026-06-19 | NSS services decimal byte parser (`bd-9ran7n`) | `glibc_baseline_resolv_services_protocols/getservbyname_http_tcp` | 28.532 us | 435.582 us | 0.0655x | WIN | Keep. Real ABI `getservbyname("http","tcp")` against host glibc on `hz1`; mean ratio 0.0692x. |
 | 2026-06-19 | NSS protocols decimal byte parser (`bd-9ran7n`) | `glibc_baseline_resolv_services_protocols/getprotobyname_tcp` | 125.854 us | 129.508 us | 0.9718x | NEUTRAL | Keep as part of same resolver parser lever: no regression, mean ratio 0.9639x, and services lookup is a large deployed ABI win. |
+| 2026-06-19 | `/etc/group` splitn colon-tail parser (`bd-2g7oyh.481`, pre-correction) | `glibc_baseline_grp_lookup/getgrnam_root` | 17.203 us | 23.977 us | 0.717x | WIN | Earlier `hz1` run before signed-gid correction; kept as evidence but final verdict uses the corrected-source rerun. |
+| 2026-06-19 | `/etc/group` splitn colon-tail parser (`bd-2g7oyh.481`, pre-correction) | `glibc_baseline_grp_lookup/getgrgid_0` | 23.447 us | 21.284 us | 1.102x | LOSS | Earlier `hz1` run before signed-gid correction; recorded as negative evidence and forced a final-source rerun. |
+| 2026-06-19 | `/etc/group` splitn colon-tail parser (`bd-2g7oyh.481`, final source) | `glibc_baseline_grp_lookup/getgrnam_root` | 9.788 us | 24.779 us | 0.395x | WIN | Partial keep. Real ABI `getgrnam("root")` against host glibc on `hz2`; mean ratio 0.393x. Conformance green after rejecting signed gid fields again. |
+| 2026-06-19 | `/etc/group` splitn colon-tail parser (`bd-2g7oyh.481`, final source) | `glibc_baseline_grp_lookup/getgrgid_0` | 24.631 us | 24.435 us | 1.008x | NEUTRAL | Do not count as a win. Route the gid lookup/cache path deeper; retained splitn parser because the same deployed parser lever gives a clear `getgrnam` win. |
 
 <!-- rows appended as benches complete -->
 
@@ -450,3 +454,47 @@ Same-run (ONE worker, `bench_math_abi` 3-way), per-call ns (batch/64):
 path proves a ~1 ns membrane is achievable) would recover **~2× on deployed math** (core 4–8 ns vs
 glibc 13–19 ns). HIGH-value, now grounded in clean same-run numbers. This is the definitive
 deployed-math result.
+
+## 2026-06-19 `bd-2g7oyh.481` group parser measured partial keep
+
+Focused gauntlet target: the code-first `splitn(4)` parser in
+`crates/frankenlibc-core/src/grp/mod.rs`, exercised through real ABI group
+lookups against host glibc.
+
+Command:
+
+```bash
+AGENT_NAME=BlackThrush \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-b/criterion-bd-2g7oyh-481-final-20260619T0414 \
+rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench glibc_baseline_bench -- glibc_baseline_grp_lookup \
+  --noplot --sample-size 80 --warm-up-time 1 --measurement-time 3
+```
+
+- Worker: `hz2`.
+- `getgrnam("root")`: FrankenLibC p50 `9.788 us`, glibc p50 `24.779 us`,
+  ratio `0.395x`; mean ratio `0.393x`; **WIN**.
+- `getgrgid(0)`: FrankenLibC p50 `24.631 us`, glibc p50 `24.435 us`, ratio
+  `1.008x`; mean ratio `1.012x`; **NEUTRAL**.
+- Verdict: **partial keep**. Keep the splitn parser for the name lookup win,
+  but record the gid lookup as negative evidence and route the lookup/cache path
+  deeper.
+
+Earlier same-turn `hz1` evidence before the signed-gid conformance correction is
+also recorded in the top table: `getgrnam("root")` was a win at `0.717x`; `getgrgid(0)`
+was a loss at `1.102x`. The `hz2` rows above are the corrected-source verdict.
+
+Validation:
+
+- `cargo check -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench`: passed.
+- `cargo test -p frankenlibc-core grp::tests:: -- --nocapture`: 37 passed.
+- `cargo test -p frankenlibc-abi --test grp_abi_test getgr -- --nocapture`:
+  initially exposed signed-gid acceptance; after rejecting signed gid fields
+  again, 35 passed and 5 were ignored.
+- `cargo test -p frankenlibc-abi --test conformance_diff_getbyid_r -- --nocapture`: 3 passed.
+- `cargo test -p frankenlibc-abi --test conformance_diff_getgrent -- --nocapture`: 1 passed.
+
+Retry-condition predicate: do not retry colon-tail parser reshaping for the
+`getgrgid(0)` neutral/gap. The next lever must target gid lookup/cache behavior
+or another profile-backed path.

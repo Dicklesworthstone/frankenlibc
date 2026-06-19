@@ -1,7 +1,7 @@
 //! Host glibc baseline comparisons for top ported libc hot paths.
 
 use std::cell::RefCell;
-use std::ffi::c_void;
+use std::ffi::{CStr, c_void};
 use std::hint::black_box;
 use std::mem;
 use std::time::{Duration, Instant};
@@ -477,6 +477,142 @@ fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
                 let entry = unsafe { libc::getprotobyname(proto.as_ptr()) };
                 if !entry.is_null() {
                     black_box(unsafe { (*entry).p_proto });
+                }
+                black_box(entry);
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn bench_grp_lookup_abi(c: &mut Criterion) {
+    let group = c.benchmark_group("glibc_baseline_grp_lookup");
+    #[cfg(feature = "abi-bench")]
+    let mut group = group;
+
+    #[cfg(feature = "abi-bench")]
+    {
+        let root = c"root";
+        let root_gid: libc::gid_t = 0;
+
+        let fl_by_name = unsafe { frankenlibc_abi::grp_abi::getgrnam(root.as_ptr()) };
+        let host_by_name = unsafe { libc::getgrnam(root.as_ptr()) };
+        assert!(
+            !fl_by_name.is_null(),
+            "FrankenLibC getgrnam(root) returned NULL"
+        );
+        assert!(
+            !host_by_name.is_null(),
+            "host glibc getgrnam(root) returned NULL"
+        );
+        assert_eq!(
+            unsafe { (*fl_by_name).gr_gid },
+            unsafe { (*host_by_name).gr_gid },
+            "getgrnam(root) gid parity"
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr((*fl_by_name).gr_name).to_bytes() },
+            unsafe { CStr::from_ptr((*host_by_name).gr_name).to_bytes() },
+            "getgrnam(root) name parity"
+        );
+
+        let fl_by_gid = unsafe { frankenlibc_abi::grp_abi::getgrgid(root_gid) };
+        let host_by_gid = unsafe { libc::getgrgid(root_gid) };
+        assert!(
+            !fl_by_gid.is_null(),
+            "FrankenLibC getgrgid(0) returned NULL"
+        );
+        assert!(
+            !host_by_gid.is_null(),
+            "host glibc getgrgid(0) returned NULL"
+        );
+        assert_eq!(
+            unsafe { (*fl_by_gid).gr_gid },
+            unsafe { (*host_by_gid).gr_gid },
+            "getgrgid(0) gid parity"
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr((*fl_by_gid).gr_name).to_bytes() },
+            unsafe { CStr::from_ptr((*host_by_gid).gr_name).to_bytes() },
+            "getgrgid(0) name parity"
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getgrnam_root",
+                impl_label: "frankenlibc_abi",
+                api_family: "grp",
+                symbol: "getgrnam",
+                workload: "lookup root through /etc/group",
+                parity_proof_ref: "tests/artifacts/perf/bd-2g7oyh.481-group-line-single-pass.md",
+            },
+            || {
+                let entry = unsafe { frankenlibc_abi::grp_abi::getgrnam(root.as_ptr()) };
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).gr_gid });
+                    black_box(unsafe { (*entry).gr_name });
+                }
+                black_box(entry);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getgrnam_root",
+                impl_label: "host_glibc",
+                api_family: "grp",
+                symbol: "getgrnam",
+                workload: "lookup root through /etc/group",
+                parity_proof_ref: "tests/artifacts/perf/bd-2g7oyh.481-group-line-single-pass.md",
+            },
+            || {
+                let entry = unsafe { libc::getgrnam(root.as_ptr()) };
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).gr_gid });
+                    black_box(unsafe { (*entry).gr_name });
+                }
+                black_box(entry);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getgrgid_0",
+                impl_label: "frankenlibc_abi",
+                api_family: "grp",
+                symbol: "getgrgid",
+                workload: "lookup gid 0 through /etc/group",
+                parity_proof_ref: "tests/artifacts/perf/bd-2g7oyh.481-group-line-single-pass.md",
+            },
+            || {
+                let entry = unsafe { frankenlibc_abi::grp_abi::getgrgid(root_gid) };
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).gr_gid });
+                    black_box(unsafe { (*entry).gr_name });
+                }
+                black_box(entry);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getgrgid_0",
+                impl_label: "host_glibc",
+                api_family: "grp",
+                symbol: "getgrgid",
+                workload: "lookup gid 0 through /etc/group",
+                parity_proof_ref: "tests/artifacts/perf/bd-2g7oyh.481-group-line-single-pass.md",
+            },
+            || {
+                let entry = unsafe { libc::getgrgid(root_gid) };
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).gr_gid });
+                    black_box(unsafe { (*entry).gr_name });
                 }
                 black_box(entry);
             },
@@ -2754,6 +2890,7 @@ criterion_group! {
         bench_strcmp_256_equal,
         bench_getenv_miss,
         bench_resolv_services_protocols_abi,
+        bench_grp_lookup_abi,
         bench_memcmp,
         bench_strtol,
         bench_scanf,

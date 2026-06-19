@@ -73,10 +73,9 @@ pub fn parse_group_line(line: &[u8]) -> Option<Group> {
     })
 }
 
-/// Parse a uid/gid field the way glibc does (`strtoul`, base 10): skip leading
-/// whitespace and an optional `+`, then require the rest to be all digits and
-/// fully consumed. Rejects "", a sign-only field, hex (`0x10`), and trailing
-/// junk — matching glibc, which errors the whole entry on those.
+/// Parse a uid/gid field: skip leading whitespace, then require an unsigned
+/// decimal value that is fully consumed. Signed group ids are rejected so NSS
+/// lookups skip those rows instead of aliasing them to valid unsigned gids.
 fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
     let mut s = field;
     while let [first, rest @ ..] = s {
@@ -85,9 +84,6 @@ fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
         } else {
             break;
         }
-    }
-    if let [b'+', rest @ ..] = s {
-        s = rest;
     }
     if s.is_empty() {
         return None;
@@ -314,10 +310,8 @@ ubuntu:x:1000:
     }
 
     #[test]
-    fn accepts_leading_plus_in_gid() {
-        // glibc parses gid via strtoul, which accepts a leading '+'.
-        let entry = parse_group_line(b"root:x:+0:").unwrap();
-        assert_eq!(entry.gr_gid, 0);
+    fn rejects_leading_plus_in_gid() {
+        assert!(parse_group_line(b"root:x:+0:").is_none());
     }
 
     #[test]
@@ -407,10 +401,12 @@ ubuntu:x:1000:
     fn reject_gid_overflow_sign_and_trailing_junk() {
         assert!(parse_group_line(b"root:x:4294967296:").is_none());
         assert!(parse_group_line(b"root:x:-1:").is_none());
+        assert!(parse_group_line(b"root:x:+1:").is_none());
         assert!(parse_group_line(b"root:x:1x:").is_none());
         assert!(parse_group_line(b"root:x:1 :").is_none());
+        assert!(parse_group_line(b"root:x: \t+42:").is_none());
 
-        let entry = parse_group_line(b"root:x: \t+42:").unwrap();
+        let entry = parse_group_line(b"root:x: \t42:").unwrap();
         assert_eq!(entry.gr_gid, 42);
     }
 

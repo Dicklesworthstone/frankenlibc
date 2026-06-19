@@ -21,8 +21,7 @@
 `parse_u32_decimal` now performs checked byte-level decimal accumulation:
 
 - preserves leading ASCII whitespace skipping;
-- preserves optional leading `+`;
-- rejects empty/sign-only, `-`, trailing junk, whitespace suffixes, and
+- rejects empty/sign-only, `+`, `-`, trailing junk, whitespace suffixes, and
   overflow;
 - returns the same `u32` value for valid fields without UTF-8 decoding or the
   generic integer parser.
@@ -36,8 +35,8 @@ screen: keep the hot path as one byte pass with no format conversion layer.
 - Existing inline group parser tests continue to cover comment/blank rejection,
   optional member list, CRLF trimming, duplicate lookup order, empty member-token
   filtering, and extra-colon member-tail absorption.
-- Added focused guard coverage for `u32` overflow, negative sign rejection,
-  trailing junk/space rejection, and leading whitespace plus `+` acceptance.
+- Added focused guard coverage for `u32` overflow, signed field rejection,
+  trailing junk/space rejection, and leading whitespace before unsigned digits.
 
 ## Negative-Evidence Ledger
 
@@ -77,3 +76,11 @@ Result:
 Keep only if the later same-worker batch shows `parse_group_line_typical`
 improves in stable p50/mean and group parser conformance remains green. Reject
 or route deeper if the row is neutral/slower or if any parser contract diverges.
+
+## 2026-06-19 Conformance Correction
+
+The `/etc/group` gauntlet for `bd-2g7oyh.481` found that accepting a leading
+`+` made `getgrnam_getgrgid_ignore_signed_gid_rows` fail in
+`crates/frankenlibc-abi/tests/grp_abi_test.rs`. The byte parser remains, but
+signed gid fields (`+N` and `-N`) are rejected again so NSS group lookups skip
+those rows.
