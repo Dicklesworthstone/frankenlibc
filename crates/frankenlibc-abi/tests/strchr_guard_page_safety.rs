@@ -74,6 +74,14 @@ fn strchr_never_reads_into_guard_page() {
                         "strchr('a') start={start} should be first byte"
                     );
                 }
+
+                // strlen shares the folded-128 NUL scan: exact length, no over-read.
+                let len = fl::strlen(s);
+                assert_eq!(
+                    len,
+                    nul_off - start,
+                    "strlen start={start} nul={nul_off} wrong length"
+                );
             }
         }
 

@@ -127,3 +127,8 @@ required-features = ["abi-bench"]
 [[bench]]
 name = "resolv_parsers_bench"
 harness = false
+
+[[bench]]
+name = "strlen_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
