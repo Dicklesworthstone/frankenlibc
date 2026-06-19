@@ -2549,6 +2549,13 @@ fn bench_memstring_abi(c: &mut Criterion) {
         let bp = b.as_ptr() as *const c_char;
         let mut m = vec![0u8; 4096];
         let mp = m.as_mut_ptr() as *mut c_void;
+        // Short, early-mismatch strcmp: glibc returns at byte 2 (~3 ns); the
+        // deployed fl path pays its fixed ~82 ns membrane regardless -> predicts
+        // a clear deployed LOSS (tests the membrane-on-cheap-op caveat).
+        let sa = b"ab\0\0\0\0\0\0".to_vec();
+        let sb = b"ac\0\0\0\0\0\0".to_vec();
+        let sap = sa.as_ptr() as *const c_char;
+        let sbp = sb.as_ptr() as *const c_char;
 
         macro_rules! pair_ms {
             ($id:expr, $sym:expr, $fl:expr, $gl:expr) => {{
@@ -2566,6 +2573,9 @@ fn bench_memstring_abi(c: &mut Criterion) {
         pair_ms!("strcmp_256_equal_abi", "strcmp",
             || { black_box(unsafe { string_abi::strcmp(black_box(ap), black_box(bp)) }); },
             || { black_box(unsafe { libc::strcmp(black_box(ap), black_box(bp)) }); });
+        pair_ms!("strcmp_short_mismatch_abi", "strcmp",
+            || { black_box(unsafe { string_abi::strcmp(black_box(sap), black_box(sbp)) }); },
+            || { black_box(unsafe { libc::strcmp(black_box(sap), black_box(sbp)) }); });
         pair_ms!("memset_64_abi", "memset",
             || { black_box(unsafe { string_abi::memset(black_box(mp), 0x5A, 64) }); },
             || { black_box(unsafe { libc::memset(black_box(mp), 0x5A, 64) }); });
