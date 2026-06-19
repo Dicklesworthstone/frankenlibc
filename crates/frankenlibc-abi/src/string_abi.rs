@@ -1212,6 +1212,27 @@ unsafe fn scan_c_string_last_byte(
         Some(limit) => {
             let mut i = 0usize;
             while i + 8 <= limit {
+                // Wide 32-byte portable-SIMD skip, mirroring the unbounded (None)
+                // path: a panel with NEITHER the target NOR a NUL cannot change
+                // `last` or terminate, so advance it whole. Taken only when the
+                // 32-byte window stays inside the bound (`i + 32 <= limit`) and the
+                // current page; any panel with a target or NUL drops to the 8-byte
+                // SWAR resolve below, which updates `last` and resolves the NUL
+                // exactly — byte-identical. Closes the bounded-path gap where the
+                // SWAR scan was ~7x slower than the SIMD unbounded path at 64 KiB.
+                if i + 32 <= limit && (p as usize + i) & 0xFFF <= 0x1000 - 32 {
+                    use core::simd::Simd;
+                    use core::simd::cmp::SimdPartialEq;
+                    // SAFETY: [i, i+32) ⊆ [0, limit) and within the current page.
+                    let v = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i), 32)
+                    });
+                    let hit = v.simd_eq(Simd::splat(target)) | v.simd_eq(Simd::splat(0));
+                    if !hit.any() {
+                        i += 32;
+                        continue;
+                    }
+                }
                 // SAFETY: [i, i+8) ⊆ [0, limit).
                 let w = unsafe { core::ptr::read_unaligned(p.add(i).cast::<u64>()) };
                 if swar_word_has_zero(w) {

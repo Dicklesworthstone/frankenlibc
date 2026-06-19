@@ -579,8 +579,8 @@ fn main() {
 
     println!("\nstrrchr (absent target → full scan to NUL, behind public strrchr):");
     println!(
-        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10} | {:>10}",
-        "len", "old(ns)", "new(ns)", "glibc(ns)", "self x", "vs glibc"
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>12} | {:>10}",
+        "len", "unbnd(ns)", "bnded(ns)", "glibc(ns)", "bnd/unbnd", "unbnd/gl"
     );
     for &n in &sizes {
         let mut s = vec![0x61u8; n + 1];
@@ -588,24 +588,28 @@ fn main() {
         let p = s.as_ptr().cast::<std::os::raw::c_char>();
         let iters = (4_000_000u64 / (n as u64 + 1)).max(2000);
 
-        let old = median_ns_per_op(rounds, iters, || {
-            black_box(unsafe { old_byte_strrchr(p, b'Z') });
-        });
+        // Unbounded path (already 32B SIMD).
         let new = median_ns_per_op(rounds, iters, || {
             black_box(unsafe { bench_scan_c_string_last_byte(p, b'Z', None) });
+        });
+        // Bounded path (membrane-tracked buffer supplies a known extent): this is
+        // the strrchr scan hit when `known_remaining` is Some — historically still
+        // 8B SWAR while the unbounded path got the SIMD skip.
+        let new_b = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { bench_scan_c_string_last_byte(p, b'Z', Some(n)) });
         });
         let gl = median_ns_per_op(rounds, iters, || {
             // SAFETY: NUL-terminated.
             black_box(unsafe { libc::strrchr(p, b'Z' as i32) });
         });
         println!(
-            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>11.2}x | {:>9.2}x",
             n,
-            old,
             new,
+            new_b,
             gl,
-            old / new,
-            gl / new,
+            new_b / new,
+            new / gl,
         );
     }
 
