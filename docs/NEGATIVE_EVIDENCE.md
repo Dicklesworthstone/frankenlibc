@@ -225,3 +225,35 @@ small `memset`/`strcmp` could be NEUTRAL-to-LOSS).
 **KEY REMAINING MEASUREMENT:** bench the DEPLOYED PUBLIC mem/string (`string_abi::memset`/`strcmp`/
 `strlen` WITH membrane) vs glibc — strcmp-has-membrane + the math-membrane cost predict deployed
 small ops are at risk. This is the next decisive head-to-head.
+
+## 2026-06-19 DEPLOYED-ABI mem/string head-to-head — membrane is PATH-SPECIFIC; deployed = parity-to-win
+
+`bench_memstring_abi` (public `string_abi` fns WITH membrane) vs glibc:
+
+| fn | deployed fl_abi | glibc | ratio | verdict |
+|----|-----------------|-------|-------|---------|
+| strlen_4096      | 121.5 ns | 309.7 ns | **0.392×** | WIN |
+| strcmp_256_equal | 87.0 ns  | 86.6 ns  | 1.005× | NEUTRAL |
+| memset_64        | 1.3 ns   | 1.2 ns   | 1.030× | NEUTRAL |
+| memset_4096      | 496.2 ns | 493.2 ns | 1.006× | NEUTRAL |
+
+**FINDING — the membrane cost is PATH-SPECIFIC, not uniform:**
+- memset: **~1 ns** (THIN fast path, no heavy decide; deployed ≈ glibc at both sizes).
+- strcmp: **~82 ns** (stage_context + decide; brings the 5 ns core strcmp to 87 ns ≈ glibc 86 ns).
+- math: **~180 ns** (unary_entry; erases the 2–4× core win).
+
+My earlier "deployed small ops at risk of LOSS" was **too pessimistic** — on these workloads they
+are NEUTRAL (the membrane brings core wins to parity, not loss). **EXCEPTION:** strcmp's *fixed*
+~82 ns membrane means SHORT-string / early-mismatch strcmp (glibc ~5 ns) would deployed-LOSE; the
+bench's 256-equal full-scan (glibc 86 ns) hides this — a workload caveat to keep honest.
+
+**REVISED DEPLOYED PICTURE (public abi, confirmed across stdio + mem/string + math):**
+- **WINS:** `fgetc` 0.552×, `strlen` 0.392× (SIMD + membrane amortized over the buffer).
+- **NEUTRAL:** memset (both sizes), strcmp (256-equal), all math, snprintf/swprintf, fgetc_unlocked.
+- **No catastrophic deployed losses** on the measured workloads. The membrane is the **upside
+  ceiling** on hot small ops, recoverable via bd-n40in2 (the fast-path lever generalizes beyond
+  math: strcmp's ~82 ns membrane is the same class of cost).
+
+**NET:** fl is **competitive (parity-to-faster) than glibc on the deployed path**; its core
+algorithms are 2–4× faster but the per-call membrane caps that to parity on hot small functions.
+Closing the membrane fast-path (bd-n40in2) is the single highest-leverage deployed-perf lever.
