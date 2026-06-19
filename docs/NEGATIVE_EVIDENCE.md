@@ -160,6 +160,25 @@ changed). The remaining fl-controllable lever is the ~2× membrane (~577 ns), no
 the headline 71× — and a fair vs-glibc target must compare against `fl_native`
 (busy main heap), not the pristine dlmopen heap. Updated bd-f874go.
 
+**Membrane (~577 ns) further bisected — no single hotspot, residual is diffuse:**
+all individually-isolable membrane operations are small, so the ~2× is *not*
+attackable by removing one piece:
+
+| Membrane piece | Isolation method | Δ on fl 256 B | verdict |
+|---|---|---|---|
+| `check_ownership` / `PageOracle::query` (free) | reorder to skip for tracked ptrs | −47 ns | landed (ee49d5e16) |
+| `record_alloc_stats`+`record_free_stats` (FlatCombiningStats HTM) | no-op both (diagnostic) | **−12 ns** | NOT the cost — reverted (stats are ~12 ns, not the ~500 ns suspected) |
+| `FALLBACK_ALLOC_*` table size/cache | shrink 262144→16384 | 0 ns | ruled out (prior section) |
+
+Sum of isolable membrane pieces ≈ 60 ns, but the membrane delta is ~577 ns →
+**~500 ns is diffuse** (i-cache/branch/TLB pressure from traversing the large
+deployed `malloc_abi` code path: double reentry guards, bootstrap/strict checks,
+fallback insert+remove, entrypoint scope). No single lever removes it; closing it
+needs a hot-path code-size reduction (aggressive inlining / a slim fast path),
+which is a broad membrane-core refactor — filed thinking on bd-f874go, not
+attempted unilaterally. **Net: the deployed allocator is ~2× the bare host on a
+busy heap, and that 2× has no single fixable hotspot.**
+
 ## 2026-06-19 `bd-4crkqx` aliases scanner measured reject
 
 Focused gauntlet target: the code-first single-pass `/etc/aliases` member
