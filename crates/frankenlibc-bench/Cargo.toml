@@ -76,6 +76,11 @@ harness = false
 required-features = ["abi-bench"]
 
 [[bench]]
+name = "calloc_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
 name = "elimination_bench"
 harness = false
 
