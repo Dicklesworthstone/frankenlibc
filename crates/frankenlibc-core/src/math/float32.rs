@@ -106,6 +106,13 @@ pub fn expf(x: f32) -> f32 {
 
 #[inline]
 pub fn logf(x: f32) -> f32 {
+    // Fused single-pass kernel (ARM optimized-routines / glibc `__ieee754_logf`,
+    // 0.32 ULP) for positive normal finite x — bit-exact to glibc. Subnormal,
+    // zero, negative, inf and nan fall through to the FE-flag + libm path.
+    let ix = x.to_bits();
+    if ix.wrapping_sub(0x0080_0000) < (0x7f80_0000 - 0x0080_0000) {
+        return logf_kernel(ix);
+    }
     // glibc raises FE_DIVBYZERO at the log(±0) pole and FE_INVALID for x<0;
     // libm::logf returns the value (-inf / NaN) without the flag.
     if x == 0.0 {
@@ -611,6 +618,57 @@ fn expf_kernel(x: f32) -> f32 {
     let y = c2 * r + 1.0;
     let y = z2 * r2 + y;
     (y * s) as f32
+}
+
+// logf fused kernel (ARM optimized-routines `logf`, glibc `__ieee754_logf`,
+// 0.32 ULP). Reuses `POWF_LOG2_OFF` (0x3f330000) and the 16-subinterval split;
+// the `invc` column matches the shared table but the `logc` column is `ln(c)`
+// (natural log), so a dedicated table is used. First-order poly coefficient is 1.
+const LOGF_LN2: f64 = f64::from_bits(0x3fe6_2e42_fefa_39ef);
+const LOGF_TAB: [(u64, u64); 16] = [
+    (0x3ff661ec79f8f3be, 0xbfd57bf7808caade),
+    (0x3ff571ed4aaf883d, 0xbfd2bef0a7c06ddb),
+    (0x3ff49539f0f010b0, 0xbfd01eae7f513a67),
+    (0x3ff3c995b0b80385, 0xbfcb31d8a68224e9),
+    (0x3ff30d190c8864a5, 0xbfc6574f0ac07758),
+    (0x3ff25e227b0b8ea0, 0xbfc1aa2bc79c8100),
+    (0x3ff1bb4a4a1a343f, 0xbfba4e76ce8c0e5e),
+    (0x3ff12358f08ae5ba, 0xbfb1973c5a611ccc),
+    (0x3ff0953f419900a7, 0xbfa252f438e10c1e),
+    (0x3ff0000000000000, 0x0000000000000000),
+    (0x3fee608cfd9a47ac, 0x3faaa5aa5df25984),
+    (0x3feca4b31f026aa0, 0x3fbc5e53aa362eb4),
+    (0x3feb2036576afce6, 0x3fc526e57720db08),
+    (0x3fe9c2d163a1aa2d, 0x3fcbc2860d224770),
+    (0x3fe886e6037841ed, 0x3fd1058bc8a07ee1),
+    (0x3fe767dcf5534862, 0x3fd4043057b6ee09),
+];
+const LOGF_POLY: [u64; 3] = [0xbfd00ea348b88334, 0x3fd5575b0be00b6a, 0xbfdffffef20a4123];
+
+/// `ln(x)` for the bit pattern `ix` of a positive normal float, rounded to f32.
+/// Faithful port of ARM `logf`.
+#[inline]
+fn logf_kernel(ix: u32) -> f32 {
+    let tmp = ix.wrapping_sub(POWF_LOG2_OFF);
+    let i = ((tmp >> (23 - POWF_LOG2_TABLE_BITS)) % 16) as usize;
+    let k = (tmp as i32) >> 23; // arithmetic shift
+    let iz = ix.wrapping_sub(tmp & 0xff80_0000);
+    let (invc_bits, logc_bits) = LOGF_TAB[i];
+    let invc = f64::from_bits(invc_bits);
+    let logc = f64::from_bits(logc_bits);
+    let z = f32::from_bits(iz) as f64;
+
+    // log(x) = log1p(z/c-1) + log(c) + k*Ln2.
+    let r = z * invc - 1.0;
+    let y0 = logc + f64::from(k) * LOGF_LN2;
+    let a0 = f64::from_bits(LOGF_POLY[0]);
+    let a1 = f64::from_bits(LOGF_POLY[1]);
+    let a2 = f64::from_bits(LOGF_POLY[2]);
+    let r2 = r * r;
+    let y = a1 * r + a2;
+    let y = a0 * r2 + y;
+    let y = y * r2 + (y0 + r);
+    y as f32
 }
 
 #[inline]

@@ -17,6 +17,7 @@ to `POWF_LOG2_TAB` since `POWF_SCALE = 1`).
 | exp2f | 2.36 | 3.13 | 5.22 | **0.75x** | **0.45x** |
 | log2f | 2.68 | 5.71 | 5.62 | **0.47x** | **0.48x** |
 | expf  | 3.01 | 7.51 | 5.46 | **0.40x** | **0.55x** |
+| logf  | 2.45 | 4.38 | 5.18 | **0.56x** | **0.47x** |
 
 - vs the prior libm fallback (the cleanest comparison — both are inlinable Rust):
   **1.3x / 2.1x / 2.5x faster**. This is the genuine kernel improvement.
@@ -40,6 +41,8 @@ inline and vectorize well). The robust, method-independent result is the
 - `expf`: new `expf_kernel` (reuses `POWF_EXP2_TAB` + `EXPF_INVLN2_SCALED` /
   `EXPF_POLY_SCALED` / unscaled `EXPF_SHIFT = 0x1.8p+52`) for 5 < |x| < 87; the
   existing [-5,5] fast path (which already beat glibc) is kept ahead of it.
+- `logf`: new `logf_kernel` (reuses `POWF_LOG2_OFF` + a dedicated `LOGF_TAB`
+  whose `logc` column is `ln(c)` + `LOGF_POLY` + `LOGF_LN2`) for positive normal x.
 
 Overflow/underflow/subnormal/zero/negative/inf/nan defer to `libm::*` so the
 errno/FE layer stays exact. Constants stored as exact IEEE-754 bit patterns
@@ -67,4 +70,6 @@ rch exec -- cargo bench -p frankenlibc-bench --bench exp_log_glibc_bench -- \
 (First attempt failed on `ovh-b` with a `zerocopy` build-script SIGILL — a known
 bad-worker environment issue, not a code failure; re-run succeeded.)
 
-`logf` remains (needs `__logf_data`); tracked under the same bead.
+All four (exp2f/log2f/expf/logf) now ported; with the earlier `powf`, the f32
+math-overfit-then-libm vein is fully closed. `logf` gate
+`conformance_diff_logf_general` is bit-exact (0 ULP) over 216 369 inputs.

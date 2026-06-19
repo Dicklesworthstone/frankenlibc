@@ -24,6 +24,8 @@ unsafe extern "C" {
     fn host_log2f(x: f32) -> f32;
     #[link_name = "expf"]
     fn host_expf(x: f32) -> f32;
+    #[link_name = "logf"]
+    fn host_logf(x: f32) -> f32;
 }
 
 #[derive(Default)]
@@ -124,6 +126,12 @@ fn bench(c: &mut Criterion) {
     run(&mut group, "fl_old", "expf", &exp_in, |x| libm::expf(x));
     run(&mut group, "glibc", "expf", &exp_in, |x| unsafe {
         host_expf(x)
+    });
+
+    run(&mut group, "fl", "logf", &log2_in, |x| math::logf(x));
+    run(&mut group, "fl_old", "logf", &log2_in, |x| libm::logf(x));
+    run(&mut group, "glibc", "logf", &log2_in, |x| unsafe {
+        host_logf(x)
     });
 
     group.finish();
