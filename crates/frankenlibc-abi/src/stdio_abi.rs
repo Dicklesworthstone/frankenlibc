@@ -10,7 +10,9 @@
 //! `StdioStream` instances from frankenlibc-core. stdin/stdout/stderr are
 //! pre-registered at well-known sentinel addresses.
 
+use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -342,13 +344,62 @@ const STDERR_SENTINEL: usize = 0x1000_0003;
 /// Next stream ID for dynamically opened files.
 static NEXT_STREAM_ID: Mutex<usize> = Mutex::new(0x1000_0010);
 
+#[derive(Clone)]
+struct StreamIdHasher {
+    state: u64,
+}
+
+impl Default for StreamIdHasher {
+    fn default() -> Self {
+        Self {
+            state: 0xcbf2_9ce4_8422_2325,
+        }
+    }
+}
+
+impl Hasher for StreamIdHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        for byte in bytes {
+            self.state ^= u64::from(*byte);
+            self.state = self.state.wrapping_mul(PRIME);
+        }
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        self.state ^= value;
+        self.state = self.state.wrapping_mul(PRIME);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.state
+    }
+}
+
+type StreamIdBuildHasher = BuildHasherDefault<StreamIdHasher>;
+type StreamMap<V> = HashMap<usize, V, StreamIdBuildHasher>;
+
+#[inline]
+fn stream_map<V>() -> StreamMap<V> {
+    StreamMap::default()
+}
+
 struct StreamRegistry {
-    streams: ArtifactHashMap<usize, StdioStream>,
+    streams: StreamMap<StdioStream>,
 }
 
 impl StreamRegistry {
     fn new() -> Self {
-        let mut streams = artifact_hash_map();
+        let mut streams = stream_map();
 
         // Pre-register stdin (fd 0).
         let stdin_flags = OpenFlags {
@@ -382,6 +433,12 @@ impl StreamRegistry {
 
         Self { streams }
     }
+}
+
+fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
+    let mut ids: Vec<usize> = reg.streams.keys().copied().collect();
+    ids.sort_unstable();
+    ids
 }
 
 fn registry() -> &'static Mutex<StreamRegistry> {
@@ -1551,7 +1608,7 @@ pub unsafe fn fflush_managed_only_for_abort() -> c_int {
     let Ok(mut reg) = registry().try_lock() else {
         return libc::EOF;
     };
-    let ids: Vec<usize> = reg.streams.keys().copied().collect();
+    let ids = sorted_stream_ids(&reg);
     let mut overall_rc = 0;
     for id in ids {
         if let Some(s) = reg.streams.get_mut(&id) {
@@ -1612,7 +1669,7 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
             return libc::EOF;
         };
         let mut any_fail = false;
-        let ids: Vec<usize> = reg.streams.keys().copied().collect();
+        let ids = sorted_stream_ids(&reg);
         for id in ids {
             if let Some(s) = reg.streams.get_mut(&id) {
                 let ok = if is_cookie_stream(id) {
@@ -7663,7 +7720,7 @@ pub extern "C" fn fcloseall() -> c_int {
 
     let ids: Vec<usize> = {
         let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        reg.streams.keys().copied().collect()
+        sorted_stream_ids(&reg)
     };
 
     let mut overall_rc = 0;
@@ -9204,4 +9261,52 @@ pub unsafe extern "C" fn snprintb_m(
     let rendered =
         frankenlibc_core::stdio::snprintb::format_snprintb_m(fmt_bytes, val, max_per_line);
     unsafe { snprintb_write_bounded(buf, bufsize, &rendered) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stdio_stream_id_hasher_integer_fast_path_matches_usize_and_u64() {
+        let value = 0x1000_0100usize;
+
+        let mut via_usize = StreamIdHasher::default();
+        via_usize.write_usize(value);
+
+        let mut via_u64 = StreamIdHasher::default();
+        via_u64.write_u64(value as u64);
+
+        let mut via_bytes = StreamIdHasher::default();
+        via_bytes.write(&value.to_ne_bytes());
+
+        assert_eq!(via_usize.finish(), via_u64.finish());
+        assert_ne!(via_usize.finish(), via_bytes.finish());
+    }
+
+    #[test]
+    fn stdio_flush_all_id_snapshot_is_sorted() {
+        let mut reg = StreamRegistry::new();
+        let writable = OpenFlags {
+            writable: true,
+            ..Default::default()
+        };
+
+        reg.streams
+            .insert(0x1000_0040, StdioStream::new(-1, writable));
+        reg.streams.insert(
+            0x1000_0020,
+            StdioStream::new(
+                -1,
+                OpenFlags {
+                    writable: true,
+                    ..Default::default()
+                },
+            ),
+        );
+
+        let ids = sorted_stream_ids(&reg);
+        assert!(ids.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(ids.starts_with(&[STDIN_SENTINEL, STDOUT_SENTINEL, STDERR_SENTINEL]));
+    }
 }
