@@ -364,6 +364,166 @@ fn powf_medium_fast_path(base: f32, exponent: f32) -> Option<f32> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Fused single-pass f32 `powf` kernel.
+//
+// Ported faithfully from ARM-software/optimized-routines `math/powf.c` plus the
+// `powf_log2_data` / `exp2f_data` tables (SPDX: MIT OR Apache-2.0 WITH
+// LLVM-exception). This is the same algorithm glibc ships as
+// `__ieee754_powf`; documented worst-case error is 0.82 ULP, comfortably
+// inside the 4-ULP glibc parity contract. One `log2` table pass + one `exp2`
+// table pass produces the f32 result, vs composing two general f64
+// transcendentals. Constants are stored as exact IEEE-754 bit patterns because
+// Rust has no hex-float literals; values were converted with `float.fromhex`.
+//
+// Used only for positive **normal** finite bases with finite exponents whose
+// result stays in the finite-normal f32 range (|y*log2 x| < 126). Overflow,
+// underflow, subnormal/zero/negative bases, and non-finite inputs fall through
+// to `libm::powf` for exact IEEE special-case + errno/exception semantics, so
+// the errno-setting ABI layer is unaffected.
+const POWF_LOG2_OFF: u32 = 0x3f33_0000;
+const POWF_LOG2_TABLE_BITS: u32 = 4; // N = 16
+const POWF_EXP2_TABLE_BITS: u32 = 5; // N = 32
+// 0x1.8p+52 / 32 — the exp2 reduction shift (POWF_SCALE = 1, non-TOINT path).
+const POWF_EXP2_SHIFT: f64 = f64::from_bits(0x42e8_0000_0000_0000);
+
+/// log2 table: (invc, logc) IEEE bit patterns, `POWF_SCALE = 1`.
+const POWF_LOG2_TAB: [(u64, u64); 16] = [
+    (0x3ff661ec79f8f3be, 0xbfdefec65b963019),
+    (0x3ff571ed4aaf883d, 0xbfdb0b6832d4fca4),
+    (0x3ff49539f0f010b0, 0xbfd7418b0a1fb77b),
+    (0x3ff3c995b0b80385, 0xbfd39de91a6dcf7b),
+    (0x3ff30d190c8864a5, 0xbfd01d9bf3f2b631),
+    (0x3ff25e227b0b8ea0, 0xbfc97c1d1b3b7af0),
+    (0x3ff1bb4a4a1a343f, 0xbfc2f9e393af3c9f),
+    (0x3ff12358f08ae5ba, 0xbfb960cbbf788d5c),
+    (0x3ff0953f419900a7, 0xbfaa6f9db6475fce),
+    (0x3ff0000000000000, 0x0000000000000000),
+    (0x3fee608cfd9a47ac, 0x3fb338ca9f24f53d),
+    (0x3feca4b31f026aa0, 0x3fc476a9543891ba),
+    (0x3feb2036576afce6, 0x3fce840b4ac4e4d2),
+    (0x3fe9c2d163a1aa2d, 0x3fd40645f0c6651c),
+    (0x3fe886e6037841ed, 0x3fd88e9c2c1b9ff8),
+    (0x3fe767dcf5534862, 0x3fdce0a44eb17bcc),
+];
+/// log2 polynomial A[0..5], `POWF_SCALE = 1`.
+const POWF_LOG2_POLY: [u64; 5] = [
+    0x3fd27616c9496e0b,
+    0xbfd71969a075c67a,
+    0x3fdec70a6ca7badd,
+    0xbfe7154748bef6c8,
+    0x3ff71547652ab82b,
+];
+/// exp2 table `tab[i] = uint(2^(i/32)) - (i << 52-5)` (already in u64).
+const POWF_EXP2_TAB: [u64; 32] = [
+    0x3ff0000000000000,
+    0x3fefd9b0d3158574,
+    0x3fefb5586cf9890f,
+    0x3fef9301d0125b51,
+    0x3fef72b83c7d517b,
+    0x3fef54873168b9aa,
+    0x3fef387a6e756238,
+    0x3fef1e9df51fdee1,
+    0x3fef06fe0a31b715,
+    0x3feef1a7373aa9cb,
+    0x3feedea64c123422,
+    0x3feece086061892d,
+    0x3feebfdad5362a27,
+    0x3feeb42b569d4f82,
+    0x3feeab07dd485429,
+    0x3feea47eb03a5585,
+    0x3feea09e667f3bcd,
+    0x3fee9f75e8ec5f74,
+    0x3feea11473eb0187,
+    0x3feea589994cce13,
+    0x3feeace5422aa0db,
+    0x3feeb737b0cdc5e5,
+    0x3feec49182a3f090,
+    0x3feed503b23e255d,
+    0x3feee89f995ad3ad,
+    0x3feeff76f2fb5e47,
+    0x3fef199bdd85529c,
+    0x3fef3720dcef9069,
+    0x3fef5818dcfba487,
+    0x3fef7c97337b9b5f,
+    0x3fefa4afa2a490da,
+    0x3fefd0765b6e4540,
+];
+/// exp2 polynomial C[0..3] (N = 32).
+const POWF_EXP2_POLY: [u64; 3] = [0x3fac6af84b912394, 0x3fcebfce50fac4f3, 0x3fe62e42ff0c52d6];
+
+/// `log2(x)` for the bit pattern `ix` of a positive normal float, returned as a
+/// double. Faithful port of ARM `log2_inline` (POWF_SCALE = 1).
+#[inline]
+fn powf_log2_inline(ix: u32) -> f64 {
+    let tmp = ix.wrapping_sub(POWF_LOG2_OFF);
+    let i = ((tmp >> (23 - POWF_LOG2_TABLE_BITS)) % 16) as usize;
+    let top = tmp & 0xff80_0000;
+    let iz = ix.wrapping_sub(top);
+    let k = (top as i32) >> 23; // POWF_SCALE_BITS = 0, arithmetic shift
+    let (invc_bits, logc_bits) = POWF_LOG2_TAB[i];
+    let invc = f64::from_bits(invc_bits);
+    let logc = f64::from_bits(logc_bits);
+    let z = f32::from_bits(iz) as f64;
+
+    // log2(x) = log1p(z/c-1)/ln2 + log2(c) + k.
+    let r = z * invc - 1.0;
+    let y0 = logc + f64::from(k);
+    let a0 = f64::from_bits(POWF_LOG2_POLY[0]);
+    let a1 = f64::from_bits(POWF_LOG2_POLY[1]);
+    let a2 = f64::from_bits(POWF_LOG2_POLY[2]);
+    let a3 = f64::from_bits(POWF_LOG2_POLY[3]);
+    let a4 = f64::from_bits(POWF_LOG2_POLY[4]);
+    let r2 = r * r;
+    let y = a0 * r + a1;
+    let p = a2 * r + a3;
+    let r4 = r2 * r2;
+    let q = a4 * r + y0;
+    let q = p * r2 + q;
+    y * r4 + q
+}
+
+/// `2^xd` rounded to f32, for positive-base powf (no sign bias). Faithful port
+/// of ARM `exp2_inline` (non-TOINT path). Caller guarantees `xd` is bounded
+/// (|xd| < 126) so the table index arithmetic cannot overflow.
+#[inline]
+fn powf_exp2_inline(xd: f64) -> f32 {
+    // x = k/N + r with r in [-1/(2N), 1/(2N)].
+    let kd = xd + POWF_EXP2_SHIFT;
+    let ki = kd.to_bits();
+    let kd = kd - POWF_EXP2_SHIFT; // k/N
+    let r = xd - kd;
+
+    // exp2(x) = 2^(k/N) * 2^r ~= s * (C0*r^3 + C1*r^2 + C2*r + 1).
+    let t = POWF_EXP2_TAB[(ki % 32) as usize];
+    let t = t.wrapping_add(ki << (52 - POWF_EXP2_TABLE_BITS));
+    let s = f64::from_bits(t);
+    let c0 = f64::from_bits(POWF_EXP2_POLY[0]);
+    let c1 = f64::from_bits(POWF_EXP2_POLY[1]);
+    let c2 = f64::from_bits(POWF_EXP2_POLY[2]);
+    let z = c0 * r + c1;
+    let r2 = r * r;
+    let y = c2 * r + 1.0;
+    let y = z * r2 + y;
+    (y * s) as f32
+}
+
+/// General fused `powf` for a positive **normal** finite base and finite
+/// exponent. Returns `None` when the result would overflow/underflow
+/// (|y*log2 x| >= 126) so the caller defers to `libm::powf` for exact range
+/// semantics. Within the accepted range the result is always a finite normal
+/// f32 (2^(-126) < r < 2^126), so no output guard is needed.
+#[inline]
+fn powf_fused_general(base: f32, exponent: f32) -> Option<f32> {
+    let ix = base.to_bits();
+    let ylogx = f64::from(exponent) * powf_log2_inline(ix);
+    if ylogx.abs() < 126.0 {
+        Some(powf_exp2_inline(ylogx))
+    } else {
+        None
+    }
+}
+
 #[inline]
 pub fn powf(base: f32, exponent: f32) -> f32 {
     // Fast paths mirroring the f64 `pow`: libm::powf always routes through its
@@ -374,35 +534,34 @@ pub fn powf(base: f32, exponent: f32) -> f32 {
     if base.is_finite() && exponent.is_finite() {
         let n = exponent as i32;
         if n as f32 == exponent && n.unsigned_abs() <= POWF_MAX_EXP {
+            // Small integer exponents stay correctly rounded (0 ULP) via
+            // exponentiation by squaring — kept ahead of the fused kernel
+            // (which carries ~0.8 ULP) and also handles negative bases.
             return powi_squaringf(base, n) as f32;
         }
         if exponent == 0.5 && base >= 0.0 {
             return base.sqrt();
+        }
+        // General fused single-pass kernel (ARM optimized-routines / glibc
+        // `__ieee754_powf`, 0.82 ULP): one log2 + one exp2 table pass for any
+        // positive **normal** finite base whose result lands in the finite-
+        // normal f32 range. This supersedes the older `exp2f/log2f` medium box
+        // and the exponent-1.337 grid below (same domain, but bit-exact to glibc
+        // and faster), so those run only for the residual subnormal-base /
+        // overflow cases the fused guard rejects. Overflow/underflow
+        // (|y*log2 x| >= 126) returns None and defers to `libm::powf` for exact
+        // FE_OVERFLOW/FE_UNDERFLOW + errno semantics; subnormal/zero/negative
+        // bases also defer (the `>=` guard excludes them).
+        if base >= f32::MIN_POSITIVE
+            && let Some(result) = powf_fused_general(base, exponent)
+        {
+            return result;
         }
         if let Some(result) = powf_half_integer_fast_path(base, exponent) {
             return result;
         }
         if let Some(result) = powf_medium_fast_path(base, exponent) {
             return result;
-        }
-        // General positive-base fast path: powf(x,y) = exp(y*ln(x)) evaluated in
-        // f64. fl's f64 `exp` and `log` both beat glibc on their fast-path
-        // domains (and otherwise defer to libm, still correct); the f64
-        // intermediate keeps the f32 result well within the 4-ULP glibc parity
-        // contract (fl's f64 log is <=4 ULP over the full dynamic range, i.e.
-        // ~2^-50 relative — negligible once rounded to f32). Only positive
-        // finite bases reach here (negative/zero bases and the remaining special
-        // IEEE cases already fell through to libm::powf below). The result is
-        // accepted only when it rounds to a finite, normal f32: overflow,
-        // underflow, and subnormal outputs — where glibc raises FE_OVERFLOW /
-        // FE_UNDERFLOW and sets errno — are deferred to libm::powf for exact
-        // exception/errno semantics.
-        if base > 0.0 {
-            let r = crate::math::exp::exp(exponent as f64 * crate::math::exp::log(base as f64));
-            let rf = r as f32;
-            if rf.is_finite() && rf.abs() >= f32::MIN_POSITIVE {
-                return rf;
-            }
         }
     }
     libm::powf(base, exponent)
