@@ -24,3 +24,34 @@ Last updated: 2026-06-19 by `cod-b` / `BlackThrush`.
 - Move or gate `zz_scratch_*` integration probes so crate-scoped test filters can build the intended test binary without unrelated scratch compile failures.
 - Add test-mode-safe coverage for `stdio_abi` and `wchar_abi` helper tests, or move the helper invariants into a module that is built under `cargo test --lib`.
 - Continue converting `code-first batch-test pending` beads into central ledger rows, starting with `bd-2jgvp9` stdio registry local hasher and cod-b-owned resolver/NSS parser rows.
+
+## 2026-06-19 BlackThrush measured update (thin-LTO, current bench)
+
+Re-ran the stdio cluster and extended to mem/string head-to-heads. Honest reconciliation + new data
+(full evidence in `docs/NEGATIVE_EVIDENCE.md`):
+
+| Bead / function | fl | glibc | ratio | verdict | note |
+|---|---|---|---|---|---|
+| `bd-2jgvp9` stdio registry hasher (`fgetc_4096`) | 5.22 ms | 9.46 ms | **0.552×** | **WIN** | robust (0.577× on prior run) |
+| `bd-0m5vaw` `snprintf("%s\n")` | 945 ns | 947 ns | 0.998× | NEUTRAL | cod-b's 0.856× was an earlier, lighter bench — does **not** reproduce |
+| `bd-fgnxc0` `swprintf` wide | 2.635 µs | 2.622 µs | 1.005× | NEUTRAL | cod-b's 0.313× does **not** reproduce (bench workload changed ~2.6×) |
+| `fgetc_unlocked` | 9.56 ms | 9.56 ms | 1.001× | NEUTRAL | fl unlocked slower than fl locked → `bd-djtvqq` |
+| memset (64 B→64 K) | — | — | 1.00–6.84× | **WIN** | beats glibc at every size |
+| memmove (64 B→64 K) | — | — | 1.02–10.57× | **WIN** | beats glibc at every size |
+| memcpy @64 K | 2208 ns | 1204 ns | **0.55×** | **LOSS** | WIN small/med; large loses → `bd-4ibo52` |
+| strlen scan @≥4 K | — | — | 0.81–0.90× | **LOSS** | WIN small → `bd-4ibo52` |
+| strchr (absent scan) | 9120 ns | 588 ns | **0.06×** | **LOSS** | severe — glibc 2–16× faster → `bd-4rxozm` |
+
+**Revised posture (measured):** fl has genuine WINS (fgetc / memset / memmove — small-buffer + registry
+paths) but genuine LOSSES vs glibc's hand-tuned AVX on large scans (**strchr severe**, memcpy@64 K,
+strlen@large). **Not release-competitive on `strchr`/`strrchr`** until the large-scan SIMD gap closes
+(`bd-4rxozm`, P2). Two previously-claimed printf wins (`bd-0m5vaw`/`bd-fgnxc0`) are **NEUTRAL** on the
+current bench — corrected here. The critical LTO methodology trap (no-LTO invalidates fl ratios) is
+logged so it is never retried. No source regressions: every loss is a gap to glibc, not vs fl's own
+prior code (fl-new beats fl-old everywhere), so nothing is reverted.
+
+### Measured backlog tally (this session)
+- **Robust WINS:** fgetc (0.552×), memset (≤6.84×), memmove (≤10.57×), + memcpy/strlen/strchr small sizes.
+- **NEUTRAL:** snprintf `%s\n`, swprintf wide, fgetc_unlocked.
+- **LOSSES (gaps filed):** strchr (`bd-4rxozm` P2), memcpy@64K + strlen@large (`bd-4ibo52` P3).
+- **New lever from measurement:** getc_unlocked (`bd-djtvqq`).
