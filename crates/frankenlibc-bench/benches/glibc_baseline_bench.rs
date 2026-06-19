@@ -2472,9 +2472,31 @@ fn bench_math_abi(c: &mut Criterion) {
     #[cfg(feature = "abi-bench")]
     {
         use frankenlibc_abi::math_abi;
+        use frankenlibc_core::math as core_math;
         let inputs: Vec<f64> = (0..64).map(|k| 0.5 + (k as f64) * 0.031_25).collect();
+        // SAME-RUN core + abi + glibc, so the core-vs-abi membrane delta is
+        // measured on ONE worker (no cross-run/worker-variance confounding).
         macro_rules! pair_abi {
-            ($id:expr, $sym:expr, $fl:expr, $glibc:expr) => {{
+            ($id:expr, $sym:expr, $core:expr, $fl:expr, $glibc:expr) => {{
+                bench_op(
+                    &mut group,
+                    BenchMeta {
+                        profile_id: $id,
+                        impl_label: "frankenlibc_core",
+                        api_family: "math",
+                        symbol: $sym,
+                        workload: "core kernel (no membrane), x in [0.5,2.5)",
+                        parity_proof_ref: "crates/frankenlibc-core/src/math/",
+                    },
+                    || {
+                        let mut acc = 0.0_f64;
+                        for &x in &inputs {
+                            let f: fn(f64) -> f64 = $core;
+                            acc += f(black_box(x));
+                        }
+                        black_box(acc);
+                    },
+                );
                 bench_op(
                     &mut group,
                     BenchMeta {
@@ -2517,12 +2539,12 @@ fn bench_math_abi(c: &mut Criterion) {
                 );
             }};
         }
-        pair_abi!("exp_abi", "exp", math_abi::exp, cmath::exp);
-        pair_abi!("sin_abi", "sin", math_abi::sin, cmath::sin);
-        pair_abi!("cos_abi", "cos", math_abi::cos, cmath::cos);
-        pair_abi!("log_abi", "log", math_abi::log, cmath::log);
-        pair_abi!("exp2_abi", "exp2", math_abi::exp2, cmath::exp2);
-        pair_abi!("log2_abi", "log2", math_abi::log2, cmath::log2);
+        pair_abi!("exp_abi", "exp", core_math::exp, math_abi::exp, cmath::exp);
+        pair_abi!("sin_abi", "sin", core_math::sin, math_abi::sin, cmath::sin);
+        pair_abi!("cos_abi", "cos", core_math::cos, math_abi::cos, cmath::cos);
+        pair_abi!("log_abi", "log", core_math::log, math_abi::log, cmath::log);
+        pair_abi!("exp2_abi", "exp2", core_math::exp2, math_abi::exp2, cmath::exp2);
+        pair_abi!("log2_abi", "log2", core_math::log2, math_abi::log2, cmath::log2);
     }
     group.finish();
 }
