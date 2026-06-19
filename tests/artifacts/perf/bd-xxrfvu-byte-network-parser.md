@@ -1,8 +1,8 @@
 # bd-xxrfvu byte network-number parser for NSS `/etc/networks`
 
-Date: 2026-06-18
-Agent: BlackThrush / cod-b
-Status: code-first batch-test pending
+Date: 2026-06-19
+Agent: BlackThrush / cod-a
+Status: measured keep
 
 ## Target
 
@@ -87,13 +87,53 @@ or a directly comparable target and mark this as:
   named, such as a borrowed-entry API redesign or a generated parser shared
   across NSS file parsers.
 
-## Validation This Turn
+## BOLD-VERIFY Same-Worker Gate
 
-Per campaign instruction, no tests, rch, or benchmarks are run in this batch.
-Only:
+The code-first lever was measured head-to-head against its parent commit using
+the same rch worker. This is internal old-vs-new parser evidence, not a
+host-glibc comparator.
 
 ```bash
-CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b cargo check -p frankenlibc-core
+AGENT_NAME=BlackThrush \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a \
+RCH_VERBOSE=1 \
+FRANKENLIBC_RESOLV_BENCH_MODE=strict \
+rch exec -- cargo bench -p frankenlibc-bench --bench resolv_parsers_bench --profile release
 ```
 
-Result is recorded in `bd-xxrfvu` notes after the check.
+- Worker: `vmi1153651` (`root@38.242.134.66`) for both baseline and
+  candidate.
+- Baseline worktree:
+  `/data/projects/.scratch/frankenlibc-cod-a-bdxxrfvu-baseline-20260619T180525Z`
+  at `db8919ba3^` (`e79873169`).
+- Candidate worktree:
+  `/data/projects/.scratch/frankenlibc-cod-a-bdxxrfvu-candidate-20260619T180525Z`
+  at `db8919ba3`.
+- Focused row: `parse_networks_line_typical`.
+
+| Metric | Baseline UTF-8 + str split | Candidate byte parser | Candidate / baseline |
+|---|---:|---:|---:|
+| p50 ns/op | 243.090 | 195.091 | 0.803x |
+| mean ns/op | 446.336 | 223.541 | 0.501x |
+| p95 ns/op | 1603.047 | 230.951 | 0.144x |
+| p99 ns/op | 3399.881 | 761.473 | 0.224x |
+| throughput ops/s | 2,240,464.663 | 4,473,445.794 | 1.997x |
+
+Verdict: **WIN / keep**. The candidate improves p50 by 19.7%, halves mean
+latency, and almost doubles throughput on the same worker. No source revert.
+This bead's measured win/loss/neutral count is `1 / 0 / 0`.
+
+## Validation This Turn
+
+- `rustfmt --check --edition 2024 crates/frankenlibc-core/src/resolv/mod.rs`:
+  passed.
+- `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo test -p frankenlibc-core netnum --lib -- --nocapture`:
+  12 passed, 0 failed, 3167 filtered.
+- `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo test -p frankenlibc-core network_ --lib -- --nocapture`:
+  15 passed, 0 failed, 3164 filtered.
+- `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core`:
+  passed with the existing unrelated iconv warnings and the known missing SMT
+  solver notice.
+
+An initial `parse_network` test filter matched zero tests and is not counted as
+coverage evidence.

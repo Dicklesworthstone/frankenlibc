@@ -42,6 +42,7 @@ retried and real wins are confirmed with numbers.
 | 2026-06-19 | general `powf` f64 `exp(y·ln x)` route (`bd-z8p3mx`) | `powf_glibc_bench` general_big_e | 30.85 ns (fl) | 7.89 ns (glibc) | 3.91x | LOSS-vs-glibc / **WIN-vs-fl_old 0.689x** | KEPT — strict improvement, no regression. fl general powf 1.4–1.6x faster than the prior `libm::powf` fallback (general_big_e 0.689x, general_small_1p7 0.609x, general_big_pi 0.726x vs fl_old) but still ~3.9x slower than glibc's fused f32 kernel (two f64 transcendentals vs one fused f32). Accuracy ≤1 ULP over 6981 inputs (new gate `conformance_diff_powf_general`); overflow/underflow/subnormal defer to libm so errno/FE parity holds. Follow-up bead filed for the fused-kernel port. See `tests/artifacts/perf/bd-z8p3mx-powf-general-f64-route.md`. |
 | 2026-06-19 | fused single-pass f32 `powf` kernel — glibc `__ieee754_powf` port (`bd-z8p3mx` / `bd-fused-f32-powf-kernel`) | `powf_glibc_bench` general_big_e | 9.27 ns (fl) | 7.53 ns (glibc) | 1.23x | **near-parity / WIN-vs-fl_old 0.206x** | KEPT — supersedes the f64 route above. Ported ARM optimized-routines `powf.c` + tables (same algorithm glibc ships). **4.8x faster than the prior libm fallback** (general 0.205–0.206x, medium 0.215x vs fl_old) and within **1.23x of glibc**, down from the f64 route's 3.9x. **Bit-exact (0 ULP)** over 6981 inputs — it is glibc's algorithm. Placing it ahead of the int/medium gauntlet also halved the medium-box path (18.9→9.4 ns) and neutralized the exponent-1.337 overfit grid. Residual 1.23x is Rust call/branch overhead vs glibc leaf asm. Conformance green (powf_general bit-exact, 1.337 gate, errno, fp_exceptions). See `tests/artifacts/perf/bd-z8p3mx-powf-general-f64-route.md`. |
 | 2026-06-19 | `/etc/aliases` manual member scanner (`bd-4crkqx`) | `resolv_parsers_bench` `parse_aliases_line_typical` (old-vs-new, no host glibc) | 106.877 ns (candidate) | 91.103 ns (baseline) | 1.173x | LOSS | Reverted to split/filter/collect. Same-worker `hz2`; mean 1.272x slower, p95 1.803x slower, p99 1.996x slower. Retry only with a new SIMD/memchr-backed multi-delimiter primitive or a long-row workload profile. |
+| 2026-06-19 | `/etc/networks` byte network-number parser (`bd-xxrfvu`) | `resolv_parsers_bench` `parse_networks_line_typical` (old-vs-new, no host glibc) | 195.091 ns (candidate) | 243.090 ns (baseline) | 0.803x | WIN | Keep. Same-worker `vmi1153651`; mean 0.501x, p95 0.144x, p99 0.224x, throughput 1.997x. No source revert. |
 | 2026-06-19 | fused f32 `exp2f` kernel — glibc `__ieee754_exp2f` port (`bd-fused-f32-exp-log-kernels`) | `exp_log_glibc_bench` exp2f | 2.36 ns (fl) | 5.22 ns (glibc) | 0.45x | **WIN** | Ported ARM optimized-routines `exp2f.c` (reuses the in-tree exp2 table from powf). 2.2x faster than glibc, 1.3x over libm (3.13 ns). **Bit-exact (0 ULP)** over 22 493 inputs (`conformance_diff_exp2f_general`). Caveat: part of the glibc margin is `math::` inlining (vs glibc's opaque extern call); the robust result is the libm win + glibc-identical algorithm/accuracy. See `tests/artifacts/perf/bd-fused-f32-exp-log-kernels.md`. |
 | 2026-06-19 | fused f32 `log2f` kernel — glibc `__ieee754_log2f` port (`bd-fused-f32-exp-log-kernels`) | `exp_log_glibc_bench` log2f | 2.68 ns (fl) | 5.62 ns (glibc) | 0.48x | **WIN** | Ported ARM `log2f.c` (reuses `POWF_LOG2_TAB` + standalone deg-4 poly), replacing the dyadic-profile overfit grid. 2.1x faster than glibc and libm (5.71 ns). **Bit-exact (0 ULP)** over 216 369 inputs. Same inlining caveat. |
 | 2026-06-19 | fused f32 `expf` kernel — glibc `__ieee754_expf` port (`bd-fused-f32-exp-log-kernels`) | `exp_log_glibc_bench` expf (x>5) | 3.01 ns (fl) | 5.46 ns (glibc) | 0.55x | **WIN** | Ported ARM `expf.c` (reuses the exp2 table + scaled poly) for 5<|x|<87; the existing [-5,5] path is kept. 1.8x faster than glibc, 2.5x over libm (7.51 ns). Bit-exact in the kernel range. Same inlining caveat. |
@@ -97,6 +98,54 @@ for short `/etc/aliases` rows. Return only with a materially different
 SIMD/memchr-backed multi-delimiter primitive shared across parser families, or
 with a profile proving long aliases rows dominate enough to amortize setup and
 branch costs.
+
+## 2026-06-19 `bd-xxrfvu` byte network-number parser measured keep
+
+Focused gauntlet target: the code-first byte-level `/etc/networks` number parser
+in `crates/frankenlibc-core/src/resolv/mod.rs`.
+
+```bash
+AGENT_NAME=BlackThrush \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a \
+RCH_VERBOSE=1 \
+FRANKENLIBC_RESOLV_BENCH_MODE=strict \
+rch exec -- cargo bench -p frankenlibc-bench --bench resolv_parsers_bench --profile release
+```
+
+- Worker: `vmi1153651` (`root@38.242.134.66`) for both baseline and candidate.
+- Baseline worktree: `/data/projects/.scratch/frankenlibc-cod-a-bdxxrfvu-baseline-20260619T180525Z`
+  at `db8919ba3^` (`e79873169`).
+- Candidate worktree: `/data/projects/.scratch/frankenlibc-cod-a-bdxxrfvu-candidate-20260619T180525Z`
+  at `db8919ba3`.
+- This is old-vs-new parser evidence. No host-glibc comparator was run for this
+  parser microbench.
+
+Focused row: `parse_networks_line_typical`.
+
+| Metric | Baseline UTF-8 + str split | Candidate byte parser | Candidate / baseline |
+|---|---:|---:|---:|
+| p50 ns/op | 243.090 | 195.091 | 0.803x |
+| mean ns/op | 446.336 | 223.541 | 0.501x |
+| p95 ns/op | 1603.047 | 230.951 | 0.144x |
+| p99 ns/op | 3399.881 | 761.473 | 0.224x |
+| throughput ops/s | 2,240,464.663 | 4,473,445.794 | 1.997x |
+
+Action: **kept** the byte parser. Same-worker proof clears the campaign gate;
+the row is a p50 win and a mean/tail win. Retry condition is now closed for
+this bead unless a later deployed ABI resolver bench exposes a distinct
+host-glibc gap.
+
+Post-keep validation:
+
+- `rustfmt --check --edition 2024 crates/frankenlibc-core/src/resolv/mod.rs`:
+  passed.
+- `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo test -p frankenlibc-core netnum --lib -- --nocapture`:
+  12 passed, 0 failed, 3167 filtered.
+- `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo test -p frankenlibc-core network_ --lib -- --nocapture`:
+  15 passed, 0 failed, 3164 filtered.
+- `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a cargo check -p frankenlibc-core`:
+  passed with existing unrelated iconv warnings and the known missing SMT
+  solver notice.
 
 ## 2026-06-19 stdio cod-b gauntlet notes
 
