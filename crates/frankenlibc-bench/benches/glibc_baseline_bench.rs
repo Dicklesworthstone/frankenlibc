@@ -2461,6 +2461,72 @@ fn bench_math(c: &mut Criterion) {
     group.finish();
 }
 
+// Deployed-ABI math head-to-head: unlike bench_math (pure `frankenlibc_core`
+// kernels), this benches the real `frankenlibc_abi` entry points, which route
+// through `unary_entry` (runtime_policy decide/observe membrane) per call. It
+// isolates the deployed per-call membrane overhead vs the core wins — answering
+// whether deployed fl math still beats glibc.
+fn bench_math_abi(c: &mut Criterion) {
+    #[allow(unused_mut)]
+    let mut group = c.benchmark_group("glibc_baseline_math_abi");
+    #[cfg(feature = "abi-bench")]
+    {
+        use frankenlibc_abi::math_abi;
+        let inputs: Vec<f64> = (0..64).map(|k| 0.5 + (k as f64) * 0.031_25).collect();
+        macro_rules! pair_abi {
+            ($id:expr, $sym:expr, $fl:expr, $glibc:expr) => {{
+                bench_op(
+                    &mut group,
+                    BenchMeta {
+                        profile_id: $id,
+                        impl_label: "frankenlibc_abi",
+                        api_family: "math",
+                        symbol: $sym,
+                        workload: "deployed abi (membrane), x in [0.5,2.5)",
+                        parity_proof_ref: "crates/frankenlibc-abi/src/math_abi.rs",
+                    },
+                    || {
+                        let mut acc = 0.0_f64;
+                        for &x in &inputs {
+                            let f: unsafe extern "C" fn(f64) -> f64 = $fl;
+                            // SAFETY: finite f64 input to a deployed math abi entry.
+                            acc += unsafe { f(black_box(x)) };
+                        }
+                        black_box(acc);
+                    },
+                );
+                bench_op(
+                    &mut group,
+                    BenchMeta {
+                        profile_id: $id,
+                        impl_label: "host_glibc",
+                        api_family: "math",
+                        symbol: $sym,
+                        workload: "deployed abi (membrane), x in [0.5,2.5)",
+                        parity_proof_ref: "crates/frankenlibc-abi/src/math_abi.rs",
+                    },
+                    || {
+                        let mut acc = 0.0_f64;
+                        for &x in &inputs {
+                            let g: unsafe extern "C" fn(f64) -> f64 = $glibc;
+                            // SAFETY: plain libm call on a finite f64 input.
+                            acc += unsafe { g(black_box(x)) };
+                        }
+                        black_box(acc);
+                    },
+                );
+            }};
+        }
+        pair_abi!("exp_abi", "exp", math_abi::exp, cmath::exp);
+        pair_abi!("sin_abi", "sin", math_abi::sin, cmath::sin);
+        pair_abi!("cos_abi", "cos", math_abi::cos, cmath::cos);
+        pair_abi!("log_abi", "log", math_abi::log, cmath::log);
+        pair_abi!("exp2_abi", "exp2", math_abi::exp2, cmath::exp2);
+        pair_abi!("log2_abi", "log2", math_abi::log2, cmath::log2);
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
@@ -2492,6 +2558,7 @@ criterion_group! {
         bench_strspn_long,
         bench_strpbrk_absent,
         bench_math,
+        bench_math_abi,
         bench_memmem_absent,
         bench_strstr_absent,
         bench_strcasestr_absent,
