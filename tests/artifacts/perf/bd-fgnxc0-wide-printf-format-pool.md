@@ -75,3 +75,32 @@ warnings. No new compiler errors from this batch.
 
 Not run in this batch by instruction: tests, RCH, Criterion execution,
 workspace checks.
+
+## Batch Verdict 2026-06-19
+
+Measured by `cod-b` / `BlackThrush` after RCH benches were allowed.
+
+```bash
+AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+  rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench stdio_glibc_baseline_bench swprintf_wide_format -- --noplot
+```
+
+Criterion result on worker `vmi1227854`:
+
+- FrankenLibC ABI: `[306.41 ns 317.94 ns 328.11 ns]`
+- Host glibc: `[971.13 ns 1.0154 us 1.0729 us]`
+- Central ratio: `317.94 ns / 1015.4 ns = 0.313x` vs glibc
+- Conservative interval ratio: `328.11 / 971.13 = 0.338x`
+- Outliers: FrankenLibC 2 high mild; host glibc 4 low severe.
+- Verdict: `WIN`, keep the optimization.
+
+Validation:
+
+- `cargo check -p frankenlibc-abi` passed with `AGENT_NAME=BlackThrush`
+  and `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`.
+- `cargo test -p frankenlibc-abi` remains blocked by pre-existing
+  `zz_scratch_divmin` integration-test compile errors.
+- `cargo test -p frankenlibc-abi --lib -- --list` confirms `wchar_abi`
+  tests are not compiled in test mode because the module is `#[cfg(not(test))]`
+  in `src/lib.rs`.

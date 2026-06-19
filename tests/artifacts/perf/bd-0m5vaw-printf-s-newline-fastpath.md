@@ -89,3 +89,31 @@ No tests, rch, or Criterion benchmarks are run in this turn by campaign
 instruction. The cargo checks completed with pre-existing warning debt in
 `frankenlibc-core` iconv and `frankenlibc-abi` math/poll/signal/erf-table
 areas.
+
+## Batch Verdict 2026-06-19
+
+Measured by `cod-b` / `BlackThrush` after RCH benches were allowed.
+
+```bash
+AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+  rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench stdio_glibc_baseline_bench snprintf_s_newline -- --noplot
+```
+
+Criterion result on worker `vmi1227854`:
+
+- FrankenLibC ABI: `[469.10 ns 471.49 ns 474.35 ns]`
+- Host glibc: `[534.84 ns 550.41 ns 572.30 ns]`
+- Central ratio: `471.49 / 550.41 = 0.856x` vs glibc
+- Conservative interval ratio: `474.35 / 534.84 = 0.887x`
+- Verdict: `WIN`, keep the optimization.
+
+Validation:
+
+- `cargo check -p frankenlibc-abi` passed with `AGENT_NAME=BlackThrush`
+  and `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`.
+- `cargo test -p frankenlibc-abi` remains blocked by pre-existing
+  `zz_scratch_divmin` integration-test compile errors.
+- `cargo test -p frankenlibc-abi --lib -- --list` confirms `stdio_abi`
+  tests are not compiled in test mode because the module is `#[cfg(not(test))]`
+  in `src/lib.rs`.
