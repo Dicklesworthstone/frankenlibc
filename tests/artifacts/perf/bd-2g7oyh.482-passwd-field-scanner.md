@@ -30,9 +30,41 @@
   - rejects signs, junk, trailing whitespace, empty fields, and overflow,
   - accepts `0..=u32::MAX`.
 
-## Pending Verdict
+## Measured Verdict
 
-- Status: code-first batch-test pending.
-- Landing note: source changes were swept into shared commit `2c04ac56a423d8cf772486f49ad2b32ad5939f54`; this artifact remains the bead-specific negative-evidence ledger and verdict anchor.
-- Keep only if the later same-worker benchmark shows `parse_passwd_line_typical` improvement with no passwd conformance regression.
-- Reject and restore this lever if the focused row regresses or any differential/conformance guard fails.
+- Status: measured reject; optimization reverted.
+- Landing note: source changes were originally swept into shared commit
+  `2c04ac56a423d8cf772486f49ad2b32ad5939f54`; this gauntlet pass converted the
+  pending claim into deployed ABI evidence against host glibc.
+- Bench command:
+
+  ```bash
+  AGENT_NAME=cod-a \
+  CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a \
+  CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-a/criterion-bd-2g7oyh-482-passwd \
+  rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+    --bench baseline_capture_bench nss_passwd_lookup -- --noplot
+  ```
+
+- Worker: `ovh-a`.
+- `getpwnam("root")`: FrankenLibC p50 `10.906 us`, glibc p50 `10.013 us`,
+  ratio `1.089x`; mean ratio `1.088x`; **LOSS**.
+- `getpwuid(0)`: FrankenLibC p50 `31.495 us`, glibc p50 `9.957 us`, ratio
+  `3.163x`; mean ratio `3.326x`; **LOSS**.
+- Action: reverted `parse_passwd_line` to the prior colon-field
+  `Vec<&[u8]>`, shell-tail `join`, and UTF-8 + `str::parse` numeric path.
+
+## Post-Revert Validation
+
+- `AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec -- cargo test -p frankenlibc-core pwd:: --lib`: 79 passed.
+- `AGENT_NAME=cod-a CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec -- cargo check -p frankenlibc-bench --features abi-bench --bench baseline_capture_bench`: passed.
+- `rustfmt --edition 2024 --config skip_children=true --check crates/frankenlibc-core/src/pwd/mod.rs crates/frankenlibc-bench/benches/baseline_capture_bench.rs`: passed.
+- `cargo clippy -p frankenlibc-core --lib -- -D warnings`: blocked on rch because
+  `cargo-clippy` is not installed for `nightly-2026-04-28-x86_64-unknown-linux-gnu`.
+
+## Retry Predicate
+
+Do not retry the passwd colon-field scanner or byte-decimal parser as a standalone
+perf lever. Future passwd/NSS perf work should target lookup/cache behavior,
+especially the deployed `getpwuid(0)` scan path, and must use a fresh ABI vs
+host-glibc benchmark.

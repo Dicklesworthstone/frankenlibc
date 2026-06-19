@@ -63,27 +63,30 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
     }
 
     // glibc requires only the first four fields (name:passwd:uid:gid); gecos,
-    // dir, and shell are optional and default to empty. `splitn(7)` preserves
-    // the old "shell absorbs extra colons" contract without collecting every
-    // field or rebuilding the tail, so "u:x:1:2:3:4:5:6:7" yields shell
-    // "5:6:7".
-    let mut fields = line.splitn(7, |&b| b == b':');
-    let name = fields.next()?;
-    let passwd = fields.next()?;
-    let uid_field = fields.next()?;
-    let gid_field = fields.next()?;
+    // dir, and shell are optional and default to empty. Keep the compatibility
+    // shape where extra colons are absorbed into the shell field.
+    let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
+    if fields.len() < 4 {
+        return None;
+    }
 
-    let uid = parse_u32_decimal(uid_field)?;
-    let gid = parse_u32_decimal(gid_field)?;
+    let name = fields[0];
+    let passwd = fields[1];
+    let uid = parse_u32_decimal(fields[2])?;
+    let gid = parse_u32_decimal(fields[3])?;
 
     // Name must be non-empty
     if name.is_empty() {
         return None;
     }
 
-    let gecos = fields.next().unwrap_or(b"");
-    let dir = fields.next().unwrap_or(b"");
-    let shell = fields.next().unwrap_or(b"");
+    let gecos = fields.get(4).copied().unwrap_or(b"");
+    let dir = fields.get(5).copied().unwrap_or(b"");
+    let shell = if fields.len() > 6 {
+        fields[6..].join(&b":"[..])
+    } else {
+        Vec::new()
+    };
 
     Some(Passwd {
         pw_name: name.to_vec(),
@@ -92,7 +95,7 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
         pw_gid: gid,
         pw_gecos: gecos.to_vec(),
         pw_dir: dir.to_vec(),
-        pw_shell: shell.to_vec(),
+        pw_shell: shell,
     })
 }
 
@@ -101,29 +104,15 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
 /// fully consumed. Rejects "", a sign-only field, hex (`0x10`), and trailing
 /// junk — matching glibc, which errors the whole entry on those.
 fn parse_u32_decimal(field: &[u8]) -> Option<u32> {
-    let mut s = field;
-    while let [first, rest @ ..] = s {
-        if *first == b' ' || (0x09..=0x0D).contains(first) {
-            s = rest;
-        } else {
-            break;
-        }
+    let mut text = std::str::from_utf8(field).ok()?;
+    text = text.trim_start_matches(|c| c == ' ' || ('\t'..='\r').contains(&c));
+    if let Some(rest) = text.strip_prefix('+') {
+        text = rest;
     }
-    if let [b'+', rest @ ..] = s {
-        s = rest;
-    }
-    if s.is_empty() {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
-    let mut value = 0u32;
-    for &byte in s {
-        if !byte.is_ascii_digit() {
-            return None;
-        }
-        let digit = u32::from(byte - b'0');
-        value = value.checked_mul(10)?.checked_add(digit)?;
-    }
-    Some(value)
+    text.parse::<u32>().ok()
 }
 
 /// Look up a passwd entry by username.
@@ -297,7 +286,14 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
         assert_eq!(e.pw_dir, b"/root");
         assert_eq!(e.pw_shell, b"");
         let f = parse_passwd_line(b"u:x:1:2").unwrap(); // 4 fields
-        assert_eq!((f.pw_gecos.as_slice(), f.pw_dir.as_slice(), f.pw_shell.as_slice()), (&b""[..], &b""[..], &b""[..]));
+        assert_eq!(
+            (
+                f.pw_gecos.as_slice(),
+                f.pw_dir.as_slice(),
+                f.pw_shell.as_slice()
+            ),
+            (&b""[..], &b""[..], &b""[..])
+        );
     }
 
     #[test]
@@ -352,9 +348,24 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     fn accepts_leading_plus_and_space_in_uid_gid() {
         // glibc parses uid/gid via strtoul, which accepts a leading '+' and
         // leading whitespace.
-        assert_eq!(parse_passwd_line(b"user:x:+1000:1000:u:/h:/bin/sh").unwrap().pw_uid, 1000);
-        assert_eq!(parse_passwd_line(b"user:x:1000:+1000:u:/h:/bin/sh").unwrap().pw_gid, 1000);
-        assert_eq!(parse_passwd_line(b"user:x: 1000:5:u:/h:/bin/sh").unwrap().pw_uid, 1000);
+        assert_eq!(
+            parse_passwd_line(b"user:x:+1000:1000:u:/h:/bin/sh")
+                .unwrap()
+                .pw_uid,
+            1000
+        );
+        assert_eq!(
+            parse_passwd_line(b"user:x:1000:+1000:u:/h:/bin/sh")
+                .unwrap()
+                .pw_gid,
+            1000
+        );
+        assert_eq!(
+            parse_passwd_line(b"user:x: 1000:5:u:/h:/bin/sh")
+                .unwrap()
+                .pw_uid,
+            1000
+        );
     }
 
     #[test]

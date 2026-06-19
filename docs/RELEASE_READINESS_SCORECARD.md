@@ -1,16 +1,16 @@
 # FrankenLibC Release Readiness Scorecard
 
-Last updated: 2026-06-19 by `cod-b` / `BlackThrush`.
+Last updated: 2026-06-19 by `cod-a` / `BlackThrush`.
 
 ## Current gate snapshot
 
 | Area | Score | Evidence | Risk |
 |---|---:|---|---|
-| Measured perf backlog conversion | 6 / many pending | `bd-0m5vaw`, `bd-fgnxc0`, `bd-2g7oyh.478`, `bd-2g7oyh.487`, `bd-9ran7n`, and `bd-2g7oyh.481` converted from code-first pending to measured head-to-head evidence vs host glibc. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, and peer-owned leaves. |
-| Negative-evidence ledger | 1 / committed ledger | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and now includes resolver services/protocols ratios for `bd-9ran7n`, corrected-host getopt evidence for `bd-2g7oyh.487`, and mixed group lookup evidence for `bd-2g7oyh.481`. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended. |
-| Revert discipline | Green for measured cluster | Winning rows kept; losing `bd-2g7oyh.478` exact-block `strcpy_4096` unroll was reverted after a 1.250x p50 loss vs glibc. `bd-2g7oyh.487` getopt fused lookup is a measured keep at 0.556x. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
-| Conformance guard | Partial green | `cargo check -p frankenlibc-abi` and the `bd-9ran7n` resolver parser + ABI differential guards passed with known warning debt. Criterion bench binaries built and ran successfully. `cargo test -p frankenlibc-core getopt --lib` passed 39 tests for the kept fused lookup. Group parser/ABI guards passed after signed gid rows were rejected again. | Workspace hygiene is still blocked by pre-existing fmt/clippy debt in bench/core files; older `cargo test -p frankenlibc-abi` blockers around scratch probes remain a separate release-readiness risk. `cargo-clippy` is missing from the selected nightly on the rch worker. |
-| Release posture | Not ready | Additional getopt and group lookup wins recorded, plus a real `getgrgid(0)` neutral/gap routed deeper. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, and conformance/bench gates are repeatable. |
+| Measured perf backlog conversion | 7 / many pending | `bd-0m5vaw`, `bd-fgnxc0`, `bd-2g7oyh.478`, `bd-2g7oyh.487`, `bd-9ran7n`, `bd-2g7oyh.481`, and `bd-2g7oyh.482` converted from code-first pending to measured head-to-head evidence vs host glibc. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, and peer-owned leaves. |
+| Negative-evidence ledger | 1 / committed ledger | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and now includes resolver services/protocols ratios for `bd-9ran7n`, corrected-host getopt evidence for `bd-2g7oyh.487`, mixed group lookup evidence for `bd-2g7oyh.481`, and passwd lookup losses for `bd-2g7oyh.482`. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended. |
+| Revert discipline | Green for measured cluster | Winning rows kept; losing `bd-2g7oyh.478` exact-block `strcpy_4096` unroll was reverted after a 1.250x p50 loss vs glibc. Losing `bd-2g7oyh.482` passwd parser scanner was reverted after 1.089x/3.163x deployed losses. `bd-2g7oyh.487` getopt fused lookup is a measured keep at 0.556x. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
+| Conformance guard | Partial green | `cargo check -p frankenlibc-abi` and the `bd-9ran7n` resolver parser + ABI differential guards passed with known warning debt. Criterion bench binaries built and ran successfully. `cargo test -p frankenlibc-core getopt --lib` passed 39 tests for the kept fused lookup. Group parser/ABI guards passed after signed gid rows were rejected again. Post-revert `pwd::` guards passed 79 tests for `bd-2g7oyh.482`. | Workspace hygiene is still blocked by pre-existing fmt/clippy debt in bench/core files; older `cargo test -p frankenlibc-abi` blockers around scratch probes remain a separate release-readiness risk. `cargo-clippy` is missing from the selected nightly on the rch worker. |
+| Release posture | Not ready | Additional getopt and group lookup wins recorded, plus real `getgrgid(0)` neutral and passwd lookup losses routed deeper. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, and conformance/bench gates are repeatable. |
 
 ## 2026-06-19 measured stdio cluster
 
@@ -149,6 +149,21 @@ Conformance stayed green for the focused path: resolver parser unit filters pass
 Conformance stayed green after the gauntlet rejected signed gid fields again:
 core group parser tests passed, `grp_abi_test getgr` passed, and group
 differential tests passed.
+
+## 2026-06-19 `bd-2g7oyh.482` measured reject
+
+The passwd field scanner was converted from pending code-first status into
+deployed ABI evidence vs host glibc and rejected.
+
+| Workload | FrankenLibC | glibc | Ratio | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| `getpwnam("root")` | 10.906 us | 10.013 us | 1.089x | LOSS | Reverted parser optimization. |
+| `getpwuid(0)` | 31.495 us | 9.957 us | 3.163x | LOSS | Reverted parser optimization; route uid lookup/cache path deeper. |
+
+Post-revert focused conformance stayed green: `cargo test -p frankenlibc-core
+pwd:: --lib` passed 79 tests, and the updated `baseline_capture_bench` check
+passed with known pre-existing warning debt. Clippy remains blocked on rch by
+missing `cargo-clippy` for the selected nightly toolchain.
 
 ### 2026-06-19 deployed-math DEFINITIVELY resolved (same-run, BlackThrush)
 

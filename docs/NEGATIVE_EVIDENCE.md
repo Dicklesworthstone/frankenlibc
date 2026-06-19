@@ -498,3 +498,46 @@ Validation:
 Retry-condition predicate: do not retry colon-tail parser reshaping for the
 `getgrgid(0)` neutral/gap. The next lever must target gid lookup/cache behavior
 or another profile-backed path.
+
+## 2026-06-19 `bd-2g7oyh.482` passwd parser measured reject + revert
+
+Focused gauntlet target: the code-first `/etc/passwd` field scanner in
+`crates/frankenlibc-core/src/pwd/mod.rs`, exercised through deployed ABI passwd
+lookups against host glibc.
+
+Command:
+
+```bash
+AGENT_NAME=cod-a \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a \
+CRITERION_HOME=/data/projects/.rch-targets/frankenlibc-cod-a/criterion-bd-2g7oyh-482-passwd \
+rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench baseline_capture_bench nss_passwd_lookup -- --noplot
+```
+
+- Worker: `ovh-a`.
+- `getpwnam("root")`: FrankenLibC p50 `10.906 us`, glibc p50 `10.013 us`,
+  ratio `1.089x`; mean ratio `1.088x`; **LOSS**.
+- `getpwuid(0)`: FrankenLibC p50 `31.495 us`, glibc p50 `9.957 us`,
+  ratio `3.163x`; mean ratio `3.326x`; **LOSS**.
+- Verdict: **reject**. The splitn/byte-decimal scanner did not beat the original
+  glibc deployed workload and exposed a much larger uid-lookup gap.
+- Action: **reverted** the parser optimization shape back to the prior
+  colon-field `Vec<&[u8]>`, shell-tail `join`, and UTF-8 + `str::parse` numeric
+  path while preserving existing compatibility semantics.
+
+Validation:
+
+- `cargo test -p frankenlibc-core pwd:: --lib`: 79 passed.
+- `cargo check -p frankenlibc-bench --features abi-bench --bench baseline_capture_bench`: passed.
+- `rustfmt --edition 2024 --config skip_children=true --check` on
+  `crates/frankenlibc-core/src/pwd/mod.rs` and
+  `crates/frankenlibc-bench/benches/baseline_capture_bench.rs`: passed.
+- `cargo clippy -p frankenlibc-core --lib -- -D warnings`: blocked because
+  `cargo-clippy` is not installed for the selected `nightly-2026-04-28`
+  rch toolchain.
+
+Retry-condition predicate: do not retry passwd colon-field scanner or byte-decimal
+reshaping as a standalone performance lever. The next passwd/NSS perf work should
+target lookup/cache behavior, especially the `getpwuid(0)` scan path, with a
+fresh deployed ABI vs glibc benchmark.

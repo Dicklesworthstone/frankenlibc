@@ -5,6 +5,7 @@
 //! mutex_bench, condvar_bench) to achieve coverage across all major families.
 
 use std::cell::RefCell;
+use std::ffi::CStr;
 use std::hint::black_box;
 use std::os::raw::{c_char, c_int};
 use std::sync::OnceLock;
@@ -559,6 +560,220 @@ fn bench_stdlib_getopt(c: &mut Criterion) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// NSS / PASSWD FAMILY BENCHMARKS
+// ═══════════════════════════════════════════════════════════════════
+
+type HostGetpwnamFn = unsafe extern "C" fn(*const c_char) -> *mut libc::passwd;
+type HostGetpwuidFn = unsafe extern "C" fn(libc::uid_t) -> *mut libc::passwd;
+
+struct HostPasswd {
+    getpwnam: HostGetpwnamFn,
+    getpwuid: HostGetpwuidFn,
+}
+
+fn host_passwd() -> &'static HostPasswd {
+    static HOST_PASSWD: OnceLock<HostPasswd> = OnceLock::new();
+    HOST_PASSWD.get_or_init(load_host_passwd)
+}
+
+fn load_host_passwd() -> HostPasswd {
+    unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(
+            !handle.is_null(),
+            "failed to dlmopen host libc.so.6 in isolated namespace"
+        );
+
+        let getpwnam = dlsym_required(handle, b"getpwnam\0", "getpwnam");
+        let getpwuid = dlsym_required(handle, b"getpwuid\0", "getpwuid");
+        HostPasswd {
+            getpwnam: std::mem::transmute::<*mut libc::c_void, HostGetpwnamFn>(getpwnam),
+            getpwuid: std::mem::transmute::<*mut libc::c_void, HostGetpwuidFn>(getpwuid),
+        }
+    }
+}
+
+fn passwd_checksum(entry: *mut libc::passwd) -> usize {
+    assert!(!entry.is_null(), "passwd lookup returned NULL");
+    unsafe {
+        // SAFETY: callers pass a non-NULL pointer returned by getpwnam/getpwuid.
+        let pw = &*entry;
+        (pw.pw_uid as usize)
+            .wrapping_mul(1_000_003)
+            .wrapping_add(pw.pw_gid as usize)
+            .wrapping_mul(257)
+            .wrapping_add(cstr_first_byte(pw.pw_name))
+            .wrapping_mul(257)
+            .wrapping_add(cstr_first_byte(pw.pw_dir))
+            .wrapping_mul(257)
+            .wrapping_add(cstr_first_byte(pw.pw_shell))
+    }
+}
+
+unsafe fn cstr_first_byte(ptr: *const c_char) -> usize {
+    if ptr.is_null() {
+        0
+    } else {
+        // SAFETY: passwd fields from libc are NUL-terminated strings.
+        unsafe { *ptr.cast::<u8>() as usize }
+    }
+}
+
+unsafe fn cstr_bytes(ptr: *const c_char) -> Vec<u8> {
+    if ptr.is_null() {
+        Vec::new()
+    } else {
+        // SAFETY: passwd fields from libc are NUL-terminated strings.
+        unsafe { CStr::from_ptr(ptr).to_bytes().to_vec() }
+    }
+}
+
+fn assert_passwd_entries_match(
+    frankenlibc: *mut libc::passwd,
+    host_glibc: *mut libc::passwd,
+    label: &str,
+) {
+    assert!(
+        !frankenlibc.is_null(),
+        "FrankenLibC passwd lookup returned NULL for {label}"
+    );
+    assert!(
+        !host_glibc.is_null(),
+        "host glibc passwd lookup returned NULL for {label}"
+    );
+    unsafe {
+        // SAFETY: both pointers were checked non-NULL and are live until the
+        // next passwd lookup in the same libc namespace.
+        let fl = &*frankenlibc;
+        let glibc = &*host_glibc;
+        assert_eq!(fl.pw_uid, glibc.pw_uid, "passwd uid mismatch for {label}");
+        assert_eq!(fl.pw_gid, glibc.pw_gid, "passwd gid mismatch for {label}");
+        assert_eq!(
+            cstr_bytes(fl.pw_name),
+            cstr_bytes(glibc.pw_name),
+            "passwd name mismatch for {label}"
+        );
+        assert_eq!(
+            cstr_bytes(fl.pw_dir),
+            cstr_bytes(glibc.pw_dir),
+            "passwd dir mismatch for {label}"
+        );
+        assert_eq!(
+            cstr_bytes(fl.pw_shell),
+            cstr_bytes(glibc.pw_shell),
+            "passwd shell mismatch for {label}"
+        );
+    }
+}
+
+#[inline(never)]
+fn frankenlibc_getpwnam_root() -> usize {
+    let entry = unsafe {
+        // SAFETY: benchmark input is a static NUL-terminated C string.
+        frankenlibc_abi::pwd_abi::getpwnam(b"root\0".as_ptr().cast())
+    };
+    passwd_checksum(entry)
+}
+
+#[inline(never)]
+fn host_glibc_getpwnam_root() -> usize {
+    let host = host_passwd();
+    let entry = unsafe {
+        // SAFETY: benchmark input is a static NUL-terminated C string.
+        (host.getpwnam)(b"root\0".as_ptr().cast())
+    };
+    passwd_checksum(entry)
+}
+
+#[inline(never)]
+fn frankenlibc_getpwuid_0() -> usize {
+    let entry = unsafe {
+        // SAFETY: uid 0 is a valid getpwuid input.
+        frankenlibc_abi::pwd_abi::getpwuid(0)
+    };
+    passwd_checksum(entry)
+}
+
+#[inline(never)]
+fn host_glibc_getpwuid_0() -> usize {
+    let host = host_passwd();
+    let entry = unsafe {
+        // SAFETY: uid 0 is a valid getpwuid input.
+        (host.getpwuid)(0)
+    };
+    passwd_checksum(entry)
+}
+
+fn bench_nss_passwd_lookup(c: &mut Criterion) {
+    let mut group = c.benchmark_group("nss_passwd_lookup");
+    let host = host_passwd();
+
+    unsafe {
+        // SAFETY: benchmark inputs are static valid getpwnam/getpwuid inputs.
+        assert_passwd_entries_match(
+            frankenlibc_abi::pwd_abi::getpwnam(b"root\0".as_ptr().cast()),
+            (host.getpwnam)(b"root\0".as_ptr().cast()),
+            "getpwnam(root)",
+        );
+        assert_passwd_entries_match(
+            frankenlibc_abi::pwd_abi::getpwuid(0),
+            (host.getpwuid)(0),
+            "getpwuid(0)",
+        );
+    }
+
+    for _ in 0..1_000 {
+        black_box(frankenlibc_getpwnam_root());
+        black_box(host_glibc_getpwnam_root());
+        black_box(frankenlibc_getpwuid_0());
+        black_box(host_glibc_getpwuid_0());
+    }
+
+    bench_symbol(
+        &mut group,
+        "frankenlibc_abi",
+        "getpwnam_root_glibc_comparable",
+        "getpwnam",
+        || {
+            black_box(frankenlibc_getpwnam_root());
+        },
+    );
+    bench_symbol(
+        &mut group,
+        "host_glibc",
+        "getpwnam_root_glibc_comparable",
+        "getpwnam",
+        || {
+            black_box(host_glibc_getpwnam_root());
+        },
+    );
+    bench_symbol(
+        &mut group,
+        "frankenlibc_abi",
+        "getpwuid_0_glibc_comparable",
+        "getpwuid",
+        || {
+            black_box(frankenlibc_getpwuid_0());
+        },
+    );
+    bench_symbol(
+        &mut group,
+        "host_glibc",
+        "getpwuid_0_glibc_comparable",
+        "getpwuid",
+        || {
+            black_box(host_glibc_getpwuid_0());
+        },
+    );
+
+    group.finish();
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ERRNO FAMILY BENCHMARKS
 // ═══════════════════════════════════════════════════════════════════
 
@@ -662,6 +877,15 @@ criterion_group!(
 );
 
 criterion_group!(
+    name = nss_benches;
+    config = Criterion::default()
+        .warm_up_time(Duration::from_millis(1))
+        .measurement_time(Duration::from_millis(500))
+        .sample_size(50);
+    targets = bench_nss_passwd_lookup
+);
+
+criterion_group!(
     name = errno_benches;
     config = Criterion::default()
         .warm_up_time(Duration::from_millis(1))
@@ -683,6 +907,7 @@ criterion_main!(
     ctype_benches,
     math_benches,
     stdlib_benches,
+    nss_benches,
     errno_benches,
     string_extended_benches,
 );
