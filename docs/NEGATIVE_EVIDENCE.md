@@ -224,6 +224,31 @@ which is a broad membrane-core refactor — filed thinking on bd-f874go, not
 attempted unilaterally. **Net: the deployed allocator is ~2× the bare host on a
 busy heap, and that 2× has no single fixable hotspot.**
 
+## 2026-06-20 `bd-f874go` strict native allocator reentry-slot reuse (BlackThrush / cod-b)
+
+The first kept code-size/touch-count reduction in the diffuse strict allocator
+path is to reuse the already-acquired public allocator reentry slot when the
+strict host path calls the native host `calloc`/`free` trampolines. Baseline and
+candidate were both routed by `rch` to `vmi1152480` with the same worker-scoped
+target pool. p50 ns/op:
+
+| size | baseline fl | baseline glibc | baseline fl/glibc | candidate fl | candidate glibc | candidate fl/glibc | candidate/base fl | verdict | action |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 16 B | 85.087 | 7.230 | 11.77x | 86.020 | 7.148 | 12.03x | 1.011x | LOSS | Negative row; keep only because the overall deployed path wins elsewhere. |
+| 256 B | 454.890 | 23.275 | 19.55x | 237.286 | 21.068 | 11.26x | 0.522x | LOSS vs glibc / WIN vs baseline | Keep; biggest small-allocation gap improved 47.8%. |
+| 4096 B | 446.897 | 81.206 | 5.50x | 273.946 | 47.993 | 5.71x | 0.613x | LOSS vs glibc / ratio neutral-loss | Keep overall; absolute FrankenLibC p50 improved 38.7%, but glibc also sped up. |
+| 65536 B | 903.792 | 526.206 | 1.72x | 711.313 | 430.895 | 1.65x | 0.787x | LOSS vs glibc / WIN vs baseline | Keep. |
+| 262144 B | 2911.750 | 1644.329 | 1.77x | 1862.715 | 1561.114 | 1.19x | 0.640x | LOSS vs glibc / WIN vs baseline | Keep; normalized gap narrowed sharply. |
+| 1048576 B | 14664.400 | 9440.443 | 1.55x | 10027.183 | 9393.547 | 1.07x | 0.684x | LOSS by strict 1.05 cutoff / near parity | Keep; near-parity after 31.6% absolute speedup. |
+| 4194304 B | 47376.372 | 48195.740 | 0.98x | 47365.083 | 67326.391 | 0.70x | 1.000x | WIN vs glibc / neutral vs baseline | Keep; deployed FrankenLibC did not regress at the largest size. |
+
+Decision: **KEEP**, but do not score this as allocator dominance. It is a real
+deployed fast-path reduction that cuts the worst measured small-row ratio
+19.55x -> 11.26x at 256 B and moves 1 MiB from 1.55x to 1.07x, while leaving
+16 B negative and 4 KiB still far behind glibc. The live allocator bead remains
+open for a slimmer strict fast path or deeper metadata-layout change. Evidence:
+`tests/artifacts/perf/bd-f874go-native-reentry-slot.md`.
+
 ## 2026-06-19 `bd-djtvqq` getc_unlocked "1.8× slower" is a Rust-bench LTO-inlining ARTIFACT, not a real gap (BlackThrush)
 
 bd-djtvqq claimed `getc_unlocked` ~1.8× slower than `fgetc` (9.56 ms vs 5.22 ms).

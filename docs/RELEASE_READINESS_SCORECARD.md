@@ -1,6 +1,6 @@
 # FrankenLibC Release Readiness Scorecard
 
-Last updated: 2026-06-20 by `cod-a` / `BlackThrush`.
+Last updated: 2026-06-20 by `cod-b` / `BlackThrush`.
 
 ## Current gate snapshot
 
@@ -10,7 +10,7 @@ Last updated: 2026-06-20 by `cod-a` / `BlackThrush`.
 | Negative-evidence ledger | 1 committed ledger + bead-local rejects | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and the cod-a parser batch. `tests/artifacts/perf/bd-2g7oyh.479-runtime-design-stack-candidates.md`, `tests/artifacts/perf/bd-li0so3-hosts-field-scanner.md`, `tests/artifacts/perf/bd-7ak6cm-calloc-alloc-zeroed.md`, `tests/artifacts/perf/bd-4crkqx-aliases-member-scanner.md`, and `tests/artifacts/perf/bd-xxrfvu-byte-network-parser.md` record same-worker rejects/keeps, root causes, and retry predicates. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended when it is not peer-owned dirty. |
 | Revert discipline | Green for measured cluster | Winning rows kept; losing/neutral parser source shapes were reversed without deleting evidence artifacts or benchmark rows. Prior glibc losses (`bd-2g7oyh.478`, `bd-2g7oyh.482`) remain reverted. `bd-2g7oyh.479` stack candidates, `bd-li0so3` hosts scanner, `bd-7ak6cm` calloc `alloc_zeroed`, and `bd-4crkqx` aliases member scanner were reverted after same-worker measurement (calloc kept only the reusable bench harness). `bd-xxrfvu` measured as a same-worker win and was kept. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
 | Conformance guard | Partial green | Focused parser guards passed previously. For `.479`, touched-file rustfmt and `cargo check -p frankenlibc-membrane --lib` passed. For `bd-li0so3`, touched-file rustfmt, 10 hosts parser tests, and `cargo check -p frankenlibc-core` passed. For `bd-7ak6cm`, source fully reverted (no allocator behavior change); the new `calloc_glibc_bench` builds clean on `ovh-a` and `cargo check -p frankenlibc-membrane` passed. For `bd-4crkqx`, source was reverted to split/filter/collect; touched-file rustfmt passed, 30 aliases-filtered core tests passed, and `cargo check -p frankenlibc-core` passed. For `bd-xxrfvu`, touched-file rustfmt passed, `netnum` filtered tests passed 12/12, `network_` filtered tests passed 15/15, and `cargo check -p frankenlibc-core` passed. For `bd-z8p3mx` (general powf fused glibc kernel), the new gate `conformance_diff_powf_general` (6981 inputs **bit-exact, 0 ULP** — it is glibc's `__ieee754_powf` algorithm), the existing `diff_powf_profile_exp_1_337`, the powf-underflow errno unit tests, and `conformance_diff_fp_exceptions` all passed against host glibc 2.42. The fused kernel is **4.8x faster than the prior libm fallback and within 1.23x of glibc** (`powf_glibc_bench`). Two pre-existing unrelated failures remain (`diff_sign_min_max_dim_helpers_*`, `fminf`/`fmaxf`/`fdimf` — fail on clean HEAD too, not touched here). | Full core tests are blocked by unrelated iconv/glob failures; workspace check/clippy by missing packaged files in `asupersync-conformance 0.3.4`; workspace fmt by broad formatting drift. |
-| Release posture | Not ready | Additional getopt and group lookup wins recorded, plus real `getgrgid(0)` neutral and passwd lookup losses routed deeper. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, and conformance/bench gates are repeatable. |
+| Release posture | Not ready | Additional getopt and group lookup wins recorded, real `getgrgid(0)` neutral and passwd lookup losses routed deeper, and `bd-f874go` strict allocator reentry-slot reuse narrows the deployed `calloc/free` gap without closing it. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, conformance/bench gates are repeatable, and allocator small sizes no longer carry double-digit glibc losses. |
 
 ## 2026-06-19 measured stdio cluster
 
@@ -305,6 +305,31 @@ Release posture: deployed math can be parity-to-faster, but deployed allocator
 small-size `calloc/free` remains a blocker for "dominates glibc" claims. The
 next allocator work should split zero-fill from metadata cost and pursue a
 deeper metadata/allocator deployment change, not another branch-local tweak.
+
+### 2026-06-20 `bd-f874go` allocator fast-path keep (BlackThrush / cod-b)
+
+Same-worker `vmi1152480` `calloc_glibc_bench` A/B kept one narrow strict-host
+allocator fast-path reduction: reuse the public allocator guard's reentry slot
+inside native host `calloc`/`free` instead of looking the slot up again.
+
+| Size | Baseline FL | Candidate FL | Candidate glibc | Candidate ratio | Verdict |
+|---|---:|---:|---:|---:|---|
+| 16 B | 85.087 ns | 86.020 ns | 7.148 ns | 12.03x | LOSS row |
+| 256 B | 454.890 ns | 237.286 ns | 21.068 ns | 11.26x | WIN vs baseline, still LOSS vs glibc |
+| 4096 B | 446.897 ns | 273.946 ns | 47.993 ns | 5.71x | absolute WIN, ratio loss/noise |
+| 262144 B | 2911.750 ns | 1862.715 ns | 1561.114 ns | 1.19x | WIN vs baseline, still LOSS vs glibc |
+| 1048576 B | 14664.400 ns | 10027.183 ns | 9393.547 ns | 1.07x | near parity |
+| 4194304 B | 47376.372 ns | 47365.083 ns | 67326.391 ns | 0.70x | WIN vs glibc, neutral vs baseline |
+
+Scorecard effect: allocator readiness improves but does not flip to release
+dominance. The worst measured 256 B row moved from 19.55x to 11.26x vs glibc,
+and 1 MiB moved from 1.55x to 1.07x. Remaining blocker: small `calloc/free`
+still carries double-digit glibc loss at 16 B and 256 B. Evidence:
+`tests/artifacts/perf/bd-f874go-native-reentry-slot.md`.
+
+Validation: touched-file rustfmt passed, `frankenlibc-abi` malloc ABI conformance
+passed on `rch` (53 passed, 0 failed, 1 ignored), and the earlier same-patch
+`cargo check -p frankenlibc-abi` passed with pre-existing warning debt.
 
 ### 2026-06-20 CP932 iconv decode keep (BlackThrush / cod-a)
 

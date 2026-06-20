@@ -338,6 +338,15 @@ impl Drop for NativeAllocatorReentryGuard {
 #[allow(dead_code)]
 fn enter_native_reentry_guard(mask: u8) -> Option<NativeAllocatorReentryGuard> {
     let slot = current_allocator_reentry_slot()?;
+    enter_native_reentry_guard_for_slot(slot, mask)
+}
+
+#[inline]
+#[allow(dead_code)]
+fn enter_native_reentry_guard_for_slot(
+    slot: &'static AllocatorReentrySlot,
+    mask: u8,
+) -> Option<NativeAllocatorReentryGuard> {
     let previous = slot.native_guard_bits.fetch_or(mask, Ordering::AcqRel);
     if previous & mask == 0 {
         Some(NativeAllocatorReentryGuard { slot, mask })
@@ -694,13 +703,41 @@ unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
     }
     #[cfg(not(feature = "standalone"))]
     {
-        let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_CALLOC) else {
+        let Some(slot) = current_allocator_reentry_slot() else {
             let Some(total) = nmemb.checked_mul(size) else {
                 return std::ptr::null_mut();
             };
-            let ptr = unsafe { bump_alloc(total) };
             // bump_alloc returns zeroed memory (static initializer).
-            return ptr;
+            return unsafe { bump_alloc(total) };
+        };
+        unsafe { native_libc_calloc_with_slot(slot, nmemb, size) }
+    }
+}
+
+#[inline]
+#[allow(clippy::needless_return)]
+unsafe fn native_libc_calloc_with_slot(
+    slot: &'static AllocatorReentrySlot,
+    nmemb: usize,
+    size: usize,
+) -> *mut c_void {
+    // In standalone mode, use bump allocator directly (no host glibc)
+    #[cfg(feature = "standalone")]
+    {
+        let Some(total) = nmemb.checked_mul(size) else {
+            return std::ptr::null_mut();
+        };
+        return unsafe { bump_alloc(total) };
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(_reentry_guard) = enter_native_reentry_guard_for_slot(slot, NATIVE_REENTRY_CALLOC)
+        else {
+            let Some(total) = nmemb.checked_mul(size) else {
+                return std::ptr::null_mut();
+            };
+            // bump_alloc returns zeroed memory (static initializer).
+            return unsafe { bump_alloc(total) };
         };
         let ptr = if let Some(&ptr) = HOST_CALLOC_FN.get() {
             ptr
@@ -796,7 +833,28 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
     }
     #[cfg(not(feature = "standalone"))]
     {
-        let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_FREE) else {
+        let Some(slot) = current_allocator_reentry_slot() else {
+            return; // Reentrant free of non-bump ptr: no-op to avoid recursion.
+        };
+        unsafe { native_libc_free_with_slot(slot, ptr) };
+    }
+}
+
+#[inline]
+#[allow(clippy::needless_return)]
+unsafe fn native_libc_free_with_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) {
+    if is_bump_ptr(ptr) {
+        return; // Bump allocator: free is a no-op.
+    }
+    // In standalone mode, free is a no-op (bump allocator doesn't support freeing)
+    #[cfg(feature = "standalone")]
+    {
+        return;
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let Some(_reentry_guard) = enter_native_reentry_guard_for_slot(slot, NATIVE_REENTRY_FREE)
+        else {
             return; // Reentrant free of non-bump ptr: no-op to avoid recursion.
         };
         let host_ptr = if let Some(&host_ptr) = HOST_FREE_FN.get() {
@@ -1771,7 +1829,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 /// `realloc`, and must not have been freed already.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
-    let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
+    let Some(reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         unsafe { bootstrap_free_passthrough(ptr) };
         return;
@@ -1797,7 +1855,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         // `!check_ownership(ptr)` under the old combined gate.
         if let Some(size) = fallback_remove_sized(ptr) {
             // SAFETY: tracked native-fallback allocation returned to the host.
-            unsafe { native_libc_free(ptr) };
+            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
             record_free_stats(size);
             return;
         }
@@ -1805,7 +1863,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
             // SAFETY: strict-mode preserves host allocator semantics. Some glibc
             // internals allocate without crossing our public malloc symbol, so
             // unknown pointers must still be returned to the host allocator.
-            unsafe { native_libc_free(ptr) };
+            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
             return;
         }
         // Arena-owned pointer: fall through to the membrane free path below.
@@ -1840,7 +1898,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
         // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
         let _ = fallback_remove(ptr);
-        unsafe { native_libc_free(ptr) };
+        unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
         runtime_policy::observe(ApiFamily::Allocator, decision.profile, 6, false);
         record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
         return;
@@ -1881,7 +1939,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         FreeResult::ForeignPointer => {
             if fallback_remove(ptr) {
                 // SAFETY: pointer is tracked as native-fallback allocation.
-                unsafe { native_libc_free(ptr) };
+                unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
             } else {
                 adverse = true;
                 if runtime_policy::mode().heals_enabled() {
@@ -1924,7 +1982,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
-    let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
+    let Some(reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         return unsafe { bootstrap_calloc_passthrough(nmemb, size) };
     };
@@ -1935,7 +1993,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
 
     if strict_allocator_host_path_active() {
         // SAFETY: strict-mode preload delegates allocator semantics to host libc.
-        let out = unsafe { native_libc_calloc(nmemb, size) };
+        let out = unsafe { native_libc_calloc_with_slot(reentry_guard.slot, nmemb, size) };
         if !out.is_null() {
             let total = nmemb.saturating_mul(size).max(1);
             fallback_insert_sized(out, total);
@@ -1992,7 +2050,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         },
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
-            let out = unsafe { native_libc_calloc(nmemb, size) };
+            let out = unsafe { native_libc_calloc_with_slot(reentry_guard.slot, nmemb, size) };
             fallback_insert_sized(out, total);
             out
         }
