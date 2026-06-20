@@ -3917,7 +3917,13 @@ unsafe fn direct_printf_string_payload<'a>(
     if p.is_null() {
         return None;
     }
-    let len = unsafe { c_str_bytes(p as *const c_char) }.len();
+    // Length via the page-safe SWAR/SIMD scan_c_string (the deployed `strlen`
+    // scanner), NOT c_str_bytes — the latter routes through scan_c_str_len ->
+    // known_remaining, a mutex lock + fallback-table hash probe per call. Here the
+    // length only feeds a copy/write, so the bound is not load-bearing; for a valid
+    // NUL-terminated %s argument (the C contract) `len` is identical. Speeds the
+    // bare-"%s" fast path for the whole printf/fprintf/vfprintf/dprintf family.
+    let (len, _) = unsafe { super::string_abi::scan_c_string(p as *const c_char, None) };
     // SAFETY: the %s contract guarantees a NUL-terminated string that remains
     // valid for the duration of the printf-family call.
     let bytes = unsafe { std::slice::from_raw_parts(p, len) };
