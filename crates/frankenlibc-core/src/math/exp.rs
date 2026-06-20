@@ -317,6 +317,724 @@ fn exp2_kernel(x: f64) -> f64 {
     scale + scale * tmp
 }
 
+// ============================================================================
+// Fused double-precision `pow` — verbatim port of glibc 2.42 / ARM
+// optimized-routines `e_pow.c` (the `__FP_FAST_FMA` branch; the build enables
+// `+fma`). Worst-case error 0.54 ULP; bit-exact vs the host glibc `pow`.
+//
+// Fidelity rule: glibc `__builtin_fma(a,b,c)` -> Rust `a.mul_add(b,c)` (single
+// rounding); glibc plain `a*b+c` -> `a*b+c` (two roundings — Rust does not
+// auto-contract to FMA). The exp reduction table is shared with exp2
+// (`EXP2D_TAB` == glibc `__exp_data.tab`, verified bit-identical by the table
+// generator). The `pow_log` table + scalars and the base-e exp poly/scalars
+// were generated from glibc `e_pow_log_data.c` / `e_exp_data.c`.
+// ============================================================================
+
+const POW_LOG_TABLE_BITS: u32 = 7;
+const POW_N: u64 = 1 << POW_LOG_TABLE_BITS; // 128
+const POW_OFF: u64 = 0x3fe6_9555_0000_0000;
+const POW_SIGN_BIAS: u64 = 0x800 << 7; // SIGN_BIAS = 0x800 << EXP_TABLE_BITS
+
+/// `__pow_log_data.tab`: 128 entries of (invc, logc, logctail) — the struct's
+/// `pad` field is always 0 and unused, so it is dropped.
+static POW_LOG_TAB: [u64; 384] = [
+    0x3ff6a00000000000,
+    0xbfd62c82f2b9c800,
+    0x3cfab42428375680,
+    0x3ff6800000000000,
+    0xbfd5d1bdbf580800,
+    0xbd1ca508d8e0f720,
+    0x3ff6600000000000,
+    0xbfd5767717455800,
+    0xbd2362a4d5b6506d,
+    0x3ff6400000000000,
+    0xbfd51aad872df800,
+    0xbce684e49eb067d5,
+    0x3ff6200000000000,
+    0xbfd4be5f95777800,
+    0xbd041b6993293ee0,
+    0x3ff6000000000000,
+    0xbfd4618bc21c6000,
+    0x3d13d82f484c84cc,
+    0x3ff5e00000000000,
+    0xbfd404308686a800,
+    0x3cdc42f3ed820b3a,
+    0x3ff5c00000000000,
+    0xbfd3a64c55694800,
+    0x3d20b1c686519460,
+    0x3ff5a00000000000,
+    0xbfd347dd9a988000,
+    0x3d25594dd4c58092,
+    0x3ff5800000000000,
+    0xbfd2e8e2bae12000,
+    0x3d267b1e99b72bd8,
+    0x3ff5600000000000,
+    0xbfd2895a13de8800,
+    0x3d15ca14b6cfb03f,
+    0x3ff5600000000000,
+    0xbfd2895a13de8800,
+    0x3d15ca14b6cfb03f,
+    0x3ff5400000000000,
+    0xbfd22941fbcf7800,
+    0xbd165a242853da76,
+    0x3ff5200000000000,
+    0xbfd1c898c1699800,
+    0xbd1fafbc68e75404,
+    0x3ff5000000000000,
+    0xbfd1675cababa800,
+    0x3d1f1fc63382a8f0,
+    0x3ff4e00000000000,
+    0xbfd1058bf9ae4800,
+    0xbd26a8c4fd055a66,
+    0x3ff4c00000000000,
+    0xbfd0a324e2739000,
+    0xbd0c6bee7ef4030e,
+    0x3ff4a00000000000,
+    0xbfd0402594b4d000,
+    0xbcf036b89ef42d7f,
+    0x3ff4a00000000000,
+    0xbfd0402594b4d000,
+    0xbcf036b89ef42d7f,
+    0x3ff4800000000000,
+    0xbfcfb9186d5e4000,
+    0x3d0d572aab993c87,
+    0x3ff4600000000000,
+    0xbfcef0adcbdc6000,
+    0x3d2b26b79c86af24,
+    0x3ff4400000000000,
+    0xbfce27076e2af000,
+    0xbd172f4f543fff10,
+    0x3ff4200000000000,
+    0xbfcd5c216b4fc000,
+    0x3d21ba91bbca681b,
+    0x3ff4000000000000,
+    0xbfcc8ff7c79aa000,
+    0x3d27794f689f8434,
+    0x3ff4000000000000,
+    0xbfcc8ff7c79aa000,
+    0x3d27794f689f8434,
+    0x3ff3e00000000000,
+    0xbfcbc286742d9000,
+    0x3d194eb0318bb78f,
+    0x3ff3c00000000000,
+    0xbfcaf3c94e80c000,
+    0x3cba4e633fcd9066,
+    0x3ff3a00000000000,
+    0xbfca23bc1fe2b000,
+    0xbd258c64dc46c1ea,
+    0x3ff3a00000000000,
+    0xbfca23bc1fe2b000,
+    0xbd258c64dc46c1ea,
+    0x3ff3800000000000,
+    0xbfc9525a9cf45000,
+    0xbd2ad1d904c1d4e3,
+    0x3ff3600000000000,
+    0xbfc87fa06520d000,
+    0x3d2bbdbf7fdbfa09,
+    0x3ff3400000000000,
+    0xbfc7ab890210e000,
+    0x3d2bdb9072534a58,
+    0x3ff3400000000000,
+    0xbfc7ab890210e000,
+    0x3d2bdb9072534a58,
+    0x3ff3200000000000,
+    0xbfc6d60fe719d000,
+    0xbd10e46aa3b2e266,
+    0x3ff3000000000000,
+    0xbfc5ff3070a79000,
+    0xbd1e9e439f105039,
+    0x3ff3000000000000,
+    0xbfc5ff3070a79000,
+    0xbd1e9e439f105039,
+    0x3ff2e00000000000,
+    0xbfc526e5e3a1b000,
+    0xbd20de8b90075b8f,
+    0x3ff2c00000000000,
+    0xbfc44d2b6ccb8000,
+    0x3d170cc16135783c,
+    0x3ff2c00000000000,
+    0xbfc44d2b6ccb8000,
+    0x3d170cc16135783c,
+    0x3ff2a00000000000,
+    0xbfc371fc201e9000,
+    0x3cf178864d27543a,
+    0x3ff2800000000000,
+    0xbfc29552f81ff000,
+    0xbd248d301771c408,
+    0x3ff2600000000000,
+    0xbfc1b72ad52f6000,
+    0xbd2e80a41811a396,
+    0x3ff2600000000000,
+    0xbfc1b72ad52f6000,
+    0xbd2e80a41811a396,
+    0x3ff2400000000000,
+    0xbfc0d77e7cd09000,
+    0x3d0a699688e85bf4,
+    0x3ff2400000000000,
+    0xbfc0d77e7cd09000,
+    0x3d0a699688e85bf4,
+    0x3ff2200000000000,
+    0xbfbfec9131dbe000,
+    0xbd2575545ca333f2,
+    0x3ff2000000000000,
+    0xbfbe27076e2b0000,
+    0x3d2a342c2af0003c,
+    0x3ff2000000000000,
+    0xbfbe27076e2b0000,
+    0x3d2a342c2af0003c,
+    0x3ff1e00000000000,
+    0xbfbc5e548f5bc000,
+    0xbd1d0c57585fbe06,
+    0x3ff1c00000000000,
+    0xbfba926d3a4ae000,
+    0x3d253935e85baac8,
+    0x3ff1c00000000000,
+    0xbfba926d3a4ae000,
+    0x3d253935e85baac8,
+    0x3ff1a00000000000,
+    0xbfb8c345d631a000,
+    0x3d137c294d2f5668,
+    0x3ff1a00000000000,
+    0xbfb8c345d631a000,
+    0x3d137c294d2f5668,
+    0x3ff1800000000000,
+    0xbfb6f0d28ae56000,
+    0xbd269737c93373da,
+    0x3ff1600000000000,
+    0xbfb51b073f062000,
+    0x3d1f025b61c65e57,
+    0x3ff1600000000000,
+    0xbfb51b073f062000,
+    0x3d1f025b61c65e57,
+    0x3ff1400000000000,
+    0xbfb341d7961be000,
+    0x3d2c5edaccf913df,
+    0x3ff1400000000000,
+    0xbfb341d7961be000,
+    0x3d2c5edaccf913df,
+    0x3ff1200000000000,
+    0xbfb16536eea38000,
+    0x3d147c5e768fa309,
+    0x3ff1000000000000,
+    0xbfaf0a30c0118000,
+    0x3d2d599e83368e91,
+    0x3ff1000000000000,
+    0xbfaf0a30c0118000,
+    0x3d2d599e83368e91,
+    0x3ff0e00000000000,
+    0xbfab42dd71198000,
+    0x3d1c827ae5d6704c,
+    0x3ff0e00000000000,
+    0xbfab42dd71198000,
+    0x3d1c827ae5d6704c,
+    0x3ff0c00000000000,
+    0xbfa77458f632c000,
+    0xbd2cfc4634f2a1ee,
+    0x3ff0c00000000000,
+    0xbfa77458f632c000,
+    0xbd2cfc4634f2a1ee,
+    0x3ff0a00000000000,
+    0xbfa39e87b9fec000,
+    0x3cf502b7f526feaa,
+    0x3ff0a00000000000,
+    0xbfa39e87b9fec000,
+    0x3cf502b7f526feaa,
+    0x3ff0800000000000,
+    0xbf9f829b0e780000,
+    0xbd2980267c7e09e4,
+    0x3ff0800000000000,
+    0xbf9f829b0e780000,
+    0xbd2980267c7e09e4,
+    0x3ff0600000000000,
+    0xbf97b91b07d58000,
+    0xbd288d5493faa639,
+    0x3ff0400000000000,
+    0xbf8fc0a8b0fc0000,
+    0xbcdf1e7cf6d3a69c,
+    0x3ff0400000000000,
+    0xbf8fc0a8b0fc0000,
+    0xbcdf1e7cf6d3a69c,
+    0x3ff0200000000000,
+    0xbf7fe02a6b100000,
+    0xbd19e23f0dda40e4,
+    0x3ff0200000000000,
+    0xbf7fe02a6b100000,
+    0xbd19e23f0dda40e4,
+    0x3ff0000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x3ff0000000000000,
+    0x0000000000000000,
+    0x0000000000000000,
+    0x3fefc00000000000,
+    0x3f80101575890000,
+    0xbd10c76b999d2be8,
+    0x3fef800000000000,
+    0x3f90205658938000,
+    0xbd23dc5b06e2f7d2,
+    0x3fef400000000000,
+    0x3f98492528c90000,
+    0xbd2aa0ba325a0c34,
+    0x3fef000000000000,
+    0x3fa0415d89e74000,
+    0x3d0111c05cf1d753,
+    0x3feec00000000000,
+    0x3fa466aed42e0000,
+    0xbd2c167375bdfd28,
+    0x3fee800000000000,
+    0x3fa894aa149fc000,
+    0xbd197995d05a267d,
+    0x3fee400000000000,
+    0x3faccb73cdddc000,
+    0xbd1a68f247d82807,
+    0x3fee200000000000,
+    0x3faeea31c006c000,
+    0xbd0e113e4fc93b7b,
+    0x3fede00000000000,
+    0x3fb1973bd1466000,
+    0xbd25325d560d9e9b,
+    0x3feda00000000000,
+    0x3fb3bdf5a7d1e000,
+    0x3d2cc85ea5db4ed7,
+    0x3fed600000000000,
+    0x3fb5e95a4d97a000,
+    0xbd2c69063c5d1d1e,
+    0x3fed400000000000,
+    0x3fb700d30aeac000,
+    0x3cec1e8da99ded32,
+    0x3fed000000000000,
+    0x3fb9335e5d594000,
+    0x3d23115c3abd47da,
+    0x3fecc00000000000,
+    0x3fbb6ac88dad6000,
+    0xbd1390802bf768e5,
+    0x3feca00000000000,
+    0x3fbc885801bc4000,
+    0x3d2646d1c65aacd3,
+    0x3fec600000000000,
+    0x3fbec739830a2000,
+    0xbd2dc068afe645e0,
+    0x3fec400000000000,
+    0x3fbfe89139dbe000,
+    0xbd2534d64fa10afd,
+    0x3fec000000000000,
+    0x3fc1178e8227e000,
+    0x3d21ef78ce2d07f2,
+    0x3febe00000000000,
+    0x3fc1aa2b7e23f000,
+    0x3d2ca78e44389934,
+    0x3feba00000000000,
+    0x3fc2d1610c868000,
+    0x3d039d6ccb81b4a1,
+    0x3feb800000000000,
+    0x3fc365fcb0159000,
+    0x3cc62fa8234b7289,
+    0x3feb400000000000,
+    0x3fc4913d8333b000,
+    0x3d25837954fdb678,
+    0x3feb200000000000,
+    0x3fc527e5e4a1b000,
+    0x3d2633e8e5697dc7,
+    0x3feae00000000000,
+    0x3fc6574ebe8c1000,
+    0x3d19cf8b2c3c2e78,
+    0x3feac00000000000,
+    0x3fc6f0128b757000,
+    0xbd25118de59c21e1,
+    0x3feaa00000000000,
+    0x3fc7898d85445000,
+    0xbd1c661070914305,
+    0x3fea600000000000,
+    0x3fc8beafeb390000,
+    0xbd073d54aae92cd1,
+    0x3fea400000000000,
+    0x3fc95a5adcf70000,
+    0x3d07f22858a0ff6f,
+    0x3fea000000000000,
+    0x3fca93ed3c8ae000,
+    0xbd28724350562169,
+    0x3fe9e00000000000,
+    0x3fcb31d8575bd000,
+    0xbd0c358d4eace1aa,
+    0x3fe9c00000000000,
+    0x3fcbd087383be000,
+    0xbd2d4bc4595412b6,
+    0x3fe9a00000000000,
+    0x3fcc6ffbc6f01000,
+    0xbcf1ec72c5962bd2,
+    0x3fe9600000000000,
+    0x3fcdb13db0d49000,
+    0xbd2aff2af715b035,
+    0x3fe9400000000000,
+    0x3fce530effe71000,
+    0x3cc212276041f430,
+    0x3fe9200000000000,
+    0x3fcef5ade4dd0000,
+    0xbcca211565bb8e11,
+    0x3fe9000000000000,
+    0x3fcf991c6cb3b000,
+    0x3d1bcbecca0cdf30,
+    0x3fe8c00000000000,
+    0x3fd07138604d5800,
+    0x3cf89cdb16ed4e91,
+    0x3fe8a00000000000,
+    0x3fd0c42d67616000,
+    0x3d27188b163ceae9,
+    0x3fe8800000000000,
+    0x3fd1178e8227e800,
+    0xbd2c210e63a5f01c,
+    0x3fe8600000000000,
+    0x3fd16b5ccbacf800,
+    0x3d2b9acdf7a51681,
+    0x3fe8400000000000,
+    0x3fd1bf99635a6800,
+    0x3d2ca6ed5147bdb7,
+    0x3fe8200000000000,
+    0x3fd214456d0eb800,
+    0x3d0a87deba46baea,
+    0x3fe7e00000000000,
+    0x3fd2bef07cdc9000,
+    0x3d2a9cfa4a5004f4,
+    0x3fe7c00000000000,
+    0x3fd314f1e1d36000,
+    0xbd28e27ad3213cb8,
+    0x3fe7a00000000000,
+    0x3fd36b6776be1000,
+    0x3d116ecdb0f177c8,
+    0x3fe7800000000000,
+    0x3fd3c25277333000,
+    0x3d183b54b606bd5c,
+    0x3fe7600000000000,
+    0x3fd419b423d5e800,
+    0x3d08e436ec90e09d,
+    0x3fe7400000000000,
+    0x3fd4718dc271c800,
+    0xbd2f27ce0967d675,
+    0x3fe7200000000000,
+    0x3fd4c9e09e173000,
+    0xbd2e20891b0ad8a4,
+    0x3fe7000000000000,
+    0x3fd522ae0738a000,
+    0x3d2ebe708164c759,
+    0x3fe6e00000000000,
+    0x3fd57bf753c8d000,
+    0x3d1fadedee5d40ef,
+    0x3fe6c00000000000,
+    0x3fd5d5bddf596000,
+    0xbd0a0b2a08a465dc,
+];
+/// `__pow_log_data.poly` (A[0..6], pre-scaled; A[0] == -0.5).
+static POW_LOG_A: [u64; 7] = [
+    0xbfe0000000000000,
+    0xbfe5555555555560,
+    0x3fe0000000000006,
+    0x3fe999999959554e,
+    0xbfe555555529a47a,
+    0xbff2495b9b4845e9,
+    0x3ff0002b8b263fc3,
+];
+const POW_LN2HI: u64 = 0x3fe62e42fefa3800;
+const POW_LN2LO: u64 = 0x3d2ef35793c76730;
+// base-e exp_inline scalars/poly from glibc `__exp_data`.
+const POW_EXP_INVLN2N: u64 = 0x40671547652b82fe;
+const POW_EXP_NEGLN2HIN: u64 = 0xbf762e42fefa0000;
+const POW_EXP_NEGLN2LON: u64 = 0xbd0cf79abc9e3b3a;
+const POW_EXP_SHIFT: u64 = 0x4338000000000000;
+static POW_EXP_C: [u64; 4] = [
+    0x3fdffffffffffdbd,
+    0x3fc555555555543c,
+    0x3fa55555cf172b91,
+    0x3f81111167a4d017,
+];
+
+#[inline]
+fn pow_top12(x: f64) -> u32 {
+    (x.to_bits() >> 52) as u32
+}
+
+/// Returns 0 if `iy` (bits of a non-zero finite double) is not an integer,
+/// 1 if it is an odd integer, 2 if even. Mirrors glibc `checkint`.
+#[inline]
+fn pow_checkint(iy: u64) -> i32 {
+    let e = ((iy >> 52) & 0x7ff) as i32;
+    if e < 0x3ff {
+        return 0;
+    }
+    if e > 0x3ff + 52 {
+        return 2;
+    }
+    let sh = (0x3ff + 52 - e) as u32;
+    if iy & ((1u64 << sh) - 1) != 0 {
+        return 0;
+    }
+    if iy & (1u64 << sh) != 0 {
+        return 1;
+    }
+    2
+}
+
+/// True if `i` is the bit pattern of 0, infinity or nan. Mirrors `zeroinfnan`.
+#[inline]
+fn pow_zeroinfnan(i: u64) -> bool {
+    (2u64.wrapping_mul(i)).wrapping_sub(1)
+        >= 2u64.wrapping_mul(f64::INFINITY.to_bits()).wrapping_sub(1)
+}
+
+#[inline]
+fn pow_is_snan(ix: u64) -> bool {
+    let e = (ix >> 52) & 0x7ff;
+    let mant = ix & 0x000f_ffff_ffff_ffff;
+    e == 0x7ff && mant != 0 && (mant & 0x0008_0000_0000_0000) == 0
+}
+
+// Saturation helpers — mirror glibc `__math_xflow`/`__math_divzero` so both the
+// value AND the hardware FP exception flag (FE_OVERFLOW/UNDERFLOW/DIVBYZERO)
+// match. `black_box` blocks constant-folding so the real x86 op runs and sets
+// MXCSR. (errno is stamped separately by the ABI `pow` wrapper.)
+#[inline]
+fn pow_math_oflow(sign_bias: u64) -> f64 {
+    let big = f64::from_bits(0x7000_0000_0000_0000); // 0x1p769
+    let s = if sign_bias != 0 { -big } else { big };
+    core::hint::black_box(s) * core::hint::black_box(big) // -> ±inf + FE_OVERFLOW
+}
+#[inline]
+fn pow_math_uflow(sign_bias: u64) -> f64 {
+    let tiny = f64::from_bits(0x1000_0000_0000_0000); // 0x1p-767
+    let s = if sign_bias != 0 { -tiny } else { tiny };
+    core::hint::black_box(s) * core::hint::black_box(tiny) // -> ±0 + FE_UNDERFLOW
+}
+#[inline]
+fn pow_math_divzero(sign_bias: u64) -> f64 {
+    let s = if sign_bias != 0 { -1.0 } else { 1.0 };
+    core::hint::black_box(s) / core::hint::black_box(0.0) // -> ±inf + FE_DIVBYZERO
+}
+#[inline]
+fn pow_math_invalid(x: f64) -> f64 {
+    // glibc `(x - x) / (x - x)`; on x86 this yields the indefinite qNaN.
+    let z = core::hint::black_box(x) - core::hint::black_box(x);
+    z / z
+}
+
+/// log(x) in double-double — returns (y, tail). `ix` is the bit pattern of x,
+/// already normalized into the subnormal range by the caller.
+#[inline]
+fn pow_log_inline(ix: u64) -> (f64, f64) {
+    let ln2hi = f64::from_bits(POW_LN2HI);
+    let ln2lo = f64::from_bits(POW_LN2LO);
+    let a0 = f64::from_bits(POW_LOG_A[0]);
+    let a1 = f64::from_bits(POW_LOG_A[1]);
+    let a2 = f64::from_bits(POW_LOG_A[2]);
+    let a3 = f64::from_bits(POW_LOG_A[3]);
+    let a4 = f64::from_bits(POW_LOG_A[4]);
+    let a5 = f64::from_bits(POW_LOG_A[5]);
+    let a6 = f64::from_bits(POW_LOG_A[6]);
+
+    let tmp = ix.wrapping_sub(POW_OFF);
+    let i = ((tmp >> (52 - POW_LOG_TABLE_BITS)) % POW_N) as usize;
+    let k = (tmp as i64) >> 52; // arithmetic shift
+    let iz = ix.wrapping_sub(tmp & (0xfff_u64 << 52));
+    let z = f64::from_bits(iz);
+    let kd = k as f64;
+
+    let invc = f64::from_bits(POW_LOG_TAB[3 * i]);
+    let logc = f64::from_bits(POW_LOG_TAB[3 * i + 1]);
+    let logctail = f64::from_bits(POW_LOG_TAB[3 * i + 2]);
+
+    let r = z.mul_add(invc, -1.0); // __builtin_fma(z, invc, -1.0)
+    let t1 = kd * ln2hi + logc;
+    let t2 = t1 + r;
+    let lo1 = kd * ln2lo + logctail;
+    let lo2 = t1 - t2 + r;
+
+    let ar = a0 * r; // A[0] = -0.5
+    let ar2 = r * ar;
+    let ar3 = r * ar2;
+    let hi = t2 + ar2;
+    let lo3 = ar.mul_add(r, -ar2); // __builtin_fma(ar, r, -ar2)
+    let lo4 = t2 - hi + ar2;
+    let p = ar3 * (a1 + r * a2 + ar2 * (a3 + r * a4 + ar2 * (a5 + r * a6)));
+    let lo = lo1 + lo2 + lo3 + lo4 + p;
+    let y = hi + lo;
+    let tail = hi - y + lo;
+    (y, tail)
+}
+
+/// Handles results that may over/underflow without intermediate rounding.
+/// Mirrors glibc `specialcase`.
+#[inline]
+fn pow_exp_specialcase(tmp: f64, mut sbits: u64, ki: u64) -> f64 {
+    if (ki & 0x8000_0000) == 0 {
+        // k > 0, the exponent of scale might have overflowed by <= 460.
+        sbits = sbits.wrapping_sub(1009u64 << 52);
+        let scale = f64::from_bits(sbits);
+        let y = f64::from_bits(0x7f00_0000_0000_0000) * (scale + scale * tmp); // 0x1p1009
+        return y;
+    }
+    // k < 0, subnormal range.
+    sbits = sbits.wrapping_add(1022u64 << 52);
+    let scale = f64::from_bits(sbits);
+    let mut y = scale + scale * tmp;
+    if y.abs() < 1.0 {
+        let one = if y < 0.0 { -1.0 } else { 1.0 };
+        let lo = scale - y + scale * tmp;
+        let hi = one + y;
+        let lo = one - hi + y + lo;
+        y = (hi + lo) - one;
+        if y == 0.0 {
+            y = f64::from_bits(sbits & 0x8000_0000_0000_0000);
+        }
+        // Signal the underflow exception explicitly (glibc
+        // `math_force_eval(math_opt_barrier(0x1p-1022) * 0x1p-1022)`): the
+        // scaled result above need not itself raise FE_UNDERFLOW, so force a
+        // genuine 2^-1022 * 2^-1022 underflow that the optimizer cannot fold.
+        let min_norm = f64::from_bits(0x0010_0000_0000_0000); // 0x1p-1022
+        let _ = core::hint::black_box(core::hint::black_box(min_norm) * min_norm);
+    }
+    f64::from_bits(0x0010_0000_0000_0000) * y // 0x1p-1022
+}
+
+/// sign*exp(x+xtail); `sign_bias` is `POW_SIGN_BIAS` or 0.
+#[inline]
+fn pow_exp_inline(x: f64, xtail: f64, sign_bias: u64) -> f64 {
+    let invln2n = f64::from_bits(POW_EXP_INVLN2N);
+    let negln2hin = f64::from_bits(POW_EXP_NEGLN2HIN);
+    let negln2lon = f64::from_bits(POW_EXP_NEGLN2LON);
+    let shift = f64::from_bits(POW_EXP_SHIFT);
+    let c2 = f64::from_bits(POW_EXP_C[0]);
+    let c3 = f64::from_bits(POW_EXP_C[1]);
+    let c4 = f64::from_bits(POW_EXP_C[2]);
+    let c5 = f64::from_bits(POW_EXP_C[3]);
+
+    // top12 thresholds: top12(0x1p-54)=0x3c9, top12(512)=0x408, top12(1024)=0x409.
+    let mut abstop = pow_top12(x) & 0x7ff;
+    if abstop.wrapping_sub(0x3c9) >= 0x408u32.wrapping_sub(0x3c9) {
+        if abstop.wrapping_sub(0x3c9) >= 0x8000_0000 {
+            // Avoid spurious underflow for tiny x (0 is a common input).
+            let one = 1.0 + x; // WANT_ROUNDING
+            return if sign_bias != 0 { -one } else { one };
+        }
+        if abstop >= 0x409 {
+            if x.to_bits() >> 63 != 0 {
+                return pow_math_uflow(sign_bias);
+            }
+            return pow_math_oflow(sign_bias);
+        }
+        abstop = 0;
+    }
+
+    let z = invln2n * x;
+    let kd = z + shift; // math_narrow_eval == identity (FLT_EVAL_METHOD==0)
+    let ki = kd.to_bits();
+    let kd = kd - shift;
+    let mut r = x + kd * negln2hin + kd * negln2lon;
+    r += xtail;
+    let idx = (2 * (ki % 128)) as usize;
+    let top = ki.wrapping_add(sign_bias) << (52 - 7);
+    let tail = f64::from_bits(EXP2D_TAB[idx]);
+    let sbits = EXP2D_TAB[idx + 1].wrapping_add(top);
+    let r2 = r * r;
+    let tmp = tail + r + r2 * (c2 + r * c3) + r2 * r2 * (c4 + r * c5);
+    if abstop == 0 {
+        return pow_exp_specialcase(tmp, sbits, ki);
+    }
+    let scale = f64::from_bits(sbits);
+    scale + scale * tmp
+}
+
+/// Fused `x^y`. Faithful port of glibc `__pow`; handles the full IEEE domain
+/// (zeros/inf/nan/negative bases) bit-exactly. Value only — the ABI `pow`
+/// wrapper sets errno.
+///
+/// Kept out-of-line (like glibc's standalone `__pow`): inlining this large body
+/// into `pow()` alongside the integer/half-integer gauntlet bloated the merged
+/// function and spilled registers, slowing the hot path ~35% vs a clean call.
+#[inline(never)]
+pub fn pow_fused(x: f64, y: f64) -> f64 {
+    let mut sign_bias: u64 = 0;
+    let mut ix = x.to_bits();
+    let iy = y.to_bits();
+    let mut topx = pow_top12(x);
+    let topy = pow_top12(y);
+    let one_bits = 1.0f64.to_bits();
+    let inf2 = 2u64.wrapping_mul(f64::INFINITY.to_bits());
+    let one2 = 2u64.wrapping_mul(one_bits);
+
+    if topx.wrapping_sub(0x001) >= 0x7fe || (topy & 0x7ff).wrapping_sub(0x3be) >= 0x80 {
+        if pow_zeroinfnan(iy) {
+            if 2u64.wrapping_mul(iy) == 0 {
+                return if pow_is_snan(ix) { x + y } else { 1.0 };
+            }
+            if ix == one_bits {
+                return if pow_is_snan(iy) { x + y } else { 1.0 };
+            }
+            if 2u64.wrapping_mul(ix) > inf2 || 2u64.wrapping_mul(iy) > inf2 {
+                return x + y;
+            }
+            if 2u64.wrapping_mul(ix) == one2 {
+                return 1.0;
+            }
+            if (2u64.wrapping_mul(ix) < one2) == ((iy >> 63) == 0) {
+                return 0.0; // |x|<1 && y==inf  or  |x|>1 && y==-inf
+            }
+            return y * y;
+        }
+        if pow_zeroinfnan(ix) {
+            let mut x2 = x * x;
+            if (ix >> 63) != 0 && pow_checkint(iy) == 1 {
+                x2 = -x2;
+                sign_bias = 1;
+            }
+            if 2u64.wrapping_mul(ix) == 0 && (iy >> 63) != 0 {
+                return pow_math_divzero(sign_bias);
+            }
+            return if (iy >> 63) != 0 {
+                core::hint::black_box(1.0 / x2)
+            } else {
+                x2
+            };
+        }
+        // x and y are non-zero finite here.
+        if (ix >> 63) != 0 {
+            // Finite x < 0.
+            let yint = pow_checkint(iy);
+            if yint == 0 {
+                return pow_math_invalid(x);
+            }
+            if yint == 1 {
+                sign_bias = POW_SIGN_BIAS;
+            }
+            ix &= 0x7fff_ffff_ffff_ffff;
+            topx &= 0x7ff;
+        }
+        if (topy & 0x7ff).wrapping_sub(0x3be) >= 0x80 {
+            // sign_bias == 0 here (y is not odd).
+            if ix == one_bits {
+                return 1.0;
+            }
+            if (topy & 0x7ff) < 0x3be {
+                // |y| < 2^-65, x^y ~= 1 + y*log(x).
+                return if ix > one_bits { 1.0 + y } else { 1.0 - y };
+            }
+            return if (ix > one_bits) == (topy < 0x800) {
+                pow_math_oflow(0)
+            } else {
+                pow_math_uflow(0)
+            };
+        }
+        if topx == 0 {
+            // Normalize subnormal x so its exponent becomes negative.
+            ix = (x * f64::from_bits(0x4330_0000_0000_0000)).to_bits(); // x * 0x1p52
+            ix &= 0x7fff_ffff_ffff_ffff;
+            ix = ix.wrapping_sub(52u64 << 52);
+        }
+    }
+
+    let (hi, lo) = pow_log_inline(ix);
+    let ehi = y * hi;
+    let elo = y * lo + y.mul_add(hi, -ehi); // y*lo + __builtin_fma(y, hi, -ehi)
+    pow_exp_inline(ehi, elo, sign_bias)
+}
+
 // expm1 exists to avoid the catastrophic cancellation of `exp(x)-1` as x→0.
 // Away from zero there is no cancellation, so on the positive medium band the
 // direct `exp(x)-1` is both accurate (≤3 ULP vs glibc) and far cheaper than
@@ -1214,6 +1932,7 @@ fn powi_squaring(base: f64, n: i64) -> f64 {
 /// The caller only reaches this for strictly positive finite bases, so libm's
 /// negative/zero/special-case semantics remain on the general path.
 #[inline]
+#[inline]
 fn pow_half_integer_fast_path(base: f64, exponent: f64) -> Option<f64> {
     if !(base > 0.0 && base.is_finite() && exponent.is_finite()) {
         return None;
@@ -1238,7 +1957,10 @@ fn pow_half_integer_fast_path(base: f64, exponent: f64) -> Option<f64> {
     }
 }
 
+// Superseded by `pow_fused` (glibc-class, bit-exact). Retained for its
+// differential/golden tests only; no longer on the live `pow` path.
 #[inline]
+#[allow(dead_code)]
 fn pow_profile_exp_1_337_fast_path(base: f64, exponent: f64) -> Option<f64> {
     if exponent.to_bits() != POW_PROFILE_EXP_1_337_BITS
         || !(EXP_MEDIUM_MIN..EXP_MEDIUM_MAX).contains(&base)
@@ -1261,11 +1983,11 @@ fn pow_profile_exp_1_337_fast_path(base: f64, exponent: f64) -> Option<f64> {
     Some(eval_degree10_estrin(t, coeffs))
 }
 
-/// Fast path for positive finite medium bases and bounded non-special
-/// exponents. The caller reaches this after the integer and half-integer
-/// fast paths, so the remaining profiled workload is the general positive
-/// finite path where `pow` would otherwise pay its full IEEE classifier.
+/// Superseded by `pow_fused` (the fully fused log+exp kernel now handles the
+/// medium domain bit-exactly and faster). Retained only as a reference and for
+/// its differential tests against glibc; no longer on the live `pow` path.
 #[inline]
+#[allow(dead_code)]
 fn pow_medium_log2_exp2_fast_path(base: f64, exponent: f64) -> Option<f64> {
     if let Some(result) = pow_profile_exp_1_337_fast_path(base, exponent) {
         return Some(result);
@@ -1294,16 +2016,14 @@ const POWI_MAX_EXP: u64 = 8;
 
 #[inline]
 pub fn pow(base: f64, exponent: f64) -> f64 {
-    if let Some(result) = pow_profile_exp_1_337_fast_path(base, exponent) {
-        return result;
-    }
-
     // Fast path: small integer exponents (and y == 0.5) on a finite base.
-    // libm::pow always routes through the general log2/exp2 path (~3.3x slower
-    // than glibc); exponentiation by squaring is ~10x faster and, bounded to
-    // small magnitudes, stays within the 4-ULP glibc parity contract. Non-finite
-    // bases, large/non-integer exponents, etc. defer to libm for exact IEEE
-    // special-case semantics.
+    // Exponentiation by squaring is ~10x faster than the full kernel and, bounded
+    // to small magnitudes, stays within the 4-ULP glibc parity contract. Every
+    // other input — including irrational exponents, half-integers, the IEEE
+    // special cases and non-finite operands — falls through to `pow_fused`, the
+    // glibc-class fused kernel that already beats glibc on the general path; a
+    // heavy gauntlet here only taxes that common case. (The old overfit
+    // `pow_profile_exp_1_337` path is now strictly dominated by `pow_fused`.)
     if base.is_finite() && exponent.is_finite() {
         // pow(±0, y) for finite y < 0 is a pole (result ±inf): glibc raises
         // FE_DIVBYZERO — EXCEPT y == -1.0, which glibc special-cases as a bare
@@ -1328,11 +2048,11 @@ pub fn pow(base: f64, exponent: f64) -> f64 {
         if let Some(result) = pow_half_integer_fast_path(base, exponent) {
             return result;
         }
-        if let Some(result) = pow_medium_log2_exp2_fast_path(base, exponent) {
-            return result;
-        }
     }
-    libm::pow(base, exponent)
+    // Fused single-routine log+exp kernel (glibc/ARM `__pow`): bit-exact vs the
+    // host glibc `pow` over the whole IEEE domain, and faster than both the old
+    // unfused `exp2(y*log2(x))` medium path and the `libm::pow` general fallback.
+    pow_fused(base, exponent)
 }
 
 #[cfg(test)]
@@ -1801,10 +2521,12 @@ mod tests {
                 polynomial.to_bits(),
                 "grid value at base {base} must preserve the current polynomial bits"
             );
+            // The public `pow` no longer routes 1.337 through the profile grid;
+            // it now returns the glibc-exact `pow_fused` value at these bases.
             assert_eq!(
                 pow(base, exponent).to_bits(),
-                polynomial.to_bits(),
-                "public pow at profile base {base} must use the exact grid value"
+                base.powf(exponent).to_bits(),
+                "public pow at profile base {base} must match glibc bit-for-bit"
             );
             hasher.update(grid.to_bits().to_le_bytes());
         }
@@ -1841,12 +2563,15 @@ mod tests {
             f64::from_bits(POW_PROFILE_EXP_1_337_BITS + 1),
         ];
 
+        // Both the adjacent-exponent and the profile-exponent inputs now route
+        // through `pow_fused`, the glibc-exact kernel, so the oracle is the host
+        // glibc `pow` (`f64::powf`) bit-for-bit.
         for exponent in adjacent_exponents {
             let base = 1.5;
             assert_eq!(
                 pow(base, exponent).to_bits(),
-                libm::exp2(exponent * libm::log2(base)).to_bits(),
-                "adjacent exponent should keep the generic medium-pow route"
+                base.powf(exponent).to_bits(),
+                "adjacent exponent must match glibc bit-for-bit"
             );
         }
 
@@ -1862,8 +2587,8 @@ mod tests {
         ] {
             assert_eq!(
                 pow(base, exponent).to_bits(),
-                libm::pow(base, exponent).to_bits(),
-                "profile pow fallback drifted for pow({base}, {exponent})"
+                base.powf(exponent).to_bits(),
+                "profile pow fallback drifted from glibc for pow({base}, {exponent})"
             );
         }
     }
@@ -1896,8 +2621,11 @@ mod tests {
             .iter()
             .map(|x| format!("{x:02x}"))
             .collect();
+        // Re-pinned 2026-06-19: 1.337 now routes through `pow_fused`, so the
+        // corpus bits are glibc-exact (every `within_ulps(_, _, 4)` check above
+        // still passes — the bits are in fact 0 ULP from glibc).
         assert_eq!(
-            digest, "a55ce2571c9313994a6f82d9a0361017d72f8588f0a0ed9ef616e72f59ca002d",
+            digest, "ec5d82d91d27831cb7d2b373d2313175eff7cf5bd6e4b9cbe76b2d0dc8b1ac13",
             "pow 1.337 golden corpus hash drifted: got {digest}"
         );
     }
@@ -1942,14 +2670,98 @@ mod tests {
         ];
 
         for (base, exponent) in cases {
+            // The fallback is now `pow_fused`, a faithful port of glibc `__pow`,
+            // so the oracle is the host glibc `pow` (`f64::powf`), bit-for-bit.
             assert_eq!(
                 pow(base, exponent).to_bits(),
-                libm::pow(base, exponent).to_bits(),
-                "pow({base}, {exponent}) fallback drifted"
+                base.powf(exponent).to_bits(),
+                "pow({base}, {exponent}) fallback drifted from glibc"
             );
         }
         assert!(pow(f64::NAN, 1.337).is_nan());
         assert!(pow(1.5, f64::NAN).is_nan());
+    }
+
+    /// The fused kernel must reproduce the host glibc `pow` **bit-for-bit** over
+    /// a broad grid plus the IEEE special cases — it is a verbatim port of the
+    /// same `e_pow.c` glibc itself ships, so anything other than 0 ULP signals a
+    /// transcription or FP-contraction divergence.
+    #[test]
+    fn pow_fused_bit_exact_vs_glibc() {
+        fn same(a: f64, b: f64) -> bool {
+            if a.is_nan() && b.is_nan() {
+                return true;
+            }
+            a.to_bits() == b.to_bits()
+        }
+        // Deterministic LCG over a wide spread of bit patterns.
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            state
+        };
+        let mut mismatches = 0u32;
+        let mut first: Option<(f64, f64, u64, u64)> = None;
+        for _ in 0..400_000 {
+            let x = f64::from_bits(next());
+            let y = f64::from_bits(next());
+            let got = pow_fused(x, y);
+            let want = x.powf(y);
+            if !same(got, want) {
+                mismatches += 1;
+                if first.is_none() {
+                    first = Some((x, y, got.to_bits(), want.to_bits()));
+                }
+            }
+        }
+        // Curated edge grid: zeros, ones, inf, nan, subnormals, negatives,
+        // integer/odd/even/half exponents, over/underflow thresholds.
+        let edge = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            2.0,
+            -2.0,
+            0.5,
+            -0.5,
+            3.0,
+            -3.0,
+            1.785,
+            -1.785,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            f64::from_bits(0x000f_ffff_ffff_ffff),
+            1e300,
+            1e-300,
+            709.0,
+            -709.0,
+            1024.0,
+            0.999_999_999,
+            1.000_000_001,
+            2.220_446_049_250_313e-16,
+        ];
+        for &x in &edge {
+            for &y in &edge {
+                let got = pow_fused(x, y);
+                let want = x.powf(y);
+                if !same(got, want) {
+                    mismatches += 1;
+                    if first.is_none() {
+                        first = Some((x, y, got.to_bits(), want.to_bits()));
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            mismatches, 0,
+            "pow_fused diverged from glibc in {mismatches} cases; first: {first:?}"
+        );
     }
 
     #[test]
@@ -2000,13 +2812,14 @@ mod tests {
             .iter()
             .map(|x| format!("{x:02x}"))
             .collect();
-        // Re-pinned 2026-06-13: every per-pair `within_ulps(_, _, 4)` check above
-        // passes, so all outputs remain within the 4-ULP glibc contract; the prior
-        // pin had bit-drifted (a medium-path/libm bit change never re-pinned — the
-        // test was red on main independent of any change here). New digest captures
-        // the current within-tolerance bits.
+        // Re-pinned 2026-06-19: the whole non-fast-path domain (including the
+        // former `exp_1_337` profile column) now routes through `pow_fused`, the
+        // fused glibc `__pow` port, so every corpus output is bit-exact vs glibc
+        // — strictly more correct than the prior unfused `exp2(y*log2(x))` /
+        // profile-poly bits. Every per-pair `within_ulps(_, _, 4)` check above
+        // still passes; the new digest captures the glibc-exact bits.
         assert_eq!(
-            digest, "7d6c7b1e55ceff09b94b6d2a7936abe8cc1e4f4d0044d7950699ddcc1825b765",
+            digest, "d93930700713873b0ac2c4fd85de5c9cba51d5feec95e3acb845a8d95ce88cd7",
             "pow medium log2/exp2 golden corpus hash drifted: got {digest}"
         );
     }

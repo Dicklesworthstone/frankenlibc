@@ -1126,3 +1126,58 @@ Retry-condition predicate: do not retry a global fallback-table CAS rewrite or
 strict free-path ownership elision as standalone allocator levers. Next work
 should isolate `calloc` zero-fill versus `free` metadata cost and then benchmark
 a deeper metadata/allocator deployment change.
+
+## 2026-06-19 `bd-gzslkk` fused f64 `pow` log+exp kernel — bit-exact + parity
+
+Target: the f64 `pow` general/medium path, which previously routed through an
+unfused 2-call `exp2(y*log2(x))` medium composition (≈1 ULP) or the slow
+`libm::pow` fdlibm fallback (out of medium range). Landed a verbatim port of
+glibc 2.42 / ARM optimized-routines `e_pow.c` (FMA branch) as
+`frankenlibc_core::math::exp::pow_fused`: the `__pow_log_data` double-double log
+table + base-e `__exp_data` exp kernel (the exp `tab` is shared with — and was
+verified bit-identical to — the existing `EXP2D_TAB`). Fidelity rule applied
+throughout: glibc `__builtin_fma` → Rust `mul_add` (one rounding), glibc plain
+`a*b+c` → `a*b+c` (two roundings; Rust does not auto-contract).
+
+Correctness (the headline result): `pow_fused` is **bit-exact vs the host glibc
+`pow`** — 0 ULP over 400,000 random bit-pattern pairs plus a curated IEEE edge
+grid (zeros/±inf/nan/subnormals/negatives/integer-odd-even/over-underflow), via
+`pow_fused_bit_exact_vs_glibc`. The saturation helpers reproduce glibc's value
+**and** FP-exception flags (FE_OVERFLOW/UNDERFLOW/DIVBYZERO via the real
+`0x1p769*0x1p769` / `0x1p-767*0x1p-767` / `1/0` ops, plus the `specialcase`
+subnormal underflow barrier), so `conformance_diff_fp_exceptions` (incl. the
+`pow(0.1,400)` FE_UNDERFLOW case), `conformance_math_errno` (20), and
+`conformance_diff_{pow_special,math,math_exact,math_special}` all stay green.
+
+Perf — measured fl-vs-glibc, custom in-tree bench pinned to `ovh-a`, 3 runs,
+back-to-back same-machine arms (1000-element irrational-exponent sweep):
+
+| arm | exponent | fl ns/call | glibc ns/call | ratio |
+|---|---|---|---|---|
+| `pow_fused` direct | 2.1 / -2.3 / 0.7 | ~14.2 | ~14.1 | **0.99–1.02 (parity)** |
+| half-integer fast path | 1.5 | ~7.8 | ~14.2 | **0.55 (win, retained)** |
+| full `pow()` (gauntlet) | 2.1 / -2.3 / 0.7 | ~19.4 | ~14.1 | 1.36 |
+
+The fused kernel is at glibc parity (same algorithm → that is the ceiling) and
+is strictly faster than the prior fl medium path (one fused kernel vs two
+inlined log2+exp2 calls) and the `libm::pow` fallback. Integer (powi squaring)
+and half-integer (sqrt) fast paths are retained and still win. The
+bench-overfit `pow_profile_exp_1_337` path is now strictly dominated by the
+glibc-exact `pow_fused` and was removed from the live path.
+
+Negative evidence: the full `pow()` shows 1.36x in the micro-bench because its
+integer/half-integer gauntlet inlines into the bench's tight accumulation loop;
+`#[inline(never)]` on `pow_fused` did **not** move it (so it is the inlined
+gauntlet branches in the hot loop, not register-spill bloat). This is a bench
+artifact for the in-tree symbol — the deployed `extern "C" pow` dispatches
+through the `binary_entry` membrane (~180 ns, `bd-n40in2`) which dwarfs the
+~5 ns gauntlet, so the gauntlet is not worth trimming at the cost of the
+integer-exponent wins. Win/loss/neutral: 1 correctness win (bit-exact, was
+1–4 ULP), 1 kernel-perf parity (up from a slower 2-call/libm path), 0 perf
+regressions; integer/half-integer wins retained.
+
+Retry-condition predicate: do not re-attempt to beat glibc `pow` on the **same**
+algorithm — `pow_fused` is a verbatim glibc port, so it is at parity by
+construction; a further win needs either a lower-latency pow algorithm or
+removing the membrane (`bd-n40in2`), not kernel micro-tuning. Do not re-pin the
+pow golden corpora to pre-fused bits.
