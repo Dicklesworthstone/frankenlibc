@@ -21,6 +21,7 @@ retried and real wins are confirmed with numbers.
 
 | Date | Lever / bead | Bench | fl | glibc | ratio | verdict | action |
 |------|--------------|-------|----|----|-------|---------|--------|
+| 2026-06-20 | strict `calloc/free` one-slot recycle + live-slot + inline zero candidate (`bd-f874go`, BlackThrush/cod-b) | `calloc_glibc_bench calloc_cycle`, final same-worker `vmi1153651` run | p50 16/256/4096/65536/262144/1048576/4194304 B = 91.418 / 421.490 / 487.234 / 1496.238 / 4924.500 / 21254.030 / 104458.013 ns | 11.196 / 37.891 / 116.207 / 1016.709 / 4422.657 / 20124.078 / 103633.044 ns | 8.16x / 11.12x / 4.19x / 1.47x / 1.11x / 1.06x / 1.01x | LOSS vs glibc / REJECT vs prior FL | Reverted. It only self-won 16 B (0.223x vs `fl_old` p50); target 256 B lost vs `fl_old` (1.012x), 4096 B lost (1.054x), 65536 B lost (1.018x), and 4 MiB p50/tails regressed. Local routing baseline plus simple-slot and live-slot remote candidates are recorded below. Do not retry one-slot hot-class recycle without a new ownership model or a multi-block/thread-local slab with same-worker proof. |
 | 2026-06-20 | deployed strict `getenv` fused name validation + raw pointer environ compare (`bd-2g7oyh`, BlackThrush/cod-a) | `strtol_glibc_bench` `getenv_hit`/`getenv_miss`, same-worker `vmi1227854` A/B | hit 26.42 -> 19.15 ns; miss 36.10 -> 27.66 ns | hit 10.56 / 10.14 ns; miss 13.58 / 14.68 ns | 2.50x -> 1.89x / 2.66x -> 1.88x | WIN gap-cut / still LOSS vs glibc | Keep. Fuses the strict fast-path NUL scan and `=` validation, then compares environment entries by raw pointer+length to avoid a second name pass. Focused getenv differential conformance passed 2/0, metamorphic getenv passed 9/0, and `cargo build -p frankenlibc-abi --release` passed via `rch` on `vmi1227854`. Evidence: `tests/artifacts/perf/bd-2g7oyh-getenv-fused-name-scan.md`. |
 | 2026-06-20 | `qsort_16_i32` deployed small-sort measurement apparatus (`bd-2g7oyh`, BlackThrush/cod-a) | `glibc_baseline_bench` `qsort_16_i32`; core screen on `hz1`, ABI screen on `vmi1293453` | core 160.522 ns; ABI 12562.578 ns | core 244.160 ns; ABI 12476.459 ns | core 0.657x / ABI 1.007x | WIN core / NEUTRAL ABI | No qsort source change. Added the small-qsort bench row and an ABI arm to disprove the stale deployed 12x-loss route: the core algorithm already wins, and deployed ABI is effectively parity. Evidence: `tests/artifacts/perf/bd-2g7oyh-getenv-fused-name-scan.md`. |
 | 2026-06-20 | strict pure-literal `snprintf("literal")` read-only format cache + inlined word copy (`bd-zexi06`, BlackThrush/cod-b) | `stdio_glibc_baseline_bench` literal group, final same-worker `hz1` run | baseline 1.9118 us -> final 10.960 ns mean | baseline 26.287 ns; final 22.036 ns mean | 72.73x loss -> 0.497x WIN | WIN | Keep. The first no-render shortcut still lost on `vmi1227854` (55.287 vs 14.563 ns, 3.80x) and the read-only length cache still lost on `vmi1149989` (27.941 vs 17.671 ns, 1.58x); only the cache plus exact unaligned word copy beat glibc. Adjacent exact string guards on `hz1` still win: `%s\n` 24.130 vs 35.897 ns (0.672x), `%s` 23.474 vs 28.263 ns (0.831x). Focused `diff_snprintf` conformance passed 7/0; `cargo build -p frankenlibc-abi --release` passed. Evidence: `tests/artifacts/perf/bd-zexi06-cod-b-literal-snprintf.md`. |
@@ -1874,6 +1875,74 @@ guard) or a materially different proof-carrying path that removes fallback-table
 participation for common strict `calloc/free` pairs.
 
 Evidence: `tests/artifacts/perf/bd-f874go-fallback-hot-slot.md`.
+
+## 2026-06-20 bd-f874go strict calloc one-slot recycle/live-slot — REJECTED/REVERTED
+
+Targeted the biggest remaining deployed strict `calloc/free` rows by trying a
+bounded exact-class cache for 16/256/4096-byte blocks. The alien-graveyard
+allocator shape was intentionally radical but small: retain one freed host block
+per hot class, skip fallback-table participation while the block is live, and
+zero recycled blocks directly. Three remote candidates were measured and the
+source was manually reverted because the target 256/4096 rows did not improve.
+
+Local fallback routing baseline (not acceptance evidence; `rch` remote preflight
+timed out and ran local):
+
+| Size | FL p50 | glibc p50 | FL/glibc | Verdict |
+|---:|---:|---:|---:|---|
+| 16 | 44.015 ns | 5.243 ns | 8.40x | LOSS |
+| 256 | 1110.918 ns | 18.938 ns | 58.66x | LOSS |
+| 4096 | 1279.538 ns | 48.138 ns | 26.58x | LOSS |
+| 65536 | 1761.087 ns | 585.685 ns | 3.01x | LOSS |
+| 262144 | 3441.133 ns | 2200.207 ns | 1.56x | LOSS |
+| 1048576 | 14152.584 ns | 11401.449 ns | 1.24x | LOSS |
+| 4194304 | 49718.937 ns | 48043.578 ns | 1.03x | NEUTRAL |
+
+Candidate A: simple recycle slot, remote `vmi1156319`.
+
+| Size | FL p50 | `fl_old` p50 | glibc p50 | FL/glibc | FL/old | Verdict |
+|---:|---:|---:|---:|---:|---:|---|
+| 16 | 100.707 ns | 528.753 ns | 10.669 ns | 9.44x | 0.190x | self-WIN / glibc-LOSS |
+| 256 | 570.316 ns | 569.806 ns | 35.971 ns | 15.86x | 1.001x | NEUTRAL/LOSS |
+| 4096 | 761.901 ns | 731.443 ns | 148.259 ns | 5.14x | 1.042x | LOSS |
+| 65536 | 1498.860 ns | 1502.169 ns | 1047.607 ns | 1.43x | 0.998x | NEUTRAL/LOSS |
+| 262144 | 4795.098 ns | 4796.953 ns | 4311.876 ns | 1.11x | 1.000x | NEUTRAL/LOSS |
+| 1048576 | 21769.371 ns | 21324.687 ns | 20645.461 ns | 1.05x | 1.021x | LOSS |
+| 4194304 | 98737.060 ns | 93648.625 ns | 94639.786 ns | 1.04x | 1.054x | LOSS |
+
+Candidate B: add cached-live metadata slot to bypass fallback table while the
+recycled block is checked out, remote `vmi1153651`.
+
+| Size | FL p50 | `fl_old` p50 | glibc p50 | FL/glibc | FL/old | Verdict |
+|---:|---:|---:|---:|---:|---:|---|
+| 16 | 101.979 ns | 568.087 ns | 12.271 ns | 8.31x | 0.180x | self-WIN / glibc-LOSS |
+| 256 | 571.500 ns | 558.744 ns | 37.211 ns | 15.36x | 1.023x | LOSS |
+| 4096 | 784.407 ns | 863.198 ns | 151.651 ns | 5.17x | 0.909x | self-WIN / glibc-LOSS |
+| 65536 | 1616.794 ns | 1571.560 ns | 1160.581 ns | 1.39x | 1.029x | LOSS |
+| 262144 | 5254.861 ns | 5360.870 ns | 4571.917 ns | 1.15x | 0.980x | LOSS vs glibc |
+| 1048576 | 22434.757 ns | 22069.578 ns | 20248.738 ns | 1.11x | 1.017x | LOSS |
+| 4194304 | 100970.802 ns | 99175.500 ns | 106888.532 ns | 0.94x | 1.018x | glibc-WIN / old-LOSS |
+
+Candidate C: inline recycled-zero writes (`u128` for 16 B, `rep stosq` for
+256/4096 B), final same-worker remote `vmi1153651`.
+
+| Size | FL p50 | `fl_old` p50 | glibc p50 | FL/glibc | FL/old | Verdict |
+|---:|---:|---:|---:|---:|---:|---|
+| 16 | 91.418 ns | 410.785 ns | 11.196 ns | 8.16x | 0.223x | self-WIN / glibc-LOSS |
+| 256 | 421.490 ns | 416.309 ns | 37.891 ns | 11.12x | 1.012x | LOSS |
+| 4096 | 487.234 ns | 462.130 ns | 116.207 ns | 4.19x | 1.054x | LOSS |
+| 65536 | 1496.238 ns | 1469.634 ns | 1016.709 ns | 1.47x | 1.018x | LOSS |
+| 262144 | 4924.500 ns | 5075.574 ns | 4422.657 ns | 1.11x | 0.970x | glibc-LOSS |
+| 1048576 | 21254.030 ns | 22711.327 ns | 20124.078 ns | 1.06x | 0.936x | glibc-LOSS |
+| 4194304 | 104458.013 ns | 100715.574 ns | 103633.044 ns | 1.01x | 1.037x | NEUTRAL/LOSS |
+
+Win/loss/neutral: the final candidate scored 1 useful self-win (16 B) but
+missed the target rows: 256 B and 4096 B both regressed versus `fl_old`, and the
+4 MiB row showed noisy p50/tail regression. Action: source and test hunks
+reverted; central evidence kept. Retry predicate: do not retry one-slot hot-class
+recycling. A future allocator lever needs either a multi-block/thread-local slab
+with same-worker proof, or a proof-carrying path that removes fallback metadata
+for strict `calloc/free` without changing strict ownership semantics.
 
 ## 2026-06-20 rand() — 1.64x deployed loss (single-threaded lock-skip fix BUILT but HELD: pre-existing conformance red)
 
