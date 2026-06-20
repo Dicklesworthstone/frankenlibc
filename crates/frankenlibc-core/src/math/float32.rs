@@ -1096,7 +1096,10 @@ pub fn tgammaf(x: f32) -> f32 {
     if x < 0.0 && x.is_finite() && x == x.floor() {
         fe_invalid_f32();
     }
-    libm::tgammaf(x)
+    // `libm::tgammaf` is ~7x slower than glibc; the in-tree f64 `tgamma` fast
+    // kernel (tgamma_reduced) is far more than accurate enough for a
+    // correctly-rounded f32 result, and f32 args widen to f64 exactly.
+    super::special::tgamma(x as f64) as f32
 }
 
 // --- New batch: remquo, sincos, nan, Bessel, compat ---

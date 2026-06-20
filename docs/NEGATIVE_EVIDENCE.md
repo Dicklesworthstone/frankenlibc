@@ -1547,3 +1547,29 @@ Win/loss/neutral: clean WIN — 0 regressions; the bit-exact trig gate (which pi
 sinf(100)/sinf(1e15)) constrained the approach but the FMA reduction happens to
 be correctly-rounded enough to satisfy it. Retry predicate: do not raise
 F32_RED_HI above ~1e15 (2-part split runs out for n > ~2^50).
+
+## 2026-06-20 f32 tgammaf — 7x LOSS → 1.49x (5.1x faster) + bit-exact, via the f64 tgamma kernel
+
+An f32-specials dlmopen survey (erff/erfcf/lgammaf/tgammaf/exp10f/j0f/j1f/asinf/
+acosf/atanf/sinhf/coshf/tanhf/expm1f/log1pf/cbrtf) found **tgammaf was 7.05x
+slower than glibc** (94.92 ns vs 13.46 ns) — striking because f64 `tgamma` is a
+3x WIN. Root cause: `tgammaf` delegated to `libm::tgammaf` (the slow fdlibm
+port), while the in-tree f64 `tgamma` has a fast custom kernel (`tgamma_reduced`,
+~0.3x glibc on f64). Fix (`float32.rs`): `tgammaf(x) = tgamma(x as f64) as f32`
+(f32 widens exactly; the f64 kernel's ~4-ULP-f64 result is far more accurate than
+an f32 needs, so the cast is correctly-rounded). Pole/FE_INVALID handling kept.
+
+Measured (dlmopen glibc, ovh-a): **94.92 ns → 18.67 ns (5.1x faster)**, ratio
+7.05x → **1.49x**. Correctness: a 300,000-sample sweep over the finite-gamma
+domain (-33.5, 35.5) vs glibc tgammaf shows **worst 0 ULP, 0 fails** — the routed
+result is BIT-EXACT to glibc (better than the old libm). math_abi_test (118),
+conformance_math_errno, conformance_diff_fp_exceptions all green.
+
+Win/loss/neutral: a 7x loss cut to a residual 1.49x (the f64 kernel computes at
+f64 precision, ~6 ns more than an f32-native kernel would need) + a correctness
+improvement to bit-exact. Other f32 specials that LOSE (erff 2.1x, sinhf 1.9x,
+exp10f 1.9x, tanhf 1.7x, coshf 1.5x, erfcf 1.5x, j0f/j1f ~1.25x) have NO faster
+f64 sibling to route through (their f64 versions are already only ~parity), so
+they would each need a dedicated ARM-optimized-routines-class f32 kernel port —
+filed as remaining gaps, not attempted here. asinf/acosf/atanf/lgammaf/cbrtf
+already win/tie.
