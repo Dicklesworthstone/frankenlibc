@@ -1352,32 +1352,43 @@ symbol MUST resolve glibc via `dlmopen(LM_ID_NEWLM)` — a plain `extern`/`libc:
 binding resolves to fl's shadowing symbol and silently measures fl-vs-fl (the
 tell: identical numbers in both arms every run).
 
-## 2026-06-20 Stdio membrane: kernel-consult removed from strict mode — 26x→12x
+## 2026-06-20 deployed `snprintf` 20x loss — Stdio kernel-consult is NOT the cause (REVERTED)
 
-Found via a dlmopen microbench: deployed `snprintf("%s")` was **1198 ns vs glibc
-45 ns (26x slower)** — a large, real, previously-unmeasured loss (the
-`glibc_baseline_bench` malloc/string arms use `libc::` which fl's `no_mangle`
-symbols shadow, hiding it). Root cause: `ApiFamily::Stdio` was missing from the
-high-frequency-family fast-path set in `decide()`/`observe()`, so every stdio
-call fell to `decide_strict_observation` — a `#[cold]` full kernel consult
-(reentry guard + panic hook + `k.decide()` with locks) on every call. But that
-function *always overrides the decision to `Allow`* (strict mode is
-ABI-faithful — verified at the `Override to passthrough` block), so the consult
-is pure telemetry; stdio buffer validation/healing runs off `known_remaining`,
-independent of this decision. Added `ApiFamily::Stdio` to the strict-mode decide
-fast-path set and the `observe()` fast-path set (left the hardened-mode set
-unchanged — smaller blast radius, and the conformance gates run strict).
+Found via a dlmopen microbench (real glibc, un-shadowed): deployed `snprintf("%s")`
+is a large, real loss — **fl ~300–1200 ns vs glibc ~15–60 ns, ratio swinging
+12–34x run-to-run**. The `glibc_baseline_bench` malloc/string `libc::` arms hide
+this (fl's `no_mangle` symbols shadow `libc::`, measuring fl-vs-fl).
 
-Measured (dlmopen snprintf microbench, ovh-a): **1198 ns → 753 ns** (26x → 12x
-vs glibc). Broad: benefits every printf/scanf/fwrite/fread-family call in the
-default (strict/unresolved) mode. Conformance green on the deployed fast-path:
-`conformance_diff_{printf_fastpaths(3),asprintf(2),dprintf(3),printf_null_string,
-printf_pointer}`.
+Hypothesis tested: `ApiFamily::Stdio` is missing from the high-frequency-family
+fast-path set in `decide()`/`observe()`, so every stdio call falls to
+`decide_strict_observation` — a `#[cold]` kernel consult (reentry guard + panic
+hook + `k.decide()` with locks). That function always overrides to `Allow`
+(verified), so the consult is pure telemetry and skipping it is behavior-
+preserving (stdio buffer validation/healing runs off `known_remaining`).
 
-Negative evidence / remaining gap: 753 ns is still 12x glibc. The residual is
-NOT the membrane decision — it is `entrypoint_scope` (3x `std::thread_local!`
-`try_with` accesses; the bundling `owned-tls-cache` feature is OFF by default, so
-each is a slow general-dynamic-TLS `__tls_get_addr` + lazy-init check) plus the
-format parse/va-extract. That is a separate, deeper lever (TLS model / trace
-machinery), tracked for follow-up; this entry banks only the kernel-consult
-removal.
+| Attempt | Key evidence | Verdict | Action |
+|---|---|---|---|
+| Add `Stdio` to the strict-mode `decide`+`observe` fast-path family sets | Controlled back-to-back A/B on `ovh-a`, 3 runs each: WITH-fix fl/glibc ratio 19.8 / 22.4 / 23.0 (median **22.4**); WITHOUT-fix 34.4 / 19.7 / 16.7 (median **19.7**). The microbench variance (worker load, the variadic call, TLS) dwarfs the per-call consult cost — the medians OVERLAP and even slightly favor the no-fix arm. No measurable win. | NEUTRAL (unmeasurable) | **Reverted.** |
+
+Conformance was green during the experiment
+(`conformance_diff_{printf_fastpaths,asprintf,dprintf,printf_null_string,
+printf_pointer}`), and the change is structurally consistent with the 6 sibling
+high-frequency families — but with NO measurable benefit and the multi-thread
+telemetry implications of dropping stdio observation unverified, it is not
+shipped. (An initial single-run measurement read 1198→753 ns / 26x→12x; the
+follow-up 6-run A/B showed that was cross-run noise, not the change. Lesson: this
+snprintf microbench is too noisy for a single before/after — always A/B
+back-to-back, and even then the consult cost is below the noise floor.)
+
+Real bottleneck for the snprintf 20x loss (negative evidence): NOT the membrane
+decision. Stubbing `entrypoint_scope` out of `snprintf` did not reduce the time
+either (it rose, within noise). The cost is the **variadic va-arg extraction +
+format-segment parse + `entrypoint_scope` TLS** (`std::thread_local!` `try_with`,
+general-dynamic-TLS `__tls_get_addr`; the bundling `owned-tls-cache` feature is
+OFF by default) — i.e. fl's printf *architecture*, not its membrane. Closing it
+is a deep printf hot-path refactor with a reliable (criterion, dlmopen) stdio
+bench, not a one-line family-set tweak.
+
+Retry-condition predicate: do not re-add `Stdio` to the membrane fast-path sets
+as a perf lever without a reliable, low-variance stdio bench that can resolve a
+sub-50 ns per-call delta; the gain (if any) is below this microbench's noise.

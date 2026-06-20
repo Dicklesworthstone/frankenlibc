@@ -2007,13 +2007,7 @@ pub(crate) fn decide(
     // Strict mode observation path (bd-06bxm.3): consult kernel for evidence
     // but override to passthrough. High-frequency families still fast-path.
     if strict_passthrough_active() {
-        // High-frequency families skip kernel even for observation. In strict
-        // mode the decision is overridden to passthrough regardless of the
-        // kernel, so the consult is pure telemetry; `Stdio` is included here so
-        // hot printf/scanf-family calls do not pay the ~1us cold kernel consult
-        // (snprintf("%s") was 26x slower than glibc before this — bd-n40in2
-        // sibling). Buffer validation/healing for stdio runs off `known_remaining`,
-        // not this decision, so it is unaffected.
+        // High-frequency families skip kernel even for observation
         if cfg!(not(test))
             && matches!(
                 family,
@@ -2023,7 +2017,6 @@ pub(crate) fn decide(
                     | ApiFamily::Loader
                     | ApiFamily::Stdlib
                     | ApiFamily::MathFenv
-                    | ApiFamily::Stdio
             )
         {
             return (SafetyLevel::Strict, passthrough_decision());
@@ -2199,9 +2192,7 @@ pub(crate) fn observe(
     adverse: bool,
 ) {
     // High-frequency families fast path: skip observation overhead.
-    // This applies to both strict and hardened mode for perf. `Stdio` is included
-    // so the hot printf/scanf family does not pay the cold kernel observe consult
-    // (bd-n40in2 sibling); only the non-adverse common path is skipped.
+    // This applies to both strict and hardened mode for perf.
     if cfg!(not(test))
         && !adverse
         && matches!(
@@ -2212,7 +2203,6 @@ pub(crate) fn observe(
                 | ApiFamily::Loader
                 | ApiFamily::Stdlib
                 | ApiFamily::MathFenv
-                | ApiFamily::Stdio
         )
     {
         return;
