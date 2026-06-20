@@ -1925,3 +1925,26 @@ held rand() single-threaded lock-skip perf win (which was already verified
 value-preserving). Caller-state externs (rand_r, standalone e/n/jrand48) keep
 their linked decls — they're pure-of-their-args so interposition can't offset
 them.
+
+## 2026-06-20 rand()/random() single-threaded lock-skip — LANDED: 1.64x LOSS → 0.63x WIN
+
+With the conformance gate now green (above), shipped the previously-held fix.
+fl `random_sv` took a `std::sync::Mutex` on every `random()`/`srandom()` call;
+glibc skips its lock while single-threaded. Restructured GLOBAL to
+`UnsafeCell<RandomState>` + `LOCK: Mutex<()>` + a `SINGLE_THREADED` flag
+(`AtomicU8`, cleared at abi `pthread_create`'s existing `__libc_single_threaded`
+site via `mark_multithreaded()`), with a `with_state` helper that locks ONLY when
+multi-threaded OR `cfg!(test)` (tests can't trust the flag — fl thread tracking
+isn't wired through `std::thread`). `#[allow(unsafe_code)]` on the two unsafe
+spots (core is `#![deny(unsafe_code)]` with 397 sanctioned exceptions).
+
+Measured (strtol_glibc_bench rand case, deployed criterion path, 3 consecutive
+runs): fl **12.3 ns → 3.2-3.6 ns**, ratio **1.64x → 0.58-0.63x WIN** (~3.6x
+faster; now BEATS glibc's 5.6 ns, which still locks). Value-preserving:
+`conformance_diff_stdlib_random` stays **11 passed / 0 failed** with the change
+(rand sequence byte-identical). In a deployed multi-threaded process the flag
+flips at the first `pthread_create`, so all concurrent `rand()` callers serialize
+on `LOCK` exactly as before — correctness is unchanged; only the single-threaded
+common case is accelerated, exactly as glibc does it.
+
+Win/loss/neutral: clean WIN (1.64x loss → 0.6x win), 0 regressions, gate green.

@@ -187,7 +187,20 @@ fn next_draw(
     result
 }
 
-static GLOBAL: Mutex<RandomState> = Mutex::new(RandomState {
+/// The live System V `random()` state. Accessed only through [`with_state`],
+/// which serializes via [`LOCK`] when the process is multi-threaded and accesses
+/// directly (no lock) when single-threaded — mirroring glibc, whose `random()`
+/// skips `__libc_lock` while `__libc_single_threaded` is set. The lock is a real
+/// per-call cost (~5 ns) that dominates an otherwise ~7 ns generator step (rand
+/// benched 12.3 ns vs glibc 7.5 ns; this closes the gap — see strtol_glibc_bench).
+struct GlobalRandom(std::cell::UnsafeCell<RandomState>);
+// SAFETY: every access goes through `with_state`, which holds `LOCK` whenever
+// more than one thread may run, and otherwise relies on the single-threaded
+// invariant — so there is never concurrent access to the cell.
+#[allow(unsafe_code)]
+unsafe impl Sync for GlobalRandom {}
+
+static GLOBAL: GlobalRandom = GlobalRandom(std::cell::UnsafeCell::new(RandomState {
     // Default generator is TYPE_3 (degree 31), matching glibc's unseeded
     // `random()`. The table is zeroed; first use lazily seeds with 1.
     rand_type: 3,
@@ -196,7 +209,35 @@ static GLOBAL: Mutex<RandomState> = Mutex::new(RandomState {
     table: [0i32; MAX_DEG],
     fptr: SEP_3,
     rptr: 0,
-});
+}));
+
+/// Serializes [`GLOBAL`] access while the process is multi-threaded.
+static LOCK: Mutex<()> = Mutex::new(());
+
+/// `1` until the first thread is created (set by the ABI thread-creation path
+/// via [`mark_multithreaded`]), then `0`. Mirrors `__libc_single_threaded`.
+static SINGLE_THREADED: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
+
+/// Called by the ABI `pthread_create` path on the first thread spawn so that
+/// subsequent `random()`/`srandom()` calls take [`LOCK`].
+pub fn mark_multithreaded() {
+    SINGLE_THREADED.store(0, std::sync::atomic::Ordering::Release);
+}
+
+/// Run `f` against the global state, taking [`LOCK`] only when needed: a
+/// multi-threaded process, or any `cfg(test)` build (where fl's thread tracking
+/// is not wired through `std::thread`, so the flag cannot be trusted). Deployed
+/// single-threaded callers skip the lock entirely.
+#[inline]
+#[allow(unsafe_code)]
+fn with_state<R>(f: impl FnOnce(&mut RandomState) -> R) -> R {
+    let need_lock =
+        cfg!(test) || SINGLE_THREADED.load(std::sync::atomic::Ordering::Acquire) == 0;
+    let _guard = need_lock.then(|| LOCK.lock().unwrap_or_else(|e| e.into_inner()));
+    // SAFETY: serialized by `_guard` when multi-threaded; otherwise the
+    // single-threaded invariant guarantees exclusive access.
+    f(unsafe { &mut *GLOBAL.0.get() })
+}
 
 /// Track whether the global state has been initialized.
 static INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -211,28 +252,30 @@ pub(crate) fn test_global_random_lock() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn ensure_init() {
-    if !INITIALIZED.load(std::sync::atomic::Ordering::Acquire) {
-        let mut state = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
-        if !INITIALIZED.load(std::sync::atomic::Ordering::Relaxed) {
-            state.seed(1);
-            INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
-        }
+/// Lazily seed the live state with 1 on first use (matching glibc's unseeded
+/// `random()`). Must be called with exclusive access to `state`.
+#[inline]
+fn ensure_init_locked(state: &mut RandomState) {
+    if !INITIALIZED.load(std::sync::atomic::Ordering::Relaxed) {
+        state.seed(1);
+        INITIALIZED.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
 /// `random()` — return a pseudo-random number in [0, 2^31-1].
 pub fn random() -> i64 {
-    ensure_init();
-    let mut state = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
-    state.next() as i64
+    with_state(|state| {
+        ensure_init_locked(state);
+        state.next() as i64
+    })
 }
 
 /// `srandom()` — seed the random number generator.
 pub fn srandom(seed: u32) {
-    let mut state = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
-    state.seed(seed);
-    INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
+    with_state(|state| {
+        state.seed(seed);
+        INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
+    });
 }
 
 /// `initstate()` — initialize state buffer and seed.
@@ -253,22 +296,23 @@ pub fn initstate(seed: u32, state_buf: &mut [u8]) -> usize {
     let Some(rand_type) = rand_type_for_size(state_buf.len()) else {
         return 0;
     };
-    let mut state = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
-    // Token for the old state (a simple fingerprint of the live accumulator).
-    let old_token = state.table[0] as usize;
-    state.set_type(rand_type);
-    state.seed(seed);
-    INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
-    // Snapshot the live state words into the caller buffer so a later
-    // setstate() on the same buffer (which re-derives the type from its size)
-    // can restore them.
-    let words_to_copy = (state_buf.len() / 4).min(state.deg.max(1));
-    for i in 0..words_to_copy {
-        let bytes = state.table[i].to_ne_bytes();
-        let off = i * 4;
-        state_buf[off..off + 4].copy_from_slice(&bytes);
-    }
-    old_token
+    with_state(|state| {
+        // Token for the old state (a simple fingerprint of the live accumulator).
+        let old_token = state.table[0] as usize;
+        state.set_type(rand_type);
+        state.seed(seed);
+        INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
+        // Snapshot the live state words into the caller buffer so a later
+        // setstate() on the same buffer (which re-derives the type from its size)
+        // can restore them.
+        let words_to_copy = (state_buf.len() / 4).min(state.deg.max(1));
+        for i in 0..words_to_copy {
+            let bytes = state.table[i].to_ne_bytes();
+            let off = i * 4;
+            state_buf[off..off + 4].copy_from_slice(&bytes);
+        }
+        old_token
+    })
 }
 
 /// `setstate()` — restore state from a previously saved buffer.
@@ -283,28 +327,29 @@ pub fn setstate(state_buf: &[u8]) -> usize {
     let Some(rand_type) = rand_type_for_size(state_buf.len()) else {
         return 0;
     };
-    let mut state = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
-    let old_token = state.table[0] as usize;
-    state.set_type(rand_type);
-    // Restore the live state words from the buffer.
-    let words_to_copy = (state_buf.len() / 4).min(state.deg.max(1));
-    for i in 0..words_to_copy {
-        let off = i * 4;
-        let bytes = [
-            state_buf[off],
-            state_buf[off + 1],
-            state_buf[off + 2],
-            state_buf[off + 3],
-        ];
-        state.table[i] = i32::from_ne_bytes(bytes);
-    }
-    // Restore the cursors to their post-seed position. The warmup advances the
-    // cursors a whole number of periods, so (sep, 0) is exactly where they sat
-    // when initstate() snapshotted the table.
-    state.fptr = state.sep;
-    state.rptr = 0;
-    INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
-    old_token
+    with_state(|state| {
+        let old_token = state.table[0] as usize;
+        state.set_type(rand_type);
+        // Restore the live state words from the buffer.
+        let words_to_copy = (state_buf.len() / 4).min(state.deg.max(1));
+        for i in 0..words_to_copy {
+            let off = i * 4;
+            let bytes = [
+                state_buf[off],
+                state_buf[off + 1],
+                state_buf[off + 2],
+                state_buf[off + 3],
+            ];
+            state.table[i] = i32::from_ne_bytes(bytes);
+        }
+        // Restore the cursors to their post-seed position. The warmup advances the
+        // cursors a whole number of periods, so (sep, 0) is exactly where they sat
+        // when initstate() snapshotted the table.
+        state.fptr = state.sep;
+        state.rptr = 0;
+        INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
+        old_token
+    })
 }
 
 // ===========================================================================

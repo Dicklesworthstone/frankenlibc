@@ -2300,6 +2300,9 @@ pub unsafe extern "C" fn pthread_create(
     // Clear __libc_single_threaded on first thread creation.
     crate::glibc_internal_abi::__libc_single_threaded
         .store(0, std::sync::atomic::Ordering::Release);
+    // rand()/random() skip their lock while single-threaded; flip them to the
+    // locked path now, before the new thread can run.
+    frankenlibc_core::stdlib::random_sv::mark_multithreaded();
     let force_native = force_native_threading_enabled();
     let start = start_routine.unwrap_or_else(|| unreachable!("start routine checked above"));
     // Host pthreads are an explicit compatibility opt-out. The default and
