@@ -144,6 +144,34 @@ back toward the core 2–4× wins. Specific deployed gaps to close: `powf` (core
 large-buffer SIMD scaling. For that deployed-vs-core sweep, no source revert was needed because
 the losses were gaps-to-glibc / membrane-ceiling, not regressions vs fl's own prior code.
 
+## 2026-06-20 GB18030 iconv closeout (BlackThrush)
+
+The post-CP932 iconv residual was GB18030 CJK encode/decode. Baseline
+`iconv_glibc_bench gb18030` on `hz1` showed two real losses:
+`utf8_cjk_to_gb18030` 5622.3 ns vs glibc 3495.2 ns (1.609x) and
+`gb18030_to_utf8` 121728.2 ns vs glibc 2603.6 ns (46.756x). The kept lever adds
+packed BMP-3 transducers for the common CJK shape: UTF-8 three-byte BMP scalars
+directly to GB18030 two-byte keys, and GB18030 two-byte keys directly to packed
+UTF-8 triples. Non-hot-shape cases fall through before consuming input.
+
+Final head-to-head run used the same command/target dir, but `rch` selected
+`hz2` despite the `hz1` preference, so baseline-to-final self-speedup is
+directional. The final in-run deployed ratios are clean wins:
+
+| Workload | fl | glibc | ratio | verdict |
+|---|---:|---:|---:|---|
+| `utf8_cjk_to_gb18030` | 1401.1 ns | 2592.7 ns | 0.540x | WIN |
+| `gb18030_to_utf8` | 976.4 ns | 2206.2 ns | 0.443x | WIN |
+
+Validation: `iconv_cjk_differential_fuzz_vs_glibc` passed 216000 conversions
+with 0 divergences, `cargo check -p frankenlibc-core` passed with pre-existing
+warnings, and `git diff --check` passed. `cargo fmt --check -p
+frankenlibc-core` remains blocked by unrelated existing formatting drift across
+generated/table and legacy files; the deny-warnings `frankenlibc-core` clippy
+gate remains blocked by pre-existing lint debt. Scorecard for this targeted lane:
+**2 WIN / 0 NEUTRAL / 0 LOSS**. Evidence:
+`tests/artifacts/perf/bd-2g7oyh-gb18030-direct-codec.md`.
+
 ## 2026-06-19 `bd-2g7oyh.478` measured reject
 
 The exact `strcpy_4096` eight-block unroll was converted from code-first pending to measured

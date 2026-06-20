@@ -18414,6 +18414,16 @@ fn build_dbcs_bmp3_utf8_direct(table: &[(u16, u32)]) -> Vec<u32> {
     t
 }
 
+fn build_utf8_bmp3_dbcs2_direct(table: &[(u32, u16)]) -> Vec<u16> {
+    let mut t = vec![0u16; 0x10000];
+    for &(cp, key) in table {
+        if (0x0800..=0xFFFF).contains(&cp) && !(0xD800..=0xDFFF).contains(&cp) {
+            t[cp as usize] = key;
+        }
+    }
+    t
+}
+
 fn decode_dbcs2(
     input: &[u8],
     one_byte: &[i32; 256],
@@ -18515,6 +18525,87 @@ fn emit_dbcs2_bmp3_utf8_run(
         write_packed_utf8_triple(outbuf, *out_pos, packed);
         *in_pos += 2;
         *out_pos += 3;
+    }
+}
+
+#[inline(always)]
+fn utf8_bmp3_dbcs2_packed_at(input: &[u8], pos: usize, direct: &[u16]) -> u16 {
+    let b0 = input[pos];
+    let b1 = input[pos + 1];
+    let b2 = input[pos + 2];
+    if !(0xE0..=0xEF).contains(&b0)
+        || !(0x80..=0xBF).contains(&b1)
+        || !(0x80..=0xBF).contains(&b2)
+    {
+        return 0;
+    }
+    if (b0 == 0xE0 && b1 < 0xA0) || (b0 == 0xED && b1 >= 0xA0) {
+        return 0;
+    }
+    let cp = (u32::from(b0 & 0x0F) << 12) | (u32::from(b1 & 0x3F) << 6) | u32::from(b2 & 0x3F);
+    direct[cp as usize]
+}
+
+#[inline(always)]
+fn write_packed_dbcs2(outbuf: &mut [u8], pos: usize, packed: u16) {
+    outbuf[pos] = (packed >> 8) as u8;
+    outbuf[pos + 1] = (packed & 0xFF) as u8;
+}
+
+fn emit_utf8_bmp3_dbcs2_run(
+    input: &[u8],
+    in_pos: &mut usize,
+    outbuf: &mut [u8],
+    out_pos: &mut usize,
+    direct: &[u16],
+) {
+    while *in_pos + 11 < input.len() && *out_pos + 8 <= outbuf.len() {
+        let p0 = utf8_bmp3_dbcs2_packed_at(input, *in_pos, direct);
+        if p0 == 0 {
+            return;
+        }
+        let p1 = utf8_bmp3_dbcs2_packed_at(input, *in_pos + 3, direct);
+        if p1 == 0 {
+            write_packed_dbcs2(outbuf, *out_pos, p0);
+            *in_pos += 3;
+            *out_pos += 2;
+            return;
+        }
+        let p2 = utf8_bmp3_dbcs2_packed_at(input, *in_pos + 6, direct);
+        if p2 == 0 {
+            write_packed_dbcs2(outbuf, *out_pos, p0);
+            write_packed_dbcs2(outbuf, *out_pos + 2, p1);
+            *in_pos += 6;
+            *out_pos += 4;
+            return;
+        }
+        let p3 = utf8_bmp3_dbcs2_packed_at(input, *in_pos + 9, direct);
+        if p3 == 0 {
+            write_packed_dbcs2(outbuf, *out_pos, p0);
+            write_packed_dbcs2(outbuf, *out_pos + 2, p1);
+            write_packed_dbcs2(outbuf, *out_pos + 4, p2);
+            *in_pos += 9;
+            *out_pos += 6;
+            return;
+        }
+
+        write_packed_dbcs2(outbuf, *out_pos, p0);
+        write_packed_dbcs2(outbuf, *out_pos + 2, p1);
+        write_packed_dbcs2(outbuf, *out_pos + 4, p2);
+        write_packed_dbcs2(outbuf, *out_pos + 6, p3);
+        *in_pos += 12;
+        *out_pos += 8;
+    }
+
+    while *in_pos + 2 < input.len() && *out_pos + 2 <= outbuf.len() {
+        let packed = utf8_bmp3_dbcs2_packed_at(input, *in_pos, direct);
+        if packed == 0 {
+            break;
+        }
+
+        write_packed_dbcs2(outbuf, *out_pos, packed);
+        *in_pos += 3;
+        *out_pos += 2;
     }
 }
 
@@ -19010,6 +19101,16 @@ fn gb18030_dbcs2_direct() -> &'static [u32] {
         }
         t
     })
+}
+
+fn gb18030_bmp3_utf8_direct() -> &'static [u32] {
+    static TABLE: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| build_dbcs_bmp3_utf8_direct(&cjk_tables::GB18030_DBCS2))
+}
+
+fn gb18030_utf8_bmp3_dbcs2_direct() -> &'static [u16] {
+    static TABLE: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| build_utf8_bmp3_dbcs2_direct(&cjk_tables::GB18030_ENC2))
 }
 
 fn decode_gb18030(input: &[u8]) -> Result<(char, usize), DecodeError> {
@@ -24094,6 +24195,27 @@ pub fn iconv(
         // the generic body, which reproduces the exact EILSEQ/EINVAL/E2BIG
         // ordering. Placed after the ASCII/sb_translation fast paths so their
         // SIMD bulk-copy still wins for ASCII-transparent pairs.
+        // Fast path: UTF-8 BMP-3 runs -> GB18030 2-byte form. The CJK benchmark
+        // is dominated by U+0800..=U+FFFF scalars that map to GB18030 DBCS
+        // pairs. A packed direct table turns three UTF-8 bytes into two output
+        // bytes without constructing `char` or entering encode_gb18030. Anything
+        // outside that exact shape (ASCII, invalid UTF-8, surrogate/overlong,
+        // GB18030 four-byte-only code points, or short output) breaks before
+        // consuming input and falls through to the scalar path for exact
+        // EILSEQ/EINVAL/E2BIG ordering.
+        if from_enc == Encoding::Utf8 && cd.to == Encoding::Gb18030 && !cd.emit_bom {
+            emit_utf8_bmp3_dbcs2_run(
+                input,
+                &mut in_pos,
+                outbuf,
+                &mut out_pos,
+                gb18030_utf8_bmp3_dbcs2_direct(),
+            );
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         // Fast path: UTF-8 -> DBCS legacy codec. Decode each char inline, then
         // call the (direct-table O(1)) per-codec encoder directly in a tight loop,
         // skipping the per-char encode_char (~100-arm match) + encode_one wrapper
@@ -24225,17 +24347,24 @@ pub fn iconv(
             }
         }
 
-        // Fast path: CP932-family DBCS -> UTF-8 BMP-3 runs. Japanese text is
+        // Fast path: DBCS-table codecs -> UTF-8 BMP-3 runs. CJK text is
         // dominated by 2-byte legacy pairs that decode to U+0800..=U+FFFF, whose
         // UTF-8 spelling is always 3 bytes. A packed `key -> UTF-8 triple` table
         // emits the bytes directly, avoiding per-character Result/char
         // construction, scalar-to-UTF-8 arithmetic, stack buffers, and slice
         // copies. Any single-byte character, invalid pair, incomplete lead,
-        // surrogate/astral edge, or short output tail breaks before consuming
-        // input and falls through to the generic body for the exact
+        // surrogate/astral/four-byte edge, or short output tail breaks before
+        // consuming input and falls through to the generic body for the exact
         // EILSEQ/EINVAL/E2BIG ordering.
         if cd.to == Encoding::Utf8 {
             match from_enc {
+                Encoding::Gb18030 => emit_dbcs2_bmp3_utf8_run(
+                    input,
+                    &mut in_pos,
+                    outbuf,
+                    &mut out_pos,
+                    gb18030_bmp3_utf8_direct(),
+                ),
                 Encoding::Cp932 => emit_dbcs2_bmp3_utf8_run(
                     input,
                     &mut in_pos,
