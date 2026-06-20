@@ -245,6 +245,17 @@ fn is_integral_f64(x: f64) -> bool {
 
 #[inline]
 fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
+    // Deployed math-membrane fast-path (bd-n40in2): in non-test builds the
+    // membrane is provably always-Allow for MathFenv and can never heal a math
+    // result, so `decide()`+`observe()` cannot change the output. Skip them for
+    // the common finite case; finite->non-finite "adverse" results fall through
+    // to the full path so observation (and any future deny/heal) stays reachable.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = f(x);
+        if !(x.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
+    }
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
         x.to_bits() as usize,
@@ -280,6 +291,13 @@ fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
 
 #[inline]
 fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f64 {
+    // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = f(x, y);
+        if !(x.is_finite() && y.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
+    }
     let mixed =
         (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
     let (mode, decision) = runtime_policy::decide(
@@ -1221,6 +1239,13 @@ pub unsafe extern "C" fn pow10(x: f64) -> f64 {
 
 #[inline]
 fn unary_entry_f32(x: f32, base_cost_ns: u64, f: fn(f32) -> f32) -> f32 {
+    // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = f(x);
+        if !(x.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
+    }
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
         x.to_bits() as usize,
@@ -1262,6 +1287,13 @@ fn unary_entry_f32(x: f32, base_cost_ns: u64, f: fn(f32) -> f32) -> f32 {
 
 #[inline]
 fn binary_entry_f32(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f32) -> f32 {
+    // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = f(x, y);
+        if !(x.is_finite() && y.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
+    }
     let mixed =
         (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
     let (mode, decision) = runtime_policy::decide(
@@ -4012,7 +4044,11 @@ pub unsafe extern "C" fn asinpif128(x: f128) -> f128 {
     if x != 0.0 && ret == 0.0 {
         set_range_errno();
     }
-    if ret.abs() > 0.5 { (0.5f128).copysign(ret) } else { ret }
+    if ret.abs() > 0.5 {
+        (0.5f128).copysign(ret)
+    } else {
+        ret
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atanpi(x: f64) -> f64 {
@@ -4053,7 +4089,11 @@ pub unsafe extern "C" fn atanpif128(x: f128) -> f128 {
     if x != 0.0 && ret == 0.0 {
         set_range_errno();
     }
-    if ret.abs() > 0.5 { (0.5f128).copysign(ret) } else { ret }
+    if ret.abs() > 0.5 {
+        (0.5f128).copysign(ret)
+    } else {
+        ret
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan2pi(x: f64, y: f64) -> f64 {
@@ -4094,7 +4134,11 @@ pub unsafe extern "C" fn atan2pif128(y: f128, x: f128) -> f128 {
     if ret == 0.0 && y != 0.0 && x.is_finite() {
         set_range_errno();
     }
-    if ret.abs() > 1.0 { (1.0f128).copysign(ret) } else { ret }
+    if ret.abs() > 1.0 {
+        (1.0f128).copysign(ret)
+    } else {
+        ret
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 /// Re-raise FE_INVALID on the cold pi-function domain path (x = ±inf).
@@ -6172,7 +6216,10 @@ pub unsafe extern "C" fn clog10f64x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn clog10f128(z: CFloat128Complex) -> CFloat128Complex {
     const LN10: f128 = 2.302585092994045684017991454684364208f128;
     let r = clog_f128(z);
-    CFloat128Complex { re: r.re / LN10, im: r.im / LN10 }
+    CFloat128Complex {
+        re: r.re / LN10,
+        im: r.im / LN10,
+    }
 }
 
 // --- lgamma*_r width variants ---
@@ -6530,7 +6577,11 @@ fn narrow_round_odd_f128(t: f128, resid: f128) -> f128 {
     let bits = t.to_bits();
     let positive = bits >> 127 == 0;
     let toward_pos = resid > 0.0;
-    let nb = if toward_pos == positive { bits + 1 } else { bits - 1 };
+    let nb = if toward_pos == positive {
+        bits + 1
+    } else {
+        bits - 1
+    };
     f128::from_bits(nb)
 }
 
@@ -8168,11 +8219,7 @@ fn remainder_f128(x: f128, y: f128) -> f128 {
             r -= ay;
         }
     }
-    if x.is_sign_negative() {
-        -r
-    } else {
-        r
-    }
+    if x.is_sign_negative() { -r } else { r }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8488,11 +8535,13 @@ fn cbrt_f128(x: f128) -> f128 {
     }
 
     // Approximate cube root of the mantissa, peak relative error 1.2e-6.
-    x = ((((1.3584464340920900529734e-1f128 * x
-        - 6.3986917220457538402318e-1f128) * x
-        + 1.2875551670318751538055e0f128) * x
-        - 1.4897083391357284957891e0f128) * x
-        + 1.3304961236013647092521e0f128) * x
+    x = ((((1.3584464340920900529734e-1f128 * x - 6.3986917220457538402318e-1f128) * x
+        + 1.2875551670318751538055e0f128)
+        * x
+        - 1.4897083391357284957891e0f128)
+        * x
+        + 1.3304961236013647092521e0f128)
+        * x
         + 3.7568280825958912391243e-1f128;
 
     // exponent divided by 3, scaling the mantissa by cbrt(2^rem).
@@ -8530,9 +8579,7 @@ fn cbrt_f128(x: f128) -> f128 {
 /// True iff `x` is a signaling NaN (binary128): NaN with the quiet bit clear.
 fn is_signaling_f128(x: f128) -> bool {
     let b = x.to_bits();
-    (b >> 112) & 0x7fff == 0x7fff
-        && (b & ((1u128 << 112) - 1)) != 0
-        && (b & (1u128 << 111)) == 0
+    (b >> 112) & 0x7fff == 0x7fff && (b & ((1u128 << 112) - 1)) != 0 && (b & (1u128 << 111)) == 0
 }
 
 /// Borges' "MyHypot3" correction kernel (arXiv:1904.09481). Inputs must be
@@ -8715,7 +8762,11 @@ fn atan_f128(x: f128) -> f128 {
         if x.is_nan() {
             return x + x;
         }
-        return if sign { -ATAN_TBL_F128[83] } else { ATAN_TBL_F128[83] };
+        return if sign {
+            -ATAN_TBL_F128[83]
+        } else {
+            ATAN_TBL_F128[83]
+        };
     }
     // |x| < 2^-58: atan(x) == x to full precision.
     if k0 <= 0x3fc5_0000 {
@@ -8723,7 +8774,11 @@ fn atan_f128(x: f128) -> f128 {
     }
     // |x| > 2^115: saturate to +/- pi/2.
     if k0 >= 0x4072_0000 {
-        return if sign { -ATAN_TBL_F128[83] } else { ATAN_TBL_F128[83] };
+        return if sign {
+            -ATAN_TBL_F128[83]
+        } else {
+            ATAN_TBL_F128[83]
+        };
     }
 
     let x = if sign { -x } else { x };
@@ -8780,14 +8835,18 @@ fn atan2_f128(y: f128, x: f128) -> f128 {
     // y == 0.
     if iy == 0 && ly == 0 {
         return match m {
-            0 | 1 => y,         // atan(+-0,+anything) = +-0
-            2 => PI + TINY,     // atan(+0,-anything) = pi
-            _ => -PI - TINY,    // atan(-0,-anything) = -pi
+            0 | 1 => y,      // atan(+-0,+anything) = +-0
+            2 => PI + TINY,  // atan(+0,-anything) = pi
+            _ => -PI - TINY, // atan(-0,-anything) = -pi
         };
     }
     // x == 0.
     if ix == 0 && lx == 0 {
-        return if hy < 0 { -PI_O_2 - TINY } else { PI_O_2 + TINY };
+        return if hy < 0 {
+            -PI_O_2 - TINY
+        } else {
+            PI_O_2 + TINY
+        };
     }
     // x is INF.
     if ix == 0x7fff_0000_0000_0000 {
@@ -8808,7 +8867,11 @@ fn atan2_f128(y: f128, x: f128) -> f128 {
     }
     // y is INF.
     if iy == 0x7fff_0000_0000_0000 {
-        return if hy < 0 { -PI_O_2 - TINY } else { PI_O_2 + TINY };
+        return if hy < 0 {
+            -PI_O_2 - TINY
+        } else {
+            PI_O_2 + TINY
+        };
     }
 
     // Compute y/x.
@@ -8821,10 +8884,10 @@ fn atan2_f128(y: f128, x: f128) -> f128 {
         atan_f128((y / x).abs())
     };
     match m {
-        0 => z,                                                  // atan(+,+)
-        1 => f128::from_bits(z.to_bits() ^ (1u128 << 127)),      // atan(-,+) = -z
-        2 => PI - (z - PI_LO),                                   // atan(+,-)
-        _ => (z - PI_LO) - PI,                                   // atan(-,-)
+        0 => z,                                             // atan(+,+)
+        1 => f128::from_bits(z.to_bits() ^ (1u128 << 127)), // atan(-,+) = -z
+        2 => PI - (z - PI_LO),                              // atan(+,-)
+        _ => (z - PI_LO) - PI,                              // atan(-,-)
     }
 }
 
@@ -9070,7 +9133,11 @@ fn acos_f128(x: f128) -> f128 {
         // |x| >= 1
         if ix == 0x3fff_0000 && (xb & ((1u128 << 96) - 1)) == 0 {
             // |x| == 1
-            return if !neg { 0.0 } else { 2.0 * PIO2_HI + 2.0 * PIO2_LO }; // acos(1)=0 / acos(-1)=pi
+            return if !neg {
+                0.0
+            } else {
+                2.0 * PIO2_HI + 2.0 * PIO2_LO
+            }; // acos(1)=0 / acos(-1)=pi
         }
         if x.is_nan() {
             return (x - x) / (x - x);
@@ -9160,7 +9227,11 @@ fn acos_f128(x: f128) -> f128 {
         q = q * t + SS1;
         q = q * t + SS0;
         let pq = p / q;
-        return if neg { PIMACOSR5625 - pq } else { ACOSR5625 + pq };
+        return if neg {
+            PIMACOSR5625 - pq
+        } else {
+            ACOSR5625 + pq
+        };
     }
 
     // |x| >= 0.625 via acos = 2·asin(sqrt((1-|x|)/2)).
@@ -9771,7 +9842,11 @@ fn log1pl_f128(xm1: f128) -> f128 {
         return xm1; // tiny: (int)xm1 == 0
     }
 
-    let mut x = if xm1 >= f128::from_bits(16496u128 << 112) { xm1 } else { xm1 + 1.0 };
+    let mut x = if xm1 >= f128::from_bits(16496u128 << 112) {
+        xm1
+    } else {
+        xm1 + 1.0
+    };
     if x <= 0.0 {
         if x == 0.0 {
             return -1.0 / 0.0; // log1p(-1) = -inf
@@ -10316,10 +10391,18 @@ fn powl_f128(x: f128, y: f128) -> f128 {
             }
         }
         if ix < 0x3ffe_ffff {
-            return if hy < 0 { sgn * HUGE * HUGE } else { sgn * TINY * TINY };
+            return if hy < 0 {
+                sgn * HUGE * HUGE
+            } else {
+                sgn * TINY * TINY
+            };
         }
         if ix > 0x3fff_0000 {
-            return if hy > 0 { sgn * HUGE * HUGE } else { sgn * TINY * TINY };
+            return if hy > 0 {
+                sgn * HUGE * HUGE
+            } else {
+                sgn * TINY * TINY
+            };
         }
     }
 
@@ -10522,19 +10605,41 @@ fn compoundn_f128(x: f128, y: i64) -> f128 {
     }
 
     // X finite > -1, Y not 0 or 1.
-    let (mut xhi, mut xlo) = if x >= 1.0 { add_split(x, 1.0) } else { add_split(1.0, x) };
+    let (mut xhi, mut xlo) = if x >= 1.0 {
+        add_split(x, 1.0)
+    } else {
+        add_split(1.0, x)
+    };
     if xlo != 0.0 && (sb(xlo) != sb(x)) {
-        let xhi_n = if sb(x) { xhi.next_up() } else { xhi.next_down() };
+        let xhi_n = if sb(x) {
+            xhi.next_up()
+        } else {
+            xhi.next_down()
+        };
         xlo += xhi - xhi_n;
         xhi = xhi_n;
     }
     let mut ret = powl_f128(xhi, y as f128); // __pown(xhi, y)
-    let big_enough = |num: f128| if xhi >= 1.0 { num.abs() >= xhi * EPS_P65 } else { xhi <= num.abs() / EPS_P65 };
+    let big_enough = |num: f128| {
+        if xhi >= 1.0 {
+            num.abs() >= xhi * EPS_P65
+        } else {
+            xhi <= num.abs() / EPS_P65
+        }
+    };
     if ret.is_finite() && ret != 0.0 && big_enough(xlo) {
         let qhi = xlo / xhi;
         let xlo_rem = (-qhi).mul_add(xhi, xlo); // fma(-qhi, xhi, xlo)
-        let qlo = if big_enough(xlo_rem) { xlo_rem / xhi } else { 0.0 };
-        let nqhi2 = if qhi.abs() >= EPS_P33 { qhi * qhi * -0.5 } else { 0.0 };
+        let qlo = if big_enough(xlo_rem) {
+            xlo_rem / xhi
+        } else {
+            0.0
+        };
+        let nqhi2 = if qhi.abs() >= EPS_P33 {
+            qhi * qhi * -0.5
+        } else {
+            0.0
+        };
 
         // mul3_split: parts add up to a·(qhi + qlo + nqhi2). NUM_PARTS == 1.
         let a = y as f128;
@@ -10873,10 +10978,14 @@ fn kernel_sincosl_f128(x: f128, y: f128, iy: i32) -> (f128, f128) {
             return (x, ONE); // |x| < 2^-57: (int)x == 0
         }
         let z = x * x;
-        let sinx = x + x * (z * (SIN1 + z * (SIN2 + z * (SIN3 + z * (SIN4
-            + z * (SIN5 + z * (SIN6 + z * (SIN7 + z * SIN8))))))));
-        let cosx = ONE + z * (COS1 + z * (COS2 + z * (COS3 + z * (COS4
-            + z * (COS5 + z * (COS6 + z * (COS7 + z * COS8)))))));
+        let sinx = x + x
+            * (z * (SIN1
+                + z * (SIN2
+                    + z * (SIN3 + z * (SIN4 + z * (SIN5 + z * (SIN6 + z * (SIN7 + z * SIN8))))))));
+        let cosx = ONE
+            + z * (COS1
+                + z * (COS2
+                    + z * (COS3 + z * (COS4 + z * (COS5 + z * (COS6 + z * (COS7 + z * COS8)))))));
         return (sinx, cosx);
     }
 
@@ -11318,7 +11427,11 @@ fn csinh_f128(x: CFloat128Complex) -> CFloat128Complex {
             re = rr;
             imo = ii;
         } else if im == 0.0 {
-            re = if negate { -f128::INFINITY } else { f128::INFINITY };
+            re = if negate {
+                -f128::INFINITY
+            } else {
+                f128::INFINITY
+            };
             imo = im;
         } else {
             re = f128::INFINITY;
@@ -11333,7 +11446,10 @@ fn csinh_f128(x: CFloat128Complex) -> CFloat128Complex {
 
 /// Complex cosine — glibc s_ccos: ccos(z) = ccosh(-im + i·re).
 fn ccos_f128(x: CFloat128Complex) -> CFloat128Complex {
-    ccosh_f128(CFloat128Complex { re: -x.im, im: x.re })
+    ccosh_f128(CFloat128Complex {
+        re: -x.im,
+        im: x.re,
+    })
 }
 
 /// Complex hyperbolic tangent for binary128 — port of glibc's s_ctanh template:
@@ -11359,7 +11475,10 @@ fn ctanh_f128(x: CFloat128Complex) -> CFloat128Complex {
             return x;
         } else {
             let rre = if rx == 0.0 { rx } else { f128::NAN };
-            return CFloat128Complex { re: rre, im: f128::NAN };
+            return CFloat128Complex {
+                re: rre,
+                im: f128::NAN,
+            };
         }
     }
     let (sinix, cosix) = sincos_pair_f128(im);
@@ -11386,7 +11505,10 @@ fn ctanh_f128(x: CFloat128Complex) -> CFloat128Complex {
         } else {
             cosix * cosix
         };
-        CFloat128Complex { re: sinhrx * coshrx / den, im: sinix * cosix / den }
+        CFloat128Complex {
+            re: sinhrx * coshrx / den,
+            im: sinix * cosix / den,
+        }
     }
 }
 
@@ -11405,12 +11527,18 @@ fn ctan_f128(x: CFloat128Complex) -> CFloat128Complex {
             } else {
                 (0.0f128).copysign(rx)
             };
-            return CFloat128Complex { re: rre, im: (1.0f128).copysign(im) };
+            return CFloat128Complex {
+                re: rre,
+                im: (1.0f128).copysign(im),
+            };
         } else if rx == 0.0 {
             return x;
         } else {
             let rim = if im == 0.0 { im } else { f128::NAN };
-            return CFloat128Complex { re: f128::NAN, im: rim };
+            return CFloat128Complex {
+                re: f128::NAN,
+                im: rim,
+            };
         }
     }
     let (sinrx, cosrx) = sincos_pair_f128(rx);
@@ -11437,7 +11565,10 @@ fn ctan_f128(x: CFloat128Complex) -> CFloat128Complex {
         } else {
             cosrx * cosrx
         };
-        CFloat128Complex { re: sinrx * cosrx / den, im: sinhix * coshix / den }
+        CFloat128Complex {
+            re: sinrx * cosrx / den,
+            im: sinhix * coshix / den,
+        }
     }
 }
 
@@ -11475,13 +11606,22 @@ fn cexp_f128(x: CFloat128Complex) -> CFloat128Complex {
                 }
             }
             if rxx > T {
-                CFloat128Complex { re: f128::MAX * cosix, im: f128::MAX * sinix }
+                CFloat128Complex {
+                    re: f128::MAX * cosix,
+                    im: f128::MAX * sinix,
+                }
             } else {
                 let ev = expl_f128(rxx);
-                CFloat128Complex { re: ev * cosix, im: ev * sinix }
+                CFloat128Complex {
+                    re: ev * cosix,
+                    im: ev * sinix,
+                }
             }
         } else {
-            CFloat128Complex { re: f128::NAN, im: f128::NAN }
+            CFloat128Complex {
+                re: f128::NAN,
+                im: f128::NAN,
+            }
         }
     } else if rx.is_infinite() {
         if ix.is_finite() {
@@ -11490,7 +11630,10 @@ fn cexp_f128(x: CFloat128Complex) -> CFloat128Complex {
                 CFloat128Complex { re: value, im: ix }
             } else {
                 let (sinix, cosix) = sincos(ix);
-                CFloat128Complex { re: value.copysign(cosix), im: value.copysign(sinix) }
+                CFloat128Complex {
+                    re: value.copysign(cosix),
+                    im: value.copysign(sinix),
+                }
             }
         } else if !sb(rx) {
             // ix is inf/NaN: imag - imag (inf-inf is the x86 negative qNaN; a NaN
@@ -11500,16 +11643,28 @@ fn cexp_f128(x: CFloat128Complex) -> CFloat128Complex {
             } else {
                 ix
             };
-            CFloat128Complex { re: f128::INFINITY, im }
+            CFloat128Complex {
+                re: f128::INFINITY,
+                im,
+            }
         } else {
-            CFloat128Complex { re: 0.0, im: (0.0f128).copysign(ix) }
+            CFloat128Complex {
+                re: 0.0,
+                im: (0.0f128).copysign(ix),
+            }
         }
     } else {
         // real NaN
         if ix == 0.0 {
-            CFloat128Complex { re: f128::NAN, im: ix }
+            CFloat128Complex {
+                re: f128::NAN,
+                im: ix,
+            }
         } else {
-            CFloat128Complex { re: f128::NAN, im: f128::NAN }
+            CFloat128Complex {
+                re: f128::NAN,
+                im: f128::NAN,
+            }
         }
     }
 }
@@ -11625,14 +11780,38 @@ fn erfcl_f128(x: f128) -> f128 {
         let xa = absx;
         let i = (8.0 * xa) as i32;
         let y = match i {
-            2 => { let z = xa - 0.25; C13B + z * neval_f128(z, &RNr13) / deval_f128(z, &RDr13) + C13A }
-            3 => { let z = xa - 0.375; C14B + z * neval_f128(z, &RNr14) / deval_f128(z, &RDr14) + C14A }
-            4 => { let z = xa - 0.5; C15B + z * neval_f128(z, &RNr15) / deval_f128(z, &RDr15) + C15A }
-            5 => { let z = xa - 0.625; C16B + z * neval_f128(z, &RNr16) / deval_f128(z, &RDr16) + C16A }
-            6 => { let z = xa - 0.75; C17B + z * neval_f128(z, &RNr17) / deval_f128(z, &RDr17) + C17A }
-            7 => { let z = xa - 0.875; C18B + z * neval_f128(z, &RNr18) / deval_f128(z, &RDr18) + C18A }
-            8 => { let z = xa - 1.0; C19B + z * neval_f128(z, &RNr19) / deval_f128(z, &RDr19) + C19A }
-            _ => { let z = xa - 1.125; C20B + z * neval_f128(z, &RNr20) / deval_f128(z, &RDr20) + C20A }
+            2 => {
+                let z = xa - 0.25;
+                C13B + z * neval_f128(z, &RNr13) / deval_f128(z, &RDr13) + C13A
+            }
+            3 => {
+                let z = xa - 0.375;
+                C14B + z * neval_f128(z, &RNr14) / deval_f128(z, &RDr14) + C14A
+            }
+            4 => {
+                let z = xa - 0.5;
+                C15B + z * neval_f128(z, &RNr15) / deval_f128(z, &RDr15) + C15A
+            }
+            5 => {
+                let z = xa - 0.625;
+                C16B + z * neval_f128(z, &RNr16) / deval_f128(z, &RDr16) + C16A
+            }
+            6 => {
+                let z = xa - 0.75;
+                C17B + z * neval_f128(z, &RNr17) / deval_f128(z, &RDr17) + C17A
+            }
+            7 => {
+                let z = xa - 0.875;
+                C18B + z * neval_f128(z, &RNr18) / deval_f128(z, &RDr18) + C18A
+            }
+            8 => {
+                let z = xa - 1.0;
+                C19B + z * neval_f128(z, &RNr19) / deval_f128(z, &RDr19) + C19A
+            }
+            _ => {
+                let z = xa - 1.125;
+                C20B + z * neval_f128(z, &RNr20) / deval_f128(z, &RDr20) + C20A
+            }
         };
         return if neg { 2.0 - y } else { y };
     }
@@ -12337,7 +12516,10 @@ fn clog_f128(z: CFloat128Complex) -> CFloat128Complex {
     if rx == 0.0 && ix == 0.0 {
         let mut imag = if sb(rx) { PI } else { 0.0 };
         imag = imag.copysign(ix);
-        return CFloat128Complex { re: -1.0 / rx.abs(), im: imag };
+        return CFloat128Complex {
+            re: -1.0 / rx.abs(),
+            im: imag,
+        };
     }
     if !rx.is_nan() && !ix.is_nan() {
         let mut absx = rx.abs();
@@ -12349,7 +12531,11 @@ fn clog_f128(z: CFloat128Complex) -> CFloat128Complex {
         if absx > f128::MAX / 2.0 {
             scale = -1;
             absx = scalbn_f128(absx, -1);
-            absy = if absy >= f128::MIN_POSITIVE * 2.0 { scalbn_f128(absy, -1) } else { 0.0 };
+            absy = if absy >= f128::MIN_POSITIVE * 2.0 {
+                scalbn_f128(absy, -1)
+            } else {
+                0.0
+            };
         } else if absx < f128::MIN_POSITIVE && absy < f128::MIN_POSITIVE {
             scale = 113;
             absx = scalbn_f128(absx, 113);
@@ -12374,11 +12560,21 @@ fn clog_f128(z: CFloat128Complex) -> CFloat128Complex {
             let d = hypot_f128(absx, absy);
             real = logl_f128(d) - (scale as f128) * LN2;
         }
-        return CFloat128Complex { re: real, im: atan2_f128(ix, rx) };
+        return CFloat128Complex {
+            re: real,
+            im: atan2_f128(ix, rx),
+        };
     }
     // NaN somewhere (not the both-zero / both-finite cases).
-    let real = if rx.is_infinite() || ix.is_infinite() { f128::INFINITY } else { f128::NAN };
-    CFloat128Complex { re: real, im: f128::NAN }
+    let real = if rx.is_infinite() || ix.is_infinite() {
+        f128::INFINITY
+    } else {
+        f128::NAN
+    };
+    CFloat128Complex {
+        re: real,
+        im: f128::NAN,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -12405,7 +12601,11 @@ fn csqrt_f128(z: CFloat128Complex) -> CFloat128Complex {
                 im = f128::INFINITY.copysign(ix);
             } else {
                 re = rx;
-                im = if ix.is_nan() { f128::NAN } else { (0.0f128).copysign(ix) };
+                im = if ix.is_nan() {
+                    f128::NAN
+                } else {
+                    (0.0f128).copysign(ix)
+                };
             }
         } else {
             re = f128::NAN;
@@ -12441,7 +12641,11 @@ fn csqrt_f128(z: CFloat128Complex) -> CFloat128Complex {
             xi = scalbn_f128(ix, -2);
         } else if ix.abs() > f128::MAX / 4.0 {
             scale = 1;
-            xr = if rx.abs() >= 4.0 * f128::MIN_POSITIVE { scalbn_f128(rx, -2) } else { 0.0 };
+            xr = if rx.abs() >= 4.0 * f128::MIN_POSITIVE {
+                scalbn_f128(rx, -2)
+            } else {
+                0.0
+            };
             xi = scalbn_f128(ix, -2);
         } else if rx.abs() < 2.0 * f128::MIN_POSITIVE && ix.abs() < 2.0 * f128::MIN_POSITIVE {
             scale = -57; // -((MANT_DIG+1)/2) = -(114/2)
@@ -12498,7 +12702,10 @@ pub unsafe extern "C" fn conjf64x(z: CDoubleComplex) -> CDoubleComplex {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn conjf128(z: CFloat128Complex) -> CFloat128Complex {
     // Negate the imaginary part (flip its sign bit, so NaN/inf signs flip too).
-    CFloat128Complex { re: z.re, im: f128::from_bits(z.im.to_bits() ^ (1u128 << 127)) }
+    CFloat128Complex {
+        re: z.re,
+        im: f128::from_bits(z.im.to_bits() ^ (1u128 << 127)),
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cprojf32(z: CFloatComplex) -> CFloatComplex {
@@ -12522,7 +12729,10 @@ pub unsafe extern "C" fn cprojf128(z: CFloat128Complex) -> CFloat128Complex {
     // is (+inf, copysign(0, im)); otherwise z is unchanged.
     if z.re.is_infinite() || z.im.is_infinite() {
         let im0 = f128::from_bits(z.im.to_bits() & (1u128 << 127)); // signed zero
-        CFloat128Complex { re: f128::from_bits(0x7fff_u128 << 112), im: im0 }
+        CFloat128Complex {
+            re: f128::from_bits(0x7fff_u128 << 112),
+            im: im0,
+        }
     } else {
         z
     }
@@ -12610,7 +12820,11 @@ fn catanh_f128(z: CFloat128Complex) -> CFloat128Complex {
             im = PI_2.copysign(ix);
         } else if rx.is_infinite() || rx == 0.0 {
             re = (0.0f128).copysign(rx);
-            im = if !ix.is_nan() { PI_2.copysign(ix) } else { f128::NAN };
+            im = if !ix.is_nan() {
+                PI_2.copysign(ix)
+            } else {
+                f128::NAN
+            };
         } else {
             re = f128::NAN;
             im = f128::NAN;
@@ -12701,17 +12915,29 @@ fn kernel_casinh_f128(x: CFloat128Complex, adj: bool) -> CFloat128Complex {
     } else if rx >= 0.5 && ix < EPS_8 {
         let s = hypot_f128(1.0, rx);
         rre = logl_f128(rx + s);
-        rim = if adj { atan2_f128(s, imx) } else { atan2_f128(ix, s) };
+        rim = if adj {
+            atan2_f128(s, imx)
+        } else {
+            atan2_f128(ix, s)
+        };
     } else if rx < EPS_8 && ix >= 1.5 {
         let s = ((ix + 1.0) * (ix - 1.0)).sqrt();
         rre = logl_f128(ix + s);
-        rim = if adj { atan2_f128(rx, s.copysign(imx)) } else { atan2_f128(s, rx) };
+        rim = if adj {
+            atan2_f128(rx, s.copysign(imx))
+        } else {
+            atan2_f128(s, rx)
+        };
     } else if ix > 1.0 && ix < 1.5 && rx < 0.5 {
         if rx < EPS2 {
             let ix2m1 = (ix + 1.0) * (ix - 1.0);
             let s = ix2m1.sqrt();
             rre = log1pl_f128(2.0 * (ix2m1 + ix * s)) / 2.0;
-            rim = if adj { atan2_f128(rx, s.copysign(imx)) } else { atan2_f128(s, rx) };
+            rim = if adj {
+                atan2_f128(rx, s.copysign(imx))
+            } else {
+                atan2_f128(s, rx)
+            };
         } else {
             let ix2m1 = (ix + 1.0) * (ix - 1.0);
             let rx2 = rx * rx;
@@ -12753,7 +12979,11 @@ fn kernel_casinh_f128(x: CFloat128Complex, adj: bool) -> CFloat128Complex {
                 let onemix2 = (1.0 + ix) * (1.0 - ix);
                 let s = onemix2.sqrt();
                 rre = log1pl_f128(2.0 * rx / s) / 2.0;
-                rim = if adj { atan2_f128(s, imx) } else { atan2_f128(ix, s) };
+                rim = if adj {
+                    atan2_f128(s, imx)
+                } else {
+                    atan2_f128(ix, s)
+                };
             } else {
                 let onemix2 = (1.0 + ix) * (1.0 - ix);
                 let rx2 = rx * rx;
@@ -12773,7 +13003,11 @@ fn kernel_casinh_f128(x: CFloat128Complex, adj: bool) -> CFloat128Complex {
         } else {
             let s = hypot_f128(1.0, rx);
             rre = log1pl_f128(2.0 * rx * (rx + s)) / 2.0;
-            rim = if adj { atan2_f128(s, imx) } else { atan2_f128(ix, s) };
+            rim = if adj {
+                atan2_f128(s, imx)
+            } else {
+                atan2_f128(ix, s)
+            };
         }
     } else {
         let yre0 = (rx - ix) * (rx + ix) + 1.0;
@@ -12842,13 +13076,22 @@ fn casin_f128(x: CFloat128Complex) -> CFloat128Complex {
         if rx == 0.0 {
             return x;
         } else if rx.is_infinite() || ix.is_infinite() {
-            return CFloat128Complex { re: f128::NAN, im: f128::INFINITY.copysign(ix) };
+            return CFloat128Complex {
+                re: f128::NAN,
+                im: f128::INFINITY.copysign(ix),
+            };
         } else {
-            return CFloat128Complex { re: f128::NAN, im: f128::NAN };
+            return CFloat128Complex {
+                re: f128::NAN,
+                im: f128::NAN,
+            };
         }
     }
     let y = casinh_f128(CFloat128Complex { re: -ix, im: rx });
-    CFloat128Complex { re: y.im, im: -y.re }
+    CFloat128Complex {
+        re: y.im,
+        im: -y.re,
+    }
 }
 
 /// Complex inverse hyperbolic cosine — glibc s_cacosh dispatcher over the kernel.
@@ -12885,13 +13128,22 @@ fn cacosh_f128(x: CFloat128Complex) -> CFloat128Complex {
         return CFloat128Complex { re, im };
     }
     if rx == 0.0 && ix == 0.0 {
-        return CFloat128Complex { re: 0.0, im: PI_2.copysign(ix) };
+        return CFloat128Complex {
+            re: 0.0,
+            im: PI_2.copysign(ix),
+        };
     }
     let y = kernel_casinh_f128(CFloat128Complex { re: -ix, im: rx }, true);
     if sb(ix) {
-        CFloat128Complex { re: y.re, im: -y.im }
+        CFloat128Complex {
+            re: y.re,
+            im: -y.im,
+        }
     } else {
-        CFloat128Complex { re: -y.re, im: y.im }
+        CFloat128Complex {
+            re: -y.re,
+            im: y.im,
+        }
     }
 }
 
@@ -12935,7 +13187,11 @@ fn catan_f128(z: CFloat128Complex) -> CFloat128Complex {
             re = PI_2.copysign(rx);
             im = (0.0f128).copysign(ix);
         } else if ix.is_infinite() {
-            re = if !rx.is_nan() { PI_2.copysign(rx) } else { f128::NAN };
+            re = if !rx.is_nan() {
+                PI_2.copysign(rx)
+            } else {
+                f128::NAN
+            };
             im = (0.0f128).copysign(ix);
         } else if ix == 0.0 {
             re = f128::NAN;
@@ -13136,8 +13392,7 @@ fn cmul_multc3_f128(z: CFloat128Complex, w: CFloat128Complex) -> CFloat128Comple
             }
             recalc = true;
         }
-        if !recalc
-            && (ac.is_infinite() || bd.is_infinite() || ad.is_infinite() || bc.is_infinite())
+        if !recalc && (ac.is_infinite() || bd.is_infinite() || ad.is_infinite() || bc.is_infinite())
         {
             if a.is_nan() {
                 a = (0.0f128).copysign(a);

@@ -1181,3 +1181,67 @@ algorithm — `pow_fused` is a verbatim glibc port, so it is at parity by
 construction; a further win needs either a lower-latency pow algorithm or
 removing the membrane (`bd-n40in2`), not kernel micro-tuning. Do not re-pin the
 pow golden corpora to pre-fused bits.
+
+## 2026-06-20 `bd-n40in2` math ABI membrane fast-path — tax removed, parity restored
+
+Target: the deployed math ABI membrane. `bench_math_abi` (3-way core/abi/glibc,
+same-run) showed the `unary_entry`/`binary_entry` `decide()`+`observe()`
+machinery adding **+8–12 ns/call**, dragging deployed math from its 2–4× core
+win down to a ~1.08× glibc *loss*. The dominant cost is `record_last_explainability`
+building a full `DecisionExplainability` struct on every hardened-mode call (its
+own comment notes "~300x overhead for python3").
+
+Key observation that makes the fast-path safe: in deployed (non-`cfg(test)`)
+builds `decide()` hard-returns `Allow`/`Full` for `ApiFamily::MathFenv` via the
+high-frequency-family fast-path *before* any kernel consult, so the membrane can
+never `Deny` a math call, and since `Repair`/heal only originates from a kernel
+decision math never reaches, it can never heal one either. The deployed math
+result is therefore bit-identical to the raw kernel result. Added
+`runtime_policy::math_membrane_fastpath()` (`= cfg!(not(test))`, coupled to that
+same gate) and a fast-path in all four entries (`unary_entry`, `binary_entry`,
+`unary_entry_f32`, `binary_entry_f32`): compute `f(x)` and return it directly for
+the common finite case, skipping `decide()` entirely. Finite→non-finite "adverse"
+results fall through to the full path so observation (and any future deny/heal)
+stays reachable.
+
+Verification — the fast-path is exercised by the *integration* gates (the lib
+compiles without `cfg(test)` as a test dependency): `math_abi_test` (118),
+`conformance_diff_math` (20), `conformance_diff_pow_special` (2),
+`conformance_math_errno`, `conformance_diff_fp_exceptions` all green — values, FP
+flags and errno are unchanged on the deployed path. Unit (`cfg(test)`) membrane
+tests keep the full path. (The 2 `ffi_pcc_*` lib-unit failures under the
+`runtime_policy` filter are PRE-EXISTING test-ordering pollution — reproduced on
+the stashed baseline, and worse there: 2 failures vs 1 with this change; unrelated
+to math.)
+
+Perf — `bench_math_abi` pinned to `ovh-a`, per-call (÷64), `runtime_mode=strict`.
+The glibc-variance-free measure is the **abi−core delta** (membrane tax, same
+run):
+
+| symbol | tax baseline | tax post | abi/glibc (quiet run) |
+|---|---|---|---|
+| exp | +12.0 ns | +3.3 ns | 1.00 |
+| sin | +8.0 ns | +0.1 ns | 1.00 |
+| cos | +8.5 ns | +0.4 ns | 1.00 |
+| log | ~+9 ns | +2.6 ns | 1.00 / 0.74 |
+| exp2 | +11.2 ns | +2.5 ns | 1.00 |
+| log2 | +9.3 ns | +2.6 ns | 0.99 |
+
+The membrane `decide()`/`record_explainability` tax is eliminated; the residual
++2.5–4 ns abi-over-core is the extern-C wrapper frame + the `fn`-pointer indirect
+call to the core kernel inside the generic entry (glibc pays its own extern-C
+frame too, so the head-to-head is parity). Deployed math moves from a consistent
+~1.08× loss to **parity-to-win vs glibc** across the whole MathFenv family
+(~100+ exported functions), incl. the new `pow_fused`. Win/loss/neutral: broad
+parity-restoration win (1 documented loss removed), 0 regressions, conformance
+green.
+
+Negative evidence / ceiling: this does NOT reach the bead's hoped ~2× — that
+prediction assumed glibc at 13–19 ns, but on quiet workers glibc math is ~5–8 ns
+and the core kernel is ~3–5 ns, so once the membrane is gone the extern-C frame
+floors the head-to-head at parity. The residual ~3 ns is the `fn`-pointer
+indirection into the generic entry; removing it needs monomorphizing the entry
+per-symbol (macro/`const` fn), a ~100-wrapper refactor for ~3 ns — deferred as
+low-value. Retry-condition predicate: do not chase the residual abi-over-core ns
+via decide/observe tuning (already skipped); only the entry-monomorphization
+refactor remains, and only if a profile shows math entry dominating.

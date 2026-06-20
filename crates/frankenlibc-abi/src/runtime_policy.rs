@@ -1951,6 +1951,29 @@ fn runtime_kernel_passthrough_family(family: ApiFamily) -> bool {
     matches!(family, ApiFamily::Locale)
 }
 
+/// Cheap predicate gating the math ABI fast-path (bd-n40in2).
+///
+/// In deployed (non-test) builds `decide()` hard-returns `Allow`/`Full` for
+/// `ApiFamily::MathFenv` via the high-frequency-family fast-path BELOW, before
+/// any kernel consultation. So for math the membrane can never emit `Deny`, and
+/// because `Repair`/heal only ever originates from a kernel decision that math
+/// never reaches, it can never heal a math result either. The deployed math
+/// result is therefore *bit-identical* to the raw kernel result, which lets the
+/// `unary_entry`/`binary_entry` wrappers skip the entire `decide()` machinery
+/// (its `record_last_explainability` struct build is the measured ~8-11 ns/call
+/// math-membrane tax) and the no-op math `observe()` for the common finite case.
+///
+/// This is intentionally coupled to the SAME `cfg!(not(test))` gate the math
+/// family fast-path uses in `decide`: unit-test builds (`cfg(test)`) keep the
+/// full path so the membrane's deny/heal/observe logic stays exercised. If a
+/// future change makes deployed math denyable/healable (i.e. removes `MathFenv`
+/// from the `decide`/`observe` fast-path family sets), this predicate MUST be
+/// updated in lockstep.
+#[inline(always)]
+pub(crate) fn math_membrane_fastpath() -> bool {
+    cfg!(not(test))
+}
+
 pub(crate) fn decide(
     family: ApiFamily,
     addr_hint: usize,

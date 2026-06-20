@@ -1932,7 +1932,6 @@ fn powi_squaring(base: f64, n: i64) -> f64 {
 /// The caller only reaches this for strictly positive finite bases, so libm's
 /// negative/zero/special-case semantics remain on the general path.
 #[inline]
-#[inline]
 fn pow_half_integer_fast_path(base: f64, exponent: f64) -> Option<f64> {
     if !(base > 0.0 && base.is_finite() && exponent.is_finite()) {
         return None;
