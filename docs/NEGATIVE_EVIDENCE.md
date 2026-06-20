@@ -1679,3 +1679,31 @@ worst 1 ULP, 0 fails** (the f64 route is correctly-rounded for f32); the bit-exa
 Win/loss/neutral: clean WIN. The f32 hyperbolic family is now tanhf 0.93x WIN,
 coshf 0.68x WIN, sinhf 1.29x (loss-reduced; near-0 cancellation band needs an
 expm1f-based form for the rest).
+
+## 2026-06-20 CORRECTION + float32.rs codegen-coupling: sinhf is ALREADY a WIN; near-0 poly REGRESSED coshf
+
+Two findings from trying to finish sinhf's near-0 [-0.5,0.5] band with a Maclaurin
+poly (`x + x^3/6 + x^5/120 + ...`, no cancellation, bit-exact at tiny x):
+
+1. **The committed sinhf is already a WIN, not 1.29x.** A controlled back-to-back
+   A/B on a *quiet* `ovh-a` showed the committed (b71517500) sinhf at **4.76 ns /
+   0.68x** and coshf at **5.03 ns / 0.56x**. The "1.29x" recorded above was a
+   single noisy measurement on a loaded worker — the whole f32 hyperbolic family
+   is in fact a WIN: sinhf ~0.68x, coshf ~0.56-0.68x, tanhf ~0.88x.
+
+2. **`float32.rs` has tight codegen coupling — adding code regresses neighbours.**
+   The sinhf near-0 poly (4 f32 consts + 4 `mul_add`s + a branch) was correct
+   (worst 1 ULP / 400k, tiny-x bit-exact, all gates green) BUT, measured on the
+   same quiet worker, it pushed sinhf 4.76 → 7.85 ns AND coshf 5.03 → 7.79 ns —
+   i.e. it deoptimised an *unrelated committed win* (coshf) by ~55%, almost
+   certainly by tripping the module's inlining budget so `crate::math::exp::exp`
+   stopped inlining into the f64-exp hot paths. **Reverted.**
+
+Retry/avoidance predicate: do NOT add inline polynomial/table code to
+`float32.rs` hot functions without an A/B that re-measures the NEIGHBOURING
+functions (sinhf/coshf/tanhf/expf/erff) — the module is at an inlining cliff and a
+local "improvement" can silently regress a sibling. If a near-0 poly is ever
+needed, put it behind `#[cold] #[inline(never)]` so it cannot perturb the hot
+path's codegen. (And the near-0 sinhf band is not worth it: sinhf already wins.)
+The f64 `erfc`-from-`erf` complement is separately a documented reject
+(special.rs: ">4 ULP in dense replay").
