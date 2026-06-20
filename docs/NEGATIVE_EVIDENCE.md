@@ -1738,3 +1738,37 @@ Win/loss/neutral: loss-reduction WIN across the strtod/strtof float-parse family
 0 regressions. The strtol/strtoul int family has the same pattern (and TWO decides
 — nptr + a redundant always-Allow endptr decide) — a follow-up; the residual
 strtod two-pass scan is the deeper lever after that.
+
+## 2026-06-20 METHODOLOGY: the cargo-test dlmopen membrane microbench runs with cfg(test)=true — strtol "20-50x loss" is largely a TEST-BUILD ARTIFACT (strtol fast-path REVERTED)
+
+Chasing the strtol follow-up, a dlmopen bench showed deployed `strtol` at ~330 ns
+vs glibc ~6-15 ns (22-52x). Applying the same membrane fast-path + a plain-strlen
+scan (skipping `scan_c_string`'s `allocation_bound`→`known_remaining`) did NOT fix
+it. Bisecting, then changing ONLY `runtime_policy::stdlib_membrane_fastpath()`
+from `cfg!(not(test))` to a literal `true`, cut strtol 341→132 ns. That is
+impossible unless `cfg!(not(test))` was **false** — i.e. **`cargo test -p
+frankenlibc-abi --test <x>` compiles the lib with `cfg(test)=true`** (at least in
+this rch/workspace setup), contradicting the assumption recorded in
+NEGATIVE/memory that integration gates exercise the deployed fast-path.
+
+Consequences (airtight first, then inference):
+  - AIRTIGHT: the `*_membrane_fastpath()` predicates are FALSE in these benches,
+    so they measure the SLOW path — full decide()+observe() + `known_remaining`.
+  - In `cfg(test)`, `known_remaining`→`validate_ptr`/`test_allocation_bound`
+    (a `Mutex`) — hundreds of ns on a `.rodata` pointer. In DEPLOYED strict mode
+    `strict_passthrough_active()` routes `known_remaining`→`fallback_remaining`
+    (cheap), and the family fast-path makes decide() cheap — so deployed strtol is
+    very likely fine, and the 20-50x "loss" is mostly the test build.
+
+Action: **REVERTED** this turn's speculative strtol/strtoul/strtoll/strtoull
+membrane fast-path + `scan_numeric_c_string` (an unmeasurable change must not
+ship — MEASURED/REVERT discipline). Scratch bench removed.
+
+CAVEAT propagated: last turn's strtod/strtof fast-path commit (57cf54f99) and the
+math/ctype membrane wins were measured the same dlmopen-cargo-test way; their
+small deltas may be partly noise. They are BENIGN in deployment (skip cheap
+membrane work, test path unchanged, conformance green) — not regressions — but a
+TRUSTWORTHY deployed-ABI perf number requires the real cdylib + LD_PRELOAD (or a
+bench in the `frankenlibc-bench` crate, which builds the lib WITHOUT cfg(test)),
+not a `--test` integration bench. That harness is the prerequisite for any
+further deployed-membrane perf claim.
