@@ -1,6 +1,6 @@
 # FrankenLibC Release Readiness Scorecard
 
-Last updated: 2026-06-19 by `cod-a` / `BlackThrush`.
+Last updated: 2026-06-20 by `cod-a` / `BlackThrush`.
 
 ## Current gate snapshot
 
@@ -277,3 +277,25 @@ Release posture: deployed math can be parity-to-faster, but deployed allocator
 small-size `calloc/free` remains a blocker for "dominates glibc" claims. The
 next allocator work should split zero-fill from metadata cost and pursue a
 deeper metadata/allocator deployment change, not another branch-local tweak.
+
+### 2026-06-20 CP932 iconv decode keep (BlackThrush / cod-a)
+
+Same-worker `hz1` head-to-head converted the CP932-family decode residual from
+a catastrophic glibc loss to neutral.
+
+| Workload | Baseline FL | Final FL | Final glibc | Final ratio | Verdict |
+|---|---:|---:|---:|---:|---|
+| `iconv_glibc_bench` `cp932_to_utf8` | 27169.4 ns | 509.5 ns | 493.0 ns | 1.033x | NEUTRAL vs glibc, 53.3x self-win |
+| paired `utf8_jp_to_cp932` guard | 2384.5 ns | 2025.2 ns | 2335.7 ns | 0.867x | WIN |
+
+The shipped lever is a packed `DBCS key -> UTF-8 triple` table for CP932,
+IBM943, and IBM932 BMP-3 pairs, with a 4-pair emission loop and exact fallback
+to the generic path for single-byte, invalid, incomplete, astral/surrogate, and
+short-output cases. Final score for the CP932 bench group: 1 win, 0 losses,
+1 neutral versus host glibc.
+
+Conformance/build: `rch exec -- cargo check -p frankenlibc-core` passed with
+pre-existing warnings; `rch exec -- cargo test -p frankenlibc-abi --test
+conformance_diff_iconv_cp932 -- --nocapture` passed 3/3. Touched-file rustfmt is
+blocked by pre-existing monolithic/generated iconv formatting drift that would
+cause broad unrelated churn.

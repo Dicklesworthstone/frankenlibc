@@ -18401,6 +18401,19 @@ fn build_dbcs_direct(table: &[(u16, u32)]) -> Vec<u32> {
     t
 }
 
+fn build_dbcs_bmp3_utf8_direct(table: &[(u16, u32)]) -> Vec<u32> {
+    let mut t = vec![0u32; 0x10000];
+    for &(k, cp) in table {
+        if (0x0800..=0xFFFF).contains(&cp) && !(0xD800..=0xDFFF).contains(&cp) {
+            let b0 = 0xE0u8 | ((cp >> 12) as u8);
+            let b1 = 0x80u8 | (((cp >> 6) & 0x3F) as u8);
+            let b2 = 0x80u8 | ((cp & 0x3F) as u8);
+            t[k as usize] = u32::from(b0) | (u32::from(b1) << 8) | (u32::from(b2) << 16);
+        }
+    }
+    t
+}
+
 fn decode_dbcs2(
     input: &[u8],
     one_byte: &[i32; 256],
@@ -18430,6 +18443,78 @@ fn decode_dbcs2(
             .ok_or(DecodeError::Invalid)
     } else {
         Err(DecodeError::Invalid)
+    }
+}
+
+#[inline(always)]
+fn dbcs2_bmp3_utf8_packed_at(input: &[u8], pos: usize, utf8_direct: &[u32]) -> u32 {
+    let b0 = input[pos];
+    let b1 = input[pos + 1];
+    let key = (u16::from(b0) << 8) | u16::from(b1);
+    utf8_direct[key as usize]
+}
+
+#[inline(always)]
+fn write_packed_utf8_triple(outbuf: &mut [u8], pos: usize, packed: u32) {
+    outbuf[pos] = packed as u8;
+    outbuf[pos + 1] = (packed >> 8) as u8;
+    outbuf[pos + 2] = (packed >> 16) as u8;
+}
+
+fn emit_dbcs2_bmp3_utf8_run(
+    input: &[u8],
+    in_pos: &mut usize,
+    outbuf: &mut [u8],
+    out_pos: &mut usize,
+    utf8_direct: &[u32],
+) {
+    while *in_pos + 7 < input.len() && *out_pos + 12 <= outbuf.len() {
+        let p0 = dbcs2_bmp3_utf8_packed_at(input, *in_pos, utf8_direct);
+        if p0 == 0 {
+            return;
+        }
+        let p1 = dbcs2_bmp3_utf8_packed_at(input, *in_pos + 2, utf8_direct);
+        if p1 == 0 {
+            write_packed_utf8_triple(outbuf, *out_pos, p0);
+            *in_pos += 2;
+            *out_pos += 3;
+            return;
+        }
+        let p2 = dbcs2_bmp3_utf8_packed_at(input, *in_pos + 4, utf8_direct);
+        if p2 == 0 {
+            write_packed_utf8_triple(outbuf, *out_pos, p0);
+            write_packed_utf8_triple(outbuf, *out_pos + 3, p1);
+            *in_pos += 4;
+            *out_pos += 6;
+            return;
+        }
+        let p3 = dbcs2_bmp3_utf8_packed_at(input, *in_pos + 6, utf8_direct);
+        if p3 == 0 {
+            write_packed_utf8_triple(outbuf, *out_pos, p0);
+            write_packed_utf8_triple(outbuf, *out_pos + 3, p1);
+            write_packed_utf8_triple(outbuf, *out_pos + 6, p2);
+            *in_pos += 6;
+            *out_pos += 9;
+            return;
+        }
+
+        write_packed_utf8_triple(outbuf, *out_pos, p0);
+        write_packed_utf8_triple(outbuf, *out_pos + 3, p1);
+        write_packed_utf8_triple(outbuf, *out_pos + 6, p2);
+        write_packed_utf8_triple(outbuf, *out_pos + 9, p3);
+        *in_pos += 8;
+        *out_pos += 12;
+    }
+
+    while *in_pos + 1 < input.len() && *out_pos + 3 <= outbuf.len() {
+        let packed = dbcs2_bmp3_utf8_packed_at(input, *in_pos, utf8_direct);
+        if packed == 0 {
+            break;
+        }
+
+        write_packed_utf8_triple(outbuf, *out_pos, packed);
+        *in_pos += 2;
+        *out_pos += 3;
     }
 }
 
@@ -18498,9 +18583,18 @@ fn encode_shiftjis(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     encode_dbcs2(ch, out, direct)
 }
 
-fn decode_cp932(input: &[u8]) -> Result<(char, usize), DecodeError> {
+fn cp932_decode_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cp932_tables::CP932_DBCS));
+    DIRECT.get_or_init(|| build_dbcs_direct(&cp932_tables::CP932_DBCS))
+}
+
+fn cp932_bmp3_utf8_direct() -> &'static [u32] {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    DIRECT.get_or_init(|| build_dbcs_bmp3_utf8_direct(&cp932_tables::CP932_DBCS))
+}
+
+fn decode_cp932(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    let direct = cp932_decode_direct();
     decode_dbcs2(
         input,
         &cp932_tables::CP932_ONE_BYTE,
@@ -18558,9 +18652,18 @@ fn encode_ansi_x3_110(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     encode_dbcs2(ch, out, direct)
 }
 
-fn decode_ibm943(input: &[u8]) -> Result<(char, usize), DecodeError> {
+fn ibm943_decode_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&ibm943_tables::IBM943_DBCS));
+    DIRECT.get_or_init(|| build_dbcs_direct(&ibm943_tables::IBM943_DBCS))
+}
+
+fn ibm943_bmp3_utf8_direct() -> &'static [u32] {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    DIRECT.get_or_init(|| build_dbcs_bmp3_utf8_direct(&ibm943_tables::IBM943_DBCS))
+}
+
+fn decode_ibm943(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    let direct = ibm943_decode_direct();
     decode_dbcs2(
         input,
         &ibm943_tables::IBM943_ONE_BYTE,
@@ -18575,9 +18678,18 @@ fn encode_ibm943(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     encode_dbcs2(ch, out, direct)
 }
 
-fn decode_ibm932(input: &[u8]) -> Result<(char, usize), DecodeError> {
+fn ibm932_decode_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&ibm932_tables::IBM_932_DBCS));
+    DIRECT.get_or_init(|| build_dbcs_direct(&ibm932_tables::IBM_932_DBCS))
+}
+
+fn ibm932_bmp3_utf8_direct() -> &'static [u32] {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    DIRECT.get_or_init(|| build_dbcs_bmp3_utf8_direct(&ibm932_tables::IBM_932_DBCS))
+}
+
+fn decode_ibm932(input: &[u8]) -> Result<(char, usize), DecodeError> {
+    let direct = ibm932_decode_direct();
     decode_dbcs2(
         input,
         &ibm932_tables::IBM_932_ONE_BYTE,
@@ -24110,6 +24222,45 @@ pub fn iconv(
                     out_pos += w;
                     continue;
                 }
+            }
+        }
+
+        // Fast path: CP932-family DBCS -> UTF-8 BMP-3 runs. Japanese text is
+        // dominated by 2-byte legacy pairs that decode to U+0800..=U+FFFF, whose
+        // UTF-8 spelling is always 3 bytes. A packed `key -> UTF-8 triple` table
+        // emits the bytes directly, avoiding per-character Result/char
+        // construction, scalar-to-UTF-8 arithmetic, stack buffers, and slice
+        // copies. Any single-byte character, invalid pair, incomplete lead,
+        // surrogate/astral edge, or short output tail breaks before consuming
+        // input and falls through to the generic body for the exact
+        // EILSEQ/EINVAL/E2BIG ordering.
+        if cd.to == Encoding::Utf8 {
+            match from_enc {
+                Encoding::Cp932 => emit_dbcs2_bmp3_utf8_run(
+                    input,
+                    &mut in_pos,
+                    outbuf,
+                    &mut out_pos,
+                    cp932_bmp3_utf8_direct(),
+                ),
+                Encoding::Ibm943 => emit_dbcs2_bmp3_utf8_run(
+                    input,
+                    &mut in_pos,
+                    outbuf,
+                    &mut out_pos,
+                    ibm943_bmp3_utf8_direct(),
+                ),
+                Encoding::Ibm932 => emit_dbcs2_bmp3_utf8_run(
+                    input,
+                    &mut in_pos,
+                    outbuf,
+                    &mut out_pos,
+                    ibm932_bmp3_utf8_direct(),
+                ),
+                _ => {}
+            }
+            if in_pos >= input.len() {
+                break;
             }
         }
 
