@@ -1948,3 +1948,33 @@ on `LOCK` exactly as before — correctness is unchanged; only the single-thread
 common case is accelerated, exactly as glibc does it.
 
 Win/loss/neutral: clean WIN (1.64x loss → 0.6x win), 0 regressions, gate green.
+
+## 2026-06-20 getenv() — 40.7x LOSS → 1.97x: a gettid() SYSCALL per call, killed by the single-threaded lock-skip
+
+Benched deployed getenv via a fresh `dlmopen` glibc whose private `environ` is
+pointed at the process table (both walk the same env; fl exports no_mangle getenv
+so dlmopen avoids interposition). Deployed getenv("PATH") was **560 ns vs glibc
+14 ns (40.7x)**, miss 592 ns (23x) — catastrophic for a ubiquitous call.
+
+Root cause: `native_getenv` takes `ENVIRON_LOCK`, an `AbiReentrantMutex` whose
+`lock()` calls `current_tid()` = **`sys_gettid()` — a SYSCALL — every call**. The
+membrane fast-path (applied same turn: skip the always-Allow Stdlib
+decide()+observe() and use a plain bounded name scan instead of `scan_c_string`'s
+`allocation_bound` lookup) trimmed a little, but the syscall dominated.
+
+Fix (same single-threaded lever as rand): the lock guards only against a
+concurrent `setenv` reallocating the table; while `__libc_single_threaded` is set
+there is no concurrent setenv, so skip the lock (and its gettid syscall) — exactly
+as glibc skips its lock single-threaded. The flag flips to 0 at the first
+pthread_create, restoring the lock for all concurrent access.
+
+Measured: getenv **560 → 25.8 ns (40.7x → 1.97x)**, miss 592 → 47 ns (23x →
+1.80x) — a ~22x speedup. Conformance green: conformance_diff_getenv,
+metamorphic_getenv, conformance_diff_setenv, conformance_diff_secure_getenv (all
+pass; the walk/result is unchanged). Residual ~2x = `getenv_bootstrap_sensitive`
+(5 reentry/init context checks per call) + the name scan vs glibc's bare walk.
+**GENERAL FINDING: any fl hot path guarded by `AbiReentrantMutex` pays a gettid()
+syscall per call; the single-threaded skip (or a cached tid) is a huge lever —
+audit other reentrant-mutex users.**
+
+Win/loss/neutral: clean WIN (40.7x loss → 1.97x), 0 regressions, gates green.

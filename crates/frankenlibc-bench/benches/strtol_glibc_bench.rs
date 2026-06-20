@@ -17,6 +17,11 @@ use std::time::{Duration, Instant};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
+unsafe extern "C" {
+    /// The process environment table (the one fl::getenv walks).
+    static environ: *mut *mut c_char;
+}
+
 type StrtolFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char, c_int) -> i64;
 type StrtodFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f64;
 type AtoiFn = unsafe extern "C" fn(*const c_char) -> c_int;
@@ -162,6 +167,28 @@ fn bench(c: &mut Criterion) {
     let fl = time_it(|| unsafe { frankenlibc_abi::stdlib_abi::rand() as i64 });
     let gl = time_it(|| unsafe { grand() as i64 });
     println!("rand: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}", fl / gl);
+
+    // getenv: point the dlmopen glibc's private `environ` at the process table so
+    // both walk the same env; fl exports no_mangle getenv so dlmopen avoids it.
+    type GetenvFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
+    unsafe {
+        let h = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        let g_env = libc::dlsym(h as *mut _, b"environ\0".as_ptr().cast()) as *mut *mut *mut c_char;
+        if !g_env.is_null() {
+            *g_env = environ;
+        }
+        let ggetenv: GetenvFn = std::mem::transmute(libc::dlsym(h as *mut _, b"getenv\0".as_ptr().cast()));
+        for (name, key) in [("getenv_hit", b"PATH\0".as_slice()), ("getenv_miss", b"NOPE_XYZZY_123\0")] {
+            let p = key.as_ptr() as *const c_char;
+            let fl = time_it(|| frankenlibc_abi::stdlib_abi::getenv(black_box(p)) as i64);
+            let gl = time_it(|| ggetenv(black_box(p)) as i64);
+            println!("{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}", fl / gl);
+        }
+    }
 
     let _ = report;
     group.finish();

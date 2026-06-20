@@ -256,7 +256,22 @@ unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
     // before we return the entry-value pointer; callers that retain the
     // pointer across a subsequent setenv must accept POSIX's documented
     // "value may be overwritten by setenv" semantics. (REVIEW round 3.)
-    let _lock = ENVIRON_LOCK.lock();
+    //
+    // Single-threaded fast path: `ENVIRON_LOCK` is a reentrant mutex whose
+    // `lock()` issues a `gettid()` SYSCALL every call (~hundreds of ns —
+    // measured deployed getenv at ~560 ns vs glibc ~14 ns). While the process is
+    // single-threaded there can be no concurrent setenv, so the lock (and its
+    // syscall) is pure overhead — skip it, exactly as glibc skips its lock while
+    // `__libc_single_threaded` is set. The flag flips to 0 at the first
+    // pthread_create, restoring the lock for all subsequent concurrent access.
+    let _lock = if crate::glibc_internal_abi::__libc_single_threaded
+        .load(std::sync::atomic::Ordering::Acquire)
+        == 0
+    {
+        Some(ENVIRON_LOCK.lock())
+    } else {
+        None
+    };
     // SAFETY: HOST_ENVIRON is owned by libc; we only read pointers/bytes
     // and the array layout is stable while we hold the mutator lock.
     unsafe {
@@ -1651,41 +1666,62 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
         return unsafe { native_getenv(name_slice) };
     }
 
-    let (_mode, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        name as usize,
-        0,
-        false,
-        known_remaining(name as usize).is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
-        return ptr::null_mut();
-    }
+    // Deployed fast-path: Stdlib is always-Allow, so the decide()+observe()
+    // membrane (and its `known_remaining` lookups) is pure overhead on top of the
+    // environ walk — same lever as strtod (bd-n40in2 sibling). `profile` is `Some`
+    // only on the full (test) path, which keeps deny/observe exercised.
+    let bound = env_name_scan_bound(name);
+    let (profile, len, terminated) = if runtime_policy::stdlib_membrane_fastpath() {
+        // Plain bounded NUL scan — no `scan_c_string` allocation_bound lookup.
+        let mut i = 0usize;
+        let mut term = false;
+        while i < bound {
+            if unsafe { *name.add(i) } == 0 {
+                term = true;
+                break;
+            }
+            i += 1;
+        }
+        (None, i, term)
+    } else {
+        let (_mode, decision) = runtime_policy::decide(
+            ApiFamily::Stdlib,
+            name as usize,
+            0,
+            false,
+            known_remaining(name as usize).is_none(),
+            0,
+        );
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+        let (len, terminated) = unsafe { scan_c_string(name, Some(bound)) };
+        (Some(decision.profile), len, terminated)
+    };
 
-    let (len, terminated) = unsafe { scan_c_string(name, Some(env_name_scan_bound(name))) };
     if !terminated {
         // Unterminated names are always rejected to avoid passing non-C strings to libc.
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        if let Some(p) = profile {
+            runtime_policy::observe(ApiFamily::Stdlib, p, 5, true);
+        }
         return ptr::null_mut();
     }
 
     let name_slice = unsafe { std::slice::from_raw_parts(name as *const u8, len) };
     if !frankenlibc_core::stdlib::valid_env_name(name_slice) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        if let Some(p) = profile {
+            runtime_policy::observe(ApiFamily::Stdlib, p, 5, true);
+        }
         return ptr::null_mut();
     }
 
     // SAFETY: we only read libc's environment table and return pointer to existing value storage.
     let result = unsafe { native_getenv(name_slice) };
-    let adverse = result.is_null();
-    runtime_policy::observe(
-        ApiFamily::Stdlib,
-        decision.profile,
-        runtime_policy::scaled_cost(8, len),
-        adverse,
-    );
+    if let Some(p) = profile {
+        let adverse = result.is_null();
+        runtime_policy::observe(ApiFamily::Stdlib, p, runtime_policy::scaled_cost(8, len), adverse);
+    }
     result
 }
 
