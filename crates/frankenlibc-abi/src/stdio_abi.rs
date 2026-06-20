@@ -3440,10 +3440,14 @@ pub(crate) unsafe fn render_wprintf(
     segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
     args: *const u64,
     max_args: usize,
-) -> Vec<u8> {
+) -> ScratchVec {
     // Callers (wprintf/swprintf family) already parsed the format for argument
     // counting/extraction; render the pre-parsed segments rather than re-parsing.
-    unsafe { render_segments(segments, args, max_args, true).into_vec() }
+    // Return the pooled `ScratchVec` (not `.into_vec()`) so the output buffer
+    // returns to the TLS pool on drop — every wide-printf caller below only reads
+    // it by reference, so keeping it pooled saves a 256-byte alloc/free per call
+    // (the narrow snprintf path already pools; this brings the wide family to parity).
+    unsafe { render_segments(segments, args, max_args, true) }
 }
 
 unsafe fn render_printf_impl(

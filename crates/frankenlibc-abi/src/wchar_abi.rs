@@ -3440,7 +3440,7 @@ pub unsafe extern "C" fn fwprintf(
     let wide_count = narrow_to_wide_count(&rendered);
 
     // Write each byte through the stdio layer to use stream buffering.
-    for &byte in &rendered {
+    for &byte in rendered.iter() {
         if unsafe { super::stdio_abi::fputc(byte as c_int, stream) } == libc::EOF {
             return -1;
         }
@@ -3528,7 +3528,7 @@ pub unsafe extern "C" fn vfwprintf(
     // vfwprintf returns the number of WIDE CHARACTERS written, not bytes.
     let wide_count = narrow_to_wide_count(&rendered);
 
-    for &byte in &rendered {
+    for &byte in rendered.iter() {
         if unsafe { super::stdio_abi::fputc(byte as c_int, stream) } == libc::EOF {
             return -1;
         }
