@@ -1707,3 +1707,34 @@ needed, put it behind `#[cold] #[inline(never)]` so it cannot perturb the hot
 path's codegen. (And the near-0 sinhf band is not worth it: sinhf already wins.)
 The f64 `erfc`-from-`erf` complement is separately a documented reject
 (special.rs: ">4 ULP in dense replay").
+
+## 2026-06-20 strtod/strtof membrane fast-path — simple-case loss cut ~0.4-0.6x (bd-n40in2 sibling)
+
+A dlmopen strtod survey found fl WINS the hard cases (subnormal 0.53x, 1.79e308
+0.65x, 17-digit 0.74x — the SWAR/fast_float parser pays off) but LOSES the simple
+common ones: integer "12345" **1.52x**, "1.234e10" **1.73x**, hex "0x1.fp10"
+**2.29x**. The core parser is already fast (Lemire SWAR); the gap is the ABI
+wrapper's per-call `decide()`+`observe()` Stdlib membrane (a non-inlined call with
+several atomics, ~5-10 ns, large next to a ~34 ns simple parse).
+
+Fix (`stdlib_abi.rs` + `runtime_policy.rs`): `Stdlib` is in the high-frequency
+fast-path family set, so in deployed (non-test) builds `decide()` always returns
+`Allow` (never `Repair` → the repair `bound` is always `None`, scan unbounded
+either way) and the parse reads the string regardless of the decision. Added
+`stdlib_membrane_fastpath()` (`= cfg!(not(test))`) and skipped decide()+observe()
+in `strtod`/`strtof` (strtold delegates to strtod). Unit-test builds keep the full
+path (deny/observe exercised).
+
+Measured — controlled back-to-back A/B on `ovh-a` (ratios normalise the worker):
+strtod **int 1.52x → 1.15x, sci 1.73x → 1.26x, hex 2.29x → 1.66x** (the fl
+absolute for "12345" dropped 50.4 → 39.8 ns — the membrane removed). Still a
+residual loss (the rest is the wrapper's two-pass scan: `scan_terminated_numeric_
+string` then `strtod_impl` re-scans), but the membrane tax is gone. Conformance
+green on the deployed fast-path: `conformance_diff_strtod_edges`,
+`strtod_strtof_live_differential_probe` (live vs-glibc value+endptr+errno),
+`strtod_strtof_signbit_differential_fuzz`, `conformance_math_errno`.
+
+Win/loss/neutral: loss-reduction WIN across the strtod/strtof float-parse family,
+0 regressions. The strtol/strtoul int family has the same pattern (and TWO decides
+— nptr + a redundant always-Allow endptr decide) — a follow-up; the residual
+strtod two-pass scan is the deeper lever after that.

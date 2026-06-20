@@ -1989,6 +1989,20 @@ pub(crate) fn ctype_membrane_fastpath() -> bool {
     cfg!(not(test))
 }
 
+/// Cheap predicate gating the Stdlib numeric-parse fast-path (strtod/strtol
+/// family). Same reasoning as [`math_membrane_fastpath`]: `ApiFamily::Stdlib` is
+/// in the high-frequency-family fast-path set in `decide`/`observe`, so in
+/// deployed (non-test) builds `decide()` always returns `Allow` (never `Repair`,
+/// so the repair `bound` is always `None` and the scan is unbounded either way)
+/// and `observe()` for a non-adverse Stdlib call is a no-op. The parse reads the
+/// string regardless of the decision, so the per-call `decide()`+`observe()` (a
+/// non-inlined call with several atomics) cannot change the result and is skipped.
+/// Unit-test builds keep the full path so deny/observe stays exercised.
+#[inline(always)]
+pub(crate) fn stdlib_membrane_fastpath() -> bool {
+    cfg!(not(test))
+}
+
 pub(crate) fn decide(
     family: ApiFamily,
     addr_hint: usize,

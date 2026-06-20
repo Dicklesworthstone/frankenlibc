@@ -1927,24 +1927,35 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
         return 0.0;
     }
 
-    let (_, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        nptr as usize,
-        0,
-        false,
-        known_remaining(nptr as usize).is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
-        if !endptr.is_null() {
-            unsafe { *endptr = nptr as *mut c_char };
+    // Deployed fast-path: Stdlib is always-Allow in non-test builds and the parse
+    // reads the string regardless of the decision, so skip the per-call
+    // decide()+observe() membrane (bd-n40in2 sibling). `profile` is `Some` only on
+    // the full (test) path, which still exercises deny/observe.
+    let profile = if runtime_policy::stdlib_membrane_fastpath() {
+        None
+    } else {
+        let (_, decision) = runtime_policy::decide(
+            ApiFamily::Stdlib,
+            nptr as usize,
+            0,
+            false,
+            known_remaining(nptr as usize).is_none(),
+            0,
+        );
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+            if !endptr.is_null() {
+                unsafe { *endptr = nptr as *mut c_char };
+            }
+            return 0.0;
         }
-        return 0.0;
-    }
+        Some(decision.profile)
+    };
 
     let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        if let Some(p) = profile {
+            runtime_policy::observe(ApiFamily::Stdlib, p, 5, true);
+        }
         if !endptr.is_null() {
             unsafe { *endptr = nptr as *mut c_char };
         }
@@ -1970,12 +1981,14 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
         }
     }
 
-    runtime_policy::observe(
-        ApiFamily::Stdlib,
-        decision.profile,
-        runtime_policy::scaled_cost(5, consumed),
-        false,
-    );
+    if let Some(p) = profile {
+        runtime_policy::observe(
+            ApiFamily::Stdlib,
+            p,
+            runtime_policy::scaled_cost(5, consumed),
+            false,
+        );
+    }
     val
 }
 
@@ -2075,24 +2088,34 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
         return 0.0;
     }
 
-    let (_, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        nptr as usize,
-        0,
-        false,
-        known_remaining(nptr as usize).is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
-        if !endptr.is_null() {
-            unsafe { *endptr = nptr as *mut c_char };
+    // Deployed fast-path: see `strtod`. Stdlib is always-Allow in non-test, so the
+    // per-call decide()+observe() membrane is skipped; `profile` is `Some` only on
+    // the full (test) path.
+    let profile = if runtime_policy::stdlib_membrane_fastpath() {
+        None
+    } else {
+        let (_, decision) = runtime_policy::decide(
+            ApiFamily::Stdlib,
+            nptr as usize,
+            0,
+            false,
+            known_remaining(nptr as usize).is_none(),
+            0,
+        );
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+            if !endptr.is_null() {
+                unsafe { *endptr = nptr as *mut c_char };
+            }
+            return 0.0;
         }
-        return 0.0;
-    }
+        Some(decision.profile)
+    };
 
     let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        if let Some(p) = profile {
+            runtime_policy::observe(ApiFamily::Stdlib, p, 5, true);
+        }
         if !endptr.is_null() {
             unsafe { *endptr = nptr as *mut c_char };
         }
@@ -2115,12 +2138,14 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
         }
     }
 
-    runtime_policy::observe(
-        ApiFamily::Stdlib,
-        decision.profile,
-        runtime_policy::scaled_cost(5, consumed),
-        false,
-    );
+    if let Some(p) = profile {
+        runtime_policy::observe(
+            ApiFamily::Stdlib,
+            p,
+            runtime_policy::scaled_cost(5, consumed),
+            false,
+        );
+    }
     value
 }
 
@@ -2151,8 +2176,18 @@ const KSIG_SETSIZE: usize = core::mem::size_of::<u64>();
 /// Install SIG_IGN for `sig`, returning the previous kernel disposition (so it
 /// can be restored verbatim, preserving any restorer/flags the caller set).
 unsafe fn system_ignore_signal(sig: c_int) -> Option<KernelSigaction> {
-    let act = KernelSigaction { handler: libc::SIG_IGN, flags: 0, restorer: 0, mask: 0 };
-    let mut old = KernelSigaction { handler: 0, flags: 0, restorer: 0, mask: 0 };
+    let act = KernelSigaction {
+        handler: libc::SIG_IGN,
+        flags: 0,
+        restorer: 0,
+        mask: 0,
+    };
+    let mut old = KernelSigaction {
+        handler: 0,
+        flags: 0,
+        restorer: 0,
+        mask: 0,
+    };
     match unsafe {
         raw_syscall::sys_rt_sigaction(
             sig,
@@ -2180,7 +2215,12 @@ unsafe fn system_restore_signal(sig: c_int, act: &KernelSigaction) {
 
 /// Reset `sig` to SIG_DFL (used in the child before exec).
 unsafe fn system_default_signal(sig: c_int) {
-    let act = KernelSigaction { handler: libc::SIG_DFL, flags: 0, restorer: 0, mask: 0 };
+    let act = KernelSigaction {
+        handler: libc::SIG_DFL,
+        flags: 0,
+        restorer: 0,
+        mask: 0,
+    };
     let _ = unsafe {
         raw_syscall::sys_rt_sigaction(
             sig,
@@ -3276,8 +3316,7 @@ pub unsafe extern "C" fn l64a(value: c_long) -> *mut c_char {
 
     // SVID base-64 alphabet (index 0='.', 1='/', 2-11='0'-'9', 12-37='A'-'Z',
     // 38-63='a'-'z'), matching frankenlibc_core::stdlib::base64.
-    const ALPHABET: &[u8; 64] =
-        b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    const ALPHABET: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
     unsafe {
@@ -3757,19 +3796,19 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
     // Keys 2/3 intentionally report "2.38" (frankenlibc's declared glibc-compat
     // level), not the host's running version.
     let value: &[u8] = match name {
-        0 => b"/bin:/usr/bin\0",         // _CS_PATH
-        1 => b"POSIX_V6_LP64_OFF64\0",   // _CS_V6_WIDTH_RESTRICTED_ENVS
-        2 => b"glibc 2.38\0",            // _CS_GNU_LIBC_VERSION
-        3 => b"NPTL 2.38\0",             // _CS_GNU_LIBPTHREAD_VERSION
-        4 => b"XBS5_LP64_OFF64\0",       // _CS_V5_WIDTH_RESTRICTED_ENVS
-        5 => b"POSIX_V7_LP64_OFF64\0",   // _CS_V7_WIDTH_RESTRICTED_ENVS
+        0 => b"/bin:/usr/bin\0",       // _CS_PATH
+        1 => b"POSIX_V6_LP64_OFF64\0", // _CS_V6_WIDTH_RESTRICTED_ENVS
+        2 => b"glibc 2.38\0",          // _CS_GNU_LIBC_VERSION
+        3 => b"NPTL 2.38\0",           // _CS_GNU_LIBPTHREAD_VERSION
+        4 => b"XBS5_LP64_OFF64\0",     // _CS_V5_WIDTH_RESTRICTED_ENVS
+        5 => b"POSIX_V7_LP64_OFF64\0", // _CS_V7_WIDTH_RESTRICTED_ENVS
         // LFS / LFS64 compiler flags (_CS_LFS_* = 1000..=1003, _CS_LFS64_* = 1004..=1007).
         1004 | 1007 => b"-D_LARGEFILE64_SOURCE\0", // LFS64 CFLAGS / LINTFLAGS
         1000..=1007 => b"\0",
         // POSIX_V6 / V7 programming-environment flags (_CS_POSIX_V6_* / _CS_POSIX_V7_* = 1100..=1147)
         // and the V6/V7 ENV strings (1148/1149). On LP64 x86_64 only the LP64_OFF64
         // CFLAGS/LDFLAGS carry `-m64`; every other environment flag is empty.
-        1148 | 1149 => b"POSIXLY_CORRECT=1\0",            // _CS_V6_ENV / _CS_V7_ENV
+        1148 | 1149 => b"POSIXLY_CORRECT=1\0", // _CS_V6_ENV / _CS_V7_ENV
         1108 | 1109 | 1124 | 1125 | 1140 | 1141 => b"-m64\0", // LP64_OFF64 CFLAGS/LDFLAGS
         1100..=1147 => b"\0",
         _ => {
