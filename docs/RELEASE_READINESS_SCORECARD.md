@@ -1,16 +1,16 @@
 # FrankenLibC Release Readiness Scorecard
 
-Last updated: 2026-06-20 by `cod-b` / `BlackThrush`.
+Last updated: 2026-06-20 by `cod-a` / `cod-b` / `BlackThrush`.
 
 ## Current gate snapshot
 
 | Area | Score | Evidence | Risk |
 |---|---:|---|---|
-| Measured perf backlog conversion | 19 / many pending | Added cod-a parser-batch classification for `bd-2g7oyh.480`, `.484`, `.486`, `.488`, `.489`, `.490`, `.491`, `bd-v4t889`, `bd-rpc-byte-program-number-wq60gz`, plus `bd-2g7oyh.479` runtime-design stack candidates, `bd-li0so3` hosts field scanner, `bd-7ak6cm` calloc `alloc_zeroed` skip (controlled new-vs-old + dlmopen glibc head-to-head on `ovh-a`), `bd-4crkqx` aliases member scanner, and `bd-xxrfvu` `/etc/networks` byte network-number parser. Parser rows are internal old-vs-new; `.479` is same-worker runtime-kernel old-vs-new; `bd-7ak6cm` adds a deployed-ABI calloc vs host-glibc bench. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, runtime membrane, and peer-owned leaves. Deployed ABI vs glibc evidence is still required for release perf claims. |
-| Negative-evidence ledger | 1 committed ledger + bead-local rejects | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and the cod-a parser batch. `tests/artifacts/perf/bd-2g7oyh.479-runtime-design-stack-candidates.md`, `tests/artifacts/perf/bd-li0so3-hosts-field-scanner.md`, `tests/artifacts/perf/bd-7ak6cm-calloc-alloc-zeroed.md`, `tests/artifacts/perf/bd-4crkqx-aliases-member-scanner.md`, and `tests/artifacts/perf/bd-xxrfvu-byte-network-parser.md` record same-worker rejects/keeps, root causes, and retry predicates. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended when it is not peer-owned dirty. |
-| Revert discipline | Green for measured cluster | Winning rows kept; losing/neutral parser source shapes were reversed without deleting evidence artifacts or benchmark rows. Prior glibc losses (`bd-2g7oyh.478`, `bd-2g7oyh.482`) remain reverted. `bd-2g7oyh.479` stack candidates, `bd-li0so3` hosts scanner, `bd-7ak6cm` calloc `alloc_zeroed`, and `bd-4crkqx` aliases member scanner were reverted after same-worker measurement (calloc kept only the reusable bench harness). `bd-xxrfvu` measured as a same-worker win and was kept. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
-| Conformance guard | Partial green | Focused parser guards passed previously. For `.479`, touched-file rustfmt and `cargo check -p frankenlibc-membrane --lib` passed. For `bd-li0so3`, touched-file rustfmt, 10 hosts parser tests, and `cargo check -p frankenlibc-core` passed. For `bd-7ak6cm`, source fully reverted (no allocator behavior change); the new `calloc_glibc_bench` builds clean on `ovh-a` and `cargo check -p frankenlibc-membrane` passed. For `bd-4crkqx`, source was reverted to split/filter/collect; touched-file rustfmt passed, 30 aliases-filtered core tests passed, and `cargo check -p frankenlibc-core` passed. For `bd-xxrfvu`, touched-file rustfmt passed, `netnum` filtered tests passed 12/12, `network_` filtered tests passed 15/15, and `cargo check -p frankenlibc-core` passed. For `bd-z8p3mx` (general powf fused glibc kernel), the new gate `conformance_diff_powf_general` (6981 inputs **bit-exact, 0 ULP** — it is glibc's `__ieee754_powf` algorithm), the existing `diff_powf_profile_exp_1_337`, the powf-underflow errno unit tests, and `conformance_diff_fp_exceptions` all passed against host glibc 2.42. The fused kernel is **4.8x faster than the prior libm fallback and within 1.23x of glibc** (`powf_glibc_bench`). Two pre-existing unrelated failures remain (`diff_sign_min_max_dim_helpers_*`, `fminf`/`fmaxf`/`fdimf` — fail on clean HEAD too, not touched here). | Full core tests are blocked by unrelated iconv/glob failures; workspace check/clippy by missing packaged files in `asupersync-conformance 0.3.4`; workspace fmt by broad formatting drift. |
-| Release posture | Not ready | Additional getopt and group lookup wins recorded, real `getgrgid(0)` neutral and passwd lookup losses routed deeper, and `bd-f874go` strict allocator reentry-slot reuse narrows the deployed `calloc/free` gap without closing it. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, conformance/bench gates are repeatable, and allocator small sizes no longer carry double-digit glibc losses. |
+| Measured perf backlog conversion | 21 / many pending | Added cod-a parser-batch classification for `bd-2g7oyh.480`, `.484`, `.486`, `.488`, `.489`, `.490`, `.491`, `bd-v4t889`, `bd-rpc-byte-program-number-wq60gz`, plus `bd-2g7oyh.479` runtime-design stack candidates, `bd-li0so3` hosts field scanner, `bd-7ak6cm` calloc `alloc_zeroed` skip, `bd-4crkqx` aliases member scanner, `bd-xxrfvu` `/etc/networks` byte network-number parser, `bd-f874go` strict allocator reentry-slot reuse, and the 2026-06-20 `bd-2g7oyh` calloc tombstone-compaction reject. Parser rows are internal old-vs-new; allocator rows use deployed-ABI calloc vs host-glibc bench evidence. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, runtime membrane, and peer-owned leaves. Deployed ABI vs glibc evidence is still required for release perf claims. |
+| Negative-evidence ledger | 1 committed ledger + bead-local rejects | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and the parser/allocator batch. `tests/artifacts/perf/bd-f874go-native-reentry-slot.md` and `tests/artifacts/perf/bd-2g7oyh-calloc-strict-fastpath.md` record the kept native reentry-slot reduction and reverted tombstone compaction with root causes and retry predicates. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended when it is not peer-owned dirty. |
+| Revert discipline | Green for measured cluster | Winning rows kept; losing/neutral parser source shapes were reversed without deleting evidence artifacts or benchmark rows. Prior glibc losses (`bd-2g7oyh.478`, `bd-2g7oyh.482`) remain reverted. `bd-2g7oyh.479` stack candidates, `bd-li0so3` hosts scanner, `bd-7ak6cm` calloc `alloc_zeroed`, `bd-4crkqx` aliases member scanner, and the 2026-06-20 calloc tombstone compaction were reverted after measurement. `bd-xxrfvu` and `bd-f874go` measured as keeps. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
+| Conformance guard | Partial green | Focused parser guards passed previously. For `.479`, touched-file rustfmt and `cargo check -p frankenlibc-membrane --lib` passed. For `bd-li0so3`, touched-file rustfmt, 10 hosts parser tests, and `cargo check -p frankenlibc-core` passed. For allocator work, `bd-f874go` passed its focused guards, and the 2026-06-20 calloc tombstone compaction reject was reverted; the current tree's `malloc_abi_test` passed 53/0/1 ignored and `rch exec -- cargo build -p frankenlibc-abi --release` passed on `hz1`. For `bd-4crkqx`, source was reverted to split/filter/collect; touched-file rustfmt passed, 30 aliases-filtered core tests passed, and `cargo check -p frankenlibc-core` passed. For `bd-xxrfvu`, touched-file rustfmt passed, `netnum` filtered tests passed 12/12, `network_` filtered tests passed 15/15, and `cargo check -p frankenlibc-core` passed. For `bd-z8p3mx`, the powf gates passed against host glibc 2.42. Two pre-existing unrelated failures remain (`diff_sign_min_max_dim_helpers_*`, `fminf`/`fmaxf`/`fdimf` — fail on clean HEAD too, not touched here). | Full core tests are blocked by unrelated iconv/glob failures; workspace check/clippy by missing packaged files in `asupersync-conformance 0.3.4`; workspace fmt by broad formatting drift. |
+| Release posture | Not ready | Additional getopt and group lookup wins recorded, real `getgrgid(0)` neutral and passwd lookup losses routed deeper, `bd-f874go` strict allocator reentry-slot reuse narrows the deployed `calloc/free` gap, and the tombstone compaction attempt is recorded as a revert. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, conformance/bench gates are repeatable, and allocator small sizes no longer carry double-digit glibc losses. |
 
 ## 2026-06-19 measured stdio cluster
 
@@ -171,6 +171,29 @@ generated/table and legacy files; the deny-warnings `frankenlibc-core` clippy
 gate remains blocked by pre-existing lint debt. Scorecard for this targeted lane:
 **2 WIN / 0 NEUTRAL / 0 LOSS**. Evidence:
 `tests/artifacts/perf/bd-2g7oyh-gb18030-direct-codec.md`.
+
+## 2026-06-20 `bd-2g7oyh` calloc tombstone compaction reject
+
+The allocator follow-up tested deletion-time tombstone compaction in the
+fallback allocation table. It was measured with deployed `calloc/free` against
+host glibc via `calloc_glibc_bench` on `vmi1293453`.
+
+| Size | Candidate FL | glibc | FL/glibc | Same-worker candidate / prior FL | Verdict |
+|---|---:|---:|---:|---:|---|
+| 16 B | 126.620 ns | 11.529 ns | 10.98x | 1.027x | LOSS/regression |
+| 256 B | 747.608 ns | 37.921 ns | 19.72x | 0.958x | LOSS vs glibc |
+| 4096 B | 823.597 ns | 153.098 ns | 5.38x | 0.925x | LOSS vs glibc |
+| 262144 B | 5016.522 ns | 4126.736 ns | 1.22x | 0.901x p50, 1.710x mean | LOSS/tail regression |
+| 1048576 B | 21035.057 ns | 19578.059 ns | 1.07x | 1.082x | LOSS/regression |
+| 4194304 B | 108814.652 ns | 118209.750 ns | 0.92x | 1.263x | Mixed; absolute regression |
+
+Action: reverted the source to the prior tombstone-on-remove behavior and kept
+only evidence. The retry predicate is now explicit: do not retry deletion-time
+tombstone clearing/coalescing; the next allocator lane needs a different shape
+such as a slim strict `calloc/free` fast path or a same-run profile that explains
+the diffuse allocator overhead first.
+
+Evidence: `tests/artifacts/perf/bd-2g7oyh-calloc-strict-fastpath.md`.
 
 ## 2026-06-19 `bd-2g7oyh.478` measured reject
 
