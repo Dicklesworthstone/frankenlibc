@@ -195,6 +195,30 @@ fn bench(c: &mut Criterion) {
     let jp_cps: Vec<u32> = (0..512u32).map(|k| 0x3041 + (k % 0x5E)).collect();
     let jp = u8enc(&jp_cps);
     run_conv(c, "utf8_jp_to_cp932", b"CP932\0", b"UTF-8\0", &jp);
+
+    // DECODE side (legacy multibyte -> UTF-8). Build the legacy source with the
+    // host glibc (authoritative), then bench the decode head-to-head. CP932 is
+    // excluded from fl's DBCS->UTF-8 fast-path guard (only the match handles it),
+    // so it falls to the slow generic body; GB18030 IS in the guard (control).
+    let host = host_iconv();
+    let host_to = |to: &[u8], src: &[u8]| -> Vec<u8> {
+        let cd = unsafe { (host.open)(to.as_ptr().cast(), b"UTF-8\0".as_ptr().cast()) };
+        assert!(cd as isize != -1 && !cd.is_null());
+        let mut dst = vec![0u8; src.len() * 4 + 16];
+        let mut inp = src.as_ptr() as *mut c_char;
+        let mut inl = src.len();
+        let mut outp = dst.as_mut_ptr() as *mut c_char;
+        let mut outl = dst.len();
+        unsafe { (host.convert)(cd, &mut inp, &mut inl, &mut outp, &mut outl) };
+        unsafe { (host.close)(cd) };
+        let n = dst.len() - outl;
+        dst.truncate(n);
+        dst
+    };
+    let cp932_src = host_to(b"CP932\0", &jp);
+    run_conv(c, "cp932_to_utf8", b"UTF-8\0", b"CP932\0", &cp932_src);
+    let gb_src = host_to(b"GB18030\0", &cjk);
+    run_conv(c, "gb18030_to_utf8", b"UTF-8\0", b"GB18030\0", &gb_src);
 }
 
 criterion_group!(benches, bench);
