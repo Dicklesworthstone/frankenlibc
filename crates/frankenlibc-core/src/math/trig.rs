@@ -1,18 +1,79 @@
 //! Trigonometric functions.
 
+// Fast extended-range argument reduction for sin/cos/tan.
+//
+// `libm`'s reduction is fast for |x| < 2^20·π/2 (≈1.6e6), but above that it
+// falls to a slow Payne-Hanek path — measured ~7-10x slower than glibc, which
+// stays flat (~10 ns) across all ranges. For the common "large but not
+// astronomical" range we reduce with an FMA-based 3-part π/2 Cody-Waite (no
+// Payne-Hanek table) and evaluate the already-fast small-arg `libm` kernel on
+// the reduced value. |x| above the 3-part range (≈1e15, where the quotient `n`
+// no longer leaves enough of the 159-bit π/2 split) stays on `libm` so the rare
+// astronomical case keeps its full accuracy.
+
+const TWO_OVER_PI: f64 = f64::from_bits(0x3fe45f306dc9c883); // 2/π
+const PIO2H: f64 = f64::from_bits(0x3ff921fb54442d18); // π/2, high 53 bits
+const PIO2M: f64 = f64::from_bits(0x3c91a62633145c07); // π/2 − PIO2H
+const PIO2L: f64 = f64::from_bits(0xb91f1976b7ed8fbc); // π/2 − PIO2H − PIO2M
+/// Below this, `libm`'s own reduction is already fast — leave it alone.
+const TRIG_FAST_HI: f64 = 1.647e6;
+/// Above this, the 3-part split runs out of precision — defer to `libm`.
+const TRIG_RED_MAX: f64 = 1.0e15;
+
+/// Reduce `x` to `(n mod 4, r)` with `r ∈ ~[-π/4, π/4]` and `x = n·π/2 + r`,
+/// using three FMA steps against a 159-bit split of π/2. Valid for the
+/// `[TRIG_FAST_HI, TRIG_RED_MAX]` magnitude band (caller-guarded).
+#[inline]
+fn reduce_pio2_fma(x: f64) -> (i64, f64) {
+    let kd = (x * TWO_OVER_PI).round_ties_even();
+    let mut r = kd.mul_add(-PIO2H, x);
+    r = kd.mul_add(-PIO2M, r);
+    r = kd.mul_add(-PIO2L, r);
+    (kd as i64, r)
+}
+
 #[inline]
 pub fn sin(x: f64) -> f64 {
-    libm::sin(x)
+    let ax = x.abs();
+    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
+        return libm::sin(x);
+    }
+    let (n, r) = reduce_pio2_fma(x);
+    match n & 3 {
+        0 => libm::sin(r),
+        1 => libm::cos(r),
+        2 => -libm::sin(r),
+        _ => -libm::cos(r),
+    }
 }
 
 #[inline]
 pub fn cos(x: f64) -> f64 {
-    libm::cos(x)
+    let ax = x.abs();
+    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
+        return libm::cos(x);
+    }
+    let (n, r) = reduce_pio2_fma(x);
+    match n & 3 {
+        0 => libm::cos(r),
+        1 => -libm::sin(r),
+        2 => -libm::cos(r),
+        _ => libm::sin(r),
+    }
 }
 
 #[inline]
 pub fn tan(x: f64) -> f64 {
-    libm::tan(x)
+    let ax = x.abs();
+    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
+        return libm::tan(x);
+    }
+    let (n, r) = reduce_pio2_fma(x);
+    if n & 1 == 0 {
+        libm::tan(r)
+    } else {
+        -1.0 / libm::tan(r)
+    }
 }
 
 #[inline]

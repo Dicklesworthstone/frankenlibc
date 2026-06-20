@@ -1393,3 +1393,40 @@ bench, not a one-line family-set tweak.
 Retry-condition predicate: do not re-add `Stdio` to the membrane fast-path sets
 as a perf lever without a reliable, low-variance stdio bench that can resolve a
 sub-50 ns per-call delta; the gain (if any) is below this microbench's noise.
+
+## 2026-06-20 large-argument sin/cos/tan — 7-10x LOSS → 0.73-0.75x WIN vs glibc
+
+A reliable dlmopen head-to-head survey of 14 f64 math functions (sin/cos/tan/
+asin/acos/atan/sinh/cosh/tanh/cbrt/expm1/log1p over small/medium/large/unit
+ranges) found fl **dominates or ties glibc everywhere except large-argument
+trig**: fl wins small sin/cos (0.65x) and ties medium, but for |x| above
+~2^20·π/2 (≈1.6e6) `libm`'s reduction falls to its slow Payne-Hanek path —
+**sin/cos ~10x and tan ~7x slower than glibc** (glibc stays flat ~10 ns across
+all ranges via its IBM `__branred` reduction).
+
+Fix (`crates/frankenlibc-core/src/math/trig.rs`): for the magnitude band
+[1.647e6, 1e15] reduce with an **FMA-based 3-part π/2 Cody-Waite** (159-bit split
+TWO_OVER_PI/PIO2H/PIO2M/PIO2L; three `mul_add` steps, no Payne-Hanek table) to
+`(n mod 4, r)` with `r ∈ [-π/4, π/4]`, then evaluate the reduced small arg on the
+already-fast `libm` kernel (`sin`/`cos`/`tan` of `r`) with the quadrant fix-up.
+|x| < 1.647e6 keeps `libm` (already fast); |x| > 1e15 keeps `libm` (the 3-part
+split runs out of bits — rare astronomical case keeps full accuracy).
+
+Measured (dlmopen glibc, ovh-a):
+
+| case | fl before | fl after | glibc | after/glibc |
+|---|---|---|---|---|
+| sin large | ~108 ns | 14.7 ns | 20.0 ns | **0.74x** |
+| cos large | ~109 ns | 14.9 ns | 19.7 ns | **0.75x** |
+| tan large | ~118 ns | 21.3 ns | 29.1 ns | **0.73x** |
+
+Win/loss/neutral: clean WIN — a 7-10x loss flipped to a ~1.3x win, with
+small/medium trig unchanged (still routed to `libm`, still winning). Correctness:
+the 4-ULP `diff_sin_cos_tan_within_4_ulps` gate (incl ±1e10) stays green, and a
+**300,000-sample sweep across the whole [2.1e6, 1e15] band vs dlmopen glibc shows
+worst 2 ULP, 0 fails** (>4 ULP). All math gates green
+(`conformance_diff_math` 20, `_exact` 2, `_multi_output` 1, `_special` 9).
+
+Retry-condition predicate: do NOT extend the 3-part reduction above ~1e15 — the
+159-bit split leaves too few bits once `n` exceeds ~2^50; that range genuinely
+needs a Payne-Hanek table and must stay on `libm`.
