@@ -13,7 +13,7 @@
 //!
 //! Coverage: string, stdlib, ctype, math, errno families.
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_long, c_longlong, c_void};
 
 // ═══════════════════════════════════════════════════════════════════
 // STRING FAMILY: Refinement proofs
@@ -242,16 +242,22 @@ fn refinement_atoi_matches_specification() {
     use frankenlibc_abi::stdlib_abi::atoi;
 
     let cases: &[(&[u8], c_int)] = &[
+        (b"\0", 0),
+        (b"   \0", 0),
         (b"0\0", 0),
         (b"1\0", 1),
         (b"-1\0", -1),
         (b"42\0", 42),
+        (b"42tail\0", 42),
         (b"  123\0", 123),
         (b"\t-456\0", -456),
         (b"2147483647\0", i32::MAX),
         (b"-2147483648\0", i32::MIN),
         (b"0000042\0", 42),
         (b"+7\0", 7),
+        (b"+-7\0", 0),
+        (b"-+7\0", 0),
+        (b"0x10\0", 0),
     ];
 
     for (input, expected) in cases {
@@ -260,6 +266,52 @@ fn refinement_atoi_matches_specification() {
             result,
             *expected,
             "atoi refinement: {:?} expected {expected}, got {result}",
+            std::str::from_utf8(&input[..input.len() - 1]).unwrap_or("?")
+        );
+    }
+}
+
+#[test]
+fn refinement_atol_atoll_match_specification() {
+    use frankenlibc_abi::stdlib_abi::{atol, atoll};
+
+    let atol_cases: &[(&[u8], c_long)] = &[
+        (b"\0", 0),
+        (b"42\0", 42),
+        (b"\t\n\r -42tail\0", -42),
+        (b"+-42\0", 0),
+        (b"0x10\0", 0),
+        (b"9223372036854775807\0", i64::MAX as c_long),
+        (b"9223372036854775808\0", i64::MAX as c_long),
+        (b"-9223372036854775808\0", i64::MIN as c_long),
+        (b"-9223372036854775809\0", i64::MIN as c_long),
+    ];
+
+    for (input, expected) in atol_cases {
+        let result = unsafe { atol(input.as_ptr() as *const c_char) };
+        assert_eq!(
+            result,
+            *expected,
+            "atol refinement: {:?} expected {expected}, got {result}",
+            std::str::from_utf8(&input[..input.len() - 1]).unwrap_or("?")
+        );
+    }
+
+    let atoll_cases: &[(&[u8], c_longlong)] = &[
+        (b"42\0", 42),
+        (b"-42tail\0", -42),
+        (b"9223372036854775807\0", i64::MAX as c_longlong),
+        (b"9223372036854775808\0", i64::MAX as c_longlong),
+        (b"-9223372036854775808\0", i64::MIN as c_longlong),
+        (b"-9223372036854775809\0", i64::MIN as c_longlong),
+    ];
+
+    for (input, expected) in atoll_cases {
+        let result = unsafe { atoll(input.as_ptr() as *const c_char) };
+        assert_eq!(
+            result,
+            *expected,
+            "atoll refinement: {:?} expected {expected}, got {result}",
             std::str::from_utf8(&input[..input.len() - 1]).unwrap_or("?")
         );
     }

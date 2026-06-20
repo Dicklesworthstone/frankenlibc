@@ -40,6 +40,78 @@ unsafe fn scan_numeric_c_string(ptr: *const c_char, bound: Option<usize>) -> (us
         unsafe { scan_c_string(ptr, bound) }
     }
 }
+
+#[inline]
+const fn atoi_is_c_space(byte: u8) -> bool {
+    byte == b' ' || (byte >= b'\t' && byte <= b'\r')
+}
+
+/// Deployed `ato*` specialization: POSIX defines `atoi`/`atol`/`atoll` as
+/// base-10 `strtol`-family parses without an end pointer. Avoid the generic
+/// scan-then-parse shape and parse directly from the C string until the first
+/// non-digit.
+#[inline]
+unsafe fn parse_ato_decimal_i64(ptr: *const c_char) -> i64 {
+    let mut cursor = ptr.cast::<u8>();
+
+    loop {
+        let byte = unsafe { *cursor };
+        if !atoi_is_c_space(byte) {
+            break;
+        }
+        cursor = unsafe { cursor.add(1) };
+    }
+
+    let mut byte = unsafe { *cursor };
+    let negative = if byte == b'-' {
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+        true
+    } else if byte == b'+' {
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+        false
+    } else {
+        false
+    };
+
+    if !byte.is_ascii_digit() {
+        return 0;
+    }
+
+    let limit = if negative {
+        (i64::MAX as u64) + 1
+    } else {
+        i64::MAX as u64
+    };
+    let cutoff = limit / 10;
+    let cutlim = limit % 10;
+    let mut acc = 0u64;
+
+    loop {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        let digit = (byte - b'0') as u64;
+        if acc > cutoff || (acc == cutoff && digit > cutlim) {
+            return if negative { i64::MIN } else { i64::MAX };
+        }
+        acc = acc * 10 + digit;
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+    }
+
+    if negative {
+        if acc == limit {
+            i64::MIN
+        } else {
+            -(acc as i64)
+        }
+    } else {
+        acc as i64
+    }
+}
+
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use libc::{intmax_t, uintmax_t};
@@ -535,43 +607,40 @@ pub unsafe extern "C" fn atoi(nptr: *const c_char) -> c_int {
         return 0;
     }
 
-    // Deployed fast-path: Stdlib always-Allow → skip decide()+observe() (see strtod).
-    let (profile, bound) = if runtime_policy::stdlib_membrane_fastpath() {
-        (None, None)
+    if runtime_policy::stdlib_membrane_fastpath() {
+        return unsafe { parse_ato_decimal_i64(nptr) } as c_int;
+    }
+
+    let known = known_remaining(nptr as usize);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        nptr as usize,
+        0,
+        false,
+        known.is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return 0;
+    }
+
+    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+        known
     } else {
-        let known = known_remaining(nptr as usize);
-        let (mode, decision) = runtime_policy::decide(
-            ApiFamily::Stdlib,
-            nptr as usize,
-            0,
-            false,
-            known.is_none(),
-            0,
-        );
-        if matches!(decision.action, MembraneAction::Deny) {
-            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
-            return 0;
-        }
-        let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-            known
-        } else {
-            None
-        };
-        (Some(decision.profile), bound)
+        None
     };
 
     let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
     let result = frankenlibc_core::stdlib::atoi(slice);
 
-    if let Some(p) = profile {
-        runtime_policy::observe(
-            ApiFamily::Stdlib,
-            p,
-            runtime_policy::scaled_cost(7, len),
-            false,
-        );
-    }
+    runtime_policy::observe(
+        ApiFamily::Stdlib,
+        decision.profile,
+        runtime_policy::scaled_cost(7, len),
+        false,
+    );
     result
 }
 
@@ -585,42 +654,40 @@ pub unsafe extern "C" fn atol(nptr: *const c_char) -> c_long {
         return 0;
     }
 
-    // Deployed fast-path: Stdlib always-Allow → skip decide()+observe() (see strtod).
-    let (profile, bound) = if runtime_policy::stdlib_membrane_fastpath() {
-        (None, None)
+    if runtime_policy::stdlib_membrane_fastpath() {
+        return unsafe { parse_ato_decimal_i64(nptr) } as c_long;
+    }
+
+    let known = known_remaining(nptr as usize);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        nptr as usize,
+        0,
+        false,
+        known.is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return 0;
+    }
+
+    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+        known
     } else {
-        let (mode, decision) = runtime_policy::decide(
-            ApiFamily::Stdlib,
-            nptr as usize,
-            0,
-            false,
-            known_remaining(nptr as usize).is_none(),
-            0,
-        );
-        if matches!(decision.action, MembraneAction::Deny) {
-            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
-            return 0;
-        }
-        let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-            known_remaining(nptr as usize)
-        } else {
-            None
-        };
-        (Some(decision.profile), bound)
+        None
     };
 
     let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
     let result = frankenlibc_core::stdlib::atol(slice);
 
-    if let Some(p) = profile {
-        runtime_policy::observe(
-            ApiFamily::Stdlib,
-            p,
-            runtime_policy::scaled_cost(7, len),
-            false,
-        );
-    }
+    runtime_policy::observe(
+        ApiFamily::Stdlib,
+        decision.profile,
+        runtime_policy::scaled_cost(7, len),
+        false,
+    );
     result as c_long
 }
 

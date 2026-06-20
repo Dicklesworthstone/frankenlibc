@@ -11,13 +11,16 @@
 //! symbols do not interpose the host.
 
 use std::ffi::{c_char, c_int};
+use std::hint::black_box;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 type StrtolFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char, c_int) -> i64;
 type StrtodFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f64;
+type AtoiFn = unsafe extern "C" fn(*const c_char) -> c_int;
+type AtolFn = unsafe extern "C" fn(*const c_char) -> i64;
 
 fn host(name: &[u8]) -> usize {
     static H: OnceLock<usize> = OnceLock::new();
@@ -62,6 +65,9 @@ fn time_it<F: FnMut() -> i64>(mut f: F) -> f64 {
 fn bench(c: &mut Criterion) {
     let gstrtol: StrtolFn = unsafe { std::mem::transmute(host(b"strtol\0")) };
     let gstrtod: StrtodFn = unsafe { std::mem::transmute(host(b"strtod\0")) };
+    let gatoi: AtoiFn = unsafe { std::mem::transmute(host(b"atoi\0")) };
+    let gatol: AtolFn = unsafe { std::mem::transmute(host(b"atol\0")) };
+    let gatoll: AtolFn = unsafe { std::mem::transmute(host(b"atoll\0")) };
     let mut group = c.benchmark_group("numeric_parse");
     group.sample_size(10);
 
@@ -80,17 +86,52 @@ fn bench(c: &mut Criterion) {
             let mut e: *mut c_char = std::ptr::null_mut();
             unsafe { gstrtol(black_box(p), &mut e, base) }
         });
-        println!("{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}", fl / gl);
+        println!(
+            "{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}",
+            fl / gl
+        );
     }
 
-    // atoi / atol (no endptr; super-common)
-    type AtoiFn = unsafe extern "C" fn(*const c_char) -> c_int;
-    let gatoi: AtoiFn = unsafe { std::mem::transmute(host(b"atoi\0")) };
-    for (name, s) in [("atoi_short", b"42\0".as_slice()), ("atoi_long", b"1234567890\0")] {
+    // ato* cases: no endptr write, base 10 only, but still ubiquitous in C
+    // parser/config code. This catches deployed ABI overhead distinct from
+    // strtol's endptr validation path.
+    for (name, s) in [
+        ("atoi_short", b"42\0".as_slice()),
+        ("atoi_long", b"1234567890\0"),
+    ] {
         let p = s.as_ptr() as *const c_char;
         let fl = time_it(|| unsafe { frankenlibc_abi::stdlib_abi::atoi(black_box(p)) as i64 });
         let gl = time_it(|| unsafe { gatoi(black_box(p)) as i64 });
-        println!("{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}", fl / gl);
+        println!(
+            "{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}",
+            fl / gl
+        );
+    }
+
+    for (name, s) in [
+        ("atol_short", b"42\0".as_slice()),
+        ("atol_long", b"1234567890\0"),
+    ] {
+        let p = s.as_ptr() as *const c_char;
+        let fl = time_it(|| unsafe { frankenlibc_abi::stdlib_abi::atol(black_box(p)) as i64 });
+        let gl = time_it(|| unsafe { gatol(black_box(p)) });
+        println!(
+            "{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}",
+            fl / gl
+        );
+    }
+
+    for (name, s) in [
+        ("atoll_short", b"42\0".as_slice()),
+        ("atoll_long", b"1234567890\0"),
+    ] {
+        let p = s.as_ptr() as *const c_char;
+        let fl = time_it(|| unsafe { frankenlibc_abi::stdlib_abi::atoll(black_box(p)) as i64 });
+        let gl = time_it(|| unsafe { gatoll(black_box(p)) });
+        println!(
+            "{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}",
+            fl / gl
+        );
     }
 
     // strtod cases
@@ -108,7 +149,10 @@ fn bench(c: &mut Criterion) {
             let mut e: *mut c_char = std::ptr::null_mut();
             unsafe { gstrtod(black_box(p), &mut e) as i64 }
         });
-        println!("{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}", fl / gl);
+        println!(
+            "{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}",
+            fl / gl
+        );
     }
 
     let _ = report;
