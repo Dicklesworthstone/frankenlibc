@@ -6,11 +6,11 @@ Last updated: 2026-06-20 by `cod-a` / `cod-b` / `BlackThrush`.
 
 | Area | Score | Evidence | Risk |
 |---|---:|---|---|
-| Measured perf backlog conversion | 21 / many pending | Added cod-a parser-batch classification for `bd-2g7oyh.480`, `.484`, `.486`, `.488`, `.489`, `.490`, `.491`, `bd-v4t889`, `bd-rpc-byte-program-number-wq60gz`, plus `bd-2g7oyh.479` runtime-design stack candidates, `bd-li0so3` hosts field scanner, `bd-7ak6cm` calloc `alloc_zeroed` skip, `bd-4crkqx` aliases member scanner, `bd-xxrfvu` `/etc/networks` byte network-number parser, `bd-f874go` strict allocator reentry-slot reuse, and the 2026-06-20 `bd-2g7oyh` calloc tombstone-compaction reject. Parser rows are internal old-vs-new; allocator rows use deployed-ABI calloc vs host-glibc bench evidence. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, runtime membrane, and peer-owned leaves. Deployed ABI vs glibc evidence is still required for release perf claims. |
-| Negative-evidence ledger | 1 committed ledger + bead-local rejects | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and the parser/allocator batch. `tests/artifacts/perf/bd-f874go-native-reentry-slot.md` and `tests/artifacts/perf/bd-2g7oyh-calloc-strict-fastpath.md` record the kept native reentry-slot reduction and reverted tombstone compaction with root causes and retry predicates. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended when it is not peer-owned dirty. |
-| Revert discipline | Green for measured cluster | Winning rows kept; losing/neutral parser source shapes were reversed without deleting evidence artifacts or benchmark rows. Prior glibc losses (`bd-2g7oyh.478`, `bd-2g7oyh.482`) remain reverted. `bd-2g7oyh.479` stack candidates, `bd-li0so3` hosts scanner, `bd-7ak6cm` calloc `alloc_zeroed`, `bd-4crkqx` aliases member scanner, and the 2026-06-20 calloc tombstone compaction were reverted after measurement. `bd-xxrfvu` and `bd-f874go` measured as keeps. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
-| Conformance guard | Partial green | Focused parser guards passed previously. For `.479`, touched-file rustfmt and `cargo check -p frankenlibc-membrane --lib` passed. For `bd-li0so3`, touched-file rustfmt, 10 hosts parser tests, and `cargo check -p frankenlibc-core` passed. For allocator work, `bd-f874go` passed its focused guards, and the 2026-06-20 calloc tombstone compaction reject was reverted; the current tree's `malloc_abi_test` passed 53/0/1 ignored and `rch exec -- cargo build -p frankenlibc-abi --release` passed on `hz1`. For `bd-4crkqx`, source was reverted to split/filter/collect; touched-file rustfmt passed, 30 aliases-filtered core tests passed, and `cargo check -p frankenlibc-core` passed. For `bd-xxrfvu`, touched-file rustfmt passed, `netnum` filtered tests passed 12/12, `network_` filtered tests passed 15/15, and `cargo check -p frankenlibc-core` passed. For `bd-z8p3mx`, the powf gates passed against host glibc 2.42. Two pre-existing unrelated failures remain (`diff_sign_min_max_dim_helpers_*`, `fminf`/`fmaxf`/`fdimf` — fail on clean HEAD too, not touched here). | Full core tests are blocked by unrelated iconv/glob failures; workspace check/clippy by missing packaged files in `asupersync-conformance 0.3.4`; workspace fmt by broad formatting drift. |
-| Release posture | Not ready | Additional getopt and group lookup wins recorded, real `getgrgid(0)` neutral and passwd lookup losses routed deeper, `bd-f874go` strict allocator reentry-slot reuse narrows the deployed `calloc/free` gap, and the tombstone compaction attempt is recorded as a revert. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, conformance/bench gates are repeatable, and allocator small sizes no longer carry double-digit glibc losses. |
+| Measured perf backlog conversion | 22 / many pending | Added cod-a parser-batch classification for `bd-2g7oyh.480`, `.484`, `.486`, `.488`, `.489`, `.490`, `.491`, `bd-v4t889`, `bd-rpc-byte-program-number-wq60gz`, plus `bd-2g7oyh.479` runtime-design stack candidates, `bd-li0so3` hosts field scanner, `bd-7ak6cm` calloc `alloc_zeroed` skip, `bd-4crkqx` aliases member scanner, `bd-xxrfvu` `/etc/networks` byte network-number parser, `bd-f874go` strict allocator reentry-slot reuse, the 2026-06-20 `bd-2g7oyh` calloc tombstone-compaction reject, and the `bd-f874go` fallback-table exact hot-slot reject. Parser rows are internal old-vs-new; allocator rows use deployed-ABI calloc vs host-glibc bench evidence. | Large backlog remains across stdio registry, resolver/NSS parser, string, allocator, runtime membrane, and peer-owned leaves. Deployed ABI vs glibc evidence is still required for release perf claims. |
+| Negative-evidence ledger | 1 committed ledger + bead-local rejects | `docs/NEGATIVE_EVIDENCE.md` records win/loss/neutral policy and the parser/allocator batch. `tests/artifacts/perf/bd-f874go-native-reentry-slot.md`, `tests/artifacts/perf/bd-2g7oyh-calloc-strict-fastpath.md`, and `tests/artifacts/perf/bd-f874go-fallback-hot-slot.md` record the kept native reentry-slot reduction, reverted tombstone compaction, and reverted exact hot-slot cache with root causes and retry predicates. | Existing per-bead artifacts still contain many pending local ledgers; central ledger needs every later result appended when it is not peer-owned dirty. |
+| Revert discipline | Green for measured cluster | Winning rows kept; losing/neutral parser source shapes were reversed without deleting evidence artifacts or benchmark rows. Prior glibc losses (`bd-2g7oyh.478`, `bd-2g7oyh.482`) remain reverted. `bd-2g7oyh.479` stack candidates, `bd-li0so3` hosts scanner, `bd-7ak6cm` calloc `alloc_zeroed`, `bd-4crkqx` aliases member scanner, the 2026-06-20 calloc tombstone compaction, and the `bd-f874go` fallback-table hot-slot cache were reverted after measurement. `bd-xxrfvu` and the earlier `bd-f874go` native reentry-slot reuse measured as keeps. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
+| Conformance guard | Partial green | Focused parser guards passed previously. For `.479`, touched-file rustfmt and `cargo check -p frankenlibc-membrane --lib` passed. For `bd-li0so3`, touched-file rustfmt, 10 hosts parser tests, and `cargo check -p frankenlibc-core` passed. For allocator work, `bd-f874go` passed its focused guards, and the 2026-06-20 calloc tombstone compaction plus fallback-table hot-slot rejects were reverted; post-revert `malloc_abi_test` passed 53/0/1 ignored under `rch exec` local fallback after remote pressure refused a remote test, and `RCH_REQUIRE_REMOTE=1 rch exec -- cargo build -p frankenlibc-abi --release` passed on `hz2`. For `bd-4crkqx`, source was reverted to split/filter/collect; touched-file rustfmt passed, 30 aliases-filtered core tests passed, and `cargo check -p frankenlibc-core` passed. For `bd-xxrfvu`, touched-file rustfmt passed, `netnum` filtered tests passed 12/12, `network_` filtered tests passed 15/15, and `cargo check -p frankenlibc-core` passed. For `bd-z8p3mx`, the powf gates passed against host glibc 2.42. Two pre-existing unrelated failures remain (`diff_sign_min_max_dim_helpers_*`, `fminf`/`fmaxf`/`fdimf` — fail on clean HEAD too, not touched here). | Full core tests are blocked by unrelated iconv/glob failures; workspace check/clippy by missing packaged files in `asupersync-conformance 0.3.4`; workspace fmt by broad formatting drift. |
+| Release posture | Not ready | Additional getopt and group lookup wins recorded, real `getgrgid(0)` neutral and passwd lookup losses routed deeper, `bd-f874go` strict allocator reentry-slot reuse narrows the deployed `calloc/free` gap, and the tombstone compaction plus fallback-table exact hot-slot attempts are recorded as reverts. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, conformance/bench gates are repeatable, and allocator small sizes no longer carry double-digit glibc losses. |
 
 ## 2026-06-19 measured stdio cluster
 
@@ -194,6 +194,40 @@ such as a slim strict `calloc/free` fast path or a same-run profile that explain
 the diffuse allocator overhead first.
 
 Evidence: `tests/artifacts/perf/bd-2g7oyh-calloc-strict-fastpath.md`.
+
+## 2026-06-20 `bd-f874go` fallback-table exact hot-slot reject
+
+The next cod-b allocator screen tested a per-thread exact fallback-table slot
+cache for strict `malloc/calloc` paired with a lock-free exact-slot remove in
+strict `free`. This kept the existing locked fallback table as the correctness
+path and only optimized same-thread exact cycles.
+
+Current-head baseline on `vmi1153651` still shows the deployed small-size
+allocator gap:
+
+| Size | FL p50 | glibc p50 | p50 ratio | FL mean | glibc mean | mean ratio | Verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 16 | 114.960 ns | 10.819 ns | 10.63x | 140.949 ns | 25.417 ns | 5.55x | LOSS |
+| 256 | 435.260 ns | 37.111 ns | 11.73x | 562.837 ns | 56.385 ns | 9.98x | LOSS |
+| 4096 | 498.224 ns | 104.550 ns | 4.77x | 538.890 ns | 156.296 ns | 3.45x | LOSS |
+| 65536 | 1536.001 ns | 1042.184 ns | 1.47x | 1865.195 ns | 1358.150 ns | 1.37x | LOSS |
+| 262144 | 4372.561 ns | 4142.734 ns | 1.06x | 5460.396 ns | 4884.627 ns | 1.12x | LOSS |
+| 1048576 | 20454.473 ns | 20917.348 ns | 0.98x | 23103.947 ns | 29813.969 ns | 0.77x | WIN |
+| 4194304 | 102830.806 ns | 96288.569 ns | 1.07x | 158753.434 ns | 117990.544 ns | 1.35x | LOSS |
+
+The candidate run selected `vmi1167313` despite the worker preference, so it was
+used only as a screen. Its in-run deployed FL-vs-glibc result was not
+competitive: 0 wins, 1 neutral, 13 losses across p50+mean cells, with a severe
+4 KiB mean/tail outlier and a 1 MiB row that flipped from baseline win to loss.
+
+Action: source reverted; evidence kept. Retry predicate: do not retry
+per-thread exact fallback-slot caching as a standalone lever. Next allocator
+attempt should first split the deployed `calloc/free` cycle into host allocator,
+fallback metadata, stats accounting, and reentry-guard substages, or use a
+materially different proof-carrying path that removes fallback-table
+participation for common strict pairs.
+
+Evidence: `tests/artifacts/perf/bd-f874go-fallback-hot-slot.md`.
 
 ## 2026-06-19 `bd-2g7oyh.478` measured reject
 

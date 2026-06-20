@@ -1822,3 +1822,48 @@ fl-absolute on 3 consecutive runs is the trustworthy read here — a single
 WITH-vs-WITHOUT A/B was inconclusive because a sub-10 ns saving sits under the
 ~±8 ns worker swing (the WITHOUT run happened to land on a fast worker, glibc
 6.9 ns). The whole strto*/ato* numeric-parse family is now fast-pathed.
+
+## 2026-06-20 bd-f874go fallback-table exact hot-slot — REJECTED/REVERTED
+
+Targeted the remaining deployed strict `calloc/free` small-size gap after the
+native reentry-slot keep. The attempted lever cached the exact fallback-table
+slot in the current allocator reentry slot and let strict `free` try an atomic
+same-slot remove before the existing locked fallback-table remove. This was a
+different shape from the rejected whole-table CAS route and the tombstone
+compaction route.
+
+Baseline current head on `vmi1153651` via `calloc_glibc_bench`:
+
+| Size | FL p50 | glibc p50 | p50 ratio | FL mean | glibc mean | mean ratio | Verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 16 | 114.960 ns | 10.819 ns | 10.63x | 140.949 ns | 25.417 ns | 5.55x | LOSS |
+| 256 | 435.260 ns | 37.111 ns | 11.73x | 562.837 ns | 56.385 ns | 9.98x | LOSS |
+| 4096 | 498.224 ns | 104.550 ns | 4.77x | 538.890 ns | 156.296 ns | 3.45x | LOSS |
+| 65536 | 1536.001 ns | 1042.184 ns | 1.47x | 1865.195 ns | 1358.150 ns | 1.37x | LOSS |
+| 262144 | 4372.561 ns | 4142.734 ns | 1.06x | 5460.396 ns | 4884.627 ns | 1.12x | LOSS |
+| 1048576 | 20454.473 ns | 20917.348 ns | 0.98x | 23103.947 ns | 29813.969 ns | 0.77x | WIN |
+| 4194304 | 102830.806 ns | 96288.569 ns | 1.07x | 158753.434 ns | 117990.544 ns | 1.35x | LOSS |
+
+Candidate screen selected `vmi1167313` despite the `vmi1153651` preference, so
+it cannot be used as same-worker keep proof. It still failed the in-run
+deployed FL-vs-glibc screen:
+
+| Size | Candidate FL p50 | glibc p50 | p50 ratio | Candidate FL mean | glibc mean | mean ratio | Verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 16 | 114.149 ns | 10.126 ns | 11.27x | 151.006 ns | 25.867 ns | 5.84x | LOSS |
+| 256 | 413.707 ns | 34.482 ns | 12.00x | 542.141 ns | 46.782 ns | 11.59x | LOSS |
+| 4096 | 497.501 ns | 144.469 ns | 3.44x | 13213.080 ns | 193.641 ns | 68.24x | LOSS/tail outlier |
+| 65536 | 1474.389 ns | 1016.307 ns | 1.45x | 1781.323 ns | 1227.567 ns | 1.45x | LOSS |
+| 262144 | 4895.259 ns | 3977.730 ns | 1.23x | 5544.162 ns | 4793.244 ns | 1.16x | LOSS |
+| 1048576 | 20201.254 ns | 19162.883 ns | 1.05x | 26756.896 ns | 22411.227 ns | 1.19x | LOSS |
+| 4194304 | 95059.017 ns | 94918.658 ns | 1.00x | 128244.779 ns | 120525.788 ns | 1.06x | NEUTRAL p50 / LOSS mean |
+
+Win/loss/neutral: baseline score 2 wins / 0 neutral / 12 losses across p50+mean;
+candidate screen score 0 wins / 1 neutral / 13 losses. Action: source reverted;
+kept only evidence. Retry predicate: do not retry the per-thread exact
+fallback-slot cache as a standalone lever. Next allocator attempt needs either a
+same-run substage split (host allocator vs fallback metadata vs stats vs reentry
+guard) or a materially different proof-carrying path that removes fallback-table
+participation for common strict `calloc/free` pairs.
+
+Evidence: `tests/artifacts/perf/bd-f874go-fallback-hot-slot.md`.
