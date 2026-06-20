@@ -1236,9 +1236,14 @@ fn bench_printf_float(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_qsort_128_i32(c: &mut Criterion) {
-    let mut group = c.benchmark_group("glibc_baseline_qsort_128_i32");
-    let template: Vec<i32> = (0..128).rev().map(|value| value * 17 % 97).collect();
+fn bench_qsort_i32(
+    c: &mut Criterion,
+    len: usize,
+    profile_id: &'static str,
+    workload: &'static str,
+) {
+    let mut group = c.benchmark_group(format!("glibc_baseline_{profile_id}"));
+    let template: Vec<i32> = (0..len as i32).rev().map(|value| value * 17 % 97).collect();
 
     let mut parity_left = template.clone();
     let mut parity_right = template.clone();
@@ -1261,11 +1266,11 @@ fn bench_qsort_128_i32(c: &mut Criterion) {
     bench_op(
         &mut group,
         BenchMeta {
-            profile_id: "qsort_128_i32",
+            profile_id,
             impl_label: "frankenlibc_core",
             api_family: "stdlib",
             symbol: "qsort",
-            workload: "128 i32 reverse-ish input",
+            workload,
             parity_proof_ref: "crates/frankenlibc-core/src/stdlib/sort.rs",
         },
         || {
@@ -1279,14 +1284,40 @@ fn bench_qsort_128_i32(c: &mut Criterion) {
         },
     );
 
+    #[cfg(feature = "abi-bench")]
     bench_op(
         &mut group,
         BenchMeta {
-            profile_id: "qsort_128_i32",
+            profile_id,
+            impl_label: "frankenlibc_abi",
+            api_family: "stdlib",
+            symbol: "qsort",
+            workload,
+            parity_proof_ref: "crates/frankenlibc-abi/src/stdlib_abi.rs",
+        },
+        || {
+            let mut values = template.clone();
+            // SAFETY: values is a valid i32 array and comparator reads only one i32 per element.
+            unsafe {
+                frankenlibc_abi::stdlib_abi::qsort(
+                    values.as_mut_ptr().cast::<c_void>(),
+                    values.len(),
+                    mem::size_of::<i32>(),
+                    Some(compare_i32_ptr),
+                );
+            }
+            black_box(values[0]);
+        },
+    );
+
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id,
             impl_label: "host_glibc",
             api_family: "stdlib",
             symbol: "qsort",
-            workload: "128 i32 reverse-ish input",
+            workload,
             parity_proof_ref: "crates/frankenlibc-core/src/stdlib/sort.rs",
         },
         || {
@@ -1305,6 +1336,14 @@ fn bench_qsort_128_i32(c: &mut Criterion) {
     );
 
     group.finish();
+}
+
+fn bench_qsort_16_i32(c: &mut Criterion) {
+    bench_qsort_i32(c, 16, "qsort_16_i32", "16 i32 reverse-ish input");
+}
+
+fn bench_qsort_128_i32(c: &mut Criterion) {
+    bench_qsort_i32(c, 128, "qsort_128_i32", "128 i32 reverse-ish input");
 }
 
 fn i32_slice_as_bytes_mut(values: &mut [i32]) -> &mut [u8] {
@@ -2899,6 +2938,7 @@ criterion_group! {
         bench_malloc_cache_pressure_256,
         bench_malloc_free_large,
         bench_printf_float,
+        bench_qsort_16_i32,
         bench_qsort_128_i32,
         bench_strchr_absent,
         bench_strrchr_absent,

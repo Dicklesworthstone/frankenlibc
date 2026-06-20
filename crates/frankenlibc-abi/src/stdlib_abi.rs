@@ -358,6 +358,11 @@ unsafe extern "C" {
 
 #[inline]
 unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
+    unsafe { native_getenv_raw(name_bytes.as_ptr(), name_bytes.len()) }
+}
+
+#[inline]
+unsafe fn native_getenv_raw(name_ptr: *const u8, name_len: usize) -> *mut c_char {
     // Hold ENVIRON_LOCK during the array walk so a concurrent setenv that
     // host_passthrough_realloc()s the HOST_ENVIRON array out from under us
     // cannot turn this read into a use-after-free. The lock is released
@@ -390,16 +395,33 @@ unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
         while !(*cursor).is_null() {
             let entry = *cursor as *const u8;
             let mut i = 0usize;
-            while i < name_bytes.len() && *entry.add(i) == name_bytes[i] {
+            while i < name_len && *entry.add(i) == *name_ptr.add(i) {
                 i += 1;
             }
-            if i == name_bytes.len() && *entry.add(i) == b'=' {
+            if i == name_len && *entry.add(i) == b'=' {
                 return entry.add(i + 1) as *mut c_char;
             }
             cursor = cursor.add(1);
         }
         ptr::null_mut()
     }
+}
+
+#[inline]
+unsafe fn scan_env_name_fast(name: *const c_char, bound: usize) -> (usize, bool, bool) {
+    let mut i = 0usize;
+    let mut valid = true;
+    while i < bound {
+        let byte = unsafe { *name.add(i) as u8 };
+        if byte == 0 {
+            return (i, true, valid && i != 0);
+        }
+        if byte == b'=' {
+            valid = false;
+        }
+        i += 1;
+    }
+    (i, false, false)
 }
 
 // ---------------------------------------------------------------------------
@@ -1823,17 +1845,11 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
     // only on the full (test) path, which keeps deny/observe exercised.
     let bound = env_name_scan_bound(name);
     let (profile, len, terminated) = if runtime_policy::stdlib_membrane_fastpath() {
-        // Plain bounded NUL scan — no `scan_c_string` allocation_bound lookup.
-        let mut i = 0usize;
-        let mut term = false;
-        while i < bound {
-            if unsafe { *name.add(i) } == 0 {
-                term = true;
-                break;
-            }
-            i += 1;
+        let (len, terminated, valid) = unsafe { scan_env_name_fast(name, bound) };
+        if !terminated || !valid {
+            return ptr::null_mut();
         }
-        (None, i, term)
+        return unsafe { native_getenv_raw(name.cast::<u8>(), len) };
     } else {
         let (_mode, decision) = runtime_policy::decide(
             ApiFamily::Stdlib,
