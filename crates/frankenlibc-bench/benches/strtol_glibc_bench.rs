@@ -190,6 +190,24 @@ fn bench(c: &mut Criterion) {
         }
     }
 
+    // pthread_self — extremely hot (every mutex op); must not syscall. The bench
+    // main thread is kernel-created like a deployed process's main thread, so this
+    // measurement is representative (unlike clock_gettime/time, whose vDSO path is
+    // gated on full deployed startup state the criterion bench can't replicate).
+    unsafe {
+        let h = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        type PtSelfFn = unsafe extern "C" fn() -> libc::pthread_t;
+        let gpts: PtSelfFn =
+            std::mem::transmute(libc::dlsym(h as *mut _, b"pthread_self\0".as_ptr().cast()));
+        let flp = time_it(|| frankenlibc_abi::pthread_abi::pthread_self() as i64);
+        let glp = time_it(|| gpts() as i64);
+        println!("pthread_self: fl={flp:.2}ns glibc={glp:.2}ns fl/glibc={:.2}", flp / glp);
+    }
+
     let _ = report;
     group.finish();
 }
