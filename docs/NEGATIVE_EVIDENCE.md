@@ -1630,3 +1630,26 @@ Win/loss/neutral: clean WIN (1.46x loss → parity), 0 regressions. Note: ARM's 
 math set is now exhausted for fl's losers — remaining f32-specials losses (sinhf
 1.9x, coshf 1.5x, tanhf 1.7x bit-exact-gated; exp10f 1.9x neutral via f64; j0f/j1f
 1.25x bessel) all need bespoke correctly-rounded f32 kernels, not a port.
+
+## 2026-06-20 f32 tanhf — 1.73x LOSS → 0.93x WIN, by widening the existing expf fast band
+
+`tanhf` already had an `(e^2x-1)/(e^2x+1)` fast path via the fast f32 `expf`, but
+it was capped at |x| <= 2.5 — so the survey's [2.5,5] (and the near-0 cancellation
+band) fell to slow `libm::tanhf`, leaving it 1.73x behind glibc. The
+`(u-1)/(u+1)` form has no cancellation for |x| >= 0.5 and **self-saturates to ±1
+exactly in f32** as `u=expf(2x)` grows (the ∓1 vanishes against the huge u), so
+the band can be widened all the way to |x| = 40 (just below where `expf(2x)`
+overflows at x≈44.3). Changed `TANHF_FAST_ABS_MAX` 2.5 → 40.0.
+
+Measured (dlmopen glibc, ovh-a): **~11.9 ns → 6.37 ns**, ratio 1.73x → **0.93x
+(WIN)**. Correctness: the **bit-exact** `conformance_diff_hyperbolic_special` gate
+stays green (its CASES — 0.5, 1.0 already in-band; 20.0 now in-band but saturates
+to the same 1.0 as glibc), plus a **400,000-sample sweep over [-45,45] vs glibc
+tanhf shows worst 3 ULP, 0 fails** (>4 ULP); math_abi_test (118),
+conformance_diff_fp_exceptions green. Residual: the near-0 [-0.5,0.5] band still
+uses libm (the (u-1) cancellation there needs an `expm1f`-based form or a poly).
+
+Win/loss/neutral: clean WIN. sinhf (1.9x) and coshf (1.5x) NOT attempted same
+turn: sinhf's bit-exact CASES are met only by the slower correctly-rounded f64-exp
+route (an f32-expf `0.5*(u-1/u)` is ~1-2 ULP and would risk the bit-exact gate at
+0.5/1.0); coshf is unstarted (`libm::coshf`) and has the same constraint.

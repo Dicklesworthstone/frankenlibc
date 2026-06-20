@@ -780,7 +780,11 @@ pub fn coshf(x: f32) -> f32 {
 }
 
 const TANHF_FAST_ABS_MIN: f32 = 0.5;
-const TANHF_FAST_ABS_MAX: f32 = 2.5;
+// Upper bound kept below where `expf(2x)` overflows (2x < 88.7, i.e. x < 44.3);
+// well before that, `(u-1)/(u+1)` self-saturates to ±1 exactly in f32 (the `-1`
+// and `+1` vanish against the huge `u`), so the result is correct for the whole
+// band — including the saturated CASES (e.g. tanhf(20)=1.0).
+const TANHF_FAST_ABS_MAX: f32 = 40.0;
 
 #[inline]
 pub fn tanhf(x: f32) -> f32 {
@@ -788,7 +792,7 @@ pub fn tanhf(x: f32) -> f32 {
     // cancellation (the result is bounded away from 0), so the f32 `expf`
     // fast path covers 2x directly on this interval and avoids widening through
     // the f64 exp kernel. The identity is odd, so it serves negative x with no
-    // special-casing. Near-0 (cancellation) and large/non-finite x defer to libm.
+    // special-casing. Near-0 (cancellation) and tiny/non-finite x defer to libm.
     if (TANHF_FAST_ABS_MIN..=TANHF_FAST_ABS_MAX).contains(&x.abs()) {
         let u = expf(2.0 * x);
         return (u - 1.0) / (u + 1.0);
