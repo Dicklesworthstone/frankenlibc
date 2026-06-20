@@ -535,36 +535,43 @@ pub unsafe extern "C" fn atoi(nptr: *const c_char) -> c_int {
         return 0;
     }
 
-    let known = known_remaining(nptr as usize);
-    let (mode, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        nptr as usize,
-        0,
-        false,
-        known.is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
-        return 0;
-    }
-
-    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known
+    // Deployed fast-path: Stdlib always-Allow → skip decide()+observe() (see strtod).
+    let (profile, bound) = if runtime_policy::stdlib_membrane_fastpath() {
+        (None, None)
     } else {
-        None
+        let known = known_remaining(nptr as usize);
+        let (mode, decision) = runtime_policy::decide(
+            ApiFamily::Stdlib,
+            nptr as usize,
+            0,
+            false,
+            known.is_none(),
+            0,
+        );
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+            return 0;
+        }
+        let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+            known
+        } else {
+            None
+        };
+        (Some(decision.profile), bound)
     };
 
     let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
     let result = frankenlibc_core::stdlib::atoi(slice);
 
-    runtime_policy::observe(
-        ApiFamily::Stdlib,
-        decision.profile,
-        runtime_policy::scaled_cost(7, len),
-        false,
-    );
+    if let Some(p) = profile {
+        runtime_policy::observe(
+            ApiFamily::Stdlib,
+            p,
+            runtime_policy::scaled_cost(7, len),
+            false,
+        );
+    }
     result
 }
 
@@ -578,35 +585,42 @@ pub unsafe extern "C" fn atol(nptr: *const c_char) -> c_long {
         return 0;
     }
 
-    let (mode, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        nptr as usize,
-        0,
-        false,
-        known_remaining(nptr as usize).is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
-        return 0;
-    }
-
-    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(nptr as usize)
+    // Deployed fast-path: Stdlib always-Allow → skip decide()+observe() (see strtod).
+    let (profile, bound) = if runtime_policy::stdlib_membrane_fastpath() {
+        (None, None)
     } else {
-        None
+        let (mode, decision) = runtime_policy::decide(
+            ApiFamily::Stdlib,
+            nptr as usize,
+            0,
+            false,
+            known_remaining(nptr as usize).is_none(),
+            0,
+        );
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+            return 0;
+        }
+        let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+            known_remaining(nptr as usize)
+        } else {
+            None
+        };
+        (Some(decision.profile), bound)
     };
 
     let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
     let result = frankenlibc_core::stdlib::atol(slice);
 
-    runtime_policy::observe(
-        ApiFamily::Stdlib,
-        decision.profile,
-        runtime_policy::scaled_cost(7, len),
-        false,
-    );
+    if let Some(p) = profile {
+        runtime_policy::observe(
+            ApiFamily::Stdlib,
+            p,
+            runtime_policy::scaled_cost(7, len),
+            false,
+        );
+    }
     result as c_long
 }
 

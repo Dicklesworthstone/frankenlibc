@@ -1803,3 +1803,22 @@ strtod_strtof_live_differential_probe.
 Win/loss/neutral: loss-reduction WIN (5x→3x) across the strtol int family,
 0 regressions. Lesson banked: the `*_glibc_bench` criterion harness is how to
 measure ANY deployed-membrane change — never the `--test` path.
+
+## 2026-06-20 atoi/atol/atoll membrane fast-path — deployed ~30→21 ns (~30%) vs glibc
+
+Extended the valid `strtol_glibc_bench` to atoi (super-common). Deployed atoi "42"
+benched **~30 ns vs glibc ~10 ns** with only the scan fix (last turn) — its
+`decide()`+`observe()` membrane was still live (atoi/atol were not in the prior
+int-family fast-path). Applied the same `(profile, bound)` fast-path to
+atoi/atol (atoll delegates to atol). atoi has ONE decide (vs strtol's two), so a
+smaller saving — and below the cross-run dlmopen-glibc noise, so measured by
+3 CONSECUTIVE same-worker runs (the tight signal): atoi "42" WITH fast-path =
+**20.15 / 20.96 / 22.12 ns** (median ~21 ns) vs ~30 ns without — a consistent
+~9 ns / ~30% drop. Conformance green: conformance_strtol_family,
+strtol_family_differential_fuzz (live vs-glibc).
+
+Win/loss/neutral: loss-reduction WIN (atoi ~3x→~2x), 0 regressions. Note: the
+fl-absolute on 3 consecutive runs is the trustworthy read here — a single
+WITH-vs-WITHOUT A/B was inconclusive because a sub-10 ns saving sits under the
+~±8 ns worker swing (the WITHOUT run happened to land on a fast worker, glibc
+6.9 ns). The whole strto*/ato* numeric-parse family is now fast-pathed.
