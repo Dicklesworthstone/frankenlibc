@@ -23572,6 +23572,59 @@ pub fn iconv(
             }
         }
 
+        // ASCII (1-byte UTF-8) -> fixed-width Unicode (UTF-16/UTF-32) fast path.
+        // A byte < 0x80 is a BMP scalar equal to itself, so it widens to one
+        // UTF-16 code unit (or one UTF-32 unit) with zero high bytes — byte-for-
+        // byte what the scalar `encode_utf16`/`encode_utf32` below produces. The
+        // `fast_ascii` bulk-copy above only handles 1->1-byte (ASCII-transparent)
+        // pairs; the fixed-width targets need 1->2/4 bytes, so an ASCII run into
+        // UTF-16/UTF-32 (the ubiquitous "ASCII text -> UTF-16" case) otherwise
+        // fell to the per-char decode/encode loop (~5x slower than glibc).
+        // Validate 16 bytes per window with one SIMD high-bit test, then widen.
+        // Same guards as the 2-byte block below (UTF-8 source, no pending BOM,
+        // fixed-width target), so the error/BOM ordering is unchanged.
+        if input[in_pos] < 0x80
+            && from_enc == Encoding::Utf8
+            && !cd.emit_bom
+            && matches!(
+                cd.to,
+                Encoding::Utf32Le | Encoding::Utf32Be | Encoding::Utf16Le | Encoding::Utf16Be
+            )
+        {
+            let be = matches!(cd.to, Encoding::Utf32Be | Encoding::Utf16Be);
+            let u16_out = matches!(cd.to, Encoding::Utf16Le | Encoding::Utf16Be);
+            let obpc = if u16_out { 2 } else { 4 }; // output bytes per char
+            while in_pos + 16 <= input.len() && out_pos + 16 * obpc <= outbuf.len() {
+                let bytes: [u8; 16] = input[in_pos..in_pos + 16].try_into().unwrap();
+                let v = Simd::<u8, 16>::from_array(bytes);
+                if v.simd_ge(Simd::splat(0x80)).any() {
+                    break; // window has a non-ASCII byte — 2-byte/scalar path handles it
+                }
+                for (k, &b) in bytes.iter().enumerate() {
+                    if u16_out {
+                        let u = if be {
+                            (b as u16).to_be_bytes()
+                        } else {
+                            (b as u16).to_le_bytes()
+                        };
+                        outbuf[out_pos + k * 2..out_pos + k * 2 + 2].copy_from_slice(&u);
+                    } else {
+                        let u = if be {
+                            (b as u32).to_be_bytes()
+                        } else {
+                            (b as u32).to_le_bytes()
+                        };
+                        outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&u);
+                    }
+                }
+                in_pos += 16;
+                out_pos += 16 * obpc;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         // SIMD 2-byte fast path: decode a run of >= 8 well-formed 2-byte UTF-8
         // sequences into UTF-32, 8 code points per 16-byte window. A 2-byte char
         // (lead 0xC2..=0xDF + continuation 0x80..=0xBF) yields a code point in

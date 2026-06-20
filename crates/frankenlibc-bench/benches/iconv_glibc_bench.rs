@@ -1,0 +1,167 @@
+//! Head-to-head `iconv` benchmark: FrankenLibC C ABI vs host glibc (dlmopen).
+//!
+//! iconv (charset transcoding) is a large surface that the existing
+//! `iconv_bench` measured only in isolation (the core Rust API). This compares
+//! fl's exported C ABI `iconv_open`/`iconv`/`iconv_close` against a pristine host
+//! glibc loaded via `dlmopen(LM_ID_NEWLM, "libc.so.6")` so fl's `no_mangle`
+//! interposition does not shadow the host symbols — each converter is exercised
+//! with its own paired open/convert/close.
+
+use std::ffi::{c_char, c_int, c_void};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+
+type IconvOpenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
+type IconvFn = unsafe extern "C" fn(
+    *mut c_void,
+    *mut *mut c_char,
+    *mut usize,
+    *mut *mut c_char,
+    *mut usize,
+) -> usize;
+type IconvCloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+struct HostIconv {
+    open: IconvOpenFn,
+    convert: IconvFn,
+    close: IconvCloseFn,
+}
+
+fn host_iconv() -> &'static HostIconv {
+    static H: OnceLock<HostIconv> = OnceLock::new();
+    H.get_or_init(|| unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(!handle.is_null(), "dlmopen libc.so.6 failed");
+        let sym = |n: &[u8]| {
+            let p = libc::dlsym(handle, n.as_ptr().cast());
+            assert!(!p.is_null(), "dlsym failed");
+            p
+        };
+        HostIconv {
+            open: std::mem::transmute::<*mut c_void, IconvOpenFn>(sym(b"iconv_open\0")),
+            convert: std::mem::transmute::<*mut c_void, IconvFn>(sym(b"iconv\0")),
+            close: std::mem::transmute::<*mut c_void, IconvCloseFn>(sym(b"iconv_close\0")),
+        }
+    })
+}
+
+#[derive(Default)]
+struct Stats {
+    s: Vec<f64>,
+}
+impl Stats {
+    fn record(&mut self, ops: u64, dur: Duration) {
+        if ops > 0 {
+            self.s.push(dur.as_nanos() as f64 / ops as f64);
+        }
+    }
+    fn report(&self, label: &str, conv: &str) {
+        let mut s = self.s.clone();
+        if s.is_empty() {
+            return;
+        }
+        s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let p50 = s[s.len() / 2];
+        let mean = s.iter().sum::<f64>() / s.len() as f64;
+        println!("ICONV_BENCH impl={label} conv=\"{conv}\" p50_ns_op={p50:.1} mean_ns_op={mean:.1}");
+    }
+}
+
+/// One conversion: reset in/out pointers, run iconv over the whole input.
+#[inline]
+unsafe fn convert_once(
+    f: IconvFn,
+    cd: *mut c_void,
+    src: &[u8],
+    dst: &mut [u8],
+) -> usize {
+    let mut inp = src.as_ptr() as *mut c_char;
+    let mut inleft = src.len();
+    let mut outp = dst.as_mut_ptr() as *mut c_char;
+    let mut outleft = dst.len();
+    unsafe { f(cd, &mut inp, &mut inleft, &mut outp, &mut outleft) }
+}
+
+fn run_conv(
+    c: &mut Criterion,
+    conv: &str,
+    to: &[u8],
+    from: &[u8],
+    src: &[u8],
+) {
+    let host = host_iconv();
+    let mut group = c.benchmark_group(format!("iconv/{conv}"));
+    group.sample_size(40);
+
+    let mut dst = vec![0u8; src.len() * 4 + 16];
+
+    // fl C ABI.
+    let fl_cd =
+        unsafe { frankenlibc_abi::iconv_abi::iconv_open(to.as_ptr().cast(), from.as_ptr().cast()) };
+    assert!(fl_cd as isize != -1 && !fl_cd.is_null(), "fl iconv_open failed");
+    let fl_stats = std::cell::RefCell::new(Stats::default());
+    group.bench_function("fl", |b| {
+        b.iter_custom(|iters| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                let r = unsafe {
+                    convert_once(frankenlibc_abi::iconv_abi::iconv, fl_cd, src, &mut dst)
+                };
+                black_box(r);
+            }
+            let dur = start.elapsed().max(Duration::from_nanos(1));
+            fl_stats.borrow_mut().record(iters, dur);
+            dur
+        });
+    });
+    fl_stats.borrow().report("fl", conv);
+    unsafe { frankenlibc_abi::iconv_abi::iconv_close(fl_cd) };
+
+    // host glibc.
+    let gl_cd = unsafe { (host.open)(to.as_ptr().cast(), from.as_ptr().cast()) };
+    assert!(gl_cd as isize != -1 && !gl_cd.is_null(), "glibc iconv_open failed");
+    let gl_stats = std::cell::RefCell::new(Stats::default());
+    group.bench_function("glibc", |b| {
+        b.iter_custom(|iters| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                let r = unsafe { convert_once(host.convert, gl_cd, src, &mut dst) };
+                black_box(r);
+            }
+            let dur = start.elapsed().max(Duration::from_nanos(1));
+            gl_stats.borrow_mut().record(iters, dur);
+            dur
+        });
+    });
+    gl_stats.borrow().report("glibc", conv);
+    unsafe { (host.close)(gl_cd) };
+
+    group.finish();
+}
+
+fn bench(c: &mut Criterion) {
+    // ~1 KiB pure ASCII (the bulk-copy hot path).
+    let ascii: Vec<u8> = (0..1024).map(|i| b'a' + (i % 26) as u8).collect();
+    run_conv(c, "utf8_to_latin1_ascii", b"ISO-8859-1\0", b"UTF-8\0", &ascii);
+    run_conv(c, "utf8_to_utf16le_ascii", b"UTF-16LE\0", b"UTF-8\0", &ascii);
+
+    // ~1 KiB Cyrillic (U+0410..=U+044F) as 2-byte UTF-8: real transcoding.
+    let mut cyr: Vec<u8> = Vec::new();
+    for k in 0..512u32 {
+        let cp = 0x0410 + (k % 0x40);
+        // 2-byte UTF-8 encode.
+        cyr.push(0xC0 | (cp >> 6) as u8);
+        cyr.push(0x80 | (cp & 0x3F) as u8);
+    }
+    run_conv(c, "utf8_cyrillic_to_koi8r", b"KOI8-R\0", b"UTF-8\0", &cyr);
+    run_conv(c, "utf8_cyrillic_to_utf16le", b"UTF-16LE\0", b"UTF-8\0", &cyr);
+}
+
+criterion_group!(benches, bench);
+criterion_main!(benches);

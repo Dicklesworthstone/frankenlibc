@@ -132,3 +132,8 @@ harness = false
 name = "strlen_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
+
+[[bench]]
+name = "iconv_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
