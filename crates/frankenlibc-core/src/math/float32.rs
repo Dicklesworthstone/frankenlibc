@@ -1068,8 +1068,73 @@ pub fn logbf(x: f32) -> f32 {
 // --- Special functions ---
 
 #[inline]
+/// Error function, single precision.
+///
+/// Verbatim port of the ARM optimized-routines `erff` (the algorithm glibc 2.42
+/// ships): a pure polynomial on |x| < 0.875 and `exp` of a polynomial on
+/// [0.875, 4); ±1 beyond. Worst-case error ~1.09 ULP. `libm::erff` (fdlibm) is
+/// ~2x slower. The rare tiny |x| < 2^-28 path defers to `libm::erff` so the
+/// underflow/subnormal flag semantics stay exact.
 pub fn erff(x: f32) -> f32 {
-    libm::erff(x)
+    const A: [f32; 6] = [
+        f32::from_bits(0x3e0375d3),
+        f32::from_bits(0xbec09370),
+        f32::from_bits(0x3de70d23),
+        f32::from_bits(0xbcdb45e9),
+        f32::from_bits(0x3ba39fa4),
+        f32::from_bits(0xba1d0d41),
+    ];
+    const B: [f32; 7] = [
+        f32::from_bits(0x3e03ce86),
+        f32::from_bits(0x3f228550),
+        f32::from_bits(0x3ddaae58),
+        f32::from_bits(0xbcc6b180),
+        f32::from_bits(0x3b7e899b),
+        f32::from_bits(0xb9c8e966),
+        f32::from_bits(0x37911480),
+    ];
+    const TWO_OVER_SQRT_PI_M1: f32 = f32::from_bits(0x3e0375d4);
+
+    let ix = x.to_bits();
+    let sign = ix >> 31;
+    let ia12 = (ix >> 20) & 0x7ff;
+
+    if ia12 < 0x3f6 {
+        // |x| < 0.875.
+        if ia12 < 0x318 {
+            // |x| < 2^-28 (incl. tiny/subnormal): defer for exact uflow flag.
+            return libm::erff(x);
+        }
+        let x2 = x * x;
+        // x + x*P(x^2), Horner.
+        let mut r = A[5];
+        r = r.mul_add(x2, A[4]);
+        r = r.mul_add(x2, A[3]);
+        r = r.mul_add(x2, A[2]);
+        r = r.mul_add(x2, A[1]);
+        r = r.mul_add(x2, A[0]);
+        r.mul_add(x, x)
+    } else if ia12 < 0x408 {
+        // |x| < 4.0: erf = sign*(1 - exp(-(a + a*Q(a)))).
+        let a = x.abs();
+        let mut r = B[6].mul_add(a, B[5]);
+        let u = B[4].mul_add(a, B[3]);
+        let x2 = x * x;
+        r = r.mul_add(x2, u);
+        r = r.mul_add(a, B[2]);
+        r = r.mul_add(a, B[1]);
+        r = r.mul_add(a, B[0]);
+        r = r.mul_add(a, a);
+        r = expf(-r);
+        if sign != 0 { -1.0 + r } else { 1.0 - r }
+    } else {
+        // |x| >= 4.0.
+        if ia12 >= 0x7f8 {
+            // erff(nan)=nan, erff(±inf)=±1.
+            return (1.0 - ((ix >> 31) << 1) as f32) + 1.0 / x;
+        }
+        if sign != 0 { -1.0 } else { 1.0 }
+    }
 }
 
 #[inline]

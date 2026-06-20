@@ -1573,3 +1573,36 @@ f64 sibling to route through (their f64 versions are already only ~parity), so
 they would each need a dedicated ARM-optimized-routines-class f32 kernel port —
 filed as remaining gaps, not attempted here. asinf/acosf/atanf/lgammaf/cbrtf
 already win/tie.
+
+## 2026-06-20 f32 erff — 2.14x LOSS → 0.99x (parity), via ARM optimized-routines port
+
+`erff` delegated to `libm::erff` (fdlibm), measured **2.14x slower than glibc**
+(~10-15 ns vs ~4.7 ns). erff has no strict gate (only a loose math_abi_test
+basic), so it is free to optimize. Ported the ARM optimized-routines `erff`
+(`float32.rs`) — the algorithm glibc 2.42 ships: a pure 6-term polynomial on
+|x| < 0.875, `exp`(-7-term-poly) on [0.875, 4) (using the in-tree fast `expf`),
+±1 beyond, with the rare |x| < 2^-28 tiny case deferred to `libm::erff` for exact
+underflow flags. Constants (poly_A[6], poly_B[7], 2/√π−1) converted from the ARM
+hex-float source to `f32::from_bits`; `fmaf` → `mul_add`.
+
+Measured (dlmopen glibc, ovh-a): **~10-15 ns → 4.49 ns**, ratio 2.14x → **0.99x
+(parity)** — a ~2.2x speedup that erases the loss. Correctness: a **400,000-sample
+sweep over [-6, 6] vs glibc erff shows worst 1 ULP, 0 fails** (glibc uses the same
+ARM kernel, so the residual ~1 ULP is just the expf path). math_abi_test (118),
+conformance_math_errno, conformance_diff_fp_exceptions all green.
+
+Win/loss/neutral: clean WIN (2.14x loss → parity), 0 regressions.
+
+### Rejected same-turn: f32 exp10f libm::exp2 → fused math::exp2 (NEUTRAL)
+`exp10f`'s f64 fallback used `libm::exp2` while the comment claimed "the fast
+exp2 kernel". Swapped to the in-tree fused `crate::math::exp2`: bit-identical
+output (the `exp10f_profile_band_preserves_fallback_bits` unit gate stayed green)
+but **no measurable speedup** (survey: fl ~7.4→8.0 ns, within worker noise; the
+1.92→1.75x ratio shift was glibc-side variance). Reverted — no measured win.
+Retry predicate: f32 exp10f/hyperbolic need a dedicated fast f32 kernel; routing
+through f64 helpers is neutral (the f64 exp2/exp are not enough faster than
+glibc's f32 versions). coshf specifically is blocked from the fast f32-`expf`
+route by the **bit-exact** `conformance_diff_hyperbolic_special` gate (it pins
+coshf at 0.5/1.0/20.0); only a correctly-rounded kernel — i.e. the slow f64-exp
+route (why sinhf still loses 1.9x) or a real ARM-class f32 erf/hyperbolic kernel —
+satisfies it.
