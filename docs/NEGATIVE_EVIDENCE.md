@@ -2163,3 +2163,30 @@ Correctness: runtime_policy lib tests (37), cross-family conformance
 (strtod/strtol/math/ctype/getenv/clock — 0 failures) green — the trace context is
 unused where it's skipped, and tests exercise the full path. Win/loss/neutral:
 small but broad WIN (every ABI entry in strict-passthrough), 0 regressions.
+
+## 2026-06-20 LD_PRELOAD gauntlet batch 2 — qsort 12x + snprintf 47x; all remaining big deployed losses are OWNED
+
+Second LD_PRELOAD ground-truth sweep (2M-iter C loops, fl cdylib vs glibc):
+  - localtime:  glibc 5.40s  fl 0.08s  → fl WINS ~67x (glibc is oddly slow here)
+  - gmtime:     glibc 0.04s  fl 0.07s  → ~1.75x (modest; membrane wrapper)
+  - snprintf:   glibc 0.10s  fl 4.69s  → ~47x LOSS  (owned: stdio_abi)
+  - qsort 16xi: glibc 0.02s  fl 0.24s  → ~12x LOSS  (owned: core sort.rs)
+  - strncmp/memset/abs: parity/too-fast-to-measure
+
+qsort root cause (for the sort owner): `core::stdlib::sort` first tries an
+integer-radix lane (`try_integer_unstable_lanes`, width 4/8/...) — but that probe
+rejects the ubiquitous `return *(int*)a - *(int*)b` comparator (it isn't a correct
+total order: subtraction overflows), so a standard-int qsort falls to
+`pdqsort_recurse`, whose per-comparison `elem(buf,width,i) = &buf[i*width..]`
+(sort.rs:127) is a BOUNDS-CHECKED slice access — ~16 ns/comparison vs glibc's
+~1.3 ns (raw `char*` arithmetic). Likely fixable with `get_unchecked` on the
+provably-in-bounds element accesses in the pdqsort hot loop, OR by widening the
+radix probe to accept the overflow-prone-but-monotone int comparator.
+
+CAMPAIGN STATE: the clean criterion-bench wins are exhausted, and EVERY remaining
+big deployed loss now lives in actively-owned files — strlen/memcpy (string_abi,
+SIMD agent: known_remaining + select_string_simd_dispatch per call), malloc
+(malloc_abi), snprintf (stdio_abi), qsort (core sort.rs, sort agent). Documented
+for those owners rather than risk-poking owned code mid-flight. My own
+non-owned broad lever (entrypoint_scope) is done. Caveat (recurring): the
+criterion `*_glibc_bench` does NOT show these — only the LD_PRELOAD harness does.
