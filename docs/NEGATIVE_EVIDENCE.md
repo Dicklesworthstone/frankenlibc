@@ -1351,3 +1351,33 @@ regressions. METHOD NOTE: any fl-vs-glibc microbench of a `no_mangle`-exported
 symbol MUST resolve glibc via `dlmopen(LM_ID_NEWLM)` — a plain `extern`/`libc::`
 binding resolves to fl's shadowing symbol and silently measures fl-vs-fl (the
 tell: identical numbers in both arms every run).
+
+## 2026-06-20 Stdio membrane: kernel-consult removed from strict mode — 26x→12x
+
+Found via a dlmopen microbench: deployed `snprintf("%s")` was **1198 ns vs glibc
+45 ns (26x slower)** — a large, real, previously-unmeasured loss (the
+`glibc_baseline_bench` malloc/string arms use `libc::` which fl's `no_mangle`
+symbols shadow, hiding it). Root cause: `ApiFamily::Stdio` was missing from the
+high-frequency-family fast-path set in `decide()`/`observe()`, so every stdio
+call fell to `decide_strict_observation` — a `#[cold]` full kernel consult
+(reentry guard + panic hook + `k.decide()` with locks) on every call. But that
+function *always overrides the decision to `Allow`* (strict mode is
+ABI-faithful — verified at the `Override to passthrough` block), so the consult
+is pure telemetry; stdio buffer validation/healing runs off `known_remaining`,
+independent of this decision. Added `ApiFamily::Stdio` to the strict-mode decide
+fast-path set and the `observe()` fast-path set (left the hardened-mode set
+unchanged — smaller blast radius, and the conformance gates run strict).
+
+Measured (dlmopen snprintf microbench, ovh-a): **1198 ns → 753 ns** (26x → 12x
+vs glibc). Broad: benefits every printf/scanf/fwrite/fread-family call in the
+default (strict/unresolved) mode. Conformance green on the deployed fast-path:
+`conformance_diff_{printf_fastpaths(3),asprintf(2),dprintf(3),printf_null_string,
+printf_pointer}`.
+
+Negative evidence / remaining gap: 753 ns is still 12x glibc. The residual is
+NOT the membrane decision — it is `entrypoint_scope` (3x `std::thread_local!`
+`try_with` accesses; the bundling `owned-tls-cache` feature is OFF by default, so
+each is a slow general-dynamic-TLS `__tls_get_addr` + lazy-init check) plus the
+format parse/va-extract. That is a separate, deeper lever (TLS model / trace
+machinery), tracked for follow-up; this entry banks only the kernel-consult
+removal.
