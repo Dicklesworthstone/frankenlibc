@@ -2063,3 +2063,41 @@ Win/loss/neutral: clean WIN (time 89x→1.14x, gettimeofday free), 0 regressions
 The vDSO clock family (clock_gettime/gettimeofday/time) is now all near-parity
 with glibc. Remaining clock_gettime ~1.36x residual = fl's per-call
 valid-clock-id + vdso-enabled wrapper checks around the vDSO call.
+
+## 2026-06-20 LD_PRELOAD sweep of hot deployed functions — strlen 16x + malloc 21x (the criterion bench HIDES these); entrypoint_scope TLS tax is the broad lever (confounded)
+
+Used the LD_PRELOAD ground-truth harness (C micro-loop, 3M iters each, fl cdylib
+vs glibc) to sweep hot functions the criterion bench reports as "fine":
+  - malloc/free 64B:   glibc 0.01s  fl 0.21s  ~21x  (known; owned/membrane)
+  - strlen 255B:       glibc 0.01s  fl 0.16s  ~16x  (!! supposedly SIMD-done)
+  - pthread_mutex l/u: glibc 0.02s  fl 0.04s  ~2x
+  - memcpy 256B:       glibc 0.01s  fl 0.02s  ~2x
+  - pthread_rwlock:    glibc 0.02s  fl 0.02s  parity
+  - strcmp equal:      ~parity
+
+strlen 16x is the surprise — the SIMD core is fast, but the DEPLOYED wrapper
+(`string_abi::strlen`) pays, per call: `runtime_policy::entrypoint_scope("strlen")`
+(pure telemetry — sets+restores a trace context via TWO `thread_local!`
+`TRACE_CONTEXT.try_with` accesses) + `known_remaining` (ptr lookup), on top of the
+~10 ns scan. entrypoint_scope is the BROADEST lever in the codebase — EVERY ABI
+function calls it; its trace context is consumed only by FFI-PCC cert lookup +
+hardened `record_last_explainability` + tests, so it is pure overhead in deployed
+strict and is gate-able to a no-op.
+
+NOT fixed this turn — TWO confounds make the magnitude untrustworthy AND the fix
+high-risk: (1) under LD_PRELOAD fl's TLS is **general-dynamic** (slow
+`__tls_get_addr`); a true-deployed fl (the libc/interpreter) may get
+**initial-exec** TLS (~2 ns) → the entrypoint_scope tax could be much smaller
+deployed. (2) building the cdylib with `--features owned-tls-cache` (the
+"faster TLS" path) made strlen **WORSE** (0.16→7.89s) — a pessimization, not a
+fix, so the right mechanism is unclear. And `entrypoint_scope`/`known_remaining`
+live in the shared, load-bearing-adjacent `runtime_policy`/`malloc_abi` core
+(string_abi is also actively SIMD-optimised by another agent) — a wrong gate
+breaks FFI-PCC verification. Shipping unverified here violates MEASURED/REVERT.
+
+Action: documented as the highest-value remaining deployed lever. To pursue
+safely: measure entrypoint_scope with a true-libc (not LD_PRELOAD) TLS model, then
+gate it to a no-op when `!(ffi_pcc_active || hardened || cfg!(test))`. malloc 21x
+is the other big one (owned). The criterion `*_glibc_bench` does NOT exercise the
+entrypoint_scope/known_remaining wrapper tax — only LD_PRELOAD does; ledger this so
+the membrane/string/malloc owners can act.
