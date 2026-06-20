@@ -1974,6 +1974,21 @@ pub(crate) fn math_membrane_fastpath() -> bool {
     cfg!(not(test))
 }
 
+/// Cheap predicate gating the ctype ABI fast-path (bd-n40in2 sibling). Same
+/// reasoning as [`math_membrane_fastpath`]: in deployed (non-test) builds
+/// `decide()` hard-returns `Allow`/`Full` for `ApiFamily::Ctype` via the
+/// high-frequency-family fast-path below, so a ctype classification/conversion
+/// can never be denied; and ctype produces no pointer/heap effect and has no
+/// heal/adverse path (its `observe()` is already a no-op for the `Ctype` family),
+/// so the whole `decide()`+`observe()` machinery cannot change the result of an
+/// `isalpha`/`tolower`-class table lookup. Unit-test builds keep the full path so
+/// the membrane's deny/observe logic stays exercised. Coupled to the same
+/// `cfg!(not(test))` `Ctype` family gate in `decide`/`observe`.
+#[inline(always)]
+pub(crate) fn ctype_membrane_fastpath() -> bool {
+    cfg!(not(test))
+}
+
 pub(crate) fn decide(
     family: ApiFamily,
     addr_hint: usize,

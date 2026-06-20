@@ -301,15 +301,21 @@ fn classify_with_mask(c: c_int, mask: u16) -> c_int {
         return 0;
     }
     let byte = c as u8;
-    let (_, decision) = runtime_policy::decide(ApiFamily::Ctype, byte as usize, 1, false, true, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, true);
-        return 0;
+    // Deployed fast-path (bd-n40in2 sibling): in non-test builds the Ctype
+    // membrane is always-Allow and has no heal/adverse path, so decide()+observe()
+    // cannot change a classification — skip the ~5-10ns membrane on this 1ns table
+    // lookup. Unit-test builds take the full path (deny/observe stays reachable).
+    if !runtime_policy::ctype_membrane_fastpath() {
+        let (_, decision) =
+            runtime_policy::decide(ApiFamily::Ctype, byte as usize, 1, false, true, 0);
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, true);
+            return 0;
+        }
+        runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, false);
     }
     let flags = CTYPE_B_TABLE[usize::from(byte) + 128];
-    let result = (flags & mask) != 0;
-    runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, false);
-    c_int::from(result)
+    c_int::from((flags & mask) != 0)
 }
 
 #[inline]
@@ -318,14 +324,17 @@ fn convert_with_table(c: c_int, table: &[i32; 384]) -> c_int {
         return c;
     }
     let byte = c as u8;
-    let (_, decision) = runtime_policy::decide(ApiFamily::Ctype, byte as usize, 1, false, true, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, true);
-        return c;
+    // Deployed fast-path (bd-n40in2 sibling); see `classify_with_mask`.
+    if !runtime_policy::ctype_membrane_fastpath() {
+        let (_, decision) =
+            runtime_policy::decide(ApiFamily::Ctype, byte as usize, 1, false, true, 0);
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, true);
+            return c;
+        }
+        runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, false);
     }
-    let result = table[usize::from(byte) + 128];
-    runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, false);
-    result
+    table[usize::from(byte) + 128]
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

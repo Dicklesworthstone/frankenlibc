@@ -1245,3 +1245,38 @@ per-symbol (macro/`const` fn), a ~100-wrapper refactor for ~3 ns — deferred as
 low-value. Retry-condition predicate: do not chase the residual abi-over-core ns
 via decide/observe tuning (already skipped); only the entry-monomorphization
 refactor remains, and only if a profile shows math entry dominating.
+
+## 2026-06-20 ctype ABI membrane fast-path — ~3x LOSS → 1.3-4x WIN vs glibc
+
+Same lever as the math membrane (`bd-n40in2`), applied to the ctype family.
+`classify_with_mask`/`convert_with_table` (the cores of `isalpha`/`isdigit`/.../
+`tolower`/`toupper` and all their `_l` and `__`-prefixed variants — ~50 exported
+symbols) called `runtime_policy::decide()`+`observe()` on every call: a ~4 ns
+membrane tax on a 1 ns table lookup. Ctype is in the always-Allow
+high-frequency-family set, takes an `int` and returns an `int` (no pointer/heap
+effect), and has no heal/adverse path (its `observe()` is already a Ctype-family
+no-op), so the membrane can never change a classification. Added
+`runtime_policy::ctype_membrane_fastpath()` (`= cfg!(not(test))`) and guarded the
+`decide()`/`observe()` block in both helpers; the table lookup runs directly.
+Unit-test builds keep the full path (deny/observe reachable + tested).
+
+Measured (zz_scratch_ctype_bench, pinned ovh-a; glibc resolved via
+`dlmopen(LM_ID_NEWLM,"libc.so.6")` so fl's `no_mangle` ctype symbols don't shadow
+it — without dlmopen *both* arms silently resolve to fl):
+
+| symbol | fl before | fl after | glibc | after/glibc |
+|---|---|---|---|---|
+| isalpha | 5.24 ns | 1.34 ns | 1.73 ns | **0.77x** |
+| isdigit | (5.2 ns) | 0.44 ns | 1.74 ns | **0.25x** |
+| isspace | 5.46 ns | 1.31 ns | 1.74 ns | **0.75x** |
+| tolower | 5.27 ns | 1.31 ns | 1.74 ns | **0.75x** |
+
+fl ctype went from a ~3x glibc LOSS (5.2 ns, membrane-bound) to a clean 1.3-4x
+WIN across the whole family. Conformance green on the deployed fast-path
+(integration gates compile the lib non-test): `conformance_diff_ctype` (19, a
+real vs-glibc differential) + `ctype_abi_test` (39) — values unchanged.
+Win/loss/neutral: broad WIN (a ~3x loss removed across ~50 hot symbols), 0
+regressions. METHOD NOTE: any fl-vs-glibc microbench of a `no_mangle`-exported
+symbol MUST resolve glibc via `dlmopen(LM_ID_NEWLM)` — a plain `extern`/`libc::`
+binding resolves to fl's shadowing symbol and silently measures fl-vs-fl (the
+tell: identical numbers in both arms every run).
