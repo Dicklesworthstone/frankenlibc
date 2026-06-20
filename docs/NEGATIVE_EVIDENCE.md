@@ -61,6 +61,40 @@ retried and real wins are confirmed with numbers.
 | 2026-06-19 | wcsrchr folded 128B SIMD tier (`wide_last_before_nul_simd`, BlackThrush) | `memset_abi_bench` wcsrchr (added fl-hook + glibc arms), same-run `ovh-a` | 65536 fl 2561→2542 ns | glibc 2606→2572 ns | fl/glibc 1.02x→**1.01x** | **NEUTRAL → reverted** | Tried the same folded-128 tier that won big for wcschr. But wcsrchr is NOT a loss: fl's plain 32-byte scan **already beats glibc at every size** (16 2.7x … 65536 1.02x — glibc's wcsrchr is less optimized than its wcschr). So there's no room: folded was within noise at ≥1024 (65536 1.02→1.01x, 1024 1.17→1.20x) and **regressed 256** (1.61→1.47x, the i≥32 gate makes the cache-resident 256-wchar case pay the folded reads). Reverted the tier; **kept** the new `bench_wide_last_before_nul_simd` hook + a corrected wcsrchr bench arm (the old arm mislabeled scalar-vs-glibc as "old/abi"; now old/fl/glibc) as the permanent fl-vs-glibc apparatus + evidence that fl wcsrchr already wins. Conformance `conformance_diff_wcsrchr` green. LESSON: the folded-128 lever only pays where fl actually LOSES; on functions fl already wins it adds short-string overhead. |
 <!-- rows appended as benches complete -->
 
+## 2026-06-19 GAUNTLET SCORECARD — broad fl-vs-glibc sweep, ~50 functions (BlackThrush)
+
+Swept `glibc_baseline_bench` (core primitives, Rust-to-Rust) + `memset_abi_bench`
+(scan hooks + wide) on `ovh-a`. **Caveat:** the core bench's thin-LTO inlines fl
+but calls glibc `extern` (see the LTO-artifact row above), so it FAVORS fl —
+meaning any fl *loss* here is conservatively real, and small fl *wins* (1.0-1.5x)
+may be partly inlining. Ratio = fl_p50 / glibc_p50 (lower = fl faster).
+
+**fl DOMINATES (ratio ≪ 1):** memmem 0.002x (~500x), strstr 0.005x (~200x),
+memcmp 0.054x (~18x), fnmatch_bracket 0.245x, qsort_128_i32 0.286x, scanf 0.30x,
+strspn_long 0.317x, fnmatch_adversarial 0.364x, strtol_hex 0.52x, pow 0.52x,
+strtol_long 0.56x, fnmatch_pathname 0.586x, strcmp_256 0.643x, strrchr 0.757x,
+memset_4096 0.789x, strchr_absent 0.870x, strlen_4096 0.871x, strtol_short 0.888x,
+strpbrk 0.94x, memcpy_4096 0.958x. Wide (memset_abi_bench): wcsstr ~5.7x,
+**wcschr now 1.02-1.21x (this session's fix)**, wcsrchr 1.02-2.7x, wcscmp/
+wcscasecmp/wmemcmp parity.
+
+**fl LOSES (ratio > 1.05) — the residual gap list:**
+| fn | fl/glibc | note |
+|---|---|---|
+| memmove_4096 | 1.174x | CONTESTED ("other agents" own mem*) + `memset_abi_bench` memmove shows fl WINNING at 4096 (benches disagree → measurement-path ambiguity, not pursued) |
+| strncasecmp_256_equal | 1.099x | ~10% at 256B equal; scan_strcasecmp already 32B-SIMD; residual is per-call/dual-page-guard, membrane-noise class |
+| strncmp_256_equal | 1.052x | ~5% at 256B equal; scan_strcmp already 32B dual-ptr SIMD; marginal |
+| deployed strlen @256K | ~1.25-2x | 32B portable_simd vs glibc wider AVX; folded-128 measured NEUTRAL (single NUL compare); needs AVX-512 = not closable on these workers |
+| deployed malloc small | "50-71x" | mostly host-heap-isolation ARTIFACT + ~2x diffuse membrane (see decomposition above), not a point-fixable hotspot |
+
+**Conclusion:** after ~50 functions measured, fl beats or ties glibc on the
+overwhelming majority; the only residual losses are contested (memmove),
+marginal-at-256B (strncmp/strncasecmp ~5-10%, membrane-noise class), or documented
+ceilings/artifacts (strlen-AVX, malloc-isolation). The string/wide scan SWAR→SIMD
+vein is fully closed (strchr/strrchr/strlen/strcmp/wcschr all SIMD; the last two
+landed this session: strrchr-bounded + wcschr-folded). No clean uncontested
+significant new lever remains on this surface.
+
 ## 2026-06-19 deployed calloc/malloc scorecard refresh + small/large size anomaly (BlackThrush)
 
 Same-worker `ovh-a` thin-LTO `calloc_glibc_bench` at HEAD (mt=3), p50 ns/op
