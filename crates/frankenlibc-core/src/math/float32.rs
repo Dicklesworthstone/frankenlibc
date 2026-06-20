@@ -1139,6 +1139,21 @@ pub fn erff(x: f32) -> f32 {
 
 #[inline]
 pub fn erfcf(x: f32) -> f32 {
+    // Well-conditioned region: build erfc from the fast `erff` kernel.
+    //   x <= 0:          erfc(x) = 1 + erf(|x|)  (result in [1,2], no cancellation)
+    //   0 < x <= 0.8:    erfc(x) = 1 - erf(x)    (erfc >= ~0.26, cancellation <=~3 ULP)
+    // libm::erfcf is ~1.5x slower than glibc; this routes the bulk of the domain
+    // through the in-tree ARM erff port instead. The small-erfc tail (x > 0.875,
+    // where 1-erf loses precision and the result eventually underflows) stays on
+    // libm::erfcf, which also yields the exact subnormal/underflow flag.
+    if x.is_finite() {
+        if x <= 0.0 {
+            return 1.0 + erff(-x);
+        }
+        if x <= 0.8 {
+            return 1.0 - erff(x);
+        }
+    }
     let r = libm::erfcf(x);
     // erfc(x) for large finite positive x underflows toward 0; glibc raises
     // FE_UNDERFLOW on the subnormal/zero result, libm omits it. erfc(+inf)=0

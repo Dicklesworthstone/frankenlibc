@@ -1606,3 +1606,27 @@ route by the **bit-exact** `conformance_diff_hyperbolic_special` gate (it pins
 coshf at 0.5/1.0/20.0); only a correctly-rounded kernel — i.e. the slow f64-exp
 route (why sinhf still loses 1.9x) or a real ARM-class f32 erf/hyperbolic kernel —
 satisfies it.
+
+## 2026-06-20 f32 erfcf — 1.46x LOSS → 1.02x (parity), via the new fast erff
+
+Follow-on to the erff port. `erfcf` delegated to `libm::erfcf` (~1.46x slower than
+glibc). ARM optimized-routines ships NO erfcf (404; nor sinhf/coshf/tanhf/cbrtf —
+only sinf/cosf/expf/logf/powf/erff for f32), so no kernel to port. Instead built
+erfcf from the now-fast in-tree `erff` over the **well-conditioned** sub-domains
+(`float32.rs`):
+  - x <= 0:        erfc = 1 + erf(|x|)   (result in [1,2], no cancellation)
+  - 0 < x <= 0.8:  erfc = 1 - erf(x)     (erfc >= ~0.26, cancellation <= ~3 ULP)
+The small-erfc tail (x > 0.8, where 1-erf loses precision and the result
+eventually underflows) stays on `libm::erfcf`, preserving the exact
+subnormal/FE_UNDERFLOW flag handling. Threshold 0.8 chosen so the cancellation
+amplification (erf/erfc ratio) keeps the routed region within ~3 ULP.
+
+Measured (dlmopen glibc, ovh-a): **~17.9 ns → 8.7 ns**, ratio 1.46x → **1.02x
+(parity)**. Correctness: a **400,000-sample sweep over [-4, 10] (incl. the
+underflow tail) vs glibc erfcf shows worst 3 ULP, 0 fails** (>4 ULP).
+math_abi_test (118), conformance_math_errno, conformance_diff_fp_exceptions green.
+
+Win/loss/neutral: clean WIN (1.46x loss → parity), 0 regressions. Note: ARM's f32
+math set is now exhausted for fl's losers — remaining f32-specials losses (sinhf
+1.9x, coshf 1.5x, tanhf 1.7x bit-exact-gated; exp10f 1.9x neutral via f64; j0f/j1f
+1.25x bessel) all need bespoke correctly-rounded f32 kernels, not a port.
