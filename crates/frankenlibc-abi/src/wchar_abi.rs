@@ -765,6 +765,40 @@ unsafe fn wide_find_or_nul_simd(s: *const u32, c: u32) -> (usize, bool) {
     let cv = Simd::<u32, LANES>::splat(c);
     let zv = Simd::<u32, LANES>::splat(0);
     loop {
+        // Length-escalated folded 4x8 = 32-lane (128-byte) tier: one combined
+        // `.any()` reduction per 128 bytes for the bulk of long wide strings,
+        // matching glibc's unrolled wcschr (the plain 32-byte panel below did one
+        // reduction per 32 bytes and lost ~1.4x at >=1024 wchars). Gated on
+        // `i >= 32` so short strings (where the 32-byte panel already beats glibc)
+        // never pay the folded overhead — the escalation guard that kept strchr's
+        // folded-128 tier (bd-4rxozm) regression-free. Page-guarded so the 128-byte
+        // read never crosses into an adjacent (possibly unmapped) page; a folded
+        // hit falls through to the 32-byte/scalar resolve below, which returns the
+        // exact first c-or-NUL index unchanged.
+        if i >= 32 && ((s as usize) + i * 4) & 0xFFF <= 0x1000 - 128 {
+            // SAFETY: the 128-byte window stays within the current mapped page.
+            let base = unsafe { s.add(i) };
+            let v0 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(base.cast::<[u32; LANES]>())
+            });
+            let v1 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(base.add(LANES).cast::<[u32; LANES]>())
+            });
+            let v2 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(base.add(2 * LANES).cast::<[u32; LANES]>())
+            });
+            let v3 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(base.add(3 * LANES).cast::<[u32; LANES]>())
+            });
+            let any = (v0.simd_eq(cv) | v0.simd_eq(zv))
+                | (v1.simd_eq(cv) | v1.simd_eq(zv))
+                | (v2.simd_eq(cv) | v2.simd_eq(zv))
+                | (v3.simd_eq(cv) | v3.simd_eq(zv));
+            if !any.any() {
+                i += 4 * LANES;
+                continue;
+            }
+        }
         // SAFETY: `s + i` is 32-byte aligned, so this 32-byte load stays inside
         // the current page; the string is NUL-terminated within a mapped page.
         // Use a raw array load rather than forming a Rust slice over C memory.
