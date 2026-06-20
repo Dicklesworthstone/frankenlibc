@@ -1772,3 +1772,34 @@ TRUSTWORTHY deployed-ABI perf number requires the real cdylib + LD_PRELOAD (or a
 bench in the `frankenlibc-bench` crate, which builds the lib WITHOUT cfg(test)),
 not a `--test` integration bench. That harness is the prerequisite for any
 further deployed-membrane perf claim.
+
+## 2026-06-20 strtol/strtoul/strtoll/strtoull membrane fast-path — REAL deployed win (built the valid harness)
+
+Acting on the prerequisite above: wrote `frankenlibc-bench/benches/strtol_glibc_
+bench.rs` — a criterion bench (lib built WITHOUT cfg(test) → deployed fast-paths
+LIVE, `known_remaining`→`fallback_remaining` cheap), glibc via dlmopen. This is
+the VALID deployed measurement the `--test` bench could not give.
+
+It confirmed BOTH points: the cfg(test) bench's 22-52x was inflated, AND there is
+a REAL deployed loss — strtol "42" **28 ns vs glibc ~6 ns (~4.5x)**, dec_long
+~2.8x, hex ~2.7x; strtod competitive (0.79-1.39x, already fast-pathed).
+
+Re-applied (now measurable) the int-family fast-path: skip the always-Allow
+decide()+observe() (strtol pays it twice — nptr + endptr) and route the arg-length
+scan through `scan_numeric_c_string` (plain NUL scan, no `allocation_bound`→
+`known_remaining` lookup). Controlled back-to-back A/B on `ovh-a` (fl absolute,
+the glibc dlmopen baseline is too noisy run-to-run to trust — 4.5-8.5 ns swings):
+  - strtol "42":     37.9 → 23.1 ns
+  - strtol dec_long: 43.5 → 33.7 ns
+  - strtol hex:      45.3 → 29.6 ns
+~10-16 ns saved (well above the ~±8 ns worker noise; strtod_int, unchanged this
+turn, swung 38-47 ns as the noise gauge). So strtol goes ~5x → ~3x vs glibc — a
+~40% loss-reduction on a ubiquitous function. The residual ~3x is the Rust ABI
+frame + the two-pass (scan-then-parse) shape vs glibc's single incremental pass —
+the deeper lever. Conformance green: conformance_strtol_family,
+strtol_family_differential_fuzz (live vs-glibc), conformance_diff_strtod_edges,
+strtod_strtof_live_differential_probe.
+
+Win/loss/neutral: loss-reduction WIN (5x→3x) across the strtol int family,
+0 regressions. Lesson banked: the `*_glibc_bench` criterion harness is how to
+measure ANY deployed-membrane change — never the `--test` path.

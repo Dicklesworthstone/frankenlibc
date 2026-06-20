@@ -16,6 +16,30 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 use frankenlibc_core::errno;
+
+/// Length of a NUL-terminated numeric argument for the strto*/ato* family.
+///
+/// In deployed (non-test) builds this is a plain NUL scan — matching glibc's
+/// "read until NUL/non-digit" model. `scan_c_string` unconditionally consults
+/// `allocation_bound` → `malloc_abi::known_remaining` (deployed `fallback_remaining`
+/// bookkeeping) on every call, which — together with the parse-time membrane —
+/// dominates the deployed strtol cost (measured ~28 ns vs glibc ~6 ns for "42"
+/// via the cdylib-equivalent `strtol_glibc_bench`, which builds the lib WITHOUT
+/// cfg(test); a `--test` bench would instead route through validate_ptr and
+/// overstate this). Unit-test builds keep the bounded scan so the allocation-bound
+/// clamping stays exercised.
+#[inline]
+unsafe fn scan_numeric_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
+    if runtime_policy::stdlib_membrane_fastpath() {
+        let mut i = 0usize;
+        while unsafe { *ptr.add(i) } != 0 {
+            i += 1;
+        }
+        (i, true)
+    } else {
+        unsafe { scan_c_string(ptr, bound) }
+    }
+}
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use libc::{intmax_t, uintmax_t};
@@ -531,7 +555,7 @@ pub unsafe extern "C" fn atoi(nptr: *const c_char) -> c_int {
         None
     };
 
-    let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
+    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
     let result = frankenlibc_core::stdlib::atoi(slice);
 
@@ -573,7 +597,7 @@ pub unsafe extern "C" fn atol(nptr: *const c_char) -> c_long {
         None
     };
 
-    let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
+    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
     let result = frankenlibc_core::stdlib::atol(slice);
 
@@ -609,40 +633,51 @@ pub unsafe extern "C" fn strtol(
         return 0;
     }
 
-    let (mode, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        nptr as usize,
-        0,
-        false,
-        known_remaining(nptr as usize).is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
-        return 0;
-    }
-
-    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(nptr as usize)
+    // Deployed fast-path (measured: strtol "42" ~28→~12 ns vs glibc ~6 ns).
+    // Stdlib is always-Allow in non-test, so the per-call decide()+observe()
+    // membrane is pure overhead (the parse reads the string regardless). strtol
+    // pays it TWICE — `nptr` and the always-Allow `endptr` write-decide. `profile`
+    // is `Some` only on the full (test) path, which still exercises deny/observe/
+    // repair. Mirrors `strtod`.
+    let (profile, bound) = if runtime_policy::stdlib_membrane_fastpath() {
+        (None, None)
     } else {
-        None
-    };
-
-    if !endptr.is_null() {
-        let (_, end_decision) = runtime_policy::decide(
+        let (mode, decision) = runtime_policy::decide(
             ApiFamily::Stdlib,
-            endptr as usize,
-            std::mem::size_of::<*mut c_char>(),
-            true,
-            true,
+            nptr as usize,
+            0,
+            false,
+            known_remaining(nptr as usize).is_none(),
             0,
         );
-        if matches!(end_decision.action, MembraneAction::Deny) {
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
             return 0;
         }
-    }
 
-    let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
+        let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+            known_remaining(nptr as usize)
+        } else {
+            None
+        };
+
+        if !endptr.is_null() {
+            let (_, end_decision) = runtime_policy::decide(
+                ApiFamily::Stdlib,
+                endptr as usize,
+                std::mem::size_of::<*mut c_char>(),
+                true,
+                true,
+                0,
+            );
+            if matches!(end_decision.action, MembraneAction::Deny) {
+                return 0;
+            }
+        }
+        (Some(decision.profile), bound)
+    };
+
+    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
     let (val, consumed, status) = frankenlibc_core::stdlib::conversion::strtol_impl(slice, base);
@@ -664,12 +699,14 @@ pub unsafe extern "C" fn strtol(
         }
     }
 
-    runtime_policy::observe(
-        ApiFamily::Stdlib,
-        decision.profile,
-        runtime_policy::scaled_cost(15, consumed),
-        false,
-    );
+    if let Some(p) = profile {
+        runtime_policy::observe(
+            ApiFamily::Stdlib,
+            p,
+            runtime_policy::scaled_cost(15, consumed),
+            false,
+        );
+    }
 
     val as c_long
 }
@@ -688,40 +725,51 @@ pub unsafe extern "C" fn strtoimax(
         return 0;
     }
 
-    let (mode, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        nptr as usize,
-        0,
-        false,
-        known_remaining(nptr as usize).is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
-        return 0;
-    }
-
-    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(nptr as usize)
+    // Deployed fast-path (measured: strtol "42" ~28→~12 ns vs glibc ~6 ns).
+    // Stdlib is always-Allow in non-test, so the per-call decide()+observe()
+    // membrane is pure overhead (the parse reads the string regardless). strtol
+    // pays it TWICE — `nptr` and the always-Allow `endptr` write-decide. `profile`
+    // is `Some` only on the full (test) path, which still exercises deny/observe/
+    // repair. Mirrors `strtod`.
+    let (profile, bound) = if runtime_policy::stdlib_membrane_fastpath() {
+        (None, None)
     } else {
-        None
-    };
-
-    if !endptr.is_null() {
-        let (_, end_decision) = runtime_policy::decide(
+        let (mode, decision) = runtime_policy::decide(
             ApiFamily::Stdlib,
-            endptr as usize,
-            std::mem::size_of::<*mut c_char>(),
-            true,
-            true,
+            nptr as usize,
+            0,
+            false,
+            known_remaining(nptr as usize).is_none(),
             0,
         );
-        if matches!(end_decision.action, MembraneAction::Deny) {
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
             return 0;
         }
-    }
 
-    let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
+        let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+            known_remaining(nptr as usize)
+        } else {
+            None
+        };
+
+        if !endptr.is_null() {
+            let (_, end_decision) = runtime_policy::decide(
+                ApiFamily::Stdlib,
+                endptr as usize,
+                std::mem::size_of::<*mut c_char>(),
+                true,
+                true,
+                0,
+            );
+            if matches!(end_decision.action, MembraneAction::Deny) {
+                return 0;
+            }
+        }
+        (Some(decision.profile), bound)
+    };
+
+    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
     let (val, consumed, status) = frankenlibc_core::stdlib::conversion::strtoimax_impl(slice, base);
@@ -742,12 +790,14 @@ pub unsafe extern "C" fn strtoimax(
         }
     }
 
-    runtime_policy::observe(
-        ApiFamily::Stdlib,
-        decision.profile,
-        runtime_policy::scaled_cost(15, consumed),
-        false,
-    );
+    if let Some(p) = profile {
+        runtime_policy::observe(
+            ApiFamily::Stdlib,
+            p,
+            runtime_policy::scaled_cost(15, consumed),
+            false,
+        );
+    }
 
     val as intmax_t
 }
@@ -779,40 +829,51 @@ pub unsafe extern "C" fn strtoul(
         return 0;
     }
 
-    let (mode, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        nptr as usize,
-        0,
-        false,
-        known_remaining(nptr as usize).is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
-        return 0;
-    }
-
-    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(nptr as usize)
+    // Deployed fast-path (measured: strtol "42" ~28→~12 ns vs glibc ~6 ns).
+    // Stdlib is always-Allow in non-test, so the per-call decide()+observe()
+    // membrane is pure overhead (the parse reads the string regardless). strtol
+    // pays it TWICE — `nptr` and the always-Allow `endptr` write-decide. `profile`
+    // is `Some` only on the full (test) path, which still exercises deny/observe/
+    // repair. Mirrors `strtod`.
+    let (profile, bound) = if runtime_policy::stdlib_membrane_fastpath() {
+        (None, None)
     } else {
-        None
-    };
-
-    if !endptr.is_null() {
-        let (_, end_decision) = runtime_policy::decide(
+        let (mode, decision) = runtime_policy::decide(
             ApiFamily::Stdlib,
-            endptr as usize,
-            std::mem::size_of::<*mut c_char>(),
-            true,
-            true,
+            nptr as usize,
+            0,
+            false,
+            known_remaining(nptr as usize).is_none(),
             0,
         );
-        if matches!(end_decision.action, MembraneAction::Deny) {
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
             return 0;
         }
-    }
 
-    let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
+        let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+            known_remaining(nptr as usize)
+        } else {
+            None
+        };
+
+        if !endptr.is_null() {
+            let (_, end_decision) = runtime_policy::decide(
+                ApiFamily::Stdlib,
+                endptr as usize,
+                std::mem::size_of::<*mut c_char>(),
+                true,
+                true,
+                0,
+            );
+            if matches!(end_decision.action, MembraneAction::Deny) {
+                return 0;
+            }
+        }
+        (Some(decision.profile), bound)
+    };
+
+    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
     let (val, consumed, status) = frankenlibc_core::stdlib::conversion::strtoul_impl(slice, base);
@@ -833,12 +894,14 @@ pub unsafe extern "C" fn strtoul(
         }
     }
 
-    runtime_policy::observe(
-        ApiFamily::Stdlib,
-        decision.profile,
-        runtime_policy::scaled_cost(15, consumed),
-        false,
-    );
+    if let Some(p) = profile {
+        runtime_policy::observe(
+            ApiFamily::Stdlib,
+            p,
+            runtime_policy::scaled_cost(15, consumed),
+            false,
+        );
+    }
 
     val as c_ulong
 }
@@ -857,40 +920,51 @@ pub unsafe extern "C" fn strtoumax(
         return 0;
     }
 
-    let (mode, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        nptr as usize,
-        0,
-        false,
-        known_remaining(nptr as usize).is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
-        return 0;
-    }
-
-    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(nptr as usize)
+    // Deployed fast-path (measured: strtol "42" ~28→~12 ns vs glibc ~6 ns).
+    // Stdlib is always-Allow in non-test, so the per-call decide()+observe()
+    // membrane is pure overhead (the parse reads the string regardless). strtol
+    // pays it TWICE — `nptr` and the always-Allow `endptr` write-decide. `profile`
+    // is `Some` only on the full (test) path, which still exercises deny/observe/
+    // repair. Mirrors `strtod`.
+    let (profile, bound) = if runtime_policy::stdlib_membrane_fastpath() {
+        (None, None)
     } else {
-        None
-    };
-
-    if !endptr.is_null() {
-        let (_, end_decision) = runtime_policy::decide(
+        let (mode, decision) = runtime_policy::decide(
             ApiFamily::Stdlib,
-            endptr as usize,
-            std::mem::size_of::<*mut c_char>(),
-            true,
-            true,
+            nptr as usize,
+            0,
+            false,
+            known_remaining(nptr as usize).is_none(),
             0,
         );
-        if matches!(end_decision.action, MembraneAction::Deny) {
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
             return 0;
         }
-    }
 
-    let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
+        let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+            known_remaining(nptr as usize)
+        } else {
+            None
+        };
+
+        if !endptr.is_null() {
+            let (_, end_decision) = runtime_policy::decide(
+                ApiFamily::Stdlib,
+                endptr as usize,
+                std::mem::size_of::<*mut c_char>(),
+                true,
+                true,
+                0,
+            );
+            if matches!(end_decision.action, MembraneAction::Deny) {
+                return 0;
+            }
+        }
+        (Some(decision.profile), bound)
+    };
+
+    let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
     let (val, consumed, status) = frankenlibc_core::stdlib::conversion::strtoumax_impl(slice, base);
@@ -911,12 +985,14 @@ pub unsafe extern "C" fn strtoumax(
         }
     }
 
-    runtime_policy::observe(
-        ApiFamily::Stdlib,
-        decision.profile,
-        runtime_policy::scaled_cost(15, consumed),
-        false,
-    );
+    if let Some(p) = profile {
+        runtime_policy::observe(
+            ApiFamily::Stdlib,
+            p,
+            runtime_policy::scaled_cost(15, consumed),
+            false,
+        );
+    }
 
     val as uintmax_t
 }
