@@ -1649,7 +1649,14 @@ tanhf shows worst 3 ULP, 0 fails** (>4 ULP); math_abi_test (118),
 conformance_diff_fp_exceptions green. Residual: the near-0 [-0.5,0.5] band still
 uses libm (the (u-1) cancellation there needs an `expm1f`-based form or a poly).
 
-Win/loss/neutral: clean WIN. sinhf (1.9x) and coshf (1.5x) NOT attempted same
-turn: sinhf's bit-exact CASES are met only by the slower correctly-rounded f64-exp
-route (an f32-expf `0.5*(u-1/u)` is ~1-2 ULP and would risk the bit-exact gate at
-0.5/1.0); coshf is unstarted (`libm::coshf`) and has the same constraint.
+Win/loss/neutral: clean WIN.
+
+Same turn, sinhf widened too (cap 2.5 → 5.0, fl's f64-`exp` fast-path limit):
+**1.95x → 1.29x** (gates green: hyperbolic_special, math_abi_test 118). This only
+*reduces* the loss — it does not win, because sinhf's bit-exact CASES (0.5/1.0)
+are satisfied only by the correctly-rounded **f64**-exp route (an f32-expf
+`0.5*(u-1/u)` is ~1-2 ULP, two exp + a subtraction, and would risk the bit-exact
+gate), and that f64 route is only ~parity with glibc; the near-0 [-0.5,0.5] band
+also stays on libm. coshf (1.5x, still `libm::coshf`) has the same f64-exp/
+bit-exact constraint — a fast f32-expf `0.5*(u+1/u)` risks the gate, the f64 route
+is parity — so it is left as a documented gap.

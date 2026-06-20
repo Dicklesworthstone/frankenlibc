@@ -757,7 +757,9 @@ pub fn powf(base: f32, exponent: f32) -> f32 {
 // --- Hyperbolic ---
 
 const SINHF_FAST_ABS_MIN: f32 = 0.5;
-const SINHF_FAST_ABS_MAX: f32 = 2.5;
+// Upper bound is fl's f64 `exp` fast-path limit (|x| <= 5); beyond it the f64
+// kernel itself defers to libm, so widening past 5 buys nothing.
+const SINHF_FAST_ABS_MAX: f32 = 5.0;
 
 #[inline]
 pub fn sinhf(x: f32) -> f32 {
