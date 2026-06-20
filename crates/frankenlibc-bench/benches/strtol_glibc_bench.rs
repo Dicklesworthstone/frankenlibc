@@ -155,6 +155,14 @@ fn bench(c: &mut Criterion) {
         );
     }
 
+    // rand() — no args; glibc skips its lock when single-threaded, fl always
+    // takes a std::sync::Mutex.
+    type RandFn = unsafe extern "C" fn() -> c_int;
+    let grand: RandFn = unsafe { std::mem::transmute(host(b"rand\0")) };
+    let fl = time_it(|| unsafe { frankenlibc_abi::stdlib_abi::rand() as i64 });
+    let gl = time_it(|| unsafe { grand() as i64 });
+    println!("rand: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}", fl / gl);
+
     let _ = report;
     group.finish();
 }

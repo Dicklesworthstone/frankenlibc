@@ -1868,3 +1868,37 @@ guard) or a materially different proof-carrying path that removes fallback-table
 participation for common strict `calloc/free` pairs.
 
 Evidence: `tests/artifacts/perf/bd-f874go-fallback-hot-slot.md`.
+
+## 2026-06-20 rand() — 1.64x deployed loss (single-threaded lock-skip fix BUILT but HELD: pre-existing conformance red)
+
+`rand()`/`random()` take a `std::sync::Mutex` lock on EVERY call (core
+`random_sv::random`). glibc's `rand()` skips its lock while
+`__libc_single_threaded` is set — the common single-threaded case. Measured via
+`strtol_glibc_bench` (deployed criterion path; fl's flag stays 1 because criterion
+spawns std/glibc threads, not fl's `pthread_create`): **rand fl=12.3 ns vs glibc
+7.5 ns (1.64x)** — and glibc is single-threaded-fast here, so the gap is purely
+fl's unconditional lock.
+
+Implemented the glibc-matching fix: restructured `random_sv` GLOBAL to
+`UnsafeCell<RandomState>` + a `LOCK: Mutex<()>` + a `SINGLE_THREADED` flag
+(cleared by abi `pthread_create`), with a `with_state` helper that locks only when
+multi-threaded OR `cfg!(test)` (tests can't trust the flag). Value-preserving:
+verified the rand sequence is BYTE-IDENTICAL to main (both produce the canonical
+`srand(1)`→1804289383).
+
+**HELD, not shipped.** Running `conformance_diff_stdlib_random` to verify, it
+SIGABRTs on `rand/srand divergences` — but **it does so on main too (changes
+stashed)**, so this is a PRE-EXISTING red gate, not my regression. Notably fl
+returns **1804289383** (the canonical glibc `srand(1)`→`rand()` value) while the
+test's host `rand()` returns **846930886** (exactly the SECOND value) — i.e. the
+test's live-glibc baseline is advanced one call, smelling like a harness
+state-leak (the dlsym'd host `rand()` is invoked once during setup, or fl's
+`no_mangle rand` interposes inconsistently). So fl's rand is very likely correct
+and the gate a false-negative — but per MEASURED/conformance-GREEN discipline I do
+NOT ship a perf change into a function with a failing gate. Reverted the perf
+change; left the `rand` case in the bench as a measurement asset.
+
+Two findings for the next session: (1) the rand single-threaded lock-skip is a
+real, value-preserving ~1.6x win ready to land once the gate is resolved; (2) the
+`conformance_diff_stdlib_random` rand/srand sub-case is a pre-existing red worth
+investigating (likely the test harness, since fl matches canonical glibc).
