@@ -28,14 +28,54 @@ fn fe_underflow_f32() {
 
 // --- Trigonometric ---
 
+// Fast argument reduction for sinf/cosf. `libm::sinf` falls to a slow reduction
+// for |x| above its ~9π/4 small-poly path (measured ~2-3x slower than glibc,
+// which is flat). For the [F32_RED_LO, F32_RED_HI] band we reduce in f64 with a
+// 2-part π/2 split (more than enough precision for an f32 result) and evaluate
+// the fast small-arg `libm` f32 kernel on the reduced value.
+const F32_TWO_OVER_PI: f64 = f64::from_bits(0x3fe45f306dc9c883);
+const F32_PIO2H: f64 = f64::from_bits(0x3ff921fb54442d18);
+const F32_PIO2M: f64 = f64::from_bits(0x3c91a62633145c07);
+const F32_RED_LO: f32 = 7.0; // musl sinf small poly covers |x| <= 9π/4 ≈ 7.06
+const F32_RED_HI: f32 = 1.0e15; // f64 2-part split stays accurate; above -> libm
+
+#[inline]
+fn reduce_pio2_f32(x: f32) -> (i64, f32) {
+    let xd = x as f64;
+    let kd = (xd * F32_TWO_OVER_PI).round_ties_even();
+    let r = kd.mul_add(-F32_PIO2H, xd);
+    let r = kd.mul_add(-F32_PIO2M, r);
+    (kd as i64, r as f32)
+}
+
 #[inline]
 pub fn sinf(x: f32) -> f32 {
-    libm::sinf(x)
+    let ax = x.abs();
+    if ax < F32_RED_LO || !(ax <= F32_RED_HI) {
+        return libm::sinf(x);
+    }
+    let (n, r) = reduce_pio2_f32(x);
+    match n & 3 {
+        0 => libm::sinf(r),
+        1 => libm::cosf(r),
+        2 => -libm::sinf(r),
+        _ => -libm::cosf(r),
+    }
 }
 
 #[inline]
 pub fn cosf(x: f32) -> f32 {
-    libm::cosf(x)
+    let ax = x.abs();
+    if ax < F32_RED_LO || !(ax <= F32_RED_HI) {
+        return libm::cosf(x);
+    }
+    let (n, r) = reduce_pio2_f32(x);
+    match n & 3 {
+        0 => libm::cosf(r),
+        1 => -libm::sinf(r),
+        2 => -libm::cosf(r),
+        _ => libm::sinf(r),
+    }
 }
 
 #[inline]

@@ -21,6 +21,7 @@ retried and real wins are confirmed with numbers.
 
 | Date | Lever / bead | Bench | fl | glibc | ratio | verdict | action |
 |------|--------------|-------|----|----|-------|---------|--------|
+| 2026-06-20 | fallback allocation table deletion-time tombstone compaction (`bd-2g7oyh`, BlackThrush/cod-a) | `calloc_glibc_bench` deployed `calloc/free`, `vmi1293453` | 16 B 126.620 ns; 256 B 747.608 ns; 4096 B 823.597 ns; 1 MiB 21035.057 ns; 4 MiB 108814.652 ns | 16 B 11.529 ns; 256 B 37.921 ns; 4096 B 153.098 ns; 1 MiB 19578.059 ns; 4 MiB 118209.750 ns | 10.98x / 19.72x / 5.38x / 1.07x / 0.92x | MIXED / REVERTED | Reverted. Mid-size p50 improved versus the 2026-06-19 same-worker artifact, but 16 B regressed, 1 MiB and 4 MiB regressed in absolute p50, and 256 KiB mean regressed from 6490.414 ns to 11097.125 ns. The target small/medium rows still lose badly to glibc, so deletion-time tombstone clearing is not a shippable allocator lever. See `tests/artifacts/perf/bd-2g7oyh-calloc-strict-fastpath.md`. |
 | 2026-06-20 | `snprintf` exact `%s` / `%s\n` parser bypass (`bd-2g7oyh`, BlackThrush/cod-a) | `stdio_glibc_baseline_bench snprintf_s` with host `snprintf` resolved by `dlmopen(LM_ID_NEWLM)` | `%s\n`: 615.58 ns; `%s`: 679.92 ns | `%s\n`: 65.319 ns; `%s`: 88.771 ns | 9.424x / 7.659x vs glibc | LOSS vs glibc / WIN vs prior FL | Partial keep. Same-worker A/B with the bypass disabled: `%s\n` 785.41 ns -> 615.58 ns (0.784x, 1.28x faster), `%s` 1.1712 us -> 679.92 ns (0.581x, 1.72x faster). Keeps the measured self-win and the `dlmopen` host-bench fix, but deployed `snprintf` remains a real glibc loss. |
 | 2026-06-19 | `%s\n` direct payload fast path (`bd-0m5vaw`) | `stdio_glibc_baseline_snprintf_s_newline` | 471.49 ns | 550.41 ns | 0.856x | WIN | Keep. Head-to-head Criterion on `vmi1227854`, cache miss; conservative CI ratio still < 0.90. |
 | 2026-06-19 | Wide printf format TLS pool (`bd-fgnxc0`) | `stdio_glibc_baseline_swprintf_wide_format` | 317.94 ns | 1.0154 us | 0.313x | WIN | Keep. Head-to-head Criterion on `vmi1227854`, cache miss; outliers noted but conservative CI ratio still < 0.34. |
@@ -248,6 +249,67 @@ deployed fast-path reduction that cuts the worst measured small-row ratio
 16 B negative and 4 KiB still far behind glibc. The live allocator bead remains
 open for a slimmer strict fast path or deeper metadata-layout change. Evidence:
 `tests/artifacts/perf/bd-f874go-native-reentry-slot.md`.
+
+## 2026-06-20 deployed calloc tombstone compaction measured reject (BlackThrush, bd-2g7oyh)
+
+Focused gauntlet target: deletion-time compaction in the open-addressed
+`FALLBACK_ALLOC_*` table. The candidate changed `fallback_remove_sized` so a
+removed slot became `EMPTY` when the next slot was empty, then coalesced adjacent
+backward tombstones. The intended lever was to reduce probe/tombstone drag under
+strict `calloc/free` churn without changing lookup semantics.
+
+Command:
+
+```bash
+AGENT_NAME=BlackThrush \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a \
+RCH_VERBOSE=1 \
+RCH_QUEUE_WHEN_BUSY=1 \
+RCH_DAEMON_WAIT_RESPONSE_TIMEOUT_SECS=1800 \
+rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench calloc_glibc_bench -- --measurement-time 2 --warm-up-time 1 --noplot
+```
+
+Final candidate worker: `vmi1293453`. A same-worker historical baseline was
+available in `tests/artifacts/perf/bd-deployed-malloc-membrane-50x-vmuu73.md`
+from 2026-06-19, using the same target dir and bench shape.
+
+Final head-to-head p50 ratios versus same-run glibc:
+
+| size | candidate fl p50 | glibc p50 | fl/glibc | verdict |
+|---|---:|---:|---:|---|
+| 16 B | 126.620 ns | 11.529 ns | 10.98x | LOSS |
+| 256 B | 747.608 ns | 37.921 ns | 19.72x | LOSS |
+| 4096 B | 823.597 ns | 153.098 ns | 5.38x | LOSS |
+| 65536 B | 1890.445 ns | 1094.101 ns | 1.73x | LOSS |
+| 262144 B | 5016.522 ns | 4126.736 ns | 1.22x | LOSS |
+| 1048576 B | 21035.057 ns | 19578.059 ns | 1.07x | LOSS |
+| 4194304 B | 108814.652 ns | 118209.750 ns | 0.92x | WIN p50 only |
+
+Same-worker historical absolute comparison against the 2026-06-19
+`vmi1293453` artifact:
+
+| size | baseline fl p50 | candidate fl p50 | candidate / baseline | decision |
+|---|---:|---:|---:|---|
+| 16 B | 123.295 ns | 126.620 ns | 1.027x | regression |
+| 256 B | 780.699 ns | 747.608 ns | 0.958x | small win |
+| 4096 B | 890.361 ns | 823.597 ns | 0.925x | win |
+| 65536 B | 2062.725 ns | 1890.445 ns | 0.916x | win |
+| 262144 B | 5567.124 ns | 5016.522 ns | 0.901x | p50 win, mean regression |
+| 1048576 B | 19433.662 ns | 21035.057 ns | 1.082x | regression |
+| 4194304 B | 86130.730 ns | 108814.652 ns | 1.263x | regression |
+
+The candidate was **reverted**. It does not dominate glibc on the target
+small/medium sizes, and it introduces absolute regressions at 16 B, 1 MiB, and
+4 MiB relative to the same-worker artifact. The 262 KiB row is especially
+untrustworthy: p50 improved, but mean degraded from 6490.414 ns to 11097.125 ns
+because the candidate run had a large p99 tail.
+
+Retry predicate: do not retry deletion-time tombstone clearing or local
+tombstone coalescing as the allocator fix. The next allocator attempt needs a
+materially different shape, preferably a slim strict `calloc/free` fast path or
+a same-run paired profile that explains the diffuse allocator overhead before
+changing metadata policy.
 
 ## 2026-06-19 `bd-djtvqq` getc_unlocked "1.8× slower" is a Rust-bench LTO-inlining ARTIFACT, not a real gap (BlackThrush)
 
@@ -1455,3 +1517,33 @@ worst 2 ULP, 0 fails** (>4 ULP). All math gates green
 Retry-condition predicate: do NOT extend the 3-part reduction above ~1e15 — the
 159-bit split leaves too few bits once `n` exceeds ~2^50; that range genuinely
 needs a Payne-Hanek table and must stay on `libm`.
+
+## 2026-06-20 f32 sinf/cosf large arg — 2-3x LOSS → parity-to-win vs glibc
+
+A reliable dlmopen survey of ~18 more math functions (f64 lgamma/tgamma/erf/erfc/
+exp10/log10/j0/j1/y0/cbrt/atan2/hypot + f32 sinf/cosf/tanf) found the f32 trig
+parallel to the f64 trig gap: `libm::sinf`/`cosf` lose **2-3x to glibc for ALL
+|x| > ~7** (above musl's 9π/4 small-poly path) — sinf ~1e2 2.2x, ~1e4 3.0x,
+~1e6 2.7x, ~1e7 3.2x; glibc is flat ~7 ns. (Other survey results, all
+already-good: tgamma 0.32x WIN, atan2 0.74x, hypot 0.70x WIN; erfc 1.58x / exp10
+1.64x / bessel 1.18-1.21x are minor + tiny-absolute; `exp10` already fused.)
+
+Fix (`crates/frankenlibc-core/src/math/float32.rs`): for |x| in [7, 1e15] reduce
+in f64 with a **2-part π/2 split** (TWO_OVER_PI/PIO2H/PIO2M; two `mul_add` steps
+— f64's 106-bit split is far more than an f32 result needs) to `(n mod 4, r)`,
+then evaluate the fast small-arg `libm::sinf/cosf` on `r as f32` with quadrant
+fix-up. |x| < 7 keeps `libm::sinf` (already wins, 0.6x); |x| > 1e15 / nan / inf
+keep `libm`. `tanf` left on `libm` (it already wins large, 0.73x).
+
+Measured (dlmopen glibc, ovh-a, warm): sinf ~1e4 0.99x, ~1e6 0.90x, large 0.83x;
+cosf large 0.80x — a 2-3x LOSS flipped to **0.80-0.99x (parity-to-win)**, small
+unchanged (still 0.6x win). Correctness: the bit-exact `conformance_diff_trig_
+special` gate (sinf/cosf at 100 and 1e15) STAYS GREEN (the reduced-arg result
+rounds identically to glibc), plus a **400,000-sample sweep over [8, 1e15] vs
+dlmopen glibc shows worst 1 ULP, 0 fails (>2 ULP)**; conformance_diff_math (20),
+inv_trig_special (2), fp_exceptions all green.
+
+Win/loss/neutral: clean WIN — 0 regressions; the bit-exact trig gate (which pins
+sinf(100)/sinf(1e15)) constrained the approach but the FMA reduction happens to
+be correctly-rounded enough to satisfy it. Retry predicate: do not raise
+F32_RED_HI above ~1e15 (2-part split runs out for n > ~2^50).
