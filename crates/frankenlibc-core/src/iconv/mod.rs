@@ -23802,6 +23802,31 @@ pub fn iconv(
                     }
                 }
             };
+            // 1-byte output run (ASCII code points < 0x80): a source unit < 0x80
+            // is a UTF-8 byte equal to itself, so narrow each unit's low byte
+            // directly. This is the ubiquitous "UTF-16/UTF-32 ASCII text -> UTF-8"
+            // case, which otherwise had NO fast run (only the 0x80..0x7FF and
+            // 0x800..0xFFFF runs below) and fell to the per-char generic body —
+            // ~365x slower than glibc. Byte-identical: `encode_utf8` of cp < 0x80
+            // emits exactly `[cp as u8]`. Any non-ASCII unit or full output buffer
+            // breaks to the runs below / generic body, preserving error ordering.
+            while in_pos + 8 * scp <= input.len()
+                && out_pos + 8 <= outbuf.len()
+                && cp_at(in_pos) < 0x80
+            {
+                let cps: [u32; 8] = std::array::from_fn(|k| cp_at(in_pos + scp * k));
+                let v = Simd::<u32, 8>::from_array(cps);
+                if !v.simd_lt(Simd::splat(0x80)).all() {
+                    break;
+                }
+                let bytes = v.cast::<u8>();
+                bytes.copy_to_slice(&mut outbuf[out_pos..out_pos + 8]);
+                in_pos += 8 * scp;
+                out_pos += 8;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
             // 2-byte output run (code points 0x80..=0x7FF).
             while in_pos + 8 * scp <= input.len()
                 && out_pos + 16 <= outbuf.len()

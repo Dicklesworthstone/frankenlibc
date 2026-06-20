@@ -82,6 +82,41 @@ fn ascii_widen_matches_scalar_reference_all_lengths() {
     }
 }
 
+/// Build a fixed-width (UTF-16/UTF-32) byte buffer from BMP code points.
+fn fixed_width_encode(cps: &[u32], enc: &str) -> Vec<u8> {
+    let mut v = Vec::new();
+    for &cp in cps {
+        match enc {
+            "UTF-16LE" => v.extend_from_slice(&(cp as u16).to_le_bytes()),
+            "UTF-16BE" => v.extend_from_slice(&(cp as u16).to_be_bytes()),
+            "UTF-32LE" => v.extend_from_slice(&cp.to_le_bytes()),
+            "UTF-32BE" => v.extend_from_slice(&cp.to_be_bytes()),
+            _ => unreachable!(),
+        }
+    }
+    v
+}
+
+#[test]
+fn reverse_ascii_narrow_to_utf8_matches_scalar() {
+    // REVERSE direction: UTF-16/UTF-32 ASCII -> UTF-8 (the new 1-byte SIMD run).
+    // An ASCII source unit (< 0x80) narrows to one UTF-8 byte equal to itself.
+    let lens = [
+        0usize, 1, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 256, 257, 1000,
+    ];
+    let froms = ["UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE"];
+    let from_bytes: [&[u8]; 4] = [b"UTF-16LE\0", b"UTF-16BE\0", b"UTF-32LE\0", b"UTF-32BE\0"];
+    for &len in &lens {
+        let cps: Vec<u32> = (0..len).map(|k| 0x20 + (k as u32 * 7 % 0x5F)).collect();
+        let want: Vec<u8> = cps.iter().map(|&c| c as u8).collect(); // ASCII -> UTF-8
+        for (f, fb) in froms.iter().zip(from_bytes.iter()) {
+            let src = fixed_width_encode(&cps, f);
+            let got = fl_convert(b"UTF-8\0", fb, &src);
+            assert_eq!(got, want, "reverse narrow mismatch len={len} from={f}");
+        }
+    }
+}
+
 #[test]
 fn ascii_widen_mixed_with_non_ascii_transitions() {
     // ASCII run, then a 2-byte Cyrillic char, then ASCII again — the SIMD window

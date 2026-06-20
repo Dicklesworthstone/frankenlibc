@@ -145,22 +145,56 @@ fn run_conv(
     group.finish();
 }
 
+/// Minimal UTF-8 encoder for building source buffers.
+fn u8enc(cps: &[u32]) -> Vec<u8> {
+    let mut v = Vec::new();
+    for &cp in cps {
+        if cp < 0x80 {
+            v.push(cp as u8);
+        } else if cp < 0x800 {
+            v.push(0xC0 | (cp >> 6) as u8);
+            v.push(0x80 | (cp & 0x3F) as u8);
+        } else if cp < 0x10000 {
+            v.push(0xE0 | (cp >> 12) as u8);
+            v.push(0x80 | ((cp >> 6) & 0x3F) as u8);
+            v.push(0x80 | (cp & 0x3F) as u8);
+        } else {
+            v.push(0xF0 | (cp >> 18) as u8);
+            v.push(0x80 | ((cp >> 12) & 0x3F) as u8);
+            v.push(0x80 | ((cp >> 6) & 0x3F) as u8);
+            v.push(0x80 | (cp & 0x3F) as u8);
+        }
+    }
+    v
+}
+
 fn bench(c: &mut Criterion) {
     // ~1 KiB pure ASCII (the bulk-copy hot path).
     let ascii: Vec<u8> = (0..1024).map(|i| b'a' + (i % 26) as u8).collect();
     run_conv(c, "utf8_to_latin1_ascii", b"ISO-8859-1\0", b"UTF-8\0", &ascii);
     run_conv(c, "utf8_to_utf16le_ascii", b"UTF-16LE\0", b"UTF-8\0", &ascii);
+    run_conv(c, "utf8_to_utf32le_ascii", b"UTF-32LE\0", b"UTF-8\0", &ascii);
 
     // ~1 KiB Cyrillic (U+0410..=U+044F) as 2-byte UTF-8: real transcoding.
-    let mut cyr: Vec<u8> = Vec::new();
-    for k in 0..512u32 {
-        let cp = 0x0410 + (k % 0x40);
-        // 2-byte UTF-8 encode.
-        cyr.push(0xC0 | (cp >> 6) as u8);
-        cyr.push(0x80 | (cp & 0x3F) as u8);
-    }
+    let cyr_cps: Vec<u32> = (0..512u32).map(|k| 0x0410 + (k % 0x40)).collect();
+    let cyr = u8enc(&cyr_cps);
     run_conv(c, "utf8_cyrillic_to_koi8r", b"KOI8-R\0", b"UTF-8\0", &cyr);
     run_conv(c, "utf8_cyrillic_to_utf16le", b"UTF-16LE\0", b"UTF-8\0", &cyr);
+
+    // REVERSE direction: UTF-16LE -> UTF-8 (reading UTF-16 -> UTF-8, common).
+    let ascii_u16le: Vec<u8> = ascii.iter().flat_map(|&b| [b, 0]).collect();
+    run_conv(c, "utf16le_ascii_to_utf8", b"UTF-8\0", b"UTF-16LE\0", &ascii_u16le);
+
+    // CJK encode (table-based): UTF-8 Chinese -> GB18030, Japanese -> CP932.
+    // ~512 common CJK ideographs (U+4E00..) as 3-byte UTF-8.
+    let cjk_cps: Vec<u32> = (0..512u32).map(|k| 0x4E00 + (k % 0x300)).collect();
+    let cjk = u8enc(&cjk_cps);
+    run_conv(c, "utf8_cjk_to_gb18030", b"GB18030\0", b"UTF-8\0", &cjk);
+    run_conv(c, "utf8_cjk_to_utf16le", b"UTF-16LE\0", b"UTF-8\0", &cjk);
+    // Hiragana (U+3040..U+309F) -> CP932 (Shift-JIS).
+    let jp_cps: Vec<u32> = (0..512u32).map(|k| 0x3041 + (k % 0x5E)).collect();
+    let jp = u8enc(&jp_cps);
+    run_conv(c, "utf8_jp_to_cp932", b"CP932\0", b"UTF-8\0", &jp);
 }
 
 criterion_group!(benches, bench);
