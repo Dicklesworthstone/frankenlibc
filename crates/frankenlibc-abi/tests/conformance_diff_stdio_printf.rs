@@ -143,6 +143,7 @@ fn diff_snprintf_string_specifiers() {
         (b"%5.3s\0", b"hello\0"),        // width + precision
         (b"%c\0", b"A\0"),               // single char (passed as int)
         (b"%%\0", b"\0"),                // literal %
+        (b"fixed literal output\0", b"\0"),
         (b"prefix-%s-suffix\0", b"X\0"), // surrounding text
     ];
     for (fmt, val) in cases {

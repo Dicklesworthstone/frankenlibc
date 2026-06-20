@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
 use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::errno;
@@ -84,6 +84,26 @@ static HOST_FREOPEN_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FLOCKFILE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FUNLOCKFILE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FTRYLOCKFILE_FN: OnceLock<usize> = OnceLock::new();
+
+const LITERAL_FORMAT_CACHE_SIZE: usize = 64;
+
+struct LiteralFormatCacheEntry {
+    key: AtomicUsize,
+    len: AtomicUsize,
+}
+
+impl LiteralFormatCacheEntry {
+    const fn new() -> Self {
+        Self {
+            key: AtomicUsize::new(0),
+            len: AtomicUsize::new(0),
+        }
+    }
+}
+
+static LITERAL_FORMAT_CACHE: [LiteralFormatCacheEntry; LITERAL_FORMAT_CACHE_SIZE] =
+    [const { LiteralFormatCacheEntry::new() }; LITERAL_FORMAT_CACHE_SIZE];
+static READ_ONLY_MAPPINGS: OnceLock<Vec<(usize, usize)>> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -3780,6 +3800,92 @@ unsafe fn exact_direct_s_format(format: *const c_char) -> Option<bool> {
     }
 }
 
+fn read_only_mappings() -> &'static [(usize, usize)] {
+    READ_ONLY_MAPPINGS
+        .get_or_init(|| {
+            let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else {
+                return Vec::new();
+            };
+            maps.lines()
+                .filter_map(|line| {
+                    let mut fields = line.split_whitespace();
+                    let range = fields.next()?;
+                    let perms = fields.next()?;
+                    let mut endpoints = range.split('-');
+                    let start = usize::from_str_radix(endpoints.next()?, 16).ok()?;
+                    let end = usize::from_str_radix(endpoints.next()?, 16).ok()?;
+                    let bytes = perms.as_bytes();
+                    if bytes.first() == Some(&b'r') && bytes.get(1) != Some(&b'w') {
+                        Some((start, end))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .as_slice()
+}
+
+#[inline]
+fn literal_format_cache_entry(format: *const c_char) -> &'static LiteralFormatCacheEntry {
+    let idx = ((format as usize) >> 4) & (LITERAL_FORMAT_CACHE_SIZE - 1);
+    &LITERAL_FORMAT_CACHE[idx]
+}
+
+#[inline]
+fn lookup_literal_format_len(format: *const c_char) -> Option<usize> {
+    let ptr = format as usize;
+    let entry = literal_format_cache_entry(format);
+    if entry.key.load(Ordering::Acquire) != ptr {
+        return None;
+    }
+    let len = entry.len.load(Ordering::Acquire);
+    if entry.key.load(Ordering::Acquire) == ptr {
+        Some(len)
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn cache_literal_format_len(format: *const c_char, len: usize) {
+    let ptr = format as usize;
+    let Some(end) = ptr.checked_add(len.saturating_add(1)) else {
+        return;
+    };
+    if !read_only_mappings()
+        .iter()
+        .any(|&(start, stop)| ptr >= start && end <= stop)
+    {
+        return;
+    }
+
+    let entry = literal_format_cache_entry(format);
+    entry.key.store(0, Ordering::Release);
+    entry.len.store(len, Ordering::Release);
+    entry.key.store(ptr, Ordering::Release);
+}
+
+#[inline]
+unsafe fn strict_literal_format_len(format: *const c_char) -> Option<usize> {
+    if let Some(len) = lookup_literal_format_len(format) {
+        return Some(len);
+    }
+
+    let f = format.cast::<u8>();
+    let mut len = 0usize;
+    loop {
+        match unsafe { *f.add(len) } {
+            0 => {
+                cache_literal_format_len(format, len);
+                return Some(len);
+            }
+            b'%' => return None,
+            _ => len = len.saturating_add(1),
+        }
+    }
+}
+
 /// Return the zero-copy payload for exact non-NULL `%s` and `%s\n` formats.
 ///
 /// The newline form is intentionally represented as two slices instead of
@@ -3931,6 +4037,50 @@ unsafe fn strict_direct_snprintf_s(
     printf_result_to_c_int(total_len)
 }
 
+#[inline]
+unsafe fn copy_literal_bytes(dst: *mut c_char, src: *const c_char, len: usize) {
+    let dst = dst.cast::<u8>();
+    let src = src.cast::<u8>();
+    let mut offset = 0usize;
+    while offset + 8 <= len {
+        let word = unsafe { std::ptr::read_unaligned(src.add(offset).cast::<u64>()) };
+        unsafe { std::ptr::write_unaligned(dst.add(offset).cast::<u64>(), word) };
+        offset += 8;
+    }
+    while offset < len {
+        unsafe { *dst.add(offset) = *src.add(offset) };
+        offset += 1;
+    }
+}
+
+unsafe fn strict_direct_snprintf_literal(
+    str_buf: *mut c_char,
+    size: usize,
+    format: *const c_char,
+    len: usize,
+) -> c_int {
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            unsafe { copy_literal_bytes(str_buf, format, copy_len) };
+        }
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+unsafe fn strict_direct_sprintf_literal(
+    str_buf: *mut c_char,
+    format: *const c_char,
+    len: usize,
+) -> c_int {
+    if len > 0 {
+        unsafe { copy_literal_bytes(str_buf, format, len) };
+    }
+    unsafe { *str_buf.add(len) = 0 };
+    printf_result_to_c_int(len)
+}
+
 unsafe fn try_write_direct_s_newline_stream(
     id: usize,
     payload: &[u8],
@@ -4013,6 +4163,11 @@ pub unsafe extern "C" fn snprintf(
 ) -> c_int {
     if format.is_null() {
         return -1;
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some(literal_len) = unsafe { strict_literal_format_len(format) }
+    {
+        return unsafe { strict_direct_snprintf_literal(str_buf, size, format, literal_len) };
     }
     if runtime_policy::strict_passthrough_active()
         && let Some(append_newline) = unsafe { exact_direct_s_format(format) }
@@ -4124,6 +4279,11 @@ pub unsafe extern "C" fn sprintf(
 ) -> c_int {
     if format.is_null() || str_buf.is_null() {
         return -1;
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some(literal_len) = unsafe { strict_literal_format_len(format) }
+    {
+        return unsafe { strict_direct_sprintf_literal(str_buf, format, literal_len) };
     }
 
     let (mode, decision) =
@@ -4821,6 +4981,11 @@ pub unsafe extern "C" fn vsnprintf(
 ) -> c_int {
     if format.is_null() {
         return -1;
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some(literal_len) = unsafe { strict_literal_format_len(format) }
+    {
+        return unsafe { strict_direct_snprintf_literal(str_buf, size, format, literal_len) };
     }
     let _trace_scope = runtime_policy::entrypoint_scope("vsnprintf");
     let (mode, decision) =

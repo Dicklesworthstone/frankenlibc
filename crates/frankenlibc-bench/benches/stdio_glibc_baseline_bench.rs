@@ -223,6 +223,30 @@ fn bench_snprintf_s_bare(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_snprintf_literal(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stdio_glibc_baseline_snprintf_literal");
+    let fmt = c"frankenlibc fixed log line without conversions\n";
+    let host = host_snprintf();
+
+    group.bench_function("frankenlibc_abi", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 128];
+            let rc = unsafe { fl::snprintf(buf.as_mut_ptr(), buf.len(), fmt.as_ptr()) };
+            black_box((rc, buf[0]));
+        });
+    });
+
+    group.bench_function("host_glibc", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 128];
+            let rc = unsafe { host(buf.as_mut_ptr(), buf.len(), fmt.as_ptr()) };
+            black_box((rc, buf[0]));
+        });
+    });
+
+    group.finish();
+}
+
 fn bench_swprintf_wide_format(c: &mut Criterion) {
     let mut group = c.benchmark_group("stdio_glibc_baseline_swprintf_wide_format");
     let fmt: [libc::wchar_t; 10] = [
@@ -278,6 +302,6 @@ criterion_group! {
         .warm_up_time(Duration::from_millis(150))
         .measurement_time(Duration::from_millis(400));
     targets = bench_fgetc, bench_fgetc_unlocked, bench_snprintf_s_newline,
-        bench_snprintf_s_bare, bench_swprintf_wide_format
+        bench_snprintf_s_bare, bench_snprintf_literal, bench_swprintf_wide_format
 }
 criterion_main!(benches);
