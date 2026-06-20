@@ -234,12 +234,167 @@ unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
 }
 
 fn resolve_vdso_symbols() -> VdsoSymbols {
-    let mapping_present =
-        raw_getauxval(libc::AT_SYSINFO_EHDR as c_ulong).is_some_and(|value| value != 0);
+    let base = match raw_getauxval(libc::AT_SYSINFO_EHDR as c_ulong) {
+        Some(value) if value != 0 => value as usize,
+        _ => return VdsoSymbols::default(),
+    };
+    // SAFETY: `base` is the kernel-provided vDSO ELF image (AT_SYSINFO_EHDR). We
+    // parse it with ONLY direct memory reads — no dynamic linker, no glibc loader
+    // re-entry (the reason the previous stub avoided it). Every structural read is
+    // bounds-checked against the ELF's own fields and any anomaly returns `None`
+    // entries, so callers fall back to the raw syscall — a parse failure is never
+    // fatal and never produces a bad pointer.
+    let (clock_gettime, gettimeofday) = unsafe { parse_vdso(base) };
     VdsoSymbols {
-        mapping_present,
-        ..VdsoSymbols::default()
+        mapping_present: true,
+        handle_opened: clock_gettime.is_some() || gettimeofday.is_some(),
+        clock_gettime,
+        gettimeofday,
     }
+}
+
+// Minimal ELF64 layout for parsing the in-memory vDSO image (x86-64 / aarch64).
+#[repr(C)]
+struct Elf64Ehdr {
+    e_ident: [u8; 16],
+    e_type: u16,
+    e_machine: u16,
+    e_version: u32,
+    e_entry: u64,
+    e_phoff: u64,
+    e_shoff: u64,
+    e_flags: u32,
+    e_ehsize: u16,
+    e_phentsize: u16,
+    e_phnum: u16,
+    e_shentsize: u16,
+    e_shnum: u16,
+    e_shstrndx: u16,
+}
+#[repr(C)]
+struct Elf64Phdr {
+    p_type: u32,
+    p_flags: u32,
+    p_offset: u64,
+    p_vaddr: u64,
+    p_paddr: u64,
+    p_filesz: u64,
+    p_memsz: u64,
+    p_align: u64,
+}
+#[repr(C)]
+struct Elf64Dyn {
+    d_tag: i64,
+    d_val: u64,
+}
+#[repr(C)]
+struct Elf64Sym {
+    st_name: u32,
+    st_info: u8,
+    st_other: u8,
+    st_shndx: u16,
+    st_value: u64,
+    st_size: u64,
+}
+
+const PT_LOAD: u32 = 1;
+const PT_DYNAMIC: u32 = 2;
+const DT_NULL: i64 = 0;
+const DT_HASH: i64 = 4;
+const DT_STRTAB: i64 = 5;
+const DT_SYMTAB: i64 = 6;
+
+#[inline]
+unsafe fn vdso_cstr_eq(p: *const u8, target: &[u8]) -> bool {
+    for (i, &want) in target.iter().enumerate() {
+        if unsafe { *p.add(i) } != want {
+            return false;
+        }
+    }
+    unsafe { *p.add(target.len()) == 0 }
+}
+
+/// Port of the kernel's reference `parse_vdso`: resolve `__vdso_clock_gettime`
+/// and `__vdso_gettimeofday` from the mapped vDSO ELF at `base`.
+unsafe fn parse_vdso(
+    base: usize,
+) -> (Option<VdsoClockGettimeFn>, Option<VdsoGettimeofdayFn>) {
+    let none = (None, None);
+    let ehdr = base as *const Elf64Ehdr;
+    let ident = unsafe { &(*ehdr).e_ident };
+    if ident[0] != 0x7f || ident[1] != b'E' || ident[2] != b'L' || ident[3] != b'F' {
+        return none;
+    }
+    let e_phoff = unsafe { (*ehdr).e_phoff } as usize;
+    let e_phnum = unsafe { (*ehdr).e_phnum } as usize;
+    let e_phentsize = unsafe { (*ehdr).e_phentsize } as usize;
+    if e_phentsize < core::mem::size_of::<Elf64Phdr>() || e_phnum > 64 {
+        return none;
+    }
+
+    // First PT_LOAD gives the load bias; PT_DYNAMIC gives the dynamic section.
+    let mut load_offset: Option<usize> = None;
+    let mut dyn_vaddr: Option<u64> = None;
+    for i in 0..e_phnum {
+        let ph = unsafe { &*((base + e_phoff + i * e_phentsize) as *const Elf64Phdr) };
+        if ph.p_type == PT_LOAD && load_offset.is_none() {
+            load_offset =
+                Some(base.wrapping_add(ph.p_offset as usize).wrapping_sub(ph.p_vaddr as usize));
+        } else if ph.p_type == PT_DYNAMIC {
+            dyn_vaddr = Some(ph.p_vaddr);
+        }
+    }
+    let (load_offset, dyn_vaddr) = match (load_offset, dyn_vaddr) {
+        (Some(l), Some(d)) => (l, d),
+        _ => return none,
+    };
+
+    let mut symtab = 0usize;
+    let mut strtab = 0usize;
+    let mut hash = 0usize;
+    let dyn_ptr = load_offset.wrapping_add(dyn_vaddr as usize) as *const Elf64Dyn;
+    for i in 0..256 {
+        let d = unsafe { &*dyn_ptr.add(i) };
+        match d.d_tag {
+            DT_NULL => break,
+            DT_SYMTAB => symtab = load_offset.wrapping_add(d.d_val as usize),
+            DT_STRTAB => strtab = load_offset.wrapping_add(d.d_val as usize),
+            DT_HASH => hash = load_offset.wrapping_add(d.d_val as usize),
+            _ => {}
+        }
+    }
+    if symtab == 0 || strtab == 0 || hash == 0 {
+        return none;
+    }
+
+    // DT_HASH layout: [nbucket, nchain, ...]; nchain == symbol-table entry count.
+    let nchain = unsafe { *(hash as *const u32).add(1) } as usize;
+    if nchain == 0 || nchain > 100_000 {
+        return none;
+    }
+
+    let symtab = symtab as *const Elf64Sym;
+    let mut clock_gettime: Option<VdsoClockGettimeFn> = None;
+    let mut gettimeofday: Option<VdsoGettimeofdayFn> = None;
+    for s in 0..nchain {
+        let sym = unsafe { &*symtab.add(s) };
+        if sym.st_value == 0 || sym.st_name == 0 {
+            continue;
+        }
+        let name = (strtab + sym.st_name as usize) as *const u8;
+        let addr = load_offset.wrapping_add(sym.st_value as usize);
+        if clock_gettime.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_clock_gettime") } {
+            // SAFETY: the resolved address is an executable vDSO entry with this
+            // exact C-ABI signature.
+            clock_gettime = Some(unsafe { core::mem::transmute::<usize, VdsoClockGettimeFn>(addr) });
+        } else if gettimeofday.is_none()
+            && unsafe { vdso_cstr_eq(name, b"__vdso_gettimeofday") }
+        {
+            gettimeofday =
+                Some(unsafe { core::mem::transmute::<usize, VdsoGettimeofdayFn>(addr) });
+        }
+    }
+    (clock_gettime, gettimeofday)
 }
 
 fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {

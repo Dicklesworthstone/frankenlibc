@@ -190,10 +190,30 @@ fn bench(c: &mut Criterion) {
         }
     }
 
+    // clock_gettime/time use the vDSO once runtime-ready (gates resolution).
+    frankenlibc_abi::string_abi::signal_runtime_ready_for_tests();
+    unsafe {
+        let h = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        type CgFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
+        type TimeFn = unsafe extern "C" fn(*mut libc::time_t) -> libc::time_t;
+        let gcg: CgFn = std::mem::transmute(libc::dlsym(h as *mut _, b"clock_gettime\0".as_ptr().cast()));
+        let gtime: TimeFn = std::mem::transmute(libc::dlsym(h as *mut _, b"time\0".as_ptr().cast()));
+        let mut ts = std::mem::zeroed::<libc::timespec>();
+        let tsp = &mut ts as *mut libc::timespec;
+        let flc = time_it(|| frankenlibc_abi::time_abi::clock_gettime(black_box(1), tsp) as i64);
+        let glc = time_it(|| gcg(black_box(1), tsp) as i64);
+        println!("clock_gettime: fl={flc:.2}ns glibc={glc:.2}ns fl/glibc={:.2}", flc / glc);
+        let flt = time_it(|| frankenlibc_abi::time_abi::time(std::ptr::null_mut()) as i64);
+        let glt = time_it(|| gtime(std::ptr::null_mut()) as i64);
+        println!("time: fl={flt:.2}ns glibc={glt:.2}ns fl/glibc={:.2}", flt / glt);
+    }
+
     // pthread_self — extremely hot (every mutex op); must not syscall. The bench
-    // main thread is kernel-created like a deployed process's main thread, so this
-    // measurement is representative (unlike clock_gettime/time, whose vDSO path is
-    // gated on full deployed startup state the criterion bench can't replicate).
+    // main thread is kernel-created like a deployed process's main thread.
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,

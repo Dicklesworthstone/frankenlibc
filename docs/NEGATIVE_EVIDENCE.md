@@ -2007,3 +2007,36 @@ not real losses — but CONFIRMING needs an LD_PRELOAD harness (fl as the actual
 libc). Removed from the committed bench to avoid misleading numbers; flagged here.
 
 Win/loss/neutral: clean WIN (40x loss → 0.88x), 0 regressions, gates green.
+
+## 2026-06-20 clock_gettime() — 27x DEPLOYED LOSS → 1.14x: vDSO symbol resolution was a STUB; implemented the ELF parse
+
+The earlier "clock_gettime/time suspected bench artifacts" suspicion was WRONG —
+an **LD_PRELOAD ground-truth** test (built the fl cdylib, ran a C loop of 3M
+clock_gettime calls under `LD_PRELOAD=libfrankenlibc_abi.so` vs glibc) proved it
+REAL: **fl 1.87 s vs glibc 0.07 s (~27x)**. Root cause: `resolve_vdso_symbols`
+in time_abi.rs was a STUB — it set only a `mapping_present` diagnostic bool and
+returned `clock_gettime: None`, so `raw_clock_gettime` ALWAYS fell back to the raw
+`clock_gettime` syscall; the vDSO was never used. (The stub's comment worried
+about "re-entering glibc loader state", but that only applies to a *dynamic-linker*
+resolve — a direct ELF parse from AT_SYSINFO_EHDR has no linker involvement.)
+
+Fix: implemented `parse_vdso` — a port of the kernel's reference parse_vdso using
+ONLY direct memory reads of the mapped vDSO ELF at AT_SYSINFO_EHDR (Elf64 Ehdr →
+PT_LOAD bias + PT_DYNAMIC → DT_SYMTAB/STRTAB/HASH → iterate DT_HASH nchain symbols
+→ match `__vdso_clock_gettime`/`__vdso_gettimeofday`, addr = load_offset+st_value).
+Any structural anomaly returns `None` → callers fall back to the syscall, so a
+parse failure is never fatal and never yields a bad pointer.
+
+Measured: clock_gettime **LD_PRELOAD 1.87 s → 0.08 s (~27x → ~1.14x)**; criterion
+bench (runtime-ready) 122 → 44.6 ns (4.8x → 1.36x; residual = fl's valid-clock-id
++ vdso-enabled checks around the call). `time()` (routes through raw_clock_gettime)
+260 ns/89x → 37 ns/14.6x — the 14x remainder is that glibc `time()` uses the
+dedicated `__vdso_time` vvar read (~2.5 ns) vs fl's full clock_gettime; a
+follow-up. Correctness: conformance_diff_clock (6), conformance_diff_gmtime (2)
+green; the 3M-call LD_PRELOAD loop ran without a fault (bad pointer would segv).
+
+Win/loss/neutral: clean WIN (clock_gettime ~27x deployed loss → ~1.14x), 0
+regressions, gates green. **KEY METHOD: LD_PRELOAD the fl cdylib + a C micro-loop
+is the GROUND TRUTH for startup-state-gated deployed paths the criterion bench
+can't reach — it disproved my "bench artifact" call and is now THE tool for vDSO/
+startup-gated perf. fl IS LD_PRELOAD-able (didn't crash).**
