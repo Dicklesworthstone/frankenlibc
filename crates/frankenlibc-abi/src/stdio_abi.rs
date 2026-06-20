@@ -3881,6 +3881,56 @@ unsafe fn direct_snprintf_s(
     printf_result_to_c_int(total_len)
 }
 
+unsafe fn strict_direct_snprintf_s(
+    str_buf: *mut c_char,
+    size: usize,
+    arg: *const c_char,
+    append_newline: bool,
+) -> c_int {
+    let mut len = 0usize;
+    if size == 0 || str_buf.is_null() {
+        if arg.is_null() {
+            len = b"(null)".len();
+        } else {
+            let src = arg.cast::<u8>();
+            while unsafe { *src.add(len) } != 0 {
+                len = len.saturating_add(1);
+            }
+        }
+        return printf_result_to_c_int(len.saturating_add(usize::from(append_newline)));
+    }
+
+    let dst = str_buf.cast::<u8>();
+    let copy_limit = size - 1;
+    if arg.is_null() {
+        for &byte in b"(null)" {
+            if len < copy_limit {
+                unsafe { *dst.add(len) = byte };
+            }
+            len += 1;
+        }
+    } else {
+        let src = arg.cast::<u8>();
+        loop {
+            let byte = unsafe { *src.add(len) };
+            if byte == 0 {
+                break;
+            }
+            if len < copy_limit {
+                unsafe { *dst.add(len) = byte };
+            }
+            len += 1;
+        }
+    }
+
+    let total_len = len.saturating_add(usize::from(append_newline));
+    if append_newline && len < copy_limit {
+        unsafe { *dst.add(len) = b'\n' };
+    }
+    unsafe { *dst.add(total_len.min(copy_limit)) = 0 };
+    printf_result_to_c_int(total_len)
+}
+
 unsafe fn try_write_direct_s_newline_stream(
     id: usize,
     payload: &[u8],
@@ -3964,6 +4014,13 @@ pub unsafe extern "C" fn snprintf(
     if format.is_null() {
         return -1;
     }
+    if runtime_policy::strict_passthrough_active()
+        && let Some(append_newline) = unsafe { exact_direct_s_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<*const c_char>() };
+        return unsafe { strict_direct_snprintf_s(str_buf, size, arg, append_newline) };
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("snprintf");
 
     let (mode, decision) = runtime_policy::decide(
