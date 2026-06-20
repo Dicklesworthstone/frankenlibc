@@ -142,3 +142,9 @@ required-features = ["abi-bench"]
 name = "iconv_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
+
+# In-process A/B for the strict snprintf("%s") copy kernel. No abi-bench: links
+# NO fl symbols so `libc::snprintf` resolves to host glibc directly (cc/BlackThrush).
+[[bench]]
+name = "snprintf_s_strict_ab_bench"
+harness = false

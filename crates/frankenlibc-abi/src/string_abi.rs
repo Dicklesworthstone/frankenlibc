@@ -955,7 +955,7 @@ fn swar_word_has_zero(w: u64) -> bool {
 /// reads *aligned* u64s: an 8-aligned 8-byte load never straddles a 4096-byte
 /// page boundary, so it cannot fault past the NUL's own (mapped) page — the same
 /// safety argument glibc/musl strlen rely on.
-unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
+pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
     let p = ptr.cast::<u8>();
     match bound {
         Some(limit) => {
