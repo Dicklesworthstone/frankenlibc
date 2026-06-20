@@ -1903,3 +1903,25 @@ Two findings for the next session: (1) the rand single-threaded lock-skip is a
 real, value-preserving ~1.6x win ready to land once the gate is resolved; (2) the
 `conformance_diff_stdlib_random` rand/srand sub-case is a pre-existing red worth
 investigating (likely the test harness, since fl matches canonical glibc).
+
+## 2026-06-20 RESOLVED: conformance_diff_stdlib_random was a harness false-negative — fl rand/rand48 is byte-exact; gate now GREEN
+
+Confirmed the suspicion above. A fresh-`dlmopen` comparison (clean glibc, no
+interposition) showed fl's ENTIRE process-global RNG family is byte-identical to
+glibc — rand/srand (`srand(1)`→`[1804289383,846930886]`), srand48/lrand48,
+drand48, seed48 (+ prior-state) all match exactly across seeds. The gate's
+SIGABRT was a **harness false-negative**: it declared the host functions as
+linked `extern "C"`, but fl exports `no_mangle` `rand`/`srand`/`*rand48`, so
+link-time resolution interposed them inconsistently (e.g. `srand`→fl while
+`rand`→glibc), leaving the host generator unseeded and one call ahead.
+
+Fix (test only): resolve all process-global host RNG functions
+(rand/srand/srand48/drand48/lrand48/mrand48/seed48/lcong48 + erand48/nrand48/
+jrand48 for the post-lcong48 cases) from a SINGLE private `dlmopen("libc.so.6",
+LM_ID_NEWLM)` namespace via a `HostRng` struct — the same robust pattern the
+`*_glibc_bench` benches use. `conformance_diff_stdlib_random` now **11 passed / 0
+failed** (was SIGABRT). This is a real conformance-infra fix AND it unblocks the
+held rand() single-threaded lock-skip perf win (which was already verified
+value-preserving). Caller-state externs (rand_r, standalone e/n/jrand48) keep
+their linked decls — they're pure-of-their-args so interposition can't offset
+them.

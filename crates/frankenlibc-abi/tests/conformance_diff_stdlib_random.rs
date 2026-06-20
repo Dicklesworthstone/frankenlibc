@@ -21,12 +21,14 @@ use std::sync::{Mutex, MutexGuard};
 
 use frankenlibc_abi::stdlib_abi as fl;
 
+// NOTE: the process-global generators (`rand`/`srand` + the rand48 global family)
+// are resolved via a private-namespace `dlmopen` (see `host_rng`), NOT linked
+// externs: fl exports `no_mangle` versions, and link-time resolution interposes
+// them inconsistently (e.g. srand -> fl, rand -> glibc), leaving the host
+// generator unseeded and one call ahead — a harness false-negative. fl's whole
+// TYPE_3 rand + rand48 family is byte-exact vs a fresh glibc. The externs below
+// are only the caller-state functions (rand_r / e·n·jrand48 standalone cases).
 unsafe extern "C" {
-    /// Host glibc `rand`.
-    fn rand() -> c_int;
-    /// Host glibc `srand`.
-    fn srand(seed: c_uint);
-
     /// Host glibc `rand_r` — not currently exposed by the `libc` crate
     /// (POSIX-only, gated behind `_POSIX_C_SOURCE`), so we link it
     /// directly. This is a thin C-ABI declaration; the real symbol is
@@ -61,6 +63,60 @@ fn global_rng_lock() -> MutexGuard<'static, ()> {
         .expect("stdlib random diff lock should not be poisoned")
 }
 
+/// Host glibc global-state RNG functions resolved from a SINGLE fresh private
+/// namespace, so fl's `no_mangle` definitions cannot interpose (a linked extern
+/// resolves these inconsistently — some to fl, some to glibc — which leaves the
+/// host global generator unseeded and one call ahead, a harness false-negative;
+/// fl's whole TYPE_3 rand + rand48 family is byte-exact vs a fresh glibc).
+///
+/// All functions share ONE namespace because the rand48 global generator and its
+/// `lcong48` multiplier are process-global: `erand48`/`nrand48`/`jrand48` after a
+/// `lcong48` must read the multiplier set in the same instance.
+struct HostRng {
+    srand: unsafe extern "C" fn(c_uint),
+    rand: unsafe extern "C" fn() -> c_int,
+    srand48: unsafe extern "C" fn(std::ffi::c_long),
+    drand48: unsafe extern "C" fn() -> f64,
+    lrand48: unsafe extern "C" fn() -> std::ffi::c_long,
+    mrand48: unsafe extern "C" fn() -> std::ffi::c_long,
+    seed48: unsafe extern "C" fn(*mut u16) -> *mut u16,
+    lcong48: unsafe extern "C" fn(*mut u16),
+    erand48: unsafe extern "C" fn(*mut u16) -> f64,
+    nrand48: unsafe extern "C" fn(*mut u16) -> std::ffi::c_long,
+    jrand48: unsafe extern "C" fn(*mut u16) -> std::ffi::c_long,
+}
+
+fn host_rng() -> &'static HostRng {
+    use std::sync::OnceLock;
+    static H: OnceLock<HostRng> = OnceLock::new();
+    H.get_or_init(|| unsafe {
+        let h = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(!h.is_null(), "dlmopen libc.so.6 failed");
+        let sym = |n: &[u8]| {
+            let p = libc::dlsym(h, n.as_ptr().cast());
+            assert!(!p.is_null(), "dlsym failed");
+            p
+        };
+        HostRng {
+            srand: std::mem::transmute(sym(b"srand\0")),
+            rand: std::mem::transmute(sym(b"rand\0")),
+            srand48: std::mem::transmute(sym(b"srand48\0")),
+            drand48: std::mem::transmute(sym(b"drand48\0")),
+            lrand48: std::mem::transmute(sym(b"lrand48\0")),
+            mrand48: std::mem::transmute(sym(b"mrand48\0")),
+            seed48: std::mem::transmute(sym(b"seed48\0")),
+            lcong48: std::mem::transmute(sym(b"lcong48\0")),
+            erand48: std::mem::transmute(sym(b"erand48\0")),
+            nrand48: std::mem::transmute(sym(b"nrand48\0")),
+            jrand48: std::mem::transmute(sym(b"jrand48\0")),
+        }
+    })
+}
+
 #[derive(Debug)]
 struct Divergence {
     function: &'static str,
@@ -90,17 +146,18 @@ const RAND_SEEDS: &[c_uint] = &[0, 1, 42, 100, 12345, 0xDEADBEEF, 0xFFFFFFFF];
 #[test]
 fn diff_rand_srand_cases() {
     let _lock = global_rng_lock();
+    let host = host_rng();
     let mut divs = Vec::new();
 
     for &seed in RAND_SEEDS {
         unsafe {
             fl::srand(seed);
-            srand(seed);
+            (host.srand)(seed);
         }
 
         for call_idx in 0..CALLS_PER_SEED {
             let fl_v = fl::rand();
-            let lc_v = unsafe { rand() };
+            let lc_v = unsafe { (host.rand)() };
             if fl_v != lc_v {
                 divs.push(Divergence {
                     function: "rand",
@@ -384,15 +441,16 @@ const SRAND48_CALLS: usize = 8;
 #[test]
 fn diff_srand48_drand48_lrand48_mrand48_cases() {
     let _lock = global_rng_lock();
+    let host = host_rng();
     let mut divs = Vec::new();
     for &seed in SRAND48_SEEDS {
         // Seed both impls.
         unsafe { fl::srand48(seed) };
-        unsafe { srand48(seed) };
+        unsafe { (host.srand48)(seed) };
         for call_idx in 0..SRAND48_CALLS {
             let case = format!("seed={seed}, call={call_idx}");
             let fl_d = unsafe { fl::drand48() };
-            let lc_d = unsafe { drand48() };
+            let lc_d = unsafe { (host.drand48)() };
             if fl_d.to_bits() != lc_d.to_bits() {
                 divs.push(Divergence {
                     function: "drand48",
@@ -403,7 +461,7 @@ fn diff_srand48_drand48_lrand48_mrand48_cases() {
                 });
             }
             let fl_l = unsafe { fl::lrand48() };
-            let lc_l = unsafe { lrand48() };
+            let lc_l = unsafe { (host.lrand48)() };
             if fl_l != lc_l {
                 divs.push(Divergence {
                     function: "lrand48",
@@ -414,7 +472,7 @@ fn diff_srand48_drand48_lrand48_mrand48_cases() {
                 });
             }
             let fl_m = unsafe { fl::mrand48() };
-            let lc_m = unsafe { mrand48() };
+            let lc_m = unsafe { (host.mrand48)() };
             if fl_m != lc_m {
                 divs.push(Divergence {
                     function: "mrand48",
@@ -448,19 +506,20 @@ const SEED48_INPUTS: &[[u16; 3]] = &[
 #[test]
 fn diff_seed48_state_swap_cases() {
     let _lock = global_rng_lock();
+    let host = host_rng();
     let mut divs = Vec::new();
     for &input in SEED48_INPUTS {
         // Pre-seed both impls to a known state so the "previous" returned
         // by seed48 is comparable. Use srand48(seed) which both impls
         // implement identically (set high 32 bits, low 16 = 0x330E).
         unsafe { fl::srand48(0xDEADBEEF) };
-        unsafe { srand48(0xDEADBEEF) };
+        unsafe { (host.srand48)(0xDEADBEEF) };
 
         // Now invoke seed48; it should return the prior state.
         let mut fl_in = input;
         let mut lc_in = input;
         let fl_prev_ptr = unsafe { fl::seed48(fl_in.as_mut_ptr()) };
-        let lc_prev_ptr = unsafe { seed48(lc_in.as_mut_ptr()) };
+        let lc_prev_ptr = unsafe { (host.seed48)(lc_in.as_mut_ptr()) };
         // Both return pointers into thread-local / static storage. We copy
         // out 3 u16s defensively before issuing more RNG calls.
         let fl_prev = unsafe { [*fl_prev_ptr, *fl_prev_ptr.add(1), *fl_prev_ptr.add(2)] };
@@ -478,7 +537,7 @@ fn diff_seed48_state_swap_cases() {
         // After seeding, the next 4 lrand48 / drand48 outputs must match.
         for call_idx in 0..4 {
             let fl_l = unsafe { fl::lrand48() };
-            let lc_l = unsafe { lrand48() };
+            let lc_l = unsafe { (host.lrand48)() };
             if fl_l != lc_l {
                 divs.push(Divergence {
                     function: "seed48->lrand48",
@@ -500,18 +559,19 @@ fn diff_seed48_state_swap_cases() {
 #[test]
 fn diff_lcong48_explicit_state_parameters() {
     let _lock = global_rng_lock();
+    let host = host_rng();
     let mut divs = Vec::new();
     let params = [0u16, 0, 0, 1, 0, 0, 1];
 
     let mut fl_params = params;
     let mut lc_params = params;
     unsafe { fl::lcong48(fl_params.as_mut_ptr()) };
-    unsafe { lcong48(lc_params.as_mut_ptr()) };
+    unsafe { (host.lcong48)(lc_params.as_mut_ptr()) };
 
     let mut fl_erand_state = [0u16, 0, 0];
     let mut lc_erand_state = [0u16, 0, 0];
     let fl_erand = unsafe { fl::erand48(fl_erand_state.as_mut_ptr()) };
-    let lc_erand = unsafe { erand48(lc_erand_state.as_mut_ptr()) };
+    let lc_erand = unsafe { (host.erand48)(lc_erand_state.as_mut_ptr()) };
     if fl_erand.to_bits() != lc_erand.to_bits() {
         divs.push(Divergence {
             function: "lcong48->erand48",
@@ -534,7 +594,7 @@ fn diff_lcong48_explicit_state_parameters() {
     let mut fl_nrand_state = [0u16, 0, 0];
     let mut lc_nrand_state = [0u16, 0, 0];
     let fl_nrand = unsafe { fl::nrand48(fl_nrand_state.as_mut_ptr()) };
-    let lc_nrand = unsafe { nrand48(lc_nrand_state.as_mut_ptr()) };
+    let lc_nrand = unsafe { (host.nrand48)(lc_nrand_state.as_mut_ptr()) };
     if fl_nrand != lc_nrand {
         divs.push(Divergence {
             function: "lcong48->nrand48",
@@ -557,7 +617,7 @@ fn diff_lcong48_explicit_state_parameters() {
     let mut fl_jrand_state = [0u16, 0, 0];
     let mut lc_jrand_state = [0u16, 0, 0];
     let fl_jrand = unsafe { fl::jrand48(fl_jrand_state.as_mut_ptr()) };
-    let lc_jrand = unsafe { jrand48(lc_jrand_state.as_mut_ptr()) };
+    let lc_jrand = unsafe { (host.jrand48)(lc_jrand_state.as_mut_ptr()) };
     if fl_jrand != lc_jrand {
         divs.push(Divergence {
             function: "lcong48->jrand48",
@@ -578,7 +638,7 @@ fn diff_lcong48_explicit_state_parameters() {
     }
 
     unsafe { fl::srand48(1) };
-    unsafe { srand48(1) };
+    unsafe { (host.srand48)(1) };
 
     assert!(
         divs.is_empty(),
