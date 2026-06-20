@@ -21,6 +21,7 @@ retried and real wins are confirmed with numbers.
 
 | Date | Lever / bead | Bench | fl | glibc | ratio | verdict | action |
 |------|--------------|-------|----|----|-------|---------|--------|
+| 2026-06-20 | deployed strict single-threaded `getenv` exact-name hot cache (`bd-2g7oyh.496`, BlackThrush/cod-b) | `strtol_glibc_bench` `getenv_hit`/`getenv_miss`, same-worker `vmi1152480` A/B | hit 41.20 -> 12.43 ns; miss 64.90 -> 21.45 ns | hit 17.21 / 15.93 ns; miss 25.60 / 23.34 ns | 2.39x -> 0.78x / 2.53x -> 0.92x | WIN / WIN | Keep. Single-entry TLS cache keyed by exact name length plus packed first 16 bytes, guarded by `ENVIRON_EPOCH` invalidated on successful `setenv`/`unsetenv`/`putenv`/`clearenv`; disabled in tests and after `__libc_single_threaded` flips to 0. Touched-file rustfmt and `git diff --check` passed; local getenv conformance passed 2/0 + 9/0; rch release build passed on `vmi1152480`; rch focused conformance passed on `vmi1227854` after worker reroute. Full final bench rows in `tests/artifacts/perf/bd-2g7oyh-getenv-hot-cache.md`. |
 | 2026-06-20 | BSD `snprintb` streaming bit-name visitor (`bd-2g7oyh.485`, BlackThrush/cod-b) | `stdio_bench` `stdio_snprintb/named_bits_stream_12`, same-worker `vmi1149989` old-vs-new; no host-glibc comparator exists for BSD `snprintb` | streaming visitor p50 1.3500 us | old collect-Vec p50 1.3316 us | 1.014x old-vs-new; host glibc N/A | NEUTRAL/REJECT | Reverted source to `collect_set_names`; kept benchmark hook and behavior guard. Do not retry this streaming visitor without an allocation-dominant or multiline-specific profile. Evidence: `tests/artifacts/perf/bd-2g7oyh.485-snprintb-stream-names.md`. |
 | 2026-06-20 | strict `calloc/free` bounded hot-class slab + global live table (`bd-deployed-malloc-membrane-50x-vmuu73`, BlackThrush/cod-b) | `calloc_glibc_bench calloc_cycle`, same-worker `vmi1227854` baseline vs candidate | candidate p50 16/256/4096/65536/262144/1048576/4194304 B = 120.002 / 251.255 / 295.500 / 611.348 / 1863.658 / 8560.236 / 41947.353 ns | 4.584 / 19.587 / 48.217 / 406.034 / 1491.685 / 8265.335 / 42680.307 ns | 26.18x / 12.83x / 6.13x / 1.51x / 1.25x / 1.04x / 0.98x | LOSS vs glibc / REJECT vs prior FL | Reverted. Current-head baseline FL p50 on the same worker was 79.578 / 211.482 / 247.232 / 612.980 / 1815.999 / 8515.143 / 43437.303 ns, so the target hot classes regressed 1.508x / 1.188x / 1.195x. The slab avoided fallback-table participation but added live-table probes plus mandatory zeroing; do not retry bounded exact hot-class slab caching as a standalone strict allocator lever. Evidence: `tests/artifacts/perf/bd-deployed-malloc-membrane-50x-vmuu73-cod-b-slab.md`. |
 | 2026-06-20 | strict `calloc/free` one-slot recycle + live-slot + inline zero candidate (`bd-f874go`, BlackThrush/cod-b) | `calloc_glibc_bench calloc_cycle`, final same-worker `vmi1153651` run | p50 16/256/4096/65536/262144/1048576/4194304 B = 91.418 / 421.490 / 487.234 / 1496.238 / 4924.500 / 21254.030 / 104458.013 ns | 11.196 / 37.891 / 116.207 / 1016.709 / 4422.657 / 20124.078 / 103633.044 ns | 8.16x / 11.12x / 4.19x / 1.47x / 1.11x / 1.06x / 1.01x | LOSS vs glibc / REJECT vs prior FL | Reverted. It only self-won 16 B (0.223x vs `fl_old` p50); target 256 B lost vs `fl_old` (1.012x), 4096 B lost (1.054x), 65536 B lost (1.018x), and 4 MiB p50/tails regressed. Local routing baseline plus simple-slot and live-slot remote candidates are recorded below. Do not retry one-slot hot-class recycle without a new ownership model or a multi-block/thread-local slab with same-worker proof. |
@@ -80,6 +81,35 @@ retried and real wins are confirmed with numbers.
 | 2026-06-20 | iconv **CP932-family packed BMP3 UTF-8 direct decode** (`bd-2g7oyh`, BlackThrush) | `iconv_glibc_bench` `cp932_to_utf8` 1 KiB, `hz1` | **27169.4→509.5 ns** | glibc 493.0 ns | fl/glibc **56.27x→1.033x** | **NEUTRAL vs glibc / huge WIN vs old fl** | Keep. Built a 64 Ki entry `DBCS key -> packed UTF-8 triple` table for CP932/IBM943/IBM932 BMP-3 pairs and emits 4 pairs per loop before falling through to the generic path for exact error ordering. Same-worker p50 self-speedup is **53.3x**; final paired score is 1 WIN (`utf8_jp_to_cp932` 2025.2 vs 2335.7 ns, 0.867x) and 1 NEUTRAL (`cp932_to_utf8` 509.5 vs 493.0 ns, 1.033x), 0 losses. Conformance: `conformance_diff_iconv_cp932` 3/3 green; `cargo check -p frankenlibc-core` green with pre-existing warnings. Residual 3.3% decode gap is routed deeper only if future workers expose a stable post-table loss. |
 | 2026-06-20 | iconv **GB18030 packed BMP3 transducers** (`bd-2g7oyh`, BlackThrush) | `iconv_glibc_bench` `utf8_cjk_to_gb18030` + `gb18030_to_utf8` 1 KiB CJK | encode **5622.3→1401.1 ns**, decode **121728.2→976.4 ns** | final glibc 2592.7 ns / 2206.2 ns | final fl/glibc **0.540x / 0.443x** | **WIN / WIN** | Keep. Added packed direct tables for UTF-8 BMP-3 -> GB18030 2-byte keys and GB18030 2-byte keys -> UTF-8 triples, emitting 4 code points per loop and falling back before consuming on ASCII, invalid, 4-byte-only, single-byte, incomplete, or output-tail cases. Baseline was on `hz1` (losses 1.609x encode, 46.756x decode); final `rch` selected `hz2` despite `hz1` preference, so self-speedup is directional, but final in-run fl/glibc ratios are valid deployed head-to-head wins. Scorecard: 2 WIN / 0 NEUTRAL / 0 LOSS. Conformance: `iconv_cjk_differential_fuzz_vs_glibc` 216000 conversions, 0 divergences; `cargo check -p frankenlibc-core` and `git diff --check` green. Evidence: `tests/artifacts/perf/bd-2g7oyh-gb18030-direct-codec.md`. |
 <!-- rows appended as benches complete -->
+
+## 2026-06-20 `bd-2g7oyh.496` getenv hot-cache final `strtol_glibc_bench` rows
+
+Final candidate run on `vmi1152480`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`, `cargo bench -p frankenlibc-bench --features abi-bench --bench strtol_glibc_bench -- --noplot --sample-size 10 --warm-up-time 1 --measurement-time 2`.
+
+| Workload | FrankenLibC | glibc | Ratio | Verdict |
+|---|---:|---:|---:|---|
+| `strtol_dec_short` | 8.75 ns | 9.41 ns | 0.93x | WIN |
+| `strtol_dec_long` | 22.67 ns | 18.40 ns | 1.23x | LOSS |
+| `strtol_hex` | 22.48 ns | 19.69 ns | 1.14x | LOSS |
+| `atoi_short` | 4.27 ns | 11.90 ns | 0.36x | WIN |
+| `atoi_long` | 11.39 ns | 21.11 ns | 0.54x | WIN |
+| `atol_short` | 4.04 ns | 10.72 ns | 0.38x | WIN |
+| `atol_long` | 10.77 ns | 20.53 ns | 0.52x | WIN |
+| `atoll_short` | 4.07 ns | 10.57 ns | 0.38x | WIN |
+| `atoll_long` | 11.37 ns | 20.08 ns | 0.57x | WIN |
+| `strtod_int` | 12.73 ns | 39.97 ns | 0.32x | WIN |
+| `strtod_simple` | 71.46 ns | 71.56 ns | 1.00x | NEUTRAL |
+| `strtod_sci` | 22.69 ns | 48.10 ns | 0.47x | WIN |
+| `rand` | 3.71 ns | 5.03 ns | 0.74x | WIN |
+| `getenv_hit` | 12.43 ns | 15.93 ns | 0.78x | WIN |
+| `getenv_miss` | 21.45 ns | 23.34 ns | 0.92x | WIN |
+| `clock_gettime` | 35.45 ns | 26.28 ns | 1.35x | LOSS |
+| `time` | 4.05 ns | 2.43 ns | 1.66x | LOSS |
+| `pthread_self` | 1.90 ns | 2.00 ns | 0.95x | WIN |
+
+Target result: `getenv_hit`/`getenv_miss` moved from 2.39x/2.53x losses to
+0.78x/0.92x wins on the same worker. Residual routed losses: long/hex
+`strtol`, `clock_gettime`, and `time`; `strtod_simple` is neutral.
 
 ## 2026-06-19 GAUNTLET SCORECARD — broad fl-vs-glibc sweep, ~50 functions (BlackThrush)
 

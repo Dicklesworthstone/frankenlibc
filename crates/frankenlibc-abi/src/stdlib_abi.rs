@@ -378,6 +378,40 @@ use libc::{intmax_t, uintmax_t};
 
 const MAX_LEGACY_CVT_DIGITS: usize = 512;
 
+#[derive(Clone, Copy)]
+struct GetenvNameProbe {
+    len: usize,
+    terminated: bool,
+    valid: bool,
+    lo: u64,
+    hi: u64,
+}
+
+#[derive(Clone, Copy)]
+struct GetenvHotCache {
+    epoch: u64,
+    name_len: usize,
+    lo: u64,
+    hi: u64,
+    result: usize,
+}
+
+impl GetenvHotCache {
+    const fn empty() -> Self {
+        Self {
+            epoch: 0,
+            name_len: 0,
+            lo: 0,
+            hi: 0,
+            result: 0,
+        }
+    }
+}
+
+thread_local! {
+    static GETENV_HOT_CACHE: Cell<GetenvHotCache> = const { Cell::new(GetenvHotCache::empty()) };
+}
+
 #[cfg(feature = "owned-tls-cache")]
 struct StdlibTls {
     shell_idx: Cell<usize>,
@@ -560,20 +594,39 @@ unsafe fn native_getenv_raw(name_ptr: *const u8, name_len: usize) -> *mut c_char
 }
 
 #[inline]
-unsafe fn scan_env_name_fast(name: *const c_char, bound: usize) -> (usize, bool, bool) {
+unsafe fn scan_env_name_fast(name: *const c_char, bound: usize) -> GetenvNameProbe {
     let mut i = 0usize;
     let mut valid = true;
+    let mut lo = 0u64;
+    let mut hi = 0u64;
     while i < bound {
         let byte = unsafe { *name.add(i) as u8 };
         if byte == 0 {
-            return (i, true, valid && i != 0);
+            return GetenvNameProbe {
+                len: i,
+                terminated: true,
+                valid: valid && i != 0,
+                lo,
+                hi,
+            };
         }
         if byte == b'=' {
             valid = false;
         }
+        if i < 8 {
+            lo |= u64::from(byte) << (i * 8);
+        } else if i < 16 {
+            hi |= u64::from(byte) << ((i - 8) * 8);
+        }
         i += 1;
     }
-    (i, false, false)
+    GetenvNameProbe {
+        len: i,
+        terminated: false,
+        valid: false,
+        lo,
+        hi,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +639,56 @@ unsafe fn scan_env_name_fast(name: *const c_char, bound: usize) -> (usize, bool,
 
 /// Whether we've already copied environ to our own allocation.
 static ENVIRON_OWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Incremented after every successful environment mutation. The deployed
+/// single-threaded `getenv` cache uses this as its coherence fence.
+static ENVIRON_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+#[inline]
+fn bump_environ_epoch() {
+    ENVIRON_EPOCH.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+}
+
+#[inline]
+fn getenv_hot_cache_enabled() -> bool {
+    cfg!(not(test))
+        && crate::glibc_internal_abi::__libc_single_threaded
+            .load(std::sync::atomic::Ordering::Acquire)
+            != 0
+}
+
+#[inline]
+fn getenv_hot_cache_lookup(probe: GetenvNameProbe) -> Option<*mut c_char> {
+    if !getenv_hot_cache_enabled() || probe.len > 16 {
+        return None;
+    }
+    let epoch = ENVIRON_EPOCH.load(std::sync::atomic::Ordering::Acquire);
+    GETENV_HOT_CACHE.with(|slot| {
+        let cache = slot.get();
+        (cache.epoch == epoch
+            && cache.name_len == probe.len
+            && cache.lo == probe.lo
+            && cache.hi == probe.hi)
+            .then_some(cache.result as *mut c_char)
+    })
+}
+
+#[inline]
+fn getenv_hot_cache_store(probe: GetenvNameProbe, result: *mut c_char) {
+    if !getenv_hot_cache_enabled() || probe.len > 16 {
+        return;
+    }
+    let epoch = ENVIRON_EPOCH.load(std::sync::atomic::Ordering::Acquire);
+    GETENV_HOT_CACHE.with(|slot| {
+        slot.set(GetenvHotCache {
+            epoch,
+            name_len: probe.len,
+            lo: probe.lo,
+            hi: probe.hi,
+            result: result as usize,
+        });
+    });
+}
 
 /// Re-entrant mutex protecting all environ mutations and reads. Re-entrant
 /// because host_passthrough_malloc / host_passthrough_realloc that we invoke
@@ -606,8 +709,7 @@ pub(crate) static ENVIRON_LOCK: crate::util::AbiReentrantMutex<()> =
 /// subsequent concurrent env access. Mirrors glibc's single-threaded lock elision.
 #[inline]
 fn environ_lock_guard() -> Option<crate::util::AbiReentrantMutexGuard<'static, ()>> {
-    if crate::glibc_internal_abi::__libc_single_threaded
-        .load(std::sync::atomic::Ordering::Acquire)
+    if crate::glibc_internal_abi::__libc_single_threaded.load(std::sync::atomic::Ordering::Acquire)
         == 0
     {
         Some(ENVIRON_LOCK.lock())
@@ -1997,11 +2099,16 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
     // only on the full (test) path, which keeps deny/observe exercised.
     let bound = env_name_scan_bound(name);
     let (profile, len, terminated) = if runtime_policy::stdlib_membrane_fastpath() {
-        let (len, terminated, valid) = unsafe { scan_env_name_fast(name, bound) };
-        if !terminated || !valid {
+        let probe = unsafe { scan_env_name_fast(name, bound) };
+        if !probe.terminated || !probe.valid {
             return ptr::null_mut();
         }
-        return unsafe { native_getenv_raw(name.cast::<u8>(), len) };
+        if let Some(cached) = getenv_hot_cache_lookup(probe) {
+            return cached;
+        }
+        let result = unsafe { native_getenv_raw(name.cast::<u8>(), probe.len) };
+        getenv_hot_cache_store(probe, result);
+        return result;
     } else {
         let (_mode, decision) = runtime_policy::decide(
             ApiFamily::Stdlib,
@@ -2192,6 +2299,8 @@ pub unsafe extern "C" fn setenv(
     let rc = unsafe { native_setenv(name, name_len, value, value_len, overwrite) };
     if rc != 0 {
         unsafe { set_abi_errno_if_clear(libc::EINVAL) };
+    } else {
+        bump_environ_epoch();
     }
     let adverse = rc != 0;
     runtime_policy::observe(
@@ -2250,6 +2359,8 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
     let rc = unsafe { native_unsetenv(name, name_len) };
     if rc != 0 {
         unsafe { set_abi_errno(libc::EINVAL) };
+    } else {
+        bump_environ_epoch();
     }
     let adverse = rc != 0;
     runtime_policy::observe(
@@ -2939,6 +3050,9 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
 
     // Native putenv: store the string directly in environ (no copy).
     let ret = unsafe { native_putenv_impl(string) };
+    if ret == 0 {
+        bump_environ_epoch();
+    }
 
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 10, ret != 0);
     ret
@@ -3379,6 +3493,10 @@ pub unsafe extern "C" fn clearenv() -> c_int {
                 cleared = true;
             }
         }
+    }
+
+    if cleared {
+        bump_environ_epoch();
     }
 
     runtime_policy::observe(
