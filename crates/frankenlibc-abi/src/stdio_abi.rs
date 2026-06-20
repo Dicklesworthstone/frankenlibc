@@ -2204,7 +2204,12 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
 
     let id = canonical_stream_id(stream);
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
-        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        // Page-safe SWAR/SIMD NUL scan (the deployed `strlen` scanner), NOT
+        // scan_c_str_len: this branch ignores the terminated flag, so the latter's
+        // known_remaining bound is pure overhead — a mutex lock + up-to-1024-slot
+        // fallback-table hash probe on every call — on top of a scalar byte loop.
+        // For a valid NUL-terminated C string `len` is identical.
+        let (len, _) = unsafe { super::string_abi::scan_c_string(s, None) };
         let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
         let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
         return if written == bytes.len() { 0 } else { libc::EOF };
@@ -3167,7 +3172,12 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
     }
 
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
-        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        // Page-safe SWAR/SIMD NUL scan (the deployed `strlen` scanner), NOT
+        // scan_c_str_len: this branch ignores the terminated flag, so the latter's
+        // known_remaining bound is pure overhead — a mutex lock + up-to-1024-slot
+        // fallback-table hash probe on every call — on top of a scalar byte loop.
+        // For a valid NUL-terminated C string `len` is identical.
+        let (len, _) = unsafe { super::string_abi::scan_c_string(s, None) };
         let stdout_ptr = active_stdout_stream();
         let stdout_id = canonical_stream_id(stdout_ptr);
         let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
