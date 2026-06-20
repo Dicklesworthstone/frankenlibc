@@ -1242,10 +1242,14 @@ fn with_decision_contract_machine<R>(
 
 pub(crate) struct EntrypointTraceGuard {
     previous: Option<TraceContext>,
+    skipped: bool,
 }
 
 impl Drop for EntrypointTraceGuard {
     fn drop(&mut self) {
+        if self.skipped {
+            return;
+        }
         let _ = with_trace_context(|slot| *slot = self.previous);
     }
 }
@@ -1279,6 +1283,21 @@ pub(crate) fn in_policy_reentry_context() -> bool {
 
 #[must_use]
 pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard {
+    // Deployed strict-passthrough fast path: the trace context this sets is never
+    // consumed — `decide()` returns at the high-frequency-family fast-path BEFORE
+    // the FFI-PCC certificate lookup (the only load-bearing reader), and
+    // `record_last_explainability` runs only in hardened mode. So the per-call
+    // `next_trace_seq` + `ffi_pcc_certificate_index_for_symbol` lookup + TWO
+    // `thread_local!` trace-context accesses (set here, restore on drop) are pure
+    // overhead on EVERY ABI entry. `strict_passthrough_active()` is a cheap atomic
+    // and is `false` under `cfg(test)`, so unit tests keep the full trace path.
+    if strict_passthrough_active() {
+        return EntrypointTraceGuard {
+            previous: None,
+            skipped: true,
+        };
+    }
+
     let trace_seq = next_trace_seq();
 
     let context = TraceContext {
@@ -1295,7 +1314,10 @@ pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard {
     })
     .flatten();
 
-    EntrypointTraceGuard { previous }
+    EntrypointTraceGuard {
+        previous,
+        skipped: false,
+    }
 }
 
 #[must_use]

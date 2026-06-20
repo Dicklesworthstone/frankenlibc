@@ -2137,3 +2137,29 @@ Verdict: keep. This is not a full `strtol` closeout because the short row remain
 environment/time rows. The next credible parser lever is either an even lower
 entrypoint/endptr overhead for short `strtol` or a direct `strtod` parser; do not
 retry another generic membrane branch tweak for this exact loss.
+
+## 2026-06-20 entrypoint_scope no-op in strict-passthrough — safe per-call telemetry skip on EVERY ABI entry
+
+Acting on the prior LD_PRELOAD finding (entrypoint_scope = the broadest wrapper
+tax). `runtime_policy::entrypoint_scope(symbol)` runs on EVERY ABI entry and sets
+a trace context via `next_trace_seq` + `ffi_pcc_certificate_index_for_symbol`
+lookup + TWO `thread_local!` accesses (set here, restore on drop). That context is
+ONLY consumed by the FFI-PCC certificate lookup inside `decide()` and by
+`record_last_explainability`. In `strict_passthrough_active()` mode (the deployed
+default) `decide()` returns at the high-frequency-family fast-path BEFORE the
+FFI-PCC lookup, and explainability runs only hardened — so the context is provably
+never read. Gated entrypoint_scope to a no-op guard (added a `skipped` flag so the
+Drop also skips the restore-TLS write) when `strict_passthrough_active()` (a cheap
+atomic that is `false` under cfg(test), so unit tests keep the full path).
+
+Measured (LD_PRELOAD): strlen **0.16 → 0.13 s** (~10 ns/call saved — the
+entrypoint_scope work). Modest for strlen (its remaining ~13x is `known_remaining`
++ SIMD-dispatch select, in owned string/malloc core — left for those owners), but
+this saves the telemetry overhead on EVERY ABI function in deployed strict.
+NOTE: the LD_PRELOAD TLS is general-dynamic (slow), so the true-deployed saving
+(initial-exec TLS) is smaller (~atomic + lookup + 2 fast TLS) but still real.
+
+Correctness: runtime_policy lib tests (37), cross-family conformance
+(strtod/strtol/math/ctype/getenv/clock — 0 failures) green — the trace context is
+unused where it's skipped, and tests exercise the full path. Win/loss/neutral:
+small but broad WIN (every ABI entry in strict-passthrough), 0 regressions.
