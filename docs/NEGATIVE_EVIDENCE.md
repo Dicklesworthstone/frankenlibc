@@ -1978,3 +1978,32 @@ syscall per call; the single-threaded skip (or a cached tid) is a huge lever —
 audit other reentrant-mutex users.**
 
 Win/loss/neutral: clean WIN (40.7x loss → 1.97x), 0 regressions, gates green.
+
+## 2026-06-20 pthread_self() — 40x LOSS → 0.88x WIN: lazy per-thread cache kills the gettid() syscall
+
+Auditing hot per-call syscalls (the getenv lever), benched pthread_self: **fl 72 ns
+vs glibc 2.6 ns (40x)** — `native_pthread_self` calls `core_self_tid()` =
+`gettid()` SYSCALL every call. fl already had a `current_pthread_self_cache` in
+pthread TLS, but it was checked ONLY for the HOST backend and populated ONLY at
+`pthread_create` — so the MAIN thread (kernel-created, where most code runs, in
+both bench AND deployed) and native-backend threads paid the syscall on every
+call. pthread_self is constant per thread, so: check the cache for ALL threads,
+and lazily populate it on the first call. glibc reads its TCB pointer the same way
+(no syscall).
+
+Measured: pthread_self **72 → 2.30 ns (40x loss → 0.88x WIN)**, ~31x faster, now
+beats glibc. Value-preserving (cached == recomputed). Conformance green:
+conformance_diff_pthread (7), pthread_abi_test, pthread_thread_lifecycle_test (0
+failures). The bench main thread is kernel-created exactly like a deployed
+process's main thread, so this is representative (no startup-state confound).
+
+UNRESOLVED / SUSPECTED-ARTIFACT (NOT pursued): the same audit benched
+`clock_gettime` 4.8x and `time` 45x slow, but their vDSO fast path is gated on
+`is_runtime_ready() && !pipeline_initialization_active()` — full deployed startup
+state the criterion bench can't replicate (signalling runtime-ready alone only got
+clock_gettime 271→122 ns; the pipeline-init gate stays set). So those are LIKELY
+deployed-startup bench artifacts (deployed clock_gettime uses the vDSO ~25 ns),
+not real losses — but CONFIRMING needs an LD_PRELOAD harness (fl as the actual
+libc). Removed from the committed bench to avoid misleading numbers; flagged here.
+
+Win/loss/neutral: clean WIN (40x loss → 0.88x), 0 regressions, gates green.
