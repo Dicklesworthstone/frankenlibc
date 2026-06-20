@@ -15,7 +15,7 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
-use frankenlibc_core::errno;
+use frankenlibc_core::{errno, stdlib::conversion::ConversionStatus};
 
 /// Length of a NUL-terminated numeric argument for the strto*/ato* family.
 ///
@@ -110,6 +110,114 @@ unsafe fn parse_ato_decimal_i64(ptr: *const c_char) -> i64 {
     } else {
         acc as i64
     }
+}
+
+#[inline]
+const fn strtol_digit_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'z' => Some(byte - b'a' + 10),
+        b'A'..=b'Z' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Deployed `strtol` specialization for the hot bases measured in the
+/// glibc head-to-head bench. It fuses the NUL scan and parse so `endptr` comes
+/// from the same cursor that found the first non-digit.
+#[inline]
+unsafe fn parse_strtol_c_string_fast(
+    ptr: *const c_char,
+    base: c_int,
+) -> Option<(i64, usize, ConversionStatus)> {
+    if base != 10 && base != 16 {
+        return None;
+    }
+
+    let mut cursor = ptr.cast::<u8>();
+    loop {
+        let byte = unsafe { *cursor };
+        if !atoi_is_c_space(byte) {
+            break;
+        }
+        cursor = unsafe { cursor.add(1) };
+    }
+
+    let mut byte = unsafe { *cursor };
+    let negative = if byte == b'-' {
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+        true
+    } else if byte == b'+' {
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+        false
+    } else {
+        false
+    };
+
+    let radix = base as u64;
+    if base == 16 && byte == b'0' {
+        let next = unsafe { *cursor.add(1) };
+        if next == b'x' || next == b'X' {
+            let after_prefix = unsafe { *cursor.add(2) };
+            if matches!(strtol_digit_value(after_prefix), Some(digit) if digit < 16) {
+                cursor = unsafe { cursor.add(2) };
+                byte = after_prefix;
+            }
+        }
+    }
+
+    let limit = if negative {
+        (i64::MAX as u64) + 1
+    } else {
+        i64::MAX as u64
+    };
+    let cutoff = limit / radix;
+    let cutlim = limit % radix;
+    let mut acc = 0u64;
+    let mut any_digits = false;
+    let mut overflow = false;
+
+    while let Some(digit) = strtol_digit_value(byte) {
+        let digit = digit as u64;
+        if digit >= radix {
+            break;
+        }
+        any_digits = true;
+        if !overflow {
+            if acc > cutoff || (acc == cutoff && digit > cutlim) {
+                overflow = true;
+            } else {
+                acc = acc * radix + digit;
+            }
+        }
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+    }
+
+    if !any_digits {
+        return Some((0, 0, ConversionStatus::Success));
+    }
+
+    let consumed = unsafe { cursor.offset_from(ptr.cast::<u8>()) as usize };
+    if overflow {
+        if negative {
+            return Some((i64::MIN, consumed, ConversionStatus::Underflow));
+        }
+        return Some((i64::MAX, consumed, ConversionStatus::Overflow));
+    }
+
+    let value = if negative {
+        if acc == limit {
+            i64::MIN
+        } else {
+            -(acc as i64)
+        }
+    } else {
+        acc as i64
+    };
+    Some((value, consumed, ConversionStatus::Success))
 }
 
 use frankenlibc_core::syscall as raw_syscall;
@@ -772,6 +880,28 @@ pub unsafe extern "C" fn strtol(
         }
         (Some(decision.profile), bound)
     };
+
+    if profile.is_none()
+        && let Some((val, consumed, status)) = unsafe { parse_strtol_c_string_fast(nptr, base) }
+    {
+        match status {
+            ConversionStatus::Overflow | ConversionStatus::Underflow => unsafe {
+                set_abi_errno(libc::ERANGE)
+            },
+            ConversionStatus::InvalidBase => unsafe {
+                set_abi_errno(libc::EINVAL);
+                return 0;
+            },
+            ConversionStatus::Success => {}
+        }
+
+        if !endptr.is_null() {
+            unsafe {
+                *endptr = (nptr as *mut c_char).add(consumed);
+            }
+        }
+        return val as c_long;
+    }
 
     let (len, _terminated) = unsafe { scan_numeric_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
@@ -1720,7 +1850,12 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
     let result = unsafe { native_getenv(name_slice) };
     if let Some(p) = profile {
         let adverse = result.is_null();
-        runtime_policy::observe(ApiFamily::Stdlib, p, runtime_policy::scaled_cost(8, len), adverse);
+        runtime_policy::observe(
+            ApiFamily::Stdlib,
+            p,
+            runtime_policy::scaled_cost(8, len),
+            adverse,
+        );
     }
     result
 }

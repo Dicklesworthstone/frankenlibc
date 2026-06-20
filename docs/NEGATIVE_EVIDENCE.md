@@ -21,6 +21,7 @@ retried and real wins are confirmed with numbers.
 
 | Date | Lever / bead | Bench | fl | glibc | ratio | verdict | action |
 |------|--------------|-------|----|----|-------|---------|--------|
+| 2026-06-20 | deployed `strtol` base-10/base-16 direct C-string parser (`bd-2g7oyh`, BlackThrush/cod-a) | `strtol_glibc_bench`, same-worker `vmi1152480`, clean `e464f5c31` baseline vs candidate | `short` 14.21 -> 7.65 ns; `long` 34.25 -> 22.16 ns; `hex` 37.68 -> 21.38 ns | `short` 8.76 / 4.82 ns; `long` 18.07 / 17.88 ns; `hex` 18.24 / 18.02 ns | 1.62x -> 1.59x / 1.90x -> 1.24x / 2.07x -> 1.19x | WIN gap-cut / NEUTRAL short | Keep. A fused C-string transducer removes the NUL pre-scan, slice construction, and core re-scan for deployed base-10/base-16 `strtol` while preserving exact overflow and `endptr` behavior. `strtol_dec_long` and `strtol_hex` are real same-worker gap cuts; `strtol_dec_short` is only neutral by ratio. Fuzz: 1,000,000 comparisons vs host glibc, 0 divergences. Evidence: `tests/artifacts/perf/bd-2g7oyh-strtol-direct-cstring.md`. |
 | 2026-06-20 | deployed `atoi`/`atol`/`atoll` base-10 single-pass parser (`bd-2g7oyh`, BlackThrush/cod-a) | `strtol_glibc_bench` deployed `ato*`, final clean post-rebase same-worker `vmi1149989` | `atoi` 2.97/7.51 ns; `atol` 2.80/9.31 ns; `atoll` 2.53/7.57 ns | `atoi` 5.25/14.67 ns; `atol` 4.91/10.77 ns; `atoll` 4.92/10.99 ns | 0.57x / 0.51x / 0.57x / 0.87x / 0.52x / 0.69x | WIN | Keep. Original same-worker baseline rows were all losses (`2.54x-3.43x` vs glibc); final clean candidate is `3.8x-11.2x` faster than that baseline FL and still beats host glibc on all six `ato*` rows after rebasing over upstream's weaker membrane fast path. Same-run `strtol_*` and `strtod_int`/`strtod_sci` rows remain residual losses (`2.05x-3.11x`, `1.37x`, `1.69x`) and are routed deeper; `strtod_simple` stays an unrelated win. Evidence: `tests/artifacts/perf/bd-2g7oyh-strtol-atoi-fastpath.md`. |
 | 2026-06-20 | strict fallback-tracked `realloc` same-size / same-small-class in-place fast path (`bd-f874go`, BlackThrush/cod-b) | `calloc_glibc_bench realloc_cycle` on `vmi1149989`: `same_256`, `same_class_shrink_256_to_240`, `cross_class_shrink_256_to_128`, `same_class_shrink_4096_to_3584` | candidate p50 13.333 / 170.314 / 239.357 / 171.915 ns | candidate p50 3.288 / 7.480 / 17.063 / 24.170 ns | 4.06x / 22.77x / 14.03x / 7.11x | LOSS vs glibc / WIN vs prior FL | Keep. Same-worker p50 vs current-head FL improved 0.193x / 0.750x / 0.739x / 0.607x, with mean 0.296x / 0.560x / 0.948x / 0.648x. Still loses every row to glibc, so this is only a measured gap-narrowing allocator keep, not a perf-closeout. Conformance: focused `malloc_abi_test realloc` passed 7/0; release build passed. Evidence: `tests/artifacts/perf/bd-f874go-realloc-same-class.md`. |
 | 2026-06-20 | fallback allocation table deletion-time tombstone compaction (`bd-2g7oyh`, BlackThrush/cod-a) | `calloc_glibc_bench` deployed `calloc/free`, `vmi1293453` | 16 B 126.620 ns; 256 B 747.608 ns; 4096 B 823.597 ns; 1 MiB 21035.057 ns; 4 MiB 108814.652 ns | 16 B 11.529 ns; 256 B 37.921 ns; 4096 B 153.098 ns; 1 MiB 19578.059 ns; 4 MiB 118209.750 ns | 10.98x / 19.72x / 5.38x / 1.07x / 0.92x | MIXED / REVERTED | Reverted. Mid-size p50 improved versus the 2026-06-19 same-worker artifact, but 16 B regressed, 1 MiB and 4 MiB regressed in absolute p50, and 256 KiB mean regressed from 6490.414 ns to 11097.125 ns. The target small/medium rows still lose badly to glibc, so deletion-time tombstone clearing is not a shippable allocator lever. See `tests/artifacts/perf/bd-2g7oyh-calloc-strict-fastpath.md`. |
@@ -2101,3 +2102,37 @@ gate it to a no-op when `!(ffi_pcc_active || hardened || cfg!(test))`. malloc 21
 is the other big one (owned). The criterion `*_glibc_bench` does NOT exercise the
 entrypoint_scope/known_remaining wrapper tax — only LD_PRELOAD does; ledger this so
 the membrane/string/malloc owners can act.
+
+## 2026-06-20 strtol direct C-string parser - deployed loss cut to 1.19x-1.24x on long/hex
+
+The post-`ato*` residual was deployed `strtol`: the ABI path scanned the C string
+for a numeric prefix, built a Rust slice, then delegated to the core parser which
+rescanned for whitespace, sign, base prefix, digits, overflow, and `endptr`.
+The kept lever is a fused direct C-string transducer for the hot measured bases
+10 and 16. It reads exactly once, handles whitespace/sign and `0x` prefix
+semantics, computes overflow with cutoff/cutlim, and writes `endptr` from the
+same cursor that found the first non-digit. Other bases still use the generic
+path. I did not add wide speculative vector loads because page-safe C-string
+over-read risk would outweigh the current gap.
+
+Same-worker `vmi1152480`, clean `e464f5c31` baseline vs candidate, identical
+bench command and target dir:
+
+| Workload | Baseline FL | Baseline glibc | Baseline ratio | Candidate FL | Candidate glibc | Final ratio | Verdict |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `strtol_dec_short` | 14.21 ns | 8.76 ns | 1.62x | 7.65 ns | 4.82 ns | 1.59x | NEUTRAL gap-cut |
+| `strtol_dec_long` | 34.25 ns | 18.07 ns | 1.90x | 22.16 ns | 17.88 ns | 1.24x | WIN gap-cut |
+| `strtol_hex` | 37.68 ns | 18.24 ns | 2.07x | 21.38 ns | 18.02 ns | 1.19x | WIN gap-cut |
+
+Validation: `rustfmt --edition 2024 --check
+crates/frankenlibc-abi/src/stdlib_abi.rs` passed, and
+`RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p frankenlibc-abi --test
+strtol_family_differential_fuzz -- --nocapture` passed on `vmi1152480` with
+1,000,000 comparisons and 0 divergences vs host glibc. The release bench also
+compiled the ABI crate in release mode through the same `rch` target dir.
+
+Verdict: keep. This is not a full `strtol` closeout because the short row remains
+1.59x vs glibc and the bench still shows unrelated residual `strtod` and
+environment/time rows. The next credible parser lever is either an even lower
+entrypoint/endptr overhead for short `strtol` or a direct `strtod` parser; do not
+retry another generic membrane branch tweak for this exact loss.
