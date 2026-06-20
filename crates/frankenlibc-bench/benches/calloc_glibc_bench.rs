@@ -15,20 +15,23 @@
 //! `calloc`/`free` so pointers never cross allocators.
 
 use std::ffi::c_void;
+use std::hint::black_box;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 type CallocFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
+type ReallocFn = unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 
 struct HostAllocator {
     calloc: CallocFn,
+    realloc: ReallocFn,
     free: FreeFn,
 }
 
-/// Resolve a pristine host glibc `calloc`/`free` pair in an isolated link
+/// Resolve a pristine host glibc allocator in an isolated link
 /// namespace so fl's interposing `no_mangle` symbols are bypassed.
 fn host_allocator() -> &'static HostAllocator {
     static HOST: OnceLock<HostAllocator> = OnceLock::new();
@@ -43,11 +46,14 @@ fn host_allocator() -> &'static HostAllocator {
             "failed to dlmopen host libc.so.6 in isolated namespace"
         );
         let calloc = libc::dlsym(handle, b"calloc\0".as_ptr().cast());
+        let realloc = libc::dlsym(handle, b"realloc\0".as_ptr().cast());
         let free = libc::dlsym(handle, b"free\0".as_ptr().cast());
         assert!(!calloc.is_null(), "failed to resolve host glibc calloc");
+        assert!(!realloc.is_null(), "failed to resolve host glibc realloc");
         assert!(!free.is_null(), "failed to resolve host glibc free");
         HostAllocator {
             calloc: std::mem::transmute::<*mut libc::c_void, CallocFn>(calloc),
+            realloc: std::mem::transmute::<*mut libc::c_void, ReallocFn>(realloc),
             free: std::mem::transmute::<*mut libc::c_void, FreeFn>(free),
         }
     })
@@ -77,6 +83,30 @@ impl Stats {
             return;
         }
         s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let idx =
+            |pct: f64| -> usize { ((s.len().saturating_sub(1)) as f64 * pct).round() as usize };
+        let p50 = s[idx(0.50)];
+        let p95 = s[idx(0.95)];
+        let p99 = s[idx(0.99)];
+        let mean = self.total_ns as f64 / self.total_iters.max(1) as f64;
+        let throughput = if self.total_ns == 0 {
+            0.0
+        } else {
+            self.total_iters as f64 / (self.total_ns as f64 / 1e9)
+        };
+        println!(
+            "CALLOC_BENCH impl={impl_label} size={size} samples={} p50_ns_op={p50:.3} \
+             p95_ns_op={p95:.3} p99_ns_op={p99:.3} mean_ns_op={mean:.3} throughput_ops_s={throughput:.3}",
+            s.len(),
+        );
+    }
+
+    fn report_workload(&self, impl_label: &str, workload: &str) {
+        let mut s = self.samples_ns_per_op.clone();
+        if s.is_empty() {
+            return;
+        }
+        s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let p50 = percentile_sorted(&s, 0.50);
         let p95 = percentile_sorted(&s, 0.95);
         let p99 = percentile_sorted(&s, 0.99);
@@ -87,7 +117,7 @@ impl Stats {
             self.total_iters as f64 / (self.total_ns as f64 / 1e9)
         };
         println!(
-            "CALLOC_BENCH impl={impl_label} size={size} samples={} p50_ns_op={p50:.3} \
+            "REALLOC_BENCH impl={impl_label} workload={workload} samples={} p50_ns_op={p50:.3} \
              p95_ns_op={p95:.3} p99_ns_op={p99:.3} mean_ns_op={mean:.3} throughput_ops_s={throughput:.3}",
             s.len(),
         );
@@ -212,5 +242,82 @@ fn bench_calloc(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_calloc);
+const REALLOC_CASES: &[(&str, usize, usize)] = &[
+    ("same_256", 256, 256),
+    ("same_class_shrink_256_to_240", 256, 240),
+    ("cross_class_shrink_256_to_128", 256, 128),
+    ("same_class_shrink_4096_to_3584", 4096, 3584),
+];
+
+fn bench_realloc(c: &mut Criterion) {
+    let host = host_allocator();
+    let mut group = c.benchmark_group("realloc_cycle");
+    group.sample_size(30);
+
+    for &(label, initial_size, target_size) in REALLOC_CASES {
+        let ops_per_iter = if initial_size == target_size { 1 } else { 2 };
+
+        let fl_stats = std::cell::RefCell::new(Stats::default());
+        group.bench_with_input(BenchmarkId::new("fl", label), &label, |b, _| {
+            b.iter_custom(|iters| {
+                let mut p = unsafe { frankenlibc_abi::malloc_abi::malloc(initial_size) };
+                assert!(!p.is_null(), "frankenlibc malloc failed in realloc bench");
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let out = unsafe { frankenlibc_abi::malloc_abi::realloc(p, target_size) };
+                    assert!(!out.is_null(), "frankenlibc realloc failed in bench");
+                    p = black_box(out);
+                    if target_size != initial_size {
+                        let back = unsafe { frankenlibc_abi::malloc_abi::realloc(p, initial_size) };
+                        assert!(
+                            !back.is_null(),
+                            "frankenlibc realloc restore failed in bench"
+                        );
+                        p = black_box(back);
+                    }
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                unsafe { frankenlibc_abi::malloc_abi::free(p) };
+                fl_stats
+                    .borrow_mut()
+                    .record(iters.saturating_mul(ops_per_iter), dur);
+                dur
+            });
+        });
+        fl_stats.borrow().report_workload("fl", label);
+
+        let glibc_stats = std::cell::RefCell::new(Stats::default());
+        group.bench_with_input(BenchmarkId::new("glibc", label), &label, |b, _| {
+            b.iter_custom(|iters| {
+                let mut p = unsafe { (host.calloc)(1, initial_size) };
+                assert!(!p.is_null(), "host glibc calloc failed in realloc bench");
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let out = unsafe { (host.realloc)(p, target_size) };
+                    assert!(!out.is_null(), "host glibc realloc failed in bench");
+                    p = black_box(out);
+                    if target_size != initial_size {
+                        let back = unsafe { (host.realloc)(p, initial_size) };
+                        assert!(
+                            !back.is_null(),
+                            "host glibc realloc restore failed in bench"
+                        );
+                        p = black_box(back);
+                    }
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                unsafe { (host.free)(p) };
+                glibc_stats
+                    .borrow_mut()
+                    .record(iters.saturating_mul(ops_per_iter), dur);
+                dur
+            });
+        });
+        glibc_stats.borrow().report_workload("glibc", label);
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_calloc, bench_realloc);
 criterion_main!(benches);

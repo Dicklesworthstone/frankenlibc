@@ -160,6 +160,45 @@ fn test_realloc_shrink() {
 }
 
 #[test]
+fn test_realloc_same_small_size_class_shrink_updates_bounds_in_place() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { malloc(256) };
+    assert!(!p.is_null());
+    unsafe {
+        let slice = std::slice::from_raw_parts_mut(p as *mut u8, 240);
+        for (i, byte) in slice.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(3).wrapping_add(1);
+        }
+    }
+
+    let p2 = unsafe { realloc(p, 240) };
+    assert_eq!(
+        p2, p,
+        "same-size-class shrink should stay in place on the strict fallback path"
+    );
+    assert_eq!(
+        malloc_known_remaining_for_tests(p2.cast_const()),
+        Some(240),
+        "same-size-class shrink must tighten fallback bounds metadata"
+    );
+    let slice = unsafe { std::slice::from_raw_parts(p2 as *const u8, 240) };
+    for (i, &byte) in slice.iter().enumerate() {
+        assert_eq!(byte, (i as u8).wrapping_mul(3).wrapping_add(1));
+    }
+
+    let p3 = unsafe { realloc(p2, 256) };
+    assert!(
+        !p3.is_null(),
+        "realloc grow after in-place shrink should succeed"
+    );
+    let grown = unsafe { std::slice::from_raw_parts(p3 as *const u8, 240) };
+    for (i, &byte) in grown.iter().enumerate() {
+        assert_eq!(byte, (i as u8).wrapping_mul(3).wrapping_add(1));
+    }
+    unsafe { free(p3) };
+}
+
+#[test]
 fn test_realloc_null_ptr_acts_as_malloc() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     let p = unsafe { realloc(ptr::null_mut(), 128) };

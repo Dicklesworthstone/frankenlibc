@@ -1122,6 +1122,13 @@ fn stats_bin_for_size(size: usize) -> usize {
 }
 
 #[inline]
+fn same_small_malloc_size_class(a: usize, b: usize) -> bool {
+    let a_bin = frankenlibc_core::malloc::size_class::bin_index(a.max(1));
+    let b_bin = frankenlibc_core::malloc::size_class::bin_index(b.max(1));
+    a_bin < frankenlibc_core::malloc::size_class::NUM_SIZE_CLASSES && a_bin == b_bin
+}
+
+#[inline]
 fn record_alloc_stats(size: usize) {
     if size == 0 {
         return;
@@ -2129,11 +2136,20 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
 
     if strict_allocator_host_path_active() {
         if let Some(old_size) = fallback_size(ptr) {
+            let req = size.max(1);
+            if req == old_size || (req < old_size && same_small_malloc_size_class(req, old_size)) {
+                if req != old_size {
+                    fallback_insert_sized(ptr, req);
+                    record_free_stats(old_size);
+                    record_alloc_stats(req);
+                }
+                return ptr;
+            }
+
             // SAFETY: fallback-tracked pointers originate from the host allocator.
             let out = unsafe { native_libc_realloc(ptr, size) };
             if !out.is_null() {
                 let removed_size = fallback_remove_sized(ptr).unwrap_or(old_size);
-                let req = size.max(1);
                 fallback_insert_sized(out, req);
                 record_free_stats(removed_size);
                 record_alloc_stats(req);
