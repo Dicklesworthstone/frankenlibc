@@ -327,3 +327,31 @@ pre-existing warnings; `rch exec -- cargo test -p frankenlibc-abi --test
 conformance_diff_iconv_cp932 -- --nocapture` passed 3/3. Touched-file rustfmt is
 blocked by pre-existing monolithic/generated iconv formatting drift that would
 cause broad unrelated churn.
+
+### 2026-06-20 Stdio `snprintf` exact-format keep (BlackThrush / cod-a)
+
+The deployed `snprintf("%s")` / `snprintf("%s\n")` surface is still glibc-red,
+but the exact-format parser bypass is a measured same-worker FrankenLibC
+self-win and the benchmark now uses a robust host denominator.
+
+| Workload | Final FL | Fast path disabled | Host glibc | Final FL/glibc | Verdict |
+|---|---:|---:|---:|---:|---|
+| `snprintf("%s\n")` | 615.58 ns | 785.41 ns | 65.319 ns | 9.424x | WIN vs old FL, LOSS vs glibc |
+| `snprintf("%s")` | 679.92 ns | 1.1712 us | 88.771 ns | 7.659x | WIN vs old FL, LOSS vs glibc |
+
+The Stdio runtime-policy consult hypothesis was rejected separately: adding
+`ApiFamily::Stdio` to the strict high-frequency family set did not produce a
+stable improvement and was reverted. The remaining release blocker is the
+printf architecture itself: variadic extraction, format parsing, and TLS
+entrypoint machinery. The next credible stdio route is an exact-format
+specializer/JIT-style mini-parser for common printf shapes, measured against the
+same `dlmopen` host glibc arm.
+
+Validation/build: `rch exec -- cargo test -p frankenlibc-abi --test
+conformance_diff_printf_fastpaths -- --nocapture` fell back to local because no
+workers were admissible and passed 3/3. The Criterion `snprintf_s` A/B bench
+completed remotely on `vmi1293453` with
+`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`. `cargo check
+-p frankenlibc-abi --all-targets` remains blocked by pre-existing
+`zz_scratch_divmin` integration-test trait errors, and workspace rustfmt remains
+blocked by broad pre-existing formatting drift.

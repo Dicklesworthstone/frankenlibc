@@ -8,18 +8,22 @@
 //! Run: `cargo bench -p frankenlibc-bench --bench stdio_glibc_baseline_bench
 //!       --features abi-bench`
 //!
+//! `snprintf` host arms resolve glibc through `dlmopen(LM_ID_NEWLM)` so
+//! frankenlibc's exported symbols cannot shadow the baseline.
+//!
 //! Quantifies bd-2g7oyh.131: every frankenlibc `fgetc` byte pays a global
 //! registry `Mutex` (often twice) plus a per-byte membrane `decide()`, vs
 //! glibc's lock-free inline buffer-pointer bump.
 
-use std::ffi::{CString, c_void};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::hint::black_box;
+use std::sync::OnceLock;
 use std::time::Duration;
-
-use std::ffi::c_int;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_abi::stdio_abi as fl;
+
+type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
 
 unsafe extern "C" {
     // Host glibc inline-fast-path getc (skips the per-FILE lock). The libc crate
@@ -35,6 +39,22 @@ unsafe extern "C" {
 }
 
 const N: usize = 4096;
+
+fn host_snprintf() -> SnprintfFn {
+    static HOST_SNPRINTF: OnceLock<usize> = OnceLock::new();
+    let addr = *HOST_SNPRINTF.get_or_init(|| unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(!handle.is_null(), "dlmopen libc.so.6 failed");
+        let sym = libc::dlsym(handle, b"snprintf\0".as_ptr().cast());
+        assert!(!sym.is_null(), "dlsym snprintf failed");
+        sym as usize
+    });
+    unsafe { std::mem::transmute::<*mut c_void, SnprintfFn>(addr as *mut c_void) }
+}
 
 fn bench_fgetc(c: &mut Criterion) {
     let mut group = c.benchmark_group("stdio_glibc_baseline_fgetc_4096");
@@ -129,6 +149,7 @@ fn bench_snprintf_s_newline(c: &mut Criterion) {
     let mut group = c.benchmark_group("stdio_glibc_baseline_snprintf_s_newline");
     let payload = CString::new("frankenlibc canonical log line payload").expect("payload");
     let fmt = c"%s\n";
+    let host = host_snprintf();
 
     group.bench_function("frankenlibc_abi", |b| {
         b.iter(|| {
@@ -149,7 +170,46 @@ fn bench_snprintf_s_newline(c: &mut Criterion) {
         b.iter(|| {
             let mut buf = [0i8; 128];
             let rc = unsafe {
-                libc::snprintf(
+                host(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt.as_ptr(),
+                    payload.as_ptr(),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_snprintf_s_bare(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stdio_glibc_baseline_snprintf_s_bare");
+    let payload = CString::new("frankenlibc canonical log line payload").expect("payload");
+    let fmt = c"%s";
+    let host = host_snprintf();
+
+    group.bench_function("frankenlibc_abi", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 128];
+            let rc = unsafe {
+                fl::snprintf(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt.as_ptr(),
+                    payload.as_ptr(),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+
+    group.bench_function("host_glibc", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 128];
+            let rc = unsafe {
+                host(
                     buf.as_mut_ptr(),
                     buf.len(),
                     fmt.as_ptr(),
@@ -218,6 +278,6 @@ criterion_group! {
         .warm_up_time(Duration::from_millis(150))
         .measurement_time(Duration::from_millis(400));
     targets = bench_fgetc, bench_fgetc_unlocked, bench_snprintf_s_newline,
-        bench_swprintf_wide_format
+        bench_snprintf_s_bare, bench_swprintf_wide_format
 }
 criterion_main!(benches);

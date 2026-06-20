@@ -21,8 +21,9 @@ use frankenlibc_core::stdio::{
     BufMode, OpenFlags, ReadUntil, StdioStream, flags_to_oflags, parse_mode,
 };
 use frankenlibc_core::syscall as raw_syscall;
+use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
-use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, RuntimeDecision};
 
 use crate::errno_abi::set_abi_errno;
 use crate::io_internal_abi::{self, NativeFileBufMode};
@@ -3766,6 +3767,19 @@ enum DirectPrintfPayload<'a> {
     StringNewline(&'a [u8]),
 }
 
+#[inline]
+unsafe fn exact_direct_s_format(format: *const c_char) -> Option<bool> {
+    let f = format.cast::<u8>();
+    if unsafe { *f } != b'%' || unsafe { *f.add(1) } != b's' {
+        return None;
+    }
+    match unsafe { *f.add(2) } {
+        0 => Some(false),
+        b'\n' if unsafe { *f.add(3) } == 0 => Some(true),
+        _ => None,
+    }
+}
+
 /// Return the zero-copy payload for exact non-NULL `%s` and `%s\n` formats.
 ///
 /// The newline form is intentionally represented as two slices instead of
@@ -3808,6 +3822,63 @@ unsafe fn copy_direct_printf_payload(
         unsafe { *dst.add(src.len()) = b'\n' as c_char };
     }
     unsafe { *dst.add(copy_len) = 0 };
+}
+
+unsafe fn direct_snprintf_s(
+    str_buf: *mut c_char,
+    size: usize,
+    arg: *const c_char,
+    append_newline: bool,
+    mode: SafetyLevel,
+    decision: RuntimeDecision,
+) -> c_int {
+    let src = if arg.is_null() {
+        b"(null)"
+    } else {
+        unsafe { c_str_bytes(arg) }
+    };
+    let total_len = src.len().saturating_add(usize::from(append_newline));
+    let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
+    let mut adverse = false;
+    let mut has_room = size > 0 && !str_buf.is_null();
+
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(str_buf as usize)
+    {
+        let safe_size = size.min(bound);
+        if safe_size == 0 {
+            has_room = false;
+            if size > 0 {
+                adverse = true;
+                global_healing_policy().record(&HealingAction::ClampSize {
+                    requested: size,
+                    clamped: 0,
+                });
+            }
+        } else {
+            let max_payload = safe_size.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
+                global_healing_policy().record(&HealingAction::TruncateWithNull {
+                    requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
+                    truncated: copy_len,
+                });
+            }
+        }
+    }
+
+    if has_room {
+        unsafe { copy_direct_printf_payload(str_buf, src, append_newline, copy_len) };
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    printf_result_to_c_int(total_len)
 }
 
 unsafe fn try_write_direct_s_newline_stream(
@@ -3906,6 +3977,11 @@ pub unsafe extern "C" fn snprintf(
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
+    }
+
+    if let Some(append_newline) = unsafe { exact_direct_s_format(format) } {
+        let arg = unsafe { args.next_arg::<*const c_char>() };
+        return unsafe { direct_snprintf_s(str_buf, size, arg, append_newline, mode, decision) };
     }
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
