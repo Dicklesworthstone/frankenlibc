@@ -2286,3 +2286,42 @@ env mutations; the lock is skipped only where there is no concurrent access).
 
 Win/loss/neutral: clean WIN across the env write family (6x→~1x), 0 regressions.
 The whole getenv/setenv/putenv/unsetenv/clearenv family is now de-syscalled.
+
+## 2026-06-20 deployed `strtod` exact-integer fast path - keep
+
+The deployed `strtod` path now recognizes decimal tokens that normalize to an
+exactly representable `f64` integer and returns directly from the ABI layer,
+writing `endptr` from the same cursor. Fractional, rounded, hex, NaN/Inf,
+overflow, and extreme-exponent cases stay on the existing full parser.
+
+Baseline `strtol_glibc_bench` on `vmi1152480` showed `strtod_int` at 38.73 ns vs
+glibc 35.21 ns (1.10x LOSS), `strtod_simple` at 53.14 ns vs 69.35 ns (0.77x
+WIN), and `strtod_sci` at 68.09 ns vs 49.20 ns (1.38x LOSS). Candidate RCH
+selected `hz1`, so old/new nanoseconds are cross-worker; the candidate
+ratio-vs-glibc rows are still direct head-to-head on that worker:
+
+| Workload | FrankenLibC | glibc | Ratio | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| `strtol_dec_short` | 9.66 ns | 10.81 ns | 0.89x | WIN | Sentinel; unchanged family. |
+| `strtol_dec_long` | 27.76 ns | 18.52 ns | 1.50x | LOSS | Existing residual; not touched. |
+| `strtol_hex` | 20.13 ns | 18.52 ns | 1.09x | LOSS | Existing residual; not touched. |
+| `atoi_short` | 4.03 ns | 9.88 ns | 0.41x | WIN | Sentinel; unchanged family. |
+| `atoi_long` | 11.43 ns | 19.44 ns | 0.59x | WIN | Sentinel; unchanged family. |
+| `atol_short` | 3.72 ns | 8.96 ns | 0.41x | WIN | Sentinel; unchanged family. |
+| `atol_long` | 11.42 ns | 18.82 ns | 0.61x | WIN | Sentinel; unchanged family. |
+| `atoll_short` | 3.72 ns | 8.65 ns | 0.43x | WIN | Sentinel; unchanged family. |
+| `atoll_long` | 11.42 ns | 18.52 ns | 0.62x | WIN | Sentinel; unchanged family. |
+| `strtod_int` | 11.73 ns | 34.89 ns | 0.34x | WIN | Keep exact-integer fast path. |
+| `strtod_simple` | 55.85 ns | 65.76 ns | 0.85x | WIN | Existing full parser remains winning. |
+| `strtod_sci` | 20.09 ns | 45.58 ns | 0.44x | WIN | Keep exact-integer fast path. |
+| `rand` | 3.15 ns | 6.38 ns | 0.49x | WIN | Sentinel; unchanged family. |
+| `getenv_hit` | 47.49 ns | 20.56 ns | 2.31x | LOSS | Existing residual; not touched. |
+| `getenv_miss` | 74.01 ns | 29.20 ns | 2.54x | LOSS | Existing residual; not touched. |
+| `clock_gettime` | 35.78 ns | 30.54 ns | 1.17x | LOSS | Existing residual; not touched. |
+| `time` | 4.94 ns | 3.10 ns | 1.60x | LOSS | Existing residual; not touched. |
+| `pthread_self` | 2.17 ns | 2.47 ns | 0.88x | WIN | Sentinel; unchanged family. |
+
+Correctness: `strtod_strtof_live_differential_probe` passed via `rch` on
+`vmi1227854`: 8071 inputs, 0 divergences vs host glibc, including `12345`,
+`1.234567e10`, `-0e10`, and malformed exponent `1e+` cases. Full evidence:
+`tests/artifacts/perf/bd-2g7oyh-strtod-exact-fastpath.md`.

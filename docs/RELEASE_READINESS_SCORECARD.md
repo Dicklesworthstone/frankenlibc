@@ -138,6 +138,29 @@ passed 1,000,000 comparisons with 0 divergences vs host glibc on `vmi1152480`;
 and the deployed `strtol_glibc_bench` release run passed via `rch`. Full
 evidence: `tests/artifacts/perf/bd-2g7oyh-strtol-direct-cstring.md`.
 
+## 2026-06-20 `bd-2g7oyh` deployed `strtod` exact-integer keep
+
+The deployed `strtod` path now has a narrow exact-integer decimal fast path for
+tokens that normalize to an exactly representable `f64` integer. It bypasses the
+scan-then-core-parser stack only for exact cases; fractional, rounded, hex,
+NaN/Inf, overflow, and extreme-exponent cases fall through unchanged.
+
+| Workload | Baseline FL | Baseline ratio | Candidate FL | Candidate glibc | Final ratio | Verdict |
+|---|---:|---:|---:|---:|---:|---|
+| `strtod_int` | 38.73 ns | 1.10x | 11.73 ns | 34.89 ns | 0.34x | WIN |
+| `strtod_simple` | 53.14 ns | 0.77x | 55.85 ns | 65.76 ns | 0.85x | WIN |
+| `strtod_sci` | 68.09 ns | 1.38x | 20.09 ns | 45.58 ns | 0.44x | WIN |
+
+Scorecard effect: the measured deployed `strtod` rows in `strtol_glibc_bench`
+now all beat host glibc. The remaining red rows in that bench are long/hex
+`strtol`, `getenv`, `clock_gettime`, and `time`; those need separate levers.
+
+Validation/build: `strtod_strtof_live_differential_probe` passed via rch with
+8071 inputs and 0 divergences vs host glibc, including the exact-integer and
+malformed-exponent cases that route through or around this fast path. The
+release `strtol_glibc_bench` run passed via `rch` on `hz1`. Full evidence:
+`tests/artifacts/perf/bd-2g7oyh-strtod-exact-fastpath.md`.
+
 ## 2026-06-20 `bd-2g7oyh` deployed `getenv` fused-name gap cut
 
 The deployed strict `getenv` path now fuses bounded NUL discovery with invalid

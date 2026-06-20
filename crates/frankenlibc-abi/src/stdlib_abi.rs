@@ -220,6 +220,158 @@ unsafe fn parse_strtol_c_string_fast(
     Some((value, consumed, ConversionStatus::Success))
 }
 
+/// Deployed `strtod` specialization for decimal tokens that normalize to an
+/// exactly representable integer. This covers hot configuration/CLI literals
+/// like `12345` and `1.234567e10` while leaving fractional, hex, NaN/Inf,
+/// overflow, and rounded cases on the existing full parser.
+#[inline]
+unsafe fn parse_strtod_exact_integer_c_string_fast(ptr: *const c_char) -> Option<(f64, usize)> {
+    const MAX_EXACT_INTEGER: u64 = 1u64 << f64::MANTISSA_DIGITS;
+
+    let start = ptr.cast::<u8>();
+    let mut cursor = start;
+
+    loop {
+        let byte = unsafe { *cursor };
+        if !atoi_is_c_space(byte) {
+            break;
+        }
+        cursor = unsafe { cursor.add(1) };
+    }
+
+    let mut byte = unsafe { *cursor };
+    let negative = if byte == b'-' {
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+        true
+    } else if byte == b'+' {
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+        false
+    } else {
+        false
+    };
+
+    if byte == b'i' || byte == b'I' || byte == b'n' || byte == b'N' {
+        return None;
+    }
+    if byte == b'0' {
+        let next = unsafe { *cursor.add(1) };
+        if next == b'x' || next == b'X' {
+            return None;
+        }
+    }
+
+    let mut acc = 0u64;
+    let mut saw_digit = false;
+    let mut saw_dot = false;
+    let mut frac_digits = 0i32;
+
+    loop {
+        byte = unsafe { *cursor };
+        if byte.is_ascii_digit() {
+            saw_digit = true;
+            if saw_dot {
+                frac_digits = frac_digits.checked_add(1)?;
+                if frac_digits > 400 {
+                    return None;
+                }
+            }
+
+            let digit = (byte - b'0') as u64;
+            if acc != 0 || digit != 0 {
+                acc = acc.checked_mul(10)?.checked_add(digit)?;
+                if acc > MAX_EXACT_INTEGER {
+                    return None;
+                }
+            }
+            cursor = unsafe { cursor.add(1) };
+        } else if byte == b'.' && !saw_dot {
+            saw_dot = true;
+            cursor = unsafe { cursor.add(1) };
+        } else {
+            break;
+        }
+    }
+
+    if !saw_digit {
+        return None;
+    }
+
+    let mut exp10 = 0i32;
+    byte = unsafe { *cursor };
+    if byte == b'e' || byte == b'E' {
+        let exponent_start = cursor;
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+
+        let exponent_negative = if byte == b'-' {
+            cursor = unsafe { cursor.add(1) };
+            true
+        } else if byte == b'+' {
+            cursor = unsafe { cursor.add(1) };
+            false
+        } else {
+            false
+        };
+
+        let mut saw_exponent_digit = false;
+        let mut exponent = 0i32;
+        loop {
+            byte = unsafe { *cursor };
+            if !byte.is_ascii_digit() {
+                break;
+            }
+            saw_exponent_digit = true;
+            exponent = exponent
+                .checked_mul(10)?
+                .checked_add((byte - b'0') as i32)?;
+            if exponent > 400 {
+                return None;
+            }
+            cursor = unsafe { cursor.add(1) };
+        }
+
+        if saw_exponent_digit {
+            exp10 = if exponent_negative {
+                exponent.checked_neg()?
+            } else {
+                exponent
+            };
+        } else {
+            cursor = exponent_start;
+        }
+    }
+
+    let consumed = unsafe { cursor.offset_from(start) as usize };
+    let mut shift = exp10.checked_sub(frac_digits)?;
+    while shift < 0 {
+        if acc % 10 != 0 {
+            return None;
+        }
+        acc /= 10;
+        shift += 1;
+    }
+
+    if acc == 0 {
+        return Some((if negative { -0.0 } else { 0.0 }, consumed));
+    }
+    if shift > 22 {
+        return None;
+    }
+
+    let mut value = acc;
+    for _ in 0..shift {
+        if value > MAX_EXACT_INTEGER / 10 {
+            return None;
+        }
+        value *= 10;
+    }
+
+    let value = value as f64;
+    Some((if negative { -value } else { value }, consumed))
+}
+
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use libc::{intmax_t, uintmax_t};
@@ -2316,6 +2468,15 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
         }
         Some(decision.profile)
     };
+
+    if profile.is_none()
+        && let Some((value, consumed)) = unsafe { parse_strtod_exact_integer_c_string_fast(nptr) }
+    {
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr.add(consumed) as *mut c_char };
+        }
+        return value;
+    }
 
     let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
         if let Some(p) = profile {
