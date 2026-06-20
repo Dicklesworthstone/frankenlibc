@@ -2204,12 +2204,7 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
 
     let id = canonical_stream_id(stream);
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
-        // Page-safe SWAR/SIMD NUL scan (the deployed `strlen` scanner), NOT
-        // scan_c_str_len: this branch ignores the terminated flag, so the latter's
-        // known_remaining bound is pure overhead — a mutex lock + up-to-1024-slot
-        // fallback-table hash probe on every call — on top of a scalar byte loop.
-        // For a valid NUL-terminated C string `len` is identical.
-        let (len, _) = unsafe { super::string_abi::scan_c_string(s, None) };
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
         let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
         let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
         return if written == bytes.len() { 0 } else { libc::EOF };
@@ -3172,12 +3167,7 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
     }
 
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
-        // Page-safe SWAR/SIMD NUL scan (the deployed `strlen` scanner), NOT
-        // scan_c_str_len: this branch ignores the terminated flag, so the latter's
-        // known_remaining bound is pure overhead — a mutex lock + up-to-1024-slot
-        // fallback-table hash probe on every call — on top of a scalar byte loop.
-        // For a valid NUL-terminated C string `len` is identical.
-        let (len, _) = unsafe { super::string_abi::scan_c_string(s, None) };
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
         let stdout_ptr = active_stdout_stream();
         let stdout_id = canonical_stream_id(stdout_ptr);
         let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
@@ -3917,13 +3907,7 @@ unsafe fn direct_printf_string_payload<'a>(
     if p.is_null() {
         return None;
     }
-    // Length via the page-safe SWAR/SIMD scan_c_string (the deployed `strlen`
-    // scanner), NOT c_str_bytes — the latter routes through scan_c_str_len ->
-    // known_remaining, a mutex lock + fallback-table hash probe per call. Here the
-    // length only feeds a copy/write, so the bound is not load-bearing; for a valid
-    // NUL-terminated %s argument (the C contract) `len` is identical. Speeds the
-    // bare-"%s" fast path for the whole printf/fprintf/vfprintf/dprintf family.
-    let (len, _) = unsafe { super::string_abi::scan_c_string(p as *const c_char, None) };
+    let len = unsafe { c_str_bytes(p as *const c_char) }.len();
     // SAFETY: the %s contract guarantees a NUL-terminated string that remains
     // valid for the duration of the printf-family call.
     let bytes = unsafe { std::slice::from_raw_parts(p, len) };

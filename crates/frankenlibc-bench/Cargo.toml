@@ -148,3 +148,9 @@ required-features = ["abi-bench"]
 [[bench]]
 name = "snprintf_s_strict_ab_bench"
 harness = false
+
+# End-to-end fputs vs host glibc (dlmopen). Validates the puts/fputs strlen lever.
+[[bench]]
+name = "fputs_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
