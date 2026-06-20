@@ -17,6 +17,7 @@ use frankenlibc_abi::string_abi::{
 };
 use frankenlibc_abi::wchar_abi::{
     bench_scan_wcscasecmp_simd, bench_scan_wcscmp_simd, bench_wide_find_or_nul_simd,
+    bench_wide_last_before_nul_simd,
 };
 
 /// Pre-lever wcscasecmp: scalar wchar_t (u32) ASCII-folded compare to diff/NUL.
@@ -336,8 +337,8 @@ fn median_ns_per_op(rounds: usize, iters: u64, mut f: impl FnMut()) -> f64 {
 fn bench_wcsrchr_table(sizes: &[usize], rounds: usize) {
     println!("\nwcsrchr (absent target -> full wide scan to NUL):");
     println!(
-        "{:>8} | {:>12} | {:>12} | {:>12}",
-        "wchars", "old(ns)", "abi(ns)", "old/abi"
+        "{:>8} | {:>12} | {:>12} | {:>12} | {:>10}",
+        "wchars", "old(ns)", "fl(ns)", "glibc(ns)", "fl/glibc"
     );
     for &n in sizes {
         let mut s: Vec<u32> = vec![0x61u32; n + 1];
@@ -348,16 +349,22 @@ fn bench_wcsrchr_table(sizes: &[usize], rounds: usize) {
         let old = median_ns_per_op(rounds, iters, || {
             black_box(unsafe { old_scalar_wcsrchr(p, 0x5A) });
         });
-        let abi = median_ns_per_op(rounds, iters, || {
+        // fl's deployed wcsrchr scan helper (the folded-128 SIMD lever target).
+        let fl = median_ns_per_op(rounds, iters, || {
+            black_box(unsafe { bench_wide_last_before_nul_simd(p, 0x5A) });
+        });
+        // host glibc wcsrchr (the `wcsrchr` extern resolves to libc, not fl).
+        let gl = median_ns_per_op(rounds, iters, || {
             // SAFETY: NUL-terminated wide string.
             black_box(unsafe { wcsrchr(p, 0x5A) });
         });
         println!(
-            "{:>8} | {:>12.1} | {:>12.1} | {:>11.2}x",
+            "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x",
             n,
             old,
-            abi,
-            old / abi,
+            fl,
+            gl,
+            gl / fl,
         );
     }
 }

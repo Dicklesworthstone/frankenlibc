@@ -859,6 +859,11 @@ unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, us
     let cv = Simd::<u32, LANES>::splat(c);
     let zv = Simd::<u32, LANES>::splat(0);
     loop {
+        // NOTE (bd-4rxozm follow-up): a folded 4x8=128B tier was measured here and
+        // rejected NEUTRAL — fl's plain 32-byte wcsrchr scan already beats glibc at
+        // every size (1.02-2.7x), so there is no room and a 256-wchar regression
+        // appeared. Unlike wcschr (which LOST to glibc and the folded tier fixed),
+        // wcsrchr stays on the plain panel. See docs/NEGATIVE_EVIDENCE.md.
         // SAFETY: `s + i` is 32-byte aligned, so this 32-byte load stays inside
         // the current page; the string is NUL-terminated within a mapped page.
         let words = unsafe { core::ptr::read(s.add(i).cast::<[u32; LANES]>()) };
@@ -877,6 +882,16 @@ unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, us
         }
         i += LANES;
     }
+}
+
+/// Benchmark/test hook for [`wide_last_before_nul_simd`] (the wcsrchr scan).
+/// Not part of the public ABI.
+///
+/// # Safety
+/// `s` must be a valid NUL-terminated wide string.
+#[doc(hidden)]
+pub unsafe fn bench_wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, usize) {
+    unsafe { wide_last_before_nul_simd(s, c) }
 }
 
 // ---------------------------------------------------------------------------
