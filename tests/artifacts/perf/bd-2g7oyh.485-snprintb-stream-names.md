@@ -1,11 +1,12 @@
 # bd-2g7oyh.485 snprintb stream names
 
-## Lever
+## Rejected lever
 
-Replace `snprintb` and `snprintb_m` bit-name collection with a streaming
-format-string visitor. The old path parsed the full format into a temporary
-`Vec<&[u8]>` and then rendered it. The new path emits each matching name while
-walking the format bytes, eliminating that allocation and second pass.
+Tested replacing `snprintb` and `snprintb_m` bit-name collection with a
+streaming format-string visitor. The old path parsed the full format into a
+temporary `Vec<&[u8]>` and then rendered it. The candidate emitted each matching
+name while walking the format bytes, eliminating that allocation and second
+pass.
 
 ## Why this lane
 
@@ -20,14 +21,37 @@ walking the format bytes, eliminating that allocation and second pass.
 
 ## Benchmark guard
 
-`crates/frankenlibc-bench/benches/stdio_bench.rs` now has
+`crates/frankenlibc-bench/benches/stdio_bench.rs` has
 `stdio_snprintb/named_bits_stream_12`, a fixed 12-name flag corpus with mixed
-sparse, dense, and all-bits values. That row is the later Criterion batch gate
-for this lever.
+sparse, dense, and all-bits values. That row is the reusable Criterion gate for
+future `snprintb` formatter work.
+
+## Measured verdict
+
+No host-glibc comparator exists for BSD `snprintb`, so this row is explicitly
+old-vs-new only. Same-worker `vmi1149989` Criterion evidence rejected the
+streaming visitor:
+
+| Workload | Old collect-Vec p50 | Streaming visitor p50 | Ratio | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| `stdio_snprintb/named_bits_stream_12` | 1.3316 us | 1.3500 us | 1.014x | NEUTRAL/REJECT | Reverted source to `collect_set_names`; kept the bench hook and behavior guard. |
+
+Commands:
+
+- Baseline worktree at `8143748abe186ee6f568b60f456f73da49f41a57` with the
+  benchmark hook patched in:
+  `AGENT_NAME=BlackThrush RCH_WORKER=hz1 CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo bench -p frankenlibc-bench --bench stdio_bench -- stdio_snprintb/named_bits_stream_12`
+- Candidate/current tree before revert:
+  `AGENT_NAME=BlackThrush RCH_WORKER=vmi1149989 CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo bench -p frankenlibc-bench --bench stdio_bench -- stdio_snprintb/named_bits_stream_12`
+
+The candidate median was 1.4% slower than the old path and had high outliers.
+Under the campaign rule to revert regressions and near-zero gains, the source
+lever is rejected. Do not retry this exact streaming visitor without a fresh
+allocation-dominant or multiline-specific profile.
 
 ## Contract guard
 
-`crates/frankenlibc-core/src/stdio/snprintb.rs` now has
+`crates/frankenlibc-core/src/stdio/snprintb.rs` keeps
 `streaming_name_scan_preserves_nul_stop_and_strays`, covering:
 
 - Stray printable bytes before the first bit spec are ignored.
@@ -45,22 +69,29 @@ for this lever.
   same-worker Criterion miss, not the generic "remove Vec" family.
 - Do not claim allocator `calloc` mmap-zero or stdio `fwrite`/`fread` direct
   bypass in a check-only turn; those leaves need broader behavior proof.
-- This batch only claims `snprintb` temporary-name-vector removal. If
-  `stdio_snprintb/named_bits_stream_12` fails to improve in the later batch
-  gate, reject/revert this lever and route to a different formatter primitive.
+- This batch rejects `snprintb` temporary-name-vector removal. Route follow-up
+  through a different formatter primitive or a workload where multiline
+  wrapping or allocation dominates the profile.
 
 ## Local validation
 
-- `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b AGENT_NAME=BlackThrush cargo check -p frankenlibc-core`
-  passed.
-- `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b AGENT_NAME=BlackThrush cargo check -p frankenlibc-bench --benches`
-  passed.
-- Per campaign instruction, no tests, `rch`, or Criterion benchmark run was
-  executed in this code-first turn.
+- `AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo test -p frankenlibc-core stdio::snprintb --lib`
+  passed on `hz1`: 13 passed, 0 failed.
+- `AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo check -p frankenlibc-bench --bench stdio_bench`
+  passed on `hz1`.
+- Both commands reported the known pre-existing `iconv` unused/dead-code
+  warnings plus the existing unused math constant; no new warning is from
+  `snprintb`.
+- `cargo fmt --check -p frankenlibc-core` remains blocked by broad pre-existing
+  formatting drift in unrelated core modules and generated iconv tables.
+- `AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo clippy -p frankenlibc-core --lib -- -D warnings`
+  failed on `vmi1293453` with pre-existing unrelated core lints in
+  `iconv`, `math`, `resolv`, and `stdio::printf`; no failure cited
+  `stdio::snprintb`.
 
 ## Landing note
 
 The source/bench/artifact payload landed in shared commit
 `545d57ee9c3ee1b110cf86444737fe920e13d42f` after a concurrent commit picked up
-the staged index. This follow-up ledger keeps the `bd-2g7oyh.485` audit trail
-explicit without rewriting the peer-owned commit.
+the staged index. This follow-up ledger records the measured reject and source
+revert without rewriting the peer-owned commit.

@@ -41,13 +41,15 @@ pub fn format_snprintb(fmt: &[u8], val: u64) -> Vec<u8> {
         _ => return Vec::new(),
     }
 
-    let mut group_open = false;
-    visit_set_names(&fmt[1..], val, |name| {
-        out.push(if group_open { b',' } else { b'<' });
-        out.extend_from_slice(name);
-        group_open = true;
-    });
-    if group_open {
+    let names = collect_set_names(&fmt[1..], val);
+    if !names.is_empty() {
+        out.push(b'<');
+        for (i, name) in names.iter().enumerate() {
+            if i > 0 {
+                out.push(b',');
+            }
+            out.extend_from_slice(name);
+        }
         out.push(b'>');
     }
     out
@@ -72,13 +74,17 @@ pub fn format_snprintb_m(fmt: &[u8], val: u64, max_per_line: usize) -> Vec<u8> {
         _ => return Vec::new(),
     }
 
+    let names = collect_set_names(&fmt[1..], val);
     let mut out: Vec<u8> = Vec::new();
     out.extend_from_slice(&prefix);
+    if names.is_empty() {
+        return out;
+    }
 
     let mut line_len = prefix.len();
     let mut group_open = false;
 
-    visit_set_names(&fmt[1..], val, |name| {
+    for name in &names {
         // Length we'd add: '<' or ',' + name + ('>' if we need to
         // close before the boundary check). We compute the running
         // length after appending and decide to wrap if it exceeds.
@@ -105,7 +111,7 @@ pub fn format_snprintb_m(fmt: &[u8], val: u64, max_per_line: usize) -> Vec<u8> {
             line_len += name.len();
             group_open = true;
         }
-    });
+    }
 
     if group_open {
         out.push(b'>');
@@ -155,9 +161,11 @@ fn write_hex(out: &mut Vec<u8>, val: u64) {
     }
 }
 
-/// Walk `body` (the format string after the base byte) and visit set-bit names
+/// Walk `body` (the format string after the base byte), collect the
+/// names whose corresponding bit is set in `val`, and return them
 /// in format-string order.
-fn visit_set_names(body: &[u8], val: u64, mut visit: impl FnMut(&[u8])) {
+fn collect_set_names(body: &[u8], val: u64) -> Vec<&[u8]> {
+    let mut names: Vec<&[u8]> = Vec::new();
     let mut i = 0usize;
     while i < body.len() {
         let b = body[i];
@@ -177,7 +185,7 @@ fn visit_set_names(body: &[u8], val: u64, mut visit: impl FnMut(&[u8])) {
                 name_end += 1;
             }
             if bit < 64 && (val & (1u64 << bit)) != 0 {
-                visit(&body[i + 1..name_end]);
+                names.push(&body[i + 1..name_end]);
             }
             i = name_end;
         } else {
@@ -185,6 +193,7 @@ fn visit_set_names(body: &[u8], val: u64, mut visit: impl FnMut(&[u8])) {
             i += 1;
         }
     }
+    names
 }
 
 #[cfg(test)]
