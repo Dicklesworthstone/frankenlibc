@@ -39,6 +39,8 @@ retried and real wins are confirmed with numbers.
 | 2026-06-19 | default hot-hit stat skip + libc `getenv` probe (`bd-2g7oyh.493`, candidate B) | `glibc_baseline_grp_lookup/getgrnam_root` | 16.181 us | 40.272 us | 0.402x | WIN | Cross-worker guard only; `rch` routed to `hz1` despite an `hz2` preference. Rejected/not landed because target `getgrgid_0` lost same-run p50. |
 | 2026-06-19 | default hot-hit stat skip + libc `getenv` probe (`bd-2g7oyh.493`, candidate B) | `glibc_baseline_grp_lookup/getgrgid_0` | 16.152 us | 10.022 us | 1.612x | LOSS | Rejected/not landed. Same-run `hz1` loss; do not retry default-only stat/env bypass as the residual fix. |
 | 2026-06-19 | strict `grp` runtime-policy bypass (`bd-2g7oyh.494`, candidate) | `glibc_baseline_grp_lookup/getgrgid_0` | 9.831 us | 11.091 us | 0.886x | WIN / NO-SHIP | Rejected/not landed as a gain. Candidate run on `vmi1293453` beat glibc, but the clean `HEAD` baseline that completed was on `vmi1153651` (FL already 0.851x glibc), and the same-path `vmi1167313` baseline hung before structured/host output. Cross-worker absolute speedup is routing evidence only. See `tests/artifacts/perf/bd-2g7oyh.494-strict-grp-policy-bypass-reject.md`. |
+| 2026-06-20 | passwd uid hot-result cache + uid-only C stat fingerprint (`bd-2g7oyh.495`) | `nss_passwd_lookup/getpwuid_0_glibc_comparable` | 17.881 us | 13.144 us | 1.361x | LOSS vs glibc / WIN vs old fl | Partial keep. Same-worker `hz1` old-vs-new improves FrankenLibC p50 23.970 -> 17.881 us (0.746x, -25.4%) and Criterion estimate 22.650 -> 19.038 us (0.840x), but p50 still loses vs glibc. `ovh-a` corroboration: 11.426 us vs 10.099 us, 1.131x p50 loss / 0.943x mean win. Route remaining gap to a per-generation uid index or lower-cost invalidation primitive. |
+| 2026-06-20 | passwd uid hot-result cache guard (`bd-2g7oyh.495`) | `nss_passwd_lookup/getpwnam_root_glibc_comparable` | 9.386 us | 10.109 us | 0.929x | WIN guard | Cross-worker `ovh-a` guard only; the lever is uid-only and should not be credited as a name-lookup win. Same-worker `hz1` name timings were noisy with both FL and glibc slower in the candidate run, so this row records no regression signal, not target progress. |
 | 2026-06-19 | calloc `alloc_zeroed` fresh-mmap skip (`bd-7ak6cm`) | `calloc_glibc_bench` 1 MiB (new vs old) | 13028.9 ns (new) | 12522.4 ns (old) | 1.040x | LOSS | Reverted. `ovh-a`, single-process controlled new-vs-old (calloc/alloc_zeroed vs malloc+write_bytes). NEUTRAL 256 B–4 MiB (band 0.98–1.04), slight loss at 1 MiB. Root cause: arena forces `align=32 > MIN_ALIGN(16)`, so Rust `System::alloc_zeroed` never forwards to libc `calloc` — it does `alloc`+`write_bytes` identically to baseline, so the mmap-zeroed skip is unreachable. Kept reusable bench harness; see `tests/artifacts/perf/bd-7ak6cm-calloc-alloc-zeroed.md`. glibc 1 MiB p50 11792.4 ns (~6% under `fl_old`; fixed membrane overhead, not memset). |
 | 2026-06-19 | general `powf` f64 `exp(y·ln x)` route (`bd-z8p3mx`) | `powf_glibc_bench` general_big_e | 30.85 ns (fl) | 7.89 ns (glibc) | 3.91x | LOSS-vs-glibc / **WIN-vs-fl_old 0.689x** | KEPT — strict improvement, no regression. fl general powf 1.4–1.6x faster than the prior `libm::powf` fallback (general_big_e 0.689x, general_small_1p7 0.609x, general_big_pi 0.726x vs fl_old) but still ~3.9x slower than glibc's fused f32 kernel (two f64 transcendentals vs one fused f32). Accuracy ≤1 ULP over 6981 inputs (new gate `conformance_diff_powf_general`); overflow/underflow/subnormal defer to libm so errno/FE parity holds. Follow-up bead filed for the fused-kernel port. See `tests/artifacts/perf/bd-z8p3mx-powf-general-f64-route.md`. |
 | 2026-06-19 | fused single-pass f32 `powf` kernel — glibc `__ieee754_powf` port (`bd-z8p3mx` / `bd-fused-f32-powf-kernel`) | `powf_glibc_bench` general_big_e | 9.27 ns (fl) | 7.53 ns (glibc) | 1.23x | **near-parity / WIN-vs-fl_old 0.206x** | KEPT — supersedes the f64 route above. Ported ARM optimized-routines `powf.c` + tables (same algorithm glibc ships). **4.8x faster than the prior libm fallback** (general 0.205–0.206x, medium 0.215x vs fl_old) and within **1.23x of glibc**, down from the f64 route's 3.9x. **Bit-exact (0 ULP)** over 6981 inputs — it is glibc's algorithm. Placing it ahead of the int/medium gauntlet also halved the medium-box path (18.9→9.4 ns) and neutralized the exponent-1.337 overfit grid. Residual 1.23x is Rust call/branch overhead vs glibc leaf asm. Conformance green (powf_general bit-exact, 1.337 gate, errno, fp_exceptions). See `tests/artifacts/perf/bd-z8p3mx-powf-general-f64-route.md`. |
@@ -1006,6 +1008,75 @@ Retry-condition predicate: do not retry passwd colon-field scanner or byte-decim
 reshaping as a standalone performance lever. The next passwd/NSS perf work should
 target lookup/cache behavior, especially the `getpwuid(0)` scan path, with a
 fresh deployed ABI vs glibc benchmark.
+
+## 2026-06-20 `bd-2g7oyh.495` passwd uid hot-result cache partial keep
+
+Focused gauntlet target: the residual deployed ABI `getpwuid(0)` loss left by
+the rejected passwd parser attempt above.
+
+Lever:
+
+- Add a generation-scoped hot cache for the most recent successful uid lookup in
+  `pwd_abi` TLS storage.
+- Reuse the already-materialized `libc::passwd` when the same uid is requested
+  for the same passwd-file generation.
+- Use the faster C `stat` fingerprint probe only on uid lookup paths, mirroring
+  the group gid-cache shape from `bd-2g7oyh.492`.
+- Do not retry the parser scanner/byte-decimal shape.
+
+Commands:
+
+```bash
+AGENT_NAME=BlackThrush \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,AGENT_NAME \
+rch exec -- cargo bench -p frankenlibc-bench --features abi-bench \
+  --bench baseline_capture_bench nss_passwd_lookup \
+  -- --noplot --sample-size 10 --warm-up-time 1 --measurement-time 2
+```
+
+Same-worker comparison used a detached baseline worktree at `c1d89cd58`
+(`perf(math): fused f64 pow log+exp kernel`) and the candidate scratch worktree.
+Both completed on `hz1`. The first pre-edit run on `hz2` is retained only as
+routing evidence.
+
+| Run | Workload | FrankenLibC p50 | glibc p50 | fl/glibc | FrankenLibC Criterion estimate | glibc Criterion estimate | Verdict |
+|---|---|---:|---:|---:|---:|---:|---|
+| `hz1` baseline `c1d89cd58` | `getpwuid_0` | 23.970 us | 9.042 us | 2.651x | 22.650 us | 9.097 us | LOSS |
+| `hz1` candidate | `getpwuid_0` | 17.881 us | 13.144 us | 1.361x | 19.038 us | 13.302 us | LOSS vs glibc, WIN vs old fl |
+| `ovh-a` candidate corroboration | `getpwuid_0` | 11.426 us | 10.099 us | 1.131x | 11.578 us | 10.016 us | p50 LOSS, mean WIN |
+| `ovh-a` candidate guard | `getpwnam_root` | 9.386 us | 10.109 us | 0.929x | 9.135 us | 10.106 us | WIN guard |
+
+Same-worker target improvement on `hz1`:
+
+- FrankenLibC p50 `23.970 -> 17.881 us`, ratio `0.746x` (`-25.4%`).
+- FrankenLibC Criterion estimate `22.650 -> 19.038 us`, ratio `0.840x`
+  (`-16.0%`).
+- FrankenLibC p95 `34.776 -> 27.371 us`, ratio `0.787x`.
+
+Verdict: **partial keep**, not p50 domination. The target path is materially
+faster and the `ovh-a` run corroborates that the candidate can approach glibc,
+but `getpwuid(0)` remains a p50 loss against host glibc under the formal ledger
+rule.
+
+Validation:
+
+- `rustfmt --edition 2024 --check crates/frankenlibc-abi/src/pwd_abi.rs crates/frankenlibc-abi/tests/pwd_abi_test.rs`: passed.
+- `cargo check -p frankenlibc-abi`: passed on rch (`hz1`) before rebase and
+  on the post-rebase tree via rch `ovh-a`; both runs had only unrelated
+  pre-existing warnings.
+- `cargo test -p frankenlibc-abi --test pwd_abi_test getpwuid_refreshes_cached_uid_after_backend_change`:
+  passed on rch (`hz1`) before rebase and on the post-rebase tree via rch
+  `vmi1152480`, 1 passed.
+- `cargo build -p frankenlibc-abi --release`: passed on the post-rebase tree via
+  rch `vmi1152480`, with only unrelated pre-existing warnings.
+- `git diff --check HEAD~1..HEAD` and touched-file `rustfmt --check`: passed
+  after rebase.
+
+Retry-condition predicate: do not retry passwd parser reshaping or a hot-result
+cache alone. The next attempt should remove lookup work rather than just reuse
+the last result, for example a per-generation uid index over a parsed snapshot,
+or a lower-cost immutable file-epoch/invalidation primitive shared with group.
 
 ## 2026-06-19 cod-a parser batch measured classification
 

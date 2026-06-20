@@ -278,6 +278,40 @@ fn getpwuid_finds_by_uid() {
 }
 
 #[test]
+fn getpwuid_refreshes_cached_uid_after_backend_change() {
+    let _guard = PASSWD_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = temp_passwd_path();
+    std::fs::write(
+        &path,
+        b"root:x:0:0:root:/root:/bin/sh\nalice:x:1000:1000:Alice:/home/alice:/bin/bash\n",
+    )
+    .expect("write initial temp passwd");
+
+    unsafe { std::env::set_var("FRANKENLIBC_PASSWD_PATH", &path) };
+
+    let first = unsafe { getpwuid(1000) };
+    assert!(!first.is_null());
+    let first_dir = unsafe { CStr::from_ptr((*first).pw_dir) };
+    assert_eq!(first_dir.to_bytes(), b"/home/alice");
+
+    std::fs::write(
+        &path,
+        b"root:x:0:0:root:/root:/bin/sh\nalice:x:1000:1000:Alice:/srv/alice:/bin/zsh\n",
+    )
+    .expect("rewrite temp passwd");
+
+    let second = unsafe { getpwuid(1000) };
+    assert!(!second.is_null());
+    let second_dir = unsafe { CStr::from_ptr((*second).pw_dir) };
+    assert_eq!(second_dir.to_bytes(), b"/srv/alice");
+
+    unsafe {
+        endpwent();
+        std::env::remove_var("FRANKENLIBC_PASSWD_PATH");
+    }
+}
+
+#[test]
 fn getpwuid_not_found() {
     with_passwd_file(FIXTURE, || {
         let pw = unsafe { getpwuid(9999) };
