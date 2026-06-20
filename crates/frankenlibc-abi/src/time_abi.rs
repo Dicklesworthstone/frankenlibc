@@ -23,6 +23,7 @@ use crate::util::scan_c_string;
 
 type VdsoClockGettimeFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
 type VdsoGettimeofdayFn = unsafe extern "C" fn(*mut libc::timeval, *mut libc::timezone) -> c_int;
+type VdsoTimeFn = unsafe extern "C" fn(*mut libc::time_t) -> libc::time_t;
 
 const ASCTIME_R_BUF_BYTES: usize = 26;
 /// Buffer for the non-reentrant `asctime`/`ctime`. glibc's static buffer is
@@ -62,6 +63,7 @@ struct VdsoSymbols {
     handle_opened: bool,
     clock_gettime: Option<VdsoClockGettimeFn>,
     gettimeofday: Option<VdsoGettimeofdayFn>,
+    time: Option<VdsoTimeFn>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -244,12 +246,13 @@ fn resolve_vdso_symbols() -> VdsoSymbols {
     // bounds-checked against the ELF's own fields and any anomaly returns `None`
     // entries, so callers fall back to the raw syscall — a parse failure is never
     // fatal and never produces a bad pointer.
-    let (clock_gettime, gettimeofday) = unsafe { parse_vdso(base) };
+    let (clock_gettime, gettimeofday, time) = unsafe { parse_vdso(base) };
     VdsoSymbols {
         mapping_present: true,
-        handle_opened: clock_gettime.is_some() || gettimeofday.is_some(),
+        handle_opened: clock_gettime.is_some() || gettimeofday.is_some() || time.is_some(),
         clock_gettime,
         gettimeofday,
+        time,
     }
 }
 
@@ -314,12 +317,16 @@ unsafe fn vdso_cstr_eq(p: *const u8, target: &[u8]) -> bool {
     unsafe { *p.add(target.len()) == 0 }
 }
 
-/// Port of the kernel's reference `parse_vdso`: resolve `__vdso_clock_gettime`
-/// and `__vdso_gettimeofday` from the mapped vDSO ELF at `base`.
+/// Port of the kernel's reference `parse_vdso`: resolve `__vdso_clock_gettime`,
+/// `__vdso_gettimeofday` and `__vdso_time` from the mapped vDSO ELF at `base`.
 unsafe fn parse_vdso(
     base: usize,
-) -> (Option<VdsoClockGettimeFn>, Option<VdsoGettimeofdayFn>) {
-    let none = (None, None);
+) -> (
+    Option<VdsoClockGettimeFn>,
+    Option<VdsoGettimeofdayFn>,
+    Option<VdsoTimeFn>,
+) {
+    let none = (None, None, None);
     let ehdr = base as *const Elf64Ehdr;
     let ident = unsafe { &(*ehdr).e_ident };
     if ident[0] != 0x7f || ident[1] != b'E' || ident[2] != b'L' || ident[3] != b'F' {
@@ -376,6 +383,7 @@ unsafe fn parse_vdso(
     let symtab = symtab as *const Elf64Sym;
     let mut clock_gettime: Option<VdsoClockGettimeFn> = None;
     let mut gettimeofday: Option<VdsoGettimeofdayFn> = None;
+    let mut time: Option<VdsoTimeFn> = None;
     for s in 0..nchain {
         let sym = unsafe { &*symtab.add(s) };
         if sym.st_value == 0 || sym.st_name == 0 {
@@ -383,18 +391,17 @@ unsafe fn parse_vdso(
         }
         let name = (strtab + sym.st_name as usize) as *const u8;
         let addr = load_offset.wrapping_add(sym.st_value as usize);
+        // SAFETY of each transmute: a resolved address is an executable vDSO entry
+        // with this exact C-ABI signature.
         if clock_gettime.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_clock_gettime") } {
-            // SAFETY: the resolved address is an executable vDSO entry with this
-            // exact C-ABI signature.
             clock_gettime = Some(unsafe { core::mem::transmute::<usize, VdsoClockGettimeFn>(addr) });
-        } else if gettimeofday.is_none()
-            && unsafe { vdso_cstr_eq(name, b"__vdso_gettimeofday") }
-        {
-            gettimeofday =
-                Some(unsafe { core::mem::transmute::<usize, VdsoGettimeofdayFn>(addr) });
+        } else if gettimeofday.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_gettimeofday") } {
+            gettimeofday = Some(unsafe { core::mem::transmute::<usize, VdsoGettimeofdayFn>(addr) });
+        } else if time.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_time") } {
+            time = Some(unsafe { core::mem::transmute::<usize, VdsoTimeFn>(addr) });
         }
     }
-    (clock_gettime, gettimeofday)
+    (clock_gettime, gettimeofday, time)
 }
 
 fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
@@ -439,6 +446,24 @@ pub unsafe extern "C" fn time(tloc: *mut i64) -> i64 {
     if !tracked_optional_object_fits(tloc.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
+    }
+
+    // vDSO fast path: glibc's `time()` reads the seconds straight from the vvar
+    // page via `__vdso_time` (~2.5 ns) rather than a full `clock_gettime`. Pass a
+    // null pointer and store into `tloc` ourselves so the membrane bounds-check
+    // above remains the sole writer of caller memory. A valid wall-clock second
+    // count is always positive; treat anything else as a miss and fall through.
+    if vdso_resolution_enabled() {
+        let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
+        if let Some(vdso_time) = symbols.time {
+            let secs = unsafe { vdso_time(std::ptr::null_mut()) };
+            if secs > 0 {
+                if !tloc.is_null() {
+                    unsafe { *tloc = secs };
+                }
+                return secs;
+            }
+        }
     }
 
     let mut ts = libc::timespec {

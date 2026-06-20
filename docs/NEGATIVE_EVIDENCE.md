@@ -2040,3 +2040,26 @@ regressions, gates green. **KEY METHOD: LD_PRELOAD the fl cdylib + a C micro-loo
 is the GROUND TRUTH for startup-state-gated deployed paths the criterion bench
 can't reach — it disproved my "bench artifact" call and is now THE tool for vDSO/
 startup-gated perf. fl IS LD_PRELOAD-able (didn't crash).**
+
+## 2026-06-20 time() — 89x → 1.14x: added __vdso_time (vvar read); + gettimeofday fixed free by the parser
+
+Follow-up to the vDSO parser. Two more vDSO wins:
+- **gettimeofday was already fixed free** by last commit: `raw_gettimeofday` was
+  already wired to `symbols.gettimeofday`, which the parser now resolves
+  (`__vdso_gettimeofday`). No code change needed.
+- **time()**: glibc's `time()` reads the seconds straight from the vvar page via
+  `__vdso_time` (~2 ns); fl's did a full `clock_gettime` (which the parser already
+  sped up, 89x→14.6x). Added `__vdso_time` to the parser (3rd symbol) + a vDSO
+  fast path in `time()` (call `__vdso_time(NULL)`, store into `tloc` ourselves so
+  the membrane bounds-check stays the sole writer; a valid second count is always
+  positive, anything else falls through to clock_gettime).
+
+Measured: time() criterion bench **37 → 2.18 ns (14.6x → 1.14x)**; LD_PRELOAD
+ground truth **fl 0.02 s vs glibc 0.01 s** over 3M calls (was ~89x as a raw
+syscall) — fault-free. Across the two commits, time() went **89x → ~1.14x**.
+Conformance green: conformance_diff_clock (6), conformance_diff_gmtime (2).
+
+Win/loss/neutral: clean WIN (time 89x→1.14x, gettimeofday free), 0 regressions.
+The vDSO clock family (clock_gettime/gettimeofday/time) is now all near-parity
+with glibc. Remaining clock_gettime ~1.36x residual = fl's per-call
+valid-clock-id + vdso-enabled wrapper checks around the vDSO call.
