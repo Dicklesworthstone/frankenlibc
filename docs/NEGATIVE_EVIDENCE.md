@@ -81,7 +81,7 @@ wcscasecmp/wmemcmp parity.
 **fl LOSES (ratio > 1.05) — the residual gap list:**
 | fn | fl/glibc | note |
 |---|---|---|
-| memmove_4096 | 1.174x | CONTESTED ("other agents" own mem*) + `memset_abi_bench` memmove shows fl WINNING at 4096 (benches disagree → measurement-path ambiguity, not pursued) |
+| memmove_4096 (core slice variant) | 1.174x | RESOLVED: not a deployed loss. The two benches call DIFFERENT fl fns — `glibc_baseline_bench` runs the core slice `frankenlibc_core::string::mem::memmove` (the 1.174x loser), `memset_abi_bench` runs `raw_memmove_bytes` (wins 1.17x). The DEPLOYED `memmove` ABI uses `raw_memmove_bytes` (string_abi.rs:1685) → real programs get the WIN. The slow core slice variant is off the deployed hot path (contested mem* area, not pursued). |
 | strncasecmp_256_equal | 1.099x | ~10% at 256B equal; scan_strcasecmp already 32B-SIMD; residual is per-call/dual-page-guard, membrane-noise class |
 | strncmp_256_equal | 1.052x | ~5% at 256B equal; scan_strcmp already 32B dual-ptr SIMD; marginal |
 | deployed strlen @256K | ~1.25-2x | 32B portable_simd vs glibc wider AVX; folded-128 measured NEUTRAL (single NUL compare); needs AVX-512 = not closable on these workers |
