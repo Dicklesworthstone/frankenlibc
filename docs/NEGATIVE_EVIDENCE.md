@@ -2190,3 +2190,24 @@ SIMD agent: known_remaining + select_string_simd_dispatch per call), malloc
 for those owners rather than risk-poking owned code mid-flight. My own
 non-owned broad lever (entrypoint_scope) is done. Caveat (recurring): the
 criterion `*_glibc_bench` does NOT show these — only the LD_PRELOAD harness does.
+
+## 2026-06-20 setenv/putenv/unsetenv/clearenv — 6x → ~1x: ENVIRON_LOCK single-threaded skip (the getenv lever, write paths)
+
+The getenv fix skipped `ENVIRON_LOCK`'s per-call `gettid()` syscall on the READ
+path; the env WRITE family still paid it. LD_PRELOAD: setenv **6.2x** (fl 1.36s vs
+glibc 0.22s/1M), unsetenv **5.8x**. Added a shared `environ_lock_guard()` →
+`Option<AbiReentrantMutexGuard>` (Some only when `__libc_single_threaded == 0`)
+and routed all 7 `ENVIRON_LOCK.lock()` write/helper sites (setenv/putenv/unsetenv/
+clearenv/...) through it. The lock only guards against a concurrent setenv
+reallocating the table; single-threaded there is none, so skip it (and its
+syscall), exactly as glibc elides its lock single-threaded. Flag flips at first
+pthread_create.
+
+Measured (LD_PRELOAD): setenv **1.36 → 0.27 s (6.2x → 1.17x)**, unsetenv
+**1.22 → 0.12 s (5.8x → 0.57x WIN)** — ~5-10x faster, now at/under glibc.
+Conformance green: conformance_diff_setenv (2), conformance_diff_getenv (2),
+metamorphic_getenv (9), conformance_diff_secure_getenv (6). Value-preserving (same
+env mutations; the lock is skipped only where there is no concurrent access).
+
+Win/loss/neutral: clean WIN across the env write family (6x→~1x), 0 regressions.
+The whole getenv/setenv/putenv/unsetenv/clearenv family is now de-syscalled.

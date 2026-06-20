@@ -421,12 +421,33 @@ static ENVIRON_OWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 pub(crate) static ENVIRON_LOCK: crate::util::AbiReentrantMutex<()> =
     crate::util::AbiReentrantMutex::new(());
 
+/// Acquire `ENVIRON_LOCK` only when the process is multi-threaded.
+///
+/// `AbiReentrantMutex::lock()` issues a `gettid()` SYSCALL every call (via
+/// `current_tid()`), and the lock exists solely to keep a concurrent `setenv`
+/// from reallocating the environ table out from under another thread. While
+/// `__libc_single_threaded` is set there is no concurrent access, so the lock —
+/// and its syscall — is pure overhead (measured: setenv ~6x, getenv was ~40x).
+/// The flag flips to 0 at the first `pthread_create`, restoring the lock for all
+/// subsequent concurrent env access. Mirrors glibc's single-threaded lock elision.
+#[inline]
+fn environ_lock_guard() -> Option<crate::util::AbiReentrantMutexGuard<'static, ()>> {
+    if crate::glibc_internal_abi::__libc_single_threaded
+        .load(std::sync::atomic::Ordering::Acquire)
+        == 0
+    {
+        Some(ENVIRON_LOCK.lock())
+    } else {
+        None
+    }
+}
+
 /// Cross-module helper: run `f` with the environ array held stable. Other
 /// ABI modules (process_abi for PATH lookup, etc.) need to walk environ
 /// without UAFing on a concurrent setenv realloc; this acquires the same
 /// lock the mutators use.
 pub(crate) fn with_environ_locked<R>(f: impl FnOnce(*mut *mut c_char) -> R) -> R {
-    let _lock = ENVIRON_LOCK.lock();
+    let _lock = environ_lock_guard();
     // SAFETY: HOST_ENVIRON is the libc environ pointer; the lock guards the
     // array layout against concurrent realloc by setenv/unsetenv/clearenv.
     let envp = unsafe { HOST_ENVIRON };
@@ -453,7 +474,7 @@ unsafe fn environ_len() -> usize {
 /// safely realloc. Safe to call multiple times (idempotent). Must be called
 /// after `init_environment_globals` has set the environ aliases.
 pub fn take_environ_ownership() {
-    let _lock = ENVIRON_LOCK.lock();
+    let _lock = environ_lock_guard();
     // SAFETY: we hold the environ lock.
     let _ = unsafe { ensure_environ_owned() };
 }
@@ -507,7 +528,7 @@ unsafe fn native_setenv(
         }
     }
 
-    let _lock = ENVIRON_LOCK.lock();
+    let _lock = environ_lock_guard();
     let environ_owned = unsafe { ensure_environ_owned() };
 
     // Build "NAME=value" string
@@ -604,7 +625,7 @@ unsafe fn native_setenv(
 /// Native unsetenv: scan and remove from environ.
 #[inline]
 unsafe fn native_unsetenv(name: *const c_char, name_len: usize) -> c_int {
-    let _lock = ENVIRON_LOCK.lock();
+    let _lock = environ_lock_guard();
     unsafe { remove_from_environ(name, name_len) }
 }
 
@@ -624,13 +645,13 @@ unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
         Some(p) => p,
         None => {
             // No '=': unset the variable (glibc behavior)
-            let _lock = ENVIRON_LOCK.lock();
+            let _lock = environ_lock_guard();
             return unsafe { remove_from_environ(string, len) };
         }
     };
     let name_len = eq_pos;
 
-    let _lock = ENVIRON_LOCK.lock();
+    let _lock = environ_lock_guard();
     let environ_owned = unsafe { ensure_environ_owned() };
 
     // Scan for existing entry with same name
@@ -3171,7 +3192,7 @@ pub unsafe extern "C" fn clearenv() -> c_int {
 
     let mut cleared = false;
     {
-        let _lock = ENVIRON_LOCK.lock();
+        let _lock = environ_lock_guard();
         // SAFETY: HOST_ENVIRON is the process environment array. Holding
         // ENVIRON_LOCK makes the array stable while we replace its first slot
         // with the terminating NULL entry.
