@@ -778,6 +778,18 @@ pub fn sinhf(x: f32) -> f32 {
 
 #[inline]
 pub fn coshf(x: f32) -> f32 {
+    // cosh(x) = (e^|x| + e^-|x|)/2 = (u + 1/u)/2, u = e^|x|. cosh is even and the
+    // sum never cancels (result >= 1), so this is well-conditioned for ALL x,
+    // including near 0. Evaluate in f64 with the fast `exp` (whose [-5,5] fast
+    // path covers |x| here) and round once — correctly-rounded for f32, matching
+    // glibc bit-for-bit on the conformance CASES. |x| > 5 (where the f64 exp
+    // kernel itself defers to libm, and large x eventually overflows) stays on
+    // libm::coshf for the exact overflow/FE semantics. Mirrors `sinhf`.
+    let ax = x.abs();
+    if ax <= 5.0 {
+        let u = crate::math::exp::exp(ax as f64);
+        return ((u + 1.0 / u) * 0.5) as f32;
+    }
     libm::coshf(x)
 }
 

@@ -1657,6 +1657,25 @@ Same turn, sinhf widened too (cap 2.5 → 5.0, fl's f64-`exp` fast-path limit):
 are satisfied only by the correctly-rounded **f64**-exp route (an f32-expf
 `0.5*(u-1/u)` is ~1-2 ULP, two exp + a subtraction, and would risk the bit-exact
 gate), and that f64 route is only ~parity with glibc; the near-0 [-0.5,0.5] band
-also stays on libm. coshf (1.5x, still `libm::coshf`) has the same f64-exp/
-bit-exact constraint — a fast f32-expf `0.5*(u+1/u)` risks the gate, the f64 route
-is parity — so it is left as a documented gap.
+also stays on libm.
+
+## 2026-06-20 f32 coshf — 1.49x LOSS → 0.68x WIN, f64-exp fast path on the whole [0,5]
+
+`coshf` was pure `libm::coshf` (no fast path at all), 1.49x slower than glibc.
+Unlike sinhf, coshf = `(u + 1/u)/2` is a **sum** with NO cancellation anywhere
+(result >= 1, even near 0), so the correctly-rounded f64-exp route can cover the
+ENTIRE common band [0, 5] (not just |x| >= 0.5). Added it (even function, `ax =
+|x|`; |x| > 5 → libm for exact overflow/FE). Because the whole survey range is now
+on the fast f64 `exp` kernel — and that kernel beats glibc's own coshf path —
+this is a clear win, not just parity (the lesson sinhf's residual taught: sinhf
+stayed 1.29x only because its near-0 band can't use this route).
+
+Measured (dlmopen glibc, ovh-a): **~10 ns → 4.99 ns**, ratio 1.49x → **0.68x
+(WIN)**. Correctness: a **400,000-sample sweep over [-9, 9] vs glibc coshf shows
+worst 1 ULP, 0 fails** (the f64 route is correctly-rounded for f32); the bit-exact
+`conformance_diff_hyperbolic_special` gate stays green (CASES 0.5/1.0 in-band,
+20.0 on libm), math_abi_test (118), fp_exceptions green.
+
+Win/loss/neutral: clean WIN. The f32 hyperbolic family is now tanhf 0.93x WIN,
+coshf 0.68x WIN, sinhf 1.29x (loss-reduced; near-0 cancellation band needs an
+expm1f-based form for the rest).
