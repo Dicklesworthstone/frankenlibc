@@ -1218,6 +1218,8 @@ static FALLBACK_ALLOC_PTRS: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
 static FALLBACK_ALLOC_SIZES: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
     [const { AtomicUsize::new(0) }; FALLBACK_ALLOC_TABLE_SLOTS];
 static FALLBACK_ALLOC_TABLE_LOCK: AtomicBool = AtomicBool::new(false);
+static FALLBACK_ALLOC_MIN_ADDR: AtomicUsize = AtomicUsize::new(usize::MAX);
+static FALLBACK_ALLOC_MAX_ADDR: AtomicUsize = AtomicUsize::new(0);
 
 struct FallbackAllocTableGuard;
 
@@ -1250,6 +1252,13 @@ fn fallback_key(ptr: *mut c_void) -> Option<usize> {
 #[inline]
 fn fallback_start_index(key: usize) -> usize {
     key.wrapping_mul(0x9e37_79b9_7f4a_7c15) % FALLBACK_ALLOC_TABLE_SLOTS
+}
+
+#[inline]
+fn publish_fallback_range(key: usize, size: usize) {
+    let end = key.saturating_add(size.max(1));
+    FALLBACK_ALLOC_MIN_ADDR.fetch_min(key, Ordering::AcqRel);
+    FALLBACK_ALLOC_MAX_ADDR.fetch_max(end, Ordering::AcqRel);
 }
 
 fn fallback_contains(ptr: *mut c_void) -> bool {
@@ -1286,6 +1295,7 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
         let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
         if slot == key {
             if size != 0 {
+                publish_fallback_range(key, size);
                 FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
             }
             return;
@@ -1298,10 +1308,12 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
         }
         if slot == FALLBACK_SLOT_EMPTY {
             if let Some(tomb_idx) = first_tombstone {
+                publish_fallback_range(key, size);
                 FALLBACK_ALLOC_SIZES[tomb_idx].store(size, Ordering::Relaxed);
                 FALLBACK_ALLOC_PTRS[tomb_idx].store(key, Ordering::Release);
                 return;
             }
+            publish_fallback_range(key, size);
             FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
             FALLBACK_ALLOC_PTRS[idx].store(key, Ordering::Release);
             return;
@@ -1309,6 +1321,7 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
     }
 
     if let Some(tomb_idx) = first_tombstone {
+        publish_fallback_range(key, size);
         FALLBACK_ALLOC_SIZES[tomb_idx].store(size, Ordering::Relaxed);
         FALLBACK_ALLOC_PTRS[tomb_idx].store(key, Ordering::Release);
     }
@@ -1359,25 +1372,11 @@ fn fallback_remaining(addr: usize) -> Option<usize> {
     if addr <= FALLBACK_SLOT_TOMBSTONE {
         return None;
     }
-    // PERF SOURCE-FIX (bd-2g7oyh — needs build+test, NOT a blind edit: allocator hot
-    // path + concurrency). This fn takes the `lock_fallback_alloc_table()` MUTEX on
-    // EVERY call — including for addresses that CANNOT be tracked allocations: rodata
-    // (printf/scanf format-string literals), .data, and stack buffers. Those are the
-    // common operands of every `known_remaining` hot-path caller (the format/
-    // caller-string scans documented at `c_str_bytes`, sscanf/scanf_core, plus
-    // clock_gettime's `tracked_required_object_fits`). PLAN — a BYTE-IDENTICAL,
-    // source-level lock elimination that fixes the whole `known_remaining`-lock vein
-    // at once (strictly better than the per-caller `c_str_bytes` strict-gate, which
-    // had a UB caveat): maintain atomic min/max of tracked-allocation addresses
-    // (update on insert at the FALLBACK_ALLOC_PTRS stores above; never shrink on
-    // remove — a wider range just yields fewer skips, still correct), then here:
-    // `if addr < TRACKED_MIN.load(Acquire) || addr >= TRACKED_MAX.load(Acquire)
-    //  { return None; }` BEFORE locking. Out-of-range ⇒ definitely not tracked ⇒
-    // `None`, identical to the current locked-probe result, but lock-free. Removes
-    // the per-call mutex for the dominant rodata/stack-pointer case. Defer to a
-    // cargo+test turn: this is the allocator's safety-critical path (a wrong range
-    // or a race would corrupt bounds checks), so it must be Miri/loom/conformance-
-    // verified, not shipped blind.
+    let min_addr = FALLBACK_ALLOC_MIN_ADDR.load(Ordering::Acquire);
+    let max_addr = FALLBACK_ALLOC_MAX_ADDR.load(Ordering::Acquire);
+    if addr < min_addr || addr >= max_addr {
+        return None;
+    }
     // Fast path: use hash-based probing (up to 1024 slots) instead of full scan.
     // This is O(1) amortized instead of O(262144), at the cost of potentially
     // missing interior pointers that hash to a different slot. For exact-start
@@ -1501,6 +1500,14 @@ pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
 #[doc(hidden)]
 pub fn malloc_known_remaining_for_tests(ptr: *const c_void) -> Option<usize> {
     known_remaining(ptr as usize)
+}
+
+#[doc(hidden)]
+pub fn malloc_fallback_range_for_tests() -> (usize, usize) {
+    (
+        FALLBACK_ALLOC_MIN_ADDR.load(Ordering::Acquire),
+        FALLBACK_ALLOC_MAX_ADDR.load(Ordering::Acquire),
+    )
 }
 
 const MCHECK_OK: c_int = 0;

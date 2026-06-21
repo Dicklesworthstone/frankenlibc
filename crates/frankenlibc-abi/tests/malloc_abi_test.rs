@@ -8,12 +8,13 @@ use frankenlibc_abi::htm_fast_path::{
 };
 use frankenlibc_abi::malloc_abi::{
     __libc_freeres, aligned_alloc, calloc, cfree, free, mallinfo, mallinfo2, malloc,
-    malloc_current_reentry_slot_index_for_tests, malloc_htm_reset_for_tests,
-    malloc_htm_snapshot_for_tests, malloc_info, malloc_known_remaining_for_tests,
-    malloc_reentry_multithreaded_latched_for_tests, malloc_restore_reentry_depth_for_tests,
-    malloc_stats, malloc_stats_init_for_tests, malloc_swap_reentry_depth_for_tests, malloc_trim,
-    malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc,
-    signal_runtime_ready_for_tests, take_last_decision_gate_for_tests, valloc,
+    malloc_current_reentry_slot_index_for_tests, malloc_fallback_range_for_tests,
+    malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests, malloc_info,
+    malloc_known_remaining_for_tests, malloc_reentry_multithreaded_latched_for_tests,
+    malloc_restore_reentry_depth_for_tests, malloc_stats, malloc_stats_init_for_tests,
+    malloc_swap_reentry_depth_for_tests, malloc_trim, malloc_usable_size, mallopt, memalign,
+    posix_memalign, pvalloc, realloc, signal_runtime_ready_for_tests,
+    take_last_decision_gate_for_tests, valloc,
 };
 use frankenlibc_abi::unistd_abi::mprobe;
 use std::collections::HashMap;
@@ -668,6 +669,63 @@ fn test_realloc_zero_in_reentrant_path_untracks_fallback_allocation() {
         malloc_known_remaining_for_tests(p.cast_const()),
         None,
         "realloc(ptr, 0) must not leave stale fallback bounds for freed memory"
+    );
+}
+
+#[test]
+fn test_fallback_range_filter_preserves_tracked_bounds_and_skips_out_of_range() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    struct ReentryDepthGuard(u32);
+
+    impl Drop for ReentryDepthGuard {
+        fn drop(&mut self) {
+            malloc_restore_reentry_depth_for_tests(self.0);
+        }
+    }
+
+    let reentry_depth = ReentryDepthGuard(malloc_swap_reentry_depth_for_tests(1));
+    let p = unsafe { malloc(128) };
+    drop(reentry_depth);
+    assert!(
+        !p.is_null(),
+        "reentrant malloc should produce a fallback allocation"
+    );
+
+    let addr = p as usize;
+    let (min_addr, max_addr) = malloc_fallback_range_for_tests();
+    assert!(
+        min_addr <= addr && addr.saturating_add(128) <= max_addr,
+        "fallback range must conservatively cover the tracked allocation: range={min_addr:#x}..{max_addr:#x}, ptr={addr:#x}"
+    );
+    assert_eq!(
+        malloc_known_remaining_for_tests(p.cast_const()),
+        Some(128),
+        "range filter must not exclude an exact tracked allocation pointer"
+    );
+
+    let out_of_range = if min_addr > 16 {
+        (min_addr - 1) as *const c_void
+    } else {
+        max_addr as *const c_void
+    };
+    assert_eq!(
+        malloc_known_remaining_for_tests(out_of_range),
+        None,
+        "out-of-range addresses should skip fallback-table lookup and remain unknown"
+    );
+
+    let stack_byte = 0u8;
+    assert_eq!(
+        malloc_known_remaining_for_tests((&stack_byte as *const u8).cast()),
+        None,
+        "ordinary stack addresses must remain untracked"
+    );
+
+    unsafe { free(p) };
+    assert_eq!(
+        malloc_known_remaining_for_tests(p.cast_const()),
+        None,
+        "free must still remove the tracked allocation even though the range is monotone"
     );
 }
 
