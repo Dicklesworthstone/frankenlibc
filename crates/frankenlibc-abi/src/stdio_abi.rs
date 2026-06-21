@@ -7595,12 +7595,26 @@ unsafe impl Sync for MemFixedSync {}
 /// Registry of fmemopen fixed-buffer metadata, keyed by stream sentinel ID.
 static MEM_FIXED_SYNC: Mutex<Option<ArtifactHashMap<usize, MemFixedSync>>> = Mutex::new(None);
 
+/// Monotonic "has any `fmemopen` fixed-buffer stream ever been created?" flag
+/// (cookie-pattern twin of `MEM_STREAM_SYNC_PRESENT`). `sync_fmemopen_full` runs
+/// on every mem-backed flush/close but only does work for fmemopen-fixed ids;
+/// without any such stream the lock + lookup is pure waste. Set on `fmemopen`
+/// (Release), loaded with Acquire, never reset (the stream's sentinel id is only
+/// published after the store, so the fast path is correct).
+static MEM_FIXED_SYNC_PRESENT: AtomicBool = AtomicBool::new(false);
+
 fn mem_fixed_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, MemFixedSync>>> {
     &MEM_FIXED_SYNC
 }
 
 /// Synchronize the full fmemopen fixed buffer contents to the caller.
 unsafe fn sync_fmemopen_full(id: usize, stream: &StdioStream) {
+    // Lock-free fast path: no fmemopen-fixed stream has ever been created, so this
+    // id cannot have fixed-buffer metadata. The id is only published after the
+    // Release store in `fmemopen`, so this Acquire load is correct.
+    if !MEM_FIXED_SYNC_PRESENT.load(Ordering::Acquire) {
+        return;
+    }
     let guard = mem_fixed_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -7915,6 +7929,9 @@ pub unsafe extern "C" fn fmemopen(
                 size,
             },
         );
+        // Publish before releasing the lock and before the stream id is returned,
+        // so the lock-free fast path in `sync_fmemopen_full` is correct.
+        MEM_FIXED_SYNC_PRESENT.store(true, Ordering::Release);
         if open_flags.truncate && open_flags.readable && size > 0 {
             unsafe {
                 *buf.cast::<u8>() = 0;
