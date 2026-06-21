@@ -122,6 +122,104 @@ const fn strtol_digit_value(byte: u8) -> Option<u8> {
     }
 }
 
+#[inline]
+const fn strtol_hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+#[inline]
+unsafe fn parse_strtol_positive_decimal_fast(ptr: *const u8) -> (i64, usize, ConversionStatus) {
+    // Caller has already proved the first byte is an unsigned decimal digit.
+    let mut cursor = ptr;
+    let mut acc = 0u64;
+    let mut digits = 0usize;
+
+    loop {
+        let byte = unsafe { *cursor };
+        let digit = byte.wrapping_sub(b'0');
+        if digit > 9 {
+            break;
+        }
+
+        let digit = digit as u64;
+        if digits < 18 {
+            acc = acc * 10 + digit;
+        } else {
+            let cutoff = (i64::MAX as u64) / 10;
+            let cutlim = (i64::MAX as u64) % 10;
+            if acc > cutoff || (acc == cutoff && digit > cutlim) {
+                cursor = unsafe { cursor.add(1) };
+                while unsafe { *cursor }.wrapping_sub(b'0') <= 9 {
+                    cursor = unsafe { cursor.add(1) };
+                }
+                let consumed = unsafe { cursor.offset_from(ptr) as usize };
+                return (i64::MAX, consumed, ConversionStatus::Overflow);
+            }
+            acc = acc * 10 + digit;
+        }
+
+        digits += 1;
+        cursor = unsafe { cursor.add(1) };
+    }
+
+    let consumed = unsafe { cursor.offset_from(ptr) as usize };
+    (acc as i64, consumed, ConversionStatus::Success)
+}
+
+#[inline]
+unsafe fn parse_strtol_positive_hex_fast(ptr: *const u8) -> (i64, usize, ConversionStatus) {
+    // Caller has already proved the first byte is a base-16 digit.
+    let mut cursor = ptr;
+    let mut byte = unsafe { *cursor };
+
+    if byte == b'0' {
+        let next = unsafe { *cursor.add(1) };
+        if next == b'x' || next == b'X' {
+            let after_prefix = unsafe { *cursor.add(2) };
+            if strtol_hex_digit(after_prefix).is_some() {
+                cursor = unsafe { cursor.add(2) };
+                byte = after_prefix;
+            }
+        }
+    }
+
+    let mut acc = 0u64;
+    let mut digits = 0usize;
+    loop {
+        let Some(digit) = strtol_hex_digit(byte) else {
+            break;
+        };
+        let digit = digit as u64;
+        if digits < 15 {
+            acc = (acc << 4) | digit;
+        } else {
+            let cutoff = (i64::MAX as u64) >> 4;
+            let cutlim = (i64::MAX as u64) & 0xf;
+            if acc > cutoff || (acc == cutoff && digit > cutlim) {
+                cursor = unsafe { cursor.add(1) };
+                while strtol_hex_digit(unsafe { *cursor }).is_some() {
+                    cursor = unsafe { cursor.add(1) };
+                }
+                let consumed = unsafe { cursor.offset_from(ptr) as usize };
+                return (i64::MAX, consumed, ConversionStatus::Overflow);
+            }
+            acc = (acc << 4) | digit;
+        }
+
+        digits += 1;
+        cursor = unsafe { cursor.add(1) };
+        byte = unsafe { *cursor };
+    }
+
+    let consumed = unsafe { cursor.offset_from(ptr) as usize };
+    (acc as i64, consumed, ConversionStatus::Success)
+}
+
 /// Deployed `strtol` specialization for the hot bases measured in the
 /// glibc head-to-head bench. It fuses the NUL scan and parse so `endptr` comes
 /// from the same cursor that found the first non-digit.
@@ -134,7 +232,16 @@ unsafe fn parse_strtol_c_string_fast(
         return None;
     }
 
-    let mut cursor = ptr.cast::<u8>();
+    let start = ptr.cast::<u8>();
+    let first = unsafe { *start };
+    if base == 10 && first.wrapping_sub(b'0') <= 9 {
+        return Some(unsafe { parse_strtol_positive_decimal_fast(start) });
+    }
+    if base == 16 && strtol_hex_digit(first).is_some() {
+        return Some(unsafe { parse_strtol_positive_hex_fast(start) });
+    }
+
+    let mut cursor = start;
     loop {
         let byte = unsafe { *cursor };
         if !atoi_is_c_space(byte) {
