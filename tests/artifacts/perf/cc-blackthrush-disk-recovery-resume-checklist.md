@@ -99,3 +99,22 @@ Verify each against the scanf conformance + metamorphic gates (the `!terminated`
 behavior change is UB-only: fl-malloc'd unterminated buffer → was EOF, becomes
 glibc-style parse-to-NUL; differential-vs-glibc gates should pass since strict ==
 glibc-compat).
+
+## Step 6 — TOP PRIORITY byte-identical source-fix: `fallback_remaining` range-filter
+
+PREFER THIS over the per-caller Step-5 gates: it is BYTE-IDENTICAL (no UB caveat) and
+fixes the ENTIRE `known_remaining`-lock vein at the source (every printf/scanf format
+scan, snprintf %s, puts/fputs strlen, clock_gettime's tracked_required_object_fits, …)
+in one change. `fallback_remaining(addr)` (malloc_abi.rs ~1358) takes the alloc-table
+MUTEX on every call even for addresses that cannot be tracked allocations (rodata format
+literals, .data, stack buffers — the common operands). Add atomic `TRACKED_MIN`/
+`TRACKED_MAX` of tracked-alloc addresses, updated at ALL THREE insert sites
+(FALLBACK_ALLOC_PTRS stores ~1302/1306/1313 — use `fetch_min`/`fetch_max`, never shrink
+on remove → a wider range only means fewer skips, never a wrong exclusion → byte-identical),
+then `if addr < TRACKED_MIN.load(Acquire) || addr >= TRACKED_MAX.load(Acquire) { return None; }`
+BEFORE the lock. Correct-by-design (min/max always bound all live tracked allocs ⇒ a
+tracked addr is never excluded). DEFERRED to cargo+test ONLY because it is the allocator's
+safety-critical concurrent path: must be Miri + loom + full conformance verified (a wrong
+range or a missed insert site would silently bypass bounds checks). Documented as
+`// PERF SOURCE-FIX` at `fallback_remaining`. Once this lands, the Step-5 per-caller gates
+become unnecessary.
