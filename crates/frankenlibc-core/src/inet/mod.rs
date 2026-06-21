@@ -117,19 +117,24 @@ pub fn inet_pton(af: i32, src: &[u8], dst: &mut [u8]) -> i32 {
 
 /// Converts an IP address from binary to text form.
 ///
-/// Equivalent to C `inet_ntop`. `af` is the address family.
-/// Returns the formatted address string as bytes, or `None` for unsupported
-/// family or wrong-sized `src`.
-pub fn inet_ntop(af: i32, src: &[u8]) -> Option<Vec<u8>> {
+/// Write the `inet_ntop` text into `out` and return the byte length written, or
+/// `None` for unsupported family / wrong-sized `src` / `out` too small. IPv4 is
+/// fully allocation-free; the deployed ABI path uses this with a stack buffer to
+/// avoid the per-call heap `Vec` that `inet_ntop` (the owning wrapper) imposes.
+pub fn inet_ntop_into(af: i32, src: &[u8], out: &mut [u8]) -> Option<usize> {
     match af {
         AF_INET => {
             if src.len() < 4 {
                 return None;
             }
-            // Byte-level format (no `format!` String + Display machinery).
             let addr = [src[0], src[1], src[2], src[3]];
             let len = format_ipv4_len(&addr);
-            Some(format_ipv4(&addr)[..len].to_vec())
+            if out.len() < len {
+                return None;
+            }
+            let buf = format_ipv4(&addr);
+            out[..len].copy_from_slice(&buf[..len]);
+            Some(len)
         }
         AF_INET6 => {
             if src.len() < 16 {
@@ -137,10 +142,26 @@ pub fn inet_ntop(af: i32, src: &[u8]) -> Option<Vec<u8>> {
             }
             let mut addr = [0u8; 16];
             addr.copy_from_slice(&src[..16]);
-            Some(format_ipv6_canonical(&addr).into_bytes())
+            let s = format_ipv6_canonical(&addr);
+            let b = s.as_bytes();
+            if out.len() < b.len() {
+                return None;
+            }
+            out[..b.len()].copy_from_slice(b);
+            Some(b.len())
         }
         _ => None,
     }
+}
+
+/// Equivalent to C `inet_ntop`. `af` is the address family.
+/// Returns the formatted address string as bytes, or `None` for unsupported
+/// family or wrong-sized `src`. Thin owning wrapper over [`inet_ntop_into`]
+/// (max text is IPv6 "x:x:x:x:x:x:255.255.255.255" = 45 bytes; 64 is ample).
+pub fn inet_ntop(af: i32, src: &[u8]) -> Option<Vec<u8>> {
+    let mut buf = [0u8; 64];
+    let len = inet_ntop_into(af, src, &mut buf)?;
+    Some(buf[..len].to_vec())
 }
 
 // ---------------------------------------------------------------------------

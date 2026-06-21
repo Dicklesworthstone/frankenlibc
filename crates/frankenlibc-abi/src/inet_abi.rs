@@ -287,9 +287,12 @@ pub unsafe extern "C" fn inet_ntop(
     }
 
     let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, src_size) };
-    match inet_core::inet_ntop(af, src_slice) {
-        Some(text) => {
-            let required = text.len() + 1;
+    // Format into a stack buffer (no per-call heap `Vec`); max text is IPv6
+    // "x:x:x:x:x:x:255.255.255.255" = 45 bytes, 64 is ample.
+    let mut text_buf = [0u8; 64];
+    match inet_core::inet_ntop_into(af, src_slice, &mut text_buf) {
+        Some(text_len) => {
+            let required = text_len + 1;
             if required > size as usize {
                 unsafe { set_abi_errno(errno::ENOSPC) };
                 runtime_policy::observe(ApiFamily::Inet, decision.profile, 10, true);
@@ -301,8 +304,8 @@ pub unsafe extern "C" fn inet_ntop(
                 return std::ptr::null();
             }
             let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, required) };
-            dst_slice[..text.len()].copy_from_slice(&text);
-            dst_slice[text.len()] = 0; // NUL terminator
+            dst_slice[..text_len].copy_from_slice(&text_buf[..text_len]);
+            dst_slice[text_len] = 0; // NUL terminator
             runtime_policy::observe(ApiFamily::Inet, decision.profile, 10, false);
             dst as *const c_char
         }
