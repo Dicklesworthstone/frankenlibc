@@ -513,6 +513,40 @@ fn bench(c: &mut Criterion) {
     });
     gtw.finish();
 
+    // ---- memmem per-candidate cost (controlled): needle "qXXXXXXXXe" (first 'q'
+    // rare=4, last 'e' common=16 → first-byte path on 'q'). Both haystacks 70 B,
+    // match at 60; vary ONLY decoy 'q' count (1 vs 4 candidates). (cand4-cand1)/3
+    // isolates per-candidate (memchr-restart + verify) cost at equal bytes scanned.
+    let mmc_ndl = b"qXXXXXXXXe";
+    let mk = |qpos: &[usize]| -> Vec<u8> {
+        let mut v = vec![b'.'; 70];
+        v[60..70].copy_from_slice(mmc_ndl);
+        for &p in qpos {
+            v[p] = b'q'; // decoy 'q' followed by '.' (!= 'X') → verify fails fast
+        }
+        v
+    };
+    let cand1 = mk(&[]); // only the match's 'q' at 60
+    let cand4 = mk(&[0, 20, 40]); // 3 decoy 'q's + the match
+    assert_eq!(frankenlibc_core::string::mem::memmem(&cand1, 70, mmc_ndl, 10), Some(60));
+    assert_eq!(frankenlibc_core::string::mem::memmem(&cand4, 70, mmc_ndl, 10), Some(60));
+    let mut gc1 = c.benchmark_group("survey_memmem_cand1");
+    gc1.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::mem::memmem(black_box(&cand1), 70, mmc_ndl, 10)))
+    });
+    gc1.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { memmem(black_box(cand1.as_ptr().cast()), 70, mmc_ndl.as_ptr().cast(), 10) }))
+    });
+    gc1.finish();
+    let mut gc4 = c.benchmark_group("survey_memmem_cand4");
+    gc4.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::mem::memmem(black_box(&cand4), 70, mmc_ndl, 10)))
+    });
+    gc4.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { memmem(black_box(cand4.as_ptr().cast()), 70, mmc_ndl.as_ptr().cast(), 10) }))
+    });
+    gc4.finish();
+
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
 }
