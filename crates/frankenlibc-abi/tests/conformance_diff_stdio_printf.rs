@@ -439,6 +439,13 @@ fn diff_sscanf_int_cases() {
         (b"  abc\0", b"%d\0"),       // no digits → match count 0
         (b"\0", b"%d\0"),            // empty input
         (b"1 2 3\0", b"%d %d %d\0"), // multi
+        (b"1 2\0", b"%d %d %d\0"),   // partial multi → count 2
+        (b"1 x 3\0", b"%d %d %d\0"), // second conversion mismatch → count 1
+        (b"\0", b"%d %d %d\0"),      // empty multi → EOF
+        (
+            b"2147483648 -2147483649 +7\0",
+            b"%d %d %d\0",
+        ), // int overflow wraps like glibc
     ];
     for (input, fmt) in cases {
         // For multi-arg cases we need 3 ints; use a fixed buffer of 4.

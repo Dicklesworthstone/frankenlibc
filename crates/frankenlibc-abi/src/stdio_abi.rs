@@ -146,26 +146,172 @@ unsafe fn scan_c_str_len(ptr: *const c_char, bound: Option<usize>) -> (usize, bo
     }
 }
 
-// PERF CHOKEPOINT (bd-2g7oyh — needs build+test, not a blind disk-low edit):
+#[inline]
+unsafe fn strict_c_str_len(ptr: *const c_char) -> (usize, bool) {
+    if runtime_policy::strict_passthrough_active() {
+        unsafe { crate::string_abi::scan_c_string(ptr, None) }
+    } else {
+        unsafe { scan_c_str_len(ptr, None) }
+    }
+}
+
+// PERF CHOKEPOINT (bd-2g7oyh):
 // This helper is the shared format-string length scan for the ENTIRE printf family
 // (printf/fprintf/sprintf/snprintf/vprintf/vsnprintf/dprintf/asprintf — ~12 entry
-// points each call `c_str_bytes(format)`) and other caller-string sites. It routes
-// through `scan_c_str_len(ptr, None)` -> `known_remaining` -> `fallback_remaining`
-// (a `lock_fallback_alloc_table()` MUTEX + up-to-1024 hash probe) + a scalar byte
-// loop, PER CALL — for a typically-short caller FORMAT string (no stream/registry
-// lock here, so this is a meaningful fraction). PLAN: gate at this ONE chokepoint —
-// in strict mode return `string_abi::scan_c_string(ptr, None).0` (page-safe SWAR, no
-// lock); keep `scan_c_str_len` (the known_remaining bound) in hardened mode. NOT
+// points each call `c_str_bytes(format)`) and other caller-string sites. Strict mode
+// uses `string_abi::scan_c_string(ptr, None)` (page-safe SWAR, no allocation-table
+// lock); hardened mode keeps `scan_c_str_len` and its known_remaining bound. NOT
 // byte-identical for the UB case (a tracked-but-unterminated buffer: the bound stops
 // at the alloc end, scan_c_string scans to NUL = glibc-compatible) — same caveat as
 // the sscanf/scanf_core levers, so gate on strict + verify with printf/scanf
-// conformance. Gating HERE fixes printf format scans + scanf (via scanf_core's own
-// scan) + every other c_str_bytes caller at once.
+// conformance.
 #[inline]
 pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
-    let (len, _) = unsafe { scan_c_str_len(ptr, None) };
-    // SAFETY: `scan_c_str_len` scanned until the first NUL byte, so this range is readable.
+    let (len, _) = unsafe { strict_c_str_len(ptr) };
+    // SAFETY: the selected C-string scan reached the first NUL byte, so this range is readable.
     unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) }
+}
+
+#[derive(Clone, Copy)]
+struct StrictThreeIntScan {
+    count: c_int,
+    input_failure: bool,
+    values: [c_int; 3],
+}
+
+enum StrictIntScan {
+    Value(c_int, *const u8),
+    InputEnd,
+    MatchFail,
+}
+
+#[inline]
+fn scanf_ascii_space(b: u8) -> bool {
+    b == b' ' || (b >= b'\t' && b <= b'\r')
+}
+
+#[inline]
+unsafe fn strict_format_is_three_decimal_ints(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    let pattern = b"%d %d %d\0";
+    for (idx, &want) in pattern.iter().enumerate() {
+        if unsafe { *f.add(idx) } != want {
+            return false;
+        }
+    }
+    true
+}
+
+#[inline]
+fn clamp_scanf_i64_magnitude(val: u64, negative: bool, overflowed: bool) -> i64 {
+    if negative {
+        const MIN_MAGNITUDE: u64 = 1u64 << 63;
+        if overflowed || val > MIN_MAGNITUDE {
+            i64::MIN
+        } else if val == MIN_MAGNITUDE {
+            i64::MIN
+        } else {
+            -(val as i64)
+        }
+    } else if overflowed || val > i64::MAX as u64 {
+        i64::MAX
+    } else {
+        val as i64
+    }
+}
+
+#[inline]
+unsafe fn strict_scan_decimal_int(mut p: *const u8) -> StrictIntScan {
+    loop {
+        let b = unsafe { *p };
+        if !scanf_ascii_space(b) {
+            break;
+        }
+        p = unsafe { p.add(1) };
+    }
+
+    let mut b = unsafe { *p };
+    if b == 0 {
+        return StrictIntScan::InputEnd;
+    }
+
+    let negative = match b {
+        b'-' => {
+            p = unsafe { p.add(1) };
+            true
+        }
+        b'+' => {
+            p = unsafe { p.add(1) };
+            false
+        }
+        _ => false,
+    };
+
+    let mut val = 0u64;
+    let mut overflowed = false;
+    let mut any_digit = false;
+    loop {
+        b = unsafe { *p };
+        if !b.is_ascii_digit() {
+            break;
+        }
+        any_digit = true;
+        let d = (b - b'0') as u64;
+        match val.checked_mul(10).and_then(|v| v.checked_add(d)) {
+            Some(next) => val = next,
+            None => {
+                val = u64::MAX;
+                overflowed = true;
+            }
+        }
+        p = unsafe { p.add(1) };
+    }
+
+    if !any_digit {
+        return StrictIntScan::MatchFail;
+    }
+
+    let wide = clamp_scanf_i64_magnitude(val, negative, overflowed);
+    StrictIntScan::Value(wide as c_int, p)
+}
+
+#[inline]
+unsafe fn strict_scan_three_decimal_ints(s: *const c_char) -> StrictThreeIntScan {
+    let mut p = s.cast::<u8>();
+    let mut values = [0; 3];
+    let mut count = 0usize;
+    for slot in &mut values {
+        match unsafe { strict_scan_decimal_int(p) } {
+            StrictIntScan::Value(value, next) => {
+                *slot = value;
+                p = next;
+                count += 1;
+            }
+            StrictIntScan::InputEnd => {
+                return StrictThreeIntScan {
+                    count: if count == 0 {
+                        libc::EOF
+                    } else {
+                        count as c_int
+                    },
+                    input_failure: count == 0,
+                    values,
+                };
+            }
+            StrictIntScan::MatchFail => {
+                return StrictThreeIntScan {
+                    count: count as c_int,
+                    input_failure: false,
+                    values,
+                };
+            }
+        }
+    }
+    StrictThreeIntScan {
+        count: 3,
+        input_failure: false,
+        values,
+    }
 }
 
 /// Take at most `limit` WIDE CHARACTERS (Unicode scalar values) from the leading
@@ -5922,18 +6068,11 @@ fn scanf_core_impl(
     format: *const c_char,
     wide_input: bool,
 ) -> Option<(ScanResult, Vec<ScanDirective>)> {
-    // PERF (bd-2g7oyh, same lever family as the sscanf input scan — needs build+test):
+    // PERF (bd-2g7oyh, same lever family as the sscanf input scan):
     // this is the SHARED scanf engine, so EVERY scanf variant (sscanf/fscanf/
-    // vfscanf/vsscanf/wide) pays a `scan_c_str_len(format, None)` -> known_remaining
-    // -> fallback_remaining (a `lock_fallback_alloc_table()` MUTEX + up-to-1024 hash
-    // probe) here just to length a caller FORMAT string that is typically 2-8 bytes
-    // — the lock dwarfs the scan. PLAN: in strict mode use the page-safe SWAR
-    // `string_abi::scan_c_string(format, None)` (no lock). Same not-byte-identical
-    // caveat as the sscanf input scan (the `!fmt_terminated` early-out is a hardening
-    // bound for fl-tracked unterminated format buffers) — gate on strict, keep
-    // scan_c_str_len in hardened. Broader than the sscanf input lever: it benefits
-    // stream-based scanf too. Verify vs glibc + scanf conformance when disk recovers.
-    let (fmt_len, fmt_terminated) = unsafe { scan_c_str_len(format, None) };
+    // vfscanf/vsscanf/wide) lengths a short caller FORMAT string here. Strict mode
+    // takes the page-safe SWAR scan; hardened keeps the allocation-bound early-out.
+    let (fmt_len, fmt_terminated) = unsafe { strict_c_str_len(format) };
     if !fmt_terminated {
         return None;
     }
@@ -6097,18 +6236,31 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         return -1;
     }
 
-    // PERF (bd-2g7oyh, NEW lever — needs build+test, not a blind disk-low edit):
+    if runtime_policy::strict_passthrough_active()
+        && unsafe { strict_format_is_three_decimal_ints(format) }
+    {
+        let fast = unsafe { strict_scan_three_decimal_ints(s) };
+        if fast.count >= 1 {
+            let ptr = unsafe { args.next_arg::<*mut c_int>() };
+            unsafe { *ptr = fast.values[0] };
+        }
+        if fast.count >= 2 {
+            let ptr = unsafe { args.next_arg::<*mut c_int>() };
+            unsafe { *ptr = fast.values[1] };
+        }
+        if fast.count >= 3 {
+            let ptr = unsafe { args.next_arg::<*mut c_int>() };
+            unsafe { *ptr = fast.values[2] };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
+        return fast.count;
+    }
+
+    // PERF (bd-2g7oyh):
     // sscanf/vsscanf parse a CALLER STRING (no stream / no registry lock), so this
-    // is strlen+parse-dominated — snprintf("%s")-class (a REAL win, unlike the
-    // registry-lock-bound fputs). `scan_c_str_len(s, None)` here routes through
-    // known_remaining -> fallback_remaining (a lock_fallback_alloc_table() MUTEX +
-    // up-to-1024 hash probe) + a scalar byte loop, per call. PLAN: in strict mode
-    // use the page-safe SWAR `string_abi::scan_c_string(s, None)` (no lock).
-    // NOT byte-identical (hence gated+tested): the `!input_terminated` EOF branch
-    // is a hardening feature for fl-tracked-but-unterminated buffers; scan_c_string
-    // always scans to the NUL (glibc-compatible) so it never reports unterminated —
-    // keep scan_c_str_len in hardened mode. Verify vs glibc + scanf conformance.
-    let (input_len, input_terminated) = unsafe { scan_c_str_len(s, None) };
+    // is strlen+parse-dominated. Strict mode uses the page-safe SWAR scan; hardened
+    // keeps the allocation-bound EOF branch for fl-tracked unterminated buffers.
+    let (input_len, input_terminated) = unsafe { strict_c_str_len(s) };
     if !input_terminated {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
@@ -6231,18 +6383,11 @@ pub unsafe extern "C" fn vsscanf(
         return -1;
     }
 
-    // PERF (bd-2g7oyh, NEW lever — needs build+test, not a blind disk-low edit):
+    // PERF (bd-2g7oyh):
     // sscanf/vsscanf parse a CALLER STRING (no stream / no registry lock), so this
-    // is strlen+parse-dominated — snprintf("%s")-class (a REAL win, unlike the
-    // registry-lock-bound fputs). `scan_c_str_len(s, None)` here routes through
-    // known_remaining -> fallback_remaining (a lock_fallback_alloc_table() MUTEX +
-    // up-to-1024 hash probe) + a scalar byte loop, per call. PLAN: in strict mode
-    // use the page-safe SWAR `string_abi::scan_c_string(s, None)` (no lock).
-    // NOT byte-identical (hence gated+tested): the `!input_terminated` EOF branch
-    // is a hardening feature for fl-tracked-but-unterminated buffers; scan_c_string
-    // always scans to the NUL (glibc-compatible) so it never reports unterminated —
-    // keep scan_c_str_len in hardened mode. Verify vs glibc + scanf conformance.
-    let (input_len, input_terminated) = unsafe { scan_c_str_len(s, None) };
+    // is strlen+parse-dominated. Strict mode uses the page-safe SWAR scan; hardened
+    // keeps the allocation-bound EOF branch for fl-tracked unterminated buffers.
+    let (input_len, input_terminated) = unsafe { strict_c_str_len(s) };
     if !input_terminated {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
