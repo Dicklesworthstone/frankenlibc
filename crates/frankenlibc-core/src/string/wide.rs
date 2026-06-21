@@ -506,11 +506,24 @@ pub fn wcscmp(s1: &[u32], s2: &[u32]) -> i32 {
     let bounded = s1.len().min(s2.len());
     let mut i = 0;
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        if !equal_and_no_nul_wide(
-            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
-            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
-        ) {
-            break;
+        let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
+        // First lane that differs OR is NUL in s1 — resolve the divergence index via
+        // the SIMD mask (O(1)) instead of breaking to the scalar tail and re-scanning
+        // the broken panel element-by-element (wcscmp was 3.25x slower than glibc on a
+        // deep-in-panel difference; bd-2g7oyh). Matches equal_and_no_nul_wide's break
+        // (`!(eq.all()) || nul-in-a`) and the scalar tail's `a!=b || a==0` resolution.
+        let event = av.simd_ne(bv) | av.simd_eq(Simd::splat(0));
+        let bits = event.to_bitmask();
+        if bits != 0 {
+            let j = i + bits.trailing_zeros() as usize;
+            let a = s1[j];
+            let b = s2[j];
+            if a != b {
+                // wchar_t is i32 on Linux, so we must compare as signed.
+                return if (a as i32) < (b as i32) { -1 } else { 1 };
+            }
+            return 0; // shared NUL terminator
         }
         i += WIDE_COMPARE_SIMD_LANES;
     }

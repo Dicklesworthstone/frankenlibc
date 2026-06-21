@@ -28,6 +28,7 @@ unsafe extern "C" {
     fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int;
     fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
     fn memcmp(a: *const c_void, b: *const c_void, n: usize) -> c_int;
+    fn wcscmp(s1: *const i32, s2: *const i32) -> c_int;
 }
 
 fn bench(c: &mut Criterion) {
@@ -283,6 +284,31 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { memcmp(black_box(m1.as_ptr().cast::<c_void>()), m2.as_ptr().cast::<c_void>(), 64) }))
     });
     gm.finish();
+
+    // ---- wcscmp — wide strings equal for 30 then differ at byte 30, NUL-term.
+    let w1: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 64];
+        v[30] = b'X' as u32;
+        v[63] = 0;
+        v
+    };
+    let w2: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 64];
+        v[30] = b'Y' as u32;
+        v[63] = 0;
+        v
+    };
+    let core_wcc = frankenlibc_core::string::wide::wcscmp(&w1, &w2);
+    let gl_wcc = unsafe { wcscmp(w1.as_ptr().cast::<i32>(), w2.as_ptr().cast::<i32>()) };
+    assert_eq!(core_wcc.signum(), gl_wcc.signum(), "wcscmp sign mismatch");
+    let mut gwc = c.benchmark_group("survey_wcscmp");
+    gwc.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcscmp(black_box(&w1), &w2)))
+    });
+    gwc.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcscmp(black_box(w1.as_ptr().cast::<i32>()), w2.as_ptr().cast::<i32>()) }))
+    });
+    gwc.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
