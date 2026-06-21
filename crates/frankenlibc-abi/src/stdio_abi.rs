@@ -1023,6 +1023,17 @@ unsafe fn write_bytes_without_runtime_policy(
         return written_total;
     }
 
+    // PERF (bd-hqo6b6): this GLOBAL `registry()` Mutex is the dominant cost of the
+    // deployed write path — `fputs`/`fwrite`/`fputc`/`puts` all funnel here and
+    // pay one acquisition per call (measured 6-12x slower than glibc end-to-end;
+    // see fputs_glibc_bench in NEGATIVE_EVIDENCE.md). glibc does a lock-free inline
+    // buffer-pointer bump. The membrane decide/observe and the cookie/memstream
+    // registry locks on this path are already eliminated for the common case
+    // (this campaign); the main `registry()` lock is what remains. The real fix is
+    // architectural: a sharded/per-FILE lock (Arc<Mutex<StdioStream>> resolved via
+    // a read-mostly RwLock<HashMap>) so concurrent writes to different streams
+    // don't serialize and the single-threaded path can drop to a cheap fast lock.
+    // NOT a blind micro-edit — needs a build+test turn with harness conformance.
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(stream_obj) = reg.streams.get_mut(&id) else {
         drop(reg);
