@@ -6071,6 +6071,17 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         return -1;
     }
 
+    // PERF (bd-2g7oyh, NEW lever — needs build+test, not a blind disk-low edit):
+    // sscanf/vsscanf parse a CALLER STRING (no stream / no registry lock), so this
+    // is strlen+parse-dominated — snprintf("%s")-class (a REAL win, unlike the
+    // registry-lock-bound fputs). `scan_c_str_len(s, None)` here routes through
+    // known_remaining -> fallback_remaining (a lock_fallback_alloc_table() MUTEX +
+    // up-to-1024 hash probe) + a scalar byte loop, per call. PLAN: in strict mode
+    // use the page-safe SWAR `string_abi::scan_c_string(s, None)` (no lock).
+    // NOT byte-identical (hence gated+tested): the `!input_terminated` EOF branch
+    // is a hardening feature for fl-tracked-but-unterminated buffers; scan_c_string
+    // always scans to the NUL (glibc-compatible) so it never reports unterminated —
+    // keep scan_c_str_len in hardened mode. Verify vs glibc + scanf conformance.
     let (input_len, input_terminated) = unsafe { scan_c_str_len(s, None) };
     if !input_terminated {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -6194,6 +6205,17 @@ pub unsafe extern "C" fn vsscanf(
         return -1;
     }
 
+    // PERF (bd-2g7oyh, NEW lever — needs build+test, not a blind disk-low edit):
+    // sscanf/vsscanf parse a CALLER STRING (no stream / no registry lock), so this
+    // is strlen+parse-dominated — snprintf("%s")-class (a REAL win, unlike the
+    // registry-lock-bound fputs). `scan_c_str_len(s, None)` here routes through
+    // known_remaining -> fallback_remaining (a lock_fallback_alloc_table() MUTEX +
+    // up-to-1024 hash probe) + a scalar byte loop, per call. PLAN: in strict mode
+    // use the page-safe SWAR `string_abi::scan_c_string(s, None)` (no lock).
+    // NOT byte-identical (hence gated+tested): the `!input_terminated` EOF branch
+    // is a hardening feature for fl-tracked-but-unterminated buffers; scan_c_string
+    // always scans to the NUL (glibc-compatible) so it never reports unterminated —
+    // keep scan_c_str_len in hardened mode. Verify vs glibc + scanf conformance.
     let (input_len, input_terminated) = unsafe { scan_c_str_len(s, None) };
     if !input_terminated {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
