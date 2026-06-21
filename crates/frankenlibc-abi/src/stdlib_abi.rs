@@ -327,13 +327,15 @@ unsafe fn parse_strtol_c_string_fast(
     Some((value, consumed, ConversionStatus::Success))
 }
 
-/// Deployed `strtod` specialization for decimal tokens that normalize to an
-/// exactly representable integer. This covers hot configuration/CLI literals
-/// like `12345` and `1.234567e10` while leaving fractional, hex, NaN/Inf,
-/// overflow, and rounded cases on the existing full parser.
+/// Deployed `strtod` specialization for short decimal tokens whose grammar is
+/// regular enough to parse as a C-string transducer. Exact integer-valued
+/// decimals (`12345`, `1.234567e10`) stay on the integer path; short fixed
+/// decimals (`3.14159`) hand the already-scanned token to Rust's
+/// correctly-rounded parser without the full core parser's extra NUL scan.
 #[inline]
-unsafe fn parse_strtod_exact_integer_c_string_fast(ptr: *const c_char) -> Option<(f64, usize)> {
+unsafe fn parse_strtod_short_decimal_c_string_fast(ptr: *const c_char) -> Option<(f64, usize)> {
     const MAX_EXACT_INTEGER: u64 = 1u64 << f64::MANTISSA_DIGITS;
+    const MAX_FIXED_SIGNIFICANT_DIGITS: u32 = 15;
 
     let start = ptr.cast::<u8>();
     let mut cursor = start;
@@ -346,6 +348,7 @@ unsafe fn parse_strtod_exact_integer_c_string_fast(ptr: *const c_char) -> Option
         cursor = unsafe { cursor.add(1) };
     }
 
+    let token_start = cursor;
     let mut byte = unsafe { *cursor };
     let negative = if byte == b'-' {
         cursor = unsafe { cursor.add(1) };
@@ -373,6 +376,7 @@ unsafe fn parse_strtod_exact_integer_c_string_fast(ptr: *const c_char) -> Option
     let mut saw_digit = false;
     let mut saw_dot = false;
     let mut frac_digits = 0i32;
+    let mut significant_digits = 0u32;
 
     loop {
         byte = unsafe { *cursor };
@@ -388,6 +392,7 @@ unsafe fn parse_strtod_exact_integer_c_string_fast(ptr: *const c_char) -> Option
             let digit = (byte - b'0') as u64;
             if acc != 0 || digit != 0 {
                 acc = acc.checked_mul(10)?.checked_add(digit)?;
+                significant_digits = significant_digits.checked_add(1)?;
                 if acc > MAX_EXACT_INTEGER {
                     return None;
                 }
@@ -406,6 +411,7 @@ unsafe fn parse_strtod_exact_integer_c_string_fast(ptr: *const c_char) -> Option
     }
 
     let mut exp10 = 0i32;
+    let mut saw_exponent = false;
     byte = unsafe { *cursor };
     if byte == b'e' || byte == b'E' {
         let exponent_start = cursor;
@@ -440,6 +446,7 @@ unsafe fn parse_strtod_exact_integer_c_string_fast(ptr: *const c_char) -> Option
         }
 
         if saw_exponent_digit {
+            saw_exponent = true;
             exp10 = if exponent_negative {
                 exponent.checked_neg()?
             } else {
@@ -453,6 +460,13 @@ unsafe fn parse_strtod_exact_integer_c_string_fast(ptr: *const c_char) -> Option
     let consumed = unsafe { cursor.offset_from(start) as usize };
     let mut shift = exp10.checked_sub(frac_digits)?;
     while shift < 0 {
+        if !saw_exponent && frac_digits <= 15 && significant_digits <= MAX_FIXED_SIGNIFICANT_DIGITS
+        {
+            let token_len = unsafe { cursor.offset_from(token_start) as usize };
+            let token = unsafe { std::slice::from_raw_parts(token_start, token_len) };
+            let token = unsafe { core::str::from_utf8_unchecked(token) };
+            return token.parse::<f64>().ok().map(|value| (value, consumed));
+        }
         if acc % 10 != 0 {
             return None;
         }
@@ -2688,7 +2702,7 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
     };
 
     if profile.is_none()
-        && let Some((value, consumed)) = unsafe { parse_strtod_exact_integer_c_string_fast(nptr) }
+        && let Some((value, consumed)) = unsafe { parse_strtod_short_decimal_c_string_fast(nptr) }
     {
         if !endptr.is_null() {
             unsafe { *endptr = nptr.add(consumed) as *mut c_char };
