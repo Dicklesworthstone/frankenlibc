@@ -95,6 +95,22 @@ static VDSO_SYMBOLS: OnceLock<VdsoSymbols> = OnceLock::new();
 static VDSO_CLOCK_GETTIME_HITS: AtomicU64 = AtomicU64::new(0);
 static VDSO_GETTIMEOFDAY_HITS: AtomicU64 = AtomicU64::new(0);
 
+#[inline]
+fn record_vdso_clock_gettime_hit() {
+    // Diagnostic only: tolerate lost increments under racing callers to keep
+    // the vDSO success path free of locked atomic RMW instructions.
+    let hits = VDSO_CLOCK_GETTIME_HITS.load(Ordering::Relaxed);
+    VDSO_CLOCK_GETTIME_HITS.store(hits.wrapping_add(1), Ordering::Relaxed);
+}
+
+#[inline]
+fn record_vdso_gettimeofday_hit() {
+    // Diagnostic only: tolerate lost increments under racing callers to keep
+    // the vDSO success path free of locked atomic RMW instructions.
+    let hits = VDSO_GETTIMEOFDAY_HITS.load(Ordering::Relaxed);
+    VDSO_GETTIMEOFDAY_HITS.store(hits.wrapping_add(1), Ordering::Relaxed);
+}
+
 const fn vdso_symbol_version_bytes() -> &'static [u8] {
     #[cfg(target_arch = "aarch64")]
     {
@@ -218,7 +234,7 @@ unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
             let rc = unsafe { vdso_clock_gettime(clock_id, tp) };
             match classify_vdso_return(rc) {
                 VdsoCallOutcome::Success => {
-                    VDSO_CLOCK_GETTIME_HITS.fetch_add(1, Ordering::Relaxed);
+                    record_vdso_clock_gettime_hit();
                     return 0;
                 }
                 VdsoCallOutcome::FallbackToSyscall => {}
@@ -241,7 +257,7 @@ unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
             let rc = unsafe { vdso_gettimeofday(tv, std::ptr::null_mut()) };
             match classify_vdso_return(rc) {
                 VdsoCallOutcome::Success => {
-                    VDSO_GETTIMEOFDAY_HITS.fetch_add(1, Ordering::Relaxed);
+                    record_vdso_gettimeofday_hit();
                     return 0;
                 }
                 VdsoCallOutcome::FallbackToSyscall => {}
