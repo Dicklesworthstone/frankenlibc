@@ -41,6 +41,7 @@ unsafe extern "C" {
     fn fnmatch(pat: *const c_char, s: *const c_char, flags: c_int) -> c_int;
     fn wcsstr(h: *const i32, n: *const i32) -> *const i32;
     fn strtok_r(s: *mut c_char, delim: *const c_char, saveptr: *mut *mut c_char) -> *mut c_char;
+    fn wcstok(wcs: *mut i32, delim: *const i32, ptr: *mut *mut i32) -> *mut i32;
 }
 
 fn bench(c: &mut Criterion) {
@@ -638,6 +639,39 @@ fn bench(c: &mut Criterion) {
         })
     });
     gtk.finish();
+
+    // ---- wcstok — wide first token is a long delimiter-free run then ','. Reset
+    // each iter (both write NUL → reset cost cancels).
+    let wtok_template: Vec<u32> = "this_is_a_fairly_long_wide_token_without_any_delims,tail"
+        .bytes().map(|b| b as u32).chain(std::iter::once(0)).collect();
+    let mut wtok_buf = wtok_template.clone();
+    let wdelim: Vec<u32> = vec![b',' as u32, 0];
+    let r0 = frankenlibc_core::string::wide::wcstok(&mut wtok_buf[..wtok_template.len() - 1], &wdelim, 0);
+    assert_eq!(r0.map(|(s, _)| s), Some(0usize), "wcstok core wrong");
+    let mut gwtk = c.benchmark_group("survey_wcstok");
+    gwtk.bench_function("frankenlibc_core", |b| {
+        b.iter(|| {
+            wtok_buf.copy_from_slice(&wtok_template);
+            black_box(frankenlibc_core::string::wide::wcstok(
+                black_box(&mut wtok_buf[..wtok_template.len() - 1]),
+                &wdelim,
+                0,
+            ))
+        })
+    });
+    let wtok_template_i: Vec<i32> = wtok_template.iter().map(|&x| x as i32).collect();
+    let mut gwtk_buf: Vec<i32> = wtok_template_i.clone();
+    let wdelim_i: Vec<i32> = vec![b',' as i32, 0];
+    gwtk.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| {
+            // Symmetric reset: copy_from_slice (memcpy) matches the fl arm exactly so
+            // the reset cost cancels in the ratio (was a slower per-element loop).
+            gwtk_buf.copy_from_slice(&wtok_template_i);
+            let mut sp: *mut i32 = std::ptr::null_mut();
+            black_box(unsafe { wcstok(black_box(gwtk_buf.as_mut_ptr()), wdelim_i.as_ptr(), &mut sp) })
+        })
+    });
+    gwtk.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
