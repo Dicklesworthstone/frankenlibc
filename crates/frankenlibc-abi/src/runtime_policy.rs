@@ -2058,6 +2058,12 @@ pub(crate) fn decide(
                     | ApiFamily::Stdlib
                     | ApiFamily::MathFenv
                     | ApiFamily::Stdio
+                    // IoFd added to STRICT ONLY (helps `readdir` per-entry loops):
+                    // strict mode forces action=Allow regardless (decide_strict_observation
+                    // never denies), so skipping the per-call kernel evidence consult is
+                    // byte-identical. NOT added to the HARDENED list below — read/write pass
+                    // the USER BUFFER to decide() there and must keep validating it.
+                    | ApiFamily::IoFd
             )
         {
             return (SafetyLevel::Strict, passthrough_decision());
@@ -2251,6 +2257,14 @@ pub(crate) fn observe(
                 | ApiFamily::Stdlib
                 | ApiFamily::MathFenv
                 | ApiFamily::Stdio
+                // IoFd added: `readdir` (hot directory-iteration loops, buffered —
+                // most calls don't hit getdents) paid the full observe() slow path
+                // (2x cert lookup + reentry guard) per entry. observe() is post-op
+                // telemetry (no validation), so this is safe for ALL IoFd ops; for
+                // syscall-dominated read/write it's harmless (~0-gain). NOTE: IoFd is
+                // intentionally NOT added to the HARDENED decide() list — read/write
+                // pass the USER BUFFER to decide() there and must keep validating it.
+                | ApiFamily::IoFd
         )
     {
         return;
