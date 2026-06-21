@@ -7457,6 +7457,15 @@ unsafe impl Sync for CookieStreamInfo {}
 /// Registry of cookie streams, keyed by stream sentinel ID.
 static COOKIE_REGISTRY: Mutex<Option<ArtifactHashMap<usize, CookieStreamInfo>>> = Mutex::new(None);
 
+/// Monotonic "has any cookie stream ever been created?" flag. `fopencookie` is
+/// rare; the overwhelmingly common case is that NO cookie stream exists, yet
+/// every `fgetc`/`fputs`/`fputc` calls [`is_cookie_stream`], which otherwise
+/// takes the `COOKIE_REGISTRY` mutex just to learn "no". This lets the hot path
+/// skip that lock entirely until the first `fopencookie`. It is never reset to
+/// false (cookie streams are rare and the reset would race a concurrent
+/// `fopencookie`), so once set the locked check resumes — still correct.
+static COOKIE_STREAMS_PRESENT: AtomicBool = AtomicBool::new(false);
+
 fn cookie_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, CookieStreamInfo>>> {
     &COOKIE_REGISTRY
 }
@@ -7531,6 +7540,13 @@ pub(crate) unsafe fn cookie_stream_close(id: usize) -> c_int {
 
 /// Check if a stream ID is cookie-backed.
 pub(crate) fn is_cookie_stream(id: usize) -> bool {
+    // Lock-free fast path: if no cookie stream has ever been registered, the id
+    // cannot be cookie-backed. A new cookie id is only published (returned from
+    // `fopencookie`) AFTER the `Release` store below, so any `is_cookie_stream`
+    // for a real cookie id happens-after this `Acquire` load observes `true`.
+    if !COOKIE_STREAMS_PRESENT.load(Ordering::Acquire) {
+        return false;
+    }
     let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref map) = *guard {
         return map.contains_key(&id);
@@ -8008,6 +8024,9 @@ pub unsafe extern "C" fn fopencookie(
             funcs: io_funcs,
         },
     );
+    // Publish before releasing the lock and before the id is returned, so the
+    // lock-free fast path in `is_cookie_stream` is correct (Acquire/Release pair).
+    COOKIE_STREAMS_PRESENT.store(true, Ordering::Release);
     drop(cookie_guard);
 
     id as *mut c_void
