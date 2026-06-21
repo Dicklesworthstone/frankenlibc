@@ -24,6 +24,7 @@ unsafe extern "C" {
     fn memrchr(s: *const c_void, c: c_int, n: usize) -> *const c_void;
     fn rawmemchr(s: *const c_void, c: c_int) -> *const c_void;
     fn strlen(s: *const c_char) -> usize;
+    fn strchr(s: *const c_char, c: c_int) -> *const c_char;
     fn wcschr(wcs: *const i32, wc: i32) -> *const i32;
     fn wcsrchr(wcs: *const i32, wc: i32) -> *const i32;
     fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
@@ -1024,6 +1025,32 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { strlen(black_box(sl.as_ptr().cast::<c_char>())) }))
     });
     gsl.finish();
+
+    // ---- strchr: core does TWO memchr passes (find c, then re-scan prefix for NUL);
+    // strchrnul does it in ONE pass. 1000-byte 'a', 'Z' at 900, NUL at 1000.
+    let sc: Vec<u8> = {
+        let mut v = vec![b'a'; 1001];
+        v[900] = b'Z';
+        v[1000] = 0;
+        v
+    };
+    let sc_core = frankenlibc_core::string::str::strchr(&sc, b'Z');
+    let sc_1pass = frankenlibc_core::string::str::strchrnul(&sc, b'Z');
+    let sc_gl = unsafe { strchr(sc.as_ptr().cast::<c_char>(), b'Z' as c_int) };
+    assert_eq!(sc_core, Some(900), "strchr core wrong");
+    assert_eq!(sc_1pass, 900, "strchr 1-pass proxy wrong");
+    assert!(!sc_gl.is_null(), "strchr glibc wrong");
+    let mut gsc = c.benchmark_group("survey_strchr");
+    gsc.bench_function("frankenlibc_core_2pass", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::str::strchr(black_box(&sc), b'Z')))
+    });
+    gsc.bench_function("frankenlibc_1pass_proxy", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::str::strchrnul(black_box(&sc), b'Z')))
+    });
+    gsc.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strchr(black_box(sc.as_ptr().cast::<c_char>()), b'Z' as c_int) }))
+    });
+    gsc.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();

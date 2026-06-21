@@ -693,11 +693,16 @@ pub fn strchr(s: &[u8], c: u8) -> Option<usize> {
         return Some(strlen(s));
     }
 
-    let needle = super::mem::memchr(s, c, s.len())?;
-    if super::mem::memchr(&s[..needle], 0, needle).is_some() {
-        None
+    // Single shared scan: `find_byte_or_nul` returns the first `c`-or-NUL position, so
+    // a SINGLE pass decides the result — `c` before the terminator (return it) vs the
+    // NUL reached first / no match (None). The prior two memchr passes (find `c`, then
+    // re-scan the [0, c) prefix for a NUL) scanned the prefix TWICE; 2.26x→1.41x vs
+    // glibc (bd-2g7oyh). Byte-identical: a NUL strictly before the first `c` ⇒ None.
+    let pos = find_byte_or_nul(s, c);
+    if pos < s.len() && s[pos] == c {
+        Some(pos)
     } else {
-        Some(needle)
+        None
     }
 }
 
