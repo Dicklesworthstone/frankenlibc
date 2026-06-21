@@ -55,3 +55,24 @@ safe-collapse plan + hazards (hardened-mode deadlock if `decide()` is held under
 (`Arc<Mutex<StdioStream>>` resolved via a read-mostly `RwLock<HashMap>`). Run it with
 harness conformance — currently blocked by the pre-existing `frankenlibc-fixture-exec`
 build break, which must be resolved first.
+
+## Step 5 — NEW levers identified during the disk-low window (implement + bench)
+
+These are snprintf("%s")-class wins (caller string, NO stream/registry lock, so
+strlen+parse-dominated — a REAL gain, unlike the registry-lock-bound fputs). Each
+swaps the `scan_c_str_len(_, None)` → `known_remaining` → `fallback_remaining`
+(`lock_fallback_alloc_table()` MUTEX + up-to-1024 hash probe) for the lock-free SWAR
+`string_abi::scan_c_string(_, None)`. NOT byte-identical (the `!*_terminated` early-out
+is a hardening bound for fl-tracked-but-unterminated buffers), so GATE on strict mode
+(glibc-compatible scan-to-NUL) and keep `scan_c_str_len` in hardened. Documented as
+`// PERF (bd-2g7oyh …)` comments at each site.
+
+| site | function(s) affected | bench |
+|------|----------------------|-------|
+| `sscanf`/`vsscanf` input scan (`scan_c_str_len(s, None)`) | sscanf, vsscanf | new sscanf-vs-glibc (dlmopen host, in-process) |
+| `scanf_core_impl` format scan (`scan_c_str_len(format, None)`) | ALL scanf variants incl. stream-based fscanf/vfscanf | same harness; format is the broader instance |
+
+Verify each against the scanf conformance + metamorphic gates (the `!terminated`
+behavior change is UB-only: fl-malloc'd unterminated buffer → was EOF, becomes
+glibc-style parse-to-NUL; differential-vs-glibc gates should pass since strict ==
+glibc-compat).
