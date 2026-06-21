@@ -133,6 +133,16 @@ const fn strtol_hex_digit(byte: u8) -> Option<u8> {
 }
 
 #[inline]
+const fn strtol_hex_digit_or_invalid(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        b'A'..=b'F' => byte - b'A' + 10,
+        _ => 0xff,
+    }
+}
+
+#[inline]
 unsafe fn parse_strtol_positive_decimal_fast(ptr: *const u8) -> (i64, usize, ConversionStatus) {
     // Caller has already proved the first byte is an unsigned decimal digit.
     let mut cursor = ptr;
@@ -220,6 +230,46 @@ unsafe fn parse_strtol_positive_hex_fast(ptr: *const u8) -> (i64, usize, Convers
     (acc as i64, consumed, ConversionStatus::Success)
 }
 
+#[inline]
+unsafe fn parse_strtol_positive_prefixed_hex_fast(
+    ptr: *const u8,
+) -> (i64, usize, ConversionStatus) {
+    // Caller has already proved `ptr` starts with 0x/0X followed by a hex digit.
+    let mut cursor = unsafe { ptr.add(2) };
+    let mut acc = 0u64;
+    let mut digits = 0usize;
+
+    loop {
+        let digit = strtol_hex_digit_or_invalid(unsafe { *cursor });
+        if digit > 15 {
+            break;
+        }
+
+        let digit = digit as u64;
+        if digits < 15 {
+            acc = (acc << 4) | digit;
+        } else {
+            let cutoff = (i64::MAX as u64) >> 4;
+            let cutlim = (i64::MAX as u64) & 0xf;
+            if acc > cutoff || (acc == cutoff && digit > cutlim) {
+                cursor = unsafe { cursor.add(1) };
+                while strtol_hex_digit_or_invalid(unsafe { *cursor }) <= 15 {
+                    cursor = unsafe { cursor.add(1) };
+                }
+                let consumed = unsafe { cursor.offset_from(ptr) as usize };
+                return (i64::MAX, consumed, ConversionStatus::Overflow);
+            }
+            acc = (acc << 4) | digit;
+        }
+
+        digits += 1;
+        cursor = unsafe { cursor.add(1) };
+    }
+
+    let consumed = unsafe { cursor.offset_from(ptr) as usize };
+    (acc as i64, consumed, ConversionStatus::Success)
+}
+
 /// Deployed `strtol` specialization for the hot bases measured in the
 /// glibc head-to-head bench. It fuses the NUL scan and parse so `endptr` comes
 /// from the same cursor that found the first non-digit.
@@ -236,6 +286,14 @@ unsafe fn parse_strtol_c_string_fast(
     let first = unsafe { *start };
     if base == 10 && first.wrapping_sub(b'0') <= 9 {
         return Some(unsafe { parse_strtol_positive_decimal_fast(start) });
+    }
+    if base == 16 && first == b'0' {
+        let second = unsafe { *start.add(1) };
+        if (second == b'x' || second == b'X')
+            && strtol_hex_digit_or_invalid(unsafe { *start.add(2) }) <= 15
+        {
+            return Some(unsafe { parse_strtol_positive_prefixed_hex_fast(start) });
+        }
     }
     if base == 16 && strtol_hex_digit(first).is_some() {
         return Some(unsafe { parse_strtol_positive_hex_fast(start) });
