@@ -35,6 +35,9 @@ unsafe extern "C" {
     fn wcslen(s: *const i32) -> usize;
     fn wmemchr(s: *const i32, c: i32, n: usize) -> *const i32;
     fn wcsspn(s: *const i32, accept: *const i32) -> usize;
+    fn wmemset(s: *mut i32, c: i32, n: usize) -> *mut i32;
+    fn wmemcpy(d: *mut i32, s: *const i32, n: usize) -> *mut i32;
+    fn memmem(h: *const c_void, hl: usize, n: *const c_void, nl: usize) -> *const c_void;
 }
 
 fn bench(c: &mut Criterion) {
@@ -433,6 +436,52 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wcsspn(black_box(wsp.as_ptr().cast::<i32>()), wacc.as_ptr().cast::<i32>()) }))
     });
     gsp.finish();
+
+    // ---- wmemset / wmemcpy — 256 wide chars (fill / copy throughput vs glibc).
+    let mut wset_dst = vec![0u32; 256];
+    let mut wset_gl = vec![0i32; 256];
+    {
+        frankenlibc_core::string::wide::wmemset(&mut wset_dst, b'q' as u32, 256);
+        unsafe { wmemset(wset_gl.as_mut_ptr(), b'q' as i32, 256) };
+        assert!(wset_dst.iter().all(|&x| x == b'q' as u32), "wmemset core wrong");
+    }
+    let mut gws = c.benchmark_group("survey_wmemset");
+    gws.bench_function("frankenlibc_core", |b| {
+        b.iter(|| frankenlibc_core::string::wide::wmemset(black_box(&mut wset_dst), b'q' as u32, 256))
+    });
+    gws.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| unsafe { wmemset(black_box(wset_gl.as_mut_ptr()), b'q' as i32, 256) })
+    });
+    gws.finish();
+
+    let wcp_src = vec![b'z' as u32; 256];
+    let mut wcp_dst = vec![0u32; 256];
+    let wcp_src_i = vec![b'z' as i32; 256];
+    let mut wcp_gl = vec![0i32; 256];
+    let mut gwcp = c.benchmark_group("survey_wmemcpy");
+    gwcp.bench_function("frankenlibc_core", |b| {
+        b.iter(|| frankenlibc_core::string::wide::wmemcpy(black_box(&mut wcp_dst), &wcp_src, 256))
+    });
+    gwcp.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| unsafe { wmemcpy(black_box(wcp_gl.as_mut_ptr()), wcp_src_i.as_ptr(), 256) })
+    });
+    gwcp.finish();
+
+    // ---- memmem DIRECT (isolates from strstr's strlen) — same 79-byte hay, 11-byte
+    // needle at the end. Localizes whether the strstr 3.1x gap is memmem itself.
+    let mmhay = b"the quick brown fox jumps over the lazy dog and then some more text needle_here";
+    let mmndl = b"needle_here";
+    let core_mm = frankenlibc_core::string::mem::memmem(mmhay, mmhay.len(), mmndl, mmndl.len());
+    let gl_mm = unsafe { memmem(mmhay.as_ptr().cast(), mmhay.len(), mmndl.as_ptr().cast(), mmndl.len()) };
+    assert_eq!(core_mm.is_some(), !gl_mm.is_null(), "memmem found-ness mismatch");
+    let mut gmm = c.benchmark_group("survey_memmem");
+    gmm.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::mem::memmem(black_box(mmhay), mmhay.len(), mmndl, mmndl.len())))
+    });
+    gmm.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { memmem(black_box(mmhay.as_ptr().cast()), mmhay.len(), mmndl.as_ptr().cast(), mmndl.len()) }))
+    });
+    gmm.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
