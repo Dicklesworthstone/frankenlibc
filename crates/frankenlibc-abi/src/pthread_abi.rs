@@ -6,7 +6,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 #[cfg(not(feature = "owned-tls-cache"))]
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::{c_int, c_void};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
@@ -243,6 +243,7 @@ pub(crate) const fn pthread_tls_access_active() -> bool {
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
     static PTHREAD_TLS: RefCell<PthreadTlsState> = RefCell::new(PthreadTlsState::new());
+    static PTHREAD_SELF_FAST: Cell<libc::pthread_t> = const { Cell::new(0) };
 }
 
 #[inline]
@@ -278,6 +279,41 @@ fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<
             .ok()
             .flatten()
     }
+}
+
+#[inline]
+fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        try_with_pthread_tls(|tls| {
+            (tls.current_pthread_self_cache != 0).then_some(tls.current_pthread_self_cache)
+        })
+        .flatten()
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        if let Some(cached_self) = PTHREAD_SELF_FAST
+            .try_with(|cell| (cell.get() != 0).then_some(cell.get()))
+            .ok()
+            .flatten()
+        {
+            return Some(cached_self);
+        }
+
+        let cached_self = try_with_pthread_tls(|tls| {
+            (tls.current_pthread_self_cache != 0).then_some(tls.current_pthread_self_cache)
+        })
+        .flatten()?;
+        let _ = PTHREAD_SELF_FAST.try_with(|cell| cell.set(cached_self));
+        Some(cached_self)
+    }
+}
+
+#[inline]
+fn remember_current_pthread_self(value: libc::pthread_t) {
+    #[cfg(not(feature = "owned-tls-cache"))]
+    let _ = PTHREAD_SELF_FAST.try_with(|cell| cell.set(value));
+    let _ = try_with_pthread_tls(|tls| tls.current_pthread_self_cache = value);
 }
 
 #[inline]
@@ -887,11 +923,7 @@ fn native_pthread_self() -> libc::pthread_t {
     // for native-backend and kernel-created (main) threads too — whose cache
     // `pthread_create` never populates, which is why they previously paid the
     // syscall on every call.
-    if let Some(cached_self) = try_with_pthread_tls(|tls| {
-        (tls.current_pthread_self_cache != 0).then_some(tls.current_pthread_self_cache)
-    })
-    .flatten()
-    {
+    if let Some(cached_self) = cached_pthread_self_fast() {
         return cached_self;
     }
 
@@ -907,7 +939,7 @@ fn native_pthread_self() -> libc::pthread_t {
     } else {
         tid as libc::pthread_t
     };
-    let _ = try_with_pthread_tls(|tls| tls.current_pthread_self_cache = result);
+    remember_current_pthread_self(result);
     result
 }
 
@@ -1679,7 +1711,7 @@ unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_vo
     let start_routine = start_ctx.start_routine;
     let start_arg = start_ctx.arg;
     if host_thread != 0 {
-        let _ = try_with_pthread_tls(|tls| tls.current_pthread_self_cache = host_thread);
+        remember_current_pthread_self(host_thread);
         remember_host_thread_tid(host_thread, core_self_tid());
     }
     unsafe { start_routine(start_arg) }
