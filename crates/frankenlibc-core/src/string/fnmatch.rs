@@ -646,9 +646,54 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
                 if pathname && text[ssi] == b'/' {
                     return false;
                 }
-                si = ssi + 1;
+                let mut new_si = ssi + 1;
+                // Fast-skip: when the char right after the '*' run is a plain literal,
+                // jump the star directly to that literal's next occurrence instead of
+                // retrying the match at every text byte (glibc does this; the byte-walk
+                // made fnmatch ~2.8x slower on typical globs; bd-2g7oyh). Only the
+                // case-sensitive plain-literal case — '?','[','\\','*' and casefold
+                // fall through to the +1 byte-walk. Byte-identical: skipped bytes can
+                // never start a match of `lit`, and the search is bounded by the next
+                // '/' under PATHNAME (a '*' cannot cross '/').
+                if !casefold && new_si < text.len() {
+                    if let Some(&lit) = pat.get(spi) {
+                        let plain = !matches!(lit, b'*' | b'?' | b'[')
+                            && !(lit == b'\\' && !noescape);
+                        if plain {
+                            if pathname {
+                                // '*' may advance only within the current path
+                                // segment (it cannot consume '/').
+                                let seg_end = text[new_si..]
+                                    .iter()
+                                    .position(|&b| b == b'/')
+                                    .map_or(text.len(), |p| new_si + p);
+                                if lit == b'/' {
+                                    // The literal AFTER the '*' is itself the '/':
+                                    // the star eats the rest of the segment and the
+                                    // '/' matches the separator.
+                                    if seg_end < text.len() {
+                                        new_si = seg_end;
+                                    } else {
+                                        return false;
+                                    }
+                                } else {
+                                    match text[new_si..seg_end].iter().position(|&b| b == lit) {
+                                        Some(off) => new_si += off,
+                                        None => return false, // lit not reachable before '/'
+                                    }
+                                }
+                            } else {
+                                match text[new_si..].iter().position(|&b| b == lit) {
+                                    Some(off) => new_si += off,
+                                    None => return false, // lit absent → no match
+                                }
+                            }
+                        }
+                    }
+                }
+                si = new_si;
                 pi = spi;
-                star = Some((spi, ssi + 1));
+                star = Some((spi, new_si));
             }
             None => return false,
         }

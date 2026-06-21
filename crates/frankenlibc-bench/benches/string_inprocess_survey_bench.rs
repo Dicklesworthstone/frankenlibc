@@ -38,6 +38,7 @@ unsafe extern "C" {
     fn wmemset(s: *mut i32, c: i32, n: usize) -> *mut i32;
     fn wmemcpy(d: *mut i32, s: *const i32, n: usize) -> *mut i32;
     fn memmem(h: *const c_void, hl: usize, n: *const c_void, nl: usize) -> *const c_void;
+    fn fnmatch(pat: *const c_char, s: *const c_char, flags: c_int) -> c_int;
 }
 
 fn bench(c: &mut Criterion) {
@@ -546,6 +547,34 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { memmem(black_box(cand4.as_ptr().cast()), 70, mmc_ndl.as_ptr().cast(), 10) }))
     });
     gc4.finish();
+
+    // ---- fnmatch (pure, non-ifunc) — typical glob + a backtrack-heavy star pattern.
+    use frankenlibc_core::string::fnmatch::{fnmatch_match, FnmatchFlags};
+    let fm_pat = c"*_2024_*.txt";
+    let fm_txt = c"report_2024_final.txt";
+    let core_fm = fnmatch_match(b"*_2024_*.txt", b"report_2024_final.txt", FnmatchFlags::NONE);
+    let gl_fm = unsafe { fnmatch(fm_pat.as_ptr(), fm_txt.as_ptr(), 0) };
+    assert_eq!(core_fm, gl_fm == 0, "fnmatch mismatch");
+    let mut gfm = c.benchmark_group("survey_fnmatch_glob");
+    gfm.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(fnmatch_match(black_box(b"*_2024_*.txt"), b"report_2024_final.txt", FnmatchFlags::NONE)))
+    });
+    gfm.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { fnmatch(black_box(fm_pat.as_ptr()), fm_txt.as_ptr(), 0) }))
+    });
+    gfm.finish();
+
+    // Backtrack-heavy: many stars over a long text (stresses the matcher).
+    let fm_pat2 = c"*a*b*c*d*e*";
+    let fm_txt2 = c"xxaxxbxxcxxdxxexxxxxxxxxxxxxxxxxxxxxxxxxxxxend";
+    let mut gfm2 = c.benchmark_group("survey_fnmatch_stars");
+    gfm2.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(fnmatch_match(black_box(b"*a*b*c*d*e*"), b"xxaxxbxxcxxdxxexxxxxxxxxxxxxxxxxxxxxxxxxxxxend", FnmatchFlags::NONE)))
+    });
+    gfm2.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { fnmatch(black_box(fm_pat2.as_ptr()), fm_txt2.as_ptr(), 0) }))
+    });
+    gfm2.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
