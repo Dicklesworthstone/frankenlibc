@@ -2044,6 +2044,10 @@ pub(crate) fn decide(
     // but override to passthrough. High-frequency families still fast-path.
     if strict_passthrough_active() {
         // High-frequency families skip kernel even for observation
+        // (Stdio added: strict mode forces Allow regardless — see
+        // decide_strict_observation which always returns action=Allow in strict —
+        // so for per-char fgetc/fputc/fread this only skips the kernel evidence
+        // call, no behavior change; the action is identical.)
         if cfg!(not(test))
             && matches!(
                 family,
@@ -2053,6 +2057,7 @@ pub(crate) fn decide(
                     | ApiFamily::Loader
                     | ApiFamily::Stdlib
                     | ApiFamily::MathFenv
+                    | ApiFamily::Stdio
             )
         {
             return (SafetyLevel::Strict, passthrough_decision());
