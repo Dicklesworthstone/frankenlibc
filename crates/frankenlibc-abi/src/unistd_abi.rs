@@ -50,6 +50,15 @@ fn current_abi_errno() -> c_int {
 
 #[inline]
 unsafe fn read_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
+    Some(unsafe { read_c_string_bytes_ref(ptr)? }.to_vec())
+}
+
+/// Borrowed (allocation-free) variant of [`read_c_string_bytes`]: returns the
+/// bounded, NUL-terminated input as a slice aliasing `ptr`. Use where the bytes are
+/// only READ within the call (e.g. the pure `ether_aton` parser, which consumes the
+/// slice and never retains it) — the owning `to_vec` was pure per-call overhead on
+/// such conversions. Same bounded-read safety (rejects non-NUL-terminated input).
+unsafe fn read_c_string_bytes_ref<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
     if ptr.is_null() {
         return None;
     }
@@ -57,8 +66,9 @@ unsafe fn read_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
     if !terminated {
         return None;
     }
-    let bytes = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) };
-    Some(bytes.to_vec())
+    // SAFETY: scan_c_string confirmed `len` readable NUL-terminated bytes at `ptr`,
+    // valid for the calling conversion (which does not retain the slice).
+    Some(unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) })
 }
 
 #[inline]
@@ -13328,10 +13338,11 @@ unsafe fn parse_ether_addr(asc: *const c_char, out: *mut EtherAddrBytes) -> bool
     if asc.is_null() || out.is_null() {
         return false;
     }
-    let Some(bytes) = (unsafe { read_c_string_bytes(asc) }) else {
+    // Borrowed (no-alloc): the core parser consumes the bytes read-only.
+    let Some(bytes) = (unsafe { read_c_string_bytes_ref(asc) }) else {
         return false;
     };
-    match frankenlibc_core::ether::parse_ether_addr(&bytes) {
+    match frankenlibc_core::ether::parse_ether_addr(bytes) {
         Some(octet) => {
             unsafe { (*out).octet = octet };
             true
