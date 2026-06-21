@@ -173,6 +173,12 @@ name = "inet_addr_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
 
+# inet_ntop vs host glibc (dlmopen). Measures the format_ipv4 byte-level rewrite.
+[[bench]]
+name = "inet_ntop_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
+
 # readdir vs host glibc (dlmopen). Validates the IoFd membrane fast-path (0b08a21e8).
 [[bench]]
 name = "readdir_glibc_bench"

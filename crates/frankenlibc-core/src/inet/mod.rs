@@ -126,8 +126,10 @@ pub fn inet_ntop(af: i32, src: &[u8]) -> Option<Vec<u8>> {
             if src.len() < 4 {
                 return None;
             }
-            let s = format!("{}.{}.{}.{}", src[0], src[1], src[2], src[3]);
-            Some(s.into_bytes())
+            // Byte-level format (no `format!` String + Display machinery).
+            let addr = [src[0], src[1], src[2], src[3]];
+            let len = format_ipv4_len(&addr);
+            Some(format_ipv4(&addr)[..len].to_vec())
         }
         AF_INET6 => {
             if src.len() < 16 {
@@ -364,19 +366,54 @@ pub fn parse_ipv4(src: &[u8]) -> Option<[u8; 4]> {
 }
 
 /// Formats an IPv4 address from 4 bytes to dotted-decimal into a fixed buffer.
+/// Write `v`'s decimal digits (1-3, no leading zeros) into `out`; returns the count.
+#[inline]
+fn write_u8_dec(v: u8, out: &mut [u8]) -> usize {
+    if v >= 100 {
+        out[0] = b'0' + v / 100;
+        out[1] = b'0' + (v / 10) % 10;
+        out[2] = b'0' + v % 10;
+        3
+    } else if v >= 10 {
+        out[0] = b'0' + v / 10;
+        out[1] = b'0' + v % 10;
+        2
+    } else {
+        out[0] = b'0' + v;
+        1
+    }
+}
+
+#[inline]
+fn u8_dec_len(v: u8) -> usize {
+    if v >= 100 {
+        3
+    } else if v >= 10 {
+        2
+    } else {
+        1
+    }
+}
+
 pub fn format_ipv4(addr: &[u8; 4]) -> [u8; 16] {
+    // Byte-level write (no per-call `format!` String alloc + Display machinery).
+    // Byte-identical to `format!("{}.{}.{}.{}")`: decimal octets, no leading
+    // zeros, dot-separated; max "255.255.255.255" = 15 bytes fits [u8; 16].
     let mut buf = [0u8; 16];
-    let s = format!("{}.{}.{}.{}", addr[0], addr[1], addr[2], addr[3]);
-    let bytes = s.as_bytes();
-    let len = bytes.len().min(15);
-    buf[..len].copy_from_slice(&bytes[..len]);
+    let mut pos = 0usize;
+    for (i, &octet) in addr.iter().enumerate() {
+        if i > 0 {
+            buf[pos] = b'.';
+            pos += 1;
+        }
+        pos += write_u8_dec(octet, &mut buf[pos..]);
+    }
     buf
 }
 
 /// Returns the length (excluding null) of a formatted IPv4 address.
 pub fn format_ipv4_len(addr: &[u8; 4]) -> usize {
-    let s = format!("{}.{}.{}.{}", addr[0], addr[1], addr[2], addr[3]);
-    s.len()
+    u8_dec_len(addr[0]) + u8_dec_len(addr[1]) + u8_dec_len(addr[2]) + u8_dec_len(addr[3]) + 3
 }
 
 // ---------------------------------------------------------------------------
