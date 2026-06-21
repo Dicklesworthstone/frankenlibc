@@ -282,13 +282,24 @@ fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<
 }
 
 #[inline]
-fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
-    if force_native_threading_enabled() {
-        return None;
+fn global_force_native_threading_enabled() -> bool {
+    #[cfg(feature = "standalone")]
+    {
+        true
     }
+    #[cfg(not(feature = "standalone"))]
+    {
+        FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    }
+}
 
+#[inline]
+fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
     #[cfg(feature = "owned-tls-cache")]
     {
+        if force_native_threading_enabled() {
+            return None;
+        }
         try_with_pthread_tls(|tls| {
             (tls.current_pthread_self_cache != 0).then_some(tls.current_pthread_self_cache)
         })
@@ -296,6 +307,12 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        // All force-native entrypoints update the global flag before installing
+        // a TLS override. The deployed cache-hit path can therefore avoid
+        // borrowing the larger pthread TLS state unless the global flag is set.
+        if global_force_native_threading_enabled() {
+            return None;
+        }
         if let Some(cached_self) = PTHREAD_SELF_FAST
             .try_with(|cell| (cell.get() != 0).then_some(cell.get()))
             .ok()
@@ -304,6 +321,9 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
             return Some(cached_self);
         }
 
+        if force_native_threading_enabled() {
+            return None;
+        }
         let cached_self = try_with_pthread_tls(|tls| {
             (tls.current_pthread_self_cache != 0).then_some(tls.current_pthread_self_cache)
         })
@@ -327,15 +347,13 @@ fn force_native_threading_enabled() -> bool {
     // In standalone mode, always use native threading (no host pthreads)
     #[cfg(feature = "standalone")]
     {
-        true
+        global_force_native_threading_enabled()
     }
     #[cfg(not(feature = "standalone"))]
     {
-        try_with_pthread_tls(|tls| {
-            tls.force_native_threading_override
-                .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire))
-        })
-        .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire))
+        let global = global_force_native_threading_enabled();
+        try_with_pthread_tls(|tls| tls.force_native_threading_override.unwrap_or(global))
+            .unwrap_or(global)
     }
 }
 
