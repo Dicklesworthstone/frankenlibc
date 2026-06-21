@@ -26,6 +26,7 @@ unsafe extern "C" {
     fn wcsrchr(wcs: *const i32, wc: i32) -> *const i32;
     fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
     fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int;
+    fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
 }
 
 fn bench(c: &mut Criterion) {
@@ -229,6 +230,30 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { strcmp(black_box(s1c.as_ptr().cast::<c_char>()), s2c.as_ptr().cast::<c_char>()) }))
     });
     gsc.finish();
+
+    // ---- strncasecmp — case-insensitively equal for 30 bytes (a vs A) then differ
+    // at byte 30 (deep in the first panel). Checks the case-fold fast-path's break.
+    let s1ic: Vec<u8> = {
+        let mut v = vec![b'a'; 64];
+        v[30] = b'X';
+        v
+    };
+    let s2ic: Vec<u8> = {
+        let mut v = vec![b'A'; 64]; // 'A' == 'a' case-insensitively for the first 30
+        v[30] = b'Y';
+        v
+    };
+    let core_ic = frankenlibc_core::string::str::strncasecmp(&s1ic, &s2ic, 64);
+    let gl_ic = unsafe { strncasecmp(s1ic.as_ptr().cast::<c_char>(), s2ic.as_ptr().cast::<c_char>(), 64) };
+    assert_eq!(core_ic.signum(), gl_ic.signum(), "strncasecmp sign mismatch");
+    let mut gic = c.benchmark_group("survey_strncasecmp");
+    gic.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::str::strncasecmp(black_box(&s1ic), &s2ic, 64)))
+    });
+    gic.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strncasecmp(black_box(s1ic.as_ptr().cast::<c_char>()), s2ic.as_ptr().cast::<c_char>(), 64) }))
+    });
+    gic.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();

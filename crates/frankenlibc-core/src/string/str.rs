@@ -1376,8 +1376,22 @@ pub fn strcasecmp(s1: &[u8], s2: &[u8]) -> i32 {
     }
 
     while i + SIMD_LANES <= bounded {
-        if !fold_equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
-            break;
+        let av = Simd::<u8, SIMD_LANES>::from_slice(&s1[i..i + SIMD_LANES]);
+        let bv = Simd::<u8, SIMD_LANES>::from_slice(&s2[i..i + SIMD_LANES]);
+        // First lane that case-folds-differently OR is NUL in s1 — O(1) divergence
+        // index via the SIMD mask instead of breaking to the scalar tail and
+        // re-lowercasing the panel byte-by-byte (bd-2g7oyh; same fix as strncasecmp).
+        let event = fold_ascii_upper_simd_32(av).simd_ne(fold_ascii_upper_simd_32(bv))
+            | av.simd_eq(Simd::splat(0));
+        let bits = event.to_bitmask();
+        if bits != 0 {
+            let j = i + bits.trailing_zeros() as usize;
+            let la = s1[j].to_ascii_lowercase();
+            let lb = s2[j].to_ascii_lowercase();
+            if la != lb {
+                return (la as i32) - (lb as i32);
+            }
+            return 0; // shared NUL after case-folding equal
         }
         i += SIMD_LANES;
     }
@@ -1418,8 +1432,25 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
     }
 
     while i + SIMD_LANES <= bounded {
-        if !fold_equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
-            break;
+        let av = Simd::<u8, SIMD_LANES>::from_slice(&s1[i..i + SIMD_LANES]);
+        let bv = Simd::<u8, SIMD_LANES>::from_slice(&s2[i..i + SIMD_LANES]);
+        // First lane that case-folds-differently OR is NUL in s1 — resolve the
+        // divergence index via the SIMD mask + trailing_zeros (O(1)) instead of
+        // breaking to the scalar tail and re-lowercasing the panel byte-by-byte
+        // (strncasecmp was 12.3x slower than glibc on a deep-in-panel case diff;
+        // bd-2g7oyh). `fold_ascii_upper_simd_32` matches fold_equal_and_no_nul_simd_32's
+        // break condition exactly; the lowercase byte compare at `j` matches the tail.
+        let event = fold_ascii_upper_simd_32(av).simd_ne(fold_ascii_upper_simd_32(bv))
+            | av.simd_eq(Simd::splat(0));
+        let bits = event.to_bitmask();
+        if bits != 0 {
+            let j = i + bits.trailing_zeros() as usize;
+            let la = s1[j].to_ascii_lowercase();
+            let lb = s2[j].to_ascii_lowercase();
+            if la != lb {
+                return (la as i32) - (lb as i32);
+            }
+            return 0; // shared NUL after case-folding equal
         }
         i += SIMD_LANES;
     }
