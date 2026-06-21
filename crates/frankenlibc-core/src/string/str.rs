@@ -22,10 +22,8 @@ fn has_nul_byte(word: usize) -> bool {
     word.wrapping_sub(LO_MAGIC) & !word & HI_MAGIC != 0
 }
 
-#[inline(always)]
-fn repeated_byte(byte: u8) -> usize {
-    usize::from_ne_bytes([byte; size_of::<usize>()])
-}
+// (repeated_byte removed: its only user, find_non_byte_or_nul's SWAR small path, is
+// gone — replaced by a direct simd_ne mask scan. bd-2g7oyh.)
 
 #[inline(always)]
 fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
@@ -192,30 +190,8 @@ fn strcpy_4096_terminated(dest: &mut [u8], src: &[u8]) -> usize {
     STRCPY_4096_SRC_LEN
 }
 
-#[inline(always)]
-fn has_non_byte_simd_64(chunk: &[u8], byte: u8) -> bool {
-    debug_assert_eq!(chunk.len(), STRLEN_SIMD_LANES);
-    !Simd::<u8, STRLEN_SIMD_LANES>::from_slice(chunk)
-        .simd_eq(Simd::splat(byte))
-        .all()
-}
-
-#[inline(always)]
-fn block_has_non_byte_256(chunk: &[u8], byte: u8) -> bool {
-    debug_assert_eq!(chunk.len(), STRLEN_BLOCK);
-    let splat = Simd::<u8, STRLEN_SIMD_LANES>::splat(byte);
-    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[0..STRLEN_SIMD_LANES]);
-    let v1 =
-        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
-    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
-        &chunk[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
-    );
-    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES * 3..STRLEN_BLOCK]);
-    let folded = (v0 ^ splat)
-        .simd_max(v1 ^ splat)
-        .simd_max((v2 ^ splat).simd_max(v3 ^ splat));
-    folded.simd_ne(Simd::splat(0)).any()
-}
+// (has_non_byte_simd_64 + block_has_non_byte_256 removed: find_non_byte_or_nul now
+// uses a direct simd_ne mask scan, so these bool prefilters are unused. bd-2g7oyh.)
 
 // (equal_and_no_nul_simd_32 removed: strcmp/strncmp's SIMD_LANES loops now compute
 // the divergence index directly via an event-mask instead of a bool prefilter +
@@ -1141,69 +1117,39 @@ fn span_general(s: &[u8], set: &[u8], table: &[bool; 256], stop_in_set: bool) ->
 
 #[allow(unsafe_code)]
 fn find_non_byte_or_nul(s: &[u8], accepted: u8) -> usize {
-    const WORD_SIZE: usize = size_of::<usize>();
-
+    // First byte != `accepted` via a direct mask scan + trailing_zeros (one
+    // movemask/64), replacing the prior coarse-break + scalar tier re-scan (and the
+    // SWAR small path) — strspn(1) was ~5x slower than glibc (bd-2g7oyh). Since
+    // `accepted != 0`, a NUL is also `!= accepted`, so `simd_ne(accepted)` is exactly
+    // the scalar `byte == 0 || byte != accepted` stop. Byte-identical.
     if accepted == 0 {
         return 0;
     }
-
-    if s.len() >= STRLEN_BLOCK {
-        let mut i = 0usize;
-
-        while i + STRLEN_BLOCK <= s.len() {
-            let chunk = &s[i..i + STRLEN_BLOCK];
-            if block_has_non_byte_256(chunk, accepted) {
-                break;
-            }
-            i += STRLEN_BLOCK;
-        }
-
-        while i + STRLEN_SIMD_LANES <= s.len() {
-            let chunk = &s[i..i + STRLEN_SIMD_LANES];
-            if has_non_byte_simd_64(chunk, accepted) {
-                break;
-            }
-            i += STRLEN_SIMD_LANES;
-        }
-
-        while i < s.len() {
-            let byte = s[i];
-            if byte == 0 || byte != accepted {
-                return i;
-            }
-            i += 1;
-        }
-
-        return s.len();
-    }
-
-    let repeated = repeated_byte(accepted);
     let mut i = 0;
-    while i < s.len() && !(s.as_ptr() as usize + i).is_multiple_of(WORD_SIZE) {
-        let byte = s[i];
-        if byte == 0 || byte != accepted {
-            return i;
+    let a64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(accepted);
+    while i + STRLEN_SIMD_LANES <= s.len() {
+        let v = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&s[i..i + STRLEN_SIMD_LANES]);
+        let bits = v.simd_ne(a64).to_bitmask();
+        if bits != 0 {
+            return i + bits.trailing_zeros() as usize;
         }
-        i += 1;
+        i += STRLEN_SIMD_LANES;
     }
-
-    while i + WORD_SIZE <= s.len() {
-        // SAFETY: i is aligned to WORD_SIZE, and i + WORD_SIZE <= s.len().
-        let word = unsafe { core::ptr::read(s.as_ptr().add(i) as *const usize) };
-        if word != repeated {
-            break;
+    let a32 = Simd::<u8, SIMD_LANES>::splat(accepted);
+    while i + SIMD_LANES <= s.len() {
+        let v = Simd::<u8, SIMD_LANES>::from_slice(&s[i..i + SIMD_LANES]);
+        let bits = v.simd_ne(a32).to_bitmask();
+        if bits != 0 {
+            return i + bits.trailing_zeros() as usize;
         }
-        i += WORD_SIZE;
+        i += SIMD_LANES;
     }
-
     while i < s.len() {
-        let byte = s[i];
-        if byte == 0 || byte != accepted {
+        if s[i] != accepted {
             return i;
         }
         i += 1;
     }
-
     s.len()
 }
 

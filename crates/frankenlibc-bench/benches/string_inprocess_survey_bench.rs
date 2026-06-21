@@ -791,6 +791,28 @@ fn bench(c: &mut Criterion) {
     });
     gcn.finish();
 
+    // ---- strspn(1-char) — 300 'a's with a non-accept 'X' at 100 (find_non_byte_or_nul
+    // scalar-block-rescan). accept="a". strspn counts leading 'a's → 100.
+    let sp1: Vec<u8> = {
+        let mut v = vec![b'a'; 300];
+        v[100] = b'X';
+        v[299] = 0;
+        v
+    };
+    let sp1_acc = b"a\0";
+    let core_sp1 = core_str::strspn(&sp1, sp1_acc);
+    let gl_sp1 = unsafe { strspn(sp1.as_ptr().cast::<c_char>(), c"a".as_ptr()) };
+    assert_eq!(core_sp1, 100, "strspn1 core wrong");
+    assert_eq!(core_sp1, gl_sp1, "strspn1 vs glibc mismatch");
+    let mut gsp1 = c.benchmark_group("survey_strspn1");
+    gsp1.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strspn(black_box(&sp1), sp1_acc)))
+    });
+    gsp1.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strspn(black_box(sp1.as_ptr().cast::<c_char>()), c"a".as_ptr()) }))
+    });
+    gsp1.finish();
+
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
 }
