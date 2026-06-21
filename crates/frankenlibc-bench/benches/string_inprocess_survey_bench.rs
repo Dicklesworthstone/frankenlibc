@@ -23,6 +23,7 @@ unsafe extern "C" {
     fn strcasestr(h: *const c_char, n: *const c_char) -> *const c_char;
     fn memrchr(s: *const c_void, c: c_int, n: usize) -> *const c_void;
     fn rawmemchr(s: *const c_void, c: c_int) -> *const c_void;
+    fn strlen(s: *const c_char) -> usize;
     fn wcschr(wcs: *const i32, wc: i32) -> *const i32;
     fn wcsrchr(wcs: *const i32, wc: i32) -> *const i32;
     fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
@@ -1003,6 +1004,26 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wcsnlen(black_box(wnl.as_ptr().cast::<i32>()), 2000) }))
     });
     gwnl.finish();
+
+    // ---- strlen (THE most-called fn). fl uses a hierarchical min-fold (512/256/64
+    // block_has_nul) + narrow; glibc is tuned AVX2. 1000-byte 'a', NUL at 900.
+    let sl: Vec<u8> = {
+        let mut v = vec![b'a'; 1001];
+        v[900] = 0;
+        v
+    };
+    let sl_core = frankenlibc_core::string::str::strlen(&sl);
+    let sl_gl = unsafe { strlen(sl.as_ptr().cast::<c_char>()) };
+    assert_eq!(sl_core, 900, "strlen core wrong");
+    assert_eq!(sl_core, sl_gl, "strlen vs glibc mismatch");
+    let mut gsl = c.benchmark_group("survey_strlen");
+    gsl.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::str::strlen(black_box(&sl))))
+    });
+    gsl.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strlen(black_box(sl.as_ptr().cast::<c_char>())) }))
+    });
+    gsl.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
