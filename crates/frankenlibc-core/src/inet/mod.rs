@@ -190,18 +190,17 @@ pub fn parse_ipv4_bsd(src: &[u8]) -> Option<[u8; 4]> {
         .iter()
         .position(|&b| b == b'\0' || b.is_ascii_whitespace())
         .unwrap_or(src.len());
-    let s = core::str::from_utf8(&src[..end]).ok()?;
+    // Byte-walk: no `from_utf8` validation pass (parse_bsd_part rejects any
+    // non-digit byte, so invalid UTF-8 still → None, same accept/reject set) and
+    // no str split. (bd-xh0av: the part count is capped at 4 with a stack count.)
+    let s = &src[..end];
     if s.is_empty() {
         return None;
     }
 
-    // Avoid the per-call heap allocation a `Vec<&str>` would impose; the
-    // BSD numbers-and-dots grammar caps the part count at 4, so a five-slot
-    // stack buffer is enough to count parts and reject 5+ in one pass.
-    // (bd-xh0av)
     let mut nums = [0u32; 4];
     let mut nparts = 0usize;
-    for part in s.split('.') {
+    for part in s.split(|&b| b == b'.') {
         if nparts >= 4 {
             return None;
         }
@@ -259,36 +258,52 @@ pub fn parse_ipv4_bsd(src: &[u8]) -> Option<[u8; 4]> {
 
 /// Parse one BSD-grammar IPv4 part: hex (`0x`/`0X` prefix), octal (`0` prefix
 /// followed by digits), or decimal. Empty input rejected. Overflow rejected.
-fn parse_bsd_part(part: &str) -> Option<u32> {
-    if part.is_empty() {
+fn parse_bsd_part(bytes: &[u8]) -> Option<u32> {
+    if bytes.is_empty() {
         return None;
     }
-    let bytes = part.as_bytes();
+    // Byte-fold each base directly (no `from_str_radix`/`str::parse` + separate
+    // all-digit scan): one pass with `checked_*` so overflow → None, byte-for-byte
+    // the same accept/reject + value as the prior str version.
     if bytes.len() >= 2 && bytes[0] == b'0' && (bytes[1] == b'x' || bytes[1] == b'X') {
-        // Hex. Reject sign prefixes — `u32::from_str_radix` accepts a leading
-        // `+`/`-` per its contract, but glibc inet_aton rejects `0x+1` /
-        // `0x-1` because its strtoul reads the sign before the `0x` prefix;
-        // once `0x` has been consumed the next character must be a hex digit.
-        let rest = &part[2..];
+        // Hex. Reject sign prefixes — glibc inet_aton rejects `0x+1`/`0x-1`
+        // (strtoul reads the sign before `0x`); after `0x` the next char must be
+        // a hex digit.
+        let rest = &bytes[2..];
         if rest.is_empty() {
             return None;
         }
-        if rest.bytes().any(|b| !b.is_ascii_hexdigit()) {
-            return None;
+        let mut v: u32 = 0;
+        for &b in rest {
+            let d = match b {
+                b'0'..=b'9' => b - b'0',
+                b'a'..=b'f' => b - b'a' + 10,
+                b'A'..=b'F' => b - b'A' + 10,
+                _ => return None,
+            };
+            v = v.checked_mul(16)?.checked_add(d as u32)?;
         }
-        u32::from_str_radix(rest, 16).ok()
+        Some(v)
     } else if bytes[0] == b'0' && bytes.len() > 1 {
         // Octal. Each remaining char must be 0..=7.
-        if bytes[1..].iter().any(|&b| !(b'0'..=b'7').contains(&b)) {
-            return None;
+        let mut v: u32 = 0;
+        for &b in &bytes[1..] {
+            if !(b'0'..=b'7').contains(&b) {
+                return None;
+            }
+            v = v.checked_mul(8)?.checked_add((b - b'0') as u32)?;
         }
-        u32::from_str_radix(&part[1..], 8).ok()
+        Some(v)
     } else {
         // Decimal.
-        if bytes.iter().any(|&b| !b.is_ascii_digit()) {
-            return None;
+        let mut v: u32 = 0;
+        for &b in bytes {
+            if !b.is_ascii_digit() {
+                return None;
+            }
+            v = v.checked_mul(10)?.checked_add((b - b'0') as u32)?;
         }
-        part.parse().ok()
+        Some(v)
     }
 }
 
