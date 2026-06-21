@@ -46,23 +46,11 @@ fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
 /// halved reduction count, so four is the sweet spot.)
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
-const STRCHR_FOLD_PANELS: usize = 4;
-const STRCHR_FOLD_BYTES: usize = STRLEN_SIMD_LANES * STRCHR_FOLD_PANELS;
 const STRCMP_EXACT_256_LEN: usize = STRLEN_BLOCK + 1;
 
-#[inline(always)]
-fn has_byte_or_nul_simd_folded_256(block: &[u8], byte: u8) -> bool {
-    debug_assert_eq!(block.len(), STRCHR_FOLD_BYTES);
-    let n = Simd::<u8, STRLEN_SIMD_LANES>::splat(byte);
-    let z = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
-    let mut acc = Mask::<i8, STRLEN_SIMD_LANES>::splat(false);
-    for k in 0..STRCHR_FOLD_PANELS {
-        let lo = k * STRLEN_SIMD_LANES;
-        let panel = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&block[lo..lo + STRLEN_SIMD_LANES]);
-        acc |= panel.simd_eq(n) | panel.simd_eq(z);
-    }
-    acc.any()
-}
+// (has_byte_or_nul_simd_folded_256 + STRCHR_FOLD_PANELS/BYTES removed: find_byte_or_nul
+// and strrchr now use a direct mask scan / memrchr, so the folded coarse-check is unused.
+// bd-2g7oyh.)
 
 #[inline(always)]
 fn has_nul_simd_64(chunk: &[u8]) -> bool {
@@ -782,37 +770,33 @@ pub fn strchrnul(s: &[u8], c: u8) -> usize {
 
 #[allow(unsafe_code)]
 fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
+    // Direct mask scan for the first `needle`-or-NUL lane via trailing_zeros — one
+    // movemask per 64-byte panel, no coarse-check-then-rescan double-load. The prior
+    // folded-coarse + SCALAR byte re-scan of the flagged block made strchrnul/
+    // strcspn(1) ~16x slower than glibc; the mask alone is glibc-class (bd-2g7oyh).
     let mut i = 0;
-
-    // Tier 1: 256-byte folded blocks — one `.any()` reduction per 4 wide panels.
-    // On a hit, resolve the first matching byte within the block scalar-side
-    // (rare path), so the steady-state scan pays a single reduction per 256B.
-    while i + STRCHR_FOLD_BYTES <= s.len() {
-        if has_byte_or_nul_simd_folded_256(&s[i..i + STRCHR_FOLD_BYTES], needle) {
-            for k in 0..STRCHR_FOLD_BYTES {
-                let byte = s[i + k];
-                if byte == needle || byte == 0 {
-                    return i + k;
-                }
-            }
+    let n64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(needle);
+    let z64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
+    while i + STRLEN_SIMD_LANES <= s.len() {
+        let v = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&s[i..i + STRLEN_SIMD_LANES]);
+        let bits = (v.simd_eq(n64) | v.simd_eq(z64)).to_bitmask();
+        if bits != 0 {
+            return i + bits.trailing_zeros() as usize;
         }
-        i += STRCHR_FOLD_BYTES;
+        i += STRLEN_SIMD_LANES;
     }
 
-    // Tier 2: remaining whole 32-byte panels.
+    let n32 = Simd::<u8, SIMD_LANES>::splat(needle);
+    let z32 = Simd::<u8, SIMD_LANES>::splat(0);
     while i + SIMD_LANES <= s.len() {
-        if has_byte_or_nul_simd_32(&s[i..i + SIMD_LANES], needle) {
-            for k in 0..SIMD_LANES {
-                let byte = s[i + k];
-                if byte == needle || byte == 0 {
-                    return i + k;
-                }
-            }
+        let v = Simd::<u8, SIMD_LANES>::from_slice(&s[i..i + SIMD_LANES]);
+        let bits = (v.simd_eq(n32) | v.simd_eq(z32)).to_bitmask();
+        if bits != 0 {
+            return i + bits.trailing_zeros() as usize;
         }
         i += SIMD_LANES;
     }
 
-    // Tier 3: scalar tail.
     while i < s.len() {
         let byte = s[i];
         if byte == needle || byte == 0 {

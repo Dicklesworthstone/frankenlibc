@@ -46,6 +46,7 @@ unsafe extern "C" {
     fn gmtime_r(t: *const i64, tm: *mut libc::tm) -> *mut libc::tm;
     fn random() -> std::ffi::c_long;
     fn strrchr(s: *const c_char, c: c_int) -> *const c_char;
+    fn strchrnul(s: *const c_char, c: c_int) -> *const c_char;
 }
 
 fn bench(c: &mut Criterion) {
@@ -769,6 +770,26 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { strrchr(black_box(rr.as_ptr().cast::<c_char>()), b'/' as c_int) }))
     });
     grr.finish();
+
+    // ---- strchrnul — 300-byte string, 'q' at 100, NUL at 299 (folded block flagged
+    // → exercises find_byte_or_nul's scalar block re-scan; deep target at 100).
+    let cn: Vec<u8> = {
+        let mut v = vec![b'a'; 300];
+        v[100] = b'q';
+        v[299] = 0;
+        v
+    };
+    let core_cn = core_str::strchrnul(&cn, b'q');
+    let gl_cn = unsafe { strchrnul(cn.as_ptr().cast::<c_char>(), b'q' as c_int) };
+    assert_eq!(core_cn, 100, "strchrnul core wrong");
+    let mut gcn = c.benchmark_group("survey_strchrnul");
+    gcn.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strchrnul(black_box(&cn), b'q')))
+    });
+    gcn.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strchrnul(black_box(cn.as_ptr().cast::<c_char>()), b'q' as c_int) }))
+    });
+    gcn.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
