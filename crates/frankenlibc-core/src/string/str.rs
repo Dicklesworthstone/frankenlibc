@@ -1252,6 +1252,82 @@ fn find_non_byte_or_nul(s: &[u8], accepted: u8) -> usize {
     s.len()
 }
 
+#[inline(always)]
+fn find_last_byte_before_nul(s: &[u8], needle: u8) -> Option<usize> {
+    debug_assert_ne!(needle, 0);
+
+    let mut i = 0usize;
+    let mut last = None;
+    let n64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(needle);
+    let z64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
+    while i + STRLEN_SIMD_LANES <= s.len() {
+        let v = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&s[i..i + STRLEN_SIMD_LANES]);
+        let target = v.simd_eq(n64);
+        let nul = v.simd_eq(z64);
+        let event_bits = (target | nul).to_bitmask() as u64;
+        if event_bits != 0 {
+            let nul_bits = nul.to_bitmask() as u64;
+            let target_bits = event_bits & !nul_bits;
+            if nul_bits == 0 {
+                last = Some(i + 63 - target_bits.leading_zeros() as usize);
+            } else {
+                let nul = nul_bits.trailing_zeros() as usize;
+                let before_nul = if nul == 0 {
+                    0
+                } else {
+                    target_bits & ((1u64 << nul) - 1)
+                };
+                if before_nul != 0 {
+                    last = Some(i + 63 - before_nul.leading_zeros() as usize);
+                }
+                return last;
+            }
+        }
+        i += STRLEN_SIMD_LANES;
+    }
+
+    let n32 = Simd::<u8, SIMD_LANES>::splat(needle);
+    let z32 = Simd::<u8, SIMD_LANES>::splat(0);
+    while i + SIMD_LANES <= s.len() {
+        let v = Simd::<u8, SIMD_LANES>::from_slice(&s[i..i + SIMD_LANES]);
+        let target = v.simd_eq(n32);
+        let nul = v.simd_eq(z32);
+        let event_bits = (target | nul).to_bitmask() as u64;
+        if event_bits != 0 {
+            let nul_bits = nul.to_bitmask() as u64;
+            let target_bits = event_bits & !nul_bits;
+            if nul_bits == 0 {
+                last = Some(i + 63 - target_bits.leading_zeros() as usize);
+            } else {
+                let nul = nul_bits.trailing_zeros() as usize;
+                let before_nul = if nul == 0 {
+                    0
+                } else {
+                    target_bits & ((1u64 << nul) - 1)
+                };
+                if before_nul != 0 {
+                    last = Some(i + 63 - before_nul.leading_zeros() as usize);
+                }
+                return last;
+            }
+        }
+        i += SIMD_LANES;
+    }
+
+    while i < s.len() {
+        let byte = s[i];
+        if byte == 0 {
+            return last;
+        }
+        if byte == needle {
+            last = Some(i);
+        }
+        i += 1;
+    }
+
+    last
+}
+
 /// Locates the last occurrence of `c` in the NUL-terminated string `s`.
 ///
 /// Equivalent to C `strrchr`. Returns the index of the last byte equal to `c`,
@@ -1261,15 +1337,9 @@ pub fn strrchr(s: &[u8], c: u8) -> Option<usize> {
         return Some(strlen(s));
     }
 
-    // strrchr = "last `c` before the terminating NUL" = the last `c` in `s[..strlen]`,
-    // which is exactly `memrchr(s, c, strlen(s))`. Both helpers are SIMD: strlen finds
-    // the NUL bound, memrchr does a mask-based reverse scan (bd-2g7oyh). This replaces
-    // the prior path — a redundant full `memchr` existence pre-scan PLUS a scalar
-    // byte-by-byte re-scan of each flagged 256-byte folded block — which was ~34x
-    // slower than glibc on a 300-byte string. Byte-identical: memrchr over [0, strlen)
-    // returns the same last (rightmost) match, or None when `c` is absent.
-    let n = strlen(s);
-    super::mem::memrchr(s, c, n)
+    // One pass: keep the highest `c` lane seen before the first NUL. This is the
+    // same result as `memrchr(s, c, strlen(s))` without scanning the string twice.
+    find_last_byte_before_nul(s, c)
 }
 
 /// Finds the first occurrence of the NUL-terminated substring `needle` in
