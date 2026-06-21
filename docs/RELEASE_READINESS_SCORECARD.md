@@ -1,6 +1,6 @@
 # FrankenLibC Release Readiness Scorecard
 
-Last updated: 2026-06-20 by `cod-a` / `cod-b` / `BlackThrush`.
+Last updated: 2026-06-21 by `cod-a` / `cod-b` / `BlackThrush`.
 
 ## Current gate snapshot
 
@@ -11,6 +11,12 @@ Last updated: 2026-06-20 by `cod-a` / `cod-b` / `BlackThrush`.
 | Revert discipline | Green for measured cluster | Winning rows kept; losing/neutral parser source shapes were reversed without deleting evidence artifacts or benchmark rows. Prior glibc losses (`bd-2g7oyh.478`, `bd-2g7oyh.482`) remain reverted. `bd-2g7oyh.479` stack candidates, `bd-li0so3` hosts scanner, `bd-7ak6cm` calloc `alloc_zeroed`, `bd-4crkqx` aliases member scanner, the 2026-06-20 calloc tombstone compaction, the `bd-f874go` fallback-table hot-slot cache, the `bd-f874go` strict calloc one-slot recycle/live-slot candidate, the `bd-deployed-malloc-membrane-50x-vmuu73` bounded hot-class slab candidate, the `bd-2g7oyh` vDSO pointer-cache/counter candidates, and the `bd-2g7oyh.485` snprintb streaming visitor were reverted after measurement. The first `bd-zexi06` no-render and length-cache-only attempts are recorded as losses, not credited as keeps. `bd-xxrfvu`, the earlier `bd-f874go` native reentry-slot reuse, the deployed `ato*` parser, the deployed `getenv` fused-name scanner plus hot-cache closeout, the fused exact string `snprintf` path, the final pure-literal `snprintf` cache+word-copy path, and the `bd-f874go` same-size-class `realloc` path measured as keeps. The qsort screen kept only benchmark apparatus; the snprintb reject kept benchmark apparatus and the behavior guard. No qsort source lever was landed; snprintb source was reverted. | Future neutral/loss rows must be reverted or explicitly marked safety/correctness exceptions. |
 | Conformance guard | Partial green | Focused parser guards passed previously. For `.479`, touched-file rustfmt and `cargo check -p frankenlibc-membrane --lib` passed. For `bd-li0so3`, touched-file rustfmt, 10 hosts parser tests, and `cargo check -p frankenlibc-core` passed. For allocator work, `bd-f874go` passed its focused guards, and the 2026-06-20 calloc tombstone compaction plus fallback-table hot-slot rejects were reverted; post-revert `malloc_abi_test` passed 53/0/1 ignored under `rch exec` local fallback after remote pressure refused a remote test, and `RCH_REQUIRE_REMOTE=1 rch exec -- cargo build -p frankenlibc-abi --release` passed on `hz2`. The one-slot recycle/live-slot reject passed focused `cargo check -p frankenlibc-abi --lib` and its focused reuse test before measurement, then its source/test hunks were reverted; current tree `cargo check -p frankenlibc-abi --lib` passes with known pre-existing warnings. The bounded hot-class slab reject passed touched-file rustfmt and `cargo check -p frankenlibc-abi --lib` before measurement, completed same-worker `rch` `calloc_glibc_bench`, then source was reverted; post-revert touched-file rustfmt and `cargo check -p frankenlibc-abi --lib` pass with known pre-existing warnings. The same-size-class `realloc` keep passed `malloc_abi_test realloc` 7/0 on rch and `cargo build -p frankenlibc-abi --release` on rch. For the `ato*` keep, touched-file rustfmt, `git diff --check`, strict refinement integration (16/16), strtol-family differential fuzz (1,000,000 comparisons, 0 divergences), `cargo build -p frankenlibc-abi --release`, and deployed `strtol_glibc_bench` passed via `rch`; the final fuzz rerun used `rch exec` local fallback after remote workers were unavailable. For the deployed `strtol` direct-parser keep, touched-file rustfmt passed, strtol-family differential fuzz passed 1,000,000 comparisons with 0 divergences on `vmi1152480`, and the deployed release bench passed via `rch`. For the rejected vDSO timing candidates, touched-file rustfmt and `git diff --check` passed while source was present, focused `time_abi_test vdso` passed 10/10 via rch on `vmi1227854`, and final source was reverted after same-worker `hz2` bench rejection. For the deployed `getenv` fused-name keep, `git diff --check` passed, `conformance_diff_getenv` passed 2/0, `metamorphic_getenv` passed 9/0, and `cargo build -p frankenlibc-abi --release` passed via rch on `vmi1227854`; crate rustfmt remains blocked by pre-existing formatting drift in the touched ABI and bench files and was not normalized here. For `bd-2g7oyh.496`, touched-file rustfmt and `git diff --check` passed, local `cargo check -p frankenlibc-abi --lib` passed with known warnings, local getenv conformance passed 2/0 + 9/0, `cargo build -p frankenlibc-abi --release` passed via rch on `vmi1152480`, and focused rch getenv conformance passed 2/0 + 9/0 on `vmi1227854` after worker reroute. For `bd-0ft0w3`, `git diff --check` passed, `cargo build -p frankenlibc-abi --release` passed on `hz1`, and focused rch conformance passed `diff_snprintf_string_specifiers`, `diff_snprintf_truncation`, and `printf_null_string_precision_matches_glibc`. For `bd-zexi06`, focused rch conformance passed `diff_snprintf` 7/0 and `cargo build -p frankenlibc-abi --release` passed on `hz1`; broad rustfmt remains blocked by pre-existing formatting drift in touched files and was not normalized here. For `bd-2g7oyh.485`, post-revert rch validation passed `cargo test -p frankenlibc-core stdio::snprintb --lib` 13/13 and `cargo check -p frankenlibc-bench --bench stdio_bench` on `hz1`, with only known pre-existing iconv/math warnings. For `bd-4crkqx`, source was reverted to split/filter/collect; touched-file rustfmt passed, 30 aliases-filtered core tests passed, and `cargo check -p frankenlibc-core` passed. For `bd-xxrfvu`, touched-file rustfmt passed, `netnum` filtered tests passed 12/12, `network_` filtered tests passed 15/15, and `cargo check -p frankenlibc-core` passed. For `bd-z8p3mx`, the powf gates passed against host glibc 2.42. Two pre-existing unrelated failures remain (`diff_sign_min_max_dim_helpers_*`, `fminf`/`fmaxf`/`fdimf` — fail on clean HEAD too, not touched here). | Full core tests are blocked by unrelated iconv/glob failures; workspace check/clippy by missing packaged files in `asupersync-conformance 0.3.4`; workspace fmt and crate fmt are blocked by broad formatting drift. |
 | Release posture | Not ready | Additional getopt and group lookup wins recorded, real `getgrgid(0)` neutral and passwd lookup losses routed deeper, `bd-f874go` strict allocator reentry-slot reuse and same-size-class `realloc` in-place path narrow allocator gaps, tombstone compaction plus fallback-table exact hot-slot plus strict calloc one-slot recycle/live-slot plus bounded hot-class slab plus vDSO timing pointer-cache attempts are recorded as reverts, deployed `atoi`/`atol`/`atoll` beat glibc at 0.36x-0.57x in the latest same-worker run, deployed `getenv_hit`/`getenv_miss` now beat glibc at 0.78x/0.92x after the hot-cache keep, exact string `snprintf` beats glibc at 0.781x/0.679x mean, pure-literal `snprintf` beats glibc at 0.497x mean, and the snprintb streaming visitor was neutral/slower and reverted. | Not release-ready until scratch test debt is isolated/fixed, central ledger covers the pending backlog, conformance/bench gates are repeatable, allocator small/realloc rows no longer carry large glibc losses, and the remaining long/hex `strtol`, `time`, and `clock_gettime` deployed losses are closed or accepted. |
+
+2026-06-21 supersession note: `bd-2g7oyh.497` below converts the current
+`strtol_dec_short`/`strtol_dec_long`/`strtol_hex` rows to same-worker host-glibc
+wins at 0.50x/0.57x/0.78x. The older snapshot cells that still call long/hex
+`strtol` red are now stale; `clock_gettime`, `time`, and the focused
+`pthread_self` row remain routed timing/TLS losses.
 
 ## 2026-06-19 measured stdio cluster
 
@@ -152,8 +158,9 @@ NaN/Inf, overflow, and extreme-exponent cases fall through unchanged.
 | `strtod_sci` | 68.09 ns | 1.38x | 20.09 ns | 45.58 ns | 0.44x | WIN |
 
 Scorecard effect: the measured deployed `strtod` rows in `strtol_glibc_bench`
-now all beat host glibc. The remaining red rows in that bench are long/hex
-`strtol`, `getenv`, `clock_gettime`, and `time`; those need separate levers.
+now all beat host glibc. At this point the remaining red rows in that bench
+were long/hex `strtol`, `getenv`, `clock_gettime`, and `time`; later rows below
+close hot-cache `getenv` and positive-prefix `strtol`.
 
 Validation/build: `strtod_strtof_live_differential_probe` passed via rch with
 8071 inputs and 0 divergences vs host glibc, including the exact-integer and
@@ -201,8 +208,9 @@ and multithreaded processes stay on the existing path.
 | `getenv_miss` | 64.90 ns | 2.53x | 21.45 ns | 23.34 ns | 0.92x | 0.330x | WIN |
 
 Scorecard effect: hot repeated-key `getenv` is no longer a red row in
-`strtol_glibc_bench`. The same final run still leaves long/hex `strtol`,
-`clock_gettime`, and `time` as losses; `strtod_simple` is neutral.
+`strtol_glibc_bench`. At this point the same final run still left long/hex
+`strtol`, `clock_gettime`, and `time` as losses; the next `bd-2g7oyh.497`
+section closes the deployed `strtol` rows.
 
 Validation/build: touched-file rustfmt and `git diff --check` passed; local
 `cargo check -p frankenlibc-abi --lib` passed with known warnings; local getenv
@@ -210,6 +218,35 @@ conformance passed 2/0 + 9/0; `cargo build -p frankenlibc-abi --release` passed
 via rch on `vmi1152480`; focused rch getenv conformance passed 2/0 + 9/0 on
 `vmi1227854` after worker reroute. Full evidence:
 `tests/artifacts/perf/bd-2g7oyh-getenv-hot-cache.md`.
+
+## 2026-06-21 `bd-2g7oyh.497` deployed `strtol` positive-prefix keep
+
+The code-first positive/no-whitespace `strtol` fast path from `6f311ef07` was
+verified with same-worker remote evidence on `vmi1152480`. It splits direct
+base-10 digit prefixes and base-16 digit/`0x` prefixes away from the generic
+whitespace/sign/base setup while preserving fallback semantics for signed,
+whitespace-prefixed, invalid-base, overflow, and `0x`-without-hex cases.
+
+| Workload | Baseline FL | Baseline ratio | Final FL | Final glibc | Final ratio | Verdict |
+|---|---:|---:|---:|---:|---:|---|
+| `strtol_dec_short` | 9.35 ns | 0.96x | 4.64 ns | 9.33 ns | 0.50x | WIN |
+| `strtol_dec_long` | 25.21 ns | 1.21x | 9.95 ns | 17.38 ns | 0.57x | WIN |
+| `strtol_hex` | 21.55 ns | 1.13x | 13.52 ns | 17.30 ns | 0.78x | WIN |
+
+Scorecard effect: the measured deployed `strtol` rows in
+`strtol_glibc_bench` now all beat host glibc. The same final run leaves
+`clock_gettime` at 1.33x, `time` at 1.64x, and `pthread_self` at 1.10x; route
+those separately and do not retry the rejected vDSO pointer-cache family.
+
+Validation/build: touched-file rustfmt check and `git diff --check` passed.
+RCH `conformance_strtol_family` passed; RCH
+`strtol_family_differential_fuzz` compared 1,000,000 cases with 0 divergences;
+RCH `cargo check -p frankenlibc-abi --lib` and
+`cargo build -p frankenlibc-abi --release` passed with known pre-existing
+warnings. RCH clippy was attempted per crate but blocked because `cargo-clippy`
+is not installed for `nightly-2026-04-28-x86_64-unknown-linux-gnu`. Full
+evidence:
+`tests/artifacts/perf/bd-2g7oyh.497-strtol-positive-prefix-pending.md`.
 
 ## 2026-06-20 `bd-2g7oyh` `qsort_16_i32` screen
 
