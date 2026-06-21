@@ -178,3 +178,10 @@ required-features = ["abi-bench"]
 name = "sscanf_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
+
+# Multi-threaded stdio contention vs glibc. Quantifies bd-hqo6b6 (global registry lock)
+# + the MT value of the shipped lock-removal guards.
+[[bench]]
+name = "stdio_mt_contention_bench"
+harness = false
+required-features = ["abi-bench"]
