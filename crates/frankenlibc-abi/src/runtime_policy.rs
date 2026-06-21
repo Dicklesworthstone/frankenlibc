@@ -2239,6 +2239,7 @@ pub(crate) fn observe(
                 | ApiFamily::Loader
                 | ApiFamily::Stdlib
                 | ApiFamily::MathFenv
+                | ApiFamily::Stdio
         )
     {
         return;
