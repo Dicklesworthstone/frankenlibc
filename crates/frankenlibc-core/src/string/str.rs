@@ -1444,27 +1444,11 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
             let accepted = accept[0];
             return find_non_byte_or_nul(s, accepted);
         }
-        2 => {
-            let a0 = accept[0];
-            let a1 = accept[1];
-            for (i, &byte) in s.iter().enumerate() {
-                if byte == 0 || (byte != a0 && byte != a1) {
-                    return i;
-                }
-            }
-            return s.len();
-        }
-        3 => {
-            let a0 = accept[0];
-            let a1 = accept[1];
-            let a2 = accept[2];
-            for (i, &byte) in s.iter().enumerate() {
-                if byte == 0 || (byte != a0 && byte != a1 && byte != a2) {
-                    return i;
-                }
-            }
-            return s.len();
-        }
+        // len 2/3 reuse the SIMD len-4 scanner by duplicating accept bytes (same
+        // membership set), instead of a scalar per-byte loop (was 6.5x slower than
+        // glibc's vectorized strspn; bd-2g7oyh).
+        2 => return find_non_any_of4_or_nul(s, accept[0], accept[1], accept[0], accept[1]),
+        3 => return find_non_any_of4_or_nul(s, accept[0], accept[1], accept[2], accept[2]),
         4 => return find_non_any_of4_or_nul(s, accept[0], accept[1], accept[2], accept[3]),
         _ => {}
     }
@@ -1486,27 +1470,10 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
             let rejected = reject[0];
             return find_byte_or_nul(s, rejected);
         }
-        2 => {
-            let r0 = reject[0];
-            let r1 = reject[1];
-            for (i, &byte) in s.iter().enumerate() {
-                if byte == 0 || byte == r0 || byte == r1 {
-                    return i;
-                }
-            }
-            return s.len();
-        }
-        3 => {
-            let r0 = reject[0];
-            let r1 = reject[1];
-            let r2 = reject[2];
-            for (i, &byte) in s.iter().enumerate() {
-                if byte == 0 || byte == r0 || byte == r1 || byte == r2 {
-                    return i;
-                }
-            }
-            return s.len();
-        }
+        // len 2/3 reuse the SIMD len-4 scanner by duplicating reject bytes (same
+        // membership set), instead of a scalar per-byte loop (bd-2g7oyh).
+        2 => return find_any_of4_or_nul_fused(s, reject[0], reject[1], reject[0], reject[1]),
+        3 => return find_any_of4_or_nul_fused(s, reject[0], reject[1], reject[2], reject[2]),
         4 => return find_any_of4_or_nul_fused(s, reject[0], reject[1], reject[2], reject[3]),
         _ => {}
     }
@@ -1531,30 +1498,19 @@ pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
             }
             return None;
         }
+        // len 2/3 reuse the SIMD len-4 scanner by duplicating accept bytes (same
+        // membership set), instead of a scalar per-byte loop (bd-2g7oyh).
         2 => {
-            let a0 = accept[0];
-            let a1 = accept[1];
-            for (i, &byte) in s.iter().enumerate() {
-                if byte == 0 {
-                    return None;
-                }
-                if byte == a0 || byte == a1 {
-                    return Some(i);
-                }
+            let index = find_any_of4_or_nul(s, accept[0], accept[1], accept[0], accept[1]);
+            if index < s.len() && s[index] != 0 {
+                return Some(index);
             }
             return None;
         }
         3 => {
-            let a0 = accept[0];
-            let a1 = accept[1];
-            let a2 = accept[2];
-            for (i, &byte) in s.iter().enumerate() {
-                if byte == 0 {
-                    return None;
-                }
-                if byte == a0 || byte == a1 || byte == a2 {
-                    return Some(i);
-                }
+            let index = find_any_of4_or_nul(s, accept[0], accept[1], accept[2], accept[2]);
+            if index < s.len() && s[index] != 0 {
+                return Some(index);
             }
             return None;
         }
