@@ -49,24 +49,10 @@ const WIDE_REVERSE_SIMD_LANES: usize = 16;
 const WIDE_REVERSE_LONG_SIMD_LANES: usize = WIDE_FIND_LONG_SIMD_LANES;
 const WIDE_REVERSE_LONG_MIN_LEN: usize = WIDE_REVERSE_LONG_SIMD_LANES * 4;
 
-/// Returns `true` if `chunk` (exactly [`WIDE_FIND_SIMD_LANES`] elements) contains the
-/// wide character `needle` or a terminating NUL. Used as a cheap panel filter
-/// before exact left-to-right scalar resolution on candidate panels.
-#[inline(always)]
-fn has_wide_or_nul_simd(chunk: &[u32], needle: u32) -> bool {
-    debug_assert_eq!(chunk.len(), WIDE_FIND_SIMD_LANES);
-    let lanes = Simd::<u32, WIDE_FIND_SIMD_LANES>::from_slice(chunk);
-    (lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(needle))).any()
-}
-
-/// Returns `true` if `chunk` (exactly [`WIDE_FIND_LONG_SIMD_LANES`] elements)
-/// contains the wide character `needle` or a terminating NUL.
-#[inline(always)]
-fn has_wide_or_nul_long_simd(chunk: &[u32], needle: u32) -> bool {
-    debug_assert_eq!(chunk.len(), WIDE_FIND_LONG_SIMD_LANES);
-    let lanes = Simd::<u32, WIDE_FIND_LONG_SIMD_LANES>::from_slice(chunk);
-    (lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(needle))).any()
-}
+// (has_wide_or_nul_simd / has_wide_or_nul_long_simd removed: find_wide_or_nul,
+// find_wide_or_nul_long and wcsrchr now compute the needle/NUL lane index directly
+// via masks instead of a bool prefilter + scalar resolve, so the prefilters are
+// unused. bd-2g7oyh.)
 
 /// Returns `true` iff the two [`WIDE_COMPARE_SIMD_LANES`]-element panels are
 /// element-for-element equal AND contain no terminating NUL. Used as the
@@ -703,20 +689,33 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
         let mut base = 0usize;
 
         for chunk in chunks.by_ref() {
-            if !has_wide_or_nul_long_simd(chunk, c) {
+            // Last `c` before the first NUL in this 64-lane chunk via masks (O(1))
+            // instead of a scalar element-by-element inner scan (bd-2g7oyh). If the
+            // chunk holds a NUL, the answer is the highest `c` lane below the first
+            // NUL lane (or `last` from prior chunks); else the highest `c` lane
+            // updates `last`. `63 - leading_zeros` = highest set lane (last match).
+            let lanes = Simd::<u32, WIDE_FIND_LONG_SIMD_LANES>::from_slice(chunk);
+            let nul_m = lanes.simd_eq(Simd::splat(0));
+            let c_m = lanes.simd_eq(Simd::splat(c));
+            // Cheap combined prefilter (one reduction) keeps the NUL-free/c-free
+            // throughput identical to the old has_wide_or_nul_long_simd gate; only
+            // a flagged chunk pays the two movemasks below.
+            if !(nul_m | c_m).any() {
                 base += WIDE_FIND_LONG_SIMD_LANES;
                 continue;
             }
-
-            for (j, &ch) in chunk.iter().enumerate() {
-                if ch == 0 {
-                    return last;
+            let nul_bits = nul_m.to_bitmask() as u64;
+            let c_bits = c_m.to_bitmask() as u64;
+            if nul_bits != 0 {
+                let first_nul = nul_bits.trailing_zeros();
+                let c_before = c_bits & ((1u64 << first_nul) - 1);
+                if c_before != 0 {
+                    return Some(base + 63 - c_before.leading_zeros() as usize);
                 }
-                if ch == c {
-                    last = Some(base + j);
-                }
+                return last;
             }
-
+            // Gate fired with no NUL → c_bits != 0: highest `c` lane updates `last`.
+            last = Some(base + 63 - c_bits.leading_zeros() as usize);
             base += WIDE_FIND_LONG_SIMD_LANES;
         }
 
@@ -736,20 +735,26 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
     let mut base = 0usize;
 
     for chunk in chunks.by_ref() {
-        if !has_wide_or_nul_simd(chunk, c) {
+        // Last `c` before the first NUL in this 32-lane chunk via masks (O(1)) —
+        // same nul-before-c resolution as the 64-lane path above (bd-2g7oyh).
+        let lanes = Simd::<u32, WIDE_FIND_SIMD_LANES>::from_slice(chunk);
+        let nul_m = lanes.simd_eq(Simd::splat(0));
+        let c_m = lanes.simd_eq(Simd::splat(c));
+        if !(nul_m | c_m).any() {
             base += WIDE_FIND_SIMD_LANES;
             continue;
         }
-
-        for (j, &ch) in chunk.iter().enumerate() {
-            if ch == 0 {
-                return last;
+        let nul_bits = nul_m.to_bitmask() as u64;
+        let c_bits = c_m.to_bitmask() as u64;
+        if nul_bits != 0 {
+            let first_nul = nul_bits.trailing_zeros();
+            let c_before = c_bits & ((1u64 << first_nul) - 1);
+            if c_before != 0 {
+                return Some(base + 63 - c_before.leading_zeros() as usize);
             }
-            if ch == c {
-                last = Some(base + j);
-            }
+            return last;
         }
-
+        last = Some(base + 63 - c_bits.leading_zeros() as usize);
         base += WIDE_FIND_SIMD_LANES;
     }
 

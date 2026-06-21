@@ -173,17 +173,24 @@ fn bench(c: &mut Criterion) {
     });
     gw.finish();
 
-    // ---- wcsrchr (reverse wide search) — removed redundant wmemrchr pre-scan.
-    let core_wr = frankenlibc_core::string::wide::wcsrchr(&wbuf, b'X' as u32);
-    let gl_wr = unsafe { wcsrchr(wbuf.as_ptr().cast::<i32>(), b'X' as i32) };
-    assert_eq!(core_wr, Some(30), "wcsrchr core position wrong");
+    // ---- wcsrchr (reverse wide search) — 128 wide chars so the 64-lane chunk loop
+    // runs; single 'X' at 100, NUL at 127 (last X before NUL = 100).
+    let wrbuf: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 128];
+        v[100] = b'X' as u32;
+        v[127] = 0;
+        v
+    };
+    let core_wr = frankenlibc_core::string::wide::wcsrchr(&wrbuf, b'X' as u32);
+    let gl_wr = unsafe { wcsrchr(wrbuf.as_ptr().cast::<i32>(), b'X' as i32) };
+    assert_eq!(core_wr, Some(100), "wcsrchr core position wrong");
     assert_eq!(!gl_wr.is_null(), core_wr.is_some(), "wcsrchr found-ness mismatch");
     let mut gwr = c.benchmark_group("survey_wcsrchr");
     gwr.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcsrchr(black_box(&wbuf), b'X' as u32)))
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcsrchr(black_box(&wrbuf), b'X' as u32)))
     });
     gwr.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wcsrchr(black_box(wbuf.as_ptr().cast::<i32>()), b'X' as i32) }))
+        b.iter(|| black_box(unsafe { wcsrchr(black_box(wrbuf.as_ptr().cast::<i32>()), b'X' as i32) }))
     });
     gwr.finish();
 
