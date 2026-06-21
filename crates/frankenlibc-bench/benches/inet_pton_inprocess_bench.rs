@@ -21,6 +21,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use frankenlibc_core::inet as core_inet;
 
 const AF_INET: c_int = 2;
+const AF_INET6: c_int = 10;
 
 // Declared directly (the `libc` crate doesn't re-export inet_pton). With NO
 // `abi-bench` feature, no frankenlibc no_mangle symbol exists, so this links to the
@@ -60,6 +61,37 @@ fn bench(c: &mut Criterion) {
         });
     });
     group.finish();
+
+    // IPv6: parse_ipv6 is alloc-heavy (from_utf8 + 2x Vec::collect + 2 group Vecs);
+    // measure it against real glibc to decide if the Vec-elimination is warranted.
+    let v6_bytes = b"2001:db8:85a3::8a2e:370:7334";
+    let v6_cstr = c"2001:db8:85a3::8a2e:370:7334";
+    let mut c6 = [0u8; 16];
+    let rc_c6 = core_inet::inet_pton(AF_INET6, v6_bytes, &mut c6);
+    let mut g6 = [0u8; 16];
+    let rc_g6 = unsafe { inet_pton(AF_INET6, v6_cstr.as_ptr(), g6.as_mut_ptr().cast::<c_void>()) };
+    assert_eq!(rc_c6, 1, "core inet_pton v6 should succeed");
+    assert_eq!(rc_g6, 1, "glibc inet_pton v6 should succeed");
+    assert_eq!(c6, g6, "core vs real-glibc inet_pton v6 byte mismatch");
+
+    let mut g6group = c.benchmark_group("inet_pton_inprocess_ipv6");
+    g6group.bench_function("frankenlibc_core", |b| {
+        b.iter(|| {
+            let mut out = [0u8; 16];
+            let rc = core_inet::inet_pton(AF_INET6, black_box(&v6_bytes[..]), &mut out);
+            black_box((rc, out));
+        });
+    });
+    g6group.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| {
+            let mut out = [0u8; 16];
+            let rc = unsafe {
+                inet_pton(AF_INET6, black_box(v6_cstr.as_ptr()), out.as_mut_ptr().cast::<c_void>())
+            };
+            black_box((rc, out));
+        });
+    });
+    g6group.finish();
 }
 
 criterion_group! {
