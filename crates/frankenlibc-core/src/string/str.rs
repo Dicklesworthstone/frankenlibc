@@ -1696,16 +1696,13 @@ pub fn strcasestr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
     // Dual-anchor fast path: a match at `start` requires BOTH the case-folded
     // first byte at `start` and the case-folded last byte at `start + n_len - 1`.
-    // When the folded first byte is common (e.g. icase "aAaA…aB" over a mixed
-    // 'a'/'A' run) but the folded last byte is rare/absent, anchoring the SIMD
-    // scan on the last byte collapses the search to a single pass — the
-    // first-byte-only scan below makes every position a candidate (O(n*m)). We
-    // scan for the folded last byte; each hit confirms the folded first byte and
-    // a full case-insensitive compare. Only valid when `first != last`; otherwise
-    // the anchors coincide and we use the first-byte scan. The O(n+m) Two-Way
-    // bailout and leftmost-match semantics are preserved (last-byte hits are
-    // visited left to right, so candidate starts increase monotonically).
-    if first != last {
+    // Last-byte anchoring is excellent when the last byte is the rarer anchor
+    // (e.g. icase "aaaa...b"), but text needles often end in a common byte (`e`,
+    // `t`, space). Use the same static frequency prior as `memmem`/`wcsstr` so
+    // common-last text routes to the first-byte scan below while rare-last
+    // needles keep the dual-anchor win. The O(n+m) Two-Way bailout and
+    // leftmost-match semantics are preserved whichever anchor is selected.
+    if first != last && strcasestr_prefers_last_anchor(first, last) {
         let mut anchor = n_len - 1;
         let mut miss_work = 0usize;
         while anchor < hay.len() {
@@ -1779,6 +1776,26 @@ pub fn strcasestr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     }
 
     None
+}
+
+#[inline(always)]
+fn strcasestr_prefers_last_anchor(first: u8, last: u8) -> bool {
+    debug_assert_ne!(first, last);
+    strcasestr_anchor_commonness(last) <= strcasestr_anchor_commonness(first)
+}
+
+#[inline(always)]
+fn strcasestr_anchor_commonness(byte: u8) -> u8 {
+    match byte.to_ascii_lowercase() {
+        b' ' | b'e' => 16,
+        b'a' | b'i' | b'n' | b'o' | b'r' | b's' | b't' => 12,
+        b'c' | b'd' | b'f' | b'g' | b'h' | b'l' | b'm' | b'p' | b'u' | b'w' | b'y' => 8,
+        b'\t' | b'\n' | b'\r' | b'_' | b'-' | b'.' | b'/' => 6,
+        b'0'..=b'9' => 5,
+        b'!'..=b'~' => 4,
+        0 => 2,
+        _ => 1,
+    }
 }
 
 /// Duplicates a NUL-terminated string into a new `Vec<u8>`.
