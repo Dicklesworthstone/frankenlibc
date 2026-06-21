@@ -24,6 +24,7 @@ unsafe extern "C" {
     fn memrchr(s: *const c_void, c: c_int, n: usize) -> *const c_void;
     fn wcschr(wcs: *const i32, wc: i32) -> *const i32;
     fn wcsrchr(wcs: *const i32, wc: i32) -> *const i32;
+    fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
 }
 
 fn bench(c: &mut Criterion) {
@@ -176,6 +177,30 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wcsrchr(black_box(wbuf.as_ptr().cast::<i32>()), b'X' as i32) }))
     });
     gwr.finish();
+
+    // ---- strncmp — two strings equal for 30 bytes then differ IN the first
+    // 32-byte SIMD panel (exercises the scalar re-scan of the broken panel).
+    let s1n: Vec<u8> = {
+        let mut v = vec![b'a'; 64];
+        v[30] = b'X';
+        v
+    };
+    let s2n: Vec<u8> = {
+        let mut v = vec![b'a'; 64];
+        v[30] = b'Y';
+        v
+    };
+    let core_nc = frankenlibc_core::string::str::strncmp(&s1n, &s2n, 64);
+    let gl_nc = unsafe { strncmp(s1n.as_ptr().cast::<c_char>(), s2n.as_ptr().cast::<c_char>(), 64) };
+    assert_eq!(core_nc.signum(), gl_nc.signum(), "strncmp sign mismatch");
+    let mut gn = c.benchmark_group("survey_strncmp");
+    gn.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::str::strncmp(black_box(&s1n), &s2n, 64)))
+    });
+    gn.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strncmp(black_box(s1n.as_ptr().cast::<c_char>()), s2n.as_ptr().cast::<c_char>(), 64) }))
+    });
+    gn.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();

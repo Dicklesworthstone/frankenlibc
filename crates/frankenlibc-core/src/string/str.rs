@@ -582,13 +582,27 @@ pub fn strncmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
     // that differs OR contains a NUL, so the scalar loop below resolves the
     // exact divergence/terminator index — identical result to the reference.
     while i + SIMD_LANES <= bounded {
-        if !equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
-            break;
+        let av = Simd::<u8, SIMD_LANES>::from_slice(&s1[i..i + SIMD_LANES]);
+        let bv = Simd::<u8, SIMD_LANES>::from_slice(&s2[i..i + SIMD_LANES]);
+        // First lane that differs OR is NUL in s1 — the exact divergence/terminator
+        // index, via the SIMD mask + trailing_zeros instead of a scalar per-byte
+        // re-scan of the broken panel (was 9.45x slower than glibc on a deep-in-panel
+        // difference; bd-2g7oyh). Equivalent to the scalar tail's `a!=b || a==0` stop.
+        let event = av.simd_ne(bv) | av.simd_eq(Simd::splat(0));
+        let bits = event.to_bitmask();
+        if bits != 0 {
+            let j = i + bits.trailing_zeros() as usize;
+            let a = s1[j];
+            let b = s2[j];
+            if a != b {
+                return (a as i32) - (b as i32);
+            }
+            return 0; // a == b == 0 (shared NUL terminator)
         }
         i += SIMD_LANES;
     }
 
-    // Resolve the remaining bytes (and the panel that broke) exactly.
+    // Resolve any remaining bytes past the last full SIMD panel exactly.
     while i < n {
         let a = if i < s1.len() { s1[i] } else { 0 };
         let b = if i < s2.len() { s2[i] } else { 0 };
