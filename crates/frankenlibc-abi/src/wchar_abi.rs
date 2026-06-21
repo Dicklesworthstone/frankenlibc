@@ -4800,14 +4800,12 @@ pub unsafe extern "C" fn wcschrnul(
     if s.is_null() {
         return std::ptr::null_mut();
     }
-    let mut p = s;
-    loop {
-        let c = unsafe { *p };
-        if c == wc || c == 0 {
-            return p as *mut libc::wchar_t;
-        }
-        p = unsafe { p.add(1) };
-    }
+    // SIMD scan for `wc`-or-NUL (was a scalar per-wide-char loop, ~1.47x slower than
+    // glibc's scalar wcschrnul; the SIMD scan WINS ~5x). Byte-identical: returns the
+    // first `wc`-or-NUL position (the NUL terminator when `wc` is not found), exactly
+    // like the scalar `*p == wc || *p == 0` loop. bd-2g7oyh.
+    let (idx, _found) = unsafe { wide_find_or_nul_simd(s as *const u32, wc as u32) };
+    unsafe { (s as *const u32).add(idx) as *mut libc::wchar_t }
 }
 
 /// BSD `wcslcat` — size-bounded wide string concatenation.

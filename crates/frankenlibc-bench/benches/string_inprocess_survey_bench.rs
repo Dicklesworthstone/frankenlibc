@@ -38,6 +38,7 @@ unsafe extern "C" {
     fn wcsspn(s: *const i32, accept: *const i32) -> usize;
     fn wcscspn(s: *const i32, reject: *const i32) -> usize;
     fn wcspbrk(s: *const i32, accept: *const i32) -> *const i32;
+    fn wcschrnul(s: *const i32, wc: i32) -> *const i32;
     fn wmemset(s: *mut i32, c: i32, n: usize) -> *mut i32;
     fn wmemcpy(d: *mut i32, s: *const i32, n: usize) -> *mut i32;
     fn memmem(h: *const c_void, hl: usize, n: *const c_void, nl: usize) -> *const c_void;
@@ -920,6 +921,45 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { rawmemchr(black_box(rmc.as_ptr().cast::<c_void>()), b'Z' as c_int) }))
     });
     grm.finish();
+
+    // ---- wcschrnul (GNU wide find-wc-or-NUL). Deployed fl is a SCALAR wide loop;
+    // glibc's wide scanner is scalar too, so fl's SIMD wide scan (core wcschr proxy)
+    // should WIN. 1000 wide chars, 'Z' at 900, NUL at 999.
+    let wcn: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 1000];
+        v[900] = b'Z' as u32;
+        v[999] = 0;
+        v
+    };
+    let scalar_wcschrnul = |buf: &[u32], wc: u32| -> usize {
+        let mut i = 0usize;
+        loop {
+            let c = buf[i];
+            if c == wc || c == 0 {
+                return i;
+            }
+            i += 1;
+        }
+    };
+    let wcn_scalar = scalar_wcschrnul(&wcn, b'Z' as u32);
+    let wcn_simd = frankenlibc_core::string::wide::wcschr(&wcn, b'Z' as u32).unwrap();
+    let wcn_gl = unsafe {
+        (wcschrnul(wcn.as_ptr().cast::<i32>(), b'Z' as i32) as usize - wcn.as_ptr() as usize) / 4
+    };
+    assert_eq!(wcn_scalar, 900, "wcschrnul scalar replica wrong");
+    assert_eq!(wcn_simd, 900, "wcschrnul simd proxy wrong");
+    assert_eq!(wcn_gl, 900, "wcschrnul glibc wrong");
+    let mut gwcn = c.benchmark_group("survey_wcschrnul");
+    gwcn.bench_function("frankenlibc_scalar_current", |b| {
+        b.iter(|| black_box(scalar_wcschrnul(black_box(&wcn), b'Z' as u32)))
+    });
+    gwcn.bench_function("frankenlibc_simd_fix_proxy", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcschr(black_box(&wcn), b'Z' as u32)))
+    });
+    gwcn.bench_function("host_glibc", |b| {
+        b.iter(|| black_box(unsafe { wcschrnul(black_box(wcn.as_ptr().cast::<i32>()), b'Z' as i32) }))
+    });
+    gwcn.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
