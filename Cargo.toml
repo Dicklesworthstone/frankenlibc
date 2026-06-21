@@ -52,6 +52,12 @@ frankenlibc-fixture-exec = { path = "crates/frankenlibc-fixture-exec", default-f
 asupersync-conformance = "0.3.4"
 ftui-harness = "0.3.1"
 
+[patch.crates-io]
+# asupersync-conformance 0.3.4 includes repo-root conformance artifacts that
+# are missing from the published crate package; use the local source until the
+# crate ships those artifacts inside the package.
+asupersync-conformance = { path = "/data/projects/asupersync/conformance" }
+
 # Profiling profile: release optimizations with debug symbols for flamegraphs
 [profile.release-perf]
 inherits = "release"

@@ -14084,14 +14084,15 @@ fn run_impl_math_finite_alias_f32(func: &str, x: f32) -> Result<f32, String> {
 }
 
 fn run_impl_math_finite_alias_mapped_f64(func: &str, x: f64) -> Result<f64, String> {
-    // SAFETY: FrankenLibC intentionally maps long-double/f128 finite aliases to f64.
+    // SAFETY: These fixture cases classify long-double/f128 finite aliases through
+    // f64 inputs and outputs; the f128 ABI itself still takes binary128 values.
     let value = unsafe {
         match func {
             "__acosl_finite" => frankenlibc_abi::math_abi::__acosl_finite(x),
             "__acoshl_finite" => frankenlibc_abi::math_abi::__acoshl_finite(x),
-            "__acosf128_finite" => frankenlibc_abi::math_abi::__acosf128_finite(x),
-            "__acoshf128_finite" => frankenlibc_abi::math_abi::__acoshf128_finite(x),
-            "__asinf128_finite" => frankenlibc_abi::math_abi::__asinf128_finite(x),
+            "__acosf128_finite" => frankenlibc_abi::math_abi::__acosf128_finite(x.into()) as f64,
+            "__acoshf128_finite" => frankenlibc_abi::math_abi::__acoshf128_finite(x.into()) as f64,
+            "__asinf128_finite" => frankenlibc_abi::math_abi::__asinf128_finite(x.into()) as f64,
             _ => return Err(format!("unsupported mapped finite alias: {func}")),
         }
     };
@@ -14265,7 +14266,9 @@ fn math_finite_special_wave03_classes(
             let actual = classify_math_finite_alias_f64(unsafe {
                 match func {
                     "__asinl_finite" => frankenlibc_abi::math_abi::__asinl_finite(x),
-                    "__atanhf128_finite" => frankenlibc_abi::math_abi::__atanhf128_finite(x),
+                    "__atanhf128_finite" => {
+                        frankenlibc_abi::math_abi::__atanhf128_finite(x.into()) as f64
+                    }
                     "__atanhl_finite" => frankenlibc_abi::math_abi::__atanhl_finite(x),
                     _ => unreachable!(),
                 }
@@ -14283,7 +14286,9 @@ fn math_finite_special_wave03_classes(
             // fixture values by value and are covered as FrankenLibC f64 mappings.
             let actual = classify_math_finite_alias_f64(unsafe {
                 match func {
-                    "__atan2f128_finite" => frankenlibc_abi::math_abi::__atan2f128_finite(y, x),
+                    "__atan2f128_finite" => {
+                        frankenlibc_abi::math_abi::__atan2f128_finite(y.into(), x.into()) as f64
+                    }
                     "__atan2l_finite" => frankenlibc_abi::math_abi::__atan2l_finite(y, x),
                     _ => unreachable!(),
                 }
