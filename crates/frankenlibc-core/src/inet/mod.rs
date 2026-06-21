@@ -128,13 +128,7 @@ pub fn inet_ntop_into(af: i32, src: &[u8], out: &mut [u8]) -> Option<usize> {
                 return None;
             }
             let addr = [src[0], src[1], src[2], src[3]];
-            let len = format_ipv4_len(&addr);
-            if out.len() < len {
-                return None;
-            }
-            let buf = format_ipv4(&addr);
-            out[..len].copy_from_slice(&buf[..len]);
-            Some(len)
+            format_ipv4_into(&addr, out)
         }
         AF_INET6 => {
             if src.len() < 16 {
@@ -415,15 +409,35 @@ pub fn format_ipv4(addr: &[u8; 4]) -> [u8; 16] {
     // Byte-identical to `format!("{}.{}.{}.{}")`: decimal octets, no leading
     // zeros, dot-separated; max "255.255.255.255" = 15 bytes fits [u8; 16].
     let mut buf = [0u8; 16];
+    let _ = format_ipv4_into_fixed(addr, &mut buf);
+    buf
+}
+
+/// Formats an IPv4 address into a full INET_ADDRSTRLEN-sized buffer.
+pub fn format_ipv4_into_fixed(addr: &[u8; 4], out: &mut [u8; 16]) -> usize {
+    write_ipv4_addr(addr, out)
+}
+
+/// Formats an IPv4 address into `out`, returning the byte length written.
+pub fn format_ipv4_into(addr: &[u8; 4], out: &mut [u8]) -> Option<usize> {
+    let len = format_ipv4_len(addr);
+    if out.len() < len {
+        return None;
+    }
+    Some(write_ipv4_addr(addr, out))
+}
+
+#[inline]
+fn write_ipv4_addr(addr: &[u8; 4], out: &mut [u8]) -> usize {
     let mut pos = 0usize;
     for (i, &octet) in addr.iter().enumerate() {
         if i > 0 {
-            buf[pos] = b'.';
+            out[pos] = b'.';
             pos += 1;
         }
-        pos += write_u8_dec(octet, &mut buf[pos..]);
+        pos += write_u8_dec(octet, &mut out[pos..]);
     }
-    buf
+    pos
 }
 
 /// Returns the length (excluding null) of a formatted IPv4 address.

@@ -2025,6 +2025,17 @@ pub(crate) fn stdlib_membrane_fastpath() -> bool {
     cfg!(not(test))
 }
 
+/// Cheap predicate gating strict-mode inet conversion fast-paths.
+///
+/// `ApiFamily::Inet` is a strict-only no-op in `decide()` (forced `Allow`) and
+/// non-adverse `observe()` is telemetry-only. Hardened mode still needs the full
+/// decision path, so this is intentionally tied to strict passthrough rather
+/// than `cfg!(not(test))` alone.
+#[inline(always)]
+pub(crate) fn inet_strict_membrane_fastpath() -> bool {
+    strict_passthrough_active()
+}
+
 pub(crate) fn decide(
     family: ApiFamily,
     addr_hint: usize,

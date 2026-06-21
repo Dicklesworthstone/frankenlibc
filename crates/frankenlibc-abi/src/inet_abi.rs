@@ -257,6 +257,10 @@ pub unsafe extern "C" fn inet_ntop(
     dst: *mut c_char,
     size: u32,
 ) -> *const c_char {
+    if af == AF_INET && runtime_policy::inet_strict_membrane_fastpath() {
+        return unsafe { inet_ntop_ipv4_strict_fast(src, dst, size) };
+    }
+
     let (_, decision) = runtime_policy::decide(ApiFamily::Inet, src as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
@@ -315,6 +319,40 @@ pub unsafe extern "C" fn inet_ntop(
             std::ptr::null()
         }
     }
+}
+
+#[inline]
+unsafe fn inet_ntop_ipv4_strict_fast(
+    src: *const c_void,
+    dst: *mut c_char,
+    size: u32,
+) -> *const c_char {
+    if src.is_null() || dst.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return std::ptr::null();
+    }
+
+    let src = src.cast::<u8>();
+    let addr = unsafe { [*src, *src.add(1), *src.add(2), *src.add(3)] };
+    if size >= 16 {
+        let dst_bytes = unsafe { &mut *dst.cast::<[u8; 16]>() };
+        let text_len = inet_core::format_ipv4_into_fixed(&addr, dst_bytes);
+        dst_bytes[text_len] = 0;
+        return dst as *const c_char;
+    }
+
+    let text_len = inet_core::format_ipv4_len(&addr);
+    let required = text_len + 1;
+    if required > size as usize {
+        unsafe { set_abi_errno(errno::ENOSPC) };
+        return std::ptr::null();
+    }
+
+    let dst_bytes = unsafe { std::slice::from_raw_parts_mut(dst.cast::<u8>(), required) };
+    let written = inet_core::format_ipv4_into(&addr, &mut dst_bytes[..text_len]);
+    debug_assert_eq!(written, Some(text_len));
+    dst_bytes[text_len] = 0;
+    dst as *const c_char
 }
 
 // ---------------------------------------------------------------------------
