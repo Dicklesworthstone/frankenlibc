@@ -990,17 +990,13 @@ where
         let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
         let nul = lanes.simd_eq(zero);
         let member = in_set(lanes);
-        let stop = if stop_in_set {
-            (nul | member).any()
-        } else {
-            nul.any() || !member.all()
-        };
-        if stop {
-            for (j, &byte) in chunk.iter().enumerate() {
-                if byte == 0 || (table[byte as usize] == stop_in_set) {
-                    return base + j;
-                }
-            }
+        // `in_set` (in_set_mask8/16) is byte-EXACT vs `table` (it is simd_eq over the
+        // set bytes), so the lane mask yields the exact first stop index via
+        // trailing_zeros — no scalar per-byte re-scan of the flagged chunk (bd-2g7oyh).
+        let stop_mask = if stop_in_set { nul | member } else { nul | !member };
+        let bits = stop_mask.to_bitmask();
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
         }
         base += SIMD_LANES;
     }

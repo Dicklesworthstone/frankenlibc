@@ -74,6 +74,24 @@ fn bench(c: &mut Criterion) {
     });
     gp.finish();
 
+    // ---- strcspn with a 6-char reject set (exercises span_general/span_scan, not
+    // the len<=4 fast paths) — in-chunk match at index 15.
+    let cspan6 = c"aaaaaaaaaaaaaaaXaaaaaaaaaaaaaaaaaaaa"; // 'X' (in reject) at 15
+    let reject6 = c"XYZ123";
+    assert_eq!(
+        core_str::strcspn(cspan6.to_bytes(), reject6.to_bytes()),
+        unsafe { strcspn(cspan6.as_ptr(), reject6.as_ptr()) },
+        "strcspn(6-set) mismatch"
+    );
+    let mut gs = c.benchmark_group("survey_strcspn_set6");
+    gs.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strcspn(black_box(cspan6.to_bytes()), reject6.to_bytes())))
+    });
+    gs.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strcspn(black_box(cspan6.as_ptr()), reject6.as_ptr()) }))
+    });
+    gs.finish();
+
     // ---- strstr (search) ----
     let hay = c"the quick brown fox jumps over the lazy dog and then some more text needle_here";
     let needle = c"needle_here";
