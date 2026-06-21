@@ -877,6 +877,105 @@ fn find_non_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
     s.len()
 }
 
+#[inline(always)]
+fn in_set_mask6(lanes: Simd<u8, SIMD_LANES>, set: &[u8; 6]) -> Mask<i8, SIMD_LANES> {
+    lanes.simd_eq(Simd::splat(set[0]))
+        | lanes.simd_eq(Simd::splat(set[1]))
+        | lanes.simd_eq(Simd::splat(set[2]))
+        | lanes.simd_eq(Simd::splat(set[3]))
+        | lanes.simd_eq(Simd::splat(set[4]))
+        | lanes.simd_eq(Simd::splat(set[5]))
+}
+
+#[inline(always)]
+fn in_set_mask6_16(lanes: Simd<u8, 16>, set: &[u8; 6]) -> Mask<i8, 16> {
+    lanes.simd_eq(Simd::splat(set[0]))
+        | lanes.simd_eq(Simd::splat(set[1]))
+        | lanes.simd_eq(Simd::splat(set[2]))
+        | lanes.simd_eq(Simd::splat(set[3]))
+        | lanes.simd_eq(Simd::splat(set[4]))
+        | lanes.simd_eq(Simd::splat(set[5]))
+}
+
+#[inline(always)]
+fn byte_is_any6(byte: u8, set: &[u8; 6]) -> bool {
+    byte == set[0]
+        || byte == set[1]
+        || byte == set[2]
+        || byte == set[3]
+        || byte == set[4]
+        || byte == set[5]
+}
+
+fn find_any_of6_or_nul(s: &[u8], set: &[u8; 6]) -> usize {
+    let mut base = 0usize;
+
+    // Many libc span calls are short and stop inside the first cache line. The
+    // exact 16-byte prologue avoids a full 32-byte mask when the first stop is
+    // in bytes 0..16, while the normal 32-byte loop keeps long spans vectorized.
+    if s.len() >= 16 {
+        let lanes = Simd::<u8, 16>::from_slice(&s[..16]);
+        let bits = (lanes.simd_eq(Simd::splat(0)) | in_set_mask6_16(lanes, set)).to_bitmask();
+        if bits != 0 {
+            return bits.trailing_zeros() as usize;
+        }
+        base = 16;
+    }
+
+    let zero = Simd::<u8, SIMD_LANES>::splat(0);
+    let mut simd_chunks = s[base..].chunks_exact(SIMD_LANES);
+
+    for chunk in simd_chunks.by_ref() {
+        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+        let bits = (lanes.simd_eq(zero) | in_set_mask6(lanes, set)).to_bitmask();
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
+        }
+        base += SIMD_LANES;
+    }
+
+    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+        if byte == 0 || byte_is_any6(byte, set) {
+            return base + j;
+        }
+    }
+
+    s.len()
+}
+
+fn find_non_any_of6_or_nul(s: &[u8], set: &[u8; 6]) -> usize {
+    let mut base = 0usize;
+
+    if s.len() >= 16 {
+        let lanes = Simd::<u8, 16>::from_slice(&s[..16]);
+        let bits = (lanes.simd_eq(Simd::splat(0)) | !in_set_mask6_16(lanes, set)).to_bitmask();
+        if bits != 0 {
+            return bits.trailing_zeros() as usize;
+        }
+        base = 16;
+    }
+
+    let zero = Simd::<u8, SIMD_LANES>::splat(0);
+    let mut simd_chunks = s[base..].chunks_exact(SIMD_LANES);
+
+    for chunk in simd_chunks.by_ref() {
+        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+        let bits = (lanes.simd_eq(zero) | !in_set_mask6(lanes, set)).to_bitmask();
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
+        }
+        base += SIMD_LANES;
+    }
+
+    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
+        if byte == 0 || !byte_is_any6(byte, set) {
+            return base + j;
+        }
+    }
+
+    s.len()
+}
+
 /// HAND-UNROLLED membership mask for 8 set bytes: a lane is set iff it equals
 /// any of `set[0..8]`. The explicit `|` chain (NOT a `while k<N` loop, which
 /// stays a scalar per-lane gather and runs at scalar speed) vectorizes to 8
@@ -1094,7 +1193,14 @@ fn span_general(s: &[u8], set: &[u8], table: &[bool; 256], stop_in_set: bool) ->
 /// Routes a ≥5-byte accept/reject `set` to the table-free `span_scan` (≤16) or the
 /// table-backed `span_general` (>16). The 256-byte table is built ONLY for >16 sets.
 fn span_dispatch(s: &[u8], set: &[u8], stop_in_set: bool) -> usize {
-    if set.len() <= 8 {
+    if set.len() == 6 {
+        let exact: &[u8; 6] = set.try_into().unwrap();
+        if stop_in_set {
+            find_any_of6_or_nul(s, exact)
+        } else {
+            find_non_any_of6_or_nul(s, exact)
+        }
+    } else if set.len() <= 8 {
         let mut padded = [set[0]; 8];
         padded[..set.len()].copy_from_slice(set);
         span_scan(s, stop_in_set, |lanes| in_set_mask8(lanes, &padded), set)
