@@ -725,16 +725,21 @@ completed remotely on `vmi1293453` with
 `zz_scratch_divmin` integration-test trait errors, and workspace rustfmt remains
 blocked by broad pre-existing formatting drift.
 
-### 2026-06-21 `bd-2g7oyh.499` timing pending bench (BlackThrush / cod-b)
+### 2026-06-21 `bd-2g7oyh.499` timing partial-resume bench (BlackThrush / cod-b)
 
 Disk-low code-only pass: `clock_gettime` now has a stack-output fast path for
 normal caller `timespec` outputs and a local common-clock validity fast path for
 clock ids already accepted by the existing validators.
 
-Scorecard effect: no release-readiness score change yet. This is not measured
-proof and must remain pending until the same-worker `strtol_glibc_bench`
-`clock_gettime` row and focused time/vDSO conformance run under
-`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`.
+Measured partial-resume row: remote `hz1` `strtol_glibc_bench` reports
+`clock_gettime` at 38.23 ns versus glibc 33.33 ns (`1.15x`, still a loss) and
+`time(NULL)` at 7.10 ns versus glibc 3.57 ns (`1.99x`, untouched by this lever).
+Focused clock conformance is green: remote `vmi1152480`
+`conformance_diff_clock` passed 6/6 with zero divergences.
 
-Evidence ledger: `docs/NEGATIVE_EVIDENCE.md`. Pending artifact:
+Scorecard effect: timing remains a release blocker. The `clock_gettime` row is
+materially narrower than the prior `1.33x`/`1.35x` residual rows, so the source
+is kept as a partial gap-cut, but this is not a glibc-domination claim.
+
+Evidence ledger: `docs/NEGATIVE_EVIDENCE.md`. Evidence artifact:
 `tests/artifacts/perf/bd-2g7oyh.499-clock-gettime-clock-id-fast-pending.md`.

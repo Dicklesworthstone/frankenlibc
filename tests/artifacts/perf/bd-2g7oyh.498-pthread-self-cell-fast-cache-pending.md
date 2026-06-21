@@ -54,3 +54,27 @@ lever as a keep.
 Keep only if the same-worker `pthread_self` row improves without lifecycle
 regression. Revert if the result is neutral/loss or if the pthread identity
 contract diverges from host behavior.
+
+## 2026-06-21 incidental bench row
+
+The single allowed partial-resume bench targeted the timing bead, but the mixed
+`strtol_glibc_bench` executable also emitted the `pthread_self` row:
+
+```text
+AGENT_NAME=BlackThrush BR_AGENT_NAME=cod-b RCH_REQUIRE_REMOTE=1 \
+RCH_VISIBILITY=summary \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+rch exec -- cargo bench -j 1 -p frankenlibc-bench --features abi-bench \
+  --bench strtol_glibc_bench -- --noplot --sample-size 10 \
+  --warm-up-time 1 --measurement-time 2
+```
+
+RCH selected `hz1`.
+
+| Row | FrankenLibC | glibc | Ratio | Verdict |
+|---|---:|---:|---:|---|
+| `pthread_self` | 2.14 ns | 2.99 ns | 0.72x | WIN (bench only) |
+
+Do not close this bead from the bench row alone. The focused pthread
+lifecycle/identity conformance gate still needs to pass before this code-only
+lever can be accepted as complete.

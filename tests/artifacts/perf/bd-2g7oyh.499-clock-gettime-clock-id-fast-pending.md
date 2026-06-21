@@ -74,3 +74,67 @@ rch exec -- cargo test -p frankenlibc-abi --test time_abi_test -- --nocapture
 Keep only if the same-worker `clock_gettime` ratio versus host glibc improves
 without a focused time/vDSO conformance regression. Revert if the focused row is
 neutral-with-cost or slower.
+
+## 2026-06-21 partial-resume measurement
+
+The first requested spelling included `cargo bench --release`, but this Cargo
+rejects `--release` for `bench`; that failed before any build or benchmark ran.
+The corrected single actual bench used Cargo's standard optimized bench profile:
+
+```text
+AGENT_NAME=BlackThrush BR_AGENT_NAME=cod-b RCH_REQUIRE_REMOTE=1 \
+RCH_VISIBILITY=summary \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+rch exec -- cargo bench -j 1 -p frankenlibc-bench --features abi-bench \
+  --bench strtol_glibc_bench -- --noplot --sample-size 10 \
+  --warm-up-time 1 --measurement-time 2
+```
+
+RCH selected `hz1` and rewrote the target dir to a worker-scoped path, so this
+was a cold-ish remote bench rather than a warmed same-worker A/B.
+
+Relevant rows:
+
+| Row | FrankenLibC | glibc | Ratio | Verdict |
+|---|---:|---:|---:|---|
+| `clock_gettime` | 38.23 ns | 33.33 ns | 1.15x | LOSS vs glibc, partial gap-cut vs prior residual rows |
+| `time` | 7.10 ns | 3.57 ns | 1.99x | LOSS, not touched by this lever |
+| `pthread_self` | 2.14 ns | 2.99 ns | 0.72x | WIN, belongs to `bd-2g7oyh.498` |
+
+Full mixed bench rows from the same run:
+
+```text
+strtol_dec_short: fl=8.71ns glibc=18.19ns fl/glibc=0.48
+strtol_dec_long: fl=17.61ns glibc=38.01ns fl/glibc=0.46
+strtol_hex: fl=28.66ns glibc=35.25ns fl/glibc=0.81
+atoi_short: fl=7.50ns glibc=20.36ns fl/glibc=0.37
+atoi_long: fl=20.55ns glibc=39.69ns fl/glibc=0.52
+atol_short: fl=7.64ns glibc=18.36ns fl/glibc=0.42
+atol_long: fl=21.37ns glibc=37.97ns fl/glibc=0.56
+atoll_short: fl=6.75ns glibc=18.89ns fl/glibc=0.36
+atoll_long: fl=19.43ns glibc=37.84ns fl/glibc=0.51
+strtod_int: fl=26.54ns glibc=72.43ns fl/glibc=0.37
+strtod_simple: fl=133.43ns glibc=137.42ns fl/glibc=0.97
+strtod_sci: fl=40.91ns glibc=93.77ns fl/glibc=0.44
+rand: fl=5.36ns glibc=9.58ns fl/glibc=0.56
+getenv_hit: fl=26.25ns glibc=38.27ns fl/glibc=0.69
+getenv_miss: fl=49.35ns glibc=55.81ns fl/glibc=0.88
+clock_gettime: fl=38.23ns glibc=33.33ns fl/glibc=1.15
+time: fl=7.10ns glibc=3.57ns fl/glibc=1.99
+pthread_self: fl=2.14ns glibc=2.99ns fl/glibc=0.72
+```
+
+Focused behavior gate:
+
+```text
+AGENT_NAME=BlackThrush BR_AGENT_NAME=cod-b RCH_REQUIRE_REMOTE=1 \
+CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b \
+rch exec -- cargo test -j 1 -p frankenlibc-abi \
+  --test conformance_diff_clock -- --nocapture
+```
+
+RCH selected `vmi1152480`; result: 6 passed, 0 failed, zero divergences.
+
+Action: keep as a measured partial gap-cut, not a glibc domination claim. The
+remaining `clock_gettime` and `time(NULL)` losses stay routed deeper; do not
+retry the rejected resolved-vDSO-pointer cache or buffered-hit-counter family.
