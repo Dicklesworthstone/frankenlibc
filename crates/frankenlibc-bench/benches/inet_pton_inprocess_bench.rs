@@ -74,6 +74,37 @@ fn bench(c: &mut Criterion) {
     assert_eq!(rc_g6, 1, "glibc inet_pton v6 should succeed");
     assert_eq!(c6, g6, "core vs real-glibc inet_pton v6 byte mismatch");
 
+    // Strengthened differential gate: diverse IPv6 forms (::, leading/trailing ::,
+    // embedded IPv4, full, loopback, all-zeros) must byte-match real glibc, and
+    // invalid forms must both reject. Covers the parse_ipv6 alloc-elimination.
+    for (txt, expect_ok) in [
+        ("::1", true),
+        ("::", true),
+        ("2001:db8::", true),
+        ("::ffff:192.168.1.1", true),
+        ("2001:0db8:0000:0000:0000:ff00:0042:8329", true),
+        ("fe80::1ff:fe23:4567:890a", true),
+        ("0:0:0:0:0:0:0:1", true),
+        ("1:2:3:4:5:6:7:8", true),
+        ("a:b:c:d:e:f:1.2.3.4", true),
+        ("1:2:3:4:5:6:7:8:9", false),
+        ("1::2::3", false),
+        ("::g", false),
+        ("12345::", false),
+        (":1:2:3:4:5:6:7", false),
+    ] {
+        let cs = std::ffi::CString::new(txt).unwrap();
+        let mut cc = [0u8; 16];
+        let rcc = core_inet::inet_pton(AF_INET6, txt.as_bytes(), &mut cc);
+        let mut gg = [0u8; 16];
+        let rcg = unsafe { inet_pton(AF_INET6, cs.as_ptr(), gg.as_mut_ptr().cast::<c_void>()) };
+        assert_eq!(rcc == 1, expect_ok, "core inet_pton6 accept/reject wrong for {txt:?}");
+        assert_eq!(rcc, rcg, "core vs glibc rc mismatch for {txt:?} (core={rcc}, glibc={rcg})");
+        if rcc == 1 {
+            assert_eq!(cc, gg, "core vs glibc bytes mismatch for {txt:?}");
+        }
+    }
+
     let mut g6group = c.benchmark_group("inet_pton_inprocess_ipv6");
     g6group.bench_function("frankenlibc_core", |b| {
         b.iter(|| {

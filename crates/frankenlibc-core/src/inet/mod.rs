@@ -442,13 +442,23 @@ pub fn format_ipv4_len(addr: &[u8; 4]) -> usize {
 // ---------------------------------------------------------------------------
 
 fn parse_ipv6_hextet(group: &str) -> Option<u16> {
-    if group.is_empty() || group.len() > 4 {
+    let bytes = group.as_bytes();
+    if bytes.is_empty() || bytes.len() > 4 {
         return None;
     }
-    if !group.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
+    // Byte-fold (no `from_str_radix` + separate all-hexdigit scan). len <= 4 hex
+    // digits = at most 16 bits, so `v << 4` never overflows u16.
+    let mut v: u16 = 0;
+    for &b in bytes {
+        let d = match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => b - b'a' + 10,
+            b'A'..=b'F' => b - b'A' + 10,
+            _ => return None,
+        };
+        v = (v << 4) | d as u16;
     }
-    u16::from_str_radix(group, 16).ok()
+    Some(v)
 }
 
 /// Parses an IPv6 address string into 16 network-order bytes.
@@ -496,48 +506,76 @@ pub fn parse_ipv6(src: &[u8]) -> Option<[u8; 16]> {
     // tail lives in `back`. (Previously the naive hextet loop below tried to
     // parse the dotted IPv4 segment as a hextet and bailed, wrongly rejecting
     // valid addresses like `a:b:c:d:e:f:1.2.3.4` — found by the inet fuzzer.)
-    let mut front_groups: Vec<u16> = Vec::new();
+    // Allocation-free: bounded stack arrays + direct split iteration (no Vec) — the
+    // str-based "::"/grammar logic is unchanged. (parse_ipv6 was 3.5x slower than
+    // glibc, all heap allocs; bd-2g7oyh.)
+    let mut front_groups = [0u16; 8];
+    let mut fg_n = 0usize;
     if !front_str.is_empty() {
-        let parts: Vec<&str> = front_str.split(':').collect();
-        let hex_parts: &[&str] = if !has_double_colon && front_str.contains('.') {
-            // The last segment must be the IPv4 tail; a lone "1.2.3.4" (no hex
-            // groups, no "::") is not a valid IPv6 textual form.
-            if parts.len() < 2 {
+        if !has_double_colon && front_str.contains('.') {
+            // Trailing embedded IPv4 tail (no "::"): the last colon-segment is the
+            // IPv4 address; everything before it is hex groups. A lone "1.2.3.4"
+            // (no preceding colon) is not a valid IPv6 textual form.
+            let Some((hex_str, v4_str)) = front_str.rsplit_once(':') else {
                 return None;
+            };
+            ipv4_suffix = Some(parse_ipv4(v4_str.as_bytes())?);
+            for g in hex_str.split(':') {
+                if fg_n >= 8 {
+                    return None;
+                }
+                front_groups[fg_n] = parse_ipv6_hextet(g)?;
+                fg_n += 1;
             }
-            ipv4_suffix = Some(parse_ipv4(parts.last()?.as_bytes())?);
-            &parts[..parts.len() - 1]
         } else {
-            &parts[..]
-        };
-        for g in hex_parts {
-            front_groups.push(parse_ipv6_hextet(g)?);
+            for g in front_str.split(':') {
+                if fg_n >= 8 {
+                    return None;
+                }
+                front_groups[fg_n] = parse_ipv6_hextet(g)?;
+                fg_n += 1;
+            }
         }
     }
 
     // Parse back groups -- the last group(s) might be an IPv4 suffix.
-    let mut back_groups: Vec<u16> = Vec::new();
+    let mut back_groups = [0u16; 8];
+    let mut bg_n = 0usize;
     if !back_str.is_empty() {
         // Check if the back part contains a dot (IPv4 suffix).
         if back_str.contains('.') {
-            let colon_parts: Vec<&str> = back_str.split(':').collect();
-            // The last colon-part is the IPv4 address; everything before it is
-            // hex groups.
-            let ipv4_part = colon_parts.last()?;
-            ipv4_suffix = Some(parse_ipv4(ipv4_part.as_bytes())?);
-            for g in &colon_parts[..colon_parts.len() - 1] {
-                back_groups.push(parse_ipv6_hextet(g)?);
+            // The last colon-segment is the IPv4 address; everything before it is
+            // hex groups. `rsplit_once` returning None means the back is IPv4-only
+            // (e.g. "::1.2.3.4"), i.e. no hex groups.
+            match back_str.rsplit_once(':') {
+                Some((hex_str, v4_str)) => {
+                    ipv4_suffix = Some(parse_ipv4(v4_str.as_bytes())?);
+                    for g in hex_str.split(':') {
+                        if bg_n >= 8 {
+                            return None;
+                        }
+                        back_groups[bg_n] = parse_ipv6_hextet(g)?;
+                        bg_n += 1;
+                    }
+                }
+                None => {
+                    ipv4_suffix = Some(parse_ipv4(back_str.as_bytes())?);
+                }
             }
         } else {
             for g in back_str.split(':') {
-                back_groups.push(parse_ipv6_hextet(g)?);
+                if bg_n >= 8 {
+                    return None;
+                }
+                back_groups[bg_n] = parse_ipv6_hextet(g)?;
+                bg_n += 1;
             }
         }
     }
 
     // Count total groups. IPv4 suffix counts as 2.
     let ipv4_group_count: usize = if ipv4_suffix.is_some() { 2 } else { 0 };
-    let total_explicit = front_groups.len() + back_groups.len() + ipv4_group_count;
+    let total_explicit = fg_n + bg_n + ipv4_group_count;
 
     if has_double_colon {
         // "::" must stand for AT LEAST ONE zero group, so the explicit groups
@@ -556,22 +594,36 @@ pub fn parse_ipv6(src: &[u8]) -> Option<[u8; 16]> {
         0
     };
 
-    // Build the 8 groups.
-    let mut all_groups: Vec<u16> = Vec::with_capacity(8);
-    all_groups.extend_from_slice(&front_groups);
-    all_groups.resize(all_groups.len() + zeros_needed, 0);
-    all_groups.extend_from_slice(&back_groups);
+    // Build the 8 groups directly into a stack array (front, zero-fill, back, IPv4).
+    let mut all = [0u16; 8];
+    let mut idx = 0usize;
+    for i in 0..fg_n {
+        all[idx] = front_groups[i];
+        idx += 1;
+    }
+    idx += zeros_needed; // the zero groups are already 0
+    for i in 0..bg_n {
+        if idx >= 8 {
+            return None;
+        }
+        all[idx] = back_groups[i];
+        idx += 1;
+    }
     if let Some(v4) = ipv4_suffix {
-        all_groups.push(u16::from_be_bytes([v4[0], v4[1]]));
-        all_groups.push(u16::from_be_bytes([v4[2], v4[3]]));
+        if idx + 2 > 8 {
+            return None;
+        }
+        all[idx] = u16::from_be_bytes([v4[0], v4[1]]);
+        all[idx + 1] = u16::from_be_bytes([v4[2], v4[3]]);
+        idx += 2;
     }
 
-    if all_groups.len() != 8 {
+    if idx != 8 {
         return None;
     }
 
-    for (i, &g) in all_groups.iter().enumerate() {
-        let be = g.to_be_bytes();
+    for i in 0..8 {
+        let be = all[i].to_be_bytes();
         result[i * 2] = be[0];
         result[i * 2 + 1] = be[1];
     }
