@@ -154,3 +154,9 @@ harness = false
 name = "fputs_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
+
+# strftime vs host glibc (dlmopen). Validates the Time membrane fast-path (47b89e129).
+[[bench]]
+name = "strftime_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
