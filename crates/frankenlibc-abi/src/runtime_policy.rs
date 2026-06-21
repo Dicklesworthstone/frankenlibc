@@ -2069,6 +2069,10 @@ pub(crate) fn decide(
                     // is byte-identical. NOT in the HARDENED list (strftime's output buffer
                     // must stay validated).
                     | ApiFamily::Time
+                    // Inet added to STRICT ONLY (helps looped inet_pton/ntop/aton/addr):
+                    // pure conversions, strict forces Allow = byte-identical. NOT in the
+                    // HARDENED list (inet_pton's dst output buffer must stay validated).
+                    | ApiFamily::Inet
             )
         {
             return (SafetyLevel::Strict, passthrough_decision());
@@ -2276,6 +2280,12 @@ pub(crate) fn observe(
                 // IoFd, Time is NOT added to the HARDENED decide() list — strftime's
                 // output buffer must stay validated there.)
                 | ApiFamily::Time
+                // Inet added: `inet_pton`/`inet_ntop`/`inet_aton`/`inet_addr` are
+                // pure string<->address conversions (no syscall), looped when parsing
+                // IP lists / ACLs / configs. Telemetry-only = safe. (NOT in the
+                // HARDENED decide() list — inet_pton's `dst` output buffer must stay
+                // validated there.)
+                | ApiFamily::Inet
         )
     {
         return;
