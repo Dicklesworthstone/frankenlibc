@@ -514,6 +514,25 @@ Conformance stayed green after the gauntlet rejected signed gid fields again:
 core group parser tests passed, `grp_abi_test getgr` passed, and group
 differential tests passed.
 
+## 2026-06-21 `bd-owsx6w` group GID byte-parser measured partial keep
+
+The pending code-first GID byte parser now has a same-worker remote verdict on
+`hz2`. The parser microbench itself has no host-glibc comparator, so it is
+routing evidence only (`parse_group_line_typical` p50 `63.508 ns`, mean
+`90.590 ns`). The deployed ABI comparison is still the release gate:
+
+| Workload | FrankenLibC | glibc | Ratio | Verdict | Action |
+|---|---:|---:|---:|---|---|
+| `getgrnam("root")` | 5.559 us | 11.124 us | 0.500x | WIN | Keep the byte parser as part of the deployed group parser stack. |
+| `getgrgid(0)` | 7.767 us | 7.623 us | 1.019x | NEUTRAL | Do not credit as gid domination; route residual p50 work below the field parser. |
+
+Focused conformance stayed green: remote `cargo test -p frankenlibc-core
+grp:: --lib` passed 37 tests; remote `cargo test -p frankenlibc-abi --test
+grp_abi_test getgr` passed 36 filtered tests with the signed-gid guard green.
+The live differential `conformance_diff_getgrent` and `conformance_diff_getbyid_r`
+tests passed, but that command fell back local because `rch` had no admissible
+worker slots.
+
 ## 2026-06-19 `bd-2g7oyh.482` measured reject
 
 The passwd field scanner was converted from pending code-first status into

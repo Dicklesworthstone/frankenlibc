@@ -5,7 +5,7 @@
 - ID: `bd-owsx6w`
 - Title: `perf: byte-parse /etc/group gid field`
 - Assignee: `cod-b`
-- Status after this batch: `in_progress`
+- Status after this verification batch: `closed`
 
 ## Routing Evidence
 
@@ -50,32 +50,61 @@ screen: keep the hot path as one byte pass with no format conversion layer.
 | `proc_maps`, `mntent`, `stdio`, `calloc` | Active peer/test-capable lanes. | Avoided. |
 | `/etc/group` colon-tail allocation | Already landed as `bd-2g7oyh.481`; this batch only attacks GID conversion. | Not duplicated. |
 
-## Validation
-
-Campaign instruction for this batch permits cargo-check only, no tests, no
-`rch`, and no Criterion run.
+## Measurement
 
 Commands run:
 
 ```text
-AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b cargo check -p frankenlibc-core
-AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b cargo check -p frankenlibc-bench --bench resolv_parsers_bench
+AGENT_NAME=BlackThrush RCH_WORKER=hz2 CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo bench -p frankenlibc-bench --bench resolv_parsers_bench -- parse_group_line_typical --noplot --sample-size 80 --warm-up-time 1 --measurement-time 3
+AGENT_NAME=BlackThrush RCH_WORKER=hz2 CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo bench -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench -- glibc_baseline_grp_lookup --noplot --sample-size 80 --warm-up-time 1 --measurement-time 3
+```
+
+Results:
+
+- Remote `hz2` parser row: `parse_group_line_typical` p50 `63.508 ns`, p95
+  `156.264 ns`, p99 `157.824 ns`, mean `90.590 ns`.
+- Remote `hz2` ABI `getgrnam_root`: FrankenLibC p50 `5558.772 ns`, host
+  glibc p50 `11123.830 ns`, ratio `0.500x`, `WIN`.
+- Remote `hz2` ABI `getgrgid_0`: FrankenLibC p50 `7766.673 ns`, host glibc
+  p50 `7622.855 ns`, ratio `1.019x`, `NEUTRAL`.
+- Initial `vmi1264463` parser attempt timed out during sync and fell back local:
+  `parse_group_line_typical` p50 `60.012 ns`, mean `64.093 ns`. This is
+  routing evidence only, not keep/reject proof.
+
+## Validation
+
+Commands run:
+
+```text
+AGENT_NAME=BlackThrush RCH_WORKER=hz2 CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo test -p frankenlibc-core grp:: --lib
+AGENT_NAME=BlackThrush RCH_WORKER=hz2 CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo test -p frankenlibc-abi --test grp_abi_test getgr -- --nocapture
+AGENT_NAME=BlackThrush RCH_WORKER=hz2 CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_getgrent --test conformance_diff_getbyid_r -- --nocapture
 ```
 
 Result:
 
-- PASS: `cargo check -p frankenlibc-core`
-- PASS: `cargo check -p frankenlibc-bench --bench resolv_parsers_bench`
-- Existing unrelated warnings remained in `iconv`: `emit_g1` unused `mut` and
-  `EUCJX_P2_MULTI` dead code.
+- PASS remote `hz2`: `cargo test -p frankenlibc-core grp:: --lib` passed 37
+  tests, including `reject_gid_overflow_sign_and_trailing_junk` and
+  `rejects_leading_plus_in_gid`.
+- PASS remote `hz2`: `cargo test -p frankenlibc-abi --test grp_abi_test getgr`
+  passed 36 filtered tests, including
+  `getgrnam_getgrgid_ignore_signed_gid_rows`.
+- PASS local fallback: `conformance_diff_getgrent` passed 1 test and
+  `conformance_diff_getbyid_r` passed 3 tests, but `rch` reported no
+  admissible workers (`insufficient_slots=8`, `active_project_exclusion=3`) and
+  ran this command locally.
+- Existing unrelated warnings remained in `iconv`, `math_abi`, `poll_abi`,
+  `signal_abi`, `unistd_abi`, and `erf_tables`.
 - Existing build notice remained: no SMT solver found for the generated stdio
   proof artifact, so solver execution was skipped.
 
-## Keep / Reject Rule
+## Verdict
 
-Keep only if the later same-worker batch shows `parse_group_line_typical`
-improves in stable p50/mean and group parser conformance remains green. Reject
-or route deeper if the row is neutral/slower or if any parser contract diverges.
+Partial keep. The byte parser is retained because the deployed ABI group stack
+beats host glibc on `getgrnam("root")` with conformance green. `getgrgid(0)` is
+still neutral at p50, so this bead does not close the residual gid lookup gap.
+Do not retry another GID field parser as that residual fix; route deeper to a
+lower-cost lookup/index invalidation primitive if the gid row remains a target.
 
 ## 2026-06-19 Conformance Correction
 
