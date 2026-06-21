@@ -523,8 +523,24 @@ pub fn strcmp(s1: &[u8], s2: &[u8]) -> i32 {
     }
 
     while i + SIMD_LANES <= s1.len() && i + SIMD_LANES <= s2.len() {
-        if !equal_and_no_nul_simd_32(&s1[i..i + SIMD_LANES], &s2[i..i + SIMD_LANES]) {
-            break;
+        let av = Simd::<u8, SIMD_LANES>::from_slice(&s1[i..i + SIMD_LANES]);
+        let bv = Simd::<u8, SIMD_LANES>::from_slice(&s2[i..i + SIMD_LANES]);
+        // First lane that differs OR is NUL in s1 — resolve the divergence index via
+        // the SIMD mask + trailing_zeros (O(1)) instead of cascading to the WORD +
+        // scalar tiers and re-scanning the panel (strcmp was 4.4x slower than glibc on
+        // a deep-in-panel difference; bd-2g7oyh). Equivalent to the byte tail's
+        // `a!=b || a==0` stop. The loop still exits by exhaustion when <32 B remain,
+        // falling to the WORD/scalar tail for the remainder.
+        let event = av.simd_ne(bv) | av.simd_eq(Simd::splat(0));
+        let bits = event.to_bitmask();
+        if bits != 0 {
+            let j = i + bits.trailing_zeros() as usize;
+            let a = s1[j];
+            let b = s2[j];
+            if a != b {
+                return (a as i32) - (b as i32);
+            }
+            return 0; // shared NUL terminator
         }
         i += SIMD_LANES;
     }

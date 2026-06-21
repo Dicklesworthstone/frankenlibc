@@ -25,6 +25,7 @@ unsafe extern "C" {
     fn wcschr(wcs: *const i32, wc: i32) -> *const i32;
     fn wcsrchr(wcs: *const i32, wc: i32) -> *const i32;
     fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
+    fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int;
 }
 
 fn bench(c: &mut Criterion) {
@@ -201,6 +202,33 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { strncmp(black_box(s1n.as_ptr().cast::<c_char>()), s2n.as_ptr().cast::<c_char>(), 64) }))
     });
     gn.finish();
+
+    // ---- strcmp — NUL-terminated, equal for 30 bytes then differ at byte 30
+    // (deep in the first panel). Verifies whether strcmp's tier-cascade keeps it
+    // ~parity (unlike strncmp's ≤32B rescan).
+    let s1c: Vec<u8> = {
+        let mut v = vec![b'a'; 64];
+        v[30] = b'X';
+        v[63] = 0;
+        v
+    };
+    let s2c: Vec<u8> = {
+        let mut v = vec![b'a'; 64];
+        v[30] = b'Y';
+        v[63] = 0;
+        v
+    };
+    let core_sc = frankenlibc_core::string::str::strcmp(&s1c, &s2c);
+    let gl_sc = unsafe { strcmp(s1c.as_ptr().cast::<c_char>(), s2c.as_ptr().cast::<c_char>()) };
+    assert_eq!(core_sc.signum(), gl_sc.signum(), "strcmp sign mismatch");
+    let mut gsc = c.benchmark_group("survey_strcmp");
+    gsc.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::str::strcmp(black_box(&s1c), &s2c)))
+    });
+    gsc.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strcmp(black_box(s1c.as_ptr().cast::<c_char>()), s2c.as_ptr().cast::<c_char>()) }))
+    });
+    gsc.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
