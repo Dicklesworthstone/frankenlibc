@@ -536,6 +536,78 @@ fn required_plain_literal_absent_flags_none(pat: &[u8], text: &[u8]) -> bool {
     false
 }
 
+fn find_plain_segment(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    debug_assert!(!needle.is_empty());
+    if needle.len() == 1 {
+        return haystack.iter().position(|&byte| byte == needle[0]);
+    }
+    if needle.len() > haystack.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn fnmatch_plain_star(pattern: &[u8], text: &[u8]) -> Option<bool> {
+    if pattern.is_empty() {
+        return Some(text.is_empty());
+    }
+
+    let anchored_start = pattern[0] != b'*';
+    let anchored_end = pattern[pattern.len() - 1] != b'*';
+    let mut pi = 0usize;
+    let mut si = 0usize;
+    let mut first_segment = true;
+
+    while pi < pattern.len() {
+        while pi < pattern.len() && pattern[pi] == b'*' {
+            pi += 1;
+        }
+        if pi == pattern.len() {
+            return Some(true);
+        }
+
+        let segment_start = pi;
+        while pi < pattern.len() {
+            match pattern[pi] {
+                b'*' => break,
+                b'?' | b'[' | b'\\' => return None,
+                _ => pi += 1,
+            }
+        }
+        let segment = &pattern[segment_start..pi];
+        let last_segment = pi == pattern.len();
+
+        if first_segment && anchored_start {
+            if !text.get(si..).is_some_and(|rest| rest.starts_with(segment)) {
+                return Some(false);
+            }
+            si += segment.len();
+        } else if last_segment && anchored_end {
+            if text.len() < si + segment.len() {
+                return Some(false);
+            }
+            let suffix_start = text.len() - segment.len();
+            if suffix_start < si || &text[suffix_start..] != segment {
+                return Some(false);
+            }
+            si = text.len();
+        } else {
+            let Some(rest) = text.get(si..) else {
+                return Some(false);
+            };
+            let Some(offset) = find_plain_segment(rest, segment) else {
+                return Some(false);
+            };
+            si += offset + segment.len();
+        }
+        first_segment = false;
+    }
+
+    Some(!anchored_end || si == text.len())
+}
+
 fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
     let pathname = flags.contains(FnmatchFlags::PATHNAME);
     let period = flags.contains(FnmatchFlags::PERIOD);
@@ -657,8 +729,8 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
                 // '/' under PATHNAME (a '*' cannot cross '/').
                 if !casefold && new_si < text.len() {
                     if let Some(&lit) = pat.get(spi) {
-                        let plain = !matches!(lit, b'*' | b'?' | b'[')
-                            && !(lit == b'\\' && !noescape);
+                        let plain =
+                            !matches!(lit, b'*' | b'?' | b'[') && !(lit == b'\\' && !noescape);
                         if plain {
                             if pathname {
                                 // '*' may advance only within the current path
@@ -711,8 +783,13 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
 /// flags. Returns `true` if the entire `text` matches (modulo
 /// [`FnmatchFlags::LEADING_DIR`]).
 pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
-    if flags == FnmatchFlags::NONE && required_plain_literal_absent_flags_none(pattern, text) {
-        return false;
+    if flags == FnmatchFlags::NONE {
+        if let Some(matched) = fnmatch_plain_star(pattern, text) {
+            return matched;
+        }
+        if required_plain_literal_absent_flags_none(pattern, text) {
+            return false;
+        }
     }
 
     // The iterative single-backtrack matcher (`fnmatch_simple`) now handles ALL
