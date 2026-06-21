@@ -36,6 +36,7 @@ unsafe extern "C" {
     fn wmemchr(s: *const i32, c: i32, n: usize) -> *const i32;
     fn wcsspn(s: *const i32, accept: *const i32) -> usize;
     fn wcscspn(s: *const i32, reject: *const i32) -> usize;
+    fn wcspbrk(s: *const i32, accept: *const i32) -> *const i32;
     fn wmemset(s: *mut i32, c: i32, n: usize) -> *mut i32;
     fn wmemcpy(d: *mut i32, s: *const i32, n: usize) -> *mut i32;
     fn memmem(h: *const c_void, hl: usize, n: *const c_void, nl: usize) -> *const c_void;
@@ -467,6 +468,27 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wcscspn(black_box(wcsp.as_ptr().cast::<i32>()), wrej.as_ptr().cast::<i32>()) }))
     });
     gcsp.finish();
+
+    // ---- wcspbrk — first accept-member 'Z' at 30 (deep in a panel).
+    let wpb: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 64];
+        v[30] = b'Z' as u32;
+        v[63] = 0;
+        v
+    };
+    let wpacc: Vec<u32> = vec![b'Z' as u32, 0];
+    let core_pb = frankenlibc_core::string::wide::wcspbrk(&wpb, &wpacc);
+    let gl_pb = unsafe { wcspbrk(wpb.as_ptr().cast::<i32>(), wpacc.as_ptr().cast::<i32>()) };
+    assert_eq!(core_pb, Some(30), "wcspbrk core wrong");
+    assert_eq!(core_pb.is_some(), !gl_pb.is_null(), "wcspbrk vs glibc found-ness mismatch");
+    let mut gpb = c.benchmark_group("survey_wcspbrk");
+    gpb.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcspbrk(black_box(&wpb), &wpacc)))
+    });
+    gpb.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcspbrk(black_box(wpb.as_ptr().cast::<i32>()), wpacc.as_ptr().cast::<i32>()) }))
+    });
+    gpb.finish();
 
     // ---- wmemset / wmemcpy — 256 wide chars (fill / copy throughput vs glibc).
     let mut wset_dst = vec![0u32; 256];
