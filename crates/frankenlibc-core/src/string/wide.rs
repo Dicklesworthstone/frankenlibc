@@ -607,8 +607,10 @@ pub fn wcschr(s: &[u32], c: u32) -> Option<usize> {
         return (len < s.len()).then_some(len);
     }
 
-    wmemchr(s, c, s.len())?;
-
+    // `find_wide_or_nul_long` already returns the first `c`-or-NUL position, and the
+    // `s[pos]==c` check below rejects the not-found case — so the prior
+    // `wmemchr(s, c, s.len())?` existence pre-scan was a redundant SECOND full pass
+    // (and it scanned all of `s.len()` past the NUL). Removed (bd-2g7oyh).
     let pos = find_wide_or_nul_long(s, c);
     (pos < s.len() && s[pos] == c).then_some(pos)
 }

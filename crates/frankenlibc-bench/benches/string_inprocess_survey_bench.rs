@@ -22,6 +22,7 @@ unsafe extern "C" {
     fn strstr(h: *const c_char, n: *const c_char) -> *const c_char;
     fn strcasestr(h: *const c_char, n: *const c_char) -> *const c_char;
     fn memrchr(s: *const c_void, c: c_int, n: usize) -> *const c_void;
+    fn wcschr(wcs: *const i32, wc: i32) -> *const i32;
 }
 
 fn bench(c: &mut Criterion) {
@@ -139,6 +140,27 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { memrchr(black_box(mbuf.as_ptr().cast::<c_void>()), b'X' as c_int, mbuf.len()) }))
     });
     gm.finish();
+
+    // ---- wcschr (wide char search) — removed the redundant wmemchr existence
+    // pre-scan (was a 2nd full pass). NUL-terminated wide string, 'X' at index 30.
+    let wbuf: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 60];
+        v[30] = b'X' as u32;
+        v[59] = 0; // NUL terminator
+        v
+    };
+    let core_wc = frankenlibc_core::string::wide::wcschr(&wbuf, b'X' as u32);
+    let gl_wc = unsafe { wcschr(wbuf.as_ptr().cast::<i32>(), b'X' as i32) };
+    assert_eq!(core_wc, Some(30), "wcschr core position wrong");
+    assert_eq!(!gl_wc.is_null(), core_wc.is_some(), "wcschr found-ness mismatch");
+    let mut gw = c.benchmark_group("survey_wcschr");
+    gw.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcschr(black_box(&wbuf), b'X' as u32)))
+    });
+    gw.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcschr(black_box(wbuf.as_ptr().cast::<i32>()), b'X' as i32) }))
+    });
+    gw.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
