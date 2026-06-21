@@ -25265,7 +25265,7 @@ mod tests {
             (b"UTF-8", b"EUC-JP", &[0x8E, 0xB1], "ｱ".as_bytes()),
             (b"UTF-8", b"BIG5", b"HK", b"HK"),
             (b"UTF-8", b"KOI8-R", &[0xC1], "а".as_bytes()),
-            (b"UTF-8", b"KOI8-U", &[0xB6], "і".as_bytes()),
+            (b"UTF-8", b"KOI8-U", &[0xB6], "І".as_bytes()), // 0xB6 = U+0406 CAPITAL І (glibc); lowercase і is 0xA6
             (b"UTF-8", b"KOI8-RU", &[0xAD], "ґ".as_bytes()),
         ];
 
@@ -28283,7 +28283,9 @@ mod tests {
     #[test]
     fn mik_decode_roundtrip() {
         let mik_input: &[u8] = &[0x80, 0x81, 0xA0, 0xA1, 0xC0, 0xE0];
-        let expected_utf8 = "АБаб└Γ";
+        // 0xE0 in MIK is α (U+03B1 Greek small alpha), not Γ — matches glibc
+        // `iconv -f MIK`: [80 81 A0 A1 C0 E0] -> "АБаб└α".
+        let expected_utf8 = "АБаб└α";
         let mut cd = iconv_open(b"UTF-8", b"MIK").expect("MIK to UTF-8 conversion");
         let mut utf8_out = [0u8; 32];
         let result = iconv(&mut cd, Some(mik_input), &mut utf8_out).unwrap();
