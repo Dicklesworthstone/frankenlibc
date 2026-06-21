@@ -28,6 +28,7 @@ const AF_INET6: c_int = 10;
 // REAL, ifunc-resolved, in-process glibc inet_pton.
 unsafe extern "C" {
     fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
+    fn inet_ntop(af: c_int, src: *const c_void, dst: *mut c_char, size: u32) -> *const c_char;
 }
 
 fn bench(c: &mut Criterion) {
@@ -123,6 +124,41 @@ fn bench(c: &mut Criterion) {
         });
     });
     g6group.finish();
+
+    // inet_ntop IPv6: format_ipv6_canonical still returns a heap String -> likely a
+    // loss vs real glibc. Measure reliably (core inet_ntop_into vs real glibc inet_ntop).
+    let addr6: [u8; 16] = c6; // the 16 bytes parsed above
+    let mut nt_core = [0u8; 46];
+    let n_core = core_inet::inet_ntop_into(AF_INET6, &addr6, &mut nt_core).expect("core ntop6");
+    let mut nt_gl = [0i8; 46];
+    let p_gl = unsafe {
+        inet_ntop(AF_INET6, addr6.as_ptr().cast::<c_void>(), nt_gl.as_mut_ptr(), 46)
+    };
+    assert!(!p_gl.is_null(), "glibc inet_ntop6 returned NULL");
+    let gl_bytes: &[u8] = unsafe {
+        let cs = std::ffi::CStr::from_ptr(nt_gl.as_ptr());
+        cs.to_bytes()
+    };
+    assert_eq!(&nt_core[..n_core], gl_bytes, "core vs glibc inet_ntop6 text mismatch");
+
+    let mut n6group = c.benchmark_group("inet_ntop_inprocess_ipv6");
+    n6group.bench_function("frankenlibc_core", |b| {
+        b.iter(|| {
+            let mut out = [0u8; 46];
+            let n = core_inet::inet_ntop_into(AF_INET6, black_box(&addr6), &mut out);
+            black_box((n, out));
+        });
+    });
+    n6group.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| {
+            let mut out = [0i8; 46];
+            let p = unsafe {
+                inet_ntop(AF_INET6, black_box(addr6.as_ptr()).cast::<c_void>(), out.as_mut_ptr(), 46)
+            };
+            black_box((p, out));
+        });
+    });
+    n6group.finish();
 }
 
 criterion_group! {

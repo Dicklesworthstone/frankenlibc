@@ -142,13 +142,7 @@ pub fn inet_ntop_into(af: i32, src: &[u8], out: &mut [u8]) -> Option<usize> {
             }
             let mut addr = [0u8; 16];
             addr.copy_from_slice(&src[..16]);
-            let s = format_ipv6_canonical(&addr);
-            let b = s.as_bytes();
-            if out.len() < b.len() {
-                return None;
-            }
-            out[..b.len()].copy_from_slice(b);
-            Some(b.len())
+            format_ipv6_canonical_into(&addr, out)
         }
         _ => None,
     }
@@ -638,6 +632,115 @@ pub fn parse_ipv6(src: &[u8]) -> Option<[u8; 16]> {
 /// Format 16 bytes as canonical IPv6 text with `::` abbreviation for the
 /// longest run of consecutive zero groups (ties broken by first occurrence).
 /// Per RFC 5952, a single zero group is NOT abbreviated with `::`.
+/// Write `v` as lowercase hex with no leading zeros (matches `format!("{:x}")`)
+/// into `out`; returns the digit count (1..=4 for a u16).
+#[inline]
+fn write_u16_hex(v: u16, out: &mut [u8]) -> usize {
+    if v == 0 {
+        out[0] = b'0';
+        return 1;
+    }
+    let mut tmp = [0u8; 4];
+    let mut n = 0usize;
+    let mut x = v;
+    while x > 0 {
+        let d = (x & 0xf) as u8;
+        tmp[n] = if d < 10 { b'0' + d } else { b'a' + (d - 10) };
+        n += 1;
+        x >>= 4;
+    }
+    for j in 0..n {
+        out[j] = tmp[n - 1 - j];
+    }
+    n
+}
+
+/// Allocation-free canonical IPv6 formatter: writes RFC 5952 text into `out` and
+/// returns the byte length, or `None` if `out` is too small. Byte-for-byte the same
+/// output as the prior `String`-building version (no `format!` / `String` allocs;
+/// inet_ntop IPv6 was 17x slower than glibc — all heap allocs; bd-2g7oyh).
+fn format_ipv6_canonical_into(addr: &[u8; 16], out: &mut [u8]) -> Option<usize> {
+    let mut groups = [0u16; 8];
+    for i in 0..8 {
+        groups[i] = u16::from_be_bytes([addr[i * 2], addr[i * 2 + 1]]);
+    }
+
+    let v4_zeros_0_to_10 = addr[..10].iter().all(|&b| b == 0);
+    let v4_zeros_0_to_12 = v4_zeros_0_to_10 && addr[10] == 0 && addr[11] == 0;
+    let is_v4_mapped = v4_zeros_0_to_10 && addr[10] == 0xFF && addr[11] == 0xFF;
+    let is_v4_compat = v4_zeros_0_to_12 && (addr[12] != 0 || addr[13] != 0);
+    if is_v4_mapped || is_v4_compat {
+        let prefix: &[u8] = if is_v4_mapped { b"::ffff:" } else { b"::" };
+        let v4 = [addr[12], addr[13], addr[14], addr[15]];
+        let v4len = format_ipv4_len(&v4);
+        let total = prefix.len() + v4len;
+        if out.len() < total {
+            return None;
+        }
+        out[..prefix.len()].copy_from_slice(prefix);
+        let v4buf = format_ipv4(&v4);
+        out[prefix.len()..total].copy_from_slice(&v4buf[..v4len]);
+        return Some(total);
+    }
+
+    // Longest run of consecutive zero groups (RFC 5952 §4.2.1); a single zero
+    // group is NOT abbreviated (§4.2.2).
+    let mut best_start = 0usize;
+    let mut best_len = 0usize;
+    let mut cur_start = 0usize;
+    let mut cur_len = 0usize;
+    for (i, &g) in groups.iter().enumerate() {
+        if g == 0 {
+            if cur_len == 0 {
+                cur_start = i;
+            }
+            cur_len += 1;
+        } else {
+            if cur_len > best_len {
+                best_start = cur_start;
+                best_len = cur_len;
+            }
+            cur_len = 0;
+        }
+    }
+    if cur_len > best_len {
+        best_start = cur_start;
+        best_len = cur_len;
+    }
+    if best_len <= 1 {
+        best_len = 0;
+    }
+
+    let mut pos = 0usize;
+    let mut i = 0usize;
+    while i < 8 {
+        if best_len > 0 && i == best_start {
+            if out.len() < pos + 2 {
+                return None;
+            }
+            out[pos] = b':';
+            out[pos + 1] = b':';
+            pos += 2;
+            i += best_len;
+            continue;
+        }
+        if pos != 0 && out[pos - 1] != b':' {
+            if out.len() < pos + 1 {
+                return None;
+            }
+            out[pos] = b':';
+            pos += 1;
+        }
+        if out.len() < pos + 4 {
+            return None;
+        }
+        pos += write_u16_hex(groups[i], &mut out[pos..]);
+        i += 1;
+    }
+    Some(pos)
+}
+
+#[cfg(test)]
 fn format_ipv6_canonical(addr: &[u8; 16]) -> String {
     let mut groups = [0u16; 8];
     for i in 0..8 {
@@ -1167,6 +1270,30 @@ mod tests {
     fn test_ntop_ipv4_basic() {
         let result = inet_ntop(AF_INET, &[192, 168, 0, 1]).unwrap();
         assert_eq!(result, b"192.168.0.1");
+    }
+
+    #[test]
+    fn format_ipv6_into_matches_string_oracle() {
+        // The byte-level format_ipv6_canonical_into must be byte-identical to the
+        // original String-building format_ipv6_canonical across diverse forms
+        // (zero runs, leading/trailing ::, embedded IPv4-mapped/compat, full).
+        let cases: &[[u8; 16]] = &[
+            [0; 16],                                                                  // ::
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],                         // ::1
+            [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],             // 2001:db8::
+            [0x20, 1, 0x0d, 0xb8, 0x85, 0xa3, 0, 0, 0, 0, 0x8a, 0x2e, 3, 0x70, 0x73, 0x34],
+            [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 1, 0xff, 0xfe, 0x23, 0x45, 0x67, 0x89, 0x0a],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 192, 168, 1, 1],               // ::ffff:192.168.1.1
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4],                         // ::1.2.3.4 (v4-compat)
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],                  // full
+            [0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 3, 0, 0, 0, 4],                         // mixed zero runs
+        ];
+        for addr in cases {
+            let oracle = format_ipv6_canonical(addr);
+            let mut buf = [0u8; 64];
+            let n = format_ipv6_canonical_into(addr, &mut buf).expect("into fits");
+            assert_eq!(&buf[..n], oracle.as_bytes(), "mismatch for {addr:?}");
+        }
     }
 
     #[test]
