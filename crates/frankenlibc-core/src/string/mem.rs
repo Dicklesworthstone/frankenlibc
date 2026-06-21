@@ -517,17 +517,13 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
     let last = ndl[n_count - 1];
 
     // Dual-anchor fast path: a match at `cand` requires BOTH the first needle
-    // byte at `cand` and the last needle byte at `cand + n_count - 1`. When the
-    // first byte is common (e.g. "aaaa…b" over an 'a' run) but the last byte is
-    // rare/absent, anchoring the SIMD `memchr` scan on the last byte collapses
-    // the search to a single pass — the first-byte-only scan below makes every
-    // position a candidate (O(n·m) before the Two-Way bailout). We scan for the
-    // last byte; each hit confirms the first byte and a full compare. Only valid
-    // when `first != last`; otherwise the anchors coincide and we use the
-    // first-byte scan. The O(n+m) Two-Way bailout and leftmost-match semantics
-    // are preserved (last-byte hits are visited left to right, so candidate
-    // starts increase monotonically). Mirrors the wide `wcsstr` dual-anchor.
-    if first != last {
+    // byte at `cand` and the last needle byte at `cand + n_count - 1`. Last-byte
+    // anchoring is excellent for `"aaaa...b"`-style inputs, but text needles
+    // often end in a common byte (`e`, `t`, space). A small byte-frequency prior
+    // keeps the rare-last win while routing common-last text to the first-byte
+    // scan below. The O(n+m) Two-Way bailout and leftmost-match semantics are
+    // preserved whichever anchor is selected.
+    if first != last && memmem_prefers_last_anchor(first, last) {
         let mut anchor = n_count - 1;
         let mut miss_work = 0usize;
         while anchor < hay.len() {
@@ -560,7 +556,7 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
         if cand + n_count > hay.len() {
             return None; // not enough room left for the needle
         }
-        if hay[cand..cand + n_count] == *ndl {
+        if (first == last || hay[cand + n_count - 1] == last) && hay[cand..cand + n_count] == *ndl {
             return Some(cand);
         }
         miss_work += n_count;
@@ -573,6 +569,88 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
         }
     }
     None
+}
+
+#[inline(always)]
+fn memmem_prefers_last_anchor(first: u8, last: u8) -> bool {
+    debug_assert_ne!(first, last);
+    memmem_anchor_commonness(last) <= memmem_anchor_commonness(first)
+}
+
+#[inline(always)]
+fn memmem_anchor_commonness(byte: u8) -> u8 {
+    MEMMEM_ANCHOR_COMMONNESS[byte as usize]
+}
+
+static MEMMEM_ANCHOR_COMMONNESS: [u8; 256] = memmem_anchor_commonness_table();
+
+const fn memmem_anchor_commonness_table() -> [u8; 256] {
+    let mut table = [1u8; 256];
+    table[0] = 2;
+
+    let mut b = b'!';
+    while b <= b'~' {
+        table[b as usize] = 4;
+        b += 1;
+    }
+
+    b = b'0';
+    while b <= b'9' {
+        table[b as usize] = 5;
+        b += 1;
+    }
+
+    table[b'_' as usize] = 6;
+    table[b'-' as usize] = 6;
+    table[b'.' as usize] = 6;
+    table[b'/' as usize] = 6;
+    table[b'\t' as usize] = 6;
+    table[b'\n' as usize] = 6;
+    table[b'\r' as usize] = 6;
+
+    table[b'c' as usize] = 8;
+    table[b'C' as usize] = 8;
+    table[b'd' as usize] = 8;
+    table[b'D' as usize] = 8;
+    table[b'f' as usize] = 8;
+    table[b'F' as usize] = 8;
+    table[b'g' as usize] = 8;
+    table[b'G' as usize] = 8;
+    table[b'h' as usize] = 8;
+    table[b'H' as usize] = 8;
+    table[b'l' as usize] = 8;
+    table[b'L' as usize] = 8;
+    table[b'm' as usize] = 8;
+    table[b'M' as usize] = 8;
+    table[b'p' as usize] = 8;
+    table[b'P' as usize] = 8;
+    table[b'u' as usize] = 8;
+    table[b'U' as usize] = 8;
+    table[b'w' as usize] = 8;
+    table[b'W' as usize] = 8;
+    table[b'y' as usize] = 8;
+    table[b'Y' as usize] = 8;
+
+    table[b'a' as usize] = 12;
+    table[b'A' as usize] = 12;
+    table[b'i' as usize] = 12;
+    table[b'I' as usize] = 12;
+    table[b'n' as usize] = 12;
+    table[b'N' as usize] = 12;
+    table[b'o' as usize] = 12;
+    table[b'O' as usize] = 12;
+    table[b'r' as usize] = 12;
+    table[b'R' as usize] = 12;
+    table[b's' as usize] = 12;
+    table[b'S' as usize] = 12;
+    table[b't' as usize] = 12;
+    table[b'T' as usize] = 12;
+
+    table[b' ' as usize] = 16;
+    table[b'e' as usize] = 16;
+    table[b'E' as usize] = 16;
+
+    table
 }
 
 /// Linear-time substring search via the Two-Way (Crochemore–Perrin)
