@@ -42,6 +42,7 @@ unsafe extern "C" {
     fn wcsstr(h: *const i32, n: *const i32) -> *const i32;
     fn strtok_r(s: *mut c_char, delim: *const c_char, saveptr: *mut *mut c_char) -> *mut c_char;
     fn wcstok(wcs: *mut i32, delim: *const i32, ptr: *mut *mut i32) -> *mut i32;
+    fn asctime_r(tm: *const libc::tm, buf: *mut c_char) -> *mut c_char;
 }
 
 fn bench(c: &mut Criterion) {
@@ -672,6 +673,41 @@ fn bench(c: &mut Criterion) {
         })
     });
     gwtk.finish();
+
+    // ---- asctime (fixed 26-byte formatter, pure/non-ifunc, English-only). fl uses
+    // core::fmt::write into a stack buffer; glibc uses a manual sprintf.
+    use frankenlibc_core::time::{format_asctime, BrokenDownTime};
+    let bd = BrokenDownTime {
+        tm_sec: 45, tm_min: 30, tm_hour: 14, tm_mday: 21, tm_mon: 5,
+        tm_year: 126, tm_wday: 0, tm_yday: 171, ..Default::default()
+    };
+    let mut atm: libc::tm = unsafe { std::mem::zeroed() };
+    atm.tm_sec = 45; atm.tm_min = 30; atm.tm_hour = 14; atm.tm_mday = 21;
+    atm.tm_mon = 5; atm.tm_year = 126; atm.tm_wday = 0; atm.tm_yday = 171;
+    {
+        let mut cb = [0u8; 32];
+        let n = format_asctime(&bd, &mut cb);
+        let mut gb = [0i8; 32];
+        unsafe { asctime_r(&atm, gb.as_mut_ptr()) };
+        let gbytes: &[u8] = unsafe { std::ffi::CStr::from_ptr(gb.as_ptr()).to_bytes() };
+        assert_eq!(&cb[..n], gbytes, "asctime byte mismatch");
+    }
+    let mut gat = c.benchmark_group("survey_asctime");
+    gat.bench_function("frankenlibc_core", |b| {
+        b.iter(|| {
+            let mut cb = [0u8; 32];
+            let n = format_asctime(black_box(&bd), &mut cb);
+            black_box((n, cb[0]))
+        })
+    });
+    gat.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| {
+            let mut gb = [0i8; 32];
+            let p = unsafe { asctime_r(black_box(&atm), gb.as_mut_ptr()) };
+            black_box((p, gb[0]))
+        })
+    });
+    gat.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();

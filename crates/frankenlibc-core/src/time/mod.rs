@@ -278,9 +278,79 @@ fn format_asctime_inner(bd: &BrokenDownTime, buf: &mut [u8], cap_26: bool) -> us
         buf: [0u8; 64],
         pos: 0,
     };
-    // A year too wide for the 64-byte scratch (impossible for any real epoch)
-    // errors out; treat that exactly like the old > 26-byte overflow path below.
-    if core::fmt::write(
+    // NOTE(bd-2g7oyh): byte-level fast path for the in-range common case — i.e. all output of
+    // gmtime/localtime (mday 1-31, h/m/s 0-59, year 0-9999, valid wday/mon). This
+    // avoids the `core::fmt::write` machinery (asctime was ~157 ns vs glibc ~225;
+    // the byte writer is ~3x faster, bd-2g7oyh). It is byte-identical to the
+    // format_args path below FOR THESE values: `{:>3}` of 1..=99 is space-pad to 3,
+    // `{:02}` of 0..=99 is 2-digit zero-pad, `{}` of 0..=9999 has no pad/sign. Any
+    // out-of-range field (negative, >9999, "???") falls through to format_args,
+    // which keeps its exact (signed/padded) semantics.
+    let fast = (1..=99).contains(&bd.tm_mday)
+        && (0..=99).contains(&bd.tm_hour)
+        && (0..=99).contains(&bd.tm_min)
+        && (0..=99).contains(&bd.tm_sec)
+        && (0..=9999).contains(&year)
+        && (0..=6).contains(&bd.tm_wday)
+        && (0..=11).contains(&bd.tm_mon);
+    if fast {
+        let b = &mut sf.buf;
+        b[0..3].copy_from_slice(WDAY_NAMES[bd.tm_wday as usize]);
+        b[3] = b' ';
+        b[4..7].copy_from_slice(MON_NAMES[bd.tm_mon as usize]);
+        let mut p = 7usize;
+        // `{:>3}` mday (1..=99): space-padded to width 3.
+        let md = bd.tm_mday as u8;
+        if md < 10 {
+            b[p] = b' ';
+            b[p + 1] = b' ';
+            b[p + 2] = b'0' + md;
+        } else {
+            b[p] = b' ';
+            b[p + 1] = b'0' + md / 10;
+            b[p + 2] = b'0' + md % 10;
+        }
+        p += 3;
+        b[p] = b' ';
+        // `{:02}` HH:MM:SS.
+        let h = bd.tm_hour as u8;
+        let mi = bd.tm_min as u8;
+        let s = bd.tm_sec as u8;
+        b[p + 1] = b'0' + h / 10;
+        b[p + 2] = b'0' + h % 10;
+        b[p + 3] = b':';
+        b[p + 4] = b'0' + mi / 10;
+        b[p + 5] = b'0' + mi % 10;
+        b[p + 6] = b':';
+        b[p + 7] = b'0' + s / 10;
+        b[p + 8] = b'0' + s % 10;
+        b[p + 9] = b' ';
+        p += 10;
+        // `{}` year (0..=9999): no leading zeros, no sign.
+        let y = year as u16;
+        if y >= 1000 {
+            b[p] = b'0' + (y / 1000) as u8;
+            b[p + 1] = b'0' + (y / 100 % 10) as u8;
+            b[p + 2] = b'0' + (y / 10 % 10) as u8;
+            b[p + 3] = b'0' + (y % 10) as u8;
+            p += 4;
+        } else if y >= 100 {
+            b[p] = b'0' + (y / 100) as u8;
+            b[p + 1] = b'0' + (y / 10 % 10) as u8;
+            b[p + 2] = b'0' + (y % 10) as u8;
+            p += 3;
+        } else if y >= 10 {
+            b[p] = b'0' + (y / 10) as u8;
+            b[p + 1] = b'0' + (y % 10) as u8;
+            p += 2;
+        } else {
+            b[p] = b'0' + y as u8;
+            p += 1;
+        }
+        b[p] = b'\n';
+        p += 1;
+        sf.pos = p;
+    } else if core::fmt::write(
         &mut sf,
         format_args!(
             "{} {}{:>3} {:02}:{:02}:{:02} {}\n",
@@ -289,6 +359,8 @@ fn format_asctime_inner(bd: &BrokenDownTime, buf: &mut [u8], cap_26: bool) -> us
     )
     .is_err()
     {
+        // A year too wide for the 64-byte scratch (impossible for any real epoch)
+        // errors out; treat that exactly like the old > 26-byte overflow path below.
         return 0;
     }
     let bytes = &sf.buf[..sf.pos];
