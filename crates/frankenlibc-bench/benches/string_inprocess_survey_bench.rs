@@ -483,6 +483,36 @@ fn bench(c: &mut Criterion) {
     });
     gmm.finish();
 
+    // ---- memmem diagnostics: dual-anchor FLOOR (rare last byte 'X' → 1 candidate)
+    // vs Two-Way-forced (adversarial: needle "aaaa...ab" first byte common 'a').
+    let mm_rl_hay = b"the quick brown fox jumps over the lazy dog and then some text needle_herX";
+    let mm_rl_ndl = b"needle_herX"; // last byte 'X' occurs only at the match
+    let mut grl = c.benchmark_group("survey_memmem_rarelast");
+    grl.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::mem::memmem(black_box(mm_rl_hay), mm_rl_hay.len(), mm_rl_ndl, mm_rl_ndl.len())))
+    });
+    grl.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { memmem(black_box(mm_rl_hay.as_ptr().cast()), mm_rl_hay.len(), mm_rl_ndl.as_ptr().cast(), mm_rl_ndl.len()) }))
+    });
+    grl.finish();
+
+    // Adversarial: 'a'-run haystack, needle "aaaaaaaaab" — first byte 'a' is every
+    // position → first-byte path bails to Two-Way fast → measures ~Two-Way.
+    let mm_tw_hay: Vec<u8> = {
+        let mut v = vec![b'a'; 79];
+        v[68..79].copy_from_slice(b"aaaaaaaaaab");
+        v
+    };
+    let mm_tw_ndl = b"aaaaaaaaab";
+    let mut gtw = c.benchmark_group("survey_memmem_twoway");
+    gtw.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::mem::memmem(black_box(&mm_tw_hay), mm_tw_hay.len(), mm_tw_ndl, mm_tw_ndl.len())))
+    });
+    gtw.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { memmem(black_box(mm_tw_hay.as_ptr().cast()), mm_tw_hay.len(), mm_tw_ndl.as_ptr().cast(), mm_tw_ndl.len()) }))
+    });
+    gtw.finish();
+
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
 }
