@@ -53,9 +53,18 @@ If either fails to compile, the offending commit is one of the six below — fix
   Records baseline write-path 6-12x loss AND any movement from the cookie/memstream/memfixed guards (note: write fast-path still holds the main registry() lock — see Step 4).
 - open_memstream / fmemopen flush+close micro-bench (not yet written): exercises sync_memstream/sync_fmemopen guards.
 
-Update each row's verdict in `docs/NEGATIVE_EVIDENCE.md` (PENDING -> WIN/NEUTRAL/LOSS). Revert any ~0-gain
-single-thread guard ONLY if it also has no MT-contention value (these remove global locks, so keep unless a
-clear regression appears).
+Update each row's verdict in `docs/NEGATIVE_EVIDENCE.md` (PENDING -> WIN/NEUTRAL/LOSS).
+
+KEEP/REVERT CRITERION (learned this campaign — apply it, don't relitigate):
+- The 6 shipped guards are PURE LOCK-SKIPS — they skip a global mutex + lookup that would
+  no-op anyway (no behavior change for any input). KEEP them even if a single-thread
+  microbench shows ~0-gain: they remove a global serialization point (fewer global-lock
+  acquisitions per op = real MT-contention reduction). Revert ONLY on a measured regression.
+- DO NOT confuse them with the REVERTED fputs/puts/printf `scan_c_str_len`→`scan_c_string`
+  swaps (commit ecf2043dd): those were lock-removal PLUS a SEMANTIC change (read-to-NUL vs
+  the known_remaining bound for unterminated tracked buffers) AND registry-lock-dominated
+  end-to-end. Different class — do not re-apply them blind. The same semantic caveat is why
+  the scanf levers (Step 5) must be strict-gated + conformance-tested, not shipped byte-blind.
 
 ## Step 4 — the real remaining architectural win (needs build+test, NOT a blind edit)
 
