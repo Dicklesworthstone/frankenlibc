@@ -24,8 +24,9 @@ unsafe extern "C" {
 }
 
 fn bench(c: &mut Criterion) {
-    // ---- strspn (bitmap) ----
-    let span = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXbcd"; // 31 accept chars then 'X'
+    // ---- strspn (bitmap) ---- match IN-CHUNK at index 15 (exercises the SIMD
+    // mask trailing_zeros position, not just the scalar remainder tail).
+    let span = c"aaaaaaaaaaaaaaaXaaaaaaaaaaaaaaaaaaaa"; // 15 accept then 'X' (non-accept)
     let accept = c"abc";
     assert_eq!(
         core_str::strspn(span.to_bytes(), accept.to_bytes()),
@@ -40,7 +41,38 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { strspn(black_box(span.as_ptr()), accept.as_ptr()) }))
     });
     g.finish();
-    let _ = (strcspn, strpbrk); // (kept for future arms; referenced to avoid dead-code)
+
+    // ---- strcspn (bitmap, len-3 reject) ----
+    let cspan = c"abcdefghijklmnopqrstuvwwwwwwwwwXyz"; // run of non-reject then 'X' in reject
+    let reject = c"XYZ";
+    assert_eq!(
+        core_str::strcspn(cspan.to_bytes(), reject.to_bytes()),
+        unsafe { strcspn(cspan.as_ptr(), reject.as_ptr()) },
+        "strcspn mismatch"
+    );
+    let mut gc = c.benchmark_group("survey_strcspn");
+    gc.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strcspn(black_box(cspan.to_bytes()), reject.to_bytes())))
+    });
+    gc.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strcspn(black_box(cspan.as_ptr()), reject.as_ptr()) }))
+    });
+    gc.finish();
+
+    // ---- strpbrk (len-3 accept) ----
+    let pstr = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXyz"; // run then 'X' (in accept)
+    let pacc = c"XYZ";
+    let core_pb = core_str::strpbrk(pstr.to_bytes(), pacc.to_bytes());
+    let gl_pb = unsafe { strpbrk(pstr.as_ptr(), pacc.as_ptr()) };
+    assert_eq!(core_pb.is_some(), !gl_pb.is_null(), "strpbrk found-ness mismatch");
+    let mut gp = c.benchmark_group("survey_strpbrk");
+    gp.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strpbrk(black_box(pstr.to_bytes()), pacc.to_bytes())))
+    });
+    gp.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strpbrk(black_box(pstr.as_ptr()), pacc.as_ptr()) }))
+    });
+    gp.finish();
 
     // ---- strstr (search) ----
     let hay = c"the quick brown fox jumps over the lazy dog and then some more text needle_here";

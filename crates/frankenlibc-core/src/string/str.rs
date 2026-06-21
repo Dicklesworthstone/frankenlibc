@@ -353,38 +353,10 @@ fn byte_is_any4(byte: u8, b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
     byte == b0 || byte == b1 || byte == b2 || byte == b3
 }
 
-#[inline(always)]
-fn has_any_of4_or_nul_simd_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
-    debug_assert_eq!(chunk.len(), SIMD_LANES);
-    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-    lanes.simd_eq(Simd::splat(0)).any()
-        || lanes.simd_eq(Simd::splat(b0)).any()
-        || lanes.simd_eq(Simd::splat(b1)).any()
-        || lanes.simd_eq(Simd::splat(b2)).any()
-        || lanes.simd_eq(Simd::splat(b3)).any()
-}
-
-#[inline(always)]
-fn has_any_of4_or_nul_simd_fused_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
-    debug_assert_eq!(chunk.len(), SIMD_LANES);
-    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-    let member = lanes.simd_eq(Simd::splat(b0))
-        | lanes.simd_eq(Simd::splat(b1))
-        | lanes.simd_eq(Simd::splat(b2))
-        | lanes.simd_eq(Simd::splat(b3));
-    (lanes.simd_eq(Simd::splat(0)) | member).any()
-}
-
-#[inline(always)]
-fn has_non_any_of4_or_nul_simd_32(chunk: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
-    debug_assert_eq!(chunk.len(), SIMD_LANES);
-    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-    let member = lanes.simd_eq(Simd::splat(b0))
-        | lanes.simd_eq(Simd::splat(b1))
-        | lanes.simd_eq(Simd::splat(b2))
-        | lanes.simd_eq(Simd::splat(b3));
-    (lanes.simd_eq(Simd::splat(0)) | !member).any()
-}
+// (has_any_of4_or_nul_simd_32 / _fused_32 / has_non_any_of4_or_nul_simd_32 were the
+// bool "any flagged?" prefilters; the find_*_of4_or_nul scanners now compute the lane
+// mask directly and return the first set lane via trailing_zeros, so the separate bool
+// helpers + their scalar re-scan are gone. bd-2g7oyh.)
 
 #[inline(always)]
 fn has_ascii_folded_byte_or_nul_simd_32(chunk: &[u8], folded: u8) -> bool {
@@ -897,12 +869,17 @@ fn find_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
     let mut base = 0usize;
 
     for chunk in simd_chunks.by_ref() {
-        if has_any_of4_or_nul_simd_32(chunk, b0, b1, b2, b3) {
-            for (j, &byte) in chunk.iter().enumerate() {
-                if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
-                    return base + j;
-                }
-            }
+        // Locate the first matching lane via the SIMD mask (O(1) trailing_zeros)
+        // instead of a scalar re-scan of the whole flagged chunk (bd-2g7oyh: the
+        // scalar re-scan made strcspn/strpbrk ~5x slower than glibc).
+        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+        let member = lanes.simd_eq(Simd::splat(b0))
+            | lanes.simd_eq(Simd::splat(b1))
+            | lanes.simd_eq(Simd::splat(b2))
+            | lanes.simd_eq(Simd::splat(b3));
+        let bits = (lanes.simd_eq(Simd::splat(0)) | member).to_bitmask();
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
         }
         base += SIMD_LANES;
     }
@@ -921,12 +898,15 @@ fn find_any_of4_or_nul_fused(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize 
     let mut base = 0usize;
 
     for chunk in simd_chunks.by_ref() {
-        if has_any_of4_or_nul_simd_fused_32(chunk, b0, b1, b2, b3) {
-            for (j, &byte) in chunk.iter().enumerate() {
-                if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
-                    return base + j;
-                }
-            }
+        // SIMD mask + trailing_zeros for O(1) position (no scalar re-scan; bd-2g7oyh).
+        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+        let member = lanes.simd_eq(Simd::splat(b0))
+            | lanes.simd_eq(Simd::splat(b1))
+            | lanes.simd_eq(Simd::splat(b2))
+            | lanes.simd_eq(Simd::splat(b3));
+        let bits = (lanes.simd_eq(Simd::splat(0)) | member).to_bitmask();
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
         }
         base += SIMD_LANES;
     }
@@ -945,12 +925,15 @@ fn find_non_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
     let mut base = 0usize;
 
     for chunk in simd_chunks.by_ref() {
-        if has_non_any_of4_or_nul_simd_32(chunk, b0, b1, b2, b3) {
-            for (j, &byte) in chunk.iter().enumerate() {
-                if byte == 0 || !byte_is_any4(byte, b0, b1, b2, b3) {
-                    return base + j;
-                }
-            }
+        // SIMD mask + trailing_zeros for O(1) position (no scalar re-scan; bd-2g7oyh).
+        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+        let member = lanes.simd_eq(Simd::splat(b0))
+            | lanes.simd_eq(Simd::splat(b1))
+            | lanes.simd_eq(Simd::splat(b2))
+            | lanes.simd_eq(Simd::splat(b3));
+        let bits = (lanes.simd_eq(Simd::splat(0)) | !member).to_bitmask();
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
         }
         base += SIMD_LANES;
     }
