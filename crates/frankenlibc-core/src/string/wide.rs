@@ -54,20 +54,8 @@ const WIDE_REVERSE_LONG_MIN_LEN: usize = WIDE_REVERSE_LONG_SIMD_LANES * 4;
 // via masks instead of a bool prefilter + scalar resolve, so the prefilters are
 // unused. bd-2g7oyh.)
 
-/// Returns `true` iff the two [`WIDE_COMPARE_SIMD_LANES`]-element panels are
-/// element-for-element equal AND contain no terminating NUL. Used as the
-/// equal-prefix fast path for NUL-terminated wide compares: a `false` result
-/// means either a divergence or a NUL is present in the panel, so the scalar
-/// tail must resolve the exact index. Because the panels are equal when this
-/// returns `true`, checking `a` for NUL also covers `b`.
-#[inline(always)]
-fn equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
-    debug_assert_eq!(a.len(), WIDE_COMPARE_SIMD_LANES);
-    debug_assert_eq!(b.len(), WIDE_COMPARE_SIMD_LANES);
-    let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a);
-    let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b);
-    av.simd_eq(bv).all() && !av.simd_eq(Simd::splat(0)).any()
-}
+// (equal_and_no_nul_wide removed: wcscmp/wcsncmp now resolve the divergence lane
+// inline via an event-mask, so the bool prefilter is unused. bd-2g7oyh.)
 
 #[inline(always)]
 fn equal_and_no_nul_wide_unrolled(a: &[u32], b: &[u32]) -> bool {
@@ -89,23 +77,9 @@ fn fold_ascii_upper_wide(
     is_upper.select(v + Simd::splat(0x20), v)
 }
 
-/// Returns `true` iff the two panels are equal after ASCII case-folding AND
-/// contain no terminating NUL. The equal-prefix fast path for case-insensitive
-/// wide compares: a `false` result means a folded divergence or a NUL is
-/// present, so the scalar tail resolves the exact index. NUL (`0`) is below the
-/// fold range, so fold-equality implies `a` and `b` share NUL positions —
-/// checking `a` suffices.
-#[inline(always)]
-fn fold_equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
-    debug_assert_eq!(a.len(), WIDE_COMPARE_SIMD_LANES);
-    debug_assert_eq!(b.len(), WIDE_COMPARE_SIMD_LANES);
-    let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a);
-    let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b);
-    fold_ascii_upper_wide(av)
-        .simd_eq(fold_ascii_upper_wide(bv))
-        .all()
-        && !av.simd_eq(Simd::splat(0)).any()
-}
+// (fold_equal_and_no_nul_wide removed: wcscasecmp/wcsncasecmp now resolve the
+// divergence lane inline via a fold-event-mask, so the bool prefilter is unused.
+// bd-2g7oyh.)
 
 /// Returns `true` when a 32-wide panel consists entirely of one non-NUL
 /// code-unit pair whose ASCII-folded values are equal. This narrow fast path
