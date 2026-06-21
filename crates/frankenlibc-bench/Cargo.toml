@@ -160,3 +160,9 @@ required-features = ["abi-bench"]
 name = "strftime_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
+
+# inet_pton vs host glibc (dlmopen). Validates the Inet membrane fast-path (d3fb26c0d).
+[[bench]]
+name = "inet_pton_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
