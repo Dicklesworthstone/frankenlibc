@@ -34,6 +34,7 @@ unsafe extern "C" {
     fn wcscasecmp(s1: *const i32, s2: *const i32) -> c_int;
     fn wcslen(s: *const i32) -> usize;
     fn wmemchr(s: *const i32, c: i32, n: usize) -> *const i32;
+    fn wcsspn(s: *const i32, accept: *const i32) -> usize;
 }
 
 fn bench(c: &mut Criterion) {
@@ -411,6 +412,27 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wmemchr(black_box(wm2.as_ptr().cast::<i32>()), b'X' as i32, 300) }))
     });
     gwm2.finish();
+
+    // ---- wcsspn — accepted run of 'a' then a non-member 'Z' at 30 (deep in a panel).
+    let wsp: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 64];
+        v[30] = b'Z' as u32;
+        v[63] = 0;
+        v
+    };
+    let wacc: Vec<u32> = vec![b'a' as u32, 0];
+    let core_sp = frankenlibc_core::string::wide::wcsspn(&wsp, &wacc);
+    let gl_sp = unsafe { wcsspn(wsp.as_ptr().cast::<i32>(), wacc.as_ptr().cast::<i32>()) };
+    assert_eq!(core_sp, 30, "wcsspn core wrong");
+    assert_eq!(core_sp, gl_sp, "wcsspn vs glibc mismatch");
+    let mut gsp = c.benchmark_group("survey_wcsspn");
+    gsp.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcsspn(black_box(&wsp), &wacc)))
+    });
+    gsp.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcsspn(black_box(wsp.as_ptr().cast::<i32>()), wacc.as_ptr().cast::<i32>()) }))
+    });
+    gsp.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
