@@ -34,6 +34,7 @@ const ASCTIME_R_BUF_BYTES: usize = 26;
 const ASCTIME_FULL_BUF_BYTES: usize = 64;
 const TIME_T_BYTES: usize = core::mem::size_of::<i64>();
 const TM_BYTES: usize = core::mem::size_of::<libc::tm>();
+const CURRENT_STACK_OBJECT_WINDOW_BYTES: usize = 8 * 1024 * 1024;
 
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
@@ -47,6 +48,20 @@ fn tracked_required_object_fits<T>(ptr: *const T) -> bool {
 #[inline]
 fn tracked_optional_object_fits<T>(ptr: *const T) -> bool {
     ptr.is_null() || tracked_required_object_fits(ptr)
+}
+
+#[inline]
+fn likely_current_stack_object<T>(ptr: *const T) -> bool {
+    let probe = 0u8;
+    let probe_addr = (&probe as *const u8) as usize;
+    (ptr as usize).abs_diff(probe_addr) <= CURRENT_STACK_OBJECT_WINDOW_BYTES
+}
+
+#[inline]
+fn tracked_required_hot_output_fits<T>(ptr: *const T) -> bool {
+    !ptr.is_null()
+        && (likely_current_stack_object(ptr)
+            || tracked_region_fits(ptr.cast::<c_void>(), core::mem::size_of::<T>()))
 }
 
 #[doc(hidden)]
@@ -163,6 +178,25 @@ fn vdso_clock_supported(clock_id: c_int) -> bool {
             | libc::CLOCK_BOOTTIME
             | libc::CLOCK_TAI
     )
+}
+
+#[inline]
+fn clock_gettime_common_clock_id(clock_id: c_int) -> bool {
+    matches!(
+        clock_id,
+        libc::CLOCK_REALTIME
+            | libc::CLOCK_MONOTONIC
+            | libc::CLOCK_REALTIME_COARSE
+            | libc::CLOCK_MONOTONIC_COARSE
+            | libc::CLOCK_BOOTTIME
+    )
+}
+
+#[inline]
+fn clock_gettime_clock_id_valid(clock_id: c_int) -> bool {
+    clock_gettime_common_clock_id(clock_id)
+        || time_core::valid_clock_id(clock_id)
+        || time_core::valid_clock_id_extended(clock_id)
 }
 
 #[inline]
@@ -345,8 +379,10 @@ unsafe fn parse_vdso(
     for i in 0..e_phnum {
         let ph = unsafe { &*((base + e_phoff + i * e_phentsize) as *const Elf64Phdr) };
         if ph.p_type == PT_LOAD && load_offset.is_none() {
-            load_offset =
-                Some(base.wrapping_add(ph.p_offset as usize).wrapping_sub(ph.p_vaddr as usize));
+            load_offset = Some(
+                base.wrapping_add(ph.p_offset as usize)
+                    .wrapping_sub(ph.p_vaddr as usize),
+            );
         } else if ph.p_type == PT_DYNAMIC {
             dyn_vaddr = Some(ph.p_vaddr);
         }
@@ -394,7 +430,8 @@ unsafe fn parse_vdso(
         // SAFETY of each transmute: a resolved address is an executable vDSO entry
         // with this exact C-ABI signature.
         if clock_gettime.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_clock_gettime") } {
-            clock_gettime = Some(unsafe { core::mem::transmute::<usize, VdsoClockGettimeFn>(addr) });
+            clock_gettime =
+                Some(unsafe { core::mem::transmute::<usize, VdsoClockGettimeFn>(addr) });
         } else if gettimeofday.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_gettimeofday") } {
             gettimeofday = Some(unsafe { core::mem::transmute::<usize, VdsoGettimeofdayFn>(addr) });
         } else if time.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_time") } {
@@ -493,12 +530,12 @@ pub unsafe extern "C" fn clock_gettime(clock_id: c_int, tp: *mut libc::timespec)
         return -1;
     }
 
-    if !tracked_required_object_fits(tp.cast_const()) {
+    if !tracked_required_hot_output_fits(tp.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
 
-    if !time_core::valid_clock_id(clock_id) && !time_core::valid_clock_id_extended(clock_id) {
+    if !clock_gettime_clock_id_valid(clock_id) {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }

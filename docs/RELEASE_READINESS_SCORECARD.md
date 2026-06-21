@@ -724,3 +724,17 @@ completed remotely on `vmi1293453` with
 -p frankenlibc-abi --all-targets` remains blocked by pre-existing
 `zz_scratch_divmin` integration-test trait errors, and workspace rustfmt remains
 blocked by broad pre-existing formatting drift.
+
+### 2026-06-21 `bd-2g7oyh.499` timing pending bench (BlackThrush / cod-b)
+
+Disk-low code-only pass: `clock_gettime` now has a stack-output fast path for
+normal caller `timespec` outputs and a local common-clock validity fast path for
+clock ids already accepted by the existing validators.
+
+Scorecard effect: no release-readiness score change yet. This is not measured
+proof and must remain pending until the same-worker `strtol_glibc_bench`
+`clock_gettime` row and focused time/vDSO conformance run under
+`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`.
+
+Evidence ledger: `docs/NEGATIVE_EVIDENCE.md`. Pending artifact:
+`tests/artifacts/perf/bd-2g7oyh.499-clock-gettime-clock-id-fast-pending.md`.
