@@ -33,6 +33,7 @@ unsafe extern "C" {
     fn wmemcmp(s1: *const i32, s2: *const i32, n: usize) -> c_int;
     fn wcscasecmp(s1: *const i32, s2: *const i32) -> c_int;
     fn wcslen(s: *const i32) -> usize;
+    fn wmemchr(s: *const i32, c: i32, n: usize) -> *const i32;
 }
 
 fn bench(c: &mut Criterion) {
@@ -384,6 +385,25 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wcslen(black_box(wl.as_ptr().cast::<i32>())) }))
     });
     gwl.finish();
+
+    // ---- wmemchr — LONG (match 'X' at 250 of 300) so the 256-element folded block runs.
+    let wm2: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 300];
+        v[250] = b'X' as u32;
+        v
+    };
+    let core_wmc = frankenlibc_core::string::wide::wmemchr(&wm2, b'X' as u32, 300);
+    let gl_wmc = unsafe { wmemchr(wm2.as_ptr().cast::<i32>(), b'X' as i32, 300) };
+    assert_eq!(core_wmc, Some(250), "wmemchr core wrong");
+    assert_eq!(core_wmc.is_some(), !gl_wmc.is_null(), "wmemchr found-ness mismatch");
+    let mut gwm2 = c.benchmark_group("survey_wmemchr_long");
+    gwm2.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wmemchr(black_box(&wm2), b'X' as u32, 300)))
+    });
+    gwm2.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wmemchr(black_box(wm2.as_ptr().cast::<i32>()), b'X' as i32, 300) }))
+    });
+    gwm2.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();

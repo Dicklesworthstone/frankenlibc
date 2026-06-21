@@ -231,12 +231,12 @@ fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
     let mut base = 0usize;
 
     for chunk in chunks.by_ref() {
-        if has_wide_or_nul_simd(chunk, needle) {
-            for (j, &ch) in chunk.iter().enumerate() {
-                if ch == needle || ch == 0 {
-                    return base + j;
-                }
-            }
+        // First needle-or-NUL lane via the mask (O(1)) instead of detect + scalar
+        // enumerate of the flagged 32-element chunk (bd-2g7oyh).
+        let lanes = Simd::<u32, WIDE_FIND_SIMD_LANES>::from_slice(chunk);
+        let m = (lanes.simd_eq(Simd::splat(needle)) | lanes.simd_eq(Simd::splat(0))).to_bitmask();
+        if m != 0 {
+            return base + m.trailing_zeros() as usize;
         }
         base += WIDE_FIND_SIMD_LANES;
     }
@@ -273,11 +273,23 @@ fn find_wide_or_nul_long(s: &[u32], needle: u32) -> usize {
         };
         let folded = hit(0).simd_min(hit(1)).simd_min(hit(2).simd_min(hit(3)));
         if folded.simd_eq(zero).any() {
-            for (j, &ch) in block.iter().enumerate() {
-                if ch == needle || ch == 0 {
-                    return base + j;
-                }
+            // Resolve the first needle-or-NUL panel + lane via masks (O(1)) instead
+            // of a scalar enumerate of the 256-element block (bd-2g7oyh). `hit(k)` is
+            // 0 exactly at needle/NUL lanes.
+            let m0 = hit(0).simd_eq(zero).to_bitmask();
+            if m0 != 0 {
+                return base + m0.trailing_zeros() as usize;
             }
+            let m1 = hit(1).simd_eq(zero).to_bitmask();
+            if m1 != 0 {
+                return base + PANEL + m1.trailing_zeros() as usize;
+            }
+            let m2 = hit(2).simd_eq(zero).to_bitmask();
+            if m2 != 0 {
+                return base + 2 * PANEL + m2.trailing_zeros() as usize;
+            }
+            let m3 = hit(3).simd_eq(zero).to_bitmask();
+            return base + 3 * PANEL + m3.trailing_zeros() as usize;
         }
         base += BLOCK;
     }
@@ -1071,11 +1083,23 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
         let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]) ^ target;
         let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
         if folded.simd_eq(zero).any() {
-            for (j, &x) in block.iter().enumerate() {
-                if x == c {
-                    return Some(base + j);
-                }
+            // Resolve the first matching panel + lane via masks (O(1)) instead of a
+            // scalar enumerate of the 256-element block (bd-2g7oyh). p0..p3 are
+            // already `panel ^ c`, so a zero lane is exactly a match.
+            let m0 = p0.simd_eq(zero).to_bitmask();
+            if m0 != 0 {
+                return Some(base + m0.trailing_zeros() as usize);
             }
+            let m1 = p1.simd_eq(zero).to_bitmask();
+            if m1 != 0 {
+                return Some(base + PANEL + m1.trailing_zeros() as usize);
+            }
+            let m2 = p2.simd_eq(zero).to_bitmask();
+            if m2 != 0 {
+                return Some(base + 2 * PANEL + m2.trailing_zeros() as usize);
+            }
+            let m3 = p3.simd_eq(zero).to_bitmask();
+            return Some(base + 3 * PANEL + m3.trailing_zeros() as usize);
         }
         base += BLOCK;
     }
@@ -1085,12 +1109,11 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     let mut chunks = scan[base..].chunks_exact(WIDE_MEMCHR_SIMD_LANES);
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::from_slice(chunk);
-        if lanes.simd_eq(t16).any() {
-            for (j, &x) in chunk.iter().enumerate() {
-                if x == c {
-                    return Some(base + j);
-                }
-            }
+        // First matching lane via the mask (O(1)) instead of a scalar enumerate of
+        // the flagged 16-element chunk (bd-2g7oyh).
+        let m = lanes.simd_eq(t16).to_bitmask();
+        if m != 0 {
+            return Some(base + m.trailing_zeros() as usize);
         }
         base += WIDE_MEMCHR_SIMD_LANES;
     }
