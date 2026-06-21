@@ -2103,6 +2103,11 @@ pub(crate) fn decide(
     // Return full-validate decision without runtime-math kernel overhead.
     // This trades adaptive policy tuning for ~2x speedup on Python startup.
     // Skip in test mode to allow kernel state tests to pass.
+    // (Stdio added: stdio `decide()` passes the STREAM ID, not a user buffer
+    // — fread/fwrite validate their caller buffers independently of decide() —
+    // so fast-pathing it skips no pointer validation, exactly like StringMemory
+    // above whose safety also comes from the functions' own bounds checks.
+    // Completes the Stdio membrane fast-path coverage begun in the strict path.)
     if cfg!(not(test))
         && matches!(
             family,
@@ -2112,6 +2117,7 @@ pub(crate) fn decide(
                 | ApiFamily::Loader
                 | ApiFamily::Stdlib
                 | ApiFamily::MathFenv
+                | ApiFamily::Stdio
         )
     {
         let decision = RuntimeDecision {
