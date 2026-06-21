@@ -511,6 +511,7 @@ struct GetenvNameProbe {
 #[derive(Clone, Copy)]
 struct GetenvHotCache {
     epoch: u64,
+    name_ptr: usize,
     name_len: usize,
     lo: u64,
     hi: u64,
@@ -521,6 +522,7 @@ impl GetenvHotCache {
     const fn empty() -> Self {
         Self {
             epoch: 0,
+            name_ptr: 0,
             name_len: 0,
             lo: 0,
             hi: 0,
@@ -779,6 +781,43 @@ fn getenv_hot_cache_enabled() -> bool {
 }
 
 #[inline]
+unsafe fn getenv_cached_name_matches(name: *const c_char, cache: GetenvHotCache) -> bool {
+    let name = name.cast::<u8>();
+    for i in 0..cache.name_len {
+        let byte = unsafe { *name.add(i) };
+        let expected = if i < 8 {
+            (cache.lo >> (i * 8)) as u8
+        } else {
+            (cache.hi >> ((i - 8) * 8)) as u8
+        };
+        if byte != expected {
+            return false;
+        }
+    }
+    unsafe { *name.add(cache.name_len) == 0 }
+}
+
+#[inline]
+unsafe fn getenv_hot_cache_lookup_same_ptr(name: *const c_char) -> Option<*mut c_char> {
+    if !getenv_hot_cache_enabled() {
+        return None;
+    }
+    let epoch = ENVIRON_EPOCH.load(std::sync::atomic::Ordering::Acquire);
+    GETENV_HOT_CACHE.with(|slot| {
+        let cache = slot.get();
+        if cache.epoch == epoch
+            && cache.name_ptr == name as usize
+            && cache.name_len <= 16
+            && unsafe { getenv_cached_name_matches(name, cache) }
+        {
+            Some(cache.result as *mut c_char)
+        } else {
+            None
+        }
+    })
+}
+
+#[inline]
 fn getenv_hot_cache_lookup(probe: GetenvNameProbe) -> Option<*mut c_char> {
     if !getenv_hot_cache_enabled() || probe.len > 16 {
         return None;
@@ -795,7 +834,7 @@ fn getenv_hot_cache_lookup(probe: GetenvNameProbe) -> Option<*mut c_char> {
 }
 
 #[inline]
-fn getenv_hot_cache_store(probe: GetenvNameProbe, result: *mut c_char) {
+fn getenv_hot_cache_store(name: *const c_char, probe: GetenvNameProbe, result: *mut c_char) {
     if !getenv_hot_cache_enabled() || probe.len > 16 {
         return;
     }
@@ -803,6 +842,7 @@ fn getenv_hot_cache_store(probe: GetenvNameProbe, result: *mut c_char) {
     GETENV_HOT_CACHE.with(|slot| {
         slot.set(GetenvHotCache {
             epoch,
+            name_ptr: name as usize,
             name_len: probe.len,
             lo: probe.lo,
             hi: probe.hi,
@@ -2218,8 +2258,11 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
     // membrane (and its `known_remaining` lookups) is pure overhead on top of the
     // environ walk — same lever as strtod (bd-n40in2 sibling). `profile` is `Some`
     // only on the full (test) path, which keeps deny/observe exercised.
-    let bound = env_name_scan_bound(name);
     let (profile, len, terminated) = if runtime_policy::stdlib_membrane_fastpath() {
+        if let Some(cached) = unsafe { getenv_hot_cache_lookup_same_ptr(name) } {
+            return cached;
+        }
+        let bound = env_name_scan_bound(name);
         let probe = unsafe { scan_env_name_fast(name, bound) };
         if !probe.terminated || !probe.valid {
             return ptr::null_mut();
@@ -2228,9 +2271,10 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
             return cached;
         }
         let result = unsafe { native_getenv_raw(name.cast::<u8>(), probe.len) };
-        getenv_hot_cache_store(probe, result);
+        getenv_hot_cache_store(name, probe, result);
         return result;
     } else {
+        let bound = env_name_scan_bound(name);
         let (_mode, decision) = runtime_policy::decide(
             ApiFamily::Stdlib,
             name as usize,
