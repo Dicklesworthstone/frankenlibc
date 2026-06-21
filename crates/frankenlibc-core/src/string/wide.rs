@@ -203,12 +203,19 @@ fn equal_wide_long_panel(a: &[u32], b: &[u32]) -> bool {
 #[inline(always)]
 fn resolve_wmemcmp_panel(a_chunk: &[u32], b_chunk: &[u32]) -> Option<i32> {
     debug_assert_eq!(a_chunk.len(), b_chunk.len());
-    for (a, b) in a_chunk.iter().zip(b_chunk.iter()) {
-        let a = *a as i32;
-        let b = *b as i32;
-        if a != b {
-            return Some(if a < b { -1 } else { 1 });
-        }
+    debug_assert_eq!(a_chunk.len(), WIDE_COMPARE_SIMD_LANES);
+    // First differing lane via the SIMD mask + trailing_zeros (O(1)) instead of a
+    // scalar element-by-element re-scan of the panel (wmemcmp was ~6x slower than
+    // glibc on a deep-in-panel difference; bd-2g7oyh). Callers always pass exactly
+    // WIDE_COMPARE_SIMD_LANES (16) elements.
+    let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a_chunk);
+    let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b_chunk);
+    let diff = av.simd_ne(bv).to_bitmask();
+    if diff != 0 {
+        let j = diff.trailing_zeros() as usize;
+        let a = a_chunk[j] as i32;
+        let b = b_chunk[j] as i32;
+        return Some(if a < b { -1 } else { 1 });
     }
     None
 }
@@ -573,11 +580,22 @@ pub fn wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         i += WIDE_COMPARE_UNROLL_LANES;
     }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        if !equal_and_no_nul_wide(
-            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
-            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
-        ) {
-            break;
+        let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
+        // First lane that differs OR is NUL in s1 — O(1) divergence index via the
+        // SIMD mask instead of breaking to the scalar tail and re-scanning the panel
+        // (same fix as wcscmp; bd-2g7oyh). Matches equal_and_no_nul_wide's break and
+        // the scalar tail's `a!=b || a==0`.
+        let event = av.simd_ne(bv) | av.simd_eq(Simd::splat(0));
+        let bits = event.to_bitmask();
+        if bits != 0 {
+            let j = i + bits.trailing_zeros() as usize;
+            let a = s1[j];
+            let b = s2[j];
+            if a != b {
+                return if (a as i32) < (b as i32) { -1 } else { 1 };
+            }
+            return 0;
         }
         i += WIDE_COMPARE_SIMD_LANES;
     }

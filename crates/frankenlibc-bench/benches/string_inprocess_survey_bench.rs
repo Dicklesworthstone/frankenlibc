@@ -29,6 +29,8 @@ unsafe extern "C" {
     fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
     fn memcmp(a: *const c_void, b: *const c_void, n: usize) -> c_int;
     fn wcscmp(s1: *const i32, s2: *const i32) -> c_int;
+    fn wcsncmp(s1: *const i32, s2: *const i32, n: usize) -> c_int;
+    fn wmemcmp(s1: *const i32, s2: *const i32, n: usize) -> c_int;
 }
 
 fn bench(c: &mut Criterion) {
@@ -309,6 +311,31 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wcscmp(black_box(w1.as_ptr().cast::<i32>()), w2.as_ptr().cast::<i32>()) }))
     });
     gwc.finish();
+
+    // ---- wcsncmp + wmemcmp — reuse the w1/w2 wide buffers (differ at byte 30).
+    let core_wnc = frankenlibc_core::string::wide::wcsncmp(&w1, &w2, 64);
+    let gl_wnc = unsafe { wcsncmp(w1.as_ptr().cast::<i32>(), w2.as_ptr().cast::<i32>(), 64) };
+    assert_eq!(core_wnc.signum(), gl_wnc.signum(), "wcsncmp sign mismatch");
+    let mut gwn = c.benchmark_group("survey_wcsncmp");
+    gwn.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcsncmp(black_box(&w1), &w2, 64)))
+    });
+    gwn.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcsncmp(black_box(w1.as_ptr().cast::<i32>()), w2.as_ptr().cast::<i32>(), 64) }))
+    });
+    gwn.finish();
+
+    let core_wm = frankenlibc_core::string::wide::wmemcmp(&w1, &w2, 64);
+    let gl_wm = unsafe { wmemcmp(w1.as_ptr().cast::<i32>(), w2.as_ptr().cast::<i32>(), 64) };
+    assert_eq!(core_wm.signum(), gl_wm.signum(), "wmemcmp sign mismatch");
+    let mut gwm = c.benchmark_group("survey_wmemcmp");
+    gwm.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wmemcmp(black_box(&w1), &w2, 64)))
+    });
+    gwm.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wmemcmp(black_box(w1.as_ptr().cast::<i32>()), w2.as_ptr().cast::<i32>(), 64) }))
+    });
+    gwm.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
