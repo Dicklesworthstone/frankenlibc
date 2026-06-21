@@ -43,6 +43,7 @@ unsafe extern "C" {
     fn strtok_r(s: *mut c_char, delim: *const c_char, saveptr: *mut *mut c_char) -> *mut c_char;
     fn wcstok(wcs: *mut i32, delim: *const i32, ptr: *mut *mut i32) -> *mut i32;
     fn asctime_r(tm: *const libc::tm, buf: *mut c_char) -> *mut c_char;
+    fn gmtime_r(t: *const i64, tm: *mut libc::tm) -> *mut libc::tm;
 }
 
 fn bench(c: &mut Criterion) {
@@ -708,6 +709,31 @@ fn bench(c: &mut Criterion) {
         })
     });
     gat.finish();
+
+    // ---- gmtime (epoch -> calendar, pure/non-ifunc, O(1) civil_from_days both sides).
+    let g_epoch: i64 = 1_750_000_000; // 2025-ish
+    {
+        let bd = frankenlibc_core::time::epoch_to_broken_down(g_epoch);
+        let mut gt: libc::tm = unsafe { std::mem::zeroed() };
+        unsafe { gmtime_r(&g_epoch, &mut gt) };
+        assert_eq!(bd.tm_year, gt.tm_year, "gmtime year mismatch");
+        assert_eq!(bd.tm_mon, gt.tm_mon, "gmtime mon mismatch");
+        assert_eq!(bd.tm_mday, gt.tm_mday, "gmtime mday mismatch");
+        assert_eq!(bd.tm_hour, gt.tm_hour, "gmtime hour mismatch");
+        assert_eq!(bd.tm_wday, gt.tm_wday, "gmtime wday mismatch");
+    }
+    let mut ggt = c.benchmark_group("survey_gmtime");
+    ggt.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::time::epoch_to_broken_down(black_box(g_epoch))))
+    });
+    ggt.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| {
+            let mut gt: libc::tm = unsafe { std::mem::zeroed() };
+            unsafe { gmtime_r(black_box(&g_epoch), &mut gt) };
+            black_box(gt.tm_year)
+        })
+    });
+    ggt.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
