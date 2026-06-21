@@ -7569,6 +7569,14 @@ unsafe impl Sync for MemStreamSync {}
 /// Registry of open_memstream sync metadata, keyed by stream sentinel ID.
 static MEM_STREAM_SYNC: Mutex<Option<ArtifactHashMap<usize, MemStreamSync>>> = Mutex::new(None);
 
+/// Monotonic "has any `open_memstream` ever been created?" flag (cookie-pattern
+/// twin of `COOKIE_STREAMS_PRESENT`). `sync_memstream_to_caller` runs on every
+/// mem-backed flush/close but only does work for `open_memstream` ids; without
+/// any such stream the lock + lookup is pure waste. Set on `open_memstream`
+/// (Release), loaded with Acquire, never reset (the stream's sentinel id is only
+/// published after the store, so the fast path is correct).
+static MEM_STREAM_SYNC_PRESENT: AtomicBool = AtomicBool::new(false);
+
 fn mem_sync_registry() -> &'static Mutex<Option<ArtifactHashMap<usize, MemStreamSync>>> {
     &MEM_STREAM_SYNC
 }
@@ -7622,6 +7630,12 @@ unsafe fn sync_fmemopen_full(id: usize, stream: &StdioStream) {
 /// Synchronize open_memstream data to the C caller's pointers.
 /// Called after fflush and fclose for open_memstream streams.
 unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream) {
+    // Lock-free fast path: no open_memstream has ever been created, so this id
+    // cannot have sync metadata. A new open_memstream id is only published after
+    // the Release store in `open_memstream`, so this Acquire load is correct.
+    if !MEM_STREAM_SYNC_PRESENT.load(Ordering::Acquire) {
+        return;
+    }
     let sync_guard = mem_sync_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -7961,6 +7975,9 @@ pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usi
             size_loc: sizeloc,
         },
     );
+    // Publish before releasing the lock and before the stream id is returned, so
+    // the lock-free fast path in `sync_memstream_to_caller` is correct.
+    MEM_STREAM_SYNC_PRESENT.store(true, Ordering::Release);
     drop(sync_guard);
 
     // Initialize caller's pointers to empty state.

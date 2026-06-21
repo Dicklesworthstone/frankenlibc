@@ -21,7 +21,8 @@ retried and real wins are confirmed with numbers.
 
 | Date | Lever / bead | Bench | fl | glibc | ratio | verdict | action |
 |------|--------------|-------|----|----|-------|---------|--------|
-| 2026-06-21 | positive digit-prefix `strtol` deployed fast path (`bd-2g7oyh.497`, code-only disk-low pass) | `strtol_glibc_bench` `strtol_dec_short` / `strtol_dec_long` / `strtol_hex` | PENDING | PENDING | PENDING | PENDING-BENCH | Source committed only because root filesystem was critical (`sbh status` overall critical, `df` about 50G free / 98% used). No cargo bench/build/test was started. Next turn must run same-worker rch `strtol_glibc_bench` and strtol conformance/fuzz, then keep or revert. Evidence note: `tests/artifacts/perf/bd-2g7oyh.497-strtol-positive-prefix-pending.md`. |
+| 2026-06-21 | `sync_memstream_to_caller` lock-free fast path — skip the global `MEM_STREAM_SYNC` mutex when no `open_memstream` exists (`bd-hqo6b6`, cc/BlackThrush) | PENDING (disk-low: no build/bench this turn; measure with `fputs_glibc_bench` / fflush when disk recovers) | — | — | PENDING | Code shipped. Cookie-pattern twin of the shipped `is_cookie_stream` fast-path (a8aad9c1d): `sync_memstream_to_caller` runs on every mem-backed flush/close but only does work for `open_memstream` ids, yet it locked the (usually-empty) `MEM_STREAM_SYNC` mutex every call. Added monotonic `MEM_STREAM_SYNC_PRESENT: AtomicBool` (set at the SOLE insert in `open_memstream` with Release; loaded Acquire; never reset). Byte-identical by inspection: when no open_memstream exists the function would find nothing in the map anyway (no-op); sole insert site confirmed (the other two `mem_sync_registry()` mut sites are `map.remove`). Line-for-line analog of the proven cookie-lock change (compiles with high confidence; AtomicBool/Ordering already imported). Bench verdict to be recorded when disk recovers. |
+| 2026-06-21 | positive digit-prefix `strtol` deployed fast path (`bd-2g7oyh.497`, cod-a/BlackThrush verification of code-first commit `6f311ef07`) | `strtol_glibc_bench` `strtol_dec_short` / `strtol_dec_long` / `strtol_hex`, same-worker remote `vmi1152480` baseline vs candidate | 9.35 -> 4.64 ns / 25.21 -> 9.95 ns / 21.55 -> 13.52 ns | 9.72 -> 9.33 ns / 20.88 -> 17.38 ns / 19.04 -> 17.30 ns | 0.96x -> 0.50x / 1.21x -> 0.57x / 1.13x -> 0.78x | WIN / WIN / WIN | Keep. The positive/no-whitespace base-10 and base-16 fast path converts the residual deployed `strtol` losses into wins while preserving fallback behavior for whitespace, signs, invalid bases, `0x` without hex digits, and overflow. Validation: touched-file rustfmt check, `git diff --check`, rch `conformance_strtol_family`, rch `strtol_family_differential_fuzz` 1,000,000 comparisons with 0 divergences, rch `cargo check -p frankenlibc-abi --lib`, and rch release build passed; clippy was blocked by missing `cargo-clippy` on the selected nightly. Evidence: `tests/artifacts/perf/bd-2g7oyh.497-strtol-positive-prefix-pending.md`. |
 | 2026-06-21 | `/etc/group` GID byte parser (`bd-owsx6w`, final deployed source) | `resolv_parsers_bench parse_group_line_typical`, same-worker remote `hz2` | 63.508 ns | N/A | N/A | MEASURED (no host comparator) | Parser row is now measured remotely; use only as internal routing evidence, not a glibc win. Initial `vmi1264463` attempt fell back local at 60.012 ns and is not proof. |
 | 2026-06-21 | `/etc/group` GID byte parser (`bd-owsx6w`, final deployed source) | `glibc_baseline_grp_lookup/getgrnam_root`, same-worker remote `hz2` | 5.559 us | 11.124 us | 0.500x | WIN | Partial keep. Real ABI `getgrnam("root")` remains faster than host glibc with the byte parser deployed; core parser and ABI signed-gid guards stayed green. |
 | 2026-06-21 | `/etc/group` GID byte parser (`bd-owsx6w`, final deployed source) | `glibc_baseline_grp_lookup/getgrgid_0`, same-worker remote `hz2` | 7.767 us | 7.623 us | 1.019x | NEUTRAL | Do not count as gid domination. Keep the deployed parser because the paired name lookup wins and conformance is green; route any residual gid p50 work to a lower-cost lookup/index invalidation primitive, not another GID field parser. |
@@ -123,6 +124,32 @@ Final candidate run on `vmi1152480`, `CARGO_TARGET_DIR=/data/projects/.rch-targe
 Target result: `getenv_hit`/`getenv_miss` moved from 2.39x/2.53x losses to
 0.78x/0.92x wins on the same worker. Residual routed losses: long/hex
 `strtol`, `clock_gettime`, and `time`; `strtod_simple` is neutral.
+
+## 2026-06-21 `bd-2g7oyh.497` strtol positive-prefix final rows
+
+Final verification run on same-worker remote `vmi1152480`,
+`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`,
+`cargo bench -j 1 -p frankenlibc-bench --features abi-bench --bench strtol_glibc_bench -- --noplot --sample-size 10 --warm-up-time 1 --measurement-time 2`.
+
+| Workload | Baseline FL | Baseline glibc | Baseline ratio | Candidate FL | Candidate glibc | Candidate ratio | Verdict |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `strtol_dec_short` | 9.35 ns | 9.72 ns | 0.96x | 4.64 ns | 9.33 ns | 0.50x | WIN |
+| `strtol_dec_long` | 25.21 ns | 20.88 ns | 1.21x | 9.95 ns | 17.38 ns | 0.57x | WIN |
+| `strtol_hex` | 21.55 ns | 19.04 ns | 1.13x | 13.52 ns | 17.30 ns | 0.78x | WIN |
+
+The same final run still records `clock_gettime` at 34.95 ns vs glibc
+26.24 ns (1.33x), `time` at 4.12 ns vs glibc 2.51 ns (1.64x), and
+`pthread_self` at 1.91 ns vs glibc 1.73 ns (1.10x). Route those separately;
+do not retry the rejected vDSO pointer-cache family from the 2026-06-20 row.
+
+Validation: touched-file rustfmt check and `git diff --check` passed. RCH
+`conformance_strtol_family` passed; RCH `strtol_family_differential_fuzz`
+compared 1,000,000 cases with 0 divergences vs host glibc; RCH
+`cargo check -p frankenlibc-abi --lib` and
+`cargo build -p frankenlibc-abi --release` passed with known pre-existing
+warnings. RCH clippy was attempted per crate but blocked because
+`cargo-clippy` is not installed for
+`nightly-2026-04-28-x86_64-unknown-linux-gnu`.
 
 ## 2026-06-19 GAUNTLET SCORECARD — broad fl-vs-glibc sweep, ~50 functions (BlackThrush)
 
