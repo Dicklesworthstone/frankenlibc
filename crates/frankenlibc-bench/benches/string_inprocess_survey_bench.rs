@@ -31,6 +31,7 @@ unsafe extern "C" {
     fn wcscmp(s1: *const i32, s2: *const i32) -> c_int;
     fn wcsncmp(s1: *const i32, s2: *const i32, n: usize) -> c_int;
     fn wmemcmp(s1: *const i32, s2: *const i32, n: usize) -> c_int;
+    fn wcscasecmp(s1: *const i32, s2: *const i32) -> c_int;
 }
 
 fn bench(c: &mut Criterion) {
@@ -336,6 +337,32 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wmemcmp(black_box(w1.as_ptr().cast::<i32>()), w2.as_ptr().cast::<i32>(), 64) }))
     });
     gwm.finish();
+
+    // ---- wcscasecmp — wide, case-insensitively equal (a vs A) for 30 then differ
+    // at byte 30, NUL-term.
+    let wic1: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 64];
+        v[30] = b'X' as u32;
+        v[63] = 0;
+        v
+    };
+    let wic2: Vec<u32> = {
+        let mut v = vec![b'A' as u32; 64];
+        v[30] = b'Y' as u32;
+        v[63] = 0;
+        v
+    };
+    let core_wic = frankenlibc_core::string::wide::wcscasecmp(&wic1, &wic2);
+    let gl_wic = unsafe { wcscasecmp(wic1.as_ptr().cast::<i32>(), wic2.as_ptr().cast::<i32>()) };
+    assert_eq!(core_wic.signum(), gl_wic.signum(), "wcscasecmp sign mismatch");
+    let mut gwic = c.benchmark_group("survey_wcscasecmp");
+    gwic.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcscasecmp(black_box(&wic1), &wic2)))
+    });
+    gwic.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcscasecmp(black_box(wic1.as_ptr().cast::<i32>()), wic2.as_ptr().cast::<i32>()) }))
+    });
+    gwic.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();

@@ -1460,11 +1460,27 @@ pub fn wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
         }
     }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        if !fold_equal_and_no_nul_wide(
-            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
-            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
-        ) {
-            break;
+        let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
+        // First lane that case-folds-differently OR is NUL in s1 — O(1) divergence
+        // index via the SIMD mask instead of breaking to the scalar tail and
+        // re-folding the panel element-by-element (bd-2g7oyh). Both folds are
+        // ASCII-only (fold_ascii_upper_wide here, simple_towlower in the tail), so
+        // upper-fold inequality == lower-fold inequality == the scalar stop lane;
+        // matches fold_equal_and_no_nul_wide's break and the tail's resolution.
+        let event = fold_ascii_upper_wide(av).simd_ne(fold_ascii_upper_wide(bv))
+            | av.simd_eq(Simd::splat(0));
+        let bits = event.to_bitmask();
+        if bits != 0 {
+            let j = i + bits.trailing_zeros() as usize;
+            let la = simple_towlower(s1[j]);
+            let lb = simple_towlower(s2[j]);
+            if la != lb {
+                // glibc returns the folded-codepoint difference (towlower(c1) -
+                // towlower(c2)) via wint_t arithmetic, NOT a bare ±1 sign.
+                return la.wrapping_sub(lb) as i32;
+            }
+            return 0; // shared NUL after case-folding equal
         }
         i += WIDE_COMPARE_SIMD_LANES;
     }
@@ -1518,11 +1534,22 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         }
     }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        if !fold_equal_and_no_nul_wide(
-            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
-            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
-        ) {
-            break;
+        let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
+        // First lane that case-folds-differently OR is NUL in s1 — O(1) divergence
+        // index via the SIMD mask (same fix as wcscasecmp; bd-2g7oyh). Both folds
+        // are ASCII-only, so this matches the scalar tail's stop lane + resolution.
+        let event = fold_ascii_upper_wide(av).simd_ne(fold_ascii_upper_wide(bv))
+            | av.simd_eq(Simd::splat(0));
+        let bits = event.to_bitmask();
+        if bits != 0 {
+            let j = i + bits.trailing_zeros() as usize;
+            let la = simple_towlower(s1[j]);
+            let lb = simple_towlower(s2[j]);
+            if la != lb {
+                return la.wrapping_sub(lb) as i32;
+            }
+            return 0; // shared NUL after case-folding equal
         }
         i += WIDE_COMPARE_SIMD_LANES;
     }
