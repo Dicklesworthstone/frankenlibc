@@ -166,3 +166,9 @@ required-features = ["abi-bench"]
 name = "inet_pton_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
+
+# readdir vs host glibc (dlmopen). Validates the IoFd membrane fast-path (0b08a21e8).
+[[bench]]
+name = "readdir_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
