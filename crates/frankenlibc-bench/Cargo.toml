@@ -179,6 +179,11 @@ required-features = ["abi-bench"]
 name = "inet_pton_inprocess_bench"
 harness = false
 
+# RELIABLE in-process string survey: core vs REAL in-process glibc (no abi-bench).
+[[bench]]
+name = "string_inprocess_survey_bench"
+harness = false
+
 # inet_ntop vs host glibc (dlmopen). Measures the format_ipv4 byte-level rewrite.
 [[bench]]
 name = "inet_ntop_glibc_bench"
