@@ -27,6 +27,7 @@ unsafe extern "C" {
     fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
     fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int;
     fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
+    fn memcmp(a: *const c_void, b: *const c_void, n: usize) -> c_int;
 }
 
 fn bench(c: &mut Criterion) {
@@ -254,6 +255,34 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { strncasecmp(black_box(s1ic.as_ptr().cast::<c_char>()), s2ic.as_ptr().cast::<c_char>(), 64) }))
     });
     gic.finish();
+
+    // ---- memcmp — binary buffers equal for 30 bytes then differ at byte 30 (deep
+    // in the first panel; exercises the compare_bytes scalar re-scan of the panel).
+    let m1: Vec<u8> = {
+        let mut v = vec![b'a'; 64];
+        v[30] = b'X';
+        v
+    };
+    let m2: Vec<u8> = {
+        let mut v = vec![b'a'; 64];
+        v[30] = b'Y';
+        v
+    };
+    let core_mc = frankenlibc_core::string::mem::memcmp(&m1, &m2, 64);
+    let gl_mc = unsafe { memcmp(m1.as_ptr().cast::<c_void>(), m2.as_ptr().cast::<c_void>(), 64) };
+    assert_eq!(
+        core_mc == std::cmp::Ordering::Less,
+        gl_mc < 0,
+        "memcmp sign mismatch"
+    );
+    let mut gm = c.benchmark_group("survey_memcmp");
+    gm.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::mem::memcmp(black_box(&m1), &m2, 64)))
+    });
+    gm.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { memcmp(black_box(m1.as_ptr().cast::<c_void>()), m2.as_ptr().cast::<c_void>(), 64) }))
+    });
+    gm.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();

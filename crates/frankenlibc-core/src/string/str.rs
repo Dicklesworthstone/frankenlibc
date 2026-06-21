@@ -229,22 +229,9 @@ fn block_has_non_byte_256(chunk: &[u8], byte: u8) -> bool {
     folded.simd_ne(Simd::splat(0)).any()
 }
 
-#[inline(always)]
-fn equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
-    debug_assert_eq!(left.len(), SIMD_LANES);
-    debug_assert_eq!(right.len(), SIMD_LANES);
-    let left_lanes = Simd::<u8, SIMD_LANES>::from_slice(left);
-    let right_lanes = Simd::<u8, SIMD_LANES>::from_slice(right);
-    // Continue only if every lane is equal AND non-NUL. Fuse the "differs" and
-    // "is-NUL" lane masks so a SINGLE horizontal reduction (`.any()`) gates the
-    // loop, instead of two (`.all()` for equality + `.any()` for NUL). On equal
-    // inputs — the hot path — the prior form always ran both reductions; glibc's
-    // hand-tuned strcmp likewise issues one test per 32-byte step. Logically
-    // identical: `eq.all() && !nul.any()` ⇔ `!((!eq) | nul).any()`.
-    let differs = left_lanes.simd_ne(right_lanes);
-    let is_nul = left_lanes.simd_eq(Simd::splat(0));
-    !(differs | is_nul).any()
-}
+// (equal_and_no_nul_simd_32 removed: strcmp/strncmp's SIMD_LANES loops now compute
+// the divergence index directly via an event-mask instead of a bool prefilter +
+// scalar re-scan, so the bool helper is unused. bd-2g7oyh.)
 
 /// True iff all `SIMD_FOLD_BYTES` (128) bytes are byte-for-byte equal AND
 /// NUL-free. OR's the four 32-byte panels' `(differs | is_nul)` masks and
@@ -315,23 +302,9 @@ fn fold_ascii_upper_simd_32(v: Simd<u8, SIMD_LANES>) -> Simd<u8, SIMD_LANES> {
     is_upper.select(v + Simd::splat(0x20), v)
 }
 
-/// Returns `true` iff the two 32-byte panels are equal after ASCII case-folding
-/// AND contain no terminating NUL. The equal-prefix fast path for
-/// case-insensitive byte compares: a `false` result means a folded divergence
-/// or a NUL is present, so the scalar tail resolves the exact index. NUL (`0`)
-/// is below the fold range, so fold-equality implies shared NUL positions —
-/// checking `left` suffices.
-#[inline(always)]
-fn fold_equal_and_no_nul_simd_32(left: &[u8], right: &[u8]) -> bool {
-    debug_assert_eq!(left.len(), SIMD_LANES);
-    debug_assert_eq!(right.len(), SIMD_LANES);
-    let left_lanes = Simd::<u8, SIMD_LANES>::from_slice(left);
-    let right_lanes = Simd::<u8, SIMD_LANES>::from_slice(right);
-    fold_ascii_upper_simd_32(left_lanes)
-        .simd_eq(fold_ascii_upper_simd_32(right_lanes))
-        .all()
-        && !left_lanes.simd_eq(Simd::splat(0)).any()
-}
+// (fold_equal_and_no_nul_simd_32 removed: strcasecmp/strncasecmp's SIMD_LANES loops
+// now compute the divergence index directly via a fold-event-mask using
+// fold_ascii_upper_simd_32, so the bool helper is unused. bd-2g7oyh.)
 
 #[inline(always)]
 fn fold_equal_and_no_nul_simd_folded(left: &[u8], right: &[u8]) -> bool {

@@ -105,8 +105,16 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     while i + SIMD_FOLD_BYTES <= count {
         if ne_simd_folded_128(&a[i..i + SIMD_FOLD_BYTES], &b[i..i + SIMD_FOLD_BYTES]) {
             while i + SIMD_LANES <= count {
-                if !eq_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
-                    return compare_bytes(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]);
+                // First differing lane via the SIMD mask + trailing_zeros (O(1)),
+                // instead of a scalar byte-by-byte re-scan of the panel
+                // (`compare_bytes` made memcmp 6.4x slower than glibc on a
+                // deep-in-panel difference; bd-2g7oyh).
+                let av = Simd::<u8, SIMD_LANES>::from_slice(&a[i..i + SIMD_LANES]);
+                let bv = Simd::<u8, SIMD_LANES>::from_slice(&b[i..i + SIMD_LANES]);
+                let diff = av.simd_ne(bv).to_bitmask();
+                if diff != 0 {
+                    let j = i + diff.trailing_zeros() as usize;
+                    return a[j].cmp(&b[j]);
                 }
                 i += SIMD_LANES;
             }
@@ -116,8 +124,12 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
 
     // Remaining 32-byte panels.
     while i + SIMD_LANES <= count {
-        if !eq_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
-            return compare_bytes(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]);
+        let av = Simd::<u8, SIMD_LANES>::from_slice(&a[i..i + SIMD_LANES]);
+        let bv = Simd::<u8, SIMD_LANES>::from_slice(&b[i..i + SIMD_LANES]);
+        let diff = av.simd_ne(bv).to_bitmask();
+        if diff != 0 {
+            let j = i + diff.trailing_zeros() as usize;
+            return a[j].cmp(&b[j]);
         }
         i += SIMD_LANES;
     }
