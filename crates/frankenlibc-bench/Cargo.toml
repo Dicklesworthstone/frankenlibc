@@ -173,6 +173,12 @@ name = "inet_addr_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
 
+# RELIABLE in-process inet_pton: core vs REAL in-process glibc (no abi-bench → no fl
+# symbol shadowing). Trustworthy baseline (unlike dlmopen). cc/BlackThrush.
+[[bench]]
+name = "inet_pton_inprocess_bench"
+harness = false
+
 # inet_ntop vs host glibc (dlmopen). Measures the format_ipv4 byte-level rewrite.
 [[bench]]
 name = "inet_ntop_glibc_bench"
