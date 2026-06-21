@@ -172,3 +172,9 @@ required-features = ["abi-bench"]
 name = "readdir_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
+
+# sscanf vs host glibc (dlmopen). Baseline for the documented scanf known_remaining lever.
+[[bench]]
+name = "sscanf_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
