@@ -6985,16 +6985,40 @@ fn strverscmp_bytes(s1: &[u8], s2: &[u8]) -> c_int {
 /// scans until found.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rawmemchr(s: *const c_void, c: c_int) -> *mut c_void {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+    const LANES: usize = 32;
+
     if s.is_null() {
         return std::ptr::null_mut();
     }
     let needle = c as u8;
     let mut ptr = s as *const u8;
-    loop {
+
+    // Scalar until 32-byte aligned, so every SIMD load below stays within one
+    // page (a 32-byte-aligned 32-byte block never crosses a 4096-byte boundary)
+    // — was a pure scalar byte loop, ~38x slower than glibc's AVX2 (bd-2g7oyh).
+    while (ptr as usize) & (LANES - 1) != 0 {
+        // SAFETY: the caller guarantees `needle` is present, so `ptr` stays within
+        // the mapped buffer until it is found.
         if unsafe { *ptr } == needle {
             return ptr as *mut c_void;
         }
         ptr = unsafe { ptr.add(1) };
+    }
+
+    // Aligned 32-byte SIMD scan. The caller guarantees `needle` is present, so all
+    // pages up to it are mapped, and each aligned 32-byte load is page-safe.
+    let nv = Simd::<u8, LANES>::splat(needle);
+    loop {
+        // SAFETY: `ptr` is 32-byte aligned (load within one mapped page) and
+        // `needle` is guaranteed present at or after `ptr`.
+        let v = Simd::<u8, LANES>::from_slice(unsafe { core::slice::from_raw_parts(ptr, LANES) });
+        let bits = v.simd_eq(nv).to_bitmask();
+        if bits != 0 {
+            return unsafe { ptr.add(bits.trailing_zeros() as usize) } as *mut c_void;
+        }
+        ptr = unsafe { ptr.add(LANES) };
     }
 }
 

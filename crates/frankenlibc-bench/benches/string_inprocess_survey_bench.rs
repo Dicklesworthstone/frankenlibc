@@ -22,6 +22,7 @@ unsafe extern "C" {
     fn strstr(h: *const c_char, n: *const c_char) -> *const c_char;
     fn strcasestr(h: *const c_char, n: *const c_char) -> *const c_char;
     fn memrchr(s: *const c_void, c: c_int, n: usize) -> *const c_void;
+    fn rawmemchr(s: *const c_void, c: c_int) -> *const c_void;
     fn wcschr(wcs: *const i32, wc: i32) -> *const i32;
     fn wcsrchr(wcs: *const i32, wc: i32) -> *const i32;
     fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
@@ -878,6 +879,47 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { strspn(black_box(spr.as_ptr().cast::<c_char>()), c"0123456789".as_ptr()) }))
     });
     gspr.finish();
+
+    // ---- rawmemchr (GNU, find-byte-assume-present). The DEPLOYED fl impl
+    // (string_abi.rs) is a SCALAR byte loop; glibc is AVX2. 1000-byte buf, 'Z' at 900.
+    // Compares the faithful scalar replica (= current fl), core::memchr (the SIMD-fix
+    // speed proxy — same aligned-SIMD scan I'd deploy), and glibc rawmemchr.
+    let rmc: Vec<u8> = {
+        let mut v = vec![b'a'; 1000];
+        v[900] = b'Z';
+        v
+    };
+    let scalar_rawmemchr = |buf: &[u8], needle: u8| -> usize {
+        let base = buf.as_ptr();
+        let mut q = base;
+        unsafe {
+            loop {
+                if *q == needle {
+                    break;
+                }
+                q = q.add(1);
+            }
+            q.offset_from(base) as usize
+        }
+    };
+    let off_scalar = scalar_rawmemchr(&rmc, b'Z');
+    let off_simd = frankenlibc_core::string::mem::memchr(&rmc, b'Z', rmc.len()).unwrap();
+    let off_gl =
+        unsafe { rawmemchr(rmc.as_ptr().cast::<c_void>(), b'Z' as c_int) as usize - rmc.as_ptr() as usize };
+    assert_eq!(off_scalar, 900, "rawmemchr scalar replica wrong");
+    assert_eq!(off_simd, 900, "rawmemchr simd proxy wrong");
+    assert_eq!(off_gl, 900, "rawmemchr glibc wrong");
+    let mut grm = c.benchmark_group("survey_rawmemchr");
+    grm.bench_function("frankenlibc_scalar_current", |b| {
+        b.iter(|| black_box(scalar_rawmemchr(black_box(&rmc), b'Z')))
+    });
+    grm.bench_function("frankenlibc_simd_fix_proxy", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::mem::memchr(black_box(&rmc), b'Z', rmc.len())))
+    });
+    grm.bench_function("host_glibc", |b| {
+        b.iter(|| black_box(unsafe { rawmemchr(black_box(rmc.as_ptr().cast::<c_void>()), b'Z' as c_int) }))
+    });
+    grm.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
