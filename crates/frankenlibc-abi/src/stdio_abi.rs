@@ -5907,6 +5907,17 @@ fn scanf_core_impl(
     format: *const c_char,
     wide_input: bool,
 ) -> Option<(ScanResult, Vec<ScanDirective>)> {
+    // PERF (bd-2g7oyh, same lever family as the sscanf input scan — needs build+test):
+    // this is the SHARED scanf engine, so EVERY scanf variant (sscanf/fscanf/
+    // vfscanf/vsscanf/wide) pays a `scan_c_str_len(format, None)` -> known_remaining
+    // -> fallback_remaining (a `lock_fallback_alloc_table()` MUTEX + up-to-1024 hash
+    // probe) here just to length a caller FORMAT string that is typically 2-8 bytes
+    // — the lock dwarfs the scan. PLAN: in strict mode use the page-safe SWAR
+    // `string_abi::scan_c_string(format, None)` (no lock). Same not-byte-identical
+    // caveat as the sscanf input scan (the `!fmt_terminated` early-out is a hardening
+    // bound for fl-tracked unterminated format buffers) — gate on strict, keep
+    // scan_c_str_len in hardened. Broader than the sscanf input lever: it benefits
+    // stream-based scanf too. Verify vs glibc + scanf conformance when disk recovers.
     let (fmt_len, fmt_terminated) = unsafe { scan_c_str_len(format, None) };
     if !fmt_terminated {
         return None;
