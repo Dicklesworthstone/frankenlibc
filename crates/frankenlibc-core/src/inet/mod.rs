@@ -295,36 +295,54 @@ fn parse_bsd_part(part: &str) -> Option<u32> {
 /// Parse a dotted-quad IPv4 text address into exactly 4 bytes.
 /// Rejects leading zeros, values > 255, wrong number of parts, and trailing junk.
 pub fn parse_ipv4(src: &[u8]) -> Option<[u8; 4]> {
-    let s = core::str::from_utf8(src).ok()?;
-    let s = s.trim_end_matches('\0');
-
+    // Single byte-walk (no `from_utf8` validation pass, no `splitn` iterator, no
+    // per-octet generic `str::parse` + separate all-digit scan). Byte-for-byte the
+    // same accept/reject set as the prior str-based version — verified against the
+    // `test_parse_ipv4_valid`/`_invalid` cases (empty, >255, wrong part count,
+    // leading-zero, non-digit, leading/trailing/double dot, embedded/trailing NUL,
+    // overflow). Faster on the hot inet_pton path (no UTF-8 scan or FromStr).
+    // Trailing NULs are stripped to match the old `trim_end_matches('\0')`.
+    let mut end = src.len();
+    while end > 0 && src[end - 1] == 0 {
+        end -= 1;
+    }
+    let s = &src[..end];
     if s.is_empty() {
         return None;
     }
 
-    let mut parts = s.splitn(5, '.');
     let mut octets = [0u8; 4];
+    let mut i = 0usize;
     for octet in &mut octets {
-        let part = parts.next()?;
-        if part.is_empty() {
-            return None;
+        // Octets after the first must be preceded by exactly one '.'.
+        if i != 0 {
+            if i >= s.len() || s[i] != b'.' {
+                return None;
+            }
+            i += 1;
         }
-        // Reject leading zeros (octal ambiguity).
-        if part.len() > 1 && part.starts_with('0') {
-            return None;
+        let start = i;
+        // u16 accumulation (saturating) so >255 and overflow both fall to the
+        // `val > 255` reject below, matching the old `parse::<u16>().ok()?; val > 255`.
+        let mut val: u16 = 0;
+        while i < s.len() && s[i].is_ascii_digit() {
+            val = val.saturating_mul(10).saturating_add((s[i] - b'0') as u16);
+            i += 1;
         }
-        // Reject non-digit characters.
-        if !part.bytes().all(|b| b.is_ascii_digit()) {
-            return None;
+        let len = i - start;
+        if len == 0 {
+            return None; // empty octet: leading dot, double dot, trailing dot, non-digit
         }
-        let val: u16 = part.parse().ok()?;
+        if len > 1 && s[start] == b'0' {
+            return None; // leading zero (octal ambiguity)
+        }
         if val > 255 {
             return None;
         }
         *octet = val as u8;
     }
-    // Must have consumed exactly 4 parts (no fifth part).
-    if parts.next().is_some() {
+    // Must have consumed the whole string (no 5th part / trailing characters).
+    if i != s.len() {
         return None;
     }
     Some(octets)
