@@ -7,6 +7,20 @@ compiled in its own turn). They are correctness-audited by inspection (see
 `docs/NEGATIVE_EVIDENCE.md`), but must be build-verified and benched the moment disk
 recovers, IN THIS ORDER, before any new lever.
 
+## Step 0 — GATE: confirm disk actually recovered BEFORE any cargo
+
+Disk hovered at 38–39G (~98% used) for ~10 turns. Do NOT run cargo on a wishful
+"resume" signal — verify first, or a build will fail mid-way and waste the window:
+
+```
+df -h /data /            # expect comfortably below ~90% used, ample free GB
+```
+
+Also note (separate from this code-only campaign): if disk is still tight, the usual
+culprits are accumulated `/data/projects/.rch-targets/*` build dirs and stray
+`.scratch`/perf-proof git worktrees — those are a system/sbh concern, not edited here.
+Only proceed to Step 1 once `df` shows real headroom.
+
 ## Step 1 — build-verify (one command covers all six)
 
 ```
