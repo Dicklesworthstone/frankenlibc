@@ -908,7 +908,12 @@ fn in_set_mask16(lanes: Simd<u8, SIMD_LANES>, set: &[u8; 16]) -> Mask<i8, SIMD_L
 /// resolved scalar-side via `table` (built from the REAL, unpadded set), so a
 /// padded mask only ever fast-forwards correct chunks.
 #[inline(always)]
-fn span_scan<F>(s: &[u8], table: &[bool; 256], stop_in_set: bool, in_set: F) -> usize
+// Table-FREE span scan for a ≤16-byte member `set`: the SIMD chunks use `in_set`
+// (in_set_mask8/16, simd_eq over the set bytes) and the <32-byte remainder checks the
+// `set` slice directly — so strspn/strcspn for 5-16-char sets need NOT build a 256-byte
+// `byte_membership_table` per call (was ~6x slower than glibc; bd-2g7oyh). Byte-identical:
+// `set.contains(b)` == the old `table[b]` membership for these sets.
+fn span_scan<F>(s: &[u8], stop_in_set: bool, in_set: F, set: &[u8]) -> usize
 where
     F: Fn(Simd<u8, SIMD_LANES>) -> Mask<i8, SIMD_LANES>,
 {
@@ -920,9 +925,6 @@ where
         let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
         let nul = lanes.simd_eq(zero);
         let member = in_set(lanes);
-        // `in_set` (in_set_mask8/16) is byte-EXACT vs `table` (it is simd_eq over the
-        // set bytes), so the lane mask yields the exact first stop index via
-        // trailing_zeros — no scalar per-byte re-scan of the flagged chunk (bd-2g7oyh).
         let stop_mask = if stop_in_set { nul | member } else { nul | !member };
         let bits = stop_mask.to_bitmask();
         if bits != 0 {
@@ -932,7 +934,7 @@ where
     }
 
     for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
-        if byte == 0 || (table[byte as usize] == stop_in_set) {
+        if byte == 0 || (set.contains(&byte) == stop_in_set) {
             return base + j;
         }
     }
@@ -1072,26 +1074,37 @@ fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) 
 /// Dispatches the `strspn`/`strcspn` general path (set size > 4) to a branchless
 /// SIMD multi-compare for sets up to 16 bytes — padding short sets with a real
 /// member — or a scalar `table` scan for larger sets (rare). `set` is non-empty.
+// Span scan for LARGE (>16-byte) member sets, which keep the 256-byte
+// `byte_membership_table` (a per-byte bitmap lookup beats a >16-element scalar
+// compare). 5-16-byte sets are routed by strspn/strcspn to the table-free
+// `span_scan` instead (bd-2g7oyh). Contiguous sets of any size use the range test.
 fn span_general(s: &[u8], set: &[u8], table: &[bool; 256], stop_in_set: bool) -> usize {
     if let Some((lo, hi)) = contiguous_set_range(set, table) {
         return span_range(s, table, stop_in_set, lo, hi);
     }
 
+    for (i, &byte) in s.iter().enumerate() {
+        if byte == 0 || (table[byte as usize] == stop_in_set) {
+            return i;
+        }
+    }
+    s.len()
+}
+
+/// Routes a ≥5-byte accept/reject `set` to the table-free `span_scan` (≤16) or the
+/// table-backed `span_general` (>16). The 256-byte table is built ONLY for >16 sets.
+fn span_dispatch(s: &[u8], set: &[u8], stop_in_set: bool) -> usize {
     if set.len() <= 8 {
         let mut padded = [set[0]; 8];
         padded[..set.len()].copy_from_slice(set);
-        span_scan(s, table, stop_in_set, |lanes| in_set_mask8(lanes, &padded))
+        span_scan(s, stop_in_set, |lanes| in_set_mask8(lanes, &padded), set)
     } else if set.len() <= 16 {
         let mut padded = [set[0]; 16];
         padded[..set.len()].copy_from_slice(set);
-        span_scan(s, table, stop_in_set, |lanes| in_set_mask16(lanes, &padded))
+        span_scan(s, stop_in_set, |lanes| in_set_mask16(lanes, &padded), set)
     } else {
-        for (i, &byte) in s.iter().enumerate() {
-            if byte == 0 || (table[byte as usize] == stop_in_set) {
-                return i;
-            }
-        }
-        s.len()
+        let table = byte_membership_table(set);
+        span_general(s, set, &table, stop_in_set)
     }
 }
 
@@ -1374,8 +1387,7 @@ pub(crate) fn strspn_set(s: &[u8], accept_set: &[u8]) -> usize {
         _ => {}
     }
 
-    let accept_table = byte_membership_table(accept_set);
-    span_general(s, accept_set, &accept_table, false)
+    span_dispatch(s, accept_set, false)
 }
 
 /// Returns the length of the initial segment of `s` consisting entirely of
@@ -1425,8 +1437,7 @@ pub(crate) fn strcspn_set(s: &[u8], reject_set: &[u8]) -> usize {
         _ => {}
     }
 
-    let reject_table = byte_membership_table(reject_set);
-    span_general(s, reject_set, &reject_table, true)
+    span_dispatch(s, reject_set, true)
 }
 
 /// Locates the first occurrence of any byte from `accept` in `s`.
@@ -1471,10 +1482,9 @@ pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
     }
 
     let accept_set = &accept[..accept_len];
-    let accept_table = byte_membership_table(accept_set);
-    // span_general(stop_in_set=true) returns the first member-or-NUL index, or
+    // span_dispatch(stop_in_set=true) returns the first member-or-NUL index, or
     // s.len(). It is strpbrk when the stop is a real member (non-NUL, in range).
-    let index = span_general(s, accept_set, &accept_table, true);
+    let index = span_dispatch(s, accept_set, true);
     if index < s.len() && s[index] != 0 {
         Some(index)
     } else {
