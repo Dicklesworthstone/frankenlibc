@@ -26243,14 +26243,16 @@ mod tests {
     }
 
     #[test]
-    fn rk1048_undefined_position_returns_replacement() {
-        // Position 0x98 is undefined in RK1048
+    fn rk1048_undefined_position_eilseq() {
+        // 0x98 is undefined in RK1048. glibc `iconv -f RK1048` rejects it with EILSEQ
+        // (no substitution without //TRANSLIT/IGNORE); fl matches. Verified vs glibc.
         let input: &[u8] = &[0x98];
         let mut cd = iconv_open(b"UTF-8", b"RK1048").unwrap();
         let mut out = [0u8; 16];
-        let result = iconv(&mut cd, Some(input), &mut out).unwrap();
-        let utf8_str = std::str::from_utf8(&out[..result.out_written]).unwrap();
-        assert_eq!(utf8_str, "\u{FFFD}");
+        assert!(
+            iconv(&mut cd, Some(input), &mut out).is_err(),
+            "undefined RK1048 byte 0x98 must EILSEQ like glibc, not substitute U+FFFD"
+        );
     }
 
     #[test]
@@ -26392,14 +26394,17 @@ mod tests {
     }
 
     #[test]
-    fn cp851_undefined_position_returns_replacement() {
-        // Position 0x91 is undefined in CP851
+    fn cp851_undefined_position_eilseq() {
+        // 0x91 is undefined in CP851. glibc `iconv -f CP851` REJECTS an undefined
+        // byte with EILSEQ (no //TRANSLIT/IGNORE => it never substitutes); fl matches
+        // (map_single_byte returns DecodeError::Invalid). Verified: glibc errors here.
         let input: &[u8] = &[0x91];
         let mut cd = iconv_open(b"UTF-8", b"CP851").unwrap();
         let mut out = [0u8; 16];
-        let result = iconv(&mut cd, Some(input), &mut out).unwrap();
-        let utf8_str = std::str::from_utf8(&out[..result.out_written]).unwrap();
-        assert_eq!(utf8_str, "\u{FFFD}");
+        assert!(
+            iconv(&mut cd, Some(input), &mut out).is_err(),
+            "undefined CP851 byte 0x91 must EILSEQ like glibc, not substitute U+FFFD"
+        );
     }
 
     #[test]
@@ -26966,14 +26971,17 @@ mod tests {
     }
 
     #[test]
-    fn riscoslatin1_undefined_positions_decode_to_replacement() {
-        // 0x83 is undefined in RISC OS Latin-1
+    fn riscoslatin1_undefined_positions_eilseq() {
+        // 0x83 is undefined in RISC OS Latin-1. glibc converts the leading 'A' then
+        // REJECTS 0x83 with EILSEQ (no //TRANSLIT/IGNORE => no U+FFFD substitution,
+        // and it stops before 'B'); fl matches with an Err.
         let riscos_input: &[u8] = &[0x41, 0x83, 0x42];
         let mut cd = iconv_open(b"UTF-8", b"RISCOS-LATIN1").unwrap();
         let mut utf8_out = [0u8; 16];
-        let result = iconv(&mut cd, Some(riscos_input), &mut utf8_out).unwrap();
-        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
-        assert_eq!(utf8_str, "A\u{FFFD}B");
+        assert!(
+            iconv(&mut cd, Some(riscos_input), &mut utf8_out).is_err(),
+            "undefined RISCOS-LATIN1 byte 0x83 must EILSEQ like glibc, not substitute U+FFFD"
+        );
     }
 
     #[test]
@@ -27061,14 +27069,17 @@ mod tests {
     }
 
     #[test]
-    fn macgreek_undefined_position_decodes_to_replacement() {
-        // 0xFF is undefined in Mac Greek
+    fn macgreek_undefined_position_eilseq() {
+        // 0xFF is undefined in Mac Greek. glibc converts the leading 'A' then REJECTS
+        // 0xFF with EILSEQ (no //TRANSLIT/IGNORE => no U+FFFD substitution); fl matches
+        // with an Err.
         let mac_input: &[u8] = &[0x41, 0xFF, 0x42];
         let mut cd = iconv_open(b"UTF-8", b"MACGREEK").unwrap();
         let mut utf8_out = [0u8; 16];
-        let result = iconv(&mut cd, Some(mac_input), &mut utf8_out).unwrap();
-        let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
-        assert_eq!(utf8_str, "A\u{FFFD}B");
+        assert!(
+            iconv(&mut cd, Some(mac_input), &mut utf8_out).is_err(),
+            "undefined MACGREEK byte 0xFF must EILSEQ like glibc, not substitute U+FFFD"
+        );
     }
 
     #[test]
