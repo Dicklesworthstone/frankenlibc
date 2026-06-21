@@ -40,6 +40,7 @@ unsafe extern "C" {
     fn memmem(h: *const c_void, hl: usize, n: *const c_void, nl: usize) -> *const c_void;
     fn fnmatch(pat: *const c_char, s: *const c_char, flags: c_int) -> c_int;
     fn wcsstr(h: *const i32, n: *const i32) -> *const i32;
+    fn strtok_r(s: *mut c_char, delim: *const c_char, saveptr: *mut *mut c_char) -> *mut c_char;
 }
 
 fn bench(c: &mut Criterion) {
@@ -606,6 +607,37 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wcsstr(black_box(wss_hay2.as_ptr().cast::<i32>()), wss_ndl2.as_ptr().cast::<i32>()) }))
     });
     gwss2.finish();
+
+    // ---- strtok_r — first token is a LONG (56-char) delimiter-free run, then ','.
+    // Both impls write a NUL at the delim, so each iter resets from the template
+    // (reset cost is in BOTH arms → cancels in the ratio). Measures the token-end
+    // scan: fl's scalar DelimSet loop vs glibc's (SIMD strspn/strcspn-based).
+    let tok_template: &[u8] = b"this_is_a_fairly_long_token_without_any_delimiters_here,tail\0";
+    let mut tok_buf = tok_template.to_vec();
+    let r0 = frankenlibc_core::string::strtok::strtok_r(&mut tok_buf[..tok_template.len() - 1], b",", 0);
+    assert_eq!(r0.map(|(s, l, _)| (s, l)), Some((0usize, 55usize)), "strtok_r core wrong");
+    let mut gtk = c.benchmark_group("survey_strtok_r");
+    gtk.bench_function("frankenlibc_core", |b| {
+        b.iter(|| {
+            tok_buf.copy_from_slice(tok_template);
+            black_box(frankenlibc_core::string::strtok::strtok_r(
+                black_box(&mut tok_buf[..tok_template.len() - 1]),
+                b",",
+                0,
+            ))
+        })
+    });
+    let mut gtk_buf = tok_template.to_vec();
+    gtk.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| {
+            gtk_buf.copy_from_slice(tok_template);
+            let mut sp: *mut c_char = std::ptr::null_mut();
+            black_box(unsafe {
+                strtok_r(black_box(gtk_buf.as_mut_ptr().cast::<c_char>()), c",".as_ptr(), &mut sp)
+            })
+        })
+    });
+    gtk.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();

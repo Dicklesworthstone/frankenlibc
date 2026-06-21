@@ -25,10 +25,16 @@ fn is_delim(b: u8, delimiters: &[u8]) -> bool {
 /// delimiter string per character — turning the scan from O(input × delims) into
 /// O(input + delims). NUL terminates the delimiter list and is never a member, so
 /// bit 0 is left clear (matching [`is_delim`]).
+///
+/// Retained only as a test reference: the tokenizers now reuse the SIMD
+/// `strspn_set`/`strcspn_set` scanners (bd-2g7oyh), which carry the same NUL-break
+/// membership; the guard test below pins that equivalence.
+#[cfg(test)]
 struct DelimSet {
     words: [u64; 4],
 }
 
+#[cfg(test)]
 impl DelimSet {
     fn new(delimiters: &[u8]) -> Self {
         let mut words = [0u64; 4];
@@ -73,29 +79,27 @@ pub fn strtok(s: &mut [u8], delimiters: &[u8]) -> Option<(usize, usize)> {
 /// first delimiter after the token. Returns `None` if no tokens remain.
 fn strtok_at(s: &mut [u8], delimiters: &[u8], offset: usize) -> Option<(usize, usize)> {
     let len = s.len();
-    let mut pos = offset;
-    let delims = DelimSet::new(delimiters);
+    // Exact delimiter set (bytes up to the first NUL or slice end) — same membership
+    // as DelimSet, without strlen-over-reading a non-NUL-terminated arg.
+    let dn = delimiters.iter().position(|&b| b == 0).unwrap_or(delimiters.len());
+    let delim_set = &delimiters[..dn];
+    let mut pos = offset.min(len);
 
-    // Skip leading delimiters and NUL bytes
-    while pos < len && s[pos] != 0 && delims.contains(s[pos]) {
-        pos += 1;
-    }
+    // Skip leading delimiters (SIMD strspn over the exact set — was a scalar
+    // per-byte DelimSet loop, ~3x slower than glibc on long runs; bd-2g7oyh).
+    pos += crate::string::str::strspn_set(&s[pos..], delim_set);
 
-    // Check if we've exhausted the string
     if pos >= len || s[pos] == 0 {
         return None;
     }
 
     let token_start = pos;
 
-    // Find end of token
-    while pos < len && s[pos] != 0 && !delims.contains(s[pos]) {
-        pos += 1;
-    }
+    // Find end of token (SIMD strcspn over the exact set).
+    let token_len = crate::string::str::strcspn_set(&s[token_start..], delim_set);
+    pos = token_start + token_len;
 
-    let token_len = pos - token_start;
-
-    // Write NUL terminator over the delimiter (if not already at end)
+    // Write NUL terminator over the delimiter (if not already at end).
     if pos < len && s[pos] != 0 {
         s[pos] = 0;
     }
@@ -116,13 +120,12 @@ fn strtok_at(s: &mut [u8], delimiters: &[u8], offset: usize) -> Option<(usize, u
 /// token, or `None` if no more tokens remain.
 pub fn strtok_r(s: &mut [u8], delimiters: &[u8], save_ptr: usize) -> Option<(usize, usize, usize)> {
     let len = s.len();
-    let mut pos = save_ptr;
-    let delims = DelimSet::new(delimiters);
+    let dn = delimiters.iter().position(|&b| b == 0).unwrap_or(delimiters.len());
+    let delim_set = &delimiters[..dn];
+    let mut pos = save_ptr.min(len);
 
-    // Skip leading delimiters and NUL bytes
-    while pos < len && s[pos] != 0 && delims.contains(s[pos]) {
-        pos += 1;
-    }
+    // Skip leading delimiters (SIMD strspn over the exact set; bd-2g7oyh).
+    pos += crate::string::str::strspn_set(&s[pos..], delim_set);
 
     // Check if we've exhausted the string
     if pos >= len || s[pos] == 0 {
@@ -131,12 +134,9 @@ pub fn strtok_r(s: &mut [u8], delimiters: &[u8], save_ptr: usize) -> Option<(usi
 
     let token_start = pos;
 
-    // Find end of token
-    while pos < len && s[pos] != 0 && !delims.contains(s[pos]) {
-        pos += 1;
-    }
-
-    let token_len = pos - token_start;
+    // Find end of token (SIMD strcspn over the exact set).
+    let token_len = crate::string::str::strcspn_set(&s[token_start..], delim_set);
+    pos = token_start + token_len;
 
     // Write NUL terminator and advance save pointer
     if pos < len && s[pos] != 0 {

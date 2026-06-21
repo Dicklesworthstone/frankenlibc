@@ -1451,22 +1451,49 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 /// Equivalent to C `strspn`.
 pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
     let accept_len = strlen(accept);
-    match accept_len {
+    strspn_set(s, &accept[..accept_len])
+}
+
+/// `strspn` over an EXACT member set (no NUL-terminated `strlen` of the set).
+/// Lets non-NUL-terminated callers (e.g. `strtok`'s delimiter slice) reuse the
+/// same SIMD scanners. `strspn` is the NUL-terminated wrapper.
+pub(crate) fn strspn_set(s: &[u8], accept_set: &[u8]) -> usize {
+    match accept_set.len() {
         0 => return 0,
-        1 => {
-            let accepted = accept[0];
-            return find_non_byte_or_nul(s, accepted);
-        }
+        1 => return find_non_byte_or_nul(s, accept_set[0]),
         // len 2/3 reuse the SIMD len-4 scanner by duplicating accept bytes (same
         // membership set), instead of a scalar per-byte loop (was 6.5x slower than
         // glibc's vectorized strspn; bd-2g7oyh).
-        2 => return find_non_any_of4_or_nul(s, accept[0], accept[1], accept[0], accept[1]),
-        3 => return find_non_any_of4_or_nul(s, accept[0], accept[1], accept[2], accept[2]),
-        4 => return find_non_any_of4_or_nul(s, accept[0], accept[1], accept[2], accept[3]),
+        2 => {
+            return find_non_any_of4_or_nul(
+                s,
+                accept_set[0],
+                accept_set[1],
+                accept_set[0],
+                accept_set[1],
+            );
+        }
+        3 => {
+            return find_non_any_of4_or_nul(
+                s,
+                accept_set[0],
+                accept_set[1],
+                accept_set[2],
+                accept_set[2],
+            );
+        }
+        4 => {
+            return find_non_any_of4_or_nul(
+                s,
+                accept_set[0],
+                accept_set[1],
+                accept_set[2],
+                accept_set[3],
+            );
+        }
         _ => {}
     }
 
-    let accept_set = &accept[..accept_len];
     let accept_table = byte_membership_table(accept_set);
     span_general(s, accept_set, &accept_table, false)
 }
@@ -1477,21 +1504,47 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
 /// Equivalent to C `strcspn`.
 pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
     let reject_len = strlen(reject);
-    match reject_len {
+    strcspn_set(s, &reject[..reject_len])
+}
+
+/// `strcspn` over an EXACT reject set (no NUL-terminated `strlen` of the set).
+/// Companion to [`strspn_set`] for `strtok`-style callers.
+pub(crate) fn strcspn_set(s: &[u8], reject_set: &[u8]) -> usize {
+    match reject_set.len() {
         0 => return strlen(s),
-        1 => {
-            let rejected = reject[0];
-            return find_byte_or_nul(s, rejected);
-        }
+        1 => return find_byte_or_nul(s, reject_set[0]),
         // len 2/3 reuse the SIMD len-4 scanner by duplicating reject bytes (same
         // membership set), instead of a scalar per-byte loop (bd-2g7oyh).
-        2 => return find_any_of4_or_nul_fused(s, reject[0], reject[1], reject[0], reject[1]),
-        3 => return find_any_of4_or_nul_fused(s, reject[0], reject[1], reject[2], reject[2]),
-        4 => return find_any_of4_or_nul_fused(s, reject[0], reject[1], reject[2], reject[3]),
+        2 => {
+            return find_any_of4_or_nul_fused(
+                s,
+                reject_set[0],
+                reject_set[1],
+                reject_set[0],
+                reject_set[1],
+            );
+        }
+        3 => {
+            return find_any_of4_or_nul_fused(
+                s,
+                reject_set[0],
+                reject_set[1],
+                reject_set[2],
+                reject_set[2],
+            );
+        }
+        4 => {
+            return find_any_of4_or_nul_fused(
+                s,
+                reject_set[0],
+                reject_set[1],
+                reject_set[2],
+                reject_set[3],
+            );
+        }
         _ => {}
     }
 
-    let reject_set = &reject[..reject_len];
     let reject_table = byte_membership_table(reject_set);
     span_general(s, reject_set, &reject_table, true)
 }
