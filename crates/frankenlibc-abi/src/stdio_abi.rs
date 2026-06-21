@@ -146,6 +146,21 @@ unsafe fn scan_c_str_len(ptr: *const c_char, bound: Option<usize>) -> (usize, bo
     }
 }
 
+// PERF CHOKEPOINT (bd-2g7oyh — needs build+test, not a blind disk-low edit):
+// This helper is the shared format-string length scan for the ENTIRE printf family
+// (printf/fprintf/sprintf/snprintf/vprintf/vsnprintf/dprintf/asprintf — ~12 entry
+// points each call `c_str_bytes(format)`) and other caller-string sites. It routes
+// through `scan_c_str_len(ptr, None)` -> `known_remaining` -> `fallback_remaining`
+// (a `lock_fallback_alloc_table()` MUTEX + up-to-1024 hash probe) + a scalar byte
+// loop, PER CALL — for a typically-short caller FORMAT string (no stream/registry
+// lock here, so this is a meaningful fraction). PLAN: gate at this ONE chokepoint —
+// in strict mode return `string_abi::scan_c_string(ptr, None).0` (page-safe SWAR, no
+// lock); keep `scan_c_str_len` (the known_remaining bound) in hardened mode. NOT
+// byte-identical for the UB case (a tracked-but-unterminated buffer: the bound stops
+// at the alloc end, scan_c_string scans to NUL = glibc-compatible) — same caveat as
+// the sscanf/scanf_core levers, so gate on strict + verify with printf/scanf
+// conformance. Gating HERE fixes printf format scans + scanf (via scanf_core's own
+// scan) + every other c_str_bytes caller at once.
 #[inline]
 pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
     let (len, _) = unsafe { scan_c_str_len(ptr, None) };
