@@ -25,6 +25,7 @@ unsafe extern "C" {
     fn rawmemchr(s: *const c_void, c: c_int) -> *const c_void;
     fn strlen(s: *const c_char) -> usize;
     fn strchr(s: *const c_char, c: c_int) -> *const c_char;
+    fn memchr(s: *const c_void, c: c_int, n: usize) -> *const c_void;
     fn wcschr(wcs: *const i32, wc: i32) -> *const i32;
     fn wcsrchr(wcs: *const i32, wc: i32) -> *const i32;
     fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int;
@@ -1051,6 +1052,34 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { strchr(black_box(sc.as_ptr().cast::<c_char>()), b'Z' as c_int) }))
     });
     gsc.finish();
+
+    // ---- memchr (the byte-scan foundation under strchr/strchrnul/strcspn). 1000-byte
+    // 'a', 'Z' at 900, n=1000.
+    let mc: Vec<u8> = {
+        let mut v = vec![b'a'; 1000];
+        v[900] = b'Z';
+        v
+    };
+    let mc_core = frankenlibc_core::string::mem::memchr(&mc, b'Z', mc.len()).unwrap();
+    let mc_gl =
+        unsafe { memchr(mc.as_ptr().cast::<c_void>(), b'Z' as c_int, mc.len()) as usize - mc.as_ptr() as usize };
+    assert_eq!(mc_core, 900, "memchr core wrong");
+    assert_eq!(mc_gl, 900, "memchr glibc wrong");
+    // strchrnul on this NUL-free buffer is a DIRECT 64-lane c-scan (NUL check never
+    // fires) = an upper-bound proxy for a fold-free memchr (it does 2 eq, memchr needs 1).
+    let mc_direct = frankenlibc_core::string::str::strchrnul(&mc, b'Z');
+    assert_eq!(mc_direct, 900, "memchr direct proxy wrong");
+    let mut gmc = c.benchmark_group("survey_memchr");
+    gmc.bench_function("frankenlibc_core_fold", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::mem::memchr(black_box(&mc), b'Z', mc.len())))
+    });
+    gmc.bench_function("frankenlibc_direct_proxy", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::str::strchrnul(black_box(&mc), b'Z')))
+    });
+    gmc.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { memchr(black_box(mc.as_ptr().cast::<c_void>()), b'Z' as c_int, mc.len()) }))
+    });
+    gmc.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
