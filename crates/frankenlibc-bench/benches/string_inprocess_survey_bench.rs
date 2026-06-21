@@ -45,6 +45,7 @@ unsafe extern "C" {
     fn asctime_r(tm: *const libc::tm, buf: *mut c_char) -> *mut c_char;
     fn gmtime_r(t: *const i64, tm: *mut libc::tm) -> *mut libc::tm;
     fn random() -> std::ffi::c_long;
+    fn strrchr(s: *const c_char, c: c_int) -> *const c_char;
 }
 
 fn bench(c: &mut Criterion) {
@@ -747,6 +748,27 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { random() }))
     });
     grnd.finish();
+
+    // ---- strrchr — 300-byte string, '/' at 100, NUL at 299 (folded block flagged
+    // → exercises the scalar block re-scan; also the redundant memchr pre-check).
+    let rr: Vec<u8> = {
+        let mut v = vec![b'a'; 300];
+        v[100] = b'/';
+        v[299] = 0;
+        v
+    };
+    let core_rr = core_str::strrchr(&rr, b'/');
+    let gl_rr = unsafe { strrchr(rr.as_ptr().cast::<c_char>(), b'/' as c_int) };
+    assert_eq!(core_rr, Some(100), "strrchr core wrong");
+    assert_eq!(core_rr.is_some(), !gl_rr.is_null(), "strrchr found-ness mismatch");
+    let mut grr = c.benchmark_group("survey_strrchr");
+    grr.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strrchr(black_box(&rr), b'/')))
+    });
+    grr.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strrchr(black_box(rr.as_ptr().cast::<c_char>()), b'/' as c_int) }))
+    });
+    grr.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();

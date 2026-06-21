@@ -1232,45 +1232,15 @@ pub fn strrchr(s: &[u8], c: u8) -> Option<usize> {
         return Some(strlen(s));
     }
 
-    // Absent needles need only the pure byte scan; found cases still use the
-    // existing C-string resolver below to preserve last-before-NUL semantics.
-    super::mem::memchr(s, c, s.len())?;
-
-    // Single forward pass tracking the last match — exactly what glibc does,
-    // versus the old strlen()+reverse-scan that walked the buffer TWICE. A
-    // 256B folded SIMD probe skips blocks containing neither `c` nor NUL with
-    // one reduction; only a block that has a hit is resolved scalar-side,
-    // updating the last-seen `c` until the terminating NUL ends the string.
-    let mut last = None;
-    let mut i = 0;
-
-    while i + STRCHR_FOLD_BYTES <= s.len() {
-        if has_byte_or_nul_simd_folded_256(&s[i..i + STRCHR_FOLD_BYTES], c) {
-            for k in 0..STRCHR_FOLD_BYTES {
-                let byte = s[i + k];
-                if byte == 0 {
-                    return last;
-                }
-                if byte == c {
-                    last = Some(i + k);
-                }
-            }
-        }
-        i += STRCHR_FOLD_BYTES;
-    }
-
-    while i < s.len() {
-        let byte = s[i];
-        if byte == 0 {
-            return last;
-        }
-        if byte == c {
-            last = Some(i);
-        }
-        i += 1;
-    }
-
-    last
+    // strrchr = "last `c` before the terminating NUL" = the last `c` in `s[..strlen]`,
+    // which is exactly `memrchr(s, c, strlen(s))`. Both helpers are SIMD: strlen finds
+    // the NUL bound, memrchr does a mask-based reverse scan (bd-2g7oyh). This replaces
+    // the prior path — a redundant full `memchr` existence pre-scan PLUS a scalar
+    // byte-by-byte re-scan of each flagged 256-byte folded block — which was ~34x
+    // slower than glibc on a 300-byte string. Byte-identical: memrchr over [0, strlen)
+    // returns the same last (rightmost) match, or None when `c` is absent.
+    let n = strlen(s);
+    super::mem::memrchr(s, c, n)
 }
 
 /// Finds the first occurrence of the NUL-terminated substring `needle` in
