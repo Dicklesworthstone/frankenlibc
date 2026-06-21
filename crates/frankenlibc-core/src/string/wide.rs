@@ -865,6 +865,25 @@ fn two_way_search_wide(hay: &[u32], ndl: &[u32]) -> Option<usize> {
     }
 }
 
+/// Static byte-frequency estimate for choosing the rarer wcsstr anchor char
+/// (mirrors mem.rs `memmem_anchor_commonness`; ASCII English text frequencies,
+/// non-ASCII wide chars treated as rare). Lower = rarer = better anchor.
+fn wide_anchor_commonness(c: u32) -> u8 {
+    if c >= 128 {
+        return 1;
+    }
+    match (c as u8).to_ascii_lowercase() {
+        b' ' | b'e' => 16,
+        b'a' | b'i' | b'n' | b'o' | b'r' | b's' | b't' => 12,
+        b'c' | b'd' | b'f' | b'g' | b'h' | b'l' | b'm' | b'p' | b'u' | b'w' | b'y' => 8,
+        b'_' | b'-' | b'.' | b'/' | b'\t' | b'\n' | b'\r' => 6,
+        b'0'..=b'9' => 5,
+        b'!'..=b'~' => 4,
+        0 => 2,
+        _ => 1,
+    }
+}
+
 pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     let needle_len = wcslen(needle);
     if needle_len == 0 {
@@ -872,8 +891,10 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     }
     let needle = &needle[..needle_len];
     let first = needle[0];
-    wmemchr(haystack, first, haystack.len())?;
-
+    // (Removed a redundant `wmemchr(haystack, first, haystack.len())?` existence
+    // pre-scan — a full extra pass past the NUL. `find_wide_or_nul_long` below +
+    // the `first_pos == len || haystack[first_pos] == 0` check already return None
+    // when `first` does not occur before the terminator. bd-2g7oyh, as in wcschr.)
     let first_pos = find_wide_or_nul_long(haystack, first);
     if first_pos == haystack.len() || haystack[first_pos] == 0 {
         return None;
@@ -896,7 +917,11 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     // (typically rarer) occurrences drive the scan; for each hit we confirm the
     // first char and full needle. Only valid when `first != last`; otherwise the
     // two anchors coincide and we fall back to the first-char scan below.
-    if first != last {
+    // Only anchor on the last char when it is RARER than the first (else the
+    // last-char scan visits more candidates than the first-char path — e.g. text
+    // ending in common 'e'). Mirrors mem.rs's memmem rarity-aware anchor. The
+    // chosen anchor changes only the search strategy, not the (leftmost) result.
+    if first != last && wide_anchor_commonness(last) <= wide_anchor_commonness(first) {
         // The earliest possible match starts at `first_pos`, so its last-char
         // anchor sits at `first_pos + needle_len - 1`. `hay` has no interior NUL
         // (truncated by `wcslen`), so `find_wide_or_nul` resolves the last char.

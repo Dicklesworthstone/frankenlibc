@@ -39,6 +39,7 @@ unsafe extern "C" {
     fn wmemcpy(d: *mut i32, s: *const i32, n: usize) -> *mut i32;
     fn memmem(h: *const c_void, hl: usize, n: *const c_void, nl: usize) -> *const c_void;
     fn fnmatch(pat: *const c_char, s: *const c_char, flags: c_int) -> c_int;
+    fn wcsstr(h: *const i32, n: *const i32) -> *const i32;
 }
 
 fn bench(c: &mut Criterion) {
@@ -575,6 +576,36 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { fnmatch(black_box(fm_pat2.as_ptr()), fm_txt2.as_ptr(), 0) }))
     });
     gfm2.finish();
+
+    // ---- wcsstr (wide substring, non-ifunc) — same text as the strstr survey.
+    let wss_hay: Vec<u32> = "the quick brown fox jumps over the lazy dog and then some more text needle_here"
+        .bytes().map(|b| b as u32).chain(std::iter::once(0)).collect();
+    let wss_ndl: Vec<u32> = "needle_here".bytes().map(|b| b as u32).chain(std::iter::once(0)).collect();
+    let core_wss = frankenlibc_core::string::wide::wcsstr(&wss_hay, &wss_ndl);
+    let gl_wss = unsafe { wcsstr(wss_hay.as_ptr().cast::<i32>(), wss_ndl.as_ptr().cast::<i32>()) };
+    assert_eq!(core_wss.is_some(), !gl_wss.is_null(), "wcsstr found-ness mismatch");
+    let mut gwss = c.benchmark_group("survey_wcsstr");
+    gwss.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcsstr(black_box(&wss_hay), &wss_ndl)))
+    });
+    gwss.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcsstr(black_box(wss_hay.as_ptr().cast::<i32>()), wss_ndl.as_ptr().cast::<i32>()) }))
+    });
+    gwss.finish();
+
+    // wcsstr rare-last guard (needle ends in rare 'X') — must NOT regress vs the
+    // last-anchor path (the commonness gate should still pick last here).
+    let wss_hay2: Vec<u32> = "the quick brown fox jumps over the lazy dog and then text needle_herX"
+        .bytes().map(|b| b as u32).chain(std::iter::once(0)).collect();
+    let wss_ndl2: Vec<u32> = "needle_herX".bytes().map(|b| b as u32).chain(std::iter::once(0)).collect();
+    let mut gwss2 = c.benchmark_group("survey_wcsstr_rarelast");
+    gwss2.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcsstr(black_box(&wss_hay2), &wss_ndl2)))
+    });
+    gwss2.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcsstr(black_box(wss_hay2.as_ptr().cast::<i32>()), wss_ndl2.as_ptr().cast::<i32>()) }))
+    });
+    gwss2.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
