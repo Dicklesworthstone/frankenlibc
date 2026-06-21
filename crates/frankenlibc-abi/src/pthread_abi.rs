@@ -283,6 +283,10 @@ fn try_with_pthread_tls<R>(f: impl FnOnce(&mut PthreadTlsState) -> R) -> Option<
 
 #[inline]
 fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
+    if force_native_threading_enabled() {
+        return None;
+    }
+
     #[cfg(feature = "owned-tls-cache")]
     {
         try_with_pthread_tls(|tls| {
@@ -312,7 +316,9 @@ fn cached_pthread_self_fast() -> Option<libc::pthread_t> {
 #[inline]
 fn remember_current_pthread_self(value: libc::pthread_t) {
     #[cfg(not(feature = "owned-tls-cache"))]
-    let _ = PTHREAD_SELF_FAST.try_with(|cell| cell.set(value));
+    if !force_native_threading_enabled() {
+        let _ = PTHREAD_SELF_FAST.try_with(|cell| cell.set(value));
+    }
     let _ = try_with_pthread_tls(|tls| tls.current_pthread_self_cache = value);
 }
 
