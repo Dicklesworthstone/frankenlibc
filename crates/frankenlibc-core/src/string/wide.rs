@@ -318,46 +318,24 @@ pub fn wcslen(s: &[u32]) -> usize {
 ///
 /// Equivalent to C `wcsnlen`.
 pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
-    // Same folded-block NUL scan as wcslen (bd-2g7oyh.262), bounded by `maxlen`:
-    // four 64-lane panels per 256-element block folded with `simd_min` into ONE
-    // reduction (`min(a, b) == 0` iff either lane is `0`), so the steady-state
-    // scan pays one reduction per 256 wide chars instead of one per 16. The
-    // scalar tail resolves the exact index in a flagged block, so the result is
-    // identical to the scalar `position(NUL).unwrap_or(limit)` scan.
+    // Direct 64-lane NUL mask scan bounded by `maxlen`: one `simd_eq(0).to_bitmask()`
+    // per panel, resolved by `trailing_zeros`. The prior 256-block min-FOLD did MORE
+    // vector work than a plain per-panel movemask (same single-condition pessimization
+    // as wcslen, which this mirrors). Byte-identical to the scalar
+    // `position(NUL).unwrap_or(limit)` scan. bd-2g7oyh.
     const PANEL: usize = WIDE_FIND_LONG_SIMD_LANES; // 64
-    const BLOCK: usize = PANEL * 4; // 256
     let limit = maxlen.min(s.len());
     let scan = &s[..limit];
     let zero = Simd::<u32, PANEL>::splat(0);
     let mut base = 0usize;
 
-    while base + BLOCK <= limit {
-        let block = &scan[base..base + BLOCK];
-        let p0 = Simd::<u32, PANEL>::from_slice(&block[0..PANEL]);
-        let p1 = Simd::<u32, PANEL>::from_slice(&block[PANEL..2 * PANEL]);
-        let p2 = Simd::<u32, PANEL>::from_slice(&block[2 * PANEL..3 * PANEL]);
-        let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]);
-        let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
-        if folded.simd_eq(zero).any() {
-            // Resolve the first NUL panel + lane via masks (O(1)) instead of a scalar
-            // enumerate of the whole 256-element block (was 7.8x slower than glibc;
-            // bd-2g7oyh). One of p0..p3 must hold a zero since `folded` does.
-            let m0 = p0.simd_eq(zero).to_bitmask();
-            if m0 != 0 {
-                return base + m0.trailing_zeros() as usize;
-            }
-            let m1 = p1.simd_eq(zero).to_bitmask();
-            if m1 != 0 {
-                return base + PANEL + m1.trailing_zeros() as usize;
-            }
-            let m2 = p2.simd_eq(zero).to_bitmask();
-            if m2 != 0 {
-                return base + 2 * PANEL + m2.trailing_zeros() as usize;
-            }
-            let m3 = p3.simd_eq(zero).to_bitmask();
-            return base + 3 * PANEL + m3.trailing_zeros() as usize;
+    while base + PANEL <= limit {
+        let v = Simd::<u32, PANEL>::from_slice(&scan[base..base + PANEL]);
+        let m = v.simd_eq(zero).to_bitmask();
+        if m != 0 {
+            return base + m.trailing_zeros() as usize;
         }
-        base += BLOCK;
+        base += PANEL;
     }
 
     let mut chunks = scan[base..].chunks_exact(WIDE_NUL_SIMD_LANES);

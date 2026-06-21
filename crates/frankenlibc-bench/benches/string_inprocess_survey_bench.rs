@@ -34,6 +34,7 @@ unsafe extern "C" {
     fn wmemcmp(s1: *const i32, s2: *const i32, n: usize) -> c_int;
     fn wcscasecmp(s1: *const i32, s2: *const i32) -> c_int;
     fn wcslen(s: *const i32) -> usize;
+    fn wcsnlen(s: *const i32, maxlen: usize) -> usize;
     fn wmemchr(s: *const i32, c: i32, n: usize) -> *const i32;
     fn wcsspn(s: *const i32, accept: *const i32) -> usize;
     fn wcscspn(s: *const i32, reject: *const i32) -> usize;
@@ -982,6 +983,26 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wmemchr(black_box(wmc.as_ptr().cast::<i32>()), b'Z' as i32, wmc.len()) }))
     });
     gwmc.finish();
+
+    // ---- wcsnlen (bounded wide strlen). Direct 64-lane mask scan (fold removed,
+    // same single-condition transform as wcslen). 1000 wide 'a', NUL at 900, maxlen 2000.
+    let wnl: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 1000];
+        v[900] = 0;
+        v
+    };
+    let wnl_core = frankenlibc_core::string::wide::wcsnlen(&wnl, 2000);
+    let wnl_gl = unsafe { wcsnlen(wnl.as_ptr().cast::<i32>(), 2000) };
+    assert_eq!(wnl_core, 900, "wcsnlen core wrong");
+    assert_eq!(wnl_core, wnl_gl, "wcsnlen vs glibc mismatch");
+    let mut gwnl = c.benchmark_group("survey_wcsnlen");
+    gwnl.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcsnlen(black_box(&wnl), 2000)))
+    });
+    gwnl.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcsnlen(black_box(wnl.as_ptr().cast::<i32>()), 2000) }))
+    });
+    gwnl.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
