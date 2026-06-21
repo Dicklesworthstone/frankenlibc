@@ -26469,10 +26469,10 @@ mod tests {
 
     #[test]
     fn koi8u_to_utf8_round_trip() {
-        // KOI8-U bytes for "Київ" (Kyiv with Ukrainian-specific chars)
-        // К=0xEB, и=0xC9, ї=0xB7, в=0xD7
+        // KOI8-U bytes К=0xEB, и=0xC9, Ї=0xB7 (UPPERCASE yi; lowercase ї is 0xA7),
+        // в=0xD7. Matches glibc `iconv -f KOI8-U`: [EB C9 B7 D7] -> "КиЇв".
         let koi8u_input: &[u8] = &[0xEB, 0xC9, 0xB7, 0xD7];
-        let expected_utf8 = "Київ";
+        let expected_utf8 = "КиЇв";
 
         // KOI8-U → UTF-8
         let mut cd = iconv_open(b"UTF-8", b"KOI8-U").unwrap();
@@ -26492,14 +26492,15 @@ mod tests {
 
     #[test]
     fn koi8u_differs_from_koi8r() {
-        // Ukrainian Ї (yi) is at 0xB7 in KOI8-U but 0xB7 is · in KOI8-R
+        // Ukrainian capital Ї (yi) is at 0xB7 in KOI8-U but 0xB7 is · in KOI8-R.
+        // (glibc `iconv -f KOI8-U` decodes 0xB7 -> U+0407 Ї; lowercase ї is 0xA7.)
         let koi8u_yi: &[u8] = &[0xB7];
 
         let mut cd = iconv_open(b"UTF-8", b"KOI8-U").unwrap();
         let mut utf8_out = [0u8; 8];
         let result = iconv(&mut cd, Some(koi8u_yi), &mut utf8_out).unwrap();
         let utf8_str = std::str::from_utf8(&utf8_out[..result.out_written]).unwrap();
-        assert_eq!(utf8_str, "ї"); // Ukrainian yi
+        assert_eq!(utf8_str, "Ї"); // Ukrainian capital yi (U+0407)
     }
 
     #[test]
