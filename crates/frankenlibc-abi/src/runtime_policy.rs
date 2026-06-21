@@ -2064,6 +2064,11 @@ pub(crate) fn decide(
                     // byte-identical. NOT added to the HARDENED list below — read/write pass
                     // the USER BUFFER to decide() there and must keep validating it.
                     | ApiFamily::IoFd
+                    // Time added to STRICT ONLY (helps `strftime`/`mktime` hot loops):
+                    // same reasoning — strict forces Allow, so skipping the kernel consult
+                    // is byte-identical. NOT in the HARDENED list (strftime's output buffer
+                    // must stay validated).
+                    | ApiFamily::Time
             )
         {
             return (SafetyLevel::Strict, passthrough_decision());
@@ -2265,6 +2270,12 @@ pub(crate) fn observe(
                 // intentionally NOT added to the HARDENED decide() list — read/write
                 // pass the USER BUFFER to decide() there and must keep validating it.
                 | ApiFamily::IoFd
+                // Time added: `strftime`/`mktime` are hot (timestamp-formatting
+                // loops) and pure computation (no syscall), so the per-call observe()
+                // slow path is a meaningful fraction. Telemetry-only = safe. (Same as
+                // IoFd, Time is NOT added to the HARDENED decide() list — strftime's
+                // output buffer must stay validated there.)
+                | ApiFamily::Time
         )
     {
         return;
