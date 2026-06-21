@@ -402,6 +402,10 @@ fn iso_week(bd: &BrokenDownTime) -> (i64, i32) {
 /// `%X` preferred time, `%y` year (2-digit), `%Y` full year, `%z` timezone offset,
 /// `%Z` timezone name, `%%` literal percent.
 pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
+    if let Some(n) = format_strftime_numeric_19(fmt, bd, buf) {
+        return n;
+    }
+
     let mut pos = 0usize;
     let mut i = 0usize;
 
@@ -927,6 +931,61 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     pos
 }
 
+#[inline]
+fn format_strftime_numeric_19(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
+    if fmt != b"%Y-%m-%d %H:%M:%S" {
+        return None;
+    }
+
+    let year = bd.tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year)
+        || !(0..=11).contains(&bd.tm_mon)
+        || !(1..=31).contains(&bd.tm_mday)
+        || !(0..=23).contains(&bd.tm_hour)
+        || !(0..=59).contains(&bd.tm_min)
+        || !(0..=60).contains(&bd.tm_sec)
+    {
+        return None;
+    }
+
+    const OUT_LEN: usize = 19;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+
+    let year = year as u32;
+    let month = (bd.tm_mon + 1) as u32;
+    let day = bd.tm_mday as u32;
+    let hour = bd.tm_hour as u32;
+    let minute = bd.tm_min as u32;
+    let second = bd.tm_sec as u32;
+
+    buf[0] = b'0' + ((year / 1000) % 10) as u8;
+    buf[1] = b'0' + ((year / 100) % 10) as u8;
+    buf[2] = b'0' + ((year / 10) % 10) as u8;
+    buf[3] = b'0' + (year % 10) as u8;
+    buf[4] = b'-';
+    write_two_digits(&mut buf[5..7], month);
+    buf[7] = b'-';
+    write_two_digits(&mut buf[8..10], day);
+    buf[10] = b' ';
+    write_two_digits(&mut buf[11..13], hour);
+    buf[13] = b':';
+    write_two_digits(&mut buf[14..16], minute);
+    buf[16] = b':';
+    write_two_digits(&mut buf[17..19], second);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+#[inline]
+fn write_two_digits(dst: &mut [u8], value: u32) {
+    debug_assert_eq!(dst.len(), 2);
+    debug_assert!(value <= 99);
+    dst[0] = b'0' + (value / 10) as u8;
+    dst[1] = b'0' + (value % 10) as u8;
+}
+
 /// Additional clock IDs accepted by the kernel.
 pub const CLOCK_MONOTONIC_RAW: i32 = 4;
 pub const CLOCK_REALTIME_COARSE: i32 = 5;
@@ -1182,6 +1241,20 @@ mod tests {
         let mut buf = [0u8; 64];
         let n = format_strftime(b"%F %T", &bd, &mut buf);
         assert_eq!(&buf[..n], b"2024-01-01 00:00:00");
+    }
+
+    #[test]
+    fn strftime_numeric_19_exact_fit() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 14;
+        bd.tm_min = 30;
+        bd.tm_sec = 45;
+        let mut buf = [0x55u8; 20];
+        let n = format_strftime(b"%Y-%m-%d %H:%M:%S", &bd, &mut buf);
+
+        assert_eq!(n, 19);
+        assert_eq!(&buf[..19], b"2024-01-01 14:30:45");
+        assert_eq!(buf[19], 0);
     }
 
     #[test]
