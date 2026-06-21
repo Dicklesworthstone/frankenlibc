@@ -23,6 +23,7 @@ unsafe extern "C" {
     fn strcasestr(h: *const c_char, n: *const c_char) -> *const c_char;
     fn memrchr(s: *const c_void, c: c_int, n: usize) -> *const c_void;
     fn wcschr(wcs: *const i32, wc: i32) -> *const i32;
+    fn wcsrchr(wcs: *const i32, wc: i32) -> *const i32;
 }
 
 fn bench(c: &mut Criterion) {
@@ -161,6 +162,20 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wcschr(black_box(wbuf.as_ptr().cast::<i32>()), b'X' as i32) }))
     });
     gw.finish();
+
+    // ---- wcsrchr (reverse wide search) — removed redundant wmemrchr pre-scan.
+    let core_wr = frankenlibc_core::string::wide::wcsrchr(&wbuf, b'X' as u32);
+    let gl_wr = unsafe { wcsrchr(wbuf.as_ptr().cast::<i32>(), b'X' as i32) };
+    assert_eq!(core_wr, Some(30), "wcsrchr core position wrong");
+    assert_eq!(!gl_wr.is_null(), core_wr.is_some(), "wcsrchr found-ness mismatch");
+    let mut gwr = c.benchmark_group("survey_wcsrchr");
+    gwr.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcsrchr(black_box(&wbuf), b'X' as u32)))
+    });
+    gwr.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcsrchr(black_box(wbuf.as_ptr().cast::<i32>()), b'X' as i32) }))
+    });
+    gwr.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();

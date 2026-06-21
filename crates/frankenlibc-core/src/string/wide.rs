@@ -629,8 +629,9 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
         return Some(s.len());
     }
 
-    wmemrchr(s, c, s.len())?;
-
+    // The scan below already returns the last `c` before the NUL (or None) — so the
+    // prior `wmemrchr(s, c, s.len())?` existence pre-scan was a redundant SECOND full
+    // pass (scanning all of `s.len()` past the NUL). Removed (bd-2g7oyh), same as wcschr.
     let mut last = None;
     if s.len() >= WIDE_FIND_LONG_SIMD_LANES {
         let mut chunks = s.chunks_exact(WIDE_FIND_LONG_SIMD_LANES);
