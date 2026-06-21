@@ -315,11 +315,23 @@ pub fn wcslen(s: &[u32]) -> usize {
         let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]);
         let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
         if folded.simd_eq(zero).any() {
-            for (j, &ch) in block.iter().enumerate() {
-                if ch == 0 {
-                    return base + j;
-                }
+            // Resolve the first NUL panel + lane via masks (O(1)) instead of a scalar
+            // enumerate of the whole 256-element block (was 7.8x slower than glibc;
+            // bd-2g7oyh). One of p0..p3 must hold a zero since `folded` does.
+            let m0 = p0.simd_eq(zero).to_bitmask();
+            if m0 != 0 {
+                return base + m0.trailing_zeros() as usize;
             }
+            let m1 = p1.simd_eq(zero).to_bitmask();
+            if m1 != 0 {
+                return base + PANEL + m1.trailing_zeros() as usize;
+            }
+            let m2 = p2.simd_eq(zero).to_bitmask();
+            if m2 != 0 {
+                return base + 2 * PANEL + m2.trailing_zeros() as usize;
+            }
+            let m3 = p3.simd_eq(zero).to_bitmask();
+            return base + 3 * PANEL + m3.trailing_zeros() as usize;
         }
         base += BLOCK;
     }
@@ -328,12 +340,11 @@ pub fn wcslen(s: &[u32]) -> usize {
     let mut chunks = s[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
-        if lanes.simd_eq(Simd::splat(0)).any() {
-            for (j, &ch) in chunk.iter().enumerate() {
-                if ch == 0 {
-                    return base + j;
-                }
-            }
+        // First NUL lane via the mask (O(1)) instead of a scalar enumerate of the
+        // flagged 16-element chunk (bd-2g7oyh).
+        let m = lanes.simd_eq(Simd::splat(0)).to_bitmask();
+        if m != 0 {
+            return base + m.trailing_zeros() as usize;
         }
         base += WIDE_NUL_SIMD_LANES;
     }
@@ -372,11 +383,23 @@ pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
         let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]);
         let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
         if folded.simd_eq(zero).any() {
-            for (j, &ch) in block.iter().enumerate() {
-                if ch == 0 {
-                    return base + j;
-                }
+            // Resolve the first NUL panel + lane via masks (O(1)) instead of a scalar
+            // enumerate of the whole 256-element block (was 7.8x slower than glibc;
+            // bd-2g7oyh). One of p0..p3 must hold a zero since `folded` does.
+            let m0 = p0.simd_eq(zero).to_bitmask();
+            if m0 != 0 {
+                return base + m0.trailing_zeros() as usize;
             }
+            let m1 = p1.simd_eq(zero).to_bitmask();
+            if m1 != 0 {
+                return base + PANEL + m1.trailing_zeros() as usize;
+            }
+            let m2 = p2.simd_eq(zero).to_bitmask();
+            if m2 != 0 {
+                return base + 2 * PANEL + m2.trailing_zeros() as usize;
+            }
+            let m3 = p3.simd_eq(zero).to_bitmask();
+            return base + 3 * PANEL + m3.trailing_zeros() as usize;
         }
         base += BLOCK;
     }
@@ -384,12 +407,11 @@ pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
     let mut chunks = scan[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
-        if lanes.simd_eq(Simd::splat(0)).any() {
-            for (j, &ch) in chunk.iter().enumerate() {
-                if ch == 0 {
-                    return base + j;
-                }
-            }
+        // First NUL lane via the mask (O(1)) instead of a scalar enumerate of the
+        // flagged 16-element chunk (bd-2g7oyh).
+        let m = lanes.simd_eq(Simd::splat(0)).to_bitmask();
+        if m != 0 {
+            return base + m.trailing_zeros() as usize;
         }
         base += WIDE_NUL_SIMD_LANES;
     }

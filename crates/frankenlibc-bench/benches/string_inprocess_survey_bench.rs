@@ -32,6 +32,7 @@ unsafe extern "C" {
     fn wcsncmp(s1: *const i32, s2: *const i32, n: usize) -> c_int;
     fn wmemcmp(s1: *const i32, s2: *const i32, n: usize) -> c_int;
     fn wcscasecmp(s1: *const i32, s2: *const i32) -> c_int;
+    fn wcslen(s: *const i32) -> usize;
 }
 
 fn bench(c: &mut Criterion) {
@@ -363,6 +364,26 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { wcscasecmp(black_box(wic1.as_ptr().cast::<i32>()), wic2.as_ptr().cast::<i32>()) }))
     });
     gwic.finish();
+
+    // ---- wcslen — LONG wide string (NUL at 250 of 300) so the 256-element folded
+    // block runs and its NUL-position scalar re-scan is exercised.
+    let wl: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 300];
+        v[250] = 0;
+        v
+    };
+    let core_wl = frankenlibc_core::string::wide::wcslen(&wl);
+    let gl_wl = unsafe { wcslen(wl.as_ptr().cast::<i32>()) };
+    assert_eq!(core_wl, 250, "wcslen core wrong");
+    assert_eq!(core_wl, gl_wl, "wcslen vs glibc mismatch");
+    let mut gwl = c.benchmark_group("survey_wcslen_long");
+    gwl.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcslen(black_box(&wl))))
+    });
+    gwl.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcslen(black_box(wl.as_ptr().cast::<i32>())) }))
+    });
+    gwl.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
