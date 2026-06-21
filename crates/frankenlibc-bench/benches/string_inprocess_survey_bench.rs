@@ -44,6 +44,7 @@ unsafe extern "C" {
     fn wcstok(wcs: *mut i32, delim: *const i32, ptr: *mut *mut i32) -> *mut i32;
     fn asctime_r(tm: *const libc::tm, buf: *mut c_char) -> *mut c_char;
     fn gmtime_r(t: *const i64, tm: *mut libc::tm) -> *mut libc::tm;
+    fn random() -> std::ffi::c_long;
 }
 
 fn bench(c: &mut Criterion) {
@@ -734,6 +735,18 @@ fn bench(c: &mut Criterion) {
         })
     });
     ggt.finish();
+
+    // ---- random() (PRNG state update; both fl and glibc lock per call).
+    let _ = frankenlibc_core::stdlib::sv_random();
+    let _ = unsafe { random() };
+    let mut grnd = c.benchmark_group("survey_random");
+    grnd.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::stdlib::sv_random()))
+    });
+    grnd.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { random() }))
+    });
+    grnd.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
