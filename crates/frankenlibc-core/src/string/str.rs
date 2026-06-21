@@ -25,16 +25,8 @@ fn has_nul_byte(word: usize) -> bool {
 // (repeated_byte removed: its only user, find_non_byte_or_nul's SWAR small path, is
 // gone — replaced by a direct simd_ne mask scan. bd-2g7oyh.)
 
-#[inline(always)]
-fn has_byte_or_nul_simd_32(chunk: &[u8], byte: u8) -> bool {
-    debug_assert_eq!(chunk.len(), SIMD_LANES);
-    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-    // Fold the needle and NUL comparisons into one mask, then a SINGLE `.any()`
-    // reduction (movemask + test) instead of two — needle==0 collapses to a NUL
-    // scan, which is still correct.
-    let hit = lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(byte));
-    hit.any()
-}
+// (has_byte_or_nul_simd_32 removed: find_byte_or_nul/find_ascii_folded now mask-scan
+// directly, so this bool prefilter is unused. bd-2g7oyh.)
 
 /// Number of 32-byte SIMD panels folded under a single `.any()` reduction. The
 /// reduction (movemask + test) is the per-iteration cost that dominates a flat
@@ -295,36 +287,8 @@ fn byte_is_any4(byte: u8, b0: u8, b1: u8, b2: u8, b3: u8) -> bool {
 // mask directly and return the first set lane via trailing_zeros, so the separate bool
 // helpers + their scalar re-scan are gone. bd-2g7oyh.)
 
-#[inline(always)]
-fn has_ascii_folded_byte_or_nul_simd_32(chunk: &[u8], folded: u8) -> bool {
-    debug_assert_eq!(chunk.len(), SIMD_LANES);
-    if !folded.is_ascii_lowercase() {
-        return has_byte_or_nul_simd_32(chunk, folded);
-    }
-
-    let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-    let hit = lanes.simd_eq(Simd::splat(0))
-        | lanes.simd_eq(Simd::splat(folded))
-        | lanes.simd_eq(Simd::splat(folded.to_ascii_uppercase()));
-    hit.any()
-}
-
-#[inline(always)]
-fn has_ascii_folded_byte_or_nul_simd_folded_128(block: &[u8], folded: u8) -> bool {
-    debug_assert_eq!(block.len(), SIMD_FOLD_BYTES);
-    debug_assert!(folded.is_ascii_lowercase());
-
-    let lower = Simd::<u8, SIMD_LANES>::splat(folded);
-    let upper = Simd::<u8, SIMD_LANES>::splat(folded.to_ascii_uppercase());
-    let zero = Simd::<u8, SIMD_LANES>::splat(0);
-    let mut acc = Mask::<i8, SIMD_LANES>::splat(false);
-    for k in 0..SIMD_FOLD_PANELS {
-        let lo = k * SIMD_LANES;
-        let lanes = Simd::<u8, SIMD_LANES>::from_slice(&block[lo..lo + SIMD_LANES]);
-        acc |= lanes.simd_eq(zero) | lanes.simd_eq(lower) | lanes.simd_eq(upper);
-    }
-    acc.any()
-}
+// (has_ascii_folded_byte_or_nul_simd_32 + _folded_128 removed: find_ascii_folded_byte_or_nul
+// now uses a direct 3-way mask scan, so these bool prefilters are unused. bd-2g7oyh.)
 
 #[inline]
 fn byte_membership_table(bytes: &[u8]) -> [bool; 256] {
@@ -789,29 +753,32 @@ fn find_ascii_folded_byte_or_nul(s: &[u8], folded: u8) -> usize {
         return find_byte_or_nul(s, folded);
     }
 
+    // First `folded`-or-`upper`-or-NUL lane via a direct 3-way mask scan +
+    // trailing_zeros (one movemask/64), replacing the prior coarse-check + scalar
+    // byte-by-byte re-scan of the flagged block (strcasestr was ~1.4x slower than
+    // glibc; bd-2g7oyh). Byte-identical to the scalar `==0 || ==folded || ==upper`.
     let upper = folded.to_ascii_uppercase();
     let mut base = 0usize;
-
-    while base + SIMD_FOLD_BYTES <= s.len() {
-        let block = &s[base..base + SIMD_FOLD_BYTES];
-        if has_ascii_folded_byte_or_nul_simd_folded_128(block, folded) {
-            for (j, &byte) in block.iter().enumerate() {
-                if byte == 0 || byte == folded || byte == upper {
-                    return base + j;
-                }
-            }
+    let f64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(folded);
+    let u64v = Simd::<u8, STRLEN_SIMD_LANES>::splat(upper);
+    let z64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
+    while base + STRLEN_SIMD_LANES <= s.len() {
+        let v = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&s[base..base + STRLEN_SIMD_LANES]);
+        let bits = (v.simd_eq(f64) | v.simd_eq(u64v) | v.simd_eq(z64)).to_bitmask();
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
         }
-        base += SIMD_FOLD_BYTES;
+        base += STRLEN_SIMD_LANES;
     }
 
+    let f32 = Simd::<u8, SIMD_LANES>::splat(folded);
+    let u32v = Simd::<u8, SIMD_LANES>::splat(upper);
+    let z32 = Simd::<u8, SIMD_LANES>::splat(0);
     while base + SIMD_LANES <= s.len() {
-        let chunk = &s[base..base + SIMD_LANES];
-        if has_ascii_folded_byte_or_nul_simd_32(chunk, folded) {
-            for (j, &byte) in chunk.iter().enumerate() {
-                if byte == 0 || byte == folded || byte == upper {
-                    return base + j;
-                }
-            }
+        let v = Simd::<u8, SIMD_LANES>::from_slice(&s[base..base + SIMD_LANES]);
+        let bits = (v.simd_eq(f32) | v.simd_eq(u32v) | v.simd_eq(z32)).to_bitmask();
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
         }
         base += SIMD_LANES;
     }
