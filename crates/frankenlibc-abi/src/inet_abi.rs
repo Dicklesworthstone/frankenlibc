@@ -111,11 +111,11 @@ unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
 
 /// Borrowed (allocation-free) variant of [`read_bounded_cstr`]: returns the
 /// bounded, NUL-terminated input as a slice that aliases `ptr` directly. Use this
-/// where the bytes are only READ within the call (e.g. the inet_pton parser, which
-/// consumes the slice and never retains it) — the owning `to_vec` copy was a
-/// per-call malloc+memcpy+free on these hot, pure conversions. MEASURED:
-/// inet_pton 209ns -> 134ns (byte-identical; vs glibc 17ns). Same bounded-read
-/// safety (rejects non-NUL-terminated pointers at the boundary).
+/// where the bytes are only READ within the call (e.g. the inet_pton/aton/addr
+/// parsers, which consume the slice and never retain it) — the owning `to_vec`
+/// copy was a per-call malloc+memcpy+free on these hot, pure conversions.
+/// MEASURED: inet_pton 209ns -> 134ns (byte-identical; vs glibc 17ns). Same
+/// bounded-read safety (rejects non-NUL-terminated pointers at the boundary).
 #[inline]
 unsafe fn read_bounded_cstr_ref<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
     if ptr.is_null() {
@@ -338,13 +338,14 @@ pub unsafe extern "C" fn inet_aton(cp: *const c_char, inp: *mut u32) -> c_int {
         return 0;
     }
 
-    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
-    let Some(src_bytes) = (unsafe { read_bounded_cstr(cp) }) else {
+    // Bounded read — see bd-z4k96 class. (REVIEW round 5.) Borrowed (no-alloc):
+    // the BSD parser consumes src_bytes read-only and never retains it.
+    let Some(src_bytes) = (unsafe { read_bounded_cstr_ref(cp) }) else {
         runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
         return 0;
     };
     let mut octets = [0u8; 4];
-    let rc = inet_core::inet_aton(&src_bytes, &mut octets);
+    let rc = inet_core::inet_aton(src_bytes, &mut octets);
     if rc == 1 {
         // Write as network-byte-order u32 (same as in_addr.s_addr)
         unsafe { *inp = u32::from_ne_bytes(octets) };
@@ -395,12 +396,13 @@ pub unsafe extern "C" fn inet_addr(cp: *const c_char) -> u32 {
         return inet_core::INADDR_NONE;
     }
 
-    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
-    let Some(src_bytes) = (unsafe { read_bounded_cstr(cp) }) else {
+    // Bounded read — see bd-z4k96 class. (REVIEW round 5.) Borrowed (no-alloc):
+    // the BSD parser consumes src_bytes read-only and never retains it.
+    let Some(src_bytes) = (unsafe { read_bounded_cstr_ref(cp) }) else {
         runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
         return inet_core::INADDR_NONE;
     };
-    let result = inet_core::inet_addr(&src_bytes);
+    let result = inet_core::inet_addr(src_bytes);
     runtime_policy::observe(
         ApiFamily::Inet,
         decision.profile,
