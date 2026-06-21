@@ -1015,9 +1015,23 @@ fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) 
             t.simd_gt(range_v).any()
         };
         if stop {
-            for (j, &byte) in block.iter().enumerate() {
-                if byte == 0 || (table[byte as usize] == stop_in_set) {
-                    return base + j;
+            // Mask-resolve the first stop lane (range test == real `table` membership,
+            // proven by the caller) instead of a scalar byte re-scan of the block —
+            // strspn/strcspn(range) was ~10x slower than glibc (bd-2g7oyh). Runs only
+            // on the one flagged (stop) block, so the coarse fold's long-span
+            // throughput is preserved.
+            for k in 0..PANELS {
+                let off = base + k * PANEL;
+                let p = Simd::<u8, PANEL>::from_slice(&block[k * PANEL..(k + 1) * PANEL]);
+                let member = (p - lo_v).simd_le(range_v);
+                let stopmask = if stop_in_set {
+                    member | p.simd_eq(zero_v)
+                } else {
+                    !member
+                };
+                let bits = stopmask.to_bitmask();
+                if bits != 0 {
+                    return off + bits.trailing_zeros() as usize;
                 }
             }
         }
@@ -1032,17 +1046,16 @@ fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) 
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
         let member = lanes.simd_ge(lower) & lanes.simd_le(upper);
-        let stop = if stop_in_set {
-            lanes.simd_eq(zero).any() || member.any()
+        // Direct stop-mask resolve (range test == real `table` membership) — no
+        // scalar re-scan of the flagged chunk (bd-2g7oyh).
+        let stopmask = if stop_in_set {
+            member | lanes.simd_eq(zero)
         } else {
-            !member.all()
+            !member
         };
-        if stop {
-            for (j, &byte) in chunk.iter().enumerate() {
-                if byte == 0 || (table[byte as usize] == stop_in_set) {
-                    return base + j;
-                }
-            }
+        let bits = stopmask.to_bitmask();
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
         }
         base += SIMD_LANES;
     }

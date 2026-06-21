@@ -813,6 +813,28 @@ fn bench(c: &mut Criterion) {
     });
     gsp1.finish();
 
+    // ---- strspn(range) — 300 digits with a non-digit 'X' at 100, accept "0..9"
+    // (contiguous range → span_range scalar-block-resolve).
+    let spr: Vec<u8> = {
+        let mut v = vec![b'5'; 300];
+        v[100] = b'X';
+        v[299] = 0;
+        v
+    };
+    let spr_acc = b"0123456789\0";
+    let core_spr = core_str::strspn(&spr, spr_acc);
+    let gl_spr = unsafe { strspn(spr.as_ptr().cast::<c_char>(), c"0123456789".as_ptr()) };
+    assert_eq!(core_spr, 100, "strspn-range core wrong");
+    assert_eq!(core_spr, gl_spr, "strspn-range vs glibc mismatch");
+    let mut gspr = c.benchmark_group("survey_strspn_range");
+    gspr.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strspn(black_box(&spr), spr_acc)))
+    });
+    gspr.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strspn(black_box(spr.as_ptr().cast::<c_char>()), c"0123456789".as_ptr()) }))
+    });
+    gspr.finish();
+
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
 }
