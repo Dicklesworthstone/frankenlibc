@@ -961,6 +961,28 @@ fn bench(c: &mut Criterion) {
     });
     gwcn.finish();
 
+    // ---- wmemchr (bounded wide find). glibc's wmemchr IS SIMD (unlike its scalar
+    // wcschrnul) — a real head-to-head. 1000 wide, 'Z' at 900, n=1000.
+    let wmc: Vec<u32> = {
+        let mut v = vec![b'a' as u32; 1000];
+        v[900] = b'Z' as u32;
+        v
+    };
+    let wmc_core = frankenlibc_core::string::wide::wmemchr(&wmc, b'Z' as u32, wmc.len()).unwrap();
+    let wmc_gl = unsafe {
+        (wmemchr(wmc.as_ptr().cast::<i32>(), b'Z' as i32, wmc.len()) as usize - wmc.as_ptr() as usize) / 4
+    };
+    assert_eq!(wmc_core, 900, "wmemchr core wrong");
+    assert_eq!(wmc_gl, 900, "wmemchr glibc wrong");
+    let mut gwmc = c.benchmark_group("survey_wmemchr");
+    gwmc.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wmemchr(black_box(&wmc), b'Z' as u32, wmc.len())))
+    });
+    gwmc.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wmemchr(black_box(wmc.as_ptr().cast::<i32>()), b'Z' as i32, wmc.len()) }))
+    });
+    gwmc.finish();
+
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
 }

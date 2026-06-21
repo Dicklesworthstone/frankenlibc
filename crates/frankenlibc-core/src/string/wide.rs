@@ -1072,40 +1072,23 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     // of one per 16. The scalar tail resolves the leftmost match in a flagged
     // block, so the returned index is identical to the per-chunk scan.
     const PANEL: usize = WIDE_FIND_LONG_SIMD_LANES; // 64
-    const BLOCK: usize = PANEL * 4; // 256
     let count = n.min(s.len());
     let scan = &s[..count];
     let target = Simd::<u32, PANEL>::splat(c);
-    let zero = Simd::<u32, PANEL>::splat(0);
     let mut base = 0usize;
 
-    while base + BLOCK <= count {
-        let block = &scan[base..base + BLOCK];
-        let p0 = Simd::<u32, PANEL>::from_slice(&block[0..PANEL]) ^ target;
-        let p1 = Simd::<u32, PANEL>::from_slice(&block[PANEL..2 * PANEL]) ^ target;
-        let p2 = Simd::<u32, PANEL>::from_slice(&block[2 * PANEL..3 * PANEL]) ^ target;
-        let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]) ^ target;
-        let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
-        if folded.simd_eq(zero).any() {
-            // Resolve the first matching panel + lane via masks (O(1)) instead of a
-            // scalar enumerate of the 256-element block (bd-2g7oyh). p0..p3 are
-            // already `panel ^ c`, so a zero lane is exactly a match.
-            let m0 = p0.simd_eq(zero).to_bitmask();
-            if m0 != 0 {
-                return Some(base + m0.trailing_zeros() as usize);
-            }
-            let m1 = p1.simd_eq(zero).to_bitmask();
-            if m1 != 0 {
-                return Some(base + PANEL + m1.trailing_zeros() as usize);
-            }
-            let m2 = p2.simd_eq(zero).to_bitmask();
-            if m2 != 0 {
-                return Some(base + 2 * PANEL + m2.trailing_zeros() as usize);
-            }
-            let m3 = p3.simd_eq(zero).to_bitmask();
-            return Some(base + 3 * PANEL + m3.trailing_zeros() as usize);
+    // Direct 64-lane mask scan: one `simd_eq(c).to_bitmask()` per panel, resolved by
+    // `trailing_zeros`. The prior 256-block min-FOLD (4 XOR + 3 simd_min + .any() per
+    // block) did MORE vector work than a plain per-panel movemask and measured ~2.6x
+    // slower than glibc's wmemchr; the direct mask scan (the find_byte_or_nul lesson)
+    // removes the fold overhead. Byte-identical: same leftmost match. bd-2g7oyh.
+    while base + PANEL <= count {
+        let v = Simd::<u32, PANEL>::from_slice(&scan[base..base + PANEL]);
+        let m = v.simd_eq(target).to_bitmask();
+        if m != 0 {
+            return Some(base + m.trailing_zeros() as usize);
         }
-        base += BLOCK;
+        base += PANEL;
     }
 
     // Tail (< 256 wide chars): 16-lane chunks, then scalar.
