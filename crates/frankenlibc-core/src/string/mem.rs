@@ -272,13 +272,9 @@ fn has_byte_u64(word: u64, byte: u8) -> bool {
     zero_byte_u64(word ^ u64::from_ne_bytes([byte; WORD]))
 }
 
-#[inline(always)]
-fn has_byte_simd_32(chunk: &[u8], byte: u8) -> bool {
-    debug_assert_eq!(chunk.len(), SIMD_LANES);
-    Simd::<u8, SIMD_LANES>::from_slice(chunk)
-        .simd_eq(Simd::splat(byte))
-        .any()
-}
+// (has_byte_simd_32 removed: memrchr's two scanners now compute the lane mask and
+// return the last match via 63 - leading_zeros, so the bool prefilter is unused.
+// bd-2g7oyh.)
 
 #[inline(always)]
 fn byte_mask_simd_32(chunk: &[u8], byte: u8) -> u64 {
@@ -424,9 +420,13 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         if has_byte_memchr_folded(block, needle) {
             let mut panel_end = end;
             for chunk in block.rchunks_exact(SIMD_LANES) {
-                if has_byte_simd_32(chunk, needle)
-                    && let Some(j) = chunk.iter().rposition(|&b| b == needle)
-                {
+                // Highest set lane (last match) via the SIMD mask — O(1) instead of a
+                // scalar reverse re-scan (`rposition`) of the whole flagged chunk
+                // (bd-2g7oyh: the rposition re-scan made memrchr ~3x slower than glibc).
+                let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+                let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
+                if bits != 0 {
+                    let j = 63 - bits.leading_zeros() as usize;
                     return Some(panel_end - SIMD_LANES + j);
                 }
                 panel_end -= SIMD_LANES;
@@ -439,9 +439,12 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let mut simd_chunks = hs.rchunks_exact(SIMD_LANES);
 
     for chunk in simd_chunks.by_ref() {
-        if has_byte_simd_32(chunk, needle)
-            && let Some(j) = chunk.iter().rposition(|&b| b == needle)
-        {
+        // Highest set lane via the SIMD mask — O(1) instead of a scalar reverse
+        // re-scan (`rposition`) of the flagged chunk (bd-2g7oyh).
+        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+        let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
+        if bits != 0 {
+            let j = 63 - bits.leading_zeros() as usize;
             return Some(end - SIMD_LANES + j);
         }
         end -= SIMD_LANES;

@@ -21,6 +21,7 @@ unsafe extern "C" {
     fn strpbrk(s: *const c_char, accept: *const c_char) -> *const c_char;
     fn strstr(h: *const c_char, n: *const c_char) -> *const c_char;
     fn strcasestr(h: *const c_char, n: *const c_char) -> *const c_char;
+    fn memrchr(s: *const c_void, c: c_int, n: usize) -> *const c_void;
 }
 
 fn bench(c: &mut Criterion) {
@@ -119,6 +120,26 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { strcasestr(black_box(hay.as_ptr()), c"NEEDLE_HERE".as_ptr()) }))
     });
     g3.finish();
+    // ---- memrchr (reverse byte search) — match IN-CHUNK near the start so the
+    // reverse scan reaches a flagged chunk (exercises the rposition re-scan).
+    let mbuf: Vec<u8> = {
+        let mut v = vec![b'a'; 200]; // >=128 so memrchr's folded block + inner loop runs
+        v[100] = b'X';
+        v
+    };
+    let core_mr = frankenlibc_core::string::mem::memrchr(&mbuf, b'X', mbuf.len());
+    let gl_mr = unsafe { memrchr(mbuf.as_ptr().cast::<c_void>(), b'X' as c_int, mbuf.len()) };
+    assert_eq!(core_mr.is_some(), !gl_mr.is_null(), "memrchr found-ness mismatch");
+    assert_eq!(core_mr, Some(100), "memrchr position wrong");
+    let mut gm = c.benchmark_group("survey_memrchr");
+    gm.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::mem::memrchr(black_box(&mbuf), b'X', mbuf.len())))
+    });
+    gm.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { memrchr(black_box(mbuf.as_ptr().cast::<c_void>()), b'X' as c_int, mbuf.len()) }))
+    });
+    gm.finish();
+
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
 }
