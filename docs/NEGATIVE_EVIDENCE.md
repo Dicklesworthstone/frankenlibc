@@ -2785,6 +2785,39 @@ a **small-input regression** vs glibc. REAL LEVERS (highest first): wcschr 2.59x
 2.44x, memrchr 2.43x, strcmp 2.39x, wcsrchr 2.04x — add a scalar short-input fast path before
 the SIMD entry (glibc does exactly this). All need a rebuild to fix/verify (disk-gated).
 
+### 2026-06-22 — survey part 2 (wide family + leftovers): MIXED — the pattern refines
+
+Completed the survey (all current, gate empty for wcs/wmem/strlen/strrchr/strtok/rawmemchr).
+The picture is NOT uniformly "small ops lose" — it splits by operation kind:
+
+LOSSES (char search/compare — SIMD setup doesn't amortize short):
+| op | fl core | glibc | ratio |
+|---|---|---|---|
+| `strspn_range` | 23.23 ns | 5.16 ns | **4.50x** ← worst lever found |
+| `wcsncmp` | 6.52 ns | 3.53 ns | 1.85x |
+| `strrchr` | 12.64 ns | 7.16 ns | 1.77x |
+| `wcslen_long` | 11.09 ns | 7.93 ns | 1.40x |
+| `wmemchr_long` | 10.72 ns | 7.80 ns | 1.37x |
+| `strlen` (short) | 8.03 ns | 6.53 ns | 1.23x |
+
+WINS (bitmap-set scans, SIMD fills/copies, locale-bound):
+| op | fl core | glibc | ratio | note |
+|---|---|---|---|---|
+| `wcscasecmp` | 7.77 ns | 154.8 ns | 0.05x | glibc is locale-slow; fl crushes it 20x |
+| `wcscspn` | 24.57 ns | 62.03 ns | 0.40x | bitmap set-scan beats glibc per-char |
+| `wcspbrk` | 28.92 ns | 62.07 ns | 0.47x | bitmap set-scan |
+| `wmemset` | 8.65 ns | 16.54 ns | 0.52x | SIMD fill |
+| `wmemcpy` | 9.48 ns | 13.23 ns | 0.72x | SIMD copy |
+| `strspn1` | 4.16 ns | 5.04 ns | 0.83x | single-char strspn |
+| `strtok_r` | 21.19 ns | 23.83 ns | 0.89x | parity-ish |
+| `wcsspn` | 18.13 ns | 20.15 ns | 0.90x | |
+
+**Refined model:** fl WINS on (a) multi-char bitmap set-scans (cspn/pbrk with real sets),
+(b) SIMD fills/copies, (c) locale-bound glibc functions; fl LOSES on simple char
+search/compare/strlen at SHORT inputs (wcschr/strrchr/strlen/wcsncmp…) AND on `strspn_range`
+(4.50x — a range-class set where glibc's table beats fl's path). Top levers: `strspn_range`
+4.50x, then the short-input search/compare family (scalar fast-path before SIMD). Rebuild-gated.
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
