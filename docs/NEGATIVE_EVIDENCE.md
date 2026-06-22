@@ -2852,18 +2852,23 @@ BEFORE the ≤16 `span_scan` branch, and route to `span_range` — no table invo
 commit 22a595f97's "skip the 256-byte table" framing was the wrong mechanism; this is the
 right one.) Short-input search/compare levers still want a scalar fast path before SIMD entry.
 
-**ROOT CAUSE (source analysis, no build) — short-input search/compare family (strcmp 2.4x,
-memrchr 2.3x, wcschr 2.3x):** these enter SIMD block/chunk machinery with no compact
-small-size path, so short inputs pay pure setup before the scalar fallback. `strcmp`
-(str.rs L385): `strcmp_exact_256` probe + alignment computation + align-prefix byte loop +
-cascading 128-byte-fold and 32-byte loop-bound guards (all fail for short) → scalar tail.
-`memrchr` (mem.rs L425): builds `rchunks_exact(128)` then `rchunks_exact(32)` iterators
-(both empty for <32-byte haystacks) before the scalar remainder. `wcschr` (wide.rs L589):
-same SIMD-first shape. glibc has a tight small-size loop up front. FIX (rebuild-turn): add a
-single `if len <= SIMD_LANES { /* tight scalar loop */ }` guard at the top of each (and the
-sibling memchr/strchr/strrchr/wcs* primitives) — preserves the large-input SIMD wins,
-removes the short-input setup tax. **All validated levers now root-caused at source level —
-a build-allowed turn can implement directly without re-investigation.**
+**ROOT CAUSE — search/compare family (strcmp 2.4x, memrchr 2.3x, wcschr 2.3x) — CORRECTED
+2026-06-22:** ⚠️ My "short-input, missing scalar fast-path" diagnosis was WRONG — verified
+against the bench workloads, which are MODERATE-size and explicitly sized to RUN the SIMD
+path: strcmp 64-byte buffers diverging at index 30 (L252), memrchr 200-byte buffer "≥128 so
+the folded block + inner loop runs" X at 100 (L160), wcschr 60 wide chars X at 30 (L179),
+wcsrchr 128 wide chars (L200). So a `len <= SIMD_LANES` guard (earlier commit b31de0452)
+would NOT help — the SIMD path is already running and is still ~2.3x slower than glibc.
+The real gap is per-kernel SIMD efficiency: (a) `strcmp` (str.rs L385) pays a `strcmp_exact_256`
+probe + alignment computation + align-prefix byte loop as fixed setup before its single
+32-byte chunk even when the diff is at byte 30 — setup-elision would help here specifically;
+(b) `memrchr`/`wcschr`/`wcsrchr` fully run their fold-block + per-chunk-reduction SIMD and are
+still beaten by glibc's AVX2 reverse/forward scan — a deeper kernel rewrite (reduction
+granularity, fewer ops/chunk), NOT a quick guard. RECLASSIFIED: these are HARDER levers than
+strspn_range; `strspn_range` (range-detect before the ≤16 branch) remains the
+highest-confidence, cleanest fix. **Meta-lesson: root-cause MUST be validated against the
+actual bench workload, not just the impl's dispatch — source-only analysis gave 2 wrong
+diagnoses (this + strspn_range), both caught by reading the bench definitions.**
 
 ### 2026-06-22 — survey part 3: time-formatting + PRNG (current) — asctime big WIN
 
