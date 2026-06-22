@@ -439,6 +439,7 @@ stable yardstick, the only worker-invariant reference):
 | `iconv` utf32le→utf8 2-byte (Cyrillic) | 1450.2 ns | 694.5 ns | 1491 ns | **0.97x parity → 0.466x WIN** (2.09x self, stash A/B) | UTF-32 source: 32-byte load + 4-way deinterleave reassembly |
 | `iconv` utf32le→utf8 3-byte (CJK) | 1801.4 ns | 892.3 ns | 1562 ns | **1.15x LOSS → 0.571x WIN** (2.02x self, stash A/B) | same UTF-32 source fix on the 3-byte run (16-byte load) |
 | `iconv` utf8→utf32le 2-byte (Cyrillic) | 595.0 ns | 488.3 ns | 1251 ns | **0.46x → 0.39x WIN** (1.22x self, stash A/B) | forward UTF-32 store: 2-swizzle interleave-then-widen-with-zero (MATRIX COMPLETE) |
+| `iconv` cp932→utf8 (Shift-JIS, CJK) | 601.1 ns | 392.7 ns | 414 ns | **1.49x LOSS → 0.95x WIN** (1.53x self) | ⭐ SIMD GATHER decode (`Simd::gather_or(dbcs_direct,..)`) + 3-byte encode — new technique class |
 
 Validation (byte-identical vs LIVE glibc): parse_ipv6 — 40k-round
 `inet_pton_ntop_differential_fuzz` + `conformance_diff_inet_pton6_edges` + 150

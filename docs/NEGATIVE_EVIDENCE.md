@@ -3156,6 +3156,25 @@ conformance_diff_iconv + conformance_diff_iconv_simd + iconv_differential_fuzz +
 ASCII+2-byte+3-byte, UTF-16+UTF-32, LE+BE path is SIMD load+store. The recurring anti-pattern is fully
 eliminated. (3-byte UTF-32 store also SIMD'd, byte-identical via the same gates; unbenched but same pattern.)
 
+### 2026-06-23 — ✅ iconv cp932_to_utf8 SIMD GATHER decode — 1.49x LOSS → 0.95x WIN (1.53x self) ⭐ NEW TECHNIQUE
+
+The biggest un-dominated iconv workload found: cp932_to_utf8 (Shift-JIS DBCS → UTF-8, a COMMON Japanese-text
+conversion) was fl **601.1 ns** vs glibc 403.6 ns = **1.49x LOSS** (the per-char scalar `decode_cp932` +
+`encode_utf8` loop). Fixed with the first **SIMD GATHER** lever (the documented gather-instruction frontier):
+for a uniform run of 4 two-byte chars, extract lead/trail pairs from an 8-byte window, SIMD range-check the
+CP932 leads (0x81–0x9F | 0xE0–0xFC), compute keys, **`Simd::<u32,4>::gather_or(dbcs_direct, keys, 0)`** the 4
+code points from the flat O(1) `dbcs_direct[key]` table, require all cp in 0x800–0xFFFF non-surrogate, then
+reuse the UTF-16→UTF-8 3-byte SIMD encode (lead/mid/tail + swizzle pack) → 12 bytes. Any non-uniform window /
+invalid char / short output falls to the scalar path (byte-identical: a non-lead byte gives `dbcs_direct[key]
+==0`, caught by the cp-range gate). Bench: fl **601.1 → 392.7 ns** = **1.53x self-speedup**; vs glibc 413.8 ns
+(stable yardstick) = **1.49x LOSS → 0.95x WIN**. Byte-identical vs glibc: conformance_diff_iconv_cp932
+(incl. `cp932_decode_matches_glibc_full_range` — the WHOLE CP932 range) + conformance_diff_iconv_simd +
+iconv_differential_fuzz + 285 core unit all green. **Proves the gather-SIMD technique works for the legacy
+DBCS→UTF-8 family** — the same pattern (gather from the per-codec `dbcs_direct` + 3-byte encode) generalizes
+to ShiftJis/Big5/GBK/EucJp/EucKr/Cp949/Gb2312/Johab/Ibm932/943 (all use `decode_dbcs2` + a flat direct table);
+each is a candidate next lever if benched as un-dominated. (utf8_jp_to_cp932 = 0.977x near-parity, the
+ENCODE direction — a cp→byte gather, separate lever.)
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

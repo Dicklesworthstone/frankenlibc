@@ -24646,6 +24646,63 @@ pub fn iconv(
             }
         }
 
+        // SIMD fast path: CP932 -> UTF-8 for a uniform run of 4 two-byte chars that
+        // all map to a 3-byte (BMP, non-surrogate) UTF-8 sequence — the common
+        // Shift-JIS Japanese-text shape, where the per-char scalar decode+encode loop
+        // below was ~1.49x slower than glibc. Extract 4 lead/trail pairs from an
+        // 8-byte window; range-check the leads (0x81..=0x9F | 0xE0..=0xFC = CP932's
+        // 2-byte leads — a 1-byte ASCII/katakana byte fails this so mixed/misaligned
+        // windows fall through); SIMD-gather the code points from the O(1)
+        // `dbcs_direct[key]` table; require every cp in 0x800..=0xFFFF non-surrogate
+        // (so `decode_cp932` + `char::encode_utf8` would emit exactly one 3-byte
+        // sequence each — a non-lead byte gives `dbcs_direct[key]==0`, caught here);
+        // then encode 4 cps -> 12 bytes with the SAME lead/mid/tail SIMD pack as the
+        // UTF-16->UTF-8 3-byte run. Byte-for-byte identical to the scalar path; any
+        // non-uniform window / invalid char / short output breaks to it for the exact
+        // decode + EILSEQ/E2BIG ordering. (bd-2g7oyh iconv cp932_to_utf8.)
+        if cd.to == Encoding::Utf8 && from_enc == Encoding::Cp932 {
+            let direct = cp932_decode_direct();
+            while in_pos + 8 <= input.len() && out_pos + 12 <= outbuf.len() {
+                let raw = Simd::<u8, 8>::from_slice(&input[in_pos..in_pos + 8]);
+                let leads = std::simd::simd_swizzle!(raw, [0, 2, 4, 6]);
+                let trails = std::simd::simd_swizzle!(raw, [1, 3, 5, 7]);
+                let lead_ok = (leads.simd_ge(Simd::splat(0x81))
+                    & leads.simd_le(Simd::splat(0x9F)))
+                    | (leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xFC)));
+                if !lead_ok.all() {
+                    break;
+                }
+                let keys = (leads.cast::<u32>() << Simd::splat(8)) | trails.cast::<u32>();
+                let cps =
+                    Simd::<u32, 4>::gather_or(direct, keys.cast::<usize>(), Simd::splat(0));
+                let bmp_ok = cps.simd_ge(Simd::splat(0x800)) & cps.simd_le(Simd::splat(0xFFFF));
+                let sur_ok = cps.simd_lt(Simd::splat(0xD800)) | cps.simd_gt(Simd::splat(0xDFFF));
+                if !(bmp_ok & sur_ok).all() {
+                    break;
+                }
+                let leadb = ((cps >> Simd::splat(12)) | Simd::splat(0xE0)).cast::<u8>();
+                let mids =
+                    (((cps >> Simd::splat(6)) & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+                let tails = ((cps & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
+                let lead_mid = std::simd::simd_swizzle!(leadb, mids, [0, 4, 1, 5, 2, 6, 3, 7]);
+                let zero = Simd::<u8, 4>::splat(0);
+                let tails_padded =
+                    std::simd::simd_swizzle!(tails, zero, [0, 4, 1, 4, 2, 4, 3, 4]);
+                let bytes = std::simd::simd_swizzle!(
+                    lead_mid,
+                    tails_padded,
+                    [0, 1, 8, 2, 3, 10, 4, 5, 12, 6, 7, 14, 0, 0, 0, 0]
+                );
+                let packed = bytes.to_array();
+                outbuf[out_pos..out_pos + 12].copy_from_slice(&packed[..12]);
+                in_pos += 8;
+                out_pos += 12;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         // Fast path: DBCS -> UTF-8. Inline the (now direct-table O(1)) per-codec
         // decoder + a direct UTF-8 encode, so the steady state skips both 100-arm
         // dispatches (decode_char + encode_char) and the encode_one wrapper. The
