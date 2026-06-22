@@ -251,6 +251,11 @@ fn bench(c: &mut Criterion) {
     // GBK (Simplified Chinese, 2-byte DBCS) -> UTF-8: the gather-SIMD generalization.
     let gbk_src = host_to(b"GBK\0", &cjk);
     run_conv(c, "gbk_to_utf8", b"UTF-8\0", b"GBK\0", &gbk_src);
+    // CP949/UHC (Korean Hangul) -> UTF-8: probe glibc speed (Korean codec, full Hangul source).
+    let hangul_cps: Vec<u32> = (0..512u32).map(|k| 0xAC00 + (k % 0x800)).collect();
+    let hangul = u8enc(&hangul_cps);
+    let cp949_src = host_to(b"CP949\0", &hangul);
+    run_conv(c, "cp949_to_utf8", b"UTF-8\0", b"CP949\0", &cp949_src);
 }
 
 criterion_group!(benches, bench);

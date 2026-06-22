@@ -19597,14 +19597,17 @@ fn decode_euckr(input: &[u8]) -> Result<(char, usize), DecodeError> {
     )
 }
 
-fn decode_cp949(input: &[u8]) -> Result<(char, usize), DecodeError> {
+fn cp949_decode_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::CP949_DBCS));
+    DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::CP949_DBCS))
+}
+
+fn decode_cp949(input: &[u8]) -> Result<(char, usize), DecodeError> {
     decode_dbcs2(
         input,
         &cjk_tables::CP949_ONE_BYTE,
         &cjk_tables::CP949_IS_LEAD,
-        direct,
+        cp949_decode_direct(),
     )
 }
 
@@ -24685,6 +24688,10 @@ pub fn iconv(
             // exactly `decode_eucjp`'s `eucjp_dbcs2_decode_direct[key]` lookup.
             Encoding::EucJp => Some((eucjp_dbcs2_decode_direct(), 0xA1, 0xFE, 0xFF, 0x00)),
             Encoding::EucJpMs => Some((eucjpms_dbcs2_decode_direct(), 0xA1, 0xFE, 0xFF, 0x00)),
+            // CP949/UHC (Korean): 2-byte leads 0x81..=0xFE; 1-byte ASCII < 0x81 fails
+            // the lead check so mixed windows fall to scalar. Hangul maps to BMP
+            // (U+AC00..) = 3-byte UTF-8, so the cp-range gate passes.
+            Encoding::Cp949 => Some((cp949_decode_direct(), 0x81, 0xFE, 0xFF, 0x00)),
             _ => None,
         };
         if cd.to == Encoding::Utf8

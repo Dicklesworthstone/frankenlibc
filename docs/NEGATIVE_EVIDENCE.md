@@ -3275,6 +3275,20 @@ conformance_diff_iconv_simd + iconv_differential_fuzz + 285 core unit all green.
 criterion: gather wins big when scalar is slow (SS-branches / cache-bound) AND wins OUTRIGHT when glibc is
 also slow. 3 gather WINS now (cp932 0.95x, GBK 0.46x, EucJpMs 0.68x) + EucJp loss-elimination (6.2x→1.11x).
 
+### 2026-06-23 — ✅ cp949_to_utf8 gather — 6.1x LOSS → 0.43x WIN (15.1x self-speedup) ⭐⭐ BIGGEST of session
+
+CP949/UHC (Korean Hangul) → UTF-8: probe-first with a full-Hangul source (U+AC00.., all in UHC) found fl
+SCALAR **16374 ns** / glibc **2671 ns** = **6.1x LOSS** — fl's scalar is PATHOLOGICALLY slow (32 ns/char!)
+because 512 DIVERSE Hangul over the 256 KB `cp949_decode_direct` table = 512 cache MISSES with full per-char
+`decode_dbcs2` overhead. Exposed `cp949_decode_direct()`, added the gather arm (lead 0x81..=0xFE, Hangul→BMP
+3-byte). A/B (clean): OLD scalar fl **16374 → NEW gather fl 1086.4 ns = 15.1x SELF-SPEEDUP** (biggest of the
+whole session); vs glibc **2541 ns = 6.1x LOSS → 0.43x WIN**. The gather pipelines the cache misses (4/iter)
++ kills per-char overhead, and glibc's Korean gconv is slow (2541) so fl wins handily. Byte-identical:
+conformance_diff_iconv_simd + iconv_differential_fuzz + 285 core unit all green. **The gather's BIGGEST wins
+are CACHE-BOUND-scalar codecs (diverse code points → table thrash): Cp949 15.1x, GBK 5.45x.** 4 gather WINS
+(cp932 0.95x, GBK 0.46x, EucJpMs 0.68x, Cp949 0.43x) + EucJp loss-elim. NEXT: other Korean/diverse-cp codecs
+(Johab, EucKr-with-Hangul) likely the same cache-bound-scalar + slow-glibc → big win; probe with Hangul.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
