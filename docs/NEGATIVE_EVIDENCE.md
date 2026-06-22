@@ -2754,6 +2754,16 @@ glibc arm), not the shared reduction path. Both current, sane, WIN:
 recovery. With cos+tan, the f64+f32 math surface is now confirmed glibc-beating on every
 measurable function (~32 fns); only `sin`'s glibc-arm hang blocks the last data point.
 
+**CORRECTION (2026-06-22, bench-source check):** the `sin` workload is `sin(x), x in [0.5,2.5)`
+(glibc_baseline_bench.rs L2303) — SMALL normal args, NOT large-arg. So the hang is a
+bench/environment anomaly with NO perf meaning (earlier "robustness win" / large-arg-
+reduction hypothesis was WRONG — retracted). The math benches are batch workloads (per-iter
+sum over an input array), which is why ~200–550 ns medians are normal and the glibc side is
+clean. fl `sin` core = 349 ns ≈ `cos` core 362 ns; since cos WINS 0.65x with the identical
+small-arg batch pattern, `sin` would almost certainly also WIN (~0.6x) if the harness didn't
+hang. Net: sin is not a lever and not a loss — just unmeasurable in THIS harness; confirm via
+a dlmopen sin bench post-recovery.
+
 ### 2026-06-22 — ⭐ MAJOR: SMALL-INPUT string/mem ops LOSE to glibc (clean in-process comparator)
 
 `string_inprocess_survey_bench` (06-21 18:11) uses a REAL in-process glibc comparator
