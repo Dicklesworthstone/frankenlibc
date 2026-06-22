@@ -2818,6 +2818,21 @@ search/compare/strlen at SHORT inputs (wcschr/strrchr/strlen/wcsncmp…) AND on 
 (4.50x — a range-class set where glibc's table beats fl's path). Top levers: `strspn_range`
 4.50x, then the short-input search/compare family (scalar fast-path before SIMD). Rebuild-gated.
 
+### 2026-06-22 — survey part 3: time-formatting + PRNG (current) — asctime big WIN
+
+Last clean survey groups (asctime/gmtime current — the only time commit since build is the
+unrelated `__vdso_time` cache; random current). `rawmemchr` skipped — ambiguous bench labeling.
+
+| op | fl core | glibc | ratio | verdict | note |
+|---|---|---|---|---|---|
+| `asctime` | 20.7 ns | 168.6 ns | 0.12x | WIN | glibc asctime is slow (8x); same shape as wcscasecmp — fl beats glibc's heavy locale/format paths. |
+| `random` | 2.56 ns | 4.03 ns | 0.64x | WIN | PRNG. |
+| `gmtime` | 21.5 ns | 19.3 ns | 1.12x | ~parity (slight loss) | civil-time conversion, near glibc. |
+
+This closes the `string_inprocess_survey` mining. Net across the survey: fl beats glibc on
+heavy/locale/set-scan/SIMD-fill ops, ties on civil-time, and loses on short char
+search/compare and `strspn_range` (the rebuild-gated levers).
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
