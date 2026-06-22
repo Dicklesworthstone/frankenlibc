@@ -24057,6 +24057,46 @@ pub fn iconv(
                     break;
                 }
             }
+            // UTF-32 (LE or BE) ASCII run via a TRUE 32-byte SIMD load (8 units/iter)
+            // instead of the 8-scalar-`cp_at`-read gather below. A unit is ASCII iff
+            // its low byte < 0x80 AND its 3 high bytes are 0; mask each unit's bytes
+            // (0x80 at the low-byte lane, 0xFF at the 3 high lanes) so ASCII <=>
+            // `(v & mask)` is all-zero, then swizzle the 8 low bytes out. LE keeps the
+            // low byte at lane 0 of each 4-lane unit, BE at lane 3. Byte-identical to
+            // the scalar-gather ASCII run that follows; first non-ASCII unit / short
+            // (< 32 B) tail / full output falls through to it and the generic body.
+            if scp == 4 {
+                let mask = if sbe {
+                    Simd::<u8, 32>::from_array([
+                        0xFF, 0xFF, 0xFF, 0x80, 0xFF, 0xFF, 0xFF, 0x80, 0xFF, 0xFF, 0xFF, 0x80,
+                        0xFF, 0xFF, 0xFF, 0x80, 0xFF, 0xFF, 0xFF, 0x80, 0xFF, 0xFF, 0xFF, 0x80,
+                        0xFF, 0xFF, 0xFF, 0x80, 0xFF, 0xFF, 0xFF, 0x80,
+                    ])
+                } else {
+                    Simd::<u8, 32>::from_array([
+                        0x80, 0xFF, 0xFF, 0xFF, 0x80, 0xFF, 0xFF, 0xFF, 0x80, 0xFF, 0xFF, 0xFF,
+                        0x80, 0xFF, 0xFF, 0xFF, 0x80, 0xFF, 0xFF, 0xFF, 0x80, 0xFF, 0xFF, 0xFF,
+                        0x80, 0xFF, 0xFF, 0xFF, 0x80, 0xFF, 0xFF, 0xFF,
+                    ])
+                };
+                while in_pos + 32 <= input.len() && out_pos + 8 <= outbuf.len() {
+                    let v = Simd::<u8, 32>::from_slice(&input[in_pos..in_pos + 32]);
+                    if !(v & mask).simd_eq(Simd::splat(0)).all() {
+                        break;
+                    }
+                    let lo: Simd<u8, 8> = if sbe {
+                        std::simd::simd_swizzle!(v, [3, 7, 11, 15, 19, 23, 27, 31])
+                    } else {
+                        std::simd::simd_swizzle!(v, [0, 4, 8, 12, 16, 20, 24, 28])
+                    };
+                    lo.copy_to_slice(&mut outbuf[out_pos..out_pos + 8]);
+                    in_pos += 32;
+                    out_pos += 8;
+                }
+                if in_pos >= input.len() {
+                    break;
+                }
+            }
             // 1-byte output run (ASCII code points < 0x80): a source unit < 0x80
             // is a UTF-8 byte equal to itself, so narrow each unit's low byte
             // directly. This is the ubiquitous "UTF-16/UTF-32 ASCII text -> UTF-8"

@@ -428,6 +428,8 @@ stable yardstick, the only worker-invariant reference):
 | `inet_net_pton` AF_INET | 20.2 ns | 13.9 ns | 31.5 ns | 0.64x → **0.49x WIN** (1.45x self) | per-call `Vec` → bounded stack array |
 | `iconv` utf16le→utf8 (ASCII) | 2024 ns | 490.9 ns | 1593 ns | 1.27x LOSS → **0.31x WIN** (4.1x self) | scalar `cp_at` gather → true 32-B `Simd::<u8,32>` load + `simd_swizzle!` deinterleave |
 | `iconv` utf16be→utf8 (ASCII) | ~2024 ns | 596.9 ns | 2519 ns | 0.75x → **0.24x WIN** (3.4x self) | same true-SIMD-load run generalized to BE (swap lo/hi swizzle masks) |
+| `iconv` utf32le→utf8 (ASCII) | ~2000 ns | 719.2 ns | 1789 ns | → **0.40x WIN** (~2.8x self) | 4-byte-unit true-SIMD load: `(v & mask)`-zero ASCII check + low-byte swizzle |
+| `iconv` utf32be→utf8 (ASCII) | ~2000 ns | 735.7 ns | 1863 ns | → **0.39x WIN** (~2.8x self) | same, BE low-byte lane = 3 |
 
 Validation (byte-identical vs LIVE glibc): parse_ipv6 — 40k-round
 `inet_pton_ntop_differential_fuzz` + `conformance_diff_inet_pton6_edges` + 150

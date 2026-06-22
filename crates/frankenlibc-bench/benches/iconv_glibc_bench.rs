@@ -187,6 +187,11 @@ fn bench(c: &mut Criterion) {
     // UTF-16BE -> UTF-8 (network/Java byte order): the symmetric BE case.
     let ascii_u16be: Vec<u8> = ascii.iter().flat_map(|&b| [0, b]).collect();
     run_conv(c, "utf16be_ascii_to_utf8", b"UTF-8\0", b"UTF-16BE\0", &ascii_u16be);
+    // UTF-32 LE/BE -> UTF-8 ASCII: 4-byte fixed-width source SIMD run.
+    let ascii_u32le: Vec<u8> = ascii.iter().flat_map(|&b| [b, 0, 0, 0]).collect();
+    run_conv(c, "utf32le_ascii_to_utf8", b"UTF-8\0", b"UTF-32LE\0", &ascii_u32le);
+    let ascii_u32be: Vec<u8> = ascii.iter().flat_map(|&b| [0, 0, 0, b]).collect();
+    run_conv(c, "utf32be_ascii_to_utf8", b"UTF-8\0", b"UTF-32BE\0", &ascii_u32be);
 
     // CJK encode (table-based): UTF-8 Chinese -> GB18030, Japanese -> CP932.
     // ~512 common CJK ideographs (U+4E00..) as 3-byte UTF-8.

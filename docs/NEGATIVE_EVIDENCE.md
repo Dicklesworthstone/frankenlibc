@@ -3058,5 +3058,13 @@ still on the scalar gather (~2024 ns, a marginal 0.75x). Bench (same warm run): 
 fl **596.9 ns** vs glibc **2519.4 ns** = **0.24x WIN** (glibc's BE gconv is even slower than LE);
 utf16le unchanged at fl 410 ns / glibc 1651 ns = 0.25x (refactor did NOT regress LE). Same 3.4x SIMD
 self-speedup as the A/B-measured LE case. Byte-identical: iconv_differential_fuzz + conformance_diff_iconv
-+ golden_iconv_utf8_fastpath + 285 core unit all green. Remaining sibling (UTF-32LE/BE ASCII→UTF-8, 4-byte
-units, rarer) still on the scalar gather — minor, only if benched.
++ golden_iconv_utf8_fastpath + 285 core unit all green.
+
+UPDATE 2 — UTF-32LE/BE ASCII→UTF-8 SIMD'd too (completes the fixed-width→UTF-8 family). 4-byte units: a
+TRUE 32-byte load = 8 units/iter, ASCII iff `(v & mask)` all-zero where `mask` has 0x80 at each unit's
+low-byte lane + 0xFF at its 3 high lanes (LE low lane 0, BE low lane 3), then swizzle the 8 low bytes out.
+Bench: utf32le→utf8 fl **719 ns** vs glibc 1789 ns = **0.40x WIN**; utf32be→utf8 fl **736 ns** vs glibc
+1863 ns = **0.39x WIN** (~2.8x self-speedup vs the scalar gather, same structure that was 2024 ns for
+UTF-16). Byte-identical: dedicated gate `iconv_utf32_to_utf8_simd_matches_glibc` + conformance_diff_iconv_simd
++ iconv_differential_fuzz + 285 core unit all green. **The entire fixed-width Unicode (UTF-16/32, LE/BE)
+→ UTF-8 ASCII surface is now true-SIMD and fl-dominant; no scalar-gather reverse path remains.**
