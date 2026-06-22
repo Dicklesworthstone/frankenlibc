@@ -2718,6 +2718,24 @@ and `strcasestr_absent` were SKIPPED — stale (anchor-choice commits 06-21 afte
 | `strspn_long` | 48.6 ns | 202.4 ns | 0.24x | WIN | Bitmap strspn; 4.2x. |
 | `strstr_absent` | 59.9 ns | 38.7 µs | ~0.0015x | WIN (robustness) | ⚠️ Workload-specific: an adversarial absent needle drives glibc strstr into its pathological worst case (38.7 µs); fl's TwoWay stays linear (60 ns). This is a robustness win, NOT a typical-case ratio. |
 
+### 2026-06-22 — math ABI (DEPLOYED) path vs core vs glibc — the honest deployed picture
+
+The earlier math tables are `frankenlibc_core` (inlined in the bench loop). `math_abi`
+measures the real deployed extern-C symbol. Non-trig only (sin_abi/cos_abi skipped — hang
+risk). Current; sane batch numbers.
+
+| bench | fl abi (deployed) | fl core | glibc | abi/glibc | verdict |
+|---|---|---|---|---|---|
+| `exp_abi` | 445.6 ns | 235.9 ns | 443.1 ns | 1.00x | parity |
+| `exp2_abi` | 347.7 ns | 158.4 ns | 347.5 ns | 1.00x | parity |
+| `log_abi` | 573.5 ns | 414.1 ns | 622.7 ns | 0.92x | WIN |
+| `log2_abi` | 384.5 ns | 174.7 ns | 374.5 ns | 1.03x | ~parity |
+
+**The deployed reality:** the ~2x core win is consumed by the ~190 ns extern-C call frame
+(core→abi roughly doubles), so the deployed math symbol lands at glibc parity (0.92–1.03x).
+Consistent with `bd-n40in2` ("extern-C frame floors at parity"). The core advantage is real
+but not reachable through the C ABI; no further lever here without changing the call ABI.
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
