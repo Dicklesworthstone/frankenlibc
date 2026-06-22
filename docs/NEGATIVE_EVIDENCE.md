@@ -2837,18 +2837,20 @@ search/compare/strlen at SHORT inputs (wcschr/strrchr/strlen/wcsncmp…) AND on 
 outliers. The lever list is validated and safe to invest rebuild time against (strspn_range
 first: solid ~4.5–4.8x).
 
-**ROOT CAUSE (source analysis, no build) — `strspn_range` 4.5x:** in
-`frankenlibc-core/src/string/str.rs::span_dispatch` (~L1200), sets ≤16 chars take the
-table-free `span_scan`/`find_any_of*` fast path, but **>16-char sets build a full
-`byte_membership_table` ([bool;256]) PER CALL**, then `span_general`→`contiguous_set_range`
-(which re-scans `table[lo..=hi]`)→`span_range`. The `strspn_range` workload uses a >16-char
-contiguous range set, so each call pays 256-byte table construction + a range-completeness
-scan before the (already-fast, 256-byte-block SIMD) `span_range`. The span itself is tuned;
-the **per-call setup is the loss**. FIX (rebuild-turn): detect a contiguous range directly
-from the `set` slice — `lo=min`, `hi=max`, members complete iff dedup-count == `hi-lo+1`
-(a single pass over `set`, no 256-byte table) — and dispatch straight to `span_range`,
-skipping `byte_membership_table` for range sets. Same applies to the short-input
-search/compare levers: add a scalar fast path before the SIMD entry (glibc does this).
+**ROOT CAUSE (source analysis, no build) — `strspn_range` 4.5x — CORRECTED 2026-06-22:**
+⚠️ My first diagnosis (256-byte table build for >16 sets) was WRONG — verified against the
+bench source. The `strspn_range` workload (`string_inprocess_survey_bench.rs` L867) is a
+300-byte haystack with accept set `"0123456789"` = **10 chars** (a contiguous range), answer
+100. In `frankenlibc-core/src/string/str.rs::span_dispatch` (~L1200) a 10-char set hits the
+`set.len() <= 16` branch → `span_scan` with the **16-way `in_set_mask16` per-chunk membership
+test**. The branchless contiguous-range test (`span_range`, `(b-lo)<=(hi-lo)`) is **ONLY
+reachable via the >16 `span_general` path**, so a SHORT contiguous range like `"0-9"` misses
+it entirely and pays the slow 16-way membership. glibc builds a 256-bit bitmap once and does
+uniform per-byte lookups → ~5 ns vs fl ~23 ns. FIX (rebuild-turn): detect a contiguous range
+from `set` (lo=min/hi=max, complete iff distinct-count == `hi-lo+1`) in `span_dispatch`
+BEFORE the ≤16 `span_scan` branch, and route to `span_range` — no table involved. (Earlier
+commit 22a595f97's "skip the 256-byte table" framing was the wrong mechanism; this is the
+right one.) Short-input search/compare levers still want a scalar fast path before SIMD entry.
 
 **ROOT CAUSE (source analysis, no build) — short-input search/compare family (strcmp 2.4x,
 memrchr 2.3x, wcschr 2.3x):** these enter SIMD block/chunk machinery with no compact
