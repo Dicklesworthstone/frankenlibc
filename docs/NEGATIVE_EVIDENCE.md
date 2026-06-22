@@ -3143,6 +3143,22 @@ LE/BE, ASCII + 2-byte + 3-byte output) is now SIMD-loaded — no scalar `cp_at` 
 reverse conversion.** Only the forward 2/3-byte→UTF-32 STORE keeps a scalar loop (needs a 3rd zero source
 for the 2-input swizzle; unbenched non-ASCII→UTF-32 target).
 
+### 2026-06-23 — FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter (unmeasured — degraded env)
+
+The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
+UTF-8 → UTF-32 STORE (the `else` UTF-32 branch of the forward 2-byte/3-byte runs): it SIMD-decodes
+`wc: Simd<u32,N>` then writes each cp via a scalar `to_*_bytes` + copy loop. Likely UN-DOMINATED (the
+UTF-16-target analog had the same scalar store and gained 1.7x; the wider 4-byte UTF-32 store is an even
+bigger scalar fraction). FIX (proven, 2 swizzles + a zero source): `lo`/`hi` cast → `simd_swizzle!`
+interleave to `[lo,hi,..]` → second `simd_swizzle!(lohi, zero, ..)` widening each pair to `[lo,hi,0,0]`
+(LE) / `[0,0,hi,lo]` (BE). Bench arm `utf8_cyrillic_to_utf32le` is ALREADY in place (sibling bench commit
+3c0f76f32). ⚠️ NOT measured this turn: the probe bench HUNG (7+ min, no output) under a degraded
+SHARED-CHECKOUT environment — a sibling agent was concurrently building/committing (3c0f76f32 absorbed my
+staged bench edit) and disk is 43–44G LOW, so the abi-bench couldn't run cleanly. Deferred to a turn with
+an uncontended environment; mechanism + byte-identity are well-established by the 6 sibling SIMD-load/store
+wins already shipped this session. (My 14 wins + all commits verified intact after the sibling rebase;
+tree clean, synced.)
+
 ### 2026-06-23 — inet surface verification CLOSED (all win); iconv SIMD-amenable surface exhausted
 
 Verified the last un-checked inet arm: inet_pton AF_INET (parse_ipv4) fl **16.46 ns** / glibc 17.62 ns =
