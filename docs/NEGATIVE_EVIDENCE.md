@@ -2819,6 +2819,12 @@ search/compare/strlen at SHORT inputs (wcschr/strrchr/strlen/wcsncmp…) AND on 
 (4.50x — a range-class set where glibc's table beats fl's path). Top levers: `strspn_range`
 4.50x, then the short-input search/compare family (scalar fast-path before SIMD). Rebuild-gated.
 
+**Reproducibility confirmed (2026-06-22, 2nd independent run, sample-size 25):** strspn_range
+4.50x→4.78x, strcspn_set6 2.44x→2.51x, wcschr ~2.3x→2.29x, memrchr 2.43x→2.28x, strcmp
+2.39x→2.15x. All five reproduce within noise — these are real regressions, not measurement
+outliers. The lever list is validated and safe to invest rebuild time against (strspn_range
+first: solid ~4.5–4.8x).
+
 ### 2026-06-22 — survey part 3: time-formatting + PRNG (current) — asctime big WIN
 
 Last clean survey groups (asctime/gmtime current — the only time commit since build is the
