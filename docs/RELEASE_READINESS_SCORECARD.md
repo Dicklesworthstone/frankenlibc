@@ -437,6 +437,7 @@ stable yardstick, the only worker-invariant reference):
 | `iconv` utf16le→utf8 2-byte (Cyrillic) | 1383.6 ns | 568.3 ns | 1408 ns | **0.98x PARITY → 0.40x WIN** (2.43x self, stash A/B) | reverse-encode input scalar `cp_at` gather → 16-byte SIMD load + deinterleave |
 | `iconv` utf16le→utf8 3-byte (CJK) | 1832.4 ns | 1000.6 ns | 1670 ns | **1.10x LOSS → 0.60x WIN** (1.83x self, stash A/B) | same SIMD-load fix on the 3-byte run (8-byte load, `Simd<u32,4>`) |
 | `iconv` utf32le→utf8 2-byte (Cyrillic) | 1450.2 ns | 694.5 ns | 1491 ns | **0.97x parity → 0.466x WIN** (2.09x self, stash A/B) | UTF-32 source: 32-byte load + 4-way deinterleave reassembly |
+| `iconv` utf32le→utf8 3-byte (CJK) | 1801.4 ns | 892.3 ns | 1562 ns | **1.15x LOSS → 0.571x WIN** (2.02x self, stash A/B) | same UTF-32 source fix on the 3-byte run (16-byte load) |
 
 Validation (byte-identical vs LIVE glibc): parse_ipv6 — 40k-round
 `inet_pton_ntop_differential_fuzz` + `conformance_diff_inet_pton6_edges` + 150

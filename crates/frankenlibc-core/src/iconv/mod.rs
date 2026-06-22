@@ -24262,7 +24262,26 @@ pub fn iconv(
                         (odd.cast::<u32>() << Simd::splat(8)) | even.cast::<u32>()
                     }
                 } else {
-                    Simd::<u32, 4>::from_array(std::array::from_fn(|k| cp_at(in_pos + scp * k)))
+                    // UTF-32 (scp==4): true 16-byte load + 4-way byte deinterleave for
+                    // the 4 code points (all 4 bytes/unit loaded; out-of-range cp still
+                    // caught by the BMP/surrogate checks below). LE `cp = b0|b1<<8|
+                    // b2<<16|b3<<24`, BE reversed — byte-identical to `u32::from_*_bytes`.
+                    let raw = Simd::<u8, 16>::from_slice(&input[in_pos..in_pos + 16]);
+                    let b0 = std::simd::simd_swizzle!(raw, [0, 4, 8, 12]);
+                    let b1 = std::simd::simd_swizzle!(raw, [1, 5, 9, 13]);
+                    let b2 = std::simd::simd_swizzle!(raw, [2, 6, 10, 14]);
+                    let b3 = std::simd::simd_swizzle!(raw, [3, 7, 11, 15]);
+                    if sbe {
+                        (b0.cast::<u32>() << Simd::splat(24))
+                            | (b1.cast::<u32>() << Simd::splat(16))
+                            | (b2.cast::<u32>() << Simd::splat(8))
+                            | b3.cast::<u32>()
+                    } else {
+                        b0.cast::<u32>()
+                            | (b1.cast::<u32>() << Simd::splat(8))
+                            | (b2.cast::<u32>() << Simd::splat(16))
+                            | (b3.cast::<u32>() << Simd::splat(24))
+                    }
                 };
                 let bmp_ok = v.simd_ge(Simd::splat(0x0800)) & v.simd_le(Simd::splat(0xFFFF));
                 let sur_ok = v.simd_lt(Simd::splat(0xD800)) | v.simd_gt(Simd::splat(0xDFFF));

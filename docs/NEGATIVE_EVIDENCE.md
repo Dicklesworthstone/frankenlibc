@@ -3134,8 +3134,14 @@ caught by the `0x80..=0x7FF` check — replacing the 8 scalar `cp_at` 4-byte rea
 utf32le_cyrillic_to_utf8 OLD scalar fl **1450.2 ns** → NEW SIMD fl **694.5 ns** = **2.09x self-speedup**;
 OLD fl 1450.2 / glibc 1491.4 = **0.97x (near-parity)** → NEW **0.466x WIN**. Byte-identical:
 conformance_diff_iconv + conformance_diff_iconv_simd + iconv_differential_fuzz + 285 core unit all green.
-(The 3-byte UTF-32-source run + the forward 2/3-byte→UTF-32 store keep the scalar path — same pattern, can
-follow.)
+
+UPDATE — 3-byte UTF-32-source run too (CJK UTF-32 → UTF-8): same 16-byte load + 4-way deinterleave for the
+4 code points. Stash A/B: utf32le_cjk_to_utf8 OLD scalar fl **1801.4 ns** → NEW SIMD fl **892.3 ns** =
+**2.02x self-speedup**; OLD fl 1801.4 / glibc 1561.6 = **1.15x LOSS (un-dominated)** → NEW **0.571x WIN**.
+Byte-identical (same 4 gates green). **The ENTIRE reverse fixed-width→UTF-8 input path (UTF-16 + UTF-32,
+LE/BE, ASCII + 2-byte + 3-byte output) is now SIMD-loaded — no scalar `cp_at` gather remains on any benched
+reverse conversion.** Only the forward 2/3-byte→UTF-32 STORE keeps a scalar loop (needs a 3rd zero source
+for the 2-input swizzle; unbenched non-ASCII→UTF-32 target).
 
 ### 2026-06-23 — inet surface verification CLOSED (all win); iconv SIMD-amenable surface exhausted
 
