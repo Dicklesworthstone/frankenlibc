@@ -440,6 +440,7 @@ stable yardstick, the only worker-invariant reference):
 | `iconv` utf32le→utf8 3-byte (CJK) | 1801.4 ns | 892.3 ns | 1562 ns | **1.15x LOSS → 0.571x WIN** (2.02x self, stash A/B) | same UTF-32 source fix on the 3-byte run (16-byte load) |
 | `iconv` utf8→utf32le 2-byte (Cyrillic) | 595.0 ns | 488.3 ns | 1251 ns | **0.46x → 0.39x WIN** (1.22x self, stash A/B) | forward UTF-32 store: 2-swizzle interleave-then-widen-with-zero (MATRIX COMPLETE) |
 | `iconv` cp932→utf8 (Shift-JIS, CJK) | 601.1 ns | 392.7 ns | 414 ns | **1.49x LOSS → 0.95x WIN** (1.53x self) | ⭐ SIMD GATHER decode (`Simd::gather_or(dbcs_direct,..)`) + 3-byte encode — new technique class |
+| `iconv` eucjp→utf8 (EUC-JP Japanese) | 2628 ns | 480.9 ns | 433 ns | **6.2x LOSS → 1.11x near-parity** (5.5x self, A/B) | gather bypasses decode_eucjp's slow SS2/SS3 scalar path — eliminates the worst un-dominated iconv loss |
 | `iconv` gbk→utf8 (Simplified Chinese) | (5.45x LOSS) | 1162.2 ns | 2539 ns | **5.45x LOSS → 0.46x WIN** (same-run ratios) | same gather path generalized to GBK (per-codec direct table + lead range); scalar was cache-bound |
 
 Validation (byte-identical vs LIVE glibc): parse_ipv6 — 40k-round

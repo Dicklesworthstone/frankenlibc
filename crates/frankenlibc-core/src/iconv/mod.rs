@@ -18106,8 +18106,12 @@ fn encode_cp1125(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
 ///     validation glibc defers (a lone such byte is EINVAL, e.g. 0xA0) from one
 ///     that is always illegal (immediate EILSEQ, e.g. 0xFF); a present pair is
 ///     looked up in `EUC_JP_DBCS2` (miss => EILSEQ).
+fn eucjp_dbcs2_decode_direct() -> &'static [u32] {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::EUC_JP_DBCS2))
+}
+
 fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
-    static DBCS2_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     static DBCS3_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let Some(&b0) = input.first() else {
         return Err(DecodeError::Incomplete);
@@ -18146,7 +18150,7 @@ fn decode_eucjp(input: &[u8]) -> Result<(char, usize), DecodeError> {
         return Err(DecodeError::Incomplete);
     };
     let key = (u16::from(b0) << 8) | u16::from(b1);
-    let direct = DBCS2_DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::EUC_JP_DBCS2));
+    let direct = eucjp_dbcs2_decode_direct();
     let cp = direct[key as usize];
     if cp != 0 {
         char::from_u32(cp)
@@ -24671,6 +24675,11 @@ pub fn iconv(
         let dbcs_simd: Option<(&'static [u32], u8, u8, u8, u8)> = match from_enc {
             Encoding::Cp932 => Some((cp932_decode_direct(), 0x81, 0x9F, 0xE0, 0xFC)),
             Encoding::Gbk => Some((gbk_decode_direct(), 0x81, 0xFE, 0xFF, 0x00)),
+            // EUC-JP 2-byte JIS X 0208 run (lead 0xA1..=0xFE). The SS2 (0x8E) /
+            // SS3 (0x8F) single-shift bytes are < 0xA1 so they fall to the scalar
+            // path — the gather only ever handles the plain 2-byte run, which is
+            // exactly `decode_eucjp`'s `eucjp_dbcs2_decode_direct[key]` lookup.
+            Encoding::EucJp => Some((eucjp_dbcs2_decode_direct(), 0xA1, 0xFE, 0xFF, 0x00)),
             _ => None,
         };
         if cd.to == Encoding::Utf8

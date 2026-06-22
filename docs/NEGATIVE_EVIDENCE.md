@@ -3248,6 +3248,22 @@ glibc-speed + source-validity BEFORE implementing each arm** (this probe-first s
 implementation). EucJp/EucKr/Cp949/Johab remain un-probed (need their own sources / unknown glibc speed).
 The 2 landed gather wins (cp932, GBK) stand; the technique is real but its applicability is narrow.
 
+### 2026-06-23 — ✅ eucjp_to_utf8 gather — 6.2x LOSS → 1.11x near-parity (5.5x self-speedup, biggest of session)
+
+Probed EucJp (EUC-JP Japanese → UTF-8, common) with a valid `jp`/Hiragana source: glibc FAST (424 ns) but
+fl SCALAR a catastrophic **2628 ns = 6.2x LOSS** — because `decode_eucjp` is complex (SS2 0x8E / SS3 0x8F
+single-shift branches + 3 tables) so its per-char path is heavy. The 2-byte JIS-X-0208 run uses a flat
+`eucjp_dbcs2_decode_direct()` table (exposed from the local static), so the gather applies: lead range
+0xA1..=0xFE (SS2/SS3 are < 0xA1 → fall to scalar, byte-identical), gather cp, 3-byte encode. Bench (clean
+load, A/B vs the scalar probe): fl **2628 → 480.9 ns = 5.5x self-speedup**; vs glibc 432.6 ns = **6.2x LOSS
+→ 1.11x near-parity**. NOT a full win (1.11x residual = the fast-glibc DBCS floor, same cluster as cp932
+0.93x / ShiftJis 1.14x — the 65536-entry gather table's cache cost floors fl ~480-524 ns when glibc is
+fast), but it ELIMINATES the worst un-dominated iconv loss (6.2x → ~tie). Far from ~0-gain → SHIPPED.
+Byte-identical: conformance_diff_iconv_simd + iconv_differential_fuzz + 285 core unit all green. KEY: the
+gather's biggest wins are codecs whose SCALAR decode is slow (EucJp's SS-branches 6.2x, GBK's cache-bound
+5.45x) — not just slow-glibc. To make the fast-glibc cluster (cp932/ShiftJis/EucJp) fully WIN needs beating
+the gather-table cache cost (the unresolved cp932-vs-ShiftJis 390-vs-524 anomaly) — a separate lever.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
