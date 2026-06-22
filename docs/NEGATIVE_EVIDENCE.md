@@ -2736,6 +2736,21 @@ risk). Current; sane batch numbers.
 Consistent with `bd-n40in2` ("extern-C frame floors at parity"). The core advantage is real
 but not reachable through the C ABI; no further lever here without changing the call ABI.
 
+### 2026-06-22 — trig cos/tan (timeout-guarded) WIN; the hang is sin-SPECIFIC, not all trig
+
+Retried trig with `timeout 20` + 2-thread cap. cos and tan completed cleanly — so the
+earlier 39-core hang is **sin-specific** (likely a pathological input in the sin workload's
+glibc arm), not the shared reduction path. Both current, sane, WIN:
+
+| bench | fl core | glibc | ratio | verdict |
+|---|---|---|---|---|
+| `math/cos` | 362.7 ns | 555.2 ns | 0.65x | WIN |
+| `math/tan` | 776.5 ns | 944.9 ns | 0.82x | WIN |
+
+`math/sin` still HANGS (sin/host_glibc warmup, 39-core spin) — isolate via dlmopen post-
+recovery. With cos+tan, the f64+f32 math surface is now confirmed glibc-beating on every
+measurable function (~32 fns); only `sin`'s glibc-arm hang blocks the last data point.
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
