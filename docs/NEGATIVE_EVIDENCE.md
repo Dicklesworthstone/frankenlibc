@@ -3175,6 +3175,18 @@ to ShiftJis/Big5/GBK/EucJp/EucKr/Cp949/Gb2312/Johab/Ibm932/943 (all use `decode_
 each is a candidate next lever if benched as un-dominated. (utf8_jp_to_cp932 = 0.977x near-parity, the
 ENCODE direction — a cp→byte gather, separate lever.)
 
+UPDATE — generalized the gather path to **GBK→UTF-8** (Simplified Chinese, a very common conversion): exposed
+`gbk_decode_direct()` and made the fast path select `(dbcs_direct, lead-range)` per `from_enc`
+(Cp932: 0x81–0x9F|0xE0–0xFC; Gbk: 0x81–0xFE single range). gbk_to_utf8 was UN-DOMINATED — same-run
+(worker-invariant) OLD scalar fl/glibc = **5.45x LOSS** → NEW gather-SIMD = **0.46x WIN** (fl 1162 ns /
+glibc 2539 ns). GBK's scalar path is cache-bound on the 256 KB direct table (512 diverse CJK code points →
+many misses), so the loss is far worse than cp932's 1.49x and the gather win is large; the pipelined SIMD
+gather is far less contention/cache-sensitive. (OLD absolute ns was contention-inflated to ~13.7 µs, but the
+same-run ratio is the reliable metric and confirms un-dominated.) Byte-identical: conformance_diff_iconv +
+conformance_diff_iconv_simd + iconv_differential_fuzz (codec fuzz vs glibc) + 285 core unit all green. The
+gather path is now parameterized — adding Big5/Gb2312/Cp949/ShiftJis/Johab is a one-line `match` arm each
+(expose `*_decode_direct()` + its lead range), all likely the same cache-bound loss → win.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

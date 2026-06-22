@@ -18812,14 +18812,17 @@ fn encode_big5(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     encode_dbcs2(ch, out, direct)
 }
 
-fn decode_gbk(input: &[u8]) -> Result<(char, usize), DecodeError> {
+fn gbk_decode_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::GBK_DBCS));
+    DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::GBK_DBCS))
+}
+
+fn decode_gbk(input: &[u8]) -> Result<(char, usize), DecodeError> {
     decode_dbcs2(
         input,
         &cjk_tables::GBK_ONE_BYTE,
         &cjk_tables::GBK_IS_LEAD,
-        direct,
+        gbk_decode_direct(),
     )
 }
 
@@ -24660,15 +24663,25 @@ pub fn iconv(
         // UTF-16->UTF-8 3-byte run. Byte-for-byte identical to the scalar path; any
         // non-uniform window / invalid char / short output breaks to it for the exact
         // decode + EILSEQ/E2BIG ordering. (bd-2g7oyh iconv cp932_to_utf8.)
-        if cd.to == Encoding::Utf8 && from_enc == Encoding::Cp932 {
-            let direct = cp932_decode_direct();
+        // Per-codec flat `dbcs_direct` table + its 2-byte lead range(s) (lo1..=hi1 |
+        // lo2..=hi2; a single-range codec disables the 2nd with lo2=0xFF,hi2=0x00).
+        // Generalizes the gather path across the 2-byte DBCS family (all decode via
+        // `decode_dbcs2` over a flat key->cp table). Correctness comes from the
+        // cp-range gate below, so a coarse lead range only costs wasted gathers.
+        let dbcs_simd: Option<(&'static [u32], u8, u8, u8, u8)> = match from_enc {
+            Encoding::Cp932 => Some((cp932_decode_direct(), 0x81, 0x9F, 0xE0, 0xFC)),
+            Encoding::Gbk => Some((gbk_decode_direct(), 0x81, 0xFE, 0xFF, 0x00)),
+            _ => None,
+        };
+        if cd.to == Encoding::Utf8
+            && let Some((direct, l1, h1, l2, h2)) = dbcs_simd
+        {
             while in_pos + 8 <= input.len() && out_pos + 12 <= outbuf.len() {
                 let raw = Simd::<u8, 8>::from_slice(&input[in_pos..in_pos + 8]);
                 let leads = std::simd::simd_swizzle!(raw, [0, 2, 4, 6]);
                 let trails = std::simd::simd_swizzle!(raw, [1, 3, 5, 7]);
-                let lead_ok = (leads.simd_ge(Simd::splat(0x81))
-                    & leads.simd_le(Simd::splat(0x9F)))
-                    | (leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xFC)));
+                let lead_ok = (leads.simd_ge(Simd::splat(l1)) & leads.simd_le(Simd::splat(h1)))
+                    | (leads.simd_ge(Simd::splat(l2)) & leads.simd_le(Simd::splat(h2)));
                 if !lead_ok.all() {
                     break;
                 }

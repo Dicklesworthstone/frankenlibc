@@ -242,6 +242,9 @@ fn bench(c: &mut Criterion) {
     run_conv(c, "cp932_to_utf8", b"UTF-8\0", b"CP932\0", &cp932_src);
     let gb_src = host_to(b"GB18030\0", &cjk);
     run_conv(c, "gb18030_to_utf8", b"UTF-8\0", b"GB18030\0", &gb_src);
+    // GBK (Simplified Chinese, 2-byte DBCS) -> UTF-8: the gather-SIMD generalization.
+    let gbk_src = host_to(b"GBK\0", &cjk);
+    run_conv(c, "gbk_to_utf8", b"UTF-8\0", b"GBK\0", &gbk_src);
 }
 
 criterion_group!(benches, bench);
