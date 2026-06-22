@@ -3207,6 +3207,21 @@ load ≥ ~100 the fl distribution shifts up far more than glibc's, so even the p
 rustc procs)**. ShiftJis re-stashed (`cc-shiftjis-...BENCH-CONTENTION-GARBAGE`), byte-identical and ready;
 land it (and Gb2312/Cp949/Big5 with valid sources) with a clean head-to-head once the storm clears.
 
+### 2026-06-23 — ⚠️ CORRECTION: ShiftJis gather is a 1.14x LOSS (clean bench) — NOT all DBCS codecs win
+
+The storm cleared (load 190→12); re-benched sjis_to_utf8 RELIABLY (fl mean 584 ns, tight): fl **523.8 ns /
+glibc 458.3 ns = 1.14x LOSS** — NOT a win, unlike cp932 (0.95x) and GBK (0.46x). fl ShiftJis (524 ns) is
+markedly slower than fl cp932 (392 ns) for the IDENTICAL gather code path + `jp` source — even after the
+~10% worker delta (glibc cp932 414 vs glibc sjis 458). "SHIFT_JIS" → `Encoding::ShiftJis` (canonical match,
+arm fires; it's the pure JIS-X-0208 variant, a SEPARATE codec from Cp932/MS932). Root cause unresolved (same
+`build_dbcs_direct` table builder as GBK which WON) — possibly the SHIFT_JIS_DBCS table's cp distribution for
+Hiragana causes worse gather cache behavior, or a per-char path difference. **RETRACTS the earlier "all 2-byte
+DBCS codecs likely win" claim** — they do NOT; each MUST be benched (ShiftJis is a counterexample). ShiftJis
+reverted (stashed `cc-shiftjis-CONFIRMED-LOSS-1.14x`, byte-identical but a perf loss). The proven wins remain
+cp932 (0.95x) + GBK (0.46x); the remaining codecs (Gb2312/Cp949/Big5) are now UNCERTAIN — bench before
+landing. KEY LESSON: a clean-load bench is essential — the prior contention-garbage read (spurious 1.91x)
+and the optimistic "all win" extrapolation were both wrong; only the load-12 measurement settled it.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
