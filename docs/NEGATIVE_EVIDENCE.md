@@ -2664,6 +2664,25 @@ Net: the f64 transcendental/algebraic kernels are confirmed glibc-class-or-faste
 core. No lever here (already winning); recorded as positive confirmation. Trig (sin/cos/
 tan) NOT run — shares the hung reduction path; needs a dlmopen harness post-recovery.
 
+Second batch (same method, all current, no hangs) — all WIN:
+
+| bench | fl core | glibc | ratio | verdict |
+|---|---|---|---|---|
+| `math/exp10` | 315.7 ns | 630.9 ns | 0.50x | WIN |
+| `math/expm1` | 238.9 ns | 482.4 ns | 0.50x | WIN |
+| `math/cosh` | 326.3 ns | 626.9 ns | 0.52x | WIN |
+| `math/log1p` | 430.2 ns | 782.4 ns | 0.55x | WIN |
+| `math/pow_half` | 404.9 ns | 725.3 ns | 0.56x | WIN |
+| `math/log10` | 433.9 ns | 688.2 ns | 0.63x | WIN |
+| `math/lgamma` | 467.9 ns | 662.7 ns | 0.71x | WIN |
+| `math/asinh` | 735.5 ns | 1010.5 ns | 0.73x | WIN |
+| `math/tanh` | 807.5 ns | 1063.5 ns | 0.76x | WIN |
+| `math/pow_irrational` | 978.8 ns | 1272.5 ns | 0.77x | WIN |
+| `math/sinh` | 772.4 ns | 960.6 ns | 0.80x | WIN |
+
+**f64 math surface now comprehensively confirmed faster than glibc** (20 functions across
+two batches, 0.40–0.85x). Only the hang-prone trig (sin/cos/tan) remains unmeasured here.
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
