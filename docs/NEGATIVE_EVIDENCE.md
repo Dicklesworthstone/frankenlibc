@@ -2549,6 +2549,23 @@ since the 06-21 00:46 build):
 |---|---|---|---|---|---|
 | `readdir_drain` | 52.48 µs | 33.48 µs | 1.57x | LOSS | Whole-directory drain; per-entry membrane + buffer-copy overhead vs glibc's inline dirent stream. |
 
+### 2026-06-22 — warm-binary in-process benches: iswctype WIN, swab WIN (SIMD), strtok_r parity
+
+All three families verified current (no `swab`/`ctype`/`token` code commits since the
+06-21 17:00 build, gate = `git log --since=<build> -- <family-paths>` empty). In-process
+fl-vs-glibc, warm-binary reuse, no rebuild, no scratch.
+
+| bench | workload | fl | glibc | ratio | verdict | note |
+|---|---|---|---|---|---|---|
+| `iswctype` | ascii (1000) | 1.46 ns/ch | 2.25 ns/ch | 0.65x | WIN | ctype membrane fast-path holds for wide ctype. |
+| `iswctype` | latin_ext | 1.43 ns/ch | 2.39 ns/ch | 0.60x | WIN | |
+| `iswctype` | cjk | 1.42 ns/ch | 2.36 ns/ch | 0.60x | WIN | |
+| `swab` | 64 B | 0.040 ns/B | 0.446 ns/B | 0.09x | WIN | SIMD byte-swap; 14x over scalar too. |
+| `swab` | 4096 B | 0.016 ns/B | 0.375 ns/B | 0.04x | WIN | Dominates glibc 20-25x at size. |
+| `swab` | 65536 B | 0.019 ns/B | 0.356 ns/B | 0.05x | WIN | |
+| `strtok_r` | csv 200 fields | 17694 ns | 16996 ns | 1.04x | ~parity | Membrane floor on an already-fast tokenizer; not a lever. |
+| `strtok_r` | long token 4k | 3850 ns | 3827 ns | 1.01x | ~parity | |
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
