@@ -415,6 +415,34 @@ gate remains blocked by pre-existing lint debt. Scorecard for this targeted lane
 **2 WIN / 0 NEUTRAL / 0 LOSS**. Evidence:
 `tests/artifacts/perf/bd-2g7oyh-gb18030-direct-codec.md`.
 
+## 2026-06-23 algorithmic / scalar-gather wins (cc)
+
+Three measured, byte-identical wins this session, all the ALGORITHMIC class
+(heap-alloc removal or scalar-gather→true-SIMD-load), recorded in full in
+`docs/NEGATIVE_EVIDENCE.md`. All ratios are same-run fl-vs-glibc (glibc as the
+stable yardstick, the only worker-invariant reference):
+
+| Workload | fl before | fl after | glibc | verdict | mechanism |
+|---|---:|---:|---:|---|---|
+| `inet_pton` AF_INET6 (parse_ipv6) | 112.6 ns | 38.2 ns | ~41 ns | 2.76x LOSS → **0.90x WIN** | single-pass glibc `inet_pton6` port (drop `from_utf8` + ~5 whole-string rescans) |
+| `inet_net_pton` AF_INET | 20.2 ns | 13.9 ns | 31.5 ns | 0.64x → **0.49x WIN** (1.45x self) | per-call `Vec` → bounded stack array |
+| `iconv` utf16le→utf8 (ASCII) | 2024 ns | 490.9 ns | 1593 ns | 1.27x LOSS → **0.31x WIN** (4.1x self) | scalar `cp_at` gather → true 32-B `Simd::<u8,32>` load + `simd_swizzle!` deinterleave |
+
+Validation (byte-identical vs LIVE glibc): parse_ipv6 — 40k-round
+`inet_pton_ntop_differential_fuzz` + `conformance_diff_inet_pton6_edges` + 150
+core inet unit; net_pton — `inet_net_ntop_differential_fuzz` (0 divergences) +
+`conformance_diff_inet_net` + 38 core unit; iconv — `iconv_differential_fuzz` +
+`conformance_diff_iconv` + `golden_iconv_utf8_fastpath` +
+`conformance_diff_iconv_simd` + 285 core iconv unit. iconv is now **8/8
+fl-dominant**. Lane scorecard: **3 WIN / 0 NEUTRAL / 0 LOSS**.
+
+Also retired 3 dead levers via same-process A/B (no code shipped, ledger only):
+strspn_range range-test = 2.1x REGRESSION (x86 has no native unsigned SIMD
+compare); strcmp exact-256 probe = red herring; memrchr raw-index = ~8%, still
+floor-class. Meta-lesson: a perf hypothesis on SIMD op-count MUST be settled
+with a same-process A/B before claiming — op-counting lies on x86, fl absolute
+ns swings 18→120 ns across rch workers.
+
 ## 2026-06-20 `bd-2g7oyh` calloc tombstone compaction reject
 
 The allocator follow-up tested deletion-time tombstone compaction in the
