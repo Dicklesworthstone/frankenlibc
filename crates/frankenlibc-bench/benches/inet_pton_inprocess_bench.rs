@@ -31,6 +31,12 @@ unsafe extern "C" {
     fn inet_ntop(af: c_int, src: *const c_void, dst: *mut c_char, size: u32) -> *const c_char;
 }
 
+// inet_net_pton lives in libresolv, not libc.
+#[link(name = "resolv")]
+unsafe extern "C" {
+    fn inet_net_pton(af: c_int, src: *const c_char, dst: *mut c_void, size: usize) -> c_int;
+}
+
 fn bench(c: &mut Criterion) {
     let src_bytes = b"192.168.1.100"; // no NUL: core parser takes a byte slice
     let src_cstr = c"192.168.1.100"; // NUL-terminated for libc
@@ -62,6 +68,38 @@ fn bench(c: &mut Criterion) {
         });
     });
     group.finish();
+
+    // inet_net_pton (libresolv CIDR network parse). fl core net_pton::parse used a
+    // per-call Vec heap alloc for the octets (decimal) / nibbles+octets (hex) that
+    // glibc avoids — measure the stack-array rewrite vs real glibc.
+    let net_bytes = b"192.168.0.0/24";
+    let net_cstr = c"192.168.0.0/24";
+    let mut net_core = [0u8; 4];
+    let net_core_rc = core_inet::net_pton::parse(net_bytes, &mut net_core);
+    let mut net_gl = [0u8; 4];
+    let net_gl_rc =
+        unsafe { inet_net_pton(AF_INET, net_cstr.as_ptr(), net_gl.as_mut_ptr().cast::<c_void>(), 4) };
+    assert_eq!(net_core_rc, Ok(24), "core net_pton should yield /24");
+    assert_eq!(net_gl_rc, 24, "glibc inet_net_pton should yield /24");
+    assert_eq!(net_core, net_gl, "core vs real-glibc inet_net_pton byte mismatch");
+    let mut netg = c.benchmark_group("inet_net_pton_inprocess_ipv4");
+    netg.bench_function("frankenlibc_core", |b| {
+        b.iter(|| {
+            let mut out = [0u8; 4];
+            let rc = core_inet::net_pton::parse(black_box(&net_bytes[..]), &mut out);
+            black_box((rc, out));
+        });
+    });
+    netg.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| {
+            let mut out = [0u8; 4];
+            let rc = unsafe {
+                inet_net_pton(AF_INET, black_box(net_cstr.as_ptr()), out.as_mut_ptr().cast::<c_void>(), 4)
+            };
+            black_box((rc, out));
+        });
+    });
+    netg.finish();
 
     // IPv6: parse_ipv6 is alloc-heavy (from_utf8 + 2x Vec::collect + 2 group Vecs);
     // measure it against real glibc to decide if the Vec-elimination is warranted.

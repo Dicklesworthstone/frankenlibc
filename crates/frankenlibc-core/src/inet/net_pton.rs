@@ -63,7 +63,14 @@ pub fn parse(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
         return parse_hex(input, dst);
     }
 
-    let mut octets = Vec::with_capacity(4);
+    // Bounded stack array instead of a per-call `Vec` heap allocation (glibc's
+    // inet_net_pton writes octets straight to `dst` with no alloc). `MAX_OCTETS`
+    // covers every real AF_INET/AF_INET6 `dst`; an input with more octets than
+    // this can only exceed `dst` and is the same `BufferTooSmall` (-1) error the
+    // old `Vec` path produced via `finalize`.
+    const MAX_OCTETS: usize = 16;
+    let mut octets = [0u8; MAX_OCTETS];
+    let mut n_octets = 0usize;
     let mut i = 0usize;
 
     loop {
@@ -83,7 +90,11 @@ pub fn parse(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
             // No digits where an octet was expected.
             return Err(NetPtonError::Invalid);
         }
-        octets.push(value as u8);
+        if n_octets >= MAX_OCTETS {
+            return Err(NetPtonError::BufferTooSmall);
+        }
+        octets[n_octets] = value as u8;
+        n_octets += 1;
 
         if i >= input.len() {
             break;
@@ -98,6 +109,7 @@ pub fn parse(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
         // Unrecognized byte after an octet.
         return Err(NetPtonError::Invalid);
     }
+    let octets = &octets[..n_octets];
 
     // Optional /prefix.
     let prefix_bits: u32 = if i < input.len() && input[i] == b'/' {
@@ -122,7 +134,7 @@ pub fn parse(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
         implicit_prefix_bits(octets[0], octets.len())
     };
 
-    finalize(&octets, prefix_bits, dst)
+    finalize(octets, prefix_bits, dst)
 }
 
 /// Shared libresolv tail rule for both the decimal and hex grammars:
@@ -206,8 +218,16 @@ pub fn format(bytes: &[u8], prefix_bits: u32) -> Result<Vec<u8>, NetPtonError> {
 /// infers the prefix classfully from the first octet just like the
 /// dotted-decimal grammar.
 fn parse_hex(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
+    // Build octets directly into a bounded stack array (no `nibbles` + collected
+    // `octets` heap Vecs). Each pair of nibbles becomes a byte; an odd trailing
+    // nibble is shifted into the high half (libresolv parity). `MAX_OCTETS` covers
+    // every real `dst`; more nibbles than that can only exceed `dst` → the same
+    // `BufferTooSmall` (-1) the old Vec path produced via `finalize`.
+    const MAX_OCTETS: usize = 16;
+    let mut octets = [0u8; MAX_OCTETS];
+    let mut n_octets = 0usize;
+    let mut n_nibbles = 0usize;
     let mut i = 2usize; // skip "0x"
-    let mut nibbles: Vec<u8> = Vec::with_capacity(8);
     while i < input.len() && input[i] != b'/' {
         let v = match input[i] {
             b'0'..=b'9' => input[i] - b'0',
@@ -215,22 +235,24 @@ fn parse_hex(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
             b'A'..=b'F' => input[i] - b'A' + 10,
             _ => return Err(NetPtonError::Invalid),
         };
-        nibbles.push(v);
+        if n_nibbles % 2 == 0 {
+            // First nibble of a new byte → high half (low half stays 0 until/unless
+            // the next nibble arrives).
+            if n_octets >= MAX_OCTETS {
+                return Err(NetPtonError::BufferTooSmall);
+            }
+            octets[n_octets] = v << 4;
+            n_octets += 1;
+        } else {
+            octets[n_octets - 1] |= v;
+        }
+        n_nibbles += 1;
         i += 1;
     }
-    if nibbles.is_empty() {
+    if n_nibbles == 0 {
         return Err(NetPtonError::Invalid);
     }
-    // Each pair of nibbles becomes a byte; an odd trailing nibble is
-    // shifted into the high half (libresolv parity).
-    let octets: Vec<u8> = nibbles
-        .chunks(2)
-        .map(|chunk| {
-            let hi = chunk[0];
-            let lo = if chunk.len() == 2 { chunk[1] } else { 0 };
-            (hi << 4) | lo
-        })
-        .collect();
+    let octets = &octets[..n_octets];
 
     // Optional /prefix.
     let prefix_bits: u32 = if i < input.len() && input[i] == b'/' {
@@ -256,7 +278,7 @@ fn parse_hex(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
         implicit_prefix_bits(octets[0], octets.len())
     };
 
-    finalize(&octets, prefix_bits, dst)
+    finalize(octets, prefix_bits, dst)
 }
 
 fn write_decimal(out: &mut Vec<u8>, value: u32) {

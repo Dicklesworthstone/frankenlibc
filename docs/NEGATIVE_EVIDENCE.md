@@ -2951,6 +2951,22 @@ HARDER LEVERS (real but not quick; deeper SIMD-kernel work):
    re-mining it; spend build turns on ALGORITHMIC losses (redundant scans / heap / wrong
    complexity) like parse_ipv6, where fl wins decisively.
 
+### 2026-06-23 — ✅ inet_net_pton per-call heap-alloc eliminated (algorithmic WIN, 1.45x self-speedup)
+
+`inet/net_pton.rs::parse` (libresolv CIDR network parse) heap-allocated a `Vec` per call for
+the octets (decimal path) AND two Vecs (`nibbles` + collected `octets`) in the hex path — glibc
+writes octets straight to `dst` with no alloc. Replaced both with a bounded stack array
+(`[u8; 16]` + count; `MAX_OCTETS=16` covers every real AF_INET/INET6 dst — more octets than that
+can only exceed dst and is the same `BufferTooSmall`/-1 the Vec path produced via `finalize`).
+Same-process A/B (worker-invariant, new bench arm `inet_net_pton_inprocess_ipv4` linking
+libresolv): fl OLD-Vec **20.2 ns** → fl NEW-stack **13.9 ns** (1.45x self-speedup, ~6.3 ns alloc
+saved) vs glibc **31.5 ns** — fl WIN widens 0.64x → **0.44–0.49x** (reproduced). Byte-identical:
+38 core net_pton unit + conformance_diff_inet_net (5) + inet_net_ntop_differential_fuzz vs LIVE
+glibc (0 divergences). Permanent regression-guard arm kept in the bench (`#[link(name="resolv")]`,
+since inet_net_pton lives in libresolv not libc). CONFIRMS the meta-rule: heap-alloc removal on a
+parser is a clean dominating lever; the productive vein is ALGORITHMIC (alloc/redundant-scan), not
+SIMD-kernel micro-overhead. Sibling cold parsers worth the same treatment if benched.
+
 VERIFY-ONLY (need a build/harness, not a fix):
 4. `time(NULL)` __vdso_time cache (bd-2g7oyh.503) — standing ratio 1.60x LOSS; re-bench after build.
 5. `sin` — harness hangs on the glibc arm (small args [0.5,2.5), bench/env anomaly, NOT perf);
