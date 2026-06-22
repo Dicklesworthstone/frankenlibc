@@ -2578,6 +2578,8 @@ in-process glibc, isolating it from the ABI validation membrane:
 | `inet_pton_inprocess_ipv4` | 16.42 ns | 17.54 ns | 0.94x | WIN | Core algorithm WINS — yet the full ABI path is 2.75x LOSS (see inet table above). **The IPv4 loss is the StringMemory membrane, NOT the parser.** Not a parser lever. |
 | `inet_pton_inprocess_ipv6` | 102.78 ns | 38.47 ns | 2.67x | LOSS | `parse_ipv6` is genuinely slower at the core (matches the known ~2.7x gap). **This IS a real algorithmic lever** — IPv6 parse, not membrane. |
 
+**ROOT CAUSE (source analysis, no build) — `parse_ipv6` 2.67x** (`frankenlibc-core/src/inet/mod.rs::parse_ipv6` L478): already alloc-free, so the cost is SCAN overhead. It does `core::str::from_utf8` (validates the whole input — glibc works on raw bytes, no validation), then MULTIPLE redundant full-string passes before parsing: `find("::")`, a second `s[pos+2..].contains("::")`, `starts_with(':')`/`ends_with(':')`, `front_str.contains('.')` — each re-traverses the string — then `.split(':')`. glibc inet_pton6 is a SINGLE left-to-right byte state machine. FIX (rebuild-turn): drop `from_utf8` and fold the "::"/IPv4-tail/grammar detection into one byte-level pass (mirror the inet_ntop byte-level rewrite already done). IPv4 path (`parse_ipv6_hextet`/`parse_ipv4`) is already byte-folded and fine; the win is eliminating the ~4 redundant whole-string scans + UTF-8 validation.
+
 ### 2026-06-22 — warm-binary corpus EXHAUSTED at HEAD `5e48e6aa9` (no rebuild possible under DISK CRITICAL)
 
 Swept every `*bench*` binary across all `frankenlibc-*` rch target dirs and applied the
