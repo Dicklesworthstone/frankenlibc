@@ -2578,6 +2578,25 @@ in-process glibc, isolating it from the ABI validation membrane:
 | `inet_pton_inprocess_ipv4` | 16.42 ns | 17.54 ns | 0.94x | WIN | Core algorithm WINS — yet the full ABI path is 2.75x LOSS (see inet table above). **The IPv4 loss is the StringMemory membrane, NOT the parser.** Not a parser lever. |
 | `inet_pton_inprocess_ipv6` | 102.78 ns | 38.47 ns | 2.67x | LOSS | `parse_ipv6` is genuinely slower at the core (matches the known ~2.7x gap). **This IS a real algorithmic lever** — IPv6 parse, not membrane. |
 
+### 2026-06-22 — warm-binary corpus EXHAUSTED at HEAD `5e48e6aa9` (no rebuild possible under DISK CRITICAL)
+
+Swept every `*bench*` binary across all `frankenlibc-*` rch target dirs and applied the
+staleness gate (`git log --since=<binary-mtime> -- <family-paths>` must be empty).
+Result — no further honest fl-vs-glibc ratio is obtainable without a cold rebuild
+(barred while `/` is at 98%):
+
+- **Recorded current this session:** inet_pton(abi+core), readdir, swab, iswctype, strtok_r.
+- **Stale vs HEAD (binary predates a later perf commit, do NOT re-mine):** strtol, strtod
+  (opts 06-20 16:31 / 06-21 00:35), ctype (membrane-skip 06-20 00:43), snprintf (stdio
+  opts), trig (sin/cos/tan large-arg reduction 06-20 02:09/02:39), sprintf, strchr
+  (06-21 18:19), string-survey, fputs/stdio (sscanf 06-21 11:05), calloc (malloc range
+  filter 06-21 15:23), iconv (codec fixes 06-21 19:03-19:42), inet_addr (parse_ipv4_bsd
+  06-21 01:53), inet_ntop (IPv4 fast-path 06-21 16:10), glibc_baseline (mixed; time stale).
+- **No glibc comparator:** resolv_parsers_bench (raw mode).
+
+**Queued for first post-recovery rebuild:** `parse_ipv6` (confirmed 2.67x core lever) and
+the `time(NULL)` `__vdso_time` verify (`bd-2g7oyh.503`).
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
