@@ -2580,6 +2580,16 @@ in-process glibc, isolating it from the ABI validation membrane:
 
 **ROOT CAUSE (source analysis, no build) — `parse_ipv6` 2.67x** (`frankenlibc-core/src/inet/mod.rs::parse_ipv6` L478): already alloc-free, so the cost is SCAN overhead. It does `core::str::from_utf8` (validates the whole input — glibc works on raw bytes, no validation), then MULTIPLE redundant full-string passes before parsing: `find("::")`, a second `s[pos+2..].contains("::")`, `starts_with(':')`/`ends_with(':')`, `front_str.contains('.')` — each re-traverses the string — then `.split(':')`. glibc inet_pton6 is a SINGLE left-to-right byte state machine. FIX (rebuild-turn): drop `from_utf8` and fold the "::"/IPv4-tail/grammar detection into one byte-level pass (mirror the inet_ntop byte-level rewrite already done). IPv4 path (`parse_ipv6_hextet`/`parse_ipv4`) is already byte-folded and fine; the win is eliminating the ~4 redundant whole-string scans + UTF-8 validation.
 
+**VALIDATED 2026-06-22 (vs bench workload):** the inet_pton_inprocess_ipv6 input is
+`2001:db8:85a3::8a2e:370:7334` (28-byte compressed address with `::`), which DOES trigger
+`from_utf8` + `find("::")` + second-`::` `contains` + starts/ends checks + `contains('.')`
++ `split(':')` — multiple passes, as diagnosed. (The bench's L66 comment "2x Vec::collect"
+is STALE — current code is alloc-free, confirming the impl read.) This root-cause HOLDS.
+**Audit complete:** of the 3 root-causes, strspn_range and search/compare were WRONG (workload
+mismatch, both corrected above); parse_ipv6 is VALIDATED. Confirmed levers for a build-turn:
+`strspn_range` (range-detect, high confidence) and `parse_ipv6` (single byte-pass, validated);
+search/compare reclassified as deeper SIMD-kernel work.
+
 ### 2026-06-22 — warm-binary corpus EXHAUSTED at HEAD `5e48e6aa9` (no rebuild possible under DISK CRITICAL)
 
 Swept every `*bench*` binary across all `frankenlibc-*` rch target dirs and applied the
