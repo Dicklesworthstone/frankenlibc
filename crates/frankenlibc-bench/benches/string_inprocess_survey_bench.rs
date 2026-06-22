@@ -24,6 +24,7 @@ unsafe extern "C" {
     fn memrchr(s: *const c_void, c: c_int, n: usize) -> *const c_void;
     fn rawmemchr(s: *const c_void, c: c_int) -> *const c_void;
     fn strlen(s: *const c_char) -> usize;
+    fn memfrob(s: *mut c_void, n: usize) -> *mut c_void;
     fn strchr(s: *const c_char, c: c_int) -> *const c_char;
     fn memchr(s: *const c_void, c: c_int, n: usize) -> *const c_void;
     fn wcschr(wcs: *const i32, wc: i32) -> *const i32;
@@ -1080,6 +1081,33 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { memchr(black_box(mc.as_ptr().cast::<c_void>()), b'Z' as c_int, mc.len()) }))
     });
     gmc.finish();
+
+    // ---- memfrob (GNU, XOR each byte with 42). Deployed fl is a RAW-POINTER loop
+    // (may not auto-vectorize); a slice loop auto-vectorizes. 1000-byte buffer.
+    let mut mf = vec![0xA5u8; 1000];
+    let mflen = mf.len();
+    let mut gmf = c.benchmark_group("survey_memfrob");
+    gmf.bench_function("frankenlibc_raw_current", |b| {
+        b.iter(|| {
+            let p = black_box(mf.as_mut_ptr());
+            for i in 0..mflen {
+                unsafe { *p.add(i) ^= 42 };
+            }
+            black_box(&mf);
+        })
+    });
+    gmf.bench_function("frankenlibc_slice_fix", |b| {
+        b.iter(|| {
+            for byte in black_box(&mut mf).iter_mut() {
+                *byte ^= 42;
+            }
+            black_box(&mf);
+        })
+    });
+    gmf.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { memfrob(black_box(mf.as_mut_ptr()).cast::<c_void>(), mflen) }))
+    });
+    gmf.finish();
 
     let _: c_int = 0;
     let _ = std::ptr::null::<c_void>();
