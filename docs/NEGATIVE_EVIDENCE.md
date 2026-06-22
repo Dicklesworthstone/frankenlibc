@@ -2939,6 +2939,17 @@ HARDER LEVERS (real but not quick; deeper SIMD-kernel work):
    per-call micro-overhead (probe call + alignment calc + frame) vs glibc's asm tightness —
    sub-1.2x "floor" class, same as the variadic/membrane floors. Do NOT chase probe-elision; a
    real win needs matching glibc's asm-level setup, which portable-SIMD Rust can't easily do.
+   ⚠️ memrchr ALSO floor-class (A/B 2026-06-23): at the 200 B bench `MEMCHR_FOLD_BYTES=256` so
+   the fold block is NEVER used — memrchr falls to the `rchunks_exact(32)` loop (~4 native
+   simd_eq). Replacing that iterator with a raw-index backward scan + overlapping front window
+   (no scalar tail, mirrors glibc's memrchr_avx2 pointer loop) shaves only ~8% (same-process
+   A/B: current 7.33 ns → direct 6.73 ns vs glibc 3.13 ns) — STILL 2.15x, does NOT close the
+   gap, and would regress ≥256 B buffers (loses the fold's reduction amortization). Reverted.
+   glibc's 3.1 ns 4-vector scan is asm-tight + near-irreducible behind a Rust fn-call frame.
+   CONCLUSION: the entire search/compare moderate-size family (strcmp/memrchr/wcschr/wcsrchr) is
+   per-call-overhead floor-class on tiny workloads, NOT a viable byte-identical lever. Stop
+   re-mining it; spend build turns on ALGORITHMIC losses (redundant scans / heap / wrong
+   complexity) like parse_ipv6, where fl wins decisively.
 
 VERIFY-ONLY (need a build/harness, not a fix):
 4. `time(NULL)` __vdso_time cache (bd-2g7oyh.503) — standing ratio 1.60x LOSS; re-bench after build.
