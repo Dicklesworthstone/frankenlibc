@@ -2705,6 +2705,19 @@ The old-libm arm quantifies the fused-kernel payoff: powf went from 4–7x-slowe
 (old libm) to faster-than-glibc (fused). **Entire f32+f64 math surface (~30 fns) now confirmed
 glibc-beating except trig** (sin/cos/tan, hang-prone — dlmopen harness needed post-recovery).
 
+### 2026-06-22 — long-workload string scans (current, sane glibc-side — not the small-op artifact)
+
+These use long/absent-needle workloads where the op-time exceeds the harness floor, so the
+glibc side is real. Current (strspn/strpbrk/strstr: 0 commits since 04:50 build). `memmem_absent`
+and `strcasestr_absent` were SKIPPED — stale (anchor-choice commits 06-21 after the build).
+`strtol_hex_long` skipped — 1 strtol commit since build.
+
+| bench | fl core | glibc | ratio | verdict | note |
+|---|---|---|---|---|---|
+| `strpbrk_absent` | 207.6 ns | 969.9 ns | 0.21x | WIN | Bitmap scan; 4.7x over glibc on full-haystack miss. |
+| `strspn_long` | 48.6 ns | 202.4 ns | 0.24x | WIN | Bitmap strspn; 4.2x. |
+| `strstr_absent` | 59.9 ns | 38.7 µs | ~0.0015x | WIN (robustness) | ⚠️ Workload-specific: an adversarial absent needle drives glibc strstr into its pathological worst case (38.7 µs); fl's TwoWay stays linear (60 ns). This is a robustness win, NOT a typical-case ratio. |
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
