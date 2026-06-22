@@ -2535,7 +2535,19 @@ measurement (cancels worker variance), `--sample-size 60 --measurement-time 2`:
 | bench | fl median | glibc median | ratio | verdict | note |
 |---|---|---|---|---|---|
 | `inet_pton_ipv4` | 48.79 ns | 17.77 ns | 2.75x | LOSS | StringMemory membrane (ptr validation) tax on a small op — architectural, off-limits. |
-| `inet_ntop_ipv4` | 62.19 ns | 9.61 ns | 6.47x | LOSS | Same membrane tax; formatter+membrane floor dominates the tiny IPv4 conversion. |
+| `inet_ntop_ipv4` | 62.19 ns | 9.61 ns | ~6.47x | LOSS (STALE) | ⚠️ **Binary (built 02:39) predates `perf(inet): fast-path strict IPv4 inet_ntop` @ 06-21 16:10** — this ratio is a pre-fast-path upper bound, NOT current. Re-measure after disk recovery. |
+
+**Correction (2026-06-22):** the `inet_ntop_ipv4` row above is stale — its warm
+binary predates the 16:10 IPv4 fast-path commit, so the true current loss is smaller.
+The `inet_pton_ipv4` row is reliable: its measured 48.79 ns matches the committed
+post-optimization value (`parse_ipv4 byte-walk … inet_pton 135->48ns`, 06-21 00:45).
+
+Additional warm-binary measurement (verified current — no readdir/dirent code commits
+since the 06-21 00:46 build):
+
+| bench | fl median | glibc median | ratio | verdict | note |
+|---|---|---|---|---|---|
+| `readdir_drain` | 52.48 µs | 33.48 µs | 1.57x | LOSS | Whole-directory drain; per-entry membrane + buffer-copy overhead vs glibc's inline dirent stream. |
 
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
