@@ -2566,6 +2566,18 @@ fl-vs-glibc, warm-binary reuse, no rebuild, no scratch.
 | `strtok_r` | csv 200 fields | 17694 ns | 16996 ns | 1.04x | ~parity | Membrane floor on an already-fast tokenizer; not a lever. |
 | `strtok_r` | long token 4k | 3850 ns | 3827 ns | 1.01x | ~parity | |
 
+### 2026-06-22 — inet_pton CORE-vs-glibc (separates membrane tax from algorithm)
+
+Warm `inet_pton_inprocess_bench` (built 06-21 05:50, pton core verified current — no
+pton/parse_ipv4 commits since; the `inet_ntop_inprocess_ipv6` row was skipped as it
+post-dates the build by 1 min). This measures the **core algorithm** against real
+in-process glibc, isolating it from the ABI validation membrane:
+
+| bench | fl core | glibc | ratio | verdict | note |
+|---|---|---|---|---|---|
+| `inet_pton_inprocess_ipv4` | 16.42 ns | 17.54 ns | 0.94x | WIN | Core algorithm WINS — yet the full ABI path is 2.75x LOSS (see inet table above). **The IPv4 loss is the StringMemory membrane, NOT the parser.** Not a parser lever. |
+| `inet_pton_inprocess_ipv6` | 102.78 ns | 38.47 ns | 2.67x | LOSS | `parse_ipv6` is genuinely slower at the core (matches the known ~2.7x gap). **This IS a real algorithmic lever** — IPv6 parse, not membrane. |
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
