@@ -2597,6 +2597,33 @@ Result — no further honest fl-vs-glibc ratio is obtainable without a cold rebu
 **Queued for first post-recovery rebuild:** `parse_ipv6` (confirmed 2.67x core lever) and
 the `time(NULL)` `__vdso_time` verify (`bd-2g7oyh.503`).
 
+### 2026-06-22 — CORRECTION: corpus NOT exhausted — `glibc_baseline_bench` mined (warm, no rebuild)
+
+The prior "exhausted" note was premature: `glibc_baseline_bench` (06-21 04:50) is a broad
+fl-vs-glibc comparator (~30 families). Gate-checked each; ran the verified-current subset.
+
+⚠️ **Measurement caveat (important):** the `host_glibc` side of the *tiny* mem/str ops in
+this harness carries a uniform ~620 ns per-sample floor (`memcmp_16/host_glibc` = 619 ns,
+impossible for a real 16-byte memcmp ≈ 2 ns). That is harness/FFI overhead on the glibc
+path, not glibc perf — so the small mem/str rows (memcpy/strlen/strcmp/memcmp_16/256/
+strncmp/strrchr…) would be **falsely inflated wins** and are deliberately NOT recorded.
+Only heavyweight families (op-time ≫ overhead, symmetric & sane numbers) are trusted:
+
+| bench (current) | fl | glibc | ratio | verdict | note |
+|---|---|---|---|---|---|
+| `getenv_miss` (abi) | 1.564 µs | 1.616 µs | 0.97x | parity | This harness's multi-lookup workload; differs from the old 74 ns single-lookup sentinel row (2.54x). |
+| `getservbyname_http_tcp` (abi) | 205.9 µs | 206.6 µs | 1.00x | parity | NSS services lookup. |
+| `getprotobyname_tcp` (abi) | 115.3 µs | 117.9 µs | 0.98x | parity | NSS protocols lookup. |
+| `getgrnam_root` (abi) | 15.03 µs | 15.65 µs | 0.96x | parity | NSS group-by-name. |
+| `getgrgid_0` (abi) | 8.50 µs | 8.85 µs | 0.96x | parity | NSS group-by-gid. |
+| `memset_4096` (core) | 1.166 µs | 1.202 µs | 0.97x | parity | Clean (µs scale, no overhead floor). |
+| `qsort_16_i32` | core 18.98 µs / abi 38.75 µs | 34.15 µs | core **0.56x WIN** / abi **1.13x LOSS** | mixed | Comparator-callback trampoline membrane flips a 2x core win into a small-n loss. |
+| `qsort_128_i32` | core 9.73 µs / abi 8.61 µs | 8.65 µs | ~1.0x | parity | Trampoline overhead amortizes at larger n. |
+
+Net: NSS/getenv/memset at parity (no lever); qsort comparator trampoline is the one
+small-n cost, amortizing by n=128. Small mem/str primitives un-recordable here (glibc-side
+artifact) — re-measure with a dlmopen/PLT-clean harness after disk recovery.
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
