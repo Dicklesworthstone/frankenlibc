@@ -2825,6 +2825,19 @@ search/compare/strlen at SHORT inputs (wcschr/strrchr/strlen/wcsncmp…) AND on 
 outliers. The lever list is validated and safe to invest rebuild time against (strspn_range
 first: solid ~4.5–4.8x).
 
+**ROOT CAUSE (source analysis, no build) — `strspn_range` 4.5x:** in
+`frankenlibc-core/src/string/str.rs::span_dispatch` (~L1200), sets ≤16 chars take the
+table-free `span_scan`/`find_any_of*` fast path, but **>16-char sets build a full
+`byte_membership_table` ([bool;256]) PER CALL**, then `span_general`→`contiguous_set_range`
+(which re-scans `table[lo..=hi]`)→`span_range`. The `strspn_range` workload uses a >16-char
+contiguous range set, so each call pays 256-byte table construction + a range-completeness
+scan before the (already-fast, 256-byte-block SIMD) `span_range`. The span itself is tuned;
+the **per-call setup is the loss**. FIX (rebuild-turn): detect a contiguous range directly
+from the `set` slice — `lo=min`, `hi=max`, members complete iff dedup-count == `hi-lo+1`
+(a single pass over `set`, no 256-byte table) — and dispatch straight to `span_range`,
+skipping `byte_membership_table` for range sets. Same applies to the short-input
+search/compare levers: add a scalar fast path before the SIMD entry (glibc does this).
+
 ### 2026-06-22 — survey part 3: time-formatting + PRNG (current) — asctime big WIN
 
 Last clean survey groups (asctime/gmtime current — the only time commit since build is the
