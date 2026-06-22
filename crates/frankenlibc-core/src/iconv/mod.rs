@@ -18214,8 +18214,12 @@ fn encode_eucjp(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
 // EUC-JP-MS (= EUCJP-OPEN/WIN): EUC-JP superset (NEC/IBM extensions, 940 PUA
 // cells in the SS3 plane). Same 1/2/3-byte structure as EUC-JP; mirrors
 // decode_eucjp/encode_eucjp over the euc_jp_ms_tables.
+fn eucjpms_dbcs2_decode_direct() -> &'static [u32] {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    DIRECT.get_or_init(|| build_dbcs_direct(&euc_jp_ms_tables::EUC_JP_MS_DBCS2))
+}
+
 fn decode_eucjpms(input: &[u8]) -> Result<(char, usize), DecodeError> {
-    static DBCS2_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     static DBCS3_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     let Some(&b0) = input.first() else {
         return Err(DecodeError::Incomplete);
@@ -18250,7 +18254,7 @@ fn decode_eucjpms(input: &[u8]) -> Result<(char, usize), DecodeError> {
         return Err(DecodeError::Incomplete);
     };
     let key = (u16::from(b0) << 8) | u16::from(b1);
-    let direct = DBCS2_DIRECT.get_or_init(|| build_dbcs_direct(&euc_jp_ms_tables::EUC_JP_MS_DBCS2));
+    let direct = eucjpms_dbcs2_decode_direct();
     let cp = direct[key as usize];
     if cp != 0 {
         char::from_u32(cp).map(|c| (c, 2)).ok_or(DecodeError::Invalid)
@@ -24680,6 +24684,7 @@ pub fn iconv(
             // path — the gather only ever handles the plain 2-byte run, which is
             // exactly `decode_eucjp`'s `eucjp_dbcs2_decode_direct[key]` lookup.
             Encoding::EucJp => Some((eucjp_dbcs2_decode_direct(), 0xA1, 0xFE, 0xFF, 0x00)),
+            Encoding::EucJpMs => Some((eucjpms_dbcs2_decode_direct(), 0xA1, 0xFE, 0xFF, 0x00)),
             _ => None,
         };
         if cd.to == Encoding::Utf8

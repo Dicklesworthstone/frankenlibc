@@ -243,6 +243,9 @@ fn bench(c: &mut Criterion) {
     // EUC-JP (Japanese) -> UTF-8: probe glibc speed + source validity (Hiragana is 2-byte).
     let eucjp_src = host_to(b"EUC-JP\0", &jp);
     run_conv(c, "eucjp_to_utf8", b"UTF-8\0", b"EUC-JP\0", &eucjp_src);
+    // EUC-JP-MS (MS EUC-JP variant, same SS structure) -> UTF-8: gather generalization.
+    let eucjpms_src = host_to(b"EUC-JP-MS\0", &jp);
+    run_conv(c, "eucjpms_to_utf8", b"UTF-8\0", b"EUC-JP-MS\0", &eucjpms_src);
     let gb_src = host_to(b"GB18030\0", &cjk);
     run_conv(c, "gb18030_to_utf8", b"UTF-8\0", b"GB18030\0", &gb_src);
     // GBK (Simplified Chinese, 2-byte DBCS) -> UTF-8: the gather-SIMD generalization.

@@ -3264,6 +3264,17 @@ gather's biggest wins are codecs whose SCALAR decode is slow (EucJp's SS-branche
 5.45x) — not just slow-glibc. To make the fast-glibc cluster (cp932/ShiftJis/EucJp) fully WIN needs beating
 the gather-table cache cost (the unresolved cp932-vs-ShiftJis 390-vs-524 anomaly) — a separate lever.
 
+### 2026-06-23 — ✅ eucjpms_to_utf8 gather — 4.33x LOSS → 0.68x WIN (6.4x self-speedup) ⭐ clear WIN
+
+EUC-JP-MS (the NEC/IBM-extended EUC-JP) → UTF-8: same SS2/SS3-heavy decode as EucJp (exposed
+`eucjpms_dbcs2_decode_direct()`, lead 0xA1..=0xFE), `jp` source valid. Stash A/B (clean load): OLD scalar
+fl **3362.9 ns** → NEW gather fl **527.0 ns** = **6.4x self-speedup**; vs glibc **776 ns** = **4.33x LOSS →
+0.68x WIN**. UNLIKE EucJp (glibc fast 433 → fl near-parity 1.11x), EucJpMs's glibc gconv is SLOW (776 ns)
+so the gather WINS outright (the ideal target: BOTH slow-scalar AND slow-glibc). Byte-identical:
+conformance_diff_iconv_simd + iconv_differential_fuzz + 285 core unit all green. Confirms the selection
+criterion: gather wins big when scalar is slow (SS-branches / cache-bound) AND wins OUTRIGHT when glibc is
+also slow. 3 gather WINS now (cp932 0.95x, GBK 0.46x, EucJpMs 0.68x) + EucJp loss-elimination (6.2x→1.11x).
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
