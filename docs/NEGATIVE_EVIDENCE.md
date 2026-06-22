@@ -3051,3 +3051,12 @@ glibc) + golden_iconv_utf8_fastpath + iconv_differential_fuzz + conformance_diff
 **iconv is now fully fl-dominant (8/8): no un-dominated iconv gap remains.** Lesson: when a "fast path"
 already exists but still loses, the cost is often a SCALAR GATHER feeding the SIMD op — replace it with
 a true wide load + swizzle, not more dispatch-elision (which was ~0-gain here last turn).
+
+UPDATE 2026-06-23 (same vein): generalized the true-SIMD-load run to **UTF-16BE** too (the gate was
+`scp==2 && !sbe` → now `scp==2`, BE just swaps the lo/hi swizzle masks since it stores [hi,lo]). BE was
+still on the scalar gather (~2024 ns, a marginal 0.75x). Bench (same warm run): utf16be_ascii_to_utf8
+fl **596.9 ns** vs glibc **2519.4 ns** = **0.24x WIN** (glibc's BE gconv is even slower than LE);
+utf16le unchanged at fl 410 ns / glibc 1651 ns = 0.25x (refactor did NOT regress LE). Same 3.4x SIMD
+self-speedup as the A/B-measured LE case. Byte-identical: iconv_differential_fuzz + conformance_diff_iconv
++ golden_iconv_utf8_fastpath + 285 core unit all green. Remaining sibling (UTF-32LE/BE ASCII→UTF-8, 4-byte
+units, rarer) still on the scalar gather — minor, only if benched.

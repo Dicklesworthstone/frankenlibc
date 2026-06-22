@@ -427,6 +427,7 @@ stable yardstick, the only worker-invariant reference):
 | `inet_pton` AF_INET6 (parse_ipv6) | 112.6 ns | 38.2 ns | ~41 ns | 2.76x LOSS → **0.90x WIN** | single-pass glibc `inet_pton6` port (drop `from_utf8` + ~5 whole-string rescans) |
 | `inet_net_pton` AF_INET | 20.2 ns | 13.9 ns | 31.5 ns | 0.64x → **0.49x WIN** (1.45x self) | per-call `Vec` → bounded stack array |
 | `iconv` utf16le→utf8 (ASCII) | 2024 ns | 490.9 ns | 1593 ns | 1.27x LOSS → **0.31x WIN** (4.1x self) | scalar `cp_at` gather → true 32-B `Simd::<u8,32>` load + `simd_swizzle!` deinterleave |
+| `iconv` utf16be→utf8 (ASCII) | ~2024 ns | 596.9 ns | 2519 ns | 0.75x → **0.24x WIN** (3.4x self) | same true-SIMD-load run generalized to BE (swap lo/hi swizzle masks) |
 
 Validation (byte-identical vs LIVE glibc): parse_ipv6 — 40k-round
 `inet_pton_ntop_differential_fuzz` + `conformance_diff_inet_pton6_edges` + 150

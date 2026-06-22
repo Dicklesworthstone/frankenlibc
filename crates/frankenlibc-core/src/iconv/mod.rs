@@ -24015,27 +24015,37 @@ pub fn iconv(
                     }
                 }
             };
-            // UTF-16LE ASCII run via a TRUE 32-byte SIMD load (16 units/iter)
-            // instead of the 8-scalar-`cp_at`-read gather below: deinterleave the
-            // low/high bytes of 16 units, require every unit ASCII (hi == 0 AND
-            // lo < 0x80, i.e. the u16 < 0x80), and copy the 16 low bytes straight
-            // out. Byte-identical to the scalar-gather ASCII run that follows
-            // (`encode_utf8` of cp < 0x80 == `[cp as u8]`); the first non-ASCII
-            // unit / short (< 32 B) tail / full output falls through to it and then
-            // the generic body, preserving EILSEQ/E2BIG ordering. The scalar gather
-            // (8 `cp_at` reads/iter) was the residual cost keeping UTF-16LE->UTF-8
-            // ~1.27x slower than glibc on ASCII text (bd-2g7oyh iconv).
-            if scp == 2 && !sbe {
+            // UTF-16 (LE or BE) ASCII run via a TRUE 32-byte SIMD load (16
+            // units/iter) instead of the 8-scalar-`cp_at`-read gather below:
+            // deinterleave the low/high bytes of 16 units, require every unit ASCII
+            // (hi == 0 AND lo < 0x80, i.e. the u16 < 0x80), and copy the 16 low
+            // bytes straight out. LE stores [lo,hi] (low at even indices), BE stores
+            // [hi,lo] (low at odd) — only the swizzle masks differ. Byte-identical to
+            // the scalar-gather ASCII run that follows (`encode_utf8` of cp < 0x80 ==
+            // `[cp as u8]`); the first non-ASCII unit / short (< 32 B) tail / full
+            // output falls through to it and then the generic body, preserving
+            // EILSEQ/E2BIG ordering. The scalar gather (8 `cp_at` reads/iter) was the
+            // residual cost keeping UTF-16->UTF-8 ~1.27x slower than glibc on ASCII
+            // text (bd-2g7oyh iconv; LE measured 2024→491 ns, BE the symmetric case).
+            if scp == 2 {
+                const LO_LE: [usize; 16] =
+                    [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30];
+                const HI_LE: [usize; 16] =
+                    [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31];
                 while in_pos + 32 <= input.len() && out_pos + 16 <= outbuf.len() {
                     let v = Simd::<u8, 32>::from_slice(&input[in_pos..in_pos + 32]);
-                    let lo = std::simd::simd_swizzle!(
-                        v,
-                        [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30]
-                    );
-                    let hi = std::simd::simd_swizzle!(
-                        v,
-                        [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31]
-                    );
+                    // BE swaps which interleaved lane is the low/high byte.
+                    let (lo, hi) = if sbe {
+                        (
+                            std::simd::simd_swizzle!(v, HI_LE),
+                            std::simd::simd_swizzle!(v, LO_LE),
+                        )
+                    } else {
+                        (
+                            std::simd::simd_swizzle!(v, LO_LE),
+                            std::simd::simd_swizzle!(v, HI_LE),
+                        )
+                    };
                     if !(hi.simd_eq(Simd::splat(0)) & lo.simd_lt(Simd::splat(0x80))).all() {
                         break;
                     }
