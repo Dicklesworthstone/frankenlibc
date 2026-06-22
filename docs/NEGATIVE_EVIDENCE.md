@@ -3185,7 +3185,15 @@ gather is far less contention/cache-sensitive. (OLD absolute ns was contention-i
 same-run ratio is the reliable metric and confirms un-dominated.) Byte-identical: conformance_diff_iconv +
 conformance_diff_iconv_simd + iconv_differential_fuzz (codec fuzz vs glibc) + 285 core unit all green. The
 gather path is now parameterized — adding Big5/Gb2312/Cp949/ShiftJis/Johab is a one-line `match` arm each
-(expose `*_decode_direct()` + its lead range), all likely the same cache-bound loss → win.
+(expose `*_decode_direct()` + its lead range), all likely the same cache-bound loss → win. ⚠️ BENCH-SOURCE
+CAVEAT (learned attempting Big5): the bench builds DBCS sources via `host_to(codec, cjk)` where `cjk` =
+U+4E00..U+4FFF — but those CJK-unified code points are NOT all in Big5, so glibc encodes a near-EMPTY buffer
+and big5_to_utf8 measures only the per-call floor (fl 352 ns vs glibc 29 ns = meaningless). The Big5 gather
+arm was implemented + proven BYTE-IDENTICAL (conformance_diff_iconv_simd + iconv_differential_fuzz green) but
+REVERTED (stashed `cc-big5-gather-UNMEASURABLE`) since the perf is unmeasurable with this source — REVERT-if-
+unmeasured. Each codec needs a source of its OWN encodable code points (GBK happened to cover U+4E00..U+4FFF;
+Big5/Gb2312/Cp949 need codec-specific ranges or a round-trip-filtered source) before its arm can be
+benched/landed.
 
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
