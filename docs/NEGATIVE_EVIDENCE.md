@@ -3193,7 +3193,11 @@ arm was implemented + proven BYTE-IDENTICAL (conformance_diff_iconv_simd + iconv
 REVERTED (stashed `cc-big5-gather-UNMEASURABLE`) since the perf is unmeasurable with this source — REVERT-if-
 unmeasured. Each codec needs a source of its OWN encodable code points (GBK happened to cover U+4E00..U+4FFF;
 Big5/Gb2312/Cp949 need codec-specific ranges or a round-trip-filtered source) before its arm can be
-benched/landed.
+benched/landed. ShiftJis was also implemented (valid `jp`/Hiragana source, byte-identical — 285 core
+tests green) but DEFERRED (stashed `cc-shiftjis-gather-CONTENTION`) under a multi-agent build storm
+(7+ sibling rustc/test procs, a single core test took 578 s, conformance stuck > 15 min) AND it is a
+near-duplicate of the landed cp932 (same `decode_dbcs2` scalar path + same gather + same Japanese
+workload), so its win is the cp932 win. Land ShiftJis + the other arms in a clean, uncontended turn.
 
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
