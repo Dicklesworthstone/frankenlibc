@@ -2751,6 +2751,40 @@ glibc arm), not the shared reduction path. Both current, sane, WIN:
 recovery. With cos+tan, the f64+f32 math surface is now confirmed glibc-beating on every
 measurable function (~32 fns); only `sin`'s glibc-arm hang blocks the last data point.
 
+### 2026-06-22 — ⭐ MAJOR: SMALL-INPUT string/mem ops LOSE to glibc (clean in-process comparator)
+
+`string_inprocess_survey_bench` (06-21 18:11) uses a REAL in-process glibc comparator
+(`host_glibc_inprocess`), not the `glibc_baseline` ~620 ns overhead floor. On SHORT inputs
+it reveals the opposite of the contaminated baseline: **fl `frankenlibc_core` LOSES to glibc
+on most small string/mem ops** (SIMD setup cost doesn't amortize at tiny sizes; glibc's hand-
+tuned asm wins). These are CORE (algorithm), not membrane. All current (gate: only strcasestr/
+strchr/memmem touched since build — strcasestr excluded as stale; rest unaffected):
+
+| op | fl core | glibc | ratio | verdict |
+|---|---|---|---|---|
+| `strcmp` (short) | 5.09 ns | 2.13 ns | 2.39x | LOSS |
+| `strcspn_set6` | 8.62 ns | 3.53 ns | 2.44x | LOSS |
+| `memrchr` | 7.26 ns | 2.99 ns | 2.42x | LOSS |
+| `wcschr` | 7.40 ns | 2.86 ns | 2.59x | LOSS |
+| `wcsrchr` | 14.73 ns | 7.21 ns | 2.04x | LOSS |
+| `strpbrk` (short) | 9.21 ns | 5.16 ns | 1.78x | LOSS |
+| `wcsncmp` | 6.07 ns | 3.58 ns | 1.69x | LOSS |
+| `strncasecmp` | 4.36 ns | 2.89 ns | 1.51x | LOSS |
+| `wmemcmp` | 3.29 ns | 2.53 ns | 1.30x | LOSS |
+| `strspn` (short) | 5.22 ns | 4.06 ns | 1.29x | LOSS |
+| `memcmp` (short) | 2.93 ns | 2.39 ns | 1.22x | LOSS |
+| `strncmp` (short) | 2.82 ns | 2.34 ns | 1.20x | LOSS |
+| `strcspn` (short) | 5.74 ns | 4.98 ns | 1.15x | LOSS |
+| `wcscmp` | 3.10 ns | 2.83 ns | 1.09x | LOSS |
+| `strstr` (short) | 34.04 ns | 34.01 ns | 1.00x | parity |
+
+**This CORRECTS two prior beliefs:** (1) the `glibc_baseline` small mem/str "wins" were a
+glibc-side harness artifact (confirmed — clean comparator flips them to losses); (2) the
+"perf frontier saturated" assumption holds only for LARGE inputs — the SIMD primitives have
+a **small-input regression** vs glibc. REAL LEVERS (highest first): wcschr 2.59x, strcspn_set6
+2.44x, memrchr 2.43x, strcmp 2.39x, wcsrchr 2.04x — add a scalar short-input fast path before
+the SIMD entry (glibc does exactly this). All need a rebuild to fix/verify (disk-gated).
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
