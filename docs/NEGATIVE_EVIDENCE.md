@@ -2512,3 +2512,14 @@ Correctness: `strtod_strtof_live_differential_probe` passed via `rch` on
 `vmi1227854`: 8071 inputs, 0 divergences vs host glibc, including `12345`,
 `1.234567e10`, `-0e10`, and malformed exponent `1e+` cases. Full evidence:
 `tests/artifacts/perf/bd-2g7oyh-strtod-exact-fastpath.md`.
+
+### 2026-06-22 — `bd-2g7oyh.503` (time(NULL) `__vdso_time` cache) verification BLOCKED on disk
+
+The `time` row above is the standing measurement: **fl 4.94 ns vs glibc 3.10 ns =
+1.60x LOSS** (the bead also cites 1.93x on `vmi1227854`). The `__vdso_time` leaf-
+pointer cache (deployed in `6befde58f`) was filed for BOLD-VERIFY under
+`bd-2g7oyh.503`. Re-benching it is **blocked**: the host is DISK CRITICAL (`/` at
+98%, ~50 GB free) and no warm bench artifact exists locally — the harness builds
+into a separate rch target dir, so a fresh run is a cold rebuild, which is barred
+while disk is critical. No new ratio measured this turn; lead remains open pending
+disk recovery.
