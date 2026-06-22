@@ -3302,6 +3302,20 @@ than Cp949's). Byte-identical: conformance_diff_iconv_simd + iconv_differential_
 The cache-bound-scalar + slow-glibc Korean/Chinese codecs are the proven sweet spot. Remaining blocked on
 source curation (EucKr/Gb2312/Big5 need codec-specific code-point sets, not a contiguous range).
 
+### 2026-06-23 — ✅ big5_to_utf8 gather — 5.46x LOSS → 0.53x WIN (12.1x self); generic source-builder UNBLOCKS the vein
+
+Broke the source-curation block with a GENERIC `build_dbcs_source(codec, leads, trails, n)` helper in the
+bench: it enumerates lead/trail byte pairs and keeps only those glibc decodes cleanly (fully consumes 2
+bytes) → a valid, non-degenerate DBCS source for ANY codec whose code points are a scattered subset (defeats
+the "contiguous-Unicode host_to → near-empty buffer" block that killed Big5/Gb2312/EucKr). **BIG5**
+(Traditional Chinese, widely used in TW/HK): exposed `big5_decode_direct()`, gather arm lead 0x81..=0xFE
+(cp-range gate keeps BMP 3-byte Hanzi; non-BMP/2-byte-output cells + 1-byte ASCII fall to scalar,
+byte-identical). A/B (clean): OLD scalar fl **13159.4 → NEW gather fl 1091.1 ns = 12.1x self-speedup**; vs
+glibc **2063.6 ns = 5.46x LOSS → 0.53x WIN** (Big5 is cache-bound-scalar + slow-glibc, the proven sweet
+spot). Byte-identical: conformance_diff_iconv_simd + iconv_differential_fuzz + 285 core unit green.
+**6 gather WINS now: cp932 0.95x, GBK 0.46x, EucJpMs 0.68x, Cp949 0.43x, Johab 0.33x, Big5 0.53x** + EucJp
+loss-elim. The generic builder now makes EucTw/Gb2312/EucKr probable (same vein) — bench each with it.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

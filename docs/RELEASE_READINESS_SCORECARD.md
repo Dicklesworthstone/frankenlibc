@@ -444,6 +444,7 @@ stable yardstick, the only worker-invariant reference):
 | `iconv` eucjpms→utf8 (EUC-JP-MS) | 3362.9 ns | 527.0 ns | 776 ns | **4.33x LOSS → 0.68x WIN** (6.4x self, A/B) | same gather; EUC-JP-MS glibc is SLOW so it wins outright (slow-scalar + slow-glibc) |
 | `iconv` cp949→utf8 (Korean UHC/Hangul) | 16374 ns | 1086.4 ns | 2541 ns | **6.1x LOSS → 0.43x WIN** (⭐15.1x self, A/B) | gather rescues a cache-bound scalar (512 diverse Hangul thrash the 256KB table) — biggest self-speedup of session |
 | `iconv` johab→utf8 (Korean Johab/Hangul) | 12863.9 ns | 1047.0 ns | 3152.8 ns | **4.08x LOSS → 0.33x WIN** (12.3x self, A/B) | same cache-bound gather; glibc Johab gconv even slower than Cp949 |
+| `iconv` big5→utf8 (Traditional Chinese) | 13159.4 ns | 1091.1 ns | 2063.6 ns | **5.46x LOSS → 0.53x WIN** (12.1x self, A/B) | generic valid-source builder unblocked it; cache-bound gather, widely used TW/HK |
 | `iconv` gbk→utf8 (Simplified Chinese) | (5.45x LOSS) | 1162.2 ns | 2539 ns | **5.45x LOSS → 0.46x WIN** (same-run ratios) | same gather path generalized to GBK (per-codec direct table + lead range); scalar was cache-bound |
 
 Validation (byte-identical vs LIVE glibc): parse_ipv6 — 40k-round

@@ -238,6 +238,39 @@ fn bench(c: &mut Criterion) {
         dst.truncate(n);
         dst
     };
+    // Build a VALID, non-degenerate DBCS source for codecs whose code points are a
+    // scattered subset (Big5/EucTw/Gb2312): enumerate lead/trail pairs and keep only
+    // those glibc decodes cleanly (fully consumes the 2 bytes). Defeats the
+    // "contiguous-Unicode-range host_to gives a near-empty buffer" source block.
+    let build_dbcs_source = |codec: &[u8],
+                             leads: std::ops::RangeInclusive<u8>,
+                             trails: std::ops::RangeInclusive<u8>,
+                             target: usize|
+     -> Vec<u8> {
+        let cd = unsafe { (host.open)(b"UTF-8\0".as_ptr().cast(), codec.as_ptr().cast()) };
+        assert!(cd as isize != -1 && !cd.is_null(), "build_dbcs_source open failed");
+        let mut out = Vec::new();
+        'outer: for lead in leads.clone() {
+            for trail in trails.clone() {
+                let src = [lead, trail];
+                let mut dst = [0u8; 8];
+                let mut inp = src.as_ptr() as *mut c_char;
+                let mut inl = 2usize;
+                let mut outp = dst.as_mut_ptr() as *mut c_char;
+                let mut outl = 8usize;
+                let r = unsafe { (host.convert)(cd, &mut inp, &mut inl, &mut outp, &mut outl) };
+                if r != usize::MAX && inl == 0 {
+                    out.push(lead);
+                    out.push(trail);
+                    if out.len() >= target * 2 {
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        unsafe { (host.close)(cd) };
+        out
+    };
     let cp932_src = host_to(b"CP932\0", &jp);
     run_conv(c, "cp932_to_utf8", b"UTF-8\0", b"CP932\0", &cp932_src);
     // EUC-JP (Japanese) -> UTF-8: probe glibc speed + source validity (Hiragana is 2-byte).
@@ -259,6 +292,10 @@ fn bench(c: &mut Criterion) {
     // JOHAB (Korean, full Hangul coverage like UHC) -> UTF-8: cache-bound gather.
     let johab_src = host_to(b"JOHAB\0", &hangul);
     run_conv(c, "johab_to_utf8", b"UTF-8\0", b"JOHAB\0", &johab_src);
+    // BIG5 (Traditional Chinese) -> UTF-8: valid source built by enumerating glibc-
+    // accepted Level-1/2 lead/trail pairs (defeats the contiguous-range source block).
+    let big5_src = build_dbcs_source(b"BIG5\0", 0xA4..=0xF9, 0xA1..=0xFE, 512);
+    run_conv(c, "big5_to_utf8", b"UTF-8\0", b"BIG5\0", &big5_src);
 }
 
 criterion_group!(benches, bench);

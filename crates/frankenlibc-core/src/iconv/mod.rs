@@ -18803,14 +18803,17 @@ fn encode_ibm932(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
     encode_dbcs2(ch, out, direct)
 }
 
-fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
+fn big5_decode_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::BIG5_DBCS));
+    DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::BIG5_DBCS))
+}
+
+fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
     decode_dbcs2(
         input,
         &cjk_tables::BIG5_ONE_BYTE,
         &cjk_tables::BIG5_IS_LEAD,
-        direct,
+        big5_decode_direct(),
     )
 }
 
@@ -24700,6 +24703,10 @@ pub fn iconv(
             // != 0 in BMP) rejects in-range non-leads, so a single coarse range is
             // byte-identical. 1-byte chars are ASCII < 0x80, below the range.
             Encoding::Johab => Some((johab_decode_direct(), 0x84, 0xF9, 0xFF, 0x00)),
+            // BIG5 (Traditional Chinese): 2-byte leads 0x81..=0xFE (trails 0x40..0x7E
+            // or 0xA1..0xFE). The cp-range gate keeps only BMP (3-byte UTF-8) Hanzi;
+            // non-BMP/2-byte-output cells and 1-byte ASCII (< 0x81) fall to scalar.
+            Encoding::Big5 => Some((big5_decode_direct(), 0x81, 0xFE, 0xFF, 0x00)),
             _ => None,
         };
         if cd.to == Encoding::Utf8
