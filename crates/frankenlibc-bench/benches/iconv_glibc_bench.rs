@@ -187,6 +187,9 @@ fn bench(c: &mut Criterion) {
     // Non-ASCII reverse: UTF-16LE Cyrillic -> 2-byte UTF-8 (the 2-byte-output run).
     let cyr_u16le: Vec<u8> = cyr_cps.iter().flat_map(|&c| (c as u16).to_le_bytes()).collect();
     run_conv(c, "utf16le_cyrillic_to_utf8", b"UTF-8\0", b"UTF-16LE\0", &cyr_u16le);
+    // UTF-32LE Cyrillic -> 2-byte UTF-8: the 4-byte-unit reverse 2-byte-output run.
+    let cyr_u32le: Vec<u8> = cyr_cps.iter().flat_map(|&c| c.to_le_bytes()).collect();
+    run_conv(c, "utf32le_cyrillic_to_utf8", b"UTF-8\0", b"UTF-32LE\0", &cyr_u32le);
     // UTF-16BE -> UTF-8 (network/Java byte order): the symmetric BE case.
     let ascii_u16be: Vec<u8> = ascii.iter().flat_map(|&b| [0, b]).collect();
     run_conv(c, "utf16be_ascii_to_utf8", b"UTF-8\0", b"UTF-16BE\0", &ascii_u16be);

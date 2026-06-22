@@ -3125,6 +3125,18 @@ SIMD-input-loaded; only UTF-32 input retains the scalar gather (unbenched).** Ne
 scalar-gather/scatter anti-pattern is now eliminated from EVERY benched iconv UTF-8↔UTF-16 conversion in
 both directions — 11 conversions converted from parity/loss/thin-win to decisive 0.24–0.60x wins.
 
+### 2026-06-23 — ✅ iconv UTF-32-source reverse (Cyrillic, 2-byte) — 0.97x near-parity → 0.47x WIN (2.09x self)
+
+Extended the reverse-input SIMD load to UTF-32 source (scp==4) in the 2-byte-output run (mod.rs ~L24206):
+a true 32-byte `Simd::<u8,32>` load + 4-way byte deinterleave (`b0..b3` swizzles) reassembles the 8 code
+points `cp = b0|b1<<8|b2<<16|b3<<24` (BE reversed) — loads ALL 4 bytes/unit so an out-of-range cp is still
+caught by the `0x80..=0x7FF` check — replacing the 8 scalar `cp_at` 4-byte reads. Stash A/B:
+utf32le_cyrillic_to_utf8 OLD scalar fl **1450.2 ns** → NEW SIMD fl **694.5 ns** = **2.09x self-speedup**;
+OLD fl 1450.2 / glibc 1491.4 = **0.97x (near-parity)** → NEW **0.466x WIN**. Byte-identical:
+conformance_diff_iconv + conformance_diff_iconv_simd + iconv_differential_fuzz + 285 core unit all green.
+(The 3-byte UTF-32-source run + the forward 2/3-byte→UTF-32 store keep the scalar path — same pattern, can
+follow.)
+
 ### 2026-06-23 — inet surface verification CLOSED (all win); iconv SIMD-amenable surface exhausted
 
 Verified the last un-checked inet arm: inet_pton AF_INET (parse_ipv4) fl **16.46 ns** / glibc 17.62 ns =

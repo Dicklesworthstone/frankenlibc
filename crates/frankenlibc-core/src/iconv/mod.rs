@@ -24204,7 +24204,27 @@ pub fn iconv(
                         (odd.cast::<u32>() << Simd::splat(8)) | even.cast::<u32>()
                     }
                 } else {
-                    Simd::<u32, 8>::from_array(std::array::from_fn(|k| cp_at(in_pos + scp * k)))
+                    // UTF-32 (scp==4): true 32-byte load + 4-way byte deinterleave for
+                    // the 8 code points (loads ALL 4 bytes/unit so an out-of-range cp
+                    // with high bytes set is still caught by the range check below),
+                    // replacing the 8 scalar `cp_at` reads. LE `cp = b0|b1<<8|b2<<16|
+                    // b3<<24`, BE reversed — byte-identical to `u32::from_*_bytes`.
+                    let raw = Simd::<u8, 32>::from_slice(&input[in_pos..in_pos + 32]);
+                    let b0 = std::simd::simd_swizzle!(raw, [0, 4, 8, 12, 16, 20, 24, 28]);
+                    let b1 = std::simd::simd_swizzle!(raw, [1, 5, 9, 13, 17, 21, 25, 29]);
+                    let b2 = std::simd::simd_swizzle!(raw, [2, 6, 10, 14, 18, 22, 26, 30]);
+                    let b3 = std::simd::simd_swizzle!(raw, [3, 7, 11, 15, 19, 23, 27, 31]);
+                    if sbe {
+                        (b0.cast::<u32>() << Simd::splat(24))
+                            | (b1.cast::<u32>() << Simd::splat(16))
+                            | (b2.cast::<u32>() << Simd::splat(8))
+                            | b3.cast::<u32>()
+                    } else {
+                        b0.cast::<u32>()
+                            | (b1.cast::<u32>() << Simd::splat(8))
+                            | (b2.cast::<u32>() << Simd::splat(16))
+                            | (b3.cast::<u32>() << Simd::splat(24))
+                    }
                 };
                 if !(v.simd_ge(Simd::splat(0x80)) & v.simd_le(Simd::splat(0x7FF))).all() {
                     break;
