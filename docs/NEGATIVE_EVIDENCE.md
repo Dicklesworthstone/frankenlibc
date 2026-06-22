@@ -2523,3 +2523,21 @@ pointer cache (deployed in `6befde58f`) was filed for BOLD-VERIFY under
 into a separate rch target dir, so a fresh run is a cold rebuild, which is barred
 while disk is critical. No new ratio measured this turn; lead remains open pending
 disk recovery.
+
+### 2026-06-22 — inet_pton / inet_ntop in-process ratios (warm-binary reuse, no rebuild)
+
+Ran the warm criterion harnesses `inet_pton_glibc_bench` and `inet_ntop_glibc_bench`
+(built 2026-06-21, `frankenlibc-cc` rch target) directly — no cargo, no rebuild, no
+new scratch — under DISK CRITICAL. These binaries reflect current HEAD for the inet
+family (no inet/resolv code commits since their build). In-process fl-vs-glibc
+measurement (cancels worker variance), `--sample-size 60 --measurement-time 2`:
+
+| bench | fl median | glibc median | ratio | verdict | note |
+|---|---|---|---|---|---|
+| `inet_pton_ipv4` | 48.79 ns | 17.77 ns | 2.75x | LOSS | StringMemory membrane (ptr validation) tax on a small op — architectural, off-limits. |
+| `inet_ntop_ipv4` | 62.19 ns | 9.61 ns | 6.47x | LOSS | Same membrane tax; formatter+membrane floor dominates the tiny IPv4 conversion. |
+
+Consistent with the deployed-malloc-membrane and small-op formatter findings: these
+losses are the per-call validation membrane, not the parser/formatter kernel, so they
+are not a byte-identical quick lever. No code change under test; recorded as a dead
+end so it is not re-attempted.
