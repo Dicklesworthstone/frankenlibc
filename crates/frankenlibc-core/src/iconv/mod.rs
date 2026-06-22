@@ -24015,6 +24015,38 @@ pub fn iconv(
                     }
                 }
             };
+            // UTF-16LE ASCII run via a TRUE 32-byte SIMD load (16 units/iter)
+            // instead of the 8-scalar-`cp_at`-read gather below: deinterleave the
+            // low/high bytes of 16 units, require every unit ASCII (hi == 0 AND
+            // lo < 0x80, i.e. the u16 < 0x80), and copy the 16 low bytes straight
+            // out. Byte-identical to the scalar-gather ASCII run that follows
+            // (`encode_utf8` of cp < 0x80 == `[cp as u8]`); the first non-ASCII
+            // unit / short (< 32 B) tail / full output falls through to it and then
+            // the generic body, preserving EILSEQ/E2BIG ordering. The scalar gather
+            // (8 `cp_at` reads/iter) was the residual cost keeping UTF-16LE->UTF-8
+            // ~1.27x slower than glibc on ASCII text (bd-2g7oyh iconv).
+            if scp == 2 && !sbe {
+                while in_pos + 32 <= input.len() && out_pos + 16 <= outbuf.len() {
+                    let v = Simd::<u8, 32>::from_slice(&input[in_pos..in_pos + 32]);
+                    let lo = std::simd::simd_swizzle!(
+                        v,
+                        [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30]
+                    );
+                    let hi = std::simd::simd_swizzle!(
+                        v,
+                        [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31]
+                    );
+                    if !(hi.simd_eq(Simd::splat(0)) & lo.simd_lt(Simd::splat(0x80))).all() {
+                        break;
+                    }
+                    lo.copy_to_slice(&mut outbuf[out_pos..out_pos + 16]);
+                    in_pos += 32;
+                    out_pos += 16;
+                }
+                if in_pos >= input.len() {
+                    break;
+                }
+            }
             // 1-byte output run (ASCII code points < 0x80): a source unit < 0x80
             // is a UTF-8 byte equal to itself, so narrow each unit's low byte
             // directly. This is the ubiquitous "UTF-16/UTF-32 ASCII text -> UTF-8"

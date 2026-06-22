@@ -3034,3 +3034,20 @@ UTF-16LE window, test `hi==0 & lo<0x80` across lanes, narrow-pack the low bytes 
 scalar path on the first non-ASCII unit). FILED as the next iconv lever (bigger SIMD work; byte-identity
 gated by iconv_differential_fuzz + conformance_diff_iconv, both green). Net: iconv is overwhelmingly
 fl-favorable; this lone reverse-ASCII workload is the sole un-dominated iconv gap.
+
+### 2026-06-23 — ✅ iconv utf16le→utf8 SIMD bulk-ASCII DONE — 1.27x LOSS → 0.31x WIN (4.1x self-speedup)
+
+Implemented the filed lever. ROOT-CAUSE refinement: the UTF-16/32→UTF-8 ASCII fast path ALREADY
+existed (mod.rs ~L24018) but built its code points with **8 scalar `cp_at` reads/iter**
+(`std::array::from_fn(|k| cp_at(..))`) — only the ASCII-check + narrow was SIMD. That scalar gather
+was the residual 1.27x. Added a UTF-16LE-specific TRUE-SIMD run BEFORE it (gated `scp==2 && !sbe`):
+one 32-byte `Simd::<u8,32>` load = 16 units/iter, `simd_swizzle!` deinterleave to low/high bytes,
+require all `hi==0 & lo<0x80`, `copy_to_slice` the 16 low bytes. The existing scalar-gather run handles
+the <32 B tail / non-ASCII break — byte-identical (`encode_utf8` of cp<0x80 == `[lo]`). Bench
+(iconv_glibc_bench --features abi-bench, ~1 KiB): fl **2024 ns → 490.9 ns** (p50), glibc steady
+**1589→1593 ns** yardstick → **1.27x LOSS → 0.31x WIN** (fl now 3.2x faster than glibc). Byte-identical:
+285 core iconv unit (incl. iconv_ascii_fast_path_isomorphic_to_scalar) + conformance_diff_iconv (vs
+glibc) + golden_iconv_utf8_fastpath + iconv_differential_fuzz + conformance_diff_iconv_simd all green.
+**iconv is now fully fl-dominant (8/8): no un-dominated iconv gap remains.** Lesson: when a "fast path"
+already exists but still loses, the cost is often a SCALAR GATHER feeding the SIMD op — replace it with
+a true wide load + swizzle, not more dispatch-elision (which was ~0-gain here last turn).
