@@ -2909,10 +2909,12 @@ of them. All ratios are warm-binary, in-process fl-vs-glibc (no rebuild). Levers
 AND workload-audited (2 of 3 source-only diagnoses were initially wrong — corrected).
 
 CONFIRMED LEVERS (do these first; build + verify with the same warm bench):
-1. `strspn_range` ~4.5x LOSS (reproduced 4.50/4.78x). Cause: a ≤16-char CONTIGUOUS range set
-   (e.g. "0123456789") hits the ≤16 `span_scan`/`in_set_mask16` path in `str.rs::span_dispatch`
-   and MISSES the branchless `(b-lo)<=(hi-lo)` `span_range` test (only reachable via the >16
-   path). Fix: detect a contiguous range from `set` before the ≤16 branch → route to `span_range`.
+1. ⛔ `strspn_range` — DEAD (DISPROVEN 2026-06-22, see dated entry below). The range-test fix is
+   a 2.1x REGRESSION (in-process A/B: OLD mask16 18.6 ns vs NEW range 39.8 ns vs glibc 5.06 ns):
+   x86 has NO native unsigned SIMD compare (`simd_ge/le<u8>` is emulated, slower than `pcmpeqb`)
+   AND the per-call contiguous-detection scan is pure overhead. Do NOT re-attempt. Loss is real
+   but unfixable via range test; glibc's edge is a cheap inline 256-bit bitmap (fl bitmap build
+   already ~6x slower per-call, bd-2g7oyh). NEXT confirmed lever is parse_ipv6 (#2).
 2. `parse_ipv6` ~2.67x LOSS (core). Cause: `inet/mod.rs::parse_ipv6` does `from_utf8` + ~4
    redundant whole-string scans (find/contains x2/starts/ends/contains('.')) before split.
    Fix: single byte-level state-machine pass (mirror the shipped inet_ntop byte rewrite).
@@ -2936,3 +2938,38 @@ ARTIFACTS/CORRECTIONS: glibc_baseline_bench small mem/str rows are a glibc-side 
 floor (untrustworthy — use string_inprocess_survey's `host_glibc_inprocess` instead). "Perf
 frontier saturated" holds for LARGE inputs only. Method: warm binary + `host_glibc_inprocess`
 comparator; sanity-check glibc-side absolute ns; ALWAYS validate root-cause vs the bench workload.
+
+### 2026-06-22 — ⛔ strspn_range lever (#1 "confirmed") is DEAD — DISPROVEN by in-process A/B
+
+Built and benched the campaign's #1 lever (route a SHORT contiguous range like "0123456789"
+to a branchless range test instead of the ≤16 `span_scan`/`in_set_mask16`). It is a **2.1x
+REGRESSION**, not a win. Settled with a single-process 3-arm A/B (the ONLY worker-invariant
+method — fl absolute ns swings 18→40ns across workers, so cross-run ledger numbers are useless;
+glibc is the only stable yardstick):
+
+| arm (same process, same worker) | ns | vs glibc |
+|---|---|---|
+| `fl_OLD_mask16` (current main, span_scan+in_set_mask16) | **18.6 ns** | 3.67x |
+| fl NEW range-test (this lever) | **39.8 ns** | 7.9x |
+| `host_glibc_inprocess` | 5.06 ns | 1.0x |
+
+Tried BOTH range routes; both regress:
+1. `span_range` (the coarse 256-block fold reachable from the >16 path): ~35 ns. Its block fold
+   has NO early exit and re-reads the stop block — for a stop near the FRONT (bench stops at
+   index 100 of 300) it scans 256 B + re-resolves vs `span_scan`'s early exit at ~128 B.
+2. `span_scan` with a range-test closure (`simd_ge(lo) & simd_le(hi)`, keeps early exit): ~40 ns.
+   WORSE than `mask16` because (a) the per-call contiguous-detection scan (`for v in lo..=hi {
+   set.contains(v) }`, ~100 byte-cmps) is pure overhead on EVERY strspn call, and (b) **x86 has
+   no native unsigned SIMD compare** — `simd_ge/simd_le<u8>` lower to xor-sign-bias + signed
+   compare (~5 ops each), which is SLOWER than the native `pcmpeqb` that `in_set_mask16` uses
+   (16× 1-cycle eq still beats 2× emulated unsigned cmp + per-call detection).
+
+ROOT-CAUSE of the ledger's error: the "branchless range test is cheaper" premise assumed a
+native unsigned compare (true on ARM, FALSE on x86) AND ignored the per-call detection cost.
+The strspn_range ~3.7x loss vs glibc is REAL but the range test cannot close it — glibc's edge
+is a cheap INLINE 256-bit bitmap + uniform per-byte lookup; fl's bitmap build was already shown
+~6x slower per-call (bd-2g7oyh), so there is no cheap fl path here. **strspn_range is retired as
+a lever** (do not re-attempt the range-test fix). Meta-lesson added: a perf hypothesis resting on
+SIMD op-cost MUST be validated with a same-process A/B before being called "confirmed" — op
+counting lies on x86 (unsigned-compare emulation). Change reverted (stashed
+`cc-DEAD-strspn_range-lever-REVERT`), tree clean, main untouched.
