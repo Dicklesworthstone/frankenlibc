@@ -299,6 +299,9 @@ fn bench(c: &mut Criterion) {
     // GB2312/EUC-CN (Simplified Chinese, common on Unix) -> UTF-8: generic source.
     let gb2312_src = build_dbcs_source(b"GB2312\0", 0xB0..=0xF7, 0xA1..=0xFE, 512);
     run_conv(c, "gb2312_to_utf8", b"UTF-8\0", b"GB2312\0", &gb2312_src);
+    // ENCODE direction probe: UTF-8 Hangul -> CP949 (cp->byte enc_direct lookup, also
+    // cache-bound for diverse cps). `hangul` is ~512 3-byte UTF-8 Hangul syllables.
+    run_conv(c, "utf8_to_cp949", b"CP949\0", b"UTF-8\0", &hangul);
 }
 
 criterion_group!(benches, bench);

@@ -3346,6 +3346,24 @@ the intentional exclusion. EucKr stays source-blocked (subset of the landed Cp94
 gather campaign is COMPLETE: 7 WINS (cp932/GBK/EucJpMs/Cp949/Johab/Big5/Gb2312) + EucJp loss-elim + EucTw
 boundary (reverted). The technique wins iff the codec is BMP-dense + cache-bound-scalar + slow-glibc.**
 
+### 2026-06-23 — 🎯 FILED LEVER: the ENCODE direction (UTF-8 → DBCS) is un-dominated — utf8→cp949 = 2.82x LOSS
+
+The symmetric other half of iconv. Probed UTF-8 Hangul → CP949 (the encode direction): fl **7127.6 ns /
+glibc 2524.2 ns (tight) = 2.82x LOSS** (clean same-run). ROOT CAUSE (symmetric to the decode vein):
+`encode_dbcs2` does `enc_direct[cp]` over a 65536-entry cp-indexed table (`build_enc_direct(&CP949_ENC)`),
+cache-bound for diverse cps; and the from=UTF-8→DBCS path runs the GENERAL char-by-char loop (mod.rs ~25253
+`decode_char` + ~25294 `encode_one`), no SIMD. The whole encode family (UTF-8 → Cp949/Big5/Gb2312/Johab/
+GBK/cp932) is therefore likely un-dominated — a NEW VEIN as large as the (now-complete) decode one.
+IMPLEMENTATION PLAN (mirror of the decode gather): (1) expose `cp949_encode_direct()` etc. =
+`build_enc_direct(&X_ENC)` (already the local DIRECT statics inside `encode_cp949`/`encode_big5`/...); (2)
+add a from=UTF-8 SIMD fast path before the general loop: SIMD-decode 4× 3-byte UTF-8 (Hangul/Hanzi, lead
+0xE0..=0xEF + two 0x80..=0xBF continuations; reuse the forward utf8→utf32 swizzle) → cps; `gather_or`
+`enc_direct[cp]`; require all 4 == valid 2-byte (`packed >= 0x100+1`); unpack `packed-1` → (hi,lo); scatter
+8 output bytes; advance in_pos+=12, out_pos+=8; any unit failing → fall to the scalar `encode_one`
+(byte-identical). Expected ~1000-1500 ns → WIN vs glibc 2524. Regression baseline arm `utf8_to_cp949`
+already committed. NOT yet implemented (deferred: substantial SIMD fast path, warrants a focused clean-load
+turn — the UTF-8 decode + 2-byte scatter + validation carry byte-identity risk best validated unhurried).
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
