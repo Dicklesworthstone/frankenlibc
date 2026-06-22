@@ -23813,22 +23813,61 @@ pub fn iconv(
                 if v.simd_ge(Simd::splat(0x80)).any() {
                     break; // window has a non-ASCII byte — 2-byte/scalar path handles it
                 }
-                for (k, &b) in bytes.iter().enumerate() {
-                    if u16_out {
-                        let u = if be {
-                            (b as u16).to_be_bytes()
-                        } else {
-                            (b as u16).to_le_bytes()
-                        };
-                        outbuf[out_pos + k * 2..out_pos + k * 2 + 2].copy_from_slice(&u);
+                // SIMD widen: interleave the 16 ASCII bytes with zero bytes via a
+                // single two-input `simd_swizzle!` (indices 0..15 pick `v`, 16 picks
+                // a zero lane), replacing the 16-iteration scalar scatter that wrote
+                // each `[b,0]` / `[b,0,0,0]` pair with `to_*_bytes` + `copy_from_slice`
+                // (the residual cost keeping ASCII text->UTF-16/32 only ~0.58x vs
+                // glibc; bd-2g7oyh iconv). Byte-identical: LE places the data byte at
+                // the low output lane of each unit, BE at the high lane — exactly what
+                // the scalar `to_le_bytes`/`to_be_bytes` produced.
+                let zero16 = Simd::<u8, 16>::splat(0);
+                if u16_out {
+                    let out32: Simd<u8, 32> = if be {
+                        std::simd::simd_swizzle!(
+                            v,
+                            zero16,
+                            [
+                                16, 0, 16, 1, 16, 2, 16, 3, 16, 4, 16, 5, 16, 6, 16, 7, 16, 8, 16,
+                                9, 16, 10, 16, 11, 16, 12, 16, 13, 16, 14, 16, 15
+                            ]
+                        )
                     } else {
-                        let u = if be {
-                            (b as u32).to_be_bytes()
-                        } else {
-                            (b as u32).to_le_bytes()
-                        };
-                        outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&u);
-                    }
+                        std::simd::simd_swizzle!(
+                            v,
+                            zero16,
+                            [
+                                0, 16, 1, 16, 2, 16, 3, 16, 4, 16, 5, 16, 6, 16, 7, 16, 8, 16, 9,
+                                16, 10, 16, 11, 16, 12, 16, 13, 16, 14, 16, 15, 16
+                            ]
+                        )
+                    };
+                    out32.copy_to_slice(&mut outbuf[out_pos..out_pos + 32]);
+                } else {
+                    let out64: Simd<u8, 64> = if be {
+                        std::simd::simd_swizzle!(
+                            v,
+                            zero16,
+                            [
+                                16, 16, 16, 0, 16, 16, 16, 1, 16, 16, 16, 2, 16, 16, 16, 3, 16, 16,
+                                16, 4, 16, 16, 16, 5, 16, 16, 16, 6, 16, 16, 16, 7, 16, 16, 16, 8,
+                                16, 16, 16, 9, 16, 16, 16, 10, 16, 16, 16, 11, 16, 16, 16, 12, 16,
+                                16, 16, 13, 16, 16, 16, 14, 16, 16, 16, 15
+                            ]
+                        )
+                    } else {
+                        std::simd::simd_swizzle!(
+                            v,
+                            zero16,
+                            [
+                                0, 16, 16, 16, 1, 16, 16, 16, 2, 16, 16, 16, 3, 16, 16, 16, 4, 16,
+                                16, 16, 5, 16, 16, 16, 6, 16, 16, 16, 7, 16, 16, 16, 8, 16, 16, 16,
+                                9, 16, 16, 16, 10, 16, 16, 16, 11, 16, 16, 16, 12, 16, 16, 16, 13,
+                                16, 16, 16, 14, 16, 16, 16, 15, 16, 16, 16
+                            ]
+                        )
+                    };
+                    out64.copy_to_slice(&mut outbuf[out_pos..out_pos + 64]);
                 }
                 in_pos += 16;
                 out_pos += 16 * obpc;

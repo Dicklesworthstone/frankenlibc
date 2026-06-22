@@ -3068,3 +3068,17 @@ Bench: utf32le→utf8 fl **719 ns** vs glibc 1789 ns = **0.40x WIN**; utf32be→
 UTF-16). Byte-identical: dedicated gate `iconv_utf32_to_utf8_simd_matches_glibc` + conformance_diff_iconv_simd
 + iconv_differential_fuzz + 285 core unit all green. **The entire fixed-width Unicode (UTF-16/32, LE/BE)
 → UTF-8 ASCII surface is now true-SIMD and fl-dominant; no scalar-gather reverse path remains.**
+
+### 2026-06-23 — ✅ iconv FORWARD UTF-8→UTF-16/32 ASCII SIMD widen — 0.58x→0.275x WIN
+
+Same scalar-scatter anti-pattern in the FORWARD direction: the ASCII→fixed-width path (mod.rs ~L23810)
+did a SIMD high-bit ASCII check but then WIDENED SCALARLY — a 16-iteration `for (k,&b)` loop writing each
+`[b,0]` / `[b,0,0,0]` via `to_*_bytes` + `copy_from_slice`. Replaced with a single two-input
+`simd_swizzle!(v, zero16, [..])` interleaving the 16 ASCII bytes with zero lanes (LE: data at the low
+output lane of each unit, BE: high lane) → one 32-byte (UTF-16) / 64-byte (UTF-32) store. Bench:
+utf8→utf16le fl **829→399.6 ns** vs glibc 1453 ns = **0.58x → 0.275x WIN** (~2.1x self); utf8→utf32le fl
+~700→**408.2 ns** vs glibc 1417 ns = **~0.5x → 0.288x WIN** (~1.7x self). Byte-identical: dedicated
+`iconv_utf8_to_utf32_simd_matches_glibc` + conformance_diff_iconv_simd + iconv_differential_fuzz + 285
+core unit all green. **iconv UTF-8 ↔ UTF-16/32 ASCII is now true-SIMD in BOTH directions.** Generalizes
+the SCALAR-GATHER lesson to its dual: a scalar SCATTER (wide store from a SIMD-validated window) is the
+same drag — replace narrow→wide widen with `simd_swizzle!`-interleave, not a per-element loop.
