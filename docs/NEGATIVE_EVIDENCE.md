@@ -2929,9 +2929,16 @@ CONFIRMED LEVERS (do these first; build + verify with the same warm bench):
    accepted it. Use the digit-count cap.
 
 HARDER LEVERS (real but not quick; deeper SIMD-kernel work):
-3. search/compare moderate-size LOSS: strcmp 2.4x (setup: exact-256 probe + alignment prefix
-   before its one chunk), memrchr 2.3x / wcschr 2.3x / wcsrchr 2.0x (fold-block + per-chunk
-   reduction beaten by glibc AVX2). NOT a short-input guard (workloads are 64–200 B / 60–128 wc).
+3. search/compare moderate-size LOSS: strcmp 2.4x, memrchr 2.3x / wcschr 2.3x / wcsrchr 2.0x
+   (fold-block + per-chunk reduction beaten by glibc AVX2). NOT a short-input guard (workloads
+   are 64–200 B / 60–128 wc). ⚠️ strcmp "exact-256 probe as fixed setup" = RED HERRING (checked
+   2026-06-22 vs source+workload): `STRCMP_EXACT_256_LEN = STRLEN_BLOCK+1 = 257` but the bench
+   slices are 64 B, so `strcmp_exact_256_equal_nul_terminated` early-outs on the FIRST length
+   compare (str.rs L218) — essentially free, NOT a scan. The 64 B / diverge-at-30 workload does
+   exactly ONE 32-byte SIMD compare (128-fold loop is skipped, 128>64); the 2.4x is pure
+   per-call micro-overhead (probe call + alignment calc + frame) vs glibc's asm tightness —
+   sub-1.2x "floor" class, same as the variadic/membrane floors. Do NOT chase probe-elision; a
+   real win needs matching glibc's asm-level setup, which portable-SIMD Rust can't easily do.
 
 VERIFY-ONLY (need a build/harness, not a fix):
 4. `time(NULL)` __vdso_time cache (bd-2g7oyh.503) — standing ratio 1.60x LOSS; re-bench after build.
