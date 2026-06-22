@@ -2624,6 +2624,23 @@ Net: NSS/getenv/memset at parity (no lever); qsort comparator trampoline is the 
 small-n cost, amortizing by n=128. Small mem/str primitives un-recordable here (glibc-side
 artifact) — re-measure with a dlmopen/PLT-clean harness after disk recovery.
 
+### 2026-06-22 — `glibc_baseline_bench` math group (current; gate empty) + harness hazard
+
+Math group verified current (no `crates/*/src/math/*` or libm code commits since the
+04:50 build). Numbers are sane (batch workload, ~hundreds of ns both sides — NOT the
+small-op overhead floor), so trustworthy:
+
+| bench | fl core | glibc | ratio | verdict | note |
+|---|---|---|---|---|---|
+| `math/exp` | 231.5 ns | 451.3 ns | 0.51x | WIN | fl `exp` ~2x faster — consistent with the ported fused-kernel math wins. |
+
+⚠️ **HARNESS HAZARD (do not re-run `--bench math` unfiltered on this binary):** the
+`math/sin/host_glibc` sub-bench HANGS — it spun ~39 cores at 100% for 4 min stuck in
+"Warming up" and never produced an estimate; I killed it (`pkill -9`). `math/sin/
+frankenlibc_core` completed (349 ns) but its glibc comparator never finished, so no sin
+ratio. Future math runs must filter to specific safe sub-benches (e.g. `--bench math/exp`)
+or use a dlmopen harness; the unfiltered `math` group is a runaway on this host.
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
