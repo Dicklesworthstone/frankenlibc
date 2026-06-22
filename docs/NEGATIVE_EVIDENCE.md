@@ -3124,3 +3124,19 @@ win 1.7x). Byte-identical: conformance_diff_iconv + conformance_diff_iconv_simd 
 SIMD-input-loaded; only UTF-32 input retains the scalar gather (unbenched).** Net: the recurring
 scalar-gather/scatter anti-pattern is now eliminated from EVERY benched iconv UTF-8↔UTF-16 conversion in
 both directions — 11 conversions converted from parity/loss/thin-win to decisive 0.24–0.60x wins.
+
+### 2026-06-23 — inet surface verification CLOSED (all win); iconv SIMD-amenable surface exhausted
+
+Verified the last un-checked inet arm: inet_pton AF_INET (parse_ipv4) fl **16.46 ns** / glibc 17.62 ns =
+**0.93x WIN** (near-parity — parse_ipv4 already byte-walks; the per-call floor dominates a 13-char input,
+floor-class like strcmp, not improvable by a byte-identical micro-lever). The inet surface is now fully
+confirmed fl-favorable: parse_ipv4 0.93x, parse_ipv6 0.90x, inet_net_pton 0.49x — all WIN. Combined with
+the comprehensive iconv work, the tractable BYTE-IDENTICAL SIMD-amenable un-dominated surface is now
+exhausted. REMAINING un-dominated workloads all need a fundamentally different approach (NOT a byte-exact
+micro-lever): (1) iconv legacy table-ENCODE (cyrillic→koi8r 0.77x, UTF-8→CP932/GB18030) — per-char cp→byte
+table lookup, needs SIMD gather-instruction work on a non-flat (binary-search) `to_reverse` structure; (2)
+iconv UTF-32-SOURCE non-ASCII reverse — unbenched, rare interchange, needs a 4-swizzle u32 reassembly with
+careful high-byte validation; (3) the architectural/owned losses — timing vDSO (time 1.66–2.78x,
+clock_gettime 1.28–1.35x; fleet-rejected), allocator small/realloc membrane (~50x), stdio write-path
+registry lock (fputs 3.96x, bd-hqo6b6, peer-owned). These are the documented frontier for a future turn
+with disk headroom and/or coordination — they are not in scope for the byte-identical micro-lever loop.
