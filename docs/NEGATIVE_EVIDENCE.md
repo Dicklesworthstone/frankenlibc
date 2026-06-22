@@ -2641,6 +2641,29 @@ frankenlibc_core` completed (349 ns) but its glibc comparator never finished, so
 ratio. Future math runs must filter to specific safe sub-benches (e.g. `--bench math/exp`)
 or use a dlmopen harness; the unfiltered `math` group is a runaway on this host.
 
+### 2026-06-22 — f64 math kernels sweep (warm binary, per-fn timeout-guarded) — fl WINS across the board
+
+Ran 8 more math sub-benches individually with a 25 s `timeout` + `RAYON_NUM_THREADS=2`
+blast-radius cap (after the sin hang). No hangs; all current (gate empty); sane batch
+numbers (trustworthy). These are `frankenlibc_core` vs `host_glibc` — fl's ported
+fused-kernel f64 math beats glibc on every function:
+
+| bench | fl core | glibc | ratio | verdict |
+|---|---|---|---|---|
+| `math/pow` | 226.2 ns | 559.6 ns | 0.40x | WIN |
+| `math/log2` | 168.6 ns | 361.1 ns | 0.47x | WIN |
+| `math/tgamma` | 241.0 ns | 503.9 ns | 0.48x | WIN |
+| `math/exp2` | 162.7 ns | 329.1 ns | 0.49x | WIN |
+| `math/exp` | 231.5 ns | 451.3 ns | 0.51x | WIN |
+| `math/log` | 403.9 ns | 608.2 ns | 0.66x | WIN |
+| `math/erf` | 626.9 ns | 841.7 ns | 0.74x | WIN |
+| `math/atan` | 393.4 ns | 511.1 ns | 0.77x | WIN |
+| `math/cbrt` | 857.9 ns | 1011.7 ns | 0.85x | WIN |
+
+Net: the f64 transcendental/algebraic kernels are confirmed glibc-class-or-faster at the
+core. No lever here (already winning); recorded as positive confirmation. Trig (sin/cos/
+tan) NOT run — shares the hung reduction path; needs a dlmopen harness post-recovery.
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
