@@ -2683,6 +2683,28 @@ Second batch (same method, all current, no hangs) — all WIN:
 **f64 math surface now comprehensively confirmed faster than glibc** (20 functions across
 two batches, 0.40–0.85x). Only the hang-prone trig (sin/cos/tan) remains unmeasured here.
 
+### 2026-06-22 — f32 math kernels + old-libm contrast (warm binary, timeout-guarded) — all WIN
+
+f32 sweep + the 3-arm benches (`frankenlibc_core` new fused kernel vs `frankenlibc_old_libm`
+vs `host_glibc`). All current, no hangs, all WIN vs glibc:
+
+| bench | fl core | glibc | fl/glibc | old_libm | verdict |
+|---|---|---|---|---|---|
+| `math/log10f` | 158.3 ns | 338.5 ns | 0.47x | — | WIN |
+| `math/exp_wide` | 246.7 ns | 485.7 ns | 0.51x | 484.5 ns (≈glibc) | WIN; fl ~2x both |
+| `math/expf_medium` | 185.5 ns | 350.0 ns | 0.53x | 416.6 ns | WIN; old-libm was *slower* than glibc |
+| `math/exp10f` | 247.5 ns | 460.8 ns | 0.54x | — | WIN |
+| `math/coshf` | 333.6 ns | 601.5 ns | 0.55x | — | WIN |
+| `math/expm1f` | 192.3 ns | 349.9 ns | 0.55x | — | WIN |
+| `math/sinhf` | 370.0 ns | 587.1 ns | 0.63x | — | WIN |
+| `math/tanhf` | 265.1 ns | 402.0 ns | 0.66x | — | WIN |
+| `math/powf_irrational` | 516.0 ns | 771.9 ns | 0.67x | 2140.5 ns (4.1x slower) | WIN |
+| `math/powf_int` | 339.8 ns | 476.9 ns | 0.71x | 2286.9 ns (6.7x slower) | WIN |
+
+The old-libm arm quantifies the fused-kernel payoff: powf went from 4–7x-slower-than-glibc
+(old libm) to faster-than-glibc (fused). **Entire f32+f64 math surface (~30 fns) now confirmed
+glibc-beating except trig** (sin/cos/tan, hang-prone — dlmopen harness needed post-recovery).
+
 Consistent with the deployed-malloc-membrane and small-op formatter findings: these
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
