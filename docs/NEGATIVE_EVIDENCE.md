@@ -3378,6 +3378,22 @@ The encode direction is REAL un-dominated work but the mirror gather is NOT the 
 the 4× per-window gap (gather latency? the 6-compare UTF-8 validation? cp-index cache pattern?) before
 retrying. The decode campaign's 7 wins stand; the encode stays an open lever.
 
+UPDATE 2 — ❌ cache-bound hypothesis DISPROVEN; encode-gather vein CLOSED. Hypothesised the contiguous-cp
+probe source (0xAC00.. = warm encode table) hid the gather's benefit, so re-tested with a DIVERSE source
+(`utf8_to_cp949_diverse`: cps scattered `0xAC00 + (k*21)%0x2B9C` across the full Hangul block = a
+cache-bound encode table, matching real Korean text). Result: fl **4540 ns / glibc 2411.8 ns = 1.88x LOSS**
+— IDENTICAL to the contiguous arm (1.83x). DECISIVE: **glibc's encode is the SAME ~2411-2452 ns for BOTH
+contiguous and diverse cps → the encode is NOT cache-bound** (glibc's enc table is cache-resident / its
+scalar is tight ~4.7 ns/char). So the gather has NO cache misses to pipeline — only front-end (UTF-8
+decode + 6-compare validate + cp-compute) overhead — and structurally CANNOT beat glibc here. This is the
+opposite of the decode (where diverse Hangul → scattered DBCS *keys* → genuinely cache-bound → gather wins
+12-15x). **The SIMD-gather technique applies to the DECODE direction only; the encode is not cache-bound,
+so the gather is a dead end (reverted, stashed `cc-encode-gather-DEFINITIVE-nonwin-1.88x`).** The encode
+stays un-dominated (1.88x) but would need a different attack (a tight dispatch-free UTF-8→DBCS scalar loop
+to shave the ~14→~? ns/char, though glibc's 4.7 ns/char is a hard floor) — NOT the gather. Bench arms
+`utf8_to_cp949` + `utf8_to_cp949_diverse` kept as evidence. **iconv reverse-DBCS gather work is now DONE:
+7 decode WINS, encode direction proven gather-immune.**
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

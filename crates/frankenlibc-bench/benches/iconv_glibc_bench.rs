@@ -299,9 +299,14 @@ fn bench(c: &mut Criterion) {
     // GB2312/EUC-CN (Simplified Chinese, common on Unix) -> UTF-8: generic source.
     let gb2312_src = build_dbcs_source(b"GB2312\0", 0xB0..=0xF7, 0xA1..=0xFE, 512);
     run_conv(c, "gb2312_to_utf8", b"UTF-8\0", b"GB2312\0", &gb2312_src);
-    // ENCODE direction probe: UTF-8 Hangul -> CP949 (cp->byte enc_direct lookup, also
-    // cache-bound for diverse cps). `hangul` is ~512 3-byte UTF-8 Hangul syllables.
+    // ENCODE direction: UTF-8 Hangul -> CP949 (cp->byte enc_direct lookup). `hangul`
+    // is CONTIGUOUS cps (0xAC00..) = a warm encode table (not cache-bound).
     run_conv(c, "utf8_to_cp949", b"CP949\0", b"UTF-8\0", &hangul);
+    // DIVERSE cps scattered across the full Hangul block (U+AC00..U+D7A3) = a
+    // cache-bound encode table, matching real Korean text (and the decode wins).
+    let hangul_div_cps: Vec<u32> = (0..512u32).map(|k| 0xAC00 + (k * 21) % 0x2B9C).collect();
+    let hangul_div = u8enc(&hangul_div_cps);
+    run_conv(c, "utf8_to_cp949_diverse", b"CP949\0", b"UTF-8\0", &hangul_div);
 }
 
 criterion_group!(benches, bench);
