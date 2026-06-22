@@ -3016,3 +3016,21 @@ a lever** (do not re-attempt the range-test fix). Meta-lesson added: a perf hypo
 SIMD op-cost MUST be validated with a same-process A/B before being called "confirmed" — op
 counting lies on x86 (unsigned-compare emulation). Change reverted (stashed
 `cc-DEAD-strspn_range-lever-REVERT`), tree clean, main untouched.
+
+### 2026-06-23 — iconv head-to-head: fl WINS 7/8 (glibc gconv slow); only utf16le→utf8 1.27x LOSS
+
+Ran `iconv_glibc_bench --features abi-bench` (fl C ABI vs host glibc via dlmopen), ~1 KiB real
+transcoding. fl DOMINATES glibc's gconv framework on every forward + most reverse conversions:
+utf8→latin1 **0.19x**, utf8→utf16le 0.58x, utf8→utf32le 0.60x, cyrillic→koi8r 0.77x,
+cyrillic→utf16le 0.64x, cjk→gb18030 0.60x — all WINS. The ONE loss: **utf16le_ascii_to_utf8 ~1.27x**
+(fl 2024 ns vs glibc 1589 ns). ⚠️ Attempted lever (a fixed-width-Unicode→UTF-8 dispatch-elision fast
+path mirroring the existing DBCS→UTF-8 / SBCS→UTF-8 / fixed→fixed paths — genuinely MISSING, not
+redundant) = **~0 gain** (fl 2023.8→2028.7 ns), REVERTED. Lesson: the ~100-arm decode_char/encode_char
+matches LLVM lowers to cheap jump tables, so dispatch-elision does nothing here — the gap is the lack
+of a **SIMD bulk-ASCII run path**: glibc detects runs of ASCII UTF-16 units (hi byte 0, lo < 0x80) and
+bulk-converts; fl walks char-by-char even in its fast path. The forward UTF-8→wide direction already
+has this (mod.rs ~L18888, 32-lane SIMD ASCII scan) — the reverse needs the mirror (SIMD-load a 16/32-B
+UTF-16LE window, test `hi==0 & lo<0x80` across lanes, narrow-pack the low bytes to UTF-8, fall to the
+scalar path on the first non-ASCII unit). FILED as the next iconv lever (bigger SIMD work; byte-identity
+gated by iconv_differential_fuzz + conformance_diff_iconv, both green). Net: iconv is overwhelmingly
+fl-favorable; this lone reverse-ASCII workload is the sole un-dominated iconv gap.
