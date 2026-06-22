@@ -2899,3 +2899,40 @@ Consistent with the deployed-malloc-membrane and small-op formatter findings: th
 losses are the per-call validation membrane, not the parser/formatter kernel, so they
 are not a byte-identical quick lever. No code change under test; recorded as a dead
 end so it is not re-attempted.
+
+---
+
+## 2026-06-22 — CAMPAIGN SUMMARY & BUILD-TURN ACTION LIST (warm-binary mining, disk-critical)
+
+Distilled from the dated entries above so a build-allowed turn can act without re-reading all
+of them. All ratios are warm-binary, in-process fl-vs-glibc (no rebuild). Levers root-caused
+AND workload-audited (2 of 3 source-only diagnoses were initially wrong — corrected).
+
+CONFIRMED LEVERS (do these first; build + verify with the same warm bench):
+1. `strspn_range` ~4.5x LOSS (reproduced 4.50/4.78x). Cause: a ≤16-char CONTIGUOUS range set
+   (e.g. "0123456789") hits the ≤16 `span_scan`/`in_set_mask16` path in `str.rs::span_dispatch`
+   and MISSES the branchless `(b-lo)<=(hi-lo)` `span_range` test (only reachable via the >16
+   path). Fix: detect a contiguous range from `set` before the ≤16 branch → route to `span_range`.
+2. `parse_ipv6` ~2.67x LOSS (core). Cause: `inet/mod.rs::parse_ipv6` does `from_utf8` + ~4
+   redundant whole-string scans (find/contains x2/starts/ends/contains('.')) before split.
+   Fix: single byte-level state-machine pass (mirror the shipped inet_ntop byte rewrite).
+
+HARDER LEVERS (real but not quick; deeper SIMD-kernel work):
+3. search/compare moderate-size LOSS: strcmp 2.4x (setup: exact-256 probe + alignment prefix
+   before its one chunk), memrchr 2.3x / wcschr 2.3x / wcsrchr 2.0x (fold-block + per-chunk
+   reduction beaten by glibc AVX2). NOT a short-input guard (workloads are 64–200 B / 60–128 wc).
+
+VERIFY-ONLY (need a build/harness, not a fix):
+4. `time(NULL)` __vdso_time cache (bd-2g7oyh.503) — standing ratio 1.60x LOSS; re-bench after build.
+5. `sin` — harness hangs on the glibc arm (small args [0.5,2.5), bench/env anomaly, NOT perf);
+   confirm via a dlmopen sin bench. fl sin core 349 ns ≈ cos 362 ns → likely WIN ~0.6x.
+
+CONFIRMED WINS (no action — positive evidence): ~32 f64+f32 math fns 0.40–0.85x core (deployed
+ABI = glibc parity, extern-C frame floors it); asctime 0.12x, wcscasecmp 0.05x, random 0.64x,
+wcscspn/wcspbrk/strspn1 set-scans, wmemset/wmemcpy SIMD fills, swab 0.04–0.09x, iswctype 0.60x;
+NSS/getenv/memset/strtok/gmtime parity; qsort large-n parity (comparator trampoline costs at n=16).
+
+ARTIFACTS/CORRECTIONS: glibc_baseline_bench small mem/str rows are a glibc-side ~620 ns harness
+floor (untrustworthy — use string_inprocess_survey's `host_glibc_inprocess` instead). "Perf
+frontier saturated" holds for LARGE inputs only. Method: warm binary + `host_glibc_inprocess`
+comparator; sanity-check glibc-side absolute ns; ALWAYS validate root-cause vs the bench workload.
