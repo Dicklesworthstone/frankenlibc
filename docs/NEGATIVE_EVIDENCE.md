@@ -2915,9 +2915,18 @@ CONFIRMED LEVERS (do these first; build + verify with the same warm bench):
    AND the per-call contiguous-detection scan is pure overhead. Do NOT re-attempt. Loss is real
    but unfixable via range test; glibc's edge is a cheap inline 256-bit bitmap (fl bitmap build
    already ~6x slower per-call, bd-2g7oyh). NEXT confirmed lever is parse_ipv6 (#2).
-2. `parse_ipv6` ~2.67x LOSS (core). Cause: `inet/mod.rs::parse_ipv6` does `from_utf8` + ~4
-   redundant whole-string scans (find/contains x2/starts/ends/contains('.')) before split.
-   Fix: single byte-level state-machine pass (mirror the shipped inet_ntop byte rewrite).
+2. ✅ `parse_ipv6` — DONE (WIN, 2026-06-22). Was ~2.67x LOSS; now ~0.90x WIN. Replaced the
+   `from_utf8` + ~5 redundant whole-string rescans (find("::") + 2× contains("::") + 2×
+   contains('.') + per-segment split) with a faithful SINGLE-PASS port of glibc's own
+   `inet_pton6` (resolv/inet_pton.c): one forward byte scan accumulating each hex group,
+   tracking the `::` position, parsing a trailing embedded IPv4 inline. In-process bench
+   2001:db8:85a3::8a2e:370:7334: fl 112.6 ns → 38.2 ns (glibc steady ~41 ns yardstick) =
+   2.76x LOSS → 0.90–0.92x WIN, reproduced. Byte-identical: 40k-round
+   inet_pton_ntop_differential_fuzz + conformance_diff_inet_pton6_edges + 150 core unit +
+   inet_abi(69) + metamorphic(5) all green. GOTCHA caught by the fuzz: modern glibc caps a
+   group at 4 hex DIGITS (`xdigits_seen == 4 → reject`), NOT value `> 0xffff` — so "0Fe76"
+   (= 0xfe76, fits 16 bits) must be rejected; the old BIND `val > 0xffff` check wrongly
+   accepted it. Use the digit-count cap.
 
 HARDER LEVERS (real but not quick; deeper SIMD-kernel work):
 3. search/compare moderate-size LOSS: strcmp 2.4x (setup: exact-256 probe + alignment prefix

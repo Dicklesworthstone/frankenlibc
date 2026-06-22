@@ -449,24 +449,16 @@ pub fn format_ipv4_len(addr: &[u8; 4]) -> usize {
 // Internal: IPv6 parsing
 // ---------------------------------------------------------------------------
 
-fn parse_ipv6_hextet(group: &str) -> Option<u16> {
-    let bytes = group.as_bytes();
-    if bytes.is_empty() || bytes.len() > 4 {
-        return None;
+#[inline]
+fn hex_val(b: u8) -> Option<u8> {
+    // glibc's inet_pton6 maps a char via `strchr(xdigits, tolower(ch))`, accepting
+    // both cases; this is the byte-level equivalent (digit value, or None).
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
-    // Byte-fold (no `from_str_radix` + separate all-hexdigit scan). len <= 4 hex
-    // digits = at most 16 bits, so `v << 4` never overflows u16.
-    let mut v: u16 = 0;
-    for &b in bytes {
-        let d = match b {
-            b'0'..=b'9' => b - b'0',
-            b'a'..=b'f' => b - b'a' + 10,
-            b'A'..=b'F' => b - b'A' + 10,
-            _ => return None,
-        };
-        v = (v << 4) | d as u16;
-    }
-    Some(v)
 }
 
 /// Parses an IPv6 address string into 16 network-order bytes.
@@ -476,167 +468,128 @@ fn parse_ipv6_hextet(group: &str) -> Option<u16> {
 /// - `::` compression
 /// - Mixed IPv4 trailing notation (e.g. `::ffff:192.168.1.1`)
 pub fn parse_ipv6(src: &[u8]) -> Option<[u8; 16]> {
-    let s = core::str::from_utf8(src).ok()?;
-    let s = s.trim_end_matches('\0');
-
-    if s.is_empty() {
-        return None;
+    // Faithful single-pass port of glibc's `inet_pton6` (resolv/inet_pton.c): ONE
+    // forward byte scan that accumulates each hex group, tracks the `::` position,
+    // and parses a trailing embedded IPv4 inline — no `from_utf8` validation pass
+    // and none of the prior version's redundant whole-string rescans
+    // (`find("::")` + 2× `contains("::")` + 2× `contains('.')` + per-segment
+    // `split`). Byte-identical accept/reject + output (it IS glibc's algorithm);
+    // proven by the 40k-round `inet_pton_ntop_differential_fuzz` + the
+    // `conformance_diff_inet_pton6_edges` gate. parse_ipv6 was ~2.67x slower than
+    // glibc on the in-process bench (bd-2g7oyh).
+    //
+    // Trailing NULs are stripped to match `inet_pton`'s C-string contract (the C
+    // algorithm stops at the terminating '\0').
+    let mut end = src.len();
+    while end > 0 && src[end - 1] == 0 {
+        end -= 1;
     }
+    let s = &src[..end];
 
-    // A single leading colon (not "::") is invalid.
-    if s.starts_with(':') && !s.starts_with("::") {
-        return None;
-    }
-    // A single trailing colon (not "::") is invalid.
-    if s.ends_with(':') && !s.ends_with("::") {
-        return None;
-    }
+    let mut tmp = [0u8; 16];
+    let mut tp = 0usize; // bytes written into `tmp`
+    const ENDP: usize = 16;
+    let mut colonp: Option<usize> = None; // `tp` position where `::` sits
+    let n = s.len();
+    let mut i = 0usize;
 
-    let mut result = [0u8; 16];
-
-    // Split on "::" -- at most one occurrence allowed.
-    let (front_str, back_str, has_double_colon) = if let Some(pos) = s.find("::") {
-        // Make sure there isn't a second "::".
-        if s[pos + 2..].contains("::") {
+    // A leading ':' is only valid as part of "::".
+    if i < n && s[i] == b':' {
+        i += 1;
+        if i >= n || s[i] != b':' {
             return None;
         }
-        let front = &s[..pos];
-        let back = &s[pos + 2..];
-        (front, back, true)
-    } else {
-        (s, "", false)
-    };
+    }
 
-    let mut ipv4_suffix: Option<[u8; 4]> = None;
+    let mut curtok = i; // start of the current group (for an embedded IPv4 tail)
+    let mut xdigits_seen = 0u32; // hex digits in the current group (glibc caps at 4)
+    let mut val: u32 = 0;
 
-    // Parse the front segments. A trailing embedded IPv4 (`...:1.2.3.4`) can
-    // appear here only when there is NO "::" — when a "::" is present any IPv4
-    // tail lives in `back`. (Previously the naive hextet loop below tried to
-    // parse the dotted IPv4 segment as a hextet and bailed, wrongly rejecting
-    // valid addresses like `a:b:c:d:e:f:1.2.3.4` — found by the inet fuzzer.)
-    // Allocation-free: bounded stack arrays + direct split iteration (no Vec) — the
-    // str-based "::"/grammar logic is unchanged. (parse_ipv6 was 3.5x slower than
-    // glibc, all heap allocs; bd-2g7oyh.)
-    let mut front_groups = [0u16; 8];
-    let mut fg_n = 0usize;
-    if !front_str.is_empty() {
-        if !has_double_colon && front_str.contains('.') {
-            // Trailing embedded IPv4 tail (no "::"): the last colon-segment is the
-            // IPv4 address; everything before it is hex groups. A lone "1.2.3.4"
-            // (no preceding colon) is not a valid IPv6 textual form.
-            let Some((hex_str, v4_str)) = front_str.rsplit_once(':') else {
+    while i < n {
+        let ch = s[i];
+        i += 1;
+
+        if let Some(d) = hex_val(ch) {
+            // glibc rejects a 5th hex digit (`xdigits_seen == 4`) — a DIGIT-COUNT
+            // cap, NOT a value cap, so e.g. "0Fe76" (= 0xfe76, fits 16 bits) is
+            // still rejected. (The old BIND `val > 0xffff` check accepted it.)
+            if xdigits_seen == 4 {
                 return None;
-            };
-            ipv4_suffix = Some(parse_ipv4(v4_str.as_bytes())?);
-            for g in hex_str.split(':') {
-                if fg_n >= 8 {
+            }
+            val = (val << 4) | d as u32;
+            xdigits_seen += 1;
+            continue;
+        }
+
+        if ch == b':' {
+            curtok = i;
+            if xdigits_seen == 0 {
+                // A second "::" is rejected (colonp already set).
+                if colonp.is_some() {
                     return None;
                 }
-                front_groups[fg_n] = parse_ipv6_hextet(g)?;
-                fg_n += 1;
+                colonp = Some(tp);
+                continue;
             }
-        } else {
-            for g in front_str.split(':') {
-                if fg_n >= 8 {
-                    return None;
-                }
-                front_groups[fg_n] = parse_ipv6_hextet(g)?;
-                fg_n += 1;
+            // A group followed by ':' that ends the string is a dangling colon.
+            if i >= n {
+                return None;
             }
+            if tp + 2 > ENDP {
+                return None;
+            }
+            tmp[tp] = (val >> 8) as u8;
+            tmp[tp + 1] = (val & 0xff) as u8;
+            tp += 2;
+            xdigits_seen = 0;
+            val = 0;
+            continue;
         }
-    }
 
-    // Parse back groups -- the last group(s) might be an IPv4 suffix.
-    let mut back_groups = [0u16; 8];
-    let mut bg_n = 0usize;
-    if !back_str.is_empty() {
-        // Check if the back part contains a dot (IPv4 suffix).
-        if back_str.contains('.') {
-            // The last colon-segment is the IPv4 address; everything before it is
-            // hex groups. `rsplit_once` returning None means the back is IPv4-only
-            // (e.g. "::1.2.3.4"), i.e. no hex groups.
-            match back_str.rsplit_once(':') {
-                Some((hex_str, v4_str)) => {
-                    ipv4_suffix = Some(parse_ipv4(v4_str.as_bytes())?);
-                    for g in hex_str.split(':') {
-                        if bg_n >= 8 {
-                            return None;
-                        }
-                        back_groups[bg_n] = parse_ipv6_hextet(g)?;
-                        bg_n += 1;
-                    }
-                }
-                None => {
-                    ipv4_suffix = Some(parse_ipv4(back_str.as_bytes())?);
-                }
-            }
-        } else {
-            for g in back_str.split(':') {
-                if bg_n >= 8 {
-                    return None;
-                }
-                back_groups[bg_n] = parse_ipv6_hextet(g)?;
-                bg_n += 1;
-            }
+        // A trailing embedded IPv4 (`...:1.2.3.4`) — the current group is actually
+        // dotted-decimal; parse it from `curtok` to the end (glibc's inet_pton4
+        // consumes to '\0', so the IPv4 ends the address).
+        if ch == b'.' && tp + 4 <= ENDP {
+            let v4 = parse_ipv4(&s[curtok..])?;
+            tmp[tp..tp + 4].copy_from_slice(&v4);
+            tp += 4;
+            xdigits_seen = 0;
+            i = n; // the IPv4 consumed the remainder
+            break;
         }
-    }
 
-    // Count total groups. IPv4 suffix counts as 2.
-    let ipv4_group_count: usize = if ipv4_suffix.is_some() { 2 } else { 0 };
-    let total_explicit = fg_n + bg_n + ipv4_group_count;
-
-    if has_double_colon {
-        // "::" must stand for AT LEAST ONE zero group, so the explicit groups
-        // must leave room (>= 8 means the "::" would compress nothing — glibc
-        // rejects `1:2:3:4:5:6:7::8` and friends). Found by the inet fuzzer.
-        if total_explicit >= 8 {
-            return None;
-        }
-    } else if total_explicit != 8 {
         return None;
     }
 
-    let zeros_needed = if has_double_colon {
-        8 - total_explicit
-    } else {
-        0
-    };
-
-    // Build the 8 groups directly into a stack array (front, zero-fill, back, IPv4).
-    let mut all = [0u16; 8];
-    let mut idx = 0usize;
-    for i in 0..fg_n {
-        all[idx] = front_groups[i];
-        idx += 1;
-    }
-    idx += zeros_needed; // the zero groups are already 0
-    for i in 0..bg_n {
-        if idx >= 8 {
+    if xdigits_seen > 0 {
+        if tp + 2 > ENDP {
             return None;
         }
-        all[idx] = back_groups[i];
-        idx += 1;
-    }
-    if let Some(v4) = ipv4_suffix {
-        if idx + 2 > 8 {
-            return None;
-        }
-        all[idx] = u16::from_be_bytes([v4[0], v4[1]]);
-        all[idx + 1] = u16::from_be_bytes([v4[2], v4[3]]);
-        idx += 2;
+        tmp[tp] = (val >> 8) as u8;
+        tmp[tp + 1] = (val & 0xff) as u8;
+        tp += 2;
     }
 
-    if idx != 8 {
+    if let Some(cp) = colonp {
+        // Expand "::" by hand-shifting the [cp, tp) bytes to the tail and zeroing
+        // the gap. `tp == ENDP` here means there were no zero groups to insert
+        // (the "::" would compress nothing) → reject, matching glibc.
+        if tp == ENDP {
+            return None;
+        }
+        let count = tp - cp;
+        for k in 1..=count {
+            tmp[ENDP - k] = tmp[cp + count - k];
+            tmp[cp + count - k] = 0;
+        }
+        tp = ENDP;
+    }
+
+    if tp != ENDP {
         return None;
     }
 
-    for i in 0..8 {
-        let be = all[i].to_be_bytes();
-        result[i * 2] = be[0];
-        result[i * 2 + 1] = be[1];
-    }
-
-    Some(result)
+    Some(tmp)
 }
 
 // ---------------------------------------------------------------------------
