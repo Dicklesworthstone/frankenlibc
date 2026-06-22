@@ -23920,20 +23920,36 @@ pub fn iconv(
                 let lw = leads.cast::<u32>() & Simd::splat(0x1F);
                 let cw = conts.cast::<u32>() & Simd::splat(0x3F);
                 let wc = (lw << Simd::splat(6)) | cw;
-                for (k, &cp) in wc.to_array().iter().enumerate() {
-                    if u16_out {
-                        let b = if be {
-                            (cp as u16).to_be_bytes()
-                        } else {
-                            (cp as u16).to_le_bytes()
-                        };
-                        outbuf[out_pos + k * 2..out_pos + k * 2 + 2].copy_from_slice(&b);
+                if u16_out {
+                    // SIMD store: the 8 BMP code points (0x80..=0x7FF) are each one
+                    // UTF-16 unit; split into low/high bytes and interleave with a
+                    // single `simd_swizzle!`, replacing the scalar `to_*_bytes` +
+                    // `copy_from_slice` scatter (the residual cost keeping 2-byte
+                    // UTF-8 -> UTF-16, e.g. Cyrillic, only ~0.64x vs glibc). LE =
+                    // [lo,hi] per unit, BE = [hi,lo] — byte-identical to the scalar
+                    // `(cp as u16).to_le_bytes()`/`to_be_bytes()`.
+                    let lo = (wc & Simd::splat(0xFF)).cast::<u8>();
+                    let hi = ((wc >> Simd::splat(8)) & Simd::splat(0xFF)).cast::<u8>();
+                    let out16: Simd<u8, 16> = if be {
+                        std::simd::simd_swizzle!(
+                            lo,
+                            hi,
+                            [8, 0, 9, 1, 10, 2, 11, 3, 12, 4, 13, 5, 14, 6, 15, 7]
+                        )
                     } else {
-                        let b = if be {
-                            cp.to_be_bytes()
-                        } else {
-                            cp.to_le_bytes()
-                        };
+                        std::simd::simd_swizzle!(
+                            lo,
+                            hi,
+                            [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15]
+                        )
+                    };
+                    out16.copy_to_slice(&mut outbuf[out_pos..out_pos + 16]);
+                } else {
+                    // UTF-32 target (4 bytes/char): a 3rd (zero) source would be
+                    // needed to SIMD-pack, so keep the scalar store — not on a
+                    // benched hot path. cp <= 0x7FF so the two high bytes are 0.
+                    for (k, &cp) in wc.to_array().iter().enumerate() {
+                        let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
                         outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
                     }
                 }

@@ -3082,3 +3082,12 @@ utf8→utf16le fl **829→399.6 ns** vs glibc 1453 ns = **0.58x → 0.275x WIN**
 core unit all green. **iconv UTF-8 ↔ UTF-16/32 ASCII is now true-SIMD in BOTH directions.** Generalizes
 the SCALAR-GATHER lesson to its dual: a scalar SCATTER (wide store from a SIMD-validated window) is the
 same drag — replace narrow→wide widen with `simd_swizzle!`-interleave, not a per-element loop.
+
+UPDATE — same scalar-scatter found in the **2-byte UTF-8 → UTF-16** SIMD run (mod.rs ~L23923): it
+SIMD-decodes 8 BMP code points into `wc: Simd<u32,8>` but then wrote them via a scalar `for` loop
+(`(cp as u16).to_*_bytes()` + copy). Replaced the u16 branch with `lo=(wc&0xFF).cast::<u8>()` /
+`hi=((wc>>8)&0xFF).cast::<u8>()` + one `simd_swizzle!(lo, hi, ..)` interleave (LE `[lo,hi]`, BE `[hi,lo]`).
+Bench utf8_cyrillic_to_utf16le: fl **798→469 ns** (1.7x self-speedup) vs glibc's stable ~1245 ns yardstick
+= **0.64x → 0.38x WIN**. (UTF-32-from-2-byte target kept scalar — a 3rd zero source can't fit a 2-input
+swizzle; not a benched hot path.) Byte-identical: conformance_diff_iconv + conformance_diff_iconv_simd +
+iconv_differential_fuzz + 285 core unit all green.
