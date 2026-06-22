@@ -180,6 +180,8 @@ fn bench(c: &mut Criterion) {
     let cyr = u8enc(&cyr_cps);
     run_conv(c, "utf8_cyrillic_to_koi8r", b"KOI8-R\0", b"UTF-8\0", &cyr);
     run_conv(c, "utf8_cyrillic_to_utf16le", b"UTF-16LE\0", b"UTF-8\0", &cyr);
+    // Forward 2-byte UTF-8 -> UTF-32 (currently a scalar store): probe if a lever.
+    run_conv(c, "utf8_cyrillic_to_utf32le", b"UTF-32LE\0", b"UTF-8\0", &cyr);
 
     // REVERSE direction: UTF-16LE -> UTF-8 (reading UTF-16 -> UTF-8, common).
     let ascii_u16le: Vec<u8> = ascii.iter().flat_map(|&b| [b, 0]).collect();
