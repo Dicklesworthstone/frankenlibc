@@ -3221,6 +3221,15 @@ reverted (stashed `cc-shiftjis-CONFIRMED-LOSS-1.14x`, byte-identical but a perf 
 cp932 (0.95x) + GBK (0.46x); the remaining codecs (Gb2312/Cp949/Big5) are now UNCERTAIN — bench before
 landing. KEY LESSON: a clean-load bench is essential — the prior contention-garbage read (spurious 1.91x)
 and the optimistic "all win" extrapolation were both wrong; only the load-12 measurement settled it.
+VALIDATION (same clean window): cp932_to_utf8 re-benched 2× → fl **385/392 ns** / glibc 419 ns = **0.93x
+WIN**, triple-confirmed (with last turn's 392), so the committed cp932 win is ROCK-SOLID and ShiftJis's
+524 ns (tight mean 584) is genuinely slower — the 1.14x loss is REAL, not variance. ⚠️ Both cp932 and
+ShiftJis use the SAME `build_dbcs_direct` 65536-entry table builder + SAME gather code + SAME Hiragana input
+bytes (Hiragana encodes identically in pure-Shift_JIS and CP932) — yet cp932 wins (390 ns) and ShiftJis
+loses (524 ns). UNEXPLAINED per-codec anomaly (the only difference is the table CONTENTS, irrelevant at the
+hit indices). Worth a profile when investigating the remaining DBCS gather levers. NOTE: the iconv abi-bench
+has high single-run MEAN variance (cp932 mean 1151-1420 vs p50 385-392) from occasional spikes — always read
+the **p50**, not the mean, and prefer ≥2 runs.
 
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
