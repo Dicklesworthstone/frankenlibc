@@ -3091,3 +3091,10 @@ Bench utf8_cyrillic_to_utf16le: fl **798→469 ns** (1.7x self-speedup) vs glibc
 = **0.64x → 0.38x WIN**. (UTF-32-from-2-byte target kept scalar — a 3rd zero source can't fit a 2-input
 swizzle; not a benched hot path.) Byte-identical: conformance_diff_iconv + conformance_diff_iconv_simd +
 iconv_differential_fuzz + 285 core unit all green.
+
+UPDATE 2 — same scalar-scatter in the **3-byte UTF-8 → UTF-16** SIMD run (mod.rs ~L24008, `wc:
+Simd<u32,4>`): same `lo`/`hi` cast + `simd_swizzle!(lo, hi, ..)` fix (4 units → 8 bytes). Settled the gain
+with a stash A/B (the 3-byte decode dominates, so the store is a smaller fraction → smaller gain than the
+2-byte case, as predicted): utf8_cjk_to_utf16le OLD scalar fl **1026 ns** → NEW SIMD fl **840 ns** = 1.22x
+self-speedup; vs glibc 1754 ns = **0.585x → 0.479x WIN**. NOT ~0-gain (~18%). Byte-identical: same 4 gates
+green. (UTF-32 target kept scalar.)

@@ -24005,20 +24005,26 @@ pub fn iconv(
                 let c1w = cont1.cast::<u32>() & Simd::splat(0x3F);
                 let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
                 let wc = (lw << Simd::splat(12)) | (c1w << Simd::splat(6)) | c2w;
-                for (k, &cp) in wc.to_array().iter().enumerate() {
-                    if u16_out {
-                        let b = if be {
-                            (cp as u16).to_be_bytes()
-                        } else {
-                            (cp as u16).to_le_bytes()
-                        };
-                        outbuf[out_pos + k * 2..out_pos + k * 2 + 2].copy_from_slice(&b);
+                if u16_out {
+                    // SIMD store: 4 BMP code points (0x800..=0xFFFF, non-surrogate by
+                    // the checks above) are each one UTF-16 unit; split low/high bytes
+                    // and interleave with one `simd_swizzle!`, replacing the scalar
+                    // scatter (the residual cost keeping 3-byte UTF-8 -> UTF-16, e.g.
+                    // CJK, below its potential). LE = [lo,hi] per unit, BE = [hi,lo] —
+                    // byte-identical to `(cp as u16).to_le_bytes()`/`to_be_bytes()`.
+                    let lo = (wc & Simd::splat(0xFF)).cast::<u8>();
+                    let hi = ((wc >> Simd::splat(8)) & Simd::splat(0xFF)).cast::<u8>();
+                    let out8: Simd<u8, 8> = if be {
+                        std::simd::simd_swizzle!(lo, hi, [4, 0, 5, 1, 6, 2, 7, 3])
                     } else {
-                        let b = if be {
-                            cp.to_be_bytes()
-                        } else {
-                            cp.to_le_bytes()
-                        };
+                        std::simd::simd_swizzle!(lo, hi, [0, 4, 1, 5, 2, 6, 3, 7])
+                    };
+                    out8.copy_to_slice(&mut outbuf[out_pos..out_pos + 8]);
+                } else {
+                    // UTF-32 target: a 3rd (zero) source can't fit a 2-input swizzle;
+                    // keep the scalar store (cp <= 0xFFFF so the two high bytes are 0).
+                    for (k, &cp) in wc.to_array().iter().enumerate() {
+                        let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
                         outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
                     }
                 }
