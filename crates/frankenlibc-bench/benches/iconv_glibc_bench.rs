@@ -256,6 +256,9 @@ fn bench(c: &mut Criterion) {
     let hangul = u8enc(&hangul_cps);
     let cp949_src = host_to(b"CP949\0", &hangul);
     run_conv(c, "cp949_to_utf8", b"UTF-8\0", b"CP949\0", &cp949_src);
+    // JOHAB (Korean, full Hangul coverage like UHC) -> UTF-8: cache-bound gather.
+    let johab_src = host_to(b"JOHAB\0", &hangul);
+    run_conv(c, "johab_to_utf8", b"UTF-8\0", b"JOHAB\0", &johab_src);
 }
 
 criterion_group!(benches, bench);

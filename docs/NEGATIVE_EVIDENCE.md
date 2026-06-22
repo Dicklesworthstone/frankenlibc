@@ -3289,6 +3289,19 @@ are CACHE-BOUND-scalar codecs (diverse code points → table thrash): Cp949 15.1
 (cp932 0.95x, GBK 0.46x, EucJpMs 0.68x, Cp949 0.43x) + EucJp loss-elim. NEXT: other Korean/diverse-cp codecs
 (Johab, EucKr-with-Hangul) likely the same cache-bound-scalar + slow-glibc → big win; probe with Hangul.
 
+### 2026-06-23 — ✅ johab_to_utf8 gather — 4.08x LOSS → 0.33x WIN (12.3x self-speedup); EucKr source-blocked
+
+Continuing the Korean/cache-bound vein. **EucKr (KS X 1001) is SOURCE-BLOCKED** (probe glibc 32.5 ns =
+degenerate — KS X 1001 has only ~2350 scattered Hangul so the contiguous U+AC00.. source mostly isn't in it,
+like Gb2312/Big5). **JOHAB** covers all 11172 Hangul (full source valid), simple cache-bound `decode_dbcs2`:
+exposed `johab_decode_direct()`, gather arm lead 0x84..=0xF9 (cp-range gate makes the single coarse range
+byte-identical despite the 0xD4..0xD7 gap). A/B (clean): OLD scalar fl **12863.9 → NEW gather fl 1047.0 ns =
+12.3x self-speedup**; vs glibc **3152.8 ns = 4.08x LOSS → 0.33x WIN** (glibc's Johab gconv is even slower
+than Cp949's). Byte-identical: conformance_diff_iconv_simd + iconv_differential_fuzz + 285 core unit green.
+**5 gather WINS now: cp932 0.95x, GBK 0.46x, EucJpMs 0.68x, Cp949 0.43x, Johab 0.33x** + EucJp loss-elim.
+The cache-bound-scalar + slow-glibc Korean/Chinese codecs are the proven sweet spot. Remaining blocked on
+source curation (EucKr/Gb2312/Big5 need codec-specific code-point sets, not a contiguous range).
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

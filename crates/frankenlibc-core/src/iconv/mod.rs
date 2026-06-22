@@ -19622,14 +19622,17 @@ fn decode_gb2312(input: &[u8]) -> Result<(char, usize), DecodeError> {
     )
 }
 
-fn decode_johab(input: &[u8]) -> Result<(char, usize), DecodeError> {
+fn johab_decode_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::JOHAB_DBCS));
+    DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::JOHAB_DBCS))
+}
+
+fn decode_johab(input: &[u8]) -> Result<(char, usize), DecodeError> {
     decode_dbcs2(
         input,
         &cjk_tables::JOHAB_ONE_BYTE,
         &cjk_tables::JOHAB_IS_LEAD,
-        direct,
+        johab_decode_direct(),
     )
 }
 
@@ -24692,6 +24695,11 @@ pub fn iconv(
             // the lead check so mixed windows fall to scalar. Hangul maps to BMP
             // (U+AC00..) = 3-byte UTF-8, so the cp-range gate passes.
             Encoding::Cp949 => Some((cp949_decode_direct(), 0x81, 0xFE, 0xFF, 0x00)),
+            // JOHAB (Korean): 2-byte leads span 0x84..=0xF9 (Hangul 0x84..=0xD3 +
+            // Hanja/symbol 0xD8..=0xF9, gap 0xD4..0xD7); the cp-range gate (direct[key]
+            // != 0 in BMP) rejects in-range non-leads, so a single coarse range is
+            // byte-identical. 1-byte chars are ASCII < 0x80, below the range.
+            Encoding::Johab => Some((johab_decode_direct(), 0x84, 0xF9, 0xFF, 0x00)),
             _ => None,
         };
         if cd.to == Encoding::Utf8
