@@ -2730,6 +2730,7 @@ risk). Current; sane batch numbers.
 | `exp2_abi` | 347.7 ns | 158.4 ns | 347.5 ns | 1.00x | parity |
 | `log_abi` | 573.5 ns | 414.1 ns | 622.7 ns | 0.92x | WIN |
 | `log2_abi` | 384.5 ns | 174.7 ns | 374.5 ns | 1.03x | ~parity |
+| `cos_abi` | 544.7 ns | 346.5 ns | 551.3 ns | 0.99x | parity (trig too) |
 
 **The deployed reality:** the ~2x core win is consumed by the ~190 ns extern-C call frame
 (core→abi roughly doubles), so the deployed math symbol lands at glibc parity (0.92–1.03x).
