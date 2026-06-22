@@ -434,6 +434,7 @@ stable yardstick, the only worker-invariant reference):
 | `iconv` utf8→utf32le (ASCII) | ~700 ns | 408.2 ns | 1417 ns | ~0.5x → **0.288x WIN** (~1.7x self) | same SIMD widen (64-byte store) |
 | `iconv` utf8 2-byte→utf16le (Cyrillic) | 798 ns | 469.3 ns | ~1245 ns | 0.64x → **0.38x WIN** (~1.7x self) | SIMD-decoded `wc` scalar-scatter store → `lo`/`hi` cast + `simd_swizzle!` interleave |
 | `iconv` utf8 3-byte→utf16le (CJK) | 1026 ns | 840.0 ns | 1754 ns | 0.585x → **0.479x WIN** (1.22x self, stash A/B) | same SIMD store on the 3-byte path (`wc: Simd<u32,4>`) |
+| `iconv` utf16le→utf8 2-byte (Cyrillic) | 1383.6 ns | 568.3 ns | 1408 ns | **0.98x PARITY → 0.40x WIN** (2.43x self, stash A/B) | reverse-encode input scalar `cp_at` gather → 16-byte SIMD load + deinterleave |
 
 Validation (byte-identical vs LIVE glibc): parse_ipv6 — 40k-round
 `inet_pton_ntop_differential_fuzz` + `conformance_diff_inet_pton6_edges` + 150

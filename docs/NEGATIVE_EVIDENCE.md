@@ -3098,3 +3098,17 @@ with a stash A/B (the 3-byte decode dominates, so the store is a smaller fractio
 2-byte case, as predicted): utf8_cjk_to_utf16le OLD scalar fl **1026 ns** → NEW SIMD fl **840 ns** = 1.22x
 self-speedup; vs glibc 1754 ns = **0.585x → 0.479x WIN**. NOT ~0-gain (~18%). Byte-identical: same 4 gates
 green. (UTF-32 target kept scalar.)
+
+### 2026-06-23 — ✅ iconv REVERSE non-ASCII UTF-16→UTF-8 (2-byte) — 0.98x PARITY → 0.40x WIN (2.43x self)
+
+The reverse 2-byte-UTF-8-output run (mod.rs ~L24191) already SIMD-*encoded* (leads/conts/swizzle) but
+still gathered its input code points via the scalar `std::array::from_fn(|k| cp_at(..))` (8 `cp_at` reads
+= the SAME scalar-gather drag fixed on the ASCII reverse run). For UTF-16 input (scp==2) replaced it with
+a true 16-byte `Simd::<u8,16>` load + `simd_swizzle!` deinterleave to even/odd bytes, recombined
+`cp = hi<<8 | lo` (LE even=lo, BE even=hi) — byte-identical to `cp_at`'s `u16::from_*_bytes`. Stash A/B:
+utf16le_cyrillic_to_utf8 OLD scalar fl **1383.6 ns** → NEW SIMD fl **568.3 ns** = **2.43x self-speedup**.
+⭐ This was a genuinely UN-DOMINATED workload: OLD fl 1383.6 / glibc 1408 = **0.98x (parity)** → NEW
+**0.40x WIN** — the scalar gather was keeping fl merely glibc-competitive; the SIMD load makes it dominate
+2.5x. Byte-identical: conformance_diff_iconv + conformance_diff_iconv_simd + iconv_differential_fuzz + 285
+core unit all green. (UTF-32 input + the 3-byte-output CJK reverse run keep the scalar gather — unbenched
+siblings, same fix applies if needed.)
