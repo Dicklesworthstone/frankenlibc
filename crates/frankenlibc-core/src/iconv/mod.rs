@@ -23945,13 +23945,38 @@ pub fn iconv(
                     };
                     out16.copy_to_slice(&mut outbuf[out_pos..out_pos + 16]);
                 } else {
-                    // UTF-32 target (4 bytes/char): a 3rd (zero) source would be
-                    // needed to SIMD-pack, so keep the scalar store — not on a
-                    // benched hot path. cp <= 0x7FF so the two high bytes are 0.
-                    for (k, &cp) in wc.to_array().iter().enumerate() {
-                        let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
-                        outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
-                    }
+                    // UTF-32 store via TWO swizzles (cp <= 0x7FF so the two high bytes
+                    // are 0): interleave lo/hi into `[lo,hi,..]`, then widen each pair
+                    // to a 4-byte unit with a zero source — `[lo,hi,0,0]` (LE) /
+                    // `[0,0,hi,lo]` (BE). Byte-identical to `cp.to_*_bytes()`.
+                    let lo = (wc & Simd::splat(0xFF)).cast::<u8>();
+                    let hi = ((wc >> Simd::splat(8)) & Simd::splat(0xFF)).cast::<u8>();
+                    let lohi: Simd<u8, 16> = std::simd::simd_swizzle!(
+                        lo,
+                        hi,
+                        [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15]
+                    );
+                    let zero = Simd::<u8, 16>::splat(0);
+                    let out32: Simd<u8, 32> = if be {
+                        std::simd::simd_swizzle!(
+                            lohi,
+                            zero,
+                            [
+                                16, 16, 1, 0, 16, 16, 3, 2, 16, 16, 5, 4, 16, 16, 7, 6, 16, 16, 9,
+                                8, 16, 16, 11, 10, 16, 16, 13, 12, 16, 16, 15, 14
+                            ]
+                        )
+                    } else {
+                        std::simd::simd_swizzle!(
+                            lohi,
+                            zero,
+                            [
+                                0, 1, 16, 16, 2, 3, 16, 16, 4, 5, 16, 16, 6, 7, 16, 16, 8, 9, 16,
+                                16, 10, 11, 16, 16, 12, 13, 16, 16, 14, 15, 16, 16
+                            ]
+                        )
+                    };
+                    out32.copy_to_slice(&mut outbuf[out_pos..out_pos + 32]);
                 }
                 in_pos += 16;
                 out_pos += 8 * obpc;
@@ -24021,12 +24046,28 @@ pub fn iconv(
                     };
                     out8.copy_to_slice(&mut outbuf[out_pos..out_pos + 8]);
                 } else {
-                    // UTF-32 target: a 3rd (zero) source can't fit a 2-input swizzle;
-                    // keep the scalar store (cp <= 0xFFFF so the two high bytes are 0).
-                    for (k, &cp) in wc.to_array().iter().enumerate() {
-                        let b = if be { cp.to_be_bytes() } else { cp.to_le_bytes() };
-                        outbuf[out_pos + k * 4..out_pos + k * 4 + 4].copy_from_slice(&b);
-                    }
+                    // UTF-32 store via two swizzles (cp <= 0xFFFF so the two high bytes
+                    // are 0): same interleave-then-widen-with-zero as the 2-byte run,
+                    // 4 units → 16 bytes. Byte-identical to `cp.to_*_bytes()`.
+                    let lo = (wc & Simd::splat(0xFF)).cast::<u8>();
+                    let hi = ((wc >> Simd::splat(8)) & Simd::splat(0xFF)).cast::<u8>();
+                    let lohi: Simd<u8, 8> =
+                        std::simd::simd_swizzle!(lo, hi, [0, 4, 1, 5, 2, 6, 3, 7]);
+                    let zero = Simd::<u8, 8>::splat(0);
+                    let out16: Simd<u8, 16> = if be {
+                        std::simd::simd_swizzle!(
+                            lohi,
+                            zero,
+                            [8, 8, 1, 0, 8, 8, 3, 2, 8, 8, 5, 4, 8, 8, 7, 6]
+                        )
+                    } else {
+                        std::simd::simd_swizzle!(
+                            lohi,
+                            zero,
+                            [0, 1, 8, 8, 2, 3, 8, 8, 4, 5, 8, 8, 6, 7, 8, 8]
+                        )
+                    };
+                    out16.copy_to_slice(&mut outbuf[out_pos..out_pos + 16]);
                 }
                 in_pos += 12;
                 out_pos += 4 * obpc;

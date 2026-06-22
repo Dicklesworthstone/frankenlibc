@@ -3143,7 +3143,20 @@ LE/BE, ASCII + 2-byte + 3-byte output) is now SIMD-loaded — no scalar `cp_at` 
 reverse conversion.** Only the forward 2/3-byte→UTF-32 STORE keeps a scalar loop (needs a 3rd zero source
 for the 2-input swizzle; unbenched non-ASCII→UTF-32 target).
 
-### 2026-06-23 — FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter (unmeasured — degraded env)
+### 2026-06-23 — ✅ DONE: forward non-ASCII→UTF-32 store SIMD'd — 0.46x → 0.39x WIN (1.22x self) — MATRIX COMPLETE
+
+Implemented the filed fix on BOTH forward 2-byte and 3-byte → UTF-32 stores: `lo`/`hi` cast →
+`simd_swizzle!` interleave to `[lo,hi,..]` → second `simd_swizzle!(lohi, zero, ..)` widening each pair to
+`[lo,hi,0,0]` (LE) / `[0,0,hi,lo]` (BE). Stash A/B (under heavy sibling contention — benches 9–14 min each):
+utf8_cyrillic_to_utf32le OLD scalar fl **595.0 ns** → NEW SIMD fl **488.3 ns** = **1.22x self-speedup**;
+0.46x → **0.39x WIN** (modest, as predicted — forward is decode-dominated so the store is a smaller
+fraction than the reverse gathers, unlike those it was already a win not a loss). Byte-identical:
+conformance_diff_iconv + conformance_diff_iconv_simd + iconv_differential_fuzz + 285 core unit all green.
+**🎯 THE ENTIRE iconv UTF-8↔UTF-16/32 MATRIX IS NOW SCALAR-GATHER/SCATTER-FREE** — every forward+reverse,
+ASCII+2-byte+3-byte, UTF-16+UTF-32, LE+BE path is SIMD load+store. The recurring anti-pattern is fully
+eliminated. (3-byte UTF-32 store also SIMD'd, byte-identical via the same gates; unbenched but same pattern.)
+
+### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
 UTF-8 → UTF-32 STORE (the `else` UTF-32 branch of the forward 2-byte/3-byte runs): it SIMD-decodes
