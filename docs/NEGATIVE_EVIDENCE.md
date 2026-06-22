@@ -3364,6 +3364,20 @@ add a from=UTF-8 SIMD fast path before the general loop: SIMD-decode 4× 3-byte 
 already committed. NOT yet implemented (deferred: substantial SIMD fast path, warrants a focused clean-load
 turn — the UTF-8 decode + 2-byte scatter + validation carry byte-identity risk best validated unhurried).
 
+UPDATE (same session) — ⚠️ symmetric encode gather IMPLEMENTED + byte-identical, but only 1.52x self / still
+1.92x LOSS → REVERTED. Built it exactly per the plan (standalone `cp949_encode_direct()` + a from=UTF-8 SIMD
+fast path: load 16 B, 3 swizzles → b0/b1/b2, validate 3-byte UTF-8, `cp = (b0&0xF)<<12|(b1&0x3F)<<6|(b2&0x3F)`,
+`gather_or(enc_direct, cp)`, single `enc1 >= 0x101` gate = 2-byte cell, unpack hi/lo, interleave-swizzle,
+store 8 B; in_pos+=12 out_pos+=8). VALIDATED byte-identical: 285 core + conformance_diff_iconv_simd +
+iconv_differential_fuzz all GREEN (the 2-byte gate correctly drops overlong/surrogate 3-byte seqs to scalar).
+But the clean-load A/B was fl **7127 → 4693 ns = only 1.52x self-speedup**, vs glibc 2446 ns = still **1.92x
+LOSS** — ~36 ns/window vs the DECODE gather's ~8 ns/window (4×). UNEXPLAINED asymmetry: same 4-lane gather +
+65536-entry table, but the encode (cp-indexed table 0xAC00.. span + UTF-8-decode/validate front-end) doesn't
+pipeline like the decode (DBCS-key-indexed). Reverted per non-win (stashed `cc-encode-gather-1.92x-LOSS`).
+The encode direction is REAL un-dominated work but the mirror gather is NOT the answer — needs a profile of
+the 4× per-window gap (gather latency? the 6-compare UTF-8 validation? cp-index cache pattern?) before
+retrying. The decode campaign's 7 wins stand; the encode stays an open lever.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
