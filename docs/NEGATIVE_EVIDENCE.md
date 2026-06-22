@@ -3197,7 +3197,15 @@ benched/landed. ShiftJis was also implemented (valid `jp`/Hiragana source, byte-
 tests green) but DEFERRED (stashed `cc-shiftjis-gather-CONTENTION`) under a multi-agent build storm
 (7+ sibling rustc/test procs, a single core test took 578 s, conformance stuck > 15 min) AND it is a
 near-duplicate of the landed cp932 (same `decode_dbcs2` scalar path + same gather + same Japanese
-workload), so its win is the cp932 win. Land ShiftJis + the other arms in a clean, uncontended turn.
+workload), so its win is the cp932 win. Land ShiftJis + the other arms in a clean, uncontended turn. RETRY at load ~130 (2026-06-23): ShiftJis
+conformance PASSED (conformance_diff_iconv_simd + iconv_differential_fuzz green = byte-identical vs glibc),
+but the bench was CONTENTION-GARBAGE — fl sjis_to_utf8 p50 856 ns / **mean 13717 ns** (catastrophic tail
+spikes), glibc p50 447 ns; the resulting "1.91x" is a spurious artifact that contradicts the mechanism
+(ShiftJis = the IDENTICAL gather code path + `jp` source as cp932, which cleanly measured 0.95x WIN). At
+load ≥ ~100 the fl distribution shifts up far more than glibc's, so even the p50 ratio is unreliable —
+**iconv abi-benches cannot produce trustworthy ratios during the sibling build storm (load 120–190, 13–29
+rustc procs)**. ShiftJis re-stashed (`cc-shiftjis-...BENCH-CONTENTION-GARBAGE`), byte-identical and ready;
+land it (and Gb2312/Cp949/Big5 with valid sources) with a clean head-to-head once the storm clears.
 
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
