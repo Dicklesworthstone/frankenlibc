@@ -296,6 +296,9 @@ fn bench(c: &mut Criterion) {
     // accepted Level-1/2 lead/trail pairs (defeats the contiguous-range source block).
     let big5_src = build_dbcs_source(b"BIG5\0", 0xA4..=0xF9, 0xA1..=0xFE, 512);
     run_conv(c, "big5_to_utf8", b"UTF-8\0", b"BIG5\0", &big5_src);
+    // GB2312/EUC-CN (Simplified Chinese, common on Unix) -> UTF-8: generic source.
+    let gb2312_src = build_dbcs_source(b"GB2312\0", 0xB0..=0xF7, 0xA1..=0xFE, 512);
+    run_conv(c, "gb2312_to_utf8", b"UTF-8\0", b"GB2312\0", &gb2312_src);
 }
 
 criterion_group!(benches, bench);

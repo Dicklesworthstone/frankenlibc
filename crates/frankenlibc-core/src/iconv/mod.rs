@@ -19614,14 +19614,17 @@ fn decode_cp949(input: &[u8]) -> Result<(char, usize), DecodeError> {
     )
 }
 
-fn decode_gb2312(input: &[u8]) -> Result<(char, usize), DecodeError> {
+fn gb2312_decode_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::GB2312_DBCS));
+    DIRECT.get_or_init(|| build_dbcs_direct(&cjk_tables::GB2312_DBCS))
+}
+
+fn decode_gb2312(input: &[u8]) -> Result<(char, usize), DecodeError> {
     decode_dbcs2(
         input,
         &cjk_tables::GB2312_ONE_BYTE,
         &cjk_tables::GB2312_IS_LEAD,
-        direct,
+        gb2312_decode_direct(),
     )
 }
 
@@ -24707,6 +24710,10 @@ pub fn iconv(
             // or 0xA1..0xFE). The cp-range gate keeps only BMP (3-byte UTF-8) Hanzi;
             // non-BMP/2-byte-output cells and 1-byte ASCII (< 0x81) fall to scalar.
             Encoding::Big5 => Some((big5_decode_direct(), 0x81, 0xFE, 0xFF, 0x00)),
+            // GB2312/EUC-CN (Simplified Chinese): 2-byte leads 0xA1..=0xF7. cp-range
+            // gate keeps BMP 3-byte Hanzi (rows 0xB0..); symbol rows mapping below
+            // U+0800 and 1-byte ASCII fall to scalar, byte-identical.
+            Encoding::Gb2312 => Some((gb2312_decode_direct(), 0xA1, 0xF7, 0xFF, 0x00)),
             _ => None,
         };
         if cd.to == Encoding::Utf8

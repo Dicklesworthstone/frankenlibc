@@ -3316,6 +3316,19 @@ spot). Byte-identical: conformance_diff_iconv_simd + iconv_differential_fuzz + 2
 **6 gather WINS now: cp932 0.95x, GBK 0.46x, EucJpMs 0.68x, Cp949 0.43x, Johab 0.33x, Big5 0.53x** + EucJp
 loss-elim. The generic builder now makes EucTw/Gb2312/EucKr probable (same vein) — bench each with it.
 
+### 2026-06-23 — ✅ gb2312_to_utf8 gather — 6.45x LOSS → 0.24x WIN (13.4x self) via the generic builder
+
+GB2312/EUC-CN (Simplified Chinese, common on Unix) — unblocked by `build_dbcs_source(b"GB2312", 0xB0..=0xF7,
+0xA1..=0xFE, 512)` (the contiguous-range source was degenerate; the enumerate-valid-pairs builder gives a
+proper cache-bound diverse source). Exposed `gb2312_decode_direct()`, gather arm lead 0xA1..=0xF7. A/B
+(clean): OLD scalar fl **14692 → NEW gather fl 1097.8 ns = 13.4x self-speedup**; vs glibc = **0.24x WIN**
+(same-run glibc 4643.9 ns; NB glibc GB2312 gconv is HIGH-VARIANCE run-to-run, probe measured 2276 ns, so the
+conservative range is **0.24–0.48x WIN** — fl is stable ~1098 ns and wins either way). Byte-identical:
+conformance + differential fuzz + 285 core unit green. **7 gather WINS: cp932 0.95x, GBK 0.46x, EucJpMs
+0.68x, Cp949 0.43x, Johab 0.33x, Big5 0.53x, Gb2312 0.24x** + EucJp loss-elim. CJK reverse-DBCS surface now
+broadly dominant. Remaining: EucTw (Traditional Chinese EUC, SS2-multiplane — needs care), EucKr (subset of
+the done Cp949). Gb2312 bench note: glibc arm occasionally emits NO line under a concurrent compile — rerun.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
