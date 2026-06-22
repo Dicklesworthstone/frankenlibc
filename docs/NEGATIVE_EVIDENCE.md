@@ -3329,6 +3329,23 @@ conformance + differential fuzz + 285 core unit green. **7 gather WINS: cp932 0.
 broadly dominant. Remaining: EucTw (Traditional Chinese EUC, SS2-multiplane — needs care), EucKr (subset of
 the done Cp949). Gb2312 bench note: glibc arm occasionally emits NO line under a concurrent compile — rerun.
 
+### 2026-06-23 — ⚠️ EucTw gather REVERTED — 1.92x LOSS (the one CJK codec the gather does NOT win); BOUNDARY
+
+EUC-TW (Traditional Chinese, CNS 11643): the only remaining distinct CJK reverse-DBCS codec, and the gather
+FAILS to win it. Probe (generic builder, plane-1): fl SCALAR **27678 ns** / glibc 2574 ns = **10.75x LOSS**
+(biggest of the campaign — `decode_euctw` plane-1 uses a per-char BINARY SEARCH over EUC_TW_DBCS2, ~2x worse
+than the flat-table codecs). Built a flat gather table (`build_dbcs_direct(&EUC_TW_DBCS2)`, scalar path left
+on its binary search → byte-identical, 285 core + conformance + fuzz GREEN). But the gather only reached fl
+**5018 ns / glibc 2616.6 ns = 1.92x LOSS** (5.5x self-speedup, NOT enough to win). ROOT CAUSE: CNS plane-1
+scatters NON-BMP chars (> U+FFFF) through the text; the gather requires ALL 4 units in a window to be BMP
+(3-byte UTF-8), so any single non-BMP unit breaks the whole window down to the slow binary-search scalar —
+~15% of windows fall back, and those dominate the average. Even a flat-table scalar fix only projects to
+~1.1-1.4x (near-parity at best). **REVERTED per REVERT-non-win** (the other 7 codecs are BMP-dense so all 4
+units pass; EucTw's non-BMP scatter is the boundary of the gather technique). Left a code comment marking
+the intentional exclusion. EucKr stays source-blocked (subset of the landed Cp949). **The CJK reverse-DBCS
+gather campaign is COMPLETE: 7 WINS (cp932/GBK/EucJpMs/Cp949/Johab/Big5/Gb2312) + EucJp loss-elim + EucTw
+boundary (reverted). The technique wins iff the codec is BMP-dense + cache-bound-scalar + slow-glibc.**
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

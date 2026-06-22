@@ -24714,6 +24714,9 @@ pub fn iconv(
             // gate keeps BMP 3-byte Hanzi (rows 0xB0..); symbol rows mapping below
             // U+0800 and 1-byte ASCII fall to scalar, byte-identical.
             Encoding::Gb2312 => Some((gb2312_decode_direct(), 0xA1, 0xF7, 0xFF, 0x00)),
+            // EUC-TW intentionally NOT here: its CNS-11643 plane-1 mixes non-BMP chars
+            // that break 4-unit gather windows down to the slow binary-search scalar
+            // (~15% of windows), so the gather measured 1.92x LOSS — see NEGATIVE_EVIDENCE.
             _ => None,
         };
         if cd.to == Encoding::Utf8
