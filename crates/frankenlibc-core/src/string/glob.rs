@@ -880,6 +880,14 @@ mod tests {
     #[test]
     fn directory_error_callback_can_abort() {
         let (blocked_dir, pattern) = unreadable_directory_pattern("errfunc_abort");
+        // Skip when the unreadable-dir premise doesn't hold (process is root, or a
+        // permission-ignoring filesystem): then opendir/readdir succeeds, no error is
+        // raised, and the errfunc is never called. The CI/rch fleet is mixed root and
+        // non-root, which made this test flake GREEN<->RED across workers (bd-2g7oyh).
+        if std::fs::read_dir(&blocked_dir).is_ok() {
+            restore_directory(&blocked_dir);
+            return;
+        }
 
         let mut calls = 0;
         let mut observed_path = Vec::new();
@@ -901,6 +909,12 @@ mod tests {
     #[test]
     fn directory_error_callback_can_continue() {
         let (blocked_dir, pattern) = unreadable_directory_pattern("errfunc_continue");
+        // Skip under root / permission-ignoring FS where the unreadable-dir premise
+        // doesn't hold (mixed root/non-root fleet flakiness, bd-2g7oyh).
+        if std::fs::read_dir(&blocked_dir).is_ok() {
+            restore_directory(&blocked_dir);
+            return;
+        }
 
         let mut calls = 0;
         let result = glob_expand_with_error_handler(&pattern, 0, |_, _| {
@@ -916,6 +930,12 @@ mod tests {
     #[test]
     fn glob_err_aborts_after_callback() {
         let (blocked_dir, pattern) = unreadable_directory_pattern("errfunc_glob_err");
+        // Skip under root / permission-ignoring FS where the unreadable-dir premise
+        // doesn't hold (mixed root/non-root fleet flakiness, bd-2g7oyh).
+        if std::fs::read_dir(&blocked_dir).is_ok() {
+            restore_directory(&blocked_dir);
+            return;
+        }
 
         let mut calls = 0;
         let result = glob_expand_with_error_handler(&pattern, GLOB_ERR, |_, _| {
