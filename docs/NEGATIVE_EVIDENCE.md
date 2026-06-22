@@ -3231,6 +3231,23 @@ hit indices). Worth a profile when investigating the remaining DBCS gather lever
 has high single-run MEAN variance (cp932 mean 1151-1420 vs p50 385-392) from occasional spikes — always read
 the **p50**, not the mean, and prefer ≥2 runs.
 
+### 2026-06-23 — DBCS→UTF-8 gather WIN-MAP complete (probe-first); easy wins are cp932 + GBK only
+
+Clean-window probing of the remaining DBCS→UTF-8 codecs settles the vein:
+- **cp932 ✓** (0.93x WIN, committed) — `jp`/Hiragana source valid; glibc fast (414 ns) so fl barely wins.
+- **GBK ✓** (0.46x WIN, committed) — `cjk` source valid (GBK is a superset covering U+4E00..U+4FFF); glibc
+  SLOW (2539 ns) so fl wins big.
+- **ShiftJis ✗** (1.14x LOSS) — `jp` source valid but glibc fast (458 ns); the gather's 256 KB-table cache
+  cost makes fl (524 ns) lose. Reverted.
+- **Gb2312 ✗ / Big5 ✗** — DEGENERATE bench source: `host_to(GB2312|BIG5, cjk)` encodes a near-EMPTY buffer
+  (glibc 29 ns) because those are SUBSETS and U+4E00..U+4FFF isn't fully in them. Need a codec-specific
+  encodable source (their own Hanzi ranges) to bench. Probe arm removed (a degenerate arm is misleading).
+RULE confirmed: the gather wins iff (valid full source) AND (glibc is SLOW for that codec) — the cache cost
+of the 65536-entry gather table sinks it against glibc's fast codecs. So the win is codec-specific; **probe
+glibc-speed + source-validity BEFORE implementing each arm** (this probe-first saved a wasted Gb2312
+implementation). EucJp/EucKr/Cp949/Johab remain un-probed (need their own sources / unknown glibc speed).
+The 2 landed gather wins (cp932, GBK) stand; the technique is real but its applicability is narrow.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
