@@ -24228,8 +24228,22 @@ pub fn iconv(
                 && out_pos + 12 <= outbuf.len()
                 && (0x800..=0xFFFF).contains(&cp_at(in_pos))
             {
-                let cps: [u32; 4] = std::array::from_fn(|k| cp_at(in_pos + scp * k));
-                let v = Simd::<u32, 4>::from_array(cps);
+                // UTF-16 input (scp==2): true 8-byte SIMD load + deinterleave for the
+                // 4 code points instead of the 4 scalar `cp_at` reads (same gather fix
+                // as the 2-byte run above). `cp = hi<<8 | lo`, byte-identical to
+                // `cp_at`'s `u16::from_*_bytes`. UTF-32 keeps the scalar gather.
+                let v: Simd<u32, 4> = if scp == 2 {
+                    let raw = Simd::<u8, 8>::from_slice(&input[in_pos..in_pos + 8]);
+                    let even = std::simd::simd_swizzle!(raw, [0, 2, 4, 6]);
+                    let odd = std::simd::simd_swizzle!(raw, [1, 3, 5, 7]);
+                    if sbe {
+                        (even.cast::<u32>() << Simd::splat(8)) | odd.cast::<u32>()
+                    } else {
+                        (odd.cast::<u32>() << Simd::splat(8)) | even.cast::<u32>()
+                    }
+                } else {
+                    Simd::<u32, 4>::from_array(std::array::from_fn(|k| cp_at(in_pos + scp * k)))
+                };
                 let bmp_ok = v.simd_ge(Simd::splat(0x0800)) & v.simd_le(Simd::splat(0xFFFF));
                 let sur_ok = v.simd_lt(Simd::splat(0xD800)) | v.simd_gt(Simd::splat(0xDFFF));
                 if !(bmp_ok & sur_ok).all() {

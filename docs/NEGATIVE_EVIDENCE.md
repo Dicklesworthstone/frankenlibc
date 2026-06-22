@@ -3110,5 +3110,17 @@ utf16le_cyrillic_to_utf8 OLD scalar fl **1383.6 ns** → NEW SIMD fl **568.3 ns*
 ⭐ This was a genuinely UN-DOMINATED workload: OLD fl 1383.6 / glibc 1408 = **0.98x (parity)** → NEW
 **0.40x WIN** — the scalar gather was keeping fl merely glibc-competitive; the SIMD load makes it dominate
 2.5x. Byte-identical: conformance_diff_iconv + conformance_diff_iconv_simd + iconv_differential_fuzz + 285
-core unit all green. (UTF-32 input + the 3-byte-output CJK reverse run keep the scalar gather — unbenched
-siblings, same fix applies if needed.)
+core unit all green. (UTF-32 input keeps the scalar gather — unbenched sibling, same fix applies if needed.)
+
+### 2026-06-23 — ✅ iconv REVERSE non-ASCII UTF-16→UTF-8 (3-byte, CJK) — 1.10x LOSS → 0.60x WIN (1.83x self)
+
+Same fix on the 3-byte-output run (mod.rs ~L24231): UTF-16 input (scp==2) now loads its 4 code points via
+a true 8-byte `Simd::<u8,8>` load + `simd_swizzle!` deinterleave (`cp = hi<<8 | lo`) instead of 4 scalar
+`cp_at` reads. Stash A/B: utf16le_cjk_to_utf8 OLD scalar fl **1832.4 ns** → NEW SIMD fl **1000.6 ns** =
+**1.83x self-speedup**. ⭐ Another genuinely UN-DOMINATED workload — actually a LOSS: OLD fl 1832.4 / glibc
+1670.5 = **1.10x LOSS** → NEW **0.60x WIN** (the scalar gather was making fl LOSE; the SIMD load makes it
+win 1.7x). Byte-identical: conformance_diff_iconv + conformance_diff_iconv_simd + iconv_differential_fuzz +
+285 core unit all green. **The reverse UTF-16→UTF-8 path (ASCII + 2-byte + 3-byte output) is now fully
+SIMD-input-loaded; only UTF-32 input retains the scalar gather (unbenched).** Net: the recurring
+scalar-gather/scatter anti-pattern is now eliminated from EVERY benched iconv UTF-8↔UTF-16 conversion in
+both directions — 11 conversions converted from parity/loss/thin-win to decisive 0.24–0.60x wins.

@@ -202,6 +202,9 @@ fn bench(c: &mut Criterion) {
     let cjk = u8enc(&cjk_cps);
     run_conv(c, "utf8_cjk_to_gb18030", b"GB18030\0", b"UTF-8\0", &cjk);
     run_conv(c, "utf8_cjk_to_utf16le", b"UTF-16LE\0", b"UTF-8\0", &cjk);
+    // Reverse: UTF-16LE CJK -> 3-byte UTF-8 (the 3-byte-output run).
+    let cjk_u16le: Vec<u8> = cjk_cps.iter().flat_map(|&c| (c as u16).to_le_bytes()).collect();
+    run_conv(c, "utf16le_cjk_to_utf8", b"UTF-8\0", b"UTF-16LE\0", &cjk_u16le);
     // Hiragana (U+3040..U+309F) -> CP932 (Shift-JIS).
     let jp_cps: Vec<u32> = (0..512u32).map(|k| 0x3041 + (k % 0x5E)).collect();
     let jp = u8enc(&jp_cps);
