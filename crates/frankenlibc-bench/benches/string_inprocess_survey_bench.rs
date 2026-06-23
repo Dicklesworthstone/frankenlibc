@@ -91,6 +91,19 @@ fn bench(c: &mut Criterion) {
     });
     gsp.finish();
 
+    // ---- strspn len-1 accept, 60-byte all-accept run (find_non_byte_or_nul dual of
+    // find_byte_or_nul): 28-byte remainder -> the of-1 overlapping-tail.
+    let accept1 = c"a";
+    assert_eq!(core_str::strspn(span60.to_bytes(), accept1.to_bytes()), 60);
+    let mut gsp1 = c.benchmark_group("survey_strspn_set1_60");
+    gsp1.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strspn(black_box(span60.to_bytes()), accept1.to_bytes())))
+    });
+    gsp1.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strspn(black_box(span60.as_ptr()), accept1.as_ptr()) }))
+    });
+    gsp1.finish();
+
     // ---- strcspn (bitmap, len-3 reject) ----
     let cspan = c"abcdefghijklmnopqrstuvwwwwwwwwwXyz"; // run of non-reject then 'X' in reject
     let reject = c"XYZ";

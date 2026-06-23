@@ -1338,11 +1338,25 @@ fn find_non_byte_or_nul(s: &[u8], accepted: u8) -> usize {
         }
         i += SIMD_LANES;
     }
-    while i < s.len() {
-        if s[i] != accepted {
-            return i;
+    // Overlapping 32-lane tail (span >= 32): the sub-32 remainder via one SIMD load.
+    // The overlap region is already-scanned and all == accepted (no stop), so the
+    // window's leftmost `!= accepted` is the first remainder stop — byte-identical.
+    if i < s.len() {
+        if s.len() >= SIMD_LANES {
+            let start = s.len() - SIMD_LANES;
+            let v = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
+            let bits = v.simd_ne(a32).to_bitmask();
+            if bits != 0 {
+                return start + bits.trailing_zeros() as usize;
+            }
+        } else {
+            while i < s.len() {
+                if s[i] != accepted {
+                    return i;
+                }
+                i += 1;
+            }
         }
-        i += 1;
     }
     s.len()
 }

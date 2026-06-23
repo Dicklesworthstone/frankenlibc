@@ -3488,6 +3488,18 @@ The 32-lane byte-scanner remainder was a systematic structural gap (every scanne
 the overlapping-tail closes it across the family, byte-identical. REMAIN: find_non_any_of6 (strspn-6), the
 find_ascii_folded variants (strcasestr) — same fix, A/B at a non-32-multiple size.
 
+### 2026-06-23 — ✅ find_non_byte_or_nul (strspn-1) overlapping-tail — 2.82x self-speedup, 1.41x near-parity
+
+The strspn-1 dual of find_byte_or_nul. Same overlapping-tail (`simd_ne(accepted)`, overlap all == accepted so
+no stop — byte-identical, 153 str tests GREEN). In-process A/B (survey_strspn_set1_60, 60-B = 28-B
+remainder): OLD fl 19.42 -> NEW 6.89 ns = 2.82x self-speedup; vs glibc 4.90 ns = **3.96x LOSS -> 1.41x
+near-parity**. NOTE the asymmetry: glibc's strspn-1 asm (4.90 ns) is TIGHTER than its strcspn-1 (7.27 ns),
+so fl (≈6.3-6.9 ns both) WINS strcspn-1 (0.87x) but stays a near-parity LOSS on strspn-1 — same fl code,
+glibc's per-function tightness decides. KEPT (substantial real self-speedup, byte-identical, hot). **6
+overlapping-tail wins: wcschr 1.91x, of6 2.4x, of4 5.1x->PARITY, strspn-of4 2.95x, find_byte 2.55x->0.87x
+WIN, find_non_byte 2.82x->1.41x.** The 32-lane byte/wide-scanner remainder gap is now closed across the hot
+strchr/strcspn/strpbrk/strspn/wcschr family — every one a 2-5x self-speedup, two reaching win/parity.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
