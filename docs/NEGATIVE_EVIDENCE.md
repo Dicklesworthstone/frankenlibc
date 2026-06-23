@@ -71,6 +71,17 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   Whoever picks it up: first get a clean fl-vs-glibc strtod ratio (in-process, C locale) to confirm it's
   un-dominated before porting EL. This is the one identified NEW perf lever outside the (exhausted) scanner
   vein — but it belongs to the codegen/algorithm mode, not this byte-identical micro-lever loop.
+- **❌ RETRACTED (2026-06-23): the strtod EL lever is MOOT — fl strtod ALREADY WINS glibc.** Got the clean
+  ratio (strtol_glibc_bench numeric_parse, abi-bench): strtod_int fl 12.81 / glibc 32.53 = **0.39x WIN**,
+  strtod_simple **0.59x WIN**, strtod_sci **0.48x WIN**. glibc's strtod is notoriously SLOW (its multiprecision
+  correct-rounding path, 32-49 ns); fl's exact-u128 (13-29 ns) already BEATS it 1.7-2.5x. So strtod is NOT
+  un-dominated — adding Eisel-Lemire would make fl faster still but is NOT needed to beat glibc. Do NOT port EL.
+  **The ENTIRE stdlib/conversion family is comprehensively fl-DOMINANT** (same bench): strtol 0.42-0.75x,
+  atoi 0.38-0.57x, atol 0.50-0.61x, atoll 0.48-0.51x, strtod 0.39-0.59x, rand 0.48x, getenv 0.23-0.24x,
+  pthread_self 0.86x — ALL WINS. The lone LOSS in that bench is `time` 1.80x (fl 4.20 / glibc 2.33) — but
+  that is the **sibling's active time_abi domain** (time_abi.rs is their uncommitted work), NOT mine; left
+  untouched. NET: number-conversion + stdlib is another DONE family (fl-dominant), and there is now NO
+  identified un-dominated perf lever in fl's scope outside the owned architectural allocator/stdio paths.
 
 ## Method
 
