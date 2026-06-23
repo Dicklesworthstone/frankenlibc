@@ -114,6 +114,12 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   OWNED (architectural allocator/stdio, NSS porting-epic, time_abi sibling) or POLICY-FLOORED (comparators).
   There is no un-dominated, in-scope, byte-identical-micro-lever-tractable workload left. The loop's vein is
   conclusively worked out; further gains are architectural/owned, a different mode.**
+- **CAMPAIGN CUMULATIVE GREEN VERIFIED (2026-06-23) — release-readiness capstone.** Ran the FULL `string::`
+  suite together (not just per-change): **475 passed / 0 failed** (string::str scanners + string::wide find +
+  string::mem + string::wchar/glob) — the 8 string/mem overlapping-tail edits + find_wide_or_nul interact
+  cleanly, no regression. The 7 iconv gather arms were each validated at 285 core iconv unit +
+  conformance_diff_iconv_simd + iconv_differential_fuzz (last run Big5/Gb2312 covered all arms). So all 15
+  structural wins are collectively byte-identical and release-ready.
 
 ## Method
 
