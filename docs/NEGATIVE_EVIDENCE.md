@@ -27,6 +27,16 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   profiling/asm pass on the comparator codegen using the survey harness, or (2) the owned architectural
   refactors — allocator membrane ~50x, stdio write-path lock (bd-hqo6b6).** The structural micro-lever vein
   this loop mines is worked out.
+- **REFINEMENT (2026-06-23): the comparator "codegen pass" is BLOCKED by project policy, so it is NOT a
+  tractable target either.** `frankenlibc-core` is `#![deny(unsafe_code)]` (lib.rs:8); the only ways to close
+  a portable_simd-vs-glibc-asm gap are `get_unchecked` (elide bounds checks — but the guarded loops already
+  let LLVM elide them, ~0-gain) or explicit x86 AVX2 intrinsics (`_mm256_cmpeq_epi8`/`_mm256_movemask_epi8`)
+  — both require `unsafe`, which the crate FORBIDS (and intrinsics would also break the aarch64 portability
+  the crate targets). So the comparator loss (strcmp 2.24x / memcmp 1.36x) is an **ACCEPTED FLOOR** — the
+  cost of safe, portable SIMD vs hand-tuned asm — NOT a lever. **Therefore the ONLY remaining tractable
+  un-dominated work is the ARCHITECTURAL refactors (allocator membrane, stdio lock), which are owned/large.
+  Every byte-identical AND safe-codegen string/mem+iconv perf lever is now exhausted.** Do not re-probe the
+  comparators as a perf lever — they are policy-floored.
 
 ## Method
 
