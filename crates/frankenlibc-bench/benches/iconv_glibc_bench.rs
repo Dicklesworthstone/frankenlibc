@@ -324,6 +324,9 @@ fn bench(c: &mut Criterion) {
     // SBCS -> UTF-16 probe: Latin-1 high bytes -> UTF-16LE (byte -> cp(BMP) -> 1 u16).
     // The from_decode->UTF-16/32 path is scalar single-unit — probe if un-dominated.
     run_conv(c, "latin1_to_utf16le", b"UTF-16LE\0", b"ISO-8859-1\0", &latin1_src);
+    // DBCS -> UTF-16 probe: Shift-JIS (CP932) -> UTF-16LE. The DBCS legacy->UTF-16/32
+    // path decodes each char then writes a unit — probe if un-dominated (un-benched).
+    run_conv(c, "cp932_to_utf16le", b"UTF-16LE\0", b"CP932\0", &cp932_src);
 }
 
 criterion_group!(benches, bench);

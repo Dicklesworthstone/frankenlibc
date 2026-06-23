@@ -156,6 +156,18 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   UTF-32 (tw==4) stays scalar (rarer). Generalizes to all SBCS→UTF-16. **17 WINS now. The SBCS decode-family
   vein gave 3 wins (→UTF-8 0.31x, Latin-1 0.24x, →UTF-16 0.62x); "gap-hunt the missing bench arms" is the
   most productive lesson of the late session.**
+- **DBCS→UTF-16 is 6x un-dominated; byte-identical GATE-OMISSION bug fixed (1.9x), SIMD gather FILED.**
+  Probed the next flagged path: cp932_to_utf16le fl **1599.7 ns / glibc 264.4 = 6.05x LOSS**. Found a real
+  bug: Cp932/Ibm943/Ibm932 were MISSING from the DBCS→UTF-16/32 fast-path gate (mod.rs:25000) — they have
+  direct decoders in the match below but the gate listed only ShiftJis/Big5/Gbk/Euc*/Cp949/Gb2312/Johab/
+  Gb18030, so cp932→wide fell through to the SLOWER general ~100-arm loop. Added the three to the gate →
+  scalar fast path: **6.05x → 3.16x LOSS, 1.9x self-speedup, byte-identical** (285 core green). NOT a win yet
+  — the scalar fast path (decode_cp932 per char + encode_utf16) still can't match glibc's ~0.5 ns/char.
+  **FILED LEVER (DBCS→UTF-16 SIMD gather, ~3.2x remaining):** mirror the DBCS→UTF-8 gather — for a run of
+  2-byte DBCS chars, extract keys `(lead<<8)|trail`, gather cp from the per-codec `*_decode_direct()` table
+  (already exposed: cp932/big5/gbk/cp949/johab/gb2312/eucjp/eucjpms), then the SBCS→UTF-16 u16 interleave
+  write. Substantial (per-codec 2-byte-input front-end + ASCII/astral transitions), so a focused next
+  session. Kept cp932_to_utf16le as the regression guard / documented gap.
 - **CAMPAIGN CUMULATIVE GREEN VERIFIED (2026-06-23) — release-readiness capstone.** Ran the FULL `string::`
   suite together (not just per-change): **475 passed / 0 failed** (string::str scanners + string::wide find +
   string::mem + string::wchar/glob) — the 8 string/mem overlapping-tail edits + find_wide_or_nul interact

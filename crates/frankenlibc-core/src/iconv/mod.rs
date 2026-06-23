@@ -25001,6 +25001,9 @@ pub fn iconv(
             from_enc,
             Encoding::Gb18030
                 | Encoding::ShiftJis
+                | Encoding::Cp932
+                | Encoding::Ibm943
+                | Encoding::Ibm932
                 | Encoding::Big5
                 | Encoding::Gbk
                 | Encoding::EucJp
