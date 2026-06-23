@@ -77,6 +77,20 @@ fn bench(c: &mut Criterion) {
     });
     g.finish();
 
+    // ---- strspn len-3 accept, 60-byte all-accept run (find_non_any_of4 dual): scans
+    // all 60 -> 1 chunk + 28-byte REMAINDER. Exercises the of4-dual overlapping-tail.
+    let span60 = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; // 60 'a'
+    let accept3 = c"abc";
+    assert_eq!(core_str::strspn(span60.to_bytes(), accept3.to_bytes()), 60);
+    let mut gsp = c.benchmark_group("survey_strspn_set3_60");
+    gsp.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strspn(black_box(span60.to_bytes()), accept3.to_bytes())))
+    });
+    gsp.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strspn(black_box(span60.as_ptr()), accept3.as_ptr()) }))
+    });
+    gsp.finish();
+
     // ---- strcspn (bitmap, len-3 reject) ----
     let cspan = c"abcdefghijklmnopqrstuvwwwwwwwwwXyz"; // run of non-reject then 'X' in reject
     let reject = c"XYZ";

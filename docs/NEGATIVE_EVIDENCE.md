@@ -3465,6 +3465,17 @@ strcspn/strpbrk path. REMAIN: find_byte_or_nul (strchr/strcspn-1/memchr short pa
 duals) — same fix, A/B at a NON-32-multiple size (the of4 64-B trap). String/mem now has 3 overlapping-tail
 structural wins: wcschr 1.91x, of6 2.4x, of4 5.1x->parity — all byte-identical.
 
+### 2026-06-23 — ✅ find_non_any_of4 (strspn dual) overlapping-tail — 2.95x self-speedup, near-parity
+
+The strspn complement of of4 (skip-set parsing, equally hot). Same overlapping-tail with the `!member` stop
+(the overlap region is already-scanned and entirely IN the set, so no stop there — byte-identical, 153 str
+tests GREEN). In-process A/B (survey_strspn_set3_60, 60-B all-accept = 28-B remainder): OLD fl 28.94 -> NEW
+9.82 ns = 2.95x self-speedup; vs glibc (noisy ~8.4-18.5 ns) fl is near-parity-to-win (~2.2x loss -> ~0.76-
+1.17x). 4 overlapping-tail string/mem wins now: wcschr 1.91x, of6 2.4x, of4 5.1x->parity, strspn-of4 2.95x.
+REMAIN: find_byte_or_nul (strchr/memchr short path) + find_non_any_of6 (strspn len-6) — same fix, A/B at a
+non-32-multiple size. The 32-lane byte-scanner overlapping-tail is the session's most productive string/mem
+vein: small byte-identical changes, 2-5x self-speedups, several reaching parity with glibc's hand-asm.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
