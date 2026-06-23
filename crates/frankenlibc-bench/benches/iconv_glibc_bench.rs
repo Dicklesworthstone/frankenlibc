@@ -316,6 +316,11 @@ fn bench(c: &mut Criterion) {
     // is SIMD or scalar per-byte (un-benched until now).
     let koi8r_src = host_to(b"KOI8-R\0", &cyr);
     run_conv(c, "koi8r_to_utf8", b"UTF-8\0", b"KOI8-R\0", &koi8r_src);
+    // Latin-1 (ISO-8859-1, the most common SBCS) high bytes 0xA0..=0xFF -> 2-byte
+    // UTF-8 (U+00A0..U+00FF): confirms the SBCS->UTF-8 SIMD win generalizes to the
+    // highest-value codec (shares the same from_decode 2-byte fast path).
+    let latin1_src: Vec<u8> = (0..1024).map(|i| 0xA0u8 + (i % 0x60) as u8).collect();
+    run_conv(c, "latin1_to_utf8", b"UTF-8\0", b"ISO-8859-1\0", &latin1_src);
 }
 
 criterion_group!(benches, bench);
