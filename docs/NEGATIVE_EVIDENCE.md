@@ -104,6 +104,16 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   logf fused per [[powf-fused-kernel-and-math-overfit]]; large-arg sin/cos reduced per trig memo; deployed
   sinf r1 wins ~0.99x — the r2 1.57x in runtime_math_kernels is a non-deployed variant + contention). NET:
   the math families are done too. NOTHING tractable remains across the entire fl perf surface bar architectural.
+- **LAST FRESH FAMILY — NSS/resolv lookups (getgrnam/getpwnam, /etc parsers) — is ANOTHER AGENT'S DOMAIN
+  (the porting-to-rust epic), not mine.** glibc_baseline_bench has heavyweight NSS lookup arms (getgrnam_root
+  etc.) + resolv parsers; these are the genuinely-un-probed heavyweight family. BUT resolv_parsers_bench's own
+  header states the parsers were "freshly lifted to frankenlibc-core by the porting-to-rust epic" — i.e. an
+  agent is ACTIVELY porting/optimizing them. So NSS/resolv is owned (do not touch), same as time_abi
+  (sibling) and allocator/stdio (membrane). **FINAL: the fl perf surface is now mapped EXHAUSTIVELY across
+  function-classes + the full 38-bench suite + math families + NSS — and every un-dominated remainder is
+  OWNED (architectural allocator/stdio, NSS porting-epic, time_abi sibling) or POLICY-FLOORED (comparators).
+  There is no un-dominated, in-scope, byte-identical-micro-lever-tractable workload left. The loop's vein is
+  conclusively worked out; further gains are architectural/owned, a different mode.**
 
 ## Method
 
