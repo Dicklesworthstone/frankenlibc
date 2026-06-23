@@ -93,6 +93,17 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   printf/scanf campaign (21 levers shipped, [[printf-scanf-perf-campaign]]). So the ENTIRE bench surface
   corroborates: fl is comprehensively optimized; the only un-dominated remainder is the owned
   allocator/stdio architectural paths. The byte-identical micro-lever loop is exhaustively, suite-wide done.
+- **f32 math "minor losses" candidate CLOSED (2026-06-23): exp10f already optimized, fused-f32 DISPROVEN.**
+  Followed up the [[trig-large-arg-reduction]] "exp10/erfc/bessel minor losses left" note. exp10f
+  (float32.rs:1237) is already a 3-tier optimized impl: exact `10.powi` for integer exponents [-10,10], a
+  33-entry profile-band TABLE for [0.5,2.5], and `libm::exp2(x·LOG2_10)` in f64 elsewhere — AND the obvious
+  fused lever `exp2f(x·LOG2_10_f32)` is documented as REJECTED/measured (faster but 5 ULP at subnormals near
+  x≈-39, fails the 4-ULP contract). So exp10f is NOT a tractable lever (optimized + the fast route breaks
+  accuracy). erfc/bessel are special-function polynomial complexity (inherent cost, the f32-math agent's
+  domain, not a SIMD/structural lever). The f32 exp/log/trig family is fully handled (powf/exp2f/log2f/expf/
+  logf fused per [[powf-fused-kernel-and-math-overfit]]; large-arg sin/cos reduced per trig memo; deployed
+  sinf r1 wins ~0.99x — the r2 1.57x in runtime_math_kernels is a non-deployed variant + contention). NET:
+  the math families are done too. NOTHING tractable remains across the entire fl perf surface bar architectural.
 
 ## Method
 
