@@ -46,6 +46,17 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   treatment as the iconv UTF-8↔UTF-16/32 wins). The mb↔wc bulk-text family is therefore fl-dominant, joining
   iconv/scanners as DONE. (No clean glibc ratio recorded — a reliable comparison needs C.UTF-8-locale setup,
   and the absolute 0.071 ns/byte is already at the SIMD floor, so there is no lever to chase.)
+- **FRESH FAMILY PROBED (2026-06-23): integer parsing (atoi/strtol/strtoul) ALREADY uses SWAR multi-digit
+  parsing — NOT a lever.** stdlib/conversion.rs has `is_eight_digits` (the simdjson
+  `is_made_of_eight_digits_fast` SWAR test) + `parse_eight_digits` (the Lemire/fast_float SWAR
+  `parse_eight_digits` — 8 ASCII digits per 64-bit word in ~4 multiplies), so fl's strtol parses 8 digits per
+  word vs glibc's scalar per-digit accumulate → fl-dominant for multi-digit numbers, competitive for short.
+  Already at the optimized tier. (strtod float parsing is the same fast_float lineage — see the f128 strtod
+  work in [[f128-formatter-progress]].) So the number-conversion family is DONE too. **Tally of fresh
+  families probed this session and found ALREADY-OPTIMIZED (no lever): mb↔wc (full UTF-8 SIMD), integer
+  parsing (SWAR), GB18030 (flat-table, fl-wins), memfrob (auto-vectorized), wide-spans (fl-wins). Combined
+  with the 15 scanner/gather WINS and the policy-floored comparators, the fl perf surface is comprehensively
+  optimized — the only un-dominated remainder is the owned architectural allocator/stdio paths.**
 
 ## Method
 
