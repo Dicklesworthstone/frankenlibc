@@ -114,6 +114,22 @@ fn bench(c: &mut Criterion) {
     });
     gc6.finish();
 
+    // ---- strcspn len-3 reject (find_any_of4 path), 60-byte non-reject run. find_any_of4
+    // has NO prologue, so 60 = 1x 32-chunk + 28-byte REMAINDER -> exercises the of4
+    // overlapping-tail (the hottest, len-2..4, path). (A 64-byte run would be 2 exact
+    // chunks with zero remainder and would NOT test the fix.)
+    let cspan60 = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; // 60 'a'
+    let reject3 = c"XYZ";
+    assert_eq!(core_str::strcspn(cspan60.to_bytes(), reject3.to_bytes()), 60);
+    let mut gc3 = c.benchmark_group("survey_strcspn_set3_60");
+    gc3.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strcspn(black_box(cspan60.to_bytes()), reject3.to_bytes())))
+    });
+    gc3.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strcspn(black_box(cspan60.as_ptr()), reject3.as_ptr()) }))
+    });
+    gc3.finish();
+
     // ---- strpbrk (len-3 accept) ----
     let pstr = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXyz"; // run then 'X' (in accept)
     let pacc = c"XYZ";

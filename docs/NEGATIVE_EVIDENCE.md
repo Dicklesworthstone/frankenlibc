@@ -3452,6 +3452,19 @@ byte set/find scanners are the real overlapping-tail vein (unlike the 16-lane wi
 (strcspn/strpbrk len 2-4, VERY common), `find_byte_or_nul` (strchr/strcspn-1), `find_non_any_of6`, the
 strspn duals — all share the scalar-remainder pattern at SIMD_LANES=32 -> next targets, each A/B'd.
 
+### 2026-06-23 — ✅✅ find_any_of4 overlapping-tail — strcspn/strpbrk len-2..4 — 5.1x LOSS → PARITY (4.8x self)
+
+The HOTTEST set-scanner path (strcspn/strpbrk with 2-4 char rejects — ubiquitous in tokenizers/parsers).
+Same overlapping-tail fix on BOTH find_any_of4_or_nul + _fused (153 str tests GREEN, byte-identical).
+BENCH-SIZING GOTCHA: find_any_of4 has NO 16-B prologue (pure 32-chunks), so a 64-B input = 2 exact chunks
+with ZERO remainder -> the fix never triggers (a first A/B at 64 B showed a false 1.10x). At 60 B (1 chunk +
+28-B remainder, the realistic non-aligned case): in-process A/B OLD fl 31.82 -> NEW 6.38 ns = 4.8x
+self-speedup (the 28-B scalar tail ran byte_is_any4 = 4x28 = 112 scalar compares), and vs glibc 6.24 ns =
+5.1x LOSS -> 1.02x PARITY. An ACTUAL un-domination: fl now TIES glibc's hand-asm bitmap on the most common
+strcspn/strpbrk path. REMAIN: find_byte_or_nul (strchr/strcspn-1/memchr short path), find_non_any_of* (strspn
+duals) — same fix, A/B at a NON-32-multiple size (the of4 64-B trap). String/mem now has 3 overlapping-tail
+structural wins: wcschr 1.91x, of6 2.4x, of4 5.1x->parity — all byte-identical.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

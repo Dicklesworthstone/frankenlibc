@@ -819,9 +819,28 @@ fn find_any_of4_or_nul(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize {
         base += SIMD_LANES;
     }
 
-    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
-        if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
-            return base + j;
+    // Overlapping 32-lane tail (span >= 32): finish the sub-32 remainder with one
+    // SIMD load instead of a scalar `byte_is_any4` loop (4 compares/byte). The
+    // overlap region is already-scanned no-match, so byte-identical.
+    let rem = simd_chunks.remainder();
+    if !rem.is_empty() {
+        if s.len() >= SIMD_LANES {
+            let start = s.len() - SIMD_LANES;
+            let lanes = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
+            let member = lanes.simd_eq(Simd::splat(b0))
+                | lanes.simd_eq(Simd::splat(b1))
+                | lanes.simd_eq(Simd::splat(b2))
+                | lanes.simd_eq(Simd::splat(b3));
+            let bits = (lanes.simd_eq(Simd::splat(0)) | member).to_bitmask();
+            if bits != 0 {
+                return start + bits.trailing_zeros() as usize;
+            }
+        } else {
+            for (j, &byte) in rem.iter().enumerate() {
+                if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
+                    return base + j;
+                }
+            }
         }
     }
 
@@ -846,9 +865,28 @@ fn find_any_of4_or_nul_fused(s: &[u8], b0: u8, b1: u8, b2: u8, b3: u8) -> usize 
         base += SIMD_LANES;
     }
 
-    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
-        if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
-            return base + j;
+    // Overlapping 32-lane tail (span >= 32): finish the sub-32 remainder with one
+    // SIMD load instead of a scalar `byte_is_any4` loop (4 compares/byte). The
+    // overlap region is already-scanned no-match, so byte-identical.
+    let rem = simd_chunks.remainder();
+    if !rem.is_empty() {
+        if s.len() >= SIMD_LANES {
+            let start = s.len() - SIMD_LANES;
+            let lanes = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
+            let member = lanes.simd_eq(Simd::splat(b0))
+                | lanes.simd_eq(Simd::splat(b1))
+                | lanes.simd_eq(Simd::splat(b2))
+                | lanes.simd_eq(Simd::splat(b3));
+            let bits = (lanes.simd_eq(Simd::splat(0)) | member).to_bitmask();
+            if bits != 0 {
+                return start + bits.trailing_zeros() as usize;
+            }
+        } else {
+            for (j, &byte) in rem.iter().enumerate() {
+                if byte == 0 || byte_is_any4(byte, b0, b1, b2, b3) {
+                    return base + j;
+                }
+            }
         }
     }
 
