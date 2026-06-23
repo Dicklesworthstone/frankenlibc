@@ -6,6 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-23 — STRUCTURAL PERF CAMPAIGN COMPLETE (cc) — handoff for the next (codegen/architectural) mode
+
+This session delivered **15 byte-identical measured WINS** across two clean structural veins, then
+EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below + the scorecard.
+- **iconv DBCS-decode SIMD-gather (7 wins)**: cp932 0.95x, GBK 0.46x, EucJpMs 0.68x, Cp949 0.43x (15.1x
+  self), Johab 0.33x, Big5 0.53x, Gb2312 0.24x. Wins iff cache-bound-scalar + slow-glibc. Boundaries:
+  encode direction = NOT cache-bound → gather-immune; EucTw = non-BMP scatter breaks windows; GB18030 =
+  already fl-dominant. (`Simd::gather_or(dbcs_direct, key)` + 3-byte encode; generic source builder.)
+- **string/mem scanner overlapping-tail (8 wins)**: replace a 32-lane scanner's sub-LANE SCALAR remainder
+  with ONE overlapping LANES-wide load (overlap = already-scanned no-match → byte-identical). find_byte_or_nul
+  (strchr/memchr/strcspn-1) 0.87x WIN, find_ascii_folded (strcasestr) 0.53x WIN, find_any_of4
+  (strcspn/strpbrk) PARITY, + of6/strspn-duals/wcschr self-speedups (2-5x). Corrects the prior
+  "codegen-bound" framing — it was STRUCTURAL. See [[small-input-string-mem-regression]].
+- **EXHAUSTED — every fl string/mem + iconv class probed**: SCANNERS = the clean vein (mined out);
+  COMPARATORS (strcmp 2.24x, memcmp 1.36x — fresh in-process baselines; `survey_strcmp`/`survey_memcmp`
+  harness) = codegen-bound (Rust-SIMD vs glibc-asm, no structural gap, op-counting micro-tweaks DISPROVEN);
+  REVERSE searches = mask-optimized + intricate; WIDE spans = already fl-dominant; iconv ENCODE
+  dispatch-elision = ~0-gain (cheap jump tables). **NEXT MODE (not a byte-identical micro-lever): (1) a
+  profiling/asm pass on the comparator codegen using the survey harness, or (2) the owned architectural
+  refactors — allocator membrane ~50x, stdio write-path lock (bd-hqo6b6).** The structural micro-lever vein
+  this loop mines is worked out.
+
 ## Method
 
 - Bench harness: `crates/frankenlibc-bench` (criterion). Run per-crate, not workspace-wide:
