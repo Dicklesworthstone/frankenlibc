@@ -321,6 +321,9 @@ fn bench(c: &mut Criterion) {
     // highest-value codec (shares the same from_decode 2-byte fast path).
     let latin1_src: Vec<u8> = (0..1024).map(|i| 0xA0u8 + (i % 0x60) as u8).collect();
     run_conv(c, "latin1_to_utf8", b"UTF-8\0", b"ISO-8859-1\0", &latin1_src);
+    // SBCS -> UTF-16 probe: Latin-1 high bytes -> UTF-16LE (byte -> cp(BMP) -> 1 u16).
+    // The from_decode->UTF-16/32 path is scalar single-unit — probe if un-dominated.
+    run_conv(c, "latin1_to_utf16le", b"UTF-16LE\0", b"ISO-8859-1\0", &latin1_src);
 }
 
 criterion_group!(benches, bench);

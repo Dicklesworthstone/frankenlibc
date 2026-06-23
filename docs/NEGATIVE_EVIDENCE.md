@@ -145,6 +145,17 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   ~100-codec generalization on the codec that matters most. Added latin1_to_utf8 as a regression guard.
   The SBCS→UTF-8 SIMD win is now verified high-impact (the two most-used SBCS families, Latin + Cyrillic,
   both ~0.24-0.31x WIN, 4x faster than glibc).
+- **🎯 #17 WIN: SBCS→UTF-16 was 1.48x LOSS → 0.62x WIN (2.5x self) — same gap, same gather, niche-but-real.**
+  Probed the flagged sibling path: latin1_to_utf16le fl **1971.4 ns / glibc 1334.1 = 1.48x LOSS** (the
+  from_decode→UTF-16/32 path at mod.rs:24905 was scalar single-unit per byte). FIX: SIMD UTF-16 run — gather
+  16 cps (Simd<i32,16> over decode.cp, -1 sentinel for undefined), check all >= 0, truncate to u16 (all SBCS
+  are BMP, no surrogate), split lo/hi + interleave-write 32 bytes in target endianness. Byte-identical (285
+  core + conformance_diff_iconv_simd + iconv_differential_fuzz green). A/B: OLD 1971.4 → NEW 786.6 ns = 2.5x
+  self; vs glibc 1265.1 = **0.62x WIN** (fl 1.6x faster). GOTCHA: `cast` on Simd<i32,N> needs `num::SimdInt`
+  imported (only SimdUint was — existing code only casts unsigned). Only the UTF-16 (tw==2) leg is SIMD'd;
+  UTF-32 (tw==4) stays scalar (rarer). Generalizes to all SBCS→UTF-16. **17 WINS now. The SBCS decode-family
+  vein gave 3 wins (→UTF-8 0.31x, Latin-1 0.24x, →UTF-16 0.62x); "gap-hunt the missing bench arms" is the
+  most productive lesson of the late session.**
 - **CAMPAIGN CUMULATIVE GREEN VERIFIED (2026-06-23) — release-readiness capstone.** Ran the FULL `string::`
   suite together (not just per-change): **475 passed / 0 failed** (string::str scanners + string::wide find +
   string::mem + string::wchar/glob) — the 8 string/mem overlapping-tail edits + find_wide_or_nul interact

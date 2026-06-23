@@ -3,7 +3,7 @@
 //! Implements `<iconv.h>` functions for converting between character encodings.
 
 use crate::errno;
-use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdUint};
+use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdInt, num::SimdUint};
 
 mod cjk_tables;
 mod euc_jp_ms_tables;
@@ -24915,6 +24915,49 @@ pub fn iconv(
                 4
             };
             let tbe = matches!(cd.to, Encoding::Utf16Be | Encoding::Utf32Be);
+            // SIMD UTF-16 run: 16 input bytes that all decode to a defined BMP cp ->
+            // gather the cps, truncate to u16 (all SBCS are BMP, no surrogate pair),
+            // and interleave-write 32 bytes in the target endianness. An undefined byte
+            // (cp == -1) drops the run to the scalar tail below for the exact EILSEQ
+            // ordering. Byte-identical: the written u16 is `cp as u16` in tbe order.
+            if tw == 2 {
+                while in_pos + 16 <= input.len() && out_pos + 32 <= outbuf.len() {
+                    let raw = Simd::<u8, 16>::from_slice(&input[in_pos..in_pos + 16]);
+                    let cps = Simd::<i32, 16>::gather_or(
+                        &decode.cp,
+                        raw.cast::<usize>(),
+                        Simd::splat(-1),
+                    );
+                    if cps.simd_lt(Simd::splat(0)).any() {
+                        break;
+                    }
+                    let u16s = cps.cast::<u16>();
+                    let lo = (u16s & Simd::splat(0x00FF)).cast::<u8>();
+                    let hi = (u16s >> Simd::splat(8)).cast::<u8>();
+                    let out32 = if tbe {
+                        std::simd::simd_swizzle!(
+                            hi,
+                            lo,
+                            [
+                                0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23, 8, 24, 9,
+                                25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31
+                            ]
+                        )
+                    } else {
+                        std::simd::simd_swizzle!(
+                            lo,
+                            hi,
+                            [
+                                0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23, 8, 24, 9,
+                                25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31
+                            ]
+                        )
+                    };
+                    out32.copy_to_slice(&mut outbuf[out_pos..out_pos + 32]);
+                    in_pos += 16;
+                    out_pos += 32;
+                }
+            }
             while in_pos < input.len() && out_pos + tw <= outbuf.len() {
                 let cp = decode.cp[input[in_pos] as usize];
                 if cp < 0 {
