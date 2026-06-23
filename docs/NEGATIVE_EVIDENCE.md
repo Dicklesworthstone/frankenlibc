@@ -3523,6 +3523,19 @@ strcasestr 0.53x) or PARITY (of4).** The pure-scalar-remainder scanner family in
 funcs (memchr/strcmp/memcmp — small gap, codegen-bound) and workload-dependent strlen/strrchr — documented as
 NOT clean overlapping-tail targets. The vein delivered 8 byte-identical wins across the hottest scan family.
 
+### 2026-06-23 — ⚠️ memchr WORD-tier boundary CONFIRMED (overlapping-tail tested + reverted)
+
+Tested the overlapping-32 tail on memchr (which has a WORD-SWAR tier, not a pure scalar remainder). Byte-
+identical (59 mem tests GREEN). A/B (survey_memchr_absent60, 60-B = 28-B tail): OLD fl 9.47 -> NEW 7.37 ns =
+only **1.28x self-speedup**, vs glibc **2.84 ns = 2.59x LOSS** (glibc's memchr AVX2 asm is structurally
+unbeatable — the gap is codegen, not the tail). WORSE, the gain is WORKLOAD-DEPENDENT: the overlapping-32
+beats the WORD tier for LARGE remainders (28 B) but the WORD tier was BETTER for SMALL ones (an 8-B
+remainder = 1 WORD probe vs a full 32-lane re-load), so it risks a micro-regression on `n mod 32 ≈ 8`.
+REVERTED per ~0-gain + regression-risk. **CONFIRMS the boundary**: the overlapping-tail is a clean win ONLY
+on PURE-scalar-remainder scanners (the 8 str/wide wins); functions with a WORD-SWAR intermediate tier
+(memchr/strcmp/memcmp) are codegen-bound and NOT clean targets. The string/mem structural-lever search is now
+exhaustively mapped: 8 wins on the pure-scalar scanners, boundary confirmed on the WORD-tier comparators.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
