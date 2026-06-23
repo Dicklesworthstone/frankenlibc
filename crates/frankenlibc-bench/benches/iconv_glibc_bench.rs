@@ -307,6 +307,10 @@ fn bench(c: &mut Criterion) {
     let hangul_div_cps: Vec<u32> = (0..512u32).map(|k| 0xAC00 + (k * 21) % 0x2B9C).collect();
     let hangul_div = u8enc(&hangul_div_cps);
     run_conv(c, "utf8_to_cp949_diverse", b"CP949\0", b"UTF-8\0", &hangul_div);
+    // ENCODE ASCII probe: UTF-8 ASCII (1 KiB) -> CP949 (ASCII passes through 1:1).
+    // The UTF-8->DBCS encode runs the general per-char loop with NO ASCII SIMD fast
+    // path (unlike mbstowcs) — probe whether ASCII-heavy encode is un-dominated.
+    run_conv(c, "utf8_ascii_to_cp949", b"CP949\0", b"UTF-8\0", &ascii);
 }
 
 criterion_group!(benches, bench);
