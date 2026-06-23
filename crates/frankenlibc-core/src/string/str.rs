@@ -742,12 +742,27 @@ fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
         i += SIMD_LANES;
     }
 
-    while i < s.len() {
-        let byte = s[i];
-        if byte == needle || byte == 0 {
-            return i;
+    // Overlapping 32-lane tail (span >= 32): finish the sub-32 remainder with one
+    // SIMD load instead of the scalar byte loop. The overlap region is already-scanned
+    // with no needle/NUL, so the window's leftmost hit is the first remainder hit —
+    // byte-identical.
+    if i < s.len() {
+        if s.len() >= SIMD_LANES {
+            let start = s.len() - SIMD_LANES;
+            let v = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
+            let bits = (v.simd_eq(n32) | v.simd_eq(z32)).to_bitmask();
+            if bits != 0 {
+                return start + bits.trailing_zeros() as usize;
+            }
+        } else {
+            while i < s.len() {
+                let byte = s[i];
+                if byte == needle || byte == 0 {
+                    return i;
+                }
+                i += 1;
+            }
         }
-        i += 1;
     }
 
     s.len()

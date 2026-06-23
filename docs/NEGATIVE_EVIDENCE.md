@@ -3476,6 +3476,18 @@ REMAIN: find_byte_or_nul (strchr/memchr short path) + find_non_any_of6 (strspn l
 non-32-multiple size. The 32-lane byte-scanner overlapping-tail is the session's most productive string/mem
 vein: small byte-identical changes, 2-5x self-speedups, several reaching parity with glibc's hand-asm.
 
+### 2026-06-23 — ✅✅ find_byte_or_nul overlapping-tail — strchr/memchr/strcspn-1 — 2.22x LOSS → 0.87x WIN
+
+The single-needle scanner behind strchr / memchr short path / strcspn-1 (among the hottest libc primitives).
+Scalar sub-32 remainder (`byte == needle || byte == 0`) -> ONE overlapping 32-lane load (byte-identical, 153
+str tests GREEN). In-process A/B (survey_strcspn_set1_60, 60-B non-reject = 28-B remainder): OLD fl 16.11 ->
+NEW 6.31 ns = 2.55x self-speedup; vs glibc 7.27 ns = **2.22x LOSS -> 0.87x WIN** — fl now BEATS glibc's
+hand-asm on the single-byte scan. **5 overlapping-tail string/mem wins: wcschr 1.91x(self), of6 2.4x(self),
+of4 5.1x->PARITY, strspn-of4 2.95x->near-parity, find_byte_or_nul 2.55x->0.87x WIN.** Two reach win/parity.
+The 32-lane byte-scanner remainder was a systematic structural gap (every scanner left up to 31 B scalar);
+the overlapping-tail closes it across the family, byte-identical. REMAIN: find_non_any_of6 (strspn-6), the
+find_ascii_folded variants (strcasestr) — same fix, A/B at a non-32-multiple size.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

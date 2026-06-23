@@ -144,6 +144,20 @@ fn bench(c: &mut Criterion) {
     });
     gc3.finish();
 
+    // ---- strcspn len-1 reject (find_byte_or_nul path), 60-byte non-reject run ->
+    // 28-byte remainder. Exercises the find_byte_or_nul overlapping-tail (strchr/
+    // memchr/strcspn-1 share this scanner).
+    let reject1 = c"X";
+    assert_eq!(core_str::strcspn(cspan60.to_bytes(), reject1.to_bytes()), 60);
+    let mut gc1 = c.benchmark_group("survey_strcspn_set1_60");
+    gc1.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strcspn(black_box(cspan60.to_bytes()), reject1.to_bytes())))
+    });
+    gc1.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strcspn(black_box(cspan60.as_ptr()), reject1.as_ptr()) }))
+    });
+    gc1.finish();
+
     // ---- strpbrk (len-3 accept) ----
     let pstr = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXyz"; // run then 'X' (in accept)
     let pacc = c"XYZ";
