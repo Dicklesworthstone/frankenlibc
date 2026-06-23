@@ -3428,6 +3428,16 @@ technique GENERALIZES to the other sub-lane remainders in the wide-find family. 
 in-process survey A/B (stash OLD vs NEW, same-process fl/glibc ratio) is the right tool here, per
 [[small-input-string-mem-regression]] — op-counting would've lied; the A/B proved the structural gain real.
 
+UPDATE — overlapping-tail gain SCALES WITH LANE WIDTH; 16-lane siblings are marginal. Tried extending the
+fix to wmemchr (byte-identical, 84 wide tests GREEN), but its tail is 16-lane (WIDE_MEMCHR_SIMD_LANES=16),
+so the n=60 absent workload leaves only a 12-wc remainder (vs wcschr's 28-wc at 32-lane). A/B same-process
+ratio moved 2.28x -> ~1.90x loss but inside the noise (op ~8 ns, load spiked to 67) — too small to claim,
+REVERTED per ~0-gain (stashed cc-wmemchr-overlap-AB). SIZING RULE: the overlapping-tail saves up to
+(LANES-1) scalar iters, so it pays off CLEARLY only on 32/64-lane paths (wcschr's find_wide_or_nul=32 = the
+landed win) and is marginal on the 16-lane ones (wmemchr, wcslen WIDE_NUL_SIMD_LANES=16, wcsnlen, wcsrchr
+tail). Net: the wide-find overlapping-tail vein's one clear win is wcschr/wcsstr (landed, 1.91x); the rest
+are lane-width-limited marginal. Vein essentially mined.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
