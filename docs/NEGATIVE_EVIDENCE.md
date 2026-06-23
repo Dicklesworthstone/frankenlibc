@@ -3500,6 +3500,17 @@ overlapping-tail wins: wcschr 1.91x, of6 2.4x, of4 5.1x->PARITY, strspn-of4 2.95
 WIN, find_non_byte 2.82x->1.41x.** The 32-lane byte/wide-scanner remainder gap is now closed across the hot
 strchr/strcspn/strpbrk/strspn/wcschr family — every one a 2-5x self-speedup, two reaching win/parity.
 
+### 2026-06-23 — ✅ find_non_any_of6 (strspn-6) overlapping-tail — ≥2.67x self-speedup (7th of the family)
+
+The strspn len-5..8 dual of of6. Same overlapping-tail (`simd_eq(0) | !in_set_mask6`, overlap all-in-set so
+no stop — byte-identical, 153 str tests GREEN). In-process A/B (survey_strspn_set6_64, 64-B = 16-B remainder
+via the 16-B prologue): OLD fl 29-65 ns (noisy) -> NEW 10.88 ns = >=2.67x self-speedup; vs glibc 5.12 ns =
+2.13x loss-reduction. **7 overlapping-tail wins now** (find_byte 0.87x WIN, of4 parity, of6/strspn-of4/
+strspn-of6/wcschr/strspn-1 self-speedups). The hot scanner family is essentially closed; memchr already has
+a WORD-SWAR tail (small gap, skip), strlen tails are workload-dependent (NUL must land in the last <LANES).
+Saved the durable technique to memory [[small-input-string-mem-regression]] — corrects the prior
+"codegen-bound, easy-levers-disproven" framing: it was a systematic STRUCTURAL scalar-remainder gap.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

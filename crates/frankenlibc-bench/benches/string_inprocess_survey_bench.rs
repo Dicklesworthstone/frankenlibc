@@ -104,6 +104,20 @@ fn bench(c: &mut Criterion) {
     });
     gsp1.finish();
 
+    // ---- strspn len-6 accept (find_non_any_of6 dual), 64-byte all-accept run. of6 has
+    // a 16-B prologue, so 64 = 16 + 32-chunk + 16-B remainder -> the of6-dual tail.
+    let span64 = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; // 64 'a'
+    let accept6 = c"a \t\n\r\x0b"; // 6-char accept set including 'a'
+    assert_eq!(core_str::strspn(span64.to_bytes(), accept6.to_bytes()), 64);
+    let mut gsp6 = c.benchmark_group("survey_strspn_set6_64");
+    gsp6.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strspn(black_box(span64.to_bytes()), accept6.to_bytes())))
+    });
+    gsp6.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strspn(black_box(span64.as_ptr()), accept6.as_ptr()) }))
+    });
+    gsp6.finish();
+
     // ---- strcspn (bitmap, len-3 reject) ----
     let cspan = c"abcdefghijklmnopqrstuvwwwwwwwwwXyz"; // run of non-reject then 'X' in reject
     let reject = c"XYZ";

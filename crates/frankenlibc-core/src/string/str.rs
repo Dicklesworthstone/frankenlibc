@@ -1062,9 +1062,24 @@ fn find_non_any_of6_or_nul(s: &[u8], set: &[u8; 6]) -> usize {
         base += SIMD_LANES;
     }
 
-    for (j, &byte) in simd_chunks.remainder().iter().enumerate() {
-        if byte == 0 || !byte_is_any6(byte, set) {
-            return base + j;
+    // Overlapping 32-lane tail (span >= 32): the sub-32 remainder via one SIMD load
+    // instead of a scalar `!byte_is_any6` loop. The overlap region is already-scanned
+    // and entirely IN the set (no stop), so byte-identical.
+    let rem = simd_chunks.remainder();
+    if !rem.is_empty() {
+        if s.len() >= SIMD_LANES {
+            let start = s.len() - SIMD_LANES;
+            let lanes = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
+            let bits = (lanes.simd_eq(zero) | !in_set_mask6(lanes, set)).to_bitmask();
+            if bits != 0 {
+                return start + bits.trailing_zeros() as usize;
+            }
+        } else {
+            for (j, &byte) in rem.iter().enumerate() {
+                if byte == 0 || !byte_is_any6(byte, set) {
+                    return base + j;
+                }
+            }
         }
     }
 
