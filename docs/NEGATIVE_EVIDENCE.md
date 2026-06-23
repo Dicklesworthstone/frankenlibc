@@ -3561,6 +3561,15 @@ WORD-tier tail) and the architectural allocator/stdio paths are the only un-domi
 are codegen/asm or owned-refactor work outside the byte-identical micro-lever scope.** The structural vein
 this loop mines is exhausted; further gains require a different mode (asm-level codegen or architectural).
 
+FRESH RELIABLE BASELINES for the future codegen pass (in-process survey, 2026-06-23): **strcmp fl 5.07 /
+glibc 2.26 = 2.24x LOSS**; **memcmp(64 B) fl 3.47 / glibc 2.55 = 1.36x LOSS**. memcmp@64 is exactly 2 SIMD
+chunks (64 = 2×32, NO remainder/WORD tier reached), so its 1.36x is PURELY Rust-SIMD-vs-glibc-asm codegen +
+per-call setup (the `n.min(len).min(len)` defensive bound + the exact-16/256/4096 size probes) — confirmed
+NO structural lever (the setup is semantically required for the core slice API; can't be removed). strcmp's
+2.24x is the same codegen class plus its 256-exact-probe / aligned-prefix / folded-block setup. Both are the
+codegen-pass target, not micro-levers. The survey arms `survey_strcmp`/`survey_memcmp` are the reliable
+in-process A/B harness for that pass (the dlmopen baselines mis-measure these — see top of this memo).
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
