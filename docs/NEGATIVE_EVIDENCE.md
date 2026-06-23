@@ -3394,6 +3394,24 @@ to shave the ~14→~? ns/char, though glibc's 4.7 ns/char is a hard floor) — N
 `utf8_to_cp949` + `utf8_to_cp949_diverse` kept as evidence. **iconv reverse-DBCS gather work is now DONE:
 7 decode WINS, encode direction proven gather-immune.**
 
+### 2026-06-23 — two candidate levers VERIFIED non-tractable (probe-first, no code change)
+
+After the 7-win decode campaign, probed the two next candidates:
+- **GB18030 → UTF-8 already fl-DOMINANT (no lever)**: gb18030_to_utf8 = fl **994 ns p50 / glibc 2143.6 ns =
+  0.46x WIN** already. decode_gb18030's 2-byte path uses the flat `gb18030_dbcs2_direct()[key]` (O(1)) and
+  glibc's GB18030 gconv is slow, so fl wins WITHOUT a gather. Good news: GB18030 (mandatory in China, widely
+  used) is already a strong fl win — verified, not a lever. (fl mean 3165 was this run's contention tail;
+  the p50 is the reliable median.)
+- **memrchr 200 B loss is CODEGEN-bound, not structural**: SIMD_LANES=32 (AVX2) + MEMCHR_FOLD_BYTES=256, so
+  a 200 B haystack never reaches the folded-probe path — it's already 6 reverse 32-lane SIMD chunks
+  (from_slice + simd_eq + to_bitmask + 63-leading_zeros), the same shape as glibc's reverse AVX2 loop. The
+  ~2.3x gap is Rust-SIMD codegen vs glibc hand-asm (vmovdqu/vpcmpeqb/vpmovmskb/bsr), NOT a missing
+  structure. Confirms [[small-input-string-mem-regression]]: these moderate-size string/mem losses are
+  genuine deeper-AVX2/codegen work, not quick levers (op-counting lies on x86; needs same-process A/B).
+**The tractable iconv vein is EXHAUSTED (7 decode wins + GB18030 already-won + encode/EucTw boundaries). The
+remaining un-dominated workloads (string/mem moderate-size: strcmp/memrchr/wcschr ~2.3x) are codegen-vs-asm,
+a hard frontier needing a dedicated careful pass with the in-process survey harness, not a session-tail rush.**
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
