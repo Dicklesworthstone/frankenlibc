@@ -3412,6 +3412,22 @@ After the 7-win decode campaign, probed the two next candidates:
 remaining un-dominated workloads (string/mem moderate-size: strcmp/memrchr/wcschr ~2.3x) are codegen-vs-asm,
 a hard frontier needing a dedicated careful pass with the in-process survey harness, not a session-tail rush.**
 
+### 2026-06-23 — ✅ wide-find overlapping-tail SIMD — wcschr 1.91x self-speedup (byte-identical), first string/mem structural win
+
+NOT all string/mem losses are pure codegen — found a real STRUCTURAL one. `find_wide_or_nul` (the <256-wc
+short path behind wcschr/wmemchr/etc.) scanned its sub-32-lane REMAINDER with a SCALAR loop: for the 60-wc
+survey workload that left ~28 of 60 wc (≈47%) scalar. FIX: when `s.len() >= 32`, finish the remainder with
+ONE OVERLAPPING 32-lane load anchored at the end — the overlap region `[len-32 .. base]` sits inside an
+already-scanned chunk that held no needle/NUL, so the window's leftmost hit IS the first remainder hit
+(byte-identical; 84 wide unit tests GREEN). In-process A/B (host_glibc_inprocess, the reliable comparator):
+survey_wcschr_absent OLD fl **15.87 → NEW 8.32 ns = 1.91x self-speedup**, loss vs glibc 3.63x → **2.21x**.
+HONEST: still a LOSS — glibc's wcschr asm (~3.8 ns) wins on codegen — so this is a loss-REDUCTION, not a
+domination. KEPT anyway (unlike the reverted encode/EucTw): it's a SMALL, clean, byte-identical change with
+a substantial 1.91x real gain on a hot primitive (REVERT-~0-gain keeps real gains), and the overlapping-tail
+technique GENERALIZES to the other sub-lane remainders in the wide-find family. METHOD validated: the
+in-process survey A/B (stash OLD vs NEW, same-process fl/glibc ratio) is the right tool here, per
+[[small-input-string-mem-regression]] — op-counting would've lied; the A/B proved the structural gain real.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

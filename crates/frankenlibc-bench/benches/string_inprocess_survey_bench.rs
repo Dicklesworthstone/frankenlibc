@@ -195,6 +195,20 @@ fn bench(c: &mut Criterion) {
     });
     gw.finish();
 
+    // ---- wcschr ABSENT needle: scans the whole 60-wc string to the NUL at 59 —
+    // which lies in the sub-32-lane REMAINDER. Exercises the overlapping-tail SIMD
+    // (the original scalar tail left ~28 of 60 wc scalar).
+    let core_wa = frankenlibc_core::string::wide::wcschr(&wbuf, b'Z' as u32);
+    assert_eq!(core_wa, None, "wcschr absent should be None");
+    let mut gwa = c.benchmark_group("survey_wcschr_absent");
+    gwa.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(frankenlibc_core::string::wide::wcschr(black_box(&wbuf), b'Z' as u32)))
+    });
+    gwa.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { wcschr(black_box(wbuf.as_ptr().cast::<i32>()), b'Z' as i32) }))
+    });
+    gwa.finish();
+
     // ---- wcsrchr (reverse wide search) — 128 wide chars so the 64-lane chunk loop
     // runs; single 'X' at 100, NUL at 127 (last X before NUL = 100).
     let wrbuf: Vec<u32> = {

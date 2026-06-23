@@ -201,9 +201,28 @@ fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
         base += WIDE_FIND_SIMD_LANES;
     }
 
-    for (j, &ch) in chunks.remainder().iter().enumerate() {
-        if ch == needle || ch == 0 {
-            return base + j;
+    // Sub-chunk remainder (1..LANES-1 elements). When the whole input is at least
+    // one lane wide, finish it with ONE OVERLAPPING 32-lane load anchored at the
+    // end instead of a scalar tail (which for e.g. 60 wc left ~half the input
+    // scalar). The overlap region `[len-LANES .. base]` lies inside an
+    // already-scanned chunk that held no needle/NUL, so the leftmost hit in the
+    // window is exactly the first hit in the remainder — byte-identical.
+    let rem = chunks.remainder();
+    if !rem.is_empty() {
+        if s.len() >= WIDE_FIND_SIMD_LANES {
+            let start = s.len() - WIDE_FIND_SIMD_LANES;
+            let lanes = Simd::<u32, WIDE_FIND_SIMD_LANES>::from_slice(&s[start..]);
+            let m =
+                (lanes.simd_eq(Simd::splat(needle)) | lanes.simd_eq(Simd::splat(0))).to_bitmask();
+            if m != 0 {
+                return start + m.trailing_zeros() as usize;
+            }
+        } else {
+            for (j, &ch) in rem.iter().enumerate() {
+                if ch == needle || ch == 0 {
+                    return base + j;
+                }
+            }
         }
     }
 
