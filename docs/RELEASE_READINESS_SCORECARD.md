@@ -448,6 +448,27 @@ stable yardstick, the only worker-invariant reference):
 | `iconv` gb2312→utf8 (Simplified Chinese/EUC-CN) | 14692 ns | 1097.8 ns | 4643.9 ns* | **6.45x LOSS → 0.24x WIN** (13.4x self, A/B) | generic builder; *glibc high-variance (2276–4644), fl stable, 0.24–0.48x WIN |
 | `iconv` gbk→utf8 (Simplified Chinese) | (5.45x LOSS) | 1162.2 ns | 2539 ns | **5.45x LOSS → 0.46x WIN** (same-run ratios) | same gather path generalized to GBK (per-codec direct table + lead range); scalar was cache-bound |
 
+### string/mem overlapping-tail wins (cc) — 32-lane scanner remainder gap closed family-wide
+
+The 32-lane byte/wide SIMD scanners finished their sub-LANE remainder with a SCALAR loop; replacing it with
+ONE OVERLAPPING `LANES`-wide load (overlap = already-scanned no-match window → byte-identical) closed a
+systematic structural gap. In-process A/B vs `host_glibc_inprocess`; all byte-identical (153 str / 84 wide
+unit tests). NOT codegen — a real structural remainder gap (corrects the prior "codegen-bound" framing).
+
+| function (C api) | OLD fl | NEW fl | glibc | ratio | self |
+|---|---|---|---|---|---|
+| `find_byte_or_nul` (strchr/memchr/strcspn-1) | 16.11 ns | 6.31 ns | 7.27 ns | **2.22x LOSS → 0.87x WIN** | 2.55x |
+| `find_ascii_folded` (strcasestr) | ~39 ns | 17.54 ns | 33.0 ns | **~parity → 0.53x WIN** | ~2x |
+| `find_any_of4` (strcspn/strpbrk 2-4) | 31.82 ns | 6.38 ns | 6.24 ns | **5.1x LOSS → 1.02x PARITY** | 4.8x |
+| `find_non_byte_or_nul` (strspn-1) | 19.42 ns | 6.89 ns | 4.90 ns | 3.96x → 1.41x | 2.82x |
+| `find_non_any_of4` (strspn 2-4) | 28.94 ns | 9.82 ns | ~8-18 ns | 2.2x → ~1.0x | 2.95x |
+| `find_any_of6` (strcspn/strpbrk 5-8) | 25.27 ns | 10.5 ns | ~4-8 ns | 3-6x → 1.5-2.6x | 2.4x |
+| `find_non_any_of6` (strspn 5-8) | 29-65 ns | 10.88 ns | 5.12 ns | → 2.13x | ≥2.67x |
+| `find_wide_or_nul` (wcschr/wcsstr) | 15.87 ns | 8.32 ns | 3.76 ns | 3.63x → 2.21x | 1.91x |
+
+3 reach WIN/parity (find_byte 0.87x, strcasestr 0.53x, of4 parity). Boundary: WORD-tier funcs
+(memchr/strcmp/memcmp) + workload-dependent strlen/strrchr are NOT clean targets (codegen-bound).
+
 Validation (byte-identical vs LIVE glibc): parse_ipv6 — 40k-round
 `inet_pton_ntop_differential_fuzz` + `conformance_diff_inet_pton6_edges` + 150
 core inet unit; net_pton — `inet_net_ntop_differential_fuzz` (0 divergences) +
