@@ -3511,6 +3511,18 @@ a WORD-SWAR tail (small gap, skip), strlen tails are workload-dependent (NUL mus
 Saved the durable technique to memory [[small-input-string-mem-regression]] — corrects the prior
 "codegen-bound, easy-levers-disproven" framing: it was a systematic STRUCTURAL scalar-remainder gap.
 
+### 2026-06-23 — ✅ find_ascii_folded_byte_or_nul (strcasestr) overlapping-tail — ~2x self → 0.53x WIN
+
+The strcasestr first-char scanner (3-way folded/upper/NUL), the last PURE-scalar-remainder scanner. Same
+overlapping-tail (3-way mask, overlap no-match -> byte-identical, 153 str tests GREEN). In-process A/B
+(survey_strcasestr_absent60: 60-B haystack, needle first-char absent -> find_ascii_folded scans all 60 = 28-B
+remainder): OLD fl ~32-54 ns (noisy) -> NEW 17.54 ns = ~1.8-2.2x self-speedup; vs glibc 33.0 ns (glibc's
+strcasestr is SLOW) = ~parity -> **0.53x WIN**. **8 overlapping-tail wins; 3 now reach WIN (find_byte 0.87x,
+strcasestr 0.53x) or PARITY (of4).** The pure-scalar-remainder scanner family in str.rs is now FULLY closed
+(find_byte/find_any_of4/of6 + duals + find_ascii_folded + wcschr). Truly remaining are only the WORD-tier
+funcs (memchr/strcmp/memcmp — small gap, codegen-bound) and workload-dependent strlen/strrchr — documented as
+NOT clean overlapping-tail targets. The vein delivered 8 byte-identical wins across the hottest scan family.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

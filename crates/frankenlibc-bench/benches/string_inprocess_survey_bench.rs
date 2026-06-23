@@ -245,6 +245,21 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(unsafe { strcasestr(black_box(hay.as_ptr()), c"NEEDLE_HERE".as_ptr()) }))
     });
     g3.finish();
+
+    // ---- strcasestr where the needle's first char is ABSENT from a 60-byte haystack:
+    // find_ascii_folded scans all 60 (-> 28-byte remainder) for 'z'/'Z', finds none.
+    // Exercises the find_ascii_folded overlapping-tail (strcasestr first-char scan).
+    let hay60 = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; // 60 'a'
+    let needle_z = c"zoo";
+    assert!(core_str::strcasestr(hay60.to_bytes(), needle_z.to_bytes()).is_none());
+    let mut g3b = c.benchmark_group("survey_strcasestr_absent60");
+    g3b.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strcasestr(black_box(hay60.to_bytes()), needle_z.to_bytes())))
+    });
+    g3b.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strcasestr(black_box(hay60.as_ptr()), needle_z.as_ptr()) }))
+    });
+    g3b.finish();
     // ---- memrchr (reverse byte search) — match IN-CHUNK near the start so the
     // reverse scan reaches a flagged chunk (exercises the rposition re-scan).
     let mbuf: Vec<u8> = {

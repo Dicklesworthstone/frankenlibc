@@ -803,12 +803,26 @@ fn find_ascii_folded_byte_or_nul(s: &[u8], folded: u8) -> usize {
         base += SIMD_LANES;
     }
 
-    while base < s.len() {
-        let byte = s[base];
-        if byte == 0 || byte == folded || byte == upper {
-            return base;
+    // Overlapping 32-lane tail (span >= 32): the sub-32 remainder via one SIMD load
+    // (3-way folded/upper/NUL mask) instead of a scalar loop. The overlap region is
+    // already-scanned with no match, so byte-identical.
+    if base < s.len() {
+        if s.len() >= SIMD_LANES {
+            let start = s.len() - SIMD_LANES;
+            let v = Simd::<u8, SIMD_LANES>::from_slice(&s[start..]);
+            let bits = (v.simd_eq(f32) | v.simd_eq(u32v) | v.simd_eq(z32)).to_bitmask();
+            if bits != 0 {
+                return start + bits.trailing_zeros() as usize;
+            }
+        } else {
+            while base < s.len() {
+                let byte = s[base];
+                if byte == 0 || byte == folded || byte == upper {
+                    return base;
+                }
+                base += 1;
+            }
         }
-        base += 1;
     }
 
     s.len()
