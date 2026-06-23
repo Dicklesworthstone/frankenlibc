@@ -130,6 +130,14 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   scalar on transitions — a fuller fix is a variable-length (1+2 byte) compaction SIMD (simdutf Latin-1
   technique), filed as a follow-up. LESSON: "comprehensively mapped" was wrong — the BENCH SUITE itself had a
   coverage GAP (no SBCS decode). Always check for MISSING bench arms before declaring exhaustion. **16 WINS now.**
+- **SBCS ENCODE (UTF-8→KOI8) is near-parity (NOT a lever), unlike the decode.** Followed the gap-hunting
+  lesson and benched the reverse direction: utf8_cyrillic_to_koi8r fl **2524 ns / glibc 2277.8 = 1.11x**
+  (fl mean 3817 is contention-spiked — clean ≈ parity). The encode's UTF-8 2-byte→cp decode already SIMDs;
+  only the cp→byte reverse lookup (SingleByteReverse) is scalar — a marginal residual, not the 7.2x the
+  decode had. SBCS matrix now characterized: DECODE was the big gap (fixed, 0.31x WIN, generalizes to ~100
+  codecs incl. EBCDIC which shares from_decode); ENCODE is competitive. The iconv conversion matrix is now
+  broadly covered both directions. (Disk 177 G / 91% and falling — the warm target dir is large; mind
+  disk-critical, don't start huge cold builds.)
 - **CAMPAIGN CUMULATIVE GREEN VERIFIED (2026-06-23) — release-readiness capstone.** Ran the FULL `string::`
   suite together (not just per-change): **475 passed / 0 failed** (string::str scanners + string::wide find +
   string::mem + string::wchar/glob) — the 8 string/mem overlapping-tail edits + find_wide_or_nul interact
