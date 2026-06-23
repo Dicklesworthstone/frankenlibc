@@ -3536,6 +3536,20 @@ on PURE-scalar-remainder scanners (the 8 str/wide wins); functions with a WORD-S
 (memchr/strcmp/memcmp) are codegen-bound and NOT clean targets. The string/mem structural-lever search is now
 exhaustively mapped: 8 wins on the pure-scalar scanners, boundary confirmed on the WORD-tier comparators.
 
+### 2026-06-23 — wide-function frontier mapped: wide SPANS already WIN, wide COMPARES are the complex remainder
+
+Probed the wide family for remaining levers: **wcsspn already fl-DOMINANT — fl 17.76 / glibc 22.87 = 0.78x
+WIN** (glibc's wide span/scan funcs are less-optimized than its byte ones, so fl wins them without further
+work; wcscspn/wcspbrk are symmetric -> same). So the wide SPANS are NOT levers. The wide COMPARES (wcsncmp
+~1.69x, wcscmp) ARE un-dominated but, like the byte comparators, structurally hard: no clean fixed-length
+remainder (NUL-terminated / n-bounded with out-of-range logical-NUL handling), 16-lane
+(WIDE_COMPARE_SIMD_LANES=16 -> overlapping-tail marginal anyway), and glibc's compare path is tight.
+CONCLUSION: the CLEAN structural-lever frontier across iconv + byte/wide string/mem is now EXHAUSTIVELY mined
+— 7 iconv gather wins + 8 string/mem overlapping-tail wins. What remains un-dominated is uniformly the
+COMPARATOR class (strcmp/memcmp/wcsncmp/wcscmp) — codegen-bound (Rust-SIMD vs glibc hand-asm, no clean
+structural gap) — plus the architectural owned refactors (allocator membrane, stdio lock). Neither is a
+byte-identical micro-lever; both are documented for a dedicated codegen/architectural pass.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
