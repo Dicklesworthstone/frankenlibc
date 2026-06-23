@@ -82,6 +82,17 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   that is the **sibling's active time_abi domain** (time_abi.rs is their uncommitted work), NOT mine; left
   untouched. NET: number-conversion + stdlib is another DONE family (fl-dominant), and there is now NO
   identified un-dominated perf lever in fl's scope outside the owned architectural allocator/stdio paths.
+- **FULL BENCH-SUITE SWEEP (2026-06-23): all 38 `crates/frankenlibc-bench/benches/*` mapped — no remaining
+  in-scope lever.** The glibc-comparison benches partition cleanly: DONE/fl-wins (string/iconv/strtol/inet/
+  math: powf/exp/exp2/strchr/strlen/string_inprocess_survey/iconv_glibc/strtol/inet_*); ARCHITECTURAL/owned
+  (malloc/calloc/memset_abi/membrane/metadata_read/stdio/stdio_glibc_baseline/stdio_mt_contention/fputs/
+  snprintf_s/elimination/mutex/condvar — allocator + stdio-lock); SIBLING (strftime, the `time`/clock_gettime
+  cases in strtol_glibc_bench — time_abi domain); and the genuinely-un-probed ones are NOT clean levers:
+  `readdir_glibc_bench` = syscall-bound (getdents dominates; the dirent parse is a sliver), `resolv_parsers_
+  bench` = pure-fl cost map (NO glibc comparison — /etc/hosts,services parsers), `sscanf` = the prior
+  printf/scanf campaign (21 levers shipped, [[printf-scanf-perf-campaign]]). So the ENTIRE bench surface
+  corroborates: fl is comprehensively optimized; the only un-dominated remainder is the owned
+  allocator/stdio architectural paths. The byte-identical micro-lever loop is exhaustively, suite-wide done.
 
 ## Method
 
