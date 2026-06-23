@@ -3550,6 +3550,17 @@ COMPARATOR class (strcmp/memcmp/wcsncmp/wcscmp) — codegen-bound (Rust-SIMD vs 
 structural gap) — plus the architectural owned refactors (allocator membrane, stdio lock). Neither is a
 byte-identical micro-lever; both are documented for a dedicated codegen/architectural pass.
 
+VERIFIED (memcmp structure, completing the comparator map): memcmp has the SAME 128-B folded-block + 32-chunk
++ WORD-SWAR tail + scalar structure as memchr (mem.rs:105-145) — i.e. a WORD tier, so the overlapping-tail
+there is the same marginal ~1.28x / still-loss / workload-dependent as memchr (boundary, not a clean target).
+So all three byte comparators (strcmp/memcmp via WORD-tier tails; both glibc-asm-bound) are CONFIRMED
+codegen-bound, not structural. **FINAL STATE of the structural-lever loop: every fl string/mem + iconv
+function class has been probed — SCANNERS (find-first-X over a known-length slice) were the clean
+overlapping-tail/gather vein (15 wins); COMPARATORS (memcmp/strcmp/wcsncmp, no clean fixed-length stop or
+WORD-tier tail) and the architectural allocator/stdio paths are the only un-dominated remainder, and both
+are codegen/asm or owned-refactor work outside the byte-identical micro-lever scope.** The structural vein
+this loop mines is exhausted; further gains require a different mode (asm-level codegen or architectural).
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte
