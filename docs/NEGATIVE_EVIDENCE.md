@@ -3438,6 +3438,20 @@ landed win) and is marginal on the 16-lane ones (wmemchr, wcslen WIDE_NUL_SIMD_L
 tail). Net: the wide-find overlapping-tail vein's one clear win is wcschr/wcsstr (landed, 1.91x); the rest
 are lane-width-limited marginal. Vein essentially mined.
 
+### 2026-06-23 — ✅ strcspn/strpbrk of6 overlapping-tail — 2.4x self-speedup (byte-identical); 32-lane byte scanners are the vein
+
+The overlapping-tail vein is alive on the BYTE scanners (32-lane, hot). `find_any_of6_or_nul` (the
+strcspn/strpbrk len-5..8 path) finished its sub-32-byte remainder with a SCALAR loop running `byte_is_any6`
+= 6 compares/byte → for a 64-B span that's a 16-B remainder × 6 = 96 scalar compares. FIX: when span >= 32,
+one OVERLAPPING 32-lane load + `in_set_mask6` (the overlap is already-scanned no-match, byte-identical; 153
+str tests GREEN). In-process A/B (survey_strcspn_set6, 64-B non-reject run): OLD fl **25.27 -> NEW ~10.5 ns =
+2.4x self-speedup** (bigger than wcschr's 1.91x), loss vs glibc's tight bitmap asm (~4-8 ns, high variance)
+cut from ~3-6x to ~1.5-2.6x. HONEST: still a LOSS (glibc's hand-asm bitmap wins) — a loss-REDUCTION on a hot
+function, KEPT (same rationale as wcschr: substantial real self-speedup, simple, byte-identical). The 32-lane
+byte set/find scanners are the real overlapping-tail vein (unlike the 16-lane wide siblings): `find_any_of4`
+(strcspn/strpbrk len 2-4, VERY common), `find_byte_or_nul` (strchr/strcspn-1), `find_non_any_of6`, the
+strspn duals — all share the scalar-remainder pattern at SIMD_LANES=32 -> next targets, each A/B'd.
+
 ### (prior) FILED: forward non-ASCII→UTF-32 store is the last scalar-scatter
 
 The ONLY remaining scalar gather/scatter in the iconv UTF-8↔UTF-16/32 matrix is the forward 2-byte/3-byte

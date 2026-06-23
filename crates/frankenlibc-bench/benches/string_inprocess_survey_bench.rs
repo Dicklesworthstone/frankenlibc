@@ -94,6 +94,26 @@ fn bench(c: &mut Criterion) {
     });
     gc.finish();
 
+    // ---- strcspn len-6 reject (find_any_of6 path), 64-byte non-reject run so the
+    // scan reaches the sub-32-byte REMAINDER (64 = 16 prologue + 32 chunk + 16 tail).
+    // Exercises the overlapping-tail SIMD over the of6 scanner.
+    let cspan6 = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; // 64 'a'
+    let reject6 = c" \t\n\r\x0c\x0b"; // 6-char whitespace set, none == 'a'
+    assert_eq!(
+        core_str::strcspn(cspan6.to_bytes(), reject6.to_bytes()),
+        unsafe { strcspn(cspan6.as_ptr(), reject6.as_ptr()) },
+        "strcspn len-6 mismatch"
+    );
+    assert_eq!(core_str::strcspn(cspan6.to_bytes(), reject6.to_bytes()), 64);
+    let mut gc6 = c.benchmark_group("survey_strcspn_set6");
+    gc6.bench_function("frankenlibc_core", |b| {
+        b.iter(|| black_box(core_str::strcspn(black_box(cspan6.to_bytes()), reject6.to_bytes())))
+    });
+    gc6.bench_function("host_glibc_inprocess", |b| {
+        b.iter(|| black_box(unsafe { strcspn(black_box(cspan6.as_ptr()), reject6.as_ptr()) }))
+    });
+    gc6.finish();
+
     // ---- strpbrk (len-3 accept) ----
     let pstr = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXyz"; // run then 'X' (in accept)
     let pacc = c"XYZ";
