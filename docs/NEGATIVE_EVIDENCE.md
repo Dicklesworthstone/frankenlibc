@@ -57,6 +57,20 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   parsing (SWAR), GB18030 (flat-table, fl-wins), memfrob (auto-vectorized), wide-spans (fl-wins). Combined
   with the 15 scanner/gather WINS and the policy-floored comparators, the fl perf surface is comprehensively
   optimized — the only un-dominated remainder is the owned architectural allocator/stdio paths.**
+- **FILED LEVER (2026-06-23, scoped, NOT a micro-lever): strtod Eisel-Lemire fast path.** fl's strtod
+  (stdlib/conversion.rs:1128) is CORRECT — exact u128 mantissa + single rounding + SWAR `parse_eight_digits`
+  for the integer run — but the exact-u128 path runs for EVERY input, whereas fast_float/glibc use the
+  **Eisel-Lemire** fast path (one 128-bit multiply against a precomputed 10^k table, correctly rounding
+  ~99% of inputs without any big-integer) and fall back to the slow path only on the rare halfway case. So a
+  potential lever = add an Eisel-Lemire fast path in front of the u128 accumulator for the common case.
+  CAVEAT: (1) UN-BENCHMARKED clean here — `strtol_glibc_bench` is now polluted with timing-function cases
+  (clock_gettime/time, a sibling's domain) and didn't surface strtod cleanly; fl may already be competitive
+  (exact-u128 is not inherently slow for short floats). (2) It's a SUBSTANTIAL port (the EL fast path + the
+  power-of-ten table + the halfway fallback), NOT a byte-identical micro-lever — a focused multi-step task,
+  and must stay byte-EXACT vs glibc (the [[f128-formatter-progress]] strtod correctness work is the bar).
+  Whoever picks it up: first get a clean fl-vs-glibc strtod ratio (in-process, C locale) to confirm it's
+  un-dominated before porting EL. This is the one identified NEW perf lever outside the (exhausted) scanner
+  vein — but it belongs to the codegen/algorithm mode, not this byte-identical micro-lever loop.
 
 ## Method
 
