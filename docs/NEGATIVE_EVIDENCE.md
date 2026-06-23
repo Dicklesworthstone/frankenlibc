@@ -37,6 +37,15 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   un-dominated work is the ARCHITECTURAL refactors (allocator membrane, stdio lock), which are owned/large.
   Every byte-identical AND safe-codegen string/mem+iconv perf lever is now exhausted.** Do not re-probe the
   comparators as a perf lever — they are policy-floored.
+- **FRESH FAMILY PROBED (2026-06-23): mb↔wc conversions (mbstowcs/wcstombs) are ALREADY comprehensively
+  SIMD-optimized — NOT a lever.** mbstowcs (string/wchar.rs:259) has FULL UTF-8 SIMD fast paths: 16-lane
+  ASCII (zero-extend to u32), 8-cp/vector 2-byte, 4-cp/vector 3-byte, and 4-byte — all byte-identical to the
+  scalar `mbtowc` contract, interleaved with the scalar step for mixed text. fl absolute (wchar_bench):
+  ascii_1k **71 ns** (0.071 ns/byte — near memory bandwidth), astral_4byte 931 ns, mixed_utf8 3.07 µs. glibc's
+  mbstowcs is a SCALAR per-char `mbrtowc`/gconv loop, so fl's full-vector path is the optimized tier (same
+  treatment as the iconv UTF-8↔UTF-16/32 wins). The mb↔wc bulk-text family is therefore fl-dominant, joining
+  iconv/scanners as DONE. (No clean glibc ratio recorded — a reliable comparison needs C.UTF-8-locale setup,
+  and the absolute 0.071 ns/byte is already at the SIMD floor, so there is no lever to chase.)
 
 ## Method
 
