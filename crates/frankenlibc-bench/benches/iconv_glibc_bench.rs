@@ -311,6 +311,11 @@ fn bench(c: &mut Criterion) {
     // The UTF-8->DBCS encode runs the general per-char loop with NO ASCII SIMD fast
     // path (unlike mbstowcs) — probe whether ASCII-heavy encode is un-dominated.
     run_conv(c, "utf8_ascii_to_cp949", b"CP949\0", b"UTF-8\0", &ascii);
+    // SBCS DECODE probe: KOI8-R Cyrillic (all high bytes 0xC0..) -> UTF-8 (2-byte/cp).
+    // Each byte -> cp (256-table) -> 2-byte UTF-8. Probe if the high-byte SBCS decode
+    // is SIMD or scalar per-byte (un-benched until now).
+    let koi8r_src = host_to(b"KOI8-R\0", &cyr);
+    run_conv(c, "koi8r_to_utf8", b"UTF-8\0", b"KOI8-R\0", &koi8r_src);
 }
 
 criterion_group!(benches, bench);

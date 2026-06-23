@@ -114,6 +114,22 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   OWNED (architectural allocator/stdio, NSS porting-epic, time_abi sibling) or POLICY-FLOORED (comparators).
   There is no un-dominated, in-scope, byte-identical-micro-lever-tractable workload left. The loop's vein is
   conclusively worked out; further gains are architectural/owned, a different mode.**
+- **🎯 #16 WIN + HUMBLING CORRECTION (2026-06-23): SBCS→UTF-8 decode was 7.2x LOSS (un-benched!) — now 0.31x
+  WIN via SIMD, the BIGGEST self-speedup of the session (24.6x).** My repeated "comprehensively exhausted"
+  conclusion was PREMATURE: the iconv bench suite had NO SBCS-decode arm, so a 7.2x loss hid in plain sight.
+  Added koi8r_to_utf8 (KOI8-R Cyrillic, all high bytes → 2-byte UTF-8) → fl **11086.7 ns / glibc 1539.6 ns =
+  7.2x LOSS**. ROOT CAUSE: the from_decode→UTF-8 fast path (mod.rs:24828) was a precomputed-bytes table but
+  SCALAR per-byte (~21.6 ns/char). FIX: added a `utf8_u16[256]` field (the 2-byte UTF-8 packed LE, 0 sentinel
+  for non-2-byte) + a SIMD run — gather 16 u16s, split lead/cont, interleave-write 32 bytes; a scalar-one-byte
+  step interleaved so a lone ASCII byte doesn't drop the rest. Byte-identical (285 core + conformance_diff_
+  iconv_simd + iconv_differential_fuzz green). A/B: OLD fl **11086.7 → NEW 451.0 ns = 24.6x SELF-SPEEDUP**; vs
+  glibc **1465.4 ns = 7.2x LOSS → 0.31x WIN** (fl now 3.2x faster). **GENERALIZES to ALL ~100 SBCS codecs**
+  (ISO-8859-1..16, KOI8-R/U, CP1250-1258, etc.) — all share `from_decode` + this path, so every Cyrillic/
+  Greek/Hebrew/Arabic/Latin-extended → UTF-8 decode now SIMD-batches 2-byte runs. CAVEAT (honest): the win is
+  on 2-byte-output RUNS (the bench is space-free); real space-separated text gets the SIMD on long runs +
+  scalar on transitions — a fuller fix is a variable-length (1+2 byte) compaction SIMD (simdutf Latin-1
+  technique), filed as a follow-up. LESSON: "comprehensively mapped" was wrong — the BENCH SUITE itself had a
+  coverage GAP (no SBCS decode). Always check for MISSING bench arms before declaring exhaustion. **16 WINS now.**
 - **CAMPAIGN CUMULATIVE GREEN VERIFIED (2026-06-23) — release-readiness capstone.** Ran the FULL `string::`
   suite together (not just per-change): **475 passed / 0 failed** (string::str scanners + string::wide find +
   string::mem + string::wchar/glob) — the 8 string/mem overlapping-tail edits + find_wide_or_nul interact

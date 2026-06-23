@@ -18947,6 +18947,13 @@ struct SingleByteToUtf8 {
     /// Every legacy single-byte codec maps into the BMP, so this also feeds the
     /// single-byte -> UTF-16/UTF-32 fast path with a single-unit write.
     cp: [i32; 256],
+    /// The 2-byte UTF-8 encoding of byte `b` packed little-endian
+    /// (`bytes[b][0] | bytes[b][1] << 8`) iff `len[b] == 2`, else `0`. A valid
+    /// 2-byte UTF-8 sequence is `[0xC2..=0xDF, 0x80..=0xBF]` so the packed value
+    /// is always >= 0x80C2 != 0 — `0` is a safe "not a 2-byte char" sentinel for
+    /// the SIMD SBCS->UTF-8 fast path (gather these u16s, write them LE = the two
+    /// output bytes in order).
+    utf8_u16: [u16; 256],
 }
 
 /// Build the `input_byte -> UTF-8` table for a single-byte source codec, so a
@@ -18962,6 +18969,7 @@ fn build_from_decode(from: Encoding) -> Option<SingleByteToUtf8> {
         bytes: [[0u8; 4]; 256],
         len: [0u8; 256],
         cp: [-1i32; 256],
+        utf8_u16: [0u16; 256],
     };
     for b in 0u16..=0xFF {
         match decode_char(from, &[b as u8]) {
@@ -18972,6 +18980,10 @@ fn build_from_decode(from: Encoding) -> Option<SingleByteToUtf8> {
                 table.bytes[b as usize][..l].copy_from_slice(&buf[..l]);
                 table.len[b as usize] = l as u8;
                 table.cp[b as usize] = ch as i32;
+                if l == 2 {
+                    table.utf8_u16[b as usize] =
+                        u16::from(buf[0]) | (u16::from(buf[1]) << 8);
+                }
             }
             // `from` is multibyte (lead byte needs a continuation / wide unit).
             Ok((_, _)) | Err(DecodeError::Incomplete) => return None,
@@ -24828,7 +24840,44 @@ pub fn iconv(
         if cd.to == Encoding::Utf8
             && let Some(decode) = cd.from_decode.as_ref()
         {
-            while in_pos < input.len() && out_pos + 4 <= outbuf.len() {
+            loop {
+                // SIMD 2-byte-output run: 16 input bytes that ALL decode to a 2-byte
+                // UTF-8 char (utf8_u16[b] != 0) -> gather the packed LE u16s and write
+                // them as 32 bytes [lead0,cont0,lead1,cont1,...]. A valid 2-byte cell
+                // packs to >= 0x80C2 so 0 means "1-/3-byte or undefined", which breaks
+                // to the scalar step. Byte-identical: the written bytes are exactly
+                // decode.bytes[b][..2].
+                while in_pos + 16 <= input.len() && out_pos + 32 <= outbuf.len() {
+                    let raw = Simd::<u8, 16>::from_slice(&input[in_pos..in_pos + 16]);
+                    let u16s = Simd::<u16, 16>::gather_or(
+                        &decode.utf8_u16,
+                        raw.cast::<usize>(),
+                        Simd::splat(0),
+                    );
+                    if u16s.simd_eq(Simd::splat(0)).any() {
+                        break;
+                    }
+                    let lead = (u16s & Simd::splat(0x00FF)).cast::<u8>();
+                    let cont = (u16s >> Simd::splat(8)).cast::<u8>();
+                    let out32 = std::simd::simd_swizzle!(
+                        lead,
+                        cont,
+                        [
+                            0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23, 8, 24, 9, 25,
+                            10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31
+                        ]
+                    );
+                    out32.copy_to_slice(&mut outbuf[out_pos..out_pos + 32]);
+                    in_pos += 16;
+                    out_pos += 32;
+                }
+                // Scalar step for the transition byte (1-/3-byte) / sub-16 tail, then
+                // re-loop to the SIMD path so a single ASCII byte in a 2-byte stream
+                // doesn't drop the rest to scalar. Undefined byte / no room -> break to
+                // the generic body for the exact EILSEQ/E2BIG ordering.
+                if in_pos >= input.len() || out_pos + 4 > outbuf.len() {
+                    break;
+                }
                 let b = input[in_pos] as usize;
                 let enc = decode.len[b] as usize;
                 if enc == 0 {

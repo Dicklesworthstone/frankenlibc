@@ -447,6 +447,7 @@ stable yardstick, the only worker-invariant reference):
 | `iconv` big5→utf8 (Traditional Chinese) | 13159.4 ns | 1091.1 ns | 2063.6 ns | **5.46x LOSS → 0.53x WIN** (12.1x self, A/B) | generic valid-source builder unblocked it; cache-bound gather, widely used TW/HK |
 | `iconv` gb2312→utf8 (Simplified Chinese/EUC-CN) | 14692 ns | 1097.8 ns | 4643.9 ns* | **6.45x LOSS → 0.24x WIN** (13.4x self, A/B) | generic builder; *glibc high-variance (2276–4644), fl stable, 0.24–0.48x WIN |
 | `iconv` gbk→utf8 (Simplified Chinese) | (5.45x LOSS) | 1162.2 ns | 2539 ns | **5.45x LOSS → 0.46x WIN** (same-run ratios) | same gather path generalized to GBK (per-codec direct table + lead range); scalar was cache-bound |
+| `iconv` koi8r→utf8 (SBCS Cyrillic→2-byte) | 11086.7 ns | 451.0 ns | 1465.4 ns | **7.2x LOSS → 0.31x WIN** (⭐24.6x self, A/B) | SBCS→UTF-8 was scalar per-byte (un-benched!); SIMD gather of packed-u16 2-byte UTF-8 + interleave write. Generalizes to ALL ~100 SBCS codecs (ISO-8859/KOI8/CP125x) |
 
 ### string/mem overlapping-tail wins (cc) — 32-lane scanner remainder gap closed family-wide
 
