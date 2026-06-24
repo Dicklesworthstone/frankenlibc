@@ -24774,6 +24774,60 @@ pub fn iconv(
             }
         }
 
+        // Fast path: 2-byte DBCS -> UTF-16 (explicit endianness). Mirror of the
+        // DBCS->UTF-8 gather above, reusing the same `dbcs_simd` per-codec table +
+        // lead range: gather 4 code points, require each defined (direct[key] != 0),
+        // BMP (<= 0xFFFF) and non-surrogate -> each is a single UTF-16 unit equal to
+        // the scalar `encode_utf16` output. Split lo/hi + interleave-write 8 bytes in
+        // the target endianness. A non-2-byte / astral / undefined window breaks to the
+        // scalar DBCS->UTF-16 path below for the exact decode + EILSEQ/E2BIG ordering.
+        if matches!(cd.to, Encoding::Utf16Le | Encoding::Utf16Be)
+            && !cd.emit_bom
+            && let Some((direct, l1, h1, l2, h2)) = dbcs_simd
+        {
+            let be = matches!(cd.to, Encoding::Utf16Be);
+            while in_pos + 16 <= input.len() && out_pos + 16 <= outbuf.len() {
+                let raw = Simd::<u8, 16>::from_slice(&input[in_pos..in_pos + 16]);
+                let leads = std::simd::simd_swizzle!(raw, [0, 2, 4, 6, 8, 10, 12, 14]);
+                let trails = std::simd::simd_swizzle!(raw, [1, 3, 5, 7, 9, 11, 13, 15]);
+                let lead_ok = (leads.simd_ge(Simd::splat(l1)) & leads.simd_le(Simd::splat(h1)))
+                    | (leads.simd_ge(Simd::splat(l2)) & leads.simd_le(Simd::splat(h2)));
+                if !lead_ok.all() {
+                    break;
+                }
+                let keys = (leads.cast::<u32>() << Simd::splat(8)) | trails.cast::<u32>();
+                let cps =
+                    Simd::<u32, 8>::gather_or(direct, keys.cast::<usize>(), Simd::splat(0));
+                let defined = cps.simd_ne(Simd::splat(0));
+                let bmp = cps.simd_le(Simd::splat(0xFFFF));
+                let sur_ok = cps.simd_lt(Simd::splat(0xD800)) | cps.simd_gt(Simd::splat(0xDFFF));
+                if !(defined & bmp & sur_ok).all() {
+                    break;
+                }
+                let lo = (cps & Simd::splat(0xFF)).cast::<u8>();
+                let hi = ((cps >> Simd::splat(8)) & Simd::splat(0xFF)).cast::<u8>();
+                let out16: Simd<u8, 16> = if be {
+                    std::simd::simd_swizzle!(
+                        hi,
+                        lo,
+                        [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15]
+                    )
+                } else {
+                    std::simd::simd_swizzle!(
+                        lo,
+                        hi,
+                        [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15]
+                    )
+                };
+                out16.copy_to_slice(&mut outbuf[out_pos..out_pos + 16]);
+                in_pos += 16;
+                out_pos += 16;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         // Fast path: DBCS -> UTF-8. Inline the (now direct-table O(1)) per-codec
         // decoder + a direct UTF-8 encode, so the steady state skips both 100-arm
         // dispatches (decode_char + encode_char) and the encode_one wrapper. The

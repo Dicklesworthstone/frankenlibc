@@ -168,6 +168,20 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   (already exposed: cp932/big5/gbk/cp949/johab/gb2312/eucjp/eucjpms), then the SBCS→UTF-16 u16 interleave
   write. Substantial (per-codec 2-byte-input front-end + ASCII/astral transitions), so a focused next
   session. Kept cp932_to_utf16le as the regression guard / documented gap.
+- **DBCS→UTF-16 SIMD gather IMPLEMENTED (2026-06-24): 3.16x → 1.6x LOSS (another 1.9x self), byte-identical —
+  but a WALL hit, glibc still wins.** Mirrored the DBCS→UTF-8 gather (mod.rs:24775) reusing `dbcs_simd`
+  (per-codec direct table + lead range): load 16 bytes / 8 chars, validate leads, gather 8 cps
+  (Simd<u32,8>), gate defined(!=0)+BMP+non-surrogate, split lo/hi + interleave-write 16 bytes in target
+  endianness. Byte-identical (285 core + conformance_diff_iconv_simd + iconv_differential_fuzz green). A/B:
+  scalar-fast 836.6 → gather-4-wide 433.8 → gather-8-wide 420.9 ns; vs glibc 266.3 = **1.6x LOSS** (down from
+  3.16x). **CONCRETE BLOCKER:** widening 4→8 lanes gave only ~3% (433.8→420.9), so the gather is
+  vpgatherdd-LATENCY-bound over the 256 KB (65536×u32) direct table, NOT lane-throughput-bound. glibc's
+  cp932→UTF-16 (~0.5 ns/char) uses a 2-stage L1-resident table (lead→row, trail→cp) with a tight scalar
+  loop — no gather, no 256 KB table. To actually WIN, fl would need to REPLACE the flat 64K-entry gather
+  with a 2-stage compact table (e.g. lead→256-entry row-index, then a small per-row trail table), which is a
+  table-layout redesign, not a SIMD-width tweak. LANDED the gather anyway: it's a real 1.9x self-gain
+  (byte-identical, narrows the gap) and generalizes to all 2-byte DBCS→UTF-16 (cp932/big5/gbk/cp949/johab/
+  gb2312/eucjp/eucjpms). Net DBCS→UTF-16 journey: 6.05x → 1.6x LOSS (gate fix ×1.9 + gather ×1.9 = 3.8x self).
 - **CAMPAIGN CUMULATIVE GREEN VERIFIED (2026-06-23) — release-readiness capstone.** Ran the FULL `string::`
   suite together (not just per-change): **475 passed / 0 failed** (string::str scanners + string::wide find +
   string::mem + string::wchar/glob) — the 8 string/mem overlapping-tail edits + find_wide_or_nul interact
