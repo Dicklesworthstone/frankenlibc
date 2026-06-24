@@ -25011,6 +25011,52 @@ pub fn iconv(
                     in_pos += 16;
                     out_pos += 32;
                 }
+            } else {
+                // tw == 4: SBCS -> UTF-32. Gather 8 cps, write [lo,hi,0,0] (LE) /
+                // [0,0,hi,lo] (BE) per char — byte-identical to the scalar
+                // cp.to_le_bytes()/to_be_bytes() for a BMP cp (< 0x10000, bytes 2/3 = 0).
+                while in_pos + 8 <= input.len() && out_pos + 32 <= outbuf.len() {
+                    let raw = Simd::<u8, 8>::from_slice(&input[in_pos..in_pos + 8]);
+                    let cps = Simd::<i32, 8>::gather_or(
+                        &decode.cp,
+                        raw.cast::<usize>(),
+                        Simd::splat(-1),
+                    );
+                    if cps.simd_lt(Simd::splat(0)).any() {
+                        break;
+                    }
+                    let u16s = cps.cast::<u16>();
+                    let lo = (u16s & Simd::splat(0x00FF)).cast::<u8>();
+                    let hi = (u16s >> Simd::splat(8)).cast::<u8>();
+                    let u16b: Simd<u8, 16> = if tbe {
+                        std::simd::simd_swizzle!(hi, lo, [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15])
+                    } else {
+                        std::simd::simd_swizzle!(lo, hi, [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15])
+                    };
+                    let zeros = Simd::<u8, 16>::splat(0);
+                    let out32: Simd<u8, 32> = if tbe {
+                        std::simd::simd_swizzle!(
+                            u16b,
+                            zeros,
+                            [
+                                16, 16, 0, 1, 16, 16, 2, 3, 16, 16, 4, 5, 16, 16, 6, 7, 16, 16, 8,
+                                9, 16, 16, 10, 11, 16, 16, 12, 13, 16, 16, 14, 15
+                            ]
+                        )
+                    } else {
+                        std::simd::simd_swizzle!(
+                            u16b,
+                            zeros,
+                            [
+                                0, 1, 16, 16, 2, 3, 16, 16, 4, 5, 16, 16, 6, 7, 16, 16, 8, 9, 16,
+                                16, 10, 11, 16, 16, 12, 13, 16, 16, 14, 15, 16, 16
+                            ]
+                        )
+                    };
+                    out32.copy_to_slice(&mut outbuf[out_pos..out_pos + 32]);
+                    in_pos += 8;
+                    out_pos += 32;
+                }
             }
             while in_pos < input.len() && out_pos + tw <= outbuf.len() {
                 let cp = decode.cp[input[in_pos] as usize];

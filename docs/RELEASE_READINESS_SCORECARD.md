@@ -450,6 +450,7 @@ stable yardstick, the only worker-invariant reference):
 | `iconv` koi8r→utf8 (SBCS Cyrillic→2-byte) | 11086.7 ns | 451.0 ns | 1465.4 ns | **7.2x LOSS → 0.31x WIN** (⭐24.6x self, A/B) | SBCS→UTF-8 was scalar per-byte (un-benched!); SIMD gather of packed-u16 2-byte UTF-8 + interleave write. Generalizes to ALL ~100 SBCS codecs (ISO-8859/KOI8/CP125x) |
 | `iconv` latin1→utf8 (most-common SBCS) | — | 673.8 ns | 2786.1 ns | **0.24x WIN** (4.1x faster) | confirms the SBCS→UTF-8 SIMD generalizes to ISO-8859-1 (Western European/HTTP/legacy), the highest-traffic SBCS |
 | `iconv` latin1→utf16le (SBCS→wide) | 1971.4 ns | 786.6 ns | 1265.1 ns | **1.48x LOSS → 0.62x WIN** (2.5x self, A/B) | from_decode→UTF-16/32 was scalar single-unit; SIMD gather cps + truncate-u16 + interleave-write. Generalizes to all SBCS→UTF-16 |
+| `iconv` latin1→utf32le (SBCS→wide-32) | 1705.7 ns | 968.3 ns | 1280.9 ns | **1.36x LOSS → 0.76x WIN** (1.76x self, A/B) | tw==4 leg was scalar; SIMD gather cps + lo/hi interleave + zero-expand to 4-byte units. Generalizes to all SBCS→UTF-32 |
 
 ### string/mem overlapping-tail wins (cc) — 32-lane scanner remainder gap closed family-wide
 
