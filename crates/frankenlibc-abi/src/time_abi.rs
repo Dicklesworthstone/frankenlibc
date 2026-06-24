@@ -8,7 +8,7 @@
 
 use std::ffi::{c_int, c_ulong, c_void};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::syscall as raw_syscall;
@@ -92,12 +92,8 @@ pub struct VdsoFastpathSnapshot {
 }
 
 static VDSO_SYMBOLS: OnceLock<VdsoSymbols> = OnceLock::new();
-static VDSO_TIME_FAST_PTR: AtomicUsize = AtomicUsize::new(VDSO_TIME_FAST_UNINIT);
 static VDSO_CLOCK_GETTIME_HITS: AtomicU64 = AtomicU64::new(0);
 static VDSO_GETTIMEOFDAY_HITS: AtomicU64 = AtomicU64::new(0);
-
-const VDSO_TIME_FAST_UNINIT: usize = 0;
-const VDSO_TIME_FAST_ABSENT: usize = 1;
 
 #[inline]
 fn record_vdso_clock_gettime_hit() {
@@ -113,42 +109,6 @@ fn record_vdso_gettimeofday_hit() {
     // the vDSO success path free of locked atomic RMW instructions.
     let hits = VDSO_GETTIMEOFDAY_HITS.load(Ordering::Relaxed);
     VDSO_GETTIMEOFDAY_HITS.store(hits.wrapping_add(1), Ordering::Relaxed);
-}
-
-#[inline]
-fn cached_vdso_time() -> Option<VdsoTimeFn> {
-    let cached = VDSO_TIME_FAST_PTR.load(Ordering::Relaxed);
-    if cached > VDSO_TIME_FAST_ABSENT {
-        // SAFETY: only function pointers produced from a resolved `__vdso_time`
-        // symbol are stored with values greater than the sentinel states.
-        return Some(unsafe { core::mem::transmute::<usize, VdsoTimeFn>(cached) });
-    }
-    if cached == VDSO_TIME_FAST_ABSENT {
-        return None;
-    }
-
-    if !vdso_resolution_enabled() {
-        return None;
-    }
-
-    let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
-    let resolved = symbols
-        .time
-        .map_or(VDSO_TIME_FAST_ABSENT, |vdso_time| vdso_time as usize);
-    VDSO_TIME_FAST_PTR.store(resolved, Ordering::Relaxed);
-    if resolved > VDSO_TIME_FAST_ABSENT {
-        // SAFETY: see the fast cached branch above.
-        Some(unsafe { core::mem::transmute::<usize, VdsoTimeFn>(resolved) })
-    } else {
-        None
-    }
-}
-
-#[inline]
-unsafe fn vdso_time_seconds() -> Option<i64> {
-    let vdso_time = cached_vdso_time()?;
-    let secs = unsafe { vdso_time(std::ptr::null_mut()) };
-    (secs > 0).then_some(secs as i64)
 }
 
 const fn vdso_symbol_version_bytes() -> &'static [u8] {
@@ -536,23 +496,26 @@ fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn time(tloc: *mut i64) -> i64 {
+    if !tracked_optional_object_fits(tloc.cast_const()) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
     // vDSO fast path: glibc's `time()` reads the seconds straight from the vvar
     // page via `__vdso_time` (~2.5 ns) rather than a full `clock_gettime`. Pass a
     // null pointer and store into `tloc` ourselves so the membrane bounds-check
     // above remains the sole writer of caller memory. A valid wall-clock second
     // count is always positive; treat anything else as a miss and fall through.
-    if tloc.is_null() {
-        if let Some(secs) = unsafe { vdso_time_seconds() } {
-            return secs;
-        }
-    } else {
-        if !tracked_required_object_fits(tloc.cast_const()) {
-            unsafe { set_abi_errno(errno::EFAULT) };
-            return -1;
-        }
-        if let Some(secs) = unsafe { vdso_time_seconds() } {
-            unsafe { *tloc = secs };
-            return secs;
+    if vdso_resolution_enabled() {
+        let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
+        if let Some(vdso_time) = symbols.time {
+            let secs = unsafe { vdso_time(std::ptr::null_mut()) };
+            if secs > 0 {
+                if !tloc.is_null() {
+                    unsafe { *tloc = secs };
+                }
+                return secs;
+            }
         }
     }
 
