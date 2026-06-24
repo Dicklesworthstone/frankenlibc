@@ -182,16 +182,26 @@ EXHAUSTIVELY mapped + bounded the rest. Full detail in the dated entries below +
   table-layout redesign, not a SIMD-width tweak. LANDED the gather anyway: it's a real 1.9x self-gain
   (byte-identical, narrows the gap) and generalizes to all 2-byte DBCS→UTF-16 (cp932/big5/gbk/cp949/johab/
   gb2312/eucjp/eucjpms). Net DBCS→UTF-16 journey: 6.05x → 1.6x LOSS (gate fix ×1.9 + gather ×1.9 = 3.8x self).
-- **🎯 #18 WIN (2026-06-24): SBCS→UTF-32 was 1.36x LOSS → 0.76x WIN (1.76x self).** The tw==4 (UTF-32) leg of
+- **NO-SHIP (2026-06-24): DBCS→UTF-32 flat-table gather is still a 2.61x LOSS; reverted.** Tested the direct
+  extension of the DBCS→UTF-16 gather to `cp932_to_utf32le`: load 8 two-byte chars, validate lead ranges,
+  gather cps from the 64K direct table, then zero-expand each BMP code point to `[lo,hi,0,0]` UTF-32LE.
+  Baseline scalar probe (`local`, bench row only): fl **676.3 ns** vs glibc **277.6 ns** = **2.44x LOSS**.
+  Candidate (`vmi1149989`, same-run fl/glibc): fl **677.8 ns** vs glibc **259.7 ns** = **2.61x LOSS**.
+  Result: no measurable improvement, so the implementation and `cp932_to_utf32le` bench row were reverted.
+  This reinforces the earlier DBCS wall: the flat 65536-entry gather table is latency-bound; a real glibc win
+  needs a compact lead-row/trail table layout, not another 4-byte output swizzle.
+- **🎯 #18 WIN (2026-06-24): SBCS→UTF-32 was 1.34x LOSS → 0.62x WIN.** The tw==4 (UTF-32) leg of
   the from_decode→UTF-16/32 path was left scalar by the SBCS→UTF-16 fix. Probed: latin1_to_utf32le fl
-  **1705.7 ns / glibc 1255.7 = 1.36x LOSS**. FIX: added the tw==4 SIMD branch — gather 8 cps (Simd<i32,8>,
+  **1703.4 ns / glibc 1273.8 = 1.34x LOSS**. FIX: added the tw==4 SIMD branch — gather 8 cps (Simd<i32,8>,
   -1 sentinel), check defined, then a 2-stage swizzle: interleave lo/hi → 16 u16-bytes, then expand each
   2-byte pair to 4 with a zero vector (`[lo,hi,0,0]` LE / `[0,0,hi,lo]` BE), byte-identical to the scalar
   `cp.to_le_bytes()`/`to_be_bytes()` for a BMP cp (<0x10000, bytes 2/3 = 0). Byte-identical (285 core +
-  conformance_diff_iconv_simd + iconv_differential_fuzz green). A/B: OLD 1705.7 → NEW 968.3 ns = 1.76x self;
-  vs glibc 1280.9 = **0.76x WIN** (fl 1.32x faster). Generalizes to all SBCS→UTF-32 (Latin/Cyrillic/Greek/
+  conformance_diff_iconv_simd + iconv_differential_fuzz green). Final same-run candidate on `vmi1152480`: fl
+  **960.9 ns** vs glibc **1545.8 ns** = **0.62x WIN** (fl 1.61x faster). The scalar→SIMD p50 delta is
+  **1.77x** versus the local scalar routing row; treat that self-speedup with the cross-worker caveat, but
+  the final fl/glibc ratio is same-run. Generalizes to all SBCS→UTF-32 (Latin/Cyrillic/Greek/
   etc. → wide-32). **18 WINS. The from_decode wide-target family is now ALL won: →UTF-8 (0.31x), →UTF-16
-  (0.62x), →UTF-32 (0.76x).** (UTF-32's gather is only 8-wide vs UTF-16's 16-wide because the 4-byte
+  (0.62x), →UTF-32 (0.62x).** (UTF-32's gather is only 8-wide vs UTF-16's 16-wide because the 4-byte
   expand-swizzle caps at 32-byte output; still a clean win — SBCS→UTF-32 glibc is slower than its UTF-16.)
 - **CAMPAIGN CUMULATIVE GREEN VERIFIED (2026-06-23) — release-readiness capstone.** Ran the FULL `string::`
   suite together (not just per-change): **475 passed / 0 failed** (string::str scanners + string::wide find +
