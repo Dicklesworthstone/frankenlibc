@@ -255,7 +255,7 @@ fn main() {
             );
             assert_eq!(
                 frankenlibc_core::string::wide::wcsspn(&s, &acc_yes),
-                gl_wcscspn(s.as_ptr().cast(), acc_no.as_ptr().cast()), // wcsspn(yes) == wcscspn(no) == 1000
+                gl_wcsspn(s.as_ptr().cast(), acc_yes.as_ptr().cast()),
                 "wcsspn"
             );
             let iters = 3000usize;
@@ -277,10 +277,38 @@ fn main() {
             let fls = t2.elapsed().as_nanos() as f64 / iters as f64;
             let t3 = Instant::now();
             for _ in 0..iters {
-                black_box(gl_wcscspn(black_box(s.as_ptr().cast()), black_box(acc_no.as_ptr().cast())));
+                black_box(gl_wcsspn(black_box(s.as_ptr().cast()), black_box(acc_yes.as_ptr().cast())));
             }
             let gls = t3.elapsed().as_nanos() as f64 / iters as f64;
             println!("MEM wcsspn_n1000_r50 fl={fls:.0}ns glibc={gls:.0}ns fl/glibc={:.4}x", fls / gls);
+        }
+
+        // wcsncasecmp: glibc does per-char towlower x2 (locale-aware, slow); fl fast ASCII
+        // fold. s1='A'x1000, s2='a'x1000, n=1000 -> case-insensitive equal (returns 0).
+        type WcsncasecmpFn = unsafe extern "C" fn(*const i32, *const i32, usize) -> i32;
+        let gl_wcsncasecmp: WcsncasecmpFn = std::mem::transmute::<*mut c_void, WcsncasecmpFn>(
+            libc::dlsym(h, b"wcsncasecmp\0".as_ptr().cast()),
+        );
+        {
+            let mut s1: Vec<u32> = vec![b'A' as u32; 1000];
+            s1.push(0);
+            let mut s2: Vec<u32> = vec![b'a' as u32; 1000];
+            s2.push(0);
+            let fl_r = frankenlibc_core::string::wide::wcsncasecmp(&s1, &s2, 1000);
+            let gl_r = gl_wcsncasecmp(s1.as_ptr().cast(), s2.as_ptr().cast(), 1000);
+            assert!(fl_r == 0 && gl_r == 0, "wcsncasecmp: fl={fl_r} glibc={gl_r} (expected equal)");
+            let iters = 3000usize;
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::wide::wcsncasecmp(black_box(&s1), black_box(&s2), 1000));
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_wcsncasecmp(black_box(s1.as_ptr().cast()), black_box(s2.as_ptr().cast()), 1000));
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM wcsncasecmp_n1000 fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.4}x", fl / gl);
         }
     }
 }
