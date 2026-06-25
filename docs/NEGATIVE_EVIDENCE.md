@@ -6,6 +6,17 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort large-array (1M i32) WIN 1.5x — radix advantage STABLE, not growing (cc)
+
+- **WIN: fl `qsort` 1.5x faster than glibc at n=1,000,000 (large-array integer sort).** Head-to-head
+  (`sort_bench.rs`, random i32, **output verified**): fl **32.6ms** / glibc **49.1ms** = **0.663x**.
+- **HYPOTHESIS CORRECTED:** I expected the radix O(n) vs merge O(n·log n) gap to GROW with n (bigger log
+  factor). It did NOT — 20K **0.58x** (1.7x) → 1M **0.663x** (1.5x), slightly *shrinking*. Reason: at 1M
+  (4 MB > L2) radix's ~4 full-array passes go MEMORY-BANDWIDTH-bound (cache misses), eroding the fewer-passes
+  edge; glibc's merge is more cache-sequential. **Net: fl's radix+pdqsort beats glibc's merge for integer keys
+  at ~1.5-1.7x across all tested sizes (20K-1M) — a stable win, not a growing one.** (Large-array integer
+  sorting is a common data-processing workload, so the stable 1.5x at scale is the headline.)
+
 ## 2026-06-25 — wmemset WIN (1.4-1.8x) + wcsnlen floor LOSS — the wide FILL/SCAN split (cc)
 
 - **WIN: `wmemset` 1.4-1.8x faster than glibc.** Head-to-head (`mem_large.rs`, dlmopen host glibc): n=256 fl

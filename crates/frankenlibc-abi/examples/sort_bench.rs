@@ -166,5 +166,40 @@ fn main() {
         }
         let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
         println!("SORT str16 n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+
+        // Large-array integer sort: fl radix is O(n), glibc merge is O(n·log n) — the gap
+        // GROWS with n (the log factor). n=1M random i32. Clone overhead is << the sort at
+        // this size and equal for both, so it barely biases the ratio.
+        {
+            let big = 1_000_000usize;
+            let base: Vec<i32> = (0..big)
+                .map(|i| (i.wrapping_mul(2_654_435_761) >> 7) as i32)
+                .collect();
+            let mut vf = base.clone();
+            {
+                let b = std::slice::from_raw_parts_mut(vf.as_mut_ptr().cast::<u8>(), big * 4);
+                frankenlibc_core::stdlib::sort::qsort(b, 4, cmp_rs);
+            }
+            let mut vg = base.clone();
+            gl_qsort(vg.as_mut_ptr().cast(), big, 4, cmp_i32);
+            assert_eq!(vf, vg, "i32_1M: fl qsort != glibc qsort");
+            let iters = 30usize;
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                let mut v = base.clone();
+                let b = std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<u8>(), big * 4);
+                frankenlibc_core::stdlib::sort::qsort(b, 4, cmp_rs);
+                black_box(v.as_ptr());
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                let mut v = base.clone();
+                gl_qsort(v.as_mut_ptr().cast(), big, 4, cmp_i32);
+                black_box(v.as_ptr());
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("SORT i32_1M n={big} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x", fl / gl);
+        }
     }
 }
