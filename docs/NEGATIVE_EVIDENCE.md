@@ -26,6 +26,16 @@ retried and real wins are confirmed with numbers.
   (ARM __log) — same `*LOG10_E` structure, ~glibc-grade ln. glibc's log10 (7.45 ns) is slower than its log
   (5.27 ns), so fl's now BEATS it. 29 exp-module tests green, within the 4-ULP contract. The fast f64-log
   keystone now yields an outright win on a dependent. (f64 `log1p` still libm — 1+x not exact in f64, harder.)
+- **f64 `exp10`: 1.64x → 1.33x (latent-bug fix).** Its hot path called `libm::exp2(p)` (the slow generic) even
+  though its own comment said "via the fast exp2 kernel". Swapped to `crate::math::exp2` (fl's fused
+  ARM/__ieee754_exp2). MEASURED: fl 8.51→6.73 ns / glibc 5.05 = **1.33x** (was 1.64x), maxrel 2.95e-16 ~1 ULP
+  UNCHANGED, 47 float-module tests green. Real improvement (1.27x), still a loss (glibc's exp10 is tight).
+- **f64 SPECIAL-FN SURVEY (math_survey example): tgamma is a HUGE existing WIN, the rest lose.** Deployed
+  head-to-head: **tgamma fl 8.37 / glibc 45.92 ns = 0.18x WIN (5.5x faster** — glibc's tgamma is famously
+  slow; fl's is already fast). Losses (special/transform fns, glibc moderately fast — need real ports not
+  swaps): lgamma 2.46x (dd-arith + libm::pow/exp), erfc 1.63x (libm::exp, DELIBERATELY chosen for
+  bit-identicality per the in-code note — don't blind-swap), log1p 1.58x (needs a (1+x)-error port). The clean
+  log10-style swaps (glibc-fn-slower-than-its-log/exp) are now tapped; the rest need algorithm ports.
 
 ## 2026-06-23 — STRUCTURAL PERF CAMPAIGN COMPLETE (cc) — handoff for the next (codegen/architectural) mode
 

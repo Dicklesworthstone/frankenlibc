@@ -763,7 +763,10 @@ pub fn exp10(x: f64) -> f64 {
         let hi = core::f64::consts::LOG2_10;
         let p = x * hi;
         let e = x.mul_add(hi, -p) + x * LOG2_10_LO;
-        return libm::exp2(p) * (1.0 + e * core::f64::consts::LN_2);
+        // Use fl's fused exp2 kernel (ARM/__ieee754_exp2, 0.507 ULP, ~0.6x glibc) — the
+        // comment above already intended it, but the code called the slow generic
+        // `libm::exp2`. Same accuracy structure, faster.
+        return crate::math::exp2(p) * (1.0 + e * core::f64::consts::LN_2);
     }
     // libm::exp10 is correctly rounded here; the previous `exp(x * ln10)` form
     // double-rounded (product + exp each round) and ran ~168 ULP off glibc on

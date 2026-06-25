@@ -140,5 +140,45 @@ fn main() {
             "MATH_SURVEY log10(f64) fl={fl_ns:6.2}ns glibc={gl_ns:6.2}ns fl/glibc={:.2}x maxrel={maxrel:.2e}",
             fl_ns / gl_ns
         );
+
+        // f64 transform/special fns — find the next log10-style win.
+        let f64cases: &[(&str, F64Fn, F64Fn, f64, f64)] = &[
+            ("log1p", frankenlibc_abi::math_abi::log1p, g64(h, b"log1p\0"), 0.1, 30.0),
+            ("exp10", frankenlibc_abi::math_abi::exp10, g64(h, b"exp10\0"), -2.0, 3.0),
+            ("erfc", frankenlibc_abi::math_abi::erfc, g64(h, b"erfc\0"), 0.1, 5.0),
+            ("tgamma", frankenlibc_abi::math_abi::tgamma, g64(h, b"tgamma\0"), 0.5, 8.0),
+            ("lgamma", frankenlibc_abi::math_abi::lgamma, g64(h, b"lgamma\0"), 0.5, 12.0),
+        ];
+        for &(name, flf, glf, lo, hi) in f64cases {
+            let xs: Vec<f64> = (0..4096).map(|i| lo + (hi - lo) * (i as f64) / 4096.0).collect();
+            let mut maxrel = 0.0f64;
+            for &x in &xs {
+                let a = flf(x);
+                let b = glf(x);
+                let d = if b.abs() > 1e-290 { ((a - b) / b).abs() } else { (a - b).abs() };
+                if d > maxrel { maxrel = d; }
+            }
+            let t = |f: F64Fn| -> f64 {
+                let mut acc = 0.0f64;
+                for k in 0..20_000_000usize { acc += f(xs[k & 4095]); }
+                std::hint::black_box(acc);
+                let s = Instant::now();
+                let mut acc = 0.0f64;
+                for k in 0..20_000_000usize { acc += f(xs[k & 4095]); }
+                std::hint::black_box(acc);
+                s.elapsed().as_nanos() as f64 / 20_000_000.0
+            };
+            let (fl_ns, gl_ns) = (t(flf), t(glf));
+            println!(
+                "MATH_SURVEY {name:8} fl={fl_ns:6.2}ns glibc={gl_ns:6.2}ns fl/glibc={:.2}x maxrel={maxrel:.2e}",
+                fl_ns / gl_ns
+            );
+        }
     }
+}
+
+unsafe fn g64(h: *mut std::ffi::c_void, n: &[u8]) -> unsafe extern "C" fn(f64) -> f64 {
+    let p = libc::dlsym(h, n.as_ptr().cast());
+    assert!(!p.is_null(), "dlsym f64 failed");
+    std::mem::transmute::<*mut std::ffi::c_void, unsafe extern "C" fn(f64) -> f64>(p)
 }
