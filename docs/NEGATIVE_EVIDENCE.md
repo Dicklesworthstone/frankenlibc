@@ -102,6 +102,13 @@ retried and real wins are confirmed with numbers.
   exp(2x) overflow); |x| < 0.5 keeps libm::tanh. MEASURED: fl 6.92 / glibc 12.59 ns = **0.55x WIN**, maxrel
   4.14e-16 ~2 ULP over [0.05,25], 20 trig-tests green. glibc's tanh is unusually slow (12.6 ns) so the margin
   is large. **THREE exp-win cascades now: sinh 0.81x, expm1 0.97x, tanh 0.55x.**
+- **f64 `atanh`: → 0.93x WIN (log1p cascade); `asinh`/`acosh` REVERTED (regressed).** All three were pure
+  `libm`. atanh(x) = sign(x)·0.5·log1p(2|x|/(1-|x|)) is sqrt-free (1 div + the now-fast log1p) → **fl 10.93 /
+  glibc 11.77 ns = 0.93x WIN**, maxrel 3.28e-16 ~2 ULP, 20 trig-tests green; |x|>=1 defers to libm for FE
+  flags. BUT the analogous log1p forms for **asinh (sqrt(x²+1)) measured 1.80x and acosh 1.43x — REGRESSIONS**:
+  the sqrt + arg + non-inlined log1p exceeds glibc's tight dedicated kernel, so libm::asinh/acosh win there.
+  LESSON: the log/exp cascade pays off only for sqrt-FREE transforms (atanh, log10, log1p, sinh/tanh which are
+  exp-not-sqrt); sqrt-bound ones (asinh/acosh) don't beat glibc's fused kernel. Reverted those two.
 
 ## 2026-06-23 — STRUCTURAL PERF CAMPAIGN COMPLETE (cc) — handoff for the next (codegen/architectural) mode
 
