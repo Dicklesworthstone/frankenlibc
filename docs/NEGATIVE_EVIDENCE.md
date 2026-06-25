@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — str/mem/wide SCAN+COMPARE family at the portable_simd floor — REJECT (cc)
+
+- **REJECT: the raw scan/compare primitives lose 1.2-2.5x to glibc — the portable_simd-vs-glibc-asm floor.**
+  In-process A/B (`string_inprocess_survey_bench`, fl core vs host glibc, moderate buffers). fl/glibc ratios:
+  - narrow: memchr **1.42x**, strlen 1.17x, memcmp 1.26x, memrchr **2.28x**, strcmp **2.22x**, strncmp 1.24x,
+    strncasecmp 1.47x, strpbrk 1.78x, strcspn_set6 1.61-2.54x.
+  - wide: wcschr **2.49x**, wcsrchr 2.07x, wcsncmp 1.78x, wmemcmp 1.30x, wcslen 1.40x, wmemchr 1.43x.
+  All are ALREADY explicit-SIMD (64-lane folded scans, bitmap charsets). The gap is LLVM-portable_simd vs
+  glibc's hand-asm (alignment / unroll / instruction-sequence tuning), NOT a missing-SIMD gap. Verified
+  hand-AVX2 won't help: portable_simd already emits the optimal `cmpeq`+`movemask`+`lzcnt`; the residual is the
+  asm loop/alignment, irreducible in safe Rust. NOT a tractable lever — DON'T re-attempt these scans.
+  **CONTRAST (the durable BOLD-VERIFY pattern): fl WINS the ALGORITHMIC primitives — strstr 215x, strcasestr
+  210x, wcsstr 5.4x, memmem 24x, wcscasecmp 21x, qsort ≤8B 1.6x — where glibc uses a weaker algorithm.**
+
 ## 2026-06-25 — wcsstr ~5.4x WIN (wide Two-Way vs glibc) (cc)
 
 - **WIN: fl `wcsstr` is ~5.4x faster than glibc.** fl uses `two_way_search_wide` + a rarity-aware anchor;
