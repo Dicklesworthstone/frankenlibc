@@ -6,6 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — iconv CP932->UTF-16 compact-row no-ship (BoldWaterfall)
+
+- **NO-SHIP: CP932 Hiragana-row arithmetic decode still loses to glibc; source reverted.** Tested a guarded
+  pre-gather fast path for the benchmark's hot CP932 row: require 8 two-byte chars with lead `0x82` and trail
+  `0x9F..=0xF1`, decode as `trail + 0x2FA2` (U+3041..=U+3093), and fall back without consuming input for
+  every other byte pattern. Baseline current-main probe on `vmi1227854` had custom p50 fl **462.9 ns** vs
+  glibc **253.6 ns** = **1.83x LOSS** (mean 543.5 vs 325.1 = 1.67x LOSS). Candidate same-run on `hz2`:
+  Criterion center fl **360.42 ns** vs glibc **231.05 ns** = **1.56x LOSS**; custom p50 fl **345.0 ns** vs
+  glibc **228.8 ns** = **1.51x LOSS** (mean 568.2 vs 260.6 = 2.18x LOSS). The hot-row arithmetic shortcut
+  improves p50 over the old flat-gather wall but does not reach a glibc win, so the source change was
+  reverted and only this ledger row remains. Validation after revert: `cargo check -p frankenlibc-core --lib`
+  on `hz2` passed with existing warnings; focused `cargo test -p frankenlibc-core iconv --lib -- --nocapture
+  --test-threads=1` on `vmi1152480` passed **285/0**. Next DBCS->UTF-16 work needs to remove the remaining
+  iconv loop/state overhead or adopt a broader glibc-style compact row loop, not another narrow row swizzle.
+
 ## 2026-06-24 — f64 `log` kernel + log1pf (cc, fused-kernel vein reopened)
 
 - **f64 `log`: ARM `__log` port — ~2x-slow → bit-exact glibc-grade (commit 3d0ccb75c).** The old
