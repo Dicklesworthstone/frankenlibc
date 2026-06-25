@@ -6,6 +6,7 @@
 pub mod exp;
 pub mod float;
 pub mod float32;
+mod log_data;
 pub mod special;
 pub mod trig;
 

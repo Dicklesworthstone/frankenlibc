@@ -1061,14 +1061,71 @@ pub fn expm1(x: f64) -> f64 {
 /// contract. Subnormal/zero/inf/nan defer to `libm::log` for exact semantics.
 #[inline]
 pub fn log(x: f64) -> f64 {
-    if x.is_normal() && x > 0.0 {
-        return log2_kernel(x) * std::f64::consts::LN_2;
+    // Dedicated f64 natural-log kernel — a verbatim port of ARM optimized-routines
+    // math/log.c (N=128, LOG_POLY_ORDER=6, LOG_POLY1_ORDER=12, HAVE_FAST_FMA path), the
+    // kernel glibc adopted as __ieee754_log. Replaces the old `log2_kernel(x)*LN_2`
+    // indirection (which routed natural log through the 64-bucket *log2* kernel, ~9 ns /
+    // glibc-log2 parity, where glibc's dedicated 128-bucket log is ~5 ns). Tables in
+    // `crate::math::log_data`. Cold inputs (0/subnormal/inf/nan/neg) keep the prior
+    // FE-flag + libm fallback (bit-identical behaviour, rare path).
+    use crate::math::log_data::{
+        LOG_A, LOG_B, LOG_HI, LOG_LN2HI, LOG_LN2LO, LOG_LO, LOG_OFF, LOG_ONE, LOG_T,
+    };
+    let ix = x.to_bits();
+    let top = (ix >> 48) as u32;
+
+    // |x - 1| < ~2^-4: the near-1 polynomial (relative accuracy as the result -> 0).
+    if ix.wrapping_sub(LOG_LO) < LOG_HI.wrapping_sub(LOG_LO) {
+        if ix == LOG_ONE {
+            return 0.0;
+        }
+        let r = x - 1.0;
+        let r2 = r * r;
+        let r3 = r * r2;
+        let b = &LOG_B;
+        let mut y = r3
+            * (b[1]
+                + r * b[2]
+                + r2 * b[3]
+                + r3 * (b[4]
+                    + r * b[5]
+                    + r2 * b[6]
+                    + r3 * (b[7] + r * b[8] + r2 * b[9] + r3 * b[10])));
+        let w = r * f64::from_bits(0x41a0000000000000); // 0x1p27
+        let rhi = r + w - w;
+        let rlo = r - rhi;
+        let w = rhi * rhi * b[0]; // b[0] == -0.5
+        let hi = r + w;
+        let mut lo = r - hi + w;
+        lo += b[0] * rlo * (rhi + r);
+        y += lo;
+        y += hi;
+        return y;
     }
-    // libm::log returns the correct value for special inputs but does NOT raise
-    // the C99/IEEE floating-point exception glibc raises. Re-raise it via a
-    // hardware op on this cold special-input path (safe; the hot path returned
-    // above): log(±0) = -inf -> FE_DIVBYZERO (pole); log(x<0) = NaN ->
-    // FE_INVALID (domain). NaN and +inf inputs raise nothing, matching glibc.
+
+    // Common path: normal positive x. x = 2^k·z, z in [OFF, 2·OFF); 128 subintervals.
+    if top.wrapping_sub(0x0010) < 0x7ff0 - 0x0010 {
+        let tmp = ix.wrapping_sub(LOG_OFF);
+        let i = ((tmp >> 45) % 128) as usize; // 52 - LOG_TABLE_BITS(7) = 45
+        let k = (tmp as i64) >> 52; // arithmetic shift
+        let iz = ix.wrapping_sub(tmp & (0xfff_u64 << 52));
+        let (invc, logc) = LOG_T[i];
+        let z = f64::from_bits(iz);
+        // r ~= z/c - 1, |r| < 1/256.
+        let r = z.mul_add(invc, -1.0);
+        let kd = k as f64;
+        // hi + lo = r + log(c) + k·Ln2.
+        let w = kd * LOG_LN2HI + logc;
+        let hi = w + r;
+        let lo = w - hi + r + kd * LOG_LN2LO;
+        let r2 = r * r;
+        let a = &LOG_A;
+        return lo + r2 * a[0] + r * r2 * (a[1] + r * a[2] + r2 * (a[3] + r * a[4])) + hi;
+    }
+
+    // Cold: ±0, subnormal, ±inf, NaN, or negative. Keep the prior FE-flag raising
+    // (glibc raises FE_DIVBYZERO for log(±0), FE_INVALID for log(x<0); NaN/+inf raise
+    // nothing) + libm for the exact subnormal/special value.
     if x == 0.0 {
         let _ =
             core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));

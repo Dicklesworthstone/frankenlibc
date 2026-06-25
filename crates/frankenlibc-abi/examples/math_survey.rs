@@ -94,5 +94,34 @@ fn main() {
                 fl_ns / gl_ns
             );
         }
+
+        // f64 `log` direct (the core kernel this port replaces).
+        type F64Fn = unsafe extern "C" fn(f64) -> f64;
+        let gl_log: F64Fn =
+            std::mem::transmute::<*mut c_void, F64Fn>(libc::dlsym(h, b"log\0".as_ptr().cast()));
+        let xs: Vec<f64> = (0..4096).map(|i| 0.2 + 50.0 * (i as f64) / 4096.0).collect();
+        let mut maxrel = 0.0f64;
+        for &x in &xs {
+            let a = frankenlibc_abi::math_abi::log(x);
+            let b = gl_log(x);
+            let d = ((a - b) / b).abs();
+            if d > maxrel { maxrel = d; }
+        }
+        let time64 = |f: F64Fn| -> f64 {
+            let mut acc = 0.0f64;
+            for k in 0..30_000_000usize { acc += f(xs[k & 4095]); }
+            std::hint::black_box(acc);
+            let t = Instant::now();
+            let mut acc = 0.0f64;
+            for k in 0..30_000_000usize { acc += f(xs[k & 4095]); }
+            std::hint::black_box(acc);
+            t.elapsed().as_nanos() as f64 / 30_000_000.0
+        };
+        let fl_ns = time64(frankenlibc_abi::math_abi::log);
+        let gl_ns = time64(gl_log);
+        println!(
+            "MATH_SURVEY log(f64) fl={fl_ns:6.2}ns glibc={gl_ns:6.2}ns fl/glibc={:.2}x maxrel={maxrel:.2e}",
+            fl_ns / gl_ns
+        );
     }
 }

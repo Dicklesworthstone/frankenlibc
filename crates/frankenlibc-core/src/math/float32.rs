@@ -816,7 +816,14 @@ pub fn tanhf(x: f32) -> f32 {
 
 #[inline]
 pub fn asinhf(x: f32) -> f32 {
-    libm::asinhf(x)
+    // asinh(x) = sign(x)·log(|x| + sqrt(x²+1)), evaluated in f64 so the precision
+    // absorbs the small-|x| cancellation (no dedicated log1p/polynomial needed) and the
+    // single f32 rounding is correctly-rounded-ish. Uses fl's fused f64 `log` — faster
+    // than the generic libm::asinhf. inf→±inf, ±0→±0, NaN→NaN fall out of the formula.
+    let fx = x as f64;
+    let ax = fx.abs();
+    let r = crate::math::log(ax + (ax * ax + 1.0).sqrt());
+    (if fx.is_sign_negative() { -r } else { r }) as f32
 }
 
 #[inline]
@@ -832,12 +839,20 @@ pub fn acoshf(x: f32) -> f32 {
             core::hint::black_box(0.0f32) / core::hint::black_box(0.0f32),
         );
     }
-    libm::acoshf(x)
+    // acosh(x) = log(x + sqrt((x-1)(x+1))) in f64 (the (x-1)(x+1) factoring keeps the
+    // sqrt accurate near x=1). x=1→log(1)=0; +inf→+inf. Fused f64 `log` beats libm::acoshf.
+    let fx = x as f64;
+    (crate::math::log(fx + ((fx - 1.0) * (fx + 1.0)).sqrt())) as f32
 }
 
 #[inline]
 pub fn atanhf(x: f32) -> f32 {
-    libm::atanhf(x)
+    // atanh(x) = 0.5·log((1+x)/(1-x)) in f64 (precision absorbs the small-x cancellation).
+    // copysign restores the sign for ±0 (0.5·log(1)=+0 otherwise). |x|>1→log(neg)=NaN,
+    // ±1→±inf. Fused f64 `log` beats libm::atanhf.
+    let fx = x as f64;
+    let r = 0.5 * crate::math::log((1.0 + fx) / (1.0 - fx));
+    (r as f32).copysign(x)
 }
 
 // --- Exponential / logarithmic (additional) ---
