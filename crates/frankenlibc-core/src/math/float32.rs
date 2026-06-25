@@ -756,24 +756,14 @@ pub fn powf(base: f32, exponent: f32) -> f32 {
 
 // --- Hyperbolic ---
 
-const SINHF_FAST_ABS_MIN: f32 = 0.5;
-// Upper bound is fl's f64 `exp` fast-path limit (|x| <= 5); beyond it the f64
-// kernel itself defers to libm, so widening past 5 buys nothing.
-const SINHF_FAST_ABS_MAX: f32 = 5.0;
-
 #[inline]
 pub fn sinhf(x: f32) -> f32 {
-    // sinh(x) = (e^x - e^-x)/2 = (u - 1/u)/2, u = e^x. For |x| >= 0.5 the two
-    // terms differ enough that the subtraction loses <1 bit, so evaluating in f64
-    // with our fast `exp` (whose [-5,5] fast path covers x here) and rounding
-    // once replaces libm::sinhf's dedicated polynomial. The identity is odd, so
-    // it serves negative x directly. Near-0 (cancellation) and large/non-finite x
-    // defer to libm. Mirrors the f64 `cosh` one-exp reroute and `tanhf`.
-    if (SINHF_FAST_ABS_MIN..=SINHF_FAST_ABS_MAX).contains(&x.abs()) {
-        let u = crate::math::exp::exp(x as f64);
-        return ((u - 1.0 / u) * 0.5) as f32;
-    }
-    libm::sinhf(x)
+    // Evaluate the whole range through fl's f64 `sinh` and round once: f64 sinh now uses
+    // a cheap odd Taylor polynomial on |x| <= 3 (the hot band) and the (t-1/t)/2 fast-exp
+    // reroute above, both faster than this f32's old exp-reroute — and the polynomial also
+    // covers the small-|x| range the old path left on libm::sinhf. The f64 precision
+    // absorbs any cancellation; ±inf/±0/NaN and f32 overflow fall out of the cast.
+    crate::math::sinh(x as f64) as f32
 }
 
 #[inline]
