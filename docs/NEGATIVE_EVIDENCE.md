@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — regex (Thompson NFA) 18-65x SLOWER than glibc — REJECT + real lever (cc)
+
+- **REJECT/LOSS (big gap): fl's `regex` (clean-room Thompson NFA + submatch tagging) is 18-65x SLOWER than
+  glibc's lazy DFA** on star-heavy patterns. Head-to-head (`regex_bench.rs`, dlmopen host glibc, REG_EXTENDED,
+  compile once + time exec only, all-`a` text, **both return REG_NOMATCH**):
+  - `"a*a*a*a*a*a*a*a*b"` m=40: fl **10961ns** / glibc **169ns** = **64.9x LOSS**.
+  - `"(a*)*b"` m=26: fl **2269ns** / glibc **121ns** = **18.7x LOSS**.
+  - `"(a|aa)*b"` m=26: fl **1990ns** / glibc **1479ns** = **1.35x LOSS**.
+  ROOT CAUSE: fl's tagged-NFA simulation (per-position thread set + submatch slot bookkeeping) has a HIGH
+  constant; glibc's lazy DFA is O(input) with a tiny constant. The NFA buys worst-case safety (no catastrophic
+  backtracking) but loses the average case badly — and glibc does NOT catastrophically backtrack here (it ran
+  `(a*)*b` in 121ns), so fl has no exponential-pattern win to offset the slow constant. This is fl's BIGGEST
+  measured algorithmic gap so far (a reversal of the strstr/qsort/fnmatch wins).
+  **REAL LEVER (future, substantial): a lazy-DFA fast path, or a tag-free NFA for the REG_NOSUB / discarded-
+  submatch case** — fl pays full tagged-NFA cost even when `pmatch` is empty/ignored. A DFA engine is a big
+  build; deferred, but this is the highest-value perf lever now visible in fl.
+
 ## 2026-06-25 — fnmatch ~2.5x WIN on multi-star patterns (cc)
 
 - **WIN: fl `fnmatch` is ~2.5x faster than glibc on adversarial multi-`*` patterns** — iterative
