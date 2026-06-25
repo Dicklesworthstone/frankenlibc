@@ -26,6 +26,12 @@ retried and real wins are confirmed with numbers.
   (ARM __log) — same `*LOG10_E` structure, ~glibc-grade ln. glibc's log10 (7.45 ns) is slower than its log
   (5.27 ns), so fl's now BEATS it. 29 exp-module tests green, within the 4-ULP contract. The fast f64-log
   keystone now yields an outright win on a dependent. (f64 `log1p` still libm — 1+x not exact in f64, harder.)
+- **🎯 f64 `log1p`: 1.58x → 0.95x WIN (compensated identity on the fast kernel).** Was `libm::log1p`. Now the
+  compensated `log1p(x) = log(s) + e/s`, where `s = 1+x` (rounded) and `e = x - (s-1)` recovers the rounding
+  error of `1+x` — the `e/s` term corrects the small-x cancellation a bare `log(1+x)` loses, so it rides the
+  dedicated fast f64 `log` (ARM __log) at full accuracy across finite x > -1. MEASURED: fl 7.54 / glibc
+  7.94 ns = **0.95x WIN**, maxrel 2.21e-16 ~1 ULP; 29 exp-tests green. x==0 preserves -0; x≤-1/inf/nan defer
+  to libm (pole FE_DIVBYZERO re-raised). (Earlier "log1p needs a (1+x)-error port" — done, it's this one line.)
 - **f64 `exp10`: 1.64x → 1.33x (latent-bug fix).** Its hot path called `libm::exp2(p)` (the slow generic) even
   though its own comment said "via the fast exp2 kernel". Swapped to `crate::math::exp2` (fl's fused
   ARM/__ieee754_exp2). MEASURED: fl 8.51→6.73 ns / glibc 5.05 = **1.33x** (was 1.64x), maxrel 2.95e-16 ~1 ULP

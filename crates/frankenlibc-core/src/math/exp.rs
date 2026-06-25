@@ -1566,8 +1566,21 @@ pub fn log10(x: f64) -> f64 {
 
 #[inline]
 pub fn log1p(x: f64) -> f64 {
-    // log1p(-1) = log(0) = -inf is a pole: glibc raises FE_DIVBYZERO, libm omits
-    // it. (x < -1 domain errors raise FE_INVALID, which libm already does.)
+    if x == 0.0 {
+        return x; // preserve the sign of zero (log1p(-0) = -0)
+    }
+    // Fast compensated path: log1p(x) = log(s) + e/s, where s = 1+x (rounded) and
+    // e = x - (s-1) recovers the rounding error of `1+x`. The e/s term corrects the
+    // small-x cancellation that a bare `log(1+x)` loses, so this rides the dedicated
+    // fast f64 `log` kernel (ARM __log) at full accuracy across finite x > -1.
+    if x > -1.0 && x.is_finite() {
+        let s = 1.0 + x;
+        let e = x - (s - 1.0);
+        return log(s) + e / s;
+    }
+    // x == -1 (pole) / x < -1 (domain) / inf / nan: defer to libm for the exact
+    // special value. log1p(-1) = -inf is a pole — glibc raises FE_DIVBYZERO, libm
+    // omits it, so re-raise it here (x < -1 already raises FE_INVALID via libm).
     if x == -1.0 {
         let _ =
             core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
