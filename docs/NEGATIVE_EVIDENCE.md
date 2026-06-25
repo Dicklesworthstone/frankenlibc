@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort WIN: pdqsort+radix vs glibc msort (cc)
+
+- **WIN: fl `qsort` beats glibc on random + duplicate-heavy integer data** (pdqsort + integer-radix lane vs
+  glibc's O(n·log n) merge sort). Head-to-head (`sort_bench.rs`, dlmopen host glibc, n=20000 i32, **output
+  VERIFIED byte-identical to glibc + non-decreasing**):
+  - random: fl **479µs** / glibc **802µs** = **0.60x (1.67x faster)**.
+  - dup10 (10 distinct values): fl **419µs** / glibc **744µs** = **0.56x (1.8x faster)**.
+  - reverse: fl 469µs / glibc 506µs = **0.93x** (slight win).
+  - sorted: fl 448µs / glibc 454µs = **0.99x** parity (both detect presorted).
+  fl's radix lane sorts integer-natural comparators in O(n) + an O(n) verify; pdqsort handles random/dup with
+  fewer comparisons and no temp allocation, vs glibc's allocating merge sort. Another ALGORITHMIC win (like
+  strstr Two-Way): safe-Rust beats glibc on the algorithm, not raw-SIMD throughput. (`base.clone()` overhead
+  is in both arms and ~1-2% of the sort, so it does not move the ratio.)
+
 ## 2026-06-25 — f64 `acosh` large-tail asymptotic win (BoldWaterfall)
 
 - **WIN: `acosh` large-input asymptotic turns the live survey row from a glibc loss into a win.** The old
