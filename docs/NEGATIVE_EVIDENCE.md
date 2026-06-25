@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — str/mem large-buffer head-to-head REJECT (cc)
+
+- **REJECT: safe-Rust SIMD does NOT beat glibc on memchr/strlen/memcmp at any size.** In-process A/B (dlmopen
+  host glibc vs fl `frankenlibc_core::string::{mem,str}`, full-scan, needle/diff/NUL at the very end), example
+  `crates/frankenlibc-abi/examples/mem_large.rs`. Ratios fl/glibc @ 4KB / 64KB / 1MB:
+  - **memchr: 2.60x / 1.19x / 1.25x — LOSS at EVERY size.** glibc's memchr asm stays tighter even when
+    bandwidth-bound; fl's 64-lane portable_simd folded scan never catches it.
+  - **strlen: 1.31x / 0.90x / 1.10x — parity-to-loss** (the lone 0.90x@64KB is cache-noise, not robust — 1MB
+    regresses to 1.10x).
+  - **memcmp: 2.22x / 0.99x / 0.97x — LOSS at small, ~parity at large** (0.97x@1MB is within run noise).
+  - Consistent with the moderate-size survey (memchr 1.42x, strlen 1.17x, memcmp 1.26x at ~200B).
+  CONCLUSION: small-buffer losses (2.2-2.6x) are portable_simd SIMD-setup + alignment overhead vs glibc's asm;
+  large-buffer is bandwidth-bound parity, NOT a win. The str/mem scan core is at the portable_simd-vs-glibc-asm
+  floor (hand-AVX2 won't help — portable_simd already emits the optimal `cmpeq`+`movemask`+`lzcnt`; the gap is
+  glibc's asm loop/alignment tuning). NOT a tractable lever at any buffer size. DON'T re-attempt.
+
 ## 2026-06-25 — f32 `log1pf` thresholded `logf(1+x)` no-ship (BoldWaterfall)
 
 - **NO-SHIP: routing non-cancellation `log1pf` inputs through f32 `logf(1+x)` improves FL but still loses to glibc.**
