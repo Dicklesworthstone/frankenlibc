@@ -2255,8 +2255,8 @@ fn bench_math(c: &mut Criterion) {
     // inputs; the franken/glibc ratio is per-batch and hoist-free.
     let inputs: Vec<f64> = (0..64).map(|k| 0.5 + (k as f64) * 0.031_25).collect();
 
-    macro_rules! pair {
-        ($id:expr, $sym:expr, $work:expr, $franken:expr, $glibc:expr) => {{
+    macro_rules! pair_on {
+        ($inputs:expr, $id:expr, $sym:expr, $work:expr, $franken:expr, $glibc:expr) => {{
             bench_op(
                 &mut group,
                 BenchMeta {
@@ -2269,7 +2269,7 @@ fn bench_math(c: &mut Criterion) {
                 },
                 || {
                     let mut acc = 0.0_f64;
-                    for &x in &inputs {
+                    for &x in $inputs {
                         let f: fn(f64) -> f64 = $franken;
                         acc += f(black_box(x));
                     }
@@ -2288,7 +2288,7 @@ fn bench_math(c: &mut Criterion) {
                 },
                 || {
                     let mut acc = 0.0_f64;
-                    for &x in &inputs {
+                    for &x in $inputs {
                         let g: unsafe extern "C" fn(f64) -> f64 = $glibc;
                         // SAFETY: plain libm call on a finite f64 input.
                         acc += unsafe { g(black_box(x)) };
@@ -2296,6 +2296,12 @@ fn bench_math(c: &mut Criterion) {
                     black_box(acc);
                 },
             );
+        }};
+    }
+
+    macro_rules! pair {
+        ($id:expr, $sym:expr, $work:expr, $franken:expr, $glibc:expr) => {{
+            pair_on!(&inputs, $id, $sym, $work, $franken, $glibc);
         }};
     }
 
@@ -2388,6 +2394,17 @@ fn bench_math(c: &mut Criterion) {
         "asinh",
         "asinh",
         "asinh(x) x in [0.5,2.5)",
+        math::asinh,
+        cmath::asinh
+    );
+    let large_asinh_inputs: Vec<f64> = (0..64)
+        .map(|k| 16.0 + (10_000_000.0 - 16.0) * (k as f64) / 63.0)
+        .collect();
+    pair_on!(
+        &large_asinh_inputs,
+        "asinh_large",
+        "asinh",
+        "asinh(x) x in [16,1e7]",
         math::asinh,
         cmath::asinh
     );
@@ -2851,8 +2868,20 @@ fn bench_math_abi(c: &mut Criterion) {
         pair_abi!("sin_abi", "sin", core_math::sin, math_abi::sin, cmath::sin);
         pair_abi!("cos_abi", "cos", core_math::cos, math_abi::cos, cmath::cos);
         pair_abi!("log_abi", "log", core_math::log, math_abi::log, cmath::log);
-        pair_abi!("exp2_abi", "exp2", core_math::exp2, math_abi::exp2, cmath::exp2);
-        pair_abi!("log2_abi", "log2", core_math::log2, math_abi::log2, cmath::log2);
+        pair_abi!(
+            "exp2_abi",
+            "exp2",
+            core_math::exp2,
+            math_abi::exp2,
+            cmath::exp2
+        );
+        pair_abi!(
+            "log2_abi",
+            "log2",
+            core_math::log2,
+            math_abi::log2,
+            cmath::log2
+        );
     }
     group.finish();
 }
@@ -2889,29 +2918,82 @@ fn bench_memstring_abi(c: &mut Criterion) {
 
         macro_rules! pair_ms {
             ($id:expr, $sym:expr, $fl:expr, $gl:expr) => {{
-                bench_op(&mut group, BenchMeta { profile_id: $id, impl_label: "frankenlibc_abi",
-                    api_family: "string", symbol: $sym, workload: "deployed public abi (membrane)",
-                    parity_proof_ref: "crates/frankenlibc-abi/src/string_abi.rs" }, $fl);
-                bench_op(&mut group, BenchMeta { profile_id: $id, impl_label: "host_glibc",
-                    api_family: "string", symbol: $sym, workload: "deployed public abi (membrane)",
-                    parity_proof_ref: "crates/frankenlibc-abi/src/string_abi.rs" }, $gl);
+                bench_op(
+                    &mut group,
+                    BenchMeta {
+                        profile_id: $id,
+                        impl_label: "frankenlibc_abi",
+                        api_family: "string",
+                        symbol: $sym,
+                        workload: "deployed public abi (membrane)",
+                        parity_proof_ref: "crates/frankenlibc-abi/src/string_abi.rs",
+                    },
+                    $fl,
+                );
+                bench_op(
+                    &mut group,
+                    BenchMeta {
+                        profile_id: $id,
+                        impl_label: "host_glibc",
+                        api_family: "string",
+                        symbol: $sym,
+                        workload: "deployed public abi (membrane)",
+                        parity_proof_ref: "crates/frankenlibc-abi/src/string_abi.rs",
+                    },
+                    $gl,
+                );
             }};
         }
-        pair_ms!("strlen_4096_abi", "strlen",
-            || { black_box(unsafe { string_abi::strlen(black_box(sp)) }); },
-            || { black_box(unsafe { libc::strlen(black_box(sp)) }); });
-        pair_ms!("strcmp_256_equal_abi", "strcmp",
-            || { black_box(unsafe { string_abi::strcmp(black_box(ap), black_box(bp)) }); },
-            || { black_box(unsafe { libc::strcmp(black_box(ap), black_box(bp)) }); });
-        pair_ms!("strcmp_short_mismatch_abi", "strcmp",
-            || { black_box(unsafe { string_abi::strcmp(black_box(sap), black_box(sbp)) }); },
-            || { black_box(unsafe { libc::strcmp(black_box(sap), black_box(sbp)) }); });
-        pair_ms!("memset_64_abi", "memset",
-            || { black_box(unsafe { string_abi::memset(black_box(mp), 0x5A, 64) }); },
-            || { black_box(unsafe { libc::memset(black_box(mp), 0x5A, 64) }); });
-        pair_ms!("memset_4096_abi", "memset",
-            || { black_box(unsafe { string_abi::memset(black_box(mp), 0x5A, 4096) }); },
-            || { black_box(unsafe { libc::memset(black_box(mp), 0x5A, 4096) }); });
+        pair_ms!(
+            "strlen_4096_abi",
+            "strlen",
+            || {
+                black_box(unsafe { string_abi::strlen(black_box(sp)) });
+            },
+            || {
+                black_box(unsafe { libc::strlen(black_box(sp)) });
+            }
+        );
+        pair_ms!(
+            "strcmp_256_equal_abi",
+            "strcmp",
+            || {
+                black_box(unsafe { string_abi::strcmp(black_box(ap), black_box(bp)) });
+            },
+            || {
+                black_box(unsafe { libc::strcmp(black_box(ap), black_box(bp)) });
+            }
+        );
+        pair_ms!(
+            "strcmp_short_mismatch_abi",
+            "strcmp",
+            || {
+                black_box(unsafe { string_abi::strcmp(black_box(sap), black_box(sbp)) });
+            },
+            || {
+                black_box(unsafe { libc::strcmp(black_box(sap), black_box(sbp)) });
+            }
+        );
+        pair_ms!(
+            "memset_64_abi",
+            "memset",
+            || {
+                black_box(unsafe { string_abi::memset(black_box(mp), 0x5A, 64) });
+            },
+            || {
+                black_box(unsafe { libc::memset(black_box(mp), 0x5A, 64) });
+            }
+        );
+        pair_ms!(
+            "memset_4096_abi",
+            "memset",
+            || {
+                black_box(unsafe { string_abi::memset(black_box(mp), 0x5A, 4096) });
+            },
+            || {
+                black_box(unsafe { libc::memset(black_box(mp), 0x5A, 4096) });
+            }
+        );
     }
     group.finish();
 }

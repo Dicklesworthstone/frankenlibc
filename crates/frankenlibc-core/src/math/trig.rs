@@ -209,9 +209,23 @@ pub fn tanh(x: f64) -> f64 {
 
 #[inline]
 pub fn asinh(x: f64) -> f64 {
-    // The log1p-based form (asinh = log1p(|x| + x²/(√(x²+1)+1))) was MEASURED slower than
-    // glibc (1.80x) — the sqrt + arg + non-inlined log1p exceeds glibc's tight dedicated
-    // kernel. libm::asinh wins here; the log/log1p cascade only helped sqrt-free atanh.
+    // Large-|x| asinh is dominated by sign(x)*log(2|x|). The previously rejected
+    // rewrite was sqrt-bound; this asymptotic path removes the sqrt on the hot
+    // large-input band and corrects log(2|x|) by the exact series in z=1/x^2:
+    // asinh(x)-log(2x) = z/4 - 3z^2/32 + 5z^3/96 - 35z^4/1024 + 63z^5/2560 + O(z^6).
+    let ax = x.abs();
+    if ax >= 16.0 {
+        let z = 1.0 / (ax * ax);
+        let mut p: f64 = 63.0 / 2560.0;
+        p = p.mul_add(z, -35.0 / 1024.0);
+        p = p.mul_add(z, 5.0 / 96.0);
+        p = p.mul_add(z, -3.0 / 32.0);
+        p = p.mul_add(z, 0.25);
+        let r = crate::math::log(ax) + core::f64::consts::LN_2 + z * p;
+        return if x.is_sign_negative() { -r } else { r };
+    }
+    // The midrange log1p form (asinh = log1p(|x| + x²/(√(x²+1)+1))) measured
+    // slower than glibc (1.80x); libm::asinh remains tighter below the large tail.
     libm::asinh(x)
 }
 
@@ -339,6 +353,35 @@ mod tests {
         }
         assert_eq!(acosh(f64::INFINITY), f64::INFINITY);
         println!("acosh large asymptotic worst ULP = {worst} at {worst_x}");
+    }
+
+    #[test]
+    fn asinh_large_asymptotic_within_4_ulps() {
+        let mut worst = 0u64;
+        let mut worst_x = 0.0_f64;
+        for i in 0..=262_144 {
+            let ax = 16.0 + (10_000_000.0 - 16.0) * (i as f64) / 262_144.0;
+            for x in [ax, -ax] {
+                let got = asinh(x);
+                let want = x.asinh();
+                let u = if got == want {
+                    0
+                } else {
+                    (got.to_bits() as i64 - want.to_bits() as i64).unsigned_abs()
+                };
+                if u > worst {
+                    worst = u;
+                    worst_x = x;
+                }
+                assert!(
+                    within_ulps(got, want, 4),
+                    "asinh({x}) = {got:?} vs glibc {want:?} ({u} ULP)"
+                );
+            }
+        }
+        assert_eq!(asinh(f64::INFINITY), f64::INFINITY);
+        assert_eq!(asinh(f64::NEG_INFINITY), f64::NEG_INFINITY);
+        println!("asinh large asymptotic worst ULP = {worst} at {worst_x}");
     }
 
     #[test]

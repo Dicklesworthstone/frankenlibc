@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — f64 `asinh` large-tail asymptotic landed (BoldWaterfall)
+
+- **WIN: landed the measured `asinh` large-tail asymptotic worktree win onto `main`.** The source/bench
+  candidate adds the same sqrt-free tail shape as the accepted `acosh` lever: for `|x| >= 16`, compute
+  `sign(x) * (log(|x|) + ln2 + P(1/x^2)/x^2)` with five correction-series terms, while preserving
+  `libm::asinh` below the tail where the prior sqrt/log1p form lost to glibc. Focused cargo-bench proof
+  (`rch exec -- cargo bench -p frankenlibc-bench --profile release --bench glibc_baseline_bench asinh_large`,
+  worker `vmi1227854`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b` rewritten by `rch`)
+  measured the new `asinh_large` row fl **359.875 ns** vs glibc **584.753 ns** = **0.62x WIN** on
+  `[16, 1e7]`. Earlier worktree evidence measured fl **292.119 ns** vs glibc **520.694 ns** = **0.56x WIN**.
+  Correctness proof: `rch exec -- cargo test --release -p frankenlibc-core asinh_large_asymptotic_within_4_ulps
+  --lib -- --nocapture --test-threads=1` passed with worst **1 ULP** over positive and negative `[16, 1e7]`
+  plus infinities; ABI special-case conformance `cargo test --release -p frankenlibc-abi --test
+  conformance_diff_asinh_special -- --nocapture --test-threads=1` passed **2/2**. Note: this Cargo rejects
+  the literal `cargo bench --release` spelling for benches, so the release bench used `--profile release`.
+  This is the safe asymptotic win, not the previously rejected sqrt-bound rewrite.
+
+## 2026-06-25 — fputs global-registry lock remains the live stdio blocker (BoldWaterfall)
+
+- **LOSS / NO-SHIP: `fputs` still loses end-to-end, and the bounded micro-lever is exhausted.** BOLD-VERIFY
+  found no unmerged measured win in `.scratch`/`.worktrees`, then re-checked the current cargo-bench math rows
+  before pivoting to the largest still-actionable deployed gap. Current `glibc_baseline_bench` math filters
+  showed no live loss for the suspected f64 lanes: `cbrt` fl **775.639 ns** vs glibc **1243.970 ns** =
+  **0.62x WIN** (`hz2`), `erfc` fl **678.114 ns** vs glibc **681.390 ns** = **0.995x NEUTRAL/WIN**
+  (`ovh-a`), `asinh` fl **668.146 ns** vs glibc **683.469 ns** = **0.98x WIN**, and `asinh_large` fl
+  **292.119 ns** vs glibc **520.694 ns** = **0.56x WIN** (`ovh-a`). The remaining large deployed stdio gap
+  reproduced on `fputs_glibc_bench fputs_8B` invoked through `rch` with
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`; no remote slot was admissible, so this row
+  is local fallback routing evidence: fl center **4.2737 us** per 64 calls vs glibc **1.4630 us** =
+  **2.92x LOSS** (~66.8 ns/call vs ~22.9 ns/call). Source was not edited. The strict path already skips
+  membrane policy and writes fmemopen-backed streams directly; the remaining visible cost is the mandatory
+  global `registry()` mutex per call to mutate `StdioStream`. Do **not** retry another scanner/membrane
+  micro-bypass for `fputs`; the next real lever is the architectural bd-hqo6b6 path: per-FILE/sharded stream
+  state (or equivalent read-mostly handle table) with stdio conformance, not a one-function fast path.
+
 ## 2026-06-25 — qsort WIN: pdqsort+radix vs glibc msort (cc)
 
 - **WIN: fl `qsort` beats glibc on random + duplicate-heavy integer data** (pdqsort + integer-radix lane vs
