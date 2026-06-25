@@ -6,6 +6,18 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — f32 `log1pf` thresholded `logf(1+x)` no-ship (BoldWaterfall)
+
+- **NO-SHIP: routing non-cancellation `log1pf` inputs through f32 `logf(1+x)` improves FL but still loses to glibc.**
+  Candidate kept the exact f64 `log(1+x)` path for `|x| < 0.25` and tried the existing fast ARM-style `logf`
+  kernel for finite `x > -0.75 && |x| >= 0.25`. Tighter thresholds were required for correctness:
+  `|x| >= 0.0625` failed at **11 ULP**, `|x| >= 0.125` failed at **7 ULP**, and `|x| >= 0.25` passed the
+  focused `cargo test -j 1 -p frankenlibc-core log1pf --lib -- --nocapture --test-threads=1` sweep
+  (worst <= 4 ULP). Perf still did not clear the glibc bar. Clean-main `math_survey` baseline measured
+  `log1pf` fl **8.24 ns** vs glibc **5.57 ns** = **1.48x LOSS**; candidate measured fl **6.72 ns** vs glibc
+  **5.83 ns** = **1.15x LOSS** (`maxrel=9.76e-8`). Source reverted. Next f32 `log1pf` needs a dedicated
+  compensated `log1p` kernel, not rounded f32 `1+x` plus `logf`.
+
 ## 2026-06-25 — f64 `lgamma` via `log(tgamma_reduced)` partial no-ship (BoldWaterfall)
 
 - **NO-SHIP: positive-band `lgamma` reuse of `tgamma_reduced` is a self-speedup but remains slower than glibc.**
