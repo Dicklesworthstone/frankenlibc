@@ -22,7 +22,7 @@ fn main() {
         ));
 
         let flags = FnmatchFlags::from_bits(0);
-        for &(stars, tlen) in &[(3usize, 10usize), (4, 12), (5, 14)] {
+        for &(stars, tlen) in &[(4usize, 12usize), (8, 24), (12, 36), (16, 48)] {
             let mut pat_b = Vec::new();
             for _ in 0..stars {
                 pat_b.push(b'*');

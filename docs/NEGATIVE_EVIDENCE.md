@@ -11,13 +11,14 @@ retried and real wins are confirmed with numbers.
 - **WIN: fl `fnmatch` is ~2.5x faster than glibc on adversarial multi-`*` patterns** — iterative
   single-backtrack matcher vs glibc's recursion. Head-to-head (`fnmatch_bench.rs`, dlmopen host glibc), pattern
   `"*a"×N + "*b"` vs `"a"×M` (no 'b' → **both correctly return NO-MATCH**):
-  - 3★/10: fl **27ns** / glibc **60ns** = **0.45x (2.2x faster)**.
-  - 4★/12: fl **27ns** / glibc **70ns** = **0.39x (2.6x faster)**.
-  - 5★/14: fl **31ns** / glibc **84ns** = **0.37x (2.7x faster)**.
+  - 3★/10: fl 27ns / glibc 60ns = 0.45x (2.2x) · 4★/12: 27/70 = 0.39x (2.6x) · 5★/14: 31/84 = 0.37x (2.7x).
+  - 8★/24: fl **43ns** / glibc **129ns** = **0.34x (3.0x)** · 12★/36: 61/199 = **0.31x (3.2x)** · 16★/48: fl
+    **77ns** / glibc **266ns** = **0.29x (3.5x)**.
   glibc's modern fnmatch is bounded (not the classic exponential), but its per-`*` recursion is slower than
-  fl's iterative single-backtrack matcher, and **the win grows with star count** (2.2x → 2.7x) — suggesting a
-  larger margin on heavier glob patterns. Confirms the in-code claim ("faster than glibc, no exponential
-  blow-up"), now measured. Another algorithmic win (like strstr/qsort), not raw SIMD.
+  fl's iterative single-backtrack matcher, and **the win GROWS monotonically with pattern complexity (2.2x →
+  3.5x)** — fl scales better; heavier glob patterns widen the margin further. Both are polynomial (glibc
+  60→266ns, fl 27→77ns over 3→16 stars). Confirms the in-code claim ("faster than glibc, no exponential
+  blow-up"), now measured. Another algorithmic win (like strstr/qsort), not raw SIMD. `glob` inherits it.
 
 ## 2026-06-25 — memset size-dependent (mixed, no lever) (cc)
 
