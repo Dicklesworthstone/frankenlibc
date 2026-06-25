@@ -21,6 +21,11 @@ retried and real wins are confirmed with numbers.
   identity). Conformance green. ⚠️ PRE-EXISTING (NOT cc): `log2f_dyadic_profile_grid_matches_libm_bits` +
   `golden_log2f_dyadic_profile_corpus_sha256` + `powf_profile_exp_1_337_...` are RED on bare `main` (verified
   by stash-revert) — an f32 log2f/powf profile-corpus regression that the f32-math owner should fix.
+- **🎯 f64 `log10`: 0.93x WIN (fl 6.93 / glibc 7.45 ns, maxrel 2.49e-16 ≈ 1 ULP).** Its hot path was
+  `libm::log(x)*LOG10_E` (the ~2x-slow GENERIC libm log). Swapped `libm::log` → the dedicated `log` kernel
+  (ARM __log) — same `*LOG10_E` structure, ~glibc-grade ln. glibc's log10 (7.45 ns) is slower than its log
+  (5.27 ns), so fl's now BEATS it. 29 exp-module tests green, within the 4-ULP contract. The fast f64-log
+  keystone now yields an outright win on a dependent. (f64 `log1p` still libm — 1+x not exact in f64, harder.)
 
 ## 2026-06-23 — STRUCTURAL PERF CAMPAIGN COMPLETE (cc) — handoff for the next (codegen/architectural) mode
 

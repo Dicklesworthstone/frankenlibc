@@ -123,5 +123,22 @@ fn main() {
             "MATH_SURVEY log(f64) fl={fl_ns:6.2}ns glibc={gl_ns:6.2}ns fl/glibc={:.2}x maxrel={maxrel:.2e}",
             fl_ns / gl_ns
         );
+
+        // f64 `log10` (its hot path now rides the fast __log kernel).
+        let gl_log10: F64Fn =
+            std::mem::transmute::<*mut c_void, F64Fn>(libc::dlsym(h, b"log10\0".as_ptr().cast()));
+        let mut maxrel = 0.0f64;
+        for &x in &xs {
+            let a = frankenlibc_abi::math_abi::log10(x);
+            let b = gl_log10(x);
+            let d = ((a - b) / b).abs();
+            if d > maxrel { maxrel = d; }
+        }
+        let fl_ns = time64(frankenlibc_abi::math_abi::log10);
+        let gl_ns = time64(gl_log10);
+        println!(
+            "MATH_SURVEY log10(f64) fl={fl_ns:6.2}ns glibc={gl_ns:6.2}ns fl/glibc={:.2}x maxrel={maxrel:.2e}",
+            fl_ns / gl_ns
+        );
     }
 }

@@ -1555,7 +1555,11 @@ pub fn log2(x: f64) -> f64 {
 #[inline]
 pub fn log10(x: f64) -> f64 {
     if x.is_normal() && x > 0.0 {
-        return libm::log(x) * core::f64::consts::LOG10_E;
+        // log10(x) = ln(x)·log10(e). Use the dedicated bit-exact f64 `log` kernel (ARM
+        // __log) instead of the generic `libm::log` — same `*LOG10_E` structure, but the
+        // ln is now ~glibc-grade (was the ~2x-slow generic). Within the 4-ULP-vs-glibc
+        // contract. Subnormal/non-positive/non-finite defer to libm::log10.
+        return log(x) * core::f64::consts::LOG10_E;
     }
     libm::log10(x)
 }
