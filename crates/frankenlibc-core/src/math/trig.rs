@@ -98,17 +98,44 @@ pub fn atan2(y: f64, x: f64) -> f64 {
 
 #[inline]
 pub fn sinh(x: f64) -> f64 {
-    // For |x| in [1, 700) the two exponentials are well separated (t >> 1/t), so
-    // sinh(x) = sign(x)·(t - 1/t)/2 with t = exp(|x|) has no cancellation and rides the
-    // now-fast f64 `exp` kernel — mirrors the existing `cosh` fast path. Small |x| (<1,
-    // cancellation) and |x| >= 700 (overflow) keep libm::sinh's exact handling.
+    // |x| <= 3: odd Taylor polynomial (no exp — cheaper than the (t-1/t)/2 reroute on
+    //   the hot band, mirrors the `cosh` polynomial). |x| in (3, 700): the two
+    //   exponentials are well separated (t >> 1/t), so sign(x)·(t-1/t)/2 with t=exp(|x|)
+    //   rides the fast f64 `exp` with no cancellation. |x| >= 700 (overflow) -> libm.
     let ax = x.abs();
-    if (1.0..700.0).contains(&ax) {
+    if ax <= 3.0 {
+        return sinh_poly_le_3(x);
+    }
+    if ax < 700.0 {
         let t = crate::math::exp(ax);
         let r = (t - 1.0 / t) * 0.5;
         return if x.is_sign_negative() { -r } else { r };
     }
     libm::sinh(x)
+}
+
+#[inline]
+fn sinh_poly_le_3(x: f64) -> f64 {
+    // Odd Taylor/Horner polynomial through x^27: sinh(x) = x·Σ (x²)^k/(2k+1)!. On
+    // |x| <= 3 the first omitted term x^29/29! < 8e-18 is well under the 4-ULP math
+    // contract for sinh (sinh(3)=10.02, 4 ULP ~ 9e-15). x carries the sign (odd), so ±0
+    // -> ±0 falls out. Mirrors the peer's `cosh_poly_le_3`.
+    let z = x * x;
+    let mut p: f64 = 9.183_689_863_795_546e-29;
+    p = p.mul_add(z, 6.446_950_284_384_474e-26);
+    p = p.mul_add(z, 3.868_170_170_630_683_5e-23);
+    p = p.mul_add(z, 1.957_294_106_339_126_3e-20);
+    p = p.mul_add(z, 8.220_635_246_624_33e-18);
+    p = p.mul_add(z, 2.811_457_254_345_520_6e-15);
+    p = p.mul_add(z, 7.647_163_731_819_816e-13);
+    p = p.mul_add(z, 1.605_904_383_682_161_3e-10);
+    p = p.mul_add(z, 2.505_210_838_544_172e-8);
+    p = p.mul_add(z, 2.755_731_922_398_589_3e-6);
+    p = p.mul_add(z, 1.984_126_984_126_984e-4);
+    p = p.mul_add(z, 8.333_333_333_333_333e-3);
+    p = p.mul_add(z, 0.166_666_666_666_666_66);
+    p = p.mul_add(z, 1.0);
+    x * p
 }
 
 /// `cosh(x) = (eˣ + e⁻ˣ)/2`, using a small/medium even polynomial before the
