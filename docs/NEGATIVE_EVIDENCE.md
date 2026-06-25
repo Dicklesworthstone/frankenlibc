@@ -6,29 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
-## 2026-06-25 — f64 `acosh` large-input asymptotic win (BoldWaterfall)
+## 2026-06-25 — f64 `acosh` large-tail asymptotic win (BoldWaterfall)
 
-- **LANDED: large-`x` asymptotic `acosh` turns the `math_survey` `acoshd` row from a glibc loss into a win.**
-  Dirty worktree candidate keeps the near-1/midrange `libm::acosh` path but routes `x >= 16` through
-  `log(x) + ln2 + z*(-1/4 - 3z/32 - 5z^2/96 - 35z^3/1024 - 63z^4/2560)` with `z=1/x^2`,
-  avoiding the sqrt-bound identity on the large-input survey band. Focused proof
-  `cargo test -j 1 -p frankenlibc-core acosh_large_asymptotic --lib -- --nocapture --test-threads=1`
-  passed with worst **1 ULP** at `x=168.587646484375`. Clean-main `math_survey` measured `acoshd`
-  fl **14.31 ns** vs glibc **8.85 ns** = **1.62x LOSS**; candidate measured fl **8.38 ns** vs glibc
-  **9.27 ns** = **0.90x WIN** (`maxrel=2.22e-16`). The gate is deliberately `x >= 16`; earlier
-  near-1/midrange log1p/sqrt forms remain rejected because they regressed.
+- **WIN: `acosh` large-input asymptotic turns the live survey row from a glibc loss into a win.** The old
+  rejected `acosh` rewrite was sqrt-bound (`log1p` + `sqrt`) and measured slower than glibc. This lever only
+  takes the `x >= 16` tail and uses `log(2x)` plus five exact correction-series terms in `z = 1/x^2`, avoiding
+  the sqrt on the uniform large-input survey band while keeping `x < 16` on `libm::acosh` for near-1/midrange
+  flags and accuracy. Clean-main baseline (`math_survey`, remote `hz2`) measured `acoshd` fl **14.52 ns** vs
+  glibc **8.52 ns** = **1.70x LOSS**. Candidate remote proof (`math_survey`, remote `ovh-a`; `rch` ignored the
+  `hz2` worker hint but kept the same head-to-head glibc comparator) measured fl **6.13 ns** vs glibc
+  **6.95 ns** = **0.88x WIN** (`maxrel=2.22e-16`). Local fallback routing evidence also showed fl
+  **7.80 ns** vs glibc **9.43 ns** = **0.83x WIN**. Focused correctness gate
+  `cargo test -p frankenlibc-core acosh_large_asymptotic_within_4_ulps --lib -- --nocapture --test-threads=1`
+  passed with worst **1 ULP** over `[16, 1e7]` plus `+inf`.
 
 ## 2026-06-25 — f32 `acoshf` native-`logf` hot band no-ship (BoldWaterfall)
 
 - **NO-SHIP: f32-native `acoshf` on the `math_survey` hot band improves FL but still loses to glibc.**
   Candidate kept the existing domain guard and f64 fallback, but routed `1.1 <= x <= 8.0` through
-  `logf(x + sqrtf((x-1)(x+1)))`. A wider `x <= 8.0` gate was correctness-red near 1
-  (`acoshf(1.0004272)` drifted **28 ULP**), while the narrowed `1.1..=8.0` gate passed
-  `cargo test -j 1 -p frankenlibc-core acoshf_hot_range --lib -- --nocapture --test-threads=1`
-  with worst **2 ULP** at `x=1.1`. Perf still missed the glibc bar: clean-main `math_survey`
-  measured `acoshf` fl **9.20 ns** vs glibc **5.65 ns** = **1.63x LOSS**; candidate measured
-  fl **7.47 ns** vs glibc **6.26 ns** = **1.19x LOSS** (`maxrel=1.61e-7`). Source reverted.
-  Next `acoshf` work needs a dedicated inverse-hyperbolic kernel, not just f32 `logf` substitution.
+  `logf(x + sqrtf((x-1)(x+1)))`. The narrowed hot-band gate passed the focused ULP sweep with worst
+  **2 ULP**, but the live `hz2` survey still measured fl **7.95 ns** vs glibc **5.87 ns** = **1.36x LOSS**
+  (`maxrel=0.00e0`). Source was reverted. Next `acoshf` work needs a dedicated inverse-hyperbolic kernel,
+  not just f32 `logf` substitution.
 
 ## 2026-06-25 — strstr ~215x WIN on adversarial needles + memmove parity (cc)
 
