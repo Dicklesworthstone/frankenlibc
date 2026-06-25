@@ -158,6 +158,15 @@ fn main() {
             ("asinhd", frankenlibc_abi::math_abi::asinh, g64(h, b"asinh\0"), 0.2, 1.0e7),
             ("acoshd", frankenlibc_abi::math_abi::acosh, g64(h, b"acosh\0"), 1.05, 1.0e7),
             ("atanhd", frankenlibc_abi::math_abi::atanh, g64(h, b"atanh\0"), -0.95, 0.95),
+            ("sind", frankenlibc_abi::math_abi::sin, g64(h, b"sin\0"), -3.1, 3.1),
+            ("cosd", frankenlibc_abi::math_abi::cos, g64(h, b"cos\0"), -3.1, 3.1),
+            ("tand", frankenlibc_abi::math_abi::tan, g64(h, b"tan\0"), -1.5, 1.5),
+            ("logd", frankenlibc_abi::math_abi::log, g64(h, b"log\0"), 0.2, 50.0),
+            ("sqrtd", frankenlibc_abi::math_abi::sqrt, g64(h, b"sqrt\0"), 0.1, 1.0e6),
+            ("atand", frankenlibc_abi::math_abi::atan, g64(h, b"atan\0"), -8.0, 8.0),
+            ("asind", frankenlibc_abi::math_abi::asin, g64(h, b"asin\0"), -0.95, 0.95),
+            ("acosd", frankenlibc_abi::math_abi::acos, g64(h, b"acos\0"), -0.95, 0.95),
+            ("cbrtd", frankenlibc_abi::math_abi::cbrt, g64(h, b"cbrt\0"), 0.1, 1.0e6),
         ];
         for &(name, flf, glf, lo, hi) in f64cases {
             let xs: Vec<f64> = (0..4096).map(|i| lo + (hi - lo) * (i as f64) / 4096.0).collect();
