@@ -2509,8 +2509,8 @@ fn c_tanh(rx: f64, ix: f64) -> (f64, f64) {
         let im = 4.0 * sinix * cosix * math::exp(-2.0 * math::fabs(rx));
         return (re, im);
     }
-    let sinhrx = math::sinh(rx);
-    let coshrx = math::cosh(rx);
+    // sinh(rx) and cosh(rx) share one exp (bit-identical, see sinh_cosh_shared).
+    let (sinhrx, coshrx) = sinh_cosh_shared(rx);
     let den = sinhrx * sinhrx + cosix * cosix;
     (sinhrx * coshrx / den, sinix * cosix / den)
 }
@@ -2733,6 +2733,24 @@ fn c_acos(x: f64, y: f64) -> (f64, f64) {
 /// `inf*0 = NaN` whenever a hyperbolic factor overflows while a trig factor is
 /// exactly zero (notably `y == 0`); this adds the C99 Annex G special values.
 #[inline]
+/// sinh(x) AND cosh(x) sharing a SINGLE exp. For x in [1, 700) both fl fast paths use
+/// `exp(x)` directly, so deriving sinh=(t-1/t)/2 and cosh=(t+1/t)/2 from one t=exp(x) is
+/// BIT-IDENTICAL to the separate `math::sinh(x)`/`math::cosh(x)` calls while halving the
+/// exp work — the hot case for the complex hyperbolic/trig functions (csinh/ccosh/csin/
+/// ccos), which all need both of the same argument. Outside that range (negative, small
+/// |x| where sinh cancels, or large |x|) it defers to the separate calls (still identical).
+#[inline]
+fn sinh_cosh_shared(x: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    if (1.0..700.0).contains(&x) {
+        let t = math::exp(x);
+        let inv = 1.0 / t;
+        ((t - inv) * 0.5, (t + inv) * 0.5)
+    } else {
+        (math::sinh(x), math::cosh(x))
+    }
+}
+
 fn c_sinh(rx: f64, ix: f64) -> (f64, f64) {
     use frankenlibc_core::math;
     if rx.is_finite() {
@@ -2748,10 +2766,9 @@ fn c_sinh(rx: f64, ix: f64) -> (f64, f64) {
                 let re = if rx.is_sign_negative() { -rc } else { rc };
                 return (re, rs);
             }
-            return (
-                math::sinh(rx) * math::cos(ix),
-                math::cosh(rx) * math::sin(ix),
-            );
+            // sinh(rx) and cosh(rx) share one exp (bit-identical, see helper).
+            let (sh, ch) = sinh_cosh_shared(rx);
+            return (sh * math::cos(ix), ch * math::sin(ix));
         }
         // ix is inf or NaN, rx finite.
         if rx == 0.0 {
@@ -2800,10 +2817,9 @@ fn c_cosh(rx: f64, ix: f64) -> (f64, f64) {
                 let im = if rx.is_sign_negative() { -rs } else { rs };
                 return (rc, im);
             }
-            return (
-                math::cosh(rx) * math::cos(ix),
-                math::sinh(rx) * math::sin(ix),
-            );
+            // cosh(rx) and sinh(rx) share one exp (bit-identical, see helper).
+            let (sh, ch) = sinh_cosh_shared(rx);
+            return (ch * math::cos(ix), sh * math::sin(ix));
         }
         // ix is inf or NaN, rx finite.
         if rx == 0.0 {

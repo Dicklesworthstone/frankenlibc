@@ -213,6 +213,42 @@ fn main() {
             }
         }
         println!("MATH_SURVEY exp_ULP_sweep [-708,709] max_ulp={max_ulp} at x={worst_x:.4}");
+
+        // Complex csinh: now shares ONE exp(rx) for rx in [1,700) (was sinh+cosh = 2 exp).
+        // In-process A/B vs glibc (load cancels in the ratio). re in [1,10), im in [0.5,3).
+        use frankenlibc_abi::math_abi::{CDoubleComplex, csinh};
+        type CFn = unsafe extern "C" fn(CDoubleComplex) -> CDoubleComplex;
+        let gl_csinh: CFn =
+            std::mem::transmute::<*mut c_void, CFn>(libc::dlsym(h, b"csinh\0".as_ptr().cast()));
+        let cin: Vec<CDoubleComplex> = (0..1000)
+            .map(|k| CDoubleComplex {
+                re: 1.0 + (k as f64) * 0.009,
+                im: 0.5 + ((k % 250) as f64) * 0.01,
+            })
+            .collect();
+        let iters = 3000usize;
+        for z in &cin {
+            std::hint::black_box(csinh(std::hint::black_box(*z)));
+            std::hint::black_box(gl_csinh(std::hint::black_box(*z)));
+        }
+        let t0 = Instant::now();
+        for _ in 0..iters {
+            for z in &cin {
+                std::hint::black_box(csinh(std::hint::black_box(*z)));
+            }
+        }
+        let fl_ns = t0.elapsed().as_nanos() as f64 / (iters * cin.len()) as f64;
+        let t1 = Instant::now();
+        for _ in 0..iters {
+            for z in &cin {
+                std::hint::black_box(gl_csinh(std::hint::black_box(*z)));
+            }
+        }
+        let gl_ns = t1.elapsed().as_nanos() as f64 / (iters * cin.len()) as f64;
+        println!(
+            "MATH_SURVEY csinh_complex fl={fl_ns:.2}ns glibc={gl_ns:.2}ns fl/glibc={:.2}x",
+            fl_ns / gl_ns
+        );
     }
 }
 
