@@ -6,6 +6,15 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort 8-byte (i64/pointer) WIN confirmed (cc)
+
+- **WIN: fl `qsort` beats glibc on 8-byte i64 keys too — the most common real workload (longs / pointers).**
+  Head-to-head (`sort_bench.rs`, n=20000, **output verified identical to glibc**): i64rand fl **662µs** / glibc
+  **1036µs** = **0.64x (1.57x faster)**. Confirms the qsort advantage spans the whole integer/pointer range —
+  4-byte int 0.59x, 8-byte i64 0.64x (radix + pdqsort, no temp alloc, fewer comparisons) — and that the
+  element-size crossover to a loss is at ≥16 bytes (1.37-1.49x), not 8. **fl wins qsort for `width <= 8`, which
+  is the dominant real case (int/long/double/pointer arrays).**
+
 ## 2026-06-25 — strcasestr ~210x WIN on adversarial needles (cc)
 
 - **WIN: fl `strcasestr` is ~210x faster than glibc on adversarial case-mixed needles.** glibc's `strcasestr`

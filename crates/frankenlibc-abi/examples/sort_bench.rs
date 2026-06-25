@@ -37,6 +37,18 @@ fn cmp_str_rs(a: &[u8], b: &[u8]) -> i32 {
     0
 }
 
+unsafe extern "C" fn cmp_i64(a: *const c_void, b: *const c_void) -> i32 {
+    let x = unsafe { *(a as *const i64) };
+    let y = unsafe { *(b as *const i64) };
+    (x > y) as i32 - (x < y) as i32
+}
+
+fn cmp_i64_rs(a: &[u8], b: &[u8]) -> i32 {
+    let x = i64::from_ne_bytes(a[..8].try_into().unwrap());
+    let y = i64::from_ne_bytes(b[..8].try_into().unwrap());
+    (x > y) as i32 - (x < y) as i32
+}
+
 fn main() {
     unsafe {
         let h = libc::dlmopen(
@@ -94,6 +106,38 @@ fn main() {
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!("SORT {name} n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+        }
+
+        // 8-byte i64 random sort — the most common real workload (longs/pointers/keys).
+        {
+            let base: Vec<i64> = (0..n)
+                .map(|i| (i.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 11) as i64)
+                .collect();
+            let mut vf = base.clone();
+            {
+                let b = std::slice::from_raw_parts_mut(vf.as_mut_ptr().cast::<u8>(), n * 8);
+                frankenlibc_core::stdlib::sort::qsort(b, 8, cmp_i64_rs);
+            }
+            let mut vg = base.clone();
+            gl_qsort(vg.as_mut_ptr().cast(), n, 8, cmp_i64);
+            assert_eq!(vf, vg, "i64: fl qsort != glibc qsort");
+            let iters = 1000usize;
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                let mut v = base.clone();
+                let b = std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<u8>(), n * 8);
+                frankenlibc_core::stdlib::sort::qsort(b, 8, cmp_i64_rs);
+                black_box(v.as_ptr());
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                let mut v = base.clone();
+                gl_qsort(v.as_mut_ptr().cast(), n, 8, cmp_i64);
+                black_box(v.as_ptr());
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("SORT i64rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
         }
 
         // String sort: 16-byte random keys, lexicographic (memcmp) comparator.
