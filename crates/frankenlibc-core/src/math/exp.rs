@@ -1046,7 +1046,13 @@ const EXPM1_POSITIVE_FAST_MAX: f64 = 2.5;
 
 #[inline]
 pub fn expm1(x: f64) -> f64 {
-    if (EXPM1_POSITIVE_FAST_MIN..=EXPM1_POSITIVE_FAST_MAX).contains(&x) {
+    // For |x| >= 0.5 the `exp(x) - 1` subtraction has no catastrophic cancellation
+    // (exp(x) is bounded away from 1), so it rides the now-fast f64 `exp` kernel over
+    // both signs and the full range: x > 709 -> exp overflows -> inf (expm1 -> inf);
+    // x << 0 -> exp underflows -> 0 -> -1 (expm1(-inf) = -1). Only small |x| (< 0.5,
+    // where exp(x) ~ 1 and the cancellation matters) keeps libm::expm1. Widens the old
+    // positive-only [0.5, 2.5] fast path; EXPM1_POSITIVE_FAST_MIN is the |x| threshold.
+    if x.abs() >= EXPM1_POSITIVE_FAST_MIN {
         return exp(x) - 1.0;
     }
     libm::expm1(x)

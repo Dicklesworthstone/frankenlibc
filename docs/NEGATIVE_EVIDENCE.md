@@ -59,6 +59,12 @@ retried and real wins are confirmed with numbers.
   / glibc 13.92 ns = **0.81x WIN** (1.24x faster), maxrel 4.34e-16 ~2 ULP, 20 trig-tests green. Small |x| (<1)
   / overflow (>=700) keep libm::sinh. The exp win (c29f30410) directly unlocked this. (`cosh` already had the
   [-700,700] fast path so it's algorithm-floored ~1.37x; expm1 fast path is positive-only, could widen.)
+- **🎯 f64 `expm1`: 1.40x → 0.97x WIN (exp-win cascade #2).** Its `exp(x)-1` fast path was positive-only
+  `[0.5, 2.5]`. Widened the gate to `|x| >= 0.5` (both signs, full range): for |x| >= 0.5 the subtraction has
+  no catastrophic cancellation (exp(x) bounded away from 1), so it rides the now-fast f64 `exp` over both
+  signs — x>709 -> exp inf -> inf; x<<0 -> exp 0 -> -1. Only |x|<0.5 keeps libm::expm1. MEASURED: fl 8.62→6.85
+  / glibc 7.09 ns = **0.97x WIN**, maxrel 4.09e-16 ~2 ULP, 29 exp-tests green (the [0.5,2.5] golden sweep still
+  passes — identical there). **The exp keystone (c29f30410) has now cascaded into TWO wins: sinh + expm1.**
 
 ## 2026-06-23 — STRUCTURAL PERF CAMPAIGN COMPLETE (cc) — handoff for the next (codegen/architectural) mode
 
