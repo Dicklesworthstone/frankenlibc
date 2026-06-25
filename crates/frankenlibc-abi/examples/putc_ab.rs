@@ -6,16 +6,21 @@
 // and any `cfg(test)` harness measures the test-only entrypoint-trace path, ~10x
 // inflated). Run: cargo run -p frankenlibc-abi --example putc_ab --release
 //
-// MEASURED (cc, 2026-06-24, this worker): lockskip=67.56ns mutex=69.74ns = 1.03x,
-// lockcost=2.19ns. CONCLUSIONS: (1) fl deployed fputc ~68 ns/call vs glibc ~3 ns ≈
-// ~22x — the real bd-hqo6b6 gap (a clean number; the "727 ns" from a cfg(test) probe
-// was pure entrypoint-trace overhead, absent deployed). (2) The registry `Mutex`
-// (plain std, uncontended ~2 ns) is NOT the cost — bd-hqo6b6's "registry Mutex is the
-// dominant cost" is WRONG; a single-threaded lock-skip is ~0-gain (1.03x) and was
-// reverted. The ~66 ns lives in the rest of the per-call path: `canonical_stream_id`,
-// `decide()`/`observe()` (if heals on), the `streams.get_mut(&FILE*-addr)` HashMap
-// lookup, and `buffer_write`. That — especially replacing the HashMap-by-pointer with
-// glibc's FILE*-IS-the-stream direct reference — is the real (multi-turn) lever.
+// MEASURED (cc, 2026-06-24): fputc 52-68 ns (lockskip) vs mutex ≈ 1.03-1.05x
+// (lockcost ~2 ns); fgetc 63 ns; write/read = 0.83x. CONCLUSIONS:
+// (1) fl stdio per-call ≈ 50-68 ns vs glibc ~3 ns ≈ ~20x — the real bd-hqo6b6 gap (the
+//     "727 ns" from a cfg(test) probe was pure entrypoint-trace overhead, absent deployed).
+// (2) The registry `std::sync::Mutex` (~2 ns) is NOT the cost — bd-hqo6b6's "registry
+//     Mutex is the dominant cost" is WRONG; the single-threaded lock-skip is ~0-gain
+//     (~1.04x) and was reverted (twice-confirmed).
+// (3) READ ≈ WRITE (fgetc 63 ns ≈ fputc 53 ns) — NO write-specific lever; the cost is
+//     COMMON per-call overhead: `canonical_stream_id` + the `decide()`/`observe()`
+//     membrane + the `streams.get_mut(&FILE*-addr)` registry indirection (already a
+//     custom `StreamIdHasher`, not SipHash) + `buffer_write`. Every focused suspect is
+//     already-optimized or ~0-gain; the only lever left is ARCHITECTURAL: glibc's
+//     FILE*-IS-the-stream direct reference (no per-call registry lookup, no membrane on
+//     the hot path) — a multi-turn rearchitecture. Caveat: this harness runs in
+//     MODE_UNRESOLVED (no bootstrap); fully-deployed MODE_STRICT may shave decide/observe.
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
@@ -55,10 +60,38 @@ fn main() {
         flag.store(1, Ordering::Release);
 
         frankenlibc_abi::stdio_abi::fclose(f);
+
+        // Read-path comparison: fgetc from /dev/zero (the read path my memory says was
+        // optimized to ~2x faster than glibc). The fputc/fgetc asymmetry localizes the
+        // write-path gap (membrane vs buffer vs dispatch).
+        let r = frankenlibc_abi::stdio_abi::fopen(
+            b"/dev/zero\0".as_ptr().cast(),
+            b"r\0".as_ptr().cast(),
+        );
+        let getc_ns = if !r.is_null() {
+            assert_eq!(
+                frankenlibc_abi::stdio_abi::setvbuf(r, std::ptr::null_mut(), 0, 64 << 20),
+                0
+            );
+            for _ in 0..200_000 {
+                frankenlibc_abi::stdio_abi::fgetc(r);
+            }
+            let t = Instant::now();
+            for _ in 0..n {
+                std::hint::black_box(frankenlibc_abi::stdio_abi::fgetc(r));
+            }
+            let ns = t.elapsed().as_nanos() as f64 / n as f64;
+            frankenlibc_abi::stdio_abi::fclose(r);
+            ns
+        } else {
+            -1.0
+        };
+
         println!(
-            "PUTC_AB_DEPLOYED lockskip={fast:.2}ns mutex={slow:.2}ns speedup={:.2}x lockcost={:.2}ns",
+            "PUTC_AB_DEPLOYED fputc={fast:.2}ns (lockskip) / {slow:.2}ns (mutex) = {:.2}x lockcost={:.2}ns | fgetc={getc_ns:.2}ns | write/read={:.2}x",
             slow / fast,
-            slow - fast
+            slow - fast,
+            fast / getc_ns
         );
     }
 }
