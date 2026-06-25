@@ -111,16 +111,17 @@ pub fn sinh(x: f64) -> f64 {
     libm::sinh(x)
 }
 
-/// `cosh(x) = (eˣ + e⁻ˣ)/2`, evaluated as `(t + 1/t)/2` with a single
-/// `exp` call (`t = exp(x)`, `e⁻ˣ = 1/t`).
+/// `cosh(x) = (eˣ + e⁻ˣ)/2`, using a small/medium even polynomial before the
+/// large-input one-`exp` form.
 ///
 /// Profiling (`glibc_baseline_math/cosh`) showed `libm::cosh` (~13.5 ns) is
 /// ~1.4x slower than glibc's `cosh` (~9.6 ns), while our `exp` (exp2-based
 /// fast path) is ~0.66x glibc's — so one `exp` + reciprocal reaches parity.
-/// Unlike `sinh`, `cosh` is a *sum* of positive terms with no catastrophic
-/// cancellation anywhere, so the only error source is `exp`'s own (the fast
-/// path is ≤4 ULP on `[-5,5]`, libm-exact outside); the result stays within
-/// the 4-ULP-vs-glibc math contract (verified by `cosh_fast_path_within_4_ulps`).
+/// A degree-26 even Taylor/Horner polynomial is faster still on the survey's
+/// hot `[0.1, 3.0]` band; the first omitted term at `|x| = 3` is below 8e-17.
+/// Unlike `sinh`, `cosh` has no catastrophic cancellation: both the polynomial
+/// and the one-`exp` form sum positive terms, and the result stays within the
+/// 4-ULP-vs-glibc math contract (verified by `cosh_fast_path_within_4_ulps`).
 ///
 /// `|x| >= 700` defers to `libm::cosh`: there `exp(x)` would overflow to `inf`
 /// while `cosh(x)` is still finite in the band `(709.78, 710.47]` (cosh
@@ -128,11 +129,36 @@ pub fn sinh(x: f64) -> f64 {
 /// 700 sits safely below the `exp` overflow threshold (`exp(700) ≈ 1e304`).
 #[inline]
 pub fn cosh(x: f64) -> f64 {
-    if x.abs() < 700.0 {
-        let t = crate::math::exp(x);
+    let ax = x.abs();
+    if ax <= 3.0 {
+        return cosh_poly_le_3(ax);
+    }
+    if ax < 700.0 {
+        let t = crate::math::exp(ax);
         return (t + 1.0 / t) * 0.5;
     }
     libm::cosh(x)
+}
+
+#[inline]
+fn cosh_poly_le_3(x: f64) -> f64 {
+    // Even Taylor/Horner polynomial through x^26. On |x| <= 3 the first omitted
+    // term is x^28/28! < 8e-17, well under the 4-ULP math contract for cosh.
+    let z = x * x;
+    let mut p: f64 = 2.479_596_263_224_797_2e-27;
+    p = p.mul_add(z, 1.611_737_571_096_118_4e-24);
+    p = p.mul_add(z, 8.896_791_392_450_574e-22);
+    p = p.mul_add(z, 4.110_317_623_312_165e-19);
+    p = p.mul_add(z, 1.561_920_696_858_622_5e-16);
+    p = p.mul_add(z, 4.779_477_332_387_385e-14);
+    p = p.mul_add(z, 1.147_074_559_772_972_5e-11);
+    p = p.mul_add(z, 2.087_675_698_786_81e-9);
+    p = p.mul_add(z, 2.755_731_922_398_589e-7);
+    p = p.mul_add(z, 2.480_158_730_158_73e-5);
+    p = p.mul_add(z, 1.388_888_888_888_889e-3);
+    p = p.mul_add(z, 4.166_666_666_666_666_4e-2);
+    p = p.mul_add(z, 0.5);
+    p.mul_add(z, 1.0)
 }
 
 #[inline]

@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — f64 `cosh` degree-26 even polynomial win (BoldWaterfall)
+
+- **LANDED: small/medium `cosh` polynomial turns the survey row from a glibc loss into a win.**
+  The existing f64 `cosh` used the one-`exp` identity `(t + 1/t) / 2` for every `|x| < 700`; this was accurate,
+  but the live `math_survey` `[0.1, 3.0]` row still measured fl **8.75 ns** vs glibc **6.22 ns** =
+  **1.41x LOSS**. Added a degree-26 even Taylor/Horner polynomial for `|x| <= 3`, with the first omitted term
+  `x^28/28! < 8e-17` on the whole interval, and kept the one-`exp` path outside that band. Candidate
+  `math_survey` measured fl **5.47 ns** vs glibc **6.98 ns** = **0.78x WIN** (`maxrel=2.62e-16`), a **1.60x**
+  FrankenLibC self-speedup against the clean baseline row. Supporting Criterion gate
+  `glibc_baseline_math/cosh` measured p50 fl **185.875 ns** vs glibc **412.735 ns** = **0.45x WIN** on
+  `[0.5, 2.5)`. Focused correctness gate:
+  `cargo test -j 1 -p frankenlibc-core cosh_fast_path_within_4_ulps --lib -- --nocapture --test-threads=1`
+  passed with worst **2 ULP**; ABI collateral gate `cargo test -j 1 -p frankenlibc-abi cosh --lib -- --nocapture
+  --test-threads=1` passed **5/5**. This is the polynomial/live-tail-bound lever; do not replace it with the older
+  uniform one-`exp` form unless a broader same-worker gate shows a regression outside `[0.1, 3.0]`.
+
 ## 2026-06-25 — f32 `expm1f` symmetric fast-path no-ship (BoldWaterfall)
 
 - **NO-SHIP: widening the f32 `expm1f` fast path to both signs stayed slower than glibc; source reverted.**
