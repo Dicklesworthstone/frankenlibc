@@ -6,6 +6,18 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — f32 `acoshf` native-`logf` hot band no-ship (BoldWaterfall)
+
+- **NO-SHIP: f32-native `acoshf` on the `math_survey` hot band improves FL but still loses to glibc.**
+  Candidate kept the existing domain guard and f64 fallback, but routed `1.1 <= x <= 8.0` through
+  `logf(x + sqrtf((x-1)(x+1)))`. A wider `x <= 8.0` gate was correctness-red near 1
+  (`acoshf(1.0004272)` drifted **28 ULP**), while the narrowed `1.1..=8.0` gate passed
+  `cargo test -j 1 -p frankenlibc-core acoshf_hot_range --lib -- --nocapture --test-threads=1`
+  with worst **2 ULP** at `x=1.1`. Perf still missed the glibc bar: clean-main `math_survey`
+  measured `acoshf` fl **9.20 ns** vs glibc **5.65 ns** = **1.63x LOSS**; candidate measured
+  fl **7.47 ns** vs glibc **6.26 ns** = **1.19x LOSS** (`maxrel=1.61e-7`). Source reverted.
+  Next `acoshf` work needs a dedicated inverse-hyperbolic kernel, not just f32 `logf` substitution.
+
 ## 2026-06-25 — strstr ~215x WIN on adversarial needles + memmove parity (cc)
 
 - **WIN: fl `strstr` is ~215x faster than glibc on pathological needles** (Two-Way vs glibc's degrading scan).
