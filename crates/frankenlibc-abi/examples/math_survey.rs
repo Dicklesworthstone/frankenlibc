@@ -148,6 +148,13 @@ fn main() {
             ("erfc", frankenlibc_abi::math_abi::erfc, g64(h, b"erfc\0"), 0.1, 5.0),
             ("tgamma", frankenlibc_abi::math_abi::tgamma, g64(h, b"tgamma\0"), 0.5, 8.0),
             ("lgamma", frankenlibc_abi::math_abi::lgamma, g64(h, b"lgamma\0"), 0.5, 12.0),
+            ("exp", frankenlibc_abi::math_abi::exp, g64(h, b"exp\0"), -20.0, 20.0),
+            ("exp2", frankenlibc_abi::math_abi::exp2, g64(h, b"exp2\0"), -20.0, 20.0),
+            ("expm1", frankenlibc_abi::math_abi::expm1, g64(h, b"expm1\0"), -1.5, 3.0),
+            ("cbrt", frankenlibc_abi::math_abi::cbrt, g64(h, b"cbrt\0"), 0.1, 100.0),
+            ("sinh", frankenlibc_abi::math_abi::sinh, g64(h, b"sinh\0"), 0.1, 3.0),
+            ("cosh", frankenlibc_abi::math_abi::cosh, g64(h, b"cosh\0"), 0.1, 3.0),
+            ("tanh", frankenlibc_abi::math_abi::tanh, g64(h, b"tanh\0"), 0.1, 4.0),
         ];
         for &(name, flf, glf, lo, hi) in f64cases {
             let xs: Vec<f64> = (0..4096).map(|i| lo + (hi - lo) * (i as f64) / 4096.0).collect();
