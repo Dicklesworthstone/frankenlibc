@@ -36,7 +36,7 @@ fn main() {
         let mut none: [regex::RegMatch; 0] = [];
         for &(pat, m) in cases.iter() {
             let text = "a".repeat(m); // no 'b' -> NO-MATCH
-            let compiled = match regex::regex_compile(pat.as_bytes(), libc::REG_EXTENDED) {
+            let compiled = match regex::regex_compile(pat.as_bytes(), (libc::REG_EXTENDED | libc::REG_NOSUB)) {
                 Ok(c) => c,
                 Err(e) => {
                     println!("REGEX {pat:?} fl compile err {e}");
@@ -47,7 +47,7 @@ fn main() {
 
             let mut re: libc::regex_t = std::mem::zeroed();
             let pat_c = CString::new(pat).unwrap();
-            let rc = gl_regcomp(&mut re, pat_c.as_ptr(), libc::REG_EXTENDED);
+            let rc = gl_regcomp(&mut re, pat_c.as_ptr(), (libc::REG_EXTENDED | libc::REG_NOSUB));
             if rc != 0 {
                 println!("REGEX {pat:?} glibc compile err {rc}");
                 continue;

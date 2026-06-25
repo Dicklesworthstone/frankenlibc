@@ -6,22 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
-## 2026-06-25 — regex (Thompson NFA) 18-65x SLOWER than glibc — REJECT + real lever (cc)
+## 2026-06-25 — regex: MIXED vs glibc (REG_NOSUB fair test) — loses stars ~10x, WINS ambiguous (cc)
 
-- **REJECT/LOSS (big gap): fl's `regex` (clean-room Thompson NFA + submatch tagging) is 18-65x SLOWER than
-  glibc's lazy DFA** on star-heavy patterns. Head-to-head (`regex_bench.rs`, dlmopen host glibc, REG_EXTENDED,
-  compile once + time exec only, all-`a` text, **both return REG_NOMATCH**):
-  - `"a*a*a*a*a*a*a*a*b"` m=40: fl **10961ns** / glibc **169ns** = **64.9x LOSS**.
-  - `"(a*)*b"` m=26: fl **2269ns** / glibc **121ns** = **18.7x LOSS**.
-  - `"(a|aa)*b"` m=26: fl **1990ns** / glibc **1479ns** = **1.35x LOSS**.
-  ROOT CAUSE: fl's tagged-NFA simulation (per-position thread set + submatch slot bookkeeping) has a HIGH
-  constant; glibc's lazy DFA is O(input) with a tiny constant. The NFA buys worst-case safety (no catastrophic
-  backtracking) but loses the average case badly — and glibc does NOT catastrophically backtrack here (it ran
-  `(a*)*b` in 121ns), so fl has no exponential-pattern win to offset the slow constant. This is fl's BIGGEST
-  measured algorithmic gap so far (a reversal of the strstr/qsort/fnmatch wins).
-  **REAL LEVER (future, substantial): a lazy-DFA fast path, or a tag-free NFA for the REG_NOSUB / discarded-
-  submatch case** — fl pays full tagged-NFA cost even when `pmatch` is empty/ignored. A DFA engine is a big
-  build; deferred, but this is the highest-value perf lever now visible in fl.
+- **CORRECTION + REFINED: fl's `regex` vs glibc is pattern-dependent, NOT a uniform 65x loss.** My first run
+  compiled WITHOUT `REG_NOSUB` so fl paid its full submatch-tagging cost (irrelevant when captures aren't
+  needed) — that inflated the loss. fl HAS a `nosub` "membership-mode" fast path (regex.rs:3204). **Fair test**
+  (`regex_bench.rs`, dlmopen host glibc, `REG_EXTENDED|REG_NOSUB` both sides, compile once + time exec, all-`a`
+  NO-MATCH text):
+  - `"a*a*a*a*a*a*a*a*b"` m=40: fl **1936ns** / glibc **188ns** = **10.3x LOSS** (was 64.9x with tags — nosub is
+    5.7x faster but still loses to glibc's DFA).
+  - `"(a*)*b"` m=26: fl **1029ns** / glibc **132ns** = **7.8x LOSS** (was 18.7x).
+  - `"(a|aa)*b"` m=26: fl **1262ns** / glibc **1555ns** = **0.81x WIN** (glibc's regex degrades on ambiguous
+    alternation; fl's NFA handles it tighter).
+  CONCLUSION: glibc's lazy DFA is faster on simple/star patterns (~10x); fl's NFA WINS where glibc's engine
+  degrades (ambiguous alternation). The submatch-tagging path (no REG_NOSUB) is ~6x slower still — so the
+  **lever for the submatch case is the membership-mode/DFA fast path** (already exists for nosub; extend its
+  spirit). The star-pattern ~10x gap is glibc's DFA O(input) vs fl's NFA closure constant — a DFA engine would
+  close it (big build, deferred). Net: not a uniform gap; fl is competitive-to-winning on hard patterns.
 
 ## 2026-06-25 — fnmatch ~2.5x WIN on multi-star patterns (cc)
 
