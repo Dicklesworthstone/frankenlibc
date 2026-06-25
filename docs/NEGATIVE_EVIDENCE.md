@@ -6,6 +6,18 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — f64 `acosh` large-input asymptotic win (BoldWaterfall)
+
+- **LANDED: large-`x` asymptotic `acosh` turns the `math_survey` `acoshd` row from a glibc loss into a win.**
+  Dirty worktree candidate keeps the near-1/midrange `libm::acosh` path but routes `x >= 16` through
+  `log(x) + ln2 + z*(-1/4 - 3z/32 - 5z^2/96 - 35z^3/1024 - 63z^4/2560)` with `z=1/x^2`,
+  avoiding the sqrt-bound identity on the large-input survey band. Focused proof
+  `cargo test -j 1 -p frankenlibc-core acosh_large_asymptotic --lib -- --nocapture --test-threads=1`
+  passed with worst **1 ULP** at `x=168.587646484375`. Clean-main `math_survey` measured `acoshd`
+  fl **14.31 ns** vs glibc **8.85 ns** = **1.62x LOSS**; candidate measured fl **8.38 ns** vs glibc
+  **9.27 ns** = **0.90x WIN** (`maxrel=2.22e-16`). The gate is deliberately `x >= 16`; earlier
+  near-1/midrange log1p/sqrt forms remain rejected because they regressed.
+
 ## 2026-06-25 — f32 `acoshf` native-`logf` hot band no-ship (BoldWaterfall)
 
 - **NO-SHIP: f32-native `acoshf` on the `math_survey` hot band improves FL but still loses to glibc.**

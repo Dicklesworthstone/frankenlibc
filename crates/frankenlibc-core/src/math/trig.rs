@@ -217,7 +217,20 @@ pub fn asinh(x: f64) -> f64 {
 
 #[inline]
 pub fn acosh(x: f64) -> f64 {
-    // Same as asinh: the log1p form measured 1.43x (sqrt-bound); libm::acosh is tighter.
+    // Large-x acosh is dominated by log(2x). The previously rejected rewrite was
+    // sqrt-bound; this asymptotic path removes the sqrt on the hot large-input band and
+    // corrects log(2x) by the exact series in z=1/x^2:
+    // acosh(x)-log(2x) = -z/4 - 3z^2/32 - 5z^3/96 - 35z^4/1024 - 63z^5/2560 + O(z^6).
+    if x >= 16.0 {
+        let z = 1.0 / (x * x);
+        let mut p: f64 = -63.0 / 2560.0;
+        p = p.mul_add(z, -35.0 / 1024.0);
+        p = p.mul_add(z, -5.0 / 96.0);
+        p = p.mul_add(z, -3.0 / 32.0);
+        p = p.mul_add(z, -0.25);
+        return crate::math::log(x) + core::f64::consts::LN_2 + z * p;
+    }
+    // The near-1/midrange log1p form measured 1.43x (sqrt-bound); libm::acosh is tighter.
     libm::acosh(x)
 }
 
@@ -300,6 +313,32 @@ mod tests {
         assert_eq!(cosh(-800.0), f64::INFINITY);
         assert!(within_ulps(cosh(710.4), 710.4_f64.cosh(), 4));
         println!("cosh worst ULP = {worst}");
+    }
+
+    #[test]
+    fn acosh_large_asymptotic_within_4_ulps() {
+        let mut worst = 0u64;
+        let mut worst_x = 0.0_f64;
+        for i in 0..=262_144 {
+            let x = 16.0 + (10_000_000.0 - 16.0) * (i as f64) / 262_144.0;
+            let got = acosh(x);
+            let want = x.acosh();
+            let u = if got == want {
+                0
+            } else {
+                (got.to_bits() as i64 - want.to_bits() as i64).unsigned_abs()
+            };
+            if u > worst {
+                worst = u;
+                worst_x = x;
+            }
+            assert!(
+                within_ulps(got, want, 4),
+                "acosh({x}) = {got:?} vs glibc {want:?} ({u} ULP)"
+            );
+        }
+        assert_eq!(acosh(f64::INFINITY), f64::INFINITY);
+        println!("acosh large asymptotic worst ULP = {worst} at {worst_x}");
     }
 
     #[test]
