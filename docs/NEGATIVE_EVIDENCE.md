@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — f64 `lgamma` via `log(tgamma_reduced)` partial no-ship (BoldWaterfall)
+
+- **NO-SHIP: positive-band `lgamma` reuse of `tgamma_reduced` is a self-speedup but remains slower than glibc.**
+  Dirty worktree candidate routed `lgamma`/`lgamma_r` for positive `x in [2.6, 13.0]` through
+  `log(abs(tgamma_reduced(x)))` and shortcut positive `signgam` to `1`. This is numerically clean on the
+  `math_survey` row (`maxrel=4.42e-16`) and improves current main, but it does not clear the head-to-head bar.
+  Same-worker clean-main baseline at `25eabe0fb` on `vmi1227854` measured `lgamma` fl **20.34 ns** vs glibc
+  **10.48 ns** = **1.94x LOSS**. Candidate on the same worker measured fl **13.62 ns** vs glibc **9.27 ns** =
+  **1.47x LOSS** (a **1.49x** FrankenLibC self-speedup). The first ungated variant was conformance-red
+  (`lgamma` drift >4 ULP near roots); the narrowed `[2.6, 13.0]` gate passed
+  `frankenlibc-core --test math_special_differential_probe`,
+  `frankenlibc-core gamma --release`, `frankenlibc-abi --lib lgamma --release`, and
+  `frankenlibc-abi --test conformance_diff_math_special --release`. A generated polynomial/table route was
+  checked locally and rejected before source edits because tested segments still missed the 4-ULP glibc probe
+  or required an oversized table unlikely to beat glibc. Verdict: do not land this reuse path as-is; the
+  remaining gap needs a direct `lgamma` kernel, not `tgamma` followed by `log`.
+
 ## 2026-06-25 — f64 `cosh` degree-26 even polynomial win (BoldWaterfall)
 
 - **LANDED: small/medium `cosh` polynomial turns the survey row from a glibc loss into a win.**
