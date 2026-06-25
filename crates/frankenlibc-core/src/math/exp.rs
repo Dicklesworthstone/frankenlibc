@@ -1052,10 +1052,28 @@ pub fn expm1(x: f64) -> f64 {
     // x << 0 -> exp underflows -> 0 -> -1 (expm1(-inf) = -1). Only small |x| (< 0.5,
     // where exp(x) ~ 1 and the cancellation matters) keeps libm::expm1. Widens the old
     // positive-only [0.5, 2.5] fast path; EXPM1_POSITIVE_FAST_MIN is the |x| threshold.
-    if x.abs() >= EXPM1_POSITIVE_FAST_MIN {
+    let ax = x.abs();
+    if ax >= EXPM1_POSITIVE_FAST_MIN {
         return exp(x) - 1.0;
     }
-    libm::expm1(x)
+    // |x| < 0.5: direct Taylor expm1(x) = x·Σ x^k/(k+1)! through x^14 (first omitted
+    // x^15/15! < 2.3e-17, under the 4-ULP bound). No cancellation (unlike exp(x)-1) and
+    // cheaper than libm::expm1's reduction+polynomial. x carries the sign, so ±0 -> ±0.
+    let mut p: f64 = 1.147_074_559_772_972_5e-11; // 1/14!
+    p = p.mul_add(x, 1.605_904_383_682_161_3e-10); // 1/13!
+    p = p.mul_add(x, 2.087_675_698_786_81e-9); // 1/12!
+    p = p.mul_add(x, 2.505_210_838_544_172e-8); // 1/11!
+    p = p.mul_add(x, 2.755_731_922_398_589e-7); // 1/10!
+    p = p.mul_add(x, 2.755_731_922_398_589_3e-6); // 1/9!
+    p = p.mul_add(x, 2.480_158_730_158_73e-5); // 1/8!
+    p = p.mul_add(x, 1.984_126_984_126_984e-4); // 1/7!
+    p = p.mul_add(x, 1.388_888_888_888_889e-3); // 1/6!
+    p = p.mul_add(x, 8.333_333_333_333_333e-3); // 1/5!
+    p = p.mul_add(x, 4.166_666_666_666_666_4e-2); // 1/4!
+    p = p.mul_add(x, 0.166_666_666_666_666_66); // 1/3!
+    p = p.mul_add(x, 0.5); // 1/2!
+    p = p.mul_add(x, 1.0); // 1/1!
+    x * p
 }
 
 /// Natural log via the fast log2 kernel: `ln(x) = log2(x) * ln(2)`.
