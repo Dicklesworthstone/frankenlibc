@@ -170,8 +170,7 @@ fn main() {
         // Large-array integer sort: fl radix is O(n), glibc merge is O(n·log n) — the gap
         // GROWS with n (the log factor). n=1M random i32. Clone overhead is << the sort at
         // this size and equal for both, so it barely biases the ratio.
-        {
-            let big = 1_000_000usize;
+        for &big in &[1_000_000usize, 10_000_000usize] {
             let base: Vec<i32> = (0..big)
                 .map(|i| (i.wrapping_mul(2_654_435_761) >> 7) as i32)
                 .collect();
@@ -182,8 +181,8 @@ fn main() {
             }
             let mut vg = base.clone();
             gl_qsort(vg.as_mut_ptr().cast(), big, 4, cmp_i32);
-            assert_eq!(vf, vg, "i32_1M: fl qsort != glibc qsort");
-            let iters = 30usize;
+            assert_eq!(vf, vg, "i32_big: fl qsort != glibc qsort");
+            let iters = if big >= 10_000_000 { 8 } else { 30 };
             let t0 = Instant::now();
             for _ in 0..iters {
                 let mut v = base.clone();
@@ -199,7 +198,7 @@ fn main() {
                 black_box(v.as_ptr());
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("SORT i32_1M n={big} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x", fl / gl);
+            println!("SORT i32_large n={big} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x", fl / gl);
         }
     }
 }
