@@ -6,6 +6,19 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort LOSS on large elements (16-byte) — element-size-dependent (cc)
+
+- **REJECT/LOSS: fl `qsort` LOSES 1.49x on 16-byte elements** even though it WINS on 4-byte ints. Head-to-head
+  (`sort_bench.rs`, n=20000, 16-byte keys, memcmp comparator, **output VERIFIED identical to glibc**): fl
+  **2571µs** / glibc **1726µs** = **1.49x LOSS**. Contrast the same run's int wins (random 0.55x, dup10 0.53x).
+  ROOT CAUSE: glibc's `qsort` for large elements sorts an **index/pointer array via a temp buffer** (few big
+  moves), while fl's pdqsort swaps the 16-byte elements **in place** (3-4x the memory traffic), and the radix
+  lane doesn't fire on 16-byte memcmp keys. **fl's qsort advantage is ELEMENT-SIZE-DEPENDENT: wins ≤8-byte
+  (pdqsort+radix, fewer comparisons, no alloc), loses ≥16-byte (in-place big-element swaps > glibc's index
+  sort).** REAL LEVER (not yet implemented): an index-sort fallback in `core::stdlib::sort::qsort` for
+  `width > 8` (pdqsort the indices, then cycle-permute) would recover the large-element case — candidate for a
+  future turn (substantial change to the shared core sort; deferred, not rushed).
+
 ## 2026-06-25 — f64 `asinh` large-tail asymptotic landed (BoldWaterfall)
 
 - **WIN: landed the measured `asinh` large-tail asymptotic worktree win onto `main`.** The source/bench

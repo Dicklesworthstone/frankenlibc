@@ -17,6 +17,26 @@ fn cmp_rs(a: &[u8], b: &[u8]) -> i32 {
     (x > y) as i32 - (x < y) as i32
 }
 
+unsafe extern "C" fn cmp_str(a: *const c_void, b: *const c_void) -> i32 {
+    let (pa, pb) = (a as *const u8, b as *const u8);
+    for i in 0..16 {
+        let (x, y) = (unsafe { *pa.add(i) }, unsafe { *pb.add(i) });
+        if x != y {
+            return x as i32 - y as i32;
+        }
+    }
+    0
+}
+
+fn cmp_str_rs(a: &[u8], b: &[u8]) -> i32 {
+    for i in 0..16 {
+        if a[i] != b[i] {
+            return a[i] as i32 - b[i] as i32;
+        }
+    }
+    0
+}
+
 fn main() {
     unsafe {
         let h = libc::dlmopen(
@@ -75,5 +95,32 @@ fn main() {
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!("SORT {name} n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
         }
+
+        // String sort: 16-byte random keys, lexicographic (memcmp) comparator.
+        let m = 16usize;
+        let sbase: Vec<u8> = (0..n * m)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u8)
+            .collect();
+        let mut sf = sbase.clone();
+        frankenlibc_core::stdlib::sort::qsort(&mut sf, m, cmp_str_rs);
+        let mut sg = sbase.clone();
+        gl_qsort(sg.as_mut_ptr().cast(), n, m, cmp_str);
+        assert_eq!(sf, sg, "str16: fl qsort != glibc qsort");
+        let iters = 1000usize;
+        let t0 = Instant::now();
+        for _ in 0..iters {
+            let mut v = sbase.clone();
+            frankenlibc_core::stdlib::sort::qsort(&mut v, m, cmp_str_rs);
+            black_box(v.as_ptr());
+        }
+        let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+        let t1 = Instant::now();
+        for _ in 0..iters {
+            let mut v = sbase.clone();
+            gl_qsort(v.as_mut_ptr().cast(), n, m, cmp_str);
+            black_box(v.as_ptr());
+        }
+        let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+        println!("SORT str16 n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
     }
 }
