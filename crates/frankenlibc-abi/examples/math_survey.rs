@@ -17,6 +17,15 @@
 // core kernel used widely; needs ULP-conformance across its full gate). Alternatively a
 // fast f32 `log1pf` (fl fused f32 `logf` + a small-|x| polynomial) fixes log1pf + the
 // hyperbolics' small-arg ranges without touching f64 log.
+//
+// EXACT CODE-LEVEL ROOT CAUSE (cc, math/exp.rs:1063): fl's f64 `log(x) = log2_kernel(x)
+// * LN_2` routes NATURAL log through the 64-bucket *log2* kernel (~9 ns, only glibc-LOG2
+// parity) + a multiply; glibc's natural log is a DEDICATED 128-bucket `__log` (~5 ns).
+// FIX = port ARM optimized-routines math/log.c + math/log_data.c, config N==128 /
+// LOG_POLY_ORDER==6 (tab[128]{invc,logc} + tab2[128] + poly1[12] + poly[6] + ln2hi/lo),
+// hex-floats via Python float.fromhex→from_bits, replacing the log2_kernel*LN_2
+// indirection. A 2-3 turn core-function port (NOT a rush job); un-stash the bit-exact
+// hyperbolics after.
 use std::ffi::c_void;
 use std::time::Instant;
 
