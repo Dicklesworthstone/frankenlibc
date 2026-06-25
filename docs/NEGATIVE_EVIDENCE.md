@@ -6,6 +6,30 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — passwd name-lookup cache/invalidation no-ships (BoldWaterfall)
+
+- **NO-SHIP: old scratch `getpwnam` last-name cache is slower than current `main`; not landed.**
+  Scratch worktree `/data/projects/.scratch/frankenlibc-cod-b-boldverify-20260620` contained an unlanded
+  generation-scoped `CachedNameLookup` plus materialized-result reuse for `getpwnam`. Re-benchmarked against
+  host glibc with warm `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`:
+  `cargo bench -j 1 -p frankenlibc-bench --features abi-bench --bench baseline_capture_bench
+  nss_passwd_lookup -- --noplot --sample-size 20 --warm-up-time 1 --measurement-time 2`.
+  Current `main` baseline in the same session: `getpwnam_root_glibc_comparable` fl p50 **5.288 us** vs glibc
+  **100.611 us** = **0.053x WIN** (mean 6.222 vs 130.903 us = 0.048x); `getpwuid_0_glibc_comparable` fl p50
+  **8.942 us** vs glibc **105.454 us** = **0.085x WIN**. Scratch name-cache candidate still beat its same-run
+  host glibc (`getpwnam` **11.404 us** vs **141.538 us** = **0.081x WIN**; `getpwuid` **17.412 us** vs
+  **139.843 us** = **0.125x WIN**) but regressed current `main` by roughly **2.16x** on the target `getpwnam`
+  FL p50 and **1.95x** on `getpwuid` FL p50. Verdict: do not land the scratch cache; do not retry a
+  last-result name cache without a different representation that avoids extra cloning/materialization cost.
+- **REVERTED / NO-SHIP: current-tree `getpwnam` C-stat fingerprint probe.** Applied one RCU/seqlock-inspired
+  hot-metadata lever from the existing passwd UID path: use `refresh_cache_fast_stat()` for name lookups
+  instead of the default Rust metadata probe. Candidate same-run still beat host glibc (`getpwnam` fl p50
+  **5.639 us** vs glibc **149.742 us** = **0.038x WIN**; mean 6.769 vs 256.853 us = 0.026x), but it was not
+  a measured improvement over current `main` (`5.288 -> 5.639 us` p50, `6.222 -> 6.769 us` mean). The uid guard
+  was also essentially neutral/slower (`8.942 -> 9.015 us` p50; `9.980 -> 10.593 us` mean). Source was reverted;
+  ledger-only commit. Next passwd/NSS work needs a materially different lower-cost epoch/index primitive, not
+  another last-result cache or C-stat swap.
+
 ## 2026-06-25 — iconv CP932->UTF-16 compact-row no-ship (BoldWaterfall)
 
 - **NO-SHIP: CP932 Hiragana-row arithmetic decode still loses to glibc; source reverted.** Tested a guarded
