@@ -6,6 +6,18 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — wcspbrk 24x + wcsspn 40x WIN — wide charset-scan family complete (cc)
+
+- **WIN: the entire wide charset-scan family crushes glibc.** Completing the `wcscspn` 17x entry below, now
+  `wcspbrk` + `wcsspn` measured (`mem_large.rs`, dlmopen host glibc, 1000-`a` string, r=50 set, **output
+  verified**):
+  - `wcspbrk`: fl **197ns** / glibc **4737ns** = **0.042x (24x faster)**.
+  - `wcsspn`: fl **120ns** / glibc **4746ns** = **0.025x (39.5x faster)**.
+  glibc's wide charset functions are all ~4700ns (slow per-char membership); fl's are 120-200ns (fast set).
+  The whole family (`wcscspn` 17x / `wcspbrk` 24x / `wcsspn` 40x) wins big — glibc never optimized the wide
+  charset path (no narrow-byte bitmap is available for 32-bit chars, and glibc fell back to a slow per-char
+  loop). A clean constant-factor win cluster on the wide path.
+
 ## 2026-06-25 — wcscspn ~17x WIN on long wide strings (cc)
 
 - **WIN: fl `wcscspn` is ~17x faster than glibc on long wide strings** — fast membership set vs glibc's slow

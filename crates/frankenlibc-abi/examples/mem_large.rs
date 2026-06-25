@@ -228,5 +228,59 @@ fn main() {
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!("MEM wcscspn_n1000_r{rsize} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.4}x", fl / gl);
         }
+
+        // wcspbrk + wcsspn (share wcscspn's membership path), 1000-'a' string, r=50.
+        type WcspbrkFn = unsafe extern "C" fn(*const i32, *const i32) -> *const i32;
+        let gl_wcspbrk: WcspbrkFn = std::mem::transmute::<*mut c_void, WcspbrkFn>(libc::dlsym(
+            h,
+            b"wcspbrk\0".as_ptr().cast(),
+        ));
+        let gl_wcsspn: WcscspnFn = std::mem::transmute::<*mut c_void, WcscspnFn>(libc::dlsym(
+            h,
+            b"wcsspn\0".as_ptr().cast(),
+        ));
+        {
+            let mut s: Vec<u32> = vec![b'a' as u32; 1000];
+            s.push(0);
+            let mut acc_no: Vec<u32> = (0..50).map(|i| b'b' as u32 + i).collect(); // no 'a'
+            acc_no.push(0);
+            let mut acc_yes: Vec<u32> = std::iter::once(b'a' as u32)
+                .chain((0..49).map(|i| b'b' as u32 + i))
+                .collect(); // contains 'a'
+            acc_yes.push(0);
+            assert!(
+                frankenlibc_core::string::wide::wcspbrk(&s, &acc_no).is_none()
+                    && gl_wcspbrk(s.as_ptr().cast(), acc_no.as_ptr().cast()).is_null(),
+                "wcspbrk should be no-hit"
+            );
+            assert_eq!(
+                frankenlibc_core::string::wide::wcsspn(&s, &acc_yes),
+                gl_wcscspn(s.as_ptr().cast(), acc_no.as_ptr().cast()), // wcsspn(yes) == wcscspn(no) == 1000
+                "wcsspn"
+            );
+            let iters = 3000usize;
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::wide::wcspbrk(black_box(&s), black_box(&acc_no)));
+            }
+            let flp = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_wcspbrk(black_box(s.as_ptr().cast()), black_box(acc_no.as_ptr().cast())));
+            }
+            let glp = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM wcspbrk_n1000_r50 fl={flp:.0}ns glibc={glp:.0}ns fl/glibc={:.4}x", flp / glp);
+            let t2 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::wide::wcsspn(black_box(&s), black_box(&acc_yes)));
+            }
+            let fls = t2.elapsed().as_nanos() as f64 / iters as f64;
+            let t3 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_wcscspn(black_box(s.as_ptr().cast()), black_box(acc_no.as_ptr().cast())));
+            }
+            let gls = t3.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM wcsspn_n1000_r50 fl={fls:.0}ns glibc={gls:.0}ns fl/glibc={:.4}x", fls / gls);
+        }
     }
 }
