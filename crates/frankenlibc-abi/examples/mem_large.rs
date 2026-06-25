@@ -99,6 +99,34 @@ fn main() {
             println!("MEM strstr_hard hsz={hsz} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
         }
 
+        // strcasestr HARD case-mixed needle: glibc's strcasestr is famously naive O(n·m);
+        // fl is dual-anchor case-fold + Two-Way. Needle "a"×31 + "B" never folds-matches
+        // in "a"×N (the folded 'b' is absent) → full scan.
+        type StrcasestrFn = unsafe extern "C" fn(*const c_void, *const c_void) -> *const c_void;
+        let gl_scs: StrcasestrFn = std::mem::transmute::<*mut c_void, StrcasestrFn>(libc::dlsym(
+            h,
+            b"strcasestr\0".as_ptr().cast(),
+        ));
+        for &hsz in &[4096usize, 65536] {
+            let mut hay = vec![b'a'; hsz];
+            *hay.last_mut().unwrap() = 0;
+            let mut needle = vec![b'a'; 32];
+            needle[31] = b'B';
+            needle.push(0);
+            let iters = (2_000_000_000usize / hsz).max(200);
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::str::strcasestr(black_box(&hay), black_box(&needle)));
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_scs(black_box(hay.as_ptr().cast()), black_box(needle.as_ptr().cast())));
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM strcasestr_hard hsz={hsz} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+        }
+
         // memmove non-overlapping (= memcpy, bandwidth) — 1MB.
         type MemmoveFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void;
         let gl_memmove: MemmoveFn =

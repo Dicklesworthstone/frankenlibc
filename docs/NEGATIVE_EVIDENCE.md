@@ -6,6 +6,16 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — strcasestr ~210x WIN on adversarial needles (cc)
+
+- **WIN: fl `strcasestr` is ~210x faster than glibc on adversarial case-mixed needles.** glibc's `strcasestr`
+  is naive O(n·m); fl is dual-anchor case-fold + Two-Way O(n). Head-to-head (`mem_large.rs`, dlmopen host
+  glibc), needle `"a"×31 + "B"` that never folds-matches in `"a"×N`:
+  - hsz=4KB: fl **112ns** / glibc **18760ns** = **0.006x (167x faster)**.
+  - hsz=64KB: fl **1425ns** / glibc **301283ns** = **0.0047x (211x faster)**.
+  Both correctly return not-found. Same Two-Way algorithmic dominance as `strstr` (215x) but for the
+  case-insensitive path — glibc never adopted Two-Way for `strcasestr`. safe-Rust beats glibc's weak algorithm.
+
 ## 2026-06-25 — qsort index-sort fallback REJECTED (tested, regressed) (cc)
 
 - **REJECT: the index-sort fallback for large qsort elements (the lever proposed in the entry below) does NOT
