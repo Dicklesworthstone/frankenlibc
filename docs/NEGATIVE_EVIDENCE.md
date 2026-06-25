@@ -6,6 +6,17 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — memset size-dependent (mixed, no lever) (cc)
+
+- **NEUTRAL/MIXED: fl `memset` vs glibc is size-dependent — no robust lever.** Head-to-head (`mem_large.rs`,
+  dlmopen host glibc, fill 0x5a):
+  - 64B: fl **3.2ns** / glibc **2.0ns** = **1.64x LOSS** (small per-call setup vs glibc's tight tiny path).
+  - 4KB: fl **32.6ns** / glibc **38.7ns** = **0.84x WIN** (fl's uniform SIMD fill beats glibc's mid-size-class
+    dispatch branch).
+  - 1MB: fl **11741ns** / glibc **11987ns** = **0.98x parity** (bandwidth-bound; `rep stosb` ≈ SIMD fill).
+  The small-buffer loss (setup) and large-buffer parity (bandwidth) bracket a modest mid-size win — net not a
+  tractable code change. (`memmove` non-overlap 1MB was likewise parity.)
+
 ## 2026-06-25 — str/mem/wide SCAN+COMPARE family at the portable_simd floor — REJECT (cc)
 
 - **REJECT: the raw scan/compare primitives lose 1.2-2.5x to glibc — the portable_simd-vs-glibc-asm floor.**

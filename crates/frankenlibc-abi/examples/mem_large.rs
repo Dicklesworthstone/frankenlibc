@@ -177,5 +177,26 @@ fn main() {
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!("MEM memmove_1M fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
         }
+
+        // memset across sizes: glibc uses rep stosb / AVX; fl uses a Rust fill. Small =
+        // per-call overhead, large = bandwidth.
+        type MemsetFn = unsafe extern "C" fn(*mut c_void, i32, usize) -> *mut c_void;
+        let gl_memset: MemsetFn =
+            std::mem::transmute::<*mut c_void, MemsetFn>(libc::dlsym(h, b"memset\0".as_ptr().cast()));
+        for &size in &[64usize, 4096, 1_048_576] {
+            let mut buf = vec![0u8; size];
+            let iters = (2_000_000_000usize / size).max(500);
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::mem::memset(black_box(&mut buf), 0x5a, size));
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_memset(black_box(buf.as_mut_ptr().cast()), 0x5a, size));
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM memset size={size} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.2}x", fl / gl);
+        }
     }
 }
