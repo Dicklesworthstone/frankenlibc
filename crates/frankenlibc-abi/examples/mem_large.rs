@@ -73,5 +73,56 @@ fn main() {
             let glc = t5.elapsed().as_nanos() as f64 / iters as f64;
             println!("MEM memcmp size={size} fl={flc:.0}ns glibc={glc:.0}ns fl/glibc={:.2}x", flc / glc);
         }
+
+        // strstr HARD needle ("aaa…ab" never matches in "aaa…a" → full scan): does glibc's
+        // strstr degrade like its weak memmem (290ns) or is it two-way-strong?
+        type StrstrFn = unsafe extern "C" fn(*const c_void, *const c_void) -> *const c_void;
+        let gl_strstr: StrstrFn =
+            std::mem::transmute::<*mut c_void, StrstrFn>(libc::dlsym(h, b"strstr\0".as_ptr().cast()));
+        for &hsz in &[4096usize, 65536] {
+            let mut hay = vec![b'a'; hsz];
+            *hay.last_mut().unwrap() = 0;
+            let mut needle = vec![b'a'; 32];
+            needle[31] = b'b';
+            needle.push(0);
+            let iters = (2_000_000_000usize / hsz).max(200);
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::str::strstr(black_box(&hay), black_box(&needle)));
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_strstr(black_box(hay.as_ptr().cast()), black_box(needle.as_ptr().cast())));
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM strstr_hard hsz={hsz} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+        }
+
+        // memmove non-overlapping (= memcpy, bandwidth) — 1MB.
+        type MemmoveFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void;
+        let gl_memmove: MemmoveFn =
+            std::mem::transmute::<*mut c_void, MemmoveFn>(libc::dlsym(h, b"memmove\0".as_ptr().cast()));
+        {
+            let size = 1_048_576usize;
+            let src = vec![b'a'; size];
+            let mut dst = vec![0u8; size];
+            let iters = 4000usize;
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::mem::memmove(black_box(&mut dst), black_box(&src), size));
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_memmove(
+                    black_box(dst.as_mut_ptr().cast()),
+                    black_box(src.as_ptr().cast()),
+                    size,
+                ));
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM memmove_1M fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+        }
     }
 }

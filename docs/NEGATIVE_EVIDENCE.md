@@ -6,6 +6,18 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — strstr ~215x WIN on adversarial needles + memmove parity (cc)
+
+- **WIN: fl `strstr` is ~215x faster than glibc on pathological needles** (Two-Way vs glibc's degrading scan).
+  Head-to-head (`mem_large.rs`, dlmopen host glibc), needle `"a"×31 + "b"` that never matches in `"a"×N`:
+  - hsz=4KB: fl **71ns** / glibc **15229ns** = **0.005x (215x faster)**.
+  - hsz=64KB: fl **1168ns** / glibc **252986ns** = **0.0046x (217x faster)**.
+  glibc's `strstr` degrades to ~O(n·m) on this needle; fl's Two-Way engine (via `memmem`) stays O(n) and
+  returns the correct `None`. Same algorithmic dominance as `memmem_twoway` (fl 0.04x) but MORE extreme here.
+  This is where safe-Rust genuinely beats glibc: the *algorithm*, not raw-SIMD throughput.
+- **NEUTRAL: `memmove` non-overlapping 1MB = 1.01x parity** (fl 20542ns / glibc 20321ns; bandwidth-bound, both
+  ~20.5 µs/MB). No lever — copy throughput is memory-bound, not a SIMD-codegen gap.
+
 ## 2026-06-25 — str/mem large-buffer head-to-head REJECT (cc)
 
 - **REJECT: safe-Rust SIMD does NOT beat glibc on memchr/strlen/memcmp at any size.** In-process A/B (dlmopen
