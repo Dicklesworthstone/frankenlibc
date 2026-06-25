@@ -883,11 +883,16 @@ pub fn expm1f(x: f32) -> f32 {
 
 #[inline]
 pub fn log1pf(x: f32) -> f32 {
-    // log1pf(-1) = -inf is a pole: glibc raises FE_DIVBYZERO, libm omits it.
-    if x == -1.0 {
-        fe_divbyzero_f32();
+    if x == 0.0 {
+        return x; // preserve the sign of zero (log1p(-0) = -0)
     }
-    libm::log1pf(x)
+    // log1p(x) = log(1+x). Compute 1+x in f64 — EXACT for an f32 x (no catastrophic
+    // small-x cancellation) — then take the dedicated bit-exact f64 `log` kernel and
+    // round once. Accurate across the whole domain and ~glibc speed (the f64 log is
+    // the ARM __log port), replacing the generic libm::log1pf. The f64 log raises
+    // FE_DIVBYZERO for 1+x == 0 (x == -1, pole) and FE_INVALID for 1+x < 0 (x < -1,
+    // domain), exactly matching glibc's log1pf.
+    (crate::math::log(1.0 + f64::from(x))) as f32
 }
 
 // --- Float utilities ---

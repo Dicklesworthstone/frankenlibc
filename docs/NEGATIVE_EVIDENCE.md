@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-24 — f64 `log` kernel + log1pf (cc, fused-kernel vein reopened)
+
+- **f64 `log`: ARM `__log` port — ~2x-slow → bit-exact glibc-grade (commit 3d0ccb75c).** The old
+  `frankenlibc_core::math::log` was `log2_kernel(x)*LN_2`, routing natural log through the 64-bucket *log2*
+  kernel (~9 ns, only glibc-log2 parity). Replaced with a verbatim port of ARM optimized-routines
+  math/log.c + log_data.c (N=128, POLY_ORDER=6, POLY1_ORDER=12, FMA path) = glibc's `__ieee754_log`; tables
+  auto-extracted into `math/log_data.rs`. MEASURED (math_survey example, deployed): f64 log fl **6.18 ns /
+  glibc 5.05 ns = 1.22x, maxrel=0.00 (BIT-EXACT)** — down from ~2x; the residual is the universal ABI-membrane
+  floor, not the kernel. Knock-on (the f64-log inverse hyperbolics): asinhf 1.92x→1.38x, acoshf 2.03x→1.73x.
+- **f32 `log1pf`: 1.71x → 1.17x, bit-exact (commit after).** Was `libm::log1pf` (generic). Now
+  `log(1.0 + x as f64) as f32` — 1+x is EXACT in f64 (no small-x cancellation), the dedicated f64 log is fast
+  + bit-exact, single rounding. MEASURED: fl 7.38 / glibc 6.28 = **1.17x, maxrel=0.00** (glibc uses the same
+  identity). Conformance green. ⚠️ PRE-EXISTING (NOT cc): `log2f_dyadic_profile_grid_matches_libm_bits` +
+  `golden_log2f_dyadic_profile_corpus_sha256` + `powf_profile_exp_1_337_...` are RED on bare `main` (verified
+  by stash-revert) — an f32 log2f/powf profile-corpus regression that the f32-math owner should fix.
+
 ## 2026-06-23 — STRUCTURAL PERF CAMPAIGN COMPLETE (cc) — handoff for the next (codegen/architectural) mode
 
 This session delivered **15 byte-identical measured WINS** across two clean structural veins, then
