@@ -53,6 +53,12 @@ retried and real wins are confirmed with numbers.
   tails >709/<-708/±inf/NaN stay bit-exact libm; in-range ≤4 ULP). Full math suite green (only the 3
   pre-existing log2f/powf golden fails remain). Helps the exp-family. Remaining survey losses: expm1 1.40x,
   cbrt 1.37x (=libm/glibc fdlibm, codegen-floored), sinh 1.52x, cosh 1.42x; exp2 0.99x parity.
+- **🎯 f64 `sinh`: 1.52x LOSS → 0.81x WIN (exp-win cascade).** Was pure `libm::sinh` (no fast path). Added a
+  fast path mirroring `cosh`: for |x| in [1,700) the two exponentials are well separated (no cancellation), so
+  sinh(x) = sign(x)·(t - 1/t)/2 with t = exp(|x|) rides the now-fast f64 `exp` kernel. MEASURED: fl 17.93→11.23
+  / glibc 13.92 ns = **0.81x WIN** (1.24x faster), maxrel 4.34e-16 ~2 ULP, 20 trig-tests green. Small |x| (<1)
+  / overflow (>=700) keep libm::sinh. The exp win (c29f30410) directly unlocked this. (`cosh` already had the
+  [-700,700] fast path so it's algorithm-floored ~1.37x; expm1 fast path is positive-only, could widen.)
 
 ## 2026-06-23 — STRUCTURAL PERF CAMPAIGN COMPLETE (cc) — handoff for the next (codegen/architectural) mode
 

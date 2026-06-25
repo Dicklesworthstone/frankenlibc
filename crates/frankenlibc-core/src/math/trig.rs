@@ -98,6 +98,16 @@ pub fn atan2(y: f64, x: f64) -> f64 {
 
 #[inline]
 pub fn sinh(x: f64) -> f64 {
+    // For |x| in [1, 700) the two exponentials are well separated (t >> 1/t), so
+    // sinh(x) = sign(x)·(t - 1/t)/2 with t = exp(|x|) has no cancellation and rides the
+    // now-fast f64 `exp` kernel — mirrors the existing `cosh` fast path. Small |x| (<1,
+    // cancellation) and |x| >= 700 (overflow) keep libm::sinh's exact handling.
+    let ax = x.abs();
+    if (1.0..700.0).contains(&ax) {
+        let t = crate::math::exp(ax);
+        let r = (t - 1.0 / t) * 0.5;
+        return if x.is_sign_negative() { -r } else { r };
+    }
     libm::sinh(x)
 }
 
