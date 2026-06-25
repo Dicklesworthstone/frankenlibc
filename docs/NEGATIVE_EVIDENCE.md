@@ -6,6 +6,18 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — wmemset WIN (1.4-1.8x) + wcsnlen floor LOSS — the wide FILL/SCAN split (cc)
+
+- **WIN: `wmemset` 1.4-1.8x faster than glibc.** Head-to-head (`mem_large.rs`, dlmopen host glibc): n=256 fl
+  **8ns** / glibc **15ns** = 0.56x; n=65536 fl **2721ns** / glibc **3887ns** = 0.70x. fl's wide SIMD fill beats
+  glibc's `wmemset` at both small and large sizes.
+- **REJECT: `wcsnlen` 1.25-1.41x SLOWER (wide-scan floor).** n=256 fl 11ns / glibc 8ns = 1.41x; n=65536 fl
+  2472ns / glibc 1972ns = 1.25x (**output verified**). A wide scan like `wcslen` (1.40x) / `wmemchr` (1.43x) —
+  LLVM portable_simd vs glibc hand-asm, irreducible.
+  **This crystallizes the wide-string split: fl WINS wide FILLS/charset/case/substring (wmemset, wcscspn 17x,
+  wcspbrk 24x, wcsncasecmp 85x, wcscasecmp 21x, wcsstr 5.4x) — where glibc left a slow per-char/scalar path —
+  and LOSES wide raw SCANS (wcsnlen, wcslen, wmemchr ~1.3-1.4x) where glibc has tuned SIMD asm.**
+
 ## 2026-06-25 — wcsncasecmp 85x WIN + wide charset family (CORRECTED) (cc)
 
 - **WIN: `wcsncasecmp` 85x** — glibc does per-char locale-aware `towlower`×2 (very slow); fl uses a fast ASCII

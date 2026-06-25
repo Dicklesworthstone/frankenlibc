@@ -310,5 +310,45 @@ fn main() {
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!("MEM wcsncasecmp_n1000 fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.4}x", fl / gl);
         }
+
+        // wmemset (wide fill) + wcsnlen (wide bounded scan) across sizes.
+        type WmemsetFn = unsafe extern "C" fn(*mut i32, i32, usize) -> *mut i32;
+        type WcsnlenFn = unsafe extern "C" fn(*const i32, usize) -> usize;
+        let gl_wmemset: WmemsetFn =
+            std::mem::transmute::<*mut c_void, WmemsetFn>(libc::dlsym(h, b"wmemset\0".as_ptr().cast()));
+        let gl_wcsnlen: WcsnlenFn =
+            std::mem::transmute::<*mut c_void, WcsnlenFn>(libc::dlsym(h, b"wcsnlen\0".as_ptr().cast()));
+        for &n in &[256usize, 65536] {
+            let mut buf: Vec<u32> = vec![0u32; n];
+            let iters = (200_000_000usize / n).max(500);
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::wide::wmemset(black_box(&mut buf), 0x41, n));
+            }
+            let flm = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_wmemset(black_box(buf.as_mut_ptr().cast()), 0x41, n));
+            }
+            let glm = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM wmemset n={n} fl={flm:.0}ns glibc={glm:.0}ns fl/glibc={:.4}x", flm / glm);
+
+            let mut s: Vec<u32> = vec![b'a' as u32; n];
+            s.push(0);
+            let fl_l = frankenlibc_core::string::wide::wcsnlen(&s, n);
+            let gl_l = gl_wcsnlen(s.as_ptr().cast(), n);
+            assert_eq!(fl_l, gl_l, "wcsnlen n={n}: fl={fl_l} glibc={gl_l}");
+            let t2 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::wide::wcsnlen(black_box(&s), n));
+            }
+            let fll = t2.elapsed().as_nanos() as f64 / iters as f64;
+            let t3 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_wcsnlen(black_box(s.as_ptr().cast()), n));
+            }
+            let gll = t3.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM wcsnlen n={n} fl={fll:.0}ns glibc={gll:.0}ns fl/glibc={:.4}x", fll / gll);
+        }
     }
 }
