@@ -155,6 +155,9 @@ fn main() {
             ("sinh", frankenlibc_abi::math_abi::sinh, g64(h, b"sinh\0"), 0.1, 3.0),
             ("cosh", frankenlibc_abi::math_abi::cosh, g64(h, b"cosh\0"), 0.1, 3.0),
             ("tanhd", frankenlibc_abi::math_abi::tanh, g64(h, b"tanh\0"), 0.05, 25.0),
+            ("asinhd", frankenlibc_abi::math_abi::asinh, g64(h, b"asinh\0"), 0.2, 1.0e7),
+            ("acoshd", frankenlibc_abi::math_abi::acosh, g64(h, b"acosh\0"), 1.05, 1.0e7),
+            ("atanhd", frankenlibc_abi::math_abi::atanh, g64(h, b"atanh\0"), -0.95, 0.95),
         ];
         for &(name, flf, glf, lo, hi) in f64cases {
             let xs: Vec<f64> = (0..4096).map(|i| lo + (hi - lo) * (i as f64) / 4096.0).collect();

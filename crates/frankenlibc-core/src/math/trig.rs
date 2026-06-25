@@ -156,17 +156,29 @@ pub fn tanh(x: f64) -> f64 {
 
 #[inline]
 pub fn asinh(x: f64) -> f64 {
+    // The log1p-based form (asinh = log1p(|x| + x²/(√(x²+1)+1))) was MEASURED slower than
+    // glibc (1.80x) — the sqrt + arg + non-inlined log1p exceeds glibc's tight dedicated
+    // kernel. libm::asinh wins here; the log/log1p cascade only helped sqrt-free atanh.
     libm::asinh(x)
 }
 
 #[inline]
 pub fn acosh(x: f64) -> f64 {
+    // Same as asinh: the log1p form measured 1.43x (sqrt-bound); libm::acosh is tighter.
     libm::acosh(x)
 }
 
 #[inline]
 pub fn atanh(x: f64) -> f64 {
-    libm::atanh(x)
+    // atanh(x) = sign(x)·0.5·log1p(2|x|/(1-|x|)), rides the fast `log1p`. |x| >= 1
+    // (poles ±1 -> ±inf, |x| > 1 domain -> NaN, NaN) defers to libm::atanh for exact
+    // FE flags. Small |x| stays accurate (log1p(2x) ~ 2x).
+    let ax = x.abs();
+    if !(ax < 1.0) {
+        return libm::atanh(x);
+    }
+    let r = 0.5 * crate::math::log1p(2.0 * ax / (1.0 - ax));
+    if x.is_sign_negative() { -r } else { r }
 }
 
 #[cfg(test)]
