@@ -6,6 +6,19 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort index-sort fallback REJECTED (tested, regressed) (cc)
+
+- **REJECT: the index-sort fallback for large qsort elements (the lever proposed in the entry below) does NOT
+  work — it made 16-byte sort WORSE.** Implemented `index_sort_permute` (sort a u32 index array, then scatter
+  elements through a scratch buffer) for `width > 8`, MEASURED (sort_bench.rs): str16 fl **2664µs** / glibc
+  **1687µs** = **1.58x** — *worse* than plain pdqsort-in-place's 1.49x. ROOT CAUSE: the permute is a
+  RANDOM-ACCESS gather (`out[k] = base[idx[k]]`, idx random) → cache misses that exceed the saved big-element
+  moves; glibc's merge sort writes its temp buffer SEQUENTIALLY (cache-optimal). Cheap index moves don't help
+  when the final scatter is random. **REVERTED (regression).** To beat glibc on large elements you'd need a
+  cache-friendly MERGE sort (sequential temp writes) — i.e. glibc's own algorithm — so it's unlikely to win.
+  Large-element (`width > 8`) qsort is at glibc's floor; fl's pdqsort+radix win is for small (`<= 8B`) elements.
+  DON'T retry index+gather.
+
 ## 2026-06-25 — qsort LOSS on large elements (16-byte) — element-size-dependent (cc)
 
 - **REJECT/LOSS: fl `qsort` LOSES 1.49x on 16-byte elements** even though it WINS on 4-byte ints. Head-to-head
