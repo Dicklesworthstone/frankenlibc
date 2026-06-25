@@ -127,6 +127,31 @@ fn main() {
             println!("MEM strcasestr_hard hsz={hsz} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
         }
 
+        // wcsstr HARD wide needle: glibc's wide wcsstr is likely naive O(n·m); fl uses
+        // two_way_search_wide + rarity anchor. needle (wide) "a"×31+"b" never matches "a"×N.
+        type WcsstrFn = unsafe extern "C" fn(*const i32, *const i32) -> *const i32;
+        let gl_wcsstr: WcsstrFn =
+            std::mem::transmute::<*mut c_void, WcsstrFn>(libc::dlsym(h, b"wcsstr\0".as_ptr().cast()));
+        for &hsz in &[4096usize, 65536] {
+            let mut hay: Vec<u32> = vec![b'a' as u32; hsz];
+            *hay.last_mut().unwrap() = 0;
+            let mut needle: Vec<u32> = vec![b'a' as u32; 32];
+            needle[31] = b'b' as u32;
+            needle.push(0);
+            let iters = (2_000_000_000usize / hsz).max(200);
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::wide::wcsstr(black_box(&hay), black_box(&needle)));
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_wcsstr(black_box(hay.as_ptr().cast()), black_box(needle.as_ptr().cast())));
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM wcsstr_hard hsz={hsz} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+        }
+
         // memmove non-overlapping (= memcpy, bandwidth) — 1MB.
         type MemmoveFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void;
         let gl_memmove: MemmoveFn =

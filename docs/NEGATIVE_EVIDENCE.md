@@ -6,6 +6,17 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — wcsstr ~5.4x WIN (wide Two-Way vs glibc) (cc)
+
+- **WIN: fl `wcsstr` is ~5.4x faster than glibc.** fl uses `two_way_search_wide` + a rarity-aware anchor;
+  glibc's `wcsstr` is a first-char scan + per-position verify (≈O(32·n) on this needle), not full Two-Way.
+  Head-to-head (`mem_large.rs`, dlmopen host glibc), wide needle `"a"×31 + "b"` never matching `"a"×N` (both
+  return not-found):
+  - hsz=4KB: fl **473ns** / glibc **2745ns** = **0.17x (5.8x faster)**.
+  - hsz=64KB: fl **7198ns** / glibc **38776ns** = **0.19x (5.4x faster)**.
+  Less extreme than byte `strstr` (215x) because glibc's wcsstr isn't fully naive, but fl's O(n) Two-Way still
+  wins ~5x. The Two-Way algorithmic advantage extends to the wide-string path.
+
 ## 2026-06-25 — qsort 8-byte (i64/pointer) WIN confirmed (cc)
 
 - **WIN: fl `qsort` beats glibc on 8-byte i64 keys too — the most common real workload (longs / pointers).**
