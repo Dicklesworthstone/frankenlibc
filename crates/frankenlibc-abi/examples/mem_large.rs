@@ -198,5 +198,35 @@ fn main() {
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!("MEM memset size={size} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.2}x", fl / gl);
         }
+
+        // wcscspn with a LARGE reject set: glibc scans the reject set linearly per char
+        // O(N·R); fl uses a fast membership set O(N). 1000 'a' (no reject char → returns
+        // 1000), reject = 50 distinct non-'a' chars.
+        type WcscspnFn = unsafe extern "C" fn(*const i32, *const i32) -> usize;
+        let gl_wcscspn: WcscspnFn = std::mem::transmute::<*mut c_void, WcscspnFn>(libc::dlsym(
+            h,
+            b"wcscspn\0".as_ptr().cast(),
+        ));
+        for &rsize in &[8u32, 50] {
+            let mut s: Vec<u32> = vec![b'a' as u32; 1000];
+            s.push(0);
+            let mut reject: Vec<u32> = (0..rsize).map(|i| b'b' as u32 + i).collect();
+            reject.push(0);
+            let fl_r = frankenlibc_core::string::wide::wcscspn(&s, &reject);
+            let gl_r = gl_wcscspn(s.as_ptr().cast(), reject.as_ptr().cast());
+            assert_eq!(fl_r, gl_r as usize, "wcscspn r={rsize}: fl={fl_r} glibc={gl_r}");
+            let iters = 3000usize;
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_core::string::wide::wcscspn(black_box(&s), black_box(&reject)));
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_wcscspn(black_box(s.as_ptr().cast()), black_box(reject.as_ptr().cast())));
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("MEM wcscspn_n1000_r{rsize} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.4}x", fl / gl);
+        }
     }
 }

@@ -6,6 +6,18 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — wcscspn ~17x WIN on long wide strings (cc)
+
+- **WIN: fl `wcscspn` is ~17x faster than glibc on long wide strings** — fast membership set vs glibc's slow
+  per-char check. Head-to-head (`mem_large.rs`, dlmopen host glibc), 1000 `a` (no reject char → returns 1000),
+  reject sets of 8 and 50 non-`a` chars (**output verified == 1000**):
+  - r=8: fl **178ns** / glibc **2970ns** = **0.060x (16.7x faster)**.
+  - r=50: fl **226ns** / glibc **3963ns** = **0.057x (17.5x faster)**.
+  fl ≈0.2 ns/char vs glibc ≈3-4 ns/char. The advantage is roughly flat in reject-set size (both use a set, not
+  the O(N·R) naive scan I'd hypothesized — but glibc's per-char constant is high). The string survey's 0.43x
+  was a SHORT 64-char string; the per-char edge compounds on long strings to ~17x. `wcspbrk`/`wcsspn` share the
+  membership path → same advantage. Another algorithmic/constant-factor win on the wide path.
+
 ## 2026-06-25 — regex: MIXED vs glibc (REG_NOSUB fair test) — loses stars ~10x, WINS ambiguous (cc)
 
 - **CORRECTION + REFINED: fl's `regex` vs glibc is pattern-dependent, NOT a uniform 65x loss.** My first run
