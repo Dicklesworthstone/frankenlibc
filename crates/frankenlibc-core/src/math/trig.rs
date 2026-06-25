@@ -137,6 +137,20 @@ pub fn cosh(x: f64) -> f64 {
 
 #[inline]
 pub fn tanh(x: f64) -> f64 {
+    // For |x| in [0.5, 20): tanh(x) = sign(x)·(u-1)/(u+1) with u = exp(2|x|). Since
+    // u >= e (no cancellation in u-1) it rides the now-fast f64 `exp` kernel. |x| >= 20
+    // saturates to ±1 in f64 (1 - tanh < half-ULP), which also avoids exp(2x) overflow.
+    // Small |x| (< 0.5, where u ~ 1 and u-1 cancels) keeps libm::tanh's exact handling.
+    let ax = x.abs();
+    if ax >= 0.5 {
+        let r = if ax >= 20.0 {
+            1.0
+        } else {
+            let u = crate::math::exp(2.0 * ax);
+            (u - 1.0) / (u + 1.0)
+        };
+        return if x.is_sign_negative() { -r } else { r };
+    }
     libm::tanh(x)
 }
 

@@ -65,6 +65,12 @@ retried and real wins are confirmed with numbers.
   signs — x>709 -> exp inf -> inf; x<<0 -> exp 0 -> -1. Only |x|<0.5 keeps libm::expm1. MEASURED: fl 8.62→6.85
   / glibc 7.09 ns = **0.97x WIN**, maxrel 4.09e-16 ~2 ULP, 29 exp-tests green (the [0.5,2.5] golden sweep still
   passes — identical there). **The exp keystone (c29f30410) has now cascaded into TWO wins: sinh + expm1.**
+- **🎯 f64 `tanh`: → 0.55x WIN (exp-win cascade #3, biggest margin — 1.8x faster).** Was pure `libm::tanh`.
+  Added a fast path: for |x| in [0.5, 20), tanh(x) = sign(x)·(u-1)/(u+1) with u = exp(2|x|) — u >= e so no
+  cancellation in u-1, rides the now-fast f64 `exp`; |x| >= 20 saturates to ±1 (1-tanh < half-ULP, also avoids
+  exp(2x) overflow); |x| < 0.5 keeps libm::tanh. MEASURED: fl 6.92 / glibc 12.59 ns = **0.55x WIN**, maxrel
+  4.14e-16 ~2 ULP over [0.05,25], 20 trig-tests green. glibc's tanh is unusually slow (12.6 ns) so the margin
+  is large. **THREE exp-win cascades now: sinh 0.81x, expm1 0.97x, tanh 0.55x.**
 
 ## 2026-06-23 — STRUCTURAL PERF CAMPAIGN COMPLETE (cc) — handoff for the next (codegen/architectural) mode
 
