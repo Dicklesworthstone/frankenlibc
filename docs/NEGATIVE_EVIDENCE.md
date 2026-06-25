@@ -6,6 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — f32 `expm1f` symmetric fast-path no-ship (BoldWaterfall)
+
+- **NO-SHIP: widening the f32 `expm1f` fast path to both signs stayed slower than glibc; source reverted.**
+  Tested the f64-proven cascade on f32 by changing `expm1f` from the positive-only `[0.5, 2.5]` gate to
+  `finite && |x| >= 0.5 && |x| < 87`, returning `expf(x) - 1.0` and keeping libm for the cancellation band and
+  flag-sensitive extremes. Correctness was clean in the focused candidate gate:
+  `cargo test -p frankenlibc-core expm1f --lib -- --nocapture --test-threads=1` passed **2/2**, with the widened
+  fast-path sweep worst **4 ULP** and fallback bit-preservation green. Perf did not clear the glibc bar. Current
+  main baseline (`math_survey`, remote `hz2`) had `expm1f` fl **6.28 ns** vs glibc **6.17 ns** = **1.02x LOSS**
+  (`maxrel=2.36e-7`). Candidate (`math_survey`, remote `vmi1152480`, same-run fl/glibc but not same worker as
+  baseline) measured fl **10.23 ns** vs glibc **9.09 ns** = **1.13x LOSS** (`maxrel=2.36e-7`). Because the
+  candidate remained a same-run glibc loss and offered no measured worker-stable win, the code hunk was reverted.
+  Do not retry this symmetric `expf(x)-1` gate without a different f32 `expm1f` primitive; the remaining gap is not
+  solved by simply widening the f64 cascade pattern.
+
 ## 2026-06-25 — passwd name-lookup cache/invalidation no-ships (BoldWaterfall)
 
 - **NO-SHIP: old scratch `getpwnam` last-name cache is slower than current `main`; not landed.**
