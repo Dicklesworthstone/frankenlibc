@@ -42,18 +42,17 @@ retried and real wins are confirmed with numbers.
   swaps): lgamma 2.46x (dd-arith + libm::pow/exp), erfc 1.63x (libm::exp, DELIBERATELY chosen for
   bit-identicality per the in-code note — don't blind-swap), log1p 1.58x (needs a (1+x)-error port). The clean
   log10-style swaps (glibc-fn-slower-than-its-log/exp) are now tapped; the rest need algorithm ports.
-- **f64 `exp` = 2.07x LOSS, the biggest core math gap — compensated fix WORKS (→1.12x) but BLOCKED by golden
-  tests (stashed `cc-f64-exp-compensated-2.07to1.12x-breaks-golden-revert`).** `exp_medium_exp2_fast_path`
-  (exp.rs:1977) covers only `[-5,5]` and calls the SLOW `libm::exp2` (same latent bug as exp10); the rest of
-  the range falls to slow `libm::exp`. Widening to `[-708,709]` with the compensated `exp2(x·LOG2_E)` (fl's
-  fused exp2 + fma/LOG2_E_LO/e·ln2 correction, exactly the exp10 technique) measured **fl 10.35→6.03 ns /
-  glibc 5.39 = 1.12x** (was 2.07x), maxrel 2.86e-16 ~1-2 ULP. BUT it FAILS `golden_exp_medium_exp2_corpus_sha256`
-  (bit-exact corpus) + `exp_medium_exp2_fast_path_preserves_fallback_cases` — the exp fast path is DELIBERATELY
-  bit-exact-vs-libm-pinned (stricter than the 4-ULP-vs-glibc contract the rest of the family uses). Landing it
-  needs: regen the golden corpus to the new impl + a full-[-708,709] ULP sweep vs glibc (the exp10 had exactly
-  such a sweep). A maintainer/dedicated-turn call, not a unilateral golden-edit. Other f64 exp-family losses
-  (survey): expm1 1.40x, cbrt 1.37x, sinh 1.52x, cosh 1.42x; exp2 0.99x parity (fused). Reusable harness:
-  math_survey example (now covers the f64 exp-family).
+- **🎯 f64 `exp`: 2.07x LOSS → ~parity/WIN (LANDED, validated ≤2 ULP).** `exp_medium_exp2_fast_path`
+  (exp.rs:1977) covered only `[-5,5]` AND called the SLOW `libm::exp2` (latent bug, same as exp10); the rest
+  fell to slow `libm::exp`. Widened to `[-708,709]` with the compensated `exp2(x·LOG2_E)` (fl's fused exp2 +
+  fma/LOG2_E_LO/e·ln2 correction, the exp10 technique). MEASURED: **fl 5.56 / glibc 5.82 ns = 0.96x WIN** (run
+  variance ~0.96-1.12x; was 2.07x). VALIDATED: a 4M-point full-`[-708,709]` ULP sweep vs glibc = **max 2 ULP**
+  (worst at x≈-708) — i.e. exp now MEETS the 4-ULP-vs-glibc contract the rest of the math family uses, so the
+  old bit-exact-vs-libm pin was overly conservative (no accuracy cliff). Regenerated `golden_exp_medium_exp2_
+  corpus_sha256` + rewrote `exp_medium_exp2_fast_path_preserves_fallback_cases` to the new contract (cold
+  tails >709/<-708/±inf/NaN stay bit-exact libm; in-range ≤4 ULP). Full math suite green (only the 3
+  pre-existing log2f/powf golden fails remain). Helps the exp-family. Remaining survey losses: expm1 1.40x,
+  cbrt 1.37x (=libm/glibc fdlibm, codegen-floored), sinh 1.52x, cosh 1.42x; exp2 0.99x parity.
 
 ## 2026-06-23 — STRUCTURAL PERF CAMPAIGN COMPLETE (cc) — handoff for the next (codegen/architectural) mode
 

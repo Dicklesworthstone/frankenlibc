@@ -181,6 +181,26 @@ fn main() {
                 fl_ns / gl_ns
             );
         }
+
+        // Full-range ULP sweep of f64 exp vs glibc over the entire finite-result domain
+        // [-708, 709] — validates the widened compensated path at the extremes (where the
+        // old [-5,5] limit was conservative). ULP = |fl_bits - glibc_bits| (exp > 0).
+        let gl_exp: F64Fn =
+            std::mem::transmute::<*mut c_void, F64Fn>(libc::dlsym(h, b"exp\0".as_ptr().cast()));
+        let mut max_ulp = 0i64;
+        let mut worst_x = 0.0f64;
+        let n = 4_000_000usize;
+        for i in 0..n {
+            let x = -708.0 + (709.0 - (-708.0)) * (i as f64) / (n as f64);
+            let a = frankenlibc_abi::math_abi::exp(x).to_bits() as i64;
+            let b = gl_exp(x).to_bits() as i64;
+            let u = (a - b).abs();
+            if u > max_ulp {
+                max_ulp = u;
+                worst_x = x;
+            }
+        }
+        println!("MATH_SURVEY exp_ULP_sweep [-708,709] max_ulp={max_ulp} at x={worst_x:.4}");
     }
 }
 

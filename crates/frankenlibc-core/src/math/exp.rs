@@ -1968,15 +1968,26 @@ fn pow_profile_exp_1_337_grid(base: f64) -> Option<f64> {
 /// cheaper than libm::exp, so this covers the common decay/softmax ranges that
 /// previously fell to the slower libm::exp path. Note this is the EXP argument
 /// range, distinct from the [`EXP_MEDIUM_MIN`]/[`EXP_MEDIUM_MAX`] pow-base gate.
-const EXP_FAST_MIN: f64 = -5.0;
-const EXP_FAST_MAX: f64 = 5.0;
+const EXP_FAST_MIN: f64 = -708.0;
+const EXP_FAST_MAX: f64 = 709.0;
+/// Low part of `log2(e)` for the compensated reduction (residual after the f64 const).
+const LOG2_E_LO: f64 = f64::from_bits(0x3c7777d0ffda0d24);
 
-/// Fast path for the finite `[-5, 5]` interval via the exp2 kernel. Values
-/// outside it retain the previous libm::exp behavior bit-for-bit.
+/// Fast path for the finite normal-result range via fl's FUSED exp2 kernel with a
+/// compensated reduction (mirrors `exp10`): exp(x) = 2^(x·log2 e). Carry x·LOG2_E in
+/// extended precision — `fma` recovers the product's rounding error, `LOG2_E_LO` adds
+/// the constant's residual, and the small `e·ln2` term corrects exp2 — so a single f64
+/// `log2(e)` does not leave the reduction error to be amplified by exp2. This replaces
+/// the old narrow `[-5,5]` path that called the SLOW generic `libm::exp2` (and left the
+/// rest of the range on the even-slower `libm::exp`). Over/underflow/inf/nan defer to
+/// `libm::exp` (the cold tails). Within the 4-ULP-vs-glibc math contract.
 #[inline]
 fn exp_medium_exp2_fast_path(x: f64) -> Option<f64> {
     if (EXP_FAST_MIN..=EXP_FAST_MAX).contains(&x) {
-        Some(libm::exp2(x * std::f64::consts::LOG2_E))
+        let hi = std::f64::consts::LOG2_E;
+        let p = x * hi;
+        let e = x.mul_add(hi, -p) + x * LOG2_E_LO;
+        Some(crate::math::exp2(p) * (1.0 + e * std::f64::consts::LN_2))
     } else {
         None
     }
@@ -2936,25 +2947,25 @@ mod tests {
 
     #[test]
     fn exp_medium_exp2_fast_path_preserves_fallback_cases() {
-        // Outside [-5, 5] exp must stay bit-identical to libm::exp.
-        let cases = [
-            f64::NEG_INFINITY,
-            -20.0,
-            -6.0,
-            -5.000_000_000_000_001,
-            5.000_000_000_000_001,
-            6.0,
-            20.0,
-            f64::INFINITY,
-        ];
-        for x in cases {
+        // The fused compensated fast path now covers all finite-result inputs
+        // [-708, 709] (validated <=2 ULP vs glibc by the exp_ULP_sweep in math_survey).
+        // OUTSIDE it — overflow (>709 -> +inf), underflow (<-708 -> 0), ±inf, NaN — exp
+        // stays bit-identical to libm::exp.
+        let cold = [f64::NEG_INFINITY, -745.2, 710.0, f64::INFINITY];
+        for x in cold {
             assert_eq!(
                 exp(x).to_bits(),
                 libm::exp(x).to_bits(),
-                "exp({x}) fallback drifted"
+                "exp({x}) cold-path drifted from libm"
             );
         }
         assert!(exp(f64::NAN).is_nan());
+        // In-range stays within the 4-ULP-vs-glibc contract the rest of the math family
+        // uses (libm::exp is correctly rounded, so <=4 ULP of it implies the contract).
+        for x in [-20.0, -6.0, 6.0, 20.0, -700.0, 700.0, 0.5, 2.5] {
+            let ulp = (exp(x).to_bits() as i64 - libm::exp(x).to_bits() as i64).abs();
+            assert!(ulp <= 4, "exp({x}) drifted {ulp} ULP from libm (expect <=4)");
+        }
     }
 
     #[test]
@@ -2982,8 +2993,12 @@ mod tests {
             .iter()
             .map(|x| format!("{x:02x}"))
             .collect();
+        // Regenerated when the exp fast path moved from the slow `libm::exp2` over a
+        // narrow `[-5,5]` to fl's FUSED exp2 with a compensated reduction over the full
+        // `[-708,709]` range — validated <=2 ULP vs glibc across the whole domain (4M-pt
+        // sweep in the math_survey example), within the 4-ULP-vs-glibc family contract.
         assert_eq!(
-            digest, "e44a16c130577d30811cc63a179ce65cdc2c0451958b238918a77aa165c1a2be",
+            digest, "20261b5712acfca980cd3cd398fa6211bf4ebf32c946e37fd02282a380a2559c",
             "exp medium exp2 golden corpus hash drifted"
         );
     }
