@@ -21,6 +21,22 @@ retried and real wins are confirmed with numbers.
   --test-threads=1` on `vmi1152480` passed **285/0**. Next DBCS->UTF-16 work needs to remove the remaining
   iconv loop/state overhead or adopt a broader glibc-style compact row loop, not another narrow row swizzle.
 
+## 2026-06-24 — `bd-2g7oyh.503` BOLD-VERIFY timing scratch sweep (cod-b, BoldWaterfall)
+
+- **NO unlanded scratch win found.** `.scratch/frankenlibc-boldwaterfall-latin1-utf32-candidate-20260624T2210Z`
+  contained the SBCS/LATIN1→UTF-32 SIMD win that is already on `main` as `40e3bddf0`; the DBCS→UTF-32
+  scratch worktree remained the documented no-ship path (`677.8 ns` vs glibc `259.7 ns` = **2.61x LOSS**).
+- **REVERTED / NO-SHIP: `time(NULL)` direct `__vdso_time` pointer cache + null-writer validation split.**
+  Mainline baseline, remote `hz2`, `cargo bench -p frankenlibc-bench --features abi-bench --bench
+  strtol_glibc_bench -- --noplot --sample-size 10 --warm-up-time 1 --measurement-time 2`:
+  `time` **3.79 ns / glibc 2.16 ns = 1.75x LOSS**, `clock_gettime` **26.50 ns / glibc 25.42 ns = 1.04x**.
+  The only successful candidate run landed on `vmi1227854` after `hz2` dependency preflight was stale:
+  `time` **2.13 ns / glibc 1.66 ns = 1.29x LOSS**, `clock_gettime` **24.67 ns / glibc 23.57 ns = 1.05x**.
+  Because the candidate was still slower than glibc and same-worker rerun did not complete (`ovh-b` SIGILL in
+  dependency build scripts; `rch` also rewrote the requested warm target to worker-scoped cold target dirs),
+  the code hunk was reverted. Do not retry this pointer-cache/null-writer micro-family without a different
+  primitive and same-worker proof.
+
 ## 2026-06-24 — f64 `log` kernel + log1pf (cc, fused-kernel vein reopened)
 
 - **f64 `log`: ARM `__log` port — ~2x-slow → bit-exact glibc-grade (commit 3d0ccb75c).** The old
