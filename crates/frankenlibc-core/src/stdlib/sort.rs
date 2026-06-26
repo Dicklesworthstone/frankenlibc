@@ -380,7 +380,34 @@ macro_rules! try_radix_lane_for {
         {
             let sign_mask: $ty = 1 << ($width * 8 - 1);
             let original = active.to_vec();
-            for &mask in &[sign_mask, 0 as $ty] {
+            // Pick the attempt order to skip a wasted radix pass: within a short prefix find
+            // a key with the sign bit set and one without, and let the caller's comparator
+            // say which ranks lower — signed order (sign bit = small/negative) or unsigned
+            // (sign bit = large). Verify-guarded: a wrong/absent probe just costs the second
+            // attempt as before, and all-same-sign data already sorts correctly either way.
+            let (mut hi, mut lo): (Option<usize>, Option<usize>) = (None, None);
+            for (k, chunk) in active.chunks_exact($width).take(32).enumerate() {
+                let raw: [u8; $width] = chunk.try_into().unwrap();
+                if <$ty>::from_ne_bytes(raw) & sign_mask != 0 {
+                    hi = hi.or(Some(k));
+                } else {
+                    lo = lo.or(Some(k));
+                }
+                if hi.is_some() && lo.is_some() {
+                    break;
+                }
+            }
+            let signed_first = match (hi, lo) {
+                (Some(h), Some(l)) => {
+                    compare(
+                        &active[h * $width..h * $width + $width],
+                        &active[l * $width..l * $width + $width],
+                    ) < 0
+                }
+                _ => true,
+            };
+            let masks: [$ty; 2] = if signed_first { [sign_mask, 0] } else { [0, sign_mask] };
+            for &mask in &masks {
                 let mut keys: Vec<$ty> = Vec::with_capacity(num);
                 for chunk in active.chunks_exact($width) {
                     let raw: [u8; $width] = chunk.try_into().unwrap();

@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort signed/unsigned PROBE LANDED — u16 2x faster (0.09x), u32 1.9x (0.35x) (cc)
+
+- **LANDED (code win, `sort.rs`, conformance GREEN): a cheap signed-vs-unsigned probe skips the wasted radix
+  attempt.** Before, unsigned data tried the signed mask first (fails verify), then unsigned (succeeds) = 2
+  radix passes. Now a short-prefix probe (find a sign-bit-set key + a sign-bit-clear key, ask the comparator
+  which ranks lower) picks the right mask order → ONE attempt. Verify-guarded (a wrong/absent probe just costs
+  the 2nd attempt as before; all-same-sign data sorts correctly either way, so it's never penalised).
+  - **u16: 0.19x → 0.09x** (2x faster, now **11x** vs glibc) · **u32: 0.65x → 0.35x** (1.9x faster, now **2.8x**
+    vs glibc, matching i32) · i32 0.37x / i64 0.58x UNCHANGED (signed, already 1 attempt).
+  CONFORMANCE: 32 core sort tests + 5 qsort differential gates (radix/radix16/i64_fastlane/count8/qsort_r) all
+  GREEN. **COMPLETES the qsort integer optimization: ALL widths × signedness now sort in one radix pass, all
+  fast** (i32 0.37x · u16 0.09x · u32 0.35x · i64 0.58x). 3rd qsort code win this session (unsigned-attempt +
+  narrow-key + order-probe) — integer sorting, a ubiquitous workload, is now comprehensively faster than glibc.
+
 ## 2026-06-25 — qsort u32 (unsigned 4-byte) WIN 1.5x — common unsigned-int case + strftime closure (cc)
 
 - **WIN: fl qsort `u32` wins 1.5x — confirms the unsigned-radix + native-width fixes cover the common UNSIGNED
