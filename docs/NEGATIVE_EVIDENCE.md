@@ -6,6 +6,15 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — gmtime ~PARITY (1.11x) — glibc's gmtime is well-optimized (asymmetry vs timegm) (cc)
+
+- **NEUTRAL: fl `gmtime` (epoch → UTC broken-down) is ~parity with glibc, 1.11x.** Head-to-head
+  (`gmtime_bench.rs`, dlmopen `gmtime_r`, all fields incl wday/yday **verified equal**): fl **20.4ns** / glibc
+  **18.4ns** = **1.108x** — a ~2ns gap at ~20ns, near noise. Both compute the full broken-down time via an O(1)
+  civil formula. **ASYMMETRY: glibc's `gmtime` is FAST (18.4ns) but its `timegm` is SLOW (36ns — fl wins 5.7x).**
+  glibc optimized the common epoch→date path (timestamp formatting / `localtime`) but not date→epoch. So the
+  time/date win is timegm/mktime-specific; gmtime/localtime are at glibc's (good) floor — not a lever.
+
 ## 2026-06-25 — timegm 5.7x WIN (O(1) civil-days formula vs glibc), value-exact (cc)
 
 - **WIN: fl `timegm` is 5.7x faster than glibc, value-exact.** fl's `broken_down_to_epoch` uses the O(1)
