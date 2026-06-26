@@ -42,9 +42,9 @@ fn main() {
 
         for fmt in [
             "%Y-%m-%d %H:%M:%S", // the one hard-coded fast-path format
-            "%a, %d %b %Y %H:%M:%S",
-            "%H:%M:%S",       // numeric but MISSES the fast path
-            "%Y/%m/%d",       // numeric, slashes — misses the fast path
+            "%H:%M:%S",          // 3 directives, misses fast path
+            "%H",                // 1 directive
+            "ABCDEFGH",          // 0 directives (pure literal)
         ] {
             let fmt_b = fmt.as_bytes();
             let mut fl_buf = [0u8; 64];

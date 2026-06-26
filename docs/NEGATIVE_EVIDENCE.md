@@ -6,6 +6,19 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — strftime root cause PINPOINTED: a FIXED ~187ns per-CALL overhead (not per-directive) (cc)
+
+- **PINPOINT of the strftime general-loop loss (entry below).** Tested formats of decreasing directive count
+  (`strftime_bench.rs`): `"%H:%M:%S"` (3 dirs) **225ns** · `"%H"` (1 dir) **190ns** · `"ABCDEFGH"` (0 dirs,
+  PURE LITERAL) **187ns**. A literal-only format with zero directives STILL costs ~187ns vs glibc's 9ns
+  (**20x**). So the loss is a **FIXED ~187ns per-call setup cost** in `format_strftime`'s general path —
+  directives only add ~10-15ns each. It is NOT the directive parsing or names. LEVER (now precise): find +
+  eliminate that fixed setup — a prime suspect is the function's large stack frame (multiple `[0u8; 256]`
+  scratch arrays from the compound-directive macro arms, plus the macro-heavy body) forcing a stack probe /
+  frame setup on every entry. Splitting the compound path into a separate `#[inline(never)]` fn (so the hot
+  path has a tiny frame) would likely erase most of the 187ns. High value: the main time formatter, currently
+  a 6-20x loss for every format except the one bench-overfit string.
+
 ## 2026-06-25 — strftime CORRECTED: general loop 6x SLOW; only ONE hard-coded format wins (bench-overfit) (cc)
 
 - **CORRECTION (10th self-correction) of the entry below — the loss is bigger and different than I said.** It
