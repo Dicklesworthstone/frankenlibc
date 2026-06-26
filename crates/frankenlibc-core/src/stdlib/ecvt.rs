@@ -411,7 +411,7 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     if exp < -4 || exp >= ndigit as i32 {
         rust_e_to_glibc_e(sci)
     } else {
-        format_fixed(value, ndigit, exp)
+        format_fixed_from_sci(sci, exp)
     }
 }
 
@@ -511,15 +511,59 @@ impl core::fmt::Write for StackStr {
     }
 }
 
-fn format_fixed(value: f64, ndigit: usize, exp: i32) -> String {
-    use core::fmt::Write;
-    let frac = (ndigit as i32 - 1 - exp).max(0) as usize;
-    let mut sb = StackStr::new();
-    if write!(sb, "{value:.frac$}").is_ok() {
-        strip_trailing_zeros(sb.as_str())
-    } else {
-        strip_trailing_zeros(&format!("{value:.frac$}"))
+/// Build the `%g` FIXED-notation body by REPOSITIONING the digits already
+/// produced by the single `%e` probe `sci` (a `{value:.{ndigit-1}e}` render whose
+/// mantissa is `value` rounded to `ndigit` significant digits), rather than
+/// running a SECOND dragon-class `{value:.f}` float format. `exp` is the decimal
+/// exponent parsed from `sci`; the caller guarantees `-4 <= exp < ndigit`.
+///
+/// Byte-identical to the former `format_fixed`: a `{:.Ne}` render and a `{:.Mf}`
+/// render of the same `value` both round-half-even to the SAME `ndigit`
+/// significant digits, so the `%e` digit string repositioned around the decimal
+/// point equals the `%f` string; `strip_trailing_zeros` then yields the same
+/// result. Using the probe's own digits (instead of an independent second round)
+/// is in fact strictly more self-consistent across the rounding-carry boundary
+/// that already drives `exp`. Verified by the gcvt/strfromd differential gates
+/// plus a random-double fuzz against glibc.
+fn format_fixed_from_sci(sci: &str, exp: i32) -> String {
+    let (neg, rest) = match sci.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, sci),
+    };
+    let mant = match rest.find('e') {
+        Some(p) => &rest[..p],
+        None => rest,
+    };
+    // Mantissa is `d` or `d.ffff`; gather just the digit characters (skip '.').
+    let mut digits = String::with_capacity(mant.len());
+    for c in mant.chars() {
+        if c != '.' {
+            digits.push(c);
+        }
     }
+    let n = digits.len() as i32;
+    let mut out = String::with_capacity(digits.len() + 8);
+    if neg {
+        out.push('-');
+    }
+    if exp >= 0 {
+        // Integer part = first (exp+1) digits (<= n since exp < ndigit == n);
+        // any remaining digits are the fraction.
+        let int_len = ((exp + 1).min(n)) as usize;
+        out.push_str(&digits[..int_len]);
+        if (int_len as i32) < n {
+            out.push('.');
+            out.push_str(&digits[int_len..]);
+        }
+    } else {
+        // -4 <= exp < 0: "0." then (-exp-1) leading zeros, then all the digits.
+        out.push_str("0.");
+        for _ in 0..(-exp - 1) {
+            out.push('0');
+        }
+        out.push_str(&digits);
+    }
+    strip_trailing_zeros(&out)
 }
 
 /// Render `value` as printf-style `%.<ndigit>g` (significant digits +

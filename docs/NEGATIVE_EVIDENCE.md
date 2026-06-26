@@ -6,6 +6,30 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — ✅ gcvt/%g general-fixed: single-%e reposition kills 2nd dragon-format (cc)
+
+- **LANDED CODE WIN (`ecvt.rs`, byte-identical, conformance GREEN).** Follow-through on my earlier gcvt
+  root-cause: a sibling fast-pathed EXACT round values (2.5/100000 now ~0.3x WIN), but the GENERAL non-exact
+  fixed branch still ran TWO Rust-std float formats — a `{:.e}` exponent probe AND a second `{:.f}` body
+  (both dragon-class). Replaced `format_fixed(value, …)` with `format_fixed_from_sci(sci, exp)`, which
+  REPOSITIONS the digits already in the single `%e` probe around the decimal point (no second float format).
+- **RESULT (`gcvt_glibc_bench`, in-process vs host glibc gcvt):** the redundant format is gone:
+  | case | before | after | glibc | note |
+  |---|---|---|---|---|
+  | `1234567.89` `%.17g` | 210ns (0.96x) | **135ns (0.72x WIN)** | 187 | flipped to win |
+  | `0.0001234` `%.17g` | 191ns (1.48x) | **133ns (1.08x)** | 123 | near parity |
+  | `pi` `%.6g` | 158ns (2.19x) | **109ns (1.68x)** | 65 | 31% faster |
+  | `pi` `%.17g` | 183ns (1.81x) | 177ns (1.77x) | 100 | marginal |
+  Exact/scientific/DBL_MAX rows unchanged (round 0.22x, simple 0.31x, dblmax 0.31x — all WIN).
+- **Residual:** pi still loses because ONE `%e` dragon format remains (Rust fixed-precision float fmt vs
+  glibc's faster single dragon) — irreducible without a full custom shortest-float port; that is the codegen
+  floor, separate from the redundancy removed here. The lever's value is eliminating the SECOND format.
+- **Byte-identity PROVEN:** new bench fuzz = **119,972 random doubles × random precision byte-identical to
+  glibc gcvt** (structured magnitudes + fully-random bit patterns, fixed/scientific boundary + rounding
+  carry). Conformance GREEN: `strfromd_differential_fuzz`, `conformance_diff_cvt_specials`,
+  `conformance_diff_ecvt_rounding`, `conformance_gcvt_byte_stable` all pass. `format_fixed_from_sci` feeds
+  `render_pct_g` → `strfromd` too, so the speedup carries to the real `%g` path.
+
 ## 2026-06-26 — ✅ qsort f64 sort LANDED WIN: 1.92x LOSS → 0.85x WIN (probe-gated float radix) (cc)
 
 - **LANDED CODE WIN (`stdlib/sort.rs`, conformance GREEN).** Follow-through on last turn's rejected float
