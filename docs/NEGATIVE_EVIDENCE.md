@@ -28,6 +28,39 @@ retried and real wins are confirmed with numbers.
   still pdqsort-vs-glibc merge behavior for expensive opaque comparators. All candidate code and the temporary
   bench row were removed; only this ledger reject remains.
 
+## 2026-06-26 — qsort mixed-sign finite f64 radix lane REJECTED (1.74x LOSS vs glibc) (BoldWaterfall)
+
+- **REJECTED / REVERTED:** after a fresh land-or-dig sweep found no active `.scratch` / `.worktrees`
+  measured win that was both off-main and unlanded, I tried a guarded mixed-sign finite `f64` radix lane for
+  `qsort(width == 8)`. The candidate sampled the comparator for numeric `f64` order, mapped finite doubles to
+  sortable `u64` keys, performed stable LSD radix over `(key, bytes)`, and committed only after a full
+  adjacent-pair comparator verification. It passed the focused restore/fallback test, but still lost to glibc
+  in the required head-to-head timing, so all code was manually reverted and only this ledger reject remains.
+- **BASELINE GAP (pre-edit, rch remote `vmi1264463` despite `RCH_WORKER=ovh-a` hint):** `env
+  AGENT_NAME=BoldWaterfall CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a
+  RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,AGENT_NAME RCH_WORKER=ovh-a rch exec -- cargo run -p
+  frankenlibc-abi --profile release --example sort_bench` measured `SORT f64rand n=20000` at fl
+  **5,199,035 ns** / glibc **1,699,913 ns** = **3.06x LOSS**.
+- **CANDIDATE TIMING (post-edit, rch local fallback because no admissible workers):** `env
+  AGENT_NAME=BoldWaterfall CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a
+  RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,AGENT_NAME RCH_WORKER=vmi1264463 rch exec -- cargo run -p
+  frankenlibc-abi --profile release --example sort_bench` measured `SORT f64rand n=20000` at fl
+  **1,705,806 ns** / glibc **977,682 ns** = **1.74x LOSS**.
+- **FOCUSED TEST ON CANDIDATE:** `rch exec -- cargo test -p frankenlibc-core
+  qsort_f64_radix_lane_commits_and_restores` GREEN (local fallback) before revert.
+- **PER-CRATE BENCH GATE AFTER REVERT (rch remote `vmi1227854`):** `env AGENT_NAME=BoldWaterfall
+  CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a
+  RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,AGENT_NAME rch exec -- cargo bench -p frankenlibc-bench --profile
+  release --bench glibc_baseline_bench qsort_16_i32 -- --noplot --sample-size 10 --warm-up-time 1
+  --measurement-time 1` exited 0; p50 fl **146.434 ns** / glibc **201.984 ns** = **0.72x WIN** on the
+  existing qsort integer gate.
+- **CONFORMANCE AFTER REVERT:** `rch exec -- cargo test -p frankenlibc-core qsort_` GREEN after `RCH-E412`
+  remote preflight fallback to local: **9** focused qsort unit tests plus the qsort property test passed.
+- **VERDICT:** the sortable-key idea improved the f64 row versus the pre-edit remote baseline, but it did not
+  beat glibc and was rejected under the vs-glibc ship rule. Future f64 work needs a deeper lever than an
+  owned `Vec<(u64, [u8; 8])>` radix record path: likely reduce record traffic/allocations or change the
+  comparison-sort strategy for expensive floating comparators.
+
 ## 2026-06-26 — ✅ strtod (double parse) CONFIRMED WIN vs glibc 1.2x–2.1x, bit-exact (cc)
 
 - **LANDED MEASUREMENT (new bench, no code change needed — fl already wins).** `strtod` was previously
