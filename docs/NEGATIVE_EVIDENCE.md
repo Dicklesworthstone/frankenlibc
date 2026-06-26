@@ -6,6 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — qsort STRING sort 2.7x LOSS (pdqsort + wasted radix vs glibc merge) — IMPORTANT caveat (cc)
+
+- **LOSS: fl `qsort` is 2.7x SLOWER than glibc for STRING sorting** — a very common workload (sort an array of
+  `char*` by `strcmp`: filenames, words, log lines). Head-to-head (`strsort_bench.rs`, n=20000, the SAME C-ABI
+  `strcmp`-style comparator on BOTH sides so comparator cost is identical, output verified): fl **3.34ms** /
+  glibc **1.24ms** = **2.699x**. It is NOT the comparator — it's the SORT. Two factors:
+  1. fl runs up to **2 WASTED integer-radix attempts** (both signed+unsigned orders fail the verify for an
+     opaque non-numeric comparator) before falling to pdqsort — each builds u64 keys + radixes + verify +
+     restore. (My probe/2-mask qsort wins added one of these for non-numeric comparators.)
+  2. fl's **pdqsort is slower than glibc's merge** for the expensive-comparator case (the dominant factor).
+- **IMPORTANT CAVEAT to the qsort wins:** integer keys WIN (radix applies); **string/struct/float keys
+  (non-radix-able, expensive comparator) LOSE** — and string sorting is ubiquitous. LEVERS: (a) skip the wasted
+  radix via a small-sample pre-check when the comparator isn't integer-radix-able (recovers ~part of the loss);
+  (b) the pdqsort-vs-merge gap for expensive comparators is the harder, dominant part. Both deferred.
+
 ## 2026-06-26 — CAMPAIGN SUMMARY (cc): fl-vs-glibc perf map after ~50 commits, 6 landed code wins
 
 - **LANDED CODE WINS (real fl improvements, each conformance-verified vs glibc differential gates):**
