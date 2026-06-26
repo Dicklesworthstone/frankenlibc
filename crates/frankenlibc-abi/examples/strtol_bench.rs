@@ -19,13 +19,16 @@ fn main() {
         let gl_strtol: StrtolFn =
             std::mem::transmute::<*mut c_void, StrtolFn>(libc::dlsym(h, b"strtol\0".as_ptr().cast()));
 
-        let cases: [(&str, i32); 6] = [
+        let cases: [(&str, i32); 9] = [
             ("42", 10),
             ("1234567890", 10),
             ("9223372036854775807", 10),
             ("-12345", 10),
             ("0xDEADBEEF", 16),
             ("755", 8),
+            ("0xFF", 16),
+            ("0x1F", 16),
+            ("17", 8),
         ];
         for &(s, base) in cases.iter() {
             let bytes = s.as_bytes();

@@ -6,17 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
-## 2026-06-25 — strtol MIXED: decimal/hex WIN 1.3-1.6x, octal LOSS 1.47x (cc)
+## 2026-06-25 — strtol: LONG-number WIN 1.3-1.6x (reliable); SHORT numbers noise-dominated (CORRECTED) (cc)
 
-- **MIXED: fl `strtol` wins the common decimal/hex cases, loses octal.** Head-to-head (`strtol_bench.rs`,
-  dlmopen host glibc, value-exact verified vs glibc):
-  - `"42"`: fl 9.4ns / glibc 14.8ns = **0.64x (1.6x)** · `"1234567890"`: 0.63x · `"9223372036854775807"` (max):
-    0.77x · `"0xDEADBEEF"` (base 16): **0.62x (1.6x)** → **DECIMAL + HEX WIN 1.3-1.6x (the common cases)**.
-  - `"-12345"`: 0.975x (parity).
-  - `"755"` (base 8): fl 23.6ns / glibc 16.0ns = **1.47x LOSS** → octal is fl's slow path (rare — file-mode
-    parsing; not a lever worth chasing).
-  Net: fl wins the common decimal/hex integer parsing 1.3-1.6x. Pairs with `strtod` 1.4-3.6x — **fl's number
-  parsing is broadly faster than glibc**, octal being the lone minor exception.
+- **CORRECTION (variance caught): fl `strtol` reliably wins MULTI-DIGIT parsing 1.3-1.6x; SHORT (≤4-digit,
+  sub-10ns) ratios are measurement noise, NOT a clean win/loss.** A second run on a different rch worker flipped
+  `"42"` from 0.64x (last entry) to **1.115x** — at 7-10ns the loop/black_box overhead swamps the few-ns
+  signal, so the per-call ratio is unstable (the classic rch-worker variance: use only when the work dominates).
+  RELIABLE signal (consistent across BOTH runs, value-exact vs glibc):
+  - `"1234567890"`: 0.63x / 0.73x · `"9223372036854775807"` (max): 0.77x / 0.63x · `"0xDEADBEEF"` (8 hex):
+    0.62x / 0.66x → **fl WINS multi-digit decimal + long hex ~1.3-1.6x** (the SWAR 8-digit/8-hex fast paths,
+    conversion.rs:220/239 — these do real work and dominate the noise).
+  - SHORT numbers — `"42"`, `"755"` (oct), `"0xFF"`/`"0x1F"` (short hex), `"17"` (oct): ratios swung 0.6-1.5x
+    across runs = **NOISE, ~parity**. The prior "octal 1.47x LOSS" was within this noise (short octal/hex skip
+    the base-10 short fast path + the SWAR, but at sub-10ns the difference is unmeasurable). NOT a real lever.
+  Net: fl's multi-digit integer parsing wins ~1.5x (reliable); short-number parsing is ~parity. METHOD: tiny
+  (<15ns) ops need many runs or a longer workload — a single worker's ratio lies.
 
 ## 2026-06-25 — strtod 1.4-3.6x WIN, bit-exact vs glibc (cc)
 
