@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — strtoull multi-digit WIN 2.1-2.6x, value-exact (cc)
+
+- **WIN: fl `strtoull` is 2.1-2.6x faster than glibc on multi-digit unsigned parsing** (value-exact verified).
+  Head-to-head (`strtol_bench.rs`, dlmopen host glibc), MULTI-DIGIT only (≥13ns, work-dominated — avoiding the
+  sub-15ns noise trap from the strtol short-number correction):
+  - `"12345678901234567890"` (20 digits): fl **13.0ns** / glibc 34.4ns = **0.378x (2.6x)**.
+  - `"18446744073709551615"` (u64::MAX): fl 18.2ns / glibc 38.1ns = **0.477x (2.1x)**.
+  - `"0xFFFFFFFFFFFFFFFF"` (u64::MAX hex): fl 14.3ns / glibc 30.9ns = **0.461x (2.2x)** (SWAR 8-hex path).
+  Confirms the number-parsing vein across the family: **strtod 1.4-3.6x · strtol multi-digit 1.5x · strtoull
+  multi-digit 2.1-2.6x** — fl's SWAR digit kernels (conversion.rs) decisively beat glibc's scalar loops on
+  real (multi-digit) inputs.
+- NOTE (coordination): independently reproduced + reverted BoldWaterfall's already-rejected `mbstowcs` 2-byte
+  probe gate (shared checkout); that lever is a NO-SHIP (see their entries below). Left mbstowcs to them.
+
 ## 2026-06-26 — mbstowcs partial-prefix + 2-byte gate REJECTED: mixed still 2.06x LOSS vs glibc (BoldWaterfall)
 
 - **REVERTED / NO-SHIP:** no measured `.scratch`/`.worktrees` win was off `main` at
