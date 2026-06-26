@@ -6,6 +6,32 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 - BOLD-VERIFY strtoull landed win rechecked; timing residual still routed deeper (BoldWaterfall)
+
+- **VERIFIED LANDED WIN:** the measured `strtoull` comparator from commit `8d4221679`
+  is already on `main`, `origin/main`, and `origin/master`. Fresh head-to-head rerun
+  with `AGENT_NAME=BoldWaterfall` and
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a` confirmed the
+  multi-digit unsigned parsing win while leaving source untouched.
+- Required crate-scoped bench gate used the valid release-profile Cargo spelling:
+  `rch exec -- cargo bench -p frankenlibc-bench --profile release --features abi-bench
+  --bench strtol_glibc_bench strtol -- --noplot --sample-size 10 --warm-up-time 1
+  --measurement-time 1`. RCH fell back local (`no admissible workers:
+  insufficient_slots=4,hard_preflight=1`). Numeric parser rows remained glibc wins:
+  `strtol_dec_short` **0.53x**, `strtol_dec_long` **0.54x**, `strtol_hex` **0.70x**,
+  `strtod_int` **0.38x**, `strtod_simple` **0.48x**, `strtod_sci` **0.49x**.
+  The known unrelated timing residual remained: `time(NULL)` **1.80x LOSS**; keep it
+  routed to the already-rejected vDSO/timing family, not the parser lane.
+- Direct value-exact comparator rerun:
+  `rch exec -- cargo run -p frankenlibc-abi --profile release --example strtol_bench`.
+  Each row asserted exact equality with host glibc before timing. Results:
+  `"12345678901234567890"` fl **13.6ns** / glibc 31.9ns = **0.427x WIN**,
+  `"18446744073709551615"` fl **13.6ns** / glibc 31.0ns = **0.440x WIN**,
+  `"0xFFFFFFFFFFFFFFFF"` fl **12.8ns** / glibc 31.2ns = **0.409x WIN**.
+- Focused conformance: `rch exec -- cargo test -p frankenlibc-core strtoull` passed
+  (`test_strtoull_aliases_strtoul`, 1 passed; 3183 filtered). No zero-gain code was
+  present to revert.
+
 ## 2026-06-25 — strtoull multi-digit WIN 2.1-2.6x, value-exact (cc)
 
 - **WIN: fl `strtoull` is 2.1-2.6x faster than glibc on multi-digit unsigned parsing** (value-exact verified).
