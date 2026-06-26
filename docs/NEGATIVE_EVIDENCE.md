@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — regex required-literal fast-reject: LANDED CODE WIN (10x loss → 6-83x WIN) (cc)
+
+- **LANDED a real code change (regex.rs), conformance GREEN — turns fl's BIGGEST measured gap into a dominant
+  win.** Added `required_literal_bytes(ast)`: a sound, CONSERVATIVE analysis of bytes that MUST appear in every
+  match (`Concat`→union, `Repeat{min≥1}`→inner, `Repeat{min=0}`/`Alternate`/`AnyChar`/`CharClass`/`Anchor`/
+  `BackRef`→∅, so the result is always a SUBSET of the truly-required set). Stored as
+  `CompiledRegex.required_bytes` (empty for ICASE or when a `literal_prefix` already drives memmem). At the top
+  of `regex_exec_byte_slots`, one SIMD `memchr` per required byte returns no-match in O(n) when the input lacks
+  it — no VM seeding. Head-to-head (`regex_bench.rs`, dlmopen glibc, REG_NOSUB, all-`a` NO-MATCH text):
+  - `"a*a*a*a*a*a*a*a*b"` m=40: fl **23ns** / glibc **171ns** = **0.135x (7.4x faster)** — was 10.3x LOSS.
+  - `"(a*)*b"` m=26: fl **20ns** / glibc **120ns** = **0.165x (6.1x faster)** — was 7.8x LOSS.
+  - `"(a|aa)*b"` m=26: fl **20ns** / glibc **1634ns** = **0.012x (83x faster)** — was 0.81x.
+  CONFORMANCE: 38 regex unit tests + ~20 differential gates vs LIVE glibc (`conformance_diff_regex`,
+  `regex_startend`/`midpattern`/`bre_anchor` fuzz, `nested_submatch`, `stacked_quant`, `bufanchor`, `collating`)
+  ALL GREEN. SOUND: required_bytes ⊆ truly-required, so a present byte never blocks a real match; absence proves
+  no-match. Helps the common grep-style no-match case (pattern absent from text). **Supersedes the earlier
+  "regex stars 10x LOSS" reject — fl's regex now WINS the no-match path; the residual gap is only matching
+  inputs that contain the required bytes (where the NFA still runs).**
+
 ## 2026-06-25 — qsort scales: 1.6-1.74x WIN through 10M i32, NO radix crossover (cc)
 
 - **WIN: fl `qsort` beats glibc by 1.6-1.74x on large integer arrays, and the advantage HOLDS to 10M (40 MB,

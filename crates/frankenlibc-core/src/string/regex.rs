@@ -617,6 +617,13 @@ pub struct CompiledRegex {
     /// full literal is rare (e.g. `error:` in prose). Mutually exclusive with
     /// `prefilter` (set only when this is `None`).
     literal_prefix: Option<Vec<u8>>,
+    /// Byte values that MUST appear somewhere in every string this regex matches
+    /// (computed soundly + conservatively from the AST; always a SUBSET of the true
+    /// required set). If the input lacks any of them, no match is possible, so the
+    /// VM can be skipped entirely with a cheap SIMD `memchr` per byte. Empty when
+    /// case-insensitive (a literal could match either case) or when a `literal_prefix`
+    /// already covers the search via `memmem`. Never gates on NUL.
+    required_bytes: Vec<u8>,
 }
 
 impl CompiledRegex {
@@ -3053,6 +3060,15 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         }
     };
 
+    // Required-literal fast-reject set (a sound subset of the bytes every match must
+    // contain). Skip when case-insensitive (a literal could match either case) or when
+    // a `literal_prefix` already drives a memmem search — both make it redundant.
+    let required_bytes = if icase || literal_prefix.is_some() {
+        Vec::new()
+    } else {
+        required_literal_bytes(&ast)
+    };
+
     let backtrack_ast = if has_backref { Some(ast) } else { None };
 
     Ok(Box::new(CompiledRegex {
@@ -3066,6 +3082,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         complexity_certificate,
         prefilter,
         literal_prefix,
+        required_bytes,
     }))
 }
 
@@ -3156,6 +3173,42 @@ pub fn regex_match_bounds_bytes(
     Some((*slots.first().unwrap_or(&-1), *slots.get(1).unwrap_or(&-1)))
 }
 
+/// Bytes that MUST appear in every string the regex matches — a sound, conservative
+/// necessary condition for a match. Used as a `memchr` fast-reject before the VM.
+///
+/// SOUNDNESS: the returned set is always a SUBSET of the true required set, so a byte
+/// present here is genuinely required in every match (its absence proves no match).
+/// Built so that uncertainty only ever DROPS bytes (never adds a non-required one):
+/// `Repeat{min=0}` (can match empty), `Alternate` (no byte need be common to both
+/// branches), `AnyChar`/`CharClass`/`Anchor`/`BackRef` all contribute nothing.
+fn required_literal_bytes(ast: &Ast) -> Vec<u8> {
+    fn collect(ast: &Ast, out: &mut Vec<u8>) {
+        match ast {
+            Ast::Literal(b) => out.push(*b),
+            Ast::Group { inner, .. } => collect(inner, out),
+            Ast::Concat(items) => {
+                for it in items {
+                    collect(it, out);
+                }
+            }
+            Ast::Repeat { inner, min, .. } => {
+                if *min >= 1 {
+                    collect(inner, out);
+                }
+            }
+            // Alternate / AnyChar / CharClass / Anchor / BackRef: no single byte is
+            // guaranteed across all matches — contribute nothing (keeps the set sound).
+            _ => {}
+        }
+    }
+    let mut set = Vec::new();
+    collect(ast, &mut set);
+    set.sort_unstable();
+    set.dedup();
+    set.retain(|&b| b != 0); // never gate on NUL (cstring inputs exclude it)
+    set
+}
+
 fn regex_exec_cstring_slots(
     compiled: &CompiledRegex,
     input: &[u8],
@@ -3168,6 +3221,18 @@ fn regex_exec_cstring_slots(
 
 fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) -> Option<Vec<i32>> {
     let num_slots = compiled.num_slots();
+
+    // Required-literal fast reject: every match must contain each byte in
+    // `required_bytes` (a sound subset of the truly-required bytes). If the input
+    // lacks any of them, no match is possible — a SIMD `memchr` per byte is far cheaper
+    // than seeding the VM at every start position. Sound: the set never holds a
+    // non-required byte, so a real match is never wrongly rejected.
+    for &rb in &compiled.required_bytes {
+        if crate::string::mem::memchr(input, rb, input.len()).is_none() {
+            return None;
+        }
+    }
+
     if let Some(ast) = compiled.backtrack_ast.as_ref() {
         let vm = BacktrackVm::new(BacktrackConfig {
             ast,
