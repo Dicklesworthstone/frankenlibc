@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — strftime MIXED: numeric 3.2x WIN, name-directive (%a/%b) 3.7x LOSS + lever (cc)
+
+- **MIXED: fl `strftime` wins numeric formats, loses name-directive formats.** Head-to-head
+  (`strftime_bench.rs`, dlmopen host glibc, **output byte-equal**):
+  - `"%Y-%m-%d %H:%M:%S"` (numeric): fl **21.8ns** / glibc **68.8ns** = **0.316x (3.2x WIN)** — direct
+    formatting beats glibc's format-parse (joins asctime 8.4x, timegm 5.7x).
+  - `"%a, %d %b %Y %H:%M:%S"` (`%a` weekday + `%b` month names): fl **262.2ns** / glibc **70.1ns** = **3.739x
+    LOSS**.
+  - ROOT CAUSE (partial): the names ARE const arrays (`WDAY_NAMES`/`MON_NAMES`, fast lookups), yet the name
+    format is ~10x slower PER DIRECTIVE (37ns vs 3.7ns numeric). So fl's `%a`/`%b` match arm has a slow WRAPPER
+    (not the name lookup itself — possibly a `str::from_utf8`/alloc/width-pad path). **LEVER: pinpoint + fix the
+    `%a`/`%A`/`%b`/`%B` path in `format_strftime`** — name directives are common (RFC dates, human logs). The
+    numeric path is fl's strength; the name path is the gap. A focused `time/mod.rs` follow-up.
+
 ## 2026-06-25 — asctime 8.4x WIN (direct byte build vs glibc sprintf), output-exact (cc)
 
 - **WIN: fl `asctime` is 8.4x faster than glibc, output-exact.** fl's `format_asctime` builds the 26-byte
