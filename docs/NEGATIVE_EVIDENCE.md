@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — regex required-SUBSTRING fast-reject LANDED — 3.1x WIN on scattered-byte no-match (cc)
+
+- **LANDED (real code change, regex.rs, conformance GREEN): strengthened the regex fast-reject with a
+  required-SUBSTRING `memmem`.** The single-byte required-literal check (landed earlier) PASSES when a
+  pattern's required bytes are all present but SCATTERED — the common case for literal-ish patterns over
+  natural text (e.g. grepping `ERROR` in English logs, where E/R/O appear everywhere). Added
+  `required_literal_run(ast)` = the longest top-level contiguous literal run (≥2 bytes), checked with one SIMD
+  `memmem` before the per-byte checks.
+  - Head-to-head (`regex_bench.rs`, REG_NOSUB, pattern `"a*a*a*a*a*a*ERROR"` vs `"ERO"×2000` = E,R,O scattered,
+    no contiguous `"ERROR"`): fl **11993ns** / glibc **37372ns** = **0.321x (3.1x faster)**. Both NO-MATCH.
+    Without the substring fl ran the star-heavy NFA (slow); now `memmem` rejects in O(n).
+  CONFORMANCE: 38 regex unit tests + 5 differential gate suites (`conformance_diff_regex`,
+  startend/bre-anchor/midpattern fuzz, nested_submatch) all GREEN. SOUND: consecutive top-level `Literal` nodes
+  are matched contiguously, so the run is a genuinely-required substring — its absence proves no-match. Extends
+  the required-literal win to the realistic grep-style no-match case (required bytes present but not contiguous).
+
 ## 2026-06-25 — qsort i32 WIN is FLAT ~1.8x across cardinality (radix is O(n)) (cc)
 
 - **WIN (robustness confirm): fl `qsort` i32 wins ~1.8x regardless of distinct-value count.** Head-to-head

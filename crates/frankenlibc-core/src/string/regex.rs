@@ -624,6 +624,13 @@ pub struct CompiledRegex {
     /// case-insensitive (a literal could match either case) or when a `literal_prefix`
     /// already covers the search via `memmem`. Never gates on NUL.
     required_bytes: Vec<u8>,
+    /// A contiguous byte run (>= 2 bytes) that MUST appear in every match — the longest
+    /// top-level literal run in the AST. Strictly stronger than `required_bytes` for these
+    /// bytes: if the input lacks the SUBSTRING, no match is possible, even when the
+    /// individual bytes are all present but scattered (the common case for literal-ish
+    /// patterns over natural text). Checked with one SIMD `memmem`. Empty when ICASE, when
+    /// a `literal_prefix` already drives the search, or when no >= 2-byte run exists.
+    required_substring: Vec<u8>,
 }
 
 impl CompiledRegex {
@@ -3069,6 +3076,14 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         required_literal_bytes(&ast)
     };
 
+    // Required contiguous substring (longest top-level literal run, >= 2 bytes). Same
+    // skip conditions as `required_bytes`; strictly stronger when it applies.
+    let required_substring = if icase || literal_prefix.is_some() {
+        Vec::new()
+    } else {
+        required_literal_run(&ast)
+    };
+
     let backtrack_ast = if has_backref { Some(ast) } else { None };
 
     Ok(Box::new(CompiledRegex {
@@ -3083,6 +3098,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         prefilter,
         literal_prefix,
         required_bytes,
+        required_substring,
     }))
 }
 
@@ -3209,6 +3225,47 @@ fn required_literal_bytes(ast: &Ast) -> Vec<u8> {
     set
 }
 
+/// Longest contiguous run of literal bytes that every match must contain — a SOUND
+/// required substring used as a `memmem` fast-reject. Scans the top-level `Concat` for the
+/// longest maximal run of consecutive `Ast::Literal` nodes (which are matched contiguously)
+/// and recurses into a sole `Group`. Anything non-literal (`Repeat`, `Alternate`,
+/// `AnyChar`, `CharClass`, `Anchor`, `BackRef`) breaks the run. Conservative: the result is
+/// always a genuinely-required contiguous substring, so its absence proves no-match.
+/// Returns empty if the longest run is < 2 bytes or contains a NUL.
+fn required_literal_run(ast: &Ast) -> Vec<u8> {
+    fn scan(ast: &Ast) -> Vec<u8> {
+        match ast {
+            Ast::Group { inner, .. } => scan(inner),
+            Ast::Concat(items) => {
+                let mut best: Vec<u8> = Vec::new();
+                let mut cur: Vec<u8> = Vec::new();
+                for it in items {
+                    if let Ast::Literal(b) = it {
+                        cur.push(*b);
+                    } else {
+                        if cur.len() > best.len() {
+                            best = core::mem::take(&mut cur);
+                        } else {
+                            cur.clear();
+                        }
+                    }
+                }
+                if cur.len() > best.len() {
+                    best = cur;
+                }
+                best
+            }
+            _ => Vec::new(),
+        }
+    }
+    let run = scan(ast);
+    if run.len() >= 2 && !run.contains(&0) {
+        run
+    } else {
+        Vec::new()
+    }
+}
+
 fn regex_exec_cstring_slots(
     compiled: &CompiledRegex,
     input: &[u8],
@@ -3221,6 +3278,17 @@ fn regex_exec_cstring_slots(
 
 fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) -> Option<Vec<i32>> {
     let num_slots = compiled.num_slots();
+
+    // Required-substring fast reject (strongest): every match must contain this contiguous
+    // run, so if `memmem` can't find it, no match is possible — and unlike the per-byte
+    // check below, this still rejects when the run's individual bytes are all present but
+    // SCATTERED (the common case for literal-ish patterns over natural text).
+    if !compiled.required_substring.is_empty() {
+        let sub = &compiled.required_substring;
+        if crate::string::mem::memmem(input, input.len(), sub, sub.len()).is_none() {
+            return None;
+        }
+    }
 
     // Required-literal fast reject: every match must contain each byte in
     // `required_bytes` (a sound subset of the truly-required bytes). If the input
