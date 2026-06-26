@@ -6,6 +6,19 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — mbstowcs MIXED: ASCII WIN 6.6x, multibyte LOSS 4.5x (cc)
+
+- **MIXED: fl `mbstowcs` crushes glibc on ASCII text but loses on multibyte.** Head-to-head
+  (`mbstowcs_bench.rs`, pristine glibc via dlmopen in `C.UTF-8`, **output verified identical** char-for-char):
+  - ASCII (1800B English): fl **137ns** / glibc **908ns** = **0.151x (6.6x faster)** — fl's SIMD ASCII fast path
+    vs glibc's per-char state machine.
+  - mixed (1200B accented café/résumé/naïve): fl **3301ns** / glibc **738ns** = **4.47x LOSS** — fl's scalar
+    `decode_utf8` per-char fallback is slower than glibc's state machine once the ASCII run breaks.
+  So fl wins ASCII-heavy text (English, source code, most content) **6.6x**, loses multibyte-heavy text
+  (accented European, CJK) **4.5x**. **LEVER (deferred): fl's per-char multibyte `decode_utf8` fallback is the
+  slow path; a branchless/SIMD multibyte decoder (simdutf-style) would close it.** The SIMD ASCII fast path is
+  excellent; the multibyte tail is the gap — a real i18n lever for a dedicated effort.
+
 ## 2026-06-26 — BOLD-VERIFY strtol scorecard: no off-main win; time(NULL) remains 1.81x LOSS (BoldWaterfall)
 
 - **LEDGER-ONLY / NO NEW CODE:** refreshed the land-or-dig sweep after `main` advanced to
