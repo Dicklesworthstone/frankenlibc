@@ -1148,7 +1148,11 @@ where
         let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
         let nul = lanes.simd_eq(zero);
         let member = in_set(lanes);
-        let stop_mask = if stop_in_set { nul | member } else { nul | !member };
+        let stop_mask = if stop_in_set {
+            nul | member
+        } else {
+            nul | !member
+        };
         let bits = stop_mask.to_bitmask();
         if bits != 0 {
             return base + bits.trailing_zeros() as usize;
@@ -3560,7 +3564,12 @@ mod tests {
             }
             None
         }
-        for delims in [b"\r\n\0".as_slice(), b", \0".as_slice(), b"::\0".as_slice(), b";|:\0".as_slice()] {
+        for delims in [
+            b"\r\n\0".as_slice(),
+            b", \0".as_slice(),
+            b"::\0".as_slice(),
+            b";|:\0".as_slice(),
+        ] {
             for hit in [7usize, SIMD_LANES + 3, SIMD_LANES * 2 + 1, 999] {
                 let mut buf = vec![b'x'; SIMD_LANES * 3 + 10];
                 let last = delims[..delims.len() - 1].len() - 1;
@@ -3570,7 +3579,10 @@ mod tests {
                 let mut a = buf.clone();
                 let got = strsep(&mut a, delims);
                 let want = reference(&buf, delims);
-                assert_eq!(got, want, "strsep delims={delims:?} hit={hit}: got={got:?} want={want:?}");
+                assert_eq!(
+                    got, want,
+                    "strsep delims={delims:?} hit={hit}: got={got:?} want={want:?}"
+                );
                 if let Some(idx) = got {
                     assert_eq!(a[idx], 0, "delimiter overwritten with NUL");
                 }

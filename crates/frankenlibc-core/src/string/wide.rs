@@ -488,8 +488,10 @@ pub fn wcscmp(s1: &[u32], s2: &[u32]) -> i32 {
     let bounded = s1.len().min(s2.len());
     let mut i = 0;
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
-        let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let av =
+            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let bv =
+            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
         // First lane that differs OR is NUL in s1 — resolve the divergence index via
         // the SIMD mask (O(1)) instead of breaking to the scalar tail and re-scanning
         // the broken panel element-by-element (wcscmp was 3.25x slower than glibc on a
@@ -555,8 +557,10 @@ pub fn wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         i += WIDE_COMPARE_UNROLL_LANES;
     }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
-        let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let av =
+            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let bv =
+            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
         // First lane that differs OR is NUL in s1 — O(1) divergence index via the
         // SIMD mask instead of breaking to the scalar tail and re-scanning the panel
         // (same fix as wcscmp; bd-2g7oyh). Matches equal_and_no_nul_wide's break and
@@ -1473,8 +1477,10 @@ pub fn wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
         }
     }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
-        let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let av =
+            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let bv =
+            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
         // First lane that case-folds-differently OR is NUL in s1 — O(1) divergence
         // index via the SIMD mask instead of breaking to the scalar tail and
         // re-folding the panel element-by-element (bd-2g7oyh). Both folds are
@@ -1547,8 +1553,10 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         }
     }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
-        let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let av =
+            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
+        let bv =
+            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
         // First lane that case-folds-differently OR is NUL in s1 — O(1) divergence
         // index via the SIMD mask (same fix as wcscasecmp; bd-2g7oyh). Both folds
         // are ASCII-only, so this matches the scalar tail's stop lane + resolution.
@@ -2413,9 +2421,7 @@ mod tests {
     #[test]
     fn test_wmemcmp_long_equal_prefix_panel_boundary() {
         let len = WIDE_EQUAL_PREFIX_MIN_LEN + WIDE_EQUAL_PREFIX_LANES + 19;
-        let a: Vec<u32> = (0..len)
-            .map(|i| 0x1000_u32 + (i as u32 % 251))
-            .collect();
+        let a: Vec<u32> = (0..len).map(|i| 0x1000_u32 + (i as u32 % 251)).collect();
         assert_eq!(wmemcmp(&a, &a, len), 0);
 
         for diff_at in [

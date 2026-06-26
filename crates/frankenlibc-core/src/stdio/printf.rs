@@ -454,11 +454,9 @@ impl FormatSpec {
                 let val = match self.length {
                     LengthMod::Hh => (raw as i8) as i64,
                     LengthMod::H => (raw as i16) as i64,
-                    LengthMod::L
-                    | LengthMod::Ll
-                    | LengthMod::J
-                    | LengthMod::Z
-                    | LengthMod::T => raw as i64,
+                    LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => {
+                        raw as i64
+                    }
                     _ => (raw as i32) as i64,
                 };
                 format_signed(val, self, buf);
@@ -468,11 +466,9 @@ impl FormatSpec {
                 let val = match self.length {
                     LengthMod::Hh => (raw as u8) as u64,
                     LengthMod::H => (raw as u16) as u64,
-                    LengthMod::L
-                    | LengthMod::Ll
-                    | LengthMod::J
-                    | LengthMod::Z
-                    | LengthMod::T => raw,
+                    LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => {
+                        raw
+                    }
                     _ => (raw as u32) as u64,
                 };
                 format_unsigned(val, self, buf);
@@ -1025,8 +1021,14 @@ fn find_percent(hay: &[u8]) -> Option<usize> {
     while i + 8 <= hay.len() {
         // SAFETY-free: bounded slice; LE so the lowest-address byte is least sig.
         let w = u64::from_le_bytes([
-            hay[i], hay[i + 1], hay[i + 2], hay[i + 3],
-            hay[i + 4], hay[i + 5], hay[i + 6], hay[i + 7],
+            hay[i],
+            hay[i + 1],
+            hay[i + 2],
+            hay[i + 3],
+            hay[i + 4],
+            hay[i + 5],
+            hay[i + 6],
+            hay[i + 7],
         ]);
         let x = w ^ NEEDLE; // a zero byte exactly where a '%' sits
         let m = x.wrapping_sub(ONES) & !x & HIGHS; // high bit set per zero byte
@@ -1482,7 +1484,8 @@ pub fn format_pointer(addr: usize, spec: &FormatSpec, buf: &mut Vec<u8>) {
     hexspec.route = None;
     let width = resolve_width(spec);
 
-    if spec.flags.zero_pad && !spec.flags.left_justify && matches!(spec.precision, Precision::None) {
+    if spec.flags.zero_pad && !spec.flags.left_justify && matches!(spec.precision, Precision::None)
+    {
         // Zero-pad: the sign sits at the front, then a zero-filled body whose
         // field width accounts for the sign.
         hexspec.width = Width::Fixed(width.saturating_sub(sign.len()));
@@ -1597,7 +1600,11 @@ const fn build_hex_pairs(upper: bool) -> [u8; 512] {
 /// `DIV`). Requires `value > 0` (the zero case is handled by the caller).
 /// Byte-for-byte identical output to the general loop with `base == 16`.
 fn render_hex(mut value: u64, uppercase: bool, buf: &mut [u8; 64]) -> usize {
-    let tbl = if uppercase { &HEX_PAIRS_UPPER } else { &HEX_PAIRS_LOWER };
+    let tbl = if uppercase {
+        &HEX_PAIRS_UPPER
+    } else {
+        &HEX_PAIRS_LOWER
+    };
     let mut pos = 64;
     while value >= 256 {
         let b = (value & 0xFF) as usize;
@@ -1633,7 +1640,11 @@ fn render_pow2(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64]) -
     while value > 0 && pos > 0 {
         pos -= 1;
         let digit = (value & mask) as u8;
-        buf[pos] = if digit < 10 { b'0' + digit } else { alpha + (digit - 10) };
+        buf[pos] = if digit < 10 {
+            b'0' + digit
+        } else {
+            alpha + (digit - 10)
+        };
         value >>= shift;
     }
     64 - pos
@@ -2151,7 +2162,12 @@ mod tests {
     // Reference general-base renderer (runtime DIV loop) — the exact code the
     // render_hex / render_pow2 fast paths replace, kept here to prove they are
     // byte-for-byte isomorphic for the power-of-two printf bases.
-    fn render_digits_reference(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64]) -> usize {
+    fn render_digits_reference(
+        mut value: u64,
+        base: u64,
+        uppercase: bool,
+        buf: &mut [u8; 64],
+    ) -> usize {
         if value == 0 {
             buf[63] = b'0';
             return 1;
@@ -2161,7 +2177,11 @@ mod tests {
         while value > 0 && pos > 0 {
             pos -= 1;
             let digit = (value % base) as u8;
-            buf[pos] = if digit < 10 { b'0' + digit } else { alpha + (digit - 10) };
+            buf[pos] = if digit < 10 {
+                b'0' + digit
+            } else {
+                alpha + (digit - 10)
+            };
             value /= base;
         }
         64 - pos
@@ -2171,7 +2191,9 @@ mod tests {
     fn format_segments_inline_and_spill_preserve_order() {
         // Push n literal segments and verify as_slice + into_iter return them in
         // order across the inline/heap boundary (INLINE_SEGMENTS).
-        let labels: Vec<Vec<u8>> = (0..40).map(|i| alloc::format!("seg{i}").into_bytes()).collect();
+        let labels: Vec<Vec<u8>> = (0..40)
+            .map(|i| alloc::format!("seg{i}").into_bytes())
+            .collect();
         for n in 0..=labels.len() {
             let mut segs = FormatSegments::new();
             for lab in labels.iter().take(n) {
@@ -2199,7 +2221,10 @@ mod tests {
                 })
                 .collect();
             let expected_owned: Vec<Vec<u8>> = labels.iter().take(n).cloned().collect();
-            assert_eq!(via_iter, expected_owned, "into_iter order mismatch for n={n}");
+            assert_eq!(
+                via_iter, expected_owned,
+                "into_iter order mismatch for n={n}"
+            );
         }
     }
 
@@ -2213,8 +2238,8 @@ mod tests {
             b"%".to_vec(),
             b"%abc".to_vec(),
             b"abc%".to_vec(),
-            b"abcdefg%hijk".to_vec(),   // % at index 7 (last of first word)
-            b"abcdefgh%ijk".to_vec(),   // % at index 8 (first of second word)
+            b"abcdefg%hijk".to_vec(), // % at index 7 (last of first word)
+            b"abcdefgh%ijk".to_vec(), // % at index 8 (first of second word)
             b"0123456789abcdef%".to_vec(),
             b"a%b%c%".to_vec(),
         ];
@@ -2227,7 +2252,9 @@ mod tests {
         // Deterministic pseudo-random buffers, some seeded with '%'.
         let mut state: u64 = 0xC0FFEE_1234_5678;
         for _ in 0..20_000 {
-            state ^= state << 13; state ^= state >> 7; state ^= state << 17;
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
             let n = (state as usize) % 64;
             let mut v: Vec<u8> = (0..n).map(|k| ((state >> (k % 56)) as u8) | 1).collect();
             if state & 1 == 0 && n > 0 {
@@ -2246,9 +2273,27 @@ mod tests {
     fn render_hex_and_pow2_isomorphic_to_reference() {
         // Deterministic xorshift over a wide value space, plus boundary probes.
         let mut probes: Vec<u64> = vec![
-            0, 1, 9, 15, 16, 17, 255, 256, 257, 0xFF, 0x100, 0xFFFF, 0x10000,
-            0xABCD, 0xDEADBEEF, 0xFFFF_FFFF, 0x1_0000_0000, u64::MAX, u64::MAX - 1,
-            0x8000_0000_0000_0000, 0x0FED_CBA9_8765_4321,
+            0,
+            1,
+            9,
+            15,
+            16,
+            17,
+            255,
+            256,
+            257,
+            0xFF,
+            0x100,
+            0xFFFF,
+            0x10000,
+            0xABCD,
+            0xDEADBEEF,
+            0xFFFF_FFFF,
+            0x1_0000_0000,
+            u64::MAX,
+            u64::MAX - 1,
+            0x8000_0000_0000_0000,
+            0x0FED_CBA9_8765_4321,
         ];
         let mut state: u64 = 0x1234_5678_9abc_def1;
         for _ in 0..50_000 {

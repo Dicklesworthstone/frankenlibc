@@ -231,8 +231,7 @@ pub fn mark_multithreaded() {
 #[inline]
 #[allow(unsafe_code)]
 fn with_state<R>(f: impl FnOnce(&mut RandomState) -> R) -> R {
-    let need_lock =
-        cfg!(test) || SINGLE_THREADED.load(std::sync::atomic::Ordering::Acquire) == 0;
+    let need_lock = cfg!(test) || SINGLE_THREADED.load(std::sync::atomic::Ordering::Acquire) == 0;
     let _guard = need_lock.then(|| LOCK.lock().unwrap_or_else(|e| e.into_inner()));
     // SAFETY: serialized by `_guard` when multi-threaded; otherwise the
     // single-threaded invariant guarantees exclusive access.

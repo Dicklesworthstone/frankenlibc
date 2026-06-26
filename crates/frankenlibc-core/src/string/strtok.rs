@@ -81,7 +81,10 @@ fn strtok_at(s: &mut [u8], delimiters: &[u8], offset: usize) -> Option<(usize, u
     let len = s.len();
     // Exact delimiter set (bytes up to the first NUL or slice end) — same membership
     // as DelimSet, without strlen-over-reading a non-NUL-terminated arg.
-    let dn = delimiters.iter().position(|&b| b == 0).unwrap_or(delimiters.len());
+    let dn = delimiters
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(delimiters.len());
     let delim_set = &delimiters[..dn];
     let mut pos = offset.min(len);
 
@@ -120,7 +123,10 @@ fn strtok_at(s: &mut [u8], delimiters: &[u8], offset: usize) -> Option<(usize, u
 /// token, or `None` if no more tokens remain.
 pub fn strtok_r(s: &mut [u8], delimiters: &[u8], save_ptr: usize) -> Option<(usize, usize, usize)> {
     let len = s.len();
-    let dn = delimiters.iter().position(|&b| b == 0).unwrap_or(delimiters.len());
+    let dn = delimiters
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(delimiters.len());
     let delim_set = &delimiters[..dn];
     let mut pos = save_ptr.min(len);
 

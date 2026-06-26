@@ -276,7 +276,8 @@ impl ScanSpec {
         pos: usize,
         wide_input: bool,
     ) -> Option<(Option<ScanValue>, usize)> {
-        self.scan_operation_kind()?.scan(input, pos, self, wide_input)
+        self.scan_operation_kind()?
+            .scan(input, pos, self, wide_input)
     }
 }
 
@@ -1129,7 +1130,8 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
                     k += 1;
                 }
                 if k < remaining.len() && k < budget && remaining[k] == b')' {
-                    payload = crate::stdlib::conversion::parse_nan_payload(&remaining[seq_start..k]);
+                    payload =
+                        crate::stdlib::conversion::parse_nan_payload(&remaining[seq_start..k]);
                     j = k + 1; // consume through the ')'
                 } else {
                     // Malformed payload (no closing paren / cut off by width):
@@ -1559,7 +1561,13 @@ mod tests {
     fn scanset_bitmap_matches_bool_array() {
         // Exhaustively prove the 256-bit bitmap encodes the same membership as
         // the parse-time [bool; 256] array, including word-boundary bytes.
-        for seed in [0u64, 1, 0x5555_5555_5555_5555, 0xFFFF_FFFF_FFFF_FFFF, 0x0123_4567_89ab_cdef] {
+        for seed in [
+            0u64,
+            1,
+            0x5555_5555_5555_5555,
+            0xFFFF_FFFF_FFFF_FFFF,
+            0x0123_4567_89ab_cdef,
+        ] {
             let mut arr = [false; 256];
             let mut s = seed | 1;
             for (i, slot) in arr.iter_mut().enumerate() {
@@ -1570,7 +1578,11 @@ mod tests {
             }
             let set = ScanSet::from_bool_array(false, &arr);
             for c in 0..=255u8 {
-                assert_eq!(set.contains(c), arr[c as usize], "membership mismatch at c={c} seed={seed:#x}");
+                assert_eq!(
+                    set.contains(c),
+                    arr[c as usize],
+                    "membership mismatch at c={c} seed={seed:#x}"
+                );
             }
         }
     }

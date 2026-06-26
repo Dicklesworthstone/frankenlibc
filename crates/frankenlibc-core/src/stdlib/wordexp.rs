@@ -201,7 +201,8 @@ pub fn expand_braced_param(
     undef_is_error: bool,
     lookup_env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<String, ExpandError> {
-    let is_name = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    let is_name =
+        |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
 
     // `${#NAME}` — string length.
     if let Some(name) = content.strip_prefix('#')
@@ -320,7 +321,10 @@ where
         return Ok(0);
     }
     let toks = arith_tokenize(expr)?;
-    let mut p = ArithParser { toks: &toks, pos: 0 };
+    let mut p = ArithParser {
+        toks: &toks,
+        pos: 0,
+    };
     let node = p.parse_expr()?;
     if p.pos != p.toks.len() {
         return Err(ExpandError::Syntax);
@@ -336,14 +340,36 @@ where
 enum ATok {
     Num(i64),
     Var(String),
-    Plus, Minus, Star, Slash, Percent,
-    Shl, Shr, Lt, Le, Gt, Ge, Eq, Ne,
-    Amp, Caret, Pipe, AmpAmp, PipePipe,
-    Not, Tilde, Quest, Colon, LParen, RParen,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Shl,
+    Shr,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+    Amp,
+    Caret,
+    Pipe,
+    AmpAmp,
+    PipePipe,
+    Not,
+    Tilde,
+    Quest,
+    Colon,
+    LParen,
+    RParen,
     // Assignment (bd-6a9tuc): plain `=` and the compound forms; `Assign(op)`
     // carries the underlying binary op for compound assignment (`None` = plain).
     Assign(Option<Box<ATok>>),
-    Incr, Decr, Comma,
+    Incr,
+    Decr,
+    Comma,
 }
 
 fn arith_parse_num(b: &[u8], start: usize) -> Result<(i64, usize), ExpandError> {
@@ -396,66 +422,160 @@ fn arith_tokenize(s: &str) -> Result<Vec<ATok>, ExpandError> {
         }
         match c {
             b'+' => {
-                if b.get(i + 1) == Some(&b'+') { out.push(ATok::Incr); i += 2; }
-                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Plus)))); i += 2; }
-                else { out.push(ATok::Plus); i += 1; }
+                if b.get(i + 1) == Some(&b'+') {
+                    out.push(ATok::Incr);
+                    i += 2;
+                } else if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Assign(Some(Box::new(ATok::Plus))));
+                    i += 2;
+                } else {
+                    out.push(ATok::Plus);
+                    i += 1;
+                }
             }
             b'-' => {
-                if b.get(i + 1) == Some(&b'-') { out.push(ATok::Decr); i += 2; }
-                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Minus)))); i += 2; }
-                else { out.push(ATok::Minus); i += 1; }
+                if b.get(i + 1) == Some(&b'-') {
+                    out.push(ATok::Decr);
+                    i += 2;
+                } else if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Assign(Some(Box::new(ATok::Minus))));
+                    i += 2;
+                } else {
+                    out.push(ATok::Minus);
+                    i += 1;
+                }
             }
             b'*' => {
-                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Star)))); i += 2; }
-                else { out.push(ATok::Star); i += 1; }
+                if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Assign(Some(Box::new(ATok::Star))));
+                    i += 2;
+                } else {
+                    out.push(ATok::Star);
+                    i += 1;
+                }
             }
             b'/' => {
-                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Slash)))); i += 2; }
-                else { out.push(ATok::Slash); i += 1; }
+                if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Assign(Some(Box::new(ATok::Slash))));
+                    i += 2;
+                } else {
+                    out.push(ATok::Slash);
+                    i += 1;
+                }
             }
             b'%' => {
-                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Percent)))); i += 2; }
-                else { out.push(ATok::Percent); i += 1; }
+                if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Assign(Some(Box::new(ATok::Percent))));
+                    i += 2;
+                } else {
+                    out.push(ATok::Percent);
+                    i += 1;
+                }
             }
-            b'~' => { out.push(ATok::Tilde); i += 1; }
-            b'(' => { out.push(ATok::LParen); i += 1; }
-            b')' => { out.push(ATok::RParen); i += 1; }
-            b',' => { out.push(ATok::Comma); i += 1; }
+            b'~' => {
+                out.push(ATok::Tilde);
+                i += 1;
+            }
+            b'(' => {
+                out.push(ATok::LParen);
+                i += 1;
+            }
+            b')' => {
+                out.push(ATok::RParen);
+                i += 1;
+            }
+            b',' => {
+                out.push(ATok::Comma);
+                i += 1;
+            }
             b'^' => {
-                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Caret)))); i += 2; }
-                else { out.push(ATok::Caret); i += 1; }
+                if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Assign(Some(Box::new(ATok::Caret))));
+                    i += 2;
+                } else {
+                    out.push(ATok::Caret);
+                    i += 1;
+                }
             }
-            b'?' => { out.push(ATok::Quest); i += 1; }
-            b':' => { out.push(ATok::Colon); i += 1; }
+            b'?' => {
+                out.push(ATok::Quest);
+                i += 1;
+            }
+            b':' => {
+                out.push(ATok::Colon);
+                i += 1;
+            }
             b'<' => {
-                if b.get(i + 1) == Some(&b'<') && b.get(i + 2) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Shl)))); i += 3; }
-                else if b.get(i + 1) == Some(&b'<') { out.push(ATok::Shl); i += 2; }
-                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Le); i += 2; }
-                else { out.push(ATok::Lt); i += 1; }
+                if b.get(i + 1) == Some(&b'<') && b.get(i + 2) == Some(&b'=') {
+                    out.push(ATok::Assign(Some(Box::new(ATok::Shl))));
+                    i += 3;
+                } else if b.get(i + 1) == Some(&b'<') {
+                    out.push(ATok::Shl);
+                    i += 2;
+                } else if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Le);
+                    i += 2;
+                } else {
+                    out.push(ATok::Lt);
+                    i += 1;
+                }
             }
             b'>' => {
-                if b.get(i + 1) == Some(&b'>') && b.get(i + 2) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Shr)))); i += 3; }
-                else if b.get(i + 1) == Some(&b'>') { out.push(ATok::Shr); i += 2; }
-                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Ge); i += 2; }
-                else { out.push(ATok::Gt); i += 1; }
+                if b.get(i + 1) == Some(&b'>') && b.get(i + 2) == Some(&b'=') {
+                    out.push(ATok::Assign(Some(Box::new(ATok::Shr))));
+                    i += 3;
+                } else if b.get(i + 1) == Some(&b'>') {
+                    out.push(ATok::Shr);
+                    i += 2;
+                } else if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Ge);
+                    i += 2;
+                } else {
+                    out.push(ATok::Gt);
+                    i += 1;
+                }
             }
             b'=' => {
-                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Eq); i += 2; }
-                else { out.push(ATok::Assign(None)); i += 1; }
+                if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Eq);
+                    i += 2;
+                } else {
+                    out.push(ATok::Assign(None));
+                    i += 1;
+                }
             }
             b'!' => {
-                if b.get(i + 1) == Some(&b'=') { out.push(ATok::Ne); i += 2; }
-                else { out.push(ATok::Not); i += 1; }
+                if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Ne);
+                    i += 2;
+                } else {
+                    out.push(ATok::Not);
+                    i += 1;
+                }
             }
             b'&' => {
-                if b.get(i + 1) == Some(&b'&') { out.push(ATok::AmpAmp); i += 2; }
-                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Amp)))); i += 2; }
-                else { out.push(ATok::Amp); i += 1; }
+                if b.get(i + 1) == Some(&b'&') {
+                    out.push(ATok::AmpAmp);
+                    i += 2;
+                } else if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Assign(Some(Box::new(ATok::Amp))));
+                    i += 2;
+                } else {
+                    out.push(ATok::Amp);
+                    i += 1;
+                }
             }
             b'|' => {
-                if b.get(i + 1) == Some(&b'|') { out.push(ATok::PipePipe); i += 2; }
-                else if b.get(i + 1) == Some(&b'=') { out.push(ATok::Assign(Some(Box::new(ATok::Pipe)))); i += 2; }
-                else { out.push(ATok::Pipe); i += 1; }
+                if b.get(i + 1) == Some(&b'|') {
+                    out.push(ATok::PipePipe);
+                    i += 2;
+                } else if b.get(i + 1) == Some(&b'=') {
+                    out.push(ATok::Assign(Some(Box::new(ATok::Pipe))));
+                    i += 2;
+                } else {
+                    out.push(ATok::Pipe);
+                    i += 1;
+                }
             }
             b'0'..=b'9' => {
                 let (v, ni) = arith_parse_num(b, i)?;
@@ -565,7 +685,11 @@ impl ArithParser<'_> {
                 return Err(ExpandError::Syntax);
             }
             let els = self.parse_assign()?;
-            Ok(ANode::Ternary(Box::new(cond), Box::new(then), Box::new(els)))
+            Ok(ANode::Ternary(
+                Box::new(cond),
+                Box::new(then),
+                Box::new(els),
+            ))
         } else {
             Ok(cond)
         }
@@ -623,12 +747,28 @@ impl ArithParser<'_> {
     }
     fn parse_unary(&mut self) -> Result<ANode, ExpandError> {
         match self.peek() {
-            Some(ATok::Plus) => { self.pos += 1; self.parse_unary() }
-            Some(ATok::Minus) => { self.pos += 1; Ok(ANode::Unary(ATok::Minus, Box::new(self.parse_unary()?))) }
-            Some(ATok::Not) => { self.pos += 1; Ok(ANode::Unary(ATok::Not, Box::new(self.parse_unary()?))) }
-            Some(ATok::Tilde) => { self.pos += 1; Ok(ANode::Unary(ATok::Tilde, Box::new(self.parse_unary()?))) }
+            Some(ATok::Plus) => {
+                self.pos += 1;
+                self.parse_unary()
+            }
+            Some(ATok::Minus) => {
+                self.pos += 1;
+                Ok(ANode::Unary(ATok::Minus, Box::new(self.parse_unary()?)))
+            }
+            Some(ATok::Not) => {
+                self.pos += 1;
+                Ok(ANode::Unary(ATok::Not, Box::new(self.parse_unary()?)))
+            }
+            Some(ATok::Tilde) => {
+                self.pos += 1;
+                Ok(ANode::Unary(ATok::Tilde, Box::new(self.parse_unary()?)))
+            }
             Some(ATok::Incr) | Some(ATok::Decr) => {
-                let delta = if matches!(self.peek(), Some(ATok::Incr)) { 1 } else { -1 };
+                let delta = if matches!(self.peek(), Some(ATok::Incr)) {
+                    1
+                } else {
+                    -1
+                };
                 self.pos += 1;
                 if let Some(ATok::Var(name)) = self.peek().cloned() {
                     self.pos += 1;
@@ -642,11 +782,18 @@ impl ArithParser<'_> {
     }
     fn parse_primary(&mut self) -> Result<ANode, ExpandError> {
         match self.peek().cloned() {
-            Some(ATok::Num(n)) => { self.pos += 1; Ok(ANode::Num(n)) }
+            Some(ATok::Num(n)) => {
+                self.pos += 1;
+                Ok(ANode::Num(n))
+            }
             Some(ATok::Var(name)) => {
                 self.pos += 1;
                 if matches!(self.peek(), Some(ATok::Incr) | Some(ATok::Decr)) {
-                    let delta = if matches!(self.peek(), Some(ATok::Incr)) { 1 } else { -1 };
+                    let delta = if matches!(self.peek(), Some(ATok::Incr)) {
+                        1
+                    } else {
+                        -1
+                    };
                     self.pos += 1;
                     Ok(ANode::IncrDec(name, delta, false))
                 } else {
@@ -811,7 +958,10 @@ where
         return Err(ExpandError::Syntax);
     }
     let toks = arith_tokenize(expr)?;
-    let mut p = ArithParser { toks: &toks, pos: 0 };
+    let mut p = ArithParser {
+        toks: &toks,
+        pos: 0,
+    };
     let node = p.parse_expr()?;
     if p.pos != p.toks.len() {
         return Err(ExpandError::Syntax);
