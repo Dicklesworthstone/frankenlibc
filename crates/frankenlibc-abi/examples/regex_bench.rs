@@ -98,5 +98,34 @@ fn main() {
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!("REGEX MATCH {pat:?} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x", fl / gl);
         }
+
+        // SUBMATCH-capable path (NO REG_NOSUB) on a no-match input: the fast-reject lives
+        // in regex_exec_byte_slots (shared by both paths), so this — the original 64.9x
+        // LOSS — should now also win.
+        {
+            let pat = "a*a*a*a*a*a*a*a*b";
+            let text = "a".repeat(40); // no 'b' -> NO-MATCH
+            let compiled = regex::regex_compile(pat.as_bytes(), libc::REG_EXTENDED).unwrap();
+            let fl_r = regex::regex_exec(&compiled, text.as_bytes(), &mut none, 0);
+            let mut re: libc::regex_t = std::mem::zeroed();
+            let pat_c = CString::new(pat).unwrap();
+            gl_regcomp(&mut re, pat_c.as_ptr(), libc::REG_EXTENDED);
+            let text_c = CString::new(text.clone()).unwrap();
+            let mut pm: [libc::regmatch_t; 4] = std::mem::zeroed();
+            let gl_r = gl_regexec(&re, text_c.as_ptr(), 4, pm.as_mut_ptr(), 0);
+            assert!(fl_r != 0 && gl_r != 0, "submatch-nomatch: fl={fl_r} glibc={gl_r}");
+            let iters = 200usize;
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                black_box(regex::regex_exec(black_box(&compiled), black_box(text.as_bytes()), &mut none, 0));
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_regexec(black_box(&re), black_box(text_c.as_ptr()), 4, pm.as_mut_ptr(), 0));
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("REGEX SUBMATCH-nomatch {pat:?} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.4}x", fl / gl);
+        }
     }
 }

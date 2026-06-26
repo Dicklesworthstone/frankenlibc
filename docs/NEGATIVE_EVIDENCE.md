@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — fputs strict scanner swap NO-SHIP: optimized strlen does not clear glibc (BoldWaterfall)
+
+- **REVERTED / NO-SHIP: strict `fputs` length scan via `strict_c_str_len` remains a glibc loss.** Land-or-dig
+  found no live `.scratch`/`.worktrees` measured win not already on `main` except an old unmeasured malloc WIP,
+  then routed the largest still-actionable ledger gap (`fputs_8B`) through the graveyard contention map
+  (FrankenLibC synchronization/service; RCU/QSBR, seqlock, BRAVO, flat combining). Tested the smallest safe
+  artifact first: swap the strict/non-healing `fputs` length discovery from byte-loop `scan_c_str_len(s, None)`
+  to the existing page-safe SIMD/SWAR `strict_c_str_len(s)`, leaving stream registry and write semantics
+  unchanged. Baseline (`rch exec -- cargo bench -p frankenlibc-bench --profile release --features abi-bench
+  --bench fputs_glibc_bench fputs_8B`, local fallback because no admissible worker, warm
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`): fl **4.8258 us** / glibc **1.4082 us** =
+  **3.43x LOSS** per 64 calls. Candidate: fl **4.2205 us** / glibc **1.4412 us** = **2.93x LOSS**; Criterion
+  reported **No change in performance detected** for both arms. Source reverted. The length scanner is not the
+  decisive blocker; the remaining gap is still the global stream-registry/`StdioStream` mutation path. Next
+  admissible lever must be the architectural per-FILE/sharded stream-state path, not another `fputs` strlen swap.
+
 ## 2026-06-25 — regex required-literal fast-reject: LANDED CODE WIN (10x loss → 6-83x WIN) (cc)
 
 - **LANDED a real code change (regex.rs), conformance GREEN — turns fl's BIGGEST measured gap into a dominant
@@ -29,6 +45,11 @@ retried and real wins are confirmed with numbers.
   NOT my overhead (memchr finds the `b` in ~4ns, ~0.15% of 2658ns). So the optimization is pure upside: 7x win
   on no-match, negligible cost on match. **The residual 12.6x matching-input gap is the NEXT lever — a lazy DFA
   (cache the NFA epsilon-closures into states) would make matching O(input); substantial build, deferred.**
+- **BREADTH (verified): the fast-reject also fixes the SUBMATCH path.** It lives in `regex_exec_byte_slots`,
+  shared by the nosub membership sim AND the tagged-submatch NFA. The submatch-capable compile (no `REG_NOSUB`)
+  on a no-match input — **the original worst-case 64.9x LOSS** — is now fl **19ns** / glibc 157ns = **0.123x
+  (8.1x faster)**. So one change flipped both the 10.3x (nosub) and 64.9x (submatch) no-match losses into 7-8x
+  wins.
 
 ## 2026-06-25 — qsort scales: 1.6-1.74x WIN through 10M i32, NO radix crossover (cc)
 
