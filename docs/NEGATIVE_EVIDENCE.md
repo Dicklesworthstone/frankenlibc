@@ -6,6 +6,38 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — BOLD-VERIFY strtol scorecard: no off-main win; time(NULL) remains 1.81x LOSS (BoldWaterfall)
+
+- **LEDGER-ONLY / NO NEW CODE:** refreshed the land-or-dig sweep after `main` advanced to
+  `58ca134dc` and found no measured `.scratch`/`.worktrees` win still off `main`. The live
+  BoldWaterfall scratch worktrees are ancestors of current `main`; the only dirty live
+  candidate dirs are the older SBCS/DBCS UTF-32 iconv lanes that already have landed or
+  rejected evidence. Local feature branches are also behind current `main`.
+- Re-ran the requested per-crate head-to-head scorecard through rch with the warm target dir:
+  `AGENT_NAME=BoldWaterfall CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a
+  rch exec -- cargo bench --release -p frankenlibc-bench --features abi-bench --bench
+  strtol_glibc_bench strtol -- --noplot --sample-size 10 --warm-up-time 1
+  --measurement-time 1`. Cargo rejected the literal requested spelling because `bench`
+  does not accept `--release` (`unexpected argument '--release'`), so the valid per-crate
+  release-profile form was used: `cargo bench -p frankenlibc-bench --profile release
+  --features abi-bench --bench strtol_glibc_bench strtol -- --noplot --sample-size 10
+  --warm-up-time 1 --measurement-time 1`. RCH reported local fallback
+  (`no admissible workers: insufficient_slots=5,hard_preflight=1`), so this is routing
+  evidence, not a same-worker keep proof.
+- Current scorecard vs host glibc: integer parsing rows are wins or noise-parity
+  (`strtol_dec_short` 0.54x, `strtol_dec_long` 0.52x, `strtol_hex` 0.70x; `atoi`/`atol`/
+  `atoll` 0.23-0.61x); floating parser rows are win/near-parity (`strtod_int` 0.76x,
+  `strtod_simple` 0.98x, `strtod_sci` 0.53x); `rand` 0.64x, `getenv_hit` 0.29x,
+  `getenv_miss` 0.30x, `pthread_self` 0.88x. The remaining meaningful measured loss in
+  this bench is timing: `clock_gettime` is near-parity at **1.05x LOSS/noise**, while
+  `time(NULL)` is **1.81x LOSS** (fl 4.63ns / glibc 2.56ns).
+- **Rejected route:** do not retry `time(NULL)` vDSO pointer-cache, runtime-ready gate,
+  null-writer split, or TLS hit-counter microfamilies. Prior ledger rows already measured
+  those as neutral/lossy after the `__vdso_time`/vvar fast path landed; the residual is
+  wrapper/control-plane overhead at a ~2-5ns scale. Next admissible timing lever must be a
+  deeper deployed ABI/vDSO boundary proof, not another small cache or branch split. Zero-gain
+  code was not kept.
+
 ## 2026-06-25 — strtol: LONG-number WIN 1.3-1.6x (reliable); SHORT numbers noise-dominated (CORRECTED) (cc)
 
 - **CORRECTION (variance caught): fl `strtol` reliably wins MULTI-DIGIT parsing 1.3-1.6x; SHORT (≤4-digit,
