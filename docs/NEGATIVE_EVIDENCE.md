@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — strtod 1.4-3.6x WIN, bit-exact vs glibc (cc)
+
+- **WIN: fl `strtod` is 1.4-3.6x faster than glibc AND bit-exact (correctly-rounded).** Head-to-head
+  (`strtod_bench.rs`, dlmopen host glibc, `fl.to_bits() == glibc.to_bits()` verified on every case):
+  - `"3.14159"`: fl 37.7ns / glibc 91.3ns = **0.41x (2.4x)** · `"1.5"`: 0.56x · `"123456.789012"`: 0.52x ·
+    `"0.1"`: 0.65x · `"9007199254740993"` (2⁵³+1): 0.73x.
+  - `"2.2250738585072014e-308"` (subnormal): fl 47.4ns / glibc 169.9ns = **0.28x (3.6x — glibc's subnormal path
+    is slow)** · `"1.7976931348623157e308"` (max): 0.45x (2.2x).
+  fl's parser (fast path + correct fallback) beats glibc across simple AND hard cases while staying
+  correctly-rounded. `strtod` is a hot path (config / CSV / JSON number parsing), so this win has broad reach.
+  Another "fast AND correct" win (like the f32/f64 fused math kernels), not a bench-overfit.
+
+## 2026-06-26 — BOLD-VERIFY fputs land-or-dig: no unlanded worktree win; current main still 3.78x LOSS (BoldWaterfall)
+
+- **BLOCKER / LEDGER-ONLY: no measured `.scratch`/`.worktrees` win remains off `main`; the biggest current
+  measured gap is still architectural stdio stream-state mutation.** Live local branches are ancestors of
+  `main`; the live detached worktrees under `.scratch`/`.worktrees` are also on-main, with the remaining dirty
+  candidate dirs matching already-landed SBCS->UTF-32 or already-rejected DBCS->UTF-32 evidence. The required
+  user spelling `rch exec -- cargo bench --release ...` was attempted first and Cargo rejected it
+  (`unexpected argument '--release'`), so the valid per-crate release-profile form was used:
+  `AGENT_NAME=BoldWaterfall CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec --
+  cargo bench -p frankenlibc-bench --profile release --features abi-bench --bench fputs_glibc_bench fputs_8B
+  -- --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`. RCH again reported local fallback
+  (`no admissible workers: insufficient_slots=5,hard_preflight=1`), so this is routing evidence rather than a
+  same-worker keep/reject proof: current `main` fl **4.8795 us** / glibc **1.2908 us** per 64 calls =
+  **3.78x LOSS**. The already-recorded strict scanner swap remains rejected above: it improved the center only
+  to **2.93x LOSS** with Criterion "No change in performance detected" and was reverted. Dig through the
+  Alien CS Graveyard contention map points to RCU/QSBR, seqlocks, BRAVO, and flat combining, but the existing
+  native memory-stream metadata is not authoritative enough for a safe tiny fast path: `NativeFileBacking`
+  stores fixed/growing backing descriptors while the actual position/content and memstream sync state remain
+  in `StdioStream` behind the global `registry()` mutex. A direct native-memory `fputs` bypass would desync
+  `rewind`/`fseek`/`fflush`/`fclose` and readback semantics unless the per-FILE/sharded stream-state refactor
+  lands. **Next admissible lever:** the bd-hqo6b6 per-FILE/sharded stream-state architecture with focused stdio
+  conformance; do not retry `fputs` strlen or native-pointer micro-bypasses.
+
 ## 2026-06-25 — fputs strict scanner swap NO-SHIP: optimized strlen does not clear glibc (BoldWaterfall)
 
 - **REVERTED / NO-SHIP: strict `fputs` length scan via `strict_c_str_len` remains a glibc loss.** Land-or-dig
