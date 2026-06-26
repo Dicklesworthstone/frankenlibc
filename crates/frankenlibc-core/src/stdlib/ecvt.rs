@@ -385,6 +385,9 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
             String::from("0")
         };
     }
+    if let Some(simple) = try_gcvt_exact_small_fixed(value, ndigit) {
+        return simple;
+    }
 
     // Pick format based on the decimal exponent the value rounds to.
     // The C/glibc %g switch keys off X = the exponent a `%e` conversion
@@ -410,6 +413,51 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     } else {
         format_fixed(value, ndigit, exp)
     }
+}
+
+fn try_gcvt_exact_small_fixed(value: f64, ndigit: usize) -> Option<String> {
+    let abs = value.abs();
+    if !abs.is_finite() || abs >= ((1u64 << 53) as f64) {
+        return None;
+    }
+
+    let twice = abs * 2.0;
+    if twice.fract() != 0.0 {
+        return None;
+    }
+    let twice = twice as u64;
+    let int = twice / 2;
+    let has_half = (twice & 1) != 0;
+    let int_digits = decimal_digits_u64(int);
+    let significant_digits = if has_half {
+        if int == 0 { 1 } else { int_digits + 1 }
+    } else {
+        int_digits
+    };
+    let exp = if int == 0 { -1 } else { int_digits as i32 - 1 };
+    if significant_digits > ndigit || exp < -4 || exp >= ndigit as i32 {
+        return None;
+    }
+
+    let mut out = String::with_capacity(usize::from(value.is_sign_negative()) + int_digits + 2);
+    if value.is_sign_negative() {
+        out.push('-');
+    }
+    out.push_str(&int.to_string());
+    if has_half {
+        out.push_str(".5");
+    }
+    Some(out)
+}
+
+#[inline]
+fn decimal_digits_u64(mut value: u64) -> usize {
+    let mut digits = 1;
+    while value >= 10 {
+        value /= 10;
+        digits += 1;
+    }
+    digits
 }
 
 /// Decimal exponent X of `abs` after rounding to `ndigit` significant
@@ -662,7 +710,10 @@ mod tests {
             (0.0, 6, b"0"),
             (1.0, 1, b"1"),
             (1.0, 6, b"1"),
+            (2.5, 6, b"2.5"),
             (-1.0, 6, b"-1"),
+            (3.141592653589793, 6, b"3.14159"),
+            (3.141592653589793, 17, b"3.1415926535897931"),
             (123.456, 1, b"1e+02"),
             (123.456, 2, b"1.2e+02"),
             (123.456, 6, b"123.456"),
@@ -671,6 +722,7 @@ mod tests {
             (-12345.0, 6, b"-12345"),
             (0.0001234, 1, b"0.0001"),
             (0.0001234, 6, b"0.0001234"),
+            (0.0001234, 17, b"0.00012339999999999999"),
             (1e10, 1, b"1e+10"),
             (1e10, 10, b"1e+10"),
             (1e-10, 1, b"1e-10"),

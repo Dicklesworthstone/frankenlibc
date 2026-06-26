@@ -6,6 +6,35 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — gcvt exact integer/half fixed fast path WINS vs glibc (BoldWaterfall)
+
+- **LANDED:** `render_gcvt` now short-circuits exact finite values representable as `N` or `N.5` when the
+  result is within the `%g` fixed-format exponent window and the requested significant-digit budget. This
+  avoids the prior common-case double formatting path (`%e` probe plus `%f` body) without touching the
+  hard rounded/dragon cases. The fast path deliberately rejects non-half fractions, large integers at/above
+  `2^53`, and values that should print scientific notation.
+- **BASELINE GAP (pre-edit, same turn, rch local fallback):** `gcvt_simple_p6` measured fl **309.78 ns** /
+  glibc **84.424 ns** = **3.67x LOSS**.
+- **FOCUSED CANDIDATE GATE (rch remote `vmi1264463`):** `gcvt_simple_p6` measured fl **90.565 ns** / glibc
+  **295.05 ns** = **0.31x WIN**. The host glibc row was noisy, so the broader gcvt bench was run before
+  landing.
+- **BROAD CANDIDATE GATE (rch remote `vmi1264463`, same bench binary):**
+
+  | case | fl ns | glibc ns | ratio |
+  |---|---|---|---|
+  | `3.14159...` `%.17g` | 447.99 | 411.42 | **1.09x LOSS** |
+  | `3.14159...` `%.6g` | 439.08 | 221.40 | **1.98x LOSS** |
+  | `1234567.89` `%.17g` | 618.86 | 789.45 | **0.78x WIN** |
+  | `0.0001234` `%.17g` | 517.29 | 431.41 | **1.20x LOSS** |
+  | `DBL_MAX` `%.17g` | 635.80 | 1679.8 | **0.38x WIN** |
+  | `100000` `%.6g` | 93.224 | 389.53 | **0.24x WIN** |
+  | `2.5` `%.6g` | 101.48 | 376.66 | **0.27x WIN** |
+
+- **CONFORMANCE:** `rch exec -- cargo test -p frankenlibc-core gcvt_matches_glibc_reference_outputs --
+  --nocapture` passed on `vmi1264463` with the new exact-half and existing rounded/scientific fixtures. The
+  unchanged non-exact `%g` rows remain explicitly documented losses; the deeper one-format rounded fixed-body
+  rewrite is still the next lever for the pi/small cases.
+
 ## 2026-06-26 — qsort f64 radix lane WORKS + parity-safe but NET-LOSS (wasted-attempt tax) — REVERTED (cc)
 
 - **LEVER BUILT, VERIFIED CORRECT, REVERTED (not a net win).** Added a verify-gated IEEE-754 float-radix
