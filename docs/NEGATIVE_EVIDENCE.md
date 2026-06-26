@@ -6,6 +6,34 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — CAMPAIGN SUMMARY (cc): fl-vs-glibc perf map after ~50 commits, 6 landed code wins
+
+- **LANDED CODE WINS (real fl improvements, each conformance-verified vs glibc differential gates):**
+  1. `regex` required-literal `memchr` fast-reject — no-match 10-65x LOSS → 6-83x WIN (covers nosub+submatch).
+  2. `regex` required-SUBSTRING `memmem` fast-reject — 3.1x WIN on scattered-byte no-match (grep over text).
+  3. `memccpy` fused single-pass scan+copy — ~1.2x (3n→2n traffic; still a SIMD-asm-floor loss vs glibc asm).
+  4-6. `qsort` integer arc (from a u16 1.25x LOSS): **unsigned-attempt** (loss→win) + **native-width radix**
+     (i32 +30-40%) + **signed/unsigned order-probe** (u16 2x). Integer sort now beats glibc across width
+     (2/4/8B), signedness, and scale (20K-10M): u16 0.09x · u32 0.35x · i32 0.36x · i64 0.58x · u64-1M 0.73x.
+- **CONFIRMED MEASURED WINS (existing fl algorithms, head-to-head ratios):** strstr 215x · strcasestr 210x ·
+  wcsncasecmp 85x · memmem 24x · wcspbrk 24x · wcscasecmp 21x · wcscspn 17x · **asctime 8.4x** · wcsstr 5.4x ·
+  **timegm 5.7x** · strftime-numeric 4.7x · fnmatch 3.5x · strtod 1.4-3.6x · strtoull 2.1-2.6x · wmemset 1.8x.
+- **FLOORS / REJECTS (irreducible — portable_simd vs glibc hand-asm):** scan/compare family (memchr/strlen/
+  memcmp/strcmp/memrchr/wcschr ~1.2-2.5x) · strcoll (=strcmp floor) · wide raw scans (wcslen/wcsnlen/wmemchr) ·
+  qsort ≥16B large elements (cache) · memmove/memset (bandwidth) · gmtime (glibc well-optimized).
+- **PARKED LEVERS (real but multi-session / profiler-needed):** regex matching lazy-DFA (residual star-pattern
+  ~10x) · qsort f64/f32 float-radix (multi-attempt overhead + no cheap float detection) · **strftime general
+  loop (fixed ~187ns/call CODEGEN cost — all benchmark-visible suspects ruled out; needs perf/flamegraph)** ·
+  mbstowcs multibyte SIMD decode (BoldWaterfall's area).
+- **METHOD:** in-process A/B (dlmopen pristine glibc vs fl core, worker load cancels in the ratio); verify
+  every win against the differential conformance gates BEFORE commit; **12 self-corrections** (e.g. regex
+  NOSUB-unfairness, wcsspn proxy bug, qsort widening→signed-only→narrow-key two-step, strtod/strtol/cardinality
+  hypotheses, strcoll/strftime bench-overfit) — every ratio stress-tested beyond one happy-path input.
+- **DURABLE CONCLUSION:** fl decisively beats glibc on superior ALGORITHMS (Two-Way search, radix+pdqsort,
+  iterative glob, fast-reject regex), well-engineered PARSERS/FORMATTERS (strtod, asctime, civil-days time),
+  and glibc's UNDEROPTIMIZED surfaces (wide-string, date→epoch); it sits at the irreducible floor only on
+  glibc's hand-tuned SIMD-asm scans/compares and a few well-optimized paths (gmtime).
+
 ## 2026-06-26 — qsort u64 (8-byte unsigned) at 1M WIN 1.4x — big-data pointer/hash/ID sort (cc)
 
 - **WIN: fl qsort `u64` at 1M wins 1.4x — the common big-data 8-byte-unsigned sort (pointers, hashes, IDs,
