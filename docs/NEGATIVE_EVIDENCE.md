@@ -6,6 +6,33 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — qsort f64 radix lane WORKS + parity-safe but NET-LOSS (wasted-attempt tax) — REVERTED (cc)
+
+- **LEVER BUILT, VERIFIED CORRECT, REVERTED (not a net win).** Added a verify-gated IEEE-754 float-radix
+  lane to `sort.rs` (width 4/8): map floats to an order-preserving unsigned key (positive → set sign bit;
+  negative → flip all bits), one LSD radix, inverse-transform, verify non-decreasing under the caller's
+  comparator. Targets the gap the integer lanes can't reach — arrays with NEGATIVE floats (all-positive
+  float arrays already pass the unsigned integer lane). Instrumented local run (`sort_bench` example,
+  n=20000 mixed ±doubles): **the lane is REACHED and WINS its verify on every iteration** ("float lane WON"),
+  and the built-in `vf == vg` assert (byte-identical to glibc) PASSES — so the transform is correct and
+  parity-safe.
+- **BUT IT DOES NOT BEAT glibc: f64 stays ~1.9x LOSS** (fl 1.89ms / glibc 0.98ms, n=20000, local coherent
+  build; rch reproduced 1.80x). Root cause = the **wasted-attempt tax**: by the time control reaches the
+  float lane, `try_integer_unstable_lanes` has already run the integer radix lane's **two** full 8-pass radix
+  sorts (signed then unsigned masks), both of which build+radix+writeback ~n keys before their (cheap-break)
+  verify fails. Three radix sorts total (2 wasted + 1 useful) cost more than glibc's single merge sort. The
+  float lane is a strict improvement over the prior pure-pdqsort fallback, but the gain is capped below
+  parity by the preceding wasted passes — the SAME architectural ceiling already documented for string sort.
+- **Also net-NEGATIVE for non-float width-8:** a width-8 STRUCT/descending sort that falls through the
+  integer lanes would now pay a 3rd wasted radix+verify before pdqsort. That alone justifies the revert.
+- **REAL LEVER (deferred, architectural):** a single cheap up-front TYPE PROBE — sample a cross-sign pair
+  and a same-sign-negative pair, ask the comparator, and select EXACTLY ONE of {signed-int, unsigned-int,
+  float} to radix (float vs signed-int differ only in the negative region: float negatives sort by
+  DESCENDING bits, signed-int by ascending). That removes ALL wasted passes and would make integer AND float
+  sorts win in one radix — but it is a refactor of the shared, differential-tested integer lane, out of
+  scope for a single contended-tree turn. Stashed `cc-qsort-float-radix-lane-WORKS-but-netLOSS-...` for that
+  future turn. No code shipped; sort.rs restored to HEAD.
+
 ## 2026-06-26 — gcvt (double→"%g") MIXED vs glibc + root cause: redundant double dragon-format (cc)
 
 - **MEASURED (new bench `gcvt_glibc_bench`, fl core vs real in-process glibc, no abi-bench). All bit-exact.**
