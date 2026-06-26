@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort f64 `total_cmp` fast-lane TRIED + REVERTED (still loss + regresses others) (cc)
+
+- **REVERTED (verify-correct but not a clean win):** implemented a `try_qsort_f64_natural_fast_lane` mirroring
+  the i64 lane — sort raw doubles by `f64::total_cmp` (no per-element FFI callback), then verify-then-commit
+  against the caller's comparator (so non-`f64` comparators safely fall back). CONFORMANCE was GREEN: 32 core
+  `stdlib::sort` tests + 6 differential gates (`qsort_radix`/`radix16`/`i64_fastlane`/`count8`/`qsort_r`) all
+  pass. It IMPROVED f64: **2.27x → 1.20x** (sort_bench, n=20000). But reverted because:
+  1. **Still a LOSS** — `total_cmp` is O(n·log n), the SAME class as glibc's merge; the overhead passes (read
+     into Vec, write back, the wasted integer-radix attempt that runs first) leave it 1.20x slower. No
+     asymptotic win, so it can't actually beat merge.
+  2. **Regresses other width-8 sorts** — a NON-f64, non-i64 width-8 comparator (e.g. descending i64, struct
+     keys) now pays a wasted full O(n·log n) `total_cmp` sort + verify before falling to pdqsort, where before
+     it went straight to pdqsort. The total_cmp path has no cheap fast-fail.
+- **REFINED LEVER (deferred):** the win needs an O(n) FLOAT-RADIX (transform each key by the float→sortable-u64
+  map, LSD-radix the u64, un-transform, verify) — O(n) genuinely beats merge's O(n·log n) — AND a cheap
+  non-f64 fast-fail so it doesn't tax descending/struct comparators. That's a careful reuse of the existing
+  radix machinery; bigger than a 60m slot, but the path is now mapped. (The naive `total_cmp` lane is a dead
+  end — DON'T re-try it.)
+
 ## 2026-06-25 — qsort f64 (doubles) 2.27x LOSS — the integer-radix win does NOT extend to floats (cc)
 
 - **LOSS (important scope bound): fl `qsort` loses 2.27x to glibc on f64 (double) keys** — the integer-radix
