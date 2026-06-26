@@ -86,7 +86,11 @@ impl BigUint {
     fn sub_assign(&mut self, other: &Self) {
         let mut borrow = 0i64;
         for i in 0..self.limbs.len() {
-            let o = if i < other.limbs.len() { other.limbs[i] as i64 } else { 0 };
+            let o = if i < other.limbs.len() {
+                other.limbs[i] as i64
+            } else {
+                0
+            };
             let mut d = self.limbs[i] as i64 - o - borrow;
             if d < 0 {
                 d += 1 << 32;
@@ -141,7 +145,9 @@ impl BigUint {
             return (BigUint { limbs: Vec::new() }, self.clone());
         }
         let n = self.bit_len();
-        let mut q = BigUint { limbs: vec![0; n.div_ceil(32)] };
+        let mut q = BigUint {
+            limbs: vec![0; n.div_ceil(32)],
+        };
         let mut r = BigUint { limbs: Vec::new() };
         for i in (0..n).rev() {
             r.shl1_inplace();
@@ -341,7 +347,11 @@ pub fn classify_binary128(bits: u128) -> F128Class {
         }
         let quiet = (mantissa >> 111) & 1 == 1;
         let payload = mantissa & ((1u128 << 111) - 1);
-        return F128Class::Nan { negative, quiet, payload };
+        return F128Class::Nan {
+            negative,
+            quiet,
+            payload,
+        };
     }
 
     // Significand integer `m` and binary exponent `e` such that value = m · 2^e.
@@ -371,7 +381,11 @@ pub fn classify_binary128(bits: u128) -> F128Class {
         digits.pop();
         exp10 += 1;
     }
-    F128Class::Finite { negative, digits, exp10 }
+    F128Class::Finite {
+        negative,
+        digits,
+        exp10,
+    }
 }
 
 /// Correctly-rounded (round-half-to-even) IEEE-754 binary128 bit pattern for
@@ -603,8 +617,7 @@ fn render_f(digits: &[u8], exp10: i32, p: usize, alt: bool, strip: bool) -> Vec<
         // Value is below the last retained fractional place: rounds to 0, or up
         // to one unit in the last place if it is >= half.
         let round_up = keep == 0
-            && (digits[0] > b'5'
-                || (digits[0] == b'5' && digits[1..].iter().any(|&d| d != b'0')));
+            && (digits[0] > b'5' || (digits[0] == b'5' && digits[1..].iter().any(|&d| d != b'0')));
         if round_up {
             (vec![b'1'], -(p as i32))
         } else {
@@ -648,7 +661,13 @@ fn render_f(digits: &[u8], exp10: i32, p: usize, alt: bool, strip: bool) -> Vec<
 }
 
 /// General (`%g`) body, unsigned.
-fn render_g(digits: &[u8], exp10: i32, precision: Option<usize>, upper: bool, alt: bool) -> Vec<u8> {
+fn render_g(
+    digits: &[u8],
+    exp10: i32,
+    precision: Option<usize>,
+    upper: bool,
+    alt: bool,
+) -> Vec<u8> {
     let mut p = precision.unwrap_or(6);
     if p == 0 {
         p = 1;
@@ -667,15 +686,14 @@ fn render_a(bits: u128, p_opt: Option<usize>, upper: bool, alt: bool) -> Vec<u8>
     let exp_field = ((bits >> 112) & 0x7fff) as i32;
     let mantissa = bits & ((1u128 << 112) - 1);
     let (mut lead, exp2): (u32, i32) = if exp_field == 0 {
-        if mantissa == 0 {
-            (0, 0)
-        } else {
-            (0, -16382)
-        }
+        if mantissa == 0 { (0, 0) } else { (0, -16382) }
     } else {
         (1, exp_field - 16383)
     };
-    let mut nibs: Vec<u8> = (0..28).rev().map(|i| ((mantissa >> (i * 4)) & 0xf) as u8).collect();
+    let mut nibs: Vec<u8> = (0..28)
+        .rev()
+        .map(|i| ((mantissa >> (i * 4)) & 0xf) as u8)
+        .collect();
 
     if let Some(p) = p_opt {
         if p < nibs.len() {
@@ -718,7 +736,11 @@ fn render_a(bits: u128, p_opt: Option<usize>, upper: bool, alt: bool) -> Vec<u8>
     } else {
         b"0123456789abcdef"
     };
-    let mut out: Vec<u8> = if upper { b"0X".to_vec() } else { b"0x".to_vec() };
+    let mut out: Vec<u8> = if upper {
+        b"0X".to_vec()
+    } else {
+        b"0x".to_vec()
+    };
     out.push(hexdig[lead as usize]);
     if !nibs.is_empty() || alt {
         out.push(b'.');
@@ -786,11 +808,19 @@ pub fn format_binary128(bits: u128, spec: &FmtSpec) -> Vec<u8> {
     };
 
     if matches!(cls, F128Class::Infinity { .. }) {
-        let b = if upper { b"INF".as_ref() } else { b"inf".as_ref() };
+        let b = if upper {
+            b"INF".as_ref()
+        } else {
+            b"inf".as_ref()
+        };
         return assemble(sign, b, spec, false, false);
     }
     if matches!(cls, F128Class::Nan { .. }) {
-        let b = if upper { b"NAN".as_ref() } else { b"nan".as_ref() };
+        let b = if upper {
+            b"NAN".as_ref()
+        } else {
+            b"nan".as_ref()
+        };
         return assemble(sign, b, spec, false, false);
     }
 
@@ -824,9 +854,11 @@ mod tests {
 
     fn finite(b: u128) -> (bool, String, i32) {
         match classify_binary128(b) {
-            F128Class::Finite { negative, digits, exp10 } => {
-                (negative, String::from_utf8(digits).unwrap(), exp10)
-            }
+            F128Class::Finite {
+                negative,
+                digits,
+                exp10,
+            } => (negative, String::from_utf8(digits).unwrap(), exp10),
             other => panic!("expected finite, got {other:?}"),
         }
     }
@@ -923,8 +955,14 @@ mod tests {
         assert_eq!(decimal_to_binary128(false, b"2", 0), bits(0, 0x4000, 0)); // 2.0
         assert_eq!(decimal_to_binary128(false, b"5", -1), bits(0, 0x3FFE, 0)); // 0.5
         assert_eq!(decimal_to_binary128(false, b"25", -2), bits(0, 0x3FFD, 0)); // 0.25
-        assert_eq!(decimal_to_binary128(false, b"3", 0), bits(0, 0x4000, 1 << 111)); // 3.0
-        assert_eq!(decimal_to_binary128(false, b"10", 0), bits(0, 0x4002, 1 << 110)); // 10.0
+        assert_eq!(
+            decimal_to_binary128(false, b"3", 0),
+            bits(0, 0x4000, 1 << 111)
+        ); // 3.0
+        assert_eq!(
+            decimal_to_binary128(false, b"10", 0),
+            bits(0, 0x4002, 1 << 110)
+        ); // 10.0
         assert_eq!(decimal_to_binary128(false, b"1000", -3), bits(0, 0x3FFF, 0)); // 1.0 (1000e-3)
         // Signed zero.
         assert_eq!(decimal_to_binary128(false, b"0", 0), 0);
@@ -936,15 +974,22 @@ mod tests {
         // Round-trip a known decimal expansion back to its source bits: 2^-120
         // formats to this exact decimal (see exact_tiny_normal test), so parsing
         // it must reproduce 2^-120's bits.
-        let tiny = "752316384526264005099991383822237233803945956334136013765601092018187046051025390625";
-        assert_eq!(decimal_to_binary128(false, tiny.as_bytes(), -120), bits(0, 0x3F87, 0));
+        let tiny =
+            "752316384526264005099991383822237233803945956334136013765601092018187046051025390625";
+        assert_eq!(
+            decimal_to_binary128(false, tiny.as_bytes(), -120),
+            bits(0, 0x3F87, 0)
+        );
     }
 
     #[test]
     fn parses_hex_to_bits() {
         assert_eq!(hex_to_binary128(false, b"1", b"", 0), bits(0, 0x3FFF, 0)); // 0x1p0 = 1
         assert_eq!(hex_to_binary128(false, b"1", b"", 1), bits(0, 0x4000, 0)); // 0x1p1 = 2
-        assert_eq!(hex_to_binary128(false, b"1", b"8", 1), bits(0, 0x4000, 1 << 111)); // 0x1.8p1 = 3
+        assert_eq!(
+            hex_to_binary128(false, b"1", b"8", 1),
+            bits(0, 0x4000, 1 << 111)
+        ); // 0x1.8p1 = 3
         assert_eq!(hex_to_binary128(false, b"0", b"1", 0), bits(0, 0x3FFB, 0)); // 0x0.1 = 2^-4
         assert_eq!(hex_to_binary128(true, b"1", b"", 0), bits(1, 0x3FFF, 0)); // -1
         assert_eq!(hex_to_binary128(false, b"0", b"0", 0), 0); // zero
@@ -957,12 +1002,26 @@ mod tests {
 
     #[test]
     fn classifies_specials() {
-        assert_eq!(classify_binary128(bits(0, 0x7FFF, 0)), F128Class::Infinity { negative: false });
-        assert_eq!(classify_binary128(bits(1, 0x7FFF, 0)), F128Class::Infinity { negative: true });
-        assert_eq!(classify_binary128(bits(0, 0, 0)), F128Class::Zero { negative: false });
-        assert_eq!(classify_binary128(bits(1, 0, 0)), F128Class::Zero { negative: true });
+        assert_eq!(
+            classify_binary128(bits(0, 0x7FFF, 0)),
+            F128Class::Infinity { negative: false }
+        );
+        assert_eq!(
+            classify_binary128(bits(1, 0x7FFF, 0)),
+            F128Class::Infinity { negative: true }
+        );
+        assert_eq!(
+            classify_binary128(bits(0, 0, 0)),
+            F128Class::Zero { negative: false }
+        );
+        assert_eq!(
+            classify_binary128(bits(1, 0, 0)),
+            F128Class::Zero { negative: true }
+        );
         match classify_binary128(bits(0, 0x7FFF, 1 << 111)) {
-            F128Class::Nan { quiet, negative, .. } => {
+            F128Class::Nan {
+                quiet, negative, ..
+            } => {
                 assert!(quiet);
                 assert!(!negative);
             }

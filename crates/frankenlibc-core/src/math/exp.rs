@@ -2988,7 +2988,10 @@ mod tests {
         // uses (libm::exp is correctly rounded, so <=4 ULP of it implies the contract).
         for x in [-20.0, -6.0, 6.0, 20.0, -700.0, 700.0, 0.5, 2.5] {
             let ulp = (exp(x).to_bits() as i64 - libm::exp(x).to_bits() as i64).abs();
-            assert!(ulp <= 4, "exp({x}) drifted {ulp} ULP from libm (expect <=4)");
+            assert!(
+                ulp <= 4,
+                "exp({x}) drifted {ulp} ULP from libm (expect <=4)"
+            );
         }
     }
 

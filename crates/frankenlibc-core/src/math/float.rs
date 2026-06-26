@@ -180,7 +180,9 @@ pub fn nextafter(x: f64, y: f64) -> f64 {
     // subnormal or zero (and differs from x). libm omits these flags; re-raise via
     // a hardware op (safe; only on these boundary results).
     if x.is_finite() && r.is_infinite() {
-        let _ = core::hint::black_box(core::hint::black_box(f64::MAX) * core::hint::black_box(f64::MAX));
+        let _ = core::hint::black_box(
+            core::hint::black_box(f64::MAX) * core::hint::black_box(f64::MAX),
+        );
     } else if r != x && r.abs() < f64::MIN_POSITIVE {
         let _ = core::hint::black_box(
             core::hint::black_box(f64::MIN_POSITIVE) * core::hint::black_box(f64::MIN_POSITIVE),
