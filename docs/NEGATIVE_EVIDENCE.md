@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — strftime 187ns is CODEGEN overhead in the huge recursive fn — suspects ruled out (cc)
+
+- **Follow-up to the pinpoint below — suspects RULED OUT, fix direction sharpened.** Read `format_strftime`:
+  the literal-only path (e.g. `"ABCDEFGH"`) is algorithmically TRIVIAL — the `%`-handling block (flags/width/
+  directive parse) is never reached; it just byte-pushes 8 bytes — yet it measures **187ns** vs glibc 9ns. So
+  the fixed cost is NOT: the `[0u8;256]` scratch (only 1, in the compound macro, never triggered by these
+  formats), `format_strftime_numeric_19` (returns `None` on a length-mismatch compare, fast), the directive
+  parsing, or per-byte work. It is **codegen/structural overhead of the huge, RECURSIVE `format_strftime`**
+  (the compound-directive macro recurses → the fn can't inline and carries a heavy frame/prologue even on the
+  trivial path). **FIX DIRECTION (sharpened): restructure the fn — split the cold compound/recursive path into
+  a separate `#[inline(never)]` helper and/or write a lean non-recursive general formatter — not optimize any
+  directive.** Confirming the exact codegen cost needs a profiler (perf/flamegraph) not available here; scoped
+  for a profiler-equipped turn. The asctime 8.4x / timegm 5.7x wins are unaffected.
+
 ## 2026-06-25 — strftime root cause PINPOINTED: a FIXED ~187ns per-CALL overhead (not per-directive) (cc)
 
 - **PINPOINT of the strftime general-loop loss (entry below).** Tested formats of decreasing directive count
