@@ -116,6 +116,22 @@ where
     } else {
         INTEGER_RADIX_LANE_MIN
     };
+
+    // Float radix lane (width 4/8), gated by a STRONG float-order prefix probe and
+    // tried BEFORE the integer radix lane: a genuine f32/f64 array (with negatives)
+    // takes ONE float-radix pass instead of paying the two wasted integer-radix
+    // attempts that always fail on float bits. The probe declares float only on an
+    // unambiguous signal, so integer/unsigned data falls straight through to the
+    // integer lane unchanged (no regression); verify-then-commit still guards the
+    // committed bytes. All-positive float arrays still take the unsigned integer
+    // lane (their bit pattern is monotonic), so the probe need not fire for them.
+    if (width == 4 || width == 8)
+        && num > INTEGER_RADIX_LANE_MIN
+        && try_qsort_float_radix_lane(base, num, width, compare)
+    {
+        return true;
+    }
+
     if (width == 2 || width == 4 || width == 8)
         && num > radix_min
         && try_qsort_integer_radix_lane(base, num, width, compare)
@@ -460,6 +476,173 @@ where
         2 => try_qsort_radix_u16(active, num, compare),
         4 => try_qsort_radix_u32(active, num, compare),
         8 => try_qsort_radix_u64(active, num, compare),
+        _ => false,
+    }
+}
+
+/// IEEE-754 float radix lane. An array of `fN` sorted ascending by a `<`-style
+/// comparator is a different complexity class for radix than for pdqsort: the
+/// floats map to an order-preserving UNSIGNED key via the classic sortable-key
+/// bit transform (positive: set the sign bit; negative: flip all bits), so one
+/// LSD radix sort yields ascending order with NO per-element comparator call.
+/// glibc's `qsort` over `double[]` runs `O(n log n)` indirect comparator calls.
+///
+/// The all-POSITIVE case is already covered by the unsigned integer lane (a
+/// positive float's bit pattern is monotonic in its value); this lane adds the
+/// case that lane cannot reach — arrays containing NEGATIVE floats, whose bit
+/// patterns run backwards. As with every other lane, correctness rests entirely
+/// on the verify-then-commit contract: the transformed arrangement is committed
+/// only after a single linear pass proves it non-decreasing under the caller's
+/// own comparator. A descending, struct, or NaN-poisoned comparator simply fails
+/// the verify, the original bytes are restored, and pdqsort handles the call —
+/// zero behavioral difference. Equal floats (incl. -0.0 vs +0.0) are immaterial
+/// because `qsort` is unstable.
+macro_rules! try_radix_float_lane_for {
+    ($name:ident, $uty:ty, $width:literal, $radix:ident) => {
+        fn $name<F>(active: &mut [u8], num: usize, compare: &F) -> bool
+        where
+            F: Fn(&[u8], &[u8]) -> i32,
+        {
+            const SIGN: $uty = 1 << ($width * 8 - 1);
+            let original = active.to_vec();
+
+            // Forward transform: positive (sign bit clear) -> XOR SIGN (set MSB);
+            // negative (sign bit set) -> XOR all-ones (flip every bit). The result
+            // is an unsigned key whose ascending order is the floats' ascending
+            // order.
+            let mut keys: Vec<$uty> = Vec::with_capacity(num);
+            for chunk in active.chunks_exact($width) {
+                let raw: [u8; $width] = chunk.try_into().unwrap();
+                let bits = <$uty>::from_ne_bytes(raw);
+                let mask = if bits & SIGN != 0 { <$uty>::MAX } else { SIGN };
+                keys.push(bits ^ mask);
+            }
+
+            $radix(&mut keys, $width);
+
+            // Inverse transform: the key's MSB now flags the original sign — set
+            // means it was positive (undo XOR SIGN), clear means negative (undo
+            // XOR all-ones).
+            for (chunk, &k) in active.chunks_exact_mut($width).zip(&keys) {
+                let mask = if k & SIGN != 0 { SIGN } else { <$uty>::MAX };
+                chunk.copy_from_slice(&(k ^ mask).to_ne_bytes());
+            }
+
+            let mut ordered = true;
+            let mut prev = &active[..$width];
+            for current in active[$width..].chunks_exact($width) {
+                if compare(prev, current) > 0 {
+                    ordered = false;
+                    break;
+                }
+                prev = current;
+            }
+            if ordered {
+                return true;
+            }
+            active.copy_from_slice(&original);
+            false
+        }
+    };
+}
+try_radix_float_lane_for!(try_qsort_radix_f32, u32, 4, radix_sort_u32_lsd);
+try_radix_float_lane_for!(try_qsort_radix_f64, u64, 8, radix_sort_u64_lsd);
+
+#[inline]
+fn read_uint(chunk: &[u8], width: usize) -> u64 {
+    let mut v = 0u64;
+    for (i, &b) in chunk.iter().take(width).enumerate() {
+        v |= (b as u64) << (i * 8);
+    }
+    v
+}
+
+/// Conservative IEEE-754 float-order probe over a short prefix, used to gate the
+/// float radix lane BEFORE the integer radix lane — so a genuine `double[]` /
+/// `float[]` sort takes ONE float-radix pass instead of paying the two wasted
+/// integer-radix attempts (signed+unsigned) that always fail on float bits.
+///
+/// It returns `true` only on a STRONG, unambiguous float signal, so integer data
+/// never diverts here (no regression to the integer lanes). An element whose MSB
+/// is set is either a negative float, a negative two's-complement int, or a large
+/// unsigned int — distinguished by two comparator probes:
+///   1. a cross-sign pair (`h` = MSB set, `l` = MSB clear): for float AND signed
+///      int `h < l` (negative sorts first); for unsigned `h > l`. So `h > l`
+///      rules float OUT.
+///   2. a same-MSB-set pair (`big` larger raw bits than `small`): among NEGATIVE
+///      values, float orders by DESCENDING bits (`big < small`), two's-complement
+///      signed by ASCENDING bits (`big > small`). So `big < small` is the tell.
+/// Float is declared only when `big < small` AND (no cross-sign pair seen OR
+/// `h < l`). The lane's verify-then-commit remains the correctness authority;
+/// this probe only chooses whether to TRY float first, never what is committed.
+fn qsort_prefix_says_float<F>(active: &[u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    debug_assert!(width == 4 || width == 8);
+    let get = |i: usize| &active[i * width..i * width + width];
+    let msb_set = |chunk: &[u8]| chunk[width - 1] & 0x80 != 0;
+
+    let mut h_idx: Option<usize> = None; // first MSB-set element
+    let mut l_idx: Option<usize> = None; // first MSB-clear element
+    let mut big_idx: Option<usize> = None; // MSB-set, largest raw bits seen
+    let mut small_idx: Option<usize> = None; // MSB-set, smallest raw bits seen
+    for (k, chunk) in active.chunks_exact(width).take(64).enumerate() {
+        if msb_set(chunk) {
+            if h_idx.is_none() {
+                h_idx = Some(k);
+            }
+            let kb = read_uint(chunk, width);
+            if big_idx.map(|b| kb > read_uint(get(b), width)).unwrap_or(true) {
+                big_idx = Some(k);
+            }
+            if small_idx
+                .map(|s| kb < read_uint(get(s), width))
+                .unwrap_or(true)
+            {
+                small_idx = Some(k);
+            }
+        } else if l_idx.is_none() {
+            l_idx = Some(k);
+        }
+    }
+
+    // Need two DISTINCT MSB-set magnitudes for the negative-region discriminator.
+    let (Some(big), Some(small)) = (big_idx, small_idx) else {
+        return false;
+    };
+    if read_uint(get(big), width) == read_uint(get(small), width) {
+        return false;
+    }
+    // (2) float negatives sort by descending bits: the larger-bits one is SMALLER.
+    if compare(get(big), get(small)) >= 0 {
+        return false;
+    }
+    // (1) if a cross-sign pair exists, the MSB-set side must sort first (h < l);
+    //     h > l would mean unsigned ⇒ not float.
+    if let (Some(h), Some(l)) = (h_idx, l_idx) {
+        if compare(get(h), get(l)) >= 0 {
+            return false;
+        }
+    }
+    true
+}
+
+/// Float radix lane dispatch for width 4 (`f32`) / 8 (`f64`), gated by a strong
+/// float-order probe so integer inputs never reach the float transform. Verify-
+/// then-commit guarantees parity regardless of the probe.
+fn try_qsort_float_radix_lane<F>(base: &mut [u8], num: usize, width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    debug_assert!(width == 4 || width == 8);
+    let active = &mut base[..num * width];
+    if !qsort_prefix_says_float(active, width, compare) {
+        return false;
+    }
+    match width {
+        4 => try_qsort_radix_f32(active, num, compare),
+        8 => try_qsort_radix_f64(active, num, compare),
         _ => false,
     }
 }

@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — ✅ qsort f64 sort LANDED WIN: 1.92x LOSS → 0.85x WIN (probe-gated float radix) (cc)
+
+- **LANDED CODE WIN (`stdlib/sort.rs`, conformance GREEN).** Follow-through on last turn's rejected float
+  lane: the lane was correct but net-LOSS because it ran AFTER the integer radix lane's two wasted attempts.
+  Fix = a STRONG float-order PREFIX PROBE that gates the float lane and runs it BEFORE the integer lane, so a
+  genuine `double[]`/`float[]` (with negatives) takes ONE float-radix pass instead of two wasted integer
+  passes + pdqsort.
+- **RESULT (sort_bench A/B, n=20000 mixed ±doubles, local coherent build; same harness as the landed
+  integer-sort rows):** f64rand **was 1.92x LOSS → now fl 0.74ms / glibc 0.87ms = 0.85x WIN** (1.18x
+  faster). **No integer regression** — every other row unchanged in the same run: i64rand 0.57x, u32 0.35x,
+  u16 0.09x, u64_1M 0.64x, i32_large(10M) 0.35x, random 0.42x, dup* 0.27–0.31x, str16 0.89x.
+- **Parity / conformance GREEN:** sort_bench asserts `vf == vg` (byte-identical to glibc) for every type and
+  passed; the qsort/heapsort differential gates all pass — `conformance_diff_qsort_radix`, `_count8`, `_r`,
+  `_radix16`, `_heapsort` (6/6). Verify-then-commit remains the correctness authority; the probe only chooses
+  whether to TRY float first.
+- **Why no integer regression (the probe is unambiguous):** an MSB-set element is a negative float, a negative
+  two's-complement int, or a large unsigned int. Two comparator probes split them — (1) a cross-sign pair:
+  `h<l` for float & signed, `h>l` for unsigned (rules float out); (2) a same-MSB-set pair `big`/`small` by
+  raw bits: float negatives sort DESCENDING-by-bits (`big<small`), signed ASCENDING (`big>small`). Float
+  declared only on `big<small` AND (`h<l` or no cross-sign). Signed/unsigned arrays therefore never divert to
+  the float transform; a misfire (e.g. a struct comparator) is caught by the verify and falls through to the
+  integer lane + pdqsort.
+
 ## 2026-06-26 — gcvt exact integer/half fixed fast path WINS vs glibc (BoldWaterfall)
 
 - **LANDED:** `render_gcvt` now short-circuits exact finite values representable as `N` or `N.5` when the
