@@ -49,6 +49,20 @@ fn cmp_i64_rs(a: &[u8], b: &[u8]) -> i32 {
     (x > y) as i32 - (x < y) as i32
 }
 
+unsafe extern "C" fn cmp_f64(a: *const c_void, b: *const c_void) -> i32 {
+    let x = unsafe { *(a as *const f64) };
+    let y = unsafe { *(b as *const f64) };
+    (x > y) as i32 - (x < y) as i32
+}
+
+fn cmp_f64_rs(a: &[u8], b: &[u8]) -> i32 {
+    // Raw unaligned read to match glibc's C comparator (`*(const double*)a`) exactly — no
+    // bounds check, so the pdqsort path's per-comparison cost is a fair comparison.
+    let x = unsafe { (a.as_ptr() as *const f64).read_unaligned() };
+    let y = unsafe { (b.as_ptr() as *const f64).read_unaligned() };
+    (x > y) as i32 - (x < y) as i32
+}
+
 fn main() {
     unsafe {
         let h = libc::dlmopen(
@@ -138,6 +152,41 @@ fn main() {
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!("SORT i64rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+        }
+
+        // 8-byte f64 random sort (positive + negative doubles) — ubiquitous numerical
+        // workload. fl can't radix f64 bits (negatives invert), so this exercises
+        // pdqsort vs glibc merge on 8-byte float keys.
+        {
+            let base: Vec<f64> = (0..n)
+                .map(|i| (i.wrapping_mul(2_654_435_761) as i32 as f64) * 0.001)
+                .collect();
+            let mut vf = base.clone();
+            {
+                let b = std::slice::from_raw_parts_mut(vf.as_mut_ptr().cast::<u8>(), n * 8);
+                frankenlibc_core::stdlib::sort::qsort(b, 8, cmp_f64_rs);
+            }
+            let mut vg = base.clone();
+            gl_qsort(vg.as_mut_ptr().cast(), n, 8, cmp_f64);
+            assert!(vf.iter().zip(&vg).all(|(a, b)| a == b), "f64: fl qsort != glibc qsort");
+            assert!(vf.windows(2).all(|w| w[0] <= w[1]), "f64: fl not sorted");
+            let iters = 1000usize;
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                let mut v = base.clone();
+                let b = std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<u8>(), n * 8);
+                frankenlibc_core::stdlib::sort::qsort(b, 8, cmp_f64_rs);
+                black_box(v.as_ptr());
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                let mut v = base.clone();
+                gl_qsort(v.as_mut_ptr().cast(), n, 8, cmp_f64);
+                black_box(v.as_ptr());
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("SORT f64rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
         }
 
         // String sort: 16-byte random keys, lexicographic (memcmp) comparator.

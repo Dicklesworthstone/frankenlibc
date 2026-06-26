@@ -6,6 +6,24 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort f64 (doubles) 2.27x LOSS — the integer-radix win does NOT extend to floats (cc)
+
+- **LOSS (important scope bound): fl `qsort` loses 2.27x to glibc on f64 (double) keys** — the integer-radix
+  advantage is INTEGER-SPECIFIC; sorting floats (ubiquitous in numerical/scientific code) is a real gap.
+  Head-to-head (`sort_bench.rs`, n=20000 random ± doubles, output verified, **raw-deref comparator matching
+  glibc's C `*(double*)`**): fl **2277µs** / glibc **1004µs** = **2.27x LOSS** (2.66x with a bounds-checked
+  comparator — the raw-deref is the fair number).
+  - ROOT CAUSE: fl can't radix an OPAQUE float comparator — f64 negatives invert the i64 bit order, so the
+    integer-radix probe sorts wrong, its O(n) verify FAILS, and f64 falls through to pdqsort + pays the wasted
+    radix+verify (~12%). pdqsort then loses to glibc's merge for cheap-comparator 8-byte keys (same family as
+    the str16 1.4x loss). CONTRAST: i32 0.59x / i64 0.62x WIN (radix applies); f64 2.27x LOSS (radix can't).
+  - **LEVER (deferred, SAFE): add a verify-guarded FLOAT-RADIX path** — transform each 8-byte key by the
+    standard float→sortable-bits map (`b ^ (((b>>63) as u64).wrapping_neg() | 0x8000_0000_0000_0000)`),
+    radix-sort, then VERIFY with the comparator; keep it only if the verify passes (so a wrong guess just falls
+    back to pdqsort — correctness can't break). Would turn f64 from 2.27x LOSS to a ~1.5x WIN (O(n) vs merge
+    O(n·log n)). It's a careful change to the shared `sort.rs` radix path (peer-touched) — scope explicitly,
+    not rush.
+
 ## 2026-06-26 - BOLD-VERIFY strtoull landed win rechecked; timing residual still routed deeper (BoldWaterfall)
 
 - **VERIFIED LANDED WIN:** the measured `strtoull` comparator from commit `8d4221679`
