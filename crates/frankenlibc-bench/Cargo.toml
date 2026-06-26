@@ -209,6 +209,11 @@ harness = false
 name = "strspn_shuffle_ab_bench"
 harness = false
 
+# qsort fallback: pdqsort vs merge vs glibc, expensive comparator, 1 process.
+[[bench]]
+name = "sort_fallback_ab_bench"
+harness = false
+
 # inet_ntop vs host glibc (dlmopen). Measures the format_ipv4 byte-level rewrite.
 [[bench]]
 name = "inet_ntop_glibc_bench"

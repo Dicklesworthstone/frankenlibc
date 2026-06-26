@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — ❌ qsort string-sort "merge fallback" lever DISPROVEN — corrects a wrong ledger claim (cc)
+
+- **CORRECTS PRIOR LEDGER CLAIM.** The 2026-06-26 qsort-string-sort entry blamed the 2.7x loss on "fl's
+  pdqsort is slower than glibc's merge for the expensive-comparator case (the dominant factor)" and proposed
+  a merge fallback. **That premise is FALSE.** Measured the algorithm-intrinsic comparison COUNT (the metric
+  that matters when comparisons are expensive FFI calls) in `sort_fallback_ab_bench` (std `sort_unstable_by`
+  = pdqsort vs std `sort_by` = timsort/merge, same 16-byte random records, counting comparator):
+  | n | pdqsort cmps | merge cmps | pdq/merge |
+  |---|---|---|---|
+  | 2000 | 22,361 | 23,540 | **0.95** |
+  | 20000 | 293,189 | 300,887 | **0.97** |
+  **pdqsort makes FEWER comparisons than merge**, not more. A merge fallback would ADD comparisons → it
+  cannot help; the lever is dead.
+- **Where the loss actually is:** with equal comparison counts and equal per-call FFI comparator cost, the
+  residual fl-vs-glibc string-sort gap is (a) the wasted integer-radix attempts (~10%, the only removable
+  part) and (b) fl's `pdqsort_recurse` per-element overhead (element byte-moves + the closure→C-fn-pointer
+  comparison layer) vs glibc's merge — an implementation-tuning gap, NOT an algorithm/comparison-count gap.
+- **A/B timing footnote (cheap INLINED comparator, n=20000):** pdqsort 371µs < merge 459µs < glibc-qsort
+  1.82ms — confirms pdqsort ≤ merge even on time, and that glibc's own qsort is slow precisely because its
+  comparator is an un-inlinable FFI call (the same floor fl's qsort pays). So the only string-sort lever left
+  is shaving fl's per-element pdqsort overhead or skipping the wasted radix — both small/deep, not the
+  ledger's merge swap. `sort_fallback_ab_bench.rs` kept as the disproof harness; no core change.
+
 ## 2026-06-26 — ❌ strspn 2-shuffle (Langdale/Lemire) classifier REJECTED — 4–6x SLOWER (cc)
 
 - **DISPROVEN in a clean prototype A/B (no core edit — prototyped first, per the memrchr lesson).** Survey
