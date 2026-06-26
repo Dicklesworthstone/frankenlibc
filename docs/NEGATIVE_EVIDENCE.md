@@ -6,6 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — strftime CORRECTED: general loop 6x SLOW; only ONE hard-coded format wins (bench-overfit) (cc)
+
+- **CORRECTION (10th self-correction) of the entry below — the loss is bigger and different than I said.** It
+  is NOT the `%a`/`%b` arm. `format_strftime` has a SINGLE hard-coded fast path (`format_strftime_numeric_19`,
+  which matches ONLY the exact string `"%Y-%m-%d %H:%M:%S"`); EVERY other format — numeric OR name — falls to a
+  general loop that is ~**6x slower than glibc**. Confirmed (`strftime_bench.rs`, output byte-equal):
+  - `"%Y-%m-%d %H:%M:%S"` (the hard-coded format): fl 14.6ns / glibc 68.3ns = **0.21x (4.7x WIN)**.
+  - `"%H:%M:%S"` (numeric, misses fast path): fl **248.6ns** / glibc **38.8ns** = **6.4x LOSS**.
+  - `"%Y/%m/%d"` (numeric, misses): **6.3x LOSS** · `"%a, %d %b %Y %H:%M:%S"` (names): 3.9x LOSS.
+  So fl's strftime WINS only the single exact format apps rarely pass verbatim; for all real-world *varying*
+  formats it LOSES 3.9-6.4x. ~248ns for an 8-byte output is anomalous (~31 ns/byte) → a per-CALL overhead, not
+  per-byte. **HIGH-VALUE LEVER: profile + fix the general strftime loop** (the main time formatter) — would
+  flip the common case from a 6x loss to a win. The hard-coded fast path is a **bench-overfit** (games the
+  exact-format microbench; production formats vary). asctime/timegm wins stand (those have no such trap).
+
 ## 2026-06-25 — strftime MIXED: numeric 3.2x WIN, name-directive (%a/%b) 3.7x LOSS + lever (cc)
 
 - **MIXED: fl `strftime` wins numeric formats, loses name-directive formats.** Head-to-head

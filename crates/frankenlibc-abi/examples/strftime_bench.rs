@@ -40,7 +40,12 @@ fn main() {
         tm.tm_wday = bd.tm_wday;
         tm.tm_yday = bd.tm_yday;
 
-        for fmt in ["%Y-%m-%d %H:%M:%S", "%a, %d %b %Y %H:%M:%S"] {
+        for fmt in [
+            "%Y-%m-%d %H:%M:%S", // the one hard-coded fast-path format
+            "%a, %d %b %Y %H:%M:%S",
+            "%H:%M:%S",       // numeric but MISSES the fast path
+            "%Y/%m/%d",       // numeric, slashes — misses the fast path
+        ] {
             let fmt_b = fmt.as_bytes();
             let mut fl_buf = [0u8; 64];
             let n = format_strftime(fmt_b, &bd, &mut fl_buf);
