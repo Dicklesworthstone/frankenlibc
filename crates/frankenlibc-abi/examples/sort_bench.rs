@@ -87,6 +87,18 @@ fn cmp_u32_rs(a: &[u8], b: &[u8]) -> i32 {
     (x > y) as i32 - (x < y) as i32
 }
 
+unsafe extern "C" fn cmp_u64(a: *const c_void, b: *const c_void) -> i32 {
+    let x = unsafe { *(a as *const u64) };
+    let y = unsafe { *(b as *const u64) };
+    (x > y) as i32 - (x < y) as i32
+}
+
+fn cmp_u64_rs(a: &[u8], b: &[u8]) -> i32 {
+    let x = u64::from_ne_bytes(a[..8].try_into().unwrap());
+    let y = u64::from_ne_bytes(b[..8].try_into().unwrap());
+    (x > y) as i32 - (x < y) as i32
+}
+
 fn main() {
     unsafe {
         let h = libc::dlmopen(
@@ -340,6 +352,39 @@ fn main() {
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!("SORT i32_large n={big} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x", fl / gl);
+        }
+
+        // 8-byte u64 at 1M — pointers / hashes / IDs / timestamps at data-processing scale.
+        {
+            let big = 1_000_000usize;
+            let base: Vec<u64> = (0..big)
+                .map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15) as u64)
+                .collect();
+            let mut vf = base.clone();
+            {
+                let b = std::slice::from_raw_parts_mut(vf.as_mut_ptr().cast::<u8>(), big * 8);
+                frankenlibc_core::stdlib::sort::qsort(b, 8, cmp_u64_rs);
+            }
+            let mut vg = base.clone();
+            gl_qsort(vg.as_mut_ptr().cast(), big, 8, cmp_u64);
+            assert_eq!(vf, vg, "u64_1M: fl qsort != glibc qsort");
+            let iters = 30usize;
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                let mut v = base.clone();
+                let b = std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<u8>(), big * 8);
+                frankenlibc_core::stdlib::sort::qsort(b, 8, cmp_u64_rs);
+                black_box(v.as_ptr());
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                let mut v = base.clone();
+                gl_qsort(v.as_mut_ptr().cast(), big, 8, cmp_u64);
+                black_box(v.as_ptr());
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("SORT u64_1M n={big} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x", fl / gl);
         }
     }
 }

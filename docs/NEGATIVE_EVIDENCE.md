@@ -6,6 +6,16 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — qsort u64 (8-byte unsigned) at 1M WIN 1.4x — big-data pointer/hash/ID sort (cc)
+
+- **WIN: fl qsort `u64` at 1M wins 1.4x — the common big-data 8-byte-unsigned sort (pointers, hashes, IDs,
+  timestamps).** Head-to-head (`sort_bench.rs`, n=1,000,000 random u64, **output verified**): fl **46.5ms** /
+  glibc **63.8ms** = **0.728x**. (u64 trails i32-at-1M's 0.458x because the 8-byte radix runs 8 byte-passes vs
+  i32's 4 — 2x the memory traffic — but still beats glibc's ~20-pass merge at this n.) Confirms the integer-sort
+  optimization scales to 8-byte at data-processing volume. **fl's integer sorting now beats glibc across width
+  (2/4/8B), signedness (signed/unsigned), AND scale (20K-10M)** — a comprehensive win on a ubiquitous workload,
+  from the 3-code-win qsort arc (unsigned-attempt + narrow-key + order-probe).
+
 ## 2026-06-25 — qsort signed/unsigned PROBE LANDED — u16 2x faster (0.09x), u32 1.9x (0.35x) (cc)
 
 - **LANDED (code win, `sort.rs`, conformance GREEN): a cheap signed-vs-unsigned probe skips the wasted radix
