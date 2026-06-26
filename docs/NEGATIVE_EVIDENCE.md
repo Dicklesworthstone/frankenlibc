@@ -6,6 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — ❌ strspn 2-shuffle (Langdale/Lemire) classifier REJECTED — 4–6x SLOWER (cc)
+
+- **DISPROVEN in a clean prototype A/B (no core edit — prototyped first, per the memrchr lesson).** Survey
+  put `strspn`/`strpbrk` set-ops at 1.36–1.96x LOSS; `in_set_mask6` uses N separate `simd_eq` (one per set
+  byte). The alien-graveyard lever: the Langdale/Lemire 2-shuffle byte classifier (2 `pshufb` + AND,
+  independent of set size) should beat N compares. Built `strspn_shuffle_ab_bench` (OLD N-`simd_eq` vs NEW
+  2-shuffle vs glibc, one process, byte-identity asserted).
+- **SAME-PROCESS A/B (all parity-verified):**
+  | n | old (N·eq) | new (2-shuffle) | glibc |
+  |---|---|---|---|
+  | 64 | 8.18 ns | **36.4 ns (4.4x SLOWER)** | 3.22 |
+  | 512 | 48.2 ns | **263 ns (5.5x SLOWER)** | 15.1 |
+  Portable SIMD `Simd::swizzle_dyn` does NOT lower to a fast single `pshufb` here — it degrades to ~scalar
+  per-lane gather, ~5x slower than `simd_eq`. SAME class as the disproven `strspn_range` `simd_ge` finding:
+  **x86 portable-SIMD's "fancy" ops (swizzle_dyn, simd_ge/le) are emulated, not native — only `simd_eq`/
+  arithmetic/`pshufb`-via-`simd_swizzle!`(const) are cheap.** The current N-`simd_eq` membership is correctly
+  optimal among portable-SIMD approaches.
+- **STANDING:** fl `strspn`'s 2.5–3.2x loss vs glibc (this A/B: 8.18/3.22, 48.2/15.1) is glibc's tighter
+  table+asm scan, NOT the membership method — codegen-bound, not a structural lever. Don't re-pick the
+  set-ops without an asm/intrinsics pass. `strspn_shuffle_ab_bench.rs` kept as the disproof harness; no
+  core change shipped.
+
 ## 2026-06-26 — ❌ memrchr "drop the 128-fold tier" REJECTED — ~0-gain / regression (same-process A/B) (cc)
 
 - **DISPROVEN + REVERTED.** Full survey showed `memrchr` at **2.61x LOSS** (the biggest tractable
