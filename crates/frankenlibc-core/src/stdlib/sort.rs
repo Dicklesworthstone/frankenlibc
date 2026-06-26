@@ -132,8 +132,18 @@ where
         return true;
     }
 
+    // Cheap pre-gate: only ENTER the integer radix lane if a short prefix sample
+    // is consistent with signed OR unsigned integer order. A non-integer-order
+    // comparator (e.g. `char*` sorted by `strcmp`, or a struct sorted by a key
+    // field) otherwise pays TWO full build+radix+verify passes that both fail
+    // before falling to pdqsort. The gate samples ≤8 adjacent pairs (≤8 comparator
+    // calls) and skips the lane when NEITHER integer order matches — saving the
+    // wasted radix. It is conservative in the skip direction: genuine integer data
+    // is always consistent with one order, so it never diverts (no regression),
+    // and a false "proceed" just hits the existing verify-then-commit as before.
     if (width == 2 || width == 4 || width == 8)
         && num > radix_min
+        && qsort_prefix_consistent_with_integer_order(&base[..num * width], width, compare)
         && try_qsort_integer_radix_lane(base, num, width, compare)
     {
         return true;
@@ -555,6 +565,78 @@ fn read_uint(chunk: &[u8], width: usize) -> u64 {
         v |= (b as u64) << (i * 8);
     }
     v
+}
+
+/// Bench-only: the cost of ONE integer-radix-lane attempt (build keys + LSD radix
+/// + verify) — i.e. the wasted work the prefix gate skips for non-integer data.
+#[doc(hidden)]
+pub fn __bench_integer_radix_attempt<F>(base: &mut [u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let num = base.len() / width;
+    try_qsort_integer_radix_lane(base, num, width, compare)
+}
+
+/// Bench-only: the cost of the prefix integer-order gate itself.
+#[doc(hidden)]
+pub fn __bench_integer_order_gate<F>(active: &[u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    qsort_prefix_consistent_with_integer_order(active, width, compare)
+}
+
+/// Pre-gate for the integer radix lane: returns `true` if a short prefix sample
+/// is consistent with EITHER unsigned OR signed native-width integer order under
+/// the caller's comparator, `false` only when NEITHER can possibly hold (so the
+/// lane's two build+radix+verify passes would be wasted — skip to pdqsort).
+///
+/// Sound by construction: genuine integer data is, by definition, consistent with
+/// its own (signed or unsigned) order on every pair, so this never returns `false`
+/// for it — no regression to the integer-sort wins. A non-integer comparator that
+/// coincidentally matches the small sample just falls through to the existing
+/// verify-then-commit (no worse than before). The float lane runs earlier, so
+/// float arrays don't reach here.
+fn qsort_prefix_consistent_with_integer_order<F>(active: &[u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    debug_assert!(width == 2 || width == 4 || width == 8);
+    let n = active.len() / width;
+    let pairs = (n - 1).min(8);
+    if pairs == 0 {
+        return true; // too small to judge — let the lane (and its verify) decide
+    }
+    let sign_bit = 1u64 << (width * 8 - 1);
+    let mut unsigned_ok = true;
+    let mut signed_ok = true;
+    for k in 0..pairs {
+        let a = &active[k * width..k * width + width];
+        let b = &active[(k + 1) * width..(k + 1) * width + width];
+        let c = compare(a, b); // desired order sign of a vs b
+        let (ua, ub) = (read_uint(a, width), read_uint(b, width));
+        // consistency of comparator sign with an integer order: a<b ⟺ c<0, a>b ⟺
+        // c>0, a==b ⟺ c==0.
+        let cons = |ia: u64, ib: u64| -> bool {
+            use core::cmp::Ordering::*;
+            match ia.cmp(&ib) {
+                Less => c < 0,
+                Greater => c > 0,
+                Equal => c == 0,
+            }
+        };
+        if !cons(ua, ub) {
+            unsigned_ok = false;
+        }
+        if !cons(ua ^ sign_bit, ub ^ sign_bit) {
+            signed_ok = false;
+        }
+        if !unsigned_ok && !signed_ok {
+            return false;
+        }
+    }
+    unsigned_ok || signed_ok
 }
 
 /// Conservative IEEE-754 float-order probe over a short prefix, used to gate the

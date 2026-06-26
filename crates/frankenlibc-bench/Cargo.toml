@@ -238,3 +238,8 @@ required-features = ["abi-bench"]
 name = "stdio_mt_contention_bench"
 harness = false
 required-features = ["abi-bench"]
+
+# qsort integer-radix prefix gate: wasted-attempt cost vs gate cost, 1 process.
+[[bench]]
+name = "qsort_gate_ab_bench"
+harness = false
