@@ -6,6 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort UNSIGNED radix attempt LANDED — u16 1.25x LOSS → 0.50x WIN (corrects widening cause) (cc)
+
+- **LANDED (real code win, regex... no — `sort.rs`, conformance GREEN) + ROOT-CAUSE CORRECTION of the entry
+  below.** The prior entry blamed the u16 loss on the u64 key WIDENING — **WRONG** (9th self-correction). The
+  real cause: `try_qsort_integer_radix_lane` only tried the SIGNED rank order (XOR the sign bit). For an
+  UNSIGNED comparator (`u16`/`u32`/`u64` — sizes, indices, hashes, ids), the signed order fails the O(n)
+  verify, so the radix bailed and the sort DROPPED TO PDQSORT → lost to glibc's merge (the u16 radix never
+  actually ran). FIX: try the signed order first, then UNSIGNED (no XOR), each verify-guarded.
+  - u16: **1.25x LOSS → 0.50x WIN** (fl 715µs / glibc 1432µs, 2x faster). **NO regression**: i32 0.52x, i64
+    0.71x, 1M 0.58x, 10M 0.59x all unchanged (a signed comparator hits the signed attempt first and returns).
+  CONFORMANCE: 32 core `stdlib::sort` tests + 5 qsort differential gates (radix, radix16, i64_fastlane, count8,
+  qsort_r) all GREEN. SAFE: verify-then-commit — a non-matching comparator (descending, struct, float)
+  restores and falls through. Benefits ALL unsigned-keyed integer sorts. (The u64 widening is real but
+  SECONDARY — unsigned sorts now WIN despite it; narrowing key storage is a separate smaller follow-up.)
+
 ## 2026-06-25 — qsort u16 (2-byte) 1.25x LOSS — radix WIDENS all keys to u64 (4x traffic) + clear lever (cc)
 
 - **LOSS: fl `qsort` loses 1.25x on 2-byte u16 keys where 4-byte i32 WINS 0.63x.** Head-to-head

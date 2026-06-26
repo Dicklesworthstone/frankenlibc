@@ -333,40 +333,48 @@ where
     let active = &mut base[..active_len];
     let sign_mask: u64 = 1u64 << (width as u64 * 8 - 1);
 
-    // Extract sign-flipped unsigned rank keys.
-    let mut keys: Vec<u64> = Vec::with_capacity(num);
-    for chunk in active.chunks_exact(width) {
-        let mut raw = [0u8; 8];
-        raw[..width].copy_from_slice(chunk);
-        keys.push(u64::from_ne_bytes(raw) ^ sign_mask);
-    }
-
-    // Preserve the original bytes so a non-natural comparator can fall back.
+    // Preserve the original bytes so a non-matching comparator can fall back unchanged.
     let original = active.to_vec();
 
-    radix_sort_u64_lsd(&mut keys, width);
-
-    // Write sorted keys back as their original integer byte representation.
-    for (chunk, &k) in active.chunks_exact_mut(width).zip(&keys) {
-        let restored = (k ^ sign_mask).to_ne_bytes();
-        chunk.copy_from_slice(&restored[..width]);
-    }
-
-    // Verify the radix arrangement satisfies the caller's comparator.
-    let mut ordered = true;
-    let mut prev = &active[..width];
-    for current in active[width..].chunks_exact(width) {
-        if compare(prev, current) > 0 {
-            ordered = false;
-            break;
+    // Try SIGNED rank order (XOR the sign bit) first, then UNSIGNED (no XOR). A 2's-
+    // complement signed comparator is satisfied by the sign-flipped order; an UNSIGNED
+    // comparator (`u16`/`u32`/`u64` — common for sizes, indices, hashes, ids) by the
+    // plain byte order. Each arrangement is committed only after an O(n) verify against
+    // the caller's own comparator, so the output is always a valid `qsort` result and any
+    // other comparator (descending, struct key, float) restores and falls through. Before
+    // this, only the signed order was tried, so unsigned-keyed sorts silently dropped to
+    // pdqsort and lost to glibc's merge.
+    for &mask in &[sign_mask, 0u64] {
+        let mut keys: Vec<u64> = Vec::with_capacity(num);
+        for chunk in active.chunks_exact(width) {
+            let mut raw = [0u8; 8];
+            raw[..width].copy_from_slice(chunk);
+            keys.push(u64::from_ne_bytes(raw) ^ mask);
         }
-        prev = current;
-    }
-    if ordered {
-        return true;
+
+        radix_sort_u64_lsd(&mut keys, width);
+
+        for (chunk, &k) in active.chunks_exact_mut(width).zip(&keys) {
+            let restored = (k ^ mask).to_ne_bytes();
+            chunk.copy_from_slice(&restored[..width]);
+        }
+
+        let mut ordered = true;
+        let mut prev = &active[..width];
+        for current in active[width..].chunks_exact(width) {
+            if compare(prev, current) > 0 {
+                ordered = false;
+                break;
+            }
+            prev = current;
+        }
+        if ordered {
+            return true;
+        }
+
+        active.copy_from_slice(&original);
     }
 
-    active.copy_from_slice(&original);
     false
 }
 
