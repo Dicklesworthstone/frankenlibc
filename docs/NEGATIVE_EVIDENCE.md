@@ -6,6 +6,15 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — asctime 8.4x WIN (direct byte build vs glibc sprintf), output-exact (cc)
+
+- **WIN: fl `asctime` is 8.4x faster than glibc, output-exact.** fl's `format_asctime` builds the 26-byte
+  string directly; glibc's `asctime_r` uses a sprintf-style format (format-string parse + snprintf machinery).
+  Head-to-head (`asctime_bench.rs`, dlmopen `asctime_r`, **output verified byte-equal**): fl **23.2ns** / glibc
+  **194.4ns** = **0.119x (8.4x faster)**. `asctime`/`ctime` (time → string) is common in logging. Joins timegm
+  5.7x — **fl wins the time/date FORMATTING (asctime) and date→epoch (timegm); only epoch→date (gmtime/
+  localtime) is at glibc's optimized floor.** `ctime` = `asctime(localtime(t))` inherits this win.
+
 ## 2026-06-25 — gmtime ~PARITY (1.11x) — glibc's gmtime is well-optimized (asymmetry vs timegm) (cc)
 
 - **NEUTRAL: fl `gmtime` (epoch → UTC broken-down) is ~parity with glibc, 1.11x.** Head-to-head
