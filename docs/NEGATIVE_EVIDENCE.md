@@ -52,9 +52,9 @@ retried and real wins are confirmed with numbers.
   `rewind`/`fseek`/`fflush`/`fclose` and readback semantics unless the per-FILE/sharded stream-state refactor
   lands. **Next admissible lever:** the bd-hqo6b6 per-FILE/sharded stream-state architecture with focused stdio
   conformance; do not retry `fputs` strlen or native-pointer micro-bypasses. Verification closeout:
-  `cargo test -p frankenlibc-abi --test fmemopen_write_differential_test -- --nocapture --test-threads=1`
-  passed locally with `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`; the equivalent
-  `rch exec` test invocation queued silently and was stopped after no cargo child appeared.
+  `AGENT_NAME=BoldWaterfall CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec --
+  cargo test --release -p frankenlibc-abi --test fmemopen_write_differential_test -- --nocapture
+  --test-threads=1` passed remotely on `ovh-a`: 2 passed, 0 failed.
 
 ## 2026-06-25 — fputs strict scanner swap NO-SHIP: optimized strlen does not clear glibc (BoldWaterfall)
 
