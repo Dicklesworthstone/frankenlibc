@@ -11,7 +11,7 @@
 //! ASCII with those code points; we compare the value, the consumed wide-char
 //! count (endptr), and overflow (ERANGE).
 
-use std::ffi::{c_int};
+use std::ffi::c_int;
 
 use frankenlibc_core::stdlib::conversion::{ConversionStatus, wcstol_impl, wcstoul_impl};
 
@@ -40,11 +40,11 @@ impl Lcg {
 fn gen_cp(r: &mut Lcg) -> u32 {
     const ASCII: &[u8] = b"0123456789abcdefABCDEFxXbB+- \t.gG_";
     match r.next() % 12 {
-        0 => 0x00A0,                          // no-break space
-        1 => 0x2003,                          // em space
-        2 => 0x3000,                          // ideographic space
-        3 => 0xFF10 + (r.next() % 10) as u32, // fullwidth digit 0-9
-        4 => 0x0660 + (r.next() % 10) as u32, // Arabic-Indic digit 0-9
+        0 => 0x00A0,                             // no-break space
+        1 => 0x2003,                             // em space
+        2 => 0x3000,                             // ideographic space
+        3 => 0xFF10 + (r.next() % 10) as u32,    // fullwidth digit 0-9
+        4 => 0x0660 + (r.next() % 10) as u32,    // Arabic-Indic digit 0-9
         5 => 0x0100 + (r.next() % 0x400) as u32, // misc non-ASCII
         _ => ASCII[(r.next() as usize) % ASCII.len()] as u32,
     }

@@ -85,10 +85,10 @@ fn glob_differential_battery() {
         // itself (like GLOB_NOCHECK), but only for magic-free patterns — a magic
         // pattern with no match still yields GLOB_NOMATCH. A pattern that does
         // match returns the matches regardless. (glibc <glob.h> semantics.)
-        ("BAZ", GLOB_NOMAGIC, "0: BAZ"),       // magic-free, no match -> pattern
-        ("Foo", GLOB_NOMAGIC, "0: Foo"),       // magic-free, matches -> match
+        ("BAZ", GLOB_NOMAGIC, "0: BAZ"), // magic-free, no match -> pattern
+        ("Foo", GLOB_NOMAGIC, "0: Foo"), // magic-free, matches -> match
         ("*.xyz", GLOB_NOMAGIC, &format!("{GLOB_NOMATCH}")), // magic, no match -> NOMATCH
-        ("*.txt", GLOB_NOMAGIC, "0: a.txt b.txt c.txt"),     // magic, matches -> matches
+        ("*.txt", GLOB_NOMAGIC, "0: a.txt b.txt c.txt"), // magic, matches -> matches
     ];
 
     let mut diffs = Vec::new();
