@@ -6,6 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — ❌ memrchr "drop the 128-fold tier" REJECTED — ~0-gain / regression (same-process A/B) (cc)
+
+- **DISPROVEN + REVERTED.** Full survey showed `memrchr` at **2.61x LOSS** (the biggest tractable
+  non-comparator, non-contended gap; reverse byte scan). Hypothesis: the 128-byte folded skip-probe
+  (`has_byte_memchr_folded`) re-loads a flagged block to resolve the match (a "double load"), so a direct
+  32-byte reverse SIMD scan (one load/panel, like glibc) should win. A naive cross-RUN comparison seemed to
+  confirm it (survey ratio 2.61x → 1.74x) — **but that was pure rch cross-worker variance** (absolute ns
+  shifted fl 8.0→15.3, glibc 3.1→8.8 between workers; ratios across runs are NOT comparable).
+- **SAME-PROCESS A/B (old fold vs new direct vs glibc, one process — `memrchr_ab_bench`) is the truth:**
+  | case | old_fold | new_direct | glibc | verdict |
+  |---|---|---|---|---|
+  | n=200, X@100 | 5.58 ns | 5.57 ns | 2.60 ns | **~0-gain** |
+  | n=1024, X@400 | 7.66 ns | **10.56 ns** | 5.05 ns | **NEW 38% SLOWER (regression)** |
+  The fold tier's branch-amortization over the no-match reverse run (1 reduce per 128 B vs 4 mask-branches)
+  OUTWEIGHS the double-load; op-counting lied on x86 (the exact trap the printf/scanf memo warns about). The
+  fold version is correctly the faster one. Reverted (mem.rs restored to HEAD); stash
+  `cc-memrchr-direct-scan-DISPROVEN-...`. Core memrchr tests stay GREEN (59/59, incl. scalar-rposition
+  property test).
+- **STANDING:** memrchr's residual ~2.1x vs glibc is codegen-bound (portable-SIMD reverse + reverse memory
+  access vs glibc hand-asm), NOT a structural lever — same class as the comparator losses. Don't re-pick
+  it without an asm/intrinsics pass. `memrchr_ab_bench.rs` kept as the reusable disproof harness.
+
 ## 2026-06-26 — ✅ ecvt: drop per-call `exp_str` String heap alloc — 1.2–1.4x LOSS → ~parity/WIN (cc)
 
 - **LANDED CODE WIN (`ecvt.rs`, byte-identical to fl's prior output, conformance unchanged).** New
