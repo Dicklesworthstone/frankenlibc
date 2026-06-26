@@ -123,9 +123,7 @@ pub fn parse_ether_line(line: &[u8]) -> Option<(EtherAddr, &[u8])> {
     // whitespace, or EOL byte, and rejects a missing/comment-only hostname.
     let host_len = host_bytes
         .iter()
-        .position(|&b| {
-            b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' || b == 0 || b == b'#'
-        })
+        .position(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' || b == 0 || b == b'#')
         .unwrap_or(host_bytes.len());
     if host_len == 0 {
         return None;
@@ -206,13 +204,16 @@ mod tests {
         );
         // Whitespace terminator after the last octet (incl. \v, which glibc's
         // isspace accepts but Rust's is_ascii_whitespace does not).
+        assert_eq!(parse_ether_addr(b"1:2:3:4:5:6\n"), Some([1, 2, 3, 4, 5, 6]));
         assert_eq!(
-            parse_ether_addr(b"1:2:3:4:5:6\n"),
+            parse_ether_addr(b"1:2:3:4:5:6\x0b"),
             Some([1, 2, 3, 4, 5, 6])
         );
-        assert_eq!(parse_ether_addr(b"1:2:3:4:5:6\x0b"), Some([1, 2, 3, 4, 5, 6]));
         // A hex byte after a single-digit last octet is read as the 2nd digit.
-        assert_eq!(parse_ether_addr(b"1:2:3:4:5:6a"), Some([1, 2, 3, 4, 5, 0x6a]));
+        assert_eq!(
+            parse_ether_addr(b"1:2:3:4:5:6a"),
+            Some([1, 2, 3, 4, 5, 0x6a])
+        );
     }
 
     #[test]
@@ -249,7 +250,10 @@ mod tests {
     #[test]
     fn format_canonical() {
         // glibc "%x": leading zeros are dropped (0x01 -> "1").
-        assert_eq!(fmt(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xab]), b"1:23:45:67:89:ab");
+        assert_eq!(
+            fmt(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xab]),
+            b"1:23:45:67:89:ab"
+        );
     }
 
     #[test]
@@ -261,7 +265,10 @@ mod tests {
 
     #[test]
     fn format_high_values_lowercase() {
-        assert_eq!(fmt(&[0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa]), b"ff:fe:fd:fc:fb:fa");
+        assert_eq!(
+            fmt(&[0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa]),
+            b"ff:fe:fd:fc:fb:fa"
+        );
     }
 
     #[test]

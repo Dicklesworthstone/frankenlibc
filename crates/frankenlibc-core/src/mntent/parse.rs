@@ -486,7 +486,10 @@ mod tests {
 
     #[test]
     fn escape_encodes_only_the_glibc_four() {
-        assert_eq!(escape(b"a b\tc\nd\\e"), b"a\\040b\\011c\\012d\\134e".to_vec());
+        assert_eq!(
+            escape(b"a b\tc\nd\\e"),
+            b"a\\040b\\011c\\012d\\134e".to_vec()
+        );
         // comma / equals untouched
         assert_eq!(escape(b"rw,uid=0"), b"rw,uid=0".to_vec());
     }

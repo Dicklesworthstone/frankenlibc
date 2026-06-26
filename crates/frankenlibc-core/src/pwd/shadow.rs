@@ -98,9 +98,7 @@ fn parse_decimal_i64_digits(digits: &[u8]) -> Option<i64> {
         if !byte.is_ascii_digit() {
             return None;
         }
-        value = value
-            .checked_mul(10)?
-            .checked_add(i64::from(byte - b'0'))?;
+        value = value.checked_mul(10)?.checked_add(i64::from(byte - b'0'))?;
     }
     Some(value)
 }
@@ -114,9 +112,7 @@ fn parse_decimal_u64_digits(digits: &[u8]) -> Option<u64> {
         if !byte.is_ascii_digit() {
             return None;
         }
-        value = value
-            .checked_mul(10)?
-            .checked_add(u64::from(byte - b'0'))?;
+        value = value.checked_mul(10)?.checked_add(u64::from(byte - b'0'))?;
     }
     Some(value)
 }
@@ -458,10 +454,7 @@ mod tests {
 
     #[test]
     fn numeric_overflow_is_rejected() {
-        assert_eq!(
-            parse_shadow_numeric(b"9223372036854775807"),
-            Some(i64::MAX)
-        );
+        assert_eq!(parse_shadow_numeric(b"9223372036854775807"), Some(i64::MAX));
         assert_eq!(parse_shadow_numeric(b"9223372036854775808"), None);
     }
 
@@ -507,9 +500,7 @@ mod tests {
                 .flag,
             u64::MAX
         );
-        assert!(
-            parse_shadow_line(b"u:x:0:0:0:0:0:0:18446744073709551616").is_none()
-        );
+        assert!(parse_shadow_line(b"u:x:0:0:0:0:0:0:18446744073709551616").is_none());
     }
 
     #[test]

@@ -110,10 +110,20 @@ mod tests {
     fn accepts_short_lines() {
         // glibc needs only a non-empty name; passwd/admins/members are optional.
         let e = parse_gshadow_line(b"root:*:").unwrap(); // 3 fields
-        assert_eq!((e.sg_adm.as_slice(), e.sg_mem.as_slice()), (&b""[..], &b""[..]));
+        assert_eq!(
+            (e.sg_adm.as_slice(), e.sg_mem.as_slice()),
+            (&b""[..], &b""[..])
+        );
         let f = parse_gshadow_line(b"root").unwrap(); // 1 field
         assert_eq!(f.sg_namp, b"root");
-        assert_eq!((f.sg_passwd.as_slice(), f.sg_adm.as_slice(), f.sg_mem.as_slice()), (&b""[..], &b""[..], &b""[..]));
+        assert_eq!(
+            (
+                f.sg_passwd.as_slice(),
+                f.sg_adm.as_slice(),
+                f.sg_mem.as_slice()
+            ),
+            (&b""[..], &b""[..], &b""[..])
+        );
     }
 
     #[test]
