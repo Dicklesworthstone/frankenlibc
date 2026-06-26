@@ -6,6 +6,38 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — mbstowcs partial-prefix + 2-byte gate REJECTED: mixed still 2.06x LOSS vs glibc (BoldWaterfall)
+
+- **REVERTED / NO-SHIP:** no measured `.scratch`/`.worktrees` win was off `main` at
+  `c86e47627`; all local branches are ancestors of `main`, and the only live dirty scratch
+  dirs are the older SBCS/DBCS UTF-32 iconv candidates already represented in this ledger.
+  A dirty `mbstowcs` candidate was present in the shared checkout, so it was measured
+  rather than overwritten.
+- Candidate lever: when the 16-byte ASCII SIMD chunk sees a later NUL/non-ASCII byte,
+  copy the valid ASCII prefix from the loaded chunk instead of discarding it, and add a
+  cheap `src[si + 2]` 2-byte-lead gate before the full 8-codepoint SIMD 2-byte probe. The
+  intended target was mixed Latin UTF-8 where short ASCII runs are repeatedly interrupted by
+  `é`/`ï`/`ç` and the full 2-byte SIMD probe is doomed.
+- Behavior proof passed: `AGENT_NAME=BoldWaterfall
+  CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec -- cargo test
+  -p frankenlibc-core mbstowcs_simd_isomorphic_to_scalar` (1 passed). The required
+  `cargo bench --release` spelling was attempted and rejected by Cargo
+  (`unexpected argument '--release'`), so the valid per-crate release-profile command was
+  used for measurement: `cargo bench -p frankenlibc-bench --profile release --bench
+  wchar_bench wchar_mbstowcs -- --noplot --sample-size 10 --warm-up-time 1
+  --measurement-time 1`. RCH reported local fallback
+  (`no admissible workers: insufficient_slots=3/4,hard_preflight=1,active_project_exclusion=1`),
+  so this is routing/reject evidence, not a same-worker keep proof.
+- Internal Criterion rows improved: `mixed_utf8` **-26.372%**, `astral_4byte` **-16.251%**,
+  ASCII no statistically significant change. But the decisive glibc comparator still lost:
+  `MBSTOWCS ascii` **0.204x WIN** (fl 196ns / glibc 960ns), `MBSTOWCS mixed`
+  **2.057x LOSS** (fl 1517ns / glibc 737ns). A supplemental dirty example row showed dense
+  2-byte Cyrillic **0.148x WIN**, confirming the existing 2-byte SIMD path is strong only
+  for homogeneous runs, not scattered mixed Latin. Because the targeted mixed row remains
+  slower than glibc, the code hunk was reverted. Do not retry partial-prefix copying or the
+  adjacent-lead 2-byte gate; the next admissible lever needs a real mixed-width DFA/block
+  decoder that handles ASCII+2-byte interleaving as one transducer.
+
 ## 2026-06-26 — mbstowcs short-ASCII mixed path REJECTED: faster but still 1.76x LOSS vs glibc (BoldWaterfall)
 
 - **REVERTED / NO-SHIP:** no measured `.scratch`/`.worktrees` win was off `main` after
