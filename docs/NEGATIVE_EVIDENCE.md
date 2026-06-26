@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — qsort fixed-16 byte-lex radix WIN (str16 0.91x vs glibc) (BoldWaterfall)
+
+- **LANDED CODE WIN:** the prior `qsort` string row exposed a real gap for fixed 16-byte lexicographic
+  records. I added a speculative stable LSD byte-radix lane for `width == 16` records in `sort.rs`.
+  Correctness is verify-then-commit: after radix sorting, a linear pass calls the user's comparator over
+  adjacent 16-byte records; if any pair is out of order the original bytes are restored and the generic
+  pdqsort path handles the call. This keeps arbitrary `qsort` comparator semantics intact.
+- **TARGET BENCH (rch, ovh-a, same-process host glibc comparator):** `cargo run -p frankenlibc-abi --profile
+  release --example sort_bench`:
+  - `SORT str16 n=20000`: fl **1,249,356 ns** / glibc **1,368,892 ns** = **0.91x WIN**.
+  - Local fallback cross-check before the ovh-a run: fl **1,490,978 ns** / glibc **1,725,545 ns** =
+    **0.86x WIN**.
+- **PER-CRATE BENCH GATE (rch, ovh-a):** `cargo bench -p frankenlibc-bench --profile release --bench
+  glibc_baseline_bench qsort_16_i32 -- --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`
+  stayed favorable on the existing integer gate: p50 fl **161.642 ns** / glibc **169.174 ns** =
+  **0.96x WIN**.
+- **CONFORMANCE:** `cargo test -p frankenlibc-core qsort_lex16_radix_lane_commits_and_restores` GREEN. The
+  test exercises both the fast lexicographic commit and a reverse-comparator restore/fallback path.
+
 ## 2026-06-26 — strcmp / memcmp comparator class RE-VERIFIED codegen-bound (fresh in-process A/B) (cc)
 
 - **Re-measurement, not a new lever.** Bold-verify land-or-dig sweep: no parked win existed (all stashes are

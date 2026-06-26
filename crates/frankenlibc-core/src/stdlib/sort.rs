@@ -19,6 +19,10 @@ const INTEGER_RADIX_LANE_MIN: usize = 2048;
 const NARROW_RADIX_LANE_MIN: usize = 256;
 /// 1-byte keys take the dedicated counting-sort lane above this count.
 const U8_COUNTING_LANE_MIN: usize = 256;
+/// 16-byte fixed keys under byte-lexicographic comparators take a stable LSD
+/// radix lane. The verify guard makes this speculative: non-lexicographic
+/// comparators restore and fall through.
+const BYTE_LEX16_RADIX_LANE_MIN: usize = 1024;
 
 /// Generic qsort implementation: a pattern-defeating quicksort (pdqsort,
 /// Orson Peters 2014) ported to operate on raw byte chunks through a
@@ -115,6 +119,13 @@ where
     if (width == 2 || width == 4 || width == 8)
         && num > radix_min
         && try_qsort_integer_radix_lane(base, num, width, compare)
+    {
+        return true;
+    }
+
+    if width == 16
+        && num > BYTE_LEX16_RADIX_LANE_MIN
+        && try_qsort_byte_lex16_radix_lane(base, num, compare)
     {
         return true;
     }
@@ -451,6 +462,60 @@ where
         8 => try_qsort_radix_u64(active, num, compare),
         _ => false,
     }
+}
+
+/// Fixed-16-byte lexicographic byte radix lane.
+///
+/// Many `qsort` users sort fixed-size string/hash records with a memcmp-style
+/// comparator. For those, stable LSD radix over byte positions 15..0 gives the
+/// same lexicographic order with no O(n log n) comparator calls. As with the
+/// integer lanes, correctness does not depend on guessing the comparator: the
+/// candidate output is committed only if a linear verification against the
+/// caller's comparator proves it non-decreasing. Otherwise the original bytes
+/// are restored and the generic pdqsort handles the call.
+fn try_qsort_byte_lex16_radix_lane<F>(base: &mut [u8], num: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    const WIDTH: usize = 16;
+    let active = &mut base[..num * WIDTH];
+    let original = active.to_vec();
+    let mut aux = vec![0u8; active.len()];
+
+    for pos in (0..WIDTH).rev() {
+        let mut count = [0usize; 256];
+        for chunk in active.chunks_exact(WIDTH) {
+            count[chunk[pos] as usize] += 1;
+        }
+        if count.contains(&num) {
+            continue;
+        }
+
+        let mut sum = 0usize;
+        for c in &mut count {
+            let cur = *c;
+            *c = sum;
+            sum += cur;
+        }
+
+        for chunk in active.chunks_exact(WIDTH) {
+            let d = chunk[pos] as usize;
+            let dst = count[d] * WIDTH;
+            aux[dst..dst + WIDTH].copy_from_slice(chunk);
+            count[d] += 1;
+        }
+        active.copy_from_slice(&aux);
+    }
+
+    let mut prev = &active[..WIDTH];
+    for current in active[WIDTH..].chunks_exact(WIDTH) {
+        if compare(prev, current) > 0 {
+            active.copy_from_slice(&original);
+            return false;
+        }
+        prev = current;
+    }
+    true
 }
 
 /// pdqsort core. Operates on the element-index range `[lo, hi)` of `buf`.
@@ -1570,6 +1635,61 @@ mod sort_variant_tests {
         qsort(&mut buf, 4, |a, b| -cmp_i32_ne(a, b));
 
         assert_eq!(unflatten_i32_ne(&buf), expected);
+    }
+
+    fn cmp_lex16(a: &[u8], b: &[u8]) -> i32 {
+        for i in 0..16 {
+            if a[i] != b[i] {
+                return a[i] as i32 - b[i] as i32;
+            }
+        }
+        0
+    }
+
+    #[test]
+    fn qsort_lex16_radix_lane_commits_and_restores() {
+        let n = 2048usize;
+        let width = 16usize;
+        let mut input = vec![0u8; n * width];
+        for i in 0..n {
+            let mut s = (i as u64)
+                .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                .wrapping_add(0x1234_5678_9abc_def0);
+            for j in 0..width {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                input[i * width + j] = (s >> 24) as u8;
+            }
+        }
+
+        let mut expected: Vec<[u8; 16]> = input
+            .chunks_exact(width)
+            .map(|chunk| chunk.try_into().unwrap())
+            .collect();
+        expected.sort_unstable();
+
+        let mut buf = input.clone();
+        qsort(&mut buf, width, cmp_lex16);
+        let got: Vec<[u8; 16]> = buf
+            .chunks_exact(width)
+            .map(|chunk| chunk.try_into().unwrap())
+            .collect();
+        assert_eq!(got, expected);
+
+        let mut reverse_expected: Vec<[u8; 16]> = input
+            .chunks_exact(width)
+            .map(|chunk| chunk.try_into().unwrap())
+            .collect();
+        reverse_expected.sort_unstable_by(|a, b| b.cmp(a));
+
+        let mut reverse_buf = input;
+        qsort(&mut reverse_buf, width, |a, b| -cmp_lex16(a, b));
+        let reverse_got: Vec<[u8; 16]> = reverse_buf
+            .chunks_exact(width)
+            .map(|chunk| chunk.try_into().unwrap())
+            .collect();
+        assert_eq!(reverse_got, reverse_expected);
     }
 
     #[test]
