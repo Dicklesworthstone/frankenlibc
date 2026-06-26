@@ -6,6 +6,33 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — strftime `%H:%M:%S` exact fast path REJECTED (Criterion gate 1.33x LOSS) (BoldWaterfall)
+
+- **REJECTED / REVERTED:** attempted a narrow exact-format fast path for `strftime("%H:%M:%S")` in both core
+  and the ABI boundary, after a land-or-dig sweep found no committed off-main measured win to land. The lever
+  bypassed the general format loop and, in the ABI variant, avoided materializing `BrokenDownTime` for the
+  valid `tm_hour/tm_min/tm_sec` hot case. It passed focused conformance, but the required crate-scoped
+  Criterion head-to-head still lost to glibc, so all code and bench-harness changes were manually reverted.
+- **BASELINE GAP:** `rch exec -- cargo run -p frankenlibc-abi --profile release --example strftime_bench`
+  (local fallback) measured `%H:%M:%S` at fl **208.9 ns** / glibc **34.8 ns** = **5.994x LOSS**.
+- **SECONDARY TIMING (not the keep gate):** direct release examples looked favorable after the fast path:
+  - core fast path on `ovh-a`: fl **12.0 ns** / glibc **54.5 ns** = **0.221x WIN**.
+  - core+ABI fast path on `vmi1264463`: fl **16.9 ns** / glibc **95.0 ns** = **0.178x WIN**.
+- **REQUIRED PER-CRATE BENCH GATE:** `env AGENT_NAME=BoldWaterfall CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b
+  rch exec -- cargo bench -p frankenlibc-bench --profile release --features abi-bench --bench
+  strftime_glibc_bench strftime_time_hms -- --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`
+  rejected the lever:
+  - core-only fast path on `ovh-a`: fl **39.764 ns** / glibc **28.888 ns** = **1.38x LOSS**.
+  - core+ABI fast path after `RCH-E412` remote preflight fallback to local: fl **47.674 ns** / glibc
+    **35.785 ns** = **1.33x LOSS**.
+- **CONFORMANCE:** `cargo test -p frankenlibc-core strftime_time_hms_exact_fit --lib` GREEN for the candidate;
+  `cargo test -p frankenlibc-abi --test conformance_diff_time diff_strftime_cases` GREEN before and after the
+  ABI pre-dispatch attempt.
+- **VERDICT:** exact HMS formatting is not a ship candidate under the requested `cargo bench` gate. The direct
+  release example is too harness-sensitive here; the Criterion ABI-vs-dlmopen-glibc comparator is the durable
+  reject signal. Future work should target the fixed ABI/runtime-policy overhead or the general formatter
+  setup cost, not another literal HMS writer.
+
 ## 2026-06-26 — qsort fixed-16 byte-lex radix WIN (str16 0.91x vs glibc) (BoldWaterfall)
 
 - **LANDED CODE WIN:** the prior `qsort` string row exposed a real gap for fixed 16-byte lexicographic
