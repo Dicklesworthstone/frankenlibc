@@ -844,21 +844,34 @@ pub fn memccpy(dest: &mut [u8], src: &[u8], c: u8, n: usize) -> Option<usize> {
         return None;
     }
 
-    // Locate `c` with the SIMD memchr scan, then copy the resulting prefix in
-    // one bulk move (lowered to the memcpy intrinsic) instead of a byte loop.
-    // Behaviour is identical: if `c` occurs at index `p < count`, bytes
-    // `0..=p` are copied and `Some(p + 1)` returned; otherwise all `count`
-    // bytes are copied and `None` returned.
-    match memchr(&src[..count], c, count) {
-        Some(p) => {
-            dest[..=p].copy_from_slice(&src[..=p]);
-            Some(p + 1)
+    // Fused single-pass SIMD scan+copy: copy each lane-width chunk to `dest` while testing
+    // it for `c`, stopping at the chunk that contains `c`. One pass over the data (~2n
+    // memory traffic: read src once, write dest once) instead of memchr-then-memcpy's ~3n
+    // (the memchr re-reads src). Behaviour is identical: if `c` occurs at index `p`, bytes
+    // `0..=p` are copied and `Some(p + 1)` is returned; otherwise all `count` bytes are
+    // copied and `None` is returned. All loads/stores are within the bounded
+    // `count`-length slices, so there is no page-crossing concern.
+    let needle = Simd::<u8, SIMD_LANES>::splat(c);
+    let mut i = 0;
+    while i + SIMD_LANES <= count {
+        let chunk = Simd::<u8, SIMD_LANES>::from_slice(&src[i..i + SIMD_LANES]);
+        let mask = chunk.simd_eq(needle).to_bitmask();
+        if mask != 0 {
+            let k = mask.trailing_zeros() as usize;
+            dest[i..=i + k].copy_from_slice(&src[i..=i + k]);
+            return Some(i + k + 1);
         }
-        None => {
-            dest[..count].copy_from_slice(&src[..count]);
-            None
-        }
+        dest[i..i + SIMD_LANES].copy_from_slice(&src[i..i + SIMD_LANES]);
+        i += SIMD_LANES;
     }
+    while i < count {
+        dest[i] = src[i];
+        if src[i] == c {
+            return Some(i + 1);
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Sets `n` bytes of `dest` to zero, guaranteed not to be optimized away.

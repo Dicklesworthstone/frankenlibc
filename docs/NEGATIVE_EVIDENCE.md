@@ -6,6 +6,19 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — memccpy fused one-pass LANDED — improved 1.5x→1.2x (closer, no regression, conformance green) (cc)
+
+- **LANDED a real code improvement (mem.rs), conformance GREEN:** fused fl `memccpy` from a memchr-then-memcpy
+  two-pass (~3n memory traffic) into a SINGLE SIMD scan+copy pass (~2n: copy each lane-width chunk while
+  testing it for `c`, stop at the chunk containing `c`). Head-to-head (`memccpy_bench.rs`, dlmopen host glibc,
+  **output verified**), vs the prior two-pass:
+  - n=256: **1.53x → 1.28x** · n=4096: 1.79x → 1.67x · n=65536: **1.28x → 1.10x**.
+  fl memccpy is now ~1.2x faster than before and CLOSER to glibc, but **still a loss** (glibc's hand-tuned asm
+  fused loop beats portable_simd — the same SIMD-vs-asm floor as the scan family). **No regression** (purely
+  memccpy; loads/stores all within bounded slices, no page concern). CONFORMANCE: 3 memccpy unit tests +
+  `conformance_diff_memccpy` (differential vs glibc) all GREEN. Realizes the fusion lever from the entry below;
+  the residual ~1.1-1.7x is the irreducible portable_simd-vs-asm floor. A strict improvement with no downside.
+
 ## 2026-06-25 — memccpy 1.3-1.8x LOSS (two-pass vs glibc's fused one-pass) + fusion lever (cc)
 
 - **LOSS: fl `memccpy` loses 1.28-1.79x to glibc.** Head-to-head (`memccpy_bench.rs`, dlmopen host glibc, stop
