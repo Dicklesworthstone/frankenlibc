@@ -6,6 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — qsort `char*` sampled width-8 natural-order gate REJECTED (1.98x LOSS) (BoldWaterfall)
+
+- **REJECTED / REVERTED:** attempted a narrow `qsort(width == 8)` sampled plausibility gate that rejects
+  obvious non-integer-natural comparators before trying the speculative signed/unsigned integer fast/radix
+  lanes. The target was the existing `char*` string-sort loss: opaque pointer payloads sorted by a byte-loop
+  `strcmp` comparator waste up to two full integer-radix attempts before falling back to generic pdqsort.
+- **MEASURED GATE:** a temporary Criterion row `qsort_strptr_20000` sorted 20,000 live `CString` pointers
+  with the same byte-loop comparator for frankenlibc and host glibc. Command (valid release-profile spelling
+  for the requested `cargo bench --release` intent):
+  `env AGENT_NAME=BoldWaterfall CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec --
+  cargo bench -p frankenlibc-bench --profile release --bench glibc_baseline_bench qsort_strptr_20000 --
+  --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`.
+- **RESULT:** RCH fell back local (`no admissible workers: insufficient_slots=4,hard_preflight=1`). Candidate
+  frankenlibc_core mean **3,305,900.612 ns/op**; host glibc mean **1,670,227.776 ns/op**; ratio
+  **1.979x LOSS** (p50 ratio **1.870x LOSS** from 3,248,477.129 / 1,737,117.023 ns/op).
+- **CONFORMANCE:** candidate guard tests passed:
+  `env AGENT_NAME=BoldWaterfall CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec --
+  cargo test -p frankenlibc-core --lib qsort_i64_probe -- --nocapture` -> **2 passed**.
+- **VERDICT:** no ship. The sample gate can reduce wasted speculative work, but the remaining dominant gap is
+  still pdqsort-vs-glibc merge behavior for expensive opaque comparators. All candidate code and the temporary
+  bench row were removed; only this ledger reject remains.
+
 ## 2026-06-26 — ✅ strtod (double parse) CONFIRMED WIN vs glibc 1.2x–2.1x, bit-exact (cc)
 
 - **LANDED MEASUREMENT (new bench, no code change needed — fl already wins).** `strtod` was previously
