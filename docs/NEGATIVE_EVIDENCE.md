@@ -6,6 +6,19 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — memccpy 1.3-1.8x LOSS (two-pass vs glibc's fused one-pass) + fusion lever (cc)
+
+- **LOSS: fl `memccpy` loses 1.28-1.79x to glibc.** Head-to-head (`memccpy_bench.rs`, dlmopen host glibc, stop
+  byte at end so the whole buffer is scanned+copied, **output verified**): n=256 fl 13ns / glibc 8ns = 1.53x ·
+  n=4096 91/51 = 1.79x · n=65536 1783/1388 = 1.28x.
+  - ROOT CAUSE (algorithmic, NOT the SIMD floor): fl does **two passes** — SIMD `memchr` to locate `c`, THEN
+    SIMD `memcpy` of the prefix = ~3n memory traffic (src read twice + dest write). glibc **fuses** scan+copy
+    into ONE pass = ~2n. The ~1.5x traffic ratio matches the measured loss.
+  - **LEVER (tractable, cleaner than the f64 radix): fuse the scan+copy** — a single SIMD loop that copies each
+    32-byte chunk to dest while checking it for `c`, stopping at the chunk that contains `c` (reuse the memchr
+    page-safety guard). One pass → ~2n traffic → should reach glibc parity-to-win. A focused `mem.rs` turn;
+    no verify/membrane complexity. Candidate for a dedicated slot.
+
 ## 2026-06-25 — qsort f64 RADIX-reuse lane TRIED + REVERTED — f64 float-radix is a multi-session effort (cc)
 
 - **REVERTED (made it worse): the O(n) float-radix-via-reuse approach also failed.** Implemented a second f64
