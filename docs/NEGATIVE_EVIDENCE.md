@@ -6,6 +6,30 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — strcmp / memcmp comparator class RE-VERIFIED codegen-bound (fresh in-process A/B) (cc)
+
+- **Re-measurement, not a new lever.** Bold-verify land-or-dig sweep: no parked win existed (all stashes are
+  confirmed-loss/zero-gain; all `.scratch`/`.worktrees` are prunable baselines), so I dug the un-dominated
+  comparator class. Ran the reliable in-process A/B harness `string_inprocess_survey_bench` (core fn called
+  DIRECTLY vs `host_glibc_inprocess`, no membrane in the loop) on the canonical 64-byte / differ-at-byte-30
+  case.
+- **FRESH NUMBERS (2026-06-26, rch worker):**
+  - `survey_strcmp`: fl_core **4.18 ns** / glibc **1.88 ns** = **2.23x LOSS** (prior ledger: 2.24x — stable).
+  - `survey_memcmp`: fl_core **2.88 ns** / glibc **2.45 ns** = **1.17x LOSS** (prior: 1.36x — same class,
+    within cross-worker variance).
+- **Confirmed: no byte-identical micro-lever.** Source audit (str.rs:385 / mem.rs:80): for a ≤64-byte input
+  the path is a SINGLE 32-byte portable-SIMD compare. strcmp's `strcmp_exact_256_equal_nul_terminated`
+  bails on the first length check (64≠256), and the `aligned = (p1%8)==(p2%8)` setup is ~3-4 scalar ALU ops
+  (<1 ns) — removing/reordering it CANNOT close a 2.3 ns gap. The gap lives entirely in the SIMD
+  compare+resolve sequence (`simd_ne | simd_eq(splat0)` → `to_bitmask` → `trailing_zeros`) vs glibc's fused
+  hand-asm (vpcmpeqb/vpminub + vpmovmskb + tzcnt). memcmp@64 is exactly 2×32 B with NO remainder/WORD tier
+  reached, so its residual is purely Rust-SIMD-vs-asm codegen + the semantically-required `n.min(len).min(len)`
+  bound.
+- **VERDICT:** the comparator class (strcmp/memcmp, and by the prior map strncmp/wcscmp/wcsncmp) stays the
+  documented **codegen-pass** target (asm-level intrinsics / target-feature, not a byte-identical structural
+  lever) — OUT of micro-lever scope. The byte-identical SIMD micro-lever frontier remains exhausted
+  (re-confirmed). No code changed; nothing to revert.
+
 ## 2026-06-26 — qsort STRING sort 2.7x LOSS (pdqsort + wasted radix vs glibc merge) — IMPORTANT caveat (cc)
 
 - **LOSS: fl `qsort` is 2.7x SLOWER than glibc for STRING sorting** — a very common workload (sort an array of
