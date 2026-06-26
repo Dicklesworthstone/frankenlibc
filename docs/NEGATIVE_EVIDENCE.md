@@ -6,6 +6,18 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — strtol MIXED: decimal/hex WIN 1.3-1.6x, octal LOSS 1.47x (cc)
+
+- **MIXED: fl `strtol` wins the common decimal/hex cases, loses octal.** Head-to-head (`strtol_bench.rs`,
+  dlmopen host glibc, value-exact verified vs glibc):
+  - `"42"`: fl 9.4ns / glibc 14.8ns = **0.64x (1.6x)** · `"1234567890"`: 0.63x · `"9223372036854775807"` (max):
+    0.77x · `"0xDEADBEEF"` (base 16): **0.62x (1.6x)** → **DECIMAL + HEX WIN 1.3-1.6x (the common cases)**.
+  - `"-12345"`: 0.975x (parity).
+  - `"755"` (base 8): fl 23.6ns / glibc 16.0ns = **1.47x LOSS** → octal is fl's slow path (rare — file-mode
+    parsing; not a lever worth chasing).
+  Net: fl wins the common decimal/hex integer parsing 1.3-1.6x. Pairs with `strtod` 1.4-3.6x — **fl's number
+  parsing is broadly faster than glibc**, octal being the lone minor exception.
+
 ## 2026-06-25 — strtod 1.4-3.6x WIN, bit-exact vs glibc (cc)
 
 - **WIN: fl `strtod` is 1.4-3.6x faster than glibc AND bit-exact (correctly-rounded).** Head-to-head
