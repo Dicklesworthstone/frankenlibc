@@ -6,6 +6,16 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — timegm 5.7x WIN (O(1) civil-days formula vs glibc), value-exact (cc)
+
+- **WIN: fl `timegm` is 5.7x faster than glibc, value-exact.** fl's `broken_down_to_epoch` uses the O(1)
+  Howard-Hinnant civil-days closed form (`days_from_civil`); glibc's `timegm` carries more overhead (mktime
+  internals). Head-to-head (`timegm_bench.rs`, dlmopen host glibc, 2024-06-15 12:30:45 UTC, **value verified
+  equal**): fl **6.3ns** / glibc **36.1ns** = **0.174x (5.7x faster)**. The 6x gap is far beyond sub-15ns
+  measurement noise. `timegm` (UTC broken-down → epoch) is common in date parsing / log processing / time
+  arithmetic; `mktime` shares the same civil formula so likely wins similarly. A fresh win in the time/date
+  surface (non-conflicting with the time(NULL) syscall work).
+
 ## 2026-06-25 — qsort NARROW-key radix LANDED — i32 30-40% FASTER, u16 5.5x (conformance green) (cc)
 
 - **LANDED (real code win, `sort.rs`, conformance GREEN): native-width radix keys.** The u64 widening I'd
