@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort u16 (2-byte) 1.25x LOSS — radix WIDENS all keys to u64 (4x traffic) + clear lever (cc)
+
+- **LOSS: fl `qsort` loses 1.25x on 2-byte u16 keys where 4-byte i32 WINS 0.63x.** Head-to-head
+  (`sort_bench.rs`, n=20000 random u16, **output verified**): fl **1726µs** / glibc **1386µs** = **1.25x**.
+- **ROOT CAUSE CONFIRMED** (read `try_qsort_integer_radix_lane` + `radix_sort_u64_lsd`): the radix stores ALL
+  keys as `Vec<u64>` (8 bytes each) regardless of width and ping-pongs an 8-byte `aux` buffer. For 2-byte keys
+  that is **4x the necessary memory traffic** — the count/scatter passes move 160KB of u64 for 20000 u16 keys
+  vs 40KB of actual data. The radix DOES run (n=20000 > NARROW_RADIX_LANE_MIN=256); the loss is purely the
+  u64 widening. i32 (2x widening) still wins; u16 (4x) loses; i64 (1x, no widening) wins biggest.
+- **LEVER (clear, deferred, broadly beneficial): specialize the radix key storage to the width** — `Vec<u16>`
+  for 2-byte, `Vec<u32>` for 4-byte (native-width scatter, 4x/2x less traffic). Would flip u16 to a WIN **and
+  speed up the already-winning i32 case** (2x → 1x traffic). A focused `sort.rs` change (a width-parametric or
+  narrow-specialized radix fn); i64/large-n unaffected. Higher-value than f64 (helps the common i32 path too).
+
 ## 2026-06-25 — regex required-SUBSTRING fast-reject LANDED — 3.1x WIN on scattered-byte no-match (cc)
 
 - **LANDED (real code change, regex.rs, conformance GREEN): strengthened the regex fast-reject with a
