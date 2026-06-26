@@ -137,12 +137,14 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
         let _ = write!(heap, "{abs_val:.prec$e}");
         heap.as_str()
     };
-    // Parse the scientific notation: "d.dddde+dd"
+    // Parse the scientific notation: "d.dddde+dd". The exponent is accumulated
+    // inline into an i32 (no per-call `String` heap allocation — glibc writes into
+    // a static buffer with no alloc, so the old `exp_str` String was a pure
+    // overhead vs glibc; byte-identical result, same digits/exponent arithmetic).
     let mut digits = Vec::with_capacity(ndigit);
-    let mut exponent: i32 = 0;
+    let mut exp_mag: i32 = 0;
     let mut in_exp = false;
     let mut exp_sign: i32 = 1;
-    let mut exp_str = String::new();
 
     for c in formatted.bytes() {
         if in_exp {
@@ -151,7 +153,7 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
             } else if c == b'+' {
                 // skip
             } else if c.is_ascii_digit() {
-                exp_str.push(c as char);
+                exp_mag = exp_mag * 10 + (c - b'0') as i32;
             }
         } else if c == b'e' || c == b'E' {
             in_exp = true;
@@ -162,9 +164,7 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
         }
     }
 
-    if let Ok(e) = exp_str.parse::<i32>() {
-        exponent = e * exp_sign;
-    }
+    let exponent = exp_mag * exp_sign;
 
     // Trim or pad to exactly ndigit digits.
     while digits.len() < ndigit {

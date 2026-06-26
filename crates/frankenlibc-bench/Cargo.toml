@@ -194,6 +194,11 @@ harness = false
 name = "gcvt_glibc_bench"
 harness = false
 
+# ecvt/fcvt (double -> digit string) vs host glibc, in-process (no abi-bench).
+[[bench]]
+name = "cvt_glibc_bench"
+harness = false
+
 # inet_ntop vs host glibc (dlmopen). Measures the format_ipv4 byte-level rewrite.
 [[bench]]
 name = "inet_ntop_glibc_bench"

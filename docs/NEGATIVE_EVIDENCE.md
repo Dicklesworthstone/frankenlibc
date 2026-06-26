@@ -6,6 +6,31 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — ✅ ecvt: drop per-call `exp_str` String heap alloc — 1.2–1.4x LOSS → ~parity/WIN (cc)
+
+- **LANDED CODE WIN (`ecvt.rs`, byte-identical to fl's prior output, conformance unchanged).** New
+  `cvt_glibc_bench` (fl core `ecvt`/`fcvt` vs real in-process glibc) showed fl `ecvt` CONSISTENTLY losing
+  1.18–1.40x. Root cause: `ecvt` built a throwaway `String` (`exp_str`) per call just to parse the `%e`
+  exponent, then `.parse::<i32>()` — a pure heap alloc vs glibc's static-buffer, no-alloc path. Replaced it
+  with inline `exp_mag = exp_mag*10 + (c-b'0')` accumulation (identical arithmetic, zero alloc).
+- **RESULT (`cvt_glibc_bench`, fl ns / glibc ns):**
+  | case | before | after | glibc | after ratio |
+  |---|---|---|---|---|
+  | `1234567.89` n=17 | 134 | **107** | 108 | **0.99x WIN** |
+  | `pi` n=17 | 132 | **108** | 104 | 1.04x (parity) |
+  | `0.0001234` n=15 | 135 | **112** | 104 | 1.08x |
+  | `pi` n=6 | 111 | **87** | 72 | 1.21x |
+  | `123456.789` n=9 | 122 | **100** | 86 | 1.17x |
+  ~18–22% faster across the board (≈24 ns/call removed = the String alloc); mid flips to a WIN, pi n=17
+  reaches parity. Residual loss = the still-present result `Vec` alloc (API-mandated) + the single dragon
+  format. fcvt left as-is (single-format already; mixed 0.53x–1.50x, dragon-bound on high-precision mid).
+- **Conformance:** byte-identical to fl's previous `ecvt` (same digits/exponent), so fl's posture is
+  unchanged; bench parity asserts pass for all 5 (still-matching) classic-rounding cases. **CAVEAT /
+  bigger item:** glibc 2.42 rewrote `ecvt`/`fcvt` to SHORTEST-representation (`ecvt_fcvt_rounding_parity`
+  is `#[ignore]`d, bd-2g7oyh.101 — fl rewrite pending), so the general fl-vs-glibc-2.42 `ecvt` comparison is
+  apples-to-oranges for non-classic inputs; this win is the alloc removal, orthogonal to that pending rewrite.
+  Bench `cvt_glibc_bench.rs` added (DBL_MAX excluded — fl is intentionally more-correct there).
+
 ## 2026-06-26 — ✅ gcvt/%g general-fixed: single-%e reposition kills 2nd dragon-format (cc)
 
 - **LANDED CODE WIN (`ecvt.rs`, byte-identical, conformance GREEN).** Follow-through on my earlier gcvt
