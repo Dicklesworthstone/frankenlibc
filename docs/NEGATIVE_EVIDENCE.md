@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort f64 RADIX-reuse lane TRIED + REVERTED — f64 float-radix is a multi-session effort (cc)
+
+- **REVERTED (made it worse): the O(n) float-radix-via-reuse approach also failed.** Implemented a second f64
+  lane: O(1) `total_cmp` sampling fast-fail → map keys to order-preserving u64 (`bits ^ ((bits>>63 signed) |
+  sign_mask)`) → sort via the existing tuned `try_qsort_integer_radix_lane` with an unsigned comparator →
+  map back → verify. Result (sort_bench n=20000): f64 **3.23x LOSS** (WORSE than the 2.27x pdqsort baseline)
+  AND i64 regressed 0.56x → 0.71x. TWO root causes:
+  1. **The sampling fast-fail is too weak** — POSITIVE integers' bit patterns ARE ascending-double-ordered
+     (larger u64 bits = larger positive double), so i64 data's samples agree with `total_cmp` and DON'T bail →
+     i64 pays the wasted f64-lane work before its own radix.
+  2. **The radix-reuse didn't commit a win for f64** — routing transformed keys back through
+     `try_qsort_integer_radix_lane` (which has its own try-unsigned-then-signed + verify + restore) interacts
+     badly; the f64 lane net-loses and falls through to pdqsort + all the wasted passes.
+- **CONCLUSION: the f64 float-radix is a genuine MULTI-SESSION effort, NOT a 60m task.** It needs (a) a
+  SELF-CONTAINED u64 LSD radix (not the integer-lane reuse) and (b) a comparator probe that distinguishes
+  doubles from positive integers (total_cmp sampling can't). BOTH the `total_cmp` lane AND the radix-reuse lane
+  are now dead ends — DON'T re-try either. The 2.27x f64 LOSS stands as the documented gap; the fix is parked
+  for a dedicated multi-turn effort. sort.rs reverted clean; i32/i64 wins intact.
+
 ## 2026-06-25 — qsort f64 `total_cmp` fast-lane TRIED + REVERTED (still loss + regresses others) (cc)
 
 - **REVERTED (verify-correct but not a clean win):** implemented a `try_qsort_f64_natural_fast_lane` mirroring
