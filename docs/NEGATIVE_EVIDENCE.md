@@ -24,6 +24,11 @@ retried and real wins are confirmed with numbers.
   no-match. Helps the common grep-style no-match case (pattern absent from text). **Supersedes the earlier
   "regex stars 10x LOSS" reject — fl's regex now WINS the no-match path; the residual gap is only matching
   inputs that contain the required bytes (where the NFA still runs).**
+- **NO MATCH-PATH REGRESSION (verified):** a MATCHING input (`"a"×39 + "b"`, required `b` present so the
+  fast-reject passes and the NFA runs) measures fl **2658ns** / glibc 211ns = **12.6x** — the inherent NFA cost,
+  NOT my overhead (memchr finds the `b` in ~4ns, ~0.15% of 2658ns). So the optimization is pure upside: 7x win
+  on no-match, negligible cost on match. **The residual 12.6x matching-input gap is the NEXT lever — a lazy DFA
+  (cache the NFA epsilon-closures into states) would make matching O(input); substantial build, deferred.**
 
 ## 2026-06-25 — qsort scales: 1.6-1.74x WIN through 10M i32, NO radix crossover (cc)
 
