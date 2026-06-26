@@ -324,93 +324,105 @@ where
 /// (unsigned, descending, float, struct field, …) fails the single linear
 /// verify pass; the saved original bytes are restored and the caller falls back
 /// to the generic pdqsort with zero behavioral difference.
+/// Stable LSD radix sort over 8-bit digits for an unsigned-integer key type. Runs `passes`
+/// counting passes (one per significant key byte) with a ping-pong aux buffer; a pass whose
+/// digit is constant across all keys is skipped. On return `keys` is ascending. Generated
+/// per key width so a 2-byte key moves 2 bytes per pass — not 8 (the old u64-widening cost
+/// 4x the traffic for u16, 2x for u32).
+macro_rules! radix_sort_lsd_for {
+    ($name:ident, $ty:ty) => {
+        fn $name(keys: &mut Vec<$ty>, passes: usize) {
+            let n = keys.len();
+            if n < 2 {
+                return;
+            }
+            let mut aux: Vec<$ty> = vec![0; n];
+            for p in 0..passes {
+                let shift = (p as u32) * 8;
+                let mut count = [0usize; 256];
+                for &k in keys.iter() {
+                    count[((k >> shift) & 0xff) as usize] += 1;
+                }
+                if count.contains(&n) {
+                    continue;
+                }
+                let mut sum = 0usize;
+                for c in count.iter_mut() {
+                    let cur = *c;
+                    *c = sum;
+                    sum += cur;
+                }
+                for &k in keys.iter() {
+                    let d = ((k >> shift) & 0xff) as usize;
+                    aux[count[d]] = k;
+                    count[d] += 1;
+                }
+                core::mem::swap(keys, &mut aux);
+            }
+        }
+    };
+}
+radix_sort_lsd_for!(radix_sort_u16_lsd, u16);
+radix_sort_lsd_for!(radix_sort_u32_lsd, u32);
+radix_sort_lsd_for!(radix_sort_u64_lsd, u64);
+
+/// Width-specialised integer radix lane. Builds NATIVE-width keys (no u64 widening), tries
+/// SIGNED rank order (XOR the sign bit) first then UNSIGNED (no XOR), and verify-then-
+/// commits against the caller's comparator. A 2's-complement signed comparator is satisfied
+/// by the sign-flipped order; an unsigned comparator (`u16`/`u32`/`u64` — sizes/indices/
+/// hashes/ids) by the plain order. Any other comparator (descending, struct, float) fails
+/// both verifies, restores, and falls through to pdqsort.
+macro_rules! try_radix_lane_for {
+    ($name:ident, $ty:ty, $width:literal, $radix:ident) => {
+        fn $name<F>(active: &mut [u8], num: usize, compare: &F) -> bool
+        where
+            F: Fn(&[u8], &[u8]) -> i32,
+        {
+            let sign_mask: $ty = 1 << ($width * 8 - 1);
+            let original = active.to_vec();
+            for &mask in &[sign_mask, 0 as $ty] {
+                let mut keys: Vec<$ty> = Vec::with_capacity(num);
+                for chunk in active.chunks_exact($width) {
+                    let raw: [u8; $width] = chunk.try_into().unwrap();
+                    keys.push(<$ty>::from_ne_bytes(raw) ^ mask);
+                }
+                $radix(&mut keys, $width);
+                for (chunk, &k) in active.chunks_exact_mut($width).zip(&keys) {
+                    chunk.copy_from_slice(&(k ^ mask).to_ne_bytes());
+                }
+                let mut ordered = true;
+                let mut prev = &active[..$width];
+                for current in active[$width..].chunks_exact($width) {
+                    if compare(prev, current) > 0 {
+                        ordered = false;
+                        break;
+                    }
+                    prev = current;
+                }
+                if ordered {
+                    return true;
+                }
+                active.copy_from_slice(&original);
+            }
+            false
+        }
+    };
+}
+try_radix_lane_for!(try_qsort_radix_u16, u16, 2, radix_sort_u16_lsd);
+try_radix_lane_for!(try_qsort_radix_u32, u32, 4, radix_sort_u32_lsd);
+try_radix_lane_for!(try_qsort_radix_u64, u64, 8, radix_sort_u64_lsd);
+
 fn try_qsort_integer_radix_lane<F>(base: &mut [u8], num: usize, width: usize, compare: &F) -> bool
 where
     F: Fn(&[u8], &[u8]) -> i32,
 {
     debug_assert!(width == 2 || width == 4 || width == 8);
-    let active_len = num * width;
-    let active = &mut base[..active_len];
-    let sign_mask: u64 = 1u64 << (width as u64 * 8 - 1);
-
-    // Preserve the original bytes so a non-matching comparator can fall back unchanged.
-    let original = active.to_vec();
-
-    // Try SIGNED rank order (XOR the sign bit) first, then UNSIGNED (no XOR). A 2's-
-    // complement signed comparator is satisfied by the sign-flipped order; an UNSIGNED
-    // comparator (`u16`/`u32`/`u64` — common for sizes, indices, hashes, ids) by the
-    // plain byte order. Each arrangement is committed only after an O(n) verify against
-    // the caller's own comparator, so the output is always a valid `qsort` result and any
-    // other comparator (descending, struct key, float) restores and falls through. Before
-    // this, only the signed order was tried, so unsigned-keyed sorts silently dropped to
-    // pdqsort and lost to glibc's merge.
-    for &mask in &[sign_mask, 0u64] {
-        let mut keys: Vec<u64> = Vec::with_capacity(num);
-        for chunk in active.chunks_exact(width) {
-            let mut raw = [0u8; 8];
-            raw[..width].copy_from_slice(chunk);
-            keys.push(u64::from_ne_bytes(raw) ^ mask);
-        }
-
-        radix_sort_u64_lsd(&mut keys, width);
-
-        for (chunk, &k) in active.chunks_exact_mut(width).zip(&keys) {
-            let restored = (k ^ mask).to_ne_bytes();
-            chunk.copy_from_slice(&restored[..width]);
-        }
-
-        let mut ordered = true;
-        let mut prev = &active[..width];
-        for current in active[width..].chunks_exact(width) {
-            if compare(prev, current) > 0 {
-                ordered = false;
-                break;
-            }
-            prev = current;
-        }
-        if ordered {
-            return true;
-        }
-
-        active.copy_from_slice(&original);
-    }
-
-    false
-}
-
-/// Stable least-significant-digit radix sort over 8-bit digits. Runs `passes`
-/// counting passes (one per significant key byte) using a ping-pong auxiliary
-/// buffer; a pass whose digit is constant across all keys is skipped. On return
-/// `keys` holds the ascending-sorted values.
-fn radix_sort_u64_lsd(keys: &mut Vec<u64>, passes: usize) {
-    let n = keys.len();
-    if n < 2 {
-        return;
-    }
-    let mut aux: Vec<u64> = vec![0u64; n];
-    for p in 0..passes {
-        let shift = (p as u64) * 8;
-        let mut count = [0usize; 256];
-        for &k in keys.iter() {
-            count[((k >> shift) & 0xff) as usize] += 1;
-        }
-        // Skip passes where every key shares the same digit (e.g. unused high
-        // bytes of small-magnitude integers) — the order is already settled.
-        if count.contains(&n) {
-            continue;
-        }
-        let mut sum = 0usize;
-        for c in count.iter_mut() {
-            let cur = *c;
-            *c = sum;
-            sum += cur;
-        }
-        for &k in keys.iter() {
-            let d = ((k >> shift) & 0xff) as usize;
-            aux[count[d]] = k;
-            count[d] += 1;
-        }
-        core::mem::swap(keys, &mut aux);
+    let active = &mut base[..num * width];
+    match width {
+        2 => try_qsort_radix_u16(active, num, compare),
+        4 => try_qsort_radix_u32(active, num, compare),
+        8 => try_qsort_radix_u64(active, num, compare),
+        _ => false,
     }
 }
 

@@ -6,6 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort NARROW-key radix LANDED — i32 30-40% FASTER, u16 5.5x (conformance green) (cc)
+
+- **LANDED (real code win, `sort.rs`, conformance GREEN): native-width radix keys.** The u64 widening I'd
+  called "secondary" in the prior entry was actually MAJOR. Refactored `try_qsort_integer_radix_lane` to build
+  NATIVE-width keys (`Vec<u16>`/`Vec<u32>`/`Vec<u64>`, macro-generated) instead of always `Vec<u64>` — a 2-byte
+  key now moves 2 bytes/pass, not 8 (was 4x traffic for u16, 2x for i32). Stacks with the unsigned attempt:
+  - **i32 (the dominant qsort workload): random 0.52x → 0.38x · 1M 0.58x → 0.41x · 10M 0.59x → 0.36x** (~30-40%
+    faster).
+  - **u16: 0.50x → 0.18x** (5.5x faster than glibc).
+  - i64: still wins (already native u64; no widening to remove).
+  CONFORMANCE: 32 core `stdlib::sort` tests + 6 qsort differential gates (radix, radix16, i64_fastlane, count8,
+  qsort_r, alphasort) all GREEN. SAFE: identical verify-then-commit; per-width LSD radixes + lanes are
+  macro-generated (no duplication). **Integer sorting across all widths is now substantially faster** — and the
+  "widening = secondary" call was wrong (it's worth 30-40% on the common i32 path).
+
 ## 2026-06-25 — qsort UNSIGNED radix attempt LANDED — u16 1.25x LOSS → 0.50x WIN (corrects widening cause) (cc)
 
 - **LANDED (real code win, regex... no — `sort.rs`, conformance GREEN) + ROOT-CAUSE CORRECTION of the entry
