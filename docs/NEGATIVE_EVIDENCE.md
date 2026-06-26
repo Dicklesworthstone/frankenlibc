@@ -6,6 +6,16 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — strcoll 2.4x LOSS (C-locale = strcmp floor) — REJECT (cc)
+
+- **LOSS/REJECT: fl `strcoll` is 2.4x slower than glibc in the C locale.** Head-to-head (`strcoll_bench.rs`,
+  dlmopen host glibc, 45-char strings differing at the end, **sign verified equal**): fl **11.0ns** / glibc
+  **4.5ns** = **2.448x**. My hypothesis (glibc strcoll has locale-dispatch overhead) was WRONG — glibc's
+  strcoll has a fast C-locale path (≈ memcmp/strcmp, 4.5ns). In the C locale `strcoll` reduces to `strcmp`, and
+  fl's portable_simd strcmp loses to glibc's hand-tuned asm — **the same ~2.2x scan/compare SIMD-vs-asm floor**
+  already recorded for strcmp/memrchr/etc. NOT a lever (irreducible floor). `strxfrm` (C locale = copy) likely
+  similar. (Contrast the wide collation path, where glibc is slow and fl wins.)
+
 ## 2026-06-25 — strftime 187ns is CODEGEN overhead in the huge recursive fn — suspects ruled out (cc)
 
 - **Follow-up to the pinpoint below — suspects RULED OUT, fix direction sharpened.** Read `format_strftime`:
