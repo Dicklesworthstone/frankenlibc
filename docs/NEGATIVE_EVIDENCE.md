@@ -5018,3 +5018,19 @@ careful high-byte validation; (3) the architectural/owned losses — timing vDSO
 clock_gettime 1.28–1.35x; fleet-rejected), allocator small/realloc membrane (~50x), stdio write-path
 registry lock (fputs 3.96x, bd-hqo6b6, peer-owned). These are the documented frontier for a future turn
 with disk headroom and/or coordination — they are not in scope for the byte-identical micro-lever loop.
+
+### 2026-06-26 — strftime composite cold-path split REJECTED (still 7.67x vs glibc)
+
+Agent: BoldWaterfall. Lever tested: move `%c/%r/%D/%F/%R/%T/%x/%X` composite recursion support out of the
+main `format_strftime` loop into an `#[inline(never)]` helper so the simple `%H:%M:%S` directive path would
+avoid the inline 256-byte scratch and flag/padding cold-path code. Behavior proof before benchmarking:
+`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo test -p frankenlibc-core
+--lib strftime_ -- --nocapture` on `vmi1227854`: 19 strftime tests passed. Focused ratio bench used
+release-profile cargo spelling, per-crate only: `rch exec -- cargo bench -p frankenlibc-bench --profile
+release --features abi-bench --bench strftime_glibc_bench strftime_time_hms -- --noplot --sample-size 10
+--warm-up-time 1 --measurement-time 1`. Baseline on `ovh-a`: frankenlibc `%H:%M:%S` 231.67 ns vs glibc
+29.092 ns = **7.96x LOSS**. Candidate on `vmi1227854` (rch ignored the requested `ovh-a` pin): frankenlibc
+237.40 ns vs glibc 30.958 ns = **7.67x LOSS**. Rejected because it remains a large same-process
+frankenlibc-vs-glibc loss and does not close the fixed-overhead gap enough to justify code complexity.
+Candidate source and temporary bench row were reverted; the remaining frontier is codegen/ABI-call overhead
+or a generated straight-line directive compiler, not this cold-path extraction.
