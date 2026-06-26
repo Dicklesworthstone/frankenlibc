@@ -6,6 +6,31 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — ✅ strtod (double parse) CONFIRMED WIN vs glibc 1.2x–2.1x, bit-exact (cc)
+
+- **LANDED MEASUREMENT (new bench, no code change needed — fl already wins).** `strtod` was previously
+  un-benched head-to-head. glibc's `strtod` uses a slow multiprecision (bignum) parser; fl's decimal path
+  delegates to Rust std `parse::<f64>()` (Eisel–Lemire / fast_float) and the hex path is an exact u128
+  mantissa. New in-process A/B (`strtod_glibc_bench`, fl core called directly vs host glibc `strtod`, NO
+  abi-bench so the extern resolves to real in-process glibc). Every case bit-exact (`to_bits()` asserted
+  before benching). rch worker (`CARGO_TARGET_DIR=.rch-targets/frankenlibc-cc`):
+
+  | case (input) | fl ns | glibc ns | ratio | speedup |
+  |---|---|---|---|---|
+  | `3.14159265358979` | 34.1 | 72.0 | **0.47x** | 2.11x |
+  | `3.5` | 21.0 | 39.4 | **0.53x** | 1.88x |
+  | `1000000` | 26.2 | 32.0 | **0.82x** | 1.22x |
+  | `123456789.123456789e-10` | 49.0 | 66.5 | **0.74x** | 1.36x |
+  | `1.7976931348623157e308` (DBL_MAX) | 56.7 | 109.8 | **0.52x** | 1.94x |
+  | `0.1234567890123456789` (19 sig) | 49.4 | 74.0 | **0.67x** | 1.49x |
+
+- **VERDICT: fl `strtod` WINS glibc across every shape (1.2x–2.1x), bit-exact.** The win widens with hard
+  inputs (DBL_MAX 1.94x, 15-digit 2.11x) where glibc's bignum path is most expensive and Lemire stays O(1).
+  No code lever needed — recorded so the dig loop does NOT re-pick strtod/strtof/atof (all share this path).
+  Residual micro-headroom: fl scans the syntax itself then `parse::<f64>()` re-validates (double scan); a
+  direct Eisel–Lemire port on the pre-scanned slice could shave the re-scan, but fl already wins, so it is
+  low priority vs the un-dominated architectural gaps (allocator/stdio). Bench `strtod_glibc_bench.rs` added.
+
 ## 2026-06-26 — strftime `%H:%M:%S` exact fast path REJECTED (Criterion gate 1.33x LOSS) (BoldWaterfall)
 
 - **REJECTED / REVERTED:** attempted a narrow exact-format fast path for `strftime("%H:%M:%S")` in both core
