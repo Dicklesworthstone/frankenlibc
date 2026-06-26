@@ -6,6 +6,36 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — mbstowcs short-ASCII mixed path REJECTED: faster but still 1.76x LOSS vs glibc (BoldWaterfall)
+
+- **REVERTED / NO-SHIP:** no measured `.scratch`/`.worktrees` win was off `main` after
+  `main` advanced to `2069fee30`; all live local branches are ancestors of `main`, and
+  the only dirty live scratch dirs are the already-accounted SBCS/DBCS UTF-32 iconv
+  candidates. The fresh actionable gap was the newly recorded `mbstowcs` multibyte row.
+- Required spelling check: `AGENT_NAME=BoldWaterfall
+  CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec -- cargo bench
+  --release -p frankenlibc-bench --bench wchar_bench wchar_mbstowcs -- --noplot
+  --sample-size 10 --warm-up-time 1 --measurement-time 1` was attempted first and Cargo
+  rejected `--release` for `bench` (`unexpected argument '--release'`). The valid
+  per-crate form was then used: `cargo bench -p frankenlibc-bench --profile release
+  --bench wchar_bench wchar_mbstowcs -- --noplot --sample-size 10 --warm-up-time 1
+  --measurement-time 1`. RCH reported local fallback
+  (`no admissible workers: insufficient_slots=3,hard_preflight=1,active_project_exclusion=1`),
+  so these rows are routing/reject evidence rather than a same-worker keep proof.
+- Candidate lever: add a short-ASCII scalar run inside `mbstowcs` after the SIMD windows,
+  so mixed text like `café résumé naïve façade` does not re-enter `mbtowc` once per ASCII
+  byte when each ASCII run is shorter than the 16-byte SIMD window. Behavior proof:
+  `cargo test -p frankenlibc-core mbstowcs_simd_isomorphic_to_scalar` passed (1 test).
+- Measured outcome: current-head glibc comparator before the hunk was ASCII **0.192x WIN**
+  (fl 176ns / glibc 919ns) and mixed **4.652x LOSS** (fl 3622ns / glibc 779ns). Candidate
+  improved mixed to **1.760x LOSS** (fl 1954ns / glibc 1111ns), but still did not beat
+  glibc. Criterion corroborated the internal shape: `mixed_utf8` improved **-39.884%**,
+  ASCII was statistically unchanged, and `astral_4byte` regressed **+19.306%**. Because the
+  candidate is still slower than glibc on the targeted row and regresses the pure 4-byte
+  row, the code was reverted. Next admissible lever must decode mixed ASCII+multibyte with
+  a wider table/classifier or DFA-style block transducer that does not disturb pure
+  4-byte windows; do not retry the short-ASCII scalar-run patch.
+
 ## 2026-06-25 — mbstowcs MIXED: ASCII WIN 6.6x, multibyte LOSS 4.5x (cc)
 
 - **MIXED: fl `mbstowcs` crushes glibc on ASCII text but loses on multibyte.** Head-to-head
