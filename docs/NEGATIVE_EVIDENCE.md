@@ -6,6 +6,37 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-26 — gcvt (double→"%g") MIXED vs glibc + root cause: redundant double dragon-format (cc)
+
+- **MEASURED (new bench `gcvt_glibc_bench`, fl core vs real in-process glibc, no abi-bench). All bit-exact.**
+  This is the FORMAT direction (complement to the `strtod` parse WIN). Unlike strtod, the result is MIXED —
+  fl LOSES easy cases, WINS hard ones. rch worker:
+
+  | case | fl ns | glibc ns | ratio |
+  |---|---|---|---|
+  | `2.5` `%.6g` | 292 | 88 | **3.32x LOSS** |
+  | `3.14159…` `%.6g` | 190 | 83 | **2.28x LOSS** |
+  | `3.14159…` `%.17g` | 194 | 124 | **1.56x LOSS** |
+  | `0.0001234` `%.17g` | 200 | 154 | **1.29x LOSS** |
+  | `100000` `%.6g` | 221 | 251 | **0.88x WIN** |
+  | `1234567.89` `%.17g` | 198 | 237 | **0.83x WIN** |
+  | `DBL_MAX` `%.17g` | 222 | 727 | **0.31x WIN** |
+
+- **ROOT CAUSE (ecvt.rs `render_gcvt`):** the FIXED branch does **TWO** Rust-std float formats per call — a
+  `write!("{v:.e}")` exponent probe to pick fixed-vs-scientific, THEN a second `write!("{v:.f}")` for the
+  fixed body. Rust's *fixed-precision* float fmt is dragon-class (exact `flt2dec`), NOT Grisu — so fl pays
+  ~2× a dragon for common values, while glibc generates digits once. fl only wins where glibc's own dragon is
+  pathological (DBL_MAX 17-digit: glibc 727ns vs fl 222ns = 3.2× the other way). The scientific branch is
+  already single-format (reuses the probe string), so it is not the loser.
+- **LEVER (deferred — byte-exactness risk):** render the fixed body by REPOSITIONING the single `%e` probe's
+  already-rounded digits (place the decimal point per the parsed exponent, strip trailing zeros) instead of a
+  2nd `{:.f}` format. glibc does exactly one digit generation. This should ~halve the easy-case cost
+  (→ parity/win) and also speeds `render_pct_g` → `strfromd` (and any `%g` that routes through it). NOT landed
+  this turn: it is a byte-exact rewrite of a differential-tested formatter and the full gcvt/strfromd
+  differential suite can't be run reliably in the current contended tree (`%g` rounding-carry boundaries are
+  exactly where an independent `{:.e}`-vs-`{:.f}` round could diverge — must be validated, not assumed).
+  Bench `gcvt_glibc_bench.rs` added as the durable A/B foundation for that future turn.
+
 ## 2026-06-26 — qsort `char*` sampled width-8 natural-order gate REJECTED (1.98x LOSS) (BoldWaterfall)
 
 - **REJECTED / REVERTED:** attempted a narrow `qsort(width == 8)` sampled plausibility gate that rejects
