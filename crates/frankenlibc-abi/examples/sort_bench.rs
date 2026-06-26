@@ -75,6 +75,18 @@ fn cmp_u16_rs(a: &[u8], b: &[u8]) -> i32 {
     (x > y) as i32 - (x < y) as i32
 }
 
+unsafe extern "C" fn cmp_u32(a: *const c_void, b: *const c_void) -> i32 {
+    let x = unsafe { *(a as *const u32) };
+    let y = unsafe { *(b as *const u32) };
+    (x > y) as i32 - (x < y) as i32
+}
+
+fn cmp_u32_rs(a: &[u8], b: &[u8]) -> i32 {
+    let x = u32::from_ne_bytes([a[0], a[1], a[2], a[3]]);
+    let y = u32::from_ne_bytes([b[0], b[1], b[2], b[3]]);
+    (x > y) as i32 - (x < y) as i32
+}
+
 fn main() {
     unsafe {
         let h = libc::dlmopen(
@@ -234,6 +246,39 @@ fn main() {
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!("SORT u16rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+        }
+
+        // 4-byte u32 random sort — the common UNSIGNED int case (IDs, hashes, sizes,
+        // indices). Exercises the unsigned-radix attempt + native-width keys.
+        {
+            let base: Vec<u32> = (0..n)
+                .map(|i| (i.wrapping_mul(2_654_435_761) >> 5) as u32)
+                .collect();
+            let mut vf = base.clone();
+            {
+                let b = std::slice::from_raw_parts_mut(vf.as_mut_ptr().cast::<u8>(), n * 4);
+                frankenlibc_core::stdlib::sort::qsort(b, 4, cmp_u32_rs);
+            }
+            let mut vg = base.clone();
+            gl_qsort(vg.as_mut_ptr().cast(), n, 4, cmp_u32);
+            assert_eq!(vf, vg, "u32: fl qsort != glibc qsort");
+            let iters = 1000usize;
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                let mut v = base.clone();
+                let b = std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<u8>(), n * 4);
+                frankenlibc_core::stdlib::sort::qsort(b, 4, cmp_u32_rs);
+                black_box(v.as_ptr());
+            }
+            let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
+            let t1 = Instant::now();
+            for _ in 0..iters {
+                let mut v = base.clone();
+                gl_qsort(v.as_mut_ptr().cast(), n, 4, cmp_u32);
+                black_box(v.as_ptr());
+            }
+            let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
+            println!("SORT u32rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
         }
 
         // String sort: 16-byte random keys, lexicographic (memcmp) comparator.

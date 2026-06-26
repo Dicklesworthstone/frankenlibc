@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort u32 (unsigned 4-byte) WIN 1.5x — common unsigned-int case + strftime closure (cc)
+
+- **WIN: fl qsort `u32` wins 1.5x — confirms the unsigned-radix + native-width fixes cover the common UNSIGNED
+  int case (IDs, hashes, sizes, indices).** Head-to-head (`sort_bench.rs`, n=20000 random u32, **output
+  verified**): fl **456µs** / glibc **702µs** = **0.65x**. So every integer width × signedness now wins: i32
+  **0.36x** · u16 **0.19x** · u32 **0.65x** · i64. (u32 is slower than i32 0.36x because unsigned data pays a
+  wasted SIGNED radix attempt before the unsigned one succeeds — a small residual lever: a cheap
+  signed-vs-unsigned probe would skip it, but u32 already wins, so low priority.)
+- **ADDENDUM (strftime — recursion RULED OUT empirically).** Stubbing the compound-directive recursion did NOT
+  change the 187ns literal-path cost (203ns, noise). So the recursion is NOT the cause either. ALL suspects now
+  empirically eliminated (scratch / numeric_19 / recursion / per-directive); the fixed ~187ns is a
+  profiler-needing codegen cost. **Strftime general-loop lever CLOSED pending a profiler** (perf/flamegraph) —
+  not pursuable further from benchmarks alone.
+
 ## 2026-06-25 — strcoll 2.4x LOSS (C-locale = strcmp floor) — REJECT (cc)
 
 - **LOSS/REJECT: fl `strcoll` is 2.4x slower than glibc in the C locale.** Head-to-head (`strcoll_bench.rs`,
