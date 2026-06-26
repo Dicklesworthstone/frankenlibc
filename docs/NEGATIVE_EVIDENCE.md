@@ -6,6 +6,15 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-25 — qsort i32 WIN is FLAT ~1.8x across cardinality (radix is O(n)) (cc)
+
+- **WIN (robustness confirm): fl `qsort` i32 wins ~1.8x regardless of distinct-value count.** Head-to-head
+  (`sort_bench.rs`, n=20000, output verified): random **0.56x** · dup10 **0.52x** · dup4 **0.57x** · dup2
+  **0.56x**. Hypothesis that lower cardinality (categorical data) would AMPLIFY the win was WRONG — the win is
+  flat. Reason: the LSD radix is O(n·key_bytes) independent of distinct-value count, so it beats glibc's merge
+  by the same ~1.8x whether the data has 2 or 130000 distinct values. The integer-radix win is robust across
+  data distributions (random, duplicate-heavy, categorical) — not a best-case artifact.
+
 ## 2026-06-25 — memccpy fused one-pass LANDED — improved 1.5x→1.2x (closer, no regression, conformance green) (cc)
 
 - **LANDED a real code improvement (mem.rs), conformance GREEN:** fused fl `memccpy` from a memchr-then-memcpy

@@ -81,11 +81,13 @@ fn main() {
             std::mem::transmute::<*mut c_void, QsortFn>(libc::dlsym(h, b"qsort\0".as_ptr().cast()));
 
         let n = 20_000usize;
-        let gens: [(&str, fn(usize, usize) -> i32); 4] = [
+        let gens: [(&str, fn(usize, usize) -> i32); 6] = [
             ("random", |i, _| (i.wrapping_mul(2_654_435_761) >> 13 & 0x3FFFF) as i32),
             ("sorted", |i, _| i as i32),
             ("reverse", |i, n| (n - i) as i32),
             ("dup10", |i, _| (i % 10) as i32),
+            ("dup4", |i, _| (i % 4) as i32),
+            ("dup2", |i, _| (i % 2) as i32),
         ];
         for (name, genf) in gens.iter() {
             let base: Vec<i32> = (0..n).map(|i| genf(i, n)).collect();
