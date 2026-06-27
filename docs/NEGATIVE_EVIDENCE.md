@@ -6,6 +6,26 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ❌ wcschr fold-removal / hot-cold split DISPROVEN — ~0-gain, codegen-bound — REVERTED (cc)
+
+- **Follow-up to the prior `#[inline]` win, DISPROVEN + REVERTED.** Hypothesis (from that entry): dropping
+  `find_wide_or_nul_long`'s 64-lane fold (delegate to the 32-lane `find_wide_or_nul`) would make the short
+  path inline to the clean `find_32` (~1.9 ns) and WIN glibc. Implemented (delegate + warning cleanup) — but
+  the deployed measurement is **~0-gain**: `wcschr_width_ab_bench` deployed_core short **5.35 → 5.64 ns**,
+  long **30.7 → 30.3 ns** (both noise). REVERTED.
+- **Why the prior reasoning was wrong (the `find_32` "win" was apples-to-oranges):** the bench's `find_32`
+  (1.9 ns) is INLINED into the bench loop; glibc `wcschr` (2.4 ns) is a CALL. The real no_mangle `wcschr`
+  ALWAYS pays a call (from C), as does glibc. Subtracting the ~1.5 ns call floor, glibc's asm scan is ~0.9 ns
+  vs fl's portable-SIMD scan ~1.9 ns — so fl's SCAN is ~2x glibc's, and the deployed residual is
+  cross-crate-call + the NECESSARY wrapper (`c==0` branch, `s[pos]==c` re-check to distinguish needle-vs-NUL,
+  `Option`) + that scan-codegen gap. The 64-lane fold isn't even reached on the short path, and on the long
+  path the call/wrapper overhead masks any fold difference (no clean inlined 64-vs-32 evidence ever existed).
+- **STANDING:** `wcschr`/wide scanners are CODEGEN-bound (portable-SIMD scan ~2x glibc asm + unavoidable ABI
+  call), same class as the byte comparators — NOT a structural lever. The prior `#[inline]` win (8.3→5.35 ns,
+  collapsing the redundant internal call chain) stands and is real; further wcschr gains need an asm/intrinsic
+  scan, out of byte-identical-micro-lever scope. Stash `cc-wcschr-fold-removal-DISPROVEN-...`. No code shipped
+  this turn (revert); `wcschr_width_ab_bench` (committed prior) remains the A/B foundation.
+
 ## 2026-06-27 — ✅ wcschr/wide-find #[inline]: 1.55–1.8x faster (collapses cross-crate call chain) (cc)
 
 - **LANDED CODE WIN (`wide.rs`, conformance GREEN, byte-identical — pure `#[inline]`, no logic change).**
