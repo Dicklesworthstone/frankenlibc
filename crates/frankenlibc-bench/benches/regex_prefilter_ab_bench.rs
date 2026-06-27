@@ -64,8 +64,15 @@ fn bench(c: &mut Criterion) {
     quoted.extend(std::iter::repeat(b'a').take(4090));
     quoted.push(b'"');
 
+    // (6) NO-PREFILTER `[^"]*"` over 4090 letters + `"` — no determinate first byte,
+    //     so it takes the `any_match` lazy-DFA prescan (not leftmost_start). Tests
+    //     the flat transition table replacing the per-byte HashMap lookup.
+    let mut anyq: Vec<u8> = vec![b'a'; 4090];
+    anyq.push(b'"');
+
     // Each case: (name, pattern, fl_cflags, glibc_cflags, haystack).
     let cases: &[(&str, &str, i32, i32, &Vec<u8>)] = &[
+        ("anymatch_dfa", "[^\"]*\"", REG_EXTENDED, libc::REG_EXTENDED, &anyq),
         ("sparse_digits_late", "[0-9]+END", REG_EXTENDED, libc::REG_EXTENDED, &sparse),
         ("rare_firstbyte_jump", "[0-9][0-9][0-9]X", REG_EXTENDED, libc::REG_EXTENDED, &rare),
         (

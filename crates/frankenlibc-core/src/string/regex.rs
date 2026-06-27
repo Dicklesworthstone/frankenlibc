@@ -1800,10 +1800,16 @@ impl<'a> PikeVm<'a> {
             std::collections::HashMap::new();
         let mut state_pcs: Vec<Box<[usize]>> = Vec::new();
         let mut state_accepts: Vec<bool> = Vec::new();
-        let mut trans: std::collections::HashMap<(u32, u8), u32> = std::collections::HashMap::new();
+        // Flat transition table: `trans[state*256 + b]` = next state, `u32::MAX` =
+        // uncomputed. An array index (~2 ns) per byte instead of a `HashMap<(u32,u8)>`
+        // hash+probe (~18 ns) — the per-byte cost that dominated long no-prefilter
+        // runs (e.g. `[^"]*"` was ~18 ns/byte = 74 µs/4 KiB). One row per interned
+        // state (≤ MAX_STATES), grown lazily as states are added.
+        let mut trans: Vec<u32> = Vec::new();
 
         let start = self.dfa_frontier(&[0], &mut scratch, visited, generation);
         let mut state = self.dfa_intern(start, &mut interner, &mut state_pcs, &mut state_accepts);
+        trans.resize(state_pcs.len() * 256, u32::MAX);
 
         let input_len = self.input.len();
         let mut sp = 0usize;
@@ -1815,32 +1821,32 @@ impl<'a> PikeVm<'a> {
                 return Some(false);
             }
             let b = self.input[sp];
-            state = match trans.get(&(state, b)) {
-                Some(&n) => n,
-                None => {
-                    let mut entries: Vec<usize> =
-                        Vec::with_capacity(state_pcs[state as usize].len() + 1);
-                    entries.push(0); // unanchored: re-seed the start PC every step
-                    for &pc in state_pcs[state as usize].iter() {
-                        if let NfaInstr::Match(mk) = &self.nfa[pc]
-                            && self.matches_byte(mk, b)
-                        {
-                            entries.push(pc + 1);
-                        }
+            let idx = state as usize * 256 + b as usize;
+            state = if trans[idx] != u32::MAX {
+                trans[idx]
+            } else {
+                let mut entries: Vec<usize> =
+                    Vec::with_capacity(state_pcs[state as usize].len() + 1);
+                entries.push(0); // unanchored: re-seed the start PC every step
+                for &pc in state_pcs[state as usize].iter() {
+                    if let NfaInstr::Match(mk) = &self.nfa[pc]
+                        && self.matches_byte(mk, b)
+                    {
+                        entries.push(pc + 1);
                     }
-                    let frontier = self.dfa_frontier(&entries, &mut scratch, visited, generation);
-                    let nid = self.dfa_intern(
-                        frontier,
-                        &mut interner,
-                        &mut state_pcs,
-                        &mut state_accepts,
-                    );
-                    if state_pcs.len() > MAX_STATES {
-                        return None; // state explosion → fall back to NFA simulation
-                    }
-                    trans.insert((state, b), nid);
-                    nid
                 }
+                let frontier = self.dfa_frontier(&entries, &mut scratch, visited, generation);
+                let nid =
+                    self.dfa_intern(frontier, &mut interner, &mut state_pcs, &mut state_accepts);
+                if state_pcs.len() > MAX_STATES {
+                    return None; // state explosion → fall back to NFA simulation
+                }
+                // `dfa_intern` may have added a state — grow the table to match.
+                if trans.len() < state_pcs.len() * 256 {
+                    trans.resize(state_pcs.len() * 256, u32::MAX);
+                }
+                trans[idx] = nid; // `idx` is the old state's row, still valid
+                nid
             };
             sp += 1;
         }

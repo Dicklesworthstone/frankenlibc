@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ regex any_match DFA: flat transition table replaces HashMap — 6.9x, ~parity vs glibc (cc)
+
+- **LANDED CODE WIN (`string/regex.rs` `any_match_dfa`, conformance GREEN).** The membership-prescan lazy DFA
+  (taken by no-prefilter / `class*`-led patterns over inputs > 256 B) cached transitions in a
+  `HashMap<(u32,u8),u32>` — a ~18 ns hash+probe PER BYTE, which dominated long runs (bare `[^"]*"` over 4 KiB =
+  74 µs). Replaced it with a **flat `Vec<u32>` table** (`trans[state*256 + b]`, `u32::MAX` = uncomputed, one row
+  per interned state grown lazily, ≤ MAX_STATES) — a ~2 ns array index per byte.
+- **MEASURED (`regex_prefilter_ab_bench` `anymatch_dfa` = bare `[^"]*"` over 4 KiB, vs host glibc `regexec`):**
+  **74 µs → 10.75 µs = 6.9x fl-internal**, closing the gap from **7.5x-slower to 1.09x (≈parity)** vs glibc
+  9.87 µs (glibc also a flat-array DFA). No regression elsewhere — the change is local to `any_match_dfa`, which
+  only the prefilter-less prescan reaches (prefilter/leftmost_start patterns unaffected).
+- **Conformance GREEN:** 8 `conformance_diff_regex` + `bre_anchor_star` + `midpattern_anchor` + `newline_eflags`
+  + `nested_submatch` + `startend` fuzzes — the DFA membership result is identical (only the transition cache's
+  data structure changed). This was the documented "third path" the bulk-consume couldn't reach; the flat table
+  is the simpler, broader fix (helps every no-prefilter DFA pattern, not just disjoint-class loops).
+
 ## 2026-06-27 — ✅ regex bulk-consume GENERALIZED: `*` loops + multi-exit follows now win glibc too (cc)
 
 - **LANDED CODE WIN (`string/regex.rs`, conformance GREEN), extends the just-landed bulk class-run consume.**
