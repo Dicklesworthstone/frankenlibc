@@ -6,6 +6,32 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — `fputs` native-stdio root cache REJECTED (no same-worker win proof; 5.17x vs glibc baseline)
+
+Agent: BlackThrush. Lever tested: cache the three host native stdio root pointers used by
+`standard_stream_id` in `stdio_abi.rs`, replacing three `io_internal_abi::native_stdio_stream_ptr(fd)`
+calls with a `OnceLock<[usize; 3]>` lookup after the sentinel checks. This was the narrow graveyard
+lock-elision probe for the documented `fputs` gap, intended to remove repeated native-stdio registry
+mutex trips from `canonical_stream_id` without touching stream semantics.
+
+Bench shape was the requested per-crate release-profile wrapper with this workspace's accepted Cargo
+spelling: `AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b
+FRANKENLIBC_BENCH_PIN=1 rch exec -- cargo bench -j 1 -p frankenlibc-bench --profile release
+--features abi-bench --bench fputs_glibc_bench -- fputs_8B --noplot --sample-size 20
+--warm-up-time 1 --measurement-time 2`. A clean detached `HEAD` baseline on `vmi1264463` measured
+FrankenLibC **12.342 us** p50 vs host glibc **2.3885 us** p50, ratio **5.17x slower than glibc**
+(earlier clean `vmi1264463` baseline in the same scratch path: **11.066 us** vs **2.0255 us**,
+ratio **5.46x**).
+
+The candidate run that looked promising landed on a different worker (`ovh-a`): FrankenLibC
+**2.8969 us** p50 vs glibc **853.79 ns**, ratio **3.39x**. That is valid routing evidence that the
+deployed gap remains large, but it is **not** a same-worker old-vs-new proof. The only `vmi1264463`
+candidate-adjacent run was a mixed-sync routing run at **11.468 us** vs glibc **2.0533 us** (ratio
+**5.59x**) and cannot be claimed as a win. Source reverted; no code landed. Do not retry native
+stdio-root pointer caching as a standalone `fputs` lever. The dominant loss is still the per-call
+FrankenLibC stream registry/write path (`registry().lock()` + `write_bytes_without_runtime_policy`),
+not host native stdio root pointer resolution.
+
 ## 2026-06-27 — regex Rc-COW slots: cc INDEPENDENTLY re-confirmed REJECT + localized the real bottleneck (cc)
 
 - **Re-derived the same lever below without checking the ledger first (my miss — the entry was at the top).**
