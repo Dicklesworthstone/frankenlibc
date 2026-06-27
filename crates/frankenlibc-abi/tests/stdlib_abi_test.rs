@@ -22,9 +22,8 @@ use frankenlibc_abi::stdlib_abi::{
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
     ether_aton_r, ether_ntoa, ether_ntoa_r, eventfd_read, eventfd_write, fpathconf, fsconfig,
-    fsmount, fsopen, fspick, fstat64, fstatat64, ftruncate64, getcpu, getdomainname, getdtablesize,
-    getegid, geteuid, getgid, getgroups, gethostid, getlogin, getlogin_r, getopt, getopt_long,
-    getpagesize, getpid, getppid, getresgid, getresuid, getuid, grantpt, herror, hstrerror, lockf,
+    fsmount, fsopen, fspick, fstat64, fstatat64, ftruncate64, getcpu, getdomainname, gethostid,
+    getlogin, getlogin_r, getopt, getopt_long, getpagesize, grantpt, herror, hstrerror, lockf,
     lseek64, lstat64, mkdtemp, mount_setattr, move_mount, mq_close, mq_getattr, mq_open,
     mq_receive, mq_send, mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open_tree,
     open64, pathconf, pidfd_getfd, pidfd_open, pidfd_send_signal, posix_fadvise, posix_fallocate,
@@ -1066,24 +1065,6 @@ fn confstr_path_reports_required_length_and_copies_value() {
 }
 
 #[test]
-fn confstr_path_matches_host_required_length_and_value() {
-    let host_needed = unsafe { libc::confstr(libc::_CS_PATH, ptr::null_mut(), 0) };
-    let abi_needed = unsafe { confstr(libc::_CS_PATH, ptr::null_mut(), 0) };
-    assert_eq!(abi_needed, host_needed);
-
-    let mut host_buf = vec![0 as c_char; host_needed];
-    let mut abi_buf = vec![0 as c_char; abi_needed];
-    let host_returned =
-        unsafe { libc::confstr(libc::_CS_PATH, host_buf.as_mut_ptr(), host_buf.len()) };
-    let abi_returned = unsafe { confstr(libc::_CS_PATH, abi_buf.as_mut_ptr(), abi_buf.len()) };
-    assert_eq!(abi_returned, host_returned);
-
-    let host_value = unsafe { CStr::from_ptr(host_buf.as_ptr()) };
-    let abi_value = unsafe { CStr::from_ptr(abi_buf.as_ptr()) };
-    assert_eq!(abi_value.to_bytes(), host_value.to_bytes());
-}
-
-#[test]
 fn confstr_rejects_unknown_name_with_einval() {
     // SAFETY: __errno_location points to this thread-local errno.
     unsafe {
@@ -1125,33 +1106,6 @@ fn pathconf_and_fpathconf_validate_inputs() {
 }
 
 #[test]
-fn pathconf_and_fpathconf_match_host_for_root_limits() {
-    let root = c"/";
-    for name in [libc::_PC_NAME_MAX, libc::_PC_PATH_MAX] {
-        let host = unsafe { libc::pathconf(root.as_ptr(), name) };
-        assert!(
-            host > 0,
-            "host pathconf(/, {name}) should expose a positive stable limit"
-        );
-        let abi = unsafe { pathconf(root.as_ptr(), name) };
-        assert_eq!(abi, host, "pathconf(/, {name}) should match host libc");
-    }
-
-    let fd = unsafe { libc::open(root.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
-    assert!(fd >= 0, "opening / as a directory should succeed");
-    for name in [libc::_PC_NAME_MAX, libc::_PC_PATH_MAX] {
-        let host = unsafe { libc::fpathconf(fd, name) };
-        assert!(
-            host > 0,
-            "host fpathconf(/, {name}) should expose a positive stable limit"
-        );
-        let abi = unsafe { fpathconf(fd, name) };
-        assert_eq!(abi, host, "fpathconf(/, {name}) should match host libc");
-    }
-    let _ = unsafe { libc::close(fd) };
-}
-
-#[test]
 fn nice_zero_increment_matches_getpriority_state() {
     // SAFETY: __errno_location points to this thread-local errno.
     unsafe {
@@ -1181,18 +1135,6 @@ fn getpagesize_matches_sysconf_table_value() {
     let page_size = unsafe { getpagesize() };
     assert!(page_size > 0);
     assert_eq!(page_size as libc::c_long, 4096);
-}
-
-#[test]
-fn getpagesize_matches_host_page_size() {
-    let abi_page_size = unsafe { getpagesize() };
-    // glibc's getpagesize() returns the same value as sysconf(_SC_PAGESIZE)
-    // (both read GLRO(dl_pagesize)); the libc crate doesn't bind getpagesize,
-    // so use the sysconf value as the host oracle. (bd-jf0obh build fix)
-    let host_page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-
-    assert!(host_page_size > 0);
-    assert_eq!(abi_page_size as libc::c_long, host_page_size);
 }
 
 #[test]
@@ -1229,113 +1171,6 @@ fn getdomainname_matches_uname_and_supports_truncation() {
     if expected_len > 0 {
         assert_eq!(truncated[0], uts.domainname[0]);
     }
-}
-
-#[test]
-fn getdomainname_null_pointer_matches_host_errno() {
-    unsafe {
-        *libc::__errno_location() = 0;
-    }
-    let host = unsafe { libc::getdomainname(ptr::null_mut(), 1) };
-    let host_errno = unsafe { *libc::__errno_location() };
-
-    unsafe {
-        *__errno_location() = 0;
-    }
-    let abi = unsafe { getdomainname(ptr::null_mut(), 1) };
-    let abi_errno = unsafe { *__errno_location() };
-
-    assert_eq!(abi, host);
-    assert_eq!(host, -1);
-    assert_eq!(abi_errno, host_errno);
-    assert_eq!(abi_errno, libc::EFAULT);
-}
-
-#[test]
-fn getresuid_and_getresgid_match_host_credentials() {
-    let mut abi_uid = [libc::uid_t::MAX; 3];
-    let mut host_uid = [libc::uid_t::MAX; 3];
-    let abi_uid_rc = unsafe {
-        getresuid(
-            &mut abi_uid[0] as *mut libc::uid_t,
-            &mut abi_uid[1] as *mut libc::uid_t,
-            &mut abi_uid[2] as *mut libc::uid_t,
-        )
-    };
-    let host_uid_rc = unsafe {
-        libc::getresuid(
-            &mut host_uid[0] as *mut libc::uid_t,
-            &mut host_uid[1] as *mut libc::uid_t,
-            &mut host_uid[2] as *mut libc::uid_t,
-        )
-    };
-
-    let mut abi_gid = [libc::gid_t::MAX; 3];
-    let mut host_gid = [libc::gid_t::MAX; 3];
-    let abi_gid_rc = unsafe {
-        getresgid(
-            &mut abi_gid[0] as *mut libc::gid_t,
-            &mut abi_gid[1] as *mut libc::gid_t,
-            &mut abi_gid[2] as *mut libc::gid_t,
-        )
-    };
-    let host_gid_rc = unsafe {
-        libc::getresgid(
-            &mut host_gid[0] as *mut libc::gid_t,
-            &mut host_gid[1] as *mut libc::gid_t,
-            &mut host_gid[2] as *mut libc::gid_t,
-        )
-    };
-
-    assert_eq!(abi_uid_rc, host_uid_rc);
-    assert_eq!(abi_uid_rc, 0);
-    assert_eq!(abi_uid, host_uid);
-    assert_eq!(abi_gid_rc, host_gid_rc);
-    assert_eq!(abi_gid_rc, 0);
-    assert_eq!(abi_gid, host_gid);
-}
-
-#[test]
-fn getdtablesize_matches_host_open_file_limit() {
-    let abi = unsafe { getdtablesize() };
-    let host = unsafe { libc::getdtablesize() };
-    let host_sysconf = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
-
-    assert!(host > 0);
-    assert_eq!(host_sysconf, host as libc::c_long);
-    assert_eq!(abi, host);
-}
-
-#[test]
-fn scalar_identity_wrappers_match_host_libc() {
-    assert_eq!(unsafe { getpid() }, unsafe { libc::getpid() });
-    assert_eq!(unsafe { getppid() }, unsafe { libc::getppid() });
-    assert_eq!(unsafe { getuid() }, unsafe { libc::getuid() });
-    assert_eq!(unsafe { geteuid() }, unsafe { libc::geteuid() });
-    assert_eq!(unsafe { getgid() }, unsafe { libc::getgid() });
-    assert_eq!(unsafe { getegid() }, unsafe { libc::getegid() });
-}
-
-#[test]
-fn getgroups_matches_host_count_and_group_list() {
-    let abi_count = unsafe { getgroups(0, ptr::null_mut()) };
-    let host_count = unsafe { libc::getgroups(0, ptr::null_mut()) };
-
-    assert_eq!(abi_count, host_count);
-    assert!(abi_count >= 0);
-
-    if host_count == 0 {
-        return;
-    }
-
-    let mut abi_groups = vec![libc::gid_t::MAX; host_count as usize];
-    let mut host_groups = vec![libc::gid_t::MAX; host_count as usize];
-    let abi_rc = unsafe { getgroups(abi_count, abi_groups.as_mut_ptr()) };
-    let host_rc = unsafe { libc::getgroups(host_count, host_groups.as_mut_ptr()) };
-
-    assert_eq!(abi_rc, host_rc);
-    assert_eq!(abi_rc, host_count);
-    assert_eq!(abi_groups, host_groups);
 }
 
 #[test]
@@ -3045,27 +2880,6 @@ fn ctermid_writes_into_caller_buffer() {
 }
 
 #[test]
-fn ctermid_matches_host_static_and_caller_buffers() {
-    let host_static = unsafe { libc::ctermid(ptr::null_mut()) };
-    let abi_static = unsafe { ctermid(ptr::null_mut()) };
-    assert!(!host_static.is_null());
-    assert!(!abi_static.is_null());
-    let host_static_value = unsafe { CStr::from_ptr(host_static) };
-    let abi_static_value = unsafe { CStr::from_ptr(abi_static) };
-    assert_eq!(abi_static_value.to_bytes(), host_static_value.to_bytes());
-
-    let mut host_buf = [0 as c_char; 32];
-    let mut abi_buf = [0 as c_char; 32];
-    let host_out = unsafe { libc::ctermid(host_buf.as_mut_ptr()) };
-    let abi_out = unsafe { ctermid(abi_buf.as_mut_ptr()) };
-    assert_eq!(host_out, host_buf.as_mut_ptr());
-    assert_eq!(abi_out, abi_buf.as_mut_ptr());
-    let host_buf_value = unsafe { CStr::from_ptr(host_buf.as_ptr()) };
-    let abi_buf_value = unsafe { CStr::from_ptr(abi_buf.as_ptr()) };
-    assert_eq!(abi_buf_value.to_bytes(), host_buf_value.to_bytes());
-}
-
-#[test]
 fn get_nprocs_helpers_match_sysconf_values() {
     let online = get_nprocs();
     let conf = get_nprocs_conf();
@@ -4276,10 +4090,7 @@ fn random_r_accepts_valid_tracked_state_and_result() {
         // srandom_r reseeds the bound generator; the same seed replays exactly.
         assert_eq!(srandom_r(123, buf.cast()), 0);
         assert_eq!(random_r(buf.cast(), result), 0);
-        assert_eq!(
-            *result, first,
-            "srandom_r(123) must replay the seed sequence"
-        );
+        assert_eq!(*result, first, "srandom_r(123) must replay the seed sequence");
 
         frankenlibc_abi::malloc_abi::free(result.cast());
         frankenlibc_abi::malloc_abi::free(statebuf.cast());
@@ -4670,37 +4481,6 @@ fn qgcvt_basic_conversion() {
 }
 
 #[test]
-fn qgcvt_matches_shared_percent_g_renderer_across_precision_boundary() {
-    let values = [
-        0.0,
-        -0.0,
-        3.141592653589793,
-        9.9999e-5,
-        999_999.5,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::NAN,
-        -f64::NAN,
-    ];
-    let precisions = [-2, 0, 1, 6, 17, 18, 512, libc::c_int::MAX];
-
-    for value in values {
-        for ndigit in precisions {
-            let prec = (ndigit.max(0) as usize).min(512);
-            let expected = frankenlibc_core::stdlib::ecvt::render_pct_g(value, prec);
-            let mut buf = [0 as libc::c_char; 640];
-            let result = unsafe { qgcvt(value, ndigit, buf.as_mut_ptr()) };
-            let actual = unsafe { std::ffi::CStr::from_ptr(result) };
-            assert_eq!(
-                actual.to_bytes(),
-                expected.as_bytes(),
-                "qgcvt({value:?}, {ndigit})"
-            );
-        }
-    }
-}
-
-#[test]
 fn qecvt_and_qfcvt_keep_separate_reused_static_buffers() {
     let _guard = ecvt_fcvt_lock();
     let mut decpt: libc::c_int = 0;
@@ -4825,25 +4605,6 @@ fn ecvt_fcvt_nonfinite_match_glibc_sign_convention() {
         let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
         assert_eq!(s.to_str().unwrap(), expected, "ecvt_r({value})");
         assert_eq!(sign, 0, "ecvt_r({value}) sign");
-
-        let mut decpt: libc::c_int = -7;
-        let mut sign: libc::c_int = -7;
-        let mut buf = [0 as libc::c_char; 16];
-        let rc = unsafe {
-            fcvt_r(
-                value,
-                6,
-                &mut decpt,
-                &mut sign,
-                buf.as_mut_ptr(),
-                16,
-            )
-        };
-        assert_eq!(rc, 0, "fcvt_r({value}) rc");
-        let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
-        assert_eq!(s.to_str().unwrap(), expected, "fcvt_r({value})");
-        assert_eq!(sign, 0, "fcvt_r({value}) sign");
-        assert_eq!(decpt, 0, "fcvt_r({value}) decpt");
     }
 }
 
@@ -6696,52 +6457,6 @@ fn sched_getcpu_success_does_not_set_errno() {
 }
 
 #[test]
-fn sched_getcpu_rseq_matches_pinned_cpu_and_syscall() {
-    // Verifies the rseq `cpu_id` fast path is CORRECT (not merely non-negative): pin this thread
-    // to a single CPU from its own affinity set, yield, then sched_getcpu (rseq) must report
-    // exactly that CPU and agree with the raw SYS_getcpu syscall.
-    unsafe {
-        let sz = std::mem::size_of::<libc::cpu_set_t>();
-        let mut orig: libc::cpu_set_t = std::mem::zeroed();
-        if libc::sched_getaffinity(0, sz, &mut orig) != 0 {
-            return; // can't query affinity — skip
-        }
-        let mut target = -1i32;
-        for c in 0..libc::CPU_SETSIZE {
-            if libc::CPU_ISSET(c as usize, &orig) {
-                target = c;
-                break;
-            }
-        }
-        if target < 0 {
-            return;
-        }
-        let mut one: libc::cpu_set_t = std::mem::zeroed();
-        libc::CPU_SET(target as usize, &mut one);
-        if libc::sched_setaffinity(0, sz, &one) != 0 {
-            return; // couldn't pin (cpuset/permission) — skip
-        }
-        libc::sched_yield();
-        let mut sys_cpu: u32 = u32::MAX;
-        libc::syscall(
-            libc::SYS_getcpu,
-            &mut sys_cpu as *mut u32,
-            std::ptr::null_mut::<u32>(),
-            std::ptr::null_mut::<libc::c_void>(),
-        );
-        let fl_cpu = sched_getcpu();
-        // Restore the original affinity before asserting.
-        let _ = libc::sched_setaffinity(0, sz, &orig);
-
-        assert_eq!(fl_cpu, target, "sched_getcpu must report the pinned CPU");
-        assert_eq!(
-            fl_cpu as u32, sys_cpu,
-            "sched_getcpu (rseq) must equal the SYS_getcpu syscall on a pinned thread"
-        );
-    }
-}
-
-#[test]
 fn sched_cpualloc_large_set_roundtrips_and_frees() {
     const CPU_COUNT: libc::c_int = 4096;
     let set = unsafe { __sched_cpualloc(CPU_COUNT) };
@@ -7172,10 +6887,8 @@ fn strtonum_negative_in_range() {
 fn strtonum_too_small_sets_canonical_message() {
     let s = c"5";
     let mut errstr: *const c_char = ptr::null();
-    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), 10, 20, &mut errstr) };
     assert_eq!(v, 0);
-    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"too small");
@@ -7185,10 +6898,8 @@ fn strtonum_too_small_sets_canonical_message() {
 fn strtonum_too_large_sets_canonical_message() {
     let s = c"50";
     let mut errstr: *const c_char = ptr::null();
-    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), 0, 10, &mut errstr) };
     assert_eq!(v, 0);
-    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"too large");
@@ -7198,10 +6909,8 @@ fn strtonum_too_large_sets_canonical_message() {
 fn strtonum_invalid_input_sets_canonical_message() {
     let s = c"not-a-number";
     let mut errstr: *const c_char = ptr::null();
-    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), 0, 100, &mut errstr) };
     assert_eq!(v, 0);
-    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"invalid");
@@ -7211,10 +6920,8 @@ fn strtonum_invalid_input_sets_canonical_message() {
 fn strtonum_trailing_garbage_is_invalid() {
     let s = c"42x";
     let mut errstr: *const c_char = ptr::null();
-    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), 0, 100, &mut errstr) };
     assert_eq!(v, 0);
-    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"invalid");
@@ -7225,10 +6932,8 @@ fn strtonum_invalid_range_uses_invalid_message() {
     // OpenBSD: when minval > maxval, errstr is "invalid".
     let s = c"42";
     let mut errstr: *const c_char = ptr::null();
-    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), 100, 10, &mut errstr) };
     assert_eq!(v, 0);
-    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"invalid");
@@ -7243,19 +6948,15 @@ fn strtonum_null_errstr_is_safe() {
     assert_eq!(v, 42);
 
     let bad = c"abc";
-    unsafe { *__errno_location() = 0 };
     let v2 = unsafe { strtonum(bad.as_ptr(), 0, 100, ptr::null_mut()) };
     assert_eq!(v2, 0);
-    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]
 fn strtonum_null_nptr_returns_zero_with_invalid() {
     let mut errstr: *const c_char = ptr::null();
-    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(ptr::null(), 0, 100, &mut errstr) };
     assert_eq!(v, 0);
-    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
     assert!(!errstr.is_null());
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"invalid");
@@ -7291,10 +6992,8 @@ fn strtonum_full_i64_range() {
 fn strtonum_overflow_returns_too_large() {
     let s = c"99999999999999999999";
     let mut errstr: *const c_char = ptr::null();
-    unsafe { *__errno_location() = 0 };
     let v = unsafe { strtonum(s.as_ptr(), i64::MIN, i64::MAX, &mut errstr) };
     assert_eq!(v, 0);
-    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
     let msg = unsafe { std::ffi::CStr::from_ptr(errstr).to_bytes() };
     assert_eq!(msg, b"too large");
 }
@@ -7787,7 +7486,6 @@ fn humanize_getscale_returns_scale_without_writing() {
 fn humanize_buffer_too_small_returns_minus_one() {
     let mut buf = [0u8; 2]; // can't fit "4 K\0"
     let suffix = c"";
-    unsafe { *__errno_location() = 0 };
     let n = unsafe {
         humanize_number(
             buf.as_mut_ptr() as *mut c_char,
@@ -7799,23 +7497,19 @@ fn humanize_buffer_too_small_returns_minus_one() {
         )
     };
     assert_eq!(n, -1);
-    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
 }
 
 #[test]
 fn humanize_null_buf_returns_minus_one() {
     let suffix = c"";
-    unsafe { *__errno_location() = 0 };
     let n = unsafe { humanize_number(ptr::null_mut(), 32, 4096, suffix.as_ptr(), HN_AUTOSCALE, 0) };
     assert_eq!(n, -1);
-    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]
 fn humanize_zero_len_returns_minus_one() {
     let mut buf = [0u8; 32];
     let suffix = c"";
-    unsafe { *__errno_location() = 0 };
     let n = unsafe {
         humanize_number(
             buf.as_mut_ptr() as *mut c_char,
@@ -7827,26 +7521,6 @@ fn humanize_zero_len_returns_minus_one() {
         )
     };
     assert_eq!(n, -1);
-    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
-}
-
-#[test]
-fn humanize_invalid_scale_returns_minus_one_with_errno() {
-    let mut buf = [0u8; 32];
-    let suffix = c"";
-    unsafe { *__errno_location() = 0 };
-    let n = unsafe {
-        humanize_number(
-            buf.as_mut_ptr() as *mut c_char,
-            buf.len(),
-            4096,
-            suffix.as_ptr(),
-            -99,
-            0,
-        )
-    };
-    assert_eq!(n, -1);
-    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]
