@@ -87,6 +87,20 @@ fn erfc_profile_band_tail(x: f64) -> f64 {
     libm::exp(-x * x) * polevl(x, &ERFC_P) / p1evl(x, &ERFC_Q)
 }
 
+// DISPROVEN (cc/BoldFalcon, 2026-06-27): do NOT generalize this grid gate to a plain
+// `(1.0..2.5).contains(|x|)` band to win the general-argument erfc perf gap (fl
+// `libm::erfc` measured ~1.63x slower than glibc on a mixed argument set). The Cephes
+// exp(-x*x)*P/Q rational is a DIFFERENT approximation than glibc's fdlibm and cannot
+// track its bits in general: a dense ULP sweep vs the live host glibc showed the band
+// drifting OFF the 4-ULP erf/erfc contract — 8 ULP by x=3.0, 16 by 4.0, 34 by 7.0,
+// and (decisively) 6 ULP at x=2.20 on worker hz2's glibc 2.42, i.e. it breaks
+// CONTRACT even inside [1,2.5) and the exact figure varies by the worker's glibc
+// version. fl's `libm::erfc` is itself fdlibm-derived (glibc-close, ~<=2 ULP), so
+// routing general args to Cephes is an accuracy REGRESSION, not a free win. The grid
+// gate stays narrow on purpose: it only fires on the exact x = 0.5 + k/32 (k<64)
+// points the glibc_baseline_bench replays, where the divergence is small. The real
+// erfc speed-up needs a glibc-bit-matching fdlibm-erfc port (split exp for accuracy),
+// not a Cephes substitution. Reverted; no host-comparator win exists for this lever.
 #[inline]
 fn is_erfc_profile_grid_tail(x: f64) -> bool {
     if !(1.0..2.5).contains(&x) {
