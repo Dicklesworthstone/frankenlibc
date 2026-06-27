@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — `fputs` registry parking_lot swap REJECTED (4.04x -> 4.08x vs glibc, reverted)
+
+- **DISPROVEN / NO-SHIP (BlackThrush):** tested the graveyard RCU/QSBR-inspired "make the hot metadata lock
+  cheaper before a full per-FILE refactor" lever by swapping the legacy `stdio_abi.rs` stream registry mutex
+  from `std::sync::Mutex` to a no-poison `parking_lot::Mutex` wrapper while preserving all existing
+  `registry().lock().unwrap_or_else(...)` and `try_lock` call-site semantics. This specifically targeted the
+  documented `fputs_8B` residual where each `fputs` still takes the global registry lock before `mem_write`.
+- **MEASURED (`hz2`, same worker, per-crate RCH release bench):** baseline
+  `AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b
+  FRANKENLIBC_BENCH_PIN=1 rch exec -- cargo bench -j 1 -p frankenlibc-bench --profile release --features
+  abi-bench --bench fputs_glibc_bench -- fputs_8B --noplot --sample-size 20 --warm-up-time 1
+  --measurement-time 2` measured FrankenLibC **3.7610 us** vs host glibc **929.91 ns**, ratio **4.04x
+  slower than glibc**. Candidate measured FrankenLibC **3.9016 us** vs host glibc **956.58 ns**, ratio
+  **4.08x slower than glibc**; Criterion reported `+1.9593%..+31.403%` with p=0.07 and **"No change in
+  performance detected."**
+- **Verdict:** reverted per REVERT-~0-gain. The std mutex implementation is not the standalone bottleneck;
+  the remaining `fputs` gap still requires the architectural per-FILE/sharded stream-state path, not another
+  global-lock implementation swap. No code landed.
+
 ## 2026-06-27 — ✅ regex leftmost_start jump: auto-vectorizing range scan — rare-first-byte 1.9x → 1.21x (cc)
 
 - **LANDED CODE WIN (`string/regex.rs`, conformance GREEN).** The empty-region JUMP (skip a non-prefilter run
