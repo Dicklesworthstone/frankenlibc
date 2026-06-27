@@ -6,6 +6,27 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — regex dense-case: surrounding fns confirmed optimal; next lever = bulk class-run consume (cc)
+
+- **EXPLORED, no micro-lever (saves future re-exploration):** chased the dense-regex residual (leftmost_start
+  ~96 ns/byte). Confirmed the neighbouring families are ALREADY SIMD-optimal — do NOT re-attempt:
+  `getdelim`/`getline` scan the stream buffer with `crate::string::mem::memchr` (not an fgetc loop);
+  `read_until_delim` (file.rs) likewise; `memccpy` is a fused single-pass SIMD scan+copy (~2n traffic, beats
+  memchr-then-memcpy's 3n); `strlcpy` is `strlen`+`copy_from_slice`. `lm_closure` recursion is SHALLOW for real
+  patterns (1–3 levels) so recursion→iteration is ~0-gain — the cost is the NUMBER of states visited per byte
+  (the closure size), intrinsic to the PikeVm, not call overhead.
+- **THE DENSE GAP IS FUNDAMENTAL to the PikeVm:** leftmost_start must simulate the whole match to confirm one
+  exists (O(n × closure-size)); glibc's lazy DFA does O(n) with a cached state-set→transition. Closing it needs
+  a DFA-class change, NOT a micro-opt.
+- **DESIGNED NEXT LEVER (sound, scoped — for a fresh-budget turn): compile-time BULK CLASS-RUN CONSUMPTION.**
+  When a `class+`/`class*` self-loop's class bitset is DISJOINT from the follow instruction's first-byte set
+  (e.g. `[a-z]+9`, `[0-9]+END`, `\w+\s`), mark the loop "bulk-safe" at compile time. At runtime, when the live
+  set is exactly that single loop thread, `memchr`/bitset-scan the entire class run and advance `sp` in one
+  step (the exit cannot fire mid-run because its first byte is not in the class). Apply in BOTH `leftmost_start`
+  and `run_from`. Turns `class+` over long runs from O(run) closures into O(1) scan — the realistic
+  log/text-scanning case where fl trails glibc ~2–4x. Gate with the existing `conformance_diff_regex` +
+  isomorphism `debug_assert`.
+
 ## 2026-06-27 — `fputs` native-stdio root cache REJECTED (no same-worker win proof; 5.17x vs glibc baseline)
 
 Agent: BlackThrush. Lever tested: cache the three host native stdio root pointers used by
