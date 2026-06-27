@@ -6,6 +6,26 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ❌ f32 `sincosf` fused fast-reduction REJECTED (1.84x LOSS vs glibc) — do not retry
+
+- **DISPROVEN / REVERTED (BoldFalcon):** applied the f64 `sincos` fused-reduction
+  method (which WON 4.30x, see below) to f32 `sincosf`: a `sincosf_band` sharing one
+  `reduce_pio2_f32` for both outputs, bit-identical to `(sinf(x), cosf(x))`.
+- **Conformance was GREEN** (worst 2 ULP vs live glibc over a 40k band sweep), but the
+  perf is a LOSS, so it was reverted.
+- **MEASURED (`rch` remote, in-process, no `abi-bench` → bare `extern sincosf` = host
+  glibc; `sincosf_glibc_bench`, 64 band args [7,1e15], sample-size 80):** FrankenLibC
+  **878.7 ns** vs host glibc **478.3 ns** = **1.84x SLOWER than glibc** (ratio vs ORIG
+  1.84x).
+- **WHY it didn't transfer:** the f64 win existed only because glibc's f64 `sincos`
+  uses a slow Payne–Hanek `rem_pio2` (~56 ns/call) that fl's fast f64 reduction beats.
+  glibc's f32 `sincosf` is already cheap (~7.5 ns/call — f32 reduction is light), and
+  fl's path pays a full f64-precision `reduce_pio2_f32` **plus** two separate
+  `libm::sinf/cosf` calls, which is heavier. fl `sinf`/`cosf` themselves only reach
+  ~0.8–0.99x glibc, so a fused f32 form cannot beat glibc's already-fast `sincosf`.
+  Lesson: the "reuse fl's fast reduction" method only wins where glibc's own reduction
+  for that precision is the slow Payne–Hanek path (f64 large-arg), not f32.
+
 ## 2026-06-27 — ✅ f64 `sincos` fused fast-reduction LANDED (4.30x WIN vs glibc, mid-range band)
 
 - **LANDED CODE WIN (`math/float.rs` + `math/trig.rs`, BoldFalcon):** fl's `sin`/`cos`
