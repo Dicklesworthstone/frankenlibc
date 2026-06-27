@@ -580,8 +580,18 @@ pub fn render_pct_g(value: f64, ndigit: usize) -> String {
 /// zeros in the mantissa are NOT stripped — `%e` keeps explicit
 /// zeros in its precision-padded output, unlike `%g` which strips.
 pub fn render_pct_e(value: f64, ndigit: usize) -> String {
-    let rust_form = format!("{:.prec$e}", value, prec = ndigit);
-    rust_e_to_glibc_e_no_strip(&rust_form)
+    // Render the `%e` form into a stack buffer (no per-call heap alloc for the
+    // intermediate, mirroring `render_gcvt`); only the returned String allocates.
+    use core::fmt::Write as _;
+    let mut sb = StackStr::new();
+    let mut heap = String::new();
+    let rust_form: &str = if write!(sb, "{value:.ndigit$e}").is_ok() {
+        sb.as_str()
+    } else {
+        let _ = write!(heap, "{value:.ndigit$e}");
+        heap.as_str()
+    };
+    rust_e_to_glibc_e_no_strip(rust_form)
 }
 
 /// Like `rust_e_to_glibc_e` but does NOT strip trailing zeros from

@@ -6,6 +6,27 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ render_pct_e (strfromd %e): drop intermediate heap alloc — mid-prec now WINS glibc (cc)
+
+- **LANDED CODE WIN (`ecvt.rs`, conformance GREEN, byte-identical).** New `strfrome_glibc_bench` (fl
+  `render_pct_e` vs real in-process glibc `strfromd("%.*e", x)`) showed fl losing 2.4–2.8x on common values.
+  `render_pct_e` did TWO heap allocs — `format!("{:.e}")` for the intermediate + the result. Replaced the
+  intermediate with a `StackStr` (the same stack buffer `render_gcvt` uses), leaving only the result alloc.
+- **MEASURED (within-run same-process ratios are reliable; the before→after speedup is cross-worker so
+  approximate):**
+  | case | fl after | glibc | after ratio | (before fl) |
+  |---|---|---|---|---|
+  | `1234567.89` `%.6e` | 124.3 | 131.5 | **0.95x WIN** | (161, was 1.20x LOSS) |
+  | `pi` `%.6e` | 140.5 | 66.6 | 2.11x | (161, was 2.77x) |
+  | `pi` `%.17e` | 170.6 | 92.8 | 1.84x | (244, was 2.72x) |
+  | `0.0001234` `%.15e` | 188.5 | 99.0 | 1.90x | (251, was 2.39x) |
+  | `DBL_MAX` `%.17e` | 172.3 | 572.3 | 0.30x WIN | (246) |
+  fl improved ~1.15–1.43x at every case (strictly-fewer-allocs, so provably not slower — no x86 codegen
+  subtlety, unlike the reverted memrchr/wcschr digs); mid-precision `%e` flips to a WIN.
+- **Residual is codegen** (Rust fixed-precision `%e` Dragon ~2x glibc's dragon — the same floor as gcvt %g;
+  contrast `strtod` which WINS via Rust's Eisel–Lemire PARSE). Conformance GREEN: `strfromd_differential_fuzz`,
+  `conformance_diff_cvt_specials`, core `stdlib::ecvt` 9/9. Carries to `strfromd %e`. Bench added.
+
 ## 2026-06-27 — ❌ wcschr fold-removal / hot-cold split DISPROVEN — ~0-gain, codegen-bound — REVERTED (cc)
 
 - **Follow-up to the prior `#[inline]` win, DISPROVEN + REVERTED.** Hypothesis (from that entry): dropping

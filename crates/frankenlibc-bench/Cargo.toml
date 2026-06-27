@@ -258,3 +258,8 @@ harness = false
 [[bench]]
 name = "wcschr_width_ab_bench"
 harness = false
+
+# render_pct_e (strfromd %e body) vs glibc strfromd, in-process (no abi-bench).
+[[bench]]
+name = "strfrome_glibc_bench"
+harness = false
