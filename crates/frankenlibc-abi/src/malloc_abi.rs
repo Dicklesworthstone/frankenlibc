@@ -93,6 +93,8 @@ struct AllocatorReentrySlot {
     thread_key: AtomicUsize,
     native_guard_bits: AtomicU8,
     allocator_depth: AtomicU32,
+    fallback_cache_ptr: AtomicUsize,
+    fallback_cache_index: AtomicUsize,
 }
 
 impl AllocatorReentrySlot {
@@ -102,6 +104,8 @@ impl AllocatorReentrySlot {
             thread_key: AtomicUsize::new(0),
             native_guard_bits: AtomicU8::new(0),
             allocator_depth: AtomicU32::new(0),
+            fallback_cache_ptr: AtomicUsize::new(0),
+            fallback_cache_index: AtomicUsize::new(usize::MAX),
         }
     }
 }
@@ -224,6 +228,9 @@ fn bind_slot_to_thread_key(slot: &AllocatorReentrySlot, thread_key: Option<usize
     if previous != 0 && previous != thread_key {
         slot.native_guard_bits.store(0, Ordering::Release);
         slot.allocator_depth.store(0, Ordering::Release);
+        slot.fallback_cache_ptr.store(0, Ordering::Release);
+        slot.fallback_cache_index
+            .store(usize::MAX, Ordering::Release);
     }
 }
 
@@ -1280,12 +1287,12 @@ fn fallback_contains(ptr: *mut c_void) -> bool {
     false
 }
 
-fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
+fn fallback_insert_sized_index(ptr: *mut c_void, size: usize) -> Option<usize> {
     if ptr.is_null() {
-        return;
+        return None;
     }
     let Some(key) = fallback_key(ptr) else {
-        return;
+        return None;
     };
     let _guard = lock_fallback_alloc_table();
     let start = fallback_start_index(key);
@@ -1298,7 +1305,7 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
                 publish_fallback_range(key, size);
                 FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
             }
-            return;
+            return Some(idx);
         }
         if slot == FALLBACK_SLOT_TOMBSTONE {
             if first_tombstone.is_none() {
@@ -1311,12 +1318,12 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
                 publish_fallback_range(key, size);
                 FALLBACK_ALLOC_SIZES[tomb_idx].store(size, Ordering::Relaxed);
                 FALLBACK_ALLOC_PTRS[tomb_idx].store(key, Ordering::Release);
-                return;
+                return Some(tomb_idx);
             }
             publish_fallback_range(key, size);
             FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
             FALLBACK_ALLOC_PTRS[idx].store(key, Ordering::Release);
-            return;
+            return Some(idx);
         }
     }
 
@@ -1324,11 +1331,68 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
         publish_fallback_range(key, size);
         FALLBACK_ALLOC_SIZES[tomb_idx].store(size, Ordering::Relaxed);
         FALLBACK_ALLOC_PTRS[tomb_idx].store(key, Ordering::Release);
+        return Some(tomb_idx);
+    }
+    None
+}
+
+fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
+    let _ = fallback_insert_sized_index(ptr, size);
+}
+
+#[inline]
+fn remember_fallback_cache(slot: &'static AllocatorReentrySlot, ptr: *mut c_void, idx: usize) {
+    let Some(key) = fallback_key(ptr) else {
+        return;
+    };
+    slot.fallback_cache_index.store(idx, Ordering::Release);
+    slot.fallback_cache_ptr.store(key, Ordering::Release);
+}
+
+#[inline]
+fn clear_fallback_cache(slot: &'static AllocatorReentrySlot) {
+    slot.fallback_cache_ptr.store(0, Ordering::Release);
+    slot.fallback_cache_index
+        .store(usize::MAX, Ordering::Release);
+}
+
+fn fallback_insert_sized_for_slot(
+    slot: &'static AllocatorReentrySlot,
+    ptr: *mut c_void,
+    size: usize,
+) {
+    if let Some(idx) = fallback_insert_sized_index(ptr, size) {
+        remember_fallback_cache(slot, ptr, idx);
+    } else {
+        clear_fallback_cache(slot);
     }
 }
 
 fn fallback_remove(ptr: *mut c_void) -> bool {
     fallback_remove_sized(ptr).is_some()
+}
+
+fn fallback_remove_sized_for_slot(
+    slot: &'static AllocatorReentrySlot,
+    ptr: *mut c_void,
+) -> Option<usize> {
+    let key = fallback_key(ptr)?;
+    if !MULTI_THREADED.load(Ordering::Relaxed) {
+        let cached_key = slot.fallback_cache_ptr.load(Ordering::Acquire);
+        let cached_idx = slot.fallback_cache_index.load(Ordering::Acquire);
+        if cached_key == key && cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
+            let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
+            if slot_key == key {
+                let size = FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed);
+                FALLBACK_ALLOC_SIZES[cached_idx].store(0, Ordering::Relaxed);
+                FALLBACK_ALLOC_PTRS[cached_idx].store(FALLBACK_SLOT_TOMBSTONE, Ordering::Release);
+                clear_fallback_cache(slot);
+                return Some(size);
+            }
+            clear_fallback_cache(slot);
+        }
+    }
+    fallback_remove_sized(ptr)
 }
 
 fn fallback_remove_sized(ptr: *mut c_void) -> Option<usize> {
@@ -1743,7 +1807,7 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
-    let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
+    let Some(reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         return unsafe { bootstrap_malloc_passthrough(size) };
     };
@@ -1770,7 +1834,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
             // to preserve compatibility while the PCC gate records explainability.
             let out = unsafe { native_libc_malloc(req) };
             if !out.is_null() {
-                fallback_insert_sized(out, req);
+                fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
                 record_alloc_stats(req);
             }
             runtime_policy::observe(
@@ -1786,7 +1850,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // membrane allocator and repair pipeline.
         let out = unsafe { native_libc_malloc(req) };
         if !out.is_null() {
-            fallback_insert_sized(out, req);
+            fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
             record_alloc_stats(req);
         }
         return out;
@@ -1886,7 +1950,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         // from every deployed strict-mode free of a tracked pointer (the common
         // case). Behavior-preserving: such pointers always satisfied
         // `!check_ownership(ptr)` under the old combined gate.
-        if let Some(size) = fallback_remove_sized(ptr) {
+        if let Some(size) = fallback_remove_sized_for_slot(reentry_guard.slot, ptr) {
             // SAFETY: tracked native-fallback allocation returned to the host.
             unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
             record_free_stats(size);
@@ -2029,7 +2093,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         let out = unsafe { native_libc_calloc_with_slot(reentry_guard.slot, nmemb, size) };
         if !out.is_null() {
             let total = nmemb.saturating_mul(size).max(1);
-            fallback_insert_sized(out, total);
+            fallback_insert_sized_for_slot(reentry_guard.slot, out, total);
             record_alloc_stats(total);
         }
         return out;
