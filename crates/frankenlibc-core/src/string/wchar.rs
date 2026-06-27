@@ -268,137 +268,25 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
     // every terminator / multibyte / error path stays in the unchanged scalar
     // code below. Output is therefore byte-for-byte identical to the pure
     // scalar conversion.
-    // SIMD ASCII runs and scalar multibyte steps are INTERLEAVED: after each
-    // scalar character the outer loop re-attempts the SIMD fast path, so a long
-    // ASCII tail following an early multibyte char (e.g. "café" + a paragraph of
-    // English) is vectorised instead of running scalar to end-of-string. Each
-    // outer iteration advances `si` by >= 1 (the scalar step always consumes a
-    // byte even if SIMD made no progress), so termination is guaranteed. Output
-    // is byte-for-byte identical to the pure scalar conversion: the SIMD run only
-    // ever consumes whole ASCII chunks, and every NUL / multibyte / error case is
-    // handled by the unchanged scalar step below.
-    loop {
-        // Widen the leading ASCII run via `mbs_ascii_prefix` (SIMD 16-byte chunks
-        // plus a scalar tail for the <16 remainder). The `src[si] < 0x80` guard
-        // keeps multibyte-heavy text (CJK / Cyrillic) skipping the probe entirely
-        // (unchanged). The old inline all-or-nothing 16-byte window failed a probe
-        // PER ascii char on INTERLEAVED text (café) — an accent is always within the
-        // next 16 bytes, so every chunk broke and advanced a single char via the
-        // scalar step below. `mbs_ascii_prefix` widens the whole short run in its
-        // scalar tail after ONE failed probe. Byte-identical: both widen each ASCII
-        // byte 1:1 to its codepoint and stop at the first NUL / non-ASCII / dest-full.
-        if si < src.len() && src[si] < 0x80 {
-            let k = mbs_ascii_prefix(&mut dest[di..], &src[si..]);
-            si += k;
-            di += k;
+    const LANES: usize = 16;
+    let zero = Simd::<u8, LANES>::splat(0);
+    let ascii_max = Simd::<u8, LANES>::splat(0x80);
+    while si + LANES <= src.len() && di + LANES <= dest.len() {
+        let bytes: [u8; LANES] = src[si..si + LANES].try_into().unwrap();
+        let chunk = Simd::<u8, LANES>::from_array(bytes);
+        // Any NUL (terminator) or any byte >= 0x80 (multibyte lead) ends the run.
+        if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+            break;
         }
+        // Zero-extend each ASCII byte to its u32 codepoint; LLVM lowers the
+        // `as u32` map to a vector widening (e.g. vpmovzxbd).
+        let widened = Simd::<u32, LANES>::from_array(bytes.map(|b| b as u32));
+        widened.copy_to_slice(&mut dest[di..di + LANES]);
+        si += LANES;
+        di += LANES;
+    }
 
-        // SIMD 2-byte fast path: a run of >= 8 well-formed 2-byte UTF-8 sequences
-        // decodes 8 code points per 16-byte vector. A 2-byte char is lead
-        // 0xC2..=0xDF + continuation 0x80..=0xBF, yielding a code point in
-        // 0x80..=0x7FF — never overlong (lead >= 0xC2 forces wc >= 0x80) and never
-        // a UTF-16 surrogate (wc <= 0x7FF < 0xD800). So a window whose even lanes
-        // are all valid leads and odd lanes all valid continuations is 8 valid
-        // 2-byte chars needing no further validation, and produces byte-for-byte
-        // what the scalar `mbtowc` would. Covers the common 2-byte scripts
-        // (Cyrillic / Greek / Hebrew / Arabic / Latin-extended). Any non-clean
-        // window (ASCII, 3/4-byte, malformed, NUL, or a sequence straddling the
-        // 16-byte boundary) fails the mask test and drops to the scalar step.
-        while si + 16 <= src.len()
-            && di + 8 <= dest.len()
-            && (0xC2..=0xDF).contains(&src[si])
-            && (0xC2..=0xDF).contains(&src[si + 2])
-        {
-            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
-            let v = Simd::<u8, 16>::from_array(bytes);
-            let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
-            let conts = std::simd::simd_swizzle!(v, [1, 3, 5, 7, 9, 11, 13, 15]);
-            let leads_ok = leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
-            let conts_ok = conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
-            if !(leads_ok & conts_ok).all() {
-                break; // not a clean 2-byte window — let the scalar step handle it
-            }
-            let lw = leads.cast::<u32>() & Simd::splat(0x1F);
-            let cw = conts.cast::<u32>() & Simd::splat(0x3F);
-            let wc = (lw << Simd::splat(6)) | cw;
-            wc.copy_to_slice(&mut dest[di..di + 8]);
-            si += 16;
-            di += 8;
-        }
-
-        // SIMD 3-byte fast path: a clean 12-byte window decodes four UTF-8
-        // codepoints. Validate the full RFC 3629 3-byte shape before writing:
-        // lead E0..EF, both continuations 80..BF, no E0 overlong second byte
-        // below A0, and no ED surrogate second byte above 9F. Any mixed-width,
-        // malformed, NUL, or boundary-straddling input drops to the scalar
-        // `mbtowc` path, preserving the exact success/error contract.
-        while si + 16 <= src.len()
-            && di + 4 <= dest.len()
-            && (0xE0..=0xEF).contains(&src[si])
-            && (0xE0..=0xEF).contains(&src[si + 3])
-        {
-            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
-            let v = Simd::<u8, 16>::from_array(bytes);
-            let leads = std::simd::simd_swizzle!(v, [0, 3, 6, 9]);
-            let cont1 = std::simd::simd_swizzle!(v, [1, 4, 7, 10]);
-            let cont2 = std::simd::simd_swizzle!(v, [2, 5, 8, 11]);
-            let leads_ok = leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xEF));
-            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
-            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
-            let overlong_ok = !leads.simd_eq(Simd::splat(0xE0)) | cont1.simd_ge(Simd::splat(0xA0));
-            let surrogate_ok = !leads.simd_eq(Simd::splat(0xED)) | cont1.simd_le(Simd::splat(0x9F));
-            if !(leads_ok & cont1_ok & cont2_ok & overlong_ok & surrogate_ok).all() {
-                break;
-            }
-            let lw = leads.cast::<u32>() & Simd::splat(0x0F);
-            let c1w = cont1.cast::<u32>() & Simd::splat(0x3F);
-            let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
-            let wc = (lw << Simd::splat(12)) | (c1w << Simd::splat(6)) | c2w;
-            wc.copy_to_slice(&mut dest[di..di + 4]);
-            si += 12;
-            di += 4;
-        }
-
-        // SIMD 4-byte fast path: a clean 16-byte window decodes four UTF-8
-        // codepoints. This mirrors the scalar `utf8_decode_step` contract:
-        // F0..=F7 leads, plain continuation bytes, and no overlong F0 sequence.
-        // Code points above U+10FFFF are intentionally still accepted here when
-        // encoded by F5..=F7, matching the existing glibc-compatible scalar path.
-        while si + 16 <= src.len()
-            && di + 4 <= dest.len()
-            && (0xF0..=0xF7).contains(&src[si + 4])
-            && (0xF0..=0xF7).contains(&src[si])
-        {
-            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
-            let v = Simd::<u8, 16>::from_array(bytes);
-            let leads = std::simd::simd_swizzle!(v, [0, 4, 8, 12]);
-            let cont1 = std::simd::simd_swizzle!(v, [1, 5, 9, 13]);
-            let cont2 = std::simd::simd_swizzle!(v, [2, 6, 10, 14]);
-            let cont3 = std::simd::simd_swizzle!(v, [3, 7, 11, 15]);
-            let leads_ok = leads.simd_ge(Simd::splat(0xF0)) & leads.simd_le(Simd::splat(0xF7));
-            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
-            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
-            let cont3_ok = cont3.simd_ge(Simd::splat(0x80)) & cont3.simd_le(Simd::splat(0xBF));
-            let overlong_ok = !leads.simd_eq(Simd::splat(0xF0)) | cont1.simd_ge(Simd::splat(0x90));
-            if !(leads_ok & cont1_ok & cont2_ok & cont3_ok & overlong_ok).all() {
-                break;
-            }
-            let lw = leads.cast::<u32>() & Simd::splat(0x07);
-            let c1w = cont1.cast::<u32>() & Simd::splat(0x3F);
-            let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
-            let c3w = cont3.cast::<u32>() & Simd::splat(0x3F);
-            let wc =
-                (lw << Simd::splat(18)) | (c1w << Simd::splat(12)) | (c2w << Simd::splat(6)) | c3w;
-            wc.copy_to_slice(&mut dest[di..di + 4]);
-            si += 16;
-            di += 4;
-        }
-
-        // One scalar step, then re-attempt the SIMD run.
-        if si >= src.len() {
-            // No NUL found, but all bytes converted.
-            return Some(di);
-        }
+    while si < src.len() {
         if src[si] == 0 {
             // NUL terminator
             if di < dest.len() {
@@ -406,49 +294,6 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
             }
             return Some(di);
         }
-        // Lone 2/3-byte fast decode: on INTERLEAVED text (ASCII words + a stray
-        // accent/symbol, e.g. "café", "résumé", "5€") the SIMD run paths above
-        // require a RUN of 8 (2-byte) / 4 (3-byte) and so never fire, leaving each
-        // lone multibyte char to the full `mbtowc` dispatch (~7ns). These two inline
-        // arms decode the single char with the SAME validation the SIMD windows use
-        // (2-byte: lead 0xC2..=0xDF never overlong/surrogate; 3-byte: RFC-3629 shape
-        // + no E0-overlong / ED-surrogate), so they are byte-for-byte what `mbtowc`
-        // returns; anything else (incl. a truncated lead at the buffer end) falls
-        // through to `mbtowc`, which yields the identical result.
-        let b0 = src[si];
-        if (0xC2..=0xDF).contains(&b0) && si + 1 < src.len() && src[si + 1] & 0xC0 == 0x80 {
-            let wc = (((b0 & 0x1F) as u32) << 6) | ((src[si + 1] & 0x3F) as u32);
-            if di < dest.len() {
-                dest[di] = wc;
-            } else {
-                return Some(di);
-            }
-            si += 2;
-            di += 1;
-            continue;
-        }
-        if (0xE0..=0xEF).contains(&b0) && si + 2 < src.len() {
-            let c1 = src[si + 1];
-            let c2 = src[si + 2];
-            if c1 & 0xC0 == 0x80
-                && c2 & 0xC0 == 0x80
-                && (b0 != 0xE0 || c1 >= 0xA0)
-                && (b0 != 0xED || c1 <= 0x9F)
-            {
-                let wc = (((b0 & 0x0F) as u32) << 12)
-                    | (((c1 & 0x3F) as u32) << 6)
-                    | ((c2 & 0x3F) as u32);
-                if di < dest.len() {
-                    dest[di] = wc;
-                } else {
-                    return Some(di);
-                }
-                si += 3;
-                di += 1;
-                continue;
-            }
-        }
-
         let (wc, n) = mbtowc(&src[si..])?;
         if di < dest.len() {
             dest[di] = wc;
@@ -458,157 +303,8 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
         si += n;
         di += 1;
     }
-}
-
-/// Number of wide chars a multibyte (UTF-8) string decodes to — the count-mode
-/// answer of `mbstowcs`/`mbsrtowcs`/`mbsnrtowcs` when the destination is NULL —
-/// or `None` if any sequence is invalid, exactly as a per-char [`mbtowc`] count
-/// loop returns.
-///
-/// Mirrors [`mbstowcs`]'s SIMD fast paths (ASCII / 2 / 3 / 4-byte, each with the
-/// SAME full RFC 3629 validation — lead ranges, continuation bytes, overlong and
-/// surrogate rejection) but accumulates a code-point count instead of widening
-/// into a destination, so it is byte-for-byte identical to the scalar loop while
-/// vectorising every clean run. Each clean window contributes a known count
-/// (16 ASCII / 8 two-byte / 4 three-byte / 4 four-byte code points); any window
-/// that fails its mask, plus every NUL / error / boundary-straddling case, drops
-/// to the authoritative scalar `mbtowc` step. `src` must include its terminating
-/// NUL (the scan stops there); there is no destination bound, so — like glibc's
-/// count mode — the whole string is measured.
-pub fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
-    let mut si = 0usize;
-    let mut count = 0usize;
-    loop {
-        // Count the leading run of clean validated windows (ASCII + contiguous
-        // 2/3/4-byte), then resolve the first non-clean position — NUL / end /
-        // isolated multibyte / malformed — with the authoritative scalar `mbtowc`.
-        let (c, b) = mbs_decoded_len_prefix(&src[si..]);
-        si += b;
-        count += c;
-        if si >= src.len() || src[si] == 0 {
-            return Some(count);
-        }
-        let (_, n) = mbtowc(&src[si..])?;
-        si += n;
-        count += 1;
-    }
-}
-
-/// Count the leading run of *clean* multibyte windows in `src`, returning
-/// `(code_points, bytes_consumed)`. Consumes only whole RFC-3629-validated
-/// windows — ASCII (16 cp / 16 B) plus contiguous 2-byte (8 cp / 16 B), 3-byte
-/// (4 cp / 12 B), and 4-byte (4 cp / 16 B) runs — and STOPS at the first NUL,
-/// isolated / mixed-width multibyte lead, malformed byte, or window that would
-/// exceed `src`, leaving that position (and any sequence straddling the end of
-/// `src`) for a scalar decoder. Never errors and never consumes a partial
-/// boundary sequence, so a byte-bounded caller (`mbsnrtowcs`) can hand it its
-/// `nms` window and resolve NUL / MB_INCOMPLETE / EILSEQ with the scalar step.
-///
-/// Each multibyte window carries a NEXT-char contiguity gate (a 2-byte window
-/// fires only when `src[si+2]` is also a 2-byte lead, etc.) so an isolated accent
-/// in ASCII text (café) drops straight to the caller's scalar step instead of
-/// paying a failed SIMD probe, while contiguous non-Latin scripts still vectorise.
-/// The gate only chooses window-vs-scalar, so the count is exact / byte-identical.
-pub fn mbs_decoded_len_prefix(src: &[u8]) -> (usize, usize) {
-    let mut si = 0usize;
-    let mut count = 0usize;
-    loop {
-        // ASCII run (scalar tail handles short interleaved runs cheaply).
-        let a = ascii_prefix_len(&src[si..]);
-        si += a;
-        count += a;
-        let before_windows = si;
-
-        // Density guard: probe the SIMD windows only when the run ahead is a
-        // contiguous same-width multibyte run (mirrors mbs_decode_prefix). A lone
-        // accent (café) / NUL / malformed byte returns here in one branch instead
-        // of evaluating three window conditions per character. Byte-identical: an
-        // isolated multibyte char can never fill a window, so the early return
-        // leaves it for the caller's scalar decoder exactly as the windows would.
-        let contiguous = si + 16 <= src.len()
-            && match src[si] {
-                0xC2..=0xDF => (0xC2..=0xDF).contains(&src[si + 2]),
-                0xE0..=0xEF => (0xE0..=0xEF).contains(&src[si + 3]),
-                0xF0..=0xF7 => (0xF0..=0xF7).contains(&src[si + 4]),
-                _ => false,
-            };
-        if !contiguous {
-            return (count, si);
-        }
-
-        // 2-byte run: 8 code points per clean 16-byte window (lead 0xC2..=0xDF +
-        // continuation 0x80..=0xBF ⇒ never overlong, never a surrogate).
-        while si + 16 <= src.len()
-            && (0xC2..=0xDF).contains(&src[si])
-            && (0xC2..=0xDF).contains(&src[si + 2])
-        {
-            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
-            let v = Simd::<u8, 16>::from_array(bytes);
-            let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
-            let conts = std::simd::simd_swizzle!(v, [1, 3, 5, 7, 9, 11, 13, 15]);
-            let leads_ok = leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
-            let conts_ok = conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
-            if !(leads_ok & conts_ok).all() {
-                break;
-            }
-            si += 16;
-            count += 8;
-        }
-
-        // 3-byte run: 4 code points per clean 12-byte window (E0..EF lead, both
-        // continuations 80..BF, no E0 overlong <A0, no ED surrogate >9F).
-        while si + 16 <= src.len()
-            && (0xE0..=0xEF).contains(&src[si])
-            && (0xE0..=0xEF).contains(&src[si + 3])
-        {
-            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
-            let v = Simd::<u8, 16>::from_array(bytes);
-            let leads = std::simd::simd_swizzle!(v, [0, 3, 6, 9]);
-            let cont1 = std::simd::simd_swizzle!(v, [1, 4, 7, 10]);
-            let cont2 = std::simd::simd_swizzle!(v, [2, 5, 8, 11]);
-            let leads_ok = leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xEF));
-            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
-            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
-            let overlong_ok = !leads.simd_eq(Simd::splat(0xE0)) | cont1.simd_ge(Simd::splat(0xA0));
-            let surrogate_ok = !leads.simd_eq(Simd::splat(0xED)) | cont1.simd_le(Simd::splat(0x9F));
-            if !(leads_ok & cont1_ok & cont2_ok & overlong_ok & surrogate_ok).all() {
-                break;
-            }
-            si += 12;
-            count += 4;
-        }
-
-        // 4-byte run: 4 code points per clean 16-byte window (F0..F7 lead, plain
-        // continuations, no F0 overlong <0x90; F5..F7 still accepted, matching the
-        // scalar path's glibc-compatible contract).
-        while si + 16 <= src.len()
-            && (0xF0..=0xF7).contains(&src[si])
-            && (0xF0..=0xF7).contains(&src[si + 4])
-        {
-            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
-            let v = Simd::<u8, 16>::from_array(bytes);
-            let leads = std::simd::simd_swizzle!(v, [0, 4, 8, 12]);
-            let cont1 = std::simd::simd_swizzle!(v, [1, 5, 9, 13]);
-            let cont2 = std::simd::simd_swizzle!(v, [2, 6, 10, 14]);
-            let cont3 = std::simd::simd_swizzle!(v, [3, 7, 11, 15]);
-            let leads_ok = leads.simd_ge(Simd::splat(0xF0)) & leads.simd_le(Simd::splat(0xF7));
-            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
-            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
-            let cont3_ok = cont3.simd_ge(Simd::splat(0x80)) & cont3.simd_le(Simd::splat(0xBF));
-            let overlong_ok = !leads.simd_eq(Simd::splat(0xF0)) | cont1.simd_ge(Simd::splat(0x90));
-            if !(leads_ok & cont1_ok & cont2_ok & cont3_ok & overlong_ok).all() {
-                break;
-            }
-            si += 16;
-            count += 4;
-        }
-
-        // Guard passed but no window fired (a short run / masked-out malformed
-        // window / dst-independent boundary): hand it back to the caller's scalar.
-        if si == before_windows {
-            return (count, si);
-        }
-    }
+    // No NUL found, but all bytes converted
+    Some(di)
 }
 
 /// Length of the leading plain-ASCII run of `src`: the count of bytes `b` with
@@ -660,143 +356,6 @@ pub fn mbs_ascii_prefix(dest: &mut [u32], src: &[u8]) -> usize {
         k += 1;
     }
     k
-}
-
-/// Decode the leading run of *clean* multibyte windows of `src` into `dst` as
-/// wide chars, returning `(chars_written, bytes_consumed)`. The write-side twin
-/// of [`mbs_decoded_len_prefix`]: consumes only whole RFC-3629-validated windows
-/// — ASCII (via [`mbs_ascii_prefix`]) plus contiguity-gated 2/3/4-byte runs —
-/// bounded by BOTH `src` and `dst.len()`, and STOPS at the first NUL / isolated
-/// or mixed-width multibyte lead / malformed byte / window that would exceed
-/// `src` or `dst`, leaving that position for a scalar decoder. Byte-for-byte
-/// identical to a per-char [`mbtowc`] widen: every window it emits carries the
-/// full lead/continuation/overlong/surrogate validation (the same masks the
-/// write-path [`mbstowcs`] uses), and the NEXT-char contiguity gate only chooses
-/// window-vs-scalar so an isolated accent (café) drops to the caller's scalar
-/// step instead of paying a failed SIMD probe. Exposed so the restartable
-/// `mbsrtowcs` / `mbsnrtowcs` widen contiguous multibyte runs, not just ASCII.
-pub fn mbs_decode_prefix(dst: &mut [u32], src: &[u8]) -> (usize, usize) {
-    let mut si = 0usize; // bytes consumed
-    let mut di = 0usize; // wide chars written
-    loop {
-        // ASCII run (widens 1:1, bounded by dst & src).
-        let k = mbs_ascii_prefix(&mut dst[di..], &src[si..]);
-        si += k;
-        di += k;
-        let before_windows = si;
-
-        // Density guard: probe the SIMD windows only when the run ahead is a
-        // contiguous same-width multibyte run. A width-classified peek at the next
-        // lead is ONE branch; an isolated accent (café) / NUL / malformed byte
-        // returns here instead of evaluating all three window conditions per
-        // character — that per-accent probe cost was a ~+15% tax on interleaved
-        // text. Byte-identical: a lone multibyte char can never fill a window, so
-        // this early return hands it to exactly the scalar step the windows would
-        // have deferred it to; when the peek says "contiguous", the matching
-        // window below still fully validates before consuming.
-        let contiguous = si + 16 <= src.len()
-            && match src[si] {
-                0xC2..=0xDF => (0xC2..=0xDF).contains(&src[si + 2]),
-                0xE0..=0xEF => (0xE0..=0xEF).contains(&src[si + 3]),
-                0xF0..=0xF7 => (0xF0..=0xF7).contains(&src[si + 4]),
-                _ => false,
-            };
-        if !contiguous {
-            return (di, si);
-        }
-
-        // 2-byte run: 8 code points per clean 16-byte window; src[si+2] gate.
-        while si + 16 <= src.len()
-            && di + 8 <= dst.len()
-            && (0xC2..=0xDF).contains(&src[si])
-            && (0xC2..=0xDF).contains(&src[si + 2])
-        {
-            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
-            let v = Simd::<u8, 16>::from_array(bytes);
-            let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
-            let conts = std::simd::simd_swizzle!(v, [1, 3, 5, 7, 9, 11, 13, 15]);
-            let leads_ok = leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
-            let conts_ok = conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
-            if !(leads_ok & conts_ok).all() {
-                break;
-            }
-            let lw = leads.cast::<u32>() & Simd::splat(0x1F);
-            let cw = conts.cast::<u32>() & Simd::splat(0x3F);
-            let wc = (lw << Simd::splat(6)) | cw;
-            wc.copy_to_slice(&mut dst[di..di + 8]);
-            si += 16;
-            di += 8;
-        }
-
-        // 3-byte run: 4 code points per clean 12-byte window; src[si+3] gate.
-        while si + 16 <= src.len()
-            && di + 4 <= dst.len()
-            && (0xE0..=0xEF).contains(&src[si])
-            && (0xE0..=0xEF).contains(&src[si + 3])
-        {
-            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
-            let v = Simd::<u8, 16>::from_array(bytes);
-            let leads = std::simd::simd_swizzle!(v, [0, 3, 6, 9]);
-            let cont1 = std::simd::simd_swizzle!(v, [1, 4, 7, 10]);
-            let cont2 = std::simd::simd_swizzle!(v, [2, 5, 8, 11]);
-            let leads_ok = leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xEF));
-            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
-            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
-            let overlong_ok = !leads.simd_eq(Simd::splat(0xE0)) | cont1.simd_ge(Simd::splat(0xA0));
-            let surrogate_ok = !leads.simd_eq(Simd::splat(0xED)) | cont1.simd_le(Simd::splat(0x9F));
-            if !(leads_ok & cont1_ok & cont2_ok & overlong_ok & surrogate_ok).all() {
-                break;
-            }
-            let lw = leads.cast::<u32>() & Simd::splat(0x0F);
-            let c1w = cont1.cast::<u32>() & Simd::splat(0x3F);
-            let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
-            let wc = (lw << Simd::splat(12)) | (c1w << Simd::splat(6)) | c2w;
-            wc.copy_to_slice(&mut dst[di..di + 4]);
-            si += 12;
-            di += 4;
-        }
-
-        // 4-byte run: 4 code points per clean 16-byte window; src[si+4] gate.
-        while si + 16 <= src.len()
-            && di + 4 <= dst.len()
-            && (0xF0..=0xF7).contains(&src[si])
-            && (0xF0..=0xF7).contains(&src[si + 4])
-        {
-            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
-            let v = Simd::<u8, 16>::from_array(bytes);
-            let leads = std::simd::simd_swizzle!(v, [0, 4, 8, 12]);
-            let cont1 = std::simd::simd_swizzle!(v, [1, 5, 9, 13]);
-            let cont2 = std::simd::simd_swizzle!(v, [2, 6, 10, 14]);
-            let cont3 = std::simd::simd_swizzle!(v, [3, 7, 11, 15]);
-            let leads_ok = leads.simd_ge(Simd::splat(0xF0)) & leads.simd_le(Simd::splat(0xF7));
-            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
-            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
-            let cont3_ok = cont3.simd_ge(Simd::splat(0x80)) & cont3.simd_le(Simd::splat(0xBF));
-            let overlong_ok = !leads.simd_eq(Simd::splat(0xF0)) | cont1.simd_ge(Simd::splat(0x90));
-            if !(leads_ok & cont1_ok & cont2_ok & cont3_ok & overlong_ok).all() {
-                break;
-            }
-            let lw = leads.cast::<u32>() & Simd::splat(0x07);
-            let c1w = cont1.cast::<u32>() & Simd::splat(0x3F);
-            let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
-            let c3w = cont3.cast::<u32>() & Simd::splat(0x3F);
-            let wc =
-                (lw << Simd::splat(18)) | (c1w << Simd::splat(12)) | (c2w << Simd::splat(6)) | c3w;
-            wc.copy_to_slice(&mut dst[di..di + 4]);
-            si += 16;
-            di += 4;
-        }
-
-        // No multibyte window fired ⇒ the next byte is NUL / an isolated or
-        // mixed-width lead / malformed / dst-full: hand it to the caller's scalar
-        // step (returning right after the ASCII run avoids a wasted second
-        // `mbs_ascii_prefix` probe per isolated accent in interleaved text). A
-        // window DID fire ⇒ loop to pick up a trailing ASCII run and the next
-        // contiguous multibyte run.
-        if si == before_windows {
-            return (di, si);
-        }
-    }
 }
 
 /// Length of the leading plain-ASCII run of wide chars `src`: the count of `wc`
@@ -852,192 +411,6 @@ pub fn wcs_ascii_prefix(dest: &mut [u8], src: &[u32]) -> usize {
     k
 }
 
-/// SIMD fast-forward for the wide→multibyte converters: narrow/encode the
-/// leading run of whole clean windows — ASCII (16 per vector), 2-byte (8 per
-/// vector), 3-byte and 4-byte (4 per vector) — straight into `dest`, bounded by
-/// both `src` and `dest`. Returns `(chars_consumed, bytes_written)`.
-///
-/// Stops — leaving the boundary for the caller's scalar `wctomb` step — at the
-/// first NUL, a non-clean / mixed-width / boundary-straddling window, an invalid
-/// wchar (surrogate / out-of-range), or a `dest` too full for the next whole
-/// window. Every window it consumes is range-validated and produces byte-for-byte
-/// what scalar `wctomb` would, so a caller resolving each stop scalar-side keeps
-/// an exact per-char success/error contract. One call does a single pass of the
-/// four width runs; callers loop {`this` + one scalar step}. Shared by
-/// [`wcstombs`] and the streaming `wcsrtombs` so both vectorise multibyte runs,
-/// not just their ASCII prefix.
-pub fn wcs_simd_prefix(dest: &mut [u8], src: &[u32]) -> (usize, usize) {
-    let mut si = 0usize;
-    let mut di = 0usize;
-    const LANES: usize = 16;
-    let zero = Simd::<u32, LANES>::splat(0);
-    let ascii_max = Simd::<u32, LANES>::splat(0x80);
-
-    // SIMD ASCII run. Every wide char wc (0 < wc < 0x80) narrows to the single
-    // byte `wc as u8`, exactly as `wctomb` does for a 1-byte sequence. The
-    // `src[si] < 0x80` guard skips the SIMD load+compare when the current wchar
-    // needs multibyte encoding (>= 0x80). (Bounds check first keeps `src[si]` in
-    // range.)
-    while si + LANES <= src.len() && src[si] < 0x80 && di + LANES <= dest.len() {
-        let wchars: [u32; LANES] = src[si..si + LANES].try_into().unwrap();
-        let chunk = Simd::<u32, LANES>::from_array(wchars);
-        // Any NUL (terminator) or any wc >= 0x80 (multibyte/invalid) ends the run.
-        let stop = chunk.simd_eq(zero) | chunk.simd_ge(ascii_max);
-        if stop.any() {
-            // Narrow the clean ASCII prefix [0, pos) before the first stop lane in
-            // bulk, then leave that wchar (NUL or a multibyte/invalid char) for the
-            // scalar `wctomb` step. Resolving the mask instead of breaking with zero
-            // progress is what keeps interleaved multibyte text (café) fast: the
-            // short ASCII run between two accents is narrowed in one masked load, not
-            // one scalar `wctomb` per wchar behind a wasted wide probe. Byte-identical
-            // — every prefix wchar is in 0x01..=0x7F, so `w as u8` == the 1-byte
-            // `wctomb` result; `pos < LANES` keeps `di + pos < di + LANES <= dest.len()`.
-            let pos = stop.to_bitmask().trailing_zeros() as usize;
-            for k in 0..pos {
-                dest[di + k] = wchars[k] as u8;
-            }
-            si += pos;
-            di += pos;
-            break;
-        }
-        // Lane-wise truncating SIMD cast (u32 -> u8, keeping the low byte) narrows
-        // the whole vector at once. Identical to `w as u8` per lane.
-        let bytes = chunk.cast::<u8>();
-        bytes.copy_to_slice(&mut dest[di..di + LANES]);
-        si += LANES;
-        di += LANES;
-    }
-
-    // Trailing ASCII tail: the SIMD while only narrows FULL 16-wide chunks, so a
-    // short ASCII run at the very end of the source (or before a full `dest`) would
-    // otherwise fall to the caller's scalar step one wchar at a time — costly when
-    // that step is a heavy `wcrtomb`. Narrow it directly here (byte-identical:
-    // every wchar is 0x01..=0x7F, so `w as u8` == the 1-byte `wctomb` result). Stops
-    // at the first NUL / multibyte / out-of-dest, leaving those for the scalar step.
-    while si < src.len() && di < dest.len() && src[si] != 0 && src[si] < 0x80 {
-        dest[di] = src[si] as u8;
-        si += 1;
-        di += 1;
-    }
-
-    // Contiguity gate: the SIMD encode gathers below only pay off on a RUN of
-    // same-width multibyte chars. After the ASCII run, `src[si]` is a NUL / lone
-    // accent / run-start. If the char after it is NOT also multibyte (a lone accent
-    // in mostly-ASCII text — café), skip all three gather probes and let the
-    // caller's scalar `wctomb` encode the single char, avoiding the per-boundary
-    // probe overhead that made interleaved text regress. Byte-identical: the gates
-    // inside each while would skip these windows anyway; this just collapses the
-    // three failing probes into one branch. A trailing multibyte char (si+1 out of
-    // range) is likewise left to the scalar step.
-    if si + 1 >= src.len() || src[si] < 0x80 || src[si + 1] < 0x80 {
-        return (si, di);
-    }
-
-    // SIMD 2-byte encode fast path (inverse of mbstowcs's 2-byte decode): a run
-    // of >= 8 wide chars all in 0x80..=0x7FF each encodes to exactly two bytes
-    // (0xC0|(wc>>6), 0x80|(wc&0x3F)). No code point in that range is overlong or
-    // a UTF-16 surrogate, so a range-validated window is byte-for-byte what
-    // scalar `wctomb` produces. Build 16 output bytes by interleaving the lead
-    // and continuation lanes. Any wchar outside the range (ASCII, 3/4-byte,
-    // surrogate, out-of-range) or insufficient room (< 16 bytes) drops to the
-    // scalar step. Covers the common 2-byte scripts (Cyrillic/Greek/…).
-    // 1-char lookahead gate: a lone 2-byte char in mostly-ASCII text (café, ñ)
-    // would enter here, do a full 8-wide load+range-check that breaks on the
-    // very next (ASCII) lane, and fall to scalar anyway. Requiring src[si+1] to
-    // also be 2-byte skips that wasted wide load; byte-identical because any
-    // window whose 2nd lane disqualifies it would break on the `.all()` below.
-    while si + 8 <= src.len()
-        && di + 16 <= dest.len()
-        && (0x80..=0x7FF).contains(&src[si])
-        && (0x80..=0x7FF).contains(&src[si + 1])
-    {
-        let ws: [u32; 8] = src[si..si + 8].try_into().unwrap();
-        let v = Simd::<u32, 8>::from_array(ws);
-        if !(v.simd_ge(Simd::splat(0x80)) & v.simd_le(Simd::splat(0x7FF))).all() {
-            break; // a non-2-byte wchar in the window — let the scalar step run
-        }
-        let leads = ((v >> Simd::splat(6)) | Simd::splat(0xC0)).cast::<u8>();
-        let conts = ((v & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
-        let bytes = std::simd::simd_swizzle!(
-            leads,
-            conts,
-            [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15]
-        );
-        bytes.copy_to_slice(&mut dest[di..di + 16]);
-        si += 8;
-        di += 16;
-    }
-
-    // SIMD 3-byte encode fast path for BMP non-surrogate runs. Each clean
-    // window maps four code points in 0x0800..=0xFFFF, excluding UTF-16
-    // surrogates, to four fixed-width UTF-8 triples. ASCII, 2-byte, astral,
-    // surrogate, out-of-range, and short-output cases fall through to the
-    // scalar wctomb step, preserving its exact error and truncation behavior.
-    while si + 4 <= src.len()
-        && di + 12 <= dest.len()
-        && (0x0800..=0xFFFF).contains(&src[si])
-        && (0x0800..=0xFFFF).contains(&src[si + 1])
-    {
-        let ws: [u32; 4] = src[si..si + 4].try_into().unwrap();
-        let v = Simd::<u32, 4>::from_array(ws);
-        let bmp_ok = v.simd_ge(Simd::splat(0x0800)) & v.simd_le(Simd::splat(0xFFFF));
-        let surrogate_ok = v.simd_lt(Simd::splat(0xD800)) | v.simd_gt(Simd::splat(0xDFFF));
-        if !(bmp_ok & surrogate_ok).all() {
-            break;
-        }
-
-        let leads = ((v >> Simd::splat(12)) | Simd::splat(0xE0)).cast::<u8>();
-        let mids = (((v >> Simd::splat(6)) & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
-        let tails = ((v & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
-        let lead_mid = std::simd::simd_swizzle!(leads, mids, [0, 4, 1, 5, 2, 6, 3, 7]);
-        let zero = Simd::<u8, 4>::splat(0);
-        let tails_padded = std::simd::simd_swizzle!(tails, zero, [0, 4, 1, 4, 2, 4, 3, 4]);
-        let bytes = std::simd::simd_swizzle!(
-            lead_mid,
-            tails_padded,
-            [0, 1, 8, 2, 3, 10, 4, 5, 12, 6, 7, 14, 0, 0, 0, 0]
-        );
-        let packed = bytes.to_array();
-        dest[di..di + 12].copy_from_slice(&packed[..12]);
-        si += 4;
-        di += 12;
-    }
-
-    // SIMD 4-byte encode fast path for scalar wctomb's RFC 2279 4-byte
-    // branch. Each clean window maps four code points in
-    // 0x1_0000..0x20_0000 to exactly sixteen output bytes. ASCII, 2/3-byte,
-    // 5/6-byte, invalid, NUL, mixed-window, and short-output cases fall
-    // through to scalar `wctomb`, preserving glibc-compatible semantics.
-    while si + 4 <= src.len()
-        && di + 16 <= dest.len()
-        && (0x1_0000..0x20_0000).contains(&src[si])
-        && (0x1_0000..0x20_0000).contains(&src[si + 1])
-    {
-        let ws: [u32; 4] = src[si..si + 4].try_into().unwrap();
-        let v = Simd::<u32, 4>::from_array(ws);
-        if !(v.simd_ge(Simd::splat(0x1_0000)) & v.simd_lt(Simd::splat(0x20_0000))).all() {
-            break;
-        }
-
-        let leads = ((v >> Simd::splat(18)) | Simd::splat(0xF0)).cast::<u8>();
-        let cont1 = (((v >> Simd::splat(12)) & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
-        let cont2 = (((v >> Simd::splat(6)) & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
-        let cont3 = ((v & Simd::splat(0x3F)) | Simd::splat(0x80)).cast::<u8>();
-        let lead_cont1 = std::simd::simd_swizzle!(leads, cont1, [0, 4, 1, 5, 2, 6, 3, 7]);
-        let cont2_cont3 = std::simd::simd_swizzle!(cont2, cont3, [0, 4, 1, 5, 2, 6, 3, 7]);
-        let bytes = std::simd::simd_swizzle!(
-            lead_cont1,
-            cont2_cont3,
-            [0, 1, 8, 9, 2, 3, 10, 11, 4, 5, 12, 13, 6, 7, 14, 15]
-        );
-        bytes.copy_to_slice(&mut dest[di..di + 16]);
-        si += 4;
-        di += 16;
-    }
-
-    (si, di)
-}
-
 /// Convert a wide character string to a multibyte string (UTF-8).
 ///
 /// Returns the number of bytes written (not including NUL terminator), or
@@ -1046,20 +419,34 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
     let mut si = 0usize;
     let mut di = 0usize;
 
-    // Encode whole clean windows (ASCII + 2/3/4-byte) via the shared SIMD prefix
-    // helper, then take one scalar `wctomb` step at each boundary (NUL / non-clean
-    // window / invalid / dest-full) and re-attempt the SIMD run. Output is
-    // byte-for-byte identical to a pure per-char `wctomb` conversion; every
-    // terminator / multibyte-boundary / error path stays in the scalar step. Each
-    // outer iteration advances `si` by >= 1, so termination is guaranteed.
-    loop {
-        let (s, d) = wcs_simd_prefix(&mut dest[di..], &src[si..]);
-        si += s;
-        di += d;
-
-        if si >= src.len() {
-            return Some(di);
+    // SIMD ASCII fast path — the inverse of mbstowcs's. Every wide char wc with
+    // 0 < wc < 0x80 encodes to the single byte `wc as u8`, exactly as wctomb
+    // does for a 1-byte sequence. Narrow whole ASCII runs a vector at a time,
+    // bailing to the scalar loop the moment a chunk holds a NUL terminator or a
+    // wc >= 0x80 (which needs multibyte encoding, or is a surrogate / out-of-
+    // range value wctomb rejects). Output is byte-for-byte identical, and the
+    // None/error path stays entirely in the unchanged scalar code below.
+    const LANES: usize = 16;
+    let zero = Simd::<u32, LANES>::splat(0);
+    let ascii_max = Simd::<u32, LANES>::splat(0x80);
+    while si + LANES <= src.len() && di + LANES <= dest.len() {
+        let wchars: [u32; LANES] = src[si..si + LANES].try_into().unwrap();
+        let chunk = Simd::<u32, LANES>::from_array(wchars);
+        // Any NUL (terminator) or any wc >= 0x80 (multibyte/invalid) ends the run.
+        if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+            break;
         }
+        // Narrow each ASCII codepoint to its single output byte.
+        // Lane-wise truncating SIMD cast (u32 -> u8, keeping the low byte) packs
+        // the whole vector at once. Identical to `w as u8` per lane, but lowers
+        // to a vector pack instead of 16 scalar truncations + an array rebuild.
+        let bytes = chunk.cast::<u8>();
+        bytes.copy_to_slice(&mut dest[di..di + LANES]);
+        si += LANES;
+        di += LANES;
+    }
+
+    while si < src.len() {
         if src[si] == 0 {
             // NUL terminator
             if di < dest.len() {
@@ -1076,58 +463,7 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
         di += n;
         si += 1;
     }
-}
-
-/// Total number of UTF-8 output bytes for the wide string `src` (the count-mode
-/// answer of `wcstombs`/`wcsrtombs`/`wcsnrtombs` when `dst == NULL`), or `None`
-/// if any wchar is unrepresentable — exactly what a per-char `wctomb` length sum
-/// would return, but SIMD-summed 8 lanes at a time.
-///
-/// The byte length of a representable wchar is a pure function of its magnitude
-/// (`1 + (wc>=0x80) + (wc>=0x800) + (wc>=0x10000) + (wc>=0x200000) +
-/// (wc>=0x4000000)`, matching `wctomb`'s RFC-2279 length ladder), so a whole
-/// vector's lengths are computed branchlessly and horizontally summed. A window
-/// containing a UTF-16 surrogate (`0xD800..=0xDFFF`) or an out-of-range value
-/// (`> 0x7FFF_FFFF`) — the two cases `wctomb` rejects — is left to the scalar
-/// tail so the `None` is returned at the exact first offending char, byte-for-byte
-/// like the scalar loop. `src` must be the exact char window to measure (callers
-/// bound it to their NUL / `nwc` limit); NUL is not treated specially here.
-pub fn wcs_encoded_len(src: &[u32]) -> Option<usize> {
-    const LANES: usize = 8;
-    let mut si = 0usize;
-    let mut total = 0usize;
-    while si + LANES <= src.len() {
-        let v = Simd::<u32, LANES>::from_array(src[si..si + LANES].try_into().unwrap());
-        // Unrepresentable lanes (surrogate / out-of-range) -> resolve scalar so the
-        // exact `None` position matches the per-char loop.
-        let surrogate = v.simd_ge(Simd::splat(0xD800)) & v.simd_le(Simd::splat(0xDFFF));
-        let too_big = v.simd_gt(Simd::splat(0x7FFF_FFFF));
-        if (surrogate | too_big).any() {
-            break;
-        }
-        // Window byte total = LANES (every char is >= 1 byte) + the number of lanes
-        // crossing each higher-length threshold, summed. `to_bitmask().count_ones()`
-        // counts the set lanes of each comparison — one horizontal popcount per
-        // threshold, no per-lane branch. Matches `wctomb`'s RFC-2279 length ladder
-        // exactly for every representable char.
-        total += LANES
-            + v.simd_ge(Simd::splat(0x80)).to_bitmask().count_ones() as usize
-            + v.simd_ge(Simd::splat(0x800)).to_bitmask().count_ones() as usize
-            + v.simd_ge(Simd::splat(0x1_0000)).to_bitmask().count_ones() as usize
-            + v.simd_ge(Simd::splat(0x20_0000)).to_bitmask().count_ones() as usize
-            + v.simd_ge(Simd::splat(0x400_0000)).to_bitmask().count_ones() as usize;
-        si += LANES;
-    }
-    // Scalar tail (and exact error resolution) via `wctomb`.
-    let mut tmp = [0u8; 6];
-    while si < src.len() {
-        match wctomb(src[si], &mut tmp) {
-            Some(n) => total += n,
-            None => return None,
-        }
-        si += 1;
-    }
-    Some(total)
+    Some(di)
 }
 
 // Wide character classification (`<wctype.h>` `isw*` predicates).
@@ -1237,30 +573,6 @@ pub fn towlower(wc: u32) -> u32 {
 /// The lookup is a branchless binary search; values above `U+10FFFF` (e.g. a
 /// negative `wchar_t` widened to `u32`) are not scalar values, so `-1`.
 pub fn wcwidth(wc: u32) -> i32 {
-    // The BMP (the overwhelmingly common case for terminal width work) is served
-    // by a lazily-built direct `[i8; 0x10000]` lookup, replacing a per-character
-    // `partition_point` binary search over 2144 transitions (~11 scattered,
-    // cache-missing probes). Built once by calling `wcwidth_transitions` for
-    // every BMP code point, so each entry is byte-for-byte what the binary search
-    // returns — and astral code points still take that exact path. O(1) per char,
-    // single hot cache line for runs of nearby characters.
-    if wc < 0x10000 {
-        static BMP_WIDTH: std::sync::OnceLock<Box<[i8; 0x10000]>> = std::sync::OnceLock::new();
-        let table = BMP_WIDTH.get_or_init(|| {
-            let mut t = Box::new([0i8; 0x10000]);
-            for (cp, slot) in t.iter_mut().enumerate() {
-                *slot = wcwidth_transitions(cp as u32) as i8;
-            }
-            t
-        });
-        return table[wc as usize] as i32;
-    }
-    wcwidth_transitions(wc)
-}
-
-/// Exact width via the sorted transition table — the canonical result the BMP
-/// direct table is built from, and the path astral code points take directly.
-fn wcwidth_transitions(wc: u32) -> i32 {
     if wc > 0x10FFFF {
         return -1;
     }
@@ -1343,37 +655,6 @@ mod tests {
                 v.insert(pos, mb);
                 corpus.push(v);
             }
-        }
-        // Pure 3-byte BMP runs around the 4-codepoint SIMD window, including
-        // the legal boundaries adjacent to overlongs and surrogate exclusions.
-        for len in 0..40usize {
-            let mut v = Vec::with_capacity(len);
-            for i in 0..len {
-                v.push(match i % 5 {
-                    0 => 0x0800,
-                    1 => 0x20AC,
-                    2 => 0x4E00 + (i as u32 % 0x100),
-                    3 => 0xD7FF,
-                    _ => 0xE000,
-                });
-            }
-            corpus.push(v);
-        }
-        // Pure 4-byte runs around the 4-codepoint SIMD window. The upper cases
-        // intentionally cover scalar wctomb's glibc-compatible RFC 2279 range,
-        // not just Unicode scalar values through U+10FFFF.
-        for len in 0..40usize {
-            let mut v = Vec::with_capacity(len);
-            for i in 0..len {
-                v.push(match i % 5 {
-                    0 => 0x1_0000,
-                    1 => 0x1F600 + (i as u32 % 0x80),
-                    2 => 0x10_FFFF,
-                    3 => 0x11_0000 + (i as u32 % 0x100),
-                    _ => 0x1F_FFFF,
-                });
-            }
-            corpus.push(v);
         }
         // Surrogates / out-of-range values wctomb rejects (must bail to scalar
         // and return None identically).
@@ -1508,45 +789,6 @@ mod tests {
             v.splice(pos..pos, [0xE2, 0x82, 0xAC]);
             corpus.push(v);
         }
-        // Pure 3-byte runs around the 12-byte SIMD window and 16-byte load
-        // boundary, including CJK and the edge ranges that exclude overlongs
-        // and surrogates.
-        for len in 0..40usize {
-            let mut v = Vec::with_capacity(len * 3);
-            for i in 0..len {
-                let wc = match i % 5 {
-                    0 => 0x0800u32,
-                    1 => 0x20AC,
-                    2 => 0x4E00 + (i as u32 % 0x100),
-                    3 => 0xD7FF,
-                    _ => 0xE000,
-                };
-                let ch = char::from_u32(wc).unwrap();
-                let mut buf = [0u8; 4];
-                v.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
-            }
-            corpus.push(v);
-        }
-        // Pure 4-byte runs around the 16-byte SIMD window. Include scalar
-        // decoder-compatible values above U+10FFFF because glibc's converter and
-        // `utf8_decode_step` accept F5..=F7 4-byte forms.
-        for len in 0..40usize {
-            let mut v = Vec::with_capacity(len * 4);
-            for i in 0..len {
-                let wc = match i % 5 {
-                    0 => 0x1_0000u32,
-                    1 => 0x1F600 + (i as u32 % 0x80),
-                    2 => 0x10_FFFF,
-                    3 => 0x11_0000 + (i as u32 % 0x100),
-                    _ => 0x1F_FFFF,
-                };
-                let mut buf = [0u8; 6];
-                let n = wctomb(wc, &mut buf).unwrap();
-                assert_eq!(n, 4);
-                v.extend_from_slice(&buf[..n]);
-            }
-            corpus.push(v);
-        }
         // Multibyte-heavy and mixed (snowman ☃ = E2 98 83, é = C3 A9).
         corpus.push(b"caf\xc3\xa9 \xe2\x98\x83 \xe2\x82\xac done".to_vec());
         // Pseudo-random soup (LCG) including high bytes / invalid sequences.
@@ -1673,26 +915,6 @@ mod tests {
     #[test]
     fn wcwidth_cjk() {
         assert_eq!(wcwidth(0x4E16), 2); // 世
-    }
-
-    // Golden isomorphism: the direct BMP table (and the astral path) must return
-    // byte-for-byte what the pure transition-table binary search produces for
-    // EVERY code point 0..=0x10FFFF (plus an out-of-range probe).
-    #[test]
-    fn wcwidth_direct_table_matches_binary_search() {
-        fn reference(wc: u32) -> i32 {
-            if wc > 0x10FFFF {
-                return -1;
-            }
-            let table = &super::super::wcwidth_table::WIDTH_TRANSITIONS;
-            let idx = table.partition_point(|&(start, _)| start <= wc);
-            table[idx - 1].1 as i32
-        }
-        for cp in 0..=0x10FFFFu32 {
-            assert_eq!(wcwidth(cp), reference(cp), "wcwidth mismatch at U+{cp:04X}");
-        }
-        assert_eq!(wcwidth(0x11_0000), -1);
-        assert_eq!(wcwidth(0xFFFF_FFFF), -1);
     }
 
     #[test]

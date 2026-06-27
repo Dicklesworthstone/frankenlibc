@@ -12,7 +12,6 @@
 //! Regenerate with:
 //!   `cargo test -p frankenlibc-abi --test wctype_table_gen -- --ignored --nocapture`
 //! then replace the array below. Closes bd-2g7oyh.254.
-#![allow(clippy::items_after_test_module)]
 
 /// Class bits, packed one per wide-ctype predicate. MUST stay in sync with the
 /// `wctype_table_gen` generator's bit assignment.
@@ -29,68 +28,11 @@ pub(crate) const SPACE: u16 = 1 << 9;
 pub(crate) const UPPER: u16 = 1 << 10;
 pub(crate) const XDIGIT: u16 = 1 << 11;
 
-/// Direct class-mask table for the ASCII block (`0..128`) — the dominant input for every
-/// isw* predicate. A plain `.rodata` static, so ASCII lookups skip the BMP table's
-/// `OnceLock::get_or_init` + `Box` deref (~0.9ns/call, which made the isw* predicates lose
-/// ~1.4x to glibc on ASCII — wide_ctype_survey). Byte-for-byte what
-/// `ctype_mask_transitions` returns for each codepoint (generated from fl's own 12 isw*
-/// predicates; the direct-table isomorphism test re-verifies every codepoint incl. 0..128).
-#[rustfmt::skip]
-const ASCII_CTYPE: [u16; 128] = [
-    0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008,
-    0x0008, 0x020c, 0x0208, 0x0208, 0x0208, 0x0208, 0x0008, 0x0008,
-    0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008,
-    0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008,
-    0x0284, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0,
-    0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0,
-    0x08b1, 0x08b1, 0x08b1, 0x08b1, 0x08b1, 0x08b1, 0x08b1, 0x08b1,
-    0x08b1, 0x08b1, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0,
-    0x01a0, 0x0ca3, 0x0ca3, 0x0ca3, 0x0ca3, 0x0ca3, 0x0ca3, 0x04a3,
-    0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3,
-    0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3,
-    0x04a3, 0x04a3, 0x04a3, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0,
-    0x01a0, 0x08e3, 0x08e3, 0x08e3, 0x08e3, 0x08e3, 0x08e3, 0x00e3,
-    0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3,
-    0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3,
-    0x00e3, 0x00e3, 0x00e3, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x0008,
-];
-
 /// Return the glibc UTF-8-locale wide-ctype class mask for `wc`. Scalar values
 /// above `U+10FFFF` (e.g. a negative `wchar_t` widened to `u32`) are not valid
 /// wide characters, so they belong to no class (mask `0`).
 #[inline]
 pub(crate) fn ctype_mask(wc: u32) -> u16 {
-    // The BMP (the dominant case for all twelve isw* predicates) is served by a
-    // lazily-built direct `[u16; 0x10000]` lookup, replacing a per-character
-    // `partition_point` binary search over 3238 transitions (~12 scattered,
-    // cache-missing probes). Each entry is built by calling the transition search
-    // for that code point, so the table is byte-for-byte what the search returns;
-    // astral scalars still take that exact path. O(1) per char, one hot cache
-    // line for runs of nearby characters.
-    // ASCII fast path: a direct static-table index, no OnceLock/Box deref. This is the
-    // dominant input for isw* (identifiers, whitespace, digits) and closes the ~1.4x gap
-    // to glibc on ASCII. Byte-identical to the BMP table for 0..128.
-    if wc < 128 {
-        return ASCII_CTYPE[wc as usize];
-    }
-    if wc < 0x10000 {
-        static BMP_CTYPE: std::sync::OnceLock<Box<[u16; 0x10000]>> = std::sync::OnceLock::new();
-        let table = BMP_CTYPE.get_or_init(|| {
-            let mut t = Box::new([0u16; 0x10000]);
-            for (cp, slot) in t.iter_mut().enumerate() {
-                *slot = ctype_mask_transitions(cp as u32);
-            }
-            t
-        });
-        return table[wc as usize];
-    }
-    ctype_mask_transitions(wc)
-}
-
-/// Exact class mask via the sorted transition table — the canonical result the
-/// BMP direct table is built from, and the path astral scalars take directly.
-#[inline]
-fn ctype_mask_transitions(wc: u32) -> u16 {
     if wc > 0x10FFFF {
         return 0;
     }
@@ -100,37 +42,8 @@ fn ctype_mask_transitions(wc: u32) -> u16 {
     CTYPE_TRANSITIONS[idx - 1].1
 }
 
-#[cfg(test)]
-mod direct_table_tests {
-    use super::*;
-
-    // Golden isomorphism: the direct BMP table (and the astral path) must return
-    // byte-for-byte what the pure transition-table binary search produces for
-    // EVERY code point 0..=0x10FFFF, plus out-of-range probes.
-    #[test]
-    fn ctype_mask_direct_table_matches_binary_search() {
-        fn reference(wc: u32) -> u16 {
-            if wc > 0x10FFFF {
-                return 0;
-            }
-            let idx = CTYPE_TRANSITIONS.partition_point(|&(start, _)| start <= wc);
-            CTYPE_TRANSITIONS[idx - 1].1
-        }
-        for cp in 0..=0x10FFFFu32 {
-            assert_eq!(
-                ctype_mask(cp),
-                reference(cp),
-                "ctype_mask mismatch at U+{cp:04X}"
-            );
-        }
-        assert_eq!(ctype_mask(0x11_0000), 0);
-        assert_eq!(ctype_mask(0xFFFF_FFFF), 0);
-    }
-}
-
 // @generated by wctype_table_gen from host glibc isw* (UTF-8 locale).
 // Each (start, mask): class mask == mask for cp in [start, next_start).
-#[rustfmt::skip]
 pub(crate) static CTYPE_TRANSITIONS: [(u32, u16); 3238] = [
     (0x0,0x8),(0x9,0x20c),(0xa,0x208),(0xe,0x8),(0x20,0x284),(0x21,0x1a0),(0x30,0x8b1),(0x3a,0x1a0),
     (0x41,0xca3),(0x47,0x4a3),(0x5b,0x1a0),(0x61,0x8e3),(0x67,0xe3),(0x7b,0x1a0),(0x7f,0x8),(0xa0,0x1a0),
