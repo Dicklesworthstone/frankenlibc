@@ -562,10 +562,11 @@ enum MatchKind {
         newline: bool,
     },
     CharClass {
-        ranges: Vec<(u8, u8)>,
-        negated: bool,
-        icase: bool,
-        newline: bool,
+        /// 256-bit membership table with negation, ICASE case-folding and
+        /// REG_NEWLINE all baked in at compile time, so `matches_byte` is a single
+        /// O(1) bit lookup instead of a per-byte range scan (and, for ICASE, a
+        /// nested per-range character loop). `bit[c]` set ⇔ byte `c` matches.
+        set: [u64; 4],
     },
     AnchorStart {
         newline: bool,
@@ -585,6 +586,33 @@ enum MatchKind {
     BufferStart,
     /// GNU `\'` — end-of-buffer assertion (final position, zero-width).
     BufferEnd,
+}
+
+/// Precompute a `MatchKind::CharClass` 256-bit membership table at compile time so
+/// the hot `matches_byte` is a single bit lookup. Negation, ICASE case-folding and
+/// REG_NEWLINE are all baked in (semantics are byte-identical to the former
+/// per-byte range scan — verified by the regex glibc-differential fuzz suite).
+fn build_class_bitset(ranges: &[(u8, u8)], negated: bool, icase: bool, newline: bool) -> [u64; 4] {
+    let mut set = [0u64; 4];
+    for &(lo, hi) in ranges {
+        for b in lo..=hi {
+            set[(b >> 6) as usize] |= 1u64 << (b & 63);
+            if icase && b.is_ascii_alphabetic() {
+                let s = b ^ 0x20; // ASCII case swap
+                set[(s >> 6) as usize] |= 1u64 << (s & 63);
+            }
+        }
+    }
+    if negated {
+        for w in &mut set {
+            *w = !*w;
+        }
+        // POSIX REG_NEWLINE: a nonmatching (negated) list never matches '\n'.
+        if newline {
+            set[(b'\n' >> 6) as usize] &= !(1u64 << (b'\n' & 63));
+        }
+    }
+    set
 }
 
 // ---------------------------------------------------------------------------
@@ -1364,10 +1392,12 @@ impl Compiler {
             }
             Ast::CharClass { ranges, negated } => {
                 self.emit(NfaInstr::Match(MatchKind::CharClass {
-                    ranges: ranges.clone(),
-                    negated: *negated,
-                    icase: self.compile_icase,
-                    newline: self.compile_newline,
+                    set: build_class_bitset(
+                        ranges,
+                        *negated,
+                        self.compile_icase,
+                        self.compile_newline,
+                    ),
                 }));
             }
             Ast::Anchor(AnchorKind::Start { line }) => {
@@ -2500,39 +2530,10 @@ impl<'a> PikeVm<'a> {
             // glibc: `.` never matches NUL (only reachable via the binary-safe
             // byte path; the C-string path has already truncated at NUL).
             MatchKind::AnyChar { newline } => ch != 0 && !(*newline && ch == b'\n'),
-            MatchKind::CharClass {
-                ranges,
-                negated,
-                icase,
-                newline,
-            } => {
-                let mut found = false;
-                for &(lo, hi) in ranges.iter() {
-                    if *icase {
-                        let ch_lo = ch.to_ascii_lowercase();
-                        for r_ch in lo..=hi {
-                            if ch_lo == r_ch.to_ascii_lowercase() {
-                                found = true;
-                                break;
-                            }
-                        }
-                        if found {
-                            break;
-                        }
-                    } else if ch >= lo && ch <= hi {
-                        found = true;
-                        break;
-                    }
-                }
-                if *negated {
-                    // REG_NEWLINE: a nonmatching list never matches '\n' (POSIX).
-                    if *newline && ch == b'\n' {
-                        return false;
-                    }
-                    !found
-                } else {
-                    found
-                }
+            MatchKind::CharClass { set } => {
+                // Single O(1) bit lookup; negation / ICASE / REG_NEWLINE are baked
+                // into `set` at compile time (see `build_class_bitset`).
+                (set[(ch >> 6) as usize] >> (ch & 63)) & 1 != 0
             }
             // Zero-width assertions are handled in add_thread, not here.
             MatchKind::AnchorStart { .. }

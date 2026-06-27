@@ -37,18 +37,36 @@ fn bench(c: &mut Criterion) {
     let mut rare: Vec<u8> = vec![b'a'; 4092];
     rare.extend_from_slice(b"999X");
 
-    // Each case carries its own pattern (fl + glibc twin).
-    let cases: &[(&str, &str, &Vec<u8>)] = &[
-        ("sparse_digits_late", "[0-9]+END", &sparse),
-        ("rare_firstbyte_jump", "[0-9][0-9][0-9]X", &rare),
+    // (3) ICASE class matched per byte along ONE long run: `X[a-z]+9` over
+    //     "X" + 4089 'a' + "9". The rare 'X' first byte means a SINGLE start (no
+    //     O(n^2) multi-seed), and the surviving thread walks `[a-z]` across the
+    //     whole run — so the timed work IS the per-byte class test. The OLD
+    //     matches_byte ran a NESTED per-char loop (26 compares/byte under ICASE);
+    //     the bitset is one lookup.
+    const REG_ICASE: i32 = 2; // frankenlibc REG_ICASE bit
+    let mut icase: Vec<u8> = vec![b'X'];
+    icase.extend(std::iter::repeat(b'a').take(4089));
+    icase.push(b'9');
+
+    // Each case: (name, pattern, fl_cflags, glibc_cflags, haystack).
+    let cases: &[(&str, &str, i32, i32, &Vec<u8>)] = &[
+        ("sparse_digits_late", "[0-9]+END", REG_EXTENDED, libc::REG_EXTENDED, &sparse),
+        ("rare_firstbyte_jump", "[0-9][0-9][0-9]X", REG_EXTENDED, libc::REG_EXTENDED, &rare),
+        (
+            "icase_class_perbyte",
+            "X[a-z]+9",
+            REG_EXTENDED | REG_ICASE,
+            libc::REG_EXTENDED | libc::REG_ICASE,
+            &icase,
+        ),
     ];
 
-    for &(name, pat_str, hay) in cases {
-        let pat = regex_compile(pat_str.as_bytes(), REG_EXTENDED).expect("compile");
+    for &(name, pat_str, fl_cflags, gl_cflags, hay) in cases {
+        let pat = regex_compile(pat_str.as_bytes(), fl_cflags).expect("compile");
         let mut gpreg: libc::regex_t = unsafe { std::mem::zeroed() };
         let pat_c = std::ffi::CString::new(pat_str).unwrap();
         assert_eq!(
-            unsafe { libc::regcomp(&mut gpreg, pat_c.as_ptr(), libc::REG_EXTENDED) },
+            unsafe { libc::regcomp(&mut gpreg, pat_c.as_ptr(), gl_cflags) },
             0,
             "glibc regcomp failed"
         );

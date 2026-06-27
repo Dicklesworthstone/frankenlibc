@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ regex: compile-time CharClass bitset — O(1) matches_byte, 1.21x on ICASE classes (cc)
+
+- **LANDED CODE WIN (`string/regex.rs`, conformance GREEN).** `matches_byte` (the per-byte-per-thread inner
+  loop) matched a `CharClass` by ITERATING its ranges — and under ICASE ran a NESTED per-character loop
+  (`for r_ch in lo..=hi` comparing `to_ascii_lowercase`, e.g. 26 compares/byte for `[a-z]`). Replaced the
+  `{ranges, negated, icase, newline}` variant with a single precomputed `set: [u64;4]` 256-bit table built
+  once at compile time (`build_class_bitset` bakes in negation, ICASE case-folding via the ASCII `^0x20`
+  swap, and REG_NEWLINE); `matches_byte` is now one bit lookup.
+- **MEASURED (`regex_prefilter_ab_bench`, controlled fl-old(range-scan)-vs-fl-new A/B, glibc ~17.5 µs both runs
+  as the worker yardstick):** `X[a-z]+9` ICASE over a 4 KiB single-start run (rare `X` ⇒ no O(n²) multi-seed,
+  so the timed work IS the per-byte class test) — **526 µs → 434 µs = 1.21x**. Honest: matches_byte was only
+  part of the cost; the PikeVm per-byte closure/Vec overhead dominates, so fl stays ~24x off glibc's DFA on
+  this synthetic case (structural, separate from this lever). Single-range non-ICASE classes (`[0-9]`) are
+  unchanged (the old path was already one range check). Provably never-slower (O(1) ≤ O(ranges×width)).
+- **Conformance GREEN:** 8 `conformance_diff_regex` + collating + 4 differential-fuzz gates pass in DEBUG —
+  byte-identical to the range scan across icase/negated/newline/collating classes vs glibc. Also drops the
+  per-instruction `ranges` Vec (smaller NFA). NOTE: only the bitset is mine; a sibling's `stdio_abi.rs` edit
+  was left uncommitted in the shared tree.
+
 ## 2026-06-27 — ✅ regex: dead-region JUMP in leftmost_start — 4.05x on rare-first-byte search (cc)
 
 - **LANDED CODE WIN (`string/regex.rs` `leftmost_start`, conformance GREEN).** Successor to the seed-prune: even
