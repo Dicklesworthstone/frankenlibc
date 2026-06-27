@@ -1264,8 +1264,12 @@ fn fallback_start_index(key: usize) -> usize {
 #[inline]
 fn publish_fallback_range(key: usize, size: usize) {
     let end = key.saturating_add(size.max(1));
-    FALLBACK_ALLOC_MIN_ADDR.fetch_min(key, Ordering::AcqRel);
-    FALLBACK_ALLOC_MAX_ADDR.fetch_max(end, Ordering::AcqRel);
+    if key < FALLBACK_ALLOC_MIN_ADDR.load(Ordering::Acquire) {
+        FALLBACK_ALLOC_MIN_ADDR.fetch_min(key, Ordering::AcqRel);
+    }
+    if end > FALLBACK_ALLOC_MAX_ADDR.load(Ordering::Acquire) {
+        FALLBACK_ALLOC_MAX_ADDR.fetch_max(end, Ordering::AcqRel);
+    }
 }
 
 fn fallback_contains(ptr: *mut c_void) -> bool {

@@ -6,6 +6,26 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ calloc/free(16): skip steady fallback range RMWs — 1.60x FL win, still 9.09x vs glibc (BlackThrush)
+
+- **LANDED CODE WIN (`malloc_abi.rs`, conformance GREEN).** The strict native-fallback allocation path publishes
+  the conservative fallback pointer envelope on every allocation with two locked atomic RMWs (`fetch_min` and
+  `fetch_max`). After the first few allocations, the recycled small-allocation addresses are usually already
+  inside that envelope, so the locked RMWs are pure metadata traffic. Guarded each RMW with an Acquire load and
+  only publish when the allocation extends the known min/max range. This preserves the monotone envelope
+  invariant: `fallback_contains` can still only use the range as a conservative negative filter, and real
+  ownership continues to come from the fallback table.
+- **MEASURED (`calloc_glibc_bench`, filtered `calloc_cycle/(fl|glibc)/16`, local `rch` fallback because no
+  worker was admissible: `insufficient_slots=2,hard_preflight=1,active_project_exclusion=1`; requested per-crate
+  equivalent command used `cargo bench -p frankenlibc-bench --profile release ...` because this Cargo rejects
+  bench-level `--release`).** Baseline FL p50 **85.538 ns**; candidate FL p50 **53.489 ns** = **1.60x faster**
+  on the same focused gate. Current host glibc p50 **5.884 ns**, so FrankenLibC remains **9.09x slower than
+  glibc** on this microbench. This is a real gap reduction, not allocator parity.
+- **Conformance GREEN:** `cargo check -p frankenlibc-abi --lib`; `cargo test -p frankenlibc-abi --test
+  malloc_abi_test -- --nocapture` (55 passed, 1 ignored); `cargo test -p frankenlibc-abi --test
+  conformance_diff_malloc_edges -- --nocapture` (1 passed). `git diff --check` and file-local `rustfmt
+  --edition 2024 --check crates/frankenlibc-abi/src/malloc_abi.rs` passed.
+
 ## 2026-06-27 — ✅ regex: prefilter-prune seeding in leftmost_start — 2.79x on determinate-first-byte search (cc)
 
 - **LANDED CODE WIN (`string/regex.rs` `leftmost_start`, conformance GREEN).** The merged-sweep search path
