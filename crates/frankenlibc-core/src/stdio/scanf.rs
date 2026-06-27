@@ -198,10 +198,8 @@ pub enum ScanDirective {
     Literal(u8),
     /// Whitespace directive: skip zero or more whitespace chars.
     Whitespace,
-    /// A conversion specifier. Stored inline (not boxed): with a pre-sized
-    /// directive `Vec` the whole format then parses in a single allocation
-    /// instead of one extra heap box per conversion specifier.
-    Spec(ScanSpec),
+    /// A conversion specifier.
+    Spec(Box<ScanSpec>),
 }
 
 /// A parsed scanf conversion specifier.
@@ -218,11 +216,6 @@ pub struct ScanSpec {
     /// Unicode whitespace (`iswspace`), not just ASCII. Set by the wide scanf
     /// entry points after parsing; defaults to false for narrow `sscanf`.
     pub wide_input: bool,
-    /// True when the GNU `m` assignment-allocation modifier was given (`%ms`,
-    /// `%m[`, `%mc`): the destination argument is a `char **` and the matched
-    /// text is stored into a freshly allocated buffer. Only meaningful for the
-    /// string conversions; the ABI layer performs the allocation.
-    pub alloc: bool,
     route: ScanfRoute,
 }
 
@@ -276,56 +269,8 @@ impl ScanSpec {
         pos: usize,
         wide_input: bool,
     ) -> Option<(Option<ScanValue>, usize)> {
-        self.scan_operation_kind()?
-            .scan(input, pos, self, wide_input)
+        self.scan_operation_kind()?.scan(input, pos, self, wide_input)
     }
-
-    /// Run this directive at `pos` WITHOUT allocating.
-    ///
-    /// Same scan, same acceptance, same new position as [`Self::scan_at`] — the
-    /// buffer-writing conversions (`%c`, `%s`, `%[`) report the matched bytes as
-    /// an extent into `input` instead of a freshly allocated `Vec`. This is what
-    /// lets the direct sscanf engine copy once, straight into the caller's
-    /// destination.
-    pub fn scan_emit_at(
-        &self,
-        input: &[u8],
-        pos: usize,
-        wide_input: bool,
-    ) -> Option<(Option<ScanEmit>, usize)> {
-        match self.scan_operation_kind()? {
-            ScanOperationKind::Character => {
-                let (start, end) = scan_char_extent(input, pos, self, wide_input)?;
-                Some((Some(ScanEmit::Chars { start, end }), end))
-            }
-            ScanOperationKind::String => {
-                let (start, end) = scan_string_extent(input, pos, self, wide_input)?;
-                Some((Some(ScanEmit::Text { start, end }), end))
-            }
-            ScanOperationKind::Scanset => {
-                let (start, end) = scan_scanset_extent(input, pos, self)?;
-                Some((Some(ScanEmit::Text { start, end }), end))
-            }
-            other => {
-                let (value, next) = other.scan(input, pos, self, wide_input)?;
-                Some((value.map(ScanEmit::Value), next))
-            }
-        }
-    }
-}
-
-/// What one directive produced, without copying the matched text.
-///
-/// The scalar conversions carry their value; `%c` and `%s`/`%[` carry the
-/// half-open byte range of the input they matched. `Chars` is written to the
-/// destination WITHOUT a NUL terminator (C's `%c` contract) and `Text` WITH one.
-#[derive(Debug, Clone)]
-pub enum ScanEmit {
-    Value(ScanValue),
-    /// `%c`: `input[start..end]`, no terminator.
-    Chars { start: usize, end: usize },
-    /// `%s` / `%[`: `input[start..end]`, NUL-terminated on write.
-    Text { start: usize, end: usize },
 }
 
 impl IntScanKind {
@@ -364,56 +309,7 @@ impl ScanOperationKind {
 #[derive(Debug, Clone)]
 pub struct ScanSet {
     pub negated: bool,
-    /// 256-bit membership bitmap (`words[c>>6] >> (c&63) & 1`). Replaces the old
-    /// `[bool; 256]` (257 B): since `ScanSpec` is now stored inline in the
-    /// directive list, the 32-byte bitmap keeps every directive element small.
-    words: [u64; 4],
-}
-
-impl ScanSet {
-    /// An empty set; members are added as the `%[...]` body is parsed.
-    ///
-    /// PERF: the set used to be accumulated in a parse-time `[bool; 256]` and
-    /// then packed by a 256-iteration loop, per directive, PER CALL — around
-    /// 300 ns of pure setup on a `sscanf` whose whole glibc cost is ~220 ns.
-    /// Members now go straight into the bitmap, so building `%[^=]` costs one
-    /// word-mask instead of 256 iterations of anything.
-    fn empty(negated: bool) -> Self {
-        Self {
-            negated,
-            words: [0u64; 4],
-        }
-    }
-
-    #[inline]
-    fn insert(&mut self, c: u8) {
-        self.words[(c >> 6) as usize] |= 1u64 << (c & 63);
-    }
-
-    /// Add every byte in `lo..=hi` (caller guarantees `lo <= hi`), one OR per
-    /// 64-byte block rather than one per member.
-    fn insert_range(&mut self, lo: u8, hi: u8) {
-        let (lo, hi) = (lo as usize, hi as usize);
-        let (first_word, last_word) = (lo >> 6, hi >> 6);
-        for word in first_word..=last_word {
-            let start = if word == first_word { lo & 63 } else { 0 };
-            let end = if word == last_word { hi & 63 } else { 63 };
-            // `end - start + 1 == 64` only when the whole word is covered;
-            // `1u64 << 64` would be UB, so spell that case out.
-            let mask = if start == 0 && end == 63 {
-                u64::MAX
-            } else {
-                (((1u64 << (end - start + 1)) - 1)) << start
-            };
-            self.words[word] |= mask;
-        }
-    }
-
-    /// Whether byte `c` is a member of the set (before negation is applied).
-    #[inline]
-    pub fn contains(&self, c: u8) -> bool {
-        (self.words[(c >> 6) as usize] >> (c & 63)) & 1 != 0
-    }
+    pub chars: [bool; 256],
 }
 
 // ---------------------------------------------------------------------------
@@ -422,49 +318,23 @@ impl ScanSet {
 
 /// Parse a scanf format string into a list of directives.
 pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
-    // Pre-size for the common case (a handful of directives) so the inline
-    // ScanSpec elements are placed without reallocation/copy churn.
-    let mut directives = Vec::with_capacity(8);
+    let mut directives = Vec::new();
     let mut i = 0;
-    while let Some(directive) = next_scanf_directive(fmt, &mut i) {
-        directives.push(directive);
-    }
-    directives
-}
 
-/// Parse the ONE directive starting at `*i`, advancing `*i` past it.
-///
-/// `None` means "stop parsing the format": end of string, a NUL, or a malformed
-/// directive (unterminated scanset, unknown conversion, length/conversion
-/// mismatch) — exactly the conditions under which the batch parser stopped
-/// pushing. Splitting the parser this way lets the direct sscanf engine walk a
-/// format WITHOUT materialising a `Vec<ScanDirective>`, while
-/// [`parse_scanf_format`] stays defined in terms of this function so the two can
-/// never drift apart.
-pub fn next_scanf_directive(fmt: &[u8], i: &mut usize) -> Option<ScanDirective> {
-    let directive = next_scanf_directive_inner(fmt, i);
-    if directive.is_none() {
-        // A stop is terminal: park the cursor at the end so a caller that keeps
-        // asking cannot re-parse the tail of a malformed directive.
-        *i = fmt.len();
-    }
-    directive
-}
+    while i < fmt.len() {
+        if fmt[i] == 0 {
+            break;
+        }
 
-fn next_scanf_directive_inner(fmt: &[u8], cursor: &mut usize) -> Option<ScanDirective> {
-    let mut i = *cursor;
-    if i >= fmt.len() || fmt[i] == 0 {
-        return None;
-    }
-
-    if fmt[i] == b'%' {
+        if fmt[i] == b'%' {
             i += 1;
             if i >= fmt.len() || fmt[i] == 0 {
-                return None;
+                break;
             }
             if fmt[i] == b'%' {
-                *cursor = i + 1;
-                return Some(ScanDirective::Literal(b'%'));
+                directives.push(ScanDirective::Literal(b'%'));
+                i += 1;
+                continue;
             }
 
             // Parse conversion specifier.
@@ -475,7 +345,6 @@ fn next_scanf_directive_inner(fmt: &[u8], cursor: &mut usize) -> Option<ScanDire
                 conversion: 0,
                 scanset: None,
                 wide_input: false,
-                alloc: false,
                 route: ScanfRoute::invalid(),
             };
 
@@ -497,14 +366,6 @@ fn next_scanf_directive_inner(fmt: &[u8], cursor: &mut usize) -> Option<ScanDire
             }
             if has_width {
                 spec.width = Some(w);
-            }
-
-            // GNU `m` assignment-allocation modifier (`%ms`, `%m[`, `%mc`,
-            // optionally combined with `l`). It precedes the length modifier;
-            // the destination is a `char **` filled with a malloc'd buffer.
-            if i < fmt.len() && fmt[i] == b'm' {
-                spec.alloc = true;
-                i += 1;
             }
 
             // Length modifier.
@@ -550,7 +411,7 @@ fn next_scanf_directive_inner(fmt: &[u8], cursor: &mut usize) -> Option<ScanDire
 
             // Conversion specifier.
             if i >= fmt.len() {
-                return None;
+                break;
             }
 
             if fmt[i] == b'[' {
@@ -561,10 +422,10 @@ fn next_scanf_directive_inner(fmt: &[u8], cursor: &mut usize) -> Option<ScanDire
                     negated = true;
                     i += 1;
                 }
-                let mut set = ScanSet::empty(negated);
+                let mut chars = [false; 256];
                 // First char after [ or [^ can be ']'.
                 if i < fmt.len() && fmt[i] == b']' {
-                    set.insert(b']');
+                    chars[b']' as usize] = true;
                     i += 1;
                 }
                 while i < fmt.len() && fmt[i] != b']' && fmt[i] != 0 {
@@ -574,34 +435,28 @@ fn next_scanf_directive_inner(fmt: &[u8], cursor: &mut usize) -> Option<ScanDire
                         let lo = c;
                         let hi = fmt[i + 2];
                         if lo <= hi {
-                            set.insert_range(lo, hi);
+                            for ch in lo..=hi {
+                                chars[ch as usize] = true;
+                            }
                         } else {
                             // Reversed range (lo > hi): glibc does not form an
                             // empty range — it takes the three characters as
                             // literal set members (`lo`, `-`, `hi`).
-                            set.insert(lo);
-                            set.insert(b'-');
-                            set.insert(hi);
+                            chars[lo as usize] = true;
+                            chars[b'-' as usize] = true;
+                            chars[hi as usize] = true;
                         }
                         i += 3;
                     } else {
-                        set.insert(c);
+                        chars[c as usize] = true;
                         i += 1;
                     }
                 }
-                // A scanset MUST be closed by ']'. If the format ends first
-                // (e.g. "%[^]", where the ']' right after '^' is a literal
-                // member, not the closer), the conversion specification is
-                // malformed: glibc stops scanning at the invalid directive and
-                // returns the conversions completed so far (sscanf("^abc","%[^]")
-                // -> 0, NOT a match of "^abc").
-                let terminated = i < fmt.len() && fmt[i] == b']';
-                if !terminated {
-                    return None;
+                if i < fmt.len() && fmt[i] == b']' {
+                    i += 1;
                 }
-                i += 1;
                 spec.conversion = b'[';
-                spec.scanset = Some(set);
+                spec.scanset = Some(ScanSet { negated, chars });
             } else {
                 // `%S` and `%C` are SVID aliases for `%ls` and `%lc` (wide
                 // string / wide char): normalise to (s|c, length `L`) so they
@@ -621,23 +476,24 @@ fn next_scanf_directive_inner(fmt: &[u8], cursor: &mut usize) -> Option<ScanDire
             }
 
             if !spec.bind_route() {
-                return None;
+                break;
             }
 
-            *cursor = i;
-            Some(ScanDirective::Spec(spec))
-    } else if is_c_space(fmt[i]) {
-        i += 1;
-        // Consume additional whitespace in format.
-        while i < fmt.len() && is_c_space(fmt[i]) {
+            directives.push(ScanDirective::Spec(Box::new(spec)));
+        } else if is_c_space(fmt[i]) {
+            directives.push(ScanDirective::Whitespace);
+            i += 1;
+            // Consume additional whitespace in format.
+            while i < fmt.len() && is_c_space(fmt[i]) {
+                i += 1;
+            }
+        } else {
+            directives.push(ScanDirective::Literal(fmt[i]));
             i += 1;
         }
-        *cursor = i;
-        Some(ScanDirective::Whitespace)
-    } else {
-        *cursor = i + 1;
-        Some(ScanDirective::Literal(fmt[i]))
     }
+
+    directives
 }
 
 // ---------------------------------------------------------------------------
@@ -675,33 +531,24 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
     let mut pos = 0;
     let mut values = Vec::new();
     let mut count: i32 = 0;
+    let mut input_failure = true; // true until first successful read
 
-    // `input_failure` records WHY the scan stopped: it is true only when a
-    // directive ran out of input (premature EOF), distinguishing it from a
-    // matching failure (a char was present but did not match) or normal
-    // completion. The caller maps `input_failure && count == 0` to EOF (-1) and
-    // everything else to the assignment count. A format that completes — or that
-    // contains no value conversions at all (whitespace/literals only) — must
-    // therefore NOT report input failure.
     for dir in directives {
         match dir {
             ScanDirective::Whitespace => {
                 // Skip whitespace in input (Unicode-aware for a wide stream).
-                // Matches zero or more, so it never causes an input failure.
                 pos = skip_ws(input, pos, wide_input);
             }
             ScanDirective::Literal(expected) => {
                 if pos >= input.len() {
-                    // Ran out of input while a literal still needed a char: EOF.
                     return ScanResult {
                         values,
                         count,
                         consumed: pos,
-                        input_failure: true,
+                        input_failure,
                     };
                 }
                 if input[pos] != *expected {
-                    // Char present but mismatched: matching failure, not EOF.
                     return ScanResult {
                         values,
                         count,
@@ -725,10 +572,11 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                             values,
                             count,
                             consumed: pos,
-                            input_failure: exhausted_before_conversion,
+                            input_failure: exhausted_before_conversion && count == 0,
                         };
                     }
                     Some((val, new_pos)) => {
+                        input_failure = false;
                         pos = new_pos;
                         if !spec.suppress
                             && let Some(v) = val
@@ -745,13 +593,11 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
         }
     }
 
-    // All directives consumed without an EOF-induced stop: never an input
-    // failure (a conversion-less format returns 0, not EOF).
     ScanResult {
         values,
         count,
         consumed: pos,
-        input_failure: false,
+        input_failure,
     }
 }
 
@@ -760,13 +606,7 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
 /// For a WIDE stream the input bytes are the UTF-8 encoding of wide characters,
 /// so the whole UTF-8 sequence is decoded and tested with `iswspace`, matching
 /// glibc's wide scanf (which recognises U+2003, U+205F, U+3000, … as space).
-/// PERF: the Unicode arm lives in its own `#[inline(never)]` function so that
-/// `ws_seq_len` itself is small enough to inline. It is called ONCE PER BYTE by
-/// the `%s` token scan and by every whitespace skip; with the `utf8_seq_len` +
-/// `from_utf8` + `iswspace` body inline, it was too large for the compiler to
-/// inline and each byte cost a real call. That showed up as ~17-22 ns of gap per
-/// `%s` conversion against glibc, whose inner loop is an `ISSPACE` table lookup.
-#[inline(always)]
+#[inline]
 fn ws_seq_len(input: &[u8], pos: usize, wide: bool) -> usize {
     if pos >= input.len() {
         return 0;
@@ -774,13 +614,6 @@ fn ws_seq_len(input: &[u8], pos: usize, wide: bool) -> usize {
     if !wide {
         return if is_c_space(input[pos]) { 1 } else { 0 };
     }
-    ws_seq_len_wide(input, pos)
-}
-
-/// Unicode whitespace sequence length — only a WIDE scanf stream (`swscanf` /
-/// `fwscanf`), or a narrow `%ls`, ever reaches this.
-#[inline(never)]
-fn ws_seq_len_wide(input: &[u8], pos: usize) -> usize {
     let len = utf8_seq_len(input[pos]);
     if pos + len > input.len() {
         // Truncated trailing sequence: fall back to the ASCII test.
@@ -801,24 +634,9 @@ fn ws_seq_len_wide(input: &[u8], pos: usize) -> usize {
     }
 }
 
-/// Skip leading whitespace from `pos`, returning the new position — the
-/// `ScanDirective::Whitespace` step, exposed for the direct sscanf engine so it
-/// runs the identical skip the batch engine does.
-pub fn skip_scanf_whitespace(input: &[u8], pos: usize, wide: bool) -> usize {
-    skip_ws(input, pos, wide)
-}
-
 /// Skip leading whitespace. Returns new position. When `wide`, Unicode
 /// whitespace (whole UTF-8 sequences) is skipped, not just ASCII.
 fn skip_ws(input: &[u8], mut pos: usize, wide: bool) -> usize {
-    if !wide {
-        // Narrow stream: a whitespace run is a byte run, so hoist the branch out
-        // of the loop and test bytes directly.
-        while pos < input.len() && is_c_space(input[pos]) {
-            pos += 1;
-        }
-        return pos;
-    }
     loop {
         let n = ws_seq_len(input, pos, wide);
         if n == 0 {
@@ -1235,14 +1053,11 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
             // after "nan", where the sequence is `[0-9A-Za-z_]*` and the
             // closing ')' is MANDATORY: if it is absent, the whole token
             // (sign and all) is rewound and the conversion fails to match.
-            // The sign bit is applied to the NaN ("-nan" keeps its sign) and the
-            // `(n-char-sequence)` payload is encoded into the significand exactly
-            // as glibc's strtod does (parsed as strtoull base 0).
+            // The sign bit is applied to the NaN ("-nan" keeps its sign); the
+            // payload value itself is an impl detail we do not replicate.
             let budget = max_chars - chars_read; // chars allowed from `remaining`
             let mut j = 3usize;
-            let mut payload = 0u64;
             if remaining.len() > j && j < budget && remaining[j] == b'(' {
-                let seq_start = j + 1;
                 let mut k = j + 1;
                 while k < remaining.len()
                     && k < budget
@@ -1251,8 +1066,6 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
                     k += 1;
                 }
                 if k < remaining.len() && k < budget && remaining[k] == b')' {
-                    payload =
-                        crate::stdlib::conversion::parse_nan_payload(&remaining[seq_start..k]);
                     j = k + 1; // consume through the ')'
                 } else {
                     // Malformed payload (no closing paren / cut off by width):
@@ -1260,7 +1073,7 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
                     return None;
                 }
             }
-            let val = crate::stdlib::conversion::nan_f64(payload, negative);
+            let val = f64::NAN.copysign(if negative { -1.0 } else { 1.0 });
             return Some((Some(ScanValue::Float(val)), i + j));
         }
     }
@@ -1285,44 +1098,36 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
     }
 
     // Decimal float: digits, decimal point, exponent.
-    //
-    // PERF: this used to accumulate the token into a `Vec::with_capacity(64)`,
-    // one `push` per byte, and parse the copy — a heap allocation on every
-    // float conversion. glibc does not pay it: `__vfscanf_internal` gathers
-    // float characters into a stack buffer and hands that to
-    // `__strtod_internal`. Under `LD_PRELOAD` ours landed in FrankenLibC's own
-    // tracked allocator, and a lone `%lf` measured 1.574x glibc — the worst
-    // ratio in the sscanf family, on a SINGLE conversion.
-    //
-    // The copy was never needed. Every byte the old loop pushed was `input[i]`
-    // and every push advanced `i` by exactly one, so the accumulated token is
-    // always the contiguous slice `input[token_start..i]`. The one byte that
-    // differed was a leading `+`, which the old loop dropped and which
-    // `token_start` skips here. The bytes handed to `parse` are therefore
-    // identical, and so is every value and every matching failure (a trailing
-    // `e` still yields "3.14e", still fails to parse, still returns `None`).
-    let token_start = if input[pos] == b'+' { pos + 1 } else { pos };
+    let mut buf = Vec::with_capacity(64);
+    if negative {
+        buf.push(b'-');
+    }
     let mut any_digit = false;
     let mut seen_dot = false;
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
         if c.is_ascii_digit() {
             any_digit = true;
+            buf.push(c);
         } else if c == b'.' && !seen_dot {
             // Only the FIRST decimal point is part of the float; a second '.'
             // ends the token (glibc reads the longest valid prefix, e.g.
             // "03.1.5" -> 3.1 consuming 4 bytes). Found by sscanf_differential_fuzz.
             seen_dot = true;
+            buf.push(c);
         } else if (c == b'e' || c == b'E') && any_digit {
+            buf.push(c);
             i += 1;
             chars_read += 1;
             // Optional exponent sign.
             if i < input.len() && chars_read < max_chars && (input[i] == b'+' || input[i] == b'-') {
+                buf.push(input[i]);
                 i += 1;
                 chars_read += 1;
             }
             // Exponent digits.
             while i < input.len() && chars_read < max_chars && input[i].is_ascii_digit() {
+                buf.push(input[i]);
                 i += 1;
                 chars_read += 1;
             }
@@ -1338,8 +1143,8 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
         return None;
     }
 
-    // Parse the token in place — no allocation, no copy.
-    let s = core::str::from_utf8(&input[token_start..i]).ok()?;
+    // Parse the collected float string.
+    let s = core::str::from_utf8(&buf).ok()?;
     let val: f64 = s.parse().ok()?;
 
     Some((Some(ScanValue::Float(val)), i))
@@ -1448,14 +1253,14 @@ fn scan_hex_float(
         }
     }
 
-    // Convert to f64: value = significand * 2^(bin_exp - 4*frac_digits). Each
-    // hex fractional digit shifts the binary point 4 bits. Scale with
-    // `libm::ldexp` (== scalbn) rather than `* 2_f64.powi(n)`: for a large
-    // negative exponent `powi` evaluates 1/2^|n|, and 2^1074 overflows to inf,
-    // so the smallest subnormal `0x1p-1074` (5e-324) wrongly underflowed to 0.
-    // ldexp handles the full subnormal/overflow range correctly.
-    let total_exp = bin_exp.saturating_sub(frac_digits.saturating_mul(4));
-    let mut val = libm::ldexp(significand as f64, total_exp);
+    // Convert to f64:
+    // value = significand * 2^(bin_exp - 4*frac_digits)
+    // Each hex fractional digit shifts the binary point 4 bits.
+    let total_exp = bin_exp - (frac_digits * 4);
+    let mut val = significand as f64;
+    if total_exp != 0 {
+        val *= 2_f64.powi(total_exp);
+    }
     if negative {
         val = -val;
     }
@@ -1483,22 +1288,6 @@ fn scan_char(
     spec: &ScanSpec,
     wide_input: bool,
 ) -> Option<(Option<ScanValue>, usize)> {
-    let (start, end) = scan_char_extent(input, pos, spec, wide_input)?;
-    Some((Some(ScanValue::Char(input[start..end].to_vec())), end))
-}
-
-/// `%c` matched-byte extent — [`scan_char`] without the copy.
-///
-/// Every `ScanValue::Char` the batch path produces is exactly `input[start..end]`
-/// for this extent, so the direct engine can write the caller's buffer straight
-/// from the input slice and never allocate. `scan_char` is defined in terms of
-/// this function so the two cannot diverge.
-fn scan_char_extent(
-    input: &[u8],
-    pos: usize,
-    spec: &ScanSpec,
-    wide_input: bool,
-) -> Option<(usize, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     let n = spec.width.unwrap_or(1);
     // `%lc` ALWAYS counts wide characters; for a WIDE scanf stream (swscanf) the
@@ -1522,19 +1311,17 @@ fn scan_char_extent(
         if read == 0 {
             return None;
         }
-        return Some((pos, end));
+        return Some((Some(ScanValue::Char(input[pos..end].to_vec())), end));
     }
-    // Read UP TO `n` bytes. Like glibc (and the wide path above), a `%Nc` whose
-    // width exceeds the available input reads what IS there and still succeeds;
-    // only a total absence of input is a matching failure. fl previously
-    // required the full `n` bytes and wrongly failed (e.g. `%5c` on "ab").
-    // `checked_add` guards a pathological width from overflowing `pos + n`
-    // (bd-35vob).
-    let end = core::cmp::min(pos.checked_add(n)?, input.len());
-    if end == pos {
+    // Guard against pathological widths that overflow pos + n. Under
+    // debug_assertions `usize` add panics; in release it wraps and
+    // would skip the bounds check below, reading past input. (bd-35vob)
+    let end = pos.checked_add(n)?;
+    if end > input.len() {
         return None;
     }
-    Some((pos, end))
+    let chars = input[pos..end].to_vec();
+    Some((Some(ScanValue::Char(chars)), end))
 }
 
 /// Scan a string (%s). Skips whitespace, then reads non-whitespace.
@@ -1544,19 +1331,6 @@ fn scan_string(
     spec: &ScanSpec,
     wide_input: bool,
 ) -> Option<(Option<ScanValue>, usize)> {
-    let (start, end) = scan_string_extent(input, pos, spec, wide_input)?;
-    Some((Some(ScanValue::String(input[start..end].to_vec())), end))
-}
-
-/// `%s` matched-token extent — [`scan_string`] without the copy. The batch path's
-/// `buf` is built by appending exactly the bytes this scan advances over, so the
-/// token is always the contiguous slice `input[start..end]`.
-fn scan_string_extent(
-    input: &[u8],
-    pos: usize,
-    spec: &ScanSpec,
-    wide_input: bool,
-) -> Option<(usize, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     if pos >= input.len() {
         return None;
@@ -1568,25 +1342,9 @@ fn scan_string_extent(
     // bytes for a narrow stream (sscanf) but WIDE characters for a wide stream
     // (swscanf), whose input is multibyte-encoded wide text.
     let wide = wide_input || matches!(spec.length, LengthMod::L);
-
-    // Narrow `%s` on a narrow stream — the overwhelmingly common case. Here a
-    // character IS a byte, so the token ends at the first ASCII-whitespace byte
-    // and the width is a byte bound: one tight loop with no per-byte call and no
-    // wide/narrow branch inside it. (`!wide` already implies `!wide_input`.)
-    if !wide {
-        let limit = input.len().min(pos.saturating_add(max_chars));
-        let mut end = pos;
-        while end < limit && !is_c_space(input[end]) {
-            end += 1;
-        }
-        if end == pos {
-            return None;
-        }
-        return Some((pos, end));
-    }
-
     let mut i = pos;
     let mut chars_read = 0usize;
+    let mut buf = Vec::new();
 
     while i < input.len() && chars_read < max_chars {
         // The token ends at whitespace. For a wide stream that means Unicode
@@ -1596,50 +1354,49 @@ fn scan_string_extent(
             break;
         }
         if wide {
-            i = (i + utf8_seq_len(input[i])).min(input.len());
+            let next = (i + utf8_seq_len(input[i])).min(input.len());
+            buf.extend_from_slice(&input[i..next]);
+            i = next;
         } else {
+            buf.push(input[i]);
             i += 1;
         }
         chars_read += 1;
     }
 
-    if i == pos {
+    if buf.is_empty() {
         return None;
     }
 
-    Some((pos, i))
+    Some((Some(ScanValue::String(buf)), i))
 }
 
 /// Scan a scanset (%[...]). No whitespace skip.
 fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
-    let (start, end) = scan_scanset_extent(input, pos, spec)?;
-    Some((Some(ScanValue::String(input[start..end].to_vec())), end))
-}
-
-/// `%[` matched-run extent — [`scan_scanset`] without the copy.
-fn scan_scanset_extent(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(usize, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     let scanset = spec.scanset.as_ref()?;
     let max_chars = effective_width(spec, usize::MAX);
     let mut i = pos;
     let mut chars_read = 0usize;
+    let mut buf = Vec::new();
 
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
-        let in_set = scanset.contains(c);
+        let in_set = scanset.chars[c as usize];
         let accept = if scanset.negated { !in_set } else { in_set };
         if !accept {
             break;
         }
+        buf.push(c);
         i += 1;
         chars_read += 1;
     }
 
-    if i == pos {
+    if buf.is_empty() {
         return None;
     }
 
-    Some((pos, i))
+    Some((Some(ScanValue::String(buf)), i))
 }
 
 /// Scan a pointer (%p). Expects 0xHEX or (nil).
@@ -1732,79 +1489,6 @@ mod tests {
     }
 
     #[test]
-    fn scanset_bitmap_matches_bool_array() {
-        // Exhaustively prove the 256-bit bitmap encodes the same membership as
-        // the parse-time [bool; 256] array, including word-boundary bytes.
-        for seed in [
-            0u64,
-            1,
-            0x5555_5555_5555_5555,
-            0xFFFF_FFFF_FFFF_FFFF,
-            0x0123_4567_89ab_cdef,
-        ] {
-            let mut arr = [false; 256];
-            let mut s = seed | 1;
-            for (i, slot) in arr.iter_mut().enumerate() {
-                s ^= s << 13;
-                s ^= s >> 7;
-                s ^= s << 17;
-                *slot = (s & 1 == 0) || matches!(i, 0 | 63 | 64 | 127 | 128 | 255);
-            }
-            let mut set = ScanSet::empty(false);
-            for (i, member) in arr.iter().enumerate() {
-                if *member {
-                    set.insert(i as u8);
-                }
-            }
-            for c in 0..=255u8 {
-                assert_eq!(
-                    set.contains(c),
-                    arr[c as usize],
-                    "membership mismatch at c={c} seed={seed:#x}"
-                );
-            }
-        }
-    }
-
-    /// `insert_range` masks whole 64-bit words at a time, so its boundaries
-    /// (word-spanning ranges, single-byte ranges, and the full 0..=255 range
-    /// whose mask would overflow a `1u64 << 64`) each need proving against the
-    /// obvious per-byte reference.
-    #[test]
-    fn test_scanset_insert_range_matches_per_byte() {
-        for (lo, hi) in [
-            (0u8, 255u8),
-            (0, 0),
-            (255, 255),
-            (0, 63),
-            (0, 64),
-            (63, 64),
-            (63, 65),
-            (64, 127),
-            (1, 62),
-            (b'a', b'z'),
-            (b'0', b'9'),
-            (62, 193),
-            (128, 255),
-            (191, 192),
-        ] {
-            let mut ranged = ScanSet::empty(false);
-            ranged.insert_range(lo, hi);
-            let mut per_byte = ScanSet::empty(false);
-            for c in lo..=hi {
-                per_byte.insert(c);
-            }
-            for c in 0..=255u8 {
-                assert_eq!(
-                    ranged.contains(c),
-                    per_byte.contains(c),
-                    "range {lo}..={hi} diverges at c={c}"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn test_parse_scanset() {
         let dirs = parse_scanf_format(b"%[abc]");
         assert_eq!(dirs.len(), 1);
@@ -1812,10 +1496,10 @@ mod tests {
             assert_eq!(s.conversion, b'[');
             let ss = s.scanset.as_ref().unwrap();
             assert!(!ss.negated);
-            assert!(ss.contains(b'a'));
-            assert!(ss.contains(b'b'));
-            assert!(ss.contains(b'c'));
-            assert!(!ss.contains(b'd'));
+            assert!(ss.chars[b'a' as usize]);
+            assert!(ss.chars[b'b' as usize]);
+            assert!(ss.chars[b'c' as usize]);
+            assert!(!ss.chars[b'd' as usize]);
         } else {
             panic!("expected Spec");
         }
@@ -1827,7 +1511,7 @@ mod tests {
         if let ScanDirective::Spec(ref s) = dirs[0] {
             let ss = s.scanset.as_ref().unwrap();
             assert!(ss.negated);
-            assert!(ss.contains(b'a'));
+            assert!(ss.chars[b'a' as usize]);
         } else {
             panic!("expected Spec");
         }

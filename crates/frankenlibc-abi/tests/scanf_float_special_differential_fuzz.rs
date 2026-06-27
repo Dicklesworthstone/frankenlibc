@@ -13,7 +13,6 @@
 //!     its sign is checked — bit-pattern signbit, invisible to `== `),
 //!   - the `%n` consumed-character count (so `nan(123)` payload consumption is
 //!     checked).
-//!
 //! NaN mantissa payloads are NOT bit-compared (glibc's payload encoding is an
 //! impl detail); class + signbit + consumed length are the parity contract.
 
@@ -50,13 +49,9 @@ enum Fp {
 
 fn fp(v: f64) -> Fp {
     if v.is_nan() {
-        Fp::Nan {
-            neg: v.is_sign_negative(),
-        }
+        Fp::Nan { neg: v.is_sign_negative() }
     } else if v.is_infinite() {
-        Fp::Inf {
-            neg: v.is_sign_negative(),
-        }
+        Fp::Inf { neg: v.is_sign_negative() }
     } else {
         Fp::Finite(v.to_bits())
     }
@@ -69,24 +64,18 @@ struct Out {
     n: Option<c_int>,
 }
 
-fn run(is_fl: bool, s: &CString, fmt: &CString) -> Out {
+fn run(
+    is_fl: bool,
+    s: &CString,
+    fmt: &CString,
+) -> Out {
     let mut v: f64 = 0.0;
     let mut n: c_int = -12345;
     let ret = unsafe {
         if is_fl {
-            fl_sscanf(
-                s.as_ptr(),
-                fmt.as_ptr(),
-                &mut v as *mut f64,
-                &mut n as *mut c_int,
-            )
+            fl_sscanf(s.as_ptr(), fmt.as_ptr(), &mut v as *mut f64, &mut n as *mut c_int)
         } else {
-            sscanf(
-                s.as_ptr(),
-                fmt.as_ptr(),
-                &mut v as *mut f64,
-                &mut n as *mut c_int,
-            )
+            sscanf(s.as_ptr(), fmt.as_ptr(), &mut v as *mut f64, &mut n as *mut c_int)
         }
     };
     Out {
@@ -143,7 +132,7 @@ fn gen_input(r: &mut Lcg) -> String {
     }
     // Occasionally append trailing garbage to probe the consumed-length cutoff.
     if r.below(3) == 0 {
-        let tail = *b"x1.z ";
+        let tail = [b'x', b'1', b'.', b'z', b' '];
         let n = r.below(3);
         for _ in 0..n {
             s.push(tail[r.below(tail.len())] as char);
