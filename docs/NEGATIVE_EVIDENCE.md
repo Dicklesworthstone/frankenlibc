@@ -6,6 +6,26 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ calloc/free(16): fallback sized-slot cache cuts the small-allocation gap ~44% (BlackThrush)
+
+- **LANDED CODE WIN (`malloc_abi.rs`, commit `0593f38c8`).** The strict native-fallback allocator table used to
+  record `(ptr,size)` on allocation and then re-scan the open-addressed table on the matching `free`. Added a
+  per-reentry-slot exact cache of the last fallback table index, guarded to the single-threaded fast path and
+  verified against the table before tombstoning. Multi-threaded and cache-miss cases still use the existing
+  locked table lookup, so externally visible allocator behavior is unchanged.
+- **MEASURED (`calloc_glibc_bench`, filtered `calloc_cycle/(fl|glibc)/16`, `cargo bench -p frankenlibc-bench
+  --profile release --features abi-bench --bench calloc_glibc_bench`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`).**
+  `rch` could not claim a remote worker (`insufficient_slots`/preflight), so this is local same-machine
+  evidence, not fleet-wide remote proof. Parent `9a5e8b656`: fl **91.560 ns** / glibc **6.551 ns** =
+  **13.98x LOSS**. Current repeat after the parent run: fl **51.682 ns** / glibc **6.535 ns** =
+  **7.91x LOSS**. Criterion reported the current run **~44.6% faster** than the parent data
+  (`change: -46.967%..-42.045%`, p=0.00). The first current run was similar for fl (53.805 ns).
+- **CONFORMANCE:** `cargo check -p frankenlibc-abi --lib`, `cargo test -p frankenlibc-abi --test malloc_abi_test
+  -- --nocapture` (55 passed, 1 ignored), and `cargo test -p frankenlibc-abi --test
+  conformance_diff_malloc_edges -- --nocapture` all pass. Full `--all-targets` remains blocked by the
+  pre-existing scratch `zz_scratch_divmin.rs` test compile failure, so the acceptance gate here is the focused
+  allocator crate/conformance set.
+
 ## 2026-06-27 — ❌ DISPROVEN: widening the gated Cephes erfc rational to the full [1,2.5) (cc)
 
 - **MEASURED GAP (new bench `erfc_glibc_bench.rs`, in-process vs host glibc):** fl `erfc` is a **1.46x LOSS**
