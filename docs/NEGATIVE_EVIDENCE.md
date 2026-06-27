@@ -6,6 +6,24 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ❌ regex build-bulk-table-once-per-search ~0-gain (REVERTED) + new litprefix gap (cc)
+
+- **DISPROVEN (reverted):** `build_bulk_loop_table` runs per-search in both `leftmost_start` and `run_from`;
+  moved it to build ONCE per `execute()` and lend the slice down (conformance GREEN). MEASURED: ~0-gain — the
+  determinate-first-byte cases were unchanged (`rare` 2.15 µs vs 2.18 prior, `sparse` 8.14 vs 8.1 — noise), and
+  the literal-prefix-loop case (where it should help most: run_from per occurrence) stayed **fl 97.6 µs / glibc
+  18.1 µs = 5.4x** with build-once. The bulk-table build (a couple small allocs for these small NFAs) is NOT
+  the bottleneck. Reverted per REVERT-~0-gain. (Compile-time-on-CompiledRegex would shave the same negligible
+  cost — not worth the plumbing.)
+- **NEW MEASURED GAP (the real residual, future lever):** `error[0-9]` over ~680 "error " — literal_prefix
+  "error" → `execute()` calls `run_from` once per occurrence; each pays the full PikeVm per-call setup
+  (visited/closure-cache/current/next allocs + the closure walk) → **fl 97.6 µs / glibc 18.1 µs = 5.4x slower**.
+  The lever is reducing per-`run_from` setup (reusable scratch buffers across the literal-prefix loop) or a
+  DFA-bounds path — NOT the bulk table. Bench case `litprefix_many` left in place to track it.
+- Also mis-designed two bench inputs first (caught both): `errorX` is a pure literal → rejected by the
+  required_substring memmem prefilter in 118 ns (fl 122x faster, but unrelated to build-once); `error[0-9]` is
+  the correct literal-prefix-LOOP probe.
+
 ## 2026-06-27 — ✅ regex any_match DFA: flat transition table replaces HashMap — 6.9x, ~parity vs glibc (cc)
 
 - **LANDED CODE WIN (`string/regex.rs` `any_match_dfa`, conformance GREEN).** The membership-prescan lazy DFA

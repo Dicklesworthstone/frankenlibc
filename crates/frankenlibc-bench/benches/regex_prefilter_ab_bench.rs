@@ -70,8 +70,20 @@ fn bench(c: &mut Criterion) {
     let mut anyq: Vec<u8> = vec![b'a'; 4090];
     anyq.push(b'"');
 
+    // (7) LITERAL-PREFIX with MANY occurrences: `error[0-9]` over ~680 "error " (no
+    //     digit after any "error"). The literal_prefix "error" makes execute() call
+    //     run_from once per occurrence — a measured gap (fl ~97 µs / glibc ~18 µs =
+    //     5.4x) from per-run_from PikeVm setup overhead, NOT the bulk-table build
+    //     (build-once-per-search was ~0-gain here). A future per-run_from-overhead /
+    //     DFA-bounds lever, not yet closed.
+    let mut litmany: Vec<u8> = Vec::new();
+    while litmany.len() < 4080 {
+        litmany.extend_from_slice(b"error ");
+    }
+
     // Each case: (name, pattern, fl_cflags, glibc_cflags, haystack).
     let cases: &[(&str, &str, i32, i32, &Vec<u8>)] = &[
+        ("litprefix_many", "error[0-9]", REG_EXTENDED, libc::REG_EXTENDED, &litmany),
         ("anymatch_dfa", "[^\"]*\"", REG_EXTENDED, libc::REG_EXTENDED, &anyq),
         ("sparse_digits_late", "[0-9]+END", REG_EXTENDED, libc::REG_EXTENDED, &sparse),
         ("rare_firstbyte_jump", "[0-9][0-9][0-9]X", REG_EXTENDED, libc::REG_EXTENDED, &rare),
