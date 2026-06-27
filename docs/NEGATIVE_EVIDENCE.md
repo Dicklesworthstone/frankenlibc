@@ -6,6 +6,37 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — regex leftmost closure PC cache WIN (1.20x FL speedup; 29.16x -> 24.94x vs glibc)
+
+Agent: BlackThrush. Lever landed: for position-independent regex NFAs (no anchors
+or word-boundary assertions), cache the `leftmost_start` epsilon-closure output
+PCs by source PC and replay them through the existing generation stamp. This is
+the scoped lazy-DFA-state-cache primitive identified by the prior Rc-COW rejects:
+it removes repeated `lm_closure` walks on the hot `X[a-z]+9` ICASE dense run
+without changing the existing anchored/word-boundary path or the priority dedupe
+that keeps the smallest start for each live PC.
+
+Same-worker OLD/NEW proof used the requested per-crate release-profile wrapper
+with `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`:
+`rch exec -- cargo bench -p frankenlibc-bench --profile release --bench
+regex_prefilter_ab_bench -- regex_prefilter_icase_class_perbyte`.
+
+- Baseline `d4834d51f` in detached worktree, worker `hz2`: FrankenLibC
+  `regex_prefilter_icase_class_perbyte/fl_core` **441.91 us** p50; host glibc
+  **15.155 us** p50; ratio **29.16x** slower than glibc.
+- Candidate on `main`, worker `hz2`: FrankenLibC
+  `regex_prefilter_icase_class_perbyte/fl_core` **368.93 us** p50; host glibc
+  **14.791 us** p50; ratio **24.94x** slower than glibc.
+- OLD -> NEW: **1.20x** faster FL on the measured gap; ratio vs glibc improves
+  from **29.16x** to **24.94x**. Residual gap is still dominated by PikeVm
+  per-byte state simulation; next lever should be bulk class-run consume or a
+  fuller leftmost lazy-DFA transition cache, not capture-slot allocation.
+
+Behavior/conformance: `rch exec -- cargo test -p frankenlibc-core --test
+regex_differential_probe --test regex_capture_differential_probe` passed both
+tests on `ovh-a`; `rch exec -- cargo test -p frankenlibc-harness --test
+regex_glob_ops_conformance_test` passed 11/11 locally through `rch`.
+
 ## 2026-06-27 — regex dense-case: surrounding fns confirmed optimal; next lever = bulk class-run consume (cc)
 
 - **EXPLORED, no micro-lever (saves future re-exploration):** chased the dense-regex residual (leftmost_start

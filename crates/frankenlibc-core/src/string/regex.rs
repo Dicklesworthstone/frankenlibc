@@ -2114,6 +2114,68 @@ impl<'a> PikeVm<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn lm_push_cached_closure(
+        &self,
+        pc: usize,
+        start: usize,
+        sp: usize,
+        notbol: bool,
+        noteol: bool,
+        list: &mut Vec<(usize, usize)>,
+        visited: &mut [u64],
+        cur_gen: u64,
+        use_cache: bool,
+        cache: &mut [Option<Box<[usize]>>],
+        cache_visited: &mut [u64],
+        cache_gen: &mut u64,
+        cache_scratch: &mut Vec<(usize, usize)>,
+    ) {
+        if !use_cache {
+            self.lm_closure(pc, start, sp, notbol, noteol, list, visited, cur_gen, 0);
+            return;
+        }
+        if pc >= cache.len() {
+            return;
+        }
+        if cache[pc].is_none() {
+            *cache_gen = cache_gen.wrapping_add(1);
+            if *cache_gen == 0 {
+                cache_visited.fill(0);
+                *cache_gen = 1;
+            }
+            cache_scratch.clear();
+            // Position-independent NFAs have no anchors or word assertions, so
+            // the closure PCs depend only on the source PC, not on input offset.
+            self.lm_closure(
+                pc,
+                0,
+                0,
+                false,
+                false,
+                cache_scratch,
+                cache_visited,
+                *cache_gen,
+                0,
+            );
+            cache[pc] = Some(
+                cache_scratch
+                    .iter()
+                    .map(|&(closed_pc, _)| closed_pc)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            );
+        }
+        if let Some(pcs) = &cache[pc] {
+            for &closed_pc in pcs.iter() {
+                if visited[closed_pc] != cur_gen {
+                    visited[closed_pc] = cur_gen;
+                    list.push((closed_pc, start));
+                }
+            }
+        }
+    }
+
     /// Find the leftmost START position at which the pattern matches, in a
     /// SINGLE unanchored NFA sweep that merges all start positions (deduped),
     /// instead of the per-start `run_from` probe loop. This is the leftmost
@@ -2130,6 +2192,19 @@ impl<'a> PikeVm<'a> {
         let mut current: Vec<(usize, usize)> = Vec::new();
         let mut next: Vec<(usize, usize)> = Vec::new();
         let mut best: Option<usize> = None;
+        let use_closure_cache = self.is_pos_independent();
+        let mut closure_cache: Vec<Option<Box<[usize]>>> = if use_closure_cache {
+            vec![None; self.nfa.len()]
+        } else {
+            Vec::new()
+        };
+        let mut cache_visited = if use_closure_cache {
+            vec![0u64; self.nfa.len()]
+        } else {
+            Vec::new()
+        };
+        let mut cache_gen = 0u64;
+        let mut cache_scratch: Vec<(usize, usize)> = Vec::new();
 
         cur_gen += 1;
         // A start whose first byte is not in the prefilter's first-byte set can
@@ -2137,7 +2212,7 @@ impl<'a> PikeVm<'a> {
         // first-byte pattern), so skip seeding it — exactly the soundness the
         // `#[cfg(debug_assertions)]` probe in `execute` checks via `prefilter_skips`.
         if !self.prefilter_skips(0) {
-            self.lm_closure(
+            self.lm_push_cached_closure(
                 0,
                 0,
                 0,
@@ -2146,7 +2221,11 @@ impl<'a> PikeVm<'a> {
                 &mut current,
                 &mut visited,
                 cur_gen,
-                0,
+                use_closure_cache,
+                &mut closure_cache,
+                &mut cache_visited,
+                &mut cache_gen,
+                &mut cache_scratch,
             );
         }
 
@@ -2166,7 +2245,7 @@ impl<'a> PikeVm<'a> {
                     NfaInstr::Match(mk)
                         if sp < input_len && self.matches_byte(mk, self.input[sp]) =>
                     {
-                        self.lm_closure(
+                        self.lm_push_cached_closure(
                             pc + 1,
                             start,
                             sp + 1,
@@ -2175,7 +2254,11 @@ impl<'a> PikeVm<'a> {
                             &mut next,
                             &mut visited,
                             cur_gen,
-                            0,
+                            use_closure_cache,
+                            &mut closure_cache,
+                            &mut cache_visited,
+                            &mut cache_gen,
+                            &mut cache_scratch,
                         );
                     }
                     _ => {}
@@ -2191,7 +2274,7 @@ impl<'a> PikeVm<'a> {
             // the wasted epsilon-closure on every non-first-byte position, the
             // O(n) win on determinate-first-byte patterns over large inputs).
             if best.is_none_or(|b| sp < b) && !self.prefilter_skips(sp) {
-                self.lm_closure(
+                self.lm_push_cached_closure(
                     0,
                     sp,
                     sp,
@@ -2200,7 +2283,11 @@ impl<'a> PikeVm<'a> {
                     &mut next,
                     &mut visited,
                     cur_gen,
-                    0,
+                    use_closure_cache,
+                    &mut closure_cache,
+                    &mut cache_visited,
+                    &mut cache_gen,
+                    &mut cache_scratch,
                 );
             }
             core::mem::swap(&mut current, &mut next);
