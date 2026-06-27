@@ -248,3 +248,8 @@ harness = false
 [[bench]]
 name = "qsort_pdqsort_ab_bench"
 harness = false
+
+# qsort large-element: fl pdqsort vs index-sort vs glibc (width 32), 1 process.
+[[bench]]
+name = "qsort_indexsort_ab_bench"
+harness = false

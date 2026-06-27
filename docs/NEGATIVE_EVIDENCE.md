@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ qsort LARGE elements (width>16) → indirect index-sort: 0.84x WIN → 0.51x WIN (cc)
+
+- **LANDED CODE WIN (`sort.rs`, conformance GREEN, byte-identical).** The stdlib fixed-width fallback only
+  covered widths {1,2,4,8,16}; LARGE elements (structs of width >16) still used `pdqsort_recurse`, which moves
+  full width-byte elements through every swap. Added an INDIRECT sort: stdlib-sort an array of `u32` indices
+  by the comparator, then permute the elements ONCE into a scratch buffer — moving 4-byte indices during the
+  O(n·log n) sort instead of 32-byte elements (glibc sorts large records indirectly for the same reason).
+- **SAME-PROCESS A/B (`qsort_indexsort_ab_bench`, width-32 struct-key, n=20000, all sorted-verified):**
+  | impl | time |
+  |---|---|
+  | fl `pdqsort_recurse` (old, full-element moves) | 1.99 ms |
+  | **index-sort (u32 indices + 1 permute)** | **1.03 ms** |
+  | glibc qsort | 2.38 ms |
+  index-sort is **1.93x faster** than fl's pdqsort and **2.3x faster than glibc**.
+- **DEPLOYED (core qsort width-32, after landing): 1.194 ms vs glibc 2.338 ms = 0.51x WIN** (was 0.84x;
+  1.67x self-speedup; the ~0.2 ms over the bench-local index-sort is the lane/gate dispatch before the
+  fallback). Applies to all width>16 non-radix sorts (struct arrays). Widths {1,2,4,8,16} keep the direct
+  `[u8;N]` stdlib sort; the rare small-odd widths {3,5,6,7,9..15} keep `pdqsort_recurse`.
+- **Conformance GREEN + byte-identical:** core `stdlib::sort` 33/33 incl. `qsort_golden_corpus_hash_is_stable`,
+  `conformance_diff_qsort_{radix,count8,r,radix16}` + `_heapsort` 6/6. Unstable like C qsort (tie order
+  unspecified); `u32` indices (guarded `num <= u32::MAX`, else pdqsort). Bench `qsort_indexsort_ab_bench.rs`
+  added.
+
 ## 2026-06-27 — ✅ qsort fallback → stdlib sort_unstable: char* string sort 1.6x LOSS → parity (cc)
 
 - **LANDED CODE WIN (`sort.rs`, conformance GREEN, byte-identical).** After the pre-gate skips the wasted
