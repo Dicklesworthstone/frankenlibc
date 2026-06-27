@@ -23,6 +23,31 @@ retried and real wins are confirmed with numbers.
   an ARM erf/erfc *polynomial* port for speed; fl's Cephes is already faster. (A genuine erfc win still needs
   a different algorithm for the [1,2.5) tail, but not this.)
 
+## 2026-06-27 — DISPROVEN: strict fallback pending-slot front buffer for calloc/free(16) (BlackThrush)
+
+- **MEASURED GAP TARGET:** current ledger/frontier still shows strict `calloc/free(16)` as a large allocator
+  membrane gap after the fallback sized-slot cache. The new lever came from the alien-graveyard allocator
+  hot-path pattern: keep the next strict native fallback allocation as a one-entry per-reentry-slot pending
+  `(ptr,size)` record, then let the matching `free` consume it without taking the global fallback allocation
+  table lock/probe. Generic `fallback_size`, `fallback_contains`, and `known_remaining` were taught to see
+  pending entries, and strict `realloc` was routed through slot-aware helpers so behavior remained visible.
+- **RESULT:** rejected and reverted. The requested literal per-crate bench spelling
+  `rch exec -- cargo bench --release -p frankenlibc-bench ...` is invalid for this Cargo (`unexpected argument
+  '--release'`), so proof used the workspace's accepted equivalent:
+  `AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec -- cargo
+  bench -p frankenlibc-bench --profile release --features abi-bench --bench calloc_glibc_bench --
+  'calloc_cycle/(fl|glibc)/16' --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`. `rch`
+  could not claim a worker (`insufficient_slots=4,hard_preflight=1`) and fell back local. Baseline
+  `a3354469d` measured FL **55.038 ns** p50 and glibc **32.464 ns** p50 (**1.70x LOSS**, glibc arm noisy).
+  Candidate measured FL **68.529 ns** p50 and glibc **7.236 ns** p50 (**9.47x LOSS**). Criterion reported the
+  FL arm **+24.220% regression** (`+17.438%..+31.687%`, p=0.00). Do not retry a one-entry pending fallback
+  front buffer as a standalone strict allocator lever; the slot scan/materialization machinery costs more than
+  the table probe it avoids on this gate.
+- **CONFORMANCE BEFORE REVERT:** candidate source passed `cargo check -p frankenlibc-abi --lib`, `cargo test -p
+  frankenlibc-abi --test malloc_abi_test -- --nocapture` (55 passed, 1 ignored), and `cargo test -p
+  frankenlibc-abi --test conformance_diff_malloc_edges -- --nocapture` (1 passed). Source changes were then
+  reverted; this entry is documentation-only negative evidence.
+
 ## 2026-06-27 — ✅ calloc/free(16): fallback sized-slot cache cuts the small-allocation gap ~44% (BlackThrush)
 
 - **LANDED CODE WIN (`malloc_abi.rs`, commit `0593f38c8`).** The strict native-fallback allocator table used to
