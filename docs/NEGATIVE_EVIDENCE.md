@@ -5229,3 +5229,27 @@ release --features abi-bench --bench strftime_glibc_bench strftime_time_hms -- -
 frankenlibc-vs-glibc loss and does not close the fixed-overhead gap enough to justify code complexity.
 Candidate source and temporary bench row were reverted; the remaining frontier is codegen/ABI-call overhead
 or a generated straight-line directive compiler, not this cold-path extraction.
+
+### 2026-06-26 — strict calloc fallback lock-free removal REJECTED (8.05x vs glibc; local regression)
+
+Agent: BoldWaterfall. Lever tested: make native-fallback allocation removal in `fallback_remove_sized`
+claim the exact hash-table slot with an atomic compare-exchange instead of acquiring
+`FALLBACK_ALLOC_TABLE_LOCK`, targeting the strict native `calloc/free` loop where `free` removes every
+tracked host allocation before calling host `free`. This was the graveyard flat-combining / lock-elision
+probe for the allocator membrane gap, after confirming no measured bench-worktree win was unlanded on main.
+
+Routing baseline used per-crate release-profile cargo spelling with the requested warm target dir:
+`AGENT_NAME=BoldWaterfall CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b rch exec -- cargo
+bench -p frankenlibc-bench --profile release --features abi-bench --bench calloc_glibc_bench
+calloc_cycle/fl/16 -- --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`. On remote `hz2`,
+current main measured frankenlibc `calloc/free(16)` at **45.358 ns p50**. The matching glibc arm could not
+get an admissible remote slot and `rch` fell back local: `calloc_cycle/glibc/16` measured **6.267 ns p50**.
+This made the route gap roughly **7.24x vs glibc** but was treated as routing evidence only because the
+machines differed.
+
+Candidate bench used the same per-crate `rch exec` command for `calloc_cycle/fl/16`; `rch` again fell back
+local. Criterion compared against the prior local sample and reported **+12.400% regression** (`p < 0.05`);
+the candidate measured frankenlibc `calloc/free(16)` at **50.429 ns p50**. Against the same local glibc arm
+(6.267 ns p50), the candidate was **8.05x slower than glibc**. Rejected: atomic CAS removal did not reduce
+the allocator membrane gap and likely added memory-ordering/CAS overhead on the uncontended single-thread
+path. Candidate code was reverted; no zero-gain source changes remain.
