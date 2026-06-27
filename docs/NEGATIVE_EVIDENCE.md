@@ -6,6 +6,38 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ❌ strspn set6 true pshufb/AVX2 classifier: standalone wins, production route REJECTED (BoldWaterfall)
+
+- **DISPROVEN as a core change; code reverted.** Follow-up to the prior portable
+  `Simd::swizzle_dyn` reject: built a real x86 two-nibble classifier in
+  `strspn_shuffle_ab_bench` using SSSE3/AVX2 `pshufb` (full-byte LUT, not the
+  ASCII-only portable prototype). Parity asserted old/new/SSSE3/AVX2/glibc for
+  the measured rows.
+- **Standalone same-process classifier evidence:** remote `ovh-a`
+  (`rch exec -- cargo bench -p frankenlibc-bench --profile release --bench
+  strspn_shuffle_ab_bench -- --noplot --sample-size 10 --warm-up-time 1
+  --measurement-time 1`) showed SSSE3 collapses most of the old gap but still
+  loses to glibc: n=64 old 9.02 ns / SSSE3 3.93 ns / glibc 3.28 ns
+  (**SSSE3/glibc 1.20x LOSS**); n=512 old 51.76 ns / SSSE3 17.84 ns /
+  glibc 15.54 ns (**1.15x LOSS**). A later local `rch` fallback with AVX2
+  showed n=512 AVX2 17.87 ns / glibc 18.79 ns (**0.95x standalone WIN**) but
+  n=64 AVX2 5.18 ns / glibc 4.05 ns (**1.28x LOSS**). Final remote
+  confirmation on `vmi1264463` after reverting the core edit was noisy but
+  agreed on the stop rule: n=64 AVX2 15.42 ns / glibc 7.36 ns (**2.09x
+  LOSS**), n=512 AVX2 40.79 ns / glibc 40.40 ns (**1.01x LOSS / parity**).
+- **Production route failed after setup costs:** a temporary core integration
+  (runtime feature detection + per-call two-nibble LUT build, thresholded to the
+  six-byte `strspn` path) was benchmarked and then reverted. `rch` local
+  fallback survey rows measured `survey_strspn_set6_64` core 17.20 ns / glibc
+  5.54 ns (**3.11x LOSS**) and `survey_strspn_set6_512` core 36.35 ns / glibc
+  19.25 ns (**1.89x LOSS**). The standalone AVX2 kernel is not enough unless
+  the LUT/feature setup can be hoisted or cached across calls.
+- **Standing:** keep `strspn_shuffle_ab_bench` as the disproof/route harness.
+  Do **not** re-land this as a normal core dispatch. The only admissible next
+  lever is a production-shaped design that amortizes setup (e.g. cached
+  accept-set classifiers or ABI-side specialization), then proves the full
+  core/glibc ratio, not just a prebuilt-LUT kernel.
+
 ## 2026-06-26 — ❌ qsort string-sort "merge fallback" lever DISPROVEN — corrects a wrong ledger claim (cc)
 
 - **CORRECTS PRIOR LEDGER CLAIM.** The 2026-06-26 qsort-string-sort entry blamed the 2.7x loss on "fl's

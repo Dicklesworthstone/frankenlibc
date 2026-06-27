@@ -13,10 +13,13 @@
 
 use std::ffi::c_char;
 use std::hint::black_box;
-use std::simd::cmp::SimdPartialEq;
 use std::simd::Simd;
+use std::simd::cmp::SimdPartialEq;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
+
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
 
 const L: usize = 16;
 
@@ -53,17 +56,28 @@ fn strspn_old(s: &[u8], set: &[u8]) -> usize {
 }
 
 // ---- NEW: 2-shuffle classifier (Langdale/Lemire). ----
-fn build_luts(set: &[u8]) -> (Simd<u8, L>, Simd<u8, L>) {
+fn build_raw_luts(set: &[u8]) -> ([u8; L], [u8; L]) {
     let mut lo = [0u8; L];
     let mut hi = [0u8; L];
-    for &v in set {
-        debug_assert!(v < 0x80, "ASCII-only prototype");
-        lo[(v & 0x0F) as usize] |= 1 << (v >> 4);
+    for (k, &v) in set.iter().enumerate() {
+        debug_assert!(k < 8, "prototype supports sets up to 8 bytes");
+        let bit = 1u8 << k;
+        lo[(v & 0x0F) as usize] |= bit;
+        hi[(v >> 4) as usize] |= bit;
     }
-    for (k, slot) in hi.iter_mut().enumerate().take(8) {
-        *slot = 1u8 << k;
-    }
+    (lo, hi)
+}
+
+fn build_luts(set: &[u8]) -> (Simd<u8, L>, Simd<u8, L>) {
+    let (lo, hi) = build_raw_luts(set);
     (Simd::from_array(lo), Simd::from_array(hi))
+}
+
+fn duplicate_lut(raw: [u8; L]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[..L].copy_from_slice(&raw);
+    out[L..].copy_from_slice(&raw);
+    out
 }
 
 #[inline(always)]
@@ -104,6 +118,144 @@ fn strspn_new(s: &[u8], lo_lut: Simd<u8, L>, hi_lut: Simd<u8, L>) -> usize {
     base
 }
 
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "ssse3")]
+unsafe fn strspn_ssse3(s: &[u8], lo_lut: [u8; L], hi_lut: [u8; L]) -> usize {
+    let mut base = 0usize;
+    let zero = _mm_setzero_si128();
+    let low_mask = _mm_set1_epi8(0x0F);
+    let lo_table = unsafe { _mm_loadu_si128(lo_lut.as_ptr().cast()) };
+    let hi_table = unsafe { _mm_loadu_si128(hi_lut.as_ptr().cast()) };
+
+    macro_rules! stop_bits {
+        ($offset:expr) => {{
+            let lanes = unsafe { _mm_loadu_si128(s.as_ptr().add(base + $offset).cast()) };
+            let lo = _mm_and_si128(lanes, low_mask);
+            let hi = _mm_and_si128(_mm_srli_epi16(lanes, 4), low_mask);
+            let lo_bits = _mm_shuffle_epi8(lo_table, lo);
+            let hi_bits = _mm_shuffle_epi8(hi_table, hi);
+            let member = _mm_and_si128(lo_bits, hi_bits);
+            let nonmember = _mm_cmpeq_epi8(member, zero);
+            let nul = _mm_cmpeq_epi8(lanes, zero);
+            _mm_movemask_epi8(_mm_or_si128(nonmember, nul)) as u64
+        }};
+    }
+
+    while base + 64 <= s.len() {
+        let bits = stop_bits!(0)
+            | (stop_bits!(16) << 16)
+            | (stop_bits!(32) << 32)
+            | (stop_bits!(48) << 48);
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
+        }
+        base += 64;
+    }
+
+    while base + L <= s.len() {
+        let bits = stop_bits!(0);
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
+        }
+        base += L;
+    }
+
+    while base < s.len() && s[base] != 0 {
+        let v = s[base];
+        if (lo_lut[(v & 0xF) as usize] & hi_lut[(v >> 4) as usize]) == 0 {
+            break;
+        }
+        base += 1;
+    }
+    base
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn strspn_avx2(
+    s: &[u8],
+    lo_lut: [u8; L],
+    hi_lut: [u8; L],
+    lo_lut32: [u8; 32],
+    hi_lut32: [u8; 32],
+) -> usize {
+    let mut base = 0usize;
+    let zero = _mm256_setzero_si256();
+    let low_mask = _mm256_set1_epi8(0x0F);
+    let lo_table = unsafe { _mm256_loadu_si256(lo_lut32.as_ptr().cast()) };
+    let hi_table = unsafe { _mm256_loadu_si256(hi_lut32.as_ptr().cast()) };
+
+    macro_rules! stop_bits {
+        ($offset:expr) => {{
+            let lanes = unsafe { _mm256_loadu_si256(s.as_ptr().add(base + $offset).cast()) };
+            let lo = _mm256_and_si256(lanes, low_mask);
+            let hi = _mm256_and_si256(_mm256_srli_epi16(lanes, 4), low_mask);
+            let lo_bits = _mm256_shuffle_epi8(lo_table, lo);
+            let hi_bits = _mm256_shuffle_epi8(hi_table, hi);
+            let member = _mm256_and_si256(lo_bits, hi_bits);
+            let nonmember = _mm256_cmpeq_epi8(member, zero);
+            let nul = _mm256_cmpeq_epi8(lanes, zero);
+            _mm256_movemask_epi8(_mm256_or_si256(nonmember, nul)) as u64
+        }};
+    }
+
+    while base + 128 <= s.len() {
+        let bits = (stop_bits!(0) as u128)
+            | ((stop_bits!(32) as u128) << 32)
+            | ((stop_bits!(64) as u128) << 64)
+            | ((stop_bits!(96) as u128) << 96);
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
+        }
+        base += 128;
+    }
+
+    while base + 64 <= s.len() {
+        let bits = stop_bits!(0) | (stop_bits!(32) << 32);
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
+        }
+        base += 64;
+    }
+
+    while base + 32 <= s.len() {
+        let bits = stop_bits!(0);
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
+        }
+        base += 32;
+    }
+
+    while base < s.len() && s[base] != 0 {
+        let v = s[base];
+        if (lo_lut[(v & 0xF) as usize] & hi_lut[(v >> 4) as usize]) == 0 {
+            break;
+        }
+        base += 1;
+    }
+    base
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn ssse3_available() -> bool {
+    false
+}
+
+#[cfg(target_arch = "x86_64")]
+fn ssse3_available() -> bool {
+    std::is_x86_feature_detected!("ssse3")
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn avx2_available() -> bool {
+    false
+}
+
+#[cfg(target_arch = "x86_64")]
+fn avx2_available() -> bool {
+    std::is_x86_feature_detected!("avx2")
+}
+
 fn bench(c: &mut Criterion) {
     let set: &[u8] = b"aeiou ";
     // accept-run then a stop char + NUL. Two lengths: short (64) and long (512).
@@ -118,6 +270,9 @@ fn bench(c: &mut Criterion) {
         v
     };
     let (lo_lut, hi_lut) = build_luts(set);
+    let (lo_raw, hi_raw) = build_raw_luts(set);
+    let lo_raw32 = duplicate_lut(lo_raw);
+    let hi_raw32 = duplicate_lut(hi_raw);
     let mut set_c = set.to_vec();
     set_c.push(0);
 
@@ -129,14 +284,48 @@ fn bench(c: &mut Criterion) {
         let g = unsafe { strspn(s.as_ptr().cast(), set_c.as_ptr().cast()) };
         assert_eq!(o, nw, "old/new mismatch n={n}");
         assert_eq!(o, g, "fl/glibc mismatch n={n}: old={o} glibc={g}");
+        if ssse3_available() {
+            #[cfg(target_arch = "x86_64")]
+            {
+                let ssse3 = unsafe { strspn_ssse3(&s, lo_raw, hi_raw) };
+                assert_eq!(o, ssse3, "old/ssse3 mismatch n={n}");
+            }
+        }
+        if avx2_available() {
+            #[cfg(target_arch = "x86_64")]
+            {
+                let avx2 = unsafe { strspn_avx2(&s, lo_raw, hi_raw, lo_raw32, hi_raw32) };
+                assert_eq!(o, avx2, "old/avx2 mismatch n={n}");
+            }
+        }
 
         let mut grp = c.benchmark_group(format!("strspn_n{n}"));
-        grp.bench_function("old_neq", |b| b.iter(|| black_box(strspn_old(black_box(&s), set))));
+        grp.bench_function("old_neq", |b| {
+            b.iter(|| black_box(strspn_old(black_box(&s), set)))
+        });
         grp.bench_function("new_shuffle", |b| {
             b.iter(|| black_box(strspn_new(black_box(&s), lo_lut, hi_lut)))
         });
+        if ssse3_available() {
+            #[cfg(target_arch = "x86_64")]
+            grp.bench_function("ssse3_pshufb", |b| {
+                b.iter(|| black_box(unsafe { strspn_ssse3(black_box(&s), lo_raw, hi_raw) }))
+            });
+        }
+        if avx2_available() {
+            #[cfg(target_arch = "x86_64")]
+            grp.bench_function("avx2_pshufb", |b| {
+                b.iter(|| {
+                    black_box(unsafe {
+                        strspn_avx2(black_box(&s), lo_raw, hi_raw, lo_raw32, hi_raw32)
+                    })
+                })
+            });
+        }
         grp.bench_function("host_glibc", |b| {
-            b.iter(|| black_box(unsafe { strspn(black_box(s.as_ptr().cast()), set_c.as_ptr().cast()) }))
+            b.iter(|| {
+                black_box(unsafe { strspn(black_box(s.as_ptr().cast()), set_c.as_ptr().cast()) })
+            })
         });
         grp.finish();
     }
