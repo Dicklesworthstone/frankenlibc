@@ -6,6 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ CORRECTION: qsort STRING-sort "2.7x LOSS" is STALE — fl now WINS 1.74x vs glibc (cc)
+
+- **Stale-evidence correction (re-measured, do NOT re-attempt as a "gap"):** the documented "qsort STRING sort
+  2.7x LOSS" caveat predates the `std_sort_unstable_fixed_width` fix. Fresh `qsort_pdqsort_ab_bench` at
+  n=20000 (random 8-char `char*` + `strcmp` comparator, same-process A/B vs host glibc `qsort`):
+  **fl 1.40 ms / std_sort_unstable 1.40 ms / glibc 2.43 ms = fl WINS 1.74x** (fl ≈ Rust pdqsort exactly,
+  both beat glibc's mergesort). width-8 takes the fast `sort_unstable_by` path (sort.rs:136); the integer
+  pre-gate rejects a `strcmp` comparator in ~2-3 sampled pairs, so its overhead is negligible at every size.
+- **qsort is comprehensively WON vs glibc:** integer keys via the verify-then-commit radix lanes; `char*`/struct
+  keys via Rust `sort_unstable_by`. No remaining qsort lever — the old string-loss caveat is closed.
+- **Turn context:** the open dense-regex lever (bulk class-run consume, designed in the prior entry) sits in
+  `regex.rs`, which currently holds a SIBLING's uncommitted `lm_push_cached_closure` WIP (closure cache for the
+  same leftmost_start bottleneck) — left untouched to avoid clobbering their work; that bottleneck is being
+  actively addressed from the complementary cache angle.
+
 ## 2026-06-27 — regex leftmost closure PC cache WIN (1.20x FL speedup; 29.16x -> 24.94x vs glibc)
 
 Agent: BlackThrush. Lever landed: for position-independent regex NFAs (no anchors
