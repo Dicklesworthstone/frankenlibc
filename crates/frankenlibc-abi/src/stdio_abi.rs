@@ -1972,33 +1972,6 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
     let id = canonical_stream_id(stream);
-    // PERF (bd-baifnq, part of bd-hqo6b6): for an fl-registered stream this fn
-    // takes the GLOBAL `registry()` Mutex TWICE per char — once in
-    // `registry_contains_stream(id)` below (host-delegation routing) and once for
-    // the actual read further down. That double-acquire is now the dominant
-    // per-char cost (decide() is a strict fast-path no-op and `is_cookie_stream`
-    // is lock-free as of this campaign). SAFE-COLLAPSE PLAN (needs a build+test
-    // turn, NOT a blind disk-low edit): acquire the lock ONCE, `get_mut(&id)` —
-    // Some => read it (is_cookie_stream is an atomic check, no 2nd lock in the
-    // common case); None => drop the lock then host-delegate. HAZARDS: (1) in
-    // HARDENED mode decide() takes kernel locks, so it must NOT be called while
-    // holding `registry()` (deadlock) — gate the collapse on strict mode or call
-    // decide() before locking; (2) moving the host check after the lock makes
-    // host streams newly pay decide() (cheap Allow in strict, but a behavior
-    // change to validate against harness conformance, currently blocked by the
-    // frankenlibc-fixture-exec break). glibc does a lock-free inline buffer bump.
-    // Host delegation path - not available in standalone mode
-    #[cfg(not(feature = "standalone"))]
-    if !registry_contains_stream(id)
-        && let Some(host_fgetc) = unsafe { host_fgetc_fn() }
-    {
-        let rc = unsafe { host_fgetc(stream) };
-        mark_host_io_started(stream);
-        if rc == libc::EOF {
-            unsafe { sync_host_errno(0) };
-        }
-        return rc;
-    }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
@@ -2038,6 +2011,17 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = reg.streams.get_mut(&id) else {
+        drop(reg);
+        #[cfg(not(feature = "standalone"))]
+        if let Some(host_fgetc) = unsafe { host_fgetc_fn() } {
+            let rc = unsafe { host_fgetc(stream) };
+            mark_host_io_started(stream);
+            if rc == libc::EOF {
+                unsafe { sync_host_errno(0) };
+            }
+            return rc;
+        }
+
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
     };

@@ -6,6 +6,34 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ `fgetc` registry double-lock collapse LANDED (0.859x vs ORIG; host ratio noisy)
+
+- **LANDED CODE WIN (`stdio_abi.rs`, BlackThrush):** collapsed the registered-stream `fgetc` route from two
+  global stream-registry lock acquisitions per byte to one. The old path locked once in
+  `registry_contains_stream(id)` to decide whether to host-delegate, then locked again for the actual
+  `StdioStream` read. The new path calls the runtime-policy gate before taking `registry()`, reads registered
+  streams under the single real lock, and drops that lock before host-delegating absent streams.
+- **MEASURED KEEP (`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`, requested per-crate
+  `rch exec`; wrapper fell back local for both bench runs):** command
+  `AGENT_NAME=BlackThrush rch exec -- cargo bench -j 1 -p frankenlibc-bench --profile release --features
+  abi-bench --bench stdio_mt_contention_bench -- stdio_mt_contention --noplot --sample-size 20
+  --warm-up-time 1 --measurement-time 2`. Current `origin/main` baseline measured
+  `stdio_mt_contention_8t/frankenlibc_abi` **74.117 ms** and host glibc **1.5876 ms** =
+  **46.7x LOSS vs glibc**. Candidate measured FrankenLibC **63.665 ms**, so ratio vs ORIG is
+  **0.859x** (about **1.16x faster**, Criterion robust self-change **-14.102%**, p=0.02).
+  Candidate same-run host glibc measured **8.2239 ms**, giving a same-run **7.74x LOSS vs glibc**; do not
+  interpret the apparent gap collapse literally because the unchanged host arm regressed from **1.5876 ms**
+  to **8.2239 ms** in the second run.
+- **Conformance GREEN:** `rch exec -- cargo test -j 1 -p frankenlibc-abi --test stdio_abi_test -- --nocapture`
+  passed **255/255** with 44 existing ignored tests on `ovh-a`. Focused live-glibc differentials passed
+  locally via the same per-crate wrapper fallback:
+  `--test conformance_diff_stdio_ext --test conformance_diff_stdio_unlocked_io --test
+  fmemopen_write_differential_test` passed **3/3 + 2/2 + 2/2**. `rch exec -- cargo check -j 1 -p
+  frankenlibc-abi --all-targets` passed with pre-existing warning debt. `git diff --check` passed.
+- **Residual:** this is a narrow read-path lock-count win, not the full per-FILE registry refactor. The
+  remaining stdio gap still requires moving stream state behind per-stream or sharded locks so unrelated
+  threads do not serialize on the global registry.
+
 ## 2026-06-27 — ❌ calloc/free(16) same-thread tombstone reinsertion REJECTED (~0-gain; 9.90x LOSS vs glibc)
 
 - **DISPROVEN / REVERTED (BlackThrush):** tested a graveyard-style cached-state lever for the strict native
