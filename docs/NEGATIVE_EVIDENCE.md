@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ❌ calloc/free(16) same-thread tombstone reinsertion REJECTED (~0-gain; 9.90x LOSS vs glibc)
+
+- **DISPROVEN / REVERTED (BlackThrush):** tested a graveyard-style cached-state lever for the strict native
+  fallback allocation table. After a same-thread `free` removed a tracked fallback pointer, the candidate kept
+  that tombstone index/key in the allocator reentry slot and let the next same-pointer `calloc` republish into
+  the tombstone without taking the global fallback-table lock. This targeted the remaining small-allocation
+  `calloc/free(16)` floor after the sized-slot and index-only cache wins.
+- **MEASURED (`vmi1264463`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`, per-crate RCH
+  release bench):** current `origin/main` (`5fcff655b`) command
+  `RCH_WORKER=vmi1264463 rch exec -- cargo bench -j 1 -p frankenlibc-bench --profile release --features
+  abi-bench --bench calloc_glibc_bench -- 'calloc_cycle/(fl|glibc)/16' --noplot --sample-size 20
+  --warm-up-time 1 --measurement-time 2` measured FrankenLibC **124.324 ns** p50 vs host glibc
+  **11.476 ns** p50 = **10.83x slower than glibc**. Candidate measured FrankenLibC **120.275 ns** p50 vs
+  glibc **12.151 ns** p50 = **9.90x slower than glibc**. Ratio vs ORIG is only **0.967x** by p50, and
+  Criterion reported **No change in performance detected** (`[-43.497%, -20.401%, +12.013%]`, p=0.28).
+- **VERDICT:** rejected as ~0-gain/no-ship; source changes were reverted before commit. The remaining allocator
+  floor is not a same-thread tombstone lookup problem; it is still the strict host-delegation/accounting fixed
+  cost documented by the `calloc/free(16)` frontier.
+
 ## 2026-06-27 — ❌ f32 `sincosf` fused fast-reduction REJECTED (1.84x LOSS vs glibc) — do not retry
 
 - **DISPROVEN / REVERTED (BoldFalcon):** applied the f64 `sincos` fused-reduction
