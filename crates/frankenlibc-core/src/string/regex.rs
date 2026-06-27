@@ -1647,7 +1647,9 @@ impl<'a> PikeVm<'a> {
             match self.nfa.get(pc)? {
                 NfaInstr::Save(_) => pc += 1,
                 NfaInstr::Match(
-                    MatchKind::Literal(_) | MatchKind::LiteralCi(_, _) | MatchKind::CharClass { .. },
+                    MatchKind::Literal(_)
+                    | MatchKind::LiteralCi(_, _)
+                    | MatchKind::CharClass { .. },
                 ) => return Some(pc),
                 _ => return None, // Split / Accept / AnyChar / anchor → not a mandatory byte
             }
@@ -3542,23 +3544,29 @@ pub fn regex_exec(
     matches: &mut [RegMatch],
     eflags: i32,
 ) -> i32 {
+    if compiled.nosub || matches.is_empty() {
+        return if regex_is_match(compiled, input, eflags) {
+            0
+        } else {
+            REG_NOMATCH
+        };
+    }
+
     match regex_exec_cstring_slots(compiled, input, eflags) {
         None => REG_NOMATCH,
         Some(slots) => {
-            if !compiled.nosub && !matches.is_empty() {
-                // Only the capture slots are caller-visible; hidden repeat-progress
-                // slots live above them and must never leak into `pmatch`.
-                let cap = (compiled.num_groups + 1) * 2;
-                for (i, m) in matches.iter_mut().enumerate() {
-                    let so_idx = i * 2;
-                    let eo_idx = i * 2 + 1;
-                    if eo_idx < cap {
-                        m.rm_so = slots[so_idx];
-                        m.rm_eo = slots[eo_idx];
-                    } else {
-                        m.rm_so = -1;
-                        m.rm_eo = -1;
-                    }
+            // Only the capture slots are caller-visible; hidden repeat-progress
+            // slots live above them and must never leak into `pmatch`.
+            let cap = (compiled.num_groups + 1) * 2;
+            for (i, m) in matches.iter_mut().enumerate() {
+                let so_idx = i * 2;
+                let eo_idx = i * 2 + 1;
+                if eo_idx < cap {
+                    m.rm_so = slots[so_idx];
+                    m.rm_eo = slots[eo_idx];
+                } else {
+                    m.rm_so = -1;
+                    m.rm_eo = -1;
                 }
             }
             0
@@ -3575,28 +3583,71 @@ pub fn regex_exec_bytes(
     matches: &mut [RegMatch],
     eflags: i32,
 ) -> i32 {
+    if compiled.nosub || matches.is_empty() {
+        return if regex_is_match_bytes(compiled, input, eflags) {
+            0
+        } else {
+            REG_NOMATCH
+        };
+    }
+
     match regex_exec_byte_slots(compiled, input, eflags) {
         None => REG_NOMATCH,
         Some(slots) => {
-            if !compiled.nosub && !matches.is_empty() {
-                // Only the capture slots are caller-visible; hidden repeat-progress
-                // slots live above them and must never leak into `pmatch`.
-                let cap = (compiled.num_groups + 1) * 2;
-                for (i, m) in matches.iter_mut().enumerate() {
-                    let so_idx = i * 2;
-                    let eo_idx = i * 2 + 1;
-                    if eo_idx < cap {
-                        m.rm_so = slots[so_idx];
-                        m.rm_eo = slots[eo_idx];
-                    } else {
-                        m.rm_so = -1;
-                        m.rm_eo = -1;
-                    }
+            // Only the capture slots are caller-visible; hidden repeat-progress
+            // slots live above them and must never leak into `pmatch`.
+            let cap = (compiled.num_groups + 1) * 2;
+            for (i, m) in matches.iter_mut().enumerate() {
+                let so_idx = i * 2;
+                let eo_idx = i * 2 + 1;
+                if eo_idx < cap {
+                    m.rm_so = slots[so_idx];
+                    m.rm_eo = slots[eo_idx];
+                } else {
+                    m.rm_so = -1;
+                    m.rm_eo = -1;
                 }
             }
             0
         }
     }
+}
+
+/// Execute a compiled regex when only the boolean match/no-match result is
+/// observable. This preserves all offset-producing paths for callers that ask
+/// for `regmatch_t`, while no-slot `regexec` can use the exact membership DFA.
+pub fn regex_is_match(compiled: &CompiledRegex, input: &[u8], eflags: i32) -> bool {
+    let input_len = input.iter().position(|&b| b == 0).unwrap_or(input.len());
+    regex_is_match_bytes(compiled, &input[..input_len], eflags)
+}
+
+/// Boolean match/no-match execution over an exact byte slice.
+pub fn regex_is_match_bytes(compiled: &CompiledRegex, input: &[u8], eflags: i32) -> bool {
+    if regex_required_fast_rejects(compiled, input) {
+        return false;
+    }
+
+    if compiled.backtrack_ast.is_some()
+        || compiled.literal_prefix.is_some()
+        || compiled.prefilter.is_some()
+    {
+        return regex_exec_byte_slots(compiled, input, eflags).is_some();
+    }
+
+    let vm = PikeVm::new(
+        &compiled.nfa,
+        input,
+        compiled.num_slots(),
+        eflags,
+        compiled.prefilter,
+        None,
+        compiled.icase,
+    );
+    let notbol = eflags & REG_NOTBOL != 0;
+    let noteol = eflags & REG_NOTEOL != 0;
+    let mut visited = vec![0u64; compiled.nfa.len()];
+    let mut generation = 0u64;
+    vm.any_match(notbol, noteol, &mut visited, &mut generation)
 }
 
 /// Execute a compiled regex and return the whole-match offsets even when
@@ -3711,26 +3762,8 @@ fn regex_exec_cstring_slots(
 fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) -> Option<Vec<i32>> {
     let num_slots = compiled.num_slots();
 
-    // Required-substring fast reject (strongest): every match must contain this contiguous
-    // run, so if `memmem` can't find it, no match is possible — and unlike the per-byte
-    // check below, this still rejects when the run's individual bytes are all present but
-    // SCATTERED (the common case for literal-ish patterns over natural text).
-    if !compiled.required_substring.is_empty() {
-        let sub = &compiled.required_substring;
-        if crate::string::mem::memmem(input, input.len(), sub, sub.len()).is_none() {
-            return None;
-        }
-    }
-
-    // Required-literal fast reject: every match must contain each byte in
-    // `required_bytes` (a sound subset of the truly-required bytes). If the input
-    // lacks any of them, no match is possible — a SIMD `memchr` per byte is far cheaper
-    // than seeding the VM at every start position. Sound: the set never holds a
-    // non-required byte, so a real match is never wrongly rejected.
-    for &rb in &compiled.required_bytes {
-        if crate::string::mem::memchr(input, rb, input.len()).is_none() {
-            return None;
-        }
+    if regex_required_fast_rejects(compiled, input) {
+        return None;
     }
 
     if let Some(ast) = compiled.backtrack_ast.as_ref() {
@@ -3779,6 +3812,31 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
     }
 
     vm.execute()
+}
+
+fn regex_required_fast_rejects(compiled: &CompiledRegex, input: &[u8]) -> bool {
+    // Required-substring fast reject (strongest): every match must contain this contiguous
+    // run, so if `memmem` can't find it, no match is possible — and unlike the per-byte
+    // check below, this still rejects when the run's individual bytes are all present but
+    // SCATTERED (the common case for literal-ish patterns over natural text).
+    if !compiled.required_substring.is_empty() {
+        let sub = &compiled.required_substring;
+        if crate::string::mem::memmem(input, input.len(), sub, sub.len()).is_none() {
+            return true;
+        }
+    }
+
+    // Required-literal fast reject: every match must contain each byte in
+    // `required_bytes` (a sound subset of the truly-required bytes). If the input
+    // lacks any of them, no match is possible — a SIMD `memchr` per byte is far cheaper
+    // than seeding the VM at every start position. Sound: the set never holds a
+    // non-required byte, so a real match is never wrongly rejected.
+    for &rb in &compiled.required_bytes {
+        if crate::string::mem::memchr(input, rb, input.len()).is_none() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Map an error code to a human-readable message.

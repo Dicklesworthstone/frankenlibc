@@ -11,9 +11,9 @@
 //!
 //! Run: `cargo bench -p frankenlibc-bench --bench regex_prefilter_ab_bench`
 
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use frankenlibc_core::string::regex::{REG_EXTENDED, regex_compile, regex_is_match_bytes};
 use std::hint::black_box;
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use frankenlibc_core::string::regex::{regex_compile, regex_match_bounds_bytes, REG_EXTENDED};
 
 // Host glibc regexec (no abi-bench → resolves to libc), for the vs-glibc ratio.
 fn glibc_regexec_matches(preg: &libc::regex_t, hay_cstr: &std::ffi::CStr) -> bool {
@@ -83,10 +83,34 @@ fn bench(c: &mut Criterion) {
 
     // Each case: (name, pattern, fl_cflags, glibc_cflags, haystack).
     let cases: &[(&str, &str, i32, i32, &Vec<u8>)] = &[
-        ("litprefix_many", "error[0-9]", REG_EXTENDED, libc::REG_EXTENDED, &litmany),
-        ("anymatch_dfa", "[^\"]*\"", REG_EXTENDED, libc::REG_EXTENDED, &anyq),
-        ("sparse_digits_late", "[0-9]+END", REG_EXTENDED, libc::REG_EXTENDED, &sparse),
-        ("rare_firstbyte_jump", "[0-9][0-9][0-9]X", REG_EXTENDED, libc::REG_EXTENDED, &rare),
+        (
+            "litprefix_many",
+            "error[0-9]",
+            REG_EXTENDED,
+            libc::REG_EXTENDED,
+            &litmany,
+        ),
+        (
+            "anymatch_dfa",
+            "[^\"]*\"",
+            REG_EXTENDED,
+            libc::REG_EXTENDED,
+            &anyq,
+        ),
+        (
+            "sparse_digits_late",
+            "[0-9]+END",
+            REG_EXTENDED,
+            libc::REG_EXTENDED,
+            &sparse,
+        ),
+        (
+            "rare_firstbyte_jump",
+            "[0-9][0-9][0-9]X",
+            REG_EXTENDED,
+            libc::REG_EXTENDED,
+            &rare,
+        ),
         (
             "icase_class_perbyte",
             "X[a-z]+9",
@@ -94,8 +118,20 @@ fn bench(c: &mut Criterion) {
             libc::REG_EXTENDED | libc::REG_ICASE,
             &icase,
         ),
-        ("altexit_multi", "X[a-z]+(99|88)", REG_EXTENDED, libc::REG_EXTENDED, &altexit),
-        ("negclass_quoted", "X[^\"]*\"", REG_EXTENDED, libc::REG_EXTENDED, &quoted),
+        (
+            "altexit_multi",
+            "X[a-z]+(99|88)",
+            REG_EXTENDED,
+            libc::REG_EXTENDED,
+            &altexit,
+        ),
+        (
+            "negclass_quoted",
+            "X[^\"]*\"",
+            REG_EXTENDED,
+            libc::REG_EXTENDED,
+            &quoted,
+        ),
     ];
 
     for &(name, pat_str, fl_cflags, gl_cflags, hay) in cases {
@@ -109,13 +145,13 @@ fn bench(c: &mut Criterion) {
         );
         let hay_c = std::ffi::CString::new(hay.as_slice()).unwrap();
         // correctness: fl and glibc agree on match presence.
-        let fl_m = regex_match_bounds_bytes(&pat, hay, 0).is_some();
+        let fl_m = regex_is_match_bytes(&pat, hay, 0);
         let gl_m = glibc_regexec_matches(&gpreg, &hay_c);
         assert_eq!(fl_m, gl_m, "fl/glibc disagree on {name}");
         let mut g = c.benchmark_group(format!("regex_prefilter_{name}"));
         g.throughput(Throughput::Bytes(hay.len() as u64));
         g.bench_function("fl_core", |b| {
-            b.iter(|| black_box(regex_match_bounds_bytes(&pat, black_box(hay), 0)))
+            b.iter(|| black_box(regex_is_match_bytes(&pat, black_box(hay), 0)))
         });
         g.bench_function("host_glibc", |b| {
             b.iter(|| black_box(glibc_regexec_matches(&gpreg, black_box(&hay_c))))

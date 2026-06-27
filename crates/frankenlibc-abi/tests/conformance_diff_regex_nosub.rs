@@ -46,8 +46,8 @@ impl Lcg {
     }
 }
 
-/// Compile + boolean-exec under REG_EXTENDED|REG_NOSUB. Returns Some(matched) if
-/// the pattern compiled, None if it was rejected (so both engines can agree on
+/// Compile + boolean-exec with no match slots. Returns Some(matched) if the
+/// pattern compiled, None if it was rejected (so both engines can agree on
 /// invalidity by skipping).
 fn run(
     comp: unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_int,
@@ -55,18 +55,27 @@ fn run(
     free: unsafe extern "C" fn(*mut c_void),
     pat: &CString,
     inp: &CString,
+    cflags: c_int,
 ) -> Option<bool> {
     let mut preg = Preg([0u8; 256]);
-    let c = unsafe { comp(preg.0.as_mut_ptr() as *mut c_void, pat.as_ptr(), REG_EXTENDED | REG_NOSUB) };
+    let c = unsafe { comp(preg.0.as_mut_ptr() as *mut c_void, pat.as_ptr(), cflags) };
     if c != 0 {
         return None;
     }
-    let e = unsafe { exec(preg.0.as_ptr() as *const c_void, inp.as_ptr(), 0, std::ptr::null_mut(), 0) };
+    let e = unsafe {
+        exec(
+            preg.0.as_ptr() as *const c_void,
+            inp.as_ptr(),
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
     unsafe { free(preg.0.as_mut_ptr() as *mut c_void) };
     Some(e == 0)
 }
 
-fn check(pat: &str, inp: &str, divs: &mut Vec<String>) {
+fn check(pat: &str, inp: &str, cflags: c_int, divs: &mut Vec<String>) {
     let (Ok(cp), Ok(ci)) = (CString::new(pat), CString::new(inp)) else {
         return;
     };
@@ -76,14 +85,17 @@ fn check(pat: &str, inp: &str, divs: &mut Vec<String>) {
         frankenlibc_abi::string_abi::regfree,
         &cp,
         &ci,
+        cflags,
     );
-    let gl = run(regcomp, regexec, regfree, &cp, &ci);
+    let gl = run(regcomp, regexec, regfree, &cp, &ci, cflags);
     // Only compare when both engines accepted the pattern.
     if let (Some(f), Some(g)) = (fl, gl)
         && f != g
         && divs.len() < 30
     {
-        divs.push(format!("pat={pat:?} inp={inp:?}: fl_match={f} glibc_match={g}"));
+        divs.push(format!(
+            "pat={pat:?} inp={inp:?} cflags={cflags:#x}: fl_match={f} glibc_match={g}"
+        ));
     }
 }
 
@@ -113,14 +125,31 @@ fn regex_nosub_boolean_matches_glibc() {
         ("end$", "the end"),
     ];
     for (p, i) in curated {
-        check(p, i, &mut divs);
+        check(p, i, REG_EXTENDED | REG_NOSUB, &mut divs);
+        check(p, i, REG_EXTENDED, &mut divs);
     }
 
     // Randomized ERE patterns + inputs.
     let mut r = Lcg(0x9e37_79b9_7f4a_7c15);
     let toks = [
-        "a", "b", ".", "[0-9]", "[a-z]", "[^x]", "*", "+", "?", "|", "(", ")", "^", "$", "x", "1",
-        "[[:alpha:]]", "c",
+        "a",
+        "b",
+        ".",
+        "[0-9]",
+        "[a-z]",
+        "[^x]",
+        "*",
+        "+",
+        "?",
+        "|",
+        "(",
+        ")",
+        "^",
+        "$",
+        "x",
+        "1",
+        "[[:alpha:]]",
+        "c",
     ];
     for _ in 0..60_000 {
         let plen = 1 + r.below(7);
@@ -130,8 +159,11 @@ fn regex_nosub_boolean_matches_glibc() {
         }
         let ilen = r.below(12);
         const ALPHA: &[u8] = b"abcx019 ";
-        let inp: String = (0..ilen).map(|_| ALPHA[r.below(ALPHA.len())] as char).collect();
-        check(&pat, &inp, &mut divs);
+        let inp: String = (0..ilen)
+            .map(|_| ALPHA[r.below(ALPHA.len())] as char)
+            .collect();
+        check(&pat, &inp, REG_EXTENDED | REG_NOSUB, &mut divs);
+        check(&pat, &inp, REG_EXTENDED, &mut divs);
     }
 
     assert!(

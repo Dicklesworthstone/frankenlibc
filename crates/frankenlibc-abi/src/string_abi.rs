@@ -6090,9 +6090,12 @@ pub unsafe extern "C" fn regexec(
     };
 
     if nmatch == 0 || pmatch.is_null() {
-        // No submatch extraction needed
-        let mut dummy = [regex::RegMatch::default(); 1];
-        regex::regex_exec(compiled, &input_bytes, &mut dummy, eflags)
+        // No submatch extraction needed: only the boolean rc is observable.
+        if regex::regex_is_match(compiled, &input_bytes, eflags) {
+            0
+        } else {
+            regex::REG_NOMATCH
+        }
     } else {
         // Map pmatch to our RegMatch slice
         let pmatch_slice =

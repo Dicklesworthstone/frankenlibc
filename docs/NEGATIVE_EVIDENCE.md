@@ -34,6 +34,42 @@ retried and real wins are confirmed with numbers.
   remaining stdio gap still requires moving stream state behind per-stream or sharded locks so unrelated
   threads do not serialize on the global registry.
 
+## 2026-06-27 - regex no-slot boolean DFA LANDED for no-prefilter EREs; broad prefilter shortcut REJECTED
+
+- **LANDED CODE WIN (BlackThrush, `string/regex.rs` + ABI no-slot dispatch):** `regexec` with
+  `nmatch == 0` or `pmatch == NULL` exposes only a boolean match/no-match result, but FrankenLibC still
+  computed full leftmost-longest capture offsets by routing through a dummy `regmatch_t`. Added
+  `regex_is_match{,_bytes}` and routed ABI no-slot calls through it. The fast path is deliberately narrow:
+  backreference, literal-prefix, and first-byte-prefilter patterns stay on the existing offset engine because
+  the broad shortcut was measured and rejected (see below). Offset-producing callers are unchanged.
+- **MEASURED KEEP (`vmi1264463`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`, per-crate
+  RCH release bench; Cargo rejected bench-level `--release`, so the accepted equivalent was
+  `--profile release`):** original same-worker `regex_prefilter_ab_bench`
+  `regex_prefilter_anymatch_dfa/fl_core` p50 **53.378 us** vs host glibc **20.719 us** =
+  **2.58x slower than glibc**. Final narrowed candidate command
+  `RCH_FORCE_REMOTE=true RCH_WORKER=vmi1264463 rch exec -- cargo bench -j 1 -p frankenlibc-bench
+  --profile release --bench regex_prefilter_ab_bench -- 'regex_prefilter_(litprefix_many|anymatch_dfa|rare_firstbyte_jump|sparse_digits_late)'
+  --noplot --sample-size 20 --warm-up-time 1 --measurement-time 2` measured
+  `anymatch_dfa/fl_core` p50 **16.480 us** vs host glibc **23.859 us** = **0.69x vs glibc**
+  (FrankenLibC faster on this row). Ratio vs ORIG is **0.309x** by p50, a **3.24x internal speedup**.
+- **REJECTED BROAD SHORTCUT / ROUTING EVIDENCE:** the initial candidate sent prefilter-driven no-slot
+  patterns through `any_match` too. Same-worker remote evidence showed `sparse_digits_late/fl_core`
+  **40.954 us** with a wide no-change interval (`[-68.508%, -35.034%, +27.380%]`, p=0.37) and
+  `rare_firstbyte_jump/fl_core` regressed to **16.404 us** (`+272.83%..+612.80%`, p=0.00) because it
+  bypassed the specialized `execute()` first-byte jump. That path was reverted by guarding
+  `compiled.prefilter.is_some()` and `literal_prefix.is_some()` back to `regex_exec_byte_slots(...).is_some()`.
+  Final same-worker evidence after the guard left `sparse_digits_late` as **no change** (34.442 us vs
+  host 11.832 us, still about **2.91x slower than glibc**) and restored the rare-first-byte row to the old
+  engine class (5.2947 us vs host 4.7028 us, no keep claimed). Do not retry boolean `any_match` for
+  prefilter/literal-prefix rows as a standalone lever.
+- **Conformance GREEN:** remote `rch exec -- cargo test -j 1 -p frankenlibc-core --profile release regex
+  --lib -- --nocapture` passed **38/38** regex unit tests. Remote
+  `rch exec -- cargo test -j 1 -p frankenlibc-abi --profile release --test conformance_diff_regex_nosub
+  -- --nocapture` passed the live glibc differential oracle; the oracle now checks both
+  `REG_EXTENDED|REG_NOSUB` and ordinary `REG_EXTENDED` with `nmatch=0, pmatch=NULL`.
+- **Residual:** the biggest current measured regex gap remains the prefilter sparse-digits row; this commit
+  only lands the no-prefilter membership-DFA win and records the failed broad/prefilter shortcut.
+
 ## 2026-06-27 — ❌ calloc/free(16) same-thread tombstone reinsertion REJECTED (~0-gain; 9.90x LOSS vs glibc)
 
 - **DISPROVEN / REVERTED (BlackThrush):** tested a graveyard-style cached-state lever for the strict native
