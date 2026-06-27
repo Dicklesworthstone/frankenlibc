@@ -7423,8 +7423,10 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
     match spec {
         // %f / %F — fixed-point with `precision` fractional digits.
         // Rust's `{:.N$}` is bit-compatible with printf %f for f64.
-        "f" => format!("{value:.decimal_precision$}"),
-        "F" => format!("{value:.decimal_precision$}").to_ascii_uppercase(),
+        // `%f` of a FINITE value has no alphabetic chars, so `%F` == `%f`
+        // (non-finite is handled above); the former `.to_ascii_uppercase()` was a
+        // pure no-op extra allocation.
+        "f" | "F" => format!("{value:.decimal_precision$}"),
 
         // %e — scientific with C-style `e+02` exponent (Rust's default
         // gives `e2` without sign or leading zeros, which doesn't match
@@ -7432,10 +7434,13 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
         // the reshape.
         "e" => frankenlibc_core::stdlib::ecvt::render_pct_e(value, decimal_precision),
         "E" => {
-            // %E is identical to %e but with uppercase `E`.
-            frankenlibc_core::stdlib::ecvt::render_pct_e(value, decimal_precision)
-                .replace('e', "E")
-                .to_ascii_uppercase()
+            // %E is identical to %e but with uppercase `E`. The only lowercase
+            // char render_pct_e emits is the 'e', so an in-place
+            // `make_ascii_uppercase` does exactly that — no `.replace()` +
+            // `.to_ascii_uppercase()` (two extra allocations).
+            let mut s = frankenlibc_core::stdlib::ecvt::render_pct_e(value, decimal_precision);
+            s.make_ascii_uppercase();
+            s
         }
 
         // %g — uses *significant* digits (not fractional) and switches
@@ -7445,9 +7450,13 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
         // wrong: for value=0 with precision=6 it picked "0.000000"
         // instead of glibc's "0".
         "g" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, decimal_precision),
-        "G" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, decimal_precision)
-            .replace('e', "E")
-            .to_ascii_uppercase(),
+        "G" => {
+            // As %E: the only lowercase char is the optional 'e'; upper-case in
+            // place instead of `.replace()` + `.to_ascii_uppercase()`.
+            let mut s = frankenlibc_core::stdlib::ecvt::render_pct_g(value, decimal_precision);
+            s.make_ascii_uppercase();
+            s
+        }
 
         "a" => render_hex_float(value, precision, false),
         "A" => render_hex_float(value, precision, true),

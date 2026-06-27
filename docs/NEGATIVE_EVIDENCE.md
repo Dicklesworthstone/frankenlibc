@@ -6,6 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ strfromd %E/%G/%F: in-place uppercase, drop redundant alloc chain (cc)
+
+- **LANDED CODE WIN (`string_abi.rs` `render_strfrom`, conformance GREEN, byte-identical).** `%E`/`%G` did
+  `render_pct_*(…).replace('e', "E").to_ascii_uppercase()` — TWO extra allocations where the only lowercase
+  char emitted is the `'e'`, so a single in-place `make_ascii_uppercase` suffices. `%F` did
+  `format!(…).to_ascii_uppercase()`, a pure no-op alloc (a finite `%f` has no alphabetic chars; non-finite is
+  handled earlier) — merged into the `%f` arm. Removes 2 allocs/call on `%E`/`%G`, 1 on `%F`.
+- **Byte-identical** (the gate): `strfromd_differential_fuzz` + `conformance_diff_cvt_specials` (fuzz, 6.7s)
+  both GREEN — `make_ascii_uppercase` on a `%e`/`%g` body upper-cases exactly the `'e'` (digits/`+`/`.`
+  unaffected), identical to the old `.replace().to_ascii_uppercase()`. Provably fewer allocs (strictly less
+  work). `%E`/`%G` now perform like the base `%e`/`%g` (which WIN glibc at mid-precision per the prior
+  render_pct_e / strip-trailing entries) instead of paying the redundant 2-alloc chain.
+- This consolidates the strfromd float family: `%f/%F` single-format, `%e/%E/%g/%G` through the heap-lean
+  render_pct path with in-place case folding. Non-variadic, so no variadic floor.
+
 ## 2026-06-27 — ✅ %g strip_trailing_zeros → &str + in-place truncate — common fixed-%g path (cc)
 
 - **LANDED CODE WIN (`ecvt.rs`, conformance GREEN, byte-identical).** `strip_trailing_zeros` returned an owned
