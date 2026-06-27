@@ -25,37 +25,11 @@ pub fn memcpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 ///
 /// Returns the number of bytes actually copied.
 pub fn memmove(dest: &mut [u8], src: &[u8], n: usize) -> usize {
-    if n == MEMMOVE_EXACT_4096_BYTES
-        && dest.len() == MEMMOVE_EXACT_4096_BYTES
-        && src.len() == MEMMOVE_EXACT_4096_BYTES
-    {
-        dest.copy_from_slice(src);
-        return MEMMOVE_EXACT_4096_BYTES;
-    }
-
     let count = n.min(dest.len()).min(src.len());
-    if count == MEMMOVE_EXACT_4096_BYTES && copy_exact_4096_array(dest, src) {
-        return count;
-    }
     // In safe Rust with separate slices, copy_from_slice is fine.
     // For true overlapping (same buffer), callers should use slice::copy_within.
     dest[..count].copy_from_slice(&src[..count]);
     count
-}
-
-#[inline(always)]
-fn copy_exact_4096_array(dest: &mut [u8], src: &[u8]) -> bool {
-    let Ok(dst) =
-        <&mut [u8; MEMMOVE_EXACT_4096_BYTES]>::try_from(&mut dest[..MEMMOVE_EXACT_4096_BYTES])
-    else {
-        return false;
-    };
-    let Ok(src) = <&[u8; MEMMOVE_EXACT_4096_BYTES]>::try_from(&src[..MEMMOVE_EXACT_4096_BYTES])
-    else {
-        return false;
-    };
-    *dst = *src;
-    true
 }
 
 /// Fills the first `n` bytes of `dest` with the byte `value`.
@@ -65,7 +39,9 @@ fn copy_exact_4096_array(dest: &mut [u8], src: &[u8]) -> bool {
 /// Returns the number of bytes actually set.
 pub fn memset(dest: &mut [u8], value: u8, n: usize) -> usize {
     let count = n.min(dest.len());
-    dest[..count].fill(value);
+    for byte in &mut dest[..count] {
+        *byte = value;
+    }
     count
 }
 
@@ -87,10 +63,6 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
         return memcmp_exact_16_mask(a, b);
     }
 
-    if count == MEMCMP_EXACT_4096_BYTES && memcmp_exact_4096_xor_accum_equal(a, b) {
-        return core::cmp::Ordering::Equal;
-    }
-
     if count == MEMCMP_EXACT_256_BYTES && !ne_simd_folded_256(a, b) {
         return core::cmp::Ordering::Equal;
     }
@@ -105,16 +77,8 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     while i + SIMD_FOLD_BYTES <= count {
         if ne_simd_folded_128(&a[i..i + SIMD_FOLD_BYTES], &b[i..i + SIMD_FOLD_BYTES]) {
             while i + SIMD_LANES <= count {
-                // First differing lane via the SIMD mask + trailing_zeros (O(1)),
-                // instead of a scalar byte-by-byte re-scan of the panel
-                // (`compare_bytes` made memcmp 6.4x slower than glibc on a
-                // deep-in-panel difference; bd-2g7oyh).
-                let av = Simd::<u8, SIMD_LANES>::from_slice(&a[i..i + SIMD_LANES]);
-                let bv = Simd::<u8, SIMD_LANES>::from_slice(&b[i..i + SIMD_LANES]);
-                let diff = av.simd_ne(bv).to_bitmask();
-                if diff != 0 {
-                    let j = i + diff.trailing_zeros() as usize;
-                    return a[j].cmp(&b[j]);
+                if !eq_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
+                    return compare_bytes(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]);
                 }
                 i += SIMD_LANES;
             }
@@ -124,12 +88,8 @@ pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
 
     // Remaining 32-byte panels.
     while i + SIMD_LANES <= count {
-        let av = Simd::<u8, SIMD_LANES>::from_slice(&a[i..i + SIMD_LANES]);
-        let bv = Simd::<u8, SIMD_LANES>::from_slice(&b[i..i + SIMD_LANES]);
-        let diff = av.simd_ne(bv).to_bitmask();
-        if diff != 0 {
-            let j = i + diff.trailing_zeros() as usize;
-            return a[j].cmp(&b[j]);
+        if !eq_simd_32(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]) {
+            return compare_bytes(&a[i..i + SIMD_LANES], &b[i..i + SIMD_LANES]);
         }
         i += SIMD_LANES;
     }
@@ -153,19 +113,19 @@ fn memcmp_exact_16_mask(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
     debug_assert_eq!(a.len(), MEMCMP_EXACT_16_BYTES);
     debug_assert_eq!(b.len(), MEMCMP_EXACT_16_BYTES);
 
-    if u128_from_exact_16(a) == u128_from_exact_16(b) {
+    let diff_mask = Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(a)
+        .simd_ne(Simd::<u8, MEMCMP_EXACT_16_BYTES>::from_slice(b))
+        .to_bitmask();
+    if diff_mask == 0 {
         return core::cmp::Ordering::Equal;
     }
 
-    compare_bytes(a, b)
-}
-
-#[inline(always)]
-fn u128_from_exact_16(chunk: &[u8]) -> u128 {
-    debug_assert_eq!(chunk.len(), MEMCMP_EXACT_16_BYTES);
-    let bytes = <&[u8; MEMCMP_EXACT_16_BYTES]>::try_from(chunk)
-        .expect("exact-16 memcmp chunk must be 16 bytes");
-    u128::from_ne_bytes(*bytes)
+    let first = diff_mask.trailing_zeros() as usize;
+    if a[first] < b[first] {
+        core::cmp::Ordering::Less
+    } else {
+        core::cmp::Ordering::Greater
+    }
 }
 
 /// True iff the two 32-byte panels are byte-for-byte equal. Safe portable SIMD
@@ -194,8 +154,7 @@ fn ne_simd_folded_128(a: &[u8], b: &[u8]) -> bool {
     let b2 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES * 2..SIMD_LANES * 3]);
     let a3 = Simd::<u8, SIMD_LANES>::from_slice(&a[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
     let b3 = Simd::<u8, SIMD_LANES>::from_slice(&b[SIMD_LANES * 3..SIMD_FOLD_BYTES]);
-    let diff = (a0 ^ b0) | (a1 ^ b1) | (a2 ^ b2) | (a3 ^ b3);
-    diff.simd_ne(Simd::splat(0)).any()
+    (a0.simd_ne(b0) | a1.simd_ne(b1) | a2.simd_ne(b2) | a3.simd_ne(b3)).any()
 }
 
 /// True iff any byte differs across the exact 256-byte equality hot path.
@@ -222,28 +181,7 @@ fn ne_simd_folded_256(a: &[u8], b: &[u8]) -> bool {
     let b3 = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(
         &b[MEMCMP_WIDE_LANES * 3..MEMCMP_EXACT_256_BYTES],
     );
-    let diff = (a0 ^ b0) | (a1 ^ b1) | (a2 ^ b2) | (a3 ^ b3);
-    diff.simd_ne(Simd::splat(0)).any()
-}
-
-/// Exact 4096-byte equality certificate for the profiled equal-buffer row.
-/// It never decides ordering: a non-zero accumulator falls through to the
-/// existing ordered resolver, so first-difference semantics stay unchanged.
-#[inline(always)]
-fn memcmp_exact_4096_xor_accum_equal(a: &[u8], b: &[u8]) -> bool {
-    debug_assert_eq!(a.len(), MEMCMP_EXACT_4096_BYTES);
-    debug_assert_eq!(b.len(), MEMCMP_EXACT_4096_BYTES);
-
-    let mut acc = Simd::<u8, MEMCMP_WIDE_LANES>::splat(0);
-    let mut i = 0usize;
-    while i < MEMCMP_EXACT_4096_BYTES {
-        let av = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&a[i..i + MEMCMP_WIDE_LANES]);
-        let bv = Simd::<u8, MEMCMP_WIDE_LANES>::from_slice(&b[i..i + MEMCMP_WIDE_LANES]);
-        acc |= av ^ bv;
-        i += MEMCMP_WIDE_LANES;
-    }
-
-    acc.simd_eq(Simd::splat(0)).all()
+    (a0.simd_ne(b0) | a1.simd_ne(b1) | a2.simd_ne(b2) | a3.simd_ne(b3)).any()
 }
 
 #[inline]
@@ -261,17 +199,9 @@ const MEMCMP_WIDE_LANES: usize = 64;
 const SIMD_FOLD_PANELS: usize = 4;
 const SIMD_FOLD_BYTES: usize = SIMD_LANES * SIMD_FOLD_PANELS;
 const MEMCMP_EXACT_256_BYTES: usize = SIMD_FOLD_BYTES * 2;
-const MEMCMP_EXACT_4096_BYTES: usize = 4096;
-const MEMMOVE_EXACT_4096_BYTES: usize = 4096;
-const MEMCHR_EXACT_4096_BYTES: usize = 4096;
-/// Above this point, the tuned `memchr` scan plus one bulk copy amortizes its
-/// extra call/dispatch cost and beats the fused portable-SIMD scan-copy loop.
-const MEMCCPY_BULK_COPY_MIN: usize = 16 * 1024;
 const MEMCHR_WIDE_LANES: usize = 64;
 const MEMCHR_FOLD_PANELS: usize = 8;
 const MEMCHR_FOLD_BYTES: usize = SIMD_LANES * MEMCHR_FOLD_PANELS;
-/// Wider 512B fold tier for the large-scan case (memchr only), above the 256B fold.
-const MEMCHR_FOLD_512: usize = MEMCHR_FOLD_BYTES * 2;
 
 const LO_U64: u64 = u64::from_ne_bytes([0x01; WORD]);
 const HI_U64: u64 = u64::from_ne_bytes([0x80; WORD]);
@@ -289,9 +219,13 @@ fn has_byte_u64(word: u64, byte: u8) -> bool {
     zero_byte_u64(word ^ u64::from_ne_bytes([byte; WORD]))
 }
 
-// (has_byte_simd_32 removed: memrchr's two scanners now compute the lane mask and
-// return the last match via 63 - leading_zeros, so the bool prefilter is unused.
-// bd-2g7oyh.)
+#[inline(always)]
+fn has_byte_simd_32(chunk: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(chunk.len(), SIMD_LANES);
+    Simd::<u8, SIMD_LANES>::from_slice(chunk)
+        .simd_eq(Simd::splat(byte))
+        .any()
+}
 
 #[inline(always)]
 fn byte_mask_simd_32(chunk: &[u8], byte: u8) -> u64 {
@@ -311,49 +245,17 @@ fn first_byte_simd_32(chunk: &[u8], byte: u8) -> Option<usize> {
     }
 }
 
-/// Bench hook: OLD medium-range scan (per-32B-branch loop) over the whole slice.
-#[doc(hidden)]
-pub fn memchr_medium_32bloop_for_bench(hs: &[u8], needle: u8) -> Option<usize> {
-    let count = hs.len();
-    let mut base = 0usize;
-    while count - base >= SIMD_LANES {
-        if let Some(j) = first_byte_simd_32(&hs[base..base + SIMD_LANES], needle) {
-            return Some(base + j);
-        }
-        base += SIMD_LANES;
-    }
-    hs[base..]
-        .iter()
-        .position(|&b| b == needle)
-        .map(|j| base + j)
-}
-
-/// Bench hook: NEW medium-range scan (64-lane combined tier + 32B tail).
-#[doc(hidden)]
-pub fn memchr_medium_64lane_for_bench(hs: &[u8], needle: u8) -> Option<usize> {
-    let count = hs.len();
-    let mut base = 0usize;
-    while count - base >= MEMCHR_WIDE_LANES {
-        let nv = Simd::<u8, SIMD_LANES>::splat(needle);
-        let a = Simd::<u8, SIMD_LANES>::from_slice(&hs[base..base + SIMD_LANES]);
-        let b =
-            Simd::<u8, SIMD_LANES>::from_slice(&hs[base + SIMD_LANES..base + MEMCHR_WIDE_LANES]);
-        let m = a.simd_eq(nv).to_bitmask() | (b.simd_eq(nv).to_bitmask() << SIMD_LANES);
-        if m != 0 {
-            return Some(base + m.trailing_zeros() as usize);
-        }
-        base += MEMCHR_WIDE_LANES;
-    }
-    while count - base >= SIMD_LANES {
-        if let Some(j) = first_byte_simd_32(&hs[base..base + SIMD_LANES], needle) {
-            return Some(base + j);
-        }
-        base += SIMD_LANES;
-    }
-    hs[base..]
-        .iter()
-        .position(|&b| b == needle)
-        .map(|j| base + j)
+#[inline(always)]
+fn has_byte_simd_folded(block: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(block.len(), SIMD_FOLD_BYTES);
+    let needle = Simd::splat(byte);
+    let p0 = Simd::<u8, SIMD_LANES>::from_slice(&block[..SIMD_LANES]).simd_eq(needle);
+    let p1 = Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES..SIMD_LANES * 2]).simd_eq(needle);
+    let p2 =
+        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 2..SIMD_LANES * 3]).simd_eq(needle);
+    let p3 =
+        Simd::<u8, SIMD_LANES>::from_slice(&block[SIMD_LANES * 3..SIMD_FOLD_BYTES]).simd_eq(needle);
+    (p0 | p1 | p2 | p3).any()
 }
 
 #[inline(always)]
@@ -372,42 +274,6 @@ fn has_byte_memchr_folded(block: &[u8], byte: u8) -> bool {
         Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[MEMCHR_WIDE_LANES * 3..MEMCHR_FOLD_BYTES])
             .simd_eq(needle);
     (p0 | p1 | p2 | p3).any()
-}
-
-/// 512-byte fold: `MEMCHR_FOLD_512 / MEMCHR_WIDE_LANES` (8) `Simd<u8,64>` eq-masks OR-reduced.
-/// A wider block than [`has_byte_memchr_folded`]'s 256B — measured (memchr_fold512_ab in-process
-/// A/B) ~8-10% faster at n>=512 by amortizing the skip-loop overhead further (the per-panel
-/// loads/compares pipeline; only the OR accumulate serializes). Runs ABOVE the 256B fold so the
-/// `[256,512)` remainder keeps the 256B tier (no regression). Byte-identical detection.
-#[inline(always)]
-fn has_byte_memchr_512(block: &[u8], byte: u8) -> bool {
-    debug_assert_eq!(block.len(), MEMCHR_FOLD_512);
-    let needle = Simd::<u8, MEMCHR_WIDE_LANES>::splat(byte);
-    let mut acc = needle.simd_ne(needle); // all-false mask
-    let mut o = 0usize;
-    while o < MEMCHR_FOLD_512 {
-        acc |= Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[o..o + MEMCHR_WIDE_LANES])
-            .simd_eq(needle);
-        o += MEMCHR_WIDE_LANES;
-    }
-    acc.any()
-}
-
-#[inline(always)]
-fn memchr_exact_4096_absent(haystack: &[u8], needle: u8) -> bool {
-    debug_assert_eq!(haystack.len(), MEMCHR_EXACT_4096_BYTES);
-
-    let needle = Simd::<u8, MEMCHR_WIDE_LANES>::splat(needle);
-    let zero = Simd::<u8, MEMCHR_WIDE_LANES>::splat(0);
-    let mut hits = zero.simd_ne(zero);
-    let mut i = 0usize;
-    while i < MEMCHR_EXACT_4096_BYTES {
-        let chunk = Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&haystack[i..i + MEMCHR_WIDE_LANES]);
-        hits |= (chunk ^ needle).simd_eq(zero);
-        i += MEMCHR_WIDE_LANES;
-    }
-
-    !hits.any()
 }
 
 #[inline]
@@ -435,55 +301,7 @@ fn compare_bytes(a: &[u8], b: &[u8]) -> core::cmp::Ordering {
 pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
-
-    if count == MEMCHR_EXACT_4096_BYTES && memchr_exact_4096_absent(hs, needle) {
-        return None;
-    }
-
-    // Small bounded haystack in [16, 32): the 32-byte SIMD loops below can't run, so
-    // the old code fell to an 8-byte SWAR + scalar tail (e.g. n=31 = 3×8B SWAR + 7
-    // scalar). glibc instead uses two OVERLAPPING 16-byte SIMD probes — `[0,16)` and
-    // `[count-16, count)` — which together cover all `count` bytes while staying
-    // entirely in-slice (no align-down, no OOB). First-match ordering holds: the first
-    // probe owns `[0,16)`; if it's empty, every match position `< 16` is already ruled
-    // out, so the second probe's lowest set bit lands at the true first match `≥ 16`.
-    if (16..SIMD_LANES).contains(&count) {
-        const L: usize = 16;
-        let v0 = Simd::<u8, L>::from_slice(&hs[..L]);
-        let m0 = v0.simd_eq(Simd::splat(needle)).to_bitmask();
-        if m0 != 0 {
-            return Some(m0.trailing_zeros() as usize);
-        }
-        let off = count - L;
-        let v1 = Simd::<u8, L>::from_slice(&hs[off..off + L]);
-        let m1 = v1.simd_eq(Simd::splat(needle)).to_bitmask();
-        if m1 != 0 {
-            // off + trailing_zeros ≥ 16 because [off,16) was cleared by the first probe.
-            return Some(off + m1.trailing_zeros() as usize);
-        }
-        return None;
-    }
-
     let mut base = 0usize;
-
-    // Wide 512B fold tier (above the 256B fold): larger skip windows for long scans, ~8-10%
-    // faster at n>=512 (memchr_fold512_ab). The `[256,512)` remainder falls to the 256B fold
-    // below (no regression, unlike naively widening MEMCHR_FOLD_BYTES which drops to the 64B tier).
-    while count - base >= MEMCHR_FOLD_512 {
-        let block_end = base + MEMCHR_FOLD_512;
-        let block = &hs[base..block_end];
-        if has_byte_memchr_512(block, needle) {
-            let mut panel_base = base;
-            while panel_base < block_end {
-                let chunk = &hs[panel_base..panel_base + SIMD_LANES];
-                if let Some(j) = first_byte_simd_32(chunk, needle) {
-                    return Some(panel_base + j);
-                }
-                panel_base += SIMD_LANES;
-            }
-        }
-        base = block_end;
-    }
 
     while count - base >= MEMCHR_FOLD_BYTES {
         let block_end = base + MEMCHR_FOLD_BYTES;
@@ -499,24 +317,6 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
             }
         }
         base = block_end;
-    }
-
-    // 64-byte combined tier for the medium range (64..256 B, below the fold block) that
-    // otherwise ran one movemask+branch per 32 B — deployed memchr lost 1.6-2.0x vs glibc
-    // there. Bounded (base+64 <= count) ⇒ every read is in-slice, no page guard; a single
-    // 64-lane target compare gives one branch per 64 B. The two AVX2 halves the 64-lane eq
-    // lowers to are independent (good ILP — unlike a serial min-fold). First-match holds:
-    // left-to-right steps, `trailing_zeros` picks the lowest match in the 64-byte window.
-    while count - base >= MEMCHR_WIDE_LANES {
-        let nv = Simd::<u8, SIMD_LANES>::splat(needle);
-        let a = Simd::<u8, SIMD_LANES>::from_slice(&hs[base..base + SIMD_LANES]);
-        let b =
-            Simd::<u8, SIMD_LANES>::from_slice(&hs[base + SIMD_LANES..base + MEMCHR_WIDE_LANES]);
-        let m = a.simd_eq(nv).to_bitmask() | (b.simd_eq(nv).to_bitmask() << SIMD_LANES);
-        if m != 0 {
-            return Some(base + m.trailing_zeros() as usize);
-        }
-        base += MEMCHR_WIDE_LANES;
     }
 
     while count - base >= SIMD_LANES {
@@ -555,85 +355,31 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
 pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
-
-    // Small bounded haystack in [16, 32): the 32-byte SIMD loops can't run, so the old
-    // code fell to an 8-byte SWAR + scalar reverse tail. Mirror the forward `memchr`
-    // small-n fast path with two OVERLAPPING 16-byte SIMD probes, scanned HIGH→LOW for
-    // the last match. The high probe `[count-16, count)` owns the top bytes (its highest
-    // set bit is the last match); if empty, every position ≥ count-16 is ruled out, so
-    // the low probe `[0,16)`'s highest set bit is the true last match < count-16. Stays
-    // entirely in-slice (no align-down, no OOB).
-    if (16..SIMD_LANES).contains(&count) {
-        const L: usize = 16;
-        let off = count - L;
-        let vh = Simd::<u8, L>::from_slice(&hs[off..off + L]);
-        let mh = vh.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
-        if mh != 0 {
-            return Some(off + (63 - mh.leading_zeros() as usize));
-        }
-        let vl = Simd::<u8, L>::from_slice(&hs[..L]);
-        let ml = vl.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
-        if ml != 0 {
-            return Some(63 - ml.leading_zeros() as usize);
-        }
-        return None;
-    }
-
+    let mut simd_blocks = hs.rchunks_exact(SIMD_FOLD_BYTES);
     let mut end = count;
 
-    // Wide 512B fold tier above the 256B fold (mirrors memchr): larger reverse skip windows for
-    // long scans (~8-10% at n>=512, memchr_fold512_ab). `rchunks_exact` walks blocks from the END
-    // first, so the highest match is still found first (last-match semantics preserved); the
-    // < 512 front remainder keeps the 256B fold below (no regression). Byte-identical.
-    let mut blocks512 = hs.rchunks_exact(MEMCHR_FOLD_512);
-    for block in blocks512.by_ref() {
-        if has_byte_memchr_512(block, needle) {
-            let mut panel_end = end;
-            for chunk in block.rchunks_exact(SIMD_LANES) {
-                let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-                let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
-                if bits != 0 {
-                    let j = 63 - bits.leading_zeros() as usize;
-                    return Some(panel_end - SIMD_LANES + j);
-                }
-                panel_end -= SIMD_LANES;
-            }
-        }
-        end -= MEMCHR_FOLD_512;
-    }
-    let hs = blocks512.remainder();
-
-    let mut simd_blocks = hs.rchunks_exact(MEMCHR_FOLD_BYTES);
-
     for block in simd_blocks.by_ref() {
-        if has_byte_memchr_folded(block, needle) {
+        if has_byte_simd_folded(block, needle) {
             let mut panel_end = end;
             for chunk in block.rchunks_exact(SIMD_LANES) {
-                // Highest set lane (last match) via the SIMD mask — O(1) instead of a
-                // scalar reverse re-scan (`rposition`) of the whole flagged chunk
-                // (bd-2g7oyh: the rposition re-scan made memrchr ~3x slower than glibc).
-                let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-                let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
-                if bits != 0 {
-                    let j = 63 - bits.leading_zeros() as usize;
+                if has_byte_simd_32(chunk, needle)
+                    && let Some(j) = chunk.iter().rposition(|&b| b == needle)
+                {
                     return Some(panel_end - SIMD_LANES + j);
                 }
                 panel_end -= SIMD_LANES;
             }
         }
-        end -= MEMCHR_FOLD_BYTES;
+        end -= SIMD_FOLD_BYTES;
     }
 
     let hs = simd_blocks.remainder();
     let mut simd_chunks = hs.rchunks_exact(SIMD_LANES);
 
     for chunk in simd_chunks.by_ref() {
-        // Highest set lane via the SIMD mask — O(1) instead of a scalar reverse
-        // re-scan (`rposition`) of the flagged chunk (bd-2g7oyh).
-        let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
-        let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
-        if bits != 0 {
-            let j = 63 - bits.leading_zeros() as usize;
+        if has_byte_simd_32(chunk, needle)
+            && let Some(j) = chunk.iter().rposition(|&b| b == needle)
+        {
             return Some(end - SIMD_LANES + j);
         }
         end -= SIMD_LANES;
@@ -694,13 +440,17 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
     let last = ndl[n_count - 1];
 
     // Dual-anchor fast path: a match at `cand` requires BOTH the first needle
-    // byte at `cand` and the last needle byte at `cand + n_count - 1`. Last-byte
-    // anchoring is excellent for `"aaaa...b"`-style inputs, but text needles
-    // often end in a common byte (`e`, `t`, space). A small byte-frequency prior
-    // keeps the rare-last win while routing common-last text to the first-byte
-    // scan below. The O(n+m) Two-Way bailout and leftmost-match semantics are
-    // preserved whichever anchor is selected.
-    if first != last && memmem_prefers_last_anchor(first, last) {
+    // byte at `cand` and the last needle byte at `cand + n_count - 1`. When the
+    // first byte is common (e.g. "aaaa…b" over an 'a' run) but the last byte is
+    // rare/absent, anchoring the SIMD `memchr` scan on the last byte collapses
+    // the search to a single pass — the first-byte-only scan below makes every
+    // position a candidate (O(n·m) before the Two-Way bailout). We scan for the
+    // last byte; each hit confirms the first byte and a full compare. Only valid
+    // when `first != last`; otherwise the anchors coincide and we use the
+    // first-byte scan. The O(n+m) Two-Way bailout and leftmost-match semantics
+    // are preserved (last-byte hits are visited left to right, so candidate
+    // starts increase monotonically). Mirrors the wide `wcsstr` dual-anchor.
+    if first != last {
         let mut anchor = n_count - 1;
         let mut miss_work = 0usize;
         while anchor < hay.len() {
@@ -733,7 +483,7 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
         if cand + n_count > hay.len() {
             return None; // not enough room left for the needle
         }
-        if (first == last || hay[cand + n_count - 1] == last) && hay[cand..cand + n_count] == *ndl {
+        if hay[cand..cand + n_count] == *ndl {
             return Some(cand);
         }
         miss_work += n_count;
@@ -746,88 +496,6 @@ pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Op
         }
     }
     None
-}
-
-#[inline(always)]
-fn memmem_prefers_last_anchor(first: u8, last: u8) -> bool {
-    debug_assert_ne!(first, last);
-    memmem_anchor_commonness(last) <= memmem_anchor_commonness(first)
-}
-
-#[inline(always)]
-fn memmem_anchor_commonness(byte: u8) -> u8 {
-    MEMMEM_ANCHOR_COMMONNESS[byte as usize]
-}
-
-static MEMMEM_ANCHOR_COMMONNESS: [u8; 256] = memmem_anchor_commonness_table();
-
-const fn memmem_anchor_commonness_table() -> [u8; 256] {
-    let mut table = [1u8; 256];
-    table[0] = 2;
-
-    let mut b = b'!';
-    while b <= b'~' {
-        table[b as usize] = 4;
-        b += 1;
-    }
-
-    b = b'0';
-    while b <= b'9' {
-        table[b as usize] = 5;
-        b += 1;
-    }
-
-    table[b'_' as usize] = 6;
-    table[b'-' as usize] = 6;
-    table[b'.' as usize] = 6;
-    table[b'/' as usize] = 6;
-    table[b'\t' as usize] = 6;
-    table[b'\n' as usize] = 6;
-    table[b'\r' as usize] = 6;
-
-    table[b'c' as usize] = 8;
-    table[b'C' as usize] = 8;
-    table[b'd' as usize] = 8;
-    table[b'D' as usize] = 8;
-    table[b'f' as usize] = 8;
-    table[b'F' as usize] = 8;
-    table[b'g' as usize] = 8;
-    table[b'G' as usize] = 8;
-    table[b'h' as usize] = 8;
-    table[b'H' as usize] = 8;
-    table[b'l' as usize] = 8;
-    table[b'L' as usize] = 8;
-    table[b'm' as usize] = 8;
-    table[b'M' as usize] = 8;
-    table[b'p' as usize] = 8;
-    table[b'P' as usize] = 8;
-    table[b'u' as usize] = 8;
-    table[b'U' as usize] = 8;
-    table[b'w' as usize] = 8;
-    table[b'W' as usize] = 8;
-    table[b'y' as usize] = 8;
-    table[b'Y' as usize] = 8;
-
-    table[b'a' as usize] = 12;
-    table[b'A' as usize] = 12;
-    table[b'i' as usize] = 12;
-    table[b'I' as usize] = 12;
-    table[b'n' as usize] = 12;
-    table[b'N' as usize] = 12;
-    table[b'o' as usize] = 12;
-    table[b'O' as usize] = 12;
-    table[b'r' as usize] = 12;
-    table[b'R' as usize] = 12;
-    table[b's' as usize] = 12;
-    table[b'S' as usize] = 12;
-    table[b't' as usize] = 12;
-    table[b'T' as usize] = 12;
-
-    table[b' ' as usize] = 16;
-    table[b'e' as usize] = 16;
-    table[b'E' as usize] = 16;
-
-    table
 }
 
 /// Linear-time substring search via the Two-Way (Crochemore–Perrin)
@@ -1011,16 +679,6 @@ pub fn mempcpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 pub fn memccpy(dest: &mut [u8], src: &[u8], c: u8, n: usize) -> Option<usize> {
     let count = n.min(dest.len()).min(src.len());
 
-    if count >= MEMCCPY_BULK_COPY_MIN {
-        if let Some(index) = memchr(&src[..count], c, count) {
-            let copied = index + 1;
-            dest[..copied].copy_from_slice(&src[..copied]);
-            return Some(copied);
-        }
-        dest[..count].copy_from_slice(&src[..count]);
-        return None;
-    }
-
     if count < SIMD_LANES {
         for i in 0..count {
             dest[i] = src[i];
@@ -1031,39 +689,21 @@ pub fn memccpy(dest: &mut [u8], src: &[u8], c: u8, n: usize) -> Option<usize> {
         return None;
     }
 
-    // Fused single-pass SIMD scan+copy: copy each lane-width chunk to `dest` while testing
-    // it for `c`, stopping at the chunk that contains `c`. One pass over the data (~2n
-    // memory traffic) instead of memchr-then-memcpy's ~3n. Behaviour is identical: if `c`
-    // occurs at index `p`, bytes `0..=p` are copied and `Some(p + 1)` is returned;
-    // otherwise all `count` bytes are copied and `None` is returned. All loads/stores are
-    // within the bounded `count`-length slices, so there is no page-crossing concern.
-    //
-    // NOTE (2026-07-12, cc-memccpy-copy-throughput): applying `memchr` +
-    // `copy_from_slice` at every size regressed 256-byte inputs badly, while helping
-    // 65536-byte inputs. The large-only route above captures that crossover; this fused
-    // loop remains the small/medium fallback. A portable-SIMD `copy_to_slice` rewrite
-    // was slower at every measured size and remains a do-not-retry boundary.
-    let needle = Simd::<u8, SIMD_LANES>::splat(c);
-    let mut i = 0;
-    while i + SIMD_LANES <= count {
-        let chunk = Simd::<u8, SIMD_LANES>::from_slice(&src[i..i + SIMD_LANES]);
-        let mask = chunk.simd_eq(needle).to_bitmask();
-        if mask != 0 {
-            let k = mask.trailing_zeros() as usize;
-            dest[i..=i + k].copy_from_slice(&src[i..=i + k]);
-            return Some(i + k + 1);
+    // Locate `c` with the SIMD memchr scan, then copy the resulting prefix in
+    // one bulk move (lowered to the memcpy intrinsic) instead of a byte loop.
+    // Behaviour is identical: if `c` occurs at index `p < count`, bytes
+    // `0..=p` are copied and `Some(p + 1)` returned; otherwise all `count`
+    // bytes are copied and `None` returned.
+    match memchr(&src[..count], c, count) {
+        Some(p) => {
+            dest[..=p].copy_from_slice(&src[..=p]);
+            Some(p + 1)
         }
-        dest[i..i + SIMD_LANES].copy_from_slice(&src[i..i + SIMD_LANES]);
-        i += SIMD_LANES;
-    }
-    while i < count {
-        dest[i] = src[i];
-        if src[i] == c {
-            return Some(i + 1);
+        None => {
+            dest[..count].copy_from_slice(&src[..count]);
+            None
         }
-        i += 1;
     }
-    None
 }
 
 /// Sets `n` bytes of `dest` to zero, guaranteed not to be optimized away.
@@ -1128,46 +768,11 @@ pub fn bcmp(a: &[u8], b: &[u8], n: usize) -> i32 {
 /// Equivalent to POSIX `swab`. Processes `n` bytes (n should be even).
 pub fn swab(src: &[u8], dest: &mut [u8], n: usize) -> usize {
     let pairs = n.min(src.len()).min(dest.len()) / 2;
-    let bytes = pairs * 2;
-    let mut i = 0;
-
-    // SIMD: swap adjacent byte pairs 32 at a time via a single shuffle (lane
-    // 2k <-> 2k+1), instead of two scalar stores per pair. Byte-for-byte
-    // identical to the scalar swap below — the swizzle is exactly the pairwise
-    // transposition `dest[2k]=src[2k+1]; dest[2k+1]=src[2k]`. `bytes` is even,
-    // so the SIMD step (multiple of 32) and the 2-byte tail never split a pair,
-    // and an odd trailing byte (n odd) is left untouched, as POSIX swab requires.
-    const LANES: usize = 32;
-    const SWIZZLE: [usize; LANES] = [
-        1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14, 17, 16, 19, 18, 21, 20, 23, 22, 25,
-        24, 27, 26, 29, 28, 31, 30,
-    ];
-    #[inline(always)]
-    fn swab_lane(src: &[u8], dest: &mut [u8], o: usize) {
-        let v = Simd::<u8, LANES>::from_slice(&src[o..o + LANES]);
-        std::simd::simd_swizzle!(v, SWIZZLE).copy_to_slice(&mut dest[o..o + LANES]);
+    for i in 0..pairs {
+        dest[2 * i] = src[2 * i + 1];
+        dest[2 * i + 1] = src[2 * i];
     }
-    // 128-byte-unrolled tier: four independent 32B swizzles per iteration pipeline the
-    // load/shuffle/store units and drop the per-32B loop overhead — measured 1.46-1.53x
-    // faster than the plain 32B loop at n>=4096 (swab_unroll_ab). Byte-identical (same
-    // pairwise transposition); the < 128B remainder keeps the 32B loop (no regression).
-    while i + 4 * LANES <= bytes {
-        swab_lane(src, dest, i);
-        swab_lane(src, dest, i + LANES);
-        swab_lane(src, dest, i + 2 * LANES);
-        swab_lane(src, dest, i + 3 * LANES);
-        i += 4 * LANES;
-    }
-    while i + LANES <= bytes {
-        swab_lane(src, dest, i);
-        i += LANES;
-    }
-    while i < bytes {
-        dest[i] = src[i + 1];
-        dest[i + 1] = src[i];
-        i += 2;
-    }
-    bytes
+    pairs * 2
 }
 
 #[cfg(test)]
@@ -1270,53 +875,6 @@ mod tests {
     }
 
     #[test]
-    fn memmove_exact_4096_array_copy_preserves_prefix_contract() {
-        use sha2::{Digest, Sha256};
-
-        let src: Vec<u8> = (0..MEMMOVE_EXACT_4096_BYTES)
-            .map(|i| ((i * 37 + 11) & 0xff) as u8)
-            .collect();
-        let mut dest = [0x5au8; MEMMOVE_EXACT_4096_BYTES + 8];
-
-        let copied = memmove(&mut dest, &src, MEMMOVE_EXACT_4096_BYTES);
-        assert_eq!(copied, MEMMOVE_EXACT_4096_BYTES);
-        assert_eq!(&dest[..MEMMOVE_EXACT_4096_BYTES], &src[..]);
-        assert_eq!(&dest[MEMMOVE_EXACT_4096_BYTES..], &[0x5au8; 8]);
-
-        let digest: String = Sha256::digest(dest)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        assert_eq!(
-            digest, "92ae7e54d1615da62e9a7750fdcd6280b788ce3e85e0bd993fca3d7e3b2747dc",
-            "memmove exact-4096 golden changed"
-        );
-    }
-
-    #[test]
-    fn memmove_exact_4096_full_slice_preserves_payload() {
-        use sha2::{Digest, Sha256};
-
-        let src: Vec<u8> = (0..MEMMOVE_EXACT_4096_BYTES)
-            .map(|i| ((i * 37 + 11) & 0xff) as u8)
-            .collect();
-        let mut dest = [0u8; MEMMOVE_EXACT_4096_BYTES];
-
-        let copied = memmove(&mut dest, &src, MEMMOVE_EXACT_4096_BYTES);
-        assert_eq!(copied, MEMMOVE_EXACT_4096_BYTES);
-        assert_eq!(&dest[..], &src[..]);
-
-        let digest: String = Sha256::digest(dest)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        assert_eq!(
-            digest, "4e441a3533bb2c10cd5649981d395744213e09a336746b5a3458fee4057205ec",
-            "memmove exact full-slice golden changed"
-        );
-    }
-
-    #[test]
     fn test_memset_basic() {
         let mut buf = [0u8; 8];
         memset(&mut buf, b'A', 8);
@@ -1328,14 +886,6 @@ mod tests {
         let mut buf = [0u8; 8];
         memset(&mut buf, b'X', 3);
         assert_eq!(&buf, b"XXX\0\0\0\0\0");
-    }
-
-    #[test]
-    fn test_memset_fill_clamps_to_buffer_len() {
-        let mut buf = [b'?'; 4];
-        let written = memset(&mut buf, b'Z', 99);
-        assert_eq!(written, buf.len());
-        assert_eq!(&buf, b"ZZZZ");
     }
 
     #[test]
@@ -1451,32 +1001,6 @@ mod tests {
     }
 
     #[test]
-    fn test_memcmp_exact_4096_certificate_preserves_ordering() {
-        let a: Vec<u8> = (0..MEMCMP_EXACT_4096_BYTES)
-            .map(|i| ((i * 17 + 31) & 0xff) as u8)
-            .collect();
-        assert_eq!(
-            memcmp(&a, &a, MEMCMP_EXACT_4096_BYTES),
-            core::cmp::Ordering::Equal
-        );
-
-        for index in [0usize, 1, 63, 64, 127, 128, 255, 256, 2047, 2048, 4095] {
-            let mut b = a.clone();
-            b[index] = a[index].wrapping_add(1);
-            assert_eq!(
-                memcmp(&a, &b, MEMCMP_EXACT_4096_BYTES),
-                a.as_slice().cmp(b.as_slice()),
-                "difference at index {index}"
-            );
-            assert_eq!(
-                memcmp(&b, &a, MEMCMP_EXACT_4096_BYTES),
-                b.as_slice().cmp(a.as_slice()),
-                "reverse difference at index {index}"
-            );
-        }
-    }
-
-    #[test]
     fn test_memchr_found() {
         assert_eq!(memchr(b"hello", b'l', 5), Some(2));
     }
@@ -1525,34 +1049,13 @@ mod tests {
 
     #[test]
     fn test_memrchr_folded_simd_block_resolves_last_match() {
-        let mut haystack = vec![b'A'; MEMCHR_FOLD_BYTES + SIMD_LANES];
+        let mut haystack = vec![b'A'; SIMD_FOLD_BYTES + SIMD_LANES];
         haystack[SIMD_LANES + 9] = b'Z';
-        haystack[SIMD_LANES * 7 + 17] = b'Z';
+        haystack[SIMD_LANES * 3 + 17] = b'Z';
         assert_eq!(
             memrchr(&haystack, b'Z', haystack.len()),
-            Some(SIMD_LANES * 7 + 17)
+            Some(SIMD_LANES * 3 + 17)
         );
-    }
-
-    #[test]
-    fn test_memrchr_folded_reverse_skips_full_tail_block_with_correct_index() {
-        let len = MEMCHR_FOLD_BYTES * 2 + SIMD_LANES / 2;
-        let mut haystack = vec![b'A'; len];
-        let positions = [
-            SIMD_LANES + 3,
-            MEMCHR_FOLD_BYTES - 1,
-            MEMCHR_FOLD_BYTES + SIMD_LANES + 5,
-        ];
-
-        for &pos in &positions {
-            haystack.fill(b'A');
-            haystack[pos] = b'Z';
-            assert_eq!(
-                memrchr(&haystack, b'Z', haystack.len()),
-                Some(pos),
-                "folded reverse index mismatch after tail-block skip at {pos}"
-            );
-        }
     }
 
     #[test]
@@ -1629,31 +1132,6 @@ mod tests {
                 assert_eq!(dest[len - 1], 0xA7);
             }
         }
-    }
-
-    #[test]
-    fn test_memccpy_large_bulk_lane_copies_through_first_match_only() {
-        let len = MEMCCPY_BULK_COPY_MIN + 64;
-        let stop = MEMCCPY_BULK_COPY_MIN + 7;
-        let mut src = vec![0x51; len];
-        src[stop] = 0x42;
-        src[stop + 1] = 0x42;
-        let mut dest = vec![0xA7; len];
-
-        assert_eq!(memccpy(&mut dest, &src, 0x42, len), Some(stop + 1));
-        assert_eq!(&dest[..=stop], &src[..=stop]);
-        assert!(dest[stop + 1..].iter().all(|byte| *byte == 0xA7));
-    }
-
-    #[test]
-    fn test_memccpy_large_bulk_lane_copies_all_when_absent() {
-        let len = MEMCCPY_BULK_COPY_MIN + 64;
-        let src = vec![0x51; len];
-        let mut dest = vec![0xA7; len + 1];
-
-        assert_eq!(memccpy(&mut dest, &src, 0x42, len), None);
-        assert_eq!(&dest[..len], &src);
-        assert_eq!(dest[len], 0xA7);
     }
 
     #[test]

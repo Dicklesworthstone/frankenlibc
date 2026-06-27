@@ -28,8 +28,7 @@ const WIDE_COMPARE_UNROLL_LANES: usize = WIDE_COMPARE_SIMD_LANES * 2;
 const WIDE_RANGE_MEMBERSHIP_MIN_LEN: usize = WIDE_COMPARE_SIMD_LANES * 32;
 
 /// Minimum scan length before paying to certify a repeated accepted wide char.
-const WIDE_MEMBER_REPEAT_LANES: usize = WIDE_FIND_LONG_SIMD_LANES;
-const WIDE_MEMBER_REPEAT_MIN_LEN: usize = WIDE_MEMBER_REPEAT_LANES * 4;
+const WIDE_MEMBER_REPEAT_MIN_LEN: usize = WIDE_COMPARE_UNROLL_LANES * 8;
 
 /// Minimum bounded case-fold compare length before paying to detect repeated
 /// fold-equal wide-character pairs.
@@ -46,16 +45,40 @@ const WIDE_MEMCHR_SIMD_LANES: usize = 16;
 
 /// Number of `u32` wide characters searched per reverse `wmemrchr` panel.
 const WIDE_REVERSE_SIMD_LANES: usize = 16;
-const WIDE_REVERSE_LONG_SIMD_LANES: usize = WIDE_FIND_LONG_SIMD_LANES;
-const WIDE_REVERSE_LONG_MIN_LEN: usize = WIDE_REVERSE_LONG_SIMD_LANES * 4;
 
-// (has_wide_or_nul_simd / has_wide_or_nul_long_simd removed: find_wide_or_nul,
-// find_wide_or_nul_long and wcsrchr now compute the needle/NUL lane index directly
-// via masks instead of a bool prefilter + scalar resolve, so the prefilters are
-// unused. bd-2g7oyh.)
+/// Returns `true` if `chunk` (exactly [`WIDE_FIND_SIMD_LANES`] elements) contains the
+/// wide character `needle` or a terminating NUL. Used as a cheap panel filter
+/// before exact left-to-right scalar resolution on candidate panels.
+#[inline(always)]
+fn has_wide_or_nul_simd(chunk: &[u32], needle: u32) -> bool {
+    debug_assert_eq!(chunk.len(), WIDE_FIND_SIMD_LANES);
+    let lanes = Simd::<u32, WIDE_FIND_SIMD_LANES>::from_slice(chunk);
+    (lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(needle))).any()
+}
 
-// (equal_and_no_nul_wide removed: wcscmp/wcsncmp now resolve the divergence lane
-// inline via an event-mask, so the bool prefilter is unused. bd-2g7oyh.)
+/// Returns `true` if `chunk` (exactly [`WIDE_FIND_LONG_SIMD_LANES`] elements)
+/// contains the wide character `needle` or a terminating NUL.
+#[inline(always)]
+fn has_wide_or_nul_long_simd(chunk: &[u32], needle: u32) -> bool {
+    debug_assert_eq!(chunk.len(), WIDE_FIND_LONG_SIMD_LANES);
+    let lanes = Simd::<u32, WIDE_FIND_LONG_SIMD_LANES>::from_slice(chunk);
+    (lanes.simd_eq(Simd::splat(0)) | lanes.simd_eq(Simd::splat(needle))).any()
+}
+
+/// Returns `true` iff the two [`WIDE_COMPARE_SIMD_LANES`]-element panels are
+/// element-for-element equal AND contain no terminating NUL. Used as the
+/// equal-prefix fast path for NUL-terminated wide compares: a `false` result
+/// means either a divergence or a NUL is present in the panel, so the scalar
+/// tail must resolve the exact index. Because the panels are equal when this
+/// returns `true`, checking `a` for NUL also covers `b`.
+#[inline(always)]
+fn equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
+    debug_assert_eq!(a.len(), WIDE_COMPARE_SIMD_LANES);
+    debug_assert_eq!(b.len(), WIDE_COMPARE_SIMD_LANES);
+    let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a);
+    let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b);
+    av.simd_eq(bv).all() && !av.simd_eq(Simd::splat(0)).any()
+}
 
 #[inline(always)]
 fn equal_and_no_nul_wide_unrolled(a: &[u32], b: &[u32]) -> bool {
@@ -77,9 +100,23 @@ fn fold_ascii_upper_wide(
     is_upper.select(v + Simd::splat(0x20), v)
 }
 
-// (fold_equal_and_no_nul_wide removed: wcscasecmp/wcsncasecmp now resolve the
-// divergence lane inline via a fold-event-mask, so the bool prefilter is unused.
-// bd-2g7oyh.)
+/// Returns `true` iff the two panels are equal after ASCII case-folding AND
+/// contain no terminating NUL. The equal-prefix fast path for case-insensitive
+/// wide compares: a `false` result means a folded divergence or a NUL is
+/// present, so the scalar tail resolves the exact index. NUL (`0`) is below the
+/// fold range, so fold-equality implies `a` and `b` share NUL positions —
+/// checking `a` suffices.
+#[inline(always)]
+fn fold_equal_and_no_nul_wide(a: &[u32], b: &[u32]) -> bool {
+    debug_assert_eq!(a.len(), WIDE_COMPARE_SIMD_LANES);
+    debug_assert_eq!(b.len(), WIDE_COMPARE_SIMD_LANES);
+    let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a);
+    let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b);
+    fold_ascii_upper_wide(av)
+        .simd_eq(fold_ascii_upper_wide(bv))
+        .all()
+        && !av.simd_eq(Simd::splat(0)).any()
+}
 
 /// Returns `true` when a 32-wide panel consists entirely of one non-NUL
 /// code-unit pair whose ASCII-folded values are equal. This narrow fast path
@@ -148,34 +185,15 @@ fn equal_prefix_wide(a: &[u32], b: &[u32], n: usize) -> bool {
         .all(|(left, right)| left == right)
 }
 
-/// Returns `true` iff the two long `wmemcmp` panels are exactly equal. Unlike
-/// the NUL-terminated compare helpers, this intentionally ignores NUL because
-/// `wmemcmp` compares raw wide-code-unit arrays over an explicit length.
-#[inline(always)]
-fn equal_wide_long_panel(a: &[u32], b: &[u32]) -> bool {
-    debug_assert_eq!(a.len(), WIDE_EQUAL_PREFIX_LANES);
-    debug_assert_eq!(b.len(), WIDE_EQUAL_PREFIX_LANES);
-    let av = Simd::<u32, WIDE_EQUAL_PREFIX_LANES>::from_slice(a);
-    let bv = Simd::<u32, WIDE_EQUAL_PREFIX_LANES>::from_slice(b);
-    av.simd_eq(bv).all()
-}
-
 #[inline(always)]
 fn resolve_wmemcmp_panel(a_chunk: &[u32], b_chunk: &[u32]) -> Option<i32> {
     debug_assert_eq!(a_chunk.len(), b_chunk.len());
-    debug_assert_eq!(a_chunk.len(), WIDE_COMPARE_SIMD_LANES);
-    // First differing lane via the SIMD mask + trailing_zeros (O(1)) instead of a
-    // scalar element-by-element re-scan of the panel (wmemcmp was ~6x slower than
-    // glibc on a deep-in-panel difference; bd-2g7oyh). Callers always pass exactly
-    // WIDE_COMPARE_SIMD_LANES (16) elements.
-    let av = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(a_chunk);
-    let bv = Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(b_chunk);
-    let diff = av.simd_ne(bv).to_bitmask();
-    if diff != 0 {
-        let j = diff.trailing_zeros() as usize;
-        let a = a_chunk[j] as i32;
-        let b = b_chunk[j] as i32;
-        return Some(if a < b { -1 } else { 1 });
+    for (a, b) in a_chunk.iter().zip(b_chunk.iter()) {
+        let a = *a as i32;
+        let b = *b as i32;
+        if a != b {
+            return Some(if a < b { -1 } else { 1 });
+        }
     }
     None
 }
@@ -185,52 +203,31 @@ fn resolve_wmemcmp_panel(a_chunk: &[u32], b_chunk: &[u32]) -> Option<i32> {
 ///
 /// `needle` must be non-zero so the two splat targets are distinct; callers in
 /// this module only invoke it with a non-NUL first needle character.
-#[inline]
 fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
     debug_assert_ne!(needle, 0);
     let mut chunks = s.chunks_exact(WIDE_FIND_SIMD_LANES);
     let mut base = 0usize;
 
     for chunk in chunks.by_ref() {
-        // First needle-or-NUL lane via the mask (O(1)) instead of detect + scalar
-        // enumerate of the flagged 32-element chunk (bd-2g7oyh).
-        let lanes = Simd::<u32, WIDE_FIND_SIMD_LANES>::from_slice(chunk);
-        let m = (lanes.simd_eq(Simd::splat(needle)) | lanes.simd_eq(Simd::splat(0))).to_bitmask();
-        if m != 0 {
-            return base + m.trailing_zeros() as usize;
-        }
-        base += WIDE_FIND_SIMD_LANES;
-    }
-
-    // Sub-chunk remainder (1..LANES-1 elements). When the whole input is at least
-    // one lane wide, finish it with ONE OVERLAPPING 32-lane load anchored at the
-    // end instead of a scalar tail (which for e.g. 60 wc left ~half the input
-    // scalar). The overlap region `[len-LANES .. base]` lies inside an
-    // already-scanned chunk that held no needle/NUL, so the leftmost hit in the
-    // window is exactly the first hit in the remainder — byte-identical.
-    let rem = chunks.remainder();
-    if !rem.is_empty() {
-        if s.len() >= WIDE_FIND_SIMD_LANES {
-            let start = s.len() - WIDE_FIND_SIMD_LANES;
-            let lanes = Simd::<u32, WIDE_FIND_SIMD_LANES>::from_slice(&s[start..]);
-            let m =
-                (lanes.simd_eq(Simd::splat(needle)) | lanes.simd_eq(Simd::splat(0))).to_bitmask();
-            if m != 0 {
-                return start + m.trailing_zeros() as usize;
-            }
-        } else {
-            for (j, &ch) in rem.iter().enumerate() {
+        if has_wide_or_nul_simd(chunk, needle) {
+            for (j, &ch) in chunk.iter().enumerate() {
                 if ch == needle || ch == 0 {
                     return base + j;
                 }
             }
+        }
+        base += WIDE_FIND_SIMD_LANES;
+    }
+
+    for (j, &ch) in chunks.remainder().iter().enumerate() {
+        if ch == needle || ch == 0 {
+            return base + j;
         }
     }
 
     s.len()
 }
 
-#[inline]
 fn find_wide_or_nul_long(s: &[u32], needle: u32) -> usize {
     debug_assert_ne!(needle, 0);
     // Fold four 64-lane panels per 256-element block into ONE horizontal
@@ -254,23 +251,11 @@ fn find_wide_or_nul_long(s: &[u32], needle: u32) -> usize {
         };
         let folded = hit(0).simd_min(hit(1)).simd_min(hit(2).simd_min(hit(3)));
         if folded.simd_eq(zero).any() {
-            // Resolve the first needle-or-NUL panel + lane via masks (O(1)) instead
-            // of a scalar enumerate of the 256-element block (bd-2g7oyh). `hit(k)` is
-            // 0 exactly at needle/NUL lanes.
-            let m0 = hit(0).simd_eq(zero).to_bitmask();
-            if m0 != 0 {
-                return base + m0.trailing_zeros() as usize;
+            for (j, &ch) in block.iter().enumerate() {
+                if ch == needle || ch == 0 {
+                    return base + j;
+                }
             }
-            let m1 = hit(1).simd_eq(zero).to_bitmask();
-            if m1 != 0 {
-                return base + PANEL + m1.trailing_zeros() as usize;
-            }
-            let m2 = hit(2).simd_eq(zero).to_bitmask();
-            if m2 != 0 {
-                return base + 2 * PANEL + m2.trailing_zeros() as usize;
-            }
-            let m3 = hit(3).simd_eq(zero).to_bitmask();
-            return base + 3 * PANEL + m3.trailing_zeros() as usize;
         }
         base += BLOCK;
     }
@@ -296,32 +281,37 @@ pub fn wcslen(s: &[u32]) -> usize {
     // scalar tail resolves the exact index inside a flagged block, so the
     // returned length is identical to the per-chunk scan (bd-2g7oyh).
     const PANEL: usize = WIDE_FIND_LONG_SIMD_LANES; // 64
+    const BLOCK: usize = PANEL * 4; // 256
     let zero = Simd::<u32, PANEL>::splat(0);
     let mut base = 0usize;
 
-    // Direct 64-lane NUL mask scan: one `simd_eq(0).to_bitmask()` per panel, resolved
-    // by `trailing_zeros`. The prior 256-block min-FOLD (3 `simd_min` + `.any()` on
-    // 64-lane = 8 ymm each) did MORE vector work than a plain per-panel movemask and
-    // measured 2.6x slower than glibc's wcslen; the direct mask scan removes the fold
-    // overhead (same fix as wmemchr). Byte-identical: same leftmost NUL. bd-2g7oyh.
-    while base + PANEL <= s.len() {
-        let v = Simd::<u32, PANEL>::from_slice(&s[base..base + PANEL]);
-        let m = v.simd_eq(zero).to_bitmask();
-        if m != 0 {
-            return base + m.trailing_zeros() as usize;
+    while base + BLOCK <= s.len() {
+        let block = &s[base..base + BLOCK];
+        let p0 = Simd::<u32, PANEL>::from_slice(&block[0..PANEL]);
+        let p1 = Simd::<u32, PANEL>::from_slice(&block[PANEL..2 * PANEL]);
+        let p2 = Simd::<u32, PANEL>::from_slice(&block[2 * PANEL..3 * PANEL]);
+        let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]);
+        let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
+        if folded.simd_eq(zero).any() {
+            for (j, &ch) in block.iter().enumerate() {
+                if ch == 0 {
+                    return base + j;
+                }
+            }
         }
-        base += PANEL;
+        base += BLOCK;
     }
 
     // Tail (< 256 wide chars): 16-lane chunks, then scalar.
     let mut chunks = s[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
-        // First NUL lane via the mask (O(1)) instead of a scalar enumerate of the
-        // flagged 16-element chunk (bd-2g7oyh).
-        let m = lanes.simd_eq(Simd::splat(0)).to_bitmask();
-        if m != 0 {
-            return base + m.trailing_zeros() as usize;
+        if lanes.simd_eq(Simd::splat(0)).any() {
+            for (j, &ch) in chunk.iter().enumerate() {
+                if ch == 0 {
+                    return base + j;
+                }
+            }
         }
         base += WIDE_NUL_SIMD_LANES;
     }
@@ -339,151 +329,62 @@ pub fn wcslen(s: &[u32]) -> usize {
 ///
 /// Equivalent to C `wcsnlen`.
 pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
-    // 128-byte (4×8-lane-u32) min-combine scan bounded by `maxlen`: 3 vpminud + 1 vpcmpeqd
-    // per 128 B, resolving the exact panel only on a hit — 1.25-1.43x faster than the prior
-    // 64-lane `simd_eq(0).to_bitmask()` per-panel scan (whose 64-lane bitmask pack was the
-    // bottleneck). NOT the rejected 256-block min-FOLD (that did `simd_min` on 64-lane = 8
-    // ymm each); this is 4 light 8-lane ymm. Byte-identical first-NUL. (bd-2g7oyh follow-up.)
+    // Same folded-block NUL scan as wcslen (bd-2g7oyh.262), bounded by `maxlen`:
+    // four 64-lane panels per 256-element block folded with `simd_min` into ONE
+    // reduction (`min(a, b) == 0` iff either lane is `0`), so the steady-state
+    // scan pays one reduction per 256 wide chars instead of one per 16. The
+    // scalar tail resolves the exact index in a flagged block, so the result is
+    // identical to the scalar `position(NUL).unwrap_or(limit)` scan.
+    const PANEL: usize = WIDE_FIND_LONG_SIMD_LANES; // 64
+    const BLOCK: usize = PANEL * 4; // 256
     let limit = maxlen.min(s.len());
     let scan = &s[..limit];
+    let zero = Simd::<u32, PANEL>::splat(0);
+    let mut base = 0usize;
 
-    // Small bounded scan in [8, 32) wchars: the 16-lane chunk loop below leaves a scalar
-    // tail (limit < 16 is fully scalar), the small-n NUL floor. Two OVERLAPPING SIMD
-    // probes — `[0,L)` and `[limit-L, limit)` with L = 16 (≥16) or 8 (≥8) — cover all
-    // `limit` lanes in-bounds (`scan` has exactly `limit` elements). First-NUL ordering:
-    // probe 0 owns `[0,L)`; if empty every NUL < L is ruled out so probe 1's lowest set
-    // bit is the true first NUL ≥ L. Measured to beat glibc wcsnlen 0.51-0.87x here.
-    if (16..32).contains(&limit) {
-        let v0 = Simd::<u32, 16>::from_slice(&scan[..16]);
-        let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
-        if m0 != 0 {
-            return m0.trailing_zeros() as usize;
+    while base + BLOCK <= limit {
+        let block = &scan[base..base + BLOCK];
+        let p0 = Simd::<u32, PANEL>::from_slice(&block[0..PANEL]);
+        let p1 = Simd::<u32, PANEL>::from_slice(&block[PANEL..2 * PANEL]);
+        let p2 = Simd::<u32, PANEL>::from_slice(&block[2 * PANEL..3 * PANEL]);
+        let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]);
+        let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
+        if folded.simd_eq(zero).any() {
+            for (j, &ch) in block.iter().enumerate() {
+                if ch == 0 {
+                    return base + j;
+                }
+            }
         }
-        let off = limit - 16;
-        let v1 = Simd::<u32, 16>::from_slice(&scan[off..off + 16]);
-        let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
-        if m1 != 0 {
-            return off + m1.trailing_zeros() as usize;
-        }
-        return limit;
-    }
-    if (8..16).contains(&limit) {
-        let v0 = Simd::<u32, 8>::from_slice(&scan[..8]);
-        let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
-        if m0 != 0 {
-            return m0.trailing_zeros() as usize;
-        }
-        let off = limit - 8;
-        let v1 = Simd::<u32, 8>::from_slice(&scan[off..off + 8]);
-        let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
-        if m1 != 0 {
-            return off + m1.trailing_zeros() as usize;
-        }
-        return limit;
+        base += BLOCK;
     }
 
-    // 128-byte (4×8-lane-u32) min-combine tier: `min(a,b,c,d)` has a 0 lane iff any of
-    // the four has a 0 there — 3 vpminud + 1 vpcmpeqd + `.any()` per 128 B, resolving the
-    // exact panel only on a hit. Measured 1.25-1.43x faster than the 64-lane direct
-    // `simd_eq(0).to_bitmask()` per-panel scan (whose 64-lane bitmask pack is the bottleneck).
-    {
-        use core::simd::cmp::SimdOrd;
-        let z8 = Simd::<u32, 8>::splat(0);
-        let mut base = 0usize;
-        while base + 32 <= limit {
-            let a = Simd::<u32, 8>::from_slice(&scan[base..base + 8]);
-            let b = Simd::<u32, 8>::from_slice(&scan[base + 8..base + 16]);
-            let c = Simd::<u32, 8>::from_slice(&scan[base + 16..base + 24]);
-            let d = Simd::<u32, 8>::from_slice(&scan[base + 24..base + 32]);
-            if a.simd_min(b).simd_min(c.simd_min(d)).simd_eq(z8).any() {
-                let ma = a.simd_eq(z8).to_bitmask();
-                if ma != 0 {
-                    return base + ma.trailing_zeros() as usize;
+    let mut chunks = scan[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
+    for chunk in chunks.by_ref() {
+        let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
+        if lanes.simd_eq(Simd::splat(0)).any() {
+            for (j, &ch) in chunk.iter().enumerate() {
+                if ch == 0 {
+                    return base + j;
                 }
-                let mb = b.simd_eq(z8).to_bitmask();
-                if mb != 0 {
-                    return base + 8 + mb.trailing_zeros() as usize;
-                }
-                let mc = c.simd_eq(z8).to_bitmask();
-                if mc != 0 {
-                    return base + 16 + mc.trailing_zeros() as usize;
-                }
-                return base + 24 + d.simd_eq(z8).to_bitmask().trailing_zeros() as usize;
-            }
-            base += 32;
-        }
-        // Tail (< 32 wide chars): 16-lane chunks then scalar.
-        let mut chunks = scan[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
-        for chunk in chunks.by_ref() {
-            let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
-            let m = lanes.simd_eq(Simd::splat(0)).to_bitmask();
-            if m != 0 {
-                return base + m.trailing_zeros() as usize;
-            }
-            base += WIDE_NUL_SIMD_LANES;
-        }
-        for (j, &ch) in chunks.remainder().iter().enumerate() {
-            if ch == 0 {
-                return base + j;
             }
         }
-        return limit;
+        base += WIDE_NUL_SIMD_LANES;
     }
+    for (j, &ch) in chunks.remainder().iter().enumerate() {
+        if ch == 0 {
+            return base + j;
+        }
+    }
+    limit
 }
 
 /// Computes the display width of up to `n` wide characters.
 ///
 /// Equivalent to C `wcswidth`. Returns `-1` if any character is non-printable.
 pub fn wcswidth(s: &[u32], n: usize) -> i32 {
-    let scan = &s[..n.min(s.len())];
     let mut total = 0_i32;
-    let mut i = 0usize;
-
-    // Fold four 16-wide panels into one 64-wide printable-ASCII certificate.
-    // Lane-wise min/max preserves the exact range predicate: every source lane
-    // is in 0x20..=0x7e iff every folded minimum is >= 0x20 and every folded
-    // maximum is <= 0x7e. A failed certificate advances nothing, so the
-    // existing 16-wide loop below retains the precise first-special handoff.
-    const ASCII_FOLD_LANES: usize = WIDE_NUL_SIMD_LANES * 4;
-    while i + ASCII_FOLD_LANES <= scan.len() {
-        let panel = &scan[i..i + ASCII_FOLD_LANES];
-        let a = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(&panel[..WIDE_NUL_SIMD_LANES]);
-        let b = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(
-            &panel[WIDE_NUL_SIMD_LANES..WIDE_NUL_SIMD_LANES * 2],
-        );
-        let c = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(
-            &panel[WIDE_NUL_SIMD_LANES * 2..WIDE_NUL_SIMD_LANES * 3],
-        );
-        let d = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(
-            &panel[WIDE_NUL_SIMD_LANES * 3..ASCII_FOLD_LANES],
-        );
-        let lo = a.simd_min(b).simd_min(c.simd_min(d));
-        let hi = a.simd_max(b).simd_max(c.simd_max(d));
-        let printable_ascii = lo.simd_ge(Simd::splat(0x20)) & hi.simd_le(Simd::splat(0x7e));
-        if !printable_ascii.all() {
-            break;
-        }
-        total = total.saturating_add(ASCII_FOLD_LANES as i32);
-        i += ASCII_FOLD_LANES;
-    }
-
-    // Printable ASCII has width exactly one. Certify 16 code points at once so
-    // long paths, identifiers, and terminal text skip the per-codepoint
-    // `wcwidth` table/OnceLock lookup. A panel containing NUL, a control, or any
-    // non-ASCII code point is not advanced and falls through to the exact scalar
-    // path below. Sixteen saturating +1 steps are equivalent to one saturating
-    // +16 step because every certified lane has the same positive width.
-    while i + WIDE_NUL_SIMD_LANES <= scan.len() {
-        let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(&scan[i..i + WIDE_NUL_SIMD_LANES]);
-        let printable_ascii = lanes.simd_ge(Simd::splat(0x20)) & lanes.simd_le(Simd::splat(0x7e));
-        if !printable_ascii.all() {
-            break;
-        }
-        total = total.saturating_add(WIDE_NUL_SIMD_LANES as i32);
-        i += WIDE_NUL_SIMD_LANES;
-    }
-
-    for &wc in &scan[i..] {
+    for &wc in s.iter().take(n) {
         if wc == 0 {
             break;
         }
@@ -590,26 +491,11 @@ pub fn wcscmp(s1: &[u32], s2: &[u32]) -> i32 {
     let bounded = s1.len().min(s2.len());
     let mut i = 0;
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        let av =
-            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
-        let bv =
-            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
-        // First lane that differs OR is NUL in s1 — resolve the divergence index via
-        // the SIMD mask (O(1)) instead of breaking to the scalar tail and re-scanning
-        // the broken panel element-by-element (wcscmp was 3.25x slower than glibc on a
-        // deep-in-panel difference; bd-2g7oyh). Matches equal_and_no_nul_wide's break
-        // (`!(eq.all()) || nul-in-a`) and the scalar tail's `a!=b || a==0` resolution.
-        let event = av.simd_ne(bv) | av.simd_eq(Simd::splat(0));
-        let bits = event.to_bitmask();
-        if bits != 0 {
-            let j = i + bits.trailing_zeros() as usize;
-            let a = s1[j];
-            let b = s2[j];
-            if a != b {
-                // wchar_t is i32 on Linux, so we must compare as signed.
-                return if (a as i32) < (b as i32) { -1 } else { 1 };
-            }
-            return 0; // shared NUL terminator
+        if !equal_and_no_nul_wide(
+            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
+            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
+        ) {
+            break;
         }
         i += WIDE_COMPARE_SIMD_LANES;
     }
@@ -659,24 +545,11 @@ pub fn wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         i += WIDE_COMPARE_UNROLL_LANES;
     }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        let av =
-            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
-        let bv =
-            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
-        // First lane that differs OR is NUL in s1 — O(1) divergence index via the
-        // SIMD mask instead of breaking to the scalar tail and re-scanning the panel
-        // (same fix as wcscmp; bd-2g7oyh). Matches equal_and_no_nul_wide's break and
-        // the scalar tail's `a!=b || a==0`.
-        let event = av.simd_ne(bv) | av.simd_eq(Simd::splat(0));
-        let bits = event.to_bitmask();
-        if bits != 0 {
-            let j = i + bits.trailing_zeros() as usize;
-            let a = s1[j];
-            let b = s2[j];
-            if a != b {
-                return if (a as i32) < (b as i32) { -1 } else { 1 };
-            }
-            return 0;
+        if !equal_and_no_nul_wide(
+            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
+            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
+        ) {
+            break;
         }
         i += WIDE_COMPARE_SIMD_LANES;
     }
@@ -711,7 +584,6 @@ pub fn wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
 /// string ended first and `c` is absent. The `c == 0` case matches the
 /// terminator via the SIMD [`wcslen`] scan. Behaviour is identical to a scalar
 /// "return at first `c`, stop at NUL" loop.
-#[inline]
 pub fn wcschr(s: &[u32], c: u32) -> Option<usize> {
     if c == 0 {
         // wcschr(s, 0) returns the index of the terminating NUL, or None if the
@@ -720,10 +592,8 @@ pub fn wcschr(s: &[u32], c: u32) -> Option<usize> {
         return (len < s.len()).then_some(len);
     }
 
-    // `find_wide_or_nul_long` already returns the first `c`-or-NUL position, and the
-    // `s[pos]==c` check below rejects the not-found case — so the prior
-    // `wmemchr(s, c, s.len())?` existence pre-scan was a redundant SECOND full pass
-    // (and it scanned all of `s.len()` past the NUL). Removed (bd-2g7oyh).
+    wmemchr(s, c, s.len())?;
+
     let pos = find_wide_or_nul_long(s, c);
     (pos < s.len() && s[pos] == c).then_some(pos)
 }
@@ -742,42 +612,28 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
         return Some(s.len());
     }
 
-    // The scan below already returns the last `c` before the NUL (or None) — so the
-    // prior `wmemrchr(s, c, s.len())?` existence pre-scan was a redundant SECOND full
-    // pass (scanning all of `s.len()` past the NUL). Removed (bd-2g7oyh), same as wcschr.
+    wmemrchr(s, c, s.len())?;
+
     let mut last = None;
     if s.len() >= WIDE_FIND_LONG_SIMD_LANES {
         let mut chunks = s.chunks_exact(WIDE_FIND_LONG_SIMD_LANES);
         let mut base = 0usize;
 
         for chunk in chunks.by_ref() {
-            // Last `c` before the first NUL in this 64-lane chunk via masks (O(1))
-            // instead of a scalar element-by-element inner scan (bd-2g7oyh). If the
-            // chunk holds a NUL, the answer is the highest `c` lane below the first
-            // NUL lane (or `last` from prior chunks); else the highest `c` lane
-            // updates `last`. `63 - leading_zeros` = highest set lane (last match).
-            let lanes = Simd::<u32, WIDE_FIND_LONG_SIMD_LANES>::from_slice(chunk);
-            let nul_m = lanes.simd_eq(Simd::splat(0));
-            let c_m = lanes.simd_eq(Simd::splat(c));
-            // Cheap combined prefilter (one reduction) keeps the NUL-free/c-free
-            // throughput identical to the old has_wide_or_nul_long_simd gate; only
-            // a flagged chunk pays the two movemasks below.
-            if !(nul_m | c_m).any() {
+            if !has_wide_or_nul_long_simd(chunk, c) {
                 base += WIDE_FIND_LONG_SIMD_LANES;
                 continue;
             }
-            let nul_bits = nul_m.to_bitmask() as u64;
-            let c_bits = c_m.to_bitmask() as u64;
-            if nul_bits != 0 {
-                let first_nul = nul_bits.trailing_zeros();
-                let c_before = c_bits & ((1u64 << first_nul) - 1);
-                if c_before != 0 {
-                    return Some(base + 63 - c_before.leading_zeros() as usize);
+
+            for (j, &ch) in chunk.iter().enumerate() {
+                if ch == 0 {
+                    return last;
                 }
-                return last;
+                if ch == c {
+                    last = Some(base + j);
+                }
             }
-            // Gate fired with no NUL → c_bits != 0: highest `c` lane updates `last`.
-            last = Some(base + 63 - c_bits.leading_zeros() as usize);
+
             base += WIDE_FIND_LONG_SIMD_LANES;
         }
 
@@ -797,26 +653,20 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
     let mut base = 0usize;
 
     for chunk in chunks.by_ref() {
-        // Last `c` before the first NUL in this 32-lane chunk via masks (O(1)) —
-        // same nul-before-c resolution as the 64-lane path above (bd-2g7oyh).
-        let lanes = Simd::<u32, WIDE_FIND_SIMD_LANES>::from_slice(chunk);
-        let nul_m = lanes.simd_eq(Simd::splat(0));
-        let c_m = lanes.simd_eq(Simd::splat(c));
-        if !(nul_m | c_m).any() {
+        if !has_wide_or_nul_simd(chunk, c) {
             base += WIDE_FIND_SIMD_LANES;
             continue;
         }
-        let nul_bits = nul_m.to_bitmask() as u64;
-        let c_bits = c_m.to_bitmask() as u64;
-        if nul_bits != 0 {
-            let first_nul = nul_bits.trailing_zeros();
-            let c_before = c_bits & ((1u64 << first_nul) - 1);
-            if c_before != 0 {
-                return Some(base + 63 - c_before.leading_zeros() as usize);
+
+        for (j, &ch) in chunk.iter().enumerate() {
+            if ch == 0 {
+                return last;
             }
-            return last;
+            if ch == c {
+                last = Some(base + j);
+            }
         }
-        last = Some(base + 63 - c_bits.leading_zeros() as usize);
+
         base += WIDE_FIND_SIMD_LANES;
     }
 
@@ -927,25 +777,6 @@ fn two_way_search_wide(hay: &[u32], ndl: &[u32]) -> Option<usize> {
     }
 }
 
-/// Static byte-frequency estimate for choosing the rarer wcsstr anchor char
-/// (mirrors mem.rs `memmem_anchor_commonness`; ASCII English text frequencies,
-/// non-ASCII wide chars treated as rare). Lower = rarer = better anchor.
-fn wide_anchor_commonness(c: u32) -> u8 {
-    if c >= 128 {
-        return 1;
-    }
-    match (c as u8).to_ascii_lowercase() {
-        b' ' | b'e' => 16,
-        b'a' | b'i' | b'n' | b'o' | b'r' | b's' | b't' => 12,
-        b'c' | b'd' | b'f' | b'g' | b'h' | b'l' | b'm' | b'p' | b'u' | b'w' | b'y' => 8,
-        b'_' | b'-' | b'.' | b'/' | b'\t' | b'\n' | b'\r' => 6,
-        b'0'..=b'9' => 5,
-        b'!'..=b'~' => 4,
-        0 => 2,
-        _ => 1,
-    }
-}
-
 pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     let needle_len = wcslen(needle);
     if needle_len == 0 {
@@ -953,10 +784,8 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     }
     let needle = &needle[..needle_len];
     let first = needle[0];
-    // (Removed a redundant `wmemchr(haystack, first, haystack.len())?` existence
-    // pre-scan — a full extra pass past the NUL. `find_wide_or_nul_long` below +
-    // the `first_pos == len || haystack[first_pos] == 0` check already return None
-    // when `first` does not occur before the terminator. bd-2g7oyh, as in wcschr.)
+    wmemchr(haystack, first, haystack.len())?;
+
     let first_pos = find_wide_or_nul_long(haystack, first);
     if first_pos == haystack.len() || haystack[first_pos] == 0 {
         return None;
@@ -979,11 +808,7 @@ pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     // (typically rarer) occurrences drive the scan; for each hit we confirm the
     // first char and full needle. Only valid when `first != last`; otherwise the
     // two anchors coincide and we fall back to the first-char scan below.
-    // Only anchor on the last char when it is RARER than the first (else the
-    // last-char scan visits more candidates than the first-char path — e.g. text
-    // ending in common 'e'). Mirrors mem.rs's memmem rarity-aware anchor. The
-    // chosen anchor changes only the search strategy, not the (leftmost) result.
-    if first != last && wide_anchor_commonness(last) <= wide_anchor_commonness(first) {
+    if first != last {
         // The earliest possible match starts at `first_pos`, so its last-char
         // anchor sits at `first_pos + needle_len - 1`. `hay` has no interior NUL
         // (truncated by `wcslen`), so `find_wide_or_nul` resolves the last char.
@@ -1072,29 +897,17 @@ pub fn wmemset(dest: &mut [u32], c: u32, n: usize) -> usize {
 /// Equivalent to C `wmemcmp`.
 /// Performs signed comparison (treating `u32` as `i32`) to match Linux `wchar_t`.
 ///
-/// Skips long equal prefixes with a 64-wide portable-SIMD equality probe, then
-/// scans `WIDE_COMPARE_SIMD_LANES` elements per step and resolves the first
-/// differing index within the first mismatching panel left-to-right. Behaviour
-/// is identical to the scalar element-by-element signed comparison over the
-/// first `n.min(s1.len()).min(s2.len())` elements.
+/// Scans `WIDE_COMPARE_SIMD_LANES` elements per step with a portable-SIMD equality
+/// probe, then resolves the first differing index within the first mismatching
+/// panel left-to-right. Behaviour is identical to the scalar element-by-element
+/// signed comparison over the first `n.min(s1.len()).min(s2.len())` elements.
 pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
     let count = n.min(s1.len()).min(s2.len());
     let a_all = &s1[..count];
     let b_all = &s2[..count];
 
-    let mut equal_prefix = 0usize;
-    if count >= WIDE_EQUAL_PREFIX_MIN_LEN {
-        while equal_prefix + WIDE_EQUAL_PREFIX_LANES <= count {
-            let next = equal_prefix + WIDE_EQUAL_PREFIX_LANES;
-            if !equal_wide_long_panel(&a_all[equal_prefix..next], &b_all[equal_prefix..next]) {
-                break;
-            }
-            equal_prefix = next;
-        }
-    }
-
-    let mut a_pairs = a_all[equal_prefix..].chunks_exact(WIDE_COMPARE_UNROLL_LANES);
-    let mut b_pairs = b_all[equal_prefix..].chunks_exact(WIDE_COMPARE_UNROLL_LANES);
+    let mut a_pairs = a_all.chunks_exact(WIDE_COMPARE_UNROLL_LANES);
+    let mut b_pairs = b_all.chunks_exact(WIDE_COMPARE_UNROLL_LANES);
 
     for (a_pair, b_pair) in a_pairs.by_ref().zip(b_pairs.by_ref()) {
         let (a_first, a_second) = a_pair.split_at(WIDE_COMPARE_SIMD_LANES);
@@ -1153,130 +966,48 @@ pub fn wmemcmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
 /// left-to-right. Behaviour is identical to a scalar
 /// `position(|&x| x == c)` scan over the first `n.min(s.len())` elements.
 pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
-    // Small-n overlapping fast path + a 128-byte (4×8-lane-u32) XOR-min-combine large
-    // scan (`min(panel ^ c) == 0` iff a panel contains `c`); see the bodies below.
+    // Fold four 64-lane panels per 256-element block into ONE horizontal
+    // reduction (bd-2g7oyh.262 follow-up; same lever as wcslen). `x ^ c == 0` iff
+    // `x == c`, so `simd_min` of the per-panel `panel ^ c` is `0` exactly when one
+    // of the four panels contains `c` — one reduction per 256 wide chars instead
+    // of one per 16. The scalar tail resolves the leftmost match in a flagged
+    // block, so the returned index is identical to the per-chunk scan.
+    const PANEL: usize = WIDE_FIND_LONG_SIMD_LANES; // 64
+    const BLOCK: usize = PANEL * 4; // 256
     let count = n.min(s.len());
     let scan = &s[..count];
-
-    // Small bounded scan in [8, 32) wide chars: the 16-lane chunk loop below leaves a
-    // scalar tail (count < 16 is fully scalar) — the wide small-n floor, same as wcsnlen.
-    // Two OVERLAPPING u32 SIMD probes — `[0,L)` and `[count-L, count)` with L=16 (≥16) or
-    // 8 (≥8) — cover all `count` lanes in-bounds (`scan` has exactly `count` elements).
-    // First-match ordering: probe 0 owns `[0,L)`; if empty every match < L is ruled out,
-    // so probe 1's lowest set bit is the true first match ≥ L.
-    if (16..32).contains(&count) {
-        let t = Simd::<u32, 16>::splat(c);
-        let v0 = Simd::<u32, 16>::from_slice(&scan[..16]);
-        let m0 = v0.simd_eq(t).to_bitmask();
-        if m0 != 0 {
-            return Some(m0.trailing_zeros() as usize);
-        }
-        let off = count - 16;
-        let v1 = Simd::<u32, 16>::from_slice(&scan[off..off + 16]);
-        let m1 = v1.simd_eq(t).to_bitmask();
-        if m1 != 0 {
-            return Some(off + m1.trailing_zeros() as usize);
-        }
-        return None;
-    }
-    if (8..16).contains(&count) {
-        let t = Simd::<u32, 8>::splat(c);
-        let v0 = Simd::<u32, 8>::from_slice(&scan[..8]);
-        let m0 = v0.simd_eq(t).to_bitmask();
-        if m0 != 0 {
-            return Some(m0.trailing_zeros() as usize);
-        }
-        let off = count - 8;
-        let v1 = Simd::<u32, 8>::from_slice(&scan[off..off + 8]);
-        let m1 = v1.simd_eq(t).to_bitmask();
-        if m1 != 0 {
-            return Some(off + m1.trailing_zeros() as usize);
-        }
-        return None;
-    }
-
+    let target = Simd::<u32, PANEL>::splat(c);
+    let zero = Simd::<u32, PANEL>::splat(0);
     let mut base = 0usize;
 
-    // 256-byte (8×8-lane-u32) XOR-min tier ABOVE the 128B fold: a wider skip window for long
-    // scans — measured ~9-10% faster than the 4-panel fold at n>=64 wchar (wmemchr_fold_ab
-    // in-process A/B; 16 panels/512B was worse from ymm-register pressure). The < 64-wchar
-    // remainder falls to the 128B fold below (no regression). Byte-identical leftmost match:
-    // `min_k(x_k ^ c)` has a 0 lane iff some panel holds `c`; resolve the first such panel.
-    {
-        use core::simd::cmp::SimdOrd;
-        let t8 = Simd::<u32, 8>::splat(c);
-        let z8 = Simd::<u32, 8>::splat(0);
-        while base + 64 <= count {
-            let mut folded = Simd::<u32, 8>::from_slice(&scan[base..base + 8]) ^ t8;
-            for k in 1..8 {
-                folded = folded.simd_min(
-                    Simd::<u32, 8>::from_slice(&scan[base + k * 8..base + (k + 1) * 8]) ^ t8,
-                );
-            }
-            if folded.simd_eq(z8).any() {
-                for k in 0..8 {
-                    let m = Simd::<u32, 8>::from_slice(&scan[base + k * 8..base + (k + 1) * 8])
-                        .simd_eq(t8)
-                        .to_bitmask();
-                    if m != 0 {
-                        return Some(base + k * 8 + m.trailing_zeros() as usize);
-                    }
+    while base + BLOCK <= count {
+        let block = &scan[base..base + BLOCK];
+        let p0 = Simd::<u32, PANEL>::from_slice(&block[0..PANEL]) ^ target;
+        let p1 = Simd::<u32, PANEL>::from_slice(&block[PANEL..2 * PANEL]) ^ target;
+        let p2 = Simd::<u32, PANEL>::from_slice(&block[2 * PANEL..3 * PANEL]) ^ target;
+        let p3 = Simd::<u32, PANEL>::from_slice(&block[3 * PANEL..BLOCK]) ^ target;
+        let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
+        if folded.simd_eq(zero).any() {
+            for (j, &x) in block.iter().enumerate() {
+                if x == c {
+                    return Some(base + j);
                 }
-                break; // unreachable: a 0 folded lane implies a matching panel
             }
-            base += 64;
         }
+        base += BLOCK;
     }
 
-    // 128-byte (4×8-lane-u32) XOR-min-combine scan: `(x ^ c) == 0` iff `x == c`, so
-    // `min(a^c, b^c, c^c, d^c)` has a 0 lane iff one of the four panels contains `c` —
-    // 4 vpxord + 3 vpminud + 1 vpcmpeqd + `.any()` per 128 B, resolving the exact panel
-    // only on a hit. Measured 1.18-1.20x faster than the 64-lane `simd_eq(c).to_bitmask()`
-    // per-panel scan (whose 64-lane bitmask pack is the bottleneck). NOT the rejected
-    // 256-block min-FOLD (that did simd_min on 64-lane = 8 ymm each); this is 4 light
-    // 8-lane ymm. Byte-identical leftmost match.
-    {
-        use core::simd::cmp::SimdOrd;
-        let t8 = Simd::<u32, 8>::splat(c);
-        let z8 = Simd::<u32, 8>::splat(0);
-        while base + 32 <= count {
-            let a = Simd::<u32, 8>::from_slice(&scan[base..base + 8]);
-            let b = Simd::<u32, 8>::from_slice(&scan[base + 8..base + 16]);
-            let cc = Simd::<u32, 8>::from_slice(&scan[base + 16..base + 24]);
-            let d = Simd::<u32, 8>::from_slice(&scan[base + 24..base + 32]);
-            let xa = a ^ t8;
-            let xb = b ^ t8;
-            let xc = cc ^ t8;
-            let xd = d ^ t8;
-            if xa.simd_min(xb).simd_min(xc.simd_min(xd)).simd_eq(z8).any() {
-                let ma = a.simd_eq(t8).to_bitmask();
-                if ma != 0 {
-                    return Some(base + ma.trailing_zeros() as usize);
-                }
-                let mb = b.simd_eq(t8).to_bitmask();
-                if mb != 0 {
-                    return Some(base + 8 + mb.trailing_zeros() as usize);
-                }
-                let mc = cc.simd_eq(t8).to_bitmask();
-                if mc != 0 {
-                    return Some(base + 16 + mc.trailing_zeros() as usize);
-                }
-                return Some(base + 24 + d.simd_eq(t8).to_bitmask().trailing_zeros() as usize);
-            }
-            base += 32;
-        }
-    }
-
-    // Tail (< 32 wide chars): 16-lane chunks, then scalar.
+    // Tail (< 256 wide chars): 16-lane chunks, then scalar.
     let t16 = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::splat(c);
     let mut chunks = scan[base..].chunks_exact(WIDE_MEMCHR_SIMD_LANES);
     for chunk in chunks.by_ref() {
         let lanes = Simd::<u32, WIDE_MEMCHR_SIMD_LANES>::from_slice(chunk);
-        // First matching lane via the mask (O(1)) instead of a scalar enumerate of
-        // the flagged 16-element chunk (bd-2g7oyh).
-        let m = lanes.simd_eq(t16).to_bitmask();
-        if m != 0 {
-            return Some(base + m.trailing_zeros() as usize);
+        if lanes.simd_eq(t16).any() {
+            for (j, &x) in chunk.iter().enumerate() {
+                if x == c {
+                    return Some(base + j);
+                }
+            }
         }
         base += WIDE_MEMCHR_SIMD_LANES;
     }
@@ -1400,9 +1131,9 @@ fn wide_panel_no_members_no_nul(chunk: &[u32], set: &[u32]) -> bool {
 
 #[inline(always)]
 fn repeated_wide_member_panel(chunk: &[u32], member: u32) -> bool {
-    debug_assert_eq!(chunk.len(), WIDE_MEMBER_REPEAT_LANES);
+    debug_assert_eq!(chunk.len(), WIDE_COMPARE_UNROLL_LANES);
     debug_assert_ne!(member, 0);
-    let lanes = Simd::<u32, WIDE_MEMBER_REPEAT_LANES>::from_slice(chunk);
+    let lanes = Simd::<u32, WIDE_COMPARE_UNROLL_LANES>::from_slice(chunk);
     lanes.simd_eq(Simd::splat(member)).all()
 }
 
@@ -1423,11 +1154,11 @@ pub fn wcsspn(s: &[u32], accept: &[u32]) -> usize {
     if s.len() >= WIDE_MEMBER_REPEAT_MIN_LEN {
         let repeated = s[0];
         if repeated != 0 && accept_set.contains(&repeated) {
-            while i + WIDE_MEMBER_REPEAT_LANES <= s.len() {
-                if !repeated_wide_member_panel(&s[i..i + WIDE_MEMBER_REPEAT_LANES], repeated) {
+            while i + WIDE_COMPARE_UNROLL_LANES <= s.len() {
+                if !repeated_wide_member_panel(&s[i..i + WIDE_COMPARE_UNROLL_LANES], repeated) {
                     break;
                 }
-                i += WIDE_MEMBER_REPEAT_LANES;
+                i += WIDE_COMPARE_UNROLL_LANES;
             }
         }
     }
@@ -1668,29 +1399,11 @@ pub fn wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
         }
     }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        let av =
-            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
-        let bv =
-            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
-        // First lane that case-folds-differently OR is NUL in s1 — O(1) divergence
-        // index via the SIMD mask instead of breaking to the scalar tail and
-        // re-folding the panel element-by-element (bd-2g7oyh). Both folds are
-        // ASCII-only (fold_ascii_upper_wide here, simple_towlower in the tail), so
-        // upper-fold inequality == lower-fold inequality == the scalar stop lane;
-        // matches fold_equal_and_no_nul_wide's break and the tail's resolution.
-        let event = fold_ascii_upper_wide(av).simd_ne(fold_ascii_upper_wide(bv))
-            | av.simd_eq(Simd::splat(0));
-        let bits = event.to_bitmask();
-        if bits != 0 {
-            let j = i + bits.trailing_zeros() as usize;
-            let la = simple_towlower(s1[j]);
-            let lb = simple_towlower(s2[j]);
-            if la != lb {
-                // glibc returns the folded-codepoint difference (towlower(c1) -
-                // towlower(c2)) via wint_t arithmetic, NOT a bare ±1 sign.
-                return la.wrapping_sub(lb) as i32;
-            }
-            return 0; // shared NUL after case-folding equal
+        if !fold_equal_and_no_nul_wide(
+            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
+            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
+        ) {
+            break;
         }
         i += WIDE_COMPARE_SIMD_LANES;
     }
@@ -1703,9 +1416,7 @@ pub fn wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
         let lb = simple_towlower(b);
 
         if la != lb {
-            // glibc returns the folded-codepoint difference (towlower(c1) -
-            // towlower(c2)) via wint_t arithmetic, NOT a bare ±1 sign.
-            return la.wrapping_sub(lb) as i32;
+            return if (la as i32) < (lb as i32) { -1 } else { 1 };
         }
         if a == 0 {
             return 0;
@@ -1744,24 +1455,11 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         }
     }
     while i + WIDE_COMPARE_SIMD_LANES <= bounded {
-        let av =
-            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s1[i..i + WIDE_COMPARE_SIMD_LANES]);
-        let bv =
-            Simd::<u32, WIDE_COMPARE_SIMD_LANES>::from_slice(&s2[i..i + WIDE_COMPARE_SIMD_LANES]);
-        // First lane that case-folds-differently OR is NUL in s1 — O(1) divergence
-        // index via the SIMD mask (same fix as wcscasecmp; bd-2g7oyh). Both folds
-        // are ASCII-only, so this matches the scalar tail's stop lane + resolution.
-        let event = fold_ascii_upper_wide(av).simd_ne(fold_ascii_upper_wide(bv))
-            | av.simd_eq(Simd::splat(0));
-        let bits = event.to_bitmask();
-        if bits != 0 {
-            let j = i + bits.trailing_zeros() as usize;
-            let la = simple_towlower(s1[j]);
-            let lb = simple_towlower(s2[j]);
-            if la != lb {
-                return la.wrapping_sub(lb) as i32;
-            }
-            return 0; // shared NUL after case-folding equal
+        if !fold_equal_and_no_nul_wide(
+            &s1[i..i + WIDE_COMPARE_SIMD_LANES],
+            &s2[i..i + WIDE_COMPARE_SIMD_LANES],
+        ) {
+            break;
         }
         i += WIDE_COMPARE_SIMD_LANES;
     }
@@ -1774,8 +1472,7 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         let lb = simple_towlower(b);
 
         if la != lb {
-            // glibc returns the folded-codepoint difference, not a ±1 sign.
-            return la.wrapping_sub(lb) as i32;
+            return if (la as i32) < (lb as i32) { -1 } else { 1 };
         }
         if a == 0 {
             return 0;
@@ -1789,33 +1486,17 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
 ///
 /// Equivalent to GNU `wmemrchr`. Searches backwards.
 ///
-/// Scans long inputs with 64-wide reverse panels, keeps short inputs on the
-/// narrower reverse panel, then resolves the first (rear-most) candidate panel
-/// right-to-left. Behaviour is identical to a
+/// Scans `WIDE_REVERSE_SIMD_LANES` elements per step from the end with a portable-SIMD
+/// equality probe, then resolves the last matching index within the first
+/// (rear-most) candidate panel right-to-left. Behaviour is identical to a
 /// scalar `(0..n.min(s.len())).rev().find(|&i| s[i] == c)` reverse scan.
 pub fn wmemrchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     let count = n.min(s.len());
     let scan = &s[..count];
+    let target = Simd::<u32, WIDE_REVERSE_SIMD_LANES>::splat(c);
     let mut end = count;
 
-    if count >= WIDE_REVERSE_LONG_MIN_LEN {
-        let target = Simd::<u32, WIDE_REVERSE_LONG_SIMD_LANES>::splat(c);
-        for chunk in scan.rchunks_exact(WIDE_REVERSE_LONG_SIMD_LANES) {
-            let start = end - WIDE_REVERSE_LONG_SIMD_LANES;
-            let lanes = Simd::<u32, WIDE_REVERSE_LONG_SIMD_LANES>::from_slice(chunk);
-            if lanes.simd_eq(target).any() {
-                for j in (0..WIDE_REVERSE_LONG_SIMD_LANES).rev() {
-                    if chunk[j] == c {
-                        return Some(start + j);
-                    }
-                }
-            }
-            end = start;
-        }
-    }
-
-    let target = Simd::<u32, WIDE_REVERSE_SIMD_LANES>::splat(c);
-    for chunk in scan[..end].rchunks_exact(WIDE_REVERSE_SIMD_LANES) {
+    for chunk in scan.rchunks_exact(WIDE_REVERSE_SIMD_LANES) {
         let start = end - WIDE_REVERSE_SIMD_LANES;
         let lanes = Simd::<u32, WIDE_REVERSE_SIMD_LANES>::from_slice(chunk);
         if lanes.simd_eq(target).any() {
@@ -2610,32 +2291,6 @@ mod tests {
     }
 
     #[test]
-    fn test_wmemcmp_long_equal_prefix_panel_boundary() {
-        let len = WIDE_EQUAL_PREFIX_MIN_LEN + WIDE_EQUAL_PREFIX_LANES + 19;
-        let a: Vec<u32> = (0..len).map(|i| 0x1000_u32 + (i as u32 % 251)).collect();
-        assert_eq!(wmemcmp(&a, &a, len), 0);
-
-        for diff_at in [
-            0usize,
-            WIDE_EQUAL_PREFIX_LANES - 1,
-            WIDE_EQUAL_PREFIX_LANES,
-            WIDE_EQUAL_PREFIX_MIN_LEN - 1,
-            WIDE_EQUAL_PREFIX_MIN_LEN,
-            WIDE_EQUAL_PREFIX_MIN_LEN + WIDE_EQUAL_PREFIX_LANES - 1,
-            len - 1,
-        ] {
-            let mut b = a.clone();
-            b[diff_at] = a[diff_at] + 1;
-            assert_eq!(wmemcmp(&a, &b, len), -1, "diff_at={diff_at}");
-            assert_eq!(wmemcmp(&b, &a, len), 1, "diff_at={diff_at}");
-        }
-
-        let mut clipped = a.clone();
-        clipped[WIDE_EQUAL_PREFIX_MIN_LEN + 5] = 0;
-        assert_eq!(wmemcmp(&a, &clipped, WIDE_EQUAL_PREFIX_MIN_LEN), 0);
-    }
-
-    #[test]
     fn test_wmemchr_basic() {
         let haystack = [1u32, 2, 3, 4];
         assert_eq!(wmemchr(&haystack, 3, 4), Some(2));
@@ -2691,32 +2346,13 @@ mod tests {
 
     #[test]
     fn test_wcsspn_repeated_member_run_stops_at_first_nonmember() {
-        let mut s = vec![b'1' as u32; WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES];
+        let mut s = vec![b'1' as u32; WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_COMPARE_UNROLL_LANES];
         s.push(b'x' as u32);
         s.push(0);
         let accept = [b'0' as u32, b'1' as u32, b'2' as u32, b'3' as u32, 0];
         assert_eq!(
             wcsspn(&s, &accept),
-            WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES
-        );
-    }
-
-    #[test]
-    fn test_wcsspn_repeated_member_folded_panel_boundary() {
-        let mut s = vec![b'1' as u32; WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES];
-        s.push(b'1' as u32);
-        s.push(b'x' as u32);
-        s.push(0);
-        let accept = [b'0' as u32, b'1' as u32, b'2' as u32, b'3' as u32, 0];
-        assert_eq!(
-            wcsspn(&s, &accept),
-            WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES + 1
-        );
-
-        s[WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES - 1] = b'x' as u32;
-        assert_eq!(
-            wcsspn(&s, &accept),
-            WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_MEMBER_REPEAT_LANES - 1
+            WIDE_MEMBER_REPEAT_MIN_LEN + WIDE_COMPARE_UNROLL_LANES
         );
     }
 
@@ -2924,7 +2560,7 @@ mod tests {
                 let la = simple_towlower(a);
                 let lb = simple_towlower(b);
                 if la != lb {
-                    return la.wrapping_sub(lb) as i32;
+                    return if (la as i32) < (lb as i32) { -1 } else { 1 };
                 }
                 if a == 0 {
                     return 0;
@@ -2942,7 +2578,7 @@ mod tests {
                 let la = simple_towlower(a);
                 let lb = simple_towlower(b);
                 if la != lb {
-                    return la.wrapping_sub(lb) as i32;
+                    return if (la as i32) < (lb as i32) { -1 } else { 1 };
                 }
                 if a == 0 {
                     return 0;
@@ -3045,10 +2681,8 @@ mod tests {
             .iter()
             .map(|x| format!("{x:02x}"))
             .collect();
-        // Updated when wcscasecmp/wcsncasecmp switched from a ±1 sign to glibc's
-        // folded-codepoint difference (towlower(c1) - towlower(c2)).
         assert_eq!(
-            digest, "f660faba1981f94c3fceb497d594dc1934255719102f356e0763379ce0aba5ac",
+            digest, "e3cef37478ec7090a742821c4489a19cfba9e9d1f23b7237517847ad78b785ac",
             "wide casefold compare golden corpus hash drifted"
         );
     }
@@ -3067,8 +2701,7 @@ mod tests {
 
     #[test]
     fn test_wmemrchr_simd_panel_boundary_and_remainder() {
-        // A short scan below the SIMD panel width must use the same scalar
-        // oracle semantics as a long reverse panel scan.
+        // 20 elements: two full rear panels + a 4-element front remainder.
         let mut s: Vec<u32> = vec![1u32; 20];
         // Last occurrence must win across panels and remainder.
         s[2] = 9; // remainder region
@@ -3084,23 +2717,6 @@ mod tests {
         assert_eq!(wmemrchr(&s, 7, 4), None);
         // Match only in the remainder.
         assert_eq!(wmemrchr(&s, 9, 4), Some(2));
-    }
-
-    #[test]
-    fn test_wmemrchr_long_reverse_panel_boundary_and_remainder() {
-        let mut s: Vec<u32> = vec![1u32; WIDE_REVERSE_LONG_SIMD_LANES * 2 + 5];
-        let n = s.len();
-        let front_remainder_hit = 3;
-        let middle_panel_hit = WIDE_REVERSE_LONG_SIMD_LANES + 7;
-        let rear_panel_hit = n - 2;
-        s[front_remainder_hit] = 9;
-        s[middle_panel_hit] = 9;
-        s[rear_panel_hit] = 9;
-
-        assert_eq!(wmemrchr(&s, 9, n), Some(rear_panel_hit));
-        assert_eq!(wmemrchr(&s, 9, rear_panel_hit), Some(middle_panel_hit));
-        assert_eq!(wmemrchr(&s, 9, middle_panel_hit), Some(front_remainder_hit));
-        assert_eq!(wmemrchr(&s, 7, n), None);
     }
 
     #[test]
