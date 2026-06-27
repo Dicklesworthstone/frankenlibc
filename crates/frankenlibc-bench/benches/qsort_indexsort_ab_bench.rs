@@ -70,7 +70,7 @@ fn make(n: usize) -> Vec<u8> {
 }
 
 fn bench(c: &mut Criterion) {
-    let n = 20000usize;
+    for n in [64usize, 256, 4096, 20000] {
     let data = make(n);
 
     // parity: all three produce the same sorted-by-key order (distinct keys w.h.p.;
@@ -120,6 +120,7 @@ fn bench(c: &mut Criterion) {
         )
     });
     grp.finish();
+    }
     let _ = Ordering::Equal;
 }
 

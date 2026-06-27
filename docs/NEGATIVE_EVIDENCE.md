@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ qsort index-sort: VERIFIED no small-n regression — wins glibc across n=64..20000 (cc)
+
+- **ROBUSTNESS VERIFICATION (no code change to the algorithm; closes a concern about my recent index-sort
+  allocations).** The index-sort fallback (width>8) allocates `idx` + `out` per call; the worry was that this
+  per-call allocation could make fl LOSE to glibc for SMALL arrays where the sort work is tiny. Measured the
+  deployed core qsort vs host glibc across an n-sweep (`qsort_indexsort_ab_bench`, width-12 struct-key):
+  | n | fl (deployed) | glibc | ratio |
+  |---|---|---|---|
+  | 64 | 1.13 µs | 1.96 µs | **0.57x WIN** |
+  | 256 | 5.16 µs | 10.75 µs | **0.48x WIN** |
+  | 4096 | 106.8 µs | 379.4 µs | **0.28x WIN** |
+  | 20000 | 925 µs | 2.24 ms | **0.41x WIN** |
+  fl WINS at EVERY size — no small-n regression. glibc's un-inlinable FFI-comparator floor + merge overhead
+  exceeds fl's index-sort alloc even at n=64, so no small-n guard is needed. The qsort win is robust across
+  the size range. Bench extended to sweep n ∈ {64,256,4096,20000}; all parity-asserted (sorted) at each n.
+
 ## 2026-06-27 — ✅ qsort index-sort threshold 16→8: MEDIUM elements (width 9-15) too (cc)
 
 - **LANDED CODE WIN (`sort.rs`, conformance GREEN, byte-identical).** Last turn's indirect index-sort was
