@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — regex bulk class-run consume: SOUND but doesn't fire yet (RepeatExitGuard) — 1-line fix next (cc)
+
+- **Post-closure-cache re-measurement (da50ea941 landed):** dense regex still trails glibc — `[0-9]+END` sparse
+  fl 8.0 µs / glibc 4.5 µs (1.8x); ICASE `X[a-z]+9` over a 4 KiB run **fl 310 µs / glibc 16 µs = 19.4x**. The
+  cache trimmed per-position cost but the O(run) positions remain.
+- **Implemented bulk class-run consumption** in BOTH `leftmost_start` and `run_from`: when the live set is a
+  `class+` loop body + a first-byte-disjoint exit (two threads, no match yet), scan to the first non-class byte
+  in one pass (`class_set_contains`/`sets_disjoint` on the CharClass bitsets) instead of re-deriving the closure
+  per position. **Conformance GREEN across ALL regex differential gates incl. the capture-heavy
+  `nested_submatch` + `empty_iter_capture` (run_from preserves slots — the loop body has no `Save`) and the
+  isomorphism `debug_assert`.** So the APPROACH is sound.
+- **But ~0-gain — it never FIRES:** icase stayed 360 µs. Root cause: `loop_body_class` expects
+  `Match(class)` immediately followed by `Split(loop-back, exit)`, but the `+`/`*` emit interposes a
+  **`RepeatExitGuard`** (POSIX empty-iteration guard) between them, so `nfa[pc+1]` is not the `Split`.
+- **FIX (next turn, small): make `loop_body_class` follow through `RepeatExitGuard`/`Jump` epsilon ops to reach
+  the loop-back `Split`, then verify a branch returns to `pc`.** The full machinery is correct + conformance-
+  green — only the NFA-shape detection needs widening. Stashed as `cc-regex-bulk-consume-nonfiring-WIP`.
+  Reverted from main per REVERT-~0-gain (non-firing = dead code) until detection lands.
+
 ## 2026-06-27 — ✅ CORRECTION: qsort STRING-sort "2.7x LOSS" is STALE — fl now WINS 1.74x vs glibc (cc)
 
 - **Stale-evidence correction (re-measured, do NOT re-attempt as a "gap"):** the documented "qsort STRING sort
