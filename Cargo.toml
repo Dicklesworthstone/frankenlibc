@@ -46,17 +46,11 @@ libc = "0.2.185"
 frankenlibc-membrane = { path = "crates/frankenlibc-membrane" }
 frankenlibc-core = { path = "crates/frankenlibc-core" }
 frankenlibc-abi = { path = "crates/frankenlibc-abi" }
-frankenlibc-fixture-exec = { path = "crates/frankenlibc-fixture-exec", default-features = false }
+frankenlibc-fixture-exec = { path = "crates/frankenlibc-fixture-exec" }
 
 # Companion crates (build tooling only)
-asupersync-conformance = "0.3.4"
+asupersync-conformance = "=0.3.4"
 ftui-harness = "0.3.1"
-
-[patch.crates-io]
-# asupersync-conformance 0.3.4 includes repo-root conformance artifacts that
-# are missing from the published crate package; use the local source until the
-# crate ships those artifacts inside the package.
-asupersync-conformance = { path = "/data/projects/asupersync/conformance" }
 
 # Profiling profile: release optimizations with debug symbols for flamegraphs
 [profile.release-perf]
