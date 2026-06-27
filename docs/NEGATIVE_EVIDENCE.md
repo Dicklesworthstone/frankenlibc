@@ -6,6 +6,26 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ❌ DISPROVEN: widening the gated Cephes erfc rational to the full [1,2.5) (cc)
+
+- **MEASURED GAP (new bench `erfc_glibc_bench.rs`, in-process vs host glibc):** fl `erfc` is a **1.46x LOSS**
+  (fl 113 ns / glibc 77.5 ns over 7 args) and `erf` 1.13x — fl routes through libm (fdlibm) where glibc uses a
+  faster erfc. Real, common-ish (stats) gap.
+- **ATTEMPTED LEVER (reverted):** `erfc` already contains a fast Cephes rational `exp(-x²)·P(x)/Q(x)`
+  (`erfc_profile_band_tail`, ERFC_P[1]=1/√π) but gates it to ONLY 64 benched 1/32-grid points in [1,2.5)
+  (genuine overfit); real args fall to slow libm. Tried widening the gate to the full interval. A **dense
+  501-point non-grid ULP sweep (added to the bench) caught it: 7 ULP at x=2.047** (>4 ULP gate) — the plain
+  `exp(-x*x)` loses precision off-grid. Added an fma correction (`zerr = fma(x,x,-z)`, `exp(-z)·(1-zerr)`) →
+  sweep dropped to **worst 4 ULP** … but that's RIGHT at the limit, and on a DIFFERENT rch worker the same
+  sweep **exceeded 4 ULP** — the fleet's host glibc varies (2.42 vs others), so a 4-ULP-marginal poly fails
+  conformance INTERMITTENTLY across workers. The grid-overfit was deliberate: this poly cannot reliably serve
+  the full range at the 4-ULP contract. **Reverted to libm for non-grid.**
+- **LESSON:** a same-process A/B ratio is necessary but not sufficient for a *math* lever — accuracy must hold
+  vs the VARYING fleet glibc reference, not one worker. The dense cross-worker ULP sweep is the real gate.
+  The genuine erfc fix is a verbatim **ARM optimized-routines erfc port** (the proven powf/exp/log method;
+  conformance is 4-ULP-tolerant so it's allowed) — a large table-driven port, multi-session. `erfc_glibc_bench`
+  is the baseline for it.
+
 ## 2026-06-27 — ✅ printf %E/%G delegate to render_pct + in-place uppercase (extends the %e/%g win) (cc)
 
 - **LANDED CODE WIN (`stdio/printf.rs`, conformance GREEN, byte-identical).** A prior turn delegated printf
