@@ -504,6 +504,16 @@ impl MallocState {
         };
 
         let bin_usize = bin.get();
+        let trace_certificate_enabled = self.trace_logs_enabled();
+        if !trace_certificate_enabled
+            && size_class::is_exact_size_class(size, bin)
+            && let Some(ptr) = self.thread_cache_hot_slots[bin_usize].take()
+        {
+            self.thread_cache_hits += 1;
+            self.track_hot_slot_allocation(ptr, size, bin);
+            return Some(ptr);
+        }
+
         let class_size = size_class::size_for_index(bin);
         let class_membership_valid = class_size >= size && class_size > 0;
         // The size-class certificate is diagnostic only (the allocation proceeds
@@ -511,7 +521,6 @@ impl MallocState {
         // certificate rows are dropped; avoid evaluating the SOS polynomial on
         // that hot path. Trace mode still records the byte-identical certificate,
         // and cheap violation prechecks preserve Warn rows for bad mappings.
-        let trace_certificate_enabled = self.trace_logs_enabled();
         if trace_certificate_enabled
             || size_class_certificate_may_violate(size, class_size, class_membership_valid)
         {
@@ -660,6 +669,17 @@ impl MallocState {
         }
         let size = if size == 0 { 1 } else { size };
         let mut ptr = ptr;
+
+        if let Some(pending) = self.pending_hot_accounting
+            && pending.ptr == ptr
+            && pending.size == size
+            && !self.trace_logs_enabled()
+            && self.thread_cache_hot_slots[pending.bin].is_none()
+        {
+            self.pending_hot_accounting = None;
+            self.thread_cache_hot_slots[pending.bin] = Some(ptr);
+            return;
+        }
 
         let Some(bin) = size_class::small_bin_index(size) else {
             let removed_alloc = if self

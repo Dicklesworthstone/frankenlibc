@@ -174,6 +174,11 @@ pub fn size_for_index(index: SizeClassIndex) -> usize {
     SIZE_TABLE[index.get()]
 }
 
+/// Returns true when `size` lands exactly on its resolved size-class boundary.
+pub fn is_exact_size_class(size: usize, index: SizeClassIndex) -> bool {
+    size.max(MIN_SIZE) == SIZE_TABLE[index.get()]
+}
+
 /// Initializes and returns the full table of size classes.
 ///
 /// Each size class includes the allocation size and the number of objects

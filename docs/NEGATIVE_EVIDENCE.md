@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ malloc/free exact hot-slot return — 6.8–9.8% FL win, still 1.74–1.76x vs glibc (BlackThrush)
+
+- **LANDED CODE WIN (`allocator.rs`, `size_class.rs`, conformance GREEN).** Exact size-class hot-slot
+  allocations no longer route through the diagnostic size-class certificate path when trace logging is off, and
+  exact pending hot-slot frees return to the per-bin hot slot without recomputing the bin. Trace logging and
+  non-exact sizes keep the old certificate-visible path, so certificate diagnostics and non-exact allocation
+  behavior are unchanged.
+- **MEASURED (`hz2`, per-crate focused gate, `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`,
+  accepted Cargo spelling `cargo bench -j 1 -p frankenlibc-bench --profile release --bench
+  glibc_baseline_bench -- 'glibc_baseline_malloc_free_(64|256)' --noplot --sample-size 80 --warm-up-time 1
+  --measurement-time 3`; the literal bench-level `--release` spelling is rejected by this Cargo).**
+  `malloc_free_64`: FL p50 **10.747 ns → 10.018 ns** (**6.8% faster**), host glibc p50 **5.854 ns → 5.701
+  ns**, ratio **1.84x → 1.76x vs glibc**; Criterion reported **-7.474%** (`-9.955%..-4.723%`, p=0.00).
+  `malloc_free_256`: FL p50 **11.019 ns → 9.938 ns** (**9.8% faster**), host glibc p50 **5.686 ns → 5.715
+  ns**, ratio **1.94x → 1.74x vs glibc**; Criterion reported **-8.731%** (`-11.161%..-6.048%`, p=0.00).
+  This is a real allocator hot-cycle gap reduction, not allocator parity.
+- **Conformance GREEN:** `cargo test -p frankenlibc-core malloc::allocator -- --nocapture` (22 passed);
+  `cargo test -p frankenlibc-core malloc::size_class -- --nocapture` (13 passed); `cargo test -p
+  frankenlibc-abi --test malloc_abi_test -- --nocapture` (55 passed, 1 ignored); `cargo test -p
+  frankenlibc-abi --test conformance_diff_malloc_edges -- --nocapture` (1 passed). File-local `rustfmt
+  --edition 2024 --check crates/frankenlibc-core/src/malloc/allocator.rs
+  crates/frankenlibc-core/src/malloc/size_class.rs` passed.
+
 ## 2026-06-27 — ✅ calloc/free(16): skip steady fallback range RMWs — 1.60x FL win, still 9.09x vs glibc (BlackThrush)
 
 - **LANDED CODE WIN (`malloc_abi.rs`, conformance GREEN).** The strict native-fallback allocation path publishes
