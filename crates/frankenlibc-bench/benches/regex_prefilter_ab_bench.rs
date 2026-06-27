@@ -48,6 +48,22 @@ fn bench(c: &mut Criterion) {
     icase.extend(std::iter::repeat(b'a').take(4089));
     icase.push(b'9');
 
+    // (4) MULTI-EXIT alternation follow: `X[a-z]+(99|88)` over "X"+4089'a'+"99".
+    //     During the run the live set is THREE threads — the `[a-z]` loop plus the
+    //     two alternation first-bytes {9,8}, both disjoint — so it exercises the
+    //     generalized (len>2) bulk-consume that the original len==2 path could not.
+    let mut altexit: Vec<u8> = vec![b'X'];
+    altexit.extend(std::iter::repeat(b'a').take(4089));
+    altexit.extend_from_slice(b"99");
+
+    // (5) NEGATED-class STAR run: `X[^"]*"` over "X" + 4090 letters + `"`. The `X`
+    //     prefix gives a determinate first byte (leftmost_start path, not any_match),
+    //     and `[^"]*` (a STAR loop) greedily walks the run; `[^"]` is disjoint from
+    //     the exit `"`, so it bulk-consumes — confirming `*` loops fire, not just `+`.
+    let mut quoted: Vec<u8> = vec![b'X'];
+    quoted.extend(std::iter::repeat(b'a').take(4090));
+    quoted.push(b'"');
+
     // Each case: (name, pattern, fl_cflags, glibc_cflags, haystack).
     let cases: &[(&str, &str, i32, i32, &Vec<u8>)] = &[
         ("sparse_digits_late", "[0-9]+END", REG_EXTENDED, libc::REG_EXTENDED, &sparse),
@@ -59,6 +75,8 @@ fn bench(c: &mut Criterion) {
             libc::REG_EXTENDED | libc::REG_ICASE,
             &icase,
         ),
+        ("altexit_multi", "X[a-z]+(99|88)", REG_EXTENDED, libc::REG_EXTENDED, &altexit),
+        ("negclass_quoted", "X[^\"]*\"", REG_EXTENDED, libc::REG_EXTENDED, &quoted),
     ];
 
     for &(name, pat_str, fl_cflags, gl_cflags, hay) in cases {

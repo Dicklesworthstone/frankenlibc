@@ -2341,10 +2341,7 @@ impl<'a> PikeVm<'a> {
             // above from "no live thread" to "one looping disjoint class".
             if best.is_none()
                 && sp < input_len
-                && current.len() == 2
-                && current[0].1 == current[1].1 // same start
-                && let Some(class) =
-                    self.bulk_loop_class_for_pair(&bulk_table, current[0].0, current[1].0)
+                && let Some(class) = self.bulk_loop_class_lm(&bulk_table, &current)
                 && class_set_contains(&class, self.input[sp])
             {
                 let e = self.input[sp..]
@@ -2367,26 +2364,69 @@ impl<'a> PikeVm<'a> {
         }
     }
 
-    /// If `current` (exactly two live PikeVm threads, same start) is a bulk-safe
-    /// `class+`/`class*` loop — one thread is `Match(class)` whose successor `Split`
-    /// loops back to it, the other is a `Match` whose accepted bytes are DISJOINT
-    /// from that class (so it cannot fire while the run continues) — return the loop
-    /// class's 256-bit membership table. Used to scan a class run in one pass.
-    fn bulk_loop_class_for_pair(
+    /// Core bulk-safe test over a live PikeVm thread set (by PC): the set is a fixed
+    /// point under a class run iff EXACTLY ONE thread is a `class+`/`class*` loop body
+    /// (per `table`) and EVERY other thread is a `Match` whose accepted bytes are
+    /// DISJOINT from that class (so no other thread fires, and none is `Accept`, while
+    /// the run continues). Returns the loop class. Covers single- and multi-exit
+    /// follows (`[0-9]+END`, `[0-9]+(END|STOP)`, `\w+[ \t;]`, `[^"]*"`).
+    fn bulk_class_core(
         &self,
         table: &[Option<[u64; 4]>],
-        pc0: usize,
-        pc1: usize,
+        pcs: impl Iterator<Item = usize> + Clone,
     ) -> Option<[u64; 4]> {
-        for (loop_pc, exit_pc) in [(pc0, pc1), (pc1, pc0)] {
-            if let Some(class) = table[loop_pc]
-                && let Some(exit_set) = self.match_byte_set(exit_pc)
-                && sets_disjoint(&class, &exit_set)
-            {
-                return Some(class);
+        let mut class: Option<[u64; 4]> = None;
+        for pc in pcs.clone() {
+            if let Some(c) = table[pc] {
+                if class.is_some() {
+                    return None; // more than one looping class — bail conservatively
+                }
+                class = Some(c);
             }
         }
-        None
+        let class = class?;
+        for pc in pcs {
+            if table[pc].is_some() {
+                continue; // the loop body itself
+            }
+            // Every non-loop thread must be a determinate Match disjoint from the
+            // class (`None` rules out Accept / AnyChar / anchors — can't bulk past).
+            match self.match_byte_set(pc) {
+                Some(s) if sets_disjoint(&class, &s) => {}
+                _ => return None,
+            }
+        }
+        Some(class)
+    }
+
+    /// `leftmost_start` wrapper: bulk-safe only when every live thread shares one
+    /// start (a single match attempt), else a skipped position could host a
+    /// different, more-leftmost start.
+    fn bulk_loop_class_lm(
+        &self,
+        table: &[Option<[u64; 4]>],
+        current: &[(usize, usize)],
+    ) -> Option<[u64; 4]> {
+        if current.len() < 2 {
+            return None;
+        }
+        let s0 = current[0].1;
+        if current.iter().any(|&(_, s)| s != s0) {
+            return None;
+        }
+        self.bulk_class_core(table, current.iter().map(|&(pc, _)| pc))
+    }
+
+    /// `run_from` wrapper: single start, so no shared-start guard is needed.
+    fn bulk_loop_class_rf(
+        &self,
+        table: &[Option<[u64; 4]>],
+        current: &[Thread],
+    ) -> Option<[u64; 4]> {
+        if current.len() < 2 {
+            return None;
+        }
+        self.bulk_class_core(table, current.iter().map(|t| t.pc))
     }
 
     /// Precompute, once per search, the loop-body class of every PC that begins a
@@ -2403,13 +2443,12 @@ impl<'a> PikeVm<'a> {
             let NfaInstr::Match(MatchKind::CharClass { set }) = &self.nfa[pc] else {
                 continue;
             };
-            let Some(NfaInstr::Split(a, b)) = self.nfa.get(pc + 1) else {
-                continue;
-            };
+            // `pc` is a `class+`/`class*` loop body iff, after consuming a class byte
+            // and stepping to `pc+1`, an epsilon path leads back to `pc` (to consume
+            // again). This is structure-agnostic: `+` routes the back-edge through a
+            // post-`Split`, `*` through a `Jump` to a leading `Split`, etc.
             visited.iter_mut().for_each(|v| *v = false);
-            if self.epsilon_reaches(*a, pc, &mut visited)
-                || self.epsilon_reaches(*b, pc, &mut visited)
-            {
+            if self.epsilon_reaches(pc + 1, pc, &mut visited) {
                 table[pc] = Some(*set);
             }
         }
@@ -2552,9 +2591,7 @@ impl<'a> PikeVm<'a> {
             // equal-start guard is satisfied with a shared dummy start.
             if best.is_none()
                 && sp < input_len
-                && current.len() == 2
-                && let Some(class) =
-                    self.bulk_loop_class_for_pair(&bulk_table, current[0].pc, current[1].pc)
+                && let Some(class) = self.bulk_loop_class_rf(&bulk_table, &current)
                 && class_set_contains(&class, self.input[sp])
             {
                 let e = self.input[sp..]

@@ -6,6 +6,24 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ regex bulk-consume GENERALIZED: `*` loops + multi-exit follows now win glibc too (cc)
+
+- **LANDED CODE WIN (`string/regex.rs`, conformance GREEN), extends the just-landed bulk class-run consume.**
+  Two generalizations: (1) detection — `build_bulk_loop_table` now marks a `Match(class)` PC as a loop body iff
+  `epsilon_reaches(pc+1, pc)` (a back-edge exists after consuming a class byte), which is structure-agnostic and
+  catches `*` (`Match`→`Jump`→`Split`) as well as `+` (`Match`→post-`Split`); (2) predicate — `bulk_class_core`
+  fires when EXACTLY ONE live thread is a loop body and EVERY other is a `Match` disjoint from the class (not
+  just the 2-thread case), covering alternation / multi-char follows.
+- **MEASURED (`regex_prefilter_ab_bench` vs host glibc `regexec`, 4 KiB single runs):** all WIN —
+  `X[a-z]+9` (`+`) **fl 4.10 µs / glibc 13.36 µs = 3.26x**; `X[a-z]+(99|88)` (`+`, 3-thread alternation exit)
+  **fl 4.25 / glibc 9.87 = 2.32x**; `X[^"]*"` (`*`, NEGATED class) **fl 4.02 / glibc 10.61 = 2.64x** (was 74 µs
+  before the `*` detection fix). No regression on the short-run cases.
+- **Conformance GREEN:** 8 `conformance_diff_regex` + `bre_anchor_star` (`*`/`+` quantifiers) + capture-heavy
+  `nested_submatch`/`empty_iter_capture` + `stacked_quant` + isomorphism `debug_assert` — byte-identical.
+- **Boundary noted (future lever):** no-prefilter patterns like bare `[^"]*"` are dominated by the `any_match`
+  prescan (a THIRD O(n·m) path the bulk-consume doesn't yet touch — `[^"]*"` w/o a prefix was 74 µs). Adding
+  bulk-consume to `any_match` would close that; for now the determinate-first-byte forms (the common case) win.
+
 ## 2026-06-27 — ✅ regex: bulk class-run consume LANDS — icase 24x-LOSS → 3.3x-WIN vs glibc (cc)
 
 - **LANDED CODE WIN (`string/regex.rs`, conformance GREEN).** The prior turn's bulk-class-run machinery was
