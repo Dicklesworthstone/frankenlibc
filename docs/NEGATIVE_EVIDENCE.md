@@ -6,6 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — regex PikeVm `Thread.slots` Rc COW REJECTED (573.70 µs → 712.31 µs; 53.1x vs glibc)
+
+Agent: BlackThrush. Lever tested: make PikeVm `Thread.slots` use `Rc<Vec<i32>>` with `Rc::make_mut` on
+`Save`, so `Split` forks would copy a pointer instead of cloning the capture vector. This was the
+graveyard persistent-state / copy-on-write probe for the still-large regex-vs-glibc gap after the
+compile-time CharClass bitset landed.
+
+Bench shape was the requested per-crate release-profile wrapper:
+`AGENT_NAME=BlackThrush CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec -- cargo
+bench -p frankenlibc-bench --profile release --bench regex_prefilter_ab_bench --
+regex_prefilter_icase_class_perbyte/fl_core --noplot --sample-size 20 --warm-up-time 1 --measurement-time 2`.
+The candidate ran through `rch` local fallback and measured **712.31 µs** p50-ish Criterion center for
+`X[a-z]+9` ICASE over the 4 KiB single-start run. A clean detached `origin/main` baseline at
+`87735d463` (bitset win present, Rc COW absent) ran the same local fallback path and measured **573.70 µs**.
+So the COW candidate was a **1.24x self-regression**, not a win.
+
+The host glibc yardstick arm on `ovh-a` measured **13.421 µs** for the same bench case, so the baseline is
+roughly **42.7x slower than glibc** and the rejected Rc COW candidate would be roughly **53.1x slower**.
+Rejected and source reverted. The likely reason is that these regex states are small enough that `Rc`
+refcount traffic and `make_mut` branching cost more than direct `Vec` cloning in the current PikeVm shape;
+remaining gap is still the structural PikeVm/closure/Vec engine versus glibc DFA, not this COW lever.
+
 ## 2026-06-27 — ✅ regex: compile-time CharClass bitset — O(1) matches_byte, 1.21x on ICASE classes (cc)
 
 - **LANDED CODE WIN (`string/regex.rs`, conformance GREEN).** `matches_byte` (the per-byte-per-thread inner
