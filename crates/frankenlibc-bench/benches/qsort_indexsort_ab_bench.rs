@@ -17,7 +17,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 
-const W: usize = 32;
+const W: usize = 12;
 
 unsafe extern "C" {
     fn qsort(

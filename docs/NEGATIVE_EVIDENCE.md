@@ -6,6 +6,27 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ qsort index-sort threshold 16→8: MEDIUM elements (width 9-15) too (cc)
+
+- **LANDED CODE WIN (`sort.rs`, conformance GREEN, byte-identical).** Last turn's indirect index-sort was
+  gated `width > 16`; this measured that MEDIUM widths {9..15} benefit just as much, so the threshold drops
+  to `width > 8` (the {1,2,4,8,16} direct stdlib sort and {3,5,6,7} pdqsort paths are unchanged — at width
+  ≤8 a 4-byte index is not smaller than the element, so index-sort can't help there).
+- **SAME-PROCESS A/B (`qsort_indexsort_ab_bench`, width-12 struct-key, n=20000):**
+  | impl | time |
+  |---|---|
+  | fl `pdqsort_recurse` (old) | 1.83 ms |
+  | **index-sort (u32 indices + 1 permute)** | **0.92 ms** |
+  | glibc qsort | 2.36 ms |
+  index-sort **1.98x faster** than fl pdqsort, 2.5x faster than glibc.
+- **DEPLOYED (core qsort width-12, after landing): 1.031 ms vs glibc 2.555 ms = 0.40x WIN** (was 0.78x;
+  1.77x self-speedup). Applies to all widths {9..15} (and {17+} from last turn) — medium/large struct
+  arrays.
+- **Conformance GREEN + byte-identical:** core `stdlib::sort` 33/33 incl. `qsort_golden_corpus_hash_is_stable`,
+  `conformance_diff_qsort_{radix,count8,r,radix16}` + `_heapsort` 6/6. Bench `W` set to 12 to exercise the
+  new band. NOTE (out of scope, peer-owned): `fputs`'s remaining ~3.96x is the GLOBAL `registry()` double-lock
+  (bd-hqo6b6/bd-baifnq); `decide()` is already a strict no-op, so it is NOT a membrane-skip micro-lever.
+
 ## 2026-06-27 — ✅ qsort LARGE elements (width>16) → indirect index-sort: 0.84x WIN → 0.51x WIN (cc)
 
 - **LANDED CODE WIN (`sort.rs`, conformance GREEN, byte-identical).** The stdlib fixed-width fallback only

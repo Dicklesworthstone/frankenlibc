@@ -72,14 +72,17 @@ where
         return;
     }
 
-    // Large elements (width > 16): sort an array of u32 INDICES with the stdlib
-    // unstable sort, then permute the elements ONCE. This moves 4-byte indices
-    // during the O(n·log n) sort instead of full width-byte elements (glibc sorts
-    // large records indirectly for the same reason). Measured ~1.9x faster than
-    // moving 32-byte elements through `pdqsort_recurse`. Same conformant unstable
-    // result (multiset in non-decreasing order; ties unspecified). `num` fits u32
-    // for any sane array; the absurd >4 G-element case keeps the pdqsort path.
-    if width > 16 && num <= u32::MAX as usize && std_index_sort(base, width, num, &compare) {
+    // Medium/large elements (width > 8, i.e. not one of the {1,2,4,8,16} direct
+    // cases above): sort an array of u32 INDICES with the stdlib unstable sort,
+    // then permute the elements ONCE. This moves 4-byte indices during the
+    // O(n·log n) sort instead of full width-byte elements (glibc sorts large
+    // records indirectly for the same reason). Measured ~1.9–2.0x faster than
+    // moving the elements through `pdqsort_recurse` at widths 12 and 32. Same
+    // conformant unstable result (multiset in non-decreasing order; ties
+    // unspecified). `num` fits u32 for any sane array; the absurd >4 G-element
+    // case keeps the pdqsort path. Widths {3,5,6,7} (where a 4-byte index is not
+    // smaller than the element) keep `pdqsort_recurse`.
+    if width > 8 && num <= u32::MAX as usize && std_index_sort(base, width, num, &compare) {
         return;
     }
 
