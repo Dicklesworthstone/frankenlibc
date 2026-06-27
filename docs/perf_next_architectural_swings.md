@@ -69,6 +69,28 @@ not speculative.
   (255 passing) + `conformance_diff_stdio_ext` / `_stdio_unlocked_io` /
   `_wide_stdio_write`. Validate with `stdio_mt_contention_bench` (per-crate).
   See the existing note at `stdio_abi.rs` ~line 1239.
+- **Execution plan (ordered, each step independently testable — do these in a
+  dedicated turn, NOT inline in a 60m loop):**
+  1. *Increment 1 — std-stream fast slot (lowest risk, biggest ST payoff).* The 3
+     std streams use fixed sentinels (`STD{IN,OUT,ERR}_SENTINEL` = `0x1000_000{1,2,3}`,
+     stdio_abi.rs:522) and 99% of `fputs`/`fputc`/`fwrite`/`puts` target stdout/stderr.
+     Store those 3 in dedicated `static Mutex<StdioStream>` slots resolved by
+     `standard_stream_id()` (already exists, line 777) BEFORE touching the registry,
+     so the hot path skips the HashMap entirely. Every all-stream site
+     (`sorted_stream_ids` ×5, fflush(NULL)/atexit) must also visit the 3 slots — wire
+     a `for_each_stream()` helper that covers slots+registry and route all 5 sites
+     through it FIRST (mechanical, no behavior change) so increment 1 only swaps the
+     storage. Gate: full `stdio_abi_test` + the 3 conformance_diff gates green;
+     measure with `fputs_glibc_bench`.
+  2. *Increment 2 — per-FILE lock for the rest.* Change registry value to
+     `Arc<Mutex<StdioStream>>`; resolve the Arc under a brief registry read, drop the
+     registry lock, then lock the per-stream Mutex. Mechanically convert the 58
+     `registry().lock()` sites: split each into "resolve handle" (registry) + "use
+     stream" (per-FILE). Gate same; measure `stdio_mt_contention_bench` (expect the
+     8.6x MT gap to collapse).
+  3. *Increment 3 (optional) — shard the registry HashMap* only if MT open/close
+     contention still shows; 16 shards keyed by `id` hash, all-stream sites lock
+     shards in index order.
 
 ## Swing 2 — malloc small-alloc state-machine floor
 
