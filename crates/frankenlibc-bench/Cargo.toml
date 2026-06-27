@@ -273,3 +273,8 @@ harness = false
 [[bench]]
 name = "erfc_glibc_bench"
 harness = false
+
+# regex leftmost_start prefilter-seed prune A/B.
+[[bench]]
+name = "regex_prefilter_ab_bench"
+harness = false

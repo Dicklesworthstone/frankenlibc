@@ -6,6 +6,27 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ regex: prefilter-prune seeding in leftmost_start — 2.79x on determinate-first-byte search (cc)
+
+- **LANDED CODE WIN (`string/regex.rs` `leftmost_start`, conformance GREEN).** The merged-sweep search path
+  (taken by char-class-led patterns with a first-byte prefilter but no literal prefix, e.g. `[0-9]+END`) seeded
+  a fresh epsilon-closure at EVERY input position. A start whose first byte is not in the prefilter's first-byte
+  set can never begin a match (a prefilter implies a non-nullable, determinate-first-byte pattern), so those
+  seeds only ever spawn threads that die on the next byte. Gated the seed with the (previously release-DEAD)
+  `prefilter_skips` — the exact predicate the `#[cfg(debug_assertions)]` per-start probe already validates as
+  isomorphic to the merged sweep.
+- **MEASURED (`regex_prefilter_ab_bench`, controlled fl-old-vs-fl-new A/B — the all-letters `absent` case is the
+  control: 45.8 vs 45.5 ns confirms the two runs hit comparable workers):** `[0-9]+END` over a 4 KiB
+  sparse-digit haystack with a late match — **76.7 µs → 27.5 µs = 2.79x faster**. vs glibc `regexec` (same
+  process): closes the gap from ~16x-slower to **~4.3x-slower** on this digit-dense input (glibc's DFA still
+  wins the dense case — honest: a gap *reduction*, not a flip), while fl is **31x FASTER than glibc** on the
+  absent/sparse-first-byte case (43 ns vs 1.35 µs, fl's required-substring prefilter).
+- **Conformance GREEN:** 8 regex glibc-differential gates pass in DEBUG (`conformance_diff_regex` 8/8 +
+  startend/midpattern/bre-anchor fuzz), so the `debug_assert_eq!(s_star, probe)` isomorphism fired and held —
+  the prune is byte-identical to the old search. Provably less work (skips wasted closures); a DoS-class
+  reduction on the documented regex-DoS leftmost_start vector. Also removes the `prefilter_skips never used`
+  release warning.
+
 ## 2026-06-27 — ❌ DISPROVEN: ARM optimized-routines erf poly for |x|<0.5 (slower than fl's Cephes) (cc)
 
 - **DISPROOF via same-process 3-way A/B (`erfc_glibc_bench`, [1/7-arg trap avoided]):** ported ARM

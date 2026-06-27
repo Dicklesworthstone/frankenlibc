@@ -2102,17 +2102,23 @@ impl<'a> PikeVm<'a> {
         let mut best: Option<usize> = None;
 
         cur_gen += 1;
-        self.lm_closure(
-            0,
-            0,
-            0,
-            notbol,
-            noteol,
-            &mut current,
-            &mut visited,
-            cur_gen,
-            0,
-        );
+        // A start whose first byte is not in the prefilter's first-byte set can
+        // never begin a match (the prefilter implies a non-nullable, determinate-
+        // first-byte pattern), so skip seeding it — exactly the soundness the
+        // `#[cfg(debug_assertions)]` probe in `execute` checks via `prefilter_skips`.
+        if !self.prefilter_skips(0) {
+            self.lm_closure(
+                0,
+                0,
+                0,
+                notbol,
+                noteol,
+                &mut current,
+                &mut visited,
+                cur_gen,
+                0,
+            );
+        }
 
         let mut sp = 0;
         loop {
@@ -2150,8 +2156,11 @@ impl<'a> PikeVm<'a> {
             }
             sp += 1;
             // Seed a fresh start at the new position only if it could still beat
-            // the best-known start (a later start can never be more leftmost).
-            if best.is_none_or(|b| sp < b) {
+            // the best-known start (a later start can never be more leftmost) AND
+            // its first byte can actually begin a match (prefilter prune — skips
+            // the wasted epsilon-closure on every non-first-byte position, the
+            // O(n) win on determinate-first-byte patterns over large inputs).
+            if best.is_none_or(|b| sp < b) && !self.prefilter_skips(sp) {
                 self.lm_closure(
                     0,
                     sp,
