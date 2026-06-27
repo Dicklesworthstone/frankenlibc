@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — regex Rc-COW slots: cc INDEPENDENTLY re-confirmed REJECT + localized the real bottleneck (cc)
+
+- **Re-derived the same lever below without checking the ledger first (my miss — the entry was at the top).**
+  Implemented `Thread.slots: Rc<Vec<i32>>` with `Rc::make_mut` on `Save`, conformance GREEN (capture-heavy
+  `empty_iter_capture` + `nested_submatch` differential fuzzes pass → the COW is byte-identical). Controlled
+  A/B: `X[a-z]+9` ICASE OLD (Vec clone) **392 µs (tight)** vs NEW (Rc) **534–859 µs (noisy)** — NOT faster.
+  Reverted. Same conclusion as BlackThrush's entry below.
+- **NEW DIAGNOSTIC (the value here — redirects the next attempt):** the Rc-COW touches only `run_from`, yet the
+  icase/dense number barely moved → `run_from`'s capture-vector allocation is NOT the bottleneck. The cost
+  (~96 ns/byte) is `leftmost_start` — the O(n·m) merged sweep that runs the epsilon-closure at every position
+  and carries slot-LESS `(pc, start)` tuples (no malloc to remove). **The next regex-vs-glibc lever must target
+  `leftmost_start`'s per-position `lm_closure` cost (Vec push + visited gen-stamp per thread per byte), not
+  capture allocation — or replace the merged sweep with a lazy DFA-state cache.**
+
 ## 2026-06-27 — regex PikeVm `Thread.slots` Rc COW REJECTED (573.70 µs → 712.31 µs; 53.1x vs glibc)
 
 Agent: BlackThrush. Lever tested: make PikeVm `Thread.slots` use `Rc<Vec<i32>>` with `Rc::make_mut` on
