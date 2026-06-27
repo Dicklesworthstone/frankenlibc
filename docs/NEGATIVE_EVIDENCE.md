@@ -6,6 +6,32 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ qsort fallback → stdlib sort_unstable: char* string sort 1.6x LOSS → parity (cc)
+
+- **LANDED CODE WIN (`sort.rs`, conformance GREEN, byte-identical).** After the pre-gate skips the wasted
+  radix, fl's width-8 `char*`-by-`strcmp` sort still lost **1.605x** (strsort_bench: fl 2.22 ms / glibc
+  1.39 ms) — the residual being fl's in-house `pdqsort_recurse`. Comparison counts are ≈ glibc's (pdqsort ≈
+  merge, prior entry), so this was pure per-element implementation overhead.
+- **SAME-PROCESS A/B (`qsort_pdqsort_ab_bench`, width-8 char* / strcmp, n=20000, identical order all three):**
+  | impl | time |
+  |---|---|
+  | fl custom `pdqsort_recurse` | 2.45 ms |
+  | **stdlib `sort_unstable_by`** | **1.42 ms** |
+  | glibc qsort | 2.45 ms |
+  stdlib's tuned unstable sort is **1.72x faster** than fl's custom pdqsort (and than glibc). FIX: for the
+  fixed element widths {1,2,4,8,16} the non-radix fallback now reinterprets the bytes as `[u8; N]` (safe
+  `as_chunks_mut`, no `unsafe` — the crate forbids it) and calls `slice::sort_unstable_by`; other widths keep
+  `pdqsort_recurse`.
+- **RESULT (strsort_bench, deployed): char* string sort 1.605x LOSS → 1.037x (fl 1.364 ms / glibc 1.316 ms)
+  = PARITY** — a ~1.55x improvement on the case, closing the original documented 2.7x string-sort gap (radix
+  skip + this fallback). Also speeds every other fixed-width non-radix sort (struct-key workloads).
+- **Conformance GREEN + byte-identical:** core `stdlib::sort` 33/33 incl. `qsort_golden_corpus_hash_is_stable`
+  (output hash unchanged → byte-identical on the corpus), `conformance_diff_qsort_{radix,count8,r,radix16}` +
+  `_heapsort` 6/6, `conformance_diff_stdlib_search` 4/4. stdlib sort is unstable like C qsort (tie order
+  unspecified), and is non-allocating (`sort_unstable_by` is in `core`). **No integer regression** (sort_bench:
+  random 0.39x, i64 0.66x, f64 0.84x, u32 0.40x, str16 0.99x, u64_1M 0.74x — all go through radix/lanes,
+  untouched). Bench `qsort_pdqsort_ab_bench.rs` added.
+
 ## 2026-06-27 — ✅ qsort integer-radix PRE-GATE: width-8 non-integer sort 1.42x LOSS → 0.94x WIN (cc)
 
 - **MEASUREMENT for the landed code win `ccc530e2e`** (the commit added the gate + bench but recorded no

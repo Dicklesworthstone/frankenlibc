@@ -243,3 +243,8 @@ required-features = ["abi-bench"]
 [[bench]]
 name = "qsort_gate_ab_bench"
 harness = false
+
+# qsort fallback: fl custom pdqsort vs std sort_unstable vs glibc, 1 process.
+[[bench]]
+name = "qsort_pdqsort_ab_bench"
+harness = false
