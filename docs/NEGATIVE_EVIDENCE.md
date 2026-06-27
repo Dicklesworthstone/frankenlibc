@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ printf %E/%G delegate to render_pct + in-place uppercase (extends the %e/%g win) (cc)
+
+- **LANDED CODE WIN (`stdio/printf.rs`, conformance GREEN, byte-identical).** A prior turn delegated printf
+  `%e`/`%g` (non-uppercase, non-`#`) to the heap-lean `render_pct_e`/`render_pct_g`, but `%E`/`%G` still fell
+  to the old alloc-heavy `format_e`/`format_g` (`alloc::format!` probe + helpers — 8 allocs in `format_g`).
+  Extended the delegation guard from `!uppercase && !alt_form` to `!alt_form`: for uppercase, take the
+  render_pct result and `make_ascii_uppercase` IN PLACE (the only lowercase char is the `'e'`). Only `#`
+  (alt_form) now keeps the old path.
+- **Byte-identical** (the gate): `printf_float_differential_fuzz` PASSES (fuzz vs glibc, covers %E/%G), core
+  `stdio::printf` 53/53. Provably fewer allocs (render_pct StackStr path + one in-place uppercase pass vs the
+  old 8-alloc `format_g`). printf `%E`/`%G` now perform like `%e`/`%g` (printf core mid-precision WINS glibc:
+  %g `.17` 0.62–0.76x per the prior printf-float / strip-trailing entries) instead of the old duplicate.
+- Mirrors this session's strfromd `%E/%G/%F` in-place-uppercase win. The printf float family (`%f/%F/%e/%E/%g/%G`,
+  non-`#`) now all route through the one heap-lean dtoa path with in-place case folding; only the rare `#`
+  alt-form keeps the legacy formatter.
+
 ## 2026-06-27 — ✅ strfromd %E/%G/%F: in-place uppercase, drop redundant alloc chain (cc)
 
 - **LANDED CODE WIN (`string_abi.rs` `render_strfrom`, conformance GREEN, byte-identical).** `%E`/`%G` did

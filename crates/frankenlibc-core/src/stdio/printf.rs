@@ -1739,13 +1739,19 @@ fn format_f(value: f64, precision: usize, alt_form: bool) -> String {
 
 /// `%e` / `%E` formatting: scientific notation.
 fn format_e(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> String {
-    // Common case (`%e`, no `#`): delegate to the shared, heap-lean `render_pct_e`
-    // (StackStr intermediate) instead of this function's `alloc::format!` probe —
-    // dedup + fewer allocs. Byte-identical for non-alt, non-uppercase output
-    // (guarded by `printf_float_differential_fuzz`). `alt_form`/uppercase keep the
-    // path below (alt_form forces a trailing point at precision 0; `%E` upper-cases).
-    if !uppercase && !alt_form {
-        return crate::stdlib::ecvt::render_pct_e(value, precision);
+    // Common case (`%e`/`%E`, no `#`): delegate to the shared, heap-lean
+    // `render_pct_e` (StackStr intermediate) instead of this function's
+    // `alloc::format!` probe — dedup + fewer allocs. For `%E`, the only lowercase
+    // char render_pct_e emits is the `'e'`, so an in-place `make_ascii_uppercase`
+    // upper-cases exactly that. Byte-identical (guarded by
+    // `printf_float_differential_fuzz`). `alt_form` keeps the path below (it forces
+    // a trailing point at precision 0).
+    if !alt_form {
+        let mut s = crate::stdlib::ecvt::render_pct_e(value, precision);
+        if uppercase {
+            s.make_ascii_uppercase();
+        }
+        return s;
     }
     let e_char = if uppercase { 'E' } else { 'e' };
     if value == 0.0 {
@@ -1794,13 +1800,18 @@ pub fn __bench_format_e(value: f64, precision: usize) -> String {
 
 /// `%g` / `%G` formatting: shortest of `%f` or `%e`.
 fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> String {
-    // Common case (`%g`, no `#`): delegate to the shared, heap-lean `render_pct_g`
-    // (StackStr probe + single-pass reposition) instead of this function's
-    // `alloc::format!` probe + helpers — dedup + fewer allocs. Byte-identical for
-    // non-alt, non-uppercase output (guarded by `printf_float_differential_fuzz`);
-    // `alt_form` (keep trailing zeros) / uppercase keep the path below.
-    if !uppercase && !alt_form {
-        return crate::stdlib::ecvt::render_pct_g(value, precision);
+    // Common case (`%g`/`%G`, no `#`): delegate to the shared, heap-lean
+    // `render_pct_g` (StackStr probe + single-pass reposition) instead of this
+    // function's `alloc::format!` probe + helpers — dedup + fewer allocs. For `%G`
+    // the only lowercase char is the optional `'e'`; in-place `make_ascii_uppercase`
+    // folds exactly that. Byte-identical (guarded by `printf_float_differential_fuzz`);
+    // `alt_form` (keep trailing zeros) keeps the path below.
+    if !alt_form {
+        let mut s = crate::stdlib::ecvt::render_pct_g(value, precision);
+        if uppercase {
+            s.make_ascii_uppercase();
+        }
+        return s;
     }
     let p = if precision == 0 { 1 } else { precision };
 
