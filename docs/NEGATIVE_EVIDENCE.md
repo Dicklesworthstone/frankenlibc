@@ -6,6 +6,27 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ regex: dead-region JUMP in leftmost_start — 4.05x on rare-first-byte search (cc)
+
+- **LANDED CODE WIN (`string/regex.rs` `leftmost_start`, conformance GREEN).** Successor to the seed-prune: even
+  after skipping non-first-byte SEEDS, the merged sweep still STEPPED one position per iteration over dead
+  regions (each paying the Vec-swap machinery — the O(n) residual that left determinate-first-byte search ~4x
+  off glibc). Added: when no thread is live AND no match found yet AND a first-byte prefilter exists, scan
+  straight to the next prefilter byte (`input.get(sp+1..).position(|b| fb.contains(b))`) and fast-forward `sp`
+  there — like the literal_prefix memmem jump, generalized to the first-byte SET. Sound: with no live thread
+  nothing consumes the skipped bytes, and a non-prefilter byte can never seed a match (the exact `prefilter_skips`
+  predicate the debug probe validates).
+- **MEASURED (`regex_prefilter_ab_bench`, controlled fl-old(prune,no-jump)-vs-fl-new A/B, glibc as the per-run
+  yardstick — OLD/NEW glibc within ~3%):** `[0-9][0-9][0-9]X` over 4 KiB of letters with the only digits in
+  the trailing `999X` — **11.2 µs → 2.76 µs = 4.05x faster**; the realistic `[0-9]+END` sparse-digit case
+  **20.7 µs → 11.8 µs = 1.75x**. vs glibc `regexec`: the rare-first-byte gap collapses from **7.7x-slower to
+  1.8x-slower**, the sparse from 4.4x to 2.4x.
+- **Conformance GREEN:** 8 `conformance_diff_regex` + 4 differential-fuzz gates pass in DEBUG, so the
+  `debug_assert_eq!(s_star, probe)` isomorphism held across thousands of patterns vs glibc — the jump is
+  byte-identical to the old search. No dense-case regression (the scan finds the next byte immediately when the
+  first byte is common). Two regex turns now: prune (2.79x) + jump (4.05x) close most of the determinate-first-
+  byte gap vs glibc's DFA.
+
 ## 2026-06-27 — ✅ calloc/free(16): index-only fallback cache — 1.43x FL win, still 8.93x vs glibc (BlackThrush)
 
 - **LANDED CODE WIN (`malloc_abi.rs`, conformance GREEN).** The per-reentry fallback cache carried both the

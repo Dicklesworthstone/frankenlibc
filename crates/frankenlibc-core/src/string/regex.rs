@@ -2175,6 +2175,31 @@ impl<'a> PikeVm<'a> {
             }
             core::mem::swap(&mut current, &mut next);
             next.clear();
+            // Fast-forward over dead regions: with no thread live and no match yet,
+            // the next match can only BEGIN at the next prefilter byte, so scan
+            // straight to it instead of stepping one empty position per iteration
+            // (each otherwise pays the sweep's Vec-swap + seed machinery — the O(n)
+            // residual that left determinate-first-byte search ~4x off glibc even
+            // after the seed-prune). Sound: `current` is empty so nothing needs to
+            // consume the skipped bytes, and a non-prefilter byte can never seed a
+            // match — exactly the `prefilter_skips` predicate the debug probe checks.
+            if best.is_none()
+                && current.is_empty()
+                && let Some(fb) = self.prefilter
+            {
+                match self
+                    .input
+                    .get(sp + 1..)
+                    .and_then(|rest| rest.iter().position(|&b| fb.contains(b)))
+                {
+                    // `off` is measured from sp+1; the next iteration's `sp += 1`
+                    // then lands the seed exactly on that prefilter byte.
+                    Some(off) => sp += off,
+                    // No further prefilter byte (or no byte left): no match can
+                    // begin — and `best` is None here, so the result is None.
+                    None => return best,
+                }
+            }
             // `best` is final once no live thread can start earlier AND no later
             // seed could either (reseeding stops once `sp >= best`). Until then
             // the sweep must continue even when `current` is momentarily empty:

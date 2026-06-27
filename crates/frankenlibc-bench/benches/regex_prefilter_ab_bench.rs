@@ -21,14 +21,8 @@ fn glibc_regexec_matches(preg: &libc::regex_t, hay_cstr: &std::ffi::CStr) -> boo
 }
 
 fn bench(c: &mut Criterion) {
-    // `[0-9]+END`: digit first-byte set, no literal prefix, small NFA -> leftmost_start.
-    let pat = regex_compile(b"[0-9]+END", REG_EXTENDED).expect("compile");
-
-    // (1) absent match, 4 KiB of letters: zero first-byte hits -> the prune skips
-    //     every seed; the old path ran a full closure at all 4096 starts.
-    let absent = vec![b'a'; 4096];
-
-    // (2) realistic: 4 KiB mostly letters with sparse digit runs, match at the end.
+    // (1) sparse digit first-byte, match late: `[0-9]+END` over text with sparse
+    //     digit runs. Exercises the seed-prune (skip non-digit closures).
     let mut sparse: Vec<u8> = Vec::with_capacity(4096);
     let unit = b"the brown fox 7 jumps over 42 the lazy dog rests a while. ";
     while sparse.len() < 4000 {
@@ -36,16 +30,28 @@ fn bench(c: &mut Criterion) {
     }
     sparse.extend_from_slice(b"99END");
 
-    // glibc-compiled twin of the pattern for the vs-glibc arm.
-    let mut gpreg: libc::regex_t = unsafe { std::mem::zeroed() };
-    let pat_c = std::ffi::CString::new("[0-9]+END").unwrap();
-    assert_eq!(
-        unsafe { libc::regcomp(&mut gpreg, pat_c.as_ptr(), libc::REG_EXTENDED) },
-        0,
-        "glibc regcomp failed"
-    );
+    // (2) RARE first-byte, match at the very end: `[0-9][0-9][0-9]X` over 4 KiB of
+    //     letters with the only digits in "999X" at the end. The first-byte set
+    //     (digits) is empty until the last 4 bytes — so the empty-region JUMP
+    //     fast-forwards ~4 KiB in one scan instead of stepping every position.
+    let mut rare: Vec<u8> = vec![b'a'; 4092];
+    rare.extend_from_slice(b"999X");
 
-    for (name, hay) in [("absent_4k_letters", &absent), ("sparse_digits_late", &sparse)] {
+    // Each case carries its own pattern (fl + glibc twin).
+    let cases: &[(&str, &str, &Vec<u8>)] = &[
+        ("sparse_digits_late", "[0-9]+END", &sparse),
+        ("rare_firstbyte_jump", "[0-9][0-9][0-9]X", &rare),
+    ];
+
+    for &(name, pat_str, hay) in cases {
+        let pat = regex_compile(pat_str.as_bytes(), REG_EXTENDED).expect("compile");
+        let mut gpreg: libc::regex_t = unsafe { std::mem::zeroed() };
+        let pat_c = std::ffi::CString::new(pat_str).unwrap();
+        assert_eq!(
+            unsafe { libc::regcomp(&mut gpreg, pat_c.as_ptr(), libc::REG_EXTENDED) },
+            0,
+            "glibc regcomp failed"
+        );
         let hay_c = std::ffi::CString::new(hay.as_slice()).unwrap();
         // correctness: fl and glibc agree on match presence.
         let fl_m = regex_match_bounds_bytes(&pat, hay, 0).is_some();
@@ -60,8 +66,8 @@ fn bench(c: &mut Criterion) {
             b.iter(|| black_box(glibc_regexec_matches(&gpreg, black_box(&hay_c))))
         });
         g.finish();
+        unsafe { libc::regfree(&mut gpreg) };
     }
-    unsafe { libc::regfree(&mut gpreg) };
 }
 
 criterion_group!(benches, bench);
