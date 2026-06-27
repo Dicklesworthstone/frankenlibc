@@ -5285,3 +5285,29 @@ the candidate measured frankenlibc `calloc/free(16)` at **50.429 ns p50**. Again
 (6.267 ns p50), the candidate was **8.05x slower than glibc**. Rejected: atomic CAS removal did not reduce
 the allocator membrane gap and likely added memory-ordering/CAS overhead on the uncontended single-thread
 path. Candidate code was reverted; no zero-gain source changes remain.
+
+### 2026-06-27 — strftime `%H:%M:%S` straight-line directive KEEP (8.34x -> 1.38x vs glibc)
+
+Agent: BoldWaterfall. Lever tested: add the generated straight-line directive compiler that the prior
+`strftime` cold-path split routed to, but only for the exact C-locale `%H:%M:%S` format. The fast path
+validates the glibc-normal range (`hour 0..23`, `minute 0..59`, `second 0..60`), preserves the
+NUL-required buffer contract, and falls back to the generic directive parser for malformed fields so
+out-of-range formatting stays byte-compatible.
+
+First baseline attempt used the requested per-crate `rch exec` command but had no admissible worker, so it
+fell back local: `AGENT_NAME=BoldWaterfall CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b
+rch exec -- cargo bench -p frankenlibc-bench --profile release --features abi-bench --bench
+strftime_glibc_bench strftime_time_hms -- --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`.
+That routed baseline measured frankenlibc **332.74 ns** vs host glibc **38.605 ns** = **8.62x LOSS**.
+
+Same-worker proof used a clean `origin/main` baseline worktree with only the new bench arm, and the exact
+landing worktree with the exact-format fast path. Both ran on `hz2` via the same command. Baseline:
+frankenlibc **262.34 ns** vs host glibc **31.452 ns** = **8.34x LOSS**. Candidate: frankenlibc **45.059 ns**
+vs host glibc **32.617 ns** = **1.38x LOSS**. This is a **5.82x same-worker FrankenLibC self-speedup** and
+closes most of the measured gap, though it does not yet beat glibc's hand-tuned formatter.
+
+Conformance stayed green on the exact landing tree: `rch exec -- cargo test -p frankenlibc-core --lib
+strftime_hms_fast_path -- --nocapture` on `hz2` passed **3/3**, and `rch exec -- cargo test -p
+frankenlibc-abi --test conformance_diff_time diff_strftime_cases -- --nocapture` on `hz2` passed **1/1**.
+Kept as a measured gap-narrowing win; residual 1.38x vs glibc is now ABI-call/fixed overhead and any deeper
+directive-specializer work must prove a further same-worker reduction.

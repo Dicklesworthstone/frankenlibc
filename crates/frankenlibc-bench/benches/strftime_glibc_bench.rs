@@ -55,6 +55,7 @@ fn make_tm() -> libc::tm {
 
 fn bench(c: &mut Criterion) {
     let fmt = c"%Y-%m-%d %H:%M:%S";
+    let fmt_hms = c"%H:%M:%S";
     let tm = make_tm();
     let host = host_strftime();
 
@@ -66,6 +67,14 @@ fn bench(c: &mut Criterion) {
         let nb = unsafe { host(b.as_mut_ptr(), b.len(), fmt.as_ptr(), &tm) };
         assert_eq!(na, nb, "strftime length mismatch fl vs glibc");
         assert_eq!(a, b, "strftime bytes mismatch fl vs glibc");
+    }
+    {
+        let mut a = [0i8; 64];
+        let mut b = [0i8; 64];
+        let na = unsafe { fl::strftime(a.as_mut_ptr(), a.len(), fmt_hms.as_ptr(), &tm) };
+        let nb = unsafe { host(b.as_mut_ptr(), b.len(), fmt_hms.as_ptr(), &tm) };
+        assert_eq!(na, nb, "strftime %H:%M:%S length mismatch fl vs glibc");
+        assert_eq!(a, b, "strftime %H:%M:%S bytes mismatch fl vs glibc");
     }
 
     let mut group = c.benchmark_group("strftime_numeric_19");
@@ -80,6 +89,37 @@ fn bench(c: &mut Criterion) {
         bencher.iter(|| {
             let mut buf = [0i8; 64];
             let n = unsafe { host(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), black_box(&tm)) };
+            black_box((n, buf[0]));
+        });
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("strftime_time_hms");
+    group.bench_function("frankenlibc_abi", |bencher| {
+        bencher.iter(|| {
+            let mut buf = [0i8; 64];
+            let n = unsafe {
+                fl::strftime(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt_hms.as_ptr(),
+                    black_box(&tm),
+                )
+            };
+            black_box((n, buf[0]));
+        });
+    });
+    group.bench_function("host_glibc", |bencher| {
+        bencher.iter(|| {
+            let mut buf = [0i8; 64];
+            let n = unsafe {
+                host(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt_hms.as_ptr(),
+                    black_box(&tm),
+                )
+            };
             black_box((n, buf[0]));
         });
     });

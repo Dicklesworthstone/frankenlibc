@@ -474,6 +474,9 @@ fn iso_week(bd: &BrokenDownTime) -> (i64, i32) {
 /// `%X` preferred time, `%y` year (2-digit), `%Y` full year, `%z` timezone offset,
 /// `%Z` timezone name, `%%` literal percent.
 pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
+    if let Some(n) = format_strftime_hms(fmt, bd, buf) {
+        return n;
+    }
     if let Some(n) = format_strftime_numeric_19(fmt, bd, buf) {
         return n;
     }
@@ -1004,6 +1007,37 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
 }
 
 #[inline]
+fn format_strftime_hms(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
+    if fmt != b"%H:%M:%S" {
+        return None;
+    }
+
+    if !(0..=23).contains(&bd.tm_hour)
+        || !(0..=59).contains(&bd.tm_min)
+        || !(0..=60).contains(&bd.tm_sec)
+    {
+        return None;
+    }
+
+    const OUT_LEN: usize = 8;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+
+    let hour = bd.tm_hour as u32;
+    let minute = bd.tm_min as u32;
+    let second = bd.tm_sec as u32;
+
+    write_two_digits(&mut buf[0..2], hour);
+    buf[2] = b':';
+    write_two_digits(&mut buf[3..5], minute);
+    buf[5] = b':';
+    write_two_digits(&mut buf[6..8], second);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+#[inline]
 fn format_strftime_numeric_19(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
     if fmt != b"%Y-%m-%d %H:%M:%S" {
         return None;
@@ -1327,6 +1361,45 @@ mod tests {
         assert_eq!(n, 19);
         assert_eq!(&buf[..19], b"2024-01-01 14:30:45");
         assert_eq!(buf[19], 0);
+    }
+
+    #[test]
+    fn strftime_hms_fast_path_exact_fit() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 14;
+        bd.tm_min = 30;
+        bd.tm_sec = 45;
+        let mut buf = [0x55u8; 9];
+        let n = format_strftime(b"%H:%M:%S", &bd, &mut buf);
+
+        assert_eq!(n, 8);
+        assert_eq!(&buf[..8], b"14:30:45");
+        assert_eq!(buf[8], 0);
+    }
+
+    #[test]
+    fn strftime_hms_fast_path_buffer_too_small() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 14;
+        bd.tm_min = 30;
+        bd.tm_sec = 45;
+        let mut buf = [0x55u8; 8];
+        let n = format_strftime(b"%H:%M:%S", &bd, &mut buf);
+
+        assert_eq!(n, 0);
+        assert_eq!(buf, [0x55u8; 8]);
+    }
+
+    #[test]
+    fn strftime_hms_fast_path_invalid_fields_fall_back() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 99;
+        bd.tm_min = 30;
+        bd.tm_sec = 45;
+        let mut buf = [0u8; 64];
+        let n = format_strftime(b"%H:%M:%S", &bd, &mut buf);
+
+        assert_eq!(&buf[..n], b"99:30:45");
     }
 
     #[test]
