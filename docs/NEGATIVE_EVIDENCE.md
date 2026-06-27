@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ f64 `sincos` fused fast-reduction LANDED (4.30x WIN vs glibc, mid-range band)
+
+- **LANDED CODE WIN (`math/float.rs` + `math/trig.rs`, BoldFalcon):** fl's `sin`/`cos`
+  already beat glibc in the magnitude band [1.647e6, 1e15] via a 3-FMA π/2 reduction
+  (`reduce_pio2_fma`), but `sincos` was still plain `libm::sincos` (slow Payne–Hanek
+  `rem_pio2`). New `trig::sincos_band` shares ONE fast reduction for BOTH outputs and
+  `float::sincos` routes the band through it; outside the band it is unchanged
+  (`libm::sincos`).
+- **Conformance GREEN:** the band result is **bit-identical** to `(self::sin(x),
+  self::cos(x))` by construction (same reduction, same quadrant map, same
+  `libm::sin/cos` on the reduced arg), so it inherits their already-green gates; the
+  bench asserts both bit-identity and **worst 1 ULP vs live host glibc** over a 20k
+  sweep of the band.
+- **MEASURED (`rch` remote, in-process, no `abi-bench` → bare `extern sincos` = host
+  glibc; `sincos_glibc_bench`, 64 band args, sample-size 80):** FrankenLibC
+  **835.4 ns** vs host glibc **3591.8 ns** = **4.30x faster than glibc** (ratio vs
+  ORIG 0.233x). Same fast-reduction advantage that fl sin/cos enjoy, now extended to
+  `sincos`. No behavior change outside the band.
+
 ## 2026-06-27 — ✅ fputs registry parking_lot swap LANDED on cod-a/vmi (Franken -11.1%, still 6.22x vs glibc)
 
 - **LANDED CODE WIN (`stdio_abi.rs`, BlackThrush):** swapped the legacy global stream registry

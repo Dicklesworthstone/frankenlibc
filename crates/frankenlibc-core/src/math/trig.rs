@@ -62,6 +62,30 @@ pub fn cos(x: f64) -> f64 {
     }
 }
 
+/// Fused sin+cos over the fast FMA-reduction band `[TRIG_FAST_HI, TRIG_RED_MAX]`.
+/// Returns `Some((sin(x), cos(x)))` computed from a SINGLE `reduce_pio2_fma`
+/// instead of `libm::sincos`'s slower Payne–Hanek `rem_pio2`. The result is
+/// BIT-IDENTICAL to `(self::sin(x), self::cos(x))` (same reduction, same quadrant
+/// map, same `libm::sin/cos` on the reduced arg), so it inherits their already-green
+/// ≤1–2 ULP-vs-glibc conformance; outside the band the caller falls back to
+/// `libm::sincos` (unchanged behavior).
+#[inline]
+pub(crate) fn sincos_band(x: f64) -> Option<(f64, f64)> {
+    let ax = x.abs();
+    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
+        return None;
+    }
+    let (n, r) = reduce_pio2_fma(x);
+    let s = libm::sin(r);
+    let c = libm::cos(r);
+    Some(match n & 3 {
+        0 => (s, c),
+        1 => (c, -s),
+        2 => (-s, -c),
+        _ => (-c, s),
+    })
+}
+
 #[inline]
 pub fn tan(x: f64) -> f64 {
     let ax = x.abs();

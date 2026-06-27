@@ -274,6 +274,11 @@ harness = false
 name = "erfc_glibc_bench"
 harness = false
 
+# sincos vs host glibc, in-process (no abi-bench) — fused fast-reduction lever.
+[[bench]]
+name = "sincos_glibc_bench"
+harness = false
+
 # regex leftmost_start prefilter-seed prune A/B.
 [[bench]]
 name = "regex_prefilter_ab_bench"
