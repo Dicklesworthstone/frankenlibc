@@ -45,6 +45,33 @@ retried and real wins are confirmed with numbers.
   ORIG 0.233x). Same fast-reduction advantage that fl sin/cos enjoy, now extended to
   `sincos`. No behavior change outside the band.
 
+## 2026-06-27 — strict `calloc/free(16)` cached host-call guard bypass REJECTED (7.58x -> 7.19x vs glibc; source reverted)
+
+- **DISPROVEN / NO-SHIP (BlackThrush):** tested a new allocator lever from the graveyard allocator/RCU
+  playbook: when strict mode already has cached raw host `calloc`/`free` symbols, bypass the native
+  reentry guard's hot atomic RMWs and call the cached host function directly. This targeted the current
+  `calloc/free(16)` residual after prior fallback-table/cache attempts.
+- **MEASURED (`hz2`, same worker, per-crate RCH release bench):** baseline command first confirmed Cargo
+  rejects bench-level `--release`, so the accepted workspace spelling was
+  `rch exec -- cargo bench -j 1 -p frankenlibc-bench --profile release --features abi-bench --bench
+  calloc_glibc_bench -- 'calloc_cycle/(fl|fl_native|glibc)/16' --noplot --sample-size 20 --warm-up-time 1
+  --measurement-time 2`, with `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`.
+  Baseline p50: FrankenLibC **44.371 ns**, host glibc **5.856 ns**, ratio **7.58x slower than glibc**.
+  Candidate p50 on the same `hz2` gate: FrankenLibC **41.692 ns**, host glibc **5.798 ns**, ratio
+  **7.19x slower than glibc**; Criterion reported `-9.4648%..-0.4758%`, p=0.02, but still labeled it
+  **"Change within noise threshold."**
+- **REJECTED / REVERTED:** the candidate hit the allocator overflow gate:
+  `rch exec -- cargo test -j 1 -p frankenlibc-abi --profile release --test malloc_abi_test -- --nocapture`
+  aborted at `test_calloc_overflow_returns_null`, and the focused rerun
+  `... --test malloc_abi_test test_calloc_overflow_returns_null -- --nocapture` failed the same way even
+  after a public-entry overflow guard probe. After source revert, current `main` still failed that same focused
+  release ABI test, so the failure is recorded as a gate blocker rather than shipped-source evidence. Two
+  docs-only allocator harness attempts via
+  `rch exec -- cargo test -j 1 -p frankenlibc-harness --profile release --test allocator_conformance_test -- --nocapture`
+  timed out on `vmi1264463` during release compile before test execution (`RCH-E104`, 1800s). Source is
+  reverted. Do not retry cached raw host-call guard bypass as a standalone strict allocator lever; the remaining
+  small-allocation gap needs a different ownership/bookkeeping model, not just removal of the native guard RMW.
+
 ## 2026-06-27 — ✅ fputs registry parking_lot swap LANDED on cod-a/vmi (Franken -11.1%, still 6.22x vs glibc)
 
 - **LANDED CODE WIN (`stdio_abi.rs`, BlackThrush):** swapped the legacy global stream registry
