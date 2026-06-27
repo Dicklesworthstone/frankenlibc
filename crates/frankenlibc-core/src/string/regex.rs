@@ -1637,6 +1637,12 @@ impl<'a> PikeVm<'a> {
             return None;
         }
 
+        // The `class+`/`class*` bulk-consume table is a pure function of the NFA,
+        // so build it once per search here and lend it to every leftmost_start /
+        // run_from below (the literal-prefix loop can call run_from many times) —
+        // not once per call. (Cheaper still would be compile-time on CompiledRegex.)
+        let bulk_table = self.build_bulk_loop_table();
+
         // Literal-prefix fast path: a match can only begin where the leading
         // literal occurs, so jump straight to each occurrence with SIMD memmem
         // instead of probing every start. Leftmost preserved (memmem scans L->R).
@@ -1647,9 +1653,15 @@ impl<'a> PikeVm<'a> {
                 let start = from + off;
                 let mut slots = vec![-1i32; self.num_slots];
                 slots[0] = start as i32;
-                if let Some(matched_slots) =
-                    self.run_from(start, &slots, notbol, noteol, &mut visited, &mut generation)
-                {
+                if let Some(matched_slots) = self.run_from(
+                    start,
+                    &slots,
+                    notbol,
+                    noteol,
+                    &mut visited,
+                    &mut generation,
+                    &bulk_table,
+                ) {
                     return Some(matched_slots);
                 }
                 from = start + 1;
@@ -1664,7 +1676,7 @@ impl<'a> PikeVm<'a> {
         // the result is identical to the per-start loop below; a debug build
         // asserts that isomorphism on every input (so the differential fuzz
         // proves it across 2320 patterns vs glibc).
-        let s_star = self.leftmost_start(notbol, noteol);
+        let s_star = self.leftmost_start(notbol, noteol, &bulk_table);
 
         #[cfg(debug_assertions)]
         {
@@ -1676,7 +1688,15 @@ impl<'a> PikeVm<'a> {
                 let mut slots = vec![-1i32; self.num_slots];
                 slots[0] = start as i32;
                 if self
-                    .run_from(start, &slots, notbol, noteol, &mut visited, &mut generation)
+                    .run_from(
+                        start,
+                        &slots,
+                        notbol,
+                        noteol,
+                        &mut visited,
+                        &mut generation,
+                        &bulk_table,
+                    )
                     .is_some()
                 {
                     probe = Some(start);
@@ -1692,7 +1712,15 @@ impl<'a> PikeVm<'a> {
         let start = s_star?;
         let mut slots = vec![-1i32; self.num_slots];
         slots[0] = start as i32; // group 0 start
-        self.run_from(start, &slots, notbol, noteol, &mut visited, &mut generation)
+        self.run_from(
+            start,
+            &slots,
+            notbol,
+            noteol,
+            &mut visited,
+            &mut generation,
+            &bulk_table,
+        )
     }
 
     /// Membership-only single forward pass: does ANY match exist? Seeds a
@@ -2203,7 +2231,12 @@ impl<'a> PikeVm<'a> {
     /// all starts. Threads carry their start; on `Accept` the smallest start
     /// wins. Pruning threads whose start exceeds the best, and returning as soon
     /// as no live thread can start earlier, keeps early/short matches O(match).
-    fn leftmost_start(&self, notbol: bool, noteol: bool) -> Option<usize> {
+    fn leftmost_start(
+        &self,
+        notbol: bool,
+        noteol: bool,
+        bulk_table: &[Option<[u64; 4]>],
+    ) -> Option<usize> {
         let input_len = self.input.len();
         let mut visited = vec![0u64; self.nfa.len()];
         let mut cur_gen = 0u64;
@@ -2247,7 +2280,6 @@ impl<'a> PikeVm<'a> {
             );
         }
 
-        let bulk_table = self.build_bulk_loop_table();
         let mut sp = 0;
         loop {
             cur_gen += 1;
@@ -2347,7 +2379,7 @@ impl<'a> PikeVm<'a> {
             // above from "no live thread" to "one looping disjoint class".
             if best.is_none()
                 && sp < input_len
-                && let Some(class) = self.bulk_loop_class_lm(&bulk_table, &current)
+                && let Some(class) = self.bulk_loop_class_lm(bulk_table, &current)
                 && class_set_contains(&class, self.input[sp])
             {
                 let e = self.input[sp..]
@@ -2515,6 +2547,7 @@ impl<'a> PikeVm<'a> {
         noteol: bool,
         visited: &mut [u64],
         generation: &mut u64,
+        bulk_table: &[Option<[u64; 4]>],
     ) -> Option<Vec<i32>> {
         let mut current: Vec<Thread> = Vec::new();
         let mut next: Vec<Thread> = Vec::new();
@@ -2534,7 +2567,6 @@ impl<'a> PikeVm<'a> {
         closure.generation = *generation;
         self.add_thread(&mut current, init_thread, start, anchors, &mut closure);
 
-        let bulk_table = self.build_bulk_loop_table();
         let input_len = self.input.len();
         let mut sp = start;
 
@@ -2597,7 +2629,7 @@ impl<'a> PikeVm<'a> {
             // equal-start guard is satisfied with a shared dummy start.
             if best.is_none()
                 && sp < input_len
-                && let Some(class) = self.bulk_loop_class_rf(&bulk_table, &current)
+                && let Some(class) = self.bulk_loop_class_rf(bulk_table, &current)
                 && class_set_contains(&class, self.input[sp])
             {
                 let e = self.input[sp..]

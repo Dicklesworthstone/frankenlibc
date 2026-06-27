@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ regex build_bulk_loop_table once-per-search — 1.2x on literal-prefix loops (CORRECTS prior) (cc)
+
+- **LANDED CODE WIN + CORRECTION of the prior turn's entry.** I'd reverted "build-once" as ~0-gain judging only
+  on single-`run_from` cases (rare/sparse) — but a clean same-worker A/B on the **literal-prefix-loop** case
+  (`error[0-9]` over ~680 "error ", where `execute()` calls `run_from` per occurrence) shows it IS a win:
+  `build_bulk_loop_table` built per-`run_from` (HEAD) = **fl/glibc 6.59x** (94.8 µs / 14.4 µs); built ONCE per
+  `execute()` and lent to leftmost_start + run_from = **fl/glibc 5.39x** (97.6 µs / 18.1 µs prior worker) — a
+  ~1.2x (≈18%) improvement on the loop (the N redundant table builds collapse to one). Single-run_from cases
+  unchanged. Conformance GREEN (`conformance_diff_regex` + `nested_submatch`).
+- **DISPROVEN this turn (reverted): RefCell scratch-reuse of run_from `current`/`next`.** Reusing the thread
+  buffers across the literal-prefix loop via interior-mutable `RefCell` MADE IT WORSE — clean A/B 6.59x (HEAD)
+  → **7.26x** (reuse). The per-call `borrow_mut` + the RefMut-handle `mem::swap` cost more than the saved
+  allocations (small Vecs the allocator handles cheaply; `Vec::new()` is lazy). Don't reuse via RefCell.
+- **Residual:** fl literal-prefix-loop stays ~5.4x off glibc even with build-once — fundamentally fl runs N
+  per-occurrence `run_from`s vs glibc's single DFA scan; the real close is a DFA-bounds path, not buffer micro-
+  opts (both per-call build elimination and buffer reuse are second-order).
+
 ## 2026-06-27 — ❌ regex build-bulk-table-once-per-search ~0-gain (REVERTED) + new litprefix gap (cc)
 
 - **DISPROVEN (reverted):** `build_bulk_loop_table` runs per-search in both `leftmost_start` and `run_from`;
