@@ -21,6 +21,12 @@ not speculative.
   deployed impls are SIMD since bd-2g7oyh. Relabeled to `scalar_historical` with
   corrected comments so future digs aren't misled. Most other string fns WIN
   (strchrnul 0.66x, strtok_r 0.67x, wcstok 0.57x, memfrob 0.60x, asctime 0.13x).
+- **Complex math (`math_abi.rs`) — MATURE, not a gap (cc/BoldFalcon 2026-06-27).**
+  `cexp`/`clog`/`csqrt`/`cpow`/`csin`/`ccos`/`ctan`/`carg`/`cabs` are hand-written
+  glibc-faithful implementations (full inf/NaN/signed-zero/branch-cut special-casing),
+  NOT slow `libm` passthrough. Reformulating with fl's fast exp/log/sincos would break
+  glibc-bit-matching (and fl's f64 `super::exp::exp` is anyway slower than `libm::exp`
+  for general args — see the erfc note). Do not touch.
 - **Membrane observe()/decide() fast-path vein — COMPLETE.** Every high-frequency
   family is in the strict fast-path set in `runtime_policy::decide`
   (`crates/frankenlibc-abi/src/runtime_policy.rs` ~line 2065): Allocator,
@@ -43,8 +49,18 @@ not speculative.
   8-thread `stdio_mt_contention_8t` **8.6x slower** (fl 56.7ms vs glibc 6.61ms,
   ad3bf80cf). Root cause: ALL stdio serializes on one global
   `Mutex<StreamRegistry>`; glibc uses per-FILE locking and scales.
+- **Membrane overhead CONFIRMED already eliminated (cc/BoldFalcon 2026-06-27):**
+  verified by reading the hot path — `entrypoint_scope` returns a no-op guard under
+  `strict_passthrough_active()` (skips trace_seq + pcc lookup + 2 thread_locals);
+  `decide()` Stdio is in the strict fast-path set; cookie/memstream sub-registry locks
+  are guard-skipped. So the residual 6-12x is PURELY: `registry().lock()` (parking_lot,
+  uncontended-cheap) + FNV `HashMap::get_mut(&id)` + the `StdioStream` type-dispatch
+  (cookie?/mem-backed?/buffer) + `buffer_write`, vs glibc's lock-free inline write-ptr
+  bump. No further micro-lever exists on this path (the in-code comment at
+  `write_bytes_without_runtime_policy` says the same).
 - **Lever:** shard the registry (e.g. 16 shards keyed by FILE* id hash) OR wrap
-  the value in `Arc<Mutex<StdioStream>>` resolved *outside* the global lock.
+  the value in `Arc<Mutex<StdioStream>>` resolved *outside* the global lock, AND give
+  the single-threaded common path a lookup-free fast slot for the 3 std streams.
 - **Surface (why it's a dedicated turn, not 60 min):** **58** `registry().lock()`
   / `try_lock()` sites in `crates/frankenlibc-abi/src/stdio_abi.rs`, plus **5**
   all-stream iteration points (`sorted_stream_ids` at ~1849/1910/8559/10144 — the
