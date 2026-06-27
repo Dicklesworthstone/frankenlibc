@@ -16,7 +16,18 @@
 //! resolved via `dlmopen(LM_ID_NEWLM)`; each thread uses glibc's own `fmemopen`.
 //!
 //! Run: `cargo bench -p frankenlibc-bench --bench stdio_mt_contention_bench --features abi-bench`
-//! (PENDING: authored during the disk-low window; to be RUN when disk recovers.)
+//!
+//! FIRST RUN (cc, 2026-06-27, rch remote ovh-a, sample-size 20 / measure 2s, on
+//! current main = the LANDED parking_lot registry swap a564ca8ae): 8-thread
+//! `stdio_mt_contention_8t` fl 56.7 ms vs host glibc 6.61 ms => 8.6x LOSS.
+//! This quantifies the bd-hqo6b6 architectural target: even with the parking_lot
+//! lock swap deployed, fl still serializes ALL stdio on the single global
+//! `registry()` Mutex, so 8 threads draining 8 *independent* `fmemopen` streams
+//! contend on one lock while glibc's per-FILE locking scales. The lock-IMPL swap
+//! (std::sync::Mutex -> parking_lot) cannot close this gap because the
+//! bottleneck is the single global serialization POINT, not per-acquire cost;
+//! the real fix is per-FILE locking (Arc<Mutex<StdioStream>> resolved outside the
+//! registry lock). Recorded so the contention gap is never re-measured blind.
 
 use std::ffi::{c_char, c_int, c_void};
 use std::hint::black_box;
