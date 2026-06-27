@@ -575,6 +575,51 @@ fn stream_map<V>() -> StreamMap<V> {
     StreamMap::default()
 }
 
+struct FastRegistryMutex<T> {
+    inner: parking_lot::Mutex<T>,
+}
+
+struct FastRegistryPoisonError<G> {
+    _marker: std::marker::PhantomData<G>,
+}
+
+struct FastRegistryLockResult<G> {
+    guard: G,
+}
+
+impl<T> FastRegistryMutex<T> {
+    fn new(value: T) -> Self {
+        Self {
+            inner: parking_lot::Mutex::new(value),
+        }
+    }
+
+    fn lock(&self) -> FastRegistryLockResult<parking_lot::MutexGuard<'_, T>> {
+        FastRegistryLockResult {
+            guard: self.inner.lock(),
+        }
+    }
+
+    fn try_lock(&self) -> Result<parking_lot::MutexGuard<'_, T>, ()> {
+        self.inner.try_lock().ok_or(())
+    }
+}
+
+impl<G> FastRegistryPoisonError<G> {
+    fn into_inner(self) -> G {
+        unreachable!("parking_lot mutexes do not poison")
+    }
+}
+
+impl<G> FastRegistryLockResult<G> {
+    fn unwrap_or_else<F>(self, _f: F) -> G
+    where
+        F: FnOnce(FastRegistryPoisonError<G>) -> G,
+    {
+        self.guard
+    }
+}
+
 struct StreamRegistry {
     streams: StreamMap<StdioStream>,
 }
@@ -623,11 +668,11 @@ fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
     ids
 }
 
-fn registry() -> &'static Mutex<StreamRegistry> {
+fn registry() -> &'static FastRegistryMutex<StreamRegistry> {
     ensure_host_libio_exit_safe();
 
     use std::sync::atomic::{AtomicPtr, Ordering};
-    static PTR: AtomicPtr<Mutex<StreamRegistry>> = AtomicPtr::new(std::ptr::null_mut());
+    static PTR: AtomicPtr<FastRegistryMutex<StreamRegistry>> = AtomicPtr::new(std::ptr::null_mut());
     static INIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let p = PTR.load(Ordering::Acquire);
     if !p.is_null() {
@@ -638,7 +683,7 @@ fn registry() -> &'static Mutex<StreamRegistry> {
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
         .is_ok()
     {
-        let reg = Box::new(Mutex::new(StreamRegistry::new()));
+        let reg = Box::new(FastRegistryMutex::new(StreamRegistry::new()));
         PTR.store(Box::into_raw(reg), Ordering::Release);
         return unsafe { &*PTR.load(Ordering::Acquire) };
     }

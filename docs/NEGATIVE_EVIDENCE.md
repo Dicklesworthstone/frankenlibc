@@ -6,6 +6,26 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ fputs registry parking_lot swap LANDED on cod-a/vmi (Franken -11.1%, still 6.22x vs glibc)
+
+- **LANDED CODE WIN (`stdio_abi.rs`, BlackThrush):** swapped the legacy global stream registry
+  from `std::sync::Mutex` to a poison-compatible `parking_lot::Mutex` wrapper, preserving the existing
+  `registry().lock().unwrap_or_else(...)` and `try_lock` call-site shape. This is the smallest shippable
+  synchronization lever from the graveyard flat-combining/RCU/QSBR family: it does not fix the architectural
+  global-registry bottleneck, but it reduces the uncontended lock tax on the current `fputs` memory-stream path.
+- **MEASURED KEEP (`vmi1264463`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`, per-crate
+  RCH release bench):** candidate command
+  `RCH_WORKER=vmi1264463 RCH_REQUIRE_REMOTE=1 rch exec -- cargo bench -j 1 -p frankenlibc-bench --profile release
+  --features abi-bench --bench fputs_glibc_bench -- fputs_8B/frankenlibc_abi/8B --noplot --sample-size 20
+  --warm-up-time 1 --measurement-time 2` measured FrankenLibC **10.380 us** and Criterion reported
+  **-11.142%** time (`[-18.433%, -4.8915%]`, p=0.00) vs its same-worker base. Matching host comparator
+  `RCH_WORKER=vmi1264463 RCH_REQUIRE_REMOTE=1 ... -- fputs_8B/host_glibc/8B ...` measured glibc
+  **1.6694 us**, ratio **6.22x slower than glibc** (retrieved JSON point estimates 10.469 us / 1.737 us =
+  **6.03x**).
+- **Caveat / negative evidence preserved:** the immediately following `hz2` run rejected the same lever
+  (4.04x -> 4.08x vs glibc, p=0.07). Treat this commit as a measured cod-a/vmi keep, not proof that mutex
+  swapping closes `fputs` broadly. The remaining gap still points at a per-FILE or sharded stream-state design.
+
 ## 2026-06-27 — `fputs` registry parking_lot swap REJECTED (4.04x -> 4.08x vs glibc, reverted)
 
 - **DISPROVEN / NO-SHIP (BlackThrush):** tested the graveyard RCU/QSBR-inspired "make the hot metadata lock

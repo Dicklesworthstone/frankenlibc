@@ -24,6 +24,7 @@ conformance-testing = []
 frankenlibc-membrane = { workspace = true }
 frankenlibc-core = { workspace = true }
 libc = { workspace = true }
+parking_lot = { workspace = true }
 sha2 = { workspace = true }
 md-5 = { workspace = true }
 tracing = { workspace = true, optional = true }
