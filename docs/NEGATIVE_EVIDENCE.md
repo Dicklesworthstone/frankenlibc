@@ -6,6 +6,30 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ qsort integer-radix PRE-GATE: width-8 non-integer sort 1.42x LOSS → 0.94x WIN (cc)
+
+- **MEASUREMENT for the landed code win `ccc530e2e`** (the commit added the gate + bench but recorded no
+  numbers). The pre-gate samples ≤8 prefix pairs and only ENTERS the integer radix lane when signed OR
+  unsigned integer order is consistent with the comparator — so `char*`/struct (non-integer-order) width-8
+  sorts skip the two wasted build+radix+verify passes that always fail before pdqsort.
+- **SAME-PROCESS A/B (`qsort_gate_ab_bench`, width-8, struct-key comparator [byte 2,5,0,1], n=20000):**
+  | metric | time |
+  |---|---|
+  | `radix_attempt_wasted` (the work the gate skips) | **891.8 µs** |
+  | `gate_probe` (the gate's cost) | **8.4 ns** |
+  | `full_qsort_fl` (WITH gate) | **1.744 ms** |
+  | `full_qsort_glibc` | **1.855 ms** |
+  → **WITH gate: 1.744/1.855 = 0.94x WIN.** WITHOUT gate (add back the 892 µs): ≈2.64 ms / 1.855 = **1.42x
+  LOSS.** The gate flips this common workload from a loss to a win by trading 892 µs of wasted cache-missing
+  radix scatter for an 8 ns probe. (The 892 µs is two internal LSD passes — signed+unsigned — over 20000
+  width-8 keys, both verify-failing.)
+- **No integer regression** (`sort_bench`, same run): random i32 0.39x, i64rand 0.60x, u16 0.09x, u32 0.36x,
+  u64_1M 0.70x, i32_large@10M 0.51x, f64rand 0.79x, str16 0.46x — all unchanged/winning (genuine integer
+  data is always consistent with one order, so the gate never diverts it; it adds ≤8 comparator calls ≈ 50 ns,
+  negligible vs the radix). **Conformance GREEN:** `conformance_diff_qsort_{radix,count8,r,radix16}` +
+  `_heapsort` 6/6, core `stdlib::sort` 33/33. Byte-identical (verify-then-commit unchanged; the gate only
+  decides whether to TRY the lane).
+
 ## 2026-06-27 — ❌ strspn set6 true pshufb/AVX2 classifier: standalone wins, production route REJECTED (BoldWaterfall)
 
 - **DISPROVEN as a core change; code reverted.** Follow-up to the prior portable
