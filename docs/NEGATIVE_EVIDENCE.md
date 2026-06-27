@@ -6,6 +6,26 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ calloc/free(16): index-only fallback cache — 1.43x FL win, still 8.93x vs glibc (BlackThrush)
+
+- **LANDED CODE WIN (`malloc_abi.rs`, conformance GREEN).** The per-reentry fallback cache carried both the
+  fallback table index and a duplicate cached pointer key. The free fast path already proves the cache hit by
+  loading `FALLBACK_ALLOC_PTRS[cached_idx]` and comparing it with the pointer being freed, so the cached-key
+  atomic was redundant. Removed that duplicate key from the slot and kept the table-entry comparison as the
+  authoritative proof. This saves one atomic store on fallback allocation, one atomic load on fallback free, and
+  one atomic clear on cache invalidation without changing the native-fallback ownership table contract.
+- **MEASURED (`calloc_glibc_bench`, filtered `calloc_cycle/(fl|glibc)/16`, clean detached worktree at
+  `origin/main`, local `rch` fallback because no worker was admissible: `insufficient_slots=3,hard_preflight=1`;
+  requested per-crate equivalent command used `cargo bench -p frankenlibc-bench --profile release ...` because
+  this Cargo rejects bench-level `--release`).** Baseline FL p50 **74.281 ns**; candidate FL p50 **51.808 ns** =
+  **1.43x faster** on the same focused gate. Candidate host glibc p50 **5.799 ns**, so FrankenLibC remains
+  **8.93x slower than glibc** on this microbench. The glibc arm was noisy (baseline glibc p50 9.828 ns), so the
+  keep decision is the controlled FL old-vs-new delta; the glibc ratio is the requested current residual gap.
+- **Conformance GREEN:** `cargo check -p frankenlibc-abi --lib`; `cargo test -p frankenlibc-abi --test
+  malloc_abi_test -- --nocapture` (55 passed, 1 ignored); `cargo test -p frankenlibc-abi --test
+  conformance_diff_malloc_edges -- --nocapture` (1 passed). `git diff --check` and file-local `rustfmt
+  --edition 2024 --check crates/frankenlibc-abi/src/malloc_abi.rs` passed in the clean proof worktree.
+
 ## 2026-06-27 — ✅ malloc/free exact hot-slot return — 6.8–9.8% FL win, still 1.74–1.76x vs glibc (BlackThrush)
 
 - **LANDED CODE WIN (`allocator.rs`, `size_class.rs`, conformance GREEN).** Exact size-class hot-slot

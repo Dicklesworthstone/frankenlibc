@@ -93,7 +93,6 @@ struct AllocatorReentrySlot {
     thread_key: AtomicUsize,
     native_guard_bits: AtomicU8,
     allocator_depth: AtomicU32,
-    fallback_cache_ptr: AtomicUsize,
     fallback_cache_index: AtomicUsize,
 }
 
@@ -104,7 +103,6 @@ impl AllocatorReentrySlot {
             thread_key: AtomicUsize::new(0),
             native_guard_bits: AtomicU8::new(0),
             allocator_depth: AtomicU32::new(0),
-            fallback_cache_ptr: AtomicUsize::new(0),
             fallback_cache_index: AtomicUsize::new(usize::MAX),
         }
     }
@@ -228,7 +226,6 @@ fn bind_slot_to_thread_key(slot: &AllocatorReentrySlot, thread_key: Option<usize
     if previous != 0 && previous != thread_key {
         slot.native_guard_bits.store(0, Ordering::Release);
         slot.allocator_depth.store(0, Ordering::Release);
-        slot.fallback_cache_ptr.store(0, Ordering::Release);
         slot.fallback_cache_index
             .store(usize::MAX, Ordering::Release);
     }
@@ -1346,16 +1343,14 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
 
 #[inline]
 fn remember_fallback_cache(slot: &'static AllocatorReentrySlot, ptr: *mut c_void, idx: usize) {
-    let Some(key) = fallback_key(ptr) else {
+    if fallback_key(ptr).is_none() {
         return;
-    };
+    }
     slot.fallback_cache_index.store(idx, Ordering::Release);
-    slot.fallback_cache_ptr.store(key, Ordering::Release);
 }
 
 #[inline]
 fn clear_fallback_cache(slot: &'static AllocatorReentrySlot) {
-    slot.fallback_cache_ptr.store(0, Ordering::Release);
     slot.fallback_cache_index
         .store(usize::MAX, Ordering::Release);
 }
@@ -1382,9 +1377,8 @@ fn fallback_remove_sized_for_slot(
 ) -> Option<usize> {
     let key = fallback_key(ptr)?;
     if !MULTI_THREADED.load(Ordering::Relaxed) {
-        let cached_key = slot.fallback_cache_ptr.load(Ordering::Acquire);
         let cached_idx = slot.fallback_cache_index.load(Ordering::Acquire);
-        if cached_key == key && cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
+        if cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
             let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
             if slot_key == key {
                 let size = FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed);
