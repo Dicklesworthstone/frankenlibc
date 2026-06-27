@@ -268,3 +268,8 @@ harness = false
 [[bench]]
 name = "printf_float_glibc_bench"
 harness = false
+
+# erfc/erf vs host glibc, in-process (no abi-bench) — baseline for a future ARM erfc port.
+[[bench]]
+name = "erfc_glibc_bench"
+harness = false
