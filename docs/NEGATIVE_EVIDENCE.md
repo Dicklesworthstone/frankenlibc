@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ %g strip_trailing_zeros → &str + in-place truncate — common fixed-%g path (cc)
+
+- **LANDED CODE WIN (`ecvt.rs`, conformance GREEN, byte-identical).** `strip_trailing_zeros` returned an owned
+  `String` while its core (`trim_end_matches`) yields a `&str`. The common fixed-`%g` path
+  (`format_fixed_from_sci`) built `out`, then allocated a SECOND stripped `String` from it; the scientific
+  path (`rust_e_to_glibc_e`) allocated a stripped mantissa. Changed `strip_trailing_zeros` to return `&str`;
+  `format_fixed_from_sci` now strips `out` IN PLACE (`truncate`) — one fewer alloc on the common path; the
+  scientific mantissa is now a borrow.
+- **MEASURED (`gcvt_glibc_bench`, %g, within-run same-process ratios):** `1234567.89` `%.17g` fl **134.3 ns** /
+  glibc 216.6 = **0.62x WIN** (improved from the prior 0.72x); `pi %.17g` 1.34x (from 1.56x); `pi %.6g` 1.55x
+  (from 1.68x). Provably fewer allocs (in-place truncate + `&str` borrow vs two `String` allocs) — not-slower,
+  no codegen subtlety. Benefits ALL %g consumers: `gcvt`, `strfromd %g`, and printf `%g` (all route through
+  `format_fixed_from_sci`/`rust_e_to_glibc_e`).
+- **Byte-identical** (the gates): core `stdlib::ecvt` 9/9, `strfromd_differential_fuzz`,
+  `conformance_diff_cvt_specials` (fuzz), `printf_float_differential_fuzz` (fuzz) all GREEN. Residual is the
+  Rust-Dragon codegen floor on low-precision (pi 1.34–1.55x), needing an asm dtoa — documented, out of scope.
+
 ## 2026-06-27 — ✅ printf %e/%g delegate to optimized render_pct_e/g — dedup + heap-lean (cc)
 
 - **LANDED CODE WIN (`stdio/printf.rs`, conformance GREEN, byte-identical).** printf had its OWN alloc-heavy

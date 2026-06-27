@@ -563,7 +563,12 @@ fn format_fixed_from_sci(sci: &str, exp: i32) -> String {
         }
         out.push_str(&digits);
     }
-    strip_trailing_zeros(&out)
+    // Strip trailing fractional zeros (and a bare trailing point) IN PLACE — no
+    // second allocation, vs the former `strip_trailing_zeros(&out)` which built a
+    // fresh String. This is the common fixed-`%g` path (gcvt/strfromd/printf %g).
+    let keep = strip_trailing_zeros(&out).len();
+    out.truncate(keep);
+    out
 }
 
 /// Render `value` as printf-style `%.<ndigit>g` (significant digits +
@@ -619,11 +624,11 @@ fn rust_e_to_glibc_e_no_strip(s: &str) -> String {
 
 /// Strip trailing zeros from a decimal string with a `.` separator.
 /// `"1.500"` -> `"1.5"`, `"1.000"` -> `"1"`, `"100"` -> `"100"`.
-fn strip_trailing_zeros(s: &str) -> String {
+fn strip_trailing_zeros(s: &str) -> &str {
     if !s.contains('.') {
-        return s.to_string();
+        return s;
     }
-    s.trim_end_matches('0').trim_end_matches('.').to_string()
+    s.trim_end_matches('0').trim_end_matches('.')
 }
 
 /// Convert Rust's `1.5e2` / `1e-10` mantissa-exponent form to glibc's
@@ -631,7 +636,7 @@ fn strip_trailing_zeros(s: &str) -> String {
 /// trailing zeros from the mantissa: `"1.500e2"` -> `"1.5e+02"`.
 fn rust_e_to_glibc_e(s: &str) -> String {
     let Some(e_pos) = s.find('e') else {
-        return strip_trailing_zeros(s);
+        return strip_trailing_zeros(s).to_string();
     };
     let mantissa = strip_trailing_zeros(&s[..e_pos]);
     let exp_part = &s[e_pos + 1..];
