@@ -202,6 +202,30 @@ impl FirstByteSet {
         self.words.iter().map(|w| w.count_ones()).sum()
     }
 
+    /// `Some((lo, hi))` iff the set is exactly one CONTIGUOUS byte range (e.g.
+    /// `[0-9]`, `[a-z]`). Then membership is `b.wrapping_sub(lo) <= hi-lo`, which
+    /// the compiler auto-vectorizes — far faster than the per-byte bitset lookup
+    /// when scanning a long non-prefilter region for the next start byte. `None`
+    /// for `any`, empty, or non-contiguous sets (where the bitset path is kept).
+    fn as_range(&self) -> Option<(u8, u8)> {
+        if self.any {
+            return None;
+        }
+        let total: u32 = self.words.iter().map(|w| w.count_ones()).sum();
+        if total == 0 {
+            return None;
+        }
+        // First/last set bit across the 256-bit table.
+        let lo = (0..256u16).find(|&b| self.contains(b as u8))? as u8;
+        let hi = (0..256u16).rev().find(|&b| self.contains(b as u8))? as u8;
+        // Contiguous iff the population exactly fills [lo, hi].
+        if total == (hi - lo) as u32 + 1 {
+            Some((lo, hi))
+        } else {
+            None
+        }
+    }
+
     fn singleton(byte: u8) -> Self {
         let mut set = Self::empty();
         set.insert(byte);
@@ -2329,6 +2353,9 @@ impl<'a> PikeVm<'a> {
             );
         }
 
+        // Lazily-cached "is the prefilter one contiguous range?" — computed on the
+        // first empty-region jump (so prefilter-less / no-jump searches pay nothing).
+        let mut prefilter_range: Option<Option<(u8, u8)>> = None;
         let mut sp = 0;
         loop {
             cur_gen += 1;
@@ -2404,11 +2431,16 @@ impl<'a> PikeVm<'a> {
                 && current.is_empty()
                 && let Some(fb) = self.prefilter
             {
-                match self
-                    .input
-                    .get(sp + 1..)
-                    .and_then(|rest| rest.iter().position(|&b| fb.contains(b)))
-                {
+                let range = *prefilter_range.get_or_insert_with(|| fb.as_range());
+                let found = self.input.get(sp + 1..).and_then(|rest| match range {
+                    // Contiguous range → auto-vectorizing `(b - lo) <= hi-lo` scan.
+                    Some((lo, hi)) => {
+                        let span = hi - lo;
+                        rest.iter().position(|&b| b.wrapping_sub(lo) <= span)
+                    }
+                    None => rest.iter().position(|&b| fb.contains(b)),
+                });
+                match found {
                     // `off` is measured from sp+1; the next iteration's `sp += 1`
                     // then lands the seed exactly on that prefilter byte.
                     Some(off) => sp += off,

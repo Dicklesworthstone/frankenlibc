@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ regex leftmost_start jump: auto-vectorizing range scan — rare-first-byte 1.9x → 1.21x (cc)
+
+- **LANDED CODE WIN (`string/regex.rs`, conformance GREEN).** The empty-region JUMP (skip a non-prefilter run
+  to the next start byte) scanned with `rest.iter().position(|b| fb.contains(b))` — a per-byte `[u64;4]` bitset
+  lookup the compiler can't vectorize, so a determinate-but-rare first byte over a long input walked it
+  scalar-ly (4 KiB for the `rare` case). Added `FirstByteSet::as_range()` (`Some((lo,hi))` iff the set is one
+  contiguous range, e.g. `[0-9]`, `[a-z]`); the jump then scans `b.wrapping_sub(lo) <= hi-lo`, which LLVM
+  auto-vectorizes. Lazily computed + cached on the first jump (prefilter-less / no-jump searches pay nothing).
+- **MEASURED (`regex_prefilter_ab_bench` vs host glibc `regexec`):** `rare` (`[0-9][0-9][0-9]X` over 4 KiB of
+  letters, only digits at the end) **fl 2.2 µs → 1.355 µs = 1.62x fl-internal**, gap **1.9x → 1.21x** vs glibc
+  (1.119 µs). `sparse` (`[0-9]+END`, frequent short jumps) unchanged 7.9 µs (no regression — the range scan
+  helps long jumps, the lazy cache avoids cost where it doesn't).
+- **Conformance GREEN:** 8 `conformance_diff_regex` + `startend` + `bre_anchor_star` + `midpattern_anchor` —
+  the range predicate is byte-identical to `contains` for contiguous sets; `as_range` returns `None` (bitset
+  path kept) for non-contiguous / `any` / empty. The common real-world case (rare-prefix pattern scanned over a
+  large document) now nears glibc.
+
 ## 2026-06-27 — ✅ regex literal-prefix POST-PREFIX PEEK — 6.59x LOSS → 1.21x WIN vs glibc (cc)
 
 - **LANDED CODE WIN (`string/regex.rs` `execute()`, conformance GREEN).** Literal-prefix patterns
