@@ -13,11 +13,8 @@ use std::ffi::{c_char, c_int};
 use frankenlibc_abi::stdlib_abi as fl;
 
 unsafe extern "C" {
-    fn getsubopt(
-        optionp: *mut *mut c_char,
-        tokens: *const *mut c_char,
-        valuep: *mut *mut c_char,
-    ) -> c_int;
+    fn getsubopt(optionp: *mut *mut c_char, tokens: *const *mut c_char, valuep: *mut *mut c_char)
+    -> c_int;
 }
 
 struct Lcg(u64);
@@ -101,8 +98,10 @@ fn gen_option(r: &mut Lcg) -> Vec<u8> {
                 // a pool name = value
                 out.extend_from_slice(POOL[r.below(POOL.len() as u64) as usize].as_bytes());
                 out.push(b'=');
-                let vlen = r.below(4) as usize;
-                out.extend(std::iter::repeat_n(b'x', vlen));
+                let vlen = r.below(4);
+                for _ in 0..vlen {
+                    out.push(b'x');
+                }
             }
             4 => out.extend_from_slice(b"size="), // empty value
             _ => {
