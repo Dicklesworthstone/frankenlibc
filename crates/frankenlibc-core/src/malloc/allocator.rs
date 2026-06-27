@@ -251,6 +251,28 @@ impl MallocState {
         ((self.thread_cache_hits.saturating_mul(1000)) / total) as u16
     }
 
+    #[inline]
+    fn logs_level_enabled(&self, level: AllocatorLogLevel) -> bool {
+        (level as u8) >= (self.min_log_level as u8)
+    }
+
+    #[inline]
+    fn trace_logs_enabled(&self) -> bool {
+        self.logs_level_enabled(AllocatorLogLevel::Trace)
+    }
+
+    #[inline]
+    fn elimination_handoff_possible(&self) -> bool {
+        #[cfg(test)]
+        {
+            Arc::strong_count(&self.elimination) > 1
+        }
+        #[cfg(not(test))]
+        {
+            false
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn record_lifecycle(
         &mut self,
@@ -267,7 +289,7 @@ impl MallocState {
         // what keeps the malloc/free hot path (all `Trace`) free of per-op log
         // work at the default `Warn` level. Fieldless enum, declaration order
         // Trace(0)<Debug<Info<Warn<Error(4).
-        if (level as u8) < (self.min_log_level as u8) {
+        if !self.logs_level_enabled(level) {
             return;
         }
         let decision_id = self.next_log_decision_id();
@@ -489,8 +511,7 @@ impl MallocState {
         // certificate rows are dropped; avoid evaluating the SOS polynomial on
         // that hot path. Trace mode still records the byte-identical certificate,
         // and cheap violation prechecks preserve Warn rows for bad mappings.
-        let trace_certificate_enabled =
-            (AllocatorLogLevel::Trace as u8) >= (self.min_log_level as u8);
+        let trace_certificate_enabled = self.trace_logs_enabled();
         if trace_certificate_enabled
             || size_class_certificate_may_violate(size, class_size, class_membership_valid)
         {
@@ -523,16 +544,18 @@ impl MallocState {
         if let Some(ptr) = self.thread_cache_hot_slots[bin_usize].take() {
             self.thread_cache_hits += 1;
             self.track_hot_slot_allocation(ptr, size, bin);
-            self.record_lifecycle(
-                AllocatorLogLevel::Trace,
-                "malloc",
-                "alloc",
-                Some(ptr),
-                Some(size),
-                Some(bin_usize),
-                "success",
-                "path=thread_cache",
-            );
+            if trace_certificate_enabled {
+                self.record_lifecycle(
+                    AllocatorLogLevel::Trace,
+                    "malloc",
+                    "alloc",
+                    Some(ptr),
+                    Some(size),
+                    Some(bin_usize),
+                    "success",
+                    "path=thread_cache",
+                );
+            }
             return Some(ptr);
         }
         if let Some(ptr) = self.thread_cache.alloc_index(bin) {
@@ -689,7 +712,8 @@ impl MallocState {
         };
         let bin_usize = bin.get();
 
-        if !self.clear_pending_hot_accounting(ptr, size, bin) {
+        let cleared_pending_hot_accounting = self.clear_pending_hot_accounting(ptr, size, bin);
+        if !cleared_pending_hot_accounting {
             self.materialize_pending_hot_accounting();
             self.total_allocated = self.total_allocated.saturating_sub(size);
             self.active_count = self.active_count.saturating_sub(1);
@@ -697,12 +721,12 @@ impl MallocState {
 
         // A single-owned elimination array cannot have a waiting consumer; once
         // another handle exists, preserve the existing elimination-first order.
-        if Arc::strong_count(&self.elimination) > 1 {
+        if self.elimination_handoff_possible() {
             match self.elimination.try_offer(bin_usize, ptr) {
                 OfferOutcome::Matched(meta) => {
                     // Detail string only when the Trace row survives the gate —
                     // skips a heap `format!` on every elimination-matched free.
-                    if (AllocatorLogLevel::Trace as u8) >= (self.min_log_level as u8) {
+                    if self.trace_logs_enabled() {
                         self.record_lifecycle(
                             AllocatorLogLevel::Trace,
                             "free",
@@ -727,19 +751,29 @@ impl MallocState {
             }
         }
 
+        if cleared_pending_hot_accounting
+            && !self.trace_logs_enabled()
+            && self.thread_cache_hot_slots[bin_usize].is_none()
+        {
+            self.thread_cache_hot_slots[bin_usize] = Some(ptr);
+            return;
+        }
+
         let cached = self.cache_small_object(bin, ptr);
 
         if cached {
-            self.record_lifecycle(
-                AllocatorLogLevel::Trace,
-                "free",
-                "free",
-                Some(ptr),
-                Some(size),
-                Some(bin_usize),
-                "success",
-                "path=thread_cache",
-            );
+            if self.trace_logs_enabled() {
+                self.record_lifecycle(
+                    AllocatorLogLevel::Trace,
+                    "free",
+                    "free",
+                    Some(ptr),
+                    Some(size),
+                    Some(bin_usize),
+                    "success",
+                    "path=thread_cache",
+                );
+            }
         } else {
             // Thread cache full, spill to central bin or backend
             self.spills_to_central += 1;

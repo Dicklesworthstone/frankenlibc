@@ -5591,3 +5591,47 @@ strftime_hms_fast_path -- --nocapture` on `hz2` passed **3/3**, and `rch exec --
 frankenlibc-abi --test conformance_diff_time diff_strftime_cases -- --nocapture` on `hz2` passed **1/1**.
 Kept as a measured gap-narrowing win; residual 1.38x vs glibc is now ABI-call/fixed overhead and any deeper
 directive-specializer work must prove a further same-worker reduction.
+
+### 2026-06-27 — core malloc one-live hot-cycle gate KEEP (2.14x -> 1.88-1.93x vs glibc)
+
+Agent: BlackThrush. Lever tested: remove two default-mode costs from the `MallocState` one-live
+small-object cycle. In non-test builds the elimination handoff can never have an external waiting
+consumer because the handle is private, so `free` now compiles out the `Arc::strong_count` probe while
+preserving the test-only handoff path. The exact pending-hot-accounting free also re-arms the front slot
+directly when Trace lifecycle rows are disabled, and the matching hot-slot `malloc` avoids a Trace logger
+call under the default `Warn` log gate. Trace-mode lifecycle records and the existing elimination test
+contract are preserved.
+
+Focused baseline used the requested per-crate release-profile bench shape on remote `hz2`:
+`AGENT_NAME=BlackThrush FRANKENLIBC_BENCH_PIN=1 CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b
+rch exec -- cargo bench -j 1 -p frankenlibc-bench --profile release --bench glibc_baseline_bench --
+'glibc_baseline_malloc_free_(64|256)' --noplot --sample-size 100 --warm-up-time 1 --measurement-time 3`.
+
+Baseline current-main ratios:
+
+| Workload | FL p50 | glibc p50 | p50 ratio | FL mean | glibc mean | mean ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| `malloc_free_64` | 12.613 ns | 5.897 ns | 2.14x LOSS | 14.595 ns | 6.811 ns | 2.14x LOSS |
+| `malloc_free_256` | 12.641 ns | 5.877 ns | 2.15x LOSS | 14.744 ns | 9.027 ns | 1.63x LOSS |
+
+Candidate on the same worker and command:
+
+| Workload | FL p50 | glibc p50 | p50 ratio | Criterion robust self-change | Verdict |
+|---|---:|---:|---:|---:|---|
+| `malloc_free_64` | 10.887 ns | 5.630 ns | 1.93x LOSS | -12.905%, p < 0.05 | KEEP |
+| `malloc_free_256` | 10.926 ns | 5.827 ns | 1.88x LOSS | -18.184%, p < 0.05 | KEEP |
+
+The custom `GLIBC_BASELINE_BENCH` mean rows remained outlier-sensitive in the candidate run
+(`malloc_free_64` mean 17.380 ns, `malloc_free_256` mean 15.183 ns), so this is a p50/criterion-estimator
+keep, not a tail win. It narrows the hottest core allocator-state gap without changing the public malloc
+contract; residual loss versus glibc is still the fixed Rust state-machine/accounting floor.
+
+Behavior checks: `cargo test -p frankenlibc-core malloc::allocator -- --nocapture` passed 22/22 allocator
+tests locally, including Trace lifecycle golden hashes and the test-only elimination handoff; `cargo check
+-p frankenlibc-core --all-targets` passed with pre-existing warnings. Conformance stayed green:
+`cargo test -p frankenlibc-harness --test allocator_conformance_test --test
+malloc_membrane_wave01_conformance_test --test malloc_membrane_wave02_conformance_test -- --nocapture`
+passed 23/23, and `cargo test -p frankenlibc-abi --test malloc_abi_test -- --nocapture` passed 55/55 with
+one existing ignored test. Standalone `rustfmt --edition 2024 --check
+crates/frankenlibc-core/src/malloc/allocator.rs` passed. Targeted `cargo clippy -p frankenlibc-core
+--all-targets -- -D warnings` remains blocked by unrelated pre-existing lint debt outside `malloc/allocator.rs`.
