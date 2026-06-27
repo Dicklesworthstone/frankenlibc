@@ -185,6 +185,7 @@ fn resolve_wmemcmp_panel(a_chunk: &[u32], b_chunk: &[u32]) -> Option<i32> {
 ///
 /// `needle` must be non-zero so the two splat targets are distinct; callers in
 /// this module only invoke it with a non-NUL first needle character.
+#[inline]
 fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
     debug_assert_ne!(needle, 0);
     let mut chunks = s.chunks_exact(WIDE_FIND_SIMD_LANES);
@@ -229,6 +230,7 @@ fn find_wide_or_nul(s: &[u32], needle: u32) -> usize {
     s.len()
 }
 
+#[inline]
 fn find_wide_or_nul_long(s: &[u32], needle: u32) -> usize {
     debug_assert_ne!(needle, 0);
     // Fold four 64-lane panels per 256-element block into ONE horizontal
@@ -609,6 +611,7 @@ pub fn wcsncmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
 /// string ended first and `c` is absent. The `c == 0` case matches the
 /// terminator via the SIMD [`wcslen`] scan. Behaviour is identical to a scalar
 /// "return at first `c`, stop at NUL" loop.
+#[inline]
 pub fn wcschr(s: &[u32], c: u32) -> Option<usize> {
     if c == 0 {
         // wcschr(s, 0) returns the index of the terminating NUL, or None if the

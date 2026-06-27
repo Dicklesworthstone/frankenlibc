@@ -253,3 +253,8 @@ harness = false
 [[bench]]
 name = "qsort_indexsort_ab_bench"
 harness = false
+
+# wcschr SIMD width: narrow(8) vs wide(32) vs glibc, short+long, 1 process.
+[[bench]]
+name = "wcschr_width_ab_bench"
+harness = false

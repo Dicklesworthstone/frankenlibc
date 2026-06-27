@@ -6,6 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ wcschr/wide-find #[inline]: 1.55–1.8x faster (collapses cross-crate call chain) (cc)
+
+- **LANDED CODE WIN (`wide.rs`, conformance GREEN, byte-identical — pure `#[inline]`, no logic change).**
+  Survey put `wcschr` at 2.82x LOSS. Root cause found via a same-process width/inline A/B
+  (`wcschr_width_ab_bench`): the deployed core `wcschr` was paying a non-inlined cross-crate call chain
+  (`wcschr → find_wide_or_nul_long → find_wide_or_nul`). Added `#[inline]` to those three.
+- **MEASURED (same-process, deployed core wcschr):**
+  | case | before | after | clean find_32 (inlined) | glibc |
+  |---|---|---|---|---|
+  | short (60 wc, hit@30) | 8.33 ns | **5.35 ns (1.55x)** | 1.94 | 2.38 |
+  | long (1024 wc, hit@500) | 56.1 ns | **30.7 ns (1.83x)** | 25.6 | 18.2 |
+  The `#[inline]` collapses the internal call chain (helps the no_mangle ABI path too — it inlines
+  `core::wcschr` into the ABI wrapper). Conformance GREEN: core `string::wide` 84/84, `conformance_diff_wcschr`
+  4/4, `conformance_diff_wcs_family` 3/3.
+- **STILL loses glibc** (5.35 vs 2.38 short) — two residuals remain, documented for a follow-up: (1) the
+  `find_wide_or_nul_long` 256-block loop is too big to actually inline (the `#[inline]` hint is ignored), so a
+  call survives on the hot short path — a **hot/cold split** (small length-check wrapper inlines
+  `find_wide_or_nul`; the 256-loop becomes a separate cold fn) would drop short wcschr to ~`find_32` (1.94 ns)
+  = **WIN glibc**; (2) the 64-lane fold (`Simd<u32,64>` = 8 AVX2 regs, badly emulated) PESSIMIZES long (deployed
+  30.7 vs a plain 32-lane scan 25.6) — dropping it to 32-lane helps long. Both are logic changes (conformance
+  risk on the shared wide-find), deferred. Bench `wcschr_width_ab_bench.rs` added as the A/B foundation.
+
 ## 2026-06-27 — ✅ qsort index-sort: VERIFIED no small-n regression — wins glibc across n=64..20000 (cc)
 
 - **ROBUSTNESS VERIFICATION (no code change to the algorithm; closes a concern about my recent index-sort
