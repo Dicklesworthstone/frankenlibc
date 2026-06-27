@@ -24,6 +24,28 @@ retried and real wins are confirmed with numbers.
 - **VERDICT:** rejected as ~0-gain/no-ship; source changes were reverted before commit. The remaining allocator
   floor is not a same-thread tombstone lookup problem; it is still the strict host-delegation/accounting fixed
   cost documented by the `calloc/free(16)` frontier.
+## 2026-06-27 — ✅ stdio `standard_stream_id` redundant-lock elision LANDED (fputs −8.1%, byte-identical)
+
+- **LANDED CODE WIN (`stdio_abi.rs` + `io_internal_abi.rs`, BoldFalcon):** every
+  stdio op (`fputs`/`fputc`/`fwrite`/`fgets`/…) calls `canonical_stream_id` →
+  `standard_stream_id`, which (non-standalone) evaluated
+  `addr == STD*_SENTINEL || stream == native_stdio_stream_ptr(fd)` for each of the 3
+  std streams. Because `native_stdio_stream_ptr` takes the `native_stream_registry`
+  `std::sync::Mutex` on EVERY call, a stdout/stderr write paid the STDIN-branch lock
+  and a non-std stream (fmemopen/fopen) paid all THREE locks — purely to map FILE*→id.
+  Fix: check the 3 sentinel ADDRESSES first (cheap integer compares → 0 locks for fl's
+  own stdin/stdout/stderr), and collapse the native-pointer comparison to a SINGLE
+  locked `native_stdio_fd_for_ptr` (was up to 3 locks). **Byte-identical** ptr→id
+  mapping (same lazy chain-init side effect preserved for non-sentinel streams).
+- **Conformance GREEN:** `stdio_abi_test` **255 passed / 0 failed** / 44 ignored
+  (`-p frankenlibc-abi --features conformance-testing`).
+- **MEASURED (`rch` remote, `fputs_glibc_bench --features abi-bench`, ss60, Criterion
+  self-comparison vs the prior-run baseline = pre-change parking_lot code):**
+  `fputs_38B/frankenlibc_abi` **−8.1098%** (p = 0.00 < 0.05, "improved");
+  `fputs_200B` −3.06% (p = 0.16, ns). This is an incremental win ON the architectural
+  registry-lock path (swing-1); fl/glibc absolute remains a large gap until the
+  per-FILE-lock refactor lands. Removes 2 mutex acquires from the std-stream hot path
+  and 2 from the non-std path per call.
 
 ## 2026-06-27 — ❌ f32 `sincosf` fused fast-reduction REJECTED (1.84x LOSS vs glibc) — do not retry
 

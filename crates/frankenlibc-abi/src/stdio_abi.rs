@@ -793,22 +793,26 @@ fn standard_stream_id(stream: *mut c_void) -> Option<usize> {
 
     #[cfg(not(feature = "standalone"))]
     {
-        if addr == STDIN_SENTINEL
-            || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO)
-        {
-            return Some(STDIN_SENTINEL);
+        // Check the 3 sentinel ADDRESSES first (cheap integer compares): fl's own
+        // stdin/stdout/stderr are sentinels, so the hot stdout/stderr write path
+        // resolves here with ZERO `native_stream_registry` locks. Previously each
+        // branch's `|| stream == native_stdio_stream_ptr(fd)` took that std::sync
+        // mutex (a stdout write paid the STDIN-branch lock; a non-std stream paid all
+        // 3). Byte-identical ptr->id mapping. (bd-hqo6b6 hot-path; cc/BoldFalcon)
+        match addr {
+            STDIN_SENTINEL => return Some(STDIN_SENTINEL),
+            STDOUT_SENTINEL => return Some(STDOUT_SENTINEL),
+            STDERR_SENTINEL => return Some(STDERR_SENTINEL),
+            _ => {}
         }
-        if addr == STDOUT_SENTINEL
-            || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO)
-        {
-            return Some(STDOUT_SENTINEL);
+        // Non-sentinel pointer: a single locked check against the 3 native FILE slots
+        // (was up to 3 separate locked calls).
+        match io_internal_abi::native_stdio_fd_for_ptr(stream) {
+            Some(libc::STDIN_FILENO) => Some(STDIN_SENTINEL),
+            Some(libc::STDOUT_FILENO) => Some(STDOUT_SENTINEL),
+            Some(libc::STDERR_FILENO) => Some(STDERR_SENTINEL),
+            _ => None,
         }
-        if addr == STDERR_SENTINEL
-            || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO)
-        {
-            return Some(STDERR_SENTINEL);
-        }
-        None
     }
 }
 

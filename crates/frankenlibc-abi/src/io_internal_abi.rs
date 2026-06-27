@@ -1407,6 +1407,31 @@ pub fn native_stdio_stream_ptr(fd: c_int) -> *mut c_void {
     file as *mut NativeFile as *mut c_void
 }
 
+/// Single-lock variant: does `stream` point at one of the three native std
+/// stdio FILE slots? Returns the matching fd (STDIN/STDOUT/STDERR_FILENO) or
+/// `None`. `standard_stream_id` previously called `native_stdio_stream_ptr`
+/// up to THREE times per stdio op (once per `||` branch), each taking the
+/// `native_stream_registry` mutex; this collapses that to a single lock and is
+/// byte-identical (same ptr→fd mapping, same lazy chain-init side effect).
+pub fn native_stdio_fd_for_ptr(stream: *const c_void) -> Option<c_int> {
+    if stream.is_null() {
+        return None;
+    }
+    let mut registry = native_stream_registry();
+    for (index, fd) in [
+        (0usize, libc::STDIN_FILENO),
+        (1, libc::STDOUT_FILENO),
+        (2, libc::STDERR_FILENO),
+    ] {
+        if let Some(file) = registry.get_mut(index) {
+            if file as *mut NativeFile as *const c_void == stream {
+                return Some(fd);
+            }
+        }
+    }
+    None
+}
+
 /// # Safety
 /// If `user_buf` is non-null, it must point to at least `size` bytes of valid memory.
 pub unsafe fn configure_native_stdio_stream(
