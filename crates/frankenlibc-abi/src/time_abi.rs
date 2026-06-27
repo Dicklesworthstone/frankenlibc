@@ -22,22 +22,11 @@ use crate::runtime_policy;
 use crate::util::scan_c_string;
 
 type VdsoClockGettimeFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
-type VdsoClockGetresFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
 type VdsoGettimeofdayFn = unsafe extern "C" fn(*mut libc::timeval, *mut libc::timezone) -> c_int;
-type VdsoTimeFn = unsafe extern "C" fn(*mut libc::time_t) -> libc::time_t;
-type VdsoGetcpuFn =
-    unsafe extern "C" fn(*mut libc::c_uint, *mut libc::c_uint, *mut c_void) -> c_int;
 
 const ASCTIME_R_BUF_BYTES: usize = 26;
-/// Buffer for the non-reentrant `asctime`/`ctime`. glibc's static buffer is
-/// wider than the 26-byte reentrant contract — it succeeds for years that
-/// overflow 26 bytes (e.g. 10000+), bounded only by `tm_year + 1900` not
-/// overflowing `int`. The longest such string is 62 chars (all fields at their
-/// widest), so 64 holds it plus the NUL.
-const ASCTIME_FULL_BUF_BYTES: usize = 64;
 const TIME_T_BYTES: usize = core::mem::size_of::<i64>();
 const TM_BYTES: usize = core::mem::size_of::<libc::tm>();
-const CURRENT_STACK_OBJECT_WINDOW_BYTES: usize = 8 * 1024 * 1024;
 
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
@@ -53,31 +42,6 @@ fn tracked_optional_object_fits<T>(ptr: *const T) -> bool {
     ptr.is_null() || tracked_required_object_fits(ptr)
 }
 
-#[inline]
-fn likely_current_stack_object<T>(ptr: *const T) -> bool {
-    let probe = 0u8;
-    let probe_addr = (&probe as *const u8) as usize;
-    (ptr as usize).abs_diff(probe_addr) <= CURRENT_STACK_OBJECT_WINDOW_BYTES
-}
-
-#[inline]
-fn tracked_required_hot_output_fits<T>(ptr: *const T) -> bool {
-    !ptr.is_null()
-        && (likely_current_stack_object(ptr)
-            || tracked_region_fits(ptr.cast::<c_void>(), core::mem::size_of::<T>()))
-}
-
-/// NULL-permitting twin of [`tracked_required_hot_output_fits`]: a null pointer is
-/// accepted (some syscalls — e.g. `clock_getres(clk, NULL)` — treat a null output as
-/// "validate only"), and a non-null pointer takes the cheap `likely_current_stack_object`
-/// fast-path before the arena lookup. Mirrors `tracked_optional_object_fits` but with the
-/// hot stack probe, so a stack-based output (the overwhelmingly common case) skips
-/// `tracked_region_fits`.
-#[inline]
-fn tracked_optional_hot_output_fits<T>(ptr: *const T) -> bool {
-    ptr.is_null() || tracked_required_hot_output_fits(ptr)
-}
-
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VdsoCallOutcome {
@@ -91,10 +55,7 @@ struct VdsoSymbols {
     mapping_present: bool,
     handle_opened: bool,
     clock_gettime: Option<VdsoClockGettimeFn>,
-    clock_getres: Option<VdsoClockGetresFn>,
     gettimeofday: Option<VdsoGettimeofdayFn>,
-    time: Option<VdsoTimeFn>,
-    getcpu: Option<VdsoGetcpuFn>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -102,9 +63,7 @@ pub struct VdsoFastpathSnapshot {
     pub mapping_present: bool,
     pub handle_opened: bool,
     pub clock_gettime_available: bool,
-    pub clock_getres_available: bool,
     pub gettimeofday_available: bool,
-    pub time_available: bool,
     pub clock_gettime_hits: u64,
     pub gettimeofday_hits: u64,
 }
@@ -112,22 +71,6 @@ pub struct VdsoFastpathSnapshot {
 static VDSO_SYMBOLS: OnceLock<VdsoSymbols> = OnceLock::new();
 static VDSO_CLOCK_GETTIME_HITS: AtomicU64 = AtomicU64::new(0);
 static VDSO_GETTIMEOFDAY_HITS: AtomicU64 = AtomicU64::new(0);
-
-#[inline]
-fn record_vdso_clock_gettime_hit() {
-    // Diagnostic only: tolerate lost increments under racing callers to keep
-    // the vDSO success path free of locked atomic RMW instructions.
-    let hits = VDSO_CLOCK_GETTIME_HITS.load(Ordering::Relaxed);
-    VDSO_CLOCK_GETTIME_HITS.store(hits.wrapping_add(1), Ordering::Relaxed);
-}
-
-#[inline]
-fn record_vdso_gettimeofday_hit() {
-    // Diagnostic only: tolerate lost increments under racing callers to keep
-    // the vDSO success path free of locked atomic RMW instructions.
-    let hits = VDSO_GETTIMEOFDAY_HITS.load(Ordering::Relaxed);
-    VDSO_GETTIMEOFDAY_HITS.store(hits.wrapping_add(1), Ordering::Relaxed);
-}
 
 const fn vdso_symbol_version_bytes() -> &'static [u8] {
     #[cfg(target_arch = "aarch64")]
@@ -190,9 +133,7 @@ pub fn vdso_fastpath_snapshot() -> VdsoFastpathSnapshot {
         mapping_present: symbols.mapping_present,
         handle_opened: symbols.handle_opened,
         clock_gettime_available: symbols.clock_gettime.is_some(),
-        clock_getres_available: symbols.clock_getres.is_some(),
         gettimeofday_available: symbols.gettimeofday.is_some(),
-        time_available: symbols.time.is_some(),
         clock_gettime_hits: VDSO_CLOCK_GETTIME_HITS.load(Ordering::Relaxed),
         gettimeofday_hits: VDSO_GETTIMEOFDAY_HITS.load(Ordering::Relaxed),
     }
@@ -217,25 +158,6 @@ fn vdso_clock_supported(clock_id: c_int) -> bool {
 }
 
 #[inline]
-fn clock_gettime_common_clock_id(clock_id: c_int) -> bool {
-    matches!(
-        clock_id,
-        libc::CLOCK_REALTIME
-            | libc::CLOCK_MONOTONIC
-            | libc::CLOCK_REALTIME_COARSE
-            | libc::CLOCK_MONOTONIC_COARSE
-            | libc::CLOCK_BOOTTIME
-    )
-}
-
-#[inline]
-fn clock_gettime_clock_id_valid(clock_id: c_int) -> bool {
-    clock_gettime_common_clock_id(clock_id)
-        || time_core::valid_clock_id(clock_id)
-        || time_core::valid_clock_id_extended(clock_id)
-}
-
-#[inline]
 unsafe fn raw_clock_gettime_syscall(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
     match unsafe { raw_syscall::sys_clock_gettime(clock_id, tp as *mut u8) } {
         Ok(()) => 0,
@@ -254,7 +176,7 @@ unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
             let rc = unsafe { vdso_clock_gettime(clock_id, tp) };
             match classify_vdso_return(rc) {
                 VdsoCallOutcome::Success => {
-                    record_vdso_clock_gettime_hit();
+                    VDSO_CLOCK_GETTIME_HITS.fetch_add(1, Ordering::Relaxed);
                     return 0;
                 }
                 VdsoCallOutcome::FallbackToSyscall => {}
@@ -270,58 +192,6 @@ unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
 }
 
 #[inline]
-unsafe fn raw_clock_getres_syscall(clock_id: c_int, res: *mut libc::timespec) -> c_int {
-    match unsafe { raw_syscall::sys_clock_getres(clock_id, res as *mut u8) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
-}
-
-#[inline]
-unsafe fn raw_clock_getres(clock_id: c_int, res: *mut libc::timespec) -> c_int {
-    if vdso_resolution_enabled() {
-        let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
-        if let Some(vdso_clock_getres) = symbols.clock_getres {
-            let rc = unsafe { vdso_clock_getres(clock_id, res) };
-            match classify_vdso_return(rc) {
-                VdsoCallOutcome::Success => return 0,
-                VdsoCallOutcome::FallbackToSyscall => {}
-                VdsoCallOutcome::Fail(err) => {
-                    unsafe { set_abi_errno(err) };
-                    return -1;
-                }
-            }
-        }
-    }
-
-    unsafe { raw_clock_getres_syscall(clock_id, res) }
-}
-
-/// vDSO fast path for `getcpu(2)`, used by `sched_getcpu`. Returns `Some(0)` iff `__vdso_getcpu`
-/// resolved and reported success (it has written `*cpu`/`*node`); `None` ⇒ the vDSO is
-/// unavailable or reported anything other than success ⇒ the caller falls back to the raw
-/// `SYS_getcpu` syscall (which sets errno authoritatively). Byte-identical to the syscall: the
-/// vDSO writes the same CPU/node the kernel would. `__vdso_getcpu` is x86-64-only (absent on
-/// aarch64) ⇒ `None` there ⇒ syscall — cross-arch safe. Mirrors `raw_clock_getres`.
-#[inline]
-pub unsafe fn vdso_getcpu(cpu: *mut libc::c_uint, node: *mut libc::c_uint) -> Option<c_int> {
-    if !vdso_resolution_enabled() {
-        return None;
-    }
-    let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
-    let vdso_getcpu = symbols.getcpu?;
-    let rc = unsafe { vdso_getcpu(cpu, node, std::ptr::null_mut()) };
-    match classify_vdso_return(rc) {
-        VdsoCallOutcome::Success => Some(0),
-        // ENOSYS / unexpected ⇒ fall back to the raw syscall (authoritative errno).
-        VdsoCallOutcome::FallbackToSyscall | VdsoCallOutcome::Fail(_) => None,
-    }
-}
-
-#[inline]
 unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
     if vdso_resolution_enabled() {
         let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
@@ -329,7 +199,7 @@ unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
             let rc = unsafe { vdso_gettimeofday(tv, std::ptr::null_mut()) };
             match classify_vdso_return(rc) {
                 VdsoCallOutcome::Success => {
-                    record_vdso_gettimeofday_hit();
+                    VDSO_GETTIMEOFDAY_HITS.fetch_add(1, Ordering::Relaxed);
                     return 0;
                 }
                 VdsoCallOutcome::FallbackToSyscall => {}
@@ -358,191 +228,12 @@ unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
 }
 
 fn resolve_vdso_symbols() -> VdsoSymbols {
-    let base = match raw_getauxval(libc::AT_SYSINFO_EHDR as c_ulong) {
-        Some(value) if value != 0 => value as usize,
-        _ => return VdsoSymbols::default(),
-    };
-    // SAFETY: `base` is the kernel-provided vDSO ELF image (AT_SYSINFO_EHDR). We
-    // parse it with ONLY direct memory reads — no dynamic linker, no glibc loader
-    // re-entry (the reason the previous stub avoided it). Every structural read is
-    // bounds-checked against the ELF's own fields and any anomaly returns `None`
-    // entries, so callers fall back to the raw syscall — a parse failure is never
-    // fatal and never produces a bad pointer.
-    let (clock_gettime, clock_getres, gettimeofday, time, getcpu) = unsafe { parse_vdso(base) };
+    let mapping_present =
+        raw_getauxval(libc::AT_SYSINFO_EHDR as c_ulong).is_some_and(|value| value != 0);
     VdsoSymbols {
-        mapping_present: true,
-        handle_opened: clock_gettime.is_some()
-            || clock_getres.is_some()
-            || gettimeofday.is_some()
-            || time.is_some()
-            || getcpu.is_some(),
-        clock_gettime,
-        clock_getres,
-        gettimeofday,
-        time,
-        getcpu,
+        mapping_present,
+        ..VdsoSymbols::default()
     }
-}
-
-// Minimal ELF64 layout for parsing the in-memory vDSO image (x86-64 / aarch64).
-#[repr(C)]
-struct Elf64Ehdr {
-    e_ident: [u8; 16],
-    e_type: u16,
-    e_machine: u16,
-    e_version: u32,
-    e_entry: u64,
-    e_phoff: u64,
-    e_shoff: u64,
-    e_flags: u32,
-    e_ehsize: u16,
-    e_phentsize: u16,
-    e_phnum: u16,
-    e_shentsize: u16,
-    e_shnum: u16,
-    e_shstrndx: u16,
-}
-#[repr(C)]
-struct Elf64Phdr {
-    p_type: u32,
-    p_flags: u32,
-    p_offset: u64,
-    p_vaddr: u64,
-    p_paddr: u64,
-    p_filesz: u64,
-    p_memsz: u64,
-    p_align: u64,
-}
-#[repr(C)]
-struct Elf64Dyn {
-    d_tag: i64,
-    d_val: u64,
-}
-#[repr(C)]
-struct Elf64Sym {
-    st_name: u32,
-    st_info: u8,
-    st_other: u8,
-    st_shndx: u16,
-    st_value: u64,
-    st_size: u64,
-}
-
-const PT_LOAD: u32 = 1;
-const PT_DYNAMIC: u32 = 2;
-const DT_NULL: i64 = 0;
-const DT_HASH: i64 = 4;
-const DT_STRTAB: i64 = 5;
-const DT_SYMTAB: i64 = 6;
-
-#[inline]
-unsafe fn vdso_cstr_eq(p: *const u8, target: &[u8]) -> bool {
-    for (i, &want) in target.iter().enumerate() {
-        if unsafe { *p.add(i) } != want {
-            return false;
-        }
-    }
-    unsafe { *p.add(target.len()) == 0 }
-}
-
-/// Port of the kernel's reference `parse_vdso`: resolve `__vdso_clock_gettime`,
-/// `__vdso_clock_getres`, `__vdso_gettimeofday`, `__vdso_time`, and `__vdso_getcpu`
-/// from the mapped vDSO ELF at `base`. (`__vdso_getcpu` is x86-64-only; absent on
-/// aarch64 ⇒ `None` ⇒ caller falls back to the raw syscall.)
-unsafe fn parse_vdso(
-    base: usize,
-) -> (
-    Option<VdsoClockGettimeFn>,
-    Option<VdsoClockGetresFn>,
-    Option<VdsoGettimeofdayFn>,
-    Option<VdsoTimeFn>,
-    Option<VdsoGetcpuFn>,
-) {
-    let none = (None, None, None, None, None);
-    let ehdr = base as *const Elf64Ehdr;
-    let ident = unsafe { &(*ehdr).e_ident };
-    if ident[0] != 0x7f || ident[1] != b'E' || ident[2] != b'L' || ident[3] != b'F' {
-        return none;
-    }
-    let e_phoff = unsafe { (*ehdr).e_phoff } as usize;
-    let e_phnum = unsafe { (*ehdr).e_phnum } as usize;
-    let e_phentsize = unsafe { (*ehdr).e_phentsize } as usize;
-    if e_phentsize < core::mem::size_of::<Elf64Phdr>() || e_phnum > 64 {
-        return none;
-    }
-
-    // First PT_LOAD gives the load bias; PT_DYNAMIC gives the dynamic section.
-    let mut load_offset: Option<usize> = None;
-    let mut dyn_vaddr: Option<u64> = None;
-    for i in 0..e_phnum {
-        let ph = unsafe { &*((base + e_phoff + i * e_phentsize) as *const Elf64Phdr) };
-        if ph.p_type == PT_LOAD && load_offset.is_none() {
-            load_offset = Some(
-                base.wrapping_add(ph.p_offset as usize)
-                    .wrapping_sub(ph.p_vaddr as usize),
-            );
-        } else if ph.p_type == PT_DYNAMIC {
-            dyn_vaddr = Some(ph.p_vaddr);
-        }
-    }
-    let (load_offset, dyn_vaddr) = match (load_offset, dyn_vaddr) {
-        (Some(l), Some(d)) => (l, d),
-        _ => return none,
-    };
-
-    let mut symtab = 0usize;
-    let mut strtab = 0usize;
-    let mut hash = 0usize;
-    let dyn_ptr = load_offset.wrapping_add(dyn_vaddr as usize) as *const Elf64Dyn;
-    for i in 0..256 {
-        let d = unsafe { &*dyn_ptr.add(i) };
-        match d.d_tag {
-            DT_NULL => break,
-            DT_SYMTAB => symtab = load_offset.wrapping_add(d.d_val as usize),
-            DT_STRTAB => strtab = load_offset.wrapping_add(d.d_val as usize),
-            DT_HASH => hash = load_offset.wrapping_add(d.d_val as usize),
-            _ => {}
-        }
-    }
-    if symtab == 0 || strtab == 0 || hash == 0 {
-        return none;
-    }
-
-    // DT_HASH layout: [nbucket, nchain, ...]; nchain == symbol-table entry count.
-    let nchain = unsafe { *(hash as *const u32).add(1) } as usize;
-    if nchain == 0 || nchain > 100_000 {
-        return none;
-    }
-
-    let symtab = symtab as *const Elf64Sym;
-    let mut clock_gettime: Option<VdsoClockGettimeFn> = None;
-    let mut clock_getres: Option<VdsoClockGetresFn> = None;
-    let mut gettimeofday: Option<VdsoGettimeofdayFn> = None;
-    let mut time: Option<VdsoTimeFn> = None;
-    let mut getcpu: Option<VdsoGetcpuFn> = None;
-    for s in 0..nchain {
-        let sym = unsafe { &*symtab.add(s) };
-        if sym.st_value == 0 || sym.st_name == 0 {
-            continue;
-        }
-        let name = (strtab + sym.st_name as usize) as *const u8;
-        let addr = load_offset.wrapping_add(sym.st_value as usize);
-        // SAFETY of each transmute: a resolved address is an executable vDSO entry
-        // with this exact C-ABI signature.
-        if clock_gettime.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_clock_gettime") } {
-            clock_gettime =
-                Some(unsafe { core::mem::transmute::<usize, VdsoClockGettimeFn>(addr) });
-        } else if clock_getres.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_clock_getres") } {
-            clock_getres = Some(unsafe { core::mem::transmute::<usize, VdsoClockGetresFn>(addr) });
-        } else if gettimeofday.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_gettimeofday") } {
-            gettimeofday = Some(unsafe { core::mem::transmute::<usize, VdsoGettimeofdayFn>(addr) });
-        } else if time.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_time") } {
-            time = Some(unsafe { core::mem::transmute::<usize, VdsoTimeFn>(addr) });
-        } else if getcpu.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_getcpu") } {
-            getcpu = Some(unsafe { core::mem::transmute::<usize, VdsoGetcpuFn>(addr) });
-        }
-    }
-    (clock_gettime, clock_getres, gettimeofday, time, getcpu)
 }
 
 fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
@@ -584,32 +275,9 @@ fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn time(tloc: *mut i64) -> i64 {
-    // Hot output-fit check: `tloc` (when non-null) is virtually always a caller stack
-    // local, so `likely_current_stack_object` skips the `tracked_region_fits` arena
-    // lookup — glibc's `time()` is a ~2ns vvar read, so that lookup dominated fl's
-    // overhead. NULL-permitting (time(NULL) is the common form). Byte-identical; this
-    // check remains the sole validator before the store below.
-    if !tracked_optional_hot_output_fits(tloc.cast_const()) {
+    if !tracked_optional_object_fits(tloc.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
-    }
-
-    // vDSO fast path: glibc's `time()` reads the seconds straight from the vvar
-    // page via `__vdso_time` (~2.5 ns) rather than a full `clock_gettime`. Pass a
-    // null pointer and store into `tloc` ourselves so the membrane bounds-check
-    // above remains the sole writer of caller memory. A valid wall-clock second
-    // count is always positive; treat anything else as a miss and fall through.
-    if vdso_resolution_enabled() {
-        let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
-        if let Some(vdso_time) = symbols.time {
-            let secs = unsafe { vdso_time(std::ptr::null_mut()) };
-            if secs > 0 {
-                if !tloc.is_null() {
-                    unsafe { *tloc = secs };
-                }
-                return secs;
-            }
-        }
     }
 
     let mut ts = libc::timespec {
@@ -639,12 +307,12 @@ pub unsafe extern "C" fn clock_gettime(clock_id: c_int, tp: *mut libc::timespec)
         return -1;
     }
 
-    if !tracked_required_hot_output_fits(tp.cast_const()) {
+    if !tracked_required_object_fits(tp.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
 
-    if !clock_gettime_clock_id_valid(clock_id) {
+    if !time_core::valid_clock_id(clock_id) && !time_core::valid_clock_id_extended(clock_id) {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
@@ -712,65 +380,7 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
             tm_wday: (*tm).tm_wday,
             tm_yday: (*tm).tm_yday,
             tm_isdst: (*tm).tm_isdst,
-            tm_gmtoff: (*tm).tm_gmtoff,
-            // tm_zone is NOT dereferenced here: read_tm feeds mktime/timegm/
-            // asctime too, and a caller may pass an uninitialised tm_zone to
-            // those. Only `strftime` (whose contract reads tm_zone for %Z)
-            // populates this, via read_tm_zone.
-            zone: [0; 16],
         }
-    }
-}
-
-/// Copy the caller's `tm_zone` C string into a `BrokenDownTime.zone` buffer for
-/// `strftime` `%Z`. Reads at most 15 bytes (NUL-terminated). A NULL pointer
-/// leaves the zone unset (so `%Z` falls back to "UTC").
-/// Does this format contain a `%Z` zone-name directive, the only directive that
-/// reads `bd.zone`?
-///
-/// Match the formatter's `flags -> width -> optional E/O modifier -> specifier`
-/// grammar. In particular, `%EZ` and `%OZ` are valid in the C locale and must not
-/// be mistaken for formats that cannot observe `tm_zone`.
-#[inline]
-fn fmt_has_zone_directive(fmt: &[u8]) -> bool {
-    let mut i = 0;
-    while i < fmt.len() {
-        if fmt[i] != b'%' {
-            i += 1;
-            continue;
-        }
-        i += 1;
-        if i >= fmt.len() {
-            break;
-        }
-        while i < fmt.len() && b"-_0^#".contains(&fmt[i]) {
-            i += 1;
-        }
-        while i < fmt.len() && fmt[i].is_ascii_digit() {
-            i += 1;
-        }
-        if i < fmt.len() && (fmt[i] == b'E' || fmt[i] == b'O') {
-            i += 1;
-        }
-        if i < fmt.len() && fmt[i] == b'Z' {
-            return true;
-        }
-        i += 1;
-    }
-    false
-}
-
-unsafe fn read_tm_zone(tm: *const libc::tm, bd: &mut time_core::BrokenDownTime) {
-    let zp = unsafe { (*tm).tm_zone };
-    if zp.is_null() {
-        return;
-    }
-    for i in 0..bd.zone.len() - 1 {
-        let b = unsafe { *zp.add(i) };
-        if b == 0 {
-            break;
-        }
-        bd.zone[i] = b as u8;
     }
 }
 
@@ -780,15 +390,10 @@ unsafe fn read_tm_zone(tm: *const libc::tm, bd: &mut time_core::BrokenDownTime) 
 /// Returns null on failure.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn localtime_r(timer: *const i64, result: *mut libc::tm) -> *mut libc::tm {
-    if timer.is_null() || result.is_null() {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        return std::ptr::null_mut();
-    }
-    // Strict-mode skips the tracked-object checks (glibc never validates them); hardened
-    // keeps them. Byte-identical. Mirrors gmtime_r/strftime.
-    if !runtime_policy::strict_passthrough_active()
-        && (!tracked_required_object_fits(timer)
-            || !tracked_required_object_fits(result.cast_const()))
+    if timer.is_null()
+        || result.is_null()
+        || !tracked_required_object_fits(timer)
+        || !tracked_required_object_fits(result.cast_const())
     {
         unsafe { set_abi_errno(errno::EFAULT) };
         return std::ptr::null_mut();
@@ -813,16 +418,10 @@ pub unsafe extern "C" fn localtime_r(timer: *const i64, result: *mut libc::tm) -
 /// Identical to `localtime_r` since we only support UTC.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gmtime_r(timer: *const i64, result: *mut libc::tm) -> *mut libc::tm {
-    if timer.is_null() || result.is_null() {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        return std::ptr::null_mut();
-    }
-    // Strict-mode (DEFAULT deployed) skips the tracked-object checks (2 known_remaining/
-    // alignment lookups) on a trivial epoch->calendar conversion — glibc never validates
-    // the caller's timer/result. Hardened keeps them. Byte-identical. Mirrors strftime.
-    if !runtime_policy::strict_passthrough_active()
-        && (!tracked_required_object_fits(timer)
-            || !tracked_required_object_fits(result.cast_const()))
+    if timer.is_null()
+        || result.is_null()
+        || !tracked_required_object_fits(timer)
+        || !tracked_required_object_fits(result.cast_const())
     {
         unsafe { set_abi_errno(errno::EFAULT) };
         return std::ptr::null_mut();
@@ -835,9 +434,6 @@ pub unsafe extern "C" fn gmtime_r(timer: *const i64, result: *mut libc::tm) -> *
         return std::ptr::null_mut();
     };
     unsafe { write_tm(result, &bd) };
-    // glibc's gmtime labels the zone "GMT" (write_tm's default "UTC" is the
-    // localtime label). strftime("%Z") then echoes it.
-    unsafe { (*result).tm_zone = c"GMT".as_ptr() };
     result
 }
 
@@ -851,20 +447,6 @@ pub unsafe extern "C" fn gmtime_r(timer: *const i64, result: *mut libc::tm) -> *
 /// Normalizes the `tm` structure fields and fills in `tm_wday` and `tm_yday`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
-    // Strict mode (DEFAULT deployed): fl is UTC-only, so mktime == timegm math. decide() is
-    // forced Allow for the Time family, observe() is telemetry-only, and glibc never validates
-    // the caller's tm pointer — so skip decide/observe/tracked-check and go straight to the
-    // shared normalization, exactly like timegm/gmtime_r (which this same bypass took from
-    // 1.65x-slower to parity). Byte-identical: same normalized tm + epoch, same NULL→EFAULT
-    // guard. Hardened mode keeps the full validate/deny/observe path below.
-    if runtime_policy::strict_passthrough_active() {
-        if tm.is_null() {
-            unsafe { set_abi_errno(errno::EFAULT) };
-            return -1;
-        }
-        return unsafe { utc_normalize_to_epoch(tm) };
-    }
-
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Time,
         tm as usize,
@@ -890,10 +472,12 @@ pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
         return -1;
     }
 
-    // fl is UTC-only, so mktime == timegm mathematically. Shared conversion with the
-    // in-range fast path that fills tm_wday/tm_yday directly and skips the reverse-civil
-    // round trip (see utc_normalize_to_epoch); ~56ns → ~15ns of compute. Byte-identical.
-    let epoch = unsafe { utc_normalize_to_epoch(tm) };
+    let bd = unsafe { read_tm(tm) };
+    let epoch = time_core::broken_down_to_epoch(&bd);
+
+    // Normalize: re-derive the full broken-down time and write back.
+    let normalized = time_core::epoch_to_broken_down(epoch);
+    unsafe { write_tm(tm, &normalized) };
     runtime_policy::observe(ApiFamily::Time, decision.profile, 8, false);
     epoch
 }
@@ -907,86 +491,7 @@ pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
 /// Non-standard but widely available (glibc, musl, BSDs).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timegm(tm: *mut libc::tm) -> i64 {
-    if tm.is_null() {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        return -1;
-    }
-    // Direct UTC conversion — NOT a delegation to `mktime`, whose decide()/observe()
-    // membrane tax made timegm ~1.65x slower than glibc's bare timegm (43ns vs 26ns,
-    // time_survey) even though the arithmetic is identical (fl is UTC-only, so
-    // timegm == mktime's math). Mirrors gmtime_r: strict-mode (DEFAULT deployed) skips
-    // the tracked-object check that glibc never performs; hardened keeps it. Same
-    // normalization as mktime (re-derive the broken-down time, fill tm_wday/tm_yday,
-    // write back), so the output tm and return value are byte-identical.
-    if !runtime_policy::strict_passthrough_active()
-        && !tracked_required_object_fits(tm.cast_const())
-    {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        return -1;
-    }
-    unsafe { utc_normalize_to_epoch(tm) }
-}
-
-/// Shared UTC broken-down-time → epoch conversion with in-place normalization, used by both
-/// `timegm` and (since fl is UTC-only, so `mktime == timegm` mathematically) `mktime`.
-///
-/// Fast path: when the date/time is ALREADY in its normalized range, no field carries, so
-/// `epoch_to_broken_down(broken_down_to_epoch(bd))` is an identity on the calendar fields —
-/// the tm is already the normalized output and only tm_wday/tm_yday need filling. Derive
-/// those directly from the day count and SKIP the full reverse civil conversion
-/// (`epoch_to_broken_down`), which is a whole second gmtime and dominated the runtime
-/// (timegm 43ns → 15ns, time_survey). Guarding on an in-range MONTH (not re-deriving it)
-/// means no year adjustment and no i32/i64 overflow for any valid `tm_year`; leap seconds
-/// (tm_sec==60) and any out-of-range field take the slow path. Byte-identical output.
-///
-/// # Safety
-/// `tm` must be a valid, writable `libc::tm`.
-unsafe fn utc_normalize_to_epoch(tm: *mut libc::tm) -> i64 {
-    let bd = unsafe { read_tm(tm) };
-    let year = bd.tm_year as i64 + 1900;
-    let mon = bd.tm_mon as i64;
-
-    if (0..=11).contains(&mon)
-        && (0..=59).contains(&bd.tm_sec)
-        && (0..=59).contains(&bd.tm_min)
-        && (0..=23).contains(&bd.tm_hour)
-        && (1..=days_in_month(year, mon)).contains(&(bd.tm_mday as i64))
-    {
-        let days = days_from_civil(year, mon + 1, bd.tm_mday as i64);
-        let epoch =
-            days * 86400 + bd.tm_hour as i64 * 3600 + bd.tm_min as i64 * 60 + bd.tm_sec as i64;
-        let out = time_core::BrokenDownTime {
-            tm_sec: bd.tm_sec,
-            tm_min: bd.tm_min,
-            tm_hour: bd.tm_hour,
-            tm_mday: bd.tm_mday,
-            tm_mon: bd.tm_mon,
-            tm_year: bd.tm_year,
-            tm_wday: ((days + 4).rem_euclid(7)) as i32,
-            tm_yday: (days - days_from_civil(year, 1, 1)) as i32,
-            tm_isdst: 0,
-            tm_gmtoff: 0,
-            zone: [0; 16],
-        };
-        unsafe { write_tm(tm, &out) };
-        return epoch;
-    }
-
-    // Slow path: an out-of-range field needs true normalization via the round trip.
-    let epoch = time_core::broken_down_to_epoch(&bd);
-    let normalized = time_core::epoch_to_broken_down(epoch);
-    unsafe { write_tm(tm, &normalized) };
-    epoch
-}
-
-/// Days in `mon` (0-based) of the Gregorian `year` (proleptic; year is full, e.g. 2024).
-fn days_in_month(year: i64, mon0: i64) -> i64 {
-    const DIM: [i64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    if mon0 == 1 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) {
-        29
-    } else {
-        DIM[mon0 as usize]
-    }
+    unsafe { mktime(tm) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,10 +517,7 @@ pub unsafe extern "C" fn gettimeofday(tv: *mut libc::timeval, tz: *mut c_void) -
         return -1;
     }
 
-    // Hot output-fit check (same as clock_gettime/clock_getres): `tv` is virtually
-    // always a caller stack local, so `likely_current_stack_object` skips the
-    // `tracked_region_fits` arena lookup. Byte-identical for valid inputs.
-    if !tracked_required_hot_output_fits(tv.cast_const()) {
+    if !tracked_required_object_fits(tv.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
@@ -1040,17 +542,18 @@ pub unsafe extern "C" fn clock_getres(clock_id: c_int, res: *mut libc::timespec)
         return -1;
     }
 
-    // Hot output-fit check: `res` is virtually always a caller stack local, so the
-    // `likely_current_stack_object` fast-path avoids the `tracked_region_fits` arena
-    // lookup that `tracked_optional_object_fits` always paid — the same pattern
-    // `clock_gettime` uses. NULL-permitting (clock_getres(clk, NULL) is valid: the
-    // kernel/vDSO just validates the clock and writes nothing). Byte-identical.
-    if !tracked_optional_hot_output_fits(res.cast_const()) {
+    if !tracked_optional_object_fits(res.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
 
-    unsafe { raw_clock_getres(clock_id, res) }
+    match unsafe { raw_syscall::sys_clock_getres(clock_id, res as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,15 +646,10 @@ pub unsafe extern "C" fn asctime_r(
     tm: *const libc::tm,
     buf: *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if tm.is_null() || buf.is_null() {
-        return std::ptr::null_mut();
-    }
-    // Strict-mode (DEFAULT deployed) skips the tracked-region checks (2 known_remaining
-    // registry lookups) on a trivial fixed 26-byte format — glibc never validates the
-    // caller regions. Hardened mode keeps them. Byte-identical. Mirrors strftime.
-    if !runtime_policy::strict_passthrough_active()
-        && (!tracked_region_fits(tm.cast(), TM_BYTES)
-            || !tracked_region_fits(buf.cast(), ASCTIME_R_BUF_BYTES))
+    if tm.is_null()
+        || buf.is_null()
+        || !tracked_region_fits(tm.cast(), TM_BYTES)
+        || !tracked_region_fits(buf.cast(), ASCTIME_R_BUF_BYTES)
     {
         return std::ptr::null_mut();
     }
@@ -1177,14 +675,10 @@ pub unsafe extern "C" fn ctime_r(
     timer: *const i64,
     buf: *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if timer.is_null() || buf.is_null() {
-        return std::ptr::null_mut();
-    }
-    // Strict-mode skips the tracked-region checks (glibc never validates them); hardened
-    // keeps them. Byte-identical. Mirrors strftime/asctime_r.
-    if !runtime_policy::strict_passthrough_active()
-        && (!tracked_region_fits(timer.cast(), TIME_T_BYTES)
-            || !tracked_region_fits(buf.cast(), ASCTIME_R_BUF_BYTES))
+    if timer.is_null()
+        || buf.is_null()
+        || !tracked_region_fits(timer.cast(), TIME_T_BYTES)
+        || !tracked_region_fits(buf.cast(), ASCTIME_R_BUF_BYTES)
     {
         return std::ptr::null_mut();
     }
@@ -1205,190 +699,6 @@ pub unsafe extern "C" fn ctime_r(
 // strftime
 // ---------------------------------------------------------------------------
 
-/// Copy a truncated C-locale name without re-entering FrankenLibC's exported
-/// `memcpy` symbol. These names are at most nine bytes, so decomposing the copy
-/// into 8/4/2/1-byte scalar stores is both bounded and cheaper than another ABI
-/// dispatch through the general memory routine.
-#[inline(always)]
-unsafe fn copy_strftime_small_name(dst: *mut u8, src: &[u8], count: usize) {
-    debug_assert!(count <= src.len());
-    debug_assert!(count <= 9);
-
-    let mut offset = 0usize;
-    if count & 8 != 0 {
-        // SAFETY: `count >= 8`, the caller proves `src` and `dst` each contain
-        // `count` bytes, and unaligned accesses are used deliberately.
-        let word = unsafe { std::ptr::read_unaligned(src.as_ptr().cast::<u64>()) };
-        // SAFETY: the same bound proves the destination has eight writable bytes.
-        unsafe { std::ptr::write_unaligned(dst.cast::<u64>(), word) };
-        offset = 8;
-    }
-    if count & 4 != 0 {
-        // SAFETY: the bit decomposition leaves four readable/writable bytes at
-        // `offset`; unaligned accesses impose no alignment precondition.
-        let word = unsafe { std::ptr::read_unaligned(src.as_ptr().add(offset).cast::<u32>()) };
-        // SAFETY: see the preceding bound argument.
-        unsafe { std::ptr::write_unaligned(dst.add(offset).cast::<u32>(), word) };
-        offset += 4;
-    }
-    if count & 2 != 0 {
-        // SAFETY: the bit decomposition leaves two readable/writable bytes at
-        // `offset`; unaligned accesses impose no alignment precondition.
-        let word = unsafe { std::ptr::read_unaligned(src.as_ptr().add(offset).cast::<u16>()) };
-        // SAFETY: see the preceding bound argument.
-        unsafe { std::ptr::write_unaligned(dst.add(offset).cast::<u16>(), word) };
-        offset += 2;
-    }
-    if count & 1 != 0 {
-        // SAFETY: the final bit proves one readable/writable byte remains.
-        unsafe { *dst.add(offset) = src[offset] };
-    }
-}
-
-/// Copy a pure-literal format with a page-safe portable-SIMD sentinel scan.
-///
-/// Returns `None` at the first `%`, leaving directive-bearing formats to the
-/// existing formatter. A 32-byte-aligned load cannot cross a Linux page
-/// boundary, so aligning the first load down and advancing by 32 never faults
-/// beyond the page containing the terminating NUL. This is the same guard-page
-/// discipline used by the string family's unbounded scanners.
-#[inline(never)]
-unsafe fn try_strftime_strict_literal_copy(
-    s: *mut std::ffi::c_char,
-    maxsize: usize,
-    format: *const std::ffi::c_char,
-) -> Option<usize> {
-    use core::simd::Simd;
-    use core::simd::cmp::SimdPartialEq;
-
-    let src = format.cast::<u8>();
-    let dst = s.cast::<u8>();
-    let zero = Simd::<u8, 32>::splat(0);
-    let percent = Simd::<u8, 32>::splat(b'%');
-    let align = (src as usize) & 31;
-    // SAFETY: `base` precedes `src` by at most 31 bytes in the same mapped page;
-    // its 32-byte-aligned window cannot cross that page boundary.
-    let base = unsafe { src.sub(align) };
-    let first = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
-    let mut mask = (first.simd_eq(zero).to_bitmask() | first.simd_eq(percent).to_bitmask())
-        & !((1u64 << align) - 1);
-
-    let literal_len = if mask != 0 {
-        let index = mask.trailing_zeros() as usize - align;
-        // SAFETY: the sentinel mask proves `index` addresses either `%` or NUL.
-        if unsafe { *src.add(index) } == b'%' {
-            return None;
-        }
-        index
-    } else {
-        let mut offset = 32 - align;
-        loop {
-            // SAFETY: `src + offset` is 32-byte aligned. Each full vector stays
-            // in one mapped page; the loop stops in the page containing `%`/NUL.
-            let panel = Simd::<u8, 32>::from_slice(unsafe {
-                core::slice::from_raw_parts(src.add(offset), 32)
-            });
-            mask = panel.simd_eq(zero).to_bitmask() | panel.simd_eq(percent).to_bitmask();
-            if mask != 0 {
-                let index = offset + mask.trailing_zeros() as usize;
-                // SAFETY: the sentinel mask proves `index` addresses `%` or NUL.
-                if unsafe { *src.add(index) } == b'%' {
-                    return None;
-                }
-                break index;
-            }
-            offset += 32;
-        }
-    };
-
-    if literal_len >= maxsize {
-        return Some(0);
-    }
-    // SAFETY: POSIX declares `s` and `format` restricted; `literal_len` readable
-    // source bytes and `maxsize` writable destination bytes are caller-owned.
-    unsafe {
-        std::ptr::copy_nonoverlapping(src, dst, literal_len);
-        *dst.add(literal_len) = 0;
-    }
-    Some(literal_len)
-}
-
-/// Fuse recognition and emission for one C-locale name surrounded by literals.
-///
-/// The accepted language is `literal* ("%a"|"%A"|"%b"|"%B"|"%h") literal*`;
-/// pure literals are accepted as its zero-conversion case. Every input byte is
-/// read once and every output byte is written once. On a second or unsupported
-/// conversion this declines to the untouched general formatter. POSIX declares
-/// `s` and `format` restricted, so speculative literal writes cannot alias and
-/// alter the format before that fallback overwrites the output.
-#[inline]
-unsafe fn try_strftime_strict_fused_single_name(
-    s: *mut std::ffi::c_char,
-    maxsize: usize,
-    format: *const std::ffi::c_char,
-    tm: *const libc::tm,
-) -> Option<usize> {
-    let format = format.cast::<u8>();
-    let s = s.cast::<u8>();
-    let write_limit = maxsize - 1;
-    let mut input_offset = 0usize;
-    let mut output_offset = 0usize;
-    let mut saw_name = false;
-
-    loop {
-        // SAFETY: the strict-mode C contract makes `format` readable through
-        // its terminating NUL. `input_offset` advances only across those bytes.
-        let byte = unsafe { *format.add(input_offset) };
-        if byte == 0 {
-            if output_offset >= maxsize {
-                return Some(0);
-            }
-            // SAFETY: `output_offset < maxsize` leaves one byte in the caller's
-            // writable region for the C terminator.
-            unsafe { *s.add(output_offset) = 0 };
-            return Some(output_offset);
-        }
-        if byte != b'%' {
-            if output_offset < write_limit {
-                // SAFETY: the branch proves this byte lies before the reserved
-                // terminator position in the caller's `maxsize` region.
-                unsafe { *s.add(output_offset) = byte };
-            }
-            input_offset += 1;
-            output_offset += 1;
-            continue;
-        }
-        if saw_name {
-            return None;
-        }
-
-        // SAFETY: a percent byte precedes either another format byte or the
-        // terminating NUL, both readable under the same C-string contract.
-        let conversion = unsafe { *format.add(input_offset + 1) };
-        if !matches!(conversion, b'a' | b'A' | b'b' | b'B' | b'h') {
-            return None;
-        }
-        // SAFETY: strict mode trusts the caller's valid `tm` object.
-        let field = unsafe {
-            if matches!(conversion, b'a' | b'A') {
-                (*tm).tm_wday
-            } else {
-                (*tm).tm_mon
-            }
-        };
-        let name = time_core::strftime_c_locale_name(conversion, field)?;
-        let count = (write_limit.saturating_sub(output_offset)).min(name.len());
-        if count != 0 {
-            // SAFETY: `count` is bounded by both `name` and the remaining caller
-            // output region before its reserved terminator byte.
-            unsafe { copy_strftime_small_name(s.add(output_offset), name, count) };
-        }
-        output_offset += name.len();
-        input_offset += 2;
-        saw_name = true;
-    }
-}
-
 /// POSIX `strftime` — format broken-down time into a string.
 ///
 /// Writes at most `maxsize` bytes (including the NUL terminator) into `s`.
@@ -1401,527 +711,6 @@ pub unsafe extern "C" fn strftime(
     format: *const std::ffi::c_char,
     tm: *const libc::tm,
 ) -> usize {
-    // Strict-mode fast path (DEFAULT deployed): `Time` `decide()` always-Allows in strict, so skip
-    // decide()/observe() + `tracked_region_fits` ×2 + `known_remaining` (registry lookup) and scan
-    // the format to NUL directly. Byte-identical for valid inputs (0 on null/zero args or
-    // unterminated format, else the formatted length); trust-the-caller regions, glibc never
-    // validates `s`/`tm`. Formats straight into the caller buffer (no alloc). Mirrors inet_pton.
-    if runtime_policy::strict_passthrough_active() {
-        if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
-            return 0;
-        }
-        // Pure literals are the worst remaining whole-job ratio and cannot
-        // match any exact `%...` transducer. A page-safe portable-SIMD scan
-        // recognizes and copies them before the specialization tree; formats
-        // containing a directive decline without writing and retain the
-        // existing fused/general behavior.
-        // SAFETY: strict mode trusts the non-overlapping valid C arguments.
-        if unsafe { *format.cast::<u8>() != b'%' }
-            && let Some(n) = unsafe { try_strftime_strict_literal_copy(s, maxsize, format) }
-        {
-            return n;
-        }
-        // Exact clock/date aliases, their defining spellings, and bare
-        // C-locale names share a finite, locale-independent dispatcher.
-        // Compile the families before the generic C-string scan, full `tm`
-        // projection, alias expansion, and directive interpreter, reading only
-        // the fields each member can observe. Non-normalized fields fall through
-        // so the established extended behavior remains unchanged.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
-        if unsafe { *format.cast::<u8>() == b'%' } {
-            // SAFETY: the leading non-NUL byte proves byte one is readable.
-            let head = unsafe { *format.cast::<u8>().add(1) };
-            // SAFETY: `head` is checked before byte two, so an earlier NUL stops
-            // the short-circuit expression.
-            let exact_alias = matches!(head, b'R' | b'T' | b'X' | b'r' | b'F' | b'D' | b'x')
-                && unsafe { *format.cast::<u8>().add(2) == 0 };
-            if exact_alias {
-                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-                let result = match head {
-                    b'R' => {
-                        // SAFETY: strict mode trusts the caller's valid `tm` object.
-                        let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
-                        time_core::format_strftime_hm_time(hour, minute, buf)
-                    }
-                    b'T' | b'X' => {
-                        // SAFETY: strict mode trusts the caller's valid `tm` object.
-                        let (hour, minute, second) =
-                            unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
-                        time_core::format_strftime_hms_time(hour, minute, second, buf)
-                    }
-                    b'r' => {
-                        // SAFETY: strict mode trusts the caller's valid `tm` object.
-                        let (hour, minute, second) =
-                            unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
-                        time_core::format_strftime_hms_12_time(hour, minute, second, buf)
-                    }
-                    b'F' => {
-                        // SAFETY: strict mode trusts the caller's valid `tm` object.
-                        let (year, month, day) =
-                            unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
-                        time_core::format_strftime_ymd_date(year, month, day, buf)
-                    }
-                    _ => {
-                        // SAFETY: strict mode trusts the caller's valid `tm` object.
-                        let (year, month, day) =
-                            unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
-                        time_core::format_strftime_mdy_short_date(year, month, day, buf)
-                    }
-                };
-                if let Some(n) = result {
-                    return n;
-                }
-            } else if matches!(head, b'a' | b'A' | b'b' | b'B' | b'h')
-                // SAFETY: a recognized non-NUL conversion makes byte two readable.
-                && unsafe { *format.cast::<u8>().add(2) == 0 }
-            {
-                // SAFETY: strict mode trusts the caller's valid `tm` object.
-                let field = unsafe {
-                    if matches!(head, b'a' | b'A') {
-                        (*tm).tm_wday
-                    } else {
-                        (*tm).tm_mon
-                    }
-                };
-                let name = time_core::strftime_c_locale_name(head, field)
-                    .expect("exact C-locale name conversion");
-                let write_limit = maxsize - 1;
-                let count = write_limit.min(name.len());
-                if count != 0 {
-                    // SAFETY: `count` is bounded by the static name and the
-                    // caller's writable output region before its terminator.
-                    unsafe { copy_strftime_small_name(s.cast(), name, count) };
-                }
-                if name.len() >= maxsize {
-                    return 0;
-                }
-                // SAFETY: the length check leaves one writable terminator byte.
-                unsafe { *s.cast::<u8>().add(name.len()) = 0 };
-                return name.len();
-            } else if head == b'Y'
-                // SAFETY: every read is guarded by the preceding non-NUL byte.
-                && unsafe {
-                    *format.cast::<u8>().add(2) == b'-'
-                        && *format.cast::<u8>().add(3) == b'%'
-                        && *format.cast::<u8>().add(4) == b'm'
-                        && *format.cast::<u8>().add(5) == b'-'
-                        && *format.cast::<u8>().add(6) == b'%'
-                        && *format.cast::<u8>().add(7) == b'd'
-                        && *format.cast::<u8>().add(8) == 0
-                }
-            {
-                // SAFETY: strict mode trusts the caller's valid `tm` object.
-                let (year, month, day) = unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
-                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-                if let Some(n) = time_core::format_strftime_ymd_date(year, month, day, buf) {
-                    return n;
-                }
-            } else if head == b'H'
-                // SAFETY: every read is guarded by the preceding non-NUL byte.
-                && unsafe {
-                    *format.cast::<u8>().add(2) == b':'
-                        && *format.cast::<u8>().add(3) == b'%'
-                        && *format.cast::<u8>().add(4) == b'M'
-                }
-            {
-                // SAFETY: the matched five-byte prefix proves byte five is readable.
-                let suffix = unsafe { *format.cast::<u8>().add(5) };
-                if suffix == 0 {
-                    // SAFETY: strict mode trusts the caller's valid `tm` object.
-                    let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
-                    // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-                    let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-                    if let Some(n) = time_core::format_strftime_hm_time(hour, minute, buf) {
-                        return n;
-                    }
-                } else if suffix == b':'
-                    // SAFETY: each read is guarded by the prior non-NUL byte.
-                    && unsafe {
-                        *format.cast::<u8>().add(6) == b'%'
-                            && *format.cast::<u8>().add(7) == b'S'
-                            && *format.cast::<u8>().add(8) == 0
-                    }
-                {
-                    // SAFETY: strict mode trusts the caller's valid `tm` object.
-                    let (hour, minute, second) =
-                        unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
-                    // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-                    let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-                    if let Some(n) = time_core::format_strftime_hms_time(hour, minute, second, buf)
-                    {
-                        return n;
-                    }
-                }
-            } else if head == b'I'
-                // SAFETY: every read is guarded by the preceding non-NUL byte.
-                && unsafe {
-                    *format.cast::<u8>().add(2) == b':'
-                        && *format.cast::<u8>().add(3) == b'%'
-                        && *format.cast::<u8>().add(4) == b'M'
-                        && *format.cast::<u8>().add(5) == b':'
-                        && *format.cast::<u8>().add(6) == b'%'
-                        && *format.cast::<u8>().add(7) == b'S'
-                        && *format.cast::<u8>().add(8) == b' '
-                        && *format.cast::<u8>().add(9) == b'%'
-                        && *format.cast::<u8>().add(10) == b'p'
-                        && *format.cast::<u8>().add(11) == 0
-                }
-            {
-                // SAFETY: strict mode trusts the caller's valid `tm` object.
-                let (hour, minute, second) = unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
-                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-                if let Some(n) = time_core::format_strftime_hms_12_time(hour, minute, second, buf) {
-                    return n;
-                }
-            }
-        }
-        // `%Y-%m-%d %H:%M:%S\0` is a closed, locale-independent language.
-        // Compile it at the ABI boundary so the dominant timestamp form avoids
-        // the generic C-string scan, allocation-registry probes, full `tm`
-        // projection, slice searches, and directive dispatch. The left-to-right
-        // chain never reads beyond an earlier NUL. Non-normalized fields fall
-        // through to the general formatter, preserving its extended behavior.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'Y'
-                && *format.cast::<u8>().add(2) == b'-'
-                && *format.cast::<u8>().add(3) == b'%'
-                && *format.cast::<u8>().add(4) == b'm'
-                && *format.cast::<u8>().add(5) == b'-'
-                && *format.cast::<u8>().add(6) == b'%'
-                && *format.cast::<u8>().add(7) == b'd'
-                && *format.cast::<u8>().add(8) == b' '
-                && *format.cast::<u8>().add(9) == b'%'
-                && *format.cast::<u8>().add(10) == b'H'
-                && *format.cast::<u8>().add(11) == b':'
-                && *format.cast::<u8>().add(12) == b'%'
-                && *format.cast::<u8>().add(13) == b'M'
-                && *format.cast::<u8>().add(14) == b':'
-                && *format.cast::<u8>().add(15) == b'%'
-                && *format.cast::<u8>().add(16) == b'S'
-                && *format.cast::<u8>().add(17) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let (year, month, day, hour, minute, second) = unsafe {
-                (
-                    (*tm).tm_year,
-                    (*tm).tm_mon,
-                    (*tm).tm_mday,
-                    (*tm).tm_hour,
-                    (*tm).tm_min,
-                    (*tm).tm_sec,
-                )
-            };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            if let Some(n) = time_core::format_strftime_numeric_datetime(
-                year, month, day, hour, minute, second, buf,
-            ) {
-                return n;
-            }
-        }
-        // `%Y%m%d%H%M%S\0` is the compact member of the same normalized
-        // numeric timestamp family. Its six directives otherwise enter the
-        // two-pass numeric interpreter, the largest candidate-only self-time
-        // in the whole-job profile. Match the full C string before projecting
-        // only the six fields this transducer consumes.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string; the
-        // short-circuit chain never reads past an earlier NUL.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'Y'
-                && *format.cast::<u8>().add(2) == b'%'
-                && *format.cast::<u8>().add(3) == b'm'
-                && *format.cast::<u8>().add(4) == b'%'
-                && *format.cast::<u8>().add(5) == b'd'
-                && *format.cast::<u8>().add(6) == b'%'
-                && *format.cast::<u8>().add(7) == b'H'
-                && *format.cast::<u8>().add(8) == b'%'
-                && *format.cast::<u8>().add(9) == b'M'
-                && *format.cast::<u8>().add(10) == b'%'
-                && *format.cast::<u8>().add(11) == b'S'
-                && *format.cast::<u8>().add(12) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let (year, month, day, hour, minute, second) = unsafe {
-                (
-                    (*tm).tm_year,
-                    (*tm).tm_mon,
-                    (*tm).tm_mday,
-                    (*tm).tm_hour,
-                    (*tm).tm_min,
-                    (*tm).tm_sec,
-                )
-            };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            if let Some(n) = time_core::format_strftime_compact_datetime(
-                year, month, day, hour, minute, second, buf,
-            ) {
-                return n;
-            }
-        }
-        // `%m/%d/%Y\0` and `%m/%d/%y\0` are the normalized month-first
-        // members of the fixed numeric date family. Select them before the
-        // format scan and two-pass interpreter, reading only their three fields.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string; the
-        // short-circuit chain never reads past an earlier NUL.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'm'
-                && *format.cast::<u8>().add(2) == b'/'
-                && *format.cast::<u8>().add(3) == b'%'
-                && *format.cast::<u8>().add(4) == b'd'
-                && *format.cast::<u8>().add(5) == b'/'
-                && *format.cast::<u8>().add(6) == b'%'
-                && matches!(*format.cast::<u8>().add(7), b'Y' | b'y')
-                && *format.cast::<u8>().add(8) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let (year, month, day) = unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            // SAFETY: the complete format match proves byte seven is readable.
-            let four_digit_year = unsafe { *format.cast::<u8>().add(7) == b'Y' };
-            let result = if four_digit_year {
-                time_core::format_strftime_mdy_date(year, month, day, buf)
-            } else {
-                time_core::format_strftime_mdy_short_date(year, month, day, buf)
-            };
-            if let Some(n) = result {
-                return n;
-            }
-        }
-        // `%d/%m/%Y\0` is the normalized day-first date member of the fixed
-        // numeric family. Select it before the format scan and two-pass
-        // interpreter, reading only the three `tm` fields it can observe.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string; the
-        // short-circuit chain never reads past an earlier NUL.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'd'
-                && *format.cast::<u8>().add(2) == b'/'
-                && *format.cast::<u8>().add(3) == b'%'
-                && *format.cast::<u8>().add(4) == b'm'
-                && *format.cast::<u8>().add(5) == b'/'
-                && *format.cast::<u8>().add(6) == b'%'
-                && *format.cast::<u8>().add(7) == b'Y'
-                && *format.cast::<u8>().add(8) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let (year, month, day) = unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            if let Some(n) = time_core::format_strftime_dmy_date(year, month, day, buf) {
-                return n;
-            }
-        }
-        // Exact `%c\0` in FrankenLibC's C locale is the closed representation
-        // `%a %b %e %H:%M:%S %Y`. Compile that nested locale format into one
-        // fixed emitter before the generic C-string scan, full `tm` projection,
-        // and recursive directive interpreter. Non-normalized fields and short
-        // buffers deliberately fall through to preserve the general behavior.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'c'
-                && *format.cast::<u8>().add(2) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let (weekday, month, day, year, hour, minute, second) = unsafe {
-                (
-                    (*tm).tm_wday,
-                    (*tm).tm_mon,
-                    (*tm).tm_mday,
-                    (*tm).tm_year,
-                    (*tm).tm_hour,
-                    (*tm).tm_min,
-                    (*tm).tm_sec,
-                )
-            };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            if let Some(n) = time_core::format_strftime_c_locale_datetime(
-                weekday, month, day, year, hour, minute, second, buf,
-            ) {
-                return n;
-            }
-        }
-        // Exact HTTP-date is a bounded C-locale transducer. Match the complete
-        // `%a, %d %b %Y %H:%M:%S GMT\0` format before the generic C-string
-        // scan and full `tm` projection. The left-to-right `&&` chain stops at
-        // the first mismatch or earlier NUL, so shorter valid strings do not
-        // read the next byte.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'a'
-                && *format.cast::<u8>().add(2) == b','
-                && *format.cast::<u8>().add(3) == b' '
-                && *format.cast::<u8>().add(4) == b'%'
-                && *format.cast::<u8>().add(5) == b'd'
-                && *format.cast::<u8>().add(6) == b' '
-                && *format.cast::<u8>().add(7) == b'%'
-                && *format.cast::<u8>().add(8) == b'b'
-                && *format.cast::<u8>().add(9) == b' '
-                && *format.cast::<u8>().add(10) == b'%'
-                && *format.cast::<u8>().add(11) == b'Y'
-                && *format.cast::<u8>().add(12) == b' '
-                && *format.cast::<u8>().add(13) == b'%'
-                && *format.cast::<u8>().add(14) == b'H'
-                && *format.cast::<u8>().add(15) == b':'
-                && *format.cast::<u8>().add(16) == b'%'
-                && *format.cast::<u8>().add(17) == b'M'
-                && *format.cast::<u8>().add(18) == b':'
-                && *format.cast::<u8>().add(19) == b'%'
-                && *format.cast::<u8>().add(20) == b'S'
-                && *format.cast::<u8>().add(21) == b' '
-                && *format.cast::<u8>().add(22) == b'G'
-                && *format.cast::<u8>().add(23) == b'M'
-                && *format.cast::<u8>().add(24) == b'T'
-                && *format.cast::<u8>().add(25) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let (weekday, day, month, year, hour, minute, second) = unsafe {
-                (
-                    (*tm).tm_wday,
-                    (*tm).tm_mday,
-                    (*tm).tm_mon,
-                    (*tm).tm_year,
-                    (*tm).tm_hour,
-                    (*tm).tm_min,
-                    (*tm).tm_sec,
-                )
-            };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            if let Some(n) = time_core::format_strftime_http_date(
-                b"%a, %d %b %Y %H:%M:%S GMT",
-                weekday,
-                day,
-                month,
-                year,
-                hour,
-                minute,
-                second,
-                buf,
-            ) {
-                return n;
-            }
-        }
-        // Exact RFC3164 timestamps are a bounded C-locale transducer. Recognize
-        // the complete `%b %e %H:%M:%S\0` language before the generic C-string
-        // scan and full `tm` projection. The `&&` chain is intentionally
-        // left-to-right: a shorter C string stops at its NUL before the next byte
-        // is read. Non-normalized fields fall through to the unchanged formatter.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'b'
-                && *format.cast::<u8>().add(2) == b' '
-                && *format.cast::<u8>().add(3) == b'%'
-                && *format.cast::<u8>().add(4) == b'e'
-                && *format.cast::<u8>().add(5) == b' '
-                && *format.cast::<u8>().add(6) == b'%'
-                && *format.cast::<u8>().add(7) == b'H'
-                && *format.cast::<u8>().add(8) == b':'
-                && *format.cast::<u8>().add(9) == b'%'
-                && *format.cast::<u8>().add(10) == b'M'
-                && *format.cast::<u8>().add(11) == b':'
-                && *format.cast::<u8>().add(12) == b'%'
-                && *format.cast::<u8>().add(13) == b'S'
-                && *format.cast::<u8>().add(14) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let (month, day, hour, minute, second) = unsafe {
-                (
-                    (*tm).tm_mon,
-                    (*tm).tm_mday,
-                    (*tm).tm_hour,
-                    (*tm).tm_min,
-                    (*tm).tm_sec,
-                )
-            };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            if let Some(n) = time_core::format_strftime_rfc3164(
-                b"%b %e %H:%M:%S",
-                month,
-                day,
-                hour,
-                minute,
-                second,
-                buf,
-            ) {
-                return n;
-            }
-        }
-        // Exact `%j\0` is another three-byte finite transducer leaf. Its
-        // normalized domain is the 366 possible `tm_yday` states, so bypass the
-        // generic format scan and full `tm` projection. Non-normalized fields
-        // deliberately fall through to the unchanged general formatter.
-        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
-        if unsafe {
-            *format.cast::<u8>() == b'%'
-                && *format.cast::<u8>().add(1) == b'j'
-                && *format.cast::<u8>().add(2) == 0
-        } {
-            // SAFETY: strict mode trusts the caller's valid `tm` object.
-            let yday = unsafe { (*tm).tm_yday };
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-            if let Some(n) = time_core::format_strftime_day_of_year(yday, buf) {
-                return n;
-            }
-        }
-
-        // Execute the locale-independent language while recognizing it, so
-        // supported formats avoid the allocation registry, full `tm`
-        // projection, second format read, and directive interpreter.
-        // SAFETY: strict mode trusts the non-overlapping valid C arguments.
-        if let Some(n) = unsafe { try_strftime_strict_fused_single_name(s, maxsize, format, tm) } {
-            return n;
-        }
-
-        // SAFETY: strict trusts the caller's NUL-terminated `format` (C contract).
-        let (fmt_len, terminated) = unsafe { scan_c_string(format, None) };
-        if !terminated {
-            return 0;
-        }
-        // SAFETY: `fmt_len` readable bytes at `format`; `tm` valid per C contract.
-        let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
-        if !fmt.contains(&b'%') {
-            if fmt_len >= maxsize {
-                return 0;
-            }
-            // SAFETY: caller guarantees `s` writable for `maxsize` bytes, and
-            // fmt_len < maxsize leaves room for the NUL terminator.
-            unsafe {
-                std::ptr::copy_nonoverlapping(format as *const u8, s as *mut u8, fmt_len);
-                *(s as *mut u8).add(fmt_len) = 0;
-            }
-            return fmt_len;
-        }
-        let mut bd = unsafe { read_tm(tm) };
-        // `bd.zone` is a [u8; 16] and `read_tm_zone` fills it with a 15-iteration
-        // byte copy from the caller's `tm_zone`. That buffer is consumed by exactly
-        // one directive — `%Z` — so for every other format the copy is work whose
-        // result is never observed. Guarding on the directive is behavior-preserving
-        // by construction: if the format cannot emit the zone, the bytes cannot be
-        // read. `%z` is unaffected — it formats `tm_gmtoff`, which `read_tm` already
-        // carries.
-        if fmt_has_zone_directive(fmt) {
-            unsafe { read_tm_zone(tm, &mut bd) };
-        }
-        // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
-        let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-        return time_core::format_strftime(fmt, &bd, buf);
-    }
-
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Time,
         s as usize,
@@ -1953,33 +742,8 @@ pub unsafe extern "C" fn strftime(
     }
     let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
 
-    // Pure-literal format (no conversion): copy it straight to the output, skipping
-    // the `read_tm` + `read_tm_zone` struct reads and the format loop — none of the
-    // tm fields are used, and glibc likewise never dereferences tm for a literal
-    // format. Mirrors the strict fast path's literal shortcut; byte-identical to
-    // running `format_strftime` on a `%`-free format (same copy, same
-    // `fmt_len >= maxsize` truncation-to-0). This is the full/hardened path's
-    // analogue: without it a literal format paid ~14x glibc (tm reads dominate when
-    // there is no conversion work to amortise them).
-    if !fmt.contains(&b'%') {
-        if fmt_len >= maxsize {
-            runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
-            return 0;
-        }
-        // SAFETY: validated `s` writable for `maxsize` bytes; `fmt_len < maxsize`
-        // leaves room for the NUL terminator.
-        unsafe {
-            std::ptr::copy_nonoverlapping(format as *const u8, s as *mut u8, fmt_len);
-            *(s as *mut u8).add(fmt_len) = 0;
-        }
-        runtime_policy::observe(ApiFamily::Time, decision.profile, 6, false);
-        return fmt_len;
-    }
-
-    // Read the broken-down time. strftime additionally reads tm_zone for %Z
-    // (its contract permits dereferencing it, unlike mktime/timegm).
-    let mut bd = unsafe { read_tm(tm) };
-    unsafe { read_tm_zone(tm, &mut bd) };
+    // Read the broken-down time.
+    let bd = unsafe { read_tm(tm) };
 
     // Format into the output buffer.
     let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
@@ -1996,8 +760,8 @@ pub unsafe extern "C" fn strftime(
 struct TimeTls {
     gmtime_buf: libc::tm,
     localtime_buf: libc::tm,
-    asctime_buf: [u8; ASCTIME_FULL_BUF_BYTES],
-    ctime_buf: [u8; ASCTIME_FULL_BUF_BYTES],
+    asctime_buf: [u8; ASCTIME_R_BUF_BYTES],
+    ctime_buf: [u8; ASCTIME_R_BUF_BYTES],
 }
 
 // SAFETY: `TimeTls` is keyed by kernel thread id inside `OwnedTlsCache`. The
@@ -2014,8 +778,8 @@ fn new_time_tls() -> TimeTls {
         gmtime_buf: unsafe { std::mem::zeroed() },
         // SAFETY: Same POD zero-initialization rationale as `gmtime_buf`.
         localtime_buf: unsafe { std::mem::zeroed() },
-        asctime_buf: [0; ASCTIME_FULL_BUF_BYTES],
-        ctime_buf: [0; ASCTIME_FULL_BUF_BYTES],
+        asctime_buf: [0; ASCTIME_R_BUF_BYTES],
+        ctime_buf: [0; ASCTIME_R_BUF_BYTES],
     }
 }
 
@@ -2027,8 +791,8 @@ static TIME_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<TimeTls> =
 std::thread_local! {
     static GMTIME_BUF: std::cell::UnsafeCell<libc::tm> = const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
     static LOCALTIME_BUF: std::cell::UnsafeCell<libc::tm> = const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
-    static ASCTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_FULL_BUF_BYTES]) };
-    static CTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_FULL_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_FULL_BUF_BYTES]) };
+    static ASCTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_R_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_R_BUF_BYTES]) };
+    static CTIME_BUF: std::cell::UnsafeCell<[u8; ASCTIME_R_BUF_BYTES]> = const { std::cell::UnsafeCell::new([0u8; ASCTIME_R_BUF_BYTES]) };
 }
 
 #[inline]
@@ -2066,7 +830,7 @@ fn with_localtime_buf<R>(f: impl FnOnce(&mut libc::tm) -> R) -> R {
 }
 
 #[inline]
-fn with_asctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_FULL_BUF_BYTES]) -> R) -> R {
+fn with_asctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_R_BUF_BYTES]) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
         TIME_OWNED_TLS.with(|tls| f(&mut tls.asctime_buf))
@@ -2083,7 +847,7 @@ fn with_asctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_FULL_BUF_BYTES]) -> R) -
 }
 
 #[inline]
-fn with_ctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_FULL_BUF_BYTES]) -> R) -> R {
+fn with_ctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_R_BUF_BYTES]) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
         TIME_OWNED_TLS.with(|tls| f(&mut tls.ctime_buf))
@@ -2102,13 +866,7 @@ fn with_ctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_FULL_BUF_BYTES]) -> R) -> 
 /// POSIX `gmtime` — convert time_t to broken-down UTC time (non-reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gmtime(timer: *const i64) -> *mut libc::tm {
-    // Strict mode (DEFAULT deployed) skips the tracked-object registry lookup — the inner
-    // gmtime_r already performs it (strict-gated), so doing it here too was a redundant
-    // ~8ns tax glibc never pays (gmtime 1.48x -> parity; localtime_survey). Hardened keeps
-    // the check. Mirrors gmtime_r/strftime.
-    if timer.is_null()
-        || (!runtime_policy::strict_passthrough_active() && !tracked_required_object_fits(timer))
-    {
+    if timer.is_null() || !tracked_required_object_fits(timer) {
         return std::ptr::null_mut();
     }
     with_gmtime_buf(|buf| {
@@ -2125,11 +883,7 @@ pub unsafe extern "C" fn gmtime(timer: *const i64) -> *mut libc::tm {
 /// POSIX `localtime` — convert time_t to broken-down local time (non-reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn localtime(timer: *const i64) -> *mut libc::tm {
-    // Strict mode skips the redundant tracked-object lookup (localtime_r does it,
-    // strict-gated). See gmtime.
-    if timer.is_null()
-        || (!runtime_policy::strict_passthrough_active() && !tracked_required_object_fits(timer))
-    {
+    if timer.is_null() || !tracked_required_object_fits(timer) {
         return std::ptr::null_mut();
     }
     with_localtime_buf(|buf| {
@@ -2149,16 +903,13 @@ pub unsafe extern "C" fn asctime(tm: *const libc::tm) -> *mut std::ffi::c_char {
     if tm.is_null() || !tracked_required_object_fits(tm) {
         return std::ptr::null_mut();
     }
-    // Unlike asctime_r (capped at the 26-byte contract buffer), the non-reentrant
-    // form uses glibc's wider static buffer and succeeds for years that overflow
-    // 26 bytes — so format into the wide buffer with format_asctime_full.
-    let bd = unsafe { read_tm(tm) };
     with_asctime_buf(|buf| {
-        let n = time_core::format_asctime_full(&bd, buf);
-        if n == 0 {
+        let ptr = buf.as_mut_ptr() as *mut std::ffi::c_char;
+        let result = unsafe { asctime_r(tm, ptr) };
+        if result.is_null() {
             std::ptr::null_mut()
         } else {
-            buf.as_mut_ptr() as *mut std::ffi::c_char
+            ptr
         }
     })
 }
@@ -2169,18 +920,13 @@ pub unsafe extern "C" fn ctime(timer: *const i64) -> *mut std::ffi::c_char {
     if timer.is_null() || !tracked_required_object_fits(timer) {
         return std::ptr::null_mut();
     }
-    // ctime == asctime(localtime(timer)); like asctime, the non-reentrant form
-    // uses the wider buffer (no 26-byte cap) via format_asctime_full.
-    let epoch = unsafe { *timer };
-    let Some(bd) = time_core::epoch_to_broken_down_checked(epoch) else {
-        return std::ptr::null_mut();
-    };
     with_ctime_buf(|buf| {
-        let n = time_core::format_asctime_full(&bd, buf);
-        if n == 0 {
+        let ptr = buf.as_mut_ptr() as *mut std::ffi::c_char;
+        let result = unsafe { ctime_r(timer, ptr) };
+        if result.is_null() {
             std::ptr::null_mut()
         } else {
-            buf.as_mut_ptr() as *mut std::ffi::c_char
+            ptr
         }
     })
 }
@@ -2202,38 +948,6 @@ fn parse_digits(input: &[u8], pos: usize, max_digits: usize) -> Option<(i32, usi
             p += 1;
             count += 1;
         } else {
-            break;
-        }
-    }
-    if count == 0 { None } else { Some((val, p)) }
-}
-
-/// Like [`parse_digits`] but mirrors glibc's `get_number`: it stops consuming
-/// digits as soon as reading another one would push the accumulated value past
-/// the field maximum `to`. This is what lets `strptime("34", "%m")` yield 3
-/// (month 3, leaving "4") instead of a range error — and makes packed numeric
-/// formats like `%m%d` split "312" into 3 / 12. For fields whose maximum is
-/// large enough that the width bound always trips first (e.g. %y/%C with to=99,
-/// %Y with to=9999) this is identical to `parse_digits`.
-fn parse_digits_bounded(
-    input: &[u8],
-    pos: usize,
-    max_digits: usize,
-    to: i32,
-) -> Option<(i32, usize)> {
-    let mut val: i32 = 0;
-    let mut count = 0usize;
-    let mut p = pos;
-    while count < max_digits && p < input.len() {
-        let ch = input[p];
-        if !ch.is_ascii_digit() {
-            break;
-        }
-        val = val * 10 + (ch - b'0') as i32;
-        p += 1;
-        count += 1;
-        // glibc continues only while another digit keeps val * 10 <= to.
-        if val * 10 > to {
             break;
         }
     }
@@ -2334,190 +1048,6 @@ fn jan1_weekday(year: i64) -> i64 {
     (days_from_civil(year, 1, 1) + 4).rem_euclid(7)
 }
 
-/// Day of the week (Sunday = 0) for a broken-down date, using glibc's exact
-/// `day_of_the_week` arithmetic so strptime's end-of-parse fill is bit-identical
-/// to glibc. `mon` is taken raw (assumed 0..=11 here; the only call site guards
-/// on a determinate date that always has an in-range month).
-fn strptime_day_of_week(tm_year: i64, tm_mon: i64, tm_mday: i64) -> i64 {
-    // Cumulative days before each month, ignoring leap years (matches glibc's
-    // `__mon_yday[0]`); the `corr_year` term below absorbs the leap correction.
-    const MON_YDAY0: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-    let corr_year = 1900 + tm_year - i64::from(tm_mon < 2);
-    let q = corr_year.div_euclid(4);
-    let wday = -473 + 365 * (tm_year - 70) + q - q.div_euclid(25)
-        + q.div_euclid(25).div_euclid(4)
-        + MON_YDAY0[tm_mon.clamp(0, 11) as usize]
-        + tm_mday
-        - 1;
-    wday.rem_euclid(7)
-}
-
-/// Day of the year (0-based) for a broken-down date, matching glibc's
-/// `day_of_the_year`: cumulative days before the month (leap-aware) plus
-/// `tm_mday - 1`. Accepts an out-of-range `tm_mday` (e.g. a `%W`-derived Dec 37
-/// or a `%Y-%m` mday 0) without normalising, exactly as glibc does.
-fn strptime_day_of_year(tm_year: i64, tm_mon: i64, tm_mday: i64) -> i64 {
-    let year = 1900 + tm_year;
-    let leap = usize::from((year % 4 == 0 && year % 100 != 0) || year % 400 == 0);
-    const T: [[i64; 12]; 2] = [
-        [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334],
-        [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335],
-    ];
-    T[leap][tm_mon.clamp(0, 11) as usize] + (tm_mday - 1)
-}
-
-struct ExactNumericStrptime {
-    consumed: usize,
-    date: Option<(i32, i32, i32)>,
-    // `(hour, minute, Option<second>)` — a no-seconds format (`%H:%M`,
-    // `%Y-%m-%d %H:%M`) leaves `tm_sec` untouched, exactly like glibc.
-    time: Option<(i32, i32, Option<i32>)>,
-}
-
-#[inline]
-fn parse_fixed_decimal(input: &[u8], start: usize, digits: usize) -> Option<i32> {
-    let end = start.checked_add(digits)?;
-    let mut value = 0i32;
-    for &digit in input.get(start..end)? {
-        if !digit.is_ascii_digit() {
-            return None;
-        }
-        value = value * 10 + i32::from(digit - b'0');
-    }
-    Some(value)
-}
-
-#[inline]
-fn parse_exact_numeric_date(input: &[u8], start: usize) -> Option<(i32, i32, i32)> {
-    if input.get(start + 4) != Some(&b'-') || input.get(start + 7) != Some(&b'-') {
-        return None;
-    }
-    let year = parse_fixed_decimal(input, start, 4)?;
-    let month = parse_fixed_decimal(input, start + 5, 2)?;
-    let day = parse_fixed_decimal(input, start + 8, 2)?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    Some((year - 1900, month - 1, day))
-}
-
-#[inline]
-fn parse_exact_numeric_time(input: &[u8], start: usize) -> Option<(i32, i32, i32)> {
-    if input.get(start + 2) != Some(&b':') || input.get(start + 5) != Some(&b':') {
-        return None;
-    }
-    let hour = parse_fixed_decimal(input, start, 2)?;
-    let minute = parse_fixed_decimal(input, start + 3, 2)?;
-    let second = parse_fixed_decimal(input, start + 6, 2)?;
-    if hour > 23 || minute > 59 || second > 61 {
-        return None;
-    }
-    Some((hour, minute, second))
-}
-
-/// Fixed-width `HH:MM` (no seconds) at `start`; leaves `tm_sec` untouched.
-#[inline]
-fn parse_exact_numeric_time_hm(input: &[u8], start: usize) -> Option<(i32, i32)> {
-    if input.get(start + 2) != Some(&b':') {
-        return None;
-    }
-    let hour = parse_fixed_decimal(input, start, 2)?;
-    let minute = parse_fixed_decimal(input, start + 3, 2)?;
-    if hour > 23 || minute > 59 {
-        return None;
-    }
-    Some((hour, minute))
-}
-
-/// Fixed-width US date `MM/DD/YYYY` at `start` -> `(tm_year, tm_mon, tm_mday)`.
-#[inline]
-fn parse_exact_numeric_mdy(input: &[u8], start: usize) -> Option<(i32, i32, i32)> {
-    if input.get(start + 2) != Some(&b'/') || input.get(start + 5) != Some(&b'/') {
-        return None;
-    }
-    let month = parse_fixed_decimal(input, start, 2)?;
-    let day = parse_fixed_decimal(input, start + 3, 2)?;
-    let year = parse_fixed_decimal(input, start + 6, 4)?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    Some((year - 1900, month - 1, day))
-}
-
-/// Recognize only canonical fixed-width prefixes for the common numeric
-/// formats. Any miss falls through to the general parser before touching `tm`,
-/// preserving its whitespace, variable-width, backoff, and partial-write quirks.
-#[inline]
-/// Map a bare C-standard alias format to its defining expansion.
-///
-/// ISO C 7.27.3.5 / POSIX specify these as exact equivalents for both `strftime`
-/// and `strptime`, so an alias may be routed to the expansion's exact-numeric leaf.
-/// Without this the two-byte spelling misses the whole-format table below and pays
-/// the general per-directive dispatch — measured at 2.17x the cost of parsing the
-/// identical format spelled out in full.
-///
-/// `%D` is deliberately absent: POSIX defines it as `%m/%d/%y` with a TWO-digit
-/// year, which is not the `%m/%d/%Y` leaf.
-fn strptime_alias_expansion(fmt: &[u8]) -> Option<&'static [u8]> {
-    match fmt {
-        b"%T" => Some(b"%H:%M:%S"),
-        b"%F" => Some(b"%Y-%m-%d"),
-        b"%R" => Some(b"%H:%M"),
-        _ => None,
-    }
-}
-
-fn parse_exact_numeric_strptime(input: &[u8], fmt: &[u8]) -> Option<ExactNumericStrptime> {
-    // Normalize only for leaf selection; a non-canonical input still falls through
-    // to the general parser holding the caller's original format.
-    let fmt = strptime_alias_expansion(fmt).unwrap_or(fmt);
-    match fmt.len() {
-        5 if fmt == b"%H:%M" => {
-            let (hour, minute) = parse_exact_numeric_time_hm(input, 0)?;
-            Some(ExactNumericStrptime {
-                consumed: 5,
-                date: None,
-                time: Some((hour, minute, None)),
-            })
-        }
-        8 if fmt == b"%H:%M:%S" => {
-            let (h, m, s) = parse_exact_numeric_time(input, 0)?;
-            Some(ExactNumericStrptime {
-                consumed: 8,
-                date: None,
-                time: Some((h, m, Some(s))),
-            })
-        }
-        8 if fmt == b"%m/%d/%Y" => Some(ExactNumericStrptime {
-            consumed: 10,
-            date: Some(parse_exact_numeric_mdy(input, 0)?),
-            time: None,
-        }),
-        10 if fmt == b"%Y-%m-%d" => Some(ExactNumericStrptime {
-            consumed: 10,
-            date: Some(parse_exact_numeric_date(input, 0)?),
-            time: None,
-        }),
-        14 if fmt == b"%Y-%m-%d %H:%M" && input.get(10) == Some(&b' ') => {
-            let (hour, minute) = parse_exact_numeric_time_hm(input, 11)?;
-            Some(ExactNumericStrptime {
-                consumed: 16,
-                date: Some(parse_exact_numeric_date(input, 0)?),
-                time: Some((hour, minute, None)),
-            })
-        }
-        17 if fmt == b"%Y-%m-%d %H:%M:%S" && input.get(10) == Some(&b' ') => {
-            let (h, m, s) = parse_exact_numeric_time(input, 11)?;
-            Some(ExactNumericStrptime {
-                consumed: 19,
-                date: Some(parse_exact_numeric_date(input, 0)?),
-                time: Some((h, m, Some(s))),
-            })
-        }
-        _ => None,
-    }
-}
-
 /// POSIX `strptime` — parse date/time string into broken-down time.
 ///
 /// Supports format specifiers: `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`,
@@ -2526,8 +1056,7 @@ fn parse_exact_numeric_strptime(input: &[u8], fmt: &[u8]) -> Option<ExactNumeric
 /// `%y` (2-digit year), `%I` (12-hour), `%p` (AM/PM), `%e` (day with
 /// leading space), `%D` (`%m/%d/%y`), `%T` (`%H:%M:%S`),
 /// `%R` (`%H:%M`), `%F` (`%Y-%m-%d`), `%s` (seconds since epoch),
-/// `%U`/`%W` (week number), `%V`/`%G`/`%g` (ISO week), `%z` (timezone offset),
-/// `%Z` (timezone name — consumed but not interpreted).
+/// `%U`/`%W` (week number), `%V`/`%G`/`%g` (ISO week), `%z` (timezone offset).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strptime(
     s: *const std::ffi::c_char,
@@ -2551,40 +1080,10 @@ pub unsafe extern "C" fn strptime(
     let input_ptr = s as *const u8;
     let input = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
     let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
-
-    if let Some(exact) = parse_exact_numeric_strptime(input, fmt) {
-        // SAFETY: `tm` was checked non-null and large enough above. The exact
-        // parser validates every field into locals before this commit point.
-        unsafe {
-            if let Some((year, month, day)) = exact.date {
-                (*tm).tm_year = year;
-                (*tm).tm_mon = month;
-                (*tm).tm_mday = day;
-                (*tm).tm_wday =
-                    strptime_day_of_week(i64::from(year), i64::from(month), i64::from(day)) as i32;
-                (*tm).tm_yday =
-                    strptime_day_of_year(i64::from(year), i64::from(month), i64::from(day)) as i32;
-            }
-            if let Some((hour, minute, second)) = exact.time {
-                (*tm).tm_hour = hour;
-                (*tm).tm_min = minute;
-                if let Some(second) = second {
-                    (*tm).tm_sec = second;
-                }
-            }
-            return input_ptr.add(exact.consumed) as *mut std::ffi::c_char;
-        }
-    }
-
     let mut si = 0usize; // position in input
     let mut fi = 0usize; // position in format
     let mut century: Option<i32> = None;
     let mut is_pm: Option<bool> = None;
-    // glibc applies the AM/PM 12-hour adjustment ONLY when the hour was parsed
-    // from a 12-hour clock spec (%I/%l). With %H (24-hour) or no hour at all, a
-    // stray %p is recorded but never alters tm_hour. Tracking this avoids
-    // mangling e.g. strptime("13 PM","%H %p") (stays 13) or "%p" alone (stays 0).
-    let mut have_12h = false;
     // glibc derives the calendar date (tm_mon/tm_mday) from a parsed day-of-year
     // (%j) at end-of-parse when no explicit month/day was given. Track which were
     // seen so we can mirror that (bd-2g7oyh.257).
@@ -2597,48 +1096,15 @@ pub unsafe extern "C" fn strptime(
     let mut have_wday = false;
     let mut week_u: Option<i32> = None;
     let mut week_w: Option<i32> = None;
-    // True once a calendar date is determinate (explicit %m/%d, or derived from
-    // %j / %U+%w / %W+%w); gates the glibc end-of-parse tm_wday/tm_yday fill.
-    let mut date_determinate = false;
 
     while fi < fmt.len() {
         let fc = fmt[fi];
         if fc == b'%' {
             fi += 1;
-            // glibc strptime accepts (and ignores) optional GNU flags and a
-            // field width before the conversion — e.g. `%0H`, `%2H`, `%-H` all
-            // parse like `%H`. Consume them. ('0' doubles as flag and digit, so
-            // a single run over `-_` plus digits covers both.)
-            while fi < fmt.len() && matches!(fmt[fi], b'-' | b'_' | b'0'..=b'9') {
-                fi += 1;
-            }
-            let Some(&first) = fmt.get(fi) else {
+            let Some(&spec) = fmt.get(fi) else {
                 return std::ptr::null_mut(); // trailing %
             };
             fi += 1;
-            // Optional `E`/`O` locale modifier. In the C locale it is a no-op on
-            // the per-specifier subset glibc accepts (probed from host glibc),
-            // and a REJECTED combination (e.g. `%EH`, `%Oa`) is a match failure,
-            // mirroring glibc strptime exactly.
-            let spec = if first == b'E' || first == b'O' {
-                let Some(&base) = fmt.get(fi) else {
-                    return std::ptr::null_mut();
-                };
-                fi += 1;
-                const STRPTIME_E_OK: &[u8] = b"YCxXc";
-                const STRPTIME_O_OK: &[u8] = b"ymdeHIMSUWVwbBh";
-                let table = if first == b'E' {
-                    STRPTIME_E_OK
-                } else {
-                    STRPTIME_O_OK
-                };
-                if !table.contains(&base) {
-                    return std::ptr::null_mut();
-                }
-                base
-            } else {
-                first
-            };
 
             // glibc's strptime skips leading whitespace before numeric field
             // conversions (its `get_number` helper) and before `%z`'s sign, but
@@ -2666,8 +1132,6 @@ pub unsafe extern "C" fn strptime(
                     | b'w'
                     | b'u'
                     | b'z'
-                    | b'k'
-                    | b'l'
             ) {
                 si = skip_ws(input, si);
             }
@@ -2705,7 +1169,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'm' => {
                     // Month [01,12] — glibc rejects out-of-range numeric values.
-                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 12) {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if !(1..=12).contains(&val) {
                             return std::ptr::null_mut();
                         }
@@ -2720,7 +1184,7 @@ pub unsafe extern "C" fn strptime(
                     // Day of month [01,31] (%e allows leading space).
                     // glibc rejects out-of-range numeric values.
                     si = skip_ws(input, si);
-                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 31) {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if !(1..=31).contains(&val) {
                             return std::ptr::null_mut();
                         }
@@ -2731,10 +1195,9 @@ pub unsafe extern "C" fn strptime(
                         return std::ptr::null_mut();
                     }
                 }
-                b'H' | b'k' => {
-                    // Hour (24-hour) [00,23] — glibc rejects 24..=99. `%k` is
-                    // the GNU blank-padded synonym (glibc: `case 'k': case 'H'`).
-                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 23) {
+                b'H' => {
+                    // Hour (24-hour) [00,23] — glibc rejects 24..=99.
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if !(0..=23).contains(&val) {
                             return std::ptr::null_mut();
                         }
@@ -2744,19 +1207,17 @@ pub unsafe extern "C" fn strptime(
                         return std::ptr::null_mut();
                     }
                 }
-                b'I' | b'l' => {
-                    // Hour (12-hour) [01,12]. glibc rejects 0 and 13..=99. `%l`
-                    // is the GNU blank-padded synonym (glibc: `case 'l': case 'I'`).
+                b'I' => {
+                    // Hour (12-hour) [01,12]. glibc rejects 0 and 13..=99.
                     // We store `val % 12` so the AM/PM post-processing can
                     // simply add 12 for PM and leave AM unchanged: that
                     // gives 12 AM → 0 (midnight) and 12 PM → 12 (noon)
                     // without a special case at finalization.
-                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 12) {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if !(1..=12).contains(&val) {
                             return std::ptr::null_mut();
                         }
                         unsafe { (*tm).tm_hour = val % 12 };
-                        have_12h = true;
                         si = new_si;
                     } else {
                         return std::ptr::null_mut();
@@ -2776,7 +1237,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'M' => {
                     // Minute [00,59] — glibc rejects 60..=99.
-                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 59) {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if val > 59 {
                             return std::ptr::null_mut();
                         }
@@ -2788,7 +1249,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'S' => {
                     // Second [00,61] — glibc accepts 0-61 (60-61 for leap seconds).
-                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 61) {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if val > 61 {
                             return std::ptr::null_mut();
                         }
@@ -2800,7 +1261,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'j' => {
                     // Day of year [001,366] — glibc rejects 000 and 367..=999.
-                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 3, 366) {
+                    if let Some((val, new_si)) = parse_digits(input, si, 3) {
                         if !(1..=366).contains(&val) {
                             return std::ptr::null_mut();
                         }
@@ -2826,7 +1287,8 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'a' | b'A' => {
                     // Full weekday name or standard 3-letter abbreviation.
-                    if let Some((idx, new_si)) = match_name_table(input, si, &FULL_DAYS, &ABBR_DAYS)
+                    if let Some((idx, new_si)) =
+                        match_name_table(input, si, &FULL_DAYS, &ABBR_DAYS)
                     {
                         unsafe { (*tm).tm_wday = idx as i32 };
                         have_wday = true;
@@ -2946,11 +1408,7 @@ pub unsafe extern "C" fn strptime(
                         _ => c"%I:%M:%S %p",
                     };
                     let result = unsafe {
-                        strptime(
-                            input_ptr.add(si) as *const std::ffi::c_char,
-                            sub.as_ptr(),
-                            tm,
-                        )
+                        strptime(input_ptr.add(si) as *const std::ffi::c_char, sub.as_ptr(), tm)
                     };
                     if result.is_null() {
                         return std::ptr::null_mut();
@@ -3041,7 +1499,7 @@ pub unsafe extern "C" fn strptime(
                 b'U' => {
                     // Week number (Sunday-starting weeks, 00-53). Combined with a
                     // weekday and year, glibc derives the calendar date.
-                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 53) {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if val > 53 {
                             return std::ptr::null_mut();
                         }
@@ -3053,7 +1511,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'W' => {
                     // Week number (Monday-starting weeks, 00-53).
-                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 53) {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if val > 53 {
                             return std::ptr::null_mut();
                         }
@@ -3066,7 +1524,7 @@ pub unsafe extern "C" fn strptime(
                 b'V' => {
                     // ISO 8601 week number (01-53). Parsed and validated but, like
                     // glibc, not used to derive the calendar date (bd-2g7oyh.260).
-                    if let Some((val, new_si)) = parse_digits_bounded(input, si, 2, 53) {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         if !(1..=53).contains(&val) {
                             return std::ptr::null_mut();
                         }
@@ -3180,19 +1638,6 @@ pub unsafe extern "C" fn strptime(
                         si = end;
                     }
                 }
-                b'Z' => {
-                    // Timezone NAME. glibc consumes — but does not interpret — a
-                    // timezone name: skip leading whitespace, then consume a run
-                    // of non-whitespace bytes (letters, digits, '/', '_', …, e.g.
-                    // "UTC", "EST", "America/New_York"). It performs no conversion
-                    // (tm_gmtoff/tm_isdst/tm_zone are left untouched) and never
-                    // fails — even an empty token at end-of-input succeeds. fl
-                    // previously had no %Z case and rejected it outright.
-                    si = skip_ws(input, si);
-                    while input.get(si).is_some_and(|b| !b.is_ascii_whitespace()) {
-                        si += 1;
-                    }
-                }
                 _ => {
                     // Unknown specifier — fail
                     return std::ptr::null_mut();
@@ -3218,13 +1663,8 @@ pub unsafe extern "C" fn strptime(
         unsafe { (*tm).tm_year = c * 100 + year_in_century - 1900 };
     }
 
-    // Post-processing: apply AM/PM, but only for a 12-hour (%I) hour. The %I
-    // handler already stored `val % 12`, so 12 AM -> 0 and 12 PM -> 0 before this
-    // step; adding 12 for PM then yields the right 24-hour value, while AM needs
-    // no change. A %p paired with %H, or standing alone, must not touch tm_hour
-    // (glibc parity).
-    if have_12h
-        && let Some(pm) = is_pm
+    // Post-processing: apply AM/PM
+    if let Some(pm) = is_pm
         && pm
     {
         let h = unsafe { (*tm).tm_hour };
@@ -3256,7 +1696,6 @@ pub unsafe extern "C" fn strptime(
             (*tm).tm_mon = mon as i32;
             (*tm).tm_mday = rem + 1;
         }
-        date_determinate = true;
     }
 
     // Post-processing: derive the calendar date from a week-of-year (%U Sunday or
@@ -3278,11 +1717,7 @@ pub unsafe extern "C" fn strptime(
             (u as i64, (7 - jan1).rem_euclid(7), save_wday)
         } else {
             // %W: weeks start Monday; weekday offset is Mon = 0 .. Sun = 6.
-            (
-                week_w.unwrap() as i64,
-                (8 - jan1).rem_euclid(7),
-                (save_wday + 6).rem_euclid(7),
-            )
+            (week_w.unwrap() as i64, (8 - jan1).rem_euclid(7), (save_wday + 6).rem_euclid(7))
         };
         // 1-based day of year (with tm_mon = 0).
         let mday_raw = 1 + marker_offset + (week - 1) * 7 + wday_offset;
@@ -3301,31 +1736,6 @@ pub unsafe extern "C" fn strptime(
         unsafe {
             (*tm).tm_mon = mon as i32;
             (*tm).tm_mday = (rem + 1) as i32;
-        }
-        date_determinate = true;
-    }
-
-    // End-of-parse: glibc sets `want_xday` — and so recomputes the day-of-week
-    // and day-of-year from the broken-down date — whenever a YEAR (%Y/%y/%C),
-    // MONTH (%m/%b/%B/%h) or DAY (%d/%e) field was parsed, or a calendar date was
-    // derived above (from %Y+%j or %Y+%U/%W+weekday). A weekday alone
-    // (%a/%A/%w/%u), an ISO field alone (%V/%G/%g), a bare day-of-year (%j with
-    // no year) or time-only does NOT trigger it: glibc leaves tm_wday/tm_yday
-    // untouched for `strptime("166","%j")`. An explicitly parsed weekday or %j is
-    // kept as given, not recomputed.
-    if have_year || have_mon || have_mday || date_determinate {
-        let (y, mon, mday) = unsafe {
-            (
-                (*tm).tm_year as i64,
-                (*tm).tm_mon as i64,
-                (*tm).tm_mday as i64,
-            )
-        };
-        if !have_wday {
-            unsafe { (*tm).tm_wday = strptime_day_of_week(y, mon, mday) as i32 };
-        }
-        if !have_yday {
-            unsafe { (*tm).tm_yday = strptime_day_of_year(y, mon, mday) as i32 };
         }
     }
 
@@ -3350,22 +1760,7 @@ pub unsafe extern "C" fn strptime(
 /// (Olson database parsing, DST rules) that is out of scope.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tzset() {
-    // FrankenLibC is UTC-only, but glibc's tzset() always populates the public
-    // timezone globals — in particular tzname[0] must be a valid, non-NULL
-    // string (the `tzset(); puts(tzname[0])` idiom is common and would deref
-    // NULL here). Populate them with the UTC values. bd-vxpc1y.
-    static UTC: &[u8] = b"UTC\0";
-    let p = UTC.as_ptr() as *mut std::ffi::c_char;
-    unsafe {
-        crate::glibc_internal_abi::tzname[0] = p;
-        crate::glibc_internal_abi::tzname[1] = p;
-        crate::glibc_internal_abi::__tzname[0] = p;
-        crate::glibc_internal_abi::__tzname[1] = p;
-        crate::glibc_internal_abi::timezone = 0;
-        crate::glibc_internal_abi::__timezone = 0;
-        crate::glibc_internal_abi::daylight = 0;
-        crate::glibc_internal_abi::__daylight = 0;
-    }
+    // No-op: FrankenLibC is UTC-only.
 }
 
 // ---------------------------------------------------------------------------
@@ -3434,9 +1829,7 @@ pub unsafe extern "C" fn timespec_get(ts: *mut libc::timespec, base: c_int) -> c
     if ts.is_null() || base != TIME_UTC {
         return 0;
     }
-    // Hot output-fit check (stack-local `ts` skips the arena lookup); same vein as
-    // clock_gettime/clock_getres.
-    if !tracked_required_hot_output_fits(ts.cast_const()) {
+    if !tracked_required_object_fits(ts.cast_const()) {
         return 0;
     }
     let rc = unsafe { raw_clock_gettime(libc::CLOCK_REALTIME, ts) };
