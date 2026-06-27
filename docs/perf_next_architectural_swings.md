@@ -9,6 +9,18 @@ not speculative.
 
 ## What is already done (do NOT re-attempt)
 
+- **Core string/wide scan family — SATURATED (cc/BoldFalcon 2026-06-27).** Ran
+  `string_inprocess_survey_bench` (reliable in-process vs glibc). The remaining
+  fl-slower rows are all already-aggressive `std::simd` kernels: `wmemchr` 1.61x,
+  `wcsnlen` 1.85x, `strrchr` 1.86x — each is a 64-lane panel scan (`wmemchr`/`wcsnlen`)
+  or a single-pass SIMD last-byte scan (`strrchr` via `find_last_byte_before_nul`).
+  This is the documented "deeper hand-tuned-AVX2 + ifunc" gap that portable std::simd
+  cannot close (prior attempts disproven; see the small-input string memory). **BENCH
+  TRAP fixed:** the survey's `rawmemchr` and `wcschrnul` "scalar_current" arms were
+  STALE local scalar replicas advertising phantom ~39x / ~1.5x deployed gaps — both
+  deployed impls are SIMD since bd-2g7oyh. Relabeled to `scalar_historical` with
+  corrected comments so future digs aren't misled. Most other string fns WIN
+  (strchrnul 0.66x, strtok_r 0.67x, wcstok 0.57x, memfrob 0.60x, asctime 0.13x).
 - **Membrane observe()/decide() fast-path vein — COMPLETE.** Every high-frequency
   family is in the strict fast-path set in `runtime_policy::decide`
   (`crates/frankenlibc-abi/src/runtime_policy.rs` ~line 2065): Allocator,

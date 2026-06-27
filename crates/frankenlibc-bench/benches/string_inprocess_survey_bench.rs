@@ -1006,10 +1006,12 @@ fn bench(c: &mut Criterion) {
     });
     gspr.finish();
 
-    // ---- rawmemchr (GNU, find-byte-assume-present). The DEPLOYED fl impl
-    // (string_abi.rs) is a SCALAR byte loop; glibc is AVX2. 1000-byte buf, 'Z' at 900.
-    // Compares the faithful scalar replica (= current fl), core::memchr (the SIMD-fix
-    // speed proxy — same aligned-SIMD scan I'd deploy), and glibc rawmemchr.
+    // ---- rawmemchr (GNU, find-byte-assume-present). STALE-FIXED (cc/BoldFalcon
+    // 2026-06-27): the deployed fl impl (string_abi.rs::rawmemchr) is NOW a 32-byte
+    // aligned SIMD scan (bd-2g7oyh), NOT a scalar loop. The `scalar_historical` arm
+    // below is the PRE-FIX baseline kept for reference only — it is NOT current
+    // deployment, so DO NOT read its ratio as a live deployed gap (it falsely reads
+    // ~39x). core::memchr is the SIMD speed proxy (≈ deployed). 1000-byte buf, 'Z' at 900.
     let rmc: Vec<u8> = {
         let mut v = vec![b'a'; 1000];
         v[900] = b'Z';
@@ -1036,7 +1038,7 @@ fn bench(c: &mut Criterion) {
     assert_eq!(off_simd, 900, "rawmemchr simd proxy wrong");
     assert_eq!(off_gl, 900, "rawmemchr glibc wrong");
     let mut grm = c.benchmark_group("survey_rawmemchr");
-    grm.bench_function("frankenlibc_scalar_current", |b| {
+    grm.bench_function("frankenlibc_scalar_historical", |b| {
         b.iter(|| black_box(scalar_rawmemchr(black_box(&rmc), b'Z')))
     });
     grm.bench_function("frankenlibc_simd_fix_proxy", |b| {
@@ -1047,9 +1049,12 @@ fn bench(c: &mut Criterion) {
     });
     grm.finish();
 
-    // ---- wcschrnul (GNU wide find-wc-or-NUL). Deployed fl is a SCALAR wide loop;
-    // glibc's wide scanner is scalar too, so fl's SIMD wide scan (core wcschr proxy)
-    // should WIN. 1000 wide chars, 'Z' at 900, NUL at 999.
+    // ---- wcschrnul (GNU wide find-wc-or-NUL). STALE-FIXED (cc/BoldFalcon 2026-06-27):
+    // the deployed fl impl (wchar_abi.rs::wcschrnul) is NOW a SIMD wide scan
+    // (`wide_find_or_nul_simd`, bd-2g7oyh), NOT a scalar loop. The `scalar_historical`
+    // arm is the PRE-FIX baseline (NOT current deployment — do not read its ratio as a
+    // live gap). glibc's wcschrnul IS scalar, so the deployed SIMD proxy (core wcschr)
+    // WINS ~4x vs glibc. 1000 wide chars, 'Z' at 900, NUL at 999.
     let wcn: Vec<u32> = {
         let mut v = vec![b'a' as u32; 1000];
         v[900] = b'Z' as u32;
@@ -1075,7 +1080,7 @@ fn bench(c: &mut Criterion) {
     assert_eq!(wcn_simd, 900, "wcschrnul simd proxy wrong");
     assert_eq!(wcn_gl, 900, "wcschrnul glibc wrong");
     let mut gwcn = c.benchmark_group("survey_wcschrnul");
-    gwcn.bench_function("frankenlibc_scalar_current", |b| {
+    gwcn.bench_function("frankenlibc_scalar_historical", |b| {
         b.iter(|| black_box(scalar_wcschrnul(black_box(&wcn), b'Z' as u32)))
     });
     gwcn.bench_function("frankenlibc_simd_fix_proxy", |b| {
