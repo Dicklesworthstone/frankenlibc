@@ -6,6 +6,27 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ regex: bulk class-run consume LANDS — icase 24x-LOSS → 3.3x-WIN vs glibc (cc)
+
+- **LANDED CODE WIN (`string/regex.rs`, conformance GREEN).** The prior turn's bulk-class-run machinery was
+  sound but never fired because `loop_body_class` expected `Match(class)` → `Split(..pc..)`, while the `+`/`*`
+  emit routes the loop-back INDIRECTLY (`Match` → post-`Split` → `Save`/`RepeatExitGuard`/`Jump` → back). Fixed
+  the detection: `build_bulk_loop_table` (precomputed once per search, O(nfa²)) marks a `Match(CharClass)` PC as
+  a loop body iff a successor `Split` branch EPSILON-REACHES back to it (`epsilon_reaches`, a visited-set walk
+  over `Split`/`Jump`/`Save`/`RepeatExitGuard`). When the live set is that loop body + a first-byte-disjoint
+  exit (two threads, same start, no match yet), `leftmost_start` AND `run_from` now scan the whole class run to
+  its first non-class byte in one pass.
+- **MEASURED (`regex_prefilter_ab_bench`, same-process vs host glibc `regexec`):** ICASE `X[a-z]+9` over a
+  4 KiB single run — **fl 4.05 µs / glibc 13.46 µs = fl WINS 3.32x** (was 310 µs pre-fix = **76x fl-internal
+  speedup**, flipping a ~24x LOSS into a 3.3x WIN over glibc's DFA). No regression on short-run cases
+  (`[0-9]+END` sparse ~8–9 µs, rare-first-byte 2.2 µs unchanged — the table build is O(nfa²)≈tiny, the
+  per-position check is a table lookup gated on `current.len()==2`).
+- **Conformance GREEN:** 8 `conformance_diff_regex` + capture-heavy `nested_submatch`/`empty_iter_capture` +
+  `stacked_quant` + isomorphism `debug_assert` (across thousands of patterns incl. quantifiers/captures) — the
+  bulk-scan is byte-identical. Sound: over a class run the 2-state set is a fixed point (loop re-loops, disjoint
+  exit can't fire), captures are untouched (loop body has no `Save`), and a later in-run start is never more
+  leftmost. Closes the dense `class+ <disjoint-follow>` case (the common `[0-9]+END`/`\w+\s`/`[a-z]+:` shape).
+
 ## 2026-06-27 — regex bulk class-run consume: SOUND but doesn't fire yet (RepeatExitGuard) — 1-line fix next (cc)
 
 - **Post-closure-cache re-measurement (da50ea941 landed):** dense regex still trails glibc — `[0-9]+END` sparse

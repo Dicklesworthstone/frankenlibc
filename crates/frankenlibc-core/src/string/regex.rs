@@ -615,6 +615,18 @@ fn build_class_bitset(ranges: &[(u8, u8)], negated: bool, icase: bool, newline: 
     set
 }
 
+/// `true` iff byte `b` is a member of the 256-bit class table.
+#[inline]
+fn class_set_contains(set: &[u64; 4], b: u8) -> bool {
+    (set[(b >> 6) as usize] >> (b & 63)) & 1 != 0
+}
+
+/// `true` iff the two 256-bit class tables share no byte.
+#[inline]
+fn sets_disjoint(a: &[u64; 4], b: &[u64; 4]) -> bool {
+    a[0] & b[0] == 0 && a[1] & b[1] == 0 && a[2] & b[2] == 0 && a[3] & b[3] == 0
+}
+
 // ---------------------------------------------------------------------------
 // Compiled regex
 // ---------------------------------------------------------------------------
@@ -2229,6 +2241,7 @@ impl<'a> PikeVm<'a> {
             );
         }
 
+        let bulk_table = self.build_bulk_loop_table();
         let mut sp = 0;
         loop {
             cur_gen += 1;
@@ -2317,6 +2330,29 @@ impl<'a> PikeVm<'a> {
                     None => return best,
                 }
             }
+            // Fast-forward over a CLASS RUN: when the live set is exactly a
+            // bulk-safe `class+` loop body plus its first-byte-disjoint exit (one
+            // start, no match yet), every byte in the class keeps that 2-state set
+            // invariant — the loop re-loops, the exit cannot fire — so scan straight
+            // to the first non-class byte instead of re-deriving the closure at each
+            // position. Sound: the set is a fixed point over the run, and a later
+            // start inside the run can only be less-leftmost than the live one, so
+            // the seeds skipped here never win. Generalizes the empty-region jump
+            // above from "no live thread" to "one looping disjoint class".
+            if best.is_none()
+                && sp < input_len
+                && current.len() == 2
+                && current[0].1 == current[1].1 // same start
+                && let Some(class) =
+                    self.bulk_loop_class_for_pair(&bulk_table, current[0].0, current[1].0)
+                && class_set_contains(&class, self.input[sp])
+            {
+                let e = self.input[sp..]
+                    .iter()
+                    .position(|&b| !class_set_contains(&class, b))
+                    .map_or(input_len, |o| sp + o);
+                sp = e;
+            }
             // `best` is final once no live thread can start earlier AND no later
             // seed could either (reseeding stops once `sp >= best`). Until then
             // the sweep must continue even when `current` is momentarily empty:
@@ -2329,6 +2365,101 @@ impl<'a> PikeVm<'a> {
                 return Some(b);
             }
         }
+    }
+
+    /// If `current` (exactly two live PikeVm threads, same start) is a bulk-safe
+    /// `class+`/`class*` loop — one thread is `Match(class)` whose successor `Split`
+    /// loops back to it, the other is a `Match` whose accepted bytes are DISJOINT
+    /// from that class (so it cannot fire while the run continues) — return the loop
+    /// class's 256-bit membership table. Used to scan a class run in one pass.
+    fn bulk_loop_class_for_pair(
+        &self,
+        table: &[Option<[u64; 4]>],
+        pc0: usize,
+        pc1: usize,
+    ) -> Option<[u64; 4]> {
+        for (loop_pc, exit_pc) in [(pc0, pc1), (pc1, pc0)] {
+            if let Some(class) = table[loop_pc]
+                && let Some(exit_set) = self.match_byte_set(exit_pc)
+                && sets_disjoint(&class, &exit_set)
+            {
+                return Some(class);
+            }
+        }
+        None
+    }
+
+    /// Precompute, once per search, the loop-body class of every PC that begins a
+    /// `class+`/`class*` iteration: `nfa[pc]` is `Match(CharClass)` and its successor
+    /// `Split` has a branch that epsilon-reaches back to `pc` (the `+`/`*` emit
+    /// routes the loop-back through `Split`/`Save`/`RepeatExitGuard`/`Jump`, so the
+    /// back-edge is indirect — a direct `Split(..pc..)` test misses it). `None`
+    /// elsewhere. O(nfa²) once; the runtime bulk-scan is then a table lookup.
+    fn build_bulk_loop_table(&self) -> Vec<Option<[u64; 4]>> {
+        let n = self.nfa.len();
+        let mut table = vec![None; n];
+        let mut visited = vec![false; n];
+        for pc in 0..n {
+            let NfaInstr::Match(MatchKind::CharClass { set }) = &self.nfa[pc] else {
+                continue;
+            };
+            let Some(NfaInstr::Split(a, b)) = self.nfa.get(pc + 1) else {
+                continue;
+            };
+            visited.iter_mut().for_each(|v| *v = false);
+            if self.epsilon_reaches(*a, pc, &mut visited)
+                || self.epsilon_reaches(*b, pc, &mut visited)
+            {
+                table[pc] = Some(*set);
+            }
+        }
+        table
+    }
+
+    /// True iff `from` reaches `target` over epsilon (`Split`/`Jump`/`Save`/
+    /// `RepeatExitGuard`) edges without consuming input. `visited` is reusable
+    /// scratch (cleared by the caller); `Match`/`Accept` indices are leaves.
+    fn epsilon_reaches(&self, from: usize, target: usize, visited: &mut [bool]) -> bool {
+        let mut stack = vec![from];
+        while let Some(p) = stack.pop() {
+            if p == target {
+                return true;
+            }
+            if p >= self.nfa.len() || visited[p] {
+                continue;
+            }
+            visited[p] = true;
+            match &self.nfa[p] {
+                NfaInstr::Split(a, b) => {
+                    stack.push(*a);
+                    stack.push(*b);
+                }
+                NfaInstr::Jump(t) => stack.push(*t),
+                NfaInstr::Save(_) | NfaInstr::RepeatExitGuard { .. } => stack.push(p + 1),
+                NfaInstr::Match(_) | NfaInstr::Accept => {}
+            }
+        }
+        false
+    }
+
+    /// The set of bytes `nfa[pc]`'s `Match` accepts, as a 256-bit table, or `None`
+    /// when it is not a determinate byte test (`AnyChar`, anchors, non-`Match`).
+    fn match_byte_set(&self, pc: usize) -> Option<[u64; 4]> {
+        let NfaInstr::Match(mk) = self.nfa.get(pc)? else {
+            return None;
+        };
+        let mut set = [0u64; 4];
+        let mut bit = |b: u8| set[(b >> 6) as usize] |= 1u64 << (b & 63);
+        match mk {
+            MatchKind::Literal(c) => bit(*c),
+            MatchKind::LiteralCi(lo, hi) => {
+                bit(*lo);
+                bit(*hi);
+            }
+            MatchKind::CharClass { set: s } => return Some(*s),
+            _ => return None, // AnyChar / anchors: not disjointable
+        }
+        Some(set)
     }
 
     fn run_from(
@@ -2358,6 +2489,7 @@ impl<'a> PikeVm<'a> {
         closure.generation = *generation;
         self.add_thread(&mut current, init_thread, start, anchors, &mut closure);
 
+        let bulk_table = self.build_bulk_loop_table();
         let input_len = self.input.len();
         let mut sp = start;
 
@@ -2409,6 +2541,28 @@ impl<'a> PikeVm<'a> {
             sp += 1;
             core::mem::swap(&mut current, &mut next);
             next.clear();
+            // Bulk class-run fast-forward (mirrors `leftmost_start`): when the live
+            // set is a `class+` loop body plus its first-byte-disjoint exit (two
+            // threads, no match yet), every class byte keeps the set invariant and
+            // leaves the capture slots untouched (the loop body has no `Save`), so
+            // scan to the first non-class byte instead of re-deriving the closure at
+            // each. This is the half of the long-run win `leftmost_start` cannot
+            // reach alone (it confirms the start; `run_from` still walks the run to
+            // extract the bounds). `run_from` is single-start, so the pair helper's
+            // equal-start guard is satisfied with a shared dummy start.
+            if best.is_none()
+                && sp < input_len
+                && current.len() == 2
+                && let Some(class) =
+                    self.bulk_loop_class_for_pair(&bulk_table, current[0].pc, current[1].pc)
+                && class_set_contains(&class, self.input[sp])
+            {
+                let e = self.input[sp..]
+                    .iter()
+                    .position(|&b| !class_set_contains(&class, b))
+                    .map_or(input_len, |o| sp + o);
+                sp = e;
+            }
         }
 
         best
