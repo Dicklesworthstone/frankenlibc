@@ -1596,6 +1596,40 @@ impl<'a> PikeVm<'a> {
         }
     }
 
+    /// For a `literal_prefix` pattern, the PC of the single determinate `Match`
+    /// that MUST consume the byte right after the prefix (e.g. the `[0-9]` in
+    /// `error[0-9]`). Lets the literal-prefix loop PEEK that byte and skip the
+    /// whole `run_from` when it cannot match — the common "prefix is frequent, full
+    /// match is rare" case. `None` (no peek) when the post-prefix is nullable or
+    /// branches (a `Split`/`Accept`), or the leading shape is unexpected — so the
+    /// peek can never wrongly skip a real match. Computed once per search (cheap).
+    fn post_prefix_peek_pc(&self, prefix_len: usize) -> Option<usize> {
+        let mut pc = 0usize;
+        let mut counted = 0usize;
+        // Skip leading zero-width Save (group-start) ops, then consume exactly
+        // `prefix_len` consecutive literal Matches (the prefix itself).
+        while counted < prefix_len {
+            match self.nfa.get(pc)? {
+                NfaInstr::Save(_) if counted == 0 => pc += 1,
+                NfaInstr::Match(MatchKind::Literal(_) | MatchKind::LiteralCi(_, _)) => {
+                    counted += 1;
+                    pc += 1;
+                }
+                _ => return None,
+            }
+        }
+        // Skip trailing zero-width Save, then accept a determinate byte Match.
+        loop {
+            match self.nfa.get(pc)? {
+                NfaInstr::Save(_) => pc += 1,
+                NfaInstr::Match(
+                    MatchKind::Literal(_) | MatchKind::LiteralCi(_, _) | MatchKind::CharClass { .. },
+                ) => return Some(pc),
+                _ => return None, // Split / Accept / AnyChar / anchor → not a mandatory byte
+            }
+        }
+    }
+
     /// Run the NFA, returning submatch slots if a match is found.
     /// For POSIX leftmost-longest: try each start position from left;
     /// for each start position, run all threads to find longest match.
@@ -1647,10 +1681,25 @@ impl<'a> PikeVm<'a> {
         // literal occurs, so jump straight to each occurrence with SIMD memmem
         // instead of probing every start. Leftmost preserved (memmem scans L->R).
         if let Some(lit) = self.literal_prefix {
+            // The mandatory byte-Match right after the prefix, if any: peek it to
+            // skip `run_from` at occurrences where the full match obviously can't
+            // begin (the prefix recurs but the next byte fails) — the dominant cost
+            // of literal-prefix-loop patterns like `error[0-9]` over prose.
+            let peek_pc = self.post_prefix_peek_pc(lit.len());
             let mut from = 0;
             while from + lit.len() <= input_len {
                 let off = find_literal(&self.input[from..], lit, self.literal_icase)?;
                 let start = from + off;
+                if let Some(ppc) = peek_pc {
+                    let next = start + lit.len();
+                    let can_continue = next < input_len
+                        && matches!(&self.nfa[ppc], NfaInstr::Match(mk)
+                            if self.matches_byte(mk, self.input[next]));
+                    if !can_continue {
+                        from = start + 1;
+                        continue;
+                    }
+                }
                 let mut slots = vec![-1i32; self.num_slots];
                 slots[0] = start as i32;
                 if let Some(matched_slots) = self.run_from(

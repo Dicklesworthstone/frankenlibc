@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ regex literal-prefix POST-PREFIX PEEK — 6.59x LOSS → 1.21x WIN vs glibc (cc)
+
+- **LANDED CODE WIN (`string/regex.rs` `execute()`, conformance GREEN).** Literal-prefix patterns
+  (`error[0-9]`) call `run_from` once per prefix occurrence — each re-matching the whole prefix then failing —
+  the measured 5.4–6.6x gap vs glibc's single DFA scan. New `post_prefix_peek_pc` finds the single MANDATORY
+  byte-`Match` right after the prefix (e.g. the `[0-9]`); the loop then PEEKs `input[p+len]` against it and
+  skips `run_from` entirely when it can't match. Sound: a real match at `p` must consume that byte, so a failed
+  peek means no match (verified by the glibc differential fuzz). Returns `None` (no peek, falls through) when
+  the post-prefix is nullable / branches (`Split`/`Accept`) or the leading NFA shape is unexpected — never a
+  wrong skip.
+- **MEASURED (`regex_prefilter_ab_bench` `litprefix_many` = `error[0-9]` over ~680 "error ", vs host glibc
+  `regexec`):** **fl 94.8 µs → 14.71 µs = 6.4x fl-internal**, flipping **6.59x-slower into fl WINS 1.21x**
+  (14.71 µs vs glibc 17.87 µs). The 680 `run_from`s collapse to 680 byte-peeks. No regression (peek only fires
+  for literal-prefix patterns with a mandatory determinate post-byte).
+- **Conformance GREEN:** 8 `conformance_diff_regex` + `startend` + `midpattern_anchor` + capture-heavy
+  `nested_submatch`/`empty_iter_capture` + `bre_anchor_star` — the peek is byte-identical. This closes the
+  literal-prefix-loop gap that build-once/scratch-reuse only nibbled at — the right lever was avoiding the
+  per-occurrence `run_from`, not making it cheaper.
+
 ## 2026-06-27 — ✅ regex build_bulk_loop_table once-per-search — 1.2x on literal-prefix loops (CORRECTS prior) (cc)
 
 - **LANDED CODE WIN + CORRECTION of the prior turn's entry.** I'd reverted "build-once" as ~0-gain judging only
