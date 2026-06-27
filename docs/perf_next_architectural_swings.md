@@ -56,11 +56,22 @@ not speculative.
 ## Swing 3 — accuracy-hard math (erfc / bessel / lgamma)
 
 - **erfc:** **1.63x slower** than glibc (fl `libm::erfc` is fdlibm-derived but
-  unoptimized). Cephes-rational substitution is **DISPROVEN** (065e1d98f): it
-  diverges from glibc's fdlibm by 6–34 ULP and the figure varies by worker glibc
-  version. The only conformant win is a faithful fdlibm-erfc port (split-exp) that
-  reuses fl's fast `super::exp::exp` — bounded (~60 lines) but accuracy-sensitive;
-  gate with a dense ULP-vs-live-glibc assert **on the gate worker**.
+  unoptimized). TWO approaches now **DISPROVEN — do not retry erfc**:
+  1. *Cephes-rational substitution* (065e1d98f): diverges from glibc's fdlibm by
+     6–34 ULP, figure varies by worker glibc version. Accuracy regression.
+  2. *Faithful fdlibm `erfc2` exp-branch port reusing fl's fast `super::exp::exp`*
+     (cc/BoldFalcon, 2026-06-27): conformance was CLEAN (≤3 ULP vs glibc on the
+     gate worker, since the algorithm/coefficients are glibc's own fdlibm), but it
+     is a **1.65x perf REGRESSION** — decisive same-process A/B over |x|∈[1.25,6):
+     `fl_old libm::erfc` **154.85 ns** vs `fl_new erfc2+fast-exp` **254.88 ns**.
+     Root cause: fl's f64 `super::exp::exp` (exp2-based fused kernel) is *slower*
+     than `libm::exp` for the erfc2 arguments, and erfc2 calls exp twice. The f64
+     exp2-kernel "win" is f32-only / vs the slow generic libm exp10 path, NOT vs
+     `libm::exp` itself. Reverted.
+  Conclusion: an erfc speed-up needs a genuinely faster f64 `exp` (or a
+  single-exp reformulation), which is a separate, larger lever — not erfc itself.
+  The host-glibc dlmopen comparator is also unreliable here (varied 99/323/388 ns
+  across runs for the same work); trust only same-process old-vs-new A/B.
 - **bessel (j0/j1/y0/y1) / lgamma:** pure `libm` passthrough, libm is slow vs
   glibc. Risky: zeros (bessel) and lgamma≈0 at x=1,2 cause ULP blow-up; any
   rational substitution carries the same cross-worker glibc-ULP divergence as the
