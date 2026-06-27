@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ❌ DISPROVEN: ARM optimized-routines erf poly for |x|<0.5 (slower than fl's Cephes) (cc)
+
+- **DISPROOF via same-process 3-way A/B (`erfc_glibc_bench`, [1/7-arg trap avoided]):** ported ARM
+  optimized-routines `erf_poly_A` — the divide-free degree-9 (in x²) FMA polynomial for |x|<0.5, on the theory
+  that removing fl's Cephes `x·P(z)/Q(z)` division would speed the common small-x range. **It's a regression:**
+  ARM poly **48.5 ns** vs fl's existing Cephes **29.2 ns** (6 small-x args) = **1.66x SLOWER**. The ~10-FMA
+  Estrin chain is a longer latency-bound dependency than a short Horner pair + one pipelined `divsd`. Reverted.
+- **POSITIVE FINDING (no action needed):** fl's existing Cephes erf for small-x **already WINS glibc — 29.2 ns
+  vs 42.4 ns = 0.69x**. The 1.13x erf "loss" measured the prior turn is entirely in the LARGER-x ranges
+  ([1,2.5) `1-erfc` + the libm tail), NOT small-x. erf small-x is a solved win.
+- **ULP note:** the ARM <0.5 poly WAS robustly within 4 ULP of glibc (dense 499-pt sweep passed, unlike the
+  4-ULP-marginal erfc rational) — so accuracy wasn't the blocker, speed was. **Lesson:** measure a math lever
+  against the EXISTING fl path (not just glibc) in one process — vs glibc alone the ARM poly showed the
+  pre-existing 1.14x and looked neutral; the fl-old-vs-fl-new arm exposed the 1.66x regression. Don't pursue
+  an ARM erf/erfc *polynomial* port for speed; fl's Cephes is already faster. (A genuine erfc win still needs
+  a different algorithm for the [1,2.5) tail, but not this.)
+
 ## 2026-06-27 — ✅ calloc/free(16): fallback sized-slot cache cuts the small-allocation gap ~44% (BlackThrush)
 
 - **LANDED CODE WIN (`malloc_abi.rs`, commit `0593f38c8`).** The strict native-fallback allocator table used to
