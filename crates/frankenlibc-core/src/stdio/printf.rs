@@ -1739,6 +1739,14 @@ fn format_f(value: f64, precision: usize, alt_form: bool) -> String {
 
 /// `%e` / `%E` formatting: scientific notation.
 fn format_e(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> String {
+    // Common case (`%e`, no `#`): delegate to the shared, heap-lean `render_pct_e`
+    // (StackStr intermediate) instead of this function's `alloc::format!` probe —
+    // dedup + fewer allocs. Byte-identical for non-alt, non-uppercase output
+    // (guarded by `printf_float_differential_fuzz`). `alt_form`/uppercase keep the
+    // path below (alt_form forces a trailing point at precision 0; `%E` upper-cases).
+    if !uppercase && !alt_form {
+        return crate::stdlib::ecvt::render_pct_e(value, precision);
+    }
     let e_char = if uppercase { 'E' } else { 'e' };
     if value == 0.0 {
         if precision == 0 {
@@ -1774,8 +1782,26 @@ fn format_e(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     alloc::format!("{mantissa}{dot}{e_char}{sign}{abs_exp:02}")
 }
 
+/// Bench-only hooks for the deployed printf float formatters (post-delegation).
+#[doc(hidden)]
+pub fn __bench_format_g(value: f64, precision: usize) -> String {
+    format_g(value, precision, false, false)
+}
+#[doc(hidden)]
+pub fn __bench_format_e(value: f64, precision: usize) -> String {
+    format_e(value, precision, false, false)
+}
+
 /// `%g` / `%G` formatting: shortest of `%f` or `%e`.
 fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> String {
+    // Common case (`%g`, no `#`): delegate to the shared, heap-lean `render_pct_g`
+    // (StackStr probe + single-pass reposition) instead of this function's
+    // `alloc::format!` probe + helpers — dedup + fewer allocs. Byte-identical for
+    // non-alt, non-uppercase output (guarded by `printf_float_differential_fuzz`);
+    // `alt_form` (keep trailing zeros) / uppercase keep the path below.
+    if !uppercase && !alt_form {
+        return crate::stdlib::ecvt::render_pct_g(value, precision);
+    }
     let p = if precision == 0 { 1 } else { precision };
 
     if value == 0.0 {

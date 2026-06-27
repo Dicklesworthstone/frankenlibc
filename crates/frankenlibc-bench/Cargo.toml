@@ -263,3 +263,8 @@ harness = false
 [[bench]]
 name = "strfrome_glibc_bench"
 harness = false
+
+# printf %g/%e core formatters (post-delegation) vs glibc strfromd, in-process.
+[[bench]]
+name = "printf_float_glibc_bench"
+harness = false

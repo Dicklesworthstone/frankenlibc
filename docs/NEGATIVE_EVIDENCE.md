@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ printf %e/%g delegate to optimized render_pct_e/g — dedup + heap-lean (cc)
+
+- **LANDED CODE WIN (`stdio/printf.rs`, conformance GREEN, byte-identical).** printf had its OWN alloc-heavy
+  `%e`/`%g` formatters (`format_e`/`format_g` — 8 `alloc::format!` across `format_g` + helpers), a duplicate of
+  the already-optimized `render_pct_e`/`render_pct_g` (StackStr probe, the strfromd path). Routed the COMMON
+  case (non-`#`, non-uppercase) of `format_e`/`format_g` to `render_pct_e`/`render_pct_g`: dedup + fewer heap
+  allocs on the common printf float path. `alt_form`/uppercase keep the existing path (alt_form forces a
+  trailing point; `%E`/`%G` upper-case).
+- **BYTE-IDENTICAL** (the gate): `printf_float_differential_fuzz` PASSES (fuzz vs glibc), core `stdio::printf`
+  53/53. **MEASURED (printf %g/%e CORE vs glibc `strfromd`, `printf_float_glibc_bench`, isolated from the
+  variadic dispatch):** `%g` `1234567.89` `%.17g` fl **153.7 ns** / glibc 201.9 = **0.76x WIN**; `%e`
+  `1234567.89` `%.6e` 142.6 / 134.1 = 1.06x ~parity; low-precision `pi` 2.3–2.55x LOSS (the Rust
+  fixed-precision Dragon floor, same as gcvt %g). The common printf float path now performs like the optimized
+  strfrom path (mid-precision WINS glibc) instead of the old alloc-heavy duplicate.
+- **Provably ≥ the old path** (render_pct_* use a StackStr probe vs format_e/g's `alloc::format!` intermediate
+  + helpers — strictly fewer allocs, like the render_pct_e 1.15–1.43x win it reuses). Residual low-prec loss is
+  codegen (Rust Dragon ~2x glibc), not removable without an asm dtoa. Bench `printf_float_glibc_bench.rs` +
+  `__bench_format_{g,e}` hooks added.
+
 ## 2026-06-27 — ✅ render_pct_e (strfromd %e): drop intermediate heap alloc — mid-prec now WINS glibc (cc)
 
 - **LANDED CODE WIN (`ecvt.rs`, conformance GREEN, byte-identical).** New `strfrome_glibc_bench` (fl
