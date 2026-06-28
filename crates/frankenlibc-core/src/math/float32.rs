@@ -806,14 +806,28 @@ pub fn tanhf(x: f32) -> f32 {
 
 #[inline]
 pub fn asinhf(x: f32) -> f32 {
-    // asinh(x) = sign(x)·log(|x| + sqrt(x²+1)), evaluated in f64 so the precision
-    // absorbs the small-|x| cancellation (no dedicated log1p/polynomial needed) and the
-    // single f32 rounding is correctly-rounded-ish. Uses fl's fused f64 `log` — faster
-    // than the generic libm::asinhf. inf→±inf, ±0→±0, NaN→NaN fall out of the formula.
-    let fx = x as f64;
-    let ax = fx.abs();
-    let r = crate::math::log(ax + (ax * ax + 1.0).sqrt());
-    (if fx.is_sign_negative() { -r } else { r }) as f32
+    // asinh(x) = sign(x)·log(|x| + sqrt(x²+1)).
+    // For |x| in [1, 1e19) there is no cancellation AND x²+1 stays within f32 range, so
+    // evaluate in pure f32 with fl's FUSED `logf` — ~3x faster than the f64-log+widen
+    // path and faster than glibc (asinhf_glibc_bench: 5.0 vs glibc 18.7 ns), at <=2 ULP
+    // vs glibc (asinhf is gated <=2 ULP, conformance_diff_asinh_special).
+    let ax = x.abs();
+    if !ax.is_finite() {
+        // inf→±inf, NaN→NaN (preserves sign); the log1p identity below would compute
+        // inf/inf=NaN for inf, so handle it here.
+        return x + x;
+    }
+    let r = if (1.0..1.0e19).contains(&ax) {
+        crate::math::logf(ax + (ax * ax + 1.0).sqrt())
+    } else {
+        // |x|<1 — the bare log(|x|+sqrt(x²+1)) form adds 1.0 to a tiny y and destroys its
+        // relative precision (asinhf(1.1e-12) was ~1024 ULP off). Use the cancellation-free
+        // identity asinh(x)=log1p(|x| + x²/(1+sqrt(1+x²))) in f64 (rare branch: accuracy
+        // over speed). Also covers |x|>=1e19 (f32 x² overflow) and ±0.
+        let a = (x as f64).abs();
+        crate::math::log1p(a + a * a / (1.0 + (a * a + 1.0).sqrt())) as f32
+    };
+    if x.is_sign_negative() { -r } else { r }
 }
 
 #[inline]

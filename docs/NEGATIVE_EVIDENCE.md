@@ -6779,3 +6779,25 @@ passed 23/23, and `cargo test -p frankenlibc-abi --test malloc_abi_test -- --noc
 one existing ignored test. Standalone `rustfmt --edition 2024 --check
 crates/frankenlibc-core/src/malloc/allocator.rs` passed. Targeted `cargo clippy -p frankenlibc-core
 --all-targets -- -D warnings` remains blocked by unrelated pre-existing lint debt outside `malloc/allocator.rs`.
+
+### 2026-06-28 — ✅ `asinhf` f32 fast-path KEEP (0.81x WIN) + latent small-|x| accuracy bug FIXED (1024 ULP → ≤2) — BlackThrush
+
+Deployed `asinhf` (`crates/frankenlibc-core/src/math/float32.rs`) now evaluates the no-cancellation
+range `|x| ∈ [1, 1e19)` in pure f32 with fl's fused `logf` (`logf(|x|+sqrt(x²+1))`) instead of widening
+every call to f64 — the f64-log+widen path was ~3x slower for the common range. Measured in-process A/B
+(`asinhf_glibc_bench`, worker `ovh-a`, same run): fl deployed **4.14 ns** vs glibc **5.10 ns** =
+**0.81x WIN** (candidate mirror 4.15 ns, identical).
+
+While hardening the bench (replaced the old `[-20,20]`-only ULP sweep with a log-spaced full-range sweep
+over `|x| ∈ [1e-12, 1e30]`, both signs), it surfaced a **pre-existing latent correctness bug**: the
+small-|x| fallback `log(|x| + sqrt(x²+1))` adds `1.0` to a tiny `y`, destroying its relative precision —
+`asinhf(1.1194e-12)` was **1024 ULP** off glibc. The old `conformance_diff_asinh_special` gate missed it
+because its single small sample `1e-10` happens to round favorably. Fixed with the cancellation-free
+identity `asinh(x) = log1p(|x| + x²/(1+sqrt(1+x²)))` evaluated in f64 (rare branch — accuracy over speed;
+also covers `|x| ≥ 1e19` f32 x² overflow and ±0), with inf/NaN short-circuited up front (the `x²/(1+…)`
+form computes `inf/inf=NaN` for inf). Hot `[1,1e19)` fast path unchanged.
+
+Correctness: `asinhf_glibc_bench` worst ULP now **≤2** over `|x| ∈ [1e-12, 1e30]` (assertion-enforced;
+was the only failing point) + exact inf/±0 special cases; `cargo test -p frankenlibc-abi --test
+conformance_diff_asinh_special` passed **2/2** (asinh + asinhf). The bench's `candidate` mirror was
+updated to track the deployed form byte-for-byte.

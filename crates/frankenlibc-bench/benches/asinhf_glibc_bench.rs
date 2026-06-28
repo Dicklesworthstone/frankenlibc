@@ -18,16 +18,19 @@ unsafe extern "C" {
 
 #[inline]
 fn candidate(x: f32) -> f32 {
+    // Corrected deployed form: fast f32 logf only on [1,1e19) (no cancellation AND no
+    // f32 x² overflow); f64 cancellation-free log1p identity elsewhere (small-|x|, where
+    // the bare log(|x|+sqrt(x²+1)) form lost ~1024 ULP; large-|x| overflow; ±0). inf/nan
+    // short-circuited. Matches frankenlibc_core::math::asinhf.
     let ax = x.abs();
-    let r = if ax >= 1.0 {
-        // |x| >= 1: x + sqrt(x^2+1) >= 1+sqrt(2), no cancellation — pure f32 with the
-        // fused fast logf.
+    if !ax.is_finite() {
+        return x + x;
+    }
+    let r = if (1.0..1.0e19).contains(&ax) {
         math::logf(ax + (ax * ax + 1.0).sqrt())
     } else {
-        // small |x|: cancellation in x + sqrt(x^2+1) ≈ 1; widen to f64 (rare branch).
-        let fx = x as f64;
-        let axd = fx.abs();
-        math::log(axd + (axd * axd + 1.0).sqrt()) as f32
+        let a = (x as f64).abs();
+        math::log1p(a + a * a / (1.0 + (a * a + 1.0).sqrt())) as f32
     };
     if x.is_sign_negative() { -r } else { r }
 }
@@ -53,20 +56,27 @@ fn bench(c: &mut Criterion) {
     // Dense ULP sweep over [-20,20] incl the small-|x| region.
     let mut worst = 0u64;
     let mut wx = 0.0f32;
-    for k in 0..40000u32 {
-        let x = -20.0 + (k as f32) * (40.0 / 40000.0);
-        let cand = candidate(x);
-        let g = unsafe { host_asinhf(x) };
-        let u = ((cand.to_bits() as i64) - (g.to_bits() as i64)).unsigned_abs();
-        if u > worst { worst = u; wx = x; }
+    // FULL-RANGE sweep incl tiny, mid-fast-path, the 1e19 overflow boundary, and large x
+    // (the old [-20,20]-only sweep MISSED the f32 x² overflow that the corrected branch
+    // now handles via the f64 fallback). Log-spaced |x| in [1e-12, 1e30], both signs.
+    for k in 0..60000u32 {
+        let t = k as f64 / 60000.0;
+        let mag = (10.0_f64.powf(-12.0 + t * 42.0)) as f32; // 1e-12 .. 1e30
+        for x in [mag, -mag] {
+            let cand = candidate(x);
+            let g = unsafe { host_asinhf(x) };
+            if cand.is_nan() && g.is_nan() { continue; }
+            let u = ((cand.to_bits() as i64) - (g.to_bits() as i64)).unsigned_abs();
+            if u > worst { worst = u; wx = x; }
+        }
     }
-    eprintln!("asinhf candidate vs glibc worst ULP over [-20,20] = {worst} at x={wx}");
-    // special cases
+    eprintln!("asinhf candidate vs glibc worst ULP over |x| in [1e-12,1e30] = {worst} at x={wx}");
+    // special cases (exact)
     for &(x, _name) in &[(f32::INFINITY, "inf"), (f32::NEG_INFINITY, "-inf"), (0.0f32, "+0"), (-0.0f32, "-0")] {
         let (cand, g) = (candidate(x), unsafe { host_asinhf(x) });
         assert_eq!(cand.to_bits(), g.to_bits(), "asinhf special case x={x} cand={cand} glibc={g}");
     }
-    assert!(worst <= 4, "asinhf candidate exceeds 4 ULP vs glibc (worst {worst} at x={wx})");
+    assert!(worst <= 2, "asinhf candidate exceeds 2 ULP vs glibc (worst {worst} at x={wx})");
 
     let inp: Vec<f32> = (0..64).map(|k| -20.0 + k as f32 * 0.625).collect();
     let mut g = c.benchmark_group("asinhf");
