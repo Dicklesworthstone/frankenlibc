@@ -6829,3 +6829,29 @@ signs (assertion ≤2, enforced) + exact ±0/±1 special cases. Conformance GREE
 frankenlibc-abi --test conformance_diff_fp_exceptions --test conformance_math_errno` passed
 (atanhf pole/domain FE_DIVBYZERO/FE_INVALID + errno preserved — those inputs never enter the
 fast band). The poles/domain are untouched by construction.
+
+### 2026-06-28 — ✅ f64 `asinh` [1,16) midrange bare-log kernel KEEP (2.0x self / 0.42–0.68x WIN vs glibc) — BlackThrush
+
+`math_passthrough_survey_bench` flagged f64 `asinh` at **1.20x LOSS** vs glibc (the only
+non-bessel f64 transcendental gap; j0/y0 ~1.25x are hard bessel ports). The loss sits in the
+`[1,16)` band, which deployed `asinh` served via `libm::asinh` (the `|x|≥16` band already uses
+an asymptotic series; `|x|<1` keeps libm for the small-x cancellation). For `|x|∈[1,16)`,
+`x+√(x²+1) ≥ 1+√2` has **no cancellation**, so the plain `log(|x|+√(x²+1))` with fl's fused f64
+`log` (one sqrt + one fused log) is both accurate and far cheaper than `libm::asinh`'s internal
+log+branch path. This is **NOT** the previously-rejected log1p form (`log1p(|x| + x²/(√(x²+1)+1))`,
+1.80x — extra divide + non-inlined log1p); the bare log avoids both.
+
+Measured in-process A/B (`asinh_f64_ab_bench`, local; timing input = 64 pts in `[1,16)`, both signs):
+
+| impl | criterion median | p50-loop | vs glibc |
+|---|---:|---:|---:|
+| old_libm (deployed midrange) | 12.88 ns | 14.88 ns | ~1.2–1.4x LOSS |
+| **candidate (deployed)** | **6.43 ns** | 6.27 ns | **0.42–0.68x WIN** |
+| host glibc | 13.47–17.5 ns (noisy) | 9.23 ns | — |
+
+candidate vs old_libm = **2.0x self-speedup**; candidate beats glibc on both estimators (criterion
+0.42x; the more-stable p50-loop 0.68x — glibc's criterion arm was noisy here). Correctness: worst
+**2 ULP** over `|x|∈[1,16)` both signs (assertion ≤2, enforced; worst at the x=1.0014 band edge —
+asinh is gated ≤2 ULP). Conformance GREEN: `conformance_diff_asinh_special` 2/2 (covers x=1.0/2.0
+in the new band) + `frankenlibc-core --lib trig` 23/23 (incl `asinh_large_asymptotic_within_4_ulps`).
+Mirrors the f32 `asinhf` lever; the `|x|≥16` asymptotic and `|x|<1` libm bands are untouched.

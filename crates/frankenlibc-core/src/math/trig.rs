@@ -248,8 +248,16 @@ pub fn asinh(x: f64) -> f64 {
         let r = crate::math::log(ax) + core::f64::consts::LN_2 + z * p;
         return if x.is_sign_negative() { -r } else { r };
     }
-    // The midrange log1p form (asinh = log1p(|x| + x²/(√(x²+1)+1))) measured
-    // slower than glibc (1.80x); libm::asinh remains tighter below the large tail.
+    if ax >= 1.0 {
+        // Midrange [1,16): x+√(x²+1) ≥ 1+√2 — NO cancellation — so the PLAIN log form
+        // (one sqrt + fl's fused f64 `log`) is accurate to ≤2 ULP (asinh is gated ≤2 ULP)
+        // and beats libm::asinh's heavier internal log+branch path. This is NOT the
+        // rejected log1p form (asinh = log1p(|x| + x²/(√(x²+1)+1)), 1.80x — extra divide +
+        // non-inlined log1p); the bare log avoids both.
+        let r = crate::math::log(ax + (ax * ax + 1.0).sqrt());
+        return if x.is_sign_negative() { -r } else { r };
+    }
+    // |x| < 1: x+√(x²+1) → 1 cancellation needs extra precision — libm::asinh is tighter.
     libm::asinh(x)
 }
 

@@ -324,6 +324,11 @@ harness = false
 name = "atanhf_glibc_bench"
 harness = false
 
+# f64 asinh [1,16) midrange candidate (bare-log fused kernel) vs libm vs glibc.
+[[bench]]
+name = "asinh_f64_ab_bench"
+harness = false
+
 # Reliable same-process survey: fl f64 exact binary ops (fmod/remainder) vs glibc.
 [[bench]]
 name = "fmod_survey_bench"
