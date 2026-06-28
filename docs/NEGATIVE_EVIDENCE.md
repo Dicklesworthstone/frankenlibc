@@ -6,6 +6,33 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 - fputs write-stream TLS pointer cache REJECTED (1.106x smoke vs ORIG; 2.77x LOSS vs glibc)
+
+- **DISPROVEN / REVERTED (BlackThrush):** tested an RCU/QSBR-inspired last-write-stream cache for the
+  remaining strict-mode `fputs` gap. The candidate kept a thread-local `(stream id, registry epoch,
+  StdioStream*)` entry and used it only while the existing global registry mutex was already held; stream
+  inserts/removes bumped the epoch so `fclose`, `freopen`, `fmemopen`, `fdopen`, and `fopencookie` invalidated
+  stale pointers. This targeted repeated writes to the same `fmemopen` stream by removing the HashMap lookup
+  under the still-global lock.
+- **MEASURED (`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`, per-crate `rch exec`, Cargo
+  release-profile spelling `--profile release`):** clean `origin/main` baseline on RCH worker `hz2` with
+  `cargo bench -p frankenlibc-bench --profile release --features abi-bench --bench fputs_glibc_bench --
+  fputs_8B --noplot --sample-size 20 --warm-up-time 1 --measurement-time 2` measured
+  `fputs_8B/frankenlibc_abi` **3.5434 us** mean (`[3.4146, 3.6896]`) vs host glibc **961.69 ns** mean
+  (`[922.89 ns, 1.0319 us]`) = **3.68x slower than glibc**. The candidate remote-required rerun on `hz2`
+  was blocked by `rch` (`no admissible workers: insufficient_slots=3,hard_preflight=1`), so no same-worker
+  keep proof exists. The available `rch` local fallback smoke run measured candidate FrankenLibC **3.9200 us**
+  mean (`[3.8507, 3.9755]`) vs host glibc **1.4131 us** mean (`[1.3836, 1.4468]`) = **2.77x slower than
+  glibc**. Its rough ratio vs ORIG is **1.106x** by FrankenLibC mean, and Criterion reported **No change in
+  performance detected** (`[-14.793%, -0.7948%, +11.873%]`, p=0.93); because the candidate run fell back
+  local, this is rejection smoke only, not acceptance evidence.
+- **VERDICT:** rejected as ~0-gain/no-ship; source changes were manually reverted before commit. The remaining
+  `fputs` gap is not a HashMap-lookup problem under the global lock. Do not retry generation-guarded
+  write-stream pointer caches as a standalone lever; the next real lever must remove or shard the global
+  registry lock itself via per-FILE/per-stream state.
+- **Validation note:** the candidate `cargo check -p frankenlibc-abi --lib` passed with the existing warning
+  set before source revert. No code was retained, so behavior is unchanged by construction.
+
 ## 2026-06-27 — ❌ lock-free native_stdio FILE*-cache REJECTED (~0-gain; masked by main registry lock)
 
 - **DISPROVEN / REVERTED (BoldFalcon):** follow-up to the landed `standard_stream_id`
