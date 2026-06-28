@@ -2455,6 +2455,31 @@ fn fmemopen_write_creates_stream() {
 }
 
 #[test]
+fn fmemopen_read_cursor_tracks_seek_ftell_and_eof() {
+    let mut buf = *b"abcdef";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+
+    assert_eq!(unsafe { fgetc(stream) }, b'a' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'b' as c_int);
+    assert_eq!(unsafe { ftell(stream) }, 2);
+    assert_eq!(unsafe { fseek(stream, -1, libc::SEEK_CUR) }, 0);
+    assert_eq!(unsafe { fgetc(stream) }, b'b' as c_int);
+
+    unsafe { rewind(stream) };
+    assert_eq!(unsafe { ftell(stream) }, 0);
+    assert_eq!(unsafe { fgetc(stream) }, b'a' as c_int);
+
+    while unsafe { fgetc(stream) } != libc::EOF {}
+    assert_ne!(unsafe { feof(stream) }, 0);
+    unsafe { clearerr(stream) };
+    assert_eq!(unsafe { feof(stream) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
 fn fscanf_leaves_unparsed_input_on_mem_stream() {
     // bd-2g7oyh.180: fscanf must consume exactly the parsed prefix and leave
     // the rest of the stream readable, like glibc. The bulk read previously

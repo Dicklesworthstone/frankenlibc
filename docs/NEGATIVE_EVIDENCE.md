@@ -6,6 +6,40 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 — ✅ read-only `fmemopen` `fgetc` fast cursor LANDED (0.367x vs ORIG; 2.72x faster)
+
+- **LANDED CODE WIN (BlackThrush):** added a narrow fast cursor for read-only
+  fixed-memory `fmemopen(..., "r")` streams. `fgetc` now serves this case through
+  an atomic per-stream cursor after one TLS/registry lookup, bypassing the global
+  `StreamRegistry` mutex on the hot byte-at-a-time path. Cursor state is synced
+  back before position/EOF queries and disabled before bulk/mutating operations
+  (`fread`, `fgets`, scanf, `ungetc`, close/flush/reopen/purge), so canonical
+  stream semantics own mixed-mode behavior.
+- **MEASURED (`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`,
+  same RCH worker `vmi1264463`, per-crate `frankenlibc-bench`, Cargo release
+  profile spelling `--profile release`):** command shape
+  `cargo bench -j 1 -p frankenlibc-bench --profile release --features abi-bench
+  --bench stdio_mt_contention_bench -- stdio_mt_contention --noplot
+  --sample-size 20 --warm-up-time 1 --measurement-time 2`.
+  Clean-main ORIG measured `stdio_mt_contention_8t/frankenlibc_abi`
+  **25.767 ms** mean (`[21.362, 30.773]`) vs host glibc **4.2780 ms**
+  (`[3.6531, 5.0074]`) = **6.02x slower than glibc**. Candidate measured
+  FrankenLibC **9.4653 ms** mean (`[6.4990, 13.126]`) on the same worker and
+  command. **candidate/ORIG = 9.4653 / 25.767 = 0.367x** (2.72x faster).
+  Candidate's same-run host-glibc arm was noisy/slow (**10.478 ms** mean,
+  `[7.4856, 15.146]`, Criterion warned it could not complete the sample budget),
+  so the keep proof is the same-worker ORIG ratio, with glibc context recorded
+  only for frontier tracking.
+- **Conformance GREEN:** `cargo check -j 1 -p frankenlibc-abi --lib` passed via
+  `rch`. Focused remote tests passed via `rch`: `stdio_abi_test fmemopen`
+  **11 passed / 0 failed / 1 ignored** including the new
+  `fmemopen_read_cursor_tracks_seek_ftell_and_eof` regression,
+  `stdio_abi_test fscanf_leaves_unparsed_input_on_mem_stream` **1/0**,
+  `fgets_differential_test` **1/0**, and
+  `fmemopen_write_differential_test` **2/0**. Existing repository warnings and
+  the missing-SMT-solver build warning were unchanged and are not from this
+  stdio code path.
+
 ## 2026-06-28 — ✅ f64 transcendental passthrough SURVEY (all win vs glibc) + `gamma` inherits lgamma win
 
 - **SURVEY (BoldFalcon), new reusable bench `math_passthrough_survey_bench`:** applied

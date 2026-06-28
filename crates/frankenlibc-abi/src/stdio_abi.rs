@@ -10,11 +10,12 @@
 //! `StdioStream` instances from frankenlibc-core. stdin/stdout/stderr are
 //! pre-registered at well-known sentinel addresses.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::stdio::{
@@ -620,6 +621,155 @@ impl<G> FastRegistryLockResult<G> {
     }
 }
 
+struct FastFixedMemRead {
+    data: Vec<u8>,
+    pos: AtomicUsize,
+    eof: AtomicBool,
+    closed: AtomicBool,
+}
+
+impl FastFixedMemRead {
+    fn new(data: Vec<u8>) -> Self {
+        Self {
+            data,
+            pos: AtomicUsize::new(0),
+            eof: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+        }
+    }
+
+    #[inline]
+    fn read_byte(&self) -> Option<u8> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        loop {
+            let pos = self.pos.load(Ordering::Acquire);
+            if pos >= self.data.len() {
+                self.eof.store(true, Ordering::Release);
+                return None;
+            }
+            if self
+                .pos
+                .compare_exchange_weak(pos, pos + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                self.eof.store(false, Ordering::Release);
+                return Some(self.data[pos]);
+            }
+        }
+    }
+
+    #[inline]
+    fn seek(&self, offset: i64, whence: c_int) -> Option<usize> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let len = self.data.len();
+        let current = self.pos.load(Ordering::Acquire).min(len);
+        let base = match whence {
+            libc::SEEK_SET => 0i64,
+            libc::SEEK_CUR => current as i64,
+            libc::SEEK_END => len as i64,
+            _ => return None,
+        };
+        let next = base.checked_add(offset)?;
+        if next < 0 || next as usize > len {
+            return None;
+        }
+        let next = next as usize;
+        self.pos.store(next, Ordering::Release);
+        self.eof.store(false, Ordering::Release);
+        Some(next)
+    }
+
+    #[inline]
+    fn sync_to_stream(&self, stream: &mut StdioStream) {
+        let pos = self.pos.load(Ordering::Acquire).min(self.data.len());
+        let _ = stream.mem_seek(pos as i64, libc::SEEK_SET);
+        if self.eof.load(Ordering::Acquire) {
+            stream.set_eof();
+        }
+    }
+}
+
+type FastFixedMemReadMap = StreamMap<Arc<FastFixedMemRead>>;
+
+thread_local! {
+    static FAST_FIXED_MEM_READ_CACHE: RefCell<Option<(usize, Arc<FastFixedMemRead>)>> =
+        const { RefCell::new(None) };
+}
+
+fn fast_fixed_mem_reads() -> &'static FastRegistryMutex<FastFixedMemReadMap> {
+    static MAP: OnceLock<FastRegistryMutex<FastFixedMemReadMap>> = OnceLock::new();
+    MAP.get_or_init(|| FastRegistryMutex::new(stream_map()))
+}
+
+fn register_fast_fixed_mem_read(id: usize, data: Vec<u8>) {
+    let cursor = Arc::new(FastFixedMemRead::new(data));
+    let mut map = fast_fixed_mem_reads()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    map.insert(id, cursor);
+}
+
+fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
+    FAST_FIXED_MEM_READ_CACHE.with(|cache| {
+        if let Some((cached_id, cursor)) = cache.borrow().as_ref()
+            && *cached_id == id
+            && !cursor.closed.load(Ordering::Acquire)
+        {
+            return Some(Arc::clone(cursor));
+        }
+
+        let cursor = {
+            let map = fast_fixed_mem_reads()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            map.get(&id).cloned()
+        }?;
+        if cursor.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        *cache.borrow_mut() = Some((id, Arc::clone(&cursor)));
+        Some(cursor)
+    })
+}
+
+fn sync_fast_fixed_mem_read_to_stream(id: usize, stream: &mut StdioStream) -> bool {
+    let Some(cursor) = fast_fixed_mem_read(id) else {
+        return false;
+    };
+    cursor.sync_to_stream(stream);
+    true
+}
+
+fn unregister_fast_fixed_mem_read(id: usize) {
+    let cursor = {
+        let mut map = fast_fixed_mem_reads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.remove(&id)
+    };
+    if let Some(cursor) = cursor {
+        cursor.closed.store(true, Ordering::Release);
+    }
+    FAST_FIXED_MEM_READ_CACHE.with(|cache| {
+        let clear = cache
+            .borrow()
+            .as_ref()
+            .is_some_and(|(cached_id, _)| *cached_id == id);
+        if clear {
+            *cache.borrow_mut() = None;
+        }
+    });
+}
+
+fn sync_and_unregister_fast_fixed_mem_read(id: usize, stream: &mut StdioStream) {
+    let _ = sync_fast_fixed_mem_read_to_stream(id, stream);
+    unregister_fast_fixed_mem_read(id);
+}
+
 struct StreamRegistry {
     streams: StreamMap<StdioStream>,
 }
@@ -882,6 +1032,7 @@ pub(crate) fn stream_purge(stream: *mut c_void) -> bool {
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     match reg.streams.get_mut(&id) {
         Some(s) => {
+            sync_and_unregister_fast_fixed_mem_read(id, s);
             s.purge();
             true
         }
@@ -1773,6 +1924,7 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
 
     // Memory-backed streams: sync data, then clean up.
     if s.is_mem_backed() {
+        sync_and_unregister_fast_fixed_mem_read(id, &mut s);
         unsafe {
             sync_memstream_to_caller(id, &s);
             sync_fmemopen_full(id, &s);
@@ -1917,6 +2069,7 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
                 let ok = if is_cookie_stream(id) {
                     true
                 } else if s.is_mem_backed() {
+                    let _ = sync_fast_fixed_mem_read_to_stream(id, s);
                     unsafe {
                         sync_memstream_to_caller(id, s);
                         sync_fmemopen_full(id, s);
@@ -1947,6 +2100,7 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
     if let Some(s) = reg.streams.get_mut(&id) {
         // Memory-backed streams: sync data to C caller's pointers (open_memstream).
         if s.is_mem_backed() {
+            let _ = sync_fast_fixed_mem_read_to_stream(id, s);
             unsafe {
                 sync_memstream_to_caller(id, s);
                 sync_fmemopen_full(id, s);
@@ -1974,6 +2128,15 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
     let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
+    if let Some(cursor) = fast_fixed_mem_read(id) {
+        if let Some(byte) = cursor.read_byte() {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+            return byte as c_int;
+        }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
     }
@@ -2327,6 +2490,9 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
         unsafe { *buf = 0 };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
         return buf;
+    }
+    if s.is_mem_backed() {
+        sync_and_unregister_fast_fixed_mem_read(id, s);
     }
 
     // Fill the destination under the SINGLE registry lock + policy decision
@@ -2728,6 +2894,7 @@ pub unsafe extern "C" fn fread(
 
     // Memory-backed streams: read directly from the backing.
     if s.is_mem_backed() {
+        sync_and_unregister_fast_fixed_mem_read(id, s);
         // Read straight into the caller's buffer — no throwaway Vec per fread.
         let n = s.mem_read_into(&mut dst[..total]);
         runtime_policy::observe(
@@ -3048,6 +3215,16 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
 
     // Memory-backed streams: seek within the backing buffer.
     if s.is_mem_backed() {
+        if let Some(cursor) = fast_fixed_mem_read(id) {
+            let Some(new_pos) = cursor.seek(offset, whence) else {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+                return -1;
+            };
+            let _ = s.mem_seek(new_pos as i64, libc::SEEK_SET);
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+            return 0;
+        }
         unsafe {
             sync_memstream_to_caller(id, s);
             sync_fmemopen_full(id, s);
@@ -3146,13 +3323,14 @@ pub unsafe extern "C" fn ftell(stream: *mut c_void) -> c_long {
         return -1;
     }
 
-    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get(&id) else {
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(s) = reg.streams.get_mut(&id) else {
         unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return -1;
     };
 
+    let _ = sync_fast_fixed_mem_read_to_stream(id, s);
     let off = s.offset();
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
     off as c_long
@@ -3180,6 +3358,9 @@ pub unsafe extern "C" fn rewind(stream: *mut c_void) {
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         s.clear_err();
+        if let Some(cursor) = fast_fixed_mem_read(id) {
+            cursor.eof.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -3201,8 +3382,9 @@ pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
     {
         return unsafe { host_feof(stream) };
     }
-    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get(&id) {
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(s) = reg.streams.get_mut(&id) {
+        let _ = sync_fast_fixed_mem_read_to_stream(id, s);
         if s.is_eof() { 1 } else { 0 }
     } else {
         0
@@ -3249,6 +3431,9 @@ pub unsafe extern "C" fn clearerr(stream: *mut c_void) {
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         s.clear_err();
+        if let Some(cursor) = fast_fixed_mem_read(id) {
+            cursor.eof.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -3274,6 +3459,7 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
     }
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
+        sync_and_unregister_fast_fixed_mem_read(id, s);
         if s.ungetc(c as u8) { c } else { libc::EOF }
     } else {
         libc::EOF
@@ -4302,10 +4488,7 @@ unsafe fn strict_direct_sprintf_literal(
     printf_result_to_c_int(len)
 }
 
-unsafe fn try_write_direct_s_newline_stream(
-    id: usize,
-    payload: &[u8],
-) -> Option<bool> {
+unsafe fn try_write_direct_s_newline_stream(id: usize, payload: &[u8]) -> Option<bool> {
     let total_len = payload.len().saturating_add(1);
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let s = reg.streams.get_mut(&id)?;
@@ -4432,9 +4615,12 @@ pub unsafe extern "C" fn snprintf(
             Some(DirectPrintfPayload::String(bytes)) => {
                 (bytes.as_ptr(), bytes.len(), false, bytes.len())
             }
-            Some(DirectPrintfPayload::StringNewline(bytes)) => {
-                (bytes.as_ptr(), bytes.len(), true, bytes.len().saturating_add(1))
-            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => (
+                bytes.as_ptr(),
+                bytes.len(),
+                true,
+                bytes.len().saturating_add(1),
+            ),
             None => {
                 // Reuse the segments parsed above instead of re-parsing in render_printf.
                 let rendered =
@@ -4529,9 +4715,12 @@ pub unsafe extern "C" fn sprintf(
             Some(DirectPrintfPayload::String(bytes)) => {
                 (bytes.as_ptr(), bytes.len(), false, bytes.len())
             }
-            Some(DirectPrintfPayload::StringNewline(bytes)) => {
-                (bytes.as_ptr(), bytes.len(), true, bytes.len().saturating_add(1))
-            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => (
+                bytes.as_ptr(),
+                bytes.len(),
+                true,
+                bytes.len().saturating_add(1),
+            ),
             None => {
                 let rendered =
                     unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
@@ -4743,8 +4932,7 @@ pub unsafe extern "C" fn fprintf(
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
-            let written =
-                unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
             if written > 0 {
                 mark_host_io_started(stream);
             }
@@ -4931,8 +5119,7 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
-            let written =
-                unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stdout_ptr) };
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stdout_ptr) };
             if written > 0 {
                 mark_host_io_started(stdout_ptr);
             }
@@ -4983,7 +5170,13 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
     // Bare "%s" fast path: write the string straight to the fd, else render.
     let mut _bare_hold = None;
     let bytes = unsafe {
-        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+        bare_s_or_render(
+            fmt_bytes,
+            &segments,
+            arg_buf.as_ptr(),
+            extract_count,
+            &mut _bare_hold,
+        )
     };
     let total_len = bytes.len();
 
@@ -5030,7 +5223,13 @@ pub unsafe extern "C" fn asprintf(
     // Bare "%s" fast path: use the string directly, else render.
     let mut _bare_hold = None;
     let bytes = unsafe {
-        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+        bare_s_or_render(
+            fmt_bytes,
+            &segments,
+            arg_buf.as_ptr(),
+            extract_count,
+            &mut _bare_hold,
+        )
     };
     let total_len = bytes.len();
     let alloc_size = total_len.saturating_add(1);
@@ -5231,9 +5430,12 @@ pub unsafe extern "C" fn vsnprintf(
             Some(DirectPrintfPayload::String(bytes)) => {
                 (bytes.as_ptr(), bytes.len(), false, bytes.len())
             }
-            Some(DirectPrintfPayload::StringNewline(bytes)) => {
-                (bytes.as_ptr(), bytes.len(), true, bytes.len().saturating_add(1))
-            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => (
+                bytes.as_ptr(),
+                bytes.len(),
+                true,
+                bytes.len().saturating_add(1),
+            ),
             None => {
                 // Reuse the segments parsed above instead of re-parsing in render_printf.
                 let rendered =
@@ -5332,9 +5534,12 @@ pub unsafe extern "C" fn vsprintf(
             Some(DirectPrintfPayload::String(bytes)) => {
                 (bytes.as_ptr(), bytes.len(), false, bytes.len())
             }
-            Some(DirectPrintfPayload::StringNewline(bytes)) => {
-                (bytes.as_ptr(), bytes.len(), true, bytes.len().saturating_add(1))
-            }
+            Some(DirectPrintfPayload::StringNewline(bytes)) => (
+                bytes.as_ptr(),
+                bytes.len(),
+                true,
+                bytes.len().saturating_add(1),
+            ),
             None => {
                 let rendered =
                     unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
@@ -5544,8 +5749,7 @@ pub unsafe extern "C" fn vfprintf(
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
-            let written =
-                unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
             if written > 0 {
                 mark_host_io_started(stream);
             }
@@ -5729,8 +5933,7 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
-            let written =
-                unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stdout_ptr) };
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stdout_ptr) };
             if written > 0 {
                 mark_host_io_started(stdout_ptr);
             }
@@ -5780,15 +5983,20 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_v
     // Bare "%s" fast path: use the string directly, else render.
     let mut _bare_hold = None;
     let bytes = unsafe {
-        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+        bare_s_or_render(
+            fmt_bytes,
+            &segments,
+            arg_buf.as_ptr(),
+            extract_count,
+            &mut _bare_hold,
+        )
     };
     let total_len = bytes.len();
 
     let mut written = 0usize;
     let mut adverse = false;
     while written < total_len {
-        let rc =
-            unsafe { sys_write_fd(fd, bytes[written..].as_ptr().cast(), total_len - written) };
+        let rc = unsafe { sys_write_fd(fd, bytes[written..].as_ptr().cast(), total_len - written) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             if e == errno::EINTR {
@@ -5843,7 +6051,13 @@ pub unsafe extern "C" fn vasprintf(
     // Bare "%s" fast path: use the string directly, else render.
     let mut _bare_hold = None;
     let bytes = unsafe {
-        bare_s_or_render(fmt_bytes, &segments, arg_buf.as_ptr(), extract_count, &mut _bare_hold)
+        bare_s_or_render(
+            fmt_bytes,
+            &segments,
+            arg_buf.as_ptr(),
+            extract_count,
+            &mut _bare_hold,
+        )
     };
     let total_len = bytes.len();
     let alloc_size = total_len.saturating_add(1);
@@ -6151,6 +6365,7 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (Vec<u8>, ScanfR
 
     // Memory-backed streams: read directly (rewind handled by scanf_rewind_mem).
     if s.is_mem_backed() {
+        sync_and_unregister_fast_fixed_mem_read(id, s);
         return (s.mem_read(limit), ScanfReadState::Memory);
     }
 
@@ -6685,12 +6900,13 @@ pub unsafe extern "C" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) ->
         return rc;
     }
 
-    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get(&id) else {
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(s) = reg.streams.get_mut(&id) else {
         unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return -1;
     };
+    let _ = sync_fast_fixed_mem_read_to_stream(id, s);
 
     // fpos_t is opaque; we store the offset as i64 at the start of the struct.
     // On Linux x86_64, fpos_t starts with __pos: i64.
@@ -6899,6 +7115,7 @@ pub unsafe extern "C" fn freopen(
     let mut target_fd = -1;
     if let Some(mut old) = reg.streams.remove(&id) {
         if old.is_mem_backed() {
+            sync_and_unregister_fast_fixed_mem_read(id, &mut old);
             unsafe {
                 sync_memstream_to_caller(id, &old);
                 sync_fmemopen_full(id, &old);
@@ -7081,6 +7298,9 @@ pub unsafe extern "C" fn getdelim(
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
             return -1;
         };
+        if s.is_mem_backed() {
+            sync_and_unregister_fast_fixed_mem_read(id, s);
+        }
         loop {
             match s.read_until_delim(delim_byte, &mut buf) {
                 ReadUntil::Found | ReadUntil::Eof => break,
@@ -8153,6 +8373,11 @@ pub unsafe extern "C" fn fmemopen(
         (v, cl)
     };
 
+    let fast_read_data = if open_flags.readable && !open_flags.writable {
+        Some(data[..content_len].to_vec())
+    } else {
+        None
+    };
     let stream = StdioStream::new_mem_fixed(data, content_len, open_flags);
     let handle = register_memory_stream_with_native_handle(
         stream,
@@ -8168,6 +8393,9 @@ pub unsafe extern "C" fn fmemopen(
         return std::ptr::null_mut();
     }
     let id = canonical_stream_id(handle);
+    if let Some(fast_read_data) = fast_read_data {
+        register_fast_fixed_mem_read(id, fast_read_data);
+    }
 
     if !buf.is_null() {
         let mut guard = mem_fixed_registry()
@@ -8895,9 +9123,6 @@ pub use _io_internal::*;
 //
 // fpurge is a thin wrapper over our existing __fpurge that returns int
 // (the BSD signature) instead of void (the GNU signature).
-
-#[cfg(not(feature = "owned-tls-cache"))]
-use std::cell::RefCell;
 
 #[cfg(feature = "owned-tls-cache")]
 static FGETLN_BUFFER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
@@ -10146,9 +10371,7 @@ mod tests {
         }
 
         let null_args = [0u64];
-        assert!(
-            unsafe { direct_printf_string_payload(b"%s\n", null_args.as_ptr(), 1) }.is_none()
-        );
+        assert!(unsafe { direct_printf_string_payload(b"%s\n", null_args.as_ptr(), 1) }.is_none());
         assert!(unsafe { direct_printf_string_payload(b"[%s]\n", args.as_ptr(), 1) }.is_none());
     }
 
