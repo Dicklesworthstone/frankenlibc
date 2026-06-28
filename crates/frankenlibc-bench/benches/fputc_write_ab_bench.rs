@@ -364,6 +364,25 @@ fn bench(c: &mut Criterion) {
         pfbp / pflp
     );
 
+    // Isolation: no-conversion format ("hello\n", 0 args) — pipeline minus %d/va_list extract.
+    let pf0 = CString::new("hello\n").unwrap();
+    for _ in 0..100 {
+        unsafe { fl::rewind(fl_fp) };
+        for i in 0..M as c_int {
+            unsafe { fl_fprintf(fl_fp, pf0.as_ptr(), i) };
+        }
+    }
+    let mut fp0 = Vec::new();
+    for _ in 0..200 {
+        unsafe { fl::rewind(fl_fp) };
+        let t = Instant::now();
+        for i in 0..M as c_int {
+            unsafe { fl_fprintf(fl_fp, pf0.as_ptr(), i) };
+        }
+        fp0.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / M as f64);
+    }
+    println!("FPRINTF_NOARG fl_p50_ns_per_call={:.4}", p50(&mut fp0));
+
     let mut grp = c.benchmark_group("fputc_write_buffered");
     grp.sample_size(30);
     grp.bench_function("frankenlibc_abi", |b| {

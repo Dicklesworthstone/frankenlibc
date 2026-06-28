@@ -7376,3 +7376,20 @@ removed). A tiny `fprintf("x%d\n")` rendering at ~210 ns vs glibc ~42 ns is a re
 worth a dedicated look (distinct from the variadic-dispatch floor; the printf-format campaign's 21 levers
 may have missed the small-fixed-format path). Filed for a future turn. The stdio stream-cache lever now
 covers the entire write/read byte+line+formatted API.
+
+### 2026-06-28 — 📐 printf format gap PRECISELY ISOLATED: multi-stage pipeline, not itoa/alloc (single-pass rewrite needed) — BlackThrush
+
+Drilled into the fprintf 5.93x gap (prior entry) with an isolation bench (`fputc_write_ab_bench`,
+fprintf to a Full-buffered file). Result: a no-conversion `fprintf("hello\n")` (0 args) = **111 ns**
+already 2.7x glibc (~42 ns), and adding ONE `%d` ⇒ **258 ns (+147 ns)**. Ruled OUT the obvious suspects
+by code inspection: `FormatSegments` is stack-inline (no heap for small formats), `ScratchVec` render
+buffer is POOLED (no per-call malloc), `vprintf_extract_args` extracts only the needed args, and
+`format_signed` is a tight stack-buffer itoa with a common-case fast path. So the gap is STRUCTURAL —
+fl's printf is a MULTI-STAGE pipeline (c_str_bytes scan → parse_format_string → core_count_printf_args
+→ vprintf_extract_args → direct_printf_string_payload check → render_segments, each a separate
+pass/dispatch), ~2.7x on the literal base + ~147 ns per spec for the resolve+dispatch+itoa, vs glibc's
+single tight pass. Closing it needs a SINGLE-PASS printf (parse+extract+render in one walk over the
+format) — a deep, correctness-critical rewrite of the printf core (huge blast radius), NOT a 60m lever.
+Filed precisely so the dedicated effort starts from the diagnosis. The stdio I/O cache campaign
+(fgetc/fread/fputc/fputs/fwrite/puts/printf-write, all ~4-5x) stands; printf-FORMAT is the last stdio
+gap and is its own project. Diagnostic bench arms (FPRINTF / FPRINTF_NOARG / baseline) kept.
