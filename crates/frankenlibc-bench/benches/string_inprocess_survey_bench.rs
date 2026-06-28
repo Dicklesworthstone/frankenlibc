@@ -1167,11 +1167,16 @@ fn bench(c: &mut Criterion) {
     assert_eq!(sc_core, Some(900), "strchr core wrong");
     assert_eq!(sc_1pass, 900, "strchr 1-pass proxy wrong");
     assert!(!sc_gl.is_null(), "strchr glibc wrong");
+    // NOTE (cc/BoldFalcon 2026-06-27): the deployed `strchr` is ALREADY 1-pass
+    // (single `find_byte_or_nul` scan, bd-2g7oyh) — the old "2pass" label was stale.
+    // The ~1.45ns it trails the `strchrnul` arm is just the `Option<usize>` wrap +
+    // the `pos<len && s[pos]==c` bounds check (strchr's required null-vs-found
+    // distinction), NOT a redundant second pass. Not a lever.
     let mut gsc = c.benchmark_group("survey_strchr");
-    gsc.bench_function("frankenlibc_core_2pass", |b| {
+    gsc.bench_function("frankenlibc_core_1pass", |b| {
         b.iter(|| black_box(frankenlibc_core::string::str::strchr(black_box(&sc), b'Z')))
     });
-    gsc.bench_function("frankenlibc_1pass_proxy", |b| {
+    gsc.bench_function("strchrnul_lowerbound_proxy", |b| {
         b.iter(|| black_box(frankenlibc_core::string::str::strchrnul(black_box(&sc), b'Z')))
     });
     gsc.bench_function("host_glibc_inprocess", |b| {
@@ -1192,7 +1197,10 @@ fn bench(c: &mut Criterion) {
     assert_eq!(mc_core, 900, "memchr core wrong");
     assert_eq!(mc_gl, 900, "memchr glibc wrong");
     // strchrnul on this NUL-free buffer is a DIRECT 64-lane c-scan (NUL check never
-    // fires) = an upper-bound proxy for a fold-free memchr (it does 2 eq, memchr needs 1).
+    // fires), tested as a "fold-free memchr" hypothesis. DISPROVEN (cc/BoldFalcon
+    // 2026-06-27): the deployed FOLD memchr (9.1ns) BEATS this direct scan (11.0ns)
+    // here, so dropping the fold would REGRESS — do not "simplify" memchr to a flat
+    // scan. The residual 1.38x vs glibc (6.6ns) is the saturated deeper-AVX2/ifunc gap.
     let mc_direct = frankenlibc_core::string::str::strchrnul(&mc, b'Z');
     assert_eq!(mc_direct, 900, "memchr direct proxy wrong");
     let mut gmc = c.benchmark_group("survey_memchr");
