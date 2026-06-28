@@ -6931,3 +6931,33 @@ route (worst **0 ULP self** over a 200k-pt sweep) and **≤1 ULP vs glibc**. Con
 `conformance_diff_math::diff_exp10f_within_4_ulps` 1/1 + core float32 exp10f 4/4 (incl
 `exp10f_profile_band_preserves_fallback_bits`). Removes the last stray `libm::exp2` call and aligns
 exp10f with exp10 / the fused-kernel standard.
+
+### 2026-06-28 — 🏁 MATH clean-lever vein EXHAUSTED — full audit (no more 60m code levers; remaining = codegen-floor / architectural) — BlackThrush
+
+After 6 math wins this session (asinhf, atanhf, f64 asinh[1,16), f64 lgamma[13,1e15) Stirling, f32
+lgammaf[13,1e15) f64-route, exp10f fused-exp2), a systematic audit confirms the clean math-lever
+vein is closed. Evidence (so this is not re-mined):
+
+- **f64 core transcendentals all fully fused** (verified, not just memory): `exp` fast path covers the
+  ENTIRE finite range `[-708,709]` (`EXP_FAST_MIN/MAX`; libm only for over/underflow/inf/nan);
+  `exp2`/`log`/`log2`/`log10`/`pow`/`exp10` all have fused kernels / in-tree-`__log` routes. `asin/acos/
+  atan/atan2/hypot/atanh` win or parity (math_passthrough_survey). `acosh` parity (1.021 — not a lever).
+- **Stray `libm::` audit** (the exp10f sub-vein): every remaining `libm::exp/exp2/log/pow` call in the
+  math modules is one of — a COLD fallback (over/underflow/subnormal/±0/inf/nan special cases, must stay
+  on libm for exact FE/errno), DELIBERATE & bit-identical + golden-gated (`erfc_profile_band_tail`'s
+  `libm::exp(-x*x)`; swapping risks the erf/erfc golden-sha256 corpus), or DEAD research-test code
+  (`tgamma_lanczos_research`, `#[ignore]`). No further free swaps.
+- **f32→f64-route corollary**: `lgammaf` done; the f32 LOG family (`log2f`/`log10f`) f64-route was
+  already measured-and-REJECTED (float32.rs:138 note — f64 log2 kernel ≥ glibc f32 log2f); `cbrtf`/
+  `hypotf` f64 siblings are themselves `libm`/already-winning (no gain). `tanf/asinf/acosf/atanf` win
+  via libm (f32 survey). Trivial `sqrtf/fabsf/ceilf/…/fmaf` already lower to hardware (libm `arch`
+  feature on). `fmodf`/`remainder` f64-widen/fdlibm ports previously REJECTED.
+- **Complex math** (`c_exp`/`c_log`/`c_sqrt`) already call fl's fused `math::exp/log/sin/cos/hypot`.
+
+REMAINING math gap = ONLY **bessel j0/y0/j1/y1 (~1.25x vs glibc)**, which is `libm::j0` etc. — and
+glibc's `e_j0.c` *is* the same fdlibm algorithm libm ports, so the 1.25x is asm-vs-portable-Rust
+**codegen-floor** (same class as the strcmp/memrchr string/mem floor), NOT an algorithmic lever; a
+verbatim port would be bit-identical work for ~codegen gain only. The other big gaps are architectural
+(deployed malloc ~50x membrane / stdio write ~6-12x registry lock, bd-hqo6b6) — multi-session, off a
+60m turn. Next productive perf turns should target a NON-math family (string/locale algorithmic losses,
+or the architectural beads) rather than re-scanning math.
