@@ -7150,3 +7150,19 @@ single-threaded skip is a marginal (~1.2x at best) win that adds `unsafe` aliasi
 inference) that the stdio write gap is the inline-buffer ARCHITECTURE, not the lock; the only real fix
 is a glibc-style inline per-FILE buffer (atomic multi-session redesign). Kept `fputc_write_ab_bench` as
 the reusable deployed-write yardstick (fl 9.93x vs glibc).
+
+### 2026-06-28 — 📌 fputc component breakdown COMPLETE: every bounded cost already minimized → gap is pure architecture — BlackThrush
+
+Closing the fputc-9.93x diagnosis by checking the remaining per-char components (no code change):
+- registry lock: parking_lot ~10-15 ns; single-threaded skip measured ~0-gain (still 9.93x, prior entry).
+- `entrypoint_scope("fputc")`: ALREADY fast-paths on `strict_passthrough_active()` (returns a skipped
+  guard — no trace_seq / FFI-PCC cert lookup / thread_local in deployed mode). ~0.
+- `decide(ApiFamily::Stdio)`: ALREADY fast-paths the high-frequency Stdio family (forces Allow before the
+  cert lookup). ~1-2 ns (bsearch-class). A `stdio_membrane_fastpath()` skip would be ~0-gain.
+- `observe(Stdio)`: telemetry-only, ~1-2 ns.
+So the membrane is NOT reducible (already minimized). The 34 ns fl-vs-glibc fputc gap is therefore
+ENTIRELY the `registry().lock()`-guarded `HashMap<id,StreamObj>` lookup + per-stream `StreamObj`
+indirection + `buffer_write` logic — i.e. the absence of glibc's inline `*fp->_IO_write_ptr++ = c`.
+CONCLUSION: there is NO bounded safe lever for the stdio write path; the sole fix is the inline-per-FILE
+buffer redesign (atomic, multi-session). The fputc component breakdown is now exhaustively measured/
+verified — future stdio perf work should go straight to the inline-buffer redesign, not micro-levers.
