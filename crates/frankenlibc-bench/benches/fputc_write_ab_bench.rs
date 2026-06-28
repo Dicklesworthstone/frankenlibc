@@ -15,6 +15,13 @@ use std::time::{Duration, Instant};
 use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_abi::stdio_abi as fl;
 
+// fl's no_mangle fprintf (release bench) interposes this fixed-3-arg declaration of the
+// variadic symbol (matching ABI for the fixed args of an `fprintf(fp, "x%d\n", i)` call).
+unsafe extern "C" {
+    #[link_name = "fprintf"]
+    fn fl_fprintf(stream: *mut c_void, fmt: *const c_char, x: c_int) -> c_int;
+}
+
 const N: usize = 4000; // < BUFSIZ (8192) so a full sample stays buffered
 
 type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
@@ -22,6 +29,7 @@ type FputcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
 type FwriteFn = unsafe extern "C" fn(*const c_void, usize, usize, *mut c_void) -> usize;
 type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FreadFn = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
+type FprintfFn = unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_int;
 type RewindFn = unsafe extern "C" fn(*mut c_void);
 
 struct Host {
@@ -30,6 +38,7 @@ struct Host {
     fwrite: FwriteFn,
     fgetc: FgetcFn,
     fread: FreadFn,
+    fprintf: FprintfFn,
     rewind: RewindFn,
 }
 
@@ -53,6 +62,7 @@ fn host() -> &'static Host {
             fwrite: std::mem::transmute::<*mut c_void, FwriteFn>(g(b"fwrite\0")),
             fgetc: std::mem::transmute::<*mut c_void, FgetcFn>(g(b"fgetc\0")),
             fread: std::mem::transmute::<*mut c_void, FreadFn>(g(b"fread\0")),
+            fprintf: std::mem::transmute::<*mut c_void, FprintfFn>(g(b"fprintf\0")),
             rewind: std::mem::transmute::<*mut c_void, RewindFn>(g(b"rewind\0")),
         }
     })
@@ -294,6 +304,64 @@ fn bench(c: &mut Criterion) {
     println!(
         "FREAD16_BASELINE fl_slow_p50_ns_per_call={frdbp:.4} (fast={frdp:.4}) self_speedup={:.3}x",
         frdbp / frdp
+    );
+
+    // fprintf("x%d\n", i) to a Full-buffered file — small formatted write (format + 1 lock).
+    let pf = CString::new("x%d\n").unwrap();
+    for _ in 0..100 {
+        unsafe { fl::rewind(fl_fp) };
+        for i in 0..M as c_int {
+            unsafe { fl_fprintf(fl_fp, pf.as_ptr(), i) };
+        }
+        unsafe { (h.rewind)(g_fp) };
+        for i in 0..M as c_int {
+            unsafe { (h.fprintf)(g_fp, pf.as_ptr(), i) };
+        }
+    }
+    let mut fp_fl = Vec::new();
+    let mut fp_g = Vec::new();
+    for _ in 0..200 {
+        unsafe { fl::rewind(fl_fp) };
+        let t = Instant::now();
+        for i in 0..M as c_int {
+            unsafe { fl_fprintf(fl_fp, pf.as_ptr(), i) };
+        }
+        fp_fl.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / M as f64);
+        unsafe { (h.rewind)(g_fp) };
+        let t = Instant::now();
+        for i in 0..M as c_int {
+            unsafe { (h.fprintf)(g_fp, pf.as_ptr(), i) };
+        }
+        fp_g.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / M as f64);
+    }
+    let (pflp, pfgp) = (p50(&mut fp_fl), p50(&mut fp_g));
+    println!(
+        "FPRINTF fl_p50_ns_per_call={pflp:.4} glibc_p50_ns_per_call={pfgp:.4} ratio={:.3}",
+        pflp / pfgp
+    );
+    frankenlibc_abi::glibc_internal_abi::__libc_single_threaded
+        .store(0, std::sync::atomic::Ordering::Release);
+    for _ in 0..50 {
+        unsafe { fl::rewind(fl_fp) };
+        for i in 0..M as c_int {
+            unsafe { fl_fprintf(fl_fp, pf.as_ptr(), i) };
+        }
+    }
+    let mut fp_b = Vec::new();
+    for _ in 0..200 {
+        unsafe { fl::rewind(fl_fp) };
+        let t = Instant::now();
+        for i in 0..M as c_int {
+            unsafe { fl_fprintf(fl_fp, pf.as_ptr(), i) };
+        }
+        fp_b.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / M as f64);
+    }
+    let pfbp = p50(&mut fp_b);
+    frankenlibc_abi::glibc_internal_abi::__libc_single_threaded
+        .store(1, std::sync::atomic::Ordering::Release);
+    println!(
+        "FPRINTF_BASELINE fl_slow_p50_ns_per_call={pfbp:.4} (fast={pflp:.4}) self_speedup={:.3}x",
+        pfbp / pflp
     );
 
     let mut grp = c.benchmark_group("fputc_write_buffered");

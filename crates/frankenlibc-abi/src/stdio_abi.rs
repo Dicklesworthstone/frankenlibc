@@ -5044,6 +5044,13 @@ pub unsafe extern "C" fn fprintf(
     };
     let total_len = bytes.len();
 
+    // Single-threaded inline fast path: append the rendered bytes to the cached
+    // Full-buffered fd stream if they all fit (skip the registry lock + lookup). Common for
+    // small fprintf/printf to a redirected (Full-buffered) stream. Miss → full path.
+    if try_fwrite_fast(id, bytes) {
+        return printf_result_to_c_int(total_len);
+    }
+
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
@@ -5065,6 +5072,9 @@ pub unsafe extern "C" fn fprintf(
             };
         }
 
+        // Cache the resolved fd stream so subsequent single-threaded printf/write calls
+        // hit the inline fast path (try_fwrite_fast).
+        write_cache_store(id, s as *mut StdioStream);
         let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
@@ -5232,6 +5242,13 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     };
     let total_len = bytes.len();
 
+    // Single-threaded inline fast path: append the rendered bytes to the cached
+    // Full-buffered fd stream if they all fit (skip the registry lock + lookup). Common for
+    // small fprintf/printf to a redirected (Full-buffered) stream. Miss → full path.
+    if try_fwrite_fast(id, bytes) {
+        return printf_result_to_c_int(total_len);
+    }
+
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
@@ -5253,6 +5270,9 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
             };
         }
 
+        // Cache the resolved fd stream so subsequent single-threaded printf/write calls
+        // hit the inline fast path (try_fwrite_fast).
+        write_cache_store(id, s as *mut StdioStream);
         let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
@@ -5862,6 +5882,13 @@ pub unsafe extern "C" fn vfprintf(
     };
     let total_len = bytes.len();
 
+    // Single-threaded inline fast path: append the rendered bytes to the cached
+    // Full-buffered fd stream if they all fit (skip the registry lock + lookup). Common for
+    // small fprintf/printf to a redirected (Full-buffered) stream. Miss → full path.
+    if try_fwrite_fast(id, bytes) {
+        return printf_result_to_c_int(total_len);
+    }
+
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
@@ -5883,6 +5910,9 @@ pub unsafe extern "C" fn vfprintf(
             };
         }
 
+        // Cache the resolved fd stream so subsequent single-threaded printf/write calls
+        // hit the inline fast path (try_fwrite_fast).
+        write_cache_store(id, s as *mut StdioStream);
         let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
@@ -6046,6 +6076,13 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
     };
     let total_len = bytes.len();
 
+    // Single-threaded inline fast path: append the rendered bytes to the cached
+    // Full-buffered fd stream if they all fit (skip the registry lock + lookup). Common for
+    // small fprintf/printf to a redirected (Full-buffered) stream. Miss → full path.
+    if try_fwrite_fast(id, bytes) {
+        return printf_result_to_c_int(total_len);
+    }
+
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
@@ -6067,6 +6104,9 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
             };
         }
 
+        // Cache the resolved fd stream so subsequent single-threaded printf/write calls
+        // hit the inline fast path (try_fwrite_fast).
+        write_cache_store(id, s as *mut StdioStream);
         let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {

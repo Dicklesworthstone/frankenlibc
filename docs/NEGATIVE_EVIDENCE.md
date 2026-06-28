@@ -7360,3 +7360,19 @@ Not separately micro-benched (puts is stdout-bound — redirecting fd 1 would co
 output), so it inherits the measured fast-path win class. CONFORMANCE GREEN: core stdio:: 271/271 +
 stdio_abi 256/256 (covers puts) + conformance_diff_stdio_printf 11/11 + MT stdio_locking_stress 4/4.
 The single-threaded stream-cache lever now covers fgetc/getc/fread + fputc/putc/putchar/fputs/fwrite/puts.
+
+### 2026-06-28 — ✅ stdio STEP 7: printf/fprintf/vprintf/vfprintf write fast path (1.15x self) + format-gap finding — BlackThrush
+
+Routed the 4 stream-printf variants' rendered output through the single-threaded write cache: after
+rendering to `bytes`, `try_fwrite_fast(id, bytes)` appends to the cached Full-buffered stream (skip the
+registry lock + lookup) before falling to the locked path; the slow path now also caches the stream.
+Measured (`fputc_write_ab_bench`, fprintf("x%d\n",i) to a Full-buffered file): fl fast **248.4 ns** vs
+cache-disabled **286.2 = 1.15x self-speedup** (a real ~38 ns lock-skip). Byte-identical; conformance
+GREEN: core stdio:: 271 + conformance_diff_stdio_printf 11/11 + stdio_abi 256/256 + MT stress 4/4.
+
+⚠️ FINDING (separate, bigger lever): fl fprintf is **5.93x vs glibc** (248 vs 42 ns) — the residual is now
+the FORMAT pipeline (parse_format_string + arg extract + render), NOT the lock (which the fast path
+removed). A tiny `fprintf("x%d\n")` rendering at ~210 ns vs glibc ~42 ns is a real format-rendering gap
+worth a dedicated look (distinct from the variadic-dispatch floor; the printf-format campaign's 21 levers
+may have missed the small-fixed-format path). Filed for a future turn. The stdio stream-cache lever now
+covers the entire write/read byte+line+formatted API.
