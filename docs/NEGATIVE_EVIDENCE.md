@@ -7042,3 +7042,26 @@ the Stdlib membrane fast-path lever is EXHAUSTED at this granularity — don't r
 (stdlib_abi.rs byte-identical to main). Kept `bsearch_glibc_bench` (fl no_mangle symbol vs glibc via
 dlmopen) as a reusable bsearch yardstick + this evidence; conformance was never at risk (revert =
 no change).
+
+### 2026-06-28 — 🎯 stdio-write single-threaded lock-skip: precise blocker scoped (architectural; needs registry data/lock split) — BlackThrush
+
+Pursued the canonical glibc stdio lever — skip the write-path lock while single-threaded — and found fl
+ALREADY has the infrastructure: `glibc_internal_abi::__libc_single_threaded` (AtomicU8, flipped to 0 at
+the first `pthread_create`), and it is already used to skip locks in stdlib (`getenv`/`setenv` env-lock
+at stdlib_abi.rs:747, etc.) — measured there as the difference between ~560 ns and ~14 ns. The stdio
+WRITE path (`write_bytes_without_runtime_policy`, stdio_abi.rs:1398) takes an UNCONDITIONAL
+`registry().lock()` and does NOT consult the flag.
+
+WHY it's not a drop-in (the precise blocker): the stdlib skip works because its lock guards EXTERNAL
+raw data (`HOST_ENVIRON`, a libc-owned pointer accessed regardless of the lock) — the lock only
+serializes mutators. fl's stdio registry is `Mutex<Registry>` where the Mutex OWNS the `HashMap` of
+streams, so Rust gives no way to read a stream's buffer without locking. To reuse `__libc_single_threaded`
+here the registry must be restructured so the stream data is reachable lock-free — e.g.
+`SyncUnsafeCell<Registry>` + a separate `Mutex<()>` mutator lock (mirroring the HOST_ENVIRON/ENVIRON_LOCK
+split): single-threaded → `&mut *cell.get()` directly (sound: no other thread exists); multi-threaded →
+take the mutator lock first. That touches EVERY `registry().lock()` call site across stdio_abi.rs (open/
+close/flush/fflush(NULL)-iterates-all/error-eof/buffer), so it is a focused multi-step refactor with full
+stdio + harness conformance — an isolated-worktree, dedicated-turn change (bd-hqo6b6), NOT a 60m drop-in.
+This entry records the exact infrastructure that exists and the exact restructure required, so the next
+attempt starts from the design, not a survey. No code changed this turn (no safe measured win available;
+forcing the refactor would risk conformance).
