@@ -6855,3 +6855,27 @@ candidate vs old_libm = **2.0x self-speedup**; candidate beats glibc on both est
 asinh is gated ≤2 ULP). Conformance GREEN: `conformance_diff_asinh_special` 2/2 (covers x=1.0/2.0
 in the new band) + `frankenlibc-core --lib trig` 23/23 (incl `asinh_large_asymptotic_within_4_ulps`).
 Mirrors the f32 `asinhf` lever; the `|x|≥16` asymptotic and `|x|<1` libm bands are untouched.
+
+### 2026-06-28 — ✅ f64 `lgamma` [13,1e15) tail Stirling kernel KEEP (1.98x self / 0.50x WIN vs glibc) — BlackThrush
+
+The deployed `lgamma_r` fast path covered only `[3,13)` (tgamma+log); the large-x tail
+`[13,∞)` fell to `libm::lgamma`. Added a Stirling-asymptotic kernel for `[13,1e15)`:
+`lgamma(x) = (x-0.5)·ln(x) - x + ½ln(2π) + Σ B_{2k}/(2k(2k-1)·x^{2k-1})`, reusing fl's fused
+`log` + a 5-term Bernoulli series (converges fast for x≥13). The leading `(x-0.5)·ln(x)` is
+carried with its fma residual to stay tight. `lgamma > 0` here so `signgam = +1`; the rare
+`[1e15,∞)` tail (near Γ overflow + its FE_OVERFLOW/ERANGE) stays on libm.
+
+Measured in-process A/B (`lgamma_tail_ab_bench`, local; timing input = 64 pts in [13,113]):
+
+| impl | criterion median | p50-loop |
+|---|---:|---:|
+| old_libm (deployed tail) | 11.25 ns | 14.56 ns |
+| **candidate (deployed)** | **5.67 ns** | 6.42 ns |
+| host glibc | 11.29 ns | 10.02 ns |
+
+candidate vs old_libm = **1.98x self-speedup**; candidate vs glibc = **0.50x WIN**. Correctness:
+worst **2 ULP** over a 200k-point differential sweep `[13,1e15)` vs live glibc (assertion ≤2,
+enforced; worst at the x≈13 band edge). Conformance GREEN: `conformance_diff_gamma_signgam` 1/1 +
+`frankenlibc-core --lib special` 20/20 (incl `lgamma_r_sanity`). The `[3,13)` fast path and the
+poles/small-x/overflow libm bands are untouched. This was the next gap after the f64 `asinh`
+midrange; the only remaining f64 transcendental gap is bessel j0/y0 (~1.25x, a hard glibc port).

@@ -329,6 +329,11 @@ harness = false
 name = "asinh_f64_ab_bench"
 harness = false
 
+# f64 lgamma [13,inf) tail candidate (Stirling asymptotic) vs libm vs glibc.
+[[bench]]
+name = "lgamma_tail_ab_bench"
+harness = false
+
 # Reliable same-process survey: fl f64 exact binary ops (fmod/remainder) vs glibc.
 [[bench]]
 name = "fmod_survey_bench"
