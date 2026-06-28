@@ -338,3 +338,8 @@ harness = false
 [[bench]]
 name = "fmodf_cand_bench"
 harness = false
+
+# asinh x>=16: asymptotic (1-ULP, gate RED) vs sqrt-formula (correct) vs glibc.
+[[bench]]
+name = "asinh_fix_bench"
+harness = false
