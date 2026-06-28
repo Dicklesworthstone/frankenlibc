@@ -7,6 +7,27 @@ saturated" (independently reached on 2026-06-27 across multiple turns). Read thi
 dedicated multi-turn swings or accuracy-hard ports. Each item below is measured,
 not speculative.
 
+## CAMPAIGN STATUS (2026-06-27, cc/BoldFalcon) — frontier saturated; 2 swings remain
+
+- **Non-architectural frontier SATURATED + verified:** math (sin/cos/tan/sincos/exp/
+  log/pow/exp2/exp10/cbrt/hypot/tgamma/sinh/cosh/tanh done; erfc/bessel/lgamma
+  disproven/accuracy-hard), strings/wide (wmemchr/wcsnlen/strrchr/memchr are saturated
+  64-lane SIMD; rawmemchr/wcschrnul/strchr "slow" survey arms were STALE labels),
+  stdio membrane (entrypoint_scope/decide/observe all fast-pathed; sub-locks masked),
+  complex (mature glibc-faithful), threading (mutex_lock is direct futex).
+- **Sole reliable win this campaign:** f64 `sincos` 4.30x (b43b6ca2d, same-process).
+- **2 remaining gaps, BOTH architectural (dedicated turn each, scoped below):**
+  swing-1 stdio MAIN `registry()` lock (6.2–8.6x), swing-2 malloc fallback-table
+  bookkeeping (~7x).
+- **⚠️ COORDINATION BLOCKER:** both swings live in files under ACTIVE concurrent peer
+  edits — `stdio_abi.rs` (cod-a) and `malloc_abi.rs` (BlackThrush) have shown
+  uncommitted peer changes every turn, and peers have already landed/rejected several
+  levers there (fputs parking_lot, fgetc double-lock, calloc guard-bypass/tombstone).
+  A heavy refactor by a *third* agent would collide hard. **The orchestrator should
+  assign each swing to the agent already holding that file, or serialize access** —
+  do not fan a fresh agent onto stdio/malloc concurrently. Until then there is no
+  safe non-colliding architectural work to start.
+
 ## What is already done (do NOT re-attempt)
 
 - **Core string/wide scan family — SATURATED (cc/BoldFalcon 2026-06-27).** Ran
