@@ -293,3 +293,8 @@ harness = false
 [[bench]]
 name = "lgamma_glibc_bench"
 harness = false
+
+# f32 lgammaf vs host glibc + log(tgamma) candidate, in-process (no abi-bench).
+[[bench]]
+name = "lgammaf_glibc_bench"
+harness = false

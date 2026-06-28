@@ -6,6 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ❌ f32 `lgammaf` = log(tgamma) candidate REJECTED (1.29x slower than deployed libm)
+
+- **DISPROVEN (BoldFalcon), no code change:** applied the f64 `lgamma` win pattern
+  (log(tgamma) reusing fl's fast primitives) to f32 `lgammaf`, via the f64-widened
+  `log(tgamma(x as f64)) as f32`. **0 ULP vs glibc** over [3,13), but a perf LOSS.
+- **MEASURED (`rch`, `lgammaf_glibc_bench`, 3-way same-process per-op p50 over [3,13)):**
+  deployed `fl_libm` (libm::lgammaf) **10.67 ns**, candidate **13.76 ns**, glibc
+  **11.71 ns** → candidate is **1.29x slower than deployed libm** (and 1.18x vs glibc).
+- **WHY it didn't transfer (refines the method):** the f64-widen-reuse lever wins only
+  when the `libm` f32 baseline is SLOW — true for `tgammaf` (libm ~7x glibc, so the
+  f64 Cephes path was deployed) but NOT for `lgammaf`: `libm::lgammaf` is already fast
+  (≈parity/win vs glibc at p50). So the f64 recurrence + log + narrow is pure extra
+  work. Keep `libm::lgammaf`. **Always bench the libm baseline vs glibc first** — only
+  apply the reuse-lever where libm is the slow one. New reusable bench kept.
+
 ## 2026-06-28 - fmemopen `fgetc` read-ahead cache REJECTED (no valid ratio vs ORIG; SIGABRT)
 
 - **DISPROVEN / REVERTED (BlackThrush):** tested a memory-backed `fgetc`
