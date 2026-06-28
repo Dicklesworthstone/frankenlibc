@@ -23,6 +23,30 @@ retried and real wins are confirmed with numbers.
 - **Side effect:** this unblocks the deferred `asinhf` 3.7x candidate (≤2 ULP) for a
   future deploy — but that perf change is kept SEPARATE from this conformance fix.
 
+## 2026-06-28 — `fmemopen("w")` per-stream write cursor REJECTED (~0-gain; 0.984x vs ORIG, still 3.47x slower than glibc)
+
+- **LEVER TESTED (BlackThrush):** an alien-graveyard stdio-lock route: bypass
+  the global `registry()` mutex for fixed user-buffer `fmemopen("w")` writes
+  with a per-stream deferred write cursor, while syncing back through the
+  existing `StdioStream`/`sync_fmemopen_full` path on `fflush`/`fclose`/`fseek`.
+  This targeted the documented `fputs_8B` residual after the read-side cursor
+  and registry-probe collapses.
+- **MEASURED (`rch` remote `hz2`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`,
+  per-crate `cargo bench -j 1 -p frankenlibc-bench --profile release --features
+  abi-bench --bench fputs_glibc_bench -- fputs_8B --noplot --sample-size 20
+  --warm-up-time 1 --measurement-time 2`):**
+  clean-main ORIG `fputs_8B/frankenlibc_abi` **3.6227 us** mean
+  (`[3.4545, 3.8099]`) vs host glibc **937.03 ns** mean (`[920.24, 961.16]`);
+  candidate `fputs_8B/frankenlibc_abi` **3.5630 us** mean (`[3.3864, 3.8046]`)
+  vs same-run host glibc **1.0279 us** mean (`[960.94 ns, 1.1046 us]`).
+- **VERDICT:** nominal candidate/ORIG = **0.984x** (about 1.6% faster), but
+  Criterion reported **no change** (`[-6.6223%, -2.1381%, +2.6745%]`,
+  `p = 0.40`) and the candidate still loses to same-run glibc by **3.47x**.
+  The per-stream cursor adds bookkeeping/sync complexity without a measured
+  win; source reverted. Do **not** retry this as a write-side cursor micro-lever.
+  The remaining stdio gap is the broader write-path architecture, not this
+  fixed-buffer cursor.
+
 ## 2026-06-28 — 🔬 `asinh_special` RED root-caused: fl asinh x≥16 asymptotic is ~1 ULP (not bit-exact); cheap fix rejected
 
 - **ROOT CAUSE (BoldFalcon):** the pre-existing-RED `conformance_diff_asinh_special`
