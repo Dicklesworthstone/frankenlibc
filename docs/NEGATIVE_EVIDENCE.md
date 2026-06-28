@@ -6961,3 +6961,32 @@ verbatim port would be bit-identical work for ~codegen gain only. The other big 
 (deployed malloc ~50x membrane / stdio write ~6-12x registry lock, bd-hqo6b6) — multi-session, off a
 60m turn. Next productive perf turns should target a NON-math family (string/locale algorithmic losses,
 or the architectural beads) rather than re-scanning math.
+
+### 2026-06-28 — 🏁 NON-MATH frontier swept too — higher-level string/time/locale all fl-dominant; remaining = codegen-floor + architectural beads — BlackThrush
+
+Followed the math-closure with a non-math sweep (the redirect target). Findings (measured this turn,
+`string_inprocess_survey_bench` same-process fl-core vs in-process glibc, criterion medians):
+
+- **Higher-level string/time/locale fns ALL fl WIN or parity** — `asctime` fl 21.6 ns vs glibc 175.5 ns
+  (**8.1x WIN**), `wcscasecmp` 8.1 vs 153.2 (**19x WIN**, glibc locale-folding), `fnmatch_glob` 32.3 vs 41.4
+  (**WIN**), `fnmatch_stars` 21.8 vs 69.4 (**3.2x WIN**), `strtok_r` 16.9 vs 20.4 (**WIN**), `strcasestr`
+  56.0 vs 52.1 (parity), `gmtime` ~parity. No algorithmic gap in this layer.
+- **Only losses = SIMD-classifier PRIMITIVES** (`strspn_set6` 11.7/5.3 = 2.2x, `strpbrk` 9.4/5.3 = 1.76x,
+  `strcspn_set6` 12.5/7.6 = 1.65x, `strstr` 1.17x) — all the bitmap/shuffle scanners already concluded
+  **codegen-floor** (portable-SIMD-Rust vs glibc asm; the range-test/short-input levers were DISPROVEN
+  earlier). Same class as strcmp/memrchr.
+- **iconv ENCODE** (utf8→DBCS, the one big filed non-math vein) is **proven gather-immune**: glibc's encode
+  is NOT cache-bound (~4.7 ns/char tight scalar, a hard floor); the SIMD-gather that wins 12-15x on DECODE
+  is structurally a dead end here (documented 2026-06-23, two reverts). Not a lever.
+- **stdio stream-id hot path already single-lock-optimized** (BoldFalcon: sentinel addresses resolve with
+  ZERO registry locks; non-sentinel via the single `native_stdio_fd_for_ptr`). `rand`/`random` are
+  trivial lock-protected generators (no gap).
+
+CONCLUSION (math + non-math now both swept): fl is win/parity across the entire clean-lever surface. The
+ONLY remaining gaps are (a) **codegen-floor** SIMD primitives + bessel j0/y0 (portable-Rust-vs-asm, not
+byte-exact-tractable), and (b) the **architectural beads** — deployed malloc ~50x (membrane
+ValidationPipeline; being worked by cod-a) and stdio WRITE ~6-12x (the global `registry().lock()` on every
+buffered write, bd-hqo6b6; sentinel std-stream writes still pay it — a lock-free/TLS-cached per-FILE buffer
+redesign is the fix but is genuinely multi-session + concurrency-risky + contended by live stdio worktrees,
+NOT a 60m change). Future perf turns: pick up an architectural bead with a clean checkout, or accept the
+clean-lever surface is saturated.
