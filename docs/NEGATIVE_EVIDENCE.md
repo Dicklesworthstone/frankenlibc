@@ -7065,3 +7065,25 @@ stdio + harness conformance — an isolated-worktree, dedicated-turn change (bd-
 This entry records the exact infrastructure that exists and the exact restructure required, so the next
 attempt starts from the design, not a survey. No code changed this turn (no safe measured win available;
 forcing the refactor would risk conformance).
+
+### 2026-06-28 — 📌 CORRECTION: iconv DBCS encode is already O(1)-cached (stale "O(128) search" note retired) — BlackThrush
+
+Code-level re-verification of the iconv ENCODE vein (the last big filed non-math gap). The 2026-06-23
+note's premise — that UTF-8→DBCS runs "the general char-by-char loop + an O(128) linear reverse-search
+inside encode_*" — is **STALE**. Current code (`iconv/mod.rs`): every DBCS encoder resolves the codepoint
+via `encode_dbcs2(ch, out, enc_direct)` (mod.rs:40455), an **O(1) index into a `[u32; 0x10000]` direct
+table** that is built ONCE and **cached in a `OnceLock`** per codec (Shift_JIS:40493, CP932:40519,
+IBM943:40608, IBM932:40634, BIG5:40654, EUC-JP:39982, EUC-JP-MS:40080, the `cjk_tables` macro:41928,
+ISO-6937/T.61/ANSI_X3.110, …). `build_enc_direct` (40445) runs in the `get_or_init`, not per call. So
+there is NO per-char linear/binary search to remove — the prior "tight scalar loop" lever target no
+longer exists.
+
+CONSEQUENCE: the iconv-encode residual (cp949 ~1.88x LOSS vs glibc) is purely (a) the UTF-8 decode +
+validate front-end and (b) cache misses on the 256KB direct table for diverse codepoints — exactly what
+the 2026-06-23 SIMD-gather experiment already proved structurally immune (glibc's encode is a cache-
+resident ~4.7 ns/char tight scalar = a hard floor; fl's table is necessarily cache-bound for real text).
+**iconv encode is CLOSED — no algorithmic lever remains (already O(1)-cached); the residual is a
+cache/front-end floor, not removable byte-identically.** With math + string + time + locale + iconv
+(both directions) + search + stdlib-membrane all now verified saturated AT THE CODE LEVEL, the entire
+clean-lever perf surface is confirmed exhausted; the only open work is the architectural stdio/malloc
+beads (scoped above) which need a dedicated isolated-worktree turn.
