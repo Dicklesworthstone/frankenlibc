@@ -630,6 +630,29 @@ impl StdioStream {
         Some(self.buffer.write(data))
     }
 
+    /// Fast single-byte buffered write for the common case (Full-buffered fd stream
+    /// with room). Returns `true` iff the byte was appended with no flush — exactly
+    /// the `buffer_write(&[byte])` path that returns `WriteResult { flush_needed:
+    /// false, .. }`, PLUS the caller's usual `set_offset(offset + 1)`. Returns `false`
+    /// (caller falls back to the full `buffer_write` + flush path, unchanged) for a
+    /// non-writable, mem-backed, Line/unbuffered, or full-buffer stream. Sets the same
+    /// flags as `buffer_write` so observable state is byte-identical.
+    #[inline]
+    pub fn fast_putc(&mut self, byte: u8) -> bool {
+        if !self.open_flags.writable || self.is_mem_backed() {
+            return false;
+        }
+        if self.buffer.fast_putc(byte) {
+            self.flags.io_started = true;
+            self.flags.last_write = true;
+            self.flags.eof = false;
+            self.offset = self.offset.saturating_add(1);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Get any pending write data that needs flushing.
     pub fn pending_flush(&self) -> &[u8] {
         self.buffer.pending_write_data()

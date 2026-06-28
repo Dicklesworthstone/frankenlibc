@@ -7258,3 +7258,19 @@ read-write) requires the FULL stdio conformance suite + an fputc_write_ab_bench 
 focused dedicated turn, not a rushed land (a subtly-broken stdio breaks ALL output). ⚠️ Overlaps cod-a's
 `fputs-rawfast` branch — coordinate before landing. This entry is the ready-to-execute plan + soundness
 proof so the dedicated turn (or cod-a) implements directly.
+
+### 2026-06-28 — ✅ stdio write-cache lever STEP 1/2 LANDED: core `fast_putc` methods (conformance-neutral foundation) — BlackThrush
+
+Landed the riskless half of the designed write-cache lever (prior entry `5ee5cd234`): the two core
+single-byte fast-append methods, byte-identical to the existing buffered-write path and not yet wired
+(so behavior is unchanged — `frankenlibc-core --lib stdio::` 271/271 GREEN):
+- `StreamBuffer::fast_putc(byte)->bool` (buffer.rs): Full-mode + has-space append, identical to
+  `write(&[byte])`'s no-flush branch; Line/None/full → false.
+- `StdioStream::fast_putc(byte)->bool` (file.rs): writable & !mem-backed gate, sets the same flags as
+  `buffer_write` + the offset+1 the ABI normally applies; else false.
+STEP 2 (next dedicated turn): the ABI wiring — `REGISTRY_GEN` bumped via `StreamRegistry::insert_stream/
+remove_stream` helpers (convert all 8 `reg.streams.insert/remove` sites, grep-verified so no gen bump is
+missed → no stale-ptr UAF), the thread-local `WRITE_CACHE`, and the fputc/putc fast path + cache-store on
+the slow-path `get_mut`. That half is the high-blast-radius part (raw-ptr cache across calls) and is gated
+on the FULL stdio conformance suite + an `fputc_write_ab_bench` win; ⚠️ coordinate with cod-a's
+`fputs-rawfast` before landing step 2.

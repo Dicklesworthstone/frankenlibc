@@ -158,6 +158,27 @@ impl StreamBuffer {
         }
     }
 
+    /// Fast single-byte append for the common Full-buffered, has-space case.
+    ///
+    /// Returns `true` iff the byte was appended with NO flush needed — i.e. the mode
+    /// is `Full` and there is room for one more byte. This is BYTE-IDENTICAL to
+    /// `write(&[byte])` when that returns `flush_needed = false` (the `data.len() <=
+    /// remaining` branch of `write_full`): same `data[write_len] = byte`, same
+    /// `write_len += 1`, same `io_started = true`. Every other case (Line/None mode,
+    /// or a full buffer that would flush) returns `false` so the caller takes the
+    /// full `write` path unchanged.
+    #[inline]
+    pub fn fast_putc(&mut self, byte: u8) -> bool {
+        if !matches!(self.mode, BufMode::Full) || self.write_len >= self.capacity {
+            return false;
+        }
+        self.io_started = true;
+        self.ensure_storage();
+        self.data[self.write_len] = byte;
+        self.write_len += 1;
+        true
+    }
+
     /// Get any pending buffered write data that needs flushing.
     pub fn pending_write_data(&self) -> &[u8] {
         if self.write_len == 0 {
