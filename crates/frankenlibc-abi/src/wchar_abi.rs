@@ -2315,12 +2315,16 @@ pub unsafe extern "C" fn mbrtowc(
         return MB_INCOMPLETE;
     }
 
-    // ASCII fast path: with no state object there can be no pending partial
-    // sequence, and a byte < 0x80 is a complete single-byte character whose value
-    // equals its codepoint in every supported locale (C and UTF-8 agree on
-    // 0x00..=0x7F). Skip the partial-state reassembly buffer and the RFC-3629
-    // decoder — byte-identical result for the (very common) ASCII case.
-    if ps.is_null() {
+    // ASCII fast path: when there is NO pending partial sequence — `ps` is null OR holds
+    // an empty state (count byte == 0) — a byte < 0x80 is a complete single-byte character
+    // whose value equals its codepoint in every supported locale (C and UTF-8 agree on
+    // 0x00..=0x7F). Skip the partial-state reassembly buffer and the RFC-3629 decoder.
+    // Byte-identical to the full path: with an empty state the load is a no-op, ASCII
+    // creates no partial, and clearing an already-empty state is a no-op. Extending this
+    // beyond the `ps.is_null()` case is the common stateful hot path (partials only occur
+    // at buffer boundaries), where it was previously paying load+copy+decode+clear.
+    let no_pending = ps.is_null() || unsafe { *(ps as *const u8) } == 0;
+    if no_pending {
         // SAFETY: caller guarantees `s` points to at least `n` (>= 1) bytes.
         let b0 = unsafe { *(s as *const u8) };
         if b0 < 0x80 {
@@ -3048,8 +3052,7 @@ mod wide_format_pool_tests {
     use super::*;
 
     fn wide(chars: &[u32]) -> Vec<libc::wchar_t> {
-        let mut out: Vec<libc::wchar_t> =
-            chars.iter().map(|&ch| ch as libc::wchar_t).collect();
+        let mut out: Vec<libc::wchar_t> = chars.iter().map(|&ch| ch as libc::wchar_t).collect();
         out.push(0);
         out
     }
@@ -4581,7 +4584,11 @@ pub unsafe extern "C" fn mbsinit(ps: *const c_void) -> c_int {
     let raw = unsafe { (ps as *const u8).cast::<[u8; 8]>().read_unaligned() };
     let partial_pending = raw[0] != 0;
     let surrogate_pending = raw[6] != 0 || raw[7] != 0;
-    if partial_pending || surrogate_pending { 0 } else { 1 }
+    if partial_pending || surrogate_pending {
+        0
+    } else {
+        1
+    }
 }
 
 /// `mbrlen` — determine number of bytes in next multibyte character.

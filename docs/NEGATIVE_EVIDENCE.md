@@ -7480,3 +7480,22 @@ GREEN: core stdlib:: 467/467 + conformance_diff_stdlib_random 11/11 + drand48_fa
 + random_initstate_differential_fuzz 2/2 + random_r_reentrant_differential_fuzz 2/2 (all byte-exact vs
 glibc). NOTE: stdlib_abi_test SEGVs on an UNRELATED size-suffix/blocksize test — verified PRE-EXISTING
 (reproduces on clean stdlib_abi.rs via git-stash A/B), not from this change.
+
+### 2026-06-28 — ✅✅ mbrtowc ASCII fast path extended to empty non-null mbstate: 1.46x LOSS → 0.325x WIN — BlackThrush
+
+DIFFERENT primitive (hot text decode). fl mbrtowc only ASCII-fast-pathed `ps == NULL`; with a non-null
+mbstate (the restartable/common case) every byte paid mbstate_partial_load (6-byte read) + reassembly-buf
+copy + utf8_decode_step + mbstate_partial_clear (write). Measured loss: ASCII 25.8 vs glibc 17.7
+ns/byte = 1.46x; multibyte 16.9 vs 6.94 = 2.44x. FIX: gate the ASCII fast path on "no pending partial"
+(`ps.is_null() || *(ps as *const u8) == 0` — mbstate byte[0] is the pending count) instead of just
+`ps.is_null()`. Byte-identical: with an empty state the load is a no-op, an ASCII byte creates no partial,
+and clearing an already-empty state is a no-op (verified by the stateful/streaming fuzz gates). Partials
+only occur at buffer boundaries, so the empty-state case is the overwhelming norm. Re-measured: ASCII
+25.8 → **3.30 ns/byte = 0.325x (now BEATS glibc 3x)**; multibyte stream 2.44x → **1.42x** (its embedded
+ASCII — spaces/punctuation — now fast-paths too). Real text is mostly ASCII ⇒ large practical win.
+CONFORMANCE GREEN: core string::wchar 43 + conformance_diff_mbrtowc 12 + mbrtowc_stateful_differential_fuzz
+7 + mbrtowc_streaming_differential_fuzz 1 + mbrtowc_differential_probe 1 + conformance_diff_mbsrtowcs 1 +
+golden_wchar_conv_reentry 1 (all byte-exact vs glibc). FOLLOW-UP: the residual multibyte 1.42x is the
+actual multibyte chars still doing load/copy/clear on an empty state — decoding directly from `s` when
+pending==0 (skip the reassembly buffer) would close it (duplicates the decode match arms → deferred).
+New bench: mbrtowc_ab_bench (fl vs glibc dlmopen, ASCII + multibyte streams, C.UTF-8 on both).

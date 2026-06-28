@@ -391,3 +391,9 @@ required-features = ["abi-bench"]
 name = "rng_membrane_ab_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# mbrtowc UTF-8 decode vs host glibc, in-process (abi-bench + dlmopen).
+[[bench]]
+name = "mbrtowc_ab_bench"
+required-features = ["abi-bench"]
+harness = false
