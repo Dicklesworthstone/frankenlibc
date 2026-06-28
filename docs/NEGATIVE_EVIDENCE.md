@@ -6,6 +6,40 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 - stdio standard-stream TLS classification cache REJECTED (1.531x vs ORIG; 5.40x LOSS vs glibc)
+
+- **DISPROVEN / REVERTED (BlackThrush):** tested a single-entry thread-local
+  cache in `standard_stream_id` for repeated non-sentinel `FILE *`
+  classification. The intended win was to avoid repeatedly taking the
+  `native_stream_registry` mutex after the first `fmemopen` stream lookup per
+  thread in the 8-thread stdio contention benchmark.
+- **MEASURED (`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`,
+  remote-required per-crate `rch exec`, Cargo release-profile spelling
+  `--profile release`):** clean `main` baseline on RCH worker `vmi1264463`
+  with `cargo bench -j 1 -p frankenlibc-bench --profile release --features
+  abi-bench --bench stdio_mt_contention_bench -- stdio_mt_contention --noplot
+  --sample-size 20 --warm-up-time 1 --measurement-time 2` measured
+  `stdio_mt_contention_8t/frankenlibc_abi` **23.722 ms** mean
+  (`[21.581, 26.178]`) vs host glibc **3.2164 ms** mean (`[2.8602, 3.6476]`)
+  = **7.37x slower than glibc**. Candidate rerun on the same worker measured
+  FrankenLibC **36.307 ms** mean (`[25.003, 50.522]`) vs host glibc
+  **6.7184 ms** mean (`[3.6352, 11.472]`) = **5.40x slower than glibc**.
+  The retained decision metric is FrankenLibC vs ORIG: **1.531x slower** by
+  mean, and Criterion reported **No change in performance detected**
+  (`[+4.2399%, +53.052%, +114.90%]`, p=0.06).
+- **VERDICT:** rejected as a no-ship regression; source changes were manually
+  reverted before commit. Do not retry single-entry `standard_stream_id`
+  classification caches as a standalone lever. The measured gap still points
+  at the main stream registry serialization/per-FILE state design, not the
+  shorter native-stdio classification mutex.
+- **Validation note:** the candidate release bench built and ran on
+  `vmi1264463`. A local `cargo check -j 1 -p frankenlibc-abi --lib` passed
+  before source revert with only the existing warning set. After revert, the
+  focused conformance gate
+  `cargo test -j 1 -p frankenlibc-abi --profile release --test
+  conformance_diff_stdio_ext -- --nocapture` passed on `vmi1264463` (3 passed,
+  0 failed). No code was retained, so behavior is unchanged by construction.
+
 ## 2026-06-28 - fputs write-stream TLS pointer cache REJECTED (1.106x smoke vs ORIG; 2.77x LOSS vs glibc)
 
 - **DISPROVEN / REVERTED (BlackThrush):** tested an RCU/QSBR-inspired last-write-stream cache for the
