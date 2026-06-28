@@ -7,6 +7,28 @@ saturated" (independently reached on 2026-06-27 across multiple turns). Read thi
 dedicated multi-turn swings or accuracy-hard ports. Each item below is measured,
 not speculative.
 
+## MATH CAMPAIGN — COMPLETE (2026-06-28, cc/BoldFalcon): 4 wins + full map + regression benches
+
+The reliable-survey perf campaign is closed. Method = survey fl-vs-glibc reliably, then
+the two-part filter (deployed slower than glibc AND gate is `within_N_ulps` not bit-exact
+`same32/same64`) + a same-run 3-way A/B before landing.
+
+- **Landed wins (regression bench in parens):** `sincos` 4.30x (`sincos_glibc_bench`),
+  `lgamma`[3,13) 1.02x + `gamma` inherits (`lgamma_glibc_bench`), `acoshf` 1.26x
+  (`acoshf_glibc_bench`). Run any of these per-crate to detect a regression of the win.
+- **Surveyed/ruled out (reusable benches kept):** f64 transcendentals all win
+  (`math_passthrough_survey_bench`); f32 transcendentals all win except the
+  bit-exact-gated/marginal ones (`f32_math_survey_bench`); exact binary ops
+  fmod/fmodf clean, remainder/remainderf glibc-hardware-unclosable
+  (`fmod_survey_bench`,`remainder_glibc_bench`,`fmodf_survey_bench`,`fmodf_cand_bench`);
+  cbrt 1.23x win (`cbrt_glibc_bench`); erfc disproven (`erfc_glibc_bench`); lgammaf/
+  asinhf deferred (`lgammaf_glibc_bench`,`asinhf_glibc_bench`).
+- **Deferred (maintainer/contract decisions):** `asinhf` 3.7x candidate exists but
+  `conformance_diff_asinh_special` is a bit-exact `same32` gate → needs a relax-to-≤4-ULP
+  decision; that gate is ALSO pre-existing-RED (glibc-2.42 drift, 1 ULP) and needs a
+  re-tune-or-relax. NOT landed unilaterally (don't loosen a gate to land a perf win).
+- **No more math levers.** Remaining repo perf gaps are the 2 architectural swings below.
+
 ## CAMPAIGN STATUS (2026-06-27, cc/BoldFalcon) — frontier saturated; 2 swings remain
 
 - **Non-architectural frontier SATURATED + verified:** math (sin/cos/tan/sincos/exp/
