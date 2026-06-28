@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 — ❌ f64 `remainder` fdlibm-fmod port REJECTED (slower than deployed typical; glibc hardware-faster) — fmod CLEAN
+
+- **SURVEY (new `fmod_survey_bench`):** fl `fmod` wins (typical 0.94x / stress 0.92x vs
+  glibc — leave it). `remainder` flagged slow (typical 1.53x / stress 2.27x in that run).
+- **CANDIDATE TESTED + REJECTED (new `remainder_glibc_bench`):** `libm::remainder`
+  routes through `remquo` (tracks quotient bits). Ported the classic fdlibm fmod-based
+  remainder using fl's fast `math::fmod`. **Bit-exact verified: 0 mismatches over 2M
+  random + edge cases** (ties/signs/subnormal-y/|x|==|y|/multiples) — the port is
+  correct. But a perf LOSS: per-op p50 typical `fl_deployed 10.3 / candidate 25.2 /
+  glibc 9.1` (candidate 2.5x slower than deployed; deployed ≈ parity with glibc — the
+  survey's 1.5x was worker variance), stress `deployed 70.6 / candidate 53.9 /
+  glibc 14.2` (candidate helps but still 3.8x slower than glibc).
+- **WHY:** glibc's `remainder` is fundamentally faster (hardware-assisted / tighter
+  reduction) than ANY fdlibm-fmod approach — the fmod-port can't close the stress gap
+  (still 3.8x) and regresses the common typical case (extra fmod call + bit-manip vs
+  remquo's inline small-quotient path). No core change; bit-exact port kept in the bench
+  for reference. The real `remainder` stress gap (5x) needs glibc's algorithm/hardware,
+  not an fdlibm port — out of reach without a remainder intrinsic.
+
 ## 2026-06-28 — 🏁 MATH FRONTIER RESOLVED (f64+f32) — remaining f32 hyperbolic candidates closed out
 
 Closure of the reliable-survey math campaign (do not re-probe these). Per the two-part

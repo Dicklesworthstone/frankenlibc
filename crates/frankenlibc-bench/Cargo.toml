@@ -318,3 +318,13 @@ harness = false
 [[bench]]
 name = "acoshf_glibc_bench"
 harness = false
+
+# Reliable same-process survey: fl f64 exact binary ops (fmod/remainder) vs glibc.
+[[bench]]
+name = "fmod_survey_bench"
+harness = false
+
+# f64 remainder fdlibm-fmod candidate (bit-exact) vs deployed vs glibc.
+[[bench]]
+name = "remainder_glibc_bench"
+harness = false
