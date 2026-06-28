@@ -319,6 +319,11 @@ harness = false
 name = "acoshf_glibc_bench"
 harness = false
 
+# f32 atanhf candidate (fast-f32 logf kernel on [0.5,1)) vs deployed vs glibc.
+[[bench]]
+name = "atanhf_glibc_bench"
+harness = false
+
 # Reliable same-process survey: fl f64 exact binary ops (fmod/remainder) vs glibc.
 [[bench]]
 name = "fmod_survey_bench"

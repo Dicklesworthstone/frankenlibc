@@ -861,9 +861,20 @@ pub fn acoshf(x: f32) -> f32 {
 
 #[inline]
 pub fn atanhf(x: f32) -> f32 {
-    // atanh(x) = 0.5·log((1+x)/(1-x)) in f64 (precision absorbs the small-x cancellation).
-    // copysign restores the sign for ±0 (0.5·log(1)=+0 otherwise). |x|>1→log(neg)=NaN,
-    // ±1→±inf. Fused f64 `log` beats libm::atanhf.
+    // atanh(x) = 0.5·log((1+x)/(1-x)).
+    // Fast band |x| ∈ [0.5, 1): Sterbenz's lemma makes `1-|x|` EXACT in f32 for |x| ≥ 0.5
+    // (1/2 ≤ |x| ≤ 2), and `1+|x| ∈ [1.5,2)` is near-exact, so the only error is the fused
+    // f32 `logf`'s own ~1 ULP — evaluate in pure f32 (faster than the f64-log+widen path).
+    // atanh is odd, so compute on |x| and restore the sign. Outside the band — |x| < 0.5
+    // (the (1+x)/(1-x) ratio collapses toward 1 and `logf` near 1 loses the small result's
+    // precision), the poles |x| = 1 (±inf, FE_DIVBYZERO) and the domain error |x| > 1
+    // (NaN, FE_INVALID), plus ±0/inf/NaN — use the exact f64 path (bit-identical to the old
+    // impl, which raises the correct FE flags via the f64 `log`).
+    let ax = x.abs();
+    if (0.5..1.0).contains(&ax) {
+        let r = 0.5 * crate::math::logf((1.0 + ax) / (1.0 - ax));
+        return r.copysign(x);
+    }
     let fx = x as f64;
     let r = 0.5 * crate::math::log((1.0 + fx) / (1.0 - fx));
     (r as f32).copysign(x)

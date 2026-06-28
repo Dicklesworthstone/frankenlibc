@@ -6801,3 +6801,31 @@ Correctness: `asinhf_glibc_bench` worst ULP now **≤2** over `|x| ∈ [1e-12, 1
 was the only failing point) + exact inf/±0 special cases; `cargo test -p frankenlibc-abi --test
 conformance_diff_asinh_special` passed **2/2** (asinh + asinhf). The bench's `candidate` mirror was
 updated to track the deployed form byte-for-byte.
+
+### 2026-06-28 — ✅ `atanhf` f32 fast-path KEEP (1.32x self / 0.78x WIN vs glibc, 1 ULP) — BlackThrush
+
+`atanhf` was the last inverse-hyperbolic still widening **every** input to f64
+(`0.5·log((1+x)/(1-x))`), while its siblings `asinhf`/`acoshf`/`tanhf`/`coshf` all already
+have f32 fast paths. Added a pure-f32 fast band for `|x| ∈ [0.5, 1)`: **Sterbenz's lemma
+guarantees `1-|x|` is computed exactly in f32 for `|x| ≥ 0.5`** (since `1/2 ≤ |x| ≤ 2`), and
+`1+|x| ∈ [1.5,2)` is near-exact, so the only error is the fused f32 `logf`'s own ~1 ULP —
+`0.5·logf((1+|x|)/(1-|x|))` with the sign restored (atanh is odd). Outside the band — small
+`|x| < 0.5` (the ratio collapses toward 1 and `logf` near 1 loses the tiny result's precision),
+the poles `|x| = 1`, the domain error `|x| > 1`, and ±0/inf/NaN — keep the exact f64 path
+(bit-identical to the old impl, correct FE flags).
+
+Measured in-process A/B (`atanhf_glibc_bench`, run locally — workers saturated; local is more
+cache-coherent), timing input = 64 points in the `[0.5,1)` band, both signs:
+
+| impl | criterion median | vs glibc |
+|---|---:|---:|
+| old_f64 (pre-fast-path) | 7.12 ns | 1.03x (~parity) |
+| **candidate (deployed)** | **5.39 ns** | **0.78x WIN** |
+| host glibc | 6.94 ns | — |
+
+Candidate vs old_f64: criterion **−27.5%, p < 0.05** = **1.32x self-speedup**; candidate beats
+glibc **0.78x**. Correctness: `atanhf_glibc_bench` worst ULP **1** over `|x| ∈ [1e-6, 1)` both
+signs (assertion ≤2, enforced) + exact ±0/±1 special cases. Conformance GREEN: `cargo test -p
+frankenlibc-abi --test conformance_diff_fp_exceptions --test conformance_math_errno` passed
+(atanhf pole/domain FE_DIVBYZERO/FE_INVALID + errno preserved — those inputs never enter the
+fast band). The poles/domain are untouched by construction.
