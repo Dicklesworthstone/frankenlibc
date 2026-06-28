@@ -7113,3 +7113,24 @@ Dug a "different primitive" per the directive; all verified optimal, plus two st
 Net: the clean-lever surface remains exhausted; the stdio bead's diagnosis is refined (lock is already
 fast → it's the buffer/indirection architecture), and the harness that verifies it is confirmed working.
 No code changed (no safe measured win; the only candidate is ~0-gain + UB-risk).
+
+### 2026-06-28 — 🏁 PER-PRIMITIVE HUNT CLOSED — stop the 60m micro-survey; stdio redesign is atomic — BlackThrush
+
+Final sweep of the remaining "different primitives" + infra; all already optimal: `strcasecmp`/
+`strncasecmp` (32-byte SIMD case-fold panels + 32-lane mask), and the stdio registry HASHER (the
+deferred "hasher lever") is already a custom FNV single-multiply `StreamIdHasher` (`write_usize` =
+one xor+mul, ~1 ns — not SipHash). Combined with all prior turns, EVERY primitive + infra piece
+examined across math / string / mem / time / locale / iconv / search / stdlib / crypt / multibyte /
+collation / hasher is at its optimal safe-Rust implementation. The clean-lever surface is DEFINITIVELY
+saturated — further 60m per-primitive surveys are confirmed futile (each candidate turns out already
+done).
+
+The SOLE remaining perf lever is the stdio write-path inline-buffer redesign (replace the
+HashMap<id, StreamObj>-behind-lock with glibc-style inline per-FILE buffer pointers). It is genuinely
+ATOMIC: incremental slices either don't help (the win needs the whole indirection removed) or regress
+(e.g. Boxing StreamObj values for pointer-stability adds a deref without the caching payoff). So it
+canNOT be landed conformance-GREEN in a single 60m turn — it needs a DEDICATED multi-turn effort in an
+isolated worktree (harness now builds, so it is verifiable). RECOMMENDATION for the loop: stop issuing
+60m micro-lever turns against this saturated surface; allocate a dedicated multi-turn block for the
+stdio inline-buffer redesign, or accept the port as perf-complete (7 wins landed; win/parity vs glibc
+everywhere except codegen-floor SIMD primitives + bessel).
