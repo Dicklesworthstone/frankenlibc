@@ -328,3 +328,13 @@ harness = false
 [[bench]]
 name = "remainder_glibc_bench"
 harness = false
+
+# Reliable same-process survey: fl f32 exact binary ops (fmodf/remainderf) vs glibc.
+[[bench]]
+name = "fmodf_survey_bench"
+harness = false
+
+# f32 fmodf f64-widen candidate (bit-exact) vs deployed vs glibc.
+[[bench]]
+name = "fmodf_cand_bench"
+harness = false

@@ -6,6 +6,24 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 — ❌ f32 `fmodf` f64-widen candidate REJECTED (worker noise flagged it; deployed already wins) + remainderf unclosable
+
+- **SURVEY (new `fmodf_survey_bench`)** flagged fmodf 1.43x / remainderf 1.44–2.40x slow
+  vs glibc — BUT this was largely worker noise (see below).
+- **fmodf candidate REJECTED (new `fmodf_cand_bench`):** `fmod(x as f64, y as f64) as
+  f32` reuses fl's fast f64 fmod and is **bit-exact (0 mismatches / 3M random+edge)** —
+  but the DECISIVE same-run 3-way A/B shows it SLOWER: typical `fl_deployed 6.42 /
+  candidate 8.77 / glibc 7.67`, stress `7.36 / 15.81 / 7.83`. Deployed `libm::fmodf` is
+  actually FAST (wins glibc 0.84x typical); the survey's 18.6ns reading was a slow-worker
+  artifact (the same-process fmodf/glibc ratio swung 1.43x→0.84x across runs). The
+  f64-widen just adds overhead. No core change.
+- **remainderf:** slow like f64 remainder; glibc is hardware/algo-faster than any fmod
+  approach (see the remainder entry below) → unclosable. Skip.
+- **LESSON (reinforced):** a survey's single-impl fl-vs-glibc ratio is worker-variance
+  prone for sub-20ns ops; only the **same-run 3-way A/B (deployed vs candidate vs glibc
+  together)** is decisive. The survey is a *candidate finder*, never the verdict.
+  Exact-op group (f64+f32) now fully resolved: NO levers.
+
 ## 2026-06-28 — ❌ f64 `remainder` fdlibm-fmod port REJECTED (slower than deployed typical; glibc hardware-faster) — fmod CLEAN
 
 - **SURVEY (new `fmod_survey_bench`):** fl `fmod` wins (typical 0.94x / stress 0.92x vs
