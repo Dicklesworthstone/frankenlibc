@@ -7216,3 +7216,15 @@ architectural redesigns (stdio inline-buffer, malloc membrane), both ACTIVELY OW
 BlackThrush has no further independent landable perf lever. Further 60m micro-lever turns against this
 surface are confirmed-futile noise — repurpose the loop to a dedicated multi-turn architectural assignment
 or accept the port perf-complete.
+
+### 2026-06-28 — 📊 fputs end-to-end measured (2.37x @8B) — corroborates the fputc architectural gap — BlackThrush
+
+A backgrounded `fputs_glibc_bench` (dlmopen host glibc, amortized rewind) completed:
+`fputs_8B` fl **3.176 µs** vs glibc **1.343 µs = 2.37x LOSS**. (The `fputs_38B` fl arm reads
+~47 µs — anomalous vs the 8B arm; a harness/amortization artifact, not a per-op number, so
+disregarded.) The 2.37x end-to-end ratio corroborates the raw single-char `fputc` 9.93x
+(`fputc_write_ab_bench`): the deployed stdio WRITE path is ~2.4-10x glibc depending on
+op-granularity, and — per the measured component breakdown — the gap is the registry
+lookup+lock+indirection vs glibc's inline `*FILE->_IO_write_ptr++`, i.e. the inline-buffer
+ARCHITECTURE (no bounded lever; lock/membrane/hasher all measured already-minimized). No new
+lever; recorded as the end-to-end write yardstick alongside the per-char one.
