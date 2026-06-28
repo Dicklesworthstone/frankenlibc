@@ -7166,3 +7166,22 @@ indirection + `buffer_write` logic — i.e. the absence of glibc's inline `*fp->
 CONCLUSION: there is NO bounded safe lever for the stdio write path; the sole fix is the inline-per-FILE
 buffer redesign (atomic, multi-session). The fputc component breakdown is now exhaustively measured/
 verified — future stdio perf work should go straight to the inline-buffer redesign, not micro-levers.
+
+### 2026-06-28 — 🤝 HANDOFF: bounded-lever surface exhausted; architectural gaps actively owned by cod-a — BlackThrush
+
+This turn confirmed the last untouched non-contended primitives are already optimal (`ffs`/`ffsl`/`ffsll`
+= `trailing_zeros` intrinsic; the fputc membrane components — entrypoint_scope/decide/observe — already
+fast-pathed, prior entry). No bounded safe lever remains anywhere in the clean surface.
+
+The two remaining gaps are BOTH architectural AND actively in-progress in other agents' worktrees:
+- **stdio write ~10x** (`fputc` 9.93x, measured): being worked in `.scratch/frankenlibc-cod-a-fputs-rawfast`
+  (dated 2026-06-28, 369 changed files = a full redesign branch). My contribution = the measured
+  component breakdown (gap = HashMap+indirection+buffer, NOT lock/membrane) + the `fputc_write_ab_bench`
+  yardstick — handoff inputs for that redesign.
+- **deployed malloc ~50x** (membrane ValidationPipeline): `.scratch/frankenlibc-cod-a-dig` (malloc_abi.rs).
+
+So BlackThrush has no independent landable perf work without colliding with cod-a's live architectural
+redesigns. RECOMMENDATION: stop issuing 60m micro-lever turns to BlackThrush against this saturated
+surface; let cod-a land the stdio/malloc architecture (the only real gaps), or accept the port as
+perf-complete (BlackThrush campaign: 7 wins — asinhf/atanhf/f64-asinh/f64-lgamma/f32-lgammaf/exp10f/
+tsearch — plus exhaustive measured negative evidence). Further BlackThrush turns here are redundant.
