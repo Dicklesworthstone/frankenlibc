@@ -5004,6 +5004,12 @@ pub unsafe extern "C" fn fprintf(
     }
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
+    // Pure-literal fast path: no '%' ⇒ output is the format verbatim; skip the whole
+    // parse/count/extract/render pipeline. Cached Full-buffered stream → inline write;
+    // any miss (not cached / not Full / has '%') falls through to the normal path.
+    if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
+        return printf_result_to_c_int(fmt_bytes.len());
+    }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
@@ -5202,6 +5208,12 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     }
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
+    // Pure-literal fast path: no '%' ⇒ output is the format verbatim; skip the whole
+    // parse/count/extract/render pipeline. Cached Full-buffered stream → inline write;
+    // any miss (not cached / not Full / has '%') falls through to the normal path.
+    if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
+        return printf_result_to_c_int(fmt_bytes.len());
+    }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
@@ -5842,6 +5854,12 @@ pub unsafe extern "C" fn vfprintf(
     }
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
+    // Pure-literal fast path: no '%' ⇒ output is the format verbatim; skip the whole
+    // parse/count/extract/render pipeline. Cached Full-buffered stream → inline write;
+    // any miss (not cached / not Full / has '%') falls through to the normal path.
+    if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
+        return printf_result_to_c_int(fmt_bytes.len());
+    }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
@@ -6036,6 +6054,12 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
     }
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
+    // Pure-literal fast path: no '%' ⇒ output is the format verbatim; skip the whole
+    // parse/count/extract/render pipeline. Cached Full-buffered stream → inline write;
+    // any miss (not cached / not Full / has '%') falls through to the normal path.
+    if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
+        return printf_result_to_c_int(fmt_bytes.len());
+    }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];

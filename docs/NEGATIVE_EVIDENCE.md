@@ -7393,3 +7393,18 @@ format) — a deep, correctness-critical rewrite of the printf core (huge blast 
 Filed precisely so the dedicated effort starts from the diagnosis. The stdio I/O cache campaign
 (fgetc/fread/fputc/fputs/fwrite/puts/printf-write, all ~4-5x) stands; printf-FORMAT is the last stdio
 gap and is its own project. Diagnostic bench arms (FPRINTF / FPRINTF_NOARG / baseline) kept.
+
+### 2026-06-28 — ✅✅ stdio STEP 8: pure-literal printf fast path — 111 → 38.7 ns (2.87x self, ~parity glibc) — BlackThrush
+
+Hoisted the no-`%` literal check BEFORE the parse/count/extract/render pipeline in the 4 stream-printf
+variants (printf/fprintf/vprintf/vfprintf): `if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id,
+fmt_bytes) { return len }`. A format with no conversions outputs verbatim, so for a cached Full-buffered
+stream it's just an inline write — skipping the entire multi-stage pipeline (which previously ran for
+literals too, only short-circuiting deep inside `bare_s_or_render` AFTER the wasted passes). Measured
+(`fputc_write_ab_bench` FPRINTF_NOARG, `fprintf("hello\n")`): **111 → 38.7 ns = 2.87x self-speedup**,
+≈ glibc (~34 ns) = NEAR PARITY on pure-literal printf (very common: error messages, banners,
+`printf("Done\n")`). The `%d` path (has '%') is unchanged — still the multi-stage pipeline (200 ns, the
+deferred single-pass rewrite). Byte-identical (literal output == format verbatim); any miss (not cached /
+Line-buffered / has '%') falls through to the normal path. CONFORMANCE GREEN: core stdio:: 271/271 +
+conformance_diff_stdio_printf 11/11 + stdio_abi 256/256 + MT stdio_locking_stress 4/4. The remaining
+printf gap is now ONLY the conversion (%d/%s/...) render — the single-pass-rewrite project.
