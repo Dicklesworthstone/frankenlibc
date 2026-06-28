@@ -6879,3 +6879,30 @@ enforced; worst at the x≈13 band edge). Conformance GREEN: `conformance_diff_g
 `frankenlibc-core --lib special` 20/20 (incl `lgamma_r_sanity`). The `[3,13)` fast path and the
 poles/small-x/overflow libm bands are untouched. This was the next gap after the f64 `asinh`
 midrange; the only remaining f64 transcendental gap is bessel j0/y0 (~1.25x, a hard glibc port).
+
+### 2026-06-28 — ✅ f32 `lgammaf` [13,1e15) tail → f64-route KEEP (1.51x self / 0.68x WIN vs glibc, 0 ULP) — BlackThrush
+
+`lgammaf`/`lgammaf_r` were full `libm::lgammaf` passthroughs. With the f64 `lgamma` tail now fast
+(Stirling, prior commit), routing the f32 large-x tail through it and rounding once —
+`lgamma(x as f64) as f32` — is **bit-exact vs glibc** (f64 precision >> f32) and far cheaper than
+`libm::lgammaf`, which is slow on the tail. Applied to `[13,1e15)`; `[3,13)` is left on libm (it
+already beats glibc there — `fl_libm` 11.17 ns vs glibc 13.18 ns, the tgamma+log candidate LOSES,
+so NOT a lever), and `[1e15,∞)` (near the f32 Γ overflow + its FE_OVERFLOW/ERANGE) + x<13 stay on
+libm. `lgammaf` and `lgammaf_r` use the identical band/value so the ABI's split value/sign reads
+agree (signgam = +1, Γ>0).
+
+Measured in-process A/B (`lgammaf_tail_probe_bench`, local, criterion medians; input = 64 pts in [13,213]):
+
+| impl | criterion median |
+|---|---:|
+| old_libm (deployed) | 11.57 ns |
+| **candidate (deployed)** | **7.67 ns** |
+| host glibc | 11.31 ns |
+
+candidate vs old_libm = **1.51x self-speedup**; candidate vs glibc = **0.68x WIN**. Correctness:
+worst **0 ULP** (bit-exact) over a 120k-point differential sweep `[13,1e15)` vs live glibc
+(assertion ≤1, enforced). Conformance GREEN: `conformance_diff_gamma_signgam` 1/1 + core
+`float32 lgammaf_r_sanity` ok. (The 3 unrelated `log2f`/`powf` bit-grid failures in `frankenlibc-core
+--lib` are PRE-EXISTING — they fail identically with my edits stashed on clean HEAD; the
+bd-2g7oyh owner-flagged grid debt, not this change.) Same vein as the f64 lgamma tail and asinh
+midrange: target the band each fn leaves on `libm`.

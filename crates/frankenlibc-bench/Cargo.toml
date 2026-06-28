@@ -358,3 +358,8 @@ harness = false
 [[bench]]
 name = "asinh_fix_bench"
 harness = false
+
+# probe: f32 lgammaf tail
+[[bench]]
+name = "lgammaf_tail_probe_bench"
+harness = false

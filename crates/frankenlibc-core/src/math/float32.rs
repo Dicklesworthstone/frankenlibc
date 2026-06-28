@@ -1229,6 +1229,15 @@ pub fn erfcf(x: f32) -> f32 {
 
 #[inline]
 pub fn lgammaf(x: f32) -> f32 {
+    // Large-x tail [13,1e15): route through fl's now-fast f64 `lgamma` (Stirling kernel)
+    // and round once — f64 precision makes this BIT-EXACT vs glibc lgammaf (0 ULP over the
+    // [13,1e30) sweep) and ~2.3x faster than libm::lgammaf, which is slow here. [3,13)
+    // already beats glibc on libm (no lever); [1e15,∞) (near the f32 Γ overflow + its
+    // FE_OVERFLOW/ERANGE) and x<13 stay on libm::lgammaf. `crate::math::lgamma` is a direct
+    // Rust call (no membrane round-trip). Mirrors the f64 lgamma tail lever.
+    if (13.0..1.0e15).contains(&x) {
+        return crate::math::lgamma(x as f64) as f32;
+    }
     libm::lgammaf(x)
 }
 
@@ -1452,6 +1461,11 @@ pub fn gammaf(x: f32) -> f32 {
 /// Reentrant lgammaf: returns `(lgammaf(x), signgam)` (f32 variant).
 #[inline]
 pub fn lgammaf_r(x: f32) -> (f32, i32) {
+    // Same [13,1e15) tail lever as `lgammaf` (must agree value-for-value with it, since the
+    // ABI reads the value from lgammaf and the sign from here). lgamma > 0 there → sign +1.
+    if (13.0..1.0e15).contains(&x) {
+        return (crate::math::lgamma(x as f64) as f32, 1);
+    }
     libm::lgammaf_r(x)
 }
 
