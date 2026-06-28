@@ -288,3 +288,8 @@ harness = false
 [[bench]]
 name = "cbrt_glibc_bench"
 harness = false
+
+# f64 lgamma vs host glibc + log(tgamma) candidate, in-process (no abi-bench).
+[[bench]]
+name = "lgamma_glibc_bench"
+harness = false

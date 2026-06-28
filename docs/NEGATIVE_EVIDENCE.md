@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ f64 `lgamma` [3,13) = log(tgamma) LANDED — 1.10x→1.02x vs glibc (~7% faster, ≤2 ULP)
+
+- **LANDED CODE WIN (`math/special.rs`, BoldFalcon):** `lgamma`/`lgamma_r` were a
+  `libm` passthrough. Over the no-cancellation / no-overflow band **x∈[3,13)** the
+  deployed value is now `log(tgamma(x))`, reusing fl's fast Cephes `tgamma` + fused
+  `log` (both direct Rust calls, no membrane/recursion). lgamma ≥ ln2 > 0 there so
+  `signgam = +1`; all other x keep `libm::lgamma_r` (poles, the near-zero band around
+  x=1,2, large-x overflow). `lgamma` now derives from `lgamma_r` so value+sign agree.
+- **MEASURED (`rch`, `lgamma_glibc_bench`, 3-way same-process per-op p50 over [3,13)):**
+  `fl_libm` (old) **14.20 ns**, **candidate (deployed) 13.20 ns**, `glibc` 12.89 ns.
+  → deployed lgamma **0.93x vs the old libm path (~7% faster)** and **1.02x vs glibc**
+  (was 1.10x). Reliable same-process (not cross-run Criterion).
+- **Conformance GREEN:** `conformance_diff_math_special::diff_lgamma_within_4_ulps` ok
+  (candidate ≤2 ULP vs glibc across [3,13)); `math_abi_test` 118 passed / 0 failed.
+  Both paths raise only FE_INEXACT in-band. New reusable bench `lgamma_glibc_bench`.
+
 ## 2026-06-27 — ✅ f64 `cbrt` confirmed 0.81x vs glibc (1.23x faster, 0 ULP) — passthrough fine, no lever
 
 - **CONFIRMATION (BoldFalcon), new reusable bench `cbrt_glibc_bench`:** `cbrt` is a
