@@ -7087,3 +7087,29 @@ cache/front-end floor, not removable byte-identically.** With math + string + ti
 (both directions) + search + stdlib-membrane all now verified saturated AT THE CODE LEVEL, the entire
 clean-lever perf surface is confirmed exhausted; the only open work is the architectural stdio/malloc
 beads (scoped above) which need a dedicated isolated-worktree turn.
+
+### 2026-06-28 — 📌 THREE corrections to the campaign's working model (code-verified) — BlackThrush
+
+Dug a "different primitive" per the directive; all verified optimal, plus two stale beliefs corrected:
+
+1. **`frankenlibc-fixture-exec` BUILDS again** — the long-standing "broken on main (8 E0308) blocks
+   harness integration tests" note (printf-scanf-campaign memory) is RESOLVED: `cargo build -p
+   frankenlibc-fixture-exec` finishes clean. So stdio/harness conformance IS verifiable now — the
+   architectural stdio bead is no longer blocked on a broken harness.
+
+2. **The stdio registry is ALREADY `parking_lot`, not std `Mutex`** (`FastRegistryMutex` wrapping
+   `parking_lot::Mutex`, stdio_abi.rs:579). So the prior "the global registry().lock() is the dominant
+   write cost (bd-hqo6b6)" diagnosis is now PARTLY STALE: an uncontended parking_lot lock is ~10 ns (no
+   syscall), not the bulk of the 6-12x fputs gap. A single-threaded lock-SKIP (via `data_ptr()` +
+   `__libc_single_threaded`, which fl maintains) would be ~0-gain AND soundness-risky (flag-flip vs an
+   in-flight unlocked `&mut` race) — NOT worth it. The real remaining write-path gap is ARCHITECTURAL but
+   in the HashMap-lookup + per-stream `StreamObj` indirection + buffer-write path, NOT the lock. Next
+   stdio attempt should target a lock-free per-FILE buffer (inline like glibc), not lock-skipping.
+
+3. Verified optimal at code level (this turn's "different primitive" sweep): `crypt` (RustCrypto `sha2`,
+   not naive), `getdelim`/`getline` (single-lock `read_until_delim` memchr-scan, not fgetc-per-char),
+   `mbstowcs` (16-lane SIMD ASCII widen + scalar multibyte), `strxfrm`/`wcsxfrm` (memcpy in C locale).
+
+Net: the clean-lever surface remains exhausted; the stdio bead's diagnosis is refined (lock is already
+fast → it's the buffer/indirection architecture), and the harness that verifies it is confirmed working.
+No code changed (no safe measured win; the only candidate is ~0-gain + UB-risk).
