@@ -363,3 +363,8 @@ harness = false
 [[bench]]
 name = "lgammaf_tail_probe_bench"
 harness = false
+
+# exp10f fallback: libm::exp2 vs fl fused exp2 vs glibc.
+[[bench]]
+name = "exp10f_fast_ab_bench"
+harness = false

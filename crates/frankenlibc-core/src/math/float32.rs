@@ -1311,7 +1311,13 @@ pub fn exp10f(x: f32) -> f32 {
     // faster but FAILS the 4-ULP contract (5 ULP on subnormal results near
     // x ≈ -39, where the f32 x·log2(10) rounding loses precision). Keep that
     // low-range traffic on the f64 fallback; do not switch the full domain to f32.
-    (libm::exp2(x as f64 * core::f64::consts::LOG2_10)) as f32
+    //
+    // Use fl's FUSED `exp2` kernel (ARM/__ieee754_exp2, 0.507 ULP) instead of the slow
+    // generic `libm::exp2` — same fix the f64 `exp10` already applied. Bit-identical to the
+    // libm route on this band (0 ULP self over the sweep) and ≤1 ULP vs glibc, ~1.2-1.6x
+    // faster (exp10f_fast_ab_bench); the fused kernel's own over/underflow edges fall back
+    // to libm internally, so the f32→0/inf cast semantics are unchanged.
+    (crate::math::exp2(x as f64 * core::f64::consts::LOG2_10)) as f32
 }
 
 #[inline]

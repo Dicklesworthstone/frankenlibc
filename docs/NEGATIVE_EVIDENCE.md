@@ -6906,3 +6906,28 @@ worst **0 ULP** (bit-exact) over a 120k-point differential sweep `[13,1e15)` vs 
 --lib` are PRE-EXISTING — they fail identically with my edits stashed on clean HEAD; the
 bd-2g7oyh owner-flagged grid debt, not this change.) Same vein as the f64 lgamma tail and asinh
 midrange: target the band each fn leaves on `libm`.
+
+### 2026-06-28 — ✅ f32 `exp10f` fallback: slow `libm::exp2` → fl fused `exp2` KEEP (1.18–1.65x self, glibc parity, 0 ULP self) — BlackThrush
+
+`exp10f`'s wide-domain fallback (outside the [-10,10] integer + [0.5,2.5] profile bands) computes
+`10^x = exp2(x·log2 10)` in f64 but still called the **slow generic `libm::exp2`** — the exact
+mistake the f64 `exp10` already fixed by switching to fl's fused `crate::math::exp2`
+(ARM/__ieee754_exp2, 0.507 ULP). Swapped exp10f to match. The fused kernel internally falls back to
+libm at its over/underflow edges, so the f32→0/inf cast semantics are unchanged.
+
+Measured in-process A/B (`exp10f_fast_ab_bench`, local; fallback-band inputs):
+
+| impl | criterion median | p50-loop |
+|---|---:|---:|
+| old_libm (libm::exp2) | 4.65 ns | 5.52 ns |
+| **candidate (fused exp2)** | **3.94 ns** | 3.35 ns |
+| host glibc | 3.04 ns | 5.50 ns |
+
+candidate vs old_libm = **1.18x (criterion) / 1.65x (p50-loop) self-speedup**; vs glibc =
+parity (criterion 1.30x LOSS — glibc's single-value criterion arm was anomalously fast at 3.04 ns;
+the band-averaged p50-loop shows candidate 3.35 ns < glibc 5.50 ns = 0.61x). The win is the
+self-speedup; this is a **byte-faithful pure speedup** — candidate is bit-identical to the old libm
+route (worst **0 ULP self** over a 200k-pt sweep) and **≤1 ULP vs glibc**. Conformance GREEN:
+`conformance_diff_math::diff_exp10f_within_4_ulps` 1/1 + core float32 exp10f 4/4 (incl
+`exp10f_profile_band_preserves_fallback_bits`). Removes the last stray `libm::exp2` call and aligns
+exp10f with exp10 / the fused-kernel standard.
