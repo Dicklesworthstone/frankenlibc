@@ -95,13 +95,30 @@ not speculative.
 ## Swing 2 — malloc small-alloc state-machine floor
 
 - **Measured:** deployed `malloc/calloc/free(16)` **~7x slower than glibc**
-  (NEGATIVE_EVIDENCE 2026-06-27). The Allocator membrane fast-path is already
-  applied; the residual is the Rust allocator state-machine/accounting cost, NOT
-  the membrane and NOT the lock.
-- **Disproven sub-lever (do not retry):** bypassing the native reentry-guard
-  atomic RMWs by calling cached host calloc/free directly — failed
-  `test_calloc_overflow_returns_null` (conformance RED). The gap needs a different
-  ownership/bookkeeping model, not guard removal.
+  (NEGATIVE_EVIDENCE 2026-06-27). The Allocator membrane fast-path is already applied.
+- **PRECISE mechanism (cc/BoldFalcon 2026-06-27):** in strict mode the deployed
+  `malloc` *delegates to host glibc malloc* (~5ns) and then pays fl bookkeeping —
+  `fallback_insert_sized_index` (malloc_abi.rs:1358) takes `lock_fallback_alloc_table`
+  + a hash-probe insert into `FALLBACK_ALLOC_PTRS`/`SIZES`, `publish_fallback_range`
+  (min/max addr atomics), `record_alloc_stats`, plus `decide`/`observe` and the
+  reentry/signal guards; `free` mirrors a probe+remove. THIS aggregate per-call
+  bookkeeping IS the 7x — not the host malloc, not a single heavy lock. Note
+  `lock_fallback_alloc_table` is already a lightweight `AtomicBool` spinlock
+  (malloc_abi.rs:1224), so there is **no parking_lot/lock-swap win** here.
+- **Why it's load-bearing (not just removable):** the fallback table is what
+  `known_remaining` (malloc_abi.rs:1773) reads so the membrane's bounded C-string
+  scans can reject unterminated tracked buffers before host passthrough. That is why
+  every bypass attempt fails conformance — the bookkeeping IS the safety contract.
+- **Disproven sub-levers (do not retry):** (a) bypassing the native reentry-guard
+  atomic RMWs via cached host calloc/free — failed `test_calloc_overflow_returns_null`
+  (RED); (b) same-thread tombstone-reinsertion without the table lock — ~0-gain
+  (9.90x). Both in NEGATIVE_EVIDENCE.
+- **Real lever (dedicated turn):** replace the *side* fallback table with an
+  *inline* size header on fl-owned allocations (store size just before the returned
+  ptr, glibc-style), so `known_remaining`/`free` read the header with NO table lock or
+  hash probe. Requires owning the allocation layout (not pure host-malloc delegation)
+  + careful interop with host `free` on foreign ptrs — architectural, conformance-
+  heavy (the whole malloc/calloc/realloc/free/overflow suite).
 
 ## Swing 3 — accuracy-hard math (erfc / bessel / lgamma)
 
