@@ -7134,3 +7134,19 @@ isolated worktree (harness now builds, so it is verifiable). RECOMMENDATION for 
 60m micro-lever turns against this saturated surface; allocate a dedicated multi-turn block for the
 stdio inline-buffer redesign, or accept the port as perf-complete (7 wins landed; win/parity vs glibc
 everywhere except codegen-floor SIMD primitives + bessel).
+
+### 2026-06-28 — ⚠️ stdio single-threaded registry lock-skip REJECTED (still 9.93x LOSS — lock is NOT the bottleneck) — BlackThrush
+
+Implemented the single-threaded `registry().lock()` skip inside `FastRegistryMutex::lock()` (the
+chokepoint; `__libc_single_threaded`-gated direct `&mut` via `data_ptr()`, sound by fl's established
+env-lock-skip model; deref-guard kept all 56 call sites unchanged). Conformance GREEN (stdio_abi_test
+256/256 + 20 stdio differential gates: printf/rwdir/unlocked_io/ext/fmemopen_write/wide_stdio_write).
+BUT measured (`fputc_write_ab_bench`, fl `fputc` into `fmemopen("w")` vs glibc via dlmopen, in-process):
+fl **37.80 ns/char** vs glibc **3.81 ns/char = 9.93x LOSS** — the skip does NOT close the ~10x gap.
+DECISIVE: the parking_lot lock (~10-15 ns) is NOT the dominant cost; the 34 ns gap is the
+HashMap-lookup + per-stream `StreamObj` indirection + `buffer_write` logic + membrane decide. So the
+single-threaded skip is a marginal (~1.2x at best) win that adds `unsafe` aliasing for no gap-closing
+— REVERTED (stdio_abi.rs byte-identical to main). Confirms (now with a deployed-write measurement, not
+inference) that the stdio write gap is the inline-buffer ARCHITECTURE, not the lock; the only real fix
+is a glibc-style inline per-FILE buffer (atomic multi-session redesign). Kept `fputc_write_ab_bench` as
+the reusable deployed-write yardstick (fl 9.93x vs glibc).

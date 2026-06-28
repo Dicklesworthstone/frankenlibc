@@ -379,3 +379,9 @@ harness = false
 name = "bsearch_glibc_bench"
 harness = false
 required-features = ["abi-bench"]
+
+# buffered-write fputc: deployed fl (ST registry lock-skip) vs glibc (dlmopen).
+[[bench]]
+name = "fputc_write_ab_bench"
+harness = false
+required-features = ["abi-bench"]
