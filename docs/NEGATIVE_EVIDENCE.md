@@ -6,7 +6,16 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
-## 2026-06-27 — ✅ f64 `exp2` reliably RE-CONFIRMED 0.59x vs glibc (1.69x faster); regression suspicion CLEARED
+## 2026-06-27 — ✅ f64 `cbrt` confirmed 0.81x vs glibc (1.23x faster, 0 ULP) — passthrough fine, no lever
+
+- **CONFIRMATION (BoldFalcon), new reusable bench `cbrt_glibc_bench`:** `cbrt` is a
+  `libm` passthrough (math/float.rs:57) that had never been measured vs glibc. Ran a
+  same-process A/B (fl = `math::cbrt`, glibc = host `cbrt` via `extern`, no abi-bench).
+  Per-op p50: **fl 14.25 ns vs glibc 17.51 ns = 0.81x (fl 1.23x faster)**, and
+  **0 ULP** (bit-identical to glibc across a 64-pt signed magnitude sweep [-1e8,1e8]).
+  Both use the Kahan magic-constant + Newton/Halley scheme; libm's is already at/ahead
+  of glibc. NO lever needed — do not port a "faster" cbrt (it would not beat libm). One
+  more passthrough ruled out as a gap.
 
 - **CONFIRMATION (BoldFalcon), no code change:** ran `exp2_f64_glibc_bench` (3-way
   same-process A/B, the RELIABLE measurement shape — `fl` = `math::exp2` fused

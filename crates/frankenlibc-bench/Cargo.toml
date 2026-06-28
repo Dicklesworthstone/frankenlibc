@@ -283,3 +283,8 @@ harness = false
 [[bench]]
 name = "regex_prefilter_ab_bench"
 harness = false
+
+# f64 cbrt vs host glibc, in-process (no abi-bench) — passthrough parity check.
+[[bench]]
+name = "cbrt_glibc_bench"
+harness = false
