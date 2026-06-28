@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 — ✅ f32 `acoshf` fast-f32-logf kernel LANDED — 1.26x faster than glibc (1.78x vs deployed, ≤1 ULP)
+
+- **LANDED CODE WIN (`math/float32.rs`, BoldFalcon):** for x ≥ 1.5 (the (x-1) factor
+  carries no cancellation) `acoshf` now evaluates `logf(x + sqrt((x-1)(x+1)))` in pure
+  f32 with fl's fused `logf`, instead of the f64-log+widen path. x in [1,1.5) keeps the
+  exact f64 path (near-1 cancellation, bit-identical to old); x<1 keeps the FE_INVALID
+  0/0 domain guard; x=1→0, +inf→+inf.
+- **MEASURED (`rch`, `acoshf_glibc_bench`, 3-way same-process per-op p50 over x≥1.01):**
+  deployed (old f64) **7.52 ns**, candidate (deployed) **4.22 ns**, glibc **5.33 ns** →
+  **1.78x faster than the old path, 1.26x faster than glibc (0.79x vs ORIG)**, worst
+  **1 ULP** vs glibc over [1,21].
+- **Conformance GREEN:** `conformance_diff_fp_exceptions` 1/0 (FE_INVALID domain +
+  FE_INEXACT preserved), `conformance_math_errno` 1/0 (EDOM), `math_abi_test` 118/0.
+  acoshf has NO bit-exact `same32` gate — only these ≤4-ULP/flag checks — so the kernel
+  is in contract. (Contrast `asinhf`, deferred below: it DOES have a bit-exact gate.)
+
 ## 2026-06-28 — ⏸️ f32 `asinhf` fast-f32-logf kernel: 3.7x faster + ≤2 ULP but DEFERRED (bit-exact gate intent) + PRE-EXISTING RED found
 
 - **MEASURED WIN, NOT DEPLOYED (BoldFalcon), new bench `asinhf_glibc_bench`:** candidate

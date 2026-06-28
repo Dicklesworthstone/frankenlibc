@@ -313,3 +313,8 @@ harness = false
 [[bench]]
 name = "asinhf_glibc_bench"
 harness = false
+
+# f32 acoshf candidate (fast-f32 logf kernel) vs deployed vs glibc.
+[[bench]]
+name = "acoshf_glibc_bench"
+harness = false
