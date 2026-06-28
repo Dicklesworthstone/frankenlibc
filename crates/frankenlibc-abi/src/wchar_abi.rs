@@ -2338,29 +2338,39 @@ pub unsafe extern "C" fn mbrtowc(
 
     // Reassemble any partial multibyte sequence stored in `ps` from a previous
     // call (POSIX requires resuming an incomplete sequence across calls), then
-    // append up to a full char's worth of the new bytes.
+    // append up to a full char's worth of the new bytes. When there is NO pending
+    // partial (the common case — `no_pending`, reused from the ASCII probe above),
+    // decode DIRECTLY from `s`: skip the mbstate load and the reassembly-buffer copy
+    // (nothing to reassemble). Byte-identical to the buffered path.
     let mut buf = [0u8; 8];
-    let pcount = if ps.is_null() {
-        0
+    let (decode_slice, pcount): (&[u8], usize) = if no_pending {
+        // SAFETY: caller guarantees `s` points to at least `n` (>= n.min(8)) bytes.
+        (
+            unsafe { std::slice::from_raw_parts(s as *const u8, n.min(8)) },
+            0,
+        )
     } else {
         // SAFETY: ps is a valid mbstate_t per the C contract.
-        unsafe { mbstate_partial_load(ps, &mut buf) }
+        let pc = unsafe { mbstate_partial_load(ps, &mut buf) };
+        let take = n.min(8 - pc);
+        // SAFETY: caller guarantees `s` points to at least `n` (>= take) bytes.
+        let new_bytes = unsafe { std::slice::from_raw_parts(s as *const u8, take) };
+        buf[pc..pc + take].copy_from_slice(new_bytes);
+        (&buf[..pc + take], pc)
     };
-    let take = n.min(8 - pcount);
-    // SAFETY: caller guarantees `s` points to at least `n` (>= take) bytes.
-    let new_bytes = unsafe { std::slice::from_raw_parts(s as *const u8, take) };
-    buf[pcount..pcount + take].copy_from_slice(new_bytes);
-    let total = pcount + take;
+    let total = decode_slice.len();
 
     // RFC 3629-strict decode: `Incomplete` (truncated-but-valid prefix) ->
     // accumulate and return (size_t)-2; `Invalid` -> EILSEQ. The decoder is the
     // single source of truth shared with mbtowc and the conformance harness.
-    match wchar_core::utf8_decode_step(&buf[..total]) {
+    match wchar_core::utf8_decode_step(decode_slice) {
         wchar_core::Utf8Step::Char { wc, len } => {
             // `len` is the whole char length; bytes consumed FROM THIS CALL are
             // the ones beyond what `ps` already held.
             let from_call = len - pcount;
-            if !ps.is_null() {
+            // Only clear when a partial was actually consumed; an empty state (the
+            // `no_pending`/`pcount == 0` path) is already clear, so the write is skipped.
+            if !ps.is_null() && pcount > 0 {
                 // SAFETY: ps is a valid mbstate_t per the C contract.
                 unsafe { mbstate_partial_clear(ps) };
             }
@@ -2379,7 +2389,7 @@ pub unsafe extern "C" fn mbrtowc(
             // ([0..6]) always has room.
             if !ps.is_null() && total <= 5 {
                 // SAFETY: ps is a valid mbstate_t per the C contract.
-                unsafe { mbstate_partial_store(ps, &buf[..total]) };
+                unsafe { mbstate_partial_store(ps, decode_slice) };
             }
             MB_INCOMPLETE
         }

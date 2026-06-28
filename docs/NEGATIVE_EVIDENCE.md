@@ -7499,3 +7499,20 @@ golden_wchar_conv_reentry 1 (all byte-exact vs glibc). FOLLOW-UP: the residual m
 actual multibyte chars still doing load/copy/clear on an empty state — decoding directly from `s` when
 pending==0 (skip the reassembly buffer) would close it (duplicates the decode match arms → deferred).
 New bench: mbrtowc_ab_bench (fl vs glibc dlmopen, ASCII + multibyte streams, C.UTF-8 on both).
+
+### 2026-06-28 — ✅✅ mbrtowc multibyte: decode-direct-from-`s` on empty state — 1.42x LOSS → 0.352x WIN — BlackThrush
+
+Follow-up to f505d7b91 (ASCII fast path). The residual multibyte loss was the real multibyte chars still
+paying mbstate_partial_load + reassembly-buffer copy + mbstate_partial_clear on an EMPTY state. Restructured
+the decode to choose its source by `no_pending` (the same empty-state probe the ASCII path uses): when there
+is no pending partial, build the decode slice DIRECTLY from `s` (skip the load + the buf copy) and skip the
+final clear (an empty state is already clear); only the genuine partial-resume path (pcount > 0) still
+reassembles via the buffer. The Char/Incomplete/Invalid match arms are UNCHANGED and shared by both paths
+(no duplication; Incomplete stores `decode_slice`, total<=5 guard preserved). Byte-identical. Measured
+(`mbrtowc_ab_bench`): multibyte 16.9 → **2.32 ns/byte = 0.352x (now BEATS glibc 2.8x)**, was 1.42x after the
+ASCII fix / 2.44x originally; ASCII stays ~3.2 ns/byte = 0.25x. fl mbrtowc now WINS glibc ~3x across ASCII
+AND multibyte. CONFORMANCE GREEN: core string::wchar 43 + conformance_diff_mbrtowc 12 +
+mbrtowc_stateful_differential_fuzz 7 + mbrtowc_streaming_differential_fuzz 2 + mbrtowc_differential_probe 1
++ conformance_diff_mbsrtowcs 1 + conformance_diff_mbtowc_wctomb 1 + golden_wchar_conv_reentry 1 (all
+byte-exact vs glibc, incl. partial-sequence resume across calls). VEIN: apply the same empty-state
+decode-direct pattern to mbtowc/mbrlen/mbsrtowcs internals if they reassemble through a buffer.
