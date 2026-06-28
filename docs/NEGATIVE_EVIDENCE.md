@@ -7423,3 +7423,27 @@ printf conformance 11/11 GREEN). LESSON: the %d/%-conversion printf gap (5.5x) i
 fast path — the cost is genuinely distributed across the multi-stage pipeline + the per-value render, so
 the ONLY real fix remains the single-pass printf rewrite (deferred deep project). The literal-printf fast
 path (parity, 57137b7c3) stands as the cheap printf win.
+
+### 2026-06-28 — 🏁 STDIO CAMPAIGN CAPSTONE: I/O surface ~4-5x closed; only %-conversion printf-format remains (single-pass rewrite) — BlackThrush
+
+The single-threaded stream-cache + buffer-fill campaign took stdio from the worst-offending subsystem to
+broadly ~4-5x vs glibc, in conformance-gated steps:
+- fputc/putc/putchar 4.39x (b52f747f2); fputs/fwrite 1.35x self (974add239); fgetc/getc 4.72x self →
+  4.18x (0627e2fa5); fread BUFFER-FILL 131x→4.77x = 20.8x self (e49524385); puts (09d9c70ea); printf/
+  fprintf/vprintf/vfprintf WRITE 1.15x self (dc6c15063); pure-LITERAL printf 111→38.7ns ≈parity
+  (57137b7c3). Wide stdio (fputwc/fgetwc/...) inherits via per-byte delegation. All conformance GREEN
+  (core stdio:: 271 + stdio_abi 256 + 6 conformance_diff_stdio + fread_partial + fmemopen_write +
+  wide_stdio + MT stdio_locking_stress).
+- Reusable pattern: `__libc_single_threaded`-gated + `REGISTRY_GEN`-validated thread-local
+  `(id, gen, *mut StdioStream)` cache (skips membrane + registry lock + HashMap lookup), populated on the
+  slow paths via `StreamRegistry::insert_stream/remove_stream` gen bumps; lean `fast_putc`/`fast_getc`/
+  `fast_write`/`fast_read`/`fast_write_line` on the core buffer (byte-identical to the buffered paths).
+
+REMAINING (one gap): %-CONVERSION printf-format render (e.g. fl `fprintf("x%d\n")` ~200 ns vs glibc ~42 =
+5.5x). ISOLATED+CONFIRMED unshavable by bounded fixes: the cost is the MULTI-STAGE pipeline
+(parse_format_string → core_count_printf_args → vprintf_extract_args → direct_printf_string_payload →
+render_segments — separate passes building a segments intermediate), NOT the value render (`format_signed`
+is a fast stack itoa). A render-arm fast path is marginal (1.09x, and the obvious gating broke conformance,
+98dbd8ed5). The ONLY real fix is a SINGLE-PASS printf (scan format once, extract+render inline, fall back
+to the multi-stage for positional/%n/wide) — a deep, all-formatted-output-blast-radius, multi-session
+project. Designated as the dedicated next stdio effort; start from this diagnosis.
