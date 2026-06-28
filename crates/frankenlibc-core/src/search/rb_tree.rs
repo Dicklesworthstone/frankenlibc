@@ -104,6 +104,56 @@ impl<K> RbTree<K> {
         self.len > prev_len
     }
 
+    /// Insert `key` if absent, and return a stable pointer to the key stored in
+    /// the matching node (the newly inserted one, or the pre-existing equal key
+    /// that was retained). A single tree walk — unlike `insert` followed by a
+    /// separate `find`, this halves the comparator calls, which matters when the
+    /// comparator is an indirect C callback (POSIX `tsearch`).
+    ///
+    /// The returned pointer stays valid across the rebalancing rotations: LLRB
+    /// rotations only move the `Box` owners (the heap `Node` allocations never
+    /// move), so the address of a node's `key` field is stable for the node's
+    /// lifetime in the tree. The caller must not outlive the node (i.e. must not
+    /// use the pointer after the key is deleted), exactly as POSIX requires.
+    pub fn insert_find<F: Fn(&K, &K) -> Ordering>(&mut self, key: K, cmp: &F) -> *const K {
+        let mut found: *const K = core::ptr::null();
+        let new_root = Self::insert_find_rec(self.root.take(), key, cmp, &mut self.len, &mut found);
+        let mut root = new_root;
+        if let Some(ref mut r) = root {
+            r.color = Color::Black;
+        }
+        self.root = root;
+        found
+    }
+
+    fn insert_find_rec<F: Fn(&K, &K) -> Ordering>(
+        node: Option<Box<Node<K>>>,
+        key: K,
+        cmp: &F,
+        len: &mut usize,
+        found: &mut *const K,
+    ) -> Option<Box<Node<K>>> {
+        let mut h = match node {
+            None => {
+                *len += 1;
+                let n = Node::new_red(key);
+                *found = &n.key as *const K;
+                return Some(n);
+            }
+            Some(h) => h,
+        };
+        match cmp(&key, &h.key) {
+            Ordering::Less => h.left = Self::insert_find_rec(h.left.take(), key, cmp, len, found),
+            Ordering::Greater => h.right = Self::insert_find_rec(h.right.take(), key, cmp, len, found),
+            Ordering::Equal => {
+                // Key already present; retain existing and report its stable address.
+                *found = &h.key as *const K;
+            }
+        }
+        h = Self::fix_up(h);
+        Some(h)
+    }
+
     fn insert_rec<F: Fn(&K, &K) -> Ordering>(
         node: Option<Box<Node<K>>>,
         key: K,

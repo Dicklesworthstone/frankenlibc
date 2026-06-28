@@ -368,14 +368,12 @@ pub unsafe extern "C" fn tsearch(
         }
     };
 
-    handle.tree.insert(OpaqueKey(key), &cmp);
-    // POSIX: returned pointer, when cast to `void**`, dereferences to
-    // the matching key. Our `OpaqueKey` is `#[repr(transparent)]` over
-    // `*const c_void`, so &OpaqueKey IS a void**.
-    match handle.tree.find(&OpaqueKey(key), &cmp) {
-        Some(k) => k as *const OpaqueKey as *mut c_void,
-        None => std::ptr::null_mut(),
-    }
+    // Single-walk insert-or-find: returns the stored key's stable address in ONE
+    // tree traversal, instead of `insert` then a separate `find` (which doubled the
+    // C `compar` callbacks per call). POSIX: the returned pointer, cast to `void**`,
+    // dereferences to the matching key. `OpaqueKey` is `#[repr(transparent)]` over
+    // `*const c_void`, so `*const OpaqueKey` IS a `void**`.
+    handle.tree.insert_find(OpaqueKey(key), &cmp) as *mut c_void
 }
 
 /// POSIX `tfind` — find a key in a binary tree without inserting.

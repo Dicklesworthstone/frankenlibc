@@ -6990,3 +6990,31 @@ buffered write, bd-hqo6b6; sentinel std-stream writes still pay it — a lock-fr
 redesign is the fix but is genuinely multi-session + concurrency-risky + contended by live stdio worktrees,
 NOT a 60m change). Future perf turns: pick up an architectural bead with a clean checkout, or accept the
 clean-lever surface is saturated.
+
+### 2026-06-28 — ✅ POSIX `tsearch` single-walk insert-or-find KEEP (1.54x self / 1.53x LOSS → 0.99x PARITY vs glibc) — BlackThrush
+
+The "saturated surface" had one un-surveyed corner: the pure-algorithm search structures. `tsearch`
+(search_abi.rs) did `RbTree::insert(key)` (a full LLRB walk + rebalance) **then** a separate
+`RbTree::find(key)` (a second full walk) to return the node pointer — **2x the C `compar` callbacks**
+per call. glibc's tsearch finds-or-inserts in ONE walk. Added `RbTree::insert_find` (core rb_tree.rs):
+a single recursive walk that returns a stable `*const K` to the inserted/existing node's key. Sound
+because LLRB rotations only move the `Box` owners — the heap `Node` allocations never move — so the
+address of a node's `key` field is stable across `fix_up` (POSIX already requires the returned pointer
+stays valid until the key is deleted). Wired `tsearch` to it (one walk; `OpaqueKey` is
+`#[repr(transparent)]` over `*const c_void`, so `*const OpaqueKey` IS the POSIX `void**`).
+
+Measured in-process A/B (`tsearch_ab_bench`, local; 2000 pseudo-random keys, comparator routed through a
+C callback for both fl and glibc; glibc tree freed via `tdestroy` = no comparisons, fair vs fl's tree
+drop):
+
+| impl | p50 ns/key |
+|---|---:|
+| old_insert_then_find | 172.65 |
+| **candidate_insert_find (deployed)** | **112.27** |
+| glibc_tsearch | 113.02 |
+
+candidate vs old = **1.54x self-speedup**; candidate vs glibc **0.99x = PARITY** (was 172.65/113.02 =
+**1.53x LOSS**). Halving the comparator callbacks closes the gap exactly to glibc. Conformance GREEN:
+`conformance_diff_tsearch` 1/1 + `search_abi_test` 38/38 + `tsearch_twalk_shape_pin` 2/2 + core
+`rb_tree` 16/16. Byte-identical semantics (insert-if-absent, retain existing, same returned key
+pointer). `RbTree::insert`/`find` remain for their other callers (tfind/tdelete unchanged).

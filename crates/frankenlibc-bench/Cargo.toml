@@ -368,3 +368,8 @@ harness = false
 [[bench]]
 name = "exp10f_fast_ab_bench"
 harness = false
+
+# tsearch insert+find vs single-walk insert_find vs glibc.
+[[bench]]
+name = "tsearch_ab_bench"
+harness = false
