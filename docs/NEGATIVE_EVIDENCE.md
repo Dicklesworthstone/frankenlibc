@@ -7018,3 +7018,27 @@ candidate vs old = **1.54x self-speedup**; candidate vs glibc **0.99x = PARITY**
 `conformance_diff_tsearch` 1/1 + `search_abi_test` 38/38 + `tsearch_twalk_shape_pin` 2/2 + core
 `rb_tree` 16/16. Byte-identical semantics (insert-if-absent, retain existing, same returned key
 pointer). `RbTree::insert`/`find` remain for their other callers (tfind/tdelete unchanged).
+
+### 2026-06-28 — ⚠️ bsearch Stdlib membrane fast-path REJECTED (~0-gain, within worker noise) — BlackThrush
+
+Tried extending the bd-n40in2 Stdlib membrane fast-path (proven on getenv/strtod/math/ctype) to
+`bsearch`, which calls `runtime_policy::decide()` TWICE (base + key) + `observe()` per call — skipping
+them in the deployed path (Stdlib always-Allow; the regions are already bounds-checked by
+`tracked_region_fits`). Byte-identical (test path keeps decide/observe; parity check passed). But the
+measured effect is **within worker noise** — NOT a win:
+
+| build | fl p50 ns/lookup | glibc p50 | criterion fl/glibc |
+|---|---:|---:|---:|
+| baseline (2 decide) | 30.68 | 28.26 | 0.984 |
+| patched (skip) run A | 32.02 | 23.88 | 0.929 |
+| patched (skip) run B | 23.79 | 23.40 | 0.990 |
+
+Absolute p50s swing ~30% across runs (rch worker variance) and fl's own criterion CI overlaps between
+builds — the ~1-2 ns of two always-Allow `decide()` calls is below the measurement floor. ROOT CAUSE:
+unlike the original bd-n40in2 wins (ctype 5.2→1.3 ns, math), `decide()` in strict mode is ALREADY cheap
+(cert-cached ~1-2 ns), so for a fn whose own cost is ~25-30 ns the skip is noise. **This is decisive
+negative evidence for the WHOLE remaining unguarded-`decide()` Stdlib surface** (atoi/strtol/qsort/etc.):
+the Stdlib membrane fast-path lever is EXHAUSTED at this granularity — don't re-chase it. REVERTED
+(stdlib_abi.rs byte-identical to main). Kept `bsearch_glibc_bench` (fl no_mangle symbol vs glibc via
+dlmopen) as a reusable bsearch yardstick + this evidence; conformance was never at risk (revert =
+no change).

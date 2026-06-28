@@ -373,3 +373,9 @@ harness = false
 [[bench]]
 name = "tsearch_ab_bench"
 harness = false
+
+# bsearch deployed (membrane decide x2) vs glibc (dlmopen). bd-n40in2 lever.
+[[bench]]
+name = "bsearch_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
