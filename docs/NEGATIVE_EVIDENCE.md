@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ✅ f64 `exp2` reliably RE-CONFIRMED 0.59x vs glibc (1.69x faster); regression suspicion CLEARED
+
+- **CONFIRMATION (BoldFalcon), no code change:** ran `exp2_f64_glibc_bench` (3-way
+  same-process A/B, the RELIABLE measurement shape — `fl` = `math::exp2` fused
+  ARM/glibc-table kernel, `fl_old` = `libm::exp2`, `glibc` = host `exp2`). p50 ns/op:
+  **fl 3.35 / fl_old (libm) 3.67 / glibc 5.66** → deployed f64 `exp2` is **0.59x vs
+  glibc (1.69x faster)** and also beats libm. Still a clean win (matches the powf
+  campaign).
+- **WHY this run:** my earlier erfc note found `super::exp::exp` slower than
+  `libm::exp` for the erfc2 large-negative args, raising a "did deployed f64 exp/exp2
+  regress?" suspicion. CLEARED: f64 `exp2` (the kernel `exp` builds on) wins
+  decisively. The erfc slowdown was exp-vs-exp2 extra work + erfc2-arg-specific +
+  cross-crate call overhead, NOT an exp2/kernel regression. Do not "fix" f64 exp2.
+- **Method note:** this used per-op p50 from the bench's own harness (printed
+  `EXP2F64_BENCH ... p50_ns_op`), which is same-process and worker-robust — unlike
+  cross-run Criterion `change:` lines (see the 2026-06-27 stdio calibration entry).
+
 ## 2026-06-28 - stdio standard-stream TLS classification cache REJECTED (1.531x vs ORIG; 5.40x LOSS vs glibc)
 
 - **DISPROVEN / REVERTED (BlackThrush):** tested a single-entry thread-local
