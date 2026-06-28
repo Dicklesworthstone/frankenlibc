@@ -6,6 +6,26 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 — 🏁 MATH FRONTIER RESOLVED (f64+f32) — remaining f32 hyperbolic candidates closed out
+
+Closure of the reliable-survey math campaign (do not re-probe these). Per the two-part
+filter — a faster ≤N-ULP kernel is landable iff (1) deployed is slower than glibc AND
+(2) the fn's gate is `within_N_ulps`, not bit-exact `same32/same64`:
+- **acoshf** — slow (1.36x) + NO bit-exact gate → **LANDED** (1.26x faster, this turn).
+- **asinhf** — slow (1.51x) but `conformance_diff_asinh_special` is **same32 bit-exact**
+  → DEFERRED (3.7x candidate exists; needs a contract decision to relax to ≤4 ULP).
+- **coshf / sinhf / tanhf** — `conformance_diff_hyperbolic_special` is **same32 bit-exact**
+  → any ≤N-ULP speedup DEFERRED; and they already use fl's fast f64 exp/sinh paths
+  (coshf 1.11x / sinhf 0.92x / tanhf 0.94x — minor/win anyway).
+- **atanhf** — slow (1.27x, marginal) but `atanh(x)=0.5·log((1+x)/(1-x))` has cancellation
+  at BOTH ends (x→0 and x→±1), leaving only a narrow clean window for a fast-f32 path →
+  partial win on a rare fn, NOT worth it.
+- **j0f** (1.25x) — bessel, accuracy-hard (zeros) → skip.
+All other f64+f32 transcendentals already win/parity (see the two SURVEY entries below).
+NET math wins this campaign: sincos 4.30x, lgamma[3,13), gamma, acoshf 1.26x. The math
+frontier is exhausted; remaining repo gaps are architectural (stdio main lock, malloc
+fallback-table — peer-contested) + the pre-existing asinh_special RED (glibc-2.42 drift).
+
 ## 2026-06-28 — ✅ f32 `acoshf` fast-f32-logf kernel LANDED — 1.26x faster than glibc (1.78x vs deployed, ≤1 ULP)
 
 - **LANDED CODE WIN (`math/float32.rs`, BoldFalcon):** for x ≥ 1.5 (the (x-1) factor
