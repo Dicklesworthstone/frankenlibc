@@ -7228,3 +7228,33 @@ op-granularity, and — per the measured component breakdown — the gap is the 
 lookup+lock+indirection vs glibc's inline `*FILE->_IO_write_ptr++`, i.e. the inline-buffer
 ARCHITECTURE (no bounded lever; lock/membrane/hasher all measured already-minimized). No new
 lever; recorded as the end-to-end write yardstick alongside the per-char one.
+
+### 2026-06-28 — 📐 stdio write-cache lever — concrete implementation DESIGN (ready to execute) — BlackThrush
+
+The only remaining perf lever (stdio fputc 9.93x / fputs 2.37x) made executable. Skips the measured
+dominant costs (membrane ~5ns + parking_lot lock ~10ns + HashMap lookup ~8ns) on REPEATED same-stream
+writes via a gen-validated thread-local cache — projected 37.8→~16 ns (~2.4x self / ~4x vs glibc). Design
+(all pieces verified against current code):
+
+1. `StreamBuffer::fast_putc(&mut self, byte) -> bool` (buffer.rs): `if mode!=Full || write_len>=capacity
+   { false } else { io_started=true; ensure_storage(); data[write_len]=byte; write_len+=1; true }`.
+   BYTE-IDENTICAL to `write(&[byte])` when it returns flush_needed=false (the `data.len()<=remaining`
+   branch of write_full). Line/None mode + buffer-full return false → caller takes the full path.
+2. `StdioStream::fast_putc(&mut self, byte) -> bool` (file.rs): `if !open_flags.writable || is_mem_backed()
+   { false }`; else `buffer.fast_putc(byte)` and on true set flags.{io_started,last_write,eof=false} +
+   offset+=1 (mirrors buffer_write + write_bytes' post-bump), return true.
+3. `REGISTRY_GEN: AtomicU64` bumped on EVERY `reg.streams.insert/remove` (fopen/fdopen/freopen/fmemopen/
+   open_memstream/fopencookie/fclose ~8 sites) — invalidates the cache when any value may have moved.
+4. thread_local `WRITE_CACHE: Cell<Option<(id:usize, gen:u64, ptr:*mut StdioStream)>>`.
+5. fputc/putc/putchar fast path: `if __libc_single_threaded!=0 { if let Some((cid,cg,p))=cache; cid==id &&
+   cg==REGISTRY_GEN.load(Acquire) { if unsafe{(*p).fast_putc(byte)} { return byte } } }` → fall through to
+   the existing (membrane+lock+lookup) path, which on its `get_mut(&id)` ALSO stores (id, gen, s as *mut)
+   into the cache. SOUND: single-threaded ⇒ unique &mut; ptr stays valid while gen matches (no insert/
+   remove ⇒ no value move; flush/seek mutate in place, no gen bump, and fast_putc reads write_len fresh);
+   cookie streams excluded at the ABI by the existing is_cookie_stream(id) check before the fast path.
+
+NOT landed this turn: high-blast-radius write path (flush ordering / line-buffer / mem+cookie / interleaved
+read-write) requires the FULL stdio conformance suite + an fputc_write_ab_bench win as hard gates — a
+focused dedicated turn, not a rushed land (a subtly-broken stdio breaks ALL output). ⚠️ Overlaps cod-a's
+`fputs-rawfast` branch — coordinate before landing. This entry is the ready-to-execute plan + soundness
+proof so the dedicated turn (or cod-a) implements directly.
