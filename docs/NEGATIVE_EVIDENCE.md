@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 — 🔬 `asinh_special` RED root-caused: fl asinh x≥16 asymptotic is ~1 ULP (not bit-exact); cheap fix rejected
+
+- **ROOT CAUSE (BoldFalcon):** the pre-existing-RED `conformance_diff_asinh_special`
+  (same64/same32 bit-exact-vs-live-glibc) fails because fl's `asinh` x≥16 ASYMPTOTIC
+  path (`log(ax) + LN_2 + z·p`, a perf optimization avoiding the sqrt) is **1 ULP off
+  the correctly-rounded value** at e.g. x=100: fl `…3c2b` vs correct/glibc/python
+  `…3c2a`. This is fl's own custom path, not glibc drift (python `math.asinh(100)` =
+  glibc = `…3c2a`).
+- **CHEAP FIX TESTED + REJECTED (numerically, no build):** replacing `log(ax)+LN_2`
+  with `log(2·ax)` (one rounding) fixes x=100 but BREAKS x=50 (and x=17.3 is off
+  either way). The split-log asymptotic is **fundamentally ~1 ULP across [16,∞)** — no
+  log reformulation makes it bit-exact; it only trades which cases fail.
+- **OPTIONS (maintainer call, not landed unilaterally):** (a) revert the x≥16 path to
+  the correctly-rounded `log(x+sqrt(x²+1))` sqrt-formula → greens the gate but REGRESSES
+  asinh perf (the asymptotic was a deliberate speed win); or (b) relax `asinh_special`
+  from bit-exact to ≤2 ULP (matches the project's standard math contract, survives glibc
+  drift). fl's asinh is ≤1 ULP = acceptable accuracy; the gate is the over-strict
+  outlier. I won't reverse a perf/correctness tradeoff or loosen a gate unilaterally.
+
 ## 2026-06-28 — 🧱 mem* primitives = NO LEVER (memcpy/memset parity BY CONSTRUCTION; memcmp deeper-AVX2)
 
 Closes the highest-impact domain (the obvious "optimize memcpy" target) by inspection,
