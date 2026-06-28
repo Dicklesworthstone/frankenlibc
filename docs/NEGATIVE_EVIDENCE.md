@@ -6,6 +6,31 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 — ❌ fputs raw registered-stream bypass REJECTED (1.050x vs ORIG; 2.96x LOSS vs glibc)
+
+- **DISPROVEN / REVERTED (BlackThrush):** tested a narrow RCU/read-mostly-metadata inspired fast path for
+  `fputs` in strict mode. The candidate tried the raw `FILE *` address as a FrankenLibC registry key before
+  calling `canonical_stream_id`, aiming to skip the negative `native_stdio_fd_for_ptr` probe for registered
+  `fmemopen` streams while falling back to the existing native/host path for absent streams.
+- **MEASURED (`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a`, requested per-crate
+  `rch exec`; wrapper fell back local for both bench runs; Cargo accepted the release-profile spelling
+  `--profile release`):** current `origin/main` (`383e6fe27`) command
+  `AGENT_NAME=BlackThrush rch exec -- cargo bench -p frankenlibc-bench --profile release --features
+  abi-bench --bench fputs_glibc_bench -- fputs_8B --noplot --sample-size 20 --warm-up-time 1
+  --measurement-time 2` measured `fputs_8B/frankenlibc_abi` **4.0462 us** mean vs host glibc
+  **1.2392 us** mean = **3.27x slower than glibc**. Candidate measured FrankenLibC **4.2504 us**
+  mean vs host glibc **1.4358 us** mean = **2.96x slower than glibc**. Ratio vs ORIG is **1.050x**
+  by FrankenLibC mean, and Criterion reported **No change in performance detected**
+  (`[-4.2150%, +1.0207%, +7.1877%]`, p=0.74). The host arm also slowed in the candidate run, so the
+  apparent glibc-ratio improvement is noise, not a keep.
+- **VERDICT:** rejected as ~0-gain/no-ship; source changes were not landed. The remaining `fputs` gap is not
+  solved by skipping this native-stdio negative probe. Keep routing to the broader per-FILE/sharded stream
+  state design instead of retrying a raw registered-stream precheck as a standalone lever.
+- **Validation note:** the candidate release bench built and ran. A release-profile
+  `cargo check -p frankenlibc-abi --all-targets` is not currently a valid conformance gate because the
+  existing `stdio_abi_test` imports debug-only `IO_2_1_*` symbols under release profile; no code change was
+  kept after the rejection.
+
 ## 2026-06-27 — ✅ `fgetc` registry double-lock collapse LANDED (0.859x vs ORIG; host ratio noisy)
 
 - **LANDED CODE WIN (`stdio_abi.rs`, BlackThrush):** collapsed the registered-stream `fgetc` route from two
