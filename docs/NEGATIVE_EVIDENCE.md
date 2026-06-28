@@ -7301,3 +7301,16 @@ plus core `stdio::` 271/271 (step 1). ⚠️ Overlaps cod-a's `fputs-rawfast` wo
 single-byte path; coordinate if cod-a lands a fuller redesign. Residual 4.38x vs glibc = the remaining
 per-call function-frame + fast_putc cost vs glibc's macro-inlined `*write_ptr++` (the irreducible
 shared-library-symbol floor); fputs/fwrite bulk paths can get the same cache treatment next.
+
+### 2026-06-28 — ✅ stdio write-cache STEP 3: fputs/fwrite bulk fast path (1.36x self on small writes) — BlackThrush
+
+Extended the single-threaded write cache (b52f747f2) to the bulk paths. Added `StreamBuffer::fast_write`
++ `StdioStream::fast_write` (multi-byte sibling of `fast_putc`, byte-identical to `buffer_write`'s
+no-flush branch) and `try_fwrite_fast`; wired into `fputs` (scan once → inline append) and `fwrite`
+(append `size*nmemb` if it all fits → return `nmemb`). Reuses the cache already populated by
+`write_bytes_without_runtime_policy`. MEASURED (`fputc_write_ab_bench`, fwrite of 16-byte chunks into a
+Full-buffered fd stream): fl fast **28.2 ns/call** vs the same path with the cache disabled (flag=0)
+**38.5 ns = 1.36x self-speedup**; vs glibc 8.3 ns = 3.40x (small-write overhead floor). fputc stays
+**10.26 ns / 4.39x** (consistent re-measure). Conformance GREEN: stdio_abi 256/256 + 6 conformance_diff_
+stdio + fmemopen_write + wide_stdio{,_write} = 278/278, core stdio:: 271/271. Same soundness model
+(single-threaded gate + gen-validity). The write-cache lever now covers fputc/putc/putchar/fputs/fwrite.

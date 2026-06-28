@@ -19,11 +19,13 @@ const N: usize = 4000; // < BUFSIZ (8192) so a full sample stays buffered
 
 type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
 type FputcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
+type FwriteFn = unsafe extern "C" fn(*const c_void, usize, usize, *mut c_void) -> usize;
 type RewindFn = unsafe extern "C" fn(*mut c_void);
 
 struct Host {
     fopen: FopenFn,
     fputc: FputcFn,
+    fwrite: FwriteFn,
     rewind: RewindFn,
 }
 
@@ -44,6 +46,7 @@ fn host() -> &'static Host {
         Host {
             fopen: std::mem::transmute::<*mut c_void, FopenFn>(g(b"fopen\0")),
             fputc: std::mem::transmute::<*mut c_void, FputcFn>(g(b"fputc\0")),
+            fwrite: std::mem::transmute::<*mut c_void, FwriteFn>(g(b"fwrite\0")),
             rewind: std::mem::transmute::<*mut c_void, RewindFn>(g(b"rewind\0")),
         }
     })
@@ -108,6 +111,69 @@ fn bench(c: &mut Criterion) {
     println!(
         "FPUTC_WRITE fl_p50_ns_per_char={flp:.4} glibc_p50_ns_per_char={glp:.4} ratio={:.3}",
         flp / glp
+    );
+
+    // fwrite of small 16-byte chunks (overhead-dominated bulk write — fputs/fwrite fast path).
+    const CHUNK: usize = 16;
+    const M: usize = 250; // 250*16 = 4000 < BUFSIZ
+    let buf = [b'y'; CHUNK];
+    for _ in 0..100 {
+        unsafe { fl::rewind(fl_fp) };
+        for _ in 0..M {
+            unsafe { fl::fwrite(buf.as_ptr().cast(), 1, CHUNK, fl_fp) };
+        }
+        unsafe { (h.rewind)(g_fp) };
+        for _ in 0..M {
+            unsafe { (h.fwrite)(buf.as_ptr().cast(), 1, CHUNK, g_fp) };
+        }
+    }
+    let mut fw = Vec::new();
+    let mut gw = Vec::new();
+    for _ in 0..200 {
+        unsafe { fl::rewind(fl_fp) };
+        let t = Instant::now();
+        for _ in 0..M {
+            unsafe { fl::fwrite(buf.as_ptr().cast(), 1, CHUNK, fl_fp) };
+        }
+        fw.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / M as f64);
+        unsafe { (h.rewind)(g_fp) };
+        let t = Instant::now();
+        for _ in 0..M {
+            unsafe { (h.fwrite)(buf.as_ptr().cast(), 1, CHUNK, g_fp) };
+        }
+        gw.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / M as f64);
+    }
+    let (flw, glw) = (p50(&mut fw), p50(&mut gw));
+    println!(
+        "FWRITE16 fl_p50_ns_per_call={flw:.4} glibc_p50_ns_per_call={glw:.4} ratio={:.3}",
+        flw / glw
+    );
+
+    // Baseline: disable the fast path (flag=0 ⇒ write_cache_lookup returns None) to measure
+    // the slow fwrite path for the same workload, isolating the fast-path self-speedup.
+    frankenlibc_abi::glibc_internal_abi::__libc_single_threaded
+        .store(0, std::sync::atomic::Ordering::Release);
+    for _ in 0..50 {
+        unsafe { fl::rewind(fl_fp) };
+        for _ in 0..M {
+            unsafe { fl::fwrite(buf.as_ptr().cast(), 1, CHUNK, fl_fp) };
+        }
+    }
+    let mut fwb = Vec::new();
+    for _ in 0..200 {
+        unsafe { fl::rewind(fl_fp) };
+        let t = Instant::now();
+        for _ in 0..M {
+            unsafe { fl::fwrite(buf.as_ptr().cast(), 1, CHUNK, fl_fp) };
+        }
+        fwb.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / M as f64);
+    }
+    let flwb = p50(&mut fwb);
+    frankenlibc_abi::glibc_internal_abi::__libc_single_threaded
+        .store(1, std::sync::atomic::Ordering::Release);
+    println!(
+        "FWRITE16_BASELINE fl_slow_p50_ns_per_call={flwb:.4} (fast={flw:.4}) self_speedup={:.3}x",
+        flwb / flw
     );
 
     let mut grp = c.benchmark_group("fputc_write_buffered");

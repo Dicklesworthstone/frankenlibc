@@ -653,6 +653,26 @@ impl StdioStream {
         }
     }
 
+    /// Fast multi-byte buffered write (bulk sibling of `fast_putc`): appends `data` iff a
+    /// Full-buffered fd stream has room for all of it (no flush) — byte-identical to the
+    /// no-flush `buffer_write(data)` path plus the caller's `set_offset(offset + len)`.
+    /// Returns `false` (caller falls back to the full path) otherwise.
+    #[inline]
+    pub fn fast_write(&mut self, data: &[u8]) -> bool {
+        if !self.open_flags.writable || self.is_mem_backed() {
+            return false;
+        }
+        if self.buffer.fast_write(data) {
+            self.flags.io_started = true;
+            self.flags.last_write = true;
+            self.flags.eof = false;
+            self.offset = self.offset.saturating_add(data.len() as i64);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Get any pending write data that needs flushing.
     pub fn pending_flush(&self) -> &[u8] {
         self.buffer.pending_write_data()

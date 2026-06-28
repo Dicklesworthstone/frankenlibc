@@ -179,6 +179,26 @@ impl StreamBuffer {
         true
     }
 
+    /// Fast multi-byte append for the common Full-buffered, fits-without-flush case.
+    /// BYTE-IDENTICAL to `write(data)` when it returns `flush_needed = false` (the
+    /// `data.len() <= remaining` branch of `write_full`). Returns `false` (caller takes
+    /// the full `write` path) for Line/None mode or a write that would overflow → flush.
+    #[inline]
+    pub fn fast_write(&mut self, data: &[u8]) -> bool {
+        if !matches!(self.mode, BufMode::Full)
+            || data.len() > self.capacity.saturating_sub(self.write_len)
+        {
+            return false;
+        }
+        self.io_started = true;
+        if !data.is_empty() {
+            self.ensure_storage();
+            self.data[self.write_len..self.write_len + data.len()].copy_from_slice(data);
+        }
+        self.write_len += data.len();
+        true
+    }
+
     /// Get any pending buffered write data that needs flushing.
     pub fn pending_write_data(&self) -> &[u8] {
         if self.write_len == 0 {

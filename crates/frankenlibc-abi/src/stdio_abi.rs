@@ -894,6 +894,18 @@ fn try_fputc_fast(id: usize, byte: u8) -> Option<c_int> {
     }
 }
 
+/// Bulk sibling of `try_fputc_fast` for `fputs`/`fwrite`: if `id` resolves through the
+/// gen-valid single-threaded cache to a Full-buffered fd stream with room for all of
+/// `bytes`, append them inline (skipping membrane + lock + lookup) and return `true`.
+#[inline]
+fn try_fwrite_fast(id: usize, bytes: &[u8]) -> bool {
+    match write_cache_lookup(id) {
+        // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+        Some(p) => unsafe { (*p).fast_write(bytes) },
+        None => false,
+    }
+}
+
 fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
     let mut ids: Vec<usize> = reg.streams.keys().copied().collect();
     ids.sort_unstable();
@@ -2690,6 +2702,19 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
     }
 
     let id = canonical_stream_id(stream);
+
+    // Single-threaded inline fast path: scan once, append to the cached Full-buffered fd
+    // stream if it all fits (skipping membrane + registry lock + HashMap lookup). On any
+    // miss (not cached / not Full / would flush) fall through to the existing paths.
+    if let Some(p) = write_cache_lookup(id) {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+        if unsafe { (*p).fast_write(bytes) } {
+            return 0;
+        }
+    }
+
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
         let (len, _) = unsafe { scan_c_str_len(s, None) };
         let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
@@ -3069,6 +3094,13 @@ pub unsafe extern "C" fn fwrite(
 
     let id = canonical_stream_id(stream);
     let src = unsafe { std::slice::from_raw_parts(ptr as *const u8, total) };
+
+    // Single-threaded inline fast path: append to the cached Full-buffered fd stream if it
+    // all fits (skip membrane + lock + lookup). Miss → fall through to existing paths.
+    if try_fwrite_fast(id, src) {
+        return nmemb;
+    }
+
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
         let written = unsafe { write_bytes_without_runtime_policy(id, stream, src) };
         return written.checked_div(size).unwrap_or(0);
