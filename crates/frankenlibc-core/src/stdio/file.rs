@@ -673,6 +673,38 @@ impl StdioStream {
         }
     }
 
+    /// Fast single-byte buffered read for the common case: returns `Some(byte)` iff a byte
+    /// is already in the read buffer for a clean readable fd stream — reusing
+    /// `buffered_read_into` (which advances the cursor/offset and clears `last_write`).
+    /// Returns `None` (caller falls back to the full path: refill / ungetc / transition /
+    /// mem) for an empty buffer, a write-pending stream, pending ungetc/pushback, a
+    /// mem-backed or non-readable stream. The C read/write-transition contract guarantees
+    /// the buffer is in a clean read state here.
+    #[inline]
+    pub fn fast_getc(&mut self) -> Option<u8> {
+        if !self.open_flags.readable
+            || self.is_mem_backed()
+            || self.flags.last_write
+            || self.ungetc_byte.is_some()
+            || !self.read_pushback.is_empty()
+        {
+            return None;
+        }
+        // Lean in-buffer read mirroring `buffered_read_into`'s effects for the buffered
+        // single-byte case (io_started=true, last_write=false, offset+1), skipping its
+        // dst-slice machinery and the redundant gates already checked above. `None` ⇒
+        // buffer exhausted ⇒ caller refills on the slow path.
+        match self.buffer.fast_getc() {
+            Some(b) => {
+                self.flags.io_started = true;
+                self.flags.last_write = false;
+                self.advance_offset(1);
+                Some(b)
+            }
+            None => None,
+        }
+    }
+
     /// Get any pending write data that needs flushing.
     pub fn pending_flush(&self) -> &[u8] {
         self.buffer.pending_write_data()

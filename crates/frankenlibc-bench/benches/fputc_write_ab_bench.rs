@@ -20,12 +20,14 @@ const N: usize = 4000; // < BUFSIZ (8192) so a full sample stays buffered
 type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
 type FputcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
 type FwriteFn = unsafe extern "C" fn(*const c_void, usize, usize, *mut c_void) -> usize;
+type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type RewindFn = unsafe extern "C" fn(*mut c_void);
 
 struct Host {
     fopen: FopenFn,
     fputc: FputcFn,
     fwrite: FwriteFn,
+    fgetc: FgetcFn,
     rewind: RewindFn,
 }
 
@@ -47,6 +49,7 @@ fn host() -> &'static Host {
             fopen: std::mem::transmute::<*mut c_void, FopenFn>(g(b"fopen\0")),
             fputc: std::mem::transmute::<*mut c_void, FputcFn>(g(b"fputc\0")),
             fwrite: std::mem::transmute::<*mut c_void, FwriteFn>(g(b"fwrite\0")),
+            fgetc: std::mem::transmute::<*mut c_void, FgetcFn>(g(b"fgetc\0")),
             rewind: std::mem::transmute::<*mut c_void, RewindFn>(g(b"rewind\0")),
         }
     })
@@ -174,6 +177,67 @@ fn bench(c: &mut Criterion) {
     println!(
         "FWRITE16_BASELINE fl_slow_p50_ns_per_call={flwb:.4} (fast={flw:.4}) self_speedup={:.3}x",
         flwb / flw
+    );
+
+    // ---- READ fast path: fgetc over a Full-buffered fd read stream ----
+    std::fs::write("/tmp/fl_fgetc_ab.in", vec![b'z'; N]).unwrap();
+    std::fs::write("/tmp/glibc_fgetc_ab.in", vec![b'z'; N]).unwrap();
+    let r = CString::new("r").unwrap();
+    let fl_rpath = CString::new("/tmp/fl_fgetc_ab.in").unwrap();
+    let g_rpath = CString::new("/tmp/glibc_fgetc_ab.in").unwrap();
+    let fl_rf = unsafe { fl::fopen(fl_rpath.as_ptr(), r.as_ptr()) };
+    let g_rf = unsafe { (h.fopen)(g_rpath.as_ptr(), r.as_ptr()) };
+    assert!(!fl_rf.is_null() && !g_rf.is_null(), "read fopen NULL");
+    let read_one = |fp: *mut c_void, getc: FgetcFn| {
+        let mut acc = 0i64;
+        for _ in 0..N {
+            acc += unsafe { getc(fp) } as i64;
+        }
+        acc
+    };
+    for _ in 0..100 {
+        unsafe { fl::rewind(fl_rf) };
+        read_one(fl_rf, fl::fgetc);
+        unsafe { (h.rewind)(g_rf) };
+        read_one(g_rf, h.fgetc);
+    }
+    let mut fr = Vec::new();
+    let mut gr = Vec::new();
+    for _ in 0..200 {
+        unsafe { fl::rewind(fl_rf) };
+        let t = Instant::now();
+        black_box(read_one(fl_rf, fl::fgetc));
+        fr.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / N as f64);
+        unsafe { (h.rewind)(g_rf) };
+        let t = Instant::now();
+        black_box(read_one(g_rf, h.fgetc));
+        gr.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / N as f64);
+    }
+    let (frp, grp_) = (p50(&mut fr), p50(&mut gr));
+    println!(
+        "FGETC fl_p50_ns_per_char={frp:.4} glibc_p50_ns_per_char={grp_:.4} ratio={:.3}",
+        frp / grp_
+    );
+    // baseline: flag=0 (fast path off)
+    frankenlibc_abi::glibc_internal_abi::__libc_single_threaded
+        .store(0, std::sync::atomic::Ordering::Release);
+    for _ in 0..50 {
+        unsafe { fl::rewind(fl_rf) };
+        read_one(fl_rf, fl::fgetc);
+    }
+    let mut frb = Vec::new();
+    for _ in 0..200 {
+        unsafe { fl::rewind(fl_rf) };
+        let t = Instant::now();
+        black_box(read_one(fl_rf, fl::fgetc));
+        frb.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / N as f64);
+    }
+    let frbp = p50(&mut frb);
+    frankenlibc_abi::glibc_internal_abi::__libc_single_threaded
+        .store(1, std::sync::atomic::Ordering::Release);
+    println!(
+        "FGETC_BASELINE fl_slow_p50_ns_per_char={frbp:.4} (fast={frp:.4}) self_speedup={:.3}x",
+        frbp / frp
     );
 
     let mut grp = c.benchmark_group("fputc_write_buffered");

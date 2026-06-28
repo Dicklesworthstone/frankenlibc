@@ -7314,3 +7314,21 @@ Full-buffered fd stream): fl fast **28.2 ns/call** vs the same path with the cac
 **10.26 ns / 4.39x** (consistent re-measure). Conformance GREEN: stdio_abi 256/256 + 6 conformance_diff_
 stdio + fmemopen_write + wide_stdio{,_write} = 278/278, core stdio:: 271/271. Same soundness model
 (single-threaded gate + gen-validity). The write-cache lever now covers fputc/putc/putchar/fputs/fwrite.
+
+### 2026-06-28 — ✅✅ stdio read-cache STEP 4: fgetc/getc 14x → 4.18x vs glibc (4.72x self) — BlackThrush
+
+Extended the single-threaded stream cache to the READ path (symmetric to the write cache). Added
+`StreamBuffer::fast_getc` (lean in-buffer single-byte read advancing read_pos) + `StdioStream::fast_getc`
+(gated: readable & !mem & !last_write & no ungetc/pushback; mirrors `buffered_read_into`'s
+io_started/last_write/offset effects) + `try_fgetc_fast`; wired into `fgetc` (top fast path) with the
+cache populated on the read slow path. `getc` inherits (delegates). First impl reused `buffered_read_into`
+(29.7 ns, 1.40x) — the LEAN direct-`read_pos` read brought it to **10.98 ns = 4.72x self-speedup** vs the
+cache-disabled baseline 51.84 ns, and **4.18x vs glibc 2.63 ns** (down from 14.1x). fputc stays ~4x.
+
+SOUNDNESS: the C read/write-transition contract (seek/flush required between) keeps the buffer clean, so
+the in-buffer read is valid; ungetc/pushback/write-pending all fall to the slow path; single-threaded
+gate + gen-validity as the write side; release `no_mangle` pthread_create disables it in MT. CONFORMANCE
+GREEN through the fast path (debug keeps flag=1): stdio_abi 256/256 + fread_partial + rwdir 11 + the MT
+`stdio_locking_stress_test` 4/4 (spawns threads ⇒ flips the flag ⇒ exercises the locked path) + core
+stdio:: 271/271. The single-threaded stream-cache lever now covers the FULL hot stdio byte API:
+fgetc/getc + fputc/putc/putchar/fputs/fwrite, all ~4x vs glibc (from 9-17x).

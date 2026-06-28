@@ -906,6 +906,18 @@ fn try_fwrite_fast(id: usize, bytes: &[u8]) -> bool {
     }
 }
 
+/// Read sibling of `try_fputc_fast` for `fgetc`/`getc`: if `id` resolves through the
+/// gen-valid single-threaded cache to a clean readable fd stream with a byte already
+/// buffered, return it inline (skipping membrane + lock + lookup). `None` ⇒ full path
+/// (refill / ungetc / mem / transition). The cache is populated for read streams on the
+/// fgetc slow path below, mirroring the write side.
+#[inline]
+fn try_fgetc_fast(id: usize) -> Option<c_int> {
+    let p = write_cache_lookup(id)?;
+    // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+    unsafe { (*p).fast_getc() }.map(|b| b as c_int)
+}
+
 fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
     let mut ids: Vec<usize> = reg.streams.keys().copied().collect();
     ids.sort_unstable();
@@ -2225,6 +2237,14 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
     let id = canonical_stream_id(stream);
+
+    // Single-threaded inline read fast path: a byte already buffered for a cached, clean
+    // readable fd stream — skips membrane + registry lock + HashMap lookup. Any miss
+    // (empty buffer / ungetc / write-pending / mem / not cached) falls through unchanged.
+    if let Some(rc) = try_fgetc_fast(id) {
+        return rc;
+    }
+
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
@@ -2298,6 +2318,10 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
         return b[0] as c_int;
     }
+
+    // Cache this non-cookie, non-mem fd stream so subsequent single-threaded fgetc calls
+    // hit the inline read fast path (try_fgetc_fast) — mirrors the write side.
+    write_cache_store(id, s as *mut StdioStream);
 
     // Try buffered read first (into a stack byte, no per-getc Vec).
     let mut b = [0u8; 1];

@@ -179,6 +179,20 @@ impl StreamBuffer {
         true
     }
 
+    /// Fast single-byte read from the buffer: returns the next buffered byte and advances
+    /// the read cursor, or `None` when the read buffer is exhausted (caller refills on the
+    /// slow path). Identical to `read(1)` for the in-buffer case.
+    #[inline]
+    pub fn fast_getc(&mut self) -> Option<u8> {
+        if self.read_pos < self.read_filled {
+            let b = self.data[self.read_pos];
+            self.read_pos += 1;
+            Some(b)
+        } else {
+            None
+        }
+    }
+
     /// Fast multi-byte append for the common Full-buffered, fits-without-flush case.
     /// BYTE-IDENTICAL to `write(data)` when it returns `flush_needed = false` (the
     /// `data.len() <= remaining` branch of `write_full`). Returns `false` (caller takes
