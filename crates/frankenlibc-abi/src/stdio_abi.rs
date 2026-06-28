@@ -3770,6 +3770,20 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
         return libc::EOF;
     }
 
+    // Single-threaded inline fast path: append body + '\n' to the cached Full-buffered
+    // stdout in one shot (skip membrane + the TWO write_bytes locks). Miss → full path.
+    {
+        let stdout_id = canonical_stream_id(active_stdout_stream());
+        if let Some(p) = write_cache_lookup(stdout_id) {
+            let (len, _) = unsafe { scan_c_str_len(s, None) };
+            let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
+            // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+            if unsafe { (*p).fast_puts(bytes) } {
+                return 0;
+            }
+        }
+    }
+
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
         let (len, _) = unsafe { scan_c_str_len(s, None) };
         let stdout_ptr = active_stdout_stream();

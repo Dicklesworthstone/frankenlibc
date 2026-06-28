@@ -7348,3 +7348,15 @@ byte/write API. fgetc/fputc stay ~4.3x. CONFORMANCE GREEN: core stdio:: 271/271 
 fread_partial + rwdir 11 + unlocked_io + ext + printf + wide_stdio + MT `stdio_locking_stress` 4/4 = all
 pass. The single-threaded stream cache + the fread buffer-fill now bring the ENTIRE hot stdio byte API to
 ~4-5x vs glibc (from 9-131x): fgetc/getc/fread + fputc/putc/putchar/fputs/fwrite.
+
+### 2026-06-28 — ✅ stdio STEP 6: puts joins the write fast path (skips 2 locks; same measured mechanism) — BlackThrush
+
+`puts` did TWO `write_bytes_without_runtime_policy` calls (body + '\n') = two registry locks + lookups per
+call, bypassing the cache. Added `StreamBuffer::fast_write_line` + `StdioStream::fast_puts` (append body +
+'\n' atomically iff a Full-buffered stream has room for all `len+1` — byte-identical to `write(body)` then
+`write(b"\n")` with neither flushing) and a puts fast path over cached single-threaded stdout. NOT
+~0-gain: it skips BOTH per-call locks, the identical mechanism measured for fputc (4.3x) / fwrite (1.35x).
+Not separately micro-benched (puts is stdout-bound — redirecting fd 1 would corrupt the bench's own
+output), so it inherits the measured fast-path win class. CONFORMANCE GREEN: core stdio:: 271/271 +
+stdio_abi 256/256 (covers puts) + conformance_diff_stdio_printf 11/11 + MT stdio_locking_stress 4/4.
+The single-threaded stream-cache lever now covers fgetc/getc/fread + fputc/putc/putchar/fputs/fwrite/puts.

@@ -193,6 +193,28 @@ impl StreamBuffer {
         }
     }
 
+    /// Fast `puts` body: append `body` followed by a single `'\n'` IFF a Full-buffered
+    /// stream has room for ALL of `body.len() + 1` (no flush) — byte-identical to
+    /// `write(body)` then `write(b"\n")` when neither flushes. Atomic (all-or-nothing) so
+    /// a partial body+newline never lands on the fast path. `false` ⇒ caller's full path.
+    #[inline]
+    pub fn fast_write_line(&mut self, body: &[u8]) -> bool {
+        let need = body.len() + 1;
+        if !matches!(self.mode, BufMode::Full)
+            || need > self.capacity.saturating_sub(self.write_len)
+        {
+            return false;
+        }
+        self.io_started = true;
+        self.ensure_storage();
+        if !body.is_empty() {
+            self.data[self.write_len..self.write_len + body.len()].copy_from_slice(body);
+        }
+        self.data[self.write_len + body.len()] = b'\n';
+        self.write_len += need;
+        true
+    }
+
     /// Fast bulk read of exactly `dst.len()` bytes IFF they are all already in the read
     /// buffer. Copies + advances the cursor and returns `true`; returns `false` (caller
     /// refills on the slow path) when fewer than `dst.len()` bytes are buffered. Identical

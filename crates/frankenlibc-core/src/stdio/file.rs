@@ -705,6 +705,25 @@ impl StdioStream {
         }
     }
 
+    /// Fast `puts`: append `body` + `'\n'` iff a Full-buffered fd stream has room for all
+    /// of it (no flush) — byte-identical to `buffer_write(body)` then `buffer_write(b"\n")`
+    /// plus the offset bump. Returns `false` (caller's full path) otherwise.
+    #[inline]
+    pub fn fast_puts(&mut self, body: &[u8]) -> bool {
+        if !self.open_flags.writable || self.is_mem_backed() {
+            return false;
+        }
+        if self.buffer.fast_write_line(body) {
+            self.flags.io_started = true;
+            self.flags.last_write = true;
+            self.flags.eof = false;
+            self.offset = self.offset.saturating_add(body.len() as i64 + 1);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Fast bulk buffered read (bulk sibling of `fast_getc`): fills `dst` entirely iff all
     /// `dst.len()` bytes are already buffered for a clean readable fd stream (no refill).
     /// Mirrors `buffered_read_into`'s io_started/last_write/offset effects. Returns `false`
