@@ -810,6 +810,88 @@ impl StreamRegistry {
 
         Self { streams }
     }
+
+    /// Insert a runtime stream, bumping the registry generation. ALL runtime
+    /// `streams.insert` MUST route through here so the write cache's stored
+    /// `*mut StdioStream` is invalidated whenever a HashMap insert may rehash/move
+    /// values. (The 3 std streams in `new()` are pre-registration and never cached
+    /// before init completes, so they bypass the counter.)
+    #[inline]
+    fn insert_stream(&mut self, id: usize, stream: StdioStream) {
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+        self.streams.insert(id, stream);
+    }
+
+    /// Remove a stream, bumping the registry generation (a remove backshifts other
+    /// entries, moving values — must invalidate the write cache).
+    #[inline]
+    fn remove_stream(&mut self, id: usize) -> Option<StdioStream> {
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+        self.streams.remove(&id)
+    }
+}
+
+/// Monotonic generation bumped on every runtime registry insert/remove (via
+/// `insert_stream`/`remove_stream`). The single-threaded write fast-path caches a
+/// `*mut StdioStream` together with the gen at which it was resolved; a mismatch on a
+/// later call means the HashMap may have moved that value, so the cache is dropped and
+/// the slow (locked) path re-resolves. Lock-free read for the hot path.
+static REGISTRY_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+thread_local! {
+    /// Per-thread last-written stream cache: (canonical id, registry gen, raw stream).
+    /// Lets repeated single-char writes to the same stream skip the membrane + registry
+    /// lock + HashMap lookup. Only consulted while `__libc_single_threaded` (so the
+    /// `&mut` reborrow of `ptr` is the unique reference — no other thread exists), and
+    /// only used when `gen == REGISTRY_GEN` (value not moved since it was cached).
+    static WRITE_CACHE: std::cell::Cell<(usize, u64, *mut StdioStream)> =
+        const { std::cell::Cell::new((usize::MAX, 0, std::ptr::null_mut())) };
+}
+
+/// Returns the cached `*mut StdioStream` for `id` iff single-threaded and the cache is
+/// gen-valid (value not moved since caching). The caller dereferences it without the
+/// registry lock — sound only because single-threaded ⇒ no concurrent access.
+#[inline]
+fn write_cache_lookup(id: usize) -> Option<*mut StdioStream> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+        return None;
+    }
+    WRITE_CACHE.with(|c| {
+        let (cid, cgen, p) = c.get();
+        if cid == id && !p.is_null() && cgen == REGISTRY_GEN.load(Ordering::Acquire) {
+            Some(p)
+        } else {
+            None
+        }
+    })
+}
+
+/// Records the resolved `*mut StdioStream` for `id` (called on the slow path under the
+/// registry lock, capturing the gen so a later insert/remove invalidates it).
+#[inline]
+fn write_cache_store(id: usize, ptr: *mut StdioStream) {
+    let generation = REGISTRY_GEN.load(Ordering::Acquire);
+    WRITE_CACHE.with(|c| c.set((id, generation, ptr)));
+}
+
+/// Single-threaded fast path for single-byte writes: if `id` resolves through the
+/// gen-valid thread-local cache to a Full-buffered fd stream with room, append the byte
+/// inline — skipping the membrane (`decide`/`observe`/`entrypoint_scope`), the registry
+/// lock, and the HashMap lookup. Returns `Some(byte)` on success, `None` to fall back to
+/// the full path. The cache only ever holds non-cookie, non-mem fd streams (stored solely
+/// on the regular slow path), so `fast_putc`'s semantics are exactly `buffer_write`'s
+/// no-flush branch. SOUND: `write_cache_lookup` already gated on `__libc_single_threaded`
+/// (unique `&mut`) and gen-validity (value not moved).
+#[inline]
+fn try_fputc_fast(id: usize, byte: u8) -> Option<c_int> {
+    let p = write_cache_lookup(id)?;
+    // SAFETY: single-threaded ⇒ no other thread; gen-valid ⇒ the value has not moved
+    // since it was cached; the reborrow is the unique reference for this call only.
+    if unsafe { (*p).fast_putc(byte) } {
+        Some(byte as c_int)
+    } else {
+        None
+    }
 }
 
 fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
@@ -1308,7 +1390,7 @@ pub(crate) fn register_memory_stream_with_native_handle(
     drop(native_reg);
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.insert(native_ptr as usize, stream);
+    reg.insert_stream(native_ptr as usize, stream);
     native_ptr
 }
 
@@ -1316,7 +1398,7 @@ pub(crate) fn register_memory_stream_with_native_handle(
 pub(crate) fn register_stream(stream: StdioStream) -> usize {
     let id = alloc_stream_id();
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.insert(id, stream);
+    reg.insert_stream(id, stream);
     id
 }
 
@@ -1419,6 +1501,11 @@ unsafe fn write_bytes_without_runtime_policy(
         }
         return written;
     }
+
+    // Cache this non-cookie, non-mem fd stream so subsequent single-threaded single-byte
+    // writes hit the inline fast path (try_fputc_fast). This is the COMMON deployed path
+    // (heals disabled), so the cache must be populated here, not only on the membrane path.
+    write_cache_store(id, stream_obj as *mut StdioStream);
 
     let write_result = match stream_obj.buffer_write(bytes) {
         Some(result) => result,
@@ -1868,7 +1955,7 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
             return std::ptr::null_mut();
         }
     }
-    reg.streams.insert(id, stream);
+    reg.insert_stream(id, stream);
     id as *mut c_void
 }
 
@@ -1910,7 +1997,7 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
     }
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(mut s) = reg.streams.remove(&id) else {
+    let Some(mut s) = reg.remove_stream(id) else {
         unsafe { set_abi_errno(errno::EBADF) };
         return libc::EOF;
     };
@@ -2254,6 +2341,16 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
 pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     let id = canonical_stream_id(stream);
     let byte = c as u8;
+
+    // Single-threaded inline fast path (skips membrane + registry lock + HashMap lookup
+    // for repeated writes to the same Full-buffered fd stream). Applies in BOTH the
+    // heals-disabled (common deployed) and hardened paths — it only fires for a stream
+    // already resolved+cached by a prior slow write, so bootstrap (empty cache) falls
+    // through safely.
+    if let Some(rc) = try_fputc_fast(id, byte) {
+        return rc;
+    }
+
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
         let bytes = [byte];
         let written = unsafe { write_bytes_without_runtime_policy(id, stream, &bytes) };
@@ -2320,6 +2417,10 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
         return c;
     }
+
+    // Cache this resolved non-cookie, non-mem fd stream so subsequent single-threaded
+    // single-byte writes to it skip the membrane + lock + lookup (see try_fputc_fast).
+    write_cache_store(id, s as *mut StdioStream);
 
     let single_byte = [byte];
     let write_result = match s.buffer_write(&single_byte) {
@@ -7113,7 +7214,7 @@ pub unsafe extern "C" fn freopen(
 
     // Close the old stream.
     let mut target_fd = -1;
-    if let Some(mut old) = reg.streams.remove(&id) {
+    if let Some(mut old) = reg.remove_stream(id) {
         if old.is_mem_backed() {
             sync_and_unregister_fast_fixed_mem_read(id, &mut old);
             unsafe {
@@ -7189,7 +7290,7 @@ pub unsafe extern "C" fn freopen(
     }
 
     let new_stream = StdioStream::new(fd, open_flags);
-    reg.streams.insert(id, new_stream);
+    reg.insert_stream(id, new_stream);
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, false);
     id as *mut c_void
@@ -8525,7 +8626,7 @@ pub unsafe extern "C" fn fopencookie(
     let id = alloc_stream_id();
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.insert(id, stream);
+    reg.insert_stream(id, stream);
     drop(reg);
 
     // Register the cookie info
@@ -10343,7 +10444,7 @@ mod tests {
 
         reg.streams
             .insert(0x1000_0040, StdioStream::new(-1, writable));
-        reg.streams.insert(
+        reg.insert_stream(
             0x1000_0020,
             StdioStream::new(
                 -1,

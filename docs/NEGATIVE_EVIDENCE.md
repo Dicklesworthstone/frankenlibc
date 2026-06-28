@@ -7274,3 +7274,30 @@ missed → no stale-ptr UAF), the thread-local `WRITE_CACHE`, and the fputc/putc
 the slow-path `get_mut`. That half is the high-blast-radius part (raw-ptr cache across calls) and is gated
 on the FULL stdio conformance suite + an `fputc_write_ab_bench` win; ⚠️ coordinate with cod-a's
 `fputs-rawfast` before landing step 2.
+
+### 2026-06-28 — ✅✅ stdio write-cache lever STEP 2 LANDED: fputc 9.93x → 4.38x vs glibc (~4.4x self) — BlackThrush
+
+The single-threaded registry write-cache is wired and MEASURED. Deployed `fputc` into a Full-buffered
+fd stream: fl **10.26 ns/char** vs glibc **2.34 ns/char = 4.38x LOSS**, down from the pre-cache
+**44.98 ns (9.93-17x)** — a **~4.4x self-speedup** on the hot write path, the biggest single gap closed
+this campaign. Mechanism (per the committed design): a `__libc_single_threaded`-gated, `REGISTRY_GEN`-
+validated thread-local `(id, gen, *mut StdioStream)` cache lets repeated single-byte writes to the same
+stream skip the membrane (`decide`/`observe`/`entrypoint_scope`), the registry lock, and the HashMap
+lookup — appending inline via `StdioStream::fast_putc` (byte-identical to `buffer_write`'s no-flush
+branch). Cache populated on the common heals-disabled path (`write_bytes_without_runtime_policy`) and the
+membrane path; gen bumped on ALL 8 runtime insert/remove sites via `StreamRegistry::insert_stream/
+remove_stream` (grep-verified, no raw `.streams.insert/remove` outside the helpers → no stale-ptr UAF).
+`putc`/`putchar` inherit it (they delegate to fputc).
+
+SOUNDNESS (fl's existing model, same as the stdlib env-lock skip): single-threaded ⇒ the cached `&mut`
+reborrow is unique; release-mode `no_mangle` `pthread_create` flips `__libc_single_threaded`→0 on the
+first thread spawn ⇒ fast path auto-disables in real MT programs ⇒ no race; gen-validity ⇒ the value has
+not moved since caching (insert/remove bump gen; flush/seek mutate in place and fast_putc reads write_len
+fresh). CONFORMANCE GREEN through the fast path: in debug the flag stays 1 (fputc isn't no_mangle, so the
+test harness's threads don't flip it), so the differential suite ran THROUGH the cache and confirmed
+byte-identical output — `stdio_abi_test` 256/256 + `conformance_diff_stdio_{printf,rwdir,unlocked_io,
+unlocked_query,ext}` + `fmemopen_write_differential` + `conformance_diff_wide_stdio{,_write}` = 278/278,
+plus core `stdio::` 271/271 (step 1). ⚠️ Overlaps cod-a's `fputs-rawfast` worktree — main improves the
+single-byte path; coordinate if cod-a lands a fuller redesign. Residual 4.38x vs glibc = the remaining
+per-call function-frame + fast_putc cost vs glibc's macro-inlined `*write_ptr++` (the irreducible
+shared-library-symbol floor); fputs/fwrite bulk paths can get the same cache treatment next.
