@@ -193,6 +193,20 @@ impl StreamBuffer {
         }
     }
 
+    /// Fast bulk read of exactly `dst.len()` bytes IFF they are all already in the read
+    /// buffer. Copies + advances the cursor and returns `true`; returns `false` (caller
+    /// refills on the slow path) when fewer than `dst.len()` bytes are buffered. Identical
+    /// to `read(dst.len())` for the all-buffered case.
+    #[inline]
+    pub fn fast_read(&mut self, dst: &mut [u8]) -> bool {
+        if dst.len() > self.read_filled.saturating_sub(self.read_pos) {
+            return false;
+        }
+        dst.copy_from_slice(&self.data[self.read_pos..self.read_pos + dst.len()]);
+        self.read_pos += dst.len();
+        true
+    }
+
     /// Fast multi-byte append for the common Full-buffered, fits-without-flush case.
     /// BYTE-IDENTICAL to `write(data)` when it returns `flush_needed = false` (the
     /// `data.len() <= remaining` branch of `write_full`). Returns `false` (caller takes

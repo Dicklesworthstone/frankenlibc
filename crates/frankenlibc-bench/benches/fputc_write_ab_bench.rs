@@ -21,6 +21,7 @@ type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void
 type FputcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
 type FwriteFn = unsafe extern "C" fn(*const c_void, usize, usize, *mut c_void) -> usize;
 type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FreadFn = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
 type RewindFn = unsafe extern "C" fn(*mut c_void);
 
 struct Host {
@@ -28,6 +29,7 @@ struct Host {
     fputc: FputcFn,
     fwrite: FwriteFn,
     fgetc: FgetcFn,
+    fread: FreadFn,
     rewind: RewindFn,
 }
 
@@ -50,6 +52,7 @@ fn host() -> &'static Host {
             fputc: std::mem::transmute::<*mut c_void, FputcFn>(g(b"fputc\0")),
             fwrite: std::mem::transmute::<*mut c_void, FwriteFn>(g(b"fwrite\0")),
             fgetc: std::mem::transmute::<*mut c_void, FgetcFn>(g(b"fgetc\0")),
+            fread: std::mem::transmute::<*mut c_void, FreadFn>(g(b"fread\0")),
             rewind: std::mem::transmute::<*mut c_void, RewindFn>(g(b"rewind\0")),
         }
     })
@@ -238,6 +241,59 @@ fn bench(c: &mut Criterion) {
     println!(
         "FGETC_BASELINE fl_slow_p50_ns_per_char={frbp:.4} (fast={frp:.4}) self_speedup={:.3}x",
         frbp / frp
+    );
+
+    // fread of small 16-byte chunks (overhead-dominated bulk read).
+    let mut rbuf = [0u8; CHUNK];
+    let read16 = |fp: *mut c_void, fr: FreadFn, b: &mut [u8; CHUNK]| {
+        let mut acc = 0usize;
+        for _ in 0..M {
+            acc += unsafe { fr(b.as_mut_ptr().cast(), 1, CHUNK, fp) };
+        }
+        acc
+    };
+    for _ in 0..100 {
+        unsafe { fl::rewind(fl_rf) };
+        read16(fl_rf, fl::fread, &mut rbuf);
+        unsafe { (h.rewind)(g_rf) };
+        read16(g_rf, h.fread, &mut rbuf);
+    }
+    let mut frd = Vec::new();
+    let mut grd = Vec::new();
+    for _ in 0..200 {
+        unsafe { fl::rewind(fl_rf) };
+        let t = Instant::now();
+        read16(fl_rf, fl::fread, &mut rbuf);
+        frd.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / M as f64);
+        unsafe { (h.rewind)(g_rf) };
+        let t = Instant::now();
+        read16(g_rf, h.fread, &mut rbuf);
+        grd.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / M as f64);
+    }
+    let (frdp, grdp) = (p50(&mut frd), p50(&mut grd));
+    println!(
+        "FREAD16 fl_p50_ns_per_call={frdp:.4} glibc_p50_ns_per_call={grdp:.4} ratio={:.3}",
+        frdp / grdp
+    );
+    frankenlibc_abi::glibc_internal_abi::__libc_single_threaded
+        .store(0, std::sync::atomic::Ordering::Release);
+    for _ in 0..50 {
+        unsafe { fl::rewind(fl_rf) };
+        read16(fl_rf, fl::fread, &mut rbuf);
+    }
+    let mut frdb = Vec::new();
+    for _ in 0..200 {
+        unsafe { fl::rewind(fl_rf) };
+        let t = Instant::now();
+        read16(fl_rf, fl::fread, &mut rbuf);
+        frdb.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / M as f64);
+    }
+    let frdbp = p50(&mut frdb);
+    frankenlibc_abi::glibc_internal_abi::__libc_single_threaded
+        .store(1, std::sync::atomic::Ordering::Release);
+    println!(
+        "FREAD16_BASELINE fl_slow_p50_ns_per_call={frdbp:.4} (fast={frdp:.4}) self_speedup={:.3}x",
+        frdbp / frdp
     );
 
     let mut grp = c.benchmark_group("fputc_write_buffered");

@@ -705,6 +705,30 @@ impl StdioStream {
         }
     }
 
+    /// Fast bulk buffered read (bulk sibling of `fast_getc`): fills `dst` entirely iff all
+    /// `dst.len()` bytes are already buffered for a clean readable fd stream (no refill).
+    /// Mirrors `buffered_read_into`'s io_started/last_write/offset effects. Returns `false`
+    /// (caller falls back to the full path) otherwise.
+    #[inline]
+    pub fn fast_read(&mut self, dst: &mut [u8]) -> bool {
+        if !self.open_flags.readable
+            || self.is_mem_backed()
+            || self.flags.last_write
+            || self.ungetc_byte.is_some()
+            || !self.read_pushback.is_empty()
+        {
+            return false;
+        }
+        if self.buffer.fast_read(dst) {
+            self.flags.io_started = true;
+            self.flags.last_write = false;
+            self.advance_offset(dst.len());
+            true
+        } else {
+            false
+        }
+    }
+
     /// Get any pending write data that needs flushing.
     pub fn pending_flush(&self) -> &[u8] {
         self.buffer.pending_write_data()

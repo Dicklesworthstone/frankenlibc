@@ -918,6 +918,18 @@ fn try_fgetc_fast(id: usize) -> Option<c_int> {
     unsafe { (*p).fast_getc() }.map(|b| b as c_int)
 }
 
+/// Bulk read sibling of `try_fgetc_fast` for `fread`: fills `dst` inline iff all of it is
+/// already buffered for the cached single-threaded fd stream (skip membrane + lock +
+/// lookup). `false` ⇒ full path (refill / partial / mem).
+#[inline]
+fn try_fread_fast(id: usize, dst: &mut [u8]) -> bool {
+    match write_cache_lookup(id) {
+        // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+        Some(p) => unsafe { (*p).fast_read(dst) },
+        None => false,
+    }
+}
+
 fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
     let mut ids: Vec<usize> = reg.streams.keys().copied().collect();
     ids.sort_unstable();
@@ -2950,6 +2962,16 @@ pub unsafe extern "C" fn fread(
     }
 
     let id = canonical_stream_id(stream);
+
+    // Single-threaded inline fast path: fill the whole request from the cached fd stream's
+    // buffer if it's all there (skip membrane + lock + lookup + host check). Miss → full path.
+    {
+        let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
+        if try_fread_fast(id, dst) {
+            return nmemb;
+        }
+    }
+
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
     if !registry_contains_stream(id)
@@ -3056,6 +3078,10 @@ pub unsafe extern "C" fn fread(
         return n.checked_div(size).unwrap_or(0);
     }
 
+    // Cache this non-cookie, non-mem fd stream so subsequent single-threaded reads hit the
+    // inline fast path (try_fread_fast / try_fgetc_fast).
+    write_cache_store(id, s as *mut StdioStream);
+
     while read_total < total {
         let n = s.buffered_read_into(&mut dst[read_total..total]);
         if n > 0 {
@@ -3064,6 +3090,21 @@ pub unsafe extern "C" fn fread(
         }
         if s.is_error() {
             break;
+        }
+
+        // Small remaining request on a buffered stream: refill the read buffer in one
+        // block (like glibc / fgetc) instead of a per-call direct fd read — without this,
+        // a loop of small `fread`s did one syscall EACH (~131x slower than glibc). The
+        // refill (sys_read_fd into a tmp + fill_read_buffer copy) is the same mechanism
+        // fgetc uses, so it carries no extra LD_PRELOAD recursion risk. Large requests
+        // (>= capacity) keep the direct read below (buffering would just add a copy).
+        let cap = s.buffer_capacity();
+        if cap > 0 && (total - read_total) < cap && !s.is_eof() {
+            let rc = unsafe { refill_stream(s) };
+            if rc > 0 {
+                continue; // next buffered_read_into serves from the refilled buffer
+            }
+            break; // EOF (0) or error (<0, flagged on the stream by refill_stream)
         }
 
         // Prefer direct fd reads to avoid recursive memcpy interposition through

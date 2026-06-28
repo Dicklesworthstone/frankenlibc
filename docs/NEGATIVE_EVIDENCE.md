@@ -7332,3 +7332,19 @@ GREEN through the fast path (debug keeps flag=1): stdio_abi 256/256 + fread_part
 `stdio_locking_stress_test` 4/4 (spawns threads ⇒ flips the flag ⇒ exercises the locked path) + core
 stdio:: 271/271. The single-threaded stream-cache lever now covers the FULL hot stdio byte API:
 fgetc/getc + fputc/putc/putchar/fputs/fwrite, all ~4x vs glibc (from 9-17x).
+
+### 2026-06-28 — ✅✅✅ stdio fread buffer-fill: 131x → 4.77x vs glibc (20.8x self) + read-cache STEP 5 — BlackThrush
+
+Found+fixed a BIG pre-existing fread gap. fl `fread` did a DIRECT `sys_read_fd` of exactly the request
+size per call (a deliberate "avoid LD_PRELOAD recursion" choice) → a loop of small `fread`s issued ONE
+SYSCALL EACH: measured fread(16B) **1011 ns/call vs glibc 7.7 = 131x LOSS** (fgetc on the same stream was
+buffered/9 ns — only fread bypassed the buffer). FIX: for a small remaining request (< buffer capacity) on
+a buffered stream, refill the read buffer in one block via `refill_stream` (the SAME mechanism fgetc uses
+— sys_read_fd into a tmp + `fill_read_buffer` copy, so no new recursion risk) and serve from it; large
+requests (≥ capacity) keep the direct read. Result: fread(16B) **1011 → 48.5 ns = 20.8x self-speedup,
+131x → 4.77x vs glibc**. Also wired the read cache to fread (`fast_read` / `try_fread_fast`, all-or-nothing
+buffered fill) — marginal here (1.07x; the lock is now a small fraction) but kept for consistency with the
+byte/write API. fgetc/fputc stay ~4.3x. CONFORMANCE GREEN: core stdio:: 271/271 + stdio_abi 256/256 +
+fread_partial + rwdir 11 + unlocked_io + ext + printf + wide_stdio + MT `stdio_locking_stress` 4/4 = all
+pass. The single-threaded stream cache + the fread buffer-fill now bring the ENTIRE hot stdio byte API to
+~4-5x vs glibc (from 9-131x): fgetc/getc/fread + fputc/putc/putchar/fputs/fwrite.
