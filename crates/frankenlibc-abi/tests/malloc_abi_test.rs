@@ -821,7 +821,13 @@ fn test_malloc_usable_size_after_realloc() {
 #[test]
 fn test_calloc_overflow_returns_null() {
     let _guard = test_lock().lock().expect("test lock poisoned");
-    let p = unsafe { calloc(usize::MAX / 2 + 1, 3) };
+    let calloc = std::hint::black_box(calloc as unsafe extern "C" fn(usize, usize) -> *mut c_void);
+    let p = unsafe {
+        calloc(
+            std::hint::black_box(usize::MAX / 2 + 1),
+            std::hint::black_box(3),
+        )
+    };
     assert!(
         p.is_null(),
         "calloc overflow must return NULL on the normal allocation path"
@@ -831,7 +837,8 @@ fn test_calloc_overflow_returns_null() {
 #[test]
 fn test_calloc_size_max_returns_null() {
     let _guard = test_lock().lock().expect("test lock poisoned");
-    let p = unsafe { calloc(usize::MAX, 2) };
+    let calloc = std::hint::black_box(calloc as unsafe extern "C" fn(usize, usize) -> *mut c_void);
+    let p = unsafe { calloc(std::hint::black_box(usize::MAX), std::hint::black_box(2)) };
     assert!(
         p.is_null(),
         "calloc overflow at SIZE_MAX must return NULL on the normal allocation path"
@@ -842,7 +849,13 @@ fn test_calloc_size_max_returns_null() {
 fn test_calloc_overflow_returns_null_in_reentrant_path() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     let previous_depth = malloc_swap_reentry_depth_for_tests(1);
-    let p = unsafe { calloc(usize::MAX / 2 + 1, 3) };
+    let calloc = std::hint::black_box(calloc as unsafe extern "C" fn(usize, usize) -> *mut c_void);
+    let p = unsafe {
+        calloc(
+            std::hint::black_box(usize::MAX / 2 + 1),
+            std::hint::black_box(3),
+        )
+    };
     malloc_restore_reentry_depth_for_tests(previous_depth);
     assert!(
         p.is_null(),

@@ -1430,6 +1430,21 @@ fn fallback_size(ptr: *mut c_void) -> Option<usize> {
     None
 }
 
+fn fallback_size_for_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) -> Option<usize> {
+    let key = fallback_key(ptr)?;
+    if !MULTI_THREADED.load(Ordering::Relaxed) {
+        let cached_idx = slot.fallback_cache_index.load(Ordering::Acquire);
+        if cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
+            let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
+            if slot_key == key {
+                return Some(FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed));
+            }
+            clear_fallback_cache(slot);
+        }
+    }
+    fallback_size(ptr)
+}
+
 fn fallback_remaining(addr: usize) -> Option<usize> {
     if addr <= FALLBACK_SLOT_TOMBSTONE {
         return None;
@@ -2075,8 +2090,14 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 /// # Safety
 ///
 /// Caller must eventually `free` the returned pointer exactly once.
+#[inline(never)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
+    let Some(total) = nmemb.checked_mul(size).map(|total| total.max(1)) else {
+        unsafe { set_abi_errno(ENOMEM as c_int) };
+        return std::ptr::null_mut();
+    };
+
     let Some(reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         return unsafe { bootstrap_calloc_passthrough(nmemb, size) };
@@ -2090,7 +2111,6 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         // SAFETY: strict-mode preload delegates allocator semantics to host libc.
         let out = unsafe { native_libc_calloc_with_slot(reentry_guard.slot, nmemb, size) };
         if !out.is_null() {
-            let total = nmemb.saturating_mul(size).max(1);
             fallback_insert_sized_for_slot(reentry_guard.slot, out, total);
             record_alloc_stats(total);
         }
@@ -2100,22 +2120,6 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     let _signal_guard =
         enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
-    let total = match nmemb.checked_mul(size) {
-        Some(t) => t.max(1),
-        None => {
-            unsafe { set_abi_errno(ENOMEM as c_int) };
-            let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, 0, 0, true, false, 0);
-            runtime_policy::observe(ApiFamily::Allocator, decision.profile, 4, true);
-            record_allocator_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                Some(stage_index(&ordering, CheckStage::Bounds)),
-            );
-            return std::ptr::null_mut();
-        }
-    };
-
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, total, total, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(ENOMEM as c_int) };
@@ -2187,7 +2191,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
 /// `ptr` must be null or a pointer previously returned by `malloc`/`calloc`/`realloc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
-    let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
+    let Some(reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         return unsafe { bootstrap_realloc_passthrough(ptr, size) };
     };
@@ -2223,7 +2227,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     }
 
     if strict_allocator_host_path_active() {
-        if let Some(old_size) = fallback_size(ptr) {
+        if let Some(old_size) = fallback_size_for_slot(reentry_guard.slot, ptr) {
             let req = size.max(1);
             if req == old_size || (req < old_size && same_small_malloc_size_class(req, old_size)) {
                 if req != old_size {
@@ -2866,6 +2870,10 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
         && slot.user_base == addr
     {
         return slot.user_size;
+    }
+
+    if let Some(size) = fallback_size(ptr) {
+        return size;
     }
 
     // For all other pointers (fallback, host-allocated), return 0.

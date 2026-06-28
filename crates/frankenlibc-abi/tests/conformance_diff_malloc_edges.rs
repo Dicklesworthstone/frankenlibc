@@ -66,7 +66,8 @@ unsafe fn probe(
 
     // calloc zero-fills
     let c = unsafe { calloc(8, 8) };
-    let calloc_zeroed = !c.is_null() && unsafe { (0..64usize).all(|i| *(c as *const u8).add(i) == 0) };
+    let calloc_zeroed =
+        !c.is_null() && unsafe { (0..64usize).all(|i| *(c as *const u8).add(i) == 0) };
     unsafe { free(c) };
 
     // calloc with a zero dimension -> non-NULL
@@ -75,7 +76,8 @@ unsafe fn probe(
     unsafe { free(cz) };
 
     // calloc overflow (nmemb * size overflows usize) -> NULL
-    let co = unsafe { calloc(usize::MAX, 2) };
+    let calloc = std::hint::black_box(calloc);
+    let co = unsafe { calloc(std::hint::black_box(usize::MAX), std::hint::black_box(2)) };
     let calloc_overflow_null = co.is_null();
     if !co.is_null() {
         unsafe { free(co) };
@@ -101,5 +103,9 @@ fn malloc_edge_contracts_match_glibc() {
         "allocator edge contracts (malloc0_nonnull, realloc_null, grow_preserves, realloc0_null, calloc_zeroed, calloc_zero_dim, calloc_overflow_null): fl={fp:?} glibc={gp:?}"
     );
     // glibc reference values, pinned so a future glibc change is visible.
-    assert_eq!(gp, (true, true, true, true, true, true, true), "glibc reference contracts");
+    assert_eq!(
+        gp,
+        (true, true, true, true, true, true, true),
+        "glibc reference contracts"
+    );
 }

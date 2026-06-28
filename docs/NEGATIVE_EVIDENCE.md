@@ -47,6 +47,54 @@ retried and real wins are confirmed with numbers.
   The remaining stdio gap is the broader write-path architecture, not this
   fixed-buffer cursor.
 
+## 2026-06-28 — ✅ strict `realloc(ptr, same_size)` cached fallback-size lookup LANDED (7.7% p50 win; still 2.56x vs glibc)
+
+- **NO BENCH-WORKTREE WIN TO LAND FIRST (BlackThrush):** targeted scan of
+  `.scratch/.worktrees` found no ahead-of-`origin/main` measured win to promote. The
+  next architectural gap was strict allocator fallback-table bookkeeping, specifically
+  the hot `realloc(ptr, same_size)` path.
+- **LEVER:** `realloc` now reuses the current allocator reentry slot's cached fallback
+  table index to answer `fallback_size` on the same-thread hot path when
+  `MULTI_THREADED == false`. The lookup verifies the cached key, clears the cache on
+  mismatch, and falls back to the locked table probe.
+- **CONFORMANCE REPAIRS IN SAME PATCH:** strict `calloc` overflow now returns `NULL`
+  with `ENOMEM` before bootstrap/host dispatch, `malloc_usable_size` reports tracked
+  fallback allocation sizes, and release-LTO calloc overflow tests black-box the function
+  pointer plus overflow operands so LLVM cannot fold exported `calloc` as a builtin.
+- **BENCH (`rch` remote `ovh-a`, per-crate only):**
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-a rch exec -- cargo bench -p frankenlibc-bench --profile release --features abi-bench --bench calloc_glibc_bench realloc_cycle -- --sample-size 20 --measurement-time 1 --warm-up-time 1 --noplot`
+  (`cargo bench --release` was rejected by Cargo here; `--profile release` is the release
+  equivalent that ran.)
+- **ORIG:** `origin/main` `3dd1cb66b` in a detached baseline worktree. **Candidate:** same
+  SHA plus the cached lookup.
+
+| Bench row | ORIG fl p50 | Candidate fl p50 | Cand/ORIG | ORIG fl/glibc p50 | Candidate fl/glibc p50 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `same_256` | 8.227 ns | 7.593 ns | **0.923** | 2.79x | **2.56x** |
+| `same_class_shrink_256_to_240` | 467.903 ns | 471.816 ns | 1.008 | 98.86x | 100.05x |
+| `cross_class_shrink_256_to_128` | 646.930 ns | 651.930 ns | 1.008 | 31.59x | 31.99x |
+| `same_class_shrink_4096_to_3584` | 463.671 ns | 464.809 ns | 1.002 | 29.35x | 30.85x |
+
+- **VERDICT:** keep as a narrow measured same-size realloc win. This does **not** close
+  the allocator gap; it only removes one avoidable locked size lookup. A broader
+  cached-size-update extension was also tried and reverted after local sanity showed no
+  credible broad gain. Future work still needs a larger ownership/metadata redesign.
+- **FINAL-CANDIDATE SUPPLEMENT (`rch` remote `hz2`, same command after conformance
+  repairs):** `same_256` fl p50 **7.969 ns**, glibc p50 **2.753 ns** (2.89x vs glibc);
+  `same_class_shrink_256_to_240` fl p50 **398.939 ns**, glibc p50 **5.229 ns**;
+  `cross_class_shrink_256_to_128` fl p50 **526.081 ns**, glibc p50 **12.472 ns**;
+  `same_class_shrink_4096_to_3584` fl p50 **396.151 ns**, glibc p50 **10.880 ns**.
+  This is not used as the ORIG ratio because the ORIG/candidate proof above was the
+  same-worker `ovh-a` pair.
+- **CONFORMANCE:** focused allocator conformance GREEN on `frankenlibc-abi`:
+  `conformance_diff_malloc_edges` 1/0, `conformance_diff_reallocarray` 3/0,
+  `conformance_realloc_shrink_inplace` 1/0, `malloc_abi_test realloc` 7/0,
+  `malloc_abi_test calloc_overflow` 2/0, and `malloc_abi_test calloc_size_max` 1/0.
+  Known unrelated allocator-stats debt remains: isolated
+  `test_mallinfo2_balanced_after_concurrent_alloc_free` fails on both candidate
+  (left 137, right 133) and untouched ORIG (left 138, right 133), so it is not from this
+  patch. Touched-file `rustfmt` and `git diff --check` are GREEN.
+
 ## 2026-06-28 — 🔬 `asinh_special` RED root-caused: fl asinh x≥16 asymptotic is ~1 ULP (not bit-exact); cheap fix rejected
 
 - **ROOT CAUSE (BoldFalcon):** the pre-existing-RED `conformance_diff_asinh_special`
