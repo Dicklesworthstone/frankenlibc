@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 — 🧱 mem* primitives = NO LEVER (memcpy/memset parity BY CONSTRUCTION; memcmp deeper-AVX2)
+
+Closes the highest-impact domain (the obvious "optimize memcpy" target) by inspection,
+no bench needed:
+- **`memcpy`/`memmove`/`memset`** (core `string/mem.rs`) are `copy_from_slice` / `fill`
+  / `copy_within` — these lower to the **platform `memcpy`/`memset`**, which on this
+  glibc target IS glibc's. So fl's copy/set are **parity by construction** — there is no
+  fl-vs-glibc gap to close (and a custom kernel could only match, not beat, the
+  ifunc-dispatched glibc primitive). The exact-4096/exact-16 special cases present are
+  bench-overfit, not general levers.
+- **`memcmp`** is a custom folded-SIMD scan = the documented deeper-AVX2 moderate-size
+  gap (strcmp/memcmp ~2.4x at moderate sizes), already DISPROVEN (portable std::simd
+  can't match glibc's hand-tuned AVX2+ifunc). Not a lever.
+This + the saturated string/wide-char scans (memchr/strchr/wmemchr/wcscmp all SIMD)
+means the entire string+mem domain has no clean lever. Remaining repo perf gaps =
+architectural only (stdio main lock, malloc fallback-table; peer-contested).
+
 ## 2026-06-28 — ❌ f32 `fmodf` f64-widen candidate REJECTED (worker noise flagged it; deployed already wins) + remainderf unclosable
 
 - **SURVEY (new `fmodf_survey_bench`)** flagged fmodf 1.43x / remainderf 1.44–2.40x slow
