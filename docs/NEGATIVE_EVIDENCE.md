@@ -6,6 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 — ⏸️ f32 `asinhf` fast-f32-logf kernel: 3.7x faster + ≤2 ULP but DEFERRED (bit-exact gate intent) + PRE-EXISTING RED found
+
+- **MEASURED WIN, NOT DEPLOYED (BoldFalcon), new bench `asinhf_glibc_bench`:** candidate
+  uses fl's fused f32 `logf` directly for |x|≥1 (no cancellation there), keeping the f64
+  path only for the small-|x| cancellation region. Same-process per-op p50:
+  deployed (f64 log+widen) **15.5 ns**, candidate **5.0 ns**, glibc **18.7 ns** →
+  candidate **3.1x faster than deployed, 3.7x faster than glibc**; worst **2 ULP** vs
+  glibc over [-20,20]; inf/±0/nan special cases match.
+- **WHY DEFERRED (not landed):** the project holds `asinhf`/`asinh` to a BIT-EXACT
+  `same32`/`same64` gate `conformance_diff_asinh_special` (NEGATIVE_EVIDENCE shows it
+  passed 2/2 by design). The deployed f64-widen path is near-bit-exact; the candidate
+  trades that for ≤2 ULP, which would add bit-exact-failing cases. Within a 4-ULP
+  contract it is fine, but it moves *against* the project's explicit bit-exact intent —
+  so deploying needs a contract decision (relax asinhf to ≤4 ULP), not a unilateral
+  accuracy regression. Reverted; candidate preserved in `asinhf_glibc_bench`.
+- **⚠️ PRE-EXISTING RED surfaced (independent of this work):** `conformance_diff_asinh_special`
+  is currently RED on main — verified on a CLEAN checkout (my change stashed): `asinh(100.0)`
+  fl `…3c2b` vs glibc `…3c2a` (1 ULP), `asinhf(1e-10)` fl `1.0000001e-10` vs glibc `1e-10`.
+  It passed 2/2 historically, so this is glibc-2.42-drift breakage (the deployed f64 asinh/
+  asinhf now differ from host glibc by 1 ULP). Needs a separate fix (re-tune or relax the
+  gate to ≤1–2 ULP), unrelated to the asinhf perf candidate.
+
 ## 2026-06-28 — ✅ read-only `fmemopen` `fgetc` fast cursor LANDED (0.367x vs ORIG; 2.72x faster)
 
 - **LANDED CODE WIN (BlackThrush):** added a narrow fast cursor for read-only

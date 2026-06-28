@@ -308,3 +308,8 @@ harness = false
 [[bench]]
 name = "f32_math_survey_bench"
 harness = false
+
+# f32 asinhf candidate (fast-f32 logf kernel) vs deployed vs glibc.
+[[bench]]
+name = "asinhf_glibc_bench"
+harness = false
