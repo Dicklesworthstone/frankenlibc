@@ -303,3 +303,8 @@ harness = false
 [[bench]]
 name = "math_passthrough_survey_bench"
 harness = false
+
+# Reliable same-process survey: fl f32 transcendental passthroughs vs glibc.
+[[bench]]
+name = "f32_math_survey_bench"
+harness = false

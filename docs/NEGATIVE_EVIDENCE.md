@@ -39,6 +39,24 @@ retried and real wins are confirmed with numbers.
   `fmemopen_write_differential_test` **2/0**. Existing repository warnings and
   the missing-SMT-solver build warning were unchanged and are not from this
   stdio code path.
+## 2026-06-28 — f32 transcendental SURVEY: 2 slow-vs-glibc (asinhf/acoshf) but NOT trivially leverable
+
+- **SURVEY (BoldFalcon), new reusable bench `f32_math_survey_bench`:** same-process
+  per-op p50 fl/glibc for every f32 transcendental (<1 = fl wins):
+  tanf 0.82, asinf 0.66, acosf 0.64, atanf 0.59, **asinhf 1.51**, **acoshf 1.36**,
+  atanhf 1.27, expm1f 0.77, log1pf 1.01, cbrtf 0.96, coshf 1.11, sinhf 0.92,
+  tanhf 0.94, j0f 1.25, atan2f 0.61, hypotf 0.88. Only `asinhf`/`acoshf` clear the
+  1.30x slow-libm flag (atanhf/j0f/coshf marginal).
+- **NOT trivially leverable (analysis, no code change):** the deployed `asinhf`/
+  `acoshf` (float32.rs) are NOT libm passthrough — they already widen to f64 and use a
+  custom `log(|x|+sqrt(x²+1))` / `log(x+sqrt((x-1)(x+1)))` formula with fl's fused f64
+  `log`. The obvious f64-widen reuse (`math::asinh(x as f64) as f32`) would be SLOWER:
+  deployed f64 `asinh` measured ~28 ns vs the deployed f32 custom formula ~23 ns. The
+  f64 `log` dominates either way and exceeds glibc's tuned f32 path (~15 ns). A real
+  win needs a TUNED f32 kernel (small-|x| f32 polynomial to avoid the cancellation that
+  forces the f64 widen, + fast `logf` for the tail) — a dedicated-turn port with a ULP
+  gate, for niche functions. Scoped, not attempted inline. Everything else f32: fl
+  wins/parity (no lever).
 
 ## 2026-06-28 — ✅ f64 transcendental passthrough SURVEY (all win vs glibc) + `gamma` inherits lgamma win
 
