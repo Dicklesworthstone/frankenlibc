@@ -6,6 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-27 — ❌ lock-free native_stdio FILE*-cache REJECTED (~0-gain; masked by main registry lock)
+
+- **DISPROVEN / REVERTED (BoldFalcon):** follow-up to the landed `standard_stream_id`
+  sentinel-first reorder (92ded4afe). For NON-std streams (fmemopen/fopen),
+  `native_stdio_fd_for_ptr` still took the `native_stream_registry` `std::sync::Mutex`
+  once per stdio op just to discover "not a std stream". Cached the 3 native std FILE
+  slot addresses in `AtomicUsize` (published once under the lock at chain-init) and
+  made the mapper compare lock-free. Byte-identical.
+- **MEASURED ~0-gain on BOTH paths (`rch`, `--features abi-bench`):**
+  single-thread `fputs_glibc_bench` `fputs_38B/frankenlibc_abi` 47.34 µs vs the prior
+  46.46 µs (within noise, no Criterion change line); 8-thread
+  `stdio_mt_contention_bench` fl **60.4 ms** vs the prior-baseline 56.7 ms (ad3bf80cf)
+  — i.e. NOT improved (worse within cross-worker variance). Source reverted.
+- **WHY (refines swing-1):** both the ST and MT stdio paths are dominated by the
+  *main* `registry()` `Mutex` (held for the actual lookup + buffer write), which
+  serializes everything; removing the *separate, shorter* `native_stream_registry`
+  lock is masked entirely. So no incremental lock-elision on the FILE*→id mapper helps
+  — only replacing/sharding the MAIN `registry()` lock (swing-1 per-FILE refactor)
+  will move the needle. (Also recalibrates the earlier 92ded4afe −8.1% as largely
+  cross-worker Criterion-baseline noise; the sentinel-first reorder is still correct
+  and kept, just not a measurable win on its own.)
+
 ## 2026-06-28 — ❌ fputs raw registered-stream bypass REJECTED (1.050x vs ORIG; 2.96x LOSS vs glibc)
 
 - **DISPROVEN / REVERTED (BlackThrush):** tested a narrow RCU/read-mostly-metadata inspired fast path for
