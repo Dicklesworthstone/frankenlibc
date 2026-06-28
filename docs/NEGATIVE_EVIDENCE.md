@@ -7463,3 +7463,20 @@ fiddly + pure-literal snprintf is lower-frequency than printf-literal). CONFORMA
 vfprintf done 57137b7c3; snprintf/sprintf now). The %-conversion render remains the single-pass-rewrite
 project (confirmed deep: FormatSpec carries a private parser-resolved `route`, so a single-pass renderer
 must re-implement spec parsing — not a trivial foundation).
+
+### 2026-06-28 — ✅✅ RNG membrane fast-path: random/drand48/lrand48/mrand48 LOSS→WIN (0.54-0.79x vs glibc) — BlackThrush
+
+DIFFERENT primitive. The global-state RNG fns random()/drand48()/lrand48()/mrand48() are ~3.4 ns ops that
+paid the full `decide()`+`observe()` Stdlib membrane tax (~8-12 ns) per call → the tax DOMINATED (~3x
+loss). Applied the existing `stdlib_membrane_fastpath()` (already on the strtol family; same lever as the
+math/ctype membranes bd-n40in2): for an RNG with no pointer arg, `decide` is provably always-Allow and
+non-adverse `observe` is telemetry-only, so both are skipped in non-test (`cfg!(not(test))`; tests keep the
+full path). Byte-identical — the fast path returns the exact value `sv_random()`/`drand48()`/… compute.
+Measured (`rng_membrane_ab_bench`, fl module fn vs glibc via dlmopen): fl now WINS all four —
+random 3.47 vs 4.37 (0.794x), drand48 3.57 vs 5.31 (0.672x), lrand48 3.42 vs 4.49 (0.761x),
+mrand48 3.38 vs 6.31 (0.535x). State-taking erand48/nrand48/jrand48 KEPT on the full path (their pointer
+arg needs real `tracked_region_fits` validation); rand/rand_r/random_r were already lean. CONFORMANCE
+GREEN: core stdlib:: 467/467 + conformance_diff_stdlib_random 11/11 + drand48_family_differential_fuzz 1/1
++ random_initstate_differential_fuzz 2/2 + random_r_reentrant_differential_fuzz 2/2 (all byte-exact vs
+glibc). NOTE: stdlib_abi_test SEGVs on an UNRELATED size-suffix/blocksize test — verified PRE-EXISTING
+(reproduces on clean stdlib_abi.rs via git-stash A/B), not from this change.

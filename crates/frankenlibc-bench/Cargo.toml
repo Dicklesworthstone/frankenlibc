@@ -385,3 +385,9 @@ required-features = ["abi-bench"]
 name = "fputc_write_ab_bench"
 harness = false
 required-features = ["abi-bench"]
+
+# RNG global-state membrane fast-path vs host glibc, in-process (no abi-bench).
+[[bench]]
+name = "rng_membrane_ab_bench"
+required-features = ["abi-bench"]
+harness = false

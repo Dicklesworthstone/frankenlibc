@@ -3791,6 +3791,12 @@ fn random_state_len_for_setstate(ptr: *const c_char) -> Option<usize> {
 /// `drand48` — return a double in [0.0, 1.0) using global 48-bit state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn drand48() -> c_double {
+    // Membrane fast-path (see strtol family / bd-n40in2): Stdlib RNG with no pointer arg
+    // is provably always-Allow and `observe` is telemetry-only, so skip both in non-test —
+    // byte-identical to the result the slow path returns. Tests take the full path.
+    if runtime_policy::stdlib_membrane_fastpath() {
+        return frankenlibc_core::stdlib::drand48();
+    }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
@@ -3828,6 +3834,10 @@ pub unsafe extern "C" fn erand48(xsubi: *mut u16) -> c_double {
 /// `lrand48` — return non-negative long in [0, 2^31) using global state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lrand48() -> c_long {
+    // Membrane fast-path (see drand48): RNG, no pointer arg → always-Allow, telemetry-only.
+    if runtime_policy::stdlib_membrane_fastpath() {
+        return frankenlibc_core::stdlib::lrand48() as c_long;
+    }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
@@ -3865,6 +3875,10 @@ pub unsafe extern "C" fn nrand48(xsubi: *mut u16) -> c_long {
 /// `mrand48` — return signed long in [-2^31, 2^31) using global state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mrand48() -> c_long {
+    // Membrane fast-path (see drand48): RNG, no pointer arg → always-Allow, telemetry-only.
+    if runtime_policy::stdlib_membrane_fastpath() {
+        return frankenlibc_core::stdlib::mrand48() as c_long;
+    }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
@@ -3972,6 +3986,10 @@ pub unsafe extern "C" fn lcong48(param: *mut u16) {
 /// `random` — return a pseudo-random number in [0, 2^31-1].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn random() -> c_long {
+    // Membrane fast-path (see drand48): RNG, no pointer arg → always-Allow, telemetry-only.
+    if runtime_policy::stdlib_membrane_fastpath() {
+        return frankenlibc_core::stdlib::sv_random() as c_long;
+    }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
