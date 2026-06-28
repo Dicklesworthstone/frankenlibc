@@ -6,6 +6,46 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 - fmemopen `fgetc` read-ahead cache REJECTED (no valid ratio vs ORIG; SIGABRT)
+
+- **DISPROVEN / REVERTED (BlackThrush):** tested a memory-backed `fgetc`
+  read-ahead cache for the biggest current stdio gap. The candidate prefetched
+  up to 256 bytes from `fmemopen` streams under one registry lock, served the
+  rest from thread-local storage, and tried to rewind unconsumed bytes before
+  other stream operations observed position. This targeted the
+  `stdio_mt_contention_8t` benchmark where each thread drains its own
+  `fmemopen` stream one byte at a time and ORIG serializes each byte through
+  the global stream registry.
+- **MEASURED (`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`,
+  remote-required per-crate `rch exec`, Cargo release-profile spelling
+  `--profile release`):** clean `main` ORIG baseline on RCH worker `hz2` with
+  `cargo bench -j 1 -p frankenlibc-bench --profile release --features
+  abi-bench --bench stdio_mt_contention_bench -- stdio_mt_contention --noplot
+  --sample-size 20 --warm-up-time 1 --measurement-time 2` measured
+  `stdio_mt_contention_8t/frankenlibc_abi` **15.176 ms** mean (`[14.601,
+  15.750]`) vs host glibc **3.5940 ms** mean (`[3.3193, 3.8470]`) =
+  **4.22x slower than glibc**. The candidate rerun on the same worker and same
+  command compiled, started collecting
+  `stdio_mt_contention_8t/frankenlibc_abi`, then aborted during Criterion
+  analysis with `realloc(): invalid pointer` / SIGABRT before a candidate mean
+  or candidate/glibc comparator was produced. Candidate/ORIG ratio is therefore
+  **no valid finite ratio**; this is a correctness failure, not a keepable perf
+  result.
+- **VERDICT:** rejected; source changes were manually reverted before commit.
+  Do not retry ABI-layer thread-local read-ahead over `fmemopen` without first
+  proving the fixed-buffer ownership/close/sync invariants. The remaining
+  measured gap still points at removing or sharding the global stream registry
+  lock, not hiding it with speculative per-thread bytes.
+- **Validation note:** candidate `cargo check -j 1 -p frankenlibc-abi --lib`
+  passed locally with the existing warning set before the remote bench crash.
+  After source revert, `rch` remote conformance was blocked by worker
+  critical-pressure preflight (`remote required; refusing local fallback`), so
+  the same focused per-crate command was run locally with
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod-b`:
+  `cargo test -j 1 -p frankenlibc-abi --profile release --test
+  conformance_diff_stdio_ext -- --nocapture` passed **3 passed / 0 failed**.
+  No source code was retained, so behavior is unchanged by construction.
+
 ## 2026-06-27 — ✅ f64 `lgamma` [3,13) = log(tgamma) LANDED — 1.10x→1.02x vs glibc (~7% faster, ≤2 ULP)
 
 - **LANDED CODE WIN (`math/special.rs`, BoldFalcon):** `lgamma`/`lgamma_r` were a
