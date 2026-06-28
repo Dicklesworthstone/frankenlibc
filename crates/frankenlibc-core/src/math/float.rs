@@ -734,7 +734,10 @@ pub fn drem(x: f64, y: f64) -> f64 {
 /// of the Gamma function).
 #[inline]
 pub fn gamma(x: f64) -> f64 {
-    libm::lgamma(x)
+    // `gamma` is the BSD alias for `lgamma` (log-gamma). Route through the optimized
+    // core `lgamma` so it inherits the [3,13) `log(tgamma)` fast path instead of
+    // bypassing it via a direct `libm::lgamma`. Identical result/contract.
+    crate::math::lgamma(x)
 }
 
 /// Extract the significand (mantissa) of `x` scaled to `[1, 2)`.

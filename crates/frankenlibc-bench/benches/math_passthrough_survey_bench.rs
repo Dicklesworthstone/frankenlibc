@@ -1,0 +1,124 @@
+//! Reliable same-process survey: deployed fl f64 transcendental passthroughs vs host
+//! glibc (cc/BoldFalcon). Applies the refined reuse-lever filter — only functions
+//! where the deployed fl path is slower than glibc are worth a composition lever; the
+//! rest are confirmed fine. No `abi-bench` → bare `extern "C"` resolves to host glibc.
+//!
+//! Run: `cargo bench -p frankenlibc-bench --bench math_passthrough_survey_bench`
+
+use std::time::{Duration, Instant};
+
+use criterion::{Criterion, criterion_group, criterion_main};
+use frankenlibc_core::math;
+use std::hint::black_box;
+
+unsafe extern "C" {
+    #[link_name = "asin"]
+    fn h_asin(x: f64) -> f64;
+    #[link_name = "acos"]
+    fn h_acos(x: f64) -> f64;
+    #[link_name = "atan"]
+    fn h_atan(x: f64) -> f64;
+    #[link_name = "asinh"]
+    fn h_asinh(x: f64) -> f64;
+    #[link_name = "acosh"]
+    fn h_acosh(x: f64) -> f64;
+    #[link_name = "atanh"]
+    fn h_atanh(x: f64) -> f64;
+    #[link_name = "expm1"]
+    fn h_expm1(x: f64) -> f64;
+    #[link_name = "log1p"]
+    fn h_log1p(x: f64) -> f64;
+    #[link_name = "j0"]
+    fn h_j0(x: f64) -> f64;
+    #[link_name = "y0"]
+    fn h_y0(x: f64) -> f64;
+    #[link_name = "atan2"]
+    fn h_atan2(y: f64, x: f64) -> f64;
+    #[link_name = "hypot"]
+    fn h_hypot(x: f64, y: f64) -> f64;
+}
+
+fn p50(s: &mut [f64]) -> f64 {
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    if s.is_empty() {
+        return 0.0;
+    }
+    let r = 0.5 * (s.len() - 1) as f64;
+    let (lo, hi) = (r.floor() as usize, r.ceil() as usize);
+    s[lo] * (1.0 - (r - lo as f64)) + s[hi] * (r - lo as f64)
+}
+
+fn timeit<F: Fn() -> f64>(f: F) -> f64 {
+    // one batch's per-... wrapper-agnostic: returns ns for one f() call-set call.
+    let start = Instant::now();
+    black_box(f());
+    start.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64
+}
+
+fn survey_unary(
+    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &str,
+    inputs: &[f64],
+    fl: impl Fn(f64) -> f64,
+    gl: impl Fn(f64) -> f64,
+) {
+    let run = |label: &str, f: &dyn Fn(f64) -> f64| -> f64 {
+        let mut samples = Vec::new();
+        let bench_one = || {
+            let mut acc = 0.0;
+            for &x in inputs {
+                acc += f(black_box(x));
+            }
+            acc
+        };
+        // warmup
+        for _ in 0..50 {
+            black_box(bench_one());
+        }
+        for _ in 0..200 {
+            samples.push(timeit(&bench_one) / inputs.len() as f64);
+        }
+        let v = p50(&mut samples);
+        let _ = label;
+        v
+    };
+    let fl_ns = run("fl", &fl);
+    let gl_ns = run("glibc", &gl);
+    let ratio = fl_ns / gl_ns;
+    let flag = if ratio > 1.30 {
+        "  <-- LIBM-SLOW: lever candidate"
+    } else {
+        ""
+    };
+    println!("MATH_SURVEY {name:10} fl_p50={fl_ns:7.3} glibc_p50={gl_ns:7.3} ratio={ratio:.3}{flag}");
+    // keep criterion happy with a token measurement
+    g.bench_function(name, |b| b.iter(|| black_box(fl(black_box(inputs[0])))));
+}
+
+fn bench(c: &mut Criterion) {
+    let unit: Vec<f64> = (0..64).map(|k| -0.98 + k as f64 * (1.96 / 64.0)).collect(); // (-1,1)
+    let pos1: Vec<f64> = (0..64).map(|k| 1.01 + k as f64 * 0.5).collect(); // >1 (acosh)
+    let any: Vec<f64> = (0..64).map(|k| -20.0 + k as f64 * 0.625).collect();
+    let small: Vec<f64> = (0..64).map(|k| -0.5 + k as f64 * (1.0 / 64.0)).collect();
+    let gtm1: Vec<f64> = (0..64).map(|k| -0.5 + k as f64 * 0.5).collect(); // >-1 (log1p)
+    let posb: Vec<f64> = (0..64).map(|k| 0.5 + k as f64 * 0.5).collect(); // bessel
+
+    let mut g = c.benchmark_group("math_survey");
+    g.sample_size(10);
+    survey_unary(&mut g, "asin", &unit, |x| math::asin(x), |x| unsafe { h_asin(x) });
+    survey_unary(&mut g, "acos", &unit, |x| math::acos(x), |x| unsafe { h_acos(x) });
+    survey_unary(&mut g, "atan", &any, |x| math::atan(x), |x| unsafe { h_atan(x) });
+    survey_unary(&mut g, "asinh", &any, |x| math::asinh(x), |x| unsafe { h_asinh(x) });
+    survey_unary(&mut g, "acosh", &pos1, |x| math::acosh(x), |x| unsafe { h_acosh(x) });
+    survey_unary(&mut g, "atanh", &unit, |x| math::atanh(x), |x| unsafe { h_atanh(x) });
+    survey_unary(&mut g, "expm1", &small, |x| math::expm1(x), |x| unsafe { h_expm1(x) });
+    survey_unary(&mut g, "log1p", &gtm1, |x| math::log1p(x), |x| unsafe { h_log1p(x) });
+    survey_unary(&mut g, "j0", &posb, |x| math::j0(x), |x| unsafe { h_j0(x) });
+    survey_unary(&mut g, "y0", &posb, |x| math::y0(x), |x| unsafe { h_y0(x) });
+    survey_unary(&mut g, "atan2", &any, |x| math::atan2(x, 1.7), |x| unsafe { h_atan2(x, 1.7) });
+    survey_unary(&mut g, "hypot", &any, |x| math::hypot(x, 1.7), |x| unsafe { h_hypot(x, 1.7) });
+    g.finish();
+}
+
+criterion_group!(benches, bench);
+criterion_main!(benches);

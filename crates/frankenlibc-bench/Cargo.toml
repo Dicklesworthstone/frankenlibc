@@ -298,3 +298,8 @@ harness = false
 [[bench]]
 name = "lgammaf_glibc_bench"
 harness = false
+
+# Reliable same-process survey: fl f64 transcendental passthroughs vs glibc.
+[[bench]]
+name = "math_passthrough_survey_bench"
+harness = false

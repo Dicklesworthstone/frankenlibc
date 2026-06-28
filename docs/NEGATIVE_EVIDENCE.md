@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-28 — ✅ f64 transcendental passthrough SURVEY (all win vs glibc) + `gamma` inherits lgamma win
+
+- **SURVEY (BoldFalcon), new reusable bench `math_passthrough_survey_bench`:** applied
+  the refined reuse-lever filter (only attack where the deployed fl path is SLOWER than
+  glibc) by reliably measuring every f64 transcendental passthrough vs host glibc,
+  same-process per-op p50 (fl/glibc ratio, <1 = fl wins):
+  asin 0.92, acos 0.80, atan 0.73, asinh 0.70, acosh 0.46, atanh 0.64, expm1 0.84,
+  log1p 0.83, j0 0.98, y0 0.995, atan2 0.56, hypot 0.85.
+  **Every one ≤1.0 — fl wins or matches glibc across the board.** No slow-libm
+  transcendental remains, so there are NO more composition-lever candidates here; the
+  f64 transcendental frontier is comprehensively, reliably confirmed saturated.
+- **✅ LANDED side-win: `gamma` (BSD lgamma alias) routed to the optimized core
+  `lgamma`** (math/float.rs) instead of a direct `libm::lgamma`, so it inherits the
+  [3,13) `log(tgamma)` fast path (the 2026-06-27 lgamma win). Identical result; no
+  separate `gamma` conformance test exists and lgamma's gate covers the algorithm.
+  Conformance GREEN: `conformance_diff_math_special` 9/0, `math_abi_test` 118/0.
+
 ## 2026-06-27 — ❌ f32 `lgammaf` = log(tgamma) candidate REJECTED (1.29x slower than deployed libm)
 
 - **DISPROVEN (BoldFalcon), no code change:** applied the f64 `lgamma` win pattern
