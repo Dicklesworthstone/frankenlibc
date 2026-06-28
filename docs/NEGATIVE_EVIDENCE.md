@@ -7447,3 +7447,19 @@ is a fast stack itoa). A render-arm fast path is marginal (1.09x, and the obviou
 98dbd8ed5). The ONLY real fix is a SINGLE-PASS printf (scan format once, extract+render inline, fall back
 to the multi-stage for positional/%n/wide) — a deep, all-formatted-output-blast-radius, multi-session
 project. Designated as the dedicated next stdio effort; start from this diagnosis.
+
+### 2026-06-28 — ✅ stdio: snprintf/sprintf pure-literal fast path (same measured pipeline-skip as printf-literal) — BlackThrush
+
+Extended the no-`%` literal fast path to the buffer-format siblings snprintf + sprintf: when the format has
+no '%', its output is the format verbatim, so the (src_ptr,src_len,…) tuple is set straight to `fmt_bytes`
+and the existing truncating copy-out (size/NUL handling) runs UNCHANGED — skipping parse_format_string +
+core_count_printf_args + extract + direct_printf_string_payload + render_segments entirely. Byte-identical
+(literal == verbatim; the copy-out path is the same one render output flows through). Same measured
+mechanism as the printf-literal fast path (57137b7c3, 111→38.7 ns = 2.87x, ~parity glibc) — the pipeline
+skipped is identical; not separately micro-benched (buffer-snprintf cross-symbol fl-vs-glibc bench is
+fiddly + pure-literal snprintf is lower-frequency than printf-literal). CONFORMANCE GREEN: core printf
+53/53 + conformance_diff_stdio_printf 11/11 (covers snprintf string/int/precision/width cases) + stdio_abi
+256/256. Completes pure-literal fast-path coverage across the printf family (printf/fprintf/vprintf/
+vfprintf done 57137b7c3; snprintf/sprintf now). The %-conversion render remains the single-pass-rewrite
+project (confirmed deep: FormatSpec carries a private parser-resolved `route`, so a single-pass renderer
+must re-implement spec parsing — not a trivial foundation).

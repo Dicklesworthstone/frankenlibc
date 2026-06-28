@@ -4813,16 +4813,20 @@ pub unsafe extern "C" fn snprintf(
     }
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
-    let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
-    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     // Fast path for ubiquitous exact "%s" and "%s\n": copy the string
     // argument straight to the destination, skipping the render engine and
     // intermediate buffer copy. NULL falls through so render emits "(null)".
     let _rendered_hold;
-    let (src_ptr, src_len, append_newline, total_len) =
+    let (src_ptr, src_len, append_newline, total_len) = if !fmt_bytes.contains(&b'%') {
+        // Pure-literal format: output is the format verbatim — skip parse/extract/render
+        // entirely; the truncating copy-out below handles `size`/NUL byte-identically.
+        (fmt_bytes.as_ptr(), fmt_bytes.len(), false, fmt_bytes.len())
+    } else {
+        let segments = parse_format_string(fmt_bytes);
+        let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+        let mut arg_buf = [0u64; MAX_VA_ARGS];
+        extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
         match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
             Some(DirectPrintfPayload::String(bytes)) => {
                 (bytes.as_ptr(), bytes.len(), false, bytes.len())
@@ -4841,7 +4845,8 @@ pub unsafe extern "C" fn snprintf(
                 _rendered_hold = rendered;
                 parts
             }
-        };
+        }
+    };
 
     let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
     let mut adverse = false;
@@ -4913,16 +4918,19 @@ pub unsafe extern "C" fn sprintf(
     }
 
     let fmt_bytes = unsafe { c_str_bytes(format) };
-    let segments = parse_format_string(fmt_bytes);
-    let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
-    let mut arg_buf = [0u64; MAX_VA_ARGS];
-    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
     // Fast path for exact "%s" and "%s\n" (see snprintf): copy the string
     // argument straight to the destination, skipping the render engine and its
     // intermediate buffer copy. NULL falls through so render emits "(null)".
     let _rendered_hold;
-    let (src_ptr, src_len, append_newline, total_len) =
+    let (src_ptr, src_len, append_newline, total_len) = if !fmt_bytes.contains(&b'%') {
+        // Pure-literal format: output is the format verbatim — skip parse/extract/render.
+        (fmt_bytes.as_ptr(), fmt_bytes.len(), false, fmt_bytes.len())
+    } else {
+        let segments = parse_format_string(fmt_bytes);
+        let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
+        let mut arg_buf = [0u64; MAX_VA_ARGS];
+        extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
         match unsafe { direct_printf_string_payload(fmt_bytes, arg_buf.as_ptr(), extract_count) } {
             Some(DirectPrintfPayload::String(bytes)) => {
                 (bytes.as_ptr(), bytes.len(), false, bytes.len())
@@ -4940,7 +4948,8 @@ pub unsafe extern "C" fn sprintf(
                 _rendered_hold = rendered;
                 parts
             }
-        };
+        }
+    };
 
     let mut copy_len = total_len;
     let mut adverse = false;
