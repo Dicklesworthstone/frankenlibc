@@ -7408,3 +7408,18 @@ deferred single-pass rewrite). Byte-identical (literal output == format verbatim
 Line-buffered / has '%') falls through to the normal path. CONFORMANCE GREEN: core stdio:: 271/271 +
 conformance_diff_stdio_printf 11/11 + stdio_abi 256/256 + MT stdio_locking_stress 4/4. The remaining
 printf gap is now ONLY the conversion (%d/%s/...) render — the single-pass-rewrite project.
+
+### 2026-06-28 — ⚠️ printf plain-numeric render fast path REJECTED (1.09x + gating bug) — BlackThrush
+
+Tried a fast path at the top of `render_segments`' Spec arm: for a plain (no flags/width/precision,
+non-positional) numeric spec, call `render_value_arg` directly, skipping the width/precision resolution +
+conversion-dispatch prefix. TWO problems: (1) only **1.09x** on `%d` (FPRINTF 213→196 ns) — the skipped
+prefix is just ~17 ns; the bulk is `read_arg` + `render_value_arg`/`format_signed` itself, which the fast
+path still pays. (2) BROKE conformance (`diff_snprintf_string_specifiers` FAILED): gating on
+`value_arg_is_gp()` is too broad — it includes `%c`/`%p`, but `render_value_arg` only handles
+SignedInt/UnsignedInt/Float and returns `false` for those; the `let _ =` ignored the false AFTER consuming
+the arg → dropped output. REVERTED (stdio_abi.rs byte-identical to the committed literal-fast-path state;
+printf conformance 11/11 GREEN). LESSON: the %d/%-conversion printf gap (5.5x) is NOT shavable by a render
+fast path — the cost is genuinely distributed across the multi-stage pipeline + the per-value render, so
+the ONLY real fix remains the single-pass printf rewrite (deferred deep project). The literal-printf fast
+path (parity, 57137b7c3) stands as the cheap printf win.
