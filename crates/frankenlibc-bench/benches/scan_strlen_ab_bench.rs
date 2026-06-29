@@ -585,6 +585,50 @@ unsafe fn mrchr_new(p: *const u8, needle: u8, n: usize) -> Option<usize> {
     unsafe { mrchr_old(p, needle, n) }
 }
 
+/// OLD bounded NUL scan (strnlen) small-n path: 8-byte SWAR + scalar tail.
+#[inline(never)]
+unsafe fn snlen_old(p: *const u8, limit: usize) -> usize {
+    let mut i = 0usize;
+    while i + 8 <= limit {
+        let w = unsafe { std::ptr::read_unaligned(p.add(i).cast::<u64>()) };
+        if has_byte_u64(w, 0) {
+            for j in 0..8 {
+                if unsafe { *p.add(i + j) } == 0 {
+                    return i + j;
+                }
+            }
+        }
+        i += 8;
+    }
+    while i < limit {
+        if unsafe { *p.add(i) } == 0 {
+            return i;
+        }
+        i += 1;
+    }
+    limit
+}
+
+/// NEW bounded NUL scan small-n path: two overlapping 16-byte SIMD probes.
+#[inline(never)]
+unsafe fn snlen_new(p: *const u8, limit: usize) -> usize {
+    if (16..32).contains(&limit) {
+        let v0 = Simd::<u8, 16>::from_slice(unsafe { slice::from_raw_parts(p, 16) });
+        let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+        if m0 != 0 {
+            return m0.trailing_zeros() as usize;
+        }
+        let off = limit - 16;
+        let v1 = Simd::<u8, 16>::from_slice(unsafe { slice::from_raw_parts(p.add(off), 16) });
+        let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+        if m1 != 0 {
+            return off + m1.trailing_zeros() as usize;
+        }
+        return limit;
+    }
+    unsafe { snlen_old(p, limit) }
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -897,6 +941,47 @@ fn bench(c: &mut Criterion) {
         }
         println!(
             "MRCHR_AB len={len:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t / 32.0,
+            new_t / 32.0,
+            g_t / 32.0,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // strnlen A/B: NO NUL in [0,limit) (full scan to limit = worst case). glibc strnlen.
+    type SnlenFn = unsafe extern "C" fn(*const c_char, usize) -> usize;
+    let g_snlen =
+        unsafe { std::mem::transmute::<usize, SnlenFn>(host_sym(b"strnlen\0")) };
+    for &limit in &[16usize, 19, 23, 27, 31] {
+        let mut buf = backing.clone();
+        let mut old_t = 0.0;
+        let mut new_t = 0.0;
+        let mut g_t = 0.0;
+        for off in 0..32usize {
+            // Fill [off, off+limit) with non-NUL so the scan runs the full limit.
+            for k in 0..limit {
+                buf[off + k] = b'a' + (k % 26) as u8;
+            }
+            let p = unsafe { buf.as_ptr().add(off) };
+            assert_eq!(unsafe { snlen_old(p, limit) }, limit, "snlen_old off={off} limit={limit}");
+            assert_eq!(unsafe { snlen_new(p, limit) }, limit, "snlen_new off={off} limit={limit}");
+            assert_eq!(unsafe { g_snlen(p.cast(), limit) }, limit, "glibc strnlen full");
+            // present-NUL FIRST-occurrence correctness at a couple positions
+            for &pos in &[0usize, limit / 2, limit - 1] {
+                buf[off + pos] = 0;
+                assert_eq!(unsafe { snlen_new(p, limit) }, pos, "snlen_new first off={off} limit={limit} pos={pos}");
+                assert_eq!(unsafe { g_snlen(p.cast(), limit) }, pos, "glibc strnlen first");
+                buf[off + pos] = b'a' + (pos % 26) as u8;
+            }
+            old_t += measure(|| unsafe { snlen_old(black_box(p), limit) } as u64);
+            new_t += measure(|| unsafe { snlen_new(black_box(p), limit) } as u64);
+            g_t += measure(|| unsafe { g_snlen(black_box(p.cast()), limit) } as u64);
+        }
+        println!(
+            "SNLEN_AB lim={limit:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
             old_t / 32.0,
             new_t / 32.0,

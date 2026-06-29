@@ -7853,3 +7853,25 @@ glibc by ~1.17x (new/glibc 0.84-0.86) every size in [16,32). CONFORMANCE GREEN: 
 an exhaustive in-bench last-match sweep (absent + two-match LAST-occurrence at multiple positions vs glibc,
 5 sizes × 32 alignments). Confirms the pattern: single-pointer bounded scans (memchr/memrchr/memcmp) all
 beat glibc small-n via overlapping power-of-2 loads. (n < 16 stays scalar; n >= 32 unchanged.)
+
+### 2026-06-29 — ◐ bounded scan_c_string (strnlen) small-n: overlapping 16B = 1.5-3.0x over old, ~parity glibc — BlackThrush
+
+scan_c_string's Some(limit) bounded path (strnlen + scanf field scans + strncpy/strncat bounds) fell to an
+8-byte SWAR + scalar tail for limit < 32 (limit=31 = 3×8B SWAR + 7 scalar). Added the same overlapping
+16B fast path as memchr for limit ∈ [16,32): two overlapping 16-byte NUL probes (`[0,16)` and
+`[limit-16,limit)`), O(1) trailing_zeros, first-NUL ordering (probe 0 owns [0,16); if empty probe 1's
+lowest set bit is the true first NUL ≥ 16). Stays in-bounds (caller guarantees `limit` readable bytes).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench SNLEN_AB arm: OLD (8B SWAR + scalar), NEW (overlapping
+16B), host glibc strnlen, NO NUL in [0,limit) = full scan, 32 alignments):
+  lim=16  new/old=0.658  new/glibc=1.019  old/glibc=1.550
+  lim=19  new/old=0.537  new/glibc=1.146  old/glibc=2.134
+  lim=23  new/old=0.361  new/glibc=1.144  old/glibc=3.170
+  lim=27  new/old=0.483  new/glibc=1.154  old/glibc=2.387
+  lim=31  new/old=0.336  new/glibc=1.152  old/glibc=3.429
+NEW is 1.5-3.0x faster than OLD at every size, taking strnlen from 1.5-3.4x SLOWER than glibc to ~PARITY
+(new/glibc 1.02-1.15; ties at lim=16, ~2-15% behind otherwise). Unlike memchr/memrchr (clean wins),
+glibc strnlen is tight enough that 2×16B leaves a ~1.15x residual — close but not a clean beat. Landed as a
+strict 1.5-3.0x improvement of the deployed bounded scan, benefiting strnlen + scanf field scans +
+strncpy/strncat bounds. CONFORMANCE GREEN: conformance_diff_scan_c_string + conformance_diff_string (24) +
+conformance_diff_string_mut (35) + an exhaustive in-bench first-NUL sweep vs glibc (5 sizes × 32 aligns).

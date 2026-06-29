@@ -1001,6 +1001,33 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
     let p = ptr.cast::<u8>();
     match bound {
         Some(limit) => {
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            // Small bounded scan in [16, 32): the 32-byte loop below can't run, so the
+            // old code fell to an 8-byte SWAR + scalar tail (limit=31 = 3×8B SWAR + 7
+            // scalar). glibc-style two OVERLAPPING 16-byte SIMD probes — `[0,16)` and
+            // `[limit-16, limit)` — cover all `limit` bytes in-bounds (caller guarantees
+            // `limit` readable bytes). First-NUL ordering holds: probe 0 owns `[0,16)`;
+            // if empty, every NUL position < 16 is ruled out so probe 1's lowest set bit
+            // is the true first NUL ≥ 16. Benefits strnlen + every bounded scan caller.
+            if (16..32).contains(&limit) {
+                let v0 = Simd::<u8, 16>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p, 16)
+                });
+                let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+                if m0 != 0 {
+                    return (m0.trailing_zeros() as usize, true);
+                }
+                let off = limit - 16;
+                let v1 = Simd::<u8, 16>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(off), 16)
+                });
+                let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+                if m1 != 0 {
+                    return (off + m1.trailing_zeros() as usize, true);
+                }
+                return (limit, false);
+            }
             let mut i = 0usize;
             // Wide 32-byte portable-SIMD NUL scan (AVX width, like glibc's
             // strnlen). Bounded mode guarantees `limit` readable bytes, so a
