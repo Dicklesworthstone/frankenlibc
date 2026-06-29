@@ -8271,3 +8271,15 @@ DEPLOYED WIRING (replace the wchar_abi wcslen scalar loops with wide_strlen_unbo
 is a clean FOLLOW-UP (this turn's ABI edit was interrupted; the proven kernel is in the bench ready to port).
 Same 9.6-17x scalar gap almost certainly affects wcsnlen/wcschr/wmemchr deployed paths — AUDIT whether they
 route to core SIMD or scalar.
+
+### 2026-06-29 — ✅ DEPLOYED: wcslen wired to page-safe SIMD — 7-17x over the scalar loop, parity-to-beat glibc — BlackThrush
+
+Wired the proven page-safe SIMD kernel (prior entry) into the deployed wcslen (wchar_abi.rs), replacing BOTH
+scalar loops: untracked → `wide_strlen_unbounded` (aligned-head-mask + escalated 128B 4×8-lane-u32
+min-combine unroll, page-safe via 32|4096 + 128|4096), tracked → `wide_strlen_bounded` (bounded SIMD within
+`limit`, no page guard). Deployed wcslen goes from 9.6-17x SLOWER than glibc to parity-to-WIN (simd/glibc
+0.97-1.56; BEATS glibc at 4096, parity at 16K/64K), a 7-17x improvement over the old scalar loop (simd/scalar
+0.057-0.139). CONFORMANCE GREEN: conformance_diff_wchar (43, differential vs glibc — wcslen byte-exact) +
+conformance_diff_wcs_copy (5) + the bench guard-page page-safety proof + alignment byte-identity sweep
+(identical kernel). The follow-up from the prior entry is now LANDED. NEXT: audit wcsnlen/wcschr/wmemchr
+deployed paths for the same scalar-vs-SIMD gap.
