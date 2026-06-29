@@ -6,6 +6,36 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ wide-char membrane fast-path DEPLOYED (wcscmp/wcschr/wcsrchr/wcscasecmp: 2.0–3.4x faster vs ORIG, byte-identical)
+
+- **LEVER (cc):** the entire wide-char family paid the full
+  `runtime_policy::decide()` + `observe()` membrane on EVERY call even in the
+  DEFAULT strict-passthrough deployed mode — a flat **~9–10ns/call tax** — while
+  the narrow string family (`strcmp`) and the math/ctype families already skip it
+  via a `strict_passthrough_active()` fast path (bd-n40in2). Zero
+  `strict_passthrough_active` uses existed in `wchar_abi.rs`. Added the fast path
+  to the four functions whose strict full path is provably **unbounded**
+  (`bound`/`cmp_bound` gated on `repair`, which is false in strict): `wcscmp`,
+  `wcschr`, `wcsrchr`, `wcscasecmp`. Each fast path calls the EXACT core scanner
+  the strict full path already calls (`scan_wcscmp_simd`/`wide_find_or_nul_simd`/
+  `wide_last_before_nul_simd`/`scan_wcscasecmp_simd` with no limit) →
+  **byte-identical** result; only `decide`+`observe`+`known_remaining` are skipped.
+- **MEASURED (same-process A/B `wcscmp_membrane_ab_bench`, deployed fl `wcscmp`
+  vs core `bench_scan_wcscmp_simd` vs host glibc dlmopen, within-run ratios,
+  equal NUL-terminated wide strings; before-numbers from the same bench on
+  clean-main):** deployed `wcscmp` n=2 **13.3→3.97ns (3.35x)**, n=16
+  **14.3→4.88ns (2.9x)**, n=32 **16.9→6.98ns (2.4x)**, n=64 **20.6→10.19ns
+  (2.0x)**. Post-change `fl_full` collapses onto `fl_core` at every size (tax
+  gone). vs glibc: from a **3.5–4.4x LOSS → 1.2–1.5x** (the residual is the
+  extern-C frame + the wide-SIMD core gap, a separate lever). The flat tax is
+  identical across `wcschr`/`wcsrchr`/`wcscasecmp` (same membrane path).
+- **SAFE / unchanged contract:** strict mode never denies/heals (same invariant
+  the deployed `strcmp`/math/ctype fast paths rely on); `cfg!(test)` forces the
+  full path so unit/conformance gates exercise it (conformance_diff_wchar 43/43,
+  wchar_abi_test 118/118 GREEN). `wcslen`/`wcsncmp`/`wmemchr`/`wcsncasecmp` were
+  left on the full path (they honor `known`/`n` ungated, so a blind unbounded
+  fast path would change behavior — a separate, careful follow-up).
+
 ## 2026-06-29 — `scan_strcmp` 4×32 folded 128B block REJECTED (regime-specific; intrinsic boundary regression in the common short-string regime)
 
 - **LEVER TESTED (cc):** mirror glibc `strcmp_avx2`'s 4×VEC unrolled loop in the

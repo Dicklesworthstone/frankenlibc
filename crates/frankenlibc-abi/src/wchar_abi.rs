@@ -709,6 +709,18 @@ pub unsafe extern "C" fn wcscmp(s1: *const u32, s2: *const u32) -> c_int {
         return 0;
     }
 
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough does no
+    // validation (cmp_bound == None), so the result is exactly the wide-SIMD core
+    // compare. Skip decide + observe + known_remaining (byte-identical to the strict
+    // full path: scan_wcscmp_simd with no limit), mirroring the narrow `strcmp` and
+    // the math/ctype membrane fast paths. The wide-char family was omitted from this
+    // optimization, paying a flat ~9-10ns membrane tax per call. Hardened mode keeps
+    // the full validating path below.
+    if runtime_policy::strict_passthrough_active() {
+        let (r, _span, _hit) = unsafe { scan_wcscmp_simd(s1, s2, usize::MAX) };
+        return r;
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
@@ -989,6 +1001,19 @@ pub unsafe extern "C" fn wcschr(s: *const u32, c: u32) -> *mut u32 {
         return std::ptr::null_mut();
     }
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has `bound ==
+    // None`, so this is byte-identical to the `bound.is_none()` branch below.
+    // Skips the ~9-10ns decide + observe membrane tax, mirroring narrow `strchr`
+    // and the math/ctype fast paths.
+    if runtime_policy::strict_passthrough_active() {
+        let (idx, found) = unsafe { wide_find_or_nul_simd(s, c) };
+        return if found {
+            unsafe { s.add(idx) as *mut u32 }
+        } else {
+            std::ptr::null_mut()
+        };
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
@@ -1059,6 +1084,14 @@ pub unsafe extern "C" fn wcschr(s: *const u32, c: u32) -> *mut u32 {
 pub unsafe extern "C" fn wcsrchr(s: *const u32, c: u32) -> *mut u32 {
     if s.is_null() {
         return std::ptr::null_mut();
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has `bound ==
+    // None`, byte-identical to the `bound.is_none()` branch below; skips the
+    // decide + observe membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        let (last, _span) = unsafe { wide_last_before_nul_simd(s, c) };
+        return last.map_or(std::ptr::null_mut(), |idx| unsafe { s.add(idx) as *mut u32 });
     }
 
     let (mode, decision) = runtime_policy::decide(
@@ -4305,6 +4338,14 @@ pub unsafe fn bench_scan_wcscasecmp_simd(s1: *const u32, s2: *const u32, bound: 
 pub unsafe extern "C" fn wcscasecmp(s1: *const u32, s2: *const u32) -> c_int {
     if s1.is_null() || s2.is_null() {
         return 0;
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has
+    // `cmp_bound == None`, so this is byte-identical to the strict full path
+    // (`scan_wcscasecmp_simd` with no limit); skips the decide + observe tax.
+    if runtime_policy::strict_passthrough_active() {
+        let (r, _span, _hit) = unsafe { scan_wcscasecmp_simd(s1, s2, usize::MAX) };
+        return r;
     }
 
     let (mode, decision) = runtime_policy::decide(

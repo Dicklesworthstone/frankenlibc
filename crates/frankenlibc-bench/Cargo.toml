@@ -209,6 +209,13 @@ harness = false
 name = "strcmp_fold_ab_bench"
 harness = false
 
+# wcscmp full-membrane vs core-fastpath vs glibc — measures the wide-char
+# strict-passthrough membrane tax. Needs fl symbols.
+[[bench]]
+name = "wcscmp_membrane_ab_bench"
+harness = false
+required-features = ["abi-bench"]
+
 # strspn OLD (N simd_eq) vs NEW (2-shuffle classifier) vs glibc, 1 process.
 [[bench]]
 name = "strspn_shuffle_ab_bench"
