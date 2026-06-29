@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — `WideCharSet` [u64;2] bitmap REJECTED + the "wcsspn 2.6x glibc" residual was an INPUT ARTIFACT (corrects prior entry)
+
+- **LEVER TESTED (cc):** replace `WideCharSet`'s `[bool; 128]` ASCII table (a
+  128-byte stack zero per call) with a `[u64; 2]` 128-bit bitmap (16-byte zero,
+  glibc-strspn style), hypothesizing the table init dominated the wcsspn core.
+- **MEASURED (`wcsspn_set_ab_bench`, OLD bool128 vs NEW bitmap vs glibc, 1
+  process):** bitmap helps ONLY at n=4 (0.89x) and **LOSES 1.14–1.20x at n≥16**
+  — the `(ascii[c>>6] >> (c&63)) & 1` shift/mask membership test costs more than
+  the direct `bool[128]` index, and the init is NOT dominant beyond tiny inputs
+  (cost scales with s_len = the per-element lookup loop, not the one-time table
+  build). **Net loss → rejected; deployed `WideCharSet` unchanged** (the bitmap
+  lived only in the bench).
+- **CORRECTION to the entry below:** the "wcsspn still ~2.6x glibc after tax
+  removal" residual I flagged was an **input artifact**, not a real core gap. The
+  measurement used s=`"aaaa…"`, accept=`"abcdef"` — glibc's naive O(s·accept)
+  double loop's BEST case (inner loop breaks on accept[0]=='a'). With `'a'` placed
+  LAST (`"bcdefa"`, glibc must scan all 6 per element), fl's O(1) table **BEATS
+  glibc 2.1x at n=16 (19.3 vs 40.2ns) and 2.7x at n=256 (206 vs 560ns)**. fl's
+  `WideCharSet` is the correct algorithm; glibc only wins its own best case. No
+  wcsspn core lever exists — fl already wins the general/adversarial case.
+- Reusable asset: `wcsspn_set_ab_bench` (bool128 vs bitmap vs glibc; accept
+  ordering toggles glibc's best/worst case — re-run before any wcsspn set rework).
+
 ## 2026-06-29 — ✅ wide-char membrane fast-path EXTENDED to set/substr family (wcsspn/wcscspn/wcspbrk/wcsstr, byte-identical)
 
 - **LEVER (cc, follow-up to the compare/search batch below):** the same

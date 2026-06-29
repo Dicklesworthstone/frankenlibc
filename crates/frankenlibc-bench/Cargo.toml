@@ -216,6 +216,11 @@ name = "wcscmp_membrane_ab_bench"
 harness = false
 required-features = ["abi-bench"]
 
+# wcsspn set-membership core: OLD [bool;128] vs NEW [u64;2] bitmap vs glibc, 1 process.
+[[bench]]
+name = "wcsspn_set_ab_bench"
+harness = false
+
 # strspn OLD (N simd_eq) vs NEW (2-shuffle classifier) vs glibc, 1 process.
 [[bench]]
 name = "strspn_shuffle_ab_bench"
