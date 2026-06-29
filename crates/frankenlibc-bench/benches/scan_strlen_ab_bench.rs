@@ -912,6 +912,22 @@ unsafe fn wnlen_new(s: *const u32, limit: usize) -> usize {
     unsafe { wnlen_old(s, limit) }
 }
 
+/// `rep stosb` fill (x86 ERMS) — glibc's large-memset path; inline asm so it is never
+/// lowered to @llvm.memset (recursion-safe).
+#[inline(never)]
+unsafe fn memset_repstos(dst: *mut u8, value: u8, n: usize) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!(
+            "rep stosb",
+            inout("rcx") n => _,
+            inout("rdi") dst => _,
+            in("al") value,
+            options(nostack, preserves_flags),
+        );
+    }
+}
+
 /// OLD memset small-n path: 8-aligned u64 volatile stores + byte head/tail.
 #[inline(never)]
 unsafe fn memset_old(dst: *mut u8, value: u8, n: usize) {
@@ -1532,6 +1548,25 @@ fn bench(c: &mut Criterion) {
             old_t / 16.0,
             new_t / 16.0,
             g_t / 16.0,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // memset LARGE-n A/B: OLD volatile u64 loop vs NEW rep stosb (ERMS) vs glibc.
+    let mut bigbuf = vec![0u8; 1 << 17];
+    for &n in &[64usize, 128, 256, 1024, 4096, 16384, 65536] {
+        let p = bigbuf.as_mut_ptr();
+        unsafe { memset_repstos(p, 0x7E, n) };
+        assert!(unsafe { slice::from_raw_parts(p, n) }.iter().all(|&b| b == 0x7E), "repstos n={n}");
+        let old_t = measure(|| { unsafe { memset_old(black_box(p), 0x11, n) }; black_box(p) as u64 });
+        let new_t = measure(|| { unsafe { memset_repstos(black_box(p), 0x22, n) }; black_box(p) as u64 });
+        let g_t = measure(|| unsafe { g_memset(black_box(p.cast()), 0x33, n) } as u64);
+        println!(
+            "MEMSETBIG_AB n={n:<6} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t, new_t, g_t,
             new_t / old_t,
             new_t / g_t,
             old_t / g_t
