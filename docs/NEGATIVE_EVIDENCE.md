@@ -6,6 +6,18 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strtok strict fast-path DEPLOYED (~55ns membrane removed, byte-identical) — tokenizer family COMPLETE
+
+- **DEPLOYED (cc):** `strtok` (non-reentrant, thread-local saved-ptr) — mirrors the
+  strtok_r fast path with `strtok_saved_ptr()`/`set_strtok_saved_ptr()` and
+  `core::strtok::strtok` (returns start,len; next_pos = `token_end+1` unless at end).
+  Byte-identical RETURN + saved-ptr side effect, skipping the membrane bookkeeping.
+- **MEASURED (clean stash before/after):** strtok step **ORIG 122.1ns → fast 66.6ns
+  = ~55ns removed** (~1.83x; bench resets the mutable buffer via per-iter alloc,
+  common to both). Parity: full-tokenize TOKEN STRINGS matched glibc across 5 inputs;
+  conformance_diff_{tokenize_fuzz,string_mut} GREEN. **Tokenizer family COMPLETE off
+  the membrane tax: strsep + strtok_r + strtok.**
+
 ## 2026-06-29 — ✅ strtok_r strict fast-path DEPLOYED (~60ns membrane removed, byte-identical) — the classic tokenizer
 
 - **DEPLOYED (cc):** `strtok_r` (the classic reentrant tokenizer) — despite its
