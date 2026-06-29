@@ -2500,6 +2500,17 @@ pub unsafe extern "C" fn wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usiz
         return 0;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough gates the
+    // `known_remaining` clamp on `repair` (false in strict) → `limit == maxlen`,
+    // byte-identical to the strict full body (bounded wide NUL scan). Skips the
+    // decide + observe membrane tax. (Wide analog of the strnlen fast path; unlike
+    // `wcslen`, wcsnlen does NOT honor `known` ungated.)
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            wide_core::wcsnlen(std::slice::from_raw_parts(s as *const u32, maxlen), maxlen)
+        };
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,

@@ -6,6 +6,18 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ wcsnlen strict fast-path DEPLOYED (~2.2x vs ORIG, byte-identical)
+
+- **DEPLOYED (cc):** wide analog of the strnlen fast path. `wcsnlen` gates its
+  `known_remaining` clamp on `repair` (false in strict → `limit == maxlen`), so the
+  strict fast path = `wide_core::wcsnlen(slice[..maxlen], maxlen)`, byte-identical.
+  (Unlike `wcslen`, which honors `known` ungated and stays on the full path.)
+- **MEASURED (clean stash before/after):** wcsnlen(s,64) **ORIG 11.78ns → fast
+  5.31ns = ~2.2x vs ORIG** (glibc 3.79ns, 1.4x). Parity asserted; conformance_diff_
+  wchar 43/43 + wchar_abi_test 118/118 GREEN. **The bounded-length pair (strnlen +
+  wcsnlen) is now off the membrane tax; only the unbounded `strlen`(already
+  fast-pathed)/`wcslen`(honors known, intentionally left) remain.**
+
 ## 2026-06-29 — ✅ strnlen strict fast-path DEPLOYED (~4.8x vs ORIG, byte-identical) + hardened pathology lead (~543µs!)
 
 - **DEPLOYED (cc):** `strnlen` paid the full membrane in default(strict) mode.
