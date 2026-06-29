@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ wide-char membrane fast-path EXTENDED to fixed-n write family (wmemset/wmemcpy/wmemmove, byte-identical)
+
+- **LEVER (cc, 4th batch):** the same `strict_passthrough_active()` fast path on
+  the three wide fixed-`n` mem-WRITE functions (the wide analogs of the already-
+  done narrow memset/memcpy/memmove). In strict mode `repair` is false → no clamp
+  (`fill_len`/`copy_len == n`, `clamped` false), so each fast path is byte-
+  identical to the strict full body: `wmemset` → `from_raw_parts_mut(dst,n).fill(c)`,
+  `wmemcpy`/`wmemmove` → `std::ptr::copy(src,dst,n)`. Skips decide+observe+
+  known_remaining. SAFE: same as the reads — `decide()` is always-Allow for
+  StringMemory in strict (never Deny/heal); strict = trust the caller, exactly
+  glibc's contract (these are NOT NUL-scanning builders, so not the off-limits
+  strcat/stpcpy class).
+- **MEASURED DIRECTLY (`wcscmp_membrane_ab_bench` wmemset arm, deployed fl vs
+  host glibc dlmopen):** deployed `wmemset` n=4 **3.09ns** (would be ~12ns with
+  the tax, cf. wcscmp 13.3→3.97), n=32 **3.25ns** — fast path live, tax gone; now
+  ~1.1–1.3x glibc (was ~5x). ~3.9x faster vs ORIG.
+- Conformance GREEN: conformance_diff_wchar 43/43, wchar_abi_test 118/118.
+  **14 wide-char functions now off the membrane tax** (compare/search + set/substr
+  + n-bounded + fixed-n writes). Remaining on full path: `wcslen` (honors `known`
+  ungated → strict-semantics change), and the NUL-scanning builders
+  `wcscpy`/`wcsncpy`/`wcscat`/`wcsncat` (write past a scanned length — a separate,
+  more careful class).
+
 ## 2026-06-29 — ✅ wide-char membrane fast-path EXTENDED to n-bounded family (wmemchr/wcsncmp/wcsncasecmp, byte-identical)
 
 - **LEVER (cc, 3rd batch):** the same `strict_passthrough_active()` fast path,

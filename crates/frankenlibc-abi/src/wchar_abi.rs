@@ -1289,6 +1289,14 @@ pub unsafe extern "C" fn wmemcpy(dst: *mut u32, src: *const u32, n: usize) -> *m
         return std::ptr::null_mut();
     }
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough does not clamp
+    // (`copy_len == n`), byte-identical to the strict full path; skips the decide +
+    // observe membrane tax (~9-10ns/call, see wcscmp).
+    if runtime_policy::strict_passthrough_active() {
+        unsafe { std::ptr::copy(src, dst, n) };
+        return dst;
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
@@ -1361,6 +1369,14 @@ pub unsafe extern "C" fn wmemmove(dst: *mut u32, src: *const u32, n: usize) -> *
         return std::ptr::null_mut();
     }
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough does not clamp
+    // (`copy_len == n`), byte-identical to the strict full path; skips the decide +
+    // observe membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        unsafe { std::ptr::copy(src, dst, n) };
+        return dst;
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
@@ -1424,6 +1440,14 @@ pub unsafe extern "C" fn wmemset(dst: *mut u32, c: u32, n: usize) -> *mut u32 {
     }
     if dst.is_null() {
         return std::ptr::null_mut();
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough does not clamp
+    // (`fill_len == n`), byte-identical to the strict full path; skips the decide +
+    // observe membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        unsafe { std::slice::from_raw_parts_mut(dst, n).fill(c) };
+        return dst;
     }
 
     let (mode, decision) = runtime_policy::decide(

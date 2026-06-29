@@ -16,11 +16,12 @@ use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, wcscmp, wcsspn, wmemchr};
+use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, wcscmp, wcsspn, wmemchr, wmemset};
 
 type WcscmpFn = unsafe extern "C" fn(*const u32, *const u32) -> c_int;
 type WcsspnFn = unsafe extern "C" fn(*const u32, *const u32) -> usize;
 type WmemchrFn = unsafe extern "C" fn(*const u32, u32, usize) -> *mut u32;
+type WmemsetFn = unsafe extern "C" fn(*mut u32, u32, usize) -> *mut u32;
 
 fn host_sym(name: &[u8]) -> usize {
     unsafe {
@@ -163,5 +164,30 @@ fn bench(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench, bench_wcsspn, bench_wmemchr);
+/// Deployed-fl `wmemset` (fast path now live) vs host glibc at small `n` where
+/// the fixed membrane tax dominates if still present.
+fn bench_wmemset(c: &mut Criterion) {
+    static G: OnceLock<usize> = OnceLock::new();
+    let glibc: WmemsetFn =
+        unsafe { std::mem::transmute::<usize, WmemsetFn>(*G.get_or_init(|| host_sym(b"wmemset\0"))) };
+    for &n in &[4usize, 32] {
+        let mut a = vec![0u32; n];
+        let mut b = vec![0u32; n];
+        let pa = a.as_mut_ptr();
+        let pb = b.as_mut_ptr();
+        unsafe { wmemset(pa, 0x41, n) };
+        unsafe { glibc(pb, 0x41, n) };
+        assert_eq!(a, b);
+        let mut grp = c.benchmark_group(format!("wmemset_{n}"));
+        grp.bench_function("fl_deployed", |bb| {
+            bb.iter(|| black_box(unsafe { wmemset(black_box(pa), 0x41, n) }))
+        });
+        grp.bench_function("host_glibc", |bb| {
+            bb.iter(|| black_box(unsafe { glibc(black_box(pb), 0x41, n) }))
+        });
+        grp.finish();
+    }
+}
+
+criterion_group!(benches, bench, bench_wcsspn, bench_wmemchr, bench_wmemset);
 criterion_main!(benches);
