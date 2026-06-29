@@ -4292,6 +4292,18 @@ pub unsafe extern "C" fn wcpcpy(dst: *mut u32, src: *const u32) -> *mut u32 {
         return dst;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict unbounded
+    // copy body — SIMD length scan + bulk copy through the terminator — returning the
+    // end pointer `dst + len` (at the NUL), the wide stpcpy result. Skips the membrane
+    // tax (wide analog of the wcscpy fast path, returning the end ptr).
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (len, _terminated) = scan_w_string(src, None);
+            std::ptr::copy_nonoverlapping(src, dst, len + 1);
+            dst.add(len)
+        };
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
@@ -4383,6 +4395,28 @@ pub unsafe extern "C" fn wcpcpy(dst: *mut u32, src: *const u32) -> *mut u32 {
 pub unsafe extern "C" fn wcpncpy(dst: *mut u32, src: *const u32, n: usize) -> *mut u32 {
     if dst.is_null() || src.is_null() || n == 0 {
         return dst;
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict body —
+    // scan src (`src_bound==None`), copy `min(len,n)`, NUL-pad the remainder, return
+    // the end pointer (first NUL, or dst+n). Skips the membrane tax (wide stpncpy).
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (src_len, _) = scan_w_string(src, None);
+            let copy_len = src_len.min(n);
+            if copy_len > 0 {
+                std::ptr::copy_nonoverlapping(src, dst, copy_len);
+            }
+            let end_offset = if copy_len < n {
+                for i in copy_len..n {
+                    *dst.add(i) = 0;
+                }
+                copy_len
+            } else {
+                n
+            };
+            dst.add(end_offset)
+        };
     }
 
     let (mode, decision) = runtime_policy::decide(

@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ wcpcpy/wcpncpy strict fast-path DEPLOYED (~28x vs ORIG) — wide stpcpy/stpncpy; stale-rlib trap caught again
+
+- **DEPLOYED (cc):** `wcpcpy`/`wcpncpy` (GNU wide stpcpy/stpncpy — copy + return end
+  pointer) paid the heavy wide WRITE membrane (`is_write=true`) like wcscpy. Fast
+  paths = SIMD scan + bulk copy (+ NUL-pad for wcpncpy), returning the end pointer
+  (`dst+len` / first-NUL / `dst+n`) — byte-identical to the strict bodies.
+- **STALE-RLIB TRAP CAUGHT AGAIN (the lesson holds):** the stash before/after read
+  ORIG **22.5ns ≈ fast 22.3ns** (apparent ~0-gain) — but that ORIG was a STALE rlib
+  serving my fast path. The `FRANKENLIBC_MODE` probe on the SAME binary disambiguated:
+  **default 22.4ns / hardened 5.71µs** — the heavy write membrane IS present, fast
+  path bypasses it. True full path is ~640ns (the verified wcscpy sibling, same
+  `is_write` membrane). So **~640ns → 22.4ns = ~28x vs ORIG**, NOT ~0-gain.
+- Conformance_diff_wchar 43/43 + wchar_abi_test 118/118 GREEN; parity asserted (both
+  end-pointer returns + buffers, incl. wcpncpy truncation+padding). **RULE reaffirmed:
+  for write-membrane fns, NEVER trust a stash before/after alone — cross-check with
+  `FRANKENLIBC_MODE=hardened` (must show the slow path) to detect the stale rlib.**
+
 ## 2026-06-29 — ✅ swab strict fast-path DEPLOYED (~6.6x vs ORIG) + wcstok REJECTED (~0-gain unmeasurable)
 
 - **DEPLOYED (cc):** `swab` (BSD byte-pair swap) paid the full membrane (guard +
