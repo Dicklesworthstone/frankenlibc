@@ -8425,3 +8425,20 @@ delegates to native_libc_malloc, so the 50x is the membrane wrapper + the per-al
 registry insert that feeds known_remaining; removing it is a deep re-architecture touching free/realloc/
 string-bounds semantics — correctly flagged architectural, NOT a focused-turn lever.) STRSTR_TYP bench arm
 kept as apparatus.
+
+### 2026-06-29 — ✗ REJECTED: wcsncpy SIMD (memcpy+fill) restructure — deployed scalar already ~parity with glibc — BlackThrush
+
+wcsncpy's deployed strict path is a scalar copy-until-NUL loop + a scalar NUL-pad loop. Hypothesised the
+pad (long for the common short-src/large-n fixed-buffer case) was a gap; tried scan+memcpy+`slice.fill(0)`.
+Measured BEFORE deploying — no gain:
+  n=  64  simd/scalar=1.644  simd/glibc=1.957  scalar/glibc=1.190
+  n= 256  simd/scalar=1.056  simd/glibc=1.077  scalar/glibc=1.019
+  n=1024  simd/scalar=1.006  simd/glibc=0.990  scalar/glibc=0.984
+  n=4096  simd/scalar=0.997  simd/glibc=0.997  scalar/glibc=1.000
+The deployed scalar wcsncpy is ALREADY ~parity with glibc (scalar/glibc 0.98-1.19) and the SIMD restructure
+is neutral-to-WORSE (slower at n=64 from the scan+memcpy+fill setup; parity at larger n). WHY: LLVM already
+lowers the simple `while i<n { *dst.add(i)=0 }` NUL-pad loop to a vectorised constant fill (it's not a
+@llvm.mem* recursion risk here — wcsncpy isn't an interposed mem fn the way memset is), and the copy loop is
+short for short src. DECISION: rejected, deployed wcsncpy LEFT UNCHANGED. WCSNCPY bench arm kept as
+apparatus. LESSON: a scalar pad/fill loop in a NON-interposed fn is auto-vectorised by LLVM — only the
+interposed memset/memcpy need the explicit-store dance; don't assume scalar==slow.

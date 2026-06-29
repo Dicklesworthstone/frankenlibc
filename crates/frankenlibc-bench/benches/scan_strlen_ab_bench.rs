@@ -1609,6 +1609,40 @@ unsafe fn wcsstr_naive(hay: *const u32, hlen: usize, ndl: *const u32, nlen: usiz
     None
 }
 
+/// DEPLOYED wcsncpy strict path: scalar copy-until-NUL + scalar NUL-pad.
+#[inline(never)]
+unsafe fn wcsncpy_scalar(dst: *mut u32, src: *const u32, n: usize) {
+    let mut i = 0usize;
+    while i < n {
+        let ch = unsafe { *src.add(i) };
+        unsafe { *dst.add(i) = ch };
+        i += 1;
+        if ch == 0 {
+            break;
+        }
+    }
+    while i < n {
+        unsafe { *dst.add(i) = 0 };
+        i += 1;
+    }
+}
+
+/// NEW wcsncpy: bounded SIMD NUL-scan + memcpy payload + slice NUL-fill the pad.
+#[inline(never)]
+unsafe fn wcsncpy_simd(dst: *mut u32, src: *const u32, n: usize) {
+    // src_len = min(wcslen(src), n) via a bounded SIMD scan (reads only [0,n)).
+    let src_slice = unsafe { slice::from_raw_parts(src, n) };
+    let src_len = src_slice.iter().position(|&c| c == 0).unwrap_or(n);
+    if src_len > 0 {
+        unsafe { std::ptr::copy_nonoverlapping(src, dst, src_len) };
+    }
+    if src_len < n {
+        // NUL-fill [src_len, n) — .fill() vectorizes for u32.
+        let pad = unsafe { std::slice::from_raw_parts_mut(dst.add(src_len), n - src_len) };
+        pad.fill(0);
+    }
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -2234,6 +2268,35 @@ fn bench(c: &mut Criterion) {
             new_t / g_t,
             old_t / g_t
         );
+    }
+
+    // wcsncpy A/B: short src + large n (the fixed-buffer pad-dominated case). scalar vs
+    // memcpy+fill vs glibc wcsncpy.
+    {
+        type WncpyFn = unsafe extern "C" fn(*mut u32, *const u32, usize) -> *mut u32;
+        let g_wcsncpy = unsafe { std::mem::transmute::<usize, WncpyFn>(host_sym(b"wcsncpy\0")) };
+        let src: Vec<u32> = b"hello\0".iter().map(|&b| b as u32).collect();
+        for &n in &[64usize, 256, 1024, 4096] {
+            let mut d1 = vec![0xFFu32; n];
+            let mut d2 = vec![0xFFu32; n];
+            let mut d3 = vec![0xFFu32; n];
+            let sp = src.as_ptr();
+            unsafe { wcsncpy_scalar(d1.as_mut_ptr(), sp, n) };
+            unsafe { wcsncpy_simd(d2.as_mut_ptr(), sp, n) };
+            unsafe { g_wcsncpy(d3.as_mut_ptr(), sp, n) };
+            assert_eq!(d1, d2, "scalar vs simd n={n}");
+            assert_eq!(d1, d3, "scalar vs glibc n={n}");
+            let sc_t = measure(|| { unsafe { wcsncpy_scalar(black_box(d1.as_mut_ptr()), black_box(sp), n) }; black_box(d1.as_ptr()) as u64 });
+            let si_t = measure(|| { unsafe { wcsncpy_simd(black_box(d2.as_mut_ptr()), black_box(sp), n) }; black_box(d2.as_ptr()) as u64 });
+            let g_t = measure(|| unsafe { g_wcsncpy(black_box(d3.as_mut_ptr()), black_box(sp), n) } as u64);
+            println!(
+                "WCSNCPY n={n:<5} scalar_p50_ns={sc_t:.3} simd_p50_ns={si_t:.3} glibc_p50_ns={g_t:.3} \
+                 simd/scalar={:.3} simd/glibc={:.3} scalar/glibc={:.3}",
+                si_t / sc_t,
+                si_t / g_t,
+                sc_t / g_t
+            );
+        }
     }
 
     // strstr TYPICAL: needle found near the end of realistic-ish text (no pathological
