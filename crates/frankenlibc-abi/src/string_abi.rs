@@ -1552,12 +1552,27 @@ unsafe fn scan_strcasecmp(s1: *const c_char, s2: *const c_char, bound: usize) ->
                 up.select(v + Simd::splat(0x20), v)
             };
             let z = Simd::<u8, 32>::splat(0);
-            let flagged = fold(va).simd_ne(fold(vb)) | va.simd_eq(z);
-            if !flagged.any() {
+            let flagged = (fold(va).simd_ne(fold(vb)) | va.simd_eq(z)).to_bitmask();
+            if flagged == 0 {
                 i += 32;
                 continue;
             }
-            // Flagged panel: resolve exactly via the narrower paths below.
+            // Flagged panel: the first set bit is the exact first case-folded-differing
+            // or s1-NUL byte (the same index the SWAR/scalar tail would resolve to).
+            // Resolve it directly via trailing_zeros instead of re-scanning the same 32
+            // bytes with the 8-byte SWAR path below — same O(1) resolve as scan_strcmp.
+            // Byte-identical: at `k` either fold(a)!=fold(b) (return the case-folded
+            // difference) or a==0 (a NUL; equal-so-far ⇒ return 0).
+            let k = i + flagged.trailing_zeros() as usize;
+            // SAFETY: k < bound (the flagged 32-byte window is within bound).
+            let a = unsafe { *p1.add(k) };
+            let b = unsafe { *p2.add(k) };
+            let la = a.to_ascii_lowercase();
+            let lb = b.to_ascii_lowercase();
+            if la != lb {
+                return ((la as c_int) - (lb as c_int), k + 1);
+            }
+            return (0, k + 1);
         }
         if i + 8 <= bound
             && wide_read_within_page(p1 as usize + i)

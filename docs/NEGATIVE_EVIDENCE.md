@@ -7920,3 +7920,28 @@ count∈[12,31] (new/glibc 0.70-0.78); ~parity at count=8 (1.05, still 1.4x over
 core wmemchr suite + conformance_diff_wchar (43, randomized vs glibc) + exhaustive in-bench first-match
 sweep vs glibc (6 sizes × 16 aligns). (count < 8 unchanged scalar; >=32 unchanged.) The wide single-pointer
 bounded-scan family (wcsnlen, wmemchr) now beats glibc small-n, mirroring byte memchr/memcmp/memrchr.
+
+### 2026-06-29 — ◐ strcasecmp/strncasecmp scan: O(1) mask resolve = 3.3-5.9x over old (4-7x deficit → ~1.2x) — BlackThrush
+
+scan_strcasecmp (strcasecmp/strncasecmp dual-pointer case-insensitive scan) had the SAME redundant re-scan
+as scan_strcmp but FAR more expensive: on a flagged 32B fold panel it fell through to the 8B SWAR tail and
+re-scanned with a PER-BYTE `to_ascii_lowercase` resolve loop. The OLD kernel measured 4.1-7.2x SLOWER than
+glibc at small sizes (the worst self-vs-glibc in the family). FIX: resolve the first case-folded-differing
+or s1-NUL byte directly from the flagged bitmask via `(fold_ne | eq0).to_bitmask().trailing_zeros()` — at
+`k` either fold(a)!=fold(b) (return the case-folded difference + k+1) or a==0 (NUL ⇒ return 0 + k+1),
+byte-identical to the SWAR loop — and return immediately. Same O(1)-resolve lever as scan_strcmp.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench SCASE_AB arm: OLD (fold-flag + per-byte SWAR re-scan), NEW
+(O(1) resolve), host glibc strcasecmp, case-insensitively EQUAL strings = NUL-in-first-panel re-scan case):
+  len= 7  new/old=0.299  new/glibc=1.222  old/glibc=4.081
+  len=15  new/old=0.239  new/glibc=1.222  old/glibc=5.122
+  len=23  new/old=0.197  new/glibc=1.174  old/glibc=5.965
+  len=31  new/old=0.169  new/glibc=1.222  old/glibc=7.208
+  len=47  new/old=0.291  new/glibc=1.289  old/glibc=4.436
+  len=63  new/old=0.214  new/glibc=1.285  old/glibc=5.989
+NEW is 3.3-5.9x faster than OLD at every size (the session's biggest self-speedup), collapsing the glibc
+deficit from 4.1-7.2x to ~1.2x. HONEST: still loses ~1.2-1.3x (dual-pointer-can't-align + portable-SIMD-vs-
+AVX2 ceiling, like strcmp). Benefits strncasecmp (same scan_strcasecmp, bound=n). CONFORMANCE GREEN:
+conformance_diff_cmp_family (4) + conformance_diff_string (24, randomized strcasecmp/strncasecmp vs glibc) +
+an in-bench sign sweep at multiple differing positions vs glibc. Resolves the gauntlet's strncasecmp_256
+residual loss at the scan level.

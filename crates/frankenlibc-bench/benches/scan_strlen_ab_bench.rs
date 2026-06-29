@@ -397,6 +397,119 @@ unsafe fn memcmp_new(a: *const u8, b: *const u8, n: usize) -> i32 {
 }
 
 #[inline]
+fn swar_ascii_lower(w: u64) -> u64 {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    let guarded = w | HIGHS;
+    let ge_a = guarded.wrapping_sub(ONES.wrapping_mul(0x41)) & HIGHS;
+    let ge_5b = guarded.wrapping_sub(ONES.wrapping_mul(0x5B)) & HIGHS;
+    let ascii = !w & HIGHS;
+    let is_upper = ge_a & !ge_5b & ascii;
+    w | (is_upper >> 2)
+}
+#[inline]
+fn fold32(v: Simd<u8, 32>) -> Simd<u8, 32> {
+    use std::simd::Select;
+    use std::simd::cmp::SimdPartialOrd;
+    let up = v.simd_ge(Simd::splat(b'A')) & v.simd_le(Simd::splat(b'Z'));
+    up.select(v + Simd::splat(0x20), v)
+}
+
+/// OLD strcasecmp scan: 32B fold-flag then FALL THROUGH to 8B SWAR re-scan to resolve.
+#[inline(never)]
+unsafe fn scasecmp_old(p1: *const u8, p2: *const u8, bound: usize) -> (i32, usize) {
+    let mut i = 0usize;
+    loop {
+        if i + 32 <= bound && page_ok32(p1 as usize + i) && page_ok32(p2 as usize + i) {
+            let va = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p1.add(i), 32) });
+            let vb = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p2.add(i), 32) });
+            let flagged = fold32(va).simd_ne(fold32(vb)) | va.simd_eq(Simd::splat(0));
+            if !flagged.any() {
+                i += 32;
+                continue;
+            }
+        }
+        if i + 8 <= bound && page_ok8(p1 as usize + i) && page_ok8(p2 as usize + i) {
+            let wa = unsafe { std::ptr::read_unaligned(p1.add(i).cast::<u64>()) };
+            let wb = unsafe { std::ptr::read_unaligned(p2.add(i).cast::<u64>()) };
+            if swar_ascii_lower(wa) == swar_ascii_lower(wb) && !has_byte_u64(wa, 0) {
+                i += 8;
+                continue;
+            }
+            for j in 0..8 {
+                let a = unsafe { *p1.add(i + j) };
+                let b = unsafe { *p2.add(i + j) };
+                let la = a.to_ascii_lowercase();
+                let lb = b.to_ascii_lowercase();
+                if la != lb {
+                    return ((la as i32) - (lb as i32), i + j + 1);
+                }
+                if a == 0 {
+                    return (0, i + j + 1);
+                }
+            }
+            i += 8;
+            continue;
+        }
+        if i >= bound {
+            return (0, bound);
+        }
+        let a = unsafe { *p1.add(i) };
+        let b = unsafe { *p2.add(i) };
+        let la = a.to_ascii_lowercase();
+        let lb = b.to_ascii_lowercase();
+        if la != lb {
+            return ((la as i32) - (lb as i32), i + 1);
+        }
+        if a == 0 {
+            return (0, i + 1);
+        }
+        i += 1;
+    }
+}
+
+/// NEW strcasecmp scan: 32B fold-flag with O(1) trailing_zeros resolve (no SWAR re-scan).
+#[inline(never)]
+unsafe fn scasecmp_new(p1: *const u8, p2: *const u8, bound: usize) -> (i32, usize) {
+    let mut i = 0usize;
+    loop {
+        if i + 32 <= bound && page_ok32(p1 as usize + i) && page_ok32(p2 as usize + i) {
+            let va = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p1.add(i), 32) });
+            let vb = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p2.add(i), 32) });
+            let flagged = (fold32(va).simd_ne(fold32(vb)) | va.simd_eq(Simd::splat(0))).to_bitmask();
+            if flagged == 0 {
+                i += 32;
+                continue;
+            }
+            let k = i + flagged.trailing_zeros() as usize;
+            let a = unsafe { *p1.add(k) };
+            let b = unsafe { *p2.add(k) };
+            let la = a.to_ascii_lowercase();
+            let lb = b.to_ascii_lowercase();
+            if la != lb {
+                return ((la as i32) - (lb as i32), k + 1);
+            }
+            return (0, k + 1);
+        }
+        // (fallthrough tiers omitted: bench inputs always hit the 32B panel)
+        if i >= bound {
+            return (0, bound);
+        }
+        let a = unsafe { *p1.add(i) };
+        let b = unsafe { *p2.add(i) };
+        let la = a.to_ascii_lowercase();
+        let lb = b.to_ascii_lowercase();
+        if la != lb {
+            return ((la as i32) - (lb as i32), i + 1);
+        }
+        if a == 0 {
+            return (0, i + 1);
+        }
+        i += 1;
+    }
+}
+
+#[inline]
 fn page_ok32(a: usize) -> bool {
     a & 0xFFF <= 0x1000 - 32
 }
@@ -1166,6 +1279,47 @@ fn bench(c: &mut Criterion) {
             old_t / 16.0,
             new_t / 16.0,
             g_t / 16.0,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // strcasecmp A/B: case-insensitively EQUAL strings (NUL in first 32B panel = the
+    // re-scan case). bound large (NUL-terminated). glibc strcasecmp returns 0.
+    let g_scasecmp =
+        unsafe { std::mem::transmute::<usize, CmpFn>(host_sym(b"strcasecmp\0")) };
+    for &len in &[7usize, 15, 23, 31, 47, 63] {
+        let mut a = backing.clone();
+        let mut bb = backing.clone();
+        for k in 0..len {
+            // upper in a, lower in b => case-insensitively equal
+            a[k] = b'A' + (k % 26) as u8;
+            bb[k] = b'a' + (k % 26) as u8;
+        }
+        a[len] = 0;
+        bb[len] = 0;
+        let p1 = a.as_ptr();
+        let p2 = bb.as_ptr();
+        let bound = backing.len();
+        assert_eq!(unsafe { scasecmp_old(p1, p2, bound) }.0, 0, "scasecmp_old eq len={len}");
+        assert_eq!(unsafe { scasecmp_new(p1, p2, bound) }.0, 0, "scasecmp_new eq len={len}");
+        assert_eq!(unsafe { g_scasecmp(p1.cast(), p2.cast()) }, 0, "glibc strcasecmp eq len={len}");
+        // a differing byte at a couple positions: signs must agree with glibc
+        for &pos in &[0usize, len / 2, len - 1] {
+            let save = bb[pos];
+            bb[pos] = b'a' + ((pos + 5) % 26) as u8;
+            let want = unsafe { g_scasecmp(p1.cast(), p2.cast()) }.signum();
+            assert_eq!(unsafe { scasecmp_old(p1, p2, bound) }.0.signum(), want, "old sign len={len} pos={pos}");
+            assert_eq!(unsafe { scasecmp_new(p1, p2, bound) }.0.signum(), want, "new sign len={len} pos={pos}");
+            bb[pos] = save;
+        }
+        let old_t = measure(|| unsafe { scasecmp_old(black_box(p1), black_box(p2), bound) }.0 as i64 as u64);
+        let new_t = measure(|| unsafe { scasecmp_new(black_box(p1), black_box(p2), bound) }.0 as i64 as u64);
+        let g_t = measure(|| unsafe { g_scasecmp(black_box(p1.cast()), black_box(p2.cast())) } as i64 as u64);
+        println!(
+            "SCASE_AB len={len:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
             new_t / old_t,
             new_t / g_t,
             old_t / g_t
