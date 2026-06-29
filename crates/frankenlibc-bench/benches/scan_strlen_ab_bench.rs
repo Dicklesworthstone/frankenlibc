@@ -912,6 +912,70 @@ unsafe fn wnlen_new(s: *const u32, limit: usize) -> usize {
     unsafe { wnlen_old(s, limit) }
 }
 
+#[inline]
+unsafe fn cp16(dst: *mut u8, src: *const u8) {
+    unsafe { std::ptr::write_unaligned(dst.cast::<u128>(), std::ptr::read_unaligned(src.cast::<u128>())) };
+}
+#[inline]
+unsafe fn cp32(dst: *mut u8, src: *const u8) {
+    unsafe {
+        cp16(dst, src);
+        cp16(dst.add(16), src.add(16));
+    }
+}
+
+/// OLD memcpy kernel: 32/16-byte copy_unaligned + per-byte VOLATILE tail.
+#[inline(never)]
+unsafe fn memcpy_old(dst: *mut u8, src: *const u8, n: usize) {
+    let mut i = 0usize;
+    while i + 32 <= n {
+        unsafe { cp32(dst.add(i), src.add(i)) };
+        i += 32;
+    }
+    if i + 16 <= n {
+        unsafe { cp16(dst.add(i), src.add(i)) };
+        i += 16;
+    }
+    while i < n {
+        unsafe { std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i))) };
+        i += 1;
+    }
+}
+
+/// NEW memcpy kernel: overlapping power-of-2 copies, no volatile byte tail.
+#[inline(never)]
+unsafe fn memcpy_new(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        if n < 16 {
+            if n >= 8 {
+                std::ptr::write_unaligned(dst.cast::<u64>(), std::ptr::read_unaligned(src.cast::<u64>()));
+                std::ptr::write_unaligned(dst.add(n - 8).cast::<u64>(), std::ptr::read_unaligned(src.add(n - 8).cast::<u64>()));
+            } else if n >= 4 {
+                std::ptr::write_unaligned(dst.cast::<u32>(), std::ptr::read_unaligned(src.cast::<u32>()));
+                std::ptr::write_unaligned(dst.add(n - 4).cast::<u32>(), std::ptr::read_unaligned(src.add(n - 4).cast::<u32>()));
+            } else {
+                *dst = *src;
+                if n > 1 {
+                    *dst.add(n - 1) = *src.add(n - 1);
+                    *dst.add(n / 2) = *src.add(n / 2);
+                }
+            }
+            return;
+        }
+        let mut i = 0usize;
+        while i + 32 <= n {
+            cp32(dst.add(i), src.add(i));
+            i += 32;
+        }
+        if i < n {
+            if n - i > 16 {
+                cp16(dst.add(i), src.add(i));
+            }
+            cp16(dst.add(n - 16), src.add(n - 16));
+        }
+    }
+}
+
 /// `rep stosb` fill (x86 ERMS) — glibc's large-memset path; inline asm so it is never
 /// lowered to @llvm.memset (recursion-safe).
 #[inline(never)]
@@ -1567,6 +1631,40 @@ fn bench(c: &mut Criterion) {
             "MEMSETBIG_AB n={n:<6} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
             old_t, new_t, g_t,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // memcpy A/B: small-n copy. OLD copy_unaligned+volatile-tail vs NEW overlapping vs glibc.
+    type MemcpyFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void;
+    let g_memcpy =
+        unsafe { std::mem::transmute::<usize, MemcpyFn>(host_sym(b"memcpy\0")) };
+    let src: Vec<u8> = (0..4096).map(|k| (k % 251) as u8 + 1).collect();
+    let mut cdst = vec![0u8; 4096];
+    for &n in &[3usize, 7, 15, 16, 23, 31, 32, 47, 63] {
+        let mut old_t = 0.0;
+        let mut new_t = 0.0;
+        let mut g_t = 0.0;
+        for off in 0..16usize {
+            let sp = unsafe { src.as_ptr().add(off) };
+            let dp = unsafe { cdst.as_mut_ptr().add(off) };
+            unsafe { memcpy_new(dp, sp, n) };
+            assert_eq!(unsafe { slice::from_raw_parts(dp, n) }, unsafe { slice::from_raw_parts(sp, n) }, "new copy n={n}");
+            unsafe { cdst.as_mut_ptr().add(off).write_bytes(0, n) };
+            unsafe { memcpy_old(dp, sp, n) };
+            assert_eq!(unsafe { slice::from_raw_parts(dp, n) }, unsafe { slice::from_raw_parts(sp, n) }, "old copy n={n}");
+            old_t += measure(|| { unsafe { memcpy_old(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
+            new_t += measure(|| { unsafe { memcpy_new(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
+            g_t += measure(|| unsafe { g_memcpy(black_box(dp.cast()), black_box(sp.cast()), n) } as u64);
+        }
+        println!(
+            "MEMCPY_AB n={n:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t / 16.0,
+            new_t / 16.0,
+            g_t / 16.0,
             new_t / old_t,
             new_t / g_t,
             old_t / g_t

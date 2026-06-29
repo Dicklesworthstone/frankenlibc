@@ -8043,3 +8043,31 @@ exact rep stosb kernel byte-verified in-bench at 64..65536. memset now: [8,64) s
 glibc) + [64,1024) volatile (residual ~2x, needs an asm vector LOOP — future) + [1024,∞) rep stosb (parity-
 win). LESSON: inline asm (rep stosb / a vmovdqu asm loop) is THE way to get a recursion-safe fill LOOP in an
 interposed memset — Rust vector loops always risk the @llvm.memset fold.
+
+### 2026-06-29 — ✅ memcpy small-n: overlapping power-of-2 copies replace volatile tail (1.5-2.5x, beats glibc n<32) — BlackThrush
+
+memcpy is as hot as memset and had the same small-n floor: the deployed copy primitives (raw_memcpy_bytes +
+raw_lane_memcpy_bytes, shared by strcpy/strcat/strncat) did copy_unaligned_32/16 for the bulk then a PER-BYTE
+VOLATILE tail (n=31 = 1×16B + 15 volatile bytes). The volatile prevents LLVM coalescing the copy into an
+`@llvm.memcpy` call (which resolves to this interposed memcpy symbol → self-recursion). FIX: a shared
+recursion-safe `raw_overlap_copy` — explicit unaligned u128/u64/u32 loads+stores (never @llvm.memcpy) with
+OVERLAPPING power-of-2 tails (n<16 → 2×u64/u32; n>=16 → 32B copies + overlapping 16B at [n-16,n)) — no
+volatile byte tail. Used in raw_memcpy_bytes and raw_lane_memcpy_bytes (lane>=16); the lane<16 raw-passthrough
+and the overlap-aware memmove are untouched.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench MEMCPY_AB: OLD (copy_unaligned+volatile tail), NEW
+(overlapping), host glibc memcpy, 16 alignments):
+  n= 7  new/old=0.660  new/glibc=0.779  old/glibc=1.180
+  n=15  new/old=0.389  new/glibc=0.710  old/glibc=1.824
+  n=16  new/old=1.113  new/glibc=1.043   (noise: old has no volatile tail at exact 16; ~parity)
+  n=23  new/old=0.670  new/glibc=0.945  old/glibc=1.411
+  n=31  new/old=0.412  new/glibc=0.920  old/glibc=2.230
+  n=32  new/old=1.048  new/glibc=0.941   (noise: no tail at exact 32)
+  n=47  new/old=0.471  new/glibc=1.089  old/glibc=2.310
+  n=63  new/old=0.437  new/glibc=1.066  old/glibc=2.441
+NEW is 1.5-2.5x faster than OLD at the volatile-tail sizes (n=7/15/23/31/47/63), taking memcpy from
+1.2-2.4x SLOWER than glibc to BEATING glibc for n<32 (new/glibc 0.71-0.99) and ~parity [32,64). n=16/32 are
+exact-multiple sizes where old already had no volatile tail → ~parity (within noise). RECURSION-SAFE:
+conformance_diff_memcpy GREEN + conformance_diff_string_mut (35, strcpy/strcat/strncat share the primitive)
+GREEN, byte-identical no-crash; in-bench byte-identity sweep. Same straight-line/overlapping recursion-safe
+insight as the memset win. memmove left alone (overlap-aware).
