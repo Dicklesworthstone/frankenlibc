@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strnlen strict fast-path DEPLOYED (~4.8x vs ORIG, byte-identical) + hardened pathology lead (~543µs!)
+
+- **DEPLOYED (cc):** `strnlen` paid the full membrane in default(strict) mode.
+  Added `strict_passthrough_active()` fast path = the bounded SWAR NUL scan
+  `scan_c_string(s, Some(n))` — byte-identical to the strict body (strnlen gates its
+  `known_remaining` clamp on `repair`, false in strict → `scan_limit == n`, UNLIKE
+  `wcslen` which honors `known` ungated and is therefore left on the full path).
+- **MEASURED (RELIABLE; `FRANKENLIBC_MODE` default=fast/hardened=slow same binary):**
+  strnlen(s,64) **ORIG 19.8ns → fast 4.1ns = ~4.8x vs ORIG** (glibc 3.67ns, 1.1x —
+  near parity). Parity asserted; conformance_diff_{string,strlen} GREEN.
+- **NEW HARDENED LEAD (the most extreme yet):** hardened-mode strnlen(64) is
+  **~543µs** (!!) — a >100,000x pathology vs the 4ns fast path. Joins strspn/strcasecmp
+  (~27µs) and wcscpy (~5.7µs). The hardened membrane has a per-something blowup on
+  these scanning fns that is NOT present on fixed-`n` ops (bzero/memmem hardened are
+  ~70-100ns). Worth a dedicated hardened-mode investigation: a scanning fn that's
+  half a millisecond per call makes hardened mode unusable for string-heavy code.
+
 ## 2026-06-29 — ✅ memmem strict fast-path DEPLOYED (~2.9x vs ORIG, BEATS glibc 2x, byte-identical)
 
 - **DEPLOYED (cc):** `memmem` (explicit-length substring search) paid the full

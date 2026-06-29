@@ -2794,6 +2794,18 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
         return 0;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no membrane
+    // clamp (`repair` false → `scan_limit == n`), byte-identical to the strict full
+    // path — the bounded SWAR NUL scan `scan_c_string(s, Some(n))`. Skips the
+    // decide + observe + stage-trace bookkeeping. (Unlike `wcslen`, strnlen gates
+    // its `known_remaining` clamp on `repair`, so strict is plain bounded scan.)
+    if runtime_policy::strict_passthrough_active() {
+        if s.is_null() {
+            return 0;
+        }
+        return unsafe { scan_c_string(s, Some(n)).0 };
+    }
+
     let aligned = (s as usize) & 0x7 == 0;
     let recent_page = !s.is_null() && known_remaining(s as usize).is_some();
     let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
