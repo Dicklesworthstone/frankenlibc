@@ -3978,19 +3978,23 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
             out_local = haystack as *mut c_char;
             work_local = 1;
         } else if hay_len >= needle_len {
-            let mut h = 0usize;
-            while h + needle_len <= hay_len {
-                let mut n = 0usize;
-                while n < needle_len && *haystack.add(h + n) == *needle.add(n) {
-                    n += 1;
+            // Route the substring match to the core Two-Way searcher (O(hay+needle))
+            // instead of the old naive O(hay_len * needle_len) double loop, which was
+            // quadratic on adversarial inputs (e.g. hay="aaaa…", needle="aaa…c") —
+            // measured 164-455x slower than core memmem and a CPU-DoS vector. core memmem
+            // is pure (no global state), so it is safe on this strict/raw path.
+            let hay_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
+            let needle_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+            match frankenlibc_core::string::mem::memmem(
+                hay_slice, hay_len, needle_slice, needle_len,
+            ) {
+                Some(idx) => {
+                    out_local = haystack.add(idx) as *mut c_char;
+                    work_local = idx.saturating_add(needle_len);
                 }
-                if n == needle_len {
-                    out_local = haystack.add(h) as *mut c_char;
-                    work_local = h.saturating_add(needle_len);
-                    break;
+                None => {
+                    work_local = hay_len;
                 }
-                h += 1;
-                work_local = h.saturating_add(needle_len);
             }
         } else {
             work_local = hay_len;

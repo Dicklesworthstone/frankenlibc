@@ -8366,3 +8366,25 @@ their main loop, this compounds with the WideCharSet span win (561d9d238/5362a2f
 conformance_diff_wchar (43) + conformance_diff_wcs_copy (5) + wchar_abi_test (118) — byte-identical across
 the whole wide suite. LESSON: optimize the SHARED helper, not just the leaf fns — scan_w_string feeds the
 entire unbounded wide family, so one swap lifts dozens of callers.
+
+### 2026-06-29 — ✅✅ DEPLOYED strstr was NAIVE O(n*m) → routed to core Two-Way memmem: 164-455x over naive, 125-333x over glibc (+ DoS fix) — BlackThrush
+
+THE BIGGEST GAP OF THE CAMPAIGN. The deployed strict-mode strstr (the DEFAULT path, string_abi.rs:3980) ran
+a NAIVE O(hay_len * needle_len) double loop — NOT the Two-Way the memory credited (that was core memmem,
+which the ABI strstr never called: the wcslen anti-pattern again). Quadratic on adversarial inputs and a
+CPU-DoS vector. Routed the match to `frankenlibc_core::string::mem::memmem` (adaptive naive→two_way_search,
+O(hay+needle); pure, no global state — safe on the strict/raw path).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench STRSTR_PATHO: hay="a"*N+"b", needle="a"*16+"c" = no match;
+naive does N*16 byte-compares; vs core memmem (Two-Way) vs glibc strstr):
+  hn= 1024  naive=6101ns   memmem=  37ns  glibc= 4701ns  memmem/naive=0.0061  memmem/glibc=0.008
+  hn= 4096  naive=25195ns  memmem=  92ns  glibc=19001ns  memmem/naive=0.0037  memmem/glibc=0.005
+  hn=16384  naive=102722ns memmem= 222ns  glibc=80762ns  memmem/naive=0.0022  memmem/glibc=0.003
+Core memmem is 164-455x faster than the deployed naive AND 125-333x faster than glibc (glibc's strstr is
+ALSO ~quadratic on this input — both grow 4x per 4x haystack; Two-Way stays LINEAR). This is a quadratic→
+linear ALGORITHMIC fix on a very hot fn + eliminates a strstr CPU-DoS blowup vector. Byte-identical (Two-Way
+returns the same leftmost match). CONFORMANCE GREEN: conformance_diff_string (24) + conformance_diff_string_
+search (6, strstr/memmem differential vs glibc) + string_abi_test strstr (4) + in-bench naive/memmem/glibc
+agreement. (The early-startup raw_strstr passthrough fallback is still naive — lower priority, init-only, not
+on the adversarial-input path; follow-up.) LESSON: the "X is optimized" memory claim was for the CORE fn;
+the DEPLOYED ABI had its own naive loop — ALWAYS confirm the deployed entry routes to core (strstr didn't).

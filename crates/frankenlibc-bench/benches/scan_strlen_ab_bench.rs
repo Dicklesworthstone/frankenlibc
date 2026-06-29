@@ -1563,6 +1563,29 @@ unsafe fn wcsspn_table(s: *const u32, slen: usize, acc: *const u32, alen: usize)
     count
 }
 
+/// DEPLOYED strstr matching: naive O(hay_len * needle_len) double loop.
+#[inline(never)]
+unsafe fn strstr_naive(hay: *const u8, hlen: usize, ndl: *const u8, nlen: usize) -> Option<usize> {
+    if nlen == 0 {
+        return Some(0);
+    }
+    if hlen < nlen {
+        return None;
+    }
+    let mut h = 0usize;
+    while h + nlen <= hlen {
+        let mut n = 0usize;
+        while n < nlen && unsafe { *hay.add(h + n) == *ndl.add(n) } {
+            n += 1;
+        }
+        if n == nlen {
+            return Some(h);
+        }
+        h += 1;
+    }
+    None
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -2188,6 +2211,36 @@ fn bench(c: &mut Criterion) {
             new_t / g_t,
             old_t / g_t
         );
+    }
+
+    // strstr A/B: deployed NAIVE O(n*m) vs core memmem (TwoWay) vs glibc strstr.
+    {
+        type StrstrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
+        let g_strstr = unsafe { std::mem::transmute::<usize, StrstrFn>(host_sym(b"strstr\0")) };
+        // PATHOLOGICAL: hay = 'a'*N + 'b'\0, needle = 'a'*16 + 'c'\0 (no match; naive = N*16).
+        for &hn in &[1024usize, 4096, 16384] {
+            let mut hay = vec![b'a'; hn];
+            hay.push(b'b');
+            hay.push(0);
+            let mut ndl = vec![b'a'; 16];
+            ndl.push(b'c');
+            ndl.push(0);
+            let hp = hay.as_ptr();
+            let np = ndl.as_ptr();
+            assert_eq!(unsafe { strstr_naive(hp, hn + 1, np, 17) }, None, "naive path");
+            assert_eq!(frankenlibc_core::string::mem::memmem(&hay[..hn + 1], hn + 1, &ndl[..17], 17), None, "memmem path");
+            assert!(unsafe { g_strstr(hp.cast(), np.cast()) }.is_null(), "glibc path");
+            let naive_t = measure(|| unsafe { strstr_naive(black_box(hp), hn + 1, black_box(np), 17) }.unwrap_or(0) as u64);
+            let mm_t = measure(|| frankenlibc_core::string::mem::memmem(black_box(&hay[..hn + 1]), hn + 1, black_box(&ndl[..17]), 17).unwrap_or(0) as u64);
+            let g_t = measure(|| unsafe { g_strstr(black_box(hp.cast()), black_box(np.cast())) } as usize as u64);
+            println!(
+                "STRSTR_PATHO hn={hn:<6} naive_p50_ns={naive_t:.3} memmem_p50_ns={mm_t:.3} glibc_p50_ns={g_t:.3} \
+                 memmem/naive={:.4} memmem/glibc={:.3} naive/glibc={:.1}",
+                mm_t / naive_t,
+                mm_t / g_t,
+                naive_t / g_t
+            );
+        }
     }
 
     // wcsspn A/B: deployed scalar (linear contains) vs ASCII-table vs glibc wcsspn.
