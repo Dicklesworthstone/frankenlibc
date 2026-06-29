@@ -79,19 +79,85 @@ fn measure(mut f: impl FnMut() -> u64) -> f64 {
 fn bench(c: &mut Criterion) {
     let h = host();
     // 32-byte NUL-terminated buffers (small — membrane-tax-dominated regime).
-    let a: Vec<c_char> = b"the quick brown fox jumps abcde\0".iter().map(|&b| b as c_char).collect();
-    let b: Vec<c_char> = b"the quick brown fox jumps abcde\0".iter().map(|&b| b as c_char).collect();
+    let a: Vec<c_char> = b"the quick brown fox jumps abcde\0"
+        .iter()
+        .map(|&b| b as c_char)
+        .collect();
+    let b: Vec<c_char> = b"the quick brown fox jumps abcde\0"
+        .iter()
+        .map(|&b| b as c_char)
+        .collect();
     let n = 31usize;
     let mut dst = vec![0u8; 64];
     let rep = |name: &str, flp: f64, gp: f64| {
-        println!("STRFAM_{} fl_p50_ns={flp:.4} glibc_p50_ns={gp:.4} ratio={:.3}", name, flp / gp);
+        println!(
+            "STRFAM_{} fl_p50_ns={flp:.4} glibc_p50_ns={gp:.4} ratio={:.3}",
+            name,
+            flp / gp
+        );
     };
-    rep("strlen", measure(|| unsafe { fl::strlen(black_box(a.as_ptr())) } as u64), measure(|| unsafe { (h.strlen)(black_box(a.as_ptr())) } as u64));
-    rep("strcmp", measure(|| unsafe { fl::strcmp(black_box(a.as_ptr()), black_box(b.as_ptr())) } as i64 as u64), measure(|| unsafe { (h.strcmp)(black_box(a.as_ptr()), black_box(b.as_ptr())) } as i64 as u64));
-    rep("strchr", measure(|| unsafe { fl::strchr(black_box(a.as_ptr()), b'z' as i32) } as usize as u64), measure(|| unsafe { (h.strchr)(black_box(a.as_ptr()), b'z' as i32) } as usize as u64));
-    rep("memchr", measure(|| unsafe { fl::memchr(black_box(a.as_ptr().cast()), b'z' as i32, n) } as usize as u64), measure(|| unsafe { (h.memchr)(black_box(a.as_ptr().cast()), b'z' as i32, n) } as usize as u64));
-    rep("memcmp", measure(|| unsafe { fl::memcmp(black_box(a.as_ptr().cast()), black_box(b.as_ptr().cast()), n) } as i64 as u64), measure(|| unsafe { (h.memcmp)(black_box(a.as_ptr().cast()), black_box(b.as_ptr().cast()), n) } as i64 as u64));
-    rep("memmove", measure(|| unsafe { fl::memmove(black_box(dst.as_mut_ptr().cast()), black_box(a.as_ptr().cast()), n) } as usize as u64), measure(|| unsafe { (h.memmove)(black_box(dst.as_mut_ptr().cast()), black_box(a.as_ptr().cast()), n) } as usize as u64));
+    rep(
+        "strlen",
+        measure(|| unsafe { fl::strlen(black_box(a.as_ptr())) } as u64),
+        measure(|| unsafe { (h.strlen)(black_box(a.as_ptr())) } as u64),
+    );
+    rep(
+        "strcmp",
+        measure(
+            || unsafe { fl::strcmp(black_box(a.as_ptr()), black_box(b.as_ptr())) } as i64 as u64,
+        ),
+        measure(
+            || unsafe { (h.strcmp)(black_box(a.as_ptr()), black_box(b.as_ptr())) } as i64 as u64,
+        ),
+    );
+    rep(
+        "strchr",
+        measure(|| unsafe { fl::strchr(black_box(a.as_ptr()), b'z' as i32) } as usize as u64),
+        measure(|| unsafe { (h.strchr)(black_box(a.as_ptr()), b'z' as i32) } as usize as u64),
+    );
+    rep(
+        "memchr",
+        measure(
+            || unsafe { fl::memchr(black_box(a.as_ptr().cast()), b'z' as i32, n) } as usize as u64,
+        ),
+        measure(
+            || unsafe { (h.memchr)(black_box(a.as_ptr().cast()), b'z' as i32, n) } as usize as u64,
+        ),
+    );
+    rep(
+        "memcmp",
+        measure(|| unsafe {
+            fl::memcmp(
+                black_box(a.as_ptr().cast()),
+                black_box(b.as_ptr().cast()),
+                n,
+            )
+        } as i64 as u64),
+        measure(|| unsafe {
+            (h.memcmp)(
+                black_box(a.as_ptr().cast()),
+                black_box(b.as_ptr().cast()),
+                n,
+            )
+        } as i64 as u64),
+    );
+    rep(
+        "memmove",
+        measure(|| unsafe {
+            fl::memmove(
+                black_box(dst.as_mut_ptr().cast()),
+                black_box(a.as_ptr().cast()),
+                n,
+            )
+        } as usize as u64),
+        measure(|| unsafe {
+            (h.memmove)(
+                black_box(dst.as_mut_ptr().cast()),
+                black_box(a.as_ptr().cast()),
+                n,
+            )
+        } as usize as u64),
+    );
 
     let mut grp = c.benchmark_group("strfam");
     grp.bench_function("noop", |bb| bb.iter(|| black_box(1u8)));

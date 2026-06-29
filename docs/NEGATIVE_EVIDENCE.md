@@ -7615,3 +7615,20 @@ deployed strict path output; conformance_diff_memset/memcpy + string_abi_test 20
 GREEN). VEIN: other string/mem fns (memmove/memcmp/strlen/strcmp/strcpy/...) likely also miss the strict
 skip — only ~2 string_abi fns had it before this — family-wide rollout is a large deployed win on the
 hottest primitives (each ~2x at small sizes from membrane removal; core stays volatile-SWAR-bound).
+
+### 2026-06-28 — ✅ strchr strict-membrane skip 10.3x→6.4x; FAMILY-WIDE tax quantified (strlen 13x/memcmp 17.6x) — BlackThrush
+
+Continuing the string/mem strict-skip vein (after memset/memcpy ed8052d36). New string_family_small_ab_bench
+(fl module fn vs glibc dlmopen, 31-byte buffers; inputs black_box'd to defeat fl-module-fn const-folding —
+WITHOUT black_box the fl side folds to sub-ns artifacts and falsely "wins"). REAL small-size ratios show the
+whole hot string family pays the per-call StringMemory membrane: strlen 13.4x, strcmp 9.9x, memchr 9.5x,
+memcmp 17.6x, strchr 10.3x; only memmove (0.62x) is already fine. FIXED strchr this turn: added the
+strict_passthrough_active() skip at the top of `strchr_locate` (byte-identical raw page-safe
+`scan_c_string_for_byte(s, target, None)` — exactly what the strict full path computes, bound==None — but
+skipping stage_context_one + decide + observe + record). Result: strchr **10.3x → 6.4x** (~1.6x self).
+Residual 6.4x is the scan_c_string_for_byte short-string cost + call chain (a SEPARATE issue from the
+membrane; fl's page-safe SIMD scan has more fixed setup than glibc's for ~31 bytes). CONFORMANCE GREEN:
+string_abi_test 201 + core string:: 475. VEIN (next turns, the big prize): roll the same strict-skip to
+strlen/strcmp/memchr/memcmp — each must mirror its OWN fast raw op (strlen→raw_lane_strlen, NOT the scalar
+startup loop; memcmp→raw_lane_memcmp_bytes; etc.), gated on strict_passthrough_active, byte-identical,
+hardened keeps validation. Expected ~2x self each (membrane removal), like memset 7→3 / strchr 10→6.
