@@ -1098,6 +1098,44 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     const PANEL: usize = WIDE_FIND_LONG_SIMD_LANES; // 64
     let count = n.min(s.len());
     let scan = &s[..count];
+
+    // Small bounded scan in [8, 32) wide chars: the 16-lane chunk loop below leaves a
+    // scalar tail (count < 16 is fully scalar) — the wide small-n floor, same as wcsnlen.
+    // Two OVERLAPPING u32 SIMD probes — `[0,L)` and `[count-L, count)` with L=16 (≥16) or
+    // 8 (≥8) — cover all `count` lanes in-bounds (`scan` has exactly `count` elements).
+    // First-match ordering: probe 0 owns `[0,L)`; if empty every match < L is ruled out,
+    // so probe 1's lowest set bit is the true first match ≥ L.
+    if (16..32).contains(&count) {
+        let t = Simd::<u32, 16>::splat(c);
+        let v0 = Simd::<u32, 16>::from_slice(&scan[..16]);
+        let m0 = v0.simd_eq(t).to_bitmask();
+        if m0 != 0 {
+            return Some(m0.trailing_zeros() as usize);
+        }
+        let off = count - 16;
+        let v1 = Simd::<u32, 16>::from_slice(&scan[off..off + 16]);
+        let m1 = v1.simd_eq(t).to_bitmask();
+        if m1 != 0 {
+            return Some(off + m1.trailing_zeros() as usize);
+        }
+        return None;
+    }
+    if (8..16).contains(&count) {
+        let t = Simd::<u32, 8>::splat(c);
+        let v0 = Simd::<u32, 8>::from_slice(&scan[..8]);
+        let m0 = v0.simd_eq(t).to_bitmask();
+        if m0 != 0 {
+            return Some(m0.trailing_zeros() as usize);
+        }
+        let off = count - 8;
+        let v1 = Simd::<u32, 8>::from_slice(&scan[off..off + 8]);
+        let m1 = v1.simd_eq(t).to_bitmask();
+        if m1 != 0 {
+            return Some(off + m1.trailing_zeros() as usize);
+        }
+        return None;
+    }
+
     let target = Simd::<u32, PANEL>::splat(c);
     let mut base = 0usize;
 

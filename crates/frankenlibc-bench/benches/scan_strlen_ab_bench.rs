@@ -667,6 +667,56 @@ macro_rules! wnlen_probe {
     }};
 }
 
+/// OLD wmemchr small-n path: 16-lane u32 chunks + scalar tail (scalar-only for n<16).
+#[inline(never)]
+unsafe fn wmchr_old(s: *const u32, c: u32, count: usize) -> Option<usize> {
+    let mut base = 0usize;
+    while base + 16 <= count {
+        let v = Simd::<u32, 16>::from_slice(unsafe { slice::from_raw_parts(s.add(base), 16) });
+        let m = v.simd_eq(Simd::splat(c)).to_bitmask();
+        if m != 0 {
+            return Some(base + m.trailing_zeros() as usize);
+        }
+        base += 16;
+    }
+    while base < count {
+        if unsafe { *s.add(base) } == c {
+            return Some(base);
+        }
+        base += 1;
+    }
+    None
+}
+
+macro_rules! wmchr_probe {
+    ($s:expr, $c:expr, $count:expr, $L:literal) => {{
+        let t = Simd::<u32, $L>::splat($c);
+        let v0 = Simd::<u32, $L>::from_slice(unsafe { slice::from_raw_parts($s, $L) });
+        let m0 = v0.simd_eq(t).to_bitmask();
+        if m0 != 0 {
+            return Some(m0.trailing_zeros() as usize);
+        }
+        let off = $count - $L;
+        let v1 = Simd::<u32, $L>::from_slice(unsafe { slice::from_raw_parts($s.add(off), $L) });
+        let m1 = v1.simd_eq(t).to_bitmask();
+        if m1 != 0 {
+            return Some(off + m1.trailing_zeros() as usize);
+        }
+        return None;
+    }};
+}
+
+/// NEW wmemchr small-n path: two overlapping u32 SIMD probes per size class.
+#[inline(never)]
+unsafe fn wmchr_new(s: *const u32, c: u32, count: usize) -> Option<usize> {
+    if (16..32).contains(&count) {
+        wmchr_probe!(s, c, count, 16);
+    } else if (8..16).contains(&count) {
+        wmchr_probe!(s, c, count, 8);
+    }
+    unsafe { wmchr_old(s, c, count) }
+}
+
 /// NEW wcsnlen small-n path: two overlapping u32 SIMD probes per size class.
 #[inline(never)]
 unsafe fn wnlen_new(s: *const u32, limit: usize) -> usize {
@@ -1072,6 +1122,46 @@ fn bench(c: &mut Criterion) {
         }
         println!(
             "WNLEN_AB lim={limit:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t / 16.0,
+            new_t / 16.0,
+            g_t / 16.0,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // wmemchr A/B: ABSENT target in [8,32) wchars (full scan). glibc wmemchr.
+    type WMchrFn = unsafe extern "C" fn(*const u32, u32, usize) -> *mut u32;
+    let g_wmchr =
+        unsafe { std::mem::transmute::<usize, WMchrFn>(host_sym(b"wmemchr\0")) };
+    let needle = 0x0000_0001u32;
+    for &count in &[8usize, 12, 15, 16, 23, 31] {
+        let mut old_t = 0.0;
+        let mut new_t = 0.0;
+        let mut g_t = 0.0;
+        for off in 0..16usize {
+            for k in 0..count {
+                wbuf[off + k] = 0x41 + (k as u32 % 26);
+            }
+            let p = unsafe { wbuf.as_ptr().add(off) };
+            assert_eq!(unsafe { wmchr_old(p, needle, count) }, None, "wmchr_old off={off} count={count}");
+            assert_eq!(unsafe { wmchr_new(p, needle, count) }, None, "wmchr_new off={off} count={count}");
+            assert!(unsafe { g_wmchr(p, needle, count) }.is_null());
+            for &pos in &[0usize, count / 2, count - 1] {
+                wbuf[off + pos] = needle;
+                assert_eq!(unsafe { wmchr_new(p, needle, count) }, Some(pos), "wmchr_new first off={off} count={count} pos={pos}");
+                let gp = unsafe { g_wmchr(p, needle, count) };
+                assert_eq!((gp as usize - p as usize) / 4, pos, "glibc wmemchr first");
+                wbuf[off + pos] = 0x41 + (pos as u32 % 26);
+            }
+            old_t += measure(|| unsafe { wmchr_old(black_box(p), needle, count) }.unwrap_or(99) as u64);
+            new_t += measure(|| unsafe { wmchr_new(black_box(p), needle, count) }.unwrap_or(99) as u64);
+            g_t += measure(|| unsafe { g_wmchr(black_box(p), needle, count) } as usize as u64);
+        }
+        println!(
+            "WMCHR_AB cnt={count:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
             old_t / 16.0,
             new_t / 16.0,

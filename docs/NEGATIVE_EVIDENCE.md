@@ -7898,3 +7898,25 @@ NEW is 1.1-2.7x faster than OLD for limit∈[8,32) and BEATS glibc wcsnlen at ev
 unchanged scalar; >=32 unchanged.) CONFORMANCE GREEN: core wcsnlen suite + conformance_diff_wchar (43,
 randomized wide fns incl. wcsnlen vs glibc) + exhaustive in-bench first-NUL sweep vs glibc (8 sizes × 16
 aligns). Confirms the overlapping pattern transfers to WIDE single-pointer bounded scans.
+
+### 2026-06-29 — ✅ wmemchr (wide) small-n floor CLOSED: overlapping u32 SIMD probes, beats glibc — BlackThrush
+
+Second wide-char application. frankenlibc_core::string::wide::wmemchr (WIDE_MEMCHR_SIMD_LANES=16) was the
+u32 sibling of memchr with the same small-n floor: pure scalar for count < 16 wchars, 16-lane + scalar
+remainder for [16,32). Added two overlapping u32 SIMD probes per size class (count∈[16,32)→2×16-lane,
+[8,16)→2×8-lane), target=c instead of NUL, O(1) trailing_zeros, first-match ordering (probe 0 owns [0,L);
+empty ⇒ probe 1's lowest set bit is first match ≥ L). In-bounds (`scan` has exactly `count` elements).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench WMCHR_AB arm: OLD (16-lane+scalar), NEW (overlapping),
+host glibc wmemchr, ABSENT target = full scan, 16 alignments):
+  cnt= 8  new/old=0.698  new/glibc=1.050  old/glibc=1.505
+  cnt=12  new/old=0.534  new/glibc=0.779  old/glibc=1.457
+  cnt=15  new/old=0.462  new/glibc=0.769  old/glibc=1.667
+  cnt=16  new/old=0.910  new/glibc=0.780  old/glibc=0.857
+  cnt=23  new/old=0.628  new/glibc=0.748  old/glibc=1.191
+  cnt=31  new/old=0.435  new/glibc=0.704  old/glibc=1.616
+NEW is 1.1-2.3x faster than OLD, taking wmemchr from 1.2-1.7x SLOWER than glibc to BEATING glibc for
+count∈[12,31] (new/glibc 0.70-0.78); ~parity at count=8 (1.05, still 1.4x over old). CONFORMANCE GREEN:
+core wmemchr suite + conformance_diff_wchar (43, randomized vs glibc) + exhaustive in-bench first-match
+sweep vs glibc (6 sizes × 16 aligns). (count < 8 unchanged scalar; >=32 unchanged.) The wide single-pointer
+bounded-scan family (wcsnlen, wmemchr) now beats glibc small-n, mirroring byte memchr/memcmp/memrchr.
