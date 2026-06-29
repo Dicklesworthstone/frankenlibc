@@ -924,6 +924,59 @@ unsafe fn cp32(dst: *mut u8, src: *const u8) {
     }
 }
 
+/// AVX2 128-byte-unrolled asm copy loop (recursion-safe inline asm, vzeroupper) + a
+/// straight-line overlapping 128-byte tail. Requires AVX; caller guarantees n >= 128.
+#[inline(never)]
+unsafe fn memcpy_avx(dst: *mut u8, src: *const u8, n: usize) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let mut d = dst;
+        let mut s = src;
+        let mut rem = n;
+        core::arch::asm!(
+            "2:",
+            "vmovdqu ymm0, [{s}]",
+            "vmovdqu ymm1, [{s}+32]",
+            "vmovdqu ymm2, [{s}+64]",
+            "vmovdqu ymm3, [{s}+96]",
+            "vmovdqu [{d}], ymm0",
+            "vmovdqu [{d}+32], ymm1",
+            "vmovdqu [{d}+64], ymm2",
+            "vmovdqu [{d}+96], ymm3",
+            "add {s}, 128",
+            "add {d}, 128",
+            "sub {rem}, 128",
+            "cmp {rem}, 128",
+            "jae 2b",
+            "vzeroupper",
+            s = inout(reg) s,
+            d = inout(reg) d,
+            rem = inout(reg) rem,
+            out("ymm0") _, out("ymm1") _, out("ymm2") _, out("ymm3") _,
+            options(nostack),
+        );
+        let _ = (d, s);
+        // rem in [0,128): cover [n-rem,n) with the MINIMAL count of straight-line,
+        // overlapping 32-byte copies from the end (no loop ⇒ not @llvm.memcpy). Each
+        // cp32(n-k) covers [n-k,n); enough to reach back past n-rem. n>=128 ⇒ in-bounds.
+        if rem > 96 {
+            cp32(dst.add(n - 128), src.add(n - 128));
+            cp32(dst.add(n - 96), src.add(n - 96));
+            cp32(dst.add(n - 64), src.add(n - 64));
+            cp32(dst.add(n - 32), src.add(n - 32));
+        } else if rem > 64 {
+            cp32(dst.add(n - 96), src.add(n - 96));
+            cp32(dst.add(n - 64), src.add(n - 64));
+            cp32(dst.add(n - 32), src.add(n - 32));
+        } else if rem > 32 {
+            cp32(dst.add(n - 64), src.add(n - 64));
+            cp32(dst.add(n - 32), src.add(n - 32));
+        } else if rem > 0 {
+            cp32(dst.add(n - 32), src.add(n - 32));
+        }
+    }
+}
+
 /// `rep movsb` copy (x86 ERMS) — glibc's large-memcpy path; inline asm so it is never
 /// lowered to @llvm.memcpy (recursion-safe).
 #[inline(never)]
@@ -1685,6 +1738,29 @@ fn bench(c: &mut Criterion) {
             new_t / g_t,
             old_t / g_t
         );
+    }
+
+    // memcpy MEDIUM-n A/B: CUR 32B-copy loop vs AVX2 asm loop vs glibc, n>=128.
+    if std::is_x86_feature_detected!("avx") {
+        let medsrc: Vec<u8> = (0..8192).map(|k| (k % 251) as u8 + 1).collect();
+        let mut meddst = vec![0u8; 8192];
+        for &n in &[128usize, 192, 256, 512, 1024, 2048] {
+            let sp = medsrc.as_ptr();
+            let dp = meddst.as_mut_ptr();
+            unsafe { memcpy_avx(dp, sp, n) };
+            assert_eq!(unsafe { slice::from_raw_parts(dp, n) }, &medsrc[..n], "avx copy n={n}");
+            let cur_t = measure(|| { unsafe { memcpy_new(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
+            let avx_t = measure(|| { unsafe { memcpy_avx(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
+            let g_t = measure(|| unsafe { g_memcpy(black_box(dp.cast()), black_box(sp.cast()), n) } as u64);
+            println!(
+                "MEMCPYMED_AB n={n:<5} cur_p50_ns={:.3} avx_p50_ns={:.3} glibc_p50_ns={:.3} \
+                 avx/cur={:.3} avx/glibc={:.3} cur/glibc={:.3}",
+                cur_t, avx_t, g_t,
+                avx_t / cur_t,
+                avx_t / g_t,
+                cur_t / g_t
+            );
+        }
     }
 
     // memcpy LARGE-n A/B: CUR deployed 32B-copy loop vs rep movsb (ERMS) vs glibc.

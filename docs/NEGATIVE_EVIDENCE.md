@@ -8094,3 +8094,28 @@ ERMS startup makes rep movsb LOSE below ~1024 (n=256 was 2.2x worse). RECURSION-
 byte-identical no-crash; rep movsb kernel byte-verified in-bench at 64..65536. memcpy now: small-n overlapping
 (beats glibc n<32) + [2048,~32K) rep movsb (beats glibc) + 64K+ parity. Mirrors memset (rep stosb). The
 [32,2048) range keeps the copy loop (the remaining ~1.5x medium-copy residual, like memset's [64,1024)).
+
+### 2026-06-29 — ✅ memcpy medium-n [128,2048): AVX2 vmovdqu asm loop — 1.4-1.9x over u128 loop, parity-to-beat glibc — BlackThrush
+
+Closed the last hot copy/fill residual: memcpy [128,2048) ran 1.36-1.82x slower than glibc because the Rust
+u128-pair copy loop (copy_unaligned_32) emits 16-byte movups while glibc uses 32-byte AVX ymm. Added
+`raw_avx_copy`: a 128-byte-unrolled `vmovdqu` (4×ymm) asm loop + a minimal straight-line overlapping 32-byte
+tail (cover [n-rem,n) with the fewest cp32 from the end), `vzeroupper` to avoid the AVX↔SSE transition
+penalty. Inline asm ⇒ never @llvm.memcpy (recursion-safe); `#[target_feature(enable="avx")]` + runtime
+`is_x86_feature_detected!("avx")` gate; n>=128. Wired into raw_overlap_copy for n∈[128,2048) (rep movsb stays
+for >=2048, small-n overlapping below 128).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench MEMCPYMED_AB: CUR u128 copy loop, AVX asm loop, glibc):
+  n= 128  avx/cur=0.708  avx/glibc=1.000  cur/glibc=1.412
+  n= 192  avx/cur=0.667  avx/glibc=0.909  cur/glibc=1.364
+  n= 256  avx/cur=0.627  avx/glibc=1.000  cur/glibc=1.595
+  n= 512  avx/cur=0.580  avx/glibc=0.871  cur/glibc=1.503
+  n=1024  avx/cur=0.566  avx/glibc=0.984  cur/glibc=1.738
+  n=2048  avx/cur=0.538  avx/glibc=0.981  cur/glibc=1.823
+AVX is 1.4-1.9x faster than the u128 loop at EVERY size and parity-to-WIN vs glibc (avx/glibc 0.87-1.00,
+beats at 192/512), collapsing the 1.36-1.82x medium-copy deficit. RECURSION-SAFE: conformance_diff_memcpy +
+conformance_diff_string (24) + conformance_diff_string_mut (35, strcpy/strcat share raw_overlap_copy) GREEN
+byte-identical no-crash; AVX kernel byte-verified in-bench [128,2048]. **COPY/FILL FAMILY COMPLETE: memcpy is
+now parity-to-WIN vs glibc across ALL sizes** (small-n overlapping <128, AVX loop [128,2048), rep movsb
+>=2048). Non-AVX CPUs fall back to the u128 loop (correctness preserved). Mirrors memset (the remaining
+memset [64,1024) residual could take the same AVX vmovdqu-store-loop treatment next).

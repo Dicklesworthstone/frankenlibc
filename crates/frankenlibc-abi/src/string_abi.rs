@@ -361,6 +361,61 @@ pub fn strlen_dispatch_label_for_tests(s_addr: usize, len_hint: usize) -> &'stat
 /// `volatile` is needed; the overlapping tail replaces the per-byte volatile tail. Each
 /// store re-writes already-correct bytes at most (disjoint src), so the result is
 /// byte-identical to the scalar copy. NOT for memmove (overlap-unsafe). `n >= 1`.
+/// AVX2 128-byte-unrolled `vmovdqu` asm copy loop + minimal straight-line overlapping
+/// 32-byte tail. Inline asm ⇒ never lowered to `@llvm.memcpy` (recursion-safe). Closes the
+/// medium-copy gap: the Rust u128-pair loop emits 16-byte movups (half glibc's 32-byte
+/// ymm); this matches glibc and beats it for n>=512. `vzeroupper` avoids the AVX↔SSE
+/// transition penalty. Caller guarantees n >= 128 and AVX availability.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn raw_avx_copy(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        let mut d = dst;
+        let mut s = src;
+        let mut rem = n;
+        core::arch::asm!(
+            "2:",
+            "vmovdqu ymm0, [{s}]",
+            "vmovdqu ymm1, [{s}+32]",
+            "vmovdqu ymm2, [{s}+64]",
+            "vmovdqu ymm3, [{s}+96]",
+            "vmovdqu [{d}], ymm0",
+            "vmovdqu [{d}+32], ymm1",
+            "vmovdqu [{d}+64], ymm2",
+            "vmovdqu [{d}+96], ymm3",
+            "add {s}, 128",
+            "add {d}, 128",
+            "sub {rem}, 128",
+            "cmp {rem}, 128",
+            "jae 2b",
+            "vzeroupper",
+            s = inout(reg) s,
+            d = inout(reg) d,
+            rem = inout(reg) rem,
+            out("ymm0") _, out("ymm1") _, out("ymm2") _, out("ymm3") _,
+            options(nostack),
+        );
+        let _ = (d, s);
+        // rem ∈ [0,128): cover [n-rem,n) with the minimal count of straight-line,
+        // overlapping 32-byte copies from the end (no loop ⇒ not @llvm.memcpy). n>=128.
+        if rem > 96 {
+            copy_unaligned_32(dst.add(n - 128), src.add(n - 128));
+            copy_unaligned_32(dst.add(n - 96), src.add(n - 96));
+            copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+            copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+        } else if rem > 64 {
+            copy_unaligned_32(dst.add(n - 96), src.add(n - 96));
+            copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+            copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+        } else if rem > 32 {
+            copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+            copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+        } else if rem > 0 {
+            copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+        }
+    }
+}
+
 #[inline]
 unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
     unsafe {
@@ -381,6 +436,14 @@ unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
                 inout("rsi") src => _,
                 options(nostack, preserves_flags),
             );
+            return;
+        }
+        // Medium copies [128,2048): AVX2 vmovdqu loop (matches/beats glibc; the u128-pair
+        // loop below emits only 16-byte movups). Gated on runtime AVX detection.
+        #[cfg(target_arch = "x86_64")]
+        if n >= 128 && std::is_x86_feature_detected!("avx") {
+            // SAFETY: n>=128 and AVX confirmed available.
+            raw_avx_copy(dst, src, n);
             return;
         }
         if n < 16 {
