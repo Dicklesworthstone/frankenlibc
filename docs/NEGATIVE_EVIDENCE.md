@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — `wcscpy` strict fast-path REVERTED (could not measure a win) + LEAD: fl wcscpy ~605ns @n≥32 vs glibc ~4ns
+
+- **LEVER ATTEMPTED (cc):** strict `strict_passthrough_active()` fast path for the
+  NUL-scanning builder `wcscpy` = `scan_w_string(src,None)` (→ `wide_strlen_unbounded`,
+  the fast SIMD wcslen) + `copy_nonoverlapping(src,dst,len+1)`. Byte-identical to the
+  strict full body (verified: conformance_diff_wchar 43/43, wchar_abi_test 118/118).
+- **WHY REVERTED — could not register a win:** in `wcscmp_membrane_ab_bench` the
+  deployed `wcscpy` measured **n=4 ~19ns, n=32 ~605ns, n=128 ~614ns** (flat ~600ns
+  above a small-n threshold, NON-monotonic) WITH the fast path present and a forced-
+  fresh binary (ruled out the rch stale-binary trap). If the fast path were taken it
+  would be ~5ns (scan+bulk-copy of ≤132 bytes), so it is **not registering as taken**
+  in this harness — yet the identical-shape fast paths for `wmemset`/`wmemchr`/`wcscmp`
+  DO take (3-10ns) in the same bench. Unresolved why wcscpy differs. No measurable
+  win → reverted (discipline: measured wins only). Deployed `wcscpy` unchanged.
+- **LEAD for a future turn (do NOT lose this):** the flat ~605ns is the **full-path**
+  cost. `wcscpy` calls `known_remaining(dst)` + `known_remaining(src)` UNCONDITIONALLY
+  at the top (before any membrane gate) — if that allocation-registry lookup is ~300ns
+  each for these inputs, it explains the ~600ns and means deployed `wcscpy` (no strict
+  gate on main) pays it in production too = a real ~150x gap vs glibc. NEXT STEP: profile
+  `known_remaining` cost directly (is it O(1)? contended? per-input pathological?), and
+  determine why the wcscpy strict gate didn't take while the sibling write fns' did —
+  THAT is the actual lever, not the copy kernel.
+
 ## 2026-06-29 — ✅ wide-char membrane fast-path EXTENDED to fixed-n write family (wmemset/wmemcpy/wmemmove, byte-identical)
 
 - **LEVER (cc, 4th batch):** the same `strict_passthrough_active()` fast path on
