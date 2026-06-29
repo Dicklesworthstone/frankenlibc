@@ -449,6 +449,30 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
 pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
+
+    // Small bounded haystack in [16, 32): the 32-byte SIMD loops can't run, so the old
+    // code fell to an 8-byte SWAR + scalar reverse tail. Mirror the forward `memchr`
+    // small-n fast path with two OVERLAPPING 16-byte SIMD probes, scanned HIGH→LOW for
+    // the last match. The high probe `[count-16, count)` owns the top bytes (its highest
+    // set bit is the last match); if empty, every position ≥ count-16 is ruled out, so
+    // the low probe `[0,16)`'s highest set bit is the true last match < count-16. Stays
+    // entirely in-slice (no align-down, no OOB).
+    if (16..SIMD_LANES).contains(&count) {
+        const L: usize = 16;
+        let off = count - L;
+        let vh = Simd::<u8, L>::from_slice(&hs[off..off + L]);
+        let mh = vh.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
+        if mh != 0 {
+            return Some(off + (63 - mh.leading_zeros() as usize));
+        }
+        let vl = Simd::<u8, L>::from_slice(&hs[..L]);
+        let ml = vl.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
+        if ml != 0 {
+            return Some(63 - ml.leading_zeros() as usize);
+        }
+        return None;
+    }
+
     let mut simd_blocks = hs.rchunks_exact(MEMCHR_FOLD_BYTES);
     let mut end = count;
 

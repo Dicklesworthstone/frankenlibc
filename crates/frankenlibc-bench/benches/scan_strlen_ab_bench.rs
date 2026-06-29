@@ -542,6 +542,49 @@ unsafe fn mchr_new(p: *const u8, needle: u8, n: usize) -> Option<usize> {
     unsafe { mchr_old(p, needle, n) }
 }
 
+/// OLD memrchr small-n path: 8-byte SWAR reverse loop + scalar front remainder.
+#[inline(never)]
+unsafe fn mrchr_old(p: *const u8, needle: u8, n: usize) -> Option<usize> {
+    let mut end = n;
+    while end >= 8 {
+        let w = unsafe { std::ptr::read_unaligned(p.add(end - 8).cast::<u64>()) };
+        if has_byte_u64(w, needle) {
+            for j in (0..8).rev() {
+                if unsafe { *p.add(end - 8 + j) } == needle {
+                    return Some(end - 8 + j);
+                }
+            }
+        }
+        end -= 8;
+    }
+    for j in (0..end).rev() {
+        if unsafe { *p.add(j) } == needle {
+            return Some(j);
+        }
+    }
+    None
+}
+
+/// NEW memrchr small-n path: two overlapping 16-byte SIMD probes, high→low.
+#[inline(never)]
+unsafe fn mrchr_new(p: *const u8, needle: u8, n: usize) -> Option<usize> {
+    if (16..32).contains(&n) {
+        let off = n - 16;
+        let vh = Simd::<u8, 16>::from_slice(unsafe { slice::from_raw_parts(p.add(off), 16) });
+        let mh = vh.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
+        if mh != 0 {
+            return Some(off + (63 - mh.leading_zeros() as usize));
+        }
+        let vl = Simd::<u8, 16>::from_slice(unsafe { slice::from_raw_parts(p, 16) });
+        let ml = vl.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
+        if ml != 0 {
+            return Some(63 - ml.leading_zeros() as usize);
+        }
+        return None;
+    }
+    unsafe { mrchr_old(p, needle, n) }
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -808,6 +851,52 @@ fn bench(c: &mut Criterion) {
         }
         println!(
             "MCHR_AB len={len:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t / 32.0,
+            new_t / 32.0,
+            g_t / 32.0,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // memrchr A/B: ABSENT byte in [16,32)-byte buffers (full reverse scan). glibc memrchr.
+    let g_mrchr =
+        unsafe { std::mem::transmute::<usize, MchrFn>(host_sym(b"memrchr\0")) };
+    let absent2 = 0x01u8;
+    for &len in &[16usize, 19, 23, 27, 31] {
+        let mut buf = backing.clone();
+        let mut old_t = 0.0;
+        let mut new_t = 0.0;
+        let mut g_t = 0.0;
+        for off in 0..32usize {
+            for k in 0..len {
+                buf[off + k] = b'a' + (k % 26) as u8;
+            }
+            let p = unsafe { buf.as_ptr().add(off) };
+            assert_eq!(unsafe { mrchr_old(p, absent2, len) }, None, "mrchr_old off={off} len={len}");
+            assert_eq!(unsafe { mrchr_new(p, absent2, len) }, None, "mrchr_new off={off} len={len}");
+            assert!(unsafe { g_mrchr(p.cast(), absent2 as i32, len) }.is_null());
+            // present-byte LAST-match correctness (two matches; want the higher)
+            for &(lo, hi) in &[(0usize, len - 1), (1, len / 2), (len / 3, len - 2)] {
+                if lo >= hi || hi >= len {
+                    continue;
+                }
+                buf[off + lo] = absent2;
+                buf[off + hi] = absent2;
+                assert_eq!(unsafe { mrchr_new(p, absent2, len) }, Some(hi), "mrchr_new last off={off} len={len}");
+                let gp = unsafe { g_mrchr(p.cast(), absent2 as i32, len) };
+                assert_eq!(gp as usize - p as usize, hi, "glibc memrchr last");
+                buf[off + lo] = b'a' + (lo % 26) as u8;
+                buf[off + hi] = b'a' + (hi % 26) as u8;
+            }
+            old_t += measure(|| unsafe { mrchr_old(black_box(p), absent2, len) }.unwrap_or(99) as u64);
+            new_t += measure(|| unsafe { mrchr_new(black_box(p), absent2, len) }.unwrap_or(99) as u64);
+            g_t += measure(|| unsafe { g_mrchr(black_box(p.cast()), absent2 as i32, len) } as usize as u64);
+        }
+        println!(
+            "MRCHR_AB len={len:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
             old_t / 32.0,
             new_t / 32.0,
