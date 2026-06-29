@@ -8195,3 +8195,19 @@ for long strings dominates. CONFORMANCE GREEN: conformance_diff_scan_c_string (1
 in-bench byte-identity sweep (32 alignments × 7 sizes). Applies to strlen + every unbounded scan_c_string
 caller. Residual ~1.1-1.4x vs glibc at [1K,16K] = portable_simd vs glibc hand-tuned AVX2 (an asm strlen loop
 could close it further).
+
+### 2026-06-29 — ✗ REJECTED: software prefetch in strlen 128-unroll does NOT help (measure-first) — BlackThrush
+
+Tried adding `_mm_prefetch(p+i+512, T0)` per 128-byte iteration to the escalated strlen unroll to close the
+[4K,16K] L2-range residual (1.1-1.28x vs glibc). Measured BEFORE deploying — it fails:
+  len= 1024  pf/new=0.974
+  len= 4096  pf/new=1.043
+  len=16384  pf/new=1.137   (REGRESSES)
+  len=65536  pf/new=1.008
+  len=262144 pf/new=1.030
+Prefetch is neutral-to-REGRESSION at every size (worst 1.14x at 16K). The hardware prefetcher already
+streams the sequential scan, so the software prefetch only adds instruction overhead. Deployed strlen LEFT
+UNCHANGED (the escalated 128-unroll from 7a1ec68cc stands). The [4K,16K] ~1.1-1.28x residual vs glibc is the
+portable_simd-vs-hand-tuned-AVX2 gap (glibc's exact loop scheduling / branch layout), NOT a memory-latency
+issue prefetch can fix. LESSON: don't add software prefetch to a sequential SIMD scan — the HW prefetcher
+owns that access pattern; prefetch only helps pointer-chasing / strided / latency-bound loops.

@@ -1260,6 +1260,56 @@ unsafe fn scan_unroll128(p: *const u8) -> usize {
     }
 }
 
+/// Same as scan_unroll128 but with a software prefetch (T0) of the line ~512 B ahead
+/// in the 128-byte unrolled tier — targets the L2-range [4K,16K] residual vs glibc.
+#[inline(never)]
+unsafe fn scan_unroll128_pf(p: *const u8) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+    let align = (p as usize) & 31;
+    let base = unsafe { p.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(base, 32) });
+    let mask0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & !((1u64 << align) - 1);
+    if mask0 != 0 {
+        return mask0.trailing_zeros() as usize - align;
+    }
+    let mut i = 32 - align;
+    while i < 256 || (p as usize + i) & 127 != 0 {
+        let v = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+        let m = v.simd_eq(Simd::splat(0)).to_bitmask();
+        if m != 0 {
+            return i + m.trailing_zeros() as usize;
+        }
+        i += 32;
+    }
+    loop {
+        #[cfg(target_arch = "x86_64")]
+        _mm_prefetch::<_MM_HINT_T0>(unsafe { p.add(i + 512) }.cast());
+        let a = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+        let b = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 32), 32) });
+        let c = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 64), 32) });
+        let d = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 96), 32) });
+        let z = Simd::splat(0u8);
+        let (ea, eb, ec, ed) = (a.simd_eq(z), b.simd_eq(z), c.simd_eq(z), d.simd_eq(z));
+        if (ea | eb | ec | ed).any() {
+            let ma = ea.to_bitmask();
+            if ma != 0 {
+                return i + ma.trailing_zeros() as usize;
+            }
+            let mb = eb.to_bitmask();
+            if mb != 0 {
+                return i + 32 + mb.trailing_zeros() as usize;
+            }
+            let mc = ec.to_bitmask();
+            if mc != 0 {
+                return i + 64 + mc.trailing_zeros() as usize;
+            }
+            return i + 96 + ed.to_bitmask().trailing_zeros() as usize;
+        }
+        i += 128;
+    }
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -1901,16 +1951,17 @@ fn bench(c: &mut Criterion) {
             }
             lb[len] = 0;
             let p = lb.as_ptr();
-            let cur_t = measure(|| unsafe { scan_new(black_box(p)) } as u64);
+            assert_eq!(unsafe { scan_unroll128_pf(p) }, len, "pf big len={len}");
             let new_t = measure(|| unsafe { scan_unroll128(black_box(p)) } as u64);
+            let pf_t = measure(|| unsafe { scan_unroll128_pf(black_box(p)) } as u64);
             let g_t = measure(|| unsafe { (host_strlen())(black_box(p.cast())) } as u64);
             lb[len] = b'a';
             println!(
-                "STRLENBIG len={len:<7} cur_p50_ns={cur_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
-                 new/cur={:.3} new/glibc={:.3} cur/glibc={:.3}",
-                new_t / cur_t,
-                new_t / g_t,
-                cur_t / g_t
+                "STRLENBIG len={len:<7} new_p50_ns={new_t:.3} pf_p50_ns={pf_t:.3} glibc_p50_ns={g_t:.3} \
+                 pf/new={:.3} pf/glibc={:.3} new/glibc={:.3}",
+                pf_t / new_t,
+                pf_t / g_t,
+                new_t / g_t
             );
         }
     }
