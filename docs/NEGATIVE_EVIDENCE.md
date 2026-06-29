@@ -6,28 +6,30 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
-## 2026-06-29 — `wcscpy` strict fast-path REVERTED (could not measure a win) + LEAD: fl wcscpy ~605ns @n≥32 vs glibc ~4ns
+## 2026-06-29 — ✅ `wcscpy` strict fast-path DEPLOYED (~31x vs ORIG) + the wide WRITE membrane full path is ~640ns (hardened ~5.7µs)
 
-- **LEVER ATTEMPTED (cc):** strict `strict_passthrough_active()` fast path for the
+- **DEPLOYED (cc):** strict `strict_passthrough_active()` fast path for the
   NUL-scanning builder `wcscpy` = `scan_w_string(src,None)` (→ `wide_strlen_unbounded`,
   the fast SIMD wcslen) + `copy_nonoverlapping(src,dst,len+1)`. Byte-identical to the
-  strict full body (verified: conformance_diff_wchar 43/43, wchar_abi_test 118/118).
-- **WHY REVERTED — could not register a win:** in `wcscmp_membrane_ab_bench` the
-  deployed `wcscpy` measured **n=4 ~19ns, n=32 ~605ns, n=128 ~614ns** (flat ~600ns
-  above a small-n threshold, NON-monotonic) WITH the fast path present and a forced-
-  fresh binary (ruled out the rch stale-binary trap). If the fast path were taken it
-  would be ~5ns (scan+bulk-copy of ≤132 bytes), so it is **not registering as taken**
-  in this harness — yet the identical-shape fast paths for `wmemset`/`wmemchr`/`wcscmp`
-  DO take (3-10ns) in the same bench. Unresolved why wcscpy differs. No measurable
-  win → reverted (discipline: measured wins only). Deployed `wcscpy` unchanged.
-- **LEAD for a future turn (do NOT lose this):** the flat ~605ns is the **full-path**
-  cost. `wcscpy` calls `known_remaining(dst)` + `known_remaining(src)` UNCONDITIONALLY
-  at the top (before any membrane gate) — if that allocation-registry lookup is ~300ns
-  each for these inputs, it explains the ~600ns and means deployed `wcscpy` (no strict
-  gate on main) pays it in production too = a real ~150x gap vs glibc. NEXT STEP: profile
-  `known_remaining` cost directly (is it O(1)? contended? per-input pathological?), and
-  determine why the wcscpy strict gate didn't take while the sibling write fns' did —
-  THAT is the actual lever, not the copy kernel.
+  strict unbounded copy body (conformance_diff_wchar 43/43, wchar_abi_test 118/118).
+- **THE BIG FINDING — the wide WRITE membrane full path is catastrophically slow.**
+  `wcscpy`/`wmemcpy`/`wmemset` pass `is_write=true` to `decide()`; the WRITE full path
+  is **~640ns at n≥32** (vs the READ full path ~13ns for wcscmp). Forced-mode probe
+  (`FRANKENLIBC_MODE`, same fresh binary): **strict 19.7ns / DEFAULT 20.8ns / hardened
+  5,748ns**. DEFAULT resolves to strict → the fast path takes → **main 642ns → 20.8ns
+  = ~31x vs ORIG** (vs glibc 3.7ns = 5.6x, down from 173x). Hardened mode is ~5.7µs
+  (full validation/healing) — a separate, even larger concern, but not the default.
+- **MEASUREMENT HAZARD that cost the prior (wrong) "reverted" verdict:** the rch
+  worker rlib cache intermittently serves a STALE `frankenlibc_abi` to the bench, so
+  `wcscpy` measured ~590-640ns (the pre-fast-path binary) even after `cargo clean -p`
+  ("Removed 0 files" — the rlib is on the worker, not local). `touch`-ing
+  `wchar_abi.rs` forces a fresh rebuild → consistent ~20ns. **RULE: for any
+  membrane-fast-path bench, `touch` the abi source (or verify via `FRANKENLIBC_MODE=
+  hardened` showing the slow path) before trusting the number** — a stale binary reads
+  as "fast path not taken". My prior-turn revert was an artifact of this, now corrected.
+- **FOLLOW-UP (same ~30x each):** `wcsncpy`/`wcscat`/`wcsncat` are wide write builders
+  on the same ~640ns full path — add the same strict fast path (verify each strict body
+  is byte-identical first). And the hardened-mode ~5.7µs write path is its own lever.
 
 ## 2026-06-29 — ✅ wide-char membrane fast-path EXTENDED to fixed-n write family (wmemset/wmemcpy/wmemmove, byte-identical)
 
