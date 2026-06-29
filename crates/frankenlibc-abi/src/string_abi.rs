@@ -5719,6 +5719,20 @@ pub unsafe extern "C" fn memccpy(
 /// Caller must ensure `s` is valid for `n` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn bzero(s: *mut c_void, n: usize) {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`set_len == n`), byte-identical to the strict full body (`core::bzero` over
+    // `n`). Skips the membrane guard + decide + observe + stage-trace. Fixed-`n`
+    // write, mirroring the deployed `memset` fast path.
+    if runtime_policy::strict_passthrough_active() {
+        if n == 0 || s.is_null() {
+            return;
+        }
+        // raw_memset_bytes(.., 0, n) zeros exactly `n` bytes — byte-identical to the
+        // strict full body's `core::bzero` (same SIMD memset the reentrant fallback uses).
+        unsafe { raw_memset_bytes(s.cast::<u8>(), 0, n) };
+        return;
+    }
+
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         if n == 0 || s.is_null() {
             return;

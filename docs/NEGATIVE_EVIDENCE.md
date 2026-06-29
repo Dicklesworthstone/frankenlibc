@@ -6,6 +6,24 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ bzero strict fast-path DEPLOYED (~9.8x vs ORIG, BEATS glibc, byte-identical)
+
+- **DEPLOYED (cc):** `bzero` paid the full membrane (guard + decide + observe +
+  stage-trace) in default(strict) mode (`bcopy` already delegates to the fast-pathed
+  `memmove`). Added the `strict_passthrough_active()` fast path = `raw_memset_bytes(s,
+  0, n)` (the SIMD memset; byte-identical to the strict body's zeroing of `n` bytes).
+- **GOTCHA worth keeping:** first wrote the fast path as `core::string::bzero(slice,n)`
+  (matching the full path verbatim) → 14.6ns (only 2x). Swapping to `raw_memset_bytes`
+  → **2.9ns**: `core::bzero` itself was the slow part, NOT just the membrane. Lesson:
+  when porting a strict body into a fast path, use the leanest byte-identical
+  primitive, don't blindly copy the full path's (possibly slower) inner call.
+- **MEASURED (RELIABLE; `FRANKENLIBC_MODE` default=fast/hardened=slow same binary):**
+  bzero(16) **ORIG 28.6ns → fast 2.9ns = ~9.8x vs ORIG**, and **BEATS host glibc
+  (2.9 vs 3.07ns)**. Parity vs glibc asserted; conformance_diff_{memset,string_mut} GREEN.
+- **NOT done (higher risk, smaller savings):** `strstr`/`memmem` use `known_remaining`
+  bounds UNGATED (not repair-gated), so a fast path still pays known_remaining +
+  must duplicate the scan+memmem+adverse body — deferred.
+
 ## 2026-06-29 — ✅ narrow strcasecmp/strncasecmp strict fast-path DEPLOYED (~8.9x vs ORIG, byte-identical)
 
 - **DEPLOYED (cc):** the case-insensitive compares paid the full membrane
