@@ -1988,7 +1988,10 @@ pub unsafe extern "C" fn wcstok(
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
         return std::ptr::null_mut();
     }
-    let delim_slice = unsafe { std::slice::from_raw_parts(delim, delim_len) };
+    // O(1)-membership delimiter set (ASCII table + non-ASCII fallback) instead of a
+    // per-char linear `delim_slice.contains(ch)` in both scan loops below — O(token_len *
+    // delim_len) → O(token_len). Same lever as wcsspn (561d9d238).
+    let delims = unsafe { WideCharSet::new(delim, delim_len) };
 
     unsafe {
         // Skip leading delimiters
@@ -2000,7 +2003,7 @@ pub unsafe extern "C" fn wcstok(
                 runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, false);
                 return std::ptr::null_mut();
             }
-            if !delim_slice.contains(&ch) {
+            if !delims.contains(ch) {
                 break;
             }
             pos = pos.add(1);
@@ -2014,7 +2017,7 @@ pub unsafe extern "C" fn wcstok(
                 *save_ptr = pos;
                 break;
             }
-            if delim_slice.contains(&ch) {
+            if delims.contains(ch) {
                 *pos = 0;
                 *save_ptr = pos.add(1);
                 break;

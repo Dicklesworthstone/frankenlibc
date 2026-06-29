@@ -8339,3 +8339,16 @@ linear-fallback semantics. LESSON: the wide span family used the same per-char l
 strspn family already replaced with a bitmap — wide chars can't use a 256-bitmap but a 128-ASCII-table +
 non-ASCII fallback captures the common case at O(1)/char. NEXT: audit other wide multi-arg fns for O(n*m)
 naive scans.
+
+### 2026-06-29 — ✅ wcstok: O(1) delimiter-set membership (WideCharSet) replaces per-char linear scan — BlackThrush
+
+Same O(n*m)→O(n) lever as wcsspn (561d9d238), applied to wcstok (wide tokenize): both its scan loops
+(skip-leading-delimiters + find-token-end) did `delim_slice.contains(ch)` per char — a linear scan of the
+delimiter set for EVERY char ⇒ O(token_len * delim_len). Replaced with the shared `WideCharSet` (128-entry
+ASCII table O(1) + non-ASCII linear fallback). The per-char delimiter test is now O(1) for ASCII delims (the
+universal case). The inner-loop kernel is identical to wcsspn's, so the measured wcsspn ratios apply:
+table membership is 1.8-4.5x over the scalar linear-contains and 2.6-6.7x over glibc's naive wide span/tok.
+CONFORMANCE GREEN: conformance_diff_wchar (43, differential vs glibc — wcstok byte-exact incl. the stateful
+save_ptr / in-place NUL-write semantics). Byte strtok already uses bitmaps (not naive) — clean. Audited all
+deployed `.contains()` per-char scans: wcsspn/wcscspn/wcspbrk (done) + wcstok (this) were the only O(n*m)
+naive set scans in the wide ABI.
