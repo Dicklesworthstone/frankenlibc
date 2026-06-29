@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — fused 2-pass strspn kernel REJECTED (loses to 4-pass for common sizes; real gap is glibc SIMD) + LEAD: deployed core::strspn 2.3x slower than a naive bitmap
+
+- **LEVER TESTED (cc):** hypothesis — the ABI strspn does 4 passes (pre-scan s,
+  pre-scan accept, build bitmap, scan) where glibc fuses to 2 (build bitmap from
+  accept-ptr, scan s-ptr against it, no s pre-scan); fusing should win, esp. for
+  early-mismatch (O(1) vs O(s_len)).
+- **MEASURED (`strspn_fused_ab_bench`, RELIABLE same-process A/B — kernels
+  reimplemented in-bench, no fl abi linkage, stale-immune):** the fused 2-pass is
+  actually **SLOWER than the 4-pass for common short sizes** (run16 27.6 vs 21.3ns;
+  early 14.4 vs 11.5ns; digits8 15.8 vs 12.6ns) — the bounded `while i<s_len` loop
+  out-codegens the fused `loop{bitmap-check}`. Fused only wins for a 256-char run
+  (111 vs 177ns, the s pre-scan finally matters). **Both scalar-bitmap variants
+  lose ~8x to glibc** (run16 ~21-27ns vs glibc 2.5ns) — glibc's strspn is SIMD
+  (PSHUFB classifier). The fused approach does NOT close that. ~0-gain/mixed →
+  rejected, no deployed change.
+- **LEAD (do not lose):** the in-bench naive bitmap (4-pass, 21ns) is **2.3x
+  faster than the DEPLOYED `core::str::strspn` (48.6ns)** — the deployed core uses
+  a heavier membership structure than a plain `[u64;4]` bitmap and is improvable
+  ~2.3x WITHOUT touching glibc's SIMD frontier. But the real win is a SIMD strspn
+  (8x; the `strspn_shuffle_ab_bench` / "2-shuffle classifier" line + the rejected
+  range-test are prior art here — x86 has no native unsigned SIMD compare). Reusable
+  `strspn_fused_ab_bench` kept.
+
 ## 2026-06-29 — ✅ narrow READ family strncmp/strspn/strcspn/strpbrk strict fast-path DEPLOYED (~2.4x vs ORIG, byte-identical)
 
 - **DEPLOYED (cc):** four hot string READS still paid the full membrane

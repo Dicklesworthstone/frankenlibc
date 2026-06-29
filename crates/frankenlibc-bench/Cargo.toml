@@ -455,3 +455,8 @@ harness = false
 [[bench]]
 name = "wcscpy_fused_ab_bench"
 harness = false
+
+# strspn kernel: OLD 4-pass vs NEW fused 2-pass vs glibc, 1 process.
+[[bench]]
+name = "strspn_fused_ab_bench"
+harness = false
