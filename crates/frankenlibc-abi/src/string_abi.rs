@@ -3243,6 +3243,29 @@ pub unsafe extern "C" fn stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
 /// deny. `strncpy` returns the original `dst`; `stpncpy` returns `dst + offset`, so
 /// it no longer re-scans the just-written destination with a second `strnlen` pass.
 unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option<usize> {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no clamp (`safe_dst_len == safe_src_len == n`), so this
+    // is byte-identical to the strict full body — scan src (bounded by `n`), bulk
+    // copy the prefix, NUL-pad the remainder. Skips stage_context + decide + observe
+    // + stage-trace bookkeeping. Bounded-`n` write (caller-controlled extent), the
+    // analog of the shipped `wcsncpy`/`memmove` fast paths and the deployed `memcpy`
+    // one — NOT the unbounded strcpy/strcat builder class. Hardened mode falls through.
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() || n == 0 {
+            return Some(0);
+        }
+        let copy_len = unsafe {
+            let k = scan_c_string(src, Some(n)).0;
+            let copy_len = k.min(n);
+            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+            if copy_len < n {
+                raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, n - copy_len);
+            }
+            copy_len
+        };
+        return Some(copy_len);
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() || n == 0 {
         if dst.is_null() || src.is_null() {

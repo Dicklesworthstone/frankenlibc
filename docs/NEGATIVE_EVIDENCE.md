@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ narrow strncpy/stpncpy strict fast-path DEPLOYED (~9x vs ORIG, byte-identical)
+
+- **DEPLOYED (cc):** `strncpy`/`stpncpy` (shared `strncpy_core`) paid the full
+  membrane (`stage_context_two` + `decide` + `known_remaining` + `observe` +
+  stage-trace) in steady-state default(strict) mode. Added the
+  `strict_passthrough_active()` fast path: byte-identical to the strict full body
+  (scan src bounded by `n`, bulk `raw_memcpy_bytes` prefix, `raw_memset_bytes`
+  NUL-pad), returning `Some(copy_len)` (`stpncpy` offset). BOUNDED-`n` write
+  (caller-controlled extent) — the narrow analog of the shipped `wcsncpy`/`memmove`
+  fast paths + the deployed `memcpy` one, NOT the unbounded strcpy/strcat builder
+  class my memory flags as off-limits.
+- **MEASURED (RELIABLE — ORIG 79.4ns matched the hardened-mode 85.9ns full path,
+  internally consistent, NOT a stale-rlib artifact; `FRANKENLIBC_MODE` disambiguated
+  default=fast vs hardened=slow on the same binary):** strncpy slen=16/cap=32
+  **ORIG 79.4ns → fast 8.78ns = ~9x vs ORIG** (glibc 3.0ns; 26x → 2.9x). Byte
+  identity: a non-test probe asserted fl==glibc for strncpy AND stpncpy (incl.
+  return pointer) across truncation (cap<len) + exact + padding (cap>len);
+  conformance_diff_{strncpy,stpncpy} GREEN.
+- **SAFE / consistent with precedent:** `decide()` already immediate-passthroughs
+  `StringMemory` in strict, so the fast path removes only surrounding bookkeeping,
+  never a real validation — same invariant as every string-write fast path shipped
+  this session and the pre-existing deployed `memcpy` one.
+
 ## 2026-06-29 — fused wide copy-scan kernel for wcscpy REJECTED (~0-gain end-to-end; the 2-pass copy is not the wcscpy bottleneck)
 
 - **LEVER TESTED (cc):** replace the deployed wcscpy fast path's 2-pass core
