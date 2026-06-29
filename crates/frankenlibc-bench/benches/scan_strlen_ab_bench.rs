@@ -849,6 +849,70 @@ unsafe fn wmcmp_new(a: *const u32, b: *const u32, count: usize) -> i32 {
     unsafe { wmcmp_old(a, b, count) }
 }
 
+/// CUR core wmemchr large: 64-lane simd_eq(target).to_bitmask() per 256-byte panel.
+#[inline(never)]
+unsafe fn wmchr_cur64(s: *const u32, c: u32, count: usize) -> Option<usize> {
+    let t = Simd::<u32, 64>::splat(c);
+    let mut base = 0usize;
+    while base + 64 <= count {
+        let v = Simd::<u32, 64>::from_slice(unsafe { slice::from_raw_parts(s.add(base), 64) });
+        let m = v.simd_eq(t).to_bitmask();
+        if m != 0 {
+            return Some(base + m.trailing_zeros() as usize);
+        }
+        base += 64;
+    }
+    while base < count {
+        if unsafe { *s.add(base) } == c {
+            return Some(base);
+        }
+        base += 1;
+    }
+    None
+}
+
+/// NEW core wmemchr large: 4×8-lane XOR-min-combine (`min(a^t,b^t,c^t,d^t)==0` iff any==t).
+#[inline(never)]
+unsafe fn wmchr_minc(s: *const u32, c: u32, count: usize) -> Option<usize> {
+    use std::simd::cmp::SimdOrd;
+    let t = Simd::<u32, 8>::splat(c);
+    let z = Simd::<u32, 8>::splat(0);
+    let mut base = 0usize;
+    while base + 32 <= count {
+        let a = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(base), 8) });
+        let b = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(base + 8), 8) });
+        let cc = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(base + 16), 8) });
+        let d = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(base + 24), 8) });
+        let xa = a ^ t;
+        let xb = b ^ t;
+        let xc = cc ^ t;
+        let xd = d ^ t;
+        if xa.simd_min(xb).simd_min(xc.simd_min(xd)).simd_eq(z).any() {
+            let ma = a.simd_eq(t).to_bitmask();
+            if ma != 0 {
+                return Some(base + ma.trailing_zeros() as usize);
+            }
+            let mb = b.simd_eq(t).to_bitmask();
+            if mb != 0 {
+                return Some(base + 8 + mb.trailing_zeros() as usize);
+            }
+            let mc = cc.simd_eq(t).to_bitmask();
+            if mc != 0 {
+                return Some(base + 16 + mc.trailing_zeros() as usize);
+            }
+            return Some(base + 24 + d.simd_eq(t).to_bitmask().trailing_zeros() as usize);
+        }
+        base += 32;
+    }
+    while base < count {
+        if unsafe { *s.add(base) } == c {
+            return Some(base);
+        }
+        base += 1;
+    }
+    None
+}
+
 /// OLD wmemchr small-n path: 16-lane u32 chunks + scalar tail (scalar-only for n<16).
 #[inline(never)]
 unsafe fn wmchr_old(s: *const u32, c: u32, count: usize) -> Option<usize> {
@@ -2124,6 +2188,32 @@ fn bench(c: &mut Criterion) {
             println!(
                 "WCSLENBIG len={len:<6} scalar_p50_ns={cur_t:.3} simd_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
                  simd/scalar={:.3} simd/glibc={:.3} scalar/glibc={:.3}",
+                new_t / cur_t,
+                new_t / g_t,
+                cur_t / g_t
+            );
+        }
+    }
+
+    // wmemchr LARGE-n: cur 64-lane vs XOR-min-combine vs glibc wmemchr. Absent target.
+    {
+        let g_wmc = unsafe { std::mem::transmute::<usize, WMchrFn>(host_sym(b"wmemchr\0")) };
+        let mut wb = vec![0x41u32; (1 << 16) + 64];
+        let needle = 0x0000_0001u32;
+        for &n in &[256usize, 1024, 4096, 16384, 65536] {
+            let p = wb.as_ptr();
+            assert_eq!(unsafe { wmchr_cur64(p, needle, n) }, None, "wmchr_cur64 n={n}");
+            assert_eq!(unsafe { wmchr_minc(p, needle, n) }, None, "wmchr_minc n={n}");
+            // present-target correctness
+            wb[n / 2] = needle;
+            assert_eq!(unsafe { wmchr_minc(p, needle, n) }, Some(n / 2), "wmchr_minc present n={n}");
+            wb[n / 2] = 0x41;
+            let cur_t = measure(|| unsafe { wmchr_cur64(black_box(p), needle, n) }.unwrap_or(0) as u64);
+            let new_t = measure(|| unsafe { wmchr_minc(black_box(p), needle, n) }.unwrap_or(0) as u64);
+            let g_t = measure(|| unsafe { g_wmc(black_box(p), needle, n) } as usize as u64);
+            println!(
+                "WMCHRBIG n={n:<6} cur64_p50_ns={cur_t:.3} minc_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
+                 minc/cur={:.3} minc/glibc={:.3} cur/glibc={:.3}",
                 new_t / cur_t,
                 new_t / g_t,
                 cur_t / g_t
