@@ -6,6 +6,26 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strstr strict fast-path DEPLOYED (~3.6x vs ORIG, byte-identical) — hot function
+
+- **DEPLOYED (cc):** `strstr` (extremely hot) paid the full membrane in
+  default(strict) mode. Now that `memmem` is shipped, strstr's strict body is just
+  scan-needle + scan-haystack (same ungated `known_remaining` bounds) + core
+  Two-Way `memmem`. Added the `strict_passthrough_active()` fast path replicating
+  that exact RETURN (haystack / haystack+idx / null), skipping stage_context +
+  decide + observe + stage-trace + `record_truncation` (telemetry only, return
+  unchanged — consistent with every strict fast path this session).
+- **MEASURED (RELIABLE; `FRANKENLIBC_MODE` default=fast/hardened=slow, ORIG≈hardened
+  88ns confirms consistency):** strstr 30-byte haystack **ORIG 84.2ns → fast 23.5ns
+  = ~3.6x vs ORIG** — strstr's full-path bookkeeping was ~60ns (heavier than the
+  typical ~14ns; the `decide` addr_hint logic + scaled_cost(10,work) + record).
+  Parity asserted (5 cases incl. not-found/empty/overlap); conformance_diff_string_search GREEN.
+- **CORE LEAD:** fl strstr is still ~4x glibc (23.5 vs 5.5ns) — fl scans BOTH strings
+  fully then memmem (2 full passes + a search pass), where glibc FUSES the haystack
+  scan into the search (stops at first match, never scans the whole haystack). A
+  fused strstr (search haystack directly for needle, bounded by NUL) would close it —
+  same shape as the deferred wcscpy fused-copy idea. Separate, owned-core lever.
+
 ## 2026-06-29 — ✅ wcsnlen strict fast-path DEPLOYED (~2.2x vs ORIG, byte-identical)
 
 - **DEPLOYED (cc):** wide analog of the strnlen fast path. `wcsnlen` gates its

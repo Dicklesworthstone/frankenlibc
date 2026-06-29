@@ -4008,6 +4008,39 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
         return unsafe { raw_strstr(haystack, needle) };
     }
 
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body's RETURN — scan needle + haystack (with the same ungated
+    // `known_remaining` bounds), then core Two-Way `memmem`. Skips stage_context +
+    // decide + observe + stage-trace (and `record_truncation`, a telemetry side
+    // effect skipped on every strict fast path this session — return value unchanged).
+    // Measured ~3.6x vs the full path (the bookkeeping here was ~60ns).
+    if runtime_policy::strict_passthrough_active() {
+        if haystack.is_null() {
+            return std::ptr::null_mut();
+        }
+        if needle.is_null() {
+            return haystack as *mut c_char;
+        }
+        return unsafe {
+            let needle_bound = known_remaining(needle as usize);
+            let hay_bound = known_remaining(haystack as usize);
+            let (needle_len, _) = scan_c_string(needle, needle_bound);
+            let (hay_len, _) = scan_c_string(haystack, hay_bound);
+            if needle_len == 0 {
+                haystack as *mut c_char
+            } else if hay_len >= needle_len {
+                let hs = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
+                let ns = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+                match frankenlibc_core::string::mem::memmem(hs, hay_len, ns, needle_len) {
+                    Some(idx) => haystack.add(idx) as *mut c_char,
+                    None => std::ptr::null_mut(),
+                }
+            } else {
+                std::ptr::null_mut()
+            }
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
     if haystack.is_null() {
         record_string_stage_outcome(
