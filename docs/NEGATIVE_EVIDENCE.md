@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — `byte_membership_table` [bool;256]→[u64;4] bitmap REJECTED (1.4x REGRESSION — per-lookup shift+mask costs more than the build saving)
+
+- **LEVER TESTED (cc):** sub-lever (a) from the entry below — swap strspn/strcspn's
+  256-byte `[bool; 256]` membership table for a 32-byte `[u64; 4]` bitmap, betting
+  the 8x-smaller per-call BUILD would help short-s (where the build was thought to
+  dominate). Byte-identical (conformance_diff_{string_search,string,string_mut}
+  GREEN; core str 153/153).
+- **MEASURED (clean stash before/after, same bench):** **1.4x REGRESSION** —
+  noncontig 16-byte set ORIG **20.1ns → 28.8ns**; contig ORIG **31.2ns → 44.3ns**.
+  WHY: `[bool;256]`'s direct `table[b]` index is a single load; the bitmap's
+  `(table[b>>6]>>(b&63))&1` is shift+mask+index per lookup. `contiguous_set_range`
+  does `hi-lo+1` lookups and the scalar span loops do one per byte — that per-access
+  overhead OUTWEIGHS the 256→32-byte build saving (the build was NOT the dominant
+  cost). **Reverted, no deployed change.** Lesson: for a dense ASCII membership
+  table that's READ far more than built, the byte-per-entry array beats the packed
+  bitmap on x86 (load < shift+mask). The real short-s + non-contiguous win is the
+  PSHUFB classifier (single SIMD pass, no per-byte scalar lookup), not the table
+  representation. Sub-lever (a) is now CLOSED; (b) PSHUFB remains the lever.
+
 ## 2026-06-29 — ✅ core strspn/strcspn 9-16 byte set routing FIXED (up to 23x vs ORIG, byte-identical) + LEAD: avx2 PSHUFB classifier beats glibc
 
 - **DEPLOYED (cc):** `span_dispatch` routed 9-16 byte accept/reject sets to
