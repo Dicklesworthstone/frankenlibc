@@ -26,6 +26,19 @@ retried and real wins are confirmed with numbers.
   generalizing the prototype (it's ≤8-byte-ASCII; `build_raw_luts` asserts k<8) to
   the universal classifier + runtime feature detection (`is_x86_feature_detected`)
   + non-ASCII fallback + byte-identity. A scoped, high-value follow-up turn.
+- **VERIFICATION (next turn, no regression confirmed):** the 9-16 routing change
+  helps BOTH contiguous and NON-contiguous sets — measured a non-contiguous
+  16-byte set (no `span_range` fast path → scalar `span_general` + 256B `[bool;256]`
+  table build): short 16-char run **52→23.7ns**, 256-char run **643→167ns** (still
+  beats the old in_set_mask16). But fl is now **8-16x off glibc for NON-contiguous
+  sets** (short 23.7 vs 2.97ns; long 167 vs 10.5ns) — the scalar `span_general`
+  loop + the 256-byte table build (which dominates short-s). CONTIGUOUS sets are
+  fine (`span_range` is folded-SIMD range-test, ~28ns). So two precise sub-levers
+  remain: (a) `byte_membership_table` `[bool;256]`→`[u64;4]` cuts the short-s build
+  ~8x (cheap, no SIMD, but touches contiguous_set_range/span_range/span_general
+  signatures); (b) the PSHUFB classifier for the scalar scan (the real glibc-beater).
+  Neither rushed at session-end — both carry membership-correctness risk in a
+  fundamental fn (strspn/strcspn/strpbrk/strtok).
 
 ## 2026-06-29 — fused 2-pass strspn kernel REJECTED (loses to 4-pass for common sizes; real gap is glibc SIMD) + LEAD: deployed core::strspn 2.3x slower than a naive bitmap
 
