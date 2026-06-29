@@ -4340,6 +4340,44 @@ pub unsafe extern "C" fn strtok_r(
     delim: *const c_char,
     saveptr: *mut *mut c_char,
 ) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict body's
+    // RETURN + `*saveptr` update — pick `current` (s or *saveptr), scan it (unbounded)
+    // + delim (same ungated `known_remaining(delim)`), core `strtok_r`, advance
+    // `*saveptr`. Skips stage_context + decide + observe + stage-trace (interleaved
+    // telemetry, return/side-effects unchanged). strsep-style clean replication.
+    if runtime_policy::strict_passthrough_active() {
+        if delim.is_null() || saveptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        unsafe {
+            let current = if s.is_null() { *saveptr } else { s };
+            if current.is_null() {
+                *saveptr = std::ptr::null_mut();
+                return std::ptr::null_mut();
+            }
+            let (scan_limit, terminated) = scan_c_string(current, None);
+            let slice_len = if terminated { scan_limit + 1 } else { scan_limit };
+            let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
+            let delim_bound = known_remaining(delim as usize);
+            let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
+            if !delim_terminated {
+                *saveptr = std::ptr::null_mut();
+                return std::ptr::null_mut();
+            }
+            let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_len + 1);
+            return match frankenlibc_core::string::strtok::strtok_r(s_slice, delim_slice, 0) {
+                Some((start, _len, next_offset)) => {
+                    *saveptr = current.add(next_offset);
+                    current.add(start)
+                }
+                None => {
+                    *saveptr = std::ptr::null_mut();
+                    std::ptr::null_mut()
+                }
+            };
+        }
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, delim as usize);
     if delim.is_null() || saveptr.is_null() {
         record_string_stage_outcome(

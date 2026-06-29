@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strtok_r strict fast-path DEPLOYED (~60ns membrane removed, byte-identical) — the classic tokenizer
+
+- **DEPLOYED (cc):** `strtok_r` (the classic reentrant tokenizer) — despite its
+  observe/record telemetry being interleaved across branches (I'd earlier judged it
+  "woven"), the RETURN + `*saveptr` logic IS cleanly replicable, like strsep. Fast
+  path: pick `current` (s or *saveptr), scan it (unbounded) + delim (same ungated
+  `known_remaining(delim)`), core `strtok_r`, advance `*saveptr` — byte-identical
+  return + side effect, skipping stage_context + decide + observe + stage-trace.
+- **MEASURED (clean stash before/after):** strtok_r first step **ORIG 131.7ns → fast
+  72.1ns = ~1.83x**, but the bench resets the MUTABLE buffer via a fresh `cs()` alloc
+  each iter (strtok_r writes NULs in-place, so the buffer must be reset) — ~50ns
+  common to both arms. **The honest figure is the ~60ns membrane saving** (131.7−72.1),
+  same shape as strsep's ~62ns; alloc-free it would be ~4x. Parity: full-tokenize fuzz
+  vs glibc matched token offsets across 5 inputs; conformance_diff_{tokenize_fuzz,
+  string_mut} GREEN. (strtok non-reentrant has its OWN path — separate fast path.)
+
 ## 2026-06-29 — ✅ strsep strict fast-path DEPLOYED (~4.8x vs ORIG, byte-identical) — hot tokenizer + wcsdup REJECTED
 
 - **DEPLOYED (cc):** `strsep` (hot — config/CSV parsing) paid the full membrane in
