@@ -22,16 +22,26 @@ type LenFn = unsafe extern "C" fn(*const c_char) -> usize;
 type ChrFn = unsafe extern "C" fn(*const c_char, i32) -> *mut c_char;
 type CmpFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
 
-fn host_sym(name: &[u8]) -> usize {
-    unsafe {
+fn host_handle() -> usize {
+    // Open libc in ONE fresh namespace and reuse it for every dlsym. glibc caps
+    // link-map namespaces (DL_NNS=16), so a fresh dlmopen per symbol overflows once
+    // there are many arms — open once, dlsym many.
+    static H: OnceLock<usize> = OnceLock::new();
+    *H.get_or_init(|| unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
             b"libc.so.6\0".as_ptr().cast(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen failed");
-        let s = libc::dlsym(h, name.as_ptr().cast());
-        assert!(!s.is_null());
+        h as usize
+    })
+}
+
+fn host_sym(name: &[u8]) -> usize {
+    unsafe {
+        let s = libc::dlsym(host_handle() as *mut c_void, name.as_ptr().cast());
+        assert!(!s.is_null(), "dlsym failed");
         s as usize
     }
 }
@@ -939,11 +949,18 @@ unsafe fn memset_new(dst: *mut u8, value: u8, n: usize) {
     #[cfg(target_arch = "x86_64")]
     use std::arch::x86_64::{__m128i, _mm_set1_epi8, _mm_storeu_si128};
     unsafe {
-        if n >= 16 {
+        if (16..64).contains(&n) {
+            // mirror deployed: straight-line head [0,32) + tail [n-32,n) overlapping stores.
+            let v = _mm_set1_epi8(value as i8);
+            _mm_storeu_si128(dst.cast::<__m128i>(), v);
+            if n >= 32 {
+                _mm_storeu_si128(dst.add(16).cast::<__m128i>(), v);
+                _mm_storeu_si128(dst.add(n - 32).cast::<__m128i>(), v);
+            }
+            _mm_storeu_si128(dst.add(n - 16).cast::<__m128i>(), v);
+        } else if n >= 64 {
             let v = _mm_set1_epi8(value as i8);
             let mut i = 0usize;
-            // straight-line stride-16 stores (NOT a constant-fill loop idiom: compiler
-            // still keeps explicit storeu instructions) + one overlapping tail store.
             while i + 16 <= n {
                 _mm_storeu_si128(dst.add(i).cast::<__m128i>(), v);
                 i += 16;

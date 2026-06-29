@@ -7999,3 +7999,22 @@ glibc to BEATING glibc for n<32 (new/glibc 0.93-0.98) — the common small-fill 
 (the deployed interposed symbol routes through raw_memset_bytes; a self-recursion would stack-overflow).
 Plus an in-bench byte-identity sweep (new fill + new-vs-glibc-bytes, 8 sizes × 16 aligns). n>=32 AVX
 (_mm256) follow-up could close the [32,64) ~1.1x residual but needs a straight-line unroll (no loop).
+
+### 2026-06-29 — ✅ memset [32,64) extended to straight-line 4-store + bench host_sym DL_NNS fix — BlackThrush
+
+Extended the memset straight-line fast path (prior entry) from [16,32) to [16,64): n∈[32,64) now uses 4
+overlapping `_mm_storeu_si128` covering head [0,32) and tail [n-32,n) — still straight-line (no loop ⇒ no
+@llvm.memset self-recursion), still SSE2-baseline. Replaces the volatile loop for [32,64), which was ~2.3x
+slower than glibc.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench MEMSET_AB, 16 alignments):
+  n=32  new/old=0.551  new/glibc=1.015  old/glibc=1.841
+  n=47  new/old=0.633  new/glibc=1.050  old/glibc=1.659
+  n=63  new/old=0.374  new/glibc=0.938  old/glibc=2.506
+NEW is 1.6-2.7x faster than the OLD volatile loop for [32,64), taking it from 1.7-2.5x SLOWER than glibc to
+parity-to-WIN (n=63 now BEATS glibc 0.94; the earlier stride-16-loop bench kernel was 1.14 here — the
+straight-line 4-store is strictly better). Whole [8,64) range now parity-to-win vs glibc. RECURSION-SAFE:
+conformance_diff_memset GREEN byte-identical, no crash. BENCH FIX (same commit): host_sym did a fresh
+dlmopen(LM_ID_NEWLM) per symbol; with ~14 A/B arms that overflowed glibc's DL_NNS=16 link-map-namespace cap
+→ "dlmopen failed" panic. Fixed to open libc ONCE (OnceLock handle) and dlsym all symbols from it. Lesson:
+cache the dlmopen handle in multi-arm in-process A/B benches — fresh-namespace-per-symbol caps at 16.

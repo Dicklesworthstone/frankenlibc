@@ -516,13 +516,18 @@ unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
         // used directly. Measured 1.7-2.4x over the volatile path, parity-to-win vs glibc
         // for n < 32 (the common small-fill range; memset is the hottest libc fn).
         #[cfg(target_arch = "x86_64")]
-        if (16..32).contains(&n) {
+        if (16..64).contains(&n) {
             use core::arch::x86_64::{__m128i, _mm_set1_epi8, _mm_storeu_si128};
-            // SSE2 is baseline on x86_64. Two explicit unaligned 16-byte stores cover
-            // [0,16) and [n-16,n) (overlapping) — every byte set to `value`, byte-identical
-            // to the scalar fill. No loop ⇒ never lowered to @llvm.memset.
+            // SSE2 is baseline on x86_64. Explicit unaligned 16-byte stores covering the
+            // head [0,32) and tail [n-32,n) (overlapping) set every byte to `value`,
+            // byte-identical to the scalar fill. No loop ⇒ never lowered to @llvm.memset.
+            // n∈[16,32): the head's 2nd store and the tail overlap; n∈[32,64): 4 stores.
             let v = _mm_set1_epi8(value as i8);
             _mm_storeu_si128(dst.cast::<__m128i>(), v);
+            if n >= 32 {
+                _mm_storeu_si128(dst.add(16).cast::<__m128i>(), v);
+                _mm_storeu_si128(dst.add(n - 32).cast::<__m128i>(), v);
+            }
             _mm_storeu_si128(dst.add(n - 16).cast::<__m128i>(), v);
             return;
         }
