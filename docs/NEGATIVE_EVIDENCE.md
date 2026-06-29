@@ -7534,3 +7534,22 @@ CONCLUSION: the wide-text/ctype/collation surface is DONE (fl wins or parity eve
 lone gap, now closed). Added wctype_ab_bench as a durable regression guard. Future digs should target a
 different family — string/mem SIMD moderate-size losses remain (deeper-AVX2, hard) and the printf
 %-conversion single-pass rewrite remains the biggest open lever.
+
+### 2026-06-28 — 📐 time/strtod/malloc-validation audit: parity/optimized (no lever); gmtime regression guard added — BlackThrush
+
+Continued the bench-then-dig sweep into new families (after RNG, mbrtowc, wide-ctype wins). Findings:
+- TIME conversion (new `gmtime_ab_bench`, fl vs glibc dlmopen, varied epochs incl leap/1900/2100):
+  timegm 74.7 vs 84.7 ns = **0.882x WIN**; gmtime_r 24.1 vs 20.0 = 1.204x (modest). gmtime_r pays NO
+  membrane decide; its overhead is the date algorithm (epoch_to_broken_down) + write_tm + two
+  tracked_required_object_fits checks — and those are NOT the bottleneck because `fallback_remaining`
+  already fast-rejects non-heap (stack/global) pointers via a min/max heap-range check BEFORE any lock.
+  So gmtime_r is ~parity with a small intentional safety margin; not a clean lever.
+- strtod: already has `parse_strtod_short_decimal_c_string_fast` (short-decimal fast path) + the
+  stdlib membrane fast-path — optimized, not a lever.
+- malloc bounds validation (`known_remaining`→`fallback_remaining`): O(1) hash-probe with an up-front
+  heap-range reject for non-heap pointers — the common stack/global arg case is already cheap.
+CAMPAIGN STATUS: the tractable per-function "find a gap / fix a fast-path restriction" vein is broadly
+HARVESTED across stdio, math, RNG, mb/wc conversion, wide-ctype, time, strtod. Remaining open levers are
+the DEEP ones: (1) printf %-conversion single-pass rewrite (biggest; multi-session); (2) string/mem
+moderate-size SIMD losses (deeper-AVX2 kernel work); (3) deployed-malloc membrane (architectural). Added
+gmtime_ab_bench as a durable regression guard (timegm win + gmtime_r parity).

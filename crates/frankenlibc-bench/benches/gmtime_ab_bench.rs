@@ -78,7 +78,9 @@ fn measure(eps: &[i64], mut f: impl FnMut(i64) -> i32) -> f64 {
             }
         }
         black_box(acc);
-        s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / (50 * eps.len()) as f64);
+        s.push(
+            t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / (50 * eps.len()) as f64,
+        );
     }
     p50(&mut s)
 }
@@ -97,7 +99,10 @@ fn bench(c: &mut Criterion) {
         unsafe { (h.gmtime_r)(&e, &mut tm) };
         tm.tm_yday + tm.tm_hour
     });
-    println!("GMTIME_R fl_p50_ns_per_call={flp:.4} glibc_p50_ns_per_call={gp:.4} ratio={:.3}", flp / gp);
+    println!(
+        "GMTIME_R fl_p50_ns_per_call={flp:.4} glibc_p50_ns_per_call={gp:.4} ratio={:.3}",
+        flp / gp
+    );
 
     // timegm (broken-down -> epoch)
     let mk = |e: i64, gm: &dyn Fn(i64, &mut libc::tm)| {
@@ -106,14 +111,21 @@ fn bench(c: &mut Criterion) {
         tm
     };
     let flp = measure(&eps, |e| {
-        let mut tm = mk(e, &|e, t| unsafe { fl::gmtime_r(&e, t); });
+        let mut tm = mk(e, &|e, t| unsafe {
+            fl::gmtime_r(&e, t);
+        });
         unsafe { fl::timegm(&mut tm) as i32 }
     });
     let gp = measure(&eps, |e| {
-        let mut tm = mk(e, &|e, t| unsafe { (h.gmtime_r)(&e, t); });
+        let mut tm = mk(e, &|e, t| unsafe {
+            (h.gmtime_r)(&e, t);
+        });
         unsafe { (h.timegm)(&mut tm) as i32 }
     });
-    println!("TIMEGM fl_p50_ns_per_call={flp:.4} glibc_p50_ns_per_call={gp:.4} ratio={:.3}", flp / gp);
+    println!(
+        "TIMEGM fl_p50_ns_per_call={flp:.4} glibc_p50_ns_per_call={gp:.4} ratio={:.3}",
+        flp / gp
+    );
 
     let mut grp = c.benchmark_group("gmtime");
     grp.bench_function("noop", |b| b.iter(|| black_box(1u8)));
