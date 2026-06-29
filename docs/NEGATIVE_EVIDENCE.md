@@ -8297,3 +8297,23 @@ glibc — byte-exact). LESSON: bytewise-min (vpminud) as the combined zero check
 `to_bitmask()` per panel — the 64-lane bitmask pack costs more than 4 light 8-lane min+cmp. (core wcslen has
 the same 64-lane loop but the deployed wcslen now uses wide_strlen_unbounded, so core wcslen is internal-only
 — left as-is.)
+
+### 2026-06-29 — ✅ core wmemchr large path: 64-lane → 4×8-lane XOR-min-combine (1.18-1.20x; deployed wmemchr) — BlackThrush
+
+Extended the min-combine lever to TARGET search via the XOR trick: `(x ^ c) == 0` iff `x == c`, so
+`min(a^c, b^c, c^c, d^c)` has a 0 lane iff one of the four 8-lane panels contains `c`. Replaced core
+wmemchr's 64-lane `simd_eq(c).to_bitmask()` per-256-byte-panel large loop with the 4×8-lane XOR-min-combine
+(4 vpxord + 3 vpminud + 1 vpcmpeqd + `.any()` per 128 B, resolve exact panel only on a hit). NOT the rejected
+256-block min-FOLD (simd_min on 64-lane = 8 ymm); this is 4 light 8-lane ymm.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench WMCHRBIG, absent target = full scan, vs glibc wmemchr):
+  n=  256  minc/cur=0.845  minc/glibc=1.021  cur/glibc=1.208
+  n= 1024  minc/cur=0.851  minc/glibc=1.247  cur/glibc=1.465
+  n= 4096  minc/cur=0.844  minc/glibc=1.269  cur/glibc=1.503
+  n=16384  minc/cur=0.839  minc/glibc=1.206  cur/glibc=1.437
+  n=65536  minc/cur=0.830  minc/glibc=1.202  cur/glibc=1.449
+XOR-min-combine is 1.18-1.20x faster than the 64-lane scan at every size, narrowing the glibc gap from
+1.21-1.50x to 1.02-1.27x. Deployed wmemchr routes to core wmemchr. CONFORMANCE GREEN: core wmemchr suite +
+conformance_diff_wchar (43, differential vs glibc — byte-exact) + in-bench present/absent sweep. LESSON
+GENERALIZED: bytewise-min combined check works for EQUALITY-to-target scans too via `min(panel ^ target)`
+(not just NUL/zero) — the cheapest N-way combined check for both zero AND target search in a SIMD scan.
