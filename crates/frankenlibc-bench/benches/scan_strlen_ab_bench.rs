@@ -1517,6 +1517,52 @@ unsafe fn wcslen_new(s: *const u32, cap: usize) -> usize {
     cap
 }
 
+/// DEPLOYED wcsspn kernel: linear `accept.contains(c)` per char — O(s_len * set_len).
+#[inline(never)]
+unsafe fn wcsspn_scalar(s: *const u32, slen: usize, acc: *const u32, alen: usize) -> usize {
+    let accept = unsafe { slice::from_raw_parts(acc, alen) };
+    let mut count = 0usize;
+    for i in 0..slen {
+        if accept.contains(unsafe { &*s.add(i) }) {
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    count
+}
+
+/// NEW wcsspn kernel: 128-bool ASCII table (O(1)/char) + linear fallback for non-ASCII.
+#[inline(never)]
+unsafe fn wcsspn_table(s: *const u32, slen: usize, acc: *const u32, alen: usize) -> usize {
+    let mut table = [false; 128];
+    let mut has_nonascii = false;
+    for k in 0..alen {
+        let a = unsafe { *acc.add(k) };
+        if a < 128 {
+            table[a as usize] = true;
+        } else {
+            has_nonascii = true;
+        }
+    }
+    let accept = unsafe { slice::from_raw_parts(acc, alen) };
+    let mut count = 0usize;
+    for i in 0..slen {
+        let c = unsafe { *s.add(i) };
+        let in_set = if c < 128 {
+            table[c as usize]
+        } else {
+            has_nonascii && accept.contains(&c)
+        };
+        if in_set {
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    count
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -2142,6 +2188,35 @@ fn bench(c: &mut Criterion) {
             new_t / g_t,
             old_t / g_t
         );
+    }
+
+    // wcsspn A/B: deployed scalar (linear contains) vs ASCII-table vs glibc wcsspn.
+    {
+        type WspnFn = unsafe extern "C" fn(*const u32, *const u32) -> usize;
+        let g_wcsspn = unsafe { std::mem::transmute::<usize, WspnFn>(host_sym(b"wcsspn\0")) };
+        // accept set = 16 ASCII chars; string = all-accept (full span).
+        let accept: Vec<u32> = (b'a'..b'a' + 16).map(|x| x as u32).chain(std::iter::once(0)).collect();
+        for &(slen, alen) in &[(64usize, 8usize), (256, 16), (1024, 16), (4096, 8)] {
+            let acc: Vec<u32> = (b'a'..b'a' + alen as u8).map(|x| x as u32).chain(std::iter::once(0)).collect();
+            let _ = &accept;
+            let mut sb: Vec<u32> = (0..slen).map(|i| b'a' as u32 + (i as u32 % alen as u32)).collect();
+            sb.push(0);
+            let sp = sb.as_ptr();
+            let ap = acc.as_ptr();
+            assert_eq!(unsafe { wcsspn_scalar(sp, slen, ap, alen) }, slen, "scalar span");
+            assert_eq!(unsafe { wcsspn_table(sp, slen, ap, alen) }, slen, "table span");
+            assert_eq!(unsafe { g_wcsspn(sp, ap) }, slen, "glibc span");
+            let cur_t = measure(|| unsafe { wcsspn_scalar(black_box(sp), slen, black_box(ap), alen) } as u64);
+            let new_t = measure(|| unsafe { wcsspn_table(black_box(sp), slen, black_box(ap), alen) } as u64);
+            let g_t = measure(|| unsafe { g_wcsspn(black_box(sp), black_box(ap)) } as u64);
+            println!(
+                "WCSSPN slen={slen:<5} alen={alen} scalar_p50_ns={cur_t:.3} table_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
+                 table/scalar={:.3} table/glibc={:.3} scalar/glibc={:.3}",
+                new_t / cur_t,
+                new_t / g_t,
+                cur_t / g_t
+            );
+        }
     }
 
     // wcslen LARGE-n: deployed SCALAR (cur) vs page-safe SIMD (pagesafe) vs glibc wcslen.

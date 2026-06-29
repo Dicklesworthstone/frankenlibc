@@ -8317,3 +8317,25 @@ XOR-min-combine is 1.18-1.20x faster than the 64-lane scan at every size, narrow
 conformance_diff_wchar (43, differential vs glibc — byte-exact) + in-bench present/absent sweep. LESSON
 GENERALIZED: bytewise-min combined check works for EQUALITY-to-target scans too via `min(panel ^ target)`
 (not just NUL/zero) — the cheapest N-way combined check for both zero AND target search in a SIMD scan.
+
+### 2026-06-29 — ✅ wcsspn/wcscspn/wcspbrk: ASCII-table membership replaces O(s*set) linear scan — 1.8-4.5x over scalar, 2.6-6.7x over glibc — BlackThrush
+
+DIFFERENT PRIMITIVE (wide span family). Deployed wcsspn/wcscspn/wcspbrk did `set_slice.contains(c)` per
+character — a LINEAR scan of the accept/reject set for EVERY char ⇒ O(s_len * set_len). Added a shared
+`WideCharSet` (128-entry ASCII bool table for O(1) membership of chars <128, linear fallback only for
+non-ASCII set members) and wired it into all three. glibc's wide wcsspn is itself a slow nested loop, so the
+table beats it decisively.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench WCSSPN, full-span string, accept set 8-16 ASCII chars, vs
+glibc wcsspn):
+  slen=  64 alen= 8  table/scalar=0.234  table/glibc=0.381  scalar/glibc=1.630
+  slen= 256 alen=16  table/scalar=0.564  table/glibc=0.164  scalar/glibc=0.292
+  slen=1024 alen=16  table/scalar=0.518  table/glibc=0.149  scalar/glibc=0.287
+  slen=4096 alen= 8  table/scalar=0.220  table/glibc=0.205  scalar/glibc=0.933
+The ASCII table is 1.8-4.5x faster than the deployed scalar linear-contains AND 2.6-6.7x faster than glibc
+wcsspn at every size. CONFORMANCE GREEN: conformance_diff_wchar (43, differential vs glibc — wcsspn/wcscspn/
+wcspbrk byte-exact) + in-bench byte-identity (scalar/table/glibc agree). Non-ASCII set members keep exact
+linear-fallback semantics. LESSON: the wide span family used the same per-char linear set scan the BYTE
+strspn family already replaced with a bitmap — wide chars can't use a 256-bitmap but a 128-ASCII-table +
+non-ASCII fallback captures the common case at O(1)/char. NEXT: audit other wide multi-arg fns for O(n*m)
+naive scans.
