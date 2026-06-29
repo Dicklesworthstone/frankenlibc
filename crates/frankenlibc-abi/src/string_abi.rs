@@ -1925,6 +1925,15 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
         return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
     }
 
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces Allow
+    // with no clamp (cmp_len == n), so the result is exactly the dispatched raw compare.
+    // Skip entrypoint_scope + stage_context + decide + maybe_clamp + record + observe
+    // (byte-identical to the strict full path below), like the inet_strict family. Hardened
+    // mode keeps the full validating path.
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe { raw_dispatch_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n) };
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("memcmp");
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     let (mode, decision) = runtime_policy::decide(
@@ -2003,6 +2012,23 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
 /// Caller must ensure `s` is valid for `n` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces Allow
+    // with no clamp (scan_len == n), so the result is exactly the SIMD core scan over the
+    // caller-bounded `n` bytes. Skip stage_context + decide + maybe_clamp + record + observe
+    // (byte-identical to the strict full path), like the inet_strict family. Hardened mode
+    // keeps the full validating path.
+    if runtime_policy::strict_passthrough_active() {
+        if n == 0 || s.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: caller guarantees `s` is valid for `n` bytes (memchr's contract).
+        let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), n) };
+        return match frankenlibc_core::string::mem::memchr(bytes, c as u8, n) {
+            Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
+            None => std::ptr::null_mut(),
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if n == 0 || s.is_null() {
         if s.is_null() {
@@ -2242,6 +2268,17 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         }
     }
 
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough does no
+    // validation, so the result is exactly the raw page-safe SIMD scan to NUL. Skip
+    // entrypoint_scope + known_remaining + the membrane (byte-identical to the existing
+    // `!heals && rem.is_none()` path below, now also covering tracked pointers in strict),
+    // like the inet_strict family. Hardened mode keeps the full validating path.
+    if runtime_policy::strict_passthrough_active() {
+        let dispatch =
+            select_string_simd_dispatch(SimdStringOperation::Strlen, s as usize, s as usize, 64);
+        return unsafe { raw_lane_strlen_bytes(s, dispatch.lane_bytes) };
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("strlen");
     let rem = known_remaining(s as usize);
     if !runtime_policy::mode().heals_enabled() && rem.is_none() {
@@ -2433,6 +2470,23 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
 /// Caller must ensure both `s1` and `s2` point to valid null-terminated strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough does no
+    // validation (cmp_bound == None), so the result is exactly the page-cross-guarded raw
+    // SWAR compare. Skip stage_context + decide + record + observe (byte-identical to the
+    // strict full path: scan_strcmp with no limit), like the inet_strict family. Hardened
+    // mode keeps the full validating path.
+    if runtime_policy::strict_passthrough_active() {
+        if s1.is_null() || s2.is_null() {
+            return 0;
+        }
+        // SAFETY: `scan_strcmp` with usize::MAX is the page-cross-guarded raw scan — the
+        // identical call the strict full path makes (cmp_bound == None).
+        let (i, _hit_limit) = unsafe { scan_strcmp(s1, s2, usize::MAX) };
+        let a = unsafe { *s1.add(i) } as u8;
+        let b = unsafe { *s2.add(i) } as u8;
+        return (a as c_int) - (b as c_int);
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
         record_string_stage_outcome(

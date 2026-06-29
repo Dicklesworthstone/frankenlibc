@@ -7632,3 +7632,22 @@ string_abi_test 201 + core string:: 475. VEIN (next turns, the big prize): roll 
 strlen/strcmp/memchr/memcmp — each must mirror its OWN fast raw op (strlen→raw_lane_strlen, NOT the scalar
 startup loop; memcmp→raw_lane_memcmp_bytes; etc.), gated on strict_passthrough_active, byte-identical,
 hardened keeps validation. Expected ~2x self each (membrane removal), like memset 7→3 / strchr 10→6.
+
+### 2026-06-28 — ✅✅ string family strict-membrane skip: strlen/strcmp/memchr/memcmp 1.8-2.9x self each — BlackThrush
+
+Rolled the strict_passthrough_active() membrane skip (established by inet/stdio + memset/memcpy/strchr) to
+the remaining hot string fns, each mirroring its OWN fast raw op so it's byte-identical to the strict full
+path (strict forces decide()=Allow, no clamp → the membrane is pure overhead):
+- strlen → select_string_simd_dispatch + raw_lane_strlen_bytes (now covers tracked ptrs in strict too).
+- strcmp → scan_strcmp(s1,s2,usize::MAX) + diverging-byte diff.
+- memchr → core::string::mem::memchr over the caller-bounded n bytes.
+- memcmp → raw_dispatch_memcmp_bytes (the dispatched fast op, cmp_len==n).
+Each skips entrypoint_scope/stage_context + decide + maybe_clamp + record + observe; gated on strict
+(hardened keeps full validation). Measured (string_family_small_ab_bench, 31B bufs, black_box'd inputs):
+strlen **13.4x → 8.02x**, strcmp **9.93x → 4.67x**, memchr **9.55x → 3.19x**, memcmp **17.59x → 6.11x**
+(1.8-2.9x self each); strchr 6.2x (prior turn), memmove 0.70x (already fine). CONFORMANCE GREEN: core
+string:: 475 + string_abi_test 201 + conformance_diff_{memset,memcpy,mempcpy_rawmemchr,memmem_strcasestr}.
+RESIDUAL (3-8x): the raw scan/op SHORT-STRING cost (fl's page-safe SIMD has more fixed setup than glibc's
+for ~31 bytes) — a SEPARATE 2nd lever (strlen's 8x residual is highest; raw_lane_strlen/select_dispatch
+setup). The DEFAULT-deployed hot string/mem family (memset/memcpy/strlen/strcmp/strchr/memchr/memcmp) now
+all skip the per-call membrane; remaining gap is the short-string scan core, not the membrane.
