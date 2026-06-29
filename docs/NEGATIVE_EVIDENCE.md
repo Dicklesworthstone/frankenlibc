@@ -7757,3 +7757,29 @@ strrchr is ~1.5x faster even at steady state — a different algorithm (likely f
 memchr, or wider-vector single reverse pass) is needed to actually beat it; the aligned-head-mask alone
 closes the setup floor but not the throughput gap. Unlike strlen/strchr (which the SAME lever took to
 parity-or-WIN), strrchr's extra last-match bookkeeping leaves a residual.
+
+### 2026-06-29 — ✅ memcmp small-n floor CLOSED: glibc-style overlapping power-of-2 tail — BlackThrush
+
+memcmp's bounded scan (`raw_lane_memcmp_bytes`) finished with a per-byte SCALAR tail: for n=31 it did
+1×16B u128 compare + 15 scalar byte compares (the `while i+32<=n` SIMD guard fails for n<32). glibc uses
+overlapping power-of-2 loads. The family bench had memcmp at ~8x vs glibc at small sizes. FIX: after the
+32-byte main loop (now run for the whole lane_bytes>=16 path — chunk_equal_32 is two SSE2 u128 compares,
+no AVX needed), resolve the remainder r=n-i ∈ [0,32) with ONE overlapping wide load per size class:
+r≥16 → 2×16B (`[i,i+16)` and `[n-16,n)`), r≥8 → 2×u64, r≥4 → 2×u32, else a ≤3-byte scalar. Each window
+ends at n so it stays in-bounds; the overlapped prefix is already proven equal so the first mismatch found
+is the true first differing byte. The lane_bytes<16 raw-passthrough path stays pure scalar (unchanged).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench MCMP_AB arm: OLD kernel (16B+scalar tail), NEW kernel,
+host glibc memcmp, EQUAL buffers = full-scan worst case = the family-bench regime):
+  len= 7  new/old=0.565  new/glibc=1.005  old/glibc=1.777
+  len=15  new/old=0.401  new/glibc=0.910  old/glibc=2.267
+  len=23  new/old=0.557  new/glibc=0.864  old/glibc=1.550
+  len=31  new/old=0.351  new/glibc=0.864  old/glibc=2.459
+  len=47  new/old=0.445  new/glibc=1.095  old/glibc=2.464
+  len=63  new/old=0.433  new/glibc=1.045  old/glibc=2.414
+NEW is 1.8-2.8x faster than OLD at every size, taking memcmp from 1.5-2.5x SLOWER than glibc to
+parity-to-WIN (BEATS glibc at len 15/23/31, ~within 10% at 7/47/63). At the family-bench size n=31 it now
+beats glibc (0.86) vs old's 2.5x loss. CONFORMANCE GREEN: conformance_diff_cmp_family (4) +
+conformance_diff_string (24, randomized memcmp vs glibc) + an exhaustive in-bench sign sweep (every
+differing-byte position for n∈{1,3,4,7,8,15,16,23,31,32,47,63} matched glibc's sign). Residual at 47/63
+(~5-10%) = glibc's native AVX2 ymm 32B compare vs the SSE2 u128-pair, the portable-SIMD ceiling.

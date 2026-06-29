@@ -290,6 +290,111 @@ unsafe fn rchr_new(p: *const u8, target: u8) -> Option<usize> {
     }
 }
 
+#[inline]
+unsafe fn eq16(a: *const u8, b: *const u8) -> bool {
+    unsafe { std::ptr::read_unaligned(a.cast::<u128>()) == std::ptr::read_unaligned(b.cast::<u128>()) }
+}
+#[inline]
+unsafe fn eq32(a: *const u8, b: *const u8) -> bool {
+    unsafe { eq16(a, b) && eq16(a.add(16), b.add(16)) }
+}
+#[inline]
+unsafe fn first_diff_sign(a: *const u8, b: *const u8, lo: usize, hi: usize) -> i32 {
+    let mut j = lo;
+    while j < hi {
+        let av = unsafe { *a.add(j) };
+        let bv = unsafe { *b.add(j) };
+        if av != bv {
+            return if av < bv { -1 } else { 1 };
+        }
+        j += 1;
+    }
+    0
+}
+
+/// OLD memcmp kernel: lane=32 dispatch path — 32-chunks, 16-chunks, then SCALAR tail.
+#[inline(never)]
+unsafe fn memcmp_old(a: *const u8, b: *const u8, n: usize) -> i32 {
+    let mut i = 0usize;
+    while i + 32 <= n {
+        if !unsafe { eq32(a.add(i), b.add(i)) } {
+            return unsafe { first_diff_sign(a, b, i, i + 32) };
+        }
+        i += 32;
+    }
+    while i + 16 <= n {
+        if !unsafe { eq16(a.add(i), b.add(i)) } {
+            return unsafe { first_diff_sign(a, b, i, i + 16) };
+        }
+        i += 16;
+    }
+    while i < n {
+        let av = unsafe { *a.add(i) };
+        let bv = unsafe { *b.add(i) };
+        if av != bv {
+            return if av < bv { -1 } else { 1 };
+        }
+        i += 1;
+    }
+    0
+}
+
+/// NEW memcmp kernel — EXACT deployable structure: 32-chunk loop, 16-chunk loop, then a
+/// glibc-style overlapping power-of-2 tail (replaces the per-byte scalar tail). Mirrors
+/// what raw_lane_memcmp_bytes will run (lane_bytes>=16 path).
+#[inline(never)]
+unsafe fn memcmp_new(a: *const u8, b: *const u8, n: usize) -> i32 {
+    let mut i = 0usize;
+    while i + 32 <= n {
+        if !unsafe { eq32(a.add(i), b.add(i)) } {
+            return unsafe { first_diff_sign(a, b, i, i + 32) };
+        }
+        i += 32;
+    }
+    if i == n {
+        return 0;
+    }
+    // remainder r = n - i in [1, 32): one overlapping wide load per size class. Each window
+    // ends at n so it stays in bounds; the overlapped prefix was already proven equal.
+    let r = n - i;
+    if r >= 16 {
+        if !unsafe { eq16(a.add(i), b.add(i)) } {
+            return unsafe { first_diff_sign(a, b, i, i + 16) };
+        }
+        let off = n - 16;
+        if !unsafe { eq16(a.add(off), b.add(off)) } {
+            return unsafe { first_diff_sign(a, b, off, n) };
+        }
+    } else if r >= 8 {
+        let x0 = unsafe { std::ptr::read_unaligned(a.add(i).cast::<u64>()) };
+        let y0 = unsafe { std::ptr::read_unaligned(b.add(i).cast::<u64>()) };
+        if x0 != y0 {
+            return unsafe { first_diff_sign(a, b, i, i + 8) };
+        }
+        let off = n - 8;
+        let x1 = unsafe { std::ptr::read_unaligned(a.add(off).cast::<u64>()) };
+        let y1 = unsafe { std::ptr::read_unaligned(b.add(off).cast::<u64>()) };
+        if x1 != y1 {
+            return unsafe { first_diff_sign(a, b, off, n) };
+        }
+    } else if r >= 4 {
+        let x0 = unsafe { std::ptr::read_unaligned(a.add(i).cast::<u32>()) };
+        let y0 = unsafe { std::ptr::read_unaligned(b.add(i).cast::<u32>()) };
+        if x0 != y0 {
+            return unsafe { first_diff_sign(a, b, i, i + 4) };
+        }
+        let off = n - 4;
+        let x1 = unsafe { std::ptr::read_unaligned(a.add(off).cast::<u32>()) };
+        let y1 = unsafe { std::ptr::read_unaligned(b.add(off).cast::<u32>()) };
+        if x1 != y1 {
+            return unsafe { first_diff_sign(a, b, off, n) };
+        }
+    } else {
+        return unsafe { first_diff_sign(a, b, i, n) };
+    }
+    0
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -435,6 +540,58 @@ fn bench(c: &mut Criterion) {
             old_t / 32.0,
             new_t / 32.0,
             g_t / 32.0,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // memcmp A/B: EQUAL buffers (full-scan worst case, the family-bench regime). Also
+    // a correctness sweep with a single differing byte at every position vs glibc sign.
+    type McmpFn = unsafe extern "C" fn(*const c_void, *const c_void, usize) -> i32;
+    let g_mcmp =
+        unsafe { std::mem::transmute::<usize, McmpFn>(host_sym(b"memcmp\0")) };
+    // Correctness: for several n, flip one byte at each position and check sign agreement.
+    for &n in &[1usize, 3, 4, 7, 8, 15, 16, 23, 31, 32, 47, 63] {
+        let mut a = vec![b'a' + 0u8; n + 1];
+        for k in 0..n {
+            a[k] = b'a' + (k % 26) as u8;
+        }
+        for pos in 0..n {
+            let mut b = a.clone();
+            b[pos] = a[pos] ^ 0x20; // differ at exactly `pos`
+            let ap = a.as_ptr();
+            let bp = b.as_ptr();
+            let want = unsafe { g_mcmp(ap.cast(), bp.cast(), n) }.signum();
+            assert_eq!(
+                unsafe { memcmp_old(ap, bp, n) }.signum(),
+                want,
+                "memcmp_old sign wrong n={n} pos={pos}"
+            );
+            assert_eq!(
+                unsafe { memcmp_new(ap, bp, n) }.signum(),
+                want,
+                "memcmp_new sign wrong n={n} pos={pos}"
+            );
+        }
+        // equal buffers => 0
+        assert_eq!(unsafe { memcmp_new(a.as_ptr(), a.as_ptr(), n) }, 0, "memcmp_new eq n={n}");
+    }
+    for &len in &[7usize, 15, 23, 31, 47, 63] {
+        let mut a = backing.clone();
+        let mut bb = backing.clone();
+        for k in 0..len {
+            a[k] = b'a' + (k % 26) as u8;
+            bb[k] = b'a' + (k % 26) as u8;
+        }
+        let ap = a.as_ptr();
+        let bp = bb.as_ptr();
+        let old_t = measure(|| unsafe { memcmp_old(black_box(ap), black_box(bp), len) } as i64 as u64);
+        let new_t = measure(|| unsafe { memcmp_new(black_box(ap), black_box(bp), len) } as i64 as u64);
+        let g_t = measure(|| unsafe { g_mcmp(black_box(ap.cast()), black_box(bp.cast()), len) } as i64 as u64);
+        println!(
+            "MCMP_AB len={len:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
             new_t / old_t,
             new_t / g_t,
             old_t / g_t

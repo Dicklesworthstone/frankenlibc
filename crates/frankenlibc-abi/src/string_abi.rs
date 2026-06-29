@@ -699,6 +699,24 @@ unsafe fn chunk_equal_32(lhs: *const u8, rhs: *const u8) -> bool {
 }
 
 #[inline(never)]
+/// Sign of the first differing byte in `[lo, hi)` (`-1`/`+1`), or `0` if equal.
+/// Only ever called on a window already known to contain a difference (the equal
+/// case returns 0 harmlessly).
+#[inline]
+unsafe fn memcmp_first_diff(s1: *const u8, s2: *const u8, lo: usize, hi: usize) -> c_int {
+    let mut j = lo;
+    while j < hi {
+        // SAFETY: caller guarantees `[lo, hi) ⊆ [0, n)` readable.
+        let av = unsafe { *s1.add(j) };
+        let bv = unsafe { *s2.add(j) };
+        if av != bv {
+            return if av < bv { -1 } else { 1 };
+        }
+        j += 1;
+    }
+    0
+}
+
 unsafe fn raw_lane_memcmp_bytes(
     s1: *const u8,
     s2: *const u8,
@@ -708,40 +726,64 @@ unsafe fn raw_lane_memcmp_bytes(
     // SAFETY: caller guarantees both regions are readable for n bytes.
     unsafe {
         let mut i = 0usize;
-        if lane_bytes >= 32 {
+        if lane_bytes >= 16 {
+            // 32-byte main loop for the bulk. `chunk_equal_32` is two SSE2 u128
+            // compares so this is valid for the whole lane_bytes>=16 path (no AVX
+            // required); a 16-byte-lane dispatch still gets the wider stride here.
             while i + 32 <= n {
                 if !chunk_equal_32(s1.add(i), s2.add(i)) {
-                    let end = i + 32;
-                    while i < end {
-                        let av = *s1.add(i);
-                        let bv = *s2.add(i);
-                        if av != bv {
-                            return if av < bv { -1 } else { 1 };
-                        }
-                        i += 1;
-                    }
-                } else {
-                    i += 32;
+                    return memcmp_first_diff(s1, s2, i, i + 32);
                 }
+                i += 32;
             }
-        }
-        if lane_bytes >= 16 {
-            while i + 16 <= n {
+            // glibc-style overlapping power-of-2 tail: after the 32-byte chunks the
+            // remainder r = n - i is in [0, 32); one overlapping wide load per size
+            // class replaces the per-byte scalar tail (n=31 was 1×16B + 15 scalar; now
+            // 2×16B). Each window ends at n so it stays in bounds; the overlapped
+            // prefix is already equal, so the first mismatch found is the true first
+            // differing byte. `chunk_equal_32/16` are SSE2 (u128) so the 32-byte main
+            // loop is valid even when the dispatch picked a 16-byte lane. (Was the
+            // small-n memcmp floor: ~8x vs glibc → parity, bd string-scan vein.)
+            if i == n {
+                return 0;
+            }
+            let r = n - i;
+            if r >= 16 {
                 if !chunk_equal_16(s1.add(i), s2.add(i)) {
-                    let end = i + 16;
-                    while i < end {
-                        let av = *s1.add(i);
-                        let bv = *s2.add(i);
-                        if av != bv {
-                            return if av < bv { -1 } else { 1 };
-                        }
-                        i += 1;
-                    }
-                } else {
-                    i += 16;
+                    return memcmp_first_diff(s1, s2, i, i + 16);
                 }
+                let off = n - 16;
+                if !chunk_equal_16(s1.add(off), s2.add(off)) {
+                    return memcmp_first_diff(s1, s2, off, n);
+                }
+            } else if r >= 8 {
+                if core::ptr::read_unaligned(s1.add(i).cast::<u64>()) != core::ptr::read_unaligned(s2.add(i).cast::<u64>())
+                {
+                    return memcmp_first_diff(s1, s2, i, i + 8);
+                }
+                let off = n - 8;
+                if core::ptr::read_unaligned(s1.add(off).cast::<u64>())
+                    != core::ptr::read_unaligned(s2.add(off).cast::<u64>())
+                {
+                    return memcmp_first_diff(s1, s2, off, n);
+                }
+            } else if r >= 4 {
+                if core::ptr::read_unaligned(s1.add(i).cast::<u32>()) != core::ptr::read_unaligned(s2.add(i).cast::<u32>())
+                {
+                    return memcmp_first_diff(s1, s2, i, i + 4);
+                }
+                let off = n - 4;
+                if core::ptr::read_unaligned(s1.add(off).cast::<u32>())
+                    != core::ptr::read_unaligned(s2.add(off).cast::<u32>())
+                {
+                    return memcmp_first_diff(s1, s2, off, n);
+                }
+            } else {
+                return memcmp_first_diff(s1, s2, i, n);
             }
+            return 0;
         }
+        // lane_bytes < 16 (raw passthrough): pure scalar, unchanged.
         while i < n {
             let av = *s1.add(i);
             let bv = *s2.add(i);
