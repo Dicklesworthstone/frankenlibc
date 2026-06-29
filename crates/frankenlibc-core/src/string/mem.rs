@@ -371,6 +371,30 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         return None;
     }
 
+    // Small bounded haystack in [16, 32): the 32-byte SIMD loops below can't run, so
+    // the old code fell to an 8-byte SWAR + scalar tail (e.g. n=31 = 3×8B SWAR + 7
+    // scalar). glibc instead uses two OVERLAPPING 16-byte SIMD probes — `[0,16)` and
+    // `[count-16, count)` — which together cover all `count` bytes while staying
+    // entirely in-slice (no align-down, no OOB). First-match ordering holds: the first
+    // probe owns `[0,16)`; if it's empty, every match position `< 16` is already ruled
+    // out, so the second probe's lowest set bit lands at the true first match `≥ 16`.
+    if (16..SIMD_LANES).contains(&count) {
+        const L: usize = 16;
+        let v0 = Simd::<u8, L>::from_slice(&hs[..L]);
+        let m0 = v0.simd_eq(Simd::splat(needle)).to_bitmask();
+        if m0 != 0 {
+            return Some(m0.trailing_zeros() as usize);
+        }
+        let off = count - L;
+        let v1 = Simd::<u8, L>::from_slice(&hs[off..off + L]);
+        let m1 = v1.simd_eq(Simd::splat(needle)).to_bitmask();
+        if m1 != 0 {
+            // off + trailing_zeros ≥ 16 because [off,16) was cleared by the first probe.
+            return Some(off + m1.trailing_zeros() as usize);
+        }
+        return None;
+    }
+
     let mut base = 0usize;
 
     while count - base >= MEMCHR_FOLD_BYTES {

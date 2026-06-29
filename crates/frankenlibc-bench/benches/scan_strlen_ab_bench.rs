@@ -492,6 +492,56 @@ unsafe fn scmp_new(p1: *const u8, p2: *const u8, bound: usize) -> usize {
     }
 }
 
+#[inline]
+fn has_byte_u64(w: u64, needle: u8) -> bool {
+    let x = w ^ (needle as u64).wrapping_mul(0x0101_0101_0101_0101);
+    x.wrapping_sub(0x0101_0101_0101_0101) & !x & 0x8080_8080_8080_8080 != 0
+}
+
+/// OLD memchr small-n path: 8-byte SWAR loop + scalar tail (no SIMD for n<32).
+#[inline(never)]
+unsafe fn mchr_old(p: *const u8, needle: u8, n: usize) -> Option<usize> {
+    let mut base = 0usize;
+    while n - base >= 8 {
+        let w = unsafe { std::ptr::read_unaligned(p.add(base).cast::<u64>()) };
+        if has_byte_u64(w, needle) {
+            for j in 0..8 {
+                if unsafe { *p.add(base + j) } == needle {
+                    return Some(base + j);
+                }
+            }
+        }
+        base += 8;
+    }
+    while base < n {
+        if unsafe { *p.add(base) } == needle {
+            return Some(base);
+        }
+        base += 1;
+    }
+    None
+}
+
+/// NEW memchr small-n path: two overlapping 16-byte SIMD probes for n in [16,32).
+#[inline(never)]
+unsafe fn mchr_new(p: *const u8, needle: u8, n: usize) -> Option<usize> {
+    if (16..32).contains(&n) {
+        let v0 = Simd::<u8, 16>::from_slice(unsafe { slice::from_raw_parts(p, 16) });
+        let m0 = v0.simd_eq(Simd::splat(needle)).to_bitmask();
+        if m0 != 0 {
+            return Some(m0.trailing_zeros() as usize);
+        }
+        let off = n - 16;
+        let v1 = Simd::<u8, 16>::from_slice(unsafe { slice::from_raw_parts(p.add(off), 16) });
+        let m1 = v1.simd_eq(Simd::splat(needle)).to_bitmask();
+        if m1 != 0 {
+            return Some(off + m1.trailing_zeros() as usize);
+        }
+        return None;
+    }
+    unsafe { mchr_old(p, needle, n) }
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -720,6 +770,48 @@ fn bench(c: &mut Criterion) {
         println!(
             "SCMP_AB len={len:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // memchr A/B: ABSENT byte in [16,32)-byte buffers (full scan = the small-n floor).
+    type MchrFn = unsafe extern "C" fn(*const c_void, i32, usize) -> *mut c_void;
+    let g_mchr =
+        unsafe { std::mem::transmute::<usize, MchrFn>(host_sym(b"memchr\0")) };
+    let absent = 0x01u8;
+    for &len in &[16usize, 19, 23, 27, 31] {
+        let mut buf = backing.clone();
+        let mut old_t = 0.0;
+        let mut new_t = 0.0;
+        let mut g_t = 0.0;
+        for off in 0..32usize {
+            for k in 0..len {
+                buf[off + k] = b'a' + (k % 26) as u8;
+            }
+            let p = unsafe { buf.as_ptr().add(off) };
+            assert_eq!(unsafe { mchr_old(p, absent, len) }, None, "mchr_old off={off} len={len}");
+            assert_eq!(unsafe { mchr_new(p, absent, len) }, None, "mchr_new off={off} len={len}");
+            assert!(unsafe { g_mchr(p.cast(), absent as i32, len) }.is_null());
+            // also a present-byte correctness check at a couple positions
+            for &pos in &[0usize, len / 2, len - 1] {
+                buf[off + pos] = absent;
+                assert_eq!(unsafe { mchr_new(p, absent, len) }, Some(pos), "mchr_new present off={off} len={len} pos={pos}");
+                let gp = unsafe { g_mchr(p.cast(), absent as i32, len) };
+                assert_eq!(gp as usize - p as usize, pos, "glibc present");
+                buf[off + pos] = b'a' + (pos % 26) as u8;
+            }
+            old_t += measure(|| unsafe { mchr_old(black_box(p), absent, len) }.unwrap_or(99) as u64);
+            new_t += measure(|| unsafe { mchr_new(black_box(p), absent, len) }.unwrap_or(99) as u64);
+            g_t += measure(|| unsafe { g_mchr(black_box(p.cast()), absent as i32, len) } as usize as u64);
+        }
+        println!(
+            "MCHR_AB len={len:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t / 32.0,
+            new_t / 32.0,
+            g_t / 32.0,
             new_t / old_t,
             new_t / g_t,
             old_t / g_t

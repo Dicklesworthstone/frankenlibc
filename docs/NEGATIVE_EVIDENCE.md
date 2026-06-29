@@ -7808,3 +7808,26 @@ strcmp STILL LOSES to glibc ~1.3x — the residual is the dual-pointer-can't-ali
 glibc native-AVX2 ceiling (same class as strrchr's residual). Landed as a strict 1.6-2.9x improvement of
 the deployed scan + benefits strncmp (same scan_strcmp, bound=n). CONFORMANCE GREEN:
 conformance_diff_cmp_family (4) + conformance_diff_string (24, randomized strcmp/strncmp vs glibc).
+
+### 2026-06-29 — ✅ memchr small-n floor CLOSED: glibc-style overlapping 16B probes — BlackThrush
+
+frankenlibc_core::string::mem::memchr (the deployed memchr scan) fell to an 8-byte SWAR + scalar tail for
+n < 32 (the two 32-byte SIMD loops can't run): n=31 = 3×8B SWAR + 7 scalar. Family bench had memchr ~4.3x
+vs glibc small-n. It's a slice API (can't align-down below the start like strlen), but glibc's OVERLAPPING
+loads stay in-slice: added a fast path for count ∈ [16, 32) doing two overlapping 16-byte SIMD probes
+(`[0,16)` and `[count-16, count)`), O(1) trailing_zeros resolve. First-match ordering holds: probe 0 owns
+`[0,16)`; if empty, every position < 16 is ruled out so probe 1's lowest set bit is the true first match
+≥ 16. Stays entirely within the n-byte slice (no OOB, no align-down).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench MCHR_AB arm: OLD kernel (8B SWAR + scalar), NEW kernel
+(overlapping 16B), host glibc memchr, ABSENT byte = full scan = worst case, 32 alignments):
+  len=16  new/old=0.667  new/glibc=0.750  old/glibc=1.125
+  len=19  new/old=0.613  new/glibc=0.751  old/glibc=1.225
+  len=23  new/old=0.480  new/glibc=0.751  old/glibc=1.564
+  len=27  new/old=0.571  new/glibc=0.750  old/glibc=1.313
+  len=31  new/old=0.444  new/glibc=0.754  old/glibc=1.698
+NEW is 1.5-2.3x faster than OLD at every size, taking memchr from 1.1-1.7x SLOWER than glibc to BEATING
+glibc by 1.33x (new/glibc 0.75) at every size in [16,32). CONFORMANCE GREEN: core memchr suite incl.
+memchr_golden_output_sha256 (byte-identity over many inputs) + an exhaustive in-bench present/absent sweep
+(every match position + absent vs glibc, 5 sizes × 32 alignments). Single-pointer bounded scan, so unlike
+strcmp the overlapping lever reaches a clean WIN. (n < 16 stays on the cheap scalar path; n >= 32 unchanged.)
