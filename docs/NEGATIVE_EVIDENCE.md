@@ -6,6 +6,30 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — 🔬 BIG LEAD QUANTIFIED: deployed malloc is 6.4x glibc @32B but ~370x @256B (size-class pathology) — allocator core, not touched
+
+- **MEASURED (cc; `zz_malloc`, deployed `frankenlibc_abi::malloc_abi::malloc`+free
+  vs host glibc dlmopen, default strict mode):** **malloc(32) 47.4ns vs glibc 7.4ns
+  = 6.4x; malloc(256) 1.88µs vs glibc 5.1ns = ~370x.** A SIZE-CLASS pathology kicks
+  in between ~38B (strdup's allocs were ~50ns total, so its <38B malloc was fast) and
+  256B. This is the codebase's single biggest measured gap, and sharpens the filed
+  bd-deployed-malloc-membrane-50x (the "~50x" is conservative — 256B is 370x).
+- **PATH:** in default/strict mode `strict_allocator_host_path_active()` = true (it's
+  `!heals_enabled()`), so deployed malloc routes to `native_libc_malloc(req)` +
+  `fallback_insert_sized_for_slot` + `record_alloc_stats` (+ a PCC `decide`/`observe`
+  sub-path when `proof_carried_fast_path_active`). `native_libc_malloc` SHOULD be
+  ~glibc-speed (5ns); the ~1.88µs means a slow path dominates — SUSPECTS: (a) the
+  `NATIVE_MALLOC_REENTRY` → static `BUMP_HEAP` arena fallback (per the strdup-comment
+  warning), (b) `fallback_insert_sized_for_slot`'s size-tracking map insert being
+  O(slow)/contended, (c) the PCC decide+observe. The size-dependence (32B fast,
+  256B 370x) points at a size-keyed branch in native_libc_malloc or the slot map.
+- **NOT TOUCHED:** the allocator is the safety-critical core (free() relies on the
+  size-tracking); a heap-corruption regression from a rushed change is catastrophic,
+  and bench-linkage can confound native_libc_malloc (the memory's standing warning).
+  This needs a dedicated allocator investigation — profile WHICH of (a)/(b)/(c)
+  dominates at 256B, then a targeted, conformance+ASAN-verified fix. **Highest-EV
+  open lever in the project, deliberately deferred to a careful turn.**
+
 ## 2026-06-29 — ✅ strndup strict fast-path DEPLOYED (~1.31x vs ORIG, byte-identical) — completes the dup family
 
 - **DEPLOYED (cc):** `strndup` (bounded strdup) — strict has `bound == Some(n)`
