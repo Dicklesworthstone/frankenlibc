@@ -204,6 +204,11 @@ harness = false
 name = "memrchr_ab_bench"
 harness = false
 
+# strcmp OLD (single 32B panel) vs NEW (4×32 folded 128B block) vs glibc, 1 process.
+[[bench]]
+name = "strcmp_fold_ab_bench"
+harness = false
+
 # strspn OLD (N simd_eq) vs NEW (2-shuffle classifier) vs glibc, 1 process.
 [[bench]]
 name = "strspn_shuffle_ab_bench"

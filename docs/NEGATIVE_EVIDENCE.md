@@ -6,6 +6,34 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — `scan_strcmp` 4×32 folded 128B block REJECTED (regime-specific; intrinsic boundary regression in the common short-string regime)
+
+- **LEVER TESTED (cc):** mirror glibc `strcmp_avx2`'s 4×VEC unrolled loop in the
+  deployed dual-pointer `scan_strcmp` — fold four 32B panels into one 128B block
+  under a single combined page-guard + one branch (4 pipelined loads OR'd), to
+  amortize the per-panel bitmask/branch the current single-32B-panel loop pays.
+  Targets the documented "strcmp loses ~2.4x to glibc at moderate sizes" gap.
+- **MEASURED (same-process A/B `strcmp_fold_ab_bench`, equal NUL-terminated
+  strings, within-run ratios — absolute ns not comparable across rch workers):**
+  the fold genuinely wins **only for ≥256B strings** (new/old: 256B≈0.81x, 512B
+  0.74–0.87x, 1024B 0.68–0.75x; narrows old/glibc 2.33x→~1.48x at 1024, reaches
+  glibc parity at 512). BUT **every threshold T regresses strings of length ≈T**:
+  a 4-load fold replaces ~1 cheap panel at the boundary, so new = T/32 panels +
+  1 fold vs old's T/32+1 panels — extra 3 loads. `i>=32` gate → n=32 **1.14x
+  regression**; `i>=128` gate → n=128 **1.27x regression**; `i>=256` gate pushes
+  it to n=256 (~1.05x) but the win shrinks. The regression is **intrinsic to
+  speculative wide reads at the NUL boundary** and cannot be removed by tuning T.
+- **WHY REJECTED:** strcmp's dominant real-world regime is **short strings**
+  (hash-table keys, env vars, option/path parsing, identifiers — typically <64B),
+  where the fold is at best a tie and at worst a boundary regression. The only
+  clean wins are ≥256B equal-prefix compares, which are rare for strcmp. Net not
+  a deployable win; deployed `scan_strcmp` left unchanged. glibc's ≥512B edge
+  comes from aligning ONE pointer + a tighter unrolled loop, unreachable by an
+  unaligned dual-pointer scan with per-iteration page guards.
+- **Reusable asset kept:** `strcmp_fold_ab_bench` (OLD single-32B-panel vs NEW
+  4×32 fold vs host glibc strcmp, all in one process) — re-run before retrying
+  any strcmp/strncmp wide-read restructure.
+
 ## 2026-06-28 — ✅ `asinh_special` RED → GREEN (relaxed an UNSATISFIABLE bit-exact gate to ≤2 ULP)
 
 - **CONFORMANCE FIX (BoldFalcon), no asinh/asinhf code change:** the pre-existing-RED
