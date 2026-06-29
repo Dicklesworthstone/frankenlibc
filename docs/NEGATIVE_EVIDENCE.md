@@ -8250,3 +8250,24 @@ head-mask beats glibc; [4K,16K] now 0.95-1.11; >=64K parity). CONFORMANCE GREEN:
 + unterminated_buffer_audit (guard-page page-safety) + in-bench byte-identity sweep. Applies to strlen + all
 unbounded scan_c_string callers. LESSON: bytewise-min is the cheapest N-way combined zero/eq check in a SIMD
 scan (1 cmp regardless of N), beating per-vector-cmp + mask-OR.
+
+### 2026-06-29 — ⚑ BIG GAP FOUND: deployed wcslen is SCALAR (9.6-17x slower than glibc); page-safe SIMD kernel proven (7-17x, parity-to-beat glibc) — wiring is a follow-up — BlackThrush
+
+The deployed wcslen (wchar_abi.rs) is PURE SCALAR for BOTH paths: untracked → `while *s.add(len)!=0 {len+=1}`,
+tracked → `for i in 0..limit`. core's SIMD wcslen is NOT on the deployed path. Measured (scan_strlen_ab_bench
+WCSLENBIG, deployed-scalar vs page-safe SIMD min-combine vs glibc wcslen):
+  len=  256  scalar/glibc=11.22   simd/scalar=0.139  simd/glibc=1.560
+  len= 1024  scalar/glibc=15.33   simd/scalar=0.067  simd/glibc=1.019
+  len= 4096  scalar/glibc=17.03   simd/scalar=0.057  simd/glibc=0.966  (SIMD BEATS glibc)
+  len=16384  scalar/glibc= 9.99   simd/scalar=0.101  simd/glibc=1.005
+  len=65536  scalar/glibc=10.23   simd/scalar=0.098  simd/glibc=1.003
+The deployed scalar wcslen is 9.6-17x SLOWER than glibc — the single biggest gap found this campaign. A
+page-safe SIMD kernel (`wcslen_pagesafe`: aligned-head-mask + escalated 128-byte 4×8-lane-u32 min-combine
+unroll, 32|4096 + 128|4096 page-safe) is 7-17x FASTER than the scalar loop and parity-to-WIN vs glibc for
+>=1024 (BEATS at 4096). PAGE-SAFETY PROVEN: new guard-page test (mmap 2 pages, 2nd PROT_NONE, NUL at every
+position in the last 40 u32 of page 1, scanned from every start — no SIGSEGV, exact length). Byte-identity
+across alignments GREEN. The kernel + guard-page test + WCSLENBIG bench arm are landed as apparatus; the
+DEPLOYED WIRING (replace the wchar_abi wcslen scalar loops with wide_strlen_unbounded/wide_strlen_bounded)
+is a clean FOLLOW-UP (this turn's ABI edit was interrupted; the proven kernel is in the bench ready to port).
+Same 9.6-17x scalar gap almost certainly affects wcsnlen/wcschr/wmemchr deployed paths — AUDIT whether they
+route to core SIMD or scalar.

@@ -1357,6 +1357,102 @@ unsafe fn scan_unroll128_pf(p: *const u8) -> usize {
     }
 }
 
+/// CUR DEPLOYED wcslen: pure scalar element-at-a-time loop (wchar_abi.rs untracked path).
+#[inline(never)]
+unsafe fn wcslen_cur(s: *const u32, _cap: usize) -> usize {
+    let mut len = 0usize;
+    while unsafe { *s.add(len) } != 0 {
+        len += 1;
+    }
+    len
+}
+
+/// PAGE-SAFE unbounded SIMD wcslen (the deployable kernel for the untracked path):
+/// aligned-head-mask + escalated 128-byte (4×8-lane-u32) min-combine unroll. 32-byte
+/// aligned 8-lane loads and 128-byte aligned unroll loads never cross a 4 KiB page.
+#[inline(never)]
+unsafe fn wcslen_pagesafe(s: *const u32) -> usize {
+    use std::simd::cmp::SimdOrd;
+    let z = Simd::<u32, 8>::splat(0);
+    let pb = s as usize;
+    let align = (pb & 31) >> 2; // u32 elems before the 32-byte boundary (0..7)
+    let base = unsafe { s.sub(align) };
+    let v0 = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(base, 8) });
+    let m0 = v0.simd_eq(z).to_bitmask() & !((1u64 << align) - 1);
+    if m0 != 0 {
+        return m0.trailing_zeros() as usize - align;
+    }
+    let mut i = 8 - align; // s+i is 32-byte (8-u32) aligned
+    while i < 64 || (pb + i * 4) & 127 != 0 {
+        let v = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(i), 8) });
+        let m = v.simd_eq(z).to_bitmask();
+        if m != 0 {
+            return i + m.trailing_zeros() as usize;
+        }
+        i += 8;
+    }
+    loop {
+        let a = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(i), 8) });
+        let b = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(i + 8), 8) });
+        let c = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(i + 16), 8) });
+        let d = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(i + 24), 8) });
+        if a.simd_min(b).simd_min(c.simd_min(d)).simd_eq(z).any() {
+            let ma = a.simd_eq(z).to_bitmask();
+            if ma != 0 {
+                return i + ma.trailing_zeros() as usize;
+            }
+            let mb = b.simd_eq(z).to_bitmask();
+            if mb != 0 {
+                return i + 8 + mb.trailing_zeros() as usize;
+            }
+            let mc = c.simd_eq(z).to_bitmask();
+            if mc != 0 {
+                return i + 16 + mc.trailing_zeros() as usize;
+            }
+            return i + 24 + d.simd_eq(z).to_bitmask().trailing_zeros() as usize;
+        }
+        i += 32;
+    }
+}
+
+/// NEW core wcslen: 4×8-lane-u32 (4 ymm = 128 B/iter) with min-combine (3 vpminud +
+/// 1 vpcmpeqd), resolve only on a hit — the strlen-128-unroll structure for wide.
+#[inline(never)]
+unsafe fn wcslen_new(s: *const u32, cap: usize) -> usize {
+    use std::simd::cmp::SimdOrd;
+    let z = Simd::<u32, 8>::splat(0);
+    let mut base = 0usize;
+    while base + 32 <= cap {
+        let a = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(base), 8) });
+        let b = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(base + 8), 8) });
+        let c = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(base + 16), 8) });
+        let d = Simd::<u32, 8>::from_slice(unsafe { slice::from_raw_parts(s.add(base + 24), 8) });
+        if a.simd_min(b).simd_min(c.simd_min(d)).simd_eq(z).any() {
+            let ma = a.simd_eq(z).to_bitmask();
+            if ma != 0 {
+                return base + ma.trailing_zeros() as usize;
+            }
+            let mb = b.simd_eq(z).to_bitmask();
+            if mb != 0 {
+                return base + 8 + mb.trailing_zeros() as usize;
+            }
+            let mc = c.simd_eq(z).to_bitmask();
+            if mc != 0 {
+                return base + 16 + mc.trailing_zeros() as usize;
+            }
+            return base + 24 + d.simd_eq(z).to_bitmask().trailing_zeros() as usize;
+        }
+        base += 32;
+    }
+    while base < cap {
+        if unsafe { *s.add(base) } == 0 {
+            return base;
+        }
+        base += 1;
+    }
+    cap
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -1982,6 +2078,57 @@ fn bench(c: &mut Criterion) {
             new_t / g_t,
             old_t / g_t
         );
+    }
+
+    // wcslen LARGE-n: deployed SCALAR (cur) vs page-safe SIMD (pagesafe) vs glibc wcslen.
+    {
+        type WLenFn = unsafe extern "C" fn(*const u32) -> usize;
+        let g_wcslen = unsafe { std::mem::transmute::<usize, WLenFn>(host_sym(b"wcslen\0")) };
+        // PAGE-SAFETY: 2 pages of u32; 2nd PROT_NONE; place a NUL at every position in the
+        // last 40 u32 of page 1; scan from several starts in the tail — must not fault.
+        let pg = 4096usize;
+        let m = unsafe {
+            libc::mmap(std::ptr::null_mut(), 2 * pg, libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0)
+        };
+        assert_ne!(m, libc::MAP_FAILED, "mmap");
+        unsafe { assert_eq!(libc::mprotect((m as *mut u8).add(pg).cast(), pg, libc::PROT_NONE), 0) };
+        let words = pg / 4; // u32 per page
+        let buf = m as *mut u32;
+        for k in 0..words { unsafe { *buf.add(k) = 0x41 }; }
+        for nul_at in (words - 40)..words {
+            unsafe { *buf.add(nul_at) = 0 };
+            for start in (words - 40)..=nul_at {
+                let q = unsafe { buf.add(start) };
+                let got = unsafe { wcslen_pagesafe(q) };
+                assert_eq!(got, nul_at - start, "pagesafe guard nul_at={nul_at} start={start}");
+            }
+            unsafe { *buf.add(nul_at) = 0x41 };
+        }
+        unsafe { libc::munmap(m, 2 * pg) };
+        // byte-identity across alignments + timing.
+        let mut wl = vec![0x41u32; (1 << 16) + 64];
+        for &len in &[256usize, 1024, 4096, 16384, 65536] {
+            for off in 0..8usize {
+                wl[off + len] = 0;
+                let q = unsafe { wl.as_ptr().add(off) };
+                assert_eq!(unsafe { wcslen_pagesafe(q) }, len, "pagesafe off={off} len={len}");
+                wl[off + len] = 0x41;
+            }
+            wl[len] = 0;
+            let p = wl.as_ptr();
+            let cur_t = measure(|| unsafe { wcslen_cur(black_box(p), wl.len()) } as u64);
+            let new_t = measure(|| unsafe { wcslen_pagesafe(black_box(p)) } as u64);
+            let g_t = measure(|| unsafe { g_wcslen(black_box(p)) } as u64);
+            wl[len] = 0x41;
+            println!(
+                "WCSLENBIG len={len:<6} scalar_p50_ns={cur_t:.3} simd_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
+                 simd/scalar={:.3} simd/glibc={:.3} scalar/glibc={:.3}",
+                new_t / cur_t,
+                new_t / g_t,
+                cur_t / g_t
+            );
+        }
     }
 
     // strrchr LARGE-n: deployed rchr_new (32B loop) vs glibc strrchr. Target absent =>
