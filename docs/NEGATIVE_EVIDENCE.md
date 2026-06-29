@@ -6,6 +6,22 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ swab strict fast-path DEPLOYED (~6.6x vs ORIG) + wcstok REJECTED (~0-gain unmeasurable)
+
+- **DEPLOYED (cc):** `swab` (BSD byte-pair swap) paid the full membrane (guard +
+  decide + observe + stage-trace) in default(strict). Fast path = `core::swab(src[..n],
+  dst[..n], n)` (`swap_len==n` in strict), byte-identical. Fixed-`n` write.
+- **MEASURED (clean fixed-buffer bench, no alloc confound):** swab(64) **ORIG 31.8ns
+  → fast 4.83ns = ~6.6x vs ORIG** (~27ns membrane removed). Parity asserted;
+  conformance_diff_{swab_memfrob,string,string_mut} GREEN.
+- **wcstok REJECTED (~0-gain):** the wide tokenizer fast path is byte-identical
+  (conformance_diff_wchar 43/43) and saves the ~9ns wide membrane tax, BUT the bench
+  is alloc-dominated (wcstok mutates its buffer in place → must re-alloc per iter,
+  ~150ns common to both) so the ~9ns saving is unmeasurable noise (209 vs 212ns).
+  Reverted per measured-wins-only — niche fn, marginal saving, can't isolate it.
+  LESSON: in-place-mutating fns need a non-alloc buffer reset to bench cleanly; if
+  the saving is < the reset cost, it's not cleanly measurable → don't ship on belief.
+
 ## 2026-06-29 — ✅ strxfrm strict fast-path DEPLOYED (~3.4x vs ORIG, byte-identical) — collation pair done
 
 - **DEPLOYED (cc):** `strxfrm` (locale sort-key transform; C-locale = copy + strlen)

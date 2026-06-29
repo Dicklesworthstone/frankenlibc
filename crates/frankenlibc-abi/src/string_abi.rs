@@ -6133,6 +6133,21 @@ pub unsafe extern "C" fn swab(src: *const c_void, dst: *mut c_void, isize_n: isi
     }
     let n = isize_n as usize;
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`swap_len == n`), byte-identical to the strict body — core swab over `n`.
+    // Skips the membrane guard + decide + observe + stage-trace. Fixed-`n` write.
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() {
+            return;
+        }
+        unsafe {
+            let s = std::slice::from_raw_parts(src.cast::<u8>(), n);
+            let d = std::slice::from_raw_parts_mut(dst.cast::<u8>(), n);
+            frankenlibc_core::string::swab(s, d, n);
+        }
+        return;
+    }
+
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         if dst.is_null() || src.is_null() {
             return;
