@@ -5117,6 +5117,28 @@ pub unsafe extern "C" fn strdup(s: *const c_char) -> *mut c_char {
 /// The returned pointer must be freed with `free`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strndup(s: *const c_char, n: usize) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has `bound ==
+    // Some(n)` (repair false → no known-clamp), byte-identical to the strict body —
+    // scan s bounded by n, malloc(copy_len+1), copy, NUL. Skips the membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        if s.is_null() {
+            return std::ptr::null_mut();
+        }
+        return unsafe {
+            let (s_len, _) = scan_c_string(s, Some(n));
+            let copy_len = s_len.min(n);
+            let dst = crate::malloc_abi::malloc(copy_len + 1);
+            if dst.is_null() {
+                return std::ptr::null_mut();
+            }
+            if copy_len > 0 {
+                raw_memcpy_bytes(dst.cast::<u8>(), s.cast::<u8>(), copy_len);
+            }
+            *(dst as *mut u8).add(copy_len) = 0;
+            dst.cast::<c_char>()
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if s.is_null() {
         record_string_stage_outcome(

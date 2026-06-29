@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strndup strict fast-path DEPLOYED (~1.31x vs ORIG, byte-identical) — completes the dup family
+
+- **DEPLOYED (cc):** `strndup` (bounded strdup) — strict has `bound == Some(n)`
+  (repair false → no known-clamp), so the fast path = scan s bounded by `n` +
+  `malloc(copy_len+1)` + copy + NUL, byte-identical to the strict body.
+- **MEASURED (clean stash before/after; bench = strndup+free):** strndup n=100 of a
+  37-byte string **ORIG 66.3ns → fast 50.8ns = ~1.31x vs ORIG** (~15ns membrane
+  removed). Parity asserted (truncate + full); conformance_diff_{string,string_mut}
+  GREEN. **dup family (strdup + strndup) now off the membrane tax.**
+- **FUSED-STRSPN re-scoped DOWN:** even eliminating the abi pre-scan, the deployed
+  PSHUFB scan is ~10 bytes/ns vs glibc's ~25, so a fused strspn would reach ~2.5x
+  glibc (not parity) for ~2x more over the current 52ns — a complex, segfault-risky
+  page-safe-pointer change for a bounded gain. Deprioritized vs its earlier framing.
+
 ## 2026-06-29 — ✅ strdup strict fast-path DEPLOYED (~1.32x vs ORIG, byte-identical) — very hot fn
 
 - **DEPLOYED (cc):** `strdup` paid the full membrane (stage_context + decide +
