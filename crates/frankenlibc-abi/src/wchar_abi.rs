@@ -1166,6 +1166,28 @@ pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mu
         return haystack as *mut u32;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has both bounds
+    // == None, so both scans terminate (not adverse) — byte-identical to the strict
+    // full body below; skips the decide + observe membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (needle_len, _) = scan_w_string(needle, None);
+            let (hay_len, _) = scan_w_string(haystack, None);
+            if needle_len == 0 {
+                haystack as *mut u32
+            } else if hay_len >= needle_len {
+                let hay_slice = std::slice::from_raw_parts(haystack, hay_len);
+                let needle_slice = std::slice::from_raw_parts(needle, needle_len);
+                match wide_core::wcsstr(hay_slice, needle_slice) {
+                    Some(idx) => haystack.add(idx) as *mut u32,
+                    None => std::ptr::null_mut(),
+                }
+            } else {
+                std::ptr::null_mut()
+            }
+        };
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         haystack as usize,
@@ -1771,6 +1793,26 @@ pub unsafe extern "C" fn wcsspn(s: *const u32, accept: *const u32) -> usize {
         return 0;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has both bounds
+    // == None, byte-identical to the strict full body below; skips the decide +
+    // observe membrane tax (~9-10ns/call, see wcscmp).
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (accept_len, _) = scan_w_string(accept, None);
+            let set = WideCharSet::new(accept, accept_len);
+            let (s_len, _) = scan_w_string(s, None);
+            let mut count = 0usize;
+            for i in 0..s_len {
+                if set.contains(*s.add(i)) {
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+            count
+        };
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
@@ -1830,6 +1872,24 @@ pub unsafe extern "C" fn wcscspn(s: *const u32, reject: *const u32) -> usize {
         return 0;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body below; skips the decide + observe membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (reject_len, _) = scan_w_string(reject, None);
+            let set = WideCharSet::new(reject, reject_len);
+            let (s_len, _) = scan_w_string(s, None);
+            let mut count = 0usize;
+            for i in 0..s_len {
+                if set.contains(*s.add(i)) {
+                    break;
+                }
+                count += 1;
+            }
+            count
+        };
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
@@ -1886,6 +1946,24 @@ pub unsafe extern "C" fn wcscspn(s: *const u32, reject: *const u32) -> usize {
 pub unsafe extern "C" fn wcspbrk(s: *const u32, accept: *const u32) -> *mut u32 {
     if s.is_null() || accept.is_null() {
         return std::ptr::null_mut();
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body below; skips the decide + observe membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (accept_len, _) = scan_w_string(accept, None);
+            let set = WideCharSet::new(accept, accept_len);
+            let (s_len, _) = scan_w_string(s, None);
+            let mut found: *mut u32 = std::ptr::null_mut();
+            for i in 0..s_len {
+                if set.contains(*s.add(i)) {
+                    found = s.add(i) as *mut u32;
+                    break;
+                }
+            }
+            found
+        };
     }
 
     let (mode, decision) = runtime_policy::decide(

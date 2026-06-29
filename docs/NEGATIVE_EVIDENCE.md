@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ wide-char membrane fast-path EXTENDED to set/substr family (wcsspn/wcscspn/wcspbrk/wcsstr, byte-identical)
+
+- **LEVER (cc, follow-up to the compare/search batch below):** the same
+  `strict_passthrough_active()` fast path, extended to the four set/substring
+  wide functions whose strict full body is provably **unbounded** (`s_bound`/
+  `accept_bound`/`hay_bound`/`needle_bound` all gated on `repair`, false in
+  strict → `scan_w_string(..None)` terminates → not adverse). Each fast path is a
+  verbatim copy of the strict full body with bounds → `None`, dropping only
+  `decide`+`observe`+`known_remaining` → byte-identical result.
+- **TAX REMOVED = the same measured ~9-10ns/call** (decide+observe), proven flat
+  on `wcscmp` (13.3→3.97ns) below; these functions share the IDENTICAL membrane
+  calls, so the fast path removes the same fixed cost. The fast path is confirmed
+  live in-process (the `wcscmp` arm of `wcscmp_membrane_ab_bench` shows
+  `strict_passthrough_active()==true` — full collapses onto core — and these
+  check the identical predicate in the same process).
+- **HONEST RESIDUAL:** `wcsspn_eq_4` deployed fl **14.5ns** vs host glibc **5.5ns**
+  — after the tax is gone fl is still ~2.6x glibc, because fl's `WideCharSet::new`
+  set-building core is slower than glibc's 256-bit bitmap. That core gap is a
+  SEPARATE lever (not addressed here); this change only removes the membrane tax.
+- Conformance GREEN: conformance_diff_wchar 43/43, n_bounded_wchar_differential
+  + golden_wchar_nrt_simd pass. `wcslen`/`wcsncmp`/`wmemchr`/`wcsncasecmp` still
+  on the full path (honor `known`/`n` ungated — separate careful follow-up).
+
 ## 2026-06-29 — ✅ wide-char membrane fast-path DEPLOYED (wcscmp/wcschr/wcsrchr/wcscasecmp: 2.0–3.4x faster vs ORIG, byte-identical)
 
 - **LEVER (cc):** the entire wide-char family paid the full

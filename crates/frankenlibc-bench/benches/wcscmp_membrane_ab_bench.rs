@@ -16,9 +16,10 @@ use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, wcscmp};
+use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, wcscmp, wcsspn};
 
 type WcscmpFn = unsafe extern "C" fn(*const u32, *const u32) -> c_int;
+type WcsspnFn = unsafe extern "C" fn(*const u32, *const u32) -> usize;
 
 /// Host glibc `wcscmp` via an isolated dlmopen namespace (bypasses fl's
 /// interposing no_mangle symbol).
@@ -36,6 +37,53 @@ fn host_wcscmp() -> WcscmpFn {
         sym as usize
     });
     unsafe { std::mem::transmute::<usize, WcscmpFn>(addr) }
+}
+
+/// Host glibc `wcsspn` via the same isolated dlmopen namespace.
+fn host_wcsspn() -> WcsspnFn {
+    static HOST: OnceLock<usize> = OnceLock::new();
+    let addr = *HOST.get_or_init(|| unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(!handle.is_null(), "failed to dlmopen host libc.so.6");
+        let sym = libc::dlsym(handle, b"wcsspn\0".as_ptr().cast());
+        assert!(!sym.is_null(), "failed to resolve host glibc wcsspn");
+        sym as usize
+    });
+    unsafe { std::mem::transmute::<usize, WcsspnFn>(addr) }
+}
+
+/// Deployed-fl `wcsspn` (fast path now live) vs host glibc — short string where
+/// the fixed membrane tax would dominate if still present. Confirms the tax is
+/// gone (fl ≈ glibc + small core delta, not glibc + ~9ns).
+fn bench_wcsspn(c: &mut Criterion) {
+    let glibc = host_wcsspn();
+    let accept = wstr_set(); // "abcdef\0"
+    for &n in &[4usize, 16] {
+        let s = wstr(n);
+        let pa = s.as_ptr();
+        let pset = accept.as_ptr();
+        assert_eq!(unsafe { wcsspn(pa, pset) }, n);
+        assert_eq!(unsafe { glibc(pa, pset) }, n);
+        let mut grp = c.benchmark_group(format!("wcsspn_eq_{n}"));
+        grp.bench_function("fl_deployed", |bb| {
+            bb.iter(|| black_box(unsafe { wcsspn(black_box(pa), black_box(pset)) }))
+        });
+        grp.bench_function("host_glibc", |bb| {
+            bb.iter(|| black_box(unsafe { glibc(black_box(pa), black_box(pset)) }))
+        });
+        grp.finish();
+    }
+}
+
+/// Accept set "abcdef" (all 'a' inputs are fully spanned).
+fn wstr_set() -> Vec<u32> {
+    let mut v: Vec<u32> = "abcdef".chars().map(|c| c as u32).collect();
+    v.push(0);
+    v
 }
 
 /// Build a NUL-terminated wide string of `n` 'a' wchars.
@@ -76,5 +124,5 @@ fn bench(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench);
+criterion_group!(benches, bench, bench_wcsspn);
 criterion_main!(benches);
