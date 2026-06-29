@@ -6,6 +6,30 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ PSHUFB classifier for non-contiguous LONG strspn/strcspn DEPLOYED (~3.2x vs ORIG, byte-identical, fuzz-verified) — the deferred lever, landed
+
+- **DEPLOYED (cc):** the long-deferred Langdale/Lemire 2-PSHUFB byte classifier, now
+  in `core::str::span_general` for NON-contiguous ALL-ASCII sets (`span_pshufb_ascii`,
+  AVX2). Universal-ASCII LUT (`lo[v&0xF] |= 1<<(v>>4)`, `hi[h]=1<<h` h<8) — handles
+  ANY set size (not the bench prototype's ≤8) and makes non-ASCII bytes + NUL natural
+  non-members. Replaces the scalar `table[byte]` loop (O(s_len) per byte) that was
+  ~16x glibc on long non-contiguous spans. Build flag mandates AVX2 → no feature
+  detection. Both strspn + strcspn directions.
+- **BYTE-IDENTITY PROVEN:** new `span_pshufb_matches_scalar` proptest — **4000 cases**,
+  arbitrary haystack (incl. non-ASCII + NULs) × all-ASCII sets × both directions, all
+  == the scalar reference. core str 154/154 + conformance_diff_{string_search,string,
+  string_mut} GREEN.
+- **MEASURED + GATED:** non-contiguous 256-char run **167ns → 52ns = ~3.2x vs ORIG**.
+  Gated on `s.len() >= 64`: PSHUFB's LUT-build + AVX2 call-boundary setup (~20ns, no
+  cross-`target_feature` inlining) REGRESSED short spans (9-char 23.7→45.6ns), so short
+  stays scalar (re-measured 20.6ns, no regression). Long-only win, clean.
+- **STILL ~5x glibc** (52 vs 10.5ns @256) — NOT the classifier, the **abi pre-scan**:
+  the deployed strspn does `scan_c_string(s)` (full s length for the slice) THEN the
+  PSHUFB scan = 2 passes; glibc fuses (1 pass, no pre-scan). A NUL-terminated fused
+  strspn (core takes a ptr, scans once) closes the rest — same shape as the fused
+  strstr lead. The classifier is the prerequisite (now in); the fused-scan is the
+  follow-up.
+
 ## 2026-06-29 — ✅ strcasestr strict fast-path DEPLOYED (~2.0x vs ORIG, byte-identical) — hot fn
 
 - **DEPLOYED (cc):** `strcasestr` (hot — HTTP/protocol header matching) mirrors the
