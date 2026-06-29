@@ -7516,3 +7516,21 @@ mbrtowc_stateful_differential_fuzz 7 + mbrtowc_streaming_differential_fuzz 2 + m
 + conformance_diff_mbsrtowcs 1 + conformance_diff_mbtowc_wctomb 1 + golden_wchar_conv_reentry 1 (all
 byte-exact vs glibc, incl. partial-sequence resume across calls). VEIN: apply the same empty-state
 decode-direct pattern to mbtowc/mbrlen/mbsrtowcs internals if they reassemble through a buffer.
+
+### 2026-06-28 — 📐 wchar text surface AUDIT: mb/wc family + wide-ctype + collation all win/parity (no lever); wctype regression guard added — BlackThrush
+
+Systematic dig of the wide-text surface after the mbrtowc wins (f505d7b91 + 6d96741c9). Findings (all
+inspected + the hot ones benched vs glibc via dlmopen):
+- mb/wc CONVERSION family fully optimized: mbrtowc FIXED (now ~3x win both ASCII+multibyte); mbrlen
+  delegates to mbrtowc (inherits); mbtowc decodes directly via utf8_decode_step (ASCII is its first arm);
+  mbsrtowcs/mbstowcs AND wcsrtombs/wcstombs already SIMD ASCII fast-forward straight into dst; wcrtomb/
+  wctomb have an ASCII fast path + direct encode (ignore the stateless-UTF-8 mbstate). No lever left.
+- WIDE-CTYPE already WINS (new `wctype_ab_bench`, fl vs glibc dlmopen, mixed ASCII/Latin/CJK codepoints):
+  iswalpha 2.01 vs 2.44 ns = 0.826x, towlower 1.67 vs 3.03 = 0.552x, wcwidth 0.78 vs 2.44 = 0.321x. fl's
+  Unicode tables beat glibc's lookup. No lever.
+- COLLATION: strcoll delegates straight to strcmp (C/POSIX collation == byte order — fused single-pass);
+  strxfrm is a C-locale memcpy + REQUIRED StringMemory pointer validation (safety core, not skippable).
+CONCLUSION: the wide-text/ctype/collation surface is DONE (fl wins or parity everywhere; mbrtowc was the
+lone gap, now closed). Added wctype_ab_bench as a durable regression guard. Future digs should target a
+different family — string/mem SIMD moderate-size losses remain (deeper-AVX2, hard) and the printf
+%-conversion single-pass rewrite remains the biggest open lever.

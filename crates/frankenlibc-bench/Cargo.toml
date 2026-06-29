@@ -397,3 +397,9 @@ harness = false
 name = "mbrtowc_ab_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# wide-ctype (iswalpha/towlower/wcwidth) vs host glibc, in-process (abi-bench + dlmopen).
+[[bench]]
+name = "wctype_ab_bench"
+required-features = ["abi-bench"]
+harness = false
