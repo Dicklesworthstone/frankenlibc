@@ -7831,3 +7831,25 @@ glibc by 1.33x (new/glibc 0.75) at every size in [16,32). CONFORMANCE GREEN: cor
 memchr_golden_output_sha256 (byte-identity over many inputs) + an exhaustive in-bench present/absent sweep
 (every match position + absent vs glibc, 5 sizes × 32 alignments). Single-pointer bounded scan, so unlike
 strcmp the overlapping lever reaches a clean WIN. (n < 16 stays on the cheap scalar path; n >= 32 unchanged.)
+
+### 2026-06-29 — ✅ memrchr small-n floor CLOSED: overlapping reverse 16B probes — BlackThrush
+
+Sibling of the memchr win: frankenlibc_core::string::mem::memrchr fell to an 8-byte SWAR reverse loop +
+scalar front remainder for count < 32 (n=31 = 3×8B SWAR + 7 scalar). Added the REVERSE overlapping fast
+path for count ∈ [16, 32): two overlapping 16-byte SIMD probes scanned HIGH→LOW for the LAST match. High
+probe `[count-16, count)` owns the top bytes (its highest set bit = `63 - leading_zeros` = last match); if
+empty, every position ≥ count-16 is ruled out, so the low probe `[0,16)`'s highest set bit is the true
+last match < count-16. Stays in-slice.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench MRCHR_AB arm: OLD (8B SWAR reverse + scalar), NEW
+(overlapping reverse 16B), host glibc memrchr, ABSENT byte = full scan, 32 alignments):
+  len=16  new/old=0.561  new/glibc=0.845  old/glibc=1.505
+  len=19  new/old=0.466  new/glibc=0.847  old/glibc=1.820
+  len=23  new/old=0.377  new/glibc=0.850  old/glibc=2.255
+  len=27  new/old=0.417  new/glibc=0.838  old/glibc=2.010
+  len=31  new/old=0.346  new/glibc=0.857  old/glibc=2.479
+NEW is 1.8-2.9x faster than OLD at every size, taking memrchr from 1.5-2.5x SLOWER than glibc to BEATING
+glibc by ~1.17x (new/glibc 0.84-0.86) every size in [16,32). CONFORMANCE GREEN: core memrchr suite (13) +
+an exhaustive in-bench last-match sweep (absent + two-match LAST-occurrence at multiple positions vs glibc,
+5 sizes × 32 alignments). Confirms the pattern: single-pointer bounded scans (memchr/memrchr/memcmp) all
+beat glibc small-n via overlapping power-of-2 loads. (n < 16 stays scalar; n >= 32 unchanged.)
