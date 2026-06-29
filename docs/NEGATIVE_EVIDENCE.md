@@ -7553,3 +7553,19 @@ HARVESTED across stdio, math, RNG, mb/wc conversion, wide-ctype, time, strtod. R
 the DEEP ones: (1) printf %-conversion single-pass rewrite (biggest; multi-session); (2) string/mem
 moderate-size SIMD losses (deeper-AVX2 kernel work); (3) deployed-malloc membrane (architectural). Added
 gmtime_ab_bench as a durable regression guard (timegm win + gmtime_r parity).
+
+### 2026-06-28 — ✅✅ wmemchr was SCALAR (not the SIMD core): 10x → 1.6x vs glibc (~5x self) — BlackThrush
+
+DIFFERENT primitive. New `wmem_ab_bench` (fl vs glibc dlmopen) exposed wmemchr losing 8.8x (256 elem) /
+10.0x (4096) while its sibling wmemcmp was at parity. Root cause: the ABI `wmemchr` used a SCALAR
+`slice.iter().position(|&x| x == c)` element loop, NOT the SIMD `wchar_core::string::wide::wmemchr`
+(64-lane Simd<u32> panels + O(1) lane resolve) — even though wmemcmp right next to it already delegated to
+its SIMD core. Fixed by delegating wmemchr to the core (identical first-match semantics; the repair/clamp
+bound-scan path is preserved). Measured: wmemchr 8.8x → **2.18x** (256), 10.0x → **1.60x** (4096) = ~5x
+self-improvement on the scan; the residual is the per-call StringMemory membrane tax (decide +
+known_remaining pointer validation — the safety core, not skippable). CONFORMANCE GREEN: core string::wide
+84 + conformance_diff_wchar 43 (incl diff_wmemchr_cases, byte-exact vs glibc) + wchar_abi_test 118 +
+n_bounded_wchar_differential_probe 2. Bench also recorded: wmemset WINS (0.63-0.97x), wmemcmp at parity
+(delegates to core), wmemcpy 2.1x (copy_nonoverlapping=memcpy; residual is membrane tax, safety core).
+LESSON: a "core is SIMD" claim doesn't guarantee the ABI wrapper USES it — grep ABI wrappers for scalar
+`iter().position()/iter().any()` element loops where a SIMD core exists.

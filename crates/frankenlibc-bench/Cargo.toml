@@ -409,3 +409,9 @@ harness = false
 name = "gmtime_ab_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# wide-mem (wmemset/wmemchr/wmemcmp/wmemcpy) vs host glibc, in-process (abi-bench + dlmopen).
+[[bench]]
+name = "wmem_ab_bench"
+required-features = ["abi-bench"]
+harness = false
