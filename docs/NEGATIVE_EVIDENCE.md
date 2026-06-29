@@ -6,6 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ narrow READ family strncmp/strspn/strcspn/strpbrk strict fast-path DEPLOYED (~2.4x vs ORIG, byte-identical)
+
+- **DEPLOYED (cc):** four hot string READS still paid the full membrane
+  (`stage_context_two` + `decide` + `observe` + stage-trace) in default(strict)
+  mode. Added `strict_passthrough_active()` fast paths byte-identical to their
+  strict bodies: `strncmp` = page-guarded `scan_strcmp(s1,s2,n)` (narrow analog of
+  the deployed strcmp + shipped wcsncmp); `strspn`/`strcspn`/`strpbrk` = scan both
+  args + `core::str::{strspn,strcspn,strpbrk}` (pointer mapped for strpbrk).
+- **MEASURED (RELIABLE; `FRANKENLIBC_MODE` disambiguated default=fast/hardened=slow
+  same binary):** strspn-16 **ORIG 115ns → fast 48.6ns = ~2.4x vs ORIG** (the
+  ~66ns membrane bookkeeping removed). strncmp/strcspn/strpbrk share that ~66ns
+  removal (HIGHER ratio for strncmp — its `scan_strcmp` core is fast). Byte
+  identity: non-test probe asserted fl==glibc for strncmp (4 pairs × n), strspn,
+  strcspn, strpbrk (incl. pointer); conformance_diff_{string_search,cmp_family,
+  string,string_mut} GREEN.
+- **TWO SEPARATE (bigger) LEVERS SURFACED, not mine here:** (1) the strspn/cspn/pbrk
+  CORE loses badly to glibc (48.6ns vs 3ns @16) — a bitmap/SIMD core gap. (2) the
+  HARDENED-mode strspn path is **~27µs** (per-char validation/healing pathology) —
+  catastrophic for hardened deployments, its own lever.
+- **SAFE:** `decide()` already immediate-passthroughs `StringMemory` in strict, so
+  the fast path removes only bookkeeping — same invariant as every fast path this session.
+
 ## 2026-06-29 — ✅ narrow memccpy/strlcat strict fast-path DEPLOYED (~6.2x vs ORIG, BEATS glibc, byte-identical) — bounded-write family COMPLETE
 
 - **DEPLOYED (cc, completes the bounded narrow write family):** `memccpy`

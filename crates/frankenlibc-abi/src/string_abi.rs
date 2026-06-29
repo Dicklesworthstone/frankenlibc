@@ -2987,6 +2987,24 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
         return 0;
     }
 
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough has no
+    // membrane clamp (`cmp_limit == n`, not adverse), so this is byte-identical to
+    // the strict full path — the page-guarded SWAR/SIMD `scan_strcmp` bounded by `n`.
+    // Skips stage_context + decide + observe + stage-trace, mirroring the deployed
+    // `strcmp` fast path and the shipped `wcsncmp` one. Hardened mode falls through.
+    if runtime_policy::strict_passthrough_active() {
+        if s1.is_null() || s2.is_null() {
+            return 0;
+        }
+        let (i, hit_limit) = unsafe { scan_strcmp(s1, s2, n) };
+        if hit_limit {
+            return 0;
+        }
+        let a = unsafe { *s1.add(i) } as u8;
+        let b = unsafe { *s2.add(i) } as u8;
+        return (a as c_int) - (b as c_int);
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
         record_string_stage_outcome(
@@ -4604,6 +4622,21 @@ pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: us
 /// Caller must ensure both `s` and `accept` are valid null-terminated strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usize {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp, so
+    // this is byte-identical to the strict full body — scan s + accept, core strspn.
+    // Skips stage_context + decide + observe + stage-trace.
+    if !s.is_null() && !accept.is_null() && runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (s_len, s_terminated) = scan_c_string(s, None);
+            let (accept_len, accept_terminated) = scan_c_string(accept, None);
+            let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+            let accept_slice_len = if accept_terminated { accept_len + 1 } else { accept_len };
+            let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+            let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_slice_len);
+            frankenlibc_core::string::str::strspn(s_slice, accept_slice)
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, accept as usize);
     if s.is_null() || accept.is_null() {
         record_string_stage_outcome(
@@ -4689,6 +4722,20 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
 /// Caller must ensure both `s` and `reject` are valid null-terminated strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usize {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body — scan s + reject, core strcspn. Skips the membrane bookkeeping.
+    if !s.is_null() && !reject.is_null() && runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (s_len, s_terminated) = scan_c_string(s, None);
+            let (reject_len, reject_terminated) = scan_c_string(reject, None);
+            let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+            let reject_slice_len = if reject_terminated { reject_len + 1 } else { reject_len };
+            let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+            let reject_slice = std::slice::from_raw_parts(reject.cast::<u8>(), reject_slice_len);
+            frankenlibc_core::string::str::strcspn(s_slice, reject_slice)
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, reject as usize);
     if s.is_null() || reject.is_null() {
         record_string_stage_outcome(
@@ -4775,6 +4822,23 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
 /// Caller must ensure both `s` and `accept` are valid null-terminated strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body — scan s + accept, core strpbrk, map index to pointer. Skips bookkeeping.
+    if !s.is_null() && !accept.is_null() && runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (s_len, s_terminated) = scan_c_string(s, None);
+            let (accept_len, accept_terminated) = scan_c_string(accept, None);
+            let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+            let accept_slice_len = if accept_terminated { accept_len + 1 } else { accept_len };
+            let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+            let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_slice_len);
+            match frankenlibc_core::string::str::strpbrk(s_slice, accept_slice) {
+                Some(idx) => s.add(idx) as *mut c_char,
+                None => std::ptr::null_mut(),
+            }
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, accept as usize);
     if s.is_null() || accept.is_null() {
         record_string_stage_outcome(
