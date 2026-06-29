@@ -2236,6 +2236,39 @@ fn bench(c: &mut Criterion) {
         );
     }
 
+    // strstr TYPICAL: needle found near the end of realistic-ish text (no pathological
+    // anchor repeats). Confirms the core-memmem routing didn't regress the common case.
+    {
+        type StrstrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
+        let g_strstr = unsafe { std::mem::transmute::<usize, StrstrFn>(host_sym(b"strstr\0")) };
+        for &hn in &[64usize, 256, 1024, 4096] {
+            // pseudo-text: rotating lowercase letters; needle = 8 distinct chars near end.
+            let mut hay: Vec<u8> = (0..hn).map(|i| b'a' + ((i * 7 + 3) % 23) as u8).collect();
+            let npos = hn.saturating_sub(10);
+            let ndl_bytes = b"XYZ01234"; // 8 chars, placed once near the end
+            for (k, &b) in ndl_bytes.iter().enumerate() {
+                hay[npos + k] = b;
+            }
+            hay.push(0);
+            let mut ndl = ndl_bytes.to_vec();
+            ndl.push(0);
+            let hp = hay.as_ptr();
+            let np = ndl.as_ptr();
+            let want = Some(npos);
+            assert_eq!(unsafe { strstr_naive(hp, hn + 1, np, 8) }, want, "tnaive");
+            assert_eq!(frankenlibc_core::string::mem::memmem(&hay[..hn + 1], hn + 1, &ndl[..8], 8), want, "tcore");
+            let naive_t = measure(|| unsafe { strstr_naive(black_box(hp), hn + 1, black_box(np), 8) }.unwrap_or(0) as u64);
+            let mm_t = measure(|| frankenlibc_core::string::mem::memmem(black_box(&hay[..hn + 1]), hn + 1, black_box(&ndl[..8]), 8).unwrap_or(0) as u64);
+            let g_t = measure(|| unsafe { g_strstr(black_box(hp.cast()), black_box(np.cast())) } as usize as u64);
+            println!(
+                "STRSTR_TYP hn={hn:<5} naive_p50_ns={naive_t:.3} memmem_p50_ns={mm_t:.3} glibc_p50_ns={g_t:.3} \
+                 memmem/naive={:.3} memmem/glibc={:.3}",
+                mm_t / naive_t,
+                mm_t / g_t
+            );
+        }
+    }
+
     // wcsstr A/B: naive wide O(n*m) vs core wcsstr (Two-Way wide) vs glibc wcsstr.
     {
         type WcsstrFn = unsafe extern "C" fn(*const u32, *const u32) -> *mut u32;

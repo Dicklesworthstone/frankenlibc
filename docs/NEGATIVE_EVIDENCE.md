@@ -8407,3 +8407,21 @@ itself is 3.7-5.1x slower than even the naive here — also superlinear). Quadra
 Byte-identical (Two-Way returns the same leftmost match). CONFORMANCE GREEN: conformance_diff_wchar (43,
 differential vs glibc — wcsstr byte-exact) + in-bench naive/two-way/glibc agreement. Substring-search family
 now fully Two-Way: strstr (335bd0e16) + wcsstr (this); strcasestr/memmem already routed to core.
+
+### 2026-06-29 — ◇ strstr core-memmem routing confirmed NO typical-case regression (pure win both ways) — BlackThrush
+
+Due-diligence on the strstr/wcsstr Two-Way routing (335bd0e16/933975889): verified the common case (needle
+found near the end of non-pathological text) did NOT regress. Measured (scan_strlen_ab_bench STRSTR_TYP,
+needle near end vs old naive vs glibc strstr):
+  hn=  64  memmem/naive=0.314  memmem/glibc=1.078
+  hn= 256  memmem/naive=0.088  memmem/glibc=1.123
+  hn=1024  memmem/naive=0.030  memmem/glibc=0.886
+  hn=4096  memmem/naive=0.018  memmem/glibc=0.971
+Core memmem is 3-55x FASTER than the old deployed naive even on typical inputs (SIMD candidate-skip vs
+byte-by-byte) AND parity-to-WIN vs glibc (0.89-1.12; beats at 1024/4096, ~10% behind for tiny 64/256-byte
+haystacks where the Two-Way/memmem setup shows). So the routing is a strict improvement on BOTH typical and
+pathological inputs — no trade-off. (Aside on the deployed malloc 50x: read the strict-mode malloc path — it
+delegates to native_libc_malloc, so the 50x is the membrane wrapper + the per-alloc `fallback_insert_sized`
+registry insert that feeds known_remaining; removing it is a deep re-architecture touching free/realloc/
+string-bounds semantics — correctly flagged architectural, NOT a focused-turn lever.) STRSTR_TYP bench arm
+kept as apparatus.
