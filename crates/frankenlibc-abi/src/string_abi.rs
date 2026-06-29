@@ -4994,6 +4994,26 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
 /// The returned pointer must be freed with `free`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strdup(s: *const c_char) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has `bound == None`,
+    // byte-identical to the strict full body — scan s, malloc(len+1), copy, NUL-terminate.
+    // Skips stage_context + decide + observe + stage-trace. (malloc dominates strdup's
+    // cost, so this is a smaller margin, but strdup is extremely hot.)
+    if runtime_policy::strict_passthrough_active() {
+        if s.is_null() {
+            return std::ptr::null_mut();
+        }
+        return unsafe {
+            let (s_len, _) = scan_c_string(s, None);
+            let dst = crate::malloc_abi::malloc(s_len + 1);
+            if dst.is_null() {
+                return std::ptr::null_mut();
+            }
+            raw_memcpy_bytes(dst.cast::<u8>(), s.cast::<u8>(), s_len);
+            *(dst as *mut u8).add(s_len) = 0;
+            dst.cast::<c_char>()
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if s.is_null() {
         record_string_stage_outcome(

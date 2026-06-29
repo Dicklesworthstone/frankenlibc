@@ -6,6 +6,17 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strdup strict fast-path DEPLOYED (~1.32x vs ORIG, byte-identical) — very hot fn
+
+- **DEPLOYED (cc):** `strdup` paid the full membrane (stage_context + decide +
+  observe + stage-trace) on top of scan+malloc+copy. Added the
+  `strict_passthrough_active()` fast path = scan s (`bound==None` in strict) +
+  `malloc(len+1)` + `raw_memcpy_bytes` + NUL — byte-identical to the strict body.
+- **MEASURED (clean stash before/after; bench = strdup+free per iter):** strdup of
+  a 36-byte string **ORIG 69.5ns → fast 52.6ns = ~1.32x vs ORIG** (~17ns membrane
+  removed). Smaller margin than the tiny-core ops (malloc dominates), but strdup is
+  EXTREMELY hot. conformance_diff_string GREEN.
+
 ## 2026-06-29 — ✅ PSHUFB classifier for non-contiguous LONG strspn/strcspn DEPLOYED (~3.2x vs ORIG, byte-identical, fuzz-verified) — the deferred lever, landed
 
 - **DEPLOYED (cc):** the long-deferred Langdale/Lemire 2-PSHUFB byte classifier, now
