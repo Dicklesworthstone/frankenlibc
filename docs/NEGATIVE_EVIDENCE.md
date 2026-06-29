@@ -6,6 +6,33 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ narrow memmove/mempcpy strict fast-path DEPLOYED (byte-identical; mirrors deployed memcpy)
+
+- **DEPLOYED (cc):** `memmove` and `mempcpy` had only the early-startup
+  `string_raw_passthrough_active()` path — in steady-state default(strict) mode they
+  paid the full membrane (guard + `decide` + stage-trace + `maybe_clamp` + `observe`),
+  while the sibling `memcpy` already has a `strict_passthrough_active()` fast path.
+  Added the same fast path (byte-identical: strict → no clamp → `copy_len == n` →
+  `raw_memmove_bytes`/`raw_memcpy_bytes`, `mempcpy` returns `dst+n`). Fixed-n mem ops,
+  NOT the off-limits NUL-scanning builder/strcpy class.
+- **SAFE:** `decide()` already returns immediate passthrough for `ApiFamily::StringMemory`
+  in strict (it is in the high-frequency skip list inside `decide()` itself) — so the
+  fast path removes only the surrounding bookkeeping, never a real validation.
+  Byte-identity: conformance_diff_{memmove,mempcpy_rawmemchr,memcpy} GREEN + a non-test
+  probe asserted fl==glibc (incl. mempcpy return pointer) for n∈{8,64,256}.
+- **MEASURED — small-n only (the rch worker rlib cache makes larger-n absolute ns
+  UNRELIABLE: the same config read 9 / 67 / 591 / 1163 ns across rebuilds — the stale-
+  binary trap):** memmove n=8 **ORIG 27ns → fast 7ns ≈ 3.9x vs ORIG** (glibc 2.4ns).
+  Larger-n is at least as good but the absolute numbers are stale-corrupted, so only the
+  conservative small-n ratio is claimed. The win is the per-call membrane bookkeeping
+  removal — identical mechanism to the deployed `memcpy` fast path.
+- **RULE reinforced:** for these benches the rch cache serves stale `frankenlibc_abi`
+  intermittently EVEN after `touch`; trust only within-one-invocation ratios or
+  `FRANKENLIBC_MODE` cross-checks (hardened must show the slow path). Narrow `strcpy`
+  itself (65ns@32 vs glibc 3.3ns, ~20x) is a SEPARATE lever — documented off-limits
+  (adaptive-defense telemetry on the #1 overflow target) + needs a fused SIMD kernel;
+  not grabbed.
+
 ## 2026-06-29 — ✅ wide WRITE builders wcscat/wcsncpy/wcsncat strict fast-path DEPLOYED (~28x vs ORIG, byte-identical)
 
 - **DEPLOYED (cc, completes the wcscpy follow-up):** the same strict

@@ -2102,6 +2102,16 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         return dst;
     }
 
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no clamp/heal, so `copy_len == n` and the result is
+    // exactly the raw overlap-safe move (byte-identical to the full path below).
+    // Skip the membrane guard + decide + stage-trace + observe machinery, mirroring
+    // the sibling `memcpy` strict fast path. Hardened mode falls through.
+    if runtime_policy::strict_passthrough_active() {
+        unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        return dst;
+    }
+
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         // SAFETY: reentrant fallback avoids runtime-policy recursion and mirrors memmove semantics.
         unsafe {
@@ -5106,6 +5116,21 @@ pub unsafe extern "C" fn memmem(
 /// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no clamp, so the result is exactly the raw copy with the
+    // end pointer `dst + n` (byte-identical to the full path). Skip the membrane
+    // guard + decide + stage-trace + observe machinery, mirroring `memcpy`/`memmove`.
+    if runtime_policy::strict_passthrough_active() {
+        if n == 0 {
+            return dst;
+        }
+        if dst.is_null() || src.is_null() {
+            return std::ptr::null_mut();
+        }
+        unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        return unsafe { (dst as *mut u8).add(n).cast() };
+    }
+
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         if n == 0 {
             return dst;
