@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strsep strict fast-path DEPLOYED (~4.8x vs ORIG, byte-identical) — hot tokenizer + wcsdup REJECTED
+
+- **DEPLOYED (cc):** `strsep` (hot — config/CSV parsing) paid the full membrane in
+  default(strict) mode. Added the `strict_passthrough_active()` fast path replicating
+  the strict body's RETURN + `*stringp` update exactly: scan s (unbounded) + delim
+  (same ungated `known_remaining(delim)`), the `!delim_term` branch, core `strsep`
+  with the post-delimiter `*stringp` advance. Unlike `strtok_r`, strsep's bookkeeping
+  is NOT woven through the branches, so a clean prefix fast path is feasible.
+- **MEASURED (clean stash before/after):** one strsep step on a 30-byte string
+  **ORIG 78.0ns → fast 16.3ns = ~4.8x vs ORIG** (bookkeeping was ~62ns — same heavy
+  decide-addr_hint + scaled_cost + record shape as strstr's ~60ns). Parity: a
+  full-tokenize fuzz loop vs glibc matched token offsets across 4 inputs;
+  conformance_diff_{tokenize_fuzz,string,string_mut} GREEN.
+- **wcsdup REJECTED (~0-gain):** wide strdup fast path measured ORIG 75.1ns → 70.1ns
+  = ~1.07x (within noise) — the membrane removal (~5ns) is negligible vs the
+  `malloc((len+1)*4)`=124B alloc that dominates (124B is in the slower malloc class).
+  Reverted. CONFIRMS: the dup family's fast-path value is gated by the malloc SIZE
+  class — strdup/strndup (~38B allocs) got 1.3x; wcsdup (124B) gets nothing.
+
 ## 2026-06-29 — 🔬 BIG LEAD QUANTIFIED: deployed malloc is 6.4x glibc @32B but ~370x @256B (size-class pathology) — allocator core, not touched
 
 - **MEASURED (cc; `zz_malloc`, deployed `frankenlibc_abi::malloc_abi::malloc`+free

@@ -6149,6 +6149,39 @@ pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char)
         return std::ptr::null_mut();
     }
 
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body's RETURN + `*stringp` update — scan s (unbounded) + delim (same ungated
+    // `known_remaining(delim)` bound), then core `strsep` with the post-delimiter
+    // `*stringp` advance. Skips stage_context + decide + observe + stage-trace.
+    if runtime_policy::strict_passthrough_active() {
+        if delim.is_null() {
+            unsafe { *stringp = std::ptr::null_mut() };
+            return s;
+        }
+        return unsafe {
+            let delim_bound = known_remaining(delim as usize);
+            let (s_len, s_term) = scan_c_string(s, None);
+            let (delim_len, delim_term) = scan_c_string(delim, delim_bound);
+            if !delim_term {
+                std::ptr::null_mut()
+            } else {
+                let s_slice_len = if s_term { s_len + 1 } else { s_len };
+                let s_slice = std::slice::from_raw_parts_mut(s.cast::<u8>(), s_slice_len);
+                let delim_slice = std::slice::from_raw_parts(delim.cast::<u8>(), delim_len + 1);
+                match frankenlibc_core::string::str::strsep(s_slice, delim_slice) {
+                    Some(idx) => {
+                        *stringp = s.add(idx + 1);
+                        s
+                    }
+                    None => {
+                        *stringp = std::ptr::null_mut();
+                        s
+                    }
+                }
+            }
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(s as usize, delim as usize);
     if delim.is_null() {
         record_string_stage_outcome(
