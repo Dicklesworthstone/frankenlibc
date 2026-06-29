@@ -421,3 +421,9 @@ harness = false
 name = "memset_midsize_ab_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# hot string-family small-size vs host glibc, in-process (abi-bench + dlmopen).
+[[bench]]
+name = "string_family_small_ab_bench"
+required-features = ["abi-bench"]
+harness = false

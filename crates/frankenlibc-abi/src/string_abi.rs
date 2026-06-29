@@ -3243,6 +3243,22 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
 /// caller picks the fallback). Folding both entry points onto this eliminates
 /// strchrnul's old strchr()+strlen() double scan on a miss.
 unsafe fn strchr_locate(s: *const c_char, c: c_int) -> Option<(*mut c_char, bool)> {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no repair, so `bound` is `None` and the result is exactly the
+    // page-safe raw `target`-or-NUL scan below. Skip the stage context + decide + observe +
+    // record machinery (byte-identical to the strict full path), like the inet_strict family.
+    // Hardened mode (`strict_passthrough_active() == false`) keeps the full validating path.
+    if runtime_policy::strict_passthrough_active() {
+        if s.is_null() {
+            return None;
+        }
+        let target = c as c_char;
+        // SAFETY: `scan_c_string_for_byte` with no bound is the page-safe SIMD scan; this is
+        // the identical call the strict full path makes (bound == None).
+        let (i, found_target, _) = unsafe { scan_c_string_for_byte(s, target as u8, None) };
+        return Some((unsafe { s.add(i) } as *mut c_char, found_target));
+    }
+
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if s.is_null() {
         record_string_stage_outcome(
