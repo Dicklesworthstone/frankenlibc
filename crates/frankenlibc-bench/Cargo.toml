@@ -450,3 +450,8 @@ harness = false
 name = "scan_strlen_ab_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# wcscpy copy kernel: OLD 2-pass (wcslen+copy) vs NEW fused 1-pass vs glibc, 1 process.
+[[bench]]
+name = "wcscpy_fused_ab_bench"
+harness = false

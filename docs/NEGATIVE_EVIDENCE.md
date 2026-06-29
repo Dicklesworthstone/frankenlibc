@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — fused wide copy-scan kernel for wcscpy REJECTED (~0-gain end-to-end; the 2-pass copy is not the wcscpy bottleneck)
+
+- **LEVER TESTED (cc):** replace the deployed wcscpy fast path's 2-pass core
+  (`scan_w_string` SIMD wcslen → `copy_nonoverlapping`) with a fused 1-pass
+  copy-while-scanning kernel (8×u32 panels, store-then-stop-at-NUL, glibc
+  __wcscpy_avx2 shape), to close the residual ~1.8x-vs-glibc gap.
+- **MEASURED (`wcscpy_fused_ab_bench`, RELIABLE same-process A/B — both kernels
+  reimplemented in-bench, NO fl abi linkage so the rch stale-rlib cache cannot
+  corrupt it; within-process ratios):** fused beats 2-pass at the kernel level for
+  n=8-64 (**0.75-0.86x = 1.15-1.3x faster**, even beats glibc at n=8/16) but
+  **REGRESSES at n=128 (1.06x)** — glibc's wider streaming stores win for bulk;
+  the per-panel fused copy doesn't.
+- **WHY REJECTED:** the kernel is only ~5ns of the deployed wcscpy's ~22ns (n=32);
+  the other ~17ns is `scan_w_string`'s page-guard setup + the abi call frame + the
+  fast-path branch. So fusing saves ~0.8ns end-to-end (~4%) AND adds the n=128
+  regression — net ~0-gain. **The wcscpy residual gap to glibc is NOT the copy
+  kernel; it's scan_w_string setup + abi framing.** No deployed change; the
+  reusable A/B bench is kept (proves the kernel is not the lever — don't retry).
+
 ## 2026-06-29 — ✅ narrow memmove/mempcpy strict fast-path DEPLOYED (byte-identical; mirrors deployed memcpy)
 
 - **DEPLOYED (cc):** `memmove` and `mempcpy` had only the early-startup
