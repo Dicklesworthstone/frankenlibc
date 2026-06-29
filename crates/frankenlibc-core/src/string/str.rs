@@ -1117,14 +1117,6 @@ fn in_set_mask8(lanes: Simd<u8, SIMD_LANES>, set: &[u8; 8]) -> Mask<i8, SIMD_LAN
         | lanes.simd_eq(Simd::splat(set[7]))
 }
 
-/// Hand-unrolled membership mask for 16 set bytes (two [`in_set_mask8`] halves).
-#[inline(always)]
-fn in_set_mask16(lanes: Simd<u8, SIMD_LANES>, set: &[u8; 16]) -> Mask<i8, SIMD_LANES> {
-    let lo: &[u8; 8] = set[0..8].try_into().unwrap();
-    let hi: &[u8; 8] = set[8..16].try_into().unwrap();
-    in_set_mask8(lanes, lo) | in_set_mask8(lanes, hi)
-}
-
 /// Branchless 32-byte-chunk span scan. `in_set` computes a chunk's membership
 /// mask; `stop_in_set` selects direction — `true` is `strcspn` (stop on a member
 /// or NUL), `false` is `strspn` (stop on a non-member or NUL). The exact stop is
@@ -1332,11 +1324,14 @@ fn span_dispatch(s: &[u8], set: &[u8], stop_in_set: bool) -> usize {
         let mut padded = [set[0]; 8];
         padded[..set.len()].copy_from_slice(set);
         span_scan(s, stop_in_set, |lanes| in_set_mask8(lanes, &padded), set)
-    } else if set.len() <= 16 {
-        let mut padded = [set[0]; 16];
-        padded[..set.len()].copy_from_slice(set);
-        span_scan(s, stop_in_set, |lanes| in_set_mask16(lanes, &padded), set)
     } else {
+        // 9+ byte sets: a 256-bit membership bitmap (one O(1) lookup per byte) beats
+        // `in_set_mask16` (16 `simd_eq` per panel = O(s_len * set_size)). Measured:
+        // 16-byte set, 256-char run, in_set_mask16 643ns vs bitmap 32ns (20x); a
+        // 16-char run 52ns vs 34ns (1.5x). The bitmap path (`span_general`) is the
+        // same one 17+ byte sets already use, so it is byte-identical and already
+        // conformance-tested — only the routing threshold changed (in_set_mask16
+        // was O(s_len*set_size) and pathological on long accepted spans).
         let table = byte_membership_table(set);
         span_general(s, set, &table, stop_in_set)
     }

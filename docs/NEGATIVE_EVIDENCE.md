@@ -6,6 +6,27 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ core strspn/strcspn 9-16 byte set routing FIXED (up to 23x vs ORIG, byte-identical) + LEAD: avx2 PSHUFB classifier beats glibc
+
+- **DEPLOYED (cc):** `span_dispatch` routed 9-16 byte accept/reject sets to
+  `in_set_mask16` = 16 `simd_eq` per 32B panel = **O(s_len × set_size)** —
+  pathological on long spans. Changed the threshold so 9+ byte sets use the
+  256-bit membership bitmap (`byte_membership_table` + `span_general`), the SAME
+  path 17+ byte sets already used → byte-identical, already conformance-tested.
+  Removed the now-dead `in_set_mask16`. Affects strspn/strcspn/strpbrk/strtok.
+- **MEASURED (deployed fl strspn, 16-byte set, before→after):** 16-char run
+  **52→31ns (1.7x)**, 256-char run **643→28ns (~23x!)**. The 23x is the killer:
+  `in_set_mask16` did 16 comparisons per byte-panel; the bitmap does one O(1)
+  lookup. core str tests 153/153, conformance_diff_{string_search,string} GREEN.
+- **LEAD (the remaining strspn gap to glibc):** the deployed bitmap is now ~28-30ns
+  vs glibc ~18ns (n512) — still ~1.6x. The `strspn_shuffle_ab_bench` proves a
+  hand-written **AVX2 PSHUFB classifier (Langdale/Lemire) BEATS glibc**: n64
+  3.92ns vs glibc 3.93 (parity), n512 **14.8 vs glibc 18.8 (0.79x)**, and 2.6-3.7x
+  over the old `in_set_mask`. Deploying it = the real glibc-beating win but needs
+  generalizing the prototype (it's ≤8-byte-ASCII; `build_raw_luts` asserts k<8) to
+  the universal classifier + runtime feature detection (`is_x86_feature_detected`)
+  + non-ASCII fallback + byte-identity. A scoped, high-value follow-up turn.
+
 ## 2026-06-29 — fused 2-pass strspn kernel REJECTED (loses to 4-pass for common sizes; real gap is glibc SIMD) + LEAD: deployed core::strspn 2.3x slower than a naive bitmap
 
 - **LEVER TESTED (cc):** hypothesis — the ABI strspn does 4 passes (pre-scan s,
