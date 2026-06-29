@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ wmemcmp/wmemrchr strict fast-path DEPLOYED (~2.7x / ~4.7x vs ORIG) — wide mem family complete
+
+- **DEPLOYED (cc):** `wmemcmp` (wide memcmp) + `wmemrchr` (wide memrchr) — fixed-`n`
+  reads, repair-gated (`cmp_len`/`scan_len == n` in strict). Fast paths = core SIMD
+  `wmemcmp(s1[..n],s2[..n],n)` / reverse-find of `c` over `n` — byte-identical.
+- **MEASURED (stash before/after WITH hardened cross-check to defeat the stale-rlib
+  trap — ORIG hardened showed the slow path 97.6ns / 1.24µs, confirming ORIG-default
+  is the real full path, not stale):** wmemcmp(32) **ORIG 16.6ns → fast 6.05ns =
+  ~2.7x**; wmemrchr(64) **ORIG 19.7ns → fast 4.2ns = ~4.7x**. conformance_diff_wchar
+  43/43 + wchar_abi_test 118/118 GREEN; parity asserted. **Wide mem family now
+  complete: wmemcpy/wmemmove/wmemset/wmemchr/wmemcmp/wmemrchr off the membrane tax.**
+- (Another scanning-fn hardened pathology logged: wmemrchr(64) hardened ~1.24µs —
+  joins strnlen/strspn/strcasecmp; per-element validation, intentional formal-verify cost.)
+
 ## 2026-06-29 — ✅ wcpcpy/wcpncpy strict fast-path DEPLOYED (~28x vs ORIG) — wide stpcpy/stpncpy; stale-rlib trap caught again
 
 - **DEPLOYED (cc):** `wcpcpy`/`wcpncpy` (GNU wide stpcpy/stpncpy — copy + return end

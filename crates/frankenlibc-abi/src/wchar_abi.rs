@@ -1552,6 +1552,17 @@ pub unsafe extern "C" fn wmemcmp(s1: *const u32, s2: *const u32, n: usize) -> c_
         return 0;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`cmp_len == n`), byte-identical to the strict body — SIMD core wmemcmp over
+    // exactly `n` elements. Skips the decide + observe membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let a = std::slice::from_raw_parts(s1, n);
+            let b = std::slice::from_raw_parts(s2, n);
+            frankenlibc_core::string::wide::wmemcmp(a, b, n)
+        };
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
@@ -4703,6 +4714,19 @@ pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -
 pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
     if n == 0 || s.is_null() {
         return std::ptr::null_mut();
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`scan_len == n`), byte-identical to the strict body — reverse scan of `n`
+    // elements for the last `c`. Skips the decide + observe membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let slice = std::slice::from_raw_parts(s, n);
+            match (0..n).rev().find(|&i| slice[i] == c) {
+                Some(i) => s.add(i) as *mut u32,
+                None => std::ptr::null_mut(),
+            }
+        };
     }
 
     let (mode, decision) = runtime_policy::decide(
