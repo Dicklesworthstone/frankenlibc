@@ -1003,50 +1003,43 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
             (limit, false)
         }
         None => {
-            let mut i = 0usize;
-            // Byte-scan the misaligned head so every wide load below is 8-aligned.
-            let head = (p as usize).wrapping_neg() & 7;
-            while i < head {
-                // SAFETY: caller guarantees a valid NUL-terminated string.
-                if unsafe { *p.add(i) } == 0 {
-                    return (i, true);
-                }
-                i += 1;
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            // glibc-style aligned-load-with-head-mask: align the pointer DOWN to a
+            // 32-byte boundary and do one aligned load, masking off the `align`
+            // bytes that precede `ptr`. A 32-byte-aligned 32-byte window is always
+            // contained in a single 4 KiB page (32 | 4096), and the page holding
+            // `ptr` is mapped, so reading the head bytes `base..ptr` (same page) is
+            // safe. This eliminates BOTH the scalar head-align scan and the
+            // per-iteration page-cross guard the old loop paid on every chunk — the
+            // residual short-string floor identified in NEGATIVE_EVIDENCE.md.
+            let align = (p as usize) & 31;
+            // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31
+            // bytes); the full 32-byte aligned window is in that page.
+            let base = unsafe { p.sub(align) };
+            let v0 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(base, 32)
+            });
+            // Clear the low `align` bits so head bytes before `p` can't match.
+            let mask0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & !((1u64 << align) - 1);
+            if mask0 != 0 {
+                // NUL at base+tz ⇒ length from p is tz-align (tz ≥ align by the mask).
+                return (mask0.trailing_zeros() as usize - align, true);
             }
+            // Continue from the next 32-aligned boundary (= base+32 = p + (32-align)).
+            // Every subsequent load is 32-aligned ⇒ in-page, no guard needed.
+            let mut i = 32 - align;
             loop {
-                // Wide 32-byte portable-SIMD NUL scan when the read stays in-page
-                // (32-byte window does not cross the page boundary). NUL-free
-                // panels advance 32; a panel with a NUL drops to the 8-byte SWAR
-                // resolve below, so the returned index is unchanged.
-                if (p as usize + i) & 0xFFF <= 0x1000 - 32 {
-                    use core::simd::Simd;
-                    use core::simd::cmp::SimdPartialEq;
-                    // SAFETY: the 32-byte window stays within the current mapped page.
-                    let v = Simd::<u8, 32>::from_slice(unsafe {
-                        core::slice::from_raw_parts(p.add(i), 32)
-                    });
-                    // O(1) NUL index via the SIMD mask (trailing_zeros) instead of advancing
-                    // then re-locating the byte with the 8-byte SWAR + inner scalar loop
-                    // below — same fix as wmemchr/memrchr. A NUL-free panel advances 32.
-                    let mask = v.simd_eq(Simd::splat(0)).to_bitmask();
-                    if mask == 0 {
-                        i += 32;
-                        continue;
-                    }
+                // SAFETY: p+i is 32-aligned, so the 32-byte window stays in one page;
+                // the string is NUL-terminated within a mapped page.
+                let v = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let mask = v.simd_eq(Simd::splat(0)).to_bitmask();
+                if mask != 0 {
                     return (i + mask.trailing_zeros() as usize, true);
                 }
-                // SAFETY: p+i is 8-aligned, so this aligned 8-byte read stays inside
-                // the current page; the string is NUL-terminated within a mapped page.
-                let w = unsafe { *p.add(i).cast::<u64>() };
-                if swar_word_has_zero(w) {
-                    for j in 0..8 {
-                        // SAFETY: the window contains a NUL at or before j==7.
-                        if unsafe { *p.add(i + j) } == 0 {
-                            return (i + j, true);
-                        }
-                    }
-                }
-                i += 8;
+                i += 32;
             }
         }
     }
