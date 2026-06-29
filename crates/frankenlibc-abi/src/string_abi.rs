@@ -1574,6 +1574,18 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         return dst;
     }
 
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no clamp/heal, so the result is exactly the raw copy. Skip the
+    // entrypoint trace scope + proof-carried/observe machinery (byte-identical to the
+    // `!heals_enabled` raw_dispatch path below), like the inet_strict family. Hardened mode
+    // falls through to the full validating path.
+    if runtime_policy::strict_passthrough_active() {
+        if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n) {
+            unsafe { raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        }
+        return dst;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
     if !runtime_policy::mode().heals_enabled() {
         if runtime_policy::proof_carried_fast_path_active(ApiFamily::StringMemory, n, true, true) {
@@ -1790,6 +1802,17 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
 
     // Fast path during early startup: skip membrane entirely.
     if string_raw_passthrough_active() {
+        unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
+        return dst;
+    }
+
+    // Strict-mode fast path (the DEFAULT deployed mode): in strict passthrough the
+    // StringMemory membrane is a no-op — `decide()` forces Allow (StringMemory is on the
+    // strict fast-list) and no clamp/heal occurs, so the membrane's only output is a raw
+    // memset. Skip the whole membrane (known_remaining + check_ordering + decide + record +
+    // observe), exactly as the inet_strict family already does. Hardened mode
+    // (`strict_passthrough_active() == false`) falls through to the full validating path.
+    if runtime_policy::strict_passthrough_active() {
         unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
         return dst;
     }

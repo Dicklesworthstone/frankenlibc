@@ -7590,3 +7590,28 @@ scalar element loops where a SIMD core exists:
   appears ~2.5x glibc at 4-16KB (wcsncpy pad), worth a direct memset_mid_size A/B (memory claims parity).
 SCALAR-WRAPPER VEIN now MINED: wmemchr was the single winnable bug; the rest delegate to SIMD or are
 membrane/parity-bound.
+
+### 2026-06-28 — ✅ memset strict-membrane skip: 7.06x → ~3.1x vs glibc (hottest fn); memcpy 5.6→~4.8x — BlackThrush
+
+A DIRECT memset/memcpy A/B (memset_midsize_ab_bench, fl vs glibc dlmopen, 256B-64KB) — free of the
+wcsncpy-pad contamination — showed the DEPLOYED fl memset/memcpy are 2-7x glibc (memset_256 7.06x,
+memcpy_256 5.64x), converging to parity only at 64KB. This CORRECTS the record: memory's "memset/memcpy =
+parity by construction, NO LEVER" was the CORE; the deployed ABI pays a per-call StringMemory membrane tax
+that dominates small/mid sizes. ROOT CAUSE: memset ran the FULL membrane (known_remaining + check_ordering
++ decide + record + observe) even though in STRICT mode (the default, MODE_UNRESOLVED) `decide(StringMemory)`
+is forced-Allow (StringMemory is on the strict fast-list, decide() L~2010) with no clamp/heal — i.e. the
+membrane is a no-op producing a raw memset. memset only had the *startup* skip (string_raw_passthrough),
+not the strict skip that the inet/stdio/time/IoFd families already use. FIX: added
+`if strict_passthrough_active() { raw_memset/raw_dispatch_memcpy; return }` to memset + memcpy (the exact
+inet_strict pattern; hardened mode `strict_passthrough_active()==false` keeps the full validating path —
+no safety change, strict already does no validation). Measured: **memset_256 7.06 → 3.10x (~2.3x self on
+the hottest fn)**, mid sizes ~2.4-2.7x; memcpy_256 5.64 → ~4.8x (modest — its !heals_enabled path already
+skipped most membrane; the strict skip drops entrypoint_scope+proof_carried). RESIDUAL (~2-3x): the CORE
+`raw_memset_bytes`/`raw_dispatch_memcpy_bytes` use VOLATILE SWAR (u64, 32B/iter) because they MUST NOT
+lower to `@llvm.memset` (self-recursion: the intrinsic resolves to fl's own interposed memset) — so they
+can't be vectorized to match glibc's asm memset/rep-stosb. That residual is a FUNDAMENTAL constraint, not
+fixable in safe Rust. Byte-identical (raw_memset_bytes is the trusted core; bench verify() confirms the
+deployed strict path output; conformance_diff_memset/memcpy + string_abi_test 201 + core string::mem 59
+GREEN). VEIN: other string/mem fns (memmove/memcmp/strlen/strcmp/strcpy/...) likely also miss the strict
+skip — only ~2 string_abi fns had it before this — family-wide rollout is a large deployed win on the
+hottest primitives (each ~2x at small sizes from membrane removal; core stays volatile-SWAR-bound).

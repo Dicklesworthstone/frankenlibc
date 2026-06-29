@@ -415,3 +415,9 @@ harness = false
 name = "wmem_ab_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# memset/memcpy mid-size vs host glibc, in-process (abi-bench + dlmopen).
+[[bench]]
+name = "memset_midsize_ab_bench"
+required-features = ["abi-bench"]
+harness = false
