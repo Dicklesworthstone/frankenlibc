@@ -6,6 +6,28 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ narrow strncat/strlcpy strict fast-path DEPLOYED (~5.6x vs ORIG, BEATS glibc, byte-identical)
+
+- **DEPLOYED (cc):** `strncat` (bounded append, narrow twin of the shipped
+  `wcsncat`) and `strlcpy` (BSD bounded copy) paid the full membrane in default
+  (strict) mode. Added the `strict_passthrough_active()` fast path:
+  - `strncat` = scan dst NUL + bulk `raw_memcpy_bytes(min(strlen(src),n))` + NUL
+    (the scalar copy loop → bulk copy, byte-identical).
+  - `strlcpy` = scan src + `core::strlcpy(dst[..dstsize], src_slice)` for the common
+    case (valid dst); null/zero-size edges fall through to the full BSD-contract path.
+  Bounded-`n`/`dstsize` writes (caller-controlled extent) — NOT the unbounded
+  strcpy/strcat builder class my memory flags off-limits.
+- **MEASURED (RELIABLE — ORIG 68.2ns consistent with hardened-mode 98.8ns full
+  path, not stale; `FRANKENLIBC_MODE` disambiguated default=fast/hardened=slow on
+  the same binary):** strncat append-11/n=32 **ORIG 68.2ns → fast 12.2ns = ~5.6x
+  vs ORIG**, and the fast path **BEATS host glibc (12.2 vs 12.5ns)**. Byte identity:
+  a non-test probe asserted fl==glibc for strncat (4 srcs × n∈{0,2,len,len+3}) AND
+  strlcpy (incl. return value, across cap<len/=/>); conformance_diff_strlcpy +
+  conformance_diff_string_mut GREEN.
+- **SAFE:** `decide()` already immediate-passthroughs `StringMemory` in strict, so
+  the fast path removes only bookkeeping — same invariant as every string-write
+  fast path shipped this session.
+
 ## 2026-06-29 — ✅ narrow strncpy/stpncpy strict fast-path DEPLOYED (~9x vs ORIG, byte-identical)
 
 - **DEPLOYED (cc):** `strncpy`/`stpncpy` (shared `strncpy_core`) paid the full

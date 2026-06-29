@@ -3568,6 +3568,27 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
 /// (up to `strlen(dst) + n + 1` bytes).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // `decide()` Allow with no clamp, so this is byte-identical to the strict full
+    // body — scan dst's NUL, append `min(strlen(src), n)` bytes, NUL-terminate (the
+    // scalar copy loop becomes a bulk `raw_memcpy_bytes`, same bytes). Skips the
+    // stage_context + decide + observe + stage-trace bookkeeping. Bounded-`n` write,
+    // the narrow analog of the shipped `wcsncat` fast path. Hardened mode falls through.
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() || n == 0 {
+            return dst;
+        }
+        unsafe {
+            let dst_len = scan_c_string(dst.cast_const(), None).0;
+            let copy = scan_c_string(src, Some(n)).0;
+            if copy > 0 {
+                raw_memcpy_bytes(dst.add(dst_len).cast::<u8>(), src.cast::<u8>(), copy);
+            }
+            *dst.add(dst_len + copy) = 0;
+        }
+        return dst;
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() || n == 0 {
         if dst.is_null() || src.is_null() {
@@ -5972,6 +5993,22 @@ pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char)
 /// Caller must ensure `dst` is valid for `dstsize` bytes and `src` is NUL-terminated.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: usize) -> usize {
+    // Strict-mode fast path (DEFAULT deployed) for the common case (valid dst): strict
+    // passthrough has no clamp, so this is byte-identical to the strict full body —
+    // scan src, copy `min(strlen, dstsize-1)` + NUL via the core, return strlen(src).
+    // Skips stage_context + decide + observe + stage-trace. The null/zero-size edges
+    // fall through to the full path (which returns strlen(src) per BSD contract).
+    if !dst.is_null() && !src.is_null() && dstsize != 0 && runtime_policy::strict_passthrough_active()
+    {
+        return unsafe {
+            let (src_len, src_terminated) = scan_c_string(src, None);
+            let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
+            let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
+            let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dstsize);
+            frankenlibc_core::string::str::strlcpy(dst_slice, src_slice)
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if src.is_null() {
         record_string_stage_outcome(
