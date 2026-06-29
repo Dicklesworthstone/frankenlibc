@@ -8211,3 +8211,21 @@ UNCHANGED (the escalated 128-unroll from 7a1ec68cc stands). The [4K,16K] ~1.1-1.
 portable_simd-vs-hand-tuned-AVX2 gap (glibc's exact loop scheduling / branch layout), NOT a memory-latency
 issue prefetch can fix. LESSON: don't add software prefetch to a sequential SIMD scan — the HW prefetcher
 owns that access pattern; prefetch only helps pointer-chasing / strided / latency-bound loops.
+
+### 2026-06-29 — ◇ PROBED: strrchr large-n is only marginally behind glibc (1.06-1.33x) — not worth the 128-unroll — BlackThrush
+
+After landing the strlen escalated-128-unroll, probed whether the sibling unbounded scans have the same big
+large-n floor. strrchr (scan_c_string_last_byte None path, 32B aligned loop) does NOT — measured (STRRCHRBIG
+arm, absent target = full scan, vs glibc strrchr):
+  len= 1024  cur/glibc=0.840   (fl BEATS glibc)
+  len= 4096  cur/glibc=1.329
+  len=16384  cur/glibc=1.152
+  len=65536  cur/glibc=1.058
+fl strrchr is parity-to-WIN at 1024/64K and only 1.15-1.33x behind at [4K,16K] — a marginal gap, not the
+1.8-3.5x strlen had. glibc's strrchr is itself less optimized than its strlen. Applying the escalated
+128-unroll here would need complex last-match resolution across 4 vectors for a <1.33x payoff — NOT worth it.
+CONCLUSION: the str/mem SCAN family is now comprehensively optimized; the only remaining residuals are
+~1.1-1.33x at the L2 range [4K,16K] (strlen, strrchr) = the portable_simd-vs-hand-tuned-AVX2 ceiling, closable
+only by per-fn AVX2 asm scan loops with page-safe alignment (a larger investment with diminishing returns,
+since these functions are already parity-to-win at small AND >=64K sizes). Kept STRLENBIG/STRRCHRBIG bench
+arms as permanent large-scan apparatus.

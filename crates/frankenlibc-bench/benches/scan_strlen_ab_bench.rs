@@ -1937,6 +1937,24 @@ fn bench(c: &mut Criterion) {
         );
     }
 
+    // strrchr LARGE-n: deployed rchr_new (32B loop) vs glibc strrchr. Target absent =>
+    // full scan to NUL (strrchr always scans the whole string).
+    {
+        let mut rb = vec![b'a'; (1 << 18) + 64];
+        let g_srchr = unsafe { std::mem::transmute::<usize, ChrFn>(host_sym(b"strrchr\0")) };
+        for &len in &[1024usize, 4096, 16384, 65536] {
+            rb[len] = 0;
+            let p = rb.as_ptr();
+            let cur_t = measure(|| unsafe { rchr_new(black_box(p), b'Z') }.unwrap_or(0) as u64);
+            let g_t = measure(|| unsafe { g_srchr(black_box(p.cast()), b'Z' as i32) } as usize as u64);
+            rb[len] = b'a';
+            println!(
+                "STRRCHRBIG len={len:<7} cur_p50_ns={cur_t:.3} glibc_p50_ns={g_t:.3} cur/glibc={:.3}",
+                cur_t / g_t
+            );
+        }
+    }
+
     // strlen LARGE-n: deployed scan_new (aligned-head-mask 32B loop) vs glibc strlen.
     {
         let mut lb = vec![b'a'; (1 << 18) + 64];
