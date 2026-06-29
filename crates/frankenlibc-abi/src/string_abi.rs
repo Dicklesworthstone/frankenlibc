@@ -5158,6 +5158,25 @@ pub unsafe extern "C" fn memmem(
         return haystack as *mut c_void;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`hay_scan == haystack_len`, `needle_scan == needle_len`), byte-identical to
+    // the strict full body — core Two-Way `memmem` over the explicit lengths,
+    // returning `haystack+idx`/null. Skips stage_context + decide + observe +
+    // stage-trace. Explicit-length op (no NUL scan).
+    if runtime_policy::strict_passthrough_active() {
+        if haystack.is_null() || needle.is_null() || haystack_len == 0 {
+            return std::ptr::null_mut();
+        }
+        return unsafe {
+            let h_bytes = std::slice::from_raw_parts(haystack.cast::<u8>(), haystack_len);
+            let n_bytes = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+            match frankenlibc_core::string::mem::memmem(h_bytes, haystack_len, n_bytes, needle_len) {
+                Some(idx) => (haystack as *mut u8).add(idx).cast::<c_void>(),
+                None => std::ptr::null_mut(),
+            }
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
     if haystack.is_null() || needle.is_null() || haystack_len == 0 {
         if haystack.is_null() || needle.is_null() {

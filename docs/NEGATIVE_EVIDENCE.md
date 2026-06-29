@@ -6,6 +6,25 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ memmem strict fast-path DEPLOYED (~2.9x vs ORIG, BEATS glibc 2x, byte-identical)
+
+- **DEPLOYED (cc):** `memmem` (explicit-length substring search) paid the full
+  membrane in default(strict) mode. Added the `strict_passthrough_active()` fast
+  path = core Two-Way `memmem` over the explicit `(haystack_len, needle_len)`,
+  returning `haystack+idx`/null — byte-identical to the strict body (no clamp →
+  `hay_scan==haystack_len`). No NUL scan (unlike `strstr`, which is why memmem was
+  the clean one). Skips stage_context + decide + observe + stage-trace.
+- **MEASURED (RELIABLE; `FRANKENLIBC_MODE` default=fast/hardened=slow same binary):**
+  memmem 30-byte haystack **ORIG 34.7ns → fast 11.9ns = ~2.9x vs ORIG**, and
+  **BEATS host glibc 2x (11.9 vs 24.6ns)** — fl's Two-Way core already beats glibc's
+  memmem; the fast path removes the ~23ns bookkeeping that dominated this short
+  haystack. Parity asserted; conformance_diff_memmem_strcasestr GREEN. (For LONG
+  haystacks the win shrinks — the Two-Way core dominates and bookkeeping is a smaller
+  fraction; the win is biggest for short haystacks, the common parsing case.)
+- **`strstr` still NOT done:** it NUL-scans both args with `known_remaining` bounds
+  ungated + has the needle==0/hay>=needle branches — bigger duplication, smaller win
+  (core scan dominates). Deferred.
+
 ## 2026-06-29 — ✅ bzero strict fast-path DEPLOYED (~9.8x vs ORIG, BEATS glibc, byte-identical)
 
 - **DEPLOYED (cc):** `bzero` paid the full membrane (guard + decide + observe +
