@@ -30,6 +30,22 @@ retried and real wins are confirmed with numbers.
   dominates at 256B, then a targeted, conformance+ASAN-verified fix. **Highest-EV
   open lever in the project, deliberately deferred to a careful turn.**
 
+- **CODE-READ NARROWING (cc, same turn — IMPORTANT CORRECTION):** read the whole
+  strict malloc+free path and every component is SIZE-INDEPENDENT — `native_libc_malloc`
+  calls the cached `HOST_MALLOC_FN` (host glibc malloc ~5ns); the size-tracking table
+  (`fallback_insert_sized_for_slot`/`fallback_remove_sized`) keys on **ptr** not size;
+  `record_alloc_stats` is per-size-BIN atomic increments. NONE explains a 47ns→1.88µs
+  blowup with size. **So the 370x@256B is most likely a BENCH-LINKAGE ARTIFACT** (the
+  memory's standing malloc-bench warning): under criterion's own allocations,
+  `enter_native_reentry_guard` can fail → `bump_alloc`, and fl shares the contended
+  PROCESS heap while the dlmopen glibc comparator has a pristine isolated heap.
+  **Revised: the ~6.4x@32B (~40ns fixed: reentry guard + entrypoint_scope + slot
+  insert + stats) is plausibly real; the 370x@256B is probably NOT a real deployed
+  gap.** NEXT STEP before trusting it: re-measure without the bench confound
+  (LD_PRELOAD or reentry-free in-process A/B), THEN profile any residual. Allocator
+  untouched (safety core). LESSON: malloc microbenches here are confounded — verify
+  the path actually taken, don't trust the raw ratio (matches the prior memory warning).
+
 ## 2026-06-29 — ✅ strndup strict fast-path DEPLOYED (~1.31x vs ORIG, byte-identical) — completes the dup family
 
 - **DEPLOYED (cc):** `strndup` (bounded strdup) — strict has `bound == Some(n)`
