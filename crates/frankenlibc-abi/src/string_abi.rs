@@ -4446,6 +4446,17 @@ pub unsafe extern "C" fn strtok_r(
 /// Caller must ensure both `s1` and `s2` point to valid null-terminated strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no membrane
+    // bound, byte-identical to the strict common branch — the fused SWAR
+    // case-compare `scan_strcasecmp(.., usize::MAX)`. Skips stage_context + decide +
+    // observe + stage-trace (read-family sibling of the strncmp fast path).
+    if runtime_policy::strict_passthrough_active() {
+        if s1.is_null() || s2.is_null() {
+            return 0;
+        }
+        return unsafe { scan_strcasecmp(s1, s2, usize::MAX) }.0;
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
         record_string_stage_outcome(
@@ -4536,6 +4547,16 @@ pub unsafe extern "C" fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_i
 pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int {
     if n == 0 {
         return 0;
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no membrane
+    // clamp (`cmp_limit == n`, not adverse), byte-identical to the strict full path —
+    // the fused SWAR case-compare `scan_strcasecmp(.., n)`. Skips the bookkeeping.
+    if runtime_policy::strict_passthrough_active() {
+        if s1.is_null() || s2.is_null() {
+            return 0;
+        }
+        return unsafe { scan_strcasecmp(s1, s2, n) }.0;
     }
 
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);

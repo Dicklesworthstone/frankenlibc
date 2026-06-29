@@ -6,6 +6,24 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ narrow strcasecmp/strncasecmp strict fast-path DEPLOYED (~8.9x vs ORIG, byte-identical)
+
+- **DEPLOYED (cc):** the case-insensitive compares paid the full membrane
+  (`stage_context_two` + `decide` + `observe` + stage-trace) in default(strict)
+  mode. Added `strict_passthrough_active()` fast paths byte-identical to their
+  strict bodies: both = the fused SWAR case-compare `scan_strcasecmp(s1,s2,LIMIT)`
+  (`usize::MAX` for strcasecmp, `n` for strncasecmp — strict has no membrane clamp,
+  `cmp_limit==n`, not adverse). Read-family siblings of the shipped strncmp fast path.
+- **MEASURED (RELIABLE; `FRANKENLIBC_MODE` disambiguated default=fast/hardened=slow
+  same binary):** strcasecmp 25-char eq **ORIG 59.2ns → fast 6.66ns = ~8.9x vs
+  ORIG** (glibc 3.5ns; 17x → 1.9x). Byte identity: non-test probe asserted
+  fl==glibc (signum) for strcasecmp (5 pairs) + strncasecmp (×n); conformance_diff_
+  {cmp_family,strcasecmp,strcasecmp_simd} GREEN.
+- **SEPARATE LEAD:** the HARDENED-mode case-compare path is **~26.7µs** (per-char
+  validation pathology, same shape as the strspn hardened ~27µs) — its own lever.
+- **SAFE:** `decide()` already immediate-passthroughs `StringMemory` in strict, so
+  the fast path removes only bookkeeping — same invariant as every fast path this session.
+
 ## 2026-06-29 — `byte_membership_table` [bool;256]→[u64;4] bitmap REJECTED (1.4x REGRESSION — per-lookup shift+mask costs more than the build saving)
 
 - **LEVER TESTED (cc):** sub-lever (a) from the entry below — swap strspn/strcspn's
