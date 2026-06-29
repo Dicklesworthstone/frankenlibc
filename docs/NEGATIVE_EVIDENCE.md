@@ -7728,3 +7728,32 @@ scan_c_string_for_byte caller. CONFORMANCE GREEN: conformance_diff_strchr (1) + 
 + conformance_diff_scan_c_string (1). The residual deployed-strchr small-size gap (family bench 7.2x) is
 now purely the StringMemory membrane per-call tax (decide/observe), a separate architectural lever — the
 SCAN floor is closed.
+
+### 2026-06-29 — ◐ strrchr scan: aligned-head-mask = 2-4x over prior fl, but still 1.3-1.8x SLOWER than glibc — BlackThrush
+
+Applied the aligned-head-mask lever to the THIRD scanner, `scan_c_string_last_byte`'s None path
+(strrchr), which had the same scalar head-align loop + per-chunk page guard + 8B-SWAR floor. The reverse
+(last-match) resolution is done with the per-block target/NUL bitmasks: on the terminating block, the last
+target ≤ NUL is `63 - leading_zeros(tgt & ((1<<(nul_pos+1))-1))` (the inclusive mask makes strrchr(s,'\0')
+report the NUL itself); non-terminating blocks update `last` from the highest target bit. Steady-state
+keeps the old loop's single combined `(eq|eq).any()` skip cost — the two separate masks are computed only
+on a panel that actually contains a target/NUL — so long target-free runs pay no extra reduction (verified
+no large-size regression). The folded tier is absent in both (strrchr never had one).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench RCHR_AB arm, target present near end = full scan + real
+last-match, 32 aligns × lengths incl. large):
+  len=  7  new/old=0.507  new/glibc=1.296  old/glibc=2.556
+  len= 31  new/old=0.317  new/glibc=1.677  old/glibc=5.292
+  len= 63  new/old=0.275  new/glibc=1.796  old/glibc=6.531
+  len= 256 new/old=0.345  new/glibc=1.415  old/glibc=4.102
+  len=1024 new/old=0.531  new/glibc=1.625  old/glibc=3.061
+  len=4096 new/old=0.649  new/glibc=1.709  old/glibc=2.631
+HONEST RESULT: NEW is 2-4x faster than the prior fl kernel at EVERY size (no large-size regression: 4096B
+85→55ns), narrowing the glibc deficit from 2.6-6.5x to 1.3-1.8x — but strrchr STILL LOSES to glibc at
+every size (contradicts the earlier memory claim that fl strrchr already beat glibc; that was wrong for the
+last-match path). Landed anyway as a strict 2-4x improvement of the deployed fn with full conformance
+(conformance_diff_strrchr + conformance_strrchr_bounded >1000-case reference GREEN). RESIDUAL: glibc
+strrchr is ~1.5x faster even at steady state — a different algorithm (likely forward strlen + reverse
+memchr, or wider-vector single reverse pass) is needed to actually beat it; the aligned-head-mask alone
+closes the setup floor but not the throughput gap. Unlike strlen/strchr (which the SAME lever took to
+parity-or-WIN), strrchr's extra last-match bookkeeping leaves a residual.

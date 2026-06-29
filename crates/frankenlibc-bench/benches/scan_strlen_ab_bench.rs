@@ -195,6 +195,101 @@ unsafe fn chr_new(p: *const u8, target: u8) -> usize {
     }
 }
 
+/// OLD strrchr None-path kernel: scalar head-align + per-chunk page guard + 8B SWAR.
+#[inline(never)]
+unsafe fn rchr_old(p: *const u8, target: u8) -> Option<usize> {
+    let bcast = (target as u64).wrapping_mul(0x0101_0101_0101_0101);
+    let mut last: Option<usize> = None;
+    let mut i = 0usize;
+    let head = (p as usize).wrapping_neg() & 7;
+    while i < head {
+        let b = unsafe { *p.add(i) };
+        if b == target {
+            last = Some(i);
+        }
+        if b == 0 {
+            return last;
+        }
+        i += 1;
+    }
+    loop {
+        if (p as usize + i) & 0xFFF <= 0x1000 - 32 {
+            let v = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+            let hit = v.simd_eq(Simd::splat(target)) | v.simd_eq(Simd::splat(0));
+            if !hit.any() {
+                i += 32;
+                continue;
+            }
+        }
+        let w = unsafe { *p.add(i).cast::<u64>() };
+        if swar_has_zero(w) {
+            for j in 0..8 {
+                let b = unsafe { *p.add(i + j) };
+                if b == target {
+                    last = Some(i + j);
+                }
+                if b == 0 {
+                    return last;
+                }
+            }
+        } else if swar_has_zero(w ^ bcast) {
+            for j in (0..8).rev() {
+                if unsafe { *p.add(i + j) } == target {
+                    last = Some(i + j);
+                    break;
+                }
+            }
+        }
+        i += 8;
+    }
+}
+
+/// NEW strrchr None-path kernel: aligned-load-down + head-mask, last-match via bitmasks.
+#[inline(never)]
+unsafe fn rchr_new(p: *const u8, target: u8) -> Option<usize> {
+    let align = (p as usize) & 31;
+    let base = unsafe { p.sub(align) };
+    let headclear = !((1u64 << align) - 1);
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(base, 32) });
+    let nul0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & headclear;
+    let tgt0 = v0.simd_eq(Simd::splat(target)).to_bitmask() & headclear;
+    if nul0 != 0 {
+        let nul_pos = nul0.trailing_zeros();
+        let upto = tgt0 & ((1u64 << (nul_pos + 1)) - 1);
+        return if upto != 0 {
+            Some((63 - upto.leading_zeros()) as usize - align)
+        } else {
+            None
+        };
+    }
+    let mut last = if tgt0 != 0 {
+        Some((63 - tgt0.leading_zeros()) as usize - align)
+    } else {
+        None
+    };
+    let mut i = 32 - align;
+    loop {
+        let v = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+        let hit = (v.simd_eq(Simd::splat(0)) | v.simd_eq(Simd::splat(target))).to_bitmask();
+        if hit == 0 {
+            i += 32;
+            continue;
+        }
+        let nul = v.simd_eq(Simd::splat(0)).to_bitmask();
+        let tgt = v.simd_eq(Simd::splat(target)).to_bitmask();
+        if nul != 0 {
+            let nul_pos = nul.trailing_zeros();
+            let upto = tgt & ((1u64 << (nul_pos + 1)) - 1);
+            if upto != 0 {
+                last = Some(i + (63 - upto.leading_zeros()) as usize);
+            }
+            return last;
+        }
+        last = Some(i + (63 - tgt.leading_zeros()) as usize);
+        i += 32;
+    }
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -220,7 +315,7 @@ fn measure(mut f: impl FnMut() -> u64) -> f64 {
 fn bench(c: &mut Criterion) {
     let g = host_strlen();
     // Page-aligned backing buffer so we can place a string at any alignment offset.
-    let backing = vec![b'x'; 4096];
+    let backing = vec![b'x'; 16384];
     // For each length, sweep all 32 alignment offsets and sum kernel times, so the
     // reported ratio reflects the full alignment distribution (the old kernel's
     // scalar head cost is alignment-dependent; the new kernel's head-mask is flat).
@@ -288,6 +383,54 @@ fn bench(c: &mut Criterion) {
         }
         println!(
             "CHR_AB len={len:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t / 32.0,
+            new_t / 32.0,
+            g_t / 32.0,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // strrchr A/B: target PRESENT near the END (exercises last-match resolution &
+    // full scan to NUL). glibc strrchr returns a pointer to the last match.
+    let g_rchr =
+        unsafe { std::mem::transmute::<usize, ChrFn>(host_sym(b"strrchr\0")) };
+    for &len in &[7usize, 15, 23, 31, 47, 63, 256, 1024, 4096] {
+        let mut buf = backing.clone();
+        let mut old_t = 0.0;
+        let mut new_t = 0.0;
+        let mut g_t = 0.0;
+        // Target 'Q' placed at two spots (len/2 and len-2) so a real last-match exists.
+        let tgt = b'Q';
+        for off in 0..32usize {
+            for k in 0..len {
+                buf[off + k] = b'a' + (k % 26) as u8;
+            }
+            if len >= 4 {
+                buf[off + len / 2] = tgt;
+                buf[off + len - 2] = tgt;
+            }
+            buf[off + len] = 0;
+            let p = unsafe { buf.as_ptr().add(off) };
+            let want = if len >= 4 { Some(len - 2) } else { None };
+            assert_eq!(unsafe { rchr_old(p, tgt) }, want, "rchr_old wrong off={off} len={len}");
+            assert_eq!(unsafe { rchr_new(p, tgt) }, want, "rchr_new wrong off={off} len={len}");
+            let gp = unsafe { g_rchr(p.cast(), tgt as i32) };
+            let g_idx = if gp.is_null() {
+                None
+            } else {
+                Some(unsafe { gp.cast::<u8>().offset_from(p) } as usize)
+            };
+            assert_eq!(g_idx, want, "glibc strrchr disagrees off={off} len={len}");
+            old_t += measure(|| unsafe { rchr_old(black_box(p), tgt) }.unwrap_or(0) as u64);
+            new_t += measure(|| unsafe { rchr_new(black_box(p), tgt) }.unwrap_or(0) as u64);
+            g_t += measure(|| unsafe { g_rchr(black_box(p.cast()), tgt as i32) } as usize as u64);
+            buf[off + len] = b'x';
+        }
+        println!(
+            "RCHR_AB len={len:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
             old_t / 32.0,
             new_t / 32.0,

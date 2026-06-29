@@ -1266,62 +1266,72 @@ unsafe fn scan_c_string_last_byte(
             (last, limit, true)
         }
         None => {
-            let mut i = 0usize;
-            let head = (p as usize).wrapping_neg() & 7;
-            while i < head {
-                // SAFETY: caller guarantees a valid NUL-terminated string.
-                let b = unsafe { *p.add(i) };
-                if b == target {
-                    last = Some(i);
-                }
-                if b == 0 {
-                    return (last, i, false);
-                }
-                i += 1;
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            // glibc-style aligned-load-with-head-mask: align DOWN to a 32-byte
+            // boundary, do one aligned load, mask off the `align` bytes before
+            // `ptr`. A 32-aligned 32-byte window is in one 4 KiB page (32 | 4096)
+            // and the page holding `ptr` is mapped, so reading head bytes is safe.
+            // Resolves the LAST target ≤ the terminating NUL via the per-block
+            // target/NUL bitmasks (highest set bit = 63 - leading_zeros), dropping
+            // the scalar head-align loop and the per-chunk page guard the old loop
+            // paid on every 32B chunk. `target == 0` includes the NUL position so
+            // strrchr(s,'\0') reports the NUL itself.
+            let align = (p as usize) & 31;
+            // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31).
+            let base = unsafe { p.sub(align) };
+            let headclear = !((1u64 << align) - 1);
+            let v0 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(base, 32)
+            });
+            let nul0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & headclear;
+            let tgt0 = v0.simd_eq(Simd::splat(target)).to_bitmask() & headclear;
+            if nul0 != 0 {
+                let nul_pos = nul0.trailing_zeros();
+                // Targets at or before the NUL (inclusive covers target==0).
+                let upto = tgt0 & ((1u64 << (nul_pos + 1)) - 1);
+                let last = if upto != 0 {
+                    Some((63 - upto.leading_zeros()) as usize - align)
+                } else {
+                    None
+                };
+                return (last, nul_pos as usize - align, false);
             }
+            // No NUL in the first block: record its last target, then continue from
+            // the next 32-aligned boundary (all subsequent loads in-page, no guard).
+            let mut last = if tgt0 != 0 {
+                Some((63 - tgt0.leading_zeros()) as usize - align)
+            } else {
+                None
+            };
+            let mut i = 32 - align;
             loop {
-                // Wide 32-byte portable-SIMD skip (glibc's strrchr works a vector
-                // at a time; the 8-byte SWAR below was the bottleneck). A panel
-                // with NEITHER the target byte NOR a NUL cannot change `last` or
-                // terminate the scan, so advance it whole; any panel with a target
-                // or NUL (or one that would cross the page) drops to the SWAR tail,
-                // which updates `last` and resolves the NUL exactly — unchanged.
-                if (p as usize + i) & 0xFFF <= 0x1000 - 32 {
-                    use core::simd::Simd;
-                    use core::simd::cmp::SimdPartialEq;
-                    // SAFETY: the 32-byte window stays within the current page.
-                    let v = Simd::<u8, 32>::from_slice(unsafe {
-                        core::slice::from_raw_parts(p.add(i), 32)
-                    });
-                    let hit = v.simd_eq(Simd::splat(target)) | v.simd_eq(Simd::splat(0));
-                    if !hit.any() {
-                        i += 32;
-                        continue;
-                    }
+                // SAFETY: p+i is 32-aligned ⇒ the 32-byte window stays in one page.
+                let v = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                // Steady-state fast skip: ONE combined target|NUL reduction per panel
+                // (matching the old loop's single `.any()` cost) — only split into the
+                // two separate masks when a panel actually contains a target or NUL, so
+                // long target-free runs pay no extra work vs the old skip.
+                let hit = (v.simd_eq(Simd::splat(0)) | v.simd_eq(Simd::splat(target))).to_bitmask();
+                if hit == 0 {
+                    i += 32;
+                    continue;
                 }
-                // SAFETY: p+i is 8-aligned; the aligned read stays inside the page.
-                let w = unsafe { *p.add(i).cast::<u64>() };
-                if swar_word_has_zero(w) {
-                    for j in 0..8 {
-                        // SAFETY: within the just-read window, before/at the NUL.
-                        let b = unsafe { *p.add(i + j) };
-                        if b == target {
-                            last = Some(i + j);
-                        }
-                        if b == 0 {
-                            return (last, i + j, false);
-                        }
+                let nul = v.simd_eq(Simd::splat(0)).to_bitmask();
+                let tgt = v.simd_eq(Simd::splat(target)).to_bitmask();
+                if nul != 0 {
+                    let nul_pos = nul.trailing_zeros();
+                    let upto = tgt & ((1u64 << (nul_pos + 1)) - 1);
+                    if upto != 0 {
+                        last = Some(i + (63 - upto.leading_zeros()) as usize);
                     }
-                } else if swar_word_has_zero(w ^ bcast) {
-                    for j in (0..8).rev() {
-                        // SAFETY: within the just-read window.
-                        if unsafe { *p.add(i + j) } == target {
-                            last = Some(i + j);
-                            break;
-                        }
-                    }
+                    return (last, i + nul_pos as usize, false);
                 }
-                i += 8;
+                // hit != 0 with no NUL ⇒ tgt != 0 (hit == nul | tgt).
+                last = Some(i + (63 - tgt.leading_zeros()) as usize);
+                i += 32;
             }
         }
     }
