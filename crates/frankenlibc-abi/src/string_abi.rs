@@ -1422,12 +1422,17 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
                 Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p1.add(i), 32) });
             let vb =
                 Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p2.add(i), 32) });
-            let flagged = va.simd_ne(vb) | va.simd_eq(Simd::splat(0));
-            if !flagged.any() {
+            let flagged = (va.simd_ne(vb) | va.simd_eq(Simd::splat(0))).to_bitmask();
+            if flagged == 0 {
                 i += 32;
                 continue;
             }
-            // Flagged panel: resolve exactly via the narrower paths below.
+            // Flagged panel: the first set bit is the exact first
+            // differing-or-s1-NUL byte (the same index the SWAR/scalar tail would
+            // resolve to). Return it directly via trailing_zeros instead of
+            // re-scanning the same 32 bytes with the 8-byte SWAR path below — the
+            // same O(1) resolve used in scan_c_string/strchr. Byte-identical.
+            return (i + flagged.trailing_zeros() as usize, false);
         }
         if i + 8 <= bound
             && wide_read_within_page(p1 as usize + i)

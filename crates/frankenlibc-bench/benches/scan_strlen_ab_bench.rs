@@ -20,6 +20,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 type LenFn = unsafe extern "C" fn(*const c_char) -> usize;
 type ChrFn = unsafe extern "C" fn(*const c_char, i32) -> *mut c_char;
+type CmpFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
 
 fn host_sym(name: &[u8]) -> usize {
     unsafe {
@@ -395,6 +396,102 @@ unsafe fn memcmp_new(a: *const u8, b: *const u8, n: usize) -> i32 {
     0
 }
 
+#[inline]
+fn page_ok32(a: usize) -> bool {
+    a & 0xFFF <= 0x1000 - 32
+}
+#[inline]
+fn page_ok8(a: usize) -> bool {
+    a & 0xFFF <= 0x1000 - 8
+}
+
+/// OLD strcmp scan: 32B SIMD flag then FALL THROUGH to 8B SWAR re-scan to resolve.
+#[inline(never)]
+unsafe fn scmp_old(p1: *const u8, p2: *const u8, bound: usize) -> usize {
+    let mut i = 0usize;
+    loop {
+        if i + 32 <= bound && page_ok32(p1 as usize + i) && page_ok32(p2 as usize + i) {
+            let va = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p1.add(i), 32) });
+            let vb = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p2.add(i), 32) });
+            let flagged = va.simd_ne(vb) | va.simd_eq(Simd::splat(0));
+            if !flagged.any() {
+                i += 32;
+                continue;
+            }
+        }
+        if i + 8 <= bound && page_ok8(p1 as usize + i) && page_ok8(p2 as usize + i) {
+            let wa = unsafe { std::ptr::read_unaligned(p1.add(i).cast::<u64>()) };
+            let wb = unsafe { std::ptr::read_unaligned(p2.add(i).cast::<u64>()) };
+            if wa == wb && !swar_has_zero(wa) {
+                i += 8;
+                continue;
+            }
+            for j in 0..8 {
+                let a = unsafe { *p1.add(i + j) };
+                let b = unsafe { *p2.add(i + j) };
+                if a != b || a == 0 {
+                    return i + j;
+                }
+            }
+            i += 8;
+            continue;
+        }
+        if i >= bound {
+            return bound;
+        }
+        let a = unsafe { *p1.add(i) };
+        let b = unsafe { *p2.add(i) };
+        if a != b || a == 0 {
+            return i;
+        }
+        i += 1;
+    }
+}
+
+/// NEW strcmp scan: 32B SIMD with O(1) trailing_zeros resolve (no SWAR re-scan).
+#[inline(never)]
+unsafe fn scmp_new(p1: *const u8, p2: *const u8, bound: usize) -> usize {
+    let mut i = 0usize;
+    loop {
+        if i + 32 <= bound && page_ok32(p1 as usize + i) && page_ok32(p2 as usize + i) {
+            let va = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p1.add(i), 32) });
+            let vb = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p2.add(i), 32) });
+            let flagged = (va.simd_ne(vb) | va.simd_eq(Simd::splat(0))).to_bitmask();
+            if flagged == 0 {
+                i += 32;
+                continue;
+            }
+            return i + flagged.trailing_zeros() as usize;
+        }
+        if i + 8 <= bound && page_ok8(p1 as usize + i) && page_ok8(p2 as usize + i) {
+            let wa = unsafe { std::ptr::read_unaligned(p1.add(i).cast::<u64>()) };
+            let wb = unsafe { std::ptr::read_unaligned(p2.add(i).cast::<u64>()) };
+            if wa == wb && !swar_has_zero(wa) {
+                i += 8;
+                continue;
+            }
+            for j in 0..8 {
+                let a = unsafe { *p1.add(i + j) };
+                let b = unsafe { *p2.add(i + j) };
+                if a != b || a == 0 {
+                    return i + j;
+                }
+            }
+            i += 8;
+            continue;
+        }
+        if i >= bound {
+            return bound;
+        }
+        let a = unsafe { *p1.add(i) };
+        let b = unsafe { *p2.add(i) };
+        if a != b || a == 0 {
+            return i;
+        }
+        i += 1;
+    }
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -591,6 +688,37 @@ fn bench(c: &mut Criterion) {
         let g_t = measure(|| unsafe { g_mcmp(black_box(ap.cast()), black_box(bp.cast()), len) } as i64 as u64);
         println!(
             "MCMP_AB len={len:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // strcmp A/B: EQUAL strings (NUL in first 32B panel = the case where the old scan
+    // flags then re-scans with SWAR). bound large (NUL-terminated). glibc returns 0.
+    let g_scmp =
+        unsafe { std::mem::transmute::<usize, CmpFn>(host_sym(b"strcmp\0")) };
+    for &len in &[7usize, 15, 23, 31, 47, 63] {
+        let mut a = backing.clone();
+        let mut bb = backing.clone();
+        for k in 0..len {
+            a[k] = b'a' + (k % 26) as u8;
+            bb[k] = b'a' + (k % 26) as u8;
+        }
+        a[len] = 0;
+        bb[len] = 0;
+        let p1 = a.as_ptr();
+        let p2 = bb.as_ptr();
+        let bound = backing.len();
+        assert_eq!(unsafe { scmp_old(p1, p2, bound) }, len, "scmp_old off len={len}");
+        assert_eq!(unsafe { scmp_new(p1, p2, bound) }, len, "scmp_new off len={len}");
+        assert_eq!(unsafe { g_scmp(p1.cast(), p2.cast()) }, 0, "glibc strcmp eq len={len}");
+        let old_t = measure(|| unsafe { scmp_old(black_box(p1), black_box(p2), bound) } as u64);
+        let new_t = measure(|| unsafe { scmp_new(black_box(p1), black_box(p2), bound) } as u64);
+        let g_t = measure(|| unsafe { g_scmp(black_box(p1.cast()), black_box(p2.cast())) } as i64 as u64);
+        println!(
+            "SCMP_AB len={len:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
             new_t / old_t,
             new_t / g_t,

@@ -7783,3 +7783,28 @@ beats glibc (0.86) vs old's 2.5x loss. CONFORMANCE GREEN: conformance_diff_cmp_f
 conformance_diff_string (24, randomized memcmp vs glibc) + an exhaustive in-bench sign sweep (every
 differing-byte position for n∈{1,3,4,7,8,15,16,23,31,32,47,63} matched glibc's sign). Residual at 47/63
 (~5-10%) = glibc's native AVX2 ymm 32B compare vs the SSE2 u128-pair, the portable-SIMD ceiling.
+
+### 2026-06-29 — ◐ strcmp/strncmp scan: O(1) mask resolve = 1.6-2.9x over old, still ~1.3x behind glibc — BlackThrush
+
+scan_strcmp (the deployed strcmp/strncmp dual-pointer scan) computed the 32B SIMD `flagged` mask
+(`simd_ne | simd_eq(0)`), and on a flagged panel FELL THROUGH to the 8-byte SWAR + scalar tail to
+RE-SCAN the same 32 bytes and locate the stop index. For short strings the NUL is always in the first
+panel, so every call paid 1×32B SIMD (flag) + up to 4×8B SWAR (re-scan). FIX: resolve the stop index
+directly from the SIMD mask via `flagged.to_bitmask().trailing_zeros()` — the first set bit is exactly the
+first differing-or-s1-NUL byte the SWAR tail would have found (byte-identical) — and return immediately,
+skipping the redundant re-scan. Same O(1)-resolve lever as scan_c_string/strchr. Dual-pointer alignment
+prevents the full aligned-head-mask (can't align two independently-aligned pointers down together).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench SCMP_AB arm: OLD kernel (flag+SWAR re-scan), NEW kernel
+(O(1) resolve), host glibc strcmp, EQUAL strings = NUL in first panel = the re-scan case):
+  len= 7  new/old=0.631  new/glibc=1.286  old/glibc=2.037
+  len=15  new/old=0.499  new/glibc=1.309  old/glibc=2.623
+  len=23  new/old=0.401  new/glibc=1.262  old/glibc=3.147
+  len=31  new/old=0.344  new/glibc=1.262  old/glibc=3.670
+  len=47  new/old=0.553  new/glibc=1.292  old/glibc=2.337
+  len=63  new/old=0.409  new/glibc=1.296  old/glibc=3.171
+NEW is 1.6-2.9x faster than OLD at every size, narrowing the glibc deficit from 2.0-3.7x to ~1.3x. HONEST:
+strcmp STILL LOSES to glibc ~1.3x — the residual is the dual-pointer-can't-align + portable_simd-32B vs
+glibc native-AVX2 ceiling (same class as strrchr's residual). Landed as a strict 1.6-2.9x improvement of
+the deployed scan + benefits strncmp (same scan_strcmp, bound=n). CONFORMANCE GREEN:
+conformance_diff_cmp_family (4) + conformance_diff_string (24, randomized strcmp/strncmp vs glibc).
