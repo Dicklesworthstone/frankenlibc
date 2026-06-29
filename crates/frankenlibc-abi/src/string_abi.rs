@@ -602,29 +602,31 @@ unsafe fn raw_strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_c
     }
     // SAFETY: both pointers are valid NUL-terminated strings.
     unsafe {
-        let needle_first = *needle;
-        if needle_first == 0 {
+        if *needle == 0 {
             return haystack as *mut c_char;
         }
-        let mut h = haystack;
-        while *h != 0 {
-            if *h == needle_first {
-                let mut hi = h;
-                let mut ni = needle;
-                loop {
-                    ni = ni.add(1);
-                    if *ni == 0 {
-                        return h as *mut c_char; // found
-                    }
-                    hi = hi.add(1);
-                    if *hi == 0 || *hi != *ni {
-                        break;
-                    }
-                }
-            }
-            h = h.add(1);
+        // Compute lengths with plain inline scalar scans (NO membrane / known_remaining
+        // lookup) so this stays deadlock-safe on the early-startup / membrane-reentrant
+        // path, then route the MATCH to the pure core Two-Way searcher instead of the old
+        // naive O(hay*needle) double loop (a latent quadratic-DoS vector even here). core
+        // memmem allocates nothing and holds no locks, so it is safe in this context.
+        let mut hay_len = 0usize;
+        while *haystack.add(hay_len) != 0 {
+            hay_len += 1;
         }
-        std::ptr::null_mut()
+        let mut needle_len = 0usize;
+        while *needle.add(needle_len) != 0 {
+            needle_len += 1;
+        }
+        if hay_len < needle_len {
+            return std::ptr::null_mut();
+        }
+        let hay_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
+        let needle_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+        match frankenlibc_core::string::mem::memmem(hay_slice, hay_len, needle_slice, needle_len) {
+            Some(idx) => haystack.add(idx) as *mut c_char,
+            None => std::ptr::null_mut(),
+        }
     }
 }
 

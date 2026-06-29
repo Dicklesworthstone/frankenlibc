@@ -8442,3 +8442,17 @@ lowers the simple `while i<n { *dst.add(i)=0 }` NUL-pad loop to a vectorised con
 short for short src. DECISION: rejected, deployed wcsncpy LEFT UNCHANGED. WCSNCPY bench arm kept as
 apparatus. LESSON: a scalar pad/fill loop in a NON-interposed fn is auto-vectorised by LLVM — only the
 interposed memset/memcpy need the explicit-store dance; don't assume scalar==slow.
+
+### 2026-06-29 — ✅ raw_strstr (early-startup/reentrant passthrough) routed to core Two-Way memmem — completes the strstr DoS sweep — BlackThrush
+
+The LAST naive substring path: raw_strstr (the string_raw_passthrough_active / membrane-reentrant fallback
+for strstr) still ran the naive O(hay*needle) double loop — a latent quadratic-DoS vector if that path ever
+processes adversarial input. Computed lengths with plain inline scalar NUL scans (NO membrane /
+known_remaining lookup, keeping the path deadlock-safe) and routed the MATCH to
+`frankenlibc_core::string::mem::memmem` (Two-Way; allocates nothing, holds no locks — safe in the
+early-startup / reentrant context). Same ratio as the strict-path strstr fix (335bd0e16): 164-455x over the
+naive on the STRSTR_PATHO input, byte-identical first-match. CONFORMANCE GREEN: conformance_diff_string (24)
++ conformance_diff_string_search (6) + string_abi_test strstr (4). **SUBSTRING FAMILY NOW 100% TWO-WAY: byte
+strstr (strict + raw passthrough), wcsstr, strcasestr, memmem — NO naive O(n*m) substring path remains
+anywhere in the deployed ABI.** The deployed-naive-vs-core anti-pattern is fully swept (length: wcslen/
+scan_w_string; substring: strstr/wcsstr/raw_strstr; span: wide WideCharSet; all byte fns route to core).
