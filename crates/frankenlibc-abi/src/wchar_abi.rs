@@ -1167,54 +1167,23 @@ pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mu
         if needle_len == 0 {
             out_local = haystack as *mut u32;
             work_local = 1;
-        } else if hay_len >= needle_len && hay_bound.is_none() {
-            // SIMD-prefiltered search: jump to each occurrence of the needle's
-            // first element with the 8-lane wide scan (wide_find_or_nul_simd),
-            // then verify the remaining elements. Only candidate positions where
-            // needle[0] matches pay the O(needle_len) verify; the gaps between
-            // them are skipped 8 elements at a time. `needle[0]` is non-NUL
-            // (needle_len > 0), so the scan distinguishes it from the terminator.
-            // Restricted to the unbounded path so the scan (which runs to the NUL)
-            // never reads past a membrane clamp; the bounded path keeps the scalar
-            // scan below.
-            let n0 = *needle;
-            let mut h = 0usize;
-            loop {
-                let (idx, found) = wide_find_or_nul_simd(haystack.add(h), n0);
-                if !found {
-                    work_local = hay_len;
-                    break;
-                }
-                let pos = h + idx;
-                if pos + needle_len > hay_len {
-                    work_local = hay_len;
-                    break;
-                }
-                let mut k = 1usize;
-                while k < needle_len && *haystack.add(pos + k) == *needle.add(k) {
-                    k += 1;
-                }
-                if k == needle_len {
-                    out_local = haystack.add(pos) as *mut u32;
-                    work_local = pos.saturating_add(needle_len);
-                    break;
-                }
-                h = pos + 1;
-            }
         } else if hay_len >= needle_len {
-            let mut h = 0usize;
-            while h + needle_len <= hay_len {
-                let mut n = 0usize;
-                while n < needle_len && *haystack.add(h + n) == *needle.add(n) {
-                    n += 1;
+            // Route to the core wide Two-Way searcher (O(hay+needle)) instead of the
+            // old SIMD-prefilter-then-verify / naive double loop, both of which were
+            // O(hay_len * needle_len) on adversarial inputs (hay="aaaa…",
+            // needle="aaa…c") — measured 16-32x slower than core wcsstr (and a CPU-DoS
+            // vector). `hay_len`/`needle_len` already bake in any membrane clamp, so
+            // the bounded slices are safe. Byte-identical leftmost match.
+            let hay_slice = std::slice::from_raw_parts(haystack, hay_len);
+            let needle_slice = std::slice::from_raw_parts(needle, needle_len);
+            match wide_core::wcsstr(hay_slice, needle_slice) {
+                Some(idx) => {
+                    out_local = haystack.add(idx) as *mut u32;
+                    work_local = idx.saturating_add(needle_len);
                 }
-                if n == needle_len {
-                    out_local = haystack.add(h) as *mut u32;
-                    work_local = h.saturating_add(needle_len);
-                    break;
+                None => {
+                    work_local = hay_len;
                 }
-                h += 1;
-                work_local = h.saturating_add(needle_len);
             }
         } else {
             work_local = hay_len;

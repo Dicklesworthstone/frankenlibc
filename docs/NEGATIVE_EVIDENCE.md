@@ -8388,3 +8388,22 @@ search (6, strstr/memmem differential vs glibc) + string_abi_test strstr (4) + i
 agreement. (The early-startup raw_strstr passthrough fallback is still naive — lower priority, init-only, not
 on the adversarial-input path; follow-up.) LESSON: the "X is optimized" memory claim was for the CORE fn;
 the DEPLOYED ABI had its own naive loop — ALWAYS confirm the deployed entry routes to core (strstr didn't).
+
+### 2026-06-29 — ✅ DEPLOYED wcsstr was O(n*m) → routed to core wide Two-Way: 16-32x over naive, 4.5-6.4x over glibc (+ DoS fix) — BlackThrush
+
+The wide sibling of the strstr win (335bd0e16). Deployed wcsstr had TWO O(hay_len*needle_len) match paths —
+a SIMD-prefilter-then-verify (verifies needle_len at EVERY needle[0] candidate → quadratic when the anchor
+is common, e.g. hay="aaaa…" needle="aaa…c") and a naive double-loop fallback — but core
+`frankenlibc_core::string::wide::wcsstr` (uses `two_way_search_wide`, O(hay+needle)) was never called.
+Routed both branches to core wcsstr (bounded slices already bake in the membrane clamp).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench WCSSTR_PATHO: hay="a"*N+"b", needle="a"*16+"c" = no match;
+naive worst case vs core wide Two-Way vs glibc wcsstr):
+  hn= 1024  naive= 2865ns  twoway= 172ns  glibc= 768ns  tw/naive=0.0601  tw/glibc=0.224
+  hn= 4096  naive=11739ns  twoway= 365ns  glibc=2323ns  tw/naive=0.0311  tw/glibc=0.157
+  hn=16384  naive=47991ns  twoway=1858ns  glibc=9434ns  tw/naive=0.0387  tw/glibc=0.197
+Core wide Two-Way is 16-32x faster than the naive worst case AND 4.5-6.4x faster than glibc wcsstr (glibc
+itself is 3.7-5.1x slower than even the naive here — also superlinear). Quadratic→linear + DoS-blowup fix.
+Byte-identical (Two-Way returns the same leftmost match). CONFORMANCE GREEN: conformance_diff_wchar (43,
+differential vs glibc — wcsstr byte-exact) + in-bench naive/two-way/glibc agreement. Substring-search family
+now fully Two-Way: strstr (335bd0e16) + wcsstr (this); strcasestr/memmem already routed to core.

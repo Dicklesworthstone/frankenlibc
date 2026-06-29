@@ -1586,6 +1586,29 @@ unsafe fn strstr_naive(hay: *const u8, hlen: usize, ndl: *const u8, nlen: usize)
     None
 }
 
+/// Naive wide substring match (the deployed wcsstr's O(hay*needle) worst case).
+#[inline(never)]
+unsafe fn wcsstr_naive(hay: *const u32, hlen: usize, ndl: *const u32, nlen: usize) -> Option<usize> {
+    if nlen == 0 {
+        return Some(0);
+    }
+    if hlen < nlen {
+        return None;
+    }
+    let mut h = 0usize;
+    while h + nlen <= hlen {
+        let mut n = 0usize;
+        while n < nlen && unsafe { *hay.add(h + n) == *ndl.add(n) } {
+            n += 1;
+        }
+        if n == nlen {
+            return Some(h);
+        }
+        h += 1;
+    }
+    None
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -2211,6 +2234,35 @@ fn bench(c: &mut Criterion) {
             new_t / g_t,
             old_t / g_t
         );
+    }
+
+    // wcsstr A/B: naive wide O(n*m) vs core wcsstr (Two-Way wide) vs glibc wcsstr.
+    {
+        type WcsstrFn = unsafe extern "C" fn(*const u32, *const u32) -> *mut u32;
+        let g_wcsstr = unsafe { std::mem::transmute::<usize, WcsstrFn>(host_sym(b"wcsstr\0")) };
+        for &hn in &[1024usize, 4096, 16384] {
+            let mut hay: Vec<u32> = vec![b'a' as u32; hn];
+            hay.push(b'b' as u32);
+            hay.push(0);
+            let mut ndl: Vec<u32> = vec![b'a' as u32; 16];
+            ndl.push(b'c' as u32);
+            ndl.push(0);
+            let hp = hay.as_ptr();
+            let np = ndl.as_ptr();
+            assert_eq!(unsafe { wcsstr_naive(hp, hn + 1, np, 17) }, None, "wnaive");
+            assert_eq!(frankenlibc_core::string::wide::wcsstr(&hay[..hn + 1], &ndl[..17]), None, "wcore");
+            assert!(unsafe { g_wcsstr(hp, np) }.is_null(), "wglibc");
+            let naive_t = measure(|| unsafe { wcsstr_naive(black_box(hp), hn + 1, black_box(np), 17) }.unwrap_or(0) as u64);
+            let tw_t = measure(|| frankenlibc_core::string::wide::wcsstr(black_box(&hay[..hn + 1]), black_box(&ndl[..17])).unwrap_or(0) as u64);
+            let g_t = measure(|| unsafe { g_wcsstr(black_box(hp), black_box(np)) } as usize as u64);
+            println!(
+                "WCSSTR_PATHO hn={hn:<6} naive_p50_ns={naive_t:.3} twoway_p50_ns={tw_t:.3} glibc_p50_ns={g_t:.3} \
+                 tw/naive={:.4} tw/glibc={:.3} naive/glibc={:.1}",
+                tw_t / naive_t,
+                tw_t / g_t,
+                naive_t / g_t
+            );
+        }
     }
 
     // strstr A/B: deployed NAIVE O(n*m) vs core memmem (TwoWay) vs glibc strstr.
