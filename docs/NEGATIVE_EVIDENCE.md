@@ -7569,3 +7569,24 @@ n_bounded_wchar_differential_probe 2. Bench also recorded: wmemset WINS (0.63-0.
 (delegates to core), wmemcpy 2.1x (copy_nonoverlapping=memcpy; residual is membrane tax, safety core).
 LESSON: a "core is SIMD" claim doesn't guarantee the ABI wrapper USES it — grep ABI wrappers for scalar
 `iter().position()/iter().any()` element loops where a SIMD core exists.
+
+### 2026-06-28 — ⚠️ wcsncpy pad-SIMD REJECTED (membrane+memset-bound, 2.5-4.5x loss); scalar-wrapper vein audit — BlackThrush
+
+Continued the scalar-wrapper vein (after the wmemchr 10x→1.6x win). Audited string/wchar ABI wrappers for
+scalar element loops where a SIMD core exists:
+- CLEAN (delegate to SIMD/fused cores): rawmemchr, memccpy (fused SIMD scan+copy core), strchrnul,
+  memrchr, strcasecmp (SWAR-fused common path), wcsrchr (wide_last_before_nul_simd), wcschrnul (SIMD),
+  wcscpy/wcpcpy/wcscat (wcslen+copy), wmemcmp (SIMD core), wmemset (fill). wcsspn/wcscspn/wcspbrk are
+  set-based per-char (wide can't use a 256-bitmap) = parity with glibc. argz/envz scalar scans are niche.
+- wcsncpy had a SCALAR copy + SCALAR NUL-pad loop. Tried pad → bulk zero-write (fill(0) AND
+  std::ptr::write_bytes, both = memset). Measured (wcsncpy_ab_bench, short src in n-buffer): PAD_256
+  4.53x, PAD_4096 2.57x, PAD_16384 2.59x — STILL a 2.5-4.5x LOSS. The pad impl was NOT the bottleneck
+  (fill(0) already lowered to memset; write_bytes identical). The residual is the per-call StringMemory
+  membrane (decide + known_remaining×2 for src+dst, ~45ns floor) PLUS fl's memset being ~2.5x glibc's at
+  these mid sizes (per-elem pad ~0.08 ns/elem vs glibc ~0.03). Unlike wmemchr (a clean scalar→SIMD-core
+  win to near-parity), wcsncpy CANNOT reach parity — it's membrane-bound like the strcat/stpcpy copy
+  family (StringMemory safety core, off-limits). REVERTED per REVERT-~0-gain (the within-run ratio was
+  unchanged at small n; the large-n case stays a 2.5x loss). NOTE for cod-a: fl memset via write_bytes
+  appears ~2.5x glibc at 4-16KB (wcsncpy pad), worth a direct memset_mid_size A/B (memory claims parity).
+SCALAR-WRAPPER VEIN now MINED: wmemchr was the single winnable bug; the rest delegate to SIMD or are
+membrane/parity-bound.
