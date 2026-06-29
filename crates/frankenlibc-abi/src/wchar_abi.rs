@@ -346,6 +346,18 @@ pub unsafe extern "C" fn wcscpy(dst: *mut u32, src: *const u32) -> *mut u32 {
         return dst;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the unbounded
+    // scalar copy branch below, but skips the (write) decide + observe membrane
+    // path — which for the wide write family is ~655ns/call — and upgrades the
+    // scalar wchar loop to a SIMD length scan + bulk copy.
+    if runtime_policy::strict_passthrough_active() {
+        unsafe {
+            let (len, _terminated) = scan_w_string(src, None);
+            std::ptr::copy_nonoverlapping(src, dst, len + 1);
+        }
+        return dst;
+    }
+
     let dst_bound = known_remaining(dst as usize).map(bytes_to_wchars);
     let src_bound = known_remaining(src as usize).map(bytes_to_wchars);
     let (_mode, decision) = runtime_policy::decide(

@@ -16,12 +16,13 @@ use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, wcscmp, wcsspn, wmemchr, wmemset};
+use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, wcscmp, wcscpy, wcsspn, wmemchr, wmemset};
 
 type WcscmpFn = unsafe extern "C" fn(*const u32, *const u32) -> c_int;
 type WcsspnFn = unsafe extern "C" fn(*const u32, *const u32) -> usize;
 type WmemchrFn = unsafe extern "C" fn(*const u32, u32, usize) -> *mut u32;
 type WmemsetFn = unsafe extern "C" fn(*mut u32, u32, usize) -> *mut u32;
+type WcscpyFn = unsafe extern "C" fn(*mut u32, *const u32) -> *mut u32;
 
 fn host_sym(name: &[u8]) -> usize {
     unsafe {
@@ -189,5 +190,36 @@ fn bench_wmemset(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench, bench_wcsspn, bench_wmemchr, bench_wmemset);
+/// Deployed-fl `wcscpy` (strict fast path: SIMD scan + bulk copy) vs host glibc.
+/// The wide WRITE membrane full path is ~640ns at n≥32 (hardened mode is ~5.7µs);
+/// the fast path is byte-identical and drops it to ~23ns. NOTE: requires a clean
+/// abi rebuild to avoid a stale-rlib measurement (an incremental build can link a
+/// pre-fast-path `frankenlibc_abi`).
+fn bench_wcscpy(c: &mut Criterion) {
+    static G: OnceLock<usize> = OnceLock::new();
+    let glibc: WcscpyFn =
+        unsafe { std::mem::transmute::<usize, WcscpyFn>(*G.get_or_init(|| host_sym(b"wcscpy\0"))) };
+    for &n in &[4usize, 32, 128] {
+        let mut src = vec![b'a' as u32; n];
+        src.push(0);
+        let mut da = vec![0u32; n + 1];
+        let mut db = vec![0u32; n + 1];
+        unsafe { wcscpy(da.as_mut_ptr(), src.as_ptr()) };
+        unsafe { glibc(db.as_mut_ptr(), src.as_ptr()) };
+        assert_eq!(da, db);
+        let ps = src.as_ptr();
+        let pa = da.as_mut_ptr();
+        let pb = db.as_mut_ptr();
+        let mut grp = c.benchmark_group(format!("wcscpy_{n}"));
+        grp.bench_function("fl_deployed", |bb| {
+            bb.iter(|| black_box(unsafe { wcscpy(black_box(pa), black_box(ps)) }))
+        });
+        grp.bench_function("host_glibc", |bb| {
+            bb.iter(|| black_box(unsafe { glibc(black_box(pb), black_box(ps)) }))
+        });
+        grp.finish();
+    }
+}
+
+criterion_group!(benches, bench, bench_wcsspn, bench_wmemchr, bench_wmemset, bench_wcscpy);
 criterion_main!(benches);
