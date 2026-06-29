@@ -5519,6 +5519,24 @@ pub unsafe extern "C" fn memccpy(
     c: c_int,
     n: usize,
 ) -> *mut c_void {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`copy_len == n`), byte-identical to the strict full body — core memccpy over
+    // `n` bytes, returning `dst+idx` past the copied `c` or null. Skips the membrane
+    // guard + decide + observe + stage-trace. Bounded-`n` op (fixed extent).
+    if runtime_policy::strict_passthrough_active() {
+        if n == 0 || dst.is_null() || src.is_null() {
+            return std::ptr::null_mut();
+        }
+        return unsafe {
+            let d_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), n);
+            let s_slice = std::slice::from_raw_parts(src.cast::<u8>(), n);
+            match frankenlibc_core::string::memccpy(d_slice, s_slice, c as u8, n) {
+                Some(idx) => (dst as *mut u8).add(idx).cast(),
+                None => std::ptr::null_mut(),
+            }
+        };
+    }
+
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         if n == 0 || dst.is_null() || src.is_null() {
             return std::ptr::null_mut();
@@ -6110,6 +6128,22 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: 
 /// Caller must ensure `dst` is valid for `dstsize` bytes and both are NUL-terminated.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: usize) -> usize {
+    // Strict-mode fast path (DEFAULT deployed) for the common case (valid dst): strict
+    // passthrough has no clamp (`dst_limit == dstsize`), byte-identical to the strict
+    // full body — scan src, core strlcat into `dst[..dstsize]`, return the BSD total
+    // length. Skips stage_context + decide + observe + stage-trace. null/zero-size
+    // edges fall through to the full path.
+    if !dst.is_null() && !src.is_null() && dstsize != 0 && runtime_policy::strict_passthrough_active()
+    {
+        return unsafe {
+            let (src_len, src_terminated) = scan_c_string(src, None);
+            let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
+            let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
+            let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dstsize);
+            frankenlibc_core::string::str::strlcat(dst_slice, src_slice)
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() {
         record_string_stage_outcome(

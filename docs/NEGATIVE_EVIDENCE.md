@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ narrow memccpy/strlcat strict fast-path DEPLOYED (~6.2x vs ORIG, BEATS glibc, byte-identical) — bounded-write family COMPLETE
+
+- **DEPLOYED (cc, completes the bounded narrow write family):** `memccpy`
+  (bounded copy-until-byte) + `strlcat` (BSD bounded append) paid the full membrane
+  in default(strict) mode. Added `strict_passthrough_active()` fast paths byte-
+  identical to their strict bodies: `memccpy` = `core::memccpy(dst[..n], src[..n],
+  c, n)` returning `dst+idx`/null; `strlcat` = scan src + `core::strlcat(dst[..dstsize],
+  src_slice)` for the common case (null/zero edges fall through). Bounded extent,
+  not the unbounded strcpy/strcat class.
+- **MEASURED (RELIABLE; `FRANKENLIBC_MODE` disambiguated default=fast/hardened=slow
+  same binary):** memccpy copy-9 **ORIG 32.3ns → fast 5.2ns = ~6.2x vs ORIG**,
+  **BEATS glibc (5.2 vs 5.5ns)**. Byte identity: non-test probe asserted fl==glibc
+  for memccpy (c-found/not-found × n) incl. return ptr, AND strlcat (3 srcs × 4
+  dstsize incl. truncation) incl. BSD return length; conformance_diff_memccpy +
+  conformance_diff_strlcpy GREEN.
+- **BOUNDED NARROW WRITE FAMILY NOW COMPLETE off the membrane tax:** memcpy
+  (pre-existing) + memmove + mempcpy + memccpy + strncpy + stpncpy + strncat +
+  strlcpy + strlcat. Plus the full wide family. Remaining on full path: the
+  UNBOUNDED builders strcpy/stpcpy/strcat (off-limits: adaptive-defense telemetry
+  on the #1 overflow target + "other agents"), and `wcslen`/narrow `strcpy_core`
+  fused-kernel leads. The hardened-mode write path (~80ns memccpy / ~5.7µs wcscpy)
+  is its own separate lever.
+
 ## 2026-06-29 — ✅ narrow strncat/strlcpy strict fast-path DEPLOYED (~5.6x vs ORIG, BEATS glibc, byte-identical)
 
 - **DEPLOYED (cc):** `strncat` (bounded append, narrow twin of the shipped
