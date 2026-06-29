@@ -977,6 +977,25 @@ unsafe fn memcpy_avx(dst: *mut u8, src: *const u8, n: usize) {
     }
 }
 
+/// Mirrors the deployed raw_overlap_copy dispatch (small overlapping / AVX [128,2048) /
+/// rep movsb >=2048) — the path disjoint memmove would route to.
+#[inline(never)]
+unsafe fn memmove_disjoint_new(dst: *mut u8, src: *const u8, n: usize) {
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        if n >= 2048 {
+            memcpy_repmovs(dst, src, n);
+            return;
+        }
+        #[cfg(target_arch = "x86_64")]
+        if n >= 128 && std::is_x86_feature_detected!("avx") {
+            memcpy_avx(dst, src, n);
+            return;
+        }
+        memcpy_new(dst, src, n);
+    }
+}
+
 /// `rep movsb` copy (x86 ERMS) — glibc's large-memcpy path; inline asm so it is never
 /// lowered to @llvm.memcpy (recursion-safe).
 #[inline(never)]
@@ -1807,6 +1826,31 @@ fn bench(c: &mut Criterion) {
             old_t / 16.0,
             new_t / 16.0,
             g_t / 16.0,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // memmove DISJOINT A/B: OLD copy_unaligned+volatile vs NEW (raw_overlap_copy dispatch)
+    // vs glibc memmove. Disjoint src/dst (the common memmove case).
+    type MemmoveFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void;
+    let g_memmove =
+        unsafe { std::mem::transmute::<usize, MemmoveFn>(host_sym(b"memmove\0")) };
+    let mvsrc: Vec<u8> = (0..(1usize << 17)).map(|k| (k % 251) as u8 + 1).collect();
+    let mut mvdst = vec![0u8; 1 << 17];
+    for &n in &[15usize, 31, 64, 256, 1024, 4096, 16384] {
+        let sp = mvsrc.as_ptr();
+        let dp = mvdst.as_mut_ptr();
+        unsafe { memmove_disjoint_new(dp, sp, n) };
+        assert_eq!(unsafe { slice::from_raw_parts(dp, n) }, &mvsrc[..n], "mv new n={n}");
+        let old_t = measure(|| { unsafe { memcpy_old(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
+        let new_t = measure(|| { unsafe { memmove_disjoint_new(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
+        let g_t = measure(|| unsafe { g_memmove(black_box(dp.cast()), black_box(sp.cast()), n) } as u64);
+        println!(
+            "MEMMOVE_AB n={n:<6} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t, new_t, g_t,
             new_t / old_t,
             new_t / g_t,
             old_t / g_t
