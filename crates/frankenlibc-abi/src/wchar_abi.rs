@@ -782,6 +782,14 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
         return 0;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no membrane
+    // clamp (`cmp_bound == Some(n)`, `adverse` false), byte-identical to the strict
+    // full path (core compare bounded by `n`); skips the decide + observe tax.
+    if runtime_policy::strict_passthrough_active() {
+        let (r, _span, _hit) = unsafe { scan_wcscmp_simd(s1, s2, n) };
+        return r;
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
@@ -1543,6 +1551,20 @@ pub unsafe extern "C" fn wmemcmp(s1: *const u32, s2: *const u32, n: usize) -> c_
 pub unsafe extern "C" fn wmemchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
     if n == 0 || s.is_null() {
         return std::ptr::null_mut();
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough does not clamp
+    // (`repair` false → `scan_len == n`), so this is byte-identical to the strict
+    // full path (core wmemchr over exactly `n` elements); skips the decide +
+    // observe membrane tax (~9-10ns/call, see wcscmp).
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let slice = std::slice::from_raw_parts(s, n);
+            match frankenlibc_core::string::wide::wmemchr(slice, c, n) {
+                Some(i) => s.add(i) as *mut u32,
+                None => std::ptr::null_mut(),
+            }
+        };
     }
 
     let (mode, decision) = runtime_policy::decide(
@@ -4485,6 +4507,15 @@ pub unsafe extern "C" fn wcscasecmp(s1: *const u32, s2: *const u32) -> c_int {
 pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -> c_int {
     if s1.is_null() || s2.is_null() || n == 0 {
         return 0;
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no membrane
+    // clamp (`cmp_bound == Some(n)`, `adverse` false), byte-identical to the strict
+    // full path (ASCII-folded core compare bounded by `n`); skips the decide +
+    // observe tax.
+    if runtime_policy::strict_passthrough_active() {
+        let (r, _span, _hit) = unsafe { scan_wcscasecmp_simd(s1, s2, n) };
+        return r;
     }
 
     let (mode, decision) = runtime_policy::decide(

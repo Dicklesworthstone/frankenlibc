@@ -16,10 +16,49 @@ use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, wcscmp, wcsspn};
+use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, wcscmp, wcsspn, wmemchr};
 
 type WcscmpFn = unsafe extern "C" fn(*const u32, *const u32) -> c_int;
 type WcsspnFn = unsafe extern "C" fn(*const u32, *const u32) -> usize;
+type WmemchrFn = unsafe extern "C" fn(*const u32, u32, usize) -> *mut u32;
+
+fn host_sym(name: &[u8]) -> usize {
+    unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(!handle.is_null(), "dlmopen libc.so.6");
+        let sym = libc::dlsym(handle, name.as_ptr().cast());
+        assert!(!sym.is_null(), "resolve glibc symbol");
+        sym as usize
+    }
+}
+
+/// Deployed-fl `wmemchr` (n-bounded fast path now live) vs host glibc at a small
+/// `n` where the fixed membrane tax dominates if still present.
+fn bench_wmemchr(c: &mut Criterion) {
+    static G: OnceLock<usize> = OnceLock::new();
+    let glibc: WmemchrFn =
+        unsafe { std::mem::transmute::<usize, WmemchrFn>(*G.get_or_init(|| host_sym(b"wmemchr\0"))) };
+    for &n in &[8usize, 64] {
+        // miss case: needle not present -> full scan of n
+        let buf = vec![b'a' as u32; n];
+        let p = buf.as_ptr();
+        let c0 = b'Z' as u32;
+        assert!(unsafe { wmemchr(p, c0, n) }.is_null());
+        assert!(unsafe { glibc(p, c0, n) }.is_null());
+        let mut grp = c.benchmark_group(format!("wmemchr_miss_{n}"));
+        grp.bench_function("fl_deployed", |bb| {
+            bb.iter(|| black_box(unsafe { wmemchr(black_box(p), c0, n) }))
+        });
+        grp.bench_function("host_glibc", |bb| {
+            bb.iter(|| black_box(unsafe { glibc(black_box(p), c0, n) }))
+        });
+        grp.finish();
+    }
+}
 
 /// Host glibc `wcscmp` via an isolated dlmopen namespace (bypasses fl's
 /// interposing no_mangle symbol).
@@ -124,5 +163,5 @@ fn bench(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench, bench_wcsspn);
+criterion_group!(benches, bench, bench_wcsspn, bench_wmemchr);
 criterion_main!(benches);

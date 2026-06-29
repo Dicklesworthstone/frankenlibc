@@ -6,6 +6,27 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ wide-char membrane fast-path EXTENDED to n-bounded family (wmemchr/wcsncmp/wcsncasecmp, byte-identical)
+
+- **LEVER (cc, 3rd batch):** the same `strict_passthrough_active()` fast path,
+  extended to the three n-bounded wide functions. In strict mode `repair` is
+  false, so each computes its limit as exactly `n` (no known-clamp,
+  `adverse`/`clamped` always false): `wmemchr` → `scan_len == n`,
+  `wcsncmp`/`wcsncasecmp` → `cmp_bound == Some(n)`. Each fast path calls the same
+  core (`core::string::wide::wmemchr` over `n` / `scan_wcscmp_simd` /
+  `scan_wcscasecmp_simd` bounded by `n`) → **byte-identical**, skipping only
+  `decide`+`observe`+`known_remaining` (the measured flat ~9-10ns/call tax).
+- **MEASURED DIRECTLY (`wcscmp_membrane_ab_bench` wmemchr arm, deployed fl vs
+  host glibc dlmopen, miss/full-scan):** deployed `wmemchr` n=8 **4.31ns** (would
+  be ~13ns with the tax, cf. wcscmp 13.3→3.97), n=64 **8.06ns** — fast path live,
+  tax gone; now ~1.6x glibc (n=8, was ~4.8x) / ~2.0x (n=64). ~3x faster vs ORIG.
+- Conformance GREEN: conformance_diff_wchar 43/43, n_bounded_wchar_differential
+  2/2, wchar_abi_test 118/118. **11 wide-char functions now off the membrane
+  tax** (compare/search + set/substr + n-bounded). Only `wcslen` remains on the
+  full path — it honors `known` UNGATED (truncation-heals in strict, unlike the
+  rest), so a fast path would change its strict semantics; left as a deliberate,
+  separate decision.
+
 ## 2026-06-29 — `WideCharSet` [u64;2] bitmap REJECTED + the "wcsspn 2.6x glibc" residual was an INPUT ARTIFACT (corrects prior entry)
 
 - **LEVER TESTED (cc):** replace `WideCharSet`'s `[bool; 128]` ASCII table (a
