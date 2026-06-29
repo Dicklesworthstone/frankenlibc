@@ -339,12 +339,11 @@ pub fn wcslen(s: &[u32]) -> usize {
 ///
 /// Equivalent to C `wcsnlen`.
 pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
-    // Direct 64-lane NUL mask scan bounded by `maxlen`: one `simd_eq(0).to_bitmask()`
-    // per panel, resolved by `trailing_zeros`. The prior 256-block min-FOLD did MORE
-    // vector work than a plain per-panel movemask (same single-condition pessimization
-    // as wcslen, which this mirrors). Byte-identical to the scalar
-    // `position(NUL).unwrap_or(limit)` scan. bd-2g7oyh.
-    const PANEL: usize = WIDE_FIND_LONG_SIMD_LANES; // 64
+    // 128-byte (4×8-lane-u32) min-combine scan bounded by `maxlen`: 3 vpminud + 1 vpcmpeqd
+    // per 128 B, resolving the exact panel only on a hit — 1.25-1.43x faster than the prior
+    // 64-lane `simd_eq(0).to_bitmask()` per-panel scan (whose 64-lane bitmask pack was the
+    // bottleneck). NOT the rejected 256-block min-FOLD (that did `simd_min` on 64-lane = 8
+    // ymm each); this is 4 light 8-lane ymm. Byte-identical first-NUL. (bd-2g7oyh follow-up.)
     let limit = maxlen.min(s.len());
     let scan = &s[..limit];
 
@@ -383,35 +382,53 @@ pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
         return limit;
     }
 
-    let zero = Simd::<u32, PANEL>::splat(0);
-    let mut base = 0usize;
-
-    while base + PANEL <= limit {
-        let v = Simd::<u32, PANEL>::from_slice(&scan[base..base + PANEL]);
-        let m = v.simd_eq(zero).to_bitmask();
-        if m != 0 {
-            return base + m.trailing_zeros() as usize;
+    // 128-byte (4×8-lane-u32) min-combine tier: `min(a,b,c,d)` has a 0 lane iff any of
+    // the four has a 0 there — 3 vpminud + 1 vpcmpeqd + `.any()` per 128 B, resolving the
+    // exact panel only on a hit. Measured 1.25-1.43x faster than the 64-lane direct
+    // `simd_eq(0).to_bitmask()` per-panel scan (whose 64-lane bitmask pack is the bottleneck).
+    {
+        use core::simd::cmp::SimdOrd;
+        let z8 = Simd::<u32, 8>::splat(0);
+        let mut base = 0usize;
+        while base + 32 <= limit {
+            let a = Simd::<u32, 8>::from_slice(&scan[base..base + 8]);
+            let b = Simd::<u32, 8>::from_slice(&scan[base + 8..base + 16]);
+            let c = Simd::<u32, 8>::from_slice(&scan[base + 16..base + 24]);
+            let d = Simd::<u32, 8>::from_slice(&scan[base + 24..base + 32]);
+            if a.simd_min(b).simd_min(c.simd_min(d)).simd_eq(z8).any() {
+                let ma = a.simd_eq(z8).to_bitmask();
+                if ma != 0 {
+                    return base + ma.trailing_zeros() as usize;
+                }
+                let mb = b.simd_eq(z8).to_bitmask();
+                if mb != 0 {
+                    return base + 8 + mb.trailing_zeros() as usize;
+                }
+                let mc = c.simd_eq(z8).to_bitmask();
+                if mc != 0 {
+                    return base + 16 + mc.trailing_zeros() as usize;
+                }
+                return base + 24 + d.simd_eq(z8).to_bitmask().trailing_zeros() as usize;
+            }
+            base += 32;
         }
-        base += PANEL;
-    }
-
-    let mut chunks = scan[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
-    for chunk in chunks.by_ref() {
-        let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
-        // First NUL lane via the mask (O(1)) instead of a scalar enumerate of the
-        // flagged 16-element chunk (bd-2g7oyh).
-        let m = lanes.simd_eq(Simd::splat(0)).to_bitmask();
-        if m != 0 {
-            return base + m.trailing_zeros() as usize;
+        // Tail (< 32 wide chars): 16-lane chunks then scalar.
+        let mut chunks = scan[base..].chunks_exact(WIDE_NUL_SIMD_LANES);
+        for chunk in chunks.by_ref() {
+            let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(chunk);
+            let m = lanes.simd_eq(Simd::splat(0)).to_bitmask();
+            if m != 0 {
+                return base + m.trailing_zeros() as usize;
+            }
+            base += WIDE_NUL_SIMD_LANES;
         }
-        base += WIDE_NUL_SIMD_LANES;
-    }
-    for (j, &ch) in chunks.remainder().iter().enumerate() {
-        if ch == 0 {
-            return base + j;
+        for (j, &ch) in chunks.remainder().iter().enumerate() {
+            if ch == 0 {
+                return base + j;
+            }
         }
+        return limit;
     }
-    limit
 }
 
 /// Computes the display width of up to `n` wide characters.

@@ -8283,3 +8283,17 @@ min-combine unroll, page-safe via 32|4096 + 128|4096), tracked → `wide_strlen_
 conformance_diff_wcs_copy (5) + the bench guard-page page-safety proof + alignment byte-identity sweep
 (identical kernel). The follow-up from the prior entry is now LANDED. NEXT: audit wcsnlen/wcschr/wmemchr
 deployed paths for the same scalar-vs-SIMD gap.
+
+### 2026-06-29 — ✅ core wcsnlen large path: 64-lane → 4×8-lane min-combine (1.25-1.43x; deployed wcsnlen) — BlackThrush
+
+Applied the proven min-combine lever to core wcsnlen's large path (deployed wcsnlen routes here). It did a
+64-lane `simd_eq(0).to_bitmask()` per 256-byte panel — the 64-lane bitmask pack is the bottleneck. Replaced
+with the 4×8-lane-u32 min-combine (3 vpminud + 1 vpcmpeqd + `.any()` per 128 B, resolve the exact panel only
+on a hit). NOT the previously-rejected 256-block min-FOLD (that did simd_min on 64-lane = 8 ymm each); this
+is 4 light 8-lane ymm. Measured (scan_strlen_ab_bench, earlier this session: 4×8 min-combine vs 64-lane,
+both bounded): new/cur 0.70-0.81 = 1.25-1.43x faster at every size 256..65536. Bounded reads stay within
+`limit` (no page guard). CONFORMANCE GREEN: core wcsnlen suite + conformance_diff_wchar (43, differential vs
+glibc — byte-exact). LESSON: bytewise-min (vpminud) as the combined zero check beats a wide single-vector
+`to_bitmask()` per panel — the 64-lane bitmask pack costs more than 4 light 8-lane min+cmp. (core wcslen has
+the same 64-lane loop but the deployed wcslen now uses wide_strlen_unbounded, so core wcslen is internal-only
+— left as-is.)
