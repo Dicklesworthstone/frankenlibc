@@ -1260,6 +1260,53 @@ unsafe fn scan_unroll128(p: *const u8) -> usize {
     }
 }
 
+/// Same as scan_unroll128 but the combined NUL check is ONE `min(a,b,c,d)==0` (3 vpminub
+/// + 1 vpcmpeqb) instead of 4 vpcmpeqb + 3 mask-ORs — fewer ops/128B for the L1/L2 range.
+#[inline(never)]
+unsafe fn scan_unroll128_min(p: *const u8) -> usize {
+    use std::simd::cmp::SimdOrd;
+    let align = (p as usize) & 31;
+    let base = unsafe { p.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(base, 32) });
+    let mask0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & !((1u64 << align) - 1);
+    if mask0 != 0 {
+        return mask0.trailing_zeros() as usize - align;
+    }
+    let mut i = 32 - align;
+    while i < 256 || (p as usize + i) & 127 != 0 {
+        let v = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+        let m = v.simd_eq(Simd::splat(0)).to_bitmask();
+        if m != 0 {
+            return i + m.trailing_zeros() as usize;
+        }
+        i += 32;
+    }
+    loop {
+        let a = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+        let b = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 32), 32) });
+        let c = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 64), 32) });
+        let d = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 96), 32) });
+        let z = Simd::splat(0u8);
+        // min == 0 at a lane iff any of the 4 has a 0 there.
+        if a.simd_min(b).simd_min(c.simd_min(d)).simd_eq(z).any() {
+            let ma = a.simd_eq(z).to_bitmask();
+            if ma != 0 {
+                return i + ma.trailing_zeros() as usize;
+            }
+            let mb = b.simd_eq(z).to_bitmask();
+            if mb != 0 {
+                return i + 32 + mb.trailing_zeros() as usize;
+            }
+            let mc = c.simd_eq(z).to_bitmask();
+            if mc != 0 {
+                return i + 64 + mc.trailing_zeros() as usize;
+            }
+            return i + 96 + d.simd_eq(z).to_bitmask().trailing_zeros() as usize;
+        }
+        i += 128;
+    }
+}
+
 /// Same as scan_unroll128 but with a software prefetch (T0) of the line ~512 B ahead
 /// in the 128-byte unrolled tier — targets the L2-range [4K,16K] residual vs glibc.
 #[inline(never)]
@@ -1969,16 +2016,16 @@ fn bench(c: &mut Criterion) {
             }
             lb[len] = 0;
             let p = lb.as_ptr();
-            assert_eq!(unsafe { scan_unroll128_pf(p) }, len, "pf big len={len}");
+            assert_eq!(unsafe { scan_unroll128_min(p) }, len, "min big len={len}");
             let new_t = measure(|| unsafe { scan_unroll128(black_box(p)) } as u64);
-            let pf_t = measure(|| unsafe { scan_unroll128_pf(black_box(p)) } as u64);
+            let min_t = measure(|| unsafe { scan_unroll128_min(black_box(p)) } as u64);
             let g_t = measure(|| unsafe { (host_strlen())(black_box(p.cast())) } as u64);
             lb[len] = b'a';
             println!(
-                "STRLENBIG len={len:<7} new_p50_ns={new_t:.3} pf_p50_ns={pf_t:.3} glibc_p50_ns={g_t:.3} \
-                 pf/new={:.3} pf/glibc={:.3} new/glibc={:.3}",
-                pf_t / new_t,
-                pf_t / g_t,
+                "STRLENBIG len={len:<7} new_p50_ns={new_t:.3} min_p50_ns={min_t:.3} glibc_p50_ns={g_t:.3} \
+                 min/new={:.3} min/glibc={:.3} new/glibc={:.3}",
+                min_t / new_t,
+                min_t / g_t,
                 new_t / g_t
             );
         }

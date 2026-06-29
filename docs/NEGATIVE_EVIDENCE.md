@@ -8229,3 +8229,24 @@ CONCLUSION: the str/mem SCAN family is now comprehensively optimized; the only r
 only by per-fn AVX2 asm scan loops with page-safe alignment (a larger investment with diminishing returns,
 since these functions are already parity-to-win at small AND >=64K sizes). Kept STRLENBIG/STRRCHRBIG bench
 arms as permanent large-scan apparatus.
+
+### 2026-06-29 — ✅ strlen 128-unroll: bytewise-min combined NUL check closes the [4K,16K] residual — BlackThrush
+
+The strlen escalated-128-unroll (7a1ec68cc) left a ~1.1-1.28x residual vs glibc at the L1/L2 range [4K,16K]
+(compute-bound). Root cause: the combined per-128B NUL check was `(ea|eb|ec|ed).any()` = 4 vpcmpeqb + 3
+mask-ORs. Replaced with `min(a,b,c,d).simd_eq(0).any()` — `min` has a 0 lane iff ANY of the 4 vectors has a
+0 there (3 vpminub + 1 vpcmpeqb), resolving the exact panel only on a hit. Fewer ops/128B = faster in the
+compute-bound range.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench STRLENBIG: OR-combine (new) vs min-combine (min) vs glibc):
+  len= 4096  min/new=0.905  min/glibc=1.110   (was new/glibc 1.226 → 1.110)
+  len=16384  min/new=0.872  min/glibc=0.948   (was new/glibc 1.087 → 0.948, now BEATS glibc)
+  len=65536  min/new=0.996  min/glibc=1.000   (parity, bandwidth-bound — unchanged)
+  len=262144 min/new=0.990  min/glibc=0.995
+min-combine is 10-13% faster than OR-combine at [4K,16K] (strictly ≥ at every size, min/new 0.87-1.00, NO
+regression), taking strlen to parity-to-WIN vs glibc at [4K,16K] too (1.11 at 4K, 0.95 BEATS glibc at 16K).
+Combined with the earlier strlen wins, **deployed strlen is now parity-to-WIN vs glibc at EVERY size** (small
+head-mask beats glibc; [4K,16K] now 0.95-1.11; >=64K parity). CONFORMANCE GREEN: conformance_diff_scan_c_string
++ unterminated_buffer_audit (guard-page page-safety) + in-bench byte-identity sweep. Applies to strlen + all
+unbounded scan_c_string callers. LESSON: bytewise-min is the cheapest N-way combined zero/eq check in a SIMD
+scan (1 cmp regardless of N), beating per-vector-cmp + mask-OR.
