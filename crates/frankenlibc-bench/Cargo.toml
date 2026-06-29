@@ -403,3 +403,9 @@ harness = false
 name = "wctype_ab_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# gmtime_r/timegm time<->broken-down vs host glibc, in-process (abi-bench + dlmopen).
+[[bench]]
+name = "gmtime_ab_bench"
+required-features = ["abi-bench"]
+harness = false
