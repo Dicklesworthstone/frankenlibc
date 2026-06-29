@@ -6615,6 +6615,26 @@ pub unsafe extern "C" fn strcoll(s1: *const c_char, s2: *const c_char) -> c_int 
 /// Caller must ensure `dst` is valid for `n` bytes and `src` is NUL-terminated.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strxfrm(dst: *mut c_char, src: *const c_char, n: usize) -> usize {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has `src_bound ==
+    // None`, byte-identical to the strict body — scan src; if dst null / n==0 return
+    // strlen(src), else core `strxfrm` into `dst[..n]`. Skips the membrane tax.
+    if runtime_policy::strict_passthrough_active() {
+        if src.is_null() {
+            return 0;
+        }
+        return unsafe {
+            let (src_len, src_terminated) = scan_c_string(src, None);
+            if dst.is_null() || n == 0 {
+                src_len
+            } else {
+                let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
+                let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
+                let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), n);
+                frankenlibc_core::string::str::strxfrm(dst_slice, src_slice, n)
+            }
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if src.is_null() {
         record_string_stage_outcome(

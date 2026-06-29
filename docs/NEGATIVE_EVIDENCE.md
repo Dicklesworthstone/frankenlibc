@@ -6,6 +6,17 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strxfrm strict fast-path DEPLOYED (~3.4x vs ORIG, byte-identical) — collation pair done
+
+- **DEPLOYED (cc):** `strxfrm` (locale sort-key transform; C-locale = copy + strlen)
+  paid the full membrane. Fast path = scan src (`src_bound==None` in strict) → return
+  strlen if dst null/n==0, else core `strxfrm` into `dst[..n]` — byte-identical.
+  (`strcoll` already delegates to the fast-pathed `strcmp` — done.)
+- **MEASURED (clean stash before/after):** strxfrm n=64 **ORIG 91.6ns → fast 27.1ns
+  = ~3.4x vs ORIG** (~64ns bookkeeping removed — heavy, like the substring/tokenizer
+  fns). Parity asserted (n=64 buffer + n=0 strlen-only); conformance_diff_{strcoll_
+  strxfrm,string,string_mut} GREEN. **Collation pair (strcoll+strxfrm) now off the tax.**
+
 ## 2026-06-29 — ✅ strtok strict fast-path DEPLOYED (~55ns membrane removed, byte-identical) — tokenizer family COMPLETE
 
 - **DEPLOYED (cc):** `strtok` (non-reentrant, thread-local saved-ptr) — mirrors the
