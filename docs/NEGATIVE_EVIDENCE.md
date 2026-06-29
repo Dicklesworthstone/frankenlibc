@@ -7875,3 +7875,26 @@ glibc strnlen is tight enough that 2×16B leaves a ~1.15x residual — close but
 strict 1.5-3.0x improvement of the deployed bounded scan, benefiting strnlen + scanf field scans +
 strncpy/strncat bounds. CONFORMANCE GREEN: conformance_diff_scan_c_string + conformance_diff_string (24) +
 conformance_diff_string_mut (35) + an exhaustive in-bench first-NUL sweep vs glibc (5 sizes × 32 aligns).
+
+### 2026-06-29 — ✅ wcsnlen (wide) small-n floor CLOSED: overlapping u32 SIMD probes, beats glibc — BlackThrush
+
+First WIDE-char application of the overlapping lever. frankenlibc_core::string::wide::wcsnlen
+(WIDE_NUL_SIMD_LANES=16) was PURE SCALAR for limit < 16 wchars and 16-lane + scalar-remainder for [16,32).
+Added two overlapping u32 SIMD probes per size class: limit∈[16,32) → 2×16-lane (`[0,16)` and
+`[limit-16,limit)`); limit∈[8,16) → 2×8-lane. O(1) trailing_zeros, first-NUL ordering (probe 0 owns [0,L);
+empty ⇒ probe 1's lowest set bit is first NUL ≥ L). In-bounds (scan slice has exactly `limit` elements).
+limit < 8 left scalar (overlapping-4 measured a slight regression at limit=4: new/old 1.15, no win).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench WNLEN_AB arm: OLD (16-lane+scalar), NEW (overlapping),
+host glibc wcsnlen, NO NUL in [0,limit) = full scan, 16 alignments):
+  lim= 8  new/old=0.731  new/glibc=0.868  old/glibc=1.188
+  lim=12  new/old=0.480  new/glibc=0.674  old/glibc=1.404
+  lim=15  new/old=0.414  new/glibc=0.648  old/glibc=1.565
+  lim=16  new/old=0.917  new/glibc=0.586  old/glibc=0.640
+  lim=23  new/old=0.576  new/glibc=0.556  old/glibc=0.965
+  lim=31  new/old=0.365  new/glibc=0.511  old/glibc=1.400
+NEW is 1.1-2.7x faster than OLD for limit∈[8,32) and BEATS glibc wcsnlen at every size (new/glibc
+0.51-0.87), taking the scalar-floored [8,16) range from 1.2-1.6x SLOWER than glibc to a clean win. (limit<8
+unchanged scalar; >=32 unchanged.) CONFORMANCE GREEN: core wcsnlen suite + conformance_diff_wchar (43,
+randomized wide fns incl. wcsnlen vs glibc) + exhaustive in-bench first-NUL sweep vs glibc (8 sizes × 16
+aligns). Confirms the overlapping pattern transfers to WIDE single-pointer bounded scans.

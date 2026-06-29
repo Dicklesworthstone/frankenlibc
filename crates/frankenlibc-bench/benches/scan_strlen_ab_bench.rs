@@ -629,6 +629,57 @@ unsafe fn snlen_new(p: *const u8, limit: usize) -> usize {
     unsafe { snlen_old(p, limit) }
 }
 
+/// OLD wcsnlen small-n path: 16-lane u32 chunks + scalar tail (scalar-only for n<16).
+#[inline(never)]
+unsafe fn wnlen_old(s: *const u32, limit: usize) -> usize {
+    let mut base = 0usize;
+    while base + 16 <= limit {
+        let v = Simd::<u32, 16>::from_slice(unsafe { slice::from_raw_parts(s.add(base), 16) });
+        let m = v.simd_eq(Simd::splat(0)).to_bitmask();
+        if m != 0 {
+            return base + m.trailing_zeros() as usize;
+        }
+        base += 16;
+    }
+    while base < limit {
+        if unsafe { *s.add(base) } == 0 {
+            return base;
+        }
+        base += 1;
+    }
+    limit
+}
+
+macro_rules! wnlen_probe {
+    ($s:expr, $limit:expr, $L:literal) => {{
+        let v0 = Simd::<u32, $L>::from_slice(unsafe { slice::from_raw_parts($s, $L) });
+        let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
+        if m0 != 0 {
+            return m0.trailing_zeros() as usize;
+        }
+        let off = $limit - $L;
+        let v1 = Simd::<u32, $L>::from_slice(unsafe { slice::from_raw_parts($s.add(off), $L) });
+        let m1 = v1.simd_eq(Simd::splat(0)).to_bitmask();
+        if m1 != 0 {
+            return off + m1.trailing_zeros() as usize;
+        }
+        return $limit;
+    }};
+}
+
+/// NEW wcsnlen small-n path: two overlapping u32 SIMD probes per size class.
+#[inline(never)]
+unsafe fn wnlen_new(s: *const u32, limit: usize) -> usize {
+    if (16..32).contains(&limit) {
+        wnlen_probe!(s, limit, 16);
+    } else if (8..16).contains(&limit) {
+        wnlen_probe!(s, limit, 8);
+    } else if (4..8).contains(&limit) {
+        wnlen_probe!(s, limit, 4);
+    }
+    unsafe { wnlen_old(s, limit) }
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -986,6 +1037,45 @@ fn bench(c: &mut Criterion) {
             old_t / 32.0,
             new_t / 32.0,
             g_t / 32.0,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // wcsnlen A/B: NO NUL in [0,limit) wchars (full scan). glibc wcsnlen (wchar_t=u32).
+    type WNlenFn = unsafe extern "C" fn(*const u32, usize) -> usize;
+    let g_wnlen =
+        unsafe { std::mem::transmute::<usize, WNlenFn>(host_sym(b"wcsnlen\0")) };
+    let mut wbuf = vec![0x41u32; 4096];
+    for &limit in &[4usize, 6, 8, 12, 15, 16, 23, 31] {
+        let mut old_t = 0.0;
+        let mut new_t = 0.0;
+        let mut g_t = 0.0;
+        for off in 0..16usize {
+            for k in 0..limit {
+                wbuf[off + k] = 0x41 + (k as u32 % 26);
+            }
+            let p = unsafe { wbuf.as_ptr().add(off) };
+            assert_eq!(unsafe { wnlen_old(p, limit) }, limit, "wnlen_old off={off} limit={limit}");
+            assert_eq!(unsafe { wnlen_new(p, limit) }, limit, "wnlen_new off={off} limit={limit}");
+            assert_eq!(unsafe { g_wnlen(p, limit) }, limit, "glibc wcsnlen full");
+            for &pos in &[0usize, limit / 2, limit - 1] {
+                wbuf[off + pos] = 0;
+                assert_eq!(unsafe { wnlen_new(p, limit) }, pos, "wnlen_new first off={off} limit={limit} pos={pos}");
+                assert_eq!(unsafe { g_wnlen(p, limit) }, pos, "glibc wcsnlen first");
+                wbuf[off + pos] = 0x41 + (pos as u32 % 26);
+            }
+            old_t += measure(|| unsafe { wnlen_old(black_box(p), limit) } as u64);
+            new_t += measure(|| unsafe { wnlen_new(black_box(p), limit) } as u64);
+            g_t += measure(|| unsafe { g_wnlen(black_box(p), limit) } as u64);
+        }
+        println!(
+            "WNLEN_AB lim={limit:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t / 16.0,
+            new_t / 16.0,
+            g_t / 16.0,
             new_t / old_t,
             new_t / g_t,
             old_t / g_t
