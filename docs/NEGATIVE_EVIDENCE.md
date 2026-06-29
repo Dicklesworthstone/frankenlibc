@@ -7945,3 +7945,29 @@ AVX2 ceiling, like strcmp). Benefits strncasecmp (same scan_strcasecmp, bound=n)
 conformance_diff_cmp_family (4) + conformance_diff_string (24, randomized strcasecmp/strncasecmp vs glibc) +
 an in-bench sign sweep at multiple differing positions vs glibc. Resolves the gauntlet's strncasecmp_256
 residual loss at the scan level.
+
+### 2026-06-29 — ✗ REJECTED: wmemcmp overlapping power-of-2 does NOT beat glibc (measure-first caught it) — BlackThrush
+
+The overlapping power-of-2 lever that cleanly beat glibc for byte memcmp (a985fbb0a, new/glibc 0.86-1.10)
+does NOT transfer to the WIDE wmemcmp (core string::wide::wmemcmp, WIDE_COMPARE_SIMD_LANES=16, scalar for
+count<16). Measured the candidate in the bench BEFORE touching deployed code (measure-first discipline) —
+and it failed the vs-glibc bar, so NO deployed change was made.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench WMCMP_AB arm: OLD (16-lane+scalar), NEW (overlapping
+2×16/2×8-lane), host glibc wmemcmp, equal buffers = full scan, + exhaustive sign sweep):
+  cnt= 4  new/old=1.115  new/glibc=1.414   (REGRESSES vs old, loses glibc)
+  cnt= 6  new/old=1.086  new/glibc=1.614   (REGRESSES vs old, loses glibc)
+  cnt= 8  new/old=0.637  new/glibc=1.052
+  cnt=12  new/old=0.448  new/glibc=1.105
+  cnt=15  new/old=0.414  new/glibc=1.125
+  cnt=16  new/old=1.073  new/glibc=1.131   (REGRESSES vs old: off=0 ⇒ redundant double 16-lane probe)
+  cnt=23  new/old=0.657  new/glibc=1.000
+  cnt=31  new/old=0.393  new/glibc=0.959
+NEW beats OLD only for count∈[8,15]∪[23,31] but is ~parity-to-LOSS vs glibc (new/glibc 0.96-1.13) at EVERY
+size, and REGRESSES vs old at cnt=4/6 (overlapping overhead on tiny) and cnt=16 (the [16,32) branch double-
+probes [0,16) when off=0). WHY it differs from byte memcmp: glibc wmemcmp is already well-tuned and a 16-lane
+u32 panel is 64 bytes — already wide enough that the overlapping tail buys nothing vs glibc's native path.
+DECISION: rejected, deployed core wmemcmp LEFT UNCHANGED (confirms the earlier "wmemcmp=parity" finding). The
+WMCMP_AB bench arm is kept as permanent negative-evidence apparatus. LESSON: the overlapping lever beats
+glibc for BYTE bounded scans (16B = half a panel) but only reaches ~parity for WIDE (a u32 panel is already
+64B); always measure the wide variant separately, don't assume the byte win transfers.

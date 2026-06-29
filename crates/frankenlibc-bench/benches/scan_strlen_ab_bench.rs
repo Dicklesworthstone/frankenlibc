@@ -780,6 +780,65 @@ macro_rules! wnlen_probe {
     }};
 }
 
+/// OLD wmemcmp small-n path: 16-lane u32 chunks + scalar tail (scalar-only for n<16).
+#[inline(never)]
+unsafe fn wmcmp_old(a: *const u32, b: *const u32, count: usize) -> i32 {
+    let mut base = 0usize;
+    while base + 16 <= count {
+        let av = Simd::<u32, 16>::from_slice(unsafe { slice::from_raw_parts(a.add(base), 16) });
+        let bv = Simd::<u32, 16>::from_slice(unsafe { slice::from_raw_parts(b.add(base), 16) });
+        let d = av.simd_ne(bv).to_bitmask();
+        if d != 0 {
+            let j = base + d.trailing_zeros() as usize;
+            let (x, y) = (unsafe { *a.add(j) } as i32, unsafe { *b.add(j) } as i32);
+            return if x < y { -1 } else { 1 };
+        }
+        base += 16;
+    }
+    while base < count {
+        let (x, y) = (unsafe { *a.add(base) } as i32, unsafe { *b.add(base) } as i32);
+        if x != y {
+            return if x < y { -1 } else { 1 };
+        }
+        base += 1;
+    }
+    0
+}
+
+macro_rules! wmcmp_probe {
+    ($a:expr, $b:expr, $count:expr, $L:literal) => {{
+        let v0a = Simd::<u32, $L>::from_slice(unsafe { slice::from_raw_parts($a, $L) });
+        let v0b = Simd::<u32, $L>::from_slice(unsafe { slice::from_raw_parts($b, $L) });
+        let d0 = v0a.simd_ne(v0b).to_bitmask();
+        if d0 != 0 {
+            let j = d0.trailing_zeros() as usize;
+            let (x, y) = (unsafe { *$a.add(j) } as i32, unsafe { *$b.add(j) } as i32);
+            return if x < y { -1 } else { 1 };
+        }
+        let off = $count - $L;
+        let v1a = Simd::<u32, $L>::from_slice(unsafe { slice::from_raw_parts($a.add(off), $L) });
+        let v1b = Simd::<u32, $L>::from_slice(unsafe { slice::from_raw_parts($b.add(off), $L) });
+        let d1 = v1a.simd_ne(v1b).to_bitmask();
+        if d1 != 0 {
+            let j = off + d1.trailing_zeros() as usize;
+            let (x, y) = (unsafe { *$a.add(j) } as i32, unsafe { *$b.add(j) } as i32);
+            return if x < y { -1 } else { 1 };
+        }
+        return 0;
+    }};
+}
+
+/// NEW wmemcmp small-n path: two overlapping u32 SIMD probes per size class.
+#[inline(never)]
+unsafe fn wmcmp_new(a: *const u32, b: *const u32, count: usize) -> i32 {
+    if (16..32).contains(&count) {
+        wmcmp_probe!(a, b, count, 16);
+    } else if (8..16).contains(&count) {
+        wmcmp_probe!(a, b, count, 8);
+    }
+    unsafe { wmcmp_old(a, b, count) }
+}
+
 /// OLD wmemchr small-n path: 16-lane u32 chunks + scalar tail (scalar-only for n<16).
 #[inline(never)]
 unsafe fn wmchr_old(s: *const u32, c: u32, count: usize) -> Option<usize> {
@@ -1319,6 +1378,41 @@ fn bench(c: &mut Criterion) {
         let g_t = measure(|| unsafe { g_scasecmp(black_box(p1.cast()), black_box(p2.cast())) } as i64 as u64);
         println!(
             "SCASE_AB len={len:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // wmemcmp A/B: EQUAL buffers (full scan worst case) + a differing-position sweep.
+    type WMcmpFn = unsafe extern "C" fn(*const u32, *const u32, usize) -> i32;
+    let g_wmcmp =
+        unsafe { std::mem::transmute::<usize, WMcmpFn>(host_sym(b"wmemcmp\0")) };
+    let mut wa = vec![0x41u32; 4096];
+    let mut wbb = vec![0x41u32; 4096];
+    for &count in &[4usize, 6, 8, 12, 15, 16, 23, 31] {
+        for k in 0..count {
+            wa[k] = 0x41 + (k as u32 % 26);
+            wbb[k] = 0x41 + (k as u32 % 26);
+        }
+        let p1 = wa.as_ptr();
+        let p2 = wbb.as_ptr();
+        // correctness: flip one element at each position, signs must agree with glibc
+        for pos in 0..count {
+            let save = wbb[pos];
+            wbb[pos] = wa[pos] + 1;
+            let want = unsafe { g_wmcmp(p1, p2, count) }.signum();
+            assert_eq!(unsafe { wmcmp_old(p1, p2, count) }.signum(), want, "wmcmp_old n={count} pos={pos}");
+            assert_eq!(unsafe { wmcmp_new(p1, p2, count) }.signum(), want, "wmcmp_new n={count} pos={pos}");
+            wbb[pos] = save;
+        }
+        assert_eq!(unsafe { wmcmp_new(p1, p2, count) }, 0, "wmcmp_new eq n={count}");
+        let old_t = measure(|| unsafe { wmcmp_old(black_box(p1), black_box(p2), count) } as i64 as u64);
+        let new_t = measure(|| unsafe { wmcmp_new(black_box(p1), black_box(p2), count) } as i64 as u64);
+        let g_t = measure(|| unsafe { g_wmcmp(black_box(p1), black_box(p2), count) } as i64 as u64);
+        println!(
+            "WMCMP_AB cnt={count:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
             new_t / old_t,
             new_t / g_t,
