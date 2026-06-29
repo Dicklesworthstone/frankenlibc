@@ -972,8 +972,11 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
                 let v = Simd::<u8, 32>::from_slice(unsafe {
                     core::slice::from_raw_parts(p.add(i), 32)
                 });
-                if v.simd_eq(Simd::splat(0)).any() {
-                    break;
+                // O(1) NUL index via the SIMD mask instead of breaking to the 8-byte SWAR
+                // tail to re-locate the byte (same fix as wmemchr/memrchr).
+                let mask = v.simd_eq(Simd::splat(0)).to_bitmask();
+                if mask != 0 {
+                    return (i + mask.trailing_zeros() as usize, true);
                 }
                 i += 32;
             }
@@ -1022,10 +1025,15 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
                     let v = Simd::<u8, 32>::from_slice(unsafe {
                         core::slice::from_raw_parts(p.add(i), 32)
                     });
-                    if !v.simd_eq(Simd::splat(0)).any() {
+                    // O(1) NUL index via the SIMD mask (trailing_zeros) instead of advancing
+                    // then re-locating the byte with the 8-byte SWAR + inner scalar loop
+                    // below — same fix as wmemchr/memrchr. A NUL-free panel advances 32.
+                    let mask = v.simd_eq(Simd::splat(0)).to_bitmask();
+                    if mask == 0 {
                         i += 32;
                         continue;
                     }
+                    return (i + mask.trailing_zeros() as usize, true);
                 }
                 // SAFETY: p+i is 8-aligned, so this aligned 8-byte read stays inside
                 // the current page; the string is NUL-terminated within a mapped page.

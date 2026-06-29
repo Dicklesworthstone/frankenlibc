@@ -7651,3 +7651,24 @@ RESIDUAL (3-8x): the raw scan/op SHORT-STRING cost (fl's page-safe SIMD has more
 for ~31 bytes) — a SEPARATE 2nd lever (strlen's 8x residual is highest; raw_lane_strlen/select_dispatch
 setup). The DEFAULT-deployed hot string/mem family (memset/memcpy/strlen/strcmp/strchr/memchr/memcmp) now
 all skip the per-call membrane; remaining gap is the short-string scan core, not the membrane.
+
+### 2026-06-28 — ✅ scan_c_string O(1) NUL index (bitmask) + short-string residual root-caused — BlackThrush
+
+Digging the post-membrane short-string residual (strlen 8x after the strict-skip). Findings:
+- select_string_simd_dispatch is NOT the cost (~1.5ns, is_x86_feature_detected is std-cached; experiment:
+  hardcoding the lane only moved strlen 20→18.5ns). Also note raw_lane_strlen_bytes IGNORES its lane_bytes
+  arg and just calls scan_c_string(s, None) — the dispatch is wasted for strlen.
+- The cost is scan_c_string's scan. Its 32-byte SIMD branch used `.any()` ("a NUL exists") then re-located
+  the byte with an 8-byte SWAR + inner scalar loop. FIXED: use `.to_bitmask().trailing_zeros()` for the
+  O(1) NUL index (same fix as wmemchr/memrchr), in BOTH the None (strlen) and bounded (strnlen/scanf field
+  scans) paths. Byte-identical (first-NUL). Measured: strlen 20 → 17 ns (~3ns; near the bench noise floor
+  for a single 31-byte call, but strictly fewer ops and applies to EVERY scan_c_string caller — strlen +
+  all bounded C-string scans). CONFORMANCE GREEN: core string:: 475 + string_abi_test 201 +
+  conformance_diff_{memset,memcpy}.
+- REMAINING short-string residual (~17ns vs glibc ~3ns, the ~5x): FUNDAMENTAL — fl's None-path scan does a
+  scalar HEAD byte-scan to 8-align + a per-iteration page-cross guard `(p+i)&0xFFF<=0x1000-32` + the
+  scan_c_string call frame, whereas glibc's strlen is a tight ifunc-resolved asm loop (aligned load + mask
+  the head bits, no per-chunk page guard). Matching it needs an aligned-load-with-head-mask short path in
+  asm-equivalent Rust — a deeper-AVX rewrite, the genuine "short-input SIMD setup" ceiling (not the
+  membrane, which is now skipped). The hot string/mem family is membrane-free in default mode; the residual
+  is this scan-setup floor.
