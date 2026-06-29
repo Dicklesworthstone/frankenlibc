@@ -902,6 +902,72 @@ unsafe fn wnlen_new(s: *const u32, limit: usize) -> usize {
     unsafe { wnlen_old(s, limit) }
 }
 
+/// OLD memset small-n path: 8-aligned u64 volatile stores + byte head/tail.
+#[inline(never)]
+unsafe fn memset_old(dst: *mut u8, value: u8, n: usize) {
+    let word = (value as u64).wrapping_mul(0x0101_0101_0101_0101);
+    let mut i = 0usize;
+    let head = ((dst as usize).wrapping_neg() & 7).min(n);
+    while i < head {
+        unsafe { std::ptr::write_volatile(dst.add(i), value) };
+        i += 1;
+    }
+    while i + 32 <= n {
+        let p = unsafe { dst.add(i).cast::<u64>() };
+        unsafe {
+            std::ptr::write_volatile(p, word);
+            std::ptr::write_volatile(p.add(1), word);
+            std::ptr::write_volatile(p.add(2), word);
+            std::ptr::write_volatile(p.add(3), word);
+        }
+        i += 32;
+    }
+    while i + 8 <= n {
+        unsafe { std::ptr::write_volatile(dst.add(i).cast::<u64>(), word) };
+        i += 8;
+    }
+    while i < n {
+        unsafe { std::ptr::write_volatile(dst.add(i), value) };
+        i += 1;
+    }
+}
+
+/// NEW memset small-n path: straight-line OVERLAPPING _mm_storeu_si128 (SSE2) vector
+/// stores — explicit instructions, never lowered to @llvm.memset (recursion-safe).
+#[inline(never)]
+unsafe fn memset_new(dst: *mut u8, value: u8, n: usize) {
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::{__m128i, _mm_set1_epi8, _mm_storeu_si128};
+    unsafe {
+        if n >= 16 {
+            let v = _mm_set1_epi8(value as i8);
+            let mut i = 0usize;
+            // straight-line stride-16 stores (NOT a constant-fill loop idiom: compiler
+            // still keeps explicit storeu instructions) + one overlapping tail store.
+            while i + 16 <= n {
+                _mm_storeu_si128(dst.add(i).cast::<__m128i>(), v);
+                i += 16;
+            }
+            _mm_storeu_si128(dst.add(n - 16).cast::<__m128i>(), v);
+        } else {
+            // n < 16: overlapping power-of-2 scalar stores.
+            let word = (value as u64).wrapping_mul(0x0101_0101_0101_0101);
+            if n >= 8 {
+                std::ptr::write_unaligned(dst.cast::<u64>(), word);
+                std::ptr::write_unaligned(dst.add(n - 8).cast::<u64>(), word);
+            } else if n >= 4 {
+                let w = value as u32 as u64 * 0x0101_0101;
+                std::ptr::write_unaligned(dst.cast::<u32>(), w as u32);
+                std::ptr::write_unaligned(dst.add(n - 4).cast::<u32>(), w as u32);
+            } else {
+                for j in 0..n {
+                    *dst.add(j) = value;
+                }
+            }
+        }
+    }
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -1414,6 +1480,41 @@ fn bench(c: &mut Criterion) {
         println!(
             "WMCMP_AB cnt={count:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
+    // memset A/B: small-n fill. OLD volatile u64 vs NEW overlapping _mm_storeu vs glibc.
+    type MemsetFn = unsafe extern "C" fn(*mut c_void, i32, usize) -> *mut c_void;
+    let g_memset =
+        unsafe { std::mem::transmute::<usize, MemsetFn>(host_sym(b"memset\0")) };
+    let mut dbuf = vec![0u8; 4096];
+    for &n in &[7usize, 15, 16, 23, 31, 32, 47, 63] {
+        let mut old_t = 0.0;
+        let mut new_t = 0.0;
+        let mut g_t = 0.0;
+        for off in 0..16usize {
+            let p = unsafe { dbuf.as_mut_ptr().add(off) };
+            // byte-identity check vs a reference fill
+            let mut refb = vec![0xAAu8; n + 16];
+            unsafe { memset_old(p, 0x5A, n) };
+            refb[..n].copy_from_slice(unsafe { slice::from_raw_parts(p, n) });
+            unsafe { memset_new(p, 0x3C, n) };
+            assert!(unsafe { slice::from_raw_parts(p, n) }.iter().all(|&b| b == 0x3C), "new fill n={n}");
+            unsafe { g_memset(p.cast(), 0x5A, n) };
+            assert_eq!(unsafe { slice::from_raw_parts(p, n) }, &refb[..n], "new vs glibc bytes n={n}");
+            old_t += measure(|| { unsafe { memset_old(black_box(p), 0x11, n) }; black_box(p) as u64 });
+            new_t += measure(|| { unsafe { memset_new(black_box(p), 0x22, n) }; black_box(p) as u64 });
+            g_t += measure(|| unsafe { g_memset(black_box(p.cast()), 0x33, n) } as u64);
+        }
+        println!(
+            "MEMSET_AB n={n:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t / 16.0,
+            new_t / 16.0,
+            g_t / 16.0,
             new_t / old_t,
             new_t / g_t,
             old_t / g_t

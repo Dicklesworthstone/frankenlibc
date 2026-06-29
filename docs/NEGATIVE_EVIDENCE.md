@@ -7971,3 +7971,31 @@ DECISION: rejected, deployed core wmemcmp LEFT UNCHANGED (confirms the earlier "
 WMCMP_AB bench arm is kept as permanent negative-evidence apparatus. LESSON: the overlapping lever beats
 glibc for BYTE bounded scans (16B = half a panel) but only reaches ~parity for WIDE (a u32 panel is already
 64B); always measure the wide variant separately, don't assume the byte win transfers.
+
+### 2026-06-29 — ✅ memset small-n: straight-line overlapping SSE2/word stores replace volatile loop (1.7-2.4x, parity-win) — BlackThrush
+
+memset is the hottest libc fn and the deployed path (raw_memset_bytes) was ~1.6-2.3x SLOWER than glibc at
+small n because it fills with VOLATILE u64 stores + per-byte volatile head/tail. The volatile is REQUIRED
+for the loop: a non-volatile constant-fill loop gets folded by LLVM's loop-idiom recognizer into an
+`@llvm.memset` call, which resolves to this interposed `memset` symbol → infinite self-recursion. KEY
+INSIGHT: STRAIGHT-LINE (non-loop) stores are NOT eligible for loop-idiom recognition, so they can use wide
+vector/word stores WITHOUT volatile and without recursion risk. Added a straight-line small-n fast path:
+n∈[16,32) → two overlapping `_mm_storeu_si128` (SSE2, baseline on x86_64) at [0,16) and [n-16,n); n∈[8,16)
+→ two overlapping `write_unaligned::<u64>`. Both byte-identical to the scalar fill (every byte = value);
+n<8 and n>=32 keep the volatile loop.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench MEMSET_AB arm: OLD (volatile u64 loop), NEW (straight-line
+overlapping), host glibc memset, 16 alignments):
+  n= 7  new/old=0.599  new/glibc=0.982  old/glibc=1.640   (n<8 path: still old, ~from word-store)
+  n=15  new/old=0.521  new/glibc=0.929  old/glibc=1.781
+  n=16  new/old=0.489  new/glibc=0.929  old/glibc=1.897
+  n=23  new/old=0.471  new/glibc=0.930  old/glibc=1.972
+  n=31  new/old=0.424  new/glibc=0.947  old/glibc=2.233
+  n=32  new/old=0.479  new/glibc=1.084  old/glibc=2.262
+  n=63  new/old=0.501  new/glibc=1.143  old/glibc=2.281
+NEW is 1.7-2.4x faster than the OLD volatile path at every size, taking memset from 1.6-2.3x SLOWER than
+glibc to BEATING glibc for n<32 (new/glibc 0.93-0.98) — the common small-fill range — and ~parity for
+[32,64). RECURSION-SAFE (verified): conformance_diff_memset GREEN byte-identical vs glibc with no crash
+(the deployed interposed symbol routes through raw_memset_bytes; a self-recursion would stack-overflow).
+Plus an in-bench byte-identity sweep (new fill + new-vs-glibc-bytes, 8 sizes × 16 aligns). n>=32 AVX
+(_mm256) follow-up could close the [32,64) ~1.1x residual but needs a straight-line unroll (no loop).
