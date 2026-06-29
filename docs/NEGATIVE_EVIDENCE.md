@@ -8352,3 +8352,17 @@ CONFORMANCE GREEN: conformance_diff_wchar (43, differential vs glibc — wcstok 
 save_ptr / in-place NUL-write semantics). Byte strtok already uses bitmaps (not naive) — clean. Audited all
 deployed `.contains()` per-char scans: wcsspn/wcscspn/wcspbrk (done) + wcstok (this) were the only O(n*m)
 naive set scans in the wide ABI.
+
+### 2026-06-29 — ✅ scan_w_string (shared wide-length helper) → page-safe SIMD — 7-17x scan, lifts all wide callers — BlackThrush
+
+`scan_w_string` (the shared wide NUL-length helper, used by wcsspn/wcscspn/wcspbrk/wcstok + many other wide
+ABI fns to determine string length) was SCALAR in BOTH paths: unbounded → `while *ptr.add(i) != 0`, bounded
+→ `for i in 0..limit`. Wired in the already-proven page-safe SIMD kernels: None → `wide_strlen_unbounded`
+(aligned-head-mask + 128B 4×8-lane min-combine unroll, 32|4096 + 128|4096 page-safe, guard-page proven),
+Some(limit) → `wide_strlen_bounded` (bounded SIMD, no guard) with `(r, r<limit)` for the terminated flag.
+The length-scan portion is now the wide_strlen_unbounded kernel = 7-17x over the old scalar element loop
+(simd/scalar 0.057-0.139, measured for wcslen). Since wcsspn/etc. each do a full scan_w_string(s) before
+their main loop, this compounds with the WideCharSet span win (561d9d238/5362a2f30). CONFORMANCE GREEN:
+conformance_diff_wchar (43) + conformance_diff_wcs_copy (5) + wchar_abi_test (118) — byte-identical across
+the whole wide suite. LESSON: optimize the SHARED helper, not just the leaf fns — scan_w_string feeds the
+entire unbounded wide family, so one swap lifts dozens of callers.
