@@ -1205,6 +1205,61 @@ unsafe fn memset_new(dst: *mut u8, value: u8, n: usize) {
     }
 }
 
+/// NEW strlen scan: aligned-head-mask, then a 128-byte (4×32B) unrolled loop with ONE
+/// combined NUL check per 128 bytes (glibc structure). Page-safe: the 128-byte loop runs
+/// 128-aligned, so every read stays in one 4 KiB page (128 | 4096).
+#[inline(never)]
+unsafe fn scan_unroll128(p: *const u8) -> usize {
+    let align = (p as usize) & 31;
+    let base = unsafe { p.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(base, 32) });
+    let headclear = !((1u64 << align) - 1);
+    let mask0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & headclear;
+    if mask0 != 0 {
+        return mask0.trailing_zeros() as usize - align;
+    }
+    let mut i = 32 - align; // p+i is 32-aligned
+    // 32B tier: short strings terminate here (no unroll-setup cost). Escalate to the
+    // 128-unroll only once confirmed long (i >= 256) AND 128-aligned (page-safe).
+    while i < 256 || (p as usize + i) & 127 != 0 {
+        let v = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+        let m = v.simd_eq(Simd::splat(0)).to_bitmask();
+        if m != 0 {
+            return i + m.trailing_zeros() as usize;
+        }
+        i += 32;
+    }
+    // 128-aligned 4×32B unrolled loop: one combined `.any()` per 128 bytes.
+    loop {
+        let a = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+        let b = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 32), 32) });
+        let c = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 64), 32) });
+        let d = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 96), 32) });
+        let z = Simd::splat(0u8);
+        let ea = a.simd_eq(z);
+        let eb = b.simd_eq(z);
+        let ec = c.simd_eq(z);
+        let ed = d.simd_eq(z);
+        if (ea | eb | ec | ed).any() {
+            let ma = ea.to_bitmask();
+            if ma != 0 {
+                return i + ma.trailing_zeros() as usize;
+            }
+            let mb = eb.to_bitmask();
+            if mb != 0 {
+                return i + 32 + mb.trailing_zeros() as usize;
+            }
+            let mc = ec.to_bitmask();
+            if mc != 0 {
+                return i + 64 + mc.trailing_zeros() as usize;
+            }
+            let md = ed.to_bitmask();
+            return i + 96 + md.trailing_zeros() as usize;
+        }
+        i += 128;
+    }
+}
+
 fn p50(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v[v.len() / 2]
@@ -1830,6 +1885,34 @@ fn bench(c: &mut Criterion) {
             new_t / g_t,
             old_t / g_t
         );
+    }
+
+    // strlen LARGE-n: deployed scan_new (aligned-head-mask 32B loop) vs glibc strlen.
+    {
+        let mut lb = vec![b'a'; (1 << 18) + 64];
+        for &len in &[64usize, 256, 1024, 4096, 16384, 65536, 262144] {
+            // byte-identity: exactly one NUL at off+len; both kernels agree, all alignments.
+            for off in 0..32usize {
+                lb[off + len] = 0;
+                let q = unsafe { lb.as_ptr().add(off) };
+                assert_eq!(unsafe { scan_unroll128(q) }, len, "unroll128 off={off} len={len}");
+                assert_eq!(unsafe { scan_new(q) }, len, "scan_new off={off} len={len}");
+                lb[off + len] = b'a';
+            }
+            lb[len] = 0;
+            let p = lb.as_ptr();
+            let cur_t = measure(|| unsafe { scan_new(black_box(p)) } as u64);
+            let new_t = measure(|| unsafe { scan_unroll128(black_box(p)) } as u64);
+            let g_t = measure(|| unsafe { (host_strlen())(black_box(p.cast())) } as u64);
+            lb[len] = b'a';
+            println!(
+                "STRLENBIG len={len:<7} cur_p50_ns={cur_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
+                 new/cur={:.3} new/glibc={:.3} cur/glibc={:.3}",
+                new_t / cur_t,
+                new_t / g_t,
+                cur_t / g_t
+            );
+        }
     }
 
     // memmove DISJOINT A/B: OLD copy_unaligned+volatile vs NEW (raw_overlap_copy dispatch)

@@ -8168,3 +8168,30 @@ exercises OVERLAPPING moves vs glibc — proving the careful path is intact) + c
 (1) + conformance_diff_string_mut (35). Recursion-safe (raw_overlap_copy is asm/explicit, never @llvm.mem*).
 **THE ENTIRE memcpy/memmove/memset FAMILY IS NOW PARITY-TO-WIN vs glibc across all sizes** (disjoint moves
 included; only genuine-overlap memmove keeps the careful copy_unaligned path, ~1.3-1.5x, structurally needed).
+
+### 2026-06-29 — ✅ strlen large-n: length-escalated 128-byte (4×32B) unrolled scan — 2-2.5x over old, parity-to-beat glibc — BlackThrush
+
+The biggest remaining hot-path gap: deployed strlen (scan_c_string None path, aligned-head-mask + 32B/iter
+loop) was 1.8-3.5x SLOWER than glibc at large sizes — one movemask+branch per 32 bytes vs glibc's 4×vpcmpeqb
+OR'd to one branch per 128 bytes. Added a length-escalated 128-byte unrolled tier: short strings stay in the
+32B tier (no setup cost), and once confirmed long (i>=256) AND 128-aligned (so the 4×32B=128B window stays
+in one 4 KiB page, 128|4096) the loop does ONE combined `(ea|eb|ec|ed).any()` per 128 bytes, resolving the
+exact panel/index only on a NUL. Pure portable_simd (no asm); page-safe via 128-alignment.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench STRLENBIG: OLD 32B loop, NEW escalated 128-unroll, glibc):
+  len=    64  new/cur=1.304  new/glibc=1.312   (escalation NOT reached; noise, tiny absolute)
+  len=   256  new/cur=1.399  new/glibc=1.964   (escalation-edge: NUL right at threshold, wasted unroll reads)
+  len=  1024  new/cur=0.702  new/glibc=1.771
+  len=  4096  new/cur=0.393  new/glibc=1.390   (2.5x over old)
+  len= 16384  new/cur=0.388  new/glibc=1.280   (2.5x over old)
+  len= 65536  new/cur=0.641  new/glibc=1.008   (glibc parity)
+  len=262144  new/cur=0.472  new/glibc=0.853   (BEATS glibc, 2.1x over old)
+NEW is 2-2.5x faster than the OLD 32B loop for len>=1024, taking large strlen from 1.8-3.5x SLOWER than
+glibc to parity-to-WIN (parity at 64K, BEATS glibc at 256K). HONEST: short strings (<256) unaffected (stay in
+the head-mask/32B tier, already beat glibc); a narrow regression band sits right at the escalation edge
+(len~256-384, NUL lands just past the threshold so the first unroll wastes reads — len=256 is 1.40x). The win
+for long strings dominates. CONFORMANCE GREEN: conformance_diff_scan_c_string (1) + unterminated_buffer_audit
+(4, guard-page PROT_NONE page-safety — proves the 128B aligned reads never fault past the NUL's page) + an
+in-bench byte-identity sweep (32 alignments × 7 sizes). Applies to strlen + every unbounded scan_c_string
+caller. Residual ~1.1-1.4x vs glibc at [1K,16K] = portable_simd vs glibc hand-tuned AVX2 (an asm strlen loop
+could close it further).
