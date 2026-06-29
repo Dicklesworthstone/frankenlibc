@@ -8071,3 +8071,26 @@ exact-multiple sizes where old already had no volatile tail → ~parity (within 
 conformance_diff_memcpy GREEN + conformance_diff_string_mut (35, strcpy/strcat/strncat share the primitive)
 GREEN, byte-identical no-crash; in-bench byte-identity sweep. Same straight-line/overlapping recursion-safe
 insight as the memset win. memmove left alone (overlap-aware).
+
+### 2026-06-29 — ✅ memcpy large-n (n>=2048): rep movsb (ERMS) — 1.7x over u128 copy loop, beats glibc — BlackThrush
+
+Analog of the memset rep-stosb win, for the medium-large copy gap: the deployed u128-pair copy loop
+(copy_unaligned_32) ran ~1.5x slower than glibc in [1024,32768). Added `rep movsb` (x86 ERMS = glibc's own
+large-memcpy path) to the shared raw_overlap_copy for n>=2048. Inline asm ⇒ never lowered to @llvm.memcpy
+(recursion-safe); DF=0 on entry (SysV) ⇒ forward copy.
+
+MEASURED — in-process A/B (scan_strlen_ab_bench MEMCPYBIG_AB: CUR u128-pair copy loop, REP movsb, glibc):
+  n=   64  rep/cur=1.474  rep/glibc=1.400   (rep LOSES — ERMS startup; not deployed)
+  n=  128  rep/cur=3.346  rep/glibc=3.955   (LOSES badly — not deployed)
+  n=  256  rep/cur=2.200  rep/glibc=2.933   (LOSES — not deployed)
+  n= 1024  rep/cur=0.953  rep/glibc=1.627   (marginal; below threshold)
+  n= 4096  rep/cur=0.589  rep/glibc=0.892   (1.7x over cur, BEATS glibc)
+  n=16384  rep/cur=0.589  rep/glibc=0.867   (1.7x over cur, BEATS glibc)
+  n=65536  rep/cur=1.027  rep/glibc=1.005   (parity — memory-bandwidth-bound; cur already 0.98 vs glibc)
+For n>=2048 rep movsb is ~1.7x faster than the copy loop in [4096,32768) and BEATS glibc (0.87-0.89) where
+the copy loop was 1.5x slower; at 64 KiB everything is memory-bound parity (harmless). Threshold 2048 because
+ERMS startup makes rep movsb LOSE below ~1024 (n=256 was 2.2x worse). RECURSION-SAFE: conformance_diff_memcpy
++ conformance_diff_string (24) + conformance_diff_string_mut (35, strcpy/strcat share raw_overlap_copy) GREEN
+byte-identical no-crash; rep movsb kernel byte-verified in-bench at 64..65536. memcpy now: small-n overlapping
+(beats glibc n<32) + [2048,~32K) rep movsb (beats glibc) + 64K+ parity. Mirrors memset (rep stosb). The
+[32,2048) range keeps the copy loop (the remaining ~1.5x medium-copy residual, like memset's [64,1024)).

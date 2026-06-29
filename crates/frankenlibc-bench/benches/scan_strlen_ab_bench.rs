@@ -924,6 +924,22 @@ unsafe fn cp32(dst: *mut u8, src: *const u8) {
     }
 }
 
+/// `rep movsb` copy (x86 ERMS) — glibc's large-memcpy path; inline asm so it is never
+/// lowered to @llvm.memcpy (recursion-safe).
+#[inline(never)]
+unsafe fn memcpy_repmovs(dst: *mut u8, src: *const u8, n: usize) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!(
+            "rep movsb",
+            inout("rcx") n => _,
+            inout("rdi") dst => _,
+            inout("rsi") src => _,
+            options(nostack, preserves_flags),
+        );
+    }
+}
+
 /// OLD memcpy kernel: 32/16-byte copy_unaligned + per-byte VOLATILE tail.
 #[inline(never)]
 unsafe fn memcpy_old(dst: *mut u8, src: *const u8, n: usize) {
@@ -1668,6 +1684,27 @@ fn bench(c: &mut Criterion) {
             new_t / old_t,
             new_t / g_t,
             old_t / g_t
+        );
+    }
+
+    // memcpy LARGE-n A/B: CUR deployed 32B-copy loop vs rep movsb (ERMS) vs glibc.
+    let bigsrc: Vec<u8> = (0..(1usize << 17)).map(|k| (k % 251) as u8 + 1).collect();
+    let mut bigdst = vec![0u8; 1 << 17];
+    for &n in &[64usize, 128, 256, 1024, 4096, 16384, 65536] {
+        let sp = bigsrc.as_ptr();
+        let dp = bigdst.as_mut_ptr();
+        unsafe { memcpy_repmovs(dp, sp, n) };
+        assert_eq!(unsafe { slice::from_raw_parts(dp, n) }, &bigsrc[..n], "repmovs n={n}");
+        let cur_t = measure(|| { unsafe { memcpy_new(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
+        let new_t = measure(|| { unsafe { memcpy_repmovs(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
+        let g_t = measure(|| unsafe { g_memcpy(black_box(dp.cast()), black_box(sp.cast()), n) } as u64);
+        println!(
+            "MEMCPYBIG_AB n={n:<6} cur_p50_ns={:.3} rep_p50_ns={:.3} glibc_p50_ns={:.3} \
+             rep/cur={:.3} rep/glibc={:.3} cur/glibc={:.3}",
+            cur_t, new_t, g_t,
+            new_t / cur_t,
+            new_t / g_t,
+            cur_t / g_t
         );
     }
 
