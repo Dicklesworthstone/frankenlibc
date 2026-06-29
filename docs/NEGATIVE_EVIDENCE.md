@@ -7672,3 +7672,31 @@ Digging the post-membrane short-string residual (strlen 8x after the strict-skip
   asm-equivalent Rust — a deeper-AVX rewrite, the genuine "short-input SIMD setup" ceiling (not the
   membrane, which is now skipped). The hot string/mem family is membrane-free in default mode; the residual
   is this scan-setup floor.
+
+### 2026-06-29 — ✅ scan_c_string short-string floor CLOSED: glibc-style aligned-load head-mask — BlackThrush
+
+The residual short-string floor from the prior entry (fl strlen scan ~1.5-1.9x slower than glibc for
+~7-63 byte strings) is now CLOSED. Root cause was the None-path doing a scalar byte-scan of the misaligned
+head (to 8-align every wide load) PLUS a per-iteration page-cross guard `(p+i)&0xFFF<=0x1000-32` on every
+32B chunk. glibc pays neither: it aligns the pointer DOWN to a vector boundary, does ONE aligned load, and
+head-masks the bytes before the start — an aligned 32B load is always within a single 4 KiB page (32|4096),
+so no per-chunk guard is needed, and the page holding `ptr` is mapped so the head bytes `base..ptr` are
+safe to read. Ported that exact shape into scan_c_string's None path (commit 847363e6e): `align=p&31`,
+one aligned load from `p-align`, mask `& !((1<<align)-1)`, length on a head hit = `tz-align`; subsequent
+loads run from the next 32-aligned boundary (all in-page, no guard). Bounded path unchanged (can't align
+below `ptr` without reading pre-allocation bytes).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench: OLD kernel, NEW kernel, host glibc all timed in ONE
+process over all 32 alignments × 6 lengths, so rch worker variance cancels in the ratios):
+  len= 7  new/old=0.528  new/glibc=0.919  old/glibc=1.739
+  len=15  new/old=0.537  new/glibc=1.018  old/glibc=1.896
+  len=23  new/old=0.609  new/glibc=1.070  old/glibc=1.759
+  len=31  new/old=0.606  new/glibc=1.067  old/glibc=1.759
+  len=47  new/old=0.546  new/glibc=0.899  old/glibc=1.648
+  len=63  new/old=0.601  new/glibc=0.917  old/glibc=1.525
+NEW is 1.65-1.9x faster than OLD at every size, taking fl from 1.5-1.9x SLOWER than glibc to PARITY-to-WIN
+(beats glibc at len 7/47/63; within 7% elsewhere). Applies to strlen + every unbounded scan_c_string
+caller. CONFORMANCE GREEN: conformance_diff_scan_c_string (1), unterminated_buffer_audit_test (4, the
+page-safety gate), string_abi_test (the lone failure = memcpy_htm_abort, a TSX/HTM hardware test that
+needs CPU transactional-memory the worker lacks — VERIFIED failing identically at parent a7878a76b, NOT my
+change). The short-string SIMD-setup ceiling claimed "fundamental" in the prior entry was in fact closable.
