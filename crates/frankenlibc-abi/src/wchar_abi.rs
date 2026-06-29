@@ -454,6 +454,22 @@ pub unsafe extern "C" fn wcsncpy(dst: *mut u32, src: *const u32, n: usize) -> *m
         return dst;
     }
 
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict
+    // copy-then-NUL-pad body below — copy `min(strlen(src)+1, n)` wchars (through
+    // the terminator if it fits), zero-pad the remainder to `n`. Skips the ~640ns
+    // wide WRITE membrane full path (see wcscpy).
+    if runtime_policy::strict_passthrough_active() {
+        unsafe {
+            let (src_len, _) = scan_w_string(src, Some(n));
+            let copy = (src_len + 1).min(n);
+            std::ptr::copy_nonoverlapping(src, dst, copy);
+            if copy < n {
+                std::slice::from_raw_parts_mut(dst.add(copy), n - copy).fill(0);
+            }
+        }
+        return dst;
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
@@ -534,6 +550,18 @@ pub unsafe extern "C" fn wcsncpy(dst: *mut u32, src: *const u32, n: usize) -> *m
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcscat(dst: *mut u32, src: *const u32) -> *mut u32 {
     if dst.is_null() || src.is_null() {
+        return dst;
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict
+    // unbounded append below (scalar loop → SIMD scan + bulk copy), skipping the
+    // ~640ns wide WRITE membrane full path (see wcscpy).
+    if runtime_policy::strict_passthrough_active() {
+        unsafe {
+            let (dst_len, _) = scan_w_string(dst.cast_const(), None);
+            let (src_len, _) = scan_w_string(src, None);
+            std::ptr::copy_nonoverlapping(src, dst.add(dst_len), src_len + 1);
+        }
         return dst;
     }
 
@@ -1663,6 +1691,22 @@ pub unsafe extern "C" fn wmemchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcsncat(dst: *mut u32, src: *const u32, n: usize) -> *mut u32 {
     if dst.is_null() || src.is_null() || n == 0 {
+        return dst;
+    }
+
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict
+    // unbounded append below — append `min(strlen(src), n)` wchars at dst's end,
+    // then NUL-terminate. Skips the ~640ns wide WRITE membrane full path (see wcscpy).
+    if runtime_policy::strict_passthrough_active() {
+        unsafe {
+            let (dst_len, _) = scan_w_string(dst.cast_const(), None);
+            let (src_len, _) = scan_w_string(src, None);
+            let copy_len = src_len.min(n);
+            if copy_len > 0 {
+                std::ptr::copy_nonoverlapping(src, dst.add(dst_len), copy_len);
+            }
+            *dst.add(dst_len + copy_len) = 0;
+        }
         return dst;
     }
 

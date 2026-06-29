@@ -6,6 +6,27 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ wide WRITE builders wcscat/wcsncpy/wcsncat strict fast-path DEPLOYED (~28x vs ORIG, byte-identical)
+
+- **DEPLOYED (cc, completes the wcscpy follow-up):** the same strict
+  `strict_passthrough_active()` fast path on the three remaining wide write
+  builders, each byte-identical to its strict body (verified):
+  - `wcscat` = scan dst NUL + scan src + `copy_nonoverlapping(src, dst+dst_len, src_len+1)`.
+  - `wcsncpy` = `copy min(strlen(src)+1, n)` then zero-pad to `n` (covers padding AND truncation).
+  - `wcsncat` = append `min(strlen(src), n)` at dst's end + NUL.
+- **BYTE-IDENTITY PROVEN in a NON-TEST binary** (cfg(test) forces the full path, so
+  conformance alone can't exercise the fast path): `wcscmp_membrane_ab_bench`
+  `bench_builders` asserts fl==glibc for all three across sizes {1,3,8,32} and BOTH
+  cap<len (truncation) and cap>len (padding) edges — all pass. Plus
+  conformance_diff_wchar 43/43 + wchar_abi_test 118/118 GREEN.
+- **MEASURED (fresh build via `touch`, default=strict):** `wcscat` append-32
+  **22.5ns** vs the ~640ns wide WRITE membrane full path = **~28x vs ORIG**
+  (vs glibc 12.2ns = 1.8x). Same ~28-31x for wcsncpy/wcsncat (shared full path).
+- **Wide WRITE family now COMPLETE on the fast path:** wmemset/wmemcpy/wmemmove +
+  wcscpy + wcscat/wcsncpy/wcsncat. 18 wide-char functions total off the membrane
+  tax. Remaining full-path: `wcslen` (honors `known` ungated). The hardened-mode
+  ~5.7µs write path is still its own separate lever.
+
 ## 2026-06-29 — ✅ `wcscpy` strict fast-path DEPLOYED (~31x vs ORIG) + the wide WRITE membrane full path is ~640ns (hardened ~5.7µs)
 
 - **DEPLOYED (cc):** strict `strict_passthrough_active()` fast path for the

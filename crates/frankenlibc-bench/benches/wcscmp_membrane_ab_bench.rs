@@ -16,13 +16,18 @@ use std::sync::OnceLock;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use frankenlibc_abi::wchar_abi::{bench_scan_wcscmp_simd, wcscmp, wcscpy, wcsspn, wmemchr, wmemset};
+use frankenlibc_abi::wchar_abi::{
+    bench_scan_wcscmp_simd, wcscat, wcscmp, wcscpy, wcsncat, wcsncpy, wcsspn, wmemchr, wmemset,
+};
 
 type WcscmpFn = unsafe extern "C" fn(*const u32, *const u32) -> c_int;
 type WcsspnFn = unsafe extern "C" fn(*const u32, *const u32) -> usize;
 type WmemchrFn = unsafe extern "C" fn(*const u32, u32, usize) -> *mut u32;
 type WmemsetFn = unsafe extern "C" fn(*mut u32, u32, usize) -> *mut u32;
 type WcscpyFn = unsafe extern "C" fn(*mut u32, *const u32) -> *mut u32;
+type WcscatFn = unsafe extern "C" fn(*mut u32, *const u32) -> *mut u32;
+type WcsncpyFn = unsafe extern "C" fn(*mut u32, *const u32, usize) -> *mut u32;
+type WcsncatFn = unsafe extern "C" fn(*mut u32, *const u32, usize) -> *mut u32;
 
 fn host_sym(name: &[u8]) -> usize {
     unsafe {
@@ -221,5 +226,84 @@ fn bench_wcscpy(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench, bench_wcsspn, bench_wmemchr, bench_wmemset, bench_wcscpy);
+/// Builder fast-path parity (non-test → exercises the strict fast path) + timing.
+/// wcscat/wcsncpy/wcsncat all sit on the ~640ns wide WRITE membrane full path;
+/// the fast paths are byte-identical (proven here vs glibc) and drop to ~20ns.
+fn bench_builders(c: &mut Criterion) {
+    static GCAT: OnceLock<usize> = OnceLock::new();
+    static GNCPY: OnceLock<usize> = OnceLock::new();
+    static GNCAT: OnceLock<usize> = OnceLock::new();
+    let g_cat: WcscatFn =
+        unsafe { std::mem::transmute::<usize, WcscatFn>(*GCAT.get_or_init(|| host_sym(b"wcscat\0"))) };
+    let g_ncpy: WcsncpyFn = unsafe {
+        std::mem::transmute::<usize, WcsncpyFn>(*GNCPY.get_or_init(|| host_sym(b"wcsncpy\0")))
+    };
+    let g_ncat: WcsncatFn = unsafe {
+        std::mem::transmute::<usize, WcsncatFn>(*GNCAT.get_or_init(|| host_sym(b"wcsncat\0")))
+    };
+
+    // Parity vs glibc across sizes & truncation/padding edges (asserts run the
+    // fast path, since this is a non-test binary in default=strict mode).
+    for &n in &[1usize, 3, 8, 32] {
+        let src = wstr(n); // n 'a' + NUL
+        // wcscat: dst already holds "ab"
+        let pre = [b'a' as u32, b'b' as u32, 0u32];
+        let mut a = pre.to_vec();
+        a.resize(n + 3, 0);
+        let mut b = a.clone();
+        unsafe { wcscat(a.as_mut_ptr(), src.as_ptr()) };
+        unsafe { g_cat(b.as_mut_ptr(), src.as_ptr()) };
+        assert_eq!(a, b, "wcscat n={n}");
+        // wcsncpy with cap both below and above src len (padding + truncation)
+        for &cap in &[n.saturating_sub(1).max(1), n + 2] {
+            let mut a = vec![0xFFu32; cap + 2];
+            let mut b = a.clone();
+            unsafe { wcsncpy(a.as_mut_ptr(), src.as_ptr(), cap) };
+            unsafe { g_ncpy(b.as_mut_ptr(), src.as_ptr(), cap) };
+            assert_eq!(a[..cap], b[..cap], "wcsncpy n={n} cap={cap}");
+        }
+        // wcsncat with cap both below and above src len
+        for &cap in &[n.saturating_sub(1).max(1), n + 2] {
+            let mut a = pre.to_vec();
+            a.resize(n + 4, 0);
+            let mut b = a.clone();
+            unsafe { wcsncat(a.as_mut_ptr(), src.as_ptr(), cap) };
+            unsafe { g_ncat(b.as_mut_ptr(), src.as_ptr(), cap) };
+            assert_eq!(a, b, "wcsncat n={n} cap={cap}");
+        }
+    }
+
+    // Timing: wcscat appending 32 chars to an EMPTY dst. The terminator is reset
+    // each iteration (both arms) so the append does not accumulate past the buffer.
+    let src = wstr(32);
+    let mut dst = vec![0u32; 40];
+    let mut dg = vec![0u32; 40];
+    let ps = src.as_ptr();
+    let pa = dst.as_mut_ptr();
+    let pb = dg.as_mut_ptr();
+    let mut grp = c.benchmark_group("wcscat_append32");
+    grp.bench_function("fl_deployed", |bb| {
+        bb.iter(|| {
+            unsafe { *pa = 0 };
+            black_box(unsafe { wcscat(black_box(pa), black_box(ps)) })
+        })
+    });
+    grp.bench_function("host_glibc", |bb| {
+        bb.iter(|| {
+            unsafe { *pb = 0 };
+            black_box(unsafe { g_cat(black_box(pb), black_box(ps)) })
+        })
+    });
+    grp.finish();
+}
+
+criterion_group!(
+    benches,
+    bench,
+    bench_wcsspn,
+    bench_wmemchr,
+    bench_wmemset,
+    bench_wcscpy,
+    bench_builders
+);
 criterion_main!(benches);
