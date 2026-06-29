@@ -5431,6 +5431,33 @@ pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize)
 /// Caller must ensure both `haystack` and `needle` are valid null-terminated strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
+    // body's RETURN — scan haystack + needle (same ungated `known_remaining` bounds),
+    // then core case-insensitive `strcasestr` over the NUL-inclusive slices. Skips
+    // stage_context + decide + observe + stage-trace (mirrors the strstr fast path).
+    if runtime_policy::strict_passthrough_active() {
+        if haystack.is_null() {
+            return std::ptr::null_mut();
+        }
+        if needle.is_null() {
+            return haystack as *mut c_char;
+        }
+        return unsafe {
+            let hay_bound = known_remaining(haystack as usize);
+            let needle_bound = known_remaining(needle as usize);
+            let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
+            let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
+            let h_slice_len = if hay_terminated { hay_len + 1 } else { hay_len };
+            let n_slice_len = if needle_terminated { needle_len + 1 } else { needle_len };
+            let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), h_slice_len);
+            let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), n_slice_len);
+            match frankenlibc_core::string::str::strcasestr(h_slice, n_slice) {
+                Some(idx) => haystack.add(idx) as *mut c_char,
+                None => std::ptr::null_mut(),
+            }
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
     if haystack.is_null() {
         record_string_stage_outcome(

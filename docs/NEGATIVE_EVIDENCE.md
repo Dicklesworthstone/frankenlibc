@@ -6,6 +6,19 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strcasestr strict fast-path DEPLOYED (~2.0x vs ORIG, byte-identical) — hot fn
+
+- **DEPLOYED (cc):** `strcasestr` (hot — HTTP/protocol header matching) mirrors the
+  strstr fast path: scan haystack + needle (same ungated `known_remaining` bounds)
+  + core case-insensitive `str::strcasestr` over the NUL-INCLUSIVE slices
+  (`hay_len+1` when terminated — matches the full body exactly, unlike strstr/memmem
+  which pass the bare length). Skips stage_context + decide + observe + stage-trace.
+- **MEASURED (clean stash before/after):** strcasestr 38-byte **ORIG 100.3ns → fast
+  49.5ns = ~2.0x vs ORIG** (glibc 33ns, 1.5x). Parity asserted (6 cases incl.
+  not-found/empty/mixed-case); conformance_diff_memmem_strcasestr GREEN. **The
+  substring family (strstr + memmem + strcasestr, + wide wcsstr) is now off the
+  membrane tax.**
+
 ## 2026-06-29 — ✅ strstr strict fast-path DEPLOYED (~3.6x vs ORIG, byte-identical) — hot function
 
 - **DEPLOYED (cc):** `strstr` (extremely hot) paid the full membrane in
