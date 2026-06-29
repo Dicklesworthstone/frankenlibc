@@ -1045,6 +1045,58 @@ unsafe fn memcpy_new(dst: *mut u8, src: *const u8, n: usize) {
     }
 }
 
+/// AVX2 128-byte-unrolled vmovdqu STORE loop (recursion-safe asm, vzeroupper) + minimal
+/// straight-line overlapping 32-byte SSE tail. Requires AVX; caller guarantees n >= 128.
+#[inline(never)]
+unsafe fn memset_avx(dst: *mut u8, value: u8, n: usize) {
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::{__m128i, _mm256_set1_epi8, _mm_set1_epi8, _mm_storeu_si128};
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let v = _mm256_set1_epi8(value as i8);
+        let mut d = dst;
+        let mut rem = n;
+        core::arch::asm!(
+            "2:",
+            "vmovdqu [{d}], {v}",
+            "vmovdqu [{d}+32], {v}",
+            "vmovdqu [{d}+64], {v}",
+            "vmovdqu [{d}+96], {v}",
+            "add {d}, 128",
+            "sub {rem}, 128",
+            "cmp {rem}, 128",
+            "jae 2b",
+            "vzeroupper",
+            d = inout(reg) d,
+            rem = inout(reg) rem,
+            v = in(ymm_reg) v,
+            options(nostack),
+        );
+        let _ = d;
+        // rem ∈ [0,128): minimal straight-line overlapping 32-byte SSE stores from the end.
+        let vx = _mm_set1_epi8(value as i8);
+        let set32 = |off: usize| {
+            _mm_storeu_si128(dst.add(off).cast::<__m128i>(), vx);
+            _mm_storeu_si128(dst.add(off + 16).cast::<__m128i>(), vx);
+        };
+        if rem > 96 {
+            set32(n - 128);
+            set32(n - 96);
+            set32(n - 64);
+            set32(n - 32);
+        } else if rem > 64 {
+            set32(n - 96);
+            set32(n - 64);
+            set32(n - 32);
+        } else if rem > 32 {
+            set32(n - 64);
+            set32(n - 32);
+        } else if rem > 0 {
+            set32(n - 32);
+        }
+    }
+}
+
 /// `rep stosb` fill (x86 ERMS) — glibc's large-memset path; inline asm so it is never
 /// lowered to @llvm.memset (recursion-safe).
 #[inline(never)]
@@ -1685,6 +1737,27 @@ fn bench(c: &mut Criterion) {
             new_t / g_t,
             old_t / g_t
         );
+    }
+
+    // memset MEDIUM-n A/B: OLD volatile u64 loop vs AVX2 store loop vs glibc, n>=128.
+    if std::is_x86_feature_detected!("avx") {
+        let mut mdbuf = vec![0u8; 8192];
+        for &n in &[128usize, 192, 256, 512, 1024, 2048] {
+            let p = mdbuf.as_mut_ptr();
+            unsafe { memset_avx(p, 0x6D, n) };
+            assert!(unsafe { slice::from_raw_parts(p, n) }.iter().all(|&b| b == 0x6D), "avx set n={n}");
+            let old_t = measure(|| { unsafe { memset_old(black_box(p), 0x11, n) }; black_box(p) as u64 });
+            let avx_t = measure(|| { unsafe { memset_avx(black_box(p), 0x22, n) }; black_box(p) as u64 });
+            let g_t = measure(|| unsafe { g_memset(black_box(p.cast()), 0x33, n) } as u64);
+            println!(
+                "MEMSETMED_AB n={n:<5} old_p50_ns={:.3} avx_p50_ns={:.3} glibc_p50_ns={:.3} \
+                 avx/old={:.3} avx/glibc={:.3} old/glibc={:.3}",
+                old_t, avx_t, g_t,
+                avx_t / old_t,
+                avx_t / g_t,
+                old_t / g_t
+            );
+        }
     }
 
     // memset LARGE-n A/B: OLD volatile u64 loop vs NEW rep stosb (ERMS) vs glibc.

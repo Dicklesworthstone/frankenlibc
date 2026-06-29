@@ -617,6 +617,60 @@ unsafe fn raw_strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_c
     }
 }
 
+/// AVX2 128-byte-unrolled `vmovdqu` STORE loop + minimal straight-line overlapping 32-byte
+/// SSE tail. Inline asm ⇒ never lowered to `@llvm.memset` (recursion-safe). The volatile
+/// u64 loop emits 8-byte stores (1/4 glibc's 32-byte ymm); this matches/beats glibc for
+/// medium n. `vzeroupper` avoids the AVX↔SSE penalty (the tail is pure SSE). Caller
+/// guarantees n >= 128 and AVX availability.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn raw_avx_memset(dst: *mut u8, value: u8, n: usize) {
+    use core::arch::x86_64::{__m128i, _mm256_set1_epi8, _mm_set1_epi8, _mm_storeu_si128};
+    unsafe {
+        let v = _mm256_set1_epi8(value as i8);
+        let mut d = dst;
+        let mut rem = n;
+        core::arch::asm!(
+            "2:",
+            "vmovdqu [{d}], {v}",
+            "vmovdqu [{d}+32], {v}",
+            "vmovdqu [{d}+64], {v}",
+            "vmovdqu [{d}+96], {v}",
+            "add {d}, 128",
+            "sub {rem}, 128",
+            "cmp {rem}, 128",
+            "jae 2b",
+            "vzeroupper",
+            d = inout(reg) d,
+            rem = inout(reg) rem,
+            v = in(ymm_reg) v,
+            options(nostack),
+        );
+        let _ = d;
+        // rem ∈ [0,128): minimal straight-line overlapping 32-byte SSE stores from the end.
+        let vx = _mm_set1_epi8(value as i8);
+        let set32 = |off: usize| {
+            _mm_storeu_si128(dst.add(off).cast::<__m128i>(), vx);
+            _mm_storeu_si128(dst.add(off + 16).cast::<__m128i>(), vx);
+        };
+        if rem > 96 {
+            set32(n - 128);
+            set32(n - 96);
+            set32(n - 64);
+            set32(n - 32);
+        } else if rem > 64 {
+            set32(n - 96);
+            set32(n - 64);
+            set32(n - 32);
+        } else if rem > 32 {
+            set32(n - 64);
+            set32(n - 32);
+        } else if rem > 0 {
+            set32(n - 32);
+        }
+    }
+}
+
 #[inline(never)]
 unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
     // Wide-word volatile fill. The fill MUST NOT lower to an `@llvm.memset`
@@ -676,7 +730,7 @@ unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
         // parity-to-win vs glibc for n>=1024 (beats glibc at 64 KiB); ERMS startup cost
         // makes it lose for smaller n, so the [64,1024) range keeps the volatile loop.
         #[cfg(target_arch = "x86_64")]
-        if n >= 1024 {
+        if n >= 2048 {
             // SAFETY: fills exactly `n` bytes at `dst` with `value` (caller-guaranteed
             // valid for n writes); clobbers rcx/rdi/flags per the asm contract.
             core::arch::asm!(
@@ -686,6 +740,15 @@ unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
                 in("al") value,
                 options(nostack, preserves_flags),
             );
+            return;
+        }
+        // Medium fills [128,2048): AVX2 vmovdqu store loop (beats glibc; the volatile loop
+        // below emits only 8-byte stores, and rep stosb loses here on ERMS startup). Gated
+        // on runtime AVX detection.
+        #[cfg(target_arch = "x86_64")]
+        if n >= 128 && std::is_x86_feature_detected!("avx") {
+            // SAFETY: n>=128 and AVX confirmed available.
+            raw_avx_memset(dst, value, n);
             return;
         }
 
