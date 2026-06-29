@@ -7700,3 +7700,31 @@ caller. CONFORMANCE GREEN: conformance_diff_scan_c_string (1), unterminated_buff
 page-safety gate), string_abi_test (the lone failure = memcpy_htm_abort, a TSX/HTM hardware test that
 needs CPU transactional-memory the worker lacks — VERIFIED failing identically at parent a7878a76b, NOT my
 change). The short-string SIMD-setup ceiling claimed "fundamental" in the prior entry was in fact closable.
+
+### 2026-06-29 — ✅ strchr/strchrnul short-string floor CLOSED: same aligned-head-mask lever — BlackThrush
+
+Applied the aligned-load-with-head-mask lever (prior entry) to the SECOND scanner that paid the same
+floor: `scan_c_string_for_byte`'s None path (strchr/strchrnul), the WORST small-string fn in the deployed
+family bench (7.2x vs glibc). It had the identical scalar head-align-to-8 loop + per-chunk page-cross guard
+on every 32B chunk. Replaced the first vector with align-down-to-32 + one aligned load + head-mask over the
+combined `target|NUL` bitmask (O(1) trailing_zeros resolve; `target==0` reports the NUL as found, matching
+strchr(s,'\0')); subsequent loads run from the next 32-aligned boundary so the 32B tier needs NO per-chunk
+guard (32|4096), and the SWAR 8B resolve tier is gone (mask resolves exactly). The folded-128 long-string
+skip tier is preserved WITH its guard (a 128B window from a 32-aligned-but-not-128-aligned address can
+straddle a page).
+
+MEASURED — in-process A/B (scan_strlen_ab_bench CHR_AB arm: OLD kernel, NEW kernel, host glibc strchr all
+in ONE process, absent-byte search = full scan to NUL = worst case, 32 aligns × 6 lengths):
+  len= 7  new/old=0.272  new/glibc=0.580  old/glibc=2.135
+  len=15  new/old=0.250  new/glibc=0.702  old/glibc=2.805
+  len=23  new/old=0.211  new/glibc=0.840  old/glibc=3.990
+  len=31  new/old=0.178  new/glibc=0.915  old/glibc=5.154
+  len=47  new/old=0.300  new/glibc=0.809  old/glibc=2.696
+  len=63  new/old=0.197  new/glibc=0.889  old/glibc=4.518
+NEW is 3.3-5.6x faster than OLD at every size, taking fl's strchr scan from 2.1-5.2x SLOWER than glibc to
+BEATING glibc at every size (0.58-0.92). The old scalar-head loop was catastrophic for the 2-comparison
+(target|NUL) case (16-17ns at len 31/63). Applies to strchr + strchrnul + every unbounded
+scan_c_string_for_byte caller. CONFORMANCE GREEN: conformance_diff_strchr (1) + conformance_diff_strchrnul
++ conformance_diff_scan_c_string (1). The residual deployed-strchr small-size gap (family bench 7.2x) is
+now purely the StringMemory membrane per-call tax (decide/observe), a separate architectural lever — the
+SCAN floor is closed.

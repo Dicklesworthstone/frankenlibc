@@ -19,21 +19,30 @@ use std::time::{Duration, Instant};
 use criterion::{Criterion, criterion_group, criterion_main};
 
 type LenFn = unsafe extern "C" fn(*const c_char) -> usize;
+type ChrFn = unsafe extern "C" fn(*const c_char, i32) -> *mut c_char;
 
-fn host_strlen() -> LenFn {
-    static H: OnceLock<usize> = OnceLock::new();
-    let addr = *H.get_or_init(|| unsafe {
+fn host_sym(name: &[u8]) -> usize {
+    unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
             b"libc.so.6\0".as_ptr().cast(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen failed");
-        let s = libc::dlsym(h, b"strlen\0".as_ptr().cast());
+        let s = libc::dlsym(h, name.as_ptr().cast());
         assert!(!s.is_null());
         s as usize
-    });
-    unsafe { std::mem::transmute::<usize, LenFn>(addr) }
+    }
+}
+
+fn host_strlen() -> LenFn {
+    static H: OnceLock<usize> = OnceLock::new();
+    unsafe { std::mem::transmute::<usize, LenFn>(*H.get_or_init(|| host_sym(b"strlen\0"))) }
+}
+
+fn host_strchr() -> ChrFn {
+    static H: OnceLock<usize> = OnceLock::new();
+    unsafe { std::mem::transmute::<usize, ChrFn>(*H.get_or_init(|| host_sym(b"strchr\0"))) }
 }
 
 #[inline]
@@ -90,6 +99,97 @@ unsafe fn scan_new(p: *const u8) -> usize {
         let mask = v.simd_eq(Simd::splat(0)).to_bitmask();
         if mask != 0 {
             return i + mask.trailing_zeros() as usize;
+        }
+        i += 32;
+    }
+}
+
+/// OLD strchr None-path kernel: scalar head-align to 8 + per-chunk page guard + folded-128.
+#[inline(never)]
+unsafe fn chr_old(p: *const u8, target: u8) -> usize {
+    let bcast = (target as u64).wrapping_mul(0x0101_0101_0101_0101);
+    let mut i = 0usize;
+    let head = (p as usize).wrapping_neg() & 7;
+    while i < head {
+        let b = unsafe { *p.add(i) };
+        if b == target || b == 0 {
+            return i;
+        }
+        i += 1;
+    }
+    loop {
+        if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
+            let tv = Simd::<u8, 32>::splat(target);
+            let zv = Simd::<u8, 32>::splat(0);
+            let v0 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+            let v1 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 32), 32) });
+            let v2 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 64), 32) });
+            let v3 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 96), 32) });
+            let any = (v0.simd_eq(tv) | v0.simd_eq(zv))
+                | (v1.simd_eq(tv) | v1.simd_eq(zv))
+                | (v2.simd_eq(tv) | v2.simd_eq(zv))
+                | (v3.simd_eq(tv) | v3.simd_eq(zv));
+            if !any.any() {
+                i += 128;
+                continue;
+            }
+        }
+        if (p as usize + i) & 0xFFF <= 0x1000 - 32 {
+            let v = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+            let hits = v.simd_eq(Simd::splat(0)) | v.simd_eq(Simd::splat(target));
+            if !hits.any() {
+                i += 32;
+                continue;
+            }
+        }
+        let w = unsafe { *p.add(i).cast::<u64>() };
+        if swar_has_zero(w) || swar_has_zero(w ^ bcast) {
+            for j in 0..8 {
+                let b = unsafe { *p.add(i + j) };
+                if b == target || b == 0 {
+                    return i + j;
+                }
+            }
+        }
+        i += 8;
+    }
+}
+
+/// NEW strchr None-path kernel: aligned-load-down + head-mask, then aligned 32B (no guard) + folded-128.
+#[inline(never)]
+unsafe fn chr_new(p: *const u8, target: u8) -> usize {
+    let align = (p as usize) & 31;
+    let base = unsafe { p.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(base, 32) });
+    let headclear = !((1u64 << align) - 1);
+    let nul0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & headclear;
+    let tgt0 = v0.simd_eq(Simd::splat(target)).to_bitmask() & headclear;
+    let comb0 = nul0 | tgt0;
+    if comb0 != 0 {
+        return comb0.trailing_zeros() as usize - align;
+    }
+    let mut i = 32 - align;
+    loop {
+        if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
+            let tv = Simd::<u8, 32>::splat(target);
+            let zv = Simd::<u8, 32>::splat(0);
+            let v1 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+            let v2 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 32), 32) });
+            let v3 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 64), 32) });
+            let v4 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 96), 32) });
+            let any = (v1.simd_eq(tv) | v1.simd_eq(zv))
+                | (v2.simd_eq(tv) | v2.simd_eq(zv))
+                | (v3.simd_eq(tv) | v3.simd_eq(zv))
+                | (v4.simd_eq(tv) | v4.simd_eq(zv));
+            if !any.any() {
+                i += 128;
+                continue;
+            }
+        }
+        let v = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
+        let comb = (v.simd_eq(Simd::splat(0)) | v.simd_eq(Simd::splat(target))).to_bitmask();
+        if comb != 0 {
+            return i + comb.trailing_zeros() as usize;
         }
         i += 32;
     }
@@ -159,6 +259,45 @@ fn bench(c: &mut Criterion) {
             old_t / g_t
         );
     }
+    // strchr A/B: search an ABSENT byte so the scan runs to the NUL (worst case,
+    // same scan-floor workload as strlen). glibc strchr returns NULL on absence.
+    let g_chr = host_strchr();
+    let absent = 0x01u8; // never appears in the 'a'..'z' payloads
+    for &len in &[7usize, 15, 23, 31, 47, 63] {
+        let mut buf = backing.clone();
+        let mut old_t = 0.0;
+        let mut new_t = 0.0;
+        let mut g_t = 0.0;
+        for off in 0..32usize {
+            for k in 0..len {
+                buf[off + k] = b'a' + (k % 26) as u8;
+            }
+            buf[off + len] = 0;
+            let p = unsafe { buf.as_ptr().add(off) };
+            // Byte-identity guard: both kernels return the NUL index on absence; glibc returns NULL.
+            assert_eq!(unsafe { chr_old(p, absent) }, len, "chr_old wrong off={off} len={len}");
+            assert_eq!(unsafe { chr_new(p, absent) }, len, "chr_new wrong off={off} len={len}");
+            assert!(
+                unsafe { g_chr(p.cast(), absent as i32) }.is_null(),
+                "glibc strchr should miss off={off} len={len}"
+            );
+            old_t += measure(|| unsafe { chr_old(black_box(p), absent) } as u64);
+            new_t += measure(|| unsafe { chr_new(black_box(p), absent) } as u64);
+            g_t += measure(|| unsafe { g_chr(black_box(p.cast()), absent as i32) } as usize as u64);
+            buf[off + len] = b'x';
+        }
+        println!(
+            "CHR_AB len={len:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
+             new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
+            old_t / 32.0,
+            new_t / 32.0,
+            g_t / 32.0,
+            new_t / old_t,
+            new_t / g_t,
+            old_t / g_t
+        );
+    }
+
     let mut grp = c.benchmark_group("scan_ab");
     grp.bench_function("noop", |bb| bb.iter(|| black_box(1u8)));
     grp.finish();

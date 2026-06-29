@@ -1099,90 +1099,84 @@ unsafe fn scan_c_string_for_byte(
             (limit, false, true)
         }
         None => {
-            let mut i = 0usize;
-            let head = (p as usize).wrapping_neg() & 7;
-            while i < head {
-                // SAFETY: caller guarantees a valid NUL-terminated string.
-                let b = unsafe { *p.add(i) };
-                if b == target {
-                    return (i, true, false);
-                }
-                if b == 0 {
-                    return (i, false, false);
-                }
-                i += 1;
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            // glibc-style aligned-load-with-head-mask for the FIRST vector: align
+            // DOWN to a 32-byte boundary, do one aligned load, and mask off the
+            // `align` bytes that precede `ptr`. A 32-aligned 32-byte window is
+            // contained in one 4 KiB page (32 | 4096) and the page holding `ptr` is
+            // mapped, so reading head bytes `base..ptr` is safe. Eliminates BOTH the
+            // scalar head-align scan and the per-chunk page-cross guard the old loop
+            // paid on every 32B chunk (same fix as scan_c_string's None path).
+            let align = (p as usize) & 31;
+            // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31).
+            let base = unsafe { p.sub(align) };
+            let v0 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(base, 32)
+            });
+            let headclear = !((1u64 << align) - 1);
+            let nul0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & headclear;
+            let tgt0 = v0.simd_eq(Simd::splat(target)).to_bitmask() & headclear;
+            let comb0 = nul0 | tgt0;
+            if comb0 != 0 {
+                let pos = comb0.trailing_zeros() as usize;
+                // `target == 0` (strchr(s,'\0')) reports the NUL as a *found* target.
+                let found = (tgt0 >> pos) & 1 == 1;
+                return (pos - align, found, false);
             }
+            // Continue from the next 32-aligned boundary (= base+32 = p + (32-align)).
+            // Every subsequent load is 32-aligned ⇒ a 32-byte read stays in-page, so
+            // the 32B tier needs no per-chunk guard; only the 128B folded tier (whose
+            // window can straddle a page from a 32-aligned, non-128-aligned address)
+            // keeps its guard.
+            let mut i = 32 - align;
             loop {
-                // Length-escalated folded 4x32 = 128-byte tier: one `.any()`
+                // Length-escalated folded 4x32 = 128-byte skip tier: one `.any()`
                 // reduction per 128 bytes for the bulk of *long* strings. Gated on
-                // `i >= 128` so short strings (the common case) terminate in the
-                // 32-byte/SWAR tiers below and never pay the folded overhead — this
-                // is the escalation guard that fixed the short-string regression of
-                // the un-gated folded tier (measured reject, bd-4rxozm). A folded
-                // hit falls through to the tiers below, which resolve the exact
+                // `i >= 128` so short strings terminate in the 32-byte tier and never
+                // pay the folded overhead (measured escalation guard, bd-4rxozm). A
+                // folded hit falls through to the 32B tier, which resolves the exact
                 // first match — index unchanged.
                 if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
-                    use core::simd::Simd;
-                    use core::simd::cmp::SimdPartialEq;
                     let tv = Simd::<u8, 32>::splat(target);
                     let zv = Simd::<u8, 32>::splat(0);
                     // SAFETY: [i, i+128) stays within the current mapped page.
-                    let v0 = Simd::<u8, 32>::from_slice(unsafe {
+                    let v1 = Simd::<u8, 32>::from_slice(unsafe {
                         core::slice::from_raw_parts(p.add(i), 32)
                     });
-                    let v1 = Simd::<u8, 32>::from_slice(unsafe {
+                    let v2 = Simd::<u8, 32>::from_slice(unsafe {
                         core::slice::from_raw_parts(p.add(i + 32), 32)
                     });
-                    let v2 = Simd::<u8, 32>::from_slice(unsafe {
+                    let v3 = Simd::<u8, 32>::from_slice(unsafe {
                         core::slice::from_raw_parts(p.add(i + 64), 32)
                     });
-                    let v3 = Simd::<u8, 32>::from_slice(unsafe {
+                    let v4 = Simd::<u8, 32>::from_slice(unsafe {
                         core::slice::from_raw_parts(p.add(i + 96), 32)
                     });
-                    let any = (v0.simd_eq(tv) | v0.simd_eq(zv))
-                        | (v1.simd_eq(tv) | v1.simd_eq(zv))
+                    let any = (v1.simd_eq(tv) | v1.simd_eq(zv))
                         | (v2.simd_eq(tv) | v2.simd_eq(zv))
-                        | (v3.simd_eq(tv) | v3.simd_eq(zv));
+                        | (v3.simd_eq(tv) | v3.simd_eq(zv))
+                        | (v4.simd_eq(tv) | v4.simd_eq(zv));
                     if !any.any() {
                         i += 128;
                         continue;
                     }
                 }
-                // Wide 32-byte portable-SIMD scan for `target` OR NUL (AVX width,
-                // like glibc strchr), taken only when the 32-byte window stays in
-                // the current page (offset <= 0x1000-32). NUL/target-free panels
-                // advance 32; a panel containing either drops to the 8-byte SWAR
-                // resolve below, so the returned index is unchanged. Mirrors the
-                // NUL-only page-safe scan in `scan_c_str_len`.
-                if (p as usize + i) & 0xFFF <= 0x1000 - 32 {
-                    use core::simd::Simd;
-                    use core::simd::cmp::SimdPartialEq;
-                    // SAFETY: the 32-byte window stays within the current mapped page.
-                    let v = Simd::<u8, 32>::from_slice(unsafe {
-                        core::slice::from_raw_parts(p.add(i), 32)
-                    });
-                    let hits = v.simd_eq(Simd::splat(0)) | v.simd_eq(Simd::splat(target));
-                    if !hits.any() {
-                        i += 32;
-                        continue;
-                    }
+                // SAFETY: p+i is 32-aligned, so this 32-byte window stays in one page;
+                // the string is NUL-terminated within a mapped page. O(1) resolve via
+                // the combined target|NUL bitmask (trailing_zeros).
+                let v = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let nul = v.simd_eq(Simd::splat(0)).to_bitmask();
+                let tgt = v.simd_eq(Simd::splat(target)).to_bitmask();
+                let comb = nul | tgt;
+                if comb != 0 {
+                    let pos = comb.trailing_zeros() as usize;
+                    let found = (tgt >> pos) & 1 == 1;
+                    return (i + pos, found, false);
                 }
-                // SAFETY: p+i is 8-aligned, so this aligned 8-byte read stays inside
-                // the current page; the string is NUL-terminated within a mapped page.
-                let w = unsafe { *p.add(i).cast::<u64>() };
-                if swar_word_has_zero(w) || swar_word_has_zero(w ^ bcast) {
-                    for j in 0..8 {
-                        // SAFETY: the window contains a target or NUL at or before j==7.
-                        let b = unsafe { *p.add(i + j) };
-                        if b == target {
-                            return (i + j, true, false);
-                        }
-                        if b == 0 {
-                            return (i + j, false, false);
-                        }
-                    }
-                }
-                i += 8;
+                i += 32;
             }
         }
     }
