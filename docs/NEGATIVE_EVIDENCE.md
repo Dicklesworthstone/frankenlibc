@@ -6,6 +6,21 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ atof stdlib fast-path DEPLOYED (~1.11x vs ORIG, small but real) — ato* family consistency
+
+- **DEPLOYED (cc):** `atof` was the one `ato*` parser missing the
+  `stdlib_membrane_fastpath()` (atoi/atol/atoll/strtol have it). Added it — skip
+  decide()+observe(), keep the byte-identical scan + `core::stdlib::atof`.
+- **MEASURED (clean stash before/after):** atof("3.14159…") **ORIG 54.9ns → fast
+  49.6ns = ~1.11x** (~5ns membrane removed; ranges separate [..51.2] vs [53.6..], so
+  real not noise). SMALL because the f64 parse core (~45ns) DOMINATES — unlike atoi
+  where the membrane was the bulk. conformance_diff_strtod_edges GREEN (atof shares
+  the float-parse core); bench-asserted 3.14159… parses correctly. Shipped for the
+  real ~5ns + ato*-family consistency, with honest framing that the ratio is small.
+- (Swept CLEAN this turn: `rand_r` is a direct `core::rand_r` call (no membrane);
+  `strchrnul`/`__strchrnul`/`strchr` share the already-fast-pathed `strchr_locate`
+  helper; ctype's 49 fns route through the gated `classify_with_mask`/`convert_with_table`.)
+
 ## 2026-06-29 — ✅ memrchr strict fast-path DEPLOYED (~3.6x vs ORIG, byte-identical)
 
 - **DEPLOYED (cc):** narrow `memrchr` (fixed-`n` reverse byte search) paid the full

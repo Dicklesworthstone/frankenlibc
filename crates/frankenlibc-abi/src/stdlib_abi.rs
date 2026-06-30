@@ -2740,6 +2740,17 @@ pub unsafe extern "C" fn atof(nptr: *const c_char) -> f64 {
         return 0.0;
     }
 
+    // Deployed fast-path (Stdlib always-Allow in non-test; sibling of atoi/atol/strtol):
+    // skip the decide()+observe() membrane — the parse reads the string regardless and
+    // the result is byte-identical to the full path's scan + core::atof.
+    if runtime_policy::stdlib_membrane_fastpath() {
+        let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
+            return 0.0;
+        };
+        let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
+        return frankenlibc_core::stdlib::atof(slice);
+    }
+
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         nptr as usize,
