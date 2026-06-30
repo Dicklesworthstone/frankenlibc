@@ -6442,23 +6442,49 @@ pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char)
         }
         return unsafe {
             let delim_bound = known_remaining(delim as usize);
-            let (s_len, s_term) = scan_c_string(s, None);
             let (delim_len, delim_term) = scan_c_string(delim, delim_bound);
             if !delim_term {
-                std::ptr::null_mut()
-            } else {
-                let s_slice_len = if s_term { s_len + 1 } else { s_len };
-                let s_slice = std::slice::from_raw_parts_mut(s.cast::<u8>(), s_slice_len);
-                let delim_slice = std::slice::from_raw_parts(delim.cast::<u8>(), delim_len + 1);
-                match frankenlibc_core::string::str::strsep(s_slice, delim_slice) {
-                    Some(idx) => {
-                        *stringp = s.add(idx + 1);
-                        s
-                    }
-                    None => {
-                        *stringp = std::ptr::null_mut();
-                        s
-                    }
+                return std::ptr::null_mut();
+            }
+            // Small delim set (1..=4): FUSED single early-stopping pass over `s`
+            // instead of the full `scan_c_string(s)` pre-scan + core membership
+            // pass. Byte-identical to `core::str::strsep` (first delim → NUL-write
+            // it, advance `*stringp` past it; no delim → NUL stop → `*stringp` null;
+            // returned token = original `s` either way). NOTE: a 1-char delim is
+            // routed through set4 (`[d;4]`) too, NOT `scan_c_string_for_byte` — the
+            // set4 scan ORs target|NUL in SIMD and does ONE movemask per window,
+            // whereas for_byte takes two (nul, target) separately and MEASURED ~2x
+            // worse fl/glibc here.
+            if (1..=4).contains(&delim_len) {
+                let d = delim.cast::<u8>();
+                let set = match delim_len {
+                    1 => [*d, *d, *d, *d],
+                    2 => [*d, *d.add(1), *d, *d.add(1)],
+                    3 => [*d, *d.add(1), *d.add(2), *d.add(2)],
+                    _ => [*d, *d.add(1), *d.add(2), *d.add(3)],
+                };
+                let idx = scan_c_string_for_set4(s, set, false);
+                let stop = s.add(idx).cast::<u8>();
+                if *stop != 0 {
+                    *stop = 0; // replace the delimiter with NUL (matches core strsep)
+                    *stringp = s.add(idx + 1);
+                } else {
+                    *stringp = std::ptr::null_mut();
+                }
+                return s;
+            }
+            let (s_len, s_term) = scan_c_string(s, None);
+            let s_slice_len = if s_term { s_len + 1 } else { s_len };
+            let s_slice = std::slice::from_raw_parts_mut(s.cast::<u8>(), s_slice_len);
+            let delim_slice = std::slice::from_raw_parts(delim.cast::<u8>(), delim_len + 1);
+            match frankenlibc_core::string::str::strsep(s_slice, delim_slice) {
+                Some(idx) => {
+                    *stringp = s.add(idx + 1);
+                    s
+                }
+                None => {
+                    *stringp = std::ptr::null_mut();
+                    s
                 }
             }
         };

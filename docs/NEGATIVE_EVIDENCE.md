@@ -6,6 +6,37 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-30 — ✅ strsep FUSED early-stop DEPLOYED — full tokenization O(n²)→O(n), byte-identical (fl/glibc flat ~1.2 vs ORIG growing to 7.5x)
+
+- **DEPLOYED (cc):** the deployed strict `strsep` did `scan_c_string(s, None)` — a
+  full strlen of the *remaining* string — on EVERY call just to bound the slice for
+  the core membership pass. So a complete tokenization loop over K tokens was
+  **O(n²)** (call i pre-scans the whole tail). For small delim sets (1..=4 bytes —
+  the overwhelmingly common case: `;`, `,`, `\t`, `, `, `\r\n`) the strict path now
+  uses the PROVEN `scan_c_string_for_set4` ONE early-stopping pass to the first
+  delimiter, NUL-writes it (matching `core::str::strsep`'s `s[idx]=0`), advances
+  `*stringp` past it — O(token-length) per call → **O(n)** for the whole loop.
+  >4-byte delim sets keep the prior slice path.
+- **BYTE-IDENTITY PROVEN:** `conformance_diff_tokenize_fuzz` (20000 random
+  (source, delimiter) pairs driving the full `strsep` via-`*stringp` loop, delims
+  `;`/`,`/` `/`, `/`-_ `/`abc` + empty, covering empty-field/leading/trailing/
+  no-delim corners) + `conformance_diff_string_mut` GREEN. Stop semantics ==
+  `core::str::strsep` (first delim → NUL-write + advance; no delim → `*stringp` null;
+  token = original `s`).
+- **MEASURED (`strsep_glibc_bench`, deployed fl vs dlmopen glibc, full K-token
+  loop; ORIG = old 2-pass via git-stash). RELIABLE signal = within-run fl/glibc
+  ratio + ns/token shape (cross-rch-worker absolute ns NOT comparable):** ORIG
+  fl/glibc **1.42→1.60→2.67→7.50** for K=8→64→512→2048 with ns/token GROWING
+  18.7→52.9 (quadratic); NEW fl/glibc **1.16→1.20→1.26→1.17** with ns/token FLAT
+  ~15-28 (linear). **NEW beats ORIG's ratio at EVERY K; eliminates the quadratic
+  blowup entirely** (also a tokenization-DoS hardening). Same-binary before/after at
+  K=2048 was ~3.3x (cross-worker-confounded but directionally confirms the loop went
+  from quadratic to linear).
+- **GOTCHA (measured):** routing the 1-char delim through `scan_c_string_for_byte`
+  instead of set4-`[d;4]` MADE IT ~2x WORSE (fl/glibc 2.0-2.4 vs 1.2) — for_byte
+  takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
+  in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
+
 ## 2026-06-30 — ✗ FUSED span extended to MEDIUM sets (5..=8 bytes, 8-way SIMD-eq) REJECTED — net REGRESSION at scale, reverted
 
 - **LEVER TESTED (cc):** extend the shipped small-set (≤4) fused early-stop to 5..=8-byte
