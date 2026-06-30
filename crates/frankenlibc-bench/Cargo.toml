@@ -445,6 +445,12 @@ name = "string_family_small_ab_bench"
 required-features = ["abi-bench"]
 harness = false
 
+# FUSED span (strcspn/strpbrk/strspn small-set) deployed fl vs host glibc, dlmopen.
+[[bench]]
+name = "fused_span_glibc_bench"
+required-features = ["abi-bench"]
+harness = false
+
 # in-process A/B: old vs new scan_c_string strlen kernel vs host glibc.
 [[bench]]
 name = "scan_strlen_ab_bench"

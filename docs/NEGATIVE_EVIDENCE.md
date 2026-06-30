@@ -6,6 +6,38 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-30 — ✅ FUSED small-set strspn/strcspn/strpbrk early-stop DEPLOYED (~1.7–2.65x vs ORIG on the common early-match case, byte-identical) — the explicitly-scoped follow-up landed
+
+- **DEPLOYED (cc):** the long-scoped fused-span lever (see the PSHUFB entry's
+  "STILL ~5x glibc … the abi pre-scan" lead). The deployed strict path for
+  `strcspn`/`strpbrk` (2..=4-byte set) and `strspn` (1..=4-byte set) used to
+  `scan_c_string(s)` the WHOLE string to bound the slice, THEN run a second
+  membership pass — 2 passes; glibc fuses into 1. New page-safe
+  `scan_c_string_for_set4` makes ONE early-stopping SIMD pass straight from the raw
+  pointer (aligned-down + head-mask discipline copied verbatim from
+  `scan_c_string`'s None branch + the 128 B folded tier from `scan_c_string_for_byte`).
+  Generalises the already-shipped single-char early-stop to small delimiter sets —
+  the hot tokenizing idiom `strcspn(s, "\r\n ")`. >4-byte sets keep the old path.
+- **BYTE-IDENTITY PROVEN:** `conformance_diff_string_search` GREEN (live host-glibc
+  oracle): existing `strpbrk_strspn_strcspn_match_glibc` (6000 cases) + NEW
+  `fused_span_long_strings_match_glibc` (3000 cases, blen 96..315 → exercises the
+  128 B folded tier, every head residue 0..32 → exercises the aligned-down head-mask).
+  Stop semantics == `core::str::{find_any_of4_or_nul_fused, find_non_any_of4_or_nul}`
+  over the NUL-inclusive slice (NUL is never a set member, so `!member` is exactly
+  the strspn stop). Same duplicate-fill of the membership set as the core.
+- **MEASURED (`fused_span_glibc_bench`, deployed fl vs dlmopen host glibc, same
+  process; ORIG = identical bench with the src change git-stashed):** set = `"|;,"`.
+  EARLY regime (a set member ~1/8 in — the common short-token case): strcspn 256
+  **ORIG 10.47ns → NEW 4.67ns = ~2.24x**, strpbrk 256 **13.53→5.10 = ~2.65x**,
+  strspn 256 **10.14→4.67 = ~2.17x**; 64 B 1.65–1.98x; 4096 B 1.57–2.14x. ABSENT
+  (full scan to NUL): small sizes ~1.6–1.7x@64, ~neutral@256 (the eliminated
+  pre-scan was already a fast SIMD strlen there), and at 4096 fl already BEAT glibc
+  (strcspn 76ns vs glibc 174ns = **0.44x**). vs glibc the early-match small-string
+  loss dropped from ~2.7–3.7x (ORIG) to ~1.1–1.7x; large strings now WIN glibc.
+- **WHY only small sets:** for 2..=4 members the core membership scan is already
+  fast SIMD, so the pre-scan was the dominant overhead — clean win. The >4-byte
+  (PSHUFB) path's residual gap is the classifier throughput, a separate lever.
+
 ## 2026-06-29 — ✅ strcspn/strpbrk single-char-set early-stop DEPLOYED (~4.0x vs ORIG, byte-identical)
 
 - **DEPLOYED (cc, extends the strstr single-char sliver to the search family):** for

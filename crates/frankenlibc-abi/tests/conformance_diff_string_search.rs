@@ -290,6 +290,56 @@ fn strpbrk_strspn_strcspn_match_glibc() {
     }
 }
 
+/// LONG-string + small-set differential for the FUSED early-stop span scanner
+/// (bd-7xqyx8 follow-up): exercises the 128-byte folded tier (only reachable for
+/// strings > 128 B) and varied head-alignment for `strspn`/`strcspn`/`strpbrk`
+/// with 2..=4-byte accept/reject sets — the exact path the deployed strict mode
+/// takes. Each `s` is built in a 64-byte-aligned page-interior buffer and probed
+/// at every head offset 0..32 so the aligned-down + head-mask first load is
+/// covered at all 32 residues.
+#[test]
+fn fused_span_long_strings_match_glibc() {
+    let mut rng = Rng(0x1357_9BDF_2468_ACE0);
+    for _ in 0..3000 {
+        // Set size 2..=4 (the fused path); members from a tiny alphabet so a
+        // member appears somewhere in a long run.
+        let setlen = 2 + rng.below(3);
+        let set: Vec<u8> = {
+            let mut v: Vec<u8> = (0..setlen).map(|_| 1 + (rng.below(6) as u8)).collect();
+            v.push(0);
+            v
+        };
+        // Body length spanning the 32 B / 128 B tier boundaries; alphabet overlaps
+        // the set sometimes (early stop) and sometimes not (scan to NUL).
+        let blen = 96 + rng.below(220); // 96..=315
+        let alpha = [2u8, 7, 12][rng.below(3)];
+        // Over-allocate so we can slide the start to test every head residue.
+        let mut buf: Vec<u8> = vec![0u8; blen + 64];
+        let head = rng.below(32);
+        for b in buf.iter_mut().skip(head).take(blen) {
+            *b = 1 + (rng.next() % (alpha as u64)) as u8;
+        }
+        buf[head + blen] = 0; // NUL terminator
+        let s = buf[head..].as_ptr();
+
+        let g_spn = unsafe { g::strspn(s.cast(), set.as_ptr().cast()) };
+        let f_spn = unsafe { fl::strspn(s.cast(), set.as_ptr().cast()) };
+        assert_eq!(f_spn, g_spn, "strspn(long) mismatch head={head} blen={blen} set={set:?}");
+
+        let g_csp = unsafe { g::strcspn(s.cast(), set.as_ptr().cast()) };
+        let f_csp = unsafe { fl::strcspn(s.cast(), set.as_ptr().cast()) };
+        assert_eq!(f_csp, g_csp, "strcspn(long) mismatch head={head} blen={blen} set={set:?}");
+
+        let gp = unsafe { g::strpbrk(s.cast(), set.as_ptr().cast()) };
+        let fp = unsafe { fl::strpbrk(s.cast(), set.as_ptr().cast()) };
+        assert_eq!(
+            off(fp.cast(), s.cast()),
+            off(gp.cast(), s.cast()),
+            "strpbrk(long) mismatch head={head} blen={blen} set={set:?}"
+        );
+    }
+}
+
 #[test]
 fn rawmemchr_matches_memchr_when_present() {
     // rawmemchr assumes the byte IS present; cross-check against memchr.

@@ -1551,6 +1551,94 @@ unsafe fn scan_c_string_for_byte(
     }
 }
 
+/// Page-safe FUSED early-stop membership scan over a NUL-terminated string for a
+/// SMALL set of 1..=4 bytes (`set`, duplicate-filled to 4 — same membership set).
+///
+/// Returns the index of the first byte that satisfies the stop predicate:
+///   - `complement == false` (strcspn / strpbrk): byte `== NUL` OR byte ∈ `set`;
+///   - `complement == true`  (strspn):            byte `== NUL` OR byte ∉ `set`.
+///
+/// This is the *fused* analog of the ABI strict path's `scan_c_string(s)` pre-scan
+/// + `core::str::{strspn,strcspn}` second pass: it makes ONE early-stopping SIMD
+/// pass from the raw pointer, never scanning past the stop byte (glibc's structure).
+/// Byte-identical to those core functions over the NUL-inclusive slice:
+///   - strcspn(2..=4): first reject-member OR NUL == `find_any_of4_or_nul_fused`.
+///   - strspn(2..=4):  first non-member  OR NUL == `find_non_any_of4_or_nul`
+///     (NUL is never a set member — set bytes come from a C string — so `!member`
+///     already covers the NUL stop).
+///   - strpbrk(2..=4): same stop index; the caller reads the stop byte to map
+///     member→pointer, NUL→null.
+///
+/// Page-safety is identical to [`scan_c_string`] / [`scan_c_string_for_byte`]:
+/// align DOWN to a 32-byte boundary and head-mask the bytes before `ptr`, then
+/// every subsequent 32-aligned 32-byte load stays within one 4 KiB page (32 | 4096)
+/// up to and including the NUL's page. The 128-byte folded tier keeps the same
+/// page-cross guard as `scan_c_string_for_byte`.
+///
+/// # Safety
+///
+/// `ptr` must be a valid NUL-terminated C string.
+unsafe fn scan_c_string_for_set4(ptr: *const c_char, set: [u8; 4], complement: bool) -> usize {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+    let p = ptr.cast::<u8>();
+    let s0 = Simd::<u8, 32>::splat(set[0]);
+    let s1 = Simd::<u8, 32>::splat(set[1]);
+    let s2 = Simd::<u8, 32>::splat(set[2]);
+    let s3 = Simd::<u8, 32>::splat(set[3]);
+    let zv = Simd::<u8, 32>::splat(0);
+    // Computes the 32-lane "stop here" bitmask for a loaded window.
+    let stop_bits = |v: Simd<u8, 32>| -> u64 {
+        let member = v.simd_eq(s0) | v.simd_eq(s1) | v.simd_eq(s2) | v.simd_eq(s3);
+        let stop = if complement { !member } else { member | v.simd_eq(zv) };
+        stop.to_bitmask()
+    };
+
+    // FIRST vector: aligned-down load + head-mask (page-safe; see doc comment).
+    let align = (p as usize) & 31;
+    // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31 bytes).
+    let base = unsafe { p.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+    let headclear = !((1u64 << align) - 1);
+    let bits0 = stop_bits(v0) & headclear;
+    if bits0 != 0 {
+        // Stop index is `pos - align` relative to `p` (pos ≥ align by the head mask).
+        return bits0.trailing_zeros() as usize - align;
+    }
+    // Continue from the next 32-aligned boundary (= base+32 = p + (32-align)).
+    let mut i = 32 - align;
+    loop {
+        // Length-escalated folded 4x32 = 128-byte skip tier for long strings; one
+        // `.any()` reduction per 128 bytes. Gated on `i >= 128` (short strings stay
+        // in the 32B tier) AND a page-cross guard (the 128B window from a 32-aligned,
+        // non-128-aligned address can straddle a page). A folded hit falls through to
+        // the 32B tier, which resolves the exact first stop index unchanged.
+        if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
+            // SAFETY: [i, i+128) stays within the current mapped page.
+            let w1 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+            let w2 =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 32), 32) });
+            let w3 =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 64), 32) });
+            let w4 =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 96), 32) });
+            if (stop_bits(w1) | stop_bits(w2) | stop_bits(w3) | stop_bits(w4)) == 0 {
+                i += 128;
+                continue;
+            }
+        }
+        // SAFETY: p+i is 32-aligned, so this 32-byte window stays in one page; the
+        // string is NUL-terminated within a mapped page, so the scan stops at/before
+        // the NUL (which is always a stop lane) — never reading a faulting page.
+        let v = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+        let bits = stop_bits(v);
+        if bits != 0 {
+            return i + bits.trailing_zeros() as usize;
+        }
+        i += 32;
+    }
+}
+
 /// SWAR scan for the LAST byte equal to `target` at or before the terminating
 /// NUL (or `bound`). Returns `(last_match_index, stop_index, hit_limit)`:
 ///   - `last_match_index` = index of the last `target` (None if absent);
@@ -4806,8 +4894,23 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
     // Skips stage_context + decide + observe + stage-trace.
     if !s.is_null() && !accept.is_null() && runtime_policy::strict_passthrough_active() {
         return unsafe {
-            let (s_len, s_terminated) = scan_c_string(s, None);
             let (accept_len, accept_terminated) = scan_c_string(accept, None);
+            // Small accept set (1..=4): FUSED single early-stopping pass — stop at the
+            // first byte NOT in the set (or NUL) — instead of a full pre-scan of `s` +
+            // a second `core::str::strspn` pass. Byte-identical to the core span (NUL is
+            // never a set member, so `!member` is exactly the strspn stop predicate),
+            // same duplicate-fill of the membership set.
+            if (1..=4).contains(&accept_len) {
+                let a = accept.cast::<u8>();
+                let set = match accept_len {
+                    1 => [*a, *a, *a, *a],
+                    2 => [*a, *a.add(1), *a, *a.add(1)],
+                    3 => [*a, *a.add(1), *a.add(2), *a.add(2)],
+                    _ => [*a, *a.add(1), *a.add(2), *a.add(3)],
+                };
+                return scan_c_string_for_set4(s, set, true);
+            }
+            let (s_len, s_terminated) = scan_c_string(s, None);
             let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
             let accept_slice_len = if accept_terminated { accept_len + 1 } else { accept_len };
             let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
@@ -4913,6 +5016,19 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
                 let target = *(reject.cast::<u8>());
                 let (i, _found, _) = scan_c_string_for_byte(s, target, None);
                 return i;
+            }
+            // Small reject set (2..=4): FUSED single early-stopping pass from the raw
+            // pointer instead of a full pre-scan of `s` + a second membership pass.
+            // Byte-identical to `core::str::strcspn` over the NUL-inclusive slice
+            // (`find_any_of4_or_nul_fused`), same duplicate-fill of the membership set.
+            if (2..=4).contains(&reject_len) {
+                let r = reject.cast::<u8>();
+                let set = match reject_len {
+                    2 => [*r, *r.add(1), *r, *r.add(1)],
+                    3 => [*r, *r.add(1), *r.add(2), *r.add(2)],
+                    _ => [*r, *r.add(1), *r.add(2), *r.add(3)],
+                };
+                return scan_c_string_for_set4(s, set, false);
             }
             let (s_len, s_terminated) = scan_c_string(s, None);
             let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
@@ -5022,6 +5138,24 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
                 let (i, found, _) = scan_c_string_for_byte(s, target, None);
                 return if found {
                     s.add(i) as *mut c_char
+                } else {
+                    std::ptr::null_mut()
+                };
+            }
+            // Small accept set (2..=4): FUSED single early-stopping pass. The stop
+            // index is the first set-member OR the NUL; map member→pointer, NUL→null.
+            // Byte-identical to `core::str::strpbrk` (`find_any_of4_or_nul` + the
+            // `s[index] != 0` member test) over the NUL-inclusive slice.
+            if (2..=4).contains(&accept_len) {
+                let a = accept.cast::<u8>();
+                let set = match accept_len {
+                    2 => [*a, *a.add(1), *a, *a.add(1)],
+                    3 => [*a, *a.add(1), *a.add(2), *a.add(2)],
+                    _ => [*a, *a.add(1), *a.add(2), *a.add(3)],
+                };
+                let idx = scan_c_string_for_set4(s, set, false);
+                return if *s.add(idx).cast::<u8>() != 0 {
+                    s.add(idx) as *mut c_char
                 } else {
                     std::ptr::null_mut()
                 };
