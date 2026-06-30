@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strcspn/strpbrk single-char-set early-stop DEPLOYED (~4.0x vs ORIG, byte-identical)
+
+- **DEPLOYED (cc, extends the strstr single-char sliver to the search family):** for
+  a 1-char set, `strcspn(s,[c])` == index of first `c` (or strlen) == exactly
+  `scan_c_string_for_byte(s,c).0`; `strpbrk(s,[c])` == `strchr(s,c)`. Both now use the
+  page-safe EARLY-STOPPING scan instead of pre-scanning the whole string to bound the
+  core. Byte-identical; needle/set sizes 0 and ≥2 unchanged (no regression).
+- **MEASURED (clean stash before/after):** strcspn single-char on a 256-byte string,
+  delimiter at pos 4 **ORIG 15.6ns → fast 3.88ns = ~4.0x vs ORIG** (bigger than strstr's
+  1.4x — the early match skips scanning the WHOLE string; margin grows with string
+  length). Parity asserted (strcspn + strpbrk × 4 cases incl. not-found/empty/leading);
+  conformance_diff_string_search GREEN. `strcspn(s, single-delim)` = the common
+  "scan to next delimiter" parsing idiom, so this hits a real hot pattern.
+
 ## 2026-06-29 — ✅ strstr single-char-needle early-stop DEPLOYED (~1.4x vs ORIG, byte-identical) — a SAFE sliver of the fused-strstr lever
 
 - **DEPLOYED (cc):** in the strstr strict fast path, special-cased `needle_len == 1`:

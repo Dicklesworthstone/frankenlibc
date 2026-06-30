@@ -4905,8 +4905,16 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
     // body — scan s + reject, core strcspn. Skips the membrane bookkeeping.
     if !s.is_null() && !reject.is_null() && runtime_policy::strict_passthrough_active() {
         return unsafe {
-            let (s_len, s_terminated) = scan_c_string(s, None);
             let (reject_len, reject_terminated) = scan_c_string(reject, None);
+            // Single-char reject: strcspn(s, [c]) == index of the first `c` (or strlen(s)
+            // if none) — the page-safe early-stopping scan returns exactly that, with NO
+            // full-haystack pre-scan. Byte-identical.
+            if reject_len == 1 {
+                let target = *(reject.cast::<u8>());
+                let (i, _found, _) = scan_c_string_for_byte(s, target, None);
+                return i;
+            }
+            let (s_len, s_terminated) = scan_c_string(s, None);
             let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
             let reject_slice_len = if reject_terminated { reject_len + 1 } else { reject_len };
             let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
@@ -5005,8 +5013,20 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
     // body — scan s + accept, core strpbrk, map index to pointer. Skips bookkeeping.
     if !s.is_null() && !accept.is_null() && runtime_policy::strict_passthrough_active() {
         return unsafe {
-            let (s_len, s_terminated) = scan_c_string(s, None);
             let (accept_len, accept_terminated) = scan_c_string(accept, None);
+            // Single-char accept: strpbrk(s, [c]) == strchr(s, c) — the page-safe
+            // early-stopping scan stops at the first `c` (NO full-haystack pre-scan).
+            // Byte-identical: c found → s+i, NUL/not-found → null.
+            if accept_len == 1 {
+                let target = *(accept.cast::<u8>());
+                let (i, found, _) = scan_c_string_for_byte(s, target, None);
+                return if found {
+                    s.add(i) as *mut c_char
+                } else {
+                    std::ptr::null_mut()
+                };
+            }
+            let (s_len, s_terminated) = scan_c_string(s, None);
             let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
             let accept_slice_len = if accept_terminated { accept_len + 1 } else { accept_len };
             let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
