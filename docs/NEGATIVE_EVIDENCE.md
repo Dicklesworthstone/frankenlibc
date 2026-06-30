@@ -6,6 +6,30 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-30 — ✗ FUSED span extended to MEDIUM sets (5..=8 bytes, 8-way SIMD-eq) REJECTED — net REGRESSION at scale, reverted
+
+- **LEVER TESTED (cc):** extend the shipped small-set (≤4) fused early-stop to 5..=8-byte
+  sets via an 8-way SIMD-eq membership (`scan_c_string_for_set8`: 8 `vpcmpeqb` + OR per
+  32 B, same page-safe aligned-down/head-mask/128 B-fold core, refactored into a shared
+  `scan_c_string_fused(ptr, stop_bits)` generic). Hypothesis: same pre-scan-elimination
+  win as ≤4. Byte-identity PROVEN (conformance_diff_string_search GREEN, the long-string
+  case widened to sets 2..=8 vs live glibc).
+- **MEASURED (`fused_span_glibc_bench`, 6-byte set `"|;,<>&"` / `"abcdef"`, deployed fl vs
+  dlmopen glibc; ORIG = old 2-pass via git-stash of the src):** NET LOSS at scale.
+  fl_p50 ORIG→NEW: strcspn4096-absent **134.6→249.8ns = 0.54x (SLOWER)**, strspn256-absent
+  **20.5→46.6 = 0.44x**, strcspn4096-early **41.5→60.2 = 0.69x**. Only tiny early-match
+  strings improved modestly (strcspn256-early 13.9→12.7 = 1.10x; strpbrk256-early 1.24x).
+- **WHY (the lesson, so this is never retried):** UNLIKE ≤4 sets — where the core uses a
+  4-way SIMD `find_any_of4_or_nul` and the abi pre-scan was pure waste — for >4 sets the
+  OLD path's core already routes to an EFFICIENT 256-bit-bitmap / Langdale-Lemire **2-PSHUFB
+  classifier** (2 ops per 32 B, gated `len>=64`) + a bitmap scan for short. A naive 8-way
+  SIMD-eq is ~4x the per-byte compare work of 2 PSHUFB, so it loses the scan throughput by
+  more than the pre-scan elimination saves once the string is non-trivial. **The fused
+  early-stop only pays where the core membership test is NOT already a classifier — i.e.
+  set size ≤4 (find_any_of4). For ≥5 the win must come from a page-safe FUSED *PSHUFB*
+  scan (no pre-scan, classifier throughput), not more SIMD-eq lanes.** Reverted; the ≤4
+  fused path (prior entry) stays deployed unchanged.
+
 ## 2026-06-30 — ✅ FUSED small-set strspn/strcspn/strpbrk early-stop DEPLOYED (~1.7–2.65x vs ORIG on the common early-match case, byte-identical) — the explicitly-scoped follow-up landed
 
 - **DEPLOYED (cc):** the long-scoped fused-span lever (see the PSHUFB entry's
