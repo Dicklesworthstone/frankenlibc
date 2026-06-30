@@ -6,6 +6,23 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ strstr single-char-needle early-stop DEPLOYED (~1.4x vs ORIG, byte-identical) — a SAFE sliver of the fused-strstr lever
+
+- **DEPLOYED (cc):** in the strstr strict fast path, special-cased `needle_len == 1`:
+  `strstr(h, [c]) == strchr(h, c)`, so use the page-safe EARLY-STOPPING byte scan
+  (`scan_c_string_for_byte`) instead of pre-scanning the WHOLE haystack just to bound
+  memmem. Byte-identical (same `hay_bound`, first occurrence, NUL/not-found → null);
+  no change to the needle_len 0 / ≥2 paths (no regression).
+- **MEASURED (clean stash before/after):** single-char strstr on a 256-byte haystack
+  with an early match (pos 4) **ORIG 24.0ns → fast 17.3ns = ~1.4x** (the avoided
+  full-haystack pre-scan; margin GROWS with haystack length and earliness of match).
+  Parity asserted across 6 cases (found early/late, not-found, multichar, empty,
+  len-1 haystack); conformance_diff_string_search GREEN.
+- **This is the one SAFE sliver of the fused-strstr lead** (eliminate the haystack
+  pre-scan) — for needle_len==1 it needs no new core / page-safe Two-Way, just the
+  existing strchr scanner. The GENERAL fused-strstr (any needle, NUL-terminated
+  Two-Way, no pre-scan) remains the substantial/segfault-risky dedicated-turn lever.
+
 ## 2026-06-29 — ✅ atof stdlib fast-path DEPLOYED (~1.11x vs ORIG, small but real) — ato* family consistency
 
 - **DEPLOYED (cc):** `atof` was the one `ato*` parser missing the

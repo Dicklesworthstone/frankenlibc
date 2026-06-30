@@ -4041,18 +4041,32 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
             let needle_bound = known_remaining(needle as usize);
             let hay_bound = known_remaining(haystack as usize);
             let (needle_len, _) = scan_c_string(needle, needle_bound);
-            let (hay_len, _) = scan_c_string(haystack, hay_bound);
             if needle_len == 0 {
                 haystack as *mut c_char
-            } else if hay_len >= needle_len {
-                let hs = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
-                let ns = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
-                match frankenlibc_core::string::mem::memmem(hs, hay_len, ns, needle_len) {
-                    Some(idx) => haystack.add(idx) as *mut c_char,
-                    None => std::ptr::null_mut(),
+            } else if needle_len == 1 {
+                // strstr(h, [c]) == strchr(h, c): the page-safe early-stopping byte scan
+                // stops at the FIRST match — no full-haystack pre-scan (the general path
+                // pre-scans the whole haystack just to bound memmem). Byte-identical: same
+                // `hay_bound`, first occurrence; NUL/not-found → null.
+                let target = *(needle.cast::<u8>());
+                let (i, found, _) = scan_c_string_for_byte(haystack, target, hay_bound);
+                if found {
+                    haystack.add(i) as *mut c_char
+                } else {
+                    std::ptr::null_mut()
                 }
             } else {
-                std::ptr::null_mut()
+                let (hay_len, _) = scan_c_string(haystack, hay_bound);
+                if hay_len >= needle_len {
+                    let hs = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
+                    let ns = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+                    match frankenlibc_core::string::mem::memmem(hs, hay_len, ns, needle_len) {
+                        Some(idx) => haystack.add(idx) as *mut c_char,
+                        None => std::ptr::null_mut(),
+                    }
+                } else {
+                    std::ptr::null_mut()
+                }
             }
         };
     }
