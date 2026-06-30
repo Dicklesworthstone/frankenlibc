@@ -2539,6 +2539,22 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
 /// Caller must ensure `s` is valid for `n` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
+    // (`scan_len == n`), byte-identical to the strict body — core memrchr over `n`,
+    // returning `s+idx`/null. Skips stage_context + decide + observe + stage-trace.
+    if runtime_policy::strict_passthrough_active() {
+        if n == 0 || s.is_null() {
+            return std::ptr::null_mut();
+        }
+        return unsafe {
+            let bytes = std::slice::from_raw_parts(s.cast::<u8>(), n);
+            match frankenlibc_core::string::mem::memrchr(bytes, c as u8, n) {
+                Some(idx) => (s as *mut u8).add(idx).cast(),
+                None => std::ptr::null_mut(),
+            }
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if n == 0 || s.is_null() {
         if s.is_null() {

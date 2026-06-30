@@ -6,6 +6,20 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-29 — ✅ memrchr strict fast-path DEPLOYED (~3.6x vs ORIG, byte-identical)
+
+- **DEPLOYED (cc):** narrow `memrchr` (fixed-`n` reverse byte search) paid the full
+  membrane; fast path = core `memrchr(s[..n], c, n)` returning `s+idx`/null,
+  byte-identical (`scan_len==n` in strict). The CORE is unchanged (the earlier
+  memrchr-core direct-scan exploration was rejected 0-gain — this is the orthogonal
+  MEMBRANE-bookkeeping skip).
+- **MEASURED (stash before/after + hardened cross-check — ORIG hardened 88ns ≈ NEW
+  hardened 87.6ns confirms ORIG-default is the real full path, not stale):**
+  memrchr(256) **ORIG 53.9ns → fast 14.9ns = ~3.6x vs ORIG**. conformance_diff_
+  {memrchr,string} GREEN.
+- **NEXT (found this turn):** `strchrnul` has NO fast path (and `__strchrnul`
+  delegates to it) — a hot internal function; clean candidate.
+
 ## 2026-06-29 — ✅ wmemcmp/wmemrchr strict fast-path DEPLOYED (~2.7x / ~4.7x vs ORIG) — wide mem family complete
 
 - **DEPLOYED (cc):** `wmemcmp` (wide memcmp) + `wmemrchr` (wide memrchr) — fixed-`n`
