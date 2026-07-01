@@ -4466,8 +4466,10 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
                 set_strtok_saved_ptr(std::ptr::null_mut());
                 return std::ptr::null_mut();
             }
-            let delim_bound = known_remaining(delim as usize);
-            let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
+            // Strict: a valid `delim` is NUL-terminated, so an unbounded page-safe
+            // scan is byte-identical AND skips the per-call `fallback_remaining`
+            // registry touch — matching the span functions (which already use None).
+            let (delim_len, delim_terminated) = scan_c_string(delim, None);
             if !delim_terminated {
                 set_strtok_saved_ptr(std::ptr::null_mut());
                 return std::ptr::null_mut();
@@ -4706,8 +4708,9 @@ pub unsafe extern "C" fn strtok_r(
                 *saveptr = std::ptr::null_mut();
                 return std::ptr::null_mut();
             }
-            let delim_bound = known_remaining(delim as usize);
-            let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
+            // Strict: unbounded page-safe delim scan (valid delim is NUL-terminated),
+            // skipping the per-call fallback_remaining touch — same as the span fns.
+            let (delim_len, delim_terminated) = scan_c_string(delim, None);
             if !delim_terminated {
                 *saveptr = std::ptr::null_mut();
                 return std::ptr::null_mut();
@@ -6715,8 +6718,9 @@ pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char)
             return s;
         }
         return unsafe {
-            let delim_bound = known_remaining(delim as usize);
-            let (delim_len, delim_term) = scan_c_string(delim, delim_bound);
+            // Strict: unbounded page-safe delim scan (valid delim is NUL-terminated),
+            // skipping the per-call fallback_remaining touch — same as the span fns.
+            let (delim_len, delim_term) = scan_c_string(delim, None);
             if !delim_term {
                 return std::ptr::null_mut();
             }

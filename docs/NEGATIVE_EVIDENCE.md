@@ -62,6 +62,25 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-01 — ✅ strtok/strtok_r/strsep strict path drops per-call known_remaining(delim) — ~8-15% fl/glibc, byte-identical
+
+- **DEPLOYED (cc):** the strict tokenizer fast paths bounded the `delim` scan with
+  `known_remaining(delim)` (→ `fallback_remaining`: min/max range check + a possible
+  lock+hash-probe, a non-inlined per-call registry touch), while the span functions
+  (strspn/strcspn/strpbrk) already scan the set with `scan_c_string(accept, None)`.
+  A valid C `delim` is NUL-terminated, so an unbounded page-safe scan is byte-identical
+  and matches glibc (and the span fns). Changed the 3 strict paths (strtok, strtok_r,
+  strsep) to `scan_c_string(delim, None)`, removing the per-call `fallback_remaining`.
+- **BYTE-IDENTITY:** conformance_diff_tokenize_fuzz (20000 cases + guard-page) +
+  tokenize + string_mut GREEN. Full/fortify paths (which need the bound for healing)
+  UNCHANGED — only the strict passthrough paths.
+- **MEASURED (`strtok_glibc_bench`, deployed fl vs dlmopen glibc; RELIABLE metric =
+  within-run fl/glibc ratio since glibc runs same-process and cancels cross-worker
+  speed):** fl/glibc ORIG→NEW **1.38→1.22 (K=8), 1.30→1.28 (64), 1.36→1.28 (512),
+  1.37→1.17 (2048)** — NEW lower at ALL 4 sizes (consistent direction, ~8-15%, avg
+  ~1.35→1.24). Not noise (uniform), not near-zero; a per-call saving on the very-hot
+  strtok family. (Absolute ns cross-worker-confounded as usual — ratio is the signal.)
+
 ## 2026-07-01 — ✅ strcspn/strspn/strpbrk >4-byte-set fused via page-safe PSHUFB DEPLOYED — removes the whole-string prescan (byte-identical, page-safe)
 
 - **DEPLOYED (cc):** completes the >4-byte-set fused early-stop for the single-call
