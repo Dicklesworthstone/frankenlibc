@@ -1551,6 +1551,143 @@ unsafe fn scan_c_string_for_byte(
     }
 }
 
+/// Builds the Langdale/Lemire 2-PSHUFB membership LUTs for an ALL-ASCII byte set
+/// `[set, set+set_len)` (every byte `< 0x80`): `lo16[v&0xF] |= 1<<(v>>4)` per set
+/// byte, `hi16[h] = 1<<h` for h<8. Membership of `b` iff `lo16[b&0xF] & hi16[b>>4]
+/// != 0` (bytes `>= 0x80` and NUL map to non-members — exact). Scalar/cheap.
+///
+/// # Safety
+/// `set` readable for `set_len` bytes.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn build_pshufb_lut(set: *const u8, set_len: usize) -> ([u8; 16], [u8; 16]) {
+    let mut lo16 = [0u8; 16];
+    let mut hi16 = [0u8; 16];
+    let mut k = 0;
+    while k < set_len {
+        // SAFETY: k < set_len, caller guarantees readability.
+        let v = unsafe { *set.add(k) };
+        lo16[(v & 0x0F) as usize] |= 1u8 << (v >> 4);
+        k += 1;
+    }
+    let mut h = 0;
+    while h < 8 {
+        hi16[h] = 1u8 << h;
+        h += 1;
+    }
+    (lo16, hi16)
+}
+
+/// True iff all `len` bytes at `p` are ASCII (`< 0x80`) — the precondition for the
+/// PSHUFB classifier (a set byte `>= 0x80` would be misclassified as a non-member).
+///
+/// # Safety
+/// `p` readable for `len` bytes.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn all_bytes_ascii(p: *const u8, len: usize) -> bool {
+    let mut k = 0;
+    while k < len {
+        // SAFETY: k < len, caller guarantees readability.
+        if unsafe { *p.add(k) } >= 0x80 {
+            return false;
+        }
+        k += 1;
+    }
+    true
+}
+
+/// Page-safe FUSED early-stop PSHUFB membership scan over a NUL-terminated string
+/// for an arbitrary-size ALL-ASCII set (via the `lo16`/`hi16` LUTs from
+/// [`build_pshufb_lut`]). The LARGE-set (>4-byte) analog of
+/// [`scan_c_string_for_set4`]: ONE early-stopping AVX2 pass from the raw pointer
+/// (2 vpshufb + compare per 32 bytes — classifier throughput, ~glibc), so a
+/// tokenization loop / a strcspn over a >4-byte set stays O(n) with a fast body
+/// scan (no O(n²) prescan, no scalar-bitmap long-run regression).
+///
+/// `stop_in_set == true` → strcspn (stop on member OR NUL); `false` → strspn (stop
+/// on NON-member OR NUL). Byte-identical to `core::str::span_pshufb_ascii` (same
+/// LUT + stop math), which the `span_pshufb_matches_scalar` proptest pins to the
+/// scalar reference.
+///
+/// PAGE-SAFETY is identical to [`scan_c_string_for_set4`]: align DOWN to 32 and
+/// head-mask the bytes before `ptr`, then every 32-aligned 32-byte load stays in
+/// one 4 KiB page up to and including the NUL's page. The PSHUFB classify is pure
+/// register arithmetic on the loaded vector — no extra memory access — so it adds
+/// no page-crossing risk over the proven set4 loads.
+///
+/// # Safety
+/// `ptr` must be a valid NUL-terminated C string; AVX2 is enabled crate-wide.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn scan_c_string_pshufb(
+    ptr: *const c_char,
+    lo16: &[u8; 16],
+    hi16: &[u8; 16],
+    stop_in_set: bool,
+) -> usize {
+    use std::arch::x86_64::*;
+    // SAFETY of every intrinsic below: AVX2 enabled crate-wide; loads are page-safe
+    // per the doc comment (aligned-down first load + head-mask, 32-aligned after).
+    unsafe {
+        let lo_table = _mm256_broadcastsi128_si256(_mm_loadu_si128(lo16.as_ptr().cast()));
+        let hi_table = _mm256_broadcastsi128_si256(_mm_loadu_si128(hi16.as_ptr().cast()));
+        let zero = _mm256_setzero_si256();
+        let low_mask = _mm256_set1_epi8(0x0F);
+        let ones = _mm256_set1_epi8(-1i8);
+        let p = ptr.cast::<u8>();
+
+        #[inline(always)]
+        unsafe fn window_stop_bits(
+            lanes: std::arch::x86_64::__m256i,
+            lo_table: std::arch::x86_64::__m256i,
+            hi_table: std::arch::x86_64::__m256i,
+            zero: std::arch::x86_64::__m256i,
+            low_mask: std::arch::x86_64::__m256i,
+            ones: std::arch::x86_64::__m256i,
+            stop_in_set: bool,
+        ) -> u32 {
+            use std::arch::x86_64::*;
+            unsafe {
+                let lo = _mm256_and_si256(lanes, low_mask);
+                let hi = _mm256_and_si256(_mm256_srli_epi16(lanes, 4), low_mask);
+                let lo_bits = _mm256_shuffle_epi8(lo_table, lo);
+                let hi_bits = _mm256_shuffle_epi8(hi_table, hi);
+                let member = _mm256_and_si256(lo_bits, hi_bits);
+                let nonmember = _mm256_cmpeq_epi8(member, zero); // 0xFF where NON-member
+                let nul = _mm256_cmpeq_epi8(lanes, zero);
+                let stop = if stop_in_set {
+                    _mm256_or_si256(_mm256_andnot_si256(nonmember, ones), nul)
+                } else {
+                    _mm256_or_si256(nonmember, nul)
+                };
+                _mm256_movemask_epi8(stop) as u32
+            }
+        }
+
+        // FIRST vector: aligned-down load + head-mask (page-safe).
+        let align = (p as usize) & 31;
+        let base = p.sub(align);
+        let v0 = _mm256_loadu_si256(base.cast());
+        let head_clear = if align == 0 { u32::MAX } else { !((1u32 << align) - 1) };
+        let bits0 =
+            window_stop_bits(v0, lo_table, hi_table, zero, low_mask, ones, stop_in_set) & head_clear;
+        if bits0 != 0 {
+            return bits0.trailing_zeros() as usize - align;
+        }
+        // Every subsequent 32-byte window is 32-aligned ⇒ within one page.
+        let mut i = 32 - align;
+        loop {
+            let v = _mm256_loadu_si256(p.add(i).cast());
+            let bits = window_stop_bits(v, lo_table, hi_table, zero, low_mask, ones, stop_in_set);
+            if bits != 0 {
+                return i + bits.trailing_zeros() as usize;
+            }
+            i += 32;
+        }
+    }
+}
+
 /// Page-safe FUSED early-stop membership scan over a NUL-terminated string for a
 /// SMALL set of 1..=4 bytes (`set`, duplicate-filled to 4 — same membership set).
 ///
@@ -4364,6 +4501,28 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
                 set_strtok_saved_ptr(current.add(next));
                 return current.add(start) as *mut c_char;
             }
+            // Large ALL-ASCII delim set (>4): FUSED page-safe PSHUFB early-stop
+            // (mirrors the strtok_r >4 path; thread-local saved ptr). O(n) loop.
+            #[cfg(target_arch = "x86_64")]
+            if delim_len > 4 && all_bytes_ascii(delim.cast::<u8>(), delim_len) {
+                let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
+                let start = scan_c_string_pshufb(current, &lo16, &hi16, false);
+                if *current.add(start).cast::<u8>() == 0 {
+                    set_strtok_saved_ptr(std::ptr::null_mut());
+                    return std::ptr::null_mut();
+                }
+                let tok_len = scan_c_string_pshufb(current.add(start), &lo16, &hi16, true);
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0;
+                    end + 1
+                } else {
+                    end
+                };
+                set_strtok_saved_ptr(current.add(next));
+                return current.add(start) as *mut c_char;
+            }
             let (scan_limit, terminated) = scan_c_string(current, None);
             let slice_len = if terminated { scan_limit + 1 } else { scan_limit };
             let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
@@ -4583,6 +4742,30 @@ pub unsafe extern "C" fn strtok_r(
                     end + 1
                 } else {
                     end // token ran to the NUL; save_ptr points at it (next call → None)
+                };
+                *saveptr = current.add(next);
+                return current.add(start) as *mut c_char;
+            }
+            // Large ALL-ASCII delim set (>4): FUSED page-safe PSHUFB early-stop for
+            // BOTH scans (skip leading delims via strspn, token end via strcspn) —
+            // classifier-throughput body scan, no prescan → O(n) loop, no scalar
+            // long-token regression. Non-ASCII sets fall through to the slice path.
+            #[cfg(target_arch = "x86_64")]
+            if delim_len > 4 && all_bytes_ascii(delim.cast::<u8>(), delim_len) {
+                let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
+                let start = scan_c_string_pshufb(current, &lo16, &hi16, false);
+                if *current.add(start).cast::<u8>() == 0 {
+                    *saveptr = std::ptr::null_mut();
+                    return std::ptr::null_mut();
+                }
+                let tok_len = scan_c_string_pshufb(current.add(start), &lo16, &hi16, true);
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0;
+                    end + 1
+                } else {
+                    end
                 };
                 *saveptr = current.add(next);
                 return current.add(start) as *mut c_char;
@@ -6530,6 +6713,21 @@ pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char)
                 let stop = s.add(idx).cast::<u8>();
                 if *stop != 0 {
                     *stop = 0; // replace the delimiter with NUL (matches core strsep)
+                    *stringp = s.add(idx + 1);
+                } else {
+                    *stringp = std::ptr::null_mut();
+                }
+                return s;
+            }
+            // Large ALL-ASCII delim set (>4): FUSED page-safe PSHUFB first-delimiter
+            // scan (strcspn direction) — O(n) tokenization, classifier body scan.
+            #[cfg(target_arch = "x86_64")]
+            if delim_len > 4 && all_bytes_ascii(delim.cast::<u8>(), delim_len) {
+                let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
+                let idx = scan_c_string_pshufb(s, &lo16, &hi16, true);
+                let stop = s.add(idx).cast::<u8>();
+                if *stop != 0 {
+                    *stop = 0;
                     *stringp = s.add(idx + 1);
                 } else {
                     *stringp = std::ptr::null_mut();

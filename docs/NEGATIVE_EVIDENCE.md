@@ -62,6 +62,32 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-01 — ✅ strtok/strsep >4-byte-delim fused via page-safe PSHUFB DEPLOYED — O(n²)→O(n) AND beats glibc on long tokens, byte-identical + guard-page proven
+
+- **DEPLOYED (cc):** the clean fix the entry below scoped. New page-safe
+  `scan_c_string_pshufb` (AVX2, Langdale/Lemire 2-PSHUFB classifier — the SAME LUT +
+  stop math as `core::str::span_pshufb_ascii`, arbitrary-size ALL-ASCII set) reusing
+  the PROVEN `scan_c_string_for_set4` load pattern (align DOWN to 32 + head-mask; the
+  PSHUFB classify is pure register arithmetic — no extra memory access — so page-safety
+  is inherited unchanged). Wired into strtok/strtok_r/strsep for >4-byte ALL-ASCII
+  delim sets (both the skip-leading strspn and the token-end strcspn scans); non-ASCII
+  sets / non-x86_64 keep the slice path.
+- **BYTE-IDENTITY:** conformance_diff_tokenize_fuzz (20000 cases incl. 5- & 7-char
+  delims) + tokenize/tokenizers/string_mut/string_search all GREEN.
+- **PAGE-SAFETY PROVEN:** new `strtok_pshufb_does_not_overread_past_guard_page` — a
+  string ending at every offset in the last 40 B of a mapped page whose successor is
+  `PROT_NONE`, tokenized with a 6-char delim (routes through the PSHUFB scan) → no
+  SIGSEGV + correct tokens. The 32-B AVX2 windows sit right against the guard page.
+- **MEASURED (`strtok_bigdelim_glibc_bench`, 6-char delim, deployed fl vs dlmopen
+  glibc):** common (many short tokens) fl/glibc **2.17→1.86 @512 / 5.03→1.86 @2048**,
+  ns/token now FLAT ~21 (O(n), was 41→83 growing quadratic — ~4.0x faster than ORIG at
+  K=2048); adversarial (few LONG tokens) fl/glibc **0.98→0.74 — now BEATS glibc** (the
+  PSHUFB body scan; ~1.9x faster than ORIG). **Beats ORIG at EVERY case, NO regression
+  mode** (unlike the rejected scalar bitmap's 8.34x long-token blowup). Residual common
+  1.86x-vs-glibc = per-call PSHUFB LUT-build + AVX2 setup (~10ns/token) on short tokens,
+  not algorithmic. Same page-safe PSHUFB scanner is now available for the >4 span
+  functions (strcspn/strspn/strpbrk) — a follow-up.
+
 ## 2026-07-01 — ✗ strtok/strsep >4-byte-delim fused via SCALAR bitmap REJECTED (8x adversarial regression) — but SURFACES a REAL unfixed gap: >4 tokenizer is O(n²), the clean fix needs page-safe PSHUFB
 
 - **CONTEXT:** my landed strtok/strsep/strtok_r fused early-stop only covers delim

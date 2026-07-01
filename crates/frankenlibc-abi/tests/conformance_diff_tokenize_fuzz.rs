@@ -125,3 +125,62 @@ fn tokenize_differential_fuzz_vs_glibc() {
         div.join("\n  ")
     );
 }
+
+/// PAGE-SAFETY proof for the >4-byte-delim fused PSHUFB tokenizer scan: place a
+/// NUL-terminated string ending at every offset in the last 40 bytes of a mapped
+/// page whose successor page is PROT_NONE, run strtok_r with a 6-char delimiter set
+/// (routes through `scan_c_string_pshufb`), and require no SIGSEGV + correct tokens.
+/// The 32-byte AVX2 windows sit right against the guard page, so any over-read past
+/// the terminating NUL's page would fault.
+#[test]
+fn strtok_pshufb_does_not_overread_past_guard_page() {
+    let page = 4096usize;
+    let delim = CString::new(" \t\n\r\x0c\x0b").unwrap(); // 6 chars → PSHUFB path
+    unsafe {
+        let base = libc::mmap(
+            std::ptr::null_mut(),
+            page * 2,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        );
+        assert_ne!(base, libc::MAP_FAILED, "mmap failed");
+        let base = base.cast::<u8>();
+        assert_eq!(
+            libc::mprotect(base.add(page).cast(), page, libc::PROT_NONE),
+            0,
+            "mprotect failed"
+        );
+        // Content: alternating token bytes and delimiter (space) so the scan stops
+        // at real delimiters AND runs to the NUL against the guard page.
+        for back in 1..=40usize {
+            let start = base.add(page - back);
+            for k in 0..(back - 1) {
+                // pattern: 'a','a',' ','a','a',' ',... — tokens of length ≤2.
+                *start.add(k) = if (k % 3) == 2 { b' ' } else { b'a' };
+            }
+            *start.add(back - 1) = 0;
+
+            // Reference token sequence via a heap copy (safe, away from the guard).
+            let mut heap: Vec<u8> = std::slice::from_raw_parts(start, back).to_vec();
+            let want = tok_seq(strtok_r, &heap[..back - 1], delim.to_bytes());
+
+            // fl strtok_r driven IN PLACE on the guard-adjacent buffer.
+            let _ = &mut heap;
+            let mut sp: *mut c_char = std::ptr::null_mut();
+            let mut got: Vec<Vec<u8>> = Vec::new();
+            let mut cur = start as *mut c_char;
+            loop {
+                let t = fa::strtok_r(cur, delim.as_ptr(), &mut sp);
+                cur = std::ptr::null_mut();
+                if t.is_null() {
+                    break;
+                }
+                got.push(CStr::from_ptr(t).to_bytes().to_vec());
+            }
+            assert_eq!(got, want, "strtok_r PSHUFB wrong/overread near guard (back={back})");
+        }
+        libc::munmap(base.cast(), page * 2);
+    }
+}
