@@ -4329,15 +4329,44 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
                 set_strtok_saved_ptr(std::ptr::null_mut());
                 return std::ptr::null_mut();
             }
-            let (scan_limit, terminated) = scan_c_string(current, None);
-            let slice_len = if terminated { scan_limit + 1 } else { scan_limit };
-            let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
             let delim_bound = known_remaining(delim as usize);
             let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
             if !delim_terminated {
                 set_strtok_saved_ptr(std::ptr::null_mut());
                 return std::ptr::null_mut();
             }
+            // FUSED small delim set (1..=4): mirror the strtok_r fused path (skip
+            // leading delimiters, find token end, NUL-write, advance the thread-local
+            // saved ptr) — O(n²) full-tokenization loop → O(n). Byte-identical to
+            // `core::str::strtok::strtok`.
+            if (1..=4).contains(&delim_len) {
+                let d = delim.cast::<u8>();
+                let set = match delim_len {
+                    1 => [*d, *d, *d, *d],
+                    2 => [*d, *d.add(1), *d, *d.add(1)],
+                    3 => [*d, *d.add(1), *d.add(2), *d.add(2)],
+                    _ => [*d, *d.add(1), *d.add(2), *d.add(3)],
+                };
+                let start = scan_c_string_for_set4(current, set, true);
+                if *current.add(start).cast::<u8>() == 0 {
+                    set_strtok_saved_ptr(std::ptr::null_mut());
+                    return std::ptr::null_mut();
+                }
+                let tok_len = scan_c_string_for_set4(current.add(start), set, false);
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0;
+                    end + 1
+                } else {
+                    end
+                };
+                set_strtok_saved_ptr(current.add(next));
+                return current.add(start) as *mut c_char;
+            }
+            let (scan_limit, terminated) = scan_c_string(current, None);
+            let slice_len = if terminated { scan_limit + 1 } else { scan_limit };
+            let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
             let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_len + 1);
             return match frankenlibc_core::string::strtok::strtok(s_slice, delim_slice) {
                 Some((start, len)) => {
@@ -4518,15 +4547,49 @@ pub unsafe extern "C" fn strtok_r(
                 *saveptr = std::ptr::null_mut();
                 return std::ptr::null_mut();
             }
-            let (scan_limit, terminated) = scan_c_string(current, None);
-            let slice_len = if terminated { scan_limit + 1 } else { scan_limit };
-            let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
             let delim_bound = known_remaining(delim as usize);
             let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
             if !delim_terminated {
                 *saveptr = std::ptr::null_mut();
                 return std::ptr::null_mut();
             }
+            // FUSED small delim set (1..=4): TWO early-stopping passes — skip leading
+            // delimiters (strspn) then find the token end (strcspn) — instead of a
+            // full `scan_c_string(current)` pre-scan + core pass. Byte-identical to
+            // `core::str::strtok::strtok_r` (skip-leading via strspn_set, token end
+            // via strcspn_set, NUL-write the trailing delimiter, advance save_ptr).
+            // Turns a full tokenization loop from O(n²) into O(n) (see strsep).
+            if (1..=4).contains(&delim_len) {
+                let d = delim.cast::<u8>();
+                let set = match delim_len {
+                    1 => [*d, *d, *d, *d],
+                    2 => [*d, *d.add(1), *d, *d.add(1)],
+                    3 => [*d, *d.add(1), *d.add(2), *d.add(2)],
+                    _ => [*d, *d.add(1), *d.add(2), *d.add(3)],
+                };
+                // Skip leading delimiters: first non-delim-or-NUL (strspn == complement).
+                let start = scan_c_string_for_set4(current, set, true);
+                if *current.add(start).cast::<u8>() == 0 {
+                    // Only delimiters (or empty) remain → no token.
+                    *saveptr = std::ptr::null_mut();
+                    return std::ptr::null_mut();
+                }
+                // Token end from the token start: first delim-or-NUL (strcspn).
+                let tok_len = scan_c_string_for_set4(current.add(start), set, false);
+                let end = start + tok_len;
+                let end_ptr = current.add(end).cast::<u8>();
+                let next = if *end_ptr != 0 {
+                    *end_ptr = 0; // replace the trailing delimiter with NUL (matches core)
+                    end + 1
+                } else {
+                    end // token ran to the NUL; save_ptr points at it (next call → None)
+                };
+                *saveptr = current.add(next);
+                return current.add(start) as *mut c_char;
+            }
+            let (scan_limit, terminated) = scan_c_string(current, None);
+            let slice_len = if terminated { scan_limit + 1 } else { scan_limit };
+            let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
             let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_len + 1);
             return match frankenlibc_core::string::strtok::strtok_r(s_slice, delim_slice, 0) {
                 Some((start, _len, next_offset)) => {

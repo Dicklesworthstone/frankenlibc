@@ -6,6 +6,31 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-06-30 — ✅ strtok / strtok_r FUSED early-stop DEPLOYED — full tokenization O(n²)→O(n), byte-identical (sibling of the strsep fix; strtok is far hotter)
+
+- **DEPLOYED (cc):** same quadratic pattern as strsep — the deployed strict `strtok`
+  and `strtok_r` did `scan_c_string(current, None)` (a full strlen of the *remaining*
+  string) on EVERY call to bound the slice, so a full tokenization loop over K tokens
+  was **O(n²)**. For small delim sets (1..=4 bytes — the common case) both now do TWO
+  early-stopping `scan_c_string_for_set4` passes: skip leading delimiters (strspn ==
+  `complement=true`) then find the token end (strcspn), NUL-write the trailing
+  delimiter, advance the save/thread-local pointer — O(token) per call → **O(n)**.
+  >4-byte delim sets keep the slice path. Covers strtok, strtok_r, __strtok_r (→
+  strtok_r), __strtok_r_1c (→ strtok_r).
+- **BYTE-IDENTITY PROVEN:** `conformance_diff_tokenize_fuzz` (20000 random
+  (source, delimiter) pairs, full via-`*saveptr` strtok_r loops) +
+  conformance_diff_tokenize/tokenizers/string_mut GREEN. Semantics ==
+  `core::str::strtok::{strtok,strtok_r}` (skip leading via strspn_set, token end via
+  strcspn_set, NUL-write, save_ptr = past-delim or at-NUL for the last token).
+- **MEASURED (`strtok_glibc_bench`, deployed fl vs dlmopen glibc, full K-token loop;
+  ORIG = old 2-pass via git-stash. RELIABLE = within-run fl/glibc ratio + ns/token
+  shape, cross-worker abs ns not comparable):** ORIG fl/glibc **1.23→1.28→2.30→4.53**
+  for K=8→64→512→2048 with ns/token GROWING 39→87 (quadratic); NEW fl/glibc
+  **1.33→1.31→1.38→1.28** with ns/token FLAT ~19 (linear). Same-binary before/after
+  at K=2048 ≈ **4.6x** (178076→38977ns), K=512 ≈ 2.1x — confirms O(n²)→O(n). Removes
+  the quadratic tokenization-DoS. **strtok is one of the hottest C string fns (every
+  CSV/config/PATH parser), so the linear fix matters broadly.**
+
 ## 2026-06-30 — ✅ strsep FUSED early-stop DEPLOYED — full tokenization O(n²)→O(n), byte-identical (fl/glibc flat ~1.2 vs ORIG growing to 7.5x)
 
 - **DEPLOYED (cc):** the deployed strict `strsep` did `scan_c_string(s, None)` — a
