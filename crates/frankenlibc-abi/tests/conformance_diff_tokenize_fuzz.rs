@@ -66,7 +66,11 @@ fn sep_seq(f: Sep, src: &[u8], delim: &[u8]) -> Vec<Option<Vec<u8>>> {
 #[test]
 fn tokenize_differential_fuzz_vs_glibc() {
     let alpha = *b"abc, -_;x,";
-    let delimsets: &[&[u8]] = &[b",", b", ", b"-_ ", b";", b"abc", b" ", b",;", b"xyz", b""];
+    // Includes >4-byte delimiter sets (`, -_;` = 5, `abc, -_` = 7) to cover the
+    // fused bitmap tokenizer path (delim_len > 4), members drawn from `alpha`.
+    let delimsets: &[&[u8]] = &[
+        b",", b", ", b"-_ ", b";", b"abc", b" ", b",;", b"xyz", b"", b", -_;", b"abc, -_",
+    ];
     let mut seed: u64 = 0xC0FFEE;
     let mut rng = || {
         seed ^= seed << 13;

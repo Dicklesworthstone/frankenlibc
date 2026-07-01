@@ -62,6 +62,35 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-01 — ✗ strtok/strsep >4-byte-delim fused via SCALAR bitmap REJECTED (8x adversarial regression) — but SURFACES a REAL unfixed gap: >4 tokenizer is O(n²), the clean fix needs page-safe PSHUFB
+
+- **CONTEXT:** my landed strtok/strsep/strtok_r fused early-stop only covers delim
+  sets ≤4 bytes (SIMD `scan_c_string_for_set4`). A >4-byte delim set (e.g. the 6-char
+  whitespace set `" \t\n\r\f\v"` — VERY common for tokenizing) STILL falls to the old
+  `scan_c_string(current, None)` full-prescan path → **O(n²)** per tokenization loop.
+- **MEASURED THE GAP IS REAL (`strtok_bigdelim_glibc_bench`, 6-char delim, deployed fl
+  vs dlmopen glibc):** ORIG (fallback) common-case fl/glibc **2.17x @512 tokens →
+  5.03x @2048** with ns/token GROWING 41→83 (quadratic). So the >4 tokenizer is a
+  genuine 2-5x-and-growing loss vs glibc — the ≤4 fix left it unaddressed.
+- **LEVER TESTED (cc):** extend the fused early-stop to >4 via a page-safe SCALAR
+  256-bit-bitmap byte-by-byte scan (`scan_c_string_bitmap`; trivially page-safe — never
+  reads past the NUL; matches glibc strtok's own bitmap approach). Byte-identical
+  (conformance_diff_tokenize_fuzz extended with 5- and 7-char delim sets, 20000 cases,
+  GREEN).
+- **RESULT — MIXED, net REJECT:** common (many short tokens) fl/glibc **2.17→1.03 /
+  5.03→1.03**, ns/token FLAT 17 (O(n)) — a big win. BUT adversarial (few LONG tokens,
+  4×4000 chars) **0.98→8.34x REGRESSION**: the scalar body scan (~0.75 ns/char) is ~8x
+  glibc's SIMD strcspn on long tokens, where ORIG's core PSHUFB body scan (+ only a few
+  prescans, no quadratic) was at parity. Same trap as the set8 entry below: a scalar
+  membership scan loses badly to SIMD/PSHUFB on long runs. Reverted the perf code (perf
+  code only — kept the >4 fuzz coverage + the bench as apparatus).
+- **THE REAL FIX (scoped for a dedicated turn):** a page-safe FUSED *PSHUFB* strcspn/
+  strspn scan from the raw pointer (no prescan, classifier-throughput body scan) — the
+  same lever the span entries defer. It would make BOTH the common (O(n²)→O(n)) AND the
+  long-token (SIMD body) cases win. The scalar bitmap is only correct as a fallback for
+  NON-AVX2 targets. `strtok_bigdelim_glibc_bench` (common + adversarial arms) is the
+  apparatus to validate it.
+
 ## 2026-06-30 — ✗ FUSED span extended to MEDIUM sets (5..=8 bytes, 8-way SIMD-eq) REJECTED — net REGRESSION at scale, reverted
 
 - **LEVER TESTED (cc):** extend the shipped small-set (≤4) fused early-stop to 5..=8-byte
