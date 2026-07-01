@@ -62,6 +62,29 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-01 — ✅ strcspn/strspn/strpbrk >4-byte-set fused via page-safe PSHUFB DEPLOYED — removes the whole-string prescan (byte-identical, page-safe)
+
+- **DEPLOYED (cc):** completes the >4-byte-set fused early-stop for the single-call
+  span family, symmetric with the tokenizer >4 fix. For an ALL-ASCII set >4 bytes the
+  strict path used to `scan_c_string(s, None)` (a full strlen of `s`) + a second
+  `core::str::{strspn,strcspn,strpbrk}` pass — 2 passes. Now routes through the
+  page-safe `scan_c_string_pshufb` (built for the tokenizer fix) → ONE early-stopping
+  pass, no prescan. Non-ASCII sets / non-x86_64 keep the slice path.
+- **BYTE-IDENTITY:** conformance_diff_string_search (incl. the 2..=8-byte long-string
+  differential now exercising the >4 PSHUFB route) + conformance_diff_string GREEN.
+  PAGE-SAFETY already proven — same `scan_c_string_pshufb` as the tokenizer, covered by
+  `strtok_pshufb_does_not_overread_past_guard_page`.
+- **MEASURED (`fused_span_glibc_bench`, 6-char set, deployed fl vs dlmopen glibc;
+  NEW vs ORIG via git-stash — CROSS-WORKER glibc variance is significant, so the
+  reliable read is the fl-side direction + the removed prescan):** the EARLY regime
+  (delimiter found before the end — the common "scan to next delimiter" idiom) shows a
+  robust fl improvement from dropping the whole-string prescan: strcspn fl_p50 64
+  **7.34→4.34**, 256 **8.89→5.15**, 4096 **31.04→16.94** (~1.7x); 4096 absent NEW beats
+  glibc ~2x (strpbrk fl/glibc 0.47→0.36, strspn 0.61→0.45). Small-string ABSENT
+  (full-scan, no early stop) is ~neutral (both scan the whole string once). No measured
+  regression; the gain is the eliminated prescan, largest when the stop is early or the
+  string is long. Modest but real; not near-zero for the common partial-scan case.
+
 ## 2026-07-01 — ✅ strtok/strsep >4-byte-delim fused via page-safe PSHUFB DEPLOYED — O(n²)→O(n) AND beats glibc on long tokens, byte-identical + guard-page proven
 
 - **DEPLOYED (cc):** the clean fix the entry below scoped. New page-safe

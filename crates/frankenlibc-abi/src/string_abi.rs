@@ -5156,6 +5156,14 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
                 };
                 return scan_c_string_for_set4(s, set, true);
             }
+            // Large ALL-ASCII accept set (>4): FUSED page-safe PSHUFB early-stop
+            // (strspn = stop on non-member OR NUL), no prescan. Byte-identical to
+            // core::str::strspn. Non-ASCII sets fall through to the slice path.
+            #[cfg(target_arch = "x86_64")]
+            if accept_len > 4 && all_bytes_ascii(accept.cast::<u8>(), accept_len) {
+                let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), accept_len);
+                return scan_c_string_pshufb(s, &lo16, &hi16, false);
+            }
             let (s_len, s_terminated) = scan_c_string(s, None);
             let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
             let accept_slice_len = if accept_terminated { accept_len + 1 } else { accept_len };
@@ -5275,6 +5283,14 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
                     _ => [*r, *r.add(1), *r.add(2), *r.add(3)],
                 };
                 return scan_c_string_for_set4(s, set, false);
+            }
+            // Large ALL-ASCII reject set (>4): FUSED page-safe PSHUFB early-stop
+            // (strcspn = stop on member OR NUL), no prescan. Byte-identical to
+            // core::str::strcspn. Non-ASCII sets fall through to the slice path.
+            #[cfg(target_arch = "x86_64")]
+            if reject_len > 4 && all_bytes_ascii(reject.cast::<u8>(), reject_len) {
+                let (lo16, hi16) = build_pshufb_lut(reject.cast::<u8>(), reject_len);
+                return scan_c_string_pshufb(s, &lo16, &hi16, true);
             }
             let (s_len, s_terminated) = scan_c_string(s, None);
             let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
@@ -5400,6 +5416,18 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
                     _ => [*a, *a.add(1), *a.add(2), *a.add(3)],
                 };
                 let idx = scan_c_string_for_set4(s, set, false);
+                return if *s.add(idx).cast::<u8>() != 0 {
+                    s.add(idx) as *mut c_char
+                } else {
+                    std::ptr::null_mut()
+                };
+            }
+            // Large ALL-ASCII accept set (>4): FUSED page-safe PSHUFB early-stop
+            // (first member OR NUL); map member→pointer, NUL→null. No prescan.
+            #[cfg(target_arch = "x86_64")]
+            if accept_len > 4 && all_bytes_ascii(accept.cast::<u8>(), accept_len) {
+                let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), accept_len);
+                let idx = scan_c_string_pshufb(s, &lo16, &hi16, true);
                 return if *s.add(idx).cast::<u8>() != 0 {
                     s.add(idx) as *mut c_char
                 } else {
