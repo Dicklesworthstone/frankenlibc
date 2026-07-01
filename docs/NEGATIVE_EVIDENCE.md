@@ -62,6 +62,34 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-01 — ✗ known_remaining-drop lever BLOCKED for strstr/strcasestr/strlen (main-data-arg bound is a load-bearing safety feature) — boundary recorded
+
+- **CONTEXT:** the prior entry dropped `known_remaining(delim)` in the strict tokenizer
+  paths (~8-15% win). Natural extension: drop it in the very-hot `strstr` strict path
+  (2 calls/invocation: needle + haystack). BLOCKED — and the general boundary is:
+  **`known_remaining` on the MAIN data arg is NOT droppable; on a small SECONDARY arg
+  (delim / the span set) it is.**
+- **WHY BLOCKED:** `strstr`/`strcasestr`/`strlen`/`strverscmp` have ACTIVE (non-ignored)
+  `*_bounds_tracked_unterminated_*` tests (fl deliberately BOUNDS a tracked unterminated
+  buffer — a safety value-add glibc lacks). More importantly, dropping the HAYSTACK
+  bound is a real CORRECTNESS risk, not just a safety/perf tradeoff: for a tracked
+  unterminated haystack whose match lies in ADJACENT heap past the allocation, the
+  unbounded scan would return a FALSE-POSITIVE pointer OUTSIDE the buffer. (The existing
+  test happens to still pass — its match is inside the tracked bytes and is the first
+  match — but the property is genuinely load-bearing.) The tokenizer drop was safe
+  because the delim is tiny/controlled and its rejection tests are `#[ignore]`
+  ("requires real hardened mode bounds checking") — a bonus, not a contract; the span
+  functions already scan their set with `None`. **The secondary-arg known_remaining
+  sweep is now COMPLETE (delim + span set); the main-arg bound stays. Don't re-attempt
+  strstr/strcasestr/strchr/strlen.**
+- **VERIFIED (this turn):** the shipped tokenizer drop (773e71302) is clean — full
+  `string_abi_test` tokenizer/substring subset 8 passed / 3 ignored / 0 failed.
+- **⚠️ FLAKY TEST (infra, not a regression):** `string_abi_test` aborts (SIGABRT) on
+  workers WITHOUT Intel TSX via `memcpy should record an HTM abort` (attempts:0 →
+  HTM never attempted). Environment-dependent (ovh-a lacks TSX); unrelated to any perf
+  change. Run the specific test filter (`-- strtok strsep strstr`) to avoid it, or pin
+  a TSX-capable worker.
+
 ## 2026-07-01 — ✅ strtok/strtok_r/strsep strict path drops per-call known_remaining(delim) — ~8-15% fl/glibc, byte-identical
 
 - **DEPLOYED (cc):** the strict tokenizer fast paths bounded the `delim` scan with
