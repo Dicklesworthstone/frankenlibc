@@ -10098,3 +10098,19 @@ REMAINING BIG GAPS ARE ARCHITECTURAL (multi-session, not focused-turn levers):
      fortify bounds — removing it touches free/realloc/string-bounds (architectural).
 SURFACED: no clean safe focused-turn write/malloc lever; the copy vein is exhausted. Next real
 progress needs the fast_write-miss audit (small) or one of the two architectural refactors.
+
+### 2026-07-02 — ⚠️ CORRECTION to the entry above: defer to the measured 6.22x, not my 2.7x estimate — BlackThrush
+
+The "~2.7x" in the previous entry came from criterion's WARM-UP ITERATION ESTIMATE (fl 853k vs
+glibc 2.3M @8B in the 2s estimate window), NOT a final measured time — my captured bench output
+was truncated before the fl `time:` line. Prior memory has a MEASURED fputs_8B = 6.22x vs glibc
+(commit a564ca8ae, parking_lot) and MT 8-thread = 8.6x (stdio_mt_contention_bench). Those measured
+numbers STAND; my iteration-estimate 2.7x is looser and should not be read as a "correction" of
+6-12x. The substantive, already-established conclusion is unchanged and CONFIRMED: the deployed
+stdio-write gap is dominated by the single global registry() Mutex (bd-hqo6b6) — the micro-lock-
+elision vein is EXHAUSTED+CALIBRATED (per prior turns: cookie-lock, standard_stream_id reorder,
+native-FILE cache all done/measured), and only the swing-1 per-FILE lock refactor moves the needle.
+The 38B iteration drop I flagged is consistent with buffer-flush behavior in the amortized-rewind
+bench, not necessarily a fast-path bug. NET: no new focused-turn stdio lever; architectural refactor
+required. Lesson: never infer a ratio from criterion's warm-up iteration estimate — capture the
+final `time:` line or use a same-process A/B.
