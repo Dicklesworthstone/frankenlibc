@@ -548,7 +548,11 @@ pub unsafe extern "C" fn lfind(
         Some(n) => n,
         None => return std::ptr::null_mut(),
     };
-    if !tracked_region_fits(base, total) || !tracked_region_fits(key, width) {
+    // Strict-mode fast path: skip the two `tracked_region_fits` registry lookups
+    // (byte-identical trust-the-caller; glibc never validates the region). [lfind]
+    if !crate::runtime_policy::strict_passthrough_active()
+        && (!tracked_region_fits(base, total) || !tracked_region_fits(key, width))
+    {
         return std::ptr::null_mut();
     }
     let buf: &[u8] = unsafe { std::slice::from_raw_parts(base as *const u8, total) };
@@ -579,7 +583,11 @@ pub unsafe extern "C" fn lsearch(
         Some(n) => n,
         None => return std::ptr::null_mut(),
     };
-    if !tracked_region_fits(base.cast_const(), total) || !tracked_region_fits(key, width) {
+    // Strict-mode fast path: skip the two `tracked_region_fits` registry lookups
+    // (byte-identical trust-the-caller; glibc never validates the region). [lsearch find]
+    if !crate::runtime_policy::strict_passthrough_active()
+        && (!tracked_region_fits(base.cast_const(), total) || !tracked_region_fits(key, width))
+    {
         return std::ptr::null_mut();
     }
     let buf: &[u8] = unsafe { std::slice::from_raw_parts(base as *const u8, total) };

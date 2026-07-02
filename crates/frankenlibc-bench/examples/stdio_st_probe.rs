@@ -265,6 +265,22 @@ fn main() {
         let t = Instant::now(); for i in 0..bit { let k = keys[(i & 3) as usize]; black_box_ptr3(unsafe { g_bsearch((&k as *const i32).cast(), ssorted.as_ptr().cast(), nq, 4, cmp_i32) }); } gb.push(t.elapsed().as_nanos() as f64 / bit as f64);
     }
     println!("BSEARCH fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fb,0.5), pctl(&gb,0.5), pctl(&fb,0.5)/pctl(&gb,0.5));
+    // lfind: linear search (POSIX). Pays 2x tracked_region_fits (registry lookups); strict skips them.
+    type LfindFn = unsafe extern "C" fn(*const libc::c_void, *const libc::c_void, *const usize, usize, CmpFn) -> *mut libc::c_void;
+    let g_lfind: LfindFn = dl(h, b"lfind\0");
+    {
+        let mut nel: usize = 64;
+        let arrl: Vec<i32> = (0..nel as i32).collect();
+        let key: i32 = 40; // present, mid-array
+        let (mut fl2, mut gl2) = (Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_ptr3(unsafe { frankenlibc_abi::search_abi::lfind((&key as *const i32).cast(), arrl.as_ptr().cast(), &mut nel, 4, cmp_i32) }); } fl2.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_ptr3(unsafe { g_lfind((&key as *const i32).cast(), arrl.as_ptr().cast(), &nel, 4, cmp_i32) }); } gl2.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        let _ = &mut nel;
+        println!("LFIND fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fl2,0.5), pctl(&gl2,0.5), pctl(&fl2,0.5)/pctl(&gl2,0.5));
+    }
     // QSORT_SMALL: small sorts (common) — the membrane decide()/observe() dominates pdqsort's
     // few comparisons; the strict fast path should show the biggest relative gain here.
     for &sn in &[8usize, 16, 32] {

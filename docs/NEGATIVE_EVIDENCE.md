@@ -11301,3 +11301,27 @@ DEFINITIVELY closed (verified strxfrm already covered; all string/wchar/stdlib-p
 covered; syscall wrappers disproven). Coordination check: stdio_abi/malloc_abi working tree clean but
 the 2 architectural swings remain large/correctness-critical/coordination-sensitive — not a safe
 unilateral start; orchestrator must assign per perf_next_architectural_swings.md.
+
+---
+
+## lfind/lsearch strict fast path — POSIX linear search beats glibc 1.5x (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Extending the sort/search strict-fast-path family into search_abi.rs: `lfind`/`lsearch` (POSIX linear
+search) paid 2× `tracked_region_fits` (each a `known_remaining` registry lookup) on every call with no
+strict bypass (search_abi has 0 decide() calls, so this registry lookup — not decide/observe — was its
+membrane tax).
+
+**Measured (stdio_st_probe LFIND arm, 64-elem array, key mid-array, dlmopen glibc):**
+fl **55.73ns vs glibc 85.02ns = 0.655x — fl beats glibc 1.5x.**
+
+**Fix (byte-identical):** one-line `!strict_passthrough_active() && (!tracked_region_fits ×2)` guard
+on lfind (L551) + lsearch's find (L582) so strict skips the registry lookups (trust-the-caller; glibc
+never validates the region). Gates GREEN: conformance_diff_lsearch 3, conformance_diff_search 15,
+conformance_diff_generic_search 4, search_abi_test 38, strict_mode_refinement 18, hardened_mode_safety 15.
+
+**SORT + SEARCH strict-fast-path now COMPLETE across BOTH modules:** stdlib_abi (qsort, qsort_r,
+mergesort, heapsort, bsearch, bsearch_r) + search_abi (lfind, lsearch). Every comparator-based
+sort/search entrypoint bypasses the membrane in strict. This whole vein (reopened after "campaign
+closed" by auditing un-probed non-colliding modules) has now yielded 7 real byte-identical wins:
+bsearch 0.90x (was 1.68x loss), qsort (small win-more), qsort_r 0.467x, lfind 0.655x, + bsearch_r/
+mergesort/heapsort (registry-lookup skips). Non-colliding strict-fast-path audit DEFINITIVELY closed.
