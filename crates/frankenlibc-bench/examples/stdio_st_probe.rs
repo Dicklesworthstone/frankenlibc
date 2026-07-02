@@ -219,6 +219,28 @@ fn main() {
     }
     let (flwp, glwp) = (pctl(&flw,0.5), pctl(&glw,0.5));
     println!("WCSTOL fl={flwp:.2} glibc={glwp:.2} fl/glibc={:.3}", flwp/glwp);
+
+    // qsort: fl (pdqsort) vs glibc (introsort), same array + comparator, dlmopen. Reset the
+    // array from a master each sort (a shuffled-but-fixed permutation) so both sort identical work.
+    type CmpFn = unsafe extern "C" fn(*const libc::c_void, *const libc::c_void) -> i32;
+    type QsortFn = unsafe extern "C" fn(*mut libc::c_void, usize, usize, CmpFn);
+    unsafe extern "C" fn cmp_i32(a: *const libc::c_void, b: *const libc::c_void) -> i32 {
+        let (x, y) = unsafe { (*(a as *const i32), *(b as *const i32)) };
+        (x > y) as i32 - (x < y) as i32
+    }
+    let g_qsort: QsortFn = dl(h, b"qsort\0");
+    let nq = 1024usize;
+    // Deterministic pseudo-shuffle (no rng): a fixed permutation-ish fill.
+    let master: Vec<i32> = (0..nq).map(|i| ((i * 2654435761usize) & 0x7fffffff) as i32).collect();
+    let mut arr = master.clone();
+    let qit = 2000u64;
+    let (mut fqv, mut gqv) = (Vec::new(), Vec::new());
+    for _ in 0..80 {
+        let t = Instant::now(); for _ in 0..qit { arr.copy_from_slice(&master); unsafe { frankenlibc_abi::stdlib_abi::qsort(arr.as_mut_ptr().cast(), nq, 4, Some(cmp_i32)); } std::hint::black_box(arr[0]); } fqv.push(t.elapsed().as_nanos() as f64 / qit as f64);
+        let t = Instant::now(); for _ in 0..qit { arr.copy_from_slice(&master); unsafe { g_qsort(arr.as_mut_ptr().cast(), nq, 4, cmp_i32); } std::hint::black_box(arr[0]); } gqv.push(t.elapsed().as_nanos() as f64 / qit as f64);
+    }
+    let (fqp, gqp) = (pctl(&fqv,0.5), pctl(&gqv,0.5));
+    println!("QSORT_1024 fl={fqp:.2} glibc={gqp:.2} fl/glibc={:.3} (ns/sort incl reset)", fqp/gqp);
 }
 
 #[inline(never)]

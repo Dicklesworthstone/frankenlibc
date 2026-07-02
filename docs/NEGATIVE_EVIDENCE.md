@@ -10512,3 +10512,18 @@ malloc dominates — fl's thread_cache makes small allocs cheap (~3ns), so targe
 per-call allocations. Clean high-value focused-turn levers now EXHAUSTED across stdio (ST certified
 winning) + the per-call-alloc family; remaining is architectural (malloc ownership, stdio MT lock).
 Apparatus: WCSTOL arm in stdio_st_probe.
+
+### 2026-07-02 — ✅ CERTIFIED (honest dlmopen): qsort BEATS glibc 3x (0.333x) for integer sort — BlackThrush
+
+Re-measured qsort vs HOST glibc via dlmopen (the reliable method — the old "3.5x win" was via
+glibc_baseline_bench, Rust-to-Rust thin-LTO, which has repeatedly HIDDEN real gaps this session
+e.g. wcschr/wcscpy). Same 1024-element i32 array (deterministic fill) + same C comparator, reset
+from a master each sort: **fl=10123ns vs glibc=30372ns = fl/glibc 0.333 — fl BEATS glibc by 3x.**
+Confirms fl's qsort (pdqsort + integer-radix fast path) genuinely dominates glibc's comparison
+introsort for radix-eligible data — the claim HOLDS under honest measurement. (For pointer/struct
+elements with no radix path it degrades to pdqsort ~parity-to-slight-win; the 3x is the integer
+radix lever.) Apparatus: QSORT_1024 arm in stdio_st_probe. This closes the honest-remeasurement
+sweep of the "old biased-bench wins": qsort 0.333x (WIN, confirmed), stdio read fread_4K 0.917x /
+write fwrite_4K 0.371x (WIN, certified this session), wcstol 1.25x (near-parity). fl's core
+perf surface genuinely beats glibc where the memory claimed — the biased-bench caveat did NOT
+overturn qsort (unlike wcschr/wcscpy, which the bias DID hide).
