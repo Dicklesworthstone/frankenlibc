@@ -90,6 +90,21 @@ fn main() {
     }
     let (fop, fnp) = (pctl(&fo, 0.5), pctl(&fn_, 0.5));
     println!("FEOF_AB old={fop:.2} new={fnp:.2} new/old={:.3} saved={:.2}ns", fnp/fop, fop-fnp);
+
+    // Interleave thrash test: single-entry cache should thrash when alternating between
+    // TWO streams (each call misses -> canonical_stream_id lock). vs single-stream loop.
+    let ff2 = unsafe { fl::fopen(path, mode) }; assert!(!ff2.is_null());
+    unsafe { fl::setvbuf(ff2, std::ptr::null_mut(), libc::_IOFBF, cap); }
+    let s: Vec<u8> = std::iter::repeat(b'x').take(16).chain(std::iter::once(0)).collect();
+    let sp = s.as_ptr() as *const c_char;
+    unsafe { fl::fputs(sp, ff); fl::fputs(sp, ff2); fl::fflush(ff); fl::fflush(ff2); }
+    let (mut single, mut inter) = (Vec::new(), Vec::new());
+    for _ in 0..120 {
+        let t = Instant::now(); for _ in 0..it { unsafe { black_box_i32(fl::fputs(sp, ff)); } } unsafe { fl::fflush(ff); } single.push(t.elapsed().as_nanos() as f64 / it as f64);
+        let t = Instant::now(); for _ in 0..(it/2) { unsafe { black_box_i32(fl::fputs(sp, ff)); black_box_i32(fl::fputs(sp, ff2)); } } unsafe { fl::fflush(ff); fl::fflush(ff2); } inter.push(t.elapsed().as_nanos() as f64 / it as f64);
+    }
+    let (sp_, ip_) = (pctl(&single, 0.5), pctl(&inter, 0.5));
+    println!("INTERLEAVE single={sp_:.2} two_stream={ip_:.2} inter/single={:.3}", ip_/sp_);
 }
 
 #[inline(never)]

@@ -10215,3 +10215,19 @@ lower-frequency but free. **stdio ST pointer-keyed lock-elision now COMPLETE acr
 surface: write (fputs/fputc/fwrite), read (fgetc/getc/fread), state (feof/ferror), query
 (fileno/ftell/clearerr) — all skip the per-call FILE*->id native lock; the state/query fns also
 skip the main registry lock.** MT path (bd-hqo6b6) unchanged. Apparatus: stdio_st_probe.
+
+### 2026-07-02 — ✅ stdio write cache 2-way — kills the 1.58x multi-stream interleave thrash — BlackThrush
+
+The thread-local stdio fast-path cache (WRITE_CACHE, backing all the pointer-keyed fast paths)
+was SINGLE-ENTRY. Measured (stdio_st_probe INTERLEAVE arm) a program alternating writes between
+TWO fd streams (stdout + a log file; app + access log — a common logging pattern) thrashed it:
+each alternating call missed -> canonical_stream_id native lock. two_stream/single = 1.582
+(68.5ns vs 43.3ns per call). Made the cache 2-way (most-recent-first: store inserts at slot 0,
+shifting the old head to slot 1; lookup scans both; store only runs on a full miss so no
+duplicate). AFTER: two_stream/single = 1.011 (44.2ns vs 43.7ns) — interleave now at PARITY with
+single-stream (~1.55x faster for the 2-stream loop, 68.5->44.2ns). Single-stream unchanged (slot
+0 hit first, 43.7 vs 43.3ns = noise). Byte-identical: strict stdio conformance stdio_abi_test 256
+passed / 0 failed; benefits ALL pointer-keyed fast paths at once (fputs/fputc/fwrite/fgetc/getc/
+fread/feof/ferror/fileno/ftell/clearerr). GOTCHA: `gen` is a Rust 2024 reserved keyword — the
+loop's generation local must be `cur_gen`. A 3rd hot stream still evicts LRU-ish (slot 1); 2-way
+covers the dominant stdout+stderr / two-log patterns. MT path (bd-hqo6b6) unchanged.
