@@ -10380,3 +10380,26 @@ FRONTIER STATUS — clean focused-turn levers EXHAUSTED. Remaining gaps are:
   4. fseek in-buffer optimization (glibc avoids lseek for seeks within the buffered region);
      fl always repositions — a correctness-sensitive buffered-seek feature.
 NEXT SESSION should target #1 or #2 (the architectural refactors) — the micro-lever surface is done.
+
+### 2026-07-02 — ⊘ getenv tuned; getdelim/getline dig INCONCLUSIVE (temp-Vec not dominant; 302x EOF anomaly) — BlackThrush
+
+getenv: already optimized — membrane fast-path (stdlib_membrane_fastpath) + a hot cache
+(getenv_hot_cache_lookup_same_ptr / _lookup / _store) + native_getenv_raw. No lever.
+
+getdelim/getline dig — hypothesis (fl allocates a fresh 128B temp Vec per call that glibc avoids)
+was WEAKENED by measurement: an isolated Vec::with_capacity(128)+drop is only ~61ns, so the temp
+Vec is NOT the dominant cost. An EOF-based probe (fl getdelim vs glibc on a /dev/null "r" stream,
+returns -1) showed fl=2855ns vs glibc=9ns (302x) — but this is UNREPRESENTATIVE (EOF corner, not
+per-line reading) and ANOMALOUS: 2855ns is syscall-territory, implying fl re-reads (sys_read_fd)
+on every getdelim-at-EOF while glibc caches EOF. refill_stream DOES set_eof() on a 0-read (line
+1840) and the loop checks `if s.is_eof() { break }` before refilling, so getdelim SHOULD cache
+EOF and be ~100ns after the first call — the 302x contradicts that and I could NOT explain it in-
+turn (possible interaction with the probe's prior fgets-bench state on the shared /dev/null "r"
+stream, or read_until_delim/eof-flag semantics on /dev/null). PER MEASURE-FIRST DISCIPLINE: did
+NOT commit a getdelim change on murky data. LEADS for a dedicated turn: (1) a PROPER per-line
+getdelim benchmark (fresh readable file with content + rewind, NOT EOF) to measure the real
+per-line cost; (2) getdelim reads into a temp Vec then copies to *lineptr via copy_nonoverlapping
+— the abi-crate naive-loop copy trap (slow for long lines); reading directly into the caller's
+buffer (Vec::from_raw_parts adoption, medium-risk re: alloc-under-registry-lock) eliminates both
+the temp Vec AND the copy; (3) INVESTIGATE the getdelim-at-EOF re-read (is it a real per-call
+syscall vs glibc's EOF cache?) — if so it's a correctness-adjacent perf finding.
