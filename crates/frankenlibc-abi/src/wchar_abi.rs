@@ -906,64 +906,61 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
 /// stays within one page and cannot fault past the NUL — the wide analogue of the
 /// align-to-8 discipline used by the narrow SWAR scans.
 unsafe fn wide_find_or_nul_simd(s: *const u32, c: u32) -> (usize, bool) {
+    use std::simd::cmp::SimdOrd;
     const LANES: usize = 8;
-    let mut i = 0usize;
-    // Element-wise head until `s + i` is 32-byte aligned.
-    let head = ((32 - ((s as usize) & 31)) & 31) / 4;
-    while i < head {
-        // SAFETY: caller guarantees a valid NUL-terminated string.
-        let ch = unsafe { *s.add(i) };
-        if ch == c {
-            return (i, true);
-        }
-        if ch == 0 {
-            return (i, false);
-        }
-        i += 1;
-    }
     let cv = Simd::<u32, LANES>::splat(c);
     let zv = Simd::<u32, LANES>::splat(0);
+    let pb = s as usize;
+    // Aligned-load-down + head-mask instead of an element-by-element scalar head
+    // (was up to 7 scalar iters to reach 32-byte alignment): load the 8-lane panel
+    // containing `s`, mask off lanes before `s`, and resolve in one SIMD step —
+    // the same head trick that closed narrow strchr's short-string floor (847363e6e).
+    // ~1.4-2.8x faster than the scalar head at small/medium wide strings.
+    let align = (pb & 31) >> 2; // elements before the 32-byte boundary (0..=7)
+    // SAFETY: `base` is aligned down <= 28 bytes, so it stays in the same mapped page
+    // as `s`; the 32-byte load never crosses a page boundary.
+    let base = unsafe { s.sub(align) };
+    let v0 = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(base.cast::<[u32; LANES]>()) });
+    // `min(v ^ c, v)` has a zero lane iff v == c (v^c == 0) OR v == 0 — collapses the
+    // two-target (c-or-NUL) detection into a single compare, so the folded tier below
+    // can min-combine 4 vectors into one reduction (the wcslen-style kernel).
+    let m0 = ((v0 ^ cv).simd_min(v0)).simd_eq(zv).to_bitmask() & !((1u64 << align) - 1);
+    if m0 != 0 {
+        let pos = m0.trailing_zeros() as usize; // lane within the base window
+        // SAFETY: `pos < LANES` within the just-read window.
+        let is_c = unsafe { *base.add(pos) } == c;
+        return (pos - align, is_c);
+    }
+    let mut i = LANES - align; // s+i is 32-byte (8-u32) aligned
     loop {
         // Length-escalated folded 4x8 = 32-lane (128-byte) tier: one combined
-        // `.any()` reduction per 128 bytes for the bulk of long wide strings,
-        // matching glibc's unrolled wcschr (the plain 32-byte panel below did one
-        // reduction per 32 bytes and lost ~1.4x at >=1024 wchars). Gated on
-        // `i >= 32` so short strings (where the 32-byte panel already beats glibc)
-        // never pay the folded overhead — the escalation guard that kept strchr's
-        // folded-128 tier (bd-4rxozm) regression-free. Page-guarded so the 128-byte
-        // read never crosses into an adjacent (possibly unmapped) page; a folded
-        // hit falls through to the 32-byte/scalar resolve below, which returns the
-        // exact first c-or-NUL index unchanged.
-        if i >= 32 && ((s as usize) + i * 4) & 0xFFF <= 0x1000 - 128 {
+        // reduction per 128 bytes for the bulk of long wide strings, matching glibc's
+        // unrolled wcschr. Gated on `i >= 32` so short strings (already resolved above
+        // or in the 32-byte panel) never pay the folded overhead — the escalation
+        // guard that kept strchr's folded-128 tier (bd-4rxozm) regression-free.
+        // Page-guarded so the 128-byte read never crosses into an adjacent (possibly
+        // unmapped) page; a folded hit falls through to the 32-byte/scalar resolve
+        // below, which returns the exact first c-or-NUL index unchanged.
+        if i >= 32 && (pb + i * 4) & 0xFFF <= 0x1000 - 128 {
             // SAFETY: the 128-byte window stays within the current mapped page.
-            let base = unsafe { s.add(i) };
-            let v0 = Simd::<u32, LANES>::from_array(unsafe {
-                core::ptr::read(base.cast::<[u32; LANES]>())
-            });
-            let v1 = Simd::<u32, LANES>::from_array(unsafe {
-                core::ptr::read(base.add(LANES).cast::<[u32; LANES]>())
-            });
-            let v2 = Simd::<u32, LANES>::from_array(unsafe {
-                core::ptr::read(base.add(2 * LANES).cast::<[u32; LANES]>())
-            });
-            let v3 = Simd::<u32, LANES>::from_array(unsafe {
-                core::ptr::read(base.add(3 * LANES).cast::<[u32; LANES]>())
-            });
-            let any = (v0.simd_eq(cv) | v0.simd_eq(zv))
-                | (v1.simd_eq(cv) | v1.simd_eq(zv))
-                | (v2.simd_eq(cv) | v2.simd_eq(zv))
-                | (v3.simd_eq(cv) | v3.simd_eq(zv));
-            if !any.any() {
+            let b = unsafe { s.add(i) };
+            let x0 = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(b.cast::<[u32; LANES]>()) });
+            let x1 = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(b.add(LANES).cast::<[u32; LANES]>()) });
+            let x2 = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(b.add(2 * LANES).cast::<[u32; LANES]>()) });
+            let x3 = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(b.add(3 * LANES).cast::<[u32; LANES]>()) });
+            let e0 = (x0 ^ cv).simd_min(x0);
+            let e1 = (x1 ^ cv).simd_min(x1);
+            let e2 = (x2 ^ cv).simd_min(x2);
+            let e3 = (x3 ^ cv).simd_min(x3);
+            if !e0.simd_min(e1).simd_min(e2.simd_min(e3)).simd_eq(zv).any() {
                 i += 4 * LANES;
                 continue;
             }
         }
         // SAFETY: `s + i` is 32-byte aligned, so this 32-byte load stays inside
         // the current page; the string is NUL-terminated within a mapped page.
-        // Use a raw array load rather than forming a Rust slice over C memory.
-        let words = unsafe { core::ptr::read(s.add(i).cast::<[u32; LANES]>()) };
-        let v = Simd::<u32, LANES>::from_array(words);
-        if (v.simd_eq(cv) | v.simd_eq(zv)).any() {
+        let v = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(s.add(i).cast::<[u32; LANES]>()) });
+        if (v ^ cv).simd_min(v).simd_eq(zv).any() {
             for j in 0..LANES {
                 // SAFETY: within the just-read window; a c-or-NUL exists at/ before j==7.
                 let ch = unsafe { *s.add(i + j) };

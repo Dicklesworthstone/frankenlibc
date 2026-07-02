@@ -515,6 +515,12 @@ name = "wcslen_escalation_ab_bench"
 required-features = ["abi-bench"]
 harness = false
 
+# wcschr find-or-nul head in-process A/B/C (scalar head vs aligned-down head vs glibc).
+[[bench]]
+name = "wcschr_head_ab_bench"
+required-features = ["abi-bench"]
+harness = false
+
 [[bench]]
 name = "wcsdup_glibc_bench"
 required-features = ["abi-bench"]

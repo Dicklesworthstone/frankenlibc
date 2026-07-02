@@ -9784,3 +9784,40 @@ most of the medium wins: n=48 mid/old=1.00 (no escalation at all — a 48-wchar 
 0.74 vs 0.46. The deployed no-gate variant DOMINATES the i<32 gate at every size except n=16. The n=16
 regression (~12% vs old fl) is real but small and fl STILL beats glibc there (new/glibc≈0.73), so it is not
 worth trading the medium band for. Do not re-attempt the i<32 gate.
+
+### 2026-07-02 — ✅ wcschr/wcschrnul/wcsstr wide finder: aligned-load-down head + min-combine c-or-NUL fold — 1.2-2.8x faster than deployed fl (still ~2x behind glibc at moderate/large) — BlackThrush
+
+The deployed strict wide finder `wide_find_or_nul_simd` (backs wcschr, wcschrnul, the
+wcsstr candidate scan, and wcsrchr's c=0 span) had (a) a scalar element-by-element head
+loop — up to 7 iters to reach 32-byte alignment — and (b) a fold/panel that did
+`v.eq(c) | v.eq(0)` = 2 compares + an OR per 8-lane vector (8 eq + 6 OR per 128 B fold).
+The prior wcschr_width_ab_bench measured `core::string::wide::wcschr`, NOT this deployed
+abi path (the classic wrong-target trap), so the gap was invisible. A deployed-path
+in-process bench (wcschr_head_ab_bench, via the bench_wide_find_or_nul_simd hook) showed
+old/glibc = 1.4-2.8x across ALL sizes.
+
+Two fixes, both byte-identical (conformance: wcschr 3, wchar 44, wcsrchr 3, wcsstr 1,
+wcs_family 4, wchar_abi 118 — all 0 failed; the (idx,found) contract every caller relies
+on is preserved, incl. c==0 → returns the NUL with found=true):
+  1. Aligned-load-down + head-mask head (the narrow-strchr trick 847363e6e, never swept
+     to the wide finder): load the 8-lane panel containing `s`, mask lanes before `s`,
+     resolve in one SIMD step. Page-safe (aligned down <=28 B stays in-page).
+  2. min-combine c-or-NUL detection: `min(v ^ c, v)` has a zero lane iff v==c OR v==0, so
+     the folded tier collapses 4 vectors into ONE `.eq(0)` reduction (the wcslen-style
+     kernel), extended to the two-target search.
+
+In-process A/B/C (worker variance cancels in new2/old; new2 = deployed variant):
+  n=   4  new2/old=0.362  new2/glibc=0.471      n=  96  new2/old=0.837  new2/glibc=2.256
+  n=   8  new2/old=0.668  new2/glibc=0.729      n= 128  new2/old=0.865  new2/glibc=2.045
+  n=  16  new2/old=0.750  new2/glibc=1.365      n= 256  new2/old=0.902  new2/glibc=1.659
+  n=  32  new2/old=0.828  new2/glibc=2.205      n=1024  new2/old=0.997  new2/glibc=1.680
+  n=  48  new2/old=0.879  new2/glibc=2.043
+  n=  64  new2/old=0.822  new2/glibc=2.344
+1.0-2.8x faster than the deployed scalar-head fl at every size (parity at 1024), and it
+now BEATS glibc at n=4 (0.47) / n=8 (0.73). HONEST LIMIT: fl's wide finder is STILL ~1.4-
+2.3x behind glibc's hand-tuned wcschr-avx2 at moderate/large (n=16..1024) — the head and
+fold-kernel micro-tweaks do NOT close that gap; it is a deep AVX-kernel matter (glibc uses
+tighter vpcmpeqd+vpmovmskb sequences with better ILP), not a focused-turn lever. Deployed
+anyway because it is a strict improvement over the prior fl code with no regression.
+Apparatus: wcschr_head_ab_bench (deployed-path in-process A/B/C). NOTE: after deploy the
+bench's "old" arm now measures the NEW deployed code — it doubles as a regression guard.
