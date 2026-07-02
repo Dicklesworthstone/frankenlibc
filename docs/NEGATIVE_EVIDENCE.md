@@ -10586,3 +10586,28 @@ Two-Way) but LOSES the SIMD-scan family to glibc's AVX2 (asm-only lever) + archi
 The "fl core surface dominant" narrative was inflated by the LTO-biased bench for the scan family.
 Apparatus: STRCHR/MEMCHR arms in stdio_st_probe. LESSON: re-measure EVERY biased-bench "win" vs real
 glibc via dlmopen — the scan family was systematically over-claimed.
+
+### 2026-07-02 — ⊘ DEFINITIVE: scan-family gap is irreducible without AVX2 asm — every non-asm lever RULED OUT — BlackThrush
+
+Investigated whether the strchr/memchr losses (prior entry) have a NON-asm fix. Ruled out ALL of them:
+  - LANE WIDTH: core memchr/strchr already use SIMD_LANES=32 (Simd<u8,32> => AVX2 ymm), NOT 16. Not a
+    width gap vs glibc's AVX2.
+  - AVX-512: the rch worker is an AMD Ryzen Threadripper PRO 5975WX (Zen 3) — AVX2-only, NO AVX-512
+    (cpuinfo: avx2, no avx512). So glibc uses __memchr_avx2 (32B), same width as fl. NOT an AVX-512
+    dispatch gap. (Zen 4+ / Intel would have avx512 and glibc's __memchr_evex 64B — there fl WOULD
+    need a runtime avx512 path, but not here.)
+  - MEMBRANE: deployed memchr (+strchr via strchr_locate) ALREADY have strict_passthrough fast paths
+    (no per-call decide/observe/stage_context). Not a membrane tax.
+  - ALGORITHM: strrchr's strlen+memrchr 2-pass was measured WORSE (prior entry). No swap helps.
+COST BREAKDOWN: memchr is NEAR-PARITY at large (n=1024 1.07x) — the 32B kernel is competitive — but
+loses at small (n=64 2.39x) = the core scan setup (fold-check + [16,32) special-case) + extern-C
+frame floor (glibc's tail is a single overlapping ymm; fl's is more branchy). strchr loses more
+UNIFORMLY (1.87x @1024) = the c-OR-NUL two-compare scan + page-safety handling vs glibc's tight
+aligned AVX2 unroll. CONCLUSION: the scan family (strchr/memchr/strrchr/strcmp) is at the
+portable-SIMD-vs-hand-tuned-AVX2-asm STRUCTURE ceiling on AVX2-only HW — the ONLY lever is a per-fn
+recursion-safe AVX2 asm loop matching glibc's exact structure (memcpy/memset asm precedent exists),
+and even that has BOUNDED gain (memchr already 1.07x; the win is mostly strchr's ~1.5-1.8x + the
+small-size setup). This is a high-effort/high-risk dedicated-turn lever, NOT a clean focused-turn
+change. NO future agent should re-chase lane-width / AVX-512 / membrane / algorithm for these — all
+ruled out here. The scan family + malloc/MT are the ONLY remaining fl-vs-glibc gaps; everything
+algorithmic + stdio is certified WINNING.
