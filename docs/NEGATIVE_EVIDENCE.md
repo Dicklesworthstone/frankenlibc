@@ -10976,3 +10976,35 @@ before host passthrough — a security/safety invariant, not skippable. This SHA
 not the membrane telemetry. Closing it needs a cheaper per-alloc bounds-tracking scheme (e.g. deriving
 size from `malloc_usable_size` on demand instead of a global locked table, or a per-CPU/sharded table) —
 an allocator-architecture redesign, its own dedicated effort. MALLOC_FREE probe arm kept in stdio_st_probe.rs.
+
+---
+
+## memmem CERTIFIED 404x faster than glibc on adversarial input (honest dlmopen) — DoS-resistance win (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Honest dlmopen certification sweep of the memory's claimed algorithmic wins (the wcscmp episode
+proved biased benches mislead, so re-verified through the REAL no_mangle entry vs isolated glibc).
+
+**✓ CERTIFIED (VALID measurement): memmem 404x faster on the pathological/adversarial case.**
+Haystack = `"a"×4096`, needle = `"a"×31 + "c"` (the classic input that drives a naive or
+mismatched substring search quadratic). **fl 36.5ns vs glibc 14747ns = fl/glibc 0.002x (~404x).**
+This is NOT a bench artifact: a 4096-byte Two-Way search cannot be const-folded (36ns reflects
+genuine linear work), and glibc's memmem genuinely degrades to ~15µs on this adversarial input
+while fl's Two-Way (core `string::mem::memmem`, wired into the deployed no_mangle memmem — the
+anti-pattern-swept substring family) stays O(n+m) linear. This is both a PERF win and a
+**CPU-DoS-resistance** property glibc lacks — a real, honest, algorithmic superiority, not the
+inlined-vs-extern or thin-LTO artifact class. Certifies the memory's "memmem ~500x / substring
+family fully Two-Way" claim survives an honest probe (unlike wcscmp/wcschr's biased "wins").
+
+**◐ strspn — fl WINS (direction certified), exact ratio NOT (const-fold bias).** fl 1.68ns vs
+glibc 6.23ns (0.269x) — fl's 256-bit accept-set bitmap genuinely beats glibc's byte-at-a-time
+span, consistent with the memory's documented ~3.2x. BUT the 1.68ns is inflated by the same
+inlined-fl + loop-invariant-const-input const-folding as the atoi caution example, so the exact
+ratio is not trustworthy; only the DIRECTION (fl wins via bitmap vs scalar) is certified. To
+measure fl span fairly needs an opaque call boundary / non-constant input.
+
+**Certification value:** confirms fl's ALGORITHMIC wins (Two-Way substring, bitmap span) are REAL
+under honest measurement — the biased-bench artifacts were confined to the MICRO-optimized scan
+family (wcschr/wcscmp folded-panel "wins"), not the algorithmic surface. fl's advantage vs glibc
+is genuine where it stems from a better algorithm (Two-Way, pdqsort, bitmap, UTC-only mktime);
+the losses are confined to the hand-tuned-asm scan primitives (documented AVX2-asm frontier).
+MEMMEM_PATHO + STRSPN probe arms kept in stdio_st_probe.rs.

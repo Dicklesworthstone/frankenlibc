@@ -419,6 +419,38 @@ fn main() {
         println!("WCSCMP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fc,0.5), pctl(&gc,0.5), pctl(&fc,0.5)/pctl(&gc,0.5));
     }
 
+    // memmem + strspn: honest dlmopen certification of claimed algorithmic wins (Two-Way / bitmap).
+    type MemmemFn = unsafe extern "C" fn(*const libc::c_void, usize, *const libc::c_void, usize) -> *mut libc::c_void;
+    type StrspnFn = unsafe extern "C" fn(*const c_char, *const c_char) -> usize;
+    let g_memmem: MemmemFn = dl(h, b"memmem\0");
+    let g_strspn: StrspnFn = dl(h, b"strspn\0");
+    {
+        // pathological: haystack "aaa...a" (4096), needle "aa..ac" (32) — forces naive quadratic.
+        let hay: Vec<u8> = std::iter::repeat(b'a').take(4096).collect();
+        let mut ndl: Vec<u8> = std::iter::repeat(b'a').take(32).collect(); ndl[31] = b'c';
+        let (hp, hl, np, nl) = (hay.as_ptr() as *const libc::c_void, hay.len(), ndl.as_ptr() as *const libc::c_void, ndl.len());
+        let (mut fm, mut gm) = (Vec::new(), Vec::new());
+        let lit = 20_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_ptr3(unsafe { frankenlibc_abi::string_abi::memmem(hp, hl, np, nl) }); } fm.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_ptr3(unsafe { g_memmem(hp, hl, np, nl) }); } gm.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("MEMMEM_PATHO fl={:.1} glibc={:.1} fl/glibc={:.3}", pctl(&fm,0.5), pctl(&gm,0.5), pctl(&fm,0.5)/pctl(&gm,0.5));
+    }
+    {
+        // strspn: span of a 64-char string over a 4-char accept set (bitmap vs glibc).
+        let s = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaX\0";
+        let acc = b"abcd\0";
+        let (sp, ap) = (s.as_ptr() as *const c_char, acc.as_ptr() as *const c_char);
+        let (mut fs2, mut gs2) = (Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_usize(unsafe { frankenlibc_abi::string_abi::strspn(sp, ap) }); } fs2.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_usize(unsafe { g_strspn(sp, ap) }); } gs2.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("STRSPN fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs2,0.5), pctl(&gs2,0.5), pctl(&fs2,0.5)/pctl(&gs2,0.5));
+    }
+
     // malloc+free: fl strict malloc DELEGATES to native glibc malloc + membrane overhead
     // (entrypoint_scope + reentry_guard + decide + fallback_insert_sized + record_stats + observe),
     // so fl = glibc + pure removable tax. vs glibc dlmopen. THE biggest documented gap (~50x).
@@ -491,3 +523,6 @@ fn black_box_bool(v: bool) -> bool { std::hint::black_box(v) }
 fn black_box_usize(v: usize) -> usize { std::hint::black_box(v) }
 #[inline(never)]
 fn black_box_ptr(v: *mut libc::c_void) -> *mut libc::c_void { std::hint::black_box(v) }
+
+#[inline(never)]
+fn black_box_ptr3(v: *mut libc::c_void) -> *mut libc::c_void { std::hint::black_box(v) }
