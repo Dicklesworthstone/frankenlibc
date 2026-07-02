@@ -970,6 +970,15 @@ fn try_fgetc_fast(id: usize) -> Option<c_int> {
     unsafe { (*p).fast_getc() }.map(|b| b as c_int)
 }
 
+/// Pointer-keyed sibling of `try_fgetc_fast`: skips `canonical_stream_id`'s native lock on a
+/// hit (the read analog of the write fast-path win). Same soundness gates.
+#[inline]
+fn try_fgetc_fast_by_stream(stream: *mut c_void) -> Option<c_int> {
+    let p = write_cache_lookup_by_stream(stream)?;
+    // SAFETY: as `try_fgetc_fast`.
+    unsafe { (*p).fast_getc() }.map(|b| b as c_int)
+}
+
 /// Bulk read sibling of `try_fgetc_fast` for `fread`: fills `dst` inline iff all of it is
 /// already buffered for the cached single-threaded fd stream (skip membrane + lock +
 /// lookup). `false` ⇒ full path (refill / partial / mem).
@@ -977,6 +986,16 @@ fn try_fgetc_fast(id: usize) -> Option<c_int> {
 fn try_fread_fast(id: usize, dst: &mut [u8]) -> bool {
     match write_cache_lookup(id) {
         // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+        Some(p) => unsafe { (*p).fast_read(dst) },
+        None => false,
+    }
+}
+
+/// Pointer-keyed sibling of `try_fread_fast`: skips `canonical_stream_id`'s native lock on a hit.
+#[inline]
+fn try_fread_fast_by_stream(stream: *mut c_void, dst: &mut [u8]) -> bool {
+    match write_cache_lookup_by_stream(stream) {
+        // SAFETY: as `try_fread_fast`.
         Some(p) => unsafe { (*p).fast_read(dst) },
         None => false,
     }
@@ -2332,15 +2351,15 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
 /// POSIX `fgetc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
-    let id = canonical_stream_id(stream);
-
     // Single-threaded inline read fast path: a byte already buffered for a cached, clean
-    // readable fd stream — skips membrane + registry lock + HashMap lookup. Any miss
-    // (empty buffer / ungetc / write-pending / mem / not cached) falls through unchanged.
-    if let Some(rc) = try_fgetc_fast(id) {
+    // readable fd stream — skips membrane + registry lock + HashMap lookup. Pointer-keyed
+    // so a hit also skips `canonical_stream_id`'s native lock; `id` computed lazily on miss.
+    // Any miss (empty buffer / ungetc / write-pending / mem / not cached) falls through.
+    if let Some(rc) = try_fgetc_fast_by_stream(stream) {
         return rc;
     }
 
+    let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
@@ -3049,16 +3068,17 @@ pub unsafe extern "C" fn fread(
         return 0;
     }
 
-    let id = canonical_stream_id(stream);
-
     // Single-threaded inline fast path: fill the whole request from the cached fd stream's
-    // buffer if it's all there (skip membrane + lock + lookup + host check). Miss → full path.
+    // buffer if it's all there (skip membrane + lock + lookup + host check). Pointer-keyed
+    // so a hit also skips `canonical_stream_id`'s native lock; `id` computed lazily on miss.
     {
         let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
-        if try_fread_fast(id, dst) {
+        if try_fread_fast_by_stream(stream, dst) {
             return nmemb;
         }
     }
+
+    let id = canonical_stream_id(stream);
 
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]

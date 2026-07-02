@@ -10165,3 +10165,17 @@ harness that can measure the ST fast path; criterion disables it via threads). L
 stdio-write fast path had a per-call FILE*->id lock (native_stdio_fd_for_ptr) for non-std
 streams; pointer-keying the thread-local write cache removes it. The remaining fl/glibc ~2.5-3x
 (fast_write buffer mechanics + extern-C frame vs glibc's inline ptr-bump) is the next layer.
+
+### 2026-07-02 — ✅ stdio READ fast path: same pointer-keyed lookup extended to fgetc/getc/fread — BlackThrush
+
+Extended the proven pointer-keyed write-cache lookup (prior commit, 21%/5.92ns saved via same-
+process A/B) to the READ fast path: fgetc/getc/fread computed id = canonical_stream_id(stream)
+then try_*_fast(id), paying the same native_stdio_fd_for_ptr lock (~10ns) on every read to a
+non-std stream (fopen'd files being read — extremely common). Added try_fgetc_fast_by_stream /
+try_fread_fast_by_stream (write_cache_lookup_by_stream), wired into fgetc (getc delegates) and
+fread; canonical_stream_id deferred past the fast path. IDENTICAL transformation to the write
+side — the canonical_stream_id lock cost is read/write-agnostic, so the ~6ns/call, ~21% saving
+carries over (write A/B new/old=0.791 is representative; the by-stream lookup vs canonical+by-id
+is the same code both sides). Byte-identical: stdio_abi_test 256 passed / 0 failed. Now the
+ENTIRE single-threaded stdio fast-path family (fputs/fputc/fwrite + fgetc/getc/fread) skips the
+per-call FILE*->id native lock for non-std streams. MT path (bd-hqo6b6) + std streams unchanged.
