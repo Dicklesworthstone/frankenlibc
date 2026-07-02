@@ -10946,3 +10946,5 @@ spent (dead-tax/dispatch/HTM/guard-reorder/fast-path-list all landed or ruled ou
 on), so the only remaining fl-losses (scan family ~1.3-2x, strcpy structural) require per-function
 hand-written recursion-safe AVX2 asm leaf kernels with page-safe alignment — a large, multi-turn
 swing that should be scoped as its own dedicated effort, not a focused land-a-win turn.
+
+**✗ strcmp `#[inline]` on scan_strcmp — REJECTED (unmeasurable/marginal, BlackThrush 2026-07-02).** Tested forcing `#[inline]` on the (large, multi-tier) `scan_strcmp` to remove the strcmp→scan_strcmp call boundary. Cross-run STRCMP showed only noisy ~5-8% at small n (n=8 5.28→4.89, n=16 5.24→4.81) with an n=32 REGRESSION (5.27→5.52) — all within worker variance. **Critically, a codegen-attribute change cannot be same-process A/B'd** (the only reliable measurement on this variance-heavy fleet per the campaign methodology), so the difference is unattributable. Reverted. Inlining a large fn also risks I-cache bloat on other callers. Confirms strcmp is at its structural floor; the call boundary is NOT a reliable lever — only a hand-written asm leaf routine would close it.
