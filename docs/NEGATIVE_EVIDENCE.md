@@ -10352,3 +10352,31 @@ on registry insert/remove), no behavior change; conformance stdio_abi_test 256 p
 LESSON: a pointer-keyed fast path is only as good as its cache POPULATION — a fn whose slow path
 doesn't write_cache_store leaves its own fast path dead for the fn's primary usage pattern. (fputs/
 fputc/fwrite cache via try_fwrite_fast's slow path; fgetc/fread cache explicitly; fgets was the gap.)
+
+### 2026-07-02 — ⊘ CERTIFIED + FRONTIER: stdio ST fast-path campaign COMPLETE, verified vs glibc; clean levers exhausted — BlackThrush
+
+Certified the session's ~12-commit stdio single-threaded fast-path campaign byte-correct against
+HOST GLIBC via the differential suite (all green, 0 failed): fgets_differential_test,
+fread_partial_differential_test, conformance_diff_stdio_rwdir, _unlocked_io, _unlocked_query,
+_stdio_ext, _wide_stdio, _wide_stdio_write — plus stdio_abi_test 256/0. The pointer-keyed lock-
+elision + cache-population is complete and correct across the WHOLE hot ST surface:
+  - write: fputs/fputc/fwrite (+ cache via write_bytes_without_runtime_policy helper, line 1717)
+  - read: fgetc/getc/fread (+ explicit cache)
+  - line read: fgets (+ cache-store fix — was the sole dead-fast-path gap, now fires)
+  - state: feof/ferror; query: fileno/ftell/clearerr; pushback: ungetc (cache from prior I/O)
+  - _unlocked family: all delegate to the above (inherit)
+  - 2-way cache (interleave-safe); fputws bulk-convert (SIMD wcstombs)
+Measured wins this campaign (same-process A/B, worker-invariant, standalone-ST probe since
+criterion disables the fast path): fputs lookup 0.79, feof 0.209 (4.8x), fgets 0.428 (2.3x),
+fileno/ftell/clearerr/ungetc = same feof 3-4-lock set, interleave 1.58x->1.01, fputws 2.4-12.8x.
+
+FRONTIER STATUS — clean focused-turn levers EXHAUSTED. Remaining gaps are:
+  1. stdio MT: the global registry() Mutex serializes multi-threaded FILE access (bd-hqo6b6);
+     needs per-FILE locking (Arc<Mutex<StdioStream>> resolved outside the registry lock) —
+     architectural, multi-session.
+  2. malloc ~16.7x (ST-measured, diffuse membrane, not one lock) — ownership-model redesign.
+  3. fgetws (wide line read): per-char decode; bulk needs buffer-level mbstowcs with wide-cap +
+     newline-stop + no-over-read — feature-level, not a focused-turn tweak.
+  4. fseek in-buffer optimization (glibc avoids lseek for seeks within the buffered region);
+     fl always repositions — a correctness-sensitive buffered-seek feature.
+NEXT SESSION should target #1 or #2 (the architectural refactors) — the micro-lever surface is done.
