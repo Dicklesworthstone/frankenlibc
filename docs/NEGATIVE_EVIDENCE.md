@@ -62,6 +62,33 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ FUSED strstr (untracked haystack) — page-chunked search, no whole-haystack prescan; big early-match win vs ORIG, byte-identical + guard-page proven
+
+- **DEPLOYED (cc):** the biggest known strstr gap — deployed strstr did a FULL
+  `scan_c_string(haystack)` prescan THEN `memmem`, so an EARLY match still scanned the
+  WHOLE haystack (glibc stops at the first match). New `strstr_fused` searches the
+  haystack one bounded chunk at a time (`memmem` per chunk, `needle_len-1` carry-over
+  for boundary-spanning matches), returning at the first match — no whole-haystack
+  prescan. Used ONLY when `known_remaining(haystack)` is None (UNTRACKED: literals,
+  parsed/network buffers, mmap'd data — the common case); TRACKED buffers keep the
+  bounded path so fl's `strstr_bounds_tracked_unterminated_haystack` safety guarantee
+  is PRESERVED. Gated to `2 <= needle_len <= 256`.
+- **PAGE-SAFE:** each chunk read is bounded to `min(2048, bytes-to-next-page-boundary)`
+  — entirely within the current mapped page; if no NUL before the boundary the string
+  continues so the next page is mapped too. Proven by new
+  `strstr_fused_untracked_guard_page` (mmap'd haystack ending at every offset in the
+  last 48 B before a PROT_NONE page × present/absent/tail needles → == glibc, no
+  SIGSEGV). BYTE-IDENTICAL: conformance_diff_string_search (6000-case strstr-vs-glibc +
+  the guard-page test) + memmem_strcasestr GREEN.
+- **MEASURED (`strstr_glibc_bench`, mmap'd haystack → fused path, deployed fl vs dlmopen
+  glibc):** early-match fl_p50 (page-chunk) 217ns@64k / 227ns@256k; (512-chunk) 86ns /
+  119ns. ORIG prescans the WHOLE haystack (a 64K–256K SIMD strlen ≈ ~1–2µs) BEFORE
+  searching, so for an early match NEW does ~10–20x less work than ORIG (scans ~2 KB vs
+  64–256 KB). Absent-needle ~neutral vs ORIG (both scan the whole haystack once; the
+  per-chunk memmem carries a small preprocessing tax — chunk=2048 balances it). fl still
+  trails glibc's hand-tuned strstr (~3.6x) — that residual is the core `memmem` throughput,
+  a separate lever; the PRESCAN ELIMINATION (the ORIG gap) is what this closes.
+
 ## 2026-07-01 — ✗ known_remaining-drop lever BLOCKED for strstr/strcasestr/strlen (main-data-arg bound is a load-bearing safety feature) — boundary recorded
 
 - **CONTEXT:** the prior entry dropped `known_remaining(delim)` in the strict tokenizer

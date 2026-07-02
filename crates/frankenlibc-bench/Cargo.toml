@@ -484,3 +484,9 @@ harness = false
 [[bench]]
 name = "strspn_fused_ab_bench"
 harness = false
+
+# fused strstr (untracked haystack) deployed fl vs glibc, dlmopen.
+[[bench]]
+name = "strstr_glibc_bench"
+required-features = ["abi-bench"]
+harness = false

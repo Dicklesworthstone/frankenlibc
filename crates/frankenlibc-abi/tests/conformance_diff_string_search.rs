@@ -39,6 +39,55 @@ mod g {
 
 use frankenlibc_abi::string_abi as fl;
 
+/// PAGE-SAFETY + correctness proof for the FUSED strstr (untracked haystack path).
+/// mmap'd memory is not fl-malloc-tracked → `known_remaining` is None → the fused
+/// page-chunked search runs. Place a NUL-terminated haystack ending at every offset
+/// in the last 48 B of a mapped page whose successor is PROT_NONE, then strstr for a
+/// present needle, an absent needle, and one whose match sits right at the tail —
+/// require the exact glibc result and no SIGSEGV.
+#[test]
+fn strstr_fused_untracked_guard_page() {
+    let page = 4096usize;
+    unsafe {
+        let base = libc::mmap(
+            std::ptr::null_mut(),
+            page * 2,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        );
+        assert_ne!(base, libc::MAP_FAILED, "mmap failed");
+        let base = base.cast::<u8>();
+        assert_eq!(libc::mprotect(base.add(page).cast(), page, libc::PROT_NONE), 0);
+
+        let needles: &[&[u8]] = &[b"ab\0", b"xyz\0", b"aab\0", b"zzz\0"];
+        for back in 2..=48usize {
+            let start = base.add(page - back);
+            // Fill with a repeating pattern that contains "ab"/"aab" sometimes.
+            for k in 0..(back - 1) {
+                *start.add(k) = match k % 4 {
+                    0 => b'a',
+                    1 => b'a',
+                    2 => b'b',
+                    _ => b'c',
+                };
+            }
+            *start.add(back - 1) = 0;
+            for ndl in needles {
+                let gp = g::strstr(start.cast(), ndl.as_ptr().cast());
+                let fp = fl::strstr(start.cast(), ndl.as_ptr().cast());
+                assert_eq!(
+                    off(fp.cast(), start.cast()),
+                    off(gp.cast(), start.cast()),
+                    "strstr fused mismatch/overread back={back} needle={ndl:?}"
+                );
+            }
+        }
+        libc::munmap(base.cast(), page * 2);
+    }
+}
+
 /// Offset of `p` from `base`, or -1 if `p` is NULL. Both impls operate on the
 /// same buffer, so equal offsets ⟺ identical results.
 fn off(p: *const c_void, base: *const c_void) -> isize {
