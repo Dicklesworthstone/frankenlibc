@@ -1206,6 +1206,61 @@ pub unsafe extern "C" fn wcsrchr(s: *const u32, c: u32) -> *mut u32 {
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// FUSED wcsstr for a NUL-terminated wide haystack (2 <= needle_len <= 256): the
+/// wide analog of the byte `substr_fused` — search the haystack one page-bounded
+/// chunk at a time (`wide_core::wcsstr` per window with a `needle_len-1` carry-over),
+/// returning at the first match, so an EARLY match never pre-scans the whole
+/// haystack. After `FUSED_EARLY_WINDOW` wchars with no match, finish the tail with a
+/// single `scan_w_string(None)` + one search (ORIG's shape → absent ~ORIG).
+/// Byte-identical to `wide_core::wcsstr` over the full NUL-terminated haystack.
+///
+/// PAGE-SAFE: each chunk read is bounded to the wchars remaining in the CURRENT
+/// (mapped) 4 KiB page (`(4096 - (addr & 0xFFF)) / 4`, exact since wchar_t* is
+/// 4-aligned); if no NUL is found before the boundary the string continues, so the
+/// next page is mapped. `known_remaining` is unused (the strict path already scans
+/// with `None`), so no tracked-buffer bounding is dropped.
+///
+/// # Safety
+/// `haystack` valid NUL-terminated wide string; `needle` readable for `needle_len`
+/// wchars with `2 <= needle_len <= 256`.
+unsafe fn wcsstr_fused(haystack: *const u32, needle: *const u32, needle_len: usize) -> *mut u32 {
+    // SAFETY: needle readable for needle_len wchars (caller contract).
+    let ns = unsafe { std::slice::from_raw_parts(needle, needle_len) };
+    let mut window_start = 0usize; // absolute wchar offset of the search window
+    let mut cur = 0usize; // absolute wchar offset of the next element to scan
+    const FUSED_EARLY_WINDOW: usize = 4096; // wchars
+    loop {
+        if cur >= FUSED_EARLY_WINDOW {
+            // Tail: one page-safe scan to NUL + one search (ORIG's shape).
+            let (rest, _) = unsafe { scan_w_string(haystack.add(cur), None) };
+            let end = cur + rest;
+            let win = unsafe { std::slice::from_raw_parts(haystack.add(window_start), end - window_start) };
+            return match wide_core::wcsstr(win, ns) {
+                Some(idx) => unsafe { haystack.add(window_start + idx) as *mut u32 },
+                None => std::ptr::null_mut(),
+            };
+        }
+        let addr = (haystack as usize).wrapping_add(cur * 4);
+        let wchars_to_page = (0x1000 - (addr & 0xFFF)) / 4; // exact: 4-aligned
+        let chunk = wchars_to_page.min(512);
+        // SAFETY: [cur, cur+chunk) wchars are within one mapped page.
+        let (seg_len, terminated) = unsafe { scan_w_string(haystack.add(cur), Some(chunk)) };
+        let seg_end = cur + seg_len;
+        if seg_end - window_start >= needle_len {
+            // SAFETY: [window_start, seg_end) wchars have been read (all mapped).
+            let win = unsafe { std::slice::from_raw_parts(haystack.add(window_start), seg_end - window_start) };
+            if let Some(idx) = wide_core::wcsstr(win, ns) {
+                return unsafe { haystack.add(window_start + idx) as *mut u32 };
+            }
+        }
+        if terminated {
+            return std::ptr::null_mut();
+        }
+        cur = seg_end;
+        window_start = seg_end - (needle_len - 1);
+    }
+}
+
 pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mut u32 {
     if haystack.is_null() {
         return std::ptr::null_mut();
@@ -1220,10 +1275,17 @@ pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mu
     if runtime_policy::strict_passthrough_active() {
         return unsafe {
             let (needle_len, _) = scan_w_string(needle, None);
-            let (hay_len, _) = scan_w_string(haystack, None);
             if needle_len == 0 {
-                haystack as *mut u32
-            } else if hay_len >= needle_len {
+                return haystack as *mut u32;
+            }
+            // FUSED page-chunked search — no whole-haystack pre-scan, returns at the
+            // first match (mirrors the byte strstr fused path). The strict path already
+            // scans with None (no tracked-buffer bound), so nothing is dropped.
+            if (2..=256).contains(&needle_len) {
+                return wcsstr_fused(haystack, needle, needle_len);
+            }
+            let (hay_len, _) = scan_w_string(haystack, None);
+            if hay_len >= needle_len {
                 let hay_slice = std::slice::from_raw_parts(haystack, hay_len);
                 let needle_slice = std::slice::from_raw_parts(needle, needle_len);
                 match wide_core::wcsstr(hay_slice, needle_slice) {

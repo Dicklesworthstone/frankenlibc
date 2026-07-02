@@ -105,6 +105,36 @@ fn bench(c: &mut Criterion) {
         let (fp, gp) = (pctl(&fs, 0.50), pctl(&gs, 0.50));
         println!("STRSTR_FUSED case={label} fl_p50={fp:.1}ns glibc_p50={gp:.1}ns ratio_fl_over_glibc={:.2}", fp / gp);
     }
+    // wcsstr (wide), same untracked-haystack fused path.
+    type WFn = unsafe extern "C" fn(*const u32, *const u32) -> *mut u32;
+    let gw: WFn = unsafe { std::mem::transmute::<usize, WFn>(host_sym(b"wcsstr\0")) };
+    let wneedle: [u32; 8] = [b'n' as u32, b'e' as u32, b'e' as u32, b'd' as u32, b'l' as u32, b'e' as u32, b'!' as u32, 0];
+    for &(label, n, pos) in &[("wcs_early_64k@512", 65536usize, 512usize), ("wcs_absent_64k", 65536, usize::MAX)] {
+        let m = unsafe { libc::mmap(std::ptr::null_mut(), (n + 1024) * 4,
+            libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0) };
+        assert_ne!(m, libc::MAP_FAILED);
+        let hw = m.cast::<u32>();
+        unsafe {
+            for i in 0..n { *hw.add(i) = b'a' as u32; }
+            if pos != usize::MAX { for (i, &b) in wneedle[..7].iter().enumerate() { *hw.add(pos + i) = b; } }
+            *hw.add(n) = 0;
+        }
+        let fp = unsafe { frankenlibc_abi::wchar_abi::wcsstr(hw, wneedle.as_ptr()) };
+        let gp = unsafe { gw(hw, wneedle.as_ptr()) };
+        assert_eq!(fp as usize, gp as usize, "wcsstr fl!=glibc {label}");
+        let it = 500u64;
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now();
+            for _ in 0..it { black_box(unsafe { frankenlibc_abi::wchar_abi::wcsstr(black_box(hw), black_box(wneedle.as_ptr())) }); }
+            fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now();
+            for _ in 0..it { black_box(unsafe { gw(black_box(hw), black_box(wneedle.as_ptr())) }); }
+            gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        let (fp, gp) = (pctl(&fs, 0.50), pctl(&gs, 0.50));
+        println!("STRSTR_FUSED case={label} fl_p50={fp:.1}ns glibc_p50={gp:.1}ns ratio_fl_over_glibc={:.2}", fp / gp);
+    }
     group.bench_function("noop", |b| b.iter(|| black_box(1u64)));
     group.finish();
 }

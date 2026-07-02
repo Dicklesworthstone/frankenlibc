@@ -2368,3 +2368,52 @@ fn diff_wcsstr_dual_anchor_fuzz() {
         render_divs(&divs)
     );
 }
+
+/// PAGE-SAFETY + correctness proof for the FUSED wcsstr (untracked wide haystack).
+/// mmap'd wide memory ending at every wchar offset in the last 24 wchars of a mapped
+/// page whose successor is PROT_NONE; wcsstr for present/absent/tail needles → must
+/// equal glibc's match offset with NO SIGSEGV (the fused SIMD chunk reads sit against
+/// the guard page).
+#[test]
+fn wcsstr_fused_untracked_guard_page() {
+    let page = 4096usize;
+    unsafe {
+        let base = libc::mmap(
+            std::ptr::null_mut(),
+            page * 2,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        );
+        assert_ne!(base, libc::MAP_FAILED, "mmap failed");
+        let base = base.cast::<u8>();
+        assert_eq!(libc::mprotect(base.add(page).cast(), page, libc::PROT_NONE), 0);
+        let a = b'a' as u32;
+        let b = b'b' as u32;
+        let c = b'c' as u32;
+        let x = b'x' as u32;
+        let y = b'y' as u32;
+        let needles: [Vec<u32>; 3] = [vec![a, b, 0], vec![x, y, 0], vec![a, a, b, 0]];
+        // `back_w` wchars, NUL at the last one → placed against the guard page.
+        for back_w in 2..=24usize {
+            let start = base.add(page).cast::<u32>().sub(back_w);
+            for k in 0..(back_w - 1) {
+                *start.add(k) = match k % 4 {
+                    0 | 1 => a,
+                    2 => b,
+                    _ => c,
+                };
+            }
+            *start.add(back_w - 1) = 0;
+            for ndl in &needles {
+                let gp = wcsstr(start.cast(), ndl.as_ptr().cast());
+                let fp = fl::wcsstr(start, ndl.as_ptr());
+                let go = if gp.is_null() { -1 } else { gp.cast::<u32>().offset_from(start) };
+                let fo = if fp.is_null() { -1 } else { fp.offset_from(start) };
+                assert_eq!(fo, go, "wcsstr fused mismatch/overread back_w={back_w} ndl={ndl:?}");
+            }
+        }
+        libc::munmap(base.cast(), page * 2);
+    }
+}

@@ -62,6 +62,26 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ FUSED wcsstr (wide) — completes the substring family; BEATS glibc 2.5–6.3x, byte-identical + wide guard-page proven
+
+- **DEPLOYED (cc):** wide analog of the fused strstr — `wcsstr_fused` searches the
+  wide haystack one page-bounded chunk at a time (`wide_core::wcsstr` per window +
+  `needle_len-1` carry-over) with the same 4096-wchar early window + single-scan tail
+  fallback; no whole-haystack pre-scan. The wcsstr strict path already scanned with
+  `None` (no tracked-buffer bound), so the fused path runs for any `needle_len∈[2,256]`.
+- **PAGE-SAFE (wide):** each chunk read is bounded to the wchars left in the current
+  4 KiB page (`(4096-(addr&0xFFF))/4`, exact — wchar_t* is 4-aligned). New
+  `wcsstr_fused_untracked_guard_page` (mmap'd wide haystack ending at every wchar
+  offset in the last 24 wchars before a PROT_NONE page × present/absent/tail needles →
+  == glibc, no SIGSEGV). BYTE-IDENTICAL: conformance_diff_wchar 44/44 (incl. the
+  wcsstr dual-anchor fuzz which exercises the fused path).
+- **MEASURED (`strstr_glibc_bench`, mmap wide haystack, deployed fl vs dlmopen glibc):**
+  wcsstr fl/glibc **wcs_early_64k 0.40x (2.5x FASTER), wcs_absent_64k 0.16x (6.3x
+  FASTER)** — glibc's wcsstr, like its strcasestr, lacks a tuned path, so fl's core +
+  prescan-elimination WIN outright. vs ORIG the win is the eliminated whole-haystack
+  pre-scan (same structural gap as strstr/strcasestr). **SUBSTRING FUSED FAMILY COMPLETE:
+  strstr + strcasestr + wcsstr all fused (memmem takes explicit lengths — no prescan).**
+
 ## 2026-07-02 — ✅ FUSED strcasestr (untracked haystack) — same prescan-elimination as strstr; BEATS glibc 2–7.7x, byte-identical
 
 - **DEPLOYED (cc):** generalised the fused strstr machinery (`strstr_fused` →
