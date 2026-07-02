@@ -11262,3 +11262,30 @@ PURE-COMPUTATION functions where decide()/observe() is a large fraction of a sma
 path remains outside the coordination-blocked stdio/malloc files. LSEEK probe arm kept as the
 syscall-tax-is-negligible reference. Remaining frontier = the 2 architectural swings (stdio per-FILE
 lock, malloc inline header), both coordination-blocked per perf_next_architectural_swings.md.
+
+---
+
+## qsort_r + bsearch_r strict fast paths — reentrant sort/search family completed (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Completing the sort/search family after bsearch + qsort: the REENTRANT (thunk-comparator) variants
+`qsort_r` and `bsearch_r` also lacked a strict fast path.
+
+**qsort_r** ran `tracked_region_fits` + `decide()` + `observe()` per call (like qsort). Added the
+same strict bypass. **Measured (stdio_st_probe QSORT_R arm, n=8, incl reset):** fl **39.90ns vs
+glibc 85.41ns = 0.467x — fl beats glibc 2.1x** (fl qsort_r ~matches qsort's 40ns; glibc's qsort_r
+is notably slower than its qsort, ~85 vs ~74ns).
+
+**bsearch_r** was lighter (no decide/observe — only 2× `tracked_region_fits`, each a
+`known_remaining` registry lookup); added the strict short-circuit `strict_passthrough_active() ||
+(tracked_region_fits ×2)` to skip those lookups in strict.
+
+Both byte-identical (Stdlib always-Allows in strict; region validation is the trust-the-caller
+bypass glibc never does). Gates GREEN: conformance_diff_qsort_r 2, conformance_diff_generic_search
+4, conformance_diff_stdlib_search 4, strict_mode_refinement 18, hardened_mode_safety 15.
+
+**SORT/SEARCH STRICT-FAST-PATH FAMILY COMPLETE:** bsearch (0.90x, was 1.68x loss), qsort (small
+sorts win more), qsort_r (0.467x = 2.1x), bsearch_r (region-check skip). All four hot pure-computation
+sort/search entrypoints now bypass the membrane in strict. Combined with the syscall-wrapper disproof
+(lseek parity → decide negligible vs syscall) and the wchar/string/atoi/strcoll coverage, the
+non-colliding strict-fast-path audit is fully closed. Remaining frontier = the 2 coordination-blocked
+architectural swings.

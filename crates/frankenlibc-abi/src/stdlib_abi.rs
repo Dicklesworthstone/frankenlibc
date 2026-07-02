@@ -4145,6 +4145,20 @@ pub unsafe extern "C" fn qsort_r(
     let Some(total) = nmemb.checked_mul(size) else {
         return;
     };
+
+    // Strict-mode fast path (the DEFAULT deployed mode): skip `tracked_region_fits` +
+    // `decide()` + `observe()` — byte-identical to the full path (Stdlib always-Allows in
+    // strict; region validation is the trust-the-caller bypass, glibc never validates).
+    // Mirrors the sibling `qsort`/`bsearch` strict fast paths.
+    if runtime_policy::strict_passthrough_active() {
+        // SAFETY: caller guarantees `base` is `nmemb*size` writable bytes.
+        let slice = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, total) };
+        frankenlibc_core::stdlib::qsort(slice, size, |a, b| unsafe {
+            cmp_fn(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void, arg)
+        });
+        return;
+    }
+
     if !tracked_region_fits(base.cast_const(), total) {
         return;
     }
@@ -4205,7 +4219,12 @@ pub unsafe extern "C" fn bsearch_r(
     let Some(total) = nmemb.checked_mul(size) else {
         return ptr::null_mut();
     };
-    if !tracked_region_fits(base, total) || !tracked_region_fits(key, size) {
+    // Strict-mode fast path: skip the two `tracked_region_fits` (each a `known_remaining`
+    // registry lookup) — byte-identical to the full path for valid inputs (trust-the-caller,
+    // glibc never validates the region). The search itself is identical.
+    let validated = runtime_policy::strict_passthrough_active()
+        || (tracked_region_fits(base, total) && tracked_region_fits(key, size));
+    if !validated {
         return ptr::null_mut();
     }
 

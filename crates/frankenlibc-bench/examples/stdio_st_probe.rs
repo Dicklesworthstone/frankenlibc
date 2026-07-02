@@ -278,6 +278,26 @@ fn main() {
         }
         println!("QSORT_SMALL n={sn} fl={:.2} glibc={:.2} fl/glibc={:.3} (incl reset)", pctl(&fqs,0.5), pctl(&gqs,0.5), pctl(&fqs,0.5)/pctl(&gqs,0.5));
     }
+    // qsort_r: reentrant sort (thunk comparator). fl vs glibc (GNU qsort_r has arg LAST like fl).
+    unsafe extern "C" fn cmp_i32_r(a: *const libc::c_void, b: *const libc::c_void, _arg: *mut libc::c_void) -> i32 {
+        let (x, y) = unsafe { (*(a as *const i32), *(b as *const i32)) };
+        (x > y) as i32 - (x < y) as i32
+    }
+    type CmpRFn = unsafe extern "C" fn(*const libc::c_void, *const libc::c_void, *mut libc::c_void) -> i32;
+    type QsortRFn = unsafe extern "C" fn(*mut libc::c_void, usize, usize, CmpRFn, *mut libc::c_void);
+    let g_qsort_r: QsortRFn = dl(h, b"qsort_r\0");
+    {
+        let sn = 8usize;
+        let sm: Vec<i32> = (0..sn).map(|i| ((i * 2654435761usize) & 0x7fffffff) as i32).collect();
+        let mut sa = sm.clone();
+        let sqit = 4000u64;
+        let (mut fq, mut gq) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now(); for _ in 0..sqit { sa.copy_from_slice(&sm); unsafe { frankenlibc_abi::stdlib_abi::qsort_r(sa.as_mut_ptr().cast(), sn, 4, Some(cmp_i32_r), std::ptr::null_mut()); } std::hint::black_box(sa[0]); } fq.push(t.elapsed().as_nanos() as f64 / sqit as f64);
+            let t = Instant::now(); for _ in 0..sqit { sa.copy_from_slice(&sm); unsafe { g_qsort_r(sa.as_mut_ptr().cast(), sn, 4, cmp_i32_r, std::ptr::null_mut()); } std::hint::black_box(sa[0]); } gq.push(t.elapsed().as_nanos() as f64 / sqit as f64);
+        }
+        println!("QSORT_R n=8 fl={:.2} glibc={:.2} fl/glibc={:.3} (incl reset)", pctl(&fq,0.5), pctl(&gq,0.5), pctl(&fq,0.5)/pctl(&gq,0.5));
+    }
 
     // strtod: float parsing, fl vs glibc (dlmopen). Common in config/JSON/scientific input.
     type StrtodFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f64;
