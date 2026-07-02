@@ -265,6 +265,19 @@ fn main() {
         let t = Instant::now(); for i in 0..bit { let k = keys[(i & 3) as usize]; black_box_ptr3(unsafe { g_bsearch((&k as *const i32).cast(), ssorted.as_ptr().cast(), nq, 4, cmp_i32) }); } gb.push(t.elapsed().as_nanos() as f64 / bit as f64);
     }
     println!("BSEARCH fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fb,0.5), pctl(&gb,0.5), pctl(&fb,0.5)/pctl(&gb,0.5));
+    // QSORT_SMALL: small sorts (common) — the membrane decide()/observe() dominates pdqsort's
+    // few comparisons; the strict fast path should show the biggest relative gain here.
+    for &sn in &[8usize, 16, 32] {
+        let sm: Vec<i32> = (0..sn).map(|i| ((i * 2654435761usize) & 0x7fffffff) as i32).collect();
+        let mut sa = sm.clone();
+        let sqit = 4000u64;
+        let (mut fqs, mut gqs) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now(); for _ in 0..sqit { sa.copy_from_slice(&sm); unsafe { frankenlibc_abi::stdlib_abi::qsort(sa.as_mut_ptr().cast(), sn, 4, Some(cmp_i32)); } std::hint::black_box(sa[0]); } fqs.push(t.elapsed().as_nanos() as f64 / sqit as f64);
+            let t = Instant::now(); for _ in 0..sqit { sa.copy_from_slice(&sm); unsafe { g_qsort(sa.as_mut_ptr().cast(), sn, 4, cmp_i32); } std::hint::black_box(sa[0]); } gqs.push(t.elapsed().as_nanos() as f64 / sqit as f64);
+        }
+        println!("QSORT_SMALL n={sn} fl={:.2} glibc={:.2} fl/glibc={:.3} (incl reset)", pctl(&fqs,0.5), pctl(&gqs,0.5), pctl(&fqs,0.5)/pctl(&gqs,0.5));
+    }
 
     // strtod: float parsing, fl vs glibc (dlmopen). Common in config/JSON/scientific input.
     type StrtodFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f64;

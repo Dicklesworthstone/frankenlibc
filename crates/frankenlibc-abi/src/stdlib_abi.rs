@@ -1941,6 +1941,27 @@ pub unsafe extern "C" fn qsort(
     let Some(total_bytes) = nmemb.checked_mul(size) else {
         return;
     };
+    let Some(compar_fn) = compar else {
+        return;
+    };
+
+    // Strict-mode fast path (the DEFAULT deployed mode): `Stdlib` `decide()` always-Allows in
+    // strict (fast-path family; `decide_strict_observation` never denies) with no clamp/heal, so
+    // the membrane's only output is the raw sort. Skip `tracked_region_fits` + `decide()` +
+    // `observe()` — byte-identical to the full path for valid inputs (C requires them; glibc
+    // never validates the region). This matters most for SMALL sorts, where the ~15ns membrane
+    // dwarfs pdqsort's handful of comparisons. Mirrors the bsearch/string strict fast paths.
+    if runtime_policy::strict_passthrough_active() {
+        let wrapper = |a: &[u8], b: &[u8]| -> i32 {
+            // SAFETY: slices are `size` bytes into the caller-provided (C-contract valid) array.
+            unsafe { compar_fn(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void) }
+        };
+        // SAFETY: caller guarantees `base` is `nmemb*size` writable bytes.
+        let slice = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, total_bytes) };
+        frankenlibc_core::stdlib::sort::qsort(slice, size, wrapper);
+        return;
+    }
+
     if !tracked_region_fits(base.cast_const(), total_bytes) {
         return;
     }
@@ -1959,9 +1980,6 @@ pub unsafe extern "C" fn qsort(
     }
 
     // Wrap comparator
-    let Some(compar_fn) = compar else {
-        return;
-    };
     let wrapper = |a: &[u8], b: &[u8]| -> i32 {
         unsafe { compar_fn(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void) }
     };

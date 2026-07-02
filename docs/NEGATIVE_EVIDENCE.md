@@ -11194,3 +11194,40 @@ probed — bsearch proves the dlmopen-no_mangle methodology still finds real win
 NON-colliding modules that LACK a strict fast path. NEXT: audit other stdlib/search/misc no_mangle
 fns for a missing strict_passthrough bypass (the string/mem/malloc families have them; stdlib
 search/sort/misc may not). Non-colliding = landable without the stdio/malloc coordination block.
+
+---
+
+## qsort strict fast path — dead decide/observe removed, small sorts win glibc more (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Sibling of the bsearch win: `qsort` (like bsearch) lacked a strict fast path — it ran
+`tracked_region_fits` + `decide()` + `observe()` on every call. For SMALL sorts (very common) that
+~15ns membrane is a meaningful fraction of pdqsort's handful of comparisons; for large sorts it
+amortises away.
+
+**Measured (stdio_st_probe QSORT_SMALL arm, before=change stashed / after, same session, incl reset):**
+
+| nmemb | fl before | fl after | glibc | fl/glibc before → after |
+|-------|-----------|----------|-------|-------------------------|
+| 8     | 45.90 ns  | 40.57 ns | ~74   | 0.620x → **0.554x**     |
+| 16    | 156.8 ns  | 124.6 ns | ~186  | 0.690x → **0.670x**     |
+| 32    | 367.5 ns  | 364.0 ns | ~433  | 0.850x → **0.814x**     |
+
+fl qsort ALREADY beat glibc (pdqsort vs mergesort); the fast path removes the dead membrane so it
+wins MORE at small n (biggest relative gain where the tax dominates; ~5-10%, some noise at n=16/32
+from the reset copy + cross-run variance). MODEST but real + byte-identical.
+
+**Fix (byte-identical, bsearch template):** `strict_passthrough_active()` fast path skips
+`tracked_region_fits` + `decide()` + `observe()`, runs the raw `core::stdlib::sort::qsort` directly.
+SOUND: `Stdlib` `decide()` always-Allows in strict (never denies), so the membrane's only output is
+the raw sort; the region validation is the strict-mode trust-the-caller bypass (glibc never
+validates the region). cfg(test) keeps the full path test-covered.
+
+**Gates GREEN:** conformance_diff_qsort_{i64_fastlane,radix,count8,radix16,r} + heapsort +
+stdlib_search + generic_search + strict_mode_refinement 18 + hardened_mode_safety 15.
+
+**Vein status:** bsearch (landed) + qsort (this) close the two HOT stdlib fns that lacked a strict
+fast path. Remaining fast-path-less stdlib decide() callers are COLD (exit/atexit/mkstemp/rand48/
+ecvt/realpath) — the amortised or rare cost isn't worth the churn. qsort_r (L4135) is the same
+pattern + cheap follow-up but far less common. The atoi/atol/strtol/getenv family already have
+`stdlib_membrane_fastpath`/hot-cache bypasses (not levers). Non-colliding stdlib strict-fast-path
+vein now essentially closed.
