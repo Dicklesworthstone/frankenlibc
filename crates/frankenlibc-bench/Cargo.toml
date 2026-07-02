@@ -513,3 +513,8 @@ harness = false
 name = "wcsdup_glibc_bench"
 required-features = ["abi-bench"]
 harness = false
+
+[[bench]]
+name = "wcswcs_glibc_bench"
+required-features = ["abi-bench"]
+harness = false

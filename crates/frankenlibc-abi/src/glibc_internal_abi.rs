@@ -1239,33 +1239,14 @@ pub unsafe extern "C" fn wcstouq(
 // wcswcs: native — find wide substring (deprecated alias for wcsstr)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcswcs(big: *const WcharT, little: *const WcharT) -> *mut WcharT {
+    // wcswcs is a deprecated synonym for wcsstr. Route to the deployed fused wcsstr
+    // (first-wchar scan + Two-Way; O(n+m), no whole-haystack prescan) instead of the
+    // old naive O(n*m) double-loop-with-full-prescan (the substring anti-pattern the
+    // rest of the family already retired). Null handling is preserved unchanged.
     if big.is_null() || little.is_null() {
         return std::ptr::null_mut();
     }
-    let (needle_len, needle_terminated) = unsafe { bounded_wide_string_scan(little) };
-    if !needle_terminated {
-        return std::ptr::null_mut();
-    }
-    if needle_len == 0 {
-        return big as *mut WcharT;
-    }
-
-    let (hay_len, _) = unsafe { bounded_wide_string_scan(big) };
-    if hay_len < needle_len {
-        return std::ptr::null_mut();
-    }
-
-    let last_start = hay_len - needle_len;
-    for h in 0..=last_start {
-        let mut n = 0usize;
-        while n < needle_len && unsafe { *big.add(h + n) } == unsafe { *little.add(n) } {
-            n += 1;
-        }
-        if n == needle_len {
-            return unsafe { big.add(h) as *mut WcharT };
-        }
-    }
-    std::ptr::null_mut()
+    unsafe { super::wchar_abi::wcsstr(big.cast::<u32>(), little.cast::<u32>()).cast::<WcharT>() }
 }
 // wmempcpy: native — copy n wchars and return pointer past end
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

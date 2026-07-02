@@ -62,6 +62,24 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ wcswcs routed to fused wcsstr — kills a naive O(n·m) anti-pattern; ~29-40x vs ORIG, beats glibc 4x
+
+- **DEPLOYED (cc):** `wcswcs` (deprecated glibc synonym for wcsstr, in glibc_internal_abi
+  — MISSED by the earlier "substring family 100% Two-Way" sweep which only covered
+  wchar_abi) had its OWN NAIVE O(n·m) impl: full prescan of both args + a nested
+  double-loop re-comparing the needle at every haystack position. Replaced with a
+  delegation to the deployed fused `wcsstr` (first-wchar scan + Two-Way; O(n+m), no
+  prescan). Null handling preserved (either arg null → null).
+- **BYTE-IDENTICAL:** wcswcs ≡ wcsstr semantics; the fused wcsstr is already covered by
+  conformance_diff_wchar 44/44 (incl. dual-anchor fuzz + guard-page); the bench asserts
+  fl==glibc offset.
+- **MEASURED (`wcswcs_glibc_bench` [new], adversarial haystack 'a'*n / needle 'a'*16+'b'
+  — many partial matches; deployed fl vs dlmopen glibc; clean stash ORIG/NEW):** fl_p50
+  ORIG→NEW **n4096 28085→979ns (~29x), n16384 115600→2875ns (~40x)**; the naive O(n·m)
+  re-compared 17 wchars at every position. vs glibc it flips from **11.3–11.7x LOSS →
+  0.23–0.25x (fl 4x FASTER)** — glibc's wcswcs/wcsstr is itself slow on adversarial wide
+  input, so fl's fused core wins outright. Removes a wide-substring DoS.
+
 ## 2026-07-02 — ✅ wcsdup strict fast-path — ~17% fl/glibc improvement (membrane removed; malloc-dominated residual)
 
 - **DEPLOYED (cc):** wcsdup (wide strdup) paid the full READ membrane (decide + observe)
