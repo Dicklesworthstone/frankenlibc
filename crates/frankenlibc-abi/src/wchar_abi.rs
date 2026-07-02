@@ -288,6 +288,26 @@ unsafe fn wide_strlen_bounded(s: *const u32, limit: usize) -> usize {
 /// 8-lane chunks are SIMD-stored, the NUL-containing tail is copied scalar up to and
 /// including the NUL, so `dst` receives byte-for-byte the same `len + 1` chars as glibc.
 ///
+/// Bounded wide copy of exactly `count` u32 chars (no NUL scan). 8-lane SIMD store loop
+/// + scalar tail — never lowers to the interposed `memcpy` symbol (`copy_to_slice` is a
+/// vector store), so an n-bounded wide copy skips the symbol round trip. dst/src disjoint.
+///
+/// # Safety
+/// `src`/`dst` valid for `count` u32 reads/writes and non-overlapping.
+#[inline]
+unsafe fn wide_copy_n(dst: *mut u32, src: *const u32, count: usize) {
+    let mut i = 0usize;
+    while i + 8 <= count {
+        let v = Simd::<u32, 8>::from_slice(unsafe { std::slice::from_raw_parts(src.add(i), 8) });
+        v.copy_to_slice(unsafe { std::slice::from_raw_parts_mut(dst.add(i), 8) });
+        i += 8;
+    }
+    while i < count {
+        unsafe { *dst.add(i) = *src.add(i) };
+        i += 1;
+    }
+}
+
 /// Returns the length copied (index of the terminating NUL), so `wcpcpy` can return the
 /// end pointer `dst + len` without a second scan.
 ///
@@ -1852,11 +1872,14 @@ pub unsafe extern "C" fn wcsncat(dst: *mut u32, src: *const u32, n: usize) -> *m
     // then NUL-terminate. Skips the ~640ns wide WRITE membrane full path (see wcscpy).
     if runtime_policy::strict_passthrough_active() {
         unsafe {
+            // Bound the src scan to `n` (glibc stops at n — no full-string over-scan when
+            // n << strlen(src)) and copy with an inline SIMD loop instead of
+            // copy_nonoverlapping (which lowers to the interposed memcpy symbol). Byte-
+            // identical: scan_w_string(src, Some(n)).0 == min(strlen(src), n) == copy_len.
             let (dst_len, _) = scan_w_string(dst.cast_const(), None);
-            let (src_len, _) = scan_w_string(src, None);
-            let copy_len = src_len.min(n);
+            let copy_len = scan_w_string(src, Some(n)).0;
             if copy_len > 0 {
-                std::ptr::copy_nonoverlapping(src, dst.add(dst_len), copy_len);
+                wide_copy_n(dst.add(dst_len), src, copy_len);
             }
             *dst.add(dst_len + copy_len) = 0;
         }

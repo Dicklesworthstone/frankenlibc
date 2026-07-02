@@ -94,6 +94,25 @@ fn bench(c: &mut Criterion) {
         println!("WMEMSET n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
     }
 
+    // wcsncat: append n-bounded. dst = 'b'*pre + NUL; n = full src len (copies all).
+    type CatNFn = unsafe extern "C" fn(*mut u32, *const u32, usize) -> *mut u32;
+    let g_ncat: CatNFn = sym(b"wcsncat\0");
+    let pre = 3usize;
+    for &n in &[4usize, 16, 32, 64, 128, 256, 1024] {
+        let mut src: Vec<u32> = std::iter::repeat(b'a' as u32).take(n).collect(); src.push(0);
+        let sp = src.as_ptr();
+        let mk = || { let mut d = vec![0u32; pre + n + 1]; for k in 0..pre { d[k] = b'b' as u32; } d };
+        let (mut dfl, mut dgl) = (mk(), mk());
+        unsafe { frankenlibc_abi::wchar_abi::wcsncat(dfl.as_mut_ptr(), sp, n); g_ncat(dgl.as_mut_ptr(), sp, n); }
+        assert_eq!(dfl, dgl, "wcsncat mismatch n={n}");
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now(); for _ in 0..it { unsafe { dfl[pre] = 0; black_box(frankenlibc_abi::wchar_abi::wcsncat(black_box(dfl.as_mut_ptr()), black_box(sp), black_box(n))); } } fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now(); for _ in 0..it { unsafe { dgl[pre] = 0; black_box(g_ncat(black_box(dgl.as_mut_ptr()), black_box(sp), black_box(n))); } } gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        println!("WCSNCAT n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
+    }
+
     grp.bench_function("noop", |b| b.iter(|| black_box(1u8))); grp.finish();
 }
 criterion_group!(benches, bench); criterion_main!(benches);

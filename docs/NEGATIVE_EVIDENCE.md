@@ -9958,3 +9958,27 @@ kept as baseline apparatus so this isn't re-probed. (Also confirmed: strchr_loca
 its strict_passthrough fast path — the memory note about strchr's "5.5x membrane" residual is
 stale/fixed. The narrow-string membrane fast-path sweep is complete: strcpy/stpcpy/strcat were
 the last gaps, now closed.)
+
+### 2026-07-02 — ✅ wcsncat strict path: bounded src scan + inline SIMD copy — 19x glibc at 1 KiB -> beats glibc — BlackThrush
+
+wcsncat's strict fast path did scan_w_string(src, None) (FULL unbounded src scan) +
+copy_nonoverlapping(src, dst+dst_len, min(src_len,n)) — the copy lowering to the interposed
+memcpy SYMBOL. Deployed bench (WCSNCAT arm in wide_copyfill_glibc_bench, dst-end scan + per-iter
+reset shared by both arms) showed a SEVERE gap that exploded at large n:
+  fl/glibc = 1.83 (n=4) 1.90 (16) 3.24 (32) 2.87 (64) 1.14 (128) 1.68 (256) 19.08 (1024)
+fl was 1540ns at n=1024 vs glibc 81ns — the full-src None-scan + the wide copy_nonoverlapping
+symbol path was catastrophic.
+
+Fix: bound the src scan to `n` (scan_w_string(src, Some(n)).0 == min(strlen(src), n) == the old
+copy_len, so byte-identical AND no over-scan when n << strlen) + copy with a new inline
+`wide_copy_n` (8-lane u32 SIMD store loop + scalar tail; copy_to_slice is a vector store, never
+the memcpy symbol). Byte-identical (conformance_diff_wchar 44 / wcs_copy 5 / wcs_family 4 /
+wchar_abi 118, all 0 failed). After fix:
+  fl/glibc = 0.87 (n=4) 0.91 (16) 0.87 (32) 0.91 (64) 0.87 (128) 0.76 (256) 1.51 (1024)
+fl now BEATS glibc at n=4..256 (0.76-0.91x), and n=1024 19x -> 1.51x (1540ns -> 69ns, ~22x
+faster fl-side). WIDE N-BOUNDED note: wcsncpy already ~parity (prior NEGATIVE_EVIDENCE, uses
+bounded scan + copy_nonoverlapping + fill — its copy_len is small in the common fixed-buffer
+case so the symbol path doesn't dominate; wcsncat's full None-scan was the real outlier).
+Apparatus: WCSNCAT arm. LESSON (reinforced): scan_w_string(_, None) on a copy's SRC over-scans
+huge strings; always bound it to the copy limit, and prefer an inline SIMD copy over
+copy_nonoverlapping for wide (u32) copies to dodge the interposed-memcpy symbol.
