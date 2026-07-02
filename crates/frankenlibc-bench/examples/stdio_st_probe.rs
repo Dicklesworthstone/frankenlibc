@@ -419,6 +419,25 @@ fn main() {
         println!("WCSCMP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fc,0.5), pctl(&gc,0.5), pctl(&fc,0.5)/pctl(&gc,0.5));
     }
 
+    // malloc+free: fl strict malloc DELEGATES to native glibc malloc + membrane overhead
+    // (entrypoint_scope + reentry_guard + decide + fallback_insert_sized + record_stats + observe),
+    // so fl = glibc + pure removable tax. vs glibc dlmopen. THE biggest documented gap (~50x).
+    type MallocFn = unsafe extern "C" fn(usize) -> *mut libc::c_void;
+    type FreeFn = unsafe extern "C" fn(*mut libc::c_void);
+    let g_malloc: MallocFn = dl(h, b"malloc\0");
+    let g_free: FreeFn = dl(h, b"free\0");
+    for &sz in &[16usize, 64, 256] {
+        // warm
+        for _ in 0..1000 { unsafe { let p = frankenlibc_abi::malloc_abi::malloc(sz); frankenlibc_abi::malloc_abi::free(p); let q = g_malloc(sz); g_free(q); } }
+        let (mut flv, mut glv) = (Vec::new(), Vec::new());
+        let lit = 100_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { unsafe { let p = frankenlibc_abi::malloc_abi::malloc(sz); std::hint::black_box(p); frankenlibc_abi::malloc_abi::free(p); } } flv.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { unsafe { let p = g_malloc(sz); std::hint::black_box(p); g_free(p); } } glv.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("MALLOC_FREE sz={sz} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&flv,0.5), pctl(&glv,0.5), pctl(&flv,0.5)/pctl(&glv,0.5));
+    }
+
     // mktime: ApiFamily::Time is MISSING from the decide/observe fast-path list, so it pays
     // the full membrane tax per call (kernel evidence consult + telemetry). vs glibc dlmopen.
     type MktimeFn = unsafe extern "C" fn(*mut libc::tm) -> i64;

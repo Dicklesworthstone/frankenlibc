@@ -10948,3 +10948,31 @@ hand-written recursion-safe AVX2 asm leaf kernels with page-safe alignment — a
 swing that should be scoped as its own dedicated effort, not a focused land-a-win turn.
 
 **✗ strcmp `#[inline]` on scan_strcmp — REJECTED (unmeasurable/marginal, BlackThrush 2026-07-02).** Tested forcing `#[inline]` on the (large, multi-tier) `scan_strcmp` to remove the strcmp→scan_strcmp call boundary. Cross-run STRCMP showed only noisy ~5-8% at small n (n=8 5.28→4.89, n=16 5.24→4.81) with an n=32 REGRESSION (5.27→5.52) — all within worker variance. **Critically, a codegen-attribute change cannot be same-process A/B'd** (the only reliable measurement on this variance-heavy fleet per the campaign methodology), so the difference is unattributable. Reverted. Inlining a large fn also risks I-cache bloat on other callers. Confirms strcmp is at its structural floor; the call boundary is NOT a reliable lever — only a hand-written asm leaf routine would close it.
+
+---
+
+## malloc/free 10x gap VERIFIED registry-architectural, telemetry-skip DISPROVEN (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Honest dlmopen probe of the deployed no_mangle malloc+free vs glibc (stdio_st_probe MALLOC_FREE arm):
+**fl 46.7ns vs glibc 4.6ns = fl/glibc ~10x, flat across 16/64/256B.** (Corrects the memory's stale
+"~50x" — it is 10x now.) fl strict malloc delegates to `native_libc_malloc` (host glibc, ~4.6ns) then
+adds ~42ns of membrane bookkeeping; free's strict path was already leaned (bd-f874go).
+
+**✗ DISPROVEN lever: skip the strict-mode telemetry (decide/observe/entrypoint_scope).** Hypothesis:
+the malloc PCC branch's `decide()`+`observe()` explainability is the tax, skippable like the string/
+ctype/math strict fast paths. Applied it (leaned malloc's strict path to match free's, removed the PCC
+branch + moved entrypoint_scope off the strict path) and MEASURED: **46.7→44.9ns, only ~2ns (within
+noise).** Root cause: the PCC branch was **never taken** in the deployed probe — `proof_carried_fast_path_active(Allocator)` returns false (no Allocator PCC cert), so the lean non-PCC path was ALREADY running.
+decide/observe were not on the hot path. Reverted (the ~2ns doesn't justify dropping PCC explainability).
+
+**CONFIRMED: the ~40ns is registry-architectural + required bookkeeping, NOT telemetry.** The cost is
+`fallback_insert_sized` (malloc) + `fallback_remove_sized` (free) — a 262144-slot open-addressing table
+(FALLBACK_ALLOC_PTRS/SIZES) behind a spinlock (FALLBACK_ALLOC_TABLE_LOCK), hash-probed per alloc AND
+per free — plus `record_alloc_stats`/`record_free_stats` and the allocator reentry guard. The registry
+is REQUIRED: `known_remaining()` in strict mode returns `fallback_remaining(addr)`, consumed by bounded
+C-string scans (strstr/strncpy on tracked buffers) that must reject unterminated tracked allocations
+before host passthrough — a security/safety invariant, not skippable. This SHARPENS the memory's
+"architectural" verdict with a concrete disproof: it is the bounds-tracking registry (insert+remove+lock),
+not the membrane telemetry. Closing it needs a cheaper per-alloc bounds-tracking scheme (e.g. deriving
+size from `malloc_usable_size` on demand instead of a global locked table, or a per-CPU/sharded table) —
+an allocator-architecture redesign, its own dedicated effort. MALLOC_FREE probe arm kept in stdio_st_probe.rs.
