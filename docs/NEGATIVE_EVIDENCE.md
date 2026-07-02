@@ -62,6 +62,24 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ strcasestr first-byte-scan fused — ~3x faster than the prior fused (vs ORIG); now beats glibc 6.7–20x
+
+- **DEPLOYED (cc):** applied the strstr first-byte-scan fix to strcasestr (hot: HTTP
+  header matching). Was on `substr_fused` (per-chunk NUL scan THEN `core::strcasestr` =
+  double scan). New `strcasestr_fused_firstbyte`: scan for the first byte case-folding
+  to `needle[0]` (either case) OR NUL via the page-safe `scan_c_string_for_set4`
+  ([lo,up,lo,up], ONE NUL-aware pass), verify case-insensitively, advance; O(n+m)
+  Two-Way bailout to `core::strcasestr` (dual-anchor) once verify work outweighs the
+  scan distance (also handles a common first byte). Removed the now-dead `substr_fused`.
+- **BYTE-IDENTICAL + PAGE-SAFE:** conformance_diff_string_search (strcasestr differential
+  + fused guard-page) + conformance_diff_memmem_strcasestr GREEN. Verify reads
+  `haystack[cand+k]` byte-by-byte, stops at NUL/mismatch.
+- **MEASURED (`strstr_glibc_bench`, mmap haystack, deployed fl vs dlmopen glibc):**
+  strcasestr fl/glibc **ci_early_64k 0.49x → 0.15x (fl 99ns → 30ns, ~3.3x faster),
+  ci_absent_64k 0.13x → 0.05x (fl 2770ns → 1058ns, ~2.6x faster)** — ~3x faster than the
+  prior fused (vs ORIG) and now BEATS glibc 6.7x (early) / 20x (absent). wcsstr still on
+  the (winning) chunked `wcsstr_fused` — low-frequency, no gap to chase.
+
 ## 2026-07-02 — ✅ strstr first-byte-scan fused — kills the substr_fused double-scan; ~3x faster than the prior fused, near parity with glibc (3.5x→1.3x)
 
 - **DEPLOYED (cc):** the shipped `substr_fused` scanned each chunk for NUL
