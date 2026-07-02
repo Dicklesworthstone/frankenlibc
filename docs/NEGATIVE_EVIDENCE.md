@@ -10039,3 +10039,19 @@ memmove-symbol hot strict paths now swept: wcscpy/wcpcpy/wcscat/wcsncat/wcsncpy/
 wcsdup. Remaining wide symbol copies are in cold repair/hardened branches + wcsxfrm (low-hot) +
 wmemmove (overlap semantics, must keep).** wcsdup's residual is the deployed-malloc membrane
 (architectural, tracked separately), not the copy.
+
+### 2026-07-02 — ✅ wcsxfrm/wcsxfrm_l copy off the copy_nonoverlapping trap (wide_copy_n) + ROOT CAUSE — BlackThrush
+
+ROOT CAUSE of the whole wide-copy vein: in the frankenlibc-abi crate (which DEFINES the no_mangle
+`memcpy`), a wide-u32 `copy_nonoverlapping`/`std::ptr::copy` does NOT lower to a fast memcpy call —
+LLVM emits a slow naive element loop (~2 GB/s, up to 34x glibc at 1 KiB) to avoid referencing the
+in-crate memcpy symbol. This is the same hazard `raw_memcpy_bytes` was written to dodge. FIX for
+every wide copy: explicit SIMD (`wide_copy_n` / `wide_fused_copy`), never copy_nonoverlapping.
+
+wcsxfrm (fl = identity transform) copied src->dest via copy_nonoverlapping (no strict gate, always
+runs); wcsxfrm_l delegates to it. Swapped to wide_copy_n. Byte-identical (conformance_diff_wchar 44
++ wcsxfrm_wcscoll_differential_fuzz 1 + wchar_abi 118, all 0 failed). Timing (WCSXFRM arm; glibc
+emits locale COLLATION keys = more work than fl's identity, so this is not a pure copy ratio):
+  fl/glibc = 1.24 (n=4) 0.87 (16) 0.90 (64) 1.30 (256) 1.49 (1024) — beats glibc at n=16/64.
+**WIDE copy_nonoverlapping TRAP FULLY SWEPT across hot paths: wcscpy/wcpcpy/wcscat/wcsncat/wcsncpy/
+wcpncpy/wmemcpy/wcsdup/wcsxfrm. Remaining are cold repair/hardened branches + wmemmove (overlap).**

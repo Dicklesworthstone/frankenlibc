@@ -4521,7 +4521,10 @@ pub unsafe extern "C" fn wcsxfrm(
     // SAFETY: destination and source are caller-provided valid buffers for the requested range.
     unsafe {
         if copy_len > 0 {
-            std::ptr::copy_nonoverlapping(src, dest, copy_len);
+            // Inline SIMD copy, not copy_nonoverlapping: in this crate (which defines the
+            // no_mangle memcpy) a wide copy_nonoverlapping compiles to a slow naive loop
+            // (~2 GB/s / up to 34x glibc at large len — the wide-copy-symbol trap).
+            wide_copy_n(dest.cast::<u32>(), src.cast::<u32>(), copy_len);
         }
         if copy_len < n {
             *dest.add(copy_len) = 0;

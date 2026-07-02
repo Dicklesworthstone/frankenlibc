@@ -180,6 +180,27 @@ fn bench(c: &mut Criterion) {
         println!("WCSDUP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
     }
 
+    // wcsxfrm: fl identity transform = wide copy of min(len,n). N=n+1 copies all + NUL.
+    type XfrmFn = unsafe extern "C" fn(*mut i32, *const i32, usize) -> usize;
+    let g_xfrm: XfrmFn = sym(b"wcsxfrm\0");
+    for &n in &[4usize, 16, 64, 256, 1024] {
+        let mut src: Vec<i32> = std::iter::repeat(b'a' as i32).take(n).collect(); src.push(0);
+        let sp = src.as_ptr();
+        let (mut dfl, mut dgl) = (vec![0i32; n + 1], vec![0i32; n + 1]);
+        // NOTE: fl wcsxfrm is an identity transform; glibc emits locale collation keys, so
+        // outputs/returns differ by design (correctness is covered by conformance_diff_wchar
+        // + wcsxfrm_wcscoll_differential_fuzz). This arm times the copy cost only.
+        let _ = unsafe { frankenlibc_abi::wchar_abi::wcsxfrm(dfl.as_mut_ptr(), sp, n + 1) };
+        let _ = unsafe { g_xfrm(dgl.as_mut_ptr(), sp, n + 1) };
+        assert_eq!(&dfl[..n], &src[..n], "fl wcsxfrm identity n={n}");
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now(); for _ in 0..it { black_box(unsafe { frankenlibc_abi::wchar_abi::wcsxfrm(black_box(dfl.as_mut_ptr()), black_box(sp), black_box(n + 1)) }); } fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now(); for _ in 0..it { black_box(unsafe { g_xfrm(black_box(dgl.as_mut_ptr()), black_box(sp), black_box(n + 1)) }); } gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        println!("WCSXFRM n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
+    }
+
     grp.bench_function("noop", |b| b.iter(|| black_box(1u8))); grp.finish();
 }
 criterion_group!(benches, bench); criterion_main!(benches);
