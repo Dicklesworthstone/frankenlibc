@@ -10282,3 +10282,25 @@ whole string in one gconv pass, then one buffered write) — a larger, correctne
 handling), NOT the naive bulk-write I tried. LESSON: batching the WRITE doesn't help when the
 per-element CONVERT dominates; measure the convert vs write split first. fl narrow stdio is fast;
 wide stdio's gap is the per-char gconv, a separate multi-step lever.
+
+### 2026-07-02 — ✅ fputws bulk-CONVERT (SIMD wcstombs + one fwrite) — 2.4-12.8x faster (supersedes the bulk-write rejection) — BlackThrush
+
+The surfaced fputws lever (per prior entry: fl 9-212x glibc = per-char convert vs glibc's bulk
+wcsrtombs) is now LANDED. The earlier bulk-WRITE attempt regressed because it still encoded
+per-char (wctomb x N). The fix is bulk CONVERT: `wchar_core::wcstombs` (a real SIMD converter —
+16-lane ASCII + 8x 2-byte + 4x 3/4-byte fast paths, proven isomorphic to per-char wctomb via
+conformance_diff_wcstombs_simd) converts the whole wide string in ONE pass into a stack buffer,
+then ONE fwrite. Unencodable wchar (wcstombs -> None) or a string longer than the buffer
+(CAP/6 = 256 wchars) falls to the per-char loop (glibc '?' substitution). Gated on wlen>=16: below
+the measured crossover the per-char loop wins (stack-buffer+wcstombs setup > a few fast fputc), so
+the fast path only fires where it helps (strict improvement).
+
+Same-process A/B (stdio_st_probe FPUTWS arm, new bulk vs old per-char vs glibc):
+  wn=8   new/old=1.06 (per-char, <16 gate; ~noise)   wn=16  new/old=0.416 (2.4x)
+  wn=64  new/old=0.113 (8.8x)                          wn=200 new/old=0.078 (12.8x)
+new/glibc improved from 33-212x to 8.0-15.7x. Byte-identical: conformance_diff_wchar 44 +
+wchar_abi_test 118, 0 failed (fast path emits the same UTF-8 bytes as the per-char path; slow
+path unchanged). getwchar/putwchar/fputwc unaffected. LESSON (now proven both ways): batching the
+WRITE is useless when the per-element CONVERT dominates — bulk CONVERT (SIMD wcstombs) is the win.
+Residual 8-15x vs glibc = fl's wlen pre-scan + wcstombs + fwrite framing vs glibc's tighter single
+gconv; further closing is diminishing. Apparatus: stdio_st_probe FPUTWS arm + bench_fputws_percall.

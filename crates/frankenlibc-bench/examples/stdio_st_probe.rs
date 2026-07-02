@@ -106,6 +106,22 @@ fn main() {
     let (sp_, ip_) = (pctl(&single, 0.5), pctl(&inter, 0.5));
     println!("INTERLEAVE single={sp_:.2} two_stream={ip_:.2} inter/single={:.3}", ip_/sp_);
 
+    // fputws: NEW bulk-CONVERT (SIMD wcstombs + one fwrite) vs OLD per-char vs glibc.
+    type FputwsFn = unsafe extern "C" fn(*const i32, *mut libc::c_void) -> i32;
+    let g_fputws: FputwsFn = dl(h, b"fputws\0");
+    for &wn in &[8usize, 16, 64, 200] {
+        let ws: Vec<i32> = std::iter::repeat(b'y' as i32).take(wn).chain(std::iter::once(0)).collect();
+        let wp = ws.as_ptr();
+        unsafe { frankenlibc_abi::wchar_abi::fputws(wp, ff); frankenlibc_abi::wchar_abi::bench_fputws_percall(wp, ff); g_fputws(wp, gf as *mut libc::c_void); fl::fflush(ff); g_fflush(gf); }
+        let (mut nb, mut ob, mut gb) = (Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..it { black_box_i32(unsafe { frankenlibc_abi::wchar_abi::fputws(wp, ff) }); } unsafe { fl::fflush(ff); } nb.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now(); for _ in 0..it { black_box_i32(unsafe { frankenlibc_abi::wchar_abi::bench_fputws_percall(wp, ff) }); } unsafe { fl::fflush(ff); } ob.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now(); for _ in 0..it { black_box_i32(unsafe { g_fputws(wp, gf as *mut libc::c_void) }); } unsafe { g_fflush(gf); } gb.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        let (np, op, gp) = (pctl(&nb,0.5), pctl(&ob,0.5), pctl(&gb,0.5));
+        println!("FPUTWS wn={wn} new={np:.2} old={op:.2} glibc={gp:.2} new/old={:.3} new/glibc={:.3}", np/op, np/gp);
+    }
 }
 
 #[inline(never)]

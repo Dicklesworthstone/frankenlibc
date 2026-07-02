@@ -3915,11 +3915,55 @@ pub unsafe extern "C" fn fputws(ws: *const libc::wchar_t, stream: *mut std::ffi:
         return libc::EOF;
     }
 
-    // NOTE: a bulk-encode-to-stack-buffer + single fwrite variant was measured SLOWER than
-    // this per-char loop (new/old 2.6-3.4x, stdio_st_probe FPUTWS arm) and REVERTED — batching
-    // only the write while still encoding per-char (wctomb x N) does not help; the real gap vs
-    // glibc (fl 9-212x, glibc bulk-converts via wcsrtombs) needs bulk CONVERSION, a larger
-    // lever. See NEGATIVE_EVIDENCE.md 2026-07-02. Keeping the simple per-char loop.
+    unsafe { fputws_impl(ws, stream) }
+}
+
+/// Fast path: bulk SIMD `wcstombs` conversion of the whole (buffer-fitting, all-encodable)
+/// wide string + ONE `fwrite`, matching glibc's single bulk conversion (fl was 9-212x on the
+/// per-char `fputwc` loop). A single unencodable wchar (`wcstombs` -> None) or a string longer
+/// than the stack buffer falls to the per-char loop, which does glibc's '?' substitution and
+/// handles arbitrary length. Byte-identical: `wchar_core::wcstombs` is proven isomorphic to
+/// per-char `wctomb` (conformance_diff_wcstombs_simd), so the fast path emits the same bytes;
+/// the slow path is the original loop. NOTE: an earlier bulk-WRITE-only variant (still per-char
+/// wctomb) REGRESSED 2.6-3.4x — the win requires bulk CONVERT (this SIMD wcstombs), not bulk
+/// write. See NEGATIVE_EVIDENCE.md 2026-07-02.
+#[inline]
+unsafe fn fputws_impl(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -> c_int {
+    // Worst-case 6 bytes/wchar (wctomb RFC-2279), so a wlen<=CAP/6 string always fits without
+    // wcstombs truncating on `dest` room. Longer strings drop to the per-char fallback.
+    const CAP: usize = 1536;
+    let max_wchars = CAP / 6;
+    let mut wlen = 0usize;
+    while wlen <= max_wchars {
+        // SAFETY: caller provides a NUL-terminated wide string.
+        if unsafe { *ws.add(wlen) } == 0 {
+            break;
+        }
+        wlen += 1;
+    }
+    // Gate the bulk path on wlen >= 16: below the measured crossover the per-char loop is
+    // faster (the stack-buffer + wcstombs setup exceeds a handful of fast fputc calls; wn=8
+    // was 7% slower). At wlen>=16 bulk wins decisively (wn=64: 9.4x). Strict improvement.
+    if (16..=max_wchars).contains(&wlen) {
+        let mut buf = [0u8; CAP];
+        // SAFETY: `ws` is valid for `wlen` wide chars (NUL found at `wlen`).
+        let src = unsafe { std::slice::from_raw_parts(ws as *const u32, wlen) };
+        if let Some(nbytes) = wchar_core::wcstombs(&mut buf, src) {
+            if nbytes == 0 {
+                return 0;
+            }
+            // SAFETY: valid stream; `buf[..nbytes]` initialized by wcstombs.
+            return if unsafe { super::stdio_abi::fwrite(buf.as_ptr().cast(), 1, nbytes, stream) }
+                == nbytes
+            {
+                0
+            } else {
+                libc::EOF
+            };
+        }
+        // Unencodable wchar: fall through to the per-char loop (glibc '?' substitution).
+    }
+    // Per-char fallback: long strings (> CAP/6) or an unencodable wchar.
     let mut idx = 0usize;
     loop {
         // SAFETY: caller provides NUL-terminated wide string.
@@ -3928,6 +3972,25 @@ pub unsafe extern "C" fn fputws(ws: *const libc::wchar_t, stream: *mut std::ffi:
             return 0;
         }
         // SAFETY: delegated to this ABI implementation with validated stream.
+        if unsafe { fputwc(wc, stream) } == WEOF_VALUE {
+            return libc::EOF;
+        }
+        idx += 1;
+    }
+}
+
+/// Bench hook: OLD per-wide-char fputws (fputwc loop). Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_fputws_percall(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -> c_int {
+    if ws.is_null() || stream.is_null() {
+        return libc::EOF;
+    }
+    let mut idx = 0usize;
+    loop {
+        let wc = unsafe { *ws.add(idx) as u32 };
+        if wc == 0 {
+            return 0;
+        }
         if unsafe { fputwc(wc, stream) } == WEOF_VALUE {
             return libc::EOF;
         }
