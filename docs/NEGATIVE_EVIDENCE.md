@@ -62,6 +62,28 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ wcslen fast-path drops known_remaining (matches narrow strlen) — ~2.9x faster vs the prior fast-path; now BEATS glibc at small+large
+
+- **DEPLOYED (cc):** the just-shipped wcslen fast path still gated on `known.is_none()`
+  and thus CALLED `known_remaining` every time (~9ns — more than expected). The narrow
+  `strlen` fast path proves this is unnecessary in strict: the raw page-safe SIMD scan is
+  byte-identical for BOTH tracked and untracked pointers (strict = no heal → bounded and
+  unbounded scans return the same length for a valid string; `malloc_unterminated` leaves
+  a NUL right after the content, so even an unterminated tracked buffer resolves
+  correctly). Simplified wcslen strict to `wide_strlen_unbounded(s)` directly — no
+  known_remaining, no decide, no observe.
+- **BYTE-IDENTICAL (proven, incl. the SAFETY case):** the ACTIVE (non-ignored)
+  `wcslen_bounds_tracked_unterminated_input` test PASSES (returns 3 for a 3-wchar
+  unterminated tracked buffer) + wchar_abi_test 118/0-failed + conformance_diff_wchar
+  44/44. Same precedent narrow strlen relies on.
+- **MEASURED (`wcslen_glibc_bench`, deployed fl vs dlmopen glibc):** fl/glibc **n4
+  4.0x→0.88x (fl 13.9→4.76ns, ~2.9x faster — now BEATS glibc), n16 4.17→1.22x, n64
+  2.69→2.25x, n1024 1.73→0.98x (BEATS glibc)** — the known_remaining call was ~9ns, the
+  dominant tiny-string overhead. Now near-parity-to-WIN at every size (n64 medium residual
+  = 32B-panel vs glibc wider path, the known scan-throughput lever). **This is the
+  tiny-string floor I'd surfaced as the "next lever" — closed cleanly, no asm needed:
+  it was the membrane touch, not the SIMD setup.**
+
 ## 2026-07-02 — ✅ wcstok strict fast-path — removes the wide WRITE membrane (~655ns/call); now BEATS glibc 1.35–1.5x
 
 - **DEPLOYED (cc):** wcstok (wide tokenizer) was the last audit item without a strict
