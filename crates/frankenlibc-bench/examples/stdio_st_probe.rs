@@ -241,6 +241,22 @@ fn main() {
     }
     let (fqp, gqp) = (pctl(&fqv,0.5), pctl(&gqv,0.5));
     println!("QSORT_1024 fl={fqp:.2} glibc={gqp:.2} fl/glibc={:.3} (ns/sort incl reset)", fqp/gqp);
+
+    // strtod: float parsing, fl vs glibc (dlmopen). Common in config/JSON/scientific input.
+    type StrtodFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f64;
+    let g_strtod: StrtodFn = dl(h, b"strtod\0");
+    for pat in [b"3.14159\0".as_ref(), b"1.7976931348623157e308\0".as_ref(), b"42\0".as_ref()] {
+        let dp = pat.as_ptr() as *const c_char;
+        let (mut fdv, mut gdv) = (Vec::new(), Vec::new());
+        let dit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..dit { std::hint::black_box(unsafe { frankenlibc_abi::stdlib_abi::strtod(dp, std::ptr::null_mut()) }); } fdv.push(t.elapsed().as_nanos() as f64 / dit as f64);
+            let t = Instant::now(); for _ in 0..dit { std::hint::black_box(unsafe { g_strtod(dp, std::ptr::null_mut()) }); } gdv.push(t.elapsed().as_nanos() as f64 / dit as f64);
+        }
+        let (fdp, gdp) = (pctl(&fdv,0.5), pctl(&gdv,0.5));
+        let s = std::str::from_utf8(&pat[..pat.len()-1]).unwrap();
+        println!("STRTOD '{s}' fl={fdp:.2} glibc={gdp:.2} fl/glibc={:.3}", fdp/gdp);
+    }
 }
 
 #[inline(never)]

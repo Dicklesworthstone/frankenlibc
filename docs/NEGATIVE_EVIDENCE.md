@@ -10527,3 +10527,21 @@ sweep of the "old biased-bench wins": qsort 0.333x (WIN, confirmed), stdio read 
 write fwrite_4K 0.371x (WIN, certified this session), wcstol 1.25x (near-parity). fl's core
 perf surface genuinely beats glibc where the memory claimed — the biased-bench caveat did NOT
 overturn qsort (unlike wcschr/wcscpy, which the bias DID hide).
+
+### 2026-07-02 — ✅ CERTIFIED (honest dlmopen): strtod BEATS glibc 1.1-3x — BlackThrush
+
+Continued the honest-remeasure sweep on strtod (float parse — common in config/JSON/scientific;
+complex enough to hide a gap). fl vs HOST glibc (dlmopen):
+  "42"                     fl=7.14  glibc=21.66  fl/glibc=0.330 (3.0x faster)
+  "3.14159"                fl=22.51 glibc=48.03  fl/glibc=0.469 (2.1x faster)
+  "1.7976931348623157e308" fl=92.02 glibc=101.88 fl/glibc=0.903 (~1.1x, near-parity at the extreme)
+fl's short-fixed-decimal fast path dominates common inputs; near-parity only for the hardest
+max-double case. No hidden gap — WIN. SWEEP PATTERN (this session's honest dlmopen re-measures):
+fl WINS the ALGORITHMIC surface — qsort 0.333x (radix), strtod 0.33-0.90x (fast-path parse),
+stdio fread_4K 0.917x / fwrite_4K 0.371x (lock-free fast paths), memmem/strstr Two-Way. The
+LTO-biased glibc_baseline_bench only HID gaps on the SIMD-SCAN-KERNEL functions (portable-SIMD vs
+AVX2: wcschr/wcscpy/wcsncpy/strrchr/strcmp) — those were found + fixed/documented this session
+(the wide-copy family via wide_copy_n; strcmp/strrchr residual = the AVX2 ceiling, asm-only).
+CONCLUSION: fl's core surface genuinely beats glibc on algorithms; the only real remaining losses
+are (a) SIMD-scan AVX2 ceiling (strcmp/strrchr ~1.2-1.8x, needs per-fn asm) and (b) architectural
+(malloc ownership ~16.7x, stdio MT registry lock). Apparatus: STRTOD arm in stdio_st_probe.
