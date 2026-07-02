@@ -10055,3 +10055,24 @@ emits locale COLLATION keys = more work than fl's identity, so this is not a pur
   fl/glibc = 1.24 (n=4) 0.87 (16) 0.90 (64) 1.30 (256) 1.49 (1024) — beats glibc at n=16/64.
 **WIDE copy_nonoverlapping TRAP FULLY SWEPT across hot paths: wcscpy/wcpcpy/wcscat/wcsncat/wcsncpy/
 wcpncpy/wmemcpy/wcsdup/wcsxfrm. Remaining are cold repair/hardened branches + wmemmove (overlap).**
+
+### 2026-07-02 — ⊘ VEIN EXHAUSTED: wide copy_nonoverlapping trap fully swept; all other hot copy paths verified safe — BlackThrush
+
+After swapping the whole wide-copy family off the abi-crate copy_nonoverlapping trap (9 commits:
+wcscpy/wcpcpy/wcscat/wcsncat/wcsncpy/wcpncpy/wmemcpy/wcsdup/wcsxfrm), I audited whether the trap
+(abi-crate wide/large copy_nonoverlapping -> slow naive loop, ~2 GB/s) affects OTHER hot paths.
+VERIFIED SAFE (no fix needed):
+  - fread: buffered_read_into is in CORE (fast memcpy symbol); large reads route to direct
+    sys_read_fd (no copy). Small buffered copies only.
+  - fwrite: try_fwrite_fast -> StdioStream::fast_write in CORE (fast); large -> direct/cookie.
+  - strcpy/stpcpy/strcat/strncpy/stpncpy: all use raw_memcpy_bytes / raw_memset_bytes (explicit
+    u128/AVX loops, recursion-safe, fast) — NOT copy_nonoverlapping.
+  - narrow strxfrm: delegates the copy to frankenlibc_core::string::str::strxfrm (CORE, fast).
+KEY: the trap only bites when an ABI-crate fn copies WIDE/large data via copy_nonoverlapping
+DIRECTLY. Core-crate copies lower to the fast interposed memcpy symbol (no in-crate self-ref, so
+LLVM emits @llvm.memcpy). Remaining abi copy_nonoverlapping sites are small/cold (env-var names,
+formatted output <= buffer, error messages, fixed <=20-byte copies) — negligible per call.
+The copy-trap vein is EXHAUSTED for hot paths. NEXT AREAS (not this vein): the fwrite/stdio-write
+registry-lock 6-12x gap (architectural, bd-hqo6b6) and the deployed-malloc membrane ~50x
+(architectural) remain the big known gaps; a fresh non-copy family (or those refactors) is the
+next lever, not more copy_nonoverlapping hunting.
