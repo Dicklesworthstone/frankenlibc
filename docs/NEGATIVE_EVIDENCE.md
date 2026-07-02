@@ -10114,3 +10114,25 @@ The 38B iteration drop I flagged is consistent with buffer-flush behavior in the
 bench, not necessarily a fast-path bug. NET: no new focused-turn stdio lever; architectural refactor
 required. Lesson: never infer a ratio from criterion's warm-up iteration estimate — capture the
 final `time:` line or use a same-process A/B.
+
+### 2026-07-02 — ⊘ METHODOLOGY: stdio-write fast path is __libc_single_threaded-gated; criterion (MT) benches CANNOT measure it — BlackThrush
+
+Chasing the stdio-write gap, found TWO measurement traps that explain why it's been hard to pin down:
+  1. fputs_glibc_bench uses fmemopen (MEM-BACKED). fast_write returns false for is_mem_backed()
+     (file.rs:662), so that bench NEVER exercises the fd fast path — it measures the slow locked
+     mem path. Its "6.22x" is the mem-backed slow path, not the common fd fputs.
+  2. NEW bench fputs_fd_glibc_bench (fd-backed /dev/null, _IOFBF, 64 KiB buffer) STILL showed fl
+     3.3-5.1x glibc (n=8/38/200). But write_cache_lookup (stdio_abi.rs:856) short-circuits to None
+     when __libc_single_threaded == 0 — and CRITERION spawns threads, so __libc_single_threaded is
+     0 for the whole process, DISABLING the fast_write cache. So even this fd bench measured the
+     slow locked path (canonical_stream_id + registry lock + full membrane), NOT the fast path.
+CONSEQUENCE: neither bench can observe the deployed single-threaded fast path (fast_write:
+lock-free buffer append for a cached, Full-buffered, fd-backed stream in a genuinely ST process).
+To measure the real fast path you need a STANDALONE single-threaded binary (no criterion/pthread),
+e.g. a small main() that fopens /dev/null _IOFBF and loops fputs, timed with clock_gettime, vs a
+glibc build. The "stdio-write is 3-12x slow" numbers across the ledger are all the SLOW (MT or
+mem) path; the ST fast-path perf is UNMEASURED here. The slow path IS architecturally lock-bound
+(bd-hqo6b6, registry Mutex) as documented — but the common ST program hits the lock-free fast path,
+which these harnesses structurally cannot see. Apparatus kept: fputs_fd_glibc_bench (with this
+caveat). NEXT: a standalone-ST microbench binary is the only honest way to measure/optimize the
+stdio fast path; the criterion harness is the wrong tool.

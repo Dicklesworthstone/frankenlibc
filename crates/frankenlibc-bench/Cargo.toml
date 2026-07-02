@@ -565,3 +565,9 @@ harness = false
 name = "clock_gettime_glibc_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# fputs to fd-backed FULL-buffered stream (/dev/null) — the fast_write fast-path common case.
+[[bench]]
+name = "fputs_fd_glibc_bench"
+required-features = ["abi-bench"]
+harness = false
