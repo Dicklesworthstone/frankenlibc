@@ -470,6 +470,24 @@ fn main() {
         println!("ERRNO_LOC fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fe,0.5), pctl(&ge,0.5), pctl(&fe,0.5)/pctl(&ge,0.5));
     }
 
+    // lseek: fast syscall wrapper. fl calls decide()+observe() (IoFd) on every call; the syscall
+    // cost is identical for fl+glibc (same kernel), so fl/glibc isolates the membrane overhead.
+    type LseekFn = unsafe extern "C" fn(i32, i64, i32) -> i64;
+    let g_lseek: LseekFn = dl(h, b"lseek\0");
+    {
+        let devnull = unsafe { libc::open(b"/dev/null\0".as_ptr().cast(), libc::O_RDONLY) };
+        if devnull >= 0 {
+            let (mut fls, mut gls) = (Vec::new(), Vec::new());
+            let lit = 300_000u64;
+            for _ in 0..100 {
+                let t = Instant::now(); for _ in 0..lit { black_box_i64(unsafe { frankenlibc_abi::unistd_abi::lseek(devnull, 0, libc::SEEK_SET) }); } fls.push(t.elapsed().as_nanos() as f64 / lit as f64);
+                let t = Instant::now(); for _ in 0..lit { black_box_i64(unsafe { g_lseek(devnull, 0, libc::SEEK_SET) }); } gls.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            }
+            println!("LSEEK fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fls,0.5), pctl(&gls,0.5), pctl(&fls,0.5)/pctl(&gls,0.5));
+            unsafe { libc::close(devnull); }
+        }
+    }
+
     // rand + random: PRNG (mutates global state -> no const-fold). glibc random() = expensive
     // nonlinear additive-feedback generator; a simpler fl PRNG could win. dlmopen glibc.
     type RandFn = unsafe extern "C" fn() -> i32;

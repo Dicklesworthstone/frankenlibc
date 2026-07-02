@@ -11231,3 +11231,34 @@ ecvt/realpath) — the amortised or rare cost isn't worth the churn. qsort_r (L4
 pattern + cheap follow-up but far less common. The atoi/atol/strtol/getenv family already have
 `stdlib_membrane_fastpath`/hot-cache bypasses (not levers). Non-colliding stdlib strict-fast-path
 vein now essentially closed.
+
+---
+
+## Syscall-wrapper strict-fast-path sweep DISPROVEN — decide() tax negligible vs syscall (AGENT_NAME: BlackThrush, 2026-07-02)
+
+After landing the bsearch + qsort strict fast paths (pure-computation wins), audited whether the
+same lever applies to the SYSCALL-wrapper modules that have many `decide()` calls and NO strict fast
+path: unistd_abi (82 decide, 0 strict), io_abi (21), socket_abi (19), signal_abi (17). Hypothesis:
+for a FAST syscall, the ~15ns decide()+observe() could be ~15-20% overhead.
+
+**✗ DISPROVEN — parity.** Measured `lseek(devnull, 0, SEEK_SET)` — a minimal syscall (stdio_st_probe
+LSEEK arm; the syscall cost is identical for fl+glibc on the same kernel, so fl/glibc isolates the
+membrane overhead): **fl 604.74ns vs glibc 601.50ns = 1.005x (parity).** The syscall is ~600ns on
+this worker (kernel + seccomp/sandbox overhead), so fl's decide/observe (~15ns, and IoFd is already
+on the decide() fast-path family list skipping the kernel evidence consult) is ~0.5% — lost in the
+noise. Even the "fast" syscalls are ~600ns here.
+
+**VEIN CLOSED for syscall wrappers.** A strict-fast-path sweep of the ~140 decide()-calling syscall
+wrappers (unistd/io/socket/signal/termios/process/mmap/poll/dirent) would yield ~0.5% each — NOT
+worth the churn or the correctness risk on syscall paths. The strict-fast-path lever pays ONLY for
+PURE-COMPUTATION functions where decide()/observe() is a large fraction of a small total:
+- LANDED: bsearch (1.68x loss → 0.90x win, ~19ns tax on a ~24ns search), qsort (small sorts win
+  glibc more, ~15ns tax on pdqsort's few comparisons).
+- Everything else covered: string/wide families have strict paths; atoi/atol/strtol/getenv have
+  `stdlib_membrane_fastpath`/hot-cache; strcoll delegates to strcmp; math/ctype have membrane
+  fast-paths; the remaining stdlib decide()-callers are cold (exit/mkstemp/rand48/ecvt/realpath).
+
+**Non-colliding strict-fast-path audit COMPLETE.** No pure-computation deployed fn lacking a fast
+path remains outside the coordination-blocked stdio/malloc files. LSEEK probe arm kept as the
+syscall-tax-is-negligible reference. Remaining frontier = the 2 architectural swings (stdio per-FILE
+lock, malloc inline header), both coordination-blocked per perf_next_architectural_swings.md.
