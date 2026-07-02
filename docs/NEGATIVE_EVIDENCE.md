@@ -10304,3 +10304,18 @@ path unchanged). getwchar/putwchar/fputwc unaffected. LESSON (now proven both wa
 WRITE is useless when the per-element CONVERT dominates — bulk CONVERT (SIMD wcstombs) is the win.
 Residual 8-15x vs glibc = fl's wlen pre-scan + wcstombs + fwrite framing vs glibc's tighter single
 gconv; further closing is diminishing. Apparatus: stdio_st_probe FPUTWS arm + bench_fputws_percall.
+
+### 2026-07-02 — ✅ ungetc pointer-keyed fast path — 4-lock elision (feof-class), hot in parsers — BlackThrush
+
+ungetc (hot in scanf/custom parsers via the ungetc-after-fgetc pattern) took FOUR locks per call:
+canonical_stream_id native lock + registry_contains_stream + registry().lock() + (in
+sync_and_unregister_fast_fixed_mem_read) the fast_fixed_mem_reads lock — vs glibc's inline
+pushback. A cache hit is a non-cookie non-mem fd stream, so sync_and_unregister is a full no-op
+(fast_fixed_mem_read(id)==None: sync no-ops, unregister removes a non-present id) — reduce to
+`s.ungetc(c)` directly, skipping all 4 locks. Byte-identical (mutating pushback, ST-gated ⇒
+unique &mut, same as clearerr; a subsequent fgetc's fast_getc sees ungetc_byte.is_some() and
+falls to the slow path that returns the pushed char, unchanged). Conformance stdio_abi_test 256
+passed / 0 failed (covers the fgetc/ungetc interaction). Skips the same 3-lock set measured for
+feof (A/B old=21ns new=4.4ns, ~16.6ns saved) PLUS the fast_fixed_mem_reads lock. The stream is
+already cached by the preceding fgetc, so the parser hot path hits. MT path (bd-hqo6b6) unchanged.
+The ST stdio pointer-keyed lock-elision now also covers ungetc (parser pushback).

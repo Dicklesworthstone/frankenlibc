@@ -3815,6 +3815,15 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
     if c == libc::EOF {
         return libc::EOF;
     }
+    // ST fast path: a cache hit is a non-cookie non-mem fd stream, so the slow path's
+    // sync_and_unregister_fast_fixed_mem_read is a no-op (fast_fixed_mem_read(id)==None) —
+    // reduce to s.ungetc() directly, skipping 4 per-call locks (native + registry_contains +
+    // registry + fast_fixed_mem_reads). Byte-identical; mutating but ST-gated ⇒ unique &mut.
+    // The common ungetc-after-fgetc parser pattern leaves the stream cached, so this hits.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
+        return if unsafe { (*p).ungetc(c as u8) } { c } else { libc::EOF };
+    }
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
