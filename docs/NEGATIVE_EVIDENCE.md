@@ -10611,3 +10611,51 @@ small-size setup). This is a high-effort/high-risk dedicated-turn lever, NOT a c
 change. NO future agent should re-chase lane-width / AVX-512 / membrane / algorithm for these — all
 ruled out here. The scan family + malloc/MT are the ONLY remaining fl-vs-glibc gaps; everything
 algorithmic + stdio is certified WINNING.
+
+---
+
+## strlen dead-dispatch elision — the #1 hottest libc fn was paying ~8ns for a thrown-away lane hint (AGENT_NAME: BlackThrush, 2026-07-02)
+
+**Measured (same-process dlmopen A/B, examples/stdio_st_probe.rs STRLEN arm, worker-invariant):**
+
+| n     | fl BEFORE | fl AFTER | glibc | fl/glibc BEFORE | fl/glibc AFTER |
+|-------|-----------|----------|-------|-----------------|----------------|
+| 16    | 14.77 ns  | 6.49 ns  | 2.21  | 5.881x          | **2.942x**     |
+| 64    | 15.42 ns  | 7.37 ns  | 2.76  | 5.562x          | **2.669x**     |
+| 256   | 19.38 ns  | 11.21 ns | 4.06  | 5.299x          | **2.758x**     |
+| 1024  | 23.60 ns  | 15.06 ns | 8.04  | 3.201x          | **1.874x**     |
+
+**fl strlen is now ~2.3x faster than before at every size** (14.77→6.49ns at n=16). This
+is the single most-called libc function, and it was un-measured this session; an honest
+dlmopen probe exposed a 3.2–5.9x LOSS vs glibc — far worse than the strchr/memchr scan
+family — which the LTO-biased glibc_baseline_bench had hidden (same class of error as the
+earlier strchr/memchr correction).
+
+**Root cause (strcpy-class membrane/dispatch tax, NOT the scan kernel):** deployed `strlen`
+already had a strict-passthrough fast path, but that path still called
+`select_string_simd_dispatch(Strlen, …)` to compute a `lane_bytes` hint and passed it to
+`raw_lane_strlen_bytes(s, lane)`. But `raw_lane_strlen_bytes` **ignores its lane argument**
+(`_lane_bytes`) — its whole body is `scan_c_string(s, None).0`. So every strlen call built a
+`StringSimdDispatch` struct — atomic feature-mask load + AVX2/SSE/NEON candidate probe +
+`log_string_simd_dispatch_once` — purely to throw the result away. ~8ns of provably-dead
+work on the hottest entrypoint in libc.
+
+**Fix (byte-identical):** in strlen's strict path and its `!heals && rem.is_none()` path,
+skip the dispatch and call `scan_c_string(s, None).0` directly — literally the same call
+`raw_lane_strlen_bytes` already made, minus the dead struct. Zero semantic change; string
+lib tests green (6 passed). The deep hardened/tracked-pointer path (past the membrane
+`decide()`, a rare branch) keeps the dispatch call — not hot, not touched.
+
+**Honest framing — this NARROWS the gap, it does not overtake glibc.** fl strlen still
+LOSES to glibc's hand-tuned AVX2 asm (2.94x small → 1.87x large); the residual is
+`scan_c_string` (portable-SIMD) vs glibc AVX2, the same AVX2-ceiling frontier documented for
+strchr/memchr/strrchr/strcmp/wcschr. The only remaining strlen lever is a per-fn
+recursion-safe AVX2 asm kernel (bounded gain — glibc is ~1.87x even at large where the scan
+dominates dispatch). But removing ~8ns of dead dispatch from the #1 function is a real,
+measured, byte-identical 2.3x self-improvement worth landing on its own.
+
+**Reusable finding:** `raw_lane_strlen_bytes`/`raw_lane_strnlen_bytes` ignore their lane hint
+(the SWAR/`scan_c_string` scan superseded lane-chunking). Any remaining hot call site that
+computes `select_string_simd_dispatch` only to feed one of these is pure waste. strnlen's
+strict path was already clean (direct `scan_c_string(s, Some(n))`); strlen was the last hot
+offender.

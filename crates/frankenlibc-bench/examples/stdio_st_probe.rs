@@ -294,6 +294,21 @@ fn main() {
         println!("STRCHR n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fcv,0.5), pctl(&gcv,0.5), pctl(&fcv,0.5)/pctl(&gcv,0.5));
         println!("MEMCHR n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fmv,0.5), pctl(&gmv,0.5), pctl(&fmv,0.5)/pctl(&gmv,0.5));
     }
+
+    // strlen: THE hottest libc fn. fl uses 64-byte panels. fl vs glibc, full scan to NUL.
+    type StrlenFn = unsafe extern "C" fn(*const c_char) -> usize;
+    let g_strlen: StrlenFn = dl(h, b"strlen\0");
+    for &n in &[16usize, 64, 256, 1024] {
+        let sv: Vec<u8> = std::iter::repeat(b'a').take(n).chain(std::iter::once(0)).collect();
+        let scp = sv.as_ptr() as *const c_char;
+        let (mut flv2, mut glv2) = (Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { std::hint::black_box(unsafe { frankenlibc_abi::string_abi::strlen(scp) }); } flv2.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { std::hint::black_box(unsafe { g_strlen(scp) }); } glv2.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("STRLEN n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&flv2,0.5), pctl(&glv2,0.5), pctl(&flv2,0.5)/pctl(&glv2,0.5));
+    }
 }
 
 #[inline(never)]

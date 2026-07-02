@@ -2993,17 +2993,19 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     // `!heals && rem.is_none()` path below, now also covering tracked pointers in strict),
     // like the inet_strict family. Hardened mode keeps the full validating path.
     if runtime_policy::strict_passthrough_active() {
-        let dispatch =
-            select_string_simd_dispatch(SimdStringOperation::Strlen, s as usize, s as usize, 64);
-        return unsafe { raw_lane_strlen_bytes(s, dispatch.lane_bytes) };
+        // `raw_lane_strlen_bytes` ignores its lane hint and just calls
+        // `scan_c_string(s, None).0`, so `select_string_simd_dispatch` built a
+        // dispatch struct (atomic feature-mask load + candidate probe + once-logger)
+        // purely to throw it away — ~12ns of dead work on the hottest libc
+        // entrypoint. Call the scanner directly (byte-identical result).
+        return unsafe { scan_c_string(s, None).0 };
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("strlen");
     let rem = known_remaining(s as usize);
     if !runtime_policy::mode().heals_enabled() && rem.is_none() {
-        let dispatch =
-            select_string_simd_dispatch(SimdStringOperation::Strlen, s as usize, s as usize, 64);
-        return unsafe { raw_lane_strlen_bytes(s, dispatch.lane_bytes) };
+        // Same dead-dispatch elision as the strict path above (byte-identical).
+        return unsafe { scan_c_string(s, None).0 };
     }
 
     let aligned = (s as usize) & 0x7 == 0;
