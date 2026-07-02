@@ -10076,3 +10076,25 @@ The copy-trap vein is EXHAUSTED for hot paths. NEXT AREAS (not this vein): the f
 registry-lock 6-12x gap (architectural, bd-hqo6b6) and the deployed-malloc membrane ~50x
 (architectural) remain the big known gaps; a fresh non-copy family (or those refactors) is the
 next lever, not more copy_nonoverlapping hunting.
+
+### 2026-07-02 — ⊘ stdio-write gap RE-MEASURED: fputs ST ~2.7x glibc (was "6-12x"; fast path mitigated) — blocker surfaced — BlackThrush
+
+Re-measured the deployed stdio WRITE path (fputs_glibc_bench, dlmopen glibc + amortized rewind)
+now that fputs/fwrite BOTH carry the single-threaded write_cache_lookup + fast_write lock-skip
+fast path (line 2745 fputs / try_fwrite_fast). At 8B: fl completed 853k iters vs glibc 2.3M in
+the same 2s window = fl ~2.7x slower single-threaded — NOT the "6-12x" in prior memory; the fast
+path closed most of it. CORRECTION for [[printf-scanf-perf-campaign]] / bd-hqo6b6: the ST fputs
+gap is ~2.7x, not 6-12x. SUSPICIOUS SIGNAL: fl fputs 38B ran only 87k iters (~10x fewer than 8B),
+a much larger drop than the 30-byte size increase warrants — suggests the fast path MISSES and
+falls to the locked+flush path for 38B (buffer-fill / not-Full / would-flush), doing an actual
+write syscall where glibc still buffers. That fast-path-miss threshold is a CANDIDATE lever (if
+it misses for writes that don't truly overflow the buffer) but needs fast_write overflow-logic
+audit — NOT resolved this turn.
+REMAINING BIG GAPS ARE ARCHITECTURAL (multi-session, not focused-turn levers):
+  1. stdio-write MT contention: the fast path is single-threaded (gen-valid cache); multi-threaded
+     writes fall to the global registry().lock() Mutex. glibc uses per-FILE recursive lock + flockfile.
+     Alien fix = lock-free/per-CPU/sharded per-stream buffer (large, concurrent-correctness risk).
+  2. deployed malloc ~50x: per-alloc fallback_insert_sized registry insert feeds known_remaining/
+     fortify bounds — removing it touches free/realloc/string-bounds (architectural).
+SURFACED: no clean safe focused-turn write/malloc lever; the copy vein is exhausted. Next real
+progress needs the fast_write-miss audit (small) or one of the two architectural refactors.
