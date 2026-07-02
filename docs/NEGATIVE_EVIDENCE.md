@@ -9899,3 +9899,22 @@ copy (like wide_fused_copy) is the follow-up lever, smaller than this membrane r
 stpcpy shares strcpy_core so it gets the same win. Apparatus: strcpy_membrane_glibc_bench.
 LESSON: audit EVERY hot deployed write fn for a missing strict_passthrough fast path — strcpy
 was a ~10x outlier hiding in plain sight (wcscpy/strncpy had it; strcpy/stpcpy did not).
+
+### 2026-07-02 — ✅ strcat strict path: SIMD scan + block copy of src (was byte-by-byte) — 11.4x glibc at 1 KiB -> near-parity — BlackThrush
+
+strcat HAD a strict_passthrough fast path (unlike strcpy), but its src append was a
+byte-by-byte scalar loop (`loop { *dst.add(d) = *src.add(s); ... }`) — O(n) scalar stores, no
+SIMD. Deployed bench (STRCAT arm in strcpy_membrane_glibc_bench, dst-end scan + per-iter reset
+shared by both arms) showed the loss GROWING with src length:
+  fl/glibc = 1.31 (n=4) 1.44 (16) 1.71 (32) 2.24 (64) 3.06 (128) 4.54 (256) 11.37 (1024)
+fl was 294ns at n=1024 vs glibc 26ns.
+
+Fix: keep the inherent dst-end scan, replace the scalar src loop with scan_c_string(src,None)
++ raw_memcpy_bytes(dst+dst_len, src, src_len) + write NUL — the strcpy non-repair shape.
+Byte-identical append (conformance_diff_string 24 / string_mut 35 / string_abi_test 201, all 0
+failed). After fix:
+  fl/glibc = 1.15 (n=4) 1.14 (16) 1.02 (32) 1.08 (64) 1.02 (128) 1.35 (256) 1.01 (1024)
+NEAR-PARITY at every size; n=1024 294ns -> 31ns (~9.5x faster fl-side). The narrow analog of
+the wcscat fuse. NARROW BUILDER FAMILY now fast: strcpy/stpcpy (membrane fast path, prior
+commit) + strcat (SIMD src copy). LESSON: a strict fast path can still hide a SCALAR inner
+loop — check the copy kernel inside the fast path, not just that the fast path exists.

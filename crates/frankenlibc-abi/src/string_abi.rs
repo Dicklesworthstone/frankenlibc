@@ -3736,18 +3736,15 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
     // hardened mode keeps the full membrane (bounds/heal) below.
     if !dst.is_null() && !src.is_null() && runtime_policy::strict_passthrough_active() {
         return unsafe {
+            // dst-end scan is inherent to strcat; the src side then does a SIMD scan +
+            // block copy instead of the old byte-by-byte loop (which lost up to ~11x vs
+            // glibc at 1 KiB src — O(n) scalar stores). Byte-identical append.
             let (dst_len, _) = scan_c_string(dst.cast_const(), None);
-            let mut d = dst_len;
-            let mut s = 0usize;
-            loop {
-                let ch = *src.add(s);
-                *dst.add(d) = ch;
-                if ch == 0 {
-                    break;
-                }
-                d += 1;
-                s += 1;
+            let src_len = scan_c_string(src, None).0;
+            if src_len > 0 {
+                raw_memcpy_bytes(dst.add(dst_len).cast::<u8>(), src.cast::<u8>(), src_len);
             }
+            *dst.add(dst_len + src_len) = 0;
             dst
         };
     }
