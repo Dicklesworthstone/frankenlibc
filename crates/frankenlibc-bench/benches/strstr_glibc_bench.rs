@@ -16,16 +16,18 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 type StrstrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
 
-fn host() -> StrstrFn {
+fn host_sym(sym: &[u8]) -> usize {
     static H: OnceLock<usize> = OnceLock::new();
-    let a = *H.get_or_init(|| unsafe {
-        let h = libc::dlmopen(libc::LM_ID_NEWLM, b"libc.so.6\0".as_ptr().cast(),
+    let h = *H.get_or_init(|| unsafe {
+        let x = libc::dlmopen(libc::LM_ID_NEWLM, b"libc.so.6\0".as_ptr().cast(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL);
-        assert!(!h.is_null());
-        libc::dlsym(h, b"strstr\0".as_ptr().cast()) as usize
+        assert!(!x.is_null());
+        x as usize
     });
-    unsafe { std::mem::transmute::<usize, StrstrFn>(a) }
+    unsafe { libc::dlsym(h as *mut c_void, sym.as_ptr().cast()) as usize }
 }
+fn host() -> StrstrFn { unsafe { std::mem::transmute::<usize, StrstrFn>(host_sym(b"strstr\0")) } }
+fn host_ci() -> StrstrFn { unsafe { std::mem::transmute::<usize, StrstrFn>(host_sym(b"strcasestr\0")) } }
 
 fn pctl(s: &[f64], q: f64) -> f64 {
     let mut v = s.to_vec();
@@ -76,6 +78,28 @@ fn bench(c: &mut Criterion) {
             fs.push(t.elapsed().as_nanos() as f64 / it as f64);
             let t = Instant::now();
             for _ in 0..it { black_box(unsafe { g(black_box(hay), black_box(needle)) }); }
+            gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        let (fp, gp) = (pctl(&fs, 0.50), pctl(&gs, 0.50));
+        println!("STRSTR_FUSED case={label} fl_p50={fp:.1}ns glibc_p50={gp:.1}ns ratio_fl_over_glibc={:.2}", fp / gp);
+    }
+
+    // strcasestr (case-insensitive), same untracked-haystack fused path.
+    let gci = host_ci();
+    let ci_needle = b"needle!\0".as_ptr().cast::<c_char>();
+    for &(label, n, pos) in &[("ci_early_64k@512", 65536usize, 512usize), ("ci_absent_64k", 65536, usize::MAX)] {
+        let hay = unsafe { make_hay(n, pos) };
+        let fp = unsafe { frankenlibc_abi::string_abi::strcasestr(hay, ci_needle) };
+        let gp = unsafe { gci(hay, ci_needle) };
+        assert_eq!(fp as usize, gp as usize, "strcasestr fl!=glibc {label}");
+        let it = 500u64;
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now();
+            for _ in 0..it { black_box(unsafe { frankenlibc_abi::string_abi::strcasestr(black_box(hay), black_box(ci_needle)) }); }
+            fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now();
+            for _ in 0..it { black_box(unsafe { gci(black_box(hay), black_box(ci_needle)) }); }
             gs.push(t.elapsed().as_nanos() as f64 / it as f64);
         }
         let (fp, gp) = (pctl(&fs, 0.50), pctl(&gs, 0.50));

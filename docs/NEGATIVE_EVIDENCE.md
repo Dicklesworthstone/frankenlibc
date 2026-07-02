@@ -62,6 +62,25 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ FUSED strcasestr (untracked haystack) — same prescan-elimination as strstr; BEATS glibc 2–7.7x, byte-identical
+
+- **DEPLOYED (cc):** generalised the fused strstr machinery (`strstr_fused` →
+  `substr_fused(haystack, needle_len, matcher)`) and wired `strcasestr`'s untracked
+  strict path through it with a case-insensitive matcher (`core::str::strcasestr` per
+  window). Same page-chunked early-window + single-scan tail-fallback; no
+  whole-haystack pre-scan. Tracked buffers / needle_len∉[2,256] keep the bounded path
+  (preserves `strcasestr_bounds_tracked_unterminated_haystack`).
+- **BYTE-IDENTITY + PAGE-SAFE:** conformance_diff_string_search (incl. the shared
+  `substr_fused` guard-page test — the windowing/scanning is identical, only the
+  matcher differs and it reads only already-scanned window bytes) +
+  conformance_diff_memmem_strcasestr GREEN.
+- **MEASURED (`strstr_glibc_bench`, mmap haystack → fused path, deployed fl vs dlmopen
+  glibc):** strcasestr fl/glibc **ci_early_64k 0.49x (2.0x FASTER), ci_absent_64k 0.13x
+  (7.7x FASTER)** — glibc's strcasestr lacks its strstr SIMD path, so fl's dual-anchor
+  Two-Way core + prescan-elimination WIN outright. (strstr same run: early 3.46–4.08x,
+  absent 2.08x vs glibc — consistent with the prior entry.) vs ORIG the win is the
+  eliminated whole-haystack pre-scan (same structural gap as strstr).
+
 ## 2026-07-02 — ✅ FUSED strstr (untracked haystack) — page-chunked search, no whole-haystack prescan; big early-match win vs ORIG, byte-identical + guard-page proven
 
 - **DEPLOYED (cc):** the biggest known strstr gap — deployed strstr did a FULL

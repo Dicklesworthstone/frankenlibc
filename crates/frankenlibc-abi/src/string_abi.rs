@@ -4229,33 +4229,36 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
     result
 }
 
-/// FUSED strstr for an UNTRACKED, NUL-terminated haystack (2 <= needle_len <= 256):
-/// search one mapped 4 KiB page of the haystack at a time (Two-Way `memmem` per
-/// chunk with a `needle_len-1` carry-over for boundary-spanning matches), returning
-/// the moment a match is found — so an EARLY match never pre-scans the whole
-/// haystack (glibc's structure; the old path did a full `scan_c_string(haystack)`
-/// pass THEN searched). Byte-identical to `memmem` over the full NUL-terminated
-/// haystack (returns the first match, or null).
+/// FUSED substring search (strstr / strcasestr) for an UNTRACKED, NUL-terminated
+/// haystack (2 <= needle_len <= 256): search the haystack one bounded chunk at a
+/// time via `matcher` (which returns the first match offset within a window) with a
+/// `needle_len-1` carry-over for boundary-spanning matches, returning the moment a
+/// match is found — so an EARLY match never pre-scans the whole haystack (glibc's
+/// structure; the old path did a full `scan_c_string(haystack)` pass THEN searched).
+/// After `FUSED_EARLY_WINDOW` bytes with no match, the tail is finished with ONE
+/// `scan_c_string(None)` + one `matcher` call (ORIG's shape — no per-chunk tax, so
+/// an absent/late needle costs ~ORIG). Byte-identical to `matcher` over the full
+/// NUL-terminated haystack (returns the first match, or null).
 ///
-/// PAGE-SAFE: each chunk read is bounded to `[cur, next-4KiB-boundary)`, which lies
-/// entirely within the CURRENT page. That page is mapped (the string is valid up to
-/// its NUL); if no NUL is found before the boundary the string continues, so the
-/// next page is mapped too. Thus no read ever crosses into an unmapped page — the
-/// same invariant a plain NUL scan relies on. Used ONLY when `known_remaining`
-/// (tracked-buffer bound) is None; tracked buffers keep the bounded path so fl's
-/// unterminated-tracked-buffer bounding is preserved.
+/// PAGE-SAFE: each chunk read is bounded to `[cur, next-4KiB-boundary)`, entirely
+/// within the CURRENT (mapped) page; if no NUL is found before the boundary the
+/// string continues, so the next page is mapped too — no read crosses into an
+/// unmapped page. Used ONLY when `known_remaining` (tracked-buffer bound) is None;
+/// tracked buffers keep the bounded path so fl's unterminated-tracked-buffer
+/// bounding is preserved.
+///
+/// `matcher(window)` must return the first match of the (captured) needle within
+/// `window`, treating it as a plain byte range (it may internally `strlen` the
+/// window — every window this passes has NO interior NUL before its end).
 ///
 /// # Safety
-/// `haystack` is a valid NUL-terminated C string; `needle` is readable for
-/// `needle_len` bytes with `2 <= needle_len <= 256`.
-unsafe fn strstr_fused(
+/// `haystack` is a valid NUL-terminated C string; `2 <= needle_len <= 256`.
+unsafe fn substr_fused(
     haystack: *const c_char,
-    needle: *const u8,
     needle_len: usize,
+    matcher: impl Fn(&[u8]) -> Option<usize>,
 ) -> *mut c_char {
     let hp = haystack.cast::<u8>();
-    // SAFETY: needle readable for needle_len bytes (caller contract).
-    let ns = unsafe { std::slice::from_raw_parts(needle, needle_len) };
     let mut window_start = 0usize; // absolute offset where the search window begins
     let mut cur = 0usize; // absolute offset of the next byte to scan
     // After this many bytes with no match, stop chunking and finish the tail with a
@@ -4272,7 +4275,7 @@ unsafe fn strstr_fused(
             let win = unsafe {
                 std::slice::from_raw_parts(hp.add(window_start), end - window_start)
             };
-            return match frankenlibc_core::string::mem::memmem(win, win.len(), ns, needle_len) {
+            return match matcher(win) {
                 Some(idx) => unsafe { hp.add(window_start + idx) as *mut c_char },
                 None => std::ptr::null_mut(),
             };
@@ -4292,9 +4295,7 @@ unsafe fn strstr_fused(
             let win = unsafe {
                 std::slice::from_raw_parts(hp.add(window_start), seg_end - window_start)
             };
-            if let Some(idx) =
-                frankenlibc_core::string::mem::memmem(win, win.len(), ns, needle_len)
-            {
+            if let Some(idx) = matcher(win) {
                 return unsafe { hp.add(window_start + idx) as *mut c_char };
             }
         }
@@ -4362,7 +4363,10 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
             } else if hay_bound.is_none() && needle_len <= 256 {
                 // Untracked haystack (no bound to preserve): FUSED page-chunked search —
                 // no whole-haystack pre-scan, returns at the first match (glibc's shape).
-                strstr_fused(haystack, needle.cast::<u8>(), needle_len)
+                let ns = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+                substr_fused(haystack, needle_len, |win| {
+                    frankenlibc_core::string::mem::memmem(win, win.len(), ns, needle_len)
+                })
             } else {
                 // Tracked buffer (keep the bound → preserves unterminated-buffer bounding)
                 // or a very long needle: full pre-scan + Two-Way memmem.
@@ -6116,8 +6120,19 @@ pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_ch
         return unsafe {
             let hay_bound = known_remaining(haystack as usize);
             let needle_bound = known_remaining(needle as usize);
-            let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
             let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
+            // Untracked haystack + small needle: FUSED page-chunked case-insensitive
+            // search — no whole-haystack pre-scan (mirrors the strstr fused path). The
+            // core `strcasestr` matcher `strlen`s each window (no interior NUL before
+            // its end) and searches case-insensitively. Tracked buffers / large needles
+            // keep the bounded path (preserves the unterminated-tracked-buffer bound).
+            if hay_bound.is_none() && needle_terminated && (2..=256).contains(&needle_len) {
+                let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
+                return substr_fused(haystack, needle_len, |win| {
+                    frankenlibc_core::string::str::strcasestr(win, n_slice)
+                });
+            }
+            let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
             let h_slice_len = if hay_terminated { hay_len + 1 } else { hay_len };
             let n_slice_len = if needle_terminated { needle_len + 1 } else { needle_len };
             let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), h_slice_len);
