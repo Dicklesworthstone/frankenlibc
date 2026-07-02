@@ -418,6 +418,42 @@ fn main() {
         println!("WCSLEN n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fl_,0.5), pctl(&gl_,0.5), pctl(&fl_,0.5)/pctl(&gl_,0.5));
         println!("WCSCMP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fc,0.5), pctl(&gc,0.5), pctl(&fc,0.5)/pctl(&gc,0.5));
     }
+
+    // mktime: ApiFamily::Time is MISSING from the decide/observe fast-path list, so it pays
+    // the full membrane tax per call (kernel evidence consult + telemetry). vs glibc dlmopen.
+    type MktimeFn = unsafe extern "C" fn(*mut libc::tm) -> i64;
+    let g_mktime: MktimeFn = dl(h, b"mktime\0");
+    {
+        let mk = || { let mut t: libc::tm = unsafe { std::mem::zeroed() };
+            t.tm_year = 125; t.tm_mon = 6; t.tm_mday = 2; t.tm_hour = 12; t.tm_min = 30; t.tm_sec = 0; t };
+        // normalize once (both idempotent after)
+        let mut ft = mk(); let mut gt = mk();
+        unsafe { frankenlibc_abi::time_abi::mktime(&mut ft); g_mktime(&mut gt); }
+        let (mut flv, mut glv) = (Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_i64(unsafe { frankenlibc_abi::time_abi::mktime(&mut ft) }); } flv.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i64(unsafe { g_mktime(&mut gt) }); } glv.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("MKTIME fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&flv,0.5), pctl(&glv,0.5), pctl(&flv,0.5)/pctl(&glv,0.5));
+    }
+    { // atoi/strtol: hot pure-computation integer parse (Stdlib family), vs glibc dlmopen
+        type AtoiFn = unsafe extern "C" fn(*const c_char) -> i32;
+        type StrtolFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char, i32) -> i64;
+        let g_atoi: AtoiFn = dl(h, b"atoi\0");
+        let g_strtol: StrtolFn = dl(h, b"strtol\0");
+        let s = b"-1234567\0"; let sp = s.as_ptr() as *const c_char;
+        let (mut fa, mut ga, mut fs2, mut gs2) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { frankenlibc_abi::stdlib_abi::atoi(sp) }); } fa.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { g_atoi(sp) }); } ga.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i64(unsafe { frankenlibc_abi::stdlib_abi::strtol(sp, std::ptr::null_mut(), 10) }); } fs2.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i64(unsafe { g_strtol(sp, std::ptr::null_mut(), 10) }); } gs2.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("ATOI fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fa,0.5), pctl(&ga,0.5), pctl(&fa,0.5)/pctl(&ga,0.5));
+        println!("STRTOL fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs2,0.5), pctl(&gs2,0.5), pctl(&fs2,0.5)/pctl(&gs2,0.5));
+    }
 }
 
 #[inline(never)]

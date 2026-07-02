@@ -10883,3 +10883,38 @@ wcslen parity, the scan family after the aligned-head-mask work) or at the docum
 AVX2-asm / structural-call ceiling (strcpy, strcmp, wcscmp, strchr). No non-asm dead-tax lever
 remains in this family. Probe apparatus (STRCPY/STRCMP/WCSLEN/WCSCMP/STRCPY_FUSED_AB arms) kept
 in stdio_st_probe.rs for future re-measurement.
+
+---
+
+## Time / Stdlib-parse family probe: fl-dominant, fast-path-list omission is NOT a glibc lever (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Dug the next lever via the "missing high-frequency fast-path family" method that found the Stdio/IoFd
+omissions. The `decide()`/`observe()` fast-path sets cover Allocator/StringMemory/Ctype/Loader/Stdlib/
+MathFenv/Stdio/IoFd; **Time (and Threading/Signal/Socket/Process/Poll) are absent**, so their membrane
+users pay the full per-call tax. Probed whether that yields a vs-glibc win. **It does not** — documented
+so no future agent re-chases the Time fast-path-list addition expecting a ratio win.
+
+**mktime — CERTIFIED fl-dominant (valid measured, side-effecting write, not const-foldable):** fl
+**46.3 ns vs glibc 3111 ns = fl/glibc 0.015x (~66x faster)**. fl mktime is UTC-only (== timegm, no
+tz/DST lookup) while glibc does full `__tzfile_compute` timezone conversion. mktime DOES pay the Time
+membrane tax (`decide()`+`observe()`, ~35ns of the 46ns since Time is off the fast-path list), but
+adding Time to the fast-path list would only shave 46→~35ns against glibc's 3111ns — no meaningful
+ratio change. So the fast-path-list omission is real but **irrelevant to the glibc ratio** for Time
+(fl already crushes it on algorithm). Left unchanged.
+
+**atoi / strtol — measurement INVALID (inlining/const-fold bias), NOT certified.** Probe showed fl
+atoi 1.46ns / strtol 1.20ns vs glibc ~14ns (0.08-0.10x), but the input `"-1234567\0"` is loop-invariant
+and fl's parser is inlined (same crate) → LLVM hoists/const-folds the whole computation out of the loop,
+while glibc is an opaque dlmopen call. The 10x "win" is the classic inlined-fl-vs-extern-glibc artifact
+(same class as the glibc_baseline_bench thin-LTO bias). Real strtol win is the ~1.9-3x documented via a
+proper bench; this probe arm is a CAUTION EXAMPLE, not evidence. To measure fl parse fairly needs an
+opaque call boundary (dlopen fl, or black_box the input pointer AND defeat inlining).
+
+**Blocker/state:** no NEW pure-computation glibc-LOSS found this turn — the probed hot families (Time,
+Stdlib parse) are already fl-dominant or vDSO/syscall-dominated. The remaining genuine fl-losses are the
+documented AVX2-asm scan ceiling (strchr/strcmp/wcscmp/strlen-large ~1.3-2x) and strcpy structural
+call-overhead — both require per-fn hand-written AVX2 asm kernels (a large, separate swing), not a
+focused-turn dead-tax/reorder lever. The dead-tax vein (dispatch/HTM/guard-reorder/fast-path-list) that
+produced this session's wins (strlen/memcpy/memcmp/mutex, cumulative memcpy 6.4x) is now EXHAUSTED for
+pure-computation families. Probe arms MKTIME/ATOI/STRTOL kept in stdio_st_probe.rs (ATOI/STRTOL flagged
+biased).
