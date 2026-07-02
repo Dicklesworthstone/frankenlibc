@@ -1815,15 +1815,38 @@ unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
 }
 
 /// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
+thread_local! {
+    /// Reusable refill bounce buffer — refill_stream fires on EVERY buffered read refill
+    /// (fgetc/fread/fgets/getline), and a fresh `vec![0u8; <=8192]` per refill is a per-refill
+    /// fl-malloc on the read hot path. A thread-local Vec retains capacity across refills;
+    /// a drop guard restores it on every return path.
+    static REFILL_TMP: std::cell::Cell<Vec<u8>> = const { std::cell::Cell::new(Vec::new()) };
+}
+
+struct RefillTmpGuard(Vec<u8>);
+impl Drop for RefillTmpGuard {
+    fn drop(&mut self) {
+        REFILL_TMP.with(|c| c.set(std::mem::take(&mut self.0)));
+    }
+}
+
 unsafe fn refill_stream(stream: &mut StdioStream) -> isize {
     let capacity = stream.buffer_capacity();
     if capacity == 0 {
         return 0; // Cannot buffer anything.
     }
-    let mut tmp = vec![0u8; capacity.min(8192)];
+    let want = capacity.min(8192);
+    // Reuse the thread-local bounce buffer (retains capacity) instead of a fresh per-refill
+    // Vec. `sys_read_fd` overwrites the first `want` bytes, so no pre-zeroing is required for
+    // correctness; `resize(want, 0)` only grows (a no-op once warmed to the common size).
+    let mut guard = RefillTmpGuard(REFILL_TMP.with(|c| c.take()));
+    let tmp = &mut guard.0;
+    if tmp.len() < want {
+        tmp.resize(want, 0);
+    }
     let fd = stream.fd();
     loop {
-        let rc = unsafe { sys_read_fd(fd, tmp.as_mut_ptr().cast(), tmp.len()) };
+        let rc = unsafe { sys_read_fd(fd, tmp.as_mut_ptr().cast(), want) };
         let errno_val = if rc < 0 {
             std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
         } else {

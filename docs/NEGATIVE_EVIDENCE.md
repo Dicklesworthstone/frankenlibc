@@ -10449,3 +10449,22 @@ getline delegates to getdelim (inherits). REJECTED same turn: the getdelim temp-
 copy_nonoverlapping is NOT the wide-copy trap — narrow u8 copy_nonoverlapping is fine (measured
 195.58->189.43ns at 300-char lines = ~3%/noise), so raw_memcpy_bytes swap reverted. Narrow != wide
 for the copy-lowering trap.
+
+### 2026-07-02 — ✅ refill_stream thread-local bounce buffer — kills the per-refill malloc on ALL buffered reads — BlackThrush
+
+refill_stream (fires on EVERY buffered-read refill: fgetc/fread/fgets/getline) allocated a fresh
+`vec![0u8; capacity.min(8192)]` per refill — a per-refill fl-malloc (up to 8 KiB) on the read hot
+path, plus the read-into-tmp-then-copy-to-buffer bounce. Replaced the per-call Vec with a
+thread-local reusable bounce buffer (REFILL_TMP + RefillTmpGuard drop-restore, the getdelim/fgetln
+pattern). Byte-identical: sys_read_fd overwrites the first `want` bytes so no pre-zeroing is needed
+for correctness; resize(want,0) only grows (no-op once warmed); read length capped at `want` not
+tmp.len() (reused buffer may be larger). Conformance stdio_abi_test 256/0 single-threaded.
+MEASURED (getline 300-char, cross-run w/ glibc stable ~74ns as the variance anchor): 119.67 ->
+110.36 ns/line (~9ns/line, 1.08x); fl/glibc 1.63 -> 1.48x. MODEST for getline (refill is amortized
+over the whole file — ~2 refills per 15 KiB read), but this removes the per-refill malloc from the
+ENTIRE buffered-read surface, so LARGE sequential reads (fread/fgetc over MB files, one refill per
+8 KiB) benefit proportionally more. Cumulative getline this session: 290.62 -> 110.36 = 2.63x
+(scratch x pointer-keyed x refill-tmp). Same per-call-alloc lever as getdelim; the refill bounce is
+the shared read-path instance. (vis/nvis/svis/snvis also per-call-malloc but are BSD/libbsd, no
+glibc baseline — off-target. scanf-stream read buffer is a real glibc lever but needs a
+buffer-ownership refactor across read/parse/finalize — deferred.)
