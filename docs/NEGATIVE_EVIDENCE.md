@@ -62,6 +62,27 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ wcsstr first-wchar-scan fused — ~6.3x faster than the prior chunked fused; now beats glibc 11–12.5x. SUBSTRING FAMILY COMPLETE.
+
+- **DEPLOYED (cc):** applied the first-byte-scan fix to wcsstr — the last substring
+  member still on the chunked `wcsstr_fused` (per-chunk NUL scan THEN `wide_core::wcsstr`
+  = double scan). Rewrote its body: find the first `needle[0]` wchar via the page-safe
+  NUL-aware `wide_find_or_nul_simd` (wcschr's scanner, guard-page proven — ONE pass),
+  verify the rest, advance; O(n+m) Two-Way bailout to `wide_core::wcsstr` on adversarial
+  common first wchar.
+- **BYTE-IDENTICAL + PAGE-SAFE:** conformance_diff_wchar 44/44 (wcsstr dual-anchor fuzz +
+  `wcsstr_fused_untracked_guard_page`). Verify reads `haystack[cand+k]` wchar-by-wchar
+  (4-aligned), stops at NUL/mismatch.
+- **MEASURED (`strstr_glibc_bench`, mmap wide haystack, deployed fl vs dlmopen glibc):**
+  wcsstr fl/glibc **wcs_early_64k 0.40x → 0.09x (fl 165.8ns → 26.4ns, ~6.3x faster),
+  wcs_absent_64k 0.16x → 0.08x (fl 8027ns → 2912ns, ~2.8x faster)** — now BEATS glibc
+  11x (early) / 12.5x (absent). Bigger self-win than strstr/strcasestr because the prior
+  chunked path pre-scanned the whole 512-wchar chunk for NUL.
+- **SUBSTRING FAMILY COMPLETE:** strstr (near parity, was 3.5x behind), strcasestr (beats
+  glibc 6.7–20x), wcsstr (beats glibc 11–12.5x) — all single-pass first-byte/wchar scan +
+  verify + O(n+m) bailout, byte-identical, guard-page-proven, no regression modes; the
+  chunked `substr_fused` double-scan is fully retired.
+
 ## 2026-07-02 — ✅ strcasestr first-byte-scan fused — ~3x faster than the prior fused (vs ORIG); now beats glibc 6.7–20x
 
 - **DEPLOYED (cc):** applied the strstr first-byte-scan fix to strcasestr (hot: HTTP

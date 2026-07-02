@@ -1226,38 +1226,47 @@ pub unsafe extern "C" fn wcsrchr(s: *const u32, c: u32) -> *mut u32 {
 unsafe fn wcsstr_fused(haystack: *const u32, needle: *const u32, needle_len: usize) -> *mut u32 {
     // SAFETY: needle readable for needle_len wchars (caller contract).
     let ns = unsafe { std::slice::from_raw_parts(needle, needle_len) };
-    let mut window_start = 0usize; // absolute wchar offset of the search window
-    let mut cur = 0usize; // absolute wchar offset of the next element to scan
-    const FUSED_EARLY_WINDOW: usize = 4096; // wchars
+    let n0 = ns[0];
+    let mut pos = 0usize; // absolute wchar offset to resume the first-wchar scan
+    let mut miss_work = 0usize;
     loop {
-        if cur >= FUSED_EARLY_WINDOW {
-            // Tail: one page-safe scan to NUL + one search (ORIG's shape).
-            let (rest, _) = unsafe { scan_w_string(haystack.add(cur), None) };
-            let end = cur + rest;
-            let win = unsafe { std::slice::from_raw_parts(haystack.add(window_start), end - window_start) };
+        // First occurrence of needle[0] at/after `pos`, or the terminating NUL —
+        // ONE page-safe NUL-aware pass (wcschr's scanner; guard-page proven), no
+        // separate per-chunk NUL scan (the old chunked path double-scanned).
+        // SAFETY: page-safe wide scan.
+        let (i, found) = unsafe { wide_find_or_nul_simd(haystack.add(pos), n0) };
+        if !found {
+            return std::ptr::null_mut(); // NUL before another needle[0]
+        }
+        let cand = pos + i;
+        // Verify needle[1..] at cand+1; stop at first mismatch or NUL (needle has no
+        // NUL). Page-safe: reads only up to the NUL, which is mapped.
+        let mut k = 1usize;
+        let mut matched = true;
+        while k < needle_len {
+            // SAFETY: cand+k <= wcslen while wchars match, so within the mapped string.
+            if unsafe { *haystack.add(cand + k) } != ns[k] {
+                matched = false;
+                break;
+            }
+            k += 1;
+        }
+        if matched {
+            return unsafe { haystack.add(cand) as *mut u32 };
+        }
+        miss_work += needle_len;
+        pos = cand + 1;
+        // O(n+m) Two-Way bailout once verify work outweighs the scan distance
+        // (adversarial common first wchar).
+        if miss_work > cand.max(256) {
+            // SAFETY: page-safe scan to NUL, then a bounded slice search.
+            let (rest, _) = unsafe { scan_w_string(haystack.add(cand), None) };
+            let win = unsafe { std::slice::from_raw_parts(haystack.add(cand), rest) };
             return match wide_core::wcsstr(win, ns) {
-                Some(idx) => unsafe { haystack.add(window_start + idx) as *mut u32 },
+                Some(idx) => unsafe { haystack.add(cand + idx) as *mut u32 },
                 None => std::ptr::null_mut(),
             };
         }
-        let addr = (haystack as usize).wrapping_add(cur * 4);
-        let wchars_to_page = (0x1000 - (addr & 0xFFF)) / 4; // exact: 4-aligned
-        let chunk = wchars_to_page.min(512);
-        // SAFETY: [cur, cur+chunk) wchars are within one mapped page.
-        let (seg_len, terminated) = unsafe { scan_w_string(haystack.add(cur), Some(chunk)) };
-        let seg_end = cur + seg_len;
-        if seg_end - window_start >= needle_len {
-            // SAFETY: [window_start, seg_end) wchars have been read (all mapped).
-            let win = unsafe { std::slice::from_raw_parts(haystack.add(window_start), seg_end - window_start) };
-            if let Some(idx) = wide_core::wcsstr(win, ns) {
-                return unsafe { haystack.add(window_start + idx) as *mut u32 };
-            }
-        }
-        if terminated {
-            return std::ptr::null_mut();
-        }
-        cur = seg_end;
-        window_start = seg_end - (needle_len - 1);
     }
 }
 
