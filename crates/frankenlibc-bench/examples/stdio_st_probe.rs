@@ -122,6 +122,25 @@ fn main() {
         let (np, op, gp) = (pctl(&nb,0.5), pctl(&ob,0.5), pctl(&gb,0.5));
         println!("FPUTWS wn={wn} new={np:.2} old={op:.2} glibc={gp:.2} new/old={:.3} new/glibc={:.3}", np/op, np/gp);
     }
+
+    // fgets lock-elision A/B: a /dev/null "r" stream at EOF. Both hooks return null and
+    // run the same fill loop (one read_into_slice->Eof); they differ ONLY in the lookup
+    // (old: canonical_stream_id native lock + registry().lock(); new: pointer-keyed). So
+    // the delta is the per-line lock overhead fgets pays reading lines from a fopen'd file.
+    let rpath = b"/dev/null\0".as_ptr() as *const c_char;
+    let rmode = b"r\0".as_ptr() as *const c_char;
+    let rf = unsafe { fl::fopen(rpath, rmode) }; assert!(!rf.is_null());
+    unsafe { fl::setvbuf(rf, std::ptr::null_mut(), libc::_IOFBF, cap); }
+    let mut gbuf = [0u8; 256];
+    unsafe { fl::fgetc(rf); } // populate the write cache for rf
+    unsafe { assert!(fl::bench_fgets_oldpath(gbuf.as_mut_ptr() as *mut c_char, 256, rf).is_null()); assert!(fl::bench_fgets_newpath(gbuf.as_mut_ptr() as *mut c_char, 256, rf).is_null()); }
+    let (mut go, mut gn) = (Vec::new(), Vec::new());
+    for _ in 0..120 {
+        let t = Instant::now(); for _ in 0..it { std::hint::black_box(unsafe { fl::bench_fgets_oldpath(gbuf.as_mut_ptr() as *mut c_char, 256, rf) }); } go.push(t.elapsed().as_nanos() as f64 / it as f64);
+        let t = Instant::now(); for _ in 0..it { std::hint::black_box(unsafe { fl::bench_fgets_newpath(gbuf.as_mut_ptr() as *mut c_char, 256, rf) }); } gn.push(t.elapsed().as_nanos() as f64 / it as f64);
+    }
+    let (gop, gnp) = (pctl(&go,0.5), pctl(&gn,0.5));
+    println!("FGETS_AB old={gop:.2} new={gnp:.2} new/old={:.3} saved={:.2}ns", gnp/gop, gop-gnp);
 }
 
 #[inline(never)]

@@ -1225,6 +1225,43 @@ pub fn bench_feof_newpath(stream: *mut c_void) -> c_int {
     0
 }
 
+/// Bench hook: OLD fgets path (canonical_stream_id + registry lock + fill). Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_fgets_oldpath(buf: *mut c_char, size: c_int, stream: *mut c_void) -> *mut c_char {
+    let id = canonical_stream_id(stream);
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(s) = reg.streams.get_mut(&id) else {
+        return std::ptr::null_mut();
+    };
+    let max = (size - 1) as usize;
+    if s.is_mem_backed() {
+        sync_and_unregister_fast_fixed_mem_read(id, s);
+    }
+    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
+    let (written, had_error) = unsafe { fgets_fill_stream(s, dst) };
+    if (written == 0 && max > 0) || had_error {
+        return std::ptr::null_mut();
+    }
+    unsafe { *buf.add(written) = 0 };
+    buf
+}
+
+/// Bench hook: NEW fgets pointer-keyed fast path. Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_fgets_newpath(buf: *mut c_char, size: c_int, stream: *mut c_void) -> *mut c_char {
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        let max = (size - 1) as usize;
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
+        let (written, had_error) = unsafe { fgets_fill_stream(&mut *p, dst) };
+        if (written == 0 && max > 0) || had_error {
+            return std::ptr::null_mut();
+        }
+        unsafe { *buf.add(written) = 0 };
+        return buf;
+    }
+    std::ptr::null_mut()
+}
+
 /// Snapshot of a stream's state for the `stdio_ext.h` introspection helpers
 /// (`__freadable`/`__fwritable`/`__flbf`/`__fbufsize`/`__fpending`).
 pub(crate) struct StreamExtInfo {
@@ -2676,12 +2713,100 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
 
 /// POSIX `fgets`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Shared fgets fill loop: read from `s` into `dst` until '\n' (inclusive), `dst` full, EOF,
+/// or error. Returns `(bytes_written, had_error)`. Scans the stream buffer for '\n' via
+/// `read_into_slice` (bulk, no per-char Vec) and refills the fd as needed. Sound whether the
+/// caller holds the registry lock (slow path) OR has ST-unique access to a cached stream
+/// (pointer-keyed fast path). Pure stream mutation (no membrane/registry), so identical bytes.
+///
+/// # Safety
+/// `s` must be uniquely borrowed for this call (registry lock held, or ST cache-gated).
+unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> (usize, bool) {
+    let max = dst.len();
+    let mut written = 0usize;
+    let mut had_error = false;
+    while written < max {
+        let (n, outcome) = s.read_into_slice(b'\n', &mut dst[written..]);
+        written += n;
+        match outcome {
+            ReadUntil::Found => break,
+            ReadUntil::Eof => {
+                if s.is_error() {
+                    had_error = true;
+                }
+                break;
+            }
+            ReadUntil::NeedRefill => {
+                if written >= max {
+                    break;
+                }
+                if s.is_eof() || s.is_error() {
+                    if s.is_error() {
+                        had_error = true;
+                    }
+                    break;
+                }
+                if s.buffer_capacity() == 0 {
+                    // Unbuffered fd stream: read a byte directly.
+                    let mut b = [0u8; 1];
+                    let fd = s.fd();
+                    let rc = unsafe { sys_read_fd(fd, b.as_mut_ptr().cast(), 1) };
+                    if rc > 0 {
+                        s.set_offset(s.offset().saturating_add(1));
+                        dst[written] = b[0];
+                        written += 1;
+                        if b[0] == b'\n' {
+                            break;
+                        }
+                    } else {
+                        if rc == 0 {
+                            s.set_eof();
+                        } else {
+                            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                            if e != errno::EINTR {
+                                s.set_error();
+                                had_error = true;
+                            }
+                        }
+                        break;
+                    }
+                } else if unsafe { refill_stream(s) } <= 0 {
+                    if s.is_error() {
+                        had_error = true;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    (written, had_error)
+}
+
 pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_void) -> *mut c_char {
     if buf.is_null() || size <= 0 {
         return std::ptr::null_mut();
     }
     if size == 1 {
         unsafe { *buf = 0 };
+        return buf;
+    }
+    // ST fast path: a cache hit is a non-cookie non-mem fd stream, so the is_mem_backed
+    // sync is skipped and read_into_slice runs directly — skipping canonical_stream_id's
+    // native lock + registry_contains_stream + registry().lock() + decide/observe per line
+    // (hot when reading lines from a fopen'd file). Byte-identical (same bulk fill loop).
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        let max = (size - 1) as usize;
+        if max == 0 {
+            unsafe { *buf = 0 };
+            return buf;
+        }
+        // SAFETY: ST-gated + gen-valid ⇒ unique &mut; `buf` valid for `size` bytes.
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
+        let (written, had_error) = unsafe { fgets_fill_stream(&mut *p, dst) };
+        if (written == 0 && max > 0) || had_error {
+            return std::ptr::null_mut();
+        }
+        unsafe { *buf.add(written) = 0 };
         return buf;
     }
     let id = canonical_stream_id(stream);
@@ -2788,63 +2913,7 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
     // heap traffic); the ABI layer owns descriptor refill since the membrane
     // policy and sys_read_fd live here.
     let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
-    let mut written = 0usize;
-    let mut had_error = false;
-    while written < max {
-        let (n, outcome) = s.read_into_slice(b'\n', &mut dst[written..]);
-        written += n;
-        match outcome {
-            ReadUntil::Found => break,
-            ReadUntil::Eof => {
-                if s.is_error() {
-                    had_error = true;
-                }
-                break;
-            }
-            ReadUntil::NeedRefill => {
-                if written >= max {
-                    break;
-                }
-                if s.is_eof() || s.is_error() {
-                    if s.is_error() {
-                        had_error = true;
-                    }
-                    break;
-                }
-                if s.buffer_capacity() == 0 {
-                    // Unbuffered fd stream: read a byte directly (matches the
-                    // capacity-0 path; cannot call fgetc/fgetc under the lock).
-                    let mut b = [0u8; 1];
-                    let fd = s.fd();
-                    let rc = unsafe { sys_read_fd(fd, b.as_mut_ptr().cast(), 1) };
-                    if rc > 0 {
-                        s.set_offset(s.offset().saturating_add(1));
-                        dst[written] = b[0];
-                        written += 1;
-                        if b[0] == b'\n' {
-                            break;
-                        }
-                    } else {
-                        if rc == 0 {
-                            s.set_eof();
-                        } else {
-                            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                            if e != errno::EINTR {
-                                s.set_error();
-                                had_error = true;
-                            }
-                        }
-                        break;
-                    }
-                } else if unsafe { refill_stream(s) } <= 0 {
-                    if s.is_error() {
-                        had_error = true;
-                    }
-                    break;
-                }
-            }
-        }
-    }
+    let (written, had_error) = unsafe { fgets_fill_stream(s, dst) };
 
     if (written == 0 && max > 0) || had_error {
         runtime_policy::observe(

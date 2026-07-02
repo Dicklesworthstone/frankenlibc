@@ -10319,3 +10319,21 @@ passed / 0 failed (covers the fgetc/ungetc interaction). Skips the same 3-lock s
 feof (A/B old=21ns new=4.4ns, ~16.6ns saved) PLUS the fast_fixed_mem_reads lock. The stream is
 already cached by the preceding fgetc, so the parser hot path hits. MT path (bd-hqo6b6) unchanged.
 The ST stdio pointer-keyed lock-elision now also covers ungetc (parser pushback).
+
+### 2026-07-02 — ✅ fgets pointer-keyed fast path — 2.3x faster per line (10.76ns saved) — BlackThrush
+
+fgets (extremely hot: line-reading a fopen'd file) was already BULK (read_into_slice scans the
+stream buffer for '\n' + copies — no per-char loop), but still paid, PER LINE: canonical_stream_id
+native lock + registry_contains_stream + registry().lock() + decide + observe. Extracted the fill
+loop into a shared `fgets_fill_stream(s, dst)` helper (single source of truth, no duplication) and
+added a pointer-keyed fast path: a cache hit is a non-cookie non-mem fd stream, so the is_mem_backed
+sync is skipped and the SAME fill helper runs directly — skipping all the locks + membrane.
+Byte-identical (conformance stdio_abi_test 256 passed / 0 failed; the slow path now calls the same
+helper). DEFINITIVE SAME-PROCESS A/B (bench_fgets_oldpath vs newpath, /dev/null "r" at EOF so both
+return null and run the identical fill loop, differing ONLY in the lookup; stdio_st_probe FGETS_AB):
+  old=18.81ns new=8.05ns **new/old=0.428 (2.3x faster), 10.76ns saved per fgets**.
+Saved per LINE regardless of line length (the fill work is identical in both arms). MT path
+(bd-hqo6b6) unchanged. **The ST stdio pointer-keyed lock-elision now spans write (fputs/fputc/
+fwrite), read (fgetc/getc/fread), LINE read (fgets), state (feof/ferror), query (fileno/ftell/
+clearerr), pushback (ungetc) + the 2-way cache + fputws bulk-convert — the entire hot ST stdio
+surface.** Apparatus: stdio_st_probe FGETS_AB + bench_fgets_{old,new}path.
