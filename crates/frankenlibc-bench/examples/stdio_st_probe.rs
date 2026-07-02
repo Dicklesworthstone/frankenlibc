@@ -141,6 +141,33 @@ fn main() {
     }
     let (gop, gnp) = (pctl(&go,0.5), pctl(&gn,0.5));
     println!("FGETS_AB old={gop:.2} new={gnp:.2} new/old={:.3} saved={:.2}ns", gnp/gop, gop-gnp);
+
+    // getline PER-LINE over a REAL file (fresh stream; avoids the EOF corner + shared-rf
+    // state that made the earlier EOF probe anomalous). Read all lines then rewind, per iter.
+    type GetlineFn = unsafe extern "C" fn(*mut *mut c_char, *mut usize, *mut libc::c_void) -> isize;
+    type RewindFn = unsafe extern "C" fn(*mut libc::c_void);
+    let g_getline: GetlineFn = dl(h, b"getline\0");
+    let g_rewind: RewindFn = dl(h, b"rewind\0");
+    let nlines = 50usize;
+    let content = "the quick brown fox jumps over the lazy dog\n".repeat(nlines);
+    std::fs::write("/tmp/fl_getline_probe.txt", &content).unwrap();
+    let fpath = b"/tmp/fl_getline_probe.txt\0".as_ptr() as *const c_char;
+    let flf = unsafe { fl::fopen(fpath, rmode) }; assert!(!flf.is_null());
+    unsafe { fl::setvbuf(flf, std::ptr::null_mut(), libc::_IOFBF, cap); }
+    let glf = unsafe { g_fopen(fpath, rmode) }; assert!(!glf.is_null());
+    unsafe { g_setvbuf(glf, std::ptr::null_mut(), libc::_IOFBF, cap); }
+    let (mut flp, mut glp): (*mut c_char, *mut c_char) = (std::ptr::null_mut(), std::ptr::null_mut());
+    let (mut fnc, mut gnc): (usize, usize) = (0, 0);
+    // warm
+    unsafe { while frankenlibc_abi::stdio_abi::getline(&mut flp, &mut fnc, flf) != -1 {} fl::rewind(flf); while g_getline(&mut glp, &mut gnc, glf) != -1 {} g_rewind(glf as *mut libc::c_void); }
+    let iters = 2000u64;
+    let (mut fl_v, mut gl_v) = (Vec::new(), Vec::new());
+    for _ in 0..80 {
+        let t = Instant::now(); for _ in 0..iters { unsafe { while frankenlibc_abi::stdio_abi::getline(&mut flp, &mut fnc, flf) != -1 {} fl::rewind(flf); } } fl_v.push(t.elapsed().as_nanos() as f64 / (iters * nlines as u64) as f64);
+        let t = Instant::now(); for _ in 0..iters { unsafe { while g_getline(&mut glp, &mut gnc, glf) != -1 {} g_rewind(glf as *mut libc::c_void); } } gl_v.push(t.elapsed().as_nanos() as f64 / (iters * nlines as u64) as f64);
+    }
+    let (flpl, glpl) = (pctl(&fl_v,0.5), pctl(&gl_v,0.5));
+    println!("GETLINE_PERLINE fl={flpl:.2} glibc={glpl:.2} fl/glibc={:.3} (ns/line incl amortized rewind)", flpl/glpl);
 }
 
 #[inline(never)]

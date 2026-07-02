@@ -7801,6 +7801,21 @@ pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
 /// Reads from `stream` until `delim` is found or EOF. Dynamically (re)allocates
 /// `*lineptr` using `malloc`/`realloc`. Stores the line length in `*n`.
 /// Returns the number of bytes read (including delim), or -1 on error/EOF.
+thread_local! {
+    /// Reusable getdelim scratch buffer — avoids a fresh `Vec::with_capacity(128)` (a per-line
+    /// fl-malloc, ~61ns, that glibc doesn't pay) on every getdelim/getline call. Retains its
+    /// capacity across calls; a drop guard restores it on every return path.
+    static GETDELIM_SCRATCH: std::cell::Cell<Vec<u8>> = const { std::cell::Cell::new(Vec::new()) };
+}
+
+struct GetdelimScratchGuard(Vec<u8>);
+impl Drop for GetdelimScratchGuard {
+    fn drop(&mut self) {
+        // Return the (grown) buffer to the thread-local so its capacity is reused next call.
+        GETDELIM_SCRATCH.with(|c| c.set(std::mem::take(&mut self.0)));
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getdelim(
     lineptr: *mut *mut c_char,
@@ -7834,7 +7849,10 @@ pub unsafe extern "C" fn getdelim(
     }
 
     let delim_byte = delim as u8;
-    let mut buf: Vec<u8> = Vec::with_capacity(128);
+    // Reuse the thread-local scratch (retains capacity) instead of a fresh per-call Vec.
+    let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
+    let buf = &mut scratch.0;
+    buf.clear();
 
     // Read the whole line under a SINGLE registry lock + the policy decision
     // taken above, scanning the stream buffer for the delimiter with
@@ -7852,7 +7870,7 @@ pub unsafe extern "C" fn getdelim(
             sync_and_unregister_fast_fixed_mem_read(id, s);
         }
         loop {
-            match s.read_until_delim(delim_byte, &mut buf) {
+            match s.read_until_delim(delim_byte, &mut *buf) {
                 ReadUntil::Found | ReadUntil::Eof => break,
                 ReadUntil::NeedRefill => {
                     if s.is_eof() || s.is_error() {

@@ -10403,3 +10403,24 @@ per-line cost; (2) getdelim reads into a temp Vec then copies to *lineptr via co
 buffer (Vec::from_raw_parts adoption, medium-risk re: alloc-under-registry-lock) eliminates both
 the temp Vec AND the copy; (3) INVESTIGATE the getdelim-at-EOF re-read (is it a real per-call
 syscall vs glibc's EOF cache?) — if so it's a correctness-adjacent perf finding.
+
+### 2026-07-02 — ✅ getdelim/getline thread-local scratch buffer — 1.46x faster per line (kills the per-call temp-Vec malloc) — BlackThrush
+
+Followed the getdelim lead with a PROPER per-line benchmark (real file, 50 lines, fopen "r"
+_IOFBF, getline-loop + amortized rewind — NOT the earlier unrepresentative EOF probe): fl getline
+= 290.62 ns/line vs glibc 36.79 = 7.9x. getdelim allocated a FRESH `Vec::with_capacity(128)` per
+call (a per-line fl-malloc — ~61ns isolated, but the alloc+free churn costs more end-to-end) that
+glibc avoids. Replaced it with a thread-local reusable scratch (GETDELIM_SCRATCH) that retains its
+capacity across calls; a drop guard (GetdelimScratchGuard) restores it on EVERY return path.
+Byte-identical (same bytes read/copied; stdio_abi_test 256/0 single-threaded + parallel re-run).
+Measured after: fl getline **290.62 -> 198.83 ns/line = 1.46x faster, 91ns saved/line**; fl/glibc
+7.9x -> 5.45x. GOTCHA: the thread_local!/struct must go ABOVE the #[cfg_attr(...no_mangle)] on
+getdelim, else the attribute lands on the macro and getdelim loses its export symbol (caught +
+fixed). Residual 5.45x = the remaining per-line locks (canonical + registry, ~30ns — a
+pointer-keyed getdelim fast path like fgets is the next lever) + the temp->caller
+copy_nonoverlapping (abi-crate naive-loop trap, hurts long lines — read-into-caller-buffer would
+kill it). getline delegates to getdelim (inherits). TEST NOTE: stdio_abi_test has an INTERMITTENT
+parallel flake (fopen_path_with_embedded_null_truncates — shared global registry state; passes
+single-threaded + isolated + on re-run) unrelated to this change; prefer --test-threads=1 for
+coherence (memory-documented hazard). EARLIER EOF PROBE CORRECTED: the 302x was the EOF corner +
+shared-rf state, NOT representative; the real per-line gap is 7.9x -> 5.45x.
