@@ -10136,3 +10136,32 @@ mem) path; the ST fast-path perf is UNMEASURED here. The slow path IS architectu
 which these harnesses structurally cannot see. Apparatus kept: fputs_fd_glibc_bench (with this
 caveat). NEXT: a standalone-ST microbench binary is the only honest way to measure/optimize the
 stdio fast path; the criterion harness is the wrong tool.
+
+### 2026-07-02 — ✅ stdio write fast path: pointer-keyed cache lookup skips canonical_stream_id's native lock — 21% faster (fputs/fputc/fwrite) — BlackThrush
+
+FIRST clean win on the stdio-write fast path. Using the standalone-ST probe (examples/
+stdio_st_probe.rs — NOT criterion, so __libc_single_threaded==1 and the fast_write path is
+LIVE, confirmed printed =1), measured deployed fl fputs to an fd-backed _IOFBF /dev/null stream
+= 2.8-3.8x glibc even on the fast path. Isolated the cause IN-PROCESS: canonical_stream_id costs
+~9.7-10.7ns/call because for a non-std stream (fopen'd files/pipes) it falls to
+standard_stream_id -> native_stdio_fd_for_ptr, which takes the native_stream_registry LOCK on
+EVERY write just to rule out the 3 native glibc std FILE*s.
+
+Fix: the write cache's id equals canonical_stream_id(stream), which for BOTH fl std streams
+(sentinel address) and fl-owned non-std streams equals `stream as usize`. So a pointer-keyed
+lookup (`cid == stream as usize`, same ST + gen gates) is a valid hit that SKIPS
+canonical_stream_id entirely; `id` is computed lazily only on a miss. Added
+write_cache_lookup_by_stream + by_stream siblings of try_fputc_fast/try_fwrite_fast; wired into
+fputs/fputc/fwrite (canonical_stream_id deferred past the fast path). Byte-identical: strict
+stdio conformance stdio_abi_test 256 passed / 0 failed.
+
+DEFINITIVE SAME-PROCESS A/B (old canonical+by-id lookup vs new pointer-keyed, identical
+fast_write, worker-invariant): old=28.25ns new=22.33ns **new/old=0.791 (21% faster), 5.92ns
+saved per call**. Applies to fputs/fputc/fwrite (identical transformation). Helps the common
+single-threaded write-to-fopen'd-file/pipe loop (~99.7% of writes in a buffered loop hit the
+fast path). Does NOT touch the MT path (still the registry lock, bd-hqo6b6, architectural) or
+std stdout/stderr (already sentinel-cheap). Apparatus: examples/stdio_st_probe.rs (the ONLY
+harness that can measure the ST fast path; criterion disables it via threads). LESSON: the
+stdio-write fast path had a per-call FILE*->id lock (native_stdio_fd_for_ptr) for non-std
+streams; pointer-keying the thread-local write cache removes it. The remaining fl/glibc ~2.5-3x
+(fast_write buffer mechanics + extern-C frame vs glibc's inline ptr-bump) is the next layer.

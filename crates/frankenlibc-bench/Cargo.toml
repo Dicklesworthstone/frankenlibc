@@ -571,3 +571,7 @@ harness = false
 name = "fputs_fd_glibc_bench"
 required-features = ["abi-bench"]
 harness = false
+
+[[example]]
+name = "stdio_st_probe"
+required-features = ["abi-bench"]

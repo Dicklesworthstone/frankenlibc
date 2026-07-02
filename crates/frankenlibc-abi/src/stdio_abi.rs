@@ -866,6 +866,33 @@ fn write_cache_lookup(id: usize) -> Option<*mut StdioStream> {
     })
 }
 
+/// Pointer-keyed sibling of `write_cache_lookup`: resolve a raw `FILE*` to its cached
+/// `StdioStream*` WITHOUT calling `canonical_stream_id`. The cached id is exactly
+/// `canonical_stream_id(stream)`, which for both fl's own std streams (sentinel address)
+/// and fl-owned non-std streams equals `stream as usize` (a non-std id IS the pointer).
+/// So `cid == stream as usize` is a valid hit — and it skips `standard_stream_id`'s
+/// `native_stdio_fd_for_ptr` lock, which otherwise fires on EVERY fputs/fputc/fwrite to a
+/// non-std stream (fopen'd files/pipes) purely to rule out the 3 native glibc std FILE*s
+/// (~20ns uncontended lock, the dominant cost of the single-threaded write fast path vs
+/// glibc's lock-free append). A miss (rare: a genuine host-glibc std FILE* passed in, or
+/// first write) falls through to the `canonical_stream_id` path unchanged. Same ST +
+/// gen-validity soundness gates as `write_cache_lookup`.
+#[inline]
+fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+        return None;
+    }
+    let key = stream as usize;
+    WRITE_CACHE.with(|c| {
+        let (cid, cgen, p) = c.get();
+        if cid == key && !p.is_null() && cgen == REGISTRY_GEN.load(Ordering::Acquire) {
+            Some(p)
+        } else {
+            None
+        }
+    })
+}
+
 /// Records the resolved `*mut StdioStream` for `id` (called on the slow path under the
 /// registry lock, capturing the gen so a later insert/remove invalidates it).
 #[inline]
@@ -894,6 +921,20 @@ fn try_fputc_fast(id: usize, byte: u8) -> Option<c_int> {
     }
 }
 
+/// Pointer-keyed sibling of `try_fputc_fast`: resolves via `write_cache_lookup_by_stream`
+/// so the fast path skips `canonical_stream_id`'s `native_stdio_fd_for_ptr` lock (measured
+/// ~6ns/call saved, ~21% of fd fputc). Same soundness gates.
+#[inline]
+fn try_fputc_fast_by_stream(stream: *mut c_void, byte: u8) -> Option<c_int> {
+    let p = write_cache_lookup_by_stream(stream)?;
+    // SAFETY: as `try_fputc_fast`.
+    if unsafe { (*p).fast_putc(byte) } {
+        Some(byte as c_int)
+    } else {
+        None
+    }
+}
+
 /// Bulk sibling of `try_fputc_fast` for `fputs`/`fwrite`: if `id` resolves through the
 /// gen-valid single-threaded cache to a Full-buffered fd stream with room for all of
 /// `bytes`, append them inline (skipping membrane + lock + lookup) and return `true`.
@@ -901,6 +942,17 @@ fn try_fputc_fast(id: usize, byte: u8) -> Option<c_int> {
 fn try_fwrite_fast(id: usize, bytes: &[u8]) -> bool {
     match write_cache_lookup(id) {
         // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
+        Some(p) => unsafe { (*p).fast_write(bytes) },
+        None => false,
+    }
+}
+
+/// Pointer-keyed sibling of `try_fwrite_fast`: resolves via `write_cache_lookup_by_stream`
+/// so the fast path skips `canonical_stream_id`'s `native_stdio_fd_for_ptr` lock. Same gates.
+#[inline]
+fn try_fwrite_fast_by_stream(stream: *mut c_void, bytes: &[u8]) -> bool {
+    match write_cache_lookup_by_stream(stream) {
+        // SAFETY: as `try_fwrite_fast`.
         Some(p) => unsafe { (*p).fast_write(bytes) },
         None => false,
     }
@@ -1087,6 +1139,38 @@ fn standard_stream_id(stream: *mut c_void) -> Option<usize> {
 #[inline]
 fn canonical_stream_id(stream: *mut c_void) -> usize {
     standard_stream_id(stream).unwrap_or(stream as usize)
+}
+
+/// Bench hook: cost of `canonical_stream_id` (the per-call FILE*->id mapping, which for a
+/// non-std stream takes the `native_stdio_fd_for_ptr` lock). Not part of the ABI.
+#[doc(hidden)]
+pub fn bench_canonical_stream_id_cost(stream: *mut c_void) -> usize {
+    canonical_stream_id(stream)
+}
+
+/// Bench hook: OLD fputs fast-path lookup (canonical_stream_id + by-id cache) + fast_write.
+/// # Safety: `s` NUL-terminated; `stream` a cached writable stream.
+#[doc(hidden)]
+pub unsafe fn bench_fputs_oldpath(s: *const c_char, stream: *mut c_void) -> bool {
+    let id = canonical_stream_id(stream);
+    if let Some(p) = write_cache_lookup(id) {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        return unsafe { (*p).fast_write(bytes) };
+    }
+    false
+}
+
+/// Bench hook: NEW fputs fast-path lookup (pointer-keyed, skips canonical_stream_id) + fast_write.
+/// # Safety: `s` NUL-terminated; `stream` a cached writable stream.
+#[doc(hidden)]
+pub unsafe fn bench_fputs_newpath(s: *const c_char, stream: *mut c_void) -> bool {
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        return unsafe { (*p).fast_write(bytes) };
+    }
+    false
 }
 
 /// Snapshot of a stream's state for the `stdio_ext.h` introspection helpers
@@ -2387,17 +2471,18 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
 /// POSIX `fputc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
-    let id = canonical_stream_id(stream);
     let byte = c as u8;
 
     // Single-threaded inline fast path (skips membrane + registry lock + HashMap lookup
-    // for repeated writes to the same Full-buffered fd stream). Applies in BOTH the
-    // heals-disabled (common deployed) and hardened paths — it only fires for a stream
-    // already resolved+cached by a prior slow write, so bootstrap (empty cache) falls
-    // through safely.
-    if let Some(rc) = try_fputc_fast(id, byte) {
+    // for repeated writes to the same Full-buffered fd stream). Pointer-keyed so a hit
+    // also skips `canonical_stream_id`'s native lock; `id` is computed lazily on miss.
+    // It only fires for a stream already resolved+cached by a prior slow write, so
+    // bootstrap (empty cache) falls through safely.
+    if let Some(rc) = try_fputc_fast_by_stream(stream, byte) {
         return rc;
     }
+
+    let id = canonical_stream_id(stream);
 
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
         let bytes = [byte];
@@ -2737,12 +2822,13 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
         return libc::EOF;
     }
 
-    let id = canonical_stream_id(stream);
-
     // Single-threaded inline fast path: scan once, append to the cached Full-buffered fd
-    // stream if it all fits (skipping membrane + registry lock + HashMap lookup). On any
-    // miss (not cached / not Full / would flush) fall through to the existing paths.
-    if let Some(p) = write_cache_lookup(id) {
+    // stream if it all fits (skipping membrane + registry lock + HashMap lookup). Keyed by
+    // the raw FILE* pointer so a repeated-write loop skips `canonical_stream_id` and its
+    // `native_stdio_fd_for_ptr` lock entirely (the dominant ST fast-path cost for non-std
+    // fopen'd streams). On any miss (not cached / not Full / would flush) fall through to
+    // the existing paths, computing `id` lazily below.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
         let (len, _) = unsafe { scan_c_str_len(s, None) };
         let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
         // SAFETY: single-threaded (lookup-gated) ⇒ unique &mut; gen-valid ⇒ not moved.
@@ -2750,6 +2836,8 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
             return 0;
         }
     }
+
+    let id = canonical_stream_id(stream);
 
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
         let (len, _) = unsafe { scan_c_str_len(s, None) };
@@ -3157,14 +3245,16 @@ pub unsafe extern "C" fn fwrite(
         return 0;
     }
 
-    let id = canonical_stream_id(stream);
     let src = unsafe { std::slice::from_raw_parts(ptr as *const u8, total) };
 
     // Single-threaded inline fast path: append to the cached Full-buffered fd stream if it
-    // all fits (skip membrane + lock + lookup). Miss → fall through to existing paths.
-    if try_fwrite_fast(id, src) {
+    // all fits (skip membrane + lock + lookup). Pointer-keyed so a hit also skips
+    // `canonical_stream_id`'s native lock; `id` computed lazily on miss.
+    if try_fwrite_fast_by_stream(stream, src) {
         return nmemb;
     }
+
+    let id = canonical_stream_id(stream);
 
     if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
         let written = unsafe { write_bytes_without_runtime_policy(id, stream, src) };
