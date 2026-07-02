@@ -1888,6 +1888,23 @@ pub unsafe extern "C" fn wcsdup(s: *const u32) -> *mut u32 {
         return std::ptr::null_mut();
     }
 
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict body
+    // (repair=false → bound None → scan s, malloc(len+1), copy, NUL). Skips decide +
+    // observe. Mirrors narrow `strdup` + `wcscpy` fast paths. (malloc dominates, so the
+    // margin is smaller than the pure-scan fns, but wcsdup is hot in wide code.)
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (len, _) = scan_w_string(s, None);
+            let ptr = crate::malloc_abi::malloc((len + 1) * 4) as *mut u32;
+            if ptr.is_null() {
+                return std::ptr::null_mut();
+            }
+            std::ptr::copy_nonoverlapping(s, ptr, len);
+            *ptr.add(len) = 0;
+            ptr
+        };
+    }
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,

@@ -62,6 +62,22 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ wcsdup strict fast-path — ~17% fl/glibc improvement (membrane removed; malloc-dominated residual)
+
+- **DEPLOYED (cc):** wcsdup (wide strdup) paid the full READ membrane (decide + observe)
+  every call, no fast path (last of the audit's flagged fns bar the low-frequency
+  wcstok). Added the strict fast path = scan s (None) + malloc(len+1) + copy + NUL,
+  byte-identical to the strict body (repair=false → bound None). Mirrors narrow `strdup`
+  + `wcscpy`.
+- **BYTE-IDENTICAL:** conformance_diff_wchar 44/44 GREEN.
+- **MEASURED (`wcsdup_glibc_bench` [new], dup+free; RELIABLE = within-run fl/glibc ratio,
+  the malloc-heavy bench is very worker-sensitive so absolute ns aren't cross-run
+  comparable):** fl/glibc **ORIG 2.38/2.34 → NEW 1.96/1.97** (n=8/32) — ~17% ratio
+  improvement from removing the ~14ns read membrane off a ~110ns op. The 1.96x residual
+  is fl's allocator (~2x glibc small-alloc — the architectural deployed-malloc gap), not
+  leverable here. **STRICT-FAST-PATH AUDIT ESSENTIALLY DONE: only wcstok (low-frequency
+  wide tokenizer) remains without one.**
+
 ## 2026-07-02 — ✅ wcslen untracked strict fast-path — removes ~8-9ns membrane, ~1.5x faster vs ORIG (hot wide strlen)
 
 - **DEPLOYED (cc):** audit continuation — `wcslen` paid the full membrane (decide +
