@@ -10846,3 +10846,40 @@ exception; all other hot string/mem fns take the reorder.
 dead-dispatch removal + this guard reorder), fl/glibc 7.15x → 1.60x. See
 [[htm-tax-and-nomangle-probe-vein]]. Reorder is the general lever for any strict-fast-path fn
 whose raw-passthrough guard precedes the strict check.
+
+---
+
+## Bench rejection + honest corrections: strcpy-fused / strcmp / strcpy / wcslen / wcscmp (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Deployed no_mangle entries measured vs glibc (dlmopen, stdio_st_probe arms STRCPY/STRCMP/STRCPY_FUSED_AB/WCSLEN/WCSCMP). After the string/mem dead-tax vein was exhausted this session (strlen/memcpy/memcmp/mutex/guard-reorder all landed), these four were probed for the next lever. Result: **no clean landable win — the remaining gaps are structural/ceiling, documented here so no future agent re-chases them.**
+
+**✗ REJECTED — fused single-pass strcpy (re-validated, was already rejected once).** Deployed
+strcpy does two passes: `scan_c_string` (SIMD strlen) + `raw_overlap_copy`. A `fused_strcpy_bytes`
+(copy-through-NUL in one pass, store-while-checking-NUL) exists as a bench hook. Honest in-process
+A/B (STRCPY_FUSED_AB, same process): **fused/twopass = 1.05–2.70x SLOWER** at every size
+(n=8 1.05x, n=16 1.70x, n=32 1.54x, n=64 2.70x, n=128 1.40x). The per-chunk NUL-check-while-storing
+branch costs more than the second cache-hot read. The two-pass (each pass branch-light SIMD) is
+correct. Confirms the prior rejection — **do NOT wire fused_strcpy_bytes into strcpy_core.**
+
+**strcpy ~2x = structural, not a dead tax.** fl 6.95→12.42ns vs glibc 3.51→4.98 (fl/glibc
+1.98–2.49x). strcpy_core's strict path is already clean (strict-first, no dispatch/HTM,
+`raw_memcpy_bytes` routes to fast `raw_overlap_copy`). The gap is call-boundary overhead
+(strcpy→strcpy_core→scan_c_string + raw_overlap_copy) vs glibc's single fused leaf asm. Closing it
+needs a hand-fused asm strcpy (the Rust fused version is slower, above) — not a focused-turn lever.
+
+**strcmp ~1.5x + wcscmp ~1.3–1.96x = dual-pointer AVX2 ceiling.** STRCMP fl/glibc 1.44–1.81x;
+WCSCMP fl/glibc 1.30–1.96x (grows with n). Both strict paths are clean (no dead tax; wcscmp's
+`scan_wcscmp_simd` is already AVX2-width WLANES=8 with a cheap dual page-guard). This is the same
+portable-SIMD-vs-hand-tuned-AVX2 dual-pointer ceiling documented for the narrow scan family — the
+"wcscmp/wmemcmp = parity" claim in [[strchr-simd-and-string-scan-width]] was a glibc_baseline_bench
+(thin-LTO) artifact; honest dlmopen shows a real 1.3–1.96x loss. Closable only by per-fn AVX2 asm.
+
+**✓ CORRECTION (good news): wcslen is HONEST parity.** WCSLEN fl/glibc **1.00–1.30x** (n=8 exactly
+1.000) — the memory's wcslen-parity claim survives an honest dlmopen probe (unlike wcscmp/wcschr,
+whose biased-bench "wins" were overclaims). No action needed; wcslen is genuinely glibc-class.
+
+Net: the hot string/mem/wide surface is now either WINNING/near-parity (memcpy 1.6x, memset,
+wcslen parity, the scan family after the aligned-head-mask work) or at the documented
+AVX2-asm / structural-call ceiling (strcpy, strcmp, wcscmp, strchr). No non-asm dead-tax lever
+remains in this family. Probe apparatus (STRCPY/STRCMP/WCSLEN/WCSCMP/STRCPY_FUSED_AB arms) kept
+in stdio_st_probe.rs for future re-measurement.

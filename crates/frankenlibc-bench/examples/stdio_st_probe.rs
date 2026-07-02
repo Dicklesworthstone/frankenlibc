@@ -368,7 +368,60 @@ fn main() {
         }
         println!("MEMCMP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&flv,0.5), pctl(&glv,0.5), pctl(&flv,0.5)/pctl(&glv,0.5));
     }
+
+    // strcpy + strcmp: deployed no_mangle entries vs glibc. Probe for dead tax / reorderable guard.
+    type StrcpyFn = unsafe extern "C" fn(*mut c_char, *const c_char) -> *mut c_char;
+    type StrcmpFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+    let g_strcpy: StrcpyFn = dl(h, b"strcpy\0");
+    let g_strcmp: StrcmpFn = dl(h, b"strcmp\0");
+    for &n in &[8usize, 16, 32, 64, 128] {
+        let s: Vec<u8> = std::iter::repeat(b'a').take(n).chain(std::iter::once(0)).collect();
+        let sc = s.as_ptr() as *const c_char;
+        let mut dbuf = vec![0u8; n + 1]; let dp = dbuf.as_mut_ptr() as *mut c_char;
+        // strcmp: compare against an equal copy differing at last byte
+        let mut s2: Vec<u8> = s.clone(); s2[n-1] = b'b'; let s2c = s2.as_ptr() as *const c_char;
+        let (mut fcp, mut gcp, mut fcm, mut gcm) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_ptr2(unsafe { frankenlibc_abi::string_abi::strcpy(dp, sc) }); } fcp.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_ptr2(unsafe { g_strcpy(dp, sc) }); } gcp.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { frankenlibc_abi::string_abi::strcmp(sc, s2c) }); } fcm.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { g_strcmp(sc, s2c) }); } gcm.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("STRCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fcp,0.5), pctl(&gcp,0.5), pctl(&fcp,0.5)/pctl(&gcp,0.5));
+        println!("STRCMP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fcm,0.5), pctl(&gcm,0.5), pctl(&fcm,0.5)/pctl(&gcm,0.5));
+        // A/B: deployed two-pass strcpy vs fused single-pass bench hook (same process).
+        let mut fus = Vec::new();
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_usize(unsafe { frankenlibc_abi::string_abi::bench_strcpy_fused(dp.cast(), sc.cast()) }); } fus.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("STRCPY_FUSED_AB n={n} twopass={:.2} fused={:.2} fused/twopass={:.3}", pctl(&fcp,0.5), pctl(&fus,0.5), pctl(&fus,0.5)/pctl(&fcp,0.5));
+    }
+
+    // Wide family honest probe: wcslen + wcscmp deployed no_mangle vs glibc (dlmopen).
+    type WcslenFn = unsafe extern "C" fn(*const i32) -> usize;
+    type WcscmpFn = unsafe extern "C" fn(*const i32, *const i32) -> i32;
+    let g_wcslen: WcslenFn = dl(h, b"wcslen\0");
+    let g_wcscmp: WcscmpFn = dl(h, b"wcscmp\0");
+    for &n in &[8usize, 16, 32, 64] {
+        let w: Vec<i32> = std::iter::repeat(b'a' as i32).take(n).chain(std::iter::once(0)).collect();
+        let wp = w.as_ptr();
+        let mut w2: Vec<i32> = w.clone(); w2[n-1] = b'b' as i32; let wp2 = w2.as_ptr();
+        let (mut fl_, mut gl_, mut fc, mut gc) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_usize(unsafe { frankenlibc_abi::wchar_abi::wcslen(wp.cast::<u32>()) }); } fl_.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_usize(unsafe { g_wcslen(wp) }); } gl_.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { frankenlibc_abi::wchar_abi::wcscmp(wp.cast::<u32>(), wp2.cast::<u32>()) }); } fc.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { g_wcscmp(wp, wp2) }); } gc.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("WCSLEN n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fl_,0.5), pctl(&gl_,0.5), pctl(&fl_,0.5)/pctl(&gl_,0.5));
+        println!("WCSCMP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fc,0.5), pctl(&gc,0.5), pctl(&fc,0.5)/pctl(&gc,0.5));
+    }
 }
+
+#[inline(never)]
+fn black_box_ptr2(v: *mut c_char) -> *mut c_char { std::hint::black_box(v) }
 
 #[inline(never)]
 fn black_box_i64(v: i64) -> i64 { std::hint::black_box(v) }
