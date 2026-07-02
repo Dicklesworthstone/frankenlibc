@@ -279,6 +279,62 @@ unsafe fn wide_strlen_bounded(s: *const u32, limit: usize) -> usize {
     limit
 }
 
+/// Fused single-pass wcscpy for raw (untracked, strict-mode) wide strings: copies `src`
+/// through its terminating NUL into `dst` in ONE pass, writing exactly `len + 1` wide
+/// chars. Replaces the prior two-pass `scan_w_string` + `copy_nonoverlapping` (the copy
+/// lowered to the interposed fl `memcpy` symbol — an ABI-entry + membrane call, ~6x
+/// glibc at small sizes and ~2x the memory traffic at large). Aligned-load-down +
+/// head-mask read discipline (32|4096 keeps each 8-lane read in one page); full NUL-free
+/// 8-lane chunks are SIMD-stored, the NUL-containing tail is copied scalar up to and
+/// including the NUL, so `dst` receives byte-for-byte the same `len + 1` chars as glibc.
+///
+/// # Safety
+/// `src` must be a valid NUL-terminated wide string and `dst` must have room for
+/// `wcslen(src) + 1` wide chars (the caller's contract for C `wcscpy`).
+#[inline]
+unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) {
+    let z = Simd::<u32, 8>::splat(0);
+    let pb = src as usize;
+    let align = (pb & 31) >> 2; // u32 elements before the 32-byte boundary (0..=7)
+    // SAFETY: `base` is aligned down <= 28 bytes, in the same mapped page as `src`.
+    let base = unsafe { src.sub(align) };
+    let v0 = Simd::<u32, 8>::from_slice(unsafe { std::slice::from_raw_parts(base, 8) });
+    let m0 = v0.simd_eq(z).to_bitmask() & !((1u64 << align) - 1);
+    if m0 != 0 {
+        // NUL within the first (masked) window: copy src[0..=nul] inclusive.
+        let nul = m0.trailing_zeros() as usize - align;
+        for j in 0..=nul {
+            // SAFETY: j <= nul < remaining string length; dst has room for len+1.
+            unsafe { *dst.add(j) = *src.add(j) };
+        }
+        return;
+    }
+    // First (partial) chunk [src, base+8): (8 - align) elements, all confirmed non-NUL.
+    let first = 8 - align;
+    for j in 0..first {
+        // SAFETY: within the just-read window; these lanes are non-NUL string chars.
+        unsafe { *dst.add(j) = *src.add(j) };
+    }
+    let mut i = first; // src+i is 32-byte (8-u32) aligned
+    loop {
+        // SAFETY: src+i is 32-byte aligned ⇒ this 8-lane (32-byte) load stays in-page.
+        let v = Simd::<u32, 8>::from_slice(unsafe { std::slice::from_raw_parts(src.add(i), 8) });
+        let m = v.simd_eq(z).to_bitmask();
+        if m != 0 {
+            let nul = m.trailing_zeros() as usize;
+            for j in 0..=nul {
+                // SAFETY: copies through the NUL; dst has room for len+1.
+                unsafe { *dst.add(i + j) = *src.add(i + j) };
+            }
+            return;
+        }
+        // No NUL in this chunk: all 8 lanes are real string chars ⇒ dst has room for
+        // [i, i+8). SIMD-store the full chunk (unaligned store).
+        v.copy_to_slice(unsafe { std::slice::from_raw_parts_mut(dst.add(i), 8) });
+        i += 8;
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcslen(s: *const u32) -> usize {
     if s.is_null() {
@@ -365,10 +421,9 @@ pub unsafe extern "C" fn wcscpy(dst: *mut u32, src: *const u32) -> *mut u32 {
     // path — which for the wide write family is ~655ns/call — and upgrades the
     // scalar wchar loop to a SIMD length scan + bulk copy.
     if runtime_policy::strict_passthrough_active() {
-        unsafe {
-            let (len, _terminated) = scan_w_string(src, None);
-            std::ptr::copy_nonoverlapping(src, dst, len + 1);
-        }
+        // Fused single-pass copy-through-NUL: no scan_w_string + interposed-memcpy
+        // round trip (that was ~6x glibc at small sizes / ~2x traffic at large).
+        unsafe { wide_fused_copy(dst, src) };
         return dst;
     }
 

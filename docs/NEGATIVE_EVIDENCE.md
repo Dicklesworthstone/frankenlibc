@@ -9821,3 +9821,29 @@ tighter vpcmpeqd+vpmovmskb sequences with better ILP), not a focused-turn lever.
 anyway because it is a strict improvement over the prior fl code with no regression.
 Apparatus: wcschr_head_ab_bench (deployed-path in-process A/B/C). NOTE: after deploy the
 bench's "old" arm now measures the NEW deployed code — it doubles as a regression guard.
+
+### 2026-07-02 — ✅ wcscpy strict path: fused single-pass copy-through-NUL — deployed fl/glibc ~2-6x → ~1.2-2x (beats glibc at n=256) — BlackThrush
+
+The deployed strict wcscpy did TWO passes: `scan_w_string` (SIMD wcslen) + `copy_nonoverlapping`
+— the copy lowers to the interposed fl `memcpy` SYMBOL (an ABI-entry + membrane call), not an
+inline copy. A deployed-symbol bench (wide_copyfill_glibc_bench, dlmopen glibc) exposed the gap:
+  fl/glibc = 6.16 (n=4) 2.99 (16) 5.71 (32) 3.77 (64) 3.10 (128) 1.65 (256) 1.83 (1024)
+The small-size 3-6x is the memcpy-symbol call overhead; the ~2x at large is the doubled memory
+traffic of two passes. glibc's wcscpy fuses scan+copy into one pass.
+
+Fix: `wide_fused_copy` — one pass, aligned-load-down + head-mask read (32|4096 keeps each 8-lane
+read in-page), full NUL-free 8-lane chunks SIMD-stored, the NUL-containing tail copied scalar up
+to and including the NUL. Writes EXACTLY len+1 wchars (byte-for-byte glibc; no memcpy call).
+Byte-identical: conformance_diff_wchar 44, conformance_diff_wcs_copy 5, wchar_abi_test 118 — all
+0 failed. Only the strict fast path changed; the bounded/healing path is untouched.
+
+Deployed-symbol re-bench after fusing (different worker, glibc absolute times differ, so read the
+ratio not cross-run ns):
+  fl/glibc = 1.97 (n=4) 1.64 (16) 2.02 (32) 1.45 (64) 1.61 (128) 0.87 (256) 1.22 (1024)
+Small sizes improved most (n=4 6.16→1.97, n=32 5.71→2.02, n=64 3.77→1.45), now BEATS glibc at
+n=256 (0.87) and ~1.2x at 1024. In-process A/B (wcscpy_fused_head_ab_bench) confirms the fused
+kernel is worker-invariantly faster than scan+memcpy for n>=64 (new/old 0.55-0.89). HONEST LIMIT:
+residual ~1.2-2x at small/medium is the portable-SIMD-vs-glibc-AVX2 kernel ceiling (same class as
+wcschr) — not closable by removing the 2-pass penalty; a per-fn AVX2 asm copy loop would be needed.
+Apparatus: wide_copyfill_glibc_bench (deployed) + wcscpy_fused_head_ab_bench (in-process A/B/C).
+ASIDE: wmemset (slice.fill) measured ~parity-to-1.2x, no 2-pass penalty — left unchanged.

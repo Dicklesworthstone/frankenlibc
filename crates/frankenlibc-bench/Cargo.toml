@@ -521,6 +521,18 @@ name = "wcschr_head_ab_bench"
 required-features = ["abi-bench"]
 harness = false
 
+# wide copy/fill (wcscpy/wmemset) deployed fl vs glibc (dlmopen).
+[[bench]]
+name = "wide_copyfill_glibc_bench"
+required-features = ["abi-bench"]
+harness = false
+
+# wcscpy fused single-pass in-process A/B/C (scan+memcpy vs fused vs glibc).
+[[bench]]
+name = "wcscpy_fused_head_ab_bench"
+required-features = ["abi-bench"]
+harness = false
+
 [[bench]]
 name = "wcsdup_glibc_bench"
 required-features = ["abi-bench"]
