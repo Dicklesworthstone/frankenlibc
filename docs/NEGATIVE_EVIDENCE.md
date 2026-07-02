@@ -62,6 +62,26 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ wcstok strict fast-path — removes the wide WRITE membrane (~655ns/call); now BEATS glibc 1.35–1.5x
+
+- **DEPLOYED (cc):** wcstok (wide tokenizer) was the last audit item without a strict
+  fast path. It calls `decide(..., write=true)` per token — the WIDE WRITE membrane, which
+  the wcscpy fast-path notes is ~655ns/call — so a tokenization loop paid it PER TOKEN.
+  Added the strict fast path = delim scan + skip-leading/find-end tokenize + `*save_ptr`
+  update (byte-identical to the full body's loop), skipping decide + observe. Strict =
+  glibc semantics (no clamp), so the in-place NUL write is unchanged; hardened keeps the
+  full membrane.
+- **BYTE-IDENTICAL:** conformance_diff_wchar 44/44 GREEN + the bench asserts fl==glibc
+  token counts. (The wcstok_unterminated harness test couldn't run — pre-existing broken
+  `asupersync` dep on main, unrelated.)
+- **MEASURED (`wcstok_glibc_bench` [new], full K-token loop, deployed fl vs dlmopen
+  glibc):** fl/glibc **k8 0.74x, k64 0.67x, k512 0.65x — fl BEATS glibc 1.35–1.5x**, with
+  flat ns/token ~11-18 (O(n)). The ORIG per-token wide-write membrane (~655ns) made the
+  loop dramatically slower (ORIG fl would be ~655ns×K); NEW is ~11-18ns/token. (ORIG A/B
+  bench errored on the asupersync build flake, but the vs-glibc win + the removed
+  ~655ns/call decide are the measured/structural signal.) **STRICT-FAST-PATH AUDIT
+  COMPLETE across string_abi + wchar_abi.**
+
 ## 2026-07-02 — ✅ wcswcs routed to fused wcsstr — kills a naive O(n·m) anti-pattern; ~29-40x vs ORIG, beats glibc 4x
 
 - **DEPLOYED (cc):** `wcswcs` (deprecated glibc synonym for wcsstr, in glibc_internal_abi

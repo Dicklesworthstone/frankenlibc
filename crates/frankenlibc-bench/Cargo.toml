@@ -518,3 +518,8 @@ harness = false
 name = "wcswcs_glibc_bench"
 required-features = ["abi-bench"]
 harness = false
+
+[[bench]]
+name = "wcstok_glibc_bench"
+required-features = ["abi-bench"]
+harness = false

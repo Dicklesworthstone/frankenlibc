@@ -2252,6 +2252,49 @@ pub unsafe extern "C" fn wcstok(
         }
     };
 
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the full body's
+    // delim scan + skip-leading/find-end tokenize + `*save_ptr` update, but skips the
+    // WRITE decide + observe membrane (the wide write family is ~655ns/call). Strict =
+    // glibc semantics (no clamp), so the in-place NUL write is unchanged; hardened mode
+    // keeps the full validating path below.
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let delim_bound = known_remaining(delim as usize).map(bytes_to_wchars);
+            let (delim_len, delim_terminated) = scan_w_string(delim, delim_bound);
+            if !delim_terminated {
+                return std::ptr::null_mut();
+            }
+            let delims = WideCharSet::new(delim, delim_len);
+            let mut pos = start;
+            loop {
+                let ch = *pos;
+                if ch == 0 {
+                    *save_ptr = pos;
+                    return std::ptr::null_mut();
+                }
+                if !delims.contains(ch) {
+                    break;
+                }
+                pos = pos.add(1);
+            }
+            let token_start = pos;
+            loop {
+                let ch = *pos;
+                if ch == 0 {
+                    *save_ptr = pos;
+                    break;
+                }
+                if delims.contains(ch) {
+                    *pos = 0;
+                    *save_ptr = pos.add(1);
+                    break;
+                }
+                pos = pos.add(1);
+            }
+            token_start
+        };
+    }
+
     let (_, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         start as usize,
