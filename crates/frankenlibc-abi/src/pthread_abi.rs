@@ -1915,17 +1915,26 @@ fn futex_wake_private(word: &AtomicI32, count: i32) -> c_int {
 }
 
 fn futex_lock_normal(word: &AtomicI32) -> c_int {
-    if matches!(
-        PTHREAD_MUTEX_HTM_SITE.run(|| {
-            if word.load(Ordering::Acquire) == 0 {
-                word.store(1, Ordering::Release);
-                true
-            } else {
-                false
-            }
-        }),
-        Ok(true)
-    ) {
+    // HTM lock elision is dead weight without RTM (all AMD, most Intel): the site attempts
+    // a transaction, `real_htm_supported()` returns false, and it falls back to the CAS
+    // below on every uncontended lock — pure per-call cost (current_test_mode + fallback
+    // record). The `timed_futex_lock_normal` sibling already goes CAS-first with no HTM,
+    // proving the elision is superfluous. Attempt HTM only under a forced test mode (so the
+    // HTM-site tests still exercise it); deployed builds go straight to the atomic CAS,
+    // which is *stronger* than the transaction's non-atomic load-then-store anyway.
+    if crate::htm_fast_path::htm_forced_mode_active_for_tests()
+        && matches!(
+            PTHREAD_MUTEX_HTM_SITE.run(|| {
+                if word.load(Ordering::Acquire) == 0 {
+                    word.store(1, Ordering::Release);
+                    true
+                } else {
+                    false
+                }
+            }),
+            Ok(true)
+        )
+    {
         return 0;
     }
 

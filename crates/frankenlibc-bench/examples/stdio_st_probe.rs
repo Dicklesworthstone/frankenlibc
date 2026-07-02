@@ -327,6 +327,29 @@ fn main() {
         }
         println!("MEMCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&flv,0.5), pctl(&glv,0.5), pctl(&flv,0.5)/pctl(&glv,0.5));
     }
+
+    // pthread_mutex_lock/unlock: uncontended (single-threaded), the common case. SUSPECT:
+    // futex_lock_normal attempts PTHREAD_MUTEX_HTM_SITE.run FIRST → real_htm_supported()
+    // FALSE on AMD → ~10ns dead HTM before the compare_exchange that acquires anyway.
+    type MtxFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> i32;
+    let g_lock: MtxFn = dl(h, b"pthread_mutex_lock\0");
+    let g_unlock: MtxFn = dl(h, b"pthread_mutex_unlock\0");
+    {
+        let mut gm: libc::pthread_mutex_t = unsafe { std::mem::zeroed() };
+        let mut fm: libc::pthread_mutex_t = unsafe { std::mem::zeroed() };
+        // warm/init both
+        for _ in 0..1000 { unsafe {
+            frankenlibc_abi::pthread_abi::pthread_mutex_lock(&mut fm); frankenlibc_abi::pthread_abi::pthread_mutex_unlock(&mut fm);
+            g_lock(&mut gm); g_unlock(&mut gm);
+        }}
+        let (mut flv, mut glv) = (Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { unsafe { black_box_i32(frankenlibc_abi::pthread_abi::pthread_mutex_lock(&mut fm)); black_box_i32(frankenlibc_abi::pthread_abi::pthread_mutex_unlock(&mut fm)); } } flv.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { unsafe { black_box_i32(g_lock(&mut gm)); black_box_i32(g_unlock(&mut gm)); } } glv.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("MUTEX_LOCKUNLOCK fl={:.2} glibc={:.2} fl/glibc={:.3} (ns/lock+unlock pair)", pctl(&flv,0.5), pctl(&glv,0.5), pctl(&flv,0.5)/pctl(&glv,0.5));
+    }
 }
 
 #[inline(never)]

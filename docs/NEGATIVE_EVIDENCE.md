@@ -10722,3 +10722,37 @@ dead dispatch → volatile) from a top-3 libc fn is a real, measured, byte-ident
 RTM (all AMD). It was on the strict + hardened memcpy paths. Same class as the strlen
 dead-dispatch: verify perf through the ACTUAL no_mangle entry via dlmopen — kernel-direct and
 glibc_baseline_bench both bypass the HTM/dispatch/guard layer and hide these flat per-call taxes.
+
+---
+
+## pthread_mutex_lock drops dead HTM elision — uncontended lock now near-parity with glibc (AGENT_NAME: BlackThrush, 2026-07-02)
+
+**Measured (same-process dlmopen A/B, stdio_st_probe MUTEX_LOCKUNLOCK arm, uncontended single-threaded):**
+
+| metric              | BEFORE  | AFTER  | glibc |
+|---------------------|---------|--------|-------|
+| fl lock+unlock pair | 10.34ns | 7.54ns | ~6.7  |
+| fl/glibc            | 1.556x  | **1.109x** | —  |
+
+**The third HTM-tax site (after memcpy this session).** `futex_lock_normal` — the uncontended
+default-mutex acquire path — attempted `PTHREAD_MUTEX_HTM_SITE.run` (a transactional
+load-then-store lock elision) BEFORE the real `compare_exchange(0,1)` acquire. In `Real` mode
+on this AMD Zen3 worker, `real_htm_supported()` (RTM feature) is false → `record_fallback` →
+the elision fails on EVERY uncontended lock, then the CAS below acquires it anyway. Pure
+per-call cost (`current_test_mode` load + cached support load + fallback increment + closure).
+
+**Tell-tale:** the `timed_futex_lock_normal` sibling already goes CAS-first with NO HTM attempt
+— proving the elision in the plain path is superfluous, not a semantic requirement.
+
+**Fix:** gate the HTM attempt on `htm_forced_mode_active_for_tests()` (mirrors the memcpy fix).
+Deployed builds skip straight to the atomic `compare_exchange`, which is *stronger* than the
+transaction's non-atomic load-then-store. Under a forced test mode the HTM site is still
+exercised (pthread_mutex_core_test 20/20 green, incl. the forced-HTM cases).
+
+**Result: fl uncontended mutex lock/unlock is now 1.109x glibc (was 1.556x) — effectively at
+parity.** The ~0.8ns residual is fl's managed-mutex bookkeeping (ensure_managed_default_mutex /
+mutex_word_ptr / read_mutex_type) that glibc's inline fast path lacks — structural, small.
+
+**Vein status:** three HtmSite instances existed — memcpy (fixed), pthread_mutex_lock (fixed),
+and MALLOC_STATS_HTM_SITE (malloc_stats combiner, COLD — reporting only, left as-is). Real-HTM
+lock/copy elision is dead weight on any RTM-less CPU (all AMD); this closes the two hot ones.
