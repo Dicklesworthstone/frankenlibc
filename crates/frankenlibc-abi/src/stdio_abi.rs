@@ -2904,6 +2904,11 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
     }
     if s.is_mem_backed() {
         sync_and_unregister_fast_fixed_mem_read(id, s);
+    } else {
+        // Cache this non-cookie, non-mem fd stream so subsequent fgets/fgetc/fread hit the
+        // pointer-keyed fast path — a pure `fgets` loop (read a file line by line) otherwise
+        // never populates the cache and pays the per-line locks forever. Mirrors fgetc/fread.
+        write_cache_store(id, s as *mut StdioStream);
     }
 
     // Fill the destination under the SINGLE registry lock + policy decision

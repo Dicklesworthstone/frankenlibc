@@ -10337,3 +10337,18 @@ Saved per LINE regardless of line length (the fill work is identical in both arm
 fwrite), read (fgetc/getc/fread), LINE read (fgets), state (feof/ferror), query (fileno/ftell/
 clearerr), pushback (ungetc) + the 2-way cache + fputws bulk-convert — the entire hot ST stdio
 surface.** Apparatus: stdio_st_probe FGETS_AB + bench_fgets_{old,new}path.
+
+### 2026-07-02 — ✅ fgets slow path now populates the write cache — ACTIVATES the fgets fast path for pure-fgets loops — BlackThrush
+
+Completeness fix for the prior fgets pointer-keyed fast path (77e5e7b6c). The fgets SLOW path did
+NOT call write_cache_store (fgetc/fread do), so a stream read only via fgets — the DOMINANT
+pattern (read a file line by line with fgets in a loop) — never populated the thread-local write
+cache, and every fgets missed the fast path (paid the per-line canonical native lock + registry
+locks forever). Added write_cache_store(id, s) on the non-mem fd branch of the fgets slow path
+(gated to non-cookie non-mem, preserving the cache invariant). Now the FIRST fgets caches the
+stream and every subsequent fgets hits the 2.3x fast path (measured FGETS_AB new/old=0.428,
+10.76ns saved/line). Byte-identical: write_cache_store is pure cache population (gen-invalidated
+on registry insert/remove), no behavior change; conformance stdio_abi_test 256 passed / 0 failed.
+LESSON: a pointer-keyed fast path is only as good as its cache POPULATION — a fn whose slow path
+doesn't write_cache_store leaves its own fast path dead for the fn's primary usage pattern. (fputs/
+fputc/fwrite cache via try_fwrite_fast's slow path; fgetc/fread cache explicitly; fgets was the gap.)
