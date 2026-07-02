@@ -502,3 +502,9 @@ harness = false
 name = "strcat_glibc_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# wcslen deployed fl vs glibc (dlmopen). Measures the untracked strict fast-path.
+[[bench]]
+name = "wcslen_glibc_bench"
+required-features = ["abi-bench"]
+harness = false

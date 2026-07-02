@@ -62,6 +62,26 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ wcslen untracked strict fast-path — removes ~8-9ns membrane, ~1.5x faster vs ORIG (hot wide strlen)
+
+- **DEPLOYED (cc):** audit continuation — `wcslen` paid the full membrane (decide +
+  observe) every call. wcslen intentionally honors `known` ungated (bounded scan +
+  truncate-heal for TRACKED buffers), so it was left on the full path. Added a fast path
+  for the COMMON UNTRACKED case only: `if known.is_none() && strict_passthrough_active()
+  { return wide_strlen_unbounded(s) }` — byte-identical to the untracked full-body branch
+  (decide()→Allow then `wide_strlen_unbounded`), skips decide + observe. Tracked buffers
+  (`known` Some) keep the full validating/healing path unchanged.
+- **BYTE-IDENTICAL:** conformance_diff_wchar 44/44 GREEN.
+- **MEASURED (`wcslen_glibc_bench` [new], deployed fl vs dlmopen glibc; clean stash
+  ORIG/NEW):** fl_p50 ORIG→NEW **n4 21.4→13.9ns (~1.54x), n16 27.4→17.8 (~1.54x), n64
+  25.4→16.6 (~1.53x), n1024 71.5→53.4 (~1.34x)** — ~8-9ns membrane removed, consistent.
+  wcslen still trails glibc (~1.7–4x) on small-wide `wide_strlen_unbounded` scan
+  throughput (aligned-head-mask setup on tiny strings — a separate lever). **AUDIT
+  STATUS: string_abi strict-fast-path coverage complete (strchr/strrchr/strcat + span/
+  tokenizer/substring all fast-pathed; strchrnul routes via strchr_locate's fast path).
+  Wide remaining: wcstok/wcsdup (lower-frequency) + the flagged isw* were window-bleed
+  false positives (they call wchar_core directly, no membrane).**
+
 ## 2026-07-02 — ✅ strcat strict fast-path — was FULLY on the membrane; removes a ~25-33ns/call tax, ~2.4-3.1x faster vs ORIG (hot string-building fn)
 
 - **DEPLOYED (cc):** `strcat` had NO strict fast path (audit of string fns with

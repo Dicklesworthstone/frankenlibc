@@ -281,6 +281,14 @@ pub unsafe extern "C" fn wcslen(s: *const u32) -> usize {
     }
 
     let known = known_remaining(s as usize);
+    // Strict-mode fast path for the common UNTRACKED wide string (`known` is None):
+    // byte-identical to the untracked full-body branch (decide()→Allow in strict, then
+    // `wide_strlen_unbounded`), but skips decide + observe. TRACKED buffers (`known` is
+    // Some) keep the full validating/healing path — wcslen intentionally honors `known`
+    // ungated (bounded scan + truncate-heal), so that path is preserved unchanged.
+    if known.is_none() && runtime_policy::strict_passthrough_active() {
+        return unsafe { wide_strlen_unbounded(s) };
+    }
     let (_mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
