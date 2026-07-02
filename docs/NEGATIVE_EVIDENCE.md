@@ -62,6 +62,26 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ strcat strict fast-path — was FULLY on the membrane; removes a ~25-33ns/call tax, ~2.4-3.1x faster vs ORIG (hot string-building fn)
+
+- **DEPLOYED (cc):** `strcat` had NO strict fast path (audit of string fns with
+  `stage_context` but no `strict_passthrough_active` flagged it + `stpncpy`). It paid the
+  full membrane every call. Added the strict fast path = scan dst for its NUL + fused
+  byte-by-byte copy of src onto the end until NUL — byte-identical to the strict
+  (non-repair) full body, and it ALSO drops the redundant `scan_c_string(src)` the full
+  body computes but never uses on that branch. STRICT ONLY (hardened keeps the full
+  membrane bounds/heal, so the WRITE safety value-add is preserved — the old "off-limits"
+  note was over-conservative: strict = glibc semantics = no clamp, identical to what the
+  strict body already did). `decide()` is always-Allow in strict-StringMemory (same
+  invariant the read fast paths rely on), so skipping it is byte-identical.
+- **BYTE-IDENTICAL:** conformance_diff_string_mut (24) + conformance_diff_string (35) GREEN.
+- **MEASURED (`strcat_glibc_bench` [new], deployed fl vs dlmopen glibc; clean stash
+  ORIG/NEW, O(1) buffer reset):** fl_p50 ORIG→NEW **dlen8 37.1→12.4ns (~3.0x), dlen16
+  41.7→13.6 (~3.1x), dlen64 39.8→16.7 (~2.4x), dlen256 54.7→21.2 (~2.6x)** — the membrane
+  tax was ~25-33ns. vs glibc the loss collapses **1.85–3.46x → 1.34–1.97x**. Residual is
+  the scan-throughput / raw-copy floor. **NEXT: `stpncpy` (also flagged) — but it's a
+  bounded WRITE; audit whether its strict body is as cleanly separable.**
+
 ## 2026-07-02 — ✅ strrchr strict fast-path — was FULLY on the membrane; removes a ~32ns/call tax, ~5.6x faster vs ORIG at small sizes (5.8x→1.8x glibc)
 
 - **DEPLOYED (cc):** `strrchr` had NO strict fast path — it paid the full membrane

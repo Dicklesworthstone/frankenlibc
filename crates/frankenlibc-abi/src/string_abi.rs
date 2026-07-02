@@ -3706,6 +3706,30 @@ pub unsafe extern "C" fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize)
 /// including null terminator, and that the buffers do not overlap.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict (non-repair)
+    // full body — scan dst for its NUL, then a fused byte-by-byte copy of src onto the
+    // end of dst until NUL. Skips stage_context + decide + observe + stage-trace AND the
+    // redundant `scan_c_string(src)` the full body computes but never uses on the
+    // non-repair branch. Strict = glibc semantics (no clamp), so the write is unchanged;
+    // hardened mode keeps the full membrane (bounds/heal) below.
+    if !dst.is_null() && !src.is_null() && runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            let (dst_len, _) = scan_c_string(dst.cast_const(), None);
+            let mut d = dst_len;
+            let mut s = 0usize;
+            loop {
+                let ch = *src.add(s);
+                *dst.add(d) = ch;
+                if ch == 0 {
+                    break;
+                }
+                d += 1;
+                s += 1;
+            }
+            dst
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() {
         record_string_stage_outcome(
