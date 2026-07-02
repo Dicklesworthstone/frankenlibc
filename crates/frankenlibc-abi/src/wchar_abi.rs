@@ -1498,7 +1498,10 @@ pub unsafe extern "C" fn wmemcpy(dst: *mut u32, src: *const u32, n: usize) -> *m
     // (`copy_len == n`), byte-identical to the strict full path; skips the decide +
     // observe membrane tax (~9-10ns/call, see wcscmp).
     if runtime_policy::strict_passthrough_active() {
-        unsafe { std::ptr::copy(src, dst, n) };
+        // Inline SIMD copy instead of std::ptr::copy (which for a wide u32 copy lowers to
+        // the interposed memmove symbol — measured ~34x glibc, 1408ns at n=1024). wmemcpy's
+        // C contract is disjoint (memcpy semantics), so the forward wide_copy_n is correct.
+        unsafe { wide_copy_n(dst, src, n) };
         return dst;
     }
 

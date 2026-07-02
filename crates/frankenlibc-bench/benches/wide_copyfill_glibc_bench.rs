@@ -146,6 +146,23 @@ fn bench(c: &mut Criterion) {
         println!("WCPNCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
     }
 
+    // wmemcpy: pure n-count wide copy (disjoint), the wide memcpy analog.
+    type MemcpyNFn = unsafe extern "C" fn(*mut u32, *const u32, usize) -> *mut u32;
+    let g_wmemcpy: MemcpyNFn = sym(b"wmemcpy\0");
+    for &n in &[4usize, 16, 32, 64, 128, 256, 1024] {
+        let src: Vec<u32> = std::iter::repeat(b'a' as u32).take(n).collect();
+        let sp = src.as_ptr();
+        let (mut dfl, mut dgl) = (vec![0u32; n], vec![0u32; n]);
+        unsafe { frankenlibc_abi::wchar_abi::wmemcpy(dfl.as_mut_ptr(), sp, n); g_wmemcpy(dgl.as_mut_ptr(), sp, n); }
+        assert_eq!(dfl, dgl, "wmemcpy mismatch n={n}");
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now(); for _ in 0..it { black_box(unsafe { frankenlibc_abi::wchar_abi::wmemcpy(black_box(dfl.as_mut_ptr()), black_box(sp), black_box(n)) }); } fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now(); for _ in 0..it { black_box(unsafe { g_wmemcpy(black_box(dgl.as_mut_ptr()), black_box(sp), black_box(n)) }); } gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        println!("WMEMCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
+    }
+
     grp.bench_function("noop", |b| b.iter(|| black_box(1u8))); grp.finish();
 }
 criterion_group!(benches, bench); criterion_main!(benches);

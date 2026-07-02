@@ -10006,3 +10006,20 @@ WCSNCPY beats glibc at n=256. Residual ~1.5-2.5x = portable-SIMD-vs-AVX2 wide-co
 (bounded scan + wide_copy_n) all fixed — none use the slow wide copy_nonoverlapping symbol.**
 LESSON: for WIDE (u32) copies, std::ptr::copy_nonoverlapping lowers to the interposed memcpy
 symbol whose wide path can be ~2 GB/s — ALWAYS use the inline SIMD wide_copy_n instead.
+
+### 2026-07-02 — ✅ wmemcpy strict path: inline SIMD wide_copy_n (was std::ptr::copy) — 34.5x glibc at 1 KiB -> 2.0x — BlackThrush
+
+wmemcpy (the wide memcpy analog, very hot) strict path did `std::ptr::copy(src, dst, n)` — for a
+wide (u32) copy that lowers to the interposed memmove SYMBOL, same ~2 GB/s trap as the wide
+copy_nonoverlapping. Deployed bench (WMEMCPY arm, N=n):
+  fl/glibc = 2.69 (n=4) 3.25 (16) 2.77 (32) 3.69 (64) 1.95 (128) 1.89 (256) 34.52 (1024)
+fl was 1408ns at n=1024. Fix: wide_copy_n (wmemcpy's C contract is disjoint = memcpy semantics,
+so the forward SIMD copy is correct). Byte-identical (conformance_diff_wchar 44 / wchar_abi 118,
+0 failed). After:
+  fl/glibc = 1.08 (n=4) 1.17 (16) 1.33 (32) 1.53 (64) 1.83 (128) 1.88 (256) 2.03 (1024)
+n=1024 34.5x->2.03x (1408ns->74ns, ~19x fl-side); small sizes near-parity. wmemmove LEFT ALONE
+(overlap-aware, needs std::ptr::copy). **WIDE COPY FAMILY FULLY SWEPT: wcscpy/wcpcpy/wcscat/
+wcsncat/wcsncpy/wcpncpy/wmemcpy all off the slow interposed copy_nonoverlapping/memmove symbol,
+now 1.0-2.5x (several beat glibc). Only wmemmove keeps the symbol (overlap semantics).** NOTE:
+the disk-full worker (hz1 pool, "No space left on device") failed one bench run — retried on a
+fresh worker; conformance ran clean throughout.
