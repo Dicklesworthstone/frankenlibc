@@ -9941,3 +9941,20 @@ pass is EXPENSIVE (wide wcscpy's second pass was the interposed-memcpy SYMBOL ca
 cleanly); when both passes are already tight internal SIMD loops, fusing adds per-chunk branch
 overhead and does not win. Contrast the wcscpy fuse (WON: removed a symbol call) vs this (LOST:
 both passes already cheap).
+
+### 2026-07-02 — ✗ NO LEVER: clock_gettime/gettimeofday already vDSO + parity with glibc — BlackThrush
+
+Probed the hot time family expecting fl might do raw syscalls where glibc uses the vDSO
+(a ~20-50x gap). It does NOT: raw_clock_gettime (time_abi.rs:230) already resolves and calls
+__vdso_clock_gettime / __vdso_gettimeofday (fall back to syscall only on vDSO miss), and time()
+uses __vdso_time. Deployed-symbol bench (clock_gettime_glibc_bench, dlmopen glibc):
+  CLOCK_GETTIME REALTIME  fl=34.34 glibc=32.16  fl/glibc=1.068
+  CLOCK_GETTIME MONOTONIC fl=32.50 glibc=31.26  fl/glibc=1.040
+  GETTIMEOFDAY            fl=33.76 glibc=31.78  fl/glibc=1.062
+PARITY (1.04-1.07x). The ~32ns vDSO call dominates; fl's per-call overhead (OnceLock
+get_or_init + vdso_resolution_enabled + clock_id validation + membrane output-fits check) adds
+only ~1-2ns (4-7%), not worth a fast-path shave. NOT A LEVER — time vDSO family is done. Bench
+kept as baseline apparatus so this isn't re-probed. (Also confirmed: strchr_locate ALREADY has
+its strict_passthrough fast path — the memory note about strchr's "5.5x membrane" residual is
+stale/fixed. The narrow-string membrane fast-path sweep is complete: strcpy/stpcpy/strcat were
+the last gaps, now closed.)

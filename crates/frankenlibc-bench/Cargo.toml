@@ -559,3 +559,9 @@ harness = false
 name = "strcpy_fused_ab_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# clock_gettime/gettimeofday deployed fl vs glibc (dlmopen) — vDSO per-call overhead.
+[[bench]]
+name = "clock_gettime_glibc_bench"
+required-features = ["abi-bench"]
+harness = false
