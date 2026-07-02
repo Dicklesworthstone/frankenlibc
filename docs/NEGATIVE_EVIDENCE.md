@@ -10179,3 +10179,22 @@ carries over (write A/B new/old=0.791 is representative; the by-stream lookup vs
 is the same code both sides). Byte-identical: stdio_abi_test 256 passed / 0 failed. Now the
 ENTIRE single-threaded stdio fast-path family (fputs/fputc/fwrite + fgetc/getc/fread) skips the
 per-call FILE*->id native lock for non-std streams. MT path (bd-hqo6b6) + std streams unchanged.
+
+### 2026-07-02 — ✅ feof/ferror pointer-keyed fast path — 4.8x faster (16.6ns saved/call, 3 locks -> 0) — BlackThrush
+
+Biggest stdio fast-path win yet. feof/ferror (hot in every `while(!feof(f))` read loop) took
+THREE locks per call: canonical_stream_id (native_stdio_fd_for_ptr lock for non-std) +
+registry_contains_stream (registry lock, host-delegation routing) + registry().lock() (the
+state read) — vs glibc's inline flag read (~1-2ns). Added a pointer-keyed fast path (reusing
+write_cache_lookup_by_stream): a cache hit guarantees a non-cookie, non-mem fd stream, so
+sync_fast_fixed_mem_read_to_stream is a no-op (fast_fixed_mem_read(id)==None) and reading
+is_eof()/is_error() directly is byte-identical to the slow path — skipping all 3 locks.
+
+DEFINITIVE SAME-PROCESS A/B (bench_feof_oldpath vs bench_feof_newpath, standalone-ST probe,
+worker-invariant, asserted equal result): old=21.00ns new=4.40ns **new/old=0.209 (4.8x faster),
+16.60ns saved/call**. (fputs A/B reconfirmed same run: new/old=0.799.) Byte-identical: strict
+stdio conformance stdio_abi_test 256 passed / 0 failed. ferror gets the identical treatment
+(is_error()). Helps single-threaded read loops enormously; MT path (registry lock, bd-hqo6b6)
+unchanged. **stdio pointer-keyed lock-elision now covers the whole ST hot family: fputs/fputc/
+fwrite (write) + fgetc/getc/fread (read) + feof/ferror (state) — all skip the per-call FILE*->id
+native lock; feof/ferror additionally skip the main registry lock.** Apparatus: stdio_st_probe.

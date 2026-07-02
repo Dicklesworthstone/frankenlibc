@@ -1192,6 +1192,28 @@ pub unsafe fn bench_fputs_newpath(s: *const c_char, stream: *mut c_void) -> bool
     false
 }
 
+/// Bench hook: OLD feof path (canonical_stream_id + registry lock + get + is_eof).
+#[doc(hidden)]
+pub fn bench_feof_oldpath(stream: *mut c_void) -> c_int {
+    let id = canonical_stream_id(stream);
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(s) = reg.streams.get_mut(&id) {
+        let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+        if s.is_eof() { 1 } else { 0 }
+    } else {
+        0
+    }
+}
+
+/// Bench hook: NEW feof fast path (pointer-keyed, lock-free is_eof).
+#[doc(hidden)]
+pub fn bench_feof_newpath(stream: *mut c_void) -> c_int {
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        return if unsafe { (*p).is_eof() } { 1 } else { 0 };
+    }
+    0
+}
+
 /// Snapshot of a stream's state for the `stdio_ext.h` introspection helpers
 /// (`__freadable`/`__fwritable`/`__flbf`/`__fbufsize`/`__fpending`).
 pub(crate) struct StreamExtInfo {
@@ -3679,6 +3701,15 @@ pub unsafe extern "C" fn rewind(stream: *mut c_void) {
 /// POSIX `feof`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
+    // Single-threaded inline fast path: the pointer-keyed write cache only ever holds
+    // non-cookie, non-mem fd streams, so `sync_fast_fixed_mem_read_to_stream` is a no-op
+    // for a cached stream (fast_fixed_mem_read(id) == None) — reading `is_eof()` directly
+    // is byte-identical to the slow path, skipping canonical_stream_id's native lock +
+    // registry_contains_stream + registry().lock() (3 locks/call, hot in `while(!feof)`).
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated (unique access) + gen-valid ⇒ pointer live, shared read only.
+        return if unsafe { (*p).is_eof() } { 1 } else { 0 };
+    }
     let id = canonical_stream_id(stream);
     if id == 0 {
         return 0;
@@ -3702,6 +3733,12 @@ pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
 /// POSIX `ferror`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ferror(stream: *mut c_void) -> c_int {
+    // Single-threaded inline fast path (see feof): cached => non-mem fd stream => read
+    // `is_error()` directly, skipping the 3 per-call locks. Byte-identical.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
+        return if unsafe { (*p).is_error() } { 1 } else { 0 };
+    }
     let id = canonical_stream_id(stream);
     if id == 0 {
         return 0;

@@ -80,7 +80,20 @@ fn main() {
     }
     let (op, np) = (pctl(&os, 0.5), pctl(&ns, 0.5));
     println!("FPUTS_LOOKUP_AB old={op:.2} new={np:.2} new/old={:.3} saved={:.2}ns", np/op, op-np);
+
+    // feof A/B: 3-lock old path vs pointer-keyed lock-free new path (same process).
+    unsafe { assert_eq!(fl::bench_feof_oldpath(ff), fl::bench_feof_newpath(ff)); }
+    let (mut fo, mut fn_) = (Vec::new(), Vec::new());
+    for _ in 0..120 {
+        let t = Instant::now(); for _ in 0..it { black_box_i32(unsafe { fl::bench_feof_oldpath(black_box_ptr(ff)) }); } fo.push(t.elapsed().as_nanos() as f64 / it as f64);
+        let t = Instant::now(); for _ in 0..it { black_box_i32(unsafe { fl::bench_feof_newpath(black_box_ptr(ff)) }); } fn_.push(t.elapsed().as_nanos() as f64 / it as f64);
+    }
+    let (fop, fnp) = (pctl(&fo, 0.5), pctl(&fn_, 0.5));
+    println!("FEOF_AB old={fop:.2} new={fnp:.2} new/old={:.3} saved={:.2}ns", fnp/fop, fop-fnp);
 }
+
+#[inline(never)]
+fn black_box_i32(v: i32) -> i32 { std::hint::black_box(v) }
 
 #[inline(never)]
 fn black_box_bool(v: bool) -> bool { std::hint::black_box(v) }
