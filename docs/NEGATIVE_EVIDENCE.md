@@ -10439,8 +10439,12 @@ empty/ENOMEM(-1,true) + success(len,false) telemetry exactly; conformance stdio_
 single-threaded. The skipped lock-set is the one measured on fgets (same-process A/B old=18.81ns
 new=8.05ns, new/old=0.428, 10.76ns saved/line) — getdelim skips the same per-line locks. Combined
 with the prior thread-local scratch (78286251c, 1.46x), getline's per-line overhead is now scratch
-+ lock-free. (End-to-end getline per-line ratio not re-captured this turn — build cut short; the
-lock-set saving is the fgets-measured 10.76ns/line, and getline was 189ns/line post-scratch.)
++ lock-free. **MEASURED end-to-end (300-char lines, per-line incl amortized rewind): getline
+189.43 -> 119.67 ns/line = 1.58x faster, 69.76ns saved/line; fl/glibc 2.56x -> 1.63x.** The 69ns
+saving (>> the fgets 10.76ns lock-set) is because getdelim's slow path had TWO registry locks
+(registry_contains_stream + registry().lock()) + decide + observe, ALL skipped by the fast path,
+and the cache-store makes it fire for pure getline loops. Cumulative getline this session:
+290.62 -> 119.67 ns/line = 2.43x (scratch 1.46x x pointer-keyed 1.58x).
 getline delegates to getdelim (inherits). REJECTED same turn: the getdelim temp->caller
 copy_nonoverlapping is NOT the wide-copy trap — narrow u8 copy_nonoverlapping is fine (measured
 195.58->189.43ns at 300-char lines = ~3%/noise), so raw_memcpy_bytes swap reverted. Narrow != wide
