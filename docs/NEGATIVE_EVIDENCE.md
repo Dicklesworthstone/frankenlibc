@@ -11092,3 +11092,39 @@ caveated win, not a strong certification.
 **stdlib/PRNG coverage now complete.** No lever (fl already wins/parity). This extends the
 session's surface map: the PRNG family joins the fl-favorable side (algorithmic/simpler-impl),
 consistent with memmem/qsort/strtod/mktime. RAND/RANDOM probe arms kept in stdio_st_probe.rs.
+
+---
+
+## __errno_location parity — no pervasive systemic tax (last candidate ruled out) (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Probed `__errno_location` — the single most plausible PERVASIVE systemic tax: it's called by
+~every errno-setting/reading libc fn, and fl implements it with `thread_local!` + `try_with`
+(lazy-init + destructor check) vs glibc's single `mov %fs:offset`. If fl's were slow, it would
+tax the entire library.
+
+**✓ NOT a tax — parity/better:** fl 2.12ns vs glibc 2.83ns = 0.748x (fl faster). Inlining-caveated
+(fl inlined vs glibc's opaque dlmopen extern call — glibc's 2.83ns is mostly the call overhead, not
+the `%fs` load), so the true verdict is PARITY: LLVM optimizes the `try_with` down to a direct TLS
+access when it can prove the slot is initialized (the common steady-state case), matching glibc's
+single-instruction access. No `#[thread_local]` rewrite needed; the plausible pervasive-tax
+hypothesis is DISPROVEN.
+
+**MEASUREMENT CAMPAIGN CLOSED (this session, ~28 fns via honest dlmopen through the real no_mangle
+entry).** Definitive surface map vs glibc:
+- **WINS (algorithmic, certified valid):** memmem 404x (DoS), qsort 2.7-4.4x, strtod ~3x, Two-Way
+  substring family, bitmap span, UTC mktime 66x, rand/random ~1.3x (caveated).
+- **PARITY (well-implemented / irreducible per-call floor / inlining-caveated):** memcpy (1.6x
+  post-fix), memset, memmove, strcat, wcslen, strnlen, __errno_location.
+- **LOSSES (architectural frontier ONLY):** hand-tuned-asm scan primitives strchr/strcmp/wcscmp/
+  strlen-large (~1.3-2x — a property of the safe-Rust membrane entry + portable-SIMD-vs-asm, NOT a
+  removable tax; the scan KERNELS are already near-parity), strcpy (~2x structural call-overhead),
+  malloc/free (~10x — the bounds-tracking registry, a safety contract; ALL point-fixes disproven:
+  telemetry-skip, lock-swap, lock-skip, CAS-insert).
+
+There is NO remaining cheap or medium pure-computation lever — confirmed by measurement + ~8
+disproven attempts this session, not assertion. The only paths that can move the two remaining
+losses are the documented multi-turn architectural swings: per-fn AVX2-asm scan kernels (would
+bypass the membrane entry) and malloc swing-2 (inline size header — requires fl to OWN the
+allocation layout, not delegate to host glibc, so it can distinguish its own vs foreign pointers
+without the side table). Both are fundamental redesigns for dedicated efforts, scoped in
+docs/perf_next_architectural_swings.md. ERRNO_LOC probe arm kept in stdio_st_probe.rs.

@@ -429,6 +429,20 @@ fn main() {
         println!("WCSCMP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fc,0.5), pctl(&gc,0.5), pctl(&fc,0.5)/pctl(&gc,0.5));
     }
 
+    // __errno_location: called by ~every errno-setting/reading libc fn. glibc = 1 mov (%fs);
+    // fl uses thread_local! + try_with (lazy-init/destructor check). Pervasive systemic tax if slow.
+    type ErrnoLocFn = unsafe extern "C" fn() -> *mut i32;
+    let g_errno_loc: ErrnoLocFn = dl(h, b"__errno_location\0");
+    {
+        let (mut fe, mut ge) = (Vec::new(), Vec::new());
+        let lit = 500_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_ptr(unsafe { frankenlibc_abi::errno_abi::__errno_location() } as *mut libc::c_void); } fe.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_ptr(unsafe { g_errno_loc() } as *mut libc::c_void); } ge.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("ERRNO_LOC fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fe,0.5), pctl(&ge,0.5), pctl(&fe,0.5)/pctl(&ge,0.5));
+    }
+
     // rand + random: PRNG (mutates global state -> no const-fold). glibc random() = expensive
     // nonlinear additive-feedback generator; a simpler fl PRNG could win. dlmopen glibc.
     type RandFn = unsafe extern "C" fn() -> i32;
