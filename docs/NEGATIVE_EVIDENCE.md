@@ -10563,3 +10563,26 @@ per-fn AVX2 asm strrchr (recursion-safe, page-safe reverse scan), not an algorit
 "glibc uses a 2-pass algo and fl's sub-primitive is fast" does NOT imply the 2-pass wins in fl —
 the doubled memory traffic + setup dominated; the single-pass was already the better portable shape.
 Same class as strcmp (dual-pointer, AVX2-ceiling). Both are asm-only levers. STRRCHR probe apparatus.
+
+### 2026-07-02 — ⚠️ CORRECTION (honest dlmopen): strchr + memchr LOSE to glibc (1.07-2.46x) — the biased bench HID it — BlackThrush
+
+MAJOR correction. Prior memory REPEATEDLY claimed fl strchr (eede9140e "BEATS glibc 0.58-0.99") and
+memchr ("new/glibc 0.75 BEATS glibc 1.33x") beat glibc — but those were via glibc_baseline_bench
+(Rust-to-Rust thin-LTO) or same-process A/B-vs-old-fl, NOT vs real glibc. Honest dlmopen (full scan,
+target near end so both scan the whole string):
+  STRCHR n=64 1.779x   n=256 2.465x   n=1024 1.872x  (fl LOSES)
+  MEMCHR n=64 2.393x   n=256 1.563x   n=1024 1.074x  (fl LOSES; near-parity only at 1024)
+So fl's HOTTEST search fns are SLOWER than glibc — the SAME biased-bench artifact that hid the
+wcschr/wcscpy gaps this session. The memory's "strchr/memchr beat glibc" is FALSE vs real glibc; the
+A/B "wins" were only vs the OLD SWAR fl code, not glibc's AVX2. THE WHOLE SIMD-SCAN FAMILY loses to
+glibc (portable-SIMD 32B vs AVX2/EVEX 64B, no native unsigned-SIMD-compare on the portable path):
+strchr 1.8-2.5x, memchr 1.07-2.4x, strrchr 1.2-1.7x (2-pass rejected), strcmp 1.2-2.4x, wcschr
+1.4-2.3x. memchr's n=1024 near-parity (1.07x) shows the kernel is closest at large size; the
+small-size losses (2.4x @64) are SIMD-setup + extern-C-frame floor. FIXABLE ONLY by per-fn AVX2/EVEX
+asm (recursion-safe like the memset rep-stosb / memcpy vmovdqu-asm precedent in this crate) —
+portable-SIMD cannot match AVX2 for these scans. NO algorithm swap helps (strrchr 2-pass proved
+worse). HONEST FRONTIER: fl WINS algorithmic (qsort 3x, strtod 3x, stdio read/write, memmem/strstr
+Two-Way) but LOSES the SIMD-scan family to glibc's AVX2 (asm-only lever) + architectural (malloc/MT).
+The "fl core surface dominant" narrative was inflated by the LTO-biased bench for the scan family.
+Apparatus: STRCHR/MEMCHR arms in stdio_st_probe. LESSON: re-measure EVERY biased-bench "win" vs real
+glibc via dlmopen — the scan family was systematically over-claimed.

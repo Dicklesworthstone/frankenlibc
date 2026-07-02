@@ -274,6 +274,26 @@ fn main() {
         let (fsp, gsp) = (pctl(&fsv,0.5), pctl(&gsv,0.5));
         println!("STRRCHR n={n} fl={fsp:.2} glibc={gsp:.2} fl/glibc={:.3}", fsp/gsp);
     }
+
+    // strchr + memchr: the hottest search fns. Target present once early (full scan). fl vs glibc.
+    type StrchrFn = unsafe extern "C" fn(*const c_char, i32) -> *mut c_char;
+    type MemchrFn = unsafe extern "C" fn(*const libc::c_void, i32, usize) -> *mut libc::c_void;
+    let g_strchr: StrchrFn = dl(h, b"strchr\0");
+    let g_memchr: MemchrFn = dl(h, b"memchr\0");
+    for &n in &[64usize, 256, 1024] {
+        let mut sv: Vec<u8> = std::iter::repeat(b'a').take(n).collect(); sv[n-3] = b'b'; sv.push(0);
+        let scp = sv.as_ptr() as *const c_char;
+        let (mut fcv, mut gcv, mut fmv, mut gmv) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let cit = 100_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..cit { std::hint::black_box(unsafe { frankenlibc_abi::string_abi::strchr(scp, b'b' as i32) }); } fcv.push(t.elapsed().as_nanos() as f64 / cit as f64);
+            let t = Instant::now(); for _ in 0..cit { std::hint::black_box(unsafe { g_strchr(scp, b'b' as i32) }); } gcv.push(t.elapsed().as_nanos() as f64 / cit as f64);
+            let t = Instant::now(); for _ in 0..cit { std::hint::black_box(unsafe { frankenlibc_abi::string_abi::memchr(scp.cast(), b'b' as i32, n) }); } fmv.push(t.elapsed().as_nanos() as f64 / cit as f64);
+            let t = Instant::now(); for _ in 0..cit { std::hint::black_box(unsafe { g_memchr(scp.cast(), b'b' as i32, n) }); } gmv.push(t.elapsed().as_nanos() as f64 / cit as f64);
+        }
+        println!("STRCHR n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fcv,0.5), pctl(&gcv,0.5), pctl(&fcv,0.5)/pctl(&gcv,0.5));
+        println!("MEMCHR n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fmv,0.5), pctl(&gmv,0.5), pctl(&fmv,0.5)/pctl(&gmv,0.5));
+    }
 }
 
 #[inline(never)]
