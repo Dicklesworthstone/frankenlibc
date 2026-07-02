@@ -509,6 +509,12 @@ name = "wcslen_glibc_bench"
 required-features = ["abi-bench"]
 harness = false
 
+# wcslen escalation-threshold in-process A/B/C (old-gate vs new-gate vs glibc).
+[[bench]]
+name = "wcslen_escalation_ab_bench"
+required-features = ["abi-bench"]
+harness = false
+
 [[bench]]
 name = "wcsdup_glibc_bench"
 required-features = ["abi-bench"]

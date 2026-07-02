@@ -200,9 +200,14 @@ unsafe fn wide_strlen_unbounded(s: *const u32) -> usize {
         return m0.trailing_zeros() as usize - align;
     }
     let mut i = 8 - align; // s+i is 32-byte (8-u32) aligned
-    // 8-lane tier: short strings terminate here; escalate to the 128B unroll only once
-    // confirmed long (i>=64 elems = 256 B) AND `s+i` 128-byte aligned (page-safe).
-    while i < 64 || (pb + i * 4) & 127 != 0 {
+    // 8-lane tier: step 32 B/iter until `s+i` reaches the next 128-byte boundary, then
+    // escalate to the 128B min-combine unroll. A short string terminates in this tier
+    // before it ever reaches the boundary (each 8-lane load already probes 32 B), so we
+    // no longer wait for the old i>=64 (256 B) gate that kept medium strings — the whole
+    // 32..256-wchar band — stuck at 32 B/iter and losing to glibc's early 128 B loop.
+    // 128-alignment keeps every 128 B window inside one page (128 | 4096), so this is
+    // still page-safe for the untracked/unbounded scan.
+    while (pb + i * 4) & 127 != 0 {
         // SAFETY: s+i is 32-byte aligned ⇒ the 32-byte window stays in one page.
         let v = Simd::<u32, 8>::from_slice(unsafe { std::slice::from_raw_parts(s.add(i), 8) });
         let m = v.simd_eq(z).to_bitmask();

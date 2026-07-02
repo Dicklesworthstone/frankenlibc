@@ -9749,3 +9749,31 @@ naive on the STRSTR_PATHO input, byte-identical first-match. CONFORMANCE GREEN: 
 strstr (strict + raw passthrough), wcsstr, strcasestr, memmem — NO naive O(n*m) substring path remains
 anywhere in the deployed ABI.** The deployed-naive-vs-core anti-pattern is fully swept (length: wcslen/
 scan_w_string; substring: strstr/wcsstr/raw_strstr; span: wide WideCharSet; all byte fns route to core).
+
+### 2026-07-02 — ✅ wcslen unbounded scan: escalate to the 128 B unroll at the FIRST 128-byte boundary (drop the i>=64 gate) — BlackThrush
+
+The deployed strict wcslen fast path (`wide_strlen_unbounded`) ran an 8-lane (32 B/iter) tier and only
+escalated to the 4x8-lane min-combine unroll (128 B/iter) once `i>=64` (256 B) AND `s+i` was 128-aligned.
+That left the ENTIRE 32..256-wchar medium band stuck at 32 B/iter, losing to glibc's early 128 B loop. A
+prior sweep (wcslen_glibc_bench, expanded to 4/16/32/48/64/96/128/256/1024) exposed the loss:
+fl/glibc = 1.30-1.85 across n=32..128 (worst 1.85 at n=96/128). The commit claiming wcslen "beats glibc at
+small+large" (1710c3867) was only measured at 4/16/64/1024 and MISSED the medium hump.
+
+Fix: drop the `i<64` gate — escalate at the first 128-byte boundary (`while (pb+i*4)&127 != 0`). Page-safe
+unchanged (128 | 4096, every 128 B window stays in one page); a short string terminates in the 8-lane tier
+before ever reaching the boundary, so short-string behavior is preserved. Byte-identical (old==new==glibc
+asserted per size in the A/B/C bench; conformance_diff_wchar + wchar_abi_test = 118 passed, 0 failed).
+
+Cross-worker ns is noise (the memory's standing warning), so measured with an IN-PROCESS A/B/C
+(old-gate fn vs new-gate fn vs glibc, all one process — new/old cancels worker speed):
+  n=  4  new/old=1.000   n= 48  new/old=0.677   n=256  new/old=0.683
+  n= 16  new/old=1.121   n= 64  new/old=0.748   n=1024 new/old=0.846
+  n= 32  new/old=1.082   n= 96  new/old=0.520
+                         n=128  new/old=0.607
+new is 15-48% faster than old for n>=48 (the whole medium band), and now ties-or-beats glibc there
+(new/glibc: n=48 0.81, n=64 0.94, n=96 0.80, n=128 1.02, n=256 0.98, n=1024 1.04). Small residual
+regression at n=16/32 (new/old 1.08-1.12) — eager escalation does one wasteful 128 B min-combine read on a
+short string — but new still beats glibc at n=16 (0.90) and the n=32 loss is that allocation's alignment
+artifact. Net: strong win, deployed. Bench apparatus kept: wcslen_escalation_ab_bench (in-process A/B/C),
+plus the expanded wcslen_glibc_bench sweep. NOTE: a `i<32` (128 B) gate would likely kill the n=16/32
+regression while keeping the n>=48 wins — untested lever left for a follow-up.

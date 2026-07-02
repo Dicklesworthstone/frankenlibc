@@ -17,7 +17,7 @@ fn pctl(s: &[f64], q: f64) -> f64 { let mut v=s.to_vec(); v.sort_by(|a,b|a.parti
 fn bench(c: &mut Criterion) {
     let g = host();
     let mut grp = c.benchmark_group("wcslen"); grp.sample_size(30);
-    for &n in &[4usize, 16, 64, 1024] {
+    for &n in &[4usize, 16, 32, 48, 64, 96, 128, 256, 1024] {
         let mut buf: Vec<u32> = std::iter::repeat(b'a' as u32).take(n).collect(); buf.push(0);
         let p = buf.as_ptr();
         assert_eq!(unsafe { frankenlibc_abi::wchar_abi::wcslen(p) }, unsafe { g(p) }, "wcslen fl!=glibc n={n}");
