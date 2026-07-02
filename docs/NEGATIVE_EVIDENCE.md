@@ -62,6 +62,26 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ strstr first-byte-scan fused — kills the substr_fused double-scan; ~3x faster than the prior fused, near parity with glibc (3.5x→1.3x)
+
+- **DEPLOYED (cc):** the shipped `substr_fused` scanned each chunk for NUL
+  (`scan_c_string(Some(chunk))`) THEN ran `memmem` — a DOUBLE scan of the chunk (for a
+  match at offset 512 in a 2048-chunk: ~2560 bytes scanned vs glibc's ~512). For the
+  EXACT strstr path, replaced it with `strstr_fused_firstbyte`: find the first
+  `needle[0]` via the page-safe NUL-AWARE `scan_c_string_for_byte` (ONE pass, no separate
+  NUL scan), verify the rest, advance — glibc's structure — with an O(n+m) Two-Way
+  bailout (`miss_work > cand.max(256)`) for adversarial common-first-byte input. strcasestr
+  / wcsstr keep `substr_fused` (they already BEAT glibc, no double-scan gap to close).
+- **BYTE-IDENTICAL + PAGE-SAFE:** conformance_diff_string_search (6000-case strstr-vs-glibc
+  differential — incl. alpha-2/3 cases that trigger the bailout — + the fused guard-page
+  test) GREEN. The verify loop reads `haystack[cand+k]` byte-by-byte, stopping at the
+  first mismatch OR NUL, so it never reads past the NUL's page.
+- **MEASURED (`strstr_glibc_bench`, mmap haystack, deployed fl vs dlmopen glibc):**
+  strstr fl/glibc **early_64k 3.5–4x → 1.34x, early_256k → 1.29x, absent_64k 2.08x →
+  1.21x** — the double-scan elimination is ~3x faster than the prior fused
+  (early fl 98ns → 32ns) and brings strstr to NEAR PARITY with glibc. (The residual
+  ~1.3x is core memchr/scan_c_string_for_byte throughput vs glibc's tuned AVX2.)
+
 ## 2026-07-02 — ✅ FUSED wcsstr (wide) — completes the substring family; BEATS glibc 2.5–6.3x, byte-identical + wide guard-page proven
 
 - **DEPLOYED (cc):** wide analog of the fused strstr — `wcsstr_fused` searches the

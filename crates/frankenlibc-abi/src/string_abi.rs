@@ -4309,6 +4309,74 @@ unsafe fn substr_fused(
     }
 }
 
+/// FUSED exact strstr for an UNTRACKED NUL-terminated haystack (2 <= needle_len <=
+/// 256): find the first occurrence of `needle[0]` via the page-safe, NUL-AWARE
+/// `scan_c_string_for_byte` (ONE pass — no separate per-chunk NUL scan, unlike
+/// `substr_fused`), verify the rest of the needle there, and advance. This is
+/// glibc's structure and avoids `substr_fused`'s double-scan (chunk NUL scan THEN
+/// memmem). To keep the O(n+m) guarantee against adversarial input (a common first
+/// byte, e.g. `"aa…a"` searched for `"aa…ab"`), once cumulative verify work exceeds
+/// the scanned position it bails to Two-Way `memmem` over the NUL-terminated tail.
+/// Both paths return the leftmost match, so the result is byte-identical.
+///
+/// PAGE-SAFE: `scan_c_string_for_byte(None)` is page-safe (guard-page proven); the
+/// verify loop reads `haystack[cand+k]` for `k < needle_len` byte-by-byte and stops
+/// at the first mismatch OR NUL (the needle has no NUL), so it never reads past the
+/// terminating NUL's page.
+///
+/// # Safety
+/// `haystack` valid NUL-terminated; `needle` readable for `needle_len` (>=2) bytes.
+unsafe fn strstr_fused_firstbyte(
+    haystack: *const c_char,
+    needle: *const u8,
+    needle_len: usize,
+) -> *mut c_char {
+    let hp = haystack.cast::<u8>();
+    // SAFETY: needle readable for needle_len bytes.
+    let ns = unsafe { std::slice::from_raw_parts(needle, needle_len) };
+    let n0 = ns[0];
+    let mut pos = 0usize; // absolute offset to resume the first-byte scan
+    let mut miss_work = 0usize;
+    loop {
+        // First occurrence of needle[0] at/after `pos`, or the terminating NUL.
+        // SAFETY: page-safe NUL-aware scan.
+        let (i, found, _) = unsafe { scan_c_string_for_byte(hp.add(pos).cast(), n0, None) };
+        if !found {
+            return std::ptr::null_mut(); // NUL reached before another needle[0]
+        }
+        let cand = pos + i;
+        // Verify needle[1..] at cand+1; stop at the first mismatch or NUL (page-safe:
+        // reads only up to the NUL, which is mapped).
+        let mut k = 1usize;
+        let mut matched = true;
+        while k < needle_len {
+            // SAFETY: cand+k <= NUL position while bytes match (needle has no NUL), so
+            // the read is within the mapped string up to and including its NUL.
+            if unsafe { *hp.add(cand + k) } != ns[k] {
+                matched = false;
+                break;
+            }
+            k += 1;
+        }
+        if matched {
+            return unsafe { hp.add(cand) as *mut c_char };
+        }
+        miss_work += needle_len;
+        pos = cand + 1;
+        // Adversarial guard: once verification work outweighs the scan distance,
+        // finish with the guaranteed O(n+m) Two-Way over the NUL-terminated tail.
+        if miss_work > cand.max(256) {
+            // SAFETY: page-safe scan to NUL, then a bounded slice search.
+            let (rest, _) = unsafe { scan_c_string(hp.add(cand).cast(), None) };
+            let win = unsafe { std::slice::from_raw_parts(hp.add(cand), rest) };
+            return match frankenlibc_core::string::mem::memmem(win, rest, ns, needle_len) {
+                Some(idx) => unsafe { hp.add(cand + idx) as *mut c_char },
+                None => std::ptr::null_mut(),
+            };
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // strstr
 // ---------------------------------------------------------------------------
@@ -4361,12 +4429,10 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
                     std::ptr::null_mut()
                 }
             } else if hay_bound.is_none() && needle_len <= 256 {
-                // Untracked haystack (no bound to preserve): FUSED page-chunked search —
-                // no whole-haystack pre-scan, returns at the first match (glibc's shape).
-                let ns = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
-                substr_fused(haystack, needle_len, |win| {
-                    frankenlibc_core::string::mem::memmem(win, win.len(), ns, needle_len)
-                })
+                // Untracked haystack (no bound to preserve): FUSED first-byte scan +
+                // verify (NUL-aware, single pass — no per-chunk NUL prescan), returns
+                // at the first match (glibc's shape).
+                strstr_fused_firstbyte(haystack, needle.cast::<u8>(), needle_len)
             } else {
                 // Tracked buffer (keep the bound → preserves unterminated-buffer bounding)
                 // or a very long needle: full pre-scan + Two-Way memmem.
