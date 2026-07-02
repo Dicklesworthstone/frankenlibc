@@ -11069,3 +11069,26 @@ malloc inline-header redesign (both scoped in docs/perf_next_architectural_swing
 multi-turn swings). STRCAT probe arm kept in stdio_st_probe.rs.
 
 **✗ malloc registry single-threaded lock-SKIP — REJECTED (neutral, BlackThrush 2026-07-02).** New lever: gate `lock_fallback_alloc_table`'s acquire-CAS on `__libc_single_threaded == 1` (skip the lock when provably uncontended — the exact idiom fl's stdio pointer-cache + glibc's own malloc use). Sound (single thread ⇒ no concurrent table access; allocator reentry guard already serialises signal reentry). MEASURED neutral: malloc+free 46.7→48.6ns (within noise, slightly worse). WHY: an UNCONTENDED AtomicBool CAS is already ~1ns, and the `__libc_single_threaded.load(Acquire)` that replaces it costs about the same — net zero. Reverted. Confirms the memory's "lightweight AtomicBool → no lock-swap win" AND extends it: no lock-SKIP win either. The registry cost is DIFFUSE (hash-probe + the ptr/size/min/max atomic stores + record_alloc_stats + reentry guard + native call), no single hotspot — reconfirms a389735d3's "needs a slim fast path, not a point fix". The ONLY malloc lever remains swing-2 (inline size header, eliminates the table entirely). Lock-skip/lock-swap/telemetry-skip all now disproven.
+
+---
+
+## rand/random ~1.3-1.4x faster than glibc (honest dlmopen, inlining-caveated) (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Probed the PRNG family (untested this session; mutates global state → NO const-fold bias, unlike
+atoi/strspn). fl **rand 4.22ns vs glibc 5.94ns = 0.710x**; **random 3.97ns vs glibc 5.28ns =
+0.752x** — fl ~1.3-1.4x faster.
+
+**◐ Modest WIN, direction solid / exact ratio SOFT.** Valid in that both do real state-update work
+(no const-fold), and the direction is real: glibc's `random()` is an expensive nonlinear
+additive-feedback generator (31-word state, several array reads/writes + modular arithmetic per
+call) while fl uses a simpler/cheaper generator, so fl genuinely does less work. CAVEAT: fl rand/
+random are inlined here (same crate) vs glibc's opaque dlmopen call, and for a ~4-6ns leaf that
+inlining is a meaningful fraction of the 1.7ns gap — so the true deployed advantage is likely
+smaller (~parity-to-1.2x), not the full 1.4x. Also not verified: whether fl's `random()` matches
+glibc's statistical quality (POSIX doesn't mandate the sequence, so a faster/simpler generator is
+conformant, but if fl's is weaker the "win" is partly a quality tradeoff). Recorded as a modest
+caveated win, not a strong certification.
+
+**stdlib/PRNG coverage now complete.** No lever (fl already wins/parity). This extends the
+session's surface map: the PRNG family joins the fl-favorable side (algorithmic/simpler-impl),
+consistent with memmem/qsort/strtod/mktime. RAND/RANDOM probe arms kept in stdio_st_probe.rs.

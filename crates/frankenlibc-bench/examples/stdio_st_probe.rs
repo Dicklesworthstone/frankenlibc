@@ -429,6 +429,25 @@ fn main() {
         println!("WCSCMP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fc,0.5), pctl(&gc,0.5), pctl(&fc,0.5)/pctl(&gc,0.5));
     }
 
+    // rand + random: PRNG (mutates global state -> no const-fold). glibc random() = expensive
+    // nonlinear additive-feedback generator; a simpler fl PRNG could win. dlmopen glibc.
+    type RandFn = unsafe extern "C" fn() -> i32;
+    type RandomFn = unsafe extern "C" fn() -> libc::c_long;
+    let g_rand: RandFn = dl(h, b"rand\0");
+    let g_random: RandomFn = dl(h, b"random\0");
+    {
+        let (mut fr, mut gr, mut frnd, mut grnd) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let lit = 500_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { frankenlibc_abi::stdlib_abi::rand() }); } fr.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { g_rand() }); } gr.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i64(unsafe { frankenlibc_abi::stdlib_abi::random() as i64 }); } frnd.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i64(unsafe { g_random() as i64 }); } grnd.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("RAND fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fr,0.5), pctl(&gr,0.5), pctl(&fr,0.5)/pctl(&gr,0.5));
+        println!("RANDOM fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&frnd,0.5), pctl(&grnd,0.5), pctl(&frnd,0.5)/pctl(&grnd,0.5));
+    }
+
     // strcat: builder = scan dst-to-NUL + copy src. Common; can hide two-pass/naive issues.
     type StrcatFn = unsafe extern "C" fn(*mut c_char, *const c_char) -> *mut c_char;
     let g_strcat: StrcatFn = dl(h, b"strcat\0");
