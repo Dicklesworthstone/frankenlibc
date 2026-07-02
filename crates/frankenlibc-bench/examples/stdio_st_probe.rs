@@ -168,6 +168,28 @@ fn main() {
     }
     let (flpl, glpl) = (pctl(&fl_v,0.5), pctl(&gl_v,0.5));
     println!("GETLINE_PERLINE fl={flpl:.2} glibc={glpl:.2} fl/glibc={:.3} (ns/line incl amortized rewind)", flpl/glpl);
+
+    // Large sequential fread over a 256 KiB file in 4 KiB chunks (exercises the buffered refill
+    // path). fl vs glibc, ns per fread call (amortized rewind). Certifies the read path.
+    type FreadFn = unsafe extern "C" fn(*mut libc::c_void, usize, usize, *mut libc::c_void) -> usize;
+    let g_fread: FreadFn = dl(h, b"fread\0");
+    let big = vec![b'z'; 256 * 1024];
+    std::fs::write("/tmp/fl_fread_probe.bin", &big).unwrap();
+    let bpath = b"/tmp/fl_fread_probe.bin\0".as_ptr() as *const c_char;
+    let flr = unsafe { fl::fopen(bpath, rmode) }; assert!(!flr.is_null());
+    unsafe { fl::setvbuf(flr, std::ptr::null_mut(), libc::_IOFBF, cap); }
+    let gr = unsafe { g_fopen(bpath, rmode) }; assert!(!gr.is_null());
+    unsafe { g_setvbuf(gr, std::ptr::null_mut(), libc::_IOFBF, cap); }
+    let mut chunk = vec![0u8; 4096];
+    let chunks_per = (256 * 1024) / 4096u64; // 64
+    let riter = 400u64;
+    let (mut frv, mut grv) = (Vec::new(), Vec::new());
+    for _ in 0..80 {
+        let t = Instant::now(); for _ in 0..riter { unsafe { while frankenlibc_abi::stdio_abi::fread(chunk.as_mut_ptr().cast(), 1, 4096, flr) == 4096 {} fl::rewind(flr); } } frv.push(t.elapsed().as_nanos() as f64 / (riter * chunks_per) as f64);
+        let t = Instant::now(); for _ in 0..riter { unsafe { while g_fread(chunk.as_mut_ptr().cast(), 1, 4096, gr) == 4096 {} g_rewind(gr as *mut libc::c_void); } } grv.push(t.elapsed().as_nanos() as f64 / (riter * chunks_per) as f64);
+    }
+    let (frp, grp) = (pctl(&frv,0.5), pctl(&grv,0.5));
+    println!("FREAD_4K fl={frp:.2} glibc={grp:.2} fl/glibc={:.3} (ns per 4KiB fread)", frp/grp);
 }
 
 #[inline(never)]
