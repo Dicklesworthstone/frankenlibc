@@ -11038,3 +11038,32 @@ mktime (66x), fl wins decisively wherever the advantage is algorithmic. The cert
 confined to the hand-tuned-asm scan primitives (strchr/strcmp/wcscmp/strlen-large ~1.3-2x = the
 documented AVX2-asm frontier) and the architectural malloc registry (~10x, bounds-tracking safety
 contract). QSORT_SORTED probe arm kept in stdio_st_probe.rs.
+
+---
+
+## strcat CERTIFIED parity (honest dlmopen) — string-builder coverage complete (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Probed strcat (common builder = scan-dst-to-NUL + copy-src; builders can hide two-pass/naive
+structural issues like the memcpy-HTM / memcmp-dispatch losses fixed earlier this session).
+
+**✓ CERTIFIED parity — no fixable structural loss:** fl/glibc **1.221x (dn=8,sn=8) → 1.164x
+(32,16) → 0.885x (64,32, fl WINS)**. strcat's strict path is already clean (scan_c_string for the
+dst-NUL + `raw_memcpy_bytes`→`raw_overlap_copy` for the src copy, no dispatch/HTM/naive loop). The
+small-n ~1.2x is the SAME irreducible per-call floor documented for strcmp: one
+`strict_passthrough_active()` relaxed-atomic load + one non-inlined helper-call boundary, vs
+glibc's zero-setup leaf-asm builder — not a removable dead tax. Confirms the memory's "strcat
+parity" claim under honest measurement; no lever.
+
+**Measurement sweep now COMPREHENSIVE this session** (all honest dlmopen through the real
+no_mangle entry). Map of the deployed surface vs glibc:
+- **Algorithmic WINS (certified valid):** memmem 404x (DoS), qsort 2.7-4.4x, strtod ~3x, Two-Way
+  substring family, bitmap span, UTC mktime 66x.
+- **PARITY (near 1x, well-implemented, irreducible per-call floor):** strcat, memcpy (1.6x after
+  this session's fixes), memset, memmove, wcslen, strnlen.
+- **Losses = asm/architectural frontier ONLY:** scan primitives strchr/strcmp/wcscmp/strlen-large
+  (~1.3-2x, portable-SIMD-vs-hand-tuned-AVX2-asm, build already `+avx2`), strcpy (~2x structural
+  call-overhead), malloc/free (~10x, required bounds-tracking registry — a safety contract).
+
+No cheap pure-computation lever remains; the frontier is the per-fn AVX2-asm scan kernels and the
+malloc inline-header redesign (both scoped in docs/perf_next_architectural_swings.md as dedicated
+multi-turn swings). STRCAT probe arm kept in stdio_st_probe.rs.

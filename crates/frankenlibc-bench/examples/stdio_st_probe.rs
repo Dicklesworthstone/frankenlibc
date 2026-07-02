@@ -429,6 +429,25 @@ fn main() {
         println!("WCSCMP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fc,0.5), pctl(&gc,0.5), pctl(&fc,0.5)/pctl(&gc,0.5));
     }
 
+    // strcat: builder = scan dst-to-NUL + copy src. Common; can hide two-pass/naive issues.
+    type StrcatFn = unsafe extern "C" fn(*mut c_char, *const c_char) -> *mut c_char;
+    let g_strcat: StrcatFn = dl(h, b"strcat\0");
+    for &(dn, sn) in &[(8usize, 8usize), (32, 16), (64, 32)] {
+        let src: Vec<u8> = std::iter::repeat(b'b').take(sn).chain(std::iter::once(0)).collect();
+        let scp = src.as_ptr() as *const c_char;
+        // dst buffer: dn-char prefix + NUL, big enough for prefix+src+NUL; reset NUL each call.
+        let mut dbuf = vec![0u8; dn + sn + 8];
+        for i in 0..dn { dbuf[i] = b'a'; }
+        let dp = dbuf.as_mut_ptr() as *mut c_char;
+        let (mut fc, mut gc) = (Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { unsafe { dbuf[dn] = 0; black_box_ptr2(frankenlibc_abi::string_abi::strcat(dp, scp)); } } fc.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { unsafe { dbuf[dn] = 0; black_box_ptr2(g_strcat(dp, scp)); } } gc.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("STRCAT dn={dn} sn={sn} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fc,0.5), pctl(&gc,0.5), pctl(&fc,0.5)/pctl(&gc,0.5));
+    }
+
     // memmem + strspn: honest dlmopen certification of claimed algorithmic wins (Two-Way / bitmap).
     type MemmemFn = unsafe extern "C" fn(*const libc::c_void, usize, *const libc::c_void, usize) -> *mut libc::c_void;
     type StrspnFn = unsafe extern "C" fn(*const c_char, *const c_char) -> usize;
