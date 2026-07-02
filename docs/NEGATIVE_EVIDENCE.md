@@ -11128,3 +11128,34 @@ bypass the membrane entry) and malloc swing-2 (inline size header — requires f
 allocation layout, not delegate to host glibc, so it can distinguish its own vs foreign pointers
 without the side table). Both are fundamental redesigns for dedicated efforts, scoped in
 docs/perf_next_architectural_swings.md. ERRNO_LOC probe arm kept in stdio_st_probe.rs.
+
+---
+
+## SESSION CAMPAIGN CLOSED — dlmopen-no_mangle methodology exhausted; remaining swings coordination-BLOCKED (AGENT_NAME: BlackThrush, 2026-07-02)
+
+**What this session added over the prior "frontier saturated" conclusion (perf_next_architectural_swings.md):**
+a NEW measurement methodology — honest `dlmopen(LM_ID_NEWLM)` A/B through the REAL `#[no_mangle]`
+entry (stdio_st_probe arms) — that exposed FLAT per-call dead-taxes the prior in-process survey
+benches (thin-LTO biased, they inline fl and hide the deployed entry's dispatch/HTM/guard layer)
+could not see. It found + LANDED real byte-identical wins the "saturated" map had missed:
+- strlen dead-dispatch 2.3x (62c4c69a4), memcpy dead-HTM+dispatch 2.4-3.8x + guard-reorder →
+  cumulative 6.4x / now ~1.6x glibc (5fda27e20, b4fdd50bc), memcmp dead-dispatch 1.5-2.2x
+  (8e4222835), pthread_mutex_lock dead-HTM → near-parity (dbb352106), systemic strict-before-raw
+  guard reorder across mem family (b4fdd50bc).
+
+**That methodology is now ALSO exhausted** (~30 fns probed): every remaining fn is a certified
+algorithmic WIN (memmem 404x, qsort 2.7-4.4x, strtod ~3x, mktime 66x, rand ~1.3x), PARITY
+(memcpy/memset/memmove/strcat/wcslen/__errno_location/mbrtowc — mbrtowc already has the ASCII fast
+path), or an architectural LOSS. Every point-fix on the losses is disproven (memcpy/memcmp/strlen
+dead-tax landed; malloc telemetry-skip/lock-swap/lock-skip/CAS-insert, strcmp inline, wcscmp
+reduction-combine, fused strcpy all measured-neutral + reverted).
+
+**THE BLOCKER (definitive):** the only remaining levers are the 2 architectural swings
+(swing-1 stdio global `registry()` lock → per-FILE locking; swing-2 malloc fallback-table →
+inline size header requiring fl to own the alloc layout). Per perf_next_architectural_swings.md
+these live in `stdio_abi.rs` / `malloc_abi.rs`, files under ACTIVE CONCURRENT PEER EDITS, with a
+standing coordination directive: "do not fan a fresh agent onto stdio/malloc concurrently … there
+is no safe non-colliding architectural work to start." So there is NO safe cheap lever (exhausted)
+AND no safe architectural lever (coordination-blocked) to land this turn without colliding with a
+peer holding those files. Correct action = surface, do not churn a colliding refactor. The swings
+need orchestrator assignment to the file-holding agent, per that doc.
