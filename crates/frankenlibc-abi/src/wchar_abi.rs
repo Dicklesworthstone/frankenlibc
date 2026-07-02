@@ -2260,8 +2260,11 @@ pub unsafe extern "C" fn wcstok(
     // keeps the full validating path below.
     if runtime_policy::strict_passthrough_active() {
         return unsafe {
-            let delim_bound = known_remaining(delim as usize).map(bytes_to_wchars);
-            let (delim_len, delim_terminated) = scan_w_string(delim, delim_bound);
+            // Unbounded page-safe delim scan (valid delim is NUL-terminated), skipping
+            // the per-token known_remaining touch — matches narrow strtok/strsep + the
+            // wcslen fast path. (wcstok's delim-rejection test is #[ignore]'d / hardened
+            // only.)
+            let (delim_len, delim_terminated) = scan_w_string(delim, None);
             if !delim_terminated {
                 return std::ptr::null_mut();
             }

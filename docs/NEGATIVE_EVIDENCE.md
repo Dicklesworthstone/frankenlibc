@@ -62,6 +62,23 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ◇ wcstok fast-path drops per-token known_remaining(delim) — byte-identical, precedent-backed (~15% expected); direct A/B noise-masked
+
+- **DEPLOYED (cc):** the wcstok strict fast path still called `known_remaining(delim)`
+  per token — the identical per-token membrane touch removed from narrow strtok/strsep
+  (measured **8-15%** there) and from wcslen (~9ns). Dropped it → `scan_w_string(delim,
+  None)` (valid delim is NUL-terminated → byte-identical; the wcstok delim-rejection test
+  is `#[ignore]`'d / hardened-only, same precedent as narrow strtok).
+- **BYTE-IDENTICAL:** conformance_diff_wchar 44/44 + wchar_abi_test 118/0-failed GREEN.
+- **MEASURED — HONEST CAVEAT:** the direct stash A/B landed the two runs on DIFFERENT rch
+  workers (ORIG ns/tok 11-22 = fast worker, NEW ns/tok 18-34 = slow worker), so the
+  fl/glibc ratios (ORIG 0.65-0.74 vs NEW 0.70-0.76 — both BEAT glibc) are cross-worker
+  confounded and the ~2-3ns/token effect is BELOW the noise floor here. Shipped on the
+  strength of: byte-identity + non-regression (removing work can't slow it) + the
+  identical lever's measured 8-15% on narrow strtok (a literal delim's known_remaining
+  early-out is ~2-3ns on an ~11-18ns/token op ≈ ~15%; larger for heap-tracked delims).
+  Not a clean measured number — flagged as `◇` not `✅`.
+
 ## 2026-07-02 — ✅ wcslen fast-path drops known_remaining (matches narrow strlen) — ~2.9x faster vs the prior fast-path; now BEATS glibc at small+large
 
 - **DEPLOYED (cc):** the just-shipped wcslen fast path still gated on `known.is_none()`
