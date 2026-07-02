@@ -2225,6 +2225,31 @@ pub unsafe extern "C" fn bsearch(
     let Some(total_bytes) = nmemb.checked_mul(size) else {
         return ptr::null_mut();
     };
+    let Some(compar_fn) = compar else {
+        return ptr::null_mut();
+    };
+
+    // Strict-mode fast path (the DEFAULT deployed mode): `Stdlib` `decide()` always-Allows in
+    // strict (it is on the high-frequency fast-path family list; `decide_strict_observation`
+    // never denies) with no clamp/heal, so the membrane's only output is the raw binary search.
+    // Skip the `tracked_region_fits` region validation + the TWO `decide()` calls + `observe()`
+    // — byte-identical to the full path for valid inputs (which C requires; glibc likewise does
+    // not validate the region). Mirrors the string/inet_strict strict fast paths. Hardened mode
+    // (`strict_passthrough_active() == false`) keeps the full validating path below.
+    if runtime_policy::strict_passthrough_active() {
+        let wrapper = |a: &[u8], b: &[u8]| -> i32 {
+            // SAFETY: slices are `size` bytes into the caller-provided (C-contract valid) arrays.
+            unsafe { compar_fn(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void) }
+        };
+        // SAFETY: caller guarantees `base` is `nmemb*size` bytes and `key` is `size` bytes.
+        let slice = unsafe { std::slice::from_raw_parts(base as *const u8, total_bytes) };
+        let key_slice = unsafe { std::slice::from_raw_parts(key as *const u8, size) };
+        return match frankenlibc_core::stdlib::sort::bsearch(key_slice, slice, size, wrapper) {
+            Some(s) => s.as_ptr() as *mut c_void,
+            None => ptr::null_mut(),
+        };
+    }
+
     if !tracked_region_fits(base, total_bytes) || !tracked_region_fits(key, size) {
         return ptr::null_mut();
     }
@@ -2257,9 +2282,6 @@ pub unsafe extern "C" fn bsearch(
         return ptr::null_mut();
     }
 
-    let Some(compar_fn) = compar else {
-        return ptr::null_mut();
-    };
     let wrapper = |a: &[u8], b: &[u8]| -> i32 {
         unsafe { compar_fn(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void) }
     };

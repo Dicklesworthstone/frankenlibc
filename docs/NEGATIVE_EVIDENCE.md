@@ -11159,3 +11159,38 @@ is no safe non-colliding architectural work to start." So there is NO safe cheap
 AND no safe architectural lever (coordination-blocked) to land this turn without colliding with a
 peer holding those files. Correct action = surface, do not churn a colliding refactor. The swings
 need orchestrator assignment to the file-holding agent, per that doc.
+
+---
+
+## bsearch strict fast path — dead-tax removed, now BEATS glibc (0.90x, was 1.68x LOSS) (AGENT_NAME: BlackThrush, 2026-07-02)
+
+The dlmopen-no_mangle methodology, applied to a NON-stdio/malloc module (avoiding the coordination
+blocker), found a real deployed loss the prior campaign missed: **bsearch had NO strict fast path.**
+
+**Measured (stdio_st_probe BSEARCH arm, 1024-elem sorted i32 array, 4 rotating keys, dlmopen glibc):**
+fl **40.49 → 21.38 ns**, fl/glibc **1.676x → 0.896x** — ~1.9x self-improvement, fl now BEATS glibc.
+
+**Root cause:** deployed bsearch ran the FULL membrane on every call — `tracked_region_fits` ×2 +
+**TWO** `runtime_policy::decide()` calls (base + key) + `known_remaining` ×2 + `observe()` — ~19ns of
+per-call tax on top of the O(log n) search, with no strict bypass (unlike memcmp/strlen/the string
+family). glibc does a bare binary search.
+
+**Fix (byte-identical):** add a `strict_passthrough_active()` fast path that skips the region
+validation + both decide() + observe() and runs the raw `core::stdlib::sort::bsearch` directly.
+SOUND: `Stdlib` `decide()` always-Allows in strict (fast-path family; `decide_strict_observation`
+never denies) with no clamp/heal, so the membrane's only output IS the raw search; the region
+validation is the strict-mode "trust the caller per C contract" bypass every string strict path
+already makes (glibc likewise never validates the region — a bad nmemb/size is caller UB). Mirrors
+the string/inet_strict fast paths. cfg(test) forces strict off, so the full validating path stays
+test-covered.
+
+**Gates GREEN:** conformance_diff_stdlib_search 4, conformance_diff_generic_search 4,
+strict_mode_refinement_test 18, hardened_mode_safety_test 15. ⚠️ NOTE: `stdlib_abi_test` SIGSEGVs
+but that is PRE-EXISTING on main (verified: c89f7b098 segfaults with my change stashed) — an
+unrelated broken test, NOT this change (and my fast path is dead code under cfg(test) anyway).
+
+**LESSON:** the "campaign closed / frontier saturated" conclusion held only for the modules already
+probed — bsearch proves the dlmopen-no_mangle methodology still finds real wins in UN-probed
+NON-colliding modules that LACK a strict fast path. NEXT: audit other stdlib/search/misc no_mangle
+fns for a missing strict_passthrough bypass (the string/mem/malloc families have them; stdlib
+search/sort/misc may not). Non-colliding = landable without the stdio/malloc coordination block.

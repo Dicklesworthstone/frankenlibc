@@ -251,6 +251,20 @@ fn main() {
     }
     let (fsp, gsp) = (pctl(&fsv,0.5), pctl(&gsv,0.5));
     println!("QSORT_SORTED fl={fsp:.2} glibc={gsp:.2} fl/glibc={:.3} (ns/sort incl reset)", fsp/gsp);
+    // bsearch: fl has NO strict_passthrough fast path -> pays full decide()+observe() per call
+    // (unlike memcmp/strlen). Indirect comparator calls prevent const-fold. vs glibc dlmopen.
+    type BsearchFn = unsafe extern "C" fn(*const libc::c_void, *const libc::c_void, usize, usize, CmpFn) -> *mut libc::c_void;
+    let g_bsearch: BsearchFn = dl(h, b"bsearch\0");
+    let mut ssorted: Vec<i32> = (0..nq as i32).collect();
+    ssorted.sort();
+    let keys: [i32; 4] = [1, 511, 900, 1023];
+    let (mut fb, mut gb) = (Vec::new(), Vec::new());
+    let bit = 200_000u64;
+    for _ in 0..100 {
+        let t = Instant::now(); for i in 0..bit { let k = keys[(i & 3) as usize]; black_box_ptr3(unsafe { frankenlibc_abi::stdlib_abi::bsearch((&k as *const i32).cast(), ssorted.as_ptr().cast(), nq, 4, Some(cmp_i32)) }); } fb.push(t.elapsed().as_nanos() as f64 / bit as f64);
+        let t = Instant::now(); for i in 0..bit { let k = keys[(i & 3) as usize]; black_box_ptr3(unsafe { g_bsearch((&k as *const i32).cast(), ssorted.as_ptr().cast(), nq, 4, cmp_i32) }); } gb.push(t.elapsed().as_nanos() as f64 / bit as f64);
+    }
+    println!("BSEARCH fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fb,0.5), pctl(&gb,0.5), pctl(&fb,0.5)/pctl(&gb,0.5));
 
     // strtod: float parsing, fl vs glibc (dlmopen). Common in config/JSON/scientific input.
     type StrtodFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f64;
