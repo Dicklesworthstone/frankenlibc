@@ -2261,21 +2261,18 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         return std::ptr::null_mut();
     }
 
-    // Fast path during early startup: skip membrane entirely.
-    if string_raw_passthrough_active() {
-        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
-            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
-        {
-            unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
-        }
-        return dst;
-    }
-
     // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
     // `decide()` Allow with no clamp/heal, so the result is exactly the raw copy. Skip the
     // entrypoint trace scope + proof-carried/observe machinery (byte-identical to the
     // `!heals_enabled` raw_dispatch path below), like the inet_strict family. Hardened mode
     // falls through to the full validating path.
+    //
+    // Checked BEFORE `string_raw_passthrough_active()`: the strict path is membrane-free
+    // (pure pointer copy, no alloc/TLS/validation/membrane), so it is safe in EVERY context —
+    // bootstrap (MODE_UNRESOLVED → strict active), allocator/validation reentrancy, and
+    // steady state. The raw-passthrough guard below is only needed in HARDENED mode (its
+    // fall-through is the recursion-prone full membrane); in strict mode it was a redundant
+    // ~3-5ns of TLS-context reads (allocator-reentry + validation-depth + bootstrap-phase).
     if runtime_policy::strict_passthrough_active() {
         // HTM only carries meaning under a forced test mode: real RTM is absent on most
         // deployed CPUs (all AMD, most Intel), so attempting a transaction in `Real` mode
@@ -2290,6 +2287,16 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
             && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
         {
             unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        }
+        return dst;
+    }
+
+    // Raw passthrough (hardened-mode reentrancy/early-startup guard): skip membrane entirely.
+    if string_raw_passthrough_active() {
+        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
+        {
+            unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
         }
         return dst;
     }
@@ -2416,18 +2423,21 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         return std::ptr::null_mut();
     }
 
-    // Fast path during early startup: skip membrane entirely.
-    if string_raw_passthrough_active() {
-        unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
-        return dst;
-    }
-
     // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
     // `decide()` Allow with no clamp/heal, so `copy_len == n` and the result is
     // exactly the raw overlap-safe move (byte-identical to the full path below).
     // Skip the membrane guard + decide + stage-trace + observe machinery, mirroring
-    // the sibling `memcpy` strict fast path. Hardened mode falls through.
+    // the sibling `memcpy` strict fast path. Hardened mode falls through. Checked
+    // before `string_raw_passthrough_active()`: the strict path is membrane-free/pure
+    // (safe in bootstrap + reentrancy), so the raw guard's TLS-context reads are only
+    // needed in hardened mode — see the memcpy strict-path note.
     if runtime_policy::strict_passthrough_active() {
+        unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        return dst;
+    }
+
+    // Raw passthrough (hardened-mode reentrancy/early-startup guard): skip membrane entirely.
+    if string_raw_passthrough_active() {
         unsafe { raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
         return dst;
     }
@@ -2524,19 +2534,22 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
         return std::ptr::null_mut();
     }
 
-    // Fast path during early startup: skip membrane entirely.
-    if string_raw_passthrough_active() {
-        unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
-        return dst;
-    }
-
     // Strict-mode fast path (the DEFAULT deployed mode): in strict passthrough the
     // StringMemory membrane is a no-op — `decide()` forces Allow (StringMemory is on the
     // strict fast-list) and no clamp/heal occurs, so the membrane's only output is a raw
     // memset. Skip the whole membrane (known_remaining + check_ordering + decide + record +
     // observe), exactly as the inet_strict family already does. Hardened mode
     // (`strict_passthrough_active() == false`) falls through to the full validating path.
+    // Checked before `string_raw_passthrough_active()`: the strict path is membrane-free/pure
+    // (safe in bootstrap + reentrancy), so the raw guard's TLS-context reads are only needed
+    // in hardened mode — see the memcpy strict-path note.
     if runtime_policy::strict_passthrough_active() {
+        unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
+        return dst;
+    }
+
+    // Raw passthrough (hardened-mode reentrancy/early-startup guard): skip membrane entirely.
+    if string_raw_passthrough_active() {
         unsafe { raw_memset_bytes(dst.cast::<u8>(), c as u8, n) };
         return dst;
     }
@@ -2645,17 +2658,25 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
         return 0;
     }
 
-    if string_raw_passthrough_active() {
-        return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
-    }
-
     // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces Allow
     // with no clamp (cmp_len == n), so the result is exactly the dispatched raw compare.
     // Skip entrypoint_scope + stage_context + decide + maybe_clamp + record + observe
     // (byte-identical to the strict full path below), like the inet_strict family. Hardened
     // mode keeps the full validating path.
+    //
+    // Checked BEFORE `string_raw_passthrough_active()`: the strict path is membrane-free
+    // (pure pointer reads + raw compare, no alloc/TLS/validation), so it is safe in EVERY
+    // context — bootstrap (MODE_UNRESOLVED → strict active), allocator/validation reentrancy,
+    // and steady state alike. The `string_raw_passthrough_active()` guard below is only
+    // needed in HARDENED mode, where the fall-through is the recursion-prone full membrane;
+    // in strict mode it was a redundant ~3-5ns of TLS-context reads (allocator-reentry +
+    // validation-depth + bootstrap-phase) on every call. Ordering strict first elides them.
     if runtime_policy::strict_passthrough_active() {
         return unsafe { raw_dispatch_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n) };
+    }
+
+    if string_raw_passthrough_active() {
+        return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("memcmp");

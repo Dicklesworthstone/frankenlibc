@@ -10794,3 +10794,55 @@ dead dispatch is a real byte-identical win.
 (clean, no dispatch/HTM); memcpy (HTM+dispatch, fixed) and memcmp (dispatch, fixed) were the two hot
 offenders. The remaining `select_string_simd_dispatch` sites are test-label helpers + the rare deep
 hardened strlen path. See [[htm-tax-and-nomangle-probe-vein]].
+
+---
+
+## string/mem strict fast path checked BEFORE the raw-passthrough guard — systemic ~3ns/call, memcpy now near-glibc (AGENT_NAME: BlackThrush, 2026-07-02)
+
+**Measured (same-process dlmopen A/B, stdio_st_probe, worker-invariant):**
+
+| fn / n      | before reorder | after reorder | glibc | fl/glibc after |
+|-------------|----------------|---------------|-------|----------------|
+| MEMCPY n=8  | 6.64 ns        | **3.80 ns**   | 2.38  | **1.595x**     |
+| MEMCPY n=16 | 7.58 ns        | **4.60 ns**   | 2.39  | 1.925x         |
+| MEMCPY n=64 | 8.08 ns        | **5.67 ns**   | 3.24  | 1.748x         |
+| MEMCPY n=128| 7.79 ns        | **4.57 ns**   | 2.38  | 1.916x         |
+| MEMCMP n=8  | 9.91 ns        | **7.62 ns**   | 3.44  | 2.213x         |
+| MEMCMP n=256| 21.05 ns       | **17.68 ns**  | 4.31  | 4.105x         |
+
+**Systemic lever — the flat per-call floor was `string_raw_passthrough_active()`.** Every
+string/mem fn ran, at the top of its hot path, BEFORE the strict fast path:
+`string_raw_passthrough_active()` = `bootstrap_passthrough_active()` (atomic) `||`
+`in_allocator_reentry_context()` (TLS slot lookup + atomic) `||` `in_validation_context()`
+(`VALIDATION_DEPTH.try_with` — TLS with lazy-init check) `|| …`. That is ~3ns of TLS-context
+reads paid on EVERY call (the two `owned-tls-cache`-gated checks are `const false` in the
+default build, but the allocator-reentry + validation-depth + bootstrap reads are live).
+
+**Insight:** the strict fast path is **membrane-free and pure** (raw pointer copy/compare/scan;
+no alloc, no TLS, no validation, no membrane), so it is safe in EVERY context — bootstrap
+(MODE_UNRESOLVED → strict active), allocator/validation reentrancy, and steady state. The
+`string_raw_passthrough_active()` guard is only needed in HARDENED mode, whose fall-through is
+the recursion-prone full membrane. So in strict mode (the deployed default) that guard was pure
+redundant tax.
+
+**Fix:** reorder — check `strict_passthrough_active()` FIRST (cheap: one relaxed atomic +
+compare), then `string_raw_passthrough_active()` for the hardened-mode reentrancy guard, then
+the full path. Applied to memcpy / memmove / memset / memcmp.
+
+**Byte-identical / zero behavior change in steady state:** in deployed steady state
+`string_raw_passthrough_active()` is already `false`, so the strict path was already the one
+taken — the reorder merely skips a known-false check (the strict-path BODY is untouched). The
+only path-selection difference is during bootstrap/reentrancy (strict taken instead of raw), and
+both are correct implementations producing identical bytes. Gates: string_abi_test 201,
+conformance_diff_string_mut 35 / copy_stragglers 4 / cmp_family 4 / string 24,
+strict_mode_refinement 18, hardened_mode_safety 15.
+
+**strlen intentionally NOT reordered:** its raw-path comment flags a real dlvsym→strlen
+init-deadlock hazard; it is THE dynamic-linker-critical fn, so the conservative raw-first order
+is cheap insurance there (and its 2.3x dead-dispatch win already landed). This is the one
+exception; all other hot string/mem fns take the reorder.
+
+**Cumulative memcpy story this session: n=8 went 24.27ns → 3.80ns = 6.4x faster** (HTM removal +
+dead-dispatch removal + this guard reorder), fl/glibc 7.15x → 1.60x. See
+[[htm-tax-and-nomangle-probe-vein]]. Reorder is the general lever for any strict-fast-path fn
+whose raw-passthrough guard precedes the strict check.
