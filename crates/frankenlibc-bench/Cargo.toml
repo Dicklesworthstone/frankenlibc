@@ -490,3 +490,9 @@ harness = false
 name = "strstr_glibc_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# strrchr deployed fl vs glibc (dlmopen). Measures the strict fast-path + scan.
+[[bench]]
+name = "strrchr_glibc_bench"
+required-features = ["abi-bench"]
+harness = false

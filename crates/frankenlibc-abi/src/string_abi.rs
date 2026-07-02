@@ -4160,6 +4160,20 @@ pub unsafe extern "C" fn __strchrnul(s: *const c_char, c: c_int) -> *mut c_char 
 /// Caller must ensure `s` is a valid null-terminated string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full body
+    // — `scan_c_string_last_byte(s, target, None)` (bound is None in strict, so
+    // hit_limit is always false and the result is just the last-match mapping). Skips
+    // stage_context + decide + observe + stage-trace, mirroring `strchr`'s fast path
+    // (strrchr had been left on the full membrane path).
+    if !s.is_null() && runtime_policy::strict_passthrough_active() {
+        let target = c as c_char;
+        let (last_idx, _, _) = unsafe { scan_c_string_last_byte(s, target as u8, None) };
+        return match last_idx {
+            Some(idx) => unsafe { s.add(idx) as *mut c_char },
+            None => std::ptr::null_mut(),
+        };
+    }
+
     let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if s.is_null() {
         record_string_stage_outcome(

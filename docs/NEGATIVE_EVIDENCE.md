@@ -62,6 +62,22 @@ retried and real wins are confirmed with numbers.
   takes TWO movemasks (nul, target separately) per window where set4 ORs target|NUL
   in SIMD and does ONE. Single movemask wins; 1-char stays on the set4 path.
 
+## 2026-07-02 — ✅ strrchr strict fast-path — was FULLY on the membrane; removes a ~32ns/call tax, ~5.6x faster vs ORIG at small sizes (5.8x→1.8x glibc)
+
+- **DEPLOYED (cc):** `strrchr` had NO strict fast path — it paid the full membrane
+  (`stage_context + decide + observe + stage-trace`) on EVERY call, unlike `strchr`
+  (which got the lever long ago). Added the `strict_passthrough_active()` fast path =
+  `scan_c_string_last_byte(s, target, None)` + last-match mapping, byte-identical to the
+  strict full body (bound is None in strict → hit_limit always false).
+- **BYTE-IDENTICAL:** conformance_diff_strrchr_simd + conformance_strrchr_bounded GREEN.
+- **MEASURED (`strrchr_glibc_bench` [new], deployed fl vs dlmopen glibc; clean stash
+  ORIG/NEW):** fl_p50 ORIG→NEW **size 8 39.3→7.0ns (~5.6x), 16 42.0→7.0ns (~6x), 64
+  44.0→12.0ns (~3.7x), 1024 58.2→30.7ns (~1.9x)**; the membrane tax on strrchr was ~32ns
+  (huge). vs glibc that collapses the small-size loss **5.8x → 1.8x**. Residual ~1.6–2x
+  vs glibc is `scan_c_string_last_byte` throughput (forward reverse-tracking vs glibc's
+  reverse memchr — a separate deep-primitive lever). Large-size (64K) ~neutral vs ORIG
+  (scan-dominated, membrane amortized).
+
 ## 2026-07-02 — ✅ wcsstr first-wchar-scan fused — ~6.3x faster than the prior chunked fused; now beats glibc 11–12.5x. SUBSTRING FAMILY COMPLETE.
 
 - **DEPLOYED (cc):** applied the first-byte-scan fix to wcsstr — the last substring
