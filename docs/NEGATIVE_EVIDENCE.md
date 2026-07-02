@@ -9847,3 +9847,15 @@ residual ~1.2-2x at small/medium is the portable-SIMD-vs-glibc-AVX2 kernel ceili
 wcschr) — not closable by removing the 2-pass penalty; a per-fn AVX2 asm copy loop would be needed.
 Apparatus: wide_copyfill_glibc_bench (deployed) + wcscpy_fused_head_ab_bench (in-process A/B/C).
 ASIDE: wmemset (slice.fill) measured ~parity-to-1.2x, no 2-pass penalty — left unchanged.
+
+### 2026-07-02 — ✅ wcpcpy strict path: reuse wide_fused_copy (returns len for the end ptr) — same 2-pass fix as wcscpy — BlackThrush
+
+wcpcpy (wide stpcpy) had the identical 2-pass shape as pre-fuse wcscpy: scan_w_string +
+copy_nonoverlapping (interposed memcpy symbol) + return dst.add(len). Extended wide_fused_copy
+to RETURN the length (index of the NUL it already found), so wcpcpy returns dst+len with no
+second scan. Byte-identical incl the end pointer (conformance_diff_wchar 44 / wcs_copy 5 /
+wchar_abi 118 all 0 failed; the deployed bench asserts both the copied bytes AND the returned
+end-ptr offset equal glibc per size). Deployed fl/glibc after fuse: n=4 1.75, n=16 1.75, n=32
+1.77, n=64 1.60, n=128 1.49, n=256 1.87, n=1024 1.93 — the same ~1.5-1.9x band as fused wcscpy
+(was the same 2-pass ~2-6x shape before). Residual ~1.5-1.9x = the portable-SIMD-vs-AVX2 ceiling.
+Apparatus: WCPCPY arm added to wide_copyfill_glibc_bench.

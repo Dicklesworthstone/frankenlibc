@@ -44,6 +44,24 @@ fn bench(c: &mut Criterion) {
         println!("WCSCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
     }
 
+    let g_pcpy: CpyFn = sym(b"wcpcpy\0");
+    for &n in &[4usize, 16, 32, 64, 128, 256, 1024] {
+        let mut src: Vec<u32> = std::iter::repeat(b'a' as u32).take(n).collect(); src.push(0);
+        let mut dfl = vec![0u32; n + 1];
+        let mut dgl = vec![0u32; n + 1];
+        let sp = src.as_ptr();
+        let efl = unsafe { frankenlibc_abi::wchar_abi::wcpcpy(dfl.as_mut_ptr(), sp) };
+        let egl = unsafe { g_pcpy(dgl.as_mut_ptr(), sp) };
+        assert_eq!(dfl, dgl, "wcpcpy mismatch n={n}");
+        assert_eq!(efl as usize - dfl.as_ptr() as usize, egl as usize - dgl.as_ptr() as usize, "wcpcpy end-ptr n={n}");
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now(); for _ in 0..it { black_box(unsafe { frankenlibc_abi::wchar_abi::wcpcpy(black_box(dfl.as_mut_ptr()), black_box(sp)) }); } fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now(); for _ in 0..it { black_box(unsafe { g_pcpy(black_box(dgl.as_mut_ptr()), black_box(sp)) }); } gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        println!("WCPCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
+    }
+
     for &n in &[4usize, 16, 32, 64, 128, 256, 1024] {
         let mut bfl = vec![0u32; n];
         let mut bgl = vec![0u32; n];

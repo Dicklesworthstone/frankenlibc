@@ -288,11 +288,14 @@ unsafe fn wide_strlen_bounded(s: *const u32, limit: usize) -> usize {
 /// 8-lane chunks are SIMD-stored, the NUL-containing tail is copied scalar up to and
 /// including the NUL, so `dst` receives byte-for-byte the same `len + 1` chars as glibc.
 ///
+/// Returns the length copied (index of the terminating NUL), so `wcpcpy` can return the
+/// end pointer `dst + len` without a second scan.
+///
 /// # Safety
 /// `src` must be a valid NUL-terminated wide string and `dst` must have room for
-/// `wcslen(src) + 1` wide chars (the caller's contract for C `wcscpy`).
+/// `wcslen(src) + 1` wide chars (the caller's contract for C `wcscpy`/`wcpcpy`).
 #[inline]
-unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) {
+unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) -> usize {
     let z = Simd::<u32, 8>::splat(0);
     let pb = src as usize;
     let align = (pb & 31) >> 2; // u32 elements before the 32-byte boundary (0..=7)
@@ -307,7 +310,7 @@ unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) {
             // SAFETY: j <= nul < remaining string length; dst has room for len+1.
             unsafe { *dst.add(j) = *src.add(j) };
         }
-        return;
+        return nul;
     }
     // First (partial) chunk [src, base+8): (8 - align) elements, all confirmed non-NUL.
     let first = 8 - align;
@@ -326,7 +329,7 @@ unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) {
                 // SAFETY: copies through the NUL; dst has room for len+1.
                 unsafe { *dst.add(i + j) = *src.add(i + j) };
             }
-            return;
+            return i + nul;
         }
         // No NUL in this chunk: all 8 lanes are real string chars ⇒ dst has room for
         // [i, i+8). SIMD-store the full chunk (unaligned store).
@@ -4508,11 +4511,10 @@ pub unsafe extern "C" fn wcpcpy(dst: *mut u32, src: *const u32) -> *mut u32 {
     // end pointer `dst + len` (at the NUL), the wide stpcpy result. Skips the membrane
     // tax (wide analog of the wcscpy fast path, returning the end ptr).
     if runtime_policy::strict_passthrough_active() {
-        return unsafe {
-            let (len, _terminated) = scan_w_string(src, None);
-            std::ptr::copy_nonoverlapping(src, dst, len + 1);
-            dst.add(len)
-        };
+        // Fused single-pass copy-through-NUL (see wide_fused_copy); returns the end
+        // pointer dst+len (the wide stpcpy result) from the length it already found —
+        // no scan_w_string + interposed-memcpy round trip.
+        return unsafe { dst.add(wide_fused_copy(dst, src)) };
     }
 
     let (mode, decision) = runtime_policy::decide(
