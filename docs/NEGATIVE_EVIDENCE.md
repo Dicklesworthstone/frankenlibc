@@ -9859,3 +9859,17 @@ end-ptr offset equal glibc per size). Deployed fl/glibc after fuse: n=4 1.75, n=
 1.77, n=64 1.60, n=128 1.49, n=256 1.87, n=1024 1.93 — the same ~1.5-1.9x band as fused wcscpy
 (was the same 2-pass ~2-6x shape before). Residual ~1.5-1.9x = the portable-SIMD-vs-AVX2 ceiling.
 Apparatus: WCPCPY arm added to wide_copyfill_glibc_bench.
+
+### 2026-07-02 — ✅ wcscat strict path: fuse the src-side scan+copy — near-parity with glibc (1.02-1.34x) — BlackThrush
+
+wcscat did THREE passes: scan_w_string(dst) + scan_w_string(src) + copy_nonoverlapping
+(interposed memcpy). The dst-end scan is inherent (find the append point), but the src side
+was the same 2-pass + memcpy-symbol shape as pre-fuse wcscpy. Replaced src scan+copy with
+wide_fused_copy(dst.add(dst_len), src). Byte-identical (conformance_diff_wchar 44 / wcs_copy 5
+/ wcs_family 4 / wchar_abi 118, all 0 failed). Deployed fl/glibc after fuse (dst-end scan +
+per-iter NUL reset shared by both arms, cancels in ratio): n=4 1.18, n=16 1.10, n=32 1.17,
+n=64 1.02, n=128 1.06, n=256 1.09, n=1024 1.34 — NEAR-PARITY (the dst-scan is the shared floor;
+the residual at n=1024 is the AVX2 copy ceiling). WCSCAT arm added to wide_copyfill_glibc_bench.
+WIDE COPY FAMILY NOW FUSED: wcscpy, wcpcpy, wcscat all use wide_fused_copy (one pass, no memcpy
+round trip); wmemset (slice.fill) was already ~parity. wcsncpy/wcpncpy stay scalar (n-bounded
+fill auto-vectorises, prior NEGATIVE_EVIDENCE finding).

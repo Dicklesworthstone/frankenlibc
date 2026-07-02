@@ -630,9 +630,11 @@ pub unsafe extern "C" fn wcscat(dst: *mut u32, src: *const u32) -> *mut u32 {
     // ~640ns wide WRITE membrane full path (see wcscpy).
     if runtime_policy::strict_passthrough_active() {
         unsafe {
+            // The dst-end scan is inherent to wcscat (find the append point); the src
+            // side then fuses scan+copy in one pass (no scan_w_string + interposed
+            // memcpy round trip — the wcscpy fix).
             let (dst_len, _) = scan_w_string(dst.cast_const(), None);
-            let (src_len, _) = scan_w_string(src, None);
-            std::ptr::copy_nonoverlapping(src, dst.add(dst_len), src_len + 1);
+            wide_fused_copy(dst.add(dst_len), src);
         }
         return dst;
     }

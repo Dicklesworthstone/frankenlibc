@@ -62,6 +62,24 @@ fn bench(c: &mut Criterion) {
         println!("WCPCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
     }
 
+    let g_cat: CpyFn = sym(b"wcscat\0");
+    let pre = 3usize;
+    for &n in &[4usize, 16, 32, 64, 128, 256, 1024] {
+        let mut src: Vec<u32> = std::iter::repeat(b'a' as u32).take(n).collect(); src.push(0);
+        let sp = src.as_ptr();
+        // dst = 'b'*pre + NUL, buffer sized for prefix + src + NUL.
+        let mk = || { let mut d = vec![0u32; pre + n + 1]; for k in 0..pre { d[k] = b'b' as u32; } d };
+        let (mut dfl, mut dgl) = (mk(), mk());
+        unsafe { frankenlibc_abi::wchar_abi::wcscat(dfl.as_mut_ptr(), sp); g_cat(dgl.as_mut_ptr(), sp); }
+        assert_eq!(dfl, dgl, "wcscat mismatch n={n}");
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now(); for _ in 0..it { unsafe { dfl[pre] = 0; black_box(frankenlibc_abi::wchar_abi::wcscat(black_box(dfl.as_mut_ptr()), black_box(sp))); } } fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now(); for _ in 0..it { unsafe { dgl[pre] = 0; black_box(g_cat(black_box(dgl.as_mut_ptr()), black_box(sp))); } } gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        println!("WCSCAT n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
+    }
+
     for &n in &[4usize, 16, 32, 64, 128, 256, 1024] {
         let mut bfl = vec![0u32; n];
         let mut bgl = vec![0u32; n];
