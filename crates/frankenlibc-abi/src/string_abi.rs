@@ -4283,6 +4283,10 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
     // stage_context + decide + observe + stage-trace, mirroring `strchr`'s fast path
     // (strrchr had been left on the full membrane path).
     if !s.is_null() && runtime_policy::strict_passthrough_active() {
+        // NOTE: a strlen+memrchr routing (glibc's two-pass shape, reusing fl's fast memrchr)
+        // was measured SLOWER here (2.3-3.8x vs this single-pass's 1.2-1.7x) — two full SIMD
+        // scans cost more than one heavier last-match pass. strrchr's residual loss is the
+        // portable-SIMD-vs-AVX2 kernel ceiling (asm-only). See NEGATIVE_EVIDENCE.md 2026-07-02.
         let target = c as c_char;
         let (last_idx, _, _) = unsafe { scan_c_string_last_byte(s, target as u8, None) };
         return match last_idx {

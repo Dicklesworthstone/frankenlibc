@@ -257,6 +257,23 @@ fn main() {
         let s = std::str::from_utf8(&pat[..pat.len()-1]).unwrap();
         println!("STRTOD '{s}' fl={fdp:.2} glibc={gdp:.2} fl/glibc={:.3}", fdp/gdp);
     }
+
+    // strrchr: fl (single-pass last-match) vs glibc (strlen+reverse). Target present once early
+    // so both must scan the whole string. Sizes exercise the SIMD scan.
+    type StrrchrFn = unsafe extern "C" fn(*const c_char, i32) -> *mut c_char;
+    let g_strrchr: StrrchrFn = dl(h, b"strrchr\0");
+    for &n in &[64usize, 256, 1024] {
+        let mut sv: Vec<u8> = std::iter::repeat(b'a').take(n).collect(); sv[5] = b'b'; sv.push(0);
+        let scp = sv.as_ptr() as *const c_char;
+        let (mut fsv, mut gsv) = (Vec::new(), Vec::new());
+        let sit = 100_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..sit { std::hint::black_box(unsafe { frankenlibc_abi::string_abi::strrchr(scp, b'b' as i32) }); } fsv.push(t.elapsed().as_nanos() as f64 / sit as f64);
+            let t = Instant::now(); for _ in 0..sit { std::hint::black_box(unsafe { g_strrchr(scp, b'b' as i32) }); } gsv.push(t.elapsed().as_nanos() as f64 / sit as f64);
+        }
+        let (fsp, gsp) = (pctl(&fsv,0.5), pctl(&gsv,0.5));
+        println!("STRRCHR n={n} fl={fsp:.2} glibc={gsp:.2} fl/glibc={:.3}", fsp/gsp);
+    }
 }
 
 #[inline(never)]

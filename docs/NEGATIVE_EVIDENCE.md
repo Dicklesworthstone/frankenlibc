@@ -10545,3 +10545,21 @@ AVX2: wcschr/wcscpy/wcsncpy/strrchr/strcmp) — those were found + fixed/documen
 CONCLUSION: fl's core surface genuinely beats glibc on algorithms; the only real remaining losses
 are (a) SIMD-scan AVX2 ceiling (strcmp/strrchr ~1.2-1.8x, needs per-fn asm) and (b) architectural
 (malloc ownership ~16.7x, stdio MT registry lock). Apparatus: STRTOD arm in stdio_st_probe.
+
+### 2026-07-02 — ✗ REJECTED: strrchr strlen+memrchr routing (2-pass) — slower than the single-pass; loss is the AVX2 ceiling — BlackThrush
+
+Honest dlmopen confirmed fl strrchr LOSES glibc: n=64 1.742x, n=256 1.504x, n=1024 1.181x. The
+memory's lead was "glibc uses forward strlen + reverse memchr; a DIFFERENT primitive would beat
+the single-pass" — and fl's own memrchr beats glibc (0.84x). Hypothesised routing deployed strrchr
+-> scan_c_string(strlen) + core memrchr(s[..len], c) would win. Implemented (byte-identical:
+conformance_diff_strrchr 24 + string 8 + string_search 1, all 0 failed) and A/B'd vs the deployed
+single-pass in the same probe. MEASURED WORSE: n=64 2.317x, n=256 3.788x, n=1024 1.960x — the
+two-pass (full forward strlen + full backward memrchr = 2x memory traffic + two SIMD-scan setups)
+costs MORE than the single last-match pass, even though fl's memrchr is individually fast. REVERTED
+(deployed strrchr keeps the single-pass find_last_byte_before_nul). CONCLUSION: strrchr's ~1.2-1.7x
+residual is genuinely the portable-SIMD-vs-glibc-AVX2 kernel ceiling — glibc's AVX2 last-match scan
+is faster per byte than ANY portable-SIMD arrangement (single OR two-pass); closing it needs a
+per-fn AVX2 asm strrchr (recursion-safe, page-safe reverse scan), not an algorithm swap. LESSON:
+"glibc uses a 2-pass algo and fl's sub-primitive is fast" does NOT imply the 2-pass wins in fl —
+the doubled memory traffic + setup dominated; the single-pass was already the better portable shape.
+Same class as strcmp (dual-pointer, AVX2-ceiling). Both are asm-only levers. STRRCHR probe apparatus.
