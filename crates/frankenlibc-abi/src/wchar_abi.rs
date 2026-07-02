@@ -3915,6 +3915,11 @@ pub unsafe extern "C" fn fputws(ws: *const libc::wchar_t, stream: *mut std::ffi:
         return libc::EOF;
     }
 
+    // NOTE: a bulk-encode-to-stack-buffer + single fwrite variant was measured SLOWER than
+    // this per-char loop (new/old 2.6-3.4x, stdio_st_probe FPUTWS arm) and REVERTED — batching
+    // only the write while still encoding per-char (wctomb x N) does not help; the real gap vs
+    // glibc (fl 9-212x, glibc bulk-converts via wcsrtombs) needs bulk CONVERSION, a larger
+    // lever. See NEGATIVE_EVIDENCE.md 2026-07-02. Keeping the simple per-char loop.
     let mut idx = 0usize;
     loop {
         // SAFETY: caller provides NUL-terminated wide string.

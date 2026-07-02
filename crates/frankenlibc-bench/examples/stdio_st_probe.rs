@@ -105,6 +105,7 @@ fn main() {
     }
     let (sp_, ip_) = (pctl(&single, 0.5), pctl(&inter, 0.5));
     println!("INTERLEAVE single={sp_:.2} two_stream={ip_:.2} inter/single={:.3}", ip_/sp_);
+
 }
 
 #[inline(never)]

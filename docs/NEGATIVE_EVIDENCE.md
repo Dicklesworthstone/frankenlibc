@@ -10260,3 +10260,25 @@ CONCLUSION (confirms memory): the malloc gap is architectural — closing it nee
 the ownership-discrimination model (e.g., range-based arena check to drop the per-alloc table
 insert/remove entirely) or a lighter reentry/telemetry path, both multi-session + high-risk.
 Apparatus kept: malloc_st_probe.rs (the honest ST malloc harness). NOT a focused-turn win.
+
+### 2026-07-02 — ✗ REJECTED: fputws bulk-write; ✓ SURFACED: fl fputws 9-212x glibc is per-char CONVERT (needs bulk wcsrtombs) — BlackThrush
+
+fputws loops fputwc->fputc per wide char. Hypothesised that bulk-encoding into a 512B stack
+buffer + one fwrite (vs N per-char fputc) would win (like the wcscat fuse). Implemented + A/B'd
+in the standalone-ST probe (new bulk vs old per-char vs glibc fputws, same process):
+  FPUTWS wn=8  new=313.9 old=91.0  glibc=9.3  new/old=3.448  new/glibc=33.8
+  FPUTWS wn=64 new=2227  old=842   glibc=10.5 new/old=2.644  new/glibc=212.8
+The bulk-WRITE variant was 2.6-3.4x SLOWER than the per-char loop (measured, consistent — not
+noise). REVERTED (deployed fputws unchanged, byte-identical original per-char loop kept + a
+comment). WHY the regression: both variants still encode PER-CHAR (wchar_core::wctomb x N); the
+bulk version only batched the write, adding stack-buffer + copy_from_slice + a mispredicted
+fwrite path per string without removing the dominant per-char convert cost — net worse.
+
+THE REAL GAP (surfaced): fl fputws is 9-212x glibc because fl converts one wchar at a time
+(wctomb x N) while glibc bulk-converts the whole wide string in a single wcsrtombs into the FILE
+buffer (~10ns for 64 chars). Closing it needs a BULK wcsrtombs-style conversion path (convert the
+whole string in one gconv pass, then one buffered write) — a larger, correctness-sensitive lever
+(C.UTF-8 encode of the full string + the '?'-substitution/EILSEQ semantics + partial-write
+handling), NOT the naive bulk-write I tried. LESSON: batching the WRITE doesn't help when the
+per-element CONVERT dominates; measure the convert vs write split first. fl narrow stdio is fast;
+wide stdio's gap is the per-char gconv, a separate multi-step lever.
