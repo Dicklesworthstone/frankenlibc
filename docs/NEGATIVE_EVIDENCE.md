@@ -10756,3 +10756,41 @@ mutex_word_ptr / read_mutex_type) that glibc's inline fast path lacks — struct
 **Vein status:** three HtmSite instances existed — memcpy (fixed), pthread_mutex_lock (fixed),
 and MALLOC_STATS_HTM_SITE (malloc_stats combiner, COLD — reporting only, left as-is). Real-HTM
 lock/copy elision is dead weight on any RTM-less CPU (all AMD); this closes the two hot ones.
+
+---
+
+## memcmp drops dead SIMD-dispatch — ~1.5-2.2x faster (AGENT_NAME: BlackThrush, 2026-07-02)
+
+**Measured (same-process dlmopen A/B, stdio_st_probe MEMCMP arm, worker-invariant):**
+
+| n    | fl BEFORE | fl AFTER | glibc | fl/glibc BEFORE | fl/glibc AFTER |
+|------|-----------|----------|-------|-----------------|----------------|
+| 8    | 21.61 ns  | 9.91 ns  | 3.33  | 5.850x          | **2.975x**     |
+| 16   | 25.73 ns  | 12.98 ns | 3.33  | 7.020x          | **3.897x**     |
+| 24   | 23.90 ns  | 12.96 ns | 3.32  | 6.514x          | **3.900x**     |
+| 32   | 27.46 ns  | 16.62 ns | 3.32  | 7.472x          | **5.009x**     |
+| 64   | 28.36 ns  | 16.78 ns | 3.54  | 7.176x          | **4.743x**     |
+| 256  | 31.27 ns  | 21.05 ns | 4.45  | 7.028x          | **4.752x**     |
+
+**Fourth dead-tax site this session (strlen / memcpy / pthread_mutex_lock / memcmp).** Deployed
+memcmp's strict path routed through `raw_dispatch_memcmp_bytes` → `select_string_simd_dispatch(Memcmp)`
+(~10-12ns: atomic feature-mask + ISA candidate probe + memcmp once-logger) to pick a lane whose
+ONLY effect in `raw_lane_memcmp_bytes` is `>=16` (the 32-byte SSE2 compare loop, valid for any
+lane≥16) vs `<16` (scalar). In strict mode that maps exactly to the byte boundary n≥16 → wide,
+n<16 → core scalar memcmp.
+
+**Fix (byte-identical):** branch on `n >= 16` directly in `raw_dispatch_memcmp_bytes`, dropping the
+dispatch. `raw_lane_memcmp_bytes` gates only on `lane_bytes >= 16` (never the exact value — verified:
+lane 16 and 32 run the identical 32-byte loop + overlapping tail), so passing 32 for the old lane-16
+band [16,64) is identical; n<16 still routes to core `memcmp` exactly as the old SCALAR dispatch did.
+Same boundary, same two implementations. Gates: conformance_diff_cmp_family 4, conformance_diff_string 24.
+
+**Honest framing:** NARROWS the gap ~1.5-2.2x, does not overtake glibc (still 3-5x; the ~9ns flat floor
+at n=8 is per-call guards + from_raw_parts + non-inlined memcmp_first_diff vs glibc's leaf asm, and the
+n-growth is portable-SIMD compare vs glibc AVX2 — the documented scan-family ceiling). Removing ~11ns of
+dead dispatch is a real byte-identical win.
+
+**Copy/fill/cmp dispatch audit COMPLETE:** memset + memmove strict paths already call raw_* directly
+(clean, no dispatch/HTM); memcpy (HTM+dispatch, fixed) and memcmp (dispatch, fixed) were the two hot
+offenders. The remaining `select_string_simd_dispatch` sites are test-label helpers + the rare deep
+hardened strlen path. See [[htm-tax-and-nomangle-probe-vein]].

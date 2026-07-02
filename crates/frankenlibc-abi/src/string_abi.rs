@@ -1128,12 +1128,16 @@ unsafe fn raw_lane_memcmp_bytes(
 
 #[inline(never)]
 unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c_int {
-    let dispatch =
-        select_string_simd_dispatch(SimdStringOperation::Memcmp, s1 as usize, s2 as usize, n);
+    // `select_string_simd_dispatch(Memcmp)` cost ~8ns/call (atomic feature-mask + ISA probe
+    // + once-logger) to pick a lane whose ONLY effect here is `>1` (SIMD) vs `==1` (scalar).
+    // In strict mode that maps exactly to the byte boundary n>=16 (Sse42 threshold) → the
+    // wide `raw_lane_memcmp_bytes` (its 32-byte SSE2 loop is valid for any lane>=16), else
+    // n<16 → the core scalar `memcmp`. Branch on `n` directly and drop the dead dispatch —
+    // byte-identical (same boundary, same two implementations).
     // SAFETY: caller guarantees both regions are readable for `n` bytes.
     unsafe {
-        if dispatch.lane_bytes > 1 {
-            raw_lane_memcmp_bytes(s1, s2, n, dispatch.lane_bytes)
+        if n >= 16 {
+            raw_lane_memcmp_bytes(s1, s2, n, 32)
         } else {
             let lhs = std::slice::from_raw_parts(s1, n);
             let rhs = std::slice::from_raw_parts(s2, n);

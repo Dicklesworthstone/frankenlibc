@@ -350,6 +350,24 @@ fn main() {
         }
         println!("MUTEX_LOCKUNLOCK fl={:.2} glibc={:.2} fl/glibc={:.3} (ns/lock+unlock pair)", pctl(&flv,0.5), pctl(&glv,0.5), pctl(&flv,0.5)/pctl(&glv,0.5));
     }
+
+    // memcmp: deployed no_mangle entry vs glibc. SUSPECT: strict path routes through
+    // raw_dispatch_memcmp_bytes → select_string_simd_dispatch (~8ns) where the lane only
+    // decides >=16 (SIMD) vs <16 (core) — a dead per-call tax like strlen/memcpy.
+    type MemcmpFn = unsafe extern "C" fn(*const libc::c_void, *const libc::c_void, usize) -> i32;
+    let g_memcmp: MemcmpFn = dl(h, b"memcmp\0");
+    for &n in &[8usize, 16, 24, 32, 64, 256] {
+        let a: Vec<u8> = (0..n).map(|i| (i & 0xff) as u8).collect();
+        let mut b: Vec<u8> = a.clone(); if n > 0 { b[n-1] = b[n-1].wrapping_add(1); } // differ at last byte
+        let (ap, bp) = (a.as_ptr() as *const libc::c_void, b.as_ptr() as *const libc::c_void);
+        let (mut flv, mut glv) = (Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { frankenlibc_abi::string_abi::memcmp(ap, bp, n) }); } flv.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { g_memcmp(ap, bp, n) }); } glv.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("MEMCMP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&flv,0.5), pctl(&glv,0.5), pctl(&flv,0.5)/pctl(&glv,0.5));
+    }
 }
 
 #[inline(never)]
