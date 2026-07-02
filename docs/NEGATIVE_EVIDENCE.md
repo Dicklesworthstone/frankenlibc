@@ -10918,3 +10918,31 @@ focused-turn dead-tax/reorder lever. The dead-tax vein (dispatch/HTM/guard-reord
 produced this session's wins (strlen/memcpy/memcmp/mutex, cumulative memcpy 6.4x) is now EXHAUSTED for
 pure-computation families. Probe arms MKTIME/ATOI/STRTOL kept in stdio_st_probe.rs (ATOI/STRTOL flagged
 biased).
+
+---
+
+## Scan-family frontier VERIFIED: AVX2 already enabled, gap is asm-structural not codegen (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Before committing to the large hand-written-AVX2-asm swing for the remaining scan losses
+(strchr/strcmp/wcscmp/strlen-large ~1.3-2x), ruled out the cheap alternative — a missing
+target-feature build flag.
+
+**DISPROVEN cheap lever: the build ALREADY has `-Ctarget-feature=+avx2,+fma`** (.cargo/config.toml).
+So `Simd::<u8,32>` / `Simd::<u32,8>` in the scan kernels (scan_c_string, scan_strcmp,
+scan_c_string_for_byte, scan_wcscmp_simd) already lower to REAL AVX2 `vpcmpeqb ymm`, not
+2×SSE2 emulation. There is no free width to unlock — the portable-SIMD kernels are already
+32-byte-wide. **The remaining gap is genuinely portable-SIMD-loop-STRUCTURE vs glibc's
+hand-tuned asm leaf routines, not codegen.**
+
+**strcmp confirmed near its floor:** scan_strcmp is already optimal for portable SIMD — 32-byte
+AVX2 fast path, combined `(va.simd_ne(vb) | va.simd_eq(0)).to_bitmask()` (ONE reduction),
+O(1) `trailing_zeros()` first-diff resolve (no re-scan). The ~1.5x residual at small n is
+STRUCTURAL fixed cost: the `strict_passthrough_active()` atomic + the non-inlined `scan_strcmp`
+call boundary + portable-SIMD-vs-glibc-leaf-asm — none removable without collapsing the whole
+entry into a single asm-like leaf (glibc's shape), which IS the asm swing.
+
+**BLOCKER (one sentence):** every cheap vs-glibc lever in the hot pure-computation surface is now
+spent (dead-tax/dispatch/HTM/guard-reorder/fast-path-list all landed or ruled out, AVX2 already
+on), so the only remaining fl-losses (scan family ~1.3-2x, strcpy structural) require per-function
+hand-written recursion-safe AVX2 asm leaf kernels with page-safe alignment — a large, multi-turn
+swing that should be scoped as its own dedicated effort, not a focused land-a-win turn.
