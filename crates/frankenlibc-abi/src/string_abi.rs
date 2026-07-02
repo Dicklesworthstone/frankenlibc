@@ -515,6 +515,80 @@ unsafe fn raw_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
     }
 }
 
+/// Fused single-pass strcpy: copy `src` through its terminating NUL into `dst`, writing
+/// exactly `len + 1` bytes, in ONE pass (vs `scan_c_string` + `raw_memcpy_bytes`, which
+/// reads `src` twice). Aligned-load-down + head-mask read discipline (32|4096 keeps each
+/// 32-byte read in-page, same as `scan_c_string`'s None path); full NUL-free 32-byte
+/// chunks are SIMD-stored, the NUL-containing tail is copied scalar up to and including
+/// the NUL. Returns `len` (the NUL index) so callers can return the `stpcpy` end pointer.
+///
+/// # Safety
+/// `src` must be a valid NUL-terminated C string and `dst` must have room for
+/// `strlen(src) + 1` bytes.
+#[inline]
+unsafe fn fused_strcpy_bytes(dst: *mut u8, src: *const u8) -> usize {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+    let z = Simd::<u8, 32>::splat(0);
+    let align = (src as usize) & 31;
+    // SAFETY: `base` is aligned down <= 31 bytes, in the same mapped page as `src`.
+    let base = unsafe { src.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+    let m0 = v0.simd_eq(z).to_bitmask() & !((1u64 << align) - 1);
+    if m0 != 0 {
+        let nul = m0.trailing_zeros() as usize - align;
+        for j in 0..=nul {
+            // SAFETY: j <= nul < string length; dst has room for len+1.
+            unsafe { *dst.add(j) = *src.add(j) };
+        }
+        return nul;
+    }
+    let first = 32 - align; // elements from src to the next 32-byte boundary
+    if align == 0 {
+        // base == src: the head window IS the first aligned chunk, all non-NUL.
+        v0.copy_to_slice(unsafe { core::slice::from_raw_parts_mut(dst, 32) });
+    } else {
+        for j in 0..first {
+            // SAFETY: within the just-read window; these are non-NUL string bytes.
+            unsafe { *dst.add(j) = *src.add(j) };
+        }
+    }
+    let mut i = first; // src+i is 32-byte aligned
+    loop {
+        // SAFETY: src+i is 32-byte aligned ⇒ the 32-byte load stays in one page.
+        let v = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(src.add(i), 32) });
+        let m = v.simd_eq(z).to_bitmask();
+        if m != 0 {
+            let nul = m.trailing_zeros() as usize;
+            for j in 0..=nul {
+                // SAFETY: copies through the NUL; dst has room for len+1.
+                unsafe { *dst.add(i + j) = *src.add(i + j) };
+            }
+            return i + nul;
+        }
+        // No NUL: all 32 lanes are real bytes ⇒ dst has room for [i, i+32). SIMD store.
+        v.copy_to_slice(unsafe { core::slice::from_raw_parts_mut(dst.add(i), 32) });
+        i += 32;
+    }
+}
+
+/// Bench hook: current two-pass strcpy body (scan + block copy). Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_strcpy_two_pass(dst: *mut u8, src: *const u8) -> usize {
+    let src_len = unsafe { scan_c_string(src.cast(), None).0 };
+    if src_len > 0 {
+        unsafe { raw_memcpy_bytes(dst, src, src_len) };
+    }
+    unsafe { *dst.add(src_len) = 0 };
+    src_len
+}
+
+/// Bench hook: fused single-pass strcpy. Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_strcpy_fused(dst: *mut u8, src: *const u8) -> usize {
+    unsafe { fused_strcpy_bytes(dst, src) }
+}
+
 #[inline(never)]
 unsafe fn raw_dispatch_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
     let dispatch =

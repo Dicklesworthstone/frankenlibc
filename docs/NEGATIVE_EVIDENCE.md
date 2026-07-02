@@ -9918,3 +9918,26 @@ NEAR-PARITY at every size; n=1024 294ns -> 31ns (~9.5x faster fl-side). The narr
 the wcscat fuse. NARROW BUILDER FAMILY now fast: strcpy/stpcpy (membrane fast path, prior
 commit) + strcat (SIMD src copy). LESSON: a strict fast path can still hide a SCALAR inner
 loop — check the copy kernel inside the fast path, not just that the fast path exists.
+
+### 2026-07-02 — ✗ REJECTED: fused single-pass strcpy (scan+copy in one pass) — inconsistent, no reliable win over the two-pass — BlackThrush
+
+After the strcpy membrane fast-path win (fl/glibc 7-10x -> 1.5-2.6x), hypothesised the residual
+was the two-pass (scan_c_string + raw_memcpy_bytes reads src twice) vs glibc's fused single
+pass. Wrote fused_strcpy_bytes (aligned-head-mask read + 32-byte SIMD store of NUL-free chunks +
+scalar tail through NUL, one pass) and A/B'd it vs the deployed two-pass via REAL internal-fn
+hooks (bench_strcpy_two_pass / bench_strcpy_fused), both + glibc in one process. Measured
+fused/two_pass:
+  n=4 1.32  n=8 2.10  n=16 0.74  n=32 0.50  n=64 2.23  n=128 2.43  n=256 0.55  n=1024 0.91
+INCONSISTENT — fused wins at n=16/32/256 (0.50-0.74) but loses 2.2-2.4x at n=64/128 (fused
+10-11ns vs the n=256 fused 3.7ns = non-monotonic outliers), so it is noise-dominated with no
+reliable improvement. WHY: the two-pass is already two TIGHT auto-vectorised loops (the SIMD
+scan_c_string + the overlapping-power-of-2 raw_overlap_copy), and a fused loop pays a NUL-check
+branch per 32-byte chunk + an awkward misaligned-head scalar copy that the two clean loops avoid.
+The strcpy residual ~1.5-2.6x vs glibc is the extern-C-frame floor + glibc's hand-tuned asm, NOT
+the second src pass. DECISION: fused NOT deployed; deployed strcpy keeps scan + raw_memcpy_bytes.
+Kept fused_strcpy_bytes + the two hooks + strcpy_fused_ab_bench as apparatus (reusable if a
+per-fn AVX2 asm strcpy is ever attempted). LESSON: a "2-pass -> 1-pass" fuse only pays when a
+pass is EXPENSIVE (wide wcscpy's second pass was the interposed-memcpy SYMBOL call — that fused
+cleanly); when both passes are already tight internal SIMD loops, fusing adds per-chunk branch
+overhead and does not win. Contrast the wcscpy fuse (WON: removed a symbol call) vs this (LOST:
+both passes already cheap).

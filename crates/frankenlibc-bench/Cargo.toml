@@ -553,3 +553,9 @@ harness = false
 name = "wcstok_glibc_bench"
 required-features = ["abi-bench"]
 harness = false
+
+# strcpy two-pass vs fused single-pass in-process A/B/C.
+[[bench]]
+name = "strcpy_fused_ab_bench"
+required-features = ["abi-bench"]
+harness = false
