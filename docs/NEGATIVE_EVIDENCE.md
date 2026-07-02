@@ -81,13 +81,18 @@ retried and real wins are confirmed with numbers.
   SIGSEGV). BYTE-IDENTICAL: conformance_diff_string_search (6000-case strstr-vs-glibc +
   the guard-page test) + memmem_strcasestr GREEN.
 - **MEASURED (`strstr_glibc_bench`, mmap'd haystack → fused path, deployed fl vs dlmopen
-  glibc):** early-match fl_p50 (page-chunk) 217ns@64k / 227ns@256k; (512-chunk) 86ns /
-  119ns. ORIG prescans the WHOLE haystack (a 64K–256K SIMD strlen ≈ ~1–2µs) BEFORE
-  searching, so for an early match NEW does ~10–20x less work than ORIG (scans ~2 KB vs
-  64–256 KB). Absent-needle ~neutral vs ORIG (both scan the whole haystack once; the
-  per-chunk memmem carries a small preprocessing tax — chunk=2048 balances it). fl still
-  trails glibc's hand-tuned strstr (~3.6x) — that residual is the core `memmem` throughput,
-  a separate lever; the PRESCAN ELIMINATION (the ORIG gap) is what this closes.
+  glibc; RELIABLE = within-run fl/glibc ratio, cross-worker glibc varies ~2x):**
+  EARLY-match fl/glibc **ORIG 34.4x@64k / 103.5x@256k → NEW 3.18x / 2.84x** — a ~10–36x
+  ratio improvement (ORIG prescans the WHOLE 64–256K haystack ≈ ~1–2µs BEFORE searching;
+  NEW returns at the first match). ABSENT fl/glibc **ORIG 1.83x → NEW 2.16x**.
+- **⚠️ CORRECTION + FIX:** the FIRST cut (commit a3e34ad01) chunked the ENTIRE haystack,
+  so ABSENT REGRESSED (fl/glibc 1.83 → 2.5–3.8: per-chunk memmem re-preprocessing with
+  no early-stop benefit) — my "absent ~neutral" claim there was WRONG. FIXED here: fuse
+  only the first `FUSED_EARLY_WINDOW = 16384` bytes (catches the common early match
+  cheaply), then finish the tail with a SINGLE `scan_c_string(None)` + one `memmem`
+  (ORIG's shape, one preprocess) → absent back to ~ORIG (2.16 ≈ 1.83, within worker
+  noise). Now a clean Pareto win: EARLY hugely faster, ABSENT ~parity. fl still trails
+  glibc's hand-tuned strstr (~3x) — core `memmem` throughput, a separate lever.
 
 ## 2026-07-01 — ✗ known_remaining-drop lever BLOCKED for strstr/strcasestr/strlen (main-data-arg bound is a load-bearing safety feature) — boundary recorded
 

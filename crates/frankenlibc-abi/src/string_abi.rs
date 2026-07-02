@@ -4258,7 +4258,25 @@ unsafe fn strstr_fused(
     let ns = unsafe { std::slice::from_raw_parts(needle, needle_len) };
     let mut window_start = 0usize; // absolute offset where the search window begins
     let mut cur = 0usize; // absolute offset of the next byte to scan
+    // After this many bytes with no match, stop chunking and finish the tail with a
+    // SINGLE scan_c_string(None) + one memmem (ORIG's shape) — the early-match window
+    // caught the common case cheaply; the tail avoids the per-chunk memmem-preprocess
+    // tax, so an ABSENT/late needle costs ~ORIG instead of regressing.
+    const FUSED_EARLY_WINDOW: usize = 16384;
     loop {
+        if cur >= FUSED_EARLY_WINDOW {
+            // SAFETY: page-safe unbounded scan to the NUL, then one search over the
+            // whole [window_start, end) window (carry-over already applied).
+            let (rest_len, _) = unsafe { scan_c_string(hp.add(cur).cast(), None) };
+            let end = cur + rest_len;
+            let win = unsafe {
+                std::slice::from_raw_parts(hp.add(window_start), end - window_start)
+            };
+            return match frankenlibc_core::string::mem::memmem(win, win.len(), ns, needle_len) {
+                Some(idx) => unsafe { hp.add(window_start + idx) as *mut c_char },
+                None => std::ptr::null_mut(),
+            };
+        }
         let addr = hp as usize + cur;
         // Scan a bounded chunk that never crosses the current (mapped) page: the
         // smaller of a 512 B window and the bytes remaining to the page boundary.
