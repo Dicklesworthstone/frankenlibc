@@ -149,7 +149,7 @@ fn main() {
     let g_getline: GetlineFn = dl(h, b"getline\0");
     let g_rewind: RewindFn = dl(h, b"rewind\0");
     let nlines = 50usize;
-    let content = "the quick brown fox jumps over the lazy dog\n".repeat(nlines);
+    let content = format!("{}\n", "x".repeat(300)).repeat(nlines);
     std::fs::write("/tmp/fl_getline_probe.txt", &content).unwrap();
     let fpath = b"/tmp/fl_getline_probe.txt\0".as_ptr() as *const c_char;
     let flf = unsafe { fl::fopen(fpath, rmode) }; assert!(!flf.is_null());

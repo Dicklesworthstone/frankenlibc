@@ -7816,6 +7816,87 @@ impl Drop for GetdelimScratchGuard {
     }
 }
 
+/// Shared getdelim read loop: fill `buf` from `s` through the first `delim_byte`, or EOF/
+/// error. Bulk-scans the stream buffer via read_until_delim (no per-char re-lock), refilling
+/// the fd. Extracted verbatim from the original loop so both the slow path (registry lock
+/// held) and the ST pointer-keyed fast path (cache-gated) share one implementation.
+///
+/// # Safety
+/// `s` must be uniquely borrowed for this call (registry lock held, or ST cache-gated).
+unsafe fn getdelim_fill_stream(s: &mut StdioStream, delim_byte: u8, buf: &mut Vec<u8>) {
+    loop {
+        match s.read_until_delim(delim_byte, &mut *buf) {
+            ReadUntil::Found | ReadUntil::Eof => break,
+            ReadUntil::NeedRefill => {
+                if s.is_eof() || s.is_error() {
+                    break;
+                }
+                if s.buffer_capacity() == 0 {
+                    // Unbuffered fd stream: read a byte directly.
+                    let mut b = [0u8; 1];
+                    let fd = s.fd();
+                    let rc = unsafe { sys_read_fd(fd, b.as_mut_ptr().cast(), 1) };
+                    if rc > 0 {
+                        s.set_offset(s.offset().saturating_add(1));
+                        buf.push(b[0]);
+                        if b[0] == delim_byte {
+                            break;
+                        }
+                    } else if rc == 0 {
+                        s.set_eof();
+                        break;
+                    } else {
+                        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                        if e != errno::EINTR {
+                            s.set_error();
+                        }
+                        break;
+                    }
+                } else if unsafe { refill_stream(s) } <= 0 {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Shared getdelim tail: (re)allocate `*lineptr` to fit `buf` + NUL, copy, NUL-terminate.
+/// Returns the line length, or -1 (empty read / ENOMEM). No observe/membrane — the caller
+/// handles telemetry (the fast path skips it).
+///
+/// # Safety
+/// `lineptr`/`n` are valid getdelim out-params; `*lineptr` (if non-null) is host-allocated.
+unsafe fn getdelim_finish(buf: &[u8], lineptr: *mut *mut c_char, n: *mut usize) -> isize {
+    if buf.is_empty() {
+        return -1;
+    }
+    let needed = buf.len() + 1; // +1 for NUL terminator
+    let current_buf = unsafe { *lineptr };
+    let current_size = unsafe { *n };
+    let out_buf = if current_buf.is_null() || current_size < needed {
+        let new_size = needed.max(128);
+        let new_buf = if let Some(host_realloc) = crate::host_resolve::host_realloc_raw() {
+            unsafe { host_realloc(current_buf.cast(), new_size) }
+        } else {
+            unsafe { crate::malloc_abi::realloc(current_buf.cast(), new_size) }
+        };
+        if new_buf.is_null() {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return -1;
+        }
+        unsafe { *lineptr = new_buf.cast() };
+        unsafe { *n = new_size };
+        new_buf as *mut u8
+    } else {
+        current_buf as *mut u8
+    };
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), out_buf, buf.len());
+        *out_buf.add(buf.len()) = 0; // NUL terminate
+    }
+    buf.len() as isize
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getdelim(
     lineptr: *mut *mut c_char,
@@ -7826,6 +7907,20 @@ pub unsafe extern "C" fn getdelim(
     if lineptr.is_null() || n.is_null() || stream.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
+    }
+
+    let delim_byte = delim as u8;
+
+    // ST fast path: a cache hit is a non-cookie non-mem fd stream, so fill lock-free + finish,
+    // skipping canonical_stream_id's native lock + registry_contains + registry().lock() +
+    // decide/observe per line (getline is hot for file processing). Byte-identical.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
+        let buf = &mut scratch.0;
+        buf.clear();
+        // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
+        unsafe { getdelim_fill_stream(&mut *p, delim_byte, buf) };
+        return unsafe { getdelim_finish(buf, lineptr, n) };
     }
 
     let id = canonical_stream_id(stream);
@@ -7848,18 +7943,13 @@ pub unsafe extern "C" fn getdelim(
         return -1;
     }
 
-    let delim_byte = delim as u8;
     // Reuse the thread-local scratch (retains capacity) instead of a fresh per-call Vec.
     let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
     let buf = &mut scratch.0;
     buf.clear();
 
-    // Read the whole line under a SINGLE registry lock + the policy decision
-    // taken above, scanning the stream buffer for the delimiter with
-    // `read_until_delim` instead of calling `fgetc` (which re-locks the
-    // registry, re-runs the membrane policy, and allocates a 1-byte `Vec`)
-    // once per character. The ABI layer owns the descriptor refill because the
-    // membrane policy and `sys_read_fd` live here.
+    // Read the whole line under a SINGLE registry lock + the policy decision above (bulk
+    // read_until_delim, not per-char fgetc; the ABI layer owns descriptor refill).
     {
         let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
         let Some(s) = reg.streams.get_mut(&id) else {
@@ -7868,83 +7958,18 @@ pub unsafe extern "C" fn getdelim(
         };
         if s.is_mem_backed() {
             sync_and_unregister_fast_fixed_mem_read(id, s);
+        } else if !is_cookie_stream(id) {
+            // Cache the non-cookie non-mem fd stream so subsequent getdelim/getline hit the
+            // fast path — a pure getline loop otherwise never populates the cache. See fgets.
+            write_cache_store(id, s as *mut StdioStream);
         }
-        loop {
-            match s.read_until_delim(delim_byte, &mut *buf) {
-                ReadUntil::Found | ReadUntil::Eof => break,
-                ReadUntil::NeedRefill => {
-                    if s.is_eof() || s.is_error() {
-                        break;
-                    }
-                    if s.buffer_capacity() == 0 {
-                        // Unbuffered fd stream: read a byte directly (matches
-                        // `fgetc`'s capacity-0 path; cannot call `fgetc` while
-                        // holding the registry lock — it would deadlock).
-                        let mut b = [0u8; 1];
-                        let fd = s.fd();
-                        let rc = unsafe { sys_read_fd(fd, b.as_mut_ptr().cast(), 1) };
-                        if rc > 0 {
-                            s.set_offset(s.offset().saturating_add(1));
-                            buf.push(b[0]);
-                            if b[0] == delim_byte {
-                                break;
-                            }
-                        } else if rc == 0 {
-                            s.set_eof();
-                            break;
-                        } else {
-                            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                            if e != errno::EINTR {
-                                s.set_error();
-                            }
-                            break;
-                        }
-                    } else if unsafe { refill_stream(s) } <= 0 {
-                        break;
-                    }
-                }
-            }
-        }
+        // SAFETY: `s` uniquely borrowed under the registry lock.
+        unsafe { getdelim_fill_stream(s, delim_byte, buf) };
     }
 
-    let got_any = !buf.is_empty();
-    if !got_any {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return -1;
-    }
-
-    // Allocate/reallocate the output buffer.
-    let needed = buf.len() + 1; // +1 for NUL terminator
-    let current_buf = unsafe { *lineptr };
-    let current_size = unsafe { *n };
-
-    let out_buf = if current_buf.is_null() || current_size < needed {
-        let new_size = needed.max(128);
-        let new_buf = if let Some(host_realloc) = crate::host_resolve::host_realloc_raw() {
-            unsafe { host_realloc(current_buf.cast(), new_size) }
-        } else {
-            unsafe { crate::malloc_abi::realloc(current_buf.cast(), new_size) }
-        };
-        if new_buf.is_null() {
-            unsafe { set_abi_errno(errno::ENOMEM) };
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-            return -1;
-        }
-        unsafe { *lineptr = new_buf.cast() };
-        unsafe { *n = new_size };
-        new_buf as *mut u8
-    } else {
-        current_buf as *mut u8
-    };
-
-    // Copy data to output buffer.
-    unsafe {
-        std::ptr::copy_nonoverlapping(buf.as_ptr(), out_buf, buf.len());
-        *out_buf.add(buf.len()) = 0; // NUL terminate
-    }
-
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    buf.len() as isize
+    let r = unsafe { getdelim_finish(buf, lineptr, n) };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, r < 0);
+    r
 }
 
 /// POSIX `getline` — read a complete line, dynamically allocating the buffer.

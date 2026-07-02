@@ -10424,3 +10424,24 @@ parallel flake (fopen_path_with_embedded_null_truncates — shared global regist
 single-threaded + isolated + on re-run) unrelated to this change; prefer --test-threads=1 for
 coherence (memory-documented hazard). EARLIER EOF PROBE CORRECTED: the 302x was the EOF corner +
 shared-rf state, NOT representative; the real per-line gap is 7.9x -> 5.45x.
+
+### 2026-07-02 — ✅ getdelim/getline pointer-keyed fast path + cache-store — skips per-line locks (feof/fgets lock-set) — BlackThrush
+
+Landed the proven pointer-keyed lock-elision (fgets mechanism) on getdelim, completing the getline
+optimization. Extracted the read loop (getdelim_fill_stream) + the realloc/copy tail
+(getdelim_finish) into shared helpers used by BOTH the slow path (registry lock held) and a new ST
+fast path: a cache hit is a non-cookie non-mem fd stream, so fill lock-free + finish, skipping
+canonical_stream_id's native lock + registry_contains + registry().lock() + decide/observe per
+line. Also added write_cache_store on the slow-path non-mem branch (guarded !is_cookie_stream, cache
+invariant preserved) so a pure getline loop actually populates the cache and hits the fast path
+(same dead-fast-path gap fixed for fgets). Byte-identical: observe(15, r<0) reproduces the original
+empty/ENOMEM(-1,true) + success(len,false) telemetry exactly; conformance stdio_abi_test 256/0
+single-threaded. The skipped lock-set is the one measured on fgets (same-process A/B old=18.81ns
+new=8.05ns, new/old=0.428, 10.76ns saved/line) — getdelim skips the same per-line locks. Combined
+with the prior thread-local scratch (78286251c, 1.46x), getline's per-line overhead is now scratch
++ lock-free. (End-to-end getline per-line ratio not re-captured this turn — build cut short; the
+lock-set saving is the fgets-measured 10.76ns/line, and getline was 189ns/line post-scratch.)
+getline delegates to getdelim (inherits). REJECTED same turn: the getdelim temp->caller
+copy_nonoverlapping is NOT the wide-copy trap — narrow u8 copy_nonoverlapping is fine (measured
+195.58->189.43ns at 300-char lines = ~3%/noise), so raw_memcpy_bytes swap reverted. Narrow != wide
+for the copy-lowering trap.
