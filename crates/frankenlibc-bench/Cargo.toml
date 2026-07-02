@@ -575,3 +575,7 @@ harness = false
 [[example]]
 name = "stdio_st_probe"
 required-features = ["abi-bench"]
+
+[[example]]
+name = "malloc_st_probe"
+required-features = ["abi-bench"]

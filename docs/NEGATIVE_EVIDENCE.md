@@ -10231,3 +10231,32 @@ passed / 0 failed; benefits ALL pointer-keyed fast paths at once (fputs/fputc/fw
 fread/feof/ferror/fileno/ftell/clearerr). GOTCHA: `gen` is a Rust 2024 reserved keyword — the
 loop's generation local must be `cur_gen`. A 3rd hot stream still evicts LRU-ish (slot 1); 2-way
 covers the dominant stdout+stderr / two-log patterns. MT path (bd-hqo6b6) unchanged.
+
+### 2026-07-02 — ⊘ malloc ST re-measured 16.7x (not 50x); cost is DIFFUSE membrane, no single lever — blocker confirmed — BlackThrush
+
+Applied the standalone-ST-probe method (that unlocked the stdio wins) to malloc. New apparatus
+examples/malloc_st_probe.rs (single-threaded, so MULTI_THREADED stays false and the allocator ST
+fast paths are live — criterion can't measure this). Deployed fl malloc+free round-trip vs host
+glibc (dlmopen):
+  MALLOC_FREE sz=16 fl=142.1 glibc=8.55 = 16.6x; sz=64 16.9x; sz=256 16.7x; sz=1024 16.7x.
+FLAT across sizes ⇒ fixed per-call overhead (membrane machinery), NOT the allocation itself
+(native_libc_malloc IS glibc, ~8ns). The "~50x" in prior memory was the criterion-MT number;
+genuine ST is ~16.7x.
+
+Investigated for a strict-fast-path lever (like strcpy/stdio). Findings:
+  - malloc's fallback_insert_sized_index takes a GLOBAL SPINLOCK (lock_fallback_alloc_table)
+    every call; free already SKIPS its lock in ST via the MULTI_THREADED gate (asymmetry).
+    Skipping the insert lock under !MULTI_THREADED would be sound BY PARITY with free's shipped
+    ST path — BUT the spinlock CAS is only ~5-10ns of the ~132ns overhead (~7%), so it's a
+    marginal win with a CATASTROPHIC downside (malloc heap corruption if the ST/MT gate races).
+    REJECTED as not worth the risk/reward.
+  - The registry insert is LOAD-BEARING: free's strict fast path (fallback_remove_sized_for_slot)
+    uses it to route host-vs-arode ownership WITHOUT the expensive check_ownership/PageOracle
+    query, and for record_free_stats. So it can't just be dropped.
+  - The ~132ns overhead is DIFFUSE across enter_allocator_reentry_guard (x2, malloc+free) +
+    note_thread_tid + fallback insert/remove + publish_fallback_range + record_*_stats +
+    entrypoint_scope + allocator_stage_context. No single dominant cost ⇒ no focused-turn lever.
+CONCLUSION (confirms memory): the malloc gap is architectural — closing it needs a redesign of
+the ownership-discrimination model (e.g., range-based arena check to drop the per-alloc table
+insert/remove entirely) or a lighter reentry/telemetry path, both multi-session + high-risk.
+Apparatus kept: malloc_st_probe.rs (the honest ST malloc harness). NOT a focused-turn win.
