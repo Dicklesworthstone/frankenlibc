@@ -1991,7 +1991,10 @@ pub unsafe extern "C" fn wcsdup(s: *const u32) -> *mut u32 {
             if ptr.is_null() {
                 return std::ptr::null_mut();
             }
-            std::ptr::copy_nonoverlapping(s, ptr, len);
+            // Inline SIMD copy, not copy_nonoverlapping (wide u32 copy -> interposed
+            // memcpy symbol, ~2 GB/s / up to 34x glibc at large len). `len` is already
+            // known from the scan above, so wide_copy_n copies exactly it.
+            wide_copy_n(ptr, s, len);
             *ptr.add(len) = 0;
             ptr
         };

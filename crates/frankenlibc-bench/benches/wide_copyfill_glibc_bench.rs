@@ -163,6 +163,23 @@ fn bench(c: &mut Criterion) {
         println!("WMEMCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
     }
 
+    // wcsdup: scan + malloc + copy. Free each iter (both arms) so it doesn't OOM; malloc
+    // adds fixed cost to both, but the copy improvement shows at large len.
+    type DupFn = unsafe extern "C" fn(*const u32) -> *mut u32;
+    type FreeFn = unsafe extern "C" fn(*mut libc::c_void);
+    let g_dup: DupFn = sym(b"wcsdup\0");
+    let g_free: FreeFn = sym(b"free\0");
+    for &n in &[4usize, 16, 64, 256, 1024] {
+        let mut src: Vec<u32> = std::iter::repeat(b'a' as u32).take(n).collect(); src.push(0);
+        let sp = src.as_ptr();
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..60 {
+            let t = Instant::now(); for _ in 0..it { let p = unsafe { frankenlibc_abi::wchar_abi::wcsdup(black_box(sp)) }; black_box(p); unsafe { frankenlibc_abi::malloc_abi::free(p as *mut libc::c_void) }; } fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now(); for _ in 0..it { let p = unsafe { g_dup(black_box(sp)) }; black_box(p); unsafe { g_free(p as *mut libc::c_void) }; } gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        println!("WCSDUP n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
+    }
+
     grp.bench_function("noop", |b| b.iter(|| black_box(1u8))); grp.finish();
 }
 criterion_group!(benches, bench); criterion_main!(benches);

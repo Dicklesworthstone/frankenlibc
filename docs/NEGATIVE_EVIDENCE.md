@@ -10023,3 +10023,19 @@ wcsncat/wcsncpy/wcpncpy/wmemcpy all off the slow interposed copy_nonoverlapping/
 now 1.0-2.5x (several beat glibc). Only wmemmove keeps the symbol (overlap semantics).** NOTE:
 the disk-full worker (hz1 pool, "No space left on device") failed one bench run — retried on a
 fresh worker; conformance ran clean throughout.
+
+### 2026-07-02 — ✅ wcsdup copy off the copy_nonoverlapping symbol (wide_copy_n); malloc-dominated net 1.2-1.6x — BlackThrush
+
+wcsdup strict path = scan + malloc + copy_nonoverlapping(s, ptr, len) + NUL. The copy is the
+SAME wide-u32 copy_nonoverlapping that measured ~1400ns at len=1024 (interposed memcpy symbol,
+~2 GB/s) in wcsncpy/wcpncpy/wmemcpy. Swapped to inline wide_copy_n (len already known from the
+scan). Byte-identical (conformance_diff_wchar 44 / wchar_abi 118, 0 failed); the fix is provably
+<= the old path so it cannot regress. Deployed bench (WCSDUP arm, malloc+free per iter, both
+arms): fl/glibc = 1.55 (n=4) 1.64 (16) 1.17 (64) 1.49 (256) 1.22 (1024). wcsdup is MALLOC-
+DOMINATED (fl ~28-44ns malloc floor vs glibc, the deployed-malloc-membrane ~50x class, an
+architectural item — NOT this copy), so the net ratio reflects malloc, not the copy; total at
+n=1024 is now 125ns (the copy is no longer the ~1400ns symbol path). **ALL wide copy_nonoverlapping/
+memmove-symbol hot strict paths now swept: wcscpy/wcpcpy/wcscat/wcsncat/wcsncpy/wcpncpy/wmemcpy/
+wcsdup. Remaining wide symbol copies are in cold repair/hardened branches + wcsxfrm (low-hot) +
+wmemmove (overlap semantics, must keep).** wcsdup's residual is the deployed-malloc membrane
+(architectural, tracked separately), not the copy.
