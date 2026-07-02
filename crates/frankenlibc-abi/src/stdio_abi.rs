@@ -3634,6 +3634,14 @@ pub unsafe extern "C" fn ftell(stream: *mut c_void) -> c_long {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
     }
+    // ST fast path: a cache hit is a non-mem fd stream whose offset is tracked inline;
+    // sync_fast_fixed_mem_read_to_stream is a no-op and decide()==Allow in strict, so
+    // returning `offset()` directly is byte-identical (matches the existing cache-hit
+    // fast paths that skip decide). Skips the 3 per-call locks.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
+        return unsafe { (*p).offset() } as c_long;
+    }
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
@@ -3761,6 +3769,14 @@ pub unsafe extern "C" fn ferror(stream: *mut c_void) -> c_int {
 /// POSIX `clearerr`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clearerr(stream: *mut c_void) {
+    // ST fast path: a cache hit is a non-mem fd stream (fast_fixed_mem_read(id)==None), so
+    // the slow path reduces to `s.clear_err()` — do it directly, skipping the 3 per-call
+    // locks. Byte-identical. Mutating, but ST-gated ⇒ unique access.
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
+        unsafe { (*p).clear_err() };
+        return;
+    }
     let id = canonical_stream_id(stream);
     if id == 0 {
         return;
@@ -3814,6 +3830,14 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
 /// POSIX `fileno`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fileno(stream: *mut c_void) -> c_int {
+    // ST fast path: a cache hit is a non-cookie non-mem fd stream, so `is_mem_backed()`
+    // is false and the slow path returns `s.fd()` — read it directly, skipping the 3
+    // per-call locks (native + registry_contains + registry). Byte-identical. (feof A/B:
+    // 3-lock elision = ~16ns/call.)
+    if let Some(p) = write_cache_lookup_by_stream(stream) {
+        // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
+        return unsafe { (*p).fd() };
+    }
     let id = canonical_stream_id(stream);
     if id == 0 {
         unsafe { set_abi_errno(errno::EBADF) };

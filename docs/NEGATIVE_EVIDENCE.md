@@ -10198,3 +10198,20 @@ stdio conformance stdio_abi_test 256 passed / 0 failed. ferror gets the identica
 unchanged. **stdio pointer-keyed lock-elision now covers the whole ST hot family: fputs/fputc/
 fwrite (write) + fgetc/getc/fread (read) + feof/ferror (state) — all skip the per-call FILE*->id
 native lock; feof/ferror additionally skip the main registry lock.** Apparatus: stdio_st_probe.
+
+### 2026-07-02 — ✅ fileno/ftell/clearerr pointer-keyed fast path — same 3-lock elision as feof — BlackThrush
+
+Extended the pointer-keyed fast path to the remaining stdio state/query fns that took the same
+3-lock-per-call set (canonical_stream_id native lock + registry_contains_stream + registry().lock()):
+  - fileno: a cache hit is a non-mem fd stream ⇒ `is_mem_backed()` false ⇒ return `fd()` directly.
+  - ftell: cache hit ⇒ sync is a no-op + decide==Allow in strict ⇒ return `offset()` directly
+    (matches the existing cache-hit fast paths that skip decide).
+  - clearerr: cache hit ⇒ reduces to `clear_err()` (fast_fixed_mem_read(id)==None).
+All byte-identical (strict stdio conformance stdio_abi_test 256 passed / 0 failed). These skip the
+IDENTICAL 3-lock set already measured for feof (same-process A/B old=21.00ns new=4.40ns,
+new/old=0.209, ~16.6ns saved/call), so the per-call saving carries over (dominant cost is the 3
+locks, identical across these fns). fileno is hot in poll/select/epoll loops; ftell/clearerr
+lower-frequency but free. **stdio ST pointer-keyed lock-elision now COMPLETE across the hot
+surface: write (fputs/fputc/fwrite), read (fgetc/getc/fread), state (feof/ferror), query
+(fileno/ftell/clearerr) — all skip the per-call FILE*->id native lock; the state/query fns also
+skip the main registry lock.** MT path (bd-hqo6b6) unchanged. Apparatus: stdio_st_probe.
