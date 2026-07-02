@@ -10659,3 +10659,66 @@ measured, byte-identical 2.3x self-improvement worth landing on its own.
 computes `select_string_simd_dispatch` only to feed one of these is pure waste. strnlen's
 strict path was already clean (direct `scan_c_string(s, Some(n))`); strlen was the last hot
 offender.
+
+---
+
+## memcpy drops useless real-HTM attempt + dead dispatch — 2.4-3.8x faster on a top-3 hottest libc fn (AGENT_NAME: BlackThrush, 2026-07-02)
+
+**Measured (same-process dlmopen A/B, stdio_st_probe MEMCPY arm, worker-invariant):**
+
+| n    | fl BEFORE | fl AFTER | glibc | fl/glibc BEFORE | fl/glibc AFTER |
+|------|-----------|----------|-------|-----------------|----------------|
+| 8    | 24.27 ns  | 6.64 ns  | 2.69  | 7.154x          | **2.470x**     |
+| 16   | 19.17 ns  | 7.58 ns  | 2.62  | 7.284x          | **2.892x**     |
+| 24   | 24.23 ns  | 7.80 ns  | 2.64  | 7.422x          | **2.955x**     |
+| 32   | 18.79 ns  | 7.73 ns  | 2.19  | 8.839x          | **3.537x**     |
+| 48   | 19.35 ns  | 8.58 ns  | 2.23  | 8.979x          | **3.846x**     |
+| 64   | 19.48 ns  | 8.08 ns  | 3.32  | 5.886x          | **2.432x**     |
+| 128  | 18.72 ns  | 7.79 ns  | 2.75  | 7.115x          | **2.835x**     |
+
+**Deployed memcpy (a top-3 hottest libc fn) was ~19ns FLAT for all n≤128 — 5.9–9x slower
+than glibc** — and, like strlen last commit, this was invisible to the LTO-biased
+glibc_baseline_bench / kernel-direct MEMCPY_AB benches (which measure `raw_overlap_copy`
+directly, NOT the no_mangle entry). An honest dlmopen probe through the real `memcpy` symbol
+exposed it.
+
+**Two stacked dead costs on the strict (default deployed) path:**
+1. **Useless real-HTM attempt.** `MEMCPY_HTM_MAX_BYTES = 256`, so every memcpy ≤256B called
+   `try_memcpy_htm` → `HtmSite::run` in `Real` mode → `real_htm_supported()` which is FALSE
+   on this AMD Zen3 worker (no RTM — true for all AMD and most Intel) → `record_fallback` →
+   `Err` every single call. ~10ns/call to discover "unsupported" and fall back. And a plain
+   disjoint memcpy has NO atomicity contract for a transaction to provide — HTM is pointless
+   here even where RTM exists. (The raw-passthrough branch already gated HTM behind
+   `htm_forced_mode_active_for_tests()`; only the strict/hardened paths attempted real HTM.)
+2. **Dead dispatch → volatile for n<32.** The fallback went through `raw_dispatch_memcpy_bytes`
+   → `select_string_simd_dispatch(Memcpy,…)`, whose thresholds (AVX2 128, SSE42 32) return
+   **SCALAR (lane 1) for every n<32** → `raw_lane_memcpy_bytes` then ran the SLOW volatile
+   byte loop. The small-n `raw_overlap_copy` win the ledger credited never reached the
+   deployed entry (dispatch thresholds were never lowered to match).
+
+**Fix (byte-identical for disjoint memcpy = the C contract):** in the strict path and both
+`!heals` proof-carried paths, mirror the raw-passthrough branch — attempt HTM only under a
+forced test mode, otherwise call `raw_overlap_copy` directly. `raw_overlap_copy` is a
+complete size-class dispatcher on `n` alone (overlapping power-of-2 small-n / AVX2 vmovdqu
+loop [128,2048) / rep movsb ≥2048), recursion-safe, and is exactly what the SIMD lane path
+already used for n≥32 — so it supersedes both the HTM attempt and the dispatch. For n<32 it
+replaces the volatile byte loop with overlapping wide copies (identical bytes, disjoint).
+
+**Gates (all green, byte-identity + both modes):** conformance_diff_string_mut 35,
+conformance_diff_copy_stragglers 4, strict_mode_refinement_test 18, hardened_mode_safety_test
+15, string_abi_test 201 (incl. memcpy_htm_fast_path_commits_when_forced /
+memcpy_htm_abort_falls_back_and_preserves_bytes — HTM still exercised under forced mode).
+
+**Honest framing — NARROWS the gap 2.4–3.8x, does not overtake glibc.** fl memcpy is still
+2.4–3.8x slower; the ~5ns residual over glibc is per-call fixed cost — the `n==0` guard, two
+null checks, the `strict_passthrough_active()` + `htm_forced_mode_active_for_tests()` atomic
+loads, and the non-inlined `raw_overlap_copy` call boundary — vs glibc's leaf asm routine
+with zero setup. Closing it further means inlining the small-n copy into `memcpy` and shedding
+the guards (diminishing returns, higher risk). But removing ~11ns of pure waste (dead HTM +
+dead dispatch → volatile) from a top-3 libc fn is a real, measured, byte-identical
+2.4–3.8x self-improvement.
+
+**Reusable finding:** the real-HTM `try_memcpy_htm` attempt is dead weight on any CPU without
+RTM (all AMD). It was on the strict + hardened memcpy paths. Same class as the strlen
+dead-dispatch: verify perf through the ACTUAL no_mangle entry via dlmopen — kernel-direct and
+glibc_baseline_bench both bypass the HTM/dispatch/guard layer and hide these flat per-call taxes.

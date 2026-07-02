@@ -309,6 +309,24 @@ fn main() {
         }
         println!("STRLEN n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&flv2,0.5), pctl(&glv2,0.5), pctl(&flv2,0.5)/pctl(&glv2,0.5));
     }
+
+    // memcpy: deployed no_mangle entry vs glibc (dlmopen). SUSPECT: strict path routes
+    // through select_string_simd_dispatch, which returns SCALAR(lane 1) for n<32 (SSE42
+    // threshold 32) → the SLOW volatile byte loop, never the raw_overlap_copy small-n win.
+    type MemcpyFn = unsafe extern "C" fn(*mut libc::c_void, *const libc::c_void, usize) -> *mut libc::c_void;
+    let g_memcpy: MemcpyFn = dl(h, b"memcpy\0");
+    for &n in &[8usize, 16, 24, 32, 48, 64, 128] {
+        let src: Vec<u8> = (0..n).map(|i| (i & 0xff) as u8).collect();
+        let mut dst = vec![0u8; n];
+        let (sp, dp) = (src.as_ptr() as *const libc::c_void, dst.as_mut_ptr() as *mut libc::c_void);
+        let (mut flv, mut glv) = (Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { std::hint::black_box(unsafe { frankenlibc_abi::string_abi::memcpy(dp, sp, n) }); } flv.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { std::hint::black_box(unsafe { g_memcpy(dp, sp, n) }); } glv.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("MEMCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&flv,0.5), pctl(&glv,0.5), pctl(&flv,0.5)/pctl(&glv,0.5));
+    }
 }
 
 #[inline(never)]

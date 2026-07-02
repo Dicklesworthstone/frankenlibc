@@ -2273,8 +2273,19 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
     // `!heals_enabled` raw_dispatch path below), like the inet_strict family. Hardened mode
     // falls through to the full validating path.
     if runtime_policy::strict_passthrough_active() {
-        if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n) {
-            unsafe { raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        // HTM only carries meaning under a forced test mode: real RTM is absent on most
+        // deployed CPUs (all AMD, most Intel), so attempting a transaction in `Real` mode
+        // cost ~10ns/call to detect-unsupported-and-fall-back on EVERY memcpy <= 256B, and
+        // a plain (disjoint) memcpy has no atomicity contract for HTM to provide anyway.
+        // Mirror the raw-passthrough branch: try HTM only under a forced test mode, else
+        // copy directly. `raw_overlap_copy` handles ALL sizes (overlapping small-n / AVX2
+        // vmovdqu loop / rep movsb) and is byte-identical to a memcpy for disjoint regions —
+        // it supersedes `raw_dispatch_memcpy_bytes`, whose `select_string_simd_dispatch`
+        // returned SCALAR (lane 1 → slow volatile byte loop) for every n < 32.
+        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
+        {
+            unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
         }
         return dst;
     }
@@ -2284,8 +2295,12 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         if runtime_policy::proof_carried_fast_path_active(ApiFamily::StringMemory, n, true, true) {
             let (_, decision) =
                 runtime_policy::decide(ApiFamily::StringMemory, dst as usize, n, true, true, 0);
-            if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n) {
-                unsafe { raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            // See strict-path note: HTM only meaningful under forced test mode; else copy
+            // directly via raw_overlap_copy (all sizes, byte-identical for disjoint memcpy).
+            if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+                && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
+            {
+                unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
             }
             runtime_policy::observe(
                 ApiFamily::StringMemory,
@@ -2295,8 +2310,10 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
             );
             return dst;
         }
-        if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n) {
-            unsafe { raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
+        {
+            unsafe { raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), n) };
         }
         return dst;
     }
