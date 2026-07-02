@@ -190,6 +190,21 @@ fn main() {
     }
     let (frp, grp) = (pctl(&frv,0.5), pctl(&grv,0.5));
     println!("FREAD_4K fl={frp:.2} glibc={grp:.2} fl/glibc={:.3} (ns per 4KiB fread)", frp/grp);
+
+    // Large sequential fwrite to /dev/null in 4 KiB chunks (exercises the buffered write +
+    // flush path). fl vs glibc, ns per fwrite call. Certifies the write path.
+    type FwriteFn = unsafe extern "C" fn(*const libc::c_void, usize, usize, *mut libc::c_void) -> usize;
+    let g_fwrite: FwriteFn = dl(h, b"fwrite\0");
+    let src4k = vec![b'w'; 4096];
+    let wchunks = 64u64;
+    let witer = 400u64;
+    let (mut fwv, mut gwv) = (Vec::new(), Vec::new());
+    for _ in 0..80 {
+        let t = Instant::now(); for _ in 0..witer { for _ in 0..wchunks { unsafe { std::hint::black_box(frankenlibc_abi::stdio_abi::fwrite(src4k.as_ptr().cast(), 1, 4096, ff)); } } unsafe { fl::fflush(ff); } } fwv.push(t.elapsed().as_nanos() as f64 / (witer * wchunks) as f64);
+        let t = Instant::now(); for _ in 0..witer { for _ in 0..wchunks { unsafe { std::hint::black_box(g_fwrite(src4k.as_ptr().cast(), 1, 4096, gf)); } } unsafe { g_fflush(gf); } } gwv.push(t.elapsed().as_nanos() as f64 / (witer * wchunks) as f64);
+    }
+    let (fwp, gwp) = (pctl(&fwv,0.5), pctl(&gwv,0.5));
+    println!("FWRITE_4K fl={fwp:.2} glibc={gwp:.2} fl/glibc={:.3} (ns per 4KiB fwrite)", fwp/gwp);
 }
 
 #[inline(never)]

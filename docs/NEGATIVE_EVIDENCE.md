@@ -10481,3 +10481,17 @@ Read-path summary vs glibc after this session: fread_4K 0.917 (WIN), getline 1.4
 2.3x-over-old (lock-set). The buffered ST read surface is DONE + certified. (Write path: fputs/
 fwrite/fputc fast-path parity-ish per prior FPUTS_ST; the deeper write gap is the MT registry lock,
 architectural.) NO clean focused-turn read-path lever remains — the read side beats glibc.
+
+### 2026-07-02 — ✅ CERTIFIED: large fwrite BEATS glibc 2.7x (0.371x); BOTH ST buffered paths win vs glibc — BlackThrush
+
+Certified the buffered WRITE path vs host glibc (companion to the FREAD_4K read cert). New FWRITE_4K
+arm in stdio_st_probe: sequential fwrite to /dev/null in 4 KiB chunks (_IOFBF 64 KiB, exercises the
+buffered write + auto-flush path), ns per fwrite. Result: **fl=152.87ns vs glibc=411.67ns =
+fl/glibc 0.371 — fl BEATS glibc by 2.7x for 4 KiB fwrite.** The lean lock-free fast_write append
+(pointer-keyed cache) is much faster than glibc's _IO_file_xsputn per-call path (same buffer size /
+flush cadence, so the win is the append hot path, not syscall count). **BOTH ST buffered paths now
+CERTIFIED WINNING vs glibc: fread_4K 0.917x, fwrite_4K 0.371x** (+ getline 1.48x, fgets/feof/getdelim
+fast-path wins). The single-threaded stdio surface — read AND write — beats glibc. The ONLY remaining
+stdio gap is MULTI-THREADED (the global registry() Mutex, bd-hqo6b6, architectural per-FILE-lock
+refactor); the ST focused-turn campaign is DONE and winning. Apparatus: FREAD_4K + FWRITE_4K in
+stdio_st_probe.
