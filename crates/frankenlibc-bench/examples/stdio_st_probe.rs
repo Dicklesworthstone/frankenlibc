@@ -241,6 +241,16 @@ fn main() {
     }
     let (fqp, gqp) = (pctl(&fqv,0.5), pctl(&gqv,0.5));
     println!("QSORT_1024 fl={fqp:.2} glibc={gqp:.2} fl/glibc={:.3} (ns/sort incl reset)", fqp/gqp);
+    // QSORT_SORTED: already-sorted input — pdqsort has an O(n) pattern-defeating fast path;
+    // glibc mergesort still does O(n log n) merges. Valid (real sort work, no const-fold).
+    let sorted: Vec<i32> = (0..nq as i32).collect();
+    let (mut fsv, mut gsv) = (Vec::new(), Vec::new());
+    for _ in 0..80 {
+        let t = Instant::now(); for _ in 0..qit { arr.copy_from_slice(&sorted); unsafe { frankenlibc_abi::stdlib_abi::qsort(arr.as_mut_ptr().cast(), nq, 4, Some(cmp_i32)); } std::hint::black_box(arr[0]); } fsv.push(t.elapsed().as_nanos() as f64 / qit as f64);
+        let t = Instant::now(); for _ in 0..qit { arr.copy_from_slice(&sorted); unsafe { g_qsort(arr.as_mut_ptr().cast(), nq, 4, cmp_i32); } std::hint::black_box(arr[0]); } gsv.push(t.elapsed().as_nanos() as f64 / qit as f64);
+    }
+    let (fsp, gsp) = (pctl(&fsv,0.5), pctl(&gsv,0.5));
+    println!("QSORT_SORTED fl={fsp:.2} glibc={gsp:.2} fl/glibc={:.3} (ns/sort incl reset)", fsp/gsp);
 
     // strtod: float parsing, fl vs glibc (dlmopen). Common in config/JSON/scientific input.
     type StrtodFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f64;

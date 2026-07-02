@@ -11008,3 +11008,33 @@ family (wcschr/wcscmp folded-panel "wins"), not the algorithmic surface. fl's ad
 is genuine where it stems from a better algorithm (Two-Way, pdqsort, bitmap, UTC-only mktime);
 the losses are confined to the hand-tuned-asm scan primitives (documented AVX2-asm frontier).
 MEMMEM_PATHO + STRSPN probe arms kept in stdio_st_probe.rs.
+
+---
+
+## qsort CERTIFIED 2.7x (random) / 4.4x (sorted) faster than glibc — pdqsort adaptivity (honest dlmopen) (AGENT_NAME: BlackThrush, 2026-07-02)
+
+Continuing the honest algorithmic-win certification sweep (valid measurements — real sort work,
+no const-fold possible; both fl and glibc arms include the identical per-iteration array reset).
+
+**✓ CERTIFIED: qsort beats glibc at both random and (especially) pre-sorted input.**
+
+| input (1024 × i32, incl. reset) | fl        | glibc      | fl/glibc |
+|---------------------------------|-----------|------------|----------|
+| random permutation              | 10570 ns  | 28894 ns   | **0.366x (2.7x)** |
+| already sorted                  | 3937 ns   | 17472 ns   | **0.225x (4.4x)** |
+
+fl's `qsort` (deployed no_mangle → pdqsort) beats glibc's mergesort **2.7x on random** and **4.4x
+on already-sorted** input. The sorted case is a genuine ADAPTIVE-algorithm advantage: pdqsort's
+pattern-defeating detection sorts an already-ordered run in O(n) with a single scan, while glibc's
+mergesort still performs the full O(n log n) merge passes regardless of pre-order. Valid honest
+measurement (a 1024-element sort cannot const-fold; both arms pay the same reset copy, so the
+ratio is conservative — sort-only would favour fl more). Real for common workloads (sorting
+already-mostly-sorted data — appended logs, timestamp streams, re-sorts — is extremely common).
+
+**Session certification tally (all honest dlmopen, VALID):** memmem 404x (adversarial/DoS),
+qsort 2.7-4.4x (random/sorted) — fl's ALGORITHMIC surface genuinely dominates glibc. Combined with
+strtod ~3x, the Two-Way substring family (strstr/wcsstr/strcasestr), bitmap span, and UTC-only
+mktime (66x), fl wins decisively wherever the advantage is algorithmic. The certified LOSSES are
+confined to the hand-tuned-asm scan primitives (strchr/strcmp/wcscmp/strlen-large ~1.3-2x = the
+documented AVX2-asm frontier) and the architectural malloc registry (~10x, bounds-tracking safety
+contract). QSORT_SORTED probe arm kept in stdio_st_probe.rs.
