@@ -4229,86 +4229,6 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
     result
 }
 
-/// FUSED substring search (strstr / strcasestr) for an UNTRACKED, NUL-terminated
-/// haystack (2 <= needle_len <= 256): search the haystack one bounded chunk at a
-/// time via `matcher` (which returns the first match offset within a window) with a
-/// `needle_len-1` carry-over for boundary-spanning matches, returning the moment a
-/// match is found — so an EARLY match never pre-scans the whole haystack (glibc's
-/// structure; the old path did a full `scan_c_string(haystack)` pass THEN searched).
-/// After `FUSED_EARLY_WINDOW` bytes with no match, the tail is finished with ONE
-/// `scan_c_string(None)` + one `matcher` call (ORIG's shape — no per-chunk tax, so
-/// an absent/late needle costs ~ORIG). Byte-identical to `matcher` over the full
-/// NUL-terminated haystack (returns the first match, or null).
-///
-/// PAGE-SAFE: each chunk read is bounded to `[cur, next-4KiB-boundary)`, entirely
-/// within the CURRENT (mapped) page; if no NUL is found before the boundary the
-/// string continues, so the next page is mapped too — no read crosses into an
-/// unmapped page. Used ONLY when `known_remaining` (tracked-buffer bound) is None;
-/// tracked buffers keep the bounded path so fl's unterminated-tracked-buffer
-/// bounding is preserved.
-///
-/// `matcher(window)` must return the first match of the (captured) needle within
-/// `window`, treating it as a plain byte range (it may internally `strlen` the
-/// window — every window this passes has NO interior NUL before its end).
-///
-/// # Safety
-/// `haystack` is a valid NUL-terminated C string; `2 <= needle_len <= 256`.
-unsafe fn substr_fused(
-    haystack: *const c_char,
-    needle_len: usize,
-    matcher: impl Fn(&[u8]) -> Option<usize>,
-) -> *mut c_char {
-    let hp = haystack.cast::<u8>();
-    let mut window_start = 0usize; // absolute offset where the search window begins
-    let mut cur = 0usize; // absolute offset of the next byte to scan
-    // After this many bytes with no match, stop chunking and finish the tail with a
-    // SINGLE scan_c_string(None) + one memmem (ORIG's shape) — the early-match window
-    // caught the common case cheaply; the tail avoids the per-chunk memmem-preprocess
-    // tax, so an ABSENT/late needle costs ~ORIG instead of regressing.
-    const FUSED_EARLY_WINDOW: usize = 16384;
-    loop {
-        if cur >= FUSED_EARLY_WINDOW {
-            // SAFETY: page-safe unbounded scan to the NUL, then one search over the
-            // whole [window_start, end) window (carry-over already applied).
-            let (rest_len, _) = unsafe { scan_c_string(hp.add(cur).cast(), None) };
-            let end = cur + rest_len;
-            let win = unsafe {
-                std::slice::from_raw_parts(hp.add(window_start), end - window_start)
-            };
-            return match matcher(win) {
-                Some(idx) => unsafe { hp.add(window_start + idx) as *mut c_char },
-                None => std::ptr::null_mut(),
-            };
-        }
-        let addr = hp as usize + cur;
-        // Scan a bounded chunk that never crosses the current (mapped) page: the
-        // smaller of a 512 B window and the bytes remaining to the page boundary.
-        // Sub-page chunks keep an EARLY match from scanning a whole page before the
-        // search (closer to glibc's incremental stop) while staying page-safe.
-        let dist_to_page = 0x1000 - (addr & 0xFFF);
-        let chunk = dist_to_page.min(2048);
-        // SAFETY: [cur, cur+chunk) is within one mapped page.
-        let (seg_len, terminated) = unsafe { scan_c_string(hp.add(cur).cast(), Some(chunk)) };
-        let seg_end = cur + seg_len; // absolute; == the NUL offset when `terminated`
-        if seg_end - window_start >= needle_len {
-            // SAFETY: [window_start, seg_end) has been read (all mapped).
-            let win = unsafe {
-                std::slice::from_raw_parts(hp.add(window_start), seg_end - window_start)
-            };
-            if let Some(idx) = matcher(win) {
-                return unsafe { hp.add(window_start + idx) as *mut c_char };
-            }
-        }
-        if terminated {
-            return std::ptr::null_mut();
-        }
-        // No NUL in this page: advance to the boundary, carry over needle_len-1 bytes
-        // so a match straddling the page boundary is caught next iteration.
-        cur = seg_end;
-        window_start = seg_end - (needle_len - 1);
-    }
-}
-
 /// FUSED exact strstr for an UNTRACKED NUL-terminated haystack (2 <= needle_len <=
 /// 256): find the first occurrence of `needle[0]` via the page-safe, NUL-AWARE
 /// `scan_c_string_for_byte` (ONE pass — no separate per-chunk NUL scan, unlike
@@ -4380,6 +4300,72 @@ unsafe fn strstr_fused_firstbyte(
 // ---------------------------------------------------------------------------
 // strstr
 // ---------------------------------------------------------------------------
+
+/// FUSED case-insensitive strcasestr for an UNTRACKED NUL-terminated haystack
+/// (2 <= needle_len <= 256): find the first byte that case-folds to `needle[0]`
+/// (either case, or NUL) via the page-safe `scan_c_string_for_set4` (ONE NUL-aware
+/// pass — no separate per-chunk NUL scan like `substr_fused`), verify the rest
+/// case-insensitively, and advance. O(n+m) Two-Way bailout to `core::str::strcasestr`
+/// (dual-anchor) once verify work outweighs the scan distance — which also handles a
+/// COMMON first byte. Byte-identical to `core::str::strcasestr` over the full haystack
+/// (leftmost match).
+///
+/// PAGE-SAFE: `scan_c_string_for_set4` is page-safe (guard-page proven); the verify
+/// loop reads `haystack[cand+k]` byte-by-byte, stopping at NUL / mismatch.
+///
+/// # Safety
+/// `haystack` valid NUL-terminated; `needle` readable for `needle_len` (>=2) bytes.
+unsafe fn strcasestr_fused_firstbyte(
+    haystack: *const c_char,
+    needle: *const u8,
+    needle_len: usize,
+) -> *mut c_char {
+    let hp = haystack.cast::<u8>();
+    // SAFETY: needle readable for needle_len bytes.
+    let ns = unsafe { std::slice::from_raw_parts(needle, needle_len) };
+    let n0 = ns[0];
+    let lo = n0.to_ascii_lowercase();
+    let up = n0.to_ascii_uppercase();
+    let set = [lo, up, lo, up]; // both cases of needle[0] (dedups when lo == up)
+    let mut pos = 0usize;
+    let mut miss_work = 0usize;
+    loop {
+        // First byte in {lo, up} at/after `pos`, or the terminating NUL.
+        // SAFETY: page-safe NUL-aware membership scan.
+        let idx = unsafe { scan_c_string_for_set4(hp.add(pos).cast(), set, false) };
+        let cand = pos + idx;
+        // SAFETY: cand <= strlen; the byte there is a set member or the NUL.
+        if unsafe { *hp.add(cand) } == 0 {
+            return std::ptr::null_mut();
+        }
+        // Verify needle[1..] case-insensitively (needle[0] already matched by the scan).
+        let mut k = 1usize;
+        let mut matched = true;
+        while k < needle_len {
+            // SAFETY: within the mapped string up to and including its NUL.
+            let b = unsafe { *hp.add(cand + k) };
+            if b == 0 || b.to_ascii_lowercase() != ns[k].to_ascii_lowercase() {
+                matched = false;
+                break;
+            }
+            k += 1;
+        }
+        if matched {
+            return unsafe { hp.add(cand) as *mut c_char };
+        }
+        miss_work += needle_len;
+        pos = cand + 1;
+        if miss_work > cand.max(256) {
+            // SAFETY: page-safe scan to NUL, then a bounded case-insensitive search.
+            let (rest, _) = unsafe { scan_c_string(hp.add(cand).cast(), None) };
+            let win = unsafe { std::slice::from_raw_parts(hp.add(cand), rest) };
+            return match frankenlibc_core::string::str::strcasestr(win, ns) {
+                Some(i) => unsafe { hp.add(cand + i) as *mut c_char },
+                None => std::ptr::null_mut(),
+            };
+        }
+    }
+}
 
 /// POSIX `strstr` -- locates the first occurrence of substring `needle` in `haystack`.
 ///
@@ -6193,10 +6179,7 @@ pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_ch
             // its end) and searches case-insensitively. Tracked buffers / large needles
             // keep the bounded path (preserves the unterminated-tracked-buffer bound).
             if hay_bound.is_none() && needle_terminated && (2..=256).contains(&needle_len) {
-                let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
-                return substr_fused(haystack, needle_len, |win| {
-                    frankenlibc_core::string::str::strcasestr(win, n_slice)
-                });
+                return strcasestr_fused_firstbyte(haystack, needle.cast::<u8>(), needle_len);
             }
             let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
             let h_slice_len = if hay_terminated { hay_len + 1 } else { hay_len };
