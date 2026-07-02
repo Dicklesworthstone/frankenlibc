@@ -205,7 +205,24 @@ fn main() {
     }
     let (fwp, gwp) = (pctl(&fwv,0.5), pctl(&gwv,0.5));
     println!("FWRITE_4K fl={fwp:.2} glibc={gwp:.2} fl/glibc={:.3} (ns per 4KiB fwrite)", fwp/gwp);
+
+    // wcstol: fl (allocates project_wide_ascii Vec per call) vs glibc. Short numeric wide str.
+    type WcstolFn = unsafe extern "C" fn(*const i32, *mut *mut i32, i32) -> i64;
+    let g_wcstol: WcstolFn = dl(h, b"wcstol\0");
+    let wnum: Vec<i32> = [b'1',b'2',b'3',b'4',b'5',b'6',b'7',b'8',0].iter().map(|&b| b as i32).collect();
+    let wp2 = wnum.as_ptr();
+    let (mut flw, mut glw) = (Vec::new(), Vec::new());
+    let wit = 200_000u64;
+    for _ in 0..100 {
+        let t = Instant::now(); for _ in 0..wit { black_box_i64(unsafe { frankenlibc_abi::wchar_abi::wcstol(wp2, std::ptr::null_mut(), 10) }); } flw.push(t.elapsed().as_nanos() as f64 / wit as f64);
+        let t = Instant::now(); for _ in 0..wit { black_box_i64(unsafe { g_wcstol(wp2, std::ptr::null_mut(), 10) }); } glw.push(t.elapsed().as_nanos() as f64 / wit as f64);
+    }
+    let (flwp, glwp) = (pctl(&flw,0.5), pctl(&glw,0.5));
+    println!("WCSTOL fl={flwp:.2} glibc={glwp:.2} fl/glibc={:.3}", flwp/glwp);
 }
+
+#[inline(never)]
+fn black_box_i64(v: i64) -> i64 { std::hint::black_box(v) }
 
 #[inline(never)]
 fn black_box_i32(v: i32) -> i32 { std::hint::black_box(v) }

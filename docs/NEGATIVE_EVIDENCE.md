@@ -10495,3 +10495,20 @@ fast-path wins). The single-threaded stdio surface — read AND write — beats 
 stdio gap is MULTI-THREADED (the global registry() Mutex, bd-hqo6b6, architectural per-FILE-lock
 refactor); the ST focused-turn campaign is DONE and winning. Apparatus: FREAD_4K + FWRITE_4K in
 stdio_st_probe.
+
+### 2026-07-02 — ⊘ wcstol near-parity (1.25x); per-call-alloc lever REFINED: small Vec allocs are ~3ns, not 140ns — BlackThrush
+
+Swept the per-call-Vec-alloc lever (getdelim/refill pattern) across the abi crate; most remaining
+sites are niche (legacy_regex_concat = re_search; project_wide_ascii = wcstol/wcstoul; wcsftime
+buffers; vis = BSD). Measured the most glibc-relevant: WCSTOL (fl allocates project_wide_ascii Vec
+per call) — **fl=15.35ns vs glibc=12.32ns = 1.246x (near-parity, ~3ns gap).** CRUCIAL REFINEMENT:
+if the per-call Vec were the ~140ns fl-malloc (deployed-malloc 16.7x), wcstol would be ~150ns — but
+it's 15ns, so the SMALL (9-byte) Vec alloc is only ~3ns (fl malloc's small-alloc thread_cache is
+fast). So the per-call-alloc lever only PAYS for LARGE per-call allocs: getdelim's 128B Vec
+(91ns saved end-to-end) and refill's <=8 KiB Vec — NOT small ones (wcstol ~3ns, marginal). The
+project_wide_ascii fix (moderate refactor: it returns an owned Vec the caller parses) is not worth
+~3ns; wcstol/wcstoul left as-is at near-parity. LESSON: size the alloc before assuming the per-call
+malloc dominates — fl's thread_cache makes small allocs cheap (~3ns), so target only the KB-scale
+per-call allocations. Clean high-value focused-turn levers now EXHAUSTED across stdio (ST certified
+winning) + the per-call-alloc family; remaining is architectural (malloc ownership, stdio MT lock).
+Apparatus: WCSTOL arm in stdio_st_probe.
