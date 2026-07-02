@@ -533,6 +533,12 @@ name = "wcscpy_fused_head_ab_bench"
 required-features = ["abi-bench"]
 harness = false
 
+# strcpy/stpcpy deployed membrane tax vs glibc (dlmopen).
+[[bench]]
+name = "strcpy_membrane_glibc_bench"
+required-features = ["abi-bench"]
+harness = false
+
 [[bench]]
 name = "wcsdup_glibc_bench"
 required-features = ["abi-bench"]

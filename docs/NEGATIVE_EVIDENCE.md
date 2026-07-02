@@ -9873,3 +9873,29 @@ the residual at n=1024 is the AVX2 copy ceiling). WCSCAT arm added to wide_copyf
 WIDE COPY FAMILY NOW FUSED: wcscpy, wcpcpy, wcscat all use wide_fused_copy (one pass, no memcpy
 round trip); wmemset (slice.fill) was already ~parity. wcsncpy/wcpncpy stay scalar (n-bounded
 fill auto-vectorises, prior NEGATIVE_EVIDENCE finding).
+
+### 2026-07-02 — ✅ strcpy/stpcpy strict-mode fast path — deployed 7-10x glibc -> 1.5-2.6x (membrane tax removed) — BlackThrush
+
+strcpy_core had NO strict_passthrough fast path (unlike the shipped wcscpy/wcstok/strncpy),
+so EVERY deployed strcpy/stpcpy call paid the full membrane: stage_context_two + decide +
+observe + record_string_stage_outcome. Deployed-symbol bench (strcpy_membrane_glibc_bench,
+dlmopen glibc) showed a FLAT ~30-48ns regardless of length = fixed membrane overhead, not the
+copy:
+  fl/glibc = 10.63 (n=4) 9.01 (16) 10.27 (32) 10.03 (64) 7.70 (128) 6.30 (256) 2.85 (1024)
+This was the biggest single gap found this session — strcpy is one of the hottest libc fns.
+
+Fix: strict_passthrough_active() fast path at the top of strcpy_core — scan_c_string(src,None)
++ raw_memcpy_bytes (fl's INTERNAL fast copy, not the interposed symbol) + write NUL, return the
+terminator position (stpcpy result). Skips all four membrane calls. Byte-identical: strict mode
+forces decide()=Allow, heals off, so this equals the full body's non-repair branch exactly
+(conformance_diff_string 24 / string_mut 35 / string_abi_test 201, all 0 failed). Hardened/test
+mode keeps the full validating path.
+
+After fix (deployed symbol, faster worker so glibc ~2-4ns): fl dropped ~30-48ns -> ~4-16ns:
+  fl/glibc = 1.90 (n=4) 2.50 (16) 2.27 (32) 2.54 (64) 2.42 (128) 2.63 (256) 1.50 (1024)
+~4-11x faster fl-side; the 7-10x fixed-overhead gap is GONE. Residual ~1.5-2.6x = the 2-pass
+(scan + copy) vs glibc's fused single pass + portable-SIMD-vs-AVX2 ceiling — a fused narrow
+copy (like wide_fused_copy) is the follow-up lever, smaller than this membrane removal.
+stpcpy shares strcpy_core so it gets the same win. Apparatus: strcpy_membrane_glibc_bench.
+LESSON: audit EVERY hot deployed write fn for a missing strict_passthrough fast path — strcpy
+was a ~10x outlier hiding in plain sight (wcscpy/strncpy had it; strcpy/stpcpy did not).

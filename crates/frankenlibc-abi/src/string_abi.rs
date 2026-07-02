@@ -3357,6 +3357,28 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
 /// returns the original `dst`; `stpcpy` returns the end pointer directly, so it no
 /// longer re-scans the just-copied string with a second `strlen` pass.
 unsafe fn strcpy_core(dst: *mut c_char, src: *const c_char) -> Option<*mut c_char> {
+    // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
+    // decide() Allow with no clamp and heals off, so this is byte-identical to the
+    // full body's non-repair branch — scan src, bulk-copy the payload, append the NUL,
+    // return the terminator position (the stpcpy result). Skips stage_context_two +
+    // decide + observe + record_string_stage_outcome, whose combined fixed cost made
+    // deployed strcpy/stpcpy ~7-10x glibc at small/medium sizes (~30ns flat regardless
+    // of length). Mirrors the shipped wcscpy/strncpy strict fast paths. Hardened/test
+    // mode falls through to the full validating path below.
+    if runtime_policy::strict_passthrough_active() {
+        if dst.is_null() || src.is_null() {
+            return Some(dst);
+        }
+        // SAFETY: strict mode follows raw libc strcpy semantics; `src` is a valid
+        // NUL-terminated string and `dst` has room for its length + terminator.
+        let src_len = unsafe { scan_c_string(src, None).0 };
+        if src_len > 0 {
+            unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len) };
+        }
+        unsafe { *dst.add(src_len) = 0 };
+        return Some(unsafe { dst.add(src_len) });
+    }
+
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() {
         record_string_stage_outcome(
