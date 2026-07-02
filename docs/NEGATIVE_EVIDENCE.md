@@ -9775,5 +9775,12 @@ new is 15-48% faster than old for n>=48 (the whole medium band), and now ties-or
 regression at n=16/32 (new/old 1.08-1.12) — eager escalation does one wasteful 128 B min-combine read on a
 short string — but new still beats glibc at n=16 (0.90) and the n=32 loss is that allocation's alignment
 artifact. Net: strong win, deployed. Bench apparatus kept: wcslen_escalation_ab_bench (in-process A/B/C),
-plus the expanded wcslen_glibc_bench sweep. NOTE: a `i<32` (128 B) gate would likely kill the n=16/32
-regression while keeping the n>=48 wins — untested lever left for a follow-up.
+plus the expanded wcslen_glibc_bench sweep.
+
+FOLLOW-UP TESTED AND REJECTED: a `i<32` (128 B) gate ("mid" arm) was measured to see if it kills the small
+n=16/32 regression while keeping the n>=48 wins. It does NOT — it fixes n=16 (mid/old=1.00) but throws away
+most of the medium wins: n=48 mid/old=1.00 (no escalation at all — a 48-wchar string reaches its NUL in the
+8-lane tier before the first 128 B boundary) vs the deployed no-gate new/old=0.55; n=64 0.84 vs 0.48; n=96
+0.74 vs 0.46. The deployed no-gate variant DOMINATES the i<32 gate at every size except n=16. The n=16
+regression (~12% vs old fl) is real but small and fl STILL beats glibc there (new/glibc≈0.73), so it is not
+worth trading the medium band for. Do not re-attempt the i<32 gate.
