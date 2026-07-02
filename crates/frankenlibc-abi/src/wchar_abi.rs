@@ -552,9 +552,12 @@ pub unsafe extern "C" fn wcsncpy(dst: *mut u32, src: *const u32, n: usize) -> *m
     // wide WRITE membrane full path (see wcscpy).
     if runtime_policy::strict_passthrough_active() {
         unsafe {
+            // Inline SIMD copy (wide_copy_n) instead of copy_nonoverlapping, which for a
+            // wide (u32) copy lowers to the interposed memcpy symbol — measured ~2 GB/s
+            // (5-34x glibc, 1839ns at n=1024). Bounded scan + SIMD-store fixes it.
             let (src_len, _) = scan_w_string(src, Some(n));
             let copy = (src_len + 1).min(n);
-            std::ptr::copy_nonoverlapping(src, dst, copy);
+            wide_copy_n(dst, src, copy);
             if copy < n {
                 std::slice::from_raw_parts_mut(dst.add(copy), n - copy).fill(0);
             }
@@ -4640,15 +4643,15 @@ pub unsafe extern "C" fn wcpncpy(dst: *mut u32, src: *const u32, n: usize) -> *m
     // the end pointer (first NUL, or dst+n). Skips the membrane tax (wide stpncpy).
     if runtime_policy::strict_passthrough_active() {
         return unsafe {
-            let (src_len, _) = scan_w_string(src, None);
-            let copy_len = src_len.min(n);
+            // Bounded scan (glibc stops at n) + inline SIMD copy instead of the full
+            // None-scan + copy_nonoverlapping (interposed memcpy symbol) that made this
+            // 5-34x glibc (1836ns at n=1024). Byte-identical: min(strlen,n) == copy_len.
+            let copy_len = scan_w_string(src, Some(n)).0;
             if copy_len > 0 {
-                std::ptr::copy_nonoverlapping(src, dst, copy_len);
+                wide_copy_n(dst, src, copy_len);
             }
             let end_offset = if copy_len < n {
-                for i in copy_len..n {
-                    *dst.add(i) = 0;
-                }
+                std::slice::from_raw_parts_mut(dst.add(copy_len), n - copy_len).fill(0);
                 copy_len
             } else {
                 n

@@ -9982,3 +9982,27 @@ case so the symbol path doesn't dominate; wcsncat's full None-scan was the real 
 Apparatus: WCSNCAT arm. LESSON (reinforced): scan_w_string(_, None) on a copy's SRC over-scans
 huge strings; always bound it to the copy limit, and prefer an inline SIMD copy over
 copy_nonoverlapping for wide (u32) copies to dodge the interposed-memcpy symbol.
+
+### 2026-07-02 — ✅ wcsncpy + wcpncpy: inline SIMD copy (wide_copy_n) replaces copy_nonoverlapping — 5-34x glibc -> 1.0-2.5x — BlackThrush
+
+CORRECTS A STALE CLAIM: an earlier NEGATIVE_EVIDENCE entry said wcsncpy was "~parity with glibc
+(0.98-1.19)". A deployed-symbol bench (WCSNCPY/WCPNCPY arms in wide_copyfill_glibc_bench, dlmopen
+glibc, N=n full copy) shows it was actually 5-34x SLOWER:
+  WCSNCPY fl/glibc = 5.86 (n=4) 7.07 (16) 5.78 (32) 4.25 (64) 3.18 (128) 1.76 (256) 34.26 (1024)
+  WCPNCPY fl/glibc = 6.68 (n=4) 7.72 (16) 5.73 (32) 4.61 (64) 2.37 (128) 1.75 (256) 34.05 (1024)
+fl was ~1839/1836 ns at n=1024 (a 4 KiB copy) = ~2 GB/s — the wide (u32) copy_nonoverlapping
+lowers to the interposed memcpy SYMBOL, whose wide path is catastrophically slow here. (wcpncpy
+also did a full None src-scan like pre-fix wcsncat.)
+
+Fix: wcsncpy — swap copy_nonoverlapping for the inline SIMD wide_copy_n (bounded scan already
+present). wcpncpy — bound the scan to Some(n) (byte-identical min(strlen,n)) + wide_copy_n +
+slice.fill pad (was a scalar pad loop). Byte-identical incl wcpncpy end pointer
+(conformance_diff_wchar 44 / wcs_copy 5 / wcslcpy 2 / wchar_abi 118, all 0 failed). After fix:
+  WCSNCPY fl/glibc = 2.20 (n=4) 1.75 (16) 1.62 (32) 1.61 (64) 1.87 (128) 0.99 (256) 2.06 (1024)
+  WCPNCPY fl/glibc = 1.91 (n=4) 1.75 (16) 1.71 (32) 1.84 (64) 2.16 (128) 1.29 (256) 2.52 (1024)
+n=1024: WCSNCPY 34x->2.06x (1839ns->77ns, ~24x fl-side); WCPNCPY 34x->2.52x (1836ns->95ns, ~19x).
+WCSNCPY beats glibc at n=256. Residual ~1.5-2.5x = portable-SIMD-vs-AVX2 wide-copy ceiling.
+**WIDE COPY FAMILY NOW COMPLETE: wcscpy/wcpcpy/wcscat (fused) + wcsncat/wcsncpy/wcpncpy
+(bounded scan + wide_copy_n) all fixed — none use the slow wide copy_nonoverlapping symbol.**
+LESSON: for WIDE (u32) copies, std::ptr::copy_nonoverlapping lowers to the interposed memcpy
+symbol whose wide path can be ~2 GB/s — ALWAYS use the inline SIMD wide_copy_n instead.

@@ -113,6 +113,39 @@ fn bench(c: &mut Criterion) {
         println!("WCSNCAT n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
     }
 
+    // wcsncpy / wcpncpy: n-bounded copy (N = n, full copy, no pad).
+    type CpyNFn = unsafe extern "C" fn(*mut u32, *const u32, usize) -> *mut u32;
+    let g_ncpy: CpyNFn = sym(b"wcsncpy\0");
+    let g_pncpy: CpyNFn = sym(b"wcpncpy\0");
+    for &n in &[4usize, 16, 32, 64, 128, 256, 1024] {
+        let mut src: Vec<u32> = std::iter::repeat(b'a' as u32).take(n).collect(); src.push(0);
+        let sp = src.as_ptr();
+        let (mut dfl, mut dgl) = (vec![0u32; n + 8], vec![0u32; n + 8]);
+        unsafe { frankenlibc_abi::wchar_abi::wcsncpy(dfl.as_mut_ptr(), sp, n); g_ncpy(dgl.as_mut_ptr(), sp, n); }
+        assert_eq!(dfl, dgl, "wcsncpy mismatch n={n}");
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now(); for _ in 0..it { black_box(unsafe { frankenlibc_abi::wchar_abi::wcsncpy(black_box(dfl.as_mut_ptr()), black_box(sp), black_box(n)) }); } fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now(); for _ in 0..it { black_box(unsafe { g_ncpy(black_box(dgl.as_mut_ptr()), black_box(sp), black_box(n)) }); } gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        println!("WCSNCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
+    }
+    for &n in &[4usize, 16, 32, 64, 128, 256, 1024] {
+        let mut src: Vec<u32> = std::iter::repeat(b'a' as u32).take(n).collect(); src.push(0);
+        let sp = src.as_ptr();
+        let (mut dfl, mut dgl) = (vec![0u32; n + 8], vec![0u32; n + 8]);
+        let efl = unsafe { frankenlibc_abi::wchar_abi::wcpncpy(dfl.as_mut_ptr(), sp, n) };
+        let egl = unsafe { g_pncpy(dgl.as_mut_ptr(), sp, n) };
+        assert_eq!(dfl, dgl, "wcpncpy mismatch n={n}");
+        assert_eq!(efl as usize - dfl.as_ptr() as usize, egl as usize - dgl.as_ptr() as usize, "wcpncpy end-ptr n={n}");
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..80 {
+            let t = Instant::now(); for _ in 0..it { black_box(unsafe { frankenlibc_abi::wchar_abi::wcpncpy(black_box(dfl.as_mut_ptr()), black_box(sp), black_box(n)) }); } fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now(); for _ in 0..it { black_box(unsafe { g_pncpy(black_box(dgl.as_mut_ptr()), black_box(sp), black_box(n)) }); } gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        println!("WCPNCPY n={n} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fs,0.5), pctl(&gs,0.5), pctl(&fs,0.5)/pctl(&gs,0.5));
+    }
+
     grp.bench_function("noop", |b| b.iter(|| black_box(1u8))); grp.finish();
 }
 criterion_group!(benches, bench); criterion_main!(benches);
