@@ -2039,7 +2039,11 @@ pub unsafe extern "C" fn mergesort(
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    if !tracked_region_fits(base.cast_const(), total_bytes) {
+    // Strict-mode fast path: skip the `tracked_region_fits` registry lookup (trust-the-caller,
+    // byte-identical; glibc/BSD never validate the region). Completes the sort-family bypass.
+    if !runtime_policy::strict_passthrough_active()
+        && !tracked_region_fits(base.cast_const(), total_bytes)
+    {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
@@ -2089,7 +2093,11 @@ pub unsafe extern "C" fn heapsort(
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    if !tracked_region_fits(base.cast_const(), total_bytes) {
+    // Strict-mode fast path: skip the `tracked_region_fits` registry lookup (trust-the-caller,
+    // byte-identical; glibc/BSD never validate the region). Completes the sort-family bypass.
+    if !runtime_policy::strict_passthrough_active()
+        && !tracked_region_fits(base.cast_const(), total_bytes)
+    {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }

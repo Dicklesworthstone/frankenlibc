@@ -11289,3 +11289,15 @@ sort/search entrypoints now bypass the membrane in strict. Combined with the sys
 (lseek parity → decide negligible vs syscall) and the wchar/string/atoi/strcoll coverage, the
 non-colliding strict-fast-path audit is fully closed. Remaining frontier = the 2 coordination-blocked
 architectural swings.
+
+**mergesort + heapsort strict guards (BlackThrush 2026-07-02):** the BSD sort variants each did one
+`tracked_region_fits` (a `known_remaining` registry lookup) with no strict bypass. Added the one-line
+`!strict_passthrough_active() && !tracked_region_fits(...)` guard so strict skips the lookup
+(byte-identical trust-the-caller; glibc/BSD never validate the region). Small (one registry lookup,
+uncommon BSD fns) but completes the family. Gates: conformance_diff_mergesort 1, conformance_diff_heapsort 1,
+strict_mode_refinement 18, hardened_mode_safety 15. **ENTIRE sort/search family now strict-bypassed:
+qsort, qsort_r, mergesort, heapsort, bsearch, bsearch_r.** Non-colliding strict-fast-path audit
+DEFINITIVELY closed (verified strxfrm already covered; all string/wchar/stdlib-parse/math/ctype
+covered; syscall wrappers disproven). Coordination check: stdio_abi/malloc_abi working tree clean but
+the 2 architectural swings remain large/correctness-critical/coordination-sensitive — not a safe
+unilateral start; orchestrator must assign per perf_next_architectural_swings.md.
