@@ -192,6 +192,58 @@ pub unsafe extern "C" fn ntohl(netlong: u32) -> u32 {
 // inet_pton
 // ---------------------------------------------------------------------------
 
+/// Single-pass dotted-quad parse over a NUL-terminated C string (glibc `inet_pton4`
+/// structure): one branch per char, stopping at the terminator. Byte-for-byte the
+/// same accept/reject set as the core `parse_ipv4` on the string's pre-NUL bytes,
+/// but with NO separate `scan_c_string`/strlen pass — the strict `inet_pton` v4 path
+/// was doing `scan_c_string` (pass 1) + `parse_ipv4` (pass 2); this collapses them.
+///
+/// # Safety
+/// `src` must point to a readable NUL-terminated C string (the strict-mode caller
+/// contract, identical to what glibc's `inet_pton` requires).
+unsafe fn parse_ipv4_cstr(src: *const u8) -> Option<[u8; 4]> {
+    let mut octets = [0u8; 4];
+    let mut oct_idx = 0usize; // completed octets so far
+    let mut val: u16 = 0;
+    let mut saw_digit = false;
+    let mut i = 0usize;
+    loop {
+        // SAFETY: caller guarantees a NUL terminator; the walk stops at it.
+        let ch = unsafe { *src.add(i) };
+        if ch == 0 {
+            break;
+        }
+        if ch.is_ascii_digit() {
+            // Leading-zero reject: a second digit while the octet value is still 0
+            // means the first digit was '0' (matches `parse_ipv4`'s `len>1 && '0'`).
+            if saw_digit && val == 0 {
+                return None;
+            }
+            val = val * 10 + (ch - b'0') as u16; // max 255*10+9 < u16::MAX, no overflow
+            if val > 255 {
+                return None;
+            }
+            saw_digit = true;
+        } else if ch == b'.' {
+            if !saw_digit || oct_idx == 3 {
+                return None; // empty octet (leading/double/trailing dot) or 5th part
+            }
+            octets[oct_idx] = val as u8;
+            oct_idx += 1;
+            val = 0;
+            saw_digit = false;
+        } else {
+            return None; // non-digit, non-dot
+        }
+        i += 1;
+    }
+    if !saw_digit || oct_idx != 3 {
+        return None; // trailing dot / empty final octet, or wrong number of parts
+    }
+    octets[3] = val as u8;
+    Some(octets)
+}
+
 /// Convert text IP address to binary form.
 ///
 /// Returns 1 on success, 0 if `src` is not a valid address for the given
@@ -209,23 +261,38 @@ pub unsafe extern "C" fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_vo
             unsafe { set_abi_errno(errno::EFAULT) };
             return -1;
         }
-        // SAFETY: strict trusts the caller's NUL-terminated `src` (C contract).
-        let (len, terminated) = unsafe { scan_c_string(src, None) };
-        if !terminated {
-            return 0;
-        }
-        let dst_size = match af {
-            AF_INET => 4,
-            AF_INET6 => 16,
+        match af {
+            AF_INET => {
+                // Single-pass parse straight over the NUL-terminated `src` (glibc
+                // structure) — no separate `scan_c_string` strlen pass. Byte-identical
+                // accept/reject to the two-pass `scan + parse_ipv4`. The raw-pointer
+                // walk lives here in the ABI layer (the safe-Rust core forbids it).
+                // SAFETY: strict trusts the caller's NUL-terminated `src` (C contract);
+                // `dst` is valid for 4 bytes.
+                return match unsafe { parse_ipv4_cstr(src as *const u8) } {
+                    Some(octets) => {
+                        unsafe { core::ptr::copy_nonoverlapping(octets.as_ptr(), dst as *mut u8, 4) };
+                        1
+                    }
+                    None => 0,
+                };
+            }
+            AF_INET6 => {
+                // SAFETY: strict trusts the caller's NUL-terminated `src` (C contract).
+                let (len, terminated) = unsafe { scan_c_string(src, None) };
+                if !terminated {
+                    return 0;
+                }
+                // SAFETY: `len` NUL-terminated bytes at `src`; caller guarantees `dst` for 16.
+                let src_bytes = unsafe { core::slice::from_raw_parts(src as *const u8, len) };
+                let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, 16) };
+                return inet_core::inet_pton(AF_INET6, src_bytes, dst_slice);
+            }
             _ => {
                 unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
                 return -1;
             }
-        };
-        // SAFETY: `len` NUL-terminated bytes at `src`; caller guarantees `dst` for `dst_size`.
-        let src_bytes = unsafe { core::slice::from_raw_parts(src as *const u8, len) };
-        let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dst_size) };
-        return inet_core::inet_pton(af, src_bytes, dst_slice);
+        }
     }
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Inet, src as usize, 0, false, true, 0);

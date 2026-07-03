@@ -11459,3 +11459,23 @@ the coverage gap is now closed (durable regression guard). Confirms the string-s
 saturated: audited this turn and found already-optimal — wmemcmp (unrolled Simd panels), bcmp
 (portable-SIMD fold), strcasecmp (SIMD case-fold, bd-2g7oyh), wcscmp (floor-bound, DISPROVEN above).
 The only remaining string_abi scalar-`u128` compare was memcmp (fixed this session, 9378639c0).
+
+---
+
+## inet_pton v4 single-pass parse — 2 passes → 1, fl now BEATS glibc 1.34x (BlackThrush, 2026-07-02)
+
+The strict v4 `inet_pton` path did TWO passes: `scan_c_string(src, None)` (strlen) then
+`inet_core::inet_pton` → match → `parse_ipv4` (parse), plus a slice construction and a cross-crate
+call. glibc's `inet_pton4` is a SINGLE pass walking to NUL. Added `parse_ipv4_cstr` in the ABI layer
+(the safe-Rust core forbids raw pointers) that parses straight over the NUL-terminated `src`, one
+branch per char, byte-identical accept/reject to `parse_ipv4` (leading-zero, >255, part-count,
+non-digit, empty-octet all reproduced). Wired into the AF_INET strict fast path; AF_INET6 keeps the
+scan+parse (its parser is more complex, already near-parity).
+
+**Measured (stdio_st_probe A/B, dlmopen glibc, "192.168.1.100"):** v4 fl **26.16 → 14.27ns**,
+fl/glibc **1.522 → 0.747 — fl now BEATS glibc by 1.34x** (collapsing the strlen pass + slice build +
+cross-crate call into one inline loop won far more than the strlen alone). v6 unchanged (1.13x).
+Correctness: conformance_diff_arpa_inet 12, inet_pton_ntop_differential_fuzz 1 (differential vs host
+glibc, exercises the strict path via the integration-test build), conformance_diff_inet_pton6_edges
+14, inet_abi_test 69 — all GREEN. The v4 parser is no longer the residual gap noted in the
+inet_pton strict-fast-path entry above; inet_pton v4 is now a WIN vs glibc.
