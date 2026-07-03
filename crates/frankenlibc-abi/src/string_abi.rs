@@ -4274,11 +4274,12 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
             return dst;
         }
         unsafe {
+            // dst-end scan is inherent to strncat. The src side is then a SINGLE bounded
+            // fused prefix copy (`fused_strncpy_prefix`, copy-through-NUL-or-`n`) instead
+            // of scan_c_string(src, Some(n)) + raw_memcpy, which read the prefix twice.
+            // Byte-identical: appends `min(strnlen(src,n), n)` bytes then the terminator.
             let dst_len = scan_c_string(dst.cast_const(), None).0;
-            let copy = scan_c_string(src, Some(n)).0;
-            if copy > 0 {
-                raw_memcpy_bytes(dst.add(dst_len).cast::<u8>(), src.cast::<u8>(), copy);
-            }
+            let copy = fused_strncpy_prefix(dst.add(dst_len).cast::<u8>(), src.cast::<u8>(), n);
             *dst.add(dst_len + copy) = 0;
         }
         return dst;
