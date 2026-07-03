@@ -85,6 +85,30 @@ the two-part filter (deployed slower than glibc AND gate is `within_N_ulps` not 
   SipHash) already; `parking_lot` registry mutex landed (a564ca8ae, fputs −11%).
 - **f64/f32 math hot fns — done & winning** (powf/exp/exp2/log/log2/exp10/cbrt/
   hypot/tgamma, large-arg sin/cos/tan). See the math memory veins.
+- **DEPLOYED-SYMBOL small-primitive floor — CONFIRMED, do NOT re-survey (BlackThrush
+  2026-07-02, verified over several turns via stdio_st_probe dlmopen A/B).** Distinct
+  from the in-process-kernel note above: through the real `no_mangle` extern symbol,
+  the small string/mem primitives lose glibc ~1.5–3x at small n and this is the
+  **irreducible extern-call + strict-check + scanner-call floor**, NOT a kernel gap.
+  The kernels are already maxed: `strlen`/`strchr`/`memchr`/`strrchr` all use
+  head-mask-first-load + 32B tier + **128B unrolled folded tier** (vpminub/OR-combine);
+  `memcmp` is explicit AVX2 (n≥32) + SSE16 (16–31) [9378639c0/223ee52ab];
+  `strcmp`/`wcscmp`/`scan_wcscmp_simd` are 32B-SIMD two-pointer scans whose per-window
+  double page-guard amortization was DISPROVEN neutral-to-regression (n=8 single-window
+  already ~1.95x = pure floor; crate is `-Ctarget-feature=+avx2` so `Simd<u8,32>` is
+  real AVX2). `memcpy` small-n framing is load-bearing: `raw_memcpy_bytes` is
+  `#[inline(never)]` on purpose — inlining a copy loop into the interposed `memcpy`
+  symbol makes LLVM lower it to `@llvm.memcpy` = infinite self-recursion. `getenv`
+  (hot-ptr cache), `strtol` (single-pass + membrane fast-path), `pthread_mutex_lock`
+  (1-branch+1-CAS) all maxed. glibc's equivalents are bare PLT jumps to hand-tuned
+  ifunc asm; fl cannot match that through a `no_mangle` symbol + membrane boundary.
+  These residual 1.5–3x rows are NOT levers — only the two architectural swings remain.
+- **inet `<arpa/inet.h>` conversion family — fully fast-pathed & mostly winning
+  (BlackThrush 2026-07-02, 6 commits).** pton v4 single-pass BEATS glibc 1.34x; addr
+  BEATS glibc; aton/pton-v6 at parity; ntop v4/v6 have strict fast-paths (v6 direct-format).
+  Only residual = the core `format_ipv6_canonical_into`/`format_ipv4` text formatter
+  (v4 1.74x / v6 1.9x), which is FLOOR-BOUND (v4 already formats direct-to-dst; v6's
+  temp copy is inherent to glibc's no-clobber-on-ENOSPC). Do NOT re-attempt.
 
 ## Swing 1 — stdio per-stream / sharded registry lock (biggest gap)
 
