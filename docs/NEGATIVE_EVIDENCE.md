@@ -11748,3 +11748,15 @@ HEAD without this change, NOT a regression.)
 
 Time family now fully swept for the strict-fast-path membrane-tax lever: strftime, asctime_r, ctime_r,
 gmtime_r, localtime_r — all byte-identical, removing the ~4-15ns known_remaining/tracked tax class.
+
+## strxfrm strict fast-path — eliminate redundant second strlen, byte-identical (BlackThrush, 2026-07-03)
+
+The strxfrm strict fast-path did `scan_c_string(src, None)` (strlen #1) then handed a src_slice to
+core `strxfrm`, which ran `strlen(src)` AGAIN (strlen #2) before the C/POSIX-locale identity copy —
+a DOUBLE strlen over the same string. Since the ABI already has `src_len`, inlined the core's copy
+(copy min(src_len, n) chars + NUL-terminate iff room, return src_len) directly, dropping the second
+strlen. For a typical sort key the copy path goes 2×strlen+1×copy → 1×strlen+1×copy. Byte-identical:
+strcoll_strxfrm_differential_fuzz 2 + conformance_diff_strxfrm_l + conformance_diff_strcoll_strxfrm 3
++ string_abi_test 201 — all GREEN vs host glibc. Same single-pass class as inet_pton v4
+(scan+parse → one walk). No separate glibc ratio (strxfrm is fast + dlmopen-noisy); the win is the
+removal of one full strlen pass on the sort-key transform.

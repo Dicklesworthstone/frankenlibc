@@ -7622,14 +7622,22 @@ pub unsafe extern "C" fn strxfrm(dst: *mut c_char, src: *const c_char, n: usize)
             return 0;
         }
         return unsafe {
-            let (src_len, src_terminated) = scan_c_string(src, None);
+            let (src_len, _src_terminated) = scan_c_string(src, None);
             if dst.is_null() || n == 0 {
                 src_len
             } else {
-                let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
-                let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
-                let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), n);
-                frankenlibc_core::string::str::strxfrm(dst_slice, src_slice, n)
+                // Inline the core strxfrm (C/POSIX-locale identity copy) using the
+                // already-scanned `src_len` — avoids the core's redundant SECOND
+                // `strlen(src)`. Byte-identical: copy min(src_len, n) chars, then
+                // NUL-terminate iff there is room (copy_len < n). Returns src_len.
+                let copy_len = src_len.min(n);
+                if copy_len > 0 {
+                    std::ptr::copy_nonoverlapping(src.cast::<u8>(), dst.cast::<u8>(), copy_len);
+                }
+                if copy_len < n {
+                    *dst.cast::<u8>().add(copy_len) = 0;
+                }
+                src_len
             }
         };
     }
