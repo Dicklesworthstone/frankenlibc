@@ -11760,3 +11760,17 @@ strcoll_strxfrm_differential_fuzz 2 + conformance_diff_strxfrm_l + conformance_d
 + string_abi_test 201 — all GREEN vs host glibc. Same single-pass class as inet_pton v4
 (scan+parse → one walk). No separate glibc ratio (strxfrm is fast + dlmopen-noisy); the win is the
 removal of one full strlen pass on the sort-key transform.
+
+## strlcpy/strlcat strict paths — eliminate redundant src double-scan, byte-identical (BlackThrush, 2026-07-03)
+
+Same double-scan pattern as strxfrm, found by mining ABI-scans-then-core-re-scans. Both strict fast
+paths did `scan_c_string(src)` (strlen #1) then handed a slice to core `strlcpy`/`strlcat`, which ran
+`strlen(src)` AGAIN (strlen #2). Inlined the core copy in the ABI using the already-scanned src_len:
+- strlcpy: copy min(src_len, dstsize-1) + NUL, return src_len. Drops the 2nd src strlen.
+- strlcat: bounded `scan_c_string(dst, Some(dstsize))` for dest_len (replacing the core's strlen(dst))
+  + append min(src_len, dstsize-dest_len-1) + NUL, return dest_len+src_len; dst-not-terminated → return
+  dstsize+src_len. Drops the 2nd src strlen (net: src scanned once, dst once, was src×2+dst×1).
+Byte-identical (BSD contract): conformance_diff_strlcpy 2 (incl strlcat_matches_glibc) +
+conformance_diff_copy_stragglers 4 + conformance_diff_string_mut 35 + string_abi_test 201 — GREEN vs
+host glibc. Third double-scan elimination after strxfrm; the ABI-scan-then-core-rescan anti-pattern
+is now swept for the length-returning string builders (strxfrm, strlcpy, strlcat).

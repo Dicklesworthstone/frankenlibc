@@ -7366,11 +7366,16 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: 
     if !dst.is_null() && !src.is_null() && dstsize != 0 && runtime_policy::strict_passthrough_active()
     {
         return unsafe {
-            let (src_len, src_terminated) = scan_c_string(src, None);
-            let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
-            let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
-            let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dstsize);
-            frankenlibc_core::string::str::strlcpy(dst_slice, src_slice)
+            // Inline core strlcpy using the already-scanned src_len (dstsize != 0
+            // guaranteed) — avoids the core's redundant SECOND strlen(src). Byte-
+            // identical: copy min(src_len, dstsize-1) chars + NUL, return src_len.
+            let (src_len, _src_terminated) = scan_c_string(src, None);
+            let copy_len = src_len.min(dstsize - 1);
+            if copy_len > 0 {
+                std::ptr::copy_nonoverlapping(src.cast::<u8>(), dst.cast::<u8>(), copy_len);
+            }
+            *dst.cast::<u8>().add(copy_len) = 0;
+            src_len
         };
     }
 
@@ -7483,11 +7488,27 @@ pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: 
     if !dst.is_null() && !src.is_null() && dstsize != 0 && runtime_policy::strict_passthrough_active()
     {
         return unsafe {
-            let (src_len, src_terminated) = scan_c_string(src, None);
-            let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
-            let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
-            let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dstsize);
-            frankenlibc_core::string::str::strlcat(dst_slice, src_slice)
+            // Inline core strlcat using the already-scanned src_len + a BOUNDED dst
+            // scan — avoids the core's redundant SECOND strlen(src). Byte-identical to
+            // the core BSD semantics: if dst has no NUL in dstsize bytes, return
+            // dstsize + src_len; else append min(src_len, dstsize-dest_len-1) + NUL and
+            // return dest_len + src_len.
+            let (src_len, _src_terminated) = scan_c_string(src, None);
+            let (dest_len, dest_terminated) = scan_c_string(dst.cast_const(), Some(dstsize));
+            if !dest_terminated {
+                return dstsize + src_len;
+            }
+            let available = dstsize - dest_len - 1;
+            let copy_len = src_len.min(available);
+            if copy_len > 0 {
+                std::ptr::copy_nonoverlapping(
+                    src.cast::<u8>(),
+                    dst.cast::<u8>().add(dest_len),
+                    copy_len,
+                );
+            }
+            *dst.cast::<u8>().add(dest_len + copy_len) = 0;
+            dest_len + src_len
         };
     }
 
