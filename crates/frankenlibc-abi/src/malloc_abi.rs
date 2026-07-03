@@ -1083,11 +1083,42 @@ impl FlatCombiningStats {
     }
 
     fn record_alloc(&self, size: usize, bin: usize) {
-        let _ = self.apply_op(FC_OP_ALLOC, size, bin);
+        self.record_mutation(FC_OP_ALLOC, size, bin);
     }
 
     fn record_free(&self, size: usize, bin: usize) {
-        let _ = self.apply_op(FC_OP_FREE, size, bin);
+        self.record_mutation(FC_OP_FREE, size, bin);
+    }
+
+    /// Lean per-alloc/per-free counter update. Unlike `apply_op`, this does NOT build
+    /// the `MallocStatsSnapshot` (which `record_alloc`/`record_free` immediately
+    /// discarded — pure waste ×2 per alloc+free) and, in the DEPLOYED path, does NOT
+    /// attempt the `MALLOC_STATS_HTM_SITE` transaction (whose `run()` pays
+    /// `current_test_mode` + `real_htm_supported` + fallback-telemetry on every call,
+    /// and on the common TSX-less CPU always falls back to the lock anyway). Measured:
+    /// `record_alloc+free` 25.4ns → the flat-combining HTM+snapshot machinery, >half of
+    /// the malloc/free-vs-glibc gap. The optimistic HTM path is preserved verbatim
+    /// under a forced HTM test mode so the HTM-site tests still exercise it; the lean
+    /// path takes the SAME `combiner_lock`, so it stays correct vs concurrent snapshots.
+    #[inline]
+    fn record_mutation(&self, op: usize, size: usize, bin: usize) {
+        if crate::htm_fast_path::htm_forced_mode_active_for_tests() {
+            let _ = self.apply_op(op, size, bin);
+            return;
+        }
+        let bin = bin.min(MALLOC_STATS_BIN_COUNT - 1);
+        while self
+            .combiner_lock
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+        // SAFETY: `combiner_lock` is held exclusively for this mutation.
+        unsafe {
+            Self::apply_locked(&mut *self.state.get(), op, size, bin);
+        }
+        self.combiner_lock.store(false, Ordering::Release);
     }
 
     fn snapshot(&self) -> MallocStatsSnapshot {
@@ -1447,6 +1478,15 @@ pub fn fallback_size_for_bench(ptr: *mut c_void) -> Option<usize> {
 #[doc(hidden)]
 pub fn fallback_remove_sized_for_bench(ptr: *mut c_void) -> Option<usize> {
     fallback_remove_sized(ptr)
+}
+
+/// Bench hook (swing-2 framing de-risking): the real per-alloc / per-free stats
+/// recorders (`record_alloc_stats` + `record_free_stats`) — the flat-combining +
+/// HTM path that builds and discards a snapshot on every call.
+#[doc(hidden)]
+pub fn record_alloc_free_stats_for_bench(size: usize) {
+    record_alloc_stats(size);
+    record_free_stats(size);
 }
 
 fn fallback_size_for_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) -> Option<usize> {

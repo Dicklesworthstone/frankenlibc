@@ -77,9 +77,23 @@ fn main() {
         hv.push(t.elapsed().as_nanos() as f64 / (iters * N as u64) as f64);
     }
 
+    // STATS: the per-alloc+free flat-combining stats recorders (HTM + snapshot-discard).
+    let mut sv = Vec::new();
+    for _ in 0..rounds {
+        let t = Instant::now();
+        for _ in 0..iters {
+            for k in 0..N {
+                m::record_alloc_free_stats_for_bench(sizes[k % 4]);
+            }
+        }
+        sv.push(t.elapsed().as_nanos() as f64 / (iters * N as u64) as f64);
+    }
+    let stats = pctl(&sv, 0.5);
+
     let table = pctl(&tv, 0.5);
     let head = pctl(&hv, 0.5);
     println!("SIZETRACK_AB table={table:.2} header={head:.2} header/table={:.3} table_saves={:.2}ns/op", head / table, table - head);
+    println!("STATS_AB record_alloc+free={stats:.2}ns/alloc+free-pair (flat-combining HTM + discarded snapshot)");
     println!(
         "  => swing-2 (inline header) can eliminate ~{:.1}ns of the per-alloc+free size-tracking cost (table {table:.2}ns -> header {head:.2}ns).",
         table - head

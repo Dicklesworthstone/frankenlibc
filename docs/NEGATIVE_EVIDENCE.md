@@ -11591,3 +11591,38 @@ slim-fast-path framing reduction. **Fidelity caveat:** the bench calls the non-c
 uses the `_for_slot` per-thread-cached variants with 2 ops, so 11.6ns is an UPPER BOUND on the
 deployed table cost — the "swing-2 is partial, not full" conclusion only strengthens under the true
 (cheaper) cached cost. Bench: `cargo run --release --example malloc_sizetrack_ab --features abi-bench`.
+
+---
+
+## malloc/free stats recorder lean path — deployed 9.5x -> 8.05x, biggest malloc win (BlackThrush, 2026-07-02)
+
+The swing-2 de-risking bench (above) unexpectedly showed the FALLBACK table is NOT the dominant
+malloc cost — the per-alloc/free **stats recorder** is: `record_alloc_stats + record_free_stats` =
+**25.4 ns/pair**, >half the ~47 ns malloc/free-vs-glibc gap. Root cause: `record_alloc`/`record_free`
+called `FlatCombiningStats::apply_op`, which (a) runs `MALLOC_STATS_HTM_SITE.run()` — paying
+`current_test_mode` + `real_htm_supported` + fallback-telemetry every call, and on the common
+TSX-less CPU always falling back to the spinlock anyway — and (b) builds a full `MallocStatsSnapshot`
+that `record_alloc`/`record_free` immediately **discard** (`let _ =`).
+
+**Fix:** a lean `record_mutation` path for the two recorders — direct `combiner_lock` + `apply_locked`,
+NO HTM attempt, NO snapshot. The optimistic HTM path is preserved verbatim under a forced HTM test
+mode (`htm_forced_mode_active_for_tests()`, same gate the mutex uses) so the HTM-site tests still
+exercise it; the lean path takes the SAME lock so it stays correct vs concurrent `snapshot()`
+(mallinfo). Counter updates are identical (`apply_locked`), so mallinfo/mallinfo2/malloc_info are
+unchanged.
+
+**Measured:**
+- isolated (malloc_sizetrack_ab, same session): `record_alloc+free` **25.40 → 9.87 ns/pair** (0.39x).
+- deployed MALLOC_FREE (stdio_st_probe, dlmopen glibc, same-session A/B, stash+rebuild baseline):
+
+| sz  | baseline fl/glibc | lean fl/glibc | fl-over-fl |
+|-----|-------------------|---------------|------------|
+| 16  | 9.485 | 8.059 | 46.74→37.26 = **0.80** |
+| 64  | 9.948 | 8.053 | 49.87→36.99 = **0.74** |
+| 256 | 9.553 | 8.041 | 46.45→36.45 = **0.78** |
+
+~10 ns removed per alloc+free; deployed malloc **~9.5-9.9x → ~8.05x** vs glibc. This is a real
+non-architectural malloc win (no inline-header needed) — the first sub-step of the "malloc needs
+framing reduction too" finding. Gates GREEN: malloc_abi_test 55 (incl. both HTM tests +
+mallinfo/mallinfo2/malloc_info), conformance_diff_malloc_edges 1. The remaining ~32 ns is the
+FALLBACK table (~11 ns, swing-2) + reentry guards + the native malloc ~5 ns.
