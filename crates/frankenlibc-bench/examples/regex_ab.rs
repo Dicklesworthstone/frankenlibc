@@ -12,7 +12,7 @@ fn main(){
   // matches glibc EXACTLY, not just match/nomatch (the subtle part of the fast path).
   {
     let mut checks=0u64;
-    for pfx in ["a","ab","z"]{ for sfx in ["z","az","a"]{
+    for pfx in ["","a","ab","z"]{ for sfx in ["","z","az","a"]{
       let pat=std::ffi::CString::new(format!("{pfx}.*{sfx}")).unwrap();
       let mut fre:libc::regex_t=unsafe{std::mem::zeroed()}; let mut gre:libc::regex_t=unsafe{std::mem::zeroed()};
       assert_eq!(unsafe{frankenlibc_abi::string_abi::regcomp(&mut fre as *mut _ as *mut std::ffi::c_void,pat.as_ptr(),0)},0);
@@ -29,7 +29,7 @@ fn main(){
     }}
     println!("dotstar-positions: {checks} spans fl == glibc ✓");
   }
-  for (pat,txt) in [("hello","xxxxx hello world"),("[0-9]+","abc 12345 def"),("^foo","foobar baz"),("a.*z","aXXXXXXXXXXz"),("(ab|cd)+","ababcdab end")]{
+  for (pat,txt) in [("hello","xxxxx hello world"),("[0-9]+","abc 12345 def"),("^foo","foobar baz"),("a.*z","aXXXXXXXXXXz"),(".*z","XXXXXXXXXXXXz"),("a.*","aXXXXXXXXXXXX"),("(ab|cd)+","ababcdab end")]{
     let cp=std::ffi::CString::new(pat).unwrap(); let ct=std::ffi::CString::new(txt).unwrap();
     // fl compile
     let mut fre:libc::regex_t=unsafe{std::mem::zeroed()};

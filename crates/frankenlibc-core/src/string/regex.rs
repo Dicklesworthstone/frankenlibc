@@ -413,9 +413,9 @@ fn anchored_literal_bytes(ast: &Ast) -> Option<Vec<u8>> {
 }
 
 /// A `prefix.*suffix` pattern: a `Concat` of `<literals> Repeat{AnyChar,0,None} <literals>`
-/// with BOTH literal runs non-empty and nothing else. POSIX leftmost-longest makes its
-/// match exactly `[first prefix occurrence, last suffix occurrence + suffix.len()]` — the
-/// greedy `.*` span — computed with two SIMD searches, no NFA. Only valid WITHOUT
+/// (either literal run may be EMPTY, e.g. `.*z` / `a.*` / `.*`) and nothing else. POSIX
+/// leftmost-longest makes its match a closed form computed with two SIMD searches, no NFA:
+/// an empty prefix ⇒ start 0, an empty suffix ⇒ end = input length. Only valid WITHOUT
 /// REG_NEWLINE (there `.` excludes `\n`, so `.*` can't span a newline). Returns
 /// `(prefix, suffix)` or `None`.
 fn lit_dotstar_lit_bytes(ast: &Ast) -> Option<(Vec<u8>, Vec<u8>)> {
@@ -439,7 +439,7 @@ fn lit_dotstar_lit_bytes(ast: &Ast) -> Option<(Vec<u8>, Vec<u8>)> {
         }
         i += 1;
     }
-    (!prefix.is_empty() && !suffix.is_empty()).then_some((prefix, suffix))
+    Some((prefix, suffix))
 }
 
 /// Find the leftmost occurrence of `needle` in `haystack`, case-insensitively
@@ -1789,38 +1789,51 @@ impl<'a> PikeVm<'a> {
         // the prefix end — two SIMD searches, no NFA. (`.` spans anything incl `\n` here
         // since this path is only taken without REG_NEWLINE.)
         if let Some((prefix, suffix)) = self.dotstar_lits {
-            let start = match find_literal(self.input, prefix, self.literal_icase) {
-                Some(s) => s,
-                None => return None,
-            };
-            let region = &self.input[start + prefix.len()..];
-            let last_rel = if suffix.len() == 1 {
-                let sb = suffix[0];
-                if self.literal_icase {
-                    let lo = sb.to_ascii_lowercase();
-                    region.iter().rposition(|&b| b.to_ascii_lowercase() == lo)
-                } else {
-                    region.iter().rposition(|&b| b == sb)
-                }
-            } else if region.len() >= suffix.len() {
-                (0..=region.len() - suffix.len()).rev().find(|&k| {
-                    let w = &region[k..k + suffix.len()];
-                    if self.literal_icase {
-                        w.eq_ignore_ascii_case(suffix)
-                    } else {
-                        w == suffix
-                    }
-                })
+            // Start: first prefix occurrence (empty prefix ⇒ 0 — `.*` matches from 0).
+            let start = if prefix.is_empty() {
+                0
             } else {
-                None
+                match find_literal(self.input, prefix, self.literal_icase) {
+                    Some(s) => s,
+                    None => return None,
+                }
             };
-            return last_rel.map(|rel| {
-                let end = start + prefix.len() + rel + suffix.len();
-                let mut slots = vec![-1i32; self.num_slots];
-                slots[0] = start as i32;
-                slots[1] = end as i32;
-                slots
-            });
+            let after = start + prefix.len();
+            // End: the greedy `.*` extends to the LAST suffix at/after `after` (empty
+            // suffix ⇒ input end).
+            let end = if suffix.is_empty() {
+                self.input.len()
+            } else {
+                let region = &self.input[after..];
+                let last_rel = if suffix.len() == 1 {
+                    let sb = suffix[0];
+                    if self.literal_icase {
+                        let lo = sb.to_ascii_lowercase();
+                        region.iter().rposition(|&b| b.to_ascii_lowercase() == lo)
+                    } else {
+                        region.iter().rposition(|&b| b == sb)
+                    }
+                } else if region.len() >= suffix.len() {
+                    (0..=region.len() - suffix.len()).rev().find(|&k| {
+                        let w = &region[k..k + suffix.len()];
+                        if self.literal_icase {
+                            w.eq_ignore_ascii_case(suffix)
+                        } else {
+                            w == suffix
+                        }
+                    })
+                } else {
+                    None
+                };
+                match last_rel {
+                    Some(rel) => after + rel + suffix.len(),
+                    None => return None,
+                }
+            };
+            let mut slots = vec![-1i32; self.num_slots];
+            slots[0] = start as i32;
+            slots[1] = end as i32;
+            return Some(slots);
         }
         let notbol = self.eflags & REG_NOTBOL != 0;
         let noteol = self.eflags & REG_NOTEOL != 0;
