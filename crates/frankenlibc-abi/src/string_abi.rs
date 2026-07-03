@@ -1603,6 +1603,50 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
                 return (limit, false);
             }
             let mut i = 0usize;
+            // 128-byte folded tier for large bounded scans: ONE combined NUL check per
+            // 128 B (4×32-lane min-fold, the same structure the unbounded None path uses
+            // to reach glibc parity at large sizes). Bounded ⇒ [i, i+128) ⊆ [0, limit) is
+            // in-bounds, no page guard. A flagged block breaks to the 64B/32B tiers below,
+            // which resolve the exact first-NUL index (unchanged result).
+            while i + 128 <= limit {
+                use core::simd::Simd;
+                use core::simd::cmp::{SimdOrd, SimdPartialEq};
+                let z = Simd::<u8, 32>::splat(0);
+                // SAFETY: [i, i+128) ⊆ [0, limit); `limit` bytes are readable.
+                let a = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+                let b = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 32), 32) });
+                let c = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 64), 32) });
+                let d = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 96), 32) });
+                if a.simd_min(b).simd_min(c.simd_min(d)).simd_eq(z).any() {
+                    break;
+                }
+                i += 128;
+            }
+            // 64-byte combined tier: ONE movemask+branch per 64 B (2×32-lane,
+            // `m0 | m1<<32`) — the bounded path had only a per-32B-branch loop, so
+            // strnlen/bounded scans lost in the medium+ range like unbounded strlen did
+            // before its 64B tier (c442ceba2). Bounded mode guarantees `limit` readable
+            // bytes ⇒ [i, i+64) ⊆ [0, limit) is in-bounds, no page guard. The two 32-lane
+            // compares are independent (good ILP — explicit 2×32-lane beats Simd<u8,64>,
+            // see f8d2259ef). First-NUL holds: left-to-right, trailing_zeros of the 64-bit
+            // combined mask is the lowest NUL in the window.
+            while i + 64 <= limit {
+                use core::simd::Simd;
+                use core::simd::cmp::SimdPartialEq;
+                let z = Simd::<u8, 32>::splat(0);
+                // SAFETY: [i, i+64) ⊆ [0, limit); `limit` bytes are readable.
+                let v0 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let v1 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 32), 32)
+                });
+                let m = v0.simd_eq(z).to_bitmask() | (v1.simd_eq(z).to_bitmask() << 32);
+                if m != 0 {
+                    return (i + m.trailing_zeros() as usize, true);
+                }
+                i += 64;
+            }
             // Wide 32-byte portable-SIMD NUL scan (AVX width, like glibc's
             // strnlen). Bounded mode guarantees `limit` readable bytes, so a
             // 32-byte load is in-bounds whenever i+32 <= limit. NUL-free panels
