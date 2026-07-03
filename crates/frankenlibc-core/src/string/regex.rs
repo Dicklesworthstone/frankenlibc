@@ -412,6 +412,36 @@ fn anchored_literal_bytes(ast: &Ast) -> Option<Vec<u8>> {
     (!out.is_empty()).then_some(out)
 }
 
+/// A `prefix.*suffix` pattern: a `Concat` of `<literals> Repeat{AnyChar,0,None} <literals>`
+/// with BOTH literal runs non-empty and nothing else. POSIX leftmost-longest makes its
+/// match exactly `[first prefix occurrence, last suffix occurrence + suffix.len()]` — the
+/// greedy `.*` span — computed with two SIMD searches, no NFA. Only valid WITHOUT
+/// REG_NEWLINE (there `.` excludes `\n`, so `.*` can't span a newline). Returns
+/// `(prefix, suffix)` or `None`.
+fn lit_dotstar_lit_bytes(ast: &Ast) -> Option<(Vec<u8>, Vec<u8>)> {
+    let Ast::Concat(items) = ast else { return None };
+    let mut prefix = Vec::new();
+    let mut i = 0;
+    while let Some(Ast::Literal(b)) = items.get(i) {
+        prefix.push(*b);
+        i += 1;
+    }
+    // The `.*`: Repeat over AnyChar, min 0, unbounded.
+    match items.get(i) {
+        Some(Ast::Repeat { inner, min: 0, max: None }) if matches!(**inner, Ast::AnyChar) => i += 1,
+        _ => return None,
+    }
+    let mut suffix = Vec::new();
+    while let Some(it) = items.get(i) {
+        match it {
+            Ast::Literal(b) => suffix.push(*b),
+            _ => return None,
+        }
+        i += 1;
+    }
+    (!prefix.is_empty() && !suffix.is_empty()).then_some((prefix, suffix))
+}
+
 /// Find the leftmost occurrence of `needle` in `haystack`, case-insensitively
 /// (ASCII) when `icase`. Backs the regex literal-prefix jump: SIMD `memmem` for
 /// the case-sensitive path, SIMD-folded `strcasestr` for the case-insensitive
@@ -722,6 +752,10 @@ pub struct CompiledRegex {
     /// no captures): matches ONLY at position 0, so `execute` answers with a direct prefix
     /// compare there — no NFA (was ~10x glibc on `^foo`-style anchored literals).
     anchored_literal: Option<Vec<u8>>,
+    /// `prefix.*suffix` (both non-empty literals, no captures, no REG_NEWLINE): the
+    /// greedy leftmost-longest match is `[first prefix, last suffix + len]`, found with
+    /// two SIMD searches — no per-start NFA (was ~30x glibc on `a.*z`-style patterns).
+    dotstar_lits: Option<(Vec<u8>, Vec<u8>)>,
     /// Byte values that MUST appear somewhere in every string this regex matches
     /// (computed soundly + conservatively from the AST; always a SUBSET of the true
     /// required set). If the input lacks any of them, no match is possible, so the
@@ -1613,6 +1647,8 @@ struct PikeVm<'a> {
     literal_is_whole: bool,
     /// `^literal` (position-0-only): direct prefix compare at 0, no NFA.
     anchored_literal: Option<&'a [u8]>,
+    /// `prefix.*suffix`: (prefix, suffix) literals — greedy span via two SIMD searches.
+    dotstar_lits: Option<(&'a [u8], &'a [u8])>,
 }
 
 /// Thread state in Pike VM
@@ -1644,6 +1680,7 @@ impl<'a> PikeVm<'a> {
         literal_icase: bool,
         literal_is_whole: bool,
         anchored_literal: Option<&'a [u8]>,
+        dotstar_lits: Option<(&'a [u8], &'a [u8])>,
     ) -> Self {
         Self {
             nfa,
@@ -1655,6 +1692,7 @@ impl<'a> PikeVm<'a> {
             literal_icase,
             literal_is_whole,
             anchored_literal,
+            dotstar_lits,
         }
     }
 
@@ -1745,6 +1783,44 @@ impl<'a> PikeVm<'a> {
                 }
             }
             return None;
+        }
+        // `prefix.*suffix` short-circuit (no REG_NEWLINE): POSIX leftmost-longest is the
+        // FIRST prefix occurrence, then the greedy `.*` extends to the LAST suffix at/after
+        // the prefix end — two SIMD searches, no NFA. (`.` spans anything incl `\n` here
+        // since this path is only taken without REG_NEWLINE.)
+        if let Some((prefix, suffix)) = self.dotstar_lits {
+            let start = match find_literal(self.input, prefix, self.literal_icase) {
+                Some(s) => s,
+                None => return None,
+            };
+            let region = &self.input[start + prefix.len()..];
+            let last_rel = if suffix.len() == 1 {
+                let sb = suffix[0];
+                if self.literal_icase {
+                    let lo = sb.to_ascii_lowercase();
+                    region.iter().rposition(|&b| b.to_ascii_lowercase() == lo)
+                } else {
+                    region.iter().rposition(|&b| b == sb)
+                }
+            } else if region.len() >= suffix.len() {
+                (0..=region.len() - suffix.len()).rev().find(|&k| {
+                    let w = &region[k..k + suffix.len()];
+                    if self.literal_icase {
+                        w.eq_ignore_ascii_case(suffix)
+                    } else {
+                        w == suffix
+                    }
+                })
+            } else {
+                None
+            };
+            return last_rel.map(|rel| {
+                let end = start + prefix.len() + rel + suffix.len();
+                let mut slots = vec![-1i32; self.num_slots];
+                slots[0] = start as i32;
+                slots[1] = end as i32;
+                slots
+            });
         }
         let notbol = self.eflags & REG_NOTBOL != 0;
         let noteol = self.eflags & REG_NOTEOL != 0;
@@ -3617,6 +3693,14 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         None
     };
 
+    // `prefix.*suffix` fast path: only without REG_NEWLINE (`.` would exclude `\n`) and
+    // with no captures/backrefs to fill.
+    let dotstar_lits = if !newline && num_groups == 0 && !has_backref {
+        lit_dotstar_lit_bytes(&ast)
+    } else {
+        None
+    };
+
     let backtrack_ast = if has_backref { Some(ast) } else { None };
 
     Ok(Box::new(CompiledRegex {
@@ -3632,6 +3716,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         literal_prefix,
         literal_is_whole,
         anchored_literal,
+        dotstar_lits,
         required_bytes,
         required_substring,
     }))
@@ -3744,6 +3829,7 @@ pub fn regex_is_match_bytes(compiled: &CompiledRegex, input: &[u8], eflags: i32)
         None,
         compiled.icase,
         false,
+        None,
         None,
     );
     let notbol = eflags & REG_NOTBOL != 0;
@@ -3893,6 +3979,7 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
         compiled.icase,
         compiled.literal_is_whole,
         compiled.anchored_literal.as_deref(),
+        compiled.dotstar_lits.as_ref().map(|(p, s)| (p.as_slice(), s.as_slice())),
     );
 
     // REG_NOSUB fast path: only the boolean match/no-match decision is
