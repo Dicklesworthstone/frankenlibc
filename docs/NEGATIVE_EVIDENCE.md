@@ -11774,3 +11774,18 @@ Byte-identical (BSD contract): conformance_diff_strlcpy 2 (incl strlcat_matches_
 conformance_diff_copy_stragglers 4 + conformance_diff_string_mut 35 + string_abi_test 201 — GREEN vs
 host glibc. Third double-scan elimination after strxfrm; the ABI-scan-then-core-rescan anti-pattern
 is now swept for the length-returning string builders (strxfrm, strlcpy, strlcat).
+
+## 2026-07-03 (BlackThrush) — wide bounded fused wcsncpy/wcsncat: byte-exact but SLOWER, NOT shipped
+After landing the narrow bounded fused strncpy/stpncpy/strncat (8238967b1, 7b109f8ce; fused/two-pass
+0.70-0.99), built the u32/8-lane analog `fused_wcsncpy_prefix` to fuse wcsncpy's
+`scan_w_string(src,Some(n))` + `wide_copy_n` double-read. Validated byte-exact over 28,160
+(ealign×slen×n) combos, then A/B'd (prefix-only p10, same-process) BEFORE wiring in — and it LOSES:
+fused/two-pass slen/n = 16/16 **1.422**, 32/32 **1.258**, 64/64 0.851, 128/128 **1.151**, 8/128 **1.173**,
+16/256 0.956. Only slen=64 wins; the rest regress 1.15-1.42x. ROOT CAUSE: for wide the windows are only
+8 lanes, so the fused kernel's per-window branching + `wide_copy_n` partial-tail calls (scalar for <8
+elements) cost more than the wide two-pass, whose `scan_w_string` and `wide_copy_n` are each tight
+optimized SIMD loops — the double-read it saves is cheaper than the interleave overhead it adds. Narrow
+won because its 32-lane windows + `raw_overlap_copy` (rep-movsb/overlap) tails amortize the interleave.
+REVERTED (kernel + hooks + bench removed); wcsncpy/wcsncat keep scan+copy. LESSON: the fused-vs-two-pass
+win does NOT transfer narrow→wide; the win/loss hinges on window width vs per-window overhead. Harness-
+then-A/B-before-wiring caught this with zero risk to the shipped surface.
