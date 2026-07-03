@@ -720,10 +720,12 @@ unsafe fn raw_memmove_bytes(dst: *mut u8, src: *const u8, n: usize) {
             return;
         }
         if dst_addr <= src_addr || dst_addr >= src_addr.saturating_add(n) {
-            // Forward copy (low -> high), safe when dst <= src or disjoint.
-            // `copy_unaligned_32` reads each 16-byte half into a register before
-            // storing it, and for dst <= src every store lands at an address <= the
-            // address just read, so no source byte is overwritten before it is read.
+            // Forward copy (low -> high), safe when dst <= src or disjoint. Strictly ascending:
+            // each chunk is read-then-written in place, and for dst <= src every store lands at
+            // an address <= the address just read, so no source byte is overwritten before it
+            // is read. NOTE: raw_overlap_copy CANNOT be used here — its small-n path does an
+            // end-overlapping store ([n-16,n) after [0,16)) tuned for DISJOINT copies, which
+            // clobbers the source on a forward OVERLAP (e.g. n=17, dst=src-8).
             let mut i = 0usize;
             while i + 32 <= n {
                 copy_unaligned_32(dst.add(i), src.add(i));
