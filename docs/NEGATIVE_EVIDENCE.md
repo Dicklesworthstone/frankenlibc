@@ -11822,3 +11822,20 @@ independent parallel compares for a serial min-fold; measure ILP-sensitive kerne
 same-process A/B, never op-count. strchr's broad gap is NOT the folded combine — likely the per-128B
 page-guard branch (vs strlen's 128-alignment) and/or the [0,128) 32B tail; a dedicated effort under low
 contention needed. Bench strchr_largen_ab (with 21K-combo correctness cross-check vs glibc) kept for it.
+
+## 2026-07-03 (BlackThrush) — strcmp folded+64B tiers: large-win but small-regression TRADE-OFF, not shipped
+After the strnlen bounded-tier win (a3d145cf1), characterized fl strcmp vs glibc (dlmopen, p10,
+strcmp_largen_ab.rs, equal-prefix strings = worst-case full scan): scan_strcmp has only a 32B panel and
+loses MORE at large — l=32 1.44, 64 1.77, 256 2.05, 512 2.15, 1024 2.53, 4096 2.94. Added a 128B folded
+(4×32 OR-fold, good ILP) + 64B (2×32) SKIP tier before the 32B panel, page-guarded on BOTH pointers,
+gated i>=128 / i>=64. Byte-exact (8,000 align×len sign-vs-glibc, equal + differ-at-k). LARGE won big:
+l=4096 2.94→1.54, l=1024 2.53→1.75, l=512 2.15→1.79. But SMALL REGRESSED: l=32 1.44→2.00 (fl 4.69→6.53),
+l=64 1.77→2.15 — DEFINITIVE via stash-baseline-NOW (l=32 baseline-now 1.44 == earlier, so not drift).
+ROOT CAUSE: the added tier code (loop-top splat + two gated branch checks per iteration + larger body)
+bloats scan_strcmp's HOT 32B-panel path that short compares live on. strcmp `bound=usize::MAX` so the
+tiers can't be limit-excluded like strnlen's (which naturally skipped short via i+64<=limit and did NOT
+regress small). Small strcmp is very common ⇒ a size trade-off, NOT shipped (same rule as the strlen
+threshold, 74866e40c). CLEAN FIX = extract the tiers into a separate cold fn so the hot path stays lean
+(scan_strcmp calls it only once i>=64) — deferred. Bench strcmp_largen_ab kept. LESSON: adding a bulk-skip
+tier to a two-pointer scanner with unbounded `bound` bloats the short-input hot path; gate by extracting,
+not just by an `i>=N` guard inside the same function.
