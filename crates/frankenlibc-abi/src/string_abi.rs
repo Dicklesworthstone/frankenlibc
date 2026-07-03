@@ -588,6 +588,94 @@ pub unsafe fn bench_strcpy_fused(dst: *mut u8, src: *const u8) -> usize {
     unsafe { fused_strcpy_bytes(dst, src) }
 }
 
+/// Bounded fused strncpy prefix copy: copies `min(strnlen(src, n), n)` non-NUL bytes
+/// from `src` to `dst` in ONE page-safe pass and returns that count (the strncpy
+/// `copy_len`). Does NOT write the terminator or pad — the caller zero-fills
+/// `dst[copy_len..n]` afterward. Fuses the `scan_c_string(src, Some(n))` +
+/// `raw_memcpy_bytes(dst, src, copy_len)` two-pass (which read the prefix twice).
+///
+/// Read discipline is identical to `fused_strcpy_bytes` (aligned-load-down + head-mask,
+/// 32|4096 keeps each 32-byte read in-page); the `n` cap only bounds how many bytes are
+/// COPIED and where the scan stops — it never enlarges a read, so page-safety is
+/// unchanged. `n > 0` is guaranteed by the caller.
+///
+/// # Safety
+/// `src` readable up to its NUL or `n` bytes (C strncpy contract); `dst` writable for
+/// at least `min(strnlen(src, n), n)` bytes.
+#[inline]
+unsafe fn fused_strncpy_prefix(dst: *mut u8, src: *const u8, n: usize) -> usize {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+    let z = Simd::<u8, 32>::splat(0);
+    let align = (src as usize) & 31;
+    // SAFETY: `base` aligned down <= 31 bytes, same mapped page as `src`.
+    let base = unsafe { src.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+    let m0 = v0.simd_eq(z).to_bitmask() & !((1u64 << align) - 1);
+    if m0 != 0 {
+        // NUL in the head window: copy min(nul, n) real bytes.
+        let nul = m0.trailing_zeros() as usize - align;
+        let take = nul.min(n);
+        // `raw_overlap_copy` assumes n>0 (its caller guards); guard the empty case
+        // (NUL at src[0], or n cap of 0).
+        if take > 0 {
+            unsafe { raw_overlap_copy(dst, src, take) };
+        }
+        return take;
+    }
+    let first = 32 - align; // bytes from src to the next 32-byte boundary (all non-NUL)
+    let head_take = first.min(n);
+    unsafe { raw_overlap_copy(dst, src, head_take) };
+    if head_take == n {
+        return n; // hit the n cap inside the head window
+    }
+    let mut i = first; // src+i is 32-byte aligned; i < n here
+    loop {
+        if i >= n {
+            return n;
+        }
+        // SAFETY: src+i is 32-byte aligned ⇒ the 32-byte load stays in one page.
+        let v = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(src.add(i), 32) });
+        let m = v.simd_eq(z).to_bitmask();
+        if i + 32 > n {
+            // Final partial window: fewer than 32 bytes remain before the n cap.
+            let rem = n - i;
+            let stop = if m != 0 { (m.trailing_zeros() as usize).min(rem) } else { rem };
+            if stop > 0 {
+                unsafe { raw_overlap_copy(dst.add(i), src.add(i), stop) };
+            }
+            return i + stop;
+        }
+        if m != 0 {
+            let nul = m.trailing_zeros() as usize; // < 32 <= n-i
+            if nul > 0 {
+                unsafe { raw_overlap_copy(dst.add(i), src.add(i), nul) };
+            }
+            return i + nul;
+        }
+        // Full non-NUL window entirely within [i, n): SIMD store.
+        v.copy_to_slice(unsafe { core::slice::from_raw_parts_mut(dst.add(i), 32) });
+        i += 32;
+    }
+}
+
+/// Bench hook: current two-pass strncpy prefix (scan + block copy). Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_strncpy_two_pass(dst: *mut u8, src: *const u8, n: usize) -> usize {
+    let k = unsafe { scan_c_string(src.cast(), Some(n)).0 };
+    let copy_len = k.min(n);
+    if copy_len > 0 {
+        unsafe { raw_memcpy_bytes(dst, src, copy_len) };
+    }
+    copy_len
+}
+
+/// Bench hook: bounded fused single-pass strncpy prefix. Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_strncpy_fused(dst: *mut u8, src: *const u8, n: usize) -> usize {
+    unsafe { fused_strncpy_prefix(dst, src, n) }
+}
+
 #[inline(never)]
 unsafe fn raw_dispatch_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
     let dispatch =
@@ -3839,9 +3927,13 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
             return Some(0);
         }
         let copy_len = unsafe {
-            let k = scan_c_string(src, Some(n)).0;
-            let copy_len = k.min(n);
-            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+            // Single-pass fused prefix copy (copy-through-NUL-or-`n`) instead of
+            // `scan_c_string(src, Some(n))` + `raw_memcpy_bytes`, which read the copied
+            // prefix TWICE. Same strncpy semantics: `copy_len = min(strnlen(src,n), n)`
+            // bytes copied, then zero-pad `dst[copy_len..n]`. A/B (strncpy_fused_ab,
+            // prefix-only p10): fused/two-pass 0.70-0.99, uniform win; 166,320
+            // (align×slen×n) combos byte-identical incl. every 32-byte-window edge.
+            let copy_len = fused_strncpy_prefix(dst.cast::<u8>(), src.cast::<u8>(), n);
             if copy_len < n {
                 raw_memset_bytes(dst.add(copy_len).cast::<u8>(), 0, n - copy_len);
             }
