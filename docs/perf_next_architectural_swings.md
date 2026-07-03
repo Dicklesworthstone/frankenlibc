@@ -204,12 +204,32 @@ the two-part filter (deployed slower than glibc AND gate is `within_N_ulps` not 
   indexes its page slot (chunk base + size) and validates exact-start for the size.
   Lookup is O(1) array indexing (no open-addressing probe like today's
   `FALLBACK_ALLOC_PTRS`), insert is O(1) set-page-slot, and per-page atomics remove
-  the global `lock_fallback_alloc_table` entirely. EV≈3.0 (Impact 4·Conf 3·Reuse 3 /
-  Effort 4·Friction 3); Tier A; baseline comparator = the current 262144-slot spinlocked
-  open-addressing table. Fallback/rollback: keep the existing table behind a cfg flag;
-  shadow-run the rtree (populate both, assert agreement) before switching reads.
-  Still a dedicated multi-turn swing + membrane-owner review (touches the safety
-  contract), but the rtree removes the inline-header's arbitrary-pointer UB blocker.
+  the global `lock_fallback_alloc_table` entirely.
+
+- **CORRECTION — the page-radix alternative above is FLAWED for fl's model; inline
+  header is the sound primary (BlackThrush 2026-07-02, second pass):** `fallback_key`
+  (malloc_abi.rs:1247) keys on the **exact byte address** (`ptr as usize`), not the
+  page — because fl `malloc` *delegates to host glibc malloc*, so many DIFFERENT-sized
+  allocations coexist in one 4 KiB page (e.g. 5×`malloc(16)` at distinct 16-byte
+  offsets). A radix keyed by `ptr >> PAGE_SHIFT` collapses all of them to ONE slot and
+  **cannot** store per-allocation sizes — it would need each page slot to point to a
+  per-page offset→size sub-map, i.e. reinventing a hash table with extra indirection
+  and per-page sub-allocation. Keying finer (`ptr >> 4`, the malloc alignment) needs a
+  ~2⁴⁴-leaf multi-level radix that is sparse ⇒ effectively the current hash table again.
+  So the radix does NOT beat the exact-ptr table for host-delegated mixed-size allocs.
+  **The sound lever is the INLINE HEADER with the two-guard prelude** (heap-range check
+  + strong magic) from the refinement above: the size lives *with each allocation*, so
+  there is no per-page collision; `known_remaining` reads `ptr[-16]` only when
+  `min_heap+16 <= ptr <= max_heap` (mapped ⇒ no fault) and accepts only on magic match.
+  The residual ~2⁻⁶⁴ interior-false-accept yields a garbage bound that is **no worse
+  than glibc's baseline** (glibc bounds nothing and trusts NUL termination), so it does
+  not regress safety below the strict-mode contract. EV≈3.0; Tier A; baseline comparator
+  = current 262144-slot spinlocked open-addressing table. Rollback: keep the table
+  behind a cfg flag; shadow-run the header (populate+assert-agree) before switching
+  reads. Still a dedicated multi-turn swing + membrane-owner review (safety contract).
+  **First de-risking step for that turn: a per-crate microbench of header read/write vs
+  `fallback_insert_sized`/`fallback_size`/`fallback_remove` over an alloc/free churn —
+  prove the header is actually cheaper before the invasive integration.**
 
 ## Swing 3 — accuracy-hard math (erfc / bessel / lgamma)
 
