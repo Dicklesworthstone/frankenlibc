@@ -163,6 +163,30 @@ the two-part filter (deployed slower than glibc AND gate is `within_N_ulps` not 
   + careful interop with host `free` on foreign ptrs — architectural, conformance-
   heavy (the whole malloc/calloc/realloc/free/overflow suite).
 
+- **SAFETY REFINEMENT + graveyard-matched alternative (BlackThrush 2026-07-02, via
+  /alien-graveyard on the size-tracking symptom):** the inline-header plan has an
+  unaddressed hazard — `known_remaining` has **395 call sites** and is invoked with
+  *arbitrary* caller pointers (any string arg: heap, stack, static, or INTERIOR),
+  not just malloc-returned ones. Reading `ptr[-8]` for a non-heap/interior ptr is
+  unsound (stack/static → wild read; interior heap ptr → mid-chunk garbage that a
+  weak magic could accept → wrong bound). The inline header is only salvageable with
+  a two-guard prelude: (1) `publish_fallback_range` `[min,max]` heap-range check so
+  the header is *never read* outside the mapped heap; (2) a strong 8-byte magic so an
+  interior read (within heap, still mapped ⇒ no fault) is rejected with ~2⁻⁶⁴
+  false-accept. **Cleaner alternative = a page-indexed radix tree (jemalloc `rtree`
+  archetype).** Key the metadata by `ptr >> PAGE_SHIFT`, not by reading memory at the
+  ptr: a non-heap ptr's page is simply absent ⇒ `None` with ZERO ptr dereference
+  (structurally UB-free for arbitrary pointers, unlike the inline header); a heap ptr
+  indexes its page slot (chunk base + size) and validates exact-start for the size.
+  Lookup is O(1) array indexing (no open-addressing probe like today's
+  `FALLBACK_ALLOC_PTRS`), insert is O(1) set-page-slot, and per-page atomics remove
+  the global `lock_fallback_alloc_table` entirely. EV≈3.0 (Impact 4·Conf 3·Reuse 3 /
+  Effort 4·Friction 3); Tier A; baseline comparator = the current 262144-slot spinlocked
+  open-addressing table. Fallback/rollback: keep the existing table behind a cfg flag;
+  shadow-run the rtree (populate both, assert agreement) before switching reads.
+  Still a dedicated multi-turn swing + membrane-owner review (touches the safety
+  contract), but the rtree removes the inline-header's arbitrary-pointer UB blocker.
+
 ## Swing 3 — accuracy-hard math (erfc / bessel / lgamma)
 
 - **erfc:** **1.63x slower** than glibc (fl `libm::erfc` is fdlibm-derived but
