@@ -8266,13 +8266,16 @@ pub unsafe extern "C" fn regexec(
         return rc;
     }
 
-    let Some(input_bytes) = (unsafe { read_c_string_bytes_with_nul(string) }) else {
-        return regex::REG_NOMATCH;
-    };
+    // Borrow the C string (INCL. its NUL, which the engine expects — same bytes as the
+    // old `read_c_string_bytes_with_nul`) instead of allocating a Vec copy on every call.
+    // That per-call alloc was part of deployed regexec's fixed overhead (the residual on
+    // the literal / dotstar fast paths). SAFETY: `string` is non-null (checked above) and
+    // NUL-terminated (C contract).
+    let input_bytes = unsafe { core::ffi::CStr::from_ptr(string) }.to_bytes_with_nul();
 
     if nmatch == 0 || pmatch.is_null() {
         // No submatch extraction needed: only the boolean rc is observable.
-        if regex::regex_is_match(compiled, &input_bytes, eflags) {
+        if regex::regex_is_match(compiled, input_bytes, eflags) {
             0
         } else {
             regex::REG_NOMATCH
@@ -8281,7 +8284,7 @@ pub unsafe extern "C" fn regexec(
         // Map pmatch to our RegMatch slice
         let pmatch_slice =
             unsafe { core::slice::from_raw_parts_mut(pmatch as *mut regex::RegMatch, nmatch) };
-        regex::regex_exec(compiled, &input_bytes, pmatch_slice, eflags)
+        regex::regex_exec(compiled, input_bytes, pmatch_slice, eflags)
     }
 }
 
