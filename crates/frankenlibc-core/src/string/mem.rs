@@ -306,6 +306,44 @@ fn first_byte_simd_32(chunk: &[u8], byte: u8) -> Option<usize> {
     }
 }
 
+/// Bench hook: OLD medium-range scan (per-32B-branch loop) over the whole slice.
+#[doc(hidden)]
+pub fn memchr_medium_32bloop_for_bench(hs: &[u8], needle: u8) -> Option<usize> {
+    let count = hs.len();
+    let mut base = 0usize;
+    while count - base >= SIMD_LANES {
+        if let Some(j) = first_byte_simd_32(&hs[base..base + SIMD_LANES], needle) {
+            return Some(base + j);
+        }
+        base += SIMD_LANES;
+    }
+    hs[base..].iter().position(|&b| b == needle).map(|j| base + j)
+}
+
+/// Bench hook: NEW medium-range scan (64-lane combined tier + 32B tail).
+#[doc(hidden)]
+pub fn memchr_medium_64lane_for_bench(hs: &[u8], needle: u8) -> Option<usize> {
+    let count = hs.len();
+    let mut base = 0usize;
+    while count - base >= MEMCHR_WIDE_LANES {
+        let nv = Simd::<u8, SIMD_LANES>::splat(needle);
+        let a = Simd::<u8, SIMD_LANES>::from_slice(&hs[base..base + SIMD_LANES]);
+        let b = Simd::<u8, SIMD_LANES>::from_slice(&hs[base + SIMD_LANES..base + MEMCHR_WIDE_LANES]);
+        let m = a.simd_eq(nv).to_bitmask() | (b.simd_eq(nv).to_bitmask() << SIMD_LANES);
+        if m != 0 {
+            return Some(base + m.trailing_zeros() as usize);
+        }
+        base += MEMCHR_WIDE_LANES;
+    }
+    while count - base >= SIMD_LANES {
+        if let Some(j) = first_byte_simd_32(&hs[base..base + SIMD_LANES], needle) {
+            return Some(base + j);
+        }
+        base += SIMD_LANES;
+    }
+    hs[base..].iter().position(|&b| b == needle).map(|j| base + j)
+}
+
 #[inline(always)]
 fn has_byte_memchr_folded(block: &[u8], byte: u8) -> bool {
     debug_assert_eq!(block.len(), MEMCHR_FOLD_BYTES);
@@ -411,6 +449,23 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
             }
         }
         base = block_end;
+    }
+
+    // 64-byte combined tier for the medium range (64..256 B, below the fold block) that
+    // otherwise ran one movemask+branch per 32 B — deployed memchr lost 1.6-2.0x vs glibc
+    // there. Bounded (base+64 <= count) ⇒ every read is in-slice, no page guard; a single
+    // 64-lane target compare gives one branch per 64 B. The two AVX2 halves the 64-lane eq
+    // lowers to are independent (good ILP — unlike a serial min-fold). First-match holds:
+    // left-to-right steps, `trailing_zeros` picks the lowest match in the 64-byte window.
+    while count - base >= MEMCHR_WIDE_LANES {
+        let nv = Simd::<u8, SIMD_LANES>::splat(needle);
+        let a = Simd::<u8, SIMD_LANES>::from_slice(&hs[base..base + SIMD_LANES]);
+        let b = Simd::<u8, SIMD_LANES>::from_slice(&hs[base + SIMD_LANES..base + MEMCHR_WIDE_LANES]);
+        let m = a.simd_eq(nv).to_bitmask() | (b.simd_eq(nv).to_bitmask() << SIMD_LANES);
+        if m != 0 {
+            return Some(base + m.trailing_zeros() as usize);
+        }
+        base += MEMCHR_WIDE_LANES;
     }
 
     while count - base >= SIMD_LANES {
