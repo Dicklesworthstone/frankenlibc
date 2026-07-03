@@ -8,6 +8,13 @@ pub fn erf(x: f64) -> f64 {
         } else {
             erf_profile_band(x)
         }
+    } else if x.abs() >= 6.0 {
+        // Saturation short-circuit: `erf(x)` rounds to exactly ±1.0 in f64 for
+        // |x| >= 6 (1 - erf(6) ≈ 2.15e-17 < 2^-53, and glibc returns exactly ±1.0
+        // there), so skip the `libm::erf` call — bit-identical. `±inf` also lands
+        // here (erf(±inf)=±1); NaN (NaN >= 6.0 is false) falls through to
+        // `libm::erf(NaN)=NaN`.
+        1.0_f64.copysign(x)
     } else {
         libm::erf(x)
     }

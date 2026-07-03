@@ -11642,3 +11642,19 @@ After the lean-stats win (malloc/free ~37ns / 8.05x), decomposed the remaining f
 Conclusion: the stats recorder was the one extractable non-architectural malloc win (~15ns off the
 op, ~10ns deployed). The guard is already lean; the table needs the swing-2 inline header. No further
 safe quick malloc lever — the remaining ~8ns guard + ~11ns table are safety-critical / architectural.
+
+---
+
+## erf large-|x| saturation fast-path — bit-exact, skips libm::erf call (BlackThrush, 2026-07-03)
+
+Math survey (math_passthrough_survey_bench, extended this turn with cbrt/sinh/cosh/tanh/erf/tgamma —
+all WIN except the erf artifact below) found erf 1.332x SLOWER than glibc on the `any` range
+(−20..20). Root cause: 45/64 of those points are |x|>=6, where deployed erf() routed to a `libm::erf`
+CALL. For real erf usage (|x|<0.5, the fast `erf_profile_band` rational) fl already WINS: erf fl=5.80
+vs glibc=7.05 = **0.823x**. The `any`-range gap was a large-x call-overhead artifact.
+
+Fix (math/special.rs): bit-exact saturation short-circuit — `erf(x)` rounds to exactly ±1.0 in f64
+for |x|>=6 (1-erf(6)~2.15e-17 < 2^-53, glibc returns exactly ±1.0 there), so return `1.0.copysign(x)`
+instead of `libm::erf`. ±inf lands here; NaN falls through. |x| in [2.5,6) unchanged. Byte-identical:
+conformance_diff_math_special 9/9 GREEN (differential vs host glibc). f64 math family confirmed
+comprehensively won: cbrt 0.85, sinh 0.48, cosh 0.62, tanh 0.46, tgamma 0.72, erf 0.82 (real usage).
