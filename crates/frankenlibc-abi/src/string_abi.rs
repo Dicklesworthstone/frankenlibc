@@ -9520,11 +9520,12 @@ pub unsafe extern "C" fn strfromd(
     if format.is_null() {
         return -1;
     }
-    let Some(fmt_bytes) = (unsafe { read_c_string_bytes(format) }) else {
-        return -1;
-    };
+    // Borrow the format string instead of a per-call Vec copy (read_c_string_bytes) — the
+    // same alloc antipattern fixed in fnmatch/regexec/strverscmp; the format is only read.
+    // SAFETY: format non-null (checked) and NUL-terminated (C contract).
+    let fmt_bytes = unsafe { core::ffi::CStr::from_ptr(format) }.to_bytes();
     // Parse format: must be "%[.<precision>]{f,e,g,a}" (C23 subset)
-    let fmt_str = match std::str::from_utf8(&fmt_bytes) {
+    let fmt_str = match std::str::from_utf8(fmt_bytes) {
         Ok(s) => s,
         Err(_) => return -1,
     };
