@@ -11805,3 +11805,20 @@ range is a dedicated 64-byte combined-check tier (2×32B aligned loads → one `
 needs 64-alignment for page-safety, engages right after head-align, escalates to the 128B tier at i>=256
 UNCHANGED so large is untouched) — deferred as careful safety-critical surgery (82-caller scanner; needs
 guard-page + exhaustive byte-exact harness). Bench strlen_largen_ab kept for that effort.
+
+## 2026-07-03 (BlackThrush) — strchr folded-tier min-trick: parity-to-slower (ILP), not shipped
+After the strlen 64B-tier win (c442ceba2), characterized deployed fl strchr vs glibc (dlmopen, p10,
+examples/strchr_largen_ab.rs, target absent → full scan): fl LOSES 1.4-2.2x at EVERY size incl. 16KB
+(n=64 1.46, 128 1.57, 256 1.72, 512 2.15, 1024 1.41, 2048 1.57, 4096 1.52, 16384 1.44) — unlike strlen
+it does NOT converge, so the folded tier itself is suspect. TRIED replacing the folded-tier skip check's
+8×simd_eq + 7×OR with the min-trick `(v^target).simd_min(v)` (zero lane iff v==target OR v==0; same trick
+wcschr/scan_c_string use) — 12 vector ops vs 15. Byte-exact (21,000 align×len combos, present+absent).
+But a SAME-PROCESS A/B of the two folded skip loops (cancels the heavy sibling-load contention that made
+the deployed p10 unreadable) showed the min-trick is PARITY-TO-SLOWER: n=256 ratio 1.15 (p10)/1.26 (p50),
+1024 0.97/1.01, 4096 0.99/1.05, 16384 1.12/0.95. ROOT CAUSE: the old 8×simd_eq are INDEPENDENT (issue in
+parallel on a wide OoO core), while the min-trick's `(v^t)→min(.,v)→min-fold` is a longer dependency
+chain — fewer ops but worse ILP, so no net gain. Reverted. LESSON: fewer SIMD ops ≠ faster when it trades
+independent parallel compares for a serial min-fold; measure ILP-sensitive kernel changes with a
+same-process A/B, never op-count. strchr's broad gap is NOT the folded combine — likely the per-128B
+page-guard branch (vs strlen's 128-alignment) and/or the [0,128) 32B tail; a dedicated effort under low
+contention needed. Bench strchr_largen_ab (with 21K-combo correctness cross-check vs glibc) kept for it.
