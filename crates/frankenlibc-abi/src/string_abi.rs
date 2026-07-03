@@ -3169,10 +3169,15 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         return 0;
     }
 
-    // Fast path during early startup: skip membrane validation entirely.
-    // The membrane's ValidationPipeline uses PageOracle (RwLock) and TLS,
-    // which deadlock during init when called from dlvsym → strlen chains.
-    if string_raw_passthrough_active() {
+    // Earliest-bootstrap guard (cheap: one atomic runtime-phase read). Keep the
+    // scalar scan the dl-linker bootstrap chain (dlvsym → strlen) relies on, BEFORE
+    // any TLS-touching probe. The full `string_raw_passthrough_active()` fan-out is
+    // FIVE chained checks including two `#[thread_local]`/reentry-slot reads
+    // (`in_validation_context`, `in_allocator_reentry_context`) that cost ~4ns on
+    // EVERY call — the measured deployed-strlen floor (probe: n=16 fl 6.3 vs glibc
+    // 2.0ns = 3.2x, while the raw SIMD kernel is at parity). Hoisting only the one
+    // cheap phase-read out front lets the strict fast path skip the other four.
+    if runtime_policy::bootstrap_passthrough_active() {
         unsafe {
             let mut len = 0usize;
             while *s.add(len) != 0 {
@@ -3183,10 +3188,12 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     }
 
     // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough does no
-    // validation, so the result is exactly the raw page-safe SIMD scan to NUL. Skip
-    // entrypoint_scope + known_remaining + the membrane (byte-identical to the existing
-    // `!heals && rem.is_none()` path below, now also covering tracked pointers in strict),
-    // like the inet_strict family. Hardened mode keeps the full validating path.
+    // validation, so the result is exactly the raw page-safe SIMD scan to NUL —
+    // reached now WITHOUT the four TLS/reentry probes. `scan_c_string` is lock-free,
+    // page-safe and TLS-free, so it is valid in every non-bootstrap context those
+    // probes guarded (reentry included: it holds no lock to deadlock on), making this
+    // byte-identical. Skip entrypoint_scope + known_remaining + the membrane (same as
+    // the `!heals && rem.is_none()` path below). Hardened mode keeps validating.
     if runtime_policy::strict_passthrough_active() {
         // `raw_lane_strlen_bytes` ignores its lane hint and just calls
         // `scan_c_string(s, None).0`, so `select_string_simd_dispatch` built a
@@ -3194,6 +3201,18 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         // purely to throw it away — ~12ns of dead work on the hottest libc
         // entrypoint. Call the scanner directly (byte-identical result).
         return unsafe { scan_c_string(s, None).0 };
+    }
+
+    // Hardened mode only: the remaining reentry/TLS-access bypasses before the
+    // validating membrane (the bootstrap term is harmlessly re-checked here).
+    if string_raw_passthrough_active() {
+        unsafe {
+            let mut len = 0usize;
+            while *s.add(len) != 0 {
+                len += 1;
+            }
+            return len;
+        }
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("strlen");
@@ -11520,3 +11539,20 @@ pub unsafe extern "C" fn strnstr(
     }
 }
 
+
+/// Bench-only A/B for the deployed-strlen gate reorder: the OLD prologue gate
+/// (`string_raw_passthrough_active()` 5-check fan-out, then strict) vs the NEW gate
+/// (cheap `bootstrap_passthrough_active()`, then strict). Same-process ratio isolates
+/// the four TLS/reentry probes the reorder removes from the hot path. Both return the
+/// same bool in deployed strict mode (false-fanout || true-strict).
+#[doc(hidden)]
+#[inline(never)]
+pub fn strlen_gate_old_for_bench() -> bool {
+    string_raw_passthrough_active() || runtime_policy::strict_passthrough_active()
+}
+
+#[doc(hidden)]
+#[inline(never)]
+pub fn strlen_gate_new_for_bench() -> bool {
+    runtime_policy::bootstrap_passthrough_active() || runtime_policy::strict_passthrough_active()
+}
