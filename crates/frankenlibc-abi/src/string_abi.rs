@@ -9050,14 +9050,14 @@ pub unsafe extern "C" fn strverscmp(s1: *const c_char, s2: *const c_char) -> c_i
         return 1;
     }
 
-    let s1_bytes = unsafe { read_c_string_bytes(s1) };
-    let s2_bytes = unsafe { read_c_string_bytes(s2) };
-    match (s1_bytes, s2_bytes) {
-        (Some(s1_bytes), Some(s2_bytes)) => strverscmp_bytes(&s1_bytes, &s2_bytes),
-        (None, Some(_)) => -1,
-        (Some(_), None) => 1,
-        (None, None) => 0,
-    }
+    // Borrow both C strings (strlen + slice) instead of `read_c_string_bytes`, which
+    // allocated a fresh Vec copy of EACH on every call — strverscmp runs in tight
+    // version-sort comparison loops, and the two copies made it 6-22x glibc regardless of
+    // content (~110 ns fixed). `strverscmp_bytes` only reads the slices.
+    // SAFETY: s1/s2 are non-null (checked above) and NUL-terminated (C contract).
+    let s1_bytes = unsafe { core::ffi::CStr::from_ptr(s1) }.to_bytes();
+    let s2_bytes = unsafe { core::ffi::CStr::from_ptr(s2) }.to_bytes();
+    strverscmp_bytes(s1_bytes, s2_bytes)
 }
 
 fn strvers_byte(bytes: &[u8], index: usize) -> u8 {
