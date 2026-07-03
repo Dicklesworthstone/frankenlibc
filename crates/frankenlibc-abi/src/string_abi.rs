@@ -1218,6 +1218,52 @@ unsafe fn memcmp_avx2(s1: *const u8, s2: *const u8, n: usize) -> c_int {
     }
 }
 
+/// SSE2 memcmp for `16 <= n < 32`: two overlapping 16-byte `pcmpeqb` windows.
+///
+/// SSE2 is part of the x86_64 baseline, so no runtime feature check is needed.
+/// Replaces the scalar path's two `chunk_equal_16` (`u128 ==` → serial 64-bit
+/// compares) with real vector compares. First-diff via `movemask` + `tzcnt`.
+/// Byte-identical result to the scalar path.
+///
+/// # Safety
+/// Caller guarantees `16 <= n < 32` and both regions readable for `n` bytes.
+#[cfg(target_arch = "x86_64")]
+unsafe fn memcmp_sse16(s1: *const u8, s2: *const u8, n: usize) -> c_int {
+    use std::arch::x86_64::*;
+    // SAFETY: SSE2 is baseline on x86_64; both windows lie within `[0, n)`
+    // (first at 0, second at `n-16`, and `n >= 16`).
+    unsafe {
+        #[inline(always)]
+        unsafe fn win(s1: *const u8, s2: *const u8, off: usize) -> u32 {
+            use std::arch::x86_64::*;
+            // SAFETY: `[off, off+16) ⊆ [0, n)`, readable per the outer contract.
+            unsafe {
+                let a = _mm_loadu_si128(s1.add(off).cast());
+                let b = _mm_loadu_si128(s2.add(off).cast());
+                // 16-bit mask: bit = 1 where EQUAL.
+                (_mm_movemask_epi8(_mm_cmpeq_epi8(a, b)) as u32) & 0xFFFF
+            }
+        }
+        #[inline(always)]
+        unsafe fn diff_at(s1: *const u8, s2: *const u8, idx: usize) -> c_int {
+            // SAFETY: `idx < n`, readable per the outer contract.
+            let av = unsafe { *s1.add(idx) };
+            let bv = unsafe { *s2.add(idx) };
+            if av < bv { -1 } else { 1 }
+        }
+        let m0 = win(s1, s2, 0);
+        if m0 != 0xFFFF {
+            return diff_at(s1, s2, (!m0 & 0xFFFF).trailing_zeros() as usize);
+        }
+        let off = n - 16;
+        let m1 = win(s1, s2, off);
+        if m1 != 0xFFFF {
+            return diff_at(s1, s2, off + (!m1 & 0xFFFF).trailing_zeros() as usize);
+        }
+        0
+    }
+}
+
 #[inline(never)]
 unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c_int {
     // `select_string_simd_dispatch(Memcmp)` cost ~8ns/call (atomic feature-mask + ISA probe
@@ -1234,8 +1280,14 @@ unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c
             // The 16<=n<32 sliver and no-AVX2 fallback keep the proven scalar path.
             #[cfg(target_arch = "x86_64")]
             {
-                if n >= 32 && active_string_simd_feature_mask() & SIMD_FEATURE_AVX2 != 0 {
-                    return memcmp_avx2(s1, s2, n);
+                if n >= 32 {
+                    if active_string_simd_feature_mask() & SIMD_FEATURE_AVX2 != 0 {
+                        return memcmp_avx2(s1, s2, n);
+                    }
+                } else {
+                    // 16 <= n < 32: two overlapping SSE2 `pcmpeqb` windows (SSE2 is
+                    // baseline on x86_64) beat the scalar path's serial `u128 ==`.
+                    return memcmp_sse16(s1, s2, n);
                 }
             }
             raw_lane_memcmp_bytes(s1, s2, n, 32)

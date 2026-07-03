@@ -11387,3 +11387,12 @@ all-equal + tail + boundary + random diff positions) — the existing gate cappe
 reached the 128B unrolled loop. Gates GREEN: conformance_diff_cmp_family 5, conformance_diff_string
 24, conformance_diff_string_mut 35, string_abi_test 201, strict_mode_refinement 18,
 conformance_diff_wmemcmp 1.
+
+### follow-up: memcmp 16<=n<32 SSE2 window — 3.1x -> ~1.2x near-parity (BlackThrush, 2026-07-02)
+
+The AVX2 kernel left the 16<=n<32 sliver on the scalar path (still 3.1x, and oddly ~10ns — slower
+than the AVX2 n=32 path). Added `memcmp_sse16`: two overlapping 16-byte `pcmpeqb` windows (SSE2 is
+x86_64 baseline, no feature check). A/B: n=16 3.136->1.199 (10.39->4.29, 0.41x), n=24 3.082->1.264
+(10.19->4.50, 0.44x) — **near-parity with glibc**. Covered by the existing 8000-iter
+`memcmp_bcmp_match_glibc` (lengths 0-48, diff biased to last byte). Gates green (cmp_family 5,
+string 24, string_abi 201). memcmp family now: 16-31 ~1.2x, 32-256 ~1.6x vs glibc (was 3.1-4.0x).
