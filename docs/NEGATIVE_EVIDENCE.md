@@ -11396,3 +11396,51 @@ x86_64 baseline, no feature check). A/B: n=16 3.136->1.199 (10.39->4.29, 0.41x),
 (10.19->4.50, 0.44x) — **near-parity with glibc**. Covered by the existing 8000-iter
 `memcmp_bcmp_match_glibc` (lengths 0-48, diff biased to last byte). Gates green (cmp_family 5,
 string 24, string_abi 201). memcmp family now: 16-31 ~1.2x, 32-256 ~1.6x vs glibc (was 3.1-4.0x).
+
+---
+
+## wcscmp per-window page-check amortization — DISPROVEN (BlackThrush, 2026-07-02)
+
+**Hypothesis:** `scan_wcscmp_simd`'s 2x-vs-glibc gap came from doing two
+`wide32_read_within_page` checks + two SIMD reductions (`va==vb` && `!simd_eq(zv).any()`)
+on *every* 8-lane (32B) window. Rewrote it to compute a safe-window burst count from each
+pointer's distance to its page end (looping N windows with NO per-window check) and combined the
+two reductions into one (`(va.simd_ne(vb) | va.simd_eq(zv)).any()`).
+
+**Result (stdio_st_probe A/B, dlmopen glibc): NO WIN, slight regression.** n=8 1.95→2.41x,
+n=16 1.66→1.90x, n=32 2.17→2.26x, n=64 2.02→1.92x. At the benched sizes (8-64 wchars = 1-8
+windows) there are too few windows to amortize, and the burst-setup division adds overhead. n=8
+is a SINGLE window yet already 1.95x — proving the gap is the **extern-`no_mangle` call floor +
+per-call setup** (portable-Simd load/compare vs glibc's hand-tuned wcscmp asm), NOT per-window page
+checks. Reverted. Confirms the "op-counting lies on x86; A/B before claiming" rule — the crate is
+already `-Ctarget-feature=+avx2` so `Simd<u32,8>` was real AVX2 all along. wcscmp/strcmp gaps are
+floor-bound like the other small string primitives; not a lever.
+
+## deployed malloc/free ~9.6x gap — SURFACED, precise overhead sites (bd-deployed-malloc-membrane-50x)
+
+Biggest measured gap in the whole probe: MALLOC_FREE fl≈47.5ns vs glibc≈4.9ns (9.6x) at sz=16/64/256.
+Even the STRICT host path (`strict_allocator_host_path_active` → `native_libc_malloc`, so the actual
+allocation IS host glibc) pays, per call, over raw glibc: `enter_allocator_reentry_guard` (TLS) +
+`entrypoint_scope("malloc")` (RAII trace) + `proof_carried_fast_path_active` + `decide(Allocator,..)`
++ **`fallback_insert_sized_for_slot`** (pointer→size map insert, so `known_remaining` can later reject
+unterminated tracked buffers in bounded C-string scans) + `record_alloc_stats` + `observe()`; `free`
+mirrors it with a map removal. The size-map insert/remove is the likely dominant term and is
+load-bearing for hardened-mode + any strict function that still calls `known_remaining`
+(→`fallback_remaining` reads the same map). NOTE: the PCC "fast path" branch ADDS `decide`+`observe`
+that the plain fallback branch skips — the membrane telemetry (entrypoint_scope/decide/observe) is a
+candidate strict-mode bypass (same class as the string/math/inet strict fast paths), but the map
+insert can't be dropped without proving no strict path reads it. Needs profiling to split
+telemetry-tax vs map-cost before editing the allocator; not a safe one-shot change.
+
+**Confirmed root cause (this turn):** `entrypoint_scope` ALREADY has a strict fast-path (cheap
+skipped guard) and PCC certificates are not registered by default, so the bench takes the PLAIN
+strict path: `native_libc_malloc` (~glibc) + `fallback_insert_sized_for_slot` + `record_alloc_stats`;
+`free` mirrors with a hash remove. The ~42ns overhead is the **`FALLBACK_ALLOC_PTRS/SIZES`
+open-addressing hash table** (linear-probe insert per malloc, probe+tombstone remove per free, under
+`lock_fallback_alloc_table` when multi-threaded). **Architectural lead for the bead:** replace the
+parallel size table with host `malloc_usable_size(ptr)` (reads glibc's chunk header) in
+`fallback_remaining` — it returns the actual readable extent (a safe UPPER bound for the "reject
+unterminated tracked buffer" check), eliminating the per-malloc insert AND per-free remove entirely
+for native-allocated pointers. Caveats: only valid for native (non-membrane-arena) pointers, and it
+returns usable (rounded-up) not requested size — every `known_remaining` consumer must tolerate an
+upper bound. Multi-turn change; needs the allocator owner.
