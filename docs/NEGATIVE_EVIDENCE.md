@@ -11857,3 +11857,9 @@ latency-sensitive short hot path) at ANY delegation threshold. The real fix is a
 compare loop (one well-scheduled kernel from byte 0, no tier handoff) — a from-scratch rewrite of
 scan_strcmp, genuinely deferred. All 4 variants reverted; scan_strcmp unchanged. strcmp_largen_ab (f44e6468b)
 is the characterization/correctness harness for that effort.
+
+## 2026-07-03 (BlackThrush) — three fresh targets characterized: mktime WINS, wcslen already-tiered, memrchr 64B-reverse marginal
+Surveyed non-scanner / remaining-scanner targets after the strcmp deferral:
+- **mktime**: fl 48.5ns vs glibc 92.9ns (TZ=UTC) = **0.52x, fl already WINS 1.9x** — not a lever (216 dates byte-exact).
+- **wcslen** (`wide_strlen_unbounded`): ALREADY tiered — 8-lane (32B) + 128B min-fold folded, with early escalation (recently de-gated so medium wchar strings don't wait). Its 1.4-2.1x residual is the u32-portable-SIMD-vs-asm ceiling + extern floor, not a missing tier.
+- **memrchr** 64B REVERSE tier (mirror of memchr's forward win f8d2259ef): byte-EXACT (12,000 align×len combos, fl==glibc AND 32rev==64rev reverse last-match) but the win is MARGINAL + contention-muddy — same-process kernel A/B new/old at n>=128 consistently <1 but swings 0.77-0.98 with load; n=48 has a function-size artifact (the larger memrchr slows the gated-out small path). Unlike memchr's clean 1.25x forward win, the reverse `rchunks` structure + memrchr's cross-crate ABI FLOOR-masking (like memchr) make it borderline churn on a core scanner. NOT shipped (reverted). The 2×32-lane tier technique's clean wins are the FORWARD single-pointer scanners with a deployed-visible floor (strlen/strnlen) or an internal-user path (memchr); reverse + floor-masked + less-common (memrchr) is a wash.
