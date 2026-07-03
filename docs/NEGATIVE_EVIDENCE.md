@@ -11521,3 +11521,31 @@ two region checks, not one). **HONEST: v6 ntop STILL LOSES glibc 2.11x** — the
 lever (core algorithm), a separate swing. This completes the inet strict-fast-path coverage
 (pton v4/v6, aton, addr, ntop v4/v6). Gates green: conformance_diff_arpa_inet 12, inet_abi_test 69,
 inet_pton_ntop_differential_fuzz 1 (ntop differential vs host glibc, exercises the strict path).
+
+---
+
+## inet_ntop formatter + pthread mutex dispatch — both FLOOR-BOUND, not levers (BlackThrush, 2026-07-02)
+
+Two candidate gaps dug this turn, both confirmed floor-bound (do not re-chase):
+
+**inet_ntop formatter (v4 1.74x, v6 2.11x vs glibc).** The core formatters are already
+allocation-free and tight (bd-2g7oyh). v4 (`format_ipv4_into_fixed` → `write_ipv4_addr`, div-based
+`write_u8_dec`) formats DIRECTLY into dst (no temp buffer) yet is still 1.74x — pure floor (extern
+`no_mangle` call + `strict_passthrough`/`inet_strict_membrane_fastpath` checks + 4-byte read + format
+4 numbers; glibc 7ns, fl 12ns). v6 (`format_ipv6_canonical_into`, single-pass longest-zero-run +
+`write_u16_hex`) has one extra inefficiency — formats to a 64-byte stack temp then copies to dst —
+but that double-write is INHERENT to matching glibc's no-clobber-on-ENOSPC semantics (glibc also uses
+a tmp[46] + copy). Removing it saves ~2-4ns and still loses ~1.9x. Not a clean algorithmic lever;
+the formatter algorithm is already optimal, the gap is extern floor + glibc-mandated temp copy.
+
+**pthread_mutex_lock/unlock (1.36x, ~3.5ns).** No membrane (direct futex). The uncontended lock is
+already optimal: `is_managed_mutex` (magic load) → `mutex_word_ptr` (align check) → `read_mutex_type`
+(load) → `futex_lock_normal` = 1 branch + 1 CAS (HTM elision is gated to forced-test-mode only, so
+deployed goes straight to the CAS). The ~3.5ns over glibc is the extra alignment/magic/type
+validation loads, which are load-bearing (managed-mutex safety) and not safely removable. Near-parity
+on a concurrency-critical primitive = low-value/high-risk. Not a lever.
+
+Net: after this session's inet fast-path sweep + memcmp AVX2, the deployed hot-path frontier is
+mature — remaining losses are floor-bound (small string/mem/inet/mutex primitives, extern-call +
+validation floor) or architectural (malloc FALLBACK table ~10x, stdio registry lock ~1.7x). No
+byte-identical algorithmic levers remain in the surveyed families.
