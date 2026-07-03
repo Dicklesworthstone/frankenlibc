@@ -380,6 +380,18 @@ fn leading_literal_prefix(ast: &Ast) -> Vec<u8> {
     }
 }
 
+/// True iff the AST is ENTIRELY literal bytes (a single `Literal` or a `Concat` of
+/// only `Literal`s) — no metacharacters, groups, anchors, classes, or quantifiers.
+/// Such a pattern's `leading_literal_prefix` IS the whole match, so a match is exactly
+/// the leftmost `memmem`/`strcasestr` occurrence — no NFA verification is needed.
+fn is_all_literal(ast: &Ast) -> bool {
+    match ast {
+        Ast::Literal(_) => true,
+        Ast::Concat(items) => !items.is_empty() && items.iter().all(|it| matches!(it, Ast::Literal(_))),
+        _ => false,
+    }
+}
+
 /// Find the leftmost occurrence of `needle` in `haystack`, case-insensitively
 /// (ASCII) when `icase`. Backs the regex literal-prefix jump: SIMD `memmem` for
 /// the case-sensitive path, SIMD-folded `strcasestr` for the case-insensitive
@@ -681,6 +693,11 @@ pub struct CompiledRegex {
     /// full literal is rare (e.g. `error:` in prose). Mutually exclusive with
     /// `prefilter` (set only when this is `None`).
     literal_prefix: Option<Vec<u8>>,
+    /// The whole pattern is exactly `literal_prefix` (an all-`Literal` AST with no
+    /// captures/anchors/quantifiers): the leftmost `memmem`/`strcasestr` occurrence IS
+    /// the full match, so `execute` returns `[start, start+len]` directly with no NFA
+    /// `run_from` verification (the per-hit NFA sim was ~6-10x glibc on literal patterns).
+    literal_is_whole: bool,
     /// Byte values that MUST appear somewhere in every string this regex matches
     /// (computed soundly + conservatively from the AST; always a SUBSET of the true
     /// required set). If the input lacks any of them, no match is possible, so the
@@ -1568,6 +1585,8 @@ struct PikeVm<'a> {
     /// When true, the literal-prefix jump uses a case-insensitive substring
     /// search (the regex itself matches case-insensitively).
     literal_icase: bool,
+    /// The whole pattern is `literal_prefix` — return the memmem hit directly, no NFA.
+    literal_is_whole: bool,
 }
 
 /// Thread state in Pike VM
@@ -1597,6 +1616,7 @@ impl<'a> PikeVm<'a> {
         prefilter: Option<FirstByteSet>,
         literal_prefix: Option<&'a [u8]>,
         literal_icase: bool,
+        literal_is_whole: bool,
     ) -> Self {
         Self {
             nfa,
@@ -1606,6 +1626,7 @@ impl<'a> PikeVm<'a> {
             prefilter,
             literal_prefix,
             literal_icase,
+            literal_is_whole,
         }
     }
 
@@ -1660,6 +1681,22 @@ impl<'a> PikeVm<'a> {
     /// For POSIX leftmost-longest: try each start position from left;
     /// for each start position, run all threads to find longest match.
     fn execute(&self) -> Option<Vec<i32>> {
+        // Pure-literal short-circuit, BEFORE any NFA setup (visited alloc, bulk-loop
+        // table, prescan): the whole pattern IS `literal_prefix`, so the leftmost
+        // memmem/strcasestr occurrence is exactly the full match. num_slots == 2 (no
+        // captures) ⇒ [start, start+len] is the complete result. Anchors/notbol/noteol
+        // can't apply (an all-literal AST has no `^`/`$`). This turns the ~6x-glibc
+        // literal-regexec into a single SIMD substring search.
+        if self.literal_is_whole {
+            if let Some(lit) = self.literal_prefix {
+                return find_literal(self.input, lit, self.literal_icase).map(|off| {
+                    let mut slots = vec![-1i32; self.num_slots];
+                    slots[0] = off as i32;
+                    slots[1] = (off + lit.len()) as i32;
+                    slots
+                });
+            }
+        }
         let notbol = self.eflags & REG_NOTBOL != 0;
         let noteol = self.eflags & REG_NOTEOL != 0;
         let input_len = self.input.len();
@@ -3518,6 +3555,11 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         required_literal_run(&ast)
     };
 
+    // Pure-literal short-circuit eligibility: the whole AST is literal bytes, a
+    // `literal_prefix` drives the search, and there are no captures/backrefs to fill.
+    let literal_is_whole =
+        literal_prefix.is_some() && num_groups == 0 && !has_backref && is_all_literal(&ast);
+
     let backtrack_ast = if has_backref { Some(ast) } else { None };
 
     Ok(Box::new(CompiledRegex {
@@ -3531,6 +3573,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         complexity_certificate,
         prefilter,
         literal_prefix,
+        literal_is_whole,
         required_bytes,
         required_substring,
     }))
@@ -3642,6 +3685,7 @@ pub fn regex_is_match_bytes(compiled: &CompiledRegex, input: &[u8], eflags: i32)
         compiled.prefilter,
         None,
         compiled.icase,
+        false,
     );
     let notbol = eflags & REG_NOTBOL != 0;
     let noteol = eflags & REG_NOTEOL != 0;
@@ -3788,6 +3832,7 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
         compiled.prefilter,
         compiled.literal_prefix.as_deref(),
         compiled.icase,
+        compiled.literal_is_whole,
     );
 
     // REG_NOSUB fast path: only the boolean match/no-match decision is
