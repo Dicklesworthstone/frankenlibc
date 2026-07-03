@@ -11701,3 +11701,21 @@ conformance_diff_exp2m1_exp10m1 + conformance_diff_f128_exp10m1 GREEN (different
 
 Math saturation-fast-path family this session (all bit-exact, conformance-verified vs host glibc):
 erf(|x|>=6->±1), erfc(x<=-6->2), expm1(x<=-37->-1, 0.577x), exp2m1(x<=-54->-1), exp10m1(x<=-17->-1).
+
+## strftime strict fast-path — membrane tax removed, byte-identical (BlackThrush, 2026-07-03)
+
+strftime paid the full `Time` membrane every call — `decide()` + `observe()` + `tracked_region_fits`
+×2 (s + tm) + `known_remaining` (registry lookup) + a bounded `scan_c_string(format, known_remaining)`
+— with NO function-level strict fast-path (the earlier 47b89e129 only put `Time` in the `decide()`
+strict list; the rest of the tax remained). Added the proven inet-style strict fast-path: scan the
+format to NUL directly, read tm, format straight into the caller buffer (the core `format_strftime`
+is already allocation-free, `push!`-macro based). Byte-identical for valid inputs — trust-the-caller
+regions (glibc never validates s/tm). Removes the same membrane-tax class measured at ~10-15ns for
+inet_pton/aton.
+
+Gates GREEN (byte-identical vs host glibc): conformance_diff_strftime_{eo_modifier,gmtoff,l,oor_names,
+zone} 5 + strftime_specifier_differential_fuzz + strftime_buffer_wide_year_differential_fuzz.
+Measured (strftime dlmopen probe): fl 30-43ns, decisively beats glibc — fl/glibc 0.314 ("%Y-%m-%d
+%H:%M:%S") / 0.083 ("%a %b %d %T %Z %Y"). CAVEAT: the dlmopen glibc strftime is noisy/inflated
+(locale-init state per call, 60-3107ns), so the headline ratio overstates; the robust claim is the
+byte-identical removal of the ~10-15ns inet-class membrane tax on an already-fast fl strftime.

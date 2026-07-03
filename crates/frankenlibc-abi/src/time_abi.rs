@@ -976,6 +976,29 @@ pub unsafe extern "C" fn strftime(
     format: *const std::ffi::c_char,
     tm: *const libc::tm,
 ) -> usize {
+    // Strict-mode fast path (DEFAULT deployed): `Time` `decide()` always-Allows in strict, so skip
+    // decide()/observe() + `tracked_region_fits` ×2 + `known_remaining` (registry lookup) and scan
+    // the format to NUL directly. Byte-identical for valid inputs (0 on null/zero args or
+    // unterminated format, else the formatted length); trust-the-caller regions, glibc never
+    // validates `s`/`tm`. Formats straight into the caller buffer (no alloc). Mirrors inet_pton.
+    if runtime_policy::strict_passthrough_active() {
+        if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
+            return 0;
+        }
+        // SAFETY: strict trusts the caller's NUL-terminated `format` (C contract).
+        let (fmt_len, terminated) = unsafe { scan_c_string(format, None) };
+        if !terminated {
+            return 0;
+        }
+        // SAFETY: `fmt_len` readable bytes at `format`; `tm` valid per C contract.
+        let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
+        let mut bd = unsafe { read_tm(tm) };
+        unsafe { read_tm_zone(tm, &mut bd) };
+        // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+        let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+        return time_core::format_strftime(fmt, &bd, buf);
+    }
+
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Time,
         s as usize,
