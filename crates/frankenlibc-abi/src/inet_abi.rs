@@ -475,7 +475,25 @@ unsafe fn inet_ntop_ipv6_strict_fast(
     }
     // SAFETY: caller guarantees 16 readable bytes at `src` (C contract).
     let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, 16) };
-    // Canonical IPv6 text max "x:x:x:x:x:x:255.255.255.255" = 45 bytes; 64 ample.
+    // Canonical IPv6 text is always < INET6_ADDRSTRLEN (46, incl. NUL). When `dst`
+    // has room for the whole string, format DIRECTLY into it — no 64-byte stack temp
+    // (zeroed) + copy. The temp path is only needed for a short `dst` to preserve
+    // glibc's no-clobber-on-ENOSPC (it can't ENOSPC once size >= 46).
+    if size >= 46 {
+        // SAFETY: caller guarantees `dst` writable for `size` bytes.
+        let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, size as usize) };
+        return match inet_core::inet_ntop_into(AF_INET6, src_slice, dst_slice) {
+            Some(text_len) => {
+                dst_slice[text_len] = 0; // text_len < 46 <= size ⇒ in bounds
+                dst as *const c_char
+            }
+            None => {
+                unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
+                std::ptr::null()
+            }
+        };
+    }
+    // Short dst: format into a temp, then bounds-check before touching `dst`.
     let mut text_buf = [0u8; 64];
     match inet_core::inet_ntop_into(AF_INET6, src_slice, &mut text_buf) {
         Some(text_len) => {

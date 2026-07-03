@@ -11549,3 +11549,19 @@ Net: after this session's inet fast-path sweep + memcmp AVX2, the deployed hot-p
 mature — remaining losses are floor-bound (small string/mem/inet/mutex primitives, extern-call +
 validation floor) or architectural (malloc FALLBACK table ~10x, stdio registry lock ~1.7x). No
 byte-identical algorithmic levers remain in the surveyed families.
+
+---
+
+## inet_ntop v6 direct-format — skip the temp-buffer copy for ample dst (BlackThrush, 2026-07-02)
+
+The v6 strict fast-path formatted into a 64-byte stack temp (zeroed each call) then copied to `dst`.
+That double-write is only needed to preserve glibc's no-clobber-on-ENOSPC for a SHORT `dst` — but
+once `size >= 46` (`INET6_ADDRSTRLEN`), the canonical text (< 46 bytes) always fits, so it can be
+formatted DIRECTLY into `dst` (no temp, no 64-byte zeroing, no copy). Short-`dst` keeps the temp path.
+Byte-identical.
+
+**Same-session A/B (stdio_st_probe, dlmopen glibc, size=64):** v6 fl **33.40 → 31.12ns**, fl/glibc
+**2.097 → 1.913** = **0.93x fl-over-fl** (~2.3ns, ~7%). v4 untouched (12.1ns, its path already formats
+directly). v6 ntop still loses glibc 1.91x (core `format_ipv6_canonical_into`, formerly established
+as formatter-bound), but this removes a genuine per-call waste. Gates green: conformance_diff_arpa_inet
+12, inet_pton_ntop_differential_fuzz 1 (vs host glibc), inet_abi_test 69.
