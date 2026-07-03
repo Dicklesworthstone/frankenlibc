@@ -419,12 +419,24 @@ unsafe fn raw_avx_copy(dst: *mut u8, src: *const u8, n: usize) {
 #[inline]
 unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
     unsafe {
-        // Large copies: `rep movsb` (x86 ERMS) — glibc's large-memcpy path. Inline asm is
-        // opaque to LLVM's loop-idiom recognizer, so (unlike a Rust copy loop) it is never
-        // lowered to @llvm.memcpy into this interposed symbol — recursion-safe. Measured
-        // 1.7x over the u128-pair copy loop and beats glibc for n in [4096,32768) (the
-        // copy loop is ~1.5x slower than glibc there); below ~1024 ERMS startup loses, so
-        // the threshold is 2048. DF=0 on entry (SysV ABI) ⇒ forward copy.
+        // Medium copies [128,131072): AVX vmovdqu loop. Measured DIRECT dlmopen A/B
+        // (memcpy_direct_ab / memcpy_xover) OVERTURNED the old "rep movsb beats glibc for
+        // [4096,32768)" claim — rep movsb actually LOST 1.6-1.7x across [2048,8192] and a
+        // catastrophic 3.87x at 16 KiB (ERMS 4K-aliasing store-forward stall), while the AVX
+        // loop is parity vs glibc across the whole [2048,131072) range (0.99-1.03x, spike
+        // gone). So the AVX loop is the medium-large path; rep movsb (ERMS, cache-friendly
+        // for huge copies past L2) stays only for >=128 KiB. Gated on runtime AVX; non-AVX
+        // machines fall through to the rep movsb / u128-pair paths below unchanged.
+        #[cfg(target_arch = "x86_64")]
+        if (128..131072).contains(&n) && std::is_x86_feature_detected!("avx") {
+            // SAFETY: n in [128,131072) and AVX confirmed available.
+            raw_avx_copy(dst, src, n);
+            return;
+        }
+        // Huge copies (>=128 KiB) and the non-AVX medium-large fallback: `rep movsb` (x86
+        // ERMS) — glibc's large-memcpy path. Inline asm is opaque to LLVM's loop-idiom
+        // recognizer, so (unlike a Rust copy loop) it is never lowered to @llvm.memcpy into
+        // this interposed symbol — recursion-safe. DF=0 on entry (SysV ABI) ⇒ forward copy.
         #[cfg(target_arch = "x86_64")]
         if n >= 2048 {
             // SAFETY: copies exactly `n` bytes src→dst (caller-guaranteed disjoint & valid);
@@ -436,14 +448,6 @@ unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
                 inout("rsi") src => _,
                 options(nostack, preserves_flags),
             );
-            return;
-        }
-        // Medium copies [128,2048): AVX2 vmovdqu loop (matches/beats glibc; the u128-pair
-        // loop below emits only 16-byte movups). Gated on runtime AVX detection.
-        #[cfg(target_arch = "x86_64")]
-        if n >= 128 && std::is_x86_feature_detected!("avx") {
-            // SAFETY: n>=128 and AVX confirmed available.
-            raw_avx_copy(dst, src, n);
             return;
         }
         if n < 16 {
