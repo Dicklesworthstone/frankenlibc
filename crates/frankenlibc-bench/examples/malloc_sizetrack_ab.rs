@@ -90,6 +90,20 @@ fn main() {
     }
     let stats = pctl(&sv, 0.5);
 
+    // GUARD: the per-alloc reentry guard enter+exit (fs read + slot cache + CAS + drop).
+    let mut gv = Vec::new();
+    for _ in 0..rounds {
+        let t = Instant::now();
+        for _ in 0..iters {
+            for _ in 0..N {
+                m::reentry_guard_enter_exit_for_bench();
+            }
+        }
+        gv.push(t.elapsed().as_nanos() as f64 / (iters * N as u64) as f64);
+    }
+    let guard = pctl(&gv, 0.5);
+    println!("GUARD_AB reentry_enter+exit={guard:.2}ns/call (fs read + slot cache + depth CAS + drop)");
+
     let table = pctl(&tv, 0.5);
     let head = pctl(&hv, 0.5);
     println!("SIZETRACK_AB table={table:.2} header={head:.2} header/table={:.3} table_saves={:.2}ns/op", head / table, table - head);

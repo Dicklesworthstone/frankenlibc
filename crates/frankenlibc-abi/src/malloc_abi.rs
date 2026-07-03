@@ -1489,6 +1489,15 @@ pub fn record_alloc_free_stats_for_bench(size: usize) {
     record_free_stats(size);
 }
 
+/// Bench hook: the per-alloc reentry guard enter+exit (fs:[0] read + slot cache +
+/// depth CAS + drop-reset) that every malloc/free pays.
+#[doc(hidden)]
+pub fn reentry_guard_enter_exit_for_bench() {
+    let g = enter_allocator_reentry_guard();
+    std::hint::black_box(&g);
+    drop(g);
+}
+
 fn fallback_size_for_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) -> Option<usize> {
     let key = fallback_key(ptr)?;
     if !MULTI_THREADED.load(Ordering::Relaxed) {

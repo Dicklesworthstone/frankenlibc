@@ -11626,3 +11626,19 @@ non-architectural malloc win (no inline-header needed) — the first sub-step of
 framing reduction too" finding. Gates GREEN: malloc_abi_test 55 (incl. both HTM tests +
 mallinfo/mallinfo2/malloc_info), conformance_diff_malloc_edges 1. The remaining ~32 ns is the
 FALLBACK table (~11 ns, swing-2) + reentry guards + the native malloc ~5 ns.
+
+## malloc framing breakdown (post-stats-win) — guard ~4ns is lean, not a lever (BlackThrush, 2026-07-02)
+
+After the lean-stats win (malloc/free ~37ns / 8.05x), decomposed the remaining framing via
+`malloc_sizetrack_ab` (GUARD_AB arm + `reentry_guard_enter_exit_for_bench` hook). Per alloc+free
+(~37ns fl total, ~5ns of which is native malloc = glibc floor):
+
+| component | isolated cost | status |
+|-----------|---------------|--------|
+| reentry guard enter+exit | **4.04 ns/call** (×2 for malloc+free ≈ 8ns) | LEAN — fs:[0] read + `LAST_THREAD_CACHE` + depth CAS + drop-store; the post-CAS `is_runtime_ready`/`in_policy_reentry_context`/pthread-reentry checks are safety-critical (catch cross-subsystem reentry the depth-CAS alone misses) → NOT a safe lever |
+| FALLBACK table insert+lookup+remove | 11.55 ns | swing-2 (inline header) — architectural |
+| stats record_alloc+free | 8.71 ns | DONE (lean path, 20901156e) |
+
+Conclusion: the stats recorder was the one extractable non-architectural malloc win (~15ns off the
+op, ~10ns deployed). The guard is already lean; the table needs the swing-2 inline header. No further
+safe quick malloc lever — the remaining ~8ns guard + ~11ns table are safety-critical / architectural.
