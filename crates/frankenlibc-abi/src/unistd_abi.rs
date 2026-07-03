@@ -16198,23 +16198,29 @@ pub unsafe extern "C" fn __xpg_basename(path: *mut c_char) -> *mut c_char {
     if path.is_null() {
         return DOT.as_ptr() as *mut c_char;
     }
-    let Some(bytes) = (unsafe { read_c_string_bytes(path) }) else {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return DOT.as_ptr() as *mut c_char;
-    };
-    if bytes.is_empty() {
-        return DOT.as_ptr() as *mut c_char;
-    }
-    let mut end = bytes.len();
-    while end > 0 && bytes[end - 1] == b'/' {
-        end -= 1;
-    }
-    if end == 0 {
-        return SLASH.as_ptr() as *mut c_char;
-    }
-    let start = match bytes[..end].iter().rposition(|&b| b == b'/') {
-        Some(pos) => pos + 1,
-        None => 0,
+    // Read the path via a borrowed slice (strlen + slice) instead of `read_c_string_bytes`,
+    // which allocated a fresh Vec copy on every call — basename runs in path-processing
+    // loops and the copy made it 13-16x glibc (~55 ns vs ~4 ns). The slice is used ONLY to
+    // compute the component offsets and is dropped (block scope) BEFORE the in-place NUL
+    // write, so it never aliases the mutation of `path`.
+    // SAFETY: path non-null (checked above) and NUL-terminated (C contract).
+    let (end, start) = {
+        let bytes = unsafe { core::ffi::CStr::from_ptr(path) }.to_bytes();
+        if bytes.is_empty() {
+            return DOT.as_ptr() as *mut c_char;
+        }
+        let mut end = bytes.len();
+        while end > 0 && bytes[end - 1] == b'/' {
+            end -= 1;
+        }
+        if end == 0 {
+            return SLASH.as_ptr() as *mut c_char;
+        }
+        let start = match bytes[..end].iter().rposition(|&b| b == b'/') {
+            Some(pos) => pos + 1,
+            None => 0,
+        };
+        (end, start)
     };
     unsafe { *path.add(end) = 0 };
     unsafe { path.add(start) }
