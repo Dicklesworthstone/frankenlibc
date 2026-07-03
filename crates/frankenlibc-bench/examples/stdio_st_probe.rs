@@ -543,6 +543,22 @@ fn main() {
         println!("RANDOM fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&frnd,0.5), pctl(&grnd,0.5), pctl(&frnd,0.5)/pctl(&grnd,0.5));
     }
 
+    // inet_pton: hot IP parse. Pays decide()+observe()+tracked_region_fits+bounded-cstr (registry
+    // lookup), no strict bypass. Parse writes to dst (side effect) so no const-fold. dlmopen glibc.
+    type PtonFn = unsafe extern "C" fn(i32, *const c_char, *mut libc::c_void) -> i32;
+    let g_pton: PtonFn = dl(h, b"inet_pton\0");
+    for (label, af, s) in [("v4", libc::AF_INET, b"192.168.1.100\0".as_slice()), ("v6", libc::AF_INET6, b"2001:db8::8a2e:370:7334\0".as_slice())] {
+        let sp = s.as_ptr() as *const c_char;
+        let mut buf = [0u8; 16];
+        let (mut fp, mut gp) = (Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { frankenlibc_abi::inet_abi::inet_pton(af, sp, buf.as_mut_ptr().cast()) }); std::hint::black_box(buf[0]); } fp.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { g_pton(af, sp, buf.as_mut_ptr().cast()) }); std::hint::black_box(buf[0]); } gp.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("INET_PTON {label} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fp,0.5), pctl(&gp,0.5), pctl(&fp,0.5)/pctl(&gp,0.5));
+    }
+
     // strcat: builder = scan dst-to-NUL + copy src. Common; can hide two-pass/naive issues.
     type StrcatFn = unsafe extern "C" fn(*mut c_char, *const c_char) -> *mut c_char;
     let g_strcat: StrcatFn = dl(h, b"strcat\0");

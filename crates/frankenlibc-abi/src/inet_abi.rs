@@ -198,6 +198,36 @@ pub unsafe extern "C" fn ntohl(netlong: u32) -> u32 {
 /// family, -1 if `af` is unsupported (sets errno to `EAFNOSUPPORT`).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int {
+    // Strict-mode fast path (the DEFAULT deployed mode): `Inet` `decide()` always-Allows in strict
+    // (never denies), so the membrane's only output is the raw parse. Skip decide()/observe() +
+    // `tracked_region_fits(dst)` + the `known_remaining` bound (scan src to NUL directly). Byte-
+    // identical to the full path for valid inputs (same errno/return: EFAULT on null, 0 on
+    // unterminated src, EAFNOSUPPORT on bad af); trust-the-caller region handling, glibc never
+    // validates dst. Mirrors the string/sort/search strict fast paths.
+    if runtime_policy::strict_passthrough_active() {
+        if src.is_null() || dst.is_null() {
+            unsafe { set_abi_errno(errno::EFAULT) };
+            return -1;
+        }
+        // SAFETY: strict trusts the caller's NUL-terminated `src` (C contract).
+        let (len, terminated) = unsafe { scan_c_string(src, None) };
+        if !terminated {
+            return 0;
+        }
+        let dst_size = match af {
+            AF_INET => 4,
+            AF_INET6 => 16,
+            _ => {
+                unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
+                return -1;
+            }
+        };
+        // SAFETY: `len` NUL-terminated bytes at `src`; caller guarantees `dst` for `dst_size`.
+        let src_bytes = unsafe { core::slice::from_raw_parts(src as *const u8, len) };
+        let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dst_size) };
+        return inet_core::inet_pton(af, src_bytes, dst_slice);
+    }
+
     let (_, decision) = runtime_policy::decide(ApiFamily::Inet, src as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EAFNOSUPPORT) };

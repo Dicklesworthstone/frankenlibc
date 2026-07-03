@@ -11325,3 +11325,29 @@ sort/search entrypoint bypasses the membrane in strict. This whole vein (reopene
 closed" by auditing un-probed non-colliding modules) has now yielded 7 real byte-identical wins:
 bsearch 0.90x (was 1.68x loss), qsort (small win-more), qsort_r 0.467x, lfind 0.655x, + bsearch_r/
 mergesort/heapsort (registry-lookup skips). Non-colliding strict-fast-path audit DEFINITIVELY closed.
+
+---
+
+## inet_pton strict fast-path — membrane tax removed, v6 reaches near-parity (BlackThrush, 2026-07-02)
+
+**Lever:** `inet_pton` paid the full `Inet` membrane on every call — `decide()` + `observe()` +
+`tracked_region_fits(dst)` + `read_bounded_cstr_ref` (registry lookup) — even though `Inet`'s
+`decide()` always-Allows in strict (the default deployed mode) and glibc never validates `dst`.
+Added a `strict_passthrough_active()` fast path that skips all of it: EFAULT-on-null, scan src to
+NUL directly (`scan_c_string(src, None)`), `af`→size, hand `(src_bytes, dst_slice)` straight to
+`inet_core::inet_pton`. Byte-identical to the full path for valid inputs (same return/errno).
+Mirrors the sort/search/qsort strict fast paths.
+
+**Measured (stdio_st_probe A/B, same binary, dlmopen host glibc, median of 100×200k):**
+
+| case | baseline fl/glibc | fast-path fl/glibc | fl-over-fl (new/old) |
+|------|-------------------|--------------------|----------------------|
+| v4 `192.168.1.100`         | 1.962 | 1.522 | 26.16/35.18 = **0.744** |
+| v6 `2001:db8::8a2e:370:7334`| 1.412 | 1.061 | 34.93/46.86 = **0.745** |
+
+**Honest read:** a real ~1.34x fl-over-fl speedup (~9-12ns dead membrane tax removed per call).
+v6 lands at near-parity with glibc (1.06x). v4 STILL LOSES glibc 1.52x — the residual is
+parser-bound (`inet_core::inet_pton` digit/dot scan), NOT membrane; that is a separate lever.
+Not a win *vs glibc* on v4, but a byte-identical improvement worth landing (same class as the
+already-merged qsort/lfind strict fast paths). Gates GREEN: conformance_diff_arpa_inet 12,
+conformance_diff_inet_pton6_edges 14, inet_pton_ntop_differential_fuzz 1.
