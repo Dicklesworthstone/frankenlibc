@@ -11732,3 +11732,19 @@ asctime_r_differential_fuzz + conformance_diff_asctime_range 2 + time_abi_test 6
 ratio (the fixed-format functions are fast and the dlmopen glibc comparator is locale-noisy, as with
 strftime); the robust claim is removal of the ~4-8ns known_remaining tax class on an already-fast
 fixed-format path — the same lever as strftime/inet.
+
+## gmtime_r / localtime_r strict fast-path — skip tracked-object tax, byte-identical (BlackThrush, 2026-07-03)
+
+Time-family completion (broken-down converters, after the formatters). gmtime_r/localtime_r paid
+`tracked_required_object_fits` ×2 (2× known_remaining + alignment lookups, ~4-8ns) on a ~20-30ns
+epoch->calendar conversion — a meaningful ~20-30% fraction, no strict fast-path. Added
+`!strict_passthrough_active()` gating so strict (DEFAULT deployed) skips the tracked-object checks
+(glibc never validates the caller's timer/result); hardened keeps them. Byte-identical (the
+epoch_to_broken_down_checked + write_tm are unchanged). Gates GREEN vs host glibc (TZ=UTC):
+conformance_diff_gmtime 2 + time_abi_test 60 + asctime_range 2 + asctime_r_differential_fuzz.
+(NOTE: conformance_diff_gmtime::ctime_r_matches_glibc requires TZ=UTC — fl ctime_r is UTC-only vs
+glibc's localtime; this is a PRE-EXISTING architectural difference, confirmed failing identically on
+HEAD without this change, NOT a regression.)
+
+Time family now fully swept for the strict-fast-path membrane-tax lever: strftime, asctime_r, ctime_r,
+gmtime_r, localtime_r — all byte-identical, removing the ~4-15ns known_remaining/tracked tax class.

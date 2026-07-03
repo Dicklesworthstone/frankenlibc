@@ -652,10 +652,15 @@ unsafe fn read_tm_zone(tm: *const libc::tm, bd: &mut time_core::BrokenDownTime) 
 /// Returns null on failure.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn localtime_r(timer: *const i64, result: *mut libc::tm) -> *mut libc::tm {
-    if timer.is_null()
-        || result.is_null()
-        || !tracked_required_object_fits(timer)
-        || !tracked_required_object_fits(result.cast_const())
+    if timer.is_null() || result.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return std::ptr::null_mut();
+    }
+    // Strict-mode skips the tracked-object checks (glibc never validates them); hardened
+    // keeps them. Byte-identical. Mirrors gmtime_r/strftime.
+    if !runtime_policy::strict_passthrough_active()
+        && (!tracked_required_object_fits(timer)
+            || !tracked_required_object_fits(result.cast_const()))
     {
         unsafe { set_abi_errno(errno::EFAULT) };
         return std::ptr::null_mut();
@@ -680,10 +685,16 @@ pub unsafe extern "C" fn localtime_r(timer: *const i64, result: *mut libc::tm) -
 /// Identical to `localtime_r` since we only support UTC.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gmtime_r(timer: *const i64, result: *mut libc::tm) -> *mut libc::tm {
-    if timer.is_null()
-        || result.is_null()
-        || !tracked_required_object_fits(timer)
-        || !tracked_required_object_fits(result.cast_const())
+    if timer.is_null() || result.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return std::ptr::null_mut();
+    }
+    // Strict-mode (DEFAULT deployed) skips the tracked-object checks (2 known_remaining/
+    // alignment lookups) on a trivial epoch->calendar conversion — glibc never validates
+    // the caller's timer/result. Hardened keeps them. Byte-identical. Mirrors strftime.
+    if !runtime_policy::strict_passthrough_active()
+        && (!tracked_required_object_fits(timer)
+            || !tracked_required_object_fits(result.cast_const()))
     {
         unsafe { set_abi_errno(errno::EFAULT) };
         return std::ptr::null_mut();
