@@ -392,6 +392,26 @@ fn is_all_literal(ast: &Ast) -> bool {
     }
 }
 
+/// The literal bytes of a `^literal` pattern: a `Concat` whose first item is a
+/// non-line `Anchor(Start)` and whose remaining items are all `Literal`s. Such a
+/// pattern (compiled WITHOUT REG_NEWLINE) matches ONLY at input position 0, so a match
+/// is a direct prefix comparison there — no NFA. Returns `None` for line-mode anchors
+/// or any non-literal tail.
+fn anchored_literal_bytes(ast: &Ast) -> Option<Vec<u8>> {
+    let Ast::Concat(items) = ast else { return None };
+    if !matches!(items.first(), Some(Ast::Anchor(AnchorKind::Start { line: false }))) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for it in &items[1..] {
+        match it {
+            Ast::Literal(b) => out.push(*b),
+            _ => return None,
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 /// Find the leftmost occurrence of `needle` in `haystack`, case-insensitively
 /// (ASCII) when `icase`. Backs the regex literal-prefix jump: SIMD `memmem` for
 /// the case-sensitive path, SIMD-folded `strcasestr` for the case-insensitive
@@ -698,6 +718,10 @@ pub struct CompiledRegex {
     /// the full match, so `execute` returns `[start, start+len]` directly with no NFA
     /// `run_from` verification (the per-hit NFA sim was ~6-10x glibc on literal patterns).
     literal_is_whole: bool,
+    /// `^literal` (non-line start anchor + all-literal tail, compiled without REG_NEWLINE,
+    /// no captures): matches ONLY at position 0, so `execute` answers with a direct prefix
+    /// compare there — no NFA (was ~10x glibc on `^foo`-style anchored literals).
+    anchored_literal: Option<Vec<u8>>,
     /// Byte values that MUST appear somewhere in every string this regex matches
     /// (computed soundly + conservatively from the AST; always a SUBSET of the true
     /// required set). If the input lacks any of them, no match is possible, so the
@@ -1587,6 +1611,8 @@ struct PikeVm<'a> {
     literal_icase: bool,
     /// The whole pattern is `literal_prefix` — return the memmem hit directly, no NFA.
     literal_is_whole: bool,
+    /// `^literal` (position-0-only): direct prefix compare at 0, no NFA.
+    anchored_literal: Option<&'a [u8]>,
 }
 
 /// Thread state in Pike VM
@@ -1617,6 +1643,7 @@ impl<'a> PikeVm<'a> {
         literal_prefix: Option<&'a [u8]>,
         literal_icase: bool,
         literal_is_whole: bool,
+        anchored_literal: Option<&'a [u8]>,
     ) -> Self {
         Self {
             nfa,
@@ -1627,6 +1654,7 @@ impl<'a> PikeVm<'a> {
             literal_prefix,
             literal_icase,
             literal_is_whole,
+            anchored_literal,
         }
     }
 
@@ -1696,6 +1724,27 @@ impl<'a> PikeVm<'a> {
                     slots
                 });
             }
+        }
+        // Anchored-literal short-circuit: `^literal` (no REG_NEWLINE) matches ONLY at
+        // position 0, and only if position 0 is a line start (not REG_NOTBOL). Without
+        // newline mode `^` matches nowhere else, so it's a single prefix compare there.
+        if let Some(lit) = self.anchored_literal {
+            let notbol = self.eflags & REG_NOTBOL != 0;
+            if !notbol && self.input.len() >= lit.len() {
+                let head = &self.input[..lit.len()];
+                let hit = if self.literal_icase {
+                    head.eq_ignore_ascii_case(lit)
+                } else {
+                    head == lit
+                };
+                if hit {
+                    let mut slots = vec![-1i32; self.num_slots];
+                    slots[0] = 0;
+                    slots[1] = lit.len() as i32;
+                    return Some(slots);
+                }
+            }
+            return None;
         }
         let notbol = self.eflags & REG_NOTBOL != 0;
         let noteol = self.eflags & REG_NOTEOL != 0;
@@ -3560,6 +3609,14 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
     let literal_is_whole =
         literal_prefix.is_some() && num_groups == 0 && !has_backref && is_all_literal(&ast);
 
+    // `^literal` position-0-only fast path: only when NOT REG_NEWLINE (else `^` also
+    // matches after every `\n`) and no captures/backrefs.
+    let anchored_literal = if !newline && num_groups == 0 && !has_backref {
+        anchored_literal_bytes(&ast)
+    } else {
+        None
+    };
+
     let backtrack_ast = if has_backref { Some(ast) } else { None };
 
     Ok(Box::new(CompiledRegex {
@@ -3574,6 +3631,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         prefilter,
         literal_prefix,
         literal_is_whole,
+        anchored_literal,
         required_bytes,
         required_substring,
     }))
@@ -3686,6 +3744,7 @@ pub fn regex_is_match_bytes(compiled: &CompiledRegex, input: &[u8], eflags: i32)
         None,
         compiled.icase,
         false,
+        None,
     );
     let notbol = eflags & REG_NOTBOL != 0;
     let noteol = eflags & REG_NOTEOL != 0;
@@ -3833,6 +3892,7 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
         compiled.literal_prefix.as_deref(),
         compiled.icase,
         compiled.literal_is_whole,
+        compiled.anchored_literal.as_deref(),
     );
 
     // REG_NOSUB fast path: only the boolean match/no-match decision is
