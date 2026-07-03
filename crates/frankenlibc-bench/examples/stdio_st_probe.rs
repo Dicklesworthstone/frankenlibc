@@ -559,6 +559,26 @@ fn main() {
         println!("INET_PTON {label} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fp,0.5), pctl(&gp,0.5), pctl(&fp,0.5)/pctl(&gp,0.5));
     }
 
+    // inet_ntop: binary->text. v4 had a strict fast-path; v6 paid full membrane
+    // (decide+observe+tracked_region_fits x2). dlmopen glibc.
+    {
+        type NtopFn = unsafe extern "C" fn(i32, *const libc::c_void, *mut c_char, u32) -> *const c_char;
+        let g_ntop: NtopFn = dl(h, b"inet_ntop\0");
+        let v4: [u8; 4] = [192, 168, 1, 100];
+        let v6: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0x8a, 0x2e, 0x03, 0x70, 0x73, 0x34];
+        for (label, af, src) in [("v4", libc::AF_INET, &v4[..]), ("v6", libc::AF_INET6, &v6[..])] {
+            let sp = src.as_ptr() as *const libc::c_void;
+            let mut outb = [0u8; 64];
+            let (mut fp, mut gp) = (Vec::new(), Vec::new());
+            let lit = 200_000u64;
+            for _ in 0..100 {
+                let t = Instant::now(); for _ in 0..lit { std::hint::black_box(unsafe { frankenlibc_abi::inet_abi::inet_ntop(af, sp, outb.as_mut_ptr().cast(), 64) }); std::hint::black_box(outb[0]); } fp.push(t.elapsed().as_nanos() as f64 / lit as f64);
+                let t = Instant::now(); for _ in 0..lit { std::hint::black_box(unsafe { g_ntop(af, sp, outb.as_mut_ptr().cast(), 64) }); std::hint::black_box(outb[0]); } gp.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            }
+            println!("INET_NTOP {label} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fp,0.5), pctl(&gp,0.5), pctl(&fp,0.5)/pctl(&gp,0.5));
+        }
+    }
+
     // inet_aton + inet_addr: BSD dotted-quad parse. Siblings of inet_pton but with NO
     // strict fast-path — pay full decide()+observe()+tracked_region_fits+bounded-cstr. dlmopen glibc.
     {

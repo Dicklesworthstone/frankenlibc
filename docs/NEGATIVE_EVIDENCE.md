@@ -11503,3 +11503,21 @@ inet_addr crosses to a glibc win; inet_aton reaches parity. Correctness: conform
 (diff_inet_aton_cases + diff_inet_addr_cases) 12, conformance_diff_inet_aton_fuzz 1,
 conformance_diff_inet_aton_edges 12, conformance_diff_network_number 1, metamorphic_inet_aton_ntoa 8,
 inet_abi_test 69 — all GREEN (differential vs host glibc, exercises the strict path).
+
+---
+
+## inet_ntop v6 strict fast-path — 8ns membrane tax removed; v6 stays formatter-bound (BlackThrush, 2026-07-02)
+
+inet_ntop had a v4 strict fast-path but AF_INET6 paid the full `Inet` membrane (decide + observe +
+TWO `tracked_region_fits` calls, src AND dst). Added `inet_ntop_ipv6_strict_fast` mirroring the v4
+one (format 16 bytes via `inet_ntop_into` into a stack buffer, ENOSPC/EFAULT parity, trust-the-caller
+regions). Byte-identical.
+
+**A/B (stdio_st_probe, dlmopen glibc, 2001:db8::8a2e:370:7334):** v6 fl **42.33 → 34.00ns**, fl/glibc
+**2.704 → 2.113** = **0.80x fl-over-fl** (~8ns removed — larger than inet_aton's 3ns because it skips
+two region checks, not one). **HONEST: v6 ntop STILL LOSES glibc 2.11x** — the residual is the core
+`inet_ntop_into` v6 canonical formatter (find longest zero-run + hex-format), not membrane. v4 ntop
+(already fast-pathed) is 1.74x for the same formatter reason. The IPv6 text formatter is the real
+lever (core algorithm), a separate swing. This completes the inet strict-fast-path coverage
+(pton v4/v6, aton, addr, ntop v4/v6). Gates green: conformance_diff_arpa_inet 12, inet_abi_test 69,
+inet_pton_ntop_differential_fuzz 1 (ntop differential vs host glibc, exercises the strict path).

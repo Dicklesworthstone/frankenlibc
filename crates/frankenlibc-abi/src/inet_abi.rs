@@ -354,8 +354,12 @@ pub unsafe extern "C" fn inet_ntop(
     dst: *mut c_char,
     size: u32,
 ) -> *const c_char {
-    if af == AF_INET && runtime_policy::inet_strict_membrane_fastpath() {
-        return unsafe { inet_ntop_ipv4_strict_fast(src, dst, size) };
+    if runtime_policy::inet_strict_membrane_fastpath() {
+        match af {
+            AF_INET => return unsafe { inet_ntop_ipv4_strict_fast(src, dst, size) },
+            AF_INET6 => return unsafe { inet_ntop_ipv6_strict_fast(src, dst, size) },
+            _ => {} // unsupported af → fall through to full path (sets EAFNOSUPPORT)
+        }
     }
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Inet, src as usize, 0, false, true, 0);
@@ -450,6 +454,47 @@ unsafe fn inet_ntop_ipv4_strict_fast(
     debug_assert_eq!(written, Some(text_len));
     dst_bytes[text_len] = 0;
     dst as *const c_char
+}
+
+/// Strict-mode `inet_ntop` for AF_INET6: format the 16-byte address to canonical
+/// text with no membrane (`decide`/`observe`/`tracked_region_fits`). Byte-identical
+/// to the full v6 path for valid inputs (EFAULT on null, ENOSPC when `size` too
+/// small, else the canonical text); trust-the-caller regions, glibc never validates
+/// `src`/`dst`. Mirrors `inet_ntop_ipv4_strict_fast`.
+///
+/// # Safety
+/// `src` must be readable for 16 bytes and `dst` writable for `size` bytes (C contract).
+unsafe fn inet_ntop_ipv6_strict_fast(
+    src: *const c_void,
+    dst: *mut c_char,
+    size: u32,
+) -> *const c_char {
+    if src.is_null() || dst.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return std::ptr::null();
+    }
+    // SAFETY: caller guarantees 16 readable bytes at `src` (C contract).
+    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, 16) };
+    // Canonical IPv6 text max "x:x:x:x:x:x:255.255.255.255" = 45 bytes; 64 ample.
+    let mut text_buf = [0u8; 64];
+    match inet_core::inet_ntop_into(AF_INET6, src_slice, &mut text_buf) {
+        Some(text_len) => {
+            let required = text_len + 1;
+            if required > size as usize {
+                unsafe { set_abi_errno(errno::ENOSPC) };
+                return std::ptr::null();
+            }
+            // SAFETY: caller guarantees `dst` writable for `required` (<= size) bytes.
+            let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, required) };
+            dst_slice[..text_len].copy_from_slice(&text_buf[..text_len]);
+            dst_slice[text_len] = 0;
+            dst as *const c_char
+        }
+        None => {
+            unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
+            std::ptr::null()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
