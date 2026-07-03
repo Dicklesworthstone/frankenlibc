@@ -11839,3 +11839,21 @@ threshold, 74866e40c). CLEAN FIX = extract the tiers into a separate cold fn so 
 (scan_strcmp calls it only once i>=64) — deferred. Bench strcmp_largen_ab kept. LESSON: adding a bulk-skip
 tier to a two-pointer scanner with unbounded `bound` bloats the short-input hot path; gate by extracting,
 not just by an `i>=N` guard inside the same function.
+
+## 2026-07-03 (BlackThrush) — strcmp tiers, follow-up: cold-fn extraction ALSO fails; needs a unified loop
+Last entry scoped the clean fix as "extract the tiers to a cold fn". Tried it — it does NOT work cleanly
+either. Two more variants, both byte-exact (8,000 combos) but rejected: (1) a #[cold] SKIP helper that
+fast-forwards equal chunks and returns a resume-i to scan_strcmp's hot loop → THRASHES via re-delegation:
+every clean 32B panel past i>=64 re-calls the helper (a real #[inline(never)] call reading 128B) just to
+return, blowing up medium (l=128 3.28x, l=256 3.35x). (2) a COMPLETE #[cold] scanner (folded+64B then a
+copied 32B/SWAR/scalar resolve, returns the result — no re-delegation) fixed SMALL (l=32 1.44→1.36, hot
+path finally lean) and won LARGE (l=1024 2.53→1.94, l=4096 2.94→1.59), but the DELEGATION BOUNDARY
+over-reads: a string whose NUL is within ~128 B after the i>=N handoff makes the cold fn's folded tier
+read 128 B past the end → a regression at l≈threshold (i>=64 → l=64-256 regress; i>=256 → l=256 regress
+2.05→2.60). The boundary regression is INHERENT to fixed-threshold tier delegation (you can't know the
+remaining length at handoff). CONCLUSION: the tiered-skip technique that cleanly won strlen/strnlen/memchr
+(single-pointer, bounded-or-small-floor) does NOT transfer to strcmp (unbounded two-pointer with a
+latency-sensitive short hot path) at ANY delegation threshold. The real fix is a UNIFIED glibc-style wide
+compare loop (one well-scheduled kernel from byte 0, no tier handoff) — a from-scratch rewrite of
+scan_strcmp, genuinely deferred. All 4 variants reverted; scan_strcmp unchanged. strcmp_largen_ab (f44e6468b)
+is the characterization/correctness harness for that effort.
