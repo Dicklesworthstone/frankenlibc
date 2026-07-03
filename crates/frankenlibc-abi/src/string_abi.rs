@@ -417,7 +417,7 @@ unsafe fn raw_avx_copy(dst: *mut u8, src: *const u8, n: usize) {
 }
 
 #[inline]
-unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
+pub(crate) unsafe fn raw_overlap_copy(dst: *mut u8, src: *const u8, n: usize) {
     unsafe {
         // Medium copies [128,131072): AVX vmovdqu loop. Measured DIRECT dlmopen A/B
         // (memcpy_direct_ab / memcpy_xover) OVERTURNED the old "rep movsb beats glibc for

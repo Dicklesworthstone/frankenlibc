@@ -296,6 +296,22 @@ unsafe fn wide_strlen_bounded(s: *const u32, limit: usize) -> usize {
 /// `src`/`dst` valid for `count` u32 reads/writes and non-overlapping.
 #[inline]
 unsafe fn wide_copy_n(dst: *mut u32, src: *const u32, count: usize) {
+    // Large copies: a wide (u32) copy of `count` elements is byte-for-byte a forward
+    // memcpy of `count*4` bytes — and every caller here is disjoint/forward (memcpy
+    // semantics), never an overlapping move. For count >= 1024 (>= 4 KiB) delegate to the
+    // shared byte-copy primitive, which has the tuned size dispatch (AVX vmovdqu loop for
+    // mid-large / rep movsb only >=128 KiB). The inline 8-lane loop below emits only
+    // 32 bytes/iter with a single accumulator and lost 1.28-1.66x to glibc's memcpy (==
+    // what glibc's wmemcpy calls) from 4 KiB up (measured wmemcpy_ab); the byte primitive
+    // brings 64 KiB to parity and 4-16 KiB from ~1.6x to ~1.3x. Below 4 KiB the inline
+    // loop stays — it beats the byte primitive's per-call dispatch + small-size floor
+    // (raw_overlap_copy is ~2.1x at 256 B). `count*4` cannot overflow for any real buffer.
+    if count >= 1024 {
+        unsafe {
+            crate::string_abi::raw_overlap_copy(dst.cast::<u8>(), src.cast::<u8>(), count * 4)
+        };
+        return;
+    }
     let mut i = 0usize;
     while i + 8 <= count {
         let v = Simd::<u32, 8>::from_slice(unsafe { std::slice::from_raw_parts(src.add(i), 8) });
