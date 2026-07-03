@@ -874,19 +874,30 @@ unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
         // used directly. Measured 1.7-2.4x over the volatile path, parity-to-win vs glibc
         // for n < 32 (the common small-fill range; memset is the hottest libc fn).
         #[cfg(target_arch = "x86_64")]
-        if (16..64).contains(&n) {
+        if (16..128).contains(&n) {
             use core::arch::x86_64::{__m128i, _mm_set1_epi8, _mm_storeu_si128};
-            // SSE2 is baseline on x86_64. Explicit unaligned 16-byte stores covering the
-            // head [0,32) and tail [n-32,n) (overlapping) set every byte to `value`,
-            // byte-identical to the scalar fill. No loop ⇒ never lowered to @llvm.memset.
-            // n∈[16,32): the head's 2nd store and the tail overlap; n∈[32,64): 4 stores.
+            // SSE2 is baseline on x86_64 (no runtime feature detect). Explicit unaligned
+            // 16-byte stores covering the head [0,min(n,64)) and tail [n-min(n,64),n)
+            // (overlapping) set every byte to `value`, byte-identical to the scalar fill.
+            // No loop ⇒ never lowered to @llvm.memset (which resolves to this interposed
+            // symbol and would self-recurse). Three overlapping tiers by size:
+            //   n∈[16,32]: 2 stores    n∈(32,64]: 4 stores    n∈(64,128): 8 stores
+            // This closes the [64,128) band that previously fell through to the slow
+            // volatile u64 loop below (measured 2.9x slower than glibc at n=64) — glibc
+            // fills this range with a couple of overlapping vector stores, not a loop.
             let v = _mm_set1_epi8(value as i8);
-            _mm_storeu_si128(dst.cast::<__m128i>(), v);
-            if n >= 32 {
-                _mm_storeu_si128(dst.add(16).cast::<__m128i>(), v);
-                _mm_storeu_si128(dst.add(n - 32).cast::<__m128i>(), v);
+            _mm_storeu_si128(dst.cast::<__m128i>(), v); // [0,16)
+            _mm_storeu_si128(dst.add(n - 16).cast::<__m128i>(), v); // [n-16,n)
+            if n > 32 {
+                _mm_storeu_si128(dst.add(16).cast::<__m128i>(), v); // [16,32)
+                _mm_storeu_si128(dst.add(n - 32).cast::<__m128i>(), v); // [n-32,n-16)
             }
-            _mm_storeu_si128(dst.add(n - 16).cast::<__m128i>(), v);
+            if n > 64 {
+                _mm_storeu_si128(dst.add(32).cast::<__m128i>(), v); // [32,48)
+                _mm_storeu_si128(dst.add(48).cast::<__m128i>(), v); // [48,64)
+                _mm_storeu_si128(dst.add(n - 48).cast::<__m128i>(), v); // [n-48,n-32)
+                _mm_storeu_si128(dst.add(n - 64).cast::<__m128i>(), v); // [n-64,n-48)
+            }
             return;
         }
         if (8..16).contains(&n) {
@@ -897,12 +908,23 @@ unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
             return;
         }
 
-        // Large fills: `rep stosb` (x86 ERMS) — glibc's own large-memset path. Inline
-        // asm is opaque to LLVM's loop-idiom recognizer, so (unlike a Rust vector-store
-        // loop) it is NEVER lowered to an @llvm.memset call into this interposed symbol —
-        // recursion-safe without volatile. Measured 2.3x over the volatile u64 loop and
-        // parity-to-win vs glibc for n>=1024 (beats glibc at 64 KiB); ERMS startup cost
-        // makes it lose for smaller n, so the [64,1024) range keeps the volatile loop.
+        // Medium fills [128,16384): AVX vmovdqu store loop. Measured crossover vs `rep stosb`
+        // (memset_direct_ab / memset_xover): the AVX loop beats rep stosb below ~16 KiB
+        // because ERMS startup dominates there — at 4 KiB the AVX loop is parity vs glibc
+        // (0.99x) while rep stosb was 1.56x; at 8 KiB 1.09x vs 1.28x. Above ~16 KiB rep stosb
+        // (ERMS steady-state / less cache pollution) wins (16 KiB rep 1.14x < AVX 1.19x;
+        // 64 KiB 1.10x < 1.26x), so it stays the large-fill path. Gated on runtime AVX;
+        // non-AVX machines fall through to the rep stosb / volatile paths below unchanged.
+        #[cfg(target_arch = "x86_64")]
+        if (128..16384).contains(&n) && std::is_x86_feature_detected!("avx") {
+            // SAFETY: n in [128,16384) and AVX confirmed available.
+            raw_avx_memset(dst, value, n);
+            return;
+        }
+        // Large fills (>=16 KiB) and the non-AVX medium-large fallback: `rep stosb` (x86
+        // ERMS) — glibc's own large-memset path. Inline asm is opaque to LLVM's loop-idiom
+        // recognizer, so (unlike a Rust vector-store loop) it is NEVER lowered to an
+        // @llvm.memset call into this interposed symbol — recursion-safe without volatile.
         #[cfg(target_arch = "x86_64")]
         if n >= 2048 {
             // SAFETY: fills exactly `n` bytes at `dst` with `value` (caller-guaranteed
@@ -914,15 +936,6 @@ unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
                 in("al") value,
                 options(nostack, preserves_flags),
             );
-            return;
-        }
-        // Medium fills [128,2048): AVX2 vmovdqu store loop (beats glibc; the volatile loop
-        // below emits only 8-byte stores, and rep stosb loses here on ERMS startup). Gated
-        // on runtime AVX detection.
-        #[cfg(target_arch = "x86_64")]
-        if n >= 128 && std::is_x86_feature_detected!("avx") {
-            // SAFETY: n>=128 and AVX confirmed available.
-            raw_avx_memset(dst, value, n);
             return;
         }
 
