@@ -537,10 +537,11 @@ unsafe fn fused_strcpy_bytes(dst: *mut u8, src: *const u8) -> usize {
     let m0 = v0.simd_eq(z).to_bitmask() & !((1u64 << align) - 1);
     if m0 != 0 {
         let nul = m0.trailing_zeros() as usize - align;
-        for j in 0..=nul {
-            // SAFETY: j <= nul < string length; dst has room for len+1.
-            unsafe { *dst.add(j) = *src.add(j) };
-        }
+        // Copy [0, nul] (the payload + NUL) with the fast overlapping-SIMD small-copy
+        // rather than a scalar byte loop — the scalar tail made fused LOSE to the
+        // two-pass at n<32 (its bulk copy is SIMD). `raw_overlap_copy` touches exactly
+        // `nul+1` bytes, all within the string + its terminator.
+        unsafe { raw_overlap_copy(dst, src, nul + 1) };
         return nul;
     }
     let first = 32 - align; // elements from src to the next 32-byte boundary
@@ -560,10 +561,8 @@ unsafe fn fused_strcpy_bytes(dst: *mut u8, src: *const u8) -> usize {
         let m = v.simd_eq(z).to_bitmask();
         if m != 0 {
             let nul = m.trailing_zeros() as usize;
-            for j in 0..=nul {
-                // SAFETY: copies through the NUL; dst has room for len+1.
-                unsafe { *dst.add(i + j) = *src.add(i + j) };
-            }
+            // Overlapping-SIMD tail copy of [i, i+nul] (see the head-window note).
+            unsafe { raw_overlap_copy(dst.add(i), src.add(i), nul + 1) };
             return i + nul;
         }
         // No NUL: all 32 lanes are real bytes ⇒ dst has room for [i, i+32). SIMD store.
@@ -3659,14 +3658,16 @@ unsafe fn strcpy_core(dst: *mut c_char, src: *const c_char) -> Option<*mut c_cha
         if dst.is_null() || src.is_null() {
             return Some(dst);
         }
-        // SAFETY: strict mode follows raw libc strcpy semantics; `src` is a valid
+        // Single-pass fused copy-through-NUL: reads `src` ONCE (vs the old
+        // `scan_c_string` + `raw_memcpy_bytes`, which read `src` twice — ~2x the src
+        // traffic, the measured 2.5-2.7x-vs-glibc gap). Byte-identical: `dst` receives
+        // `src[0..=len]` incl. the terminator, and the returned NUL index gives the same
+        // `stpcpy` end pointer. Same-process A/B (strcpy_fused_ab): fused/two-pass
+        // 0.58-0.90 across n=8..256, uniform win.
+        // SAFETY: strict follows raw libc strcpy semantics — `src` is a valid
         // NUL-terminated string and `dst` has room for its length + terminator.
-        let src_len = unsafe { scan_c_string(src, None).0 };
-        if src_len > 0 {
-            unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len) };
-        }
-        unsafe { *dst.add(src_len) = 0 };
-        return Some(unsafe { dst.add(src_len) });
+        let end = unsafe { fused_strcpy_bytes(dst.cast::<u8>(), src.cast::<u8>()) };
+        return Some(unsafe { dst.add(end) });
     }
 
     let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
