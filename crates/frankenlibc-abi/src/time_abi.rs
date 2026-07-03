@@ -911,10 +911,15 @@ pub unsafe extern "C" fn asctime_r(
     tm: *const libc::tm,
     buf: *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if tm.is_null()
-        || buf.is_null()
-        || !tracked_region_fits(tm.cast(), TM_BYTES)
-        || !tracked_region_fits(buf.cast(), ASCTIME_R_BUF_BYTES)
+    if tm.is_null() || buf.is_null() {
+        return std::ptr::null_mut();
+    }
+    // Strict-mode (DEFAULT deployed) skips the tracked-region checks (2 known_remaining
+    // registry lookups) on a trivial fixed 26-byte format — glibc never validates the
+    // caller regions. Hardened mode keeps them. Byte-identical. Mirrors strftime.
+    if !runtime_policy::strict_passthrough_active()
+        && (!tracked_region_fits(tm.cast(), TM_BYTES)
+            || !tracked_region_fits(buf.cast(), ASCTIME_R_BUF_BYTES))
     {
         return std::ptr::null_mut();
     }
@@ -940,10 +945,14 @@ pub unsafe extern "C" fn ctime_r(
     timer: *const i64,
     buf: *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if timer.is_null()
-        || buf.is_null()
-        || !tracked_region_fits(timer.cast(), TIME_T_BYTES)
-        || !tracked_region_fits(buf.cast(), ASCTIME_R_BUF_BYTES)
+    if timer.is_null() || buf.is_null() {
+        return std::ptr::null_mut();
+    }
+    // Strict-mode skips the tracked-region checks (glibc never validates them); hardened
+    // keeps them. Byte-identical. Mirrors strftime/asctime_r.
+    if !runtime_policy::strict_passthrough_active()
+        && (!tracked_region_fits(timer.cast(), TIME_T_BYTES)
+            || !tracked_region_fits(buf.cast(), ASCTIME_R_BUF_BYTES))
     {
         return std::ptr::null_mut();
     }

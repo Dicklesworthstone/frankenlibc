@@ -11719,3 +11719,16 @@ Measured (strftime dlmopen probe): fl 30-43ns, decisively beats glibc — fl/gli
 %H:%M:%S") / 0.083 ("%a %b %d %T %Z %Y"). CAVEAT: the dlmopen glibc strftime is noisy/inflated
 (locale-init state per call, 60-3107ns), so the headline ratio overstates; the robust claim is the
 byte-identical removal of the ~10-15ns inet-class membrane tax on an already-fast fl strftime.
+
+## asctime_r / ctime_r strict fast-path — skip tracked-region tax, byte-identical (BlackThrush, 2026-07-03)
+
+Time-formatter-family completion after strftime. asctime_r/ctime_r paid `tracked_region_fits` ×2
+(2× `known_remaining` registry lookups, ~4-8ns) to format a TRIVIAL fixed 26-byte string ("Www Mmm
+dd hh:mm:ss yyyy") — the tax is a large fraction of the tiny format cost, and there was no strict
+fast-path. Added `!strict_passthrough_active() && (...)` so strict (DEFAULT deployed) skips the region
+checks (glibc never validates the caller's tm/buf/timer); hardened keeps them. Byte-identical (the
+read_tm/epoch-conversion + format_asctime are unchanged). Gates GREEN vs host glibc:
+asctime_r_differential_fuzz + conformance_diff_asctime_range 2 + time_abi_test 60. No separate glibc
+ratio (the fixed-format functions are fast and the dlmopen glibc comparator is locale-noisy, as with
+strftime); the robust claim is removal of the ~4-8ns known_remaining tax class on an already-fast
+fixed-format path — the same lever as strftime/inet.
