@@ -126,6 +126,48 @@ fn memcmp_bcmp_match_glibc() {
     }
 }
 
+/// Large-buffer differential: stresses the AVX2 memcmp kernel's 128-byte
+/// unrolled main loop, the 32-byte loop, and the overlapping tail window — none
+/// of which `memcmp_bcmp_match_glibc` reaches (it caps at n=48). Difference is
+/// planted at every kind of position: the last byte (tail), a 32-byte boundary,
+/// deep inside an unrolled block, plus the all-equal case.
+#[test]
+fn memcmp_large_buffers_match_glibc() {
+    let mut rng = Rng(0xDEAD_BEEF_1234_5678);
+    for _ in 0..6000 {
+        let alpha = [2u8, 16, 255][rng.below(3)];
+        // Sizes that span the 32/128 boundaries and their neighbours.
+        let len = [32usize, 33, 63, 64, 65, 96, 127, 128, 129, 160, 200, 255, 256, 257, 384, 512]
+            [rng.below(16)];
+        let a: Vec<u8> = (0..len).map(|_| rng.byte(alpha)).collect();
+        let mut b = a.clone();
+        match rng.below(5) {
+            0 => {}                                   // identical
+            1 => b[len - 1] = b[len - 1].wrapping_add(1).max(1), // tail
+            2 => {
+                let i = (len / 32) * 32; // last 32B boundary (or 0)
+                let i = i.min(len - 1);
+                b[i] = b[i].wrapping_add(1).max(1);
+            }
+            _ => {
+                let i = rng.below(len);
+                b[i] = rng.byte(alpha);
+            }
+        }
+        let n = len;
+        let gm = unsafe { g::memcmp(a.as_ptr().cast(), b.as_ptr().cast(), n) };
+        let fm = unsafe { fl::memcmp(a.as_ptr().cast(), b.as_ptr().cast(), n) };
+        assert_eq!(
+            sgn(fm),
+            sgn(gm),
+            "large memcmp sign mismatch n={n} alpha={alpha}: fl={fm} glibc={gm}"
+        );
+        // Antisymmetry on the wide kernel.
+        let fm_rev = unsafe { fl::memcmp(b.as_ptr().cast(), a.as_ptr().cast(), n) };
+        assert_eq!(sgn(fm), -sgn(fm_rev), "large memcmp antisymmetry n={n}");
+    }
+}
+
 #[test]
 fn strncmp_strncasecmp_match_glibc() {
     let mut rng = Rng(0x0F0F_F0F0_1122_3344);

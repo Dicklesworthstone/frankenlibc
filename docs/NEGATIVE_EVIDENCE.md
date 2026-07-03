@@ -11351,3 +11351,39 @@ parser-bound (`inet_core::inet_pton` digit/dot scan), NOT membrane; that is a se
 Not a win *vs glibc* on v4, but a byte-identical improvement worth landing (same class as the
 already-merged qsort/lfind strict fast paths). Gates GREEN: conformance_diff_arpa_inet 12,
 conformance_diff_inet_pton6_edges 14, inet_pton_ntop_differential_fuzz 1.
+
+---
+
+## memcmp AVX2 bulk kernel — scalar u128 → real vpcmpeqb, 2.3-2.7x fl-over-fl (BlackThrush, 2026-07-02)
+
+**Root cause (measured, not assumed):** the deployed strict memcmp path routes through
+`raw_dispatch_memcmp_bytes` → `raw_lane_memcmp_bytes(...,32)`, whose bulk compare is
+`chunk_equal_32` = two `chunk_equal_16` = `u128 ==`. LLVM lowers `u128 ==` to **two
+data-dependent 64-bit integer compares**, never a vector op — so a 32-byte window costs 4 serial
+scalar compares (`&&`-chained), and n=256 is 32 serial compares. glibc uses one `vpcmpeqb` +
+`vpmovmskb` per 32 bytes, unrolled. The prior strrchr note's "AVX2 ceiling" did NOT apply here:
+memcmp wasn't using AVX2 at all.
+
+**Fix:** new `memcmp_avx2` (`#[target_feature(enable="avx2")]`) for `n>=32` when the CPU has AVX2
+(`active_string_simd_feature_mask() & SIMD_FEATURE_AVX2`, respects the test override). 128-byte
+unrolled main loop ANDs four `_mm256_cmpeq_epi8` masks → one branch per 128B in the all-equal
+throughput case; then a 32B loop and an overlapping final 32B window. First-diff via
+`(!movemask).trailing_zeros()`. `16<=n<32` and no-AVX2 keep the proven scalar path unchanged.
+
+**Measured (stdio_st_probe A/B, same binary, dlmopen host glibc, median 100×200k, diff at last byte = full scan):**
+
+| n   | baseline fl/glibc | AVX2 fl/glibc | fl-over-fl (new/old) |
+|-----|-------------------|---------------|----------------------|
+| 32  | 3.691 | 1.635 | 5.43/13.23 = **0.41** |
+| 64  | 3.507 | 1.669 | 5.90/13.37 = **0.44** |
+| 256 | 3.978 | 1.585 | 6.39/17.00 = **0.38** |
+
+**Honest read:** a real 2.3-2.7x fl-over-fl win that cuts the glibc gap from ~3.5-4.0x to ~1.6x.
+Still LOSES glibc ~1.6x — the residual is glibc's larger unroll + no extern-call frame (fl pays an
+irreducible no_mangle-symbol call boundary), NOT the kernel. n=16/24 stay ~3.1x (scalar 16-31
+sliver — a separate SSE lever, deferred). Correctness: extended `conformance_diff_cmp_family` with
+`memcmp_large_buffers_match_glibc` (6000 iters vs host glibc across the 32/128-byte boundaries,
+all-equal + tail + boundary + random diff positions) — the existing gate capped at n=48 and never
+reached the 128B unrolled loop. Gates GREEN: conformance_diff_cmp_family 5, conformance_diff_string
+24, conformance_diff_string_mut 35, string_abi_test 201, strict_mode_refinement 18,
+conformance_diff_wmemcmp 1.

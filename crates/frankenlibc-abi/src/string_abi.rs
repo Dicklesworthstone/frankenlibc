@@ -1126,6 +1126,98 @@ unsafe fn raw_lane_memcmp_bytes(
     }
 }
 
+/// AVX2 memcmp bulk kernel for `n >= 32`.
+///
+/// The scalar `raw_lane_memcmp_bytes` path uses `u128 ==` (`chunk_equal_16`),
+/// which LLVM lowers to two data-dependent 64-bit integer compares — so a 32-byte
+/// window is 4 serial scalar compares, never a vector op. glibc's AVX2 memcmp does
+/// one `vpcmpeqb` + `vpmovmskb` per 32 bytes, unrolled. This kernel matches that:
+/// a 128-byte main loop that ANDs four eq-masks and branches once per 128 bytes in
+/// the all-equal case (the throughput bound), then a 32-byte loop and an overlapping
+/// final 32-byte window for the tail. First-diff is located via `movemask` + `tzcnt`.
+///
+/// Byte-identical result to the scalar path: returns the sign (`-1`/`+1`) of the
+/// first differing byte compared as `u8`, or `0` when the two regions are equal.
+///
+/// # Safety
+/// Caller guarantees `n >= 32` and both regions readable for `n` bytes; AVX2 present.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn memcmp_avx2(s1: *const u8, s2: *const u8, n: usize) -> c_int {
+    use std::arch::x86_64::*;
+    // SAFETY: AVX2 enabled on this fn; every load stays within `[0, n)` (caller
+    // guarantees `n` readable bytes and every offset below is `<= n - 32`).
+    unsafe {
+        #[inline(always)]
+        unsafe fn diff_at(s1: *const u8, s2: *const u8, idx: usize) -> c_int {
+            // SAFETY: `idx < n`, readable per the outer contract.
+            let av = unsafe { *s1.add(idx) };
+            let bv = unsafe { *s2.add(idx) };
+            if av < bv { -1 } else { 1 }
+        }
+        #[inline(always)]
+        unsafe fn block_mask(s1: *const u8, s2: *const u8, off: usize) -> u32 {
+            use std::arch::x86_64::*;
+            // SAFETY: `[off, off+32) ⊆ [0, n)`, readable per the outer contract.
+            unsafe {
+                let a = _mm256_loadu_si256(s1.add(off).cast());
+                let b = _mm256_loadu_si256(s2.add(off).cast());
+                // eq-mask bit = 1 where bytes are EQUAL, 0 where they differ.
+                _mm256_movemask_epi8(_mm256_cmpeq_epi8(a, b)) as u32
+            }
+        }
+        let mut i = 0usize;
+        // 128-byte unrolled main loop: AND the four eq-masks so the common all-equal
+        // case pays a single branch per 128 bytes (like glibc's unrolled loop).
+        while i + 128 <= n {
+            let a0 = _mm256_loadu_si256(s1.add(i).cast());
+            let b0 = _mm256_loadu_si256(s2.add(i).cast());
+            let a1 = _mm256_loadu_si256(s1.add(i + 32).cast());
+            let b1 = _mm256_loadu_si256(s2.add(i + 32).cast());
+            let a2 = _mm256_loadu_si256(s1.add(i + 64).cast());
+            let b2 = _mm256_loadu_si256(s2.add(i + 64).cast());
+            let a3 = _mm256_loadu_si256(s1.add(i + 96).cast());
+            let b3 = _mm256_loadu_si256(s2.add(i + 96).cast());
+            let e0 = _mm256_cmpeq_epi8(a0, b0);
+            let e1 = _mm256_cmpeq_epi8(a1, b1);
+            let e2 = _mm256_cmpeq_epi8(a2, b2);
+            let e3 = _mm256_cmpeq_epi8(a3, b3);
+            let all = _mm256_and_si256(_mm256_and_si256(e0, e1), _mm256_and_si256(e2, e3));
+            if _mm256_movemask_epi8(all) as u32 != 0xFFFF_FFFF {
+                // A diff is in one of the four blocks — re-probe each to locate it.
+                let mut k = 0usize;
+                while k < 4 {
+                    let off = i + k * 32;
+                    let m = block_mask(s1, s2, off);
+                    if m != 0xFFFF_FFFF {
+                        return diff_at(s1, s2, off + (!m).trailing_zeros() as usize);
+                    }
+                    k += 1;
+                }
+            }
+            i += 128;
+        }
+        while i + 32 <= n {
+            let m = block_mask(s1, s2, i);
+            if m != 0xFFFF_FFFF {
+                return diff_at(s1, s2, i + (!m).trailing_zeros() as usize);
+            }
+            i += 32;
+        }
+        // Overlapping final 32-byte window (n >= 32 ⇒ off is in bounds). The prefix
+        // it re-scans is already known equal, so the first mismatch found is the true
+        // first differing byte.
+        if i < n {
+            let off = n - 32;
+            let m = block_mask(s1, s2, off);
+            if m != 0xFFFF_FFFF {
+                return diff_at(s1, s2, off + (!m).trailing_zeros() as usize);
+            }
+        }
+        0
+    }
+}
+
 #[inline(never)]
 unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c_int {
     // `select_string_simd_dispatch(Memcmp)` cost ~8ns/call (atomic feature-mask + ISA probe
@@ -1137,6 +1229,15 @@ unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c
     // SAFETY: caller guarantees both regions are readable for `n` bytes.
     unsafe {
         if n >= 16 {
+            // Real AVX2 kernel for the bulk (n>=32) when the CPU has it: one
+            // `vpcmpeqb` per 32B vs the scalar path's 4 serial `u128 ==` compares.
+            // The 16<=n<32 sliver and no-AVX2 fallback keep the proven scalar path.
+            #[cfg(target_arch = "x86_64")]
+            {
+                if n >= 32 && active_string_simd_feature_mask() & SIMD_FEATURE_AVX2 != 0 {
+                    return memcmp_avx2(s1, s2, n);
+                }
+            }
             raw_lane_memcmp_bytes(s1, s2, n, 32)
         } else {
             let lhs = std::slice::from_raw_parts(s1, n);
@@ -11337,3 +11438,4 @@ pub unsafe extern "C" fn strnstr(
         None => std::ptr::null_mut(),
     }
 }
+
