@@ -1054,6 +1054,13 @@ pub fn expm1(x: f64) -> f64 {
     // positive-only [0.5, 2.5] fast path; EXPM1_POSITIVE_FAST_MIN is the |x| threshold.
     let ax = x.abs();
     if ax >= EXPM1_POSITIVE_FAST_MIN {
+        // Negative saturation: expm1(x) = e^x - 1 rounds to exactly -1.0 for x <= -37
+        // (e^-37 ~ 8.5e-17 < half-ULP(1) = 1.11e-16), and glibc returns -1.0 there.
+        // Skip the exp(x) call for the whole x <= -37 tail (expm1(-inf) = -1 too).
+        // Bit-identical to the `exp(x) - 1.0` path, which already yields -1.0 here.
+        if x <= -37.0 {
+            return -1.0;
+        }
         return exp(x) - 1.0;
     }
     // |x| < 0.5: direct Taylor expm1(x) = x·Σ x^k/(k+1)! through x^14 (first omitted

@@ -36,6 +36,12 @@ unsafe extern "C" {
     fn h_atan2(y: f64, x: f64) -> f64;
     #[link_name = "hypot"]
     fn h_hypot(x: f64, y: f64) -> f64;
+    #[link_name = "sin"]
+    fn h_sin(x: f64) -> f64;
+    #[link_name = "cos"]
+    fn h_cos(x: f64) -> f64;
+    #[link_name = "tan"]
+    fn h_tan(x: f64) -> f64;
     #[link_name = "cbrt"]
     fn h_cbrt(x: f64) -> f64;
     #[link_name = "sinh"]
@@ -131,6 +137,9 @@ fn bench(c: &mut Criterion) {
     survey_unary(&mut g, "y0", &posb, |x| math::y0(x), |x| unsafe { h_y0(x) });
     survey_unary(&mut g, "atan2", &any, |x| math::atan2(x, 1.7), |x| unsafe { h_atan2(x, 1.7) });
     survey_unary(&mut g, "hypot", &any, |x| math::hypot(x, 1.7), |x| unsafe { h_hypot(x, 1.7) });
+    survey_unary(&mut g, "sin", &any, |x| math::sin(x), |x| unsafe { h_sin(x) });
+    survey_unary(&mut g, "cos", &any, |x| math::cos(x), |x| unsafe { h_cos(x) });
+    survey_unary(&mut g, "tan", &any, |x| math::tan(x), |x| unsafe { h_tan(x) });
     survey_unary(&mut g, "cbrt", &any, |x| math::cbrt(x), |x| unsafe { h_cbrt(x) });
     survey_unary(&mut g, "sinh", &small, |x| math::sinh(x), |x| unsafe { h_sinh(x) });
     survey_unary(&mut g, "cosh", &small, |x| math::cosh(x), |x| unsafe { h_cosh(x) });

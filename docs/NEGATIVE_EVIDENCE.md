@@ -11671,3 +11671,19 @@ improvement on the large-negative saturation region. NOTE: erfc's MIXED-range ra
 (negwide -20..0) because the (-6,0] region routes to libm::erfc, which is slower than glibc there —
 that residual is the accuracy-hard fdlibm-erfc-port gap (swing-3, DISPROVEN for Cephes substitution),
 NOT closable bit-exactly. This fast-path only claims the exact-saturation tail.
+
+## expm1 negative-saturation fast-path — bit-exact, WINS glibc 1.7x for x<=-37 (BlackThrush, 2026-07-03)
+
+Third sibling of the erf/erfc saturation fast-paths. expm1(x) = e^x - 1 rounds to exactly -1.0 in
+f64 for x <= -37 (e^-37 ≈ 8.5e-17 < half-ULP(1) = 1.11e-16), and glibc returns -1.0 there. The prior
+fl path computed `exp(x) - 1.0` (a real exp call) even in this saturation tail; added
+`if x <= -37.0 { return -1.0 }` before it — bit-identical (`exp(-37)-1` already yields -1.0),
+skipping the exp call. expm1(-inf)=-1 also lands here.
+
+Measured (math_passthrough_survey_bench, large-negative range -60..-38): expm1 fl **3.44ns vs glibc
+5.95ns = 0.577x** — fl now BEATS glibc **1.7x** for the x<=-37 tail (glibc still computes exp(x)-1).
+Bit-exact: conformance_diff_math_special 9 + conformance_diff_math_exact 2 GREEN (differential vs
+host glibc). Real-usage expm1 (|x|<0.5) already at parity via the direct Taylor path.
+
+Math saturation-fast-path family this session: erf (|x|>=6 -> ±1), erfc (x<=-6 -> 2), expm1
+(x<=-37 -> -1) — all bit-exact short-circuits skipping a libm/exp call in the exact-saturation tail.
