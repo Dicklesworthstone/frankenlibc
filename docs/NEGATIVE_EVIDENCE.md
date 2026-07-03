@@ -11658,3 +11658,16 @@ for |x|>=6 (1-erf(6)~2.15e-17 < 2^-53, glibc returns exactly ±1.0 there), so re
 instead of `libm::erf`. ±inf lands here; NaN falls through. |x| in [2.5,6) unchanged. Byte-identical:
 conformance_diff_math_special 9/9 GREEN (differential vs host glibc). f64 math family confirmed
 comprehensively won: cbrt 0.85, sinh 0.48, cosh 0.62, tanh 0.46, tgamma 0.72, erf 0.82 (real usage).
+
+## erfc negative-saturation fast-path — bit-exact, skips libm::erfc for x<=-6 (BlackThrush, 2026-07-03)
+
+Sibling of the erf fast-path. erfc(x) = 1 - erf(x) rounds to exactly 2.0 in f64 for x <= -6
+(erf(-6) rounds to -1.0; 1-(-0.99999999999999997848) = 2.0; glibc returns exactly 2.0). 2.0 is a
+NORMAL value — no underflow flag, unlike the large-POSITIVE tail (which must keep raising
+FE_UNDERFLOW, so it is intentionally NOT touched). Added `if x <= -6.0 { return 2.0 }` before the
+libm::erfc call — byte-identical (conformance_diff_math_special 9/9 GREEN, differential vs host
+glibc), removing the libm::erfc call for the whole x<=-6 tail (±inf lands here too). fl-over-fl
+improvement on the large-negative saturation region. NOTE: erfc's MIXED-range ratio stays ~1.29x
+(negwide -20..0) because the (-6,0] region routes to libm::erfc, which is slower than glibc there —
+that residual is the accuracy-hard fdlibm-erfc-port gap (swing-3, DISPROVEN for Cephes substitution),
+NOT closable bit-exactly. This fast-path only claims the exact-saturation tail.

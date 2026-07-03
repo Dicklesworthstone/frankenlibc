@@ -327,6 +327,15 @@ pub fn lgamma(x: f64) -> f64 {
 /// Complementary error function: 1 - erf(x).
 #[inline]
 pub fn erfc(x: f64) -> f64 {
+    // Negative saturation short-circuit: erfc(x) = 1 - erf(x) rounds to exactly 2.0
+    // in f64 for x <= -6 (erf(-6) rounds to -1.0; 1-(-0.99999999999999997848) = 2.0),
+    // and glibc returns exactly 2.0 there. 2.0 is a normal value — no underflow flag,
+    // unlike the large-POSITIVE tail below (which must keep raising FE_UNDERFLOW). So
+    // skip the libm::erfc call for the whole x <= -6 tail. Bit-identical. (x=-inf ->
+    // erfc(-inf)=2 also lands here; NaN, x in (-6,...) fall through unchanged.)
+    if x <= -6.0 {
+        return 2.0;
+    }
     let r = if is_erfc_profile_grid_tail(x) {
         erfc_profile_band_tail(x)
     } else {

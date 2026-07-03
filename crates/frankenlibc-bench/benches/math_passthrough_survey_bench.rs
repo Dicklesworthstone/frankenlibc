@@ -46,6 +46,8 @@ unsafe extern "C" {
     fn h_tanh(x: f64) -> f64;
     #[link_name = "erf"]
     fn h_erf(x: f64) -> f64;
+    #[link_name = "erfc"]
+    fn h_erfc(x: f64) -> f64;
     #[link_name = "tgamma"]
     fn h_tgamma(x: f64) -> f64;
 }
@@ -134,6 +136,8 @@ fn bench(c: &mut Criterion) {
     survey_unary(&mut g, "cosh", &small, |x| math::cosh(x), |x| unsafe { h_cosh(x) });
     survey_unary(&mut g, "tanh", &any, |x| math::tanh(x), |x| unsafe { h_tanh(x) });
     survey_unary(&mut g, "erf", &any, |x| math::erf(x), |x| unsafe { h_erf(x) });
+    let negwide: Vec<f64> = (0..64).map(|k| -20.0 + k as f64 * 0.3125).collect();
+    survey_unary(&mut g, "erfc", &negwide, |x| math::erfc(x), |x| unsafe { h_erfc(x) });
     survey_unary(&mut g, "tgamma", &pos1, |x| math::tgamma(x), |x| unsafe { h_tgamma(x) });
     g.finish();
 }
