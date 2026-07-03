@@ -11789,3 +11789,19 @@ won because its 32-lane windows + `raw_overlap_copy` (rep-movsb/overlap) tails a
 REVERTED (kernel + hooks + bench removed); wcsncpy/wcsncat keep scan+copy. LESSON: the fused-vs-two-pass
 win does NOT transfer narrow→wide; the win/loss hinges on window width vs per-window overhead. Harness-
 then-A/B-before-wiring caught this with zero risk to the shipped surface.
+
+## 2026-07-03 (BlackThrush) — strlen/scan_c_string medium-string kernel gap: threshold-lowering is a TRADE-OFF, not shipped
+Characterized deployed fl strlen vs glibc (dlmopen, p10, examples/strlen_largen_ab.rs) across sizes:
+fl LOSES 1.4-1.8x in the 64B..2KB range (worst n=256-512 ~1.79x), converging to parity only at 16KB
+(n=64 1.40, 128 1.70, 256 1.76, 512 1.80, 1024 1.64, 2048 1.37, 4096 1.21, 16384 1.09). ROOT CAUSE:
+the None-path 128-byte unrolled combined-check tier only engages at i>=256 AND 128-aligned, so medium
+strings run entirely on the 32-byte-per-branch loop. TRIED lowering the escalation threshold 256→96:
+IMPROVED medium (512: 1.80→1.44, 1024: 1.64→1.46, 256: 1.76→1.55) but REGRESSED large (2048: 1.37→1.45,
+4096: 1.21→1.42, 16384: 1.09→1.37) — reproducible across reruns, and 256-rebuilt-now matched its
+baseline (16384=1.087) so it is NOT drift. Mechanism of the large regression is unclear (large strings
+use the same 128B tier regardless of threshold — likely a code-layout / branch-prediction artifact of
+the constant). Net = a size trade-off, NOT a clean win; REVERTED to 256. The real fix for the medium
+range is a dedicated 64-byte combined-check tier (2×32B aligned loads → one `m0|(m1<<32)` branch per 64B,
+needs 64-alignment for page-safety, engages right after head-align, escalates to the 128B tier at i>=256
+UNCHANGED so large is untouched) — deferred as careful safety-critical surgery (82-caller scanner; needs
+guard-page + exhaustive byte-exact harness). Bench strlen_largen_ab kept for that effort.
