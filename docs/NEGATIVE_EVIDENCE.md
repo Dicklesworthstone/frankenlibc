@@ -11687,3 +11687,17 @@ host glibc). Real-usage expm1 (|x|<0.5) already at parity via the direct Taylor 
 
 Math saturation-fast-path family this session: erf (|x|>=6 -> ±1), erfc (x<=-6 -> 2), expm1
 (x<=-37 -> -1) — all bit-exact short-circuits skipping a libm/exp call in the exact-saturation tail.
+
+## exp2m1/exp10m1 negative-saturation fast-paths — bit-exact, skip exp2/exp10 call (BlackThrush, 2026-07-03)
+
+C23 siblings of expm1, same saturation lever. 2^x-1 rounds to exactly -1.0 for x <= -54 (2^-54 <
+half-ULP(1)=2^-53); 10^x-1 rounds to exactly -1.0 for x <= -17 (10^-17 < half-ULP); glibc returns
+-1.0 in both. The prior fl paths computed exp2(x)-1 / exp10(x)-1 (a real exp2/exp10 call) even in the
+saturation tail. Added `if x <= -54.0 { return -1.0 }` (exp2m1) and `if x <= -17.0 { return -1.0 }`
+(exp10m1) before those calls — bit-identical (the exp2/exp10 path already yields -1.0 there), skipping
+the transcendental call. exp2m1(-inf)=exp10m1(-inf)=-1 also land here. Mechanically identical to the
+expm1 negative-saturation fast-path (measured 0.577x = beats glibc 1.7x on the tail). Bit-exact:
+conformance_diff_exp2m1_exp10m1 + conformance_diff_f128_exp10m1 GREEN (differential vs host glibc).
+
+Math saturation-fast-path family this session (all bit-exact, conformance-verified vs host glibc):
+erf(|x|>=6->±1), erfc(x<=-6->2), expm1(x<=-37->-1, 0.577x), exp2m1(x<=-54->-1), exp10m1(x<=-17->-1).

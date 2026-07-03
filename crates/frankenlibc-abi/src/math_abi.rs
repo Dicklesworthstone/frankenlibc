@@ -4886,6 +4886,11 @@ pub unsafe extern "C" fn exp2m1(x: f64) -> f64 {
     // exp2(x) - 1 is benign and tracks glibc's correctly-rounded exp2 to 0 ULP;
     // only inside |x| < 1 (where 1 is within an ULP of the result) is expm1 needed
     // to avoid catastrophic cancellation. NaN/inf flow through exp2 unchanged.
+    // Negative saturation: 2^x - 1 rounds to exactly -1.0 for x <= -54 (2^-54 <
+    // half-ULP(1) = 2^-53); glibc returns -1.0. Skip the exp2 call (exp2m1(-inf)=-1).
+    if x <= -54.0 {
+        return -1.0;
+    }
     if x.abs() < 1.0 {
         unsafe { expm1(x * std::f64::consts::LN_2) }
     } else {
@@ -4933,6 +4938,11 @@ pub unsafe extern "C" fn exp10m1(x: f64) -> f64 {
     // C23 10^x - 1. Same argument-reduction hazard as exp2m1 (naive form diverges
     // ~1080 ULP at x~301). exp10(x) - 1 matches glibc to 0 ULP for |x| >= 0.5;
     // inside that band expm1(x*LN_10) avoids the near-1 cancellation.
+    // Negative saturation: 10^x - 1 rounds to exactly -1.0 for x <= -17 (10^-17 =
+    // 1e-17 < half-ULP(1) = 1.11e-16); glibc returns -1.0. Skip the exp10 call.
+    if x <= -17.0 {
+        return -1.0;
+    }
     if x.abs() < 0.5 {
         unsafe { expm1(x * std::f64::consts::LN_10) }
     } else {
