@@ -28,6 +28,55 @@ fn main() {
     assert!(!h.is_null(), "dlmopen libc");
     let g_strlen: StrlenFn = unsafe { dl(h, b"strlen\0") };
 
+    // Exhaustive correctness: fl strlen (strict path → scan_c_string, the tiered kernel)
+    // must equal the true length at every alignment × length spanning head(≤32),
+    // bridge(32-64), 64B tier(64-256), and 128B handoff(256+) and their boundaries.
+    {
+        let mut checks = 0u64;
+        for align in 0..80usize {
+            for len in 0..340usize {
+                let mut buf = vec![0u8; align + len + 1 + 160];
+                for k in 0..len {
+                    buf[align + k] = 1 + ((align + k) % 200) as u8; // non-zero
+                }
+                buf[align + len] = 0;
+                let sp = unsafe { buf.as_ptr().add(align) as *const i8 };
+                let got = unsafe { frankenlibc_abi::string_abi::strlen(sp) };
+                assert_eq!(got, len, "strlen align={align} len={len}");
+                checks += 1;
+            }
+        }
+        println!("correctness: {checks} (align×len) fl strlen == true length ✓");
+    }
+
+    // Page-safety: place strings ending just before an unmapped (PROT_NONE) page and
+    // verify the tiered scan (which reads up to 32B past the NUL within its aligned
+    // window) never faults. A fault crashes the process ⇒ test fails by crashing.
+    unsafe {
+        let pg = 4096usize;
+        let base = libc::mmap(std::ptr::null_mut(), 2 * pg, libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0) as *mut u8;
+        assert_ne!(base as isize, -1, "mmap");
+        assert_eq!(libc::mprotect(base.add(pg) as *mut _, pg, libc::PROT_NONE), 0, "mprotect");
+        let mut guarded = 0u64;
+        // For every NUL position in the last 140 bytes of the mapped page, and every
+        // start alignment 0..64 before it, strlen must stop at the NUL without reading
+        // into the guard page.
+        for nul_off in (pg - 140)..pg {
+            for a in 0..64usize {
+                if a > nul_off { continue; }
+                let start = nul_off - a; // string of length `a`, NUL at nul_off
+                for k in start..nul_off { base.add(k).write(b'z'); }
+                base.add(nul_off).write(0);
+                let got = frankenlibc_abi::string_abi::strlen(base.add(start) as *const i8);
+                assert_eq!(got, a, "guard strlen nul_off={nul_off} a={a}");
+                guarded += 1;
+            }
+        }
+        libc::munmap(base as *mut _, 2 * pg);
+        println!("page-safety: {guarded} guard-page strlens near PROT_NONE boundary ✓");
+    }
+
     let sizes = [64usize, 128, 256, 512, 1024, 2048, 4096, 16384];
     for &n in &sizes {
         // Typical (non-128-aligned) buffer: a Vec is 8/16-aligned, offset by 8 bytes so

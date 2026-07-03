@@ -1672,11 +1672,10 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
             // Continue from the next 32-aligned boundary (= base+32 = p + (32-align)).
             // Every subsequent load is 32-aligned ⇒ in-page, no guard needed.
             let mut i = 32 - align;
-            // 32-byte tier: short strings (the common case) terminate here with no
-            // unroll-setup cost. Escalate to the 128-byte unrolled tier only once the
-            // string is confirmed long (i >= 256) AND `p+i` is 128-aligned (so the
-            // 4×32B = 128-byte window stays within one 4 KiB page, 128 | 4096).
-            while i < 256 || (p as usize + i) & 127 != 0 {
+            // Bridge to 64-alignment for the 64-byte combined tier below (at most one
+            // 32-byte step from the 32-aligned start). Short strings whose NUL lands in
+            // this window terminate here.
+            if (p as usize + i) & 63 != 0 {
                 // SAFETY: p+i is 32-aligned, so the 32-byte window stays in one page.
                 let v = Simd::<u8, 32>::from_slice(unsafe {
                     core::slice::from_raw_parts(p.add(i), 32)
@@ -1685,7 +1684,28 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
                 if mask != 0 {
                     return (i + mask.trailing_zeros() as usize, true);
                 }
-                i += 32;
+                i += 32; // now 64-aligned
+            }
+            // 64-byte combined tier: ONE movemask+branch per 64 bytes (2×32B halves,
+            // `m0 | m1<<32`) for the medium range (64 B..2 KB) that the old per-32B-branch
+            // loop ran at 1.4-1.8x vs glibc. Each 32B half is 32-aligned and the 64-aligned
+            // 64-byte window is within one 4 KiB page (64 | 4096). Escalates to the 128-byte
+            // tier ONLY at i >= 256 AND 128-aligned — so long strings keep the proven 4×32B
+            // tier for the bulk and cannot regress (the entry point is unchanged).
+            while i < 256 || (p as usize + i) & 127 != 0 {
+                // SAFETY: p+i is 64-aligned ⇒ [i, i+64) is within one mapped page.
+                let v0 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let v1 = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 32), 32)
+                });
+                let zc = Simd::splat(0u8);
+                let m = v0.simd_eq(zc).to_bitmask() | (v1.simd_eq(zc).to_bitmask() << 32);
+                if m != 0 {
+                    return (i + m.trailing_zeros() as usize, true);
+                }
+                i += 64;
             }
             // 128-aligned 4×32B unrolled tier: ONE combined NUL check per 128 bytes
             // (glibc's structure — vs one movemask+branch per 32 B), then resolve the
