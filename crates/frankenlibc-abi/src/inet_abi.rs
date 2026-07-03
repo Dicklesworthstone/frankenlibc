@@ -461,6 +461,30 @@ unsafe fn inet_ntop_ipv4_strict_fast(
 /// Returns 1 on success, 0 on failure.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet_aton(cp: *const c_char, inp: *mut u32) -> c_int {
+    // Strict-mode fast path (DEFAULT deployed): `Inet` `decide()` always-Allows in strict, so skip
+    // decide()/observe() + `tracked_region_fits(inp)` + `read_bounded_cstr_ref` (registry lookup) and
+    // scan `cp` to NUL directly. Byte-identical for valid inputs (0 on null/unterminated, rc from the
+    // BSD parser); trust-the-caller region handling, glibc never validates `inp`. Mirrors inet_pton.
+    if runtime_policy::strict_passthrough_active() {
+        if cp.is_null() || inp.is_null() {
+            return 0;
+        }
+        // SAFETY: strict trusts the caller's NUL-terminated `cp` (C contract).
+        let (len, terminated) = unsafe { scan_c_string(cp, None) };
+        if !terminated {
+            return 0;
+        }
+        // SAFETY: `len` NUL-terminated bytes at `cp`.
+        let src_bytes = unsafe { core::slice::from_raw_parts(cp as *const u8, len) };
+        let mut octets = [0u8; 4];
+        let rc = inet_core::inet_aton(src_bytes, &mut octets);
+        if rc == 1 {
+            // SAFETY: caller guarantees `inp` valid for a u32 (C contract).
+            unsafe { *inp = u32::from_ne_bytes(octets) };
+        }
+        return rc;
+    }
+
     let (_, decision) = runtime_policy::decide(ApiFamily::Inet, cp as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
@@ -523,6 +547,23 @@ pub unsafe extern "C" fn inet_ntoa(addr: u32) -> *const c_char {
 /// Returns `INADDR_NONE` (0xFFFFFFFF) on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet_addr(cp: *const c_char) -> u32 {
+    // Strict-mode fast path (DEFAULT deployed): skip decide()/observe() + `read_bounded_cstr_ref`
+    // (registry lookup); scan `cp` to NUL directly. Byte-identical (INADDR_NONE on null/unterminated,
+    // else the BSD parse). Mirrors inet_pton/inet_aton.
+    if runtime_policy::strict_passthrough_active() {
+        if cp.is_null() {
+            return inet_core::INADDR_NONE;
+        }
+        // SAFETY: strict trusts the caller's NUL-terminated `cp` (C contract).
+        let (len, terminated) = unsafe { scan_c_string(cp, None) };
+        if !terminated {
+            return inet_core::INADDR_NONE;
+        }
+        // SAFETY: `len` NUL-terminated bytes at `cp`.
+        let src_bytes = unsafe { core::slice::from_raw_parts(cp as *const u8, len) };
+        return inet_core::inet_addr(src_bytes);
+    }
+
     let (_, decision) = runtime_policy::decide(ApiFamily::Inet, cp as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);

@@ -11479,3 +11479,27 @@ Correctness: conformance_diff_arpa_inet 12, inet_pton_ntop_differential_fuzz 1 (
 glibc, exercises the strict path via the integration-test build), conformance_diff_inet_pton6_edges
 14, inet_abi_test 69 — all GREEN. The v4 parser is no longer the residual gap noted in the
 inet_pton strict-fast-path entry above; inet_pton v4 is now a WIN vs glibc.
+
+---
+
+## inet_aton + inet_addr strict fast-path — membrane tax removed, inet_addr beats glibc (BlackThrush, 2026-07-02)
+
+The BSD dotted-quad siblings `inet_aton`/`inet_addr` had NO strict fast-path — they always paid the
+full `Inet` membrane (`decide` + `observe` + `tracked_region_fits(inp)` + `read_bounded_cstr_ref`
+registry lookup), exactly like inet_pton did before its fast-path. Added the same strict bypass (scan
+`cp` to NUL directly, trust-the-caller region handling; glibc never validates `inp`). Byte-identical
+(0/INADDR_NONE on null/unterminated, else the BSD parse).
+
+**A/B (stdio_st_probe, dlmopen glibc, "192.168.1.100"):**
+
+| fn        | baseline fl/glibc | fast-path fl/glibc | fl-over-fl |
+|-----------|-------------------|--------------------|------------|
+| inet_aton | 1.123 | 1.039 | 41.05→38.32 = **0.93** (near-parity) |
+| inet_addr | 1.036 | 0.936 | 37.42→34.06 = **0.91** (now BEATS glibc) |
+
+~3ns membrane tax removed per call — a smaller fraction than inet_pton's (0.74x) because the BSD
+parser (`parse_ipv4_bsd`, hex/octal/1-4-part grammar) dominates ~35ns, vs inet_pton4's tight loop.
+inet_addr crosses to a glibc win; inet_aton reaches parity. Correctness: conformance_diff_arpa_inet
+(diff_inet_aton_cases + diff_inet_addr_cases) 12, conformance_diff_inet_aton_fuzz 1,
+conformance_diff_inet_aton_edges 12, conformance_diff_network_number 1, metamorphic_inet_aton_ntoa 8,
+inet_abi_test 69 — all GREEN (differential vs host glibc, exercises the strict path).

@@ -559,6 +559,28 @@ fn main() {
         println!("INET_PTON {label} fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fp,0.5), pctl(&gp,0.5), pctl(&fp,0.5)/pctl(&gp,0.5));
     }
 
+    // inet_aton + inet_addr: BSD dotted-quad parse. Siblings of inet_pton but with NO
+    // strict fast-path — pay full decide()+observe()+tracked_region_fits+bounded-cstr. dlmopen glibc.
+    {
+        type AtonFn = unsafe extern "C" fn(*const c_char, *mut u32) -> i32;
+        type AddrFn = unsafe extern "C" fn(*const c_char) -> u32;
+        let g_aton: AtonFn = dl(h, b"inet_aton\0");
+        let g_addr: AddrFn = dl(h, b"inet_addr\0");
+        let s = b"192.168.1.100\0"; let sp = s.as_ptr() as *const c_char;
+        let mut out: u32 = 0;
+        let (mut fa, mut ga) = (Vec::new(), Vec::new());
+        let (mut fd2, mut gd2) = (Vec::new(), Vec::new());
+        let lit = 200_000u64;
+        for _ in 0..100 {
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { frankenlibc_abi::inet_abi::inet_aton(sp, &mut out) }); std::hint::black_box(out); } fa.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { black_box_i32(unsafe { g_aton(sp, &mut out) }); std::hint::black_box(out); } ga.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { std::hint::black_box(unsafe { frankenlibc_abi::inet_abi::inet_addr(sp) }); } fd2.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            let t = Instant::now(); for _ in 0..lit { std::hint::black_box(unsafe { g_addr(sp) }); } gd2.push(t.elapsed().as_nanos() as f64 / lit as f64);
+        }
+        println!("INET_ATON fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fa,0.5), pctl(&ga,0.5), pctl(&fa,0.5)/pctl(&ga,0.5));
+        println!("INET_ADDR fl={:.2} glibc={:.2} fl/glibc={:.3}", pctl(&fd2,0.5), pctl(&gd2,0.5), pctl(&fd2,0.5)/pctl(&gd2,0.5));
+    }
+
     // strcat: builder = scan dst-to-NUL + copy src. Common; can hide two-pass/naive issues.
     type StrcatFn = unsafe extern "C" fn(*mut c_char, *const c_char) -> *mut c_char;
     let g_strcat: StrcatFn = dl(h, b"strcat\0");
