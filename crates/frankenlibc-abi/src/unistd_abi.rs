@@ -3382,16 +3382,16 @@ pub unsafe extern "C" fn getopt(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     }
-    let Some(optspec) = (unsafe { read_c_string_bytes(optstring) }) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
-        return -1;
-    };
+    // Borrow the optstring instead of a per-call Vec copy (read_c_string_bytes) — getopt is
+    // called once per option in the arg-parse loop, re-copying the SAME optstring each
+    // call; getopt_internal only reads it. SAFETY: optstring non-null (checked above) and
+    // NUL-terminated (C contract).
+    let optspec = unsafe { core::ffi::CStr::from_ptr(optstring) }.to_bytes();
     let rc = unsafe {
         getopt_internal(
             argc,
             argv,
-            &optspec,
+            optspec,
             std::ptr::null(),
             std::ptr::null_mut(),
             false,
@@ -3456,12 +3456,10 @@ pub unsafe extern "C" fn getopt_long(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     }
-    let Some(optspec) = (unsafe { read_c_string_bytes(optstring) }) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
-        return -1;
-    };
-    let rc = unsafe { getopt_internal(argc, argv, &optspec, longopts, longindex, false) };
+    // Borrow the optstring (read-only) instead of a per-call Vec copy — same as getopt.
+    // SAFETY: optstring non-null (checked above), NUL-terminated (C contract).
+    let optspec = unsafe { core::ffi::CStr::from_ptr(optstring) }.to_bytes();
+    let rc = unsafe { getopt_internal(argc, argv, optspec, longopts, longindex, false) };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -3501,12 +3499,10 @@ pub unsafe extern "C" fn getopt_long_only(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     }
-    let Some(optspec) = (unsafe { read_c_string_bytes(optstring) }) else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
-        return -1;
-    };
-    let rc = unsafe { getopt_internal(argc, argv, &optspec, longopts, longindex, true) };
+    // Borrow the optstring (read-only) instead of a per-call Vec copy — same as getopt.
+    // SAFETY: optstring non-null (checked above), NUL-terminated (C contract).
+    let optspec = unsafe { core::ffi::CStr::from_ptr(optstring) }.to_bytes();
+    let rc = unsafe { getopt_internal(argc, argv, optspec, longopts, longindex, true) };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
