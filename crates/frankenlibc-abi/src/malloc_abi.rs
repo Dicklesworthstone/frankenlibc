@@ -1430,6 +1430,25 @@ fn fallback_size(ptr: *mut c_void) -> Option<usize> {
     None
 }
 
+/// Bench hook (swing-2 de-risking): the real FALLBACK size-table insert. Lets a
+/// per-crate bench isolate the size-tracking cost that an inline header would replace.
+#[doc(hidden)]
+pub fn fallback_insert_sized_for_bench(ptr: *mut c_void, size: usize) {
+    fallback_insert_sized(ptr, size);
+}
+
+/// Bench hook: the real FALLBACK size-table lookup (what `known_remaining` reads).
+#[doc(hidden)]
+pub fn fallback_size_for_bench(ptr: *mut c_void) -> Option<usize> {
+    fallback_size(ptr)
+}
+
+/// Bench hook: the real FALLBACK size-table remove (what `free` runs).
+#[doc(hidden)]
+pub fn fallback_remove_sized_for_bench(ptr: *mut c_void) -> Option<usize> {
+    fallback_remove_sized(ptr)
+}
+
 fn fallback_size_for_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) -> Option<usize> {
     let key = fallback_key(ptr)?;
     if !MULTI_THREADED.load(Ordering::Relaxed) {

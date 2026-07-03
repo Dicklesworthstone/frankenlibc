@@ -11565,3 +11565,29 @@ Byte-identical.
 directly). v6 ntop still loses glibc 1.91x (core `format_ipv6_canonical_into`, formerly established
 as formatter-bound), but this removes a genuine per-call waste. Gates green: conformance_diff_arpa_inet
 12, inet_pton_ntop_differential_fuzz 1 (vs host glibc), inet_abi_test 69.
+
+---
+
+## malloc swing-2 de-risking microbench — size-table cost is only ~25% of the gap (BlackThrush, 2026-07-02)
+
+Before anyone does the invasive inline-header integration, measured the isolated size-tracking
+op cost that swing-2 would replace. New per-crate bench `malloc_sizetrack_ab` (+ 3 `#[doc(hidden)]`
+hooks `fallback_{insert_sized,size,remove_sized}_for_bench` in malloc_abi.rs) over the same set of
+real host-malloc'd pointers:
+
+| scheme | per alloc+free cycle | ratio |
+|--------|----------------------|-------|
+| FALLBACK hash table (insert+lookup+remove) | **11.63 ns** | 1.00 |
+| inline header (store + 2 loads) | **0.74 ns** | **0.064** (16x cheaper) |
+
+**Conclusion (corrects the swing-2 EV):** the deployed MALLOC_FREE is ~52ns vs glibc ~5ns (~47ns
+overhead). The size-table ops account for **only ~11.6ns (~25%)** of that. So the inline-header
+swing removes ~11ns → malloc ~10x→~8x vs glibc, **NOT parity** — it is *necessary but not
+sufficient*. The remaining ~36ns is DIFFUSE framing (reentry guards, `entrypoint_scope`,
+`decide`/`observe`, `record_alloc_stats`, `publish_fallback_range`, the native malloc ~5ns),
+confirming the prior "no single hotspot" bisection. A full malloc fix needs BOTH the header AND a
+slim-fast-path framing reduction. **Fidelity caveat:** the bench calls the non-cached
+`fallback_*_sized` variants with a 3-op churn (insert+size+remove); the deployed malloc+free path
+uses the `_for_slot` per-thread-cached variants with 2 ops, so 11.6ns is an UPPER BOUND on the
+deployed table cost — the "swing-2 is partial, not full" conclusion only strengthens under the true
+(cheaper) cached cost. Bench: `cargo run --release --example malloc_sizetrack_ab --features abi-bench`.

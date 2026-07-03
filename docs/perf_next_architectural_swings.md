@@ -231,6 +231,18 @@ the two-part filter (deployed slower than glibc AND gate is `within_N_ulps` not 
   `fallback_insert_sized`/`fallback_size`/`fallback_remove` over an alloc/free churn —
   prove the header is actually cheaper before the invasive integration.**
 
+- **DE-RISKING BENCH DONE (BlackThrush 2026-07-02, `examples/malloc_sizetrack_ab.rs`
+  + `fallback_*_for_bench` hooks):** FALLBACK table insert+lookup+remove = **11.63 ns**
+  vs inline header store+2loads = **0.74 ns** (16x). BUT the deployed MALLOC_FREE
+  overhead over glibc is ~47 ns, so the table is **only ~25% of the gap** → swing-2
+  caps malloc at ~10x→~8x, **NOT parity**. It is *necessary but not sufficient*: the
+  other ~36 ns is DIFFUSE framing (reentry guards, `entrypoint_scope`, `decide`/
+  `observe`, `record_alloc_stats`, `publish_fallback_range`, native malloc ~5 ns),
+  confirming BoldFalcon's "no single hotspot" bisection. **A full malloc fix needs
+  BOTH the inline header AND a slim-fast-path framing reduction — plan swing-2 as two
+  sub-steps, not one.** (Bench uses non-cached 3-op churn = upper bound on the deployed
+  cached 2-op cost; the "partial win" conclusion strengthens under the true cost.)
+
 ## Swing 3 — accuracy-hard math (erfc / bessel / lgamma)
 
 - **erfc:** **1.63x slower** than glibc (fl `libm::erfc` is fdlibm-derived but

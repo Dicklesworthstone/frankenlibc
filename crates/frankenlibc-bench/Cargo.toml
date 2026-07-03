@@ -579,3 +579,7 @@ required-features = ["abi-bench"]
 [[example]]
 name = "malloc_st_probe"
 required-features = ["abi-bench"]
+
+[[example]]
+name = "malloc_sizetrack_ab"
+required-features = ["abi-bench"]
