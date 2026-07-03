@@ -597,6 +597,24 @@ fn main() {
         println!("MEMMEM_PATHO fl={:.1} glibc={:.1} fl/glibc={:.3}", pctl(&fm,0.5), pctl(&gm,0.5), pctl(&fm,0.5)/pctl(&gm,0.5));
     }
     {
+        // COMMON case: short needle in an ordinary haystack (the realistic memmem
+        // workload). glibc uses a SIMD first-byte scan + verify; fl's Two-Way pays
+        // needle preprocessing. Needle sits near the end (typical near-miss scan cost).
+        let hay: Vec<u8> = (0..256u32).map(|i| b'a' + (i.wrapping_mul(37) % 23) as u8).collect();
+        for nl in [3usize, 8, 16] {
+            // needle = last `nl` bytes of the haystack (always found at the end).
+            let ndl: Vec<u8> = hay[256 - nl..].to_vec();
+            let (hp, hln, np, nln) = (hay.as_ptr() as *const libc::c_void, hay.len(), ndl.as_ptr() as *const libc::c_void, ndl.len());
+            let (mut fm, mut gm) = (Vec::new(), Vec::new());
+            let lit = 100_000u64;
+            for _ in 0..100 {
+                let t = Instant::now(); for _ in 0..lit { black_box_ptr3(unsafe { frankenlibc_abi::string_abi::memmem(hp, hln, np, nln) }); } fm.push(t.elapsed().as_nanos() as f64 / lit as f64);
+                let t = Instant::now(); for _ in 0..lit { black_box_ptr3(unsafe { g_memmem(hp, hln, np, nln) }); } gm.push(t.elapsed().as_nanos() as f64 / lit as f64);
+            }
+            println!("MEMMEM_COMMON nl={nl} fl={:.1} glibc={:.1} fl/glibc={:.3}", pctl(&fm,0.5), pctl(&gm,0.5), pctl(&fm,0.5)/pctl(&gm,0.5));
+        }
+    }
+    {
         // strspn: span of a 64-char string over a 4-char accept set (bitmap vs glibc).
         let s = b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaX\0";
         let acc = b"abcd\0";

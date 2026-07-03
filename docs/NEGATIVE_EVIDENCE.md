@@ -11444,3 +11444,18 @@ unterminated tracked buffer" check), eliminating the per-malloc insert AND per-f
 for native-allocated pointers. Caveats: only valid for native (non-membrane-arena) pointers, and it
 returns usable (rounded-up) not requested size — every `known_remaining` consumer must tolerate an
 upper bound. Multi-turn change; needs the allocator owner.
+
+---
+
+## memmem COMMON-case certified — fl WINS glibc 1.3-1.5x (BlackThrush, 2026-07-02)
+
+The `stdio_st_probe` memmem arm only certified the PATHOLOGICAL case (fl Two-Way 333x faster than
+glibc's quadratic: MEMMEM_PATHO 0.003). glibc's memmem is SIMD-accelerated for the COMMON case
+(short needle, ordinary haystack) where Two-Way's needle preprocessing could lose — that was
+unmeasured. Added a `MEMMEM_COMMON` arm (256B haystack, needle at the end, nl∈{3,8,16}). Result:
+**fl WINS across the board** — nl=3 0.672, nl=8 0.648, nl=16 0.785 (fl/glibc; 1.3-1.5x faster). So
+fl memmem beats glibc on BOTH the pathological and the realistic common workload; not a lever, but
+the coverage gap is now closed (durable regression guard). Confirms the string-search frontier is
+saturated: audited this turn and found already-optimal — wmemcmp (unrolled Simd panels), bcmp
+(portable-SIMD fold), strcasecmp (SIMD case-fold, bd-2g7oyh), wcscmp (floor-bound, DISPROVEN above).
+The only remaining string_abi scalar-`u128` compare was memcmp (fixed this session, 9378639c0).
