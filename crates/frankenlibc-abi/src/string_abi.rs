@@ -8337,14 +8337,15 @@ pub unsafe extern "C" fn fnmatch(
     if pattern.is_null() || string.is_null() {
         return FNM_NOMATCH;
     }
-    let Some(pat_bytes) = (unsafe { read_c_string_bytes(pattern) }) else {
-        return FNM_NOMATCH;
-    };
-    let Some(str_bytes) = (unsafe { read_c_string_bytes(string) }) else {
-        return FNM_NOMATCH;
-    };
+    // Borrow the C strings directly (one strlen + a slice each) instead of
+    // `read_c_string_bytes`, which allocated a fresh Vec copy of BOTH the pattern and the
+    // string on EVERY call — the ~100 ns fixed overhead that made fnmatch 5-13x glibc
+    // regardless of pattern (even a plain literal). The matcher only reads the slices.
+    // SAFETY: both pointers are non-null (checked above) and NUL-terminated (C contract).
+    let pat_bytes = unsafe { core::ffi::CStr::from_ptr(pattern) }.to_bytes();
+    let str_bytes = unsafe { core::ffi::CStr::from_ptr(string) }.to_bytes();
     let core_flags = frankenlibc_core::string::fnmatch::FnmatchFlags::from_bits(flags as u32);
-    if frankenlibc_core::string::fnmatch::fnmatch_match(&pat_bytes, &str_bytes, core_flags) {
+    if frankenlibc_core::string::fnmatch::fnmatch_match(pat_bytes, str_bytes, core_flags) {
         0
     } else {
         FNM_NOMATCH
