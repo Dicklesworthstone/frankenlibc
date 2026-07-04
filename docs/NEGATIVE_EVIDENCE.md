@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-04 — ◇ bd-dcrhgl inline-header size tracking MEASURED 31x faster than the legacy fallback table, but NOT SHIPPED: min/max is not a no-fault proof
+
+- **MEASURED (`rch exec`, worker `vmi1149989`, command:
+  `cargo run --release -p frankenlibc-bench --example malloc_sizetrack_ab --features abi-bench`):**
+  `SIZETRACK_AB table=19.59ns header=0.63ns header/table=0.032 table_saves=18.96ns/op`.
+  The simulated inline-header metadata path is a real ~31x micro-win over the current
+  legacy `FALLBACK_ALLOC_PTRS` insert+lookup+remove path. Same run measured
+  `GUARD_AB reentry_enter+exit=5.63ns/call` and
+  `STATS_AB record_alloc+free=16.78ns/alloc+free-pair`.
+- **WHY NO CODE SHIPPED:** `known_remaining(addr)` is called with arbitrary C pointers:
+  malloc starts, interior heap pointers, stack addresses, static strings, and foreign
+  pointers. The proposed two-guard header read (`min/max heap range` + strong magic at
+  `ptr[-16]`) still has a proof hole: the monotone min/max range is only a coarse early
+  reject and does **not** prove that every address between min and max can safely read
+  `addr - 16` (mmap-served allocations can leave holes or include unrelated mapped
+  regions). A production header read must first prove no-fault readability or exact
+  allocation membership without dereferencing the candidate pointer.
+- **RETRY PREDICATE:** keep the fallback table as the production source of truth until the
+  header plan has a no-fault guard such as exact-start metadata, interval/page residency
+  metadata that cannot collide per allocation, or a shadow mode that proves agreement
+  before reads switch. Do **not** land the naive min/max+magic header read as a one-turn
+  perf lever, even though the ratio is attractive.
+
 ## 2026-06-30 — ✅ strtok / strtok_r FUSED early-stop DEPLOYED — full tokenization O(n²)→O(n), byte-identical (sibling of the strsep fix; strtok is far hotter)
 
 - **DEPLOYED (cc):** same quadratic pattern as strsep — the deployed strict `strtok`

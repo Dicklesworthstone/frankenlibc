@@ -243,6 +243,18 @@ the two-part filter (deployed slower than glibc AND gate is `within_N_ulps` not 
   sub-steps, not one.** (Bench uses non-cached 3-op churn = upper bound on the deployed
   cached 2-op cost; the "partial win" conclusion strengthens under the true cost.)
 
+- **2026-07-04 refinement (BlackThrush, `rch` worker `vmi1149989`):** the ratio is still
+  very real, and stronger on a fresh per-crate run: FALLBACK table
+  insert+lookup+remove = **19.59 ns** vs simulated inline header store+2loads =
+  **0.63 ns** (`header/table=0.032`, **18.96 ns/op saved**). However, the production
+  switch is **not safe with only the coarse min/max range guard**. `known_remaining(addr)`
+  receives arbitrary C pointers, and a monotone `[min,max]` allocation envelope does not
+  prove that `addr - 16` is mapped for every in-range address; mmap holes or unrelated
+  mapped regions can still make a header read fault before the magic check. Treat the
+  inline header as a measured target, not a ready implementation, until the plan includes
+  a no-fault exact-membership guard or a shadow mode that proves agreement before reads
+  switch away from the fallback table. **Do not land naive min/max+magic header reads.**
+
 ## Swing 3 — accuracy-hard math (erfc / bessel / lgamma)
 
 - **erfc:** **1.63x slower** than glibc (fl `libm::erfc` is fdlibm-derived but
