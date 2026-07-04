@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-04 — ✗ cached tombstone reinsertion REJECTED — local same-target `calloc/free(16)` regressed 1.84x vs ORIG
+
+- **NO-SHIP (Codex):** tested a deeper follow-up to the prior fallback-cache clear
+  rejection on the largest live allocator gap. Candidate added a cached fallback
+  key alongside `fallback_cache_index`, kept the key/index after a single-thread
+  cached remove, and let the next same-address strict `malloc`/`calloc` reinsert
+  directly into that tombstoned slot. The proof shape was exact-key only and avoided
+  arbitrary header reads, but the extra key traffic and branch did not produce a
+  reliable deployed-path win. Source was reverted before commit.
+- **COMMAND NOTE:** the requested exact form
+  `AGENT_NAME=Codex CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod rch exec -- cargo bench --release -p frankenlibc-bench --features abi-bench --bench calloc_glibc_bench -- 'calloc_cycle/(fl|glibc)/16' --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`
+  was attempted first and Cargo rejected `--release`; valid per-crate evidence used
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench --bench
+  calloc_glibc_bench -- 'calloc_cycle/(fl|glibc)/16' --noplot --sample-size 10
+  --warm-up-time 1 --measurement-time 1`.
+- **REMOTE ROUTING EVIDENCE (`rch exec`, current main):** worker `vmi1149989`
+  measured FL **64.023 ns**, glibc **5.328 ns**, fl/glibc **12.02x LOSS**; worker
+  `ovh-a` measured FL **52.019 ns**, glibc **4.613 ns**, fl/glibc **11.28x LOSS**.
+- **REMOTE CANDIDATE EVIDENCE (`rch exec`, cross-worker only):** worker `hz2`
+  measured FL **32.279 ns**, glibc **5.933 ns**, fl/glibc **5.44x LOSS**; worker
+  `vmi1293453` measured FL **57.908 ns**, glibc **6.410 ns**, fl/glibc
+  **9.03x LOSS**. These normalized ratios looked mixed but were not same-worker
+  proof.
+- **DECISIVE LOCAL SAME-TARGET CHECK (supplemental, same
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`):** current-main local
+  fallback after `RCH-E412` measured FL **40.740 ns**, glibc **8.453 ns**,
+  fl/glibc **4.82x LOSS**. Candidate measured FL **74.845 ns**, glibc **9.947 ns**,
+  fl/glibc **7.52x LOSS**; candidate/current FL p50 **1.84x slower**, and Criterion
+  reported the FL arm as a regression (`+35.733%`, p < 0.05). Treat cached
+  tombstone reinsertion as rejected unless a future design removes insert/probe
+  work without adding hot-path key traffic.
+- **CONFORMANCE GREEN:** after reverting the source variant,
+  `AGENT_NAME=Codex CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod rch exec -- cargo test --profile release -p frankenlibc-abi --test conformance_diff_malloc_edges -- --nocapture`
+  passed 1/1 via local fallback (`malloc_edge_contracts_match_glibc`).
+
 ## 2026-07-04 — ✅ render_pct_g dyadic non-integer fast path LANDED — 1.47x vs ORIG Rust `%e` probe
 
 - **LANDED CODE WIN (`ecvt.rs` / `render_pct_g`):** `%g`/`gcvt`/`strfromd("%g")`
