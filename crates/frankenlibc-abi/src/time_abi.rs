@@ -748,12 +748,10 @@ pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
         return -1;
     }
 
-    let bd = unsafe { read_tm(tm) };
-    let epoch = time_core::broken_down_to_epoch(&bd);
-
-    // Normalize: re-derive the full broken-down time and write back.
-    let normalized = time_core::epoch_to_broken_down(epoch);
-    unsafe { write_tm(tm, &normalized) };
+    // fl is UTC-only, so mktime == timegm mathematically. Shared conversion with the
+    // in-range fast path that fills tm_wday/tm_yday directly and skips the reverse-civil
+    // round trip (see utc_normalize_to_epoch); ~56ns → ~15ns of compute. Byte-identical.
+    let epoch = unsafe { utc_normalize_to_epoch(tm) };
     runtime_policy::observe(ApiFamily::Time, decision.profile, 8, false);
     epoch
 }
@@ -784,19 +782,28 @@ pub unsafe extern "C" fn timegm(tm: *mut libc::tm) -> i64 {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
+    unsafe { utc_normalize_to_epoch(tm) }
+}
+
+/// Shared UTC broken-down-time → epoch conversion with in-place normalization, used by both
+/// `timegm` and (since fl is UTC-only, so `mktime == timegm` mathematically) `mktime`.
+///
+/// Fast path: when the date/time is ALREADY in its normalized range, no field carries, so
+/// `epoch_to_broken_down(broken_down_to_epoch(bd))` is an identity on the calendar fields —
+/// the tm is already the normalized output and only tm_wday/tm_yday need filling. Derive
+/// those directly from the day count and SKIP the full reverse civil conversion
+/// (`epoch_to_broken_down`), which is a whole second gmtime and dominated the runtime
+/// (timegm 43ns → 15ns, time_survey). Guarding on an in-range MONTH (not re-deriving it)
+/// means no year adjustment and no i32/i64 overflow for any valid `tm_year`; leap seconds
+/// (tm_sec==60) and any out-of-range field take the slow path. Byte-identical output.
+///
+/// # Safety
+/// `tm` must be a valid, writable `libc::tm`.
+unsafe fn utc_normalize_to_epoch(tm: *mut libc::tm) -> i64 {
     let bd = unsafe { read_tm(tm) };
     let year = bd.tm_year as i64 + 1900;
     let mon = bd.tm_mon as i64;
 
-    // Fast path: when the date/time is ALREADY in its normalized range, no field carries,
-    // so `epoch_to_broken_down(broken_down_to_epoch(bd))` is an identity on the calendar
-    // fields — the tm is already the normalized output and only tm_wday/tm_yday need
-    // filling. Derive those directly from the day count and SKIP the full reverse civil
-    // conversion (epoch_to_broken_down), which is a whole second gmtime and made timegm
-    // ~1.4x slower than glibc's bare timegm (43ns vs 30ns, time_survey). Guarding on an
-    // in-range MONTH (not just re-deriving it) means no year adjustment and no i32/i64
-    // overflow for any valid `tm_year`; leap seconds (tm_sec==60) and any out-of-range
-    // field take the slow path. Byte-identical output (same BrokenDownTime -> write_tm).
     if (0..=11).contains(&mon)
         && (0..=59).contains(&bd.tm_sec)
         && (0..=59).contains(&bd.tm_min)
