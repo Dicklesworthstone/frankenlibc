@@ -2683,6 +2683,51 @@ unsafe fn scan_strcmp(s1: *const c_char, s2: *const c_char, bound: usize) -> (us
     let p2 = s2.cast::<u8>();
     let mut i = 0usize;
     loop {
+        // Wide 128-byte unrolled fast path: the plain 32B loop below re-ran the
+        // dual page-guard (`&0xFFF <= 0x1000-32` on BOTH pointers) AND the `i+32<=bound`
+        // check on EVERY 32 bytes — ~2.7x slower than glibc for long equal strings
+        // (measured strcmp_align, alignment-independent ⇒ pure per-iter overhead, not
+        // splits). glibc unrolls and amortizes the page check. Here: one guard covers a
+        // full 128B window (both pointers in-page), then four 32-lane compares whose
+        // flag masks are OR-combined so the all-equal common case takes a SINGLE branch
+        // and advances 128B. Byte-identical: the first set bit across the four masks (in
+        // order) is the exact first differing-or-s1-NUL byte the 32B/SWAR tail resolves to.
+        if i + 128 <= bound
+            && (p1 as usize + i) & 0xFFF <= 0x1000 - 128
+            && (p2 as usize + i) & 0xFFF <= 0x1000 - 128
+        {
+            use core::simd::Simd;
+            use core::simd::cmp::SimdPartialEq;
+            let zero = Simd::<u8, 32>::splat(0);
+            // SAFETY: the 128B window [i, i+128) stays within both mapped pages and bound.
+            let cmp = |off: usize| -> u64 {
+                let a = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(i + off), 32)
+                });
+                let b = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(i + off), 32)
+                });
+                (a.simd_ne(b) | a.simd_eq(zero)).to_bitmask()
+            };
+            let f0 = cmp(0);
+            let f1 = cmp(32);
+            let f2 = cmp(64);
+            let f3 = cmp(96);
+            if f0 | f1 | f2 | f3 == 0 {
+                i += 128;
+                continue;
+            }
+            if f0 != 0 {
+                return (i + f0.trailing_zeros() as usize, false);
+            }
+            if f1 != 0 {
+                return (i + 32 + f1.trailing_zeros() as usize, false);
+            }
+            if f2 != 0 {
+                return (i + 64 + f2.trailing_zeros() as usize, false);
+            }
+            return (i + 96 + f3.trailing_zeros() as usize, false);
+        }
         // Wide 32-byte portable-SIMD fast path: skip whole equal, NUL-free panels
         // at AVX width (glibc's strcmp/strncmp step 16-32 bytes; the 8-byte SWAR
         // below was the bottleneck — strncmp was ~1.5x slower). A flagged panel
