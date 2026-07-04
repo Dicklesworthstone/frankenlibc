@@ -32,6 +32,35 @@ retried and real wins are confirmed with numbers.
   claim. The path is intentionally limited to cached single-threaded fd streams
   whose current buffer already proves ASCII-only completion.
 
+## 2026-07-04 — ✅ render_pct_e dyadic non-integer fast path LANDED — 2.50x vs original dtoa path
+
+- **LANDED CODE WIN (`ecvt.rs`):** `%e` / `strfromd("%e")` already had an
+  exact-integer fast path, but exact dyadic non-integers (`0.5`, `3.125`,
+  `10.75`, etc.) still paid Rust std `{:.Ne}` flt2dec plus exponent reshape even
+  when no rounding was required. Added a guarded dyadic proof path for finite,
+  nonzero, non-integral values whose reduced binary denominator needs at most
+  19 decimal places and whose scaled decimal digits fit the requested `ndigit+1`
+  significant digits. It builds the glibc `%e` body directly from
+  `value * 10^k`; rounding-needed, high-precision, non-dyadic, zero, integer,
+  and non-finite values fall through to the existing paths.
+- **MEASURED (`rch exec`, worker `hz1`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod`, per-crate
+  command `cargo bench --profile release -p frankenlibc-bench --example dyade_iso`;
+  the requested `cargo bench --release -p frankenlibc-bench --example dyade_iso`
+  was attempted first and Cargo rejected it with `unexpected argument '--release'`):
+  `dyade_iso` same-process A/B over non-integral exact dyadics, OLD
+  Rust `{:.Ne}`+reshape **185.3 ns** -> NEW `render_pct_e` dyadic **74.1 ns**,
+  candidate/original **0.400x**, **2.50x faster**. The example asserts old/new
+  byte identity before timing.
+- **CONFORMANCE GREEN:** focused unit gate
+  `cargo test --profile release -p frankenlibc-core render_pct_e_dyadic_values_match_glibc_style -- --nocapture`
+  passed 1/1 under `rch` local fallback. Host-glibc ABI differential
+  `cargo test --profile release -p frankenlibc-abi --test strfromd_differential_fuzz -- --nocapture`
+  passed on worker `vmi1227854`: **200000 comparisons, 0 divergences vs host glibc**.
+- **Scope:** measured ratio is vs the original FrankenLibC `%e` dtoa route for
+  exact dyadic non-integers, not a general Schubfach/Ryu replacement. The
+  broader non-dyadic `%e/%f/%g` residual remains dtoa-kernel-bound.
+
 ## 2026-07-04 — CURRENT FRONTIER CHECK: no unmerged measured win; allocator still 5.20x vs glibc; stdio-MT comparator blocked
 
 - **SCRATCH / WORKTREE AUDIT:** the only live worktree head not contained in `main`

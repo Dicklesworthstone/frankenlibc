@@ -218,6 +218,10 @@ name = "fgetws_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[example]]
+name = "dyade_iso"
+harness = false
+
 # strcmp OLD (single 32B panel) vs NEW (4×32 folded 128B block) vs glibc, 1 process.
 [[bench]]
 name = "strcmp_fold_ab_bench"

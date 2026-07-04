@@ -408,6 +408,84 @@ fn try_build_integer_sci(value: f64, frac: usize, out: &mut String) -> bool {
     true
 }
 
+fn dyadic_decimal_scale(value: f64) -> Option<usize> {
+    let bits = value.abs().to_bits();
+    let raw_exp = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & 0x000f_ffff_ffff_ffff;
+    let (significand, exp2) = if raw_exp == 0 {
+        (fraction, -1074)
+    } else {
+        ((1u64 << 52) | fraction, raw_exp - 1023 - 52)
+    };
+    if significand == 0 {
+        return Some(0);
+    }
+    let denom_bits = (-exp2).saturating_sub(significand.trailing_zeros() as i32);
+    Some(denom_bits.max(0) as usize)
+}
+
+fn try_build_dyadic_sci(value: f64, frac: usize) -> Option<String> {
+    use core::fmt::Write as _;
+
+    if frac > 19 || !value.is_finite() || value == 0.0 || value.fract() == 0.0 {
+        return None;
+    }
+
+    let decimal_scale = dyadic_decimal_scale(value)?;
+    if decimal_scale > 19 {
+        return None;
+    }
+
+    let binary_scale = f64::from_bits((1023u64 + decimal_scale as u64) << 52);
+    let scaled = value.abs() * binary_scale;
+    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+        return None;
+    }
+    let decimal = (scaled as u128).checked_mul(5u128.pow(decimal_scale as u32))?;
+
+    let mut tmp = [0u8; 40];
+    let mut n = decimal;
+    let mut i = tmp.len();
+    loop {
+        i -= 1;
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    let digits = &tmp[i..];
+    let target_digits = frac + 1;
+    if digits.len() > target_digits {
+        return None;
+    }
+
+    let zero_pad = target_digits - digits.len();
+    let exp = frac as i32 - (decimal_scale + zero_pad) as i32;
+    let mut out = String::with_capacity(usize::from(value.is_sign_negative()) + frac + 8);
+    if value.is_sign_negative() {
+        out.push('-');
+    }
+    out.push(digits[0] as char);
+    if frac > 0 {
+        out.push('.');
+        for &c in &digits[1..] {
+            out.push(c as char);
+        }
+        for _ in 0..zero_pad {
+            out.push('0');
+        }
+    }
+    out.push('e');
+    out.push(if exp < 0 { '-' } else { '+' });
+    let abs_exp = exp.unsigned_abs();
+    if abs_exp < 10 {
+        out.push('0');
+    }
+    let _ = write!(out, "{abs_exp}");
+    Some(out)
+}
+
 fn render_gcvt(value: f64, ndigit: usize) -> String {
     if value.is_nan() {
         // glibc's `%g` preserves the NaN sign bit: gcvt(-nan) -> "-nan".
@@ -689,6 +767,9 @@ pub fn render_pct_e(value: f64, ndigit: usize) -> String {
             return out;
         }
     }
+    if let Some(dyadic) = try_build_dyadic_sci(value, ndigit) {
+        return dyadic;
+    }
     // Render the `%e` form into a stack buffer (no per-call heap alloc for the
     // intermediate, mirroring `render_gcvt`); only the returned String allocates.
     let mut sb = StackStr::new();
@@ -928,6 +1009,24 @@ mod tests {
                 std::str::from_utf8(&buf[..len]).unwrap_or("<invalid utf8>"),
                 std::str::from_utf8(expected).unwrap_or("<invalid utf8>"),
             );
+        }
+    }
+
+    #[test]
+    fn render_pct_e_dyadic_values_match_glibc_style() {
+        let cases = [
+            (0.5, 6, "5.000000e-01"),
+            (0.03125, 6, "3.125000e-02"),
+            (3.125, 6, "3.125000e+00"),
+            (10.75, 6, "1.075000e+01"),
+            (-8.5, 2, "-8.50e+00"),
+            (0.5, 0, "5e-01"),
+            // Ties that need rounding must stay on the formatter fallback.
+            (0.25, 0, "2e-01"),
+            (2.5, 0, "2e+00"),
+        ];
+        for (value, ndigit, expected) in cases {
+            assert_eq!(render_pct_e(value, ndigit), expected, "{value} .{ndigit}e");
         }
     }
 
