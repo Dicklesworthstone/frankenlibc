@@ -29,6 +29,32 @@ pub(crate) const SPACE: u16 = 1 << 9;
 pub(crate) const UPPER: u16 = 1 << 10;
 pub(crate) const XDIGIT: u16 = 1 << 11;
 
+/// Direct class-mask table for the ASCII block (`0..128`) — the dominant input for every
+/// isw* predicate. A plain `.rodata` static, so ASCII lookups skip the BMP table's
+/// `OnceLock::get_or_init` + `Box` deref (~0.9ns/call, which made the isw* predicates lose
+/// ~1.4x to glibc on ASCII — wide_ctype_survey). Byte-for-byte what
+/// `ctype_mask_transitions` returns for each codepoint (generated from fl's own 12 isw*
+/// predicates; the direct-table isomorphism test re-verifies every codepoint incl. 0..128).
+#[rustfmt::skip]
+const ASCII_CTYPE: [u16; 128] = [
+    0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008,
+    0x0008, 0x020c, 0x0208, 0x0208, 0x0208, 0x0208, 0x0008, 0x0008,
+    0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008,
+    0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008,
+    0x0284, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0,
+    0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0,
+    0x08b1, 0x08b1, 0x08b1, 0x08b1, 0x08b1, 0x08b1, 0x08b1, 0x08b1,
+    0x08b1, 0x08b1, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0,
+    0x01a0, 0x0ca3, 0x0ca3, 0x0ca3, 0x0ca3, 0x0ca3, 0x0ca3, 0x04a3,
+    0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3,
+    0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3, 0x04a3,
+    0x04a3, 0x04a3, 0x04a3, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x01a0,
+    0x01a0, 0x08e3, 0x08e3, 0x08e3, 0x08e3, 0x08e3, 0x08e3, 0x00e3,
+    0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3,
+    0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3, 0x00e3,
+    0x00e3, 0x00e3, 0x00e3, 0x01a0, 0x01a0, 0x01a0, 0x01a0, 0x0008,
+];
+
 /// Return the glibc UTF-8-locale wide-ctype class mask for `wc`. Scalar values
 /// above `U+10FFFF` (e.g. a negative `wchar_t` widened to `u32`) are not valid
 /// wide characters, so they belong to no class (mask `0`).
@@ -41,6 +67,12 @@ pub(crate) fn ctype_mask(wc: u32) -> u16 {
     // for that code point, so the table is byte-for-byte what the search returns;
     // astral scalars still take that exact path. O(1) per char, one hot cache
     // line for runs of nearby characters.
+    // ASCII fast path: a direct static-table index, no OnceLock/Box deref. This is the
+    // dominant input for isw* (identifiers, whitespace, digits) and closes the ~1.4x gap
+    // to glibc on ASCII. Byte-identical to the BMP table for 0..128.
+    if wc < 128 {
+        return ASCII_CTYPE[wc as usize];
+    }
     if wc < 0x10000 {
         static BMP_CTYPE: std::sync::OnceLock<Box<[u16; 0x10000]>> = std::sync::OnceLock::new();
         let table = BMP_CTYPE.get_or_init(|| {
