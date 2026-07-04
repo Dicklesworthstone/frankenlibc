@@ -3880,6 +3880,72 @@ unsafe fn parse_wcstoul_fast(
     Some((value, i, ConversionStatus::Success))
 }
 
+/// Single-pass fast path for `wcstod`/`wcstold` when the token is a PLAIN base-10 integer
+/// exactly representable in `f64` (|value| ≤ 2^53): `[ws][sign][digits]` with the stop char
+/// NOT continuing the number (`.eExXpP`). Returns `(value, consumed)`; `None` (→ the full
+/// `wide_parse_float` path) for anything else — floats, hex, inf/nan, or a magnitude past
+/// 2^53. An exact integer is byte-identical to strtod's result and never sets ERANGE, so the
+/// caller just writes `endptr` and returns. Skips the scan+ASCII-project+strtod machinery
+/// that gave a ~26ns floor even on "0" (glibc fast-paths it to ~11ns; wcstod_survey).
+///
+/// # Safety
+/// `nptr` must point to a valid NUL-terminated wide string.
+#[inline]
+unsafe fn parse_wcstod_integer_fast(nptr: *const u32) -> Option<(f64, usize)> {
+    let mut i = 0usize;
+    loop {
+        let c = unsafe { *nptr.add(i) };
+        if matches!(c, 0x09..=0x0d | 0x20) {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    let negative = {
+        let c = unsafe { *nptr.add(i) };
+        if c == b'-' as u32 {
+            i += 1;
+            true
+        } else if c == b'+' as u32 {
+            i += 1;
+            false
+        } else {
+            false
+        }
+    };
+    let digit_start = i;
+    let mut acc = 0u64;
+    loop {
+        let c = unsafe { *nptr.add(i) };
+        if !(b'0' as u32..=b'9' as u32).contains(&c) {
+            break;
+        }
+        i += 1;
+        acc = acc.wrapping_mul(10).wrapping_add((c - b'0' as u32) as u64);
+        if acc > (1u64 << 53) {
+            return None; // not exactly representable in f64 — take the full path
+        }
+    }
+    if i == digit_start {
+        return None; // no digits (sign-only, inf/nan, empty)
+    }
+    // A stop char that could continue the number means strtod would consume more (float
+    // fraction/exponent, or a 0x/0Xp hex float) — defer to the full path for exactness.
+    let stop = unsafe { *nptr.add(i) };
+    if stop == b'.' as u32
+        || stop == b'e' as u32
+        || stop == b'E' as u32
+        || stop == b'x' as u32
+        || stop == b'X' as u32
+        || stop == b'p' as u32
+        || stop == b'P' as u32
+    {
+        return None;
+    }
+    let v = acc as f64;
+    Some((if negative { -v } else { v }, i))
+}
+
 unsafe fn wide_parse_int<T: Copy>(
     nptr: *const libc::wchar_t,
     base: c_int,
@@ -3993,6 +4059,15 @@ pub unsafe extern "C" fn wcstod(
             unsafe { *endptr = nptr as *mut libc::wchar_t };
         }
         return 0.0;
+    }
+
+    // Fast path: a plain integer exactly representable in f64 (see parse_wcstod_integer_fast)
+    // skips the scan+project+strtod machinery. Exact ⇒ no ERANGE; just write endptr + return.
+    if let Some((value, consumed)) = unsafe { parse_wcstod_integer_fast(nptr as *const u32) } {
+        if !endptr.is_null() {
+            unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
+        }
+        return value;
     }
 
     // Bounded scan + zero-alloc projection (see wide_parse_float): O(number), not O(buffer).
