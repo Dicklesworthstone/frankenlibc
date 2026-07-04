@@ -22,6 +22,11 @@ criterion = { workspace = true }
 libc = { workspace = true }
 libm = "0.2.16"
 
+[[example]]
+name = "wmemrchr_strict_ab"
+harness = false
+required-features = ["abi-bench"]
+
 [[bench]]
 name = "string_bench"
 harness = false

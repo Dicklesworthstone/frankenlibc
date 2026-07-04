@@ -5542,43 +5542,6 @@ pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -
 // wmemrchr  (GNU extension)
 // ---------------------------------------------------------------------------
 
-/// Index of the LAST `c` in `s[0..n]`, or `None`. Reverse SIMD scan: the top `n % 8`
-/// elements are checked scalar (highest index first), then 8-lane chunks descend and the
-/// highest set lane of the first matching chunk is the answer. Replaces the plain scalar
-/// `(0..n).rev().find` (no SIMD) — measured 2.3-6.8x on full-scan workloads (wmemrchr_simd_ab).
-/// All reads stay within `[0, n)` (bounded buffer; no NUL, no page concern).
-///
-/// # Safety
-/// `s` must be valid for `n` u32 reads.
-#[inline]
-unsafe fn wmemrchr_simd(s: *const u32, c: u32, n: usize) -> Option<usize> {
-    const L: usize = 8;
-    let cv = Simd::<u32, L>::splat(c);
-    let mut i = n;
-    // Top remainder (n not a multiple of 8): highest indices first, so the first match is
-    // the last occurrence.
-    let rem = n % L;
-    for _ in 0..rem {
-        i -= 1;
-        // SAFETY: i < n ⇒ in-bounds.
-        if unsafe { *s.add(i) } == c {
-            return Some(i);
-        }
-    }
-    // 8-lane chunks from high to low; first matching chunk holds the last `c`.
-    while i >= L {
-        i -= L;
-        // SAFETY: [i, i+8) ⊆ [0, n).
-        let v = Simd::<u32, L>::from_slice(unsafe { std::slice::from_raw_parts(s.add(i), L) });
-        let m = v.simd_eq(cv).to_bitmask();
-        if m != 0 {
-            // Highest set lane = last `c` in this chunk.
-            return Some(i + (63 - m.leading_zeros() as usize));
-        }
-    }
-    None
-}
-
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
     if n == 0 || s.is_null() {
@@ -5587,10 +5550,15 @@ pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
 
     // Strict-mode fast path (DEFAULT deployed): strict passthrough has no clamp
     // (`scan_len == n`), byte-identical to the strict body — reverse scan of `n`
-    // elements for the last `c`. Skips the decide + observe membrane tax.
+    // elements for the last `c`. Skips the decide + observe membrane tax, while
+    // reusing the core SIMD reverse scanner instead of a scalar ABI loop.
     if runtime_policy::strict_passthrough_active() {
         return unsafe {
-            wmemrchr_simd(s, c, n).map_or(std::ptr::null_mut(), |i| s.add(i) as *mut u32)
+            let slice = std::slice::from_raw_parts(s, n);
+            match frankenlibc_core::string::wide::wmemrchr(slice, c, n) {
+                Some(i) => s.add(i) as *mut u32,
+                None => std::ptr::null_mut(),
+            }
         };
     }
 
@@ -5628,7 +5596,11 @@ pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
     }
 
     let result = unsafe {
-        wmemrchr_simd(s, c, scan_len).map_or(std::ptr::null_mut(), |i| s.add(i) as *mut u32)
+        let slice = std::slice::from_raw_parts(s, scan_len);
+        match frankenlibc_core::string::wide::wmemrchr(slice, c, scan_len) {
+            Some(i) => s.add(i) as *mut u32,
+            None => std::ptr::null_mut(),
+        }
     };
 
     runtime_policy::observe(

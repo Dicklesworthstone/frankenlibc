@@ -41,6 +41,40 @@ retried and real wins are confirmed with numbers.
   `AGENT_NAME=Codex CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod rch exec -- cargo test --profile release -p frankenlibc-abi --test conformance_diff_malloc_edges -- --nocapture`
   passed 1/1 via local fallback (`malloc_edge_contracts_match_glibc`).
 
+## 2026-07-04 — ✅ wmemrchr ABI strict path LANDED — 3.00x-15.56x vs ORIG scalar ABI loop
+
+- **LANDED CODE WIN (`wchar_abi.rs` / `wmemrchr`):** ORIG used an inline scalar
+  `(0..n).rev().find(...)` ABI loop while the core wide-string implementation
+  already had a SIMD reverse scanner. During rebase, incoming `origin/main` had
+  also landed a local 8-lane ABI helper for the same scalar gap; the resolved
+  commit keeps the central core scanner instead of duplicating the kernel in the
+  ABI crate. Both strict/default and bounded hardened scan bodies now route
+  through `frankenlibc_core::string::wide::wmemrchr(slice, c, scan_len)`.
+  Behavior is index-isomorphic: same bounded slice, same last matching `u32`,
+  same null on miss; only the scan kernel changes. Host glibc has no exported
+  `wmemrchr` symbol on this platform, so this entry is explicitly old-vs-new
+  ORIG evidence, not a host-glibc ratio.
+- **MEASURED POST-REBASE (`rch exec`, worker `vmi1293453`,
+  `AGENT_NAME=cod`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  per-crate short gate `cargo bench --profile release -p frankenlibc-bench
+  --features abi-bench --example wmemrchr_strict_ab`):** in-process A/B asserts
+  ORIG scalar pointer offset == NEW ABI pointer offset before timing. p10 rows:
+  `n=64 absent` **18.86 ns -> 4.47 ns**, new/orig **0.237x** (**4.22x faster**);
+  `n=256 absent` **100.41 ns -> 8.02 ns**, **0.080x** (**12.52x faster**);
+  `n=1024 absent` **361.64 ns -> 23.24 ns**, **0.064x** (**15.56x faster**);
+  `n=4096 absent` **1544.58 ns -> 110.75 ns**, **0.072x** (**13.95x faster**);
+  `n=1024 hit=32` **311.96 ns -> 27.44 ns**, **0.088x** (**11.37x faster**);
+  `n=1024 hit=900` **46.82 ns -> 15.60 ns**, **0.333x** (**3.00x faster**).
+- **CONFORMANCE / BUILD:** core `wmemrchr` filter passed 6/6 via `rch exec`
+  on `ovh-a`; ABI `wmemrchr_finds_last_element` passed 1/1 via `rch exec`
+  local fallback; conformance `correctness_wmemrchr_cases` passed 1/1 via
+  `rch exec` local fallback. New example formatting passed
+  `rustfmt --edition 2024 --check`. Broader `cargo check --profile release
+  -p frankenlibc-abi --all-targets` was attempted twice: remote `ovh-b` hit a
+  worker SIGILL in the `blake3` build script, and local fallback reached a
+  pre-existing release-profile test failure where `stdio_abi_test` imports
+  `IO_2_1_{STDIN,STDOUT,STDERR}` symbols gated behind `debug_assertions`.
+
 ## 2026-07-04 — ✅ render_pct_g dyadic non-integer fast path LANDED — 1.47x vs ORIG Rust `%e` probe
 
 - **LANDED CODE WIN (`ecvt.rs` / `render_pct_g`):** `%g`/`gcvt`/`strfromd("%g")`
