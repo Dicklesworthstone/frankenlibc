@@ -391,7 +391,7 @@ unsafe fn parse_strtol_c_string_fast(
 /// decimals (`3.14159`) hand the already-scanned token to Rust's
 /// correctly-rounded parser without the full core parser's extra NUL scan.
 #[inline]
-unsafe fn parse_strtod_short_decimal_c_string_fast(ptr: *const c_char) -> Option<(f64, usize)> {
+pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(ptr: *const c_char) -> Option<(f64, usize)> {
     const MAX_EXACT_INTEGER: u64 = 1u64 << f64::MANTISSA_DIGITS;
     const MAX_FIXED_SIGNIFICANT_DIGITS: u32 = 15;
 

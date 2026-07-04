@@ -4072,11 +4072,21 @@ pub unsafe extern "C" fn wcstod(
 
     // Bounded scan + zero-alloc projection (see wide_parse_float): O(number), not O(buffer).
     // glibc 2.38+ raises ERANGE on wide float over/underflow — wide_parse_float applies the
-    // same rule strtod uses, over the consumed prefix.
+    // same rule strtod uses, over the consumed prefix. The projected ASCII is NUL-terminated,
+    // so try narrow strtod's short-decimal/exact fast path on it FIRST — it wins exact
+    // scientific/decimal tokens (e.g. "-1.5e10" was 1.71x glibc via the slow strtod_impl,
+    // now parity/win). It only returns for exactly-representable values (never ERANGE, so
+    // erange=false); anything else falls through to the full core parser. Byte-identical:
+    // it is the same fast path narrow strtod uses over the same ASCII bytes.
     let (value, consumed, erange) = unsafe {
         wide_parse_float(
             nptr,
-            frankenlibc_core::stdlib::conversion::strtod_impl,
+            |ascii: &[u8]| match crate::stdlib_abi::parse_strtod_short_decimal_c_string_fast(
+                ascii.as_ptr() as *const std::ffi::c_char,
+            ) {
+                Some((v, c)) => (v, c, false),
+                None => frankenlibc_core::stdlib::conversion::strtod_impl(ascii),
+            },
             crate::stdlib_abi::strtod_result_is_erange,
         )
     };
