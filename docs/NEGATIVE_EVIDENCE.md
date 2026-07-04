@@ -6,6 +6,34 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-04 — ✅ render_pct_g dyadic non-integer fast path LANDED — 1.47x vs ORIG Rust `%e` probe
+
+- **LANDED CODE WIN (`ecvt.rs` / `render_pct_g`):** `%g`/`gcvt`/`strfromd("%g")`
+  already had exact-integer and half-only fixed-output shortcuts, and `%e` had
+  an exact-dyadic scientific shortcut, but non-half exact dyadic `%g` values
+  (`3.125`, `10.75`, `0.03125`, etc.) still paid Rust std `{:.Pe}` flt2dec just
+  to decide fixed vs scientific form and reshape the exponent. Added a guarded
+  Rust-style scientific dyadic builder before the `%g` probe, only when the exact
+  decimal digits fit the requested significant precision with no rounding.
+  Downstream `%g` style switching and trailing-zero stripping remain unchanged;
+  non-dyadic and rounding-needed values still fall through to the existing path.
+- **MEASURED (`rch exec`, worker `hz2`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  exact requested `cargo bench --release -p frankenlibc-bench --example dyadg_iso`
+  was attempted first and Cargo rejected it with `unexpected argument '--release'
+  found`, so the valid per-crate bench form used `cargo bench --profile release -p
+  frankenlibc-bench --example dyadg_iso`):** `dyadg_iso` old/new A/B asserts byte
+  identity. ORIG Rust `.Pg` scientific probe + `%g` reshape **155.0 ns** -> NEW
+  `render_pct_g` dyadic path **105.7 ns**, candidate/original **0.682x**,
+  **1.47x faster**.
+- **CONFORMANCE GREEN:** core unit `render_pct_g_dyadic_values_match_glibc_style`
+  passed 1/1 via `rch exec`; `gcvt_differential_fuzz` passed 200000 comparisons
+  with 0 divergences vs host glibc; `strfromd_differential_fuzz` passed 200000
+  comparisons with 0 divergences vs host glibc. Optional broader
+  `printf_float_differential_fuzz` was not claimed; it was interrupted after a
+  long silent run.
+- **Scope:** exact dyadic non-integer `%g` only; broader non-dyadic dtoa remains
+  a Schubfach/Ryu-sized lever.
+
 ## 2026-07-04 — ✗ lock-free fallback allocation table REJECTED — worsened `calloc/free(16)` to 12.27x vs glibc
 
 - **NO-SHIP (cod):** tried the allocator-metadata/RCU-style lever from the

@@ -486,6 +486,64 @@ fn try_build_dyadic_sci(value: f64, frac: usize) -> Option<String> {
     Some(out)
 }
 
+fn try_build_dyadic_rust_sci(value: f64, frac: usize) -> Option<String> {
+    use core::fmt::Write as _;
+
+    if frac > 19 || !value.is_finite() || value == 0.0 || value.fract() == 0.0 {
+        return None;
+    }
+
+    let decimal_scale = dyadic_decimal_scale(value)?;
+    if decimal_scale > 19 {
+        return None;
+    }
+
+    let binary_scale = f64::from_bits((1023u64 + decimal_scale as u64) << 52);
+    let scaled = value.abs() * binary_scale;
+    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+        return None;
+    }
+    let decimal = (scaled as u128).checked_mul(5u128.pow(decimal_scale as u32))?;
+
+    let mut tmp = [0u8; 40];
+    let mut n = decimal;
+    let mut i = tmp.len();
+    loop {
+        i -= 1;
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    let digits = &tmp[i..];
+    let target_digits = frac + 1;
+    if digits.len() > target_digits {
+        return None;
+    }
+
+    let zero_pad = target_digits - digits.len();
+    let exp = frac as i32 - (decimal_scale + zero_pad) as i32;
+    let mut out = String::with_capacity(usize::from(value.is_sign_negative()) + frac + 8);
+    if value.is_sign_negative() {
+        out.push('-');
+    }
+    out.push(digits[0] as char);
+    if frac > 0 {
+        out.push('.');
+        for &c in &digits[1..] {
+            out.push(c as char);
+        }
+        for _ in 0..zero_pad {
+            out.push('0');
+        }
+    }
+    // Rust's `{:e}` exponent has no plus sign and no leading zero padding.
+    out.push('e');
+    let _ = write!(out, "{exp}");
+    Some(out)
+}
+
 fn render_gcvt(value: f64, ndigit: usize) -> String {
     if value.is_nan() {
         // glibc's `%g` preserves the NaN sign bit: gcvt(-nan) -> "-nan".
@@ -533,6 +591,9 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     // Covers %g integers that `try_gcvt_exact_small_fixed` leaves (scientific-style and
     // >= 2^53). Guarded so no rounding occurs.
     let sci: &str = if try_build_integer_sci(value, frac, &mut sci_heap) {
+        sci_heap.as_str()
+    } else if let Some(dyadic) = try_build_dyadic_rust_sci(value, frac) {
+        sci_heap = dyadic;
         sci_heap.as_str()
     } else if write!(sci_stack, "{value:.frac$e}").is_ok() {
         sci_stack.as_str()
@@ -1027,6 +1088,21 @@ mod tests {
         ];
         for (value, ndigit, expected) in cases {
             assert_eq!(render_pct_e(value, ndigit), expected, "{value} .{ndigit}e");
+        }
+    }
+
+    #[test]
+    fn render_pct_g_dyadic_values_match_glibc_style() {
+        let cases = [
+            (3.125, 6, "3.125"),
+            (10.75, 4, "10.75"),
+            (0.03125, 6, "0.03125"),
+            (0.00003125, 6, "3.125e-05"),
+            (-8.25, 4, "-8.25"),
+            (255.25, 6, "255.25"),
+        ];
+        for (value, ndigit, expected) in cases {
+            assert_eq!(render_pct_g(value, ndigit), expected, "{value} .{ndigit}g");
         }
     }
 
