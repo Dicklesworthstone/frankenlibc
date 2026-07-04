@@ -2784,42 +2784,13 @@ pub unsafe extern "C" fn rand_r(seedp: *mut c_uint) -> c_int {
 /// Caller must ensure `nptr` is a valid null-terminated string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atof(nptr: *const c_char) -> f64 {
-    if nptr.is_null() {
-        return 0.0;
-    }
-
-    // Deployed fast-path (Stdlib always-Allow in non-test; sibling of atoi/atol/strtol):
-    // skip the decide()+observe() membrane — the parse reads the string regardless and
-    // the result is byte-identical to the full path's scan + core::atof.
-    if runtime_policy::stdlib_membrane_fastpath() {
-        let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
-            return 0.0;
-        };
-        let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
-        return frankenlibc_core::stdlib::atof(slice);
-    }
-
-    let (_, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        nptr as usize,
-        0,
-        false,
-        known_remaining(nptr as usize).is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
-        return 0.0;
-    }
-
-    let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
-        return 0.0;
-    };
-    let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
-    let result = frankenlibc_core::stdlib::atof(slice);
-    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, false);
-    result
+    // C `atof(s)` is defined as `strtod(s, NULL)`, and glibc implements it exactly that way
+    // (so it sets ERANGE like strtod). Delegating inherits strtod's single-pass decimal/
+    // integer FAST PATHS — the old `scan_terminated_numeric_string` + `core::atof` took the
+    // slow general path, so atof "0" ran ~2.7x glibc while strtod "0" WINS (strtod_survey).
+    // Byte-identical value (strtod's fast paths == strtod_impl == core::atof) + glibc-matching
+    // errno, and the same membrane fast-path handling strtod already has.
+    unsafe { strtod(nptr, std::ptr::null_mut()) }
 }
 
 /// C `strtod` -- converts string to double with endptr.
