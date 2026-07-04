@@ -324,6 +324,44 @@ unsafe fn wide_copy_n(dst: *mut u32, src: *const u32, count: usize) {
     }
 }
 
+/// Overlap-safe wide move of `count` u32 elements (the C `wmemmove` contract).
+///
+/// Self-contained so it does NOT route through the `memmove` symbol that
+/// `std::ptr::copy` lowers to: in a binary that links frankenlibc, that symbol is
+/// frankenlibc's own SIMD `memmove`, whose backward-overlap path was observed to
+/// mis-copy the tail of an overlapping wide move under some builds (the
+/// `conformance_diff_wcs_copy::wmemmove_overlap` failure; see NEGATIVE_EVIDENCE.md).
+/// Here we pick the copy direction explicitly: a forward copy is safe whenever the
+/// destination is not ahead of the source within the source extent (disjoint, or
+/// dst <= src); otherwise we copy backward element-wise so no element is read after
+/// it has been overwritten. Forward runs use the fast wide SIMD copy; the rarer
+/// backward-overlap case takes a correct scalar loop.
+///
+/// # Safety
+/// `src`/`dst` must be valid for `count` u32 reads/writes; they may overlap.
+#[inline]
+unsafe fn wide_move_n(dst: *mut u32, src: *const u32, count: usize) {
+    if count == 0 {
+        return;
+    }
+    let d = dst as usize;
+    let s = src as usize;
+    // dst strictly ahead of src and within [src, src+count) ⇒ forward would clobber
+    // not-yet-read source elements. Copy backward (high→low) in that case only.
+    if d > s && d < s + count * 4 {
+        let mut k = count;
+        while k > 0 {
+            k -= 1;
+            // SAFETY: k < count; both pointers valid for count elements.
+            unsafe { *dst.add(k) = *src.add(k) };
+        }
+    } else {
+        // Disjoint or dst behind src ⇒ a forward copy never reads an overwritten
+        // element. `wide_copy_n` is forward-only and stays off the memmove symbol.
+        unsafe { wide_copy_n(dst, src, count) };
+    }
+}
+
 /// Returns the length copied (index of the terminating NUL), so `wcpcpy` can return the
 /// end pointer `dst + len` without a second scan.
 ///
@@ -1715,9 +1753,10 @@ pub unsafe extern "C" fn wmemmove(dst: *mut u32, src: *const u32, n: usize) -> *
 
     // Strict-mode fast path (DEFAULT deployed): strict passthrough does not clamp
     // (`copy_len == n`), byte-identical to the strict full path; skips the decide +
-    // observe membrane tax.
+    // observe membrane tax. Uses the self-contained overlap-safe move (NOT std::ptr::copy
+    // → the buggy frankenlibc memmove symbol, see wide_move_n).
     if runtime_policy::strict_passthrough_active() {
-        unsafe { std::ptr::copy(src, dst, n) };
+        unsafe { wide_move_n(dst, src, n) };
         return dst;
     }
 
@@ -1759,8 +1798,10 @@ pub unsafe extern "C" fn wmemmove(dst: *mut u32, src: *const u32, n: usize) -> *
     }
 
     if copy_len > 0 {
+        // Overlap-safe, self-contained (avoids the buggy memmove symbol std::ptr::copy
+        // would call — see wide_move_n).
         unsafe {
-            std::ptr::copy(src, dst, copy_len);
+            wide_move_n(dst, src, copy_len);
         }
     }
 
