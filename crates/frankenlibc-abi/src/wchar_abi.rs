@@ -7416,32 +7416,12 @@ pub unsafe extern "C" fn __wcsftime_l(
     tm: *const c_void,
     _l: *mut c_void,
 ) -> usize {
-    // Convert wide format to narrow, call strftime, then widen result
-    let fmt_narrow = unsafe { wide_to_narrow(format) };
-    let mut buf = vec![0u8; max * 4];
-    let ret = unsafe {
-        crate::time_abi::strftime(
-            buf.as_mut_ptr() as *mut std::ffi::c_char,
-            buf.len(),
-            fmt_narrow.as_ptr() as *const std::ffi::c_char,
-            tm as *const libc::tm,
-        )
-    };
-    if ret == 0 || s.is_null() {
-        return 0;
-    }
-    // Widen the result
-    let narrow = &buf[..ret];
-    let mut i = 0;
-    for &b in narrow {
-        if i >= max - 1 {
-            break;
-        }
-        unsafe { *s.add(i) = b as libc::wchar_t };
-        i += 1;
-    }
-    unsafe { *s.add(i) = 0 };
-    i
+    // Delegate to the optimized C-locale `wcsftime` (stack buffers + ASCII bulk transcode),
+    // exactly like `wcsftime_l` does. The old separate body heap-allocated a `max*4` buffer
+    // per call AND widened the multibyte output byte-by-byte (`b as wchar_t`), which is also
+    // WRONG for any non-ASCII output (wcsftime decodes it with mbtowc). So this is both a
+    // large speedup (it had the pre-fix wcsftime's ~5-32x-glibc overhead) and a correctness fix.
+    unsafe { wcsftime(s, max, format, tm) }
 }
 
 // ===========================================================================
