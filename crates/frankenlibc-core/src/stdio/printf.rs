@@ -1948,16 +1948,40 @@ fn format_g_exp_from_scientific(
     uppercase: bool,
     alt_form: bool,
 ) -> String {
+    use core::fmt::Write as _;
     let e_char = if uppercase { 'E' } else { 'e' };
-    let mut mantissa = mantissa.to_string();
-    if !alt_form {
-        strip_trailing_zeros(&mut mantissa);
-    } else if !mantissa.contains('.') {
-        mantissa.push('.');
-    }
     let sign = if exp < 0 { '-' } else { '+' };
     let abs_exp = exp.unsigned_abs();
-    alloc::format!("{mantissa}{e_char}{sign}{abs_exp:02}")
+    // Build the "<mantissa><e><sign><exp>" string in a single allocation instead of
+    // `mantissa.to_string()` + `strip_trailing_zeros`/dot-fixup + a second `format!`
+    // concat. The mantissa transform is byte-identical to the old in-place one:
+    // non-alt strips the trailing-'0' run (and a bare '.'); alt appends '.' iff absent.
+    let (mbytes, extra_dot) = if !alt_form {
+        let b = mantissa.as_bytes();
+        let mut end = mantissa.len();
+        if b.contains(&b'.') {
+            while end > 0 && b[end - 1] == b'0' {
+                end -= 1;
+            }
+            if end > 0 && b[end - 1] == b'.' {
+                end -= 1;
+            }
+        }
+        (&mantissa[..end], false)
+    } else if !mantissa.as_bytes().contains(&b'.') {
+        (mantissa, true)
+    } else {
+        (mantissa, false)
+    };
+    let mut s = String::with_capacity(mbytes.len() + usize::from(extra_dot) + 6);
+    s.push_str(mbytes);
+    if extra_dot {
+        s.push('.');
+    }
+    s.push(e_char);
+    s.push(sign);
+    let _ = write!(s, "{abs_exp:02}");
+    s
 }
 
 /// `%a` / `%A` formatting: hexadecimal floating-point.
