@@ -1255,7 +1255,13 @@ fn with_ctime_buf<R>(f: impl FnOnce(&mut [u8; ASCTIME_FULL_BUF_BYTES]) -> R) -> 
 /// POSIX `gmtime` — convert time_t to broken-down UTC time (non-reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gmtime(timer: *const i64) -> *mut libc::tm {
-    if timer.is_null() || !tracked_required_object_fits(timer) {
+    // Strict mode (DEFAULT deployed) skips the tracked-object registry lookup — the inner
+    // gmtime_r already performs it (strict-gated), so doing it here too was a redundant
+    // ~8ns tax glibc never pays (gmtime 1.48x -> parity; localtime_survey). Hardened keeps
+    // the check. Mirrors gmtime_r/strftime.
+    if timer.is_null()
+        || (!runtime_policy::strict_passthrough_active() && !tracked_required_object_fits(timer))
+    {
         return std::ptr::null_mut();
     }
     with_gmtime_buf(|buf| {
@@ -1272,7 +1278,11 @@ pub unsafe extern "C" fn gmtime(timer: *const i64) -> *mut libc::tm {
 /// POSIX `localtime` — convert time_t to broken-down local time (non-reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn localtime(timer: *const i64) -> *mut libc::tm {
-    if timer.is_null() || !tracked_required_object_fits(timer) {
+    // Strict mode skips the redundant tracked-object lookup (localtime_r does it,
+    // strict-gated). See gmtime.
+    if timer.is_null()
+        || (!runtime_policy::strict_passthrough_active() && !tracked_required_object_fits(timer))
+    {
         return std::ptr::null_mut();
     }
     with_localtime_buf(|buf| {
