@@ -3695,6 +3695,116 @@ unsafe fn wide_parse_float<T: Copy>(
 /// integer lives in the bounded window; only if the parse consumes the ENTIRE window with no NUL
 /// (it may legitimately extend — 64-digit base-2, long leading-zero/whitespace runs) do we
 /// re-scan unbounded for an exact value+endptr.
+/// Wide value of an ASCII digit `wc` in `base` (10 or 16), or `None`. Non-ASCII (wc >= 0x80)
+/// is never a digit here (glibc's wide int parse only accepts ASCII 0-9/a-f/A-F).
+#[inline]
+fn wide_digit_value(wc: u32, base: c_int) -> Option<u32> {
+    if wc >= 0x80 {
+        return None;
+    }
+    let b = wc as u8;
+    let v = match b {
+        b'0'..=b'9' => (b - b'0') as u32,
+        b'a'..=b'z' => (b - b'a') as u32 + 10,
+        b'A'..=b'Z' => (b - b'A') as u32 + 10,
+        _ => return None,
+    };
+    if v < base as u32 { Some(v) } else { None }
+}
+
+/// SIGNED single-pass wide integer parse for base 10/16 — the wide analog of
+/// `stdlib_abi::parse_strtol_c_string_fast`, replacing the two-pass
+/// `wide_numeric_token_len` + `wcstol_impl` (a pre-scan of the token followed by a re-parse
+/// of the same chars) that made wcstol/wcstoll ~1.4-2.1x slower than glibc's single pass
+/// (wcstol_survey). Byte-identical to `wcstol_impl` for base 10/16 (same whitespace/sign/
+/// 0x-prefix/overflow-cutoff logic, mirrored from the deployed narrow fast path); returns
+/// `None` for any other base so the caller falls back to the full core parser.
+///
+/// # Safety
+/// `nptr` must point to a valid NUL-terminated wide string.
+#[inline]
+unsafe fn parse_wcstol_fast(nptr: *const u32, base: c_int) -> Option<(i64, usize, ConversionStatus)> {
+    if base != 10 && base != 16 {
+        return None;
+    }
+    let mut i = 0usize;
+    // Leading ASCII whitespace (space, \t \n \v \f \r) — matches wcstol_impl's wide_is_space.
+    loop {
+        let c = unsafe { *nptr.add(i) };
+        if matches!(c, 0x09..=0x0d | 0x20) {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    let mut c = unsafe { *nptr.add(i) };
+    let negative = if c == b'-' as u32 {
+        i += 1;
+        c = unsafe { *nptr.add(i) };
+        true
+    } else if c == b'+' as u32 {
+        i += 1;
+        c = unsafe { *nptr.add(i) };
+        false
+    } else {
+        false
+    };
+    let radix = base as u64;
+    // Optional 0x/0X prefix for base 16 (only when a hex digit follows).
+    if base == 16 && c == b'0' as u32 {
+        let n = unsafe { *nptr.add(i + 1) };
+        if n == b'x' as u32 || n == b'X' as u32 {
+            let after = unsafe { *nptr.add(i + 2) };
+            if wide_digit_value(after, 16).is_some() {
+                i += 2;
+                c = after;
+            }
+        }
+    }
+    let limit = if negative {
+        (i64::MAX as u64) + 1
+    } else {
+        i64::MAX as u64
+    };
+    let cutoff = limit / radix;
+    let cutlim = limit % radix;
+    let mut acc = 0u64;
+    let mut any_digits = false;
+    let mut overflow = false;
+    while let Some(digit) = wide_digit_value(c, base) {
+        any_digits = true;
+        if !overflow {
+            if acc > cutoff || (acc == cutoff && digit as u64 > cutlim) {
+                overflow = true;
+            } else {
+                acc = acc * radix + digit as u64;
+            }
+        }
+        i += 1;
+        c = unsafe { *nptr.add(i) };
+    }
+    if !any_digits {
+        return Some((0, 0, ConversionStatus::Success));
+    }
+    if overflow {
+        return Some(if negative {
+            (i64::MIN, i, ConversionStatus::Underflow)
+        } else {
+            (i64::MAX, i, ConversionStatus::Overflow)
+        });
+    }
+    let value = if negative {
+        if acc == limit {
+            i64::MIN
+        } else {
+            -(acc as i64)
+        }
+    } else {
+        acc as i64
+    };
+    Some((value, i, ConversionStatus::Success))
+}
+
 unsafe fn wide_parse_int<T: Copy>(
     nptr: *const libc::wchar_t,
     base: c_int,
@@ -3731,9 +3841,13 @@ pub unsafe extern "C" fn wcstol(
         return 0;
     }
 
-    // Bounded scan (see wide_parse_int): O(number), not O(buffer).
+    // Single-pass fast path for base 10/16 (parse_wcstol_fast); the two-pass
+    // wide_numeric_token_len + wcstol_impl fallback handles base 0 and other bases.
     let (value, consumed, status) = unsafe {
-        wide_parse_int(nptr, base, frankenlibc_core::stdlib::conversion::wcstol_impl)
+        match parse_wcstol_fast(nptr as *const u32, base) {
+            Some(r) => r,
+            None => wide_parse_int(nptr, base, frankenlibc_core::stdlib::conversion::wcstol_impl),
+        }
     };
 
     // glibc leaves *endptr untouched on an invalid base (it validates the base
