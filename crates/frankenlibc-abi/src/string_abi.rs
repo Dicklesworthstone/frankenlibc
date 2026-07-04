@@ -1384,7 +1384,6 @@ unsafe fn raw_lane_memcmp_bytes(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn memcmp_avx2(s1: *const u8, s2: *const u8, n: usize) -> c_int {
-    use std::arch::x86_64::*;
     // SAFETY: AVX2 enabled on this fn; every load stays within `[0, n)` (caller
     // guarantees `n` readable bytes and every offset below is `<= n - 32`).
     unsafe {
@@ -1407,35 +1406,45 @@ unsafe fn memcmp_avx2(s1: *const u8, s2: *const u8, n: usize) -> c_int {
             }
         }
         let mut i = 0usize;
-        // 128-byte unrolled main loop: AND the four eq-masks so the common all-equal
-        // case pays a single branch per 128 bytes (like glibc's unrolled loop).
-        while i + 128 <= n {
-            let a0 = _mm256_loadu_si256(s1.add(i).cast());
-            let b0 = _mm256_loadu_si256(s2.add(i).cast());
-            let a1 = _mm256_loadu_si256(s1.add(i + 32).cast());
-            let b1 = _mm256_loadu_si256(s2.add(i + 32).cast());
-            let a2 = _mm256_loadu_si256(s1.add(i + 64).cast());
-            let b2 = _mm256_loadu_si256(s2.add(i + 64).cast());
-            let a3 = _mm256_loadu_si256(s1.add(i + 96).cast());
-            let b3 = _mm256_loadu_si256(s2.add(i + 96).cast());
-            let e0 = _mm256_cmpeq_epi8(a0, b0);
-            let e1 = _mm256_cmpeq_epi8(a1, b1);
-            let e2 = _mm256_cmpeq_epi8(a2, b2);
-            let e3 = _mm256_cmpeq_epi8(a3, b3);
-            let all = _mm256_and_si256(_mm256_and_si256(e0, e1), _mm256_and_si256(e2, e3));
-            if _mm256_movemask_epi8(all) as u32 != 0xFFFF_FFFF {
-                // A diff is in one of the four blocks — re-probe each to locate it.
-                let mut k = 0usize;
-                while k < 4 {
-                    let off = i + k * 32;
-                    let m = block_mask(s1, s2, off);
-                    if m != 0xFFFF_FFFF {
-                        return diff_at(s1, s2, off + (!m).trailing_zeros() as usize);
-                    }
-                    k += 1;
-                }
-            }
-            i += 128;
+        // 128-byte all-equal throughput loop. glibc's AVX2 memcmp folds the
+        // second load into `vpcmpeqb ymm, ymm, [mem]`; the intrinsic form above
+        // forced 8 explicit loads per 128B. The asm only advances over proven
+        // equal chunks. On the first differing chunk, `i` still points at that
+        // chunk and the unchanged 32B block path below locates the exact byte.
+        if i + 128 <= n {
+            core::arch::asm!(
+                "2:",
+                "vmovdqu ymm0, [{s1}+{i}]",
+                "vpcmpeqb ymm0, ymm0, [{s2}+{i}]",
+                "vmovdqu ymm1, [{s1}+{i}+32]",
+                "vpcmpeqb ymm1, ymm1, [{s2}+{i}+32]",
+                "vmovdqu ymm2, [{s1}+{i}+64]",
+                "vpcmpeqb ymm2, ymm2, [{s2}+{i}+64]",
+                "vmovdqu ymm3, [{s1}+{i}+96]",
+                "vpcmpeqb ymm3, ymm3, [{s2}+{i}+96]",
+                "vpand ymm0, ymm0, ymm1",
+                "vpand ymm2, ymm2, ymm3",
+                "vpand ymm0, ymm0, ymm2",
+                "vpmovmskb {tmp:e}, ymm0",
+                "cmp {tmp:e}, -1",
+                "jne 3f",
+                "add {i}, 128",
+                "lea {tmp}, [{i}+128]",
+                "cmp {tmp}, {n}",
+                "jbe 2b",
+                "3:",
+                "vzeroupper",
+                s1 = in(reg) s1,
+                s2 = in(reg) s2,
+                n = in(reg) n,
+                i = inout(reg) i,
+                tmp = out(reg) _,
+                out("ymm0") _,
+                out("ymm1") _,
+                out("ymm2") _,
+                out("ymm3") _,
+                options(nostack, readonly),
+            );
         }
         while i + 32 <= n {
             let m = block_mask(s1, s2, i);

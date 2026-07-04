@@ -11972,3 +11972,34 @@ Conformance stayed green (`rch exec -- cargo test -p frankenlibc-abi --test conf
 ## 2026-07-03 (BlackThrush) — SURFACE: stdio write path NO LONGER the big gap (fputs 6-12x → 1.45x; fwrite parity)
 Re-profiled the stdio write path (fputs_ab, fl vs glibc dlmopen, each fopen'ing /dev/null full-buffered, 12-byte writes). The memory's "fputs 6-12x slower, global-registry-lock-bound (bd-hqo6b6)" is STALE: the single-threaded inline fast path (`write_cache_lookup_by_stream` → `fast_write`, thread-local stream-keyed cache, ST-gated, skips the registry lock/membrane/HashMap) has ALREADY closed most of it. Current: **fputs 1.45x (17.4 vs 12.0ns), fwrite 0.995x PARITY.** So the registry-lock write gap is effectively fixed.
 Residual fputs 1.45x is NOT a clean lever: fwrite (which receives the length) is parity, so the delta is exactly fputs's extra `scan_c_str_len` (a full strlen pass — glibc fputs does the same, but fl's SHORT-string strlen loses to glibc's ifunc aligned-load-head-mask asm, a documented fundamental floor) + the fast-path's 2 Acquire atomics (ST + REGISTRY_GEN gate, both needed for soundness) + 4 flag writes. A fused scan-and-copy (skip the separate strlen) would need to expose the stream's buffer tail/room to the ABI layer (invasive core change) for a ~a-few-ns short-string gain — not worth it. fputs is micro-overhead + strlen-floor bound, same class as the compare family. Reproducer: fputs_ab. CONCLUSION: with copy/set (crossover+overlap) and parse (quadratic) veins shipped, the remaining primitive/stdio gaps are all 1.4-2x and HARD (integrated-asm-kernel for memcmp, short-string-strlen floor for fputs, per-call membrane floor for small-n) — no clean radical lever left on the profiled surface.
+
+## 2026-07-04 (BlackThrush) — WIN: memcmp AVX2 fused compare-memory loop closes the large equal-buffer gap
+This retests the fused compare-memory loop after the earlier no-ship and non-repro notes above. Those notes remain valid
+for cross-worker/non-pinned evidence and for the residual small/unaligned surface. The landed claim is narrower and has a
+same-worker before/after: keep the existing 128B all-equal loop shape, but replace the intrinsic form that materialized
+eight explicit loads per 128B with inline asm that folds the second operand into `vpcmpeqb ymm, ymm, [mem]`. The loop
+advances only over proven-equal 128B panels and falls back to the existing 32B resolver on the first differing panel. No
+scalar head-peel was shipped.
+
+Same-worker proof on `hz1`, crate-scoped through `rch`, with
+`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc/blackthrush-memcmp-{baseline,candidate}`. The before/after
+timing loop used `cargo run --release -p frankenlibc-bench --features abi-bench --example memcmp_ab` because the original
+worktree had not registered the example with `harness=false`. This commit registers it, and the final candidate was also
+run through `rch exec -- cargo bench --profile release -p frankenlibc-bench --features abi-bench --example memcmp_ab`
+on `ovh-a`: 4940 sign checks passed; candidate/glibc was 1.047x at 4K, 1.010x at 16K, 1.004x at 64K.
+
+| n | original fl ns | candidate fl ns | fl speedup | candidate/glibc |
+|---:|---:|---:|---:|---:|
+| 16 | 4.4 | 4.7 | 0.94x | 1.668x loss |
+| 64 | 6.0 | 5.7 | 1.05x | 1.802x loss |
+| 256 | 7.5 | 6.9 | 1.09x | 2.003x loss |
+| 1024 | 17.8 | 14.4 | 1.24x | 1.276x loss |
+| 4096 | 67.4 | 44.9 | 1.50x | 1.052x parity |
+| 16384 | 277.8 | 182.2 | 1.52x | 1.026x parity |
+| 65536 | 1330.1 | 1301.9 | 1.02x | 1.001x parity |
+
+Correctness gate in the same probe: **4940 sign checks fl==glibc** across
+n={1,31,32,33,64,127,128,129,160,255,256,300,384,512}, align={0,1,7,15,31}, equal and
+differing bytes. The win is real for the measured large equal-buffer workload (4K/16K: ~1.5x faster
+than the original, now parity vs glibc). Residual: <=1K remains floor-bound; do not chase intrinsic
+reshuffles there without an ABI-floor reduction.
