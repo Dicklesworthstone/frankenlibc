@@ -5427,6 +5427,105 @@ unsafe fn try_wcsftime_numeric_fast(
     Some(out_len)
 }
 
+#[inline]
+unsafe fn write_wide_ascii(s: *mut libc::wchar_t, maxsize: usize, bytes: &[u8]) -> usize {
+    if maxsize <= bytes.len() {
+        return 0;
+    }
+    for (idx, &byte) in bytes.iter().enumerate() {
+        // SAFETY: `maxsize > bytes.len()`, so all chars and the terminator fit.
+        unsafe { *s.add(idx) = byte as libc::wchar_t };
+    }
+    // SAFETY: see loop safety above.
+    unsafe { *s.add(bytes.len()) = 0 };
+    bytes.len()
+}
+
+unsafe fn try_wcsftime_name_fast(
+    s: *mut libc::wchar_t,
+    maxsize: usize,
+    format: &[u32],
+    tm: *const libc::tm,
+) -> Option<usize> {
+    const WDAY_ABBR: [&[u8]; 7] = [b"Sun", b"Mon", b"Tue", b"Wed", b"Thu", b"Fri", b"Sat"];
+    const WDAY_FULL: [&[u8]; 7] = [
+        b"Sunday",
+        b"Monday",
+        b"Tuesday",
+        b"Wednesday",
+        b"Thursday",
+        b"Friday",
+        b"Saturday",
+    ];
+    const MON_ABBR: [&[u8]; 12] = [
+        b"Jan", b"Feb", b"Mar", b"Apr", b"May", b"Jun", b"Jul", b"Aug", b"Sep", b"Oct", b"Nov",
+        b"Dec",
+    ];
+    const MON_FULL: [&[u8]; 12] = [
+        b"January",
+        b"February",
+        b"March",
+        b"April",
+        b"May",
+        b"June",
+        b"July",
+        b"August",
+        b"September",
+        b"October",
+        b"November",
+        b"December",
+    ];
+
+    let mode = if wide_ascii_eq(format, b"%A") {
+        b'A'
+    } else if wide_ascii_eq(format, b"%a") {
+        b'a'
+    } else if wide_ascii_eq(format, b"%B") {
+        b'B'
+    } else if wide_ascii_eq(format, b"%b") || wide_ascii_eq(format, b"%h") {
+        b'b'
+    } else {
+        return None;
+    };
+
+    // SAFETY: caller already checked `tm` is non-null; exact C-locale name
+    // formats only need the scalar weekday/month fields below.
+    let tm = unsafe { &*tm };
+    let bytes: &[u8] = match mode {
+        b'A' => {
+            if (0..=6).contains(&tm.tm_wday) {
+                WDAY_FULL[tm.tm_wday as usize]
+            } else {
+                b"?"
+            }
+        }
+        b'a' => {
+            if (0..=6).contains(&tm.tm_wday) {
+                WDAY_ABBR[tm.tm_wday as usize]
+            } else {
+                b"?"
+            }
+        }
+        b'B' => {
+            if (0..=11).contains(&tm.tm_mon) {
+                MON_FULL[tm.tm_mon as usize]
+            } else {
+                b"?"
+            }
+        }
+        b'b' => {
+            if (0..=11).contains(&tm.tm_mon) {
+                MON_ABBR[tm.tm_mon as usize]
+            } else {
+                b"?"
+            }
+        }
+        _ => unreachable!(),
+    };
+
+    Some(unsafe { write_wide_ascii(s, maxsize, bytes) })
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstold(
     nptr: *const libc::wchar_t,
@@ -5464,6 +5563,11 @@ pub unsafe extern "C" fn wcsftime(
         // SAFETY: fmt_len < maxsize.
         unsafe { *s.add(fmt_len) = 0 };
         return fmt_len;
+    }
+
+    if let Some(n) = unsafe { try_wcsftime_name_fast(s, maxsize, fmt_slice, tm as *const libc::tm) }
+    {
+        return n;
     }
 
     if let Some(n) =

@@ -6,6 +6,33 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-04 — ✅ wcsftime exact name formats LANDED — 53.42x vs ORIG heap transcode, 1.38x vs glibc
+
+- **LANDED CODE WIN (Codex, `wchar_abi.rs` / `wcsftime`):** the prior direct
+  wide fast paths covered literal formats and numeric C-locale formats, but
+  exact weekday/month name directives such as `%A` still paid wide->multibyte
+  format projection, narrow `strftime`, and multibyte->wide output decoding.
+  Added a bounded exact-format emitter for `%A`, `%a`, `%B`, `%b`, and `%h`.
+  It reads only `tm_wday` / `tm_mon`, preserves the malformed-field `?`
+  behavior used by the core `strftime` path, writes ASCII C-locale names as
+  wide chars plus NUL, and falls back for flags, width, locale modifiers,
+  composites, zones, and mixed literal/directive formats.
+- **BASELINE ROUTING (`rch exec`, worker `ovh-a`, current main before edit,
+  `AGENT_NAME=Codex`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  per-crate command `cargo bench --profile release -p frankenlibc-bench
+  --features abi-bench --example wcsftime_ab`):** `%A` measured ORIG heap
+  transcode **325.31 ns**, current new path **207.57 ns**, host glibc
+  **10.01 ns**; current/glibc **20.737x LOSS**.
+- **MEASURED OLD/NEW/GLIBC (`rch exec`, worker `vmi1149989`, same command after
+  the exact-name fast path):** the in-process A/B harness asserts ORIG/new/glibc
+  wide output equality before timing. `%A` measured ORIG heap transcode
+  **380.88 ns** -> NEW exact-name path **7.13 ns**, new/orig **0.019x**
+  (**53.42x faster**); host glibc **9.81 ns**, so new/glibc **0.727x**
+  (**1.38x faster**).
+- **CONFORMANCE GREEN (`rch exec`, worker `ovh-a`):**
+  `AGENT_NAME=Codex CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod rch exec -- cargo test --profile release -p frankenlibc-abi --test conformance_diff_wcsftime -- --nocapture`
+  passed **11/11** with zero divergences.
+
 ## 2026-07-04 — ✅ wcsftime no-directive direct wide copy LANDED — 53.66x vs ORIG heap transcode path
 
 - **LANDED CODE WIN (`wchar_abi.rs` / `wcsftime`):** current main already had
