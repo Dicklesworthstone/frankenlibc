@@ -14,10 +14,13 @@ use std::ffi::{c_char, c_void};
 use std::hint::black_box;
 use std::sync::OnceLock;
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use frankenlibc_abi::time_abi as fl;
+use criterion::{Criterion, criterion_group, criterion_main};
+use frankenlibc_abi::{time_abi as fl, wchar_abi as fl_wchar};
+use frankenlibc_core::string::wchar as wchar_core;
 
 type StrftimeFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, *const libc::tm) -> usize;
+type WcsftimeFn =
+    unsafe extern "C" fn(*mut libc::wchar_t, usize, *const libc::wchar_t, *const libc::tm) -> usize;
 
 /// Host glibc `strftime` via dlmopen so frankenlibc's exported `strftime` cannot
 /// shadow the baseline.
@@ -35,6 +38,86 @@ fn host_strftime() -> StrftimeFn {
         sym as usize
     });
     unsafe { std::mem::transmute::<*mut c_void, StrftimeFn>(addr as *mut c_void) }
+}
+
+/// Host glibc `wcsftime` via dlmopen so frankenlibc's exported symbol cannot
+/// shadow the baseline.
+fn host_wcsftime() -> WcsftimeFn {
+    static H: OnceLock<usize> = OnceLock::new();
+    let addr = *H.get_or_init(|| unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(!handle.is_null(), "dlmopen libc.so.6 failed");
+        let sym = libc::dlsym(handle, b"wcsftime\0".as_ptr().cast());
+        assert!(!sym.is_null(), "dlsym wcsftime failed");
+        sym as usize
+    });
+    unsafe { std::mem::transmute::<*mut c_void, WcsftimeFn>(addr as *mut c_void) }
+}
+
+fn wide_cstr(s: &str) -> Vec<libc::wchar_t> {
+    let mut out: Vec<libc::wchar_t> = s.chars().map(|ch| ch as libc::wchar_t).collect();
+    out.push(0);
+    out
+}
+
+unsafe fn orig_wcsftime_transcode(
+    s: *mut libc::wchar_t,
+    maxsize: usize,
+    format: *const libc::wchar_t,
+    tm: *const libc::tm,
+) -> usize {
+    if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
+        return 0;
+    }
+
+    let mut fmt_len = 0usize;
+    while unsafe { *format.add(fmt_len) } != 0 {
+        fmt_len += 1;
+    }
+    let fmt_slice = unsafe { std::slice::from_raw_parts(format as *const u32, fmt_len) };
+
+    let mut fmt_mb = Vec::with_capacity(fmt_len.saturating_mul(6).saturating_add(1));
+    for &wc in fmt_slice {
+        let mut tmp = [0u8; 6];
+        let Some(n) = wchar_core::wctomb(wc, &mut tmp) else {
+            return 0;
+        };
+        fmt_mb.extend_from_slice(&tmp[..n]);
+    }
+    fmt_mb.push(0);
+
+    let mut out_mb = vec![0u8; maxsize.saturating_mul(6).max(1)];
+    let out_len = unsafe {
+        fl::strftime(
+            out_mb.as_mut_ptr() as *mut c_char,
+            out_mb.len(),
+            fmt_mb.as_ptr() as *const c_char,
+            tm,
+        )
+    };
+    if out_len == 0 {
+        return 0;
+    }
+
+    let mut mb_i = 0usize;
+    let mut wide_i = 0usize;
+    while mb_i < out_len {
+        if wide_i.saturating_add(1) >= maxsize {
+            return 0;
+        }
+        let Some((wc, used)) = wchar_core::mbtowc(&out_mb[mb_i..out_len]) else {
+            return 0;
+        };
+        unsafe { *s.add(wide_i) = wc as libc::wchar_t };
+        wide_i += 1;
+        mb_i += used;
+    }
+    unsafe { *s.add(wide_i) = 0 };
+    wide_i
 }
 
 fn make_tm() -> libc::tm {
@@ -56,8 +139,10 @@ fn make_tm() -> libc::tm {
 fn bench(c: &mut Criterion) {
     let fmt = c"%Y-%m-%d %H:%M:%S";
     let fmt_hms = c"%H:%M:%S";
+    let wfmt = wide_cstr("%Y-%m-%d %H:%M:%S");
     let tm = make_tm();
     let host = host_strftime();
+    let host_wide = host_wcsftime();
 
     // Sanity: both produce the same output for this numeric format.
     {
@@ -76,12 +161,40 @@ fn bench(c: &mut Criterion) {
         assert_eq!(na, nb, "strftime %H:%M:%S length mismatch fl vs glibc");
         assert_eq!(a, b, "strftime %H:%M:%S bytes mismatch fl vs glibc");
     }
+    {
+        let mut a = [0 as libc::wchar_t; 64];
+        let mut b = [0 as libc::wchar_t; 64];
+        let mut o = [0 as libc::wchar_t; 64];
+        let na = unsafe {
+            fl_wchar::wcsftime(
+                a.as_mut_ptr(),
+                a.len(),
+                wfmt.as_ptr(),
+                &tm as *const libc::tm as *const c_void,
+            )
+        };
+        let no = unsafe { orig_wcsftime_transcode(o.as_mut_ptr(), o.len(), wfmt.as_ptr(), &tm) };
+        let nb = unsafe { host_wide(b.as_mut_ptr(), b.len(), wfmt.as_ptr(), &tm) };
+        assert_eq!(na, nb, "wcsftime length mismatch fl vs glibc");
+        assert_eq!(no, nb, "orig wcsftime length mismatch vs glibc");
+        assert_eq!(
+            &a[..=na],
+            &b[..=nb],
+            "wcsftime wide bytes mismatch fl vs glibc"
+        );
+        assert_eq!(
+            &o[..=no],
+            &b[..=nb],
+            "orig wcsftime wide bytes mismatch vs glibc"
+        );
+    }
 
     let mut group = c.benchmark_group("strftime_numeric_19");
     group.bench_function("frankenlibc_abi", |bencher| {
         bencher.iter(|| {
             let mut buf = [0i8; 64];
-            let n = unsafe { fl::strftime(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), black_box(&tm)) };
+            let n =
+                unsafe { fl::strftime(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), black_box(&tm)) };
             black_box((n, buf[0]));
         });
     });
@@ -120,6 +233,40 @@ fn bench(c: &mut Criterion) {
                     black_box(&tm),
                 )
             };
+            black_box((n, buf[0]));
+        });
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("wcsftime_wide_numeric_19");
+    group.bench_function("orig_transcode", |bencher| {
+        bencher.iter(|| {
+            let mut buf = [0 as libc::wchar_t; 64];
+            let n = unsafe {
+                orig_wcsftime_transcode(buf.as_mut_ptr(), buf.len(), wfmt.as_ptr(), black_box(&tm))
+            };
+            black_box((n, buf[0]));
+        });
+    });
+    group.bench_function("frankenlibc_abi", |bencher| {
+        bencher.iter(|| {
+            let mut buf = [0 as libc::wchar_t; 64];
+            let n = unsafe {
+                fl_wchar::wcsftime(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    wfmt.as_ptr(),
+                    black_box(&tm) as *const libc::tm as *const c_void,
+                )
+            };
+            black_box((n, buf[0]));
+        });
+    });
+    group.bench_function("host_glibc", |bencher| {
+        bencher.iter(|| {
+            let mut buf = [0 as libc::wchar_t; 64];
+            let n =
+                unsafe { host_wide(buf.as_mut_ptr(), buf.len(), wfmt.as_ptr(), black_box(&tm)) };
             black_box((n, buf[0]));
         });
     });

@@ -44,6 +44,39 @@ retried and real wins are confirmed with numbers.
   **1.729 ns -> 2.156 ns** (**1.25x slower**). Do not retry that branch-first
   towcase variant.
 
+## 2026-07-04 — ✅ wcsftime direct wide numeric path LANDED — 15.00x vs ORIG transcode, 3.30x vs glibc
+
+- **LANDED CODE WIN (Codex, `wchar_abi.rs` / `wcsftime`):** ORIG `wcsftime`
+  converted the wide format to a multibyte heap `Vec`, called narrow
+  `strftime`, allocated another `Vec` for the multibyte output, then decoded the
+  output back to wide chars. Added a bounded direct wide emitter for exact
+  C-locale numeric formats `%Y-%m-%d %H:%M:%S`, `%Y-%m-%d`, `%H:%M:%S`, and
+  `%H:%M`. It reads only scalar `tm` fields, validates the same normalized
+  ranges as the narrow fast paths, writes the wide result and NUL terminator
+  directly, and falls back to the existing stack-buffer transcode path for
+  non-matching formats, out-of-range years/fields, locale/name/zone directives,
+  and too-small buffers.
+- **COMMAND NOTE:** the requested exact form
+  `AGENT_NAME=Codex CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod rch exec -- cargo bench --release -p frankenlibc-bench --features abi-bench --bench strftime_glibc_bench -- 'wcsftime_wide_numeric_19/(frankenlibc_abi|host_glibc)' --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`
+  was attempted first and Cargo rejected `--release`; valid per-crate evidence
+  used `cargo bench --profile release -p frankenlibc-bench --features abi-bench
+  --bench strftime_glibc_bench -- 'wcsftime_wide_numeric_19/(orig_transcode|frankenlibc_abi|host_glibc)'
+  --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`.
+- **MEASURED BASELINE (`rch exec`, worker `vmi1227854`, original source plus the
+  new benchmark harness only):** original FL `wcsftime("%Y-%m-%d %H:%M:%S")`
+  measured **375.99 ns**, host glibc **78.109 ns**, fl/glibc **4.81x LOSS**.
+- **MEASURED OLD/NEW/GLIBC (`rch exec`, worker `vmi1264463`, after rebasing
+  over the stack-buffer fallback):** benchmark sanity asserts ORIG/new/glibc
+  wide output equality before timing. ORIG transcode **817.42 ns** -> NEW direct
+  wide path **54.484 ns**, new/orig **0.0667x** (**15.00x faster**); host glibc
+  **179.84 ns**, so new/glibc **0.303x** (**3.30x faster**). A pre-rebase local
+  fallback run in the same `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`
+  also measured ORIG transcode **350.87 ns** -> NEW **19.779 ns**
+  (**17.73x faster**) with host glibc **71.684 ns**.
+- **CONFORMANCE GREEN (`rch exec`, worker `ovh-a`, final post-resolution tree):**
+  `AGENT_NAME=Codex CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod rch exec -- cargo test --profile release -p frankenlibc-abi --test conformance_diff_wcsftime -- --nocapture`
+  passed **11/11** with zero divergences.
+
 ## 2026-07-04 — ✗ cached tombstone reinsertion REJECTED — local same-target `calloc/free(16)` regressed 1.84x vs ORIG
 
 - **NO-SHIP (Codex):** tested a deeper follow-up to the prior fallback-cache clear

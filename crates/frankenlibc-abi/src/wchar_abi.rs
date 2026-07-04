@@ -5315,6 +5315,118 @@ pub unsafe extern "C" fn wcstof(
     value
 }
 
+#[inline]
+fn wide_ascii_eq(wide: &[u32], ascii: &[u8]) -> bool {
+    wide.len() == ascii.len()
+        && wide
+            .iter()
+            .zip(ascii.iter())
+            .all(|(&wc, &byte)| wc == u32::from(byte))
+}
+
+unsafe fn try_wcsftime_numeric_fast(
+    s: *mut libc::wchar_t,
+    maxsize: usize,
+    format: &[u32],
+    tm: *const libc::tm,
+) -> Option<usize> {
+    const YMD_HMS: u8 = 0;
+    const HMS: u8 = 1;
+    const HM: u8 = 2;
+    const YMD: u8 = 3;
+
+    let mode = if wide_ascii_eq(format, b"%Y-%m-%d %H:%M:%S") {
+        YMD_HMS
+    } else if wide_ascii_eq(format, b"%H:%M:%S") {
+        HMS
+    } else if wide_ascii_eq(format, b"%H:%M") {
+        HM
+    } else if wide_ascii_eq(format, b"%Y-%m-%d") {
+        YMD
+    } else {
+        return None;
+    };
+
+    // SAFETY: caller already checked `tm` is non-null; these exact numeric
+    // formats only need the scalar fields below and do not read tm_zone.
+    let tm = unsafe { &*tm };
+    let year = i64::from(tm.tm_year) + 1900;
+    let needs_date = matches!(mode, YMD_HMS | YMD);
+    let needs_time = matches!(mode, YMD_HMS | HMS | HM);
+    if needs_date
+        && (!(1000..=9999).contains(&year)
+            || !(0..=11).contains(&tm.tm_mon)
+            || !(1..=31).contains(&tm.tm_mday))
+    {
+        return None;
+    }
+    if needs_time
+        && (!(0..=23).contains(&tm.tm_hour)
+            || !(0..=59).contains(&tm.tm_min)
+            || (mode != HM && !(0..=60).contains(&tm.tm_sec)))
+    {
+        return None;
+    }
+
+    let out_len = match mode {
+        YMD_HMS => 19,
+        HMS => 8,
+        HM => 5,
+        YMD => 10,
+        _ => unreachable!(),
+    };
+    if maxsize <= out_len {
+        return Some(0);
+    }
+
+    let mut out = [0u8; 19];
+    let mut pos = 0usize;
+    if needs_date {
+        let year = year as u32;
+        out[pos] = b'0' + ((year / 1000) % 10) as u8;
+        out[pos + 1] = b'0' + ((year / 100) % 10) as u8;
+        out[pos + 2] = b'0' + ((year / 10) % 10) as u8;
+        out[pos + 3] = b'0' + (year % 10) as u8;
+        out[pos + 4] = b'-';
+        let month = (tm.tm_mon + 1) as u32;
+        out[pos + 5] = b'0' + (month / 10) as u8;
+        out[pos + 6] = b'0' + (month % 10) as u8;
+        out[pos + 7] = b'-';
+        let day = tm.tm_mday as u32;
+        out[pos + 8] = b'0' + (day / 10) as u8;
+        out[pos + 9] = b'0' + (day % 10) as u8;
+        pos += 10;
+        if mode == YMD_HMS {
+            out[pos] = b' ';
+            pos += 1;
+        }
+    }
+    if needs_time {
+        let hour = tm.tm_hour as u32;
+        out[pos] = b'0' + (hour / 10) as u8;
+        out[pos + 1] = b'0' + (hour % 10) as u8;
+        out[pos + 2] = b':';
+        let minute = tm.tm_min as u32;
+        out[pos + 3] = b'0' + (minute / 10) as u8;
+        out[pos + 4] = b'0' + (minute % 10) as u8;
+        if mode != HM {
+            out[pos + 5] = b':';
+            let second = tm.tm_sec as u32;
+            out[pos + 6] = b'0' + (second / 10) as u8;
+            out[pos + 7] = b'0' + (second % 10) as u8;
+        }
+    }
+
+    for (idx, &byte) in out[..out_len].iter().enumerate() {
+        // SAFETY: `maxsize > out_len`, so all output chars and the terminator
+        // fit in the caller-provided wide buffer.
+        unsafe { *s.add(idx) = byte as libc::wchar_t };
+    }
+    // SAFETY: see loop safety above.
+    unsafe { *s.add(out_len) = 0 };
+    Some(out_len)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstold(
     nptr: *const libc::wchar_t,
@@ -5352,6 +5464,12 @@ pub unsafe extern "C" fn wcsftime(
         // SAFETY: fmt_len < maxsize.
         unsafe { *s.add(fmt_len) = 0 };
         return fmt_len;
+    }
+
+    if let Some(n) =
+        unsafe { try_wcsftime_numeric_fast(s, maxsize, fmt_slice, tm as *const libc::tm) }
+    {
+        return n;
     }
 
     // Transcode the wide format to a multibyte C-string. Stack buffer for the
