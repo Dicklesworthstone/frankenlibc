@@ -6,6 +6,42 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-04 — CURRENT FRONTIER CHECK: no unmerged measured win; allocator still 5.20x vs glibc; stdio-MT comparator blocked
+
+- **SCRATCH / WORKTREE AUDIT:** the only live worktree head not contained in `main`
+  was `/data/projects/frankenlibc-bd381-candidate` at `9100a17d0`
+  (`wip: bd-2g7oyh.381 packed malloc hot cache`). It is one commit ahead of the old
+  `7860c0615` June base and ~1800 commits behind current `main`; it has no
+  `docs/NEGATIVE_EVIDENCE.md` ledger entry or current-main proof bundle. Current
+  `main` already has the later allocator hot-slot/lazy-accounting paths, so this is
+  **not a landable measured win**; treat it only as stale idea evidence.
+- **COMMAND NOTE:** the requested `cargo bench --release` form was attempted through
+  `rch exec` and Cargo rejected it (`unexpected argument '--release' found`). Usable
+  evidence below used Cargo's release bench profile form while preserving the required
+  per-crate `-p frankenlibc-bench` scope and
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod`.
+- **MEASURED CURRENT ALLOCATOR GAP (`rch exec`, local fallback because the worker pool
+  reported `critical_pressure=1,insufficient_slots=11`):**
+  `AGENT_NAME=Codex CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod rch exec -- cargo bench --profile release -p frankenlibc-bench --features abi-bench --bench calloc_glibc_bench -- 'calloc_cycle/(fl|fl_native|glibc)/16' --noplot --sample-size 20 --warm-up-time 1 --measurement-time 1`.
+  Completed p50s: `calloc/free(16)` fl **39.182 ns**, glibc **7.537 ns**,
+  fl/glibc **5.20x LOSS**. The old ~7-10x allocator note is directionally right but
+  current-main framing wins have reduced the clean small-allocation loss to ~5.2x on
+  this run. No new code shipped: the remaining lever is still the architectural
+  fallback-table/framing swing, not a one-line hot-cache transplant.
+- **STDIO-MT BENCH BLOCKER (`rch exec`, worker `hz2`):**
+  `stdio_mt_contention_bench` current fl arm completed at **2.160-2.404 ms** for
+  `stdio_mt_contention_8t/frankenlibc_abi`, but the host-glibc comparator aborted
+  during its arm with `realloc(): invalid pointer` (SIGABRT) before producing a glibc
+  timing. This means the old 8.6x stdio-MT ratio cannot be refreshed from this harness
+  until the glibc comparator is fixed or replaced; do not use the current
+  `stdio_mt_contention_bench` as a ratio source.
+- **CONFORMANCE:** focused malloc host-differential gate GREEN:
+  `AGENT_NAME=Codex CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod rch exec -- cargo test --profile release -p frankenlibc-abi --test conformance_diff_malloc_edges -- --nocapture`
+  passed 1/1. Broader `malloc_abi_test` remains blocked by the already-documented
+  `test_mallinfo2_balanced_after_concurrent_alloc_free` allocator-stats debt
+  (`ordblks` 649 vs 618 in this run), so do not claim full allocator-test green from
+  this docs-only pass.
+
 ## 2026-07-04 — ✅ ecvt/printf `%g` string-builder cleanups LANDED — 3.10x, 2.62x, 2.06x vs original helper paths
 
 - **LANDED CODE WIN (`ecvt.rs`, commit `a812e6e60`):** `rust_e_to_glibc_e`
