@@ -4178,6 +4178,22 @@ pub unsafe extern "C" fn fgetws(
     }
 
     let cap = n as usize;
+    let max = cap - 1;
+    if max > 0 {
+        // SAFETY: `ws` is valid for `cap` wchar_t elements; `max == cap - 1`.
+        let dst = unsafe { std::slice::from_raw_parts_mut(ws as *mut u32, max) };
+        if let Some((read, had_error)) =
+            unsafe { super::stdio_abi::read_cached_ascii_line_wide(stream, dst) }
+        {
+            if read == 0 || had_error {
+                return std::ptr::null_mut();
+            }
+            // SAFETY: `read <= max < cap`, so the terminator is in bounds.
+            unsafe { *ws.add(read) = 0 };
+            return ws;
+        }
+    }
+
     let mut written = 0usize;
     let mut hit_eof = false;
     while written + 1 < cap {
@@ -4199,6 +4215,46 @@ pub unsafe extern "C" fn fgetws(
     // C99: return NULL only when EOF/error is encountered before ANY wide char
     // is read. A degenerate `n == 1` (cap-1 == 0, the loop never runs) is NOT an
     // EOF — glibc writes the terminating L'\0' and returns `ws` (an empty string).
+    if written == 0 && hit_eof {
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: bounded by `cap` (cap >= 1, so index 0 is in range).
+    unsafe { *ws.add(written) = 0 };
+    ws
+}
+
+/// Bench hook: ORIG per-wide-char fgetws loop (fgetwc per output char).
+/// Not part of the ABI.
+#[doc(hidden)]
+pub unsafe fn bench_fgetws_percall(
+    ws: *mut libc::wchar_t,
+    n: c_int,
+    stream: *mut std::ffi::c_void,
+) -> *mut libc::wchar_t {
+    if ws.is_null() || stream.is_null() || n <= 0 {
+        return std::ptr::null_mut();
+    }
+
+    let cap = n as usize;
+    let mut written = 0usize;
+    let mut hit_eof = false;
+    while written + 1 < cap {
+        // SAFETY: delegated to the deployed wide-char reader.
+        let wc = unsafe { fgetwc(stream) };
+        if wc == WEOF_VALUE {
+            hit_eof = true;
+            break;
+        }
+
+        // SAFETY: bounded by `cap`.
+        unsafe { *ws.add(written) = wc as libc::wchar_t };
+        written += 1;
+        if wc == b'\n' as u32 {
+            break;
+        }
+    }
+
     if written == 0 && hit_eof {
         return std::ptr::null_mut();
     }

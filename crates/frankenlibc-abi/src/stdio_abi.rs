@@ -2805,6 +2805,39 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> (usize, bool
     (written, had_error)
 }
 
+/// Cached-stream ASCII wide-line reader used by `fgetws`. A cache hit is the
+/// same ST/non-cookie/non-mem fd-stream proof used by `fgets`; the stream method
+/// only consumes when buffered bytes are all ASCII through newline or destination
+/// capacity, otherwise it leaves the stream untouched for `fgetwc`.
+pub(crate) unsafe fn read_cached_ascii_line_wide(
+    stream: *mut c_void,
+    dst: &mut [u32],
+) -> Option<(usize, bool)> {
+    let p = write_cache_lookup_by_stream(stream)?;
+    // SAFETY: ST-gated + generation-valid cache hit gives unique stream access.
+    let s = unsafe { &mut *p };
+    match s.read_ascii_line_into_wide(dst) {
+        Some((n, ReadUntil::Found)) => Some((n, false)),
+        Some((n, ReadUntil::NeedRefill)) if n == dst.len() => Some((n, false)),
+        Some((0, ReadUntil::NeedRefill)) => {
+            if s.buffer_capacity() == 0 {
+                return None;
+            }
+            if unsafe { refill_stream(s) } <= 0 {
+                return Some((0, s.is_error()));
+            }
+            match s.read_ascii_line_into_wide(dst) {
+                Some((n, ReadUntil::Found)) => Some((n, false)),
+                Some((n, ReadUntil::NeedRefill)) if n == dst.len() => Some((n, false)),
+                Some((0, ReadUntil::Eof)) => Some((0, s.is_error())),
+                _ => None,
+            }
+        }
+        Some((0, ReadUntil::Eof)) => Some((0, s.is_error())),
+        _ => None,
+    }
+}
+
 pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_void) -> *mut c_char {
     if buf.is_null() || size <= 0 {
         return std::ptr::null_mut();

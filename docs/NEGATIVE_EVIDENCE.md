@@ -6,6 +6,32 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-04 — ✅ fgetws cached ASCII bulk-line fast path LANDED — 10.69x vs ORIG per-fgetwc loop
+
+- **LANDED CODE WIN (`fgetws` cached fd streams):** `fgetws` used the ORIG
+  per-wide-char loop (`fgetwc` for every output wchar), which repeatedly paid
+  cache/registry/decode overhead on the common ASCII line-read path. The landed
+  path bulk-copies already-buffered ASCII bytes into the wide destination when
+  the buffered data proves a complete `fgetws` result: newline before capacity
+  or destination capacity reached. It does **not** consume on multibyte input,
+  read-pushback/ungetc, memory streams, or an incomplete ASCII prefix, so the
+  existing `fgetwc` decoder remains the sole fallback owner for those cases.
+- **MEASURED (`rch exec`, worker `vmi1149989`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod`, command:
+  `cargo bench -p frankenlibc-bench --features abi-bench --example fgetws_ab`;
+  the requested `cargo bench --release -p frankenlibc-bench ...` form was
+  attempted first and rejected by this Cargo with `unexpected argument
+  '--release' found`):** `FGETWS_ASCII_AB` same-process old/new A/B, ORIG
+  per-`fgetwc` loop **511.74 ns/line** -> cached ASCII bulk path
+  **47.88 ns/line**, candidate/original **0.094x**, **10.69x faster**.
+- **CONFORMANCE:** `conformance_diff_wide_stdio` host-differential gate passed
+  1/1 via `rch exec`; focused ABI newline-splitting regression
+  `wchar_abi_test wide_stream_string_io_handles_newline_splitting` passed 1/1.
+  The A/B probe also asserts ORIG/new buffer equality before timing.
+- **Scope:** old/new line-read A/B only; this is not a host-glibc dominance
+  claim. The path is intentionally limited to cached single-threaded fd streams
+  whose current buffer already proves ASCII-only completion.
+
 ## 2026-07-04 — CURRENT FRONTIER CHECK: no unmerged measured win; allocator still 5.20x vs glibc; stdio-MT comparator blocked
 
 - **SCRATCH / WORKTREE AUDIT:** the only live worktree head not contained in `main`

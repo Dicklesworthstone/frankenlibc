@@ -1085,6 +1085,59 @@ impl StdioStream {
         }
     }
 
+    /// ASCII-only wide-line fast path for `fgetws`.
+    ///
+    /// This consumes bytes only when the currently buffered data can complete a
+    /// valid `fgetws` result without decoding: either a newline is present before
+    /// `dst` fills, or `dst` fills with ASCII bytes. If the buffer starts with a
+    /// multibyte character or holds only an incomplete ASCII prefix, it returns
+    /// `None` without advancing the stream so the caller can use the normal
+    /// `fgetwc` decoder.
+    pub fn read_ascii_line_into_wide(&mut self, dst: &mut [u32]) -> Option<(usize, ReadUntil)> {
+        if dst.is_empty() {
+            return Some((0, ReadUntil::NeedRefill));
+        }
+        if !self.open_flags.readable {
+            self.flags.error = true;
+            return Some((0, ReadUntil::Eof));
+        }
+        if self.is_mem_backed() || self.ungetc_byte.is_some() || !self.read_pushback.is_empty() {
+            return None;
+        }
+
+        let buffered = self.buffer.peek();
+        if buffered.is_empty() {
+            return Some((0, ReadUntil::NeedRefill));
+        }
+
+        let limit = dst.len().min(buffered.len());
+        for i in 0..limit {
+            let byte = buffered[i];
+            if byte >= 0x80 {
+                return None;
+            }
+            dst[i] = byte as u32;
+            if byte == b'\n' {
+                let n = i + 1;
+                self.flags.io_started = true;
+                self.flags.last_write = false;
+                self.buffer.consume(n);
+                self.advance_offset(n);
+                return Some((n, ReadUntil::Found));
+            }
+        }
+
+        if limit == dst.len() {
+            self.flags.io_started = true;
+            self.flags.last_write = false;
+            self.buffer.consume(limit);
+            self.advance_offset(limit);
+            return Some((limit, ReadUntil::NeedRefill));
+        }
+
+        None
+    }
+
     /// Fill the read buffer with externally-fetched data.
     /// Returns the number of bytes actually buffered.
     pub fn fill_read_buffer(&mut self, data: &[u8]) -> usize {
