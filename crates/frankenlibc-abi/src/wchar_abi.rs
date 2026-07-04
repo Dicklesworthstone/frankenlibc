@@ -3234,10 +3234,10 @@ const WIDE_ASCII_STACK: usize = 512;
 
 /// Initial bounded-scan window for the wide float parsers. Any non-pathological numeric string
 /// (the longest normal f64 literal `-1.7976931348623157e+308` is 24 chars; hex floats similar)
-/// fits well within this, so the common case scans/projects O(window) not O(buffer). Numbers
+/// fits within this, so the common case scans/projects O(window) not O(buffer). Numbers
 /// (or leading-whitespace runs) that fill the whole window trigger a one-shot unbounded re-scan
 /// in `wide_parse_float`, so correctness holds for arbitrarily long inputs.
-const WIDE_FLOAT_SCAN: usize = 64;
+const WIDE_FLOAT_SCAN: usize = 32;
 
 /// Bound on the numeric-token scan for the wide integer parsers (`wide_numeric_token_len`).
 /// Real tokens end far sooner (the scan stops at the first non-numeric char); this only caps a
@@ -3282,20 +3282,51 @@ unsafe fn wide_numeric_token_len(nptr: *const u32, bound: usize) -> (usize, bool
     (i, true) // hit the bound without a terminator
 }
 
-/// Project the leading ASCII run of `s` (stopping at the first `wc > 0x7f`, mirroring the
-/// old `project_wide_ascii`) as NUL-terminated bytes, WITHOUT a per-call heap allocation for
-/// the common short-numeric case: the prefix is written into the caller's stack buffer when
-/// it fits, else into `heap`. Returns the written slice INCLUDING the terminating NUL — the
-/// same bytes the old `project_wide_ascii` Vec held (byte-identical to the parsers). `stack`
-/// and `heap` must outlive the returned slice.
+/// Scan a bounded float prefix. After the token has started, ASCII whitespace proves the
+/// token boundary, so include one delimiter and stop instead of paying for the rest of a
+/// long buffer tail.
+unsafe fn scan_w_float_window(nptr: *const u32, limit: usize) -> (usize, bool) {
+    let mut len = 0usize;
+    let mut token_started = false;
+    while len < limit {
+        // SAFETY: caller promises a readable wide string; this bounded scanner reads at most
+        // `limit` wide chars before returning.
+        let wc = unsafe { *nptr.add(len) };
+        if wc == 0 {
+            return (len, true);
+        }
+        if wc > 0x7f {
+            return (len, false);
+        }
+        let b = wc as u8;
+        if !token_started {
+            token_started = !b.is_ascii_whitespace();
+        } else if b.is_ascii_whitespace() {
+            return (len + 1, false);
+        }
+        len += 1;
+    }
+    (len, false)
+}
+
+/// Project the leading ASCII float prefix of `s` as NUL-terminated bytes, WITHOUT a per-call
+/// heap allocation for the common short-numeric case. ASCII whitespace after the token has
+/// started cannot extend a C float token, so it is left out of the projected parser input.
+/// `stack` and `heap` must outlive the returned slice.
 fn project_wide_ascii_into<'a>(
     s: &[u32],
     stack: &'a mut [u8; WIDE_ASCII_STACK],
     heap: &'a mut Vec<u8>,
 ) -> &'a [u8] {
-    // Length of the leading ASCII run (same stop condition as before: first wc > 0x7f).
     let mut n = 0usize;
+    let mut token_started = false;
     while n < s.len() && s[n] <= 0x7f {
+        let b = s[n] as u8;
+        if !token_started {
+            token_started = !b.is_ascii_whitespace();
+        } else if b.is_ascii_whitespace() {
+            break;
+        }
         n += 1;
     }
     if n + 1 <= WIDE_ASCII_STACK {
@@ -3384,7 +3415,7 @@ unsafe fn wide_parse_float<T: Copy>(
     let mut ascii_stack = [0u8; WIDE_ASCII_STACK];
     let mut ascii_heap: Vec<u8> = Vec::new();
     // SAFETY: bounded scan; reads at most WIDE_FLOAT_SCAN wchars from a valid wide string.
-    let (len, term) = unsafe { scan_w_string(nptr as *const u32, Some(WIDE_FLOAT_SCAN)) };
+    let (len, term) = unsafe { scan_w_float_window(nptr as *const u32, WIDE_FLOAT_SCAN) };
     // SAFETY: bounded by the measured length.
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
     let projected = project_wide_ascii_into(slice, &mut ascii_stack, &mut ascii_heap);
