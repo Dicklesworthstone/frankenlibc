@@ -1346,26 +1346,33 @@ unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, us
     let cv = Simd::<u32, LANES>::splat(c);
     let zv = Simd::<u32, LANES>::splat(0);
     loop {
-        // NOTE (bd-4rxozm follow-up): a folded 4x8=128B tier was measured here and
-        // rejected NEUTRAL — fl's plain 32-byte wcsrchr scan already beats glibc at
-        // every size (1.02-2.7x), so there is no room and a 256-wchar regression
-        // appeared. Unlike wcschr (which LOST to glibc and the folded tier fixed),
-        // wcsrchr stays on the plain panel. See docs/NEGATIVE_EVIDENCE.md.
         // SAFETY: `s + i` is 32-byte aligned, so this 32-byte load stays inside
         // the current page; the string is NUL-terminated within a mapped page.
         let words = unsafe { core::ptr::read(s.add(i).cast::<[u32; LANES]>()) };
         let v = Simd::<u32, LANES>::from_array(words);
-        if (v.simd_eq(cv) | v.simd_eq(zv)).any() {
-            for j in 0..LANES {
-                // SAFETY: within the just-read window; a c-or-NUL exists at/ before j==7.
-                let ch = unsafe { *s.add(i + j) };
-                if ch == c {
-                    last = Some(i + j);
+        let eqc = v.simd_eq(cv);
+        let eqz = v.simd_eq(zv);
+        // Cheap skip test: nothing of interest in this 8-lane chunk ⇒ advance a full
+        // panel. Only when a `c` or the terminator is present do we extract the exact
+        // position(s) from the SIMD bitmasks — NEVER a scalar per-lane rescan. That
+        // per-block rescan was what made wcsrchr 3-5x slower than glibc after the host
+        // glibc 2.42 bump (the frequent-`c` case rescanned every block scalar); the
+        // mask extraction removes it. Measured 1.28-2.35x over the old scan
+        // (wcsrchr_fold_ab, in-process, byte-identical (last,span)). A folded 128B tier
+        // was tried and lost (frequent-`c` degenerates to whole-string scalar rescan).
+        if (eqc | eqz).any() {
+            let zm = eqz.to_bitmask();
+            if zm != 0 {
+                // NUL present: the last `c` (if any) must lie strictly before it.
+                let p = zm.trailing_zeros() as usize;
+                let cm_before = eqc.to_bitmask() & ((1u64 << p) - 1);
+                if cm_before != 0 {
+                    last = Some(i + (63 - cm_before.leading_zeros() as usize));
                 }
-                if ch == 0 {
-                    return (last, i + j + 1);
-                }
+                return (last, i + p + 1);
             }
+            // No NUL in this chunk ⇒ a `c` match is present; take its highest lane.
+            last = Some(i + (63 - eqc.to_bitmask().leading_zeros() as usize));
         }
         i += LANES;
     }
