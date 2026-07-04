@@ -6,6 +6,37 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-04 - ✅ __wcsftime_l measured A/B harness LANDED - 22.44x-47.08x vs ORIG heap transcode
+
+- **LANDED EVIDENCE WIN (Codex, `frankenlibc-bench` / `wcsftime_l_ab`):**
+  `main` already contains the code win from `933334baa`, where `__wcsftime_l`
+  delegates to optimized `wcsftime` instead of keeping its separate
+  heap-allocating wide->narrow->wide body. This commit adds the reproducible
+  in-process A/B harness for that exact internal symbol. The harness embeds the
+  ORIG heap-transcode body, calls current `wchar_abi::__wcsftime_l`, calls host
+  glibc `wcsftime_l` through a same-namespace C locale, and asserts
+  ORIG/NEW/glibc wide output equality before timing.
+- **MEASURED (`rch exec`, worker `vmi1227854`, `AGENT_NAME=Codex`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`; per-crate release
+  command `cargo bench --profile release -p frankenlibc-bench --features
+  abi-bench --example wcsftime_l_ab`; the literal `cargo bench --release`
+  form was attempted first and rejected by this Cargo as an unsupported flag):**
+  p10 rows:
+  `%Y-%m-%d %H:%M:%S` ORIG **321.35 ns** -> NEW **14.32 ns**, new/orig
+  **0.045x** (**22.44x faster**), new/glibc **0.319x WIN**;
+  `%H:%M` ORIG **371.52 ns** -> NEW **10.30 ns**, **0.028x**
+  (**36.07x faster**), new/glibc **0.585x WIN**;
+  `%A` ORIG **367.71 ns** -> NEW **7.81 ns**, **0.021x**
+  (**47.08x faster**), new/glibc **0.886x WIN**;
+  `just text no directives` ORIG **305.39 ns** -> NEW **12.11 ns**,
+  **0.040x** (**25.22x faster**), new/glibc **0.748x WIN**.
+- **CONFORMANCE GREEN (`rch exec`, local fallback because no workers were
+  admissible: `insufficient_slots=10,active_project_exclusion=1`;
+  `AGENT_NAME=Codex`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo test --profile release -p frankenlibc-abi --test
+  conformance_diff_wcsftime_l -- --nocapture`):** `wcsftime_l_matches_glibc`
+  passed **1/1**.
+
 ## 2026-07-04 — ✅ wcsftime exact name formats LANDED — 53.42x vs ORIG heap transcode, 1.38x vs glibc
 
 - **LANDED CODE WIN (Codex, `wchar_abi.rs` / `wcsftime`):** the prior direct

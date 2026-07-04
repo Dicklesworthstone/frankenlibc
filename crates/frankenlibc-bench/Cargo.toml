@@ -237,6 +237,11 @@ harness = false
 required-features = ["abi-bench"]
 
 [[example]]
+name = "wcsftime_l_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
 name = "strftime_survey"
 harness = false
 required-features = ["abi-bench"]
