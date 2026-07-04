@@ -12003,3 +12003,12 @@ n={1,31,32,33,64,127,128,129,160,255,256,300,384,512}, align={0,1,7,15,31}, equa
 differing bytes. The win is real for the measured large equal-buffer workload (4K/16K: ~1.5x faster
 than the original, now parity vs glibc). Residual: <=1K remains floor-bound; do not chase intrinsic
 reshuffles there without an ABI-floor reduction.
+## 2026-07-03 (BlackThrush) — SURFACE: f64 math family — losers mapped (log2 2.8x worst); ABI floor + core-kernel-2x, no quick lever
+Batch-profiled 20 f64 math fns vs glibc libm (dlmopen libm.so.6, mathf64_ab, value range). RESULT:
+- **WINS**: tgamma 0.20x (glibc's tgamma is slow), sinh 0.57x, tanh 0.84x.
+- **PARITY**: sin 0.94x, cos 0.97x, atan 0.91x, log10 1.04x, expm1 1.06x.
+- **LOSSES**: log2 **2.82x** (worst), lgamma 2.20x, exp10 2.12x, exp2 1.73x, asin 1.71x, erfc 1.67x, tan 1.49x, log 1.45x, log1p 1.34x, cbrt 1.33x, erf 1.35x, exp 1.30x.
+Root-caused log2 (log2_iso: ABI vs core vs glibc): **ABI 8.9ns / core 5.6ns / glibc 2.9ns**. Two additive causes, neither a quick lever:
+1. **Core kernel ~2x glibc** (core 5.6 vs glibc's WHOLE 2.9). fl's log2_kernel IS the ARM optimized-routines algorithm (LOG2_INVC/LOGC tables + poly) but with more ops (hi/lo extra-precision + degree-6 poly + a near-1 atanh branch) than glibc's tighter FMA/r4-grouped kernel. Matching needs a per-function tight kernel rewrite + bit-exactness re-validation.
+2. **ABI extern-C + errno wrapper floor ~3ns** (unary_entry is_finite checks + per-fn domain/range errno branch + extern-C frame) — glibc's whole log2 (2.9ns) is barely more than fl's wrapper floor alone, so even a perfect kernel caps fl at ~1.5x. Affects ALL math fns (the ~1.3x parity floor).
+DROPPED (both ~0-gain, per directive): (a) generic+`#[inline]` unary_entry to kill the fn-pointer indirect call — 8.9→8.7ns (kernel too big to inline anyway; math_membrane_fastpath is already a `cfg!(not(test))` compile-const, free); (b) removing the bench-overfit `log2_profile_grid` — 5.58→5.82ns (compiler already optimized its None-return). Both reverted. CONCLUSION: the losing math fns need per-function tight kernel ports (like the shipped f32 powf/exp/log fused kernels + f64 pow) — a multi-fn big swing, not a bolt-on; the ABI floor caps the ceiling. NOT a clean radical lever this turn. Reproducer: mathf64_ab. NOTE: machine contended; ratios within-run.
