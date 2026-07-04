@@ -811,10 +811,8 @@ unsafe fn utc_normalize_to_epoch(tm: *mut libc::tm) -> i64 {
         && (1..=days_in_month(year, mon)).contains(&(bd.tm_mday as i64))
     {
         let days = days_from_civil(year, mon + 1, bd.tm_mday as i64);
-        let epoch = days * 86400
-            + bd.tm_hour as i64 * 3600
-            + bd.tm_min as i64 * 60
-            + bd.tm_sec as i64;
+        let epoch =
+            days * 86400 + bd.tm_hour as i64 * 3600 + bd.tm_min as i64 * 60 + bd.tm_sec as i64;
         let out = time_core::BrokenDownTime {
             tm_sec: bd.tm_sec,
             tm_min: bd.tm_min,
@@ -1091,6 +1089,18 @@ pub unsafe extern "C" fn strftime(
         }
         // SAFETY: `fmt_len` readable bytes at `format`; `tm` valid per C contract.
         let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
+        if !fmt.contains(&b'%') {
+            if fmt_len >= maxsize {
+                return 0;
+            }
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes, and
+            // fmt_len < maxsize leaves room for the NUL terminator.
+            unsafe {
+                std::ptr::copy_nonoverlapping(format as *const u8, s as *mut u8, fmt_len);
+                *(s as *mut u8).add(fmt_len) = 0;
+            }
+            return fmt_len;
+        }
         let mut bd = unsafe { read_tm(tm) };
         unsafe { read_tm_zone(tm, &mut bd) };
         // SAFETY: caller guarantees `s` writable for `maxsize` bytes.

@@ -1,37 +1,198 @@
-//! Survey fl strftime vs glibc (dlmopen) for common format strings, plus localtime_r/difftime.
-use std::hint::black_box; use std::time::Instant;
-fn pctl(s:&[f64],q:f64)->f64{let mut v=s.to_vec();v.sort_by(|a,b|a.partial_cmp(b).unwrap());v[((q*(v.len()-1)as f64).round()as usize).min(v.len()-1)]}
-type SfFn=unsafe extern "C" fn(*mut i8,usize,*const i8,*const libc::tm)->usize;
-fn bench2<A:Fn(),B:Fn()>(a:A,b:B)->(f64,f64){
-  let(mut fa,mut fb)=(Vec::new(),Vec::new());
-  for r in 0..50{
-    if r%2==0{let t=Instant::now();a();fa.push(t.elapsed().as_nanos()as f64);let t=Instant::now();b();fb.push(t.elapsed().as_nanos()as f64);}
-    else{let t=Instant::now();b();fb.push(t.elapsed().as_nanos()as f64);let t=Instant::now();a();fa.push(t.elapsed().as_nanos()as f64);}
-  }
-  (pctl(&fa,0.1),pctl(&fb,0.1))
+//! Focused `strftime` no-directive ABI benchmark vs host glibc.
+
+use std::ffi::{CStr, c_char};
+use std::hint::black_box;
+use std::time::Instant;
+
+use frankenlibc_abi::time_abi;
+use frankenlibc_core::time::{BrokenDownTime, format_strftime};
+
+type StrftimeFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, *const libc::tm) -> usize;
+
+fn percentile(samples: &[f64], q: f64) -> f64 {
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let idx = ((q * (sorted.len() - 1) as f64).round() as usize).min(sorted.len() - 1);
+    sorted[idx]
 }
-fn tag(r:f64)->&'static str{ if r>1.25{"  <-- LOSS"}else if r<0.9{"  win"}else{"  ~par"} }
-fn main(){
-  let h=unsafe{libc::dlmopen(libc::LM_ID_NEWLM,b"libc.so.6\0".as_ptr().cast(),libc::RTLD_LAZY|libc::RTLD_LOCAL)};assert!(!h.is_null());
-  unsafe{ let sl:unsafe extern "C" fn(i32,*const i8)->*mut i8=std::mem::transmute(libc::dlsym(h,b"setlocale\0".as_ptr().cast())); sl(6,b"C\0".as_ptr().cast()); }
-  let g_sf:SfFn=unsafe{std::mem::transmute(libc::dlsym(h,b"strftime\0".as_ptr().cast()))};
-  use frankenlibc_abi::time_abi as ta;
-  // 2023-11-14 12:30:15, filled via gmtime_r so wday/yday are correct.
-  let e:i64=1_700_000_000; let mut tm:libc::tm=unsafe{std::mem::zeroed()};
-  unsafe{ ta::gmtime_r(&e,&mut tm); }
-  let tmp=tm; let tmpp=&tmp as *const libc::tm;
-  let iters=100_000u64;
-  let mut fb=[0i8;256]; let mut gb=[0i8;256];
-  let fbp=fb.as_mut_ptr(); let gbp=gb.as_mut_ptr();
-  for fmt in [&b"%Y-%m-%d %H:%M:%S\0"[..], &b"%a %b %d %T %Z %Y\0"[..], &b"%j %U %W %w %p\0"[..], &b"%FT%T\0"[..]]{
-    let fp=fmt.as_ptr() as *const i8;
-    let(f,g)=bench2(||{for _ in 0..iters{black_box(unsafe{ta::strftime(fbp,256,fp,tmpp)});}},
-                    ||{for _ in 0..iters{black_box(unsafe{g_sf(gbp,256,fp,tmpp)});}});
-    // byte-check
-    unsafe{ ta::strftime(fbp,256,fp,tmpp); g_sf(gbp,256,fp,tmpp); }
-    let same=fb.iter().zip(gb.iter()).take_while(|(a,_)|**a!=0).all(|(a,b)|a==b);
-    let fstr=String::from_utf8_lossy(&fb.iter().take_while(|c|**c!=0).map(|c|*c as u8).collect::<Vec<_>>()).to_string();
-    println!("strftime {:<22} fl={:6.2}ns glibc={:6.2}ns fl/glibc={:.3}{} match={} [{}]",
-      String::from_utf8_lossy(&fmt[..fmt.len()-1]),f/iters as f64,g/iters as f64,f/g,tag(f/g),same,fstr);
-  }
+
+fn bench2<A, B>(mut a: A, mut b: B) -> (f64, f64)
+where
+    A: FnMut(),
+    B: FnMut(),
+{
+    let mut aa = Vec::new();
+    let mut bb = Vec::new();
+    for round in 0..48 {
+        if round % 2 == 0 {
+            let t = Instant::now();
+            a();
+            aa.push(t.elapsed().as_nanos() as f64);
+            let t = Instant::now();
+            b();
+            bb.push(t.elapsed().as_nanos() as f64);
+        } else {
+            let t = Instant::now();
+            b();
+            bb.push(t.elapsed().as_nanos() as f64);
+            let t = Instant::now();
+            a();
+            aa.push(t.elapsed().as_nanos() as f64);
+        }
+    }
+    (percentile(&aa, 0.10), percentile(&bb, 0.10))
+}
+
+fn cstr_bytes(buf: &[c_char]) -> Vec<u8> {
+    buf.iter()
+        .take_while(|&&b| b != 0)
+        .map(|&b| b as u8)
+        .collect()
+}
+
+fn tag(ratio: f64) -> &'static str {
+    if ratio < 0.90 {
+        "WIN"
+    } else if ratio > 1.10 {
+        "LOSS"
+    } else {
+        "PAR"
+    }
+}
+
+unsafe fn orig_strftime_literal_path(
+    s: *mut c_char,
+    maxsize: usize,
+    format: *const c_char,
+    tm: *const libc::tm,
+) -> usize {
+    // SAFETY: benchmark inputs are valid C strings.
+    let fmt = unsafe { CStr::from_ptr(format).to_bytes() };
+    // SAFETY: benchmark passes a valid `libc::tm` pointer.
+    let tm = unsafe { *tm };
+    let bd = BrokenDownTime {
+        tm_sec: tm.tm_sec,
+        tm_min: tm.tm_min,
+        tm_hour: tm.tm_hour,
+        tm_mday: tm.tm_mday,
+        tm_mon: tm.tm_mon,
+        tm_year: tm.tm_year,
+        tm_wday: tm.tm_wday,
+        tm_yday: tm.tm_yday,
+        tm_isdst: tm.tm_isdst,
+        tm_gmtoff: tm.tm_gmtoff,
+        zone: [0; 16],
+    };
+    // SAFETY: benchmark output buffer is valid for `maxsize` bytes.
+    let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+    format_strftime(fmt, &bd, buf)
+}
+
+fn main() {
+    let h = unsafe {
+        libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            c"libc.so.6".as_ptr(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        )
+    };
+    assert!(!h.is_null());
+    let setlocale: unsafe extern "C" fn(i32, *const c_char) -> *mut c_char =
+        unsafe { std::mem::transmute(libc::dlsym(h, c"setlocale".as_ptr())) };
+    unsafe {
+        setlocale(6, c"C".as_ptr());
+    }
+    let glibc_strftime: StrftimeFn =
+        unsafe { std::mem::transmute(libc::dlsym(h, c"strftime".as_ptr())) };
+
+    let epoch: i64 = 1_700_000_000;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { time_abi::gmtime_r(&epoch, &mut tm) };
+    let tm_ptr = &tm as *const libc::tm;
+
+    let fmt_c = c"just text no directives";
+    let iters = 250_000u64;
+
+    let mut fl = [0 as c_char; 256];
+    let mut orig = [0 as c_char; 256];
+    let mut glibc = [0 as c_char; 256];
+    let fl_n = unsafe { time_abi::strftime(fl.as_mut_ptr(), fl.len(), fmt_c.as_ptr(), tm_ptr) };
+    let orig_n = unsafe {
+        orig_strftime_literal_path(orig.as_mut_ptr(), orig.len(), fmt_c.as_ptr(), tm_ptr)
+    };
+    let glibc_n =
+        unsafe { glibc_strftime(glibc.as_mut_ptr(), glibc.len(), fmt_c.as_ptr(), tm_ptr) };
+    assert_eq!(orig_n, fl_n);
+    assert_eq!(fl_n, glibc_n);
+    assert_eq!(cstr_bytes(&orig), cstr_bytes(&fl));
+    assert_eq!(cstr_bytes(&fl), cstr_bytes(&glibc));
+
+    let (orig_t, fl_t) = bench2(
+        || {
+            for _ in 0..iters {
+                black_box(unsafe {
+                    orig_strftime_literal_path(
+                        black_box(orig.as_mut_ptr()),
+                        orig.len(),
+                        black_box(fmt_c.as_ptr()),
+                        black_box(tm_ptr),
+                    )
+                });
+            }
+        },
+        || {
+            for _ in 0..iters {
+                black_box(unsafe {
+                    time_abi::strftime(
+                        black_box(fl.as_mut_ptr()),
+                        fl.len(),
+                        black_box(fmt_c.as_ptr()),
+                        black_box(tm_ptr),
+                    )
+                });
+            }
+        },
+    );
+    let (fl_glibc_t, glibc_t) = bench2(
+        || {
+            for _ in 0..iters {
+                black_box(unsafe {
+                    time_abi::strftime(
+                        black_box(fl.as_mut_ptr()),
+                        fl.len(),
+                        black_box(fmt_c.as_ptr()),
+                        black_box(tm_ptr),
+                    )
+                });
+            }
+        },
+        || {
+            for _ in 0..iters {
+                black_box(unsafe {
+                    glibc_strftime(
+                        black_box(glibc.as_mut_ptr()),
+                        glibc.len(),
+                        black_box(fmt_c.as_ptr()),
+                        black_box(tm_ptr),
+                    )
+                });
+            }
+        },
+    );
+    let orig_ns = orig_t / iters as f64;
+    let fl_ns = fl_t / iters as f64;
+    let fl_glibc_ns = fl_glibc_t / iters as f64;
+    let glibc_ns = glibc_t / iters as f64;
+    println!(
+        "strftime_abi_literal_orig orig={orig_ns:.2}ns new={fl_ns:.2}ns new/orig={:.3} {} [{}]",
+        fl_ns / orig_ns,
+        tag(fl_ns / orig_ns),
+        String::from_utf8_lossy(&cstr_bytes(&fl))
+    );
+    println!(
+        "strftime_abi_literal_glibc new={fl_glibc_ns:.2}ns glibc={glibc_ns:.2}ns new/glibc={:.3} {} [{}]",
+        fl_glibc_ns / glibc_ns,
+        tag(fl_glibc_ns / glibc_ns),
+        String::from_utf8_lossy(&cstr_bytes(&fl))
+    );
 }

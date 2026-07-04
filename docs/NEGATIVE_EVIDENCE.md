@@ -33,6 +33,43 @@ retried and real wins are confirmed with numbers.
   `AGENT_NAME=Codex CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod rch exec -- cargo test --profile release -p frankenlibc-abi --test conformance_diff_wcsftime -- --nocapture`
   passed **11/11** with zero divergences.
 
+## 2026-07-04 — ✅ strftime no-directive ABI literal fast path LANDED — 13.58x vs ORIG strict formatter path
+
+- **LANDED CODE WIN (`time_abi.rs` / `strftime`):** the strict/default ABI
+  path now detects formats with no `%` conversion byte after the existing format
+  NUL scan, copies the literal bytes directly to the caller buffer, writes the
+  NUL terminator, and returns without reading `struct tm`, resolving `%Z`, or
+  entering `format_strftime`. Semantics are byte-isomorphic for no-directive
+  formats: same output bytes, same required NUL space rule (`fmt_len >= maxsize`
+  returns 0), and all directive-containing formats fall through unchanged.
+- **MEASURED (`rch exec`, selected worker `vmi1227854` but local fallback after
+  dependency preflight `RCH-E412` on unrelated `wcsftime_l_ab.rs`;
+  `AGENT_NAME=cod`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  per-crate short gate `cargo bench --profile release -p frankenlibc-bench
+  --features abi-bench --example strftime_survey`):** the example asserts
+  embedded ORIG/NEW/glibc byte identity before timing. ORIG strict formatter
+  path **212.76 ns** -> NEW ABI literal copy **15.67 ns**, `new/orig`
+  **0.074x** (**13.58x faster**). NEW also beats host glibc on the same run:
+  **15.69 ns** vs glibc **19.11 ns**, `new/glibc` **0.821x WIN** for
+  `just text no directives`.
+- **CONFORMANCE GREEN (`rch exec`, selected worker `vmi1149989` but local
+  fallback after dependency preflight `RCH-E412` on unrelated `memfrob_ab.rs`;
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo test --profile release -p frankenlibc-abi --test
+  conformance_diff_time --test strftime_specifier_differential_fuzz --test
+  strftime_buffer_wide_year_differential_fuzz --test time_abi_test --
+  strftime`):** `conformance_diff_time` passed 3/3 filtered strftime tests
+  (including the existing no-conversion fixture), buffer/wide-year fuzz passed
+  1/1, specifier fuzz passed 1/1, and `time_abi_test` passed 2/2 filtered
+  non-ignored tests. Three hardened-mode-only bounds tests remained ignored as
+  before.
+- **NO-SHIP SIDE PROBE:** a core `format_strftime` literal-run bulk-copy variant
+  was measured and reverted before commit: same per-crate example on worker
+  `vmi1149989` showed `strftime_core_literal` ORIG **12.93 ns** -> candidate
+  **200.20 ns**, `new/orig` **15.479x LOSS**. The ABI row before this fast path
+  was FL **204.34 ns** vs glibc **19.94 ns**, `fl/glibc` **10.249x LOSS**.
+  Do not retry that core literal-run bulk-copy shape for this path.
+
 ## 2026-07-04 — ✅ wcsftime no-directive direct wide copy LANDED — 53.66x vs ORIG heap transcode path
 
 - **LANDED CODE WIN (`wchar_abi.rs` / `wcsftime`):** current main already had
