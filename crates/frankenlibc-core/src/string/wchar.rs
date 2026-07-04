@@ -573,7 +573,16 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
         // and continuation lanes. Any wchar outside the range (ASCII, 3/4-byte,
         // surrogate, out-of-range) or insufficient room (< 16 bytes) drops to the
         // scalar step. Covers the common 2-byte scripts (Cyrillic/Greek/…).
-        while si + 8 <= src.len() && di + 16 <= dest.len() && (0x80..=0x7FF).contains(&src[si]) {
+        // 1-char lookahead gate: a lone 2-byte char in mostly-ASCII text (café, ñ)
+        // would enter here, do a full 8-wide load+range-check that breaks on the
+        // very next (ASCII) lane, and fall to scalar anyway. Requiring src[si+1] to
+        // also be 2-byte skips that wasted wide load; byte-identical because any
+        // window whose 2nd lane disqualifies it would break on the `.all()` below.
+        while si + 8 <= src.len()
+            && di + 16 <= dest.len()
+            && (0x80..=0x7FF).contains(&src[si])
+            && (0x80..=0x7FF).contains(&src[si + 1])
+        {
             let ws: [u32; 8] = src[si..si + 8].try_into().unwrap();
             let v = Simd::<u32, 8>::from_array(ws);
             if !(v.simd_ge(Simd::splat(0x80)) & v.simd_le(Simd::splat(0x7FF))).all() {
@@ -596,7 +605,11 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
         // surrogates, to four fixed-width UTF-8 triples. ASCII, 2-byte, astral,
         // surrogate, out-of-range, and short-output cases fall through to the
         // scalar wctomb step, preserving its exact error and truncation behavior.
-        while si + 4 <= src.len() && di + 12 <= dest.len() && (0x0800..=0xFFFF).contains(&src[si]) {
+        while si + 4 <= src.len()
+            && di + 12 <= dest.len()
+            && (0x0800..=0xFFFF).contains(&src[si])
+            && (0x0800..=0xFFFF).contains(&src[si + 1])
+        {
             let ws: [u32; 4] = src[si..si + 4].try_into().unwrap();
             let v = Simd::<u32, 4>::from_array(ws);
             let bmp_ok = v.simd_ge(Simd::splat(0x0800)) & v.simd_le(Simd::splat(0xFFFF));
@@ -631,6 +644,7 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
         while si + 4 <= src.len()
             && di + 16 <= dest.len()
             && (0x1_0000..0x20_0000).contains(&src[si])
+            && (0x1_0000..0x20_0000).contains(&src[si + 1])
         {
             let ws: [u32; 4] = src[si..si + 4].try_into().unwrap();
             let v = Simd::<u32, 4>::from_array(ws);
