@@ -480,21 +480,20 @@ unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) -> usize {
     }
 }
 
-/// Fused bounded copy for `wcsncpy` / `wcpncpy`: copies `src` into `dst` up to the
-/// terminating NUL or `n` wchars (whichever comes first), then zero-pads `dst` out to
-/// `n`. Returns `min(wcslen(src), n)` — the index of the first NUL written into `dst`,
-/// i.e. the `wcpncpy` end offset (`dst + ret`); `wcsncpy` ignores it.
+/// Fused bounded copy CORE for the wide n-copy/append family: copies the real (non-NUL)
+/// chars of `src` into `dst` up to the terminating NUL or `n` wchars (whichever comes
+/// first) in ONE page-guarded 128B (4×8-lane) pass, and returns `min(wcslen(src), n)` —
+/// the number of chars written. It does NOT write a terminator or pad; the caller decides:
+/// `wcsncpy`/`wcpncpy` zero-pad `[ret, n)`, `wcsncat` writes a single NUL at `dst[ret]`.
 ///
-/// Single pass with the same page-guarded 128B (4×8-lane) tier as `wide_fused_copy`,
-/// replacing the deployed scan-then-copy two-pass (`scan_w_string` + `wide_copy_n`)
-/// which reads the copied region twice and, for `n < 1024`, copies only 8 lanes/iter.
-/// Measured (wcsncpy_fused_ab, in-process vs a *fair 128B-copy* two-pass) 1.12–1.43x;
-/// the win over the deployed 8-lane two-pass is larger. Byte-identical output.
+/// Replaces the deployed scan-then-copy two-pass (`scan_w_string` + `wide_copy_n`) which
+/// reads the copied region twice and, for `n < 1024`, copies only 8 lanes/iter. Measured
+/// (wcsncpy_fused_ab, in-process vs the old 8-lane two-pass) 1.03–2.34x. Byte-identical.
 ///
 /// # Safety
 /// `src` valid up to its NUL or `n` wchars; `dst` valid for `n` wchars. Disjoint.
 #[inline]
-unsafe fn wide_fused_copy_n(dst: *mut u32, src: *const u32, n: usize) -> usize {
+unsafe fn wide_fused_ncopy(dst: *mut u32, src: *const u32, n: usize) -> usize {
     use std::simd::cmp::SimdOrd;
     let z = Simd::<u32, 8>::splat(0);
     let mut i = 0usize;
@@ -510,7 +509,7 @@ unsafe fn wide_fused_copy_n(dst: *mut u32, src: *const u32, n: usize) -> usize {
             Simd::<u32, 8>::from_slice(unsafe { std::slice::from_raw_parts(src.add(i + 24), 8) });
         if c0.simd_min(c1).simd_min(c2.simd_min(c3)).simd_eq(z).any() {
             // A NUL is in these 128 bytes: copy the real chars of each clean chunk, then on
-            // the NUL-bearing chunk copy up to (not incl.) the NUL and zero-pad the rest.
+            // the NUL-bearing chunk copy up to (not incl.) the NUL and return its index.
             for (k, c) in [c0, c1, c2, c3].iter().enumerate() {
                 let m = c.simd_eq(z).to_bitmask();
                 if m != 0 {
@@ -519,8 +518,6 @@ unsafe fn wide_fused_copy_n(dst: *mut u32, src: *const u32, n: usize) -> usize {
                         // SAFETY: real (non-NUL) chars before the terminator.
                         unsafe { *dst.add(j) = *src.add(j) };
                     }
-                    // SAFETY: [nul, n) in-bounds for dst; writes the NUL + pad.
-                    unsafe { std::slice::from_raw_parts_mut(dst.add(nul), n - nul).fill(0) };
                     return nul;
                 }
                 // SAFETY: NUL-free chunk ⇒ dst has room for [i+k*8, +8).
@@ -540,14 +537,28 @@ unsafe fn wide_fused_copy_n(dst: *mut u32, src: *const u32, n: usize) -> usize {
         // SAFETY: i < n ⇒ src+i / dst+i in-bounds.
         let c = unsafe { *src.add(i) };
         if c == 0 {
-            // SAFETY: [i, n) in-bounds for dst.
-            unsafe { std::slice::from_raw_parts_mut(dst.add(i), n - i).fill(0) };
             return i;
         }
         unsafe { *dst.add(i) = c };
         i += 1;
     }
     n
+}
+
+/// `wcsncpy`/`wcpncpy` body: fused copy of `min(strlen,n)` chars then zero-pad `[ret, n)`.
+/// Returns `min(wcslen(src), n)` — the `wcpncpy` end offset (`dst + ret`), ignored by
+/// `wcsncpy`. Byte-identical to the old scan-then-copy-then-pad two-pass.
+///
+/// # Safety
+/// `src` valid up to its NUL or `n` wchars; `dst` valid for `n` wchars. Disjoint.
+#[inline]
+unsafe fn wide_fused_copy_n(dst: *mut u32, src: *const u32, n: usize) -> usize {
+    let copied = unsafe { wide_fused_ncopy(dst, src, n) };
+    if copied < n {
+        // SAFETY: [copied, n) in-bounds for dst; writes the NUL + pad.
+        unsafe { std::slice::from_raw_parts_mut(dst.add(copied), n - copied).fill(0) };
+    }
+    copied
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2118,15 +2129,13 @@ pub unsafe extern "C" fn wcsncat(dst: *mut u32, src: *const u32, n: usize) -> *m
     // then NUL-terminate. Skips the ~640ns wide WRITE membrane full path (see wcscpy).
     if runtime_policy::strict_passthrough_active() {
         unsafe {
-            // Bound the src scan to `n` (glibc stops at n — no full-string over-scan when
-            // n << strlen(src)) and copy with an inline SIMD loop instead of
-            // copy_nonoverlapping (which lowers to the interposed memcpy symbol). Byte-
-            // identical: scan_w_string(src, Some(n)).0 == min(strlen(src), n) == copy_len.
+            // Append point (inherent dst-end scan), then FUSE the bounded src scan+copy in
+            // one pass (128B tier) instead of the scan_w_string(Some(n)) + wide_copy_n
+            // two-pass (two reads; 8-lane copy for n<1024). wide_fused_ncopy copies the
+            // min(strlen(src),n) real chars and returns the count; we NUL-terminate. Byte-
+            // identical; same fused kernel measured 1.03-2.34x for wcsncpy (wcsncpy_fused_ab).
             let (dst_len, _) = scan_w_string(dst.cast_const(), None);
-            let copy_len = scan_w_string(src, Some(n)).0;
-            if copy_len > 0 {
-                wide_copy_n(dst.add(dst_len), src, copy_len);
-            }
+            let copy_len = wide_fused_ncopy(dst.add(dst_len), src, n);
             *dst.add(dst_len + copy_len) = 0;
         }
         return dst;
