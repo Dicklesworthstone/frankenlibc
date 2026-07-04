@@ -3805,6 +3805,81 @@ unsafe fn parse_wcstol_fast(nptr: *const u32, base: c_int) -> Option<(i64, usize
     Some((value, i, ConversionStatus::Success))
 }
 
+/// UNSIGNED single-pass wide integer parse for base 10/16 — the wcstoul/wcstoull analog of
+/// [`parse_wcstol_fast`], replacing the two-pass `wide_numeric_token_len` + `wcstoul_impl`.
+/// Byte-identical to `wcstoul_impl` for base 10/16: same whitespace/sign/0x-prefix handling,
+/// the same checked-arithmetic overflow (→ `u64::MAX`, ERANGE), and glibc's `-`-negation
+/// (`acc.wrapping_neg()`). Returns `None` for base 0/other → the caller falls back.
+///
+/// # Safety
+/// `nptr` must point to a valid NUL-terminated wide string.
+#[inline]
+unsafe fn parse_wcstoul_fast(
+    nptr: *const u32,
+    base: c_int,
+) -> Option<(u64, usize, ConversionStatus)> {
+    if base != 10 && base != 16 {
+        return None;
+    }
+    let mut i = 0usize;
+    loop {
+        let c = unsafe { *nptr.add(i) };
+        if matches!(c, 0x09..=0x0d | 0x20) {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    let mut c = unsafe { *nptr.add(i) };
+    let negative = if c == b'-' as u32 {
+        i += 1;
+        c = unsafe { *nptr.add(i) };
+        true
+    } else if c == b'+' as u32 {
+        i += 1;
+        c = unsafe { *nptr.add(i) };
+        false
+    } else {
+        false
+    };
+    if base == 16 && c == b'0' as u32 {
+        let n = unsafe { *nptr.add(i + 1) };
+        if n == b'x' as u32 || n == b'X' as u32 {
+            let after = unsafe { *nptr.add(i + 2) };
+            if wide_digit_value(after, 16).is_some() {
+                i += 2;
+                c = after;
+            }
+        }
+    }
+    let radix = base as u64;
+    let mut acc = 0u64;
+    let mut any_digits = false;
+    let mut overflow = false;
+    while let Some(digit) = wide_digit_value(c, base) {
+        any_digits = true;
+        if !overflow {
+            match acc
+                .checked_mul(radix)
+                .and_then(|a| a.checked_add(digit as u64))
+            {
+                Some(v) => acc = v,
+                None => overflow = true,
+            }
+        }
+        i += 1;
+        c = unsafe { *nptr.add(i) };
+    }
+    if !any_digits {
+        return Some((0, 0, ConversionStatus::Success));
+    }
+    if overflow {
+        return Some((u64::MAX, i, ConversionStatus::Overflow));
+    }
+    let value = if negative { acc.wrapping_neg() } else { acc };
+    Some((value, i, ConversionStatus::Success))
+}
+
 unsafe fn wide_parse_int<T: Copy>(
     nptr: *const libc::wchar_t,
     base: c_int,
@@ -3882,9 +3957,13 @@ pub unsafe extern "C" fn wcstoul(
         return 0;
     }
 
-    // Bounded scan (see wide_parse_int): O(number), not O(buffer).
+    // Single-pass fast path for base 10/16 (parse_wcstoul_fast); base 0/other fall back to
+    // the two-pass wide_numeric_token_len + wcstoul_impl.
     let (value, consumed, status) = unsafe {
-        wide_parse_int(nptr, base, frankenlibc_core::stdlib::conversion::wcstoul_impl)
+        match parse_wcstoul_fast(nptr as *const u32, base) {
+            Some(r) => r,
+            None => wide_parse_int(nptr, base, frankenlibc_core::stdlib::conversion::wcstoul_impl),
+        }
     };
 
     // glibc leaves *endptr untouched on an invalid base (it validates the base
