@@ -34,6 +34,39 @@ retried and real wins are confirmed with numbers.
 - **Scope:** exact dyadic non-integer `%g` only; broader non-dyadic dtoa remains
   a Schubfach/Ryu-sized lever.
 
+## 2026-07-04 — ✗ fallback-cache clear elision REJECTED — `calloc/free(16)` only 0.4% faster, within noise
+
+- **NO-SHIP (cod):** tested a single-store allocator micro-lever on the current
+  largest measured gap (`calloc/free(16)` vs host glibc): after a successful
+  single-thread cached fallback-table remove, leave `fallback_cache_index`
+  pointing at the now-tombstoned slot instead of doing the hot-path
+  `clear_fallback_cache(slot)` release store. This is behavior-preserving on the
+  measured single-thread path because the next insert overwrites the cache and any
+  stale tombstone misses/clears on a later lookup. It is also too small to matter.
+- **MEASURED BASELINE (`rch exec`, worker `ovh-a`, current-main row from the
+  immediately preceding allocator entry; `AGENT_NAME=cod`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`, per-crate short gate
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench --bench
+  calloc_glibc_bench -- 'calloc_cycle/(fl|glibc)/16' --noplot --sample-size 10
+  --warm-up-time 1 --measurement-time 1`):** FrankenLibC **30.857 ns**, glibc
+  **4.639 ns**, fl/glibc **6.65x LOSS**.
+- **MEASURED CANDIDATE (`rch exec`, worker `ovh-a`, same command/target root; rch
+  rewrote to its worker-scoped target dir):** FrankenLibC **30.732 ns**, glibc
+  **4.810 ns**, fl/glibc **6.39x LOSS**. Candidate/current-FL ratio is
+  **0.996x** (only **1.004x faster**, ~0.4%). Criterion reported the FL change
+  as **within noise threshold** (`-1.59%..-0.35%` interval). The apparent ratio
+  move is mostly the glibc arm moving slower, not a real FrankenLibC win.
+- **CONTROL / ROUTING NOTES:** additional short gates showed worker volatility
+  rather than a stable lever: local-fallback current-main **43.464/6.195 ns =
+  7.02x**, `hz2` candidate **36.559/5.654 ns = 6.47x**, and `vmi1227854`
+  current-main **59.222/6.255 ns = 9.47x**. Do not retry single-store cache-clear
+  elision; the remaining allocator gap is still structural fallback metadata and
+  stats/framing cost.
+- **CONFORMANCE:** source change was reverted; focused allocator differential
+  remained GREEN:
+  `AGENT_NAME=cod CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod rch exec -- cargo test --profile release -p frankenlibc-abi --test conformance_diff_malloc_edges -- --nocapture`
+  passed 1/1 on worker `vmi1152480`.
+
 ## 2026-07-04 — ✗ lock-free fallback allocation table REJECTED — worsened `calloc/free(16)` to 12.27x vs glibc
 
 - **NO-SHIP (cod):** tried the allocator-metadata/RCU-style lever from the
