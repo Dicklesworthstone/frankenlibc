@@ -3227,16 +3227,38 @@ pub unsafe extern "C" fn wcsrtombs(
 // The wcstol / wcstoul abi shims below call the core functions
 // directly.
 
-fn project_wide_ascii(s: &[u32]) -> Vec<u8> {
-    let mut projected = Vec::with_capacity(s.len().saturating_add(1));
-    for &wc in s {
-        if wc > 0x7f {
-            break;
-        }
-        projected.push(wc as u8);
+/// Stack buffer size for the ASCII projection used by the wide float/int parsers. Covers
+/// every realistic numeric string (even `0.` + ~500 digits) so the common case does ZERO
+/// heap allocation; pathologically long inputs fall back to `heap`.
+const WIDE_ASCII_STACK: usize = 512;
+
+/// Project the leading ASCII run of `s` (stopping at the first `wc > 0x7f`, mirroring the
+/// old `project_wide_ascii`) as NUL-terminated bytes, WITHOUT a per-call heap allocation for
+/// the common short-numeric case: the prefix is written into the caller's stack buffer when
+/// it fits, else into `heap`. Returns the written slice INCLUDING the terminating NUL — the
+/// same bytes the old `project_wide_ascii` Vec held (byte-identical to the parsers). `stack`
+/// and `heap` must outlive the returned slice.
+fn project_wide_ascii_into<'a>(s: &[u32], stack: &'a mut [u8; WIDE_ASCII_STACK], heap: &'a mut Vec<u8>) -> &'a [u8] {
+    // Length of the leading ASCII run (same stop condition as before: first wc > 0x7f).
+    let mut n = 0usize;
+    while n < s.len() && s[n] <= 0x7f {
+        n += 1;
     }
-    projected.push(0);
-    projected
+    if n + 1 <= WIDE_ASCII_STACK {
+        for i in 0..n {
+            stack[i] = s[i] as u8;
+        }
+        stack[n] = 0;
+        &stack[..=n]
+    } else {
+        heap.clear();
+        heap.reserve(n + 1);
+        for &wc in &s[..n] {
+            heap.push(wc as u8);
+        }
+        heap.push(0);
+        &heap[..]
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3330,8 +3352,11 @@ pub unsafe extern "C" fn wcstod(
     let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
     // SAFETY: bounded by measured wide-string length.
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
-    let projected = project_wide_ascii(slice);
-    let (value, consumed, exact) = frankenlibc_core::stdlib::conversion::strtod_impl(&projected);
+    // Zero-alloc ASCII projection for the common short-numeric case (was a per-call Vec).
+    let mut ascii_stack = [0u8; WIDE_ASCII_STACK];
+    let mut ascii_heap: Vec<u8> = Vec::new();
+    let projected = project_wide_ascii_into(slice, &mut ascii_stack, &mut ascii_heap);
+    let (value, consumed, exact) = frankenlibc_core::stdlib::conversion::strtod_impl(projected);
 
     if !endptr.is_null() {
         // SAFETY: consumed is bounded by projected input length.
@@ -4465,9 +4490,12 @@ pub unsafe extern "C" fn wcstof(
     let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
     // SAFETY: bounded by measured wide-string length.
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
-    let projected = project_wide_ascii(slice);
+    // Zero-alloc ASCII projection for the common short-numeric case (was a per-call Vec).
+    let mut ascii_stack = [0u8; WIDE_ASCII_STACK];
+    let mut ascii_heap: Vec<u8> = Vec::new();
+    let projected = project_wide_ascii_into(slice, &mut ascii_stack, &mut ascii_heap);
     let (value, consumed, exact_subnormal) =
-        frankenlibc_core::stdlib::conversion::strtof_impl(&projected);
+        frankenlibc_core::stdlib::conversion::strtof_impl(projected);
 
     if !endptr.is_null() {
         // SAFETY: consumed is bounded by projected input length.
