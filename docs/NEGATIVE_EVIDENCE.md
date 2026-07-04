@@ -6,6 +6,40 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-04 — ✗ lock-free fallback allocation table REJECTED — worsened `calloc/free(16)` to 12.27x vs glibc
+
+- **NO-SHIP (cod):** tried the allocator-metadata/RCU-style lever from the
+  graveyard path on the largest current measured gap (`calloc/free(16)` vs host
+  glibc). The candidate removed the global `FALLBACK_ALLOC_TABLE_LOCK` from the
+  native-fallback pointer/size table and used per-slot atomic claim/remove probes
+  for insert, size, remove, contains, and remaining-byte lookup. This preserved the
+  existing no-pointer-read contract and avoided the unsafe inline-header idea, but
+  it added CAS/acquire traffic to every small allocation/free path.
+- **MEASURED BASELINE (`rch exec`, worker `ovh-a`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`, per-crate short gate;
+  requested `cargo bench --release ...` was attempted first and Cargo rejected it
+  with `unexpected argument '--release' found`, so the valid run used
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench --bench
+  calloc_glibc_bench -- 'calloc_cycle/(fl|glibc)/16' --noplot --sample-size 10
+  --warm-up-time 1 --measurement-time 1`):** current main p50s:
+  FrankenLibC **30.857 ns**, glibc **4.639 ns**, fl/glibc **6.65x LOSS**.
+- **MEASURED CANDIDATE (`rch exec`, scheduler selected worker `vmi1152480` despite
+  an attempted worker pin; same per-crate short gate and target root):** candidate
+  p50s: FrankenLibC **78.789 ns**, glibc **6.422 ns**, fl/glibc **12.27x LOSS**.
+  Because the candidate was both slower in its own glibc-normalized ratio and lacked
+  same-worker proof against the baseline, the source change was fully reverted before
+  commit. Treat the cross-worker absolute delta only as routing evidence; the
+  rejection is based on no credible keep proof plus a materially worse glibc ratio.
+- **COMPONENT CONTEXT (`malloc_sizetrack_ab`, `rch exec`, worker `ovh-a`):** current
+  table path still costs `SIZETRACK_AB table=9.80ns`, while stats are already down to
+  `STATS_AB record_alloc+free=7.96ns` and guard framing is `3.73ns/call`. Do not
+  retry naive lock removal; the remaining allocator gap needs either a proven
+  no-fault metadata side channel or a deeper ownership-table design, not per-slot CAS
+  on this hot path.
+- **CONFORMANCE:** source was reverted; focused allocator conformance rerun for
+  this docs-only rejection remained GREEN:
+  `AGENT_NAME=cod CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod rch exec -- cargo test --profile release -p frankenlibc-abi --test conformance_diff_malloc_edges -- --nocapture`.
+
 ## 2026-07-04 — ✅ fgetws cached ASCII bulk-line fast path LANDED — 10.69x vs ORIG per-fgetwc loop
 
 - **LANDED CODE WIN (`fgetws` cached fd streams):** `fgetws` used the ORIG
