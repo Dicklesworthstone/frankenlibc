@@ -6,6 +6,44 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-04 — ✅ wcsftime no-directive direct wide copy LANDED — 53.66x vs ORIG heap transcode path
+
+- **LANDED CODE WIN (`wchar_abi.rs` / `wcsftime`):** current main already had
+  the stack-buffer + ASCII transcode `wcsftime` path. This commit adds the next
+  measured lever: if the wide format contains no `%` directive, copy the wide
+  literal directly to the output buffer and return without wide->multibyte
+  conversion, `strftime`, or multibyte->wide conversion. The A/B harness keeps
+  reporting the requested ratio vs the legacy ORIG heap-buffer implementation.
+- **MEASURED (`rch exec`, final run local fallback because no workers were
+  admissible: `critical_pressure=2,insufficient_slots=9`; `AGENT_NAME=cod`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`; valid per-crate
+  command `cargo bench --profile release -p frankenlibc-bench --features
+  abi-bench --example wcsftime_ab`):** the example embeds the previous ORIG
+  heap-buffer implementation and asserts ORIG/NEW/glibc wide output identity
+  before timing. The directive rows are context for the already-landed stack
+  path; the new no-directive fast path is the final row. p10 rows:
+  `%Y-%m-%d %H:%M:%S` **363.34 ns -> 69.51 ns**, new/orig **0.191x**
+  (**5.23x faster**), new/glibc **1.065x PAR**;
+  `%H:%M` **510.42 ns -> 305.58 ns**, **0.599x** (**1.67x faster**),
+  new/glibc **13.039x LOSS**;
+  `%A` **480.96 ns -> 277.47 ns**, **0.577x** (**1.73x faster**),
+  new/glibc **23.336x LOSS**;
+  `just text no directives` **724.42 ns -> 13.50 ns**, **0.019x**
+  (**53.66x faster**), new/glibc **0.793x WIN**.
+- **CONFORMANCE GREEN (`rch exec`, worker `hz2`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo test --profile release -p frankenlibc-abi --test
+  conformance_diff_wcsftime --test conformance_diff_wcsftime_l --test
+  wcsftime_differential_fuzz --test wchar_abi_test -- wcsftime`):**
+  `conformance_diff_wcsftime` passed 11/11, `conformance_diff_wcsftime_l`
+  passed 1/1, `wchar_abi_test` wcsftime filters passed 2/2, and
+  `wcsftime_differential_fuzz` passed 1/1 vs host glibc.
+- **NO-SHIP SIDE PROBE:** an ASCII-branch tweak in `towupper`/`towlower` was
+  measured and reverted before commit: local fallback A/B showed `towupper`
+  **1.877 ns -> 3.357 ns** (**1.79x slower**) and `towlower`
+  **1.729 ns -> 2.156 ns** (**1.25x slower**). Do not retry that branch-first
+  towcase variant.
+
 ## 2026-07-04 — ✗ cached tombstone reinsertion REJECTED — local same-target `calloc/free(16)` regressed 1.84x vs ORIG
 
 - **NO-SHIP (Codex):** tested a deeper follow-up to the prior fallback-cache clear

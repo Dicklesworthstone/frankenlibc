@@ -5340,6 +5340,20 @@ pub unsafe extern "C" fn wcsftime(
     // SAFETY: bounded by measured format length.
     let fmt_slice = unsafe { std::slice::from_raw_parts(format as *const u32, fmt_len) };
 
+    if !fmt_slice.contains(&('%' as u32)) {
+        if fmt_len >= maxsize {
+            return 0;
+        }
+        for i in 0..fmt_len {
+            // SAFETY: format has fmt_len readable wide chars; s has room for
+            // fmt_len chars plus NUL because fmt_len < maxsize.
+            unsafe { *s.add(i) = *format.add(i) };
+        }
+        // SAFETY: fmt_len < maxsize.
+        unsafe { *s.add(fmt_len) = 0 };
+        return fmt_len;
+    }
+
     // Transcode the wide format to a multibyte C-string. Stack buffer for the
     // common short format (wcsftime_survey showed two heap Vec allocations
     // dominated the path). Heap only for a >85-char format.
@@ -5386,7 +5400,7 @@ pub unsafe extern "C" fn wcsftime(
     const OUT_STACK: usize = 1024;
     let out_budget = maxsize.saturating_mul(6).max(1);
     let mut out_stack = [0u8; OUT_STACK];
-    let mut out_heap: Vec<u8> = Vec::new();
+    let mut out_heap: Vec<u8>;
     let stack_cap = out_budget.min(OUT_STACK);
     // SAFETY: buffers are valid; time_abi::strftime enforces byte-capacity + NUL semantics.
     let mut out_len = unsafe {
