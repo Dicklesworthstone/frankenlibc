@@ -6,6 +6,38 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-04 — ✅ ecvt/printf `%g` string-builder cleanups LANDED — 3.10x, 2.62x, 2.06x vs original helper paths
+
+- **LANDED CODE WIN (`ecvt.rs`, commit `a812e6e60`):** `rust_e_to_glibc_e`
+  and `_no_strip` rebuilt Rust's `%e` exponent with `digits.parse::<i32>()`
+  plus a second `format!`, even though Rust already emits unsigned, no-leading-zero
+  exponent digits. The landed path directly pushes mantissa, `e`, sign, a one-byte
+  zero pad when needed, and the original digits. **Measured by `reshape_ab`: OLD
+  68.3 ns → NEW 22.1 ns, candidate/original = 0.324x, 3.10x faster.**
+  Byte-identity gate: in-process A/B equality plus `gcvt_byte_stable` and
+  `conformance_diff_cvt_specials`.
+- **LANDED CODE WIN (`stdio/printf.rs`, commit `68fbfff19`):** `%g`
+  non-alt-form rebuilt the mantissa by `s[..e_pos].to_string()`,
+  `strip_trailing_zeros`, then `format!("{mantissa}{exp_part}")`.
+  The landed path drains the trailing-zero span in place inside the existing
+  `format_e` buffer. **Measured by `gstrip_ab`: OLD 84.5 ns → NEW 32.3 ns,
+  candidate/original = 0.382x, 2.62x faster.** Byte-identity gate:
+  `printf_float_differential_fuzz` plus `conformance_diff_printf_fastpaths`.
+- **LANDED CODE WIN (`stdio/printf.rs`, this commit):** the `%g` scientific
+  fallback helper `format_g_exp_from_scientific` still did the same
+  `mantissa.to_string()` + strip/dot-fix + final `format!` concat pattern.
+  The landed path computes the final mantissa slice/dot bit, allocates once, and
+  appends exponent parts directly. **Measured through `rch exec` on `hz2`
+  (`CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc/codex-gexp-candidate`,
+  `cargo bench --profile release -p frankenlibc-bench --example gexp_ab`;
+  `cargo bench --release` is rejected by this Cargo): OLD 73.5 ns → NEW 35.7 ns,
+  candidate/original = 0.486x, 2.06x faster.** Byte-identity gate:
+  `gexp_ab` old/new assertions, `printf_float_differential_fuzz` 1/1, and
+  `conformance_diff_printf_fastpaths` 3/3.
+- **Scope:** these are same-process old/new helper A/B wins, not new glibc
+  dominance claims. They remove redundant string building inside already-shipped
+  dtoa paths; the remaining strfromd/printf float residual remains dtoa-bound.
+
 ## 2026-07-04 — ◇ bd-dcrhgl inline-header size tracking MEASURED 31x faster than the legacy fallback table, but NOT SHIPPED: min/max is not a no-fault proof
 
 - **MEASURED (`rch exec`, worker `vmi1149989`, command:
