@@ -3239,6 +3239,49 @@ const WIDE_ASCII_STACK: usize = 512;
 /// in `wide_parse_float`, so correctness holds for arbitrarily long inputs.
 const WIDE_FLOAT_SCAN: usize = 64;
 
+/// Bound on the numeric-token scan for the wide integer parsers (`wide_numeric_token_len`).
+/// Real tokens end far sooner (the scan stops at the first non-numeric char); this only caps a
+/// pathologically long all-alnum run, which triggers a one-shot unbounded re-scan when it is a
+/// genuine number. 512 covers e.g. base-2 u64 (64 digits) with generous headroom.
+const WIDE_INT_SCAN: usize = 512;
+
+/// Length of the leading run that could belong to a C numeric token: ASCII whitespace (skipped
+/// by the parser) then a body of alphanumerics (digits in any base 2-36, plus inf/nan letters)
+/// and the punctuation a number may contain (`+ - . ( )` — signs, radix point, `nan(seq)`
+/// parens; `x`/`p` are letters). Stops at the first char outside that set (or NUL), returning
+/// `(len, hit_bound)`. Deliberately OVER-inclusive: the parser returns the exact `consumed`, so
+/// scanning a couple extra chars is harmless — the point is to be O(token), NOT O(buffer) like
+/// the old `scan_w_string(None)` (which made a number in a long tail 2-10x slower than glibc).
+unsafe fn wide_numeric_token_len(nptr: *const u32, bound: usize) -> (usize, bool) {
+    let mut i = 0usize;
+    // Leading ASCII whitespace (space, \t \n \v \f \r).
+    while i < bound {
+        let c = unsafe { *nptr.add(i) };
+        if matches!(c, 0x09..=0x0d | 0x20) {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    // Numeric-token body.
+    while i < bound {
+        let c = unsafe { *nptr.add(i) };
+        if c == 0 {
+            return (i, false);
+        }
+        let in_body = c < 0x80 && {
+            let b = c as u8;
+            b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.' | b'(' | b')')
+        };
+        if in_body {
+            i += 1;
+        } else {
+            return (i, false);
+        }
+    }
+    (i, true) // hit the bound without a terminator
+}
+
 /// Project the leading ASCII run of `s` (stopping at the first `wc > 0x7f`, mirroring the
 /// old `project_wide_ascii`) as NUL-terminated bytes, WITHOUT a per-call heap allocation for
 /// the common short-numeric case: the prefix is written into the caller's stack buffer when
@@ -3372,6 +3415,37 @@ unsafe fn wide_parse_float<T: Copy>(
     (value, consumed, erange_short)
 }
 
+/// Shared body for the wide integer parsers (`wcstol`/`wcstoul`). Returns the parser's
+/// `(value, consumed, status)`; the caller writes `endptr`/`errno` per its own status rules.
+///
+/// KEY (same as `wide_parse_float`): scans BOUNDED to `WIDE_INT_SCAN`, not to the NUL. The old
+/// `scan_w_string(None)` was O(whole buffer) per call — a short integer followed by a long tail
+/// was 2-10x slower than glibc (measured wcstol_longbuf_ab), quadratic across a buffer. The
+/// integer lives in the bounded window; only if the parse consumes the ENTIRE window with no NUL
+/// (it may legitimately extend — 64-digit base-2, long leading-zero/whitespace runs) do we
+/// re-scan unbounded for an exact value+endptr.
+unsafe fn wide_parse_int<T: Copy>(
+    nptr: *const libc::wchar_t,
+    base: c_int,
+    parse: impl Fn(&[u32], c_int) -> (T, usize, ConversionStatus),
+) -> (T, usize, ConversionStatus) {
+    // SAFETY: token scan reads at most WIDE_INT_SCAN wchars from a valid wide string.
+    let (tlen, hit_bound) = unsafe { wide_numeric_token_len(nptr as *const u32, WIDE_INT_SCAN) };
+    // SAFETY: bounded by the measured token length.
+    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, tlen) };
+    let (value, consumed, status) = parse(slice, base);
+    // The token was cut by the bound only if the scan filled the whole window AND the parse
+    // consumed all of it (a genuine >512-char number). Re-scan unbounded for the exact result.
+    if hit_bound && consumed >= tlen {
+        // SAFETY: unbounded token scan of the same valid wide string.
+        let (flen, _) = unsafe { wide_numeric_token_len(nptr as *const u32, usize::MAX) };
+        // SAFETY: bounded by the measured full token length.
+        let fslice = unsafe { std::slice::from_raw_parts(nptr as *const u32, flen) };
+        return parse(fslice, base);
+    }
+    (value, consumed, status)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcstol(
     nptr: *const libc::wchar_t,
@@ -3386,11 +3460,10 @@ pub unsafe extern "C" fn wcstol(
         return 0;
     }
 
-    // SAFETY: strict mode follows C semantics and scans until NUL.
-    let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
-    // SAFETY: bounded by measured wide-string length.
-    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
-    let (value, consumed, status) = frankenlibc_core::stdlib::conversion::wcstol_impl(slice, base);
+    // Bounded scan (see wide_parse_int): O(number), not O(buffer).
+    let (value, consumed, status) = unsafe {
+        wide_parse_int(nptr, base, frankenlibc_core::stdlib::conversion::wcstol_impl)
+    };
 
     // glibc leaves *endptr untouched on an invalid base (it validates the base
     // before any parsing); every other status writes the consumed position.
@@ -3424,11 +3497,10 @@ pub unsafe extern "C" fn wcstoul(
         return 0;
     }
 
-    // SAFETY: strict mode follows C semantics and scans until NUL.
-    let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
-    // SAFETY: bounded by measured wide-string length.
-    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
-    let (value, consumed, status) = frankenlibc_core::stdlib::conversion::wcstoul_impl(slice, base);
+    // Bounded scan (see wide_parse_int): O(number), not O(buffer).
+    let (value, consumed, status) = unsafe {
+        wide_parse_int(nptr, base, frankenlibc_core::stdlib::conversion::wcstoul_impl)
+    };
 
     // glibc leaves *endptr untouched on an invalid base (it validates the base
     // before any parsing); every other status writes the consumed position.
