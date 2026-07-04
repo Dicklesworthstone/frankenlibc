@@ -1224,7 +1224,57 @@ pub fn narrow_f64_to_f32(v: f64) -> f32 {
     }
 }
 
+/// Maximal length of the leading decimal-float character run: leading ASCII whitespace, an
+/// optional sign, then the maximal run of `0-9 . e E + -`. This OVER-approximates strtod's
+/// consumed length (only ever upward), which is safe for [`strtof_impl`]'s fast path:
+/// `parse_decimal_f32_prefix` feeds `s[start..len]` to Rust's `parse::<f32>`, which rejects
+/// any trailing junk (→ `None`, so the full parse runs); and when it succeeds the run was
+/// exactly a valid float, so `len` equals what strtod would consume.
+fn max_float_token_len(s: &[u8]) -> usize {
+    let mut i = 0usize;
+    while i < s.len() && is_c_space(s[i]) {
+        i += 1;
+    }
+    if i < s.len() && matches!(s[i], b'+' | b'-') {
+        i += 1;
+    }
+    while i < s.len() && matches!(s[i], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-') {
+        i += 1;
+    }
+    i
+}
+
 pub fn strtof_impl(s: &[u8]) -> (f32, usize, bool) {
+    // Fast decimal path: bound the token with a cheap maximal float-char scan and parse the
+    // f32 natively, SKIPPING the full strtod_impl f64 parse below (whose f64 value the
+    // decimal case discarded — it was called only for `consumed`). This is a double parse
+    // that made wcstof/strtof ~1.3-1.4x slower than glibc (wcstod_survey). Safe & byte-
+    // identical: `parse_decimal_f32_prefix` rejects hex/inf/nan and `parse::<f32>` rejects
+    // over-consumed junk, so any miss falls through to the unchanged full path; on success
+    // `tok` equals strtod's consumed and the f32 value is the same one the full path's
+    // `parse_decimal_f32_prefix(slice, consumed)` would return.
+    // A `0x`/`0X` hex-float prefix must NOT take the decimal fast path: `max_float_token_len`
+    // stops at the `x` (not a decimal-float char), which would hide the prefix from
+    // `parse_decimal_f32_prefix` and mis-parse "0x…" as a bare "0". Detect it at the token
+    // start and fall through to `strtod_impl`, which handles hex floats.
+    let mut hp = 0usize;
+    while hp < s.len() && is_c_space(s[hp]) {
+        hp += 1;
+    }
+    if hp < s.len() && matches!(s[hp], b'+' | b'-') {
+        hp += 1;
+    }
+    let hex_prefix = hp + 1 < s.len() && s[hp] == b'0' && matches!(s[hp + 1], b'x' | b'X');
+
+    if !hex_prefix {
+        let tok = max_float_token_len(s);
+        if tok > 0
+            && let Some(value) = parse_decimal_f32_prefix(s, tok)
+        {
+            return (value, tok, false);
+        }
+    }
+
     let (wide, consumed, wide_exact) = strtod_impl(s);
     if consumed == 0 {
         return (wide as f32, consumed, false);
