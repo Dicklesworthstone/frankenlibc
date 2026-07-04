@@ -1800,9 +1800,66 @@ fn format_f(value: f64, precision: usize, alt_form: bool) -> String {
         s.push('.');
         s.extend(core::iter::repeat_n('0', precision));
         s
+    } else if let Some(dyadic) = try_format_f_dyadic(value, precision) {
+        dyadic
     } else {
         alloc::format!("{:.prec$}", value, prec = precision)
     }
+}
+
+/// Exact-dyadic `%f` digit string (sign + integer part + '.' + `precision` frac digits) for a
+/// finite `value` with at most `precision` fractional bits, else `None`. Mirror of the dyadic
+/// fast path in `render_raw_float`: `value*10^precision = (value*2^precision)*5^precision` is an
+/// integer whose digits are the output with a point `precision` places from the right — no
+/// flt2dec, no rounding. Byte-identical to `{:.prec$}` (verified by `dyadf_iso`). Guarded to
+/// `1 <= precision <= 19` so `5^precision * (< 2^64)` fits u128.
+fn try_format_f_dyadic(value: f64, precision: usize) -> Option<String> {
+    if precision == 0 || precision > 19 {
+        return None;
+    }
+    // 2^precision built directly from the exponent field (exact, no powi).
+    let scale = f64::from_bits((1023u64 + precision as u64) << 52);
+    let scaled = value.abs() * scale;
+    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+        return None;
+    }
+    let digits = (scaled as u128).checked_mul(5u128.pow(precision as u32))?;
+    let mut tmp = [0u8; 40];
+    let mut nrem = digits;
+    let mut i = tmp.len();
+    loop {
+        i -= 1;
+        tmp[i] = b'0' + (nrem % 10) as u8;
+        nrem /= 10;
+        if nrem == 0 {
+            break;
+        }
+    }
+    let ds = &tmp[i..];
+    let mut s = String::with_capacity(ds.len() + 3);
+    if value.is_sign_negative() {
+        s.push('-');
+    }
+    if ds.len() > precision {
+        let point = ds.len() - precision;
+        for &b in &ds[..point] {
+            s.push(b as char);
+        }
+        s.push('.');
+        for &b in &ds[point..] {
+            s.push(b as char);
+        }
+    } else {
+        s.push('0');
+        s.push('.');
+        for _ in 0..precision - ds.len() {
+            s.push('0');
+        }
+        for &b in ds {
+            s.push(b as char);
+        }
+    }
+    Some(s)
 }
 
 /// `%e` / `%E` formatting: scientific notation.
