@@ -370,6 +370,66 @@ pub fn strlen_dispatch_label_for_tests(s_addr: usize, len_hint: usize) -> &'stat
 #[target_feature(enable = "avx")]
 unsafe fn raw_avx_copy(dst: *mut u8, src: *const u8, n: usize) {
     unsafe {
+        // Dest-align peel: glibc aligns the destination so its 32B stores never cross a
+        // 64B cache line; fl's `vmovdqu` stores split when `dst` is unaligned (measured
+        // ~1.32x vs glibc at n=16384, dst+16; the aligned-dst cases are parity-to-win).
+        // When `dst` is unaligned AND n is large enough to keep the aligned loop's first
+        // (mandatory do-while) 128B iteration in bounds (head <= 31, so head+128 <= n),
+        // copy the first 32B unaligned to cover the sub-32 head, then run an aligned-STORE
+        // loop (`vmovdqa`) from the next 32-aligned `dst` offset. `src` stays `vmovdqu`
+        // (load splits are cheaper; only one operand needs aligning). Byte-identical:
+        // disjoint copy, the head's `[head,32)` bytes are re-written with the same data by
+        // the loop's first store; all offsets stay in `[0, n)`.
+        let head = (32 - (dst as usize & 31)) & 31;
+        if head != 0 && head + 128 <= n {
+            copy_unaligned_32(dst, src); // covers [0, 32) ⊇ [0, head)
+            let mut d = dst.add(head);
+            let mut s = src.add(head);
+            let mut rem = n - head;
+            core::arch::asm!(
+                "2:",
+                "vmovdqu ymm0, [{s}]",
+                "vmovdqu ymm1, [{s}+32]",
+                "vmovdqu ymm2, [{s}+64]",
+                "vmovdqu ymm3, [{s}+96]",
+                "vmovdqa [{d}], ymm0",
+                "vmovdqa [{d}+32], ymm1",
+                "vmovdqa [{d}+64], ymm2",
+                "vmovdqa [{d}+96], ymm3",
+                "add {s}, 128",
+                "add {d}, 128",
+                "sub {rem}, 128",
+                "cmp {rem}, 128",
+                "jae 2b",
+                "vzeroupper",
+                s = inout(reg) s,
+                d = inout(reg) d,
+                rem = inout(reg) rem,
+                out("ymm0") _, out("ymm1") _, out("ymm2") _, out("ymm3") _,
+                options(nostack),
+            );
+            let _ = (d, s);
+            // rem ∈ [0,128): cover the final bytes with overlapping 32B end-copies
+            // (absolute offsets from dst, independent of the peel).
+            if rem > 96 {
+                copy_unaligned_32(dst.add(n - 128), src.add(n - 128));
+                copy_unaligned_32(dst.add(n - 96), src.add(n - 96));
+                copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+                copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+            } else if rem > 64 {
+                copy_unaligned_32(dst.add(n - 96), src.add(n - 96));
+                copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+                copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+            } else if rem > 32 {
+                copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
+                copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+            } else if rem > 0 {
+                copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
+            }
+            return;
+        }
+        // Original path: `dst` already 32-aligned (`vmovdqu` on an aligned address is
+        // free) OR n too small to peel. Unchanged.
         let mut d = dst;
         let mut s = src;
         let mut rem = n;
