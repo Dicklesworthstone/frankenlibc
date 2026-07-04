@@ -359,6 +359,55 @@ pub fn gcvt(value: f64, ndigit: i32, buf: &mut [u8]) -> usize {
 }
 
 /// Pure formatting helper — no buffer concerns. Exposed for unit tests.
+/// Build Rust's `{value:.frac$e}` scientific string for a finite integral value
+/// < 2^64 into `out`, returning `true` when it applied. Byte-for-byte identical to
+/// `write!(out, "{value:.frac$e}")` for these inputs (mantissa digits are the integer's
+/// exact digits, exponent = digit_count - 1, `frac` fractional slots zero-padded). Only
+/// applies when no rounding is needed (`digit_count - 1 <= frac`, i.e. the integer has at
+/// most `frac + 1` significant digits); otherwise returns `false` to fall back to flt2dec.
+fn try_build_integer_sci(value: f64, frac: usize, out: &mut String) -> bool {
+    use core::fmt::Write as _;
+    if !(value.fract() == 0.0 && value.abs() < 18446744073709551616.0) {
+        return false;
+    }
+    let mag = value.abs() as u64;
+    let mut tmp = [0u8; 20];
+    let mut n = mag;
+    let mut i = tmp.len();
+    loop {
+        i -= 1;
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    let digits = &tmp[i..];
+    let dc = digits.len();
+    if dc - 1 > frac {
+        return false; // would round to frac+1 significant digits
+    }
+    let exp = dc as i32 - 1;
+    if value.is_sign_negative() {
+        out.push('-');
+    }
+    out.push(digits[0] as char);
+    if frac > 0 {
+        out.push('.');
+        for &c in &digits[1..] {
+            out.push(c as char);
+        }
+        for _ in 0..frac - (dc - 1) {
+            out.push('0');
+        }
+    }
+    // Rust's `{:e}` exponent: bare decimal, no sign for non-negative (integers give exp >= 0),
+    // no leading zeros — exactly `write!("{exp}")`.
+    out.push('e');
+    let _ = write!(out, "{exp}");
+    true
+}
+
 fn render_gcvt(value: f64, ndigit: usize) -> String {
     if value.is_nan() {
         // glibc's `%g` preserves the NaN sign bit: gcvt(-nan) -> "-nan".
@@ -400,7 +449,14 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     let frac = ndigit.saturating_sub(1);
     let mut sci_stack = StackStr::new();
     let mut sci_heap = String::new();
-    let sci: &str = if write!(sci_stack, "{value:.frac$e}").is_ok() {
+    // Fast-path the `{value:.frac$e}` render for integral values (skips flt2dec); it
+    // produces Rust's scientific form byte-for-byte, so all the %g downstream logic
+    // (exponent extraction, fixed-vs-scientific choice, trailing-zero strip) is unchanged.
+    // Covers %g integers that `try_gcvt_exact_small_fixed` leaves (scientific-style and
+    // >= 2^53). Guarded so no rounding occurs.
+    let sci: &str = if try_build_integer_sci(value, frac, &mut sci_heap) {
+        sci_heap.as_str()
+    } else if write!(sci_stack, "{value:.frac$e}").is_ok() {
         sci_stack.as_str()
     } else {
         let _ = write!(sci_heap, "{value:.frac$e}");
