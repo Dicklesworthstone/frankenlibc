@@ -480,6 +480,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     if let Some(n) = format_strftime_numeric_19(fmt, bd, buf) {
         return n;
     }
+    if let Some(n) = format_strftime_ymd(fmt, bd, buf) {
+        return n;
+    }
 
     let mut pos = 0usize;
     let mut i = 0usize;
@@ -756,14 +759,30 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         // outer flag/width is present.
         macro_rules! push_composite {
             ($sub:expr) => {{
-                let mut scratch = [0u8; 256];
-                let n = format_strftime($sub, bd, &mut scratch);
-                let src: &[u8] = &scratch[..n];
                 let needs_case = case_flag == CaseFlag::Upper; // `#` no-ops here
-                let fits = width_override.map_or(true, |w| src.len() >= w);
-                if !needs_case && fits {
-                    push_str!(src);
+                if !needs_case && width_override.is_none() {
+                    // Common case (no `^`/width on the composite): expand the sub-format
+                    // DIRECTLY into the output buffer at `pos` — no 256-byte scratch to
+                    // zero + no scratch→buf copy. That recursion-into-scratch made the
+                    // compound specifiers ~20x slower than the equivalent explicit format
+                    // (%FT%T was 377ns vs 17ns for "%Y-%m-%d %H:%M:%S"; strftime_survey).
+                    // A composite sub-format is never empty, so n==0 means the output
+                    // buffer overflowed — propagate it exactly like `push!`.
+                    let n = format_strftime($sub, bd, &mut buf[pos..]);
+                    if n == 0 {
+                        return 0;
+                    }
+                    pos += n;
                 } else {
+                    // Case-transform or width-override on a composite: needs the whole
+                    // expansion materialized first (rare — `%^c`, `%20D`, …).
+                    let mut scratch = [0u8; 256];
+                    let n = format_strftime($sub, bd, &mut scratch);
+                    let src: &[u8] = &scratch[..n];
+                    let fits = width_override.map_or(true, |w| src.len() >= w);
+                    if !needs_case && fits {
+                        push_str!(src);
+                    } else {
                     let mut tmp: Vec<u8> = src.to_vec();
                     if needs_case {
                         tmp.make_ascii_uppercase();
@@ -781,6 +800,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                         }
                     }
                     push_str!(&tmp);
+                    }
                 }
             }};
         }
@@ -1033,6 +1053,40 @@ fn format_strftime_hms(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     write_two_digits(&mut buf[3..5], minute);
     buf[5] = b':';
     write_two_digits(&mut buf[6..8], second);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+#[inline]
+fn format_strftime_ymd(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
+    // "%Y-%m-%d" (ISO date, and the expansion of %F / part of %D). Recognizing it here
+    // means the %F/%FT%T/%F %T family — the standard timestamp formats — hits this O(1)
+    // path instead of `%F` recursing into the ~45ns/specifier general loop (that recursion
+    // was the bulk of %FT%T's 3.6x-vs-glibc loss; strftime_survey). Same 4-digit-year
+    // constraint as numeric_19 (glibc %Y is unpadded below 1000 -> general loop handles it).
+    if fmt != b"%Y-%m-%d" {
+        return None;
+    }
+    let year = bd.tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year)
+        || !(0..=11).contains(&bd.tm_mon)
+        || !(1..=31).contains(&bd.tm_mday)
+    {
+        return None;
+    }
+    const OUT_LEN: usize = 10;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+    let year = year as u32;
+    buf[0] = b'0' + ((year / 1000) % 10) as u8;
+    buf[1] = b'0' + ((year / 100) % 10) as u8;
+    buf[2] = b'0' + ((year / 10) % 10) as u8;
+    buf[3] = b'0' + (year % 10) as u8;
+    buf[4] = b'-';
+    write_two_digits(&mut buf[5..7], (bd.tm_mon + 1) as u32);
+    buf[7] = b'-';
+    write_two_digits(&mut buf[8..10], bd.tm_mday as u32);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
