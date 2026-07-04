@@ -793,6 +793,58 @@ unsafe fn scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_i
     let zv = Simd::<u32, WLANES>::splat(0);
     let mut i = 0usize;
     loop {
+        // 128-byte (32-wchar) unrolled fast path: the 32B/iter loop below re-ran the dual
+        // page-guard + bounds check every 8 wchars — ~2.2x slower than glibc for long equal
+        // wide strings (measured wcscmp_sweep, grows with n ⇒ per-element throughput, not
+        // splits). One guard covers the full 128B window (both pointers in-page), four
+        // 8-lane `(ne | eq-zero)` masks OR-combined so the all-equal case takes a SINGLE
+        // branch and advances 32 wchars; a flagged window scalar-resolves the first
+        // differing-or-NUL element (needed for the sign). Byte-identical to the 8-lane path.
+        if i + 32 <= bound
+            && (s1 as usize + i * 4) & 0xFFF <= 0x1000 - 128
+            && (s2 as usize + i * 4) & 0xFFF <= 0x1000 - 128
+        {
+            // SAFETY: the 128B window [i, i+32) wchars stays within both pages and bound.
+            let flag = |off: usize| -> u64 {
+                let a = Simd::<u32, WLANES>::from_array(unsafe {
+                    core::ptr::read(s1.add(i + off).cast::<[u32; WLANES]>())
+                });
+                let b = Simd::<u32, WLANES>::from_array(unsafe {
+                    core::ptr::read(s2.add(i + off).cast::<[u32; WLANES]>())
+                });
+                (a.simd_ne(b) | a.simd_eq(zv)).to_bitmask()
+            };
+            let f0 = flag(0);
+            let f1 = flag(8);
+            let f2 = flag(16);
+            let f3 = flag(24);
+            if f0 | f1 | f2 | f3 == 0 {
+                i += 32;
+                continue;
+            }
+            let base = if f0 != 0 {
+                i
+            } else if f1 != 0 {
+                i + 8
+            } else if f2 != 0 {
+                i + 16
+            } else {
+                i + 24
+            };
+            for j in 0..WLANES {
+                // SAFETY: base+j < i+32 <= bound; within the just-read in-page window.
+                let a = unsafe { *s1.add(base + j) };
+                let b = unsafe { *s2.add(base + j) };
+                if a != b {
+                    return (if (a as i32) < (b as i32) { -1 } else { 1 }, base + j + 1, false);
+                }
+                if a == 0 {
+                    return (0, base + j + 1, false);
+                }
+            }
+            i += 32; // defensive: a flagged window always returns above.
+            continue;
+        }
         if i + WLANES <= bound
             && wide32_read_within_page(s1.wrapping_add(i) as usize)
             && wide32_read_within_page(s2.wrapping_add(i) as usize)
