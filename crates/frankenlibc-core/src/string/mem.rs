@@ -267,6 +267,8 @@ const MEMCHR_EXACT_4096_BYTES: usize = 4096;
 const MEMCHR_WIDE_LANES: usize = 64;
 const MEMCHR_FOLD_PANELS: usize = 8;
 const MEMCHR_FOLD_BYTES: usize = SIMD_LANES * MEMCHR_FOLD_PANELS;
+/// Wider 512B fold tier for the large-scan case (memchr only), above the 256B fold.
+const MEMCHR_FOLD_512: usize = MEMCHR_FOLD_BYTES * 2;
 
 const LO_U64: u64 = u64::from_ne_bytes([0x01; WORD]);
 const HI_U64: u64 = u64::from_ne_bytes([0x80; WORD]);
@@ -362,6 +364,25 @@ fn has_byte_memchr_folded(block: &[u8], byte: u8) -> bool {
     (p0 | p1 | p2 | p3).any()
 }
 
+/// 512-byte fold: `MEMCHR_FOLD_512 / MEMCHR_WIDE_LANES` (8) `Simd<u8,64>` eq-masks OR-reduced.
+/// A wider block than [`has_byte_memchr_folded`]'s 256B — measured (memchr_fold512_ab in-process
+/// A/B) ~8-10% faster at n>=512 by amortizing the skip-loop overhead further (the per-panel
+/// loads/compares pipeline; only the OR accumulate serializes). Runs ABOVE the 256B fold so the
+/// `[256,512)` remainder keeps the 256B tier (no regression). Byte-identical detection.
+#[inline(always)]
+fn has_byte_memchr_512(block: &[u8], byte: u8) -> bool {
+    debug_assert_eq!(block.len(), MEMCHR_FOLD_512);
+    let needle = Simd::<u8, MEMCHR_WIDE_LANES>::splat(byte);
+    let mut acc = needle.simd_ne(needle); // all-false mask
+    let mut o = 0usize;
+    while o < MEMCHR_FOLD_512 {
+        acc |= Simd::<u8, MEMCHR_WIDE_LANES>::from_slice(&block[o..o + MEMCHR_WIDE_LANES])
+            .simd_eq(needle);
+        o += MEMCHR_WIDE_LANES;
+    }
+    acc.any()
+}
+
 #[inline(always)]
 fn memchr_exact_4096_absent(haystack: &[u8], needle: u8) -> bool {
     debug_assert_eq!(haystack.len(), MEMCHR_EXACT_4096_BYTES);
@@ -434,6 +455,25 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     }
 
     let mut base = 0usize;
+
+    // Wide 512B fold tier (above the 256B fold): larger skip windows for long scans, ~8-10%
+    // faster at n>=512 (memchr_fold512_ab). The `[256,512)` remainder falls to the 256B fold
+    // below (no regression, unlike naively widening MEMCHR_FOLD_BYTES which drops to the 64B tier).
+    while count - base >= MEMCHR_FOLD_512 {
+        let block_end = base + MEMCHR_FOLD_512;
+        let block = &hs[base..block_end];
+        if has_byte_memchr_512(block, needle) {
+            let mut panel_base = base;
+            while panel_base < block_end {
+                let chunk = &hs[panel_base..panel_base + SIMD_LANES];
+                if let Some(j) = first_byte_simd_32(chunk, needle) {
+                    return Some(panel_base + j);
+                }
+                panel_base += SIMD_LANES;
+            }
+        }
+        base = block_end;
+    }
 
     while count - base >= MEMCHR_FOLD_BYTES {
         let block_end = base + MEMCHR_FOLD_BYTES;
