@@ -1016,7 +1016,11 @@ unsafe fn scan_wcscmp_simd(s1: *const u32, s2: *const u32, bound: usize) -> (c_i
                 let a = unsafe { *s1.add(base + j) };
                 let b = unsafe { *s2.add(base + j) };
                 if a != b {
-                    return (if (a as i32) < (b as i32) { -1 } else { 1 }, base + j + 1, false);
+                    return (
+                        if (a as i32) < (b as i32) { -1 } else { 1 },
+                        base + j + 1,
+                        false,
+                    );
                 }
                 if a == 0 {
                     return (0, base + j + 1, false);
@@ -1251,7 +1255,8 @@ unsafe fn wide_find_or_nul_simd(s: *const u32, c: u32) -> (usize, bool) {
     // SAFETY: `base` is aligned down <= 28 bytes, so it stays in the same mapped page
     // as `s`; the 32-byte load never crosses a page boundary.
     let base = unsafe { s.sub(align) };
-    let v0 = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(base.cast::<[u32; LANES]>()) });
+    let v0 =
+        Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(base.cast::<[u32; LANES]>()) });
     // `min(v ^ c, v)` has a zero lane iff v == c (v^c == 0) OR v == 0 — collapses the
     // two-target (c-or-NUL) detection into a single compare, so the folded tier below
     // can min-combine 4 vectors into one reduction (the wcslen-style kernel).
@@ -1275,10 +1280,18 @@ unsafe fn wide_find_or_nul_simd(s: *const u32, c: u32) -> (usize, bool) {
         if i >= 32 && (pb + i * 4) & 0xFFF <= 0x1000 - 128 {
             // SAFETY: the 128-byte window stays within the current mapped page.
             let b = unsafe { s.add(i) };
-            let x0 = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(b.cast::<[u32; LANES]>()) });
-            let x1 = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(b.add(LANES).cast::<[u32; LANES]>()) });
-            let x2 = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(b.add(2 * LANES).cast::<[u32; LANES]>()) });
-            let x3 = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(b.add(3 * LANES).cast::<[u32; LANES]>()) });
+            let x0 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(b.cast::<[u32; LANES]>())
+            });
+            let x1 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(b.add(LANES).cast::<[u32; LANES]>())
+            });
+            let x2 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(b.add(2 * LANES).cast::<[u32; LANES]>())
+            });
+            let x3 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(b.add(3 * LANES).cast::<[u32; LANES]>())
+            });
             let e0 = (x0 ^ cv).simd_min(x0);
             let e1 = (x1 ^ cv).simd_min(x1);
             let e2 = (x2 ^ cv).simd_min(x2);
@@ -1290,7 +1303,9 @@ unsafe fn wide_find_or_nul_simd(s: *const u32, c: u32) -> (usize, bool) {
         }
         // SAFETY: `s + i` is 32-byte aligned, so this 32-byte load stays inside
         // the current page; the string is NUL-terminated within a mapped page.
-        let v = Simd::<u32, LANES>::from_array(unsafe { core::ptr::read(s.add(i).cast::<[u32; LANES]>()) });
+        let v = Simd::<u32, LANES>::from_array(unsafe {
+            core::ptr::read(s.add(i).cast::<[u32; LANES]>())
+        });
         if (v ^ cv).simd_min(v).simd_eq(zv).any() {
             for j in 0..LANES {
                 // SAFETY: within the just-read window; a c-or-NUL exists at/ before j==7.
@@ -1488,7 +1503,9 @@ pub unsafe extern "C" fn wcsrchr(s: *const u32, c: u32) -> *mut u32 {
     // decide + observe membrane tax.
     if runtime_policy::strict_passthrough_active() {
         let (last, _span) = unsafe { wide_last_before_nul_simd(s, c) };
-        return last.map_or(std::ptr::null_mut(), |idx| unsafe { s.add(idx) as *mut u32 });
+        return last.map_or(std::ptr::null_mut(), |idx| unsafe {
+            s.add(idx) as *mut u32
+        });
     }
 
     let (mode, decision) = runtime_policy::decide(
@@ -3723,7 +3740,10 @@ fn wide_digit_value(wc: u32, base: c_int) -> Option<u32> {
 /// # Safety
 /// `nptr` must point to a valid NUL-terminated wide string.
 #[inline]
-unsafe fn parse_wcstol_fast(nptr: *const u32, base: c_int) -> Option<(i64, usize, ConversionStatus)> {
+unsafe fn parse_wcstol_fast(
+    nptr: *const u32,
+    base: c_int,
+) -> Option<(i64, usize, ConversionStatus)> {
     if base != 10 && base != 16 {
         return None;
     }
@@ -3987,7 +4007,11 @@ pub unsafe extern "C" fn wcstol(
     let (value, consumed, status) = unsafe {
         match parse_wcstol_fast(nptr as *const u32, base) {
             Some(r) => r,
-            None => wide_parse_int(nptr, base, frankenlibc_core::stdlib::conversion::wcstol_impl),
+            None => wide_parse_int(
+                nptr,
+                base,
+                frankenlibc_core::stdlib::conversion::wcstol_impl,
+            ),
         }
     };
 
@@ -4028,7 +4052,11 @@ pub unsafe extern "C" fn wcstoul(
     let (value, consumed, status) = unsafe {
         match parse_wcstoul_fast(nptr as *const u32, base) {
             Some(r) => r,
-            None => wide_parse_int(nptr, base, frankenlibc_core::stdlib::conversion::wcstoul_impl),
+            None => wide_parse_int(
+                nptr,
+                base,
+                frankenlibc_core::stdlib::conversion::wcstoul_impl,
+            ),
         }
     };
 
@@ -4802,7 +4830,10 @@ unsafe fn fputws_impl(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -
 
 /// Bench hook: OLD per-wide-char fputws (fputwc loop). Not part of the ABI.
 #[doc(hidden)]
-pub unsafe fn bench_fputws_percall(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -> c_int {
+pub unsafe fn bench_fputws_percall(
+    ws: *const libc::wchar_t,
+    stream: *mut std::ffi::c_void,
+) -> c_int {
     if ws.is_null() || stream.is_null() {
         return libc::EOF;
     }
@@ -5309,38 +5340,101 @@ pub unsafe extern "C" fn wcsftime(
     // SAFETY: bounded by measured format length.
     let fmt_slice = unsafe { std::slice::from_raw_parts(format as *const u32, fmt_len) };
 
-    let mut fmt_mb = Vec::with_capacity(fmt_len.saturating_mul(6).saturating_add(1));
-    for &wc in fmt_slice {
-        let mut tmp = [0u8; 6];
-        let Some(n) = wchar_core::wctomb(wc, &mut tmp) else {
-            // SAFETY: thread-local errno update.
-            unsafe { set_abi_errno(libc::EILSEQ) };
-            return 0;
+    // Transcode the wide format to a multibyte C-string. Stack buffer for the
+    // common short format (wcsftime_survey showed two heap Vec allocations
+    // dominated the path). Heap only for a >85-char format.
+    const FMT_STACK: usize = 512;
+    let fmt_budget = fmt_len.saturating_mul(6).saturating_add(1);
+    let mut fmt_stack = [0u8; FMT_STACK];
+    let mut fmt_heap: Vec<u8> = Vec::new();
+    let use_fmt_stack = fmt_budget <= FMT_STACK;
+    {
+        let buf: &mut [u8] = if use_fmt_stack {
+            &mut fmt_stack[..]
+        } else {
+            fmt_heap = vec![0u8; fmt_budget];
+            &mut fmt_heap[..]
         };
-        fmt_mb.extend_from_slice(&tmp[..n]);
+        let mut w = 0usize;
+        for &wc in fmt_slice {
+            // ASCII fast path: an ASCII wchar narrows 1:1 to its byte.
+            if wc < 0x80 {
+                buf[w] = wc as u8;
+                w += 1;
+                continue;
+            }
+            let mut tmp = [0u8; 6];
+            let Some(n) = wchar_core::wctomb(wc, &mut tmp) else {
+                // SAFETY: thread-local errno update.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                return 0;
+            };
+            buf[w..w + n].copy_from_slice(&tmp[..n]);
+            w += n;
+        }
+        buf[w] = 0;
     }
-    fmt_mb.push(0);
+    let fmt_ptr = if use_fmt_stack {
+        fmt_stack.as_ptr()
+    } else {
+        fmt_heap.as_ptr()
+    } as *const std::ffi::c_char;
 
-    // Conservative UTF-8 output budget before converting back to wide chars.
-    let mut out_mb = vec![0u8; maxsize.saturating_mul(6).max(1)];
+    // Output buffer: try a stack buffer first; fall back to the conservative
+    // `maxsize*6` heap budget only if the output would truncate and that budget
+    // exceeds the stack.
+    const OUT_STACK: usize = 1024;
+    let out_budget = maxsize.saturating_mul(6).max(1);
+    let mut out_stack = [0u8; OUT_STACK];
+    let mut out_heap: Vec<u8> = Vec::new();
+    let stack_cap = out_budget.min(OUT_STACK);
     // SAFETY: buffers are valid; time_abi::strftime enforces byte-capacity + NUL semantics.
-    let out_len = unsafe {
+    let mut out_len = unsafe {
         super::time_abi::strftime(
-            out_mb.as_mut_ptr() as *mut std::ffi::c_char,
-            out_mb.len(),
-            fmt_mb.as_ptr() as *const std::ffi::c_char,
+            out_stack.as_mut_ptr() as *mut std::ffi::c_char,
+            stack_cap,
+            fmt_ptr,
             tm as *const libc::tm,
         )
     };
-    if out_len == 0 {
+    let out_ptr: *const u8 = if out_len > 0 {
+        out_stack.as_ptr()
+    } else if out_budget > OUT_STACK {
+        // The stack may have been too small — retry with the full budget on the heap.
+        out_heap = vec![0u8; out_budget];
+        // SAFETY: heap buffer is valid for its length.
+        out_len = unsafe {
+            super::time_abi::strftime(
+                out_heap.as_mut_ptr() as *mut std::ffi::c_char,
+                out_heap.len(),
+                fmt_ptr,
+                tm as *const libc::tm,
+            )
+        };
+        if out_len == 0 {
+            return 0;
+        }
+        out_heap.as_ptr()
+    } else {
         return 0;
-    }
+    };
+    // SAFETY: `out_ptr` is valid for `out_len` bytes (written by strftime).
+    let out_mb = unsafe { std::slice::from_raw_parts(out_ptr, out_len) };
 
     let mut mb_i = 0usize;
     let mut wide_i = 0usize;
     while mb_i < out_len {
         if wide_i.saturating_add(1) >= maxsize {
             return 0;
+        }
+        // ASCII fast path: an ASCII output byte widens 1:1 to its codepoint.
+        let b0 = out_mb[mb_i];
+        if b0 < 0x80 {
+            // SAFETY: `wide_i < maxsize` is enforced above.
+            unsafe { *s.add(wide_i) = b0 as libc::wchar_t };
+            wide_i += 1;
+            mb_i += 1;
+            continue;
         }
         match wchar_core::mbtowc(&out_mb[mb_i..out_len]) {
             Some((wc, used)) => {
