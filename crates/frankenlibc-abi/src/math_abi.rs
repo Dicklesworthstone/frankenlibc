@@ -289,6 +289,46 @@ fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
     out
 }
 
+/// Like `unary_entry` but for a value the caller has ALREADY computed — applies the exact same
+/// MathFenv membrane accounting/heal/deny without invoking a kernel `f(x)`. Used by `lgamma`
+/// (and its aliases), which must call `lgamma_r` to obtain `signgam` and would otherwise
+/// recompute the identical value a second time through `unary_entry(_, core::lgamma)` — a ~2x
+/// waste. Byte-identical to `unary_entry(x, cost, |_| raw)`: `raw` is exactly the `f(x)` the
+/// membrane would have used.
+fn unary_entry_precomputed(x: f64, base_cost_ns: u64, raw: f64) -> f64 {
+    if runtime_policy::math_membrane_fastpath() && !(x.is_finite() && !raw.is_finite()) {
+        return raw;
+    }
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::MathFenv,
+        x.to_bits() as usize,
+        std::mem::size_of::<f64>(),
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::MathFenv, decision.profile, base_cost_ns, true);
+        return deny_fallback(mode);
+    }
+    let adverse = x.is_finite() && !raw.is_finite();
+    let out = if adverse
+        && mode.heals_enabled()
+        && matches!(decision.action, MembraneAction::Repair(_))
+    {
+        heal_non_finite(raw)
+    } else {
+        raw
+    };
+    runtime_policy::observe(
+        ApiFamily::MathFenv,
+        decision.profile,
+        runtime_policy::scaled_cost(base_cost_ns, std::mem::size_of::<f64>()),
+        adverse,
+    );
+    out
+}
+
 #[inline]
 fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f64 {
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
@@ -668,15 +708,16 @@ pub unsafe extern "C" fn tgamma(x: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgamma(x: f64) -> f64 {
-    // Compute via reentrant version to get sign, then update global signgam.
-    let (_, sign) = frankenlibc_core::math::lgamma_r(x);
+    // Compute via reentrant version ONCE to get both the value and the sign — `core::lgamma`
+    // is literally `lgamma_r(x).0`, so routing the value through `unary_entry(_, core::lgamma)`
+    // recomputed the whole gamma kernel a second time (~2x). Reuse the value here.
+    let (val, sign) = frankenlibc_core::math::lgamma_r(x);
     unsafe {
         signgam = sign;
         __signgam = sign;
     }
-    // Run through unary_entry for membrane accounting. lgamma computes
-    // the same value as lgamma_r; the sign is a side-channel.
-    let out = unary_entry(x, 10, frankenlibc_core::math::lgamma);
+    // Membrane accounting on the already-computed value (byte-identical to the old path).
+    let out = unary_entry_precomputed(x, 10, val);
     if x.is_finite() && (x == 0.0 || (x < 0.0 && is_integral_f64(x)) || out.is_infinite()) {
         set_range_errno();
     }
@@ -1188,12 +1229,14 @@ pub unsafe extern "C" fn drem(x: f64, y: f64) -> f64 {
 /// `signgam` to the sign of Γ(x); fl previously left signgam stale.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gamma(x: f64) -> f64 {
-    let (_, sign) = frankenlibc_core::math::lgamma_r(x);
+    // `core::gamma` == `core::lgamma` == `lgamma_r(x).0`, so compute once (as lgamma does)
+    // instead of recomputing the gamma kernel through `unary_entry(_, core::gamma)`.
+    let (val, sign) = frankenlibc_core::math::lgamma_r(x);
     unsafe {
         signgam = sign;
         __signgam = sign;
     }
-    let out = unary_entry(x, 10, frankenlibc_core::math::gamma);
+    let out = unary_entry_precomputed(x, 10, val);
     if x.is_finite() && (x == 0.0 || (x < 0.0 && is_integral_f64(x)) || out.is_infinite()) {
         set_range_errno();
     }
