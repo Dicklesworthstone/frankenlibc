@@ -1337,6 +1337,18 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         } else if spec.flags.space_sign {
             buf.push(b' ');
         }
+        // Exact-integer fast path: a finite integral `abs` < 2^64 has an exact
+        // fixed-point form (integer digits + `precision` zeros), so skip the flt2dec
+        // machinery entirely. `abs` is already finite (inf/nan returned above) and
+        // non-negative; `fract() == 0.0` proves integral, `< 2^64` proves the `as u64`
+        // cast is exact. Byte-identical to `{:.prec$}` for integral values (~4.8x
+        // faster, intf_iso). Non-integral / >= 2^64 values fall through unchanged.
+        if abs.fract() == 0.0 && abs < 18446744073709551616.0 {
+            let _ = write!(VecWriter(buf), "{}", abs as u64);
+            buf.push(b'.');
+            buf.extend(core::iter::repeat_n(b'0', precision));
+            return;
+        }
         let _ = write!(VecWriter(buf), "{:.prec$}", abs, prec = precision);
         return;
     }
@@ -1732,6 +1744,21 @@ fn format_f(value: f64, precision: usize, alt_form: bool) -> String {
         } else {
             alloc::format!("{rounded:.0}")
         }
+    } else if value.fract() == 0.0 && value.abs() < 18446744073709551616.0 {
+        // Exact-integer fast path (see the bare-%f path in render_raw_float): a finite
+        // integral value < 2^64 formats as its integer digits + `precision` zeros with
+        // no flt2dec. Byte-identical to `{:.prec$}`; `fract()==0.0` excludes inf/nan and
+        // proves integral, `< 2^64` makes `as u64` exact. Sign preserved for callers that
+        // pass a signed value (the printf paths pass `abs`, so this is defensive).
+        use core::fmt::Write as _;
+        let mut s = String::with_capacity(24 + precision);
+        if value.is_sign_negative() {
+            s.push('-');
+        }
+        let _ = write!(s, "{}", value.abs() as u64);
+        s.push('.');
+        s.extend(core::iter::repeat_n('0', precision));
+        s
     } else {
         alloc::format!("{:.prec$}", value, prec = precision)
     }
