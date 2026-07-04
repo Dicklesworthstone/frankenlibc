@@ -57,7 +57,11 @@ pub(crate) unsafe fn pack_caller_aliases(
             return None;
         }
         unsafe {
-            std::ptr::copy_nonoverlapping(alias.as_ptr() as *const c_char, buf.add(off), alias.len());
+            std::ptr::copy_nonoverlapping(
+                alias.as_ptr() as *const c_char,
+                buf.add(off),
+                alias.len(),
+            );
             *buf.add(off + alias.len()) = 0;
         }
         offsets.push(off);
@@ -244,6 +248,139 @@ unsafe fn parse_ipv4_cstr(src: *const u8) -> Option<[u8; 4]> {
     Some(octets)
 }
 
+#[inline]
+fn parse_bsd_part_bytes(bytes: &[u8]) -> Option<u32> {
+    if bytes.is_empty() {
+        return None;
+    }
+    if bytes.len() >= 2 && bytes[0] == b'0' && (bytes[1] == b'x' || bytes[1] == b'X') {
+        let rest = &bytes[2..];
+        if rest.is_empty() {
+            return None;
+        }
+        let mut v: u32 = 0;
+        for &b in rest {
+            let d = match b {
+                b'0'..=b'9' => b - b'0',
+                b'a'..=b'f' => b - b'a' + 10,
+                b'A'..=b'F' => b - b'A' + 10,
+                _ => return None,
+            };
+            v = v.checked_mul(16)?.checked_add(d as u32)?;
+        }
+        Some(v)
+    } else if bytes[0] == b'0' && bytes.len() > 1 {
+        let mut v: u32 = 0;
+        for &b in &bytes[1..] {
+            if !(b'0'..=b'7').contains(&b) {
+                return None;
+            }
+            v = v.checked_mul(8)?.checked_add((b - b'0') as u32)?;
+        }
+        Some(v)
+    } else {
+        let mut v: u32 = 0;
+        for &b in bytes {
+            if !b.is_ascii_digit() {
+                return None;
+            }
+            v = v.checked_mul(10)?.checked_add((b - b'0') as u32)?;
+        }
+        Some(v)
+    }
+}
+
+#[inline]
+fn bsd_octets_from_parts(nums: &[u32; 4], nparts: usize) -> Option<[u8; 4]> {
+    let mut octets = [0u8; 4];
+    match nparts {
+        1 => {
+            let v = nums[0];
+            octets[0] = (v >> 24) as u8;
+            octets[1] = (v >> 16) as u8;
+            octets[2] = (v >> 8) as u8;
+            octets[3] = v as u8;
+        }
+        2 => {
+            if nums[0] > 0xFF || nums[1] > 0x00FF_FFFF {
+                return None;
+            }
+            octets[0] = nums[0] as u8;
+            octets[1] = (nums[1] >> 16) as u8;
+            octets[2] = (nums[1] >> 8) as u8;
+            octets[3] = nums[1] as u8;
+        }
+        3 => {
+            if nums[0] > 0xFF || nums[1] > 0xFF || nums[2] > 0xFFFF {
+                return None;
+            }
+            octets[0] = nums[0] as u8;
+            octets[1] = nums[1] as u8;
+            octets[2] = (nums[2] >> 8) as u8;
+            octets[3] = nums[2] as u8;
+        }
+        4 => {
+            for n in nums {
+                if *n > 0xFF {
+                    return None;
+                }
+            }
+            octets[0] = nums[0] as u8;
+            octets[1] = nums[1] as u8;
+            octets[2] = nums[2] as u8;
+            octets[3] = nums[3] as u8;
+        }
+        _ => return None,
+    }
+    Some(octets)
+}
+
+/// Strict-mode BSD numbers-and-dots parser for `inet_addr`/`inet_aton`.
+///
+/// This is the C-string sibling of `frankenlibc_core::inet::parse_ipv4_bsd`:
+/// it walks once until NUL or ASCII whitespace, parses each component in place,
+/// and applies the same 1/2/3/4-part packing rules. The fast path avoids the
+/// previous `scan_c_string` pre-pass and also avoids scanning ignored junk after
+/// the first whitespace terminator.
+///
+/// # Safety
+/// `src` must point to a readable NUL-terminated C string under the strict C
+/// caller contract.
+#[inline]
+unsafe fn parse_ipv4_bsd_cstr(src: *const u8) -> Option<[u8; 4]> {
+    let mut nums = [0u32; 4];
+    let mut nparts = 0usize;
+    let mut part_start = 0usize;
+    let mut i = 0usize;
+
+    loop {
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        let ch = unsafe { *src.add(i) };
+        let at_separator = ch == b'.';
+        let at_end = ch == 0 || ch.is_ascii_whitespace();
+
+        if at_separator || at_end {
+            if nparts >= 4 || i == part_start {
+                return None;
+            }
+            // SAFETY: bytes in [part_start, i) were just walked and are readable.
+            let part = unsafe { core::slice::from_raw_parts(src.add(part_start), i - part_start) };
+            nums[nparts] = parse_bsd_part_bytes(part)?;
+            nparts += 1;
+
+            if at_end {
+                break;
+            }
+            i += 1;
+            part_start = i;
+        } else {
+            i += 1;
+        }
+    }
+
+    bsd_octets_from_parts(&nums, nparts)
+}
+
 /// Convert text IP address to binary form.
 ///
 /// Returns 1 on success, 0 if `src` is not a valid address for the given
@@ -271,7 +408,9 @@ pub unsafe extern "C" fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_vo
                 // `dst` is valid for 4 bytes.
                 return match unsafe { parse_ipv4_cstr(src as *const u8) } {
                     Some(octets) => {
-                        unsafe { core::ptr::copy_nonoverlapping(octets.as_ptr(), dst as *mut u8, 4) };
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(octets.as_ptr(), dst as *mut u8, 4)
+                        };
                         1
                     }
                     None => 0,
@@ -526,26 +665,19 @@ unsafe fn inet_ntop_ipv6_strict_fast(
 pub unsafe extern "C" fn inet_aton(cp: *const c_char, inp: *mut u32) -> c_int {
     // Strict-mode fast path (DEFAULT deployed): `Inet` `decide()` always-Allows in strict, so skip
     // decide()/observe() + `tracked_region_fits(inp)` + `read_bounded_cstr_ref` (registry lookup) and
-    // scan `cp` to NUL directly. Byte-identical for valid inputs (0 on null/unterminated, rc from the
-    // BSD parser); trust-the-caller region handling, glibc never validates `inp`. Mirrors inet_pton.
+    // scan `cp` to NUL directly. Byte-identical under the C-string caller contract (0 on null/invalid,
+    // rc from the BSD parser); trust-the-caller region handling, glibc never validates `inp`.
+    // Mirrors inet_pton.
     if runtime_policy::strict_passthrough_active() {
         if cp.is_null() || inp.is_null() {
             return 0;
         }
-        // SAFETY: strict trusts the caller's NUL-terminated `cp` (C contract).
-        let (len, terminated) = unsafe { scan_c_string(cp, None) };
-        if !terminated {
-            return 0;
-        }
-        // SAFETY: `len` NUL-terminated bytes at `cp`.
-        let src_bytes = unsafe { core::slice::from_raw_parts(cp as *const u8, len) };
-        let mut octets = [0u8; 4];
-        let rc = inet_core::inet_aton(src_bytes, &mut octets);
-        if rc == 1 {
+        if let Some(octets) = unsafe { parse_ipv4_bsd_cstr(cp.cast()) } {
             // SAFETY: caller guarantees `inp` valid for a u32 (C contract).
             unsafe { *inp = u32::from_ne_bytes(octets) };
+            return 1;
         }
-        return rc;
+        return 0;
     }
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Inet, cp as usize, 0, false, true, 0);
@@ -611,20 +743,15 @@ pub unsafe extern "C" fn inet_ntoa(addr: u32) -> *const c_char {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet_addr(cp: *const c_char) -> u32 {
     // Strict-mode fast path (DEFAULT deployed): skip decide()/observe() + `read_bounded_cstr_ref`
-    // (registry lookup); scan `cp` to NUL directly. Byte-identical (INADDR_NONE on null/unterminated,
-    // else the BSD parse). Mirrors inet_pton/inet_aton.
+    // (registry lookup); scan `cp` to NUL directly. Byte-identical under the C-string caller contract
+    // (INADDR_NONE on null/invalid, else the BSD parse). Mirrors inet_pton/inet_aton.
     if runtime_policy::strict_passthrough_active() {
         if cp.is_null() {
             return inet_core::INADDR_NONE;
         }
-        // SAFETY: strict trusts the caller's NUL-terminated `cp` (C contract).
-        let (len, terminated) = unsafe { scan_c_string(cp, None) };
-        if !terminated {
-            return inet_core::INADDR_NONE;
-        }
-        // SAFETY: `len` NUL-terminated bytes at `cp`.
-        let src_bytes = unsafe { core::slice::from_raw_parts(cp as *const u8, len) };
-        return inet_core::inet_addr(src_bytes);
+        return unsafe { parse_ipv4_bsd_cstr(cp.cast()) }
+            .map(u32::from_ne_bytes)
+            .unwrap_or(inet_core::INADDR_NONE);
     }
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Inet, cp as usize, 0, false, true, 0);

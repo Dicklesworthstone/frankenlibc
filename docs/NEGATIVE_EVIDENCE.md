@@ -11946,3 +11946,13 @@ Landed the memmove-overlap lever surfaced 3 turns ago (was deferred as "needs AV
 - **Backward (dst>src), n>=128**: new `raw_avx_copy_backward` — descending 128B asm loop, atomic 32B chunks top-down (load-before-store; a store lands above the read so only already-copied higher bytes are touched).
 Both inline-asm (opaque to LLVM ⇒ no @llvm.memmove recursion). **fwd n=1024 2.0x→1.04x, fwd/bwd n=4096 2.1x/1.96x→1.02x, n=16384 2.0x→1.005x, n=65536 1.7x→1.02x.** No regressions (n=256 stays ~2x per-call floor; bwd n=1024 ~1.86x — descending is prefetch-hostile at L1, but >= the old 16B loop). Byte-exact: 418-combo overlap sweep (both dirs, |delta| 1..129) + conformance_diff_memmove/memcpy/string_mut/copy_stragglers/wcs_copy all green. Reproducer memmove_ov_ab.
 NOTE (no-lever): narrow strtod/strtol already WIN (strtod short 0.46x, tail4096 0.45x — fast-path + NUMERIC_STRING_SCAN_LIMIT bound, no quadratic; strtol 0.53-0.77x). The wide-parser quadratic was fl-specific; narrow was already optimized. Don't re-probe.
+
+## 2026-07-04 (BlackThrush) — WIN: inet_addr strict BSD parser beats glibc (0.542x)
+Direct crate-scoped `rch exec -- cargo bench -p frankenlibc-bench --bench inet_addr_glibc_bench --features abi-bench`
+on worker `ovh-a` (CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-inet-candidate): `inet_addr_ipv4/frankenlibc_abi`
+median **18.052 ns** vs host glibc median **33.309 ns**, ratio **0.542x** (1.85x faster than the legacy original).
+Pre-change characterization on a different worker (`vmi1227854`) was fl 37.644 ns vs glibc 39.321 ns = 0.957x, so that
+cross-worker number is routing context only, not before/after proof. The shipped lever removes the strict-mode
+`scan_c_string`/slice pre-pass for `inet_addr`/`inet_aton` and parses the BSD numbers-and-dots C string directly to the
+first NUL or ASCII whitespace, retaining the same radix and 1/2/3/4-part packing rules. Correctness gate:
+`conformance_diff_inet_aton_fuzz` against host glibc.
