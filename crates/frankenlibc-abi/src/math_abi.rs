@@ -2355,14 +2355,18 @@ fn c_exp(re: f64, im: f64) -> (f64, f64) {
                 // sin(±0) = ±0, so the product would be inf*0 = NaN for large x).
                 return (math::exp(re), im);
             }
+            // ONE argument reduction for both trig outputs (sincos) instead of a separate
+            // sin() and cos() call, which each redo the pi/2 reduction — bit-identical since
+            // core::sincos == (sin, cos) exactly.
+            let (si, co) = math::sincos(im);
             if re > CL_OVF_T {
                 // e^re overflows; split e^re = h*h (h = e^(re/2)) so a finite
                 // result with a small trig factor survives.
                 let h = math::exp(re * 0.5);
-                return ((math::cos(im) * h) * h, (math::sin(im) * h) * h);
+                return ((co * h) * h, (si * h) * h);
             }
             let r = math::exp(re);
-            return (r * math::cos(im), r * math::sin(im));
+            return (r * co, r * si);
         }
         // im is inf or NaN, re finite: cexp(x + i*(inf|NaN)) = NaN + i*NaN.
         return (f64::NAN, f64::NAN);
@@ -2545,8 +2549,8 @@ fn c_tanh(rx: f64, ix: f64) -> (f64, f64) {
     // Finite operands. For |x| past the overflow threshold sinh/cosh would
     // overflow, but tanh has already saturated: real = +-1, imag -> +-0.
     const T: f64 = 354.0; // floor((DBL_MAX_EXP-1)*ln2/2)
-    let sinix = math::sin(ix);
-    let cosix = math::cos(ix);
+    // One reduction for both (sincos == (sin, cos) bit-for-bit), not two.
+    let (sinix, cosix) = math::sincos(ix);
     if math::fabs(rx) > T {
         let re = f64::copysign(1.0, rx);
         let im = 4.0 * sinix * cosix * math::exp(-2.0 * math::fabs(rx));
@@ -2811,7 +2815,9 @@ fn c_sinh(rx: f64, ix: f64) -> (f64, f64) {
             }
             // sinh(rx) and cosh(rx) share one exp (bit-identical, see helper).
             let (sh, ch) = sinh_cosh_shared(rx);
-            return (sh * math::cos(ix), ch * math::sin(ix));
+            // One trig reduction for both (sincos == (sin, cos) bit-for-bit).
+            let (six, cix) = math::sincos(ix);
+            return (sh * cix, ch * six);
         }
         // ix is inf or NaN, rx finite.
         if rx == 0.0 {
@@ -2862,7 +2868,9 @@ fn c_cosh(rx: f64, ix: f64) -> (f64, f64) {
             }
             // cosh(rx) and sinh(rx) share one exp (bit-identical, see helper).
             let (sh, ch) = sinh_cosh_shared(rx);
-            return (ch * math::cos(ix), sh * math::sin(ix));
+            // One trig reduction for both (sincos == (sin, cos) bit-for-bit).
+            let (six, cix) = math::sincos(ix);
+            return (ch * cix, sh * six);
         }
         // ix is inf or NaN, rx finite.
         if rx == 0.0 {
