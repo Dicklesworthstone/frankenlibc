@@ -1411,16 +1411,35 @@ unsafe fn memcmp_avx2(s1: *const u8, s2: *const u8, n: usize) -> c_int {
         // forced 8 explicit loads per 128B. The asm only advances over proven
         // equal chunks. On the first differing chunk, `i` still points at that
         // chunk and the unchanged 32B block path below locates the exact byte.
+        //
+        // Head-peel to 32-align `s1`: with both operands loaded unaligned, EVERY
+        // 32B load can straddle a 64B cache line (measured ~1.5x vs glibc at
+        // n>=4096 when both pointers share a non-32 offset — the split penalty,
+        // not instruction count). glibc peels one pointer to alignment so only the
+        // other operand can split. Here: compare the first 32B unaligned (covers
+        // the sub-32 head), then start the loop at the next 32-aligned `s1` offset
+        // and use aligned `vmovdqa` loads for `s1` (a 32-aligned 32B load never
+        // crosses a 64B line). `s2` stays the unaligned `vpcmpeqb` memory operand.
+        // Byte-identical: `[0,32)` already verified equal, `start <= 31 < 32` so the
+        // loop's first window re-covers `[start,32)` with no gap; page-safe because
+        // alignment rounds UP (every offset stays in `[0, n)`).
+        if n >= 128 {
+            let m0 = block_mask(s1, s2, 0);
+            if m0 != 0xFFFF_FFFF {
+                return diff_at(s1, s2, (!m0).trailing_zeros() as usize);
+            }
+            i = (32 - (s1 as usize & 31)) & 31;
+        }
         if i + 128 <= n {
             core::arch::asm!(
                 "2:",
-                "vmovdqu ymm0, [{s1}+{i}]",
+                "vmovdqa ymm0, [{s1}+{i}]",
                 "vpcmpeqb ymm0, ymm0, [{s2}+{i}]",
-                "vmovdqu ymm1, [{s1}+{i}+32]",
+                "vmovdqa ymm1, [{s1}+{i}+32]",
                 "vpcmpeqb ymm1, ymm1, [{s2}+{i}+32]",
-                "vmovdqu ymm2, [{s1}+{i}+64]",
+                "vmovdqa ymm2, [{s1}+{i}+64]",
                 "vpcmpeqb ymm2, ymm2, [{s2}+{i}+64]",
-                "vmovdqu ymm3, [{s1}+{i}+96]",
+                "vmovdqa ymm3, [{s1}+{i}+96]",
                 "vpcmpeqb ymm3, ymm3, [{s2}+{i}+96]",
                 "vpand ymm0, ymm0, ymm1",
                 "vpand ymm2, ymm2, ymm3",
