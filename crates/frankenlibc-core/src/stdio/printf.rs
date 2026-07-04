@@ -1860,10 +1860,23 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
         }
         let mut s = format_e(value, p.saturating_sub(1), uppercase, alt_form);
         if !alt_form && let Some(e_pos) = s.bytes().position(|b| b == b'e' || b == b'E') {
-            let mut mantissa = s[..e_pos].to_string();
-            strip_trailing_zeros(&mut mantissa);
-            let exp_part = &s[e_pos..];
-            s = alloc::format!("{mantissa}{exp_part}");
+            // Strip the mantissa's trailing zeros (and a bare '.') in place instead of
+            // `s[..e_pos].to_string()` + `strip_trailing_zeros` + a third `format!`
+            // concat. Byte-identical to the old path: `strip_trailing_zeros` only acts
+            // when the mantissa contains '.', pops trailing '0's, then a trailing '.'.
+            let b = s.as_bytes();
+            if b[..e_pos].contains(&b'.') {
+                let mut end = e_pos;
+                while end > 0 && b[end - 1] == b'0' {
+                    end -= 1;
+                }
+                if end > 0 && b[end - 1] == b'.' {
+                    end -= 1;
+                }
+                if end < e_pos {
+                    s.drain(end..e_pos);
+                }
+            }
         }
         return s;
     };
