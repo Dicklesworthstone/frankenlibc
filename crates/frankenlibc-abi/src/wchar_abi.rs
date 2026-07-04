@@ -3232,13 +3232,24 @@ pub unsafe extern "C" fn wcsrtombs(
 /// heap allocation; pathologically long inputs fall back to `heap`.
 const WIDE_ASCII_STACK: usize = 512;
 
+/// Initial bounded-scan window for the wide float parsers. Any non-pathological numeric string
+/// (the longest normal f64 literal `-1.7976931348623157e+308` is 24 chars; hex floats similar)
+/// fits well within this, so the common case scans/projects O(window) not O(buffer). Numbers
+/// (or leading-whitespace runs) that fill the whole window trigger a one-shot unbounded re-scan
+/// in `wide_parse_float`, so correctness holds for arbitrarily long inputs.
+const WIDE_FLOAT_SCAN: usize = 64;
+
 /// Project the leading ASCII run of `s` (stopping at the first `wc > 0x7f`, mirroring the
 /// old `project_wide_ascii`) as NUL-terminated bytes, WITHOUT a per-call heap allocation for
 /// the common short-numeric case: the prefix is written into the caller's stack buffer when
 /// it fits, else into `heap`. Returns the written slice INCLUDING the terminating NUL — the
 /// same bytes the old `project_wide_ascii` Vec held (byte-identical to the parsers). `stack`
 /// and `heap` must outlive the returned slice.
-fn project_wide_ascii_into<'a>(s: &[u32], stack: &'a mut [u8; WIDE_ASCII_STACK], heap: &'a mut Vec<u8>) -> &'a [u8] {
+fn project_wide_ascii_into<'a>(
+    s: &[u32],
+    stack: &'a mut [u8; WIDE_ASCII_STACK],
+    heap: &'a mut Vec<u8>,
+) -> &'a [u8] {
     // Length of the leading ASCII run (same stop condition as before: first wc > 0x7f).
     let mut n = 0usize;
     while n < s.len() && s[n] <= 0x7f {
@@ -3259,6 +3270,106 @@ fn project_wide_ascii_into<'a>(s: &[u32], stack: &'a mut [u8; WIDE_ASCII_STACK],
         heap.push(0);
         &heap[..]
     }
+}
+
+fn ascii_eq_ignore_case(a: u8, b: u8) -> bool {
+    a.eq_ignore_ascii_case(&b)
+}
+
+fn starts_with_ignore_case(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.len() >= needle.len()
+        && haystack
+            .iter()
+            .zip(needle.iter())
+            .all(|(&a, &b)| ascii_eq_ignore_case(a, b))
+}
+
+fn float_stop_may_extend_at_bound(prefix: &[u8], consumed: usize) -> bool {
+    let consumed = consumed.min(prefix.len());
+    let mut token_start = 0usize;
+    while token_start < prefix.len() && prefix[token_start].is_ascii_whitespace() {
+        token_start += 1;
+    }
+    if token_start < prefix.len() && matches!(prefix[token_start], b'+' | b'-') {
+        token_start += 1;
+    }
+    if token_start >= prefix.len() {
+        return true;
+    }
+
+    let token = &prefix[token_start..];
+    let suffix = &prefix[consumed..];
+    if starts_with_ignore_case(token, b"inf")
+        && consumed >= token_start + 3
+        && suffix.len() < b"inity".len()
+        && starts_with_ignore_case(b"inity", suffix)
+    {
+        return true;
+    }
+    if starts_with_ignore_case(token, b"nan") && consumed == token_start + 3 {
+        return matches!(suffix.first(), Some(b'('))
+            && suffix[1..]
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || *b == b'_');
+    }
+
+    if suffix.len() <= 2
+        && matches!(suffix.first(), Some(b'e' | b'E' | b'p' | b'P'))
+        && suffix.get(1).is_none_or(|b| matches!(*b, b'+' | b'-'))
+    {
+        return true;
+    }
+    consumed == token_start + 1
+        && prefix[token_start] == b'0'
+        && matches!(suffix, [b'x' | b'X'] | [b'x' | b'X', b'.'])
+}
+
+/// Shared body for the wide float parsers (`wcstod`/`wcstof`). Returns
+/// `(value, consumed, is_erange)`; the caller writes `endptr`/`errno`.
+///
+/// KEY: scans the wide string BOUNDED to `WIDE_FLOAT_SCAN`, not to the NUL. glibc's wcstod
+/// reads only the numeric prefix — O(number). fl's old `scan_w_string(None)` + full projection
+/// was O(whole buffer), so a short number followed by a long tail (or repeated parsing across a
+/// big buffer) was 16-125x slower than glibc (measured wcstod_longbuf_ab). A real number lives
+/// in the bounded window; only if it fills the entire all-ASCII window with no NUL (i.e. it may
+/// legitimately extend past the bound) do we re-scan unbounded for an exact value/endptr.
+unsafe fn wide_parse_float<T: Copy>(
+    nptr: *const libc::wchar_t,
+    parse: impl Fn(&[u8]) -> (T, usize, bool),
+    is_erange: impl Fn(T, &[u8], bool) -> bool,
+) -> (T, usize, bool) {
+    let mut ascii_stack = [0u8; WIDE_ASCII_STACK];
+    let mut ascii_heap: Vec<u8> = Vec::new();
+    // SAFETY: bounded scan; reads at most WIDE_FLOAT_SCAN wchars from a valid wide string.
+    let (len, term) = unsafe { scan_w_string(nptr as *const u32, Some(WIDE_FLOAT_SCAN)) };
+    // SAFETY: bounded by the measured length.
+    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
+    let projected = project_wide_ascii_into(slice, &mut ascii_stack, &mut ascii_heap);
+    let ascii_len = projected.len() - 1; // minus the terminating NUL
+    let ascii_prefix = &projected[..ascii_len];
+    let (value, consumed, exact) = parse(projected);
+    // Extend only when the number MIGHT be truncated by the bound: the whole bounded window
+    // was ASCII (projection reached `len`, not stopped early by a non-ASCII char), there was no
+    // NUL within the bound (buffer continues), and the first window does not prove the token
+    // boundary. Long ASCII tails after a short number stay on the bounded path.
+    let need_extend = !term
+        && ascii_len == len
+        && (consumed == 0
+            || consumed >= ascii_len
+            || float_stop_may_extend_at_bound(ascii_prefix, consumed));
+    let erange_short =
+        consumed > 0 && is_erange(value, &projected[..consumed.min(projected.len())], exact);
+    if need_extend {
+        // SAFETY: unbounded scan of the same valid wide string.
+        let (flen, _) = unsafe { scan_w_string(nptr as *const u32, None) };
+        // SAFETY: bounded by the measured full length.
+        let fslice = unsafe { std::slice::from_raw_parts(nptr as *const u32, flen) };
+        let fprojected = project_wide_ascii_into(fslice, &mut ascii_stack, &mut ascii_heap);
+        let (v, c, e) = parse(fprojected);
+        let erange = c > 0 && is_erange(v, &fprojected[..c.min(fprojected.len())], e);
+        return (v, c, erange);
+    }
+    (value, consumed, erange_short)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3348,31 +3459,23 @@ pub unsafe extern "C" fn wcstod(
         return 0.0;
     }
 
-    // SAFETY: strict mode follows C semantics and scans until NUL.
-    let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
-    // SAFETY: bounded by measured wide-string length.
-    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
-    // Zero-alloc ASCII projection for the common short-numeric case (was a per-call Vec).
-    let mut ascii_stack = [0u8; WIDE_ASCII_STACK];
-    let mut ascii_heap: Vec<u8> = Vec::new();
-    let projected = project_wide_ascii_into(slice, &mut ascii_stack, &mut ascii_heap);
-    let (value, consumed, exact) = frankenlibc_core::stdlib::conversion::strtod_impl(projected);
-
+    // Bounded scan + zero-alloc projection (see wide_parse_float): O(number), not O(buffer).
+    // glibc 2.38+ raises ERANGE on wide float over/underflow — wide_parse_float applies the
+    // same rule strtod uses, over the consumed prefix.
+    let (value, consumed, erange) = unsafe {
+        wide_parse_float(
+            nptr,
+            frankenlibc_core::stdlib::conversion::strtod_impl,
+            crate::stdlib_abi::strtod_result_is_erange,
+        )
+    };
     if !endptr.is_null() {
-        // SAFETY: consumed is bounded by projected input length.
-        unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed.min(len)) };
+        // SAFETY: consumed is bounded by the parsed prefix length.
+        unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
     }
-
-    // glibc 2.38+ raises ERANGE on wide float over/underflow (previously only the
-    // narrow strtod did; fl used to mirror that asymmetry). Match the current
-    // host: apply the same ERANGE rule strtod uses, over the consumed prefix.
-    if consumed > 0 {
-        let consumed_ascii = &projected[..consumed.min(projected.len())];
-        if crate::stdlib_abi::strtod_result_is_erange(value, consumed_ascii, exact) {
-            unsafe { set_abi_errno(libc::ERANGE) };
-        }
+    if erange {
+        unsafe { set_abi_errno(libc::ERANGE) };
     }
-
     value
 }
 
@@ -4486,30 +4589,21 @@ pub unsafe extern "C" fn wcstof(
         return 0.0;
     }
 
-    // SAFETY: strict mode follows C semantics and scans until NUL.
-    let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
-    // SAFETY: bounded by measured wide-string length.
-    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
-    // Zero-alloc ASCII projection for the common short-numeric case (was a per-call Vec).
-    let mut ascii_stack = [0u8; WIDE_ASCII_STACK];
-    let mut ascii_heap: Vec<u8> = Vec::new();
-    let projected = project_wide_ascii_into(slice, &mut ascii_stack, &mut ascii_heap);
-    let (value, consumed, exact_subnormal) =
-        frankenlibc_core::stdlib::conversion::strtof_impl(projected);
-
+    // Bounded scan + zero-alloc projection (see wide_parse_float): O(number), not O(buffer).
+    let (value, consumed, erange) = unsafe {
+        wide_parse_float(
+            nptr,
+            frankenlibc_core::stdlib::conversion::strtof_impl,
+            crate::stdlib_abi::strtof_result_is_erange,
+        )
+    };
     if !endptr.is_null() {
-        // SAFETY: consumed is bounded by projected input length.
-        unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed.min(len)) };
+        // SAFETY: consumed is bounded by the parsed prefix length.
+        unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
     }
-
-    // glibc 2.38+ raises ERANGE on wide float over/underflow (see wcstod).
-    if consumed > 0 {
-        let consumed_ascii = &projected[..consumed.min(projected.len())];
-        if crate::stdlib_abi::strtof_result_is_erange(value, consumed_ascii, exact_subnormal) {
-            unsafe { set_abi_errno(libc::ERANGE) };
-        }
+    if erange {
+        unsafe { set_abi_errno(libc::ERANGE) };
     }
-
     value
 }
 
