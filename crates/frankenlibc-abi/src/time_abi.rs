@@ -767,7 +767,79 @@ pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
 /// Non-standard but widely available (glibc, musl, BSDs).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timegm(tm: *mut libc::tm) -> i64 {
-    unsafe { mktime(tm) }
+    if tm.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    // Direct UTC conversion — NOT a delegation to `mktime`, whose decide()/observe()
+    // membrane tax made timegm ~1.65x slower than glibc's bare timegm (43ns vs 26ns,
+    // time_survey) even though the arithmetic is identical (fl is UTC-only, so
+    // timegm == mktime's math). Mirrors gmtime_r: strict-mode (DEFAULT deployed) skips
+    // the tracked-object check that glibc never performs; hardened keeps it. Same
+    // normalization as mktime (re-derive the broken-down time, fill tm_wday/tm_yday,
+    // write back), so the output tm and return value are byte-identical.
+    if !runtime_policy::strict_passthrough_active()
+        && !tracked_required_object_fits(tm.cast_const())
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    let bd = unsafe { read_tm(tm) };
+    let year = bd.tm_year as i64 + 1900;
+    let mon = bd.tm_mon as i64;
+
+    // Fast path: when the date/time is ALREADY in its normalized range, no field carries,
+    // so `epoch_to_broken_down(broken_down_to_epoch(bd))` is an identity on the calendar
+    // fields — the tm is already the normalized output and only tm_wday/tm_yday need
+    // filling. Derive those directly from the day count and SKIP the full reverse civil
+    // conversion (epoch_to_broken_down), which is a whole second gmtime and made timegm
+    // ~1.4x slower than glibc's bare timegm (43ns vs 30ns, time_survey). Guarding on an
+    // in-range MONTH (not just re-deriving it) means no year adjustment and no i32/i64
+    // overflow for any valid `tm_year`; leap seconds (tm_sec==60) and any out-of-range
+    // field take the slow path. Byte-identical output (same BrokenDownTime -> write_tm).
+    if (0..=11).contains(&mon)
+        && (0..=59).contains(&bd.tm_sec)
+        && (0..=59).contains(&bd.tm_min)
+        && (0..=23).contains(&bd.tm_hour)
+        && (1..=days_in_month(year, mon)).contains(&(bd.tm_mday as i64))
+    {
+        let days = days_from_civil(year, mon + 1, bd.tm_mday as i64);
+        let epoch = days * 86400
+            + bd.tm_hour as i64 * 3600
+            + bd.tm_min as i64 * 60
+            + bd.tm_sec as i64;
+        let out = time_core::BrokenDownTime {
+            tm_sec: bd.tm_sec,
+            tm_min: bd.tm_min,
+            tm_hour: bd.tm_hour,
+            tm_mday: bd.tm_mday,
+            tm_mon: bd.tm_mon,
+            tm_year: bd.tm_year,
+            tm_wday: ((days + 4).rem_euclid(7)) as i32,
+            tm_yday: (days - days_from_civil(year, 1, 1)) as i32,
+            tm_isdst: 0,
+            tm_gmtoff: 0,
+            zone: [0; 16],
+        };
+        unsafe { write_tm(tm, &out) };
+        return epoch;
+    }
+
+    // Slow path: an out-of-range field needs true normalization via the round trip.
+    let epoch = time_core::broken_down_to_epoch(&bd);
+    let normalized = time_core::epoch_to_broken_down(epoch);
+    unsafe { write_tm(tm, &normalized) };
+    epoch
+}
+
+/// Days in `mon` (0-based) of the Gregorian `year` (proleptic; year is full, e.g. 2024).
+fn days_in_month(year: i64, mon0: i64) -> i64 {
+    const DIM: [i64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if mon0 == 1 && (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) {
+        29
+    } else {
+        DIM[mon0 as usize]
+    }
 }
 
 // ---------------------------------------------------------------------------
