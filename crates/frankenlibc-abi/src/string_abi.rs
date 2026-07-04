@@ -488,6 +488,59 @@ unsafe fn raw_avx_copy(dst: *mut u8, src: *const u8, n: usize) {
 unsafe fn raw_avx_copy_forward(dst: *mut u8, src: *const u8, n: usize) {
     // SAFETY: AVX enabled; caller guarantees dst/src valid for n bytes, dst <= src, n >= 128.
     unsafe {
+        // Dest-align peel (same store-split lever as raw_avx_copy): unaligned `dst` splits
+        // every 32B store across a 64B line — measured ~1.30x vs glibc for a forward
+        // overlap at n=4096, dst+16/dst+8 (aligned-dst is parity). glibc aligns the dest.
+        // Peel is applied ONLY when the ascending order is preserved: the 32B head store
+        // `[dst,dst+32)` must not clobber any source byte the main loop still needs, which
+        // holds iff `dst+32 <= src` (overlap distance >= 32 — or disjoint). Then copy the
+        // head ascending, run an aligned-STORE loop from the next 32-aligned dst offset,
+        // and finish with the same ascending remainder. Small-distance overlaps (src-dst
+        // < 32) keep the original unaligned path (the head store there would corrupt src).
+        let head = (32 - (dst as usize & 31)) & 31;
+        if head != 0 && head + 128 <= n && (dst as usize) + 32 <= (src as usize) {
+            copy_unaligned_32(dst, src); // ascending head [0,32); dst+32<=src ⇒ no src clobber
+            let mut d = dst.add(head);
+            let mut s = src.add(head);
+            let mut rem = n - head;
+            core::arch::asm!(
+                "2:",
+                "vmovdqu ymm0, [{s}]",
+                "vmovdqu ymm1, [{s}+32]",
+                "vmovdqu ymm2, [{s}+64]",
+                "vmovdqu ymm3, [{s}+96]",
+                "vmovdqa [{d}], ymm0",
+                "vmovdqa [{d}+32], ymm1",
+                "vmovdqa [{d}+64], ymm2",
+                "vmovdqa [{d}+96], ymm3",
+                "add {s}, 128",
+                "add {d}, 128",
+                "sub {rem}, 128",
+                "cmp {rem}, 128",
+                "jae 2b",
+                "vzeroupper",
+                s = inout(reg) s,
+                d = inout(reg) d,
+                rem = inout(reg) rem,
+                out("ymm0") _, out("ymm1") _, out("ymm2") _, out("ymm3") _,
+                options(nostack),
+            );
+            let _ = (d, s);
+            let mut i = n - rem;
+            while i + 32 <= n {
+                copy_unaligned_32(dst.add(i), src.add(i));
+                i += 32;
+            }
+            if i + 16 <= n {
+                copy_unaligned_16(dst.add(i), src.add(i));
+                i += 16;
+            }
+            while i < n {
+                std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
+                i += 1;
+            }
+            return;
+        }
         let mut d = dst;
         let mut s = src;
         let mut rem = n;
