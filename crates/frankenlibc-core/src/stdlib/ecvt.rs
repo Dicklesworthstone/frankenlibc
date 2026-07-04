@@ -585,9 +585,56 @@ pub fn render_pct_g(value: f64, ndigit: usize) -> String {
 /// zeros in the mantissa are NOT stripped — `%e` keeps explicit
 /// zeros in its precision-padded output, unlike `%g` which strips.
 pub fn render_pct_e(value: f64, ndigit: usize) -> String {
+    use core::fmt::Write as _;
+    // Exact-integer fast path (no rounding): a finite integral |value| < 2^64 whose
+    // integer has at most `ndigit + 1` significant digits formats to glibc's e-form
+    // directly (first digit, '.', remaining digits, zero-pad, `e±dd`), skipping Rust
+    // std flt2dec + the reshape. Byte-identical for these inputs (the digits are exact
+    // and no rounding occurs when `digit_count - 1 <= ndigit`). `fract() == 0.0` also
+    // excludes inf/nan, which fall through to the std path unchanged.
+    if value.fract() == 0.0 && value.abs() < 18446744073709551616.0 {
+        let mag = value.abs() as u64;
+        let mut tmp = [0u8; 20];
+        let mut n = mag;
+        let mut i = tmp.len();
+        loop {
+            i -= 1;
+            tmp[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+            if n == 0 {
+                break;
+            }
+        }
+        let digits = &tmp[i..];
+        let l = digits.len();
+        if l - 1 <= ndigit {
+            let exp = l as i32 - 1;
+            let mut out = String::with_capacity(l + ndigit + 6);
+            if value.is_sign_negative() {
+                out.push('-');
+            }
+            out.push(digits[0] as char);
+            if ndigit > 0 {
+                out.push('.');
+                for &c in &digits[1..] {
+                    out.push(c as char);
+                }
+                for _ in 0..ndigit - (l - 1) {
+                    out.push('0');
+                }
+            }
+            out.push('e');
+            out.push(if exp < 0 { '-' } else { '+' });
+            let abs_exp = exp.unsigned_abs();
+            if abs_exp < 10 {
+                out.push('0');
+            }
+            let _ = write!(out, "{abs_exp}");
+            return out;
+        }
+    }
     // Render the `%e` form into a stack buffer (no per-call heap alloc for the
     // intermediate, mirroring `render_gcvt`); only the returned String allocates.
-    use core::fmt::Write as _;
     let mut sb = StackStr::new();
     let mut heap = String::new();
     let rust_form: &str = if write!(sb, "{value:.ndigit$e}").is_ok() {
