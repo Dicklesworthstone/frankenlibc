@@ -332,6 +332,7 @@ unsafe fn wide_copy_n(dst: *mut u32, src: *const u32, count: usize) {
 /// `wcslen(src) + 1` wide chars (the caller's contract for C `wcscpy`/`wcpcpy`).
 #[inline]
 unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) -> usize {
+    use std::simd::cmp::SimdOrd;
     let z = Simd::<u32, 8>::splat(0);
     let pb = src as usize;
     let align = (pb & 31) >> 2; // u32 elements before the 32-byte boundary (0..=7)
@@ -355,22 +356,89 @@ unsafe fn wide_fused_copy(dst: *mut u32, src: *const u32) -> usize {
         unsafe { *dst.add(j) = *src.add(j) };
     }
     let mut i = first; // src+i is 32-byte (8-u32) aligned
-    loop {
-        // SAFETY: src+i is 32-byte aligned ⇒ this 8-lane (32-byte) load stays in-page.
-        let v = Simd::<u32, 8>::from_slice(unsafe { std::slice::from_raw_parts(src.add(i), 8) });
-        let m = v.simd_eq(z).to_bitmask();
-        if m != 0 {
-            let nul = m.trailing_zeros() as usize;
-            for j in 0..=nul {
-                // SAFETY: copies through the NUL; dst has room for len+1.
-                unsafe { *dst.add(i + j) = *src.add(i + j) };
+
+    // 8-lane step: reads/stores one 32-byte chunk at src+i (32-byte aligned ⇒ the load
+    // never crosses a page). Copies through the NUL and returns its index if present,
+    // else stores the full chunk and reports "advance 8".
+    macro_rules! lane8 {
+        () => {{
+            // SAFETY: src+i is 32-byte aligned ⇒ this 8-lane (32-byte) load stays in-page.
+            let v =
+                Simd::<u32, 8>::from_slice(unsafe { std::slice::from_raw_parts(src.add(i), 8) });
+            let m = v.simd_eq(z).to_bitmask();
+            if m != 0 {
+                let nul = m.trailing_zeros() as usize;
+                for j in 0..=nul {
+                    // SAFETY: copies through the NUL; dst has room for len+1.
+                    unsafe { *dst.add(i + j) = *src.add(i + j) };
+                }
+                return i + nul;
             }
-            return i + nul;
+            // No NUL: all 8 lanes are real chars ⇒ dst has room for [i, i+8).
+            v.copy_to_slice(unsafe { std::slice::from_raw_parts_mut(dst.add(i), 8) });
+            i += 8;
+        }};
+    }
+
+    // Prologue: two plain 8-lane chunks. Very short strings (<= ~24 wchars) reach their
+    // NUL here and return before any wide read, so the 128-byte tier never over-reads a
+    // short string's tail (which regressed small sizes when the tier ran unconditionally).
+    // Long strings pay two trivial iterations, then reap the wide tier. Measured
+    // (wfused_copy_ab, in-process new-vs-old): n=16 0.98x, n=64 0.92x, n=256 1.23x,
+    // n=1024 1.89x, n=4096 1.49x — the deployed wcscpy/wcpcpy strict hot path.
+    lane8!();
+    lane8!();
+
+    loop {
+        // 128-byte (4×8-lane) tier, page-guarded: four 32-byte chunks per iteration, run
+        // only while reading 128 bytes ahead stays within the current page. The min-reduce
+        // `min(c0,c1,c2,c3)` has a zero lane iff some chunk holds a NUL; when clean we
+        // bulk-store all 128 bytes and skip four separate NUL branches. Byte-identical to
+        // the 8-lane loop (same chars copied, same NUL index returned).
+        while (unsafe { src.add(i) } as usize & 0xFFF) <= 0x1000 - 128 {
+            // SAFETY: guard guarantees [src+i, src+i+32 u32) is in the same mapped page.
+            let c0 =
+                Simd::<u32, 8>::from_slice(unsafe { std::slice::from_raw_parts(src.add(i), 8) });
+            let c1 = Simd::<u32, 8>::from_slice(unsafe {
+                std::slice::from_raw_parts(src.add(i + 8), 8)
+            });
+            let c2 = Simd::<u32, 8>::from_slice(unsafe {
+                std::slice::from_raw_parts(src.add(i + 16), 8)
+            });
+            let c3 = Simd::<u32, 8>::from_slice(unsafe {
+                std::slice::from_raw_parts(src.add(i + 24), 8)
+            });
+            if c0.simd_min(c1).simd_min(c2.simd_min(c3)).simd_eq(z).any() {
+                // A NUL is in these 128 bytes: copy each chunk exactly, stopping at it.
+                for (k, c) in [c0, c1, c2, c3].iter().enumerate() {
+                    let m = c.simd_eq(z).to_bitmask();
+                    if m != 0 {
+                        let nul = m.trailing_zeros() as usize;
+                        let off = i + k * 8;
+                        for j in 0..=nul {
+                            // SAFETY: copies through the NUL; dst has room for len+1.
+                            unsafe { *dst.add(off + j) = *src.add(off + j) };
+                        }
+                        return off + nul;
+                    }
+                    // SAFETY: this chunk is NUL-free ⇒ dst has room for [i+k*8, +8).
+                    c.copy_to_slice(unsafe {
+                        std::slice::from_raw_parts_mut(dst.add(i + k * 8), 8)
+                    });
+                }
+                unreachable!("min-reduce reported a NUL that no chunk contained");
+            }
+            // No NUL in 128 bytes: bulk-store all four chunks (unaligned stores).
+            c0.copy_to_slice(unsafe { std::slice::from_raw_parts_mut(dst.add(i), 8) });
+            c1.copy_to_slice(unsafe { std::slice::from_raw_parts_mut(dst.add(i + 8), 8) });
+            c2.copy_to_slice(unsafe { std::slice::from_raw_parts_mut(dst.add(i + 16), 8) });
+            c3.copy_to_slice(unsafe { std::slice::from_raw_parts_mut(dst.add(i + 24), 8) });
+            i += 32;
         }
-        // No NUL in this chunk: all 8 lanes are real string chars ⇒ dst has room for
-        // [i, i+8). SIMD-store the full chunk (unaligned store).
-        v.copy_to_slice(unsafe { std::slice::from_raw_parts_mut(dst.add(i), 8) });
-        i += 8;
+        // Near a page boundary the wide read could fault; the 8-lane step is always safe
+        // (32-aligned 32-byte read) and keeps i 32-aligned, so a later iteration re-enters
+        // the wide tier once past the boundary.
+        lane8!();
     }
 }
 
