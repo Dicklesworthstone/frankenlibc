@@ -568,8 +568,31 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
         return None;
     }
 
-    let mut simd_blocks = hs.rchunks_exact(MEMCHR_FOLD_BYTES);
     let mut end = count;
+
+    // Wide 512B fold tier above the 256B fold (mirrors memchr): larger reverse skip windows for
+    // long scans (~8-10% at n>=512, memchr_fold512_ab). `rchunks_exact` walks blocks from the END
+    // first, so the highest match is still found first (last-match semantics preserved); the
+    // < 512 front remainder keeps the 256B fold below (no regression). Byte-identical.
+    let mut blocks512 = hs.rchunks_exact(MEMCHR_FOLD_512);
+    for block in blocks512.by_ref() {
+        if has_byte_memchr_512(block, needle) {
+            let mut panel_end = end;
+            for chunk in block.rchunks_exact(SIMD_LANES) {
+                let lanes = Simd::<u8, SIMD_LANES>::from_slice(chunk);
+                let bits = lanes.simd_eq(Simd::splat(needle)).to_bitmask() as u64;
+                if bits != 0 {
+                    let j = 63 - bits.leading_zeros() as usize;
+                    return Some(panel_end - SIMD_LANES + j);
+                }
+                panel_end -= SIMD_LANES;
+            }
+        }
+        end -= MEMCHR_FOLD_512;
+    }
+    let hs = blocks512.remainder();
+
+    let mut simd_blocks = hs.rchunks_exact(MEMCHR_FOLD_BYTES);
 
     for block in simd_blocks.by_ref() {
         if has_byte_memchr_folded(block, needle) {
