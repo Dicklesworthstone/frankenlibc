@@ -1498,6 +1498,36 @@ pub fn reentry_guard_enter_exit_for_bench() {
     drop(g);
 }
 
+/// Bench hook A (OLD framing): the outer allocator reentry guard PLUS the native
+/// reentry guard resolving the slot a SECOND time via `current_allocator_reentry_slot`
+/// — exactly what `malloc`/`free` pay today (outer guard, then `native_libc_*` re-resolves).
+#[doc(hidden)]
+pub fn bench_malloc_guards_reresolve() {
+    let g = enter_allocator_reentry_guard();
+    if let Some(og) = g.as_ref() {
+        let ng = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC);
+        std::hint::black_box(&ng);
+        drop(ng);
+        std::hint::black_box(og);
+    }
+    drop(g);
+}
+
+/// Bench hook B (NEW framing): same two guards, but the native guard REUSES the slot
+/// already resolved by the outer guard (`enter_native_reentry_guard_for_slot`), skipping
+/// the redundant second `current_allocator_reentry_slot` resolve.
+#[doc(hidden)]
+pub fn bench_malloc_guards_forslot() {
+    let g = enter_allocator_reentry_guard();
+    if let Some(og) = g.as_ref() {
+        let ng = enter_native_reentry_guard_for_slot(og.slot, NATIVE_REENTRY_MALLOC);
+        std::hint::black_box(&ng);
+        drop(ng);
+        std::hint::black_box(og);
+    }
+    drop(g);
+}
+
 fn fallback_size_for_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) -> Option<usize> {
     let key = fallback_key(ptr)?;
     if !MULTI_THREADED.load(Ordering::Relaxed) {

@@ -38,6 +38,34 @@ retried and real wins are confirmed with numbers.
   dominance claims. They remove redundant string building inside already-shipped
   dtoa paths; the remaining strfromd/printf float residual remains dtoa-bound.
 
+## 2026-07-04 - ✅ printf `%#g` exponential fallback builder LANDED - 2.27x vs original helper path
+
+- **LANDED CODE WIN (`stdio/printf.rs`):** `format_g_exp_from_scientific`
+  still used the old `mantissa.to_string()` + in-place zero strip / dot fixup
+  + second `format!` concat after the surrounding `%g` cleanups had landed.
+  The new path computes the kept mantissa slice, optional alternate-form dot,
+  and exponent suffix into one exactly-sized `String`. Byte semantics are the
+  same: non-`#` strips trailing mantissa zeros and a bare decimal point; `#`
+  appends a decimal point only when the mantissa lacks one.
+- **MEASURED (`rch exec`, worker `vmi1153651`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc/cod-gexp-direct`,
+  command `cargo bench --profile release -p frankenlibc-bench --example gexp_ab`;
+  the requested `cargo bench --release` form was attempted first and rejected
+  by this Cargo):** `gexp_ab` same-process helper A/B, OLD
+  **157.9 ns** -> NEW **69.7 ns**, candidate/original **0.441x**,
+  **2.27x faster**. The probe asserts old/new byte identity over exponent sign,
+  uppercase, alternate form, stripped-zero, integer-mantissa, and multi-digit
+  exponent cases.
+- **BYTE-IDENTITY / CONFORMANCE:** `printf_float_differential_fuzz` on `ovh-a`
+  passed **300000 comparisons, 0 divergences** vs host glibc. Local focused
+  unit filters passed `test_g_rounding_overflow_switches_to_e`,
+  `test_g_scientific_reuse_preserves_fixed_style_boundaries`, and
+  `test_hash_g_keeps_decimal_point`; `conformance_diff_printf_fastpaths`
+  passed 3/3 under rch local fallback while the fleet was saturated.
+- **Scope:** this closes another redundant string-builder island in the
+  already-shipped dtoa path. It is not a new glibc dominance claim; the
+  remaining float-format residual stays dtoa/kernel-bound.
+
 ## 2026-07-04 — ◇ bd-dcrhgl inline-header size tracking MEASURED 31x faster than the legacy fallback table, but NOT SHIPPED: min/max is not a no-fault proof
 
 - **MEASURED (`rch exec`, worker `vmi1149989`, command:
@@ -12071,3 +12099,7 @@ Profiled strfromd vs glibc (strfromd_ab, same-process ratio): **%g 2.65x, %.6f 1
 - The core helpers **already use `StackStr` internally** (render_gcvt, render_pct_e both: "only the returned String allocates") — the intermediates are stack, so there's just ONE ~20ns return alloc, not the multi-alloc chain I'd assumed.
 - Runtime-precision `format!("{:.*}")` == compile-time `format!("{:.6}")` (1.01x) — not a factor.
 The strfromd wrapper is already lean (format-borrow via CStr, no membrane). So the 1.9-3.6x loss is DTOA quality + the non-inlined render_strfrom String round-trip, NOT a per-call alloc. To WIN strfromd needs a faster f64→decimal path (Ryu/Grisu-class, or a tighter render_gcvt/render_pct_e) — a big algorithmic swing, and %e/%g use fl-custom dtoa (worst: %e 3.65x) while %f uses Rust std (still 1.9x). The ~20ns return-alloc elimination (broad `_into(&mut StackStr)` rewrite across ~4 fns) is a ~10% gain on a moderate-value fn — not worth the churn. CORRECTION to the prior ledger entry (f75e8816b listed strfromd-alloc as an open lever): it's marginal; the real gap is dtoa. Reproducers: strfromd_ab, strfromd_iso.
+
+## 2026-07-04 (BlackThrush) — LOSS: malloc double-slot-resolve elision is ~0-gain (0.98x), dropped
+Dug the biggest remaining measured gap (deployed malloc ~7-10x vs glibc; the diffuse ~28ns framing, not the fallback table). Spotted a concrete redundancy in the strict `malloc` hot path: the outer `enter_allocator_reentry_guard()` resolves the reentry slot via `current_allocator_reentry_slot()`, then `native_libc_malloc()` calls `enter_native_reentry_guard(NATIVE_REENTRY_MALLOC)` which resolves the SAME slot a SECOND time — even though a slot-passing variant (`native_libc_calloc_with_slot`) already exists for calloc. Hypothesis: add `native_libc_malloc_with_slot(slot,..)` reusing the outer guard's slot to skip the redundant resolve.
+**DISPROVEN by in-process A/B (`malloc_resolve_ab`, ratio cancels contention, 20M iters × 80 rounds): OLD double-resolve 16.20ns vs NEW reuse-slot 16.53ns = delta −0.33ns, new/old=1.020 (~0-gain, within noise).** Root cause: `current_allocator_reentry_slot()`'s fast path is just an `fs:[0]` register load + a relaxed `LAST_THREAD_CACHE` atomic load + a key compare — the CPU pipelines it for free. The guards' real cost is the atomic RMWs (`compare_exchange` on `allocator_depth` + `fetch_or` on `native_guard_bits` + two Drop resets), which the plumbing change does NOT remove. So eliminating the second resolve saves nothing. DROPPED (not plumbed into the deployed path — no point risking a safety-critical file for 0 gain). Confirms BoldFalcon's "no single hotspot; the malloc framing cost is diffuse" bisection: even the one obviously-redundant sub-op is free. The only real malloc levers remain the two multi-turn architectural swings (inline size header w/ no-fault guard; slim-fast-path framing) in perf_next_architectural_swings.md. Reproducer: `malloc_resolve_ab` (--features abi-bench) + hooks `bench_malloc_guards_reresolve`/`bench_malloc_guards_forslot` in malloc_abi.rs.

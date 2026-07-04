@@ -87,10 +87,10 @@ fn main() {
             new(m, e, u, a)
         );
     }
-    let iters = 2_000_000u64;
+    let iters = 200_000u64;
     let n = cases.len() as u64;
     let (mut ov, mut nv) = (Vec::new(), Vec::new());
-    for r in 0..60 {
+    for r in 0..24 {
         let o = || {
             let t = Instant::now();
             for _ in 0..iters {
