@@ -34,11 +34,7 @@ fn bench2<A: Fn(), B: Fn()>(a: A, b: B) -> (f64, f64) {
     (pctl(&fa, 0.1), pctl(&fb, 0.1))
 }
 
-fn bench3<A: FnMut(), B: FnMut(), C: FnMut()>(
-    mut a: A,
-    mut b: B,
-    mut c: C,
-) -> (f64, f64, f64) {
+fn bench3<A: FnMut(), B: FnMut(), C: FnMut()>(mut a: A, mut b: B, mut c: C) -> (f64, f64, f64) {
     let (mut fa, mut fb, mut fc) = (Vec::new(), Vec::new(), Vec::new());
     for r in 0..60 {
         match r % 3 {
