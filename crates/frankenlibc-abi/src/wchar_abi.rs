@@ -4503,6 +4503,51 @@ fn narrow_to_wide_count(narrow: &[u8]) -> usize {
     count
 }
 
+#[inline]
+unsafe fn is_exact_wide_percent_ls(format: *const libc::wchar_t) -> bool {
+    unsafe {
+        *format == b'%' as libc::wchar_t
+            && *format.add(1) == b'l' as libc::wchar_t
+            && *format.add(2) == b's' as libc::wchar_t
+            && *format.add(3) == 0
+    }
+}
+
+unsafe fn swprintf_direct_wide_string(
+    dst: *mut libc::wchar_t,
+    n: usize,
+    src: *const libc::wchar_t,
+) -> c_int {
+    const NULL_WIDE: [libc::wchar_t; 6] = [
+        b'(' as libc::wchar_t,
+        b'n' as libc::wchar_t,
+        b'u' as libc::wchar_t,
+        b'l' as libc::wchar_t,
+        b'l' as libc::wchar_t,
+        b')' as libc::wchar_t,
+    ];
+
+    let (input, produced_len): (*const libc::wchar_t, usize) = if src.is_null() {
+        (NULL_WIDE.as_ptr(), NULL_WIDE.len())
+    } else {
+        (src, unsafe { bounded_wide_len(src.cast::<u32>()) })
+    };
+
+    if !dst.is_null() && n != 0 {
+        let copy_len = produced_len.min(n.saturating_sub(1));
+        if copy_len != 0 {
+            unsafe { std::ptr::copy_nonoverlapping(input, dst, copy_len) };
+        }
+        unsafe { *dst.add(copy_len) = 0 };
+    }
+
+    if produced_len >= n {
+        -1
+    } else {
+        produced_len as c_int
+    }
+}
+
 // decode_utf8 moved to frankenlibc_core::string::wchar::decode_utf8_lossy.
 // Use the alias below at the two call sites so they read identically.
 use frankenlibc_core::string::wchar::decode_utf8_lossy as decode_utf8;
@@ -4876,6 +4921,10 @@ pub unsafe extern "C" fn swprintf(
 ) -> c_int {
     if format.is_null() {
         return -1;
+    }
+    if unsafe { is_exact_wide_percent_ls(format) } {
+        let arg = unsafe { args.next_arg::<*const libc::wchar_t>() };
+        return unsafe { swprintf_direct_wide_string(s, n, arg) };
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
     let segments = parse_format_string(fmt_narrow.as_bytes());

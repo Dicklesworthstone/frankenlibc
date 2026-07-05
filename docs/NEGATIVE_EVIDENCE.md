@@ -6,6 +6,33 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-05 - ✅ swprintf exact `%ls` wide-copy fast path LANDED - 25.79x vs ORIG round-trip, 1.50x vs glibc
+
+- **LANDED CODE WIN (Codex, `wchar_abi.rs` / `swprintf`):** the wide
+  `swprintf(L"%ls", wide_arg)` path now recognizes the exact `%ls` format and
+  copies the already-wide argument directly into the destination buffer. This
+  bypasses the old wide-format parse plus wide->UTF-8 render plus UTF-8->wide
+  output round trip for the common single-wide-string case. Truncation and
+  `(null)` handling stay byte-isomorphic with the existing path, and all
+  non-exact formats fall through unchanged.
+- **MEASURED (`rch exec`, worker `ovh-a`, `AGENT_NAME=Codex`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`; per-crate release
+  command `cargo bench --profile release -p frankenlibc-bench --features
+  abi-bench --example swprintf_survey`):** the survey example now embeds the
+  ORIG round-trip `%ls` model, current `wchar_abi::swprintf`, and host glibc
+  `swprintf` through `dlmopen`, asserting output equality before timing. p10
+  rows: `%ls` ORIG **318.69 ns** -> NEW **12.36 ns**, `new/orig` **0.039x**
+  (**25.79x faster**); host glibc **18.55 ns**, `new/glibc` **0.667x WIN**
+  (**1.50x faster**). The same run still shows the unsolved `%d` residual:
+  FL **85.92 ns** vs glibc **22.50 ns**, `fl/glibc` **3.819x LOSS**.
+- **CONFORMANCE GREEN (`rch exec`, worker `ovh-a`; `AGENT_NAME=Codex`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`; `cargo test
+  --profile release -p frankenlibc-abi --test conformance_diff_swprintf --test
+  swprintf_truncation_differential_fuzz -- --nocapture`):**
+  `conformance_diff_swprintf` passed **3/3**,
+  `swprintf_truncation_differential_fuzz` passed **1/1** with zero divergences
+  vs host glibc.
+
 ## 2026-07-04 - ✅ __wcsftime_l measured A/B harness LANDED - 22.44x-47.08x vs ORIG heap transcode
 
 - **LANDED EVIDENCE WIN (Codex, `frankenlibc-bench` / `wcsftime_l_ab`):**
