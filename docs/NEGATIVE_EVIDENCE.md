@@ -6,6 +6,39 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-05 - ✅ swprintf exact `%d` native wide decimal transducer LANDED - 19.63x vs ORIG round-trip, 1.69x vs glibc
+
+- **LANDED CODE WIN (Codex, `wchar_abi.rs` / `swprintf`):** the exact
+  `swprintf(L"%d", int)` path now recognizes the format before the pooled
+  wide->narrow projection and emits signed decimal digits directly into the
+  caller's wide buffer. This is the algebraic-fusion / native transducer version
+  of the remaining wide-printf residual: it bypasses wide format transcode,
+  printf parser/count/extract/render, narrow byte output, and UTF-8->wide decode.
+  All flags, width, precision, length modifiers, locale-sensitive cases, and
+  non-exact formats still fall through to the existing renderer unchanged.
+- **MEASURED (`rch exec`, worker `vmi1167313`, `AGENT_NAME=Codex`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`; per-crate release
+  command `cargo bench --profile release -p frankenlibc-bench --features
+  abi-bench --example swprintf_survey`):** the survey example embeds the ORIG
+  `%d` round-trip model, current `wchar_abi::swprintf`, and host glibc
+  `swprintf` through `dlmopen`, asserting output equality before timing. p10
+  rows: `%d` ORIG **655.67 ns** -> NEW **33.41 ns**, `new/orig` **0.051x**
+  (**19.63x faster**); host glibc **56.54 ns**, `new/glibc` **0.591x WIN**
+  (**1.69x faster**). The same run confirmed the prior `%ls` fast path remains
+  healthy: ORIG **1187.39 ns** -> NEW **43.57 ns**, `new/orig` **0.037x**;
+  host glibc **61.33 ns**, `new/glibc` **0.710x WIN**.
+- **CONFORMANCE GREEN (`rch exec`, local fallback because no workers were
+  admissible: `insufficient_slots=9,active_project_exclusion=2`;
+  `AGENT_NAME=Codex`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo test --profile release -p frankenlibc-abi --test
+  conformance_diff_swprintf --test swprintf_truncation_differential_fuzz --
+  --nocapture`):** `conformance_diff_swprintf` passed **3/3** and
+  `swprintf_truncation_differential_fuzz` passed **1/1** with zero divergences
+  vs host glibc. Exact `%d` proof surface is deliberately small: C `int`
+  decimal including negative values and `INT_MIN` via unsigned magnitude, the
+  same truncation/NUL return contract as the existing `swprintf`, and no change
+  to general wide-printf behavior.
+
 ## 2026-07-05 - ✅ swprintf exact `%ls` wide-copy fast path LANDED - 25.79x vs ORIG round-trip, 1.50x vs glibc
 
 - **LANDED CODE WIN (Codex, `wchar_abi.rs` / `swprintf`):** the wide

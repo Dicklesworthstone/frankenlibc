@@ -4513,6 +4513,61 @@ unsafe fn is_exact_wide_percent_ls(format: *const libc::wchar_t) -> bool {
     }
 }
 
+#[inline]
+unsafe fn is_exact_wide_percent_d(format: *const libc::wchar_t) -> bool {
+    // SAFETY: `swprintf` format pointers are required to reference a
+    // NUL-terminated wide string. Short-circuiting avoids reading past the
+    // terminator unless the prefix is exactly "%d".
+    unsafe {
+        *format == b'%' as libc::wchar_t
+            && *format.add(1) == b'd' as libc::wchar_t
+            && *format.add(2) == 0
+    }
+}
+
+unsafe fn swprintf_direct_i32(dst: *mut libc::wchar_t, n: usize, value: c_int) -> c_int {
+    let mut out = [0 as libc::wchar_t; 11];
+    let mut len = 0usize;
+    let signed = value as i64;
+    let mut mag = if signed < 0 {
+        out[0] = b'-' as libc::wchar_t;
+        len = 1;
+        signed.unsigned_abs()
+    } else {
+        signed as u64
+    };
+
+    let mut digits = [0u8; 10];
+    let mut idx = digits.len();
+    loop {
+        idx -= 1;
+        digits[idx] = b'0' + (mag % 10) as u8;
+        mag /= 10;
+        if mag == 0 {
+            break;
+        }
+    }
+    for &digit in &digits[idx..] {
+        out[len] = digit as libc::wchar_t;
+        len += 1;
+    }
+
+    if !dst.is_null() && n != 0 {
+        let copy_len = len.min(n.saturating_sub(1));
+        if copy_len != 0 {
+            // SAFETY: `out[..copy_len]` was initialized above and `copy_len`
+            // is bounded by the caller-provided destination capacity minus
+            // the trailing NUL slot.
+            unsafe { std::ptr::copy_nonoverlapping(out.as_ptr(), dst, copy_len) };
+        }
+        // SAFETY: `copy_len < n` when `n != 0`, so the terminator lands
+        // within the destination object promised by the C ABI caller.
+        unsafe { *dst.add(copy_len) = 0 };
+    }
+
+    if len >= n { -1 } else { len as c_int }
+}
+
 unsafe fn swprintf_direct_wide_string(
     dst: *mut libc::wchar_t,
     n: usize,
@@ -4925,6 +4980,16 @@ pub unsafe extern "C" fn swprintf(
     if unsafe { is_exact_wide_percent_ls(format) } {
         let arg = unsafe { args.next_arg::<*const libc::wchar_t>() };
         return unsafe { swprintf_direct_wide_string(s, n, arg) };
+    }
+    // SAFETY: `format` is the same NUL-terminated wide string already
+    // accepted by the surrounding `swprintf` path.
+    if unsafe { is_exact_wide_percent_d(format) } {
+        // SAFETY: the exact `%d` format consumes one promoted C `int` vararg.
+        let arg = unsafe { args.next_arg::<c_int>() };
+        // SAFETY: `swprintf_direct_i32` writes at most `n` wide characters to
+        // the caller-provided destination and mirrors the generic truncation
+        // contract for this exact format.
+        return unsafe { swprintf_direct_i32(s, n, arg) };
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
     let segments = parse_format_string(fmt_narrow.as_bytes());

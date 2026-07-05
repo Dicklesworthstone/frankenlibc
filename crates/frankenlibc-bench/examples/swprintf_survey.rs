@@ -12,28 +12,6 @@ fn pctl(samples: &[f64], q: f64) -> f64 {
     v[((q * (v.len() - 1) as f64).round() as usize).min(v.len() - 1)]
 }
 
-fn bench2<A: Fn(), B: Fn()>(a: A, b: B) -> (f64, f64) {
-    let (mut fa, mut fb) = (Vec::new(), Vec::new());
-    for r in 0..50 {
-        if r % 2 == 0 {
-            let t = Instant::now();
-            a();
-            fa.push(t.elapsed().as_nanos() as f64);
-            let t = Instant::now();
-            b();
-            fb.push(t.elapsed().as_nanos() as f64);
-        } else {
-            let t = Instant::now();
-            b();
-            fb.push(t.elapsed().as_nanos() as f64);
-            let t = Instant::now();
-            a();
-            fa.push(t.elapsed().as_nanos() as f64);
-        }
-    }
-    (pctl(&fa, 0.1), pctl(&fb, 0.1))
-}
-
 fn bench3<A: FnMut(), B: FnMut(), C: FnMut()>(mut a: A, mut b: B, mut c: C) -> (f64, f64, f64) {
     let (mut fa, mut fb, mut fc) = (Vec::new(), Vec::new(), Vec::new());
     for r in 0..60 {
@@ -93,6 +71,50 @@ fn mk(s: &str) -> Vec<i32> {
         .collect()
 }
 
+unsafe fn copy_narrow_to_wide(dst: *mut i32, n: usize, narrow: &[u8]) -> i32 {
+    let mut wide = Vec::new();
+    let mut pos = 0usize;
+    while pos < narrow.len() {
+        let (cp, advance) = frankenlibc_core::string::wchar::decode_utf8_lossy(&narrow[pos..]);
+        wide.push(cp as i32);
+        pos += advance;
+    }
+
+    if !dst.is_null() && n != 0 {
+        let copy = wide.len().min(n - 1);
+        if copy != 0 {
+            unsafe { std::ptr::copy_nonoverlapping(wide.as_ptr(), dst, copy) };
+        }
+        unsafe { *dst.add(copy) = 0 };
+    }
+
+    if wide.len() >= n {
+        -1
+    } else {
+        wide.len() as i32
+    }
+}
+
+unsafe fn old_exact_d(dst: *mut i32, n: usize, value: i32) -> i32 {
+    let segments = frankenlibc_core::stdio::parse_format_string(b"%d");
+    black_box(frankenlibc_core::stdio::count_printf_args(&segments));
+
+    let mut narrow = Vec::new();
+    for segment in segments.as_slice() {
+        match segment {
+            frankenlibc_core::stdio::FormatSegment::Literal(bytes) => {
+                narrow.extend_from_slice(bytes);
+            }
+            frankenlibc_core::stdio::FormatSegment::Percent => narrow.push(b'%'),
+            frankenlibc_core::stdio::FormatSegment::Spec(spec) => {
+                frankenlibc_core::stdio::format_signed(value as i64, spec, &mut narrow);
+            }
+        }
+    }
+
+    unsafe { copy_narrow_to_wide(dst, n, &narrow) }
+}
+
 unsafe fn old_exact_ls(dst: *mut i32, n: usize, arg: *const i32) -> i32 {
     let segments = frankenlibc_core::stdio::parse_format_string(b"%ls");
     black_box(frankenlibc_core::stdio::count_printf_args(&segments));
@@ -116,27 +138,7 @@ unsafe fn old_exact_ls(dst: *mut i32, n: usize, arg: *const i32) -> i32 {
         utf8.extend_from_slice(b"(null)");
     }
 
-    let mut wide = Vec::new();
-    let mut pos = 0usize;
-    while pos < utf8.len() {
-        let (cp, advance) = frankenlibc_core::string::wchar::decode_utf8_lossy(&utf8[pos..]);
-        wide.push(cp as i32);
-        pos += advance;
-    }
-
-    if !dst.is_null() && n != 0 {
-        let copy = wide.len().min(n - 1);
-        if copy != 0 {
-            unsafe { std::ptr::copy_nonoverlapping(wide.as_ptr(), dst, copy) };
-        }
-        unsafe { *dst.add(copy) = 0 };
-    }
-
-    if wide.len() >= n {
-        -1
-    } else {
-        wide.len() as i32
-    }
+    unsafe { copy_narrow_to_wide(dst, n, &utf8) }
 }
 
 fn same_prefix(a: &[i32], an: i32, b: &[i32], bn: i32) -> bool {
@@ -159,36 +161,43 @@ fn main() {
     use frankenlibc_abi::wchar_abi as wa;
 
     let iters = 50_000u64;
-    let mut fb = [0i32; 256];
-    let mut gb = [0i32; 256];
-    let fbp = fb.as_mut_ptr();
-    let gbp = gb.as_mut_ptr();
-
     let f = mk("%d");
     let fp = f.as_ptr();
     let flf: PdFn = unsafe { std::mem::transmute(wa::swprintf as *const ()) };
-    let fn2 = unsafe { flf(fbp, 256, fp, 12345) };
-    let gn = unsafe { g_pd(gbp, 256, fp, 12345) };
-    let same = same_prefix(&fb, fn2, &gb, gn);
-    let (a, b) = bench2(
+    let mut old_d_buf = [0i32; 256];
+    let mut new_d_buf = [0i32; 256];
+    let mut glibc_d_buf = [0i32; 256];
+    let on = unsafe { old_exact_d(old_d_buf.as_mut_ptr(), 256, 12345) };
+    let nn = unsafe { flf(new_d_buf.as_mut_ptr(), 256, fp, 12345) };
+    let gn = unsafe { g_pd(glibc_d_buf.as_mut_ptr(), 256, fp, 12345) };
+    assert!(same_prefix(&old_d_buf, on, &new_d_buf, nn));
+    assert!(same_prefix(&new_d_buf, nn, &glibc_d_buf, gn));
+    let (old, new, glibc) = bench3(
         || {
             for _ in 0..iters {
-                black_box(unsafe { flf(black_box(fbp), 256, fp, 12345) });
+                black_box(unsafe { old_exact_d(black_box(old_d_buf.as_mut_ptr()), 256, 12345) });
             }
         },
         || {
             for _ in 0..iters {
-                black_box(unsafe { g_pd(black_box(gbp), 256, fp, 12345) });
+                black_box(unsafe { flf(black_box(new_d_buf.as_mut_ptr()), 256, fp, 12345) });
+            }
+        },
+        || {
+            for _ in 0..iters {
+                black_box(unsafe { g_pd(black_box(glibc_d_buf.as_mut_ptr()), 256, fp, 12345) });
             }
         },
     );
+    let old_ns = old / iters as f64;
+    let new_ns = new / iters as f64;
+    let glibc_ns = glibc / iters as f64;
     println!(
-        "swprintf %d       fl={:7.2}ns glibc={:7.2}ns fl/glibc={:.3} {} match={}",
-        a / iters as f64,
-        b / iters as f64,
-        a / b,
-        tag(a / b),
-        same
+        "swprintf %d       old={old_ns:7.2}ns new={new_ns:7.2}ns glibc={glibc_ns:7.2}ns new/old={:.3} {} new/glibc={:.3} {} match=true",
+        new_ns / old_ns,
+        tag(new_ns / old_ns),
+        new_ns / glibc_ns,
+        tag(new_ns / glibc_ns)
     );
 
     let f = mk("%ls");
