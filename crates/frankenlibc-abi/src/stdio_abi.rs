@@ -174,7 +174,7 @@ pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
 }
 
 #[derive(Clone, Copy)]
-struct StrictThreeIntScan {
+struct StrictDecimalIntsScan {
     count: c_int,
     input_failure: bool,
     values: [c_int; 3],
@@ -192,15 +192,34 @@ fn scanf_ascii_space(b: u8) -> bool {
 }
 
 #[inline]
-unsafe fn strict_format_is_three_decimal_ints(format: *const c_char) -> bool {
+unsafe fn strict_decimal_int_format_count(format: *const c_char) -> Option<usize> {
     let f = format.cast::<u8>();
-    let pattern = b"%d %d %d\0";
-    for (idx, &want) in pattern.iter().enumerate() {
-        if unsafe { *f.add(idx) } != want {
-            return false;
-        }
+    if unsafe { *f } != b'%' || unsafe { *f.add(1) } != b'd' {
+        return None;
     }
-    true
+    match unsafe { *f.add(2) } {
+        0 => Some(1),
+        b' ' => {
+            if unsafe { *f.add(3) } != b'%' || unsafe { *f.add(4) } != b'd' {
+                return None;
+            }
+            match unsafe { *f.add(5) } {
+                0 => Some(2),
+                b' ' => {
+                    if unsafe { *f.add(6) } == b'%'
+                        && unsafe { *f.add(7) } == b'd'
+                        && unsafe { *f.add(8) } == 0
+                    {
+                        Some(3)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 #[inline]
@@ -277,11 +296,11 @@ unsafe fn strict_scan_decimal_int(mut p: *const u8) -> StrictIntScan {
 }
 
 #[inline]
-unsafe fn strict_scan_three_decimal_ints(s: *const c_char) -> StrictThreeIntScan {
+unsafe fn strict_scan_decimal_ints(s: *const c_char, fields: usize) -> StrictDecimalIntsScan {
     let mut p = s.cast::<u8>();
     let mut values = [0; 3];
     let mut count = 0usize;
-    for slot in &mut values {
+    for slot in values.iter_mut().take(fields) {
         match unsafe { strict_scan_decimal_int(p) } {
             StrictIntScan::Value(value, next) => {
                 *slot = value;
@@ -289,7 +308,7 @@ unsafe fn strict_scan_three_decimal_ints(s: *const c_char) -> StrictThreeIntScan
                 count += 1;
             }
             StrictIntScan::InputEnd => {
-                return StrictThreeIntScan {
+                return StrictDecimalIntsScan {
                     count: if count == 0 {
                         libc::EOF
                     } else {
@@ -300,7 +319,7 @@ unsafe fn strict_scan_three_decimal_ints(s: *const c_char) -> StrictThreeIntScan
                 };
             }
             StrictIntScan::MatchFail => {
-                return StrictThreeIntScan {
+                return StrictDecimalIntsScan {
                     count: count as c_int,
                     input_failure: false,
                     values,
@@ -308,8 +327,8 @@ unsafe fn strict_scan_three_decimal_ints(s: *const c_char) -> StrictThreeIntScan
             }
         }
     }
-    StrictThreeIntScan {
-        count: 3,
+    StrictDecimalIntsScan {
+        count: fields as c_int,
         input_failure: false,
         values,
     }
@@ -7090,24 +7109,16 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         return -1;
     }
 
-    if runtime_policy::strict_passthrough_active()
-        && unsafe { strict_format_is_three_decimal_ints(format) }
-    {
-        let fast = unsafe { strict_scan_three_decimal_ints(s) };
-        if fast.count >= 1 {
-            let ptr = unsafe { args.next_arg::<*mut c_int>() };
-            unsafe { *ptr = fast.values[0] };
+    if runtime_policy::strict_passthrough_active() {
+        if let Some(fields) = unsafe { strict_decimal_int_format_count(format) } {
+            let fast = unsafe { strict_scan_decimal_ints(s, fields) };
+            for idx in 0..(fast.count.max(0) as usize).min(fields) {
+                let ptr = unsafe { args.next_arg::<*mut c_int>() };
+                unsafe { *ptr = fast.values[idx] };
+            }
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
+            return fast.count;
         }
-        if fast.count >= 2 {
-            let ptr = unsafe { args.next_arg::<*mut c_int>() };
-            unsafe { *ptr = fast.values[1] };
-        }
-        if fast.count >= 3 {
-            let ptr = unsafe { args.next_arg::<*mut c_int>() };
-            unsafe { *ptr = fast.values[2] };
-        }
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, fast.input_failure);
-        return fast.count;
     }
 
     // PERF (bd-2g7oyh):

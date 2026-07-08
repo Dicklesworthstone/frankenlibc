@@ -438,6 +438,10 @@ fn diff_sscanf_int_cases() {
         (b"0xff\0", b"%i\0"),
         (b"  abc\0", b"%d\0"),       // no digits → match count 0
         (b"\0", b"%d\0"),            // empty input
+        (b"1 2\0", b"%d %d\0"),      // two-field exact fast path
+        (b"1\0", b"%d %d\0"),        // two-field partial → count 1
+        (b"1 x\0", b"%d %d\0"),      // two-field mismatch → count 1
+        (b"\0", b"%d %d\0"),         // two-field empty → EOF
         (b"1 2 3\0", b"%d %d %d\0"), // multi
         (b"1 2\0", b"%d %d %d\0"),   // partial multi → count 2
         (b"1 x 3\0", b"%d %d %d\0"), // second conversion mismatch → count 1

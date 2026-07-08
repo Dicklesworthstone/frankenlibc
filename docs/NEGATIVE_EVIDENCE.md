@@ -6,6 +6,42 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-08 - LANDED `sscanf` exact `%d` / `%d %d` decimal transducer family - 12.46x and 112.03x vs ORIG
+
+- **LANDED CODE WIN (Codex, `stdio_abi.rs` / `sscanf`):** extended the strict
+  literal decimal scanner from only `"%d %d %d"` to the exact family `"%d"`,
+  `"%d %d"`, and `"%d %d %d"`. The fast path recognizes only those byte-exact
+  NUL-terminated format strings, reuses the existing strict decimal parser, and
+  writes only successfully assigned `int *` varargs. All widths, modifiers,
+  locale-sensitive cases, scansets, strings, floats, non-literal formats, and
+  hardened-mode behavior still fall through to the generic scanner unchanged.
+- **NEGATIVE-EVIDENCE FILTER:** this did not retry the rejected byte-scanner,
+  allocator fallback-table, stdio stream-lock, `fgetc` double-lock, `fgetws`,
+  `mbstowcs`, or broad scanf rewrites. The route follows the prior measured
+  `sscanf("%d %d %d")` keep and its next-step note: a small verified
+  transducer table/cache for adjacent hot literal format strings.
+- **MEASURED (`rch exec`, worker `hz2`, `AGENT_NAME=codex-libc-cod`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`; requested
+  `cargo bench --release` was attempted first and Cargo rejected it as an
+  unsupported bench flag, so the valid command was
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench
+  --bench sscanf_glibc_bench -- 'sscanf_(one_int|two_ints|three_ints)'
+  --noplot --sample-size 20 --warm-up-time 1 --measurement-time 2`):**
+  the ORIG run temporarily narrowed the recognizer back to the pre-edit
+  three-int-only gate while keeping the new bench rows, then the final run
+  restored the one/two/three family. Same-worker medians:
+  `sscanf_one_int/frankenlibc_abi` ORIG **140.12 ns** -> NEW **11.246 ns**,
+  `new/orig` **0.080x** (**12.46x faster**), host glibc **43.801 ns**,
+  `new/glibc` **0.257x WIN**; `sscanf_two_ints/frankenlibc_abi` ORIG
+  **1.6583 us** -> NEW **14.802 ns**, `new/orig` **0.0089x**
+  (**112.03x faster**), host glibc **70.105 ns**, `new/glibc`
+  **0.211x WIN**. Existing `sscanf_three_ints` stayed neutral:
+  ORIG **18.773 ns** -> NEW **19.124 ns**, `new/orig` **1.019x**.
+- **CONFORMANCE GREEN:** `rch exec` worker `hz2`,
+  `cargo test --profile release -p frankenlibc-abi --test
+  conformance_diff_stdio_printf diff_sscanf_int_cases -- --nocapture` passed
+  after adding `%d %d` success, partial, mismatch, and EOF cases.
+
 ## 2026-07-08 - LAND-OR-DIG audit: no scratch win to land; allocator residual remains structural, no rejected lever retried
 
 - **SCRATCH AUDIT (Codex):** checked the live `.scratch` FrankenLibC worktrees
