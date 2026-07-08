@@ -6,6 +6,57 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-08 - LAND-OR-DIG audit: no scratch win to land; allocator residual remains structural, no rejected lever retried
+
+- **SCRATCH AUDIT (Codex):** checked the live `.scratch` FrankenLibC worktrees
+  before digging. None was ahead of `main` with a measured ratio-vs-ORIG code win
+  that still needed landing, so there was no scratch commit to replay onto `main`.
+  The shared checkout started clean apart from peer-owned untracked target output
+  (`.rch-targets-blackthrush/`), which was left untouched.
+- **NEGATIVE-EVIDENCE FILTER:** did not retry the known no-ship families:
+  `native_libc_malloc_with_slot` / double-slot-resolve (`new/old=1.020`
+  regression), fallback-table lock-free CAS, fallback lock-skip, cached
+  tombstone/cache-clear elision, naive min/max+magic inline header reads, and the
+  saturated byte-scanner reshuffles (`memchr` / `strchr` / `strrchr` / span
+  scanner variants). Current source already contains the landed fallback
+  min/max range guard, cached fallback index, lean malloc stats recorder, direct
+  `strchr` scanner, `memrchr`/`memchr` folded tiers, and wide/time exact-format
+  wins.
+- **CURRENT SHORT GATE (`rch exec`, local fallback because no admissible workers;
+  `AGENT_NAME=codex`, `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  requested `cargo bench --release` was attempted first and Cargo rejected it as
+  an unsupported bench flag, so the valid command was
+  `cargo bench --profile release -p frankenlibc-bench --bench
+  glibc_baseline_bench -- --sample-size 10 --warm-up-time 1
+  --measurement-time 1`):** remaining measured losses were the expected
+  residuals, not new isolated code gaps. Small strict allocation is still the
+  largest clean architectural gap: `malloc_free_64` FL **17.016 ns** vs glibc
+  **6.801 ns** (**2.50x LOSS**) and `malloc_free_256` FL **13.332 ns** vs glibc
+  **5.287 ns** (**2.52x LOSS**). Byte scanners remain bounded by prior evidence:
+  `strchr_absent` **66.881 ns** vs **32.966 ns**, `strrchr_absent`
+  **61.372 ns** vs **36.831 ns**, and `memchr_absent` **32.768 ns** vs
+  **26.312 ns**. The same run showed many hot families already winning or near
+  parity (`memset_4096`, integer parsing, scanf hex/decimal, `printf_f_6`,
+  `qsort`, substring absent rows, wide conversion rows, and most math rows).
+- **ALIEN DIG RESULT (`/alien-graveyard` + `/alien-artifact-coding` +
+  `/extreme-software-optimization`):** the only credible allocator primitive is
+  still the two-part architectural swing: exact-membership size metadata
+  replacing the fallback table plus a slim strict fast-path frame. Fresh
+  component proof (`malloc_sizetrack_ab`, `rch exec` worker `ovh-a`,
+  `cargo run --profile release -p frankenlibc-bench --features abi-bench
+  --example malloc_sizetrack_ab`) measured `GUARD_AB` **3.73 ns/call**,
+  `SIZETRACK_AB table=10.56 ns header=0.65 ns header/table=0.062
+  table_saves=9.90 ns/op`, and `STATS_AB record_alloc+free=7.97
+  ns/alloc+free-pair`. That confirms the table/header delta is real, but it is
+  still not a safe one-turn production switch: `known_remaining(addr)` accepts
+  arbitrary C pointers, so any deployed header read needs an exact no-fault
+  membership proof or shadow agreement mode before replacing the fallback table.
+- **OUTCOME:** docs-only no-ship closeout. Do not spend another turn on allocator
+  point fixes (lock-skip, CAS table, tombstone/cache-store tweaks, redundant slot
+  plumbing) unless the candidate first removes the table with a proven no-fault
+  exact-membership guard or demonstrates a separate slim-frame win with
+  same-worker old/new A/B and focused allocator conformance.
+
 ## 2026-07-05 - ✅ swprintf exact `%d` native wide decimal transducer LANDED - 19.63x vs ORIG round-trip, 1.69x vs glibc
 
 - **LANDED CODE WIN (Codex, `wchar_abi.rs` / `swprintf`):** the exact
