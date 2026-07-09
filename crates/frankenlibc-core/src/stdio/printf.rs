@@ -1390,6 +1390,10 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
                 return;
             }
         }
+        if let Some(scaled) = rounded_scaled_fixed(value, precision) {
+            push_fixed_scaled_u128(buf, scaled, precision);
+            return;
+        }
         let _ = write!(VecWriter(buf), "{:.prec$}", abs, prec = precision);
         return;
     }
@@ -1802,6 +1806,15 @@ fn format_f(value: f64, precision: usize, alt_form: bool) -> String {
         s
     } else if let Some(dyadic) = try_format_f_dyadic(value, precision) {
         dyadic
+    } else if let Some(scaled) = rounded_scaled_fixed(value, precision) {
+        let mut s = String::with_capacity(24 + precision);
+        if value.is_sign_negative() {
+            s.push('-');
+        }
+        let mut tmp = [0u8; 40];
+        let ds = decimal_digits_u128(scaled, &mut tmp);
+        push_fixed_scaled_digits_string(&mut s, ds, precision);
+        s
     } else {
         alloc::format!("{:.prec$}", value, prec = precision)
     }
@@ -1860,6 +1873,126 @@ fn try_format_f_dyadic(value: f64, precision: usize) -> Option<String> {
         }
     }
     Some(s)
+}
+
+const POW5_FIXED: [u128; 10] = [
+    1, 5, 25, 125, 625, 3_125, 15_625, 78_125, 390_625, 1_953_125,
+];
+
+/// Exact fixed-precision `%f` rounding for the common small-precision decimal lane.
+///
+/// Computes `round_ties_even(abs(value) * 10^precision)` from the binary64 mantissa
+/// using integer arithmetic. The fast path is deliberately capped to precision <= 9
+/// and a 64-bit result so the downstream decimal emission is tiny and the fallback
+/// remains responsible for large/edge dtoa cases.
+fn rounded_scaled_fixed(value: f64, precision: usize) -> Option<u128> {
+    if precision == 0 || precision > 9 {
+        return None;
+    }
+    let bits = value.abs().to_bits();
+    let exp_bits = ((bits >> 52) & 0x7ff) as i32;
+    let frac = bits & ((1u64 << 52) - 1);
+    if exp_bits == 0x7ff {
+        return None;
+    }
+    let (mant, exp2) = if exp_bits == 0 {
+        (frac, -1074)
+    } else {
+        ((1u64 << 52) | frac, exp_bits - 1075)
+    };
+    if mant == 0 {
+        return Some(0);
+    }
+
+    let n = (mant as u128).checked_mul(POW5_FIXED[precision])?;
+    let shift = exp2 + precision as i32;
+    let rounded = if shift >= 0 {
+        let shift = shift as u32;
+        if shift >= 128 || n > (u128::MAX >> shift) {
+            return None;
+        }
+        n << shift
+    } else {
+        round_shift_right_ties_even(n, (-shift) as u32)?
+    };
+    if rounded <= u64::MAX as u128 {
+        Some(rounded)
+    } else {
+        None
+    }
+}
+
+fn round_shift_right_ties_even(n: u128, shift: u32) -> Option<u128> {
+    if shift == 0 {
+        return Some(n);
+    }
+    if shift >= 128 {
+        return if shift == 128 && n == (1u128 << 127) {
+            Some(0)
+        } else {
+            None
+        };
+    }
+    let q = n >> shift;
+    let rem = n & ((1u128 << shift) - 1);
+    let half = 1u128 << (shift - 1);
+    let round_up = rem > half || (rem == half && (q & 1) == 1);
+    q.checked_add(round_up as u128)
+}
+
+fn decimal_digits_u128(mut value: u128, tmp: &mut [u8; 40]) -> &[u8] {
+    let mut i = tmp.len();
+    loop {
+        i -= 1;
+        tmp[i] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    &tmp[i..]
+}
+
+fn push_fixed_scaled_u128(buf: &mut Vec<u8>, scaled: u128, precision: usize) {
+    let mut tmp = [0u8; 40];
+    let ds = decimal_digits_u128(scaled, &mut tmp);
+    push_fixed_scaled_digits_vec(buf, ds, precision);
+}
+
+fn push_fixed_scaled_digits_vec(buf: &mut Vec<u8>, ds: &[u8], precision: usize) {
+    if ds.len() > precision {
+        let point = ds.len() - precision;
+        buf.extend_from_slice(&ds[..point]);
+        buf.push(b'.');
+        buf.extend_from_slice(&ds[point..]);
+    } else {
+        buf.push(b'0');
+        buf.push(b'.');
+        buf.extend(core::iter::repeat_n(b'0', precision - ds.len()));
+        buf.extend_from_slice(ds);
+    }
+}
+
+fn push_fixed_scaled_digits_string(s: &mut String, ds: &[u8], precision: usize) {
+    if ds.len() > precision {
+        let point = ds.len() - precision;
+        for &b in &ds[..point] {
+            s.push(b as char);
+        }
+        s.push('.');
+        for &b in &ds[point..] {
+            s.push(b as char);
+        }
+    } else {
+        s.push('0');
+        s.push('.');
+        for _ in 0..precision - ds.len() {
+            s.push('0');
+        }
+        for &b in ds {
+            s.push(b as char);
+        }
+    }
 }
 
 /// `%e` / `%E` formatting: scientific notation.
@@ -1921,6 +2054,14 @@ pub fn __bench_format_g(value: f64, precision: usize) -> String {
 #[doc(hidden)]
 pub fn __bench_format_e(value: f64, precision: usize) -> String {
     format_e(value, precision, false, false)
+}
+#[doc(hidden)]
+pub fn __bench_format_f(value: f64, precision: usize) -> String {
+    format_f(value, precision, false)
+}
+#[doc(hidden)]
+pub fn __bench_format_f_legacy(value: f64, precision: usize) -> String {
+    alloc::format!("{:.prec$}", value, prec = precision)
 }
 
 /// `%g` / `%G` formatting: shortest of `%f` or `%e`.
@@ -3160,6 +3301,45 @@ mod tests {
         format_float(core::f64::consts::PI, &spec, &mut buf);
         let s = String::from_utf8_lossy(&buf);
         assert!(s.starts_with("3.14"));
+    }
+
+    #[test]
+    fn test_format_float_scaled_fixed_matches_rust() {
+        let mut spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::Fixed(6),
+            length: LengthMod::None,
+            conversion: b'f',
+            value_position: None,
+            route: None,
+        };
+        let cases = [
+            (12345.678901_f64, 6usize),
+            (0.1_f64, 6usize),
+            (1.23456789_f64, 6usize),
+            (999.9999995_f64, 6usize),
+            (-0.0000004_f64, 6usize),
+            (-123.456789_f64, 6usize),
+            (1.0_f64 / 3.0_f64, 6usize),
+            (12_345.678901_f64, 3usize),
+        ];
+        let mut buf = Vec::new();
+        for (value, precision) in cases {
+            assert!(
+                rounded_scaled_fixed(value, precision).is_some(),
+                "scaled fixed path should cover value={value} precision={precision}"
+            );
+            spec.precision = Precision::Fixed(precision);
+            buf.clear();
+            format_float(value, &spec, &mut buf);
+            let expected = alloc::format!("{:.prec$}", value, prec = precision);
+            assert_eq!(
+                buf,
+                expected.as_bytes(),
+                "value={value} precision={precision}"
+            );
+        }
     }
 
     #[test]

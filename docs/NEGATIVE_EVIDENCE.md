@@ -6,6 +6,54 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-09 - LANDED core `%f` exact scaled-integer formatter - 1.17x vs ORIG, byte-exact
+
+- **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
+  first and did not retry the rejected span bitmap/equality, tokenizer bitmap,
+  `memchr`/`strchr`, allocator fallback-table, or stdio stream-lock levers.
+  The short profile (`rch exec`, worker `hz1`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench
+  --bench glibc_baseline_bench -- --sample-size 10 --warm-up-time 1
+  --measurement-time 1 --noplot`) left a clean unrejected stdio gap:
+  `printf_f_6` FrankenLibC core **708.032 ns** vs host glibc **275.877 ns**.
+  Scanner and allocator candidates were ignored because this ledger already
+  marks those lever families as no-retry territory.
+- **ALIEN DIG PRIMITIVE LANDED:** certify the common small-precision `%f`
+  decimal lane by decomposing the binary64 mantissa/exponent and computing
+  `round_ties_even(abs(value) * 10^precision)` as an integer
+  `mantissa * 5^precision * 2^(exponent + precision)`. The path is gated to
+  precision **1..=9** and a `u64`-sized scaled result, then emits decimal digits
+  directly. This is not the previous exact-integer/dyadic `%f` fast path and is
+  not a general Schubfach/Ryu dtoa port; large or edge cases fall through to the
+  existing formatter.
+- **MEASURED KEEP vs LEGACY ORIGINAL (`rch exec`, worker `ovh-a`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --bench
+  printf_float_glibc_bench -- printffloat_f_mid_p6 --sample-size 20
+  --warm-up-time 1 --measurement-time 2 --noplot`):** same-process A/B row
+  embeds the legacy original Rust fixed formatter beside the patched
+  `frankenlibc_core` path for `12345.678901` at precision 6. ORIG
+  **80.408 ns** -> NEW **68.980 ns**, `new/orig` **0.858x** (**1.17x
+  faster**); host glibc in the same binary was **136.99 ns**.
+- **BYTE-EXACT CONFORMANCE GREEN:** focused core unit
+  `test_format_float_scaled_fixed_matches_rust` passed after the final source
+  change; `printf_float_differential_fuzz` passed **300000** comparisons with
+  **0 divergences** vs host glibc on worker `ovh-a`; ABI conformance
+  `diff_snprintf_float_fuzz` and `diff_snprintf_float_specifiers` both passed
+  on worker `hz2`. `cargo check --profile release -p frankenlibc-core -p
+  frankenlibc-bench --benches`, touched-file `rustfmt --edition 2024 --check`,
+  and `git diff --check` were green. `cargo clippy --profile release -p
+  frankenlibc-core --lib -- -D warnings` remains blocked by pre-existing
+  unrelated lint debt; the new helper's only lint (`needless_lifetimes`) was
+  fixed before landing.
+- **NO-RETRY NOTE:** an intermediate differential fuzz run caught a huge-value
+  `%39.4f` overflow that wrapped to `0.0000`; the landed code now bails out
+  before overflowing `u128 << shift`. Do not retry approximate
+  `abs * 10^precision` float-multiply shortcuts without the exact integer
+  proof and overflow guard. A full general dtoa rewrite remains a separate
+  large primitive, not this narrow lane.
+
 ## 2026-07-09 - LANDED core `strspn` 8-byte interval-cover SIMD classifier - 1.36x vs ORIG, byte-exact
 
 - **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
