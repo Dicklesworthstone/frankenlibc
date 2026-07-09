@@ -517,6 +517,29 @@ fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
             &mut group,
             BenchMeta {
                 profile_id: "getprotobyname_tcp",
+                impl_label: "frankenlibc_legacy_orig",
+                api_family: "resolver",
+                symbol: "getprotobyname",
+                workload: "lookup tcp through /etc/protocols",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let entry = unsafe {
+                    frankenlibc_abi::resolv_abi::getprotobyname_legacy_read_per_call_for_bench(
+                        proto.as_ptr(),
+                    )
+                } as *mut libc::protoent;
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).p_proto });
+                }
+                black_box(entry);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getprotobyname_tcp",
                 impl_label: "host_glibc",
                 api_family: "resolver",
                 symbol: "getprotobyname",

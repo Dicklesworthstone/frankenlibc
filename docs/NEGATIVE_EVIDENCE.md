@@ -54,6 +54,55 @@ retried and real wins are confirmed with numbers.
   no-retry byte-scanner family; any future `strchr_absent` attempt needs a
   fundamentally different contract or a different profiled path.
 
+## 2026-07-09 - LANDED resolver protocols backend snapshot cache - 2.41x vs ORIG, conformance green
+
+- **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
+  first and did not retry the closed scanner/copy/span, allocator fallback,
+  `memchr`/`strchr`, `memcmp`, `strtol`, `%f` classifier, or resolver byte
+  decimal parser levers. A broad short profile on worker `vmi1152480`
+  (`CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `rch exec -- cargo bench --profile release -p frankenlibc-bench --features
+  abi-bench --bench glibc_baseline_bench -- --sample-size 10 --warm-up-time 1
+  --measurement-time 1 --noplot`) left the resolver protocol file lookup as a
+  clean unrejected residual: `getprotobyname_tcp` FrankenLibC p50 **14111.536
+  ns** vs host glibc p50 **13438.496 ns**. Adjacent `getservbyname_http_tcp`
+  was close but already had the services backend cache shape; narrow `strtol`
+  and protocol numeric parsing were skipped because this ledger already closes
+  those families.
+- **ALIEN DIG PRIMITIVE LANDED:** added a generation-stable TLS backend snapshot
+  cache for `/etc/protocols`, matching the existing hosts/services file-cache
+  invariant instead of reparsing after a fresh filesystem read on every
+  non-reentrant `getprotobyname` / `getprotobynumber` call. The cache keeps the
+  observable file contents contract and invalidates through the shared
+  `BackendFileCache` metadata checks; a bench-only legacy helper preserves the
+  read-per-call original for direct A/B measurement. This is not another
+  byte-decimal parser, token scanner, or numeric lookup retune.
+- **MEASURED KEEP vs LEGACY ORIGINAL (`rch exec`, worker `vmi1149989`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench
+  --bench glibc_baseline_bench getprotobyname_tcp -- --sample-size 20
+  --warm-up-time 1 --measurement-time 2 --noplot`):** same-binary A/B row
+  embeds the legacy read-per-call protocol lookup as `frankenlibc_legacy_orig`.
+  ORIG p50 **12473.751 ns** -> patched p50 **5175.302 ns**,
+  `new/orig` **0.415x** (**2.41x faster**). Mean also improved from
+  **12677.011 ns** to **5470.070 ns**, `new/orig` **0.432x**; host glibc in
+  the same run was p50 **10990.102 ns**.
+- **CONFORMANCE / BUILD STATE:** `cargo check --profile release -p
+  frankenlibc-abi --lib -p frankenlibc-bench --features abi-bench --bench
+  glibc_baseline_bench` passed with only pre-existing warnings. Focused GREEN
+  gates: `cargo test --profile release -p frankenlibc-core
+  resolv::tests::protocol_ -- --nocapture` passed **11/11** on worker
+  `vmi1227854`; `cargo test --profile release -p frankenlibc-abi --test
+  resolv_abi_test getproto -- --nocapture` passed **9/9** on worker
+  `vmi1227854`; `conformance_diff_protoent_r_aliases` passed **1/1**; and
+  `conformance_diff_netdb_aliases` passed **1/1**. `rustfmt --edition 2024
+  --check` on the touched Rust files and `git diff --check` are clean.
+- **NO-RETRY NOTE:** do not retry "eliminate per-call `/etc/protocols` read" or
+  a duplicate protocol backend-file snapshot cache. Future resolver work should
+  target a different primitive such as indexed/zero-allocation parsed protocol
+  records or cross-family NSS result caching, not byte-decimal parsing or this
+  file snapshot lever.
+
 ## 2026-07-09 - REJECTED `%f` binary64 classifier decision DAG - 1.111x vs ORIG (slower)
 
 - **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger

@@ -35,6 +35,7 @@ const NO_RECOVERY_ERRNO: c_int = 3;
 const EAI_ADDRFAMILY: c_int = -9;
 const HOSTS_PATH: &str = "/etc/hosts";
 const SERVICES_PATH: &str = "/etc/services";
+const PROTOCOLS_PATH: &str = "/etc/protocols";
 const PROC_NET_ROUTE_PATH: &str = "/proc/net/route";
 const PROC_NET_IF_INET6_PATH: &str = "/proc/net/if_inet6";
 
@@ -109,6 +110,7 @@ pub fn dns_metrics_snapshot() -> DnsMetricsSnapshot {
 }
 const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
 const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
+const PROTOCOLS_PATH_ENV: &str = "FRANKENLIBC_PROTOCOLS_PATH";
 const PROC_NET_ROUTE_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_ROUTE_PATH";
 const PROC_NET_IF_INET6_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_IF_INET6_PATH";
 
@@ -287,6 +289,11 @@ fn new_services_backend_cache() -> BackendFileCache {
 }
 
 #[cfg(feature = "owned-tls-cache")]
+fn new_protocols_backend_cache() -> BackendFileCache {
+    BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV)
+}
+
+#[cfg(feature = "owned-tls-cache")]
 fn new_proc_net_route_cache() -> BackendFileCache {
     BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV)
 }
@@ -303,6 +310,9 @@ static HOSTS_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFil
 static SERVICES_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_services_backend_cache);
 #[cfg(feature = "owned-tls-cache")]
+static PROTOCOLS_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_protocols_backend_cache);
+#[cfg(feature = "owned-tls-cache")]
 static PROC_NET_ROUTE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_proc_net_route_cache);
 #[cfg(feature = "owned-tls-cache")]
@@ -315,6 +325,8 @@ thread_local! {
         RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV));
     static SERVICES_BACKEND_TLS: RefCell<BackendFileCache> =
         RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV));
+    static PROTOCOLS_BACKEND_TLS: RefCell<BackendFileCache> =
+        RefCell::new(BackendFileCache::new(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV));
     static PROC_NET_ROUTE_TLS: RefCell<BackendFileCache> =
         RefCell::new(BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV));
     static PROC_NET_IF_INET6_TLS: RefCell<BackendFileCache> =
@@ -347,6 +359,17 @@ fn read_services_backend() -> std::io::Result<Vec<u8>> {
     #[cfg(not(feature = "owned-tls-cache"))]
     {
         SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+    }
+}
+
+fn read_protocols_backend() -> std::io::Result<Vec<u8>> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        PROTOCOLS_BACKEND_OWNED_TLS.with(|cache| cache.read_snapshot())
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        PROTOCOLS_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
     }
 }
 
@@ -2745,7 +2768,7 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
     }
     let name_bytes = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
 
-    let content = match std::fs::read("/etc/protocols") {
+    let content = match read_protocols_backend() {
         Ok(c) => c,
         Err(_) => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
@@ -2776,6 +2799,66 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
     })
 }
 
+#[doc(hidden)]
+pub unsafe fn getprotobyname_legacy_read_per_call_for_bench(name: *const c_char) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        0,
+        true,
+        name.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    if name.is_null() {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+
+    // SAFETY: name is non-null and follows getprotobyname's C-string contract;
+    // known_remaining bounds tracked malloc-backed inputs.
+    let (name_len, name_terminated) =
+        unsafe { crate::util::scan_c_string(name, known_remaining(name as usize)) };
+    if !name_terminated {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+    let name_bytes = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
+
+    let content = match std::fs::read(PROTOCOLS_PATH) {
+        Ok(c) => c,
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
+    };
+
+    let entry = match frankenlibc_core::resolv::lookup_protocol_by_name(&content, name_bytes) {
+        Some(e) => e,
+        None => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
+    };
+
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+
+    with_tls_protoent(|storage| {
+        copy_to_cchar_buf(&mut storage.name, &entry.name);
+        fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
+        storage.protoent = libc::protoent {
+            p_name: storage.name.as_mut_ptr(),
+            p_aliases: storage.aliases.as_mut_ptr(),
+            p_proto: entry.number,
+        };
+        (&mut storage.protoent as *mut libc::protoent).cast::<c_void>()
+    })
+}
+
 /// POSIX `getprotobynumber` — look up a protocol by number in /etc/protocols.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
@@ -2792,7 +2875,7 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
         return ptr::null_mut();
     }
 
-    let content = match std::fs::read("/etc/protocols") {
+    let content = match read_protocols_backend() {
         Ok(c) => c,
         Err(_) => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
