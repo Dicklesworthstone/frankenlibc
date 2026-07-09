@@ -6,6 +6,61 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-09 - LANDED resolver protocol parsed lookup index - 17.58x vs ORIG, conformance green
+
+- **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
+  first and did not retry the already-landed services parsed index, protocols
+  backend snapshot cache, resolver byte-decimal parser, scanner/span/`memcmp`,
+  qsort, stdio-float, or allocator families. A broad short profile on worker
+  `hz2` (`CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `rch exec -- cargo bench --profile release -p frankenlibc-bench --features
+  abi-bench --bench glibc_baseline_bench -- --sample-size 10 --warm-up-time 1
+  --measurement-time 1 --noplot`) left `getprotobyname_tcp` as a clean resolver
+  residual after prior no-retry filters: FrankenLibC p50 **25126.317 ns** vs
+  legacy original p50 **26476.773 ns** vs host glibc p50 **24569.139 ns**.
+- **ALIEN DIG PRIMITIVE LANDED:** added a generation-stamped parsed
+  `/etc/protocols` lookup index for non-reentrant `getprotobyname` and
+  `getprotobynumber`. The existing `BackendFileCache` still owns file and
+  env-path freshness; the new `ProtocolLookupCache` borrows the cached bytes,
+  rebuilds only when the backend generation changes, and stores sorted
+  case-folded canonical-name, alias, and protocol-number keys that preserve
+  original file-order tie-breaks. Hot repeated lookups now avoid both per-call
+  backend-byte cloning and line-by-line `parse_protocols_line`. This is
+  deliberately not another protocols file snapshot cache, byte-decimal parser,
+  or token scanner retune; it is the parsed-record index escape hatch left open
+  by the prior protocol snapshot row.
+- **MEASURED KEEP vs LEGACY ORIGINAL (`rch exec`, worker `hz2`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench
+  --bench glibc_baseline_bench getprotobyname_tcp -- --sample-size 20
+  --warm-up-time 1 --measurement-time 2 --noplot`):** same-binary A/B row
+  embeds the old read/parse protocol lookup as `frankenlibc_legacy_orig`. ORIG
+  p50 **26638.033 ns** -> patched p50 **1515.029 ns**, `new/orig` **0.057x**
+  (**17.58x faster**). Mean **26961.328 ns** -> **3964.046 ns**, `new/orig`
+  **0.147x** (**6.80x faster**). Host glibc in the same run was p50
+  **2244.399 ns**, so the patched path is also **1.48x faster** than host on
+  this row.
+- **CONFORMANCE / BUILD STATE:** release check passed via `rch exec` on worker
+  `ovh-a` for `cargo check --profile release -p frankenlibc-abi --lib -p
+  frankenlibc-bench --features abi-bench --bench glibc_baseline_bench` with
+  pre-existing warnings only. Focused GREEN gates: `cargo test --profile
+  release -p frankenlibc-abi --test resolv_abi_test getproto -- --nocapture
+  --test-threads=1` passed **11/11**; `cargo test --profile release -p
+  frankenlibc-abi --test conformance_diff_netdb_aliases
+  getservby_and_getprotoby_match_glibc -- --nocapture --test-threads=1` passed
+  **1/1** byte-exact against glibc; `cargo test --profile release -p
+  frankenlibc-abi --test conformance_diff_protoent_r_aliases
+  protoent_reentrant_matches_glibc -- --nocapture --test-threads=1` passed
+  **1/1** byte-exact against glibc. Remote clippy could not run because worker
+  `hz1` lacks `cargo-clippy` for `nightly-2026-04-28`; local clippy with
+  `-D warnings` remains blocked by pre-existing unrelated `frankenlibc-core`
+  lint debt before this resolver change.
+- **NO-RETRY NOTE:** do not retry protocol name/number parsed record indexing
+  or duplicate `/etc/protocols` snapshot/byte-parser work for this row. Future
+  resolver work should target another profiled surface such as `getaddrinfo`
+  profile reuse, reentrant protoent buffer packing, static atoms with an exact
+  freshness proof, or cross-family NSS result caching with a fresh comparator.
+
 ## 2026-07-09 - LANDED resolver services generation-indexed parsed lookup cache - 11.46x vs ORIG, conformance green
 
 - **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger

@@ -20,6 +20,7 @@ const HOST_NOT_FOUND_ERRNO: i32 = 1;
 const NO_RECOVERY_ERRNO: i32 = 3;
 const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
 const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
+const PROTOCOLS_PATH_ENV: &str = "FRANKENLIBC_PROTOCOLS_PATH";
 const PROC_NET_ROUTE_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_ROUTE_PATH";
 const PROC_NET_IF_INET6_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_IF_INET6_PATH";
 const EAI_ADDRFAMILY: c_int = -9;
@@ -30,6 +31,7 @@ static RESOLVER_ENV_LOCK: Mutex<()> = Mutex::new(());
 struct ResolverFixturePaths {
     hosts: std::path::PathBuf,
     services: std::path::PathBuf,
+    protocols: std::path::PathBuf,
     route: std::path::PathBuf,
     if_inet6: std::path::PathBuf,
 }
@@ -42,6 +44,7 @@ impl Drop for ResolverEnvGuard {
         unsafe {
             std::env::remove_var(HOSTS_PATH_ENV);
             std::env::remove_var(SERVICES_PATH_ENV);
+            std::env::remove_var(PROTOCOLS_PATH_ENV);
             std::env::remove_var(PROC_NET_ROUTE_PATH_ENV);
             std::env::remove_var(PROC_NET_IF_INET6_PATH_ENV);
         }
@@ -89,7 +92,14 @@ fn with_resolver_backends<T>(
     services: Option<&[u8]>,
     f: impl FnOnce(&ResolverFixturePaths) -> T,
 ) -> T {
-    with_resolver_backends_and_addrconfig(hosts, services, None, None, f)
+    with_resolver_backends_full(hosts, services, None, None, None, f)
+}
+
+fn with_resolver_protocols<T>(
+    protocols: Option<&[u8]>,
+    f: impl FnOnce(&ResolverFixturePaths) -> T,
+) -> T {
+    with_resolver_backends_full(None, None, protocols, None, None, f)
 }
 
 fn with_resolver_backends_and_addrconfig<T>(
@@ -99,10 +109,22 @@ fn with_resolver_backends_and_addrconfig<T>(
     if_inet6: Option<&[u8]>,
     f: impl FnOnce(&ResolverFixturePaths) -> T,
 ) -> T {
+    with_resolver_backends_full(hosts, services, None, route, if_inet6, f)
+}
+
+fn with_resolver_backends_full<T>(
+    hosts: Option<&[u8]>,
+    services: Option<&[u8]>,
+    protocols: Option<&[u8]>,
+    route: Option<&[u8]>,
+    if_inet6: Option<&[u8]>,
+    f: impl FnOnce(&ResolverFixturePaths) -> T,
+) -> T {
     let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let paths = ResolverFixturePaths {
         hosts: temp_resolver_path("hosts"),
         services: temp_resolver_path("services"),
+        protocols: temp_resolver_path("protocols"),
         route: temp_resolver_path("route"),
         if_inet6: temp_resolver_path("if-inet6"),
     };
@@ -117,6 +139,11 @@ fn with_resolver_backends_and_addrconfig<T>(
         std::fs::write(&paths.services, content).expect("write temp services fixture");
         // SAFETY: serialized by RESOLVER_ENV_LOCK.
         unsafe { std::env::set_var(SERVICES_PATH_ENV, &paths.services) };
+    }
+    if let Some(content) = protocols {
+        std::fs::write(&paths.protocols, content).expect("write temp protocols fixture");
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var(PROTOCOLS_PATH_ENV, &paths.protocols) };
     }
     if let Some(content) = route {
         std::fs::write(&paths.route, content).expect("write temp route fixture");
@@ -2195,6 +2222,61 @@ fn getprotobyname_nonexistent_returns_null() {
     let name = CString::new("nonexistent_protocol_zzz").unwrap();
     let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
     assert!(ptr.is_null());
+}
+
+#[test]
+fn getproto_cached_lookup_respects_protocols_backend_update() {
+    with_resolver_protocols(Some(b"fixture-proto 222 oldalias\n"), |paths| {
+        let name = CString::new("fixture-proto").unwrap();
+
+        let first_ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        assert!(!first_ptr.is_null());
+        let first = unsafe { &*(first_ptr as *const libc::protoent) };
+        assert_eq!(first.p_proto, 222);
+
+        std::fs::write(
+            &paths.protocols,
+            b"broken-proto nope ignored\nfixture-proto 223 refreshed-alias\n",
+        )
+        .expect("rewrite temp protocols fixture");
+
+        let second_ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        assert!(!second_ptr.is_null());
+        let second = unsafe { &*(second_ptr as *const libc::protoent) };
+        assert_eq!(second.p_proto, 223);
+
+        let alias = CString::new("REFRESHED-ALIAS").unwrap();
+        let alias_ptr = unsafe { resolv_abi::getprotobyname(alias.as_ptr()) };
+        assert!(!alias_ptr.is_null());
+        let alias_entry = unsafe { &*(alias_ptr as *const libc::protoent) };
+        assert_eq!(alias_entry.p_proto, 223);
+
+        let number_ptr = unsafe { resolv_abi::getprotobynumber(223) };
+        assert!(!number_ptr.is_null());
+        let number_entry = unsafe { &*(number_ptr as *const libc::protoent) };
+        let canonical = unsafe { CStr::from_ptr(number_entry.p_name) };
+        assert_eq!(canonical.to_bytes(), b"fixture-proto");
+    });
+}
+
+#[test]
+fn getproto_lookup_respects_protocols_backend_fixture_numbers() {
+    with_resolver_protocols(Some(b"tcp 222 fixture-tcp\n"), |_paths| {
+        let tcp = CString::new("tcp").unwrap();
+        let name_ptr = unsafe { resolv_abi::getprotobyname(tcp.as_ptr()) };
+        assert!(!name_ptr.is_null());
+        let by_name = unsafe { &*(name_ptr as *const libc::protoent) };
+        assert_eq!(by_name.p_proto, 222);
+
+        let static_number_ptr = unsafe { resolv_abi::getprotobynumber(6) };
+        assert!(static_number_ptr.is_null());
+
+        let fixture_number_ptr = unsafe { resolv_abi::getprotobynumber(222) };
+        assert!(!fixture_number_ptr.is_null());
+        let by_number = unsafe { &*(fixture_number_ptr as *const libc::protoent) };
+        let canonical = unsafe { CStr::from_ptr(by_number.p_name) };
+        assert_eq!(canonical.to_bytes(), b"tcp");
+    });
 }
 
 // ===========================================================================
