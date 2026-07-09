@@ -6,6 +6,54 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-09 - REJECTED `strchr` SSE4.2 explicit-length compare scanner - 5.893x vs ORIG (slower)
+
+- **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
+  first and did not retry the rejected allocator fallback-table/hot-cycle,
+  byte-scanner load-shape/fold/SWAR/bitmap reshuffles, `memcmp` load-shape,
+  stdio stream-lock, or already-shipped `%f`/`%g`/`pow` levers. A short broad
+  profile (`CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `rch exec -- cargo bench --profile release -p frankenlibc-bench --bench
+  glibc_baseline_bench -- --noplot --sample-size 10 --warm-up-time 1
+  --measurement-time 1`; RCH remote sync timed out, local fallback) still left
+  `strchr_absent` as the hottest visible clean loss in the shipped core path:
+  FrankenLibC core **76.313 ns** vs host glibc **32.543 ns** on the 4096-byte
+  absent-byte C-string workload. Other large losses were already no-retry
+  allocator/scanner/`memcmp` families or already-closed stdio/math lanes.
+- **ALIEN DIG PRIMITIVE TESTED, THEN REVERTED:** tried an x86_64 SSE4.2
+  explicit-length string-compare automaton for core `find_byte_or_nul`: encode
+  `{needle, NUL}` as a length-2 pattern and scan 16-byte blocks with
+  `_mm_cmpestri` (`equal-any`, unsigned bytes, least-significant index), unrolled
+  four blocks per loop. This was intentionally different from the prior
+  portable-SIMD mask folds, SWAR, scalar bitmap, and load-shape retunes: it uses
+  the CPU string-comparison finite-state primitive directly.
+- **MEASURED REJECTION vs LEGACY ORIGINAL (`rch exec`, worker `ovh-a`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --bench
+  glibc_baseline_bench glibc_baseline_strchr_absent -- --noplot --sample-size
+  20 --warm-up-time 1 --measurement-time 2`):** same-binary A/B row embedded
+  the pre-change core scanner as `frankenlibc_legacy_orig`. ORIG **57.190 ns**
+  -> candidate **337.022 ns**, `candidate/orig` **5.893x** (**489% slower**);
+  host glibc in the same run was **26.733 ns**. The primitive lost because the
+  SSE4.2 string instruction throughput/latency dominated the 4096-byte absent
+  scan, while the existing 64-byte portable-SIMD mask path remains much cheaper.
+- **CONFORMANCE / BUILD STATE:** focused core conformance on the reverted
+  final source state (`rch exec`, worker `ovh-a`; `cargo test --profile release -p
+  frankenlibc-core strchr -- --nocapture --test-threads=1`) passed **14**
+  direct `strchr`/`strchrnul` tests plus
+  `string_properties::prop_strchr_strrchr_both_find_or_miss`. Because the
+  measured primitive regressed, the source and temporary same-bench comparator
+  hook were reverted cleanly; this docs-only rejection is the landed artifact.
+  `git diff --check` was green after the revert. Full workspace
+  `cargo fmt --check` is still blocked by pre-existing unrelated formatting
+  drift outside the touched files; the touched files were formatted with
+  `rustfmt --edition 2024` before the revert and no source diff remains.
+- **NO-RETRY NOTE:** do not retry x86 SSE4.2 `pcmpestri`/explicit-length
+  two-symbol `{needle,NUL}` scanners for core `strchr`/`strchrnul` absent
+  workloads. This is not a profitable escape hatch from the existing
+  no-retry byte-scanner family; any future `strchr_absent` attempt needs a
+  fundamentally different contract or a different profiled path.
+
 ## 2026-07-09 - REJECTED `%f` binary64 classifier decision DAG - 1.111x vs ORIG (slower)
 
 - **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
