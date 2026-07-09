@@ -6,6 +6,51 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-09 - REJECTED `%f` binary64 classifier decision DAG - 1.111x vs ORIG (slower)
+
+- **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
+  first and did not retry the rejected scanner/copy/span, allocator fallback,
+  stdio stream-lock, or already-shipped `%f` exact integer/dyadic/scaled-digit
+  levers. A short broad profile on worker `vmi1149989`
+  (`CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `rch exec -- cargo bench --profile release -p frankenlibc-bench --features
+  abi-bench --bench glibc_baseline_bench -- --sample-size 10 --warm-up-time 1
+  --measurement-time 1 --noplot`) left `printf_f_6` as the clean unrejected
+  residual: FrankenLibC core **375.746 ns** vs host glibc **193.965 ns**.
+  Wide ASCII conversion was not reopened because this ledger already closes
+  `mbsrtowcs`/`wcsrtombs` as optimized and not a real loss.
+- **ALIEN DIG PRIMITIVE TESTED, THEN REVERTED:** replaced the `%f` fixed-format
+  decision checks with a decoded binary64 mantissa/exponent classifier: prove
+  integral form, dyadic eligibility (`abs * 2^precision` integral), and scaled
+  rounding eligibility from integer parts instead of the old `fract()` and float
+  multiply probes. This targeted the decision DAG around the existing
+  exact-scaled formatter, not another digit-emission or dtoa rewrite.
+- **MEASURED REJECTION vs LEGACY ORIGINAL (`rch exec`, worker `vmi1149989`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --bench
+  printf_float_glibc_bench -- printffloat_format_float_f_mid_p6 --sample-size
+  20 --warm-up-time 1 --measurement-time 2 --noplot`):** same-binary A/B row
+  embedded the pre-change float-probe order as `frankenlibc_legacy_orig`.
+  ORIG **74.198 ns** -> candidate **82.456 ns**, `candidate/orig` **1.111x**
+  (**11.1% slower**); host glibc in the same run was **273.61 ns**.
+- **CONFORMANCE / BUILD STATE:** focused unit
+  `test_format_float_scaled_fixed_matches_rust` passed on worker `hz2`, and
+  `cargo check --profile release -p frankenlibc-core -p frankenlibc-bench
+  --benches` passed on worker `hz1` with only pre-existing unrelated warnings.
+  After reverting the candidate code, focused unit
+  `test_format_float_scaled_fixed_matches_rust` passed on worker `hz1`,
+  `printf_float_differential_fuzz` passed **300000** comparisons with **0
+  divergences** (RCH local fallback due saturated workers), and ABI conformance
+  `diff_snprintf_float_specifiers` + `diff_snprintf_float_fuzz` passed on worker
+  `vmi1149989`. Because the measured primitive regressed, the source and
+  temporary bench hook were reverted cleanly; this docs-only rejection is the
+  landed artifact.
+- **NO-RETRY NOTE:** do not replace the current `%f` integer/dyadic/scaled
+  decision order with a binary64 decoded classifier for the `12345.678901,
+  precision=6` fixed lane. The extra integer classifier work costs more than the
+  avoided float-probe checks. The existing exact integer, exact dyadic, and exact
+  scaled `%f` fast paths remain the accepted implementation.
+
 ## 2026-07-09 - LANDED core `%f` exact scaled-integer formatter - 1.17x vs ORIG, byte-exact
 
 - **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
