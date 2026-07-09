@@ -6,6 +6,50 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-08 - REJECTED core `MallocState` exact 64/256 hot-cycle precheck - 0-gain vs ORIG, source reverted
+
+- **PROFILE ROUTE (Codex):** reread this ledger before touching code and did
+  not retry the rejected allocator fallback-table levers (`native_libc_malloc`
+  slot/double-resolve, CAS fallback table, lock-skip, tombstone/cache-clear
+  elision, min/max+magic inline header reads) or the saturated byte-scanner
+  reshuffles (`memchr` / `strchr` / `strrchr` / span). The fresh short profile
+  (`rch exec`, worker `vmi1149989`, `AGENT_NAME=codex`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`, valid command
+  `cargo bench --profile release -p frankenlibc-bench --bench
+  glibc_baseline_bench -- --sample-size 10 --warm-up-time 1
+  --measurement-time 1`) again isolated small core-state allocation as the
+  clean unrejected loss: `malloc_free_64` FL **11.829 ns** vs glibc
+  **4.946 ns** (**2.39x LOSS**) and `malloc_free_256` FL **10.645 ns** vs glibc
+  **5.006 ns** (**2.13x LOSS**). Scanner losses were ignored because they are
+  already no-retry families.
+- **ALIEN DIG PRIMITIVE TRIED:** imported the allocator/graveyard idea of an
+  exact-size certificate jump: recognize the one-live-object core hot cycle for
+  size **64** and **256** before generic accounting/size-class dispatch, jump
+  directly to the known hot-bin slots (`64 -> bin 3`, `256 -> bin 11`), and
+  fall back for trace logging, pending hot accounting, overflow state, or any
+  non-exact request. This is distinct from the ABI fallback-table work: it
+  targets only `frankenlibc_core::malloc::MallocState`.
+- **MEASURED REJECTION (`rch exec`, worker `hz2`, `AGENT_NAME=codex`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo run --profile release -p frankenlibc-bench --features abi-bench
+  --example malloc_st_probe`):** the probe embedded the LEGACY ORIGINAL core
+  hot-cycle model and compared it against the patched `MallocState`. Same-run
+  medians regressed: `CORE_MALLOC_HOT_AB sz=64` ORIG **4.33 ns** -> NEW
+  **5.80 ns**, `new/orig` **1.341x**; `CORE_MALLOC_HOT_AB sz=256` ORIG
+  **4.45 ns** -> NEW **6.10 ns**, `new/orig` **1.370x**. The extra branch
+  surface and raw-bin shortcut lost to the existing compiler-optimized generic
+  exact hot-slot path.
+- **OUTCOME:** source and probe edits were reverted; this is a docs-only
+  rejection commit. Do not retry exact 64/256 pre-accounting hot-bin jumps or
+  raw hard-coded bin constants for core `MallocState` unless a future candidate
+  first shows a lower-level structural change that removes the same branches
+  from both ORIG and NEW comparators.
+- **REVERT/CONFORMANCE GREEN:** after reverting the source/probe edits, focused
+  allocator verification passed on `rch exec` worker `vmi1152480`:
+  `cargo test --profile release -p frankenlibc-core malloc::allocator --lib
+  -- --nocapture` (**22 passed**, 0 failed). The commit intentionally carries no
+  code delta.
+
 ## 2026-07-08 - LANDED `sscanf` exact `%d` / `%d %d` decimal transducer family - 12.46x and 112.03x vs ORIG
 
 - **LANDED CODE WIN (Codex, `stdio_abi.rs` / `sscanf`):** extended the strict
