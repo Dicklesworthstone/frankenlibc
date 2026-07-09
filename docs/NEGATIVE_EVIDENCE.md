@@ -53,6 +53,58 @@ retried and real wins are confirmed with numbers.
   scope still fails on pre-existing unrelated formatting drift; the touched
   files pass `rustfmt --check --edition 2024`.
 
+## 2026-07-09 - REJECTED dig-deeper pass: hottest paths mapped to no-retry families; no source lever
+
+- **PROFILE ROUTE (Codex):** reread this ledger before touching code and did
+  not retry the rejected allocator fallback-table/hot-cycle levers, byte-scanner
+  reshuffles, memcmp load-shape work, f64/f32 math gate trims, or stdio
+  fmemopen/write-cache/raw-stream/lock-skip attempts. A fresh short broad
+  profile (`rch exec`, worker `ovh-a`, `AGENT_NAME=codex`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`, valid command
+  `cargo bench --profile release -p frankenlibc-bench --bench
+  glibc_baseline_bench -- --sample-size 10 --warm-up-time 1
+  --measurement-time 1`) routed the visible losses back to already-mined
+  surfaces: `malloc_free_64` FL **17.186 ns** vs glibc **6.903 ns**
+  (**2.49x LOSS**) and `malloc_free_256` FL **8.587 ns** vs glibc
+  **4.662 ns** (**1.84x LOSS**) are covered by the allocator no-retry rows;
+  the scanner/memcmp losses are the documented saturated SIMD families; and the
+  residual `pow_irrational`/`expf_medium` signals sit inside the already-closed
+  math campaign rather than a new isolated primitive.
+- **DIG PRIMITIVE SCREENED, THEN KILLED BY LEDGER:** the only plausible
+  stdio-looking primitive after the broad profile was a memory-backed
+  per-stream cursor / direct fmemopen `fputs` fast path. Code audit showed that
+  this is not new: this ledger already rejects fixed-buffer `fmemopen("w")`
+  per-stream write cursors (**0.984x vs ORIG**), fputs write-stream TLS pointer
+  caches (**1.106x vs ORIG**), raw registered-stream bypasses (**1.050x vs
+  ORIG**), and single-threaded registry lock-skip (still **9.93x LOSS** on the
+  fputc write probe). The later stdio correction also says the valid fd-backed
+  fast path is already near parity and Criterion/fmemopen does not observe the
+  deployed single-threaded fd fast path. Per the no-retry rule, no source edit
+  was made.
+- **FOCUSED CONFIRMATION:** the wide-text route is already winning, not a target.
+  The valid rerun (`rch exec`, local fallback because no admissible workers,
+  `AGENT_NAME=codex`,
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench
+  --bench mbrtowc_ab_bench -- --noplot --sample-size 10 --warm-up-time 1
+  --measurement-time 1`) printed `MBRTOWC_ASCII` FL **3.0405 ns/B** vs glibc
+  **13.7900 ns/B** (`ratio=0.220`) and `MBRTOWC_MULTIBYTE` FL
+  **3.2072 ns/B** vs glibc **6.6081 ns/B** (`ratio=0.485`).
+- **STDIO CONFIRMATION IS NOT A NEW LEVER:** the valid fmemopen rerun (`rch
+  exec`, worker `ovh-a`, `AGENT_NAME=codex`,
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench
+  --bench fputs_glibc_bench -- fputs_8B --noplot --sample-size 10
+  --warm-up-time 1 --measurement-time 1`) measured `fputs_8B` FL
+  **1.9675 us** vs host glibc **889.47 ns** (**2.21x LOSS**). This confirms
+  only the already-documented fmemopen/Criterion slow path; it does not justify
+  another cache/cursor/raw-bypass attempt.
+- **OUTCOME:** docs-only no-ship closeout. Since every new-looking hot-path
+  primitive mapped to an explicit no-retry row before code, the source tree
+  stayed byte-identical (`NEW/ORIG = 1.000x` for this commit). Do not spend
+  another turn on fmemopen `fputs` cursor/cache/raw-bypass/lock-skip variants;
+  the next admissible stdio write attempt must be the larger per-FILE inline
+  buffer/state redesign with a standalone fd-backed single-threaded probe, not
+  Criterion fmemopen.
+
 ## 2026-07-08 - REJECTED core `MallocState` exact 64/256 hot-cycle precheck - 0-gain vs ORIG, source reverted
 
 - **PROFILE ROUTE (Codex):** reread this ledger before touching code and did
