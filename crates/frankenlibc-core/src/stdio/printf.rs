@@ -2052,6 +2052,10 @@ pub fn __bench_format_g(value: f64, precision: usize) -> String {
     format_g(value, precision, false, false)
 }
 #[doc(hidden)]
+pub fn __bench_format_g_legacy(value: f64, precision: usize) -> String {
+    crate::stdlib::ecvt::render_pct_g(value, precision)
+}
+#[doc(hidden)]
 pub fn __bench_format_e(value: f64, precision: usize) -> String {
     format_e(value, precision, false, false)
 }
@@ -2073,6 +2077,9 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     // folds exactly that. Byte-identical (guarded by `printf_float_differential_fuzz`);
     // `alt_form` (keep trailing zeros) keeps the path below.
     if !alt_form {
+        if let Some(s) = try_format_g_fixed_scaled(value, precision) {
+            return s;
+        }
         let mut s = crate::stdlib::ecvt::render_pct_g(value, precision);
         if uppercase {
             s.make_ascii_uppercase();
@@ -2155,6 +2162,100 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     }
 
     format_g_exp_from_scientific(mantissa, exp, uppercase, alt_form)
+}
+
+fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<String> {
+    let p = if precision == 0 { 1 } else { precision };
+    if p > 9 || value == 0.0 {
+        return None;
+    }
+
+    let negative = value.is_sign_negative();
+    let abs = value.abs();
+    let exp = decimal_exp_for_fixed_g(abs)?;
+    if exp >= p as i32 {
+        return None;
+    }
+    let frac_digits = (p as i32 - 1 - exp) as usize;
+    if frac_digits == 0 || frac_digits > 9 {
+        return None;
+    }
+
+    let scaled = rounded_scaled_fixed(abs, frac_digits)?;
+    let post_exp = fixed_scaled_decimal_exp_after_rounding(scaled, frac_digits, exp);
+    if post_exp >= p as i32 {
+        return None;
+    }
+
+    let mut tmp = [0u8; 40];
+    let ds = decimal_digits_u128(scaled, &mut tmp);
+    let mut s = String::with_capacity(ds.len() + frac_digits + 3 + usize::from(negative));
+    if negative {
+        s.push('-');
+    }
+    push_fixed_scaled_digits_string(&mut s, ds, frac_digits);
+    strip_trailing_zeros(&mut s);
+    Some(s)
+}
+
+fn decimal_exp_for_fixed_g(value: f64) -> Option<i32> {
+    const POW10_POS: [f64; 10] = [
+        1.0,
+        10.0,
+        100.0,
+        1_000.0,
+        10_000.0,
+        100_000.0,
+        1_000_000.0,
+        10_000_000.0,
+        100_000_000.0,
+        1_000_000_000.0,
+    ];
+
+    if !(0.0001..POW10_POS[9]).contains(&value) {
+        return None;
+    }
+    if value < 1.0 {
+        return Some(if value >= 0.1 {
+            -1
+        } else if value >= 0.01 {
+            -2
+        } else if value >= 0.001 {
+            -3
+        } else {
+            -4
+        });
+    }
+
+    let mut exp = 0;
+    while exp + 1 < POW10_POS.len() && value >= POW10_POS[exp + 1] {
+        exp += 1;
+    }
+    Some(exp as i32)
+}
+
+fn fixed_scaled_decimal_exp_after_rounding(scaled: u128, precision: usize, pre_exp: i32) -> i32 {
+    const POW10_U128: [u128; 10] = [
+        1,
+        10,
+        100,
+        1_000,
+        10_000,
+        100_000,
+        1_000_000,
+        10_000_000,
+        100_000_000,
+        1_000_000_000,
+    ];
+
+    let integer = scaled / POW10_U128[precision];
+    if pre_exp < 0 {
+        if integer > 0 { 0 } else { pre_exp }
+    } else if integer >= POW10_U128[(pre_exp as usize) + 1] {
+        pre_exp + 1
+    } else {
+        pre_exp
+    }
 }
 
 fn split_scientific(raw: &str) -> Option<(&str, i32)> {

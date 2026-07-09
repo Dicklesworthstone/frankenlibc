@@ -51,6 +51,56 @@ retried and real wins are confirmed with numbers.
   avoided float-probe checks. The existing exact integer, exact dyadic, and exact
   scaled `%f` fast paths remain the accepted implementation.
 
+## 2026-07-09 - LANDED core `%g` fixed-style scaled-significant transducer - 2.13x vs ORIG, byte-exact
+
+- **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this
+  ledger first and did not retry the rejected allocator fallback-table/hot
+  cycle, scanner/SWAR/asm, `memcmp` load-shape, fmemopen/write-cache, closed
+  `%f` exact scaled-integer, or historical `%g` dyadic/integer/scientific
+  cleanup levers. The short broad profile (`rch exec`, worker `vmi1152480`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`; `cargo bench
+  --profile release -p frankenlibc-bench --bench glibc_baseline_bench --
+  --noplot --sample-size 10 --warm-up-time 1 --measurement-time 1`) found
+  the biggest live losses in no-retry allocator/string/memcmp families, then a
+  clean unrejected stdio residual: `printf_g_6` FrankenLibC core **236.723
+  ns** vs host glibc **200.906 ns**.
+- **ALIEN DIG PRIMITIVE LANDED:** added a narrow fixed-style `%g`
+  significant-digit transducer for non-`#` `%g` with precision **1..=9** and
+  decimal exponent in the fixed window. It classifies the fixed `%g` case,
+  reuses the exact integer binary64 rounding core
+  `round_ties_even(abs(value) * 10^frac_digits)`, emits the fixed decimal
+  digits directly, strips trailing zeros, and bails out when rounding carries
+  the value into scientific notation. This is not the prior `%g` exact
+  dyadic/integer path, not the prior scientific-style builder cleanup, and not
+  a general Schubfach/Ryu dtoa port.
+- **MEASURED KEEP vs LEGACY ORIGINAL (`rch exec` command, local fallback after
+  remote dependency preflight `RCH-E410`; `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --bench
+  printf_float_glibc_bench -- printffloat_g_profile_p6 --sample-size 20
+  --warm-up-time 1 --measurement-time 2 --noplot`):** same-process A/B row
+  embeds `frankenlibc_legacy_orig` beside the patched `frankenlibc_core` path
+  for `12345.678901` at precision 6. ORIG **146.85 ns** -> NEW **69.054
+  ns**, `new/orig` **0.470x** (**2.13x faster**); host glibc in the same
+  binary was **127.62 ns**.
+- **DEPLOYED PROFILE ROW GREEN (`rch exec`, worker `hz2`;
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`; `cargo bench
+  --profile release -p frankenlibc-bench --bench glibc_baseline_bench
+  printf_g_6 -- --noplot --sample-size 20 --warm-up-time 1
+  --measurement-time 2`):** `printf_g_6` FrankenLibC core **75.370 ns/op**
+  vs host glibc **144.599 ns/op** on the filtered shipped benchmark row.
+- **BYTE-EXACT CONFORMANCE GREEN:** focused core `%g` boundary tests passed on
+  worker `vmi1227854`; `printf_float_differential_fuzz` passed **300000**
+  comparisons with **0 divergences** vs host glibc on worker `hz2`; ABI
+  conformance `diff_snprintf_float_specifiers` and `diff_snprintf_float_fuzz`
+  both passed through the `rch exec` command path with local fallback after the
+  same `RCH-E410` remote dependency preflight. `cargo check --profile release
+  -p frankenlibc-core -p frankenlibc-bench --benches` passed on worker
+  `vmi1156319`; touched-file `rustfmt --edition 2024 --check` and
+  `git diff --check` were green.
+- **NO-RETRY NOTE:** do not retry this narrow fixed-style `%g`
+  scaled-significant route without a new comparator. Broad non-dyadic dtoa
+  remains a separate Schubfach/Ryu-sized primitive and was not attempted here.
+
 ## 2026-07-09 - LANDED core `%f` exact scaled-integer formatter - 1.17x vs ORIG, byte-exact
 
 - **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger

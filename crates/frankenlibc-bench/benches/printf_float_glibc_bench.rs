@@ -1,6 +1,6 @@
 //! In-process A/B: deployed printf float formatters vs real in-process glibc
-//! `strfromd("%.*f"/"%.*g"/"%.*e")`. The `%f` row also keeps the legacy Rust
-//! fixed formatter as the ORIG comparator for the scaled-integer fast path.
+//! `strfromd("%.*f"/"%.*g"/"%.*e")`. The `%f` and `%g` rows also keep legacy
+//! formatter arms as ORIG comparators for narrow fixed-digit fast paths.
 //!
 //! Run: `cargo bench -p frankenlibc-bench --bench printf_float_glibc_bench`
 
@@ -15,6 +15,7 @@ unsafe extern "C" {
 
 const CASES: &[(&str, f64, usize)] = &[
     ("f_mid_p6", 12345.678901, 6),
+    ("g_profile_p6", 12345.678901, 6),
     ("g_pi_p6", 3.141592653589793, 6),
     ("g_mid_p17", 1234567.89, 17),
     ("e_pi_p6", 3.141592653589793, 6),
@@ -73,6 +74,15 @@ fn bench(c: &mut Criterion) {
             grp.bench_function("frankenlibc_legacy_orig", |b| {
                 b.iter(|| {
                     black_box(frankenlibc_core::stdio::printf::__bench_format_f_legacy(
+                        black_box(*value),
+                        *prec,
+                    ))
+                })
+            });
+        } else if conv == 'g' {
+            grp.bench_function("frankenlibc_legacy_orig", |b| {
+                b.iter(|| {
+                    black_box(frankenlibc_core::stdio::printf::__bench_format_g_legacy(
                         black_box(*value),
                         *prec,
                     ))
