@@ -276,6 +276,133 @@ impl BackendFileCache {
             )),
         }
     }
+
+    fn with_snapshot<R>(&mut self, callback: impl FnOnce(&[u8], u64) -> R) -> std::io::Result<R> {
+        self.refresh_cache();
+        match &self.file_cache {
+            Some(bytes) => Ok(callback(bytes, self.cache_generation)),
+            None => Err(std::io::Error::from_raw_os_error(
+                self.last_io_error
+                    .unwrap_or(frankenlibc_core::errno::ENOENT),
+            )),
+        }
+    }
+}
+
+struct ServiceNameLookupKey {
+    name_hash: u64,
+    protocol_hash: u64,
+    entry_index: usize,
+    name: Vec<u8>,
+}
+
+struct ServiceLookupCache {
+    generation: Option<u64>,
+    entries: Vec<frankenlibc_core::resolv::ServiceEntry>,
+    name_keys: Vec<ServiceNameLookupKey>,
+}
+
+impl ServiceLookupCache {
+    fn new() -> Self {
+        Self {
+            generation: None,
+            entries: Vec::new(),
+            name_keys: Vec::new(),
+        }
+    }
+
+    fn rebuild_if_needed(&mut self, generation: u64, content: &[u8]) {
+        if self.generation == Some(generation) {
+            return;
+        }
+
+        self.entries.clear();
+        self.name_keys.clear();
+
+        for entry in content
+            .split(|&b| b == b'\n')
+            .filter_map(frankenlibc_core::resolv::parse_services_line)
+        {
+            let entry_index = self.entries.len();
+            let protocol_hash = ascii_casefold_hash(&entry.protocol);
+            self.name_keys.push(ServiceNameLookupKey {
+                name_hash: ascii_casefold_hash(&entry.name),
+                protocol_hash,
+                entry_index,
+                name: entry.name.clone(),
+            });
+            self.name_keys
+                .extend(entry.aliases.iter().map(|alias| ServiceNameLookupKey {
+                    name_hash: ascii_casefold_hash(alias),
+                    protocol_hash,
+                    entry_index,
+                    name: alias.clone(),
+                }));
+            self.entries.push(entry);
+        }
+
+        self.name_keys.sort_by_key(|key| key.name_hash);
+        self.generation = Some(generation);
+    }
+
+    fn lookup_by_name(
+        &mut self,
+        generation: u64,
+        content: &[u8],
+        name: &[u8],
+        proto_filter: Option<&[u8]>,
+    ) -> Option<&frankenlibc_core::resolv::ServiceEntry> {
+        self.rebuild_if_needed(generation, content);
+
+        let name_hash = ascii_casefold_hash(name);
+        let start = self
+            .name_keys
+            .partition_point(|key| key.name_hash < name_hash);
+        let end = self
+            .name_keys
+            .partition_point(|key| key.name_hash <= name_hash);
+        let proto_hash = proto_filter.map(ascii_casefold_hash);
+        let mut best_entry_index = None;
+
+        for key in &self.name_keys[start..end] {
+            if proto_hash.is_some_and(|hash| key.protocol_hash != hash)
+                || !key.name.eq_ignore_ascii_case(name)
+            {
+                continue;
+            }
+
+            let entry = &self.entries[key.entry_index];
+            if let Some(filter) = proto_filter
+                && !entry.protocol.eq_ignore_ascii_case(filter)
+            {
+                continue;
+            }
+
+            if best_entry_index.is_none_or(|current| key.entry_index < current) {
+                best_entry_index = Some(key.entry_index);
+            }
+        }
+
+        best_entry_index.map(|index| &self.entries[index])
+    }
+}
+
+#[inline]
+fn ascii_casefold_hash(bytes: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = FNV_OFFSET;
+    for &byte in bytes {
+        let folded = if byte.is_ascii_uppercase() {
+            byte + 32
+        } else {
+            byte
+        };
+        hash ^= u64::from(folded);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash ^ (bytes.len() as u64)
 }
 
 #[cfg(feature = "owned-tls-cache")]
@@ -304,6 +431,11 @@ fn new_proc_net_if_inet6_cache() -> BackendFileCache {
 }
 
 #[cfg(feature = "owned-tls-cache")]
+fn new_service_lookup_cache() -> ServiceLookupCache {
+    ServiceLookupCache::new()
+}
+
+#[cfg(feature = "owned-tls-cache")]
 static HOSTS_BACKEND_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_hosts_backend_cache);
 #[cfg(feature = "owned-tls-cache")]
@@ -318,6 +450,9 @@ static PROC_NET_ROUTE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFi
 #[cfg(feature = "owned-tls-cache")]
 static PROC_NET_IF_INET6_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<BackendFileCache> =
     crate::owned_tls_cache::OwnedTlsCache::new(new_proc_net_if_inet6_cache);
+#[cfg(feature = "owned-tls-cache")]
+static SERVICE_LOOKUP_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServiceLookupCache> =
+    crate::owned_tls_cache::OwnedTlsCache::new(new_service_lookup_cache);
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
@@ -331,6 +466,8 @@ thread_local! {
         RefCell::new(BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV));
     static PROC_NET_IF_INET6_TLS: RefCell<BackendFileCache> =
         RefCell::new(BackendFileCache::new(PROC_NET_IF_INET6_PATH, PROC_NET_IF_INET6_PATH_ENV));
+    static SERVICE_LOOKUP_TLS: RefCell<ServiceLookupCache> =
+        RefCell::new(ServiceLookupCache::new());
 }
 
 fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
@@ -359,6 +496,31 @@ fn read_services_backend() -> std::io::Result<Vec<u8>> {
     #[cfg(not(feature = "owned-tls-cache"))]
     {
         SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+    }
+}
+
+fn with_services_backend_snapshot<R>(callback: impl FnOnce(&[u8], u64) -> R) -> std::io::Result<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SERVICES_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
+    }
+}
+
+fn with_service_lookup_cache<R>(callback: impl FnOnce(&mut ServiceLookupCache) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SERVICE_LOOKUP_OWNED_TLS.with(callback)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        SERVICE_LOOKUP_TLS.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            callback(&mut cache)
+        })
     }
 }
 
@@ -693,6 +855,25 @@ fn service_entry_matches(entry: &frankenlibc_core::resolv::ServiceEntry, service
             .aliases
             .iter()
             .any(|alias| alias.eq_ignore_ascii_case(service))
+}
+
+fn lookup_service_entry_in_content(
+    content: &[u8],
+    service: &[u8],
+    proto_filter: Option<&[u8]>,
+) -> Option<frankenlibc_core::resolv::ServiceEntry> {
+    content.split(|&b| b == b'\n').find_map(|line| {
+        let entry = frankenlibc_core::resolv::parse_services_line(line)?;
+        if !service_entry_matches(&entry, service) {
+            return None;
+        }
+        if let Some(pf) = proto_filter
+            && !entry.protocol.eq_ignore_ascii_case(pf)
+        {
+            return None;
+        }
+        Some(entry)
+    })
 }
 
 fn lookup_service_profiles(
@@ -2246,6 +2427,23 @@ fn with_tls_servent<R>(callback: impl FnOnce(&mut ServentTlsStorage) -> R) -> R 
     }
 }
 
+fn fill_servent_storage(
+    storage: &mut ServentTlsStorage,
+    entry: &frankenlibc_core::resolv::ServiceEntry,
+    port_net: c_int,
+) -> *mut c_void {
+    copy_to_cchar_buf(&mut storage.name, &entry.name);
+    copy_to_cchar_buf(&mut storage.proto, &entry.protocol);
+    fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
+    storage.servent = libc::servent {
+        s_name: storage.name.as_mut_ptr(),
+        s_aliases: storage.aliases.as_mut_ptr(),
+        s_port: port_net,
+        s_proto: storage.proto.as_mut_ptr(),
+    };
+    (&mut storage.servent as *mut libc::servent).cast::<c_void>()
+}
+
 /// Thread-local storage for protoent results.
 struct ProtoentTlsStorage {
     name: [c_char; 256],
@@ -2615,34 +2813,85 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
         Some(unsafe { std::slice::from_raw_parts(proto as *const u8, proto_len) })
     };
 
-    let content = match read_services_backend() {
-        Ok(c) => c,
+    let entry = match with_services_backend_snapshot(|content, generation| {
+        with_service_lookup_cache(|cache| {
+            cache
+                .lookup_by_name(generation, content, name_bytes, proto_filter)
+                .cloned()
+        })
+    }) {
+        Ok(Some(entry)) => entry,
+        Ok(None) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
         Err(_) => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
             return ptr::null_mut();
         }
     };
 
-    // Find the full matching entry so we can return glibc-faithful fields:
-    // the CANONICAL name (not the queried alias) plus the entry's aliases.
-    let entry = match content.split(|&b| b == b'\n').find_map(|line| {
-        let entry = frankenlibc_core::resolv::parse_services_line(line)?;
-        let name_match = entry.name.eq_ignore_ascii_case(name_bytes)
-            || entry
-                .aliases
-                .iter()
-                .any(|alias| alias.eq_ignore_ascii_case(name_bytes));
-        if !name_match {
-            return None;
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+    with_tls_servent(|storage| fill_servent_storage(storage, &entry, entry.port.to_be() as c_int))
+}
+
+#[doc(hidden)]
+pub unsafe fn getservbyname_legacy_parse_per_call_for_bench(
+    name: *const c_char,
+    proto: *const c_char,
+) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        0,
+        true,
+        name.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    if name.is_null() {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+
+    // SAFETY: name is non-null and follows getservbyname's C-string contract;
+    // known_remaining bounds tracked malloc-backed inputs.
+    let (name_len, name_terminated) =
+        unsafe { crate::util::scan_c_string(name, known_remaining(name as usize)) };
+    if !name_terminated {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+    let name_bytes = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
+
+    let proto_filter = if proto.is_null() {
+        None
+    } else {
+        // SAFETY: proto is non-null in this branch and has getservbyname's
+        // optional C-string contract.
+        let (proto_len, proto_terminated) =
+            unsafe { crate::util::scan_c_string(proto, known_remaining(proto as usize)) };
+        if !proto_terminated {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
         }
-        if let Some(pf) = proto_filter
-            && !entry.protocol.eq_ignore_ascii_case(pf)
-        {
-            return None;
+        Some(unsafe { std::slice::from_raw_parts(proto as *const u8, proto_len) })
+    };
+
+    let content = match read_services_backend() {
+        Ok(content) => content,
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
         }
-        Some(entry)
-    }) {
-        Some(e) => e,
+    };
+
+    let entry = match lookup_service_entry_in_content(&content, name_bytes, proto_filter) {
+        Some(entry) => entry,
         None => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
             return ptr::null_mut();
@@ -2650,18 +2899,7 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
     };
 
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
-    with_tls_servent(|storage| {
-        copy_to_cchar_buf(&mut storage.name, &entry.name);
-        copy_to_cchar_buf(&mut storage.proto, &entry.protocol);
-        fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
-        storage.servent = libc::servent {
-            s_name: storage.name.as_mut_ptr(),
-            s_aliases: storage.aliases.as_mut_ptr(),
-            s_port: entry.port.to_be() as c_int,
-            s_proto: storage.proto.as_mut_ptr(),
-        };
-        (&mut storage.servent as *mut libc::servent).cast::<c_void>()
-    })
+    with_tls_servent(|storage| fill_servent_storage(storage, &entry, entry.port.to_be() as c_int))
 }
 
 /// POSIX `getservbyport` — look up a service by port number in /etc/services.
@@ -2723,18 +2961,7 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
     // Success path: record service lookup completed
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
 
-    with_tls_servent(|storage| {
-        copy_to_cchar_buf(&mut storage.name, &entry.name);
-        copy_to_cchar_buf(&mut storage.proto, &entry.protocol);
-        fill_alias_table(&mut storage.alias_buf, &mut storage.aliases, &entry.aliases);
-        storage.servent = libc::servent {
-            s_name: storage.name.as_mut_ptr(),
-            s_aliases: storage.aliases.as_mut_ptr(),
-            s_port: port,
-            s_proto: storage.proto.as_mut_ptr(),
-        };
-        (&mut storage.servent as *mut libc::servent).cast::<c_void>()
-    })
+    with_tls_servent(|storage| fill_servent_storage(storage, &entry, port))
 }
 
 /// POSIX `getprotobyname` — look up a protocol by name in /etc/protocols.

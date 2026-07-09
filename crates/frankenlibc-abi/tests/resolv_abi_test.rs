@@ -2041,6 +2041,27 @@ fn getservbyname_uses_overridden_services_backend_and_ignores_malformed_lines() 
     );
 }
 
+#[test]
+fn getservbyname_cached_lookup_respects_services_backend_update() {
+    with_resolver_backends(None, Some(b"fixture-svc 4242/tcp\n"), |paths| {
+        let name = CString::new("fixture-svc").unwrap();
+        let proto = CString::new("tcp").unwrap();
+
+        let first_ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+        assert!(!first_ptr.is_null());
+        let first = unsafe { &*(first_ptr as *const libc::servent) };
+        assert_eq!(u16::from_be(first.s_port as u16), 4242);
+
+        std::fs::write(&paths.services, b"fixture-svc 4243/tcp refreshed-alias\n")
+            .expect("rewrite temp services fixture");
+
+        let second_ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+        assert!(!second_ptr.is_null());
+        let second = unsafe { &*(second_ptr as *const libc::servent) };
+        assert_eq!(u16::from_be(second.s_port as u16), 4243);
+    });
+}
+
 // ===========================================================================
 // getservbyport
 // ===========================================================================

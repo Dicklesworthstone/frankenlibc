@@ -6,6 +6,59 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-09 - LANDED resolver services generation-indexed parsed lookup cache - 11.46x vs ORIG, conformance green
+
+- **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
+  first and did not retry the rejected `strchr` SSE4.2 scanner, closed
+  byte-scanner/span/`memcmp`/qsort/stdio-float families, getenv hot-cache
+  family, resolver byte-decimal parser, or the already-landed protocols backend
+  snapshot cache. A broad short profile on worker `vmi1264463`
+  (`CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `rch exec -- cargo bench --profile release -p frankenlibc-bench --features
+  abi-bench --bench glibc_baseline_bench -- --sample-size 10 --warm-up-time 1
+  --measurement-time 1 --noplot`) left `getservbyname_http_tcp` as the hottest
+  clean resolver path by absolute time: FrankenLibC p50 **71777.838 ns** vs
+  host glibc p50 **78118.996 ns**. It was not a host-loss row, but it was still
+  a large repeated parse surface with no no-retry entry for a parsed services
+  result index.
+- **ALIEN DIG PRIMITIVE LANDED:** added a generation-stamped parsed
+  `/etc/services` lookup index for non-reentrant `getservbyname`. The existing
+  `BackendFileCache` still owns file/env-path freshness; the new
+  `ServiceLookupCache` borrows the cached bytes, rebuilds only when the backend
+  generation changes, and stores case-folded hash keys for canonical service
+  names plus aliases. Hot repeated lookups now avoid both per-call backend-byte
+  cloning and line-by-line `parse_services_line`; misses and backend updates
+  preserve the original file-order semantics. This is deliberately not another
+  byte-decimal parser, file snapshot cache, or token scanner retune. A
+  bench-only legacy helper preserves the pre-index read/parse path for direct
+  A/B measurement.
+- **MEASURED KEEP vs LEGACY ORIGINAL (`rch exec`, worker `vmi1152480`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench
+  --bench glibc_baseline_bench getservbyname_http_tcp -- --sample-size 20
+  --warm-up-time 1 --measurement-time 2 --noplot`):** same-binary A/B row
+  embeds the old read/parse services lookup as `frankenlibc_legacy_orig`. ORIG
+  p50 **39004.430 ns** -> patched p50 **3403.309 ns**, `new/orig` **0.087x**
+  (**11.46x faster**). Host glibc in the same run was p50 **4949.227 ns**, so
+  the patched path is also **1.45x faster** than host on this row.
+- **CONFORMANCE / BUILD STATE:** `cargo check -p frankenlibc-abi --lib` passed
+  with only pre-existing warnings. `cargo check -p frankenlibc-bench --bench
+  glibc_baseline_bench --features abi-bench` passed. Focused GREEN gates:
+  `cargo test -p frankenlibc-abi --test resolv_abi_test getservbyname --
+  --nocapture --test-threads=1` passed **9/9**, including a new backend-update
+  test proving the parsed cache respects `FRANKENLIBC_SERVICES_PATH` fixture
+  rewrites; `cargo test -p frankenlibc-harness --test
+  resolver_nss_core_wave01_conformance_test -- --nocapture` passed **5/5**.
+  Full `cargo check -p frankenlibc-abi --tests` remains blocked by the
+  pre-existing unrelated `zz_scratch_divmin` `CDiv`/`CLdiv` debug/compare
+  compile debt, not by this resolver change.
+- **NO-RETRY NOTE:** do not retry duplicate parsed `getservbyname` hot-result
+  indexes, `/etc/services` generation-index caches, or another services
+  read/parse elimination pass for this row. Future service resolver work should
+  target a different surface such as `getservbyport` indexing or
+  `getaddrinfo` profile reuse, not this exact parsed-name index, byte-decimal
+  parsing, or backend file snapshotting.
+
 ## 2026-07-09 - REJECTED `strchr` SSE4.2 explicit-length compare scanner - 5.893x vs ORIG (slower)
 
 - **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
