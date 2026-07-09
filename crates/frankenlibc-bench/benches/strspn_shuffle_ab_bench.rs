@@ -1,7 +1,6 @@
-//! Same-process A/B for a strspn set-membership lever: OLD (N separate simd_eq,
-//! one per set byte — `in_set_mask6` style) vs NEW (Langdale/Lemire 2-shuffle
-//! byte classifier: 2 pshufb + AND, independent of set size) vs host glibc
-//! `strspn`. All three in ONE process so per-worker load cancels in the ratios.
+//! Same-process A/B for strspn set-membership levers: OLD (N separate simd_eq,
+//! one per set byte — `in_set_mask6` style) vs NEW candidates vs host glibc.
+//! All variants run in ONE process so per-worker load cancels in the ratios.
 //!
 //! Membership is verified byte-identical between OLD and NEW on every input
 //! before timing. ASCII accept sets only (the 8-bit-mask classifier covers bytes
@@ -17,11 +16,13 @@ use std::simd::Simd;
 use std::simd::cmp::SimdPartialEq;
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use frankenlibc_core::string::str as core_str;
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
 const L: usize = 16;
+const L32: usize = 32;
 
 unsafe extern "C" {
     fn strspn(s: *const c_char, accept: *const c_char) -> usize;
@@ -53,6 +54,51 @@ fn strspn_old(s: &[u8], set: &[u8]) -> usize {
         base += 1;
     }
     base
+}
+
+#[inline(always)]
+fn member_eq8_32(lanes: Simd<u8, L32>, set: &[u8; 8]) -> std::simd::Mask<i8, L32> {
+    lanes.simd_eq(Simd::splat(set[0]))
+        | lanes.simd_eq(Simd::splat(set[1]))
+        | lanes.simd_eq(Simd::splat(set[2]))
+        | lanes.simd_eq(Simd::splat(set[3]))
+        | lanes.simd_eq(Simd::splat(set[4]))
+        | lanes.simd_eq(Simd::splat(set[5]))
+        | lanes.simd_eq(Simd::splat(set[6]))
+        | lanes.simd_eq(Simd::splat(set[7]))
+}
+
+fn span_legacy_eq8_32(s: &[u8], set: &[u8; 8], stop_in_set: bool) -> usize {
+    let zero = Simd::<u8, L32>::splat(0);
+    let mut chunks = s.chunks_exact(L32);
+    let mut base = 0usize;
+
+    for chunk in chunks.by_ref() {
+        let lanes = Simd::<u8, L32>::from_slice(chunk);
+        let member = member_eq8_32(lanes, set);
+        let stop = if stop_in_set {
+            lanes.simd_eq(zero) | member
+        } else {
+            lanes.simd_eq(zero) | !member
+        };
+        let bits = stop.to_bitmask();
+        if bits != 0 {
+            return base + bits.trailing_zeros() as usize;
+        }
+        base += L32;
+    }
+
+    for (j, &byte) in chunks.remainder().iter().enumerate() {
+        if byte == 0 || (set.contains(&byte) == stop_in_set) {
+            return base + j;
+        }
+    }
+
+    s.len()
+}
+
+fn strspn_legacy_eq8_32(s: &[u8], set: &[u8; 8]) -> usize {
+    span_legacy_eq8_32(s, set, false)
 }
 
 // ---- NEW: 2-shuffle classifier (Langdale/Lemire). ----
@@ -329,6 +375,42 @@ fn bench(c: &mut Criterion) {
         });
         grp.finish();
     }
+
+    let span_set: &[u8; 8] = b"abcdefgh";
+    let mut span_accept = span_set.to_vec();
+    span_accept.push(0);
+    let mut span_s = vec![b'a'; 4096];
+    span_s.push(0);
+    assert_eq!(strspn_legacy_eq8_32(&span_s, span_set), 4096);
+    assert_eq!(core_str::strspn(&span_s, &span_accept), 4096);
+    assert_eq!(
+        unsafe { strspn(span_s.as_ptr().cast(), span_accept.as_ptr().cast()) },
+        4096
+    );
+
+    let mut span8 = c.benchmark_group("strspn_interval8_n4096");
+    span8.bench_function("legacy_eq8_32", |b| {
+        b.iter(|| black_box(strspn_legacy_eq8_32(black_box(&span_s), span_set)))
+    });
+    span8.bench_function("core_current", |b| {
+        b.iter(|| {
+            black_box(core_str::strspn(
+                black_box(&span_s),
+                black_box(&span_accept),
+            ))
+        })
+    });
+    span8.bench_function("host_glibc", |b| {
+        b.iter(|| {
+            black_box(unsafe {
+                strspn(
+                    black_box(span_s.as_ptr().cast()),
+                    span_accept.as_ptr().cast(),
+                )
+            })
+        })
+    });
+    span8.finish();
 }
 
 criterion_group!(benches, bench);

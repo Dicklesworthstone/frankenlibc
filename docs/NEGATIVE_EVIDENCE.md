@@ -6,6 +6,53 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-09 - LANDED core `strspn` 8-byte interval-cover SIMD classifier - 1.36x vs ORIG, byte-exact
+
+- **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
+  first and did not retry the rejected `[bool;256] -> [u64;4]` span bitmap,
+  fused scalar 2-pass span, medium-set SIMD-eq extension, tokenizer bitmap,
+  `memchr`/`strchr` reshuffles, allocator fallback-table, or stdio stream-lock
+  levers. The short profile (`rch exec`, worker `vmi1152480`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --features abi-bench
+  --bench glibc_baseline_bench -- --sample-size 10 --warm-up-time 1
+  --measurement-time 1 --noplot`) left the clean unrejected string gap at
+  `strspn_long`: FL **214.0939 ns** vs host glibc **138.3291 ns** on the
+  4096-byte all-accepted, 8-byte-set row. A sibling `strpbrk_absent` route was
+  probed but not landed after the full wrapper benchmark was noisy to worse;
+  final dispatch is deliberately gated to `strspn` (`!stop_in_set`) only.
+- **ALIEN DIG PRIMITIVE LANDED:** algebraically normalize only long 7/8-byte
+  accept sets into an exact one/two-interval cover, then classify each SIMD
+  panel with unsigned range masks instead of the legacy 8 x `simd_eq` OR-tree.
+  This is not the rejected bitmap or equality reshuffle: it is a tiny interval
+  automaton for sets such as `abcdefgh`, with duplicates deduped before cover
+  construction and all non-interval-coverable sets falling through unchanged.
+- **MEASURED KEEP vs LEGACY ORIGINAL (`rch exec`, worker `vmi1264463`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --bench
+  strspn_shuffle_ab_bench -- strspn_interval8_n4096 --sample-size 20
+  --warm-up-time 1 --measurement-time 2 --noplot`):** same-process A/B row
+  embeds the legacy original 32-lane eq8 span body (`legacy_eq8_32`) beside the
+  patched `frankenlibc_core::string::strspn`. ORIG **386.63 ns** -> NEW
+  **284.67 ns**, `new/orig` **0.736x** (**1.36x faster**); host glibc in the
+  same binary was **242.16 ns**. Secondary profile-row confirmation on the
+  earlier worker `vmi1152480`:
+  `glibc_baseline_strspn_long/frankenlibc_core` Criterion estimator
+  **176.02 ns** after the patch, reported **-14.197%** vs its prior saved row
+  (`p = 0.01`); host glibc remained unchanged at **137.41 ns**.
+- **BYTE-EXACT CONFORMANCE GREEN:** `cargo check --profile release -p
+  frankenlibc-core --lib`, `cargo check --profile release -p frankenlibc-bench
+  --bench strspn_shuffle_ab_bench`, `cargo test --profile release -p
+  frankenlibc-core span_interval_cover_matches_scalar -- --nocapture` (**1
+  passed**), `cargo test --profile release -p frankenlibc-core span_general --
+  --nocapture` (**2 passed**), `cargo test --profile release -p frankenlibc-abi
+  --test conformance_diff_string diff_strspn_cases -- --nocapture` (**1
+  passed**), and `cargo test --profile release -p frankenlibc-abi --test
+  conformance_diff_string_search strpbrk_strspn_strcspn_match_glibc --
+  --nocapture` (**1 passed**) were green. `cargo fmt --check` at workspace
+  scope still fails on pre-existing unrelated formatting drift; the touched
+  files pass `rustfmt --check --edition 2024`.
+
 ## 2026-07-08 - REJECTED core `MallocState` exact 64/256 hot-cycle precheck - 0-gain vs ORIG, source reverted
 
 - **PROFILE ROUTE (Codex):** reread this ledger before touching code and did

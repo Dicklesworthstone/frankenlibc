@@ -1180,6 +1180,75 @@ fn contiguous_set_range(set: &[u8], table: &[bool; 256]) -> Option<(u8, u8)> {
     Some((lo, hi))
 }
 
+#[derive(Clone, Copy)]
+struct SpanIntervalCover {
+    ranges: [(u8, u8); 2],
+    count: usize,
+}
+
+#[inline]
+fn small_interval_cover(set: &[u8]) -> Option<SpanIntervalCover> {
+    let mut bytes = [0u8; 8];
+    let mut len = 0usize;
+
+    for &byte in set {
+        if bytes[..len].contains(&byte) {
+            continue;
+        }
+
+        let mut pos = len;
+        while pos > 0 && bytes[pos - 1] > byte {
+            bytes[pos] = bytes[pos - 1];
+            pos -= 1;
+        }
+        bytes[pos] = byte;
+        len += 1;
+    }
+
+    if len == 0 {
+        return None;
+    }
+
+    let mut ranges = [(0u8, 0u8); 2];
+    let mut count = 0usize;
+    let mut i = 0usize;
+    while i < len {
+        let lo = bytes[i];
+        let mut hi = lo;
+        while i + 1 < len && hi != u8::MAX && bytes[i + 1] == hi + 1 {
+            i += 1;
+            hi = bytes[i];
+        }
+        if count == ranges.len() {
+            return None;
+        }
+        ranges[count] = (lo, hi);
+        count += 1;
+        i += 1;
+    }
+
+    Some(SpanIntervalCover { ranges, count })
+}
+
+#[inline(always)]
+fn byte_range_mask(lanes: Simd<u8, SIMD_LANES>, lo: u8, hi: u8) -> Mask<i8, SIMD_LANES> {
+    (lanes - Simd::splat(lo)).simd_le(Simd::splat(hi - lo))
+}
+
+#[inline(always)]
+fn interval_cover_mask(
+    lanes: Simd<u8, SIMD_LANES>,
+    cover: SpanIntervalCover,
+) -> Mask<i8, SIMD_LANES> {
+    let (lo, hi) = cover.ranges[0];
+    let mut member = byte_range_mask(lanes, lo, hi);
+    if cover.count == 2 {
+        let (lo, hi) = cover.ranges[1];
+        member |= byte_range_mask(lanes, lo, hi);
+    }
+    member
+}
+
 #[inline(always)]
 fn span_range(s: &[u8], table: &[bool; 256], stop_in_set: bool, lo: u8, hi: u8) -> usize {
     // Members are exactly the contiguous byte range `[lo, hi]` — the caller
@@ -1401,6 +1470,20 @@ unsafe fn span_pshufb_ascii(s: &[u8], set: &[u8], stop_in_set: bool) -> usize {
 /// Routes a ≥5-byte accept/reject `set` to the table-free `span_scan` (≤16) or the
 /// table-backed `span_general` (>16). The 256-byte table is built ONLY for >16 sets.
 fn span_dispatch(s: &[u8], set: &[u8], stop_in_set: bool) -> usize {
+    if set.len() >= 7
+        && set.len() <= 8
+        && s.len() >= 64
+        && !stop_in_set
+        && let Some(cover) = small_interval_cover(set)
+    {
+        return span_scan(
+            s,
+            stop_in_set,
+            |lanes| interval_cover_mask(lanes, cover),
+            set,
+        );
+    }
+
     if set.len() == 6 {
         let exact: &[u8; 6] = set.try_into().unwrap();
         if stop_in_set {
@@ -2165,7 +2248,6 @@ mod tests {
     use proptest::test_runner::Config as ProptestConfig;
     use sha2::{Digest, Sha256};
 
-    #[cfg(target_arch = "x86_64")]
     fn scalar_span_ref(s: &[u8], set: &[u8], stop_in_set: bool) -> usize {
         let mut table = [false; 256];
         for &b in set {
@@ -2196,6 +2278,30 @@ mod tests {
             let simd = unsafe { span_pshufb_ascii(&s, &set, stop_in_set) };
             let scalar = scalar_span_ref(&s, &set, stop_in_set);
             prop_assert_eq!(simd, scalar, "s={:?} set={:?} stop={}", s, set, stop_in_set);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4000))]
+        /// A one/two-interval cover is an exact algebraic normalization of the
+        /// small member set; the SIMD range masks must preserve scalar byte
+        /// identity in both span directions.
+        #[test]
+        fn span_interval_cover_matches_scalar(
+            s in proptest::collection::vec(any::<u8>(), 0..200),
+            set in proptest::collection::vec(any::<u8>(), 1..9),
+            stop_in_set in any::<bool>(),
+        ) {
+            if let Some(cover) = small_interval_cover(&set) {
+                let simd = span_scan(
+                    &s,
+                    stop_in_set,
+                    |lanes| interval_cover_mask(lanes, cover),
+                    &set,
+                );
+                let scalar = scalar_span_ref(&s, &set, stop_in_set);
+                prop_assert_eq!(simd, scalar, "s={:?} set={:?} stop={}", s, set, stop_in_set);
+            }
         }
     }
 
