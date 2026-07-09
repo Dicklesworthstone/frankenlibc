@@ -111,6 +111,56 @@ fn bench_op<F>(
     stats.borrow().report(meta);
 }
 
+fn legacy_powi_squaring(base: f64, n: i64) -> f64 {
+    let mut result = 1.0_f64;
+    let mut b = base;
+    let mut e = n.unsigned_abs();
+    while e > 0 {
+        if e & 1 == 1 {
+            result *= b;
+        }
+        e >>= 1;
+        if e > 0 {
+            b *= b;
+        }
+    }
+    if n < 0 { 1.0 / result } else { result }
+}
+
+fn legacy_pow_half_integer_fast_path(base: f64, exponent: f64) -> Option<f64> {
+    if !(base > 0.0 && base.is_finite() && exponent.is_finite()) {
+        return None;
+    }
+
+    let shifted = exponent - 0.5;
+    let n = shifted as i64;
+    if n as f64 == shifted && n.unsigned_abs() <= 8 {
+        let p = legacy_powi_squaring(base, n);
+        if !p.is_finite() || p == 0.0 {
+            return None;
+        }
+        Some(p * base.sqrt())
+    } else {
+        None
+    }
+}
+
+fn legacy_pow_wrapper_pre_irrational_corridor(base: f64, exponent: f64) -> f64 {
+    if base.is_finite() && exponent.is_finite() {
+        let n = exponent as i64;
+        if n as f64 == exponent && n.unsigned_abs() <= 8 {
+            return legacy_powi_squaring(base, n);
+        }
+        if exponent == 0.5 && base >= 0.0 {
+            return if base == 0.0 { 0.0 } else { base.sqrt() };
+        }
+        if let Some(result) = legacy_pow_half_integer_fast_path(base, exponent) {
+            return result;
+        }
+    }
+    frankenlibc_core::math::exp::pow_fused(base, exponent)
+}
+
 fn bench_memcpy_4096(c: &mut Criterion) {
     let mut group = c.benchmark_group("glibc_baseline_memcpy_4096");
     group.throughput(Throughput::Bytes(4096));
@@ -2525,6 +2575,24 @@ fn bench_math(c: &mut Criterion) {
             let mut acc = 0.0_f64;
             for &x in &inputs {
                 acc += math::pow(black_box(x), black_box(1.337));
+            }
+            black_box(acc);
+        },
+    );
+    bench_op(
+        &mut group,
+        BenchMeta {
+            profile_id: "pow_irrational",
+            impl_label: "frankenlibc_legacy_orig",
+            api_family: "math",
+            symbol: "pow",
+            workload: "pow(x,1.337) x in [0.5,2.5)",
+            parity_proof_ref: "crates/frankenlibc-core/src/math/",
+        },
+        || {
+            let mut acc = 0.0_f64;
+            for &x in &inputs {
+                acc += legacy_pow_wrapper_pre_irrational_corridor(black_box(x), black_box(1.337));
             }
             black_box(acc);
         },

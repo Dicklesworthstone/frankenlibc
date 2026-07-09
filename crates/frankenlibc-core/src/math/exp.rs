@@ -2130,16 +2130,39 @@ fn pow_medium_log2_exp2_fast_path(base: f64, exponent: f64) -> Option<f64> {
 const POWI_MAX_EXP: u64 = 8;
 
 #[inline]
+fn pow_may_hit_small_integer_or_half_exponent(exponent: f64) -> bool {
+    let bits = exponent.to_bits() & 0x7fff_ffff_ffff_ffff;
+    if bits == 0 {
+        return true;
+    }
+
+    let biased_exp = ((bits >> 52) & 0x7ff) as i32;
+    if biased_exp == 0 || biased_exp == 0x7ff {
+        return false;
+    }
+
+    let exponent_of_two = biased_exp - 1023;
+    if !(-1..=3).contains(&exponent_of_two) {
+        return false;
+    }
+
+    let fractional_mask = (1_u64 << (52 - (exponent_of_two + 1) as u32)) - 1;
+    (bits & fractional_mask) == 0
+}
+
+#[inline]
 pub fn pow(base: f64, exponent: f64) -> f64 {
     // Fast path: small integer exponents (and y == 0.5) on a finite base.
     // Exponentiation by squaring is ~10x faster than the full kernel and, bounded
     // to small magnitudes, stays within the 4-ULP glibc parity contract. Every
-    // other input — including irrational exponents, half-integers, the IEEE
-    // special cases and non-finite operands — falls through to `pow_fused`, the
-    // glibc-class fused kernel that already beats glibc on the general path; a
-    // heavy gauntlet here only taxes that common case. (The old overfit
-    // `pow_profile_exp_1_337` path is now strictly dominated by `pow_fused`.)
+    // positive-base exponent that cannot be a small integer or half-integer takes
+    // the bit-lattice corridor straight to `pow_fused`, skipping two f64->i64
+    // probes. IEEE special cases and negative bases keep the full classifier.
     if base.is_finite() && exponent.is_finite() {
+        if base > 0.0 && !pow_may_hit_small_integer_or_half_exponent(exponent) {
+            return pow_fused(base, exponent);
+        }
+
         // pow(±0, y) for finite y < 0 is a pole (result ±inf): glibc raises
         // FE_DIVBYZERO — EXCEPT y == -1.0, which glibc special-cases as a bare
         // reciprocal and leaves flag-free (verified vs host glibc). The fast-path
@@ -2267,6 +2290,39 @@ mod tests {
                     "pow({base}, 0.5) = {got:?} but glibc = {want:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn pow_irrational_corridor_classifier_keeps_small_exponent_lattice() {
+        for n in -8..=8 {
+            let integer = n as f64;
+            assert!(
+                pow_may_hit_small_integer_or_half_exponent(integer),
+                "{integer} should stay eligible for the integer fast path"
+            );
+
+            let half = integer + 0.5;
+            assert!(
+                pow_may_hit_small_integer_or_half_exponent(half),
+                "{half} should stay eligible for the half-integer fast path"
+            );
+        }
+
+        for exponent in [
+            1.337,
+            -1.337,
+            0.25,
+            0.75,
+            8.25,
+            f64::MIN_POSITIVE,
+            f64::INFINITY,
+            f64::NAN,
+        ] {
+            assert!(
+                !pow_may_hit_small_integer_or_half_exponent(exponent),
+                "{exponent:?} should use the direct fused corridor"
+            );
         }
     }
 

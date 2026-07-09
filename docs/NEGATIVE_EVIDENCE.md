@@ -54,6 +54,53 @@ retried and real wins are confirmed with numbers.
   proof and overflow guard. A full general dtoa rewrite remains a separate
   large primitive, not this narrow lane.
 
+## 2026-07-09 - LANDED core `pow` irrational bit-lattice dispatch sieve - 1.14x vs ORIG, byte-exact
+
+- **PROFILE ROUTE (Codex, `AGENT_NAME=cod`):** reread this ledger first and
+  did not retry allocator fallback-table/hot-cycle, scanner/SWAR/asm,
+  memcmp load-shape, stdio fmemopen/write-cache, qsort, or the closed
+  `pow_profile_exp_1_337` polynomial/grid/table retune families. A focused
+  current-head profile reproduced the live f64 `pow_irrational` wrapper gap
+  (`rch exec`, worker `vmi1264463`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`;
+  `cargo bench --profile release -p frankenlibc-bench --bench
+  glibc_baseline_bench pow_irrational -- --noplot --sample-size 30
+  --warm-up-time 1 --measurement-time 2`): FL **2247.152 ns/op** vs host glibc
+  **1686.148 ns/op** (`FL/host = 1.333x`). The earlier qsort signal was
+  rechecked and discarded as stale-routing noise; `qsort_16_i32` current core
+  already wins glibc.
+- **ALIEN DIG PRIMITIVE LANDED:** added a positive-finite-base bit-lattice
+  corridor for exponents that cannot hit the retained small-integer or
+  half-integer fast paths. The classifier inspects the absolute f64 exponent
+  bits and only keeps the legacy probes when the exponent lies on the exact
+  integer/half-integer lattice; all other finite positive-base cases jump
+  directly to the already bit-exact glibc/ARM `pow_fused` kernel. This is not a
+  retry of the rejected 1.337 grid/polynomial/table overfit: it changes only the
+  wrapper dispatch tax and leaves the fused kernel and golden corpora intact.
+- **MEASURED KEEP vs LEGACY ORIGINAL (`rch exec`, worker `ovh-a`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/libc-cod`; same process, added
+  embedded `frankenlibc_legacy_orig` arm to `glibc_baseline_bench`;
+  `cargo bench --profile release -p frankenlibc-bench --bench
+  glibc_baseline_bench pow_irrational -- --noplot --sample-size 30
+  --warm-up-time 1 --measurement-time 2`):** LEGACY ORIG **819.333 ns/op** ->
+  NEW **718.250 ns/op**, `new/orig` **0.877x** (**1.14x faster**); host glibc
+  was **641.064 ns/op** in the same binary. A second sibling sweep on the same
+  worker confirmed the ratio at NEW **730.232 ns/op** vs ORIG **826.613 ns/op**
+  (`new/orig = 0.884x`) and verified the retained fast paths still win host:
+  `pow(x,3)` FL **296.876 ns/op** vs host **647.766 ns/op**; `pow(x,2.5)` FL
+  **427.693 ns/op** vs host **644.433 ns/op**.
+- **BYTE-EXACT CONFORMANCE GREEN:** `cargo test --profile release -p
+  frankenlibc-core pow_ -- --nocapture` passed **18** pow-related tests,
+  including `pow_fused_bit_exact_vs_glibc`,
+  `pow_irrational_corridor_classifier_keeps_small_exponent_lattice`,
+  `pow_integer_fast_path_within_4_ulps`, and
+  `pow_half_integer_fast_path_within_4_ulps` (RCH fell back local after worker
+  preflight `RCH-E410`, command/target dir unchanged). `cargo check --profile
+  release -p frankenlibc-core --lib` passed on `hz1`; `cargo check --profile
+  release -p frankenlibc-bench --bench glibc_baseline_bench` passed on `hz1`
+  after an `ovh-b` worker-local `zerocopy` build-script `SIGILL` retry;
+  touched-file `rustfmt --edition 2024 --check` passed.
+
 ## 2026-07-09 - LANDED core `strspn` 8-byte interval-cover SIMD classifier - 1.36x vs ORIG, byte-exact
 
 - **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger
