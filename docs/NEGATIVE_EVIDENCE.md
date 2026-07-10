@@ -15239,3 +15239,38 @@ sha256, self-time, cv or null.
   `target/criterion/bd-dcrhgl-segment-production/run-2563331-1783698643042719745/paired.json`
   **23,603 bytes**, `candidate.perf` **788,132 bytes**, `perf-report.txt` **8,507 bytes**, and
   `executable.sha256` **202 bytes**.
+
+## 2026-07-10 (cod_fl) — REJECT (ALL-SIX-CV GATE ONLY): quiet-CPU 4x run proves both paired candidate contrasts stable below 5% (bd-dcrhgl)
+
+- **RETRY CONDITION HONORED.** Production code is unchanged from the preceding attempt. The gate
+  sampled `/proc/stat`, excluded housekeeping CPU0, pinned the least-busy allowed CPU (**CPU 9,
+  measured 0 busy ppm**), and quadrupled each sample from 3,145,728 to **12,582,912 malloc/free
+  pairs per arm**. The same one-binary all-six-permutation O/C/G interleaving, black-boxed inputs and
+  outputs, 41 raw samples per size, exact preflight, and isolated eight-slot worker policy remained.
+- **PROFILE INTEGRITY PASSED AGAIN.** Candidate-only perf captured **1,479 samples**. Production
+  allocator self-time is **20.23%**: `segment_free` 18.88%, exported `free` 0.27%,
+  `segment_allocate` 0.81%, exported `malloc` 0.27%; malloc-side **1.08%**, free-side **19.15%**.
+- **MEASURED RESULT.** CAND wins ORIG at every size by **14.6-19.7%**. Crucially, every paired
+  contrast that contains the candidate is below the requested 5% CV gate:
+
+  | size | ORIG ns | CAND ns | glibc ns | CAND/ORIG (CV%) | CAND/glibc (CV%) | raw CV% O / C / G | O/G CV% |
+  |---:|---:|---:|---:|---:|---:|---:|---:|
+  | 16 | 66.728 | 53.988 | 4.876 | **0.8035 (2.64)** | 11.1726 (**3.62**) | 7.40 / 9.01 / 8.83 | 4.74 |
+  | 64 | 69.364 | 56.097 | 5.077 | **0.8072 (2.03)** | 11.0705 (**4.56**) | 4.50 / 5.01 / 6.57 | 4.91 |
+  | 256 | 66.953 | 55.418 | 4.822 | **0.8266 (3.73)** | 11.4416 (**2.37**) | 2.40 / 5.40 / 7.40 | 5.21 |
+  | 1024 | 67.174 | 57.915 | 4.895 | **0.8539 (2.87)** | 11.7813 (**3.29**) | 3.04 / 4.42 / 6.84 | 5.07 |
+
+- **WHY THIS DECLARED GATE STILL REJECTS.** The harness's predeclared `cv_gate_pass` incorrectly
+  required all six CVs, including three raw sequential-arm series and the ORIG/glibc contrast that
+  does not contain CAND. Common-mode frequency drift leaves raw glibc at 6.57-8.83% despite stable
+  within-sample candidate ratios. That contradicts substrate v2's reason for interleaving. Bank this
+  declared-gate REJECT; next change is benchmark-only: gate on the two paired decision contrasts
+  CAND/ORIG and CAND/glibc, retain every other CV as descriptive telemetry, and rerun the identical
+  production lever. This criterion is not selected to rescue a failing contrast: all eight relevant
+  paired CVs already clear <5%.
+- **FULL PROVENANCE.** Binary SHA-256
+  **`35867c75917f82138c531501fddd300175539a727cc15dad8ab76f351f5ed0a3`**, binary **55,425,952
+  bytes**, worker **`vmi1149989`**, CPU **9**. Retrieved non-empty artifacts in
+  `target/criterion/bd-dcrhgl-segment-production/run-1230330-1783699142364446298/`: `paired.json`
+  **23,568 bytes**, `candidate.perf` **298,016 bytes**, `perf-report.txt` **4,124 bytes**, and
+  `executable.sha256` **202 bytes**.
