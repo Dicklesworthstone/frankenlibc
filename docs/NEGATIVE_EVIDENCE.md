@@ -6,6 +6,33 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush, cod walling → own the repo) — ALLOCATOR FRAMING PROFILE + REJECT (reverted): the small-churn 9.7x is near-optimal; slot-local stats fast-path is a REGRESSION as written (slot re-fetch costs as much as the CAS)
+
+- **PROFILE-FIRST (`examples/malloc_sizetrack_ab.rs`, worker ovh-a).** Small-churn malloc/free framing:
+  **GUARD (reentry enter+exit) 3.74 ns** (fs read + slot cache + depth **CAS** — signal-safe reentry
+  detection, IRREDUCIBLE on x86: `lock cmpxchg` regardless of ordering), **STATS (record_alloc+free)
+  7.96 ns** (flat-combining combiner-lock CAS ×2), **SIZETRACK 0.74–1.43 ns** (segment bitmap/size-class
+  — cod already fixed it; was 9.34 ns table). `bin_index` is ALREADY a LUT (`SMALL_BIN_LUT[(size-1)>>4]`),
+  not a lever. So the ONLY reducible framing is STATS.
+- **LEVER ATTEMPTED — single-threaded slot-local stats (cod's never-landed SUB-STEP B).** `record_alloc/
+  free_stats` take the global combiner-lock CAS even single-threaded. Idea: accumulate stats in the
+  per-thread `SegmentLocalState` (exclusive under the guard, non-atomic) when `!MULTI_THREADED`, flush to
+  the global combiner once MT latches, mallinfo flushes the caller's slot. Correctness worked
+  (**malloc_abi_test 59/0** incl. `test_mallinfo2_balanced_after_concurrent_alloc_free`).
+- **REJECT — MEASURED REGRESSION, reverted.** Having `record_stats` fetch its own slot via
+  `current_allocator_reentry_slot()` costs **~5.5 ns** (it does the SAME fs-read + tid-verify as the guard),
+  so **STATS went 7.96 ns → 14.74 ns** — nearly 2x WORSE. The slot lookup is as expensive as the CAS it
+  replaces. Reverted (malloc_abi.rs back to HEAD).
+- **WHAT A REAL WIN WOULD REQUIRE (surfaced, cod's wall characterized).** (1) Thread the already-in-hand
+  `reentry_guard.slot` through ALL ~40 `record_alloc_stats`/`record_free_stats` call sites (no re-fetch) —
+  large, error-prone. (2) Cross-path net-count consistency: a thread's allocs AND frees must land in the
+  SAME place, else the unsigned `active_allocations`/`live_bytes` saturate on a cross-path free and mallinfo
+  balance breaks — so it's all-record-sites-or-none. (3) `active_allocations`/`live_bytes`/`peak_usage` are
+  cross-thread NET invariants (thread B frees thread A's object), so slot-local only works because
+  single-threaded has no cross-thread free. Net: a ~6 ns (~11% of the 55 ns malloc/free) win behind a large
+  40-site refactor of a critical stats system. **The allocator's 9.7x is fundamentally the memory-safety
+  cost** (guard CAS + stats combiner), near-optimal; this is a real but low-ROI follow-on, NOT rushed.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — PROFILE + HONEST NON-CLAIM: getaddrinfo is now **4.71x** vs glibc (bookkeeping fixed); the `profiles` Vec→stack elision is byte-identical but DEPLOYED SUB-FLOOR — the gap is distributed, not that alloc
 
 - **PROFILE (`examples/getaddrinfo_ab.rs`, numeric `AI_NUMERICHOST|AI_NUMERICSERV` query, fl vs dlmopen
