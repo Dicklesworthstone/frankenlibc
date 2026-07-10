@@ -42,6 +42,11 @@ name = "hosts_reverse_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[example]]
+name = "hostent_iter_ab"
+harness = false
+required-features = ["abi-bench"]
+
 [[bench]]
 name = "string_bench"
 harness = false

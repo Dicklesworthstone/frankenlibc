@@ -713,6 +713,16 @@ pub fn bench_legacy_hosts_scan(name: &[u8]) {
     std::hint::black_box(&candidates);
 }
 
+/// Bench-only: reconstruct the pre-lever per-call whole-file clone that `_gethtent` performed on
+/// EVERY iteration step (`read_hosts_backend()`), which made draining N entries O(N^2).
+#[doc(hidden)]
+pub fn bench_legacy_hosts_clone() {
+    let Ok(content) = read_hosts_backend() else {
+        return;
+    };
+    std::hint::black_box(&content);
+}
+
 /// Bench-only: reconstruct the pre-lever per-call REVERSE hosts work — an owned clone of the whole
 /// `/etc/hosts` plus `reverse_lookup_hosts`, which `parse_hosts_line`-allocates every line and then
 /// builds an owned `Vec<Vec<u8>>` of the matching line's hostnames.
@@ -6989,12 +6999,14 @@ pub unsafe extern "C" fn _sethtent(_stayopen: c_int) {
 /// Trivially safe.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _gethtent() -> *mut c_void {
-    let Ok(content) = read_hosts_backend() else {
-        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
-        return core::ptr::null_mut();
-    };
-    let next = with_hosts_iterator_offset(|offset| next_hosts_ipv4_entry(&content, offset));
-    let Some(entry) = next else {
+    // Borrow the cached backend. `read_hosts_backend()` cloned the WHOLE `/etc/hosts` on every
+    // call, so draining the iterator over N entries was O(N^2) in file size. The iterator offset
+    // lives in a different thread-local, so the two borrows do not conflict. Backend-read error
+    // and iterator exhaustion both remain HOST_NOT_FOUND, as before.
+    let next = with_hosts_backend_snapshot(|content, _generation| {
+        with_hosts_iterator_offset(|offset| next_hosts_ipv4_entry(content, offset))
+    });
+    let Ok(Some(entry)) = next else {
         unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
         return core::ptr::null_mut();
     };

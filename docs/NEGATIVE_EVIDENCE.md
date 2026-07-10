@@ -14728,3 +14728,101 @@ constraint forbids. Where only a profile could settle it, that is said, not glos
   to the structurally different exact two-level radix PageMap primitive and profile it independently.
   This is a substrate blocker, not a parity ceiling and not evidence against address-derived
   ownership itself.
+
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): `_gethtent` borrows the backend — the O(N²) hosts-iterator drain, 1.67x vs ORIG (bd-ld0i35); + a pre-existing conformance divergence surfaced (bd-79p18u)
+
+- **PROVENANCE (new rule).** binary sha256 `52fd0c308204aa5fae67651b3011cfa11bbfe346ffaf5151d92463f04e79e7fc`
+  (`target/release/examples/hostent_iter_ab`, retrieved locally because `env -u CARGO_TARGET_DIR`
+  lets rch manage the artifact); source sha256 `085b312f…` (harness) / `1ca8736f…` (`resolv_abi.rs`);
+  parent commit `2ff083925`; workers `ovh-a` (build), `ovh` (bench), `vmi1227854` + `ovh` (tests);
+  cv_pct recorded per arm below. **self-time: NOT MEASURED — blocked (bd-3dxo1a).** No self-time
+  number was invented; execution is proven by the in-harness byte-identity assert and a 1.67x paired
+  delta, neither of which a dead-code arm can produce.
+- **NEGATIVE-EVIDENCE FIRST.** No prior attempt or rejection on `_gethtent`. Retried nothing CLOSED.
+  Stayed out of `malloc_abi.rs`.
+- **SWEEP RESULT — THE RESOLVER BACKEND-CLONE VEIN IS NOW FULLY CLOSED.** Grepped every
+  `read_{hosts,services,protocols}_backend()` call and every deployed use of the allocating core
+  parsers. After this commit: `lookup_hosts` 1 site (my bench fn), `reverse_lookup_hosts` 1 (bench
+  fn), `parse_services_line` 3 (all three bench fns), `parse_protocols_line` 0, `parse_hosts_line`
+  1 (`next_hosts_ipv4_entry`, reached only via the now-borrowed `_gethtent`). **Zero deployed
+  per-call backend clones remain in the resolver family.**
+- **MECHANISM (source-provable).** `_gethtent()` — the `gethostent`-style iterator step — called
+  `read_hosts_backend()`, an **owned clone of the whole `/etc/hosts`, on every step**. Draining N
+  entries was therefore **O(N²)** in file size. Converted to `with_hosts_backend_snapshot`; the
+  iterator offset lives in a different thread-local so the two borrows do not conflict.
+  Backend-read error and exhaustion both remain `HOST_NOT_FOUND`, as before.
+- **MEASURED — TRULY INTERLEAVED PAIRED SAMPLER, one binary, one `rch exec` invocation, worker `ovh`;
+  1100 paired samples; ns per FULL drain.** ORIG and CAND alternate inside one measured routine,
+  order swapped every sample; host glibc (`dlmopen`, its own `sethostent`/`gethostent`/`endhostent`)
+  is a third interleaved arm. Every input through `black_box`, every result consumed through it.
+
+  | arm | median ns/drain | mean | cv_pct |
+  |---|---|---|---|
+  | ORIG (clone per step) | 10880.00 | 10916.43 | **4.02%** |
+  | **CAND (borrow)** | **6503.00** | 6597.69 | **35.47%** |
+  | host glibc (dlmopen) | 18795.00 | 18900.07 | **3.99%** |
+
+  **PAIRED cand/orig median = 0.5993 => 1.67x faster** (paired-ratio cv **35.25%**).
+  **cand/glibc = 0.346x => 2.89x faster than host glibc.** ORIG is reconstructed in-process
+  (removed clone + deployed step), so it overstates ORIG and 1.67x is an UNDER-estimate.
+  **Honest caveat:** CAND's cv is 35% — with only 2 entries in this `/etc/hosts` the borrowed drain
+  is short and dominated by the backend `stat`, so the per-sample spread is wide. The paired median
+  is the drift-cancelled estimator, but this ratio is the least tight of the campaign. The O(N²)
+  claim is structural (one whole-file clone per step) and would widen with a larger hosts file.
+- **⚠ SURFACED: PRE-EXISTING CONFORMANCE DIVERGENCE (bd-79p18u).** The harness's `verify()` found
+  **fl `_gethtent` yields 2 IPv4 `/etc/hosts` entries where host glibc `gethostent` yields 3** (same
+  first canonical name). **This lever cannot cause it** — it swaps a clone for a borrow of identical
+  bytes and does not touch `next_hosts_ipv4_entry`'s selection logic; `cand == reconstructed-orig`
+  exactly (same count, same first name). The harness therefore *reports* rather than asserts on the
+  glibc comparison, so a pre-existing divergence cannot masquerade as a regression from this commit.
+  Filed as a bug. This is the kind of defect a byte-identity gate finds and a perf bench hides.
+- **CONFORMANCE GREEN (all remote).** `resolv_abi_test` **182 passed / 0 failed / 31 ignored**;
+  `conformance_diff_getaddrinfo` **7 / 0**; `inet_abi_test` **69 / 0 / 13**. `ubs` exit 0;
+  `rustfmt --check` clean.
+- **RCH BLOCKER ENCOUNTERED AND RESPECTED.** Two conformance attempts were refused:
+  `[RCH] local (no admissible workers: insufficient_slots=10,active_project_exclusion=1)` followed by
+  `[RCH] remote required; refusing local fallback`. Per the rule that is a blocker, not a licence to
+  build locally. I waited and retried; a slot freed on `vmi1227854` and the gates ran remotely. No
+  local cargo was run at any point this turn.
+
+## 2026-07-10 (cc_fl / BlackThrush) — REPORT (not my measurement): segment-bitmap membership vs the 9.79 ns fallback-table bar
+
+Asked repeatedly to "report the segment-membership ns". **I have not measured it.** Swing-2 malloc
+execution is cod's lane, I built no membership gate, and I will not synthesise a number. What follows
+is quoted from **cod's** own ledger row (`## 2026-07-10 - WIN - bd-dcrhgl segment-bitmap no-deref
+membership primitive`, L13634-13723), attributed:
+
+- Same-worker baseline quoted there: **table `9.79 ns` / header `0.83 ns` / guarded-header `10.37 ns`**.
+- That row's own 3-way run: **mean table `14.08 ns`, mean segment bitmap `1.12 ns`** =>
+  **0.079x table, saving `12.96 ns/op`** before any header read. Reported cv-like figures in the row:
+  guarded-header **1.17%**, segment-bitmap **2.77%**.
+- Against the quoted **9.79 ns** bar, `1.12 ns` is ≈ **8.7x cheaper**.
+- **BUT the decision is already recorded and it is not the primitive.** Commit
+  `0b06aa4a5 "docs: reject production segment malloc wiring"` rejects the **production wiring**, and
+  `rg -c segment_bitmap crates/frankenlibc-abi/src/malloc_abi.rs` = **0** — the primitive exists only
+  in benches. So "the single number that decides Swing-2" is already in hand (1.12 ns vs 9.79-14.08 ns,
+  a clear win) and the blocker is **wiring**, not membership cost. Anyone re-deriving the membership
+  ns is re-measuring a settled quantity.
+
+## 2026-07-10 (cc_fl / BlackThrush) — LEDGER PROVENANCE AUDIT, phase 1 (counts + blocker) — bd-v0psen
+
+Applying the frankenredis provenance rule to this 14.7k-line ledger. Phase 1 is a coverage census
+(cheap, no build). Ranking rejects by the frame size each gates is **phase 2 and is blocked**, because
+that ranking *is* a self-time measurement.
+
+- **`^##` rows whose heading contains REJECT/REJECTED: 53.**
+- **`sha256` appears on 8 lines in the entire file** (and 5 of those are from this campaign's rows).
+- **`cv_pct` / `cv=`: 0 lines before this campaign.**
+- **self-time (`self time`/`self-time`/`self%`): 20 lines**, essentially all from my bd-qds9jk /
+  bd-xmng5n frame tables and the audit rows.
+- **Conclusion:** the frankenredis finding replicates. The overwhelming majority of REJECT rows here
+  carry no binary sha256, no cv_pct, and no self-time, and are therefore **not reproducible** and not
+  verifiable against the dead-code-bench rule. They are not thereby *wrong* — last turn's audit
+  showed the four rows I could check statically all executed their code — but they are unprovenanced.
+- **BLOCKER for phase 2 (bd-3dxo1a).** Ranking 53 rejects by the frame each gates requires `perf` per
+  row, i.e. a local `--profile release-perf` debuginfo build, forbidden by the disk constraint. Two
+  unblocks: (i) relax for one profiling build (remote cargo cache is warm), or (ii) add a remote-perf
+  path to `rch` (`rch exec -- perf record …` + retrieve `perf.data`). **Until then I will not fabricate
+  self-time or sha256 for historical rows, and I will not rank what I cannot measure.**
+- **Compliance going forward:** every row I write from here carries binary sha256, worker id, cv_pct,
+  and either a self-time figure or an explicit "self-time: blocked (bd-3dxo1a)".
