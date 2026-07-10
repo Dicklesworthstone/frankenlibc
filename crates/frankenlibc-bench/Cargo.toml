@@ -27,6 +27,11 @@ name = "wmemrchr_strict_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[example]]
+name = "stdio_mapper_mt_ab"
+harness = false
+required-features = ["abi-bench"]
+
 [[bench]]
 name = "string_bench"
 harness = false

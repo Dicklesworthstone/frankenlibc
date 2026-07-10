@@ -13367,3 +13367,103 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
 - **MEASURED (`rch exec`, worker `ovh-a`, command: `cargo run --profile release-perf -p frankenlibc-bench --example malloc_sizetrack_ab --features abi-bench`):** extended the existing de-risking bench with `SIZETRACK_GUARDED_HEADER_AB`, which reads simulated header metadata only after `fallback_size_for_bench(p).is_some()` proves exact-start membership without dereferencing `p`. Same run: `GUARD_AB reentry_enter+exit=7.45ns/call`, `SIZETRACK_AB table=17.57ns header=0.93ns header/table=0.053 table_saves=16.65ns/op`, `SIZETRACK_GUARDED_HEADER_AB table=17.57ns guarded_header=18.29ns guarded/table=1.041 guarded_tax=0.71ns/op`, `STATS_AB record_alloc+free=16.53ns/alloc+free-pair`.
 - **VERDICT:** reject "reuse the current fallback table as the no-fault proof, then read the inline header" as a production speed lever. It is safe, but it is **4.1% slower** than the current table lifecycle because the table proof is still paid before the header read. No allocator behavior changed; the landed increment is a proof/measurement harness row only.
 - **RETRY CONDITION:** do not retry existing-table guarded headers. A valid next bd-dcrhgl attempt must introduce a new exact no-deref membership primitive or shadow-agreement scheme that is cheaper than the fallback table on the same release-perf worker, then prove byte/conformance parity before switching `known_remaining`. Typestate alone is insufficient because ABI callers can pass stack, static, foreign, and interior pointers to the 395 `known_remaining` call sites.
+
+## 2026-07-09 (cc_fl / BlackThrush) — WIN (SHIPPED): lock-free `native_stdio_fd_for_ptr` — MT stdio `fgetc` 17.5-18.7x faster; fl/glibc MT gap 55x -> 2.96x
+
+- **NEGATIVE-EVIDENCE FIRST.** This retries an idea recorded as rejected on 2026-06-27
+  ("❌ lock-free native_stdio FILE*-cache REJECTED (~0-gain; masked by main registry lock)").
+  Its **stated reason does not hold**, and the rejection rested on an instrument that cannot
+  resolve the effect. Both are corrected below. Adjacent and still-valid rejections (NOT
+  retried): `standard_stream_id` TLS classification cache (1.531x regression), fputs
+  write-stream TLS pointer cache *under the held lock* (~0-gain), fputs raw registered-stream
+  bypass (1.050x), fmemopen `fgetc` read-ahead (SIGABRT).
+- **CORRECTION 1 (mechanism).** The 2026-06-27 entry concluded removal of the
+  `native_stream_registry` lock was "masked entirely" by the main `registry()` `Mutex`.
+  That is false for the very workload it measured. `fgetc` on an `fmemopen` read stream
+  **never reaches `registry()`**: it short-circuits at `fast_fixed_mem_read(id)`, whose
+  cursor is served from a thread-local cache and read through `AtomicUsize` — lock-free.
+  Tracing the deployed MT `fgetc` path per byte: `try_fgetc_fast_by_stream` returns `None`
+  (ST-gated), `runtime_policy::decide` takes the Stdio strict fast path (no lock),
+  `fast_fixed_mem_read` hits TLS (no lock). **Exactly one** global mutex remains —
+  `NATIVE_STREAM_REGISTRY` (a `std::sync::Mutex`, not even `parking_lot`), taken inside
+  `canonical_stream_id` -> `standard_stream_id` -> `native_stdio_fd_for_ptr` purely to rule
+  out the three native glibc std FILE slots. The header comment on
+  `stdio_mt_contention_bench` ("fl serializes ALL stdio on the GLOBAL `registry()` Mutex")
+  is likewise wrong about its own benchmark.
+- **CORRECTION 2 (instrument).** `stdio_mt_contention_bench` re-spawns N threads and
+  opens/closes N `fmemopen` streams *inside every Criterion iteration*, so spawn+allocator
+  noise dominates the mean. Its own recorded history for the SAME arm spans
+  **15.2 / 23.7 / 56.7 / 60.4 / 74.1 ms** and its host-glibc comparator **1.59 - 8.22 ms**.
+  The 2026-06-27 rejection was a **56.7 -> 60.4 ms** delta: entirely inside that band.
+  Worse, the binary **cannot finish**: it aborts with `realloc(): invalid pointer` during
+  Criterion's analysis phase (an `abi-bench` binary links fl's `#[no_mangle]` allocator over
+  the harness's own). Reproduced here on **unmodified** code — so the identical SIGABRT the
+  2026-06-28 fmemopen read-ahead entry attributed to *that candidate* is a property of the
+  bench binary, not of the candidate. **Do not use `stdio_mt_contention_bench` as a ratio
+  source.**
+- **LEVER (shipped, byte-identical).** `native_stdio_fd_for_ptr` publishes the three
+  reserved slot addresses into `NATIVE_STDIO_SLOT_ADDR: [AtomicUsize; 3]` once, under the
+  registry lock, at chain init (`Release`), and thereafter answers with three `Acquire`
+  integer compares. Sound because slots 0..3 are reserved — `register` only allocates from
+  slot 3 upward, so those `NativeFile` addresses are fixed for process lifetime; a `0` entry
+  means "unoccupied" and mirrors `get_mut`'s `SLOT_OCCUPIED` test exactly; `unregister`
+  clears the entry (unreachable today) so the table can never name a vacated slot. The cold
+  first call still takes the lock, preserving the lazy chain-init side effect callers rely on.
+- **INSTRUMENT BUILT:** `crates/frankenlibc-bench/examples/stdio_mapper_mt_ab.rs` — threads
+  spawned ONCE, barrier-synced rounds, arms interleaved, median + cv reported; OLD (locked
+  scan, retained as `bench_native_stdio_fd_for_ptr_locked`) and NEW live in ONE process, so
+  worker load cancels in the ratio. A `verify()` asserts NEW == OLD on every input class
+  (three real native std FILE slots, a foreign pointer, NULL) before any timing.
+- **MEASURED — mapper A/B (5 repeat runs, one fixed host, `iters=4096 rounds=200`):**
+  single-thread OLD **5.95-6.78 ns/op** vs NEW **2.21-2.92 ns/op** = **2.2-3.0x faster**;
+  8-thread OLD **222.5-260.8 ns/op** (cv 9.7-17.1%) vs NEW **2.41-2.99 ns/op** (cv 10.0-16.6%)
+  = **81-95x faster** (new/old median 0.0104-0.0135). Per-arm cv exceeds the 5% keep-gate
+  because futex contention is intrinsically bursty — that is the quantity under measurement,
+  not measurement error; the **ratio reproduces to ~7% across the 5 independent runs**.
+- **MEASURED — end-to-end (`fgetc` drain, 3 repeat runs, same process, same threads).** The
+  kernel win is necessary but not sufficient, so the deployed `fl::fgetc` is driven against
+  host glibc's (dlmopen `LM_ID_NEWLM`), 8 threads each draining their own 4096-byte
+  `fmemopen` stream. A third arm reconstructs the pre-change path exactly (one locked mapper
+  probe per byte + the deployed call), so old-vs-new is **measured, not derived**:
+
+  | 8 threads | ns/byte | vs glibc |
+  |---|---|---|
+  | fl OLD (reconstructed) | **486.5 - 505.1** (cv 4.7-9.9%) | ~55x LOSS |
+  | fl NEW (deployed) | **26.8 - 31.7** | **2.96 - 3.11x LOSS** |
+  | host glibc | 8.70 - 9.62 | — |
+
+  **new/old median 0.053-0.057 = 17.5-18.7x faster.** Single-thread: OLD 22.1-26.2, NEW
+  16.9-19.8, glibc 6.35-7.33 ns/byte = **1.24-1.46x faster**. The reconstructed-old
+  fl/glibc ≈ 55x independently corroborates this bench family's worst recorded 46.7x, and
+  fl's 8-thread per-byte cost (≈27 ns) is now barely above its 1-thread cost (≈18 ns) —
+  i.e. the contention itself is gone, not merely cheaper.
+- **CONFORMANCE GREEN.** `rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test`
+  **256 passed / 0 failed** (44 ignored); `--test conformance_diff_stdio_ext` **3/3**;
+  `--test conformance_diff_stdio_unlocked_io` **2/2**; `--test fmemopen_write_differential_test`
+  **2/2**. Bench `verify()` asserts NEW == OLD byte-for-byte. `ubs` exit **0** on both changed
+  files (its 4 "critical" hits are pre-existing false positives elsewhere in
+  `io_internal_abi.rs`: `mem::zeroed` for `_mbstate` at :509, and `io_iter_decode` at :3123
+  flagged as a "JWT decode bypass"). `rustfmt --check` clean on both files.
+- **PRE-EXISTING FAILURE (not this change).** `cargo clippy -p frankenlibc-abi --lib` fails in
+  the *dependency* crate: `crates/frankenlibc-core/src/math/exp.rs:815`, `error: equal
+  expressions as operands to '/'` (`z / z`, the deliberate NaN idiom, denied by `eq_op`).
+  Untouched by this lever; recorded so it is not attributed here.
+- **RESIDUAL / NEXT LEVER (this is swing-1 proper).** fl MT `fgetc` is still **2.96x** behind
+  glibc, and the reason is now unambiguous: **every stdio fast path in `stdio_abi.rs` is gated
+  on `__libc_single_threaded`** (`write_cache_lookup`, `write_cache_lookup_by_stream`,
+  `try_fgetc_fast*`, `try_fputc_fast*`, `try_fwrite_fast*`, `try_fread_fast*`, and the inline
+  `feof`/`ferror`/`clearerr` paths). The instant a program creates a second thread, ALL of them
+  switch off and every op falls back to `registry()`-locked lookups — so real multithreaded
+  programs (servers, thread pools) get none of the single-threaded work. Making them MT-sound
+  requires what five prior entries already concluded: per-FILE/per-stream state, i.e.
+  `StreamMap` values become `Arc<Mutex<StdioStream>>` (or the registry is sharded), resolved
+  OUTSIDE the registry lock, letting the thread-local cache hold an `Arc` instead of a bare
+  `*mut`. Survey for that work: 63 `registry().lock()` sites in `stdio_abi.rs`, all id-scoped
+  except `sorted_stream_ids` (flush-all); accessor mix is 41 `get_mut` / 4 `get` / 3
+  `contains_key` / 1 each `insert`/`remove`/`keys`; no other file touches this registry.
+  Lock-ordering hazards to respect: the write path holds `registry()` across the blocking
+  `sys_write_fd` flush, and `fclose` (stdio_abi.rs ~9187) takes `registry()` then
+  `cookie_registry()`.
+- **Reproducer:** `cargo run --release -p frankenlibc-bench --features abi-bench --example stdio_mapper_mt_ab`
+  (build via `rch exec`, then run the produced binary on ONE fixed host and repeat it — do not
+  compare absolute ns across rch workers).

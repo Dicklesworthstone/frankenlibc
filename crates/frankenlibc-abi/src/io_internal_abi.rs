@@ -14,7 +14,7 @@
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
-use std::sync::atomic::{AtomicI8, Ordering};
+use std::sync::atomic::{AtomicI8, AtomicUsize, Ordering};
 
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
@@ -1289,6 +1289,12 @@ impl NativeStreamRegistry {
             }
         }
         self.slots[index] = StreamSlot::empty();
+        // Keep the lock-free `native_stdio_fd_for_ptr` table exact. `register` never hands
+        // out a reserved slot (it starts at 3), so this is unreachable today; it exists so
+        // the table cannot outlive the slot's occupancy if that ever changes.
+        if index < NATIVE_STDIO_SLOT_ADDR.len() {
+            NATIVE_STDIO_SLOT_ADDR[index].store(0, Ordering::Release);
+        }
         true
     }
 
@@ -1367,6 +1373,22 @@ static NATIVE_STREAM_REGISTRY: std::sync::LazyLock<Mutex<NativeStreamRegistry>> 
 static STDIO_CHAIN_INITIALIZED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Addresses of the three reserved native stdio `FILE` slots (`slots[0..3].file`),
+/// published once under the registry lock during chain init. A `0` entry means the slot
+/// is not occupied, mirroring `get_mut`'s `SLOT_OCCUPIED` test — so a lock-free compare
+/// against this table answers exactly what the locked slot scan answered.
+///
+/// Sound because slots 0..3 are *reserved*: `register` only ever allocates from slot 3
+/// upward, so these `NativeFile` addresses are fixed for the life of the process (the
+/// registry is a `static`, and `ensure_stdio_chain_linked` runs after it reaches its
+/// final location). `unregister` clears the entry if it is ever asked to free a reserved
+/// slot, so the table can never name a vacated slot.
+static NATIVE_STDIO_SLOT_ADDR: [AtomicUsize; 3] = [
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+];
+
 /// Access the global stream registry.
 ///
 /// On first access, initializes the stdio chain links and bloom filter.
@@ -1387,6 +1409,19 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
         NATIVE_FILE_BLOOM.insert(stdout_ptr as usize);
         NATIVE_FILE_BLOOM.insert(stderr_ptr as usize);
 
+        // Publish the reserved slot addresses for the lock-free `native_stdio_fd_for_ptr`
+        // path. `get_mut` (not `&mut slots[i].file`) so an unoccupied slot publishes 0 and
+        // the lock-free compare stays semantically identical to the locked scan.
+        for index in 0..NATIVE_STDIO_SLOT_ADDR.len() {
+            let addr = match guard.get_mut(index) {
+                Some(file) => file as *mut NativeFile as usize,
+                None => 0,
+            };
+            NATIVE_STDIO_SLOT_ADDR[index].store(addr, Ordering::Relaxed);
+        }
+
+        // Release: publishes the slot-address stores above to every `Acquire` reader of
+        // this flag, which is what makes the lock-free fast path safe to enter.
         STDIO_CHAIN_INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
     }
 
@@ -1417,6 +1452,34 @@ pub fn native_stdio_fd_for_ptr(stream: *const c_void) -> Option<c_int> {
     if stream.is_null() {
         return None;
     }
+    // Hot path: this fires on EVERY stdio op against a non-sentinel `FILE *` (every
+    // fgetc/fputc/fputs/fwrite to an fopen'd file, pipe, or fmemopen stream) purely to
+    // rule out the three native glibc std FILE slots. It used to take the global
+    // `NATIVE_STREAM_REGISTRY` mutex to do so, which serializes all such ops across
+    // threads — the single global lock left on the multi-threaded `fgetc` path, since
+    // `fast_fixed_mem_read` already answers lock-free. Once the chain is initialized the
+    // three reserved slot addresses are fixed, so the locked scan is exactly three
+    // integer compares against a published table.
+    if STDIO_CHAIN_INITIALIZED.load(std::sync::atomic::Ordering::Acquire) {
+        return native_stdio_fd_for_addr(stream as usize);
+    }
+    // Cold: first-ever access. Taking the lock runs the lazy chain init, which publishes
+    // the table (and is the side effect callers rely on); then answer from it.
+    let _guard = native_stream_registry();
+    native_stdio_fd_for_addr(stream as usize)
+}
+
+/// Bench-only mirror of the pre-lock-free `native_stdio_fd_for_ptr`: take the global
+/// `NATIVE_STREAM_REGISTRY` mutex and scan the three reserved slots. Retained so the
+/// in-process A/B (`frankenlibc-bench/examples/stdio_mapper_mt_ab.rs`) can measure OLD vs
+/// NEW in ONE process. Cross-run Criterion means on the rch fleet cannot resolve this
+/// lever: the MT stdio bench's own recorded spread is 15-74 ms for the same arm, which is
+/// why two earlier lock-elision attempts were rejected on unresolvable evidence.
+#[doc(hidden)]
+pub fn bench_native_stdio_fd_for_ptr_locked(stream: *const c_void) -> Option<c_int> {
+    if stream.is_null() {
+        return None;
+    }
     let mut registry = native_stream_registry();
     for (index, fd) in [
         (0usize, libc::STDIN_FILENO),
@@ -1427,6 +1490,26 @@ pub fn native_stdio_fd_for_ptr(stream: *const c_void) -> Option<c_int> {
             if file as *mut NativeFile as *const c_void == stream {
                 return Some(fd);
             }
+        }
+    }
+    None
+}
+
+/// Lock-free tail of `native_stdio_fd_for_ptr`: match `addr` against the published
+/// reserved-slot table, in the same slot order the locked scan used. A `0` entry is an
+/// unoccupied slot and never matches (`addr` is non-null here).
+#[inline]
+fn native_stdio_fd_for_addr(addr: usize) -> Option<c_int> {
+    for (index, fd) in [
+        (0usize, libc::STDIN_FILENO),
+        (1, libc::STDOUT_FILENO),
+        (2, libc::STDERR_FILENO),
+    ] {
+        // Acquire (free on x86, LDAR on aarch64): pairs with `unregister`'s Release clear
+        // so a vacated reserved slot can never be reported as occupied.
+        let slot = NATIVE_STDIO_SLOT_ADDR[index].load(Ordering::Acquire);
+        if slot != 0 && slot == addr {
+            return Some(fd);
         }
     }
     None
