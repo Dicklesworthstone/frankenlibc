@@ -1097,6 +1097,36 @@ pub fn bench_resolver_stage_bookkeeping() {
     std::hint::black_box((aligned, recent_page));
 }
 
+/// Bench-only: `decide` for `Resolver` in isolation (observe cost = decide+observe − this).
+#[doc(hidden)]
+pub fn bench_resolver_decide_only() {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        std::hint::black_box(0x1000),
+        0,
+        true,
+        false,
+        0,
+    );
+    std::hint::black_box(decision.action);
+}
+
+/// Bench-only: reconstruct the PRE-lever `decide` + non-adverse `observe` cost. `adverse=true`
+/// bypasses the observe() fast-path family list (which gates on `!adverse`), so this runs the same
+/// slow observe path Resolver took before it was added to the list — the ORIG arm for the A/B.
+#[doc(hidden)]
+pub fn bench_resolver_decide_observe_slow() {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        std::hint::black_box(0x1000),
+        0,
+        true,
+        false,
+        0,
+    );
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+}
+
 /// Bench-only: the `decide` + `observe` membrane pair for `Resolver` in isolation.
 #[doc(hidden)]
 pub fn bench_resolver_decide_observe() {

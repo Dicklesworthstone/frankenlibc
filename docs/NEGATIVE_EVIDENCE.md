@@ -6,6 +6,32 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED, bd-rwz2ns): `observe()` telemetry fast-path adds `ApiFamily::Resolver` — **3.01x** on the decide+observe pair, ~773 ns/call off EVERY resolver call (getaddrinfo + hardened getnameinfo_full), ONE line
+
+- **PROFILE-DRIVEN.** The follow-on profile split the ~1.7 µs Resolver membrane tax: `resolver_stage_context`
+  + `record` = 153–165 ns (cheap), `decide` = ~397 ns, **`observe` = the dominant ~773 ns**. `observe()`
+  already has a telemetry fast-path family list (Allocator/StringMemory/Ctype/Loader/Stdlib/MathFenv/Stdio/
+  IoFd/Time/Inet) that early-returns on non-adverse outcomes — and **Resolver was missing from it**. Every
+  getaddrinfo/getnameinfo success paid the full slow observe.
+- **LEVER (ONE line).** Added `| ApiFamily::Resolver` to the observe() fast-path list, with the same
+  rationale the Inet/IoFd/Time entries carry: `observe()` is POST-op telemetry with NO validation, so
+  skipping it on non-adverse (success) resolver outcomes is behaviour-neutral in BOTH modes. `decide()` is
+  UNTOUCHED — it still makes the Allow/Deny call and validates the node/service pointers, so no safety
+  change. (getnameinfo's own strict fast path already skipped observe entirely; this covers getaddrinfo and
+  the hardened-mode `getnameinfo_full` path, plus any other resolver observe.)
+- **MEASURED** (`examples/resolver_bookkeeping_ab.rs`, interleaved paired in ONE binary, ORIG reconstructs
+  the pre-lever slow observe via `adverse=true` which bypasses the `!adverse` fast-path gate; worker ovh-a):
+  - **NULL CONTROL (cand vs cand): 1.0000** cv 2.2%.
+  - **LEVER decide+observe: 1159.6 ns → 386.2 ns = paired median 0.3327 = 3.01x**, cv 2.5% — ~773 ns/call
+    saved, far outside the null. (386 ns = decide-only + stage; observe now early-returns.)
+- **CORRECTNESS: behaviour-neutral (telemetry-only).** resolv_abi_test 183/0 + getnameinfo_differential_fuzz
+  + conformance_diff_getaddrinfo + conformance_diff_netdb_aliases all GREEN, unchanged — `observe()`'s return
+  is never consumed; skipping it changes no output/errno. The change is in the SAME telemetry fast-path list
+  extended for Inet/IoFd/Time.
+- **DEPLOYED reach.** getaddrinfo does exactly one non-adverse `observe` per successful call, so this removes
+  ~773 ns/call from the hottest resolver function (every connection). Full getaddrinfo `decide`-skip (another
+  ~397 ns, needs the 3-decide/19-observe call-site refactor) remains as bd-rwz2ns.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — PROFILE + SURFACE (bd-cj974n follow-on): the Resolver-family membrane cost is **`decide`+`observe` = 1686 ns**, NOT the stage bookkeeping (153 ns) — getaddrinfo is the next lever but a large multi-site refactor
 
 - **PROFILE (`examples/resolver_bookkeeping_ab.rs`, non-test binary ⇒ strict passthrough, worker ovh-a),

@@ -2297,6 +2297,16 @@ pub(crate) fn observe(
                 // HARDENED decide() list — inet_pton's `dst` output buffer must stay
                 // validated there.)
                 | ApiFamily::Inet
+                // Resolver added: `getaddrinfo`/`getnameinfo` per-call `observe()` was
+                // profiled at ~1334 ns/call — the dominant cost of the resolver membrane
+                // path (vs ~397 ns for `decide` + ~153 ns stage bookkeeping). observe()
+                // is post-op telemetry with no validation, so skipping it on non-adverse
+                // (success) resolver outcomes is behaviour-neutral in BOTH modes — same
+                // rationale as Inet/IoFd/Time. decide() is NOT touched: it still makes the
+                // Allow/Deny call and validates the node/service pointers. getnameinfo's
+                // own strict fast path already skips observe entirely; this covers
+                // getaddrinfo and the hardened-mode getnameinfo_full path.
+                | ApiFamily::Resolver
         )
     {
         return;
