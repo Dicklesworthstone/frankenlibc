@@ -13956,3 +13956,106 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
 - **Reproducer:** `cargo bench -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench
   getprotobyname_r_tcp`. Run the row **in isolation**; a multi-group sweep inflates every arm and
   compresses the ratios toward 1.0.
+
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED) + HYPOTHESIS REFUTED: the resolver's per-call cost is malloc traffic, not `getenv` or `stat`. Allocation-elision = 3.00x vs ORIG, 3.98-4.13x faster than host glibc (bd-qds9jk)
+
+- **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped `refresh_source_path|per-call getenv|getenv hot-cache|
+  bd-getenv|env cache`. Found the shipped `getenv` hot cache (2026-06-20, `bd-2g7oyh.496`) and its
+  `ENVIRON_EPOCH` coherence fence — the exact "cheap generation counter" this lever was going to
+  reuse. Retried nothing CLOSED (`strchr` SSE4.2 explicit-length scanner; portable-SIMD string
+  residuals wmemchr/wcsnlen/strrchr, parked pending AVX2+ifunc). Stayed out of `malloc_abi.rs`.
+- **PROFILE FIRST — AND IT REFUTED THE HYPOTHESIS.** The task was "drop the per-call `getenv` in
+  `BackendFileCache::refresh_cache`". A ranked self-time frame table says that is not where the time
+  goes. `perf record -F 4999` on the `getprotobyname_r_tcp/frankenlibc_abi` arm (local
+  `--profile release-perf` build with debuginfo), frames >= 0.1% self:
+
+  | self % | frame |
+  |---|---|
+  | 29.31 | `frankenlibc_abi::malloc_abi::record_free_stats` |
+  | 27.21 | `frankenlibc_abi::malloc_abi::record_alloc_stats` |
+  | 16.73 | `frankenlibc_abi::malloc_abi::fallback_insert_sized_index` |
+  | 13.76 | `free` |
+  | 2.65 | `realloc` |
+  | 2.40 | `frankenlibc_abi::malloc_abi::fallback_remove_sized` |
+  | 0.14 | `frankenlibc_abi::malloc_abi::enter_allocator_reentry_guard` |
+  | 0.13 | `memcpy` |
+  | ~1.5 | kernel `[k]` frames (the `stat` syscall) |
+
+  **~92% of self time is allocator bookkeeping. `getenv` does not appear at >= 0.1%. The `stat` is
+  ~1.5%.** So neither the env read nor the syscall is the cost — the *allocations wrapped around
+  them* are. Both prior estimates in the 2026-07-09 and 2026-07-10 rows ("the per-call `getenv` +
+  `stat` is the floor") were wrong about the mechanism, though right that `refresh_cache` was the
+  floor. Corrected here.
+- **TOP FRAME IS AN OFF-LIMITS FAMILY — TOOK THE NEXT ACTIONABLE ONE.** The top three frames are
+  `malloc_abi` bookkeeping: cod's Swing-2 lane (bd-dcrhgl), whose diffuse framing cost is already
+  ledgered as resistant (2026-07-04 "no single hotspot; the malloc framing cost is diffuse"). Per
+  method, do not attack that family. The actionable lever in the resolver lane is to **stop calling
+  malloc**, which removes the frames at their source.
+- **LEVER (one mechanism, two allocation sites, both in the resolver lane).**
+  1. `refresh_source_path_from_env` called `configured_source_path()` unconditionally, which
+     materialises a `PathBuf` on EVERY lookup — even when the env var is unset and the answer is the
+     `&'static str` default — purely to compare it and drop it. Replaced with an allocation-free
+     `source_path_matches_env()` comparison against `self.source_path.as_os_str()`.
+  2. `with_protocol_entry_by_{name,number}` now run the caller's closure on the **borrowed** cache
+     entry instead of `.cloned()`. A `ProtocolEntry` clone is a name `Vec<u8>` plus a
+     `Vec<Vec<u8>>` of aliases: 3+ malloc/free pairs and the observed `realloc`. The cloning
+     `lookup_protocol_entry_by_*` wrappers remain, defined as `with_*(.., Clone::clone)`.
+- **SEMANTICS: NO env snapshot, NO generation fence, nothing to reason about.** The environment is
+  still consulted on **every** call, exactly as before — `std::env::var_os(self.env_key)` still runs;
+  only the `PathBuf` around it is gone. So a `setenv`/`putenv` between two lookups is observed
+  identically. This sidesteps the soundness hole a generation fence would have had: in a *test*
+  binary `std::env::set_var` binds glibc's `setenv` (proven earlier: `libc::getservbyport` binds
+  glibc, not fl's `#[no_mangle]` symbol), so `ENVIRON_EPOCH` would never bump while the value
+  changed, and the `*_track_overridden_*_backend` gates would have served a stale path. Which
+  functions read these keys: `FRANKENLIBC_{HOSTS,SERVICES,PROTOCOLS,ROUTE,IF_INET6}_PATH` are
+  FrankenLibC-internal fixture hooks. No C-standard function reads them and glibc has no equivalent,
+  so no standard imposes a re-read requirement — but our own test suite mutates them mid-process and
+  requires the next call to observe the change, so re-reading **is** observable. Hence: keep the
+  read, kill the allocation.
+- **MEASURED 3-WAY (4 arms), SAME BINARY / SAME RUN / SAME WORKER (`vmi1149989`), TWO PASSES.**
+  `frankenlibc_legacy_orig` faithfully reconstructs the pre-lever body in-process: it calls
+  `bench_protocols_pathbuf_refresh_alloc()` (rebuilding and dropping the exact `PathBuf` that was
+  removed) and then the cloning `lookup_protocol_entry_by_name` — so the A/B prices the WHOLE lever,
+  not just the clone half. `frankenlibc_legacy_fs` is the older pre-index arm, kept as an anchor.
+
+  | pass | fl (new) | legacy_orig (PathBuf+clone) | legacy_fs (pre-index) | host_glibc | vs ORIG | vs glibc |
+  |---|---|---|---|---|---|---|
+  | 1 | **1125.06** | 3380.15 | 11332.35 | 4475.76 | **3.00x** | **3.98x faster** |
+  | 2 | **1124.32** | 3384.24 | 11907.94 | 4646.10 | **3.01x** | **4.13x faster** |
+
+  (p50 ns/op.) The two passes agree to **0.3%** on both the fl arm and the ratio — unlike the earlier
+  syscall-bound rows, this lever's ratio IS stable, because it removes CPU work rather than shifting
+  a syscall. Cumulative for the row: **10.1-10.6x vs the pre-index `fs::read` arm**, and
+  `getprotobyname_r` went from ~1671-1952 ns (previous commit) to **~1125 ns**.
+- **CONFORMANCE GREEN.** Full `resolv_abi_test` **182 passed / 0 failed / 31 ignored** — including
+  both `*_track_overridden_*_backend` gates, which is the direct proof that the allocation-free env
+  comparison preserves `FRANKENLIBC_{SERVICES,PROTOCOLS}_PATH` observation and backend-generation
+  invalidation. Byte-exact vs live glibc: `conformance_diff_protoent_r_aliases` **1/1**,
+  `conformance_diff_netdb_aliases` **1/1**, `conformance_diff_netdb_r_aliases` **1/1**. `ubs` exit
+  **0**. `rustfmt --check` clean.
+- **PRE-EXISTING (not this change).** Full `unistd_abi_test` still aborts on the argp errno bug
+  (`abi_argp_error_normalizes_negative_star_width_and_precision`, `left: 29` `right: 0`), proven at
+  `c1b03f89a` in a clean worktree. `clippy -D warnings` still blocked by
+  `frankenlibc-core/src/math/exp.rs:815` (`eq_op` on the deliberate `z / z` NaN idiom).
+- **ENVIRONMENT NOTE.** The local `release-perf` build used for the frame table was reaped mid-turn
+  by the `sbh` disk-pressure daemon (`/` at 93%). The BEFORE frame table above was captured first and
+  is the load-bearing evidence; the AFTER profile was not re-captured, so the allocation collapse is
+  evidenced by the same-run A/B (3.00x) rather than by a second frame table.
+- **NO-RETRY NOTE:** do not retry an `ENVIRON_EPOCH`-guarded or `OnceLock` snapshot of the resolver
+  backend env path — it is unsound in the test process (glibc `setenv` does not bump fl's epoch) and
+  it targets a frame that does not exist (`getenv` < 0.1% self). Do not retry "elide the per-call
+  `stat`": it is ~1.5% self. Ranked remaining resolver surfaces:
+  **(1) The SAME allocation-elision applied to the services family** — `lookup_service_entry_by_*`
+  still `.cloned()` a `ServiceEntry` (name + protocol + alias `Vec<Vec<u8>>`) for `getservbyname`,
+  `getservbyport`, `getservbyname_r`, `getservbyport_r`. Mechanical: add
+  `with_service_entry_by_{name,port}` mirroring the protocol pair. Expect the same ~3x.
+  **(2) `read_c_string_bytes` / `read_bounded_cstr` allocate a `Vec<u8>` for the needle on every
+  `_r` call** — `inet_abi` already has an allocation-free `read_bounded_cstr_ref`; `unistd_abi` does
+  not. **(3) `getaddrinfo` profile reuse. (4) cross-family NSS result caching.**
+- **METHOD NOTE (generalisable).** For any fl function whose absolute time looks stuck at ~1-2 µs,
+  profile before theorising: the interposed allocator's bookkeeping (`record_alloc_stats` +
+  `record_free_stats` + `fallback_insert_sized_index`) turns an incidental `PathBuf`/`Vec` clone into
+  the dominant cost. Grep the hot path for `.cloned()`, `to_vec()`, `PathBuf::from`, `var_os` — each
+  is ~40 ns of allocator framing here, not the ~5 ns it would be under glibc.
+- **Reproducer:** `cargo bench -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench
+  getprotobyname_r_tcp` (4 arms, one binary). Run in isolation.

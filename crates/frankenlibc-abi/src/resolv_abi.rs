@@ -11,7 +11,7 @@
 
 #[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
 use std::mem::{align_of, size_of};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::fs::MetadataExt;
@@ -188,7 +188,32 @@ impl BackendFileCache {
         configured_backend_path(self.default_path, self.env_key)
     }
 
+    /// Does the currently-configured backend path already equal `source_path`?
+    ///
+    /// Allocation-free on the steady-state path. The old `refresh_source_path_from_env`
+    /// called `configured_source_path()` unconditionally, which materialises a `PathBuf`
+    /// (a heap allocation) on EVERY resolver lookup — even when the env var is unset and
+    /// the answer is the `&'static str` default — only to compare and drop it. Under the
+    /// interposed allocator that malloc/free pair is expensive: a `perf` frame table of
+    /// `getprotobyname_r` showed ~92% of self time in allocator bookkeeping
+    /// (`record_free_stats` 29.3%, `record_alloc_stats` 27.2%,
+    /// `fallback_insert_sized_index` 16.7%, `free` 13.8%), while `getenv` did not appear
+    /// at >=0.1% and the `stat` syscall was ~1.5%.
+    ///
+    /// Semantics are unchanged: the environment is still consulted on every call, so a
+    /// `setenv`/`putenv` between two lookups is observed exactly as before. No environment
+    /// snapshot or generation fence is introduced.
+    fn source_path_matches_env(&self) -> bool {
+        match std::env::var_os(self.env_key) {
+            Some(value) if !value.is_empty() => self.source_path.as_os_str() == value,
+            _ => self.source_path.as_os_str() == OsStr::new(self.default_path),
+        }
+    }
+
     fn refresh_source_path_from_env(&mut self) {
+        if self.source_path_matches_env() {
+            return;
+        }
         let configured = self.configured_source_path();
         if configured == self.source_path {
             return;
@@ -747,29 +772,56 @@ fn with_protocols_backend_snapshot<R>(
 }
 
 /// Shared `/etc/protocols` lookup by canonical name or alias, through the cached backend
-/// bytes and the generation-stamped parsed index. `Ok(None)` means "no such protocol";
+/// bytes and the generation-stamped parsed index. Runs `f` on the BORROWED cache entry, so
+/// no `ProtocolEntry` (its name `Vec<u8>` plus its `Vec<Vec<u8>>` of aliases — 3+ heap
+/// allocations and a `realloc`) is cloned per call. `Ok(None)` means "no such protocol";
 /// `Err` means the backend could not be read.
 ///
 /// Exposed to the crate so the reentrant `getprotobyname_r` (which lives in `unistd_abi`)
 /// can share this cache instead of re-reading and re-parsing the file on every call.
-pub(crate) fn lookup_protocol_entry_by_name(
+pub(crate) fn with_protocol_entry_by_name<R>(
     name: &[u8],
-) -> std::io::Result<Option<frankenlibc_core::resolv::ProtocolEntry>> {
+    f: impl FnOnce(&frankenlibc_core::resolv::ProtocolEntry) -> R,
+) -> std::io::Result<Option<R>> {
     with_protocols_backend_snapshot(|content, generation| {
-        with_protocol_lookup_cache(|cache| cache.lookup_by_name(generation, content, name).cloned())
+        with_protocol_lookup_cache(|cache| cache.lookup_by_name(generation, content, name).map(f))
     })
 }
 
 /// Shared `/etc/protocols` lookup by protocol number. Sibling of
-/// [`lookup_protocol_entry_by_name`], shared with the reentrant `getprotobynumber_r`.
+/// [`with_protocol_entry_by_name`], shared with the reentrant `getprotobynumber_r`.
+pub(crate) fn with_protocol_entry_by_number<R>(
+    number: c_int,
+    f: impl FnOnce(&frankenlibc_core::resolv::ProtocolEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    with_protocols_backend_snapshot(|content, generation| {
+        with_protocol_lookup_cache(|cache| {
+            cache.lookup_by_number(generation, content, number).map(f)
+        })
+    })
+}
+
+/// Bench-only: reproduce the per-call `PathBuf` that `refresh_source_path_from_env` used to
+/// build (and immediately drop) on every protocols lookup. Lets the `frankenlibc_legacy_orig`
+/// bench arm reconstruct the exact pre-lever allocation traffic in the SAME binary, so the
+/// A/B measures the whole allocation-elision lever rather than only the entry-clone half.
+#[doc(hidden)]
+pub fn bench_protocols_pathbuf_refresh_alloc() {
+    let path = configured_backend_path(PROTOCOLS_PATH, PROTOCOLS_PATH_ENV);
+    std::hint::black_box(&path);
+}
+
+/// Cloning wrappers, kept for callers that need to own the entry past the cache borrow.
+pub(crate) fn lookup_protocol_entry_by_name(
+    name: &[u8],
+) -> std::io::Result<Option<frankenlibc_core::resolv::ProtocolEntry>> {
+    with_protocol_entry_by_name(name, Clone::clone)
+}
+
 pub(crate) fn lookup_protocol_entry_by_number(
     number: c_int,
 ) -> std::io::Result<Option<frankenlibc_core::resolv::ProtocolEntry>> {
-    with_protocols_backend_snapshot(|content, generation| {
-        with_protocol_lookup_cache(|cache| {
-            cache.lookup_by_number(generation, content, number).cloned()
-        })
-    })
+    with_protocol_entry_by_number(number, Clone::clone)
 }
 
 fn with_protocol_lookup_cache<R>(callback: impl FnOnce(&mut ProtocolLookupCache) -> R) -> R {

@@ -954,11 +954,38 @@ fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
             },
         );
 
+        // ORIG for the allocation-elision lever: indexed, but clones the cache entry.
         bench_op(
             &mut group,
             BenchMeta {
                 profile_id: "getprotobyname_r_tcp",
                 impl_label: "frankenlibc_legacy_orig",
+                api_family: "resolver",
+                symbol: "getprotobyname_r",
+                workload: "reentrant lookup tcp into caller buffer",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let rc = unsafe {
+                    frankenlibc_abi::unistd_abi::getprotobyname_r_cloning_for_bench(
+                        proto.as_ptr(),
+                        (&raw mut r_protoent).cast::<c_void>(),
+                        rp_buf.as_mut_ptr(),
+                        rp_buf.len(),
+                        (&raw mut rp_result).cast::<*mut c_void>(),
+                    )
+                };
+                black_box(rc);
+                black_box(rp_result);
+            },
+        );
+
+        // Historical anchor: the pre-index arm that re-read /etc/protocols per call.
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getprotobyname_r_tcp",
+                impl_label: "frankenlibc_legacy_fs",
                 api_family: "resolver",
                 symbol: "getprotobyname_r",
                 workload: "reentrant lookup tcp into caller buffer",

@@ -26577,18 +26577,22 @@ pub unsafe extern "C" fn getprotobyname_r(
     // + linear `lookup_protocol_by_name` scan: this entry point re-read and re-parsed the
     // whole file on EVERY call and never reached `BackendFileCache`. A backend read error
     // still reports "not found" with `*result` left NULL (glibc behavior), exactly as before.
-    match crate::resolv_abi::lookup_protocol_entry_by_name(needle.as_slice()) {
-        Ok(Some(entry)) => unsafe {
-            fill_protoent_r(
-                &entry.name,
-                entry.number,
-                &entry.aliases,
-                result_buf,
-                buf,
-                buflen,
-                result,
-            )
-        },
+    // Borrow the cache entry rather than cloning it: a `ProtocolEntry` clone is a name
+    // `Vec<u8>` plus a `Vec<Vec<u8>>` of aliases, i.e. 3+ malloc/free pairs per call
+    // through the interposed allocator. A `perf` frame table put ~92% of this function's
+    // self time in allocator bookkeeping.
+    match crate::resolv_abi::with_protocol_entry_by_name(needle.as_slice(), |entry| unsafe {
+        fill_protoent_r(
+            &entry.name,
+            entry.number,
+            &entry.aliases,
+            result_buf,
+            buf,
+            buflen,
+            result,
+        )
+    }) {
+        Ok(Some(rc)) => rc,
         Ok(None) | Err(_) => 0, // not found, result stays NULL (glibc behavior)
     }
 }
@@ -26615,8 +26619,61 @@ pub unsafe extern "C" fn getprotobynumber_r(
         return libc::EINVAL;
     }
 
-    // Shared generation-stamped parsed number index; see `getprotobyname_r` above.
-    match crate::resolv_abi::lookup_protocol_entry_by_number(proto) {
+    // Shared generation-stamped parsed number index, borrowed not cloned; see
+    // `getprotobyname_r` above.
+    match crate::resolv_abi::with_protocol_entry_by_number(proto, |entry| unsafe {
+        fill_protoent_r(
+            &entry.name,
+            entry.number,
+            &entry.aliases,
+            result_buf,
+            buf,
+            buflen,
+            result,
+        )
+    }) {
+        Ok(Some(rc)) => rc,
+        Ok(None) | Err(_) => 0,
+    }
+}
+
+/// Bench-only: the immediately-previous `getprotobyname_r` — indexed (so it does NOT re-read
+/// the file), but cloning the `ProtocolEntry` out of the cache and paying the per-call
+/// `PathBuf` in `refresh_source_path_from_env`. This is the ORIG arm for the
+/// allocation-elision lever, distinct from `getprotobyname_r_legacy_fs_per_call_for_bench`,
+/// which is the pre-index arm.
+///
+/// # Safety
+/// Same contract as `getprotobyname_r`.
+#[doc(hidden)]
+pub unsafe fn getprotobyname_r_cloning_for_bench(
+    name: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    if name.is_null()
+        || result_buf.is_null()
+        || buf.is_null()
+        || !tracked_object_fits::<libc::protoent>(result_buf.cast())
+    {
+        return libc::EINVAL;
+    }
+
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+        return libc::EINVAL;
+    };
+
+    // Reconstruct the pre-lever allocation traffic exactly: the old
+    // `refresh_source_path_from_env` built and dropped one `PathBuf` per call...
+    crate::resolv_abi::bench_protocols_pathbuf_refresh_alloc();
+    // ...and the old lookup cloned the whole `ProtocolEntry` out of the cache.
+    match crate::resolv_abi::lookup_protocol_entry_by_name(needle.as_slice()) {
         Ok(Some(entry)) => unsafe {
             fill_protoent_r(
                 &entry.name,
