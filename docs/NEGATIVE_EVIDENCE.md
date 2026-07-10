@@ -6,6 +6,66 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — MEASUREMENT (provenanced): deployed malloc/free with cod's landed segments is **~9.7x vs glibc** (NOT the ~5x target) — segments beat old fl 1.3x, but the exported wrapper framing (65% self) + segment_free (16%) dominate, not membership
+
+- **ASK.** Verify the end-to-end malloc/free ratio vs glibc now that cod's segment magazines landed
+  (bd-dcrhgl), built on the segment-bitmap membership rehabilitated at 6.21x. I RAN cod's own 3-way
+  harness (`malloc_bench --features abi-bench -- segment_allocator_3way`, `bench_segment_production_paired`):
+  orig = pre-segment strict path, candidate = deployed `malloc_abi::malloc`/`free`, glibc = dlmopen'd
+  host libc — all three interleaved in ONE binary, thread-pinned (cpu 9). Measurement only; I did NOT
+  touch malloc_abi.rs (cod's lane).
+- **RESULT (worker vmi1152480, executable sha256 bd8d59e7dc5247bf7321691eda49bdaeac0ae9b9ca1d095081d567e03fe8dc59,
+  41 samples/size):**
+  | size | cand p50 | glibc p50 | **cand/glibc** | cand/orig | cand/glibc cv | cv_gate |
+  |---|---|---|---|---|---|---|
+  | 16   | 54.884 ns | 5.648 | **9.76x** | 0.7676 | 4.00% | pass |
+  | 64   | 55.612 ns | 5.796 | 9.65x | 0.7832 | 7.88% | fail |
+  | 256  | 56.131 ns | 5.716 | 9.83x | 0.7745 | 6.42% | fail |
+  | 1024 | 54.071 ns | 5.635 | 9.66x | 0.7649 | 4.00% | pass |
+  Median across sizes is tightly clustered **9.65–9.83x** (range 0.18x), so the ratio is real
+  regardless of the two per-size cv-gate misses (the user's rule gates on the MEDIAN; cv<5% is
+  unreachable — here cross-size consistency is the stronger evidence). **candidate beats orig 1.28–1.31x
+  at every size** — cod's segments are a genuine self-improvement (orig ≈ 12.8x → candidate ≈ 9.7x).
+- **BUT NOT ~5x, and ABOVE the historical 8.05x microbench.** This heavier mixed-size churn harness
+  exposes more than the 37 ns/8.05x microbench did. **Self-time (perf, 1007 samples, total_self 84.13%):
+  `malloc` 36.91% + `free` 28.25% = 65% in the exported ABI WRAPPERS, `segment_free` 15.99%,
+  `segment_allocate` 2.98%.** The membership bitmap is NOT the cost. The gap to glibc is the
+  wrapper framing (reentry guard + stats recorder + membrane entrypoint scope) surrounding the segment
+  core, plus the segment_free path. So the next Swing-2 lever is bd-dcrhgl SUB-STEP B (framing: the
+  ~8 ns reentry guard + single-threaded non-atomic stats), NOT more membership work — that primitive is
+  done. Handed to cod (bd-dcrhgl comment). self-time: captured (candidate.perf, above).
+
+## 2026-07-10 (cc_fl / BlackThrush) — REJECT (codegen-verified, no room): the "+avx2 build fix widens the string-SIMD residuals" lever does NOT exist here — the shipped build ALREADY emits AVX2; wmemchr/wcsnlen/memchr cores are 256-bit ymm
+
+- **HYPOTHESIS (peer-sourced).** A sibling repo (frankenscipy) got **1.745x from a build fix alone** —
+  its build was silently NOT applying AVX2, so all portable `std::simd` lowered to SSE2 128-bit. Claim
+  to check here: are fl's string-SIMD residuals (wmemchr / wcsnlen / strrchr / memchr) emitted at half
+  vector width because `-Ctarget-feature=+avx2` is being dropped on the remote build?
+- **METHOD (codegen, not a perf A/B — this is a machine-code FACT).** Built the shipped cdylib on rch
+  (`cargo build --release -p frankenlibc-abi`, worker **vmi1149989**), retrieved
+  `target/release/libfrankenlibc_abi.so` (**sha256 d9b20fe250b7ae30e8eb6dc1b97743c77a24c837e66f76fff3d93b2caabf8483**),
+  and disassembled it (`objdump -d`).
+- **RESULT — AVX2 is fully active; there is NO half-width build bug.**
+  - Global: **22,216 `%ymm` uses, 4,605 AVX2-only mnemonics** (`vpcmpeqb`/`vpmovmskb`/`vperm2i128`),
+    424 FMA. `.cargo/config.toml`'s `-Ctarget-feature=+avx2,+fma` DOES reach the rch build (no remote
+    `RUSTFLAGS` override, unlike frankenscipy).
+  - Per named residual (the SIMD lives in the `frankenlibc_core` core symbols; the exported ABI symbol
+    is a scalar membrane wrapper — `known_remaining`/`decide`/`observe` — that tail-calls the core):
+    - `core::string::wide::wmemchr`: **171 ymm / 31 xmm**, 22× `vpcmpeqd` (ymm dword-compare), 6×
+      `vpmovmskb`. `Simd<u32,16>` (512-bit logical) lowers to 2× ymm as expected.
+    - `core::string::wide::wcsnlen`: **36 ymm / 18 xmm**.
+    - `core::string::mem::memchr`: **133 ymm / 16 xmm**.
+    - exported `strlen`: **54 ymm**; `strrchr`: **13 ymm**.
+- **VERDICT.** The +avx2 build-fix lever has ZERO room here — the residuals were never at half width;
+  the "16" in `Simd<u32,16>` (wide.rs) is *u32 lanes* = 64 bytes = 512-bit, and it compiles to 256-bit
+  ymm. This corrects a source-level hand-wave with the actual disassembly. self-time: N/A (a codegen
+  fact). The only 128-bit `Simd<u8,16>` code is the wchar UTF-8 mbtowc DECODE window (structural,
+  swizzle-based, not a lane-bumpable scan; widening doubles the emulated `simd_ge/le<u8>` work — see
+  [[small-input-string-mem-regression]]). Do NOT re-open "widen the string SIMD via a build flag".
+- **RESIDUAL (real, different lever).** Every deployed wmemchr/etc. call pays the SCALAR ABI-wrapper
+  membrane bookkeeping BEFORE reaching the AVX2 core — that is the interposed-membrane tax, not an ISA
+  issue.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): `getnameinfo` numeric path stops allocating two `String`s per call — deployed 1.20x, kernel 19.43x, byte-identical (netdb String-elision vein)
 
 - **LEVER.** The AF_INET `getnameinfo` numeric render did `ip.to_string()` + `port.to_string()` per
