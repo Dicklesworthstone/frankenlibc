@@ -53,6 +53,20 @@ fn stage() -> u64 {
     }
     black_box(REPS as u64)
 }
+#[inline(never)]
+fn decide_fast() -> u64 {
+    for _ in 0..REPS {
+        fl::bench_resolver_decide_only();
+    }
+    black_box(REPS as u64)
+}
+#[inline(never)]
+fn decide_slow() -> u64 {
+    for _ in 0..REPS {
+        fl::bench_resolver_decide_only_slow();
+    }
+    black_box(REPS as u64)
+}
 
 fn paired<F: FnMut() -> u64, G: FnMut() -> u64>(mut a: F, mut b: G) -> (Vec<f64>, Vec<f64>) {
     let (mut xa, mut xb) = (Vec::new(), Vec::new());
@@ -97,10 +111,18 @@ fn main() {
     black_box(orig());
     black_box(stage());
 
+    black_box(decide_fast());
+    black_box(decide_slow());
+
     let (n1, n2) = paired(cand, cand);
     report("NULL CONTROL (cand vs cand)", &n1, &n2);
     let (o, c) = paired(orig, cand);
-    report("LEVER observe fast-path (slow->fast)", &o, &c);
+    report("observe fast-path (shipped, slow->fast)", &o, &c);
+
+    let (dn1, dn2) = paired(decide_fast, decide_fast);
+    report("NULL CONTROL decide (fast vs fast)", &dn1, &dn2);
+    let (do_, dc) = paired(decide_slow, decide_fast);
+    report("LEVER decide fast-path (slow->fast)", &do_, &dc);
 
     let s = paired(stage, stage).0;
     println!("  reference: resolver_stage_context+record median {:.1}ns", median(&s));

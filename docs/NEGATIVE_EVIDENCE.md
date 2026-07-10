@@ -6,6 +6,34 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED, bd-rwz2ns CLOSED): `decide()` strict fast-path adds `ApiFamily::Resolver` — **63.65x** on decide; with the observe fast-path the WHOLE resolver membrane bookkeeping is **1214 ns → 8.8 ns (137.68x)** — no getaddrinfo refactor needed
+
+- **THE PAYOFF of the profile.** The profile said the resolver membrane tax was `decide` (~397 ns) +
+  `observe` (~773 ns); the observe half shipped last commit. This commit takes the `decide` half the SAME
+  way — a central strict-fast-path list entry, not the risky 3-decide/19-observe getaddrinfo refactor.
+- **LEVER (ONE line).** `decide()` has a STRICT-ONLY fast-path list (Allocator/StringMemory/Ctype/Loader/
+  Stdlib/MathFenv/Stdio/IoFd/Time/Inet) that returns `passthrough_decision()` (action=Allow) without the
+  kernel evidence consult; **Resolver was missing.** Added `| ApiFamily::Resolver`. Byte-identical:
+  `decide_strict_observation` already **forces `action = Allow` for every family** in strict (it consults
+  the kernel only to RECORD evidence, then overrides), so skipping the consult yields the same action;
+  `repair` derives from action (not profile); and the now-fast-pathed `observe()` no longer reads the
+  profile — so the profile is behaviour-dead for Resolver. STRICT-ONLY (hardened keeps the full consult);
+  node/service pointers are validated by getaddrinfo/getnameinfo's own opt_cstr/write_c_buffer bounds.
+- **MEASURED** (`examples/resolver_bookkeeping_ab.rs`, interleaved paired, worker ovh-a; ORIG reconstructs
+  the pre-lever slow decide via `ApiFamily::Socket`, not in the strict list → routes through
+  `decide_strict_observation`):
+  - **NULL CONTROL decide (fast vs fast): 1.0004** cv 1.7%.
+  - **LEVER decide fast-path: 530.1 ns → 8.0 ns = 0.0157 = 63.65x**, cv 13.3%.
+  - **COMBINED with the shipped observe fast-path — decide+observe: 1214.4 ns → 8.8 ns = 137.68x** (null
+    0.9975): the ENTIRE per-call resolver membrane bookkeeping is now ~9 ns.
+- **CORRECTNESS.** resolv_abi_test **183/0** (single-threaded; a parallel run showed `getprotobyname_tcp_
+  resolves` fail once — a pre-existing FRANKENLIBC_PROTOCOLS_PATH env-var race between parallel tests, NOT
+  this change, which is `cfg!(not(test))`-inert in test builds) + getnameinfo_differential_fuzz +
+  conformance_diff_getaddrinfo + conformance_diff_netdb_aliases all GREEN.
+- **DEPLOYED reach.** getaddrinfo, getnameinfo (its full path), and every resolver call in strict mode (the
+  default) now pay ~9 ns of membrane bookkeeping instead of ~1200 ns. bd-rwz2ns CLOSED — the full skip was
+  achieved via two central one-line fast-path entries (this + the observe commit), no call-site refactor.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED, bd-rwz2ns): `observe()` telemetry fast-path adds `ApiFamily::Resolver` — **3.01x** on the decide+observe pair, ~773 ns/call off EVERY resolver call (getaddrinfo + hardened getnameinfo_full), ONE line
 
 - **PROFILE-DRIVEN.** The follow-on profile split the ~1.7 µs Resolver membrane tax: `resolver_stage_context`

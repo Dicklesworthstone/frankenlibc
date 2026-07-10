@@ -2084,6 +2084,17 @@ pub(crate) fn decide(
                     // pure conversions, strict forces Allow = byte-identical. NOT in the
                     // HARDENED list (inet_pton's dst output buffer must stay validated).
                     | ApiFamily::Inet
+                    // Resolver added to STRICT ONLY (helps getaddrinfo/getnameinfo — every
+                    // connection). `decide_strict_observation` forces action=Allow regardless
+                    // (it consults the kernel only to RECORD evidence, then overrides to
+                    // passthrough), so skipping that ~397 ns consult is byte-identical: the
+                    // action is Allow either way, `repair` derives from action not profile,
+                    // and the now-fast-pathed observe() no longer reads the profile. Node/
+                    // service pointers are validated by getaddrinfo/getnameinfo's own
+                    // opt_cstr/write_c_buffer bounds, not by decide(). NOT in the HARDENED
+                    // list below — hardened keeps the full consult. Pairs with the Resolver
+                    // observe() fast-path to remove the whole ~1.17 us resolver bookkeeping.
+                    | ApiFamily::Resolver
             )
         {
             return (SafetyLevel::Strict, passthrough_decision());
