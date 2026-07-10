@@ -1528,6 +1528,39 @@ pub fn bench_malloc_guards_forslot() {
     drop(g);
 }
 
+/// Bench hook: the pre-fast-path deployed strict `free(NULL)` frame. `free(NULL)`
+/// is a POSIX no-op, so the new exported path may return before this work; this
+/// hook keeps the old frame measurable in-process without changing production
+/// behavior.
+#[doc(hidden)]
+pub fn bench_free_null_old_strict_path() {
+    let ptr = std::ptr::null_mut();
+    let Some(reentry_guard) = enter_allocator_reentry_guard() else {
+        // SAFETY: mirrors the old reentrant `free(NULL)` fallback.
+        unsafe { bootstrap_free_passthrough(ptr) };
+        return;
+    };
+
+    if allocator_bootstrap_passthrough_active() {
+        // SAFETY: mirrors the old bootstrap `free(NULL)` fallback.
+        unsafe { bootstrap_free_passthrough(ptr) };
+        return;
+    }
+
+    if strict_allocator_host_path_active() {
+        if let Some(size) = fallback_remove_sized_for_slot(reentry_guard.slot, ptr) {
+            // SAFETY: unreachable for null, but retained to keep the old frame exact.
+            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            record_free_stats(size);
+            return;
+        }
+        if !check_ownership(ptr as usize) {
+            // SAFETY: old strict path delegated unknown/null pointers to host free.
+            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+        }
+    }
+}
+
 fn fallback_size_for_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) -> Option<usize> {
     let key = fallback_key(ptr)?;
     if !MULTI_THREADED.load(Ordering::Relaxed) {
@@ -2037,6 +2070,10 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 /// `realloc`, and must not have been freed already.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
+    if ptr.is_null() && runtime_policy::strict_passthrough_active() {
+        return;
+    }
+
     let Some(reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         unsafe { bootstrap_free_passthrough(ptr) };

@@ -13467,3 +13467,41 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
 - **Reproducer:** `cargo run --release -p frankenlibc-bench --features abi-bench --example stdio_mapper_mt_ab`
   (build via `rch exec`, then run the produced binary on ONE fixed host and repeat it — do not
   compare absolute ns across rch workers).
+
+## 2026-07-10 (cod_fl) - WIN: bd-dcrhgl strict `free(NULL)` no-op skips allocator framing (17.89ns -> 2.19ns)
+
+- **NEGATIVE-EVIDENCE FIRST:** this is not a retry of the rejected bd-dcrhgl inline-header/table
+  family. Still closed: naive min/max+magic inline header reads, existing-table guarded header
+  reads, lock-free fallback table, cached tombstone reinsertion, MallocState 64-256 hot-cycle
+  precheck, and the native malloc slot double-resolve. Fresh grep of this ledger plus
+  `docs/perf_next_architectural_swings.md` found no prior rejection for a strict
+  `free(NULL)` no-op fast exit.
+- **PROFILED BEFORE LEVER:** the active Swing-2 profile remains the allocator framing row from
+  the deployed `malloc_st_probe`: `perf stat -r 3` kept `MALLOC_FREE` at fl **38.30-40.43ns**
+  vs host glibc **4.57-4.82ns** (`fl/glibc=8.304-8.484`), with flamegraph userspace stacks
+  ranking `free` **13.20%**, `enter_allocator_reentry_guard` **11.25%**, and visible fallback
+  table/stat bookkeeping. A baseline `FREE_NULL` row on `rch` worker `hz2` measured fl
+  **11.33ns** vs glibc **2.47ns** (`fl/glibc=4.577`), confirming a concrete null-free framing
+  hotspot inside the same allocator lane.
+- **LEVER (shipped):** `free(NULL)` is a specified no-op. In strict passthrough mode, return
+  before `enter_allocator_reentry_guard`, fallback-table probing, ownership checks, host
+  delegation, and stats. Hardened/non-strict paths keep the existing instrumentation and repair
+  semantics because the gate is `runtime_policy::strict_passthrough_active()`.
+- **SAME-WORKER KEEP GATE:** in-process old-vs-new A/B on `rch` worker `vmi1227854`, release-perf
+  profile, command `cargo run --profile release-perf -p frankenlibc-bench --example malloc_st_probe
+  --features abi-bench`: `FREE_NULL_AB old=17.89 new=2.19 new/old=0.122 saves=15.70ns/call`.
+  Same binary also reported `FREE_NULL fl=2.19 glibc=1.88 fl/glibc=1.163`. The A/B row compares
+  the deployed new path against a bench hook that reconstructs the old strict frame in the same
+  process, so worker noise cancels in the ratio.
+- **PARITY / CHECKS:** `free(NULL)` does not free an allocation and must not change allocator
+  state. Focused malloc tests passed on `rch` (`conformance_diff_malloc_edges`: 1 passed;
+  `malloc_abi_test`: 55 passed, 1 ignored). `rustfmt --edition 2024 --check` passed on the two
+  changed Rust files. Focused local clippy passed for `malloc_st_probe` with `--features
+  abi-bench --no-deps -D warnings`. `ubs` on the two changed files found **0 critical** findings
+  (warnings are existing broad ABI/bench patterns). Full workspace `cargo fmt --check` remains
+  blocked by pre-existing unrelated formatting drift in many files; remote clippy was unavailable
+  on one worker because the pinned nightly lacked the `cargo-clippy` component.
+- **RESIDUAL / NEXT:** this improves cleanup-heavy C paths that defensively call `free(NULL)`.
+  It does not move the non-null `MALLOC_FREE` rows; the next bd-dcrhgl Swing-2 attempt still needs
+  a new exact no-deref membership primitive or shadow-agreement scheme before any inline-header
+  replacement of the fallback table.
