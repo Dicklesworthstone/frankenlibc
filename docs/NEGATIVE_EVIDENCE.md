@@ -13890,3 +13890,87 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   `rch exec -- cargo test -p frankenlibc-abi --test malloc_abi_test -- --test-threads=1`
   on `vmi1149989`: **55 passed / 0 failed / 1 ignored**. Existing workspace
   warnings in unrelated `core`/`abi` files remain outside this lever.
+
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): reentrant `getprotobyname_r`/`getprotobynumber_r` share the parsed protocol index — 7.6-13.2x vs ORIG, 3.0-4.1x faster than host glibc (bd-o7l0tn)
+
+- **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped `getprotobyname_r|getprotobynumber_r|getprotoent|
+  protoent_r|PROTOCOLS_PATH`: no prior attempt or rejection on this surface. The only reference is
+  my own 2026-07-09 `_r` services row, which ranked this as follow-up (2). Did not retry anything
+  CLOSED (`strchr` SSE4.2 explicit-length scanner; portable-SIMD string residuals wmemchr/wcsnlen/
+  strrchr, parked pending AVX2+ifunc; MallocState hot-cycle precheck; cached tombstone reinsertion;
+  lock-free fallback table). Stayed out of `malloc_abi.rs` (cod owns bd-dcrhgl).
+- **MECHANISM — read from source, then confirmed by the retained ORIG arm, NOT from a frame
+  table.** Stated plainly because method item (2) asks for a ranked profile: no `perf` frame table
+  was produced for this lever. It was not needed to locate the mechanism — `getprotobyname_r` and
+  `getprotobynumber_r` (in `unistd_abi.rs`, NOT `resolv_abi.rs`) each opened with a literal
+  `std::fs::read(PROTOCOLS_PATH)` **on every call**, followed by a linear
+  `frankenlibc_core::resolv::lookup_protocol_by_{name,number}` scan. They never reached
+  `BackendFileCache` or the parsed index that the non-reentrant `getprotobyname` has used since
+  be6de10f8. The retained ORIG arm then priced that syscall directly: **12.65-25.74 µs/call**
+  against **1.67-1.95 µs** for the indexed path.
+- **LEVER (one).** Added `pub(crate) lookup_protocol_entry_by_name` / `lookup_protocol_entry_by_number`
+  to `resolv_abi.rs` (wrapping `with_protocols_backend_snapshot` + `with_protocol_lookup_cache`) and
+  pointed both `_r` entry points at them. This also removes the second call site of the core parser,
+  so the reentrant and non-reentrant protocol lookups now agree on name/alias matching, canonical
+  name, and alias list *by construction*. `fill_protoent_r`'s caller-buffer packing is untouched, as
+  is the `Err(_) => 0` contract (a backend read error reports "not found" with `*result` NULL, the
+  glibc behavior the ORIG code documented).
+- **BEHAVIOR CHANGE (intentional, gated).** The `_r` protocol paths hardcoded `/etc/protocols`; going
+  through `BackendFileCache` means they now honor `FRANKENLIBC_PROTOCOLS_PATH` exactly as the
+  non-reentrant path always has. New gate
+  `resolv_abi_test::reentrant_protoent_lookups_track_overridden_protocols_backend` pins both halves:
+  the `_r` path reads the overridden backend, and rewriting that backend invalidates the shared index
+  for it (via the backend generation). It also checks alias resolution through the name index.
+- **MEASURED 3-WAY, SAME BINARY / SAME RUN, TWO ISOLATED PASSES.** New row `getprotobyname_r_tcp` in
+  `glibc_baseline_bench` with `frankenlibc_abi`, `frankenlibc_legacy_orig` (the pre-change body kept
+  verbatim as `getprotoby{name,number}_r_legacy_fs_per_call_for_bench`), and `host_glibc`. Two passes
+  because these rows are syscall-bound and load-sensitive (see the 2026-07-09 calibration row):
+
+  | pass | fl | legacy_orig | host_glibc | vs ORIG | vs glibc |
+  |---|---|---|---|---|---|
+  | isolated (`vmi1152480`) | **1671.22** | 12650.75 | 5090.33 | **7.57x** | **3.05x faster** |
+  | isolated (`hz2`) | **1952.31** | 25736.17 | 8009.14 | **13.18x** | **4.10x faster** |
+
+  (p50 ns/op; `rch exec`, `--profile release --sample-size 20 --warm-up-time 1 --measurement-time 2
+  --noplot`.) **fl's own time is stable (1671-1952 ns)** — it is pinned to the per-call `stat` floor
+  (bd-qds9jk) — while the `legacy_orig` and `host_glibc` arms swing ~2x with worker load. Direction
+  is identical in both passes; magnitudes are a range, not a constant.
+- **HOST ARM IS REALLY GLIBC.** The `libc` crate does not declare `getprotobyname_r`, and a bare
+  `extern "C"` block would bind to FrankenLibC's own `#[no_mangle]` symbol in the same binary,
+  silently making "host_glibc" a second fl arm. The bench resolves it from
+  `dlmopen(LM_ID_NEWLM, "libc.so.6")`, and asserts `p_proto` + `p_name` parity against that host
+  before timing.
+- **CONFORMANCE GREEN.** `resolv_abi_test -- getproto reentrant_protoent reentrant_servent getserv`
+  **27 passed / 0 failed** (includes both new `_r` freshness gates). Byte-exact vs live glibc:
+  `conformance_diff_protoent_r_aliases` **1/1**, `conformance_diff_netdb_aliases` **1/1**,
+  `conformance_diff_netdb_r_aliases` **1/1**. In `unistd_abi_test`, the bead-owned tests pass
+  (`getprotobyname_r_resolves_tcp_and_nulls_missing`,
+  `getprotobynumber_r_and_getprotoent_r_surface_entries`; the short-buffer ones are pre-existing
+  `ignored, requires real hardened mode bounds checking (bd-q3snos)`). `ubs` exit **0** (the single
+  critical inside added lines is `mem::zeroed()` for `libc::protoent`, the same POD-C-struct idiom as
+  the hundreds of pre-existing hits). `rustfmt --check` clean on all four files.
+- **PRE-EXISTING FAILURE, PROVEN NOT MINE.** The FULL `unistd_abi_test` suite aborts (SIGABRT) at
+  `abi_argp_error_normalizes_negative_star_width_and_precision` (unistd_abi_test.rs:3267,
+  `assert_eq!(errno_value(), 0)` → `left: 29` (ESPIPE) `right: 0`). This matters because `argp_error`
+  writes its diagnostic through fl stdio, which calls the `native_stdio_fd_for_ptr` I made lock-free
+  in ad465633f — so it had to be ruled out rather than assumed. Ruled out by running that exact test
+  in a clean `git worktree` detached at **c1b03f89a** (the commit *before* any of my changes this
+  session): it fails there identically (`left: 29, right: 0`). The argp code was last changed in
+  `1c317502b` / `70dac90af`, both labelled "code-first, **batch-test pending**". Not attributable to
+  this bead, and not to the stdio mapper. `clippy -D warnings` also still blocked by
+  `frankenlibc-core/src/math/exp.rs:815` (`eq_op` on the deliberate `z / z` NaN idiom).
+- **NO-RETRY NOTE:** do not retry parsed indexes, snapshot/generation caches, or read/parse
+  elimination for ANY of `getservbyname`, `getservbyport`, `getservbyname_r`, `getservbyport_r`,
+  `getprotobyname`, `getprotobynumber`, `getprotobyname_r`, `getprotobynumber_r` — all eight are now
+  indexed and all beat host glibc. Ranked remaining resolver surfaces:
+  **(1) bd-qds9jk — elide the per-call `getenv` + `stat` in `BackendFileCache::refresh_cache`.** This
+  is now provably the floor: fl's arm is pinned at ~1.7-2.0 µs across workers whose load moves the
+  other two arms 2x, and the index lookup itself is a binary search over a few hundred entries (tens
+  of ns). Every one of the eight entry points pays it. Needs a freshness-semantics decision (a TTL
+  would break the `*_track_overridden_*_backend` gates as written), so it is a design lever.
+  **(2) `getprotoent_r` / `getservent_r` / `gethostent_r`** — the sequential iterator forms still
+  re-read per iteration; different (stateful) semantics, so not a mechanical hoist.
+  **(3) `getaddrinfo` profile reuse. (4) cross-family NSS result caching with a fresh comparator.**
+- **Reproducer:** `cargo bench -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench
+  getprotobyname_r_tcp`. Run the row **in isolation**; a multi-group sweep inflates every arm and
+  compresses the ratios toward 1.0.

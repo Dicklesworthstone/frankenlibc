@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use frankenlibc_abi::inet_abi;
 use frankenlibc_abi::malloc_abi;
 use frankenlibc_abi::resolv_abi;
+use frankenlibc_abi::unistd_abi;
 
 const HOST_NOT_FOUND_ERRNO: i32 = 1;
 const NO_RECOVERY_ERRNO: i32 = 3;
@@ -2234,6 +2235,71 @@ fn reentrant_servent_lookups_track_overridden_services_backend() {
         );
         assert_eq!(unsafe { (*n_result).s_port }, port_net);
     });
+}
+
+/// The reentrant `getprotobyname_r`/`getprotobynumber_r` (in `unistd_abi`) now share the
+/// generation-stamped parsed protocol index owned by `resolv_abi` instead of doing a
+/// per-call `std::fs::read("/etc/protocols")`. As with the servent `_r` pair, they must now
+/// observe the `FRANKENLIBC_PROTOCOLS_PATH` override (they hardcoded `/etc/protocols`), and a
+/// backend rewrite must invalidate the shared index for them.
+#[test]
+fn reentrant_protoent_lookups_track_overridden_protocols_backend() {
+    with_resolver_backends_full(
+        None,
+        None,
+        Some(b"fixture-old 253 fx-old\n"),
+        None,
+        None,
+        |paths| {
+            let mut protoent: libc::protoent = unsafe { std::mem::zeroed() };
+            let mut buf = [0i8; 512];
+            let mut result: *mut libc::protoent = std::ptr::null_mut();
+
+            let mut by_number = || unsafe {
+                let rc = unistd_abi::getprotobynumber_r(
+                    253,
+                    (&raw mut protoent).cast::<libc::c_void>(),
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    (&raw mut result).cast::<*mut libc::c_void>(),
+                );
+                assert_eq!(rc, 0, "getprotobynumber_r failed");
+                assert!(!result.is_null(), "getprotobynumber_r found nothing");
+                CStr::from_ptr((*result).p_name).to_bytes().to_vec()
+            };
+
+            // Reads the OVERRIDDEN backend, not /etc/protocols.
+            assert_eq!(by_number(), b"fixture-old".to_vec());
+
+            std::fs::write(&paths.protocols, b"fixture-new 253 fx-new\n")
+                .expect("rewrite temp protocols fixture");
+
+            // Backend generation changed => shared parsed index rebuilt for the `_r` path.
+            assert_eq!(by_number(), b"fixture-new".to_vec());
+
+            // The name index reaches the reentrant path too, including aliases.
+            let alias = CString::new("fx-new").unwrap();
+            let mut n_protoent: libc::protoent = unsafe { std::mem::zeroed() };
+            let mut n_buf = [0i8; 512];
+            let mut n_result: *mut libc::protoent = std::ptr::null_mut();
+            let rc = unsafe {
+                unistd_abi::getprotobyname_r(
+                    alias.as_ptr(),
+                    (&raw mut n_protoent).cast::<libc::c_void>(),
+                    n_buf.as_mut_ptr(),
+                    n_buf.len(),
+                    (&raw mut n_result).cast::<*mut libc::c_void>(),
+                )
+            };
+            assert_eq!(rc, 0, "getprotobyname_r failed");
+            assert!(!n_result.is_null(), "getprotobyname_r found nothing");
+            assert_eq!(unsafe { (*n_result).p_proto }, 253);
+            assert_eq!(
+                unsafe { CStr::from_ptr((*n_result).p_name) }.to_bytes(),
+                b"fixture-new"
+            );
+        },
+    );
 }
 
 // ===========================================================================

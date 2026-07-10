@@ -8257,7 +8257,11 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
     // sets EINVAL. Mirror that. bd-r9ihvq. (DES/yescrypt/bcrypt hashing itself
     // is still unsupported — bd-c6ykz1.)
     let failure_token = |buf: &mut [u8; 256]| -> *mut c_char {
-        let token: &[u8] = if salt_bytes.starts_with(b"*0") { b"*1" } else { b"*0" };
+        let token: &[u8] = if salt_bytes.starts_with(b"*0") {
+            b"*1"
+        } else {
+            b"*0"
+        };
         buf[..token.len()].copy_from_slice(token);
         buf[token.len()] = 0;
         buf.as_mut_ptr() as *mut c_char
@@ -26565,13 +26569,103 @@ pub unsafe extern "C" fn getprotobyname_r(
     let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
         return libc::EINVAL;
     };
+
+    // Shared generation-stamped parsed index (resolv_abi), the same one the non-reentrant
+    // `getprotobyname` uses — it already agrees on name+alias matching, canonical name, and
+    // alias list, so this keeps the two in lockstep by construction rather than by having a
+    // second call site of the core parser. Replaces a per-call `std::fs::read(PROTOCOLS_PATH)`
+    // + linear `lookup_protocol_by_name` scan: this entry point re-read and re-parsed the
+    // whole file on EVERY call and never reached `BackendFileCache`. A backend read error
+    // still reports "not found" with `*result` left NULL (glibc behavior), exactly as before.
+    match crate::resolv_abi::lookup_protocol_entry_by_name(needle.as_slice()) {
+        Ok(Some(entry)) => unsafe {
+            fill_protoent_r(
+                &entry.name,
+                entry.number,
+                &entry.aliases,
+                result_buf,
+                buf,
+                buflen,
+                result,
+            )
+        },
+        Ok(None) | Err(_) => 0, // not found, result stays NULL (glibc behavior)
+    }
+}
+
+/// `getprotobynumber_r` — reentrant protocol lookup by number.
+///
+/// Native implementation: scans /etc/protocols.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotobynumber_r(
+    proto: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    if result_buf.is_null()
+        || buf.is_null()
+        || !tracked_object_fits::<libc::protoent>(result_buf.cast())
+    {
+        return libc::EINVAL;
+    }
+
+    // Shared generation-stamped parsed number index; see `getprotobyname_r` above.
+    match crate::resolv_abi::lookup_protocol_entry_by_number(proto) {
+        Ok(Some(entry)) => unsafe {
+            fill_protoent_r(
+                &entry.name,
+                entry.number,
+                &entry.aliases,
+                result_buf,
+                buf,
+                buflen,
+                result,
+            )
+        },
+        Ok(None) | Err(_) => 0,
+    }
+}
+
+/// Bench-only: the pre-index `getprotobyname_r` (per-call `std::fs::read(PROTOCOLS_PATH)` +
+/// linear `lookup_protocol_by_name` scan), retained verbatim so `glibc_baseline_bench` can
+/// measure ORIG vs patched in the SAME binary.
+///
+/// # Safety
+/// Same contract as `getprotobyname_r`.
+#[doc(hidden)]
+pub unsafe fn getprotobyname_r_legacy_fs_per_call_for_bench(
+    name: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    if name.is_null()
+        || result_buf.is_null()
+        || buf.is_null()
+        || !tracked_object_fits::<libc::protoent>(result_buf.cast())
+    {
+        return libc::EINVAL;
+    }
+
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+        return libc::EINVAL;
+    };
     let content = match std::fs::read(PROTOCOLS_PATH) {
         Ok(c) => c,
-        Err(_) => return 0, // not found, result stays NULL (glibc behavior)
+        Err(_) => return 0,
     };
 
-    // Use the shared parser so name+alias matching, the canonical name, and
-    // the alias list all agree with the non-reentrant getprotobyname.
     match frankenlibc_core::resolv::lookup_protocol_by_name(&content, needle.as_slice()) {
         Some(entry) => unsafe {
             fill_protoent_r(
@@ -26584,15 +26678,17 @@ pub unsafe extern "C" fn getprotobyname_r(
                 result,
             )
         },
-        None => 0, // not found, result stays NULL (glibc behavior)
+        None => 0,
     }
 }
 
-/// `getprotobynumber_r` — reentrant protocol lookup by number.
+/// Bench-only: the pre-index `getprotobynumber_r`. See
+/// `getprotobyname_r_legacy_fs_per_call_for_bench`.
 ///
-/// Native implementation: scans /etc/protocols.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getprotobynumber_r(
+/// # Safety
+/// Same contract as `getprotobynumber_r`.
+#[doc(hidden)]
+pub unsafe fn getprotobynumber_r_legacy_fs_per_call_for_bench(
     proto: c_int,
     result_buf: *mut c_void,
     buf: *mut c_char,

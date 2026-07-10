@@ -431,9 +431,19 @@ type ServByPortR = unsafe extern "C" fn(
 ) -> libc::c_int;
 
 #[cfg(feature = "abi-bench")]
+type ProtoByNameR = unsafe extern "C" fn(
+    *const libc::c_char,
+    *mut libc::protoent,
+    *mut libc::c_char,
+    usize,
+    *mut *mut libc::protoent,
+) -> libc::c_int;
+
+#[cfg(feature = "abi-bench")]
 struct HostServentR {
     by_name: ServByNameR,
     by_port: ServByPortR,
+    proto_by_name: ProtoByNameR,
 }
 
 #[cfg(feature = "abi-bench")]
@@ -454,6 +464,7 @@ fn host_servent_r() -> &'static HostServentR {
         HostServentR {
             by_name: mem::transmute::<*mut c_void, ServByNameR>(sym(c"getservbyname_r")),
             by_port: mem::transmute::<*mut c_void, ServByPortR>(sym(c"getservbyport_r")),
+            proto_by_name: mem::transmute::<*mut c_void, ProtoByNameR>(sym(c"getprotobyname_r")),
         }
     })
 }
@@ -873,6 +884,126 @@ fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
                 };
                 black_box(rc);
                 black_box(h_result);
+            },
+        );
+
+        // --- reentrant protocol row (bd-o7l0tn) ----------------------------------
+        let mut r_protoent: libc::protoent = unsafe { mem::zeroed() };
+        let mut rp_buf = [0i8; 1024];
+        let mut rp_result: *mut libc::protoent = std::ptr::null_mut();
+
+        {
+            let mut h_protoent: libc::protoent = unsafe { mem::zeroed() };
+            let mut hp_buf = [0i8; 1024];
+            let mut hp_result: *mut libc::protoent = std::ptr::null_mut();
+            let fl_rc = unsafe {
+                frankenlibc_abi::unistd_abi::getprotobyname_r(
+                    proto.as_ptr(),
+                    (&raw mut r_protoent).cast::<c_void>(),
+                    rp_buf.as_mut_ptr(),
+                    rp_buf.len(),
+                    (&raw mut rp_result).cast::<*mut c_void>(),
+                )
+            };
+            let host_rc = unsafe {
+                (host_servent_r().proto_by_name)(
+                    proto.as_ptr(),
+                    &raw mut h_protoent,
+                    hp_buf.as_mut_ptr(),
+                    hp_buf.len(),
+                    &raw mut hp_result,
+                )
+            };
+            assert_eq!(fl_rc, 0, "FrankenLibC getprotobyname_r failed");
+            assert_eq!(host_rc, 0, "host glibc getprotobyname_r failed");
+            assert!(!rp_result.is_null() && !hp_result.is_null());
+            assert_eq!(
+                unsafe { (*rp_result).p_proto },
+                unsafe { (*hp_result).p_proto },
+                "getprotobyname_r protocol number parity"
+            );
+            assert_eq!(
+                unsafe { CStr::from_ptr((*rp_result).p_name) },
+                unsafe { CStr::from_ptr((*hp_result).p_name) },
+                "getprotobyname_r name parity"
+            );
+        }
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getprotobyname_r_tcp",
+                impl_label: "frankenlibc_abi",
+                api_family: "resolver",
+                symbol: "getprotobyname_r",
+                workload: "reentrant lookup tcp into caller buffer",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let rc = unsafe {
+                    frankenlibc_abi::unistd_abi::getprotobyname_r(
+                        proto.as_ptr(),
+                        (&raw mut r_protoent).cast::<c_void>(),
+                        rp_buf.as_mut_ptr(),
+                        rp_buf.len(),
+                        (&raw mut rp_result).cast::<*mut c_void>(),
+                    )
+                };
+                black_box(rc);
+                black_box(rp_result);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getprotobyname_r_tcp",
+                impl_label: "frankenlibc_legacy_orig",
+                api_family: "resolver",
+                symbol: "getprotobyname_r",
+                workload: "reentrant lookup tcp into caller buffer",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let rc = unsafe {
+                    frankenlibc_abi::unistd_abi::getprotobyname_r_legacy_fs_per_call_for_bench(
+                        proto.as_ptr(),
+                        (&raw mut r_protoent).cast::<c_void>(),
+                        rp_buf.as_mut_ptr(),
+                        rp_buf.len(),
+                        (&raw mut rp_result).cast::<*mut c_void>(),
+                    )
+                };
+                black_box(rc);
+                black_box(rp_result);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getprotobyname_r_tcp",
+                impl_label: "host_glibc",
+                api_family: "resolver",
+                symbol: "getprotobyname_r",
+                workload: "reentrant lookup tcp into caller buffer",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let mut h_protoent: libc::protoent = unsafe { mem::zeroed() };
+                let mut hp_buf = [0i8; 1024];
+                let mut hp_result: *mut libc::protoent = std::ptr::null_mut();
+                let rc = unsafe {
+                    (host_servent_r().proto_by_name)(
+                        proto.as_ptr(),
+                        &raw mut h_protoent,
+                        hp_buf.as_mut_ptr(),
+                        hp_buf.len(),
+                        &raw mut hp_result,
+                    )
+                };
+                black_box(rc);
+                black_box(hp_result);
             },
         );
 

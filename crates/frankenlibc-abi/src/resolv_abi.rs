@@ -746,6 +746,32 @@ fn with_protocols_backend_snapshot<R>(
     }
 }
 
+/// Shared `/etc/protocols` lookup by canonical name or alias, through the cached backend
+/// bytes and the generation-stamped parsed index. `Ok(None)` means "no such protocol";
+/// `Err` means the backend could not be read.
+///
+/// Exposed to the crate so the reentrant `getprotobyname_r` (which lives in `unistd_abi`)
+/// can share this cache instead of re-reading and re-parsing the file on every call.
+pub(crate) fn lookup_protocol_entry_by_name(
+    name: &[u8],
+) -> std::io::Result<Option<frankenlibc_core::resolv::ProtocolEntry>> {
+    with_protocols_backend_snapshot(|content, generation| {
+        with_protocol_lookup_cache(|cache| cache.lookup_by_name(generation, content, name).cloned())
+    })
+}
+
+/// Shared `/etc/protocols` lookup by protocol number. Sibling of
+/// [`lookup_protocol_entry_by_name`], shared with the reentrant `getprotobynumber_r`.
+pub(crate) fn lookup_protocol_entry_by_number(
+    number: c_int,
+) -> std::io::Result<Option<frankenlibc_core::resolv::ProtocolEntry>> {
+    with_protocols_backend_snapshot(|content, generation| {
+        with_protocol_lookup_cache(|cache| {
+            cache.lookup_by_number(generation, content, number).cloned()
+        })
+    })
+}
+
 fn with_protocol_lookup_cache<R>(callback: impl FnOnce(&mut ProtocolLookupCache) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
