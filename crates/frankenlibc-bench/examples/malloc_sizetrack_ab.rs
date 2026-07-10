@@ -287,6 +287,23 @@ fn main() {
     }
     let stats = pctl(&sv, 0.5);
 
+    // STATS_SLOT: the deployed single-threaded slot-local record path vs the global combiner. The
+    // slot is fetched ONCE (the deployed malloc/free reuses the guard's already-fetched slot), so
+    // this prices the slot-local UPDATE, not the slot lookup.
+    let slot = m::bench_current_reentry_slot();
+    let mut ssv = Vec::new();
+    for _ in 0..rounds {
+        let t = Instant::now();
+        for _ in 0..iters {
+            for k in 0..N {
+                // SAFETY: single-threaded bench; exclusive access to the slot's segment_local.
+                unsafe { m::record_alloc_free_stats_for_slot_bench(&slot, sizes[k % 4]) };
+            }
+        }
+        ssv.push(t.elapsed().as_nanos() as f64 / (iters * N as u64) as f64);
+    }
+    let stats_slot = pctl(&ssv, 0.5);
+
     // GUARD: the per-alloc reentry guard enter+exit (fs read + slot cache + CAS + drop).
     let mut gv = Vec::new();
     for _ in 0..rounds {
@@ -330,6 +347,11 @@ fn main() {
     );
     println!(
         "STATS_AB record_alloc+free={stats:.2}ns/alloc+free-pair (flat-combining HTM + discarded snapshot)"
+    );
+    println!(
+        "STATS_SLOT_AB slot_local={stats_slot:.2}ns global={stats:.2}ns slot/global={:.3} saves={:.2}ns/pair (deployed single-threaded malloc/free)",
+        stats_slot / stats,
+        stats - stats_slot
     );
     println!(
         "  => swing-2 (inline header) can eliminate ~{:.1}ns of the per-alloc+free size-tracking cost (table {table:.2}ns -> header {head:.2}ns).",

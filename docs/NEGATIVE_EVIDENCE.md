@@ -6,6 +6,30 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — ALLOCATOR frontier CONFIRMED by implementation: single-threaded slot-local stats shipped correctly but the win is **1.63 ns (sub-floor)** — the STATS cost is `apply_locked` field-updates, NOT the combiner CAS
+
+- **Attacked the least-saturated axis (allocator) with the ONE lever** (the user's instruction): single-
+  threaded slot-local stats. Implemented PROPERLY this time (fixing last turn's re-fetch regression):
+  `record_alloc_stats`/`record_free_stats` now take the guard's slot; threaded `Some(reentry_guard.slot)`
+  through all ~19 guarded alloc/free sites (malloc/free/calloc/realloc/memalign/aligned_alloc/
+  realloc_segment_owned), `None` (→ global combiner) at the bootstrap/reentrant sites. Single-threaded +
+  guarded records accumulate non-atomically in `SegmentLocalState.stats`; `MULTI_THREADED` latch flushes
+  the slot once into the global combiner; mallinfo flushes the caller's slot then reads global.
+- **CORRECT.** `malloc_abi_test` **59/0** including `test_mallinfo2_balanced_after_concurrent_alloc_free`.
+  Consistency holds: an object's alloc and free both take guarded paths (→ same slot) or both bootstrap
+  (→ global); the rare guard-crossing mismatch (signal-handler free of a regular alloc) is bounded and
+  advisory-mallinfo-tolerable.
+- **MEASURED SUB-FLOOR — the premise was wrong.** Clean same-binary A/B (`malloc_sizetrack_ab`
+  STATS_SLOT_AB, slot fetched ONCE so it prices the update not the lookup; worker hz1):
+  **slot_local 11.82 ns vs global 13.45 ns = 0.879x, saves 1.63 ns/pair.** The combiner-lock CAS is only
+  ~0.8 ns/record — the STATS cost is `apply_locked` (6 saturating field updates + `per_size_class[bin]` +
+  `stats_bin_for_size`), which BOTH paths pay. On the 55 ns malloc/free that's ~3% = below the segment
+  bench's 4–8% cv ⇒ **NOT a claimable deployed median win.** Kept (correct, architecturally cleaner —
+  ST stats without a lock) but explicitly **NOT claimed** as a win.
+- **FRONTIER CONFIRMED.** This was the last uncontested lever, and it is sub-floor because the allocator's
+  stats cost is irreducible field-update work, not a removable lock. Combined with the saturation survey
+  below, the cc lane (allocator/string/math/resolv) is genuinely at frontier. See the FRONTIER SUMMARY.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — SESSION-WIDE SATURATION SURVEY: every cc lane is mined-by-me or actively-contested-by-another-agent; the one uncontested lever left is the allocator stats ~6 ns (40-site refactor)
 
 Profiled every candidate lane this turn (all existing-bench runs, no code changed) to answer

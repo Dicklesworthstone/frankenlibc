@@ -541,12 +541,19 @@ impl SegmentLocalClass {
 
 struct SegmentLocalState {
     classes: [SegmentLocalClass; NUM_SIZE_CLASSES],
+    /// Single-threaded stats accumulator, written non-atomically ONLY while the allocator reentry
+    /// guard is held (exclusive per-thread access, same invariant as `classes`). Lets the common
+    /// single-threaded malloc/free skip the global stats combiner-lock CAS (~6 ns/pair). Correct
+    /// single-threaded (no cross-thread frees); once `MULTI_THREADED` latches, this is flushed once
+    /// into the global combiner and all further records use the global path.
+    stats: MallocStatsState,
 }
 
 impl SegmentLocalState {
     const fn new() -> Self {
         Self {
             classes: [SegmentLocalClass::new(); NUM_SIZE_CLASSES],
+            stats: MallocStatsState::new(),
         }
     }
 }
@@ -1470,13 +1477,13 @@ pub fn malloc_stats_reset_for_harness() {
 #[doc(hidden)]
 pub fn malloc_stats_record_alloc_for_harness(size: usize) {
     let _ = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
-    record_alloc_stats(size);
+    record_alloc_stats(None, size);
 }
 
 #[doc(hidden)]
 pub fn malloc_stats_record_free_for_harness(size: usize) {
     let _ = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
-    record_free_stats(size);
+    record_free_stats(None, size);
 }
 
 #[doc(hidden)]
@@ -1870,6 +1877,39 @@ impl FlatCombiningStats {
         self.apply_op_with_lock(op, size, bin.min(MALLOC_STATS_BIN_COUNT - 1))
     }
 
+    /// Merge a per-slot single-threaded accumulator into the global state under the combiner lock,
+    /// then reset it. Called when `MULTI_THREADED` latches (and on snapshot) to publish a thread's
+    /// single-threaded-era counts. The accumulator is self-consistent (no cross-thread frees), so a
+    /// field-wise add is exact for cumulative and net counters; `peak_usage` merges via max.
+    fn merge_and_reset(&self, delta: &mut MallocStatsState) {
+        if delta.allocation_events == 0 && delta.free_events == 0 {
+            return;
+        }
+        while self
+            .combiner_lock
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+        // SAFETY: `combiner_lock` is held exclusively for this merge.
+        unsafe {
+            let s = &mut *self.state.get();
+            s.allocation_events = s.allocation_events.saturating_add(delta.allocation_events);
+            s.free_events = s.free_events.saturating_add(delta.free_events);
+            s.total_allocated = s.total_allocated.saturating_add(delta.total_allocated);
+            s.total_freed = s.total_freed.saturating_add(delta.total_freed);
+            s.active_allocations = s.active_allocations.saturating_add(delta.active_allocations);
+            s.live_bytes = s.live_bytes.saturating_add(delta.live_bytes);
+            s.peak_usage = s.peak_usage.max(s.live_bytes).max(delta.peak_usage);
+            for i in 0..MALLOC_STATS_BIN_COUNT {
+                s.per_size_class[i] = s.per_size_class[i].saturating_add(delta.per_size_class[i]);
+            }
+        }
+        *delta = MallocStatsState::new();
+        self.combiner_lock.store(false, Ordering::Release);
+    }
+
     fn apply_locked(state: &mut MallocStatsState, op: usize, size: usize, bin: usize) {
         match op {
             FC_OP_ALLOC => {
@@ -1993,27 +2033,70 @@ fn same_small_malloc_size_class(a: usize, b: usize) -> bool {
 }
 
 #[inline]
-fn record_alloc_stats(size: usize) {
+/// Publish a thread's single-threaded-era stats accumulator into the global combiner.
+///
+/// # Safety
+/// The caller must hold the allocator reentry guard for `slot` (exclusive access to `segment_local`).
+#[inline]
+unsafe fn flush_slot_stats(slot: &AllocatorReentrySlot, global: &FlatCombiningStats) {
+    // SAFETY: exclusive per-thread access to `segment_local` per the contract above.
+    let pending = unsafe { &mut (*slot.segment_local.get()).stats };
+    global.merge_and_reset(pending);
+}
+
+/// Record one alloc/free into the malloc stats. `slot` is the caller's guard slot when the allocator
+/// reentry guard is held (hot path), else `None` (bootstrap/reentrant/foreign — no exclusive slot
+/// access), which routes to the global combiner. Single-threaded + guarded records accumulate
+/// non-atomically in the slot, skipping the combiner-lock CAS.
+#[inline]
+fn record_stats(slot: Option<&AllocatorReentrySlot>, op: usize, size: usize) {
     if size == 0 {
         return;
     }
-    if let Some(stats) = global_alloc_stats() {
-        stats.record_alloc(size, stats_bin_for_size(size));
+    let Some(global) = global_alloc_stats() else {
+        return;
+    };
+    let bin = stats_bin_for_size(size);
+    if let Some(slot) = slot {
+        if !MULTI_THREADED.load(Ordering::Relaxed) {
+            // SAFETY: guard held (caller passed its guard slot) + single-threaded => exclusive.
+            unsafe {
+                FlatCombiningStats::apply_locked(&mut (*slot.segment_local.get()).stats, op, size, bin);
+            }
+            return;
+        }
+        // Multi-threaded: publish this slot's single-threaded-era pending once, then go global so
+        // cross-thread frees stay consistent.
+        // SAFETY: guard held => exclusive access to this slot's stats.
+        unsafe { flush_slot_stats(slot, global) };
+    }
+    if op == FC_OP_ALLOC {
+        global.record_alloc(size, bin);
+    } else {
+        global.record_free(size, bin);
     }
 }
 
 #[inline]
-fn record_free_stats(size: usize) {
-    if size == 0 {
-        return;
-    }
-    if let Some(stats) = global_alloc_stats() {
-        stats.record_free(size, stats_bin_for_size(size));
-    }
+fn record_alloc_stats(slot: Option<&AllocatorReentrySlot>, size: usize) {
+    record_stats(slot, FC_OP_ALLOC, size);
+}
+
+#[inline]
+fn record_free_stats(slot: Option<&AllocatorReentrySlot>, size: usize) {
+    record_stats(slot, FC_OP_FREE, size);
 }
 
 #[inline]
 fn snapshot_alloc_stats() -> MallocStatsSnapshot {
+    // Publish the calling thread's single-threaded-era pending so the snapshot reflects it. The
+    // allocator guard grants exclusive access to this thread's slot; skip if unavailable (reentrant).
+    if let Some(global) = global_alloc_stats()
+        && let Some(guard) = enter_allocator_reentry_guard()
+    {
+        // SAFETY: the guard grants exclusive access to `guard.slot.segment_local`.
+        unsafe { flush_slot_stats(guard.slot, global) };
+    }
     global_alloc_stats()
         .map(|s| s.snapshot())
         .unwrap_or_default()
@@ -2356,8 +2439,30 @@ pub fn fallback_remove_sized_for_bench(ptr: *mut c_void) -> Option<usize> {
 /// HTM path that builds and discards a snapshot on every call.
 #[doc(hidden)]
 pub fn record_alloc_free_stats_for_bench(size: usize) {
-    record_alloc_stats(size);
-    record_free_stats(size);
+    record_alloc_stats(None, size);
+    record_free_stats(None, size);
+}
+
+/// Opaque bench handle wrapping the calling thread's reentry slot (the slot type is private).
+#[doc(hidden)]
+pub struct BenchSlotHandle(Option<&'static AllocatorReentrySlot>);
+
+/// Bench hook: the calling thread's reentry slot, fetched ONCE by the bench so the record A/B prices
+/// the slot-local update, not the slot lookup (the deployed path reuses the guard's slot).
+#[doc(hidden)]
+pub fn bench_current_reentry_slot() -> BenchSlotHandle {
+    BenchSlotHandle(current_allocator_reentry_slot())
+}
+
+/// Bench hook: one alloc+free stats record pair with a pre-fetched slot (`Some` = deployed
+/// single-threaded slot-local path; `None` = global combiner path).
+///
+/// # Safety
+/// Single-threaded bench context: exclusive access to the slot's `segment_local`.
+#[doc(hidden)]
+pub unsafe fn record_alloc_free_stats_for_slot_bench(handle: &BenchSlotHandle, size: usize) {
+    record_alloc_stats(handle.0, size);
+    record_free_stats(handle.0, size);
 }
 
 /// Bench hook: the per-alloc reentry guard enter+exit (fs:[0] read + slot cache +
@@ -2422,7 +2527,7 @@ pub fn bench_free_null_old_strict_path() {
         if let Some(size) = fallback_remove_sized_for_slot(reentry_guard.slot, ptr) {
             // SAFETY: unreachable for null, but retained to keep the old frame exact.
             unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
-            record_free_stats(size);
+            record_free_stats(Some(reentry_guard.slot), size);
             return;
         }
         if !check_ownership(ptr as usize) {
@@ -2462,7 +2567,7 @@ pub unsafe extern "C" fn bench_malloc_orig_strict_path(size: usize) -> *mut c_vo
             let out = unsafe { native_libc_malloc(req) };
             if !out.is_null() {
                 fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
-                record_alloc_stats(req);
+                record_alloc_stats(Some(reentry_guard.slot), req);
             }
             runtime_policy::observe(
                 ApiFamily::Allocator,
@@ -2475,7 +2580,7 @@ pub unsafe extern "C" fn bench_malloc_orig_strict_path(size: usize) -> *mut c_vo
         let out = unsafe { native_libc_malloc(req) };
         if !out.is_null() {
             fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
-            record_alloc_stats(req);
+            record_alloc_stats(Some(reentry_guard.slot), req);
         }
         return out;
     }
@@ -2504,7 +2609,7 @@ pub unsafe extern "C" fn bench_free_orig_strict_path(ptr: *mut c_void) {
     if strict_allocator_host_path_active() {
         if let Some(size) = fallback_remove_sized_for_slot(reentry_guard.slot, ptr) {
             unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
-            record_free_stats(size);
+            record_free_stats(Some(reentry_guard.slot), size);
             return;
         }
         if !check_ownership(ptr as usize) {
@@ -2802,8 +2907,8 @@ unsafe fn realloc_segment_owned(
             let Some(previous) = segment_resize_in_place(ptr, requested) else {
                 return std::ptr::null_mut();
             };
-            record_free_stats(previous);
-            record_alloc_stats(requested);
+            record_free_stats(slot, previous);
+            record_alloc_stats(slot, requested);
         }
         return ptr;
     }
@@ -2837,9 +2942,9 @@ unsafe fn realloc_segment_owned(
         fallback_insert_sized(out, requested);
     }
     if let SegmentFreeResult::Freed(freed_size) = segment_free(slot, ptr) {
-        record_free_stats(freed_size);
+        record_free_stats(slot, freed_size);
     }
-    record_alloc_stats(requested);
+    record_alloc_stats(slot, requested);
     out
 }
 
@@ -2851,7 +2956,7 @@ unsafe fn bootstrap_malloc_passthrough(size: usize) -> *mut c_void {
     let out = unsafe { native_libc_malloc(req) };
     fallback_insert_sized(out, req);
     if !out.is_null() {
-        record_alloc_stats(req);
+        record_alloc_stats(None, req);
     }
     out
 }
@@ -2864,7 +2969,7 @@ unsafe fn bootstrap_calloc_passthrough(nmemb: usize, size: usize) -> *mut c_void
     let req = nmemb.saturating_mul(size).max(1);
     fallback_insert_sized(out, req);
     if !out.is_null() {
-        record_alloc_stats(req);
+        record_alloc_stats(None, req);
     }
     out
 }
@@ -2889,9 +2994,9 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         let req = size.max(1);
         fallback_insert_sized(out, req);
         if let Some(old_size) = old_size {
-            record_free_stats(old_size);
+            record_free_stats(None, old_size);
         }
-        record_alloc_stats(req);
+        record_alloc_stats(None, req);
     }
     out
 }
@@ -2900,7 +3005,7 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
 unsafe fn bootstrap_free_passthrough(ptr: *mut c_void) {
     match segment_free(None, ptr) {
         SegmentFreeResult::Freed(size) => {
-            record_free_stats(size);
+            record_free_stats(None, size);
             return;
         }
         SegmentFreeResult::OwnedInvalid => return,
@@ -2911,7 +3016,7 @@ unsafe fn bootstrap_free_passthrough(ptr: *mut c_void) {
     // return host-owned allocations through the native fallback path.
     unsafe { native_libc_free(ptr) };
     if let Some(size) = tracked_size {
-        record_free_stats(size);
+        record_free_stats(None, size);
     }
 }
 
@@ -3042,7 +3147,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
                 if !segment_owned {
                     fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
                 }
-                record_alloc_stats(req);
+                record_alloc_stats(Some(reentry_guard.slot), req);
             }
             runtime_policy::observe(
                 ApiFamily::Allocator,
@@ -3061,7 +3166,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
             if !segment_owned {
                 fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
             }
-            record_alloc_stats(req);
+            record_alloc_stats(Some(reentry_guard.slot), req);
         }
         return out;
     }
@@ -3100,7 +3205,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         }
     };
     if !out.is_null() {
-        record_alloc_stats(req);
+        record_alloc_stats(Some(reentry_guard.slot), req);
     }
     runtime_policy::observe(
         ApiFamily::Allocator,
@@ -3153,7 +3258,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 
     match segment_free(Some(reentry_guard.slot), ptr) {
         SegmentFreeResult::Freed(size) => {
-            record_free_stats(size);
+            record_free_stats(Some(reentry_guard.slot), size);
             return;
         }
         SegmentFreeResult::OwnedInvalid => return,
@@ -3175,7 +3280,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         if let Some(size) = fallback_remove_sized_for_slot(reentry_guard.slot, ptr) {
             // SAFETY: tracked native-fallback allocation returned to the host.
             unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
-            record_free_stats(size);
+            record_free_stats(Some(reentry_guard.slot), size);
             return;
         }
         if !check_ownership(ptr as usize) {
@@ -3234,7 +3339,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     match result {
         FreeResult::Freed => {
             if let Some(size) = known_size {
-                record_free_stats(size);
+                record_free_stats(Some(reentry_guard.slot), size);
             }
         }
         FreeResult::FreedWithCanaryCorruption => {
@@ -3243,7 +3348,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
             // are recorded by the arena.
             adverse = true;
             if let Some(size) = known_size {
-                record_free_stats(size);
+                record_free_stats(Some(reentry_guard.slot), size);
             }
         }
         FreeResult::DoubleFree => {
@@ -3323,7 +3428,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
             if !segment_owned {
                 fallback_insert_sized_for_slot(reentry_guard.slot, out, total);
             }
-            record_alloc_stats(total);
+            record_alloc_stats(Some(reentry_guard.slot), total);
         }
         return out;
     }
@@ -3366,7 +3471,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         }
     };
     if !out.is_null() {
-        record_alloc_stats(total);
+        record_alloc_stats(Some(reentry_guard.slot), total);
     }
     runtime_policy::observe(
         ApiFamily::Allocator,
@@ -3447,8 +3552,8 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             if req == old_size || (req < old_size && same_small_malloc_size_class(req, old_size)) {
                 if req != old_size {
                     fallback_insert_sized(ptr, req);
-                    record_free_stats(old_size);
-                    record_alloc_stats(req);
+                    record_free_stats(Some(reentry_guard.slot), old_size);
+                    record_alloc_stats(Some(reentry_guard.slot), req);
                 }
                 return ptr;
             }
@@ -3458,8 +3563,8 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             if !out.is_null() {
                 let removed_size = fallback_remove_sized(ptr).unwrap_or(old_size);
                 fallback_insert_sized(out, req);
-                record_free_stats(removed_size);
-                record_alloc_stats(req);
+                record_free_stats(Some(reentry_guard.slot), removed_size);
+                record_alloc_stats(Some(reentry_guard.slot), req);
             }
             return out;
         }
@@ -3481,7 +3586,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             }
             let _ = pipeline.free(ptr.cast());
             fallback_insert_sized(out, size.max(1));
-            record_alloc_stats(size.max(1));
+            record_alloc_stats(Some(reentry_guard.slot), size.max(1));
             return out;
         }
 
@@ -3491,7 +3596,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         let out = unsafe { native_libc_realloc(ptr, size) };
         if !out.is_null() {
             fallback_insert_sized(out, size.max(1));
-            record_alloc_stats(size.max(1));
+            record_alloc_stats(Some(reentry_guard.slot), size.max(1));
         }
         return out;
     }
@@ -3663,7 +3768,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     }
 
     // Account new live allocation first so failed old-block release does not undercount.
-    record_alloc_stats(size);
+    record_alloc_stats(Some(reentry_guard.slot), size);
 
     // Free old block and account deallocation only if arena confirms it was released.
     let old_free = pipeline.free(ptr.cast());
@@ -3671,7 +3776,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         old_free,
         FreeResult::Freed | FreeResult::FreedWithCanaryCorruption
     ) {
-        record_free_stats(old_size);
+        record_free_stats(Some(reentry_guard.slot), old_size);
     }
     runtime_policy::observe(
         ApiFamily::Allocator,
@@ -3761,7 +3866,7 @@ pub unsafe extern "C" fn posix_memalign(
         }
     };
     if !out.is_null() {
-        record_alloc_stats(req);
+        record_alloc_stats(Some(_reentry_guard.slot), req);
     }
 
     runtime_policy::observe(
@@ -3859,7 +3964,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
         }
     };
     if !out.is_null() {
-        record_alloc_stats(req);
+        record_alloc_stats(Some(_reentry_guard.slot), req);
     }
 
     runtime_policy::observe(
@@ -3953,7 +4058,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         }
     };
     if !out.is_null() {
-        record_alloc_stats(req);
+        record_alloc_stats(Some(_reentry_guard.slot), req);
     }
 
     runtime_policy::observe(
