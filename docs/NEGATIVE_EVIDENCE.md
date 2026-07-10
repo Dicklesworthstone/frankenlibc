@@ -13775,3 +13775,68 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
 - **Reproducer:** `cargo bench -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench
   getservbyport_r` (and `getservbyname_r`). Run each row **in isolation**; a 4-group sweep inflates
   every arm and compresses the ratios.
+
+### 2026-07-10 - bd-dcrhgl Swing-2 malloc: segment size-class no-deref remaining-byte proof - WIN, benchmark-only
+
+- **NEGATIVE-EVIDENCE GREP FIRST.** Before touching code I grepped
+  `docs/NEGATIVE_EVIDENCE.md` and `docs/perf_next_architectural_swings.md` for
+  `segment|segmented|pagemap|page map|PageMap|radix|bitmap|ownership|no-deref|no fault|no-fault|inline header|Swing-2|bd-dcrhgl`.
+  Closed rows stayed closed: naive min/max+magic inline header is rejected because
+  the range guard is not a no-fault proof; table-guarded inline header is safe but
+  slower than the table; PageOracle checked header is far too slow; lock-free
+  fallback table is closed. The open retry condition was exactly "a new exact
+  no-deref membership or shadow-agreement primitive cheaper than the fallback
+  table." The prior segment-bitmap row satisfied membership alone; no closed row
+  rejected owned segment size-class metadata.
+- **PROFILE / HOTSPOT CONFIRMATION.** Current same-campaign `malloc_st_probe` via
+  `rch exec -- cargo run --profile release-perf -p frankenlibc-bench --example malloc_st_probe --features abi-bench`
+  on worker `vmi1227854` still puts non-null malloc/free on the critical path:
+  size 16 `fl=61.89ns`, `glibc=4.26ns`, `fl/glibc=14.52x`; size 64
+  `65.49ns` vs `4.25ns` (`15.40x`); size 256 `63.23ns` vs `4.11ns`
+  (`15.38x`); size 1024 `63.00ns` vs `3.31ns` (`19.04x`). The prior
+  Swing-2 profile in this ledger already ranked the allocation metadata/fallback
+  table path in the malloc/free flamegraph/perf-stat bundle; this lever attacks
+  that ranked metadata decision only.
+- **LEVER (one, benchmark-only).** Added `SEGMENT_SIZECLASS` to
+  `crates/frankenlibc-bench/examples/malloc_sizetrack_ab.rs`. It models a
+  4MiB power-of-two segment heap with Rust-owned metadata arrays:
+  `segment_bitmap[ptr >> 22]` proves membership, `ptr & !(4MiB-1)` identifies
+  the owned segment, `class_sizes[segment]` supplies the size class, and
+  `(offset - header) % class_size` computes exact remaining bytes for both exact
+  object starts and interior pointers. It never reads candidate/user memory and
+  never reads an inline header. Invalid foreign addresses, header-region
+  addresses, zero, and `usize::MAX` are asserted as non-members.
+- **MEASURED SAME-RUN A/B.** Primary run:
+  `rch exec -- cargo run --profile release-perf -p frankenlibc-bench --example malloc_sizetrack_ab --features abi-bench`
+  on worker `vmi1227854`:
+
+  | arm | p50 ns/op | ratio vs table | saved vs table |
+  |---|---:|---:|---:|
+  | fallback table | 19.23 | 1.000 | 0.00 |
+  | raw header read | 0.61 | 0.032 | 18.62 |
+  | table-guarded header | 19.06 | 0.991 | 0.17 |
+  | segment bitmap membership | 0.96 | 0.050 | 18.27 |
+  | segment size-class remaining | **1.99** | **0.103** | **17.24** |
+
+  Cross-worker sanity on `vmi1293453` reproduced the direction: table `18.65ns`,
+  segment bitmap `0.94ns`, segment size-class `1.88ns`, size-class/table
+  `0.101`, saved `16.76ns/op`.
+- **RESULT.** WIN for the second half of the retry condition: exact no-deref
+  ownership plus exact/interior remaining-byte metadata can be computed from
+  owned segment metadata at about **1.9-2.0ns**, roughly **10% of the fallback
+  table** and far below the rejected guarded-header/table costs. This is not yet
+  a production allocator keep: current strict-path malloc still delegates through
+  host-backed/mixed allocations, so there is no valid production segment header
+  to trust. The next production retry condition is to carve FrankenLibC-owned heap
+  out of real 4MiB-aligned segments, or install an equivalent two-level page map,
+  so membership and size class are both answered by owned metadata before any
+  inline header read or `known_remaining` shadow agreement is allowed.
+- **GATES.** `rustfmt --edition 2024 crates/frankenlibc-bench/examples/malloc_sizetrack_ab.rs --check`
+  passed. `ubs crates/frankenlibc-bench/examples/malloc_sizetrack_ab.rs` exit 0
+  (critical 0; warnings are benchmark-only existing patterns such as asserts,
+  direct indexing, and unsafe benchmark calls). Remote build gate passed:
+  `rch exec -- cargo check -p frankenlibc-bench --example malloc_sizetrack_ab --features abi-bench`
+  on `hz2`. Malloc conformance stayed green:
+  `rch exec -- cargo test -p frankenlibc-abi --test malloc_abi_test -- --test-threads=1`
+  on `vmi1149989`: **55 passed / 0 failed / 1 ignored**. Existing workspace
+  warnings in unrelated `core`/`abi` files remain outside this lever.
