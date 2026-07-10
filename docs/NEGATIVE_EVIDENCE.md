@@ -8,6 +8,8 @@ retried and real wins are confirmed with numbers.
 
 ## ============ FRONTIER SUMMARY (cc_fl / BlackThrush) — cc lane at frontier 2026-07-10; HOLDING ============
 
+**Consolidated finalization: see `docs/PERF_FRONTIER_FINAL.md`** (shipped wins + every reject with ID/null-control/retry-condition).
+
 Consolidated summary of the cc (Claude) agent's lane (allocator/string/math/resolv). Every axis is
 mined-by-me or actively-contested-by-another-agent; the remaining gaps are marginal, risky, or owned.
 
