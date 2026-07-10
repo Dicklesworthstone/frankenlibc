@@ -1087,6 +1087,30 @@ fn record_resolver_stage_outcome(
     );
 }
 
+/// Bench-only: the `resolver_stage_context` + `record_resolver_stage_outcome` helper pair (the
+/// adaptive check-ordering computation + learning update) in isolation.
+#[doc(hidden)]
+pub fn bench_resolver_stage_bookkeeping() {
+    let (aligned, recent_page, ordering) =
+        resolver_stage_context(std::hint::black_box(0x1000), std::hint::black_box(0x2000));
+    record_resolver_stage_outcome(&ordering, aligned, recent_page, None);
+    std::hint::black_box((aligned, recent_page));
+}
+
+/// Bench-only: the `decide` + `observe` membrane pair for `Resolver` in isolation.
+#[doc(hidden)]
+pub fn bench_resolver_decide_observe() {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        std::hint::black_box(0x1000),
+        0,
+        true,
+        false,
+        0,
+    );
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, false);
+}
+
 unsafe fn opt_cstr<'a>(ptr: *const c_char) -> Result<Option<&'a CStr>, ()> {
     if ptr.is_null() {
         return Ok(None);

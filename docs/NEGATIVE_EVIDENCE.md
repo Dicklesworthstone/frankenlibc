@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — PROFILE + SURFACE (bd-cj974n follow-on): the Resolver-family membrane cost is **`decide`+`observe` = 1686 ns**, NOT the stage bookkeeping (153 ns) — getaddrinfo is the next lever but a large multi-site refactor
+
+- **PROFILE (`examples/resolver_bookkeeping_ab.rs`, non-test binary ⇒ strict passthrough, worker ovh-a),
+  isolating the two components of the per-call Resolver membrane tax the getnameinfo fast path skipped:**
+  - `resolver_stage_context` + `record_resolver_stage_outcome`: **153.76 ns** cv 3.5% — CHEAP.
+    `note_check_order_outcome` early-returns under `strict_runtime_kernel_fast_path`, and `check_ordering`
+    for Resolver is light. So the adaptive check-ordering learning is NOT the cost.
+  - `decide` + `observe` (Resolver): **1685.93 ns** cv 6.7% — the ENTIRE cost. `decide()` for Resolver
+    (not in the high-frequency fast-path family list) runs the full kernel/PCC consultation per call.
+  - This confirms the getnameinfo 36x came almost entirely from skipping `decide`+`observe`, and pinpoints
+    the identical lever for the whole Resolver family.
+- **NEXT LEVER (surfaced, not yet shipped): getaddrinfo `decide`+`observe` skip in strict passthrough.**
+  Same safe pattern (strict `decide()` always-Allows; `observe` is pure observability). BUT getaddrinfo is
+  a large, resolution-critical function with **3 `decide` + 19 `observe` call sites** (non-uniform: 15×
+  cost25/denied, 2× cost12/success, …), each `observe` coupled to `decision.profile`, interwoven with the
+  numeric/`/etc/hosts` resolution + addrinfo-list construction. A correct fast path requires
+  conditionalizing all of them (or extracting a bookkeeping-free `resolve_addrinfo` core that returns the
+  failed `CheckStage`) plus an addrinfo-list fast≡full equivalence test. That is its own focused turn — NOT
+  rushed at the tail of another — because a subtle error would corrupt resolution, not just perf. Deferred
+  deliberately; the profiling harness (`bench_resolver_stage_bookkeeping`/`bench_resolver_decide_observe`)
+  is committed so the split and the eventual win are reproducible. Expected win: ~10x on getaddrinfo (the
+  hottest resolver function — every connection).
+
 ## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED, bd-cj974n): `getnameinfo` strict-passthrough fast path — **36.57x** vs the full membrane path, fl 31.98 ns now at PARITY with glibc 32.95 ns (was 36x slower)
 
 - **PROFILE-FIRST.** getnameinfo's numeric render was **1337 ns** (full path) vs glibc 33 ns = ~40x. The
