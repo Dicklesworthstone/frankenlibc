@@ -14458,3 +14458,87 @@ constraint forbids. Where only a profile could settle it, that is said, not glos
   size-dependent delta, which no dead-code change can manufacture. A profile makes it airtight, but
   these three checks catch the frankenmermaid-class error (input never reaches the branch) on
   inspection.
+
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): `/etc/hosts` lookups borrow the backend and stop allocating per line — 2.08x vs ORIG (drift-cancelled), 2.80x faster than host glibc (bd-0p00be)
+
+- **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped `resolve_hosts_subset|read_hosts_backend|hosts
+  backend|HostsLookupCache`. Only hits: my own two "ranked next" pointers. No prior attempt, no
+  rejection. Retried nothing CLOSED. Stayed out of `malloc_abi.rs` (cod's Swing-2).
+- **MECHANISM (source-provable; `perf` still blocked, see bd-3dxo1a).** `read_hosts_backend()`
+  returns an **owned clone of the whole `/etc/hosts`**, and `frankenlibc_core::resolv::lookup_hosts`
+  then runs `parse_hosts_line` on **every line** — which builds an owned address `Vec` plus a
+  `Vec<Vec<u8>>` of hostnames — and clones each matched address into a result `Vec<Vec<u8>>`. Three
+  call sites paid this per call: `resolve_hosts_subset`, `lookup_hosts_ipv4_by_name`, and the
+  `/etc/hosts` node branch of `getaddrinfo` (which is the other half of that row's residual 9.5 µs).
+  Same defect as the services scan, one file over.
+- **LEVER (one).** New allocation-free core scanner
+  `frankenlibc_core::resolv::for_each_hosts_match(content, name, visit)` — same comment stripping,
+  same field separators, same "non-empty hostname list AND valid IPv4/IPv6 address" acceptance test,
+  same file order, at most one match per line; the address slice aliases `content`. New
+  `with_hosts_backend_snapshot` in `resolv_abi` mirrors the services/protocols borrowing accessors.
+  All three call sites converted. The `getaddrinfo` site keeps visiting **every** match (its `visit`
+  always returns `false`), exactly as the old `for candidate` loop did; the two helpers stop at the
+  first parseable address, as before. Backend-error behaviour preserved (`.ok().flatten()` and
+  `unwrap_or_default()` -> no matches).
+- **SUBSTRATE v2 COMPLIANCE — measured with a TRULY INTERLEAVED PAIRED SAMPLER, not criterion arms.**
+  Criterion runs group members **sequentially**, so ORIG/CAND registered side by side do NOT cancel
+  worker/thermal drift. New harness `crates/frankenlibc-bench/examples/hosts_lookup_ab.rs`:
+  ORIG and CAND alternate **within one measured routine**, one call of each per paired sample, with
+  the order swapped every sample; host glibc (via `dlmopen(LM_ID_NEWLM)`, so it cannot bind our
+  `#[no_mangle]` `gethostbyname`) is a third interleaved arm. Every input goes through `black_box`
+  and every result is consumed through `black_box`. `verify()` asserts fl == host glibc on both the
+  resolved address and the canonical name **before** any timing, so a dead-code-eliminated arm
+  cannot pass.
+- **MEASURED (one binary, one `rch exec` invocation, worker `hz2`; 1900 paired samples, 20 reps/arm).**
+
+  | arm | median ns/call | mean | cv |
+  |---|---|---|---|
+  | ORIG (clone + per-line parse) | 6845.52 | 7088.40 | 14.43% |
+  | **CAND (borrow + allocation-free scan)** | **3269.75** | 3461.51 | 22.16% |
+  | host glibc (dlmopen) | 9159.02 | 9271.52 | 8.45% |
+
+  **PAIRED cand/orig median = 0.4799 => 2.08x faster** (the paired per-sample ratio is the
+  drift-cancelled estimator; its cv is 20.94%). **cand/glibc = 0.357x => 2.80x faster than host
+  glibc.** ORIG is reconstructed in-process (it runs the removed clone+parse, then the deployed
+  call), so it **overstates** ORIG and the 2.08x is an UNDER-estimate.
+- **CORRECTION TO MY OWN EARLIER RATIOS (substrate v2, defect 1).** Every prior A/B in this campaign
+  (bd-qds9jk 3.00x, bd-xmng5n 2.24x, bd-77h82y 1.93-1.99x, bd-nyrnnq 31.3x) put ORIG and CAND in one
+  criterion group in one binary/one invocation — which removes *worker identity* variance but, as
+  criterion runs members sequentially, does **not** cancel drift *between* the arms. I had already
+  flagged that limitation in the bd-77h82y row and bounded it by pass-to-pass replication. It stands
+  as a weakness of those numbers, not an invalidation: the 31.3x and 3.00x are far outside any
+  plausible drift, while the 1.93x/2.24x are the ones a drift-cancelled sampler should re-check.
+  **Defect 2 (black_box/DCE) does not apply**: each ORIG arm produced a large distinct delta
+  (297.6 µs vs 9.5 µs; 2.0 µs vs 1.0 µs), which is positive execution proof — a DCE'd arm cannot.
+- **CONFORMANCE GREEN (all remote).** `frankenlibc-core` `resolv` unit tests **270 passed / 0 failed**
+  (the new `for_each_hosts_match`/`hosts_line_match` live there);
+  `conformance_diff_getaddrinfo` **7 passed / 0 failed** (the byte-exact differential vs live glibc
+  for the converted `getaddrinfo` node branch); `resolv_abi_test` **182 / 0 / 31 ignored**;
+  `inet_abi_test` **69 / 0 / 13**; `conformance_diff_netdb_aliases` **1/1**;
+  `conformance_diff_netdb_r_aliases` **1/1**. Plus the harness's own fl-vs-glibc byte-identity
+  assert. `ubs` exit **0**; `rustfmt --check` clean.
+- **RCH DISCIPLINE (recorded; this bit us).** `rch exec` defaults to **Strict remote: off** and will
+  run the build **locally** when it cannot reserve a remote slot — an obedient `rch exec` can still
+  drain disk. The mandatory form is:
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo <subcommand> …`
+  (`RCH_REQUIRE_REMOTE=1` fails closed; `env -u CARGO_TARGET_DIR` is needed because `~/.zshrc`
+  globally exports `CARGO_TARGET_DIR=/data/tmp/cargo-target`, which makes bench-artifact retrieval
+  return ~0 bytes). **Verify every run prints `[RCH] remote <worker>`.** All four invocations behind
+  this row did (`hz2`, `hz2`, `vmi1152480`, `vmi1152480`). If rch errors with no remote slot that is
+  a BLOCKER — wait, retry, or do analysis-only work; never fall back to a local build.
+- **STILL BLOCKED (bd-3dxo1a): per-arm self-time.** The ledger-integrity rule asks for a self-time
+  figure per arm. That needs `perf`, hence a local `--profile release-perf` debuginfo build, which
+  the disk constraint forbids (`/` at 96%, 78 G). Execution is instead proven here by (a) the
+  byte-identity `verify()` and (b) a 2.08x paired delta, neither of which a dead arm can produce. No
+  self-time numbers were invented.
+- **PRE-EXISTING (not this change).** Full `unistd_abi_test` aborts on the argp errno bug (proven at
+  `c1b03f89a`); `clippy -D warnings` blocked by `frankenlibc-core/src/math/exp.rs:815` (`eq_op`).
+- **NO-RETRY NOTE:** do not retry hosts-backend clones or per-line `parse_hosts_line` scans on
+  `resolve_hosts_subset`, `lookup_hosts_ipv4_by_name`, or `getaddrinfo`'s hosts branch. Five
+  `read_hosts_backend()` call sites remain (reverse lookup, `gethostent`, `gethostbyaddr` family);
+  the same `with_hosts_backend_snapshot` + borrowed-scan treatment applies and is now cheap to do.
+  Ranked remaining: **(1)** those five sites; **(2)** cross-family NSS result caching — needs a fresh
+  frame table to pick a mechanism honestly, blocked on bd-3dxo1a; **(3)** a fair `getaddrinfo`
+  host-glibc baseline (bd-ynaqwe).
+- **Reproducer:** `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release
+  -p frankenlibc-bench --features abi-bench --example hosts_lookup_ab`

@@ -167,6 +167,65 @@ pub fn lookup_hosts(content: &[u8], name: &[u8]) -> Vec<Vec<u8>> {
     results
 }
 
+/// Allocation-free analogue of [`lookup_hosts`]: calls `visit` with the address bytes of each
+/// line whose hostname list contains `name` (ASCII case-insensitive), in file order, stopping
+/// as soon as `visit` returns `true`.
+///
+/// Semantics are identical to `lookup_hosts` — same comment stripping, same field separators,
+/// the same "non-empty hostname list AND valid IPv4/IPv6 address" acceptance test, and at most
+/// one match per line. The difference is that nothing is allocated: `lookup_hosts` runs
+/// `parse_hosts_line` on EVERY line, which builds an owned address `Vec` plus a `Vec<Vec<u8>>`
+/// of hostnames, and then clones the matched address into a result `Vec<Vec<u8>>`. Here the
+/// address slice simply aliases `content`.
+pub fn for_each_hosts_match(content: &[u8], name: &[u8], mut visit: impl FnMut(&[u8]) -> bool) {
+    for line in content.split(|&b| b == b'\n') {
+        if let Some(addr) = hosts_line_match(line, name)
+            && visit(addr)
+        {
+            return;
+        }
+    }
+}
+
+/// Borrowed core of [`for_each_hosts_match`]: the address field of `line` iff `line` parses as a
+/// hosts entry (per [`parse_hosts_line`]) and one of its hostnames equals `name`.
+fn hosts_line_match<'a>(line: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
+    // Strip comments (as `parse_hosts_line`).
+    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+        &line[..pos]
+    } else {
+        line
+    };
+
+    let mut fields = line
+        .split(|&b| is_resolver_field_separator(b))
+        .filter(|f| !f.is_empty());
+
+    let addr_field = fields.next()?;
+
+    // `parse_hosts_line` rejects a line with no hostnames; `lookup_hosts` then accepts the line
+    // only if some hostname matches. Both conditions must hold, so test them together.
+    let mut saw_hostname = false;
+    let mut matched = false;
+    for field in fields {
+        saw_hostname = true;
+        if eq_ignore_ascii_case(field, name) {
+            matched = true;
+            break;
+        }
+    }
+    if !saw_hostname || !matched {
+        return None;
+    }
+
+    // Same address validation as `parse_hosts_line`.
+    let valid_addr = is_valid_ipv4_addr_bytes(addr_field)
+        || core::str::from_utf8(addr_field)
+            .ok()
+            .is_some_and(|addr| addr.parse::<Ipv6Addr>().is_ok());
+    valid_addr.then_some(addr_field)
+}
+
 /// Reverse lookup: find hostnames for an IP address in /etc/hosts content.
 pub fn reverse_lookup_hosts(content: &[u8], addr: &[u8]) -> Vec<Vec<u8>> {
     let mut results = Vec::new();

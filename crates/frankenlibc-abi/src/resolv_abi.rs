@@ -686,6 +686,33 @@ fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
     }
 }
 
+/// Borrowing sibling of [`read_hosts_backend`], mirroring `with_services_backend_snapshot` /
+/// `with_protocols_backend_snapshot`. `read_hosts_backend` hands back an OWNED clone of the whole
+/// `/etc/hosts`; every hot hosts lookup paid that clone per call.
+fn with_hosts_backend_snapshot<R>(callback: impl FnOnce(&[u8], u64) -> R) -> std::io::Result<R> {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        HOSTS_BACKEND_OWNED_TLS.with(|cache| cache.with_snapshot(callback))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        HOSTS_BACKEND_TLS.with(|cell| cell.borrow_mut().with_snapshot(callback))
+    }
+}
+
+/// Bench-only: reconstruct the pre-lever per-call hosts work — an owned clone of the whole
+/// `/etc/hosts` plus `lookup_hosts`, which runs `parse_hosts_line` (an address `Vec` + a
+/// `Vec<Vec<u8>>` of hostnames) on EVERY line and clones each matched address into a result
+/// `Vec<Vec<u8>>`. Lets the `frankenlibc_legacy_orig` arm price this lever in the SAME binary.
+#[doc(hidden)]
+pub fn bench_legacy_hosts_scan(name: &[u8]) {
+    let Ok(content) = read_hosts_backend() else {
+        return;
+    };
+    let candidates = frankenlibc_core::resolv::lookup_hosts(&content, name);
+    std::hint::black_box(&candidates);
+}
+
 fn read_services_backend() -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -980,38 +1007,55 @@ enum HostsAddress {
 fn resolve_hosts_subset(node: &str, family: c_int) -> Option<HostsAddress> {
     // Scope boundary: only deterministic files-backend lookup (`/etc/hosts`).
     // Network DNS/NSS backends are intentionally out-of-scope here.
-    let content = read_hosts_backend().ok()?;
-    let candidates = frankenlibc_core::resolv::lookup_hosts(&content, node.as_bytes());
-    for candidate in candidates {
-        let Ok(text) = core::str::from_utf8(&candidate) else {
-            continue;
-        };
-        if (family == libc::AF_UNSPEC || family == libc::AF_INET)
-            && let Ok(v4) = text.parse::<Ipv4Addr>()
-        {
-            return Some(HostsAddress::V4(v4));
-        }
-        if (family == libc::AF_UNSPEC || family == libc::AF_INET6)
-            && let Ok(v6) = text.parse::<Ipv6Addr>()
-        {
-            return Some(HostsAddress::V6(v6));
-        }
-    }
-    None
+    // Borrow the cached backend and walk it allocation-free. `read_hosts_backend()` cloned the
+    // whole `/etc/hosts` per call, and `lookup_hosts` then ran `parse_hosts_line` (an address
+    // `Vec` + a `Vec<Vec<u8>>` of hostnames) on EVERY line and cloned each match into a result
+    // `Vec<Vec<u8>>`. Visit order, the match test, the address validation and the first-parseable
+    // -wins selection are unchanged.
+    with_hosts_backend_snapshot(|content, _generation| {
+        let mut found = None;
+        frankenlibc_core::resolv::for_each_hosts_match(content, node.as_bytes(), |addr| {
+            let Ok(text) = core::str::from_utf8(addr) else {
+                return false;
+            };
+            if (family == libc::AF_UNSPEC || family == libc::AF_INET)
+                && let Ok(v4) = text.parse::<Ipv4Addr>()
+            {
+                found = Some(HostsAddress::V4(v4));
+                return true;
+            }
+            if (family == libc::AF_UNSPEC || family == libc::AF_INET6)
+                && let Ok(v6) = text.parse::<Ipv6Addr>()
+            {
+                found = Some(HostsAddress::V6(v6));
+                return true;
+            }
+            false
+        });
+        found
+    })
+    .ok()
+    .flatten()
 }
 
 fn lookup_hosts_ipv4_by_name(name: &[u8]) -> Option<Ipv4Addr> {
-    let content = read_hosts_backend().ok()?;
-    let candidates = frankenlibc_core::resolv::lookup_hosts(&content, name);
-    for candidate in candidates {
-        let Ok(text) = core::str::from_utf8(&candidate) else {
-            continue;
-        };
-        if let Ok(v4) = text.parse::<Ipv4Addr>() {
-            return Some(v4);
-        }
-    }
-    None
+    // Borrowed, allocation-free hosts walk; see `resolve_hosts_subset`.
+    with_hosts_backend_snapshot(|content, _generation| {
+        let mut found = None;
+        frankenlibc_core::resolv::for_each_hosts_match(content, name, |addr| {
+            let Ok(text) = core::str::from_utf8(addr) else {
+                return false;
+            };
+            if let Ok(v4) = text.parse::<Ipv4Addr>() {
+                found = Some(v4);
+                return true;
+            }
+            false
+        });
+        found
+    })
+    .ok()
+    .flatten()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2243,22 +2287,37 @@ pub unsafe extern "C" fn getaddrinfo(
                     return libc::EAI_NONAME;
                 }
 
-                // Check /etc/hosts for all matches (subset only)
-                let content = read_hosts_backend().unwrap_or_default();
-                let candidates = frankenlibc_core::resolv::lookup_hosts(&content, text.as_bytes());
-                for candidate in candidates {
-                    if let Ok(c_text) = core::str::from_utf8(&candidate) {
-                        if (family == libc::AF_UNSPEC || family == libc::AF_INET)
-                            && let Ok(v4) = c_text.parse::<Ipv4Addr>()
-                        {
-                            push_addrinfo_v4_nodes(&mut nodes, v4, &profiles, hints_ref, canonname);
-                        } else if (family == libc::AF_UNSPEC || family == libc::AF_INET6)
-                            && let Ok(v6) = c_text.parse::<Ipv6Addr>()
-                        {
-                            push_addrinfo_v6_nodes(&mut nodes, v6, &profiles, hints_ref, canonname);
-                        }
-                    }
-                }
+                // Check /etc/hosts for all matches (subset only). Borrowed + allocation-free:
+                // `read_hosts_backend()` cloned the whole file per call and `lookup_hosts` ran
+                // `parse_hosts_line` (address `Vec` + `Vec<Vec<u8>>` hostnames) on EVERY line,
+                // cloning each match into a result `Vec<Vec<u8>>`. This visits the same matching
+                // lines in the same order and pushes the same nodes; `visit` never returns `true`
+                // because every match must be pushed, exactly as the old `for candidate` loop did.
+                // A backend read error still yields no matches (was `unwrap_or_default()`).
+                let _ = with_hosts_backend_snapshot(|content, _generation| {
+                    frankenlibc_core::resolv::for_each_hosts_match(
+                        content,
+                        text.as_bytes(),
+                        |addr| {
+                            if let Ok(c_text) = core::str::from_utf8(addr) {
+                                if (family == libc::AF_UNSPEC || family == libc::AF_INET)
+                                    && let Ok(v4) = c_text.parse::<Ipv4Addr>()
+                                {
+                                    push_addrinfo_v4_nodes(
+                                        &mut nodes, v4, &profiles, hints_ref, canonname,
+                                    );
+                                } else if (family == libc::AF_UNSPEC || family == libc::AF_INET6)
+                                    && let Ok(v6) = c_text.parse::<Ipv6Addr>()
+                                {
+                                    push_addrinfo_v6_nodes(
+                                        &mut nodes, v6, &profiles, hints_ref, canonname,
+                                    );
+                                }
+                            }
+                            false
+                        },
+                    );
+                });
             }
 
             if nodes.is_empty() {
