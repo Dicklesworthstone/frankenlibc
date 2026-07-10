@@ -14389,3 +14389,72 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   allocating `read_bounded_cstr`; trivial `_ref` swap.
 - **Reproducer:** `rch exec -- cargo bench -p frankenlibc-bench --features abi-bench --bench
   glibc_baseline_bench getaddrinfo_localhost_http` (3 arms, one binary, one invocation).
+
+## 2026-07-10 (cc_fl / BlackThrush) — LEDGER-INTEGRITY AUDIT (dead-code-bench rule): one UNSOURCED no-retry VOIDED (it was mine), four rejects VERIFIED as executing, self-time backfill BLOCKED
+
+Applying the dead-code-bench rule (*"a REJECT measured on an input that never reaches the code is
+INVALID"*) to the two families named for audit. Verification here is **static** — harness source +
+recorded measurements — because `perf` needs a local debuginfo build, which the active disk
+constraint forbids. Where only a profile could settle it, that is said, not glossed.
+
+- **(A) "portable-SIMD string residuals wmemchr/wcsnlen/strrchr, parked pending AVX2+ifunc" —
+  UNSOURCED. DECLARED VOID. This one is mine.** Grepping every `^##` verdict row:
+  - `wmemchr`: **two entries, both WINS** — 2026-06-29 wide membrane fast-path, and 2026-07-04
+    "**WIN (SHIPPED): wmemchr 256B XOR-min fold tier, ~9-10% faster**". **There is no wmemchr
+    rejection anywhere in this ledger.**
+  - `wcsnlen`: 2026-06-29 "**WIN** wcsnlen strict fast-path DEPLOYED (~2.2x vs ORIG)"; plus a
+    2026-06-25 "wcsnlen floor LOSS" row.
+  - `strrchr`: 2026-07-02 "**WIN** strrchr strict fast-path (~5.6x vs ORIG)"; plus one narrow
+    rejection of the **128B-unroll specifically** (below).
+  The words "parked"/"saturated for portable std::simd" appear **only in my own NO-RETRY preambles**
+  (five occurrences: L13882, L13966, L14152, L14233, L14321). The claim entered from turn
+  instructions, never from a measurement, and I copied it forward five times. **It is void.** The
+  portable-SIMD string surface is NOT closed; the only thing rejected there is the strrchr 128B
+  unroll. `wmemchr` and `wcsnlen` are open — indeed `wmemchr`'s most recent measured action was a
+  shipped 9-10% win. Filed **bd-9248oh** so this is not re-propagated. Blocker for the self-time
+  backfill: **bd-3dxo1a**.
+- **(B) strrchr 128B-unroll REJECT (2026-07-04) — VALID; the code executed.** Harness
+  `crates/frankenlibc-bench/benches/strrchr_glibc_bench.rs` calls the **deployed**
+  `frankenlibc_abi::string_abi::strrchr`, not a core kernel. **Execution proof:** the change moved
+  the fl/glibc ratio in BOTH directions as a function of size — n=64 regressed 1.67x -> 2.60x while
+  n=4096 improved 2.06x -> 1.42x. A change to code that never runs cannot regress n=64 by 1.56x.
+  Rejection stands (short strings dominate strrchr's real use). **Self-time %: not recorded** (the
+  row predates the rule); backfill blocked, see (E).
+- **(C) malloc header-proof family, all three rejections — VALID; the rejected code executed in each.**
+  Each reports a **distinct, reproducible per-op timing for the candidate arm itself**, which a
+  dead-code arm cannot produce:
+  - L1175 (naive min/max is not a no-fault proof): `SIZETRACK_AB table=19.59ns header=0.63ns`
+  - L13363 (existing-table guarded header): `SIZETRACK_GUARDED_HEADER_AB table=17.57ns
+    guarded_header=18.29ns`
+  - L13591 (PageOracle-checked header proof): `SIZETRACK_AB table=9.79ns header=0.83ns`;
+    `guarded_header=10.37ns`
+  In all three the candidate path yields its own non-degenerate number, differing from the baseline
+  arm — so it ran. These are **not** dead-code rejects; nothing to reopen. **Self-time %: not
+  recorded**; backfill blocked. (These rows are cod's lane; audited, not modified.)
+- **(D) STATUS CORRECTION — the segment-bitmap no-deref membership primitive is NOT an open lever.**
+  L13634 already records it as a **WIN** (primitive proven at bench level against the 9.79 ns
+  fallback-table bar), and commit `0b06aa4a5 "docs: reject production segment malloc wiring"`
+  rejects the production wiring. `rg -c segment_bitmap crates/frankenlibc-abi/src/malloc_abi.rs` =
+  **0**: it exists only in benches. Anyone told "the open Swing-2 lever is the segment bitmap"
+  should read those two rows first — the primitive is measured, the *wiring* is what failed.
+- **(E) BLOCKER (surfaced, not worked around).** The rule also asks that a self-time figure be
+  attached to each REJECT. For rows (B) and (C) that requires `perf`, which requires a local
+  `--profile release-perf` build with debuginfo, which the active **no-local-cargo disk constraint
+  forbids** (`/` at 96%). I did the static half (harness reaches the code; candidate arm produced a
+  distinct timing) and did **not** fabricate self-time numbers. To unblock, either (i) relax the
+  constraint for one short `release-perf` build — the remote cargo cache is warm, ~1 min — or
+  (ii) add a remote-`perf` path to `rch` (`rch exec -- perf record …` + retrieve `perf.data`).
+  Until then, legacy rejects carry execution-verified status but no self-time %.
+- **COMPLIANCE GOING FORWARD.** Every REJECT I write from here carries its self-time figure. The two
+  NO-RETRY rows I authored this campaign already do, and both are non-zero, i.e. the code ran and was
+  simply cheap: `getenv` = **0.11% self** (`native_getenv_raw` 0.05 + `getenv` 0.05 + std closure
+  0.01 + `_var_os` 0.00); `stat` elision = **0.08% user self** (`try_statx` 0.03 + `statx` 0.03 +
+  `std::sys::fs::metadata` 0.02) plus ~1.6% unresolved kernel frames. `bd-rh3gc8` was refuted from
+  source (fixed arrays), never benched, and is closed INVALID.
+- **METHOD NOTE (generalisable, cheap).** The dead-code failure mode is detectable *without* a
+  profiler in most cases: (1) confirm the harness calls the **deployed ABI symbol**, not a core
+  kernel that a strict fast-path bypasses; (2) confirm the candidate arm produced a **distinct,
+  non-degenerate timing** rather than tracking the baseline exactly; (3) prefer a bidirectional or
+  size-dependent delta, which no dead-code change can manufacture. A profile makes it airtight, but
+  these three checks catch the frankenmermaid-class error (input never reaches the branch) on
+  inspection.
