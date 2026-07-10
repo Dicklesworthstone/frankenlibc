@@ -14542,3 +14542,42 @@ constraint forbids. Where only a profile could settle it, that is said, not glos
   host-glibc baseline (bd-ynaqwe).
 - **Reproducer:** `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release
   -p frankenlibc-bench --features abi-bench --example hosts_lookup_ab`
+
+## 2026-07-10 (cod_fl) — REJECT (stability gate): exact no-deref 4MiB segment membership is 1.708ns, but paired CV is 13.20% (bd-dcrhgl)
+
+- **NEGATIVE-EVIDENCE FIRST / STATUS CORRECTION.** Grepped
+  `segment|pagemap|page map|PageMap|radix|bitmap|ownership|no-deref|bd-dcrhgl` before editing. The
+  earlier benchmark-only bitmap WIN at L13634 used fixed-order arm blocks and recorded no candidate
+  self-time; the production rejection at L14063 profiled only the retained baseline. Under substrate
+  v2 neither row closes this retry. The rejected global tagged-free-list + per-slot-sidecar production
+  composition remains CLOSED; this attempt measures membership alone and changes no allocator code.
+- **ONE LEVER.** `SegmentMembershipForBench` models exact 4MiB ownership as
+  `(ptr >> 22) - base_segment`, safe `Vec<u64>::get`, and one bit test. It reads only benchmark-owned
+  bitmap memory and never dereferences the queried address. The named `#[inline(never)]`
+  `segment_bitmap_profile_batch` consumes black-boxed addresses and returns a black-boxed hit count;
+  preflight asserts all 256 owned addresses hit and address zero misses.
+- **HONEST ONE-BINARY RUN.** One release-perf binary on remote worker `vmi1167313`; four warm-up
+  pairs were discarded, then 31 samples alternated table-first / bitmap-first order inside one paired
+  routine. Each arm executed 1,024,000 operations per sample. Command:
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR RCH_WORKER=vmi1167313 rch exec -- cargo bench -p
+  frankenlibc-bench --features abi-bench --bench malloc_bench --profile release-perf --
+  segment_bitmap_integrity --noplot`. RCH reported `[RCH] remote vmi1167313`; no local Cargo command
+  ran.
+- **PROFILE INTEGRITY — NON-ZERO SELF-TIME.** Before scoring, remote `perf record -F 4999
+  --call-graph fp` attached to the exact benchmark process for two seconds. It captured **1,573
+  samples**. `perf report --no-children --sort=symbol` assigns
+  `malloc_bench::segment_bitmap_profile_batch` **98.83% self-time**, proving the pure call was not
+  eliminated. Retrieved artifacts are non-empty:
+  `candidate.perf` **292,948 bytes**, `perf-report.txt` **1,684 bytes**, and `paired.json` **2,065
+  bytes** under `target/criterion/bd-dcrhgl-segment-membership/run-3369290-1783691919660336914/`.
+- **MEASURED.** Bitmap p50 **1.708ns/op**, below the required historical **9.79ns** fallback-table
+  bar by **8.082ns** (0.174x of the bar). The same-binary fallback insert+lookup+remove reference was
+  **30.679ns/op**, so bitmap/reference p50 was **0.0529**. However table CV was **23.70%**, bitmap CV
+  **17.42%**, and paired-ratio CV **13.20%**, all above the mandatory **<5%** gate. This is therefore
+  a stability REJECT, not permission to wire production.
+- **RETRY CONDITION (OPEN AND NARROW).** Retry membership alone only with the same profiled named
+  frame, but prepopulate the fallback table so the reference performs lookup alone, interleave short
+  ABBA/BAAB microblocks *within every sample*, and lengthen candidate sample time until raw arm and
+  paired-ratio CV are each <5%. If that clears, the production retry must use per-thread segment
+  bump/magazines with address-derived shadow metadata; do not recreate the rejected global tagged
+  free-list/sidecar composition.

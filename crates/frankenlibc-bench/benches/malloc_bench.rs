@@ -4,10 +4,13 @@
 //! flat-combining vs lock-based baselines under varying thread counts,
 //! operation mixes, and batch sizes.
 
-use std::fs::{File, create_dir_all};
+use std::fs::{self, File, create_dir_all};
 use std::hint::black_box;
 use std::io::Write;
+#[cfg(feature = "abi-bench")]
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, RwLock};
 use std::thread;
@@ -22,6 +25,217 @@ const FC_OP_READ: usize = 1;
 const FC_OP_ALLOC: usize = 2;
 const FC_OP_FREE: usize = 3;
 const SAMPLE_STRIDE: u64 = 64;
+
+#[cfg(feature = "abi-bench")]
+const SEGMENT_SHIFT_FOR_BENCH: usize = 22;
+
+#[cfg(feature = "abi-bench")]
+struct SegmentMembershipForBench {
+    base_segment: usize,
+    words: Vec<u64>,
+}
+
+#[cfg(feature = "abi-bench")]
+impl SegmentMembershipForBench {
+    fn new(addrs: &[usize]) -> Self {
+        let min_segment = addrs
+            .iter()
+            .map(|addr| addr >> SEGMENT_SHIFT_FOR_BENCH)
+            .min()
+            .expect("segment benchmark needs at least one address");
+        let max_segment = addrs
+            .iter()
+            .map(|addr| addr >> SEGMENT_SHIFT_FOR_BENCH)
+            .max()
+            .expect("segment benchmark needs at least one address");
+        let segment_span = max_segment - min_segment + 1;
+        let mut words = vec![0u64; segment_span.div_ceil(64)];
+        for &addr in addrs {
+            let rel = (addr >> SEGMENT_SHIFT_FOR_BENCH) - min_segment;
+            words[rel >> 6] |= 1u64 << (rel & 63);
+        }
+        Self {
+            base_segment: min_segment,
+            words,
+        }
+    }
+
+    #[inline(always)]
+    fn contains(&self, addr: usize) -> bool {
+        let rel = (addr >> SEGMENT_SHIFT_FOR_BENCH).wrapping_sub(self.base_segment);
+        let word = rel >> 6;
+        let Some(bits) = self.words.get(word) else {
+            return false;
+        };
+        (bits & (1u64 << (rel & 63))) != 0
+    }
+}
+
+/// Keep the tested shift + safe bitmap indexing in one named frame while
+/// amortizing the call boundary over a full batch. Inputs and the accumulated
+/// result cross optimizer barriers so a pure membership call cannot be DCE'd.
+#[cfg(feature = "abi-bench")]
+#[inline(never)]
+fn segment_bitmap_profile_batch(
+    membership: &SegmentMembershipForBench,
+    addrs: &[usize],
+    repetitions: u64,
+) -> usize {
+    let mut hits = 0usize;
+    for _ in 0..black_box(repetitions) {
+        for &addr in black_box(addrs) {
+            hits = hits.wrapping_add(membership.contains(black_box(addr)) as usize);
+        }
+    }
+    black_box(hits)
+}
+
+#[cfg(feature = "abi-bench")]
+#[inline(never)]
+fn fallback_table_profile_batch(addrs: &[usize], sizes: &[usize], repetitions: u64) -> usize {
+    use frankenlibc_abi::malloc_abi as malloc;
+
+    let mut observed = 0usize;
+    for _ in 0..black_box(repetitions) {
+        for (index, &addr) in black_box(addrs).iter().enumerate() {
+            let ptr = black_box(addr) as *mut libc::c_void;
+            let size = black_box(sizes[index % sizes.len()]);
+            malloc::fallback_insert_sized_for_bench(ptr, size);
+            observed = observed
+                .wrapping_add(black_box(malloc::fallback_size_for_bench(ptr)).unwrap_or_default());
+            observed = observed.wrapping_add(
+                black_box(malloc::fallback_remove_sized_for_bench(ptr)).unwrap_or_default(),
+            );
+        }
+    }
+    black_box(observed)
+}
+
+#[cfg(feature = "abi-bench")]
+fn paired_cv_pct(samples: &[f64]) -> f64 {
+    let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+    let variance = samples
+        .iter()
+        .map(|sample| {
+            let delta = sample - mean;
+            delta * delta
+        })
+        .sum::<f64>()
+        / (samples.len() - 1) as f64;
+    100.0 * variance.sqrt() / mean
+}
+
+#[cfg(feature = "abi-bench")]
+fn segment_bench_artifact_dir() -> PathBuf {
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .expect("RCH must provide CARGO_TARGET_DIR for retrievable bench artifacts");
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time must follow the Unix epoch")
+        .as_nanos();
+    let output_dir = PathBuf::from(target_dir)
+        .join("criterion")
+        .join("bd-dcrhgl-segment-membership")
+        .join(format!("run-{}-{timestamp}", std::process::id()));
+    create_dir_all(&output_dir).expect("create segment benchmark artifact directory");
+    output_dir
+}
+
+#[cfg(feature = "abi-bench")]
+fn profile_segment_bitmap_execution(
+    output_dir: &Path,
+    membership: &SegmentMembershipForBench,
+    addrs: &[usize],
+) -> (f64, String) {
+    let perf_path = output_dir.join("candidate.perf");
+    let report_path = output_dir.join("perf-report.txt");
+    let pid = std::process::id().to_string();
+    let mut perf = Command::new("perf")
+        .args(["record", "-F", "4999", "--call-graph", "fp", "-p"])
+        .arg(&pid)
+        .arg("-o")
+        .arg(&perf_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("spawn remote perf record for segment membership");
+    thread::sleep(Duration::from_millis(250));
+    assert!(
+        perf.try_wait().expect("poll remote perf record").is_none(),
+        "perf record exited before the candidate workload"
+    );
+
+    let profile_start = Instant::now();
+    let mut checksum = 0usize;
+    while profile_start.elapsed() < Duration::from_secs(2) {
+        checksum ^=
+            segment_bitmap_profile_batch(black_box(membership), black_box(addrs), black_box(4_000));
+    }
+    black_box(checksum);
+
+    let signal_status = Command::new("kill")
+        .arg("-INT")
+        .arg(perf.id().to_string())
+        .status()
+        .expect("signal remote perf record");
+    assert!(
+        signal_status.success(),
+        "failed to stop perf record cleanly"
+    );
+    let perf_status = perf.wait().expect("wait for remote perf record");
+    assert!(
+        perf_status.success() || perf_status.signal() == Some(libc::SIGINT),
+        "remote perf record failed: {perf_status}"
+    );
+    let perf_bytes = fs::metadata(&perf_path)
+        .expect("stat candidate perf artifact")
+        .len();
+    assert!(perf_bytes > 0, "candidate perf artifact is empty");
+
+    let report = Command::new("perf")
+        .args([
+            "report",
+            "--stdio",
+            "--no-children",
+            "--percent-limit",
+            "0.01",
+            "--sort=symbol",
+            "--call-graph",
+            "none",
+            "-i",
+        ])
+        .arg(&perf_path)
+        .output()
+        .expect("render remote segment membership perf report");
+    assert!(report.status.success(), "remote perf report failed");
+    fs::write(&report_path, &report.stdout).expect("write retrievable perf report");
+    assert!(
+        fs::metadata(&report_path)
+            .expect("stat candidate perf report")
+            .len()
+            > 0,
+        "candidate perf report is empty"
+    );
+
+    let report_text = String::from_utf8(report.stdout).expect("perf report must be UTF-8");
+    let candidate_line = report_text
+        .lines()
+        .find(|line| line.contains("segment_bitmap_profile_batch"))
+        .expect("candidate frame missing from perf report")
+        .trim()
+        .to_owned();
+    let self_pct = candidate_line
+        .split_whitespace()
+        .next()
+        .and_then(|field| field.strip_suffix('%'))
+        .and_then(|field| field.parse::<f64>().ok())
+        .expect("parse candidate self-time percentage");
+    assert!(self_pct > 0.0, "candidate self-time must be non-zero");
+    println!(
+        "MALLOC_SEGMENT_BITMAP_SELF_TIME self_pct={self_pct:.2} perf_bytes={perf_bytes} frame={candidate_line}"
+    );
+    (self_pct, candidate_line)
+}
 
 #[derive(Default)]
 struct BaselineBenchStats {
@@ -459,6 +673,177 @@ fn bench_size_class_lookup(c: &mut Criterion) {
     });
     group.finish();
 }
+
+#[cfg(feature = "abi-bench")]
+fn bench_segment_bitmap_paired(c: &mut Criterion) {
+    const ADDRESS_COUNT: usize = 256;
+    const WARMUP_PAIRS: usize = 4;
+    const PAIRED_ROUNDS: usize = 31;
+    const REPETITIONS_PER_ROUND: u64 = 4_000;
+
+    let output_dir = segment_bench_artifact_dir();
+    let sizes = [16usize, 24, 64, 256];
+    let mut blocks: Vec<Vec<u8>> = (0..ADDRESS_COUNT)
+        .map(|index| vec![0u8; sizes[index % sizes.len()]])
+        .collect();
+    let addrs: Vec<usize> = blocks
+        .iter_mut()
+        .map(|block| black_box(block.as_mut_ptr() as usize))
+        .collect();
+    let membership = SegmentMembershipForBench::new(black_box(&addrs));
+
+    let expected_hits = ADDRESS_COUNT * REPETITIONS_PER_ROUND as usize;
+    assert_eq!(
+        segment_bitmap_profile_batch(&membership, &addrs, REPETITIONS_PER_ROUND),
+        expected_hits
+    );
+    assert!(!membership.contains(black_box(0)));
+    assert!(!membership.contains(black_box(usize::MAX)));
+    let expected_table_observation = addrs
+        .iter()
+        .enumerate()
+        .map(|(index, _)| 2 * sizes[index % sizes.len()])
+        .sum::<usize>();
+    assert_eq!(
+        fallback_table_profile_batch(&addrs, &sizes, 1),
+        expected_table_observation
+    );
+    let (candidate_self_pct, _) =
+        profile_segment_bitmap_execution(&output_dir, &membership, &addrs);
+
+    for warmup in 0..WARMUP_PAIRS {
+        if warmup.is_multiple_of(2) {
+            black_box(fallback_table_profile_batch(&addrs, &sizes, 100));
+            black_box(segment_bitmap_profile_batch(&membership, &addrs, 100));
+        } else {
+            black_box(segment_bitmap_profile_batch(&membership, &addrs, 100));
+            black_box(fallback_table_profile_batch(&addrs, &sizes, 100));
+        }
+    }
+
+    let operations = REPETITIONS_PER_ROUND as f64 * ADDRESS_COUNT as f64;
+    let mut table_samples = Vec::with_capacity(PAIRED_ROUNDS);
+    let mut segment_samples = Vec::with_capacity(PAIRED_ROUNDS);
+    let mut paired_ratios = Vec::with_capacity(PAIRED_ROUNDS);
+
+    for round in 0..PAIRED_ROUNDS {
+        let measure_table = || {
+            let start = Instant::now();
+            black_box(fallback_table_profile_batch(
+                black_box(&addrs),
+                black_box(&sizes),
+                black_box(REPETITIONS_PER_ROUND),
+            ));
+            start.elapsed().as_nanos() as f64 / operations
+        };
+        let measure_segment = || {
+            let start = Instant::now();
+            black_box(segment_bitmap_profile_batch(
+                black_box(&membership),
+                black_box(&addrs),
+                black_box(REPETITIONS_PER_ROUND),
+            ));
+            start.elapsed().as_nanos() as f64 / operations
+        };
+
+        let (table_ns, segment_ns) = if round.is_multiple_of(2) {
+            (measure_table(), measure_segment())
+        } else {
+            let segment_ns = measure_segment();
+            let table_ns = measure_table();
+            (table_ns, segment_ns)
+        };
+        table_samples.push(table_ns);
+        segment_samples.push(segment_ns);
+        paired_ratios.push(segment_ns / table_ns);
+    }
+
+    let mut sorted_table = table_samples.clone();
+    let mut sorted_segment = segment_samples.clone();
+    let mut sorted_ratios = paired_ratios.clone();
+    sorted_table.sort_by(f64::total_cmp);
+    sorted_segment.sort_by(f64::total_cmp);
+    sorted_ratios.sort_by(f64::total_cmp);
+    let table_p50 = percentile_sorted(&sorted_table, 0.50);
+    let segment_p50 = percentile_sorted(&sorted_segment, 0.50);
+    let ratio_p50 = percentile_sorted(&sorted_ratios, 0.50);
+    let table_cv = paired_cv_pct(&table_samples);
+    let segment_cv = paired_cv_pct(&segment_samples);
+    let paired_ratio_cv = paired_cv_pct(&paired_ratios);
+
+    let paired_json = format!(
+        concat!(
+            "{{\n",
+            "  \"samples\": {samples},\n",
+            "  \"warmup_pairs\": {warmup_pairs},\n",
+            "  \"ops_per_arm_sample\": {ops_per_arm_sample},\n",
+            "  \"table_p50_ns\": {table_p50:.6},\n",
+            "  \"segment_p50_ns\": {segment_p50:.6},\n",
+            "  \"segment_over_table_p50\": {ratio_p50:.8},\n",
+            "  \"table_cv_pct\": {table_cv:.6},\n",
+            "  \"segment_cv_pct\": {segment_cv:.6},\n",
+            "  \"paired_ratio_cv_pct\": {paired_ratio_cv:.6},\n",
+            "  \"candidate_self_pct\": {candidate_self_pct:.6},\n",
+            "  \"table_samples_ns\": {:?},\n",
+            "  \"segment_samples_ns\": {:?},\n",
+            "  \"paired_ratios\": {:?}\n",
+            "}}\n"
+        ),
+        table_samples,
+        segment_samples,
+        paired_ratios,
+        samples = PAIRED_ROUNDS,
+        warmup_pairs = WARMUP_PAIRS,
+        ops_per_arm_sample = REPETITIONS_PER_ROUND * ADDRESS_COUNT as u64,
+        table_p50 = table_p50,
+        segment_p50 = segment_p50,
+        ratio_p50 = ratio_p50,
+        table_cv = table_cv,
+        segment_cv = segment_cv,
+        paired_ratio_cv = paired_ratio_cv,
+        candidate_self_pct = candidate_self_pct,
+    );
+    let paired_path = output_dir.join("paired.json");
+    fs::write(&paired_path, paired_json).expect("write retrievable paired benchmark artifact");
+    let paired_bytes = fs::metadata(&paired_path)
+        .expect("stat paired benchmark artifact")
+        .len();
+    assert!(paired_bytes > 0, "paired benchmark artifact is empty");
+
+    println!(
+        "MALLOC_SEGMENT_BITMAP_PAIRED samples={PAIRED_ROUNDS} ops_per_arm_sample={} table_p50_ns={table_p50:.3} segment_p50_ns={segment_p50:.3} segment_over_table_p50={ratio_p50:.4} saved_ns={:.3} table_cv_pct={:.2} segment_cv_pct={:.2} paired_ratio_cv_pct={:.2}",
+        REPETITIONS_PER_ROUND * ADDRESS_COUNT as u64,
+        table_p50 - segment_p50,
+        table_cv,
+        segment_cv,
+        paired_ratio_cv,
+    );
+    println!(
+        "MALLOC_SEGMENT_BITMAP_ARTIFACTS output_dir={} paired_bytes={paired_bytes}",
+        output_dir.display()
+    );
+
+    // This single candidate-only Criterion member exists for `perf` execution
+    // integrity. The keep/reject score comes from the alternating paired sampler
+    // above, never from sequential Criterion group members.
+    let mut group = c.benchmark_group("segment_bitmap_integrity");
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_secs(1));
+    group.measurement_time(Duration::from_secs(3));
+    group.bench_function("profile_candidate", |b| {
+        b.iter(|| {
+            black_box(segment_bitmap_profile_batch(
+                black_box(&membership),
+                black_box(&addrs),
+                black_box(64),
+            ))
+        })
+    });
+    group.finish();
+}
+
+#[cfg(not(feature = "abi-bench"))]
+fn bench_segment_bitmap_paired(_c: &mut Criterion) {}
 
 fn choose_op(mix: OpMix, op_index: u64, toggle: &mut bool) -> BenchOp {
     match mix {
@@ -965,6 +1350,7 @@ criterion_group!(
     bench_alloc_burst,
     bench_bounded_index_overhead,
     bench_size_class_lookup,
+    bench_segment_bitmap_paired,
     bench_flat_combining_vs_lock_contention
 );
 criterion_main!(benches);
