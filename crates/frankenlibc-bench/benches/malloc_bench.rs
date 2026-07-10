@@ -92,23 +92,94 @@ fn segment_bitmap_profile_batch(
 
 #[cfg(feature = "abi-bench")]
 #[inline(never)]
-fn fallback_table_profile_batch(addrs: &[usize], sizes: &[usize], repetitions: u64) -> usize {
+fn fallback_table_lookup_batch(addrs: &[usize], repetitions: u64) -> usize {
     use frankenlibc_abi::malloc_abi as malloc;
 
     let mut observed = 0usize;
     for _ in 0..black_box(repetitions) {
-        for (index, &addr) in black_box(addrs).iter().enumerate() {
+        for &addr in black_box(addrs) {
             let ptr = black_box(addr) as *mut libc::c_void;
-            let size = black_box(sizes[index % sizes.len()]);
-            malloc::fallback_insert_sized_for_bench(ptr, size);
             observed = observed
                 .wrapping_add(black_box(malloc::fallback_size_for_bench(ptr)).unwrap_or_default());
-            observed = observed.wrapping_add(
-                black_box(malloc::fallback_remove_sized_for_bench(ptr)).unwrap_or_default(),
-            );
         }
     }
     black_box(observed)
+}
+
+#[cfg(feature = "abi-bench")]
+#[inline(always)]
+fn time_fallback_lookup_microblock(addrs: &[usize], repetitions: u64) -> (u128, usize) {
+    let start = Instant::now();
+    let observed = fallback_table_lookup_batch(black_box(addrs), black_box(repetitions));
+    (start.elapsed().as_nanos(), black_box(observed))
+}
+
+#[cfg(feature = "abi-bench")]
+#[inline(always)]
+fn time_segment_bitmap_microblock(
+    membership: &SegmentMembershipForBench,
+    addrs: &[usize],
+    repetitions: u64,
+) -> (u128, usize) {
+    let start = Instant::now();
+    let hits = segment_bitmap_profile_batch(
+        black_box(membership),
+        black_box(addrs),
+        black_box(repetitions),
+    );
+    (start.elapsed().as_nanos(), black_box(hits))
+}
+
+#[cfg(feature = "abi-bench")]
+#[inline(never)]
+fn paired_membership_sample(
+    membership: &SegmentMembershipForBench,
+    addrs: &[usize],
+    repetitions_per_microblock: u64,
+    microblock_quads: usize,
+    invert_first_order: bool,
+) -> (u128, u128, usize) {
+    let mut table_elapsed = 0u128;
+    let mut segment_elapsed = 0u128;
+    let mut checksum = 0usize;
+
+    macro_rules! table_microblock {
+        () => {{
+            let (elapsed, observed) = time_fallback_lookup_microblock(
+                black_box(addrs),
+                black_box(repetitions_per_microblock),
+            );
+            table_elapsed = table_elapsed.wrapping_add(elapsed);
+            checksum = checksum.wrapping_add(observed);
+        }};
+    }
+    macro_rules! segment_microblock {
+        () => {{
+            let (elapsed, hits) = time_segment_bitmap_microblock(
+                black_box(membership),
+                black_box(addrs),
+                black_box(repetitions_per_microblock),
+            );
+            segment_elapsed = segment_elapsed.wrapping_add(elapsed);
+            checksum = checksum.wrapping_add(hits);
+        }};
+    }
+
+    for quad in 0..black_box(microblock_quads) {
+        if quad.is_multiple_of(2) == invert_first_order {
+            table_microblock!();
+            segment_microblock!();
+            segment_microblock!();
+            table_microblock!();
+        } else {
+            segment_microblock!();
+            table_microblock!();
+            table_microblock!();
+            segment_microblock!();
+        }
+    }
+
+    black_box((table_elapsed, segment_elapsed, checksum))
 }
 
 #[cfg(feature = "abi-bench")]
@@ -677,9 +748,10 @@ fn bench_size_class_lookup(c: &mut Criterion) {
 #[cfg(feature = "abi-bench")]
 fn bench_segment_bitmap_paired(c: &mut Criterion) {
     const ADDRESS_COUNT: usize = 256;
-    const WARMUP_PAIRS: usize = 4;
+    const WARMUP_QUADS: usize = 256;
     const PAIRED_ROUNDS: usize = 31;
-    const REPETITIONS_PER_ROUND: u64 = 4_000;
+    const MICROBLOCK_QUADS_PER_SAMPLE: usize = 512;
+    const REPETITIONS_PER_MICROBLOCK: u64 = 64;
 
     let output_dir = segment_bench_artifact_dir();
     let sizes = [16usize, 24, 64, 256];
@@ -692,67 +764,66 @@ fn bench_segment_bitmap_paired(c: &mut Criterion) {
         .collect();
     let membership = SegmentMembershipForBench::new(black_box(&addrs));
 
-    let expected_hits = ADDRESS_COUNT * REPETITIONS_PER_ROUND as usize;
+    let expected_hits = ADDRESS_COUNT * REPETITIONS_PER_MICROBLOCK as usize;
     assert_eq!(
-        segment_bitmap_profile_batch(&membership, &addrs, REPETITIONS_PER_ROUND),
+        segment_bitmap_profile_batch(&membership, &addrs, REPETITIONS_PER_MICROBLOCK),
         expected_hits
     );
     assert!(!membership.contains(black_box(0)));
     assert!(!membership.contains(black_box(usize::MAX)));
+
+    use frankenlibc_abi::malloc_abi as malloc;
+    for (index, &addr) in addrs.iter().enumerate() {
+        malloc::fallback_insert_sized_for_bench(
+            black_box(addr) as *mut libc::c_void,
+            black_box(sizes[index % sizes.len()]),
+        );
+    }
     let expected_table_observation = addrs
         .iter()
         .enumerate()
-        .map(|(index, _)| 2 * sizes[index % sizes.len()])
+        .map(|(index, _)| sizes[index % sizes.len()])
         .sum::<usize>();
     assert_eq!(
-        fallback_table_profile_batch(&addrs, &sizes, 1),
+        fallback_table_lookup_batch(&addrs, 1),
         expected_table_observation
     );
     let (candidate_self_pct, _) =
         profile_segment_bitmap_execution(&output_dir, &membership, &addrs);
 
-    for warmup in 0..WARMUP_PAIRS {
-        if warmup.is_multiple_of(2) {
-            black_box(fallback_table_profile_batch(&addrs, &sizes, 100));
-            black_box(segment_bitmap_profile_batch(&membership, &addrs, 100));
-        } else {
-            black_box(segment_bitmap_profile_batch(&membership, &addrs, 100));
-            black_box(fallback_table_profile_batch(&addrs, &sizes, 100));
-        }
-    }
+    black_box(paired_membership_sample(
+        black_box(&membership),
+        black_box(&addrs),
+        black_box(REPETITIONS_PER_MICROBLOCK),
+        black_box(WARMUP_QUADS),
+        black_box(false),
+    ));
+    black_box(paired_membership_sample(
+        black_box(&membership),
+        black_box(&addrs),
+        black_box(REPETITIONS_PER_MICROBLOCK),
+        black_box(WARMUP_QUADS),
+        black_box(true),
+    ));
 
-    let operations = REPETITIONS_PER_ROUND as f64 * ADDRESS_COUNT as f64;
+    let operations =
+        (REPETITIONS_PER_MICROBLOCK as usize * ADDRESS_COUNT * MICROBLOCK_QUADS_PER_SAMPLE * 2)
+            as f64;
     let mut table_samples = Vec::with_capacity(PAIRED_ROUNDS);
     let mut segment_samples = Vec::with_capacity(PAIRED_ROUNDS);
     let mut paired_ratios = Vec::with_capacity(PAIRED_ROUNDS);
 
     for round in 0..PAIRED_ROUNDS {
-        let measure_table = || {
-            let start = Instant::now();
-            black_box(fallback_table_profile_batch(
-                black_box(&addrs),
-                black_box(&sizes),
-                black_box(REPETITIONS_PER_ROUND),
-            ));
-            start.elapsed().as_nanos() as f64 / operations
-        };
-        let measure_segment = || {
-            let start = Instant::now();
-            black_box(segment_bitmap_profile_batch(
-                black_box(&membership),
-                black_box(&addrs),
-                black_box(REPETITIONS_PER_ROUND),
-            ));
-            start.elapsed().as_nanos() as f64 / operations
-        };
-
-        let (table_ns, segment_ns) = if round.is_multiple_of(2) {
-            (measure_table(), measure_segment())
-        } else {
-            let segment_ns = measure_segment();
-            let table_ns = measure_table();
-            (table_ns, segment_ns)
-        };
+        let (table_elapsed, segment_elapsed, checksum) = paired_membership_sample(
+            black_box(&membership),
+            black_box(&addrs),
+            black_box(REPETITIONS_PER_MICROBLOCK),
+            black_box(MICROBLOCK_QUADS_PER_SAMPLE),
+            black_box(round.is_multiple_of(2)),
+        );
+        black_box(checksum);
+        let table_ns = table_elapsed as f64 / operations;
+        let segment_ns = segment_elapsed as f64 / operations;
         table_samples.push(table_ns);
         segment_samples.push(segment_ns);
         paired_ratios.push(segment_ns / table_ns);
@@ -775,7 +846,9 @@ fn bench_segment_bitmap_paired(c: &mut Criterion) {
         concat!(
             "{{\n",
             "  \"samples\": {samples},\n",
-            "  \"warmup_pairs\": {warmup_pairs},\n",
+            "  \"warmup_quads\": {warmup_quads},\n",
+            "  \"microblock_quads_per_sample\": {microblock_quads},\n",
+            "  \"repetitions_per_microblock\": {repetitions_per_microblock},\n",
             "  \"ops_per_arm_sample\": {ops_per_arm_sample},\n",
             "  \"table_p50_ns\": {table_p50:.6},\n",
             "  \"segment_p50_ns\": {segment_p50:.6},\n",
@@ -793,8 +866,10 @@ fn bench_segment_bitmap_paired(c: &mut Criterion) {
         segment_samples,
         paired_ratios,
         samples = PAIRED_ROUNDS,
-        warmup_pairs = WARMUP_PAIRS,
-        ops_per_arm_sample = REPETITIONS_PER_ROUND * ADDRESS_COUNT as u64,
+        warmup_quads = WARMUP_QUADS * 2,
+        microblock_quads = MICROBLOCK_QUADS_PER_SAMPLE,
+        repetitions_per_microblock = REPETITIONS_PER_MICROBLOCK,
+        ops_per_arm_sample = operations as u64,
         table_p50 = table_p50,
         segment_p50 = segment_p50,
         ratio_p50 = ratio_p50,
@@ -812,7 +887,7 @@ fn bench_segment_bitmap_paired(c: &mut Criterion) {
 
     println!(
         "MALLOC_SEGMENT_BITMAP_PAIRED samples={PAIRED_ROUNDS} ops_per_arm_sample={} table_p50_ns={table_p50:.3} segment_p50_ns={segment_p50:.3} segment_over_table_p50={ratio_p50:.4} saved_ns={:.3} table_cv_pct={:.2} segment_cv_pct={:.2} paired_ratio_cv_pct={:.2}",
-        REPETITIONS_PER_ROUND * ADDRESS_COUNT as u64,
+        operations as u64,
         table_p50 - segment_p50,
         table_cv,
         segment_cv,
@@ -840,6 +915,13 @@ fn bench_segment_bitmap_paired(c: &mut Criterion) {
         })
     });
     group.finish();
+
+    for (index, &addr) in addrs.iter().enumerate() {
+        assert_eq!(
+            malloc::fallback_remove_sized_for_bench(black_box(addr) as *mut libc::c_void),
+            Some(sizes[index % sizes.len()])
+        );
+    }
 }
 
 #[cfg(not(feature = "abi-bench"))]

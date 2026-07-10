@@ -14582,6 +14582,40 @@ constraint forbids. Where only a profile could settle it, that is said, not glos
   bump/magazines with address-derived shadow metadata; do not recreate the rejected global tagged
   free-list/sidecar composition.
 
+## 2026-07-10 (cod_fl) — REJECT (second stability gate): lookup-only ABBA bitmap is 1.116ns, but paired CV remains 12.08% (bd-dcrhgl)
+
+- **RECORDED RETRY CONDITION SATISFIED.** This is the one permitted retry of the immediately prior
+  row: the fallback table was populated once outside timing and scored with `fallback_size` lookup
+  alone; each sample interleaved 512 balanced T-S-S-T / S-T-T-S quads; and each arm ran
+  **16,777,216 operations/sample**. Inputs and accumulated results crossed `black_box`; the named
+  batch functions remained `#[inline(never)]`. Preflight verified the aggregate lookup result, and
+  teardown individually removed all 256 entries with their exact expected sizes.
+- **ONE BINARY / ONE REMOTE INVOCATION.** Command:
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR RCH_WORKER=vmi1167313 rch exec -- cargo bench -p
+  frankenlibc-bench --features abi-bench --bench malloc_bench --profile release-perf --
+  segment_bitmap_integrity --noplot`. RCH treated the worker value as a preference and selected root
+  worker **vmi1149989**; both arms still executed inside that one process and RCH ended with
+  `[RCH] remote vmi1149989`. No local Cargo command ran. A prior invocation failed closed with
+  `no admissible workers`; it produced no measurements and is not a result row.
+- **PROFILE INTEGRITY — NON-ZERO SELF-TIME.** The pre-score remote profile captured **1,734
+  samples** and assigned `malloc_bench::segment_bitmap_profile_batch` **99.56% self-time**.
+  Retrieved artifacts are non-empty:
+  `candidate.perf` **320,312 bytes**, `perf-report.txt` **826 bytes**, and `paired.json` **2,286
+  bytes** under `target/criterion/bd-dcrhgl-segment-membership/run-993595-1783692725064299037/`.
+- **MEASURED.** Exact segment bitmap p50 **1.116ns/op**; exact fallback-table lookup p50
+  **6.721ns/op**; bitmap/table paired p50 **0.1631**, saving **5.606ns/op**. The bitmap clears both
+  the historical **9.79ns** bar and the same-binary lookup reference on point estimate. Raw stability
+  still fails the mandatory gate: table CV **10.54%**, bitmap CV **14.25%**, paired-ratio CV
+  **12.08%** (31 untrimmed samples, sample variance). Therefore this remains a REJECT and production
+  wiring is still forbidden.
+- **RETRY CONDITION (OPEN AND NARROW).** One final measurement-substrate retry is allowed only if
+  it keeps the same lookup-only balanced microblocks and non-zero self-profile, binds the benchmark
+  thread to one CPU, and raises per-arm sample duration by at least 8x (>=134,217,728 operations) to
+  average scheduler/frequency noise. Do not switch to trimmed CV, discard outliers, or substitute
+  thread-CPU time for wall time. If raw table, bitmap, and paired-ratio CV still do not all fall below
+  5%, stop this measurement seam and surface the remote-worker noise blocker rather than laundering
+  the 1.116ns point estimate into a WIN.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): reverse `/etc/hosts` lookups borrow the backend — 1.96x vs ORIG (drift-cancelled), 3.37x faster than host glibc (bd-d8vabn)
 
 - **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped the hosts family; the only entry is my own bd-0p00be
