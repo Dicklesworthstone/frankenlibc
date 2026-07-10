@@ -15106,3 +15106,87 @@ in the last two hours (`2ff083925`, `8ba788f83`).
   counts over `docs/NEGATIVE_EVIDENCE.md` at commit `c4f694cd1`, reproducible by the script in the
   commit message, and (b) quotations from cod's rows L14063/L14546/L14585/L14691 with attribution.
   **self-time: blocked (bd-3dxo1a).**
+
+## 2026-07-10 (cc_fl / BlackThrush) — REHABILITATION under MEDIAN-GATING: the segment-membership REJECTs are VOID and the primitive **PASSES**; 39 of 93 REJECT rows are void by the same rule
+
+Analysis-only: `rch` refused **five consecutive times**
+(`no admissible workers: insufficient_slots=10,active_project_exclusion=1`). No build/bench/test ran;
+nothing below required one. The blocker is named, not worked around.
+
+### ANSWER: **YES — `segment_bitmap[ptr >> 22]` is faster than the 9.79 ns fallback table.**
+
+The acceptance rule is now "gate on the MEDIAN; `cv < 5%` is unreachable on this hardware." That rule
+**retires the gate that produced all three segment rejections**, and the surviving statistic decides
+the lever without any new measurement:
+
+| quantity | value | source |
+|---|---|---|
+| bitmap p50 | **0.985 ns/op** | cod L14691 (pinned CPU 5, 134,217,728 ops/sample, 31 raw samples) |
+| lookup-only fallback table p50 | 6.083 ns/op | cod L14691 |
+| **paired median (bitmap/table)** | **0.1610 => 6.21x faster** | cod L14691 |
+| historical bar | 9.79 ns | cod L13591 |
+| **bitmap vs the 9.79 ns bar** | **9.94x cheaper** | arithmetic |
+| self-time of the arm under test | **96.67%** on `segment_bitmap_profile_batch`, 1,507 samples | cod L14691 |
+| worst null-control median measured anywhere in this repo | **0.9048** (A/A, `vmi1152480`) | this campaign |
+| **margin of 0.1610 outside that floor** | **5.62x** | arithmetic |
+
+No null control was run on that harness (L14546/L14585/L14691 each contain **zero** mentions of
+`null control` / `A/A`). It does not matter for the verdict: **a null control cannot manufacture a
+6.21x ratio.** The worst A/A median observed on this hardware is 0.9048; the measured effect is 0.1610,
+**5.62x outside it**. Under median-gating the lever **PASSES**, decisively, on evidence already banked.
+
+- **REHABILITATED:** L14546 (1.708 ns), L14585 (1.116 ns), L14691 (0.985 ns) were rejected solely on a
+  `<5% all-CV` rule. That rule is now retired as unreachable, and it was in any case defective: the
+  bitmap's **absolute** jitter is **0.097 ns** versus the table's **0.168 ns** (p50 × CV) — the faster
+  arm is the *steadier* one, and a relative gate punishes it. Their verdicts are **VOID**. The
+  membership primitive is **measured, profiled (96.67% self-time), and passing**.
+- **This does NOT make Swing-2 an ~11x hot-path win, and that is not a matter of opinion.** L14063
+  records the production 4 MiB segment heap **losing 6.1-7.7%** to the retained malloc/free path,
+  code reverted — measured *after* its retry-condition (the membership proof) was satisfied. Membership
+  cost and wiring economics are two separate measured facts. The first now passes; the second failed.
+  **The open question for Swing-2 is the wiring loss, not the bitmap.** (cod's lane; bd-r5bgws,
+  bd-t43kz2.)
+
+### The same rule voids 39 of 93 REJECT rows
+
+Using the worst A/A median measured in this repo (**0.9048**) as the floor, any REJECT decided on a
+ratio inside **[0.905, 1.105]**, or on the words `~0-gain` / `no change in performance` / `within
+noise`, cannot be distinguished from an identical arm compared against itself. **39 of 93** REJECT-class
+rows meet that description. Ranked by the largest per-op time each row quotes (the frame it gates):
+
+| rank | frame | row | quoted ratio | lever | lane |
+|---|---|---|---|---|---|
+| 1 | **60.4 ms** | L2938 | ~0-gain | lock-free `native_stdio` FILE*-cache | **ALREADY REHABILITATED → `ad465633f`, 17.5-18.7x** |
+| 2 | 36.3 ms | L2877 | (verify) | stdio standard-stream TLS classification cache | mine |
+| 3 | 159 µs | L7574 | 1.06x / 0.98x | fallback-table exact hot-slot | cod |
+| 4 | 118 µs | L6001 | 1.07x / 0.92x | calloc tombstone compaction | cod |
+| 5 | 107 µs | L7619 | 1.03x / 1.001x | strict calloc one-slot recycle | cod |
+| 6 | 98 µs | L3248 | ~0-gain | regex build-bulk-table-once-per-search | mine — **bd-fw52ov** |
+| 7 | 40 µs | L6713 | **1.007x** | default hot-hit `stat` bypass | mine — **bd-alkove** |
+| 8 | 31 µs | L6805 | 1.089x / 1.088x | passwd parser | mine — **bd-alkove** |
+| 9 | 5 µs | L4850 | ~0-gain | `fputs` strict scanner swap | mine |
+| 10 | 4 µs | L2960 | 1.050x | `fputs` raw registered-stream bypass | mine |
+| 11 | 4 µs | L2911 | 1.106x | `fputs` write-stream TLS pointer cache | mine |
+
+**Rank 1 is already proven.** L2938 was rejected on 56.7 → 60.4 ms against its own 15-74 ms spread;
+reopening it produced `ad465633f` — multi-threaded `fgetc` **17.5-18.7x faster**, fl-vs-glibc
+**55x → 2.96x**. The ranking rediscovered it independently. Ranks 9-11 are the same `fputs`/stdio
+family and the same margin class (1.050x, 1.106x, ~0-gain) — all inside the floor, none carrying a
+sha256, self-time, cv or null.
+
+- **CAVEAT (stated, not buried).** This table is a *candidate* list produced by pattern-matching row
+  text, not a per-row adjudication. L2877, for instance, also quotes a genuine **1.531x regression**
+  elsewhere in its body, which would survive median-gating; it is listed because the row *also* contains
+  `~0-gain` language. Each row must be read before it is re-attacked. What is not in doubt is the
+  aggregate: **0/93 carry a binary sha256, 1/93 a null control, and ~42% are decided on margins inside
+  the measured floor.**
+- **NEXT ACTION (blocked on a worker slot, not on thinking).** Re-attack rank 6 (L3248, regex
+  build-bulk-table-once-per-search, 98 µs frame) with the corrected method: paired interleaved arms in
+  one binary/one invocation, `paired(base, base)` null control first, gate on the **median**, per-function
+  floor, full provenance (binary sha256, worker, cv_pct, null median, self-time or an explicit blocked
+  marker). bd-fw52ov.
+- **PROVENANCE of this row:** no measurement. Counts machine-extracted over `docs/NEGATIVE_EVIDENCE.md`
+  at `fb6578d3e`; all segment figures quoted from cod's L14063/L14546/L14585/L14691 with attribution;
+  the 0.9048 floor is my own A/A measurement (binary sha256
+  `591a0cfae73c52918271c4025edc9a16c70d5fabf0c1785780295165a28e2327`, worker `vmi1152480`).
+  **self-time: blocked (bd-3dxo1a).**
