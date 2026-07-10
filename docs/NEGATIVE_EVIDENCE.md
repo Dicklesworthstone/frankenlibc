@@ -32,6 +32,39 @@ retried and real wins are confirmed with numbers.
   single-threaded has no cross-thread free. Net: a ~6 ns (~11% of the 55 ns malloc/free) win behind a large
   40-site refactor of a critical stats system. **The allocator's 9.7x is fundamentally the memory-safety
   cost** (guard CAS + stats combiner), near-optimal; this is a real but low-ROI follow-on, NOT rushed.
+## 2026-07-10 (cod_fl / Codex) — REJECT: checked `gmtime` civil-result reuse regresses median self-time **1.2741x**; source and bench restored
+
+- **PROFILE ROUTE (REMOTE-ONLY).** Stayed outside cc-owned allocator/string/resolver work. A fresh
+  current-main `math_passthrough_survey_bench` run on worker `vmi1152480` found no actionable f64 math
+  loss: `cos` was already a FrankenLibC win, **9.703 ns vs glibc 11.266 ns = 0.861x**, and the largest
+  remaining f64 loss was only `erf` at **1.140x**, below the 1.30 candidate threshold. Rotated to time.
+  The remote `gmtime_ab_bench` baseline on the same worker measured `gmtime_r` FrankenLibC p50
+  **31.7975 ns** vs glibc **33.5250 ns = 0.948x**, while `timegm` remained a **0.643x** win
+  (**58.5375 ns vs 91.0600 ns**). Every Cargo invocation used the
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo bench` prefix; no local fallback was
+  used.
+- **ONE LEVER TESTED.** `epoch_to_broken_down_checked` already computes
+  `days = epoch.div_euclid(86400)` and `civil_from_days(days)` to validate the representable year, then
+  called `epoch_to_broken_down`, which expresses the same day/civil conversion again. The candidate
+  reused the checked `(year, month, day)` tuple through one shared broken-down-time builder; remainder,
+  hour/minute/second, weekday, yearday, range behavior, and output construction were unchanged.
+- **CORRECTNESS PROOF.** Let `D(t)` be Euclidean epoch-day division, `C(d)` the civil conversion, and
+  `B(t,d,c)` the unchanged field builder. The original successful checked path returns
+  `Some(B(t,D(t),C(D(t))))`; the candidate binds `d=D(t)` and `c=C(d)` during the same range check and
+  returns the identical expression. Out-of-range years return `None` in both versions. The same-binary
+  witness also asserted ORIG == CAND for all eight benchmark epochs before timing.
+- **MEDIAN SELF-TIME REJECTION.** The initial sequential routing run already regressed the reconstructed
+  core path from ORIG p50 **20.0050 ns** to candidate **24.8625 ns**, `candidate/orig = 1.2428x`; this was
+  routing evidence only. The decisive same-binary, order-alternated paired run on worker `hz2` had an
+  exact A/A null of **43.4250 / 43.4250 ns = 1.0000**, while ORIG/CAND was
+  **43.4250 / 55.3250 ns**, paired median `candidate/orig = 1.2741x` (**27.41% slower**). The loss is far
+  outside the null floor, so the lever fails the median gate despite its semantic equivalence.
+- **DISPOSITION / NO-RETRY.** Manually restored both `crates/frankenlibc-core/src/time/mod.rs` and the
+  temporary `gmtime_ab_bench.rs` comparator; the final source and durable benchmark are unchanged,
+  leaving this docs-only rejection. LLVM likely already removes or cheaply absorbs the source-level
+  duplicate, while the extracted shared-builder shape harms code generation. Do not retry this exact
+  checked-civil tuple/helper extraction unless new disassembly or materially different inlining/codegen
+  evidence shows the duplicate survives optimization.
 
 ## 2026-07-10 (cc_fl / BlackThrush) — PROFILE + HONEST NON-CLAIM: getaddrinfo is now **4.71x** vs glibc (bookkeeping fixed); the `profiles` Vec→stack elision is byte-identical but DEPLOYED SUB-FLOOR — the gap is distributed, not that alloc
 
