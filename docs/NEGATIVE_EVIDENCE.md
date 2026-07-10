@@ -14943,3 +14943,74 @@ has already been satisfied three times and the answer is in this file.
   at L2696 returns owned `String`s by contract and is out of scope.
 - **Reproducer:** `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release
   -p frankenlibc-bench --features abi-bench --example ip_fmt_ab`
+
+## 2026-07-10 (cc_fl / BlackThrush) — METHOD: adopted the NULL CONTROL. It validated `f43855c2e`, it invalidated a run, and it produced a new rule: **the null control is per-FUNCTION, not per-harness**
+
+Adopted franken_whisper's null control: register the **identical arm twice** in the same interleaved
+routine; its ratio/cv is the harness's noise floor. Ran it, before the real arms, in both paired
+samplers. Three results, one of which is a genuine methodological finding.
+
+- **(1) `f43855c2e`'s deployed claim SURVIVES — retro-validated.** That commit claimed
+  `gethostbyaddr` deployed **1.11x** (paired 0.9026, cv 3.75%) with **no null control**. Re-ran
+  `ip_fmt_ab` with one, worker **`hz2`**, binary sha256
+  `4a1bfcd34d928dff89f33d891a2815590ef15ee0faea592f0f29cc630fa07295`:
+
+  | measurement | paired ratio | paired cv |
+  |---|---|---|
+  | NULL kernel (cand vs cand) | **1.0000** | 7.76% |
+  | NULL deployed (cand vs cand) | **0.9997** | 11.29% |
+  | KERNEL `to_string` vs `write_ipv4_text` | 0.0371 => **26.96x** | 8.00% |
+  | DEPLOYED `gethostbyaddr` | 0.8863 => **1.13x** | 12.08% |
+
+  Null deployed is **0.9997** — the harness is fit — and the real effect (0.8863) sits far outside it.
+  The claim holds, now on evidence rather than assumption.
+- **(2) A RUN was invalidated, not a lever.** The first `gethostbyname_needle_ab` run landed on
+  **`vmi1152480`**: null deployed **0.9048**, with per-arm cv of **200-460%**. An identical arm beat
+  itself by 11% — exactly the size of the effect under test. That worker was pathologically noisy;
+  the *run* was unfit. Under the old rules I would have shipped "deployed 1.11x" from it. **The null
+  control caught it.**
+- **(3) NEW RULE — THE NULL CONTROL IS PER-FUNCTION, NOT PER-HARNESS.** Re-running the needle sampler
+  on **`hz2`** — the *same worker* that gave `gethostbyaddr` a null of **0.9997** — the deployed null
+  for `gethostbyname` came out **0.9336 (cv 20.86%)**. Same binary, same machine, same paired routine,
+  same `black_box` discipline; only the function under test differs. A harness that is fit for one
+  entry point can be unfit for another (`gethostbyname` ~3.1 µs and carries more internal state than
+  `gethostbyaddr` ~2.1 µs). **Run the null for every function you intend to decide, not once per
+  harness.**
+
+### Consequence for bd-veb6ve (`resolve_gethostbyname_target` needle allocation)
+
+- **Binary sha256** `591a0cfae73c52918271c4025edc9a16c70d5fabf0c1785780295165a28e2327`; worker **`hz2`**;
+  parent commit `f43855c2e`; **self-time: blocked (bd-3dxo1a)**.
+
+  | measurement | paired ratio | paired cv | verdict |
+  |---|---|---|---|
+  | NULL kernel | 1.0000 | 12.58% | fit |
+  | **KERNEL needle alloc (`to_vec` vs borrow)** | 0.0565 => **17.71x** | 8.39% | **CLAIMABLE** (far outside null) |
+  | NULL deployed | **0.9336** | 20.86% | **NOT fit** |
+  | DEPLOYED `gethostbyname` | 0.9132 (1.10x) | 18.75% | **NOT CLAIMABLE** — only ~2% beyond the null |
+
+- **The kernel win is real: removing the `to_vec()` needle is 17.71x on the primitive.** The deployed
+  effect is **not decidable on this harness** and is deliberately **not claimed**. The change itself is
+  a strict removal of a per-call heap allocation with byte-identical behaviour (`verify()` asserts
+  fl == host glibc on address AND canonical name), so it is justified structurally, not by a deployed
+  number I cannot defend.
+- **BLOCKER — the code is NOT committed.** `rch` refused conformance **three times**
+  (`no admissible workers: insufficient_slots=10,active_project_exclusion=1`). Behaviour parity must be
+  proven before keeping, so the `resolve_gethostbyname_target` borrow + its bench hook remain
+  **uncommitted in the working tree** (not stashed, not deleted). They build remotely and pass the
+  harness's byte-identity `verify()`; they have **not** passed `resolv_abi_test` /
+  `conformance_diff_getaddrinfo` / `inet_abi_test`. To finish: re-run those gates when a slot frees,
+  then commit. bd-veb6ve stays **in_progress**.
+- **HARNESS FIX REQUIRED before the deployed number can be decided** (per the rule "if the null is not
+  tight, fix the harness"): raise `DEPLOYED_REPS` far above 20 so per-sample time dominates timer and
+  scheduler noise, and/or pin the scoring thread. Both are cheap; neither was attempted this turn
+  because conformance — not the bench — is the blocking gate.
+
+### Retro-application to this campaign's other rows
+
+No other row of mine is invalidated by the null control, because every other claimed ratio is **an
+order of magnitude outside any plausible floor**: getaddrinfo 31.3x, getservbyport 29.23x, ip-format
+kernel 26.96x/27.50x, needle kernel 17.71x, `_gethtent` 1.67x (paired cv 35% — **flagged: this one is
+the weakest and should be re-run with a null control**), hosts borrow 1.96x/2.08x (paired cv 11-21%,
+also worth a null). The two sub-2x hosts rows are the candidates for re-measurement; the ≥17x rows are
+not in doubt. Filed as **bd-9x1jcx**.

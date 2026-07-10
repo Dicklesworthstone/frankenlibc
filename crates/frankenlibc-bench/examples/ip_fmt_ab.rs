@@ -208,6 +208,30 @@ fn report(label: &str, per: f64, o: &[f64], c: &[f64], unit: &str) {
 fn main() {
     verify();
 
+    // NULL CONTROL FIRST (franken_whisper rule): the identical arm registered twice in the same
+    // interleaved routine. Its ratio and cv are this harness's noise floor. Any claimed effect not
+    // clearly outside the null is indistinguishable from noise and must not be claimed.
+    let (n1, n2) = paired(
+        KERNEL_SAMPLES,
+        || kernel_cand(LOOPBACK),
+        || kernel_cand(LOOPBACK),
+    );
+    report(
+        "NULL CONTROL kernel (cand vs cand)",
+        KERNEL_REPS as f64,
+        &n1,
+        &n2,
+        "(ns/op)",
+    );
+    let (m1, m2) = paired(DEPLOYED_SAMPLES, deployed_cand, deployed_cand);
+    report(
+        "NULL CONTROL deployed (cand vs cand)",
+        DEPLOYED_REPS as f64,
+        &m1,
+        &m2,
+        "(ns/call)",
+    );
+
     let (ko, kc) = paired(
         KERNEL_SAMPLES,
         || kernel_orig(LOOPBACK),
