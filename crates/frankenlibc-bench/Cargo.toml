@@ -72,6 +72,11 @@ name = "resolver_bookkeeping_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[example]]
+name = "getaddrinfo_ab"
+harness = false
+required-features = ["abi-bench"]
+
 [[bench]]
 name = "string_bench"
 harness = false

@@ -6,6 +6,31 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — PROFILE + HONEST NON-CLAIM: getaddrinfo is now **4.71x** vs glibc (bookkeeping fixed); the `profiles` Vec→stack elision is byte-identical but DEPLOYED SUB-FLOOR — the gap is distributed, not that alloc
+
+- **PROFILE (`examples/getaddrinfo_ab.rs`, numeric `AI_NUMERICHOST|AI_NUMERICSERV` query, fl vs dlmopen
+  glibc, interleaved paired, null control).** With the resolver membrane bookkeeping now ~9 ns, getaddrinfo
+  is **fl 621–635 ns vs glibc 134–135 ns = 4.71x** (null control 1.0001, cv 7.5%). The ~487 ns gap is the
+  RESOLUTION path: ~3 interposed malloc/free pairs (profiles Vec, nodes Vec, the contiguous addrinfo node —
+  ~55 ns each = ~165 ns, the per-alloc cost being the interposed allocator = cod's lane) + ~320 ns of fl
+  parse/build logic vs glibc's ~124 ns.
+- **LEVER TRIED — `profiles` Vec → `[AddrinfoProfile; 3]` stack array (`Profiles`).** getaddrinfo's service
+  resolution yields AT MOST 3 distinct `(socktype, protocol)` profiles (the values come from the fixed set
+  SOCK_STREAM/TCP, SOCK_DGRAM/UDP, SOCK_RAW, and the list is deduped), so the `Vec<AddrinfoProfile>` in
+  `profiles_for_port`/`lookup_service_profiles`/`resolve_addrinfo_profiles` fits inline on the stack.
+- **BYTE-IDENTICAL but DEPLOYED SUB-FLOOR.** resolv_abi_test **183/0** + conformance_diff_getaddrinfo +
+  conformance_diff_netdb_aliases GREEN (single-threaded; a parallel run flakes on `getprotobyname_tcp_
+  resolves`, a pre-existing FRANKENLIBC_PROTOCOLS_PATH env-var race). BUT the deployed fl/glibc ratio is
+  **UNCHANGED: 4.72x → 4.71x** (cross-worker; glibc stable at ~135 ns) — eliminating that one ~55 ns alloc is
+  below the getaddrinfo noise. NOT claimed as a perf win. Kept as a byte-identical alloc reduction (fewer
+  heap allocs / less allocator pressure), NOT a measured median improvement.
+- **SURFACE — where the getaddrinfo gap actually is.** The ~487 ns is distributed: the per-alloc interposed
+  cost (~165 ns, cod's SUB-STEP B) + ~320 ns of fl resolution logic vs glibc's ~124 ns. There is no single
+  clean high-value lever in cc's lane here — the alloc-count reduction (profiles proven sub-floor; a full
+  addrinfo-list arena would save the remaining ~2 allocs ≈ ~110 ns, still bounded by the interposed per-alloc
+  cost) and the ~320 ns logic gap would each need per-step profiling to localize. Recommend this as a
+  lower-priority follow-on; the high-value resolver levers (bookkeeping) are done.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED, bd-rwz2ns CLOSED): `decide()` strict fast-path adds `ApiFamily::Resolver` — **63.65x** on decide; with the observe fast-path the WHOLE resolver membrane bookkeeping is **1214 ns → 8.8 ns (137.68x)** — no getaddrinfo refactor needed
 
 - **THE PAYOFF of the profile.** The profile said the resolver membrane tax was `decide` (~397 ns) +

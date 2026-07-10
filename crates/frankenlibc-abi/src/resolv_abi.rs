@@ -1258,6 +1258,49 @@ struct AddrinfoProfile {
     protocol: c_int,
 }
 
+/// At most 3 distinct `(socktype, protocol)` profiles ever result from a getaddrinfo service
+/// resolution: the socktype/protocol values come from the fixed set {SOCK_STREAM/IPPROTO_TCP,
+/// SOCK_DGRAM/IPPROTO_UDP, SOCK_RAW}, and the list is deduped. So the profile list fits inline on the
+/// stack — eliminating the per-call `Vec<AddrinfoProfile>` heap allocation (one interposed
+/// malloc/free pair) on every `getaddrinfo` call. Behaviour-identical to the Vec it replaces.
+#[derive(Clone, Copy)]
+struct Profiles {
+    buf: [AddrinfoProfile; 3],
+    len: usize,
+}
+
+impl Profiles {
+    const fn new() -> Self {
+        Self {
+            buf: [AddrinfoProfile {
+                port: 0,
+                socktype: 0,
+                protocol: 0,
+            }; 3],
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, p: AddrinfoProfile) {
+        debug_assert!(self.len < self.buf.len(), "getaddrinfo profile list exceeded 3");
+        if self.len < self.buf.len() {
+            self.buf[self.len] = p;
+            self.len += 1;
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl std::ops::Deref for Profiles {
+    type Target = [AddrinfoProfile];
+    fn deref(&self) -> &[AddrinfoProfile] {
+        &self.buf[..self.len]
+    }
+}
+
 fn parse_numeric_service_port(text: &str) -> NumericService {
     // glibc parses numeric services through a signed-long path, then
     // rejects values whose 32-bit signed result is negative. The final
@@ -1289,12 +1332,12 @@ fn profiles_for_port(
     port: u16,
     hints: Option<&libc::addrinfo>,
     service_present: bool,
-) -> Result<Vec<AddrinfoProfile>, c_int> {
+) -> Result<Profiles, c_int> {
     let (socktype, protocol) = hints
         .map(|h| (h.ai_socktype, h.ai_protocol))
         .unwrap_or((0, 0));
 
-    let mut profiles = Vec::new();
+    let mut profiles = Profiles::new();
     match socktype {
         0 => match protocol {
             0 => {
@@ -1468,7 +1511,7 @@ fn lookup_service_entry_in_content(
 fn lookup_service_profiles(
     service: &[u8],
     hints: Option<&libc::addrinfo>,
-) -> Result<Option<Vec<AddrinfoProfile>>, c_int> {
+) -> Result<Option<Profiles>, c_int> {
     // Walk the parsed index instead of cloning the backend and re-parsing every line.
     // `cache.entries` IS `content.split('\n').filter_map(parse_services_line)`, so the visit
     // order, the entries, the `service_entry_matches` test, the `service_entry_profile` error
@@ -1478,7 +1521,7 @@ fn lookup_service_profiles(
     // pairs per call through the interposed allocator (bd-qds9jk / bd-xmng5n frame tables put
     // ~91-92% of resolver self time in allocator bookkeeping).
     let scanned = with_service_entries(|entries| {
-        let mut profiles = Vec::new();
+        let mut profiles = Profiles::new();
         for entry in entries {
             if !service_entry_matches(entry, service) {
                 continue;
@@ -1511,7 +1554,7 @@ fn resolve_addrinfo_profiles(
     service: Option<&CStr>,
     hints: Option<&libc::addrinfo>,
     repair: bool,
-) -> Result<Vec<AddrinfoProfile>, c_int> {
+) -> Result<Profiles, c_int> {
     let Some(service) = service else {
         return profiles_for_port(0, hints, false);
     };
