@@ -14059,3 +14059,87 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   is ~40 ns of allocator framing here, not the ~5 ns it would be under glibc.
 - **Reproducer:** `cargo bench -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench
   getprotobyname_r_tcp` (4 arms, one binary). Run in isolation.
+
+## 2026-07-10 (cod_fl) — REJECT (CODE REVERTED): production 4MiB segment heap loses 6.1-7.7% to the retained malloc/free path (bd-dcrhgl)
+
+- **NEGATIVE-EVIDENCE FIRST.** Before this attempt, grepped this ledger and
+  `docs/perf_next_architectural_swings.md` for `segment`, `segmented`, `pagemap`, `page map`,
+  `PageMap`, `radix`, `bitmap`, `ownership`, `no-deref`, `no fault`, `inline header`, `Swing-2`,
+  and `bd-dcrhgl`. The CLOSED families stayed closed: naive min/max+magic header validation,
+  table-guarded headers, PageOracle-guarded headers, the lock-free fallback table, cached tombstone
+  reinsertion, and the MallocState 64/256 hot-cycle precheck. The open retry condition was the
+  exact address-derived ownership/size proof banked above: segment-bitmap membership measured
+  **1.12ns** versus the **14.08ns** fallback-table control (0.079x), and benchmark-only segment
+  size-class remaining-byte lookup measured **1.99ns** versus **19.23ns** (0.103x).
+- **PROFILE ROUTING, NOT A GUESS.** The retained raw `perf.data` frame table above contains every
+  frame at or above 0.1% self time. Its leading frames are `free` 13.20%, allocator reentry guard
+  11.25%, `fallback_insert_sized_index` 10.98%, FrankenLibC `malloc` 10.41%, host `cfree` 8.38%,
+  `native_libc_malloc` 7.96%, alloc stats 7.15%, host `malloc` 6.52%, runtime mode 5.99%, and free
+  stats 5.34%. The nearby reentry/precheck families were already rejected, so this attempt took the
+  next actionable metadata frame, `fallback_insert_sized_index`, and replaced the ownership/size
+  table mechanism rather than retrying a header guard.
+- **ONE PRODUCTION LEVER ATTEMPTED.** Strict-mode small allocations were carved from one aligned,
+  bounded 256MiB reservation split into 64 power-of-two 4MiB segments. An address-derived 64-bit
+  segment bitmap proved exact membership without touching user memory; each class-homogeneous
+  segment had an immutable process-owned 64KiB header (portable across 4/16/64KiB host pages), and
+  a process-owned per-slot sidecar held requested size, live/generation state, and free-list links.
+  Segment mappings were monotone/immortal, the free list was tagged, and contended initialization
+  failed open to the existing host allocator. Bootstrap, large, aligned, and host-fallback
+  allocations retained the existing fallback table. Thus the experiment isolated production
+  segment allocation/free metadata without changing the foreign-pointer contract.
+- **BEHAVIOR/PARITY BEFORE SCORING.** Remote focused ABI check passed. The pre-expansion allocator
+  suite passed **56 runnable / 0 failed / 1 ignored**; the malloc-edge conformance row passed
+  **1/1**. Four focused segment tests then passed, covering exact 17-byte requested bounds and
+  alignment/slack, free/double-free/interior-free/calloc-zero/reuse lifecycle, same/cross-class and
+  segment/host realloc (including failed-realloc preservation), and 1,024 simultaneously live
+  allocations under concurrency; the concurrency case also passed its isolated rerun. The A/B
+  preflight wrote/read both ends of every allocation and asserted that the candidate pointer was
+  live in the production segment bitmap before freeing it.
+- **HONEST 3-WAY A/B.** Command:
+  `rch exec -- cargo run --profile release-perf -p frankenlibc-bench --features abi-bench --example malloc_st_probe`.
+  All arms ran interleaved in the same release-perf binary, process, and remote worker **`hz2`**:
+  retained pre-change ORIG, deployed segment candidate, and host glibc resolved from a separate
+  `dlmopen` namespace. Each score below is one replicate median from 40 rounds of 100,000
+  malloc/free pairs; the summary is across the three replicate medians.
+
+  | size | run | ORIG ns | candidate ns | glibc ns | cand/ORIG | cand/glibc |
+  |---:|---:|---:|---:|---:|---:|---:|
+  | 16 | 1 | 37.77 | 40.22 | 5.22 | 1.065 | 7.706 |
+  | 16 | 2 | 38.21 | 40.29 | 5.23 | 1.055 | 7.706 |
+  | 16 | 3 | 37.67 | 40.05 | 5.22 | 1.063 | 7.673 |
+  | 64 | 1 | 38.31 | 41.05 | 5.29 | 1.071 | 7.764 |
+  | 64 | 2 | 38.39 | 40.89 | 5.26 | 1.065 | 7.769 |
+  | 64 | 3 | 41.51 | 45.34 | 5.43 | 1.092 | 8.354 |
+  | 256 | 1 | 37.90 | 40.27 | 5.28 | 1.063 | 7.630 |
+  | 256 | 2 | 37.81 | 40.24 | 5.28 | 1.064 | 7.619 |
+  | 256 | 3 | 38.21 | 40.75 | 5.30 | 1.067 | 7.685 |
+  | 1024 | 1 | 38.41 | 40.84 | 5.28 | 1.063 | 7.736 |
+  | 1024 | 2 | 38.13 | 40.72 | 5.27 | 1.068 | 7.724 |
+  | 1024 | 3 | 37.99 | 40.62 | 5.32 | 1.069 | 7.632 |
+
+  | size | mean ORIG ns | mean candidate ns | mean glibc ns | cand/ORIG | cand/glibc | CV ORIG / candidate / glibc |
+  |---:|---:|---:|---:|---:|---:|---:|
+  | 16 | 37.88 | 40.19 | 5.22 | **1.061** | 7.695 | 0.75% / 0.32% / 0.11% |
+  | 64 | 39.40 | 42.43 | 5.33 | **1.077** | 7.966 | 4.62% / **5.95%** / 1.67% |
+  | 256 | 37.97 | 40.42 | 5.29 | **1.064** | 7.645 | 0.55% / 0.71% / 0.26% |
+  | 1024 | 38.17 | 40.72 | 5.29 | **1.067** | 7.697 | 0.57% / 0.27% / 0.51% |
+
+- **RESULT — REJECT.** The candidate loses at every measured size: **+6.1%, +7.7%, +6.4%, and
+  +6.7%** versus ORIG, and the size-64 candidate CV is **5.95%**, above the mandatory 5% gate.
+  It remains roughly **7.7-8.0x glibc**, nowhere near the 5x target. The address bitmap itself is
+  still a valid 1.12ns no-deref primitive; what failed is the whole production composition. For
+  depth-one malloc/free churn, fresh-slot/free-list atomics plus exact requested-size/live sidecar
+  traffic cost more than the cached host allocation plus fallback-table path they replace.
+  Production source, tests, and A/B hooks were reverted byte-for-byte; allocator behavior is
+  unchanged. Full LD_PRELOAD conformance was not spent after the decisive performance rejection.
+- **CLOSEOUT GATES.** After the exact source/test/bench reversal, only this Markdown ledger remained
+  changed and `git diff --check` passed. `ubs docs/NEGATIVE_EVIDENCE.md` exited 0 but explicitly
+  reported that Markdown is unsupported and no language scanner ran; there is no surviving Rust
+  change to scan or compile.
+- **NO-RETRY / OPEN RETRY CONDITION.** Do not retry this exact global tagged free-list plus
+  per-slot sidecar segment design. A future segment/PageMap retry must first prove the *whole*
+  allocation+free metadata path below the retained pair's approximately **37.9ns** same-worker
+  floor, not merely prove membership below the table. A structurally different eligible primitive
+  is per-thread segment bump/magazine ownership with packed address-derived shadow metadata and no
+  shared atomic free-list/sidecar load on the depth-one hot cycle. This rejection is not a parity
+  ceiling: it closes this composition, while leaving that different ownership primitive open.
