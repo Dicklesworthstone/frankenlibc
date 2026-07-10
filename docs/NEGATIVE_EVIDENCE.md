@@ -13648,56 +13648,38 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   plus reentry/stats; the previous same-worker baseline measured table/header/guarded at
   `9.79ns/0.83ns/10.37ns`, and this run re-confirmed the table-vs-header gap in
   `malloc_sizetrack_ab` before trying to wire any allocator behavior.
-- **RANKED SELF-TIME FRAME TABLE (all frames >= 0.1%).** Recovered from the retained
-  `/tmp/frankenlibc-bd-dcrhgl-malloc-st.svg` profile (5,605,696,583 weighted samples). Self time
-  was derived from the flamegraph interval tree as each frame's inclusive width minus its immediate
-  child widths, then aggregated by symbol. The reconstruction sums to exactly 100.000000% of the
-  profile and has zero negative-width nodes. The top frame's nearby micro-levers are already closed:
-  redundant reentry-slot resolution was ~0-gain and the MallocState 64/256 precheck was rejected.
-  The first requested actionable metadata frame is `fallback_insert_sized_index` at 8.676%; the
-  segment-bitmap lever attacks that family without retrying the closed lock-free-table rewrite.
+- **RANKED SELF-TIME FRAME TABLE (all frames >= 0.1%).** Extracted from the retained raw
+  `perf.data` (903 samples; approximately 5,605,696,583 cycles) with
+  `perf report --stdio --no-children --percent-limit 0.1 --sort=dso,symbol --call-graph none`.
+  Kernel symbols were restricted on the profiling host, so the seven kernel addresses remain
+  unresolved. The top ABI frame's nearby micro-levers are already closed: redundant reentry-slot
+  resolution was ~0-gain and the MallocState 64/256 precheck was rejected. The first actionable
+  metadata frame is `fallback_insert_sized_index` at 10.98%; the segment-bitmap lever attacks that
+  family without retrying the closed lock-free-table rewrite.
 
   | rank | self % | frame |
   |---:|---:|---|
-  | 1 | 10.882 | `frankenlibc_abi::malloc_abi::enter_allocator_reentry_guard` |
-  | 2 | 10.581 | `free` |
-  | 3 | 10.106 | `malloc` |
-  | 4 | 8.676 | `frankenlibc_abi::malloc_abi::fallback_insert_sized_index` |
-  | 5 | 6.006 | `__GI___libc_free` |
-  | 6 | 5.573 | `frankenlibc_abi::malloc_abi::record_alloc_stats` |
-  | 7 | 4.967 | `frankenlibc_abi::runtime_policy::mode` |
-  | 8 | 4.734 | `frankenlibc_abi::malloc_abi::native_libc_malloc` |
-  | 9 | 4.193 | `frankenlibc_abi::malloc_abi::record_free_stats` |
-  | 10 | 3.854 | `malloc_st_probe::main` |
-  | 11 | 3.201 | `__GI___libc_malloc` |
-  | 12 | 3.077 | `frankenlibc_abi::runtime_policy::ensure_ffi_pcc_verified` |
-  | 13 | 2.537 | `atomic_or<u8, u8>` |
-  | 14 | 2.371 | `tcache_put_n` |
-  | 15 | 1.948 | `frankenlibc_abi::runtime_policy::entrypoint_scope` |
-  | 16 | 1.902 | `tcache_get_n` |
-  | 17 | 1.651 | `current_allocator_reentry_slot` |
-  | 18 | 1.414 | `checked_request2size` |
-  | 19 | 1.229 | `[unknown]` |
-  | 20 | 1.165 | `atomic_compare_exchange<u8>` |
-  | 21 | 1.078 | `frankenlibc_core::malloc::size_class::bin_index` |
-  | 22 | 1.064 | `apply_locked` |
-  | 23 | 1.052 | `native_libc_free_with_slot` |
-  | 24 | 1.027 | `{closure#0}` |
-  | 25 | 1.016 | `small_bin_index` |
-  | 26 | 0.938 | `saturating_add` |
-  | 27 | 0.608 | `saturating_sub` |
-  | 28 | 0.560 | `max<usize>` |
-  | 29 | 0.462 | `strict_passthrough_active` |
-  | 30 | 0.424 | `is_bump_ptr` |
-  | 31 | 0.362 | `atomic_compare_exchange<u32>` |
-  | 32 | 0.194 | `atomic_load<u8>` |
-  | 33 | 0.157 | `min<usize>` |
-  | 34 | 0.156 | `lt` |
-  | 35 | 0.154 | `drop` |
-  | 36 | 0.153 | `record_mutation` |
-  | 37 | 0.153 | `atomic_store<usize>` |
-  | 38 | 0.150 | `atomic_store<u8>` |
-  | 39 | 0.145 | `fallback_insert_sized_for_slot` |
+  | 1 | 13.20 | `free` |
+  | 2 | 11.25 | `frankenlibc_abi::malloc_abi::enter_allocator_reentry_guard` |
+  | 3 | 10.98 | `frankenlibc_abi::malloc_abi::fallback_insert_sized_index` |
+  | 4 | 10.41 | `malloc` (FrankenLibC ABI) |
+  | 5 | 8.38 | `cfree@GLIBC_2.2.5` |
+  | 6 | 7.96 | `frankenlibc_abi::malloc_abi::native_libc_malloc` |
+  | 7 | 7.15 | `frankenlibc_abi::malloc_abi::record_alloc_stats` |
+  | 8 | 6.52 | `malloc` (host glibc) |
+  | 9 | 5.99 | `frankenlibc_abi::runtime_policy::mode` |
+  | 10 | 5.34 | `frankenlibc_abi::malloc_abi::record_free_stats` |
+  | 11 | 3.85 | `malloc_st_probe::main` |
+  | 12 | 3.08 | `frankenlibc_abi::runtime_policy::ensure_ffi_pcc_verified` |
+  | 13 | 2.56 | `frankenlibc_abi::runtime_policy::entrypoint_scope` |
+  | 14 | 2.22 | `frankenlibc_core::malloc::size_class::bin_index` |
+  | 15 | 0.16 | unresolved kernel `0xffffffffaf9dec12` |
+  | 16 | 0.15 | unresolved kernel `0xffffffffb023c281` |
+  | 17 | 0.15 | unresolved kernel `0xffffffffb023c27f` |
+  | 18 | 0.15 | unresolved kernel `0xffffffffafa88535` |
+  | 19 | 0.15 | unresolved kernel `0xffffffffafb537e1` |
+  | 20 | 0.12 | unresolved kernel `0xffffffffafa7b5c3` |
+  | 21 | 0.12 | unresolved kernel `0xffffffffafac03f3` |
 - **LEVER ATTEMPTED.** Extended only `crates/frankenlibc-bench/examples/malloc_sizetrack_ab.rs`
   with `SEGMENT_BITMAP`, a 4MiB-segment ownership prototype: `addr >> 22`, subtract the base
   segment, bounds-check the compact bitmap word, then safe-index process-owned `Vec<u64>` metadata.
