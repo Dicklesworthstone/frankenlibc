@@ -14687,3 +14687,44 @@ constraint forbids. Where only a profile could settle it, that is said, not glos
   **blocked on bd-3dxo1a**; **(3)** a fair `getaddrinfo` host-glibc baseline (bd-ynaqwe).
 - **Reproducer:** `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release
   -p frankenlibc-bench --features abi-bench --example hosts_reverse_ab`
+
+## 2026-07-10 (cod_fl) — REJECT / CONCRETE BLOCKER (code reverted): pinned 134M-op segment bitmap still misses the <5% stability gate (bd-dcrhgl)
+
+- **FINAL RECORDED RETRY CONDITION SATISFIED.** Kept the exact lookup-only T-S-S-T / S-T-T-S
+  sampler and non-zero execution profile, then pinned the scoring thread to its current allowed CPU
+  and increased every arm from 16,777,216 to **134,217,728 operations/sample** (8x). All **31 raw
+  samples** remained in the CV calculation; no trimming, outlier removal, thread-CPU clock, or
+  alternate estimator was introduced. The affinity change was deliberately applied only after the
+  self-profile so the `perf` child did not inherit the one-CPU mask.
+- **REMOTE SUBSTRATE.** The measured command was
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo bench -j 8 -p
+  frankenlibc-bench --features abi-bench --bench malloc_bench --profile release-perf --
+  segment_bitmap_integrity --noplot`. Eight Cargo jobs excluded the known no-`perf` high-priority
+  workers and routed this one binary to root worker **vmi1149989**; RCH ended with
+  `[RCH] remote vmi1149989`. Both arms ran in that single process. Several pre-score routing/fixture
+  failures produced no result: fail-closed no-slot refusal; `hz1`/`hz2` and non-root `ovh-a`
+  cancellations before compile; and one root `vmi1152480` run whose `perf` child inherited the
+  first draft's CPU mask and captured zero samples. None reached the timing loop, so none is a
+  measured attempt.
+- **PROFILE INTEGRITY — NON-ZERO SELF-TIME.** The accepted run captured **1,507 samples** and
+  assigned `malloc_bench::segment_bitmap_profile_batch` **96.67% self-time**. Retrieved artifacts
+  are non-empty: `candidate.perf` **294,992 bytes**, `perf-report.txt` **5,833 bytes**, and
+  `paired.json` **2,318 bytes** under
+  `target/criterion/bd-dcrhgl-segment-membership/run-1027729-1783693673886536308/`.
+- **MEASURED.** On pinned CPU 5, exact segment bitmap p50 **0.985ns/op**; lookup-only fallback table
+  p50 **6.083ns/op**; bitmap/table paired p50 **0.1610**, saving **5.098ns/op**. Table CV finally
+  cleared at **2.76%**, but bitmap CV remained **9.87%** and paired-ratio CV **10.42%**. The point
+  estimate again clears the historical 9.79ns bar, but the mandatory rule requires *all* CVs below
+  5%; this is a REJECT, not a WIN.
+- **CODE REVERTED / PRODUCTION NOT ATTEMPTED.** The affinity and 8x-duration harness delta was
+  reverted exactly; the previously committed lookup-only integrity harness remains. No allocator
+  source or test changed. Per the user's step gate, the bitmap did not earn permission to wire into
+  the inline-header or segment allocator, so no conformance or 3-way production A/B was spent.
+- **CONCRETE BLOCKER / DO-NOT-RETRY CONDITION.** Three profiled, DCE-safe, one-binary attempts put
+  the bitmap at **1.708ns**, **1.116ns**, and **0.985ns**, always below 9.79ns, but raw bitmap CV was
+  **17.42%**, **14.25%**, and **9.87%**; even pinned 134M-op wall-time samples did not clear 5%.
+  Do not retry this wall-time bitmap sampler on the shared RCH fleet. Reopen only with a remote
+  worker reservation/isolation primitive that can demonstrate <5% raw CV without trimming, or move
+  to the structurally different exact two-level radix PageMap primitive and profile it independently.
+  This is a substrate blocker, not a parity ceiling and not evidence against address-derived
+  ownership itself.
