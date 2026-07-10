@@ -13,10 +13,13 @@ use std::ffi::{c_int, c_void};
 use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::sync::atomic::{
-    AtomicBool, AtomicI32, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering,
+    AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU32, AtomicU64, AtomicUsize, Ordering,
 };
 
 use frankenlibc_core::errno::{EINVAL, ENOMEM};
+use frankenlibc_core::malloc::size_class::{
+    MAX_SMALL_SIZE, NUM_SIZE_CLASSES, bin_size, small_bin_index,
+};
 use frankenlibc_membrane::MEMBRANE_SCHEMA_VERSION;
 use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
 use frankenlibc_membrane::check_oracle::CheckStage;
@@ -94,7 +97,15 @@ struct AllocatorReentrySlot {
     native_guard_bits: AtomicU8,
     allocator_depth: AtomicU32,
     fallback_cache_index: AtomicUsize,
+    segment_local: UnsafeCell<SegmentLocalState>,
 }
+
+// SAFETY: a live kernel tid owns exactly one reentry slot.  The outer allocator
+// guard changes `allocator_depth` from zero to one before any access to
+// `segment_local`, so only that owner can obtain its mutable reference.  A
+// signal/reentrant allocation fails the guard and uses the host/bootstrap path;
+// a recycled tid can reuse the local cache only after the previous thread exits.
+unsafe impl Sync for AllocatorReentrySlot {}
 
 impl AllocatorReentrySlot {
     const fn new() -> Self {
@@ -104,6 +115,7 @@ impl AllocatorReentrySlot {
             native_guard_bits: AtomicU8::new(0),
             allocator_depth: AtomicU32::new(0),
             fallback_cache_index: AtomicUsize::new(usize::MAX),
+            segment_local: UnsafeCell::new(SegmentLocalState::new()),
         }
     }
 }
@@ -375,6 +387,770 @@ struct BumpHeap(std::cell::UnsafeCell<[u8; BUMP_SIZE]>);
 unsafe impl Sync for BumpHeap {}
 static BUMP_HEAP: BumpHeap = BumpHeap(std::cell::UnsafeCell::new([0u8; BUMP_SIZE]));
 
+// ---------------------------------------------------------------------------
+// Strict-mode small-allocation segment heap
+// ---------------------------------------------------------------------------
+//
+// The deployed strict allocator historically delegated every allocation to the
+// host and then inserted the pointer into FALLBACK_ALLOC_PTRS.  That makes a
+// later ownership/size query depend on a contended hash table.  The segment heap
+// replaces that table only for ordinary post-bootstrap small allocations:
+//
+//   address range + one bitmap bit -> immutable segment header -> slot sidecar
+//
+// The sidecar is allocator-owned memory that is never exposed to the caller.
+// Requested size and lifecycle state therefore remain trustworthy even if C
+// code underruns its returned buffer.  Published segments and sidecars are kept
+// mapped for process lifetime, so an Acquire membership hit makes every
+// subsequent metadata read fault-free without an epoch/unmap protocol.
+
+const SEGMENT_SHIFT: usize = 22;
+const SEGMENT_SIZE: usize = 1 << SEGMENT_SHIFT;
+const SEGMENT_MASK: usize = SEGMENT_SIZE - 1;
+const SEGMENT_COUNT: usize = 64;
+const SEGMENT_ARENA_SIZE: usize = SEGMENT_COUNT * SEGMENT_SIZE;
+const SEGMENT_RESERVE_SIZE: usize = SEGMENT_ARENA_SIZE + SEGMENT_SIZE;
+// Linux targets supported by this workspace use 4K, 16K, or 64K pages.  A
+// 64K immutable header span therefore never shares a protected kernel page
+// with writable payload slots.
+const SEGMENT_HEADER_BYTES: usize = 64 * 1024;
+const SEGMENT_HEADER_MAGIC: u64 = 0x4652_414E_4B53_4547;
+const SEGMENT_ARENA_UNINITIALIZED: u8 = 0;
+const SEGMENT_ARENA_INITIALIZING: u8 = 1;
+const SEGMENT_ARENA_READY: u8 = 2;
+const SEGMENT_ARENA_FAILED: u8 = 3;
+
+static SEGMENT_ARENA_STATE: AtomicU8 = AtomicU8::new(SEGMENT_ARENA_UNINITIALIZED);
+static SEGMENT_ARENA_BASE: AtomicUsize = AtomicUsize::new(0);
+static SEGMENT_OWNED_BITMAP: AtomicU64 = AtomicU64::new(0);
+// Segment ids are claimed only when a thread exhausts its local class segment.
+// This counter is deliberately absent from the warmed allocation/free cycle.
+static SEGMENT_NEXT_UNUSED: AtomicU32 = AtomicU32::new(0);
+
+const SEGMENT_MAGAZINE_CAPACITY: usize = 8;
+const SEGMENT_BUMP_CHUNK: u32 = 64;
+const SEGMENT_NO_ACTIVE: u16 = u16::MAX;
+const SEGMENT_SLOT_FREE: u16 = u16::MAX;
+const SEGMENT_SLOT_INDEX_BITS: u32 = 18;
+const SEGMENT_SLOT_INDEX_MASK: u32 = (1 << SEGMENT_SLOT_INDEX_BITS) - 1;
+const SEGMENT_MAX_SLOT_COUNT: usize = (SEGMENT_SIZE - SEGMENT_HEADER_BYTES) / BUMP_ALIGN;
+const SEGMENT_SPILL_WORDS: usize = SEGMENT_MAX_SLOT_COUNT.div_ceil(64);
+
+#[repr(C)]
+struct SegmentMemoryHeader {
+    magic: u64,
+    class_size: u32,
+    slot_count: u32,
+    class_index: u32,
+    _reserved: u32,
+}
+
+#[repr(transparent)]
+struct SegmentSlotMeta {
+    // Zero means never used, `SEGMENT_SLOT_FREE` means retired, and every live
+    // small request fits in 1..=32768.  Packing lifecycle and exact requested
+    // bytes into one word shrinks the former 16-byte record to two bytes.
+    requested_size: AtomicU16,
+}
+
+impl SegmentSlotMeta {
+    const fn new() -> Self {
+        Self {
+            requested_size: AtomicU16::new(0),
+        }
+    }
+}
+
+struct SegmentDescriptor {
+    meta_base: AtomicUsize,
+    // Threads claim disjoint fixed-size ranges only when their private cursor
+    // empties.  The atomic never participates in the warmed depth-one cycle.
+    next_unused_slot: AtomicU32,
+    // Local magazines own the common free path.  Overflow/reentrant frees set
+    // one bit here; a local miss claims a bit with CAS.  No pointer links live
+    // in per-slot metadata and no spill word is touched on depth-one churn.
+    spill: [AtomicU64; SEGMENT_SPILL_WORDS],
+}
+
+impl SegmentDescriptor {
+    const fn new() -> Self {
+        Self {
+            meta_base: AtomicUsize::new(0),
+            next_unused_slot: AtomicU32::new(0),
+            spill: [const { AtomicU64::new(0) }; SEGMENT_SPILL_WORDS],
+        }
+    }
+}
+
+static SEGMENT_DESCRIPTORS: [SegmentDescriptor; SEGMENT_COUNT] =
+    [const { SegmentDescriptor::new() }; SEGMENT_COUNT];
+
+#[derive(Clone, Copy)]
+struct SegmentMagazine {
+    len: u8,
+    entries: [u32; SEGMENT_MAGAZINE_CAPACITY],
+}
+
+impl SegmentMagazine {
+    const fn new() -> Self {
+        Self {
+            len: 0,
+            entries: [u32::MAX; SEGMENT_MAGAZINE_CAPACITY],
+        }
+    }
+
+    #[inline]
+    fn pop(&mut self) -> Option<u32> {
+        let next_len = self.len.checked_sub(1)?;
+        self.len = next_len;
+        let entry = self.entries[next_len as usize];
+        self.entries[next_len as usize] = u32::MAX;
+        (entry != u32::MAX).then_some(entry)
+    }
+
+    #[inline]
+    fn push(&mut self, entry: u32) -> bool {
+        let index = self.len as usize;
+        if index >= SEGMENT_MAGAZINE_CAPACITY {
+            return false;
+        }
+        self.entries[index] = entry;
+        self.len += 1;
+        true
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SegmentLocalClass {
+    active_segment: u16,
+    next_unused_slot: u32,
+    bump_end: u32,
+    magazine: SegmentMagazine,
+}
+
+impl SegmentLocalClass {
+    const fn new() -> Self {
+        Self {
+            active_segment: SEGMENT_NO_ACTIVE,
+            next_unused_slot: 0,
+            bump_end: 0,
+            magazine: SegmentMagazine::new(),
+        }
+    }
+}
+
+struct SegmentLocalState {
+    classes: [SegmentLocalClass; NUM_SIZE_CLASSES],
+}
+
+impl SegmentLocalState {
+    const fn new() -> Self {
+        Self {
+            classes: [SegmentLocalClass::new(); NUM_SIZE_CLASSES],
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SegmentSlotView {
+    segment_index: usize,
+    class_index: usize,
+    class_size: usize,
+    slot_index: u32,
+    user_base: usize,
+    meta: &'static SegmentSlotMeta,
+}
+
+enum SegmentFreeResult {
+    NotOwned,
+    OwnedInvalid,
+    Freed(usize),
+}
+
+#[inline]
+fn segment_arena_base_if_ready() -> Option<usize> {
+    (SEGMENT_ARENA_STATE.load(Ordering::Acquire) == SEGMENT_ARENA_READY)
+        .then(|| SEGMENT_ARENA_BASE.load(Ordering::Relaxed))
+        .filter(|base| *base != 0)
+}
+
+#[cold]
+fn initialize_segment_arena() -> Option<usize> {
+    loop {
+        match SEGMENT_ARENA_STATE.load(Ordering::Acquire) {
+            SEGMENT_ARENA_READY => return segment_arena_base_if_ready(),
+            SEGMENT_ARENA_FAILED => return None,
+            // Never wait inside malloc.  Concurrent first users (and a child
+            // that inherited INITIALIZING across fork) safely retain the host
+            // fallback until a ready arena is visible.
+            SEGMENT_ARENA_INITIALIZING => return None,
+            SEGMENT_ARENA_UNINITIALIZED => {
+                if SEGMENT_ARENA_STATE
+                    .compare_exchange(
+                        SEGMENT_ARENA_UNINITIALIZED,
+                        SEGMENT_ARENA_INITIALIZING,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_err()
+                {
+                    continue;
+                }
+
+                // SAFETY: this is a direct raw Linux mmap syscall.  It cannot
+                // recurse through the exported mmap/malloc ABI.  The oversized
+                // immortal reservation contains one 4 MiB-aligned 256 MiB
+                // arena; untouched pages remain demand-zero and uncommitted.
+                let mapping = unsafe {
+                    raw_syscall::sys_mmap(
+                        std::ptr::null_mut(),
+                        SEGMENT_RESERVE_SIZE,
+                        libc::PROT_READ | libc::PROT_WRITE,
+                        libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                        -1,
+                        0,
+                    )
+                };
+                let Ok(raw_base) = mapping else {
+                    SEGMENT_ARENA_STATE.store(SEGMENT_ARENA_FAILED, Ordering::Release);
+                    return None;
+                };
+                let raw_base = raw_base as usize;
+                let Some(aligned_input) = raw_base.checked_add(SEGMENT_MASK) else {
+                    SEGMENT_ARENA_STATE.store(SEGMENT_ARENA_FAILED, Ordering::Release);
+                    return None;
+                };
+                let aligned_base = aligned_input & !SEGMENT_MASK;
+                let Some(arena_end) = aligned_base.checked_add(SEGMENT_ARENA_SIZE) else {
+                    SEGMENT_ARENA_STATE.store(SEGMENT_ARENA_FAILED, Ordering::Release);
+                    return None;
+                };
+                let Some(mapping_end) = raw_base.checked_add(SEGMENT_RESERVE_SIZE) else {
+                    SEGMENT_ARENA_STATE.store(SEGMENT_ARENA_FAILED, Ordering::Release);
+                    return None;
+                };
+                if arena_end > mapping_end {
+                    SEGMENT_ARENA_STATE.store(SEGMENT_ARENA_FAILED, Ordering::Release);
+                    return None;
+                }
+
+                SEGMENT_ARENA_BASE.store(aligned_base, Ordering::Relaxed);
+                SEGMENT_ARENA_STATE.store(SEGMENT_ARENA_READY, Ordering::Release);
+                return Some(aligned_base);
+            }
+            _ => return None,
+        }
+    }
+}
+
+#[inline]
+fn segment_owned_index(addr: usize) -> Option<usize> {
+    let arena_base = segment_arena_base_if_ready()?;
+    let relative = addr.wrapping_sub(arena_base);
+    if relative >= SEGMENT_ARENA_SIZE {
+        return None;
+    }
+    let index = relative >> SEGMENT_SHIFT;
+    let owned = SEGMENT_OWNED_BITMAP.load(Ordering::Acquire);
+    ((owned & (1u64 << index)) != 0).then_some(index)
+}
+
+#[inline]
+fn segment_base(index: usize) -> Option<usize> {
+    let arena_base = segment_arena_base_if_ready()?;
+    (index < SEGMENT_COUNT).then(|| arena_base + (index << SEGMENT_SHIFT))
+}
+
+#[inline]
+fn segment_header(index: usize) -> Option<&'static SegmentMemoryHeader> {
+    let base = segment_base(index)?;
+    // SAFETY: callers reach this helper only after an Acquire ownership-bit
+    // observation.  Segment initialization wrote this immutable header and
+    // mprotected its page read-only before publishing that bit.  Published
+    // segment mappings are never reclaimed.
+    let header = unsafe { &*(base as *const SegmentMemoryHeader) };
+    if header.magic != SEGMENT_HEADER_MAGIC
+        || header.class_index as usize >= NUM_SIZE_CLASSES
+        || header.class_size as usize != bin_size(header.class_index as usize)
+        || header.slot_count == 0
+    {
+        return None;
+    }
+    Some(header)
+}
+
+#[inline]
+fn segment_slot_meta(
+    segment_index: usize,
+    slot_index: u32,
+    slot_count: u32,
+) -> Option<&'static SegmentSlotMeta> {
+    if slot_index >= slot_count {
+        return None;
+    }
+    let descriptor = SEGMENT_DESCRIPTORS.get(segment_index)?;
+    let meta_base = descriptor.meta_base.load(Ordering::Acquire);
+    if meta_base == 0 {
+        return None;
+    }
+    // SAFETY: the sidecar contains `slot_count` initialized SegmentSlotMeta
+    // objects, is allocator-private, and remains mapped for process lifetime.
+    Some(unsafe { &*((meta_base as *const SegmentSlotMeta).add(slot_index as usize)) })
+}
+
+#[inline]
+fn segment_slot_view(addr: usize) -> Option<SegmentSlotView> {
+    let segment_index = segment_owned_index(addr)?;
+    let header = segment_header(segment_index)?;
+    let base = segment_base(segment_index)?;
+    let relative = addr.wrapping_sub(base);
+    if relative < SEGMENT_HEADER_BYTES {
+        return None;
+    }
+    let class_size = header.class_size as usize;
+    let payload_relative = relative - SEGMENT_HEADER_BYTES;
+    let slot_index = payload_relative / class_size;
+    if slot_index >= header.slot_count as usize {
+        return None;
+    }
+    let user_base = base + SEGMENT_HEADER_BYTES + slot_index * class_size;
+    if addr >= user_base + class_size {
+        return None;
+    }
+    let meta = segment_slot_meta(segment_index, slot_index as u32, header.slot_count)?;
+    Some(SegmentSlotView {
+        segment_index,
+        class_index: header.class_index as usize,
+        class_size,
+        slot_index: slot_index as u32,
+        user_base,
+        meta,
+    })
+}
+
+#[inline]
+fn segment_live_requested(view: SegmentSlotView) -> Option<usize> {
+    let requested = view.meta.requested_size.load(Ordering::Acquire) as usize;
+    if requested == 0 || requested > view.class_size {
+        return None;
+    }
+    Some(requested)
+}
+
+#[inline]
+fn segment_remaining(addr: usize) -> Option<usize> {
+    let view = segment_slot_view(addr)?;
+    let requested = segment_live_requested(view)?;
+    let offset = addr.wrapping_sub(view.user_base);
+    (offset < requested).then_some(requested - offset)
+}
+
+#[inline]
+fn segment_exact_live_view(ptr: *mut c_void) -> Option<(SegmentSlotView, usize)> {
+    let view = segment_slot_view(ptr as usize)?;
+    if ptr as usize != view.user_base {
+        return None;
+    }
+    let requested = segment_live_requested(view)?;
+    Some((view, requested))
+}
+
+#[cold]
+fn initialize_segment(class_index: usize) -> Option<usize> {
+    let arena_base = initialize_segment_arena()?;
+    let raw_index = loop {
+        let current = SEGMENT_NEXT_UNUSED.load(Ordering::Acquire);
+        if current as usize >= SEGMENT_COUNT {
+            return None;
+        }
+        if SEGMENT_NEXT_UNUSED
+            .compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            break current as usize;
+        }
+    };
+    let class_size = bin_size(class_index);
+    if class_size == 0 || class_size > MAX_SMALL_SIZE {
+        return None;
+    }
+    let slot_count = ((SEGMENT_SIZE - SEGMENT_HEADER_BYTES) / class_size) as u32;
+    if slot_count == 0 {
+        return None;
+    }
+    let meta_bytes = (slot_count as usize).checked_mul(std::mem::size_of::<SegmentSlotMeta>())?;
+    let meta_mapping_bytes = meta_bytes.checked_add(4095)? & !4095usize;
+
+    // SAFETY: direct raw mmap avoids allocator recursion.  The mapping is a
+    // private sidecar and is deliberately immortal while its segment is owned.
+    let meta_mapping = unsafe {
+        raw_syscall::sys_mmap(
+            std::ptr::null_mut(),
+            meta_mapping_bytes,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+            -1,
+            0,
+        )
+    };
+    let Ok(meta_base) = meta_mapping else {
+        return None;
+    };
+    let meta_base = meta_base as *mut SegmentSlotMeta;
+    for slot_index in 0..slot_count as usize {
+        // SAFETY: each iteration initializes one distinct, properly aligned
+        // object inside the sidecar mapping before any ownership publication.
+        unsafe { meta_base.add(slot_index).write(SegmentSlotMeta::new()) };
+    }
+
+    let base = arena_base + (raw_index << SEGMENT_SHIFT);
+    // SAFETY: this segment is uniquely claimed and not yet published.  Its
+    // first page is writable within the arena reservation.
+    unsafe {
+        (base as *mut SegmentMemoryHeader).write(SegmentMemoryHeader {
+            magic: SEGMENT_HEADER_MAGIC,
+            class_size: class_size as u32,
+            slot_count,
+            class_index: class_index as u32,
+            _reserved: 0,
+        });
+    }
+    // Make the address-derived size-class header immutable before publication.
+    // SAFETY: base is page-aligned and the header occupies this mapped page.
+    if unsafe { raw_syscall::sys_mprotect(base as *mut u8, SEGMENT_HEADER_BYTES, libc::PROT_READ) }
+        .is_err()
+    {
+        return None;
+    }
+
+    let descriptor = &SEGMENT_DESCRIPTORS[raw_index];
+    descriptor
+        .meta_base
+        .store(meta_base as usize, Ordering::Release);
+    descriptor.next_unused_slot.store(0, Ordering::Relaxed);
+    SEGMENT_OWNED_BITMAP.fetch_or(1u64 << raw_index, Ordering::Release);
+    Some(raw_index)
+}
+
+#[cold]
+fn claim_segment_bump_chunk(segment_index: usize, class_index: usize) -> Option<(u32, u32)> {
+    let header = segment_header(segment_index)?;
+    if header.class_index as usize != class_index {
+        return None;
+    }
+    let descriptor = SEGMENT_DESCRIPTORS.get(segment_index)?;
+    loop {
+        let start = descriptor.next_unused_slot.load(Ordering::Acquire);
+        if start >= header.slot_count {
+            return None;
+        }
+        let end = start
+            .saturating_add(SEGMENT_BUMP_CHUNK)
+            .min(header.slot_count);
+        if descriptor
+            .next_unused_slot
+            .compare_exchange_weak(start, end, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return Some((start, end));
+        }
+    }
+}
+
+#[cold]
+fn claim_existing_class_chunk(local: &mut SegmentLocalClass, class_index: usize) -> bool {
+    let owned = SEGMENT_OWNED_BITMAP.load(Ordering::Acquire);
+    for segment_index in 0..SEGMENT_COUNT {
+        if owned & (1u64 << segment_index) == 0 {
+            continue;
+        }
+        let Some((start, end)) = claim_segment_bump_chunk(segment_index, class_index) else {
+            continue;
+        };
+        local.active_segment = segment_index as u16;
+        local.next_unused_slot = start;
+        local.bump_end = end;
+        return true;
+    }
+    false
+}
+
+#[inline]
+fn activate_segment_slot(
+    view: SegmentSlotView,
+    requested: usize,
+    zeroed: bool,
+) -> Option<*mut c_void> {
+    if requested == 0 || requested > view.class_size || requested > u16::MAX as usize {
+        return None;
+    }
+    let requested = requested as u16;
+    debug_assert!(matches!(
+        view.meta.requested_size.load(Ordering::Relaxed),
+        0 | SEGMENT_SLOT_FREE
+    ));
+    if zeroed {
+        // SAFETY: the caller exclusively removed this slot from its local
+        // magazine/spill bitmap or advanced its private bump cursor.  The
+        // pointer is not externally observable until this function returns.
+        unsafe {
+            std::ptr::write_bytes(view.user_base as *mut u8, 0, requested as usize);
+        }
+    }
+    // Magazine pop, spill-bit CAS, and the owner-only bump cursor are three
+    // disjoint proofs of exclusive slot ownership.  Publish with one store;
+    // the warmed malloc path therefore performs no shared metadata RMW.
+    view.meta.requested_size.store(requested, Ordering::Release);
+    Some(view.user_base as *mut c_void)
+}
+
+#[inline]
+fn segment_slot_view_at(segment_index: usize, slot_index: u32) -> Option<SegmentSlotView> {
+    let header = segment_header(segment_index)?;
+    if slot_index >= header.slot_count {
+        return None;
+    }
+    let meta = segment_slot_meta(segment_index, slot_index, header.slot_count)?;
+    let base = segment_base(segment_index)?;
+    Some(SegmentSlotView {
+        segment_index,
+        class_index: header.class_index as usize,
+        class_size: header.class_size as usize,
+        slot_index,
+        user_base: base + SEGMENT_HEADER_BYTES + slot_index as usize * header.class_size as usize,
+        meta,
+    })
+}
+
+#[inline]
+fn encode_segment_slot(segment_index: usize, slot_index: u32) -> Option<u32> {
+    if segment_index >= SEGMENT_COUNT || slot_index > SEGMENT_SLOT_INDEX_MASK {
+        return None;
+    }
+    Some(((segment_index as u32) << SEGMENT_SLOT_INDEX_BITS) | slot_index)
+}
+
+#[inline]
+fn decode_segment_slot(encoded: u32) -> Option<(usize, u32)> {
+    if encoded == u32::MAX {
+        return None;
+    }
+    let segment_index = (encoded >> SEGMENT_SLOT_INDEX_BITS) as usize;
+    let slot_index = encoded & SEGMENT_SLOT_INDEX_MASK;
+    (segment_index < SEGMENT_COUNT).then_some((segment_index, slot_index))
+}
+
+#[cold]
+fn spill_segment_slot(view: SegmentSlotView) {
+    let Some(descriptor) = SEGMENT_DESCRIPTORS.get(view.segment_index) else {
+        return;
+    };
+    let word_index = view.slot_index as usize >> 6;
+    let Some(word) = descriptor.spill.get(word_index) else {
+        return;
+    };
+    word.fetch_or(1u64 << (view.slot_index & 63), Ordering::Release);
+}
+
+#[cold]
+fn allocate_from_spill(class_index: usize, requested: usize, zeroed: bool) -> Option<*mut c_void> {
+    let owned = SEGMENT_OWNED_BITMAP.load(Ordering::Acquire);
+    for segment_index in 0..SEGMENT_COUNT {
+        if owned & (1u64 << segment_index) == 0 {
+            continue;
+        }
+        let Some(header) = segment_header(segment_index) else {
+            continue;
+        };
+        if header.class_index as usize != class_index {
+            continue;
+        }
+        let descriptor = SEGMENT_DESCRIPTORS.get(segment_index)?;
+        let word_count = (header.slot_count as usize).div_ceil(64);
+        for word_index in 0..word_count {
+            let Some(word) = descriptor.spill.get(word_index) else {
+                break;
+            };
+            loop {
+                let observed = word.load(Ordering::Acquire);
+                if observed == 0 {
+                    break;
+                }
+                let bit_index = observed.trailing_zeros();
+                let bit = 1u64 << bit_index;
+                if word
+                    .compare_exchange_weak(
+                        observed,
+                        observed & !bit,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_err()
+                {
+                    continue;
+                }
+                let slot_index = (word_index as u32) * 64 + bit_index;
+                let Some(view) = segment_slot_view_at(segment_index, slot_index) else {
+                    break;
+                };
+                if let Some(ptr) = activate_segment_slot(view, requested, zeroed) {
+                    return Some(ptr);
+                }
+                break;
+            }
+        }
+    }
+    None
+}
+
+#[inline]
+fn allocate_from_local_class(
+    local: &mut SegmentLocalClass,
+    class_index: usize,
+    requested: usize,
+    zeroed: bool,
+) -> Option<*mut c_void> {
+    while let Some(encoded) = local.magazine.pop() {
+        let Some((segment_index, slot_index)) = decode_segment_slot(encoded) else {
+            continue;
+        };
+        let Some(view) = segment_slot_view_at(segment_index, slot_index) else {
+            continue;
+        };
+        if view.class_index != class_index {
+            continue;
+        }
+        if let Some(ptr) = activate_segment_slot(view, requested, zeroed) {
+            return Some(ptr);
+        }
+    }
+
+    loop {
+        if local.active_segment == SEGMENT_NO_ACTIVE {
+            return None;
+        }
+        let segment_index = local.active_segment as usize;
+        let Some(header) = segment_header(segment_index) else {
+            local.active_segment = SEGMENT_NO_ACTIVE;
+            return None;
+        };
+        if header.class_index as usize != class_index {
+            local.active_segment = SEGMENT_NO_ACTIVE;
+            return None;
+        }
+        if local.next_unused_slot >= local.bump_end || local.bump_end > header.slot_count {
+            local.active_segment = SEGMENT_NO_ACTIVE;
+            return None;
+        }
+        let slot_index = local.next_unused_slot;
+        local.next_unused_slot += 1;
+        let Some(view) = segment_slot_view_at(segment_index, slot_index) else {
+            continue;
+        };
+        if let Some(ptr) = activate_segment_slot(view, requested, zeroed) {
+            return Some(ptr);
+        }
+    }
+}
+
+#[inline]
+fn segment_allocate(
+    slot: &'static AllocatorReentrySlot,
+    requested: usize,
+    zeroed: bool,
+) -> Option<*mut c_void> {
+    let class = small_bin_index(requested)?;
+    let class_index = class.get();
+    // SAFETY: all callers hold the successful outer allocator guard associated
+    // with this slot; reentrant paths never call `segment_allocate`.
+    let local_state = unsafe { &mut *slot.segment_local.get() };
+    let local = local_state.classes.get_mut(class_index)?;
+
+    if let Some(ptr) = allocate_from_local_class(local, class_index, requested, zeroed) {
+        return Some(ptr);
+    }
+
+    if claim_existing_class_chunk(local, class_index) {
+        return allocate_from_local_class(local, class_index, requested, zeroed);
+    }
+
+    if let Some(ptr) = allocate_from_spill(class_index, requested, zeroed) {
+        return Some(ptr);
+    }
+
+    let segment_index = initialize_segment(class_index)?;
+    let (start, end) = claim_segment_bump_chunk(segment_index, class_index)?;
+    local.active_segment = segment_index as u16;
+    local.next_unused_slot = start;
+    local.bump_end = end;
+    allocate_from_local_class(local, class_index, requested, zeroed)
+}
+
+#[inline]
+fn segment_free(
+    slot: Option<&'static AllocatorReentrySlot>,
+    ptr: *mut c_void,
+) -> SegmentFreeResult {
+    let addr = ptr as usize;
+    if segment_owned_index(addr).is_none() {
+        return SegmentFreeResult::NotOwned;
+    }
+    let Some(view) = segment_slot_view(addr) else {
+        return SegmentFreeResult::OwnedInvalid;
+    };
+    if addr != view.user_base {
+        return SegmentFreeResult::OwnedInvalid;
+    }
+    let previous = view
+        .meta
+        .requested_size
+        .swap(SEGMENT_SLOT_FREE, Ordering::AcqRel);
+    let requested = previous as usize;
+    if previous == 0 || previous == SEGMENT_SLOT_FREE || requested > view.class_size {
+        if previous == 0 || (previous != SEGMENT_SLOT_FREE && requested > view.class_size) {
+            view.meta.requested_size.store(previous, Ordering::Release);
+        }
+        return SegmentFreeResult::OwnedInvalid;
+    }
+
+    let encoded = encode_segment_slot(view.segment_index, view.slot_index);
+    if let (Some(slot), Some(encoded)) = (slot, encoded) {
+        // SAFETY: the public free path holds this slot's successful outer guard.
+        let local_state = unsafe { &mut *slot.segment_local.get() };
+        if let Some(local) = local_state.classes.get_mut(view.class_index)
+            && local.magazine.push(encoded)
+        {
+            return SegmentFreeResult::Freed(requested);
+        }
+    }
+
+    spill_segment_slot(view);
+    SegmentFreeResult::Freed(requested)
+}
+
+#[inline]
+fn segment_resize_in_place(ptr: *mut c_void, requested: usize) -> Option<usize> {
+    let (view, old_requested) = segment_exact_live_view(ptr)?;
+    if requested == 0 || requested > view.class_size || requested > u16::MAX as usize {
+        return None;
+    }
+    view.meta
+        .requested_size
+        .compare_exchange(
+            old_requested as u16,
+            requested as u16,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .ok()?;
+    Some(old_requested)
+}
+
+#[doc(hidden)]
+pub fn malloc_segment_owned_for_tests(ptr: *const c_void) -> bool {
+    segment_owned_index(ptr as usize).is_some()
+}
+
 /// Raw allocator for internal ABI use.
 ///
 /// Uses the native host-resolution path with the same bump fallback and
@@ -407,6 +1183,59 @@ pub(crate) unsafe fn host_passthrough_realloc(ptr: *mut c_void, size: usize) -> 
 /// Host free passthrough for ABI internals that must preserve libc heap ownership.
 pub(crate) unsafe fn host_passthrough_free(ptr: *mut c_void) {
     unsafe { native_libc_free(ptr) }
+}
+
+/// Move a caller buffer out of the segment heap before handing it to a host
+/// libc API that may call the host allocator's `realloc` internally.
+///
+/// Non-segment pointers keep their address, but any stale fallback-table row
+/// is removed because the host may replace that allocation without crossing
+/// our exported `realloc`.  The caller must invoke
+/// [`finish_host_realloc_buffer`] with the returned pointer/capacity after the
+/// host call, including host error returns that leave a buffer allocated.
+pub(crate) unsafe fn prepare_host_realloc_buffer(
+    ptr: *mut c_void,
+    capacity: usize,
+) -> Option<*mut c_void> {
+    if ptr.is_null() {
+        return Some(ptr);
+    }
+    if segment_owned_index(ptr as usize).is_some() {
+        let (_, requested) = segment_exact_live_view(ptr)?;
+        // SAFETY: this allocation is intentionally host-owned because the
+        // next operation may invoke host realloc directly.
+        let host = unsafe { native_libc_malloc(capacity.max(1)) };
+        if host.is_null() {
+            return None;
+        }
+        // SAFETY: both buffers are live; a valid getdelim/getline capacity
+        // describes the caller-accessible prefix of the source allocation.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                ptr.cast::<u8>(),
+                host.cast::<u8>(),
+                requested.min(capacity),
+            );
+        }
+        if !matches!(segment_free(None, ptr), SegmentFreeResult::Freed(_)) {
+            // SAFETY: `host` was allocated immediately above and has not
+            // escaped if the segment lifecycle check unexpectedly failed.
+            unsafe { native_libc_free(host) };
+            return None;
+        }
+        return Some(host);
+    }
+
+    let _ = fallback_remove_sized(ptr);
+    Some(ptr)
+}
+
+/// Re-establish exact fallback-table bounds after a host API may have
+/// reallocated a caller-owned line buffer behind our ABI boundary.
+pub(crate) fn finish_host_realloc_buffer(ptr: *mut c_void, capacity: usize) {
+    if !ptr.is_null() {
+        fallback_insert_sized(ptr, capacity.max(1));
+    }
 }
 
 #[cold]
@@ -1561,6 +2390,89 @@ pub fn bench_free_null_old_strict_path() {
     }
 }
 
+/// Bench-only retained copy of the deployed strict malloc path immediately
+/// before the segment heap lever.  It preserves the original call boundary,
+/// runtime-policy framing, host allocation, fallback-table insertion, and
+/// statistics update so `malloc_st_probe` can run an honest in-process ORIG arm.
+#[doc(hidden)]
+pub unsafe extern "C" fn bench_malloc_orig_strict_path(size: usize) -> *mut c_void {
+    let Some(reentry_guard) = enter_allocator_reentry_guard() else {
+        return unsafe { bootstrap_malloc_passthrough(size) };
+    };
+    if allocator_bootstrap_passthrough_active() {
+        return unsafe { bootstrap_malloc_passthrough(size) };
+    }
+
+    let req = size.max(1);
+    let _trace_scope = runtime_policy::entrypoint_scope("malloc");
+    if strict_allocator_host_path_active() {
+        if cfg!(not(test))
+            && runtime_policy::is_runtime_ready()
+            && runtime_policy::proof_carried_fast_path_active(
+                ApiFamily::Allocator,
+                req,
+                true,
+                false,
+            )
+        {
+            let (_, decision) =
+                runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
+            let out = unsafe { native_libc_malloc(req) };
+            if !out.is_null() {
+                fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
+                record_alloc_stats(req);
+            }
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(8, req),
+                out.is_null(),
+            );
+            return out;
+        }
+        let out = unsafe { native_libc_malloc(req) };
+        if !out.is_null() {
+            fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
+            record_alloc_stats(req);
+        }
+        return out;
+    }
+    unsafe { malloc(size) }
+}
+
+/// Bench-only retained copy of the pre-segment strict free path paired with
+/// [`bench_malloc_orig_strict_path`].
+#[doc(hidden)]
+pub unsafe extern "C" fn bench_free_orig_strict_path(ptr: *mut c_void) {
+    if ptr.is_null() && runtime_policy::strict_passthrough_active() {
+        return;
+    }
+    let Some(reentry_guard) = enter_allocator_reentry_guard() else {
+        unsafe { bootstrap_free_passthrough(ptr) };
+        return;
+    };
+    if allocator_bootstrap_passthrough_active() {
+        unsafe { bootstrap_free_passthrough(ptr) };
+        return;
+    }
+    if is_bump_ptr(ptr) {
+        let _ = fallback_remove(ptr);
+        return;
+    }
+    if strict_allocator_host_path_active() {
+        if let Some(size) = fallback_remove_sized_for_slot(reentry_guard.slot, ptr) {
+            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            record_free_stats(size);
+            return;
+        }
+        if !check_ownership(ptr as usize) {
+            unsafe { native_libc_free_with_slot(reentry_guard.slot, ptr) };
+            return;
+        }
+    }
+    unsafe { free(ptr) }
+}
+
 fn fallback_size_for_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) -> Option<usize> {
     let key = fallback_key(ptr)?;
     if !MULTI_THREADED.load(Ordering::Relaxed) {
@@ -1738,6 +2650,23 @@ pub(crate) unsafe fn mprobe_status(ptr: *mut c_void) -> c_int {
         return MCHECK_HEAD;
     }
 
+    if segment_owned_index(ptr as usize).is_some() {
+        let Some(view) = segment_slot_view(ptr as usize) else {
+            return MCHECK_HEAD;
+        };
+        if view.user_base != ptr as usize {
+            return MCHECK_HEAD;
+        }
+        let requested = view.meta.requested_size.load(Ordering::Acquire) as usize;
+        return if requested == SEGMENT_SLOT_FREE as usize {
+            MCHECK_FREE
+        } else if requested != 0 && requested <= view.class_size {
+            MCHECK_OK
+        } else {
+            MCHECK_HEAD
+        };
+    }
+
     if is_bump_ptr(ptr) || fallback_contains(ptr) {
         return MCHECK_OK;
     }
@@ -1797,6 +2726,82 @@ fn allocator_bootstrap_passthrough_active() -> bool {
 }
 
 #[inline]
+unsafe fn strict_small_or_host_allocate(
+    slot: &'static AllocatorReentrySlot,
+    requested: usize,
+    zeroed: bool,
+) -> (*mut c_void, bool) {
+    if let Some(ptr) = segment_allocate(slot, requested, zeroed) {
+        return (ptr, true);
+    }
+    let ptr = if zeroed {
+        // SAFETY: multiplication was checked by the public calloc entrypoint;
+        // one element of the total size preserves host calloc semantics.
+        unsafe { native_libc_calloc_with_slot(slot, 1, requested) }
+    } else {
+        // SAFETY: host fallback retains existing behavior for large requests or
+        // bounded-segment-arena exhaustion.
+        unsafe { native_libc_malloc(requested) }
+    };
+    (ptr, false)
+}
+
+#[inline]
+unsafe fn realloc_segment_owned(
+    slot: Option<&'static AllocatorReentrySlot>,
+    ptr: *mut c_void,
+    requested: usize,
+) -> *mut c_void {
+    let Some((view, old_requested)) = segment_exact_live_view(ptr) else {
+        return std::ptr::null_mut();
+    };
+    if requested <= view.class_size {
+        if requested != old_requested {
+            let Some(previous) = segment_resize_in_place(ptr, requested) else {
+                return std::ptr::null_mut();
+            };
+            record_free_stats(previous);
+            record_alloc_stats(requested);
+        }
+        return ptr;
+    }
+
+    let (out, segment_owned) = match slot {
+        Some(slot) => match segment_allocate(slot, requested, false) {
+            Some(out) => (out, true),
+            None => {
+                // SAFETY: fallback is used only when the request has no small
+                // class or the bounded segment arena is exhausted.
+                (unsafe { native_libc_malloc(requested) }, false)
+            }
+        },
+        // A reentrant/bootstrap realloc must not borrow thread-local segment
+        // state without the outer guard; move it to the retained host path.
+        None => (unsafe { native_libc_malloc(requested) }, false),
+    };
+    if out.is_null() {
+        return out;
+    }
+    // SAFETY: both allocations are live and the copy is bounded by the exact
+    // requested sizes stored in allocator-owned metadata.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            ptr.cast::<u8>(),
+            out.cast::<u8>(),
+            old_requested.min(requested),
+        );
+    }
+    if !segment_owned {
+        fallback_insert_sized(out, requested);
+    }
+    if let SegmentFreeResult::Freed(freed_size) = segment_free(slot, ptr) {
+        record_free_stats(freed_size);
+    }
+    record_alloc_stats(requested);
+    out
+}
+
+#[inline]
 unsafe fn bootstrap_malloc_passthrough(size: usize) -> *mut c_void {
     let req = size.max(1);
     // SAFETY: early loader/bootstrap allocations must bypass runtime policy
@@ -1831,6 +2836,9 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         unsafe { bootstrap_free_passthrough(ptr) };
         return std::ptr::null_mut();
     }
+    if segment_owned_index(ptr as usize).is_some() {
+        return unsafe { realloc_segment_owned(None, ptr, size.max(1)) };
+    }
     // SAFETY: early loader/bootstrap reallocations must bypass runtime policy
     // and use the same native/bump fallback path as reentrant allocator calls.
     let out = unsafe { native_libc_realloc(ptr, size) };
@@ -1848,6 +2856,14 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
 
 #[inline]
 unsafe fn bootstrap_free_passthrough(ptr: *mut c_void) {
+    match segment_free(None, ptr) {
+        SegmentFreeResult::Freed(size) => {
+            record_free_stats(size);
+            return;
+        }
+        SegmentFreeResult::OwnedInvalid => return,
+        SegmentFreeResult::NotOwned => {}
+    }
     let tracked_size = fallback_remove_sized(ptr);
     // SAFETY: early loader/bootstrap frees must bypass runtime policy and
     // return host-owned allocations through the native fallback path.
@@ -1921,7 +2937,7 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
     // fallback bookkeeping is still cheap and required for bounded C-string
     // scans that must reject unterminated tracked buffers before host passthrough.
     if runtime_policy::strict_passthrough_active() {
-        return fallback_remaining(addr);
+        return segment_remaining(addr).or_else(|| fallback_remaining(addr));
     }
 
     if runtime_policy::in_policy_reentry_context()
@@ -1929,12 +2945,14 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
         || crate::membrane_state::pipeline_initialization_active()
         || frankenlibc_membrane::ptr_validator::in_validation_context()
     {
-        return fallback_remaining(addr);
+        return segment_remaining(addr).or_else(|| fallback_remaining(addr));
     }
 
-    validate_ptr(addr)
-        .and_then(|abs| abs.remaining)
-        .or_else(|| fallback_remaining(addr))
+    segment_remaining(addr).or_else(|| {
+        validate_ptr(addr)
+            .and_then(|abs| abs.remaining)
+            .or_else(|| fallback_remaining(addr))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1976,9 +2994,12 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
                 runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
             // SAFETY: strict-mode preload delegates allocator semantics to host libc
             // to preserve compatibility while the PCC gate records explainability.
-            let out = unsafe { native_libc_malloc(req) };
+            let (out, segment_owned) =
+                unsafe { strict_small_or_host_allocate(reentry_guard.slot, req, false) };
             if !out.is_null() {
-                fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
+                if !segment_owned {
+                    fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
+                }
                 record_alloc_stats(req);
             }
             runtime_policy::observe(
@@ -1992,9 +3013,12 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // SAFETY: strict-mode preload delegates allocator semantics to host libc
         // to preserve process compatibility while hardened mode exercises the
         // membrane allocator and repair pipeline.
-        let out = unsafe { native_libc_malloc(req) };
+        let (out, segment_owned) =
+            unsafe { strict_small_or_host_allocate(reentry_guard.slot, req, false) };
         if !out.is_null() {
-            fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
+            if !segment_owned {
+                fallback_insert_sized_for_slot(reentry_guard.slot, out, req);
+            }
             record_alloc_stats(req);
         }
         return out;
@@ -2085,6 +3109,14 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         return;
     }
 
+    match segment_free(Some(reentry_guard.slot), ptr) {
+        SegmentFreeResult::Freed(size) => {
+            record_free_stats(size);
+            return;
+        }
+        SegmentFreeResult::OwnedInvalid => return,
+        SegmentFreeResult::NotOwned => {}
+    }
     if is_bump_ptr(ptr) {
         let _ = fallback_remove(ptr);
         return;
@@ -2243,10 +3275,12 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     }
 
     if strict_allocator_host_path_active() {
-        // SAFETY: strict-mode preload delegates allocator semantics to host libc.
-        let out = unsafe { native_libc_calloc_with_slot(reentry_guard.slot, nmemb, size) };
+        let (out, segment_owned) =
+            unsafe { strict_small_or_host_allocate(reentry_guard.slot, total, true) };
         if !out.is_null() {
-            fallback_insert_sized_for_slot(reentry_guard.slot, out, total);
+            if !segment_owned {
+                fallback_insert_sized_for_slot(reentry_guard.slot, out, total);
+            }
             record_alloc_stats(total);
         }
         return out;
@@ -2344,6 +3378,10 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     if size == 0 {
         unsafe { free(ptr) };
         return std::ptr::null_mut();
+    }
+
+    if segment_owned_index(ptr as usize).is_some() {
+        return unsafe { realloc_segment_owned(Some(reentry_guard.slot), ptr, size.max(1)) };
     }
 
     if is_bump_ptr(ptr) {
@@ -2995,6 +4033,10 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
     // Bump/mmap allocations: size is unknown, return 0.
     if is_bump_ptr(ptr) {
         return 0;
+    }
+
+    if let Some((_, requested)) = segment_exact_live_view(ptr) {
+        return requested;
     }
 
     let addr = ptr as usize;

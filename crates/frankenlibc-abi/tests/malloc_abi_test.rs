@@ -11,10 +11,10 @@ use frankenlibc_abi::malloc_abi::{
     malloc_current_reentry_slot_index_for_tests, malloc_fallback_range_for_tests,
     malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests, malloc_info,
     malloc_known_remaining_for_tests, malloc_reentry_multithreaded_latched_for_tests,
-    malloc_restore_reentry_depth_for_tests, malloc_stats, malloc_stats_init_for_tests,
-    malloc_swap_reentry_depth_for_tests, malloc_trim, malloc_usable_size, mallopt, memalign,
-    posix_memalign, pvalloc, realloc, signal_runtime_ready_for_tests,
-    take_last_decision_gate_for_tests, valloc,
+    malloc_restore_reentry_depth_for_tests, malloc_segment_owned_for_tests, malloc_stats,
+    malloc_stats_init_for_tests, malloc_swap_reentry_depth_for_tests, malloc_trim,
+    malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc,
+    signal_runtime_ready_for_tests, take_last_decision_gate_for_tests, valloc,
 };
 use frankenlibc_abi::unistd_abi::mprobe;
 use std::collections::HashMap;
@@ -197,6 +197,204 @@ fn test_realloc_same_small_size_class_shrink_updates_bounds_in_place() {
         assert_eq!(byte, (i as u8).wrapping_mul(3).wrapping_add(1));
     }
     unsafe { free(p3) };
+}
+
+#[test]
+fn test_segment_bounds_reject_rounded_class_slack() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+    let p = unsafe { malloc(17) };
+    assert!(!p.is_null());
+    assert_eq!(
+        (p as usize) % 16,
+        0,
+        "segment payloads preserve max_align_t"
+    );
+    assert!(
+        malloc_segment_owned_for_tests(p.cast_const()),
+        "runtime-ready strict small malloc must use the address-derived segment heap"
+    );
+    assert_eq!(malloc_known_remaining_for_tests(p.cast_const()), Some(17));
+    assert_eq!(
+        malloc_known_remaining_for_tests(unsafe { p.cast::<u8>().add(1).cast_const().cast() }),
+        Some(16)
+    );
+    assert_eq!(
+        malloc_known_remaining_for_tests(unsafe { p.cast::<u8>().add(16).cast_const().cast() }),
+        Some(1)
+    );
+    assert_eq!(
+        malloc_known_remaining_for_tests(unsafe { p.cast::<u8>().add(17).cast_const().cast() }),
+        None,
+        "the 15 bytes of rounded 32-byte class slack are not caller-owned"
+    );
+    unsafe { free(p) };
+    assert_eq!(malloc_known_remaining_for_tests(p.cast_const()), None);
+}
+
+#[test]
+fn test_segment_free_reuse_and_calloc_lifecycle() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+
+    let p = unsafe { malloc(17) };
+    assert!(!p.is_null());
+    unsafe { std::ptr::write_bytes(p.cast::<u8>(), 0xa7, 17) };
+    unsafe { free(p) };
+    assert_eq!(unsafe { mprobe(p) }, MCHECK_FREE);
+    unsafe { free(p) };
+
+    let q = unsafe { calloc(1, 17) };
+    assert_eq!(q, p, "same-class free-list head should be reused");
+    assert!(
+        unsafe { std::slice::from_raw_parts(q.cast::<u8>(), 17) }
+            .iter()
+            .all(|byte| *byte == 0)
+    );
+    assert_eq!(malloc_known_remaining_for_tests(q.cast_const()), Some(17));
+
+    let interior = unsafe { q.cast::<u8>().add(1).cast::<c_void>() };
+    unsafe { free(interior) };
+    assert_eq!(
+        malloc_known_remaining_for_tests(q.cast_const()),
+        Some(17),
+        "interior free must not retire the live slot"
+    );
+    unsafe { free(q) };
+
+    let a = unsafe { malloc(31) };
+    let b = unsafe { malloc(31) };
+    assert_eq!(a, q, "reused class-32 slot must accept a new exact bound");
+    assert_ne!(a, b, "double-free must not enqueue the same slot twice");
+    assert_eq!(malloc_known_remaining_for_tests(a.cast_const()), Some(31));
+    unsafe {
+        free(a);
+        free(b);
+    }
+}
+
+#[test]
+fn test_segment_realloc_matrix_preserves_exact_bounds() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+
+    let p = unsafe { malloc(17) };
+    assert!(!p.is_null());
+    unsafe {
+        for i in 0..17 {
+            p.cast::<u8>().add(i).write((i as u8).wrapping_mul(7));
+        }
+    }
+    let same_class = unsafe { realloc(p, 31) };
+    assert_eq!(same_class, p);
+    assert_eq!(
+        malloc_known_remaining_for_tests(same_class.cast_const()),
+        Some(31)
+    );
+
+    let next_class = unsafe { realloc(same_class, 64) };
+    assert!(!next_class.is_null());
+    assert_ne!(next_class, same_class);
+    assert_eq!(
+        malloc_known_remaining_for_tests(same_class.cast_const()),
+        None
+    );
+    for i in 0..17 {
+        assert_eq!(
+            unsafe { next_class.cast::<u8>().add(i).read() },
+            (i as u8).wrapping_mul(7)
+        );
+    }
+
+    let old_segment = next_class;
+    let host = unsafe { realloc(old_segment, 32 * 1024 + 1) };
+    assert!(!host.is_null());
+    assert!(!malloc_segment_owned_for_tests(host.cast_const()));
+    assert_eq!(
+        malloc_known_remaining_for_tests(old_segment.cast_const()),
+        None
+    );
+    for i in 0..17 {
+        assert_eq!(
+            unsafe { host.cast::<u8>().add(i).read() },
+            (i as u8).wrapping_mul(7)
+        );
+    }
+    unsafe { free(host) };
+
+    let preserved = unsafe { malloc(64) };
+    assert!(!preserved.is_null());
+    unsafe { preserved.cast::<u8>().write(0x6d) };
+    let failed = unsafe { realloc(preserved, usize::MAX) };
+    assert!(failed.is_null());
+    assert_eq!(
+        malloc_known_remaining_for_tests(preserved.cast_const()),
+        Some(64),
+        "failed realloc must leave the original segment slot live"
+    );
+    assert_eq!(unsafe { preserved.cast::<u8>().read() }, 0x6d);
+    unsafe { free(preserved) };
+}
+
+#[test]
+fn test_segment_concurrent_live_slots_are_unique() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+    const THREADS: usize = 8;
+    const LIVE_PER_THREAD: usize = 128;
+    const SIZE: usize = 1536;
+    let barrier = Arc::new(Barrier::new(THREADS));
+    let live = Arc::new(Mutex::new(std::collections::HashSet::<usize>::new()));
+    let mut joins = Vec::new();
+
+    // Publish the class segment before releasing the worker swarm.  A
+    // simultaneous first-use loser intentionally fails open to host malloc;
+    // this test targets the lock-free live-slot/free-list invariants.
+    let warm = unsafe { malloc(SIZE) };
+    assert!(malloc_segment_owned_for_tests(warm.cast_const()));
+    unsafe { free(warm) };
+
+    for thread_id in 0..THREADS {
+        let barrier = Arc::clone(&barrier);
+        let live = Arc::clone(&live);
+        joins.push(std::thread::spawn(move || {
+            let mut pointers = Vec::with_capacity(LIVE_PER_THREAD);
+            for _ in 0..LIVE_PER_THREAD {
+                let ptr = unsafe { malloc(SIZE) };
+                assert!(!ptr.is_null());
+                assert!(malloc_segment_owned_for_tests(ptr.cast_const()));
+                assert!(live.lock().expect("live set poisoned").insert(ptr as usize));
+                unsafe {
+                    ptr.cast::<u8>().write(thread_id as u8);
+                    ptr.cast::<u8>()
+                        .add(SIZE - 1)
+                        .write((thread_id as u8) ^ 0xff);
+                }
+                pointers.push(ptr);
+            }
+            barrier.wait();
+            for ptr in &pointers {
+                assert_eq!(unsafe { ptr.cast::<u8>().read() }, thread_id as u8);
+                assert_eq!(
+                    unsafe { ptr.cast::<u8>().add(SIZE - 1).read() },
+                    (thread_id as u8) ^ 0xff
+                );
+            }
+            barrier.wait();
+            for ptr in pointers {
+                assert!(
+                    live.lock()
+                        .expect("live set poisoned")
+                        .remove(&(ptr as usize))
+                );
+                unsafe { free(ptr) };
+            }
+        }));
+    }
+    for join in joins {
+        join.join().expect("segment worker panicked");
+    }
+    assert!(live.lock().expect("live set poisoned").is_empty());
 }
 
 #[test]
@@ -441,6 +639,7 @@ fn test_malloc_trim_returns_success() {
 // ---------------------------------------------------------------------------
 
 const MCHECK_OK: i32 = 0;
+const MCHECK_FREE: i32 = 1;
 const MCHECK_HEAD: i32 = 2;
 
 #[test]

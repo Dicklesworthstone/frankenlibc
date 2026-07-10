@@ -7932,7 +7932,8 @@ unsafe fn getdelim_fill_stream(s: &mut StdioStream, delim_byte: u8, buf: &mut Ve
 /// handles telemetry (the fast path skips it).
 ///
 /// # Safety
-/// `lineptr`/`n` are valid getdelim out-params; `*lineptr` (if non-null) is host-allocated.
+/// `lineptr`/`n` are valid getdelim out-params; `*lineptr` (if non-null) was
+/// returned by a compatible allocator entrypoint.
 unsafe fn getdelim_finish(buf: &[u8], lineptr: *mut *mut c_char, n: *mut usize) -> isize {
     if buf.is_empty() {
         return -1;
@@ -7942,11 +7943,9 @@ unsafe fn getdelim_finish(buf: &[u8], lineptr: *mut *mut c_char, n: *mut usize) 
     let current_size = unsafe { *n };
     let out_buf = if current_buf.is_null() || current_size < needed {
         let new_size = needed.max(128);
-        let new_buf = if let Some(host_realloc) = crate::host_resolve::host_realloc_raw() {
-            unsafe { host_realloc(current_buf.cast(), new_size) }
-        } else {
-            unsafe { crate::malloc_abi::realloc(current_buf.cast(), new_size) }
-        };
+        // SAFETY: FrankenLibC realloc routes segment, fallback-tracked host,
+        // and unknown host pointers through their matching ownership path.
+        let new_buf = unsafe { crate::malloc_abi::realloc(current_buf.cast(), new_size) };
         if new_buf.is_null() {
             unsafe { set_abi_errno(errno::ENOMEM) };
             return -1;
@@ -7996,7 +7995,15 @@ pub unsafe extern "C" fn getdelim(
     if !registry_contains_stream(id)
         && let Some(host_getdelim) = unsafe { host_getdelim_fn() }
     {
+        let Some(prepared) =
+            (unsafe { crate::malloc_abi::prepare_host_realloc_buffer((*lineptr).cast(), *n) })
+        else {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return -1;
+        };
+        unsafe { *lineptr = prepared.cast() };
         let rc = unsafe { host_getdelim(lineptr, n, delim, stream) };
+        crate::malloc_abi::finish_host_realloc_buffer(unsafe { (*lineptr).cast() }, unsafe { *n });
         if rc < 0 {
             unsafe { sync_host_errno(0) };
         } else {
@@ -8059,7 +8066,15 @@ pub unsafe extern "C" fn getline(
     if !registry_contains_stream(_id)
         && let Some(host_getline) = unsafe { host_getline_fn() }
     {
+        let Some(prepared) =
+            (unsafe { crate::malloc_abi::prepare_host_realloc_buffer((*lineptr).cast(), *n) })
+        else {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return -1;
+        };
+        unsafe { *lineptr = prepared.cast() };
         let rc = unsafe { host_getline(lineptr, n, stream) };
+        crate::malloc_abi::finish_host_realloc_buffer(unsafe { (*lineptr).cast() }, unsafe { *n });
         if rc < 0 {
             unsafe { sync_host_errno(0) };
         } else {

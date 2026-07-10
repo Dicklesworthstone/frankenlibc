@@ -15358,3 +15358,52 @@ sha256, self-time, cv or null.
   `target/criterion/bd-dcrhgl-segment-production/run-2009372-1783699835747852646/`: `paired.json`
   **23,661 bytes**, `candidate.perf` **329,552 bytes**, `perf-report.txt` **2,282 bytes**, and
   `executable.sha256` **202 bytes**.
+
+## 2026-07-10 (cod_fl) — WIN (18.7-19.4% versus ORIG): exact address-derived segment ownership plus per-thread magazines (bd-dcrhgl)
+
+- **LEDGER-FIRST / PRIMITIVE CLEARS THE RETRY BAR.** The exact no-deref membership primitive was
+  already banked at **0.985 ns**, **9.94x faster** than the historical **9.79 ns** safe fallback
+  table. This production lever consumes that proof rather than re-running the three CLOSED header
+  guard families: strict small allocations come from immortal power-of-two-aligned 4 MiB segments;
+  ownership comes from the pointer address and our segment bitmap, while exact requested size/live
+  state comes from our packed segment shadow. No user allocation header is dereferenced to decide
+  ownership.
+- **ONE PRODUCTION LEVER.** Each allocator reentry slot owns 32 class-local cursors and eight-entry
+  magazines over disjoint 64-slot chunks. Warm malloc is a private pop/bump plus one packed-shadow
+  store; warm free is one packed-shadow swap plus a private push. Cross-thread and magazine-overflow
+  frees use a cold spill bitmap. The host getdelim/getline bridge migrates a segment buffer before a
+  host realloc and retracks the result, preserving the foreign-allocator boundary.
+- **BEHAVIOR PARITY PASSED BEFORE SCORING.** Fail-closed remote Cargo gates passed **59 allocator
+  tests / 0 failed / 1 ignored** and **6 getline differential tests / 0 failed**, including exact
+  requested-size/slack bounds, free/double/interior handling, calloc zeroing, realloc preservation,
+  concurrent uniqueness, and host getline growth from a FrankenLibC segment buffer.
+- **PROFILE INTEGRITY PASSED.** Candidate-only `perf record` captured **1,783 samples**. Deployed
+  allocator self-time is **20.94%**: `segment_free` **18.24%**, exported `free` **0.44%**,
+  `segment_allocate` **1.08%**, and exported `malloc` **1.18%**. Thus malloc-side self-time is
+  **2.26%** and free-side self-time is **18.68%**, both non-zero. The raw report is the non-empty
+  artifact listed below.
+- **HONEST ONE-BINARY, INTERLEAVED 3-WAY WIN.** ORIG (the retained pre-lever strict path), CAND
+  (deployed segment path), and host glibc (`dlmopen`) ran in all six O/C/G orders inside every
+  sample, reversing the order list every other sample. Inputs and returned pointers crossed
+  `black_box`. Each size used **41 samples** and **12,582,912 malloc/free pairs per arm per sample**
+  on fully reserved worker **`vmi1149989`**, pinned to measured-idle **CPU 9**. The declared gate is
+  the two paired decision contrasts containing CAND; raw-arm and ORIG/glibc CV remain telemetry.
+
+  | size | ORIG ns | CAND ns | glibc ns | CAND/ORIG (CV%) | CAND/glibc (CV%) | raw CV% O / C / G |
+  |---:|---:|---:|---:|---:|---:|---:|
+  | 16 | 68.175 | 55.412 | 5.192 | **0.8113 (2.41)** | 10.6533 (**3.26**) | 4.83 / 5.87 / 6.49 |
+  | 64 | 66.620 | 54.314 | 5.147 | **0.8132 (3.02)** | 10.6467 (**3.42**) | 5.32 / 5.49 / 7.81 |
+  | 256 | 66.304 | 53.993 | 5.006 | **0.8061 (2.37)** | 10.7764 (**3.21**) | 4.78 / 5.99 / 6.58 |
+  | 1024 | 65.172 | 52.849 | 4.889 | **0.8092 (2.94)** | 10.7159 (**2.81**) | 2.29 / 4.62 / 6.94 |
+
+- **KEEP-GATE RESULT.** All eight candidate-bearing paired CVs are below **5%**, and CAND beats
+  ORIG at every size by **18.7-19.4%**. Keep the production segment-magazine lever. The glibc ratios
+  remain **10.65-10.78x** in this isolated hot-cycle sampler, so this is an incremental Swing-2 win,
+  not completion of the near-5x target; continue from the next live profile mechanism rather than
+  declaring a ceiling.
+- **FULL PROVENANCE.** Release-perf binary SHA-256
+  **`9150c0f2c2ecad5d6e49d658c564d6e67638572e573e711de3d688c92c6da8ae`**, binary **55,425,488
+  bytes**, worker **`vmi1149989`**, CPU **9**. Locally verified non-empty retrieved artifacts in
+  `target/criterion/bd-dcrhgl-segment-production/run-1316345-1783701606831754748/`: `paired.json`
+  **23,704 bytes**, `candidate.perf` **350,432 bytes**, `perf-report.txt` **2,185 bytes**, and
+  `executable.sha256` **202 bytes**.

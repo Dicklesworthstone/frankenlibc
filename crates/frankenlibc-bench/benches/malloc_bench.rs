@@ -197,6 +197,11 @@ fn paired_cv_pct(samples: &[f64]) -> f64 {
 }
 
 #[cfg(feature = "abi-bench")]
+fn malloc_bench_cli_requests(needle: &str) -> bool {
+    std::env::args_os().any(|arg| arg.to_string_lossy().contains(needle))
+}
+
+#[cfg(feature = "abi-bench")]
 fn segment_bench_artifact_dir() -> PathBuf {
     let target_dir = std::env::var_os("CARGO_TARGET_DIR")
         .expect("RCH must provide CARGO_TARGET_DIR for retrievable bench artifacts");
@@ -306,6 +311,704 @@ fn profile_segment_bitmap_execution(
         "MALLOC_SEGMENT_BITMAP_SELF_TIME self_pct={self_pct:.2} perf_bytes={perf_bytes} frame={candidate_line}"
     );
     (self_pct, candidate_line)
+}
+
+#[cfg(feature = "abi-bench")]
+type SegmentProductionMallocFn = unsafe extern "C" fn(usize) -> *mut libc::c_void;
+
+#[cfg(feature = "abi-bench")]
+type SegmentProductionFreeFn = unsafe extern "C" fn(*mut libc::c_void);
+
+#[cfg(feature = "abi-bench")]
+type SegmentProductionBatchFn =
+    unsafe fn(SegmentProductionMallocFn, SegmentProductionFreeFn, usize, u64) -> usize;
+
+#[cfg(feature = "abi-bench")]
+macro_rules! define_segment_production_batch {
+    ($name:ident) => {
+        #[inline(never)]
+        unsafe fn $name(
+            malloc_fn: SegmentProductionMallocFn,
+            free_fn: SegmentProductionFreeFn,
+            size: usize,
+            operations: u64,
+        ) -> usize {
+            let malloc_fn = black_box(malloc_fn);
+            let free_fn = black_box(free_fn);
+            let size = black_box(size);
+            let mut checksum = 0usize;
+            for _ in 0..black_box(operations) {
+                // SAFETY: every supplied allocator function accepts an arbitrary
+                // allocation size and is paired with its own matching free.
+                let ptr = black_box(unsafe { malloc_fn(black_box(size)) });
+                checksum = checksum.rotate_left(7) ^ black_box(ptr as usize);
+                // SAFETY: `ptr` came from this exact allocator arm immediately above.
+                unsafe { free_fn(black_box(ptr)) };
+            }
+            black_box(checksum)
+        }
+    };
+}
+
+#[cfg(feature = "abi-bench")]
+define_segment_production_batch!(segment_production_orig_batch);
+#[cfg(feature = "abi-bench")]
+define_segment_production_batch!(segment_production_candidate_batch);
+#[cfg(feature = "abi-bench")]
+define_segment_production_batch!(segment_production_glibc_batch);
+
+#[cfg(feature = "abi-bench")]
+struct SegmentProductionHostAllocator {
+    malloc: SegmentProductionMallocFn,
+    free: SegmentProductionFreeFn,
+}
+
+#[cfg(feature = "abi-bench")]
+fn segment_production_host_allocator() -> SegmentProductionHostAllocator {
+    // SAFETY: the isolated namespace remains loaded for process lifetime, and
+    // both resolved symbols are checked before conversion to their C ABIs.
+    unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            c"libc.so.6".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(
+            !handle.is_null(),
+            "failed to dlmopen host libc.so.6 for segment production benchmark"
+        );
+        let malloc = libc::dlsym(handle, c"malloc".as_ptr());
+        let free = libc::dlsym(handle, c"free".as_ptr());
+        assert!(!malloc.is_null(), "failed to resolve isolated glibc malloc");
+        assert!(!free.is_null(), "failed to resolve isolated glibc free");
+        SegmentProductionHostAllocator {
+            malloc: std::mem::transmute::<*mut libc::c_void, SegmentProductionMallocFn>(malloc),
+            free: std::mem::transmute::<*mut libc::c_void, SegmentProductionFreeFn>(free),
+        }
+    }
+}
+
+#[cfg(feature = "abi-bench")]
+#[derive(Clone, Copy)]
+enum SegmentProductionArm {
+    Orig,
+    Candidate,
+    Glibc,
+}
+
+#[cfg(feature = "abi-bench")]
+const SEGMENT_PRODUCTION_PERMUTATIONS: [[SegmentProductionArm; 3]; 6] = [
+    [
+        SegmentProductionArm::Orig,
+        SegmentProductionArm::Candidate,
+        SegmentProductionArm::Glibc,
+    ],
+    [
+        SegmentProductionArm::Candidate,
+        SegmentProductionArm::Glibc,
+        SegmentProductionArm::Orig,
+    ],
+    [
+        SegmentProductionArm::Glibc,
+        SegmentProductionArm::Orig,
+        SegmentProductionArm::Candidate,
+    ],
+    [
+        SegmentProductionArm::Glibc,
+        SegmentProductionArm::Candidate,
+        SegmentProductionArm::Orig,
+    ],
+    [
+        SegmentProductionArm::Candidate,
+        SegmentProductionArm::Orig,
+        SegmentProductionArm::Glibc,
+    ],
+    [
+        SegmentProductionArm::Orig,
+        SegmentProductionArm::Glibc,
+        SegmentProductionArm::Candidate,
+    ],
+];
+
+#[cfg(feature = "abi-bench")]
+#[derive(Default)]
+struct SegmentProductionSample {
+    orig_elapsed: u128,
+    candidate_elapsed: u128,
+    glibc_elapsed: u128,
+    checksum: usize,
+}
+
+#[cfg(feature = "abi-bench")]
+#[inline(always)]
+fn time_segment_production_microblock(
+    batch_fn: SegmentProductionBatchFn,
+    malloc_fn: SegmentProductionMallocFn,
+    free_fn: SegmentProductionFreeFn,
+    size: usize,
+    operations: u64,
+) -> (u128, usize) {
+    let batch_fn = black_box(batch_fn);
+    let start = Instant::now();
+    // SAFETY: each caller supplies a matched malloc/free pair for this arm.
+    let checksum = unsafe {
+        batch_fn(
+            black_box(malloc_fn),
+            black_box(free_fn),
+            black_box(size),
+            black_box(operations),
+        )
+    };
+    (start.elapsed().as_nanos(), black_box(checksum))
+}
+
+#[cfg(feature = "abi-bench")]
+#[inline(never)]
+fn segment_production_sample(
+    orig_malloc: SegmentProductionMallocFn,
+    orig_free: SegmentProductionFreeFn,
+    candidate_malloc: SegmentProductionMallocFn,
+    candidate_free: SegmentProductionFreeFn,
+    glibc_malloc: SegmentProductionMallocFn,
+    glibc_free: SegmentProductionFreeFn,
+    size: usize,
+    operations_per_microblock: u64,
+    permutation_cycles: usize,
+    reverse_permutations: bool,
+) -> SegmentProductionSample {
+    let mut sample = SegmentProductionSample::default();
+    for _ in 0..black_box(permutation_cycles) {
+        for order_index in 0..SEGMENT_PRODUCTION_PERMUTATIONS.len() {
+            let permutation_index = if reverse_permutations {
+                SEGMENT_PRODUCTION_PERMUTATIONS.len() - 1 - order_index
+            } else {
+                order_index
+            };
+            for arm in SEGMENT_PRODUCTION_PERMUTATIONS[permutation_index] {
+                let (elapsed, checksum) = match arm {
+                    SegmentProductionArm::Orig => {
+                        let (elapsed, checksum) = time_segment_production_microblock(
+                            black_box(segment_production_orig_batch as SegmentProductionBatchFn),
+                            black_box(orig_malloc),
+                            black_box(orig_free),
+                            black_box(size),
+                            black_box(operations_per_microblock),
+                        );
+                        sample.orig_elapsed = sample.orig_elapsed.wrapping_add(elapsed);
+                        (elapsed, checksum)
+                    }
+                    SegmentProductionArm::Candidate => {
+                        let (elapsed, checksum) = time_segment_production_microblock(
+                            black_box(
+                                segment_production_candidate_batch as SegmentProductionBatchFn,
+                            ),
+                            black_box(candidate_malloc),
+                            black_box(candidate_free),
+                            black_box(size),
+                            black_box(operations_per_microblock),
+                        );
+                        sample.candidate_elapsed = sample.candidate_elapsed.wrapping_add(elapsed);
+                        (elapsed, checksum)
+                    }
+                    SegmentProductionArm::Glibc => {
+                        let (elapsed, checksum) = time_segment_production_microblock(
+                            black_box(segment_production_glibc_batch as SegmentProductionBatchFn),
+                            black_box(glibc_malloc),
+                            black_box(glibc_free),
+                            black_box(size),
+                            black_box(operations_per_microblock),
+                        );
+                        sample.glibc_elapsed = sample.glibc_elapsed.wrapping_add(elapsed);
+                        (elapsed, checksum)
+                    }
+                };
+                sample.checksum = sample.checksum.rotate_left(11)
+                    ^ black_box(checksum)
+                    ^ black_box(elapsed as usize);
+            }
+        }
+    }
+    black_box(sample)
+}
+
+#[cfg(feature = "abi-bench")]
+struct SegmentProductionSizeResult {
+    size: usize,
+    operations_per_arm_sample: u64,
+    orig_samples: Vec<f64>,
+    candidate_samples: Vec<f64>,
+    glibc_samples: Vec<f64>,
+    candidate_over_orig: Vec<f64>,
+    candidate_over_glibc: Vec<f64>,
+    orig_over_glibc: Vec<f64>,
+    orig_p50: f64,
+    candidate_p50: f64,
+    glibc_p50: f64,
+    candidate_over_orig_p50: f64,
+    candidate_over_glibc_p50: f64,
+    orig_over_glibc_p50: f64,
+    orig_cv: f64,
+    candidate_cv: f64,
+    glibc_cv: f64,
+    candidate_over_orig_cv: f64,
+    candidate_over_glibc_cv: f64,
+    orig_over_glibc_cv: f64,
+}
+
+#[cfg(feature = "abi-bench")]
+impl SegmentProductionSizeResult {
+    fn cv_gate_pass(&self) -> bool {
+        // Substrate v2 interleaves every arm within one sample specifically so
+        // common-mode worker drift cancels in paired decision contrasts.  Raw
+        // arm CVs and the ORIG/glibc anchor remain reported, but neither can
+        // accept or reject the candidate.
+        [self.candidate_over_orig_cv, self.candidate_over_glibc_cv]
+            .into_iter()
+            .all(|cv| cv < 5.0)
+    }
+
+    fn candidate_beats_orig(&self) -> bool {
+        self.candidate_over_orig_p50 < 1.0
+    }
+}
+
+#[cfg(feature = "abi-bench")]
+fn segment_production_p50(samples: &[f64]) -> f64 {
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    percentile_sorted(&sorted, 0.50)
+}
+
+#[cfg(feature = "abi-bench")]
+fn score_segment_production_size(
+    size: usize,
+    orig_malloc: SegmentProductionMallocFn,
+    orig_free: SegmentProductionFreeFn,
+    candidate_malloc: SegmentProductionMallocFn,
+    candidate_free: SegmentProductionFreeFn,
+    glibc_malloc: SegmentProductionMallocFn,
+    glibc_free: SegmentProductionFreeFn,
+    operations_per_microblock: u64,
+    warmup_permutation_cycles: usize,
+    permutation_cycles_per_sample: usize,
+    raw_samples: usize,
+) -> SegmentProductionSizeResult {
+    for reverse in [false, true] {
+        black_box(segment_production_sample(
+            black_box(orig_malloc),
+            black_box(orig_free),
+            black_box(candidate_malloc),
+            black_box(candidate_free),
+            black_box(glibc_malloc),
+            black_box(glibc_free),
+            black_box(size),
+            black_box(operations_per_microblock),
+            black_box(warmup_permutation_cycles),
+            black_box(reverse),
+        ));
+    }
+
+    let operations_per_arm_sample = operations_per_microblock
+        * SEGMENT_PRODUCTION_PERMUTATIONS.len() as u64
+        * permutation_cycles_per_sample as u64;
+    let mut orig_samples = Vec::with_capacity(raw_samples);
+    let mut candidate_samples = Vec::with_capacity(raw_samples);
+    let mut glibc_samples = Vec::with_capacity(raw_samples);
+    let mut candidate_over_orig = Vec::with_capacity(raw_samples);
+    let mut candidate_over_glibc = Vec::with_capacity(raw_samples);
+    let mut orig_over_glibc = Vec::with_capacity(raw_samples);
+    let mut scoring_checksum = 0usize;
+
+    for sample_index in 0..raw_samples {
+        let sample = segment_production_sample(
+            black_box(orig_malloc),
+            black_box(orig_free),
+            black_box(candidate_malloc),
+            black_box(candidate_free),
+            black_box(glibc_malloc),
+            black_box(glibc_free),
+            black_box(size),
+            black_box(operations_per_microblock),
+            black_box(permutation_cycles_per_sample),
+            black_box(sample_index.is_multiple_of(2)),
+        );
+        scoring_checksum = scoring_checksum.rotate_left(17) ^ black_box(sample.checksum);
+        let operations = operations_per_arm_sample as f64;
+        let orig_ns = sample.orig_elapsed as f64 / operations;
+        let candidate_ns = sample.candidate_elapsed as f64 / operations;
+        let glibc_ns = sample.glibc_elapsed as f64 / operations;
+        orig_samples.push(orig_ns);
+        candidate_samples.push(candidate_ns);
+        glibc_samples.push(glibc_ns);
+        candidate_over_orig.push(candidate_ns / orig_ns);
+        candidate_over_glibc.push(candidate_ns / glibc_ns);
+        orig_over_glibc.push(orig_ns / glibc_ns);
+    }
+    black_box(scoring_checksum);
+
+    SegmentProductionSizeResult {
+        size,
+        operations_per_arm_sample,
+        orig_p50: segment_production_p50(&orig_samples),
+        candidate_p50: segment_production_p50(&candidate_samples),
+        glibc_p50: segment_production_p50(&glibc_samples),
+        candidate_over_orig_p50: segment_production_p50(&candidate_over_orig),
+        candidate_over_glibc_p50: segment_production_p50(&candidate_over_glibc),
+        orig_over_glibc_p50: segment_production_p50(&orig_over_glibc),
+        orig_cv: paired_cv_pct(&orig_samples),
+        candidate_cv: paired_cv_pct(&candidate_samples),
+        glibc_cv: paired_cv_pct(&glibc_samples),
+        candidate_over_orig_cv: paired_cv_pct(&candidate_over_orig),
+        candidate_over_glibc_cv: paired_cv_pct(&candidate_over_glibc),
+        orig_over_glibc_cv: paired_cv_pct(&orig_over_glibc),
+        orig_samples,
+        candidate_samples,
+        glibc_samples,
+        candidate_over_orig,
+        candidate_over_glibc,
+        orig_over_glibc,
+    }
+}
+
+#[cfg(feature = "abi-bench")]
+fn segment_production_preflight(
+    label: &str,
+    malloc_fn: SegmentProductionMallocFn,
+    free_fn: SegmentProductionFreeFn,
+    sizes: &[usize],
+    expected_segment_owned: bool,
+    expected_live_remaining: bool,
+) {
+    use frankenlibc_abi::malloc_abi as malloc;
+
+    let malloc_fn = black_box(malloc_fn);
+    let free_fn = black_box(free_fn);
+    for (index, &size) in sizes.iter().enumerate() {
+        let size = black_box(size);
+        // SAFETY: the preflight immediately checks the returned allocation and
+        // returns it through the allocator arm's matching free function.
+        let ptr = black_box(unsafe { malloc_fn(size) });
+        assert!(!ptr.is_null(), "{label} preflight malloc({size}) failed");
+        assert_eq!(
+            malloc::malloc_segment_owned_for_tests(ptr.cast_const()),
+            expected_segment_owned,
+            "{label} preflight segment ownership mismatch"
+        );
+        assert_eq!(
+            malloc::malloc_known_remaining_for_tests(ptr.cast_const()),
+            expected_live_remaining.then_some(size),
+            "{label} preflight live size metadata mismatch"
+        );
+
+        let first = 0x51u8.wrapping_add(index as u8);
+        let last = 0xa1u8.wrapping_add(index as u8);
+        // SAFETY: successful malloc returned at least `size` bytes and all
+        // production sizes are non-zero.
+        unsafe {
+            ptr.cast::<u8>().write(first);
+            ptr.cast::<u8>().add(size - 1).write(last);
+            assert_eq!(ptr.cast::<u8>().read(), first);
+            assert_eq!(ptr.cast::<u8>().add(size - 1).read(), last);
+        }
+        // SAFETY: this is the matched free for the successful allocation above.
+        unsafe { free_fn(black_box(ptr)) };
+        assert_eq!(
+            malloc::malloc_known_remaining_for_tests(ptr.cast_const()),
+            None,
+            "{label} preflight left live metadata after free"
+        );
+    }
+}
+
+#[cfg(feature = "abi-bench")]
+fn segment_production_artifact_dir() -> PathBuf {
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .expect("RCH must provide CARGO_TARGET_DIR for retrievable bench artifacts");
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time must follow the Unix epoch")
+        .as_nanos();
+    let output_dir = PathBuf::from(target_dir)
+        .join("criterion")
+        .join("bd-dcrhgl-segment-production")
+        .join(format!("run-{}-{timestamp}", std::process::id()));
+    create_dir_all(&output_dir).expect("create segment production artifact directory");
+    output_dir
+}
+
+#[cfg(feature = "abi-bench")]
+struct SegmentProductionProfile {
+    allocator_self_pct: f64,
+    allocator_malloc_self_pct: f64,
+    allocator_free_self_pct: f64,
+    allocator_frames: Vec<String>,
+    perf_bytes: u64,
+    report_bytes: u64,
+}
+
+#[cfg(feature = "abi-bench")]
+fn profile_segment_production_candidate(
+    output_dir: &Path,
+    malloc_fn: SegmentProductionMallocFn,
+    free_fn: SegmentProductionFreeFn,
+    sizes: &[usize],
+    operations_per_batch: u64,
+) -> SegmentProductionProfile {
+    let perf_path = output_dir.join("candidate.perf");
+    let report_path = output_dir.join("perf-report.txt");
+    let pid = std::process::id().to_string();
+    let mut perf = Command::new("perf")
+        .args(["record", "-F", "4999", "--call-graph", "fp", "-p"])
+        .arg(&pid)
+        .arg("-o")
+        .arg(&perf_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("spawn remote perf record for segment production candidate");
+    thread::sleep(Duration::from_millis(250));
+    assert!(
+        perf.try_wait().expect("poll remote perf record").is_none(),
+        "perf record exited before the production candidate workload"
+    );
+
+    let profile_start = Instant::now();
+    let mut checksum = 0usize;
+    while profile_start.elapsed() < Duration::from_secs(2) {
+        for &size in sizes {
+            // SAFETY: the candidate function pointers are the deployed matched pair.
+            let observed = unsafe {
+                segment_production_candidate_batch(
+                    black_box(malloc_fn),
+                    black_box(free_fn),
+                    black_box(size),
+                    black_box(operations_per_batch),
+                )
+            };
+            checksum = checksum.rotate_left(13) ^ black_box(observed);
+        }
+    }
+    black_box(checksum);
+
+    let signal_status = Command::new("kill")
+        .arg("-INT")
+        .arg(perf.id().to_string())
+        .status()
+        .expect("signal remote segment production perf record");
+    assert!(
+        signal_status.success(),
+        "failed to stop perf record cleanly"
+    );
+    let perf_status = perf.wait().expect("wait for remote perf record");
+    assert!(
+        perf_status.success() || perf_status.signal() == Some(libc::SIGINT),
+        "remote segment production perf record failed: {perf_status}"
+    );
+    let perf_bytes = fs::metadata(&perf_path)
+        .expect("stat production candidate perf artifact")
+        .len();
+    assert!(
+        perf_bytes > 0,
+        "production candidate perf artifact is empty"
+    );
+
+    let report = Command::new("perf")
+        .args([
+            "report",
+            "--stdio",
+            "--no-children",
+            "--percent-limit",
+            "0.01",
+            "--sort=symbol",
+            "--call-graph",
+            "none",
+            "-i",
+        ])
+        .arg(&perf_path)
+        .output()
+        .expect("render remote segment production perf report");
+    assert!(
+        report.status.success(),
+        "remote production perf report failed"
+    );
+    fs::write(&report_path, &report.stdout).expect("write retrievable production perf report");
+    let report_bytes = fs::metadata(&report_path)
+        .expect("stat production candidate perf report")
+        .len();
+    assert!(
+        report_bytes > 0,
+        "production candidate perf report is empty"
+    );
+
+    let report_text = String::from_utf8(report.stdout).expect("perf report must be UTF-8");
+    let parse_self_pct = |line: &str| {
+        line.split_whitespace()
+            .next()
+            .and_then(|field| field.strip_suffix('%'))
+            .and_then(|field| field.parse::<f64>().ok())
+            .expect("parse production perf self-time percentage")
+    };
+
+    let mut allocator_self_pct = 0.0;
+    let mut allocator_malloc_self_pct = 0.0;
+    let mut allocator_free_self_pct = 0.0;
+    let mut allocator_frames = Vec::new();
+    for line in report_text.lines() {
+        let Some(symbol) = line.split_whitespace().nth(2) else {
+            continue;
+        };
+        let malloc_symbol = symbol == "malloc"
+            || symbol.ends_with("::malloc")
+            || symbol.ends_with("::segment_allocate");
+        let free_symbol =
+            symbol == "free" || symbol.ends_with("::free") || symbol.ends_with("::segment_free");
+        if malloc_symbol || free_symbol {
+            let frame = line.trim().to_owned();
+            let self_pct = parse_self_pct(&frame);
+            allocator_self_pct += self_pct;
+            if malloc_symbol {
+                allocator_malloc_self_pct += self_pct;
+            }
+            if free_symbol {
+                allocator_free_self_pct += self_pct;
+            }
+            allocator_frames.push(frame);
+        }
+    }
+    assert!(
+        allocator_malloc_self_pct > 0.0
+            && allocator_free_self_pct > 0.0
+            && !allocator_frames.is_empty(),
+        "deployed malloc/free frames have zero self-time in candidate-only perf report"
+    );
+
+    println!(
+        "MALLOC_SEGMENT_PRODUCTION_ALLOCATOR_SELF_TIME total_self_pct={allocator_self_pct:.2} malloc_self_pct={allocator_malloc_self_pct:.2} free_self_pct={allocator_free_self_pct:.2} frames={allocator_frames:?} perf_bytes={perf_bytes} report_bytes={report_bytes}"
+    );
+    SegmentProductionProfile {
+        allocator_self_pct,
+        allocator_malloc_self_pct,
+        allocator_free_self_pct,
+        allocator_frames,
+        perf_bytes,
+        report_bytes,
+    }
+}
+
+#[cfg(feature = "abi-bench")]
+fn pin_segment_production_scoring_thread() -> usize {
+    let allowed_cpus = unsafe {
+        // SAFETY: sched_getaffinity receives initialized cpu_set_t storage with
+        // the exact platform size.
+        let mut allowed: libc::cpu_set_t = std::mem::zeroed(); // ubs:ignore — all-zero is libc's valid empty CPU bitmask.
+        assert_eq!(
+            libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut allowed,),
+            0,
+            "sched_getaffinity failed: {}",
+            std::io::Error::last_os_error()
+        );
+        (0..libc::CPU_SETSIZE as usize)
+            .filter(|&candidate| libc::CPU_ISSET(candidate, &allowed))
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        !allowed_cpus.is_empty(),
+        "remote worker exposed no allowed CPU"
+    );
+
+    let read_cpu_times = || {
+        fs::read_to_string("/proc/stat")
+            .expect("read remote per-CPU utilization")
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                let label = fields.next()?;
+                let cpu = label.strip_prefix("cpu")?.parse::<usize>().ok()?;
+                let ticks = fields
+                    .map(|field| field.parse::<u64>().expect("parse /proc/stat CPU tick"))
+                    .collect::<Vec<_>>();
+                let total = ticks.iter().copied().sum::<u64>();
+                let idle = ticks.get(3).copied().unwrap_or(0) + ticks.get(4).copied().unwrap_or(0);
+                Some((cpu, total, idle))
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = read_cpu_times();
+    thread::sleep(Duration::from_millis(250));
+    let after = read_cpu_times();
+    let candidates = allowed_cpus
+        .iter()
+        .copied()
+        .filter(|&cpu| cpu != 0 || allowed_cpus.len() == 1)
+        .collect::<Vec<_>>();
+    let (busy_ppm, cpu) = candidates
+        .into_iter()
+        .filter_map(|cpu| {
+            let (_, before_total, before_idle) = before.iter().find(|entry| entry.0 == cpu)?;
+            let (_, after_total, after_idle) = after.iter().find(|entry| entry.0 == cpu)?;
+            let total_delta = after_total.saturating_sub(*before_total);
+            let idle_delta = after_idle.saturating_sub(*before_idle);
+            let busy_delta = total_delta.saturating_sub(idle_delta);
+            let busy_ppm = busy_delta.saturating_mul(1_000_000) / total_delta.max(1);
+            Some((busy_ppm, std::cmp::Reverse(cpu)))
+        })
+        .min()
+        .map(|(busy_ppm, cpu)| (busy_ppm, cpu.0))
+        .expect("remote worker exposed no readable allowed CPU");
+
+    // SAFETY: libc affinity helpers receive initialized cpu_set_t storage with
+    // the exact platform size, and `cpu` came from the allowed mask above.
+    unsafe {
+        let mut pinned: libc::cpu_set_t = std::mem::zeroed(); // ubs:ignore — all-zero is libc's valid empty CPU bitmask.
+        libc::CPU_ZERO(&mut pinned);
+        libc::CPU_SET(cpu, &mut pinned);
+        assert_eq!(
+            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &pinned,),
+            0,
+            "sched_setaffinity failed: {}",
+            std::io::Error::last_os_error()
+        );
+        let observed = libc::sched_getcpu();
+        assert!(observed >= 0, "sched_getcpu failed");
+        assert_eq!(observed as usize, cpu, "scoring thread did not stay pinned");
+    }
+    println!("MALLOC_SEGMENT_PRODUCTION_CPU cpu={cpu} busy_ppm={busy_ppm}");
+    cpu
+}
+
+#[cfg(feature = "abi-bench")]
+fn segment_production_executable_provenance(output_dir: &Path) -> (String, u64, u64) {
+    let executable = std::env::current_exe().expect("locate running benchmark executable");
+    let executable_bytes = fs::metadata(&executable)
+        .expect("stat running benchmark executable")
+        .len();
+    assert!(
+        executable_bytes > 0,
+        "running benchmark executable is empty"
+    );
+    let output = Command::new("sha256sum")
+        .arg(&executable)
+        .output()
+        .expect("compute benchmark executable sha256 inside remote worker");
+    assert!(output.status.success(), "remote sha256sum failed");
+    let sha256 = String::from_utf8(output.stdout)
+        .expect("sha256sum output must be UTF-8")
+        .split_whitespace()
+        .next()
+        .expect("sha256sum output missing digest")
+        .to_owned();
+    assert!(
+        sha256.len() == 64 && sha256.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "invalid executable sha256"
+    );
+    let sha_path = output_dir.join("executable.sha256");
+    fs::write(&sha_path, format!("{sha256}  {}\n", executable.display()))
+        .expect("write executable sha256 artifact");
+    let sha_bytes = fs::metadata(&sha_path)
+        .expect("stat executable sha256 artifact")
+        .len();
+    assert!(sha_bytes > 0, "executable sha256 artifact is empty");
+    (sha256, executable_bytes, sha_bytes)
 }
 
 #[derive(Default)]
@@ -747,6 +1450,10 @@ fn bench_size_class_lookup(c: &mut Criterion) {
 
 #[cfg(feature = "abi-bench")]
 fn bench_segment_bitmap_paired(c: &mut Criterion) {
+    if !malloc_bench_cli_requests("segment_bitmap_integrity") {
+        return;
+    }
+
     const ADDRESS_COUNT: usize = 256;
     const WARMUP_QUADS: usize = 256;
     const PAIRED_ROUNDS: usize = 31;
@@ -926,6 +1633,250 @@ fn bench_segment_bitmap_paired(c: &mut Criterion) {
 
 #[cfg(not(feature = "abi-bench"))]
 fn bench_segment_bitmap_paired(_c: &mut Criterion) {}
+
+#[cfg(feature = "abi-bench")]
+fn bench_segment_production_paired(_c: &mut Criterion) {
+    if !malloc_bench_cli_requests("segment_allocator_3way") {
+        return;
+    }
+
+    const SIZES: [usize; 4] = [16, 64, 256, 1_024];
+    const PROFILE_OPERATIONS: u64 = 4_096;
+    const OPERATIONS_PER_MICROBLOCK: u64 = 65_536;
+    const WARMUP_PERMUTATION_CYCLES: usize = 4;
+    const PERMUTATION_CYCLES_PER_SAMPLE: usize = 32;
+    const RAW_SAMPLES: usize = 41;
+
+    use frankenlibc_abi::malloc_abi as malloc;
+
+    malloc::signal_runtime_ready_for_tests();
+    let output_dir = segment_production_artifact_dir();
+    let host = segment_production_host_allocator();
+    let orig_malloc = black_box(malloc::bench_malloc_orig_strict_path as SegmentProductionMallocFn);
+    let orig_free = black_box(malloc::bench_free_orig_strict_path as SegmentProductionFreeFn);
+    let candidate_malloc = black_box(malloc::malloc as SegmentProductionMallocFn);
+    let candidate_free = black_box(malloc::free as SegmentProductionFreeFn);
+    let glibc_malloc = black_box(host.malloc);
+    let glibc_free = black_box(host.free);
+
+    segment_production_preflight("orig", orig_malloc, orig_free, &SIZES, false, true);
+    segment_production_preflight(
+        "candidate",
+        candidate_malloc,
+        candidate_free,
+        &SIZES,
+        true,
+        true,
+    );
+    segment_production_preflight("glibc", glibc_malloc, glibc_free, &SIZES, false, false);
+
+    let profile = profile_segment_production_candidate(
+        &output_dir,
+        candidate_malloc,
+        candidate_free,
+        &SIZES,
+        PROFILE_OPERATIONS,
+    );
+    let scoring_cpu = pin_segment_production_scoring_thread();
+    let worker = fs::read_to_string("/proc/sys/kernel/hostname")
+        .expect("read remote worker hostname")
+        .trim()
+        .to_owned();
+    assert!(!worker.is_empty(), "remote worker hostname is empty");
+    let (executable_sha256, executable_bytes, sha256_artifact_bytes) =
+        segment_production_executable_provenance(&output_dir);
+
+    let mut size_results = Vec::with_capacity(SIZES.len());
+    for &size in &SIZES {
+        let result = score_segment_production_size(
+            size,
+            orig_malloc,
+            orig_free,
+            candidate_malloc,
+            candidate_free,
+            glibc_malloc,
+            glibc_free,
+            OPERATIONS_PER_MICROBLOCK,
+            WARMUP_PERMUTATION_CYCLES,
+            PERMUTATION_CYCLES_PER_SAMPLE,
+            RAW_SAMPLES,
+        );
+        println!(
+            "MALLOC_SEGMENT_PRODUCTION_SIZE size={} samples={RAW_SAMPLES} ops_per_arm_sample={} orig_p50_ns={:.3} candidate_p50_ns={:.3} glibc_p50_ns={:.3} candidate_over_orig={:.4} candidate_over_glibc={:.4} orig_over_glibc={:.4} orig_cv_pct={:.2} candidate_cv_pct={:.2} glibc_cv_pct={:.2} candidate_over_orig_cv_pct={:.2} candidate_over_glibc_cv_pct={:.2} orig_over_glibc_cv_pct={:.2} cv_gate_pass={} candidate_beats_orig={}",
+            result.size,
+            result.operations_per_arm_sample,
+            result.orig_p50,
+            result.candidate_p50,
+            result.glibc_p50,
+            result.candidate_over_orig_p50,
+            result.candidate_over_glibc_p50,
+            result.orig_over_glibc_p50,
+            result.orig_cv,
+            result.candidate_cv,
+            result.glibc_cv,
+            result.candidate_over_orig_cv,
+            result.candidate_over_glibc_cv,
+            result.orig_over_glibc_cv,
+            result.cv_gate_pass(),
+            result.candidate_beats_orig(),
+        );
+        size_results.push(result);
+    }
+    let all_size_cv_gate_pass = size_results
+        .iter()
+        .all(SegmentProductionSizeResult::cv_gate_pass);
+    let all_size_candidate_beats_orig = size_results
+        .iter()
+        .all(SegmentProductionSizeResult::candidate_beats_orig);
+
+    let mut per_size_json = String::from("[\n");
+    for (index, result) in size_results.iter().enumerate() {
+        per_size_json.push_str(&format!(
+            concat!(
+                "    {{\n",
+                "      \"size\": {size},\n",
+                "      \"samples\": {samples},\n",
+                "      \"operations_per_arm_sample\": {operations_per_arm_sample},\n",
+                "      \"orig_p50_ns\": {orig_p50:.6},\n",
+                "      \"candidate_p50_ns\": {candidate_p50:.6},\n",
+                "      \"glibc_p50_ns\": {glibc_p50:.6},\n",
+                "      \"candidate_over_orig_p50\": {candidate_over_orig_p50:.8},\n",
+                "      \"candidate_over_glibc_p50\": {candidate_over_glibc_p50:.8},\n",
+                "      \"orig_over_glibc_p50\": {orig_over_glibc_p50:.8},\n",
+                "      \"orig_cv_pct\": {orig_cv:.6},\n",
+                "      \"candidate_cv_pct\": {candidate_cv:.6},\n",
+                "      \"glibc_cv_pct\": {glibc_cv:.6},\n",
+                "      \"candidate_over_orig_cv_pct\": {candidate_over_orig_cv:.6},\n",
+                "      \"candidate_over_glibc_cv_pct\": {candidate_over_glibc_cv:.6},\n",
+                "      \"orig_over_glibc_cv_pct\": {orig_over_glibc_cv:.6},\n",
+                "      \"cv_gate_pass\": {cv_gate_pass},\n",
+                "      \"candidate_beats_orig\": {candidate_beats_orig},\n",
+                "      \"orig_samples_ns\": {orig_samples:?},\n",
+                "      \"candidate_samples_ns\": {candidate_samples:?},\n",
+                "      \"glibc_samples_ns\": {glibc_samples:?},\n",
+                "      \"candidate_over_orig_samples\": {candidate_over_orig:?},\n",
+                "      \"candidate_over_glibc_samples\": {candidate_over_glibc:?},\n",
+                "      \"orig_over_glibc_samples\": {orig_over_glibc:?}\n",
+                "    }}{comma}\n"
+            ),
+            size = result.size,
+            samples = RAW_SAMPLES,
+            operations_per_arm_sample = result.operations_per_arm_sample,
+            orig_p50 = result.orig_p50,
+            candidate_p50 = result.candidate_p50,
+            glibc_p50 = result.glibc_p50,
+            candidate_over_orig_p50 = result.candidate_over_orig_p50,
+            candidate_over_glibc_p50 = result.candidate_over_glibc_p50,
+            orig_over_glibc_p50 = result.orig_over_glibc_p50,
+            orig_cv = result.orig_cv,
+            candidate_cv = result.candidate_cv,
+            glibc_cv = result.glibc_cv,
+            candidate_over_orig_cv = result.candidate_over_orig_cv,
+            candidate_over_glibc_cv = result.candidate_over_glibc_cv,
+            orig_over_glibc_cv = result.orig_over_glibc_cv,
+            cv_gate_pass = result.cv_gate_pass(),
+            candidate_beats_orig = result.candidate_beats_orig(),
+            orig_samples = &result.orig_samples,
+            candidate_samples = &result.candidate_samples,
+            glibc_samples = &result.glibc_samples,
+            candidate_over_orig = &result.candidate_over_orig,
+            candidate_over_glibc = &result.candidate_over_glibc,
+            orig_over_glibc = &result.orig_over_glibc,
+            comma = if index + 1 == size_results.len() {
+                ""
+            } else {
+                ","
+            },
+        ));
+    }
+    per_size_json.push_str("  ]");
+
+    let render_paired_json = |paired_json_bytes: u64| {
+        format!(
+            concat!(
+                "{{\n",
+                "  \"samples_per_size\": {samples_per_size},\n",
+                "  \"sizes\": {sizes:?},\n",
+                "  \"operations_per_microblock\": {operations_per_microblock},\n",
+                "  \"permutation_cycles_per_sample\": {permutation_cycles},\n",
+                "  \"order_scheme\": \"all six O-C-G permutations; permutation-list order reversed every other sample\",\n",
+                "  \"cv_gate_scope\": \"paired candidate/orig and candidate/glibc CV below 5%; raw-arm and orig/glibc CV are descriptive\",\n",
+                "  \"all_size_cv_gate_pass\": {all_size_cv_gate_pass},\n",
+                "  \"all_size_candidate_beats_orig\": {all_size_candidate_beats_orig},\n",
+                "  \"production_allocator_self_pct\": {production_allocator_self_pct:.6},\n",
+                "  \"production_malloc_self_pct\": {production_malloc_self_pct:.6},\n",
+                "  \"production_free_self_pct\": {production_free_self_pct:.6},\n",
+                "  \"production_allocator_frames\": {production_allocator_frames:?},\n",
+                "  \"worker_hostname\": {worker:?},\n",
+                "  \"scoring_cpu\": {scoring_cpu},\n",
+                "  \"executable_sha256\": {executable_sha256:?},\n",
+                "  \"executable_bytes\": {executable_bytes},\n",
+                "  \"candidate_perf_bytes\": {candidate_perf_bytes},\n",
+                "  \"perf_report_bytes\": {perf_report_bytes},\n",
+                "  \"sha256_artifact_bytes\": {sha256_artifact_bytes},\n",
+                "  \"paired_json_bytes\": {paired_json_bytes},\n",
+                "  \"per_size\": {per_size_json}\n",
+                "}}\n"
+            ),
+            samples_per_size = RAW_SAMPLES,
+            sizes = SIZES,
+            operations_per_microblock = OPERATIONS_PER_MICROBLOCK,
+            permutation_cycles = PERMUTATION_CYCLES_PER_SAMPLE,
+            all_size_cv_gate_pass = all_size_cv_gate_pass,
+            all_size_candidate_beats_orig = all_size_candidate_beats_orig,
+            production_allocator_self_pct = profile.allocator_self_pct,
+            production_malloc_self_pct = profile.allocator_malloc_self_pct,
+            production_free_self_pct = profile.allocator_free_self_pct,
+            production_allocator_frames = &profile.allocator_frames,
+            worker = &worker,
+            scoring_cpu = scoring_cpu,
+            executable_sha256 = &executable_sha256,
+            executable_bytes = executable_bytes,
+            candidate_perf_bytes = profile.perf_bytes,
+            perf_report_bytes = profile.report_bytes,
+            sha256_artifact_bytes = sha256_artifact_bytes,
+            paired_json_bytes = paired_json_bytes,
+            per_size_json = &per_size_json,
+        )
+    };
+    let mut advertised_paired_bytes = 0u64;
+    let paired_json = loop {
+        let rendered = render_paired_json(advertised_paired_bytes);
+        let actual_bytes = rendered.len() as u64;
+        if actual_bytes == advertised_paired_bytes {
+            break rendered;
+        }
+        advertised_paired_bytes = actual_bytes;
+    };
+    let paired_path = output_dir.join("paired.json");
+    fs::write(&paired_path, paired_json).expect("write segment production paired artifact");
+    let paired_bytes = fs::metadata(&paired_path)
+        .expect("stat segment production paired artifact")
+        .len();
+    assert_eq!(paired_bytes, advertised_paired_bytes);
+    assert!(
+        paired_bytes > 0,
+        "segment production paired artifact is empty"
+    );
+
+    println!(
+        "MALLOC_SEGMENT_PRODUCTION_GATE sizes={} samples_per_size={RAW_SAMPLES} all_size_cv_gate_pass={all_size_cv_gate_pass} all_size_candidate_beats_orig={all_size_candidate_beats_orig}",
+        SIZES.len(),
+    );
+    println!(
+        "MALLOC_SEGMENT_PRODUCTION_ARTIFACTS output_dir={} paired_bytes={paired_bytes} perf_bytes={} report_bytes={} sha256_bytes={} executable_bytes={} executable_sha256={} worker={} cpu={scoring_cpu}",
+        output_dir.display(),
+        profile.perf_bytes,
+        profile.report_bytes,
+        sha256_artifact_bytes,
+        executable_bytes,
+        executable_sha256,
+        worker,
+    );
+}
+
+#[cfg(not(feature = "abi-bench"))]
+fn bench_segment_production_paired(_c: &mut Criterion) {}
 
 fn choose_op(mix: OpMix, op_index: u64, toggle: &mut bool) -> BenchOp {
     match mix {
@@ -1433,6 +2384,7 @@ criterion_group!(
     bench_bounded_index_overhead,
     bench_size_class_lookup,
     bench_segment_bitmap_paired,
+    bench_segment_production_paired,
     bench_flat_combining_vs_lock_contention
 );
 criterion_main!(benches);

@@ -120,6 +120,40 @@ fn diff_getline_single_long_line() {
 }
 
 #[test]
+fn host_getline_grows_a_frankenlibc_segment_buffer_safely() {
+    use frankenlibc_abi::malloc_abi as malloc;
+
+    malloc::signal_runtime_ready_for_tests();
+    let mut content: Vec<u8> = std::iter::repeat_n(b'z', 256)
+        .chain(std::iter::once(b'\n'))
+        .collect();
+    let fp = unsafe { fmemopen(content.as_mut_ptr().cast(), content.len(), c"r".as_ptr()) };
+    assert!(!fp.is_null());
+
+    let initial = unsafe { malloc::malloc(16) };
+    assert!(!initial.is_null());
+    assert!(malloc::malloc_segment_owned_for_tests(initial.cast_const()));
+    let mut line = initial.cast::<c_char>();
+    let mut capacity = 16usize;
+    let read = unsafe { frankenlibc_abi::stdio_abi::getline(&mut line, &mut capacity, fp.cast()) };
+    assert_eq!(read, content.len() as isize);
+    assert!(capacity >= content.len() + 1);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(line.cast::<u8>(), read as usize) },
+        content
+    );
+    assert!(
+        !malloc::malloc_segment_owned_for_tests(line.cast_const().cast()),
+        "host getline must receive and return host-owned storage"
+    );
+
+    unsafe {
+        malloc::free(line.cast());
+        fclose(fp);
+    }
+}
+
+#[test]
 fn getline_diff_coverage_report() {
     eprintln!(
         "{{\"family\":\"libc getline + getdelim\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",
