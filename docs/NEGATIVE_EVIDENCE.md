@@ -14826,3 +14826,75 @@ that ranking *is* a self-time measurement.
   self-time or sha256 for historical rows, and I will not rank what I cannot measure.**
 - **Compliance going forward:** every row I write from here carries binary sha256, worker id, cv_pct,
   and either a self-time figure or an explicit "self-time: blocked (bd-3dxo1a)".
+
+## 2026-07-10 (cc_fl / BlackThrush) — ANALYSIS: the segment-membership number is ALREADY MEASURED and CLEARS the 9.79 ns bar. The `<5% CV` acceptance gate is the defect, and it structurally penalises the faster arm
+
+**No new measurement. No allocator code touched (cod owns Swing-2 execution / `malloc_abi.rs`).** This
+row is arithmetic on cod's own recorded numbers, because the request ("build the gate, report the ns")
+has already been satisfied three times and the answer is in this file.
+
+- **THE NUMBER (cod_fl, bd-dcrhgl, three profiled, DCE-safe, one-binary, paired attempts).**
+  Segment-bitmap membership measured at **1.708 ns** (L14546), **1.116 ns** (L14585), and
+  **0.985 ns** (L14691) — *always below* the **9.79 ns** fallback-table bar. In the final pinned run:
+  bitmap p50 **0.985 ns/op**, lookup-only fallback table p50 **6.083 ns/op**, paired p50 ratio
+  **0.1610**, saving **5.098 ns/op** => the bitmap is **6.21x faster than the table**. Ledger-integrity
+  is satisfied by that row: `malloc_bench::segment_bitmap_profile_batch` carried **96.67% self-time**
+  over 1,507 samples, with non-empty artifacts (`candidate.perf` 294,992 B). **The lever clears the
+  bar. It was never the ns.**
+- **WHAT IS ACTUALLY UNSTABLE — AND IT ISN'T THE BITMAP.** The rejections are on a mandatory
+  "*all* CVs below 5%" rule. Final pinned run: table CV **2.76%**, bitmap CV **9.87%**, paired-ratio
+  CV **10.42%**. But CV is *relative*. Converting to absolute jitter:
+
+  | arm | p50 | CV | absolute jitter (p50 × CV) |
+  |---|---|---|---|
+  | segment bitmap | 0.985 ns | 9.87% | **0.097 ns** |
+  | fallback table | 6.083 ns | 2.76% | **0.168 ns** |
+
+  **The bitmap arm is ~1.7x MORE stable in absolute terms.** Its CV is larger solely because the
+  denominator is 6.2x smaller. A fixed relative-CV gate applied to two arms whose means differ 6x
+  **systematically fails the faster arm** — the faster the primitive gets, the harder it is to pass.
+  That is a defect in the acceptance rule, not instability in the measurement, and no amount of
+  harness work fixes it: cod already pinned the CPU, raised each arm to **134,217,728 ops/sample**
+  (8x), kept all 31 raw samples with no trimming, used T-S-S-T / S-T-T-S paired interleaving, and
+  black-boxed both the input addresses and the returned hit count. Those are precisely the four fixes
+  the brief proposes ("raise iteration counts, pin the worker, paired interleaved arm, check
+  black_box"). All four are already done. The gate still cannot be met, by construction.
+- **THE CORRECT GATE FOR A PAIRED DESIGN.** The decision statistic is the paired ratio, not per-arm
+  CV. With paired-ratio CV **10.42%** over **n=31**, SE(ratio) ≈ 10.42/√31 ≈ **1.87%**. The paired
+  p50 of **0.1610** is therefore ~**53 standard errors** from 1.0. The conclusion "the bitmap is
+  ~6.2x cheaper than the table" is not in doubt at any reasonable confidence. Recommended replacement
+  for the `<5% all-CV` rule, in order of preference: (i) a bootstrap CI on the paired median ratio;
+  (ii) a sign test on paired samples (here: 31/31 in one direction would give p < 1e-9); (iii) if a
+  dispersion gate is wanted at all, bound **absolute** jitter (e.g. < 0.25 ns/op), which both arms
+  already satisfy. Any of these accepts the primitive on the existing data, with no re-measurement.
+- **BUT CLEARING THE BAR DOES NOT IMPLY THE WIRING WINS — THAT WAS MEASURED AND REVERTED.** The brief
+  states "if it clears 9.79 ns, wire it to the inline header and Swing-2 goes to an ~11x hot-path win."
+  L14063 (cod_fl, code reverted) records the opposite: the **production 4 MiB segment heap LOST
+  6.1-7.7%** to the retained malloc/free path. So the membership primitive being ~1 ns does not carry
+  the production win; the wiring was tried and rejected on its own measurement. **Swing-2's blocker is
+  the wiring economics, not the membership cost.** Anyone re-deriving the membership ns is
+  re-measuring a settled quantity and will not move Swing-2.
+- **RECOMMENDATION (for cod, whose lane this is).** Do not re-run the membership gate. Either (a)
+  amend the acceptance rule to a paired-CI / absolute-jitter criterion and accept the existing
+  1.708/1.116/0.985 ns evidence, or (b) leave the primitive banked and attack the wiring loss recorded
+  in L14063, which is where the 6.1-7.7% actually lives.
+- **PROVENANCE.** No binary, no worker, no cv_pct of my own: **this row reports no new measurement.**
+  All figures are quoted from L14063 / L14546 / L14585 / L14691 with attribution to cod_fl. Arithmetic
+  is reproducible from those rows: absolute jitter = p50 × CV; SE(ratio) = CV/√n.
+
+## 2026-07-10 (cc_fl / BlackThrush) — SURFACED: the remaining resolver micro-allocations cannot be honestly attempted under the current REJECT rule
+
+- The resolver **backend-clone** vein is closed (previous row). What remains are **small** per-call
+  allocations: `ip.to_string()` in `gethostbyaddr` / `_gethtbyaddr` / the reverse `_r` fill
+  (bd-ld0i35), and `name_cstr.to_bytes().to_vec()` in `resolve_gethostbyname_target`. Each is one
+  `String`/`Vec` alloc+free ≈ 40-80 ns of interposed-allocator framing plus formatting, against a
+  ~2.6 µs call: an expected **3-5%** effect.
+- **The trap.** My paired samplers resolve ~1.7-2x cleanly, but their paired-ratio cv is 11-35%
+  (see the `_gethtent` row). A 3-5% effect is **below that resolution**. If such a lever fails, the
+  rules require me to ledger a REJECT **with self-time** — and self-time is blocked (bd-3dxo1a, no
+  `perf` without a local debuginfo build). So I would be unable to close it honestly either way.
+- **Therefore I am not starting one this turn**, rather than produce an unprovenanced REJECT or an
+  unresolvable WIN. Unblock is the same single item: relax the disk constraint for one short
+  `--profile release-perf` build, or add a remote-`perf` path to `rch`. Beads: bd-ld0i35 (kept OPEN,
+  correctly scoped to `ip.to_string()`; note my `bb9ebb96b` commit message mis-cited it for the
+  `_gethtent` work, which was a separate lever), bd-3dxo1a (the blocker).
