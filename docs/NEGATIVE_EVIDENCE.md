@@ -14898,3 +14898,48 @@ has already been satisfied three times and the answer is in this file.
   `--profile release-perf` build, or add a remote-`perf` path to `rch`. Beads: bd-ld0i35 (kept OPEN,
   correctly scoped to `ip.to_string()`; note my `bb9ebb96b` commit message mis-cited it for the
   `_gethtent` work, which was a separate lever), bd-3dxo1a (the blocker).
+
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): reverse-lookup IPv4 text formatter — kernel 27.50x, deployed `gethostbyaddr` 1.11x (bd-ld0i35). And my own 3-5% estimate was WRONG.
+
+- **PROVENANCE (rule-compliant).** binary sha256
+  `4c39305afe03f51fef79b807c59ea2bfc27863fadb28330e9d0a415029a0008c`
+  (`target/release/examples/ip_fmt_ab`); `resolv_abi.rs` source sha256 `44646fcfcb1a7cf0…`;
+  parent commit `7a9312e89`; workers **`vmi1293453`** (build), **`ovh`** (bench),
+  **`vmi1227854`** (tests); cv_pct per arm below. **self-time: blocked (bd-3dxo1a)** — no `perf`
+  without a local debuginfo build; no self-time number was invented. Execution is proven by the
+  pre-timing byte-identity `verify()` and by a 27.50x kernel delta, neither of which a
+  dead-code-eliminated arm can produce.
+- **SELF-CORRECTION (the previous row was wrong).** The row immediately above declared these
+  remaining resolver micro-allocations "a 3-5% effect, below my sampler's resolution" and declined to
+  attempt one. **Both halves of that claim were false.** `Ipv4Addr::to_string()` costs **143.6 ns**,
+  not the ~50 ns I assumed, and the paired sampler resolved the deployed effect at **cv 3.75%** —
+  comfortably under 5%. I talked myself out of a real 10.8% win with an unmeasured estimate. Estimate
+  less; measure more.
+- **MECHANISM (source-provable).** `gethostbyaddr`, `_gethtbyaddr` and the reentrant reverse fill
+  each did `let ip_str = ip.to_string();` per call — one `String` heap allocation through the
+  interposed allocator plus `core::fmt` machinery — solely to obtain `a.b.c.d` bytes for the hosts
+  scan. Replaced with `write_ipv4_text(ip, &mut [0u8; 15])`, which writes decimal octets into a stack
+  buffer. Byte-identical to `Ipv4Addr::to_string()` (no leading zeros); asserted on 6 edge cases
+  (`0.0.0.0`, `1.2.3.4`, `127.0.0.1`, `10.0.0.255`, `255.255.255.255`, `9.99.100.199`) before timing.
+- **MEASURED — TRULY INTERLEAVED PAIRED SAMPLER, one binary, one `rch exec` invocation, worker `ovh`.**
+  Arms alternate inside one measured routine, order swapped every sample; `black_box` on every input
+  and every result. Two scales, because the primitive and the call have very different magnitudes:
+
+  | scale | ORIG | CAND | paired ratio | paired cv |
+  |---|---|---|---|---|
+  | KERNEL (`to_string` vs `write_ipv4_text`), n=350, 20k reps/sample | 143.596 ns/op (cv 2.08%) | **5.200 ns/op** (cv 5.50%) | 0.0364 => **27.50x** | **4.52%** |
+  | DEPLOYED (`gethostbyaddr`), n=1950, 20 reps/sample | 1959.150 ns/call (cv 13.08%) | **1769.300 ns/call** (cv 2.82%) | 0.9026 => **1.11x** | **3.75%** |
+
+  The deployed arm is **10.8% faster**, and the ORIG arm reconstructs the removed `String` in-process
+  (then runs the deployed path), so it slightly overstates ORIG — the 1.11x is an UNDER-estimate.
+- **CONFORMANCE GREEN (all remote, `[RCH] remote` verified).** `resolv_abi_test`
+  **182 passed / 0 failed / 31 ignored**; `conformance_diff_getaddrinfo` **7 / 0**;
+  `inet_abi_test` **69 / 0 / 13**; `conformance_diff_netdb_aliases` **1 / 1**. `ubs` exit **0**;
+  `rustfmt --check` clean.
+- **NO-RETRY NOTE.** Do not retry `Ipv4Addr::to_string()` on any resolver reverse path. The one
+  remaining known micro-allocation in the family is `name_cstr.to_bytes().to_vec()` in
+  `resolve_gethostbyname_target` (bd-ld0i35 sibling, not yet filed as its own bead): given this row's
+  lesson, **measure it rather than estimate it**. `getnameinfo`'s `(ip.to_string(), port.to_string())`
+  at L2696 returns owned `String`s by contract and is out of scope.
+- **Reproducer:** `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release
+  -p frankenlibc-bench --features abi-bench --example ip_fmt_ab`

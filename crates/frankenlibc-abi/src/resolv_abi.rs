@@ -713,6 +713,58 @@ pub fn bench_legacy_hosts_scan(name: &[u8]) {
     std::hint::black_box(&candidates);
 }
 
+/// Format `ip` as `a.b.c.d` into `buf`, returning the written bytes. Byte-identical to
+/// `Ipv4Addr::to_string()` (decimal octets, no leading zeros, `.` separators) but without the
+/// per-call `String` heap allocation — which, through the interposed allocator, costs a
+/// malloc/free pair plus `core::fmt` machinery on every reverse hosts lookup. 15 bytes is the
+/// maximum (`255.255.255.255`).
+fn write_ipv4_text(ip: Ipv4Addr, buf: &mut [u8; 15]) -> &[u8] {
+    let mut n = 0usize;
+    for (i, &octet) in ip.octets().iter().enumerate() {
+        if i > 0 {
+            buf[n] = b'.';
+            n += 1;
+        }
+        if octet >= 100 {
+            buf[n] = b'0' + octet / 100;
+            n += 1;
+        }
+        if octet >= 10 {
+            buf[n] = b'0' + (octet / 10) % 10;
+            n += 1;
+        }
+        buf[n] = b'0' + octet % 10;
+        n += 1;
+    }
+    &buf[..n]
+}
+
+/// Bench-only: reconstruct the per-call `Ipv4Addr::to_string()` heap allocation that
+/// `write_ipv4_text` replaced, so the `frankenlibc_legacy_orig` arm can price this lever in the
+/// SAME binary.
+#[doc(hidden)]
+pub fn bench_legacy_ip_to_string(octets: [u8; 4]) {
+    let text = Ipv4Addr::from(octets).to_string();
+    std::hint::black_box(&text);
+}
+
+/// Bench-only: the deployed allocation-free formatter, exposed so the paired sampler can measure
+/// the primitive itself (a 3-5% end-to-end effect is below the sampler's ratio resolution).
+#[doc(hidden)]
+pub fn bench_write_ipv4_text(octets: [u8; 4]) -> usize {
+    let mut buf = [0u8; 15];
+    let bytes = write_ipv4_text(Ipv4Addr::from(octets), &mut buf);
+    std::hint::black_box(bytes).len()
+}
+
+/// Verify-only: the deployed formatter's output, so a harness can assert byte-identity with
+/// `Ipv4Addr::to_string()` before timing. Allocates (that is the point of the comparison).
+#[doc(hidden)]
+pub fn bench_ipv4_text_owned(octets: [u8; 4]) -> Vec<u8> {
+    let mut buf = [0u8; 15];
+    write_ipv4_text(Ipv4Addr::from(octets), &mut buf).to_vec()
+}
+
 /// Bench-only: reconstruct the pre-lever per-call whole-file clone that `_gethtent` performed on
 /// EVERY iteration step (`read_hosts_backend()`), which made draining N entries O(N^2).
 #[doc(hidden)]
@@ -3141,7 +3193,8 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
 
     let octets = unsafe { std::slice::from_raw_parts(addr as *const u8, 4) };
     let ip = std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
-    let ip_str = ip.to_string();
+    let mut ip_buf = [0u8; 15];
+    let ip_str = write_ipv4_text(ip, &mut ip_buf);
 
     // Borrowed + allocation-free reverse walk: `read_hosts_backend()` cloned the whole file per
     // call and `reverse_lookup_hosts` ran `parse_hosts_line` (address `Vec` + `Vec<Vec<u8>>`
@@ -3149,8 +3202,7 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
     // First-matching-line-wins and the address validation are unchanged. A backend read error is
     // still HOST_NOT_FOUND (the `Err(_)` arm), and so is "no matching line".
     let written = with_hosts_backend_snapshot(|content, _generation| {
-        let hostname =
-            frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str.as_bytes())?;
+        let hostname = frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str)?;
         // SAFETY: caller-provided output buffers, as in the previous call.
         Some(unsafe { write_reentrant_hostent(hostname, ip, result_buf, buf, buflen, result) })
     });
@@ -3221,15 +3273,15 @@ pub unsafe extern "C" fn gethostbyaddr(
     // Read the IPv4 address
     let octets = unsafe { std::slice::from_raw_parts(addr as *const u8, 4) };
     let ip = std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
-    let ip_str = ip.to_string();
+    let mut ip_buf = [0u8; 15];
+    let ip_str = write_ipv4_text(ip, &mut ip_buf);
 
     // Look up in /etc/hosts
     // Borrowed + allocation-free reverse walk; see `gethostbyaddr_r` above. Populate thread-local
     // hostent storage with the first matching hostname, inside the backend borrow (a different
     // thread-local, so the two borrows do not conflict).
     let filled = with_hosts_backend_snapshot(|content, _generation| {
-        let hostname =
-            frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str.as_bytes())?;
+        let hostname = frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str)?;
         // SAFETY: as the previous `populate_tls_hostent` call.
         Some(unsafe { populate_tls_hostent(hostname, ip) })
     });
@@ -7081,11 +7133,11 @@ pub unsafe extern "C" fn _gethtbyaddr(addr: *const c_void, len: c_int, af: c_int
 
     let octets = unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), 4) };
     let ip = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
-    let ip_text = ip.to_string();
+    let mut ip_buf = [0u8; 15];
+    let ip_text = write_ipv4_text(ip, &mut ip_buf);
     // Borrowed + allocation-free reverse walk; see `gethostbyaddr` above.
     let filled = with_hosts_backend_snapshot(|content, _generation| {
-        let hostname =
-            frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_text.as_bytes())?;
+        let hostname = frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_text)?;
         // SAFETY: as the previous `populate_tls_hostent` call.
         Some(unsafe { populate_tls_hostent(hostname, ip) })
     });

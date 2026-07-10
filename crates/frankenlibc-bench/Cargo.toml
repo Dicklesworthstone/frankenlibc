@@ -47,6 +47,11 @@ name = "hostent_iter_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[example]]
+name = "ip_fmt_ab"
+harness = false
+required-features = ["abi-bench"]
+
 [[bench]]
 name = "string_bench"
 harness = false
