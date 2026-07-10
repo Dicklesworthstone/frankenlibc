@@ -15274,3 +15274,34 @@ sha256, self-time, cv or null.
   `target/criterion/bd-dcrhgl-segment-production/run-1230330-1783699142364446298/`: `paired.json`
   **23,568 bytes**, `candidate.perf` **298,016 bytes**, `perf-report.txt` **4,124 bytes**, and
   `executable.sha256` **202 bytes**.
+
+## 2026-07-10 (cod_fl) — REJECT (WORKER STABILITY): paired decision gate fails on known-noisy vmi1152480; production lever still wins every size (bd-dcrhgl)
+
+- **UNCHANGED LEVER / FINAL GATE.** This run changes no production mechanism from the prior two
+  attempts. The declared CV gate now correctly covers the paired candidate contrasts only
+  (CAND/ORIG and CAND/glibc); raw-arm and ORIG/glibc CVs remain descriptive. One binary, one remote
+  invocation, all six O/C/G permutations per sample, 41 samples per size, 12,582,912 pairs per arm,
+  black-boxed inputs/results, least-busy non-housekeeping CPU selection.
+- **PROFILE INTEGRITY PASSED.** Candidate-only perf captured **1,653 samples**. Production allocator
+  self-time is **19.69%**: malloc-side **3.01%** (`segment_allocate` 2.31% + exported `malloc`
+  0.70%) and free-side **16.68%** (`segment_free` 16.08% + exported `free` 0.60%).
+- **RESULT — REJECT THIS WORKER RUN.** CAND/ORIG remains stable and wins every size, but the second
+  decision contrast fails <5% on three sizes:
+
+  | size | ORIG ns | CAND ns | glibc ns | CAND/ORIG (CV%) | CAND/glibc (CV%) |
+  |---:|---:|---:|---:|---:|---:|
+  | 16 | 76.251 | 62.033 | 5.783 | **0.8183 (2.65)** | 10.6950 (**5.52**) |
+  | 64 | 76.044 | 62.472 | 5.806 | **0.8115 (2.41)** | 10.6751 (**6.26**) |
+  | 256 | 77.464 | 63.196 | 5.856 | **0.8117 (2.70)** | 10.7352 (**7.07**) |
+  | 1024 | 76.520 | 62.800 | 5.784 | **0.8172 (3.15)** | 10.8595 (**4.93**) |
+
+  This worker previously produced an A/A ratio of 0.9048 with 200-460% per-arm CV in the resolver
+  campaign, so the failure is consistent with banked worker instability. Do not change the lever or
+  gate. Retry the identical binary shape only when `vmi1149989` or `vmi1227854` is idle; the
+  immediately preceding `vmi1149989` run put all eight candidate-bearing paired CVs below 5%.
+- **FULL PROVENANCE.** Binary SHA-256
+  **`0f3d8b7f0037f8b859c190d27d2f0a3c4e7f23932ec80e04b2b5f7ad6c275abd`**, binary **55,166,688
+  bytes**, worker **`vmi1152480`**, CPU **9**. Retrieved non-empty artifacts in
+  `target/criterion/bd-dcrhgl-segment-production/run-2009372-1783699835747852646/`: `paired.json`
+  **23,661 bytes**, `candidate.perf` **329,552 bytes**, `perf-report.txt` **2,282 bytes**, and
+  `executable.sha256` **202 bytes**.
