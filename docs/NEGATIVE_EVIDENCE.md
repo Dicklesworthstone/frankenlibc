@@ -14312,3 +14312,80 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   cheap, and now trivially justified.
 - **Reproducer:** `rch exec -- cargo bench -p frankenlibc-bench --features abi-bench --bench
   glibc_baseline_bench getservbyname_r_http_tcp` (4 arms, one binary, one invocation).
+
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): `getaddrinfo` service-profile lookup walks the parsed index — 31.3x vs ORIG (bd-nyrnnq)
+
+- **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped `getaddrinfo`. Only hits: five of my own "ranked next"
+  pointers, plus a 2026-06-21 audit row of mine noting *"getaddrinfo file-I/O-dominated"* — a
+  correct hint, never acted on. No prior attempt, no rejection. Retried nothing CLOSED (`strchr`
+  SSE4.2 explicit-length scanner; portable-SIMD string residuals, parked; `ENVIRON_EPOCH`/`OnceLock`
+  env snapshot; `stat` elision; TLS-storage preallocation). Stayed out of `malloc_abi.rs`.
+- **MECHANISM (source-provable; the disk constraint forbids local builds, so no fresh `perf`).**
+  `lookup_service_profiles` — reached by every `getaddrinfo` call with a NON-numeric service name —
+  did, per call: (1) `read_services_backend()`, an **owned clone of the entire `/etc/services`**,
+  and (2) a full linear scan calling `parse_services_line` on **every line**, each of which
+  allocates a `ServiceEntry` (name `Vec`, protocol `Vec`, `Vec<Vec<u8>>` of aliases). On a stock
+  `/etc/services` that is **tens of thousands of malloc/free pairs per `getaddrinfo` call**. It is
+  the same defect already fixed for `getservbyname`/`getservbyport`, at ~11k× the scale, and it
+  never reached the parsed index.
+- **LEVER (one).** New `with_service_entries(f)` runs `f` over the cache's `entries` slice.
+  Equivalent **by construction**: `ServiceLookupCache::rebuild_if_needed` builds `entries` as
+  exactly `content.split('\n').filter_map(parse_services_line)`, so visit order, entries, the
+  `service_entry_matches` test, `service_entry_profile` error propagation, and the profile dedup are
+  all unchanged. No hashing and no case-fold reinterpretation is involved (unlike the by-name
+  index), which is why this is a safe drop-in. The `Err(_) => Ok(None)` backend contract is
+  preserved. `getaddrinfo` semantics are otherwise untouched.
+- **BENCH EXERCISES THE CODE UNDER TEST (ledger-integrity rule).** `service = "http"` is
+  non-numeric, so `resolve_addrinfo_profiles` falls past `parse_numeric_service_port`
+  (`NotNumeric`) into `lookup_service_profiles`. Positive proof, not assumption: removing that
+  function's per-call work moves the row **297.6 µs -> 9.5 µs**, i.e. ~288 µs of the ORIG arm was
+  inside the function under test. A dead-code bench cannot produce that delta.
+- **MEASURED 3-WAY, ONE BINARY / ONE `rch exec` INVOCATION / ONE WORKER (`vmi1227854`).**
+  `frankenlibc_legacy_orig` = `bench_legacy_service_profile_scan(b"http")` (rebuilds the removed
+  backend clone + per-line `parse_services_line` scan) followed by the deployed `getaddrinfo`, so it
+  reconstructs pre-lever cost in-process; it **overstates** ORIG by the deployed indexed walk, so
+  the ratio is an UNDER-estimate. Host glibc is resolved via `dlmopen(LM_ID_NEWLM)` (its own
+  `getaddrinfo` + `freeaddrinfo`), and the row asserts `sin_port` parity against it before timing.
+
+  | impl | p50 ns/op | mean ns/op |
+  |---|---|---|
+  | `frankenlibc_abi` (new) | **9505.09** | 10959.08 |
+  | `frankenlibc_legacy_orig` | 297621.73 | 296597.55 |
+  | `host_glibc` (dlmopen) | 195193.07 | 193565.05 |
+
+  **new/orig = 0.0319 => 31.3x faster.** `getaddrinfo("localhost","http")`: **297.6 µs -> 9.5 µs**.
+- **⚠️ DO NOT QUOTE THE 20.5x vs HOST GLIBC.** The host arm reads 195 µs, which is implausibly slow
+  for `getaddrinfo`. Under `dlmopen(LM_ID_NEWLM)` glibc gets a private namespace and appears to
+  redo NSS module resolution per call (the same class of inflation recorded on 2026-06-21: "dlmopen
+  host-glibc baselines are INFLATED"). The **fl-vs-ORIG 31.3x is same-binary and sound**; the
+  fl-vs-glibc number on this row is NOT trustworthy and is deliberately not claimed. Establishing a
+  fair `getaddrinfo` host baseline needs an LD_PRELOAD or fork/exec harness, filed as follow-up.
+- **CONFORMANCE GREEN (all remote, `rch exec`, `RCH_REQUIRE_REMOTE=1`).**
+  `conformance_diff_getaddrinfo` **7 passed / 0 failed** — the dedicated byte-exact differential vs
+  live glibc for this exact surface. `resolv_abi_test` **182 passed / 0 failed / 31 ignored**
+  (36 `getaddrinfo` tests among them, plus both backend-freshness gates); `inet_abi_test`
+  **69 passed / 0 failed / 13 ignored**; `conformance_diff_netdb_aliases` **1/1**,
+  `conformance_diff_netdb_r_aliases` **1/1**, `conformance_diff_protoent_r_aliases` **1/1**.
+  `ubs` exit **0**; `rustfmt --check` clean.
+- **LEDGER-INTEGRITY AUDIT of my own recent NO-RETRY rows (dead-code-bench check).** Both carry a
+  measured, NON-ZERO self-time from a profile of the row that actually exercises them, so neither is
+  a dead-code reject: the `getenv` NO-RETRY is `native_getenv_raw` 0.05% + `getenv` 0.05% +
+  `std::sys::env::unix::getenv::{closure#0}` 0.01% + `std::env::_var_os` 0.00% = **0.11% self**; the
+  `stat`-elision NO-RETRY is `try_statx` 0.03% + `statx` 0.03% + `std::sys::fs::metadata` 0.02%
+  = **0.08% self** (plus ~1.6% unresolved kernel frames). `bd-rh3gc8` was refuted from source (fixed
+  arrays), never benched. **No invalid reject rows to reopen.** Going forward every REJECT here
+  carries its self-time figure.
+- **PRE-EXISTING (not this change).** Full `unistd_abi_test` aborts on the argp errno bug (proven at
+  `c1b03f89a`); `clippy -D warnings` blocked by `frankenlibc-core/src/math/exp.rs:815` (`eq_op`).
+- **NO-RETRY NOTE:** do not retry backend clones or per-line `parse_services_line` scans anywhere.
+  Ranked remaining resolver surfaces:
+  **(1) `resolve_hosts_subset` / the `/etc/hosts` path in `getaddrinfo` and `gethostbyname`** — check
+  whether it clones the hosts backend and re-parses per call, the same defect one file over. This is
+  the other half of the 9.5 µs that remains.
+  **(2) A fair `getaddrinfo` host-glibc baseline** (LD_PRELOAD or fork/exec), so the fl-vs-glibc
+  ratio on this row can be quoted at all.
+  **(3) cross-family NSS result caching with a fresh comparator.**
+  **(4)** `if_nametoindex` (inet_abi:808) and `gethostbyname_r` (inet_abi:1232) still call the
+  allocating `read_bounded_cstr`; trivial `_ref` swap.
+- **Reproducer:** `rch exec -- cargo bench -p frankenlibc-bench --features abi-bench --bench
+  glibc_baseline_bench getaddrinfo_localhost_http` (3 arms, one binary, one invocation).

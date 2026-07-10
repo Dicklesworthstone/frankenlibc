@@ -440,10 +440,23 @@ type ProtoByNameR = unsafe extern "C" fn(
 ) -> libc::c_int;
 
 #[cfg(feature = "abi-bench")]
+type GetAddrInfoFn = unsafe extern "C" fn(
+    *const libc::c_char,
+    *const libc::c_char,
+    *const libc::addrinfo,
+    *mut *mut libc::addrinfo,
+) -> libc::c_int;
+
+#[cfg(feature = "abi-bench")]
+type FreeAddrInfoFn = unsafe extern "C" fn(*mut libc::addrinfo);
+
+#[cfg(feature = "abi-bench")]
 struct HostServentR {
     by_name: ServByNameR,
     by_port: ServByPortR,
     proto_by_name: ProtoByNameR,
+    getaddrinfo: GetAddrInfoFn,
+    freeaddrinfo: FreeAddrInfoFn,
 }
 
 #[cfg(feature = "abi-bench")]
@@ -465,6 +478,8 @@ fn host_servent_r() -> &'static HostServentR {
             by_name: mem::transmute::<*mut c_void, ServByNameR>(sym(c"getservbyname_r")),
             by_port: mem::transmute::<*mut c_void, ServByPortR>(sym(c"getservbyport_r")),
             proto_by_name: mem::transmute::<*mut c_void, ProtoByNameR>(sym(c"getprotobyname_r")),
+            getaddrinfo: mem::transmute::<*mut c_void, GetAddrInfoFn>(sym(c"getaddrinfo")),
+            freeaddrinfo: mem::transmute::<*mut c_void, FreeAddrInfoFn>(sym(c"freeaddrinfo")),
         }
     })
 }
@@ -1086,6 +1101,125 @@ fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
                 };
                 black_box(rc);
                 black_box(hp_result);
+            },
+        );
+
+        // --- getaddrinfo service-profile row (bd-2wq4pk) ---------------------------
+        // `getaddrinfo("localhost", "http")` resolves the service name through
+        // `lookup_service_profiles`. Parity is asserted against dlmopen'd glibc before timing.
+        let node = c"localhost";
+        {
+            let mut fl_res: *mut libc::addrinfo = std::ptr::null_mut();
+            let fl_rc = unsafe {
+                frankenlibc_abi::resolv_abi::getaddrinfo(
+                    node.as_ptr(),
+                    service.as_ptr(),
+                    std::ptr::null(),
+                    &raw mut fl_res,
+                )
+            };
+            let mut h_res: *mut libc::addrinfo = std::ptr::null_mut();
+            let h_rc = unsafe {
+                (host_servent_r().getaddrinfo)(
+                    node.as_ptr(),
+                    service.as_ptr(),
+                    std::ptr::null(),
+                    &raw mut h_res,
+                )
+            };
+            assert_eq!(fl_rc, 0, "FrankenLibC getaddrinfo failed");
+            assert_eq!(h_rc, 0, "host glibc getaddrinfo failed");
+            assert!(!fl_res.is_null() && !h_res.is_null());
+            // The service port must agree (both resolve http -> 80, network order).
+            let fl_port = unsafe { (*(*fl_res).ai_addr.cast::<libc::sockaddr_in>()).sin_port };
+            let h_port = unsafe { (*(*h_res).ai_addr.cast::<libc::sockaddr_in>()).sin_port };
+            assert_eq!(fl_port, h_port, "getaddrinfo service port parity");
+            unsafe { frankenlibc_abi::resolv_abi::freeaddrinfo(fl_res) };
+            unsafe { (host_servent_r().freeaddrinfo)(h_res) };
+        }
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getaddrinfo_localhost_http",
+                impl_label: "frankenlibc_abi",
+                api_family: "resolver",
+                symbol: "getaddrinfo",
+                workload: "resolve localhost + named service http through /etc/services",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let mut res: *mut libc::addrinfo = std::ptr::null_mut();
+                let rc = unsafe {
+                    frankenlibc_abi::resolv_abi::getaddrinfo(
+                        node.as_ptr(),
+                        service.as_ptr(),
+                        std::ptr::null(),
+                        &raw mut res,
+                    )
+                };
+                black_box(rc);
+                if !res.is_null() {
+                    unsafe { frankenlibc_abi::resolv_abi::freeaddrinfo(res) };
+                }
+            },
+        );
+
+        // ORIG: reconstructs the removed per-call backend clone + per-line
+        // `parse_services_line` scan, then runs the deployed path. Overstates ORIG by the
+        // deployed indexed walk, so the measured ratio is an UNDER-estimate.
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getaddrinfo_localhost_http",
+                impl_label: "frankenlibc_legacy_orig",
+                api_family: "resolver",
+                symbol: "getaddrinfo",
+                workload: "resolve localhost + named service http through /etc/services",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                frankenlibc_abi::resolv_abi::bench_legacy_service_profile_scan(b"http");
+                let mut res: *mut libc::addrinfo = std::ptr::null_mut();
+                let rc = unsafe {
+                    frankenlibc_abi::resolv_abi::getaddrinfo(
+                        node.as_ptr(),
+                        service.as_ptr(),
+                        std::ptr::null(),
+                        &raw mut res,
+                    )
+                };
+                black_box(rc);
+                if !res.is_null() {
+                    unsafe { frankenlibc_abi::resolv_abi::freeaddrinfo(res) };
+                }
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getaddrinfo_localhost_http",
+                impl_label: "host_glibc",
+                api_family: "resolver",
+                symbol: "getaddrinfo",
+                workload: "resolve localhost + named service http through /etc/services",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let mut res: *mut libc::addrinfo = std::ptr::null_mut();
+                let rc = unsafe {
+                    (host_servent_r().getaddrinfo)(
+                        node.as_ptr(),
+                        service.as_ptr(),
+                        std::ptr::null(),
+                        &raw mut res,
+                    )
+                };
+                black_box(rc);
+                if !res.is_null() {
+                    unsafe { (host_servent_r().freeaddrinfo)(res) };
+                }
             },
         );
 

@@ -758,6 +758,44 @@ pub(crate) fn with_service_entry_by_port<R>(
     })
 }
 
+/// Run `f` over ALL parsed `/etc/services` records, in file order, borrowed from the
+/// generation-stamped index. Equivalent by construction to
+/// `content.split('\n').filter_map(parse_services_line)` — that is literally how
+/// `ServiceLookupCache::rebuild_if_needed` builds `entries` — so a caller that needs to visit
+/// every record (rather than look one up) gets identical order and identical entries with no
+/// backend clone and no per-line `ServiceEntry` allocation.
+pub(crate) fn with_service_entries<R>(
+    f: impl FnOnce(&[frankenlibc_core::resolv::ServiceEntry]) -> R,
+) -> std::io::Result<R> {
+    with_services_backend_snapshot(|content, generation| {
+        with_service_lookup_cache(|cache| {
+            cache.rebuild_if_needed(generation, content);
+            f(&cache.entries)
+        })
+    })
+}
+
+/// Bench-only: reconstruct the pre-lever per-call work that `lookup_service_profiles` used to
+/// do — an owned clone of the whole `/etc/services` backend plus a `parse_services_line`
+/// allocation for EVERY line — so the `frankenlibc_legacy_orig` arm can price this lever in
+/// the SAME binary.
+#[doc(hidden)]
+pub fn bench_legacy_service_profile_scan(service: &[u8]) {
+    let Ok(content) = read_services_backend() else {
+        return;
+    };
+    let mut matches = 0usize;
+    for line in content.split(|&b| b == b'\n') {
+        let Some(entry) = frankenlibc_core::resolv::parse_services_line(line) else {
+            continue;
+        };
+        if service_entry_matches(&entry, service) {
+            matches += 1;
+        }
+    }
+    std::hint::black_box(matches);
+}
+
 /// Cloning wrappers, kept for callers that need to own the entry past the cache borrow.
 pub(crate) fn lookup_service_entry_by_name(
     name: &[u8],
@@ -1201,24 +1239,36 @@ fn lookup_service_profiles(
     service: &[u8],
     hints: Option<&libc::addrinfo>,
 ) -> Result<Option<Vec<AddrinfoProfile>>, c_int> {
-    let content = match read_services_backend() {
-        Ok(content) => content,
+    // Walk the parsed index instead of cloning the backend and re-parsing every line.
+    // `cache.entries` IS `content.split('\n').filter_map(parse_services_line)`, so the visit
+    // order, the entries, the `service_entry_matches` test, the `service_entry_profile` error
+    // propagation and the profile dedup are all unchanged. What is gone is the per-call owned
+    // clone of `/etc/services` plus one `ServiceEntry` allocation (name `Vec`, protocol `Vec`,
+    // `Vec<Vec<u8>>` of aliases) for EVERY line of the file — tens of thousands of malloc/free
+    // pairs per call through the interposed allocator (bd-qds9jk / bd-xmng5n frame tables put
+    // ~91-92% of resolver self time in allocator bookkeeping).
+    let scanned = with_service_entries(|entries| {
+        let mut profiles = Vec::new();
+        for entry in entries {
+            if !service_entry_matches(entry, service) {
+                continue;
+            }
+            if let Some(profile) = service_entry_profile(entry, hints)?
+                && !profiles.contains(&profile)
+            {
+                profiles.push(profile);
+            }
+        }
+        Ok(profiles)
+    });
+
+    // A backend read error still reports "no such service" rather than an error, exactly as
+    // the previous `read_services_backend()` / `Err(_) => return Ok(None)` did.
+    let profiles = match scanned {
+        Ok(Ok(profiles)) => profiles,
+        Ok(Err(err)) => return Err(err),
         Err(_) => return Ok(None),
     };
-    let mut profiles = Vec::new();
-    for line in content.split(|&b| b == b'\n') {
-        let Some(entry) = frankenlibc_core::resolv::parse_services_line(line) else {
-            continue;
-        };
-        if !service_entry_matches(&entry, service) {
-            continue;
-        }
-        if let Some(profile) = service_entry_profile(&entry, hints)?
-            && !profiles.contains(&profile)
-        {
-            profiles.push(profile);
-        }
-    }
 
     if profiles.is_empty() {
         Ok(None)
