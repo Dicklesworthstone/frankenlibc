@@ -1031,33 +1031,20 @@ pub unsafe extern "C" fn getservbyname_r(
         Some(proto_bytes)
     };
 
-    let content = match std::fs::read("/etc/services") {
-        Ok(c) => c,
+    // Shared generation-stamped parsed index (resolv_abi), the same one `getservbyname`
+    // uses. Replaces a per-call `std::fs::read("/etc/services")` + line-by-line
+    // `parse_services_line` scan: this entry point re-read and re-parsed the whole file on
+    // EVERY call, so it did not even reach `BackendFileCache`. Lookup semantics are
+    // unchanged (canonical name or alias, optional ASCII-case-insensitive protocol filter,
+    // first match in file order); the caller-buffer packing below is untouched. The backend
+    // now honors `FRANKENLIBC_SERVICES_PATH` exactly as the non-reentrant path does.
+    let entry = match crate::resolv_abi::lookup_service_entry_by_name(
+        name_bytes.as_slice(),
+        proto_filter.as_deref(),
+    ) {
+        Ok(Some(e)) => e,
+        Ok(None) => return 0,
         Err(_) => return libc::ENOENT,
-    };
-
-    // Find the matching service entry
-    let entry = content.split(|&b| b == b'\n').find_map(|line| {
-        let entry = frankenlibc_core::resolv::parse_services_line(line)?;
-        if !entry.name.eq_ignore_ascii_case(name_bytes.as_slice())
-            && !entry
-                .aliases
-                .iter()
-                .any(|alias| alias.eq_ignore_ascii_case(name_bytes.as_slice()))
-        {
-            return None;
-        }
-        if let Some(pf) = proto_filter.as_deref()
-            && !entry.protocol.eq_ignore_ascii_case(pf)
-        {
-            return None;
-        }
-        Some(entry)
-    });
-
-    let entry = match entry {
-        Some(e) => e,
-        None => return 0,
     };
     let (svc_name, port, svc_proto) = (&entry.name, entry.port, &entry.protocol);
 
@@ -1105,6 +1092,208 @@ pub unsafe extern "C" fn getservbyname_r(
 /// Reentrant `getservbyport_r` — look up service by port in /etc/services.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyport_r(
+    port: c_int,
+    proto: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if result.is_null() {
+        return libc::EINVAL;
+    }
+    if !tracked_object_fits(result) {
+        return libc::EINVAL;
+    }
+    if result_buf.is_null() || buf.is_null() {
+        unsafe { *result = std::ptr::null_mut() };
+        return libc::EINVAL;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits(result_buf.cast::<libc::servent>()) {
+        return libc::EINVAL;
+    }
+
+    let port_host = u16::from_be(port as u16);
+    let proto_filter = if proto.is_null() {
+        None
+    } else {
+        let Some(proto_bytes) = (unsafe { read_bounded_cstr(proto) }) else {
+            return libc::EINVAL;
+        };
+        Some(proto_bytes)
+    };
+
+    // Shared generation-stamped parsed port index (resolv_abi), the same one
+    // `getservbyport` uses; see `getservbyname_r` above. Replaces a per-call
+    // `std::fs::read("/etc/services")` + line-by-line scan. Match semantics unchanged
+    // (port plus optional case-insensitive protocol filter, first match in file order).
+    let entry =
+        match crate::resolv_abi::lookup_service_entry_by_port(port_host, proto_filter.as_deref()) {
+            Ok(Some(e)) => e,
+            Ok(None) => return 0,
+            Err(_) => return libc::ENOENT,
+        };
+    let (svc_name, svc_proto) = (&entry.name, &entry.protocol);
+
+    let name_len = svc_name.len() + 1;
+    let proto_len = svc_proto.len() + 1;
+    let effective_buflen = effective_c_buffer_len(buf, buflen);
+    if name_len + proto_len > effective_buflen {
+        return libc::ERANGE;
+    }
+
+    let name_ptr = buf;
+    unsafe {
+        std::ptr::copy_nonoverlapping(svc_name.as_ptr() as *const c_char, name_ptr, svc_name.len());
+        *name_ptr.add(svc_name.len()) = 0;
+    }
+
+    let proto_ptr = unsafe { buf.add(name_len) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            svc_proto.as_ptr() as *const c_char,
+            proto_ptr,
+            svc_proto.len(),
+        );
+        *proto_ptr.add(svc_proto.len()) = 0;
+    }
+
+    let aliases_ptr = match unsafe {
+        pack_caller_aliases(buf, effective_buflen, name_len + proto_len, &entry.aliases)
+    } {
+        Some(p) => p,
+        None => return libc::ERANGE,
+    };
+
+    let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
+    servent.s_name = name_ptr;
+    servent.s_aliases = aliases_ptr;
+    servent.s_port = port;
+    servent.s_proto = proto_ptr;
+
+    unsafe { *result = result_buf };
+    0
+}
+
+/// Bench-only: the pre-index `getservbyname_r` (per-call `std::fs::read("/etc/services")` +
+/// line-by-line `parse_services_line` scan), retained verbatim so `glibc_baseline_bench`
+/// can measure ORIG vs patched in the SAME binary.
+///
+/// # Safety
+/// Same contract as `getservbyname_r`.
+#[doc(hidden)]
+pub unsafe fn getservbyname_r_legacy_fs_per_call_for_bench(
+    name: *const c_char,
+    proto: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if result.is_null() {
+        return libc::EINVAL;
+    }
+    if !tracked_object_fits(result) {
+        return libc::EINVAL;
+    }
+    if name.is_null() || result_buf.is_null() || buf.is_null() {
+        unsafe { *result = std::ptr::null_mut() };
+        return libc::EINVAL;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits(result_buf.cast::<libc::servent>()) {
+        return libc::EINVAL;
+    }
+
+    let Some(name_bytes) = (unsafe { read_bounded_cstr(name) }) else {
+        return libc::EINVAL;
+    };
+    let proto_filter = if proto.is_null() {
+        None
+    } else {
+        let Some(proto_bytes) = (unsafe { read_bounded_cstr(proto) }) else {
+            return libc::EINVAL;
+        };
+        Some(proto_bytes)
+    };
+
+    let content = match std::fs::read("/etc/services") {
+        Ok(c) => c,
+        Err(_) => return libc::ENOENT,
+    };
+
+    let entry = content.split(|&b| b == b'\n').find_map(|line| {
+        let entry = frankenlibc_core::resolv::parse_services_line(line)?;
+        if !entry.name.eq_ignore_ascii_case(name_bytes.as_slice())
+            && !entry
+                .aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(name_bytes.as_slice()))
+        {
+            return None;
+        }
+        if let Some(pf) = proto_filter.as_deref()
+            && !entry.protocol.eq_ignore_ascii_case(pf)
+        {
+            return None;
+        }
+        Some(entry)
+    });
+
+    let entry = match entry {
+        Some(e) => e,
+        None => return 0,
+    };
+    let (svc_name, port, svc_proto) = (&entry.name, entry.port, &entry.protocol);
+
+    let name_len = svc_name.len() + 1;
+    let proto_len = svc_proto.len() + 1;
+    let effective_buflen = effective_c_buffer_len(buf, buflen);
+    if name_len + proto_len > effective_buflen {
+        return libc::ERANGE;
+    }
+
+    let name_ptr = buf;
+    unsafe {
+        std::ptr::copy_nonoverlapping(svc_name.as_ptr() as *const c_char, name_ptr, svc_name.len());
+        *name_ptr.add(svc_name.len()) = 0;
+    }
+
+    let proto_ptr = unsafe { buf.add(name_len) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            svc_proto.as_ptr() as *const c_char,
+            proto_ptr,
+            svc_proto.len(),
+        );
+        *proto_ptr.add(svc_proto.len()) = 0;
+    }
+
+    let aliases_ptr = match unsafe {
+        pack_caller_aliases(buf, effective_buflen, name_len + proto_len, &entry.aliases)
+    } {
+        Some(p) => p,
+        None => return libc::ERANGE,
+    };
+
+    let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
+    servent.s_name = name_ptr;
+    servent.s_aliases = aliases_ptr;
+    servent.s_port = port.to_be() as c_int;
+    servent.s_proto = proto_ptr;
+
+    unsafe { *result = result_buf };
+    0
+}
+
+/// Bench-only: the pre-index `getservbyport_r`. See
+/// `getservbyname_r_legacy_fs_per_call_for_bench`.
+///
+/// # Safety
+/// Same contract as `getservbyport_r`.
+#[doc(hidden)]
+pub unsafe fn getservbyport_r_legacy_fs_per_call_for_bench(
     port: c_int,
     proto: *const c_char,
     result_buf: *mut c_void,

@@ -2169,6 +2169,73 @@ fn getservbyport_reads_updated_overridden_services_backend() {
     });
 }
 
+/// The reentrant `getservbyport_r`/`getservbyname_r` (in `inet_abi`) now share the
+/// generation-stamped parsed index owned by `resolv_abi` instead of doing a per-call
+/// `std::fs::read("/etc/services")`. Two things must hold as a result, and neither did
+/// before: they must observe the `FRANKENLIBC_SERVICES_PATH` override (they used to
+/// hardcode `/etc/services`), and a backend rewrite must invalidate the shared index for
+/// them exactly as it does for the non-reentrant entry points.
+#[test]
+fn reentrant_servent_lookups_track_overridden_services_backend() {
+    with_resolver_backends(None, Some(b"fixture-old 4243/tcp\n"), |paths| {
+        let port_net = (4243u16).to_be() as c_int;
+        let proto = CString::new("tcp").unwrap();
+
+        let mut servent: libc::servent = unsafe { std::mem::zeroed() };
+        let mut buf = [0i8; 512];
+        let mut result: *mut libc::servent = std::ptr::null_mut();
+
+        let mut by_port = || unsafe {
+            let rc = inet_abi::getservbyport_r(
+                port_net,
+                proto.as_ptr(),
+                (&raw mut servent).cast::<libc::c_void>(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                (&raw mut result).cast::<*mut libc::c_void>(),
+            );
+            assert_eq!(rc, 0, "getservbyport_r failed");
+            assert!(!result.is_null(), "getservbyport_r found nothing");
+            CStr::from_ptr((*result).s_name).to_bytes().to_vec()
+        };
+
+        // Reads the OVERRIDDEN backend, not /etc/services.
+        assert_eq!(by_port(), b"fixture-old".to_vec());
+
+        std::fs::write(
+            &paths.services,
+            b"broken-service nope/tcp alias\nfixture-new 4243/tcp\n",
+        )
+        .expect("rewrite temp services fixture");
+
+        // Backend generation changed => the shared parsed index rebuilt for the `_r` path.
+        assert_eq!(by_port(), b"fixture-new".to_vec());
+
+        // The name index reaches the reentrant path too.
+        let name = CString::new("fixture-new").unwrap();
+        let mut n_servent: libc::servent = unsafe { std::mem::zeroed() };
+        let mut n_buf = [0i8; 512];
+        let mut n_result: *mut libc::servent = std::ptr::null_mut();
+        let rc = unsafe {
+            inet_abi::getservbyname_r(
+                name.as_ptr(),
+                proto.as_ptr(),
+                (&raw mut n_servent).cast::<libc::c_void>(),
+                n_buf.as_mut_ptr(),
+                n_buf.len(),
+                (&raw mut n_result).cast::<*mut libc::c_void>(),
+            )
+        };
+        assert_eq!(rc, 0, "getservbyname_r failed");
+        assert!(!n_result.is_null(), "getservbyname_r found nothing");
+        assert_eq!(
+            unsafe { CStr::from_ptr((*n_result).s_proto) }.to_bytes(),
+            b"tcp"
+        );
+        assert_eq!(unsafe { (*n_result).s_port }, port_net);
+    });
+}
+
 // ===========================================================================
 // getprotobyname
 // ===========================================================================

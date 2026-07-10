@@ -697,6 +697,42 @@ fn with_service_lookup_cache<R>(callback: impl FnOnce(&mut ServiceLookupCache) -
     }
 }
 
+/// Shared `/etc/services` lookup by canonical name or alias, through the cached backend
+/// bytes and the generation-stamped parsed index. `proto_filter` is matched
+/// ASCII-case-insensitively. `Ok(None)` means "no such service"; `Err` means the backend
+/// could not be read.
+///
+/// Exposed to the crate so the reentrant `getservbyname_r` (which lives in `inet_abi`) can
+/// share this cache instead of re-reading and re-parsing the file on every call.
+pub(crate) fn lookup_service_entry_by_name(
+    name: &[u8],
+    proto_filter: Option<&[u8]>,
+) -> std::io::Result<Option<frankenlibc_core::resolv::ServiceEntry>> {
+    with_services_backend_snapshot(|content, generation| {
+        with_service_lookup_cache(|cache| {
+            cache
+                .lookup_by_name(generation, content, name, proto_filter)
+                .cloned()
+        })
+    })
+}
+
+/// Shared `/etc/services` lookup by HOST-order port, through the cached backend bytes and
+/// the generation-stamped parsed port index. Sibling of [`lookup_service_entry_by_name`],
+/// shared with the reentrant `getservbyport_r` in `inet_abi`.
+pub(crate) fn lookup_service_entry_by_port(
+    port: u16,
+    proto_filter: Option<&[u8]>,
+) -> std::io::Result<Option<frankenlibc_core::resolv::ServiceEntry>> {
+    with_services_backend_snapshot(|content, generation| {
+        with_service_lookup_cache(|cache| {
+            cache
+                .lookup_by_port(generation, content, port, proto_filter)
+                .cloned()
+        })
+    })
+}
+
 fn with_protocols_backend_snapshot<R>(
     callback: impl FnOnce(&[u8], u64) -> R,
 ) -> std::io::Result<R> {
@@ -3024,13 +3060,7 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
         Some(unsafe { std::slice::from_raw_parts(proto as *const u8, proto_len) })
     };
 
-    let entry = match with_services_backend_snapshot(|content, generation| {
-        with_service_lookup_cache(|cache| {
-            cache
-                .lookup_by_name(generation, content, name_bytes, proto_filter)
-                .cloned()
-        })
-    }) {
+    let entry = match lookup_service_entry_by_name(name_bytes, proto_filter) {
         Ok(Some(entry)) => entry,
         Ok(None) => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
@@ -3146,13 +3176,7 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
     // them per call, and binary-search the port keys instead of re-parsing every line.
     // `BackendFileCache` still owns file/env-path freshness; the index rebuilds only when
     // its generation changes, so `FRANKENLIBC_SERVICES_PATH` rewrites are still observed.
-    let entry = match with_services_backend_snapshot(|content, generation| {
-        with_service_lookup_cache(|cache| {
-            cache
-                .lookup_by_port(generation, content, port_host, proto_filter)
-                .cloned()
-        })
-    }) {
+    let entry = match lookup_service_entry_by_port(port_host, proto_filter) {
         Ok(Some(entry)) => entry,
         Ok(None) => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);

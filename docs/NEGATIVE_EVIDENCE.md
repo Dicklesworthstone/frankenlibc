@@ -13688,3 +13688,90 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   two-level PageMap proof where membership and size-class metadata are read from owned metadata
   first. Do not use host-delegated mixed pages, min/max range guards, or the fallback table as the
   production proof for header reads.
+
+## 2026-07-09 (cc_fl / BlackThrush) — WIN (SHIPPED): reentrant `getservbyname_r`/`getservbyport_r` share the parsed index — 20.5-45.6x vs ORIG, 3.7-7.7x faster than host glibc (bd-ebdm8n)
+
+- **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped the resolver lane and the `_r` surface: no prior
+  attempt or rejection exists. The only reference is my own 2026-07-09 `getservbyport` row, which
+  named this as the ranked next lever. Did not touch anything CLOSED: `strchr` SSE4.2
+  explicit-length scanner, MallocState 64/256 hot-cycle precheck, cached tombstone reinsertion,
+  lock-free fallback table. Stayed entirely out of `malloc_abi.rs` (cod pane owns bd-dcrhgl).
+- **PROFILE / ROOT CAUSE (confirmed, not assumed).** `getservbyname_r` and `getservbyport_r` live
+  in `inet_abi.rs`, not `resolv_abi.rs`, so they could not reach the generation-stamped parsed
+  indexes at all. Both opened with a literal `std::fs::read("/etc/services")` **per call**, then a
+  line-by-line `parse_services_line` scan — no `BackendFileCache`, no index. The bench confirms the
+  filesystem hit dominates: the retained ORIG arm measures **90.1 µs** (port) / **34.0 µs** (name)
+  per call, against **2.0 µs** / **1.7 µs** for the indexed path.
+- **LEVER (one).** Hoisted the two lookups into `pub(crate) lookup_service_entry_by_name` /
+  `lookup_service_entry_by_port` in `resolv_abi.rs` (wrapping `with_services_backend_snapshot` +
+  `with_service_lookup_cache`), and pointed BOTH the non-reentrant entry points and the two `_r`
+  entry points at them. Lookup semantics unchanged (canonical name or alias; port; optional
+  ASCII-case-insensitive protocol filter; first match in file order). The caller-buffer packing in
+  the `_r` paths — string layout, alignment, alias pointer table, `ERANGE` on overflow — is
+  untouched.
+- **BEHAVIOR CHANGE (intentional, gated).** The `_r` paths hardcoded `/etc/services`; they now go
+  through `BackendFileCache` and therefore honor `FRANKENLIBC_SERVICES_PATH` exactly as the
+  non-reentrant paths always have. New gate
+  `resolv_abi_test::reentrant_servent_lookups_track_overridden_services_backend` pins both halves:
+  the `_r` path reads the overridden backend, and a rewrite of that backend invalidates the shared
+  index for the `_r` path via the backend generation.
+- **MEASURED 3-WAY, SAME BINARY / SAME RUN.** New rows `getservbyport_r_80_tcp` and
+  `getservbyname_r_http_tcp` in `glibc_baseline_bench`, each with `frankenlibc_abi`,
+  `frankenlibc_legacy_orig` (the pre-change body retained verbatim as
+  `getserv*_r_legacy_fs_per_call_for_bench`), and `host_glibc`. Reported for two passes because
+  these rows are **syscall-bound and load-sensitive** (see calibration below); direction is
+  identical in both, magnitude is not:
+
+  | row | pass | fl | legacy_orig | host_glibc | vs ORIG | vs glibc |
+  |---|---|---|---|---|---|---|
+  | `getservbyport_r` | isolated (`ovh-a`) | **1973.96** | 90055.50 | 15260.92 | **45.62x** | **7.73x faster** |
+  | `getservbyport_r` | 4-group sweep | 7659.09 | 79638.63 | 9269.13 | 10.40x | 1.21x faster |
+  | `getservbyname_r` | isolated (`vmi1227854`) | **1662.57** | 34013.68 | 6147.47 | **20.46x** | **3.70x faster** |
+  | `getservbyname_r` | 4-group sweep | 8586.61 | 80247.09 | 9405.35 | 9.34x | 1.10x faster |
+
+  (p50 ns/op; `rch exec`, `--profile release --sample-size 20 --warm-up-time 1
+  --measurement-time 2 --noplot`.) fl beats host glibc on both rows in **every** pass.
+- **HOST ARM IS REALLY GLIBC.** The `libc` crate does not declare `getservbyname_r`/
+  `getservbyport_r`, and a bare `extern "C"` block would have bound to FrankenLibC's own
+  `#[no_mangle]` symbols in the same binary — silently making "host_glibc" a second fl arm. The
+  bench resolves both out of `dlmopen(LM_ID_NEWLM, "libc.so.6")` instead, as
+  `conformance_diff_netdb_r_aliases` does. It also asserts `s_port`/`s_name`/`s_proto` parity
+  against that host before timing.
+- **CALIBRATION — CORRECTS MY OWN 2026-07-09 `getservbyport` ROW.** That entry reported
+  `29.23x vs ORIG` and `2.73x vs host glibc` from a single isolated pass. Re-running the SAME
+  code on the SAME worker (`vmi1227854`) minutes later: fl **2984.61** (vs 2954.43 — stable, so the
+  accessor extraction did NOT regress it), but `legacy_orig` **32729.27** (was 86347.52) and
+  `host_glibc` **4498.71** (was 8076.03), i.e. **10.97x vs ORIG** and **1.51x vs glibc** for
+  identical code. The direction of that row is robust; **its two ratios are not stable to better
+  than ~3x** and should be read as a range, not a constant. Cause: `BackendFileCache::refresh_cache`
+  runs `refresh_source_path_from_env()` (a `getenv`) **plus `file_fingerprint()` (a `stat`
+  syscall) on EVERY call**, even on a cache hit — so fl's indexed path is syscall-bound (~2-3 µs),
+  as is glibc's file-open path, and both track worker load. Only the fl-vs-fl_legacy direction and
+  the fl-beats-glibc verdict survive across passes.
+- **CONFORMANCE GREEN.** `resolv_abi_test -- getserv reentrant_servent` **15 passed / 0 failed**
+  (14 existing + the new `_r` freshness gate). `inet_abi_test` **69 passed / 0 failed** (13
+  ignored). Byte-exact vs live glibc: `conformance_diff_netdb_r_aliases` **1/1** (the `_r` gate —
+  resolves glibc via `dlmopen` and compares every field) and `conformance_diff_netdb_aliases`
+  **1/1**. `ubs` exit **0**; the one "critical" inside the added lines is `mem::zeroed()` for
+  `libc::servent`, the same POD-C-struct idiom as the 50 pre-existing hits in that test file.
+  `rustfmt --check` clean on all four files.
+- **PRE-EXISTING FAILURE (not this change).** `clippy -D warnings` still blocked by
+  `frankenlibc-core/src/math/exp.rs:815` (`eq_op` on the deliberate `z / z` NaN idiom).
+- **NO-RETRY NOTE:** do not retry parsed indexes, `/etc/services` snapshot/generation caches, or
+  read/parse elimination for `getservbyname`, `getservbyport`, `getservbyname_r`, `getservbyport_r`,
+  `getprotobyname`, or `getprotobynumber` — all six are now indexed and all beat host glibc.
+  Ranked remaining resolver surfaces:
+  **(1) Elide the per-call `getenv` + `stat` in `BackendFileCache::refresh_cache`.** This is now the
+  dominant cost of every indexed lookup (fl sits at ~1.7-3 µs where the index itself is a binary
+  search over ~11k entries, i.e. tens of ns). A revalidation policy (e.g. re-`stat` at most once per
+  N ms, or on an explicit generation bump) would take these rows to sub-100 ns and make the
+  fl/glibc ratios stable. Needs a freshness-semantics decision, so it is a design lever, not a
+  mechanical one.
+  **(2) `getprotobyname_r` / `getprotobynumber_r` (in `unistd_abi.rs`, NOT `resolv_abi.rs`)** still do
+  `std::fs::read(PROTOCOLS_PATH)` per call — the exact defect just fixed for services, in the
+  protocols family. Same hoist applies (`with_protocols_backend_snapshot` +
+  `with_protocol_lookup_cache` are already `fn`s in `resolv_abi.rs`).
+  **(3) `getaddrinfo` profile reuse. (4) cross-family NSS result caching with a fresh comparator.**
+- **Reproducer:** `cargo bench -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench
+  getservbyport_r` (and `getservbyname_r`). Run each row **in isolation**; a 4-group sweep inflates
+  every arm and compresses the ratios.
