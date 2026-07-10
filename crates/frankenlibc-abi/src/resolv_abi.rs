@@ -729,17 +729,41 @@ fn with_service_lookup_cache<R>(callback: impl FnOnce(&mut ServiceLookupCache) -
 ///
 /// Exposed to the crate so the reentrant `getservbyname_r` (which lives in `inet_abi`) can
 /// share this cache instead of re-reading and re-parsing the file on every call.
-pub(crate) fn lookup_service_entry_by_name(
+pub(crate) fn with_service_entry_by_name<R>(
     name: &[u8],
     proto_filter: Option<&[u8]>,
-) -> std::io::Result<Option<frankenlibc_core::resolv::ServiceEntry>> {
+    f: impl FnOnce(&frankenlibc_core::resolv::ServiceEntry) -> R,
+) -> std::io::Result<Option<R>> {
     with_services_backend_snapshot(|content, generation| {
         with_service_lookup_cache(|cache| {
             cache
                 .lookup_by_name(generation, content, name, proto_filter)
-                .cloned()
+                .map(f)
         })
     })
+}
+
+/// Borrowing sibling of [`with_service_entry_by_name`], keyed by HOST-order port.
+pub(crate) fn with_service_entry_by_port<R>(
+    port: u16,
+    proto_filter: Option<&[u8]>,
+    f: impl FnOnce(&frankenlibc_core::resolv::ServiceEntry) -> R,
+) -> std::io::Result<Option<R>> {
+    with_services_backend_snapshot(|content, generation| {
+        with_service_lookup_cache(|cache| {
+            cache
+                .lookup_by_port(generation, content, port, proto_filter)
+                .map(f)
+        })
+    })
+}
+
+/// Cloning wrappers, kept for callers that need to own the entry past the cache borrow.
+pub(crate) fn lookup_service_entry_by_name(
+    name: &[u8],
+    proto_filter: Option<&[u8]>,
+) -> std::io::Result<Option<frankenlibc_core::resolv::ServiceEntry>> {
+    with_service_entry_by_name(name, proto_filter, Clone::clone)
 }
 
 /// Shared `/etc/services` lookup by HOST-order port, through the cached backend bytes and
@@ -749,13 +773,7 @@ pub(crate) fn lookup_service_entry_by_port(
     port: u16,
     proto_filter: Option<&[u8]>,
 ) -> std::io::Result<Option<frankenlibc_core::resolv::ServiceEntry>> {
-    with_services_backend_snapshot(|content, generation| {
-        with_service_lookup_cache(|cache| {
-            cache
-                .lookup_by_port(generation, content, port, proto_filter)
-                .cloned()
-        })
-    })
+    with_service_entry_by_port(port, proto_filter, Clone::clone)
 }
 
 fn with_protocols_backend_snapshot<R>(
@@ -3138,20 +3156,29 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
         Some(unsafe { std::slice::from_raw_parts(proto as *const u8, proto_len) })
     };
 
-    let entry = match lookup_service_entry_by_name(name_bytes, proto_filter) {
-        Ok(Some(entry)) => entry,
+    // Fill directly from the BORROWED cache entry: the `.cloned()` this replaces allocated a
+    // name `Vec`, a protocol `Vec`, and a `Vec<Vec<u8>>` of aliases on every call. Under the
+    // interposed allocator that framing dominated the lookup (bd-qds9jk frame table).
+    let filled = with_service_entry_by_name(name_bytes, proto_filter, |entry| {
+        with_tls_servent(|storage| {
+            fill_servent_storage(storage, entry, entry.port.to_be() as c_int)
+        })
+    });
+
+    match filled {
+        Ok(Some(servent)) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+            servent
+        }
         Ok(None) => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
-            return ptr::null_mut();
+            ptr::null_mut()
         }
         Err(_) => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
-            return ptr::null_mut();
+            ptr::null_mut()
         }
-    };
-
-    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
-    with_tls_servent(|storage| fill_servent_storage(storage, &entry, entry.port.to_be() as c_int))
+    }
 }
 
 #[doc(hidden)]
@@ -3254,6 +3281,62 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
     // them per call, and binary-search the port keys instead of re-parsing every line.
     // `BackendFileCache` still owns file/env-path freshness; the index rebuilds only when
     // its generation changes, so `FRANKENLIBC_SERVICES_PATH` rewrites are still observed.
+    // Fill from the BORROWED entry; see `getservbyname` above.
+    let filled = with_service_entry_by_port(port_host, proto_filter, |entry| {
+        with_tls_servent(|storage| fill_servent_storage(storage, entry, port))
+    });
+
+    match filled {
+        Ok(Some(servent)) => {
+            // Success path: record service lookup completed
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+            servent
+        }
+        Ok(None) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Bench-only: the immediately-previous `getservbyport` — indexed (no file re-read), but
+/// cloning the `ServiceEntry` out of the cache on every call. This is the ORIG arm for the
+/// services allocation-elision lever, distinct from
+/// `getservbyport_legacy_parse_per_call_for_bench`, which is the pre-index arm.
+///
+/// # Safety
+/// Same contract as `getservbyport`: `proto` is an optional NUL-terminated C string.
+#[doc(hidden)]
+pub unsafe fn getservbyport_cloning_for_bench(port: c_int, proto: *const c_char) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        proto as usize,
+        0,
+        true,
+        proto.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    let port_host = u16::from_be(port as u16);
+
+    // SAFETY: as `getservbyport`.
+    let proto_filter = match unsafe { opt_cstr(proto) } {
+        Ok(value) => value.map(CStr::to_bytes),
+        Err(()) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+    };
+
+    // The pre-lever body: clone the `ServiceEntry` out of the cache, then fill.
     let entry = match lookup_service_entry_by_port(port_host, proto_filter) {
         Ok(Some(entry)) => entry,
         Ok(None) => {
@@ -3266,16 +3349,12 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
         }
     };
 
-    // Success path: record service lookup completed
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
-
     with_tls_servent(|storage| fill_servent_storage(storage, &entry, port))
 }
 
 /// Bench-only: the pre-index `getservbyport` (per-call `read_services_backend` clone +
-/// line-by-line `parse_services_line` scan), retained verbatim so `glibc_baseline_bench`
-/// can measure ORIG vs patched in the SAME binary. Mirrors
-/// `getservbyname_legacy_parse_per_call_for_bench`.
+/// line-by-line `parse_services_line` scan).
 ///
 /// # Safety
 /// Same contract as `getservbyport`: `proto` is an optional NUL-terminated C string.

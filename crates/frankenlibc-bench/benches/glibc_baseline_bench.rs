@@ -630,11 +630,37 @@ fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
             },
         );
 
+        // ORIG for the allocation-elision lever: indexed, but clones the cache entry.
         bench_op(
             &mut group,
             BenchMeta {
                 profile_id: "getservbyport_80_tcp",
                 impl_label: "frankenlibc_legacy_orig",
+                api_family: "resolver",
+                symbol: "getservbyport",
+                workload: "lookup port 80/tcp through /etc/services",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let entry = unsafe {
+                    frankenlibc_abi::resolv_abi::getservbyport_cloning_for_bench(
+                        port_be,
+                        proto.as_ptr(),
+                    )
+                } as *mut libc::servent;
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).s_port });
+                }
+                black_box(entry);
+            },
+        );
+
+        // Historical anchor: the pre-index arm that re-read + re-parsed /etc/services.
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getservbyport_80_tcp",
+                impl_label: "frankenlibc_legacy_fs",
                 api_family: "resolver",
                 symbol: "getservbyport",
                 workload: "lookup port 80/tcp through /etc/services",

@@ -14143,3 +14143,84 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   is per-thread segment bump/magazine ownership with packed address-derived shadow metadata and no
   shared atomic free-list/sidecar load on the depth-one hot cycle. This rejection is not a parity
   ceiling: it closes this composition, while leaving that different ownership primitive open.
+
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): services family allocation-elision — 2.24x vs ORIG, 1.23-1.25x faster than host glibc (bd-xmng5n)
+
+- **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped `ServiceEntry.*clon|lookup_service_entry|
+  with_service_entry|alloc.*elision`. No prior attempt or rejection; the only reference is my own
+  bd-qds9jk row, which ranks this as follow-up (1). Retried nothing CLOSED (`strchr` SSE4.2
+  explicit-length scanner; portable-SIMD string residuals wmemchr/wcsnlen/strrchr, parked pending
+  AVX2+ifunc; `ENVIRON_EPOCH`/`OnceLock` snapshot of the backend env path; eliding the per-call
+  `stat`). Stayed out of `malloc_abi.rs` (cod owns Swing-2).
+- **PROFILE FIRST — INDEPENDENTLY CONFIRMED FOR THIS FAMILY.** Did not assume the protocols result
+  transferred. `perf record -F 4999` on `getservbyport_80_tcp/frankenlibc_abi` at HEAD
+  (`fc181036f`: protocols already allocation-free, services still cloning), frames >= 0.1% self:
+
+  | self % | frame |
+  |---|---|
+  | 40.05 | `frankenlibc_abi::malloc_abi::record_free_stats` |
+  | 38.04 | `frankenlibc_abi::malloc_abi::record_alloc_stats` |
+  | 6.10 | `frankenlibc_abi::malloc_abi::fallback_insert_sized_index` |
+  | 5.04 | `free` |
+  | 1.01 | `realloc` |
+  | 0.79 | `frankenlibc_abi::malloc_abi::fallback_remove_sized` |
+  | 0.18 | `RuntimeMathKernel::decide` |
+  | 0.16 | `malloc_abi::enter_allocator_reentry_guard` |
+  | ~1.6 | kernel `[k]` frames (the `stat` syscall) |
+
+  **~91% allocator bookkeeping**, membrane `decide`/`observe` ~0.6%, `stat` ~1.6%. Same mechanism as
+  bd-qds9jk, measured on the services row rather than inferred. `getenv` again absent at >= 0.1%.
+- **LEVER (one).** `with_service_entry_by_{name,port}` now run the caller's closure on the
+  **borrowed** cache entry instead of `.cloned()`. A `ServiceEntry` clone is a name `Vec<u8>`, a
+  protocol `Vec<u8>`, and a `Vec<Vec<u8>>` of aliases — 3+ malloc/free pairs plus the observed
+  `realloc`, per call. Converted all four entry points: `getservbyname` and `getservbyport`
+  (`resolv_abi`, fill straight into the TLS `servent` storage) and `getservbyname_r` /
+  `getservbyport_r` (`inet_abi`, pack straight into the caller buffer). Caller-buffer layout,
+  alignment, alias pointer table and `ERANGE` behaviour are byte-for-byte unchanged; the cloning
+  `lookup_service_entry_by_*` wrappers remain, defined as `with_*(.., Clone::clone)`.
+- **ONE ORDERING NOTE.** `runtime_policy::observe(.., 20, false)` now runs *after* the fill rather
+  than before it (the fill moved inside the lookup closure). `observe` is telemetry only — no
+  behavioural dependency, and the success/miss/error codes (20 / 15 / 10) and the returned pointer
+  are unchanged.
+- **MEASURED 3-WAY (4 arms), SAME BINARY / SAME RUN / SAME WORKER (`hz2`), TWO PASSES.**
+  `frankenlibc_legacy_orig` is the pre-lever body kept verbatim as `getservbyport_cloning_for_bench`
+  (indexed, but clones); `frankenlibc_legacy_fs` is the older pre-index arm, kept as an anchor.
+
+  | pass | fl (new) | legacy_orig (clone) | legacy_fs (pre-index) | host_glibc | vs ORIG | vs glibc |
+  |---|---|---|---|---|---|---|
+  | 1 | **3074.98** | 6901.86 | 76896.75 | 3841.58 | **2.24x** | **1.25x faster** |
+  | 2 | **3148.82** | 7046.13 | 76534.62 | 3874.44 | **2.24x** | **1.23x faster** |
+
+  (p50 ns/op; `rch exec`, `RCH_REQUIRE_REMOTE=1`, `--profile release --sample-size 20
+  --warm-up-time 1 --measurement-time 2 --noplot`.) The vs-ORIG ratio reproduces to **0.0%** across
+  passes — like bd-qds9jk, this lever removes CPU work rather than shifting a syscall. Cumulative for
+  the row: **24.3-25.0x vs the pre-index `fs::read` arm**. The residual fl/glibc margin is smaller
+  here than on the protocols row because `getservbyport` still allocates inside
+  `fill_servent_storage` (the TLS `servent` alias/string buffers) — see follow-ups.
+- **CONFORMANCE GREEN (all remote, `rch exec` on `hz2`).** `resolv_abi_test` **182 passed / 0 failed
+  / 31 ignored** (includes both `*_track_overridden_*_backend` freshness gates); `inet_abi_test`
+  **69 passed / 0 failed / 13 ignored**; byte-exact vs live glibc:
+  `conformance_diff_netdb_aliases` **1/1**, `conformance_diff_netdb_r_aliases` **1/1**,
+  `conformance_diff_protoent_r_aliases` **1/1**. `ubs` exit **0**. `rustfmt --check` clean.
+- **PRE-EXISTING (not this change).** Full `unistd_abi_test` still aborts on the argp errno bug
+  (proven at `c1b03f89a`); `clippy -D warnings` still blocked by
+  `frankenlibc-core/src/math/exp.rs:815` (`eq_op` on the deliberate `z / z` NaN idiom).
+- **ENVIRONMENT / METHOD CONSTRAINT (recorded so the next agent does not repeat it).** `/` reached
+  **96% (89G free)** mid-turn with 11 concurrent LOCAL cargo builds draining ~450 GB/h. Two of the
+  local `--profile release-perf` builds in this campaign were mine (captured for the frame tables),
+  plus a baseline `git worktree` + its own target dir used to prove the argp failure pre-existing.
+  **New standing rule: never run local `cargo build/bench/test` in this repo — offload everything
+  through `rch exec`, and use `RCH_REQUIRE_REMOTE=1` so rch refuses a silent local fallback.** Both
+  frame tables above were captured before the constraint landed and are banked here; do not
+  regenerate them.
+- **NO-RETRY NOTE:** all eight services+protocols entry points are now indexed AND allocation-free
+  on the lookup path, and all beat host glibc. Do not retry parsed indexes, snapshot/generation
+  caches, `getenv` snapshots, or `stat` elision on them. Ranked remaining resolver surfaces:
+  **(1) `fill_servent_storage` / `fill_protoent_r`'s TLS storage still allocates** (alias vector +
+  string buffers) per call — the residual allocator frames on the `getservbyport` row. Reusable
+  fixed-capacity TLS buffers would close most of the remaining fl-vs-glibc margin.
+  **(2) `read_c_string_bytes` allocates a `Vec<u8>` needle per `_r` call** (bd-77h82y); `inet_abi`
+  already has an allocation-free `read_bounded_cstr_ref`.
+  **(3) `getaddrinfo` profile reuse. (4) cross-family NSS result caching with a fresh comparator.**
+- **Reproducer:** `rch exec -- cargo bench -p frankenlibc-bench --features abi-bench --bench
+  glibc_baseline_bench getservbyport_80_tcp` (4 arms, one binary). Run the row in isolation.
