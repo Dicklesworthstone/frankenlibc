@@ -6,6 +6,33 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — SESSION-WIDE SATURATION SURVEY: every cc lane is mined-by-me or actively-contested-by-another-agent; the one uncontested lever left is the allocator stats ~6 ns (40-site refactor)
+
+Profiled every candidate lane this turn (all existing-bench runs, no code changed) to answer
+"next lever" definitively:
+- **math (f32 survey vs glibc):** comprehensively optimized — atan2f 0.64x, hypotf 0.90x, acoshf
+  0.89x, cbrt/sinh/atanh/tanh ~parity, coshf already single-exp-optimal. Hot exp/log/pow/trig not
+  even in the survey (done). ONE gap: **`j0f` 1.42x** (`libm::j0f`) — but the only fix is
+  transcribing glibc's ~20 Bessel coefficients against a `conformance_diff_bessel` gate with NO
+  reliable in-repo source (fl has no custom f64 `j0` to mirror). Niche + unverifiable → not shipped.
+- **string:** CONTESTED — another agent recorded "string-frontier saturation" and landed
+  find_ascii_folded 0.53x / find_non_any_of6 2.67x / find_non_byte_or_nul 2.82x this week.
+- **stdio:** CONTESTED — another agent landed getdelim/getline/fgets/fgetws/sscanf fast paths this
+  week; the fputs write-path already has the ST fast path (skips registry lock). The 3.96x I recalled
+  is fixed.
+- **iconv:** CONTESTED — another agent landed SBCS→UTF-32 0.76x / DBCS→UTF-16 / SBCS→UTF-16 0.62x
+  SIMD codecs this week.
+- **allocator:** near-optimal (GUARD CAS irreducible, STATS combiner near-optimal, segments done);
+  the one lever is the single-threaded slot-local stats — a ~6 ns (~9% of 55 ns malloc/free) win, but
+  it needs threading `reentry_guard.slot` through ALL ~40 record sites (the naive self-fetch REGRESSED,
+  prior row) + all-record-sites-or-none cross-path consistency. Uncontested (mine) but large/modest.
+- **resolver:** mined by me this session (bookkeeping 137x → ~9 ns; getnameinfo → glibc parity;
+  getaddrinfo residual distributed/sub-floor).
+- **VERDICT:** the repo is at mature multi-agent saturation. No clean, high-value, uncontested, safe,
+  easily-measured lever remains. The honest next moves are ORCHESTRATION, not more solo probing:
+  assign a specific uncontested target, provide external signal (e.g. glibc `j0f` source), or accept
+  the bounded-but-marginal allocator stats refactor as a dedicated turn.
+
 ## 2026-07-10 (cc_fl / BlackThrush, cod walling → own the repo) — ALLOCATOR FRAMING PROFILE + REJECT (reverted): the small-churn 9.7x is near-optimal; slot-local stats fast-path is a REGRESSION as written (slot re-fetch costs as much as the CAS)
 
 - **PROFILE-FIRST (`examples/malloc_sizetrack_ab.rs`, worker ovh-a).** Small-churn malloc/free framing:
