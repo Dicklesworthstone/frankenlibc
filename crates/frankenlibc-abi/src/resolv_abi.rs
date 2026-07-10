@@ -2698,9 +2698,149 @@ fn scope_id_text(scope_id: u32, flags: c_int, addr: &[u8; 16]) -> String {
     scope_id.to_string()
 }
 
+/// Strict-passthrough `getnameinfo`: the load-bearing work only (salen bounds, byte-exact numeric
+/// format, and `write_c_buffer`'s `known_remaining` output-bounds check), with the membrane's
+/// adaptive check-ordering bookkeeping skipped. Behaviourally identical to the full path in strict
+/// mode (where `decide()` always-Allows, so `repair == mode heals`), validated byte-for-byte against
+/// host glibc by `getnameinfo_differential_fuzz`.
+#[inline]
+unsafe fn getnameinfo_strict_fast(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    if sa.is_null() {
+        return libc::EAI_FAIL;
+    }
+    // Strict `decide()` never yields a `Repair` action, so `repair_enabled` reduces to the mode's
+    // heal flag — the same value the full path computes.
+    let repair = runtime_policy::mode().heals_enabled();
+
+    let mut ipv4_buf = [0u8; 15];
+    let mut port_buf = [0u8; 5];
+
+    // SAFETY: caller provides a valid sockaddr for `salen`.
+    let family = unsafe { (*sa).sa_family as c_int };
+    let (host_text, serv_text): (Cow<str>, Cow<str>) = match family {
+        libc::AF_INET => {
+            if (salen as usize) < size_of::<libc::sockaddr_in>() {
+                return libc::EAI_FAIL;
+            }
+            // SAFETY: size checked above.
+            let sin = unsafe { &*sa.cast::<libc::sockaddr_in>() };
+            let ip = Ipv4Addr::from(sin.sin_addr.s_addr.to_ne_bytes());
+            let port = u16::from_be(sin.sin_port);
+            let ip_bytes = write_ipv4_text(ip, &mut ipv4_buf);
+            let ip_str = core::str::from_utf8(ip_bytes).expect("ascii ipv4");
+            (
+                Cow::Borrowed(ip_str),
+                Cow::Borrowed(write_u16_dec(port, &mut port_buf)),
+            )
+        }
+        libc::AF_INET6 => {
+            if (salen as usize) < size_of::<libc::sockaddr_in6>() {
+                return libc::EAI_FAIL;
+            }
+            // SAFETY: size checked above.
+            let sin6 = unsafe { &*sa.cast::<libc::sockaddr_in6>() };
+            let mut host_text =
+                match frankenlibc_core::inet::inet_ntop(libc::AF_INET6, &sin6.sin6_addr.s6_addr) {
+                    Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    None => return libc::EAI_FAIL,
+                };
+            if sin6.sin6_scope_id != 0 {
+                host_text.push('%');
+                host_text.push_str(&scope_id_text(
+                    sin6.sin6_scope_id,
+                    flags,
+                    &sin6.sin6_addr.s6_addr,
+                ));
+            }
+            let port = u16::from_be(sin6.sin6_port);
+            (
+                Cow::Owned(host_text),
+                Cow::Borrowed(write_u16_dec(port, &mut port_buf)),
+            )
+        }
+        _ => return libc::EAI_FAMILY,
+    };
+
+    // SAFETY: caller-provided output buffers per the getnameinfo contract; `write_c_buffer` bounds
+    // each write against `known_remaining` before copying.
+    match unsafe { write_c_buffer(host, hostlen, &host_text, repair) } {
+        Ok(_) => {}
+        Err(err) => return err,
+    }
+    match unsafe { write_c_buffer(serv, servlen, &serv_text, repair) } {
+        Ok(_) => {}
+        Err(err) => return err,
+    }
+    0
+}
+
 /// POSIX `getnameinfo` (numeric bootstrap implementation).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnameinfo(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    // Strict-passthrough fast path (the DEFAULT deployed mode). `Resolver` `decide()` always-Allows
+    // in strict, and this numeric render does NO DNS/file I/O, so the adaptive check-ordering
+    // bookkeeping (`resolver_stage_context` + `record_resolver_stage_outcome`, which is ~1.6µs/call
+    // of pure observability here) buys nothing. Skip straight to the load-bearing work — same lever
+    // `inet_pton`/`inet_ntop` already take. Byte-identical (gate: getnameinfo_differential_fuzz).
+    if runtime_policy::strict_passthrough_active() {
+        return unsafe {
+            getnameinfo_strict_fast(sa, salen, host, hostlen, serv, servlen, flags)
+        };
+    }
+    unsafe { getnameinfo_full(sa, salen, host, hostlen, serv, servlen, flags) }
+}
+
+/// Bench/test-only: the strict fast path, exposed so an equivalence test can assert it is
+/// byte-identical to `bench_getnameinfo_full` (the existing `getnameinfo_differential_fuzz` proves
+/// the full path == host glibc, so fast == full == glibc). Callable under `cfg(test)`, where the
+/// production `getnameinfo` dispatch would otherwise route to the full path.
+#[doc(hidden)]
+pub unsafe fn bench_getnameinfo_fast(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    unsafe { getnameinfo_strict_fast(sa, salen, host, hostlen, serv, servlen, flags) }
+}
+
+/// Bench-only: the full membrane `getnameinfo` path (adaptive check-ordering bookkeeping), so the
+/// strict-fast-path A/B can price ORIG in the SAME binary.
+#[doc(hidden)]
+pub unsafe fn bench_getnameinfo_full(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    unsafe { getnameinfo_full(sa, salen, host, hostlen, serv, servlen, flags) }
+}
+
+/// The full membrane path for `getnameinfo` (hardened / non-strict mode). Runs the adaptive
+/// check-ordering bookkeeping around the same numeric render the strict fast path uses.
+unsafe fn getnameinfo_full(
     sa: *const libc::sockaddr,
     salen: libc::socklen_t,
     host: *mut c_char,

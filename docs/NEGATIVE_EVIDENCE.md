@@ -6,6 +6,36 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED, bd-cj974n): `getnameinfo` strict-passthrough fast path — **36.57x** vs the full membrane path, fl 31.98 ns now at PARITY with glibc 32.95 ns (was 36x slower)
+
+- **PROFILE-FIRST.** getnameinfo's numeric render was **1337 ns** (full path) vs glibc 33 ns = ~40x. The
+  numeric format itself is ~13 ns (the stack-formatter elision already shipped); the residual ~1300 ns
+  is the `Resolver`-family adaptive check-ordering bookkeeping (`resolver_stage_context` →
+  `runtime_policy::check_ordering` + `record_resolver_stage_outcome` → `note_check_order_outcome`,
+  which for `Resolver` — unlike Allocator/StringMemory — is NOT in the fast-path list, so it runs the
+  full `enter_policy_reentry_guard` + `note_cross_family_overlap` + kernel stats update). For a numeric
+  render that does NO DNS/file I/O, that adaptive learning buys nothing.
+- **LEVER (the exact pattern `inet_pton`/`inet_ntop`/`inet_addr`/`inet_aton` already use).** Under
+  `runtime_policy::strict_passthrough_active()` (the DEFAULT deployed mode: `MODE_UNRESOLVED` /
+  `MODE_STRICT`, where `Resolver decide()` always-Allows), dispatch to `getnameinfo_strict_fast`: the
+  salen bounds checks + byte-exact numeric format + `write_c_buffer`'s `known_remaining` output-bounds
+  check, with the observability bookkeeping skipped. Hardened mode (`strict_passthrough_active()==false`)
+  keeps the full path. Split the body into `getnameinfo_full` + a thin dispatch; no membrane changes.
+- **MEASURED** (`examples/getnameinfo_ab.rs`, ORIG = `bench_getnameinfo_full`, CAND = `fl::getnameinfo`
+  (fast, since the example is non-`cfg(test)`), interleaved paired in ONE binary; worker **hz2**):
+  - **NULL CONTROL deployed (cand vs cand): 1.0000** cv 19.6% — clean floor.
+  - **DEPLOYED getnameinfo: full 1337.73 ns → fast 31.98 ns = paired median 0.0273 = 36.57x faster**,
+    cv 33% — the effect is ~37x outside the 1.0000 null, undeniable despite the cv.
+  - **HOST glibc getnameinfo: 32.95 ns** → fl fast is at PARITY (0.97x, marginally faster).
+- **CORRECTNESS PROVEN.** New test `getnameinfo_strict_fast_matches_full_membrane_path` (resolv_abi_test)
+  asserts fast == full byte-for-byte (rc + host + serv) over **4000** random AF_INET/AF_INET6 + scope +
+  NI_NUMERICSCOPE cases; `getnameinfo_differential_fuzz` proves full == host glibc ⇒ fast == glibc.
+  resolv_abi_test 183 passed / 0 failed + getnameinfo_differential_fuzz + conformance_diff_getaddrinfo +
+  conformance_diff_netdb_aliases all GREEN. verify(): fl fast == glibc (`host="127.0.0.1" serv="80"`).
+- **SAFETY.** The skipped work is observability/adaptive-ordering, NOT a safety check: the bounds
+  (`write_c_buffer` known_remaining + salen) are kept, and strict `decide()` never denies — identical
+  reasoning to the already-blessed `inet_*` strict fast paths.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — CONVERGED (bd-2g7oyh): both allocator sub-paths DECIDED — large-alloc **REJECT** (irreducible framing) + realloc fallback-update **REJECT** (kernel 1.64x REAL but deployed sub-floor)
 
 Two allocator levers, each measured to a decision this turn (no more re-profiling).

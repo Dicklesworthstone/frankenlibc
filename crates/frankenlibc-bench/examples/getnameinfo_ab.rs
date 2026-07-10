@@ -136,10 +136,11 @@ fn deployed_orig(sin: &libc::sockaddr_in) -> u8 {
     let mut host = [0 as c_char; 64];
     let mut serv = [0 as c_char; 32];
     for _ in 0..DEPLOYED_REPS {
-        // Reconstruct the two removed per-call String allocations, then run the deployed path.
-        fl::bench_legacy_getnameinfo_numeric_alloc(black_box(OCTETS), black_box(PORT));
+        // ORIG = the full membrane path (adaptive check-ordering bookkeeping) the deployed strict
+        // fast path now skips. CAND (deployed_cand) is `fl::getnameinfo`, which takes the strict
+        // fast path in this non-test binary (MODE_UNRESOLVED => strict_passthrough_active()).
         let rc = unsafe {
-            fl::getnameinfo(
+            fl::bench_getnameinfo_full(
                 black_box(sin as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
                 black_box(size_of::<libc::sockaddr_in>() as libc::socklen_t),
                 host.as_mut_ptr(),
@@ -149,7 +150,7 @@ fn deployed_orig(sin: &libc::sockaddr_in) -> u8 {
                 black_box(NI_NUMERICHOST | NI_NUMERICSERV),
             )
         };
-        assert_eq!(rc, 0, "fl getnameinfo failed");
+        assert_eq!(rc, 0, "fl getnameinfo_full failed");
         acc = acc.wrapping_add(host[0] as u8).wrapping_add(serv[0] as u8);
     }
     black_box(acc)

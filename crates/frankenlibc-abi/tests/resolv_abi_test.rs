@@ -4790,3 +4790,90 @@ fn nss_files_gethostbyname4_uses_gaih_addrtuple_backend() {
         },
     );
 }
+
+/// The strict-passthrough `getnameinfo` fast path (deployed default) must be byte-identical to the
+/// full membrane path on the success render. `getnameinfo_differential_fuzz` proves the full path ==
+/// host glibc, so fast == full == glibc. Ample buffers keep the comparison independent of the
+/// repair/mode overflow policy (which both paths derive identically in strict mode); AF_INET,
+/// AF_INET6, scope ids, and NI_NUMERICSCOPE are all exercised.
+#[test]
+fn getnameinfo_strict_fast_matches_full_membrane_path() {
+    const NI_NUMERICHOST: c_int = 1;
+    const NI_NUMERICSERV: c_int = 2;
+    const NI_NUMERICSCOPE: c_int = 64;
+
+    let mut seed: u32 = 0x9e37_79b9;
+    let mut next = || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        seed
+    };
+
+    for iter in 0..4000u32 {
+        let v6 = iter % 3 == 0;
+        let mut storage: libc::sockaddr_storage = unsafe { mem::zeroed() };
+        let (sa, salen) = if v6 {
+            let sin6 = unsafe { &mut *(&mut storage as *mut _ as *mut libc::sockaddr_in6) };
+            sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+            sin6.sin6_port = (next() as u16).to_be();
+            for b in sin6.sin6_addr.s6_addr.iter_mut() {
+                *b = next() as u8;
+            }
+            sin6.sin6_scope_id = if next() % 2 == 0 { 0 } else { next() % 20 };
+            (
+                &storage as *const _ as *const libc::sockaddr,
+                mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+            )
+        } else {
+            let sin = unsafe { &mut *(&mut storage as *mut _ as *mut libc::sockaddr_in) };
+            sin.sin_family = libc::AF_INET as libc::sa_family_t;
+            sin.sin_port = (next() as u16).to_be();
+            sin.sin_addr.s_addr = next();
+            (
+                &storage as *const _ as *const libc::sockaddr,
+                mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            )
+        };
+        let mut flags = NI_NUMERICHOST | NI_NUMERICSERV;
+        if next() % 2 == 0 {
+            flags |= NI_NUMERICSCOPE;
+        }
+
+        let mut fh = [0 as c_char; 96];
+        let mut fs = [0 as c_char; 32];
+        let mut gh = [0 as c_char; 96];
+        let mut gs = [0 as c_char; 32];
+
+        let rc_fast = unsafe {
+            resolv_abi::bench_getnameinfo_fast(
+                sa,
+                salen,
+                fh.as_mut_ptr(),
+                fh.len() as libc::socklen_t,
+                fs.as_mut_ptr(),
+                fs.len() as libc::socklen_t,
+                flags,
+            )
+        };
+        let rc_full = unsafe {
+            resolv_abi::bench_getnameinfo_full(
+                sa,
+                salen,
+                gh.as_mut_ptr(),
+                gh.len() as libc::socklen_t,
+                gs.as_mut_ptr(),
+                gs.len() as libc::socklen_t,
+                flags,
+            )
+        };
+
+        assert_eq!(rc_fast, rc_full, "rc mismatch iter={iter} v6={v6}");
+        if rc_fast == 0 {
+            let fhb = unsafe { CStr::from_ptr(fh.as_ptr()) };
+            let ghb = unsafe { CStr::from_ptr(gh.as_ptr()) };
+            let fsb = unsafe { CStr::from_ptr(fs.as_ptr()) };
+            let gsb = unsafe { CStr::from_ptr(gs.as_ptr()) };
+            assert_eq!(fhb, ghb, "host mismatch iter={iter} v6={v6}");
+            assert_eq!(fsb, gsb, "serv mismatch iter={iter} v6={v6}");
+        }
+    }
+}
