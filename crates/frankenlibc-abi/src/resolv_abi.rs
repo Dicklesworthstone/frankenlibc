@@ -296,10 +296,16 @@ struct ServiceNameLookupKey {
     name: Vec<u8>,
 }
 
+struct ServicePortLookupKey {
+    port: u16,
+    entry_index: usize,
+}
+
 struct ServiceLookupCache {
     generation: Option<u64>,
     entries: Vec<frankenlibc_core::resolv::ServiceEntry>,
     name_keys: Vec<ServiceNameLookupKey>,
+    port_keys: Vec<ServicePortLookupKey>,
 }
 
 impl ServiceLookupCache {
@@ -308,6 +314,7 @@ impl ServiceLookupCache {
             generation: None,
             entries: Vec::new(),
             name_keys: Vec::new(),
+            port_keys: Vec::new(),
         }
     }
 
@@ -318,6 +325,7 @@ impl ServiceLookupCache {
 
         self.entries.clear();
         self.name_keys.clear();
+        self.port_keys.clear();
 
         for entry in content
             .split(|&b| b == b'\n')
@@ -338,10 +346,20 @@ impl ServiceLookupCache {
                     entry_index,
                     name: alias.clone(),
                 }));
+            // Port keys index the RECORD, not its aliases: `getservbyport` matches on the
+            // numeric port plus an optional protocol filter, never on a name.
+            self.port_keys.push(ServicePortLookupKey {
+                port: entry.port,
+                entry_index,
+            });
             self.entries.push(entry);
         }
 
         self.name_keys.sort_by_key(|key| key.name_hash);
+        // (port, entry_index) so equal ports stay in original file order, preserving the
+        // first-match-wins tie-break of the line scan this index replaces.
+        self.port_keys
+            .sort_by_key(|key| (key.port, key.entry_index));
         self.generation = Some(generation);
     }
 
@@ -384,6 +402,35 @@ impl ServiceLookupCache {
         }
 
         best_entry_index.map(|index| &self.entries[index])
+    }
+
+    /// Port lookup for `getservbyport`. `port` is in HOST order. Returns the
+    /// lowest-`entry_index` record whose port matches and whose protocol satisfies
+    /// `proto_filter` (ASCII case-insensitive) — i.e. the first matching line in file
+    /// order, exactly what the replaced `split('\n').find_map(..)` scan returned.
+    fn lookup_by_port(
+        &mut self,
+        generation: u64,
+        content: &[u8],
+        port: u16,
+        proto_filter: Option<&[u8]>,
+    ) -> Option<&frankenlibc_core::resolv::ServiceEntry> {
+        self.rebuild_if_needed(generation, content);
+
+        let start = self.port_keys.partition_point(|key| key.port < port);
+        let end = self.port_keys.partition_point(|key| key.port <= port);
+
+        self.port_keys[start..end]
+            .iter()
+            .filter(|key| match proto_filter {
+                Some(filter) => self.entries[key.entry_index]
+                    .protocol
+                    .eq_ignore_ascii_case(filter),
+                None => true,
+            })
+            .map(|key| key.entry_index)
+            .min()
+            .map(|index| &self.entries[index])
     }
 }
 
@@ -3094,6 +3141,72 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
         }
     };
 
+    // Generation-stamped parsed index (the `getservbyport` sibling of the landed
+    // `getservbyname` name index): borrow the cached backend bytes instead of cloning
+    // them per call, and binary-search the port keys instead of re-parsing every line.
+    // `BackendFileCache` still owns file/env-path freshness; the index rebuilds only when
+    // its generation changes, so `FRANKENLIBC_SERVICES_PATH` rewrites are still observed.
+    let entry = match with_services_backend_snapshot(|content, generation| {
+        with_service_lookup_cache(|cache| {
+            cache
+                .lookup_by_port(generation, content, port_host, proto_filter)
+                .cloned()
+        })
+    }) {
+        Ok(Some(entry)) => entry,
+        Ok(None) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
+    };
+
+    // Success path: record service lookup completed
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
+
+    with_tls_servent(|storage| fill_servent_storage(storage, &entry, port))
+}
+
+/// Bench-only: the pre-index `getservbyport` (per-call `read_services_backend` clone +
+/// line-by-line `parse_services_line` scan), retained verbatim so `glibc_baseline_bench`
+/// can measure ORIG vs patched in the SAME binary. Mirrors
+/// `getservbyname_legacy_parse_per_call_for_bench`.
+///
+/// # Safety
+/// Same contract as `getservbyport`: `proto` is an optional NUL-terminated C string.
+#[doc(hidden)]
+pub unsafe fn getservbyport_legacy_parse_per_call_for_bench(
+    port: c_int,
+    proto: *const c_char,
+) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        proto as usize,
+        0,
+        true,
+        proto.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
+
+    let port_host = u16::from_be(port as u16);
+
+    // SAFETY: proto is optional; opt_cstr returns None for null and rejects
+    // known unterminated storage before any bytes are borrowed.
+    let proto_filter = match unsafe { opt_cstr(proto) } {
+        Ok(value) => value.map(CStr::to_bytes),
+        Err(()) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+    };
+
     let content = match read_services_backend() {
         Ok(c) => c,
         Err(_) => {
@@ -3122,7 +3235,6 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
         }
     };
 
-    // Success path: record service lookup completed
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
 
     with_tls_servent(|storage| fill_servent_storage(storage, &entry, port))

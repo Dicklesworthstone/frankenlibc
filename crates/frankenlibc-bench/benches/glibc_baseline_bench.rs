@@ -515,6 +515,98 @@ fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
             },
         );
 
+        // `getservbyport` takes the port in NETWORK byte order (as returned in s_port).
+        let port_be = 80u16.to_be() as libc::c_int;
+
+        let fl_port = unsafe {
+            frankenlibc_abi::resolv_abi::getservbyport(port_be, proto.as_ptr())
+                as *mut libc::servent
+        };
+        let host_port = unsafe { libc::getservbyport(port_be, proto.as_ptr()) };
+        assert!(
+            !fl_port.is_null(),
+            "FrankenLibC getservbyport returned NULL"
+        );
+        assert!(
+            !host_port.is_null(),
+            "host glibc getservbyport returned NULL"
+        );
+        assert_eq!(
+            unsafe { (*fl_port).s_port },
+            unsafe { (*host_port).s_port },
+            "getservbyport service port parity"
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr((*fl_port).s_name) },
+            unsafe { CStr::from_ptr((*host_port).s_name) },
+            "getservbyport service name parity"
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getservbyport_80_tcp",
+                impl_label: "frankenlibc_abi",
+                api_family: "resolver",
+                symbol: "getservbyport",
+                workload: "lookup port 80/tcp through /etc/services",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let entry = unsafe {
+                    frankenlibc_abi::resolv_abi::getservbyport(port_be, proto.as_ptr())
+                        as *mut libc::servent
+                };
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).s_port });
+                }
+                black_box(entry);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getservbyport_80_tcp",
+                impl_label: "frankenlibc_legacy_orig",
+                api_family: "resolver",
+                symbol: "getservbyport",
+                workload: "lookup port 80/tcp through /etc/services",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let entry = unsafe {
+                    frankenlibc_abi::resolv_abi::getservbyport_legacy_parse_per_call_for_bench(
+                        port_be,
+                        proto.as_ptr(),
+                    )
+                } as *mut libc::servent;
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).s_port });
+                }
+                black_box(entry);
+            },
+        );
+
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getservbyport_80_tcp",
+                impl_label: "host_glibc",
+                api_family: "resolver",
+                symbol: "getservbyport",
+                workload: "lookup port 80/tcp through /etc/services",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let entry = unsafe { libc::getservbyport(port_be, proto.as_ptr()) };
+                if !entry.is_null() {
+                    black_box(unsafe { (*entry).s_port });
+                }
+                black_box(entry);
+            },
+        );
+
         bench_op(
             &mut group,
             BenchMeta {

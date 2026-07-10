@@ -13505,3 +13505,85 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   It does not move the non-null `MALLOC_FREE` rows; the next bd-dcrhgl Swing-2 attempt still needs
   a new exact no-deref membership primitive or shadow-agreement scheme before any inline-header
   replacement of the fallback table.
+
+## 2026-07-09 (cc_fl / BlackThrush) — WIN (SHIPPED): `getservbyport` generation-indexed parsed lookup — 29.23x vs ORIG, 2.73x faster than host glibc
+
+- **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped the resolver lane. Did NOT retry anything under a
+  no-retry note: the landed `getservbyname` parsed-name index, the `/etc/protocols` backend
+  snapshot cache, the protocol name/number parsed record index, the resolver byte-decimal parser,
+  the rejected `strchr` SSE4.2 explicit-length scanner, the MallocState 64/256 hot-cycle precheck,
+  cached tombstone reinsertion, or the lock-free fallback table. This lever is the one the
+  services row explicitly left open: *"Future service resolver work should target a different
+  surface such as `getservbyport` indexing or `getaddrinfo` profile reuse"* (2026-07-09 services
+  entry, Codex `codex-libc-cod`).
+- **PROFILE / ROOT CAUSE.** `getservbyport` was the last services entry point still paying BOTH
+  costs the name index removed: a per-call `read_services_backend()` (which returns an OWNED clone
+  of the cached backend bytes) followed by a line-by-line `content.split('\n').find_map(
+  parse_services_line)` linear scan. Its sibling `getservbyname` had already been moved to
+  `with_services_backend_snapshot` (borrow, no clone) + a generation-stamped parsed index.
+  Measured on the new bench row: ORIG p50 **86347.5 ns** vs host glibc p50 **8076.0 ns** = a
+  **10.7x LOSS** to glibc before this change.
+- **LEVER (byte-identical).** Extended the existing `ServiceLookupCache` with `port_keys:
+  Vec<ServicePortLookupKey>` (`{port: u16, entry_index: usize}`), built in the same
+  `rebuild_if_needed` pass and sorted by `(port, entry_index)`. `lookup_by_port` binary-searches
+  the port range (`partition_point`), applies the optional ASCII-case-insensitive protocol filter
+  against `entries[entry_index].protocol`, and takes `min(entry_index)` — which is exactly the
+  first matching line in file order, i.e. the tie-break the replaced `find_map` scan had.
+  `getservbyport` now goes through `with_services_backend_snapshot` + `with_service_lookup_cache`,
+  so it neither clones the backend bytes nor re-parses. `BackendFileCache` still owns file and
+  env-path freshness; the index rebuilds only on a generation change. Port keys index the RECORD,
+  not aliases (port lookup never matches a name). Observe codes and the
+  `fill_servent_storage(storage, &entry, port)` call (original network-order `port` argument) are
+  unchanged. This is deliberately NOT another `/etc/services` snapshot cache, byte-decimal parser,
+  or token-scanner retune.
+- **MEASURED 3-WAY, SAME BINARY / SAME RUN / SAME WORKER** (`rch exec`, worker `vmi1227854`,
+  `CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cc-blackthrush`; `cargo bench
+  --profile release -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench
+  getservbyport_80_tcp -- --sample-size 20 --warm-up-time 1 --measurement-time 2 --noplot`). New
+  bench row `getservbyport_80_tcp` embeds the pre-index path as `frankenlibc_legacy_orig`
+  (`getservbyport_legacy_parse_per_call_for_bench`, retained verbatim):
+
+  | impl | p50 ns/op | mean ns/op |
+  |---|---|---|
+  | `frankenlibc_abi` (new) | **2954.433** | 3877.772 |
+  | `frankenlibc_legacy_orig` | 86347.518 | 86808.473 |
+  | `host_glibc` | 8076.031 | 8213.478 |
+
+  `new/orig` p50 **0.0342x = 29.23x faster** (mean 0.0447x = 22.39x). `new/host_glibc` p50
+  **0.366x = 2.73x faster than glibc** (mean 0.472x = 2.12x). The row went from a **10.7x LOSS**
+  to a **2.73x WIN** against host glibc.
+- **HOST ARM IS REALLY GLIBC (checked, not assumed).** fl exports `getservbyport` as `#[no_mangle]`
+  in release, so a `libc::getservbyport` call in the same binary could self-bind and silently make
+  "host_glibc" a second fl arm (the recorded dlmopen gotcha). It does not here: the host arm
+  measures **8076 ns** while the fl arm measures **2954 ns** and Criterion collected different
+  iteration counts (244k vs 680k) for the two. The independent
+  `conformance_diff_netdb_aliases` gate resolves glibc through `dlmopen` regardless.
+- **CONFORMANCE GREEN.** `cargo test --profile release -p frankenlibc-abi --test resolv_abi_test --
+  getserv --test-threads=1` **14 passed / 0 failed** (includes
+  `getservbyport_reads_updated_overridden_services_backend`, which proves the parsed port index
+  respects `FRANKENLIBC_SERVICES_PATH` fixture rewrites via the backend generation, plus the
+  existing `getservbyname` tests that share the extended cache struct). Byte-exact differentials vs
+  live glibc: `conformance_diff_netdb_aliases` **1/1** (its `getservbyport` arm resolves glibc via
+  `dlmopen` and compares every field over a port/proto matrix), `conformance_diff_netdb_r_aliases`
+  **1/1**, `conformance_diff_netdb_iter_aliases` **1/1**. The bench row itself asserts
+  `s_port` + `s_name` parity against host glibc before timing. `ubs` exit **0** (its 1 "critical"
+  is the pre-existing false positive at `resolv_abi.rs:1793`, `DnsHeader::decode` matched as a
+  "JWT decode bypass"). `rustfmt --check` clean on both files.
+- **PRE-EXISTING FAILURE (not this change).** Local `cargo clippy -D warnings` remains blocked by
+  unrelated `frankenlibc-core` lint debt (`crates/frankenlibc-core/src/math/exp.rs:815`, `eq_op` on
+  the deliberate `z / z` NaN idiom), the same blocker the two prior resolver rows recorded.
+- **NO-RETRY NOTE:** do not retry parsed `getservbyport` port indexes, `/etc/services` snapshot or
+  generation caches, byte-decimal port parsing, or another services read/parse elimination pass —
+  the services surface (name + port) is now fully indexed and beats host glibc on both rows.
+  Remaining untried resolver surfaces, in the order the profile favors them:
+  **(1) reentrant `_r` buffer packing — VERIFIED the biggest remaining resolver gap.**
+  `getservbyname_r`/`getservbyport_r` live in `inet_abi.rs`, NOT `resolv_abi.rs`, so they cannot
+  reach the parsed indexes (which are private to `resolv_abi.rs`). They go straight to the
+  filesystem per call (`fs::` read + `split('\n')` + `parse_services_line`) — worse than the
+  86 µs legacy path measured above, since they do not even use `BackendFileCache`. These are the
+  entry points threaded/reentrant callers actually use. Fix = hoist the indexes (or the whole
+  services/protocols cache module) so both files share them, then pack into the caller buffer.
+  **(2) `getaddrinfo` profile reuse. (3) static atoms with an exact freshness proof.
+  (4) cross-family NSS result caching with a fresh comparator.**
+- **Reproducer:** `cargo bench -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench
+  getservbyport_80_tcp` (3 arms, same binary).
