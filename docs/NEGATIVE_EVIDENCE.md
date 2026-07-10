@@ -6,6 +6,29 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — PROFILE-FIRST (bd-2g7oyh, no separable lever): deployed large-alloc = **3.81x** & realloc = **3.51x** vs glibc — both host-delegated, the gap is the wrapper+fallback+stats framing (cod's SUB-STEP B), micro-levers sit INSIDE the null floor
+
+- **ASK.** Take the next allocator lever (large-alloc / free-list / realloc), profile-first. RESULT: the
+  entire deployed allocator is `malloc_abi.rs` (cod's lane); `core/malloc/{large,allocator,thread_cache,
+  elimination}.rs` is UNWIRED dead code (only `property_tests.rs` references it). Non-segment allocs are
+  host-delegated (`native_libc_malloc`/`native_libc_realloc`) + tracked in the fallback hash table.
+- **MEASURED** (`examples/alloc_paths_ab.rs`, deployed fl vs dlmopen'd glibc, interleaved paired in ONE
+  binary, order swapped, 256 KiB large / 2048→16384→512 realloc lifecycle; worker **hz1**):
+  - **NULL large (fl vs fl): 1.000x** cv 10.4%; **NULL realloc (fl vs fl): 1.000x** cv 8.6% — clean floor.
+  - **LARGE malloc/free: fl 72.0 ns / glibc 18.9 ns = 3.81x** (cv 11.2%).
+  - **REALLOC grow+shrink: fl 147.5 ns / glibc 42.0 ns = 3.51x** (cv 10.5%).
+- **VERDICT — no floor-clearing lever separable from cod's SUB-STEP B.** fl DELEGATES large/realloc to
+  glibc's own allocator, so the gap is purely the ~53 ns fl wrapper tax per malloc/free pair (reentry
+  guard ×2 + stats ×2 + fallback insert+remove) — the SAME framing that dominates the 9.7x small-churn
+  profile. The candidate micro-lever (realloc `out==ptr` → in-place fallback size update instead of
+  remove+insert) saves ~1 hash op ≈ 6 ns on a 147 ns call = **INSIDE the 10% null floor**, not claimable.
+  Eliminating the fallback table for large host allocs (glibc `malloc_usable_size` for stats, or an
+  inline header) is bd-dcrhgl SUB-STEP A/B — cod's allocator-architecture lane, touches the stats +
+  foreign-ptr-detection design cod is actively leaning. Handed to cod (bd-dcrhgl comment); I claimed
+  only the host-delegated realloc branch and am NOT editing it since the only lever there is sub-floor.
+  self-time: the 9.7x-profile frame table already attributes this to the wrappers (malloc 36.9% + free
+  28.3% + segment_free 16%); a fresh perf run would only reconfirm framing.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — MEASUREMENT (provenanced): deployed malloc/free with cod's landed segments is **~9.7x vs glibc** (NOT the ~5x target) — segments beat old fl 1.3x, but the exported wrapper framing (65% self) + segment_free (16%) dominate, not membership
 
 - **ASK.** Verify the end-to-end malloc/free ratio vs glibc now that cod's segment magazines landed

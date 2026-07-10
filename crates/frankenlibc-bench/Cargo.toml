@@ -62,6 +62,11 @@ name = "getnameinfo_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[example]]
+name = "alloc_paths_ab"
+harness = false
+required-features = ["abi-bench"]
+
 [[bench]]
 name = "string_bench"
 harness = false
