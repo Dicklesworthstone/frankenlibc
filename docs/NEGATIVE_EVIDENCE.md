@@ -15190,3 +15190,52 @@ sha256, self-time, cv or null.
   the 0.9048 floor is my own A/A measurement (binary sha256
   `591a0cfae73c52918271c4025edc9a16c70d5fabf0c1785780295165a28e2327`, worker `vmi1152480`).
   **self-time: blocked (bd-3dxo1a).**
+
+## 2026-07-10 (cod_fl) — REJECT (EVIDENCE GATE ONLY): per-thread segment magazines win 21.9-22.5%, but CPU0 drift fails the mandatory all-CV <5% gate (bd-dcrhgl)
+
+- **LEDGER-FIRST / OPEN FAMILY.** Re-grepped this ledger for `segment`, `pagemap`, `PageMap`,
+  `bitmap`, `magazine`, `packed shadow`, `ownership`, and `bd-dcrhgl`. This attempt does not retry
+  the CLOSED global tagged-free-list design at L14063. It exercises that row's explicit open retry
+  condition: per-thread segment bump/magazine ownership with packed shadow metadata and no shared
+  free-list/sidecar load on the depth-one hot cycle. The already-banked exact membership primitive
+  remains 0.985 ns versus the historical 9.79 ns table bar; this run measures the whole production
+  allocation/free composition.
+- **ONE LEVER, BEHAVIOR FIRST.** Strict small allocations use immortal aligned 4 MiB segments,
+  per-thread 64-slot bump chunks, eight-entry magazines, and an exact `AtomicU16` requested-size/live
+  shadow. Cross-thread and magazine-overflow frees use a cold spill bitmap. Exact segment ownership,
+  `malloc_usable_size`, realloc, calloc zeroing, double/interior free handling, and the host
+  getdelim/getline realloc boundary were covered before scoring: allocator tests 59 passed / 0 failed
+  / 1 ignored; focused allocator conformance 16 / 0; host-getline segment growth 1 / 0. All Cargo
+  gates ran fail-closed through RCH.
+- **PROFILE INTEGRITY PASSED.** Candidate-only `perf record` captured **9,552 samples**. The deployed
+  allocator functions under test have **19.75% total self-time**: `segment_free` **18.50%**, exported
+  `free` **0.29%**, `segment_allocate` **0.45%**, and exported `malloc` **0.51%**. Thus malloc-side
+  self-time is **0.96%** and free-side self-time is **18.79%**, both non-zero. The complete raw report
+  is the non-empty 8,507-byte `perf-report.txt` artifact below. Two earlier calibration invocations
+  never reached timing (one LLVM-merged unsampled harness wrapper, one worker without perf); neither
+  was used for a verdict.
+- **HONEST ONE-BINARY 3-WAY.** ORIG (retained pre-lever strict path), CAND (deployed segment path),
+  and host glibc (`dlmopen`) ran in all six O/C/G orders inside every sample, with the permutation
+  list reversed every other sample. Inputs and returned pointers crossed `black_box`. Each size used
+  **41 raw samples** and **3,145,728 malloc/free pairs per arm per sample**, on isolated remote worker
+  **`vmi1227854`**, pinned scoring **CPU 0**.
+
+  | size | ORIG ns | CAND ns | glibc ns | CAND/ORIG | CAND/glibc | CV% ORIG / CAND / glibc | CV% C/O / C/G / O/G |
+  |---:|---:|---:|---:|---:|---:|---:|---:|
+  | 16 | 64.532 | 50.462 | 4.484 | **0.7766** | 11.2403 | 2.64 / **5.09** / **7.20** | 3.48 / 3.87 / **5.69** |
+  | 64 | 65.269 | 50.631 | 4.491 | **0.7769** | 11.2862 | 3.68 / 4.90 / **6.67** | 2.20 / 3.73 / **5.08** |
+  | 256 | 66.030 | 51.291 | 4.605 | **0.7808** | 11.2465 | 3.69 / **5.57** / **6.46** | 2.38 / 3.52 / 4.52 |
+  | 1024 | 65.248 | 50.323 | 4.521 | **0.7752** | 11.1190 | 3.97 / **8.78** / **12.59** | **6.20** / **5.18** / **9.77** |
+
+- **REJECTED EVIDENCE, NOT REJECTED LEVER.** CAND wins every size by **21.9-22.5%**, so this is not a
+  code loss and the lever remains uncommitted for a corrected gate. The mandatory all-CV <5% rule
+  rejects this measurement: even the paired CAND/ORIG CV reaches **6.20%** at 1024 B, while CPU0's
+  raw glibc CV reaches **12.59%**. Per the user's rule, fix the gate rather than discard the lever:
+  choose the least-busy allowed non-housekeeping CPU from a short `/proc/stat` sample and lengthen
+  each interleaved sample before the next verdict. Do not claim or ship from this run.
+- **FULL PROVENANCE.** Release-perf binary SHA-256
+  **`7c21d9934b5e2b669a8d8a2b992058a935f6e32b5221a746229de2ff30d5c7db`**, binary **55,123,952
+  bytes**, worker **`vmi1227854`**, scoring CPU **0**. Non-empty retrieved artifacts:
+  `target/criterion/bd-dcrhgl-segment-production/run-2563331-1783698643042719745/paired.json`
+  **23,603 bytes**, `candidate.perf` **788,132 bytes**, `perf-report.txt` **8,507 bytes**, and
+  `executable.sha256` **202 bytes**.
