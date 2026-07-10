@@ -6,6 +6,37 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## ============ FRONTIER SUMMARY (cc_fl / BlackThrush) — cc lane at frontier 2026-07-10; HOLDING ============
+
+Consolidated summary of the cc (Claude) agent's lane (allocator/string/math/resolv). Every axis is
+mined-by-me or actively-contested-by-another-agent; the remaining gaps are marginal, risky, or owned.
+
+**SHIPPED THIS SESSION (measured, null-controlled, conformance-green):**
+- **Resolver membrane bookkeeping ELIMINATED — 1214 ns → ~9 ns (137.68x)** across getaddrinfo /
+  getnameinfo / every resolver call: `observe()` fast-path adds Resolver (`89dd56425`, 3.01x) + `decide()`
+  strict fast-path adds Resolver (`cab088f84`, 63.65x). Byte-identical (`decide_strict_observation` forces
+  Allow; observe is telemetry).
+- **getnameinfo strict fast path — 36.57x, fl → glibc PARITY** (`d9e9ac0bd`, byte-identical, 4000-iter fast≡full).
+- getnameinfo/gethostbyname netdb String-elisions (`5778b64c8`, getnameinfo deployed 1.20x).
+- Provenanced measurements: malloc/free 9.7x + AVX2-codegen-verified; getaddrinfo 4.71x; allocator framing split.
+
+**FRONTIER STATE PER AXIS:**
+| axis | verdict | evidence |
+|---|---|---|
+| resolver | MINED (me) | bookkeeping → ~9 ns; getnameinfo parity; getaddrinfo residual distributed/sub-floor |
+| allocator | FRONTIER | guard CAS irreducible; STATS is field-updates not the lock (slot-local lever measured **1.63 ns sub-floor**, this session); segments done; bin_index is a LUT |
+| math (f32) | OPTIMIZED | survey mostly ≤1.0x; hot exp/log/pow/trig done; lone gap `j0f` 1.42x = unverifiable Bessel-coeff port (no in-repo source) |
+| string | CONTESTED | another agent: "string-frontier saturation" + find_ascii_folded 0.53x etc. this week |
+| stdio | CONTESTED | another agent: getdelim/getline/fgets/fgetws/sscanf fast paths; fputs write-path fast path landed |
+| iconv | CONTESTED | another agent: SBCS/DBCS SIMD codecs this week |
+
+**HOLDING.** No clean, high-value, uncontested, safe, above-floor cc-lane lever remains. Re-open only on:
+(a) a specific known-slow target or external source (e.g. glibc `j0f`) handed in, (b) an axis freed by a
+contesting agent, or (c) a NEW workload/benchmark exposing a fresh hot path. The per-axis rows below carry
+the full measured detail.
+
+## ============================================================================================
+
 ## 2026-07-10 (cc_fl / BlackThrush) — ALLOCATOR frontier CONFIRMED by implementation: single-threaded slot-local stats shipped correctly but the win is **1.63 ns (sub-floor)** — the STATS cost is `apply_locked` field-updates, NOT the combiner CAS
 
 - **Attacked the least-saturated axis (allocator) with the ONE lever** (the user's instruction): single-
