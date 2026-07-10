@@ -13630,3 +13630,61 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   primitive that proves header residency and exact start at sub-table cost (target below 1ns per
   checked read in `malloc_sizetrack_ab`), without consulting the fallback table and without relying
   on min/max range guards.
+
+## 2026-07-10 - WIN - bd-dcrhgl segment-bitmap no-deref membership primitive
+
+- **NEGATIVE-EVIDENCE FIRST.** Grepped `docs/NEGATIVE_EVIDENCE.md` and
+  `docs/perf_next_architectural_swings.md` for `segment`, `pagemap`, `page map`, `PageMap`,
+  `radix`, `bitmap`, `ownership`, `no-deref`, `no fault`, and `inline header` before coding. The
+  prior Swing-2 page-radix warning closed only per-page size storage for host-delegated mixed-size
+  allocations: multiple different-sized allocations share a 4KiB page, so `ptr >> PAGE_SHIFT`
+  cannot be the size table. This attempt changes the premise to segment-owned heap membership only:
+  a pointer-derived bit test over process-owned metadata before any user-memory/header dereference.
+  It does not retry the CLOSED rows: min/max+magic header, table-guarded header proof,
+  PageOracle-checked header proof, lock-free fallback table, cached tombstone reinsertion, or
+  MallocState 64/256 hot-cycle precheck.
+- **PROFILE / HOT ROW.** The active bead profile still ranks Swing-2 size tracking as the malloc
+  framing row: deployed malloc/free remains dominated by fallback insert/known_remaining/remove
+  plus reentry/stats; the previous same-worker baseline measured table/header/guarded at
+  `9.79ns/0.83ns/10.37ns`, and this run re-confirmed the table-vs-header gap in
+  `malloc_sizetrack_ab` before trying to wire any allocator behavior.
+- **LEVER ATTEMPTED.** Extended only `crates/frankenlibc-bench/examples/malloc_sizetrack_ab.rs`
+  with `SEGMENT_BITMAP`, a 4MiB-segment ownership prototype: `addr >> 22`, subtract the base
+  segment, bounds-check the compact bitmap word, then safe-index process-owned `Vec<u64>` metadata.
+  It never dereferences user memory, never reads an inline header, and cannot fault on foreign
+  pointers except by ordinary safe Rust metadata access. This is a proof/measurement increment only;
+  production allocator behavior is unchanged.
+- **MEASURED 3-WAY, SAME WORKER.** Commands were all `rch exec -- cargo run --profile release-perf
+  -p frankenlibc-bench --example malloc_sizetrack_ab --features abi-bench` with
+  `AGENT_NAME=cod_fl` and the same remote target hint. Worker `hz1` selected for three scoring
+  runs. Median rows:
+
+  | run | table ns | header ns | guarded-header ns | segment-bitmap ns |
+  |---:|---:|---:|---:|---:|
+  | 1 | 13.99 | 0.95 | 14.49 | 1.10 |
+  | 2 | 13.83 | 0.94 | 14.70 | 1.09 |
+  | 3 | 14.41 | 0.95 | 14.91 | 1.16 |
+
+  Cross-run CV gate over these same-worker medians: table **1.74%**, header **0.50%**,
+  guarded-header **1.17%**, segment-bitmap **2.77%**. Mean table **14.08ns**, mean segment bitmap
+  **1.12ns**: the segment primitive is **0.079x table** and saves **12.96ns/op** before any header
+  read. Independent routing sanity on worker `vmi1227854` also cleared the bar:
+  `table=19.15ns`, `header=0.70ns`, `guarded_header=19.54ns`, `segment_bitmap=1.10ns`.
+- **RESULT.** WIN for the open retry condition: exact no-deref ownership membership can be cheaper
+  than the fallback table by roughly **12.6x** on the same worker. This does not yet ship the inline
+  header: the next isolated lever must allocate from power-of-two-owned segments (or an equivalent
+  two-level PageMap of owned pages) so size-class/header metadata is derived from owned segment/page
+  metadata before any header read.
+- **CONFORMANCE / SAFETY.** `rch exec -- cargo test -p frankenlibc-abi --test malloc_abi_test --
+  --test-threads=1` passed **55 / 55** runnable allocator tests (**1 ignored** pre-existing
+  hardened-mode bound test), including fallback range filtering, malloc/free cycles, realloc,
+  `malloc_usable_size`, aligned allocation, valloc/pvalloc, and free-null. `ubs
+  crates/frankenlibc-bench/examples/malloc_sizetrack_ab.rs` completed with **0 critical** findings;
+  warnings are benchmark-only inventory (`assert!`, indexing with prior bounds construction,
+  `println!`, and the existing percentile `unwrap`). Single-file `rustfmt --edition 2024 --check
+  crates/frankenlibc-bench/examples/malloc_sizetrack_ab.rs` passed. Release-perf bench builds
+  produced existing workspace warnings in unrelated crates; no production allocator code changed.
+- **NEXT RETRY CONDITION.** Wire the inline size header only behind a segment-owned allocator or
+  two-level PageMap proof where membership and size-class metadata are read from owned metadata
+  first. Do not use host-delegated mixed pages, min/max range guards, or the fallback table as the
+  production proof for header reads.
