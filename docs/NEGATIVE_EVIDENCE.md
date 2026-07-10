@@ -13587,3 +13587,46 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   (4) cross-family NSS result caching with a fresh comparator.**
 - **Reproducer:** `cargo bench -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench
   getservbyport_80_tcp` (3 arms, same binary).
+
+## 2026-07-10 - REJECT - bd-dcrhgl Swing-2 PageOracle-checked inline header proof
+
+- **NEGATIVE-EVIDENCE FIRST.** Checked the Swing-2 malloc lane before trying this lever. Did not
+  retry the CLOSED rows: `strchr` SSE4.2 explicit-length scanner, MallocState 64/256 hot-cycle
+  precheck, cached tombstone reinsertion, lock-free fallback table, the naive min/max+magic inline
+  header read, or the existing-table guarded header proof. The only open retry condition for the
+  inline-header candidate was a new exact no-deref membership or shadow-agreement primitive cheaper
+  than the fallback table.
+- **PROFILE / HOT ROW.** Same-worker `rch exec` baseline on worker `hz2`
+  (`AGENT_NAME=cod_fl CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod_fl-page-guard-base
+  rch exec -- cargo run --profile release-perf -p frankenlibc-bench --example malloc_sizetrack_ab
+  --features abi-bench`) confirmed the active Swing-2 row:
+  `SIZETRACK_AB table=9.79ns header=0.83ns header/table=0.084`, and
+  `SIZETRACK_GUARDED_HEADER_AB table=9.79ns guarded_header=10.37ns guarded/table=1.059`.
+- **LEVER ATTEMPTED.** Built a proof-harness-only candidate (not a production switch): a 16-byte
+  inline size header stored before the user pointer, a keyed `AllocationFingerprint` tag bound to
+  `(user_addr, size)`, and a checked read that queried `PageOracle` for both endpoint bytes of the
+  header before dereferencing. This was a different proof from the rejected table guard: the fallback
+  table was not consulted on the checked-header arm. The candidate also smoke-tested exact pointer
+  accept, same-live-page interior pointer reject, and untracked pointer reject.
+- **MEASURED 3-WAY, SAME WORKER.** Candidate command:
+  `AGENT_NAME=cod_fl CARGO_TARGET_DIR=/data/projects/.rch-targets/frankenlibc-cod_fl-page-guard-cand
+  rch exec -- cargo run --profile release-perf -p frankenlibc-bench --example malloc_sizetrack_ab
+  --features abi-bench`; worker `hz2`, same remote target pool as the baseline. Results:
+
+  | arm | p50 ns/op | ratio vs table |
+  |---|---:|---:|
+  | `TABLE` | 9.96 | 1.000 |
+  | `HEADER` | 0.83 | 0.083 |
+  | `GUARDED_HEADER` (existing-table control) | 10.43 | 1.047 |
+  | `PAGE_GUARDED_HEADER` (new proof) | 131.50 | 13.207 |
+
+  The new proof lost to the fallback table by **121.54 ns/op** and was **13.2x slower** than the
+  table it was meant to replace.
+- **RESULT.** REJECT. The page-residency proof is no-fault in shape, but it is far too expensive
+  for malloc/free framing reduction: two `PageOracle::query` calls plus keyed tag verification
+  dominate the 9-10ns fallback-table row. Code was reverted; no allocator behavior changed.
+- **NO-RETRY NOTE.** Do not retry this exact PageOracle endpoint-checked inline-header proof on the
+  malloc/free hot path. A future retry requires a new exact no-deref membership or shadow-agreement
+  primitive that proves header residency and exact start at sub-table cost (target below 1ns per
+  checked read in `malloc_sizetrack_ab`), without consulting the fallback table and without relying
+  on min/max range guards.
