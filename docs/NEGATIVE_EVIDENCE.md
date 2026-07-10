@@ -14581,3 +14581,75 @@ constraint forbids. Where only a profile could settle it, that is said, not glos
   paired-ratio CV are each <5%. If that clears, the production retry must use per-thread segment
   bump/magazines with address-derived shadow metadata; do not recreate the rejected global tagged
   free-list/sidecar composition.
+
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): reverse `/etc/hosts` lookups borrow the backend — 1.96x vs ORIG (drift-cancelled), 3.37x faster than host glibc (bd-d8vabn)
+
+- **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped the hosts family; the only entry is my own bd-0p00be
+  row, whose NO-RETRY explicitly leaves these sites open. No prior attempt, no rejection. Retried
+  nothing CLOSED. Stayed out of `malloc_abi.rs`.
+- **SYSTEMATIC SWEEP (as instructed).** Grepped every `read_{hosts,services,protocols}_backend()`
+  call in the resolver family. Result: **services and protocols have ZERO deployed clone sites left**
+  (the four remaining hits are my own `#[doc(hidden)]` bench reference fns). Hosts had **four**
+  deployed sites: `gethostbyname_r`-class reverse fill (L3124), `gethostbyaddr` (L3203),
+  `_gethtent` (L6980), `_gethtbyaddr` (L7061). Three of them (`3124/3203/7061`) call
+  `reverse_lookup_hosts`, which — like `lookup_hosts` — runs `parse_hosts_line` on **every line**
+  (owned address `Vec` + `Vec<Vec<u8>>` hostnames), builds an owned result `Vec<Vec<u8>>`, and then
+  every caller uses only `[0]` / `.first()`.
+- **INTEGRITY CHECK ON MY OWN PRIOR ROW (bd-0p00be).** Before extending, I verified the previous
+  CAND arm actually reached the converted code — `gethostbyname` (L2972) calls
+  `resolve_gethostbyname_target` at L3002 -> `resolve_gethostbyname_ipv4` -> `resolve_hosts_subset`
+  (converted). It did. Had it not, that 2.08x would have been a synthetic delta and the row invalid.
+- **LEVER (one).** New allocation-free core scanner
+  `frankenlibc_core::resolv::first_reverse_hosts_hostname(content, addr)` returning the FIRST
+  hostname of the FIRST line whose address matches — exactly the shape all three callers use.
+  Same comment stripping, same field separators, same `parse_hosts_line` acceptance test (valid
+  IPv4/IPv6 address AND at least one hostname), same first-matching-line-wins. Converted all three
+  sites to `with_hosts_backend_snapshot` + the borrowed scanner, filling the TLS/caller hostent
+  **inside** the backend borrow (a different thread-local, so the borrows do not conflict).
+  `HOST_NOT_FOUND` on both backend-read error and no-match, as before. `_gethtent` (L6980) is a
+  stateful sequential iterator, not a lookup — left alone, noted.
+- **SUBSTRATE v2.** New harness `crates/frankenlibc-bench/examples/hosts_reverse_ab.rs`: ORIG and
+  CAND alternate **within one measured routine**, one call of each per paired sample, order swapped
+  every sample (criterion group members run sequentially and would NOT cancel drift). Host glibc is
+  a third interleaved arm via `dlmopen(LM_ID_NEWLM)` so it cannot bind our `#[no_mangle]`
+  `gethostbyaddr`. Every input through `black_box`, every result consumed through `black_box`.
+  `verify()` asserts fl == host glibc on the resolved canonical name **before** timing — a
+  dead-code-eliminated arm cannot pass.
+- **MEASURED (one binary, one `rch exec` invocation, worker `hz1`; 1900 paired samples, 20 reps/arm).**
+
+  | arm | median ns/call | mean | cv |
+  |---|---|---|---|
+  | ORIG (clone + per-line parse) | 5093.88 | 5218.61 | 5.91% |
+  | **CAND (borrow + allocation-free scan)** | **2598.45** | 2675.90 | 9.56% |
+  | host glibc (dlmopen) | 8742.25 | 8875.07 | 6.19% |
+
+  **PAIRED cand/orig median = 0.5098 => 1.96x faster** (paired-ratio cv 11.14%).
+  **cand/glibc = 0.297x => 3.37x faster than host glibc.** ORIG is reconstructed in-process, so it
+  overstates ORIG and 1.96x is an UNDER-estimate.
+- **CONFORMANCE GREEN (all remote; `[RCH] remote` verified on every invocation).**
+  `frankenlibc-core` `resolv` unit tests **270 passed / 0 failed** (the new scanner lives there);
+  `conformance_diff_getaddrinfo` **7/0**; `resolv_abi_test` **182 / 0 / 31 ignored**;
+  `inet_abi_test` **69 / 0 / 13**; `conformance_diff_netdb_aliases` **1/1**;
+  `conformance_diff_netdb_r_aliases` **1/1**. Plus the harness's own fl-vs-glibc byte-identity
+  assert. `ubs` exit **0**; `rustfmt --check` clean.
+- **BUILD RECIPE USED (every invocation).**
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo <sub> …`. Workers: `hz1` (build,
+  bench, core tests), `vmi1152480` (abi tests). One build failed closed with `[RCH] remote hz1
+  failed (exit 101)` on a genuine type error (`socklen_t` vs `c_int`) — it errored rather than
+  falling back to a local build, which is the point of the recipe.
+- **STILL BLOCKED (bd-3dxo1a): per-arm self-time.** Requires `perf`, hence a local `release-perf`
+  debuginfo build, forbidden by the disk constraint. Execution proven instead by (a) the
+  byte-identity `verify()` and (b) a 1.96x paired delta; no self-time numbers were invented.
+- **PRE-EXISTING (not this change).** Full `unistd_abi_test` aborts on the argp errno bug (proven at
+  `c1b03f89a`); `clippy -D warnings` blocked by `frankenlibc-core/src/math/exp.rs:815` (`eq_op`).
+- **NO-RETRY NOTE — the resolver backend-clone vein is now EXHAUSTED.** Services: 0 deployed clone
+  sites. Protocols: 0. Hosts: 0 remaining lookup sites (only `_gethtent`'s sequential iterator,
+  which is stateful and not a lookup). Do not retry backend clones, per-line `parse_hosts_line` /
+  `parse_services_line` scans, snapshot/generation caches, `getenv` snapshots (0.11% self), `stat`
+  elision (0.08% self), or TLS-storage preallocation (fixed arrays) anywhere in this family.
+  Remaining, in order: **(1)** `ip.to_string()` allocates a `String` per call in `gethostbyaddr` /
+  `_gethtbyaddr` / the reverse `_r` fill — a stack `[u8; 46]` formatter removes it (**bd-ld0i35**);
+  **(2)** cross-family NSS result caching — needs a fresh frame table to pick a mechanism honestly,
+  **blocked on bd-3dxo1a**; **(3)** a fair `getaddrinfo` host-glibc baseline (bd-ynaqwe).
+- **Reproducer:** `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release
+  -p frankenlibc-bench --features abi-bench --example hosts_reverse_ab`

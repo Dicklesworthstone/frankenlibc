@@ -713,6 +713,18 @@ pub fn bench_legacy_hosts_scan(name: &[u8]) {
     std::hint::black_box(&candidates);
 }
 
+/// Bench-only: reconstruct the pre-lever per-call REVERSE hosts work — an owned clone of the whole
+/// `/etc/hosts` plus `reverse_lookup_hosts`, which `parse_hosts_line`-allocates every line and then
+/// builds an owned `Vec<Vec<u8>>` of the matching line's hostnames.
+#[doc(hidden)]
+pub fn bench_legacy_reverse_hosts_scan(addr_text: &[u8]) {
+    let Ok(content) = read_hosts_backend() else {
+        return;
+    };
+    let hostnames = frankenlibc_core::resolv::reverse_lookup_hosts(&content, addr_text);
+    std::hint::black_box(&hostnames);
+}
+
 fn read_services_backend() -> std::io::Result<Vec<u8>> {
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -3121,23 +3133,25 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
     let ip = std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
     let ip_str = ip.to_string();
 
-    let content = match read_hosts_backend() {
-        Ok(c) => c,
-        Err(_) => {
-            unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
-            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
-            return libc::ENOENT;
-        }
-    };
+    // Borrowed + allocation-free reverse walk: `read_hosts_backend()` cloned the whole file per
+    // call and `reverse_lookup_hosts` ran `parse_hosts_line` (address `Vec` + `Vec<Vec<u8>>`
+    // hostnames) on every line, then built an owned result vector — of which only `[0]` was used.
+    // First-matching-line-wins and the address validation are unchanged. A backend read error is
+    // still HOST_NOT_FOUND (the `Err(_)` arm), and so is "no matching line".
+    let written = with_hosts_backend_snapshot(|content, _generation| {
+        let hostname =
+            frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str.as_bytes())?;
+        // SAFETY: caller-provided output buffers, as in the previous call.
+        Some(unsafe { write_reentrant_hostent(hostname, ip, result_buf, buf, buflen, result) })
+    });
 
-    let hostnames = frankenlibc_core::resolv::reverse_lookup_hosts(&content, ip_str.as_bytes());
-    if hostnames.is_empty() {
+    let Ok(Some(written)) = written else {
         unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
         return libc::ENOENT;
-    }
+    };
 
-    match unsafe { write_reentrant_hostent(&hostnames[0], ip, result_buf, buf, buflen, result) } {
+    match written {
         Ok(()) => {
             unsafe { set_h_errnop(h_errnop, 0) };
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, false);
@@ -3200,22 +3214,20 @@ pub unsafe extern "C" fn gethostbyaddr(
     let ip_str = ip.to_string();
 
     // Look up in /etc/hosts
-    let content = match read_hosts_backend() {
-        Ok(c) => c,
-        Err(_) => {
-            unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
-            return ptr::null_mut();
-        }
-    };
+    // Borrowed + allocation-free reverse walk; see `gethostbyaddr_r` above. Populate thread-local
+    // hostent storage with the first matching hostname, inside the backend borrow (a different
+    // thread-local, so the two borrows do not conflict).
+    let filled = with_hosts_backend_snapshot(|content, _generation| {
+        let hostname =
+            frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str.as_bytes())?;
+        // SAFETY: as the previous `populate_tls_hostent` call.
+        Some(unsafe { populate_tls_hostent(hostname, ip) })
+    });
 
-    let hostnames = frankenlibc_core::resolv::reverse_lookup_hosts(&content, ip_str.as_bytes());
-    if hostnames.is_empty() {
+    let Ok(Some(hostent_ptr)) = filled else {
         unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
         return ptr::null_mut();
-    }
-
-    // Populate thread-local hostent storage with the first matching hostname
-    let hostent_ptr = unsafe { populate_tls_hostent(&hostnames[0], ip) };
+    };
     unsafe { set_h_errnop(ptr::null_mut(), 0) };
     hostent_ptr
 }
@@ -7058,16 +7070,19 @@ pub unsafe extern "C" fn _gethtbyaddr(addr: *const c_void, len: c_int, af: c_int
     let octets = unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), 4) };
     let ip = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
     let ip_text = ip.to_string();
-    let Ok(content) = read_hosts_backend() else {
-        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
-        return core::ptr::null_mut();
-    };
-    let hostnames = frankenlibc_core::resolv::reverse_lookup_hosts(&content, ip_text.as_bytes());
-    let Some(hostname) = hostnames.first() else {
+    // Borrowed + allocation-free reverse walk; see `gethostbyaddr` above.
+    let filled = with_hosts_backend_snapshot(|content, _generation| {
+        let hostname =
+            frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_text.as_bytes())?;
+        // SAFETY: as the previous `populate_tls_hostent` call.
+        Some(unsafe { populate_tls_hostent(hostname, ip) })
+    });
+
+    let Ok(Some(hostent_ptr)) = filled else {
         unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
         return core::ptr::null_mut();
     };
 
     unsafe { set_h_errnop(ptr::null_mut(), 0) };
-    unsafe { populate_tls_hostent(hostname, ip) }
+    hostent_ptr
 }

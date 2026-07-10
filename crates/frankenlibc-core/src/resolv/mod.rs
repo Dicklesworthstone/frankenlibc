@@ -226,6 +226,48 @@ fn hosts_line_match<'a>(line: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
     valid_addr.then_some(addr_field)
 }
 
+/// Allocation-free analogue of [`reverse_lookup_hosts`] for the only shape its callers use: the
+/// FIRST hostname of the FIRST line whose address equals `addr` exactly.
+///
+/// `reverse_lookup_hosts` skips lines that fail [`parse_hosts_line`] (invalid address, or no
+/// hostnames), takes the first line whose address matches, and returns that line's hostnames —
+/// and every deployed caller then uses `[0]` / `.first()`. This reproduces exactly that, without
+/// building an owned address `Vec`, a `Vec<Vec<u8>>` of hostnames per line, or the result vector.
+/// The returned slice aliases `content`.
+pub fn first_reverse_hosts_hostname<'a>(content: &'a [u8], addr: &[u8]) -> Option<&'a [u8]> {
+    for line in content.split(|&b| b == b'\n') {
+        if let Some((line_addr, first_hostname)) = hosts_line_addr_and_first_hostname(line)
+            && line_addr == addr
+        {
+            return Some(first_hostname);
+        }
+    }
+    None
+}
+
+/// Borrowed core of [`first_reverse_hosts_hostname`]: `(address, first hostname)` iff `line` is a
+/// valid hosts entry per [`parse_hosts_line`] (valid IPv4/IPv6 address AND at least one hostname).
+fn hosts_line_addr_and_first_hostname(line: &[u8]) -> Option<(&[u8], &[u8])> {
+    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+        &line[..pos]
+    } else {
+        line
+    };
+
+    let mut fields = line
+        .split(|&b| is_resolver_field_separator(b))
+        .filter(|f| !f.is_empty());
+
+    let addr_field = fields.next()?;
+    let first_hostname = fields.next()?; // `parse_hosts_line` rejects an empty hostname list.
+
+    let valid_addr = is_valid_ipv4_addr_bytes(addr_field)
+        || core::str::from_utf8(addr_field)
+            .ok()
+            .is_some_and(|addr| addr.parse::<Ipv6Addr>().is_ok());
+    valid_addr.then_some((addr_field, first_hostname))
+}
+
 /// Reverse lookup: find hostnames for an IP address in /etc/hosts content.
 pub fn reverse_lookup_hosts(content: &[u8], addr: &[u8]) -> Vec<Vec<u8>> {
     let mut results = Vec::new();
