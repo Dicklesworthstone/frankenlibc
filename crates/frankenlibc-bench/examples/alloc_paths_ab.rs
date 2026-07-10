@@ -170,6 +170,66 @@ fn report(label: &str, fl_ns: &[f64], glibc_ns: &[f64]) -> String {
     line
 }
 
+const KERNEL_SAMPLES: usize = 400;
+const KERNEL_REPS: usize = 20_000;
+
+/// KERNEL: the realloc fallback bookkeeping in isolation. `p` is a fl-malloc'd (fallback-tracked)
+/// large pointer; ORIG does tombstone-and-reinsert, CAND does the in-place size update. Both leave
+/// `p` tracked, so the loop is table-neutral.
+#[inline(never)]
+fn kernel_remove_insert(p: *mut c_void) -> u64 {
+    let mut acc = 0u64;
+    for _ in 0..KERNEL_REPS {
+        unsafe { fl::bench_fallback_remove_insert(black_box(p), black_box(512)) };
+        acc = acc.wrapping_add(1);
+    }
+    black_box(acc)
+}
+
+#[inline(never)]
+fn kernel_update(p: *mut c_void) -> u64 {
+    let mut acc = 0u64;
+    for _ in 0..KERNEL_REPS {
+        acc = acc
+            .wrapping_add(unsafe { fl::bench_fallback_update_size(black_box(p), black_box(512)) }
+                as u64);
+    }
+    black_box(acc)
+}
+
+fn kernel_paired<F, G>(samples: usize, mut a: F, mut b: G) -> (Vec<f64>, Vec<f64>)
+where
+    F: FnMut() -> u64,
+    G: FnMut() -> u64,
+{
+    let mut xa = Vec::with_capacity(samples);
+    let mut xb = Vec::with_capacity(samples);
+    for i in 0..samples {
+        let (ta, tb) = if i % 2 == 0 {
+            let s = Instant::now();
+            black_box(a());
+            let t1 = s.elapsed();
+            let s = Instant::now();
+            black_box(b());
+            let t2 = s.elapsed();
+            (t1, t2)
+        } else {
+            let s = Instant::now();
+            black_box(b());
+            let t2 = s.elapsed();
+            let s = Instant::now();
+            black_box(a());
+            let t1 = s.elapsed();
+            (t1, t2)
+        };
+        if i >= WARMUP {
+            xa.push(ta.as_nanos() as f64 / KERNEL_REPS as f64);
+            xb.push(tb.as_nanos() as f64 / KERNEL_REPS as f64);
+        }
+    }
+    (xa, xb)
+}
+
 fn main() {
     let flo = fl_alloc();
     let host = host_alloc();
@@ -180,6 +240,24 @@ fn main() {
     black_box(realloc_cycle(&host));
 
     let mut summary = Vec::new();
+
+    // KERNEL: isolate the realloc fallback-bookkeeping lever (remove+insert vs in-place update) on a
+    // fallback-tracked large pointer. NULL CONTROL first (update vs update), then ORIG vs CAND.
+    let tracked = unsafe { (flo.malloc)(LARGE) };
+    assert!(!tracked.is_null(), "fl malloc(LARGE) for kernel null");
+    let (kn1, kn2) = kernel_paired(
+        KERNEL_SAMPLES,
+        || kernel_update(tracked),
+        || kernel_update(tracked),
+    );
+    summary.push(report("NULL kernel fallback-op (upd vs upd)", &kn1, &kn2));
+    let (ko, kc) = kernel_paired(
+        KERNEL_SAMPLES,
+        || kernel_remove_insert(tracked),
+        || kernel_update(tracked),
+    );
+    summary.push(report("KERNEL fallback remove+insert -> update", &ko, &kc));
+    unsafe { (flo.free)(tracked) };
 
     // NULL CONTROL first: fl vs fl, per function.
     let (n1, n2) = paired(SAMPLES, || large_cycle(&flo), || large_cycle(&flo));

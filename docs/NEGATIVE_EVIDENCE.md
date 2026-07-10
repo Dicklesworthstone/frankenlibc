@@ -6,6 +6,44 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — CONVERGED (bd-2g7oyh): both allocator sub-paths DECIDED — large-alloc **REJECT** (irreducible framing) + realloc fallback-update **REJECT** (kernel 1.64x REAL but deployed sub-floor)
+
+Two allocator levers, each measured to a decision this turn (no more re-profiling).
+
+**(1) large-alloc — REJECT (irreducible wrapper tax).** Full component trace of fl's 53 ns overhead
+on the 68.9–72.0 ns large malloc/free vs glibc 18.9 ns (worker hz1, null control fl-vs-fl 1.000x):
+every ns is either the glibc call fl delegates to, a load-bearing safety/observability wrapper, or
+cod's SUB-STEP B — none is dead work.
+- `native_libc_malloc`/`free` (= glibc, 18.9 ns): the floor; fl DELEGATES, cannot beat it.
+- reentry guard ×2 (~16 ns): cod, safety-critical, not removable.
+- `entrypoint_scope`: already early-returns a skipped guard under `strict_passthrough_active()`.
+- `decide`+`observe`: `decision.profile` IS consumed; already high-freq-family fast-pathed for Allocator.
+- segment probe: bails immediately via `small_bin_index(req)?`; calloc already delegates to native calloc.
+- fallback insert+remove (1 op each; free already collapsed by cod bd-f874go) + stats ×2: cod's SUB-STEP B.
+The two candidate levers fail: fallback→`malloc_usable_size` is a cost-wash + a mallinfo semantics change
+(usable ≥ requested); the realloc in-place update is measured sub-floor (below). No semantics-preserving
+ONE change clears the 10% null floor. Reducing further = weaken the membrane (mission regression) or
+cod's SUB-STEP B. Full trace on bd-2g7oyh. Do NOT re-open the large-alloc lever hunt.
+
+**(2) realloc fallback-update — REJECT (kernel win real, deployed sub-floor).** The realloc host path
+does `fallback_remove_sized(ptr)` + `fallback_insert_sized(out, req)` when `native_libc_realloc` returns
+`out==ptr` (in-place shrink) — a tombstone-and-reprobe of a key it just looked up. Added a
+`fallback_update_size` primitive (in-place size overwrite, 1 probe, no tombstone churn) and A/B'd the
+isolated op in ONE binary (worker hz1, `examples/alloc_paths_ab.rs` kernel arms):
+- **NULL kernel (update vs update): 1.000x** cv 7.5%.
+- **KERNEL remove+insert 7.1 ns → update 4.3 ns = 1.64x**, cv 10.8% — a REAL, null-clear 2.8 ns/op saving.
+- **Deployed verdict:** 2.8 ns on a 153 ns realloc lifecycle (1 in-place realloc of 2) = **~2%**; even a
+  pure in-place-shrink op (~60 ns) is **~5%** — both INSIDE the 10% deployed null floor (realloc null
+  fl-vs-fl 1.000x, cv 10.2%). No deployed median win ⇒ NOT wired into production realloc. The primitive +
+  two `#[doc(hidden)]` bench hooks (`bench_fallback_remove_insert`, `bench_fallback_update_size`) are kept
+  so the REJECT is reproducible (consistent with the file's existing bench-hook convention); the deployed
+  realloc path is UNCHANGED. Provenance: worker hz1; self-time = the 9.7x/3.6x frame tables already
+  attribute the realloc cost to native_realloc + reentry + stats, not the fallback op.
+
+**META (converged):** the allocator's entire remaining frontier — small-churn 9.7x, large 3.6–3.8x,
+realloc 3.6x — is the wrapper framing (reentry + stats), i.e. cod's SUB-STEP B. `core/malloc/` is
+unwired dead code. There is no gate-passing allocator lever separable from cod's stats-framing work.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — PROFILE-FIRST (bd-2g7oyh, no separable lever): deployed large-alloc = **3.81x** & realloc = **3.51x** vs glibc — both host-delegated, the gap is the wrapper+fallback+stats framing (cod's SUB-STEP B), micro-levers sit INSIDE the null floor
 
 - **ASK.** Take the next allocator lever (large-alloc / free-list / realloc), profile-first. RESULT: the

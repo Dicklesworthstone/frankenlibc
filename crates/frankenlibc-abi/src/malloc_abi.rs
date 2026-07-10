@@ -2273,6 +2273,48 @@ fn fallback_remove_sized(ptr: *mut c_void) -> Option<usize> {
     None
 }
 
+/// Overwrite the tracked size of an already-present pointer in place, without the
+/// tombstone-and-reprobe churn of a `fallback_remove_sized` + `fallback_insert_sized`
+/// pair. Returns `false` (no-op) if the pointer is not currently tracked. Used by the
+/// realloc path when `native_libc_realloc` returns the same pointer (in-place shrink):
+/// the entry stays at its slot, only the size changes.
+fn fallback_update_size(ptr: *mut c_void, new_size: usize) -> bool {
+    let Some(key) = fallback_key(ptr) else {
+        return false;
+    };
+    let _guard = lock_fallback_alloc_table();
+    let start = fallback_start_index(key);
+    for i in 0..1024 {
+        let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
+        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        if slot == key {
+            if new_size != 0 {
+                publish_fallback_range(key, new_size);
+                FALLBACK_ALLOC_SIZES[idx].store(new_size, Ordering::Relaxed);
+            }
+            return true;
+        }
+        if slot == FALLBACK_SLOT_EMPTY {
+            return false;
+        }
+    }
+    false
+}
+
+/// Bench-only: the pre-lever realloc fallback bookkeeping (tombstone-and-reinsert) so an
+/// A/B can price it against the in-place update in the SAME binary.
+#[doc(hidden)]
+pub unsafe fn bench_fallback_remove_insert(ptr: *mut c_void, size: usize) {
+    let _ = fallback_remove_sized(ptr);
+    fallback_insert_sized(ptr, size);
+}
+
+/// Bench-only: the deployed in-place update.
+#[doc(hidden)]
+pub unsafe fn bench_fallback_update_size(ptr: *mut c_void, size: usize) -> bool {
+    fallback_update_size(ptr, size)
+}
+
 fn fallback_size(ptr: *mut c_void) -> Option<usize> {
     let key = fallback_key(ptr)?;
     let _guard = lock_fallback_alloc_table();
