@@ -15014,3 +15014,95 @@ kernel 26.96x/27.50x, needle kernel 17.71x, `_gethtent` 1.67x (paired cv 35% —
 the weakest and should be re-run with a null control**), hosts borrow 1.96x/2.08x (paired cv 11-21%,
 also worth a null). The two sub-2x hosts rows are the candidates for re-measurement; the ≥17x rows are
 not in doubt. Filed as **bd-9x1jcx**.
+
+## 2026-07-10 (cc_fl / BlackThrush) — LEDGER PROVENANCE AUDIT, phase 2: 92 REJECT rows, **0% carry a sha256**, **51% are decided inside the null floor** — and the #1 ranked candidate already yielded 18x
+
+Analysis-only turn: `rch` reported **`no admissible workers: insufficient_slots=10,
+active_project_exclusion=1`** on four consecutive attempts, so no build/bench/test ran. Per the rule
+that is a blocker, not a licence to build locally. Nothing below required a build.
+
+### Coverage census (machine-extracted over all `^##` rows)
+
+450 `##` rows; **92 are REJECT-class** (`REJECT|REJECTED|❌|✗|DISPROVEN|NO-SHIP|LOSS/DROP`).
+
+| required field | rows carrying it |
+|---|---|
+| binary sha256 | **0 / 92 — 0.0%** |
+| self-time | 6 / 92 — 6.5% |
+| worker id | 40 / 92 — 43.5% |
+| cv_pct | 5 / 92 — 5.4% |
+| **null-control ratio** | **1 / 92 — 1.1%** |
+
+frankenredis found 67/70 rows unprovenanced. Here it is **92/92 without a binary sha256**: not one
+REJECT in this ledger is reproducible to the binary that produced it.
+
+### The decisive number: **47 / 92 (51%) of REJECT verdicts rest on a ratio inside a plausible null floor**
+
+Counting rows whose verdict language is `~0-gain`, `no change in performance`, `within noise`, or a
+quoted ratio in `0.90x–1.19x`. My own measured null controls this turn were **0.9048** (noisy worker)
+and **0.9336** (`gethostbyname`, even on a good worker). **Half of this ledger's rejections are decided
+by margins smaller than the harness noise floor I just measured.**
+
+### Ranked reopen candidates (proxy = largest per-op time quoted in the row)
+
+Ranking by *self-time* requires `perf`, which is blocked (bd-3dxo1a). The defensible proxy available
+today is the biggest per-op figure the row itself quotes — the frame the REJECT gates:
+
+| frame (quoted) | row | rejected lever |
+|---|---|---|
+| **60.40 ms** | L2938 | lock-free `native_stdio` FILE*-cache — "~0-gain; masked by main registry lock" |
+| 158.8 µs | L7574 | `bd-f874go` fallback-table exact hot-slot |
+| 118.2 µs | L6001 | deployed calloc tombstone compaction |
+| 106.9 µs | L7619 | `bd-f874go` strict calloc one-slot recycle |
+| 97.6 µs | L3248 | regex build-bulk-table-once-per-search — "~0-gain (REVERTED)" |
+| 40.3 µs | L6713 | default hot-hit `stat` bypass |
+| 31.5 µs | L6805 | passwd parser |
+| 4.3 µs | L2960 | `fputs` raw registered-stream bypass — "1.050x vs ORIG" |
+| 3.9 µs | L2911 | `fputs` write-stream TLS pointer cache — "1.106x smoke" |
+| 3.6 µs | L2508 | `fmemopen("w")` per-stream write cursor — "0.984x vs ORIG" |
+
+**THE #1 CANDIDATE IS ALREADY PROVEN.** L2938 was rejected on a **56.7 ms → 60.4 ms** delta, on a bench
+whose own recorded spread for the same arm is **15–74 ms**. I reopened it on 2026-07-09 and shipped
+`ad465633f`: multi-threaded `fgetc` **17.5-18.7x faster**, fl-vs-glibc gap **55x → 2.96x**. That is
+this ledger's analogue of frankenredis's 7.8% row, and the ranking put it at the top independently.
+`fputs` L2960 (1.050x) and L2911 (1.106x) are the same family and the same margin class — both sit
+inside the null floor I measured (0.9048/0.9336) and neither carries a sha256, self-time, cv or null.
+Filed: **bd-fw52ov** (L3248 regex), **bd-alkove** (L6713 + L6805). The malloc-family rows (L7574,
+L6001, L7619) are **cod's lane** — flagged, not claimed.
+
+### Segment membership — the answer to "with a null control in place you can now trust the answer"
+
+**There is no null control in place.** I grepped all three of cod's segment rows for
+`null control|A/A|same arm against itself`:
+
+| row | null-control mentions |
+|---|---|
+| L14546 (membership 1.708 ns) | **0** |
+| L14585 (membership 1.116 ns) | **0** |
+| L14691 (membership 0.985 ns, pinned, 134M ops) | **0** |
+
+So: the **point estimate stands and clears the bar** — segment bitmap **0.985 ns** vs the **9.79 ns**
+fallback table, **6.21x**, with `segment_bitmap_profile_batch` at **96.67% self-time** over 1,507
+samples. But the *rejections*, which were made on a `<5% all-CV` rule, ran **without an A/A floor**.
+Under the rule now in force (`every REJECT records … the null-control ratio`) those three closures are
+**unprovenanced**. And there is a specific reason to suspect the gate rather than the lever: I measured
+a paired null of **0.9336** for `gethostbyname` on a *good* worker — an identical arm beating itself by
+6.6% — which is the same order as the CV that failed the bitmap.
+
+**Concrete, cheap next action (cod's lane, bd-r5bgws):** add `paired(bitmap, bitmap)` to
+`segment_bitmap_integrity` and report its ratio + cv. If the null is tight, the bitmap's 9.87% CV is
+real dispersion of a sub-nanosecond op and the `<5%` gate should be replaced by a paired-CI or
+absolute-jitter criterion (bd-t43kz2; absolute jitter is bitmap **0.097 ns** vs table **0.168 ns** —
+the *faster* arm is the *steadier* one). If the null is loose, the entire stability gate was measuring
+harness bias and all three rejections dissolve. **Either way it is one bench run, not a re-derivation.**
+I am not running it: `malloc_bench` is Swing-2 execution, cod's lane, and cod has committed there twice
+in the last two hours (`2ff083925`, `8ba788f83`).
+
+- **Wiring remains closed on its own evidence**, independent of all of the above: L14063 records that
+  the production 4 MiB segment heap **lost 6.1-7.7%** to the retained malloc/free path, code reverted,
+  after its retry-condition (the membership proof) had been satisfied. Cheap membership does not imply
+  a winning wiring; that was measured.
+- **PROVENANCE of this row:** no measurement, no binary, no worker. All figures are (a) machine-extracted
+  counts over `docs/NEGATIVE_EVIDENCE.md` at commit `c4f694cd1`, reproducible by the script in the
+  commit message, and (b) quotations from cod's rows L14063/L14546/L14585/L14691 with attribution.
+  **self-time: blocked (bd-3dxo1a).**
