@@ -52,6 +52,16 @@ name = "ip_fmt_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[example]]
+name = "gethostbyname_needle_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
+name = "getnameinfo_ab"
+harness = false
+required-features = ["abi-bench"]
+
 [[bench]]
 name = "string_bench"
 harness = false

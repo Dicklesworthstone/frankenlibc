@@ -6,6 +6,59 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED): `getnameinfo` numeric path stops allocating two `String`s per call — deployed 1.20x, kernel 19.43x, byte-identical (netdb String-elision vein)
+
+- **LEVER.** The AF_INET `getnameinfo` numeric render did `ip.to_string()` + `port.to_string()` per
+  call — two `String` heap allocations through the interposed allocator, made only to copy the bytes
+  into the caller's C buffer and drop them. Numeric `getnameinfo` does **no** file I/O, so those
+  allocations are a real fraction of the call (unlike the resolution-dominated `gethostbyname`
+  needle below). Now the path formats into two function-scope stack buffers (`write_ipv4_text` +
+  new `write_u16_dec`) and binds `host_text`/`serv_text` as `Cow<str>` (borrowed for AF_INET + every
+  port render, owned only for the rarer AF_INET6 host). `write_c_buffer` already took `&str`, so the
+  stack slice deref-coerces in with zero downstream change.
+- **MEASURED** (`examples/getnameinfo_ab.rs`, interleaved paired A/B in ONE binary, order alternated
+  every sample, `black_box` on input + result; worker **vmi1149989**; loopback `127.0.0.1:80`,
+  `NI_NUMERICHOST|NI_NUMERICSERV`):
+  - **NULL CONTROL deployed (cand vs cand): median 0.9907, cv 16.08%** — the per-function floor.
+    (First run had `DEPLOYED_REPS=20` → null 0.8637 at cv **77%**; the null control CORRECTLY flagged
+    the harness, so I raised reps 20→400 to lengthen each sample ~30µs→560µs and crush the jitter —
+    fixed the harness, not the lever. cv fell 77%→16%.)
+  - **DEPLOYED getnameinfo: median 0.8317 (1.20x faster), cv 21.27%** — clearly below the 0.9907 null
+    floor (16% separation); ~357 ns/call saved (orig 2030.8 / cand 1673.2 ns).
+  - **KERNEL numeric alloc: median 0.0515 (19.43x), cv 43.63%**, null 0.9978 — the two `String`s cost
+    ~258 ns vs ~13 ns for the stack formatters. This is the self-time evidence (profiling blocked,
+    bd-3dxo1a): the elided allocations are ~13% of the deployed call.
+  - Binary sha256: not captured (rch retrieval did not surface the example binary; worker + cv + null
+    median recorded per LEDGER rule). self-time: blocked (bd-3dxo1a); kernel arm stands in.
+- **BYTE-IDENTICAL.** `verify()` asserts fl == host glibc (dlmopen `LM_ID_NEWLM`) on host+serv strings
+  before timing (`host="127.0.0.1" serv="80"`); gate `getnameinfo_differential_fuzz` GREEN (1 passed,
+  4.10s) + `resolv_abi_test` (7) + `conformance_diff_getaddrinfo` (1) + `conformance_diff_netdb_aliases`
+  (182). `write_u16_dec` is byte-identical to `u16::to_string()` (no leading zeros, `"0"` for zero).
+- **SURFACED, NOT CLAIMED (separate bigger lever).** fl `getnameinfo` cand is **1673 ns vs host glibc
+  46 ns = 36x slower** even after this win. The residual is ~1300 ns of Resolver-family membrane
+  bookkeeping (`resolver_stage_context` + `decide` + `observe` + `record_resolver_stage_outcome`),
+  NOT allocation — the Resolver family is one of the 10 deliberately OMITTED from the strict
+  `observe()` fast-path (it is normally syscall/validation-based), but the NUMERIC path does no
+  syscall, so a numeric-mode fast-path is the real domination lever. Filed separately; touches
+  runtime_policy, out of scope for this byte-identical commit.
+
+## 2026-07-10 (cc_fl / BlackThrush) — HONEST NON-CLAIM (byte-identical, bundled): `gethostbyname` needle borrow — kernel 17.47x REAL, but DEPLOYED sits INSIDE the per-function null floor (bd-veb6ve)
+
+- **LEVER.** `resolve_gethostbyname_target` did `name_cstr.to_bytes().to_vec()` per call — one `Vec`
+  heap allocation — only to copy the bytes into the TLS hostent a moment later. Now it borrows the
+  needle. Byte-identical (`verify()` fl == host glibc on address + canonical name; exit 0).
+- **MEASURED** (`examples/gethostbyname_needle_ab.rs`, worker hz2, same interleaved paired substrate):
+  - **KERNEL needle alloc: median 0.0572 (17.47x), cv 6.07%**, null control **1.0000** — the isolated
+    `Vec` removal is real and large (orig 47.3 ns / cand 2.7 ns).
+  - **NULL CONTROL deployed (cand vs cand): median 0.9397, cv 21.81%** — an A/A arm beat itself by 6%.
+  - **DEPLOYED gethostbyname: median 0.9198, cv 19.84%** — INSIDE the 0.9397 null floor. **Not a
+    claimable deployed win.** `gethostbyname` is resolution-dominated (~3000 ns/call); the removed
+    `Vec` is ~1.2% of it. The null control did its job: it declines a 17x-looking lever whose deployed
+    footprint is noise.
+- **DISPOSITION.** Kept in the same commit as the getnameinfo win because it is byte-identical, in the
+  same file, and the same vein (stop allocating temporaries on netdb formatting) — but the deployed
+  number is explicitly NOT claimed. bd-veb6ve resolved: kernel-proven, deployed-inside-floor.
+
 ## 2026-07-09 - LANDED resolver protocol parsed lookup index - 17.58x vs ORIG, conformance green
 
 - **PROFILE ROUTE (Codex, `AGENT_NAME=codex-libc-cod`):** reread this ledger

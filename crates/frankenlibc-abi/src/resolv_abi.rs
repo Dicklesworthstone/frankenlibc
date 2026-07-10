@@ -10,6 +10,7 @@
 #![allow(clippy::int_plus_one)]
 
 #[cfg(not(feature = "owned-tls-cache"))]
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
 use std::mem::{align_of, size_of};
@@ -739,6 +740,25 @@ fn write_ipv4_text(ip: Ipv4Addr, buf: &mut [u8; 15]) -> &[u8] {
     &buf[..n]
 }
 
+/// Format `v` in decimal into `buf`, returning the written ASCII bytes as `&str`. Byte-identical
+/// to `u16::to_string()` (no leading zeros, `"0"` for zero) but without the per-call `String` heap
+/// allocation — which, through the interposed allocator, costs a malloc/free pair on every
+/// `getnameinfo` port render. 5 bytes is the maximum (`65535`).
+fn write_u16_dec(v: u16, buf: &mut [u8; 5]) -> &str {
+    let mut i = buf.len();
+    let mut n = v;
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    // SAFETY-free: only ASCII digits were written; from_utf8 on `[b'0'..=b'9']` never fails.
+    core::str::from_utf8(&buf[i..]).expect("ascii digits")
+}
+
 /// Bench-only: reconstruct the per-call `Ipv4Addr::to_string()` heap allocation that
 /// `write_ipv4_text` replaced, so the `frankenlibc_legacy_orig` arm can price this lever in the
 /// SAME binary.
@@ -746,6 +766,27 @@ fn write_ipv4_text(ip: Ipv4Addr, buf: &mut [u8; 15]) -> &[u8] {
 pub fn bench_legacy_ip_to_string(octets: [u8; 4]) {
     let text = Ipv4Addr::from(octets).to_string();
     std::hint::black_box(&text);
+}
+
+/// Bench-only: reconstruct the two per-call `String` allocations (`ip.to_string()` +
+/// `port.to_string()`) that the `getnameinfo` AF_INET numeric path performed before the stack
+/// formatters landed, so the `orig` arm can price this lever in the SAME binary.
+#[doc(hidden)]
+pub fn bench_legacy_getnameinfo_numeric_alloc(octets: [u8; 4], port: u16) {
+    let host = Ipv4Addr::from(octets).to_string();
+    let serv = port.to_string();
+    std::hint::black_box((&host, &serv));
+}
+
+/// Bench-only: the deployed allocation-free numeric render (both stack formatters), so the paired
+/// sampler can price the CAND kernel in the SAME binary.
+#[doc(hidden)]
+pub fn bench_getnameinfo_numeric_stack(octets: [u8; 4], port: u16) -> usize {
+    let mut ipv4_buf = [0u8; 15];
+    let mut port_buf = [0u8; 5];
+    let ip_bytes = write_ipv4_text(Ipv4Addr::from(octets), &mut ipv4_buf);
+    let serv = write_u16_dec(port, &mut port_buf);
+    std::hint::black_box(ip_bytes).len() + std::hint::black_box(serv).len()
 }
 
 /// Bench-only: the deployed allocation-free formatter, exposed so the paired sampler can measure
@@ -1440,18 +1481,35 @@ fn resolve_gethostbyname_ipv4(node: &str) -> Option<Ipv4Addr> {
     }
 }
 
-fn resolve_gethostbyname_target(name: Option<&CStr>, repair: bool) -> Option<(Vec<u8>, Ipv4Addr)> {
+/// Borrowed: the resolved name aliases `name` (or is the `'static` repair default), so no `Vec` is
+/// allocated per `gethostbyname` call. `populate_tls_hostent` / `write_reentrant_hostent` copy the
+/// bytes out immediately, so the borrow never outlives the caller's C string.
+fn resolve_gethostbyname_target<'a>(
+    name: Option<&'a CStr>,
+    repair: bool,
+) -> Option<(&'a [u8], Ipv4Addr)> {
     if let Some(name_cstr) = name
         && let Ok(node) = name_cstr.to_str()
         && let Some(v4) = resolve_gethostbyname_ipv4(node)
     {
-        return Some((name_cstr.to_bytes().to_vec(), v4));
+        return Some((name_cstr.to_bytes(), v4));
     }
     if repair {
         global_healing_policy().record(&HealingAction::ReturnSafeDefault);
-        return Some((b"localhost".to_vec(), Ipv4Addr::LOCALHOST));
+        return Some((b"localhost".as_slice(), Ipv4Addr::LOCALHOST));
     }
     None
+}
+
+/// Bench-only: reconstruct the per-call `to_vec()` needle allocation that
+/// `resolve_gethostbyname_target` no longer performs.
+///
+/// # Safety
+/// `name` must be a NUL-terminated C string.
+#[doc(hidden)]
+pub unsafe fn bench_legacy_gethostbyname_needle_alloc(name: *const c_char) {
+    let owned = unsafe { CStr::from_ptr(name) }.to_bytes().to_vec();
+    std::hint::black_box(&owned);
 }
 
 #[inline]
@@ -2681,9 +2739,15 @@ pub unsafe extern "C" fn getnameinfo(
     }
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
 
+    // Stack scratch for the numeric renders, declared in function scope so the borrowed `Cow`
+    // slices below outlive the `write_c_buffer` calls. The AF_INET path and every port render
+    // borrow these buffers instead of allocating a `String` per call.
+    let mut ipv4_buf = [0u8; 15];
+    let mut port_buf = [0u8; 5];
+
     // SAFETY: caller provides valid sockaddr for given salen.
     let family = unsafe { (*sa).sa_family as c_int };
-    let (host_text, serv_text) = match family {
+    let (host_text, serv_text): (Cow<str>, Cow<str>) = match family {
         libc::AF_INET => {
             if (salen as usize) < size_of::<libc::sockaddr_in>() {
                 record_resolver_stage_outcome(
@@ -2701,7 +2765,13 @@ pub unsafe extern "C" fn getnameinfo(
             // Read raw bytes via to_ne_bytes to get [a,b,c,d] in memory order.
             let ip = Ipv4Addr::from(sin.sin_addr.s_addr.to_ne_bytes());
             let port = u16::from_be(sin.sin_port);
-            (ip.to_string(), port.to_string())
+            let ip_bytes = write_ipv4_text(ip, &mut ipv4_buf);
+            // SAFETY-free: write_ipv4_text emits only ASCII `[0-9.]`.
+            let ip_str = core::str::from_utf8(ip_bytes).expect("ascii ipv4");
+            (
+                Cow::Borrowed(ip_str),
+                Cow::Borrowed(write_u16_dec(port, &mut port_buf)),
+            )
         }
         libc::AF_INET6 => {
             if (salen as usize) < size_of::<libc::sockaddr_in6>() {
@@ -2738,7 +2808,10 @@ pub unsafe extern "C" fn getnameinfo(
                 ));
             }
             let port = u16::from_be(sin6.sin6_port);
-            (host_text, port.to_string())
+            (
+                Cow::Owned(host_text),
+                Cow::Borrowed(write_u16_dec(port, &mut port_buf)),
+            )
         }
         _ => {
             record_resolver_stage_outcome(
@@ -3080,7 +3153,7 @@ pub unsafe extern "C" fn gethostbyname(name: *const c_char) -> *mut c_void {
     };
 
     // SAFETY: pointer returned references thread-local hostent storage.
-    let hostent_ptr = unsafe { populate_tls_hostent(&resolved_name, addr) };
+    let hostent_ptr = unsafe { populate_tls_hostent(resolved_name, addr) };
     unsafe { set_h_errnop(ptr::null_mut(), 0) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, false);
     hostent_ptr
@@ -3132,7 +3205,7 @@ pub(crate) unsafe fn gethostbyname_r_impl(
     };
 
     // SAFETY: all pointers/length validated within helper.
-    match unsafe { write_reentrant_hostent(&resolved_name, addr, result_buf, buf, buflen, result) }
+    match unsafe { write_reentrant_hostent(resolved_name, addr, result_buf, buf, buflen, result) }
     {
         Ok(()) => {
             // SAFETY: optional h_errno pointer from caller.
