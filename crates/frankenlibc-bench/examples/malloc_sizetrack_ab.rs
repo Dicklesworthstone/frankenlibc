@@ -8,10 +8,13 @@
 //!
 //!   TABLE:  fallback_insert_sized(ptr,sz) + fallback_size(ptr) + fallback_remove(ptr)
 //!   HEADER: store sz at ptr[-8] + read ptr[-8] + read ptr[-8]   (the swing-2 op)
+//!   GUARDED_HEADER: TABLE exact-start proof + simulated header read
 //!
 //! Same set of real host-malloc'd pointers for both, so only the size-tracking scheme
 //! differs. If TABLE >> HEADER by ~the full malloc gap, swing-2 is validated; if the
 //! delta is small, the malloc cost is diffuse and swing-2 caps at a modest win.
+//! GUARDED_HEADER measures the currently provable safe transition: do not dereference
+//! header metadata until the no-deref fallback table proves exact pointer membership.
 //!
 //! Run: cargo run --release --example malloc_sizetrack_ab --features abi-bench
 
@@ -32,15 +35,17 @@ fn main() {
     const N: usize = 256;
     let sizes: [usize; 4] = [16, 24, 64, 256];
     let mut blocks: Vec<Vec<u8>> = (0..N).map(|i| vec![0u8; sizes[i % 4]]).collect();
-    let ptrs: Vec<*mut libc::c_void> =
-        blocks.iter_mut().map(|b| b.as_mut_ptr() as *mut libc::c_void).collect();
+    let ptrs: Vec<*mut libc::c_void> = blocks
+        .iter_mut()
+        .map(|b| b.as_mut_ptr() as *mut libc::c_void)
+        .collect();
 
     // Header backing: one usize per pointer (simulates the inline size slot at ptr[-8]).
     let mut header: Vec<usize> = vec![0usize; N];
 
     let iters = 2000u64;
     let rounds = 100;
-    let (mut tv, mut hv) = (Vec::new(), Vec::new());
+    let (mut tv, mut hv, mut ghv) = (Vec::new(), Vec::new(), Vec::new());
 
     // Warm the table once (insert then remove) so its slots/pages are faulted in.
     for (k, &p) in ptrs.iter().enumerate() {
@@ -75,6 +80,29 @@ fn main() {
             }
         }
         hv.push(t.elapsed().as_nanos() as f64 / (iters * N as u64) as f64);
+
+        // GUARDED_HEADER: the only safe transition currently available without new
+        // metadata. The existing table proves exact-start membership before the
+        // simulated header is read, so this path is no-fault for arbitrary pointers.
+        let t = Instant::now();
+        for _ in 0..iters {
+            for (k, &p) in ptrs.iter().enumerate() {
+                unsafe {
+                    let slot = header.as_mut_ptr().add(k);
+                    std::ptr::write_volatile(slot, sizes[k % 4]);
+                }
+                m::fallback_insert_sized_for_bench(p, sizes[k % 4]);
+                if m::fallback_size_for_bench(p).is_some() {
+                    unsafe {
+                        let slot = header.as_ptr().add(k);
+                        std::hint::black_box(std::ptr::read_volatile(slot));
+                        std::hint::black_box(std::ptr::read_volatile(slot));
+                    }
+                }
+                std::hint::black_box(m::fallback_remove_sized_for_bench(p));
+            }
+        }
+        ghv.push(t.elapsed().as_nanos() as f64 / (iters * N as u64) as f64);
     }
 
     // STATS: the per-alloc+free flat-combining stats recorders (HTM + snapshot-discard).
@@ -102,14 +130,29 @@ fn main() {
         gv.push(t.elapsed().as_nanos() as f64 / (iters * N as u64) as f64);
     }
     let guard = pctl(&gv, 0.5);
-    println!("GUARD_AB reentry_enter+exit={guard:.2}ns/call (fs read + slot cache + depth CAS + drop)");
+    println!(
+        "GUARD_AB reentry_enter+exit={guard:.2}ns/call (fs read + slot cache + depth CAS + drop)"
+    );
 
     let table = pctl(&tv, 0.5);
     let head = pctl(&hv, 0.5);
-    println!("SIZETRACK_AB table={table:.2} header={head:.2} header/table={:.3} table_saves={:.2}ns/op", head / table, table - head);
+    let guarded_head = pctl(&ghv, 0.5);
+    println!(
+        "SIZETRACK_AB table={table:.2} header={head:.2} header/table={:.3} table_saves={:.2}ns/op",
+        head / table,
+        table - head
+    );
+    println!(
+        "SIZETRACK_GUARDED_HEADER_AB table={table:.2} guarded_header={guarded_head:.2} guarded/table={:.3} guarded_tax={:.2}ns/op",
+        guarded_head / table,
+        guarded_head - table
+    );
     println!("STATS_AB record_alloc+free={stats:.2}ns/alloc+free-pair (flat-combining HTM + discarded snapshot)");
     println!(
         "  => swing-2 (inline header) can eliminate ~{:.1}ns of the per-alloc+free size-tracking cost (table {table:.2}ns -> header {head:.2}ns).",
         table - head
+    );
+    println!(
+        "  => existing-table guarded header changes table {table:.2}ns -> guarded {guarded_head:.2}ns; this is a safety proof only, not a production speedup."
     );
 }
