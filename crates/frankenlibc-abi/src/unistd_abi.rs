@@ -26566,7 +26566,13 @@ pub unsafe extern "C" fn getprotobyname_r(
         return libc::EINVAL;
     }
 
-    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+    // Borrowed, allocation-free needle read. `read_c_string_bytes` is
+    // `read_c_string_bytes_ref(..).to_vec()`: it malloc'd a `Vec` for the name on every call.
+    // The slice is only read inside this call (the lookup compares it, then bytes are copied
+    // into the caller buffer), so it never outlives `name` — exactly what
+    // `read_c_string_bytes_ref` requires.
+    // SAFETY: same bounded-read contract (rejects non-NUL-terminated input).
+    let Some(needle) = (unsafe { read_c_string_bytes_ref(name) }) else {
         return libc::EINVAL;
     };
 
@@ -26581,7 +26587,7 @@ pub unsafe extern "C" fn getprotobyname_r(
     // `Vec<u8>` plus a `Vec<Vec<u8>>` of aliases, i.e. 3+ malloc/free pairs per call
     // through the interposed allocator. A `perf` frame table put ~92% of this function's
     // self time in allocator bookkeeping.
-    match crate::resolv_abi::with_protocol_entry_by_name(needle.as_slice(), |entry| unsafe {
+    match crate::resolv_abi::with_protocol_entry_by_name(needle, |entry| unsafe {
         fill_protoent_r(
             &entry.name,
             entry.number,

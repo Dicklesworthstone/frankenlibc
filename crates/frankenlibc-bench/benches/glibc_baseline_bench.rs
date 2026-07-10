@@ -858,11 +858,40 @@ fn bench_resolv_services_protocols_abi(c: &mut Criterion) {
             },
         );
 
+        // ORIG for the argument-allocation lever: indexed + borrowed entry, but a `Vec` per
+        // C-string argument.
         bench_op(
             &mut group,
             BenchMeta {
                 profile_id: "getservbyname_r_http_tcp",
                 impl_label: "frankenlibc_legacy_orig",
+                api_family: "resolver",
+                symbol: "getservbyname_r",
+                workload: "reentrant lookup http/tcp into caller buffer",
+                parity_proof_ref: "tests/artifacts/perf/bd-9ran7n-byte-decimal-parser.md",
+            },
+            || {
+                let rc = unsafe {
+                    frankenlibc_abi::inet_abi::getservbyname_r_allocating_args_for_bench(
+                        service.as_ptr(),
+                        proto.as_ptr(),
+                        (&raw mut r_servent).cast::<c_void>(),
+                        r_buf.as_mut_ptr(),
+                        r_buf.len(),
+                        (&raw mut r_result).cast::<*mut c_void>(),
+                    )
+                };
+                black_box(rc);
+                black_box(r_result);
+            },
+        );
+
+        // Historical anchor: the pre-index arm that re-read /etc/services per call.
+        bench_op(
+            &mut group,
+            BenchMeta {
+                profile_id: "getservbyname_r_http_tcp",
+                impl_label: "frankenlibc_legacy_fs",
                 api_family: "resolver",
                 symbol: "getservbyname_r",
                 workload: "reentrant lookup http/tcp into caller buffer",

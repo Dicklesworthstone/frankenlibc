@@ -14224,3 +14224,91 @@ Surveyed deployed fl swprintf vs glibc (dlmopen LM_ID_NEWLM) with fixed-arg sign
   **(3) `getaddrinfo` profile reuse. (4) cross-family NSS result caching with a fresh comparator.**
 - **Reproducer:** `rch exec -- cargo bench -p frankenlibc-bench --features abi-bench --bench
   glibc_baseline_bench getservbyport_80_tcp` (4 arms, one binary). Run the row in isolation.
+
+## 2026-07-10 (cc_fl / BlackThrush) — WIN (SHIPPED) + 2 SELF-CORRECTIONS: reentrant `_r` argument reads are allocation-free — 1.93-1.99x vs ORIG, 5.50-6.17x faster than host glibc (bd-77h82y); bd-rh3gc8 INVALID; the `getenv` lever is worth 0.11%
+
+- **NEGATIVE-EVIDENCE FIRST.** Ledger-grepped `fill_servent_storage|fill_protoent_r|with_tls_servent|
+  read_c_string_bytes|read_bounded_cstr`. No prior attempt or rejection. Retried nothing CLOSED
+  (`strchr` SSE4.2 explicit-length scanner; portable-SIMD string residuals wmemchr/wcsnlen/strrchr,
+  parked; `ENVIRON_EPOCH`/`OnceLock` env snapshot; `stat` elision). Stayed out of `malloc_abi.rs`.
+- **SELF-CORRECTION 1 — bd-rh3gc8 IS INVALID; I FILED IT ON A GUESS.** The 2026-07-10 bd-xmng5n row
+  claimed "`fill_servent_storage` / `fill_protoent_r`'s TLS storage still allocates (alias vector +
+  string buffers)". **False, by source.** `ServentTlsStorage`/`ProtoentTlsStorage` are fixed arrays
+  (`name: [c_char; 256]`, `alias_buf: [c_char; NETDB_ALIAS_BYTES]`,
+  `aliases: [*mut c_char; NETDB_MAX_ALIASES + 1]`), and `copy_to_cchar_buf` / `fill_alias_table` copy
+  into them. The fill path performs **zero** allocations. Bead closed as invalid; do not work it.
+- **SELF-CORRECTION 2 — THE `getenv` LEVER IS WORTH <= 0.11%, MEASURED, NOT "ABSENT".** Rather than
+  restate "it doesn't appear", the banked services `perf.data` was re-reported with
+  `--percent-limit 0`. Every symbol on the env-read path, self%:
+  `stdlib_abi::native_getenv_raw` **0.05**, `getenv` **0.05**,
+  `std::sys::env::unix::getenv::{closure#0}` **0.01**, `std::env::_var_os` **0.00**
+  => **~0.11% total.** The userspace `stat` path is `std::sys::fs::unix::try_statx` 0.03 + `statx`
+  0.03 + `std::sys::fs::metadata` 0.02 = **0.08%** (plus ~1.6% unresolved kernel frames). Removing
+  `getenv` entirely buys **<= 1.001x**. It is not a lever.
+  **ALSO:** `native_getenv_raw` is FrankenLibC's own symbol, so `std::env::var_os` DOES bind fl's
+  `getenv` in this binary. That **refutes the soundness argument I gave in the bd-qds9jk row**
+  ("`std::env::set_var` binds glibc's `setenv`, so `ENVIRON_EPOCH` would never bump"). An
+  `ENVIRON_EPOCH` fence may well have been sound. The conclusion is unchanged and the NO-RETRY
+  stands, but for the *correct* reason: **the target frame is 0.11%**, not because the fence was
+  unsound. Recorded so nobody inherits the bad inference.
+- **MECHANISM (source-provable; no new profile — see the disk constraint below).**
+  `inet_abi::read_bounded_cstr` is literally `read_bounded_cstr_ref(ptr)?.to_vec()`, and
+  `unistd_abi::read_c_string_bytes` is `read_c_string_bytes_ref(ptr)?.to_vec()`. Every reentrant
+  resolver `_r` call therefore malloc'd one `Vec` per C-string argument — two for
+  `getservbyname_r` (name + protocol), one each for `getservbyport_r` (protocol) and
+  `getprotobyname_r` (name). Allocation-free `_ref` siblings already existed (added for
+  `inet_pton`, "209ns -> 134ns"). Given the two banked frame tables (allocator bookkeeping ~91-92%
+  of self time on these rows), this is the residual allocator traffic.
+- **LEVER (one).** Switch those four argument reads to the borrowing `_ref` variants. Sound because
+  each slice is only READ inside the call — the lookup compares it and copies bytes out into the
+  caller buffer — so it never outlives `name`/`proto`, which is exactly `read_bounded_cstr_ref`'s
+  documented contract. Bounded-read safety is identical (both reject non-NUL-terminated input via
+  `scan_c_string` + `known_remaining`). No signature, return-code, or buffer-layout change.
+- **MEASURED 3-WAY (4 arms), ONE BINARY / ONE `rch exec` INVOCATION / ONE WORKER (`vmi1227854`).**
+  `frankenlibc_legacy_orig` = `getservbyname_r_allocating_args_for_bench`: it rebuilds and drops the
+  two removed argument `Vec`s and then calls the deployed path, so it reconstructs the pre-lever
+  allocation traffic in-process. It **overstates** ORIG by the deployed path's two borrowed reads
+  (a few ns), so the measured ratio is a slight UNDER-estimate. `frankenlibc_legacy_fs` = pre-index
+  anchor.
+
+  | pass | fl (new) | legacy_orig (Vec args) | legacy_fs (pre-index) | host_glibc | vs ORIG | vs glibc |
+  |---|---|---|---|---|---|---|
+  | 1 | **1031.52** | 1995.20 | 33923.99 | 6359.70 | **1.93x** | **6.17x faster** |
+  | 2 | **1120.83** | 2227.71 | 34933.07 | 6162.31 | **1.99x** | **5.50x faster** |
+
+  (p50 ns/op; `RCH_REQUIRE_REMOTE=1`, `--profile release --sample-size 20 --warm-up-time 1
+  --measurement-time 2 --noplot`.) Cumulative for the row: **31.2-32.9x vs the pre-index arm**;
+  `getservbyname_r` has gone 34.0 µs -> 1.66 µs -> **1.03 µs** across this campaign.
+- **A/B SUBSTRATE (methodology alert compliance).** Both arms live in ONE binary and are registered
+  in the SAME criterion group, exercised within a SINGLE `rch exec` invocation, so worker identity
+  cancels inside every reported ratio. No ratio in this campaign was ever formed across two `rch`
+  invocations, and `git stash` was never used. The two passes above are independent **replications**
+  of an already same-binary ratio (1.93x, 1.99x), which additionally bounds within-run drift
+  (criterion runs group arms sequentially, not interleaved).
+- **CONFORMANCE GREEN (all remote, `rch exec` on `vmi1227854`, `RCH_REQUIRE_REMOTE=1`).**
+  `resolv_abi_test` **182 passed / 0 failed / 31 ignored** (both `*_track_overridden_*_backend`
+  freshness gates included); `inet_abi_test` **69 passed / 0 failed / 13 ignored**; byte-exact vs
+  live glibc: `conformance_diff_netdb_aliases` **1/1**, `conformance_diff_netdb_r_aliases` **1/1**,
+  `conformance_diff_protoent_r_aliases` **1/1**. `ubs` exit **0**. `rustfmt` applied to
+  `inet_abi.rs` (semantics-preserving; the benched code is byte-equivalent).
+- **PRE-EXISTING (not this change).** Full `unistd_abi_test` still aborts on the argp errno bug
+  (proven at `c1b03f89a`); `clippy -D warnings` still blocked by
+  `frankenlibc-core/src/math/exp.rs:815` (`eq_op` on the deliberate `z / z` NaN idiom).
+- **DISK CONSTRAINT (active).** `/` at 96%. **No local `cargo build/bench/test`.** Everything above
+  ran through `rch exec` with `RCH_REQUIRE_REMOTE=1` (verified `[RCH] remote vmi1227854`). This means
+  **`perf` frame tables cannot currently be captured**, so this lever deliberately chose a
+  source-provable mechanism (`.to_vec()` on the call path) over one needing a fresh profile. The two
+  banked frame tables (bd-qds9jk protocols, bd-xmng5n services) remain the evidence base — reuse
+  them, do not regenerate.
+- **NO-RETRY NOTE:** the resolver lookup path (all eight services+protocols entry points) is now
+  indexed, borrow-based, and allocation-free from argument read through result fill. Do not retry
+  parsed indexes, snapshot/generation caches, `getenv` snapshots, `stat` elision, or TLS-storage
+  preallocation (already fixed arrays). Ranked remaining:
+  **(1) `getaddrinfo` profile reuse. (2) cross-family NSS result caching with a fresh comparator.**
+  Both need a fresh frame table to pick the mechanism honestly — **blocked on the local-build/`perf`
+  constraint**; either relax it for one short profiling build or add a remote-`perf` path to `rch`.
+  **(3)** The same `_ref` swap applies to `if_nametoindex` (inet_abi:808) and `gethostbyname_r`
+  (inet_abi:1232), which still call the allocating `read_bounded_cstr` — out of the resolver lane,
+  cheap, and now trivially justified.
+- **Reproducer:** `rch exec -- cargo bench -p frankenlibc-bench --features abi-bench --bench
+  glibc_baseline_bench getservbyname_r_http_tcp` (4 arms, one binary, one invocation).

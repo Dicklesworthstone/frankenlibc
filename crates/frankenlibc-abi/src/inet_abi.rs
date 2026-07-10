@@ -1019,13 +1019,21 @@ pub unsafe extern "C" fn getservbyname_r(
         return libc::EINVAL;
     }
 
-    let Some(name_bytes) = (unsafe { read_bounded_cstr(name) }) else {
+    // Borrowed, allocation-free argument reads. `read_bounded_cstr` is
+    // `read_bounded_cstr_ref(..).to_vec()`: it malloc'd a `Vec` for the name AND another for
+    // the protocol on every call, which under the interposed allocator costs more than the
+    // indexed lookup itself (bd-qds9jk / bd-xmng5n frame tables: ~91% allocator bookkeeping).
+    // Both slices are only READ inside this call — the lookup compares them and copies bytes
+    // out — so they never outlive `name`/`proto`, exactly as `read_bounded_cstr_ref` requires.
+    // SAFETY: same bounded-read contract as `read_bounded_cstr` (rejects unterminated input).
+    let Some(name_bytes) = (unsafe { read_bounded_cstr_ref(name) }) else {
         return libc::EINVAL;
     };
     let proto_filter = if proto.is_null() {
         None
     } else {
-        let Some(proto_bytes) = (unsafe { read_bounded_cstr(proto) }) else {
+        // SAFETY: as above.
+        let Some(proto_bytes) = (unsafe { read_bounded_cstr_ref(proto) }) else {
             return libc::EINVAL;
         };
         Some(proto_bytes)
@@ -1042,57 +1050,53 @@ pub unsafe extern "C" fn getservbyname_r(
     // name `Vec`, a protocol `Vec`, and a `Vec<Vec<u8>>` of aliases on every call; a frame
     // table of this row put ~91% of self time in the interposed allocator's bookkeeping
     // (bd-xmng5n / bd-qds9jk). Packing semantics below are byte-for-byte unchanged.
-    let packed = crate::resolv_abi::with_service_entry_by_name(
-        name_bytes.as_slice(),
-        proto_filter.as_deref(),
-        |entry| {
-            let (svc_name, port, svc_proto) = (&entry.name, entry.port, &entry.protocol);
+    let packed = crate::resolv_abi::with_service_entry_by_name(name_bytes, proto_filter, |entry| {
+        let (svc_name, port, svc_proto) = (&entry.name, entry.port, &entry.protocol);
 
-            // Layout in caller buffer: name\0 proto\0 alias strings\0 <align> ptr[].
-            let name_len = svc_name.len() + 1; // +NUL
-            let proto_len = svc_proto.len() + 1;
-            let effective_buflen = effective_c_buffer_len(buf, buflen);
-            if name_len + proto_len > effective_buflen {
-                return libc::ERANGE;
-            }
+        // Layout in caller buffer: name\0 proto\0 alias strings\0 <align> ptr[].
+        let name_len = svc_name.len() + 1; // +NUL
+        let proto_len = svc_proto.len() + 1;
+        let effective_buflen = effective_c_buffer_len(buf, buflen);
+        if name_len + proto_len > effective_buflen {
+            return libc::ERANGE;
+        }
 
-            let name_ptr = buf;
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    svc_name.as_ptr() as *const c_char,
-                    name_ptr,
-                    svc_name.len(),
-                );
-                *name_ptr.add(svc_name.len()) = 0;
-            }
+        let name_ptr = buf;
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                svc_name.as_ptr() as *const c_char,
+                name_ptr,
+                svc_name.len(),
+            );
+            *name_ptr.add(svc_name.len()) = 0;
+        }
 
-            let proto_ptr = unsafe { buf.add(name_len) };
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    svc_proto.as_ptr() as *const c_char,
-                    proto_ptr,
-                    svc_proto.len(),
-                );
-                *proto_ptr.add(svc_proto.len()) = 0;
-            }
+        let proto_ptr = unsafe { buf.add(name_len) };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                svc_proto.as_ptr() as *const c_char,
+                proto_ptr,
+                svc_proto.len(),
+            );
+            *proto_ptr.add(svc_proto.len()) = 0;
+        }
 
-            let aliases_ptr = match unsafe {
-                pack_caller_aliases(buf, effective_buflen, name_len + proto_len, &entry.aliases)
-            } {
-                Some(p) => p,
-                None => return libc::ERANGE,
-            };
+        let aliases_ptr = match unsafe {
+            pack_caller_aliases(buf, effective_buflen, name_len + proto_len, &entry.aliases)
+        } {
+            Some(p) => p,
+            None => return libc::ERANGE,
+        };
 
-            let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
-            servent.s_name = name_ptr;
-            servent.s_aliases = aliases_ptr;
-            servent.s_port = port.to_be() as c_int;
-            servent.s_proto = proto_ptr;
+        let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
+        servent.s_name = name_ptr;
+        servent.s_aliases = aliases_ptr;
+        servent.s_port = port.to_be() as c_int;
+        servent.s_proto = proto_ptr;
 
-            unsafe { *result = result_buf };
-            0
-        },
-    );
+        unsafe { *result = result_buf };
+        0
+    });
 
     match packed {
         Ok(Some(rc)) => rc,
@@ -1127,10 +1131,13 @@ pub unsafe extern "C" fn getservbyport_r(
     }
 
     let port_host = u16::from_be(port as u16);
+    // Borrowed, allocation-free protocol read; see `getservbyname_r` above.
     let proto_filter = if proto.is_null() {
         None
     } else {
-        let Some(proto_bytes) = (unsafe { read_bounded_cstr(proto) }) else {
+        // SAFETY: same bounded-read contract as `read_bounded_cstr`; the slice is only read
+        // inside this call.
+        let Some(proto_bytes) = (unsafe { read_bounded_cstr_ref(proto) }) else {
             return libc::EINVAL;
         };
         Some(proto_bytes)
@@ -1141,62 +1148,90 @@ pub unsafe extern "C" fn getservbyport_r(
     // `std::fs::read("/etc/services")` + line-by-line scan. Match semantics unchanged
     // (port plus optional case-insensitive protocol filter, first match in file order).
     // Pack from the BORROWED entry; see `getservbyname_r` above.
-    let packed = crate::resolv_abi::with_service_entry_by_port(
-        port_host,
-        proto_filter.as_deref(),
-        |entry| {
-            let (svc_name, svc_proto) = (&entry.name, &entry.protocol);
+    let packed = crate::resolv_abi::with_service_entry_by_port(port_host, proto_filter, |entry| {
+        let (svc_name, svc_proto) = (&entry.name, &entry.protocol);
 
-            let name_len = svc_name.len() + 1;
-            let proto_len = svc_proto.len() + 1;
-            let effective_buflen = effective_c_buffer_len(buf, buflen);
-            if name_len + proto_len > effective_buflen {
-                return libc::ERANGE;
-            }
+        let name_len = svc_name.len() + 1;
+        let proto_len = svc_proto.len() + 1;
+        let effective_buflen = effective_c_buffer_len(buf, buflen);
+        if name_len + proto_len > effective_buflen {
+            return libc::ERANGE;
+        }
 
-            let name_ptr = buf;
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    svc_name.as_ptr() as *const c_char,
-                    name_ptr,
-                    svc_name.len(),
-                );
-                *name_ptr.add(svc_name.len()) = 0;
-            }
+        let name_ptr = buf;
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                svc_name.as_ptr() as *const c_char,
+                name_ptr,
+                svc_name.len(),
+            );
+            *name_ptr.add(svc_name.len()) = 0;
+        }
 
-            let proto_ptr = unsafe { buf.add(name_len) };
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    svc_proto.as_ptr() as *const c_char,
-                    proto_ptr,
-                    svc_proto.len(),
-                );
-                *proto_ptr.add(svc_proto.len()) = 0;
-            }
+        let proto_ptr = unsafe { buf.add(name_len) };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                svc_proto.as_ptr() as *const c_char,
+                proto_ptr,
+                svc_proto.len(),
+            );
+            *proto_ptr.add(svc_proto.len()) = 0;
+        }
 
-            let aliases_ptr = match unsafe {
-                pack_caller_aliases(buf, effective_buflen, name_len + proto_len, &entry.aliases)
-            } {
-                Some(p) => p,
-                None => return libc::ERANGE,
-            };
+        let aliases_ptr = match unsafe {
+            pack_caller_aliases(buf, effective_buflen, name_len + proto_len, &entry.aliases)
+        } {
+            Some(p) => p,
+            None => return libc::ERANGE,
+        };
 
-            let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
-            servent.s_name = name_ptr;
-            servent.s_aliases = aliases_ptr;
-            servent.s_port = port;
-            servent.s_proto = proto_ptr;
+        let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
+        servent.s_name = name_ptr;
+        servent.s_aliases = aliases_ptr;
+        servent.s_port = port;
+        servent.s_proto = proto_ptr;
 
-            unsafe { *result = result_buf };
-            0
-        },
-    );
+        unsafe { *result = result_buf };
+        0
+    });
 
     match packed {
         Ok(Some(rc)) => rc,
         Ok(None) => 0,
         Err(_) => libc::ENOENT,
     }
+}
+
+/// Bench-only: the immediately-previous `getservbyname_r` — indexed and borrowing the cache
+/// entry, but still building an owning `Vec` for each C-string argument. Reconstructs exactly
+/// the two removed allocations (name + protocol) and then runs the deployed path, so the
+/// `frankenlibc_legacy_orig` arm prices this lever in the SAME binary. It overstates ORIG by
+/// the deployed path's two borrowed reads (a few ns), so the measured ratio is a slight
+/// UNDER-estimate of the speedup.
+///
+/// # Safety
+/// Same contract as `getservbyname_r`.
+#[doc(hidden)]
+pub unsafe fn getservbyname_r_allocating_args_for_bench(
+    name: *const c_char,
+    proto: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if !name.is_null() {
+        // SAFETY: `getservbyname_r`'s contract for `name`.
+        let owned = unsafe { read_bounded_cstr(name) };
+        std::hint::black_box(&owned);
+    }
+    if !proto.is_null() {
+        // SAFETY: `getservbyname_r`'s contract for `proto`.
+        let owned = unsafe { read_bounded_cstr(proto) };
+        std::hint::black_box(&owned);
+    }
+    // SAFETY: arguments forwarded unchanged.
+    unsafe { getservbyname_r(name, proto, result_buf, buf, buflen, result) }
 }
 
 /// Bench-only: the pre-index `getservbyname_r` (per-call `std::fs::read("/etc/services")` +
