@@ -16524,3 +16524,34 @@ benchmark/workload (handed in) surfaces a function outside this closed set.
   could read the cached `cpu_id` directly and approach glibc parity. Not this turn.
 - **VEIN NOTE:** the vDSO symbol set is now `clock_gettime`/`clock_getres`/`gettimeofday`/`time`/
   `getcpu` — the full x86-64 vDSO. No further raw-syscall→vDSO route remains for time/sched.
+
+## 2026-07-11 (cc_fl) — PROFILE-FIRST negatives after the sched_getcpu win: adjacent raw-syscall wrappers are parity/cached (cc-getcpu-vdso-2026-07-11 follow-up)
+
+Profiled the raw-syscall-floor vein for more sched_getcpu-class levers. All dead ends — do NOT retry:
+
+- **`gettid` (glibc_internal_abi.rs) — PARITY, do NOT cache.** fl does a raw `SYS_gettid` per call.
+  Tempting to thread-local-cache the tid, BUT modern glibc's public `gettid()` is *itself* a bare
+  syscall wrapper (`INLINE_SYSCALL_CALL(gettid)` since 2.30) — it does NOT read the TCB cache, so it
+  stays correct after a raw `clone`/`fork` where the TCB tid isn't reset. fl's raw-syscall `gettid` is
+  therefore already AT PARITY. Caching would make fl faster than glibc but **diverge** (stale tid in a
+  fork child before the atfork reset, and after any raw-`clone`-created thread) — NOT byte-identical.
+  Same class of hazard that made glibc drop its `getpid` cache. RETRY ONLY IF a thread-local tid cache
+  is invalidated at EVERY thread-entry AND fork-child (fork's child branch at process_abi.rs:205 runs
+  `run_atfork_child` — reset must precede it), and even then it only *out-runs* glibc, not matches it.
+- **`getpagesize` / `sysconf(_SC_PAGESIZE)` — ALREADY CACHED.** `runtime_page_size` (unistd_abi.rs:172)
+  caches AT_PAGESZ in an `AtomicUsize` after one `/proc/self/auxv` read; per-call cost is a Relaxed
+  load. (Micro-nit: the one-time first call reads /proc/self/auxv rather than `raw_getauxval(AT_PAGESZ)`
+  like the vDSO path — one-time only, not a per-call lever.)
+- **vDSO symbol set now COMPLETE** (`clock_gettime`/`clock_getres`/`gettimeofday`/`time`/`getcpu`) — no
+  further raw-syscall→vDSO route remains for time/sched on x86-64.
+- **sched_getcpu residual (fl 19ns vs glibc 2ns) = the rseq `cpu_id` cache**, a thread-lifecycle lever
+  (register rseq at thread setup, read the cached cpu_id directly), NOT a clean single-turn change.
+- The vDSO per-call overhead (`*VDSO_SYMBOLS.get_or_init(...)` copies the ~56-byte struct + two
+  `vdso_resolution_enabled` atomic loads per call) is shared by all vDSO time fns; trimming it is a
+  sub-floor micro-opt across the whole family, not an above-floor lever.
+
+**Frontier position (cc lane):** clean single-turn byte-identical above-floor levers are exhausted for
+this session's veins (math membrane-bypass DONE; vDSO DONE; stdio fmemopen reads FLOOR — see
+cc-fread-mem-2026-07-11). Remaining named work is multi-turn: rseq (sched_getcpu parity), the malloc
+inline-header swing (capped ~8x, membrane-owner review — see docs/perf_next_architectural_swings.md),
+and accuracy-hard math (needs faithful fdlibm sources handed in).
