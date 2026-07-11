@@ -16449,3 +16449,44 @@ benchmark/workload (handed in) surfaces a function outside this closed set.
   Remote clippy was unavailable because `nightly-2026-04-28` on the worker lacks `cargo-clippy`.
   Fail-closed RCH rejected `cargo fmt --check` as a non-compilation command (`RCH-E301`); local
   `git diff --check` passed. No local Cargo fallback ran, and no allocator/string peer files changed.
+
+## 2026-07-11 (cc_fl) — SURFACE (byte-identical, NOT a clean win): fread-fmemopen pointer-keyed cursor fast path — 1t loses to glibc's bulk fread; 8t win unverifiable on saturated fleet (cc-fread-mem-2026-07-11)
+
+- **THE LEVER (the explicit fgetc-win follow-on).** `8cc0aced9`'s pointer-keyed fmemopen `fgetc`
+  cursor cache flagged `fread`/`fgets`/`getc` as "same floor, same cache applies (separate levers)".
+  `getc`/`getc_unlocked`/`fgetc_unlocked` already inherit it (they delegate to `fgetc`). Implemented the
+  `fread` half: `FastFixedMemRead::read_bytes` (atomic bulk sibling of `read_byte`; EOF flag set
+  identically — `true` iff request > bytes-available) + `try_fread_fast_fixed_mem_by_stream` (shares the
+  `FGETC_MEM_PTR_CACHE` slot+cursor) + `fread` reads via the lock-free atomic cursor instead of
+  `canonical_stream_id`'s native lock + `decide` + the `fast_fixed_mem_reads` map lock. Read-only mem
+  streams only (cursor registered iff `readable && !writable` ⇒ immutable snapshot); writable streams
+  keep the `sync_and_unregister` + `mem_read_into` path unchanged.
+- **BYTE-IDENTICAL — PROVEN (remote release+debug).** `fread_partial_differential_test` 1/0 (the exact
+  gate: `(ret, ftell, buf, eof)` vs glibc across partial-element / exact-fit / EOF / empty / size==0 /
+  nmemb==0), `stdio_abi_test` 256/0 (debug; 44 ignored hardened), `conformance_diff_stdio_ext` 3/0,
+  `conformance_diff_stdio_unlocked_io` 2/0, `conformance_diff_clearerr` 1/0,
+  `fmemopen_write_differential_test` 2/0. Correctness is not the issue.
+- **WHY NOT SHIPPED — NOT a clean median win.** Added an `STDIO_MT_FREAD` arm to
+  `stdio_mt_contention_bench` (CHUNK=64 ⇒ 64 `fread(buf,1,64,fp)` calls/stream, mirroring the fgetc
+  arm's 4096 fgetc). Same-worker same-process median (worker vmi1227854):
+  - **1t: fl 519.9µs vs glibc 376.6µs = 1.381x LOSS.** On the SAME run the fgetc arm WINS (fl 509.5 vs
+    glibc 555.1 = 0.918x). The contrast is load-robust: fl's per-call MT-safe cursor cost (atomic CAS +
+    two thread-local lookups + a wasted fd-cache-miss probe) amortizes over 4096 tiny `fgetc` calls but
+    NOT over 64 chunked `fread` calls — glibc's bulk `fread` (memcpy + single-threaded lock elision)
+    wins the uncontended race. Architectural per-op floor (same class as `cc-stdio-mt-2026-07-11`), not
+    closeable for large-chunk fread by this cache.
+  - **8t: fl 4220µs vs glibc 9998µs = 0.422x — UNVERIFIABLE.** Worker oversubscribed (glibc degraded
+    26x from 1t→8t, an impossible hardware result) ⇒ the "win" is a scheduling artifact, not a real
+    lock-contention signal. Baseline (worktree at `e739adf45` + the same bench arm) NEVER admitted —
+    fleet saturated 13+ consecutive `rch` attempts (`insufficient_slots=8`) — so the before/after delta
+    is UNMEASURED and a 1t regression vs the old fl path cannot be ruled out.
+- **REVERTED** (patch banked at scratch `fread_fmemopen_lever.patch`, +136/-0 over 2 files); tree left
+  clean. Mechanism (remove the global registry lock per fmemopen fread — the bd-hqo6b6 gap) is sound +
+  byte-identical; it's the large-chunk 1t economics + the un-measurable MT environment that block it,
+  not correctness.
+- **RETRY ONLY IF** a QUIET dedicated worker is available: re-measure before/after at BOTH 1t and 8t and
+  ship ONLY if 1t is ≥ neutral vs the old fl fread AND 8t is a genuine global-lock-contention win
+  (fl-old serialized on the global registry lock across independent streams, fl-new lock-free). Do NOT
+  ship on the 8t number alone from a loaded worker. `fgets`-fmemopen (the other follow-on) faces the
+  SAME 1t economics for line-sized reads plus extra newline/NUL/return-NULL correctness surface — lower
+  priority than fread was.
