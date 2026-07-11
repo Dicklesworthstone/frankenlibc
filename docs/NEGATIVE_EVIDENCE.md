@@ -16141,3 +16141,24 @@ sha256, self-time, cv or null.
   source is handed in, OR a faster correctly-rounded pow algorithm. Do not re-derive by reformulating
   `pow=exp(y·log x)` — `pow_fused` already IS the fused kernel and is bit-exact; a naive exp∘log form
   loses the double-double precision the same64 gate requires.
+
+## 2026-07-11 (cc_fl) — FRONTIER+HOLD: base-2/base-10 exp/log family confirmed-optimized; `pow` within-4-ULP option declined by maintainer (cc-explog2-2026-07-11)
+
+- **CODE-INSPECTION (no slot).** Checked the last unverified transcendental group — `exp2`/`log2`/
+  `exp10`/`log10` — for a naive/libm FORMULATION lever (the kind that flips fixably, unlike kernel-source
+  gaps). **All already optimized:** `exp2` = fused ARM `__exp2` kernel; `log2` = fused kernel +
+  profile-grid; `exp10` already does `2^(x·log2 10)` via fl's fast exp2 with extended-precision product
+  (≤4 ULP, float.rs:757); `log10` = `log()·LOG10_E` (fast ARM `__log`). No formulation lever remains.
+- **pow WITHIN-4-ULP OPTION — DECLINED.** The only fixable-in-principle path for the `pow` 1.29x loss is
+  a within-4-ULP reformulation `pow(x,y)=2^(y·log₂x)` via fl's fast exp2/log2 (mirroring `exp10`), avoiding
+  `pow_fused`'s double-double cost. Estimated payoff is only **~parity-to-slight-win** (log2+exp2 ≈ 8–9 ns
+  vs glibc 9.08 ns; beats fl's own `pow_fused` 11.7 ns but doesn't clearly beat glibc), and it requires
+  relaxing `pow`'s `same64` bit-exact gate to ≤4 ULP. **Maintainer chose HOLD** — not worth trading a
+  common function's correct-rounding for a parity-ish speedup. So `pow` stays bit-exact and 1.29x slower.
+- **TRANSCENDENTAL FRONTIER MAP COMPLETE (vs glibc 2.42):** shipped/winning — tan/sin/cos (FMA levers),
+  exp 0.72x, sincos 0.74x, exp2/log2/exp10/log10 (fused/fast-formulation), sinh/cosh/tanh/asinh/erf/
+  expm1/log1p/atan/atan2/cbrt/hypot/tgamma all <1.0x; parity — log; kernel-source-blocked (need glibc
+  source, none in-repo) — asin/acos 1.30x, pow 1.29x (maintainer-held bit-exact), Bessel j0/y0
+  accuracy-hard. **No clean tractable lever remains in the cc math lane.**
+- **RETRY ONLY IF:** a glibc-2.42 kernel source is handed in for a blocked fn, OR the maintainer reverses
+  the pow gate decision. Do not re-derive the base-2/base-10 formulations — confirmed optimal.
