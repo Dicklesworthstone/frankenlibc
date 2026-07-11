@@ -343,6 +343,8 @@ fn main() {
     // EUC-JP (Japanese) -> UTF-8: probe glibc speed + source validity (Hiragana is 2-byte).
     let eucjp_src = host_to(b"EUC-JP\0", &jp);
     run_conv(c, "eucjp_to_utf8", b"UTF-8\0", b"EUC-JP\0", &eucjp_src);
+    // ENCODE direction: UTF-8 -> EUC-JP (Japanese). `jp` is Hiragana (2-byte JIS X 0208 in EUC-JP).
+    run_conv(c, "utf8_to_eucjp", b"EUC-JP\0", b"UTF-8\0", &jp);
     // EUC-JP-MS (MS EUC-JP variant, same SS structure) -> UTF-8: gather generalization.
     let eucjpms_src = host_to(b"EUC-JP-MS\0", &jp);
     run_conv(
