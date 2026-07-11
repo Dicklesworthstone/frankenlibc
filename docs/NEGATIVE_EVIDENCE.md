@@ -16736,3 +16736,29 @@ SIMD-UTF-8-decode / table-compaction effort. iconv is confirmed: no clean single
   architectural — cp932_to_utf16le 1.67x (gather latency, gather already exists), eucjp(-ms)→utf8
   1.15–1.36x (SS2/SS3 scalar). No further clean encode-gather target (the 5 dbcs_encoder codecs are all
   covered now).
+
+## 2026-07-11 (cc_fl) — SURFACE (profile-first killed it): "eucjp SS-run SIMD" is a NON-LEVER — fl EUC-JP has no SS2 decode to accelerate (cc-iconv-eucjp-ss-2026-07-11)
+
+Investigated the eucjp/eucjpms residual (1.15x / 1.36x) as a candidate SS2/SS3-run SIMD lever
+(my earlier speculative note cc-iconv-cp949-simd assumed "SS2/SS3 scalar"). PROFILE-FIRST + code
+inspection killed it — do NOT attempt:
+
+- **The measured gap is NOT SS-related.** `iconv_glibc_bench`'s `eucjp_to_utf8` source is Hiragana
+  (2-byte JIS X 0208, lead 0xA4), which the `dbcs_simd` gather (mod.rs:46862, lead range 0xA1..=0xFE)
+  ALREADY handles. The 1.15x/1.36x is the 2-byte-gather-vs-glibc-SIMD architectural residual (same class
+  as cp932_to_utf16le 1.67x), not a scalar SS run.
+- **There is NO scalar SS2 run to accelerate byte-identically.** `EUC_JP_DBCS2` (6942 entries) has
+  **ZERO `0x8E**` keys** and no EUC-JP table maps half-width katakana (U+FF61..U+FF9F); `decode_eucjp`
+  has only one-byte / 0x8F-SS3 / LEAD2_DEFER-2-byte branches. So fl's EUC-JP decode returns EILSEQ for
+  an SS2 (0x8E) lead — there is no SS2 decode path. Enabling 0x8E in the gather's 2nd lead range would
+  gather `eucjp_dbcs2_decode_direct[0x8Exx] == 0` → break to scalar → same EILSEQ = a NO-OP.
+  Byte-identically accelerating a run that the scalar path doesn't produce is impossible; ADDING SS2
+  katakana support would change output (violates the byte-identical mandate) and is a correctness change,
+  not a perf lever.
+- **SS3 (0x8F, JIS X 0212) IS decoded** (3-byte, `EUC_JP_DBCS3`) but is a 3-byte structure the 2-byte
+  gather can't handle, and the bench source has none — not the measured gap either.
+
+**iconv frontier after the CP949 encode win (e43bc0e5b):** the ENCODE-gather vein is fully mined (all 5
+dbcs_encoder codecs). Every remaining iconv loser is architectural (gather already exists, glibc SIMD
+faster): cp932_to_utf16le 1.67x, eucjp(-ms)→utf8 1.15–1.36x. No clean single-turn iconv-SIMD lever
+remains.
