@@ -16091,3 +16091,25 @@ sha256, self-time, cv or null.
   (trig.rs). **RETRY ONLY IF** the sin/cos KERNELS are transcribed so `sincos_band` can evaluate both
   from ONE reduction with NO re-reduction (glibc's approach) — only then could it beat `libm::sincos`.
 - **TRIG FAMILY at frontier:** sin/cos/tan shipped (beat glibc); `sincos` already beats glibc (no lever).
+
+## 2026-07-11 (cc_fl) — SURFACE (blocked, no tractable lever): f64 asin/acos 1.30x is a glibc-kernel-transcription problem; cc lane at frontier (cc-asinacos-2026-07-11)
+
+- **PROFILE-FIRST.** Post-trig, the lone remaining f64 math loser (last survey) is `asin`/`acos` at
+  **1.30x/1.29x** vs glibc 2.42 (all else wins: atan 0.744, atan2 0.554, sinh/cosh/tanh/asinh/erf 0.3–0.9,
+  expm1/log1p 0.66/0.78; j0/y0 1.04/1.11 are accuracy-hard Bessel). Both are bare `libm::asin`/
+  `libm::acos` (trig.rs:128).
+- **WHY BLOCKED (not the gate — the KERNEL).** Structure mirrors trig: `same64` special-points gate
+  (`conformance_diff_inv_trig_special`) + ≤4-ULP range gate (`zz_scratch_math_unary` `apch!(...,4)`).
+  Unlike trig there is NO periodic-reduction fix: to beat `libm::asin` (the standard fdlibm kernel) I'd
+  need a *better polynomial kernel*, which is exactly what glibc 2.42 shipped — and there is **no in-repo
+  glibc source** to transcribe (`legacy_glibc_code/` absent). Same class as `j0f` (R10).
+- **atan2-FORM DISPROVEN (by construction).** `asin(x)=atan2(x,√(1−x²))` using fl's fast `atan2`
+  (0.554x glibc) is NOT faster: `libm::asin` for |x|≤0.5 is a bare odd polynomial (~3 ns), while
+  `√(1−x²)` + `atan2` (~9 ns) is ~3× costlier; near ±1 it also loses accuracy (1−x² cancellation). So the
+  fast-atan2 shortcut cannot beat libm's small-|x| path — no band-split win.
+- **NO LEVER — SURFACE.** No slot spent (this is a code+gate structural finding, not a measured A/B; the
+  1.30x profile is from the prior survey). cc lane at frontier: trig shipped, sincos beats glibc, aligned
+  allocators shipped, string at the safe-Rust/std::simd floor, resolv mined (sorted-hash, beats glibc).
+- **RETRY ONLY IF (cc-asinacos-2026-07-11):** a reliable glibc-2.42 / ARM-optimized-routines `asin`/`acos`
+  kernel source is handed in AND the `same64` inverse-trig special-case gate is authorized for ≤4-ULP
+  relaxation (as trig was). Do not re-derive via the atan2 shortcut — proven slower than libm.
