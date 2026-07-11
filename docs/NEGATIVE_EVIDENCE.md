@@ -39,6 +39,37 @@ the full measured detail.
 
 ## ============================================================================================
 
+## 2026-07-11 (cod_fl / Codex) — SURFACE: indexed `getaddrinfo` named-service profile gather is a same-worker **1.47x median win**, but RCH had no admissible correctness-test slot; source is NOT shipped
+
+- **PROFILE-FIRST / DIFFERENT LANE.** Excluded cc-owned allocator/string and the just-landed adjacent
+  trig seam. The remote-only resolver profile on worker `vmi1227854` found that
+  `lookup_service_profiles` still walked every parsed `/etc/services` record for each named-service
+  `getaddrinfo` call, even though `ServiceLookupCache` already held a generation-stamped exact-name
+  hash index. Baseline `getaddrinfo("localhost", "http")` p50 was **4223.594 ns/op**.
+- **ONE LEVER.** Prototype routes the multi-match gather through the existing canonical-name/alias hash
+  bucket: **O(N) -> O(log N + matches)**. It retains stable backend order, exact ASCII-insensitive
+  comparison after hashing, canonical/alias entry deduplication, first-error propagation, profile
+  deduplication, and backend-generation rebuilds. No allocator or string source is touched.
+- **REMOTE SAME-WORKER MEDIAN WIN.** Exact command:
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo bench --profile release -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench getaddrinfo_localhost_http -- --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`.
+  On `vmi1227854`, candidate p50 was **2867.198 ns/op**, so candidate/baseline = **0.679x time**
+  (**1.47x faster; -32.1%**). Criterion's change interval was **-34.423% to -29.067%**, `p=0.00`.
+  Null/context controls stayed flat: the legacy arm reported no significant change (`p=0.53`) and host
+  glibc reported no significant change (`p=0.64`). The benchmark's pre-timing port-parity assertion passed.
+- **CORRECTNESS BLOCKER / NO LOCAL FALLBACK.** The candidate and benchmark compiled remotely in release,
+  and an integration regression was authored for case-folded canonical/alias multi-profile order plus a
+  rewritten services-backend generation. Before the focused `resolv_abi_test`,
+  `conformance_diff_getaddrinfo`, and `conformance_diff_netdb_aliases` binaries could run, RCH returned:
+  `[RCH] local (no admissible workers: insufficient_slots=9,hard_preflight=1)` followed by
+  `[RCH] remote required; refusing local fallback (no worker assigned)`. Per the remote-only contract,
+  no local Cargo command was run and the source is **NOT shipped**.
+- **NEXT SAFE ACTION.** The isolated candidate remains in
+  `/data/projects/.scratch/frankenlibc-codex-resolv-20260711`. When a remote slot exists, run
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-abi --test resolv_abi_test --test conformance_diff_getaddrinfo --test conformance_diff_netdb_aliases -- --nocapture --test-threads=1`.
+  If green, run remote fmt/check/clippy for the touched ABI surface, re-run the same median row, then ship
+  the source + this row as a measured keep. If any parity gate fails, manually restore the source hunk and
+  retain this row as the rejection boundary. Do not re-profile or retry backend cloning/per-line parsing.
+
 ## 2026-07-10 (cc_fl / BlackThrush) — ALLOCATOR frontier CONFIRMED by implementation: single-threaded slot-local stats shipped correctly but the win is **1.63 ns (sub-floor)** — the STATS cost is `apply_locked` field-updates, NOT the combiner CAS
 
 - **Attacked the least-saturated axis (allocator) with the ONE lever** (the user's instruction): single-
