@@ -16196,3 +16196,36 @@ aggregate, functions ALREADY characterized: `malloc`/`free` (frontier), `memcpy`
 exhausted, so a macro-bench cannot manufacture a fresh tractable lever — it would confirm the floor.
 Building one is therefore NOT a productive cc-lane avenue; trigger (d) only fires if an EXTERNAL new
 benchmark/workload (handed in) surfaces a function outside this closed set.
+
+## 2026-07-11 (cc_fl) — SWING KICKOFF (maintainer-authorized): stdio registry-lock MT swing scoped + designed (cc-stdio-mt-2026-07-11)
+
+- **AUTHORIZED.** Maintainer reassigned stdio and told me to take the registry-lock swing (the biggest
+  measurable gap left: MT `fgetc`/write contention, documented `fl 56.7ms vs glibc 6.61ms = 8.6x` on 8
+  threads). Verified the "contested" status was stale fmt churn + the printf agent's COMMITTED work
+  (07-09 was formatting, not the lock).
+- **KEY FINDING — the SINGLE-THREAD path is ALREADY optimized; the swing is purely MT.** `fputs`/`fputc`/
+  `fwrite` each have a pointer-keyed lock-free write cache (`write_cache_lookup_by_stream` /
+  `try_fputc_fast_by_stream` / `try_fwrite_fast_by_stream`) that skips the registry lock + HashMap +
+  native lock for repeated same-stream writes; `fgetc` has the native_stdio cache (`ad465633f`). So the
+  frontier's "fputs 6.2x single-thread" is STALE. **These caches are `thread_local` + gated single-
+  threaded (`*mut StdioStream` not Sync), so they DON'T fire under MT** → MT falls to the ONE global
+  `parking_lot::Mutex<StreamRegistry>` (`registry()` / `FastRegistryMutex`, stdio_abi.rs:598/1040) that
+  all **63** `registry().lock()` sites serialize on. That global lock IS the 8.6x.
+- **DESIGN (least-invasive = SHARDING).** Split the single `Mutex<StreamRegistry>` into N shards keyed by
+  `id` hash. `registry().lock()` → `registry().shard_for(id).lock()` at single-stream sites (~59); →
+  `registry().lock_all()` (all shards in index order) at the 4 all-stream sites (`sorted_stream_ids`
+  @2351/2412/9462/11044, fflush(NULL)/atexit). DEADLOCK-SAFE: single-stream sites hold ONE shard;
+  all-stream sites lock in consistent index order. Cache unaffected: `REGISTRY_GEN` is global (bumped on
+  any insert/remove), still conservatively invalidates the thread-local `*mut` cache. No value-type
+  change (unlike per-FILE `Arc<Mutex>`), so lower-risk. N independent streams (the bench) → N shards →
+  contention gone.
+- **BLOCKER TO MEASURE FIRST:** `stdio_mt_contention_bench` uses criterion, which SIGABRTs on HTML render
+  under `abi-bench` symbol interposition (same crash as the aligned-alloc bench — corrupt `'title'`).
+  The fl arm's 30 samples collect fine but no median prints. **Step 0 = de-criterion the MT bench
+  (manual timing, like posix_memalign_strict_bench) to get a clean fl/glibc MT baseline.**
+- **EXECUTION PLAN (dedicated, multi-turn, NOT rushed — an atomic 63-site change under degraded rch):**
+  (0) manual-timing MT bench → baseline; (1) sharded `FastRegistryMutex` + `shard_for`/`lock_all` API;
+  (2) convert 63 sites (single→`shard_for(id)`, 4 all-stream→`lock_all`); (3) gate: full `stdio_abi_test`
+  (255) + `conformance_diff_stdio_ext`/`_unlocked_io`/`_wide_stdio_write` green + no deadlock under the MT
+  bench; (4) measure MT median. Each step compiles+tests before the next.
+- **THIS TURN = scope + design (no code shipped — a rushed partial 63-site MT change would be reckless).**
