@@ -358,6 +358,12 @@ name = "stdio_mt_contention_bench"
 harness = false
 required-features = ["abi-bench"]
 
+# sched_getcpu vDSO route vs raw SYS_getcpu (before) vs host glibc (reference).
+[[bench]]
+name = "sched_getcpu_glibc_bench"
+harness = false
+required-features = ["abi-bench"]
+
 # qsort integer-radix prefix gate: wasted-attempt cost vs gate cost, 1 process.
 [[bench]]
 name = "qsort_gate_ab_bench"

@@ -24208,10 +24208,15 @@ pub unsafe extern "C" fn semtimedop(
 
 /// `sched_getcpu` — get CPU that the calling thread is running on.
 ///
-/// Native implementation using `getcpu(2)` syscall.
+/// vDSO fast path (glibc parity): `__vdso_getcpu` avoids the `SYS_getcpu` trap; on a miss
+/// (unresolved / aarch64 / failure) it falls back to the raw `getcpu(2)` syscall. Byte-identical:
+/// the vDSO writes the same CPU the syscall would; `cpu` is our own valid stack slot.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_getcpu() -> c_int {
     let mut cpu: c_uint = 0;
+    if unsafe { crate::time_abi::vdso_getcpu(&mut cpu, std::ptr::null_mut()) }.is_some() {
+        return cpu as c_int;
+    }
     match unsafe { syscall::sys_getcpu(&mut cpu, std::ptr::null_mut()) } {
         Ok(()) => cpu as c_int,
         Err(e) => {

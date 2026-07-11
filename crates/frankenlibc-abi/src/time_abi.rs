@@ -25,6 +25,8 @@ type VdsoClockGettimeFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_
 type VdsoClockGetresFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
 type VdsoGettimeofdayFn = unsafe extern "C" fn(*mut libc::timeval, *mut libc::timezone) -> c_int;
 type VdsoTimeFn = unsafe extern "C" fn(*mut libc::time_t) -> libc::time_t;
+type VdsoGetcpuFn =
+    unsafe extern "C" fn(*mut libc::c_uint, *mut libc::c_uint, *mut c_void) -> c_int;
 
 const ASCTIME_R_BUF_BYTES: usize = 26;
 /// Buffer for the non-reentrant `asctime`/`ctime`. glibc's static buffer is
@@ -81,6 +83,7 @@ struct VdsoSymbols {
     clock_getres: Option<VdsoClockGetresFn>,
     gettimeofday: Option<VdsoGettimeofdayFn>,
     time: Option<VdsoTimeFn>,
+    getcpu: Option<VdsoGetcpuFn>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -286,6 +289,27 @@ unsafe fn raw_clock_getres(clock_id: c_int, res: *mut libc::timespec) -> c_int {
     unsafe { raw_clock_getres_syscall(clock_id, res) }
 }
 
+/// vDSO fast path for `getcpu(2)`, used by `sched_getcpu`. Returns `Some(0)` iff `__vdso_getcpu`
+/// resolved and reported success (it has written `*cpu`/`*node`); `None` ⇒ the vDSO is
+/// unavailable or reported anything other than success ⇒ the caller falls back to the raw
+/// `SYS_getcpu` syscall (which sets errno authoritatively). Byte-identical to the syscall: the
+/// vDSO writes the same CPU/node the kernel would. `__vdso_getcpu` is x86-64-only (absent on
+/// aarch64) ⇒ `None` there ⇒ syscall — cross-arch safe. Mirrors `raw_clock_getres`.
+#[inline]
+pub unsafe fn vdso_getcpu(cpu: *mut libc::c_uint, node: *mut libc::c_uint) -> Option<c_int> {
+    if !vdso_resolution_enabled() {
+        return None;
+    }
+    let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
+    let vdso_getcpu = symbols.getcpu?;
+    let rc = unsafe { vdso_getcpu(cpu, node, std::ptr::null_mut()) };
+    match classify_vdso_return(rc) {
+        VdsoCallOutcome::Success => Some(0),
+        // ENOSYS / unexpected ⇒ fall back to the raw syscall (authoritative errno).
+        VdsoCallOutcome::FallbackToSyscall | VdsoCallOutcome::Fail(_) => None,
+    }
+}
+
 #[inline]
 unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
     if vdso_resolution_enabled() {
@@ -333,17 +357,19 @@ fn resolve_vdso_symbols() -> VdsoSymbols {
     // bounds-checked against the ELF's own fields and any anomaly returns `None`
     // entries, so callers fall back to the raw syscall — a parse failure is never
     // fatal and never produces a bad pointer.
-    let (clock_gettime, clock_getres, gettimeofday, time) = unsafe { parse_vdso(base) };
+    let (clock_gettime, clock_getres, gettimeofday, time, getcpu) = unsafe { parse_vdso(base) };
     VdsoSymbols {
         mapping_present: true,
         handle_opened: clock_gettime.is_some()
             || clock_getres.is_some()
             || gettimeofday.is_some()
-            || time.is_some(),
+            || time.is_some()
+            || getcpu.is_some(),
         clock_gettime,
         clock_getres,
         gettimeofday,
         time,
+        getcpu,
     }
 }
 
@@ -409,8 +435,9 @@ unsafe fn vdso_cstr_eq(p: *const u8, target: &[u8]) -> bool {
 }
 
 /// Port of the kernel's reference `parse_vdso`: resolve `__vdso_clock_gettime`,
-/// `__vdso_clock_getres`, `__vdso_gettimeofday`, and `__vdso_time` from the
-/// mapped vDSO ELF at `base`.
+/// `__vdso_clock_getres`, `__vdso_gettimeofday`, `__vdso_time`, and `__vdso_getcpu`
+/// from the mapped vDSO ELF at `base`. (`__vdso_getcpu` is x86-64-only; absent on
+/// aarch64 ⇒ `None` ⇒ caller falls back to the raw syscall.)
 unsafe fn parse_vdso(
     base: usize,
 ) -> (
@@ -418,8 +445,9 @@ unsafe fn parse_vdso(
     Option<VdsoClockGetresFn>,
     Option<VdsoGettimeofdayFn>,
     Option<VdsoTimeFn>,
+    Option<VdsoGetcpuFn>,
 ) {
-    let none = (None, None, None, None);
+    let none = (None, None, None, None, None);
     let ehdr = base as *const Elf64Ehdr;
     let ident = unsafe { &(*ehdr).e_ident };
     if ident[0] != 0x7f || ident[1] != b'E' || ident[2] != b'L' || ident[3] != b'F' {
@@ -480,6 +508,7 @@ unsafe fn parse_vdso(
     let mut clock_getres: Option<VdsoClockGetresFn> = None;
     let mut gettimeofday: Option<VdsoGettimeofdayFn> = None;
     let mut time: Option<VdsoTimeFn> = None;
+    let mut getcpu: Option<VdsoGetcpuFn> = None;
     for s in 0..nchain {
         let sym = unsafe { &*symtab.add(s) };
         if sym.st_value == 0 || sym.st_name == 0 {
@@ -499,9 +528,11 @@ unsafe fn parse_vdso(
             gettimeofday = Some(unsafe { core::mem::transmute::<usize, VdsoGettimeofdayFn>(addr) });
         } else if time.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_time") } {
             time = Some(unsafe { core::mem::transmute::<usize, VdsoTimeFn>(addr) });
+        } else if getcpu.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_getcpu") } {
+            getcpu = Some(unsafe { core::mem::transmute::<usize, VdsoGetcpuFn>(addr) });
         }
     }
-    (clock_gettime, clock_getres, gettimeofday, time)
+    (clock_gettime, clock_getres, gettimeofday, time, getcpu)
 }
 
 fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
