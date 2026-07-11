@@ -40657,10 +40657,14 @@ fn decode_big5(input: &[u8]) -> Result<(char, usize), DecodeError> {
     )
 }
 
-fn encode_big5(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+fn big5_enc_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_enc_direct(&cjk_tables::BIG5_ENC));
-    encode_dbcs2(ch, out, direct)
+    DIRECT
+        .get_or_init(|| build_enc_direct(&cjk_tables::BIG5_ENC))
+        .as_slice()
+}
+fn encode_big5(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    encode_dbcs2(ch, out, big5_enc_direct())
 }
 
 fn gbk_decode_direct() -> &'static [u32] {
@@ -41966,6 +41970,8 @@ fn utf8_to_dbcs2_enc_direct(to: Encoding) -> Option<&'static [u32]> {
         // (1-byte output) and unrepresentable cps break to scalar via the `>= 0x101` gate.
         Encoding::Cp932 => cp932_enc_direct(),
         Encoding::ShiftJis => shiftjis_enc_direct(),
+        // Big5 (Traditional Chinese): all non-ASCII output is 2-byte `encode_dbcs2`.
+        Encoding::Big5 => big5_enc_direct(),
         _ => return None,
     })
 }

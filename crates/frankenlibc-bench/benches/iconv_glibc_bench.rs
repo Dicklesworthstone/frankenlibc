@@ -369,6 +369,23 @@ fn main() {
     // accepted Level-1/2 lead/trail pairs (defeats the contiguous-range source block).
     let big5_src = build_dbcs_source(b"BIG5\0", 0xA4..=0xF9, 0xA1..=0xFE, 512);
     run_conv(c, "big5_to_utf8", b"UTF-8\0", b"BIG5\0", &big5_src);
+    // ENCODE direction: UTF-8 -> BIG5. Source = big5_src decoded back to UTF-8 (host BIG5->UTF-8),
+    // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
+    let big5_utf8 = {
+        let cd = unsafe { (host.open)(b"UTF-8\0".as_ptr().cast(), b"BIG5\0".as_ptr().cast()) };
+        assert!(cd as isize != -1 && !cd.is_null(), "BIG5->UTF-8 open failed");
+        let mut dst = vec![0u8; big5_src.len() * 4 + 16];
+        let mut inp = big5_src.as_ptr() as *mut c_char;
+        let mut inl = big5_src.len();
+        let mut outp = dst.as_mut_ptr() as *mut c_char;
+        let mut outl = dst.len();
+        unsafe { (host.convert)(cd, &mut inp, &mut inl, &mut outp, &mut outl) };
+        unsafe { (host.close)(cd) };
+        let n = dst.len() - outl;
+        dst.truncate(n);
+        dst
+    };
+    run_conv(c, "utf8_to_big5", b"BIG5\0", b"UTF-8\0", &big5_utf8);
     // GB2312/EUC-CN (Simplified Chinese, common on Unix) -> UTF-8: generic source.
     let gb2312_src = build_dbcs_source(b"GB2312\0", 0xB0..=0xF7, 0xA1..=0xFE, 512);
     run_conv(c, "gb2312_to_utf8", b"UTF-8\0", b"GB2312\0", &gb2312_src);
