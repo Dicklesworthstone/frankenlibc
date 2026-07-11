@@ -15967,3 +15967,33 @@ sha256, self-time, cv or null.
   `reduce_pio2_fma` mechanism (still ~1.18x losers behind the `same64` gate — same relaxation applies).
   Separately, the `fmax(0.0,-0.0)`/`fmaxf` signed-zero glibc-2.42 drift (`conformance_diff_math`) remains
   a distinct open pre-existing RED.
+
+## 2026-07-11 (cc_fl) — SURFACE: fresh glibc-2.42 in-process STRING survey — every above-floor loss is the maxed-SIMD/safe-Rust floor; allocator/string at frontier (cc-string-2026-07-11)
+
+- **LANE:** allocator + string (cod owns math + memcpy this turn). Profile-first: ran
+  `string_inprocess_survey_bench` (CORE fl kernel vs REAL in-process glibc 2.42, no membrane/no ABI
+  shadowing) — 52 paired arms, **median**. Fresh comparator (2.42) since glibc updates string ifuncs.
+- **RANKED LOSERS (fl/glibc median) — all INSPECTED, all already maxed-SIMD ⇒ safe-Rust/std::simd-vs-
+  glibc-AVX2-asm floor, not levers:**
+  | arm | ratio | fl kernel (why it's floor, not a gap) |
+  |---|---:|---|
+  | strcmp | 3.25x | `strcmp_exact_256` precheck is length-guarded (instant-false here); 128B fold + 32B SIMD + mask-divergence. Gap = safe-slice bounds-checks + std::simd vs glibc raw AVX2 short path (frontier `strcmp tiers trade-off`, disproven). |
+  | strspn/set6_64/set3_60/range | 2.6–1.5x | `span_general` already uses a **Langdale/Lemire 2-PSHUFB** classifier (non-contig ASCII, len≥64) + `span_range` (contig) + dedicated 6-byte SIMD (`find_non_any_of6_or_nul`) + interval-cover. Flat `[bool;256]` already (NOT a bitmap). Residual = small-set setup floor. **Peer-tuned (`75c33eb31`); do not disturb.** |
+  | strrchr 2.47x / memrchr 2.45x | | already SIMD: `find_last_byte_before_nul` / 512B+256B fold tiers with mask last-match. |
+  | wcschr 2.33 / wcsncmp 2.04 / wcsrchr 1.80 / wmemchr 1.68/1.46 / wmemcmp 1.60 | | wide `std::simd` panels (unrolled + mask-divergence). The documented “portable std::simd can’t close the last 1.5–2x vs glibc hand-tuned AVX2 ifunc” gap. |
+  | strlen 1.46 / strncmp 1.46 / memcmp 1.30 | | head-mask + 32B + 128B unrolled / explicit AVX2 — the DEPLOYED-symbol small-primitive floor. |
+  | wcsstr 1.24 | | already dual-anchor (rarer of first/last char) SIMD, not naive. |
+  Everything else WINS (memmem/asctime/wcscasecmp/fnmatch/strcasestr_absent 0.04–0.5x, etc.). The
+  handful of sub-1.0 "cand"/"twoway"/"orig" arms are stale baseline arms (labeled do-not-read).
+- **ALLOCATOR:** at cod's declared frontier (segment magazines + membership bitmap shipped; guard CAS
+  + STATS field-updates irreducible = the memory-safety cost; R3/R4/R6 rejected). glibc 2.42 malloc
+  is ~unchanged, so no fresh flip like the trig one.
+- **NO LEVER — SURFACE.** No clean, above-floor, uncontested, correctness-safe kernel lever remains in
+  allocator/string. The one genuinely-algorithmic candidate (strspn sparse-set) is already PSHUFB-
+  classified AND freshly peer-tuned. Unsafe-raw-ptr string kernels to shave safe-slice overhead were
+  previously disproven (frontier); even if closed at the CORE, the deployed symbol re-adds the
+  extern+membrane floor.
+- **RETRY ONLY IF (cc-string-2026-07-11):** (a) a specific string fn is handed in as a known-slow
+  target with a concrete algorithmic (not SIMD-micro) gap; (b) glibc ships a REGRESSION making an fl
+  kernel newly competitive; (c) the allocator lane gets a new benchmark exposing a non-safety-tax hot
+  path. Do not re-run the string survey to re-derive this floor.
