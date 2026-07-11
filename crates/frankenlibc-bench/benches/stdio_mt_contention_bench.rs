@@ -126,20 +126,24 @@ fn measure(samples: usize, iters: u64, mut op: impl FnMut()) -> f64 {
 }
 
 fn main() {
-    let nthreads: usize = std::thread::available_parallelism()
+    let maxt: usize = std::thread::available_parallelism()
         .map(|n| n.get().min(8))
         .unwrap_or(4);
     let h = host();
-    // Warm up.
-    for _ in 0..8 {
-        fl_workload(nthreads);
-        glibc_workload(nthreads, h);
+    // Measure at 1 thread (isolates per-op overhead, NO lock contention) and at max
+    // threads (adds contention). The delta between the two ratios is the registry-lock
+    // contention the sharding swing would target.
+    for &nthreads in &[1usize, maxt] {
+        for _ in 0..8 {
+            fl_workload(nthreads);
+            glibc_workload(nthreads, h);
+        }
+        let fl_p50 = measure(41, 10, || fl_workload(nthreads));
+        let gl_p50 = measure(41, 10, || glibc_workload(nthreads, h));
+        let ratio = if gl_p50 > 0.0 { fl_p50 / gl_p50 } else { 0.0 };
+        println!(
+            "STDIO_MT_BENCH threads={nthreads} fl_ns_op={fl_p50:.1} glibc_ns_op={gl_p50:.1} \
+             ratio_fl_over_glibc={ratio:.3}"
+        );
     }
-    let fl_p50 = measure(41, 10, || fl_workload(nthreads));
-    let gl_p50 = measure(41, 10, || glibc_workload(nthreads, h));
-    let ratio = if gl_p50 > 0.0 { fl_p50 / gl_p50 } else { 0.0 };
-    println!(
-        "STDIO_MT_BENCH threads={nthreads} fl_ns_op={fl_p50:.1} glibc_ns_op={gl_p50:.1} \
-         ratio_fl_over_glibc={ratio:.3}"
-    );
 }
