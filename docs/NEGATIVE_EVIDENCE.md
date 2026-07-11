@@ -17100,3 +17100,23 @@ that made the wcsrtombs ENCODE lever clean. It does NOT work on decode. Do NOT r
   cc-mbsrtowcs-gate-retry-2026-07-11); routing them regresses interleaved-Latin. See
   [[multibyte-simd-conversion-vein]]. Follow-on: count-only (dst==NULL) paths still scalar their
   multibyte.
+
+## cc-wcstombs-count-simd-2026-07-11 — WIN (SHIPPED 8db4e7990)
+
+- **THE LEVER (profile-first).** wcstombs(NULL,src,0) count mode — the "measure then allocate" length
+  probe — summed UTF-8 byte lengths with a scalar per-char `wctomb` loop: profiled 1.955x (ascii, the
+  WORST — not even SIMD for 1-byte), 1.872x (mixed), 1.126x (cyr), 1.317x (cjk) LOSS vs glibc. Added
+  `wcs_encoded_len`: byte length is a pure function of magnitude, so a window's total is
+  `LANES + Σ(to_bitmask().count_ones() per threshold)` — no per-lane branch, no gather. Surrogate/
+  out-of-range → scalar tail for exact `None` position.
+- **BYTE-IDENTICAL + regression-free by construction** (uniform per-lane arithmetic — no interleaved
+  probing like the write path). conformance_diff_wchar 44/0, wchar_abi_test 118/0, bench asserts
+  fl==glibc length. 
+- **MEASURED (remote, median of 2, same-fleet, self-normalized):** ascii 1.955x→~0.5x, mixed 1.872x→~0.40x,
+  cyrillic 1.126x→~0.25x, cjk 1.317x→~0.20x (~6.8x fl-over-fl) — ALL flip LOSS→WIN, no regression.
+- **NOTE (API):** this toolchain's portable_simd lacks `Mask::select`/`Mask::to_int`/`Simd::reduce_sum`
+  — use `to_bitmask().count_ones()` for lane popcounts and `to_array().iter().sum()` for horizontal sums.
+- **FOLLOW-ON:** wcsrtombs/wcsnrtombs count modes still scalar their multibyte (different loop structure —
+  interleave `wcs_ascii_prefix_len` + scalar); `wcs_encoded_len` can route them (needs NUL-aware
+  integration). mbs* DECODE count is a separate (harder, validation-heavy) path. See
+  [[multibyte-simd-conversion-vein]].
