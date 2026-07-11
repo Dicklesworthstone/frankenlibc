@@ -16774,3 +16774,36 @@ inspection killed it — do NOT attempt:
 dbcs_encoder codecs). Every remaining iconv loser is architectural (gather already exists, glibc SIMD
 faster): cp932_to_utf16le 1.67x, eucjp(-ms)→utf8 1.15–1.36x. No clean single-turn iconv-SIMD lever
 remains.
+
+## 2026-07-11 (cc_fl) — SURFACE (profile-first: obsoleted + safety-blocked): malloc inline-header swing is NOT a clean single-turn landable lever (cc-malloc-header-2026-07-11)
+
+Authorized the malloc inline-header swing (frontier Swing 2). PROFILE-FIRST via code inspection of the
+CURRENT allocator (malloc_abi.rs) — the swing is obsoleted for the hot path and safety-blocked for the
+rest. Do NOT land a naive inline header:
+
+- **The hot small-alloc path ALREADY uses an inline-header-equivalent.** `15f58c419` routes strict
+  small allocs to **segment magazines**; `known_remaining` -> `segment_remaining` (malloc_abi.rs:3150)
+  resolves them via the [ptr>>22] **segment membership bitmap** (`f1db312d2`) + a segment view (size at
+  a fixed offset) — a SAFE, no-fault, O(1) inline-header read. Small malloc/free never touches the
+  fallback table. The swing's original target (small malloc/calloc/free 16B) is already served this way.
+- **The fallback (host-delegated, larger) path CANNOT use an inline header safely.** `known_remaining`
+  has ~395 call sites invoked with ARBITRARY C-string pointers (heap / stack / static / INTERIOR), and
+  `fallback_remaining` gates only on the coarse `FALLBACK_ALLOC_MIN/MAX_ADDR` range before its hash
+  probe. That range is exactly the guard the 2026-07-04 refinement already rejected: a monotone
+  [min,max] envelope does NOT prove `addr-16` is mapped (host heap has mmap holes / brk-vs-mmap gaps),
+  so replacing the probe with a header read `addr[-16]` FAULTS on an in-range non-heap/interior pointer.
+  The hash table IS the safe exact-membership structure; an inline header can't replace it without a
+  fault handler or a shadow-mode + no-fault membership guard (multi-turn). Using the header only on
+  `free` (ptr valid-or-UB) doesn't help: the table is still required for `known_remaining`, so `free`
+  would pay header-read PLUS table-remove = more work.
+- **Even fully done it caps at ~8x, not parity; the table is ~25% of the gap** (de-risking bench:
+  fallback insert+lookup+remove 16-19 ns vs inline header 0.63 ns, but deployed MALLOC_FREE overhead
+  over glibc is ~47 ns — the rest is diffuse framing: reentry/signal guards, entrypoint_scope,
+  decide/observe, record_alloc_stats, publish_fallback_range, native malloc; large allocs are the
+  irreducible wrapper floor, REJECT R3). End-to-end `calloc_glibc_bench` confirmation was blocked by a
+  ~20-proc cross-project fleet jam (its criterion arm also needs `--noplot` — it panics in HTML render
+  under abi-bench).
+- **RETRY ONLY IF** a no-fault exact-membership mechanism is designed (the frontier radix was disproven
+  for host-delegated mixed-size-per-page allocs) OR a shadow-mode (populate header + assert-agree-with-
+  table before switching reads) is built as a dedicated multi-turn swing with membrane-owner review, AND
+  accepting the ~8x cap. Not a byte-identical single-turn lever.
