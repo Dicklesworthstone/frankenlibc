@@ -16909,3 +16909,22 @@ multi-turn (malloc inline-header, standalone-fl rseq registration).
   by iconv_differential_fuzz (no glibc differential), so a "gap" there isn't a real vs-upstream gap and
   can't be fuzz-verified. Gb18030 (4-byte) + EucJp/EucJpMs (SS2/SS3) are correctly NOT gather-eligible.
   iconv DECODE residuals (cp932_to_utf16le, eucjp→utf8) remain architectural.
+
+## 2026-07-11 (cc_fl) — iconv ENCODE side verified DONE (profile-first, per-direction) (cc-iconv-big5-simd-2026-07-11 follow-up)
+
+Enumerated + measured every UTF-8→legacy encode direction (learning from the premature "complete"
+claim). State:
+- **WINS shipped (SIMD gather flips scalar cache-bound losers):** utf8_to_cp949 0.49x, utf8_jp_to_cp932
+  0.31x, utf8_to_big5 0.505x (all were ~2–4x scalar LOSSES; gather → WINS).
+- **Already WINNING on scalar (NO lever — profile-first confirmed):** utf8_to_eucjp **0.462x** (Hiragana
+  cps contiguous ⇒ cache-friendly; benched + kept as a regression guard). utf8_cyrillic_to_koi8r 0.74x,
+  utf8_cjk_to_gb18030 0.58x, latin1/utf ASCII 0.24–0.38x — all wins.
+- **Gather-covered, byte-identical-by-construction + mostly fuzz-verified (GBK/EucKr/ShiftJis in the
+  fuzz TO list), unbenched:** utf8_to_gbk/gb2312/euckr/johab/shiftjis — use the identical gather code
+  proven byte-identical by the CP949/CP932 before/after golden SHA; expected wins.
+- **DEFERRED:** Ibm943/Ibm932 encode (pure encode_dbcs2, but obscure IBM codepages, no real-world usage,
+  NOT in the fuzz ⇒ no glibc differential; a "gap" there isn't a real vs-upstream gap).
+- **KEY:** the encode LOSS pattern was CACHE-BOUND scalar enc_direct access on SCATTERED cps (Big5/CP949
+  Traditional-Chinese/Hangul); the gather's parallel loads hide the latency ⇒ LOSS→WIN. Contiguous-cp
+  codecs (eucjp Hiragana) are already fast scalar ⇒ no gather needed. iconv DECODE residuals
+  (cp932_to_utf16le, eucjp→utf8) remain architectural (gather-vs-glibc-SIMD).
