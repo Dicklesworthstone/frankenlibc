@@ -136,6 +136,11 @@ harness = false
 required-features = ["abi-bench"]
 
 [[bench]]
+name = "posix_memalign_strict_bench"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
 name = "powf_glibc_bench"
 harness = false
 

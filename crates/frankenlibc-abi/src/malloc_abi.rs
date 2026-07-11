@@ -2537,6 +2537,74 @@ pub fn bench_free_null_old_strict_path() {
     }
 }
 
+/// Bench-only ORIG arm for the aligned-allocator strict fast-path lever: the FULL pre-lever
+/// `posix_memalign` body (reentry guard + `entrypoint_scope` + `decide` + hardened-membrane
+/// arena `pipeline.allocate_aligned` — SipHash fingerprint + canary + generational arena — +
+/// `observe`) that strict-mode posix_memalign/aligned_alloc/memalign fell through to. Replicates
+/// the exact old call boundary so the returned pointer is freed by the exported `free` identically
+/// to the pre-lever deployment. Falls back to `native_libc_memalign` when the pipeline is not yet
+/// installed, mirroring the old `None` arm.
+#[doc(hidden)]
+pub fn bench_aligned_arena_alloc(alignment: usize, size: usize) -> *mut c_void {
+    let Some(reentry_guard) = enter_allocator_reentry_guard() else {
+        // SAFETY: reentrant fallback mirrors the old bootstrap path.
+        let mut p: *mut c_void = std::ptr::null_mut();
+        let rc = unsafe { native_libc_posix_memalign(&mut p, alignment, size) };
+        return if rc == 0 { p } else { std::ptr::null_mut() };
+    };
+    if allocator_bootstrap_passthrough_active() {
+        let mut p: *mut c_void = std::ptr::null_mut();
+        let rc = unsafe { native_libc_posix_memalign(&mut p, alignment, size) };
+        if rc == 0 && !p.is_null() {
+            fallback_insert_sized(p, size.max(1));
+            return p;
+        }
+        return std::ptr::null_mut();
+    }
+    let _trace_scope = runtime_policy::entrypoint_scope("posix_memalign");
+    let req = size.max(1);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        return std::ptr::null_mut();
+    }
+    let out: *mut c_void = match crate::membrane_state::try_global_pipeline() {
+        Some(pipeline) => match pipeline.allocate_aligned(req, alignment) {
+            Some(ptr) => ptr.cast(),
+            None => std::ptr::null_mut(),
+        },
+        None => {
+            // SAFETY: reentrant bootstrap falls back to the host aligned allocator.
+            let ptr = unsafe { native_libc_memalign(alignment, req) };
+            if !ptr.is_null() {
+                fallback_insert_sized(ptr, req);
+            }
+            ptr
+        }
+    };
+    if !out.is_null() {
+        record_alloc_stats(Some(reentry_guard.slot), req);
+    }
+    runtime_policy::observe(
+        ApiFamily::Allocator,
+        decision.profile,
+        runtime_policy::scaled_cost(10, req),
+        out.is_null(),
+    );
+    out
+}
+
+/// Bench-only CAND arm: the deployed strict-mode aligned allocation the lever routes to —
+/// host aligned allocator + fallback-table size tracking. Freeable via the exported `free`.
+#[doc(hidden)]
+pub fn bench_aligned_strict_host_alloc(alignment: usize, size: usize) -> *mut c_void {
+    let mut p: *mut c_void = std::ptr::null_mut();
+    // Exercise the FULL deployed strict `posix_memalign` (guard + strict host branch +
+    // `fallback_insert_sized_for_slot` cached tracking) so the CAND arm is the real lever path.
+    // SAFETY: standard posix_memalign contract; freeable through the exported `free`.
+    let rc = unsafe { posix_memalign(&mut p, alignment, size) };
+    if rc == 0 { p } else { std::ptr::null_mut() }
+}
+
 /// Bench-only retained copy of the deployed strict malloc path immediately
 /// before the segment heap lever.  It preserves the original call boundary,
 /// runtime-policy framing, host allocation, fallback-table insertion, and
@@ -3830,6 +3898,25 @@ pub unsafe extern "C" fn posix_memalign(
         return rc;
     }
 
+    if strict_allocator_host_path_active() {
+        // Strict mode host fast path — mirrors malloc/calloc. The aligned allocators were
+        // the only hot alloc entrypoints that still fell through to the hardened membrane
+        // arena (`pipeline.allocate_aligned`: SipHash fingerprint + canary + generational
+        // arena) in strict mode. Strict mode never heals, so those are dead work here; the
+        // host allocator gives the exact alignment and the fallback table already carries
+        // the size for `known_remaining`/free/realloc/malloc_usable_size, identical to how
+        // strict malloc's host allocations are tracked.
+        // SAFETY: forwards to the libc-compatible aligned allocator; guard is held.
+        let rc = unsafe { native_libc_posix_memalign(memptr, alignment, size) };
+        if rc == 0 {
+            // SAFETY: rc==0 guarantees *memptr holds a valid allocation pointer.
+            let out = unsafe { *memptr };
+            fallback_insert_sized_for_slot(_reentry_guard.slot, out, size.max(1));
+            record_alloc_stats(Some(_reentry_guard.slot), size.max(1));
+        }
+        return rc;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("posix_memalign");
     let req = size.max(1);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
@@ -3928,6 +4015,19 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
         return out;
     }
 
+    if strict_allocator_host_path_active() {
+        // Strict-mode host fast path — mirrors malloc/calloc/posix_memalign (see the note
+        // there): skip the hardened membrane arena, use the host aligned allocator + the
+        // fallback table for size tracking.
+        // SAFETY: forwards to the libc-compatible aligned allocator; guard is held.
+        let out = unsafe { native_libc_memalign(alignment, size) };
+        if !out.is_null() {
+            fallback_insert_sized_for_slot(_reentry_guard.slot, out, size.max(1));
+            record_alloc_stats(Some(_reentry_guard.slot), size.max(1));
+        }
+        return out;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("memalign");
     let req = size.max(1);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
@@ -4019,6 +4119,19 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         // runtime-policy trace state until the runtime-ready boundary.
         let out = unsafe { native_libc_aligned_alloc(alignment, size) };
         fallback_insert_sized(out, size.max(1));
+        return out;
+    }
+
+    if strict_allocator_host_path_active() {
+        // Strict-mode host fast path — mirrors malloc/calloc/posix_memalign (see the note
+        // there): skip the hardened membrane arena, use the host aligned allocator + the
+        // fallback table for size tracking.
+        // SAFETY: forwards to the libc-compatible aligned allocator; guard is held.
+        let out = unsafe { native_libc_aligned_alloc(alignment, size) };
+        if !out.is_null() {
+            fallback_insert_sized_for_slot(_reentry_guard.slot, out, size.max(1));
+            record_alloc_stats(Some(_reentry_guard.slot), size.max(1));
+        }
         return out;
     }
 
