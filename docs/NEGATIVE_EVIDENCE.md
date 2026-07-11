@@ -16837,3 +16837,29 @@ rest. Do NOT land a naive inline header:
   rseq `cpu_id` read is not reusable elsewhere (it's specifically the CPU number); fl deliberately does
   NOT register its own rseq (would EBUSY against glibc's) — a standalone-fl rseq registration is a
   separate, larger lever (thread-lifecycle) only relevant to the no-glibc build.
+
+## 2026-07-11 (cc_fl) — WIN: SIMD encode gather extended to CP932/Shift-JIS + guard-drift fix flips utf8_jp_to_cp932 LOSS→WIN — commit `ce7982bd8` (cc-iconv-cp932-simd-2026-07-11)
+
+- **PROFILE-FIRST found it (re-profile after the CP949 win).** `utf8_jp_to_cp932` was a clear loser
+  (1.1–1.64x across runs, fl ~2500 ns). TWO causes: (1) CP932/Shift-JIS encode was NOT in the SIMD
+  encode gather (only the 5 `dbcs_encoder!` codecs), and (2) a GUARD-vs-MATCH DRIFT — the scalar inline
+  UTF-8→DBCS encode fast-path guard (mod.rs ~46764) listed 9 codecs but its match body handled 12, so
+  **Cp932/Ibm943/Ibm932 encode fell to the slow generic per-char body** (the recurring iconv drift bug
+  class). Fixed both: exposed `cp932_enc_direct`/`shiftjis_enc_direct` (pure `encode_dbcs2`) and added
+  Cp932/ShiftJis to the gather; added Cp932/Ibm943/Ibm932 to the scalar guard.
+- **PROVEN, median (remote, iconv_glibc_bench, same-process, same-worker before/after):**
+  `utf8_jp_to_cp932` **2562.6 → 519.6 ns = 4.9x fl-over-fl**, flips **LOSS → 0.309x WIN** (fl now 3.2x
+  FASTER than glibc). (utf8_to_cp949 control still wins 0.714x.)
+- **BYTE-IDENTICAL — DEFINITIVE.** The CP932 golden SHA is IDENTICAL with the change reverted (scalar)
+  and applied (SIMD + guard) = `47eb292c...` — the strongest possible proof (SIMD/guard == scalar).
+  Plus `iconv_differential_fuzz` 10/0 (fl vs LIVE glibc, covers UTF-8→SHIFT_JIS encode),
+  `conformance_diff_iconv` 2/0, `golden_iconv_utf8_fastpath` 4/0 (NEW pinned CP932 golden: mixed
+  ASCII + Hiragana 2-byte + half-width katakana 1-byte, exercising the gather AND its 1-byte/scalar
+  fall-through). By construction: gather fires only on valid 3-byte windows with a 2-byte-output slot;
+  1-byte (katakana) / unrepresentable break to scalar.
+- **LESSON (reconfirms the drift bug class):** ALWAYS audit `matches!(cd.to, ...) { match cd.to { ... }}`
+  fast-path guard/match pairs for codecs present in the match but absent from the guard — they silently
+  take the slow path. This is the 3rd such drift found in iconv (cf. 291b3fb0b cp932_to_utf8 decode).
+- **iconv encode-gather vein now COMPLETE:** CP949/GBK/GB2312/JOHAB/EUC-KR/CP932/ShiftJis all gathered
+  + all in the scalar guard. Remaining iconv losers are architectural (cp932_to_utf16le 2.0x = gather
+  latency; eucjp(-ms) 1.5x = glibc SIMD; both gathers already exist).
