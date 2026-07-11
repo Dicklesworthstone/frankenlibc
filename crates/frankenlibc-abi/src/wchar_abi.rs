@@ -3389,33 +3389,19 @@ pub unsafe extern "C" fn wcsrtombs(
     // SAFETY: include terminating NUL.
     let src_slice = unsafe { std::slice::from_raw_parts(src_ptr as *const u32, src_len + 1) };
 
-    // Count-only mode.
+    // Count-only mode: SIMD-sum the UTF-8 byte length over the char window
+    // (`src_slice[..src_len]` excludes the terminating NUL) — was a scalar
+    // per-char loop. Byte-identical: `wcs_encoded_len` returns the same total and
+    // the same EILSEQ at the first unrepresentable char.
     if dst.is_null() {
-        let mut bytes = 0usize;
-        let mut idx = 0usize;
-        while idx < src_len {
-            // SIMD fast-forward the leading ASCII run (each ASCII wc encodes to
-            // exactly one byte), then resolve the multibyte char scalar-side.
-            let k = wchar_core::wcs_ascii_prefix_len(&src_slice[idx..src_len]);
-            idx += k;
-            bytes += k;
-            if idx >= src_len {
-                break;
+        return match wchar_core::wcs_encoded_len(&src_slice[..src_len]) {
+            Some(bytes) => bytes,
+            None => {
+                // SAFETY: setting thread-local errno through libc ABI helper.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                usize::MAX
             }
-            let mut tmp = [0u8; 6];
-            match wchar_core::wctomb(src_slice[idx], &mut tmp) {
-                Some(n) => {
-                    bytes += n;
-                    idx += 1;
-                }
-                None => {
-                    // SAFETY: setting thread-local errno through libc ABI helper.
-                    unsafe { set_abi_errno(libc::EILSEQ) };
-                    return usize::MAX;
-                }
-            }
-        }
-        return bytes;
+        };
     }
 
     // SAFETY: caller guarantees writable destination of at least `len` bytes.
