@@ -15949,3 +15949,21 @@ sha256, self-time, cv or null.
   `conformance_diff_trig_special.rs` as the shipped win, then continue the batch (coshf is `same32`-
   gated + marginal ~parity; the bigger follow-on is a fast f64 sin/cos on the same FMA-reduction
   mechanism, both still ~1.18x losers behind the same `same64` gate).
+
+## 2026-07-11 (cc_fl) — SHIPPED + FULLY VERIFIED: f64 `tan` fast FMA-reduction (finalizes cc-trig-fma-2026-07-11) — commit `1cfb44227`
+
+- **FINALIZED the held lever.** rch recovered enough to run the pending gate. `conformance_diff_trig_special`
+  is **GREEN — 2 passed / 0 failed**: f64 `sin_cos_tan_special_match_glibc` passes (tan at the
+  reduction-sensitive CASES π/2, π, 100.0, 1e15 all within 4 ULP; `sin`/`cos` stay bit-exact `same64`;
+  tan parity exact), and f32 `sinf_cosf_tanf_special_match_glibc` passes after moving the
+  **pre-existing-RED** `tanf` bit-exact `same32` gate to the ≤4-ULP `close32` (fl `tanf` IS ≤4 ULP of
+  glibc 2.42 — the drift was ≤1–2 ULP; `sinf`/`cosf` stay bit-exact).
+- **NO REGRESSION (full tan surface re-run):** `conformance_diff_math::diff_sin_cos_tan_within_4_ulps`
+  GREEN, `math_abi_test` **118/0**, `zz_scratch_math_unary` (apch tan ≤4 ULP) **1/0**.
+- **PERF (recap, proven prior turn, same-run paired median):** CAND `math::tan` 10.953 ns vs ORIG
+  `libm::tan` 14.250 ns ⇒ **CAND/ORIG 0.769 (1.30x)**; CAND beats glibc **0.854x** (ORIG lost 1.096x).
+- **SHIPPED:** commit `1cfb44227` (`trig.rs` + `conformance_diff_trig_special.rs` only; churn untouched).
+  This is lever #1 of the authorized ≤4-ULP trig batch. Next: fast f64 **sin/cos** on the same
+  `reduce_pio2_fma` mechanism (still ~1.18x losers behind the `same64` gate — same relaxation applies).
+  Separately, the `fmax(0.0,-0.0)`/`fmaxf` signed-zero glibc-2.42 drift (`conformance_diff_math`) remains
+  a distinct open pre-existing RED.
