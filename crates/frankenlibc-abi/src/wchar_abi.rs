@@ -3426,13 +3426,19 @@ pub unsafe extern "C" fn wcsrtombs(
     let mut written = 0usize;
     let mut idx = 0usize;
     while idx < src_len {
-        // SIMD fast-forward: narrow the leading ASCII run straight into `dst`
-        // (one byte per wc), then resolve the dst-full / multibyte boundary with
-        // the unchanged scalar logic below. Bounded to `src_len` so the
-        // terminating NUL is never consumed here.
-        let k = wchar_core::wcs_ascii_prefix(&mut dst_slice[written..], &src_slice[idx..src_len]);
-        idx += k;
-        written += k;
+        // SIMD fast-forward: encode the leading run of whole clean windows (ASCII
+        // + 2/3/4-byte, gated) straight into `dst`, then resolve the dst-full /
+        // multibyte boundary with the unchanged scalar logic below. `chars` (wide
+        // chars consumed) and `bytes` (output bytes written) differ for multibyte,
+        // so advance the two cursors independently. Bounded to `src_len` so the
+        // terminating NUL is never consumed here. The helper only emits whole
+        // validated windows, so this stays byte-for-byte identical to a per-char
+        // `wctomb` loop — the same lever `wcstombs` uses — now vectorising
+        // multibyte runs, not just the ASCII prefix.
+        let (chars, bytes) =
+            wchar_core::wcs_simd_prefix(&mut dst_slice[written..], &src_slice[idx..src_len]);
+        idx += chars;
+        written += bytes;
         if idx >= src_len {
             break;
         }
