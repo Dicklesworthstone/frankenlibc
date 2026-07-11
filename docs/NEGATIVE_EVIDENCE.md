@@ -136,6 +136,15 @@ the full measured detail.
   `[RCH] remote required; refusing local fallback (no worker assigned)`. No Cargo process, retry,
   benchmark, local fallback, source edit, or second lever followed; the 1.47x candidate remains
   **SURFACED, NOT SHIPPED**.
+- **AUTONOMOUS-CHAIN RESUME (current `main` `dfd310cc2`, 2026-07-11).** Negative-ledger and
+  `bv --robot-triage` routing still selected this unshipped measured candidate first. Current-main target
+  blobs remained identical to its base and the isolated diff retained stable patch ID
+  `e5beef44f78f9c07a7710b65fc0ea1a00c125c1c`. The one strict focused invocation again failed before
+  Cargo ran with `[RCH] local (no admissible workers: insufficient_slots=8,hard_preflight=1)` followed by
+  `[RCH] remote required; refusing local fallback (no worker assigned)`. Under the explicit
+  `rch degraded=SURFACE` contract, this is a genuine chain-wide blocker: every next lever requires a
+  strict-remote profile and median gate. No retry, benchmark, local fallback, source edit, or second
+  lever followed; the 1.47x candidate remains **SURFACED, NOT SHIPPED**.
 - **NEXT SAFE ACTION.** The isolated candidate remains in
   `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-4e4f` (with prior copies preserved at
   `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-a4f0` and
