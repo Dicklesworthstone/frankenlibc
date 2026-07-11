@@ -22,19 +22,19 @@ use frankenlibc_abi::stdlib_abi::{
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
     ether_aton_r, ether_ntoa, ether_ntoa_r, eventfd_read, eventfd_write, fpathconf, fsconfig,
-    fsmount, fsopen, fspick, fstat64, fstatat64, ftruncate64, getcpu, getdomainname,
-    getdtablesize, getegid, geteuid, getgid, getgroups, gethostid, getlogin, getlogin_r, getopt,
-    getopt_long, getpagesize, getpid, getppid, getresgid, getresuid, getuid, grantpt, herror,
-    hstrerror, lockf, lseek64, lstat64, mkdtemp, mount_setattr, move_mount, mq_close, mq_getattr,
-    mq_open, mq_receive, mq_send, mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice,
-    open_tree, open64, pathconf, pidfd_getfd, pidfd_open, pidfd_send_signal, posix_fadvise,
-    posix_fallocate, posix_madvise, posix_openpt, pread64, ptsname, pwrite64, renameat2,
-    sched_get_priority_max, sched_get_priority_min, sched_getaffinity, sched_getcpu,
-    sched_getparam, sched_getscheduler, sched_rr_get_interval, sched_setaffinity, sched_setparam,
-    sched_setscheduler, semctl, semget, semop, setdomainname, sethostname, shm_open, shm_unlink,
-    shmat, shmctl, shmdt, shmget, signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf,
-    sysinfo, timer_create, timer_delete, timer_getoverrun, timer_gettime, timer_settime, truncate64,
-    ttyname, ttyname_r, unlockpt,
+    fsmount, fsopen, fspick, fstat64, fstatat64, ftruncate64, getcpu, getdomainname, getdtablesize,
+    getegid, geteuid, getgid, getgroups, gethostid, getlogin, getlogin_r, getopt, getopt_long,
+    getpagesize, getpid, getppid, getresgid, getresuid, getuid, grantpt, herror, hstrerror, lockf,
+    lseek64, lstat64, mkdtemp, mount_setattr, move_mount, mq_close, mq_getattr, mq_open,
+    mq_receive, mq_send, mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open_tree,
+    open64, pathconf, pidfd_getfd, pidfd_open, pidfd_send_signal, posix_fadvise, posix_fallocate,
+    posix_madvise, posix_openpt, pread64, ptsname, pwrite64, renameat2, sched_get_priority_max,
+    sched_get_priority_min, sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler,
+    sched_rr_get_interval, sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget,
+    semop, setdomainname, sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget,
+    signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf, sysinfo, timer_create,
+    timer_delete, timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r,
+    unlockpt,
 };
 use frankenlibc_abi::unistd_abi::{arc4random_addrandom, arc4random_stir};
 use frankenlibc_core::syscall as raw_syscall;
@@ -6643,6 +6643,52 @@ fn sched_getcpu_success_does_not_set_errno() {
 
     assert!(cpu >= 0, "sched_getcpu should succeed on Linux");
     assert_eq!(err, 0, "sched_getcpu success should not touch errno");
+}
+
+#[test]
+fn sched_getcpu_rseq_matches_pinned_cpu_and_syscall() {
+    // Verifies the rseq `cpu_id` fast path is CORRECT (not merely non-negative): pin this thread
+    // to a single CPU from its own affinity set, yield, then sched_getcpu (rseq) must report
+    // exactly that CPU and agree with the raw SYS_getcpu syscall.
+    unsafe {
+        let sz = std::mem::size_of::<libc::cpu_set_t>();
+        let mut orig: libc::cpu_set_t = std::mem::zeroed();
+        if libc::sched_getaffinity(0, sz, &mut orig) != 0 {
+            return; // can't query affinity — skip
+        }
+        let mut target = -1i32;
+        for c in 0..libc::CPU_SETSIZE {
+            if libc::CPU_ISSET(c as usize, &orig) {
+                target = c;
+                break;
+            }
+        }
+        if target < 0 {
+            return;
+        }
+        let mut one: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_SET(target as usize, &mut one);
+        if libc::sched_setaffinity(0, sz, &one) != 0 {
+            return; // couldn't pin (cpuset/permission) — skip
+        }
+        libc::sched_yield();
+        let mut sys_cpu: u32 = u32::MAX;
+        libc::syscall(
+            libc::SYS_getcpu,
+            &mut sys_cpu as *mut u32,
+            std::ptr::null_mut::<u32>(),
+            std::ptr::null_mut::<libc::c_void>(),
+        );
+        let fl_cpu = sched_getcpu();
+        // Restore the original affinity before asserting.
+        let _ = libc::sched_setaffinity(0, sz, &orig);
+
+        assert_eq!(fl_cpu, target, "sched_getcpu must report the pinned CPU");
+        assert_eq!(
+            fl_cpu as u32, sys_cpu,
+            "sched_getcpu (rseq) must equal the SYS_getcpu syscall on a pinned thread"
+        );
+    }
 }
 
 #[test]
