@@ -16936,3 +16936,17 @@ claim). State:
   Traditional-Chinese/Hangul); the gather's parallel loads hide the latency ⇒ LOSS→WIN. Contiguous-cp
   codecs (eucjp Hiragana) are already fast scalar ⇒ no gather needed. iconv DECODE residuals
   (cp932_to_utf16le, eucjp→utf8) remain architectural (gather-vs-glibc-SIMD).
+
+## cc-iconv-euckr-simd-2026-07-11 — WIN (SHIPPED 18266d392)
+Lever: add EUC-KR (Korean) to the SIMD DBCS->UTF-8 decode gather in iconv::mod.rs.
+Was unbenched + on the scalar decode_dbcs2 path — a 3.61x LOSS vs glibc. EUC-KR is a pure
+2-byte DBCS (leads 0xA1..=0xFE over EUC_KR_DBCS), structurally identical to CP949 which already
+WINS via the gather. Exposed euckr_decode_direct, added `Encoding::EucKr => Some((..,0xA1,0xFE,..))`
+to the dbcs_simd match; added a Hangul-source euckr_to_utf8 bench arm.
+Measured (remote, median, iconv_glibc_bench, same-worker before/after, EUC-KR Hangul rows 0xB0..=0xC8):
+  euckr_to_utf8   7984.7 -> 1245.5 ns   (6.4x fl-over-fl; 3.61x LOSS -> 0.491x WIN, fl 2x faster than glibc)
+Byte-identical: same decode_dbcs2/EUC_KR_DBCS as scalar; ASCII + cp<0x800 break to scalar.
+Proof: iconv_differential_fuzz 10/0 (fl-with-gather vs LIVE glibc, covers EUC-KR decode) + conformance_diff_iconv 2/0.
+NOTE: gather needs a valid Hangul source (leads 0xB0..) — EUC-KR rows 0xA1.. are symbols (cp<0x800) that
+fall to scalar and don't exercise the gather (earlier 3.62x "no-change" measurement was a bad symbol source).
+DBCS decode-gather family now: CP949, GBK, Cp932/ShiftJis, Big5, EUC-KR all gather-routed.
