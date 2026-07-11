@@ -15804,3 +15804,49 @@ sha256, self-time, cv or null.
   `target/criterion/bd-dcrhgl-segment-production/run-1316345-1783701606831754748/`: `paired.json`
   **23,704 bytes**, `candidate.perf` **350,432 bytes**, `perf-report.txt` **2,185 bytes**, and
   `executable.sha256` **202 bytes**.
+
+## 2026-07-10 (cc_fl) — EMPTY (STRUCTURAL PROBE, no lever built): fresh-context structural-primitive sweep of the uncontested cc lane; frontier re-confirmed + HOLD (reject-id cc-struct-2026-07-10)
+
+- **MANDATE.** Fresh context, directed to attempt ONE genuinely-new structural primitive (succinct
+  structures / SIMD / cache-oblivious) on the cc lane (allocator / string / math / resolv) — ship if it
+  wins, re-confirm frontier + hold if a real attempt is empty. Profile-first, no lever without a ranked
+  hotspot. This is a **structural-saturation finding, not an A/B measurement** — so there is no binary
+  sha256 / paired.json to cite (no candidate code was built); the evidence is the in-tree structure
+  itself, read directly. Recorded so future fresh-context turns stop re-deriving it.
+- **LANE MAP (what is actually available to cc right now).**
+  - **resolv** — the *only* clean-uncontested part of the cc lane. Probed for the obvious structural
+    primitive: replace an O(N) linear lookup with a succinct/hash index. **The primitive already exists
+    in-tree.** `resolv_abi.rs` `ServiceLookupCache` (~L300–460) keys `getservbyname` on a **sorted
+    `name_hash` array** (`ascii_casefold_hash` → `partition_point` binary search + a tiny same-hash
+    collision-bucket scan) and `getservbyport` on a **sorted `port_keys` binary search**;
+    `ProtocolLookupCache` (~L480–575) mirrors it (sorted `name_hash` + sorted `number_keys`). Lookups are
+    already O(log N) over a generation-stamped parsed index (no per-call file re-read, no clone — the
+    `with_*_backend_snapshot` borrow vein). fl already **beats host glibc 3.98–6.17x** here (glibc
+    re-opens + linearly rescans `/etc/services` every call). A perfect-hash / FST refinement only turns
+    O(log N)→O(1) — on an ~11k-entry table that is ≈14 u64-compares, sub-ns — landing far **inside the
+    per-function null floor** on a path that already wins. No gap vs glibc ⇒ nothing to ship.
+  - **allocator (malloc)** — the sole remaining cc structural swing (side fallback-table → own-the-layout
+    address-derived metadata, cf. `perf_next_architectural_swings.md` Swing-2) was **LANDED TODAY by
+    cod_fl**: `15f58c419` + the bd-dcrhgl WIN above (segment magazines + exact address-derived segment
+    ownership bitmap + packed segment shadow; 18.7–19.4% vs ORIG, 59/0 allocator tests). That IS the
+    structural primitive Swing-2 pointed at. `malloc_abi.rs` is cod_fl's active file (last touch
+    `19e4f9e77`, today) and cod declared the cc lane frontier-final. Colliding is forbidden and the
+    primitive is already built. The residual 10.7x vs glibc is the memory-safety framing tax (R3, null
+    1.000x — irreducible).
+  - **math (f32)** — optimized; lone residual is `j0f` 1.42x vs glibc (R10). Retry condition is "a
+    reliable glibc/Cephes j0f source is handed in"; **not met this turn** — none handed in, and
+    `legacy_glibc_code/` is absent from the tree (no in-repo glibc `s_j0f` source). j0f is also a rare
+    Bessel function, not a realistic-workload hot path, and its `same32` gate is bit-exact (a Cephes port
+    would fail it, and loosening a correctness gate to land a perf win is forbidden). Deprioritized.
+  - **string / stdio / iconv** — contesting agent's lane (`stdio_abi.rs` carries uncommitted peer WIP in
+    the working tree this turn — confirms the note is current). Not cc's to touch.
+- **RESULT — EMPTY.** No clean, uncontested, above-floor, genuinely-new structural lever remains for cc.
+  The one structural swing left in the lane (malloc side-table→address-derived) was completed by a peer;
+  the uncontested part (resolv) is already at its structural optimum and already beats glibc. Frontier
+  **re-confirmed + HOLD**, consistent with `PERF_FRONTIER_FINAL.md`.
+- **RETRY ONLY IF (reject-id cc-struct-2026-07-10):** (a) a specific reliable glibc/Cephes `j0f` source
+  is handed in (opens R10); or (b) a contesting agent frees the string/stdio/iconv lane; or (c) a new
+  workload/benchmark exposes a fresh cc-lane hot path where fl is *measurably* slower than glibc above the
+  per-function null floor (the three re-open conditions in `PERF_FRONTIER_FINAL.md` §4). A perfect-hash
+  refinement of the resolv indices is **not** a retry condition — it is provably sub-floor on a
+  glibc-beating path.
