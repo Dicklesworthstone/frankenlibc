@@ -16162,3 +16162,27 @@ sha256, self-time, cv or null.
   accuracy-hard. **No clean tractable lever remains in the cc math lane.**
 - **RETRY ONLY IF:** a glibc-2.42 kernel source is handed in for a blocked fn, OR the maintainer reverses
   the pow gate decision. Do not re-derive the base-2/base-10 formulations — confirmed optimal.
+
+## 2026-07-11 (cc_fl) — FRONTIER+HOLD (cc lane WIDE, all 4 sub-lanes re-verified): definitive reference (cc-frontier-2026-07-11)
+
+Re-checked every cc sub-lane this turn for a fresh tractable lever (no slot — code-structural). ALL
+mined/blocked/contested; **no clean, uncontested, above-floor lever remains.** Authoritative state:
+
+- **ALLOCATOR** — aligned family (posix_memalign/aligned_alloc/memalign, +valloc/pvalloc inherit)
+  SHIPPED strict host fast-path (`552dcba5f`, 2.5–6.2x). Systematic audits done: (a) arena-alloc sites
+  outside malloc_abi = only `atfork_prepare`; (b) `try_global_pipeline`/`.validate` sites inside
+  malloc_abi = the hardened-mode paths that malloc/calloc/free/realloc strict fast-paths already skip,
+  plus `validate_ptr` (membrane mechanism). No un-wired hot path. Hot-path residual = cod's frontier
+  (guard CAS signal-safety + STATS field-updates, irreducible; R3/R4/R6). calloc optimal.
+- **STRING** — safe-Rust/std::simd-vs-glibc-AVX2 floor (`cc-string-2026-07-11`, 52-arm survey; every
+  loser already maxed-SIMD). ACTIVE PEER WIP (string_abi.rs/mem.rs `M`) — not cc's to touch.
+- **MATH** — `cc-explog2-2026-07-11` + prior: trig(tan/sin/cos)/exp/exp2/log2/exp10/log10/sincos/
+  hyperbolics/erf/expm1/log1p/atan/atan2/cbrt/hypot/tgamma all shipped-or-winning; log parity;
+  asin/acos 1.30x + pow 1.29x (maintainer-HELD bit-exact) + Bessel = kernel-source-blocked.
+- **RESOLV** — mined (137x membrane-bookkeeping elim; sorted-hash service/proto indices; borrow-backend
+  hosts; inet_* fast-paths). Beats glibc 4–6x via caching (glibc re-reads files) — 2.42-independent.
+
+**RE-OPEN ONLY IF:** (a) a glibc-2.42 kernel source is handed in for a blocked math fn (asin/acos/pow/
+bessel); (b) the maintainer reverses the pow bit-exact decision; (c) a contesting agent frees the
+string lane; or (d) a NEW workload/benchmark exposes a fresh above-floor cc hot path. Do not re-derive
+this map — it is complete as of 2026-07-11.
