@@ -2901,16 +2901,13 @@ pub unsafe extern "C" fn wcstombs(dst: *mut u8, src: *const u32, n: usize) -> us
     };
     let src_slice = unsafe { std::slice::from_raw_parts(src, wlen + 1) }; // include NUL
     if dst.is_null() {
-        // Count mode
-        let mut count = 0usize;
-        for &wc in &src_slice[..wlen] {
-            let mut tmp = [0u8; 6];
-            match wchar_core::wctomb(wc, &mut tmp) {
-                Some(len) => count += len,
-                None => return usize::MAX,
-            }
-        }
-        return count;
+        // Count mode: SIMD-sum the UTF-8 byte length over the char window (was a
+        // scalar per-char `wctomb` length loop). Byte-identical — `wcs_encoded_len`
+        // returns the same total and the same `None`-at-first-unrepresentable-char.
+        return match wchar_core::wcs_encoded_len(&src_slice[..wlen]) {
+            Some(count) => count,
+            None => usize::MAX,
+        };
     }
     let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst, n) };
     match wchar_core::wcstombs(dst_slice, src_slice) {

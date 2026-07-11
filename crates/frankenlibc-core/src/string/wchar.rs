@@ -744,6 +744,58 @@ pub fn wcstombs(dest: &mut [u8], src: &[u32]) -> Option<usize> {
     }
 }
 
+/// Total number of UTF-8 output bytes for the wide string `src` (the count-mode
+/// answer of `wcstombs`/`wcsrtombs`/`wcsnrtombs` when `dst == NULL`), or `None`
+/// if any wchar is unrepresentable — exactly what a per-char `wctomb` length sum
+/// would return, but SIMD-summed 8 lanes at a time.
+///
+/// The byte length of a representable wchar is a pure function of its magnitude
+/// (`1 + (wc>=0x80) + (wc>=0x800) + (wc>=0x10000) + (wc>=0x200000) +
+/// (wc>=0x4000000)`, matching `wctomb`'s RFC-2279 length ladder), so a whole
+/// vector's lengths are computed branchlessly and horizontally summed. A window
+/// containing a UTF-16 surrogate (`0xD800..=0xDFFF`) or an out-of-range value
+/// (`> 0x7FFF_FFFF`) — the two cases `wctomb` rejects — is left to the scalar
+/// tail so the `None` is returned at the exact first offending char, byte-for-byte
+/// like the scalar loop. `src` must be the exact char window to measure (callers
+/// bound it to their NUL / `nwc` limit); NUL is not treated specially here.
+pub fn wcs_encoded_len(src: &[u32]) -> Option<usize> {
+    const LANES: usize = 8;
+    let mut si = 0usize;
+    let mut total = 0usize;
+    while si + LANES <= src.len() {
+        let v = Simd::<u32, LANES>::from_array(src[si..si + LANES].try_into().unwrap());
+        // Unrepresentable lanes (surrogate / out-of-range) -> resolve scalar so the
+        // exact `None` position matches the per-char loop.
+        let surrogate = v.simd_ge(Simd::splat(0xD800)) & v.simd_le(Simd::splat(0xDFFF));
+        let too_big = v.simd_gt(Simd::splat(0x7FFF_FFFF));
+        if (surrogate | too_big).any() {
+            break;
+        }
+        // Window byte total = LANES (every char is >= 1 byte) + the number of lanes
+        // crossing each higher-length threshold, summed. `to_bitmask().count_ones()`
+        // counts the set lanes of each comparison — one horizontal popcount per
+        // threshold, no per-lane branch. Matches `wctomb`'s RFC-2279 length ladder
+        // exactly for every representable char.
+        total += LANES
+            + v.simd_ge(Simd::splat(0x80)).to_bitmask().count_ones() as usize
+            + v.simd_ge(Simd::splat(0x800)).to_bitmask().count_ones() as usize
+            + v.simd_ge(Simd::splat(0x1_0000)).to_bitmask().count_ones() as usize
+            + v.simd_ge(Simd::splat(0x20_0000)).to_bitmask().count_ones() as usize
+            + v.simd_ge(Simd::splat(0x400_0000)).to_bitmask().count_ones() as usize;
+        si += LANES;
+    }
+    // Scalar tail (and exact error resolution) via `wctomb`.
+    let mut tmp = [0u8; 6];
+    while si < src.len() {
+        match wctomb(src[si], &mut tmp) {
+            Some(n) => total += n,
+            None => return None,
+        }
+        si += 1;
+    }
+    Some(total)
+}
+
 // Wide character classification (`<wctype.h>` `isw*` predicates).
 //
 // All twelve predicates are driven by [`super::wctype_table::ctype_mask`], a
