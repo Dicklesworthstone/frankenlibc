@@ -16647,3 +16647,34 @@ per-call alloc-elimination (wcsftime stack-buffered, mbstowcs lean, SingleByteRe
 done), iconv (cleanest done + measurement blocked). Remaining perf work is all (a) external-glibc-source
 blocked math kernels, (b) multi-turn architectural swings (malloc inline-header, rseq), or (c)
 complex/correctness-risky (iconv DBCS/GB18030). None is a clean single-turn byte-identical lever.
+
+## 2026-07-11 (cc_fl) — iconv measurement UNBLOCKED (harness=false refactor, commit `91648da97`) + full empirical fl-vs-glibc profile (cc-iconv-probe-2026-07-11 UPDATE)
+
+Corrects the prior "criterion bench built-but-not-run" blocker: converted `iconv_glibc_bench` to a
+`harness=false` `fn main()` (prints `ICONV conv="X" fl_ns=.. glibc_ns=.. fl_over_glibc=..` per conv);
+rch now executes it. **Wrapper gotcha that hid it the first time:** the retry wrapper's result-grep must
+include `ICONV` or it drops the output lines. Full 35-conversion profile (median, worker vmi1227854,
+1 KiB buffers):
+
+- **LOSERS (fl slower):** `utf8_to_cp949_diverse` **3.78x** (5400 vs 1428 ns), `utf8_to_cp949` **2.34x**
+  (5646 vs 2414), `cp932_to_utf16le` **1.67x**, `eucjpms_to_utf8` 1.36x, `eucjp_to_utf8` 1.15x,
+  `cp932_to_utf8` 1.09x (≈par). **Everything else WINS** (0.24–0.76x): all UTF↔UTF, all SBCS, all
+  DBCS→UTF-8 (gbk/big5/gb2312/cp949/johab/gb18030 0.32–0.60x), utf8→gb18030 0.58x, koi8r 0.37–0.76x.
+- **WHY the losers are NOT clean single-turn levers:**
+  - **UTF-8→CP949 encode (2.34x/3.78x):** already HAS the inline UTF-8→DBCS encode fast path (mod.rs
+    46668, incl. Cp949 at 46707), so the residual is per-char `utf8_decode_step` + `char::from_u32` +
+    the 256 KiB cp-indexed `enc_direct[cp]` table (cache-bound for scattered Hangul → the 3.78x
+    "diverse" vs 2.34x contiguous). Closing it needs SIMD UTF-8 decode (Lemire) and/or a compact
+    encode table (glibc's `__ksc5601_from_ucs4` is compact) — a multi-turn effort, not a one-liner.
+  - **DBCS→UTF-16 (cp932_to_utf16le 1.67x):** the SIMD `dbcs_simd` gather (mod.rs 46855) decodes the
+    2-byte DBCS family but only PACKS to UTF-8 (3-byte); the `cd.to==Utf16/Utf32` case falls to the
+    per-char decode+write. A gather-output extension (4 BMP cps → 4 u16, mirroring the ascii-widen
+    extension) is the tractable lever but is real SIMD work in the correctness-sensitive convert loop
+    (pre-existing RED SBCS tests bd-k4ct23) — a dedicated iconv turn, not a rushed inline chain.
+  - **EUC-JP(-MS)→UTF-8 (1.15–1.36x):** partial gather coverage — the SS2/SS3 single-shift bytes fall
+    to scalar by design; closing needs a 3-byte SS-run SIMD path (architectural).
+
+**NET:** the bench refactor is the shippable deliverable (unblocks all future iconv perf work +
+regression-guards the 29 winning conversions). The remaining iconv gaps are SIMD/table engineering
+(multi-turn, correctness-risky), consistent with the session-wide finding that clean single-turn
+byte-identical levers are exhausted; iconv joins malloc/rseq/math-kernels as dedicated-turn work.
