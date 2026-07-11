@@ -483,6 +483,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     if let Some(n) = format_strftime_ymd(fmt, bd, buf) {
         return n;
     }
+    if let Some(n) = format_strftime_simple_numeric(fmt, bd, buf) {
+        return n;
+    }
 
     let mut pos = 0usize;
     let mut i = 0usize;
@@ -1138,6 +1141,143 @@ fn format_strftime_numeric_19(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -
     Some(OUT_LEN)
 }
 
+/// Formats the locale-independent fixed-width numeric subset without entering
+/// the general flag/modifier parser. The first pass proves that the format has
+/// at least one numeric directive, every directive is supported, every
+/// referenced field is in the fixed-width domain, and the complete output fits
+/// before the second pass writes a byte.
+#[inline(never)]
+fn format_strftime_simple_numeric(
+    fmt: &[u8],
+    bd: &BrokenDownTime,
+    buf: &mut [u8],
+) -> Option<usize> {
+    let mut out_len = 0usize;
+    let mut has_numeric = false;
+    let mut i = 0usize;
+
+    while i < fmt.len() {
+        if fmt[i] != b'%' {
+            out_len = out_len.checked_add(1)?;
+            i += 1;
+            continue;
+        }
+
+        i += 1;
+        let specifier = *fmt.get(i)?;
+        let width = match specifier {
+            b'%' => 1,
+            b'Y' => {
+                has_numeric = true;
+                let year = bd.tm_year as i64 + 1900;
+                if !(1000..=9999).contains(&year) {
+                    return None;
+                }
+                4
+            }
+            b'm' => {
+                has_numeric = true;
+                if !(0..=11).contains(&bd.tm_mon) {
+                    return None;
+                }
+                2
+            }
+            b'd' => {
+                has_numeric = true;
+                if !(1..=31).contains(&bd.tm_mday) {
+                    return None;
+                }
+                2
+            }
+            b'H' => {
+                has_numeric = true;
+                if !(0..=23).contains(&bd.tm_hour) {
+                    return None;
+                }
+                2
+            }
+            b'M' => {
+                has_numeric = true;
+                if !(0..=59).contains(&bd.tm_min) {
+                    return None;
+                }
+                2
+            }
+            b'S' => {
+                has_numeric = true;
+                if !(0..=60).contains(&bd.tm_sec) {
+                    return None;
+                }
+                2
+            }
+            _ => return None,
+        };
+        out_len = out_len.checked_add(width)?;
+        i += 1;
+    }
+
+    if !has_numeric {
+        return None;
+    }
+
+    if buf.len() <= out_len {
+        return Some(0);
+    }
+
+    let mut pos = 0usize;
+    i = 0;
+    while i < fmt.len() {
+        if fmt[i] != b'%' {
+            buf[pos] = fmt[i];
+            pos += 1;
+            i += 1;
+            continue;
+        }
+
+        i += 1;
+        match fmt[i] {
+            b'%' => {
+                buf[pos] = b'%';
+                pos += 1;
+            }
+            b'Y' => {
+                let year = (bd.tm_year as i64 + 1900) as u32;
+                buf[pos] = b'0' + ((year / 1000) % 10) as u8;
+                buf[pos + 1] = b'0' + ((year / 100) % 10) as u8;
+                buf[pos + 2] = b'0' + ((year / 10) % 10) as u8;
+                buf[pos + 3] = b'0' + (year % 10) as u8;
+                pos += 4;
+            }
+            b'm' => {
+                write_two_digits(&mut buf[pos..pos + 2], (bd.tm_mon + 1) as u32);
+                pos += 2;
+            }
+            b'd' => {
+                write_two_digits(&mut buf[pos..pos + 2], bd.tm_mday as u32);
+                pos += 2;
+            }
+            b'H' => {
+                write_two_digits(&mut buf[pos..pos + 2], bd.tm_hour as u32);
+                pos += 2;
+            }
+            b'M' => {
+                write_two_digits(&mut buf[pos..pos + 2], bd.tm_min as u32);
+                pos += 2;
+            }
+            b'S' => {
+                write_two_digits(&mut buf[pos..pos + 2], bd.tm_sec as u32);
+                pos += 2;
+            }
+            _ => unreachable!("first pass accepted only simple numeric directives"),
+        }
+        i += 1;
+    }
+
+    debug_assert_eq!(pos, out_len);
+    buf[out_len] = 0;
+    Some(out_len)
+}
+
 #[inline]
 fn write_two_digits(dst: &mut [u8], value: u32) {
     debug_assert_eq!(dst.len(), 2);
@@ -1454,6 +1594,111 @@ mod tests {
         let n = format_strftime(b"%H:%M:%S", &bd, &mut buf);
 
         assert_eq!(&buf[..n], b"99:30:45");
+    }
+
+    #[test]
+    fn strftime_simple_numeric_mixed_format() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 14;
+        bd.tm_min = 30;
+        bd.tm_sec = 45;
+        let mut buf = [0x55u8; 64];
+        let n = format_strftime(b"%H:%M %Y/%m/%d %% %S", &bd, &mut buf);
+
+        assert_eq!(&buf[..n], b"14:30 2024/01/01 % 45");
+        assert_eq!(buf[n], 0);
+    }
+
+    #[test]
+    fn strftime_simple_numeric_hm_exact_fit() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_year = i32::MAX;
+        bd.tm_mon = i32::MIN;
+        bd.tm_mday = i32::MAX;
+        bd.tm_hour = 14;
+        bd.tm_min = 30;
+        bd.tm_sec = i32::MAX;
+        let mut buf = [0x55u8; 6];
+
+        assert_eq!(
+            format_strftime_simple_numeric(b"%H:%M", &bd, &mut buf),
+            Some(5)
+        );
+        assert_eq!(&buf, b"14:30\0");
+    }
+
+    #[test]
+    fn strftime_simple_numeric_too_small_does_not_write() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 14;
+        bd.tm_min = 30;
+        let mut buf = [0x55u8; 5];
+
+        assert_eq!(
+            format_strftime_simple_numeric(b"%H:%M", &bd, &mut buf),
+            Some(0)
+        );
+        assert_eq!(buf, [0x55u8; 5]);
+    }
+
+    #[test]
+    fn strftime_simple_numeric_rejects_before_writing() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 14;
+        bd.tm_min = 30;
+        let mut buf = [0x55u8; 32];
+
+        assert_eq!(
+            format_strftime_simple_numeric(b"prefix %H:%M %A", &bd, &mut buf),
+            None
+        );
+        assert_eq!(buf, [0x55u8; 32]);
+
+        bd.tm_hour = 99;
+        assert_eq!(
+            format_strftime_simple_numeric(b"prefix %H:%M", &bd, &mut buf),
+            None
+        );
+        assert_eq!(buf, [0x55u8; 32]);
+
+        for fmt in [
+            b"prefix %H:%M %".as_slice(),
+            b"prefix %H:%M %-H".as_slice(),
+            b"prefix %H:%M %0H".as_slice(),
+            b"prefix %H:%M %OH".as_slice(),
+        ] {
+            bd.tm_hour = 14;
+            assert_eq!(format_strftime_simple_numeric(fmt, &bd, &mut buf), None);
+            assert_eq!(buf, [0x55u8; 32]);
+        }
+    }
+
+    #[test]
+    fn strftime_simple_numeric_preserves_literal_routing() {
+        let bd = epoch_to_broken_down(1_704_067_200);
+        let mut buf = [0x55u8; 8];
+
+        assert_eq!(format_strftime_simple_numeric(b"", &bd, &mut buf), None);
+        assert_eq!(format_strftime_simple_numeric(b"text", &bd, &mut buf), None);
+        assert_eq!(format_strftime_simple_numeric(b"%%Y", &bd, &mut buf), None);
+        assert_eq!(buf, [0x55u8; 8]);
+
+        assert_eq!(
+            format_strftime_simple_numeric(b"%%%Y", &bd, &mut buf),
+            Some(5)
+        );
+        assert_eq!(&buf[..6], b"%2024\0");
+    }
+
+    #[test]
+    fn strftime_simple_numeric_invalid_fields_fall_back() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_hour = 99;
+        bd.tm_min = 30;
+        let mut buf = [0u8; 64];
+        let n = format_strftime(b"%H:%M", &bd, &mut buf);
+
+        assert_eq!(&buf[..n], b"99:30");
     }
 
     #[test]

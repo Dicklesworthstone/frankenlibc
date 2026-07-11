@@ -6,6 +6,44 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-11 (cod_fl / Codex) — WIN (SHIPPED): bounded numeric `strftime` transducer cuts `%H:%M` median **417.50 -> 30.009 ns (13.91x)**; 1,108,400 host-glibc comparisons clean
+
+- **PROFILE-FIRST / ONE LEVER.** Stayed outside cc-owned allocator/string. Math's focused survey was
+  already at parity or better and memcpy's remaining small-call seam is in the owned string ABI surface,
+  so the fresh target was time: on remote worker `vmi1227854`, `strftime("%H:%M")` measured
+  FrankenLibC **417.50 ns** versus host glibc **25.786 ns**, while the exact `%H:%M:%S` path was already
+  healthy at **16.871 ns** versus glibc **36.203 ns**. The single candidate adds one out-of-line,
+  two-pass transducer before the giant recursive formatter for formats containing literals, `%%`, and
+  bare fixed-width `%Y/%m/%d/%H/%M/%S` directives.
+- **CORRECTNESS CONSTRUCTION.** Pass one scans the whole immutable format, validates only referenced
+  scalar fields (four-digit year, month/day/hour/minute ranges, and leap second 60), computes output
+  length with checked arithmetic, and rejects flags, widths, E/O modifiers, composites, malformed
+  directives, invalid referenced fields, and formats with no numeric directive before writing anything.
+  It also proves NUL capacity before pass two. Therefore pass two is a total replay of the certified token
+  stream; unsupported and out-of-domain inputs reach the unchanged general formatter, including bare
+  variable-width `%Y` and malformed-field behavior. Existing exact HMS/numeric-19/YMD writers remain
+  ordered first, and `#[inline(never)]` isolates their code layout.
+- **REMOTE SAME-WORKER MEDIAN GATE.** Identical baseline/candidate command:
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo bench -j 4 --profile release -p frankenlibc-bench --features abi-bench --bench strftime_glibc_bench strftime_time_hm -- --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`.
+  On `vmi1227854`, `%H:%M` fell **417.50 -> 30.009 ns**, candidate/baseline **0.071878x**
+  (**13.91x faster**); Criterion reported a **-93.310%** central change with `p=0.00`. The host control
+  drifted only **25.786 -> 27.084 ns (1.050x)**, and the existing `%H:%M:%S` guard improved
+  **16.871 -> 12.811 ns (0.759x)**. The effect is far above both controls and leaves the candidate within
+  **1.108x** of host glibc on `%H:%M`.
+- **CORRECTNESS PROOF GREEN, REMOTE ONLY.** Focused core units passed **28/28**, pinning exact fit + NUL,
+  insufficient-buffer immutability, late unsupported rejection, invalid-field fallback, literal-only
+  routing, escaped percent, and irrelevant-field independence. Core live differential tests completed
+  **608,400** comparisons with zero divergence; ABI deterministic fuzz completed **300,000**
+  buffer/wide-year comparisons plus **200,000** specifier/flag/width/E/O comparisons with zero divergence:
+  **1,108,400 host-glibc comparisons, 0 divergences** total.
+- **REMOTE STATIC-GATE SURFACE.** No Cargo command ran locally. RCH rejected `cargo fmt --all -- --check`
+  as a non-compilation command (`RCH-E301`), so it was surfaced without fallback; `git diff --check` is
+  clean. Remote workspace check compiled the owned core/ABI/bench targets, then hit six pre-existing
+  E0433 errors in `frankenlibc-bench/examples/regex_ab.rs` (optional `frankenlibc_abi` unavailable).
+  Workspace clippy with `-D warnings` likewise stopped on 55 pre-existing errors across iconv, inet,
+  math, stdio, stdlib, resolver, and cc-owned string code; neither failure names the changed time or
+  benchmark lines.
+
 ## ============ FRONTIER SUMMARY (cc_fl / BlackThrush) — cc lane at frontier 2026-07-10; HOLDING ============
 
 **Consolidated finalization: see `docs/PERF_FRONTIER_FINAL.md`** (shipped wins + every reject with ID/null-control/retry-condition).
