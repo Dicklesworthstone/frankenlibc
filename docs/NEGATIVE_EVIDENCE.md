@@ -16277,3 +16277,32 @@ benchmark/workload (handed in) surfaces a function outside this closed set.
 - **HOLD (offered to maintainer).** Not a clean lever to rush. RETRY ONLY IF the maintainer wants the
   fmemopen MT read win and accepts the careful multi-cycle effort (pure-seq-gated pointer cache + full
   ungetc/fseek/MT conformance). cc lane + stdio remain at frontier.
+
+## 2026-07-11 (cc_fl) — WIN (loss→win): pointer-keyed fmemopen fgetc fast path — commit `8cc0aced9` (cc-fgetc-mem-2026-07-11, RESOLVED)
+
+- **REVERSED the prior turn's "borderline/hold".** On re-examination the correctness was NOT the
+  cursor-divergence surface I feared: `ungetc`/`fseek` call `sync_and_unregister_fast_fixed_mem_read`
+  (close the cursor), and `read_byte` checks `closed` FIRST → a pointer-keyed cache reading via
+  `read_byte` inherits the existing path's exact semantics (falls through to the pushback-aware slow
+  path). So it's safe + tractable, not a multi-cycle risk.
+- **THE LEVER.** `stdio_abi.rs`: a thread-local `FGETC_MEM_PTR_CACHE: (ptr, gen, Arc<FastFixedMemRead>)`
+  checked in `fgetc` BEFORE `canonical_stream_id`. fmemopen reads were the per-op floor because the
+  write-cache fast path EXCLUDES mem streams → every byte paid `canonical_stream_id`'s native lock +
+  `decide` + the `fast_fixed_mem_reads` map lock. The cache skips all three: lock-free atomic
+  `read_byte`. **MT-SAFE** (unlike the ST-gated write cache): cursor is `Arc`+atomic pos, held so it
+  stays alive, thread-local so no cross-thread race. `REGISTRY_GEN` invalidates register/unregister +
+  pointer reuse; `closed` handles ungetc/fseek.
+- **PROVEN, median (de-criterion'd `stdio_mt_contention_bench`, manual timing + 1-thread arm):**
+
+  | threads | fl/glibc BEFORE | fl/glibc AFTER | fl absolute |
+  |---:|---:|---:|---:|
+  | 1 | 1.399 (loss) | **0.861 (win)** | 849→447 µs (~1.9x) |
+  | 8 | 1.555 (loss) | **0.592 (win)** | 3882→1751 µs (~2.2x) |
+
+  glibc moved only 0.86x across runs ⇒ the ~2x fl drop is the lever, not worker variance. fmemopen
+  fgetc now BEATS glibc (was losing).
+- **CORRECTNESS.** `stdio_abi_test` **256/0** + `conformance_diff_stdio_ext` **3/0** +
+  `conformance_diff_stdio_unlocked_io` **2/0** (exercise fmemopen/ungetc/fseek/mixed ops).
+- **FOLLOW-ON:** `fread`/`fgets`/`getc` on fmemopen pay the same floor — the same pointer-keyed cache
+  applies (separate levers). The MT **fd**-stream fgetc floor still needs per-FILE locking (rejected as
+  low-value: `cc-stdio-mt` — 1.11x contention over a per-op floor).
