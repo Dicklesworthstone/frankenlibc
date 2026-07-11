@@ -16863,3 +16863,28 @@ rest. Do NOT land a naive inline header:
 - **iconv encode-gather vein now COMPLETE:** CP949/GBK/GB2312/JOHAB/EUC-KR/CP932/ShiftJis all gathered
   + all in the scalar guard. Remaining iconv losers are architectural (cp932_to_utf16le 2.0x = gather
   latency; eucjp(-ms) 1.5x = glibc SIMD; both gathers already exist).
+
+## 2026-07-11 (cc_fl) — guard-drift audit COMPLETE + iconv clean-lever frontier exhausted (cc-iconv-cp932-simd-2026-07-11 follow-up)
+
+After the CP932 encode-guard drift fix, audited EVERY fast-path guard/match pair in the iconv convert
+loop (mod.rs ~45000-48200) for the recurring guard-vs-match drift bug class. RESULT: no remaining drift.
+- DBCS→UTF-8 decode guard (~47085): 12/12 (Gb18030/ShiftJis/Cp932/Ibm943/Ibm932/Big5/Gbk/EucJp/EucKr/
+  Cp949/Gb2312/Johab), `_ => unreachable!()`. Complete (the 291b3fb0b fix).
+- DBCS→UTF-16/32 decode guard (~47351): 12/12, unreachable. Complete.
+- UTF-8→DBCS encode scalar guard (~46764): now 12/12 after adding Cp932/Ibm943/Ibm932 (ce7982bd8).
+- SIMD encode gather + `dbcs_simd` decode gather: curated per-codec `match from_enc` (Some/None), no
+  guard to drift. EucJpMs is in the decode gather (2-byte run only); EucTw deliberately excluded
+  (measured loss). No EucJpMs/EucTw drift in any decode dispatch.
+
+**iconv clean-lever frontier EXHAUSTED.** The encode-gather vein is complete (all pure-2-byte
+`encode_dbcs2` codecs: CP949/GBK/GB2312/JOHAB/EUC-KR/CP932/ShiftJis gathered; Ibm943/Ibm932 in the
+scalar guard but unbenched/rare — not gather-worth measuring). Guard drifts all fixed. Remaining iconv
+losers are architectural: cp932_to_utf16le 2.0x (`vpgatherdd` latency vs glibc's direct DBCS→UTF-16
+table), eucjp(-ms)→utf8 1.5x (glibc SIMD decode) — both gathers already exist, glibc is faster.
+
+**Session-wide frontier (cc lane, 2026-07-11):** clean single-turn byte-identical gap-closing levers are
+exhausted. Shipped this session: sched_getcpu vDSO (3.77x) + rseq (19→2.3ns, glibc parity), mktime
+(1.36x), iconv CP949 + CP932/ShiftJis SIMD encode gathers (both LOSS→WIN), iconv bench harness=false
+(tooling). Remaining perf work is all (a) blocked on external glibc-2.42 kernel sources (math kernels),
+(b) architectural (iconv gather-vs-glibc-SIMD residuals), or (c) safety-blocked / no-glibc-rseq
+multi-turn (malloc inline-header, standalone-fl rseq registration).
