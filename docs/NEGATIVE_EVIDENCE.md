@@ -16113,3 +16113,31 @@ sha256, self-time, cv or null.
 - **RETRY ONLY IF (cc-asinacos-2026-07-11):** a reliable glibc-2.42 / ARM-optimized-routines `asin`/`acos`
   kernel source is handed in AND the `same64` inverse-trig special-case gate is authorized for ≤4-ULP
   relaxation (as trig was). Do not re-derive via the atan2 shortcut — proven slower than libm.
+
+## 2026-07-11 (cc_fl) — SURVEY + SURFACE: fresh f64 exp/log/pow vs glibc 2.42 — exp/log fine, `pow` 1.29x is bit-exact-kernel-blocked (cc-explogpow-2026-07-11)
+
+- **PROFILE-FIRST (closed a gap).** Two systematic checks this turn: (1) audited ALL arena-allocation
+  call sites (`try_global_pipeline`/`.allocate`) outside `malloc_abi.rs` — only `atfork_prepare`, so the
+  aligned-alloc family was the SOLE arena fall-through (already shipped); strdup/wcsdup/asprintf don't
+  have it. (2) Measured **f64 exp/log/pow** — the most common transcendentals, never before surveyed vs
+  glibc 2.42 (added to `math_passthrough_survey_bench`, uncommitted like the `_orig` arms):
+
+  | fn | fl p50 ns | glibc ns | ratio |
+  |---|---:|---:|---:|
+  | exp | 4.391 | 6.109 | **0.72 (win)** |
+  | log | 3.438 | 3.438 | **1.00 (parity)** |
+  | **pow** | 11.742 | 9.078 | **1.29 (LOSS)** |
+
+- **pow — NEW gap, BLOCKED (kernel).** `math::pow(base>0, irrational)` → `pow_fused` = the full ARM
+  `__pow` port (top12 classification + special-case cascade + fused double-double log2/exp2). It is
+  **`same64` bit-exact-gated** vs glibc (`conformance_diff_pow_special:75`; the code comment states
+  "bit-exact vs host glibc pow"). So fl produces the SAME result as glibc 2.42 but 1.29x slower ⇒ the gap
+  is glibc's faster same-result implementation (Rust `std::simd`/scalar vs glibc hand-asm floor — or a
+  newer 2.42 pow algorithm). Cannot close: no in-repo glibc source, no inline-asm in the core crate, and
+  no room to trade precision under the bit-exact gate. Same class as asin/acos and j0f.
+- **NO LEVER — SURFACE.** exp/log are at frontier (win/parity); pow is a fresh but blocked gap. Spent 2
+  slots (survey runs); the pow characterization is code+gate structural.
+- **RETRY ONLY IF (cc-explogpow-2026-07-11):** a glibc-2.42 / newer optimized-routines `pow` kernel
+  source is handed in, OR a faster correctly-rounded pow algorithm. Do not re-derive by reformulating
+  `pow=exp(y·log x)` — `pow_fused` already IS the fused kernel and is bit-exact; a naive exp∘log form
+  loses the double-double precision the same64 gate requires.
