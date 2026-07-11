@@ -3705,6 +3705,69 @@ fn bench_math_abi(c: &mut Criterion) {
             math_abi::log2,
             cmath::log2
         );
+
+        // Ternary f32 path: keep the current deployed ABI between the raw core
+        // kernel and a host-glibc control. Resolve the host symbol in a new
+        // namespace so FrankenLibC's exported `fmaf` cannot interpose it.
+        type HostFmaf = unsafe extern "C" fn(f32, f32, f32) -> f32;
+        let host_fmaf: HostFmaf = unsafe {
+            // SAFETY: libm.so.6 is loaded for the lifetime of this benchmark;
+            // `fmaf` has the declared C ABI on the supported Linux target.
+            let handle = libc::dlmopen(
+                libc::LM_ID_NEWLM,
+                c"libm.so.6".as_ptr(),
+                libc::RTLD_LAZY | libc::RTLD_LOCAL,
+            );
+            assert!(!handle.is_null(), "dlmopen libm.so.6 failed");
+            let symbol = libc::dlsym(handle, c"fmaf".as_ptr());
+            assert!(!symbol.is_null(), "dlsym fmaf failed");
+            mem::transmute::<*mut c_void, HostFmaf>(symbol)
+        };
+        let fmaf_inputs: Vec<(f32, f32, f32)> = (0..64)
+            .map(|k| {
+                let x = -3.5 + k as f32 * 0.109_375;
+                let y = 0.75 + k as f32 * 0.015_625;
+                let z = -0.625 + k as f32 * 0.019_531_25;
+                (x, y, z)
+            })
+            .collect();
+
+        for &(x, y, z) in &fmaf_inputs {
+            let core = core_math::fmaf(x, y, z);
+            // SAFETY: finite scalar inputs satisfy both C ABI contracts.
+            let abi = unsafe { math_abi::fmaf(x, y, z) };
+            let host = unsafe { host_fmaf(x, y, z) };
+            assert_eq!(abi.to_bits(), core.to_bits(), "fmaf ABI/core parity");
+            assert_eq!(abi.to_bits(), host.to_bits(), "fmaf ABI/glibc parity");
+        }
+
+        macro_rules! bench_fmaf_arm {
+            ($impl_label:expr, $call:expr) => {
+                bench_op(
+                    &mut group,
+                    BenchMeta {
+                        profile_id: "fmaf_abi",
+                        impl_label: $impl_label,
+                        api_family: "math",
+                        symbol: "fmaf",
+                        workload: "64 varying finite f32 triples",
+                        parity_proof_ref: "crates/frankenlibc-abi/tests/conformance_diff_fma.rs",
+                    },
+                    || {
+                        let mut acc = 0.0_f32;
+                        for &(x, y, z) in &fmaf_inputs {
+                            acc += $call(black_box(x), black_box(y), black_box(z));
+                        }
+                        black_box(acc);
+                    },
+                );
+            };
+        }
+        bench_fmaf_arm!("frankenlibc_core", |x, y, z| core_math::fmaf(x, y, z));
+        bench_fmaf_arm!("frankenlibc_abi", |x, y, z| unsafe {
+            math_abi::fmaf(x, y, z)
+        });
+        bench_fmaf_arm!("host_glibc", |x, y, z| unsafe { host_fmaf(x, y, z) });
     }
     group.finish();
 }

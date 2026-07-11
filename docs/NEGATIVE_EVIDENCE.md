@@ -16375,3 +16375,37 @@ benchmark/workload (handed in) surfaces a function outside this closed set.
 - **FOLLOW-ON:** `fread`/`fgets`/`getc` on fmemopen pay the same floor — the same pointer-keyed cache
   applies (separate levers). The MT **fd**-stream fgetc floor still needs per-FILE locking (rejected as
   low-value: `cc-stdio-mt` — 1.11x contention over a per-op floor).
+
+## 2026-07-11 (cod) — WIN: `fmaf` strict ABI policy bypass closes a 2.25x wrapper gap
+
+- **PROFILE FIRST.** The f32 core survey found no remaining kernel candidate above the 1.30x routing
+  threshold (`j0f` was 0.931x glibc; the largest residuals were `log1pf` 1.156x and `expm1f` 1.108x).
+  A separate three-arm deployed-ABI row then exposed the actual omission: unlike sibling f64 `fma`,
+  `math_abi::fmaf` always ran `runtime_policy::decide` plus `observe` in default strict mode.
+- **ONE LEVER.** Add the same `strict_passthrough_active()` early return already proven by f64 `fma`.
+  Strict mode now calls `frankenlibc_core::math::fmaf` directly. The hardened policy/deny/repair and
+  telemetry path is textually unchanged.
+- **SAME-WORKER MEDIAN GATE.** `glibc_baseline_bench fmaf_abi`, 30 samples, 64 varying finite triples,
+  remote-only on `vmi1149989`:
+
+  | arm | baseline p50 ns/batch | candidate p50 ns/batch | change |
+  |---|---:|---:|---:|
+  | core null control | 306.282 | 313.906 | +2.49% |
+  | deployed FrankenLibC ABI | 743.390 | **330.338** | **-55.56% (2.25x faster)** |
+  | host glibc null control | 302.522 | 299.846 | -0.88% |
+
+  The candidate collapses onto the core/host floor while both controls remain stable. The benchmark
+  resolves host `fmaf` from a new `libm.so.6` namespace so FrankenLibC's exported symbol cannot
+  interpose the control.
+- **CERTIFIED REWRITE.** In strict mode the old path ultimately returned exactly one call to the same
+  core fused operation; the rewrite only removes an observation whose decision was forced to `Allow`.
+  The existing 20,000-random-triple `fmaf_matches_glibc` gate passed bit-for-bit, and `fmaf_basic`
+  passed. Ordering, ties, allocation, and RNG are not involved; hardened behavior is unchanged.
+- **REPRODUCER.** All Cargo execution was fail-closed remote-only:
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo bench -j 4 --profile release -p
+  frankenlibc-bench --features abi-bench --bench glibc_baseline_bench fmaf_abi -- --sample-size 30
+  --warm-up-time 1 --measurement-time 3 --noplot`.
+- **WORKSPACE GATE SURFACE.** Remote `cargo check --workspace --all-targets` reached the modified targets
+  but failed on pre-existing optional-ABI imports in `strcpy_fused_ab.rs` and `strcmp_align.rs`.
+  Remote clippy was unavailable because that worker lacks the nightly `cargo-clippy` component, and
+  fail-closed RCH rejected `cargo fmt --check` as non-compilation (`RCH-E301`). No local fallback ran.

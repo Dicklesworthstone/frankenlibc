@@ -1761,6 +1761,11 @@ pub unsafe extern "C" fn fminf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaf(x: f32, y: f32, z: f32) -> f32 {
+    // Strict mode fast path: skip runtime policy overhead entirely.
+    if runtime_policy::strict_passthrough_active() {
+        return frankenlibc_core::math::fmaf(x, y, z);
+    }
+
     // fma is ternary — use the binary path with manual third arg folding.
     let mixed = (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize)
         ^ y.to_bits() as usize
