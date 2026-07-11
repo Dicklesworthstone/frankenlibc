@@ -364,6 +364,12 @@ fn main() {
     let hangul = u8enc(&hangul_cps);
     let cp949_src = host_to(b"CP949\0", &hangul);
     run_conv(c, "cp949_to_utf8", b"UTF-8\0", b"CP949\0", &cp949_src);
+    // EUC-KR (Korean, common on Unix) -> UTF-8: pure 2-byte DBCS decode, NOT yet in the SIMD gather.
+    // Source = EUC-KR Hangul rows (leads 0xB0..=0xC8 = Wansung Hangul, cp >= U+AC00 = 3-byte UTF-8,
+    // real Korean text) so the gather actually fires; rows 0xA1.. are symbols (many cp < 0x800 that
+    // fall to scalar) and don't represent Korean text.
+    let euckr_src = build_dbcs_source(b"EUC-KR\0", 0xB0..=0xC8, 0xA1..=0xFE, 512);
+    run_conv(c, "euckr_to_utf8", b"UTF-8\0", b"EUC-KR\0", &euckr_src);
     // JOHAB (Korean, full Hangul coverage like UHC) -> UTF-8: cache-bound gather.
     let johab_src = host_to(b"JOHAB\0", &hangul);
     run_conv(c, "johab_to_utf8", b"UTF-8\0", b"JOHAB\0", &johab_src);
