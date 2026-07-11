@@ -16696,3 +16696,35 @@ the DBCS->UTF-8 gather") AND a scalar DBCS→UTF-16/32 fast path (mod.rs:47246).
 architectural). Do NOT "add a DBCS→UTF-16 gather"; it exists. The only iconv gap that is a *fast-path*
 (not architectural) question is the CP949 encode's per-char UTF-8 decode + 256 KiB table — a multi-turn
 SIMD-UTF-8-decode / table-compaction effort. iconv is confirmed: no clean single-turn lever.
+
+## 2026-07-11 (cc_fl) — WIN: SIMD UTF-8→2-byte-DBCS encode gather flips iconv's top loser LOSS→WIN — commit `e43bc0e5b` (cc-iconv-cp949-simd-2026-07-11)
+
+- **THE LEVER (dedicated iconv-SIMD turn, authorized).** `utf8_to_cp949` was iconv's #1 loser
+  (cc-iconv-probe-2026-07-11: 2.34x contiguous / 3.78x diverse vs glibc). The scalar inline encode
+  decoded each 3-byte UTF-8 char (`utf8_decode_step` + `char::from_u32`) then looked up a 256 KiB
+  cp-indexed `enc_direct` table — the diverse (scattered-Hangul) case being cache-bound gave the 3.78x.
+  Added the ENCODE-side analog of the proven DBCS→UTF-8 gather: SIMD-decode 4 three-byte sequences,
+  `gather` their 4 `enc_direct[cp]` slots, interleave-pack 8 output bytes. Covers the 5 pure-2-byte
+  `dbcs_encoder!` codecs (CP949/GBK/GB2312/JOHAB/EUC-KR) via a shared `enc_direct` accessor exposed from
+  the macro (no table duplication).
+- **PROVEN, median (remote, iconv_glibc_bench, same-process fl-vs-glibc):**
+
+  | conv | BEFORE | AFTER |
+  |---|---|---|
+  | `utf8_to_cp949` | 2.34x LOSS (fl 5646, gl 2414) | **0.490x WIN** (fl 1200, gl 2448) |
+  | `utf8_to_cp949_diverse` | 3.78x LOSS (fl 5400) | **0.507x WIN** (fl 1257) |
+
+  ~4.5x fl-over-fl; both flip LOSS→WIN (fl now ~2x FASTER than glibc). glibc control stable
+  (2414→2448). The gather also erased the cache-bound diverse penalty (diverse 0.507 ≈ contiguous 0.490).
+- **BYTE-IDENTICAL — PROVEN.** `iconv_differential_fuzz` **10/0** (fl-with-SIMD vs LIVE glibc, covers
+  UTF-8→CP949/EUC-KR/GBK encode), `conformance_diff_iconv` 2/0, `conformance_iconv_ascii_widen` 4/0,
+  `golden_iconv_utf8_fastpath` 3/0 + a NEW pinned CP949 golden (mixed ASCII+scattered-Hangul corpus
+  exercising the gather AND its scalar fall-through). By construction: the gather fires ONLY on valid
+  non-overlong non-surrogate 3-byte windows (cp 0x800..=0xFFFF == `utf8_decode_step`'s 3-byte gate) with
+  a representable 2-byte slot; any deviation breaks to scalar for exact EILSEQ/EINVAL/E2BIG ordering.
+  Since scalar==glibc (pre-existing fuzz) and SIMD==glibc (this fuzz), SIMD==scalar transitively.
+- **METHOD:** the `harness=false` iconv bench refactor (91648da97) that unblocked measurement is what
+  made this findable + gated. **FOLLOW-ONS (measurable now):** the OTHER iconv losers remain
+  architectural — cp932_to_utf16le 1.67x (gather latency, gather already exists), eucjp(-ms)→utf8
+  1.15–1.36x (SS2/SS3 scalar). No further clean encode-gather target (the 5 dbcs_encoder codecs are all
+  covered now).
