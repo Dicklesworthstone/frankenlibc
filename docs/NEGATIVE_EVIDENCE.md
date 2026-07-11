@@ -16253,3 +16253,27 @@ benchmark/workload (handed in) surfaces a function outside this closed set.
   bench (2 arms) as the regression guard. RETRY ONLY IF the fgetc per-op floor itself is attacked (e.g.,
   a MT-safe per-thread resolved-stream cache for thread-owned streams — a different, subtle lever, NOT
   registry sharding).
+
+## 2026-07-11 (cc_fl) — SURFACE (investigated, borderline): the fgetc per-op floor is fmemopen-specific; a pointer-keyed fixed-mem cache exists but is correctness-heavy for moderate value (cc-fgetc-mem-2026-07-11)
+
+- **INVESTIGATED the fgetc per-op floor** (the 1.4x from `cc-stdio-mt-2026-07-11`). Mechanism: `fgetc`'s
+  pointer-keyed fast path (`try_fgetc_fast_by_stream`) uses the **write cache**, which (a) EXCLUDES mem
+  streams (`register_fast_fixed_mem_read` puts fmemopen readers in a SEPARATE `fast_fixed_mem_reads()`
+  locked map keyed by id), and (b) is ST-gated (`__libc_single_threaded`). So: read-only **fd** streams
+  (fopen "r") ARE cached by the slow path (`write_cache_store` @2559) ⇒ ST fgetc is FAST; **fmemopen**
+  fgetc always misses ⇒ pays `canonical_stream_id`'s native lock + `decide` + the id-keyed
+  `fast_fixed_mem_read` lookup PER BYTE = the 1.4x floor (ST and MT). MT fd fgetc is also slow (cache
+  ST-gated) but that needs per-FILE locking (the rejected sharding-class change).
+- **THE ONLY TRACTABLE LEVER = a pointer-keyed fixed-mem read cache.** `FastFixedMemRead` is
+  `Arc` (stable addr) + atomic pos ⇒ MT-SAFE, so a thread-local `(stream_ptr → Arc<FastFixedMemRead>)`
+  cache checked BEFORE `canonical_stream_id` would skip both locks + membrane and do a lock-free atomic
+  read — closing the fmemopen 1.55x MT gap (ST+MT) where the fd cache can't.
+- **WHY NOT SHIPPED (borderline):** (a) **moderate value** — fmemopen (in-memory stdio parsing) is a
+  moderate-use pattern, not a dominant realistic hot path; fd file reads are already fast (ST). (b) **real
+  correctness surface** — `sync_fast_fixed_mem_read_to_stream` (:758) proves the cursor and StdioStream
+  DIVERGE on ungetc/fseek/mixed-reads; a safe fast path needs a `pure_sequential_read` gate (set on open,
+  cleared on any non-sequential-fgetc op) threaded through those paths + careful MT validation. That is a
+  multi-cycle, correctness-heavy change for moderate value, high-risk to validate on degraded rch.
+- **HOLD (offered to maintainer).** Not a clean lever to rush. RETRY ONLY IF the maintainer wants the
+  fmemopen MT read win and accepts the careful multi-cycle effort (pure-seq-gated pointer cache + full
+  ungetc/fseek/MT conformance). cc lane + stdio remain at frontier.
