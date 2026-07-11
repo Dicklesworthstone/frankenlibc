@@ -16616,3 +16616,34 @@ above-floor HOT levers are EXHAUSTED. Shipped this session: sched_getcpu vDSO (3
 kernel sources (asin/acos/pow/exp/log/bessel — accuracy-hard), or (b) multi-turn architectural swings
 (malloc inline-header ~8x-capped + membrane-owner review; rseq for sched_getcpu↔glibc parity). Neither
 is a clean single-turn lever; do not rush them inline.
+
+## 2026-07-11 (cc_fl) — PROFILE-FIRST: iconv vein cleanest candidates already done + criterion measurement BLOCKED via rch (cc-iconv-probe-2026-07-11)
+
+Chased the iconv-nonascii memory's open follow-ups (21 days old). All the CLEAN ones are already closed
+by prior work — do NOT re-probe:
+
+- **UTF-8→single-byte encode (koi8r et al.) "binary-search bottleneck" — ALREADY a page table.**
+  `SingleByteReverse::lookup` (iconv/mod.rs:3070) is now ASCII-direct + a two-level page table
+  (`direct_page_slot[cp>>8]` → `direct_page_byte[slot][cp&0xFF]`), O(1) for BMP; the binary search is
+  only the rare high-cp tail. The memory's "needs a DIRECT table" is done.
+- **GB18030 encode (utf8_cjk_to_gb18030 1.72x) — ALREADY has direct tables + a char-free fast path**
+  (`gb18030_enc2_direct`/`gb18030_dbcs2_direct`/`encode_gb18030`, and a no-`char` fast path at ~46641).
+- **DBCS→UTF-8 SIMD gather (`dbcs_simd` match, iconv/mod.rs:46855) is CURATED, no guard-vs-match drift:**
+  Cp932/Gbk/EucJp/EucJpMs/Cp949/Johab/Big5/Gb2312 all wired; EucTw deliberately excluded (measured
+  1.92x LOSS — already in NEGATIVE_EVIDENCE). The 291b3fb0b-class drift bug (encoding in match body but
+  missing from guard) is not present here.
+- **MEASUREMENT BLOCKER:** `RCH_REQUIRE_REMOTE=1 … rch exec -- cargo bench --bench iconv_glibc_bench`
+  (criterion) BUILDS + retrieves artifacts but does NOT execute the criterion harness remotely (unlike a
+  `harness=false` bench, which rch runs — e.g. stdio_mt_contention_bench, sched_getcpu_glibc_bench). The
+  20MB bench binary is not retrieved locally (only ~2.6KB criterion metadata), so it can't be run
+  locally either. To profile the remaining iconv gaps (DBCS-decode per-char-vs-glibc-SIMD; GB18030
+  decode 157us — flagged as a CORRECTNESS bug bd-k4ct23, not perf) one must first refactor
+  iconv_glibc_bench to `harness=false` manual timing. Those remaining gaps are complex/correctness-risky
+  (pre-existing RED SBCS core tests), NOT clean single-turn levers.
+
+**SESSION FRONTIER (cc lane, 2026-07-11) — clean single-turn levers EXHAUSTED across every profiled
+vein:** strict-bypass tax (mined; shipped mktime), raw-syscall floor (mined; shipped sched_getcpu),
+per-call alloc-elimination (wcsftime stack-buffered, mbstowcs lean, SingleByteReverse page-table — all
+done), iconv (cleanest done + measurement blocked). Remaining perf work is all (a) external-glibc-source
+blocked math kernels, (b) multi-turn architectural swings (malloc inline-header, rseq), or (c)
+complex/correctness-risky (iconv DBCS/GB18030). None is a clean single-turn byte-identical lever.
