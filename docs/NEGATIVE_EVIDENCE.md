@@ -16186,3 +16186,13 @@ mined/blocked/contested; **no clean, uncontested, above-floor lever remains.** A
 bessel); (b) the maintainer reverses the pow bit-exact decision; (c) a contesting agent frees the
 string lane; or (d) a NEW workload/benchmark exposes a fresh above-floor cc hot path. Do not re-derive
 this map — it is complete as of 2026-07-11.
+
+**Macro-workload avenue (d) ASSESSED + CLOSED (2026-07-11, cc-frontier follow-up).** A self-built
+realistic composite workload (parser / JSON / server-request shapes) would only re-surface, in
+aggregate, functions ALREADY characterized: `malloc`/`free` (frontier), `memcpy` (cod's), `strlen`/
+`strchr`/`strcmp`/`memcmp`/`strtok`/`strspn` (safe-Rust/std::simd floor), `strtol`/`strtod` (maxed),
+`toupper`/`isalpha`/ctype (extern-macro floor glibc inlines and fl can't through the ABI boundary),
+`snprintf`/`sscanf` (stdio — contested/peer-WIP). Tractability is a PER-FUNCTION property already
+exhausted, so a macro-bench cannot manufacture a fresh tractable lever — it would confirm the floor.
+Building one is therefore NOT a productive cc-lane avenue; trigger (d) only fires if an EXTERNAL new
+benchmark/workload (handed in) surfaces a function outside this closed set.
