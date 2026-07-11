@@ -15997,3 +15997,40 @@ sha256, self-time, cv or null.
   target with a concrete algorithmic (not SIMD-micro) gap; (b) glibc ships a REGRESSION making an fl
   kernel newly competitive; (c) the allocator lane gets a new benchmark exposing a non-safety-tax hot
   path. Do not re-run the string survey to re-derive this floor.
+
+## 2026-07-11 (cc_fl) — WIN (2.5-6.2x): strict-mode host fast path for posix_memalign/aligned_alloc/memalign — commit `552dcba5f` (cc-aligned-2026-07-11)
+
+- **PROFILE-FIRST (allocator lane).** With calloc verified optimal (large delegates to host glibc calloc
+  which does the fresh-page-zero skip; small necessarily zeroes recycled segment slots), traced the
+  aligned allocators: `posix_memalign`/`aligned_alloc`/`memalign` had **no `strict_allocator_host_path_active()`
+  branch** and fell through to `entrypoint_scope` + `decide` + `pipeline.allocate_aligned` — the **hardened
+  membrane arena** (SipHash fingerprint + canary + generational arena) — in deployed strict mode, while
+  malloc/calloc take the host fast path. `try_global_pipeline()` returns `Some` once past bootstrap
+  regardless of mode, so this fired on every strict aligned alloc. They were simply never given the
+  strict fast-path malloc/calloc got.
+- **THE LEVER.** Add the strict branch (mirrors malloc/calloc): host aligned allocator +
+  `fallback_insert_sized_for_slot` (cached O(1) free) + `record_alloc_stats`, skipping the arena. Strict
+  mode never heals, so the arena's fingerprint/canary are dead work; the fallback table already carries
+  the size for `known_remaining`/free/realloc/`malloc_usable_size`, identical to strict malloc's host
+  allocations.
+- **PERF — PROVEN, SAME-RUN PAIRED MEDIAN (one binary, worker-stable ratio).** New manual-timing
+  `posix_memalign_strict_bench` (criterion's HTML rendering SIGABRTs under `abi-bench` symbol
+  interposition — corrupts its `'title'` key — so no criterion) with ORIG=`bench_aligned_arena_alloc`
+  (full pre-lever arena path) vs CAND=deployed `posix_memalign` vs glibc:
+
+  | size | fl_arena ns | fl_strict ns | **arena/strict** |
+  |---:|---:|---:|---:|
+  | 64 | 13419 | 3520 | **3.81x** |
+  | 256 | 9582 | 3757 | **2.55x** |
+  | 4096 | 25497 | 4096 | **6.23x** |
+
+  Absolute ns are inflated by `abi-bench` self-interposition + the busy main-namespace host heap (glibc's
+  pristine dlmopen arm reads ~20 ns) — NOT deployed values; the same-run **paired arena/strict ratio is
+  the valid metric** (both fl paths, same environment cancels).
+- **CORRECTNESS — PROVEN.** `malloc_abi_test` **59/0** + `conformance_diff_aligned_alloc` **5/0**
+  (alignment, free, realloc, `malloc_usable_size`, page-aligned, large-alignment, bad-alignment,
+  null-memptr). Host-aligned pointers are tracked/freed via the fallback table identically to strict
+  malloc's host allocations.
+- **NOTES.** calloc = already optimal (not a lever). `valloc`/`pvalloc` (page-aligned, rarely hot) not
+  yet checked for the same gap — a possible small follow-on. Do NOT re-derive: the aligned strict-fast-path
+  is now shipped.
