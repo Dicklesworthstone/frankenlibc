@@ -32,8 +32,8 @@
 use std::ffi::{c_char, c_int, c_void};
 use std::hint::black_box;
 use std::sync::OnceLock;
+use std::time::Instant;
 
-use criterion::{criterion_group, criterion_main, Criterion};
 use frankenlibc_abi::stdio_abi as fl;
 
 type FmemopenFn = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
@@ -71,66 +71,75 @@ fn host() -> &'static HostStdio {
 
 const N: usize = 4096; // bytes drained per stream per thread
 
-fn bench(c: &mut Criterion) {
-    let nthreads: usize = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4);
-
-    let mut group = c.benchmark_group(format!("stdio_mt_contention_{nthreads}t"));
-
-    group.bench_function("frankenlibc_abi", |b| {
-        b.iter(|| {
-            std::thread::scope(|s| {
-                for _ in 0..nthreads {
-                    s.spawn(|| {
-                        // Each thread owns its buffer + stream (opened in-thread).
-                        let data = vec![b'x'; N];
-                        let fp = unsafe {
-                            fl::fmemopen(data.as_ptr() as *mut c_void, N, c"r".as_ptr())
-                        };
-                        let mut sum = 0i64;
-                        for _ in 0..N {
-                            sum += unsafe { fl::fgetc(fp) } as i64;
-                        }
-                        unsafe { fl::fclose(fp) };
-                        black_box(sum);
-                        black_box(data.as_ptr());
-                    });
+/// One workload iteration: `nthreads` threads, each opens its OWN fmemopen stream and
+/// drains N bytes via fgetc, then closes. Concurrent ops on DIFFERENT streams contend on
+/// fl's single global registry lock; glibc's per-FILE locking scales.
+fn fl_workload(nthreads: usize) {
+    std::thread::scope(|s| {
+        for _ in 0..nthreads {
+            s.spawn(|| {
+                let data = vec![b'x'; N];
+                let fp = unsafe { fl::fmemopen(data.as_ptr() as *mut c_void, N, c"r".as_ptr()) };
+                let mut sum = 0i64;
+                for _ in 0..N {
+                    sum += unsafe { fl::fgetc(fp) } as i64;
                 }
+                unsafe { fl::fclose(fp) };
+                black_box(sum);
+                black_box(data.as_ptr());
             });
-        });
+        }
     });
+}
 
+fn glibc_workload(nthreads: usize, h: &'static HostStdio) {
+    std::thread::scope(|s| {
+        for _ in 0..nthreads {
+            s.spawn(|| {
+                let data = vec![b'x'; N];
+                let fp = unsafe { (h.fmemopen)(data.as_ptr() as *mut c_void, N, c"r".as_ptr()) };
+                let mut sum = 0i64;
+                for _ in 0..N {
+                    sum += unsafe { (h.fgetc)(fp) } as i64;
+                }
+                unsafe { (h.fclose)(fp) };
+                black_box(sum);
+                black_box(data.as_ptr());
+            });
+        }
+    });
+}
+
+/// Manual timing (no criterion — its HTML render SIGABRTs under `abi-bench` symbol
+/// interposition). Returns p50 ns per workload iteration.
+fn measure(samples: usize, iters: u64, mut op: impl FnMut()) -> f64 {
+    let mut per = Vec::with_capacity(samples);
+    for _ in 0..samples {
+        let start = Instant::now();
+        for _ in 0..iters {
+            op();
+        }
+        per.push(start.elapsed().as_nanos() as f64 / iters.max(1) as f64);
+    }
+    per.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    per[per.len() / 2]
+}
+
+fn main() {
+    let nthreads: usize = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(4);
     let h = host();
-    group.bench_function("host_glibc", |b| {
-        b.iter(|| {
-            std::thread::scope(|s| {
-                for _ in 0..nthreads {
-                    s.spawn(|| {
-                        let data = vec![b'x'; N];
-                        let fp = unsafe {
-                            (h.fmemopen)(data.as_ptr() as *mut c_void, N, c"r".as_ptr())
-                        };
-                        let mut sum = 0i64;
-                        for _ in 0..N {
-                            sum += unsafe { (h.fgetc)(fp) } as i64;
-                        }
-                        unsafe { (h.fclose)(fp) };
-                        black_box(sum);
-                        black_box(data.as_ptr());
-                    });
-                }
-            });
-        });
-    });
-
-    group.finish();
+    // Warm up.
+    for _ in 0..8 {
+        fl_workload(nthreads);
+        glibc_workload(nthreads, h);
+    }
+    let fl_p50 = measure(41, 10, || fl_workload(nthreads));
+    let gl_p50 = measure(41, 10, || glibc_workload(nthreads, h));
+    let ratio = if gl_p50 > 0.0 { fl_p50 / gl_p50 } else { 0.0 };
+    println!(
+        "STDIO_MT_BENCH threads={nthreads} fl_ns_op={fl_p50:.1} glibc_ns_op={gl_p50:.1} \
+         ratio_fl_over_glibc={ratio:.3}"
+    );
 }
-
-criterion_group! {
-    name = benches;
-    config = Criterion::default()
-        .sample_size(30)
-        .warm_up_time(std::time::Duration::from_millis(500))
-        .measurement_time(std::time::Duration::from_secs(3));
-    targets = bench
-}
-criterion_main!(benches);
