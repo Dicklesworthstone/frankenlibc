@@ -101,8 +101,17 @@ the full measured detail.
   `[RCH] local (no admissible workers: insufficient_slots=9,hard_preflight=1)` followed by
   `[RCH] remote required; refusing local fallback (no worker assigned)`. Per the remote-only contract,
   no local Cargo command was run and the source is **NOT shipped**.
+- **RESUME RETRY (current `main` `a4f0adaa9`, 2026-07-11).** Recreated the exact two-file candidate on
+  current `main`; `cmp` confirmed it is byte-identical to the interrupted prototype, and the 33 commits
+  since its base contain no resolver-source or resolver-test changes. The required three-binary command
+  was attempted once, fail-closed, and RCH again returned
+  `[RCH] local (no admissible workers: insufficient_slots=8,hard_preflight=1)` followed by
+  `[RCH] remote required; refusing local fallback (no worker assigned)`. No local Cargo command, median
+  rerun, or source commit followed. The measured 1.47x candidate therefore remains **SURFACED, NOT
+  SHIPPED**.
 - **NEXT SAFE ACTION.** The isolated candidate remains in
-  `/data/projects/.scratch/frankenlibc-codex-resolv-20260711`. When a remote slot exists, run
+  `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-a4f0` (with the original preserved at
+  `/data/projects/.scratch/frankenlibc-codex-resolv-20260711`). When a remote slot exists, run
   `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-abi --test resolv_abi_test --test conformance_diff_getaddrinfo --test conformance_diff_netdb_aliases -- --nocapture --test-threads=1`.
   If green, run remote fmt/check/clippy for the touched ABI surface, re-run the same median row, then ship
   the source + this row as a measured keep. If any parity gate fails, manually restore the source hunk and
