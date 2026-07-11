@@ -8,10 +8,15 @@
 //! with its own paired open/convert/close.
 
 use std::ffi::{c_char, c_int, c_void};
+use std::hint::black_box;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+// Manual-timing harness (harness = false): rch executes a plain `fn main()` remotely and
+// returns its stdout, whereas a criterion `criterion_main!` harness is built-but-not-run
+// under `rch exec -- cargo bench` (see NEGATIVE_EVIDENCE cc-iconv-probe-2026-07-11). `Bencher`
+// is a zero-cost placeholder so the ~35 `run_conv(c, ...)` call sites stay unchanged.
+struct Bencher;
 
 type IconvOpenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
 type IconvFn = unsafe extern "C" fn(
@@ -51,36 +56,23 @@ fn host_iconv() -> &'static HostIconv {
     })
 }
 
-#[derive(Default)]
-struct Stats {
-    s: Vec<f64>,
-}
-impl Stats {
-    fn record(&mut self, ops: u64, dur: Duration) {
-        if ops > 0 {
-            self.s.push(dur.as_nanos() as f64 / ops as f64);
+/// Median (p50) ns per whole-buffer conversion over `samples` samples of `iters` conversions.
+fn measure(samples: usize, iters: u64, mut op: impl FnMut()) -> f64 {
+    let mut per = Vec::with_capacity(samples);
+    for _ in 0..samples {
+        let start = Instant::now();
+        for _ in 0..iters {
+            op();
         }
+        per.push(start.elapsed().as_nanos() as f64 / iters.max(1) as f64);
     }
-    fn report(&self, label: &str, conv: &str) {
-        let mut s = self.s.clone();
-        if s.is_empty() {
-            return;
-        }
-        s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let p50 = s[s.len() / 2];
-        let mean = s.iter().sum::<f64>() / s.len() as f64;
-        println!("ICONV_BENCH impl={label} conv=\"{conv}\" p50_ns_op={p50:.1} mean_ns_op={mean:.1}");
-    }
+    per.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    per[per.len() / 2]
 }
 
 /// One conversion: reset in/out pointers, run iconv over the whole input.
 #[inline]
-unsafe fn convert_once(
-    f: IconvFn,
-    cd: *mut c_void,
-    src: &[u8],
-    dst: &mut [u8],
-) -> usize {
+unsafe fn convert_once(f: IconvFn, cd: *mut c_void, src: &[u8], dst: &mut [u8]) -> usize {
     let mut inp = src.as_ptr() as *mut c_char;
     let mut inleft = src.len();
     let mut outp = dst.as_mut_ptr() as *mut c_char;
@@ -88,61 +80,48 @@ unsafe fn convert_once(
     unsafe { f(cd, &mut inp, &mut inleft, &mut outp, &mut outleft) }
 }
 
-fn run_conv(
-    c: &mut Criterion,
-    conv: &str,
-    to: &[u8],
-    from: &[u8],
-    src: &[u8],
-) {
+fn run_conv(_c: &mut Bencher, conv: &str, to: &[u8], from: &[u8], src: &[u8]) {
     let host = host_iconv();
-    let mut group = c.benchmark_group(format!("iconv/{conv}"));
-    group.sample_size(40);
-
     let mut dst = vec![0u8; src.len() * 4 + 16];
+
+    // Iteration count scaled to keep each sample ~cheap even for the catastrophic converters.
+    const ITERS: u64 = 200;
+    const SAMPLES: usize = 41;
+    const WARMUP: u64 = 400;
 
     // fl C ABI.
     let fl_cd =
         unsafe { frankenlibc_abi::iconv_abi::iconv_open(to.as_ptr().cast(), from.as_ptr().cast()) };
-    assert!(fl_cd as isize != -1 && !fl_cd.is_null(), "fl iconv_open failed");
-    let fl_stats = std::cell::RefCell::new(Stats::default());
-    group.bench_function("fl", |b| {
-        b.iter_custom(|iters| {
-            let start = Instant::now();
-            for _ in 0..iters {
-                let r = unsafe {
-                    convert_once(frankenlibc_abi::iconv_abi::iconv, fl_cd, src, &mut dst)
-                };
-                black_box(r);
-            }
-            let dur = start.elapsed().max(Duration::from_nanos(1));
-            fl_stats.borrow_mut().record(iters, dur);
-            dur
-        });
+    assert!(
+        fl_cd as isize != -1 && !fl_cd.is_null(),
+        "fl iconv_open failed"
+    );
+    for _ in 0..WARMUP {
+        black_box(unsafe { convert_once(frankenlibc_abi::iconv_abi::iconv, fl_cd, src, &mut dst) });
+    }
+    let fl_p50 = measure(SAMPLES, ITERS, || {
+        black_box(unsafe { convert_once(frankenlibc_abi::iconv_abi::iconv, fl_cd, src, &mut dst) });
     });
-    fl_stats.borrow().report("fl", conv);
     unsafe { frankenlibc_abi::iconv_abi::iconv_close(fl_cd) };
 
     // host glibc.
     let gl_cd = unsafe { (host.open)(to.as_ptr().cast(), from.as_ptr().cast()) };
-    assert!(gl_cd as isize != -1 && !gl_cd.is_null(), "glibc iconv_open failed");
-    let gl_stats = std::cell::RefCell::new(Stats::default());
-    group.bench_function("glibc", |b| {
-        b.iter_custom(|iters| {
-            let start = Instant::now();
-            for _ in 0..iters {
-                let r = unsafe { convert_once(host.convert, gl_cd, src, &mut dst) };
-                black_box(r);
-            }
-            let dur = start.elapsed().max(Duration::from_nanos(1));
-            gl_stats.borrow_mut().record(iters, dur);
-            dur
-        });
+    assert!(
+        gl_cd as isize != -1 && !gl_cd.is_null(),
+        "glibc iconv_open failed"
+    );
+    for _ in 0..WARMUP {
+        black_box(unsafe { convert_once(host.convert, gl_cd, src, &mut dst) });
+    }
+    let gl_p50 = measure(SAMPLES, ITERS, || {
+        black_box(unsafe { convert_once(host.convert, gl_cd, src, &mut dst) });
     });
-    gl_stats.borrow().report("glibc", conv);
     unsafe { (host.close)(gl_cd) };
 
-    group.finish();
+    let ratio = if gl_p50 > 0.0 { fl_p50 / gl_p50 } else { 0.0 };
+    println!(
+        "ICONV conv=\"{conv}\" fl_ns={fl_p50:.1} glibc_ns={gl_p50:.1} fl_over_glibc={ratio:.3}"
+    );
 }
 
 /// Minimal UTF-8 encoder for building source buffers.
@@ -168,38 +147,108 @@ fn u8enc(cps: &[u32]) -> Vec<u8> {
     v
 }
 
-fn bench(c: &mut Criterion) {
+fn main() {
+    let c = &mut Bencher;
     // ~1 KiB pure ASCII (the bulk-copy hot path).
     let ascii: Vec<u8> = (0..1024).map(|i| b'a' + (i % 26) as u8).collect();
-    run_conv(c, "utf8_to_latin1_ascii", b"ISO-8859-1\0", b"UTF-8\0", &ascii);
-    run_conv(c, "utf8_to_utf16le_ascii", b"UTF-16LE\0", b"UTF-8\0", &ascii);
-    run_conv(c, "utf8_to_utf32le_ascii", b"UTF-32LE\0", b"UTF-8\0", &ascii);
+    run_conv(
+        c,
+        "utf8_to_latin1_ascii",
+        b"ISO-8859-1\0",
+        b"UTF-8\0",
+        &ascii,
+    );
+    run_conv(
+        c,
+        "utf8_to_utf16le_ascii",
+        b"UTF-16LE\0",
+        b"UTF-8\0",
+        &ascii,
+    );
+    run_conv(
+        c,
+        "utf8_to_utf32le_ascii",
+        b"UTF-32LE\0",
+        b"UTF-8\0",
+        &ascii,
+    );
 
     // ~1 KiB Cyrillic (U+0410..=U+044F) as 2-byte UTF-8: real transcoding.
     let cyr_cps: Vec<u32> = (0..512u32).map(|k| 0x0410 + (k % 0x40)).collect();
     let cyr = u8enc(&cyr_cps);
     run_conv(c, "utf8_cyrillic_to_koi8r", b"KOI8-R\0", b"UTF-8\0", &cyr);
-    run_conv(c, "utf8_cyrillic_to_utf16le", b"UTF-16LE\0", b"UTF-8\0", &cyr);
+    run_conv(
+        c,
+        "utf8_cyrillic_to_utf16le",
+        b"UTF-16LE\0",
+        b"UTF-8\0",
+        &cyr,
+    );
     // Forward 2-byte UTF-8 -> UTF-32 (currently a scalar store): probe if a lever.
-    run_conv(c, "utf8_cyrillic_to_utf32le", b"UTF-32LE\0", b"UTF-8\0", &cyr);
+    run_conv(
+        c,
+        "utf8_cyrillic_to_utf32le",
+        b"UTF-32LE\0",
+        b"UTF-8\0",
+        &cyr,
+    );
 
     // REVERSE direction: UTF-16LE -> UTF-8 (reading UTF-16 -> UTF-8, common).
     let ascii_u16le: Vec<u8> = ascii.iter().flat_map(|&b| [b, 0]).collect();
-    run_conv(c, "utf16le_ascii_to_utf8", b"UTF-8\0", b"UTF-16LE\0", &ascii_u16le);
+    run_conv(
+        c,
+        "utf16le_ascii_to_utf8",
+        b"UTF-8\0",
+        b"UTF-16LE\0",
+        &ascii_u16le,
+    );
     // Non-ASCII reverse: UTF-16LE Cyrillic -> 2-byte UTF-8 (the 2-byte-output run).
-    let cyr_u16le: Vec<u8> = cyr_cps.iter().flat_map(|&c| (c as u16).to_le_bytes()).collect();
-    run_conv(c, "utf16le_cyrillic_to_utf8", b"UTF-8\0", b"UTF-16LE\0", &cyr_u16le);
+    let cyr_u16le: Vec<u8> = cyr_cps
+        .iter()
+        .flat_map(|&c| (c as u16).to_le_bytes())
+        .collect();
+    run_conv(
+        c,
+        "utf16le_cyrillic_to_utf8",
+        b"UTF-8\0",
+        b"UTF-16LE\0",
+        &cyr_u16le,
+    );
     // UTF-32LE Cyrillic -> 2-byte UTF-8: the 4-byte-unit reverse 2-byte-output run.
     let cyr_u32le: Vec<u8> = cyr_cps.iter().flat_map(|&c| c.to_le_bytes()).collect();
-    run_conv(c, "utf32le_cyrillic_to_utf8", b"UTF-8\0", b"UTF-32LE\0", &cyr_u32le);
+    run_conv(
+        c,
+        "utf32le_cyrillic_to_utf8",
+        b"UTF-8\0",
+        b"UTF-32LE\0",
+        &cyr_u32le,
+    );
     // UTF-16BE -> UTF-8 (network/Java byte order): the symmetric BE case.
     let ascii_u16be: Vec<u8> = ascii.iter().flat_map(|&b| [0, b]).collect();
-    run_conv(c, "utf16be_ascii_to_utf8", b"UTF-8\0", b"UTF-16BE\0", &ascii_u16be);
+    run_conv(
+        c,
+        "utf16be_ascii_to_utf8",
+        b"UTF-8\0",
+        b"UTF-16BE\0",
+        &ascii_u16be,
+    );
     // UTF-32 LE/BE -> UTF-8 ASCII: 4-byte fixed-width source SIMD run.
     let ascii_u32le: Vec<u8> = ascii.iter().flat_map(|&b| [b, 0, 0, 0]).collect();
-    run_conv(c, "utf32le_ascii_to_utf8", b"UTF-8\0", b"UTF-32LE\0", &ascii_u32le);
+    run_conv(
+        c,
+        "utf32le_ascii_to_utf8",
+        b"UTF-8\0",
+        b"UTF-32LE\0",
+        &ascii_u32le,
+    );
     let ascii_u32be: Vec<u8> = ascii.iter().flat_map(|&b| [0, 0, 0, b]).collect();
-    run_conv(c, "utf32be_ascii_to_utf8", b"UTF-8\0", b"UTF-32BE\0", &ascii_u32be);
+    run_conv(
+        c,
+        "utf32be_ascii_to_utf8",
+        b"UTF-8\0",
+        b"UTF-32BE\0",
+        &ascii_u32be,
+    );
 
     // CJK encode (table-based): UTF-8 Chinese -> GB18030, Japanese -> CP932.
     // ~512 common CJK ideographs (U+4E00..) as 3-byte UTF-8.
@@ -209,11 +258,26 @@ fn bench(c: &mut Criterion) {
     run_conv(c, "utf8_cjk_to_utf16le", b"UTF-16LE\0", b"UTF-8\0", &cjk);
     run_conv(c, "utf8_cjk_to_utf32le", b"UTF-32LE\0", b"UTF-8\0", &cjk);
     // Reverse: UTF-16LE CJK -> 3-byte UTF-8 (the 3-byte-output run).
-    let cjk_u16le: Vec<u8> = cjk_cps.iter().flat_map(|&c| (c as u16).to_le_bytes()).collect();
-    run_conv(c, "utf16le_cjk_to_utf8", b"UTF-8\0", b"UTF-16LE\0", &cjk_u16le);
+    let cjk_u16le: Vec<u8> = cjk_cps
+        .iter()
+        .flat_map(|&c| (c as u16).to_le_bytes())
+        .collect();
+    run_conv(
+        c,
+        "utf16le_cjk_to_utf8",
+        b"UTF-8\0",
+        b"UTF-16LE\0",
+        &cjk_u16le,
+    );
     // UTF-32LE CJK -> 3-byte UTF-8: the 4-byte-unit reverse 3-byte-output run.
     let cjk_u32le: Vec<u8> = cjk_cps.iter().flat_map(|&c| c.to_le_bytes()).collect();
-    run_conv(c, "utf32le_cjk_to_utf8", b"UTF-8\0", b"UTF-32LE\0", &cjk_u32le);
+    run_conv(
+        c,
+        "utf32le_cjk_to_utf8",
+        b"UTF-8\0",
+        b"UTF-32LE\0",
+        &cjk_u32le,
+    );
     // Hiragana (U+3040..U+309F) -> CP932 (Shift-JIS).
     let jp_cps: Vec<u32> = (0..512u32).map(|k| 0x3041 + (k % 0x5E)).collect();
     let jp = u8enc(&jp_cps);
@@ -248,7 +312,10 @@ fn bench(c: &mut Criterion) {
                              target: usize|
      -> Vec<u8> {
         let cd = unsafe { (host.open)(b"UTF-8\0".as_ptr().cast(), codec.as_ptr().cast()) };
-        assert!(cd as isize != -1 && !cd.is_null(), "build_dbcs_source open failed");
+        assert!(
+            cd as isize != -1 && !cd.is_null(),
+            "build_dbcs_source open failed"
+        );
         let mut out = Vec::new();
         'outer: for lead in leads.clone() {
             for trail in trails.clone() {
@@ -278,7 +345,13 @@ fn bench(c: &mut Criterion) {
     run_conv(c, "eucjp_to_utf8", b"UTF-8\0", b"EUC-JP\0", &eucjp_src);
     // EUC-JP-MS (MS EUC-JP variant, same SS structure) -> UTF-8: gather generalization.
     let eucjpms_src = host_to(b"EUC-JP-MS\0", &jp);
-    run_conv(c, "eucjpms_to_utf8", b"UTF-8\0", b"EUC-JP-MS\0", &eucjpms_src);
+    run_conv(
+        c,
+        "eucjpms_to_utf8",
+        b"UTF-8\0",
+        b"EUC-JP-MS\0",
+        &eucjpms_src,
+    );
     let gb_src = host_to(b"GB18030\0", &cjk);
     run_conv(c, "gb18030_to_utf8", b"UTF-8\0", b"GB18030\0", &gb_src);
     // GBK (Simplified Chinese, 2-byte DBCS) -> UTF-8: the gather-SIMD generalization.
@@ -306,7 +379,13 @@ fn bench(c: &mut Criterion) {
     // cache-bound encode table, matching real Korean text (and the decode wins).
     let hangul_div_cps: Vec<u32> = (0..512u32).map(|k| 0xAC00 + (k * 21) % 0x2B9C).collect();
     let hangul_div = u8enc(&hangul_div_cps);
-    run_conv(c, "utf8_to_cp949_diverse", b"CP949\0", b"UTF-8\0", &hangul_div);
+    run_conv(
+        c,
+        "utf8_to_cp949_diverse",
+        b"CP949\0",
+        b"UTF-8\0",
+        &hangul_div,
+    );
     // ENCODE ASCII probe: UTF-8 ASCII (1 KiB) -> CP949 (ASCII passes through 1:1).
     // The UTF-8->DBCS encode runs the general per-char loop with NO ASCII SIMD fast
     // path (unlike mbstowcs) — probe whether ASCII-heavy encode is un-dominated.
@@ -320,17 +399,33 @@ fn bench(c: &mut Criterion) {
     // UTF-8 (U+00A0..U+00FF): confirms the SBCS->UTF-8 SIMD win generalizes to the
     // highest-value codec (shares the same from_decode 2-byte fast path).
     let latin1_src: Vec<u8> = (0..1024).map(|i| 0xA0u8 + (i % 0x60) as u8).collect();
-    run_conv(c, "latin1_to_utf8", b"UTF-8\0", b"ISO-8859-1\0", &latin1_src);
+    run_conv(
+        c,
+        "latin1_to_utf8",
+        b"UTF-8\0",
+        b"ISO-8859-1\0",
+        &latin1_src,
+    );
     // SBCS -> UTF-16 probe: Latin-1 high bytes -> UTF-16LE (byte -> cp(BMP) -> 1 u16).
     // The from_decode->UTF-16/32 path is scalar single-unit — probe if un-dominated.
-    run_conv(c, "latin1_to_utf16le", b"UTF-16LE\0", b"ISO-8859-1\0", &latin1_src);
+    run_conv(
+        c,
+        "latin1_to_utf16le",
+        b"UTF-16LE\0",
+        b"ISO-8859-1\0",
+        &latin1_src,
+    );
     // DBCS -> UTF-16 probe: Shift-JIS (CP932) -> UTF-16LE. The DBCS legacy->UTF-16/32
     // path decodes each char then writes a unit — probe if un-dominated (un-benched).
     run_conv(c, "cp932_to_utf16le", b"UTF-16LE\0", b"CP932\0", &cp932_src);
     // SBCS -> UTF-32 probe: Latin-1 high bytes -> UTF-32LE (the tw==4 leg left scalar
     // by the SBCS->UTF-16 SIMD fix) — probe if un-dominated.
-    run_conv(c, "latin1_to_utf32le", b"UTF-32LE\0", b"ISO-8859-1\0", &latin1_src);
+    run_conv(
+        c,
+        "latin1_to_utf32le",
+        b"UTF-32LE\0",
+        b"ISO-8859-1\0",
+        &latin1_src,
+    );
 }
 
-criterion_group!(benches, bench);
-criterion_main!(benches);
