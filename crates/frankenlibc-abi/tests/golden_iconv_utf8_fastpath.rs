@@ -133,3 +133,33 @@ fn iconv_utf8_to_cp949_golden_sha256() {
         assert_eq!(&got, pin, "iconv UTF-8->CP949 golden drifted");
     }
 }
+
+fn cp932_corpus() -> Vec<u8> {
+    // ASCII + Hiragana (U+3041.., 2-byte Shift-JIS — gather-handled) + half-width katakana
+    // (U+FF71.., 1-byte in CP932 — breaks the SIMD gather's `>= 0x101` gate to the scalar path),
+    // so both the 2-byte gather AND its 1-byte/scalar fall-through are exercised.
+    let mut s = String::new();
+    for i in 0..600usize {
+        s.push_str("ab");
+        for k in 0..5usize {
+            s.push(char::from_u32(0x3041 + ((i * 3 + k * 7) % 0x53) as u32).unwrap());
+        }
+        if i % 4 == 0 {
+            s.push(char::from_u32(0xFF71 + (i % 0x2D) as u32).unwrap());
+        }
+    }
+    s.into_bytes()
+}
+
+#[test]
+fn iconv_utf8_to_cp932_golden_sha256() {
+    // Guards the CP932/Shift-JIS arm of the SIMD encode gather + the scalar-inline guard drift
+    // fix (Cp932 was missing from the fast-path guard). Pinned after verifying vs live glibc.
+    let out = convert(b"CP932", &cp932_corpus());
+    let got = hex(&out);
+    eprintln!("CP932: sha256={got} ({}B)", out.len());
+    let pin = "47eb292c5a03e69f45bc3ef4eb43cae01645ca9f4faebd7b707ccf9f6b46f5f4";
+    if !pin.starts_with("__P") {
+        assert_eq!(&got, pin, "iconv UTF-8->CP932 golden drifted");
+    }
+}

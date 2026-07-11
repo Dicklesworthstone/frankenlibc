@@ -40488,10 +40488,14 @@ fn decode_shiftjis(input: &[u8]) -> Result<(char, usize), DecodeError> {
     )
 }
 
-fn encode_shiftjis(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+fn shiftjis_enc_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_enc_direct(&cjk_tables::SHIFT_JIS_ENC));
-    encode_dbcs2(ch, out, direct)
+    DIRECT
+        .get_or_init(|| build_enc_direct(&cjk_tables::SHIFT_JIS_ENC))
+        .as_slice()
+}
+fn encode_shiftjis(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    encode_dbcs2(ch, out, shiftjis_enc_direct())
 }
 
 fn cp932_decode_direct() -> &'static [u32] {
@@ -40514,10 +40518,14 @@ fn decode_cp932(input: &[u8]) -> Result<(char, usize), DecodeError> {
     )
 }
 
-fn encode_cp932(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+fn cp932_enc_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    let direct = DIRECT.get_or_init(|| build_enc_direct(&cp932_tables::CP932_ENC));
-    encode_dbcs2(ch, out, direct)
+    DIRECT
+        .get_or_init(|| build_enc_direct(&cp932_tables::CP932_ENC))
+        .as_slice()
+}
+fn encode_cp932(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    encode_dbcs2(ch, out, cp932_enc_direct())
 }
 
 // ISO-6937 / T.61 family: combining-prefix 2-byte sets (0xC1-0xCF leads), driven
@@ -41954,6 +41962,10 @@ fn utf8_to_dbcs2_enc_direct(to: Encoding) -> Option<&'static [u32]> {
         Encoding::EucKr => euckr_enc_direct(),
         Encoding::Gb2312 => gb2312_enc_direct(),
         Encoding::Johab => johab_enc_direct(),
+        // CP932/Shift-JIS are also pure `encode_dbcs2` (2-byte packed); half-width katakana
+        // (1-byte output) and unrepresentable cps break to scalar via the `>= 0x101` gate.
+        Encoding::Cp932 => cp932_enc_direct(),
+        Encoding::ShiftJis => shiftjis_enc_direct(),
         _ => return None,
     })
 }
@@ -46753,6 +46765,9 @@ pub fn iconv(
                 cd.to,
                 Encoding::Gb18030
                     | Encoding::ShiftJis
+                    | Encoding::Cp932
+                    | Encoding::Ibm943
+                    | Encoding::Ibm932
                     | Encoding::Big5
                     | Encoding::Gbk
                     | Encoding::EucJp
