@@ -16589,3 +16589,30 @@ and accuracy-hard math (needs faithful fdlibm sources handed in).
   `target/release/examples/X` LOCALLY — valid for a same-process fl-vs-glibc ratio survey (worker-
   independent). Before/after: revert via `git apply -R`, rch `cargo build --example` (build-only), run
   the retrieved binary locally, reapply.
+
+## 2026-07-11 (cc_fl) — PROFILE-FIRST: strict-bypass membrane-tax vein is MINED across cheap families (cc-mktime-tax-2026-07-11 follow-up)
+
+After shipping the mktime bypass, scanned every cheap/compute-bound (non-syscall) fast-pathed family
+for more mktime-class oversights (a hot fn calling decide()+observe() without its family's fast-path
+guard). Result: the HOT functions are all already guarded — do NOT re-scan:
+
+- **Guards exist per family:** `math_membrane_fastpath`, `stdlib_membrane_fastpath`,
+  `ctype_membrane_fastpath`, `inet_strict_membrane_fastpath`, and `strict_passthrough_active` (Time).
+- **Hot fns confirmed guarded / membrane-free:** `atoi` (stdlib_membrane_fastpath → parse_ato_decimal
+  directly), `wcstol`/`wcstoul`/`wcstod` (NO membrane at all — pure parse_wcstol_fast/wide_parse_int),
+  math entry helpers (`unary_entry`/`binary_entry`/f32 all have `math_membrane_fastpath`), `fma`/`fmaf`
+  (strict_passthrough), `gmtime_r`/`localtime_r`/`timegm` (strict_passthrough), `mktime` (now fixed),
+  `difftime` (bare `time_core::difftime`). Ctype isw*/is* fast-pathed via the ASCII table (shipped).
+- **Remaining unguarded decide() sites are SYSCALL-dominated families** (IoFd 298, Stdio 187[hot ones
+  fast-pathed], Resolver 143, Socket 59, Signal 58, Process 40, Termios 29, Poll 16, VirtualMemory 26)
+  where the syscall dwarfs the membrane — fast-pathing is ~0-gain (frontier doc §"already done").
+- **Low-value oversight candidates (NOT worth a slot):** obscure cheap fns like `inet_makeaddr`/
+  `inet_lnaof`/`inet_netof` may lack the guard but are cold (unmeasurable). Hot cheap fns in the
+  reformatting-dirty `stdlib_abi.rs` (strtod/bsearch) are already guarded like atoi anyway.
+
+**Frontier position (cc lane, end of 2026-07-11 session):** clean single-turn byte-identical
+above-floor HOT levers are EXHAUSTED. Shipped this session: sched_getcpu vDSO (3.77x), mktime bypass
+(1.36x); surfaced fread-fmemopen (floor). Remaining perf work is all (a) blocked on external glibc-2.42
+kernel sources (asin/acos/pow/exp/log/bessel — accuracy-hard), or (b) multi-turn architectural swings
+(malloc inline-header ~8x-capped + membrane-owner review; rseq for sched_getcpu↔glibc parity). Neither
+is a clean single-turn lever; do not rush them inline.
