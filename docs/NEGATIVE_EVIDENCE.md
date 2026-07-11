@@ -16490,3 +16490,37 @@ benchmark/workload (handed in) surfaces a function outside this closed set.
   ship on the 8t number alone from a loaded worker. `fgets`-fmemopen (the other follow-on) faces the
   SAME 1t economics for line-sized reads plus extra newline/NUL/return-NULL correctness surface — lower
   priority than fread was.
+
+## 2026-07-11 (cc_fl) — WIN: sched_getcpu routed through vDSO __vdso_getcpu — commit `0f360783a` (cc-getcpu-vdso-2026-07-11)
+
+- **THE LEVER (clock_getres vein, cod's e739adf45 pattern).** `sched_getcpu` issued a raw
+  `SYS_getcpu` syscall where glibc resolves `__vdso_getcpu` and skips the trap. Extended the existing
+  vDSO ELF parser (`time_abi::parse_vdso`, previously 4 time symbols) to also resolve `__vdso_getcpu`
+  (type alias + `VdsoSymbols.getcpu` field + 5-tuple return + match arm + `pub fn vdso_getcpu()`
+  accessor mirroring `raw_clock_getres`), and routed `sched_getcpu` through it with a raw-syscall
+  fallback on any miss (unresolved / aarch64 / non-success).
+- **SCOPE = sched_getcpu ONLY (deliberate).** Left the public `getcpu(cpu,node,unused)` on the raw
+  syscall: it takes ARBITRARY caller pointers, and the vDSO writes in userspace ⇒ a bad ptr SIGSEGVs
+  instead of returning EFAULT. `stdlib_abi_test::getcpu_invalid_pointer_sets_efault` asserts the EFAULT
+  contract, so routing `getcpu` through the vDSO would break it. `sched_getcpu`'s output is fl's own
+  valid stack slot ⇒ no such hazard.
+- **PROVEN, median (remote, `sched_getcpu_glibc_bench`, 3-arm same-process — the raw-syscall arm IS the
+  old fl path, so before/after/reference in one run):**
+
+  | arm | p50 ns/call |
+  |---|---:|
+  | raw `SYS_getcpu` (old fl / before) | 71.6 |
+  | **fl `sched_getcpu` (vDSO / after)** | **19.0** |
+  | host glibc `sched_getcpu` | 2.0 |
+
+  **3.77x faster** than the old raw-syscall path (71.6 → 19.0 ns), well above the ~1.105 null floor.
+- **BYTE-IDENTICAL — PROVEN.** `stdlib_abi_test -- getcpu` **5/0** (477 filtered): `sched_getcpu`
+  success + errno-untouched; `getcpu` EFAULT / all-null-success / null-cpu-valid-node all preserved
+  (getcpu unchanged). The vDSO writes the same CPU the syscall would.
+- **RESIDUAL / FOLLOW-ON:** fl 19.0 ns is still **9.38x** host glibc's 2.0 ns — glibc's `sched_getcpu`
+  reads the **rseq `cpu_id` cache** (a plain memory load, no vDSO call), which fl lacks. fl's 19 ns is
+  the vDSO call + `OnceLock::get_or_init` + `vdso_resolution_enabled` per call. RETRY ONLY IF rseq
+  registration is added to fl's thread setup (a larger, thread-lifecycle lever) — then `sched_getcpu`
+  could read the cached `cpu_id` directly and approach glibc parity. Not this turn.
+- **VEIN NOTE:** the vDSO symbol set is now `clock_gettime`/`clock_getres`/`gettimeofday`/`time`/
+  `getcpu` — the full x86-64 vDSO. No further raw-syscall→vDSO route remains for time/sched.
