@@ -16034,3 +16034,31 @@ sha256, self-time, cv or null.
 - **NOTES.** calloc = already optimal (not a lever). `valloc`/`pvalloc` (page-aligned, rarely hot) not
   yet checked for the same gap — a possible small follow-on. Do NOT re-derive: the aligned strict-fast-path
   is now shipped.
+
+## 2026-07-11 (cc_fl) — WIN (1.31x/1.41x): f64 sin/cos fast FMA-reduction (extends the tan lever) — commit `b9454d50e` (cc-sincos-2026-07-11)
+
+- **PROFILE-FIRST.** Allocator aligned family complete (valloc/pvalloc delegate to `memalign` → inherit
+  last turn's strict fast-path; all other alloc entrypoints already have it). sin/cos were the teed-up
+  follow-on to the tan lever: still `libm::sin`/`libm::cos` for the common band `|x| < TRIG_FAST_HI`, no
+  peer work since (trig.rs clean), 1.18-1.19x losers vs glibc 2.42.
+- **THE LEVER (same mechanism as tan).** sin/cos guards `ax < TRIG_FAST_HI` → `ax < FRAC_PI_4`: route
+  `[π/4, TRIG_RED_MAX]` through the proven `reduce_pio2_fma` + libm kernel-on-reduced-arg instead of
+  libm's slower internal `rem_pio2`. Odd/even by construction (reduction is odd) so parity stays exact.
+- **PERF — PROVEN, SAME-RUN PAIRED MEDIAN.** Added `sin_orig`/`cos_orig` (`libm::sin/cos`) arms to
+  `math_passthrough_survey_bench` (uncommitted, like `tan_orig`):
+
+  | fn | CAND ns | ORIG ns | **CAND/ORIG** | vs glibc |
+  |---|---:|---:|---:|---:|
+  | sin | 6.562 | 8.609 | **0.762 (1.31x)** | 0.776 |
+  | cos | 6.875 | 9.703 | **0.709 (1.41x)** | 0.656 |
+  | tan (shipped) | 7.047 | 13.453 | 0.524 | — |
+
+  CAND beats glibc; ORIG (`sin_orig` 0.860 / `cos_orig` 0.899) was near-glibc. (First survey run used a
+  stale bench binary that omitted the `_orig` arms — a forced rebuild produced these.)
+- **CORRECTNESS — PROVEN.** `conformance_diff_trig_special` **2/0** (sin/cos/tan special points π/2,π,
+  100,1e15 all ≤4 ULP via `close64`; parity exact via `same64`), `conformance_diff_math`
+  `diff_sin_cos_tan_within_4_ulps` green, `math_abi_test` **118/0**. (The 2 `conformance_diff_math`
+  fails are the pre-existing `fmax(0.0,-0.0)` glibc-2.42 signed-zero drift — unrelated.)
+- **TRIG FAMILY NOW COMPLETE:** tan (`1cfb44227`) + sin/cos (`b9454d50e`) all on the FMA reduction,
+  all beating glibc 2.42. `sincos_band` (deployed `sincos`) still uses `TRIG_FAST_HI` — a possible
+  follow-on but separate (not measured). Do NOT re-derive: sin/cos/tan FMA is shipped.
