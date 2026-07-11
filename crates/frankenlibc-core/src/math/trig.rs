@@ -86,10 +86,20 @@ pub(crate) fn sincos_band(x: f64) -> Option<(f64, f64)> {
     })
 }
 
+/// Below π/4 no reduction is needed (`libm::tan` is a direct small-arg kernel eval), so
+/// leave it on libm. From π/4 up to `TRIG_RED_MAX` we route through the fast FMA
+/// Cody-Waite reduction (`reduce_pio2_fma`, 3 FMAs) + the already-fast small-arg kernel,
+/// instead of `libm::tan`'s slower internal `rem_pio2`. glibc 2.42 sped up its dbl-64
+/// `tan`, exposing libm's medium-range reduction as the gap (f64 `tan` measured 1.68x
+/// slower than glibc 2.42). The reduction is proven ≤2 ULP on the large-arg band and is
+/// only MORE accurate for smaller `x` (smaller quotient), so it stays within the ≤4-ULP
+/// trig contract (`conformance_diff_trig_special`). Odd by construction: `reduce_pio2_fma`
+/// is odd (round-ties-even is odd), so `tan(-x) == -tan(x)` exactly. Above `TRIG_RED_MAX`
+/// the 3-part split runs out of precision — defer to libm for the rare astronomical case.
 #[inline]
 pub fn tan(x: f64) -> f64 {
     let ax = x.abs();
-    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
+    if ax < core::f64::consts::FRAC_PI_4 || !(ax <= TRIG_RED_MAX) {
         return libm::tan(x);
     }
     let (n, r) = reduce_pio2_fma(x);
