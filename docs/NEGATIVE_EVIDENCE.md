@@ -16678,3 +16678,12 @@ include `ICONV` or it drops the output lines. Full 35-conversion profile (median
 regression-guards the 29 winning conversions). The remaining iconv gaps are SIMD/table engineering
 (multi-turn, correctness-risky), consistent with the session-wide finding that clean single-turn
 byte-identical levers are exhausted; iconv joins malloc/rseq/math-kernels as dedicated-turn work.
+
+### correction (cc-iconv-probe-2026-07-11): DBCS→UTF-16 gather ALREADY EXISTS
+On reading the convert loop: the DBCS→UTF-16 SIMD gather is already present (mod.rs:46934, "Mirror of
+the DBCS->UTF-8 gather") AND a scalar DBCS→UTF-16/32 fast path (mod.rs:47246). So `cp932_to_utf16le`
+1.67x is NOT a missing fast path — it is the `vpgatherdd`-based gather being slower than glibc's SIMD
+(gather-instruction latency; fl is already 0.9 ns/char, glibc 0.54 ns/char — small absolute gap,
+architectural). Do NOT "add a DBCS→UTF-16 gather"; it exists. The only iconv gap that is a *fast-path*
+(not architectural) question is the CP949 encode's per-char UTF-8 decode + 256 KiB table — a multi-turn
+SIMD-UTF-8-decode / table-compaction effort. iconv is confirmed: no clean single-turn lever.
