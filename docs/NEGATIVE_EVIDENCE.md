@@ -116,6 +116,12 @@ the full measured detail.
   `[RCH] local (no admissible workers: insufficient_slots=8,hard_preflight=1)` followed by
   `[RCH] remote required; refusing local fallback (no worker assigned)`. Per the fail-closed contract,
   no retry, benchmark, or local Cargo command ran; source remains **SURFACED, NOT SHIPPED**.
+- **THIRD RESUME RETRY (current `main` `be28dc7ad`, 2026-07-11).** The intervening commit was another
+  docs-only iconv ledger row; resolver source, focused test, benchmark, and candidate patch ID are all
+  unchanged. The exact focused remote test command was attempted once and again failed closed with
+  `[RCH] local (no admissible workers: insufficient_slots=8,hard_preflight=1)` followed by
+  `[RCH] remote required; refusing local fallback (no worker assigned)`. No second attempt, benchmark,
+  local Cargo command, or source edit followed. The measured candidate remains **SURFACED, NOT SHIPPED**.
 - **NEXT SAFE ACTION.** The isolated candidate remains in
   `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-4e4f` (with prior copies preserved at
   `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-a4f0` and
