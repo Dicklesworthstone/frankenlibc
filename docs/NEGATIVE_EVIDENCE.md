@@ -16062,3 +16062,32 @@ sha256, self-time, cv or null.
 - **TRIG FAMILY NOW COMPLETE:** tan (`1cfb44227`) + sin/cos (`b9454d50e`) all on the FMA reduction,
   all beating glibc 2.42. `sincos_band` (deployed `sincos`) still uses `TRIG_FAST_HI` — a possible
   follow-on but separate (not measured). Do NOT re-derive: sin/cos/tan FMA is shipped.
+
+## 2026-07-11 (cc_fl) — REJECT (MEASURED no-op): f64 `sincos` common-band FMA reduction — libm::sincos already beats glibc (cc-sincos-band)
+
+- **THE ATTEMPT.** The teed-up trig follow-on: lower `sincos_band`'s threshold from `TRIG_FAST_HI` to
+  `π/4` (mirroring the landed sin/cos/tan levers) so the deployed `sincos` routes the common band
+  `[π/4, 1.647e6]` through `reduce_pio2_fma` instead of `libm::sincos`. Isolated (`sincos_band` is used
+  only by `math::sincos`); gate is a within-tolerance ≤2-ULP check (`conformance_diff_math_multi_output`,
+  not bit-exact).
+- **CORRECTNESS held.** Bit-identical to `(sin(x), cos(x))` (quadrant map verified equal); worst 1 ULP
+  vs glibc on the common band; the ≤2-ULP gate PASSED unchanged (SP has no exactly-π/π-2 point, so no
+  delicate near-zero case). So no gate relaxation was even needed.
+- **PERF — MEASURED no-op (same-run paired, `sincos_glibc_bench` common-band group added, criterion,
+  no abi-bench):**
+
+  | arm | median | vs glibc |
+  |---|---:|---:|
+  | fl_cand (FMA) | 1.591 µs | 0.74x |
+  | **libm_orig** (`libm::sincos`) | 1.589 µs | 0.74x |
+  | host_glibc | 2.157 µs | — |
+
+  **fl_cand/libm_orig = 1.001 — NO win.** Unlike libm's individual sin/cos (which LOSE to glibc 2.42,
+  hence those levers won), **`libm::sincos` already BEATS glibc's `sincos` (0.74x)** because it already
+  shares ONE reduction for both outputs. The FMA path adds a DOUBLE reduction (`reduce_pio2_fma` +
+  `libm::sin(r)`'s and `libm::cos(r)`'s own internal `rem_pio2` fast-exits) that washes out the
+  `reduce_pio2_fma` savings.
+- **REVERTED** (bench additions + threshold). Left an in-code do-not-retry NOTE at `sincos_band`
+  (trig.rs). **RETRY ONLY IF** the sin/cos KERNELS are transcribed so `sincos_band` can evaluate both
+  from ONE reduction with NO re-reduction (glibc's approach) — only then could it beat `libm::sincos`.
+- **TRIG FAMILY at frontier:** sin/cos/tan shipped (beat glibc); `sincos` already beats glibc (no lever).

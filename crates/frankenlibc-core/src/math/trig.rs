@@ -76,6 +76,13 @@ pub fn cos(x: f64) -> f64 {
 /// map, same `libm::sin/cos` on the reduced arg), so it inherits their already-green
 /// ≤1–2 ULP-vs-glibc conformance; outside the band the caller falls back to
 /// `libm::sincos` (unchanged behavior).
+///
+/// NOTE (rejected 2026-07-11, cc-sincos-band): lowering this threshold to `π/4` (mirroring
+/// the sin/cos/tan levers) is a MEASURED no-op — `libm::sincos` already shares ONE reduction
+/// for both outputs and already BEATS glibc's `sincos` on the common band (fl_cand/libm_orig
+/// = 1.001, both 0.74x glibc). The FMA path adds a double reduction (`reduce_pio2_fma` +
+/// `libm::sin(r)`/`libm::cos(r)`'s own `rem_pio2` fast-exits) that washes the savings. Do not
+/// retry without transcribing the sin/cos KERNELS to avoid the double reduction.
 #[inline]
 pub(crate) fn sincos_band(x: f64) -> Option<(f64, f64)> {
     let ax = x.abs();
