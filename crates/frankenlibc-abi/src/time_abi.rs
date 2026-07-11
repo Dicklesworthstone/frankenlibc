@@ -801,6 +801,20 @@ pub unsafe extern "C" fn gmtime_r(timer: *const i64, result: *mut libc::tm) -> *
 /// Normalizes the `tm` structure fields and fills in `tm_wday` and `tm_yday`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
+    // Strict mode (DEFAULT deployed): fl is UTC-only, so mktime == timegm math. decide() is
+    // forced Allow for the Time family, observe() is telemetry-only, and glibc never validates
+    // the caller's tm pointer — so skip decide/observe/tracked-check and go straight to the
+    // shared normalization, exactly like timegm/gmtime_r (which this same bypass took from
+    // 1.65x-slower to parity). Byte-identical: same normalized tm + epoch, same NULL→EFAULT
+    // guard. Hardened mode keeps the full validate/deny/observe path below.
+    if runtime_policy::strict_passthrough_active() {
+        if tm.is_null() {
+            unsafe { set_abi_errno(errno::EFAULT) };
+            return -1;
+        }
+        return unsafe { utc_normalize_to_epoch(tm) };
+    }
+
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Time,
         tm as usize,
