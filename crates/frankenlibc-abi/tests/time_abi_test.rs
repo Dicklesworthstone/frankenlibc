@@ -329,7 +329,10 @@ fn vdso_fastpath_snapshot_reflects_mapping_presence() {
     let snapshot = time_abi::vdso_fastpath_snapshot();
     assert_eq!(
         snapshot.handle_opened,
-        snapshot.clock_gettime_available || snapshot.gettimeofday_available
+        snapshot.clock_gettime_available
+            || snapshot.clock_getres_available
+            || snapshot.gettimeofday_available
+            || snapshot.time_available
     );
     if snapshot.handle_opened {
         assert!(snapshot.mapping_present);

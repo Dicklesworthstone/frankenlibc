@@ -29,6 +29,9 @@ const CLOCK_REALTIME: c_int = 0;
 const CLOCK_MONOTONIC: c_int = 1;
 const CLOCK_PROCESS_CPUTIME_ID: c_int = 2;
 const CLOCK_THREAD_CPUTIME_ID: c_int = 3;
+const CLOCK_MONOTONIC_RAW: c_int = 4;
+const CLOCK_REALTIME_COARSE: c_int = 5;
+const CLOCK_MONOTONIC_COARSE: c_int = 6;
 const CLOCK_BOOTTIME: c_int = 7;
 const TIMER_ABSTIME: c_int = 1;
 
@@ -128,6 +131,10 @@ fn diff_clock_getres_all_clocks() {
         ("CLOCK_MONOTONIC", CLOCK_MONOTONIC),
         ("CLOCK_PROCESS_CPUTIME_ID", CLOCK_PROCESS_CPUTIME_ID),
         ("CLOCK_THREAD_CPUTIME_ID", CLOCK_THREAD_CPUTIME_ID),
+        ("CLOCK_MONOTONIC_RAW", CLOCK_MONOTONIC_RAW),
+        ("CLOCK_REALTIME_COARSE", CLOCK_REALTIME_COARSE),
+        ("CLOCK_MONOTONIC_COARSE", CLOCK_MONOTONIC_COARSE),
+        ("CLOCK_BOOTTIME", CLOCK_BOOTTIME),
     ];
     for (name, clk) in clocks {
         let mut tp_fl: libc::timespec = unsafe { core::mem::zeroed() };

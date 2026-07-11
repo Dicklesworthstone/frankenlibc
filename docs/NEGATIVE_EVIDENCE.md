@@ -16409,3 +16409,43 @@ benchmark/workload (handed in) surfaces a function outside this closed set.
   but failed on pre-existing optional-ABI imports in `strcpy_fused_ab.rs` and `strcmp_align.rs`.
   Remote clippy was unavailable because that worker lacks the nightly `cargo-clippy` component, and
   fail-closed RCH rejected `cargo fmt --check` as non-compilation (`RCH-E301`). No local fallback ran.
+
+## 2026-07-11 (cod) — WIN: `clock_getres` vDSO route removes the raw-syscall floor
+
+- **PROFILE FIRST.** The deployed ABI always issued `SYS_clock_getres`, while the existing vDSO parser
+  already resolved the neighboring `clock_gettime`, `gettimeofday`, and `time` symbols. A rotating
+  three-arm row measured FrankenLibC against two calls through a separately loaded host-libc namespace:
+  `CLOCK_MONOTONIC` was **88.798 ns** versus host A **3.854 ns** and host B **3.828 ns**
+  (`fl/glibc=23.039`, host A/B null control `1.007`).
+- **ONE LEVER.** Resolve `__vdso_clock_getres` in that existing parser and route only `clock_getres`
+  through it. Clock-ID and optional-output validation are textually unchanged. Missing mappings,
+  missing symbols, startup/pipeline initialization, `-ENOSYS`, and positive vDSO returns all use the
+  exact former raw-syscall path; other negative returns preserve errno translation. `timespec_getres`
+  is untouched.
+- **SAME-WORKER MEDIAN GATE.** Baseline and candidate both ran on `vmi1149989`; each arm used 101
+  samples of 20,000 calls after warmup, with order rotated across samples:
+
+  | arm | baseline p50 ns/call | candidate p50 ns/call | change |
+  |---|---:|---:|---:|
+  | FrankenLibC `clock_getres` | 88.798 | **9.374** | **-89.44% (9.47x faster)** |
+  | host glibc A | 3.854 | 3.778 | -1.97% |
+  | host glibc B | 3.828 | 3.917 | +2.32% |
+  | host A/B null ratio | 1.007 | 0.964 | stable control |
+
+  Neighbor controls stayed flat: `clock_gettime(CLOCK_REALTIME)` 27.86 -> 27.95 ns,
+  `clock_gettime(CLOCK_MONOTONIC)` 28.80 -> 27.16 ns, and `gettimeofday` 29.36 -> 29.50 ns.
+- **CORRECTNESS PROOF.** Remote release tests passed `conformance_diff_clock` **6/6** with zero glibc
+  divergences and exact `clock_getres` return/value parity for all eight accepted clocks (realtime,
+  monotonic, process/thread CPU, monotonic-raw, both coarse clocks, boottime). `time_abi_test` passed
+  **60/60 active** tests (30 pre-existing hardened-mode cases ignored), including `NULL` output,
+  vDSO availability/snapshot invariants, vDSO return classification and syscall fallback semantics.
+- **REPRODUCER.** All Cargo execution was fail-closed remote-only:
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo bench -j 4 --profile release -p
+  frankenlibc-bench --features abi-bench --bench clock_gettime_glibc_bench -- --sample-size 30
+  --warm-up-time 1 --measurement-time 3 --noplot`. No local fallback ran.
+- **WORKSPACE GATE SURFACE.** Remote `cargo check --workspace --all-targets` compiled the modified ABI,
+  tests, and benchmark, then failed on the pre-existing optional-ABI import in
+  `frankenlibc-bench/examples/memfrob_ab.rs` (`frankenlibc_abi` unavailable without its feature).
+  Remote clippy was unavailable because `nightly-2026-04-28` on the worker lacks `cargo-clippy`.
+  Fail-closed RCH rejected `cargo fmt --check` as a non-compilation command (`RCH-E301`); local
+  `git diff --check` passed. No local Cargo fallback ran, and no allocator/string peer files changed.

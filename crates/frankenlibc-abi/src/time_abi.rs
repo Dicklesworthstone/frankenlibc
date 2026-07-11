@@ -22,6 +22,7 @@ use crate::runtime_policy;
 use crate::util::scan_c_string;
 
 type VdsoClockGettimeFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
+type VdsoClockGetresFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
 type VdsoGettimeofdayFn = unsafe extern "C" fn(*mut libc::timeval, *mut libc::timezone) -> c_int;
 type VdsoTimeFn = unsafe extern "C" fn(*mut libc::time_t) -> libc::time_t;
 
@@ -77,6 +78,7 @@ struct VdsoSymbols {
     mapping_present: bool,
     handle_opened: bool,
     clock_gettime: Option<VdsoClockGettimeFn>,
+    clock_getres: Option<VdsoClockGetresFn>,
     gettimeofday: Option<VdsoGettimeofdayFn>,
     time: Option<VdsoTimeFn>,
 }
@@ -86,7 +88,9 @@ pub struct VdsoFastpathSnapshot {
     pub mapping_present: bool,
     pub handle_opened: bool,
     pub clock_gettime_available: bool,
+    pub clock_getres_available: bool,
     pub gettimeofday_available: bool,
+    pub time_available: bool,
     pub clock_gettime_hits: u64,
     pub gettimeofday_hits: u64,
 }
@@ -172,7 +176,9 @@ pub fn vdso_fastpath_snapshot() -> VdsoFastpathSnapshot {
         mapping_present: symbols.mapping_present,
         handle_opened: symbols.handle_opened,
         clock_gettime_available: symbols.clock_gettime.is_some(),
+        clock_getres_available: symbols.clock_getres.is_some(),
         gettimeofday_available: symbols.gettimeofday.is_some(),
+        time_available: symbols.time.is_some(),
         clock_gettime_hits: VDSO_CLOCK_GETTIME_HITS.load(Ordering::Relaxed),
         gettimeofday_hits: VDSO_GETTIMEOFDAY_HITS.load(Ordering::Relaxed),
     }
@@ -250,6 +256,37 @@ unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
 }
 
 #[inline]
+unsafe fn raw_clock_getres_syscall(clock_id: c_int, res: *mut libc::timespec) -> c_int {
+    match unsafe { raw_syscall::sys_clock_getres(clock_id, res as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+#[inline]
+unsafe fn raw_clock_getres(clock_id: c_int, res: *mut libc::timespec) -> c_int {
+    if vdso_resolution_enabled() {
+        let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
+        if let Some(vdso_clock_getres) = symbols.clock_getres {
+            let rc = unsafe { vdso_clock_getres(clock_id, res) };
+            match classify_vdso_return(rc) {
+                VdsoCallOutcome::Success => return 0,
+                VdsoCallOutcome::FallbackToSyscall => {}
+                VdsoCallOutcome::Fail(err) => {
+                    unsafe { set_abi_errno(err) };
+                    return -1;
+                }
+            }
+        }
+    }
+
+    unsafe { raw_clock_getres_syscall(clock_id, res) }
+}
+
+#[inline]
 unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
     if vdso_resolution_enabled() {
         let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
@@ -296,11 +333,15 @@ fn resolve_vdso_symbols() -> VdsoSymbols {
     // bounds-checked against the ELF's own fields and any anomaly returns `None`
     // entries, so callers fall back to the raw syscall — a parse failure is never
     // fatal and never produces a bad pointer.
-    let (clock_gettime, gettimeofday, time) = unsafe { parse_vdso(base) };
+    let (clock_gettime, clock_getres, gettimeofday, time) = unsafe { parse_vdso(base) };
     VdsoSymbols {
         mapping_present: true,
-        handle_opened: clock_gettime.is_some() || gettimeofday.is_some() || time.is_some(),
+        handle_opened: clock_gettime.is_some()
+            || clock_getres.is_some()
+            || gettimeofday.is_some()
+            || time.is_some(),
         clock_gettime,
+        clock_getres,
         gettimeofday,
         time,
     }
@@ -368,15 +409,17 @@ unsafe fn vdso_cstr_eq(p: *const u8, target: &[u8]) -> bool {
 }
 
 /// Port of the kernel's reference `parse_vdso`: resolve `__vdso_clock_gettime`,
-/// `__vdso_gettimeofday` and `__vdso_time` from the mapped vDSO ELF at `base`.
+/// `__vdso_clock_getres`, `__vdso_gettimeofday`, and `__vdso_time` from the
+/// mapped vDSO ELF at `base`.
 unsafe fn parse_vdso(
     base: usize,
 ) -> (
     Option<VdsoClockGettimeFn>,
+    Option<VdsoClockGetresFn>,
     Option<VdsoGettimeofdayFn>,
     Option<VdsoTimeFn>,
 ) {
-    let none = (None, None, None);
+    let none = (None, None, None, None);
     let ehdr = base as *const Elf64Ehdr;
     let ident = unsafe { &(*ehdr).e_ident };
     if ident[0] != 0x7f || ident[1] != b'E' || ident[2] != b'L' || ident[3] != b'F' {
@@ -434,6 +477,7 @@ unsafe fn parse_vdso(
 
     let symtab = symtab as *const Elf64Sym;
     let mut clock_gettime: Option<VdsoClockGettimeFn> = None;
+    let mut clock_getres: Option<VdsoClockGetresFn> = None;
     let mut gettimeofday: Option<VdsoGettimeofdayFn> = None;
     let mut time: Option<VdsoTimeFn> = None;
     for s in 0..nchain {
@@ -448,13 +492,16 @@ unsafe fn parse_vdso(
         if clock_gettime.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_clock_gettime") } {
             clock_gettime =
                 Some(unsafe { core::mem::transmute::<usize, VdsoClockGettimeFn>(addr) });
+        } else if clock_getres.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_clock_getres") } {
+            clock_getres =
+                Some(unsafe { core::mem::transmute::<usize, VdsoClockGetresFn>(addr) });
         } else if gettimeofday.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_gettimeofday") } {
             gettimeofday = Some(unsafe { core::mem::transmute::<usize, VdsoGettimeofdayFn>(addr) });
         } else if time.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_time") } {
             time = Some(unsafe { core::mem::transmute::<usize, VdsoTimeFn>(addr) });
         }
     }
-    (clock_gettime, gettimeofday, time)
+    (clock_gettime, clock_getres, gettimeofday, time)
 }
 
 fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
@@ -900,13 +947,7 @@ pub unsafe extern "C" fn clock_getres(clock_id: c_int, res: *mut libc::timespec)
         return -1;
     }
 
-    match unsafe { raw_syscall::sys_clock_getres(clock_id, res as *mut u8) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { raw_clock_getres(clock_id, res) }
 }
 
 // ---------------------------------------------------------------------------
