@@ -15850,3 +15850,54 @@ sha256, self-time, cv or null.
   per-function null floor (the three re-open conditions in `PERF_FRONTIER_FINAL.md` §4). A perfect-hash
   refinement of the resolv indices is **not** a retry condition — it is provably sub-floor on a
   glibc-beating path.
+
+## 2026-07-10 (cc_fl) — SURFACE (fresh gap, BLOCKED by bit-exact gate): glibc-2.42 flipped f64 tan/sin/cos to LOSSES; not takeable without a glibc-exact port or a gate-relax decision (reject-id cc-trig-2026-07-11)
+
+- **PROFILE-FIRST, FRESH COMPARATOR.** Re-ran the reliable same-process math surveys REMOTELY against
+  the upgraded **host glibc 2.42** — the comparator prior math surveys never saw (see the host-2.42
+  upgrade). `f32_math_survey_bench` + `math_passthrough_survey_bench`, in-binary fl-core-kernel vs host
+  `extern "C"` glibc, **median (p50)** per function. This is re-open condition (c): a new host exposing a
+  fresh gap. Worker `hz2` then `vmi1152480`, both remote invocations exit-0 for the surveys.
+- **NEW MEASURED GAP (f64, `any` inputs `[-20, +19.375]`, all small/medium-arg ⇒ pure libm-kernel-vs-glibc):**
+
+  | fn | fl p50 ns | glibc-2.42 p50 ns | ratio | prior frontier claim |
+  |---|---:|---:|---:|---|
+  | **tan** | 16.562 | 9.844 | **1.683** | "large-arg tan done; f64 transcendentals all win" |
+  | **sin** | 22.188 | 18.594 | **1.193** | (win) |
+  | **cos** | 11.094 | 9.375 | **1.183** | (win) |
+
+  Everything else f64 still WINS (asinh 0.45x, sinh 0.48x, erf 0.50x, cosh 0.54x, tanh 0.54x, acosh 0.63x,
+  atan2 0.70x, hypot 0.77x, cbrt 0.85x, tgamma 0.86x, expm1 0.81x, log1p 0.81x, j0 0.99x, y0 0.99x).
+  f32: worst are `j0f` 1.305x (R10, accuracy-hard) and marginal `coshf` 1.128x / `atanhf` 1.122x
+  (below the survey's 1.30x actionable threshold); the rest win (tanf 0.73x, atanf 0.57x, atan2f 0.57x, …).
+- **ROOT CAUSE.** fl's `tan`/`sin`/`cos` (`crates/frankenlibc-core/src/math/trig.rs`) delegate the
+  common band `|x| < 1.647e6` straight to pure-Rust **`libm::{tan,sin,cos}`** (the FMA large-arg
+  reduction only engages above 1.647e6). glibc 2.42's hand-tuned dbl-64 trig is now faster than libm on
+  this band. Same story as the sinh/cosh/exp wins the repo already landed by replacing a slow libm
+  passthrough with a tuned kernel — EXCEPT those are ≤4-ULP-gated and trig is not (next bullet).
+- **WHY BLOCKED (measured, not assumed).** The ONLY f64 tan/sin/cos gate surface is
+  `conformance_diff_trig_special.rs` (bit-exact `same64` = `to_bits()` equality, NaN-aware, at 14 points
+  incl. `1.0/0.5/π/±π/2/100.0/1e15`) plus a loose `math_abi_test` `approx_eq(tan(π/4),1,1e-12)`. I RAN
+  the gate on 2.42: **`sin_cos_tan_special_match_glibc` (f64) PASSES** — so libm's f64 trig is bit-exact
+  to glibc 2.42 at those points *today*. `tan(π/2)` and `tan(π)` are pure **reduction-error artifacts**
+  (`tan(π/2_f64)=1.633e16` is `1/(π/2_f64−π/2_true)`); matching glibc's exact bits there **locks the
+  reduction+kernel to be libm/glibc-identical**. Any faster kernel uses a different reduction (Cody-Waite
+  / `reduce_pio2_fma`) ⇒ different last bits at π/2 & π ⇒ the green gate goes RED. Routing only the 14
+  gated inputs to libm while the survey band uses a fast kernel would be dishonest gate-gaming (a
+  bench/gate mismatch — the exact "bench trap" this ledger warns against). So there is **no bit-identical
+  speedup** and **no honest non-identical kernel** that keeps the gate green.
+- **ALSO FOUND (correctness, not a perf lever).** `sinf_cosf_tanf_special_match_glibc` (f32) is
+  **pre-existing RED** — `tanf` special-case `same32` fails at `conformance_diff_trig_special.rs:78`
+  (glibc-2.42 bit-exact drift, same family as the documented `asinhf`/`conformance_diff_asinh_special`
+  1-ULP 2.42 drift). Not a perf lever (fl `tanf` is already **0.728x** = faster than glibc); logged so the
+  recurring 2.42 bit-exact-drift pattern is visible for a gate-policy decision.
+- **NO SHIP — SURFACE.** Correct decision under "ONE lever, correctness proven": do not ship a
+  bit-inexact kernel that breaks a green conformance gate, and do not unilaterally relax a correctness gate
+  to land a perf win (frontier policy; cf. the asinhf deferral). The gap is real and now documented with
+  post-2.42 numbers.
+- **RETRY ONLY IF (reject-id cc-trig-2026-07-11):** (a) glibc-2.42's exact dbl-64 `tan`/`sin`/`cos`
+  source is handed in for a faithful bit-exact transcription (`legacy_glibc_code/` is ABSENT from the tree
+  — no in-repo source), OR (b) the maintainer decides to relax the `same64` trig special-case gate to a
+  within-N-ULP contract (the recurring 2.42 drift on `tanf`/`asinhf` arguably motivates it) — then a tuned
+  within-ULP tan/sin/cos kernel on the `|x|<1.647e6` band becomes landable and worth ~1.68x/1.18x. Do NOT
+  retry a non-identical kernel while the f64 gate is green.
