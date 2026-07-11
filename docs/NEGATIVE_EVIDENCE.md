@@ -17074,3 +17074,29 @@ that made the wcsrtombs ENCODE lever clean. It does NOT work on decode. Do NOT r
   gate = cyr WIN, cjk PARITY, mixed +50% regression. mbsrtowcs decode REMAINS SURFACED. The encode
   sibling wcsrtombs SHIPPED clean (cc-wcsrtombs-simd, cc65da573) — the asymmetry (fixed-width u32 encode
   vs variable-width byte decode) is the whole story. Reverted; tree clean.
+
+## cc-wcsnrtombs-simd-2026-07-11 — WIN (SHIPPED ad83dde5d) — completes the wide→multibyte encode vein
+
+- **THE LEVER.** wcsnrtombs (n-bounded streaming wide→multibyte) was the last encode converter still
+  ASCII-prefix-only + scalar `wcrtomb` for multibyte — ~6.3-7.0x LOSS vs glibc on contiguous non-Latin
+  wide text. Routed its dst path through the shared `wcs_simd_prefix` (the wcsrtombs/wcstombs lever) +
+  added a trailing-<16-ASCII scalar tail to `wcs_simd_prefix` (a short ASCII run at end-of-source was
+  falling to the heavy per-char `wcrtomb`; the tail narrows it directly). The tail also retroactively
+  improves the shipped wcstombs/wcsrtombs ASCII tails.
+- **BYTE-IDENTICAL.** conformance_diff_wchar 44/0, conformance_diff_wcstombs_simd 1/0,
+  wcsrtombs_differential_probe 2/0, n_bounded_wchar_differential_probe 1/0 — all vs LIVE glibc.
+- **MEASURED (remote, median of 2, same-fleet before/after, self-normalized):**
+
+  | arm | BEFORE | AFTER | verdict |
+  |---|---|---|---|
+  | ascii | ~0.11x WIN | ~0.11x WIN | tail keeps parity (was ~0.23x without it) |
+  | cyrillic | ~6.25x LOSS | **~0.27x WIN** | flip (~23x fl-over-fl) |
+  | cjk | ~6.98x LOSS | **~0.17x WIN** | flip (~41x) |
+  | mixed | ~4.1x LOSS | ~4.0x LOSS | parity (contiguity gate holds) |
+
+- **VEIN STATUS.** wide→multibyte ENCODE conversion is now FULLY MINED: wcstombs (had it), wcsrtombs
+  (cc65da573), wcsnrtombs (ad83dde5d) all SIMD-routed + clean. The DECODE side (mbstowcs had it;
+  mbsrtowcs/mbsnrtowcs) stays SURFACED — the contiguity gate is encode-specific (see
+  cc-mbsrtowcs-gate-retry-2026-07-11); routing them regresses interleaved-Latin. See
+  [[multibyte-simd-conversion-vein]]. Follow-on: count-only (dst==NULL) paths still scalar their
+  multibyte.
