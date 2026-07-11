@@ -38,6 +38,22 @@ fn koi8r_corpus() -> Vec<u8> {
     s.into_bytes()
 }
 
+fn cp949_corpus() -> Vec<u8> {
+    // ASCII runs interleaved with scattered Hangul syllables (U+AC00..U+D7A3, all
+    // CP949-encodable as 2 bytes). The ASCII breaks the SIMD 3-byte encode window so
+    // both the gather AND its scalar fall-through (ASCII, window boundaries) are
+    // exercised; the diverse (non-contiguous) code points make it a cache-bound
+    // encode-table access, matching the utf8_to_cp949_diverse bench.
+    let mut s = String::new();
+    for i in 0..600usize {
+        s.push_str("ab");
+        for k in 0..5usize {
+            s.push(char::from_u32(0xAC00 + ((i * 7 + k * 811) % 0x2B00) as u32).unwrap());
+        }
+    }
+    s.into_bytes()
+}
+
 fn convert(to: &[u8], src: &[u8]) -> Vec<u8> {
     let mut cd = iconv_open(to, b"UTF-8").expect("iconv_open");
     let mut out = vec![0u8; src.len() * 4 + 16];
@@ -101,5 +117,19 @@ fn iconv_utf8_to_koi8r_golden_sha256() {
     let pin = "05ea74b960f361549e1add14afdf2a3ba6c48df9229b0687b0a0e3c880e65fbb";
     if !pin.starts_with("__P") {
         assert_eq!(&got, pin, "iconv UTF-8->KOI8-R golden drifted");
+    }
+}
+
+#[test]
+fn iconv_utf8_to_cp949_golden_sha256() {
+    // Guards the SIMD UTF-8 -> 2-byte-DBCS encode gather (byte-identical to the scalar
+    // encode_cp949). Pinned after verifying the output matches live glibc via
+    // conformance_diff_iconv.
+    let out = convert(b"CP949", &cp949_corpus());
+    let got = hex(&out);
+    eprintln!("CP949: sha256={got} ({}B)", out.len());
+    let pin = "f7d3abd0869048a769acea80b9edcb6f93bc7f0f85b3d288aa452d4f55ae4fa9";
+    if !pin.starts_with("__P") {
+        assert_eq!(&got, pin, "iconv UTF-8->CP949 golden drifted");
     }
 }

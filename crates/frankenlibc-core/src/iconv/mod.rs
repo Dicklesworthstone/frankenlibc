@@ -41922,19 +41922,41 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
 }
 
 macro_rules! dbcs_encoder {
-    ($name:ident, $table:ident) => {
-        fn $name(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    ($name:ident, $direct:ident, $table:ident) => {
+        /// Shared `enc_direct[cp] = packed+1` table (0 == unrepresentable). Also read by the
+        /// SIMD UTF-8 -> 2-byte-DBCS encode gather, so the scalar and SIMD paths use the exact
+        /// same slots.
+        fn $direct() -> &'static [u32] {
             static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-            let direct = DIRECT.get_or_init(|| build_enc_direct(&cjk_tables::$table));
-            encode_dbcs2(ch, out, direct)
+            DIRECT
+                .get_or_init(|| build_enc_direct(&cjk_tables::$table))
+                .as_slice()
+        }
+        fn $name(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+            encode_dbcs2(ch, out, $direct())
         }
     };
 }
-dbcs_encoder!(encode_gbk, GBK_ENC);
-dbcs_encoder!(encode_euckr, EUC_KR_ENC);
-dbcs_encoder!(encode_cp949, CP949_ENC);
-dbcs_encoder!(encode_gb2312, GB2312_ENC);
-dbcs_encoder!(encode_johab, JOHAB_ENC);
+dbcs_encoder!(encode_gbk, gbk_enc_direct, GBK_ENC);
+dbcs_encoder!(encode_euckr, euckr_enc_direct, EUC_KR_ENC);
+dbcs_encoder!(encode_cp949, cp949_enc_direct, CP949_ENC);
+dbcs_encoder!(encode_gb2312, gb2312_enc_direct, GB2312_ENC);
+dbcs_encoder!(encode_johab, johab_enc_direct, JOHAB_ENC);
+
+/// Per-target `enc_direct` table for codecs whose UTF-8 encode is a pure 2-byte `encode_dbcs2`
+/// lookup — the set eligible for the SIMD UTF-8 -> 2-byte-DBCS encode gather. `None` for every
+/// other target (EUC-JP with SS2/SS3, GB18030 4-byte, UTF/SBCS, …), which keep their own paths.
+#[inline]
+fn utf8_to_dbcs2_enc_direct(to: Encoding) -> Option<&'static [u32]> {
+    Some(match to {
+        Encoding::Cp949 => cp949_enc_direct(),
+        Encoding::Gbk => gbk_enc_direct(),
+        Encoding::EucKr => euckr_enc_direct(),
+        Encoding::Gb2312 => gb2312_enc_direct(),
+        Encoding::Johab => johab_enc_direct(),
+        _ => return None,
+    })
+}
 
 /// Opens a character set conversion descriptor with deterministic dispatch metadata.
 ///
@@ -46651,6 +46673,66 @@ pub fn iconv(
                 &mut out_pos,
                 gb18030_utf8_bmp3_dbcs2_direct(),
             );
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
+        // SIMD fast path: UTF-8 (uniform 3-byte) -> 2-byte DBCS encode (the `dbcs_encoder!`
+        // codecs CP949/GBK/GB2312/JOHAB/EUC-KR, all `encode_dbcs2` over a packed `enc_direct`).
+        // Decode 4 three-byte sequences in parallel, gather their 4 `enc_direct[cp]` slots, then
+        // interleave-pack 8 output bytes. The reverse of the DBCS->UTF-8 gather. Byte-for-byte
+        // identical to the scalar inline encode below: a window fires ONLY when all 4 chars are
+        // valid non-overlong non-surrogate 3-byte sequences (cp in 0x800..=0xFFFF — exactly
+        // `utf8_decode_step`'s 3-byte acceptance) whose slot is a representable 2-byte output
+        // (packed >= 0x100 <=> slot >= 0x101). Any ASCII / 2-byte / 4-byte / invalid /
+        // unrepresentable / 1-byte-output char breaks with in_pos/out_pos untouched, so the
+        // scalar path resolves it for the exact EILSEQ/EINVAL/E2BIG ordering.
+        if from_enc == Encoding::Utf8
+            && !cd.emit_bom
+            && let Some(enc_direct) = utf8_to_dbcs2_enc_direct(cd.to)
+        {
+            while in_pos + 16 <= input.len() && out_pos + 8 <= outbuf.len() {
+                let raw = Simd::<u8, 16>::from_slice(&input[in_pos..in_pos + 16]);
+                let b0 = std::simd::simd_swizzle!(raw, [0, 3, 6, 9]);
+                let b1 = std::simd::simd_swizzle!(raw, [1, 4, 7, 10]);
+                let b2 = std::simd::simd_swizzle!(raw, [2, 5, 8, 11]);
+                // 3-byte UTF-8: lead 0xE0..=0xEF + two continuation bytes 0x80..=0xBF.
+                let shape_ok = b0.simd_ge(Simd::splat(0xE0))
+                    & b0.simd_le(Simd::splat(0xEF))
+                    & b1.simd_ge(Simd::splat(0x80))
+                    & b1.simd_le(Simd::splat(0xBF))
+                    & b2.simd_ge(Simd::splat(0x80))
+                    & b2.simd_le(Simd::splat(0xBF));
+                if !shape_ok.all() {
+                    break;
+                }
+                let cp = ((b0.cast::<u32>() & Simd::splat(0x0F)) << Simd::splat(12))
+                    | ((b1.cast::<u32>() & Simd::splat(0x3F)) << Simd::splat(6))
+                    | (b2.cast::<u32>() & Simd::splat(0x3F));
+                // Non-overlong (>= 0x800) + non-surrogate: exactly the utf8_decode_step 3-byte gate.
+                let cp_ok = cp.simd_ge(Simd::splat(0x800))
+                    & (cp.simd_lt(Simd::splat(0xD800)) | cp.simd_gt(Simd::splat(0xDFFF)));
+                if !cp_ok.all() {
+                    break;
+                }
+                // enc_direct[cp] == packed + 1 (0 == unrepresentable). Require a 2-byte output
+                // (packed >= 0x100 <=> slot >= 0x101) so the pack is uniform; 1-byte / missing
+                // slots break to the scalar path. cp <= 0xFFFF < table len, so no OOB gather.
+                let slot =
+                    Simd::<u32, 4>::gather_or(enc_direct, cp.cast::<usize>(), Simd::splat(0));
+                if !slot.simd_ge(Simd::splat(0x101)).all() {
+                    break;
+                }
+                let packed = slot - Simd::splat(1);
+                let hi = ((packed >> Simd::splat(8)) & Simd::splat(0xFF)).cast::<u8>();
+                let lo = (packed & Simd::splat(0xFF)).cast::<u8>();
+                // encode_dbcs2 writes out[0]=packed>>8, out[1]=packed&0xFF per char.
+                let out8 = std::simd::simd_swizzle!(hi, lo, [0, 4, 1, 5, 2, 6, 3, 7]);
+                out8.copy_to_slice(&mut outbuf[out_pos..out_pos + 8]);
+                in_pos += 12;
+                out_pos += 8;
+            }
             if in_pos >= input.len() {
                 break;
             }
