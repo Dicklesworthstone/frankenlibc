@@ -109,8 +109,16 @@ the full measured detail.
   `[RCH] remote required; refusing local fallback (no worker assigned)`. No local Cargo command, median
   rerun, or source commit followed. The measured 1.47x candidate therefore remains **SURFACED, NOT
   SHIPPED**.
+- **SECOND RESUME RETRY (current `main` `4e4fe2b77`, 2026-07-11).** Recreated the candidate again after
+  two unrelated iconv commits advanced `main`. Both target files still match the measured prototype
+  byte-for-byte and retain stable patch ID `e5beef44f78f9c07a7710b65fc0ea1a00c125c1c`. The exact focused
+  remote test command was attempted once; RCH again returned
+  `[RCH] local (no admissible workers: insufficient_slots=8,hard_preflight=1)` followed by
+  `[RCH] remote required; refusing local fallback (no worker assigned)`. Per the fail-closed contract,
+  no retry, benchmark, or local Cargo command ran; source remains **SURFACED, NOT SHIPPED**.
 - **NEXT SAFE ACTION.** The isolated candidate remains in
-  `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-a4f0` (with the original preserved at
+  `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-4e4f` (with prior copies preserved at
+  `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-a4f0` and
   `/data/projects/.scratch/frankenlibc-codex-resolv-20260711`). When a remote slot exists, run
   `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-abi --test resolv_abi_test --test conformance_diff_getaddrinfo --test conformance_diff_netdb_aliases -- --nocapture --test-threads=1`.
   If green, run remote fmt/check/clippy for the touched ABI surface, re-run the same median row, then ship
