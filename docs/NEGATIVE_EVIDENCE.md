@@ -16888,3 +16888,24 @@ exhausted. Shipped this session: sched_getcpu vDSO (3.77x) + rseq (19→2.3ns, g
 (tooling). Remaining perf work is all (a) blocked on external glibc-2.42 kernel sources (math kernels),
 (b) architectural (iconv gather-vs-glibc-SIMD residuals), or (c) safety-blocked / no-glibc-rseq
 multi-turn (malloc inline-header, standalone-fl rseq registration).
+
+## 2026-07-11 (cc_fl) — WIN: Big5 added to the SIMD encode gather — utf8_to_big5 LOSS→WIN — commit `61500c6a0` (cc-iconv-big5-simd-2026-07-11)
+
+- **CORRECTS the prior "encode-gather vein COMPLETE" claim (cc-iconv-cp932-simd follow-up) — it was
+  PREMATURE.** Big5 (Traditional Chinese, common) was in the scalar guard but NOT the SIMD encode
+  gather, and `utf8_to_big5` wasn't even benched. Added a `utf8_to_big5` bench arm (source = valid
+  `big5_src` decoded back to UTF-8) → it was a **2.15x LOSS** (scalar path, like CP949/CP932 were).
+  `encode_big5` is pure `encode_dbcs2`, so it's the same byte-identical gather.
+- **PROVEN, median (remote, iconv_glibc_bench, same-worker before/after):** `utf8_to_big5`
+  **5805.9 → 1380.0 ns = 4.2x fl-over-fl**, flips **2.15x LOSS → 0.505x WIN** (fl 2x faster than
+  glibc; glibc control stable 2700.8→2733.4).
+- **BYTE-IDENTICAL:** `iconv_differential_fuzz` 10/0 (fl-with-gather vs LIVE glibc — the fuzz TO list
+  covers BIG5); `conformance_diff_iconv` 2/0. Same gather code + `enc_direct` + `encode_dbcs2` pack as
+  the CP949/CP932 gathers proven byte-identical by before/after golden SHA.
+- **LESSON:** do NOT claim a vein "complete" without enumerating EVERY member. The encode gather now
+  covers the 8 commonly-used pure-2-byte `encode_dbcs2` encoders (CP949/GBK/GB2312/JOHAB/EUC-KR/CP932/
+  ShiftJis/Big5). Remaining pure-2-byte encoders = **Ibm943/Ibm932** only (also pure encode_dbcs2, also
+  likely scalar losers) — DEFERRED: obscure IBM codepages with no real-world encode usage, NOT covered
+  by iconv_differential_fuzz (no glibc differential), so a "gap" there isn't a real vs-upstream gap and
+  can't be fuzz-verified. Gb18030 (4-byte) + EucJp/EucJpMs (SS2/SS3) are correctly NOT gather-eligible.
+  iconv DECODE residuals (cp932_to_utf16le, eucjp→utf8) remain architectural.
