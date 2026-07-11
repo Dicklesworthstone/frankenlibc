@@ -755,6 +755,43 @@ fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
     })
 }
 
+thread_local! {
+    /// Pointer-keyed fmemopen `fgetc` fast path: caches the `Arc<FastFixedMemRead>` for a stream
+    /// `FILE*` so repeated reads skip `canonical_stream_id` (native lock — the dominant per-byte
+    /// cost for mem streams, which the write-cache fast path EXCLUDES) + `decide` + the
+    /// `fast_fixed_mem_reads` map lock. MT-SAFE (unlike the ST-gated write cache): the cursor is
+    /// `Arc` (held here ⇒ stays alive) + atomic `pos`; thread-local ⇒ no cross-thread race. `gen`
+    /// (`REGISTRY_GEN`, bumped by every fmemopen/fclose) invalidates on register/unregister and
+    /// on pointer reuse; `read_byte`'s `closed` check invalidates on ungetc/fseek (which
+    /// `sync_and_unregister_fast_fixed_mem_read` the cursor) ⇒ falls through to the pushback-aware
+    /// slow path. Inherits the exact read semantics of the existing `fast_fixed_mem_read` path.
+    static FGETC_MEM_PTR_CACHE: RefCell<Option<(usize, u64, Arc<FastFixedMemRead>)>> =
+        const { RefCell::new(None) };
+}
+
+/// Pointer-keyed fmemopen read fast path. `Some(byte)` on a gen-valid, open, non-empty cached
+/// cursor; `None` on any miss (uncached / gen-stale / closed / EOF) ⇒ caller falls through.
+fn try_fgetc_fast_fixed_mem_by_stream(stream: *mut c_void) -> Option<c_int> {
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    FGETC_MEM_PTR_CACHE.with(|c| {
+        let cache = c.borrow();
+        let (cp, cg, cursor) = cache.as_ref()?;
+        if *cp != key || *cg != cur_gen {
+            return None;
+        }
+        cursor.read_byte().map(|b| b as c_int)
+    })
+}
+
+/// Populate the pointer cache after a slow-path resolve confirms `stream` is a fixed-mem reader.
+fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>) {
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    FGETC_MEM_PTR_CACHE.with(|c| {
+        *c.borrow_mut() = Some((stream as usize, cur_gen, Arc::clone(cursor)));
+    });
+}
+
 fn sync_fast_fixed_mem_read_to_stream(id: usize, stream: &mut StdioStream) -> bool {
     let Some(cursor) = fast_fixed_mem_read(id) else {
         return false;
@@ -1246,7 +1283,11 @@ pub fn bench_feof_newpath(stream: *mut c_void) -> c_int {
 
 /// Bench hook: OLD fgets path (canonical_stream_id + registry lock + fill). Not part of the ABI.
 #[doc(hidden)]
-pub unsafe fn bench_fgets_oldpath(buf: *mut c_char, size: c_int, stream: *mut c_void) -> *mut c_char {
+pub unsafe fn bench_fgets_oldpath(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+) -> *mut c_char {
     let id = canonical_stream_id(stream);
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = reg.streams.get_mut(&id) else {
@@ -1267,7 +1308,11 @@ pub unsafe fn bench_fgets_oldpath(buf: *mut c_char, size: c_int, stream: *mut c_
 
 /// Bench hook: NEW fgets pointer-keyed fast path. Not part of the ABI.
 #[doc(hidden)]
-pub unsafe fn bench_fgets_newpath(buf: *mut c_char, size: c_int, stream: *mut c_void) -> *mut c_char {
+pub unsafe fn bench_fgets_newpath(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+) -> *mut c_char {
     if let Some(p) = write_cache_lookup_by_stream(stream) {
         let max = (size - 1) as usize;
         let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
@@ -2470,6 +2515,12 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
     if let Some(rc) = try_fgetc_fast_by_stream(stream) {
         return rc;
     }
+    // Pointer-keyed fmemopen read fast path (the write cache above EXCLUDES mem streams, so
+    // fmemopen `fgetc` otherwise pays `canonical_stream_id`'s native lock per byte — the 1.4x
+    // per-op floor, ST and MT). MT-safe (atomic cursor). Miss ⇒ falls through and re-caches.
+    if let Some(rc) = try_fgetc_fast_fixed_mem_by_stream(stream) {
+        return rc;
+    }
 
     let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, true, false, 0);
@@ -2479,6 +2530,8 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
     }
 
     if let Some(cursor) = fast_fixed_mem_read(id) {
+        // Cache by FILE* so subsequent reads skip `canonical_stream_id` + `decide` (above).
+        store_fgetc_mem_ptr_cache(stream, &cursor);
         if let Some(byte) = cursor.read_byte() {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
             return byte as c_int;
@@ -3971,7 +4024,11 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
     // The common ungetc-after-fgetc parser pattern leaves the stream cached, so this hits.
     if let Some(p) = write_cache_lookup_by_stream(stream) {
         // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
-        return if unsafe { (*p).ungetc(c as u8) } { c } else { libc::EOF };
+        return if unsafe { (*p).ungetc(c as u8) } {
+            c
+        } else {
+            libc::EOF
+        };
     }
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
