@@ -17120,3 +17120,11 @@ that made the wcsrtombs ENCODE lever clean. It does NOT work on decode. Do NOT r
   interleave `wcs_ascii_prefix_len` + scalar); `wcs_encoded_len` can route them (needs NUL-aware
   integration). mbs* DECODE count is a separate (harder, validation-heavy) path. See
   [[multibyte-simd-conversion-vein]].
+
+## cc-wcsrtombs-count-simd-2026-07-11 — WIN (SHIPPED 869e9b13d) — extends the count lever
+Routed wcsrtombs count mode (dst==NULL) through the same `wcs_encoded_len` (src_slice[..src_len]
+excludes NUL). ascii ~0.77x, mixed ~0.57x, cyrillic ~0.35x, cjk ~0.21x — all WIN (were ~1.1-2x LOSS).
+Byte-identical (conformance_diff_wchar 44/0, wcsrtombs_differential_probe 2/0, n_bounded 1/0). Remaining
+follow-on: wcsnrtombs count (interwoven with its dst loop + n/NUL bound); mbs* DECODE count (harder).
+The wide→multibyte ENCODE vein is now comprehensively mined: write paths (wcstombs/wcsrtombs/wcsnrtombs)
+AND count paths (wcstombs/wcsrtombs) all SIMD + clean.
