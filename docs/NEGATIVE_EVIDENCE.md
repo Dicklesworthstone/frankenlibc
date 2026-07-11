@@ -145,6 +145,15 @@ the full measured detail.
   `rch degraded=SURFACE` contract, this is a genuine chain-wide blocker: every next lever requires a
   strict-remote profile and median gate. No retry, benchmark, local fallback, source edit, or second
   lever followed; the 1.47x candidate remains **SURFACED, NOT SHIPPED**.
+- **STRICT-REMOTE CHAIN RESUME (current `main` `3a384ce95`, 2026-07-11).** The ledger and
+  `bv --robot-triage` again routed first to this unshipped candidate. Its target blobs still matched the
+  measured base, and patch ID `e5beef44f78f9c07a7710b65fc0ea1a00c125c1c` remained stable. Although
+  admission classified the focused test as offload-eligible, its one fail-closed invocation returned
+  `[RCH] local (no admissible workers: insufficient_slots=8,hard_preflight=1)` and
+  `[RCH] remote required; refusing local fallback (no worker assigned)` before Cargo ran. Every next
+  lever also requires a strict-remote profile and median gate, so the autonomous chain is genuinely
+  blocked. No retry, benchmark, local fallback, source edit, or second lever followed; the 1.47x
+  candidate remains **SURFACED, NOT SHIPPED**.
 - **NEXT SAFE ACTION.** The isolated candidate remains in
   `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-4e4f` (with prior copies preserved at
   `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-a4f0` and
