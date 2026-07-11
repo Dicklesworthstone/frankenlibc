@@ -17048,3 +17048,29 @@ DBCS decode-gather family now: CP949, GBK, Cp932/ShiftJis, Big5, EUC-KR all gath
   (a count-only `wcs_simd_prefix_count` would extend the win there). The mbsrtowcs decode regression retry
   (hybrid contiguity dispatch, see cc-mbsrtowcs-simd-2026-07-11) is the SAME contiguity-gate idea proven
   here — now de-risked: apply the gate on the decode side too and it should ship clean.
+
+## cc-mbsrtowcs-gate-retry-2026-07-11 — SURFACE (the wcsrtombs contiguity gate does NOT transfer to decode; mbsrtowcs stays surfaced)
+
+Retried the SURFACED mbsrtowcs decode lever (cc-mbsrtowcs-simd-2026-07-11) with the contiguity gate
+that made the wcsrtombs ENCODE lever clean. It does NOT work on decode. Do NOT re-attempt this gate.
+
+- **Same-fleet before/after (median of 2, self-normalized), mbsrtowcs WITH the decode contiguity gate
+  (classify width `w` of `src[si]`, skip gathers if `src[si+w] < 0x80`):**
+
+  | arm | BEFORE (scalar) | AFTER+gate | no-gate (earlier) |
+  |---|---|---|---|
+  | cyrillic | 3.46x LOSS | ~0.75x WIN | ~0.76x WIN |
+  | cjk | 3.00x LOSS | ~1.03x PARITY | ~0.79x WIN |
+  | mixed | 3.01x LOSS | ~4.5x LOSS | ~4.8x LOSS |
+
+- **WHY THE GATE FAILS ON DECODE (encode-specific).** Encode input is fixed-width u32 → the gate is one
+  cheap accurate check (`src[si+1] < 0x80`). Decode input is variable-width bytes → the gate needs a
+  width-classification branch (`src[si]` -> 2/3/4) before it can find the next lead at `src[si+w]`. That
+  branch is pure overhead on the CONTIGUOUS path and COST the CJK win (0.79x WIN -> 1.03x PARITY) while
+  only marginally helping interleaved (4.8x -> 4.5x, still a big regression). Byte-identity held
+  (conformance_diff_mbsrtowcs 7/0, mbstowcs_simd 1/0, mbsrtowcs_differential_probe 1/0) — it's purely a
+  perf non-win.
+- **VERDICT.** Neither decode variant is clean: no-gate = cyr+cjk WIN but mixed +100% regression;
+  gate = cyr WIN, cjk PARITY, mixed +50% regression. mbsrtowcs decode REMAINS SURFACED. The encode
+  sibling wcsrtombs SHIPPED clean (cc-wcsrtombs-simd, cc65da573) — the asymmetry (fixed-width u32 encode
+  vs variable-width byte decode) is the whole story. Reverted; tree clean.
