@@ -16555,3 +16555,37 @@ this session's veins (math membrane-bypass DONE; vDSO DONE; stdio fmemopen reads
 cc-fread-mem-2026-07-11). Remaining named work is multi-turn: rseq (sched_getcpu parity), the malloc
 inline-header swing (capped ~8x, membrane-owner review — see docs/perf_next_architectural_swings.md),
 and accuracy-hard math (needs faithful fdlibm sources handed in).
+
+## 2026-07-11 (cc_fl) — WIN: mktime strict-mode membrane bypass — commit `4a5b7d3dd` (cc-mktime-tax-2026-07-11)
+
+- **THE LEVER (timegm/fmaf strict-bypass vein).** `mktime` paid `decide()` + `observe()` + an
+  UNCONDITIONAL `tracked_required_object_fits` check per call, while its mathematical twin `timegm`
+  (fl is UTC-only ⇒ mktime == timegm math) already bypasses all three in strict mode — the same bypass
+  that took timegm off the membrane tax. Gave `mktime` the identical `strict_passthrough_active()`
+  early return straight to the shared `utc_normalize_to_epoch`, matching `timegm`/`gmtime_r`. Hardened
+  mode keeps the full validate/deny/observe path unchanged.
+- **PROVEN, median (remote-built, run locally — self-contained fl-vs-glibc dlmopen ratio, worker-
+  independent; `time_survey`). BEFORE = old mktime, AFTER = the bypass, same machine, controls flat:**
+
+  | fn | BEFORE fl ns | AFTER fl ns | note |
+  |---|---:|---:|---|
+  | **mktime** | **17.83** | **13.15** | **1.36x faster fl-over-fl; now == the timegm floor** |
+  | timegm (control) | 13.19 | 13.03 | unchanged (already bypassed) |
+  | gmtime_r (control) | 20.28 | 20.26 | unchanged |
+
+  mktime dropped 4.68 ns/call (26%) onto the same ~13 ns compute floor as its bypassed twin timegm;
+  the two controls moved <0.2 ns ⇒ the delta is the edit, not run variance. Above the ~1.105 null
+  floor. (vs glibc, mktime already WON — glibc's mktime is 93 ns because it does TZ processing even in
+  UTC; this removes fl's own avoidable per-call tax, it does not close a vs-upstream gap.)
+- **BYTE-IDENTICAL — PROVEN.** `conformance_diff_mktime_normalize` 1/0 (epoch + every normalized field
+  + tm_wday/tm_yday vs glibc, TZ=UTC, in/out-of-range battery), `conformance_diff_time` 12/0,
+  `conformance_diff_timegm_normalize` 1/0. Strict/hardened/timegm all call the same
+  `utc_normalize_to_epoch`; NULL→EFAULT guard preserved.
+- **VEIN NOTE:** mktime was the LAST Time-family hot fn still paying the decide+observe+unconditional-
+  check tax (gmtime_r/localtime_r/timegm already bypass it; the cheap-math entry helpers and fma/fmaf
+  are done). The strict-bypass parity vein for Time is now complete.
+- **METHOD NOTE (tooling):** `rch exec -- cargo run --example X` BUILDS remotely + retrieves the binary
+  but does NOT execute it (unlike `cargo bench`, which runs). Run the retrieved
+  `target/release/examples/X` LOCALLY — valid for a same-process fl-vs-glibc ratio survey (worker-
+  independent). Before/after: revert via `git apply -R`, rch `cargo build --example` (build-only), run
+  the retrieved binary locally, reapply.
