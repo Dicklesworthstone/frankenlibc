@@ -128,6 +128,14 @@ the full measured detail.
   `[RCH] remote required; refusing local fallback (no worker assigned)`. Because every subsequent lever
   also requires a strict-remote profile and median gate, the chain cannot legally advance while the RCH
   fleet is degraded. No retry, benchmark, local Cargo command, or speculative next-lever edit ran.
+- **FRESH-AUTH RESUME RETRY (current `main` `7f28e35ad`, 2026-07-11).** After Codex relaunched on fresh
+  auth, current-main target blobs still matched the measured candidate base and the isolated patch kept
+  stable patch ID `e5beef44f78f9c07a7710b65fc0ea1a00c125c1c`. `rch admit` classified the exact focused
+  test as offload-eligible, but its one strict invocation still failed closed with
+  `[RCH] local (no admissible workers: insufficient_slots=8,hard_preflight=1)` followed by
+  `[RCH] remote required; refusing local fallback (no worker assigned)`. No Cargo process, retry,
+  benchmark, local fallback, source edit, or second lever followed; the 1.47x candidate remains
+  **SURFACED, NOT SHIPPED**.
 - **NEXT SAFE ACTION.** The isolated candidate remains in
   `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-4e4f` (with prior copies preserved at
   `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-a4f0` and
