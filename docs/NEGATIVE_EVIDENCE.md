@@ -122,6 +122,12 @@ the full measured detail.
   `[RCH] local (no admissible workers: insufficient_slots=8,hard_preflight=1)` followed by
   `[RCH] remote required; refusing local fallback (no worker assigned)`. No second attempt, benchmark,
   local Cargo command, or source edit followed. The measured candidate remains **SURFACED, NOT SHIPPED**.
+- **AUTONOMOUS-CHAIN RETRY (current mirrored head `987abe688`, 2026-07-11).** Target blobs and stable
+  candidate patch ID remain unchanged. The exact focused command failed closed immediately with
+  `[RCH] local (no admissible workers: insufficient_slots=8,hard_preflight=1)` followed by
+  `[RCH] remote required; refusing local fallback (no worker assigned)`. Because every subsequent lever
+  also requires a strict-remote profile and median gate, the chain cannot legally advance while the RCH
+  fleet is degraded. No retry, benchmark, local Cargo command, or speculative next-lever edit ran.
 - **NEXT SAFE ACTION.** The isolated candidate remains in
   `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-4e4f` (with prior copies preserved at
   `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-a4f0` and
