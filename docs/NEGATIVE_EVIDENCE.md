@@ -17012,3 +17012,39 @@ DBCS decode-gather family now: CP949, GBK, Cp932/ShiftJis, Big5, EUC-KR all gath
   byte-identity surface (must re-pass the 7/0 + differential fuzz for the new control flow) — a dedicated
   follow-on, not a quick single-cycle change. The mbstowcs-mixed 4.7x→3.8x improvement (byte-identical, no
   regression, but a loss→smaller-loss not a flip) is also available if the helper extraction is landed.
+
+## cc-wcsrtombs-simd-2026-07-11 — WIN (SHIPPED cc65da573) — the CLEAN sibling of the mbsrtowcs SURFACE
+
+- **THE LEVER (profile-first).** wcsrtombs (restartable wide→multibyte, the variant modern code uses)
+  only SIMD-accelerated its ASCII prefix (`wcs_ascii_prefix`) + ran SCALAR `wctomb` for ALL multibyte;
+  `wcstombs` already had a full SIMD encode (ASCII+2/3/4-byte, `1787d71fa`). Extracted `wcstombs`'s
+  encode into a shared `wcs_simd_prefix(dest,src)->(chars,bytes)` (single source of truth; wcstombs now
+  consumes it) + ASCII mask-resolve (bulk-narrow the clean prefix before a multibyte) + a 1-char
+  contiguity gate (`si+1>=len || src[si]<0x80 || src[si+1]<0x80 => return` — skip the gather probes on a
+  lone accent). Routed wcsrtombs's dst path through it.
+- **WHY THIS SHIPPED but mbsrtowcs (decode) SURFACED — the asymmetry.** Both are "route the restartable
+  variant through the shared SIMD helper". mbsrtowcs REGRESSED interleaved 2x (its scalar `mbs_ascii_prefix`
+  was CHEAPER than the gated-gather probing per lone accent). wcsrtombs did NOT — TWO fixes made it clean:
+  (1) the ASCII **mask-resolve** (without it, wcs_simd_prefix returns (0,0) on short ASCII runs and the
+  caller scalars every char behind a wasted 64-byte probe → mixed BLEW UP to 10.5x; mask-resolve bulk-
+  narrows the prefix → 2.4-3.2x); (2) the **contiguity gate** collapses the 3 per-accent gather-while
+  probes into one branch → interleaved back to ~2.5x == BEFORE's ~2.65x (NO regression). Encode's fixed-
+  width u32 lanes + these two guards close the interleaved gap the byte-width decode side couldn't.
+- **BYTE-IDENTICAL — PROVEN.** `conformance_diff_wchar` 44/0, `conformance_diff_wcstombs_simd` 1/0,
+  `wcsrtombs_differential_probe` 2/0, `n_bounded_wchar_differential_probe` 1/0 — all vs LIVE glibc
+  (dlmopen). Helper emits only whole range-validated windows; every boundary/NUL/dest-full/error stays
+  scalar. wcstombs's suite proves the extracted helper; wcsrtombs inherits it; the mask-resolve/gate only
+  pick bulk-vs-scalar and gather-vs-scalar (both decode the same bytes).
+- **MEASURED (remote, median of 2, same-fleet before/after, `wcsrtombs_bench` dlmopen, self-normalized):**
+
+  | arm | BEFORE | AFTER | verdict |
+  |---|---|---|---|
+  | ascii | ~0.17x WIN | ~0.25x WIN | big win |
+  | cyrillic (contiguous 2-byte) | ~5.15x LOSS | **~0.17x WIN** | flip (~30x fl-over-fl) |
+  | cjk (contiguous 3-byte) | ~3.79x LOSS | **~0.20x WIN** | flip (~19x) |
+  | mixed (interleaved café) | ~2.65x LOSS | ~2.5x LOSS | NO regression (gate) |
+
+- **FOLLOW-ON:** the count-only path (dst==NULL) still uses `wcs_ascii_prefix_len` + scalar for multibyte
+  (a count-only `wcs_simd_prefix_count` would extend the win there). The mbsrtowcs decode regression retry
+  (hybrid contiguity dispatch, see cc-mbsrtowcs-simd-2026-07-11) is the SAME contiguity-gate idea proven
+  here — now de-risked: apply the gate on the decode side too and it should ship clean.
