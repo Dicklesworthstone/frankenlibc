@@ -574,6 +574,18 @@ pub fn wcs_simd_prefix(dest: &mut [u8], src: &[u32]) -> (usize, usize) {
         di += LANES;
     }
 
+    // Trailing ASCII tail: the SIMD while only narrows FULL 16-wide chunks, so a
+    // short ASCII run at the very end of the source (or before a full `dest`) would
+    // otherwise fall to the caller's scalar step one wchar at a time — costly when
+    // that step is a heavy `wcrtomb`. Narrow it directly here (byte-identical:
+    // every wchar is 0x01..=0x7F, so `w as u8` == the 1-byte `wctomb` result). Stops
+    // at the first NUL / multibyte / out-of-dest, leaving those for the scalar step.
+    while si < src.len() && di < dest.len() && src[si] != 0 && src[si] < 0x80 {
+        dest[di] = src[si] as u8;
+        si += 1;
+        di += 1;
+    }
+
     // Contiguity gate: the SIMD encode gathers below only pay off on a RUN of
     // same-width multibyte chars. After the ASCII run, `src[si]` is a NUL / lone
     // accent / run-start. If the char after it is NOT also multibyte (a lone accent

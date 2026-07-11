@@ -6699,19 +6699,29 @@ pub unsafe extern "C" fn wcsnrtombs(
         let remaining_wc = max_wchars - wchars_consumed;
         // SAFETY: `s` points to at least `remaining_wc` readable wide chars.
         let src_window = unsafe { std::slice::from_raw_parts(s as *const u32, remaining_wc) };
-        let k = if dst.is_null() {
-            wchar_core::wcs_ascii_prefix_len(src_window)
+        let (chars, bytes) = if dst.is_null() {
+            // Count mode: bulk-count the ASCII run (1 byte / wchar); multibyte is
+            // counted by the scalar `wcrtomb` step below.
+            let k = wchar_core::wcs_ascii_prefix_len(src_window);
+            (k, k)
         } else {
             // SAFETY: `dst` has >= `len` bytes; `written <= len`.
             let dst_window = unsafe {
                 std::slice::from_raw_parts_mut(dst.add(written) as *mut u8, len - written)
             };
-            wchar_core::wcs_ascii_prefix(dst_window, src_window)
+            // Encode the leading run of whole clean windows (ASCII + 2/3/4-byte,
+            // gated) via the shared SIMD lever `wcstombs`/`wcsrtombs` use, so
+            // contiguous multibyte runs vectorise, not just the ASCII prefix.
+            // `chars` (wide chars consumed) and `bytes` (output bytes written)
+            // differ for multibyte; the helper only emits whole validated windows
+            // bounded by the source window and `len - written`, so it stays
+            // byte-for-byte identical to the scalar `wcrtomb` loop.
+            wchar_core::wcs_simd_prefix(dst_window, src_window)
         };
-        if k > 0 {
-            written += k; // one byte per ASCII wide char
-            wchars_consumed += k;
-            s = unsafe { s.add(k) };
+        if chars > 0 {
+            written += bytes; // one byte per ASCII wchar; 2/3/4 for multibyte
+            wchars_consumed += chars;
+            s = unsafe { s.add(chars) };
             continue;
         }
 
