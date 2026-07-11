@@ -16229,3 +16229,27 @@ benchmark/workload (handed in) surfaces a function outside this closed set.
   (255) + `conformance_diff_stdio_ext`/`_unlocked_io`/`_wide_stdio_write` green + no deadlock under the MT
   bench; (4) measure MT median. Each step compiles+tests before the next.
 - **THIS TURN = scope + design (no code shipped — a rushed partial 63-site MT change would be reckless).**
+
+## 2026-07-11 (cc_fl) — SWING KILLED BY PROFILE (before the refactor): stdio MT gap is per-op floor, not lock contention (cc-stdio-mt-2026-07-11 follow-up)
+
+- **STEP 0 DONE + PROFILE-FIRST SAVED THE REFACTOR.** De-criterion'd `stdio_mt_contention_bench` (manual
+  timing — criterion HTML SIGABRTs under abi-bench; commit `f912ab9d7`) and added a 1-thread arm
+  (`66c4d6052`) to isolate contention BEFORE touching 63 lock sites. Measured (median, 8-thread machine):
+
+  | threads | fl ns/op | glibc ns/op | ratio |
+  |---:|---:|---:|---:|
+  | 1 (no contention) | 849,087 | 606,720 | **1.399** |
+  | 8 (adds contention) | 3,881,729 | 2,495,918 | **1.555** |
+
+- **VERDICT: DO NOT DO THE SHARDING.** (a) The frontier's **8.6x is STALE** — the real MT gap is **1.55x**
+  (prior stdio work closed most of it). (b) The gap is DOMINATED by **per-op overhead (1.40x at 1 thread,
+  ZERO contention)** — `fgetc` on fmemopen does a `registry().lock()` + membrane + id→stream lookup PER
+  BYTE, vs glibc's direct FILE* inline read. (c) Registry-**lock contention is only ~1.11x** (1.555/1.399).
+  A 63-site atomic sharding refactor would take 8t 1.55x → ~1.40x — the 1.40x per-op floor is untouched.
+  **Not worth the risk/effort.** The per-op floor is fl's architectural cost (opaque-id lookup + membrane
+  per op) — the same class as the deployed string-primitive floor, not closeable by sharding.
+- **STDIO now at frontier too:** single-thread write/read paths lock-free-cached; MT contention minor
+  (1.11x); residual is the architectural per-op lookup+membrane floor. Kept the improved manual-timing
+  bench (2 arms) as the regression guard. RETRY ONLY IF the fgetc per-op floor itself is attacked (e.g.,
+  a MT-safe per-thread resolved-stream cache for thread-owned streams — a different, subtle lever, NOT
+  registry sharding).
