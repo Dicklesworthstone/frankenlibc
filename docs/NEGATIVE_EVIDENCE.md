@@ -16968,3 +16968,47 @@ Proof: iconv_differential_fuzz 10/0 (fl-with-gather vs LIVE glibc, covers EUC-KR
 NOTE: gather needs a valid Hangul source (leads 0xB0..) — EUC-KR rows 0xA1.. are symbols (cp<0x800) that
 fall to scalar and don't exercise the gather (earlier 3.62x "no-change" measurement was a bad symbol source).
 DBCS decode-gather family now: CP949, GBK, Cp932/ShiftJis, Big5, EUC-KR all gather-routed.
+
+## cc-mbsrtowcs-simd-2026-07-11 — SURFACE (byte-identical; contiguous flips WIN but interleaved-Latin REGRESSES → tradeoff, not a clean median win) (cc-mbsrtowcs-simd-2026-07-11)
+
+- **THE LEVER (profile-first, iconv-adjacent).** Profiling the multibyte→wide converters found `mbstowcs`
+  already has full SIMD UTF-8 decode (ASCII+2/3/4-byte, `b054d31c1`/`b4c287740`) but the RESTARTABLE
+  `mbsrtowcs` (the variant modern code actually uses) only SIMD-accelerated its ASCII prefix
+  (`mbs_ascii_prefix`) and ran SCALAR `mbtowc` for ALL multibyte. Extracted `mbstowcs`'s proven SIMD
+  blocks into a shared `mbs_simd_prefix(dest,src)->(bytes,chars)` helper (single source of truth) +
+  added an ASCII mask-resolve (consume the clean prefix before a multibyte via `to_bitmask().trailing_zeros()`
+  instead of breaking to per-char scalar) + 1-char lookahead gates on the 2/3/4-byte probes (mirrors the
+  `wcstombs` `1787d71fa` fix). Routed BOTH mbstowcs and mbsrtowcs through it.
+- **BYTE-IDENTICAL — PROVEN.** `conformance_diff_mbsrtowcs` 7/0 (incl. `diff_mbsrtowcs_with_cjk`),
+  `conformance_diff_mbstowcs_simd` 1/0, `mbsrtowcs_differential_probe` 1/0 — all vs LIVE glibc. The helper
+  only ever emits whole validated windows (RFC 3629 shape, no overlong/surrogate); every boundary/NUL/error
+  stays scalar. mbstowcs's own suite proves the extracted helper; mbsrtowcs inherits it.
+- **MEASURED (remote, median of 2 after-runs, self-normalized fl/glibc ratios; `mbsrtowcs_bench` dlmopen,
+  same worker per run):**
+
+  | arm | BEFORE (scalar mb) | AFTER (SIMD) | verdict |
+  |---|---|---|---|
+  | ascii | 0.846x WIN | ~0.75x WIN | ~neutral |
+  | cyrillic (contiguous 2-byte) | **4.935x LOSS** | **~0.76x WIN** | flip (~6.5x fl-over-fl) |
+  | cjk (contiguous 3-byte) | **2.944x LOSS** | **~0.79x WIN** | flip (~3.7x) |
+  | mixed (interleaved café) | 2.094x LOSS | **~4.8x LOSS** | **REGRESSION (~2x, stable across both runs)** |
+
+- **WHY SURFACED — a tradeoff, not a clean win.** Contiguous non-Latin (Cyrillic/CJK — the dominant
+  mbsrtowcs workload) flips LOSS→WIN, huge. But interleaved medium-density accented Latin (café/résumé,
+  French/Portuguese prose) REGRESSES 2.094x→~4.8x: `mbsrtowcs`'s BEFORE path (`mbs_ascii_prefix`, no
+  multibyte probing) is CHEAPER per-boundary than `mbs_simd_prefix`'s gated-gather probing on lone accents.
+  (Root cause is the ADDED per-boundary probe cost, confirmed stable across 2 after-runs; NOT worker noise —
+  glibc control tracked. mbstowcs's own `mixed` only IMPROVED 4.7x→3.8x because it ALREADY paid the ungated
+  probe; the gates made it cheaper. mbsrtowcs had NO probe to make cheaper, only to add.) Sparse-accent text
+  (<1% multibyte, i.e. English + occasional) is ~ASCII and unaffected; the bite is medium-density interleaved.
+- **NOT SHIPPED / REVERTED** (lever patch banked at scratch `mb_lever.patch`; bench at scratch
+  `mbsrtowcs_bench.rs.keep`; tree restored to HEAD — mbsrtowcs stays on `mbs_ascii_prefix`, mbstowcs
+  unchanged). A real ~2x regression on a legit (if minority) workload blocks a clean median-gated ship.
+- **RETRY (clear path, keeps the flips WITHOUT the regression):** HYBRID contiguity dispatch in mbsrtowcs —
+  keep the cheap `mbs_ascii_prefix` for ASCII fast-forward, then engage `mbs_simd_prefix`'s gather ONLY when
+  a contiguous multibyte run is present (cheap gate: after ASCII, classify `src[i]`'s width `w`, and if
+  `src[i+w] >= 0x80` a run is likely → gather; else scalar one char). Byte-identical either way (both paths
+  decode the same chars — the gate only picks gather-vs-scalar). Blocked from this turn only by the extra
+  byte-identity surface (must re-pass the 7/0 + differential fuzz for the new control flow) — a dedicated
+  follow-on, not a quick single-cycle change. The mbstowcs-mixed 4.7x→3.8x improvement (byte-identical, no
+  regression, but a loss→smaller-loss not a flip) is also available if the helper extraction is landed.
