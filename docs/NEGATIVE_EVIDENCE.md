@@ -15901,3 +15901,51 @@ sha256, self-time, cv or null.
   within-N-ULP contract (the recurring 2.42 drift on `tanf`/`asinhf` arguably motivates it) — then a tuned
   within-ULP tan/sin/cos kernel on the `|x|<1.647e6` band becomes landable and worth ~1.68x/1.18x. Do NOT
   retry a non-identical kernel while the f64 gate is green.
+
+## 2026-07-11 (cc_fl) — WIN-PENDING (perf PROVEN, range-accuracy PROVEN, special-gate unrun by rch): f64 `tan` fast FMA-reduction, 1.30x over ORIG, now BEATS glibc (cc-trig-fma-2026-07-11)
+
+- **AUTHORIZED GATE RELAX.** The user authorized relaxing the bit-exact trig special-case gate to
+  the project's ≤4-ULP contract (KEEPING exact NaN/inf/±0/parity) to unlock the glibc-2.42 trig gap
+  (`cc-trig-2026-07-11`). This is lever #1 of that batch. (asinhf, the doc's stale "3.7x deferred",
+  is ALREADY deployed+winning — `9715/float32.rs:808`; skip it.)
+- **THE LEVER (one line).** `crates/frankenlibc-core/src/math/trig.rs` `tan`: route `|x| ∈ [π/4,
+  TRIG_RED_MAX]` through the existing fast `reduce_pio2_fma` (3 FMAs) + small-arg kernel instead of
+  `libm::tan`'s slower internal `rem_pio2`. Threshold `TRIG_FAST_HI` (1.647e6) → `FRAC_PI_4`. `|x| <
+  π/4` needs no reduction (stays on libm); `> TRIG_RED_MAX` defers (precision). Odd by construction
+  (`reduce_pio2_fma` is odd) ⇒ `tan(-x) == -tan(x)` exact.
+- **PERF — PROVEN, SAME-RUN PAIRED MEDIAN (worker-frequency-stable).** `math_passthrough_survey_bench`
+  with an added ORIG arm (`tan_orig` = `libm::tan`), CAND (`math::tan`) and glibc all in ONE binary/
+  run (fl-vs-glibc ratios swing wildly across workers — sin, unchanged, read 1.193x one run and
+  0.606x the next — so only the same-run CAND/ORIG ratio, both Rust, is trustworthy):
+
+  | arm | fl p50 ns | vs glibc |
+  |---|---:|---:|
+  | **tan (CAND, FMA path)** | **10.953** | **0.854x — fl faster** |
+  | tan_orig (ORIG, `libm::tan`) | 14.250 | 1.096x — fl slower |
+
+  **CAND/ORIG = 0.769 ⇒ 1.30x faster than the old path**, and it flips f64 `tan` from LOSING to
+  glibc (1.10x, and 1.68x last turn) to BEATING it (0.85x). Median-gated.
+- **ACCURACY (RANGE) — PROVEN.** `conformance_diff_math::diff_sin_cos_tan_within_4_ulps` **PASSED**
+  with the new tan (that is the project's ≤4-ULP tan RANGE gate; `math::sin`/`cos` unchanged).
+- **ACCURACY (SPECIAL POINTS) — PENDING (rch degraded, could not run).** I relaxed ONLY the `tan`
+  value assertion in `conformance_diff_trig_special.rs` to a new `close64` (exact bits for NaN/±inf,
+  ≤4 ULP for finite; `sin`/`cos` stay `same64`, tan parity stays `same64`). It **compiles** (a
+  combined `cargo test` built all three test binaries) but did not RUN: first blocked by an unrelated
+  pre-existing fail-fast (next bullet), then rch admission went `no admissible / hard_preflight` for
+  8+ retries. Analysis ⇒ high-confidence pass: `reduce_pio2_fma` is proven ≤2 ULP on the HARDER
+  large-arg band and is only more accurate for smaller `x`; at `π/2` (kd=1) and `π` (kd=2) the 3-part
+  159-bit split gives r to ~106 bits, so `tan(π/2)≈1.633e16` and `tan(π)≈-1.22e-16` land ≤2 ULP;
+  corroborated by the green range gate. **NOT SHIPPED** (no slot ⇒ SURFACE per the rule). Code held
+  in the working tree; clean 2-file patch backed up at
+  `scratchpad/tan_fma_lever_clean.patch`.
+- **UNRELATED PRE-EXISTING RED FOUND (undocumented until now).** `conformance_diff_math`
+  `diff_sign_min_max_dim_helpers_match_glibc_bits` + `diff_float_..._bits` FAIL on
+  `fmax(0.0,-0.0)`/`fmaxf`: fl returns `-0.0`, glibc-2.42 returns `+0.0` (IEEE-754-2019
+  maximumNumber tie-break). fl `fmax`/`fmaxf` untouched by me, mathematically unrelated to `tan`;
+  this is another glibc-2.42 bit-exact drift (cf. tanf/asinhf). Separate lever/decision.
+- **FINALIZE (reject-id cc-trig-fma-2026-07-11):** on rch recovery, run
+  `cargo test -p frankenlibc-abi --test conformance_diff_trig_special --no-fail-fast` (the
+  `--no-fail-fast` steps past the pre-existing fmax RED); if green, commit `trig.rs` +
+  `conformance_diff_trig_special.rs` as the shipped win, then continue the batch (coshf is `same32`-
+  gated + marginal ~parity; the bigger follow-on is a fast f64 sin/cos on the same FMA-reduction
+  mechanism, both still ~1.18x losers behind the same `same64` gate).
