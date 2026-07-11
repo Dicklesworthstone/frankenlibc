@@ -25,12 +25,12 @@ fn same32(a: f32, b: f32) -> bool {
     (a.is_nan() && b.is_nan()) || a.to_bits() == b.to_bits()
 }
 
-/// ≤4-ULP-vs-glibc contract with exact special values. `sin`/`cos` remain bit-exact
-/// (`same64`); `tan` moved to the fast FMA-reduction kernel (`math::tan`), whose output is
-/// ≤2 ULP — not bit-identical — vs glibc's dbl-64 `tan` at the reduction-sensitive points
-/// (π, ±π/2). Non-finite results (±inf on the pole side, NaN) must still match bit-for-bit;
-/// finite results are accepted within 4 ULP, matching the project's general-range trig
-/// contract. Authorized relaxation of the historical bit-exact `tan` special-case gate.
+/// ≤4-ULP-vs-glibc contract with exact special values. `sin`/`cos`/`tan` all use the fast
+/// FMA-reduction kernel (`math::{sin,cos,tan}`), whose output is ≤2 ULP — not bit-identical —
+/// vs glibc's dbl-64 trig at the reduction-sensitive points (π, ±π/2). Non-finite results
+/// (±inf on the pole side, NaN) must still match bit-for-bit; finite results are accepted
+/// within 4 ULP, matching the project's general-range trig contract. Authorized relaxation of
+/// the historical bit-exact trig special-case gate (parity stays exact — the reduction is odd).
 fn close64(a: f64, b: f64) -> bool {
     if a.is_nan() || b.is_nan() {
         return a.is_nan() && b.is_nan();
@@ -92,8 +92,8 @@ fn sin_cos_tan_special_match_glibc() {
         let fs = unsafe { frankenlibc_abi::math_abi::sin(x) };
         let fc = unsafe { frankenlibc_abi::math_abi::cos(x) };
         let ft = unsafe { frankenlibc_abi::math_abi::tan(x) };
-        assert!(same64(fs, gs), "sin({x:?}): fl={fs:?} glibc={gs:?}");
-        assert!(same64(fc, gc), "cos({x:?}): fl={fc:?} glibc={gc:?}");
+        assert!(close64(fs, gs), "sin({x:?}): fl={fs:?} glibc={gs:?} (>4 ULP)");
+        assert!(close64(fc, gc), "cos({x:?}): fl={fc:?} glibc={gc:?} (>4 ULP)");
         assert!(close64(ft, gt), "tan({x:?}): fl={ft:?} glibc={gt:?} (>4 ULP)");
 
         // Parity (fl-internal): sin/tan odd, cos even.

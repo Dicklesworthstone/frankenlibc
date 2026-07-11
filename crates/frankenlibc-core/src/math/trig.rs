@@ -35,7 +35,12 @@ fn reduce_pio2_fma(x: f64) -> (i64, f64) {
 #[inline]
 pub fn sin(x: f64) -> f64 {
     let ax = x.abs();
-    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
+    // Route the reduce-needing band `[π/4, TRIG_RED_MAX]` through the fast FMA Cody-Waite
+    // reduction instead of `libm::sin`'s slower internal `rem_pio2` — same mechanism as the
+    // landed f64 `tan` lever (glibc 2.42 sped up its dbl-64 trig, exposing libm's medium-range
+    // reduction). `|x| < π/4` needs no reduction (stays on libm); the reduction is ≤2 ULP and
+    // only more accurate for smaller `x`, within the ≤4-ULP trig contract.
+    if ax < core::f64::consts::FRAC_PI_4 || !(ax <= TRIG_RED_MAX) {
         return libm::sin(x);
     }
     let (n, r) = reduce_pio2_fma(x);
@@ -50,7 +55,9 @@ pub fn sin(x: f64) -> f64 {
 #[inline]
 pub fn cos(x: f64) -> f64 {
     let ax = x.abs();
-    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
+    // See `sin`: route `[π/4, TRIG_RED_MAX]` through the fast FMA reduction (same mechanism as
+    // the landed `tan` lever); `|x| < π/4` stays on libm. ≤2 ULP, within the ≤4-ULP contract.
+    if ax < core::f64::consts::FRAC_PI_4 || !(ax <= TRIG_RED_MAX) {
         return libm::cos(x);
     }
     let (n, r) = reduce_pio2_fma(x);
