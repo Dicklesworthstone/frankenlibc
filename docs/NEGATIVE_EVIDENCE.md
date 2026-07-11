@@ -16807,3 +16807,33 @@ rest. Do NOT land a naive inline header:
   for host-delegated mixed-size-per-page allocs) OR a shadow-mode (populate header + assert-agree-with-
   table before switching reads) is built as a dedicated multi-turn swing with membrane-owner review, AND
   accepting the ~8x cap. Not a byte-identical single-turn lever.
+
+## 2026-07-11 (cc_fl) — WIN: rseq cpu_id read closes the sched_getcpu vDSO→glibc residual to parity — commit `0ad88f4c8` (cc-getcpu-rseq-2026-07-11)
+
+- **THE LEVER (the follow-on to cc-getcpu-vdso; authorized rseq turn).** The vDSO getcpu route left an
+  ~9.4x residual vs glibc, which reads the kernel-maintained `cpu_id` from the per-thread `struct rseq`
+  glibc (>= 2.35, here 2.42) registers. The kernel allows only ONE rseq registration per thread, so fl
+  can't register its own alongside glibc — it READS glibc's: dlsym `__rseq_offset`/`__rseq_size` once
+  (process-global constants), then read `cpu_id` (offset 4) via a single `%fs`-relative load
+  (`mov {}, fs:[0]` for TP, then `TP + __rseq_offset + 4`). `None` (old glibc / standalone fl /
+  non-x86_64 / `cpu_id` uninitialized-or-failed) falls back to the existing vDSO→syscall path.
+- **PROVEN, median (remote, `sched_getcpu_glibc_bench`, 3-arm same-process):**
+
+  | arm | BEFORE (vDSO) | AFTER (rseq) |
+  |---|---:|---:|
+  | fl `sched_getcpu` | 19.0 ns | **2.3 ns** (8.3x fl-over-fl) |
+  | fl / host glibc | 9.383 | **1.262 (near parity)** |
+  | host glibc (rseq, control) | 2.0 | 1.8 |
+  | raw `SYS_getcpu` (control) | 71.6 | 64.9 |
+
+  fl now matches glibc's own mechanism (both read rseq `cpu_id`); the 1.26x residual is the OnceLock
+  check + the offset add — negligible. This CLOSES the residual flagged in cc-getcpu-vdso.
+- **BYTE-IDENTICAL — PROVEN.** `cpu_id` is the same current-CPU number `getcpu` returns. NEW test
+  `sched_getcpu_rseq_matches_pinned_cpu_and_syscall` pins the thread to a single CPU and asserts
+  `sched_getcpu` (rseq) == that CPU == the raw `SYS_getcpu` syscall — verifying CORRECTNESS, not just
+  non-negativity. `stdlib_abi_test` sched_getcpu/getcpu filter **6/0**; the public `getcpu` (arbitrary
+  caller pointers) is unchanged (its EFAULT contract preserved).
+- **VEIN NOTE:** the sched_getcpu family is now at glibc parity (rseq). No further getcpu lever. The
+  rseq `cpu_id` read is not reusable elsewhere (it's specifically the CPU number); fl deliberately does
+  NOT register its own rseq (would EBUSY against glibc's) — a standalone-fl rseq registration is a
+  separate, larger lever (thread-lifecycle) only relevant to the no-glibc build.
