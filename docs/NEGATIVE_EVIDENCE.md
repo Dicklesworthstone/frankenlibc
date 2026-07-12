@@ -17793,3 +17793,24 @@ reimplement-instead-of-delegate loops. Found two — `__wmemset_chk` (`for i {*d
 - **VERDICT:** explicit_bzero_chk was the LONE genuine fortify byte-loop (volatile-forced). The volatile
   byte-loop vein is the tell — non-volatile reimplementations are already compiler-optimized, DON'T chase them.
   See [[abi-raw-mem-byteloops]].
+
+## cc-fresh-subsystem-sweep-2026-07-12 — NEGATIVE (5 fresh subsystems probed, all already optimal)
+
+After the fortify byte-loop win, swept subsystems NOT previously deep-probed this campaign, looking for naive
+impls / the high-EV per-element-alloc "algorithmic disaster" pattern. ALL already optimal — DON'T re-check:
+- **signal sigset ops** (sigandset/sigorset/sigisemptyset, signal_abi.rs:1833/1873/1907) — u64-WORD loops over
+  a 16-word sigset (not byte loops), auto-vectorize, and cold. Not levers.
+- **time conversion** (time/mod.rs) — `days_from_civil`/`civil_from_days` are the closed-form Howard Hinnant
+  O(1) algorithm (no year-walking loop; the code explicitly guards against one). Optimal.
+- **per-element-alloc hunt** — grepped core/abi for `Vec<Vec<_>>` / `.to_vec()`/`collect()`/`format!` in loop
+  bodies (the mergesort-disaster class): every hit is `#[cfg(test)]` corpus-gen or a single once-per-call alloc.
+  No production per-element allocation disaster remains (the mergesort one was already fixed db61b9d0).
+- **wchar converter PLT-tax** (wchar_abi.rs:6633/6647) — already has the fix: hot per-char path uses inlinable
+  `wchar_core::mbtowc`, exported `mbrtowc` only for the NUL/incomplete/EILSEQ edge cases (documented).
+- **bcmp/bcopy/swab** — bcmp→core, bcopy→memmove(SIMD), swab→core SIMD (128B-unrolled Simd<u8,32> swizzle). Optimal.
+**VERDICT:** inspection-findable single-turn levers are EXHAUSTED (3rd confirmation: see cc-fresh-loss-scan-unprofiled,
+cc-fortify-nonvolatile-chk-loops). Continued "small increment" hunting is now itself a rathole — every fresh
+subsystem probed is already optimized. Remaining EV requires committing to a DEEP lever (the qsort load-controlled
+study is the proof that deep dives pay off — 3 shipped wins). Named deep candidates: stdio MT registry-lock shard
+(authorized/scoped, [[stdio-mt-lock-vein]]); iconv SIMD UTF-8 decode ([[iconv-nonascii-perf-gap]]); fused pow
+(bd-e4jb7k); hand-AVX2 memcmp/memchr small-n. See [[cc-lane-structural-frontier-2026-07-10]].
