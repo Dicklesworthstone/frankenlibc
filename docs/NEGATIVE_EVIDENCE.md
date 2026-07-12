@@ -17918,3 +17918,21 @@ static BUF via `ecvt_into` (no Vec, no copy), and added the `stdlib_membrane_fas
   `fcvt_into` with careful path-by-path buffer transform + the ecvt_rounding gate is ignored so lean on
   conformance_diff_ecvt_ndigit0 + core unit tests. gcvt likely routes through these too. See
   [[double-membrane-delegating-wrappers]], [[cvt-family-and-perf-frontier]].
+
+## cc-fcvt-alloc-elim-2026-07-12 — WIN (fcvt per-call Vec → fcvt_into buffer write; ~1.4x, near glibc parity)
+
+Completes the cvt-family alloc-elimination (cc-ecvt-alloc-elim). Core `fcvt` returned a per-call `Vec<u8>` (the
+deployed interposed-allocator hidden cost) that the ABI copied to a static buffer and dropped. Added
+`fcvt_into(value, ndigit, out: &mut [u8]) -> (len, decpt, neg)` via a mechanical Vec→slice transform of the SAME
+logic across all paths (nonfinite inline; ndigit<0 rounding still forms a scratch String/Vec then copies in —
+rare; zero/main-|value|≥1/sub-1 write straight into `out`, no alloc). Core `fcvt` is now a thin wrapper over a
+832-byte stack scratch (covers ≤309 int + ≤512 frac digits). Wired ABI `fcvt` to write into its static BUF via
+`fcvt_into` + added the `stdlib_membrane_fastpath()` bypass.
+- **MEASURED (ecvt_alloc_bench, pinned taskset -c 63):** fcvt10 137-146→**95-98ns** (~1.4-1.5x self; 1.33-1.58x →
+  **1.02-1.07x vs glibc**, near parity). Bench uses system malloc → LOWER BOUND on the deployed win.
+- **CORRECTNESS:** core --lib ecvt 11/11 including `fcvt_matches_glibc_reference_outputs` (MAIN path vs glibc
+  reference), `ecvt_fcvt_nonfinite_match_glibc`, `test_fcvt_basic`; conformance_diff_cvt_specials 1/1,
+  conformance_diff_ecvt_ndigit0 1/1. (ecvt_rounding still #[ignore] pre-existing glibc-2.42 gap.)
+- **cvt-family alloc-elim COMPLETE: ecvt + fcvt done, gcvt already buffer-based** — but ⚠️gcvt still allocs a
+  `String` internally via `render_gcvt` (ecvt.rs:373); a `render_gcvt_into`/`&mut impl fmt::Write` sink would
+  close it (next lever). See [[cvt-family-and-perf-frontier]], [[interposed-alloc-is-the-hidden-cost]].

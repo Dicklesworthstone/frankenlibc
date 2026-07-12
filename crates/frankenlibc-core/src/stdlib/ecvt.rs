@@ -227,11 +227,38 @@ pub fn ecvt_into(value: f64, ndigit: i32, out: &mut [u8]) -> (usize, i32, bool) 
 ///   fcvt(1e-10, 4)     -> digits=""    decpt=-4   (was: "00000" decpt=1)
 ///   fcvt(1e-10, 6)     -> digits=""    decpt=-6
 pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
+    // Thin allocating wrapper over `fcvt_into` (the hot ABI path uses `fcvt_into`
+    // directly with a static buffer — no per-call Vec). Up to MAX_LEGACY_CVT_DIGITS
+    // fractional + ≤309 integer digits + a carry fit in this scratch.
+    let mut scratch = [0u8; MAX_LEGACY_CVT_DIGITS + 320];
+    let (len, decpt, negative) = fcvt_into(value, ndigit, &mut scratch);
+    (scratch[..len].to_vec(), decpt, negative)
+}
+
+/// Digit-generating core of [`fcvt`] that writes into a caller buffer instead of
+/// allocating a `Vec` (see [`ecvt_into`]). Byte-identical to the old Vec-returning
+/// `fcvt`; the common finite `ndigit >= 0` paths write straight into `out` with no
+/// allocation, while the rare negative-`ndigit` rounding paths still form a scratch
+/// String/Vec internally and copy the result in.
+pub fn fcvt_into(value: f64, ndigit: i32, out: &mut [u8]) -> (usize, i32, bool) {
     let negative = value.is_sign_negative() && !value.is_nan();
     let abs_val = value.abs();
 
     if !value.is_finite() {
-        return nonfinite_cvt(value);
+        // Mirror `nonfinite_cvt`: sign + "inf"/"nan", decpt 0, negative == false.
+        let mut len = 0usize;
+        if value.is_sign_negative() && len < out.len() {
+            out[len] = b'-';
+            len += 1;
+        }
+        let body: &[u8] = if value.is_nan() { b"nan" } else { b"inf" };
+        for &b in body {
+            if len < out.len() {
+                out[len] = b;
+                len += 1;
+            }
+        }
+        return (len, 0, false);
     }
 
     if ndigit < 0 {
@@ -245,7 +272,10 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
         // bit-for-bit like glibc, with no float-division precision loss); a
         // carry widens the result (fcvt(999,-1)="1000"). bd-2g7oyh.101.
         if abs_val < 1.0 {
-            return (vec![b'0'], 1, negative);
+            if !out.is_empty() {
+                out[0] = b'0';
+            }
+            return (1.min(out.len()), 1, negative);
         }
         let floor_v = abs_val.floor();
         // `floor_v` is integral, so `{:.0}` yields its exact decimal digits with
@@ -269,7 +299,9 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
             round_int_decimal(int_str.as_bytes(), places, has_fraction)
         };
         let decpt = digits.len() as i32;
-        return (digits, decpt, negative);
+        let len = digits.len().min(out.len());
+        out[..len].copy_from_slice(&digits[..len]);
+        return (len, decpt, negative);
     }
 
     let ndigit = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
@@ -277,8 +309,9 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
     // Special case: exact zero. Glibc emits ndigit+1 zeros with
     // decpt=1 — i.e., one integer zero plus ndigit fractional zeros.
     if abs_val == 0.0 {
-        let digits = vec![b'0'; ndigit + 1];
-        return (digits, 1, negative);
+        let len = (ndigit + 1).min(out.len());
+        out[..len].fill(b'0');
+        return (len, 1, negative);
     }
 
     // Round to ndigit fractional places. Rust's "{:.N$}" rounds to
@@ -304,18 +337,25 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
     };
 
     if int_part != "0" {
-        // |value| >= 1: digits = int + frac concatenated, decpt =
-        // length of integer part.
-        let mut digits = Vec::with_capacity(int_part.len() + frac_part.len());
-        digits.extend_from_slice(int_part.as_bytes());
-        digits.extend_from_slice(frac_part.as_bytes());
-        return (digits, int_part.len() as i32, negative);
+        // |value| >= 1: digits = int + frac concatenated, decpt = length of the
+        // integer part. Write straight into `out` (no per-call Vec).
+        let mut len = 0usize;
+        for &b in int_part.as_bytes().iter().chain(frac_part.as_bytes()) {
+            if len < out.len() {
+                out[len] = b;
+                len += 1;
+            }
+        }
+        return (len, int_part.len() as i32, negative);
     }
 
     if ndigit == 0 {
         // Rounding a non-zero sub-unit value to zero fractional places
         // still returns the rounded integer digit.
-        return (b"0".to_vec(), 1, negative);
+        if !out.is_empty() {
+            out[0] = b'0';
+        }
+        return (1.min(out.len()), 1, negative);
     }
 
     // int_part == "0", so |value| < 1. Either rounding produced
@@ -324,14 +364,16 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
     let first_nonzero = frac_part.bytes().position(|b| b != b'0');
     match first_nonzero {
         Some(idx) => {
-            let digits = frac_part.as_bytes()[idx..].to_vec();
-            (digits, -(idx as i32), negative)
+            let src = &frac_part.as_bytes()[idx..];
+            let len = src.len().min(out.len());
+            out[..len].copy_from_slice(&src[..len]);
+            (len, -(idx as i32), negative)
         }
         None => {
             // Rounded to zero. Glibc convention: empty digits,
             // decpt = -ndigit (records "the rounded magnitude was
             // smaller than 10^-ndigit").
-            (Vec::new(), -(ndigit as i32), negative)
+            (0, -(ndigit as i32), negative)
         }
     }
 }
