@@ -17850,3 +17850,19 @@ mode `decide` never Denies, so only those guards gate the result) — just skips
   at "299690 compared" WITHOUT my change. Recorded in [[frankenlibc-preexisting-failures]].
 - Extends the double-membrane / missing-fast-path vein ([[double-membrane-delegating-wrappers]]). ⚠️Sweep the OTHER
   no-fast-path stdlib fns found earlier (a64l/l64a, ecvt/fcvt, getsubopt) — pure-computation, may pay the same tax.
+
+## cc-a64l-l64a-membrane-tax-2026-07-12 — WIN (base64 conv membrane bypass; l64a 3.2x, a64l 1.5x)
+
+Continuing the missing-fast-path stdlib sweep ([[double-membrane-delegating-wrappers]]): `a64l`/`l64a` (SVID
+base-64 <-> long) are pure ~few-ns conversions that paid the decide+observe membrane tax per call. Added the
+`stdlib_membrane_fastpath()` bypass — a64l keeps the null guard (mirrors strtol); l64a takes no pointer so it
+bypasses like drand48/lrand48. Byte-identical (deployed always-Allow → Deny never fires → only the kept guards
+gate the result).
+- **MEASURED (a64l_l64a_tax_bench, pinned taskset -c 63, before/after 2 builds, stable x2):** l64a 6.82→**2.12ns**
+  (3.22x self; 2.42x-slower → **0.75x, BEATS glibc**); a64l 13.67→**9.22ns** (1.48x self; 4.86x→3.02x vs glibc).
+- **CORRECTNESS:** a64l_l64a_differential_fuzz 1/1 (vs live glibc).
+- ⚠️**a64l RESIDUAL (separate follow-up lever):** even tax-free, a64l is 3x slower than glibc (9.22 vs 3.05ns) —
+  it pays `scan_c_string(s, Some(6))` SWAR + from_raw_parts + abi→core a64l for a ≤6-char string; glibc uses a
+  tight decode loop. A direct inline ≤6-char decode (no SWAR scan) would likely close it. Not the membrane tax.
+- ⚠️Remaining no-fast-path stdlib candidates from the sweep: ecvt/fcvt/gcvt (decide(0) → Ryū format; tax is a
+  smaller fraction), getsubopt. See [[double-membrane-delegating-wrappers]].

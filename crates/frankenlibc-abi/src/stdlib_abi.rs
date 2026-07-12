@@ -4273,6 +4273,17 @@ pub unsafe extern "C" fn bsearch_r(
 /// `a64l` — convert base-64 encoded string to long.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn a64l(s: *const c_char) -> c_long {
+    // Deployed fast path: skip the decide+observe membrane tax on this pure ≤6-char
+    // conversion (in always-Allow mode Deny never fires, so only the null guard —
+    // kept — gates the result). Mirrors strtol/strtoul.
+    if runtime_policy::stdlib_membrane_fastpath() {
+        if s.is_null() {
+            return 0;
+        }
+        let (len, _) = unsafe { scan_c_string(s, Some(6)) };
+        let slice = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        return frankenlibc_core::stdlib::a64l(slice) as c_long;
+    }
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Stdlib, s as usize, 0, true, s.is_null(), 0);
     if matches!(decision.action, MembraneAction::Deny) || s.is_null() {
@@ -4296,15 +4307,25 @@ pub unsafe extern "C" fn l64a(value: c_long) -> *mut c_char {
     // 38-63='a'-'z'), matching frankenlibc_core::stdlib::base64.
     const ALPHABET: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    // Deployed fast path: no pointer arg → always-Allow → skip decide+observe (like
+    // drand48/lrand48). `profile` is Some only on the full (test) path.
+    let profile = if runtime_policy::stdlib_membrane_fastpath() {
+        None
+    } else {
+        let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+        if matches!(decision.action, MembraneAction::Deny) {
+            unsafe {
+                let p = std::ptr::addr_of_mut!(BUF);
+                (*p)[0] = 0;
+                runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+                return p as *mut u8 as *mut c_char;
+            }
+        }
+        Some(decision.profile)
+    };
     unsafe {
         let p = std::ptr::addr_of_mut!(BUF);
         let buf = &mut *p;
-        if matches!(decision.action, MembraneAction::Deny) {
-            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
-            buf[0] = 0;
-            return p as *mut u8 as *mut c_char;
-        }
         // Encode the low 32 bits as base-64 directly into the static buffer,
         // byte-identical to the old `core::l64a` -> Vec -> copy path but without
         // the per-call heap allocation (glibc uses a static buffer, no alloc).
@@ -4316,7 +4337,9 @@ pub unsafe extern "C" fn l64a(value: c_long) -> *mut c_char {
             len += 1;
         }
         buf[len] = 0;
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+        if let Some(pr) = profile {
+            runtime_policy::observe(ApiFamily::Stdlib, pr, 4, false);
+        }
         p as *mut u8 as *mut c_char
     }
 }
