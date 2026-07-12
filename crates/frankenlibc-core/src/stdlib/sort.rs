@@ -250,13 +250,27 @@ where
         values.push(i32::from_ne_bytes(bytes));
     }
 
+    // Signed-ascending order (the dominant int32_t case).
     values.sort_unstable();
     for (chunk, value) in active.chunks_exact_mut(4).zip(&values) {
         chunk.copy_from_slice(&value.to_ne_bytes());
     }
-
     if qsort_i32_candidate_is_ordered(active, compare) {
         return true;
+    }
+
+    // Unsigned-ascending order (u32 sizes / indices / hashes / ids). See the
+    // 8-byte lane for the rationale: only worth attempting when a key has the
+    // top bit set (else unsigned order == the signed arrangement just rejected),
+    // and `*v as u32` reinterprets the bits with no new allocation.
+    if values.iter().any(|&v| v < 0) {
+        values.sort_unstable_by(|a, b| (*a as u32).cmp(&(*b as u32)));
+        for (chunk, value) in active.chunks_exact_mut(4).zip(&values) {
+            chunk.copy_from_slice(&value.to_ne_bytes());
+        }
+        if qsort_i32_candidate_is_ordered(active, compare) {
+            return true;
+        }
     }
 
     for (chunk, bytes) in active.chunks_exact_mut(4).zip(original) {
@@ -312,13 +326,33 @@ where
         values.push(i64::from_ne_bytes(bytes));
     }
 
+    // Signed-ascending order (the dominant int64_t / pointer / index case).
     values.sort_unstable();
     for (chunk, value) in active.chunks_exact_mut(8).zip(&values) {
         chunk.copy_from_slice(&value.to_ne_bytes());
     }
-
     if qsort_i64_candidate_is_ordered(active, compare) {
         return true;
+    }
+
+    // Unsigned-ascending order (u64 sizes / hashes / ids, where a set top bit
+    // makes signed and unsigned order diverge). Without this, unsigned keys in
+    // the fast-lane window verify-fail here and drop to the generic byte sort,
+    // which pays the caller's FFI comparator on every one of its O(n log n)
+    // comparisons — exactly the cost the fast lane exists to avoid. Only attempt
+    // it when some key actually has the top bit set: otherwise the unsigned order
+    // is identical to the signed arrangement just rejected, so the re-sort +
+    // verify would fail the same way, and a non-integer comparator pays nothing
+    // extra. `*v as u64` reinterprets the bits (an `as` cast between equal-width
+    // ints is bit-preserving), reusing the same buffer with no new allocation.
+    if values.iter().any(|&v| v < 0) {
+        values.sort_unstable_by(|a, b| (*a as u64).cmp(&(*b as u64)));
+        for (chunk, value) in active.chunks_exact_mut(8).zip(&values) {
+            chunk.copy_from_slice(&value.to_ne_bytes());
+        }
+        if qsort_i64_candidate_is_ordered(active, compare) {
+            return true;
+        }
     }
 
     for (chunk, bytes) in active.chunks_exact_mut(8).zip(original) {

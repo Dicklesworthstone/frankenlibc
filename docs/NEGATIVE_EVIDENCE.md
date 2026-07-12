@@ -17569,3 +17569,28 @@ dirty mbstowcs inline fast-2-byte-decode (`wchar.rs` scalar step) is the EXACT m
 as within-noise in `cc-surface-mined-consolidation` (~5-10ns/accent, unmeasurable vs worker noise). Both
 dirty files + the wcscoll_bench example stashed as `wcscoll-parked`. Do NOT reopen wcscoll or the mbstowcs
 2-byte decode this campaign. See [[strchr-simd-and-string-scan-width]], [[multibyte-simd-conversion-vein]].
+
+## cc-qsort-unsigned-fastlane-2026-07-12 — WIN (u32/u64 comparison fast lane)
+
+The i32/i64 `qsort` comparison fast lanes (window `num ∈ [64, 2048]`, core `stdlib/sort.rs`) only tried
+SIGNED order, so u32/u64 keys (sizes/indices/hashes/ids/pointers) with the top bit set verify-failed and
+dropped to the generic `std_sort_unstable_fixed_width` byte sort — which drives the caller's FFI comparator
+on every one of its O(n·log n) comparisons (the exact cost the fast lane exists to avoid). Added an
+UNSIGNED-order attempt after the signed one (mirrors the u8 counting lane's try-unsigned-then-signed),
+guarded on `values.iter().any(|v| v < 0)` so: (a) the signed happy path returns before it and is untouched,
+(b) all-non-negative data skips it (unsigned order == the signed arrangement just rejected), (c) a
+non-integer comparator with negatives present pays only one extra sort+O(n) verify before the same fallback.
+`*v as u32/u64` reinterprets the bits (equal-width `as` cast is bit-preserving), reusing the same buffer —
+no new allocation. Verify-then-commit keeps parity ABSOLUTE (commit only if non-decreasing under the caller's
+own comparator; equal unsigned keys are byte-identical ⇒ tie order immaterial ⇒ byte==glibc).
+- **MEASURED (deterministic fn-main `qsort_unsigned_lane_bench`, full-range unsigned keys, reset baseline
+  subtracted):** u64 new beats old-callback-sort **1.18–1.56x** / beats glibc **1.33–2.28x**; u32 beats old
+  **1.48–1.70x** / beats glibc **2.00–2.44x** (win grows with n; smallest n=128 still positive). Correctness
+  asserted INLINE in the bench (fl new-lane output == reference == glibc, all sizes both widths).
+- **GATE:** `conformance_diff_qsort_i64_fastlane` (already exercises the u64 comparator across below/in/above
+  the window × rand/dups/mixed-sign — u64 keys now take the new lane and stay byte==glibc; golden unchanged
+  since the i64-comparator output the golden folds is untouched) + `conformance_diff_qsort_radix` green;
+  core `--lib sort` unit tests green.
+- This is the untried follow-on flagged in [[qsort-i64-fastlane]] ("Same lever could extend to u64"); now
+  DONE for both widths. Fast-lane window `[64,2048]` × {i32,i64 signed | u32,u64 unsigned} coverage complete;
+  above 2048 the radix lanes already cover unsigned. See [[qsort-i64-fastlane]].
