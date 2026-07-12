@@ -17311,3 +17311,23 @@ blocking. Use `-j2` for every gate/bench build during contention instead of retr
   now comprehensively SIMD, modulo the interleaved-isolated-multibyte residual (inherent scalar-per-accent).
   FOLLOW-ON: a multibyte-DENSITY guard in `mbs_decode_prefix`/`mbs_decoded_len_prefix` could erase the mixed
   residual family-wide → clean wins. See [[multibyte-simd-conversion-vein]].
+
+## cc-mbs-decode-prefix-density-guard-2026-07-12 — WIN (SHIPPED 290ab9280) — trims the interleaved per-accent tax
+
+- **THE LEVER.** `mbs_decode_prefix` (decode-write, used by mbsrtowcs/mbsnrtowcs write) probed all 3 window
+  conditions per multibyte lead — a per-accent tax on interleaved text. Added a density guard: one
+  width-classified peek at the next same-width lead decides window-vs-return, so isolated multibyte / NUL /
+  malformed returns in one branch instead of 3 window-condition evals.
+- **BYTE-IDENTICAL** (a lone char can't fill a window ⇒ same scalar deferral; dst-full still caught by the
+  window guards + trailing `si==before_windows`). conformance_diff_mbsrtowcs 7/0,
+  mbsrtowcs_differential_probe 1/0, n_bounded 2/0.
+- **MEASURED (remote -j2):** mbsrtowcs write mixed ~3.8x -> ~3.44x (fl 2787-2993 -> 2726ns); wins unchanged.
+  mbsnrtowcs write mixed ~unchanged (heavy ABI mbrtowc per accent dwarfs the saving). No arm regresses.
+- **LIMIT.** Removes the SIMD-probe overhead the windows added; the UNDERLYING interleaved loss (glibc's
+  tuned scalar per-accent decode ~3x) remains and is the residual negative-ledger item for this family. A
+  true fix would need a full interleaved UTF-8->UTF-32 SIMD transcode (shuffle-table, high byte-identity
+  risk) — deferred. See [[multibyte-simd-conversion-vein]].
+
+### INFRA — disabled worker ovh-b (2026-07-12): `blake3` build script exit 101 (broken C toolchain); it was
+failing every `cargo run --example` build routed to it. `rch workers disable ovh-b -y`. Re-enable once its
+toolchain is fixed.
