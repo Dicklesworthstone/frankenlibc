@@ -3293,12 +3293,19 @@ pub unsafe extern "C" fn mbsrtowcs(
     let mut i = 0usize;
     let mut written = 0usize;
     while i < src_bytes.len() {
-        // SIMD fast-forward: widen the leading ASCII run straight into `dst`,
-        // a vector at a time, then resolve the NUL / dest-full / multibyte
-        // boundary with the unchanged scalar logic below.
-        let k = wchar_core::mbs_ascii_prefix(&mut dst_slice[written..], &src_bytes[i..]);
-        i += k;
-        written += k;
+        // SIMD fast-forward: widen the leading clean run (ASCII + contiguous
+        // 2/3/4-byte, contiguity-gated) straight into `dst`, then resolve the
+        // NUL / dest-full / multibyte boundary with the unchanged scalar logic
+        // below. `chars` (wide chars written) and `bytes` (source bytes consumed)
+        // differ for multibyte; the helper only emits whole validated windows
+        // bounded by the source and `dst_slice[written..]`, so this stays
+        // byte-for-byte identical to a per-char `mbtowc` widen — was ASCII-only
+        // (`mbs_ascii_prefix`), leaving every contiguous non-Latin run scalar
+        // (~3.6-4.9x LOSS vs glibc).
+        let (chars, bytes) =
+            wchar_core::mbs_decode_prefix(&mut dst_slice[written..], &src_bytes[i..]);
+        i += bytes;
+        written += chars;
         // Destination-full is checked BEFORE the terminating NUL: when exactly
         // `len` wide chars have been produced and the next source byte is the
         // NUL, glibc treats the stop as len-limited — it returns the count and

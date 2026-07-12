@@ -599,6 +599,123 @@ pub fn mbs_ascii_prefix(dest: &mut [u32], src: &[u8]) -> usize {
     k
 }
 
+/// Decode the leading run of *clean* multibyte windows of `src` into `dst` as
+/// wide chars, returning `(chars_written, bytes_consumed)`. The write-side twin
+/// of [`mbs_decoded_len_prefix`]: consumes only whole RFC-3629-validated windows
+/// — ASCII (via [`mbs_ascii_prefix`]) plus contiguity-gated 2/3/4-byte runs —
+/// bounded by BOTH `src` and `dst.len()`, and STOPS at the first NUL / isolated
+/// or mixed-width multibyte lead / malformed byte / window that would exceed
+/// `src` or `dst`, leaving that position for a scalar decoder. Byte-for-byte
+/// identical to a per-char [`mbtowc`] widen: every window it emits carries the
+/// full lead/continuation/overlong/surrogate validation (the same masks the
+/// write-path [`mbstowcs`] uses), and the NEXT-char contiguity gate only chooses
+/// window-vs-scalar so an isolated accent (café) drops to the caller's scalar
+/// step instead of paying a failed SIMD probe. Exposed so the restartable
+/// `mbsrtowcs` / `mbsnrtowcs` widen contiguous multibyte runs, not just ASCII.
+pub fn mbs_decode_prefix(dst: &mut [u32], src: &[u8]) -> (usize, usize) {
+    let mut si = 0usize; // bytes consumed
+    let mut di = 0usize; // wide chars written
+    loop {
+        // ASCII run (widens 1:1, bounded by dst & src).
+        let k = mbs_ascii_prefix(&mut dst[di..], &src[si..]);
+        si += k;
+        di += k;
+        let before_windows = si;
+
+        // 2-byte run: 8 code points per clean 16-byte window; src[si+2] gate.
+        while si + 16 <= src.len()
+            && di + 8 <= dst.len()
+            && (0xC2..=0xDF).contains(&src[si])
+            && (0xC2..=0xDF).contains(&src[si + 2])
+        {
+            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
+            let v = Simd::<u8, 16>::from_array(bytes);
+            let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
+            let conts = std::simd::simd_swizzle!(v, [1, 3, 5, 7, 9, 11, 13, 15]);
+            let leads_ok = leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
+            let conts_ok = conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
+            if !(leads_ok & conts_ok).all() {
+                break;
+            }
+            let lw = leads.cast::<u32>() & Simd::splat(0x1F);
+            let cw = conts.cast::<u32>() & Simd::splat(0x3F);
+            let wc = (lw << Simd::splat(6)) | cw;
+            wc.copy_to_slice(&mut dst[di..di + 8]);
+            si += 16;
+            di += 8;
+        }
+
+        // 3-byte run: 4 code points per clean 12-byte window; src[si+3] gate.
+        while si + 16 <= src.len()
+            && di + 4 <= dst.len()
+            && (0xE0..=0xEF).contains(&src[si])
+            && (0xE0..=0xEF).contains(&src[si + 3])
+        {
+            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
+            let v = Simd::<u8, 16>::from_array(bytes);
+            let leads = std::simd::simd_swizzle!(v, [0, 3, 6, 9]);
+            let cont1 = std::simd::simd_swizzle!(v, [1, 4, 7, 10]);
+            let cont2 = std::simd::simd_swizzle!(v, [2, 5, 8, 11]);
+            let leads_ok = leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xEF));
+            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
+            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
+            let overlong_ok = !leads.simd_eq(Simd::splat(0xE0)) | cont1.simd_ge(Simd::splat(0xA0));
+            let surrogate_ok = !leads.simd_eq(Simd::splat(0xED)) | cont1.simd_le(Simd::splat(0x9F));
+            if !(leads_ok & cont1_ok & cont2_ok & overlong_ok & surrogate_ok).all() {
+                break;
+            }
+            let lw = leads.cast::<u32>() & Simd::splat(0x0F);
+            let c1w = cont1.cast::<u32>() & Simd::splat(0x3F);
+            let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
+            let wc = (lw << Simd::splat(12)) | (c1w << Simd::splat(6)) | c2w;
+            wc.copy_to_slice(&mut dst[di..di + 4]);
+            si += 12;
+            di += 4;
+        }
+
+        // 4-byte run: 4 code points per clean 16-byte window; src[si+4] gate.
+        while si + 16 <= src.len()
+            && di + 4 <= dst.len()
+            && (0xF0..=0xF7).contains(&src[si])
+            && (0xF0..=0xF7).contains(&src[si + 4])
+        {
+            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
+            let v = Simd::<u8, 16>::from_array(bytes);
+            let leads = std::simd::simd_swizzle!(v, [0, 4, 8, 12]);
+            let cont1 = std::simd::simd_swizzle!(v, [1, 5, 9, 13]);
+            let cont2 = std::simd::simd_swizzle!(v, [2, 6, 10, 14]);
+            let cont3 = std::simd::simd_swizzle!(v, [3, 7, 11, 15]);
+            let leads_ok = leads.simd_ge(Simd::splat(0xF0)) & leads.simd_le(Simd::splat(0xF7));
+            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
+            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
+            let cont3_ok = cont3.simd_ge(Simd::splat(0x80)) & cont3.simd_le(Simd::splat(0xBF));
+            let overlong_ok = !leads.simd_eq(Simd::splat(0xF0)) | cont1.simd_ge(Simd::splat(0x90));
+            if !(leads_ok & cont1_ok & cont2_ok & cont3_ok & overlong_ok).all() {
+                break;
+            }
+            let lw = leads.cast::<u32>() & Simd::splat(0x07);
+            let c1w = cont1.cast::<u32>() & Simd::splat(0x3F);
+            let c2w = cont2.cast::<u32>() & Simd::splat(0x3F);
+            let c3w = cont3.cast::<u32>() & Simd::splat(0x3F);
+            let wc =
+                (lw << Simd::splat(18)) | (c1w << Simd::splat(12)) | (c2w << Simd::splat(6)) | c3w;
+            wc.copy_to_slice(&mut dst[di..di + 4]);
+            si += 16;
+            di += 4;
+        }
+
+        // No multibyte window fired ⇒ the next byte is NUL / an isolated or
+        // mixed-width lead / malformed / dst-full: hand it to the caller's scalar
+        // step (returning right after the ASCII run avoids a wasted second
+        // `mbs_ascii_prefix` probe per isolated accent in interleaved text). A
+        // window DID fire ⇒ loop to pick up a trailing ASCII run and the next
+        // contiguous multibyte run.
+        if si == before_windows {
+            return (di, si);
+        }
+    }
+}
+
 /// Length of the leading plain-ASCII run of wide chars `src`: the count of `wc`
 /// with `0 < wc < 0x80`, stopping at the first NUL or `wc >= 0x80`. The wide
 /// inverse of [`ascii_prefix_len`].
