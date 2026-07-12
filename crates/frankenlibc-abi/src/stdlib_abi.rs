@@ -3439,6 +3439,16 @@ pub unsafe extern "C" fn reallocarray(ptr: *mut c_void, nmemb: usize, size: usiz
         return ptr::null_mut();
     };
 
+    // Deployed fast path (DEFAULT): `realloc` runs its OWN reentry/bootstrap/membrane
+    // handling (decide+observe or the strict host path), so the stdlib decide+observe
+    // here is a REDUNDANT per-call tax — measured 10.8ns (reallocarray 19.3ns vs
+    // realloc 8.5ns), which made reallocarray 1.7x slower than glibc (11.2ns). Stdlib
+    // is always-Allow in deployed mode, so the decision would be Allow regardless;
+    // delegate straight to realloc. Mirrors the strtol/strtoul membrane fast path.
+    if runtime_policy::stdlib_membrane_fastpath() {
+        return unsafe { crate::malloc_abi::realloc(ptr, total_size) };
+    }
+
     let adverse_pointer = !ptr.is_null() && known_remaining(ptr as usize).is_none();
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,

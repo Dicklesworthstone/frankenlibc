@@ -17814,3 +17814,21 @@ subsystem probed is already optimized. Remaining EV requires committing to a DEE
 study is the proof that deep dives pay off — 3 shipped wins). Named deep candidates: stdio MT registry-lock shard
 (authorized/scoped, [[stdio-mt-lock-vein]]); iconv SIMD UTF-8 decode ([[iconv-nonascii-perf-gap]]); fused pow
 (bd-e4jb7k); hand-AVX2 memcmp/memchr small-n. See [[cc-lane-structural-frontier-2026-07-10]].
+
+## cc-reallocarray-membrane-tax-2026-07-12 — WIN (redundant stdlib decide+observe removed; 2.05x, flips loss→win)
+
+`reallocarray` (stdlib_abi.rs:3434) did its overflow check, then its OWN `runtime_policy::decide`+`observe`,
+then delegated to `crate::malloc_abi::realloc` — which already runs its own reentry/bootstrap/membrane handling.
+So reallocarray paid the ~10ns membrane tax REDUNDANTLY. This is the mktime/strtol membrane-bypass vein
+(cc-mktime-tax) — reallocarray was missed. Fix = add the `stdlib_membrane_fastpath()` gate that skips
+decide+observe and delegates straight to realloc in deployed (always-Allow) mode, identical to strtol/strtoul.
+- **MEASURED (reallocarray_tax_bench, pinned taskset -c 63, before/after 2 builds; shrink-in-place S so realloc
+  is fast and the wrapper tax dominates):** BEFORE reallocarray=19.3ns, wrapper_tax(reallocarray-realloc)=10.8ns,
+  1.7x SLOWER than glibc (11.2ns). AFTER reallocarray=**9.4ns**, wrapper_tax=**0.4ns** (just the overflow check),
+  now BEATS glibc (11.3ns). **2.05x self-speedup; flipped a 1.7x loss into a ~1.2x win** (stable across 2 runs).
+- **CORRECTNESS:** overflow is checked BEFORE the fast path (ENOMEM+null preserved); success delegates to the
+  already-gated realloc. Gates: conformance_diff_reallocarray 3/3 (overflow-vs-glibc + success-usable-memory) +
+  stdlib_abi_test reallocarray 2/2 (reallocate + overflow-ENOMEM) all green.
+- ⚠️Contradicts my prior "membrane vein mined" claim — reallocarray was a genuine miss (it's in stdlib_abi but
+  delegates to a malloc-family fn that self-handles the membrane; the double-membrane is the tell). Sweep other
+  stdlib→malloc/other-family delegators for the same redundant decide+observe. See [[syscall-wrapper-semantics-vein]].
