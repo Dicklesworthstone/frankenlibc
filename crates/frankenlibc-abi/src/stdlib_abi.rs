@@ -4280,9 +4280,31 @@ pub unsafe extern "C" fn a64l(s: *const c_char) -> c_long {
         if s.is_null() {
             return 0;
         }
-        let (len, _) = unsafe { scan_c_string(s, Some(6)) };
-        let slice = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
-        return frankenlibc_core::stdlib::a64l(slice) as c_long;
+        // Direct ≤6-char decode straight from the pointer — the loop stops at
+        // NUL/invalid itself and reads at most the 6 bytes permitted by `a64l`,
+        // so it needs neither the `scan_c_string`
+        // SWAR pass nor a slice (both dominate the cost on a ≤6-char string).
+        // Byte-identical to `frankenlibc_core::stdlib::a64l` — same SVID alphabet,
+        // 6-bit little-endian accumulation, then truncate to u32 and widen to long.
+        let mut result: u64 = 0;
+        let mut shift = 0u32;
+        for i in 0..6 {
+            // SAFETY: the non-null C input must be readable through its terminator
+            // or through the six-byte maximum. This loop stops at either boundary.
+            let c = unsafe { *(s.add(i) as *const u8) };
+            let val = match c {
+                0 => break,
+                b'.' => 0u64,
+                b'/' => 1,
+                b'0'..=b'9' => (c - b'0') as u64 + 2,
+                b'A'..=b'Z' => (c - b'A') as u64 + 12,
+                b'a'..=b'z' => (c - b'a') as u64 + 38,
+                _ => break,
+            };
+            result |= val << shift;
+            shift += 6;
+        }
+        return ((result as u32) as i64) as c_long;
     }
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Stdlib, s as usize, 0, true, s.is_null(), 0);

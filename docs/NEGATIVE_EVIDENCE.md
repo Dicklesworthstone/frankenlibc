@@ -17866,3 +17866,21 @@ gate the result).
   tight decode loop. A direct inline ≤6-char decode (no SWAR scan) would likely close it. Not the membrane tax.
 - ⚠️Remaining no-fast-path stdlib candidates from the sweep: ecvt/fcvt/gcvt (decide(0) → Ryū format; tax is a
   smaller fraction), getsubopt. See [[double-membrane-delegating-wrappers]].
+
+## cc-a64l-inline-decode-2026-07-12 — WIN (drop scan_c_string+slice for a ≤6-char inline decode; 2.14x)
+
+Follow-up to cc-a64l-l64a-membrane-tax's flagged residual: even tax-free, a64l's deployed fast path paid a
+`scan_c_string(s, Some(6))` SWAR NUL scan + `from_raw_parts` slice + abi→core call for a ≤6-char string — 3x
+slower than glibc's tight decode loop. Replaced the fast-path body with a DIRECT ≤6-char decode straight from
+the pointer: the loop breaks at NUL/invalid and reads at most 6 bytes (never past the string, exactly like
+glibc), so it needs neither the SWAR scan nor a slice. Byte-identical to `frankenlibc_core::stdlib::a64l` (same
+SVID alphabet, 6-bit little-endian accumulation, truncate-u32-then-sign-extend).
+- **MEASURED (a64l_l64a_tax_bench, in-binary orig-vs-cand, pinned taskset -c 63, stable x2):** a64l orig(scan)=
+  12.04ns → cand(inline)=**5.64ns** (cand/orig **0.468x = 2.14x faster**); vs glibc 3.02x → **1.84x**. Across
+  the two turns a64l went 13.67 → 9.22 (membrane) → 5.64ns (inline). l64a unchanged (1.88ns, beats glibc 0.62x).
+- **CORRECTNESS:** a64l_l64a_differential_fuzz 1/1 (vs live glibc) + the bench's inline `original_a64l==glibc`
+  and `fl a64l==glibc` asserts. Residual 1.84x vs glibc = the stdlib_membrane_fastpath gate branch + extern-C
+  boundary (glibc is a bare loop) — near the ABI floor, not chased further.
+- ⚠️Full (hardened/test) path kept as-is (scan_c_string for membrane bounds); only the deployed fast path inlined.
+- ⚠️ENV: rch artifact transfer was flaky + target dir disk-cleaned mid-turn — copy the built binary to the
+  scratchpad IMMEDIATELY post-build, then run, to beat the churn. See [[double-membrane-delegating-wrappers]].
