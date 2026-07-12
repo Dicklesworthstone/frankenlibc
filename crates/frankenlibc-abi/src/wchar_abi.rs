@@ -6614,6 +6614,33 @@ pub unsafe extern "C" fn mbsnrtowcs(
                 s = unsafe { s.add(bytes) };
                 continue;
             }
+            // The SIMD prefix made no progress ⇒ an isolated multibyte char / NUL /
+            // an nms-boundary sequence. Fast-path the common complete-char case
+            // through the inlinable core `mbtowc` instead of the exported extern "C"
+            // `mbrtowc` (a PLT call that never inlines + re-runs the null/ASCII
+            // guards) — this is the interleaved-text ("café") hot path, where the
+            // scalar step is hit once per lone accent. NUL, an nms-truncated
+            // incomplete sequence, and EILSEQ all fall through to the `mbrtowc`
+            // scalar step below for their exact contract. Byte-identical: `mbtowc`'s
+            // complete-char result shares `utf8_decode_step` with `mbrtowc`; the
+            // window is capped at `remaining` so `used <= remaining` (mirrors the
+            // `r <= remaining` arm); a NUL byte (b0 == 0) is excluded so `wc != 0`;
+            // and the state stays initial after a complete char.
+            let b0 = unsafe { *(s as *const u8) };
+            if b0 != 0 {
+                // SAFETY: caller guarantees `s` points to at least `remaining` bytes.
+                let win = unsafe { std::slice::from_raw_parts(s as *const u8, remaining.min(6)) };
+                if let Some((wc, used)) = wchar_core::mbtowc(win) {
+                    if !dst.is_null() {
+                        // SAFETY: the loop guard guarantees `written < len` in write mode.
+                        unsafe { *dst.add(written) = wc as libc::wchar_t };
+                    }
+                    written += 1;
+                    consumed += used;
+                    s = unsafe { s.add(used) };
+                    continue;
+                }
+            }
         }
 
         let mut wc: libc::wchar_t = 0;
