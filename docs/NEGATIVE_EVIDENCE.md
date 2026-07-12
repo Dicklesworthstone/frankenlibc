@@ -17223,3 +17223,22 @@ sb_translation byte->byte). Both directions MEASURED (remote, p50, 1KiB all-high
   `mbs_decoded_len` (mbsrtowcs is a straight reuse preserving its EILSEQ/no-*src; mbsnrtowcs needs its
   `nms` byte-bound honored — a bounded variant). Then the multibyte-conversion count surface is fully
   mined both directions. See [[multibyte-simd-conversion-vein]].
+
+## cc-mbsrtowcs-count-simd-2026-07-12 — WIN (SHIPPED a684272a2) — decode-count vein + contiguity-gate fix
+
+- **THE LEVER.** Routed mbsrtowcs(NULL,..) count through `mbs_decoded_len` (ASCII-prefix+scalar before).
+  Cyrillic 5.56x LOSS -> ~0.45-0.73x WIN, cjk 2.51x -> ~0.69-0.77x, ascii ~0.62x WIN.
+- **THE FIX (the non-obvious part).** The first cut REGRESSED interleaved "mixed" (café) 2.59x -> 4.08x:
+  `mbs_decoded_len`'s inline all-or-nothing ASCII vector failed its 16-byte probe on every accent-within-16B,
+  and each isolated accent paid a FAILED 2-byte-window probe. Fix: (a) lead with `ascii_prefix_len` (scalar
+  tail handles short runs cheaply), (b) a NEXT-char contiguity gate on each multibyte window (2-byte fires
+  only if src[si+2] is also a 2-byte lead, 3-byte on src[si+3], 4-byte on src[si+4]) so isolated multibyte
+  skips the probe → scalar. Gate only picks window-vs-scalar ⇒ count byte-identical. Result: mixed
+  2.59x -> ~1.7x (BELOW baseline), and it retroactively improved the shipped mbstowcs mixed 2.9x -> ~1.85x.
+- **BYTE-IDENTICAL.** conformance_diff_mbsrtowcs 7/0, conformance_diff_mbstowcs_simd 1/0, both count benches
+  assert fl==glibc on ascii/mixed/cyrillic/cjk (0 divergences vs live glibc, dlmopen).
+- **LESSON.** For decode count the contiguity gate DOES transfer (unlike the mbsrtowcs decode WRITE path,
+  cc-mbsrtowcs-gate-retry) — because count only needs a perf gate (window-vs-scalar), no width-classification
+  cost on the correctness path; the scalar `mbtowc` stays the authority.
+- **FOLLOW-ON:** mbsnrtowcs count (n-bounded) still scalar — needs a byte-bounded `mbs_decoded_len` variant.
+  Then the multibyte-conversion count surface is fully mined both directions. See [[multibyte-simd-conversion-vein]].
