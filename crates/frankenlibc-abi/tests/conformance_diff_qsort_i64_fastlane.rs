@@ -33,6 +33,11 @@ extern "C" fn gl_cmp_i64_desc(a: *const c_void, b: *const c_void) -> i32 {
     let y = unsafe { *(b as *const i64) };
     y.cmp(&x) as i32
 }
+extern "C" fn gl_cmp_u64_desc(a: *const c_void, b: *const c_void) -> i32 {
+    let x = unsafe { *(a as *const u64) };
+    let y = unsafe { *(b as *const u64) };
+    y.cmp(&x) as i32
+}
 
 fn fl_cmp_i64(a: &[u8], b: &[u8]) -> i32 {
     let x = i64::from_ne_bytes(a.try_into().unwrap());
@@ -47,6 +52,11 @@ fn fl_cmp_u64(a: &[u8], b: &[u8]) -> i32 {
 fn fl_cmp_i64_desc(a: &[u8], b: &[u8]) -> i32 {
     let x = i64::from_ne_bytes(a.try_into().unwrap());
     let y = i64::from_ne_bytes(b.try_into().unwrap());
+    y.cmp(&x) as i32
+}
+fn fl_cmp_u64_desc(a: &[u8], b: &[u8]) -> i32 {
+    let x = u64::from_ne_bytes(a.try_into().unwrap());
+    let y = u64::from_ne_bytes(b.try_into().unwrap());
     y.cmp(&x) as i32
 }
 
@@ -127,6 +137,12 @@ fn qsort_i64_fast_lane_matches_glibc() {
                 data,
                 fl_cmp_i64_desc,
                 gl_cmp_i64_desc,
+            );
+            check(
+                &format!("udesc/{tag}"),
+                data,
+                fl_cmp_u64_desc,
+                gl_cmp_u64_desc,
             );
 
             // Fold the verified-correct sorted output into a golden digest so a

@@ -17594,3 +17594,23 @@ own comparator; equal unsigned keys are byte-identical ⇒ tie order immaterial 
 - This is the untried follow-on flagged in [[qsort-i64-fastlane]] ("Same lever could extend to u64"); now
   DONE for both widths. Fast-lane window `[64,2048]` × {i32,i64 signed | u32,u64 unsigned} coverage complete;
   above 2048 the radix lanes already cover unsigned. See [[qsort-i64-fastlane]].
+
+## cc-qsort-descending-fastlane-2026-07-12 — WIN (descending completes the [64,2048] comparison lane)
+
+Direct follow-on to cc-qsort-unsigned-fastlane. The i32/i64 comparison fast lane still only committed
+ASCENDING order, so a DESCENDING integer comparator (top-N / recent-first, `return b - a`) verify-failed and
+dropped to the generic callback byte sort. Added descending as the ascending sort REVERSED — an O(n) reverse,
+NOT a second O(n·log n) sort — verified against the caller's comparator, for BOTH signed and unsigned
+interpretations (4 natural orderings total: {signed,unsigned}×{asc,desc}). The unsigned pair stays guarded on
+any-top-bit-set. Verify-then-commit keeps parity absolute.
+- **MEASURED (deterministic fn-main `qsort_descending_lane_bench`, full-range keys, reset baseline
+  subtracted):** i64desc new beats old-callback-sort **2.11–2.75x** / beats glibc **2.91–4.21x** (bigger than
+  ascending — descending is a pure reverse, no re-sort); u64desc beats old **1.53–1.84x** / beats glibc
+  **1.51–2.46x** (u64desc pays the unsigned re-sort + reverse). Correctness asserted INLINE.
+- **GATE:** `conformance_diff_qsort_i64_fastlane` extended with a u64-DESC comparator (signed-desc was already
+  covered by gl_cmp_i64_desc); all comparators byte==glibc across below/in/above the window × rand/dups/mixed.
+  **Golden sha256 ae09939d… UNCHANGED** (the golden folds the ascending i64 output, untouched). core --lib
+  sort(35) green.
+- Fast-lane window `[64,2048]` now covers all four natural integer orderings for both widths; >2048 the radix
+  lanes cover asc (desc radix is a separate untried follow-on — reverse of the radix output, same idea). See
+  [[qsort-i64-fastlane]].
