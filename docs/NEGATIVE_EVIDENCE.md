@@ -17242,3 +17242,29 @@ sb_translation byte->byte). Both directions MEASURED (remote, p50, 1KiB all-high
   cost on the correctness path; the scalar `mbtowc` stays the authority.
 - **FOLLOW-ON:** mbsnrtowcs count (n-bounded) still scalar — needs a byte-bounded `mbs_decoded_len` variant.
   Then the multibyte-conversion count surface is fully mined both directions. See [[multibyte-simd-conversion-vein]].
+
+## cc-mbsnrtowcs-count-simd-2026-07-12 — WIN (SHIPPED bdfdb2e25) — completes the decode-count vein
+
+- **THE LEVER.** mbsnrtowcs(NULL,src,nms,..) count bulk-counted only the ASCII prefix + scalar `mbrtowc`
+  per multibyte char. Extracted `mbs_decoded_len_prefix(src) -> (cp, bytes)` from `mbs_decoded_len`:
+  consumes only whole validated windows (ASCII + contiguity-gated 2/3/4-byte), never errors, stops at the
+  first NUL / isolated / malformed byte / window exceeding the slice — so the byte-bounded caller hands it
+  the `nms` window and the unchanged scalar `mbrtowc` resolves NUL / MB_INCOMPLETE / EILSEQ / *src / the
+  partial-`ps` state. `mbs_decoded_len` refactored to call the shared prefix (byte-identical).
+- **BYTE-IDENTICAL.** n_bounded_wchar_differential_probe 2/0 (dst_null x nms{0,1,2,3,64} x 3/4-byte/invalid
+  incl. mid-char nms truncation vs live glibc), conformance_diff_mbsrtowcs 7/0,
+  conformance_diff_mbstowcs_simd 1/0, count bench asserts fl==glibc on 4 arms.
+- **MEASURED (remote, self-normalized):** ascii ~0.10x, cyrillic ~0.11x, cjk ~0.36x WIN; mixed 3.8x LOSS
+  (isolated accents can't fill a window; contiguity gate drops them to scalar with no failed-probe overhead
+  — inherent, not a regression).
+- **VEIN COMPLETE.** multibyte-conversion COUNT is now fully mined BOTH directions: encode
+  (wcstombs 8db4e7990 / wcsrtombs 869e9b13d / wcsnrtombs 28c457484) + decode (mbstowcs 31e9a50e5 /
+  mbsrtowcs a684272a2 / mbsnrtowcs bdfdb2e25). See [[multibyte-simd-conversion-vein]]. Residual across
+  all decode-count arms: interleaved isolated-multibyte ("café") stays scalar (~2-4x, inherent).
+
+### INFRA NOTE — rch admission under swarm contention (recurring blocker, 2026-07-11/12)
+When workers are saturated by a peer swarm, `rch exec` fails admission with `insufficient_slots=8,
+hard_preflight=1` (the job's default slot ask can't fit any worker's free window) and, with
+RCH_REQUIRE_REMOTE=1, refuses local fallback. **FIX: shrink the slot ask** — `CARGO_BUILD_JOBS=2 rch exec
+-- cargo test -j2 ...` admitted immediately onto a worker with only 2 free slots after 3 turns of full-job
+blocking. Use `-j2` for every gate/bench build during contention instead of retry-looping.
