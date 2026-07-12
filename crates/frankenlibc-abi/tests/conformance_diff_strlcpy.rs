@@ -27,20 +27,26 @@ fn cstr(s: &str) -> Vec<u8> {
 fn strlcpy_matches_glibc() {
     // (src, size)
     let cases: &[(&str, usize)] = &[
-        ("abc", 8),       // fits
-        ("abcdefg", 8),   // exact fit (7 + NUL)
-        ("abcdefgh", 8),  // truncates by one
-        ("abcdefghij", 8),// truncates
-        ("", 8),          // empty
-        ("hello", 1),     // size 1 -> only NUL
-        ("hello", 0),     // size 0 -> no write, ret strlen
-        ("hello", 5),     // truncates (need 6)
+        ("abc", 8),        // fits
+        ("abcdefg", 8),    // exact fit (7 + NUL)
+        ("abcdefgh", 8),   // truncates by one
+        ("abcdefghij", 8), // truncates
+        ("", 8),           // empty
+        ("hello", 1),      // size 1 -> only NUL
+        ("hello", 0),      // size 0 -> no write, ret strlen
+        ("hello", 5),      // truncates (need 6)
     ];
     for &(src, size) in cases {
         let s = cstr(src);
         let mut gd = [FILL; 16];
         let mut fd = [FILL; 16];
-        let rg = unsafe { strlcpy(gd.as_mut_ptr() as *mut c_char, s.as_ptr() as *const c_char, size) };
+        let rg = unsafe {
+            strlcpy(
+                gd.as_mut_ptr() as *mut c_char,
+                s.as_ptr() as *const c_char,
+                size,
+            )
+        };
         let rf = unsafe {
             frankenlibc_abi::string_abi::strlcpy(
                 fd.as_mut_ptr() as *mut c_char,
@@ -57,14 +63,14 @@ fn strlcpy_matches_glibc() {
 fn strlcat_matches_glibc() {
     // (initial dst prefix, src, size)
     let cases: &[(&str, &str, usize)] = &[
-        ("ab", "cd", 8),        // fits -> "abcd"
-        ("ab", "cdefghij", 8),  // truncates
-        ("abcdef", "gh", 8),    // exact fit
-        ("abcdefg", "h", 8),    // truncates by one
-        ("", "xyz", 8),         // empty dst
-        ("abc", "", 8),         // empty src
-        ("abcdefgh", "x", 8),   // dlen == size (no NUL within size): ret size+strlen(src)
-        ("abc", "de", 2),       // size < dlen
+        ("ab", "cd", 8),       // fits -> "abcd"
+        ("ab", "cdefghij", 8), // truncates
+        ("abcdef", "gh", 8),   // exact fit
+        ("abcdefg", "h", 8),   // truncates by one
+        ("", "xyz", 8),        // empty dst
+        ("abc", "", 8),        // empty src
+        ("abcdefgh", "x", 8),  // dlen == size (no NUL within size): ret size+strlen(src)
+        ("abc", "de", 2),      // size < dlen
     ];
     for &(pre, src, size) in cases {
         let s = cstr(src);
@@ -73,10 +79,24 @@ fn strlcat_matches_glibc() {
         let mut fd = [FILL; 24];
         let pre_c = cstr(pre);
         unsafe {
-            memcpy(gd.as_mut_ptr() as *mut c_void, pre_c.as_ptr() as *const c_void, pre_c.len());
-            memcpy(fd.as_mut_ptr() as *mut c_void, pre_c.as_ptr() as *const c_void, pre_c.len());
+            memcpy(
+                gd.as_mut_ptr() as *mut c_void,
+                pre_c.as_ptr() as *const c_void,
+                pre_c.len(),
+            );
+            memcpy(
+                fd.as_mut_ptr() as *mut c_void,
+                pre_c.as_ptr() as *const c_void,
+                pre_c.len(),
+            );
         }
-        let rg = unsafe { strlcat(gd.as_mut_ptr() as *mut c_char, s.as_ptr() as *const c_char, size) };
+        let rg = unsafe {
+            strlcat(
+                gd.as_mut_ptr() as *mut c_char,
+                s.as_ptr() as *const c_char,
+                size,
+            )
+        };
         let rf = unsafe {
             frankenlibc_abi::string_abi::strlcat(
                 fd.as_mut_ptr() as *mut c_char,
@@ -84,7 +104,13 @@ fn strlcat_matches_glibc() {
                 size,
             )
         };
-        assert_eq!(rf, rg, "strlcat(pre={pre:?}, src={src:?}, size={size}) return");
-        assert_eq!(fd, gd, "strlcat(pre={pre:?}, src={src:?}, size={size}) buffer");
+        assert_eq!(
+            rf, rg,
+            "strlcat(pre={pre:?}, src={src:?}, size={size}) return"
+        );
+        assert_eq!(
+            fd, gd,
+            "strlcat(pre={pre:?}, src={src:?}, size={size}) buffer"
+        );
     }
 }

@@ -20,7 +20,8 @@ unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
 type OpenFn = extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
-type ConvFn = extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
+type ConvFn =
+    extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
 
 fn g_funcs() -> (OpenFn, ConvFn) {
     unsafe {
@@ -67,7 +68,10 @@ fn tis620_matches_glibc_full_range() {
     let gcd = gopen(c"UTF-8".as_ptr(), c"TIS-620".as_ptr());
     assert!(gcd as usize != INVALID, "glibc TIS-620 open failed");
     let fcd = unsafe { fl::iconv_open(c"UTF-8".as_ptr(), c"TIS-620".as_ptr()) };
-    assert!(fcd as usize != INVALID && !fcd.is_null(), "fl TIS-620 open failed");
+    assert!(
+        fcd as usize != INVALID && !fcd.is_null(),
+        "fl TIS-620 open failed"
+    );
     let mut mism = 0u64;
     let mut first = String::new();
     for b in 0u16..256 {
@@ -100,7 +104,10 @@ fn tis620_matches_glibc_full_range() {
             }
         }
     }
-    assert_eq!(mism, 0, "TIS-620 diverged from glibc ({mism}); first: {first}");
+    assert_eq!(
+        mism, 0,
+        "TIS-620 diverged from glibc ({mism}); first: {first}"
+    );
 }
 
 #[test]
@@ -109,12 +116,22 @@ fn tis620_distinct_from_cp874() {
     let tis = unsafe { fl::iconv_open(c"UTF-8".as_ptr(), c"TIS-620".as_ptr()) };
     assert!(tis as usize != INVALID && !tis.is_null());
     for b in [0x80u8, 0x85, 0xA0] {
-        assert!(conv_f(tis, &[b]).is_none(), "TIS-620 must reject byte {b:#04x}");
+        assert!(
+            conv_f(tis, &[b]).is_none(),
+            "TIS-620 must reject byte {b:#04x}"
+        );
     }
     // CP874 still maps them.
     let cp = unsafe { fl::iconv_open(c"UTF-8".as_ptr(), c"CP874".as_ptr()) };
     assert!(cp as usize != INVALID && !cp.is_null());
-    assert!(conv_f(cp, &[0x80]).is_some(), "CP874 must still map 0x80 (€)");
+    assert!(
+        conv_f(cp, &[0x80]).is_some(),
+        "CP874 must still map 0x80 (€)"
+    );
     // The shared Thai block matches.
-    assert_eq!(conv_f(tis, &[0xA1]), conv_f(cp, &[0xA1]), "Thai block must agree");
+    assert_eq!(
+        conv_f(tis, &[0xA1]),
+        conv_f(cp, &[0xA1]),
+        "Thai block must agree"
+    );
 }

@@ -3,7 +3,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use frankenlibc_core::time::{broken_down_to_epoch, BrokenDownTime};
+use frankenlibc_core::time::{BrokenDownTime, broken_down_to_epoch};
 
 fn main() {
     unsafe {
@@ -14,10 +14,9 @@ fn main() {
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type TimegmFn = unsafe extern "C" fn(*mut libc::tm) -> i64;
-        let gl_timegm: TimegmFn = std::mem::transmute::<*mut std::ffi::c_void, TimegmFn>(libc::dlsym(
-            h,
-            b"timegm\0".as_ptr().cast(),
-        ));
+        let gl_timegm: TimegmFn = std::mem::transmute::<*mut std::ffi::c_void, TimegmFn>(
+            libc::dlsym(h, b"timegm\0".as_ptr().cast()),
+        );
 
         let bd = BrokenDownTime {
             tm_year: 124, // 2024
@@ -50,6 +49,9 @@ fn main() {
             black_box(gl_timegm(black_box(&mut tm)));
         }
         let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-        println!("TIMEGM 2024-06-15 fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x", fl / gl);
+        println!(
+            "TIMEGM 2024-06-15 fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x",
+            fl / gl
+        );
     }
 }

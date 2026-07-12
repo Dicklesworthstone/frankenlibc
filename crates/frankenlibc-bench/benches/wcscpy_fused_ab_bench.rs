@@ -10,10 +10,10 @@
 
 use std::ffi::c_void;
 use std::hint::black_box;
-use std::simd::cmp::SimdPartialEq;
 use std::simd::Simd;
+use std::simd::cmp::SimdPartialEq;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 unsafe extern "C" {
     fn wcscpy(dst: *mut c_void, src: *const c_void) -> *mut c_void;
@@ -60,8 +60,9 @@ unsafe fn wcscpy_fused(dst: *mut u32, src: *const u32) {
         if (src as usize + i * 4) & 0xFFF <= 0x1000 - 32
             && (dst as usize + i * 4) & 0xFFF <= 0x1000 - 32
         {
-            let v =
-                Simd::<u32, LANES>::from_slice(unsafe { std::slice::from_raw_parts(src.add(i), LANES) });
+            let v = Simd::<u32, LANES>::from_slice(unsafe {
+                std::slice::from_raw_parts(src.add(i), LANES)
+            });
             let m = v.simd_eq(zero).to_bitmask();
             if m == 0 {
                 // No NUL in this panel: store all 8 and advance.
@@ -109,9 +110,15 @@ fn bench(c: &mut Criterion) {
         let pn = d_new.as_mut_ptr();
         let pg = d_g.as_mut_ptr();
         let mut grp = c.benchmark_group(format!("wcscpy_{n}"));
-        grp.bench_function("old_2pass", |b| b.iter(|| black_box(unsafe { wcscpy_2pass(black_box(po), black_box(ps)) })));
-        grp.bench_function("new_fused", |b| b.iter(|| black_box(unsafe { wcscpy_fused(black_box(pn), black_box(ps)) })));
-        grp.bench_function("host_glibc", |b| b.iter(|| black_box(unsafe { wcscpy(black_box(pg.cast()), black_box(ps.cast())) })));
+        grp.bench_function("old_2pass", |b| {
+            b.iter(|| black_box(unsafe { wcscpy_2pass(black_box(po), black_box(ps)) }))
+        });
+        grp.bench_function("new_fused", |b| {
+            b.iter(|| black_box(unsafe { wcscpy_fused(black_box(pn), black_box(ps)) }))
+        });
+        grp.bench_function("host_glibc", |b| {
+            b.iter(|| black_box(unsafe { wcscpy(black_box(pg.cast()), black_box(ps.cast())) }))
+        });
         grp.finish();
     }
 }

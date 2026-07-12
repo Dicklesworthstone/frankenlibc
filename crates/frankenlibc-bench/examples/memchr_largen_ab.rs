@@ -23,7 +23,11 @@ fn pctl(s: &[f64], q: f64) -> f64 {
 
 fn main() {
     let h = unsafe {
-        libc::dlmopen(libc::LM_ID_NEWLM, b"libc.so.6\0".as_ptr().cast(), libc::RTLD_LAZY | libc::RTLD_LOCAL)
+        libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        )
     };
     assert!(!h.is_null());
     let g: MemchrFn = unsafe { dl(h, b"memchr\0") };
@@ -36,7 +40,9 @@ fn main() {
         for align in 0..40usize {
             for len in 0..300usize {
                 let mut buf = vec![0u8; align + len + 64];
-                for k in 0..len { buf[align + k] = b'a' + ((align + k) % 25) as u8; }
+                for k in 0..len {
+                    buf[align + k] = b'a' + ((align + k) % 25) as u8;
+                }
                 let bp = unsafe { buf.as_ptr().add(align) as *const std::ffi::c_void };
                 // absent
                 let f = unsafe { frankenlibc_abi::string_abi::memchr(bp, b'Z' as i32, len) };
@@ -44,11 +50,16 @@ fn main() {
                 assert_eq!(f as usize, gg as usize, "absent align={align} len={len}");
                 // present at a few positions
                 for &pos in &[0usize, len / 2, len.saturating_sub(1)] {
-                    if pos >= len { continue; }
+                    if pos >= len {
+                        continue;
+                    }
                     let t = buf[align + pos] as i32;
                     let f2 = unsafe { frankenlibc_abi::string_abi::memchr(bp, t, len) };
                     let g2 = unsafe { g(bp, t, len) };
-                    assert_eq!(f2 as usize, g2 as usize, "present align={align} len={len} pos={pos}");
+                    assert_eq!(
+                        f2 as usize, g2 as usize,
+                        "present align={align} len={len} pos={pos}"
+                    );
                 }
                 checks += 1;
             }
@@ -65,22 +76,33 @@ fn main() {
         for r in 0..100 {
             if r % 2 == 0 {
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { frankenlibc_abi::string_abi::memchr(bp, b'Z' as i32, n) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { frankenlibc_abi::string_abi::memchr(bp, b'Z' as i32, n) });
+                }
                 fl.push(t.elapsed().as_nanos() as f64 / lit as f64);
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { g(bp, b'Z' as i32, n) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { g(bp, b'Z' as i32, n) });
+                }
                 gl.push(t.elapsed().as_nanos() as f64 / lit as f64);
             } else {
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { g(bp, b'Z' as i32, n) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { g(bp, b'Z' as i32, n) });
+                }
                 gl.push(t.elapsed().as_nanos() as f64 / lit as f64);
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { frankenlibc_abi::string_abi::memchr(bp, b'Z' as i32, n) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { frankenlibc_abi::string_abi::memchr(bp, b'Z' as i32, n) });
+                }
                 fl.push(t.elapsed().as_nanos() as f64 / lit as f64);
             }
         }
         let (f10, g10) = (pctl(&fl, 0.1), pctl(&gl, 0.1));
-        println!("MEMCHR n={n:<6} p10: fl={f10:.2} glibc={g10:.2} fl/glibc={:.3}  {}",
-            f10 / g10, if f10 <= g10 * 1.1 { "ok" } else { "LOSS" });
+        println!(
+            "MEMCHR n={n:<6} p10: fl={f10:.2} glibc={g10:.2} fl/glibc={:.3}  {}",
+            f10 / g10,
+            if f10 <= g10 * 1.1 { "ok" } else { "LOSS" }
+        );
     }
 }

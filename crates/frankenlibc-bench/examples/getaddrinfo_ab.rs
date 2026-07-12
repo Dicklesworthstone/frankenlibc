@@ -24,12 +24,20 @@ fn median(xs: &[f64]) -> f64 {
     let mut v = xs.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let n = v.len();
-    if n % 2 == 0 { (v[n / 2 - 1] + v[n / 2]) / 2.0 } else { v[n / 2] }
+    if n % 2 == 0 {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    } else {
+        v[n / 2]
+    }
 }
-fn mean(xs: &[f64]) -> f64 { xs.iter().sum::<f64>() / xs.len() as f64 }
+fn mean(xs: &[f64]) -> f64 {
+    xs.iter().sum::<f64>() / xs.len() as f64
+}
 fn cv(xs: &[f64]) -> f64 {
     let m = mean(xs);
-    if m == 0.0 { return 0.0; }
+    if m == 0.0 {
+        return 0.0;
+    }
     100.0 * (xs.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / xs.len() as f64).sqrt() / m
 }
 
@@ -119,7 +127,10 @@ fn verify(gai: GaiFn, h: &libc::addrinfo) {
     assert_eq!(grc, 0, "host getaddrinfo verify");
     let fsin = unsafe { &*(*fres).ai_addr.cast::<libc::sockaddr_in>() };
     let gsin = unsafe { &*(*gres).ai_addr.cast::<libc::sockaddr_in>() };
-    assert_eq!(fsin.sin_addr.s_addr, gsin.sin_addr.s_addr, "fl vs glibc addr mismatch");
+    assert_eq!(
+        fsin.sin_addr.s_addr, gsin.sin_addr.s_addr,
+        "fl vs glibc addr mismatch"
+    );
     assert_eq!(fsin.sin_port, gsin.sin_port, "fl vs glibc port mismatch");
     println!(
         "verify: OK (fl == glibc getaddrinfo {NODE:?}:{SERVICE:?} -> addr {:08x} port {})",
@@ -159,8 +170,15 @@ fn report(label: &str, fl_ns: &[f64], other: &[f64]) {
     let ratio: Vec<f64> = fl_ns.iter().zip(other.iter()).map(|(f, g)| f / g).collect();
     println!(
         "{label}: fl {:.1}ns  other {:.1}ns  paired fl/other median {:.4} ({:.2}x)  cv={:.1}%",
-        median(fl_ns), median(other), median(&ratio),
-        if median(&ratio) > 0.0 { 1.0 / median(&ratio) } else { 0.0 }, cv(&ratio),
+        median(fl_ns),
+        median(other),
+        median(&ratio),
+        if median(&ratio) > 0.0 {
+            1.0 / median(&ratio)
+        } else {
+            0.0
+        },
+        cv(&ratio),
     );
 }
 

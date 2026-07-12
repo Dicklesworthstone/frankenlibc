@@ -5,7 +5,7 @@ use std::ffi::c_void;
 use std::hint::black_box;
 use std::time::Instant;
 
-use frankenlibc_core::string::fnmatch::{fnmatch_match, FnmatchFlags};
+use frankenlibc_core::string::fnmatch::{FnmatchFlags, fnmatch_match};
 
 fn main() {
     unsafe {
@@ -38,7 +38,10 @@ fn main() {
 
             let fl_m = fnmatch_match(&pat_b, &text_b, flags);
             let gl_m = gl_fnmatch(pat_c.as_ptr().cast(), text_c.as_ptr().cast(), 0);
-            assert!(!fl_m && gl_m != 0, "fnmatch {stars}*{tlen}: fl={fl_m} glibc={gl_m}");
+            assert!(
+                !fl_m && gl_m != 0,
+                "fnmatch {stars}*{tlen}: fl={fl_m} glibc={gl_m}"
+            );
 
             let iters = 30usize;
             let t0 = Instant::now();
@@ -55,7 +58,10 @@ fn main() {
                 ));
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("FNM stars={stars} tlen={tlen} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.5}x", fl / gl);
+            println!(
+                "FNM stars={stars} tlen={tlen} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.5}x",
+                fl / gl
+            );
         }
     }
 }

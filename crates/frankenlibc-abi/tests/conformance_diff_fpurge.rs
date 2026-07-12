@@ -47,14 +47,21 @@ fn run_purge_glibc(buf: &mut [u8]) -> (usize, u64) {
     unsafe { g::__fpurge(s) };
     let pending = unsafe { g::__fpending(s) };
     unsafe { g::fclose(s) };
-    let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(u64::MAX);
+    let len = std::fs::metadata(&path)
+        .map(|m| m.len())
+        .unwrap_or(u64::MAX);
     let _ = std::fs::remove_file(&path);
     (pending, len)
 }
 
 fn run_purge_fl(buf: &mut [u8]) -> (usize, u64) {
     let (path, cpath) = temp_path("f");
-    let s = unsafe { fl::fopen(cpath.as_ptr().cast::<c_char>(), c"w".as_ptr().cast::<c_char>()) };
+    let s = unsafe {
+        fl::fopen(
+            cpath.as_ptr().cast::<c_char>(),
+            c"w".as_ptr().cast::<c_char>(),
+        )
+    };
     assert!(!s.is_null());
     unsafe { fl::setvbuf(s, buf.as_mut_ptr() as *mut c_char, libc::_IOFBF, buf.len()) };
     let data = b"buffered-output-bytes";
@@ -62,7 +69,9 @@ fn run_purge_fl(buf: &mut [u8]) -> (usize, u64) {
     unsafe { fle::__fpurge(s) };
     let pending = unsafe { fle::__fpending(s) };
     unsafe { fl::fclose(s) };
-    let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(u64::MAX);
+    let len = std::fs::metadata(&path)
+        .map(|m| m.len())
+        .unwrap_or(u64::MAX);
     let _ = std::fs::remove_file(&path);
     (pending, len)
 }
@@ -75,7 +84,13 @@ fn fpurge_discards_buffered_output_like_glibc() {
     let (f_pending, f_len) = run_purge_fl(&mut fbuf);
 
     assert_eq!(g_pending, 0, "glibc: __fpending after __fpurge must be 0");
-    assert_eq!(f_pending, g_pending, "fl __fpending after purge {f_pending} != glibc {g_pending}");
+    assert_eq!(
+        f_pending, g_pending,
+        "fl __fpending after purge {f_pending} != glibc {g_pending}"
+    );
     assert_eq!(g_len, 0, "glibc: purged bytes must not reach the file");
-    assert_eq!(f_len, g_len, "fl file length after purge+close {f_len} != glibc {g_len}");
+    assert_eq!(
+        f_len, g_len,
+        "fl file length after purge+close {f_len} != glibc {g_len}"
+    );
 }

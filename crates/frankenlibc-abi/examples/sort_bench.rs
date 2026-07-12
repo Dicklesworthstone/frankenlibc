@@ -118,7 +118,9 @@ fn main() {
 
         let n = 20_000usize;
         let gens: [(&str, fn(usize, usize) -> i32); 6] = [
-            ("random", |i, _| (i.wrapping_mul(2_654_435_761) >> 13 & 0x3FFFF) as i32),
+            ("random", |i, _| {
+                (i.wrapping_mul(2_654_435_761) >> 13 & 0x3FFFF) as i32
+            }),
             ("sorted", |i, _| i as i32),
             ("reverse", |i, n| (n - i) as i32),
             ("dup10", |i, _| (i % 10) as i32),
@@ -131,8 +133,7 @@ fn main() {
             // Correctness: fl and glibc must produce identical sorted output.
             let mut vf = base.clone();
             {
-                let bytes =
-                    std::slice::from_raw_parts_mut(vf.as_mut_ptr().cast::<u8>(), n * 4);
+                let bytes = std::slice::from_raw_parts_mut(vf.as_mut_ptr().cast::<u8>(), n * 4);
                 frankenlibc_core::stdlib::sort::qsort(bytes, 4, cmp_rs);
             }
             let mut vg = base.clone();
@@ -144,8 +145,7 @@ fn main() {
             let t0 = Instant::now();
             for _ in 0..iters {
                 let mut v = base.clone();
-                let bytes =
-                    std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<u8>(), n * 4);
+                let bytes = std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<u8>(), n * 4);
                 frankenlibc_core::stdlib::sort::qsort(bytes, 4, cmp_rs);
                 black_box(v.as_ptr());
             }
@@ -157,7 +157,10 @@ fn main() {
                 black_box(v.as_ptr());
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("SORT {name} n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+            println!(
+                "SORT {name} n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x",
+                fl / gl
+            );
         }
 
         // 8-byte i64 random sort — the most common real workload (longs/pointers/keys).
@@ -189,7 +192,10 @@ fn main() {
                 black_box(v.as_ptr());
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("SORT i64rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+            println!(
+                "SORT i64rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x",
+                fl / gl
+            );
         }
 
         // 8-byte f64 random sort (positive + negative doubles) — ubiquitous numerical
@@ -206,7 +212,10 @@ fn main() {
             }
             let mut vg = base.clone();
             gl_qsort(vg.as_mut_ptr().cast(), n, 8, cmp_f64);
-            assert!(vf.iter().zip(&vg).all(|(a, b)| a == b), "f64: fl qsort != glibc qsort");
+            assert!(
+                vf.iter().zip(&vg).all(|(a, b)| a == b),
+                "f64: fl qsort != glibc qsort"
+            );
             assert!(vf.windows(2).all(|w| w[0] <= w[1]), "f64: fl not sorted");
             let iters = 1000usize;
             let t0 = Instant::now();
@@ -224,7 +233,10 @@ fn main() {
                 black_box(v.as_ptr());
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("SORT f64rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+            println!(
+                "SORT f64rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x",
+                fl / gl
+            );
         }
 
         // 2-byte u16 random sort — the narrow radix lane (shorts / audio samples / small
@@ -257,7 +269,10 @@ fn main() {
                 black_box(v.as_ptr());
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("SORT u16rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+            println!(
+                "SORT u16rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x",
+                fl / gl
+            );
         }
 
         // 4-byte u32 random sort — the common UNSIGNED int case (IDs, hashes, sizes,
@@ -290,7 +305,10 @@ fn main() {
                 black_box(v.as_ptr());
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("SORT u32rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+            println!(
+                "SORT u32rand n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x",
+                fl / gl
+            );
         }
 
         // String sort: 16-byte random keys, lexicographic (memcmp) comparator.
@@ -318,7 +336,10 @@ fn main() {
             black_box(v.as_ptr());
         }
         let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-        println!("SORT str16 n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x", fl / gl);
+        println!(
+            "SORT str16 n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.2}x",
+            fl / gl
+        );
 
         // Large-array integer sort: fl radix is O(n), glibc merge is O(n·log n) — the gap
         // GROWS with n (the log factor). n=1M random i32. Clone overhead is << the sort at
@@ -351,7 +372,10 @@ fn main() {
                 black_box(v.as_ptr());
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("SORT i32_large n={big} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x", fl / gl);
+            println!(
+                "SORT i32_large n={big} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x",
+                fl / gl
+            );
         }
 
         // 8-byte u64 at 1M — pointers / hashes / IDs / timestamps at data-processing scale.
@@ -384,7 +408,10 @@ fn main() {
                 black_box(v.as_ptr());
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("SORT u64_1M n={big} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x", fl / gl);
+            println!(
+                "SORT u64_1M n={big} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x",
+                fl / gl
+            );
         }
     }
 }

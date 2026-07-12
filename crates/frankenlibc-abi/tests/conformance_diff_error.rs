@@ -10,7 +10,7 @@
 //! conversions (%s / %d), errnum == 0 (no strerror suffix), and several errno
 //! values (EINVAL / ENOENT / EACCES). No mocks.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 use std::io::Read;
 use std::os::unix::io::FromRawFd;
 use std::sync::Mutex;
@@ -64,8 +64,19 @@ fn error_matches_glibc() {
     both!("ENOENT suffix", libc::ENOENT, "could not open");
     both!("EACCES suffix", libc::EACCES, "denied");
     both!("%s arg, no errno", 0, "cannot read %s", foo.as_ptr());
-    both!("%s arg + errno", libc::ENOENT, "cannot read %s", foo.as_ptr());
+    both!(
+        "%s arg + errno",
+        libc::ENOENT,
+        "cannot read %s",
+        foo.as_ptr()
+    );
     both!("%d arg", 0, "exit code %d", 42 as c_int);
-    both!("%s and %d", libc::EINVAL, "%s at line %d", foo.as_ptr(), 7 as c_int);
+    both!(
+        "%s and %d",
+        libc::EINVAL,
+        "%s at line %d",
+        foo.as_ptr(),
+        7 as c_int
+    );
     both!("empty fmt + errno", libc::EINVAL, "");
 }

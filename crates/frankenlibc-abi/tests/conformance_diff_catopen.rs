@@ -12,7 +12,7 @@
 //! returns ENOENT/EISDIR, this fails in the batch run and surfaces the bug; if
 //! they agree, it confirms the fix.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 
 unsafe extern "C" {
     fn catopen(name: *const c_char, oflag: c_int) -> *mut c_void; // glibc nl_catd
@@ -60,7 +60,10 @@ fn catopen_error_paths_match_glibc() {
         let (gf, ge) = glibc_open(name);
         let (ff, fe) = fl_open(name);
         assert!(gf, "glibc catopen({name:?}) should fail (error-path test)");
-        assert_eq!(ff, gf, "catopen({name:?}) failure-outcome: fl={ff} glibc={gf}");
+        assert_eq!(
+            ff, gf,
+            "catopen({name:?}) failure-outcome: fl={ff} glibc={gf}"
+        );
         assert_eq!(fe, ge, "catopen({name:?}) errno: fl={fe} glibc={ge}");
     }
 }

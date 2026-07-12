@@ -12,7 +12,7 @@
 //! Strings copied before the static buffer is overwritten. No mocks.
 
 use std::collections::HashMap;
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 mod g {
     unsafe extern "C" {
@@ -34,7 +34,11 @@ struct Pw {
 }
 
 unsafe fn s(p: *const c_char) -> String {
-    if p.is_null() { String::new() } else { unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned() }
+    if p.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    }
 }
 
 unsafe fn rec(pw: &libc::passwd) -> (String, Pw) {
@@ -57,7 +61,9 @@ fn enumerate_fl() -> Vec<(String, Pw)> {
         fl::setpwent();
         loop {
             let p = fl::getpwent();
-            if p.is_null() { break; }
+            if p.is_null() {
+                break;
+            }
             out.push(rec(&*p));
         }
         fl::endpwent();
@@ -71,7 +77,9 @@ fn enumerate_glibc() -> HashMap<String, Pw> {
         g::setpwent();
         loop {
             let p = g::getpwent();
-            if p.is_null() { break; }
+            if p.is_null() {
+                break;
+            }
             let (n, v) = rec(&*p);
             map.entry(n).or_insert(v);
         }
@@ -85,9 +93,15 @@ fn getpwent_entries_match_glibc() {
     let fl_entries = enumerate_fl();
     let glibc = enumerate_glibc();
 
-    assert!(!fl_entries.is_empty(), "fl getpwent returned no entries (expected at least root)");
+    assert!(
+        !fl_entries.is_empty(),
+        "fl getpwent returned no entries (expected at least root)"
+    );
     // root must be present and identical in both.
-    assert!(fl_entries.iter().any(|(n, _)| n == "root"), "fl enumeration missing root");
+    assert!(
+        fl_entries.iter().any(|(n, _)| n == "root"),
+        "fl enumeration missing root"
+    );
 
     for (name, fpw) in &fl_entries {
         match glibc.get(name) {

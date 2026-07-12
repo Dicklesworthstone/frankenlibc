@@ -60,10 +60,7 @@ fn imaxdiv_matches_glibc() {
         if n == i64::MIN && d == -1 {
             continue;
         }
-        let CImaxdiv {
-            quot: fq,
-            rem: fr,
-        } = fl::imaxdiv(n, d);
+        let CImaxdiv { quot: fq, rem: fr } = fl::imaxdiv(n, d);
         let h = unsafe { imaxdiv(n, d) };
         if fq != h.quot || fr != h.rem {
             div.push(format!(

@@ -11,7 +11,7 @@
 //! overwritten. No mocks.
 
 use std::collections::HashMap;
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 mod g {
     unsafe extern "C" {
@@ -30,12 +30,18 @@ struct Gr {
 }
 
 unsafe fn s(p: *const c_char) -> String {
-    if p.is_null() { String::new() } else { unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned() }
+    if p.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    }
 }
 
 unsafe fn members(mut pp: *mut *mut c_char) -> Vec<String> {
     let mut v = Vec::new();
-    if pp.is_null() { return v; }
+    if pp.is_null() {
+        return v;
+    }
     unsafe {
         while !(*pp).is_null() {
             v.push(s(*pp));
@@ -62,7 +68,9 @@ fn enumerate_fl() -> Vec<(String, Gr)> {
         fl::setgrent();
         loop {
             let p = fl::getgrent();
-            if p.is_null() { break; }
+            if p.is_null() {
+                break;
+            }
             out.push(rec(&*p));
         }
         fl::endgrent();
@@ -76,7 +84,9 @@ fn enumerate_glibc() -> HashMap<String, Gr> {
         g::setgrent();
         loop {
             let p = g::getgrent();
-            if p.is_null() { break; }
+            if p.is_null() {
+                break;
+            }
             let (n, v) = rec(&*p);
             map.entry(n).or_insert(v);
         }
@@ -90,8 +100,14 @@ fn getgrent_entries_match_glibc() {
     let fl_entries = enumerate_fl();
     let glibc = enumerate_glibc();
 
-    assert!(!fl_entries.is_empty(), "fl getgrent returned no entries (expected at least root)");
-    assert!(fl_entries.iter().any(|(n, _)| n == "root"), "fl enumeration missing root group");
+    assert!(
+        !fl_entries.is_empty(),
+        "fl getgrent returned no entries (expected at least root)"
+    );
+    assert!(
+        fl_entries.iter().any(|(n, _)| n == "root"),
+        "fl enumeration missing root group"
+    );
 
     for (name, fgr) in &fl_entries {
         match glibc.get(name) {

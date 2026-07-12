@@ -56,7 +56,9 @@ unsafe extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
 
 fn p50(s: &mut [f64]) -> f64 {
     s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    if s.is_empty() { return 0.0; }
+    if s.is_empty() {
+        return 0.0;
+    }
     let r = 0.5 * (s.len() - 1) as f64;
     let (lo, hi) = (r.floor() as usize, r.ceil() as usize);
     s[lo] * (1.0 - (r - lo as f64)) + s[hi] * (r - lo as f64)
@@ -70,32 +72,92 @@ fn bench(c: &mut Criterion) {
 
     // parity check
     for k in &keys {
-        let a = unsafe { bsearch(k as *const i32 as *const c_void, arr.as_ptr().cast(), arr.len(), 4, cmp_i32) };
-        let b = unsafe { hostb(k as *const i32 as *const c_void, arr.as_ptr().cast(), arr.len(), 4, cmp_i32) };
-        assert!(!a.is_null() && !b.is_null(), "bsearch parity: both must find {k}");
+        let a = unsafe {
+            bsearch(
+                k as *const i32 as *const c_void,
+                arr.as_ptr().cast(),
+                arr.len(),
+                4,
+                cmp_i32,
+            )
+        };
+        let b = unsafe {
+            hostb(
+                k as *const i32 as *const c_void,
+                arr.as_ptr().cast(),
+                arr.len(),
+                4,
+                cmp_i32,
+            )
+        };
+        assert!(
+            !a.is_null() && !b.is_null(),
+            "bsearch parity: both must find {k}"
+        );
     }
 
     let run = |name: &str, f: BsearchFn| {
         let one = || {
             let mut acc = 0usize;
             for k in &keys {
-                let p = unsafe { f(k as *const i32 as *const c_void, arr.as_ptr().cast(), arr.len(), 4, cmp_i32) };
+                let p = unsafe {
+                    f(
+                        k as *const i32 as *const c_void,
+                        arr.as_ptr().cast(),
+                        arr.len(),
+                        4,
+                        cmp_i32,
+                    )
+                };
                 acc = acc.wrapping_add(p as usize);
             }
             acc
         };
-        for _ in 0..50 { black_box(one()); }
+        for _ in 0..50 {
+            black_box(one());
+        }
         let mut s = Vec::new();
-        for _ in 0..200 { let t = Instant::now(); black_box(one()); s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / keys.len() as f64); }
-        println!("BSEARCH_BENCH impl={name} p50_ns_per_lookup={:.4}", p50(&mut s));
+        for _ in 0..200 {
+            let t = Instant::now();
+            black_box(one());
+            s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / keys.len() as f64);
+        }
+        println!(
+            "BSEARCH_BENCH impl={name} p50_ns_per_lookup={:.4}",
+            p50(&mut s)
+        );
     };
     run("fl_deployed", bsearch);
     run("glibc", hostb);
 
     let mut g = c.benchmark_group("bsearch");
     g.sample_size(30);
-    g.bench_function("fl_deployed", |b| b.iter(|| black_box(unsafe { bsearch(black_box(&keys[100]) as *const i32 as *const c_void, arr.as_ptr().cast(), arr.len(), 4, cmp_i32) })));
-    g.bench_function("glibc", |b| b.iter(|| black_box(unsafe { hostb(black_box(&keys[100]) as *const i32 as *const c_void, arr.as_ptr().cast(), arr.len(), 4, cmp_i32) })));
+    g.bench_function("fl_deployed", |b| {
+        b.iter(|| {
+            black_box(unsafe {
+                bsearch(
+                    black_box(&keys[100]) as *const i32 as *const c_void,
+                    arr.as_ptr().cast(),
+                    arr.len(),
+                    4,
+                    cmp_i32,
+                )
+            })
+        })
+    });
+    g.bench_function("glibc", |b| {
+        b.iter(|| {
+            black_box(unsafe {
+                hostb(
+                    black_box(&keys[100]) as *const i32 as *const c_void,
+                    arr.as_ptr().cast(),
+                    arr.len(),
+                    4,
+                    cmp_i32,
+                )
+            })
+        })
+    });
     g.finish();
 }
 

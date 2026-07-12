@@ -39,8 +39,16 @@ fn check(s: &[u32], set: &[u32]) {
 
     let fl_pb = unsafe { fl_wcspbrk(sp, setp) };
     let gl_pb = unsafe { wcspbrk(sp, setp) };
-    let fo = if fl_pb.is_null() { None } else { Some(fl_pb as usize - sp as usize) };
-    let go = if gl_pb.is_null() { None } else { Some(gl_pb as usize - sp as usize) };
+    let fo = if fl_pb.is_null() {
+        None
+    } else {
+        Some(fl_pb as usize - sp as usize)
+    };
+    let go = if gl_pb.is_null() {
+        None
+    } else {
+        Some(gl_pb as usize - sp as usize)
+    };
     assert_eq!(fo, go, "wcspbrk s={s:?} set={set:?}");
 }
 
@@ -56,9 +64,9 @@ fn wcsspn_family_matches_glibc() {
         &[a],
         &[a, b, c],
         &[a, b, c, z, b' ' as u32, b'\t' as u32],
-        &[255, 256, 257],          // bitset/fallback boundary
-        &[a, 256, 0x1_0000],       // mixed ASCII + non-ASCII
-        &[0x10_FFFF, 256, 257],    // all non-ASCII
+        &[255, 256, 257],       // bitset/fallback boundary
+        &[a, 256, 0x1_0000],    // mixed ASCII + non-ASCII
+        &[0x10_FFFF, 256, 257], // all non-ASCII
     ];
     let cases_strs: &[&[u32]] = &[
         &[],
@@ -77,7 +85,10 @@ fn wcsspn_family_matches_glibc() {
     }
 
     // A longer deterministic sweep mixing ASCII + occasional non-ASCII.
-    let set: Vec<u32> = (b'a'..=b'f').map(|x| x as u32).chain([256u32, 0x1_0000]).collect();
+    let set: Vec<u32> = (b'a'..=b'f')
+        .map(|x| x as u32)
+        .chain([256u32, 0x1_0000])
+        .collect();
     for seed in 0u32..200 {
         let len = (seed % 40) as usize;
         let s: Vec<u32> = (0..len)
@@ -87,8 +98,8 @@ fn wcsspn_family_matches_glibc() {
                     0..=5 => (b'a' + (r as u8)) as u32, // mostly in-set ASCII
                     6 => 256,
                     7 => 0x1_0000,
-                    8 => b'x' as u32,  // not in set
-                    _ => 257,          // non-ASCII not in set
+                    8 => b'x' as u32, // not in set
+                    _ => 257,         // non-ASCII not in set
                 }
             })
             .collect();

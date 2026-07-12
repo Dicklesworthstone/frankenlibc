@@ -252,12 +252,7 @@ fn bench(c: &mut Criterion) {
         bencher.iter(|| {
             let mut buf = [0i8; 64];
             let n = unsafe {
-                fl::strftime(
-                    buf.as_mut_ptr(),
-                    buf.len(),
-                    fmt_hm.as_ptr(),
-                    black_box(&tm),
-                )
+                fl::strftime(buf.as_mut_ptr(), buf.len(), fmt_hm.as_ptr(), black_box(&tm))
             };
             black_box((n, buf[0]));
         });
@@ -265,14 +260,7 @@ fn bench(c: &mut Criterion) {
     group.bench_function("host_glibc", |bencher| {
         bencher.iter(|| {
             let mut buf = [0i8; 64];
-            let n = unsafe {
-                host(
-                    buf.as_mut_ptr(),
-                    buf.len(),
-                    fmt_hm.as_ptr(),
-                    black_box(&tm),
-                )
-            };
+            let n = unsafe { host(buf.as_mut_ptr(), buf.len(), fmt_hm.as_ptr(), black_box(&tm)) };
             black_box((n, buf[0]));
         });
     });

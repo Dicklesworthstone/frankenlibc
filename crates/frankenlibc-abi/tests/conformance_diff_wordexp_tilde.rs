@@ -45,10 +45,8 @@ fn words_of(w: &Wordexp) -> Vec<Vec<u8>> {
 fn wordexp_tilde_matches_glibc() {
     let lib = unsafe { dlopen(c"libc.so.6".as_ptr(), RTLD_NOW) };
     assert!(!lib.is_null(), "dlopen libc.so.6 failed");
-    let g_wordexp: WordexpFn =
-        unsafe { std::mem::transmute(dlsym(lib, c"wordexp".as_ptr())) };
-    let g_wordfree: WordfreeFn =
-        unsafe { std::mem::transmute(dlsym(lib, c"wordfree".as_ptr())) };
+    let g_wordexp: WordexpFn = unsafe { std::mem::transmute(dlsym(lib, c"wordexp".as_ptr())) };
+    let g_wordfree: WordfreeFn = unsafe { std::mem::transmute(dlsym(lib, c"wordfree".as_ptr())) };
 
     let cases = [
         "~root",
@@ -66,19 +64,33 @@ fn wordexp_tilde_matches_glibc() {
     for &w in &cases {
         let cw = CString::new(w).unwrap();
 
-        let mut gw = Wordexp { we_wordc: 0, we_wordv: std::ptr::null_mut(), we_offs: 0 };
+        let mut gw = Wordexp {
+            we_wordc: 0,
+            we_wordv: std::ptr::null_mut(),
+            we_offs: 0,
+        };
         let grc = g_wordexp(cw.as_ptr(), &mut gw, 0);
         let gwords = if grc == 0 { words_of(&gw) } else { Vec::new() };
 
-        let mut fw = Wordexp { we_wordc: 0, we_wordv: std::ptr::null_mut(), we_offs: 0 };
+        let mut fw = Wordexp {
+            we_wordc: 0,
+            we_wordv: std::ptr::null_mut(),
+            we_offs: 0,
+        };
         let frc = unsafe { flu::wordexp(cw.as_ptr(), (&mut fw as *mut Wordexp).cast(), 0) };
         let fwords = if frc == 0 { words_of(&fw) } else { Vec::new() };
 
         if grc != frc || gwords != fwords {
             mismatches.push(format!(
                 "{w:?}: glibc(rc={grc}, {:?}) fl(rc={frc}, {:?})",
-                gwords.iter().map(|b| String::from_utf8_lossy(b).into_owned()).collect::<Vec<_>>(),
-                fwords.iter().map(|b| String::from_utf8_lossy(b).into_owned()).collect::<Vec<_>>(),
+                gwords
+                    .iter()
+                    .map(|b| String::from_utf8_lossy(b).into_owned())
+                    .collect::<Vec<_>>(),
+                fwords
+                    .iter()
+                    .map(|b| String::from_utf8_lossy(b).into_owned())
+                    .collect::<Vec<_>>(),
             ));
         }
 

@@ -65,12 +65,19 @@ fn g_raw(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Raw {
     let r = (g.conv)(cd, &mut ip, &mut il, &mut op, &mut ol);
     (g.close)(cd);
     let w = out.len() - ol;
-    Raw { errored: r == INVALID, in_left: il, out: out[..w].to_vec() }
+    Raw {
+        errored: r == INVALID,
+        in_left: il,
+        out: out[..w].to_vec(),
+    }
 }
 fn f_raw(to: &str, from: &str, input: &[u8]) -> Raw {
     let (ct, cf) = (CString::new(to).unwrap(), CString::new(from).unwrap());
     let cd = unsafe { fl::iconv_open(ct.as_ptr(), cf.as_ptr()) };
-    assert!(cd as usize != INVALID && !cd.is_null(), "fl rejects {from}->{to}");
+    assert!(
+        cd as usize != INVALID && !cd.is_null(),
+        "fl rejects {from}->{to}"
+    );
     let mut inb = input.to_vec();
     let mut out = vec![0u8; 8192];
     let mut ip = inb.as_mut_ptr() as *mut c_char;
@@ -80,7 +87,11 @@ fn f_raw(to: &str, from: &str, input: &[u8]) -> Raw {
     let r = unsafe { fl::iconv(cd, &mut ip, &mut il, &mut op, &mut ol) };
     unsafe { fl::iconv_close(cd) };
     let w = out.len() - ol;
-    Raw { errored: r == INVALID, in_left: il, out: out[..w].to_vec() }
+    Raw {
+        errored: r == INVALID,
+        in_left: il,
+        out: out[..w].to_vec(),
+    }
 }
 fn g_full(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
     let (ct, cf) = (CString::new(to).unwrap(), CString::new(from).unwrap());
@@ -99,7 +110,13 @@ fn g_full(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
         (g.close)(cd);
         return None;
     }
-    let r2 = (g.conv)(cd, std::ptr::null_mut(), std::ptr::null_mut(), &mut op, &mut ol);
+    let r2 = (g.conv)(
+        cd,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        &mut op,
+        &mut ol,
+    );
     (g.close)(cd);
     if r2 == INVALID {
         return None;
@@ -123,7 +140,15 @@ fn f_full(to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
         unsafe { fl::iconv_close(cd) };
         return None;
     }
-    let r2 = unsafe { fl::iconv(cd, std::ptr::null_mut(), std::ptr::null_mut(), &mut op, &mut ol) };
+    let r2 = unsafe {
+        fl::iconv(
+            cd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut op,
+            &mut ol,
+        )
+    };
     unsafe { fl::iconv_close(cd) };
     if r2 == INVALID {
         return None;
@@ -144,7 +169,8 @@ fn ebcdic_dbcs_decode_matches_glibc() {
         // single bytes (SBCS mode)
         for b in 0u16..256 {
             let inp = [b as u8];
-            if g_raw(&g, "UTF-32LE", page, &inp) != f_raw("UTF-32LE", page, &inp) && mism.len() < 20 {
+            if g_raw(&g, "UTF-32LE", page, &inp) != f_raw("UTF-32LE", page, &inp) && mism.len() < 20
+            {
                 mism.push(format!("sbcs {b:02x}"));
             }
         }
@@ -162,20 +188,36 @@ fn ebcdic_dbcs_decode_matches_glibc() {
         // random multi-byte streams
         let mut state: u64 = 0x1B_09_30_42 ^ (page.len() as u64).wrapping_mul(0x9E3779B1);
         let mut next = || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (state >> 33) as usize
         };
-        let alpha: &[u8] = &[0x0e, 0x0f, 0x40, 0xc1, 0xc2, 0x81, 0x41, 0x4b, 0x5c, 0xfe, 0x00, 0x20];
+        let alpha: &[u8] = &[
+            0x0e, 0x0f, 0x40, 0xc1, 0xc2, 0x81, 0x41, 0x4b, 0x5c, 0xfe, 0x00, 0x20,
+        ];
         for _ in 0..8_000 {
             let len = 1 + next() % 10;
             let inp: Vec<u8> = (0..len)
-                .map(|_| if next() & 1 == 0 { alpha[next() % alpha.len()] } else { (next() & 0xFF) as u8 })
+                .map(|_| {
+                    if next() & 1 == 0 {
+                        alpha[next() % alpha.len()]
+                    } else {
+                        (next() & 0xFF) as u8
+                    }
+                })
                 .collect();
-            if g_raw(&g, "UTF-32LE", page, &inp) != f_raw("UTF-32LE", page, &inp) && mism.len() < 60 {
+            if g_raw(&g, "UTF-32LE", page, &inp) != f_raw("UTF-32LE", page, &inp) && mism.len() < 60
+            {
                 mism.push(format!("{inp:02x?}"));
             }
         }
-        assert!(mism.is_empty(), "{page} decode diverged ({}): {}", mism.len(), mism.join(" "));
+        assert!(
+            mism.is_empty(),
+            "{page} decode diverged ({}): {}",
+            mism.len(),
+            mism.join(" ")
+        );
     }
 }
 
@@ -200,13 +242,19 @@ fn ebcdic_dbcs_encode_roundtrip_matches_glibc() {
             for b1 in 0x40u16..=0xFE {
                 let inp = [0x0E, b0 as u8, b1 as u8, 0x0F];
                 if let Some(u) = g_full(&g, "UTF-8", page, &inp) {
-                    if g_full(&g, page, "UTF-8", &u) != f_full(page, "UTF-8", &u) && mism.len() < 40 {
+                    if g_full(&g, page, "UTF-8", &u) != f_full(page, "UTF-8", &u) && mism.len() < 40
+                    {
                         mism.push(format!("re-dbcs {b0:02x}{b1:02x}"));
                     }
                 }
             }
         }
-        assert!(mism.is_empty(), "{page} encode roundtrip diverged ({}): {}", mism.len(), mism.join(" "));
+        assert!(
+            mism.is_empty(),
+            "{page} encode roundtrip diverged ({}): {}",
+            mism.len(),
+            mism.join(" ")
+        );
     }
 }
 
@@ -221,7 +269,11 @@ fn ebcdic_dbcs_aliases_open() {
         ("1388", &[0xc1, 0x0e, 0x41, 0x41, 0x0f][..]),
     ] {
         let canon = format!("IBM-{num}");
-        for alias in [format!("CP{num}"), format!("CSIBM{num}"), format!("IBM{num}")] {
+        for alias in [
+            format!("CP{num}"),
+            format!("CSIBM{num}"),
+            format!("IBM{num}"),
+        ] {
             let fa = f_full("UTF-8", &alias, sample);
             let gc = g_full(&g, "UTF-8", &canon, sample);
             assert_eq!(fa, gc, "alias {alias} decode differs from glibc {canon}");

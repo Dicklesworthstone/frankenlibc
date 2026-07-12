@@ -13,7 +13,7 @@
 use std::ffi::c_char;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 unsafe extern "C" {
     fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64;
@@ -45,7 +45,11 @@ fn bench(c: &mut Criterion) {
     for (name, s) in CASES {
         let mut g = c.benchmark_group(format!("strtod_{name}"));
         g.bench_function("frankenlibc_core", |b| {
-            b.iter(|| black_box(frankenlibc_core::stdlib::conversion::strtod_impl(black_box(s))))
+            b.iter(|| {
+                black_box(frankenlibc_core::stdlib::conversion::strtod_impl(
+                    black_box(s),
+                ))
+            })
         });
         g.bench_function("host_glibc_inprocess", |b| {
             b.iter(|| {

@@ -24,19 +24,42 @@ fn errno_loc() -> *mut c_int {
 
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
-        0.0, -0.0f128, 0.5, -0.5, 1.5, 2.5, -2.5, 3.5, 1.0, -1.0, 2.75, -2.75, 0.4999f128,
-        0.50001f128, 1e30f128, -1e30f128, 1e-30f128, 123456.789f128, -987654.321f128, 2.0, 16.0,
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        0.0,
+        -0.0f128,
+        0.5,
+        -0.5,
+        1.5,
+        2.5,
+        -2.5,
+        3.5,
+        1.0,
+        -1.0,
+        2.75,
+        -2.75,
+        0.4999f128,
+        0.50001f128,
+        1e30f128,
+        -1e30f128,
+        1e-30f128,
+        123456.789f128,
+        -987654.321f128,
+        2.0,
+        16.0,
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
-        f128::from_bits(1),                                     // smallest subnormal
-        f128::from_bits(1u128 << 112),                          // smallest normal
+        f128::from_bits(1),                  // smallest subnormal
+        f128::from_bits(1u128 << 112),       // smallest normal
     ];
     let mut st: u64 = 0x0123_4567_89ab_cdef;
     for _ in 0..50 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         // bias exponent toward a moderate range so rounding/fma are exercised
         let ef = 0x3f00u128 + (hi as u128 % 0x180);
         let mant = (((hi as u128) << 64) | st as u128) & ((1u128 << 112) - 1);
@@ -56,7 +79,11 @@ fn f128_round_sqrt_fma_match_glibc() {
                 let g = unsafe { $g(x) }.to_bits();
                 let f = unsafe { $f(x) }.to_bits();
                 if g != f {
-                    mism.push(format!("{} x={:#034x}: glibc={g:#034x} fl={f:#034x}", $name, x.to_bits()));
+                    mism.push(format!(
+                        "{} x={:#034x}: glibc={g:#034x} fl={f:#034x}",
+                        $name,
+                        x.to_bits()
+                    ));
                 }
             }
         };
@@ -76,7 +103,10 @@ fn f128_round_sqrt_fma_match_glibc() {
         let f = unsafe { ma::sqrtf128(x) }.to_bits();
         let fe = unsafe { *errno_loc() };
         if g != f || ge != fe {
-            mism.push(format!("sqrt x={:#034x}: glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})", x.to_bits()));
+            mism.push(format!(
+                "sqrt x={:#034x}: glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})",
+                x.to_bits()
+            ));
         }
     }
 
@@ -91,9 +121,19 @@ fn f128_round_sqrt_fma_match_glibc() {
         let f = unsafe { ma::fmaf128(x, y, z) }.to_bits();
         let fe = unsafe { *errno_loc() };
         if g != f || ge != fe {
-            mism.push(format!("fma {:#034x},{:#034x},{:#034x}: glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})", x.to_bits(), y.to_bits(), z.to_bits()));
+            mism.push(format!(
+                "fma {:#034x},{:#034x},{:#034x}: glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})",
+                x.to_bits(),
+                y.to_bits(),
+                z.to_bits()
+            ));
         }
     }
 
-    assert!(mism.is_empty(), "f128 round/sqrt/fma diverged ({}):\n{}", mism.len(), mism.iter().take(25).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "f128 round/sqrt/fma diverged ({}):\n{}",
+        mism.len(),
+        mism.iter().take(25).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

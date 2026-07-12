@@ -10,10 +10,15 @@
 //! aren't interoperable. Unsupported prefixes ($y$ etc.) are out of scope here
 //! (bd-c6ykz1). No mocks.
 
-use std::ffi::{c_char, c_int, c_ulong, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_ulong};
 
 unsafe extern "C" {
-    fn crypt_gensalt(prefix: *const c_char, count: c_ulong, rbytes: *const c_char, nrbytes: c_int) -> *mut c_char;
+    fn crypt_gensalt(
+        prefix: *const c_char,
+        count: c_ulong,
+        rbytes: *const c_char,
+        nrbytes: c_int,
+    ) -> *mut c_char;
 }
 
 // Fixed pseudo-random bytes so both impls encode the same input.
@@ -21,15 +26,35 @@ const RBYTES: &[u8] = b"0123456789abcdef0123456789abcdef";
 
 fn host(prefix: &str) -> Option<String> {
     let p = CString::new(prefix).unwrap();
-    let r = unsafe { crypt_gensalt(p.as_ptr(), 0, RBYTES.as_ptr() as *const c_char, RBYTES.len() as c_int) };
-    if r.is_null() { None } else { Some(unsafe { CStr::from_ptr(r) }.to_string_lossy().into_owned()) }
+    let r = unsafe {
+        crypt_gensalt(
+            p.as_ptr(),
+            0,
+            RBYTES.as_ptr() as *const c_char,
+            RBYTES.len() as c_int,
+        )
+    };
+    if r.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(r) }.to_string_lossy().into_owned())
+    }
 }
 fn fl(prefix: &str) -> Option<String> {
     let p = CString::new(prefix).unwrap();
     let r = unsafe {
-        frankenlibc_abi::unistd_abi::crypt_gensalt(p.as_ptr(), 0, RBYTES.as_ptr() as *const c_char, RBYTES.len() as c_int)
+        frankenlibc_abi::unistd_abi::crypt_gensalt(
+            p.as_ptr(),
+            0,
+            RBYTES.as_ptr() as *const c_char,
+            RBYTES.len() as c_int,
+        )
     };
-    if r.is_null() { None } else { Some(unsafe { CStr::from_ptr(r) }.to_string_lossy().into_owned()) }
+    if r.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(r) }.to_string_lossy().into_owned())
+    }
 }
 
 #[test]
@@ -40,7 +65,10 @@ fn crypt_gensalt_supported_prefixes_match_host() {
         assert!(h.is_some(), "host crypt_gensalt({prefix:?}) NULL");
         let ht = h.as_ref().unwrap();
         // Setting must carry the requested scheme prefix.
-        assert!(ht.starts_with(prefix), "host setting {ht:?} lacks prefix {prefix:?}");
+        assert!(
+            ht.starts_with(prefix),
+            "host setting {ht:?} lacks prefix {prefix:?}"
+        );
         assert_eq!(f, h, "crypt_gensalt({prefix:?}): fl={f:?} host={h:?}");
     }
 }
@@ -53,7 +81,10 @@ fn crypt_gensalt_setting_round_trips_through_crypt() {
         let key = CString::new("password").unwrap();
         let s = CString::new(setting.clone()).unwrap();
         let h = unsafe { frankenlibc_abi::unistd_abi::crypt(key.as_ptr(), s.as_ptr()) };
-        assert!(!h.is_null(), "fl::crypt rejected fl-generated $6$ setting {setting:?}");
+        assert!(
+            !h.is_null(),
+            "fl::crypt rejected fl-generated $6$ setting {setting:?}"
+        );
         let hs = unsafe { CStr::from_ptr(h) }.to_string_lossy();
         assert!(hs.starts_with("$6$"), "fl::crypt on {setting:?} -> {hs:?}");
     }

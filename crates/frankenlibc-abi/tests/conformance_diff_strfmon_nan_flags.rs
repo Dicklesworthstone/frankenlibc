@@ -24,8 +24,7 @@ unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     fn setlocale(category: c_int, locale: *const c_char) -> *mut c_char;
 }
-type StrfmonFn =
-    unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> isize;
+type StrfmonFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> isize;
 
 fn sym(h: *mut c_void, name: &CStr) -> *mut c_void {
     let p = unsafe { dlsym(h, name.as_ptr()) };
@@ -39,7 +38,9 @@ fn fl_call(fmt: &CStr, v: f64) -> (isize, String) {
     let s = if n < 0 {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr(buf.as_ptr()) }
+            .to_string_lossy()
+            .into_owned()
     };
     (n, s)
 }
@@ -49,7 +50,9 @@ fn g_call(g: StrfmonFn, fmt: &CStr, v: f64) -> (isize, String) {
     let s = if n < 0 {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr(buf.as_ptr()) }
+            .to_string_lossy()
+            .into_owned()
     };
     (n, s)
 }
@@ -103,5 +106,10 @@ fn strfmon_nan_and_dup_flags_match_glibc() {
             ));
         }
     }
-    assert!(div.is_empty(), "strfmon divergences ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "strfmon divergences ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

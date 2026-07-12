@@ -9,9 +9,9 @@
 //! page boundary falls to the 8-byte aligned SWAR (which cannot cross), so it
 //! never faults past a NUL into an unmapped page.
 
-use std::os::raw::c_char;
 use frankenlibc_abi::string_abi as fa;
 use sha2::{Digest, Sha256};
+use std::os::raw::c_char;
 
 unsafe extern "C" {
     fn strlen(s: *const c_char) -> usize;
@@ -50,8 +50,7 @@ fn strlen_matches_glibc() {
     eprintln!("strlen golden sha256: {hex}");
     assert_eq!(div, 0, "strlen diverged from glibc in {div} cases");
     assert_eq!(
-        hex,
-        "f42d28933b3e72a9bcf899510df30db5761c06f80d5d50ca113bb6535e3ca3e9",
+        hex, "f42d28933b3e72a9bcf899510df30db5761c06f80d5d50ca113bb6535e3ca3e9",
         "strlen golden changed"
     );
 }

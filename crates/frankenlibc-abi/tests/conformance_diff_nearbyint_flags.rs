@@ -31,9 +31,31 @@ unsafe extern "C" {
 }
 
 const XS: &[f64] = &[
-    0.0, -0.0, 0.5, -0.5, 1.5, -1.5, 2.5, -2.5, 3.5, 0.1, -0.1, 0.4, 0.9, -0.9,
-    100.5, -100.5, 101.5, 123456.7, -123456.7, 1.0 / 3.0, 2.0, -3.0,
-    f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
+    0.0,
+    -0.0,
+    0.5,
+    -0.5,
+    1.5,
+    -1.5,
+    2.5,
+    -2.5,
+    3.5,
+    0.1,
+    -0.1,
+    0.4,
+    0.9,
+    -0.9,
+    100.5,
+    -100.5,
+    101.5,
+    123456.7,
+    -123456.7,
+    1.0 / 3.0,
+    2.0,
+    -3.0,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    f64::NAN,
 ];
 
 #[test]
@@ -61,7 +83,10 @@ fn nearbyint_value_and_flag_parity() {
             if !veq || ff != gg {
                 div.push(format!(
                     "nearbyint({x},m{mode:#x}): fl={:016x}/f{:#x} glibc={:016x}/f{:#x}",
-                    fv.to_bits(), ff, gv.to_bits(), gg
+                    fv.to_bits(),
+                    ff,
+                    gv.to_bits(),
+                    gg
                 ));
             }
 
@@ -78,7 +103,10 @@ fn nearbyint_value_and_flag_parity() {
             if !veqf || fff != ggf {
                 div.push(format!(
                     "nearbyintf({xf},m{mode:#x}): fl={:08x}/f{:#x} glibc={:08x}/f{:#x}",
-                    fvf.to_bits(), fff, gvf.to_bits(), ggf
+                    fvf.to_bits(),
+                    fff,
+                    gvf.to_bits(),
+                    ggf
                 ));
             }
         }

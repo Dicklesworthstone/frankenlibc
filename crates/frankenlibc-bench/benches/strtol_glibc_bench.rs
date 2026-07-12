@@ -181,12 +181,19 @@ fn bench(c: &mut Criterion) {
         if !g_env.is_null() {
             *g_env = environ;
         }
-        let ggetenv: GetenvFn = std::mem::transmute(libc::dlsym(h as *mut _, b"getenv\0".as_ptr().cast()));
-        for (name, key) in [("getenv_hit", b"PATH\0".as_slice()), ("getenv_miss", b"NOPE_XYZZY_123\0")] {
+        let ggetenv: GetenvFn =
+            std::mem::transmute(libc::dlsym(h as *mut _, b"getenv\0".as_ptr().cast()));
+        for (name, key) in [
+            ("getenv_hit", b"PATH\0".as_slice()),
+            ("getenv_miss", b"NOPE_XYZZY_123\0"),
+        ] {
             let p = key.as_ptr() as *const c_char;
             let fl = time_it(|| frankenlibc_abi::stdlib_abi::getenv(black_box(p)) as i64);
             let gl = time_it(|| ggetenv(black_box(p)) as i64);
-            println!("{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}", fl / gl);
+            println!(
+                "{name}: fl={fl:.2}ns glibc={gl:.2}ns fl/glibc={:.2}",
+                fl / gl
+            );
         }
     }
 
@@ -200,16 +207,24 @@ fn bench(c: &mut Criterion) {
         );
         type CgFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
         type TimeFn = unsafe extern "C" fn(*mut libc::time_t) -> libc::time_t;
-        let gcg: CgFn = std::mem::transmute(libc::dlsym(h as *mut _, b"clock_gettime\0".as_ptr().cast()));
-        let gtime: TimeFn = std::mem::transmute(libc::dlsym(h as *mut _, b"time\0".as_ptr().cast()));
+        let gcg: CgFn =
+            std::mem::transmute(libc::dlsym(h as *mut _, b"clock_gettime\0".as_ptr().cast()));
+        let gtime: TimeFn =
+            std::mem::transmute(libc::dlsym(h as *mut _, b"time\0".as_ptr().cast()));
         let mut ts = std::mem::zeroed::<libc::timespec>();
         let tsp = &mut ts as *mut libc::timespec;
         let flc = time_it(|| frankenlibc_abi::time_abi::clock_gettime(black_box(1), tsp) as i64);
         let glc = time_it(|| gcg(black_box(1), tsp) as i64);
-        println!("clock_gettime: fl={flc:.2}ns glibc={glc:.2}ns fl/glibc={:.2}", flc / glc);
+        println!(
+            "clock_gettime: fl={flc:.2}ns glibc={glc:.2}ns fl/glibc={:.2}",
+            flc / glc
+        );
         let flt = time_it(|| frankenlibc_abi::time_abi::time(std::ptr::null_mut()) as i64);
         let glt = time_it(|| gtime(std::ptr::null_mut()) as i64);
-        println!("time: fl={flt:.2}ns glibc={glt:.2}ns fl/glibc={:.2}", flt / glt);
+        println!(
+            "time: fl={flt:.2}ns glibc={glt:.2}ns fl/glibc={:.2}",
+            flt / glt
+        );
     }
 
     // pthread_self — extremely hot (every mutex op); must not syscall. The bench
@@ -225,7 +240,10 @@ fn bench(c: &mut Criterion) {
             std::mem::transmute(libc::dlsym(h as *mut _, b"pthread_self\0".as_ptr().cast()));
         let flp = time_it(|| frankenlibc_abi::pthread_abi::pthread_self() as i64);
         let glp = time_it(|| gpts() as i64);
-        println!("pthread_self: fl={flp:.2}ns glibc={glp:.2}ns fl/glibc={:.2}", flp / glp);
+        println!(
+            "pthread_self: fl={flp:.2}ns glibc={glp:.2}ns fl/glibc={:.2}",
+            flp / glp
+        );
     }
 
     let _ = report;

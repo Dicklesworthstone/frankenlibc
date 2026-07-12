@@ -9,7 +9,7 @@
 //! YYYY\n" string is compared too. Each impl's gmtime returns its own static tm,
 //! copied immediately. No mocks.
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 unsafe extern "C" {
     fn gmtime(t: *const i64) -> *mut libc::tm;
@@ -18,18 +18,21 @@ unsafe extern "C" {
 
 type TmFields = (i32, i32, i32, i32, i32, i32, i32, i32, i32);
 fn fields(t: &libc::tm) -> TmFields {
-    (t.tm_sec, t.tm_min, t.tm_hour, t.tm_mday, t.tm_mon, t.tm_year, t.tm_wday, t.tm_yday, t.tm_isdst)
+    (
+        t.tm_sec, t.tm_min, t.tm_hour, t.tm_mday, t.tm_mon, t.tm_year, t.tm_wday, t.tm_yday,
+        t.tm_isdst,
+    )
 }
 
 #[test]
 fn gmtime_matches_glibc() {
     let epochs: [i64; 7] = [
-        0,            // 1970-01-01 00:00:00
-        1_000_000_000, // 2001-09-09 01:46:40
-        1_700_000_000, // 2023-11-14
-        -86_400,      // 1969-12-31 (negative)
-        2_147_483_647, // 2038-01-19 (32-bit wrap)
-        951_782_400,  // 2000-02-29 (leap day)
+        0,               // 1970-01-01 00:00:00
+        1_000_000_000,   // 2001-09-09 01:46:40
+        1_700_000_000,   // 2023-11-14
+        -86_400,         // 1969-12-31 (negative)
+        2_147_483_647,   // 2038-01-19 (32-bit wrap)
+        951_782_400,     // 2000-02-29 (leap day)
         253_402_300_799, // 9999-12-31 23:59:59
     ];
     for t in epochs {
@@ -55,12 +58,16 @@ fn ctime_r_matches_glibc() {
         let g = unsafe {
             let p = ctime_r(&t, gb.as_mut_ptr() as *mut c_char);
             assert!(!p.is_null());
-            CStr::from_ptr(gb.as_ptr() as *const c_char).to_string_lossy().into_owned()
+            CStr::from_ptr(gb.as_ptr() as *const c_char)
+                .to_string_lossy()
+                .into_owned()
         };
         let f = unsafe {
             let p = frankenlibc_abi::time_abi::ctime_r(&t, fb.as_mut_ptr() as *mut c_char);
             assert!(!p.is_null());
-            CStr::from_ptr(fb.as_ptr() as *const c_char).to_string_lossy().into_owned()
+            CStr::from_ptr(fb.as_ptr() as *const c_char)
+                .to_string_lossy()
+                .into_owned()
         };
         assert_eq!(f, g, "ctime_r({t}): fl={f:?} glibc={g:?}");
     }

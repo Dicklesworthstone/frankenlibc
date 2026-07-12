@@ -62,30 +62,102 @@ macro_rules! diff_attr {
 fn pthread_attr_setters_invalid_errno_match_glibc() {
     // pthread_attr_*
     for v in [99, -1, 7, c_int::MAX] {
-        diff_attr!("attr_setinheritsched", g::pthread_attr_init, g::pthread_attr_destroy, g::pthread_attr_setinheritsched,
-            fp::pthread_attr_init, fp::pthread_attr_destroy, fp::pthread_attr_setinheritsched, v);
-        diff_attr!("attr_setschedpolicy", g::pthread_attr_init, g::pthread_attr_destroy, g::pthread_attr_setschedpolicy,
-            fp::pthread_attr_init, fp::pthread_attr_destroy, fp::pthread_attr_setschedpolicy, v);
+        diff_attr!(
+            "attr_setinheritsched",
+            g::pthread_attr_init,
+            g::pthread_attr_destroy,
+            g::pthread_attr_setinheritsched,
+            fp::pthread_attr_init,
+            fp::pthread_attr_destroy,
+            fp::pthread_attr_setinheritsched,
+            v
+        );
+        diff_attr!(
+            "attr_setschedpolicy",
+            g::pthread_attr_init,
+            g::pthread_attr_destroy,
+            g::pthread_attr_setschedpolicy,
+            fp::pthread_attr_init,
+            fp::pthread_attr_destroy,
+            fp::pthread_attr_setschedpolicy,
+            v
+        );
         // setscope: PROCESS(1)=ENOTSUP, others=EINVAL, SYSTEM(0)=ok
-        diff_attr!("attr_setscope", g::pthread_attr_init, g::pthread_attr_destroy, g::pthread_attr_setscope,
-            fp::pthread_attr_init, fp::pthread_attr_destroy, fp::pthread_attr_setscope, v);
+        diff_attr!(
+            "attr_setscope",
+            g::pthread_attr_init,
+            g::pthread_attr_destroy,
+            g::pthread_attr_setscope,
+            fp::pthread_attr_init,
+            fp::pthread_attr_destroy,
+            fp::pthread_attr_setscope,
+            v
+        );
     }
     // mutexattr
     for v in [99, -1, 7] {
-        diff_attr!("mutexattr_settype", g::pthread_mutexattr_init, g::pthread_mutexattr_destroy, g::pthread_mutexattr_settype,
-            fp::pthread_mutexattr_init, fp::pthread_mutexattr_destroy, fp::pthread_mutexattr_settype, v);
-        diff_attr!("mutexattr_setprotocol", g::pthread_mutexattr_init, g::pthread_mutexattr_destroy, g::pthread_mutexattr_setprotocol,
-            fp::pthread_mutexattr_init, fp::pthread_mutexattr_destroy, fp::pthread_mutexattr_setprotocol, v);
-        diff_attr!("mutexattr_setpshared", g::pthread_mutexattr_init, g::pthread_mutexattr_destroy, g::pthread_mutexattr_setpshared,
-            fp::pthread_mutexattr_init, fp::pthread_mutexattr_destroy, fp::pthread_mutexattr_setpshared, v);
-        diff_attr!("mutexattr_setrobust", g::pthread_mutexattr_init, g::pthread_mutexattr_destroy, g::pthread_mutexattr_setrobust,
-            fp::pthread_mutexattr_init, fp::pthread_mutexattr_destroy, fp::pthread_mutexattr_setrobust, v);
+        diff_attr!(
+            "mutexattr_settype",
+            g::pthread_mutexattr_init,
+            g::pthread_mutexattr_destroy,
+            g::pthread_mutexattr_settype,
+            fp::pthread_mutexattr_init,
+            fp::pthread_mutexattr_destroy,
+            fp::pthread_mutexattr_settype,
+            v
+        );
+        diff_attr!(
+            "mutexattr_setprotocol",
+            g::pthread_mutexattr_init,
+            g::pthread_mutexattr_destroy,
+            g::pthread_mutexattr_setprotocol,
+            fp::pthread_mutexattr_init,
+            fp::pthread_mutexattr_destroy,
+            fp::pthread_mutexattr_setprotocol,
+            v
+        );
+        diff_attr!(
+            "mutexattr_setpshared",
+            g::pthread_mutexattr_init,
+            g::pthread_mutexattr_destroy,
+            g::pthread_mutexattr_setpshared,
+            fp::pthread_mutexattr_init,
+            fp::pthread_mutexattr_destroy,
+            fp::pthread_mutexattr_setpshared,
+            v
+        );
+        diff_attr!(
+            "mutexattr_setrobust",
+            g::pthread_mutexattr_init,
+            g::pthread_mutexattr_destroy,
+            g::pthread_mutexattr_setrobust,
+            fp::pthread_mutexattr_init,
+            fp::pthread_mutexattr_destroy,
+            fp::pthread_mutexattr_setrobust,
+            v
+        );
     }
     // condattr / rwlockattr
     for v in [99, -1, 7] {
-        diff_attr!("condattr_setclock", g::pthread_condattr_init, g::pthread_condattr_destroy, g::pthread_condattr_setclock,
-            fp::pthread_condattr_init, fp::pthread_condattr_destroy, fp::pthread_condattr_setclock, v);
-        diff_attr!("rwlockattr_setkind_np", g::pthread_rwlockattr_init, g::pthread_rwlockattr_destroy, g::pthread_rwlockattr_setkind_np,
-            fp::pthread_rwlockattr_init, fp::pthread_rwlockattr_destroy, fge::pthread_rwlockattr_setkind_np, v);
+        diff_attr!(
+            "condattr_setclock",
+            g::pthread_condattr_init,
+            g::pthread_condattr_destroy,
+            g::pthread_condattr_setclock,
+            fp::pthread_condattr_init,
+            fp::pthread_condattr_destroy,
+            fp::pthread_condattr_setclock,
+            v
+        );
+        diff_attr!(
+            "rwlockattr_setkind_np",
+            g::pthread_rwlockattr_init,
+            g::pthread_rwlockattr_destroy,
+            g::pthread_rwlockattr_setkind_np,
+            fp::pthread_rwlockattr_init,
+            fp::pthread_rwlockattr_destroy,
+            fge::pthread_rwlockattr_setkind_np,
+            v
+        );
     }
 }

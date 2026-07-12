@@ -26,11 +26,11 @@ fn values() -> Vec<f128> {
         0.625,
         1e-20f128,
         1e-40f128,
-        f128::from_bits(1),                                     // smallest subnormal
+        f128::from_bits(1), // smallest subnormal
         1.5f128,
         -2.0f128,
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     let mut q: i64 = -1024;
@@ -46,9 +46,13 @@ fn values() -> Vec<f128> {
     }
     let mut st: u64 = 0xc2b2_ae3d_27d4_eb4f;
     for _ in 0..4000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3f00 + (hi % 0x0100)) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -67,7 +71,10 @@ fn f128_acos_matches_glibc() {
         let f = unsafe { ma::acosf128(x) }.to_bits();
         n += 1;
         if g != f {
-            mism.push(format!("acos({:#034x}): glibc={g:#034x} fl={f:#034x}", x.to_bits()));
+            mism.push(format!(
+                "acos({:#034x}): glibc={g:#034x} fl={f:#034x}",
+                x.to_bits()
+            ));
         }
     }
     assert!(

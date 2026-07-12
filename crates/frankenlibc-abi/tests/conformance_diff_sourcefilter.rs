@@ -19,8 +19,15 @@ unsafe extern "C" {
     fn socket(domain: c_int, ty: c_int, proto: c_int) -> c_int;
     fn close(fd: c_int) -> c_int;
 }
-type SetFn =
-    unsafe extern "C" fn(c_int, c_uint, *const c_void, c_uint, c_uint, c_uint, *const c_void) -> c_int;
+type SetFn = unsafe extern "C" fn(
+    c_int,
+    c_uint,
+    *const c_void,
+    c_uint,
+    c_uint,
+    c_uint,
+    *const c_void,
+) -> c_int;
 
 fn glibc_set() -> SetFn {
     unsafe {
@@ -56,7 +63,15 @@ fn host_errno() -> c_int {
 fn call_glibc(set: SetFn, fd: c_int, group: &[u8], srcs: &[u8], numsrc: c_uint) -> (c_int, c_int) {
     unsafe {
         *libc::__errno_location() = 0;
-        let rc = set(fd, 0, group.as_ptr().cast(), group.len() as c_uint, MCAST_INCLUDE, numsrc, srcs.as_ptr().cast());
+        let rc = set(
+            fd,
+            0,
+            group.as_ptr().cast(),
+            group.len() as c_uint,
+            MCAST_INCLUDE,
+            numsrc,
+            srcs.as_ptr().cast(),
+        );
         (rc, if rc < 0 { host_errno() } else { 0 })
     }
 }
@@ -65,9 +80,22 @@ fn call_fl(fd: c_int, group: &[u8], srcs: &[u8], numsrc: c_uint) -> (c_int, c_in
     unsafe {
         errno_abi::set_abi_errno(0);
         let rc = fl::setsourcefilter(
-            fd, 0, group.as_ptr().cast(), group.len() as c_uint, MCAST_INCLUDE, numsrc, srcs.as_ptr().cast(),
+            fd,
+            0,
+            group.as_ptr().cast(),
+            group.len() as c_uint,
+            MCAST_INCLUDE,
+            numsrc,
+            srcs.as_ptr().cast(),
         );
-        (rc, if rc < 0 { *errno_abi::__errno_location() } else { 0 })
+        (
+            rc,
+            if rc < 0 {
+                *errno_abi::__errno_location()
+            } else {
+                0
+            },
+        )
     }
 }
 
@@ -112,7 +140,10 @@ fn inet_level_parity() {
     let (g, f) = run_pair(libc::AF_INET, &group, &src);
     // Same protocol level → identical (rc, errno) on fl and glibc. The old
     // SOL_SOCKET path returned ENOPROTOOPT (92) where glibc returns EINVAL (22).
-    assert_eq!(g, f, "INET setsourcefilter (rc,errno): glibc={g:?} fl={f:?}");
+    assert_eq!(
+        g, f,
+        "INET setsourcefilter (rc,errno): glibc={g:?} fl={f:?}"
+    );
 }
 
 #[test]
@@ -125,5 +156,8 @@ fn inet6_level_parity() {
     let mut src = [0u8; SS_SIZE];
     src[..28].copy_from_slice(&sockaddr_in6([0u8; 16]));
     let (g, f) = run_pair(libc::AF_INET6, &group, &src);
-    assert_eq!(g, f, "INET6 setsourcefilter (rc,errno): glibc={g:?} fl={f:?}");
+    assert_eq!(
+        g, f,
+        "INET6 setsourcefilter (rc,errno): glibc={g:?} fl={f:?}"
+    );
 }

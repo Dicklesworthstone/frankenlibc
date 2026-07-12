@@ -45,18 +45,18 @@ const COPYSIGN_CASES: &[(f64, f64)] = &[
 ];
 
 const FDIM_CASES: &[(f64, f64)] = &[
-    (I, I),     // inf>inf false -> +0
-    (I, -I),    // -> +inf
-    (-I, I),    // -> +0
-    (-I, -I),   // -> +0
-    (N, 3.0),   // NaN
-    (3.0, N),   // NaN
+    (I, I),   // inf>inf false -> +0
+    (I, -I),  // -> +inf
+    (-I, I),  // -> +0
+    (-I, -I), // -> +0
+    (N, 3.0), // NaN
+    (3.0, N), // NaN
     (N, N),
     (5.0, 3.0), // 2
     (3.0, 5.0), // +0
     (0.0, -0.0),
-    (I, 3.0),   // +inf
-    (3.0, -I),  // +inf
+    (I, 3.0),  // +inf
+    (3.0, -I), // +inf
 ];
 
 #[test]
@@ -68,7 +68,10 @@ fn copysign_special_match_glibc() {
         let (xf, yf) = (x as f32, y as f32);
         let gf = unsafe { copysignf(xf, yf) };
         let ff = unsafe { frankenlibc_abi::math_abi::copysignf(xf, yf) };
-        assert!(same32(ff, gf), "copysignf({xf:?},{yf:?}): fl={ff:?} glibc={gf:?}");
+        assert!(
+            same32(ff, gf),
+            "copysignf({xf:?},{yf:?}): fl={ff:?} glibc={gf:?}"
+        );
     }
 }
 
@@ -81,6 +84,9 @@ fn fdim_special_match_glibc() {
         let (xf, yf) = (x as f32, y as f32);
         let gf = unsafe { fdimf(xf, yf) };
         let ff = unsafe { frankenlibc_abi::math_abi::fdimf(xf, yf) };
-        assert!(same32(ff, gf), "fdimf({xf:?},{yf:?}): fl={ff:?} glibc={gf:?}");
+        assert!(
+            same32(ff, gf),
+            "fdimf({xf:?},{yf:?}): fl={ff:?} glibc={gf:?}"
+        );
     }
 }

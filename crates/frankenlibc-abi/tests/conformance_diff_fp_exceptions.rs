@@ -12,57 +12,109 @@ use std::ffi::c_int;
 unsafe extern "C" {
     fn feclearexcept(e: c_int) -> c_int;
     fn fetestexcept(e: c_int) -> c_int;
-    fn sqrt(x: f64) -> f64; fn log(x: f64) -> f64; fn log2(x: f64) -> f64; fn log10(x: f64) -> f64;
-    fn exp(x: f64) -> f64; fn pow(x: f64, y: f64) -> f64; fn acos(x: f64) -> f64; fn asin(x: f64) -> f64;
-    fn acosh(x: f64) -> f64; fn atanh(x: f64) -> f64; fn tgamma(x: f64) -> f64; fn fmod(x: f64, y: f64) -> f64;
-    fn logf(x: f32)->f32; fn log2f(x: f32)->f32; fn log10f(x: f32)->f32; fn sqrtf(x: f32)->f32;
-    fn acosf(x: f32)->f32; fn acoshf(x: f32)->f32; fn tgammaf(x: f32)->f32; fn powf(x: f32,y: f32)->f32;
-    fn nextafter(x: f64, y: f64) -> f64; fn nextafterf(x: f32, y: f32) -> f32;
-    fn lgamma(x: f64)->f64; fn lgammaf(x: f32)->f32; fn exp2(x: f64)->f64; fn expm1(x: f64)->f64;
-    fn atanhf(x: f32)->f32; fn log1p(x: f64)->f64; fn log1pf(x: f32)->f32;
-    fn y0(x: f64)->f64; fn y1(x: f64)->f64; fn yn(n: c_int, x: f64)->f64;
-    fn y0f(x: f32)->f32; fn y1f(x: f32)->f32; fn ynf(n: c_int, x: f32)->f32;
-    fn ilogb(x: f64)->c_int; fn ilogbf(x: f32)->c_int; fn logb(x: f64)->f64;
-    fn erfc(x: f64)->f64; fn erfcf(x: f32)->f32;
+    fn sqrt(x: f64) -> f64;
+    fn log(x: f64) -> f64;
+    fn log2(x: f64) -> f64;
+    fn log10(x: f64) -> f64;
+    fn exp(x: f64) -> f64;
+    fn pow(x: f64, y: f64) -> f64;
+    fn acos(x: f64) -> f64;
+    fn asin(x: f64) -> f64;
+    fn acosh(x: f64) -> f64;
+    fn atanh(x: f64) -> f64;
+    fn tgamma(x: f64) -> f64;
+    fn fmod(x: f64, y: f64) -> f64;
+    fn logf(x: f32) -> f32;
+    fn log2f(x: f32) -> f32;
+    fn log10f(x: f32) -> f32;
+    fn sqrtf(x: f32) -> f32;
+    fn acosf(x: f32) -> f32;
+    fn acoshf(x: f32) -> f32;
+    fn tgammaf(x: f32) -> f32;
+    fn powf(x: f32, y: f32) -> f32;
+    fn nextafter(x: f64, y: f64) -> f64;
+    fn nextafterf(x: f32, y: f32) -> f32;
+    fn lgamma(x: f64) -> f64;
+    fn lgammaf(x: f32) -> f32;
+    fn exp2(x: f64) -> f64;
+    fn expm1(x: f64) -> f64;
+    fn atanhf(x: f32) -> f32;
+    fn log1p(x: f64) -> f64;
+    fn log1pf(x: f32) -> f32;
+    fn y0(x: f64) -> f64;
+    fn y1(x: f64) -> f64;
+    fn yn(n: c_int, x: f64) -> f64;
+    fn y0f(x: f32) -> f32;
+    fn y1f(x: f32) -> f32;
+    fn ynf(n: c_int, x: f32) -> f32;
+    fn ilogb(x: f64) -> c_int;
+    fn ilogbf(x: f32) -> c_int;
+    fn logb(x: f64) -> f64;
+    fn erfc(x: f64) -> f64;
+    fn erfcf(x: f32) -> f32;
 }
 const HARD: c_int = 0x1D; // INVALID|DIVBYZERO|OVERFLOW|UNDERFLOW (drop noisy INEXACT)
-fn key(x: f64) -> i64 { let b = x.to_bits() as i64; if b < 0 { i64::MIN - b } else { b } }
+fn key(x: f64) -> i64 {
+    let b = x.to_bits() as i64;
+    if b < 0 { i64::MIN - b } else { b }
+}
 // Value parity: NaN<->NaN, exact at inf/zero boundaries, <=4 ULP for finite
 // transcendental results (the math conformance contract; exception flags stay exact).
 fn beq(a: f64, b: f64) -> bool {
-    if a.is_nan() && b.is_nan() { return true; }
-    if a.is_nan() != b.is_nan() { return false; }
-    if a.is_infinite() || b.is_infinite() || a == 0.0 || b == 0.0 { return a.to_bits() == b.to_bits(); }
+    if a.is_nan() && b.is_nan() {
+        return true;
+    }
+    if a.is_nan() != b.is_nan() {
+        return false;
+    }
+    if a.is_infinite() || b.is_infinite() || a == 0.0 || b == 0.0 {
+        return a.to_bits() == b.to_bits();
+    }
     (key(a).wrapping_sub(key(b))).unsigned_abs() <= 4
 }
 
 #[test]
 fn fp_exception_and_value_parity_vs_glibc() {
     let mut div = Vec::new();
-    macro_rules! chk { ($lbl:literal, $flf:expr, $gf:expr) => {{
-        unsafe { feclearexcept(HARD); }
-        let fv = $flf;
-        let ff = unsafe { fetestexcept(HARD) };
-        unsafe { feclearexcept(HARD); }
-        let gv = unsafe { $gf };
-        let gf = unsafe { fetestexcept(HARD) };
-        if (ff & HARD) != (gf & HARD) {
-            div.push(format!("{} flags: fl={:#x} glibc={:#x}", $lbl, ff & HARD, gf & HARD));
-        }
-        if !beq(fv, gv) {
-            div.push(format!("{} value: fl={:?} glibc={:?}", $lbl, fv, gv));
-        }
-    }}; }
+    macro_rules! chk {
+        ($lbl:literal, $flf:expr, $gf:expr) => {{
+            unsafe {
+                feclearexcept(HARD);
+            }
+            let fv = $flf;
+            let ff = unsafe { fetestexcept(HARD) };
+            unsafe {
+                feclearexcept(HARD);
+            }
+            let gv = unsafe { $gf };
+            let gf = unsafe { fetestexcept(HARD) };
+            if (ff & HARD) != (gf & HARD) {
+                div.push(format!(
+                    "{} flags: fl={:#x} glibc={:#x}",
+                    $lbl,
+                    ff & HARD,
+                    gf & HARD
+                ));
+            }
+            if !beq(fv, gv) {
+                div.push(format!("{} value: fl={:?} glibc={:?}", $lbl, fv, gv));
+            }
+        }};
+    }
     chk!("sqrt(-1)", fl::sqrt(-1.0), sqrt(-1.0));
     chk!("log(0)", fl::log(0.0), log(0.0));
     chk!("log(-0)", fl::log(-0.0), log(-0.0));
     chk!("log(-1)", fl::log(-1.0), log(-1.0));
-    chk!("log(-inf)", fl::log(f64::NEG_INFINITY), log(f64::NEG_INFINITY));
+    chk!(
+        "log(-inf)",
+        fl::log(f64::NEG_INFINITY),
+        log(f64::NEG_INFINITY)
+    );
     chk!("log2(0)", fl::log2(0.0), log2(0.0));
     chk!("log10(-2)", fl::log10(-2.0), log10(-2.0));
     chk!("exp(1000)", fl::exp(1000.0), exp(1000.0));
-    chk!("pow(0,-1)", fl::pow(0.0,-1.0), pow(0.0,-1.0));
-    chk!("pow(-1,0.5)", fl::pow(-1.0,0.5), pow(-1.0,0.5));
+    chk!("pow(0,-1)", fl::pow(0.0, -1.0), pow(0.0, -1.0));
+    chk!("pow(-1,0.5)", fl::pow(-1.0, 0.5), pow(-1.0, 0.5));
     chk!("acos(2)", fl::acos(2.0), acos(2.0));
     chk!("asin(-2)", fl::asin(-2.0), asin(-2.0));
     chk!("acosh(0.5)", fl::acosh(0.5), acosh(0.5));
@@ -71,20 +123,31 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chk!("tgamma(-1)", fl::tgamma(-1.0), tgamma(-1.0));
     chk!("tgamma(-5)", fl::tgamma(-5.0), tgamma(-5.0));
     chk!("tgamma(-2.5)", fl::tgamma(-2.5), tgamma(-2.5));
-    chk!("fmod(1,0)", fl::fmod(1.0,0.0), fmod(1.0,0.0));
+    chk!("fmod(1,0)", fl::fmod(1.0, 0.0), fmod(1.0, 0.0));
 
     // f32 variants (libm f32 omits the same flags; fl re-raises)
-    macro_rules! chkf { ($lbl:literal, $flf:expr, $gf:expr) => {{
-        unsafe { feclearexcept(HARD); }
-        let _ = std::hint::black_box($flf);
-        let ff = unsafe { fetestexcept(HARD) };
-        unsafe { feclearexcept(HARD); }
-        let _ = std::hint::black_box(unsafe { $gf });
-        let gf = unsafe { fetestexcept(HARD) };
-        if (ff & HARD) != (gf & HARD) {
-            div.push(format!("{} flags: fl={:#x} glibc={:#x}", $lbl, ff & HARD, gf & HARD));
-        }
-    }}; }
+    macro_rules! chkf {
+        ($lbl:literal, $flf:expr, $gf:expr) => {{
+            unsafe {
+                feclearexcept(HARD);
+            }
+            let _ = std::hint::black_box($flf);
+            let ff = unsafe { fetestexcept(HARD) };
+            unsafe {
+                feclearexcept(HARD);
+            }
+            let _ = std::hint::black_box(unsafe { $gf });
+            let gf = unsafe { fetestexcept(HARD) };
+            if (ff & HARD) != (gf & HARD) {
+                div.push(format!(
+                    "{} flags: fl={:#x} glibc={:#x}",
+                    $lbl,
+                    ff & HARD,
+                    gf & HARD
+                ));
+            }
+        }};
+    }
     chkf!("logf(0)", fl::logf(0.0), logf(0.0));
     chkf!("logf(-1)", fl::logf(-1.0), logf(-1.0));
     chkf!("log2f(0)", fl::log2f(0.0), log2f(0.0));
@@ -95,25 +158,78 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chkf!("acoshf(0.5)", fl::acoshf(0.5), acoshf(0.5));
     chkf!("tgammaf(-1)", fl::tgammaf(-1.0), tgammaf(-1.0));
     chkf!("tgammaf(-5)", fl::tgammaf(-5.0), tgammaf(-5.0));
-    chkf!("powf(0,-1)", fl::powf(0.0,-1.0), powf(0.0,-1.0));
+    chkf!("powf(0,-1)", fl::powf(0.0, -1.0), powf(0.0, -1.0));
 
     // nextafter / nextafterf: C99 F.10.8.3 OVERFLOW (finite->inf) + UNDERFLOW
     // (result subnormal/zero). The flag-only macros reuse chkf; for f64 wrap via
     // a closure-free direct call.
-    macro_rules! chk2 { ($lbl:literal, $flf:expr, $gf:expr) => {{
-        unsafe { feclearexcept(HARD); } let _ = std::hint::black_box($flf); let ff = unsafe { fetestexcept(HARD) };
-        unsafe { feclearexcept(HARD); } let _ = std::hint::black_box(unsafe { $gf }); let gf = unsafe { fetestexcept(HARD) };
-        if (ff & HARD) != (gf & HARD) { div.push(format!("{} flags: fl={:#x} glibc={:#x}", $lbl, ff & HARD, gf & HARD)); }
-    }}; }
-    chk2!("nextafter(0,1)", fl::nextafter(0.0,1.0), nextafter(0.0,1.0));
-    chk2!("nextafter(0,-1)", fl::nextafter(0.0,-1.0), nextafter(0.0,-1.0));
-    chk2!("nextafter(MAX,INF)", fl::nextafter(f64::MAX,f64::INFINITY), nextafter(f64::MAX,f64::INFINITY));
-    chk2!("nextafter(minpos,0)", fl::nextafter(f64::MIN_POSITIVE,0.0), nextafter(f64::MIN_POSITIVE,0.0));
-    chk2!("nextafter(5,5)", fl::nextafter(5.0,5.0), nextafter(5.0,5.0));
-    chk2!("nextafter(1,2)", fl::nextafter(1.0,2.0), nextafter(1.0,2.0));
-    chk2!("nextafterf(0,1)", fl::nextafterf(0.0,1.0), nextafterf(0.0,1.0));
-    chk2!("nextafterf(MAX,INF)", fl::nextafterf(f32::MAX,f32::INFINITY), nextafterf(f32::MAX,f32::INFINITY));
-    chk2!("nextafterf(minpos,0)", fl::nextafterf(f32::MIN_POSITIVE,0.0), nextafterf(f32::MIN_POSITIVE,0.0));
+    macro_rules! chk2 {
+        ($lbl:literal, $flf:expr, $gf:expr) => {{
+            unsafe {
+                feclearexcept(HARD);
+            }
+            let _ = std::hint::black_box($flf);
+            let ff = unsafe { fetestexcept(HARD) };
+            unsafe {
+                feclearexcept(HARD);
+            }
+            let _ = std::hint::black_box(unsafe { $gf });
+            let gf = unsafe { fetestexcept(HARD) };
+            if (ff & HARD) != (gf & HARD) {
+                div.push(format!(
+                    "{} flags: fl={:#x} glibc={:#x}",
+                    $lbl,
+                    ff & HARD,
+                    gf & HARD
+                ));
+            }
+        }};
+    }
+    chk2!(
+        "nextafter(0,1)",
+        fl::nextafter(0.0, 1.0),
+        nextafter(0.0, 1.0)
+    );
+    chk2!(
+        "nextafter(0,-1)",
+        fl::nextafter(0.0, -1.0),
+        nextafter(0.0, -1.0)
+    );
+    chk2!(
+        "nextafter(MAX,INF)",
+        fl::nextafter(f64::MAX, f64::INFINITY),
+        nextafter(f64::MAX, f64::INFINITY)
+    );
+    chk2!(
+        "nextafter(minpos,0)",
+        fl::nextafter(f64::MIN_POSITIVE, 0.0),
+        nextafter(f64::MIN_POSITIVE, 0.0)
+    );
+    chk2!(
+        "nextafter(5,5)",
+        fl::nextafter(5.0, 5.0),
+        nextafter(5.0, 5.0)
+    );
+    chk2!(
+        "nextafter(1,2)",
+        fl::nextafter(1.0, 2.0),
+        nextafter(1.0, 2.0)
+    );
+    chk2!(
+        "nextafterf(0,1)",
+        fl::nextafterf(0.0, 1.0),
+        nextafterf(0.0, 1.0)
+    );
+    chk2!(
+        "nextafterf(MAX,INF)",
+        fl::nextafterf(f32::MAX, f32::INFINITY),
+        nextafterf(f32::MAX, f32::INFINITY)
+    );
+    chk2!(
+        "nextafterf(minpos,0)",
+        fl::nextafterf(f32::MIN_POSITIVE, 0.0),
+        nextafterf(f32::MIN_POSITIVE, 0.0)
+    );
 
     // lgamma poles (DIVBYZERO at non-positive integers) + the OVERFLOW family
     // (tgamma/exp2/pow). All currently correct vs glibc; pinned so a future
@@ -127,8 +243,8 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chk2!("exp2(2000)", fl::exp2(2000.0), exp2(2000.0));
     chk2!("exp2(-2000)", fl::exp2(-2000.0), exp2(-2000.0));
     chk2!("expm1(1000)", fl::expm1(1000.0), expm1(1000.0));
-    chk2!("pow(10,400)", fl::pow(10.0,400.0), pow(10.0,400.0));
-    chk2!("pow(0.1,400)", fl::pow(0.1,400.0), pow(0.1,400.0));
+    chk2!("pow(10,400)", fl::pow(10.0, 400.0), pow(10.0, 400.0));
+    chk2!("pow(0.1,400)", fl::pow(0.1, 400.0), pow(0.1, 400.0));
 
     // atanh / log1p poles (DIVBYZERO) + domain (INVALID): log1p(-1)/log1pf(-1)
     // were under-raising the pole flag (fixed); the rest pin currently-correct
@@ -146,27 +262,47 @@ fn fp_exception_and_value_parity_vs_glibc() {
     // Y-Bessel: pole at x=0 (DIVBYZERO), domain x<0 (INVALID). libm omits both.
     chk2!("y0(0)", fl::y0(0.0), y0(0.0));
     chk2!("y1(0)", fl::y1(0.0), y1(0.0));
-    chk2!("yn(2,0)", fl::yn(2,0.0), yn(2,0.0));
-    chk2!("yn(0,0)", fl::yn(0,0.0), yn(0,0.0));
+    chk2!("yn(2,0)", fl::yn(2, 0.0), yn(2, 0.0));
+    chk2!("yn(0,0)", fl::yn(0, 0.0), yn(0, 0.0));
     chk2!("y0(-1)", fl::y0(-1.0), y0(-1.0));
     chk2!("y1(-1)", fl::y1(-1.0), y1(-1.0));
-    chk2!("yn(2,-1)", fl::yn(2,-1.0), yn(2,-1.0));
+    chk2!("yn(2,-1)", fl::yn(2, -1.0), yn(2, -1.0));
     chk2!("y0(2)", fl::y0(2.0), y0(2.0));
     chk2!("y0f(0)", fl::y0f(0.0), y0f(0.0));
     chk2!("y1f(0)", fl::y1f(0.0), y1f(0.0));
-    chk2!("ynf(2,0)", fl::ynf(2,0.0), ynf(2,0.0));
+    chk2!("ynf(2,0)", fl::ynf(2, 0.0), ynf(2, 0.0));
     chk2!("y0f(-1)", fl::y0f(-1.0), y0f(-1.0));
 
     // ilogb/logb: C99 7.12.6.5 — ilogb(0)/(±inf)/(NaN) raise FE_INVALID;
     // logb(0) is a pole -> FE_DIVBYZERO. libm returns the magic value, no flag.
     chk!("ilogb(0)", fl::ilogb(0.0) as f64, ilogb(0.0) as f64);
-    chk!("ilogb(inf)", fl::ilogb(f64::INFINITY) as f64, ilogb(f64::INFINITY) as f64);
-    chk!("ilogb(-inf)", fl::ilogb(f64::NEG_INFINITY) as f64, ilogb(f64::NEG_INFINITY) as f64);
-    chk!("ilogb(nan)", fl::ilogb(f64::NAN) as f64, ilogb(f64::NAN) as f64);
+    chk!(
+        "ilogb(inf)",
+        fl::ilogb(f64::INFINITY) as f64,
+        ilogb(f64::INFINITY) as f64
+    );
+    chk!(
+        "ilogb(-inf)",
+        fl::ilogb(f64::NEG_INFINITY) as f64,
+        ilogb(f64::NEG_INFINITY) as f64
+    );
+    chk!(
+        "ilogb(nan)",
+        fl::ilogb(f64::NAN) as f64,
+        ilogb(f64::NAN) as f64
+    );
     chk!("ilogb(8)", fl::ilogb(8.0) as f64, ilogb(8.0) as f64); // control: no flag
     chk!("ilogbf(0)", fl::ilogbf(0.0) as f64, ilogbf(0.0) as f64);
-    chk!("ilogbf(inf)", fl::ilogbf(f32::INFINITY) as f64, ilogbf(f32::INFINITY) as f64);
-    chk!("ilogbf(nan)", fl::ilogbf(f32::NAN) as f64, ilogbf(f32::NAN) as f64);
+    chk!(
+        "ilogbf(inf)",
+        fl::ilogbf(f32::INFINITY) as f64,
+        ilogbf(f32::INFINITY) as f64
+    );
+    chk!(
+        "ilogbf(nan)",
+        fl::ilogbf(f32::NAN) as f64,
+        ilogbf(f32::NAN) as f64
+    );
     chk!("logb(0)", fl::logb(0.0), logb(0.0));
     chk!("logb(inf)", fl::logb(f64::INFINITY), logb(f64::INFINITY)); // control: no flag
     chk!("logb(8)", fl::logb(8.0), logb(8.0)); // control: no flag
@@ -177,15 +313,23 @@ fn fp_exception_and_value_parity_vs_glibc() {
     chk!("erfc(inf)", fl::erfc(f64::INFINITY), erfc(f64::INFINITY)); // exact 0, no flag
     chk!("erfc(0)", fl::erfc(0.0), erfc(0.0)); // control: 1.0, no flag
     chk!("erfcf(100)", fl::erfcf(100.0) as f64, erfcf(100.0) as f64);
-    chk!("erfcf(inf)", fl::erfcf(f32::INFINITY) as f64, erfcf(f32::INFINITY) as f64);
+    chk!(
+        "erfcf(inf)",
+        fl::erfcf(f32::INFINITY) as f64,
+        erfcf(f32::INFINITY) as f64
+    );
 
     // pow(0, y<0) pole -> FE_DIVBYZERO, EXCEPT y==-1.0 (glibc reciprocal special-case).
-    chk!("pow(0,-1)", fl::pow(0.0,-1.0), pow(0.0,-1.0)); // glibc: NO flag
-    chk!("pow(0,-2)", fl::pow(0.0,-2.0), pow(0.0,-2.0)); // DIVBYZERO
-    chk!("pow(0,-3)", fl::pow(0.0,-3.0), pow(0.0,-3.0)); // DIVBYZERO
-    chk!("pow(0,-0.5)", fl::pow(0.0,-0.5), pow(0.0,-0.5)); // DIVBYZERO
-    chk!("pow(-0,-3)", fl::pow(-0.0,-3.0), pow(-0.0,-3.0)); // -inf, DIVBYZERO
-    chk!("pow(-0,-1)", fl::pow(-0.0,-1.0), pow(-0.0,-1.0)); // -inf, NO flag
+    chk!("pow(0,-1)", fl::pow(0.0, -1.0), pow(0.0, -1.0)); // glibc: NO flag
+    chk!("pow(0,-2)", fl::pow(0.0, -2.0), pow(0.0, -2.0)); // DIVBYZERO
+    chk!("pow(0,-3)", fl::pow(0.0, -3.0), pow(0.0, -3.0)); // DIVBYZERO
+    chk!("pow(0,-0.5)", fl::pow(0.0, -0.5), pow(0.0, -0.5)); // DIVBYZERO
+    chk!("pow(-0,-3)", fl::pow(-0.0, -3.0), pow(-0.0, -3.0)); // -inf, DIVBYZERO
+    chk!("pow(-0,-1)", fl::pow(-0.0, -1.0), pow(-0.0, -1.0)); // -inf, NO flag
 
-    assert!(div.is_empty(), "fp-exception/value divergences vs glibc:\n  {}", div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "fp-exception/value divergences vs glibc:\n  {}",
+        div.join("\n  ")
+    );
 }

@@ -8,7 +8,7 @@
 //! leading spaces in the input (and no-space controls), comparing accept/reject,
 //! consumed length, and the parsed field. No mocks.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 
 unsafe extern "C" {
     fn strptime(s: *const c_char, format: *const c_char, tm: *mut libc::tm) -> *mut c_char;
@@ -27,8 +27,12 @@ fn field(tm: &libc::tm, which: u8) -> c_int {
     }
 }
 
-fn run(strp: unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char,
-       input: &str, fmt: &str, which: u8) -> (bool, isize, c_int) {
+fn run(
+    strp: unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char,
+    input: &str,
+    fmt: &str,
+    which: u8,
+) -> (bool, isize, c_int) {
     let ic = CString::new(input).unwrap();
     let fc = CString::new(fmt).unwrap();
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
@@ -50,16 +54,16 @@ fn strptime_leading_whitespace_matches_glibc() {
     let cases: &[(&str, &str, u8)] = &[
         (" 4", "%H", b'H'),
         ("  4", "%H", b'H'),
-        ("14", "%H", b'H'),       // control: no space
+        ("14", "%H", b'H'), // control: no space
         (" 3", "%I", b'I'),
         (" 7", "%d", b'd'),
-        ("\t9", "%d", b'd'),      // tab counts as whitespace in get_number
+        ("\t9", "%d", b'd'), // tab counts as whitespace in get_number
         (" 2", "%m", b'm'),
         (" 5", "%S", b'S'),
         (" 30", "%M", b'M'),
         (" 2024", "%Y", b'Y'),
         (" 200", "%j", b'j'),
-        ("   ", "%H", b'H'),      // only whitespace, no digit -> both reject
+        ("   ", "%H", b'H'), // only whitespace, no digit -> both reject
     ];
     for &(inp, fmt, which) in cases {
         let gr = run(g, inp, fmt, which);

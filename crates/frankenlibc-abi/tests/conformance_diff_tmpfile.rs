@@ -25,8 +25,8 @@ mod g {
         pub fn fclose(f: *mut c_void) -> c_int;
     }
 }
-use std::ffi::c_long;
 use frankenlibc_abi::stdio_abi as fl;
+use std::ffi::c_long;
 
 const PAYLOAD: &[u8] = b"Hello tmpfile \x00\x01\xfe\xff round-trip";
 
@@ -59,16 +59,54 @@ fn round_trip(
 
 #[test]
 fn tmpfile_round_trip_matches_glibc() {
-    let gr = round_trip(g::tmpfile, g::fwrite, g::fread, g::fseek, g::ftell, g::fclose);
-    let fr = round_trip(fl::tmpfile, fl::fwrite, fl::fread, fl::fseek, fl::ftell, fl::fclose);
+    let gr = round_trip(
+        g::tmpfile,
+        g::fwrite,
+        g::fread,
+        g::fseek,
+        g::ftell,
+        g::fclose,
+    );
+    let fr = round_trip(
+        fl::tmpfile,
+        fl::fwrite,
+        fl::fread,
+        fl::fseek,
+        fl::ftell,
+        fl::fclose,
+    );
     assert_eq!(fr, gr, "tmpfile round-trip: fl={fr:?} glibc={gr:?}");
-    assert_eq!(gr, (true, PAYLOAD.len(), PAYLOAD.len() as c_long, PAYLOAD.len(), true), "glibc reference");
+    assert_eq!(
+        gr,
+        (
+            true,
+            PAYLOAD.len(),
+            PAYLOAD.len() as c_long,
+            PAYLOAD.len(),
+            true
+        ),
+        "glibc reference"
+    );
 }
 
 #[test]
 fn tmpfile64_round_trip_matches_glibc() {
-    let gr = round_trip(g::tmpfile64, g::fwrite, g::fread, g::fseek, g::ftell, g::fclose);
-    let fr = round_trip(fl::tmpfile64, fl::fwrite, fl::fread, fl::fseek, fl::ftell, fl::fclose);
+    let gr = round_trip(
+        g::tmpfile64,
+        g::fwrite,
+        g::fread,
+        g::fseek,
+        g::ftell,
+        g::fclose,
+    );
+    let fr = round_trip(
+        fl::tmpfile64,
+        fl::fwrite,
+        fl::fread,
+        fl::fseek,
+        fl::ftell,
+        fl::fclose,
+    );
     assert_eq!(fr, gr, "tmpfile64 round-trip: fl={fr:?} glibc={gr:?}");
     assert!(gr.0 && gr.4, "glibc tmpfile64 should round-trip");
 }

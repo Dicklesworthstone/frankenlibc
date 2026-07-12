@@ -8,10 +8,16 @@
 //! %V, day-of-year %j, %s epoch, combined %c/%x/%X, literals and %%). fl must
 //! match host glibc byte-for-byte (output bytes AND return length). No mocks.
 
-use std::ffi::{c_char, c_void, CString};
+use std::ffi::{CString, c_char, c_void};
 
 unsafe extern "C" {
-    fn strftime_l(s: *mut c_char, max: usize, fmt: *const c_char, tm: *const libc::tm, loc: *mut c_void) -> usize;
+    fn strftime_l(
+        s: *mut c_char,
+        max: usize,
+        fmt: *const c_char,
+        tm: *const libc::tm,
+        loc: *mut c_void,
+    ) -> usize;
     fn newlocale(mask: std::ffi::c_int, name: *const c_char, base: *mut c_void) -> *mut c_void;
     fn freelocale(loc: *mut c_void);
     fn timegm(tm: *mut libc::tm) -> libc::time_t;
@@ -31,10 +37,37 @@ fn base_tm() -> libc::tm {
 }
 
 const FORMATS: &[&str] = &[
-    "%Y-%m-%d", "%H:%M:%S", "%A", "%a", "%B", "%b", "%p", "%I:%M %p",
-    "%j", "%U", "%W", "%V", "%w", "%u", "%C", "%y", "%G", "%g",
-    "%e", "%k", "%l", "%n%t", "%D", "%F", "%R", "%T", "%c", "%x", "%X",
-    "literal text %% %Y end", "%EY %Od",
+    "%Y-%m-%d",
+    "%H:%M:%S",
+    "%A",
+    "%a",
+    "%B",
+    "%b",
+    "%p",
+    "%I:%M %p",
+    "%j",
+    "%U",
+    "%W",
+    "%V",
+    "%w",
+    "%u",
+    "%C",
+    "%y",
+    "%G",
+    "%g",
+    "%e",
+    "%k",
+    "%l",
+    "%n%t",
+    "%D",
+    "%F",
+    "%R",
+    "%T",
+    "%c",
+    "%x",
+    "%X",
+    "literal text %% %Y end",
+    "%EY %Od",
     // NOTE: %s (epoch) and %Z/%z (timezone) are intentionally omitted — they
     // depend on the active timezone / tm_gmtoff,tm_zone, which is an
     // architectural axis (fl documents UTC-only %s), not a strftime_l parity
@@ -53,7 +86,15 @@ fn strftime_l_matches_glibc() {
         let fc = CString::new(f).unwrap();
         let mut gbuf = vec![0u8; 256];
         let mut fbuf = vec![0u8; 256];
-        let gn = unsafe { strftime_l(gbuf.as_mut_ptr() as *mut c_char, gbuf.len(), fc.as_ptr(), &tm, loc) };
+        let gn = unsafe {
+            strftime_l(
+                gbuf.as_mut_ptr() as *mut c_char,
+                gbuf.len(),
+                fc.as_ptr(),
+                &tm,
+                loc,
+            )
+        };
         let fln = unsafe {
             frankenlibc_abi::unistd_abi::strftime_l(
                 fbuf.as_mut_ptr() as *mut c_char,
@@ -63,9 +104,13 @@ fn strftime_l_matches_glibc() {
                 loc as *mut c_void,
             )
         };
-        assert_eq!(fln, gn, "strftime_l({f:?}) return length: fl={fln} glibc={gn}");
         assert_eq!(
-            &fbuf[..fln], &gbuf[..gn],
+            fln, gn,
+            "strftime_l({f:?}) return length: fl={fln} glibc={gn}"
+        );
+        assert_eq!(
+            &fbuf[..fln],
+            &gbuf[..gn],
             "strftime_l({f:?}) bytes: fl={:?} glibc={:?}",
             String::from_utf8_lossy(&fbuf[..fln]),
             String::from_utf8_lossy(&gbuf[..gn])

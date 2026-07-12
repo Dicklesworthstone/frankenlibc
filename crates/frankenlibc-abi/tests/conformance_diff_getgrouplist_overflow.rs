@@ -12,7 +12,8 @@
 use frankenlibc_abi::unistd_abi as fl;
 use std::ffi::{c_char, c_int};
 
-type GglFn = unsafe extern "C" fn(*const c_char, libc::gid_t, *mut libc::gid_t, *mut c_int) -> c_int;
+type GglFn =
+    unsafe extern "C" fn(*const c_char, libc::gid_t, *mut libc::gid_t, *mut c_int) -> c_int;
 
 const SENTINEL: libc::gid_t = 0xDEAD_BEEF;
 

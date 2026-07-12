@@ -48,20 +48,38 @@ fn creal_cimag_match_glibc() {
         let z = C { re, im };
         let gr = unsafe { creal(z) };
         let fr = unsafe { fl::creal(z) };
-        assert!(same64(fr, gr), "creal({re:?},{im:?}): fl={fr:?} glibc={gr:?}");
-        assert!(same64(fr, re), "creal must return re: got {fr:?} want {re:?}");
+        assert!(
+            same64(fr, gr),
+            "creal({re:?},{im:?}): fl={fr:?} glibc={gr:?}"
+        );
+        assert!(
+            same64(fr, re),
+            "creal must return re: got {fr:?} want {re:?}"
+        );
         let gi = unsafe { cimag(z) };
         let fi = unsafe { fl::cimag(z) };
-        assert!(same64(fi, gi), "cimag({re:?},{im:?}): fl={fi:?} glibc={gi:?}");
-        assert!(same64(fi, im), "cimag must return im: got {fi:?} want {im:?}");
+        assert!(
+            same64(fi, gi),
+            "cimag({re:?},{im:?}): fl={fi:?} glibc={gi:?}"
+        );
+        assert!(
+            same64(fi, im),
+            "cimag must return im: got {fi:?} want {im:?}"
+        );
 
         let (ref_, imf) = (re as f32, im as f32);
         let zf = Cf { re: ref_, im: imf };
         let grf = unsafe { crealf(zf) };
         let frf = unsafe { fl::crealf(zf) };
-        assert!(same32(frf, grf), "crealf({ref_:?},{imf:?}): fl={frf:?} glibc={grf:?}");
+        assert!(
+            same32(frf, grf),
+            "crealf({ref_:?},{imf:?}): fl={frf:?} glibc={grf:?}"
+        );
         let gif = unsafe { cimagf(zf) };
         let fif = unsafe { fl::cimagf(zf) };
-        assert!(same32(fif, gif), "cimagf({ref_:?},{imf:?}): fl={fif:?} glibc={gif:?}");
+        assert!(
+            same32(fif, gif),
+            "cimagf({ref_:?},{imf:?}): fl={fif:?} glibc={gif:?}"
+        );
     }
 }

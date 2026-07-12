@@ -9,10 +9,10 @@
 
 use std::ffi::c_int;
 use std::hint::black_box;
-use std::simd::cmp::SimdPartialEq;
 use std::simd::Simd;
+use std::simd::cmp::SimdPartialEq;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 unsafe extern "C" {
     fn wcschr(s: *const i32, c: i32) -> *const i32;
@@ -74,7 +74,12 @@ fn bench(c: &mut Criterion) {
 
         let mut grp = c.benchmark_group(format!("wcschr_{name}"));
         grp.bench_function("deployed_core", |b| {
-            b.iter(|| black_box(frankenlibc_core::string::wide::wcschr(black_box(&s), b'X' as u32)))
+            b.iter(|| {
+                black_box(frankenlibc_core::string::wide::wcschr(
+                    black_box(&s),
+                    b'X' as u32,
+                ))
+            })
         });
         grp.bench_function("narrow_8lane", |b| {
             b.iter(|| black_box(find_8(black_box(&s), b'X' as u32)))
@@ -83,7 +88,9 @@ fn bench(c: &mut Criterion) {
             b.iter(|| black_box(find_32(black_box(&s), b'X' as u32)))
         });
         grp.bench_function("host_glibc", |b| {
-            b.iter(|| black_box(unsafe { wcschr(black_box(s.as_ptr().cast::<i32>()), b'X' as c_int) }))
+            b.iter(|| {
+                black_box(unsafe { wcschr(black_box(s.as_ptr().cast::<i32>()), b'X' as c_int) })
+            })
         });
         grp.finish();
     }

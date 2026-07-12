@@ -148,6 +148,10 @@ fn gost_aliases_resolve_and_match() {
         unsafe { fl::iconv_close(cd) };
         assert_eq!(fl_decode(name), canon, "alias {name} decodes differently");
         // and must match glibc for that exact spelling
-        assert_eq!(fl_decode(name), g_decode(&gg, name), "alias {name} vs glibc");
+        assert_eq!(
+            fl_decode(name),
+            g_decode(&gg, name),
+            "alias {name} vs glibc"
+        );
     }
 }

@@ -23,7 +23,11 @@ fn pctl(s: &[f64], q: f64) -> f64 {
 
 fn main() {
     let h = unsafe {
-        libc::dlmopen(libc::LM_ID_NEWLM, b"libc.so.6\0".as_ptr().cast(), libc::RTLD_LAZY | libc::RTLD_LOCAL)
+        libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        )
     };
     assert!(!h.is_null());
     let g: StrnlenFn = unsafe { dl(h, b"strnlen\0") };
@@ -35,7 +39,9 @@ fn main() {
         for align in 0..70usize {
             for len in 0..260usize {
                 let mut buf = vec![0u8; align + len + 1 + 160];
-                for k in 0..len { buf[align + k] = 1 + ((align + k) % 200) as u8; }
+                for k in 0..len {
+                    buf[align + k] = 1 + ((align + k) % 200) as u8;
+                }
                 buf[align + len] = 0;
                 let sp = unsafe { buf.as_ptr().add(align) as *const i8 };
                 for &nn in &[0usize, len / 3, len, len + 1, len + 40, 300] {
@@ -59,22 +65,33 @@ fn main() {
         for r in 0..100 {
             if r % 2 == 0 {
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { frankenlibc_abi::string_abi::strnlen(scp, l) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { frankenlibc_abi::string_abi::strnlen(scp, l) });
+                }
                 fl.push(t.elapsed().as_nanos() as f64 / lit as f64);
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { g(scp, l) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { g(scp, l) });
+                }
                 gl.push(t.elapsed().as_nanos() as f64 / lit as f64);
             } else {
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { g(scp, l) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { g(scp, l) });
+                }
                 gl.push(t.elapsed().as_nanos() as f64 / lit as f64);
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { frankenlibc_abi::string_abi::strnlen(scp, l) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { frankenlibc_abi::string_abi::strnlen(scp, l) });
+                }
                 fl.push(t.elapsed().as_nanos() as f64 / lit as f64);
             }
         }
         let (f10, g10) = (pctl(&fl, 0.1), pctl(&gl, 0.1));
-        println!("STRNLEN l={l:<6} p10: fl={f10:.2} glibc={g10:.2} fl/glibc={:.3}  {}",
-            f10 / g10, if f10 <= g10 * 1.1 { "ok" } else { "LOSS" });
+        println!(
+            "STRNLEN l={l:<6} p10: fl={f10:.2} glibc={g10:.2} fl/glibc={:.3}  {}",
+            f10 / g10,
+            if f10 <= g10 * 1.1 { "ok" } else { "LOSS" }
+        );
     }
 }

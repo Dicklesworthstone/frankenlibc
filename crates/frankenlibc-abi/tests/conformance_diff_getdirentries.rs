@@ -53,7 +53,10 @@ fn success_basep_matches_glibc() {
     assert_eq!(grc, frc, "dir read rc sign: glibc={grc} fl={frc}");
     assert!(grc > 0, "expected a non-empty directory read");
     assert_eq!(gbase, fbase, "dir read *basep: glibc={gbase} fl={fbase}");
-    assert_ne!(gbase, SENTINEL, "glibc should have written *basep on success");
+    assert_ne!(
+        gbase, SENTINEL,
+        "glibc should have written *basep on success"
+    );
 }
 
 #[test]
@@ -65,5 +68,8 @@ fn error_leaves_basep_untouched_like_glibc() {
     assert_eq!(grc, frc, "error rc sign: glibc={grc} fl={frc}");
     assert_eq!(grc, -1, "expected getdents failure on a non-directory");
     assert_eq!(gbase, SENTINEL, "glibc must NOT write *basep on error");
-    assert_eq!(fbase, SENTINEL, "fl must NOT write *basep on error (was the bug)");
+    assert_eq!(
+        fbase, SENTINEL,
+        "fl must NOT write *basep on error (was the bug)"
+    );
 }

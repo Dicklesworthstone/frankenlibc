@@ -84,7 +84,12 @@ fn getservent_getprotoent_match_glibc_with_aliases() {
             break;
         }
         let s = unsafe { &*e };
-        glibc_serv.push((cstr(s.s_name), s.s_port, cstr(s.s_proto), alias_vec(s.s_aliases)));
+        glibc_serv.push((
+            cstr(s.s_name),
+            s.s_port,
+            cstr(s.s_proto),
+            alias_vec(s.s_aliases),
+        ));
         if glibc_serv.len() > 2000 {
             break;
         }
@@ -99,7 +104,12 @@ fn getservent_getprotoent_match_glibc_with_aliases() {
             break;
         }
         let s = unsafe { &*e };
-        fl_serv.push((cstr(s.s_name), s.s_port, cstr(s.s_proto), alias_vec(s.s_aliases)));
+        fl_serv.push((
+            cstr(s.s_name),
+            s.s_port,
+            cstr(s.s_proto),
+            alias_vec(s.s_aliases),
+        ));
         if fl_serv.len() > 2000 {
             break;
         }
@@ -120,7 +130,12 @@ fn getservent_getprotoent_match_glibc_with_aliases() {
             break;
         }
         let s = unsafe { &*e };
-        glibc_proto.push((cstr(s.p_name), s.p_proto, Vec::new(), alias_vec(s.p_aliases)));
+        glibc_proto.push((
+            cstr(s.p_name),
+            s.p_proto,
+            Vec::new(),
+            alias_vec(s.p_aliases),
+        ));
         if glibc_proto.len() > 2000 {
             break;
         }
@@ -135,7 +150,12 @@ fn getservent_getprotoent_match_glibc_with_aliases() {
             break;
         }
         let s = unsafe { &*e };
-        fl_proto.push((cstr(s.p_name), s.p_proto, Vec::new(), alias_vec(s.p_aliases)));
+        fl_proto.push((
+            cstr(s.p_name),
+            s.p_proto,
+            Vec::new(),
+            alias_vec(s.p_aliases),
+        ));
         if fl_proto.len() > 2000 {
             break;
         }

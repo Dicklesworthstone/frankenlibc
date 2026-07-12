@@ -37,7 +37,7 @@ const CASES: &[f64] = &[
     64.0,
     1000.0,
     -1000.0,
-    2.0,    // irrational result -> must match glibc rounding
+    2.0, // irrational result -> must match glibc rounding
     -2.0,
     0.125,
     0.5,
@@ -61,7 +61,11 @@ fn cbrt_special_cases_match_glibc() {
         // Odd-function identity (fl-internal): cbrt(-x) == -cbrt(x).
         if !x.is_nan() {
             let fneg = unsafe { frankenlibc_abi::math_abi::cbrt(-x) };
-            assert!(same64(fneg, -f), "cbrt odd-function at {x:?}: cbrt(-x)={fneg:?} -cbrt(x)={:?}", -f);
+            assert!(
+                same64(fneg, -f),
+                "cbrt odd-function at {x:?}: cbrt(-x)={fneg:?} -cbrt(x)={:?}",
+                -f
+            );
         }
     }
 }

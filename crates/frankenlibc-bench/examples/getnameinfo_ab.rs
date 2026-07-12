@@ -309,7 +309,11 @@ fn main() {
         &n2,
         "(ns/op)",
     ));
-    let (m1, m2) = paired(DEPLOYED_SAMPLES, || deployed_cand(&sin), || deployed_cand(&sin));
+    let (m1, m2) = paired(
+        DEPLOYED_SAMPLES,
+        || deployed_cand(&sin),
+        || deployed_cand(&sin),
+    );
     summary.push(report(
         "NULL CONTROL deployed (cand vs cand)",
         DEPLOYED_REPS as f64,

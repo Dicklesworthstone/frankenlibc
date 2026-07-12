@@ -646,10 +646,9 @@ fn strcspn_counts_rejected_prefix() {
 #[test]
 fn constant_set_scan_helpers_match_public_entrypoints() {
     let s = c"abcZdef";
-    assert_eq!(
-        unsafe { __strspn_c1(s.as_ptr(), b'a' as c_int) },
-        unsafe { strspn(s.as_ptr(), c"a".as_ptr()) }
-    );
+    assert_eq!(unsafe { __strspn_c1(s.as_ptr(), b'a' as c_int) }, unsafe {
+        strspn(s.as_ptr(), c"a".as_ptr())
+    });
     assert_eq!(
         unsafe { __strspn_c2(s.as_ptr(), b'a' as c_int, b'b' as c_int) },
         unsafe { strspn(s.as_ptr(), c"ab".as_ptr()) }
@@ -662,10 +661,9 @@ fn constant_set_scan_helpers_match_public_entrypoints() {
         unsafe { __strcspn_c2(s.as_ptr(), b'X' as c_int, b'Z' as c_int) },
         unsafe { strcspn(s.as_ptr(), c"XZ".as_ptr()) }
     );
-    assert_eq!(
-        unsafe { __strcspn_c1(s.as_ptr(), b'Z' as c_int) },
-        unsafe { strcspn(s.as_ptr(), c"Z".as_ptr()) }
-    );
+    assert_eq!(unsafe { __strcspn_c1(s.as_ptr(), b'Z' as c_int) }, unsafe {
+        strcspn(s.as_ptr(), c"Z".as_ptr())
+    });
     assert_eq!(
         unsafe { __strcspn_c3(s.as_ptr(), b'X' as c_int, b'Y' as c_int, b'Z' as c_int) },
         unsafe { strcspn(s.as_ptr(), c"XYZ".as_ptr()) }
@@ -688,9 +686,7 @@ fn constant_set_scan_helpers_stop_set_at_first_nul_argument() {
         unsafe { __strcspn_c3(s.as_ptr(), b'X' as c_int, 0, b'Z' as c_int) },
         unsafe { strcspn(s.as_ptr(), c"X".as_ptr()) }
     );
-    assert!(
-        unsafe { __strpbrk_c3(s.as_ptr(), 0, b'Z' as c_int, b'a' as c_int) }.is_null()
-    );
+    assert!(unsafe { __strpbrk_c3(s.as_ptr(), 0, b'Z' as c_int, b'a' as c_int) }.is_null());
 }
 
 #[test]

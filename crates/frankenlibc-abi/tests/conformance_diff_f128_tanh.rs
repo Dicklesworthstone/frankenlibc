@@ -27,8 +27,8 @@ fn values() -> Vec<f128> {
         -1e-20f128,
         1e-40f128,
         f128::from_bits(1),
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf → 1
-        f128::from_bits(0xffff_u128 << 112),                    // -inf → -1
+        f128::from_bits(0x7fff_u128 << 112), // +inf → 1
+        f128::from_bits(0xffff_u128 << 112), // -inf → -1
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     let mut q: i64 = -1400;
@@ -38,9 +38,13 @@ fn values() -> Vec<f128> {
     }
     let mut st: u64 = 0x1111_2222_3333_4444;
     for _ in 0..4000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3fb0 + (hi % 0x0070)) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -57,7 +61,10 @@ fn f128_tanh_matches_glibc() {
         let g = unsafe { tanhf128(x) }.to_bits();
         let f = unsafe { ma::tanhf128(x) }.to_bits();
         if g != f {
-            mism.push(format!("tanh({:#034x}): glibc={g:#034x} fl={f:#034x}", x.to_bits()));
+            mism.push(format!(
+                "tanh({:#034x}): glibc={g:#034x} fl={f:#034x}",
+                x.to_bits()
+            ));
         }
     }
     assert!(

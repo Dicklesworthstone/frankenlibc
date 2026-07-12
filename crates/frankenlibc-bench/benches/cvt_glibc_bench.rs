@@ -9,7 +9,7 @@ use std::ffi::c_char;
 use std::ffi::c_int;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 unsafe extern "C" {
     fn ecvt(value: f64, ndigit: c_int, decpt: *mut c_int, sign: *mut c_int) -> *mut c_char;
@@ -65,7 +65,12 @@ fn bench(c: &mut Criterion) {
     for (name, value, ndigit) in CASES {
         let mut ge = c.benchmark_group(format!("ecvt_{name}"));
         ge.bench_function("frankenlibc_core", |b| {
-            b.iter(|| black_box(frankenlibc_core::stdlib::ecvt::ecvt(black_box(*value), *ndigit)))
+            b.iter(|| {
+                black_box(frankenlibc_core::stdlib::ecvt::ecvt(
+                    black_box(*value),
+                    *ndigit,
+                ))
+            })
         });
         ge.bench_function("host_glibc_inprocess", |b| {
             b.iter(|| {
@@ -78,7 +83,12 @@ fn bench(c: &mut Criterion) {
 
         let mut gf = c.benchmark_group(format!("fcvt_{name}"));
         gf.bench_function("frankenlibc_core", |b| {
-            b.iter(|| black_box(frankenlibc_core::stdlib::ecvt::fcvt(black_box(*value), *ndigit)))
+            b.iter(|| {
+                black_box(frankenlibc_core::stdlib::ecvt::fcvt(
+                    black_box(*value),
+                    *ndigit,
+                ))
+            })
         });
         gf.bench_function("host_glibc_inprocess", |b| {
             b.iter(|| {

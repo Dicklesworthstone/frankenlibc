@@ -52,7 +52,10 @@ fn idle_pipe() -> (c_int, c_int) {
     (fds[0], fds[1])
 }
 
-const TMO: libc::timespec = libc::timespec { tv_sec: 0, tv_nsec: 20_000_000 }; // 20ms
+const TMO: libc::timespec = libc::timespec {
+    tv_sec: 0,
+    tv_nsec: 20_000_000,
+}; // 20ms
 
 fn ts_eq(a: &libc::timespec, b: &libc::timespec) -> bool {
     a.tv_sec == b.tv_sec && a.tv_nsec == b.tv_nsec
@@ -65,7 +68,11 @@ fn ppoll_does_not_clobber_caller_timeout_like_glibc() {
     // Non-vacuity: the raw kernel syscall DOES write back remaining time (=0 on
     // a timeout). If this ever stops being true the whole gate is meaningless.
     {
-        let mut pfd = libc::pollfd { fd: rfd, events: libc::POLLIN, revents: 0 };
+        let mut pfd = libc::pollfd {
+            fd: rfd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
         let mut t = TMO;
         let sz = core::mem::size_of::<libc::c_ulong>();
         let rc = unsafe {
@@ -89,14 +96,21 @@ fn ppoll_does_not_clobber_caller_timeout_like_glibc() {
     let f: PpollFn = frankenlibc_abi::poll_abi::ppoll;
 
     for (name, func) in [("glibc", g), ("fl", f)] {
-        let mut pfd = libc::pollfd { fd: rfd, events: libc::POLLIN, revents: 0 };
+        let mut pfd = libc::pollfd {
+            fd: rfd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
         let mut t = TMO;
         let rc = unsafe { func(&mut pfd, 1, &mut t, std::ptr::null()) };
         assert_eq!(rc, 0, "{name} ppoll should time out");
         assert!(
             ts_eq(&t, &TMO),
             "{name} ppoll modified the caller's timeout: {{{},{}}} != {{{},{}}}",
-            t.tv_sec, t.tv_nsec, TMO.tv_sec, TMO.tv_nsec
+            t.tv_sec,
+            t.tv_nsec,
+            TMO.tv_sec,
+            TMO.tv_nsec
         );
     }
 }
@@ -115,13 +129,23 @@ fn pselect_does_not_clobber_caller_timeout_like_glibc() {
         }
         let mut t = TMO;
         let rc = unsafe {
-            func(rfd + 1, &mut rset, std::ptr::null_mut(), std::ptr::null_mut(), &mut t, std::ptr::null())
+            func(
+                rfd + 1,
+                &mut rset,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut t,
+                std::ptr::null(),
+            )
         };
         assert_eq!(rc, 0, "{name} pselect should time out");
         assert!(
             ts_eq(&t, &TMO),
             "{name} pselect modified the caller's timeout: {{{},{}}} != {{{},{}}}",
-            t.tv_sec, t.tv_nsec, TMO.tv_sec, TMO.tv_nsec
+            t.tv_sec,
+            t.tv_nsec,
+            TMO.tv_sec,
+            TMO.tv_nsec
         );
     }
 }

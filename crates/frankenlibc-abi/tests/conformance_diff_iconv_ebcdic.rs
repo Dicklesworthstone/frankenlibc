@@ -152,7 +152,12 @@ fn cp037_aliases_resolve_and_match() {
     let gg = g();
     let canon = fl_decode("CP037");
     for name in [
-        "CP037", "IBM037", "CSIBM037", "EBCDIC-CP-US", "EBCDIC-CP-CA", "EBCDIC-CP-NL",
+        "CP037",
+        "IBM037",
+        "CSIBM037",
+        "EBCDIC-CP-US",
+        "EBCDIC-CP-CA",
+        "EBCDIC-CP-NL",
         "EBCDIC-CP-WT",
     ] {
         let cn = CString::new(name).unwrap();
@@ -160,7 +165,11 @@ fn cp037_aliases_resolve_and_match() {
         assert!(cd as usize != INVALID && !cd.is_null(), "fl rejects {name}");
         unsafe { fl::iconv_close(cd) };
         assert_eq!(fl_decode(name), canon, "alias {name} differs from CP037");
-        assert_eq!(fl_decode(name), g_decode(&gg, name), "alias {name} vs glibc");
+        assert_eq!(
+            fl_decode(name),
+            g_decode(&gg, name),
+            "alias {name} vs glibc"
+        );
     }
 }
 
@@ -197,17 +206,26 @@ fn fl_encode_n(name: &str, cp: u32) -> Option<Vec<u8>> {
 
 // Additional EBCDIC pages on the same full-256 path as CP037.
 const MORE_EBCDIC: &[(&str, &[&str])] = &[
-    ("CP500", &["IBM500", "CSIBM500", "EBCDIC-CP-BE", "EBCDIC-CP-CH"]),
+    (
+        "CP500",
+        &["IBM500", "CSIBM500", "EBCDIC-CP-BE", "EBCDIC-CP-CH"],
+    ),
     ("CP1047", &["IBM1047"]),
     ("CP1140", &["IBM1140", "CSIBM1140"]),
     ("CP273", &["CSIBM273", "IBM273"]),
-    ("CP278", &["CSIBM278", "EBCDIC-CP-FI", "EBCDIC-CP-SE", "IBM278"]),
+    (
+        "CP278",
+        &["CSIBM278", "EBCDIC-CP-FI", "EBCDIC-CP-SE", "IBM278"],
+    ),
     ("CP280", &["CSIBM280", "EBCDIC-CP-IT", "IBM280"]),
     ("CP284", &["CSIBM284", "EBCDIC-CP-ES", "IBM284"]),
     ("CP285", &["CSIBM285", "EBCDIC-CP-GB", "IBM285"]),
     ("CP297", &["CSIBM297", "EBCDIC-CP-FR", "IBM297"]),
     ("CP871", &["CSIBM871", "EBCDIC-CP-IS", "IBM871"]),
-    ("CP870", &["CSIBM870", "EBCDIC-CP-ROECE", "EBCDIC-CP-YU", "IBM870"]),
+    (
+        "CP870",
+        &["CSIBM870", "EBCDIC-CP-ROECE", "EBCDIC-CP-YU", "IBM870"],
+    ),
     ("CP875", &["IBM875"]),
     ("EBCDIC-CP-DK", &["CSIBM277", "EBCDIC-CP-NO", "IBM277"]),
     ("CP1025", &["CSIBM1025", "IBM-1025", "IBM1025"]),

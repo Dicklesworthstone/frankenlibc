@@ -13,9 +13,15 @@ use std::mem::MaybeUninit;
 mod g {
     use super::*;
     unsafe extern "C" {
-        pub fn wait4(pid: libc::pid_t, st: *mut c_int, opt: c_int, ru: *mut libc::rusage) -> libc::pid_t;
+        pub fn wait4(
+            pid: libc::pid_t,
+            st: *mut c_int,
+            opt: c_int,
+            ru: *mut libc::rusage,
+        ) -> libc::pid_t;
         pub fn wait3(st: *mut c_int, opt: c_int, ru: *mut libc::rusage) -> libc::pid_t;
-        pub fn waitid(idtype: c_int, id: libc::id_t, si: *mut libc::siginfo_t, opt: c_int) -> c_int;
+        pub fn waitid(idtype: c_int, id: libc::id_t, si: *mut libc::siginfo_t, opt: c_int)
+        -> c_int;
     }
 }
 use frankenlibc_abi::process_abi as fl;

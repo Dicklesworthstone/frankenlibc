@@ -7,9 +7,9 @@
 //! maps it from the filesystem f_type magic (fs_filesizebits_for_type, mirroring
 //! glibc __statfs_filesize_max), so it must match glibc on the test fs. bd-eqcn80.
 
+use frankenlibc_abi::unistd_abi as fu;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_long};
-use frankenlibc_abi::unistd_abi as fu;
 unsafe extern "C" {
     fn pathconf(p: *const c_char, n: c_int) -> c_long;
 }
@@ -17,11 +17,16 @@ unsafe extern "C" {
 #[test]
 fn pathconf_matches_glibc() {
     let keys: &[(&str, c_int)] = &[
-        ("_PC_LINK_MAX", libc::_PC_LINK_MAX), ("_PC_MAX_CANON", libc::_PC_MAX_CANON),
-        ("_PC_MAX_INPUT", libc::_PC_MAX_INPUT), ("_PC_NAME_MAX", libc::_PC_NAME_MAX),
-        ("_PC_PATH_MAX", libc::_PC_PATH_MAX), ("_PC_PIPE_BUF", libc::_PC_PIPE_BUF),
-        ("_PC_CHOWN_RESTRICTED", libc::_PC_CHOWN_RESTRICTED), ("_PC_NO_TRUNC", libc::_PC_NO_TRUNC),
-        ("_PC_VDISABLE", libc::_PC_VDISABLE), ("_PC_SYNC_IO", libc::_PC_SYNC_IO),
+        ("_PC_LINK_MAX", libc::_PC_LINK_MAX),
+        ("_PC_MAX_CANON", libc::_PC_MAX_CANON),
+        ("_PC_MAX_INPUT", libc::_PC_MAX_INPUT),
+        ("_PC_NAME_MAX", libc::_PC_NAME_MAX),
+        ("_PC_PATH_MAX", libc::_PC_PATH_MAX),
+        ("_PC_PIPE_BUF", libc::_PC_PIPE_BUF),
+        ("_PC_CHOWN_RESTRICTED", libc::_PC_CHOWN_RESTRICTED),
+        ("_PC_NO_TRUNC", libc::_PC_NO_TRUNC),
+        ("_PC_VDISABLE", libc::_PC_VDISABLE),
+        ("_PC_SYNC_IO", libc::_PC_SYNC_IO),
         ("_PC_REC_MIN_XFER_SIZE", libc::_PC_REC_MIN_XFER_SIZE),
         ("_PC_REC_XFER_ALIGN", libc::_PC_REC_XFER_ALIGN),
         ("_PC_ALLOC_SIZE_MIN", libc::_PC_ALLOC_SIZE_MIN),
@@ -37,7 +42,12 @@ fn pathconf_matches_glibc() {
             div.push(format!("{n}: fl={f} glibc={g}"));
         }
     }
-    assert!(div.is_empty(), "pathconf divergences vs glibc ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "pathconf divergences vs glibc ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }
 
 #[test]
@@ -53,9 +63,12 @@ fn fpathconf_matches_glibc() {
     let fd = unsafe { open(p.as_ptr(), 0) };
     assert!(fd >= 0, "open(/tmp) failed");
     let keys: &[(&str, c_int)] = &[
-        ("_PC_LINK_MAX", libc::_PC_LINK_MAX), ("_PC_NAME_MAX", libc::_PC_NAME_MAX),
-        ("_PC_PATH_MAX", libc::_PC_PATH_MAX), ("_PC_PIPE_BUF", libc::_PC_PIPE_BUF),
-        ("_PC_CHOWN_RESTRICTED", libc::_PC_CHOWN_RESTRICTED), ("_PC_NO_TRUNC", libc::_PC_NO_TRUNC),
+        ("_PC_LINK_MAX", libc::_PC_LINK_MAX),
+        ("_PC_NAME_MAX", libc::_PC_NAME_MAX),
+        ("_PC_PATH_MAX", libc::_PC_PATH_MAX),
+        ("_PC_PIPE_BUF", libc::_PC_PIPE_BUF),
+        ("_PC_CHOWN_RESTRICTED", libc::_PC_CHOWN_RESTRICTED),
+        ("_PC_NO_TRUNC", libc::_PC_NO_TRUNC),
         ("_PC_REC_MIN_XFER_SIZE", libc::_PC_REC_MIN_XFER_SIZE),
         ("_PC_REC_XFER_ALIGN", libc::_PC_REC_XFER_ALIGN),
         ("_PC_ALLOC_SIZE_MIN", libc::_PC_ALLOC_SIZE_MIN),
@@ -71,5 +84,10 @@ fn fpathconf_matches_glibc() {
         }
     }
     unsafe { close(fd) };
-    assert!(div.is_empty(), "fpathconf divergences vs glibc ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "fpathconf divergences vs glibc ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

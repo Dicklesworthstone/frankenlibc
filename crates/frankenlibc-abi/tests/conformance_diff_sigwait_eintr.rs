@@ -67,13 +67,22 @@ fn sigwait_restarts_on_eintr_like_glibc() {
 
     // glibc reference (libc::sigwait is the host's sigwait).
     let g = run(libc::sigwait);
-    assert_eq!(g, (0, libc::SIGUSR1), "glibc sigwait should restart on EINTR and return SIGUSR1");
+    assert_eq!(
+        g,
+        (0, libc::SIGUSR1),
+        "glibc sigwait should restart on EINTR and return SIGUSR1"
+    );
 
     // fl must match: rc 0, sig SIGUSR1, NOT EINTR.
     let f = run(fl::sigwait);
     assert_eq!(
-        f, g,
+        f,
+        g,
         "fl sigwait diverged: got (rc={}, sig={}), glibc=(rc={}, sig={}) (EINTR={})",
-        f.0, f.1, g.0, g.1, libc::EINTR
+        f.0,
+        f.1,
+        g.0,
+        g.1,
+        libc::EINTR
     );
 }

@@ -60,7 +60,7 @@ fn rand_pair(rng: &mut Rng, max_len: usize, alpha: u8) -> (Vec<u8>, Vec<u8>) {
     let mut b = a.clone();
     if len > 0 {
         match rng.below(4) {
-            0 => {}                            // identical
+            0 => {} // identical
             1 => {
                 let i = len - 1; // last byte (tail)
                 b[i] = b[i].wrapping_add(1).max(1);
@@ -137,12 +137,13 @@ fn memcmp_large_buffers_match_glibc() {
     for _ in 0..6000 {
         let alpha = [2u8, 16, 255][rng.below(3)];
         // Sizes that span the 32/128 boundaries and their neighbours.
-        let len = [32usize, 33, 63, 64, 65, 96, 127, 128, 129, 160, 200, 255, 256, 257, 384, 512]
-            [rng.below(16)];
+        let len = [
+            32usize, 33, 63, 64, 65, 96, 127, 128, 129, 160, 200, 255, 256, 257, 384, 512,
+        ][rng.below(16)];
         let a: Vec<u8> = (0..len).map(|_| rng.byte(alpha)).collect();
         let mut b = a.clone();
         match rng.below(5) {
-            0 => {}                                   // identical
+            0 => {}                                              // identical
             1 => b[len - 1] = b[len - 1].wrapping_add(1).max(1), // tail
             2 => {
                 let i = (len / 32) * 32; // last 32B boundary (or 0)
@@ -236,9 +237,7 @@ fn ordering_is_transitive() {
         let mk = |rng: &mut Rng| -> Vec<u8> { (0..n).map(|_| rng.byte(3)).collect() };
         let mut trip = [mk(&mut rng), mk(&mut rng), mk(&mut rng)];
         // sort by fl::memcmp, then assert pairwise order is consistent.
-        trip.sort_by(|x, y| {
-            unsafe { fl::memcmp(x.as_ptr().cast(), y.as_ptr().cast(), n) }.cmp(&0)
-        });
+        trip.sort_by(|x, y| unsafe { fl::memcmp(x.as_ptr().cast(), y.as_ptr().cast(), n) }.cmp(&0));
         let c01 = unsafe { fl::memcmp(trip[0].as_ptr().cast(), trip[1].as_ptr().cast(), n) };
         let c12 = unsafe { fl::memcmp(trip[1].as_ptr().cast(), trip[2].as_ptr().cast(), n) };
         let c02 = unsafe { fl::memcmp(trip[0].as_ptr().cast(), trip[2].as_ptr().cast(), n) };

@@ -96,7 +96,8 @@ fn braille_decode_all_bytes() {
         }
     }
     let all: Vec<u8> = (0u16..256).map(|b| b as u8).collect();
-    if g_full(&g, "UTF-32LE", "ISO/TR_11548-1", &all) != f_full("UTF-32LE", "ISO/TR_11548-1", &all) {
+    if g_full(&g, "UTF-32LE", "ISO/TR_11548-1", &all) != f_full("UTF-32LE", "ISO/TR_11548-1", &all)
+    {
         mism.push("full 0..256 stream".into());
     }
     assert!(mism.is_empty(), "Braille decode diverged: {mism:?}");
@@ -116,7 +117,9 @@ fn braille_encode_block_and_reject() {
         }
     }
     // The whole block as one stream.
-    let block: String = (0x2800u32..=0x28FF).map(|c| char::from_u32(c).unwrap()).collect();
+    let block: String = (0x2800u32..=0x28FF)
+        .map(|c| char::from_u32(c).unwrap())
+        .collect();
     if g_full(&g, "ISO/TR_11548-1", "UTF-8", block.as_bytes())
         != f_full("ISO/TR_11548-1", "UTF-8", block.as_bytes())
     {
@@ -152,7 +155,14 @@ fn unicode_ucs2_bom_matches_glibc() {
     let mut mism = Vec::new();
     // Encode side: BMP text (with BOM), empty, and astral (must be rejected by
     // both — glibc's UNICODE is UCS-2, not UTF-16).
-    for s in ["", "A", "Hello, world!", "\u{20AC}\u{00FF}\u{0BCD}\u{FFFD}", "\u{1F600}", "ab\u{1F4A9}cd"] {
+    for s in [
+        "",
+        "A",
+        "Hello, world!",
+        "\u{20AC}\u{00FF}\u{0BCD}\u{FFFD}",
+        "\u{1F600}",
+        "ab\u{1F4A9}cd",
+    ] {
         let ge = g_full(&g, "UNICODE", "UTF-8", s.as_bytes());
         let fe = f_full("UNICODE", "UTF-8", s.as_bytes());
         if ge != fe {

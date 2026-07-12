@@ -40,16 +40,20 @@ fn values() -> Vec<f128> {
         1e-4000f128,
         f128::MIN_POSITIVE,
         f128::MAX,
-        f128::from_bits(1),                                     // smallest subnormal
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(1),                  // smallest subnormal
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     let mut st: u64 = 0xdead_beef_0bad_f00d;
     for _ in 0..120 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (hi % 0x7fff) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);

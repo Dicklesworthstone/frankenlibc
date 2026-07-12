@@ -26,9 +26,20 @@ fn check(hay: &[u32], needle: &[u32]) {
     let np = nw.as_ptr();
     let fl = unsafe { fl_wcsstr(hp, np) };
     let gl = unsafe { wcsstr(hp, np) };
-    let fo = if fl.is_null() { None } else { Some(fl as usize - hp as usize) };
-    let go = if gl.is_null() { None } else { Some(gl as usize - hp as usize) };
-    assert_eq!(fo, go, "wcsstr hay={hay:?} needle={needle:?}: fl={fo:?} gl={go:?}");
+    let fo = if fl.is_null() {
+        None
+    } else {
+        Some(fl as usize - hp as usize)
+    };
+    let go = if gl.is_null() {
+        None
+    } else {
+        Some(gl as usize - hp as usize)
+    };
+    assert_eq!(
+        fo, go,
+        "wcsstr hay={hay:?} needle={needle:?}: fl={fo:?} gl={go:?}"
+    );
 }
 
 #[test]
@@ -69,11 +80,21 @@ fn wcsstr_matches_glibc() {
     for seed in 0u32..300 {
         let hlen = (seed % 50) as usize;
         let hay: Vec<u32> = (0..hlen)
-            .map(|k| alpha[((seed.wrapping_mul(2654435761).wrapping_add((k as u32).wrapping_mul(40503))) % 4) as usize])
+            .map(|k| {
+                alpha[((seed
+                    .wrapping_mul(2654435761)
+                    .wrapping_add((k as u32).wrapping_mul(40503)))
+                    % 4) as usize]
+            })
             .collect();
         let nlen = 1 + (seed % 5) as usize;
         let needle: Vec<u32> = (0..nlen)
-            .map(|k| alpha[((seed.wrapping_mul(40503).wrapping_add((k as u32).wrapping_mul(2654435761))) % 4) as usize])
+            .map(|k| {
+                alpha[((seed
+                    .wrapping_mul(40503)
+                    .wrapping_add((k as u32).wrapping_mul(2654435761)))
+                    % 4) as usize]
+            })
             .collect();
         check(&hay, &needle);
     }

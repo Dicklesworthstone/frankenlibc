@@ -58,11 +58,30 @@ fn snap(rc: c_int, res: *mut Servent) -> Option<Snap> {
         return None;
     }
     let s = unsafe { &*res };
-    Some((cstr(s.s_name), s.s_port, cstr(s.s_proto), alias_vec(s.s_aliases)))
+    Some((
+        cstr(s.s_name),
+        s.s_port,
+        cstr(s.s_proto),
+        alias_vec(s.s_aliases),
+    ))
 }
 
-type ByNameR = extern "C" fn(*const c_char, *const c_char, *mut Servent, *mut c_char, usize, *mut *mut Servent) -> c_int;
-type ByPortR = extern "C" fn(c_int, *const c_char, *mut Servent, *mut c_char, usize, *mut *mut Servent) -> c_int;
+type ByNameR = extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *mut Servent,
+    *mut c_char,
+    usize,
+    *mut *mut Servent,
+) -> c_int;
+type ByPortR = extern "C" fn(
+    c_int,
+    *const c_char,
+    *mut Servent,
+    *mut c_char,
+    usize,
+    *mut *mut Servent,
+) -> c_int;
 type EntR = extern "C" fn(*mut Servent, *mut c_char, usize, *mut *mut Servent) -> c_int;
 type Ent = extern "C" fn() -> *mut Servent;
 type Ctl = extern "C" fn(c_int);
@@ -119,7 +138,14 @@ fn servent_reentrant_matches_glibc() {
         // getservbyname_r
         let (mut ge, mut gb) = mk();
         let mut gres: *mut Servent = std::ptr::null_mut();
-        let grc = g_byname(cn.as_ptr(), cp.as_ptr(), &mut ge, gb.as_mut_ptr(), gb.len(), &mut gres);
+        let grc = g_byname(
+            cn.as_ptr(),
+            cp.as_ptr(),
+            &mut ge,
+            gb.as_mut_ptr(),
+            gb.len(),
+            &mut gres,
+        );
         let g = snap(grc, gres);
 
         let (mut fe, mut fb) = mk();
@@ -136,13 +162,22 @@ fn servent_reentrant_matches_glibc() {
         };
         let f = snap(frc, fres);
         if g != f {
-            mismatches.push(format!("getservbyname_r({name:?},{proto:?}): glibc={g:?} fl={f:?}"));
+            mismatches.push(format!(
+                "getservbyname_r({name:?},{proto:?}): glibc={g:?} fl={f:?}"
+            ));
         }
 
         // getservbyport_r
         let (mut ge, mut gb) = mk();
         let mut gres: *mut Servent = std::ptr::null_mut();
-        let grc = g_byport(*port_nbo, cp.as_ptr(), &mut ge, gb.as_mut_ptr(), gb.len(), &mut gres);
+        let grc = g_byport(
+            *port_nbo,
+            cp.as_ptr(),
+            &mut ge,
+            gb.as_mut_ptr(),
+            gb.len(),
+            &mut gres,
+        );
         let g = snap(grc, gres);
 
         let (mut fe, mut fb) = mk();
@@ -159,7 +194,9 @@ fn servent_reentrant_matches_glibc() {
         };
         let f = snap(frc, fres);
         if g != f {
-            mismatches.push(format!("getservbyport_r({port_nbo},{proto:?}): glibc={g:?} fl={f:?}"));
+            mismatches.push(format!(
+                "getservbyport_r({port_nbo},{proto:?}): glibc={g:?} fl={f:?}"
+            ));
         }
     }
 

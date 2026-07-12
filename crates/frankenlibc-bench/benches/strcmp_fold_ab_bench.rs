@@ -11,8 +11,8 @@
 
 use std::ffi::{c_char, c_int};
 use std::hint::black_box;
-use std::simd::cmp::SimdPartialEq;
 use std::simd::Simd;
+use std::simd::cmp::SimdPartialEq;
 
 unsafe extern "C" {
     fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int;
@@ -40,8 +40,10 @@ unsafe fn scan_strcmp_old(s1: *const c_char, s2: *const c_char, bound: usize) ->
             && (p1 as usize + i) & 0xFFF <= 0x1000 - 32
             && (p2 as usize + i) & 0xFFF <= 0x1000 - 32
         {
-            let va = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p1.add(i), 32) });
-            let vb = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p2.add(i), 32) });
+            let va =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p1.add(i), 32) });
+            let vb =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p2.add(i), 32) });
             let flagged = (va.simd_ne(vb) | va.simd_eq(Simd::splat(0))).to_bitmask();
             if flagged == 0 {
                 i += 32;
@@ -106,10 +108,12 @@ unsafe fn scan_strcmp_new(s1: *const c_char, s2: *const c_char, bound: usize) ->
             let mut combined = 0u32;
             for k in 0..4 {
                 let off = i + k * 32;
-                let va =
-                    Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p1.add(off), 32) });
-                let vb =
-                    Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p2.add(off), 32) });
+                let va = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p1.add(off), 32)
+                });
+                let vb = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p2.add(off), 32)
+                });
                 let m = (va.simd_ne(vb) | va.simd_eq(zero)).to_bitmask() as u32;
                 masks[k] = m;
                 combined |= m;
@@ -128,8 +132,10 @@ unsafe fn scan_strcmp_new(s1: *const c_char, s2: *const c_char, bound: usize) ->
             && (p1 as usize + i) & 0xFFF <= 0x1000 - 32
             && (p2 as usize + i) & 0xFFF <= 0x1000 - 32
         {
-            let va = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p1.add(i), 32) });
-            let vb = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p2.add(i), 32) });
+            let va =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p1.add(i), 32) });
+            let vb =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p2.add(i), 32) });
             let flagged = (va.simd_ne(vb) | va.simd_eq(zero)).to_bitmask();
             if flagged == 0 {
                 i += 32;
@@ -182,7 +188,7 @@ unsafe fn cmp_new(s1: *const c_char, s2: *const c_char) -> c_int {
     (a as c_int) - (b as c_int)
 }
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 fn bench(c: &mut Criterion) {
     // Equal strings of length N (worst case: full scan to shared NUL). Plus a
@@ -199,13 +205,25 @@ fn bench(c: &mut Criterion) {
 
         let mut grp = c.benchmark_group(format!("strcmp_eq_{n}"));
         grp.bench_function("old_32panel", |bb| {
-            bb.iter(|| black_box(unsafe { cmp_old(black_box(a.as_ptr().cast()), black_box(b.as_ptr().cast())) }))
+            bb.iter(|| {
+                black_box(unsafe {
+                    cmp_old(black_box(a.as_ptr().cast()), black_box(b.as_ptr().cast()))
+                })
+            })
         });
         grp.bench_function("new_128fold", |bb| {
-            bb.iter(|| black_box(unsafe { cmp_new(black_box(a.as_ptr().cast()), black_box(b.as_ptr().cast())) }))
+            bb.iter(|| {
+                black_box(unsafe {
+                    cmp_new(black_box(a.as_ptr().cast()), black_box(b.as_ptr().cast()))
+                })
+            })
         });
         grp.bench_function("host_glibc", |bb| {
-            bb.iter(|| black_box(unsafe { strcmp(black_box(a.as_ptr().cast()), black_box(b.as_ptr().cast())) }))
+            bb.iter(|| {
+                black_box(unsafe {
+                    strcmp(black_box(a.as_ptr().cast()), black_box(b.as_ptr().cast()))
+                })
+            })
         });
         grp.finish();
     }

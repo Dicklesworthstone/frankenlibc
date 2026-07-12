@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 use std::ffi::c_void;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 
 unsafe extern "C" {
     fn qsort(
@@ -61,7 +61,9 @@ fn bench(c: &mut Criterion) {
     // Distinct random 8-hex-char strings, kept alive; element = its pointer bytes.
     let mut s: u64 = 0xABCD_1234_5678_9F01;
     let mut next = || {
-        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        s = s
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         s
     };
     let strings: Vec<std::ffi::CString> = (0..n)
@@ -81,7 +83,10 @@ fn bench(c: &mut Criterion) {
         b.sort_unstable_by(cmp_ord);
         let mut g = elems.clone();
         unsafe { qsort(g.as_mut_ptr().cast(), n, 8, cmp_c) };
-        assert!(a == b && b == g, "sort order mismatch across implementations");
+        assert!(
+            a == b && b == g,
+            "sort order mismatch across implementations"
+        );
     }
 
     let mut grp = c.benchmark_group(format!("pdq_n{n}"));

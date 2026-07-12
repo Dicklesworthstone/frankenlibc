@@ -37,17 +37,36 @@ fn candidate(x: f32) -> f32 {
 
 fn p50(s: &mut [f64]) -> f64 {
     s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    if s.is_empty() { return 0.0; }
+    if s.is_empty() {
+        return 0.0;
+    }
     let r = 0.5 * (s.len() - 1) as f64;
     let (lo, hi) = (r.floor() as usize, r.ceil() as usize);
     s[lo] * (1.0 - (r - lo as f64)) + s[hi] * (r - lo as f64)
 }
 
-fn run<F: Fn(f32) -> f32>(g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>, name: &str, inp: &[f32], f: F) {
-    let one = || { let mut a = 0.0f32; for &x in inp { a += f(black_box(x)); } a };
-    for _ in 0..50 { black_box(one()); }
+fn run<F: Fn(f32) -> f32>(
+    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &str,
+    inp: &[f32],
+    f: F,
+) {
+    let one = || {
+        let mut a = 0.0f32;
+        for &x in inp {
+            a += f(black_box(x));
+        }
+        a
+    };
+    for _ in 0..50 {
+        black_box(one());
+    }
     let mut s = Vec::new();
-    for _ in 0..200 { let t = Instant::now(); black_box(one()); s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / inp.len() as f64); }
+    for _ in 0..200 {
+        let t = Instant::now();
+        black_box(one());
+        s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / inp.len() as f64);
+    }
     println!("ASINHF_BENCH impl={name} p50_ns_op={:.4}", p50(&mut s));
     g.bench_function(name, |b| b.iter(|| black_box(f(black_box(inp[0])))));
 }
@@ -65,18 +84,35 @@ fn bench(c: &mut Criterion) {
         for x in [mag, -mag] {
             let cand = candidate(x);
             let g = unsafe { host_asinhf(x) };
-            if cand.is_nan() && g.is_nan() { continue; }
+            if cand.is_nan() && g.is_nan() {
+                continue;
+            }
             let u = ((cand.to_bits() as i64) - (g.to_bits() as i64)).unsigned_abs();
-            if u > worst { worst = u; wx = x; }
+            if u > worst {
+                worst = u;
+                wx = x;
+            }
         }
     }
     eprintln!("asinhf candidate vs glibc worst ULP over |x| in [1e-12,1e30] = {worst} at x={wx}");
     // special cases (exact)
-    for &(x, _name) in &[(f32::INFINITY, "inf"), (f32::NEG_INFINITY, "-inf"), (0.0f32, "+0"), (-0.0f32, "-0")] {
+    for &(x, _name) in &[
+        (f32::INFINITY, "inf"),
+        (f32::NEG_INFINITY, "-inf"),
+        (0.0f32, "+0"),
+        (-0.0f32, "-0"),
+    ] {
         let (cand, g) = (candidate(x), unsafe { host_asinhf(x) });
-        assert_eq!(cand.to_bits(), g.to_bits(), "asinhf special case x={x} cand={cand} glibc={g}");
+        assert_eq!(
+            cand.to_bits(),
+            g.to_bits(),
+            "asinhf special case x={x} cand={cand} glibc={g}"
+        );
     }
-    assert!(worst <= 2, "asinhf candidate exceeds 2 ULP vs glibc (worst {worst} at x={wx})");
+    assert!(
+        worst <= 2,
+        "asinhf candidate exceeds 2 ULP vs glibc (worst {worst} at x={wx})"
+    );
 
     let inp: Vec<f32> = (0..64).map(|k| -20.0 + k as f32 * 0.625).collect();
     let mut g = c.benchmark_group("asinhf");

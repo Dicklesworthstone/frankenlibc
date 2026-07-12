@@ -514,7 +514,11 @@ macro_rules! try_radix_lane_for {
                 }
                 _ => true,
             };
-            let masks: [$ty; 2] = if signed_first { [sign_mask, 0] } else { [0, sign_mask] };
+            let masks: [$ty; 2] = if signed_first {
+                [sign_mask, 0]
+            } else {
+                [0, sign_mask]
+            };
             for &mask in &masks {
                 let mut keys: Vec<$ty> = Vec::with_capacity(num);
                 for chunk in active.chunks_exact($width) {
@@ -746,7 +750,10 @@ where
                 h_idx = Some(k);
             }
             let kb = read_uint(chunk, width);
-            if big_idx.map(|b| kb > read_uint(get(b), width)).unwrap_or(true) {
+            if big_idx
+                .map(|b| kb > read_uint(get(b), width))
+                .unwrap_or(true)
+            {
                 big_idx = Some(k);
             }
             if small_idx

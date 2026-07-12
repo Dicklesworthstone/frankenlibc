@@ -57,21 +57,13 @@ fn set_fl_errno(value: c_int) {
     unsafe { *fl_errno_location() = value };
 }
 
-fn host_set_mempolicy(
-    mode: c_int,
-    nodemask: *const c_ulong,
-    maxnode: c_ulong,
-) -> (c_long, c_int) {
+fn host_set_mempolicy(mode: c_int, nodemask: *const c_ulong, maxnode: c_ulong) -> (c_long, c_int) {
     set_host_errno(0);
     let rc = unsafe { libc::syscall(SYS_SET_MEMPOLICY, mode, nodemask, maxnode) as c_long };
     (rc, host_errno())
 }
 
-fn fl_set_mempolicy(
-    mode: c_int,
-    nodemask: *const c_ulong,
-    maxnode: c_ulong,
-) -> (c_long, c_int) {
+fn fl_set_mempolicy(mode: c_int, nodemask: *const c_ulong, maxnode: c_ulong) -> (c_long, c_int) {
     set_fl_errno(0);
     let rc = unsafe { fl::set_mempolicy(mode, nodemask, maxnode) };
     (rc, fl_errno())
@@ -136,9 +128,8 @@ fn host_migrate_pages(
     new_nodes: *const c_ulong,
 ) -> (c_long, c_int) {
     set_host_errno(0);
-    let rc = unsafe {
-        libc::syscall(SYS_MIGRATE_PAGES, pid, maxnode, old_nodes, new_nodes) as c_long
-    };
+    let rc =
+        unsafe { libc::syscall(SYS_MIGRATE_PAGES, pid, maxnode, old_nodes, new_nodes) as c_long };
     (rc, host_errno())
 }
 
@@ -237,10 +228,7 @@ fn numa_mempolicy_invalid_failures_match_host_syscall() {
 
     let host = host_move_pages(0, 1, ptr::null(), ptr::null(), ptr::null_mut(), 0);
     let fl = fl_move_pages(0, 1, ptr::null(), ptr::null(), ptr::null_mut(), 0);
-    assert_eq!(
-        fl, host,
-        "move_pages(null pages): fl={fl:?} host={host:?}"
-    );
+    assert_eq!(fl, host, "move_pages(null pages): fl={fl:?} host={host:?}");
     assert_eq!(fl.0, -1);
 
     let host = host_set_mempolicy_home_node(0, 0, 0, 1);

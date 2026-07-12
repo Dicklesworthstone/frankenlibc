@@ -75,7 +75,11 @@ fn build_fl(typ: c_int, appends: &[(Vec<u8>, c_int, c_int)]) -> Option<(usize, V
     let clen = unsafe { (buf.as_ptr() as *const usize).read() };
     Some((clen, buf[..clen.min(1024)].to_vec()))
 }
-fn build_glibc_full(g: &Glibc, typ: c_int, appends: &[(Vec<u8>, c_int, c_int)]) -> Option<(usize, Vec<u8>)> {
+fn build_glibc_full(
+    g: &Glibc,
+    typ: c_int,
+    appends: &[(Vec<u8>, c_int, c_int)],
+) -> Option<(usize, Vec<u8>)> {
     let mut buf = vec![0u8; 1024];
     let mut cmsgp: *mut c_void = std::ptr::null_mut();
     if unsafe { (g.init)(buf.as_mut_ptr().cast(), &mut cmsgp, typ) } != 0 {
@@ -95,11 +99,11 @@ fn init_append_byte_exact() {
     let g = glibc();
     // A spread of option payloads (type, len, data...) with assorted alignments.
     let opts: Vec<(Vec<u8>, c_int, c_int)> = vec![
-        (vec![0x00], 1, 0),                          // Pad1
-        (vec![0x01, 0x00], 1, 0),                    // PadN len 0
-        (vec![0xC2, 0x04, 1, 2, 3, 4], 4, 2),        // jumbo-ish, align 4n+2
-        (vec![0x05, 0x02, 0xAA, 0xBB], 2, 0),        // router-alert-ish, align 2
-        (vec![0xC9, 0x03, 9, 8, 7], 8, 4),           // align 8n+4
+        (vec![0x00], 1, 0),                   // Pad1
+        (vec![0x01, 0x00], 1, 0),             // PadN len 0
+        (vec![0xC2, 0x04, 1, 2, 3, 4], 4, 2), // jumbo-ish, align 4n+2
+        (vec![0x05, 0x02, 0xAA, 0xBB], 2, 0), // router-alert-ish, align 2
+        (vec![0xC9, 0x03, 9, 8, 7], 8, 4),    // align 8n+4
         (vec![0x07, 0x01, 0x42], 1, 0),
     ];
     let mut mism = Vec::new();
@@ -114,7 +118,12 @@ fn init_append_byte_exact() {
             }
         }
     }
-    assert!(mism.is_empty(), "inet6 init/append diverged ({}):\n{}", mism.len(), mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "inet6 init/append diverged ({}):\n{}",
+        mism.len(),
+        mism.join("\n")
+    );
 }
 
 #[test]
@@ -137,9 +146,20 @@ fn alloc_matches_append() {
         let gp = unsafe { (g.alloc)(gc, datalen, multx, plusy) };
         let fp = unsafe { fl::inet6_option_alloc(fc, datalen, multx, plusy) };
         // Compare null-ness and the relative offset into the buffer.
-        let goff = if gp.is_null() { -1i64 } else { gp as i64 - gbuf.as_ptr() as i64 };
-        let foff = if fp.is_null() { -1i64 } else { fp as i64 - fbuf.as_ptr() as i64 };
-        assert_eq!(goff, foff, "alloc(datalen={datalen},multx={multx},plusy={plusy}) offset mismatch");
+        let goff = if gp.is_null() {
+            -1i64
+        } else {
+            gp as i64 - gbuf.as_ptr() as i64
+        };
+        let foff = if fp.is_null() {
+            -1i64
+        } else {
+            fp as i64 - fbuf.as_ptr() as i64
+        };
+        assert_eq!(
+            goff, foff,
+            "alloc(datalen={datalen},multx={multx},plusy={plusy}) offset mismatch"
+        );
     }
 }
 
@@ -154,9 +174,15 @@ fn next_and_find_walk_identically() {
     ];
     let mut buf = vec![0u8; 1024];
     let mut cmsgp: *mut c_void = std::ptr::null_mut();
-    assert_eq!(unsafe { (g.init)(buf.as_mut_ptr().cast(), &mut cmsgp, HOPOPTS) }, 0);
+    assert_eq!(
+        unsafe { (g.init)(buf.as_mut_ptr().cast(), &mut cmsgp, HOPOPTS) },
+        0
+    );
     for (opt, multx, plusy) in &opts {
-        assert_eq!(unsafe { (g.append)(cmsgp, opt.as_ptr(), *multx, *plusy) }, 0);
+        assert_eq!(
+            unsafe { (g.append)(cmsgp, opt.as_ptr(), *multx, *plusy) },
+            0
+        );
     }
     let base = buf.as_ptr() as i64;
 
@@ -174,7 +200,11 @@ fn next_and_find_walk_identically() {
         }
         out
     };
-    assert_eq!(walk_next(g.next), walk_next(fl::inet6_option_next), "next walk diverged");
+    assert_eq!(
+        walk_next(g.next),
+        walk_next(fl::inet6_option_next),
+        "next walk diverged"
+    );
 
     // Find each present type plus an absent one, from a fresh start.
     let find_one = |f: FindFn, typ: c_int| -> (c_int, i64) {

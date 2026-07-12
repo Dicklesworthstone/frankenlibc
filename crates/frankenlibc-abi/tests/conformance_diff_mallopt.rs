@@ -28,10 +28,40 @@ fn glibc_mallopt() -> MalloptFn {
 fn mallopt_return_contract_matches_glibc() {
     let g = glibc_mallopt();
     let params = [
-        -10i32, -8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 999, -100, i32::MAX, i32::MIN,
+        -10i32,
+        -8,
+        -7,
+        -6,
+        -5,
+        -4,
+        -3,
+        -2,
+        -1,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        999,
+        -100,
+        i32::MAX,
+        i32::MIN,
     ];
     let values = [
-        -100i32, -1, 0, 1, 2, 80, 159, 160, 161, 162, 1024, 131072, i32::MAX,
+        -100i32,
+        -1,
+        0,
+        1,
+        2,
+        80,
+        159,
+        160,
+        161,
+        162,
+        1024,
+        131072,
+        i32::MAX,
     ];
     let mut mism = Vec::new();
     for &p in &params {
@@ -46,5 +76,10 @@ fn mallopt_return_contract_matches_glibc() {
             }
         }
     }
-    assert!(mism.is_empty(), "mallopt diverged ({}):\n{}", mism.len(), mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "mallopt diverged ({}):\n{}",
+        mism.len(),
+        mism.join("\n")
+    );
 }

@@ -2,7 +2,11 @@
 //! 2/pi table (sysdeps/ieee754/ldbl-128/e_rem_pio2l.c) and the sin/cos
 //! lookup table (sysdeps/ieee754/ldbl-128/t_sincosl.c) (bd-9z5ikz).
 //! DO NOT hand-edit; values are correctly-rounded.
-#![allow(clippy::excessive_precision, clippy::approx_constant, clippy::unreadable_literal)]
+#![allow(
+    clippy::excessive_precision,
+    clippy::approx_constant,
+    clippy::unreadable_literal
+)]
 
 #[rustfmt::skip]
 pub static TWO_OVER_PI: [i32; 938] = [

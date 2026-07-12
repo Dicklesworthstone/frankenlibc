@@ -136,13 +136,13 @@ fn diff_snprintf_string_specifiers() {
     let mut divs = Vec::new();
     let cases: &[(&[u8], &[u8])] = &[
         (b"%s\0", b"hello\0"),
-        (b"%s\0", b"\0"),                // empty
-        (b"|%10s|\0", b"hi\0"),          // width
-        (b"|%-10s|\0", b"hi\0"),         // left-align
-        (b"%.3s\0", b"hello\0"),         // precision: max chars
-        (b"%5.3s\0", b"hello\0"),        // width + precision
-        (b"%c\0", b"A\0"),               // single char (passed as int)
-        (b"%%\0", b"\0"),                // literal %
+        (b"%s\0", b"\0"),         // empty
+        (b"|%10s|\0", b"hi\0"),   // width
+        (b"|%-10s|\0", b"hi\0"),  // left-align
+        (b"%.3s\0", b"hello\0"),  // precision: max chars
+        (b"%5.3s\0", b"hello\0"), // width + precision
+        (b"%c\0", b"A\0"),        // single char (passed as int)
+        (b"%%\0", b"\0"),         // literal %
         (b"fixed literal output\0", b"\0"),
         (b"prefix-%s-suffix\0", b"X\0"), // surrounding text
     ];
@@ -446,10 +446,7 @@ fn diff_sscanf_int_cases() {
         (b"1 2\0", b"%d %d %d\0"),   // partial multi → count 2
         (b"1 x 3\0", b"%d %d %d\0"), // second conversion mismatch → count 1
         (b"\0", b"%d %d %d\0"),      // empty multi → EOF
-        (
-            b"2147483648 -2147483649 +7\0",
-            b"%d %d %d\0",
-        ), // int overflow wraps like glibc
+        (b"2147483648 -2147483649 +7\0", b"%d %d %d\0"), // int overflow wraps like glibc
     ];
     for (input, fmt) in cases {
         // For multi-arg cases we need 3 ints; use a fixed buffer of 4.

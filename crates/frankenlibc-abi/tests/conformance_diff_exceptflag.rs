@@ -67,12 +67,31 @@ fn run(fl_impl: bool) -> (u16, c_int, c_int) {
 fn fegetexceptflag_fesetexceptflag_match_glibc() {
     let gr = run(false);
     let fr = run(true);
-    assert_eq!(fr.1, gr.1, "full restore flags: fl={:#x} glibc={:#x}", fr.1, gr.1);
-    assert_eq!(fr.2, gr.2, "subset restore flags: fl={:#x} glibc={:#x}", fr.2, gr.2);
+    assert_eq!(
+        fr.1, gr.1,
+        "full restore flags: fl={:#x} glibc={:#x}",
+        fr.1, gr.1
+    );
+    assert_eq!(
+        fr.2, gr.2,
+        "subset restore flags: fl={:#x} glibc={:#x}",
+        fr.2, gr.2
+    );
     // saved fexcept_t value should match the glibc-compatible layout.
-    assert_eq!(fr.0, gr.0, "saved fexcept_t: fl={:#x} glibc={:#x}", fr.0, gr.0);
+    assert_eq!(
+        fr.0, gr.0,
+        "saved fexcept_t: fl={:#x} glibc={:#x}",
+        fr.0, gr.0
+    );
     // sanity
-    assert_eq!(gr.1, FE_INVALID | FE_OVERFLOW, "full restore must reinstate both");
-    assert_eq!(gr.2, FE_INVALID, "subset restore must reinstate only FE_INVALID");
+    assert_eq!(
+        gr.1,
+        FE_INVALID | FE_OVERFLOW,
+        "full restore must reinstate both"
+    );
+    assert_eq!(
+        gr.2, FE_INVALID,
+        "subset restore must reinstate only FE_INVALID"
+    );
     unsafe { g::feclearexcept(FE_ALL) };
 }

@@ -91,20 +91,8 @@ fn fanotify_invalid_failures_match_host_syscall() {
     );
     assert_eq!(fl.0, -1);
 
-    let host = host_fanotify_mark(
-        -1,
-        FAN_MARK_ADD,
-        FAN_ACCESS,
-        libc::AT_FDCWD,
-        ptr::null(),
-    );
-    let fl = fl_fanotify_mark(
-        -1,
-        FAN_MARK_ADD,
-        FAN_ACCESS,
-        libc::AT_FDCWD,
-        ptr::null(),
-    );
+    let host = host_fanotify_mark(-1, FAN_MARK_ADD, FAN_ACCESS, libc::AT_FDCWD, ptr::null());
+    let fl = fl_fanotify_mark(-1, FAN_MARK_ADD, FAN_ACCESS, libc::AT_FDCWD, ptr::null());
 
     assert_eq!(
         fl, host,

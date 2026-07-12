@@ -18,12 +18,28 @@ fn el() -> *mut c_int {
 
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
-        0.0, -0.0f128, 0.5, -0.5, 0.4999f128, 0.5001f128, 1.0, -1.0, 2.0,
-        38.0, 39.0, 40.0, -39.0, -40.0, 4933.0, 4934.0,
-        1e-30f128, -1e-30f128, 1e-40f128,
+        0.0,
+        -0.0f128,
+        0.5,
+        -0.5,
+        0.4999f128,
+        0.5001f128,
+        1.0,
+        -1.0,
+        2.0,
+        38.0,
+        39.0,
+        40.0,
+        -39.0,
+        -40.0,
+        4933.0,
+        4934.0,
+        1e-30f128,
+        -1e-30f128,
+        1e-40f128,
         f128::from_bits(1),
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf → -1
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf → -1
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     let mut q: i64 = -5000;
@@ -33,9 +49,13 @@ fn values() -> Vec<f128> {
     }
     let mut st: u64 = 0x6d6f_7265_6e75_6d73;
     for _ in 0..5000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3fc0 + (hi % 0x0040)) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -58,8 +78,17 @@ fn f128_exp10m1_matches_glibc() {
         let fe = unsafe { *el() };
         n += 1;
         if g != f || ge != fe {
-            mism.push(format!("exp10m1({:#034x}): glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})", x.to_bits()));
+            mism.push(format!(
+                "exp10m1({:#034x}): glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})",
+                x.to_bits()
+            ));
         }
     }
-    assert!(mism.is_empty(), "exp10m1f128 diverged ({}/{}):\n{}", mism.len(), n, mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "exp10m1f128 diverged ({}/{}):\n{}",
+        mism.len(),
+        n,
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

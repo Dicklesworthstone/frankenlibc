@@ -51,14 +51,26 @@ fn getresgid_matches_glibc() {
 fn getresuid_null_pointer_matches_glibc() {
     let g = unsafe {
         *__errno_location() = 0;
-        let rc = getresuid(std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+        let rc = getresuid(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
         (rc, *__errno_location())
     };
     let f = unsafe {
         *__errno_location() = 0;
-        let rc = frankenlibc_abi::unistd_abi::getresuid(std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+        let rc = frankenlibc_abi::unistd_abi::getresuid(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
         (rc, *__errno_location())
     };
     assert_eq!(f, g, "getresuid(NULL,NULL,NULL): fl={f:?} glibc={g:?}");
-    assert_eq!((g.0, g.1), (-1, libc::EFAULT), "glibc: -1/EFAULT on NULL out-pointer");
+    assert_eq!(
+        (g.0, g.1),
+        (-1, libc::EFAULT),
+        "glibc: -1/EFAULT on NULL out-pointer"
+    );
 }

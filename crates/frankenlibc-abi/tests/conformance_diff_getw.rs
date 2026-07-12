@@ -54,14 +54,23 @@ fn putw_writes_same_bytes_as_glibc() {
     let _ = std::fs::remove_file(&gp);
 
     assert_eq!(fb, gb, "putw byte stream: fl != glibc");
-    assert_eq!(fb.len(), VALS.len() * 4, "putw should write 4 bytes per int");
+    assert_eq!(
+        fb.len(),
+        VALS.len() * 4,
+        "putw should write 4 bytes per int"
+    );
 }
 
 #[test]
 fn getw_roundtrips_putw() {
     // Write with fl, read back with fl.
     let (fp, fc) = tmp("rt");
-    let f = unsafe { fl::fopen(fc.as_ptr().cast::<c_char>(), c"w+".as_ptr().cast::<c_char>()) };
+    let f = unsafe {
+        fl::fopen(
+            fc.as_ptr().cast::<c_char>(),
+            c"w+".as_ptr().cast::<c_char>(),
+        )
+    };
     assert!(!f.is_null());
     for v in VALS {
         unsafe { fl::putw(v, f) };

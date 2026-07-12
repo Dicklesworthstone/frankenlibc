@@ -39,7 +39,17 @@ fn alarm_remaining_sequence_matches_glibc() {
     let g = glibc_seq();
     let f = fl_seq();
     // Safety net: ensure no alarm is left pending regardless of outcome.
-    unsafe { alarm(0); frankenlibc_abi::unistd_abi::alarm(0); }
-    assert_eq!(f, g, "alarm sequence [alarm(100),alarm(30),alarm(0)]: fl={f:?} glibc={g:?}");
-    assert_eq!(g, [0, 100, 30], "glibc reference: no-prior=0, then ceil(remaining)=100,30");
+    unsafe {
+        alarm(0);
+        frankenlibc_abi::unistd_abi::alarm(0);
+    }
+    assert_eq!(
+        f, g,
+        "alarm sequence [alarm(100),alarm(30),alarm(0)]: fl={f:?} glibc={g:?}"
+    );
+    assert_eq!(
+        g,
+        [0, 100, 30],
+        "glibc reference: no-prior=0, then ceil(remaining)=100,30"
+    );
 }

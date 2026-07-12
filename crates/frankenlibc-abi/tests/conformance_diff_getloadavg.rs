@@ -41,7 +41,10 @@ fn getloadavg_count_matches_glibc() {
         // tiny tolerance in case the kernel updates between the two reads.
         for i in 0..gr.max(0) as usize {
             if (gb[i] - fb[i]).abs() > 0.5 {
-                mism.push(format!("nelem={nelem} idx={i}: glibc={} fl={}", gb[i], fb[i]));
+                mism.push(format!(
+                    "nelem={nelem} idx={i}: glibc={} fl={}",
+                    gb[i], fb[i]
+                ));
             }
         }
     }

@@ -33,8 +33,22 @@ fn main() {
             frankenlibc_abi::time_abi::strptime(in_c.as_ptr(), fmt_c.as_ptr(), &mut fl_tm);
             gl_strptime(in_c.as_ptr(), fmt_c.as_ptr(), &mut gl_tm);
             assert_eq!(
-                (fl_tm.tm_year, fl_tm.tm_mon, fl_tm.tm_mday, fl_tm.tm_hour, fl_tm.tm_min, fl_tm.tm_sec),
-                (gl_tm.tm_year, gl_tm.tm_mon, gl_tm.tm_mday, gl_tm.tm_hour, gl_tm.tm_min, gl_tm.tm_sec),
+                (
+                    fl_tm.tm_year,
+                    fl_tm.tm_mon,
+                    fl_tm.tm_mday,
+                    fl_tm.tm_hour,
+                    fl_tm.tm_min,
+                    fl_tm.tm_sec
+                ),
+                (
+                    gl_tm.tm_year,
+                    gl_tm.tm_mon,
+                    gl_tm.tm_mday,
+                    gl_tm.tm_hour,
+                    gl_tm.tm_min,
+                    gl_tm.tm_sec
+                ),
                 "strptime {label} tm mismatch"
             );
 
@@ -59,7 +73,10 @@ fn main() {
                 ));
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("STRPTIME {label} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x", fl / gl);
+            println!(
+                "STRPTIME {label} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x",
+                fl / gl
+            );
         }
     }
 }

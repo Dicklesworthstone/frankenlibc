@@ -23,7 +23,11 @@ fn pctl(s: &[f64], q: f64) -> f64 {
 
 fn main() {
     let h = unsafe {
-        libc::dlmopen(libc::LM_ID_NEWLM, b"libc.so.6\0".as_ptr().cast(), libc::RTLD_LAZY | libc::RTLD_LOCAL)
+        libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        )
     };
     assert!(!h.is_null());
     let g_strchr: StrchrFn = unsafe { dl(h, b"strchr\0") };
@@ -34,7 +38,9 @@ fn main() {
         for align in 0..70usize {
             for len in 0..300usize {
                 let mut buf = vec![0u8; align + len + 1 + 160];
-                for k in 0..len { buf[align + k] = b'a' + ((align + k) % 25) as u8; }
+                for k in 0..len {
+                    buf[align + k] = b'a' + ((align + k) % 25) as u8;
+                }
                 buf[align + len] = 0;
                 let sp = unsafe { buf.as_ptr().add(align) as *const i8 };
                 // absent target 'Z'
@@ -64,22 +70,33 @@ fn main() {
         for r in 0..100 {
             if r % 2 == 0 {
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { frankenlibc_abi::string_abi::strchr(scp, b'Z' as i32) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { frankenlibc_abi::string_abi::strchr(scp, b'Z' as i32) });
+                }
                 fl.push(t.elapsed().as_nanos() as f64 / lit as f64);
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { g_strchr(scp, b'Z' as i32) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { g_strchr(scp, b'Z' as i32) });
+                }
                 gl.push(t.elapsed().as_nanos() as f64 / lit as f64);
             } else {
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { g_strchr(scp, b'Z' as i32) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { g_strchr(scp, b'Z' as i32) });
+                }
                 gl.push(t.elapsed().as_nanos() as f64 / lit as f64);
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { frankenlibc_abi::string_abi::strchr(scp, b'Z' as i32) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { frankenlibc_abi::string_abi::strchr(scp, b'Z' as i32) });
+                }
                 fl.push(t.elapsed().as_nanos() as f64 / lit as f64);
             }
         }
         let (f10, g10) = (pctl(&fl, 0.1), pctl(&gl, 0.1));
-        println!("STRCHR n={n:<6} p10: fl={f10:.2} glibc={g10:.2} fl/glibc={:.3}  {}",
-            f10 / g10, if f10 <= g10 * 1.1 { "ok" } else { "LOSS" });
+        println!(
+            "STRCHR n={n:<6} p10: fl={f10:.2} glibc={g10:.2} fl/glibc={:.3}  {}",
+            f10 / g10,
+            if f10 <= g10 * 1.1 { "ok" } else { "LOSS" }
+        );
     }
 }

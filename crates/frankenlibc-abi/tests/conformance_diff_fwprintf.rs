@@ -8,8 +8,8 @@
 //! bytes AND the return value (count of wide chars, or -1) are compared with
 //! glibc across %d/%x/%f/%ls/%lc conversions. No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
 use libc::wchar_t;
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod g {
@@ -35,7 +35,10 @@ fn tmp(tag: &str) -> (std::path::PathBuf, CString) {
     let n = CNT.fetch_add(1, Ordering::Relaxed);
     let mut p = std::env::temp_dir();
     p.push(format!("fl-fwprintf-{}-{}-{}", std::process::id(), tag, n));
-    (p.clone(), CString::new(p.to_string_lossy().as_bytes()).unwrap())
+    (
+        p.clone(),
+        CString::new(p.to_string_lossy().as_bytes()).unwrap(),
+    )
 }
 
 macro_rules! both {
@@ -80,7 +83,13 @@ fn fwprintf_matches_glibc() {
     both!("decimal", "n=%d\n", 42 as c_int);
     both!("hex", "h=%x\n", 255 as c_int);
     both!("float", "f=%.3f\n", 3.14159f64);
-    both!("multi-int", "%d-%d-%d\n", 1 as c_int, 2 as c_int, 3 as c_int);
+    both!(
+        "multi-int",
+        "%d-%d-%d\n",
+        1 as c_int,
+        2 as c_int,
+        3 as c_int
+    );
     both!("wide string %ls", "s=[%ls]\n", wide.as_ptr());
     both!("wide char %lc", "c=%lc\n", ('Z' as wchar_t) as c_int);
     both!("percent + width", "[%5d]\n", 7 as c_int);

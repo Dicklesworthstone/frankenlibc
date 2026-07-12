@@ -7,9 +7,9 @@
 //! NUL (or one that would cross the page) drops to the 8-byte SWAR tail. Closes a
 //! ~1.4-1.5x strrchr gap vs glibc to ~1.3x (residual is per-call membrane cost).
 
-use std::os::raw::{c_char, c_int};
 use frankenlibc_abi::string_abi as fa;
 use sha2::{Digest, Sha256};
+use std::os::raw::{c_char, c_int};
 
 unsafe extern "C" {
     fn strrchr(s: *const c_char, c: c_int) -> *mut c_char;
@@ -29,7 +29,9 @@ fn strrchr_matches_glibc() {
     for _ in 0..300000 {
         let len = (rng() as usize) % 160;
         let off = (rng() as usize) % 8;
-        let body: Vec<u8> = (0..len).map(|_| ((rng() % 5) + b'a' as u64) as u8).collect();
+        let body: Vec<u8> = (0..len)
+            .map(|_| ((rng() % 5) + b'a' as u64) as u8)
+            .collect();
         let mut backing = vec![b'q'; off];
         backing.extend_from_slice(&body);
         backing.push(0);
@@ -38,8 +40,16 @@ fn strrchr_matches_glibc() {
         let t = targets[(rng() as usize) % targets.len()] as c_int;
         let fl = unsafe { fa::strrchr(p, t) };
         let gl = unsafe { strrchr(p, t) };
-        let fo = if fl.is_null() { u64::MAX } else { fl as u64 - p as u64 };
-        let go = if gl.is_null() { u64::MAX } else { gl as u64 - p as u64 };
+        let fo = if fl.is_null() {
+            u64::MAX
+        } else {
+            fl as u64 - p as u64
+        };
+        let go = if gl.is_null() {
+            u64::MAX
+        } else {
+            gl as u64 - p as u64
+        };
         if fo != go {
             div += 1;
             if div <= 5 {
@@ -52,8 +62,7 @@ fn strrchr_matches_glibc() {
     eprintln!("strrchr golden sha256: {hex}");
     assert_eq!(div, 0, "strrchr diverged from glibc in {div} cases");
     assert_eq!(
-        hex,
-        "daae3e091dc8a78390ced1c2226429f78aa11026ff4827e294a7b358457b52fb",
+        hex, "daae3e091dc8a78390ced1c2226429f78aa11026ff4827e294a7b358457b52fb",
         "strrchr golden changed"
     );
 }
@@ -85,11 +94,18 @@ fn strrchr_does_not_overread_past_guard_page() {
             *start.add(back - 1) = 0;
             // Search for an absent byte (full scan to the NUL against the guard).
             let r = fa::strrchr(start as *const c_char, b'z' as c_int);
-            assert!(r.is_null(), "strrchr should miss near guard page (back={back})");
+            assert!(
+                r.is_null(),
+                "strrchr should miss near guard page (back={back})"
+            );
             // And for a present byte.
             if back > 1 {
                 let r2 = fa::strrchr(start as *const c_char, b'a' as c_int);
-                assert_eq!(r2 as usize, start.add(back - 2) as usize, "last 'a' (back={back})");
+                assert_eq!(
+                    r2 as usize,
+                    start.add(back - 2) as usize,
+                    "last 'a' (back={back})"
+                );
             }
         }
         libc::munmap(base.cast(), page * 2);

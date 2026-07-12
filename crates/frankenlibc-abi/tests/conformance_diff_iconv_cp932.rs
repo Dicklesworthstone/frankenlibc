@@ -21,7 +21,8 @@ unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
 type OpenFn = extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
-type ConvFn = extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
+type ConvFn =
+    extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
 
 fn g_funcs() -> (OpenFn, ConvFn) {
     unsafe {
@@ -69,7 +70,10 @@ fn cp932_decode_matches_glibc_full_range() {
     let gcd = gopen(c"UTF-8".as_ptr(), c"CP932".as_ptr());
     assert!(gcd as usize != INVALID, "glibc iconv_open CP932 failed");
     let fcd = unsafe { fl::iconv_open(c"UTF-8".as_ptr(), c"CP932".as_ptr()) };
-    assert!(fcd as usize != INVALID && !fcd.is_null(), "fl iconv_open CP932 failed");
+    assert!(
+        fcd as usize != INVALID && !fcd.is_null(),
+        "fl iconv_open CP932 failed"
+    );
 
     let mut mism = 0u64;
     let mut first = String::new();
@@ -102,7 +106,10 @@ fn cp932_decode_matches_glibc_full_range() {
             }
         }
     }
-    assert_eq!(mism, 0, "CP932 decode diverged from glibc ({mism}); first: {first}");
+    assert_eq!(
+        mism, 0,
+        "CP932 decode diverged from glibc ({mism}); first: {first}"
+    );
 }
 
 #[test]
@@ -131,7 +138,10 @@ fn cp932_encode_matches_glibc_full_range() {
             }
         }
     }
-    assert_eq!(mism, 0, "CP932 encode diverged from glibc ({mism}); first: {first}");
+    assert_eq!(
+        mism, 0,
+        "CP932 encode diverged from glibc ({mism}); first: {first}"
+    );
 }
 
 #[test]

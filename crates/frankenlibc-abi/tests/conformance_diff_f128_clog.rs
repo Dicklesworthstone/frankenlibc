@@ -15,9 +15,27 @@ unsafe extern "C" {
 
 fn parts() -> Vec<f128> {
     let mut v = vec![
-        0.0, -0.0f128, 1.0, -1.0, 0.5, -0.5, 0.75, 1.5, -1.5, 2.0, -2.0, 3.0,
-        0.9f128, 1.1f128, 0.6f128, 1e300f128, 1e-300f128, 1e4000f128, 1e-4000f128,
-        f128::MIN_POSITIVE, f128::MAX,
+        0.0,
+        -0.0f128,
+        1.0,
+        -1.0,
+        0.5,
+        -0.5,
+        0.75,
+        1.5,
+        -1.5,
+        2.0,
+        -2.0,
+        3.0,
+        0.9f128,
+        1.1f128,
+        0.6f128,
+        1e300f128,
+        1e-300f128,
+        1e4000f128,
+        1e-4000f128,
+        f128::MIN_POSITIVE,
+        f128::MAX,
         f128::from_bits(1),
         f128::from_bits(0x7fff_u128 << 112),
         f128::from_bits(0xffff_u128 << 112),
@@ -25,9 +43,13 @@ fn parts() -> Vec<f128> {
     ];
     let mut st: u64 = 0x636c_6f67_3132_38ff;
     for _ in 0..30 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3fc0 + (hi % 0x0080)) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -54,5 +76,10 @@ fn f128_clog_matches_glibc() {
             }
         }
     }
-    assert!(mism.is_empty(), "clogf128 diverged ({}):\n{}", mism.len(), mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "clogf128 diverged ({}):\n{}",
+        mism.len(),
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

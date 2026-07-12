@@ -914,8 +914,8 @@ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) 
     }
     let before = unsafe { std::ptr::read(termios_p) };
     unsafe {
-        let next = ((*termios_p).c_cflag & !(libc::CBAUD as libc::tcflag_t))
-            | speed as libc::tcflag_t;
+        let next =
+            ((*termios_p).c_cflag & !(libc::CBAUD as libc::tcflag_t)) | speed as libc::tcflag_t;
         (*termios_p).c_cflag = next as libc::tcflag_t;
         (*termios_p).c_ospeed = speed as libc::speed_t;
     }

@@ -38,7 +38,10 @@ fn pthread_sigmask_invalid_how_returns_positive_errno() {
 
     assert_eq!(f, g, "pthread_sigmask(bad how) return: fl={f} glibc={g}");
     assert!(g > 0, "glibc returns a positive error number, got {g}");
-    assert_eq!(f_errno, g_errno, "errno must be left unchanged like glibc: fl={f_errno} glibc={g_errno}");
+    assert_eq!(
+        f_errno, g_errno,
+        "errno must be left unchanged like glibc: fl={f_errno} glibc={g_errno}"
+    );
     assert_eq!(g_errno, 0, "glibc leaves errno at its pre-call value (0)");
 }
 
@@ -48,9 +51,7 @@ fn pthread_sigmask_valid_returns_zero() {
     unsafe { sigemptyset(&mut set) };
     let mut old: libc::sigset_t = unsafe { std::mem::zeroed() };
 
-    let f = unsafe {
-        frankenlibc_abi::signal_abi::pthread_sigmask(SIG_SETMASK, &set, &mut old)
-    };
+    let f = unsafe { frankenlibc_abi::signal_abi::pthread_sigmask(SIG_SETMASK, &set, &mut old) };
     assert_eq!(f, 0, "valid pthread_sigmask should return 0");
     // restore (set the empty mask back via glibc to be safe)
     unsafe { pthread_sigmask(SIG_SETMASK, &old, std::ptr::null_mut()) };

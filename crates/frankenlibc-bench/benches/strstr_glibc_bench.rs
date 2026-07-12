@@ -12,41 +12,62 @@ use std::ffi::{c_char, c_void};
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 type StrstrFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
 
 fn host_sym(sym: &[u8]) -> usize {
     static H: OnceLock<usize> = OnceLock::new();
     let h = *H.get_or_init(|| unsafe {
-        let x = libc::dlmopen(libc::LM_ID_NEWLM, b"libc.so.6\0".as_ptr().cast(),
-            libc::RTLD_LAZY | libc::RTLD_LOCAL);
+        let x = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
         assert!(!x.is_null());
         x as usize
     });
     unsafe { libc::dlsym(h as *mut c_void, sym.as_ptr().cast()) as usize }
 }
-fn host() -> StrstrFn { unsafe { std::mem::transmute::<usize, StrstrFn>(host_sym(b"strstr\0")) } }
-fn host_ci() -> StrstrFn { unsafe { std::mem::transmute::<usize, StrstrFn>(host_sym(b"strcasestr\0")) } }
+fn host() -> StrstrFn {
+    unsafe { std::mem::transmute::<usize, StrstrFn>(host_sym(b"strstr\0")) }
+}
+fn host_ci() -> StrstrFn {
+    unsafe { std::mem::transmute::<usize, StrstrFn>(host_sym(b"strcasestr\0")) }
+}
 
 fn pctl(s: &[f64], q: f64) -> f64 {
     let mut v = s.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let r = q * (v.len() - 1) as f64;
     let (lo, hi) = (r.floor() as usize, r.ceil() as usize);
-    if lo == hi { v[lo] } else { v[lo] * (1.0 - (r - lo as f64)) + v[hi] * (r - lo as f64) }
+    if lo == hi {
+        v[lo]
+    } else {
+        v[lo] * (1.0 - (r - lo as f64)) + v[hi] * (r - lo as f64)
+    }
 }
 
 /// mmap a NUL-terminated haystack of `n` 'a' bytes; splice needle "needle!" at `pos`
 /// (or nowhere if pos == usize::MAX). Returns the base pointer (leaked; bench-only).
 unsafe fn make_hay(n: usize, pos: usize) -> *const c_char {
-    let m = libc::mmap(std::ptr::null_mut(), n + 4096,
-        libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0);
+    let m = libc::mmap(
+        std::ptr::null_mut(),
+        n + 4096,
+        libc::PROT_READ | libc::PROT_WRITE,
+        libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+        -1,
+        0,
+    );
     assert_ne!(m, libc::MAP_FAILED);
     let p = m.cast::<u8>();
-    for i in 0..n { *p.add(i) = b'a'; }
+    for i in 0..n {
+        *p.add(i) = b'a';
+    }
     if pos != usize::MAX {
-        for (i, &b) in b"needle!".iter().enumerate() { *p.add(pos + i) = b; }
+        for (i, &b) in b"needle!".iter().enumerate() {
+            *p.add(pos + i) = b;
+        }
     }
     *p.add(n) = 0;
     p.cast()
@@ -74,20 +95,32 @@ fn bench(c: &mut Criterion) {
         let (mut fs, mut gs) = (Vec::new(), Vec::new());
         for _ in 0..80 {
             let t = Instant::now();
-            for _ in 0..it { black_box(unsafe { frankenlibc_abi::string_abi::strstr(black_box(hay), black_box(needle)) }); }
+            for _ in 0..it {
+                black_box(unsafe {
+                    frankenlibc_abi::string_abi::strstr(black_box(hay), black_box(needle))
+                });
+            }
             fs.push(t.elapsed().as_nanos() as f64 / it as f64);
             let t = Instant::now();
-            for _ in 0..it { black_box(unsafe { g(black_box(hay), black_box(needle)) }); }
+            for _ in 0..it {
+                black_box(unsafe { g(black_box(hay), black_box(needle)) });
+            }
             gs.push(t.elapsed().as_nanos() as f64 / it as f64);
         }
         let (fp, gp) = (pctl(&fs, 0.50), pctl(&gs, 0.50));
-        println!("STRSTR_FUSED case={label} fl_p50={fp:.1}ns glibc_p50={gp:.1}ns ratio_fl_over_glibc={:.2}", fp / gp);
+        println!(
+            "STRSTR_FUSED case={label} fl_p50={fp:.1}ns glibc_p50={gp:.1}ns ratio_fl_over_glibc={:.2}",
+            fp / gp
+        );
     }
 
     // strcasestr (case-insensitive), same untracked-haystack fused path.
     let gci = host_ci();
     let ci_needle = b"needle!\0".as_ptr().cast::<c_char>();
-    for &(label, n, pos) in &[("ci_early_64k@512", 65536usize, 512usize), ("ci_absent_64k", 65536, usize::MAX)] {
+    for &(label, n, pos) in &[
+        ("ci_early_64k@512", 65536usize, 512usize),
+        ("ci_absent_64k", 65536, usize::MAX),
+    ] {
         let hay = unsafe { make_hay(n, pos) };
         let fp = unsafe { frankenlibc_abi::string_abi::strcasestr(hay, ci_needle) };
         let gp = unsafe { gci(hay, ci_needle) };
@@ -96,27 +129,62 @@ fn bench(c: &mut Criterion) {
         let (mut fs, mut gs) = (Vec::new(), Vec::new());
         for _ in 0..80 {
             let t = Instant::now();
-            for _ in 0..it { black_box(unsafe { frankenlibc_abi::string_abi::strcasestr(black_box(hay), black_box(ci_needle)) }); }
+            for _ in 0..it {
+                black_box(unsafe {
+                    frankenlibc_abi::string_abi::strcasestr(black_box(hay), black_box(ci_needle))
+                });
+            }
             fs.push(t.elapsed().as_nanos() as f64 / it as f64);
             let t = Instant::now();
-            for _ in 0..it { black_box(unsafe { gci(black_box(hay), black_box(ci_needle)) }); }
+            for _ in 0..it {
+                black_box(unsafe { gci(black_box(hay), black_box(ci_needle)) });
+            }
             gs.push(t.elapsed().as_nanos() as f64 / it as f64);
         }
         let (fp, gp) = (pctl(&fs, 0.50), pctl(&gs, 0.50));
-        println!("STRSTR_FUSED case={label} fl_p50={fp:.1}ns glibc_p50={gp:.1}ns ratio_fl_over_glibc={:.2}", fp / gp);
+        println!(
+            "STRSTR_FUSED case={label} fl_p50={fp:.1}ns glibc_p50={gp:.1}ns ratio_fl_over_glibc={:.2}",
+            fp / gp
+        );
     }
     // wcsstr (wide), same untracked-haystack fused path.
     type WFn = unsafe extern "C" fn(*const u32, *const u32) -> *mut u32;
     let gw: WFn = unsafe { std::mem::transmute::<usize, WFn>(host_sym(b"wcsstr\0")) };
-    let wneedle: [u32; 8] = [b'n' as u32, b'e' as u32, b'e' as u32, b'd' as u32, b'l' as u32, b'e' as u32, b'!' as u32, 0];
-    for &(label, n, pos) in &[("wcs_early_64k@512", 65536usize, 512usize), ("wcs_absent_64k", 65536, usize::MAX)] {
-        let m = unsafe { libc::mmap(std::ptr::null_mut(), (n + 1024) * 4,
-            libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0) };
+    let wneedle: [u32; 8] = [
+        b'n' as u32,
+        b'e' as u32,
+        b'e' as u32,
+        b'd' as u32,
+        b'l' as u32,
+        b'e' as u32,
+        b'!' as u32,
+        0,
+    ];
+    for &(label, n, pos) in &[
+        ("wcs_early_64k@512", 65536usize, 512usize),
+        ("wcs_absent_64k", 65536, usize::MAX),
+    ] {
+        let m = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                (n + 1024) * 4,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
         assert_ne!(m, libc::MAP_FAILED);
         let hw = m.cast::<u32>();
         unsafe {
-            for i in 0..n { *hw.add(i) = b'a' as u32; }
-            if pos != usize::MAX { for (i, &b) in wneedle[..7].iter().enumerate() { *hw.add(pos + i) = b; } }
+            for i in 0..n {
+                *hw.add(i) = b'a' as u32;
+            }
+            if pos != usize::MAX {
+                for (i, &b) in wneedle[..7].iter().enumerate() {
+                    *hw.add(pos + i) = b;
+                }
+            }
             *hw.add(n) = 0;
         }
         let fp = unsafe { frankenlibc_abi::wchar_abi::wcsstr(hw, wneedle.as_ptr()) };
@@ -126,14 +194,23 @@ fn bench(c: &mut Criterion) {
         let (mut fs, mut gs) = (Vec::new(), Vec::new());
         for _ in 0..80 {
             let t = Instant::now();
-            for _ in 0..it { black_box(unsafe { frankenlibc_abi::wchar_abi::wcsstr(black_box(hw), black_box(wneedle.as_ptr())) }); }
+            for _ in 0..it {
+                black_box(unsafe {
+                    frankenlibc_abi::wchar_abi::wcsstr(black_box(hw), black_box(wneedle.as_ptr()))
+                });
+            }
             fs.push(t.elapsed().as_nanos() as f64 / it as f64);
             let t = Instant::now();
-            for _ in 0..it { black_box(unsafe { gw(black_box(hw), black_box(wneedle.as_ptr())) }); }
+            for _ in 0..it {
+                black_box(unsafe { gw(black_box(hw), black_box(wneedle.as_ptr())) });
+            }
             gs.push(t.elapsed().as_nanos() as f64 / it as f64);
         }
         let (fp, gp) = (pctl(&fs, 0.50), pctl(&gs, 0.50));
-        println!("STRSTR_FUSED case={label} fl_p50={fp:.1}ns glibc_p50={gp:.1}ns ratio_fl_over_glibc={:.2}", fp / gp);
+        println!(
+            "STRSTR_FUSED case={label} fl_p50={fp:.1}ns glibc_p50={gp:.1}ns ratio_fl_over_glibc={:.2}",
+            fp / gp
+        );
     }
     group.bench_function("noop", |b| b.iter(|| black_box(1u64)));
     group.finish();

@@ -45,8 +45,9 @@ fn host_setxattrat(
     size: usize,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { libc::syscall(SYS_SETXATTRAT, dirfd, path, at_flags, name, uargs, size) as c_long };
+    let rc = unsafe {
+        libc::syscall(SYS_SETXATTRAT, dirfd, path, at_flags, name, uargs, size) as c_long
+    };
     (rc as c_int, host_errno())
 }
 
@@ -72,8 +73,9 @@ fn host_getxattrat(
     size: usize,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { libc::syscall(SYS_GETXATTRAT, dirfd, path, at_flags, name, uargs, size) as c_long };
+    let rc = unsafe {
+        libc::syscall(SYS_GETXATTRAT, dirfd, path, at_flags, name, uargs, size) as c_long
+    };
     (rc as c_int, host_errno())
 }
 
@@ -98,8 +100,7 @@ fn host_listxattrat(
     size: usize,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { libc::syscall(SYS_LISTXATTRAT, dirfd, path, at_flags, list, size) as c_long };
+    let rc = unsafe { libc::syscall(SYS_LISTXATTRAT, dirfd, path, at_flags, list, size) as c_long };
     (rc as c_int, host_errno())
 }
 
@@ -122,8 +123,7 @@ fn host_removexattrat(
     name: *const c_char,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { libc::syscall(SYS_REMOVEXATTRAT, dirfd, path, at_flags, name) as c_long };
+    let rc = unsafe { libc::syscall(SYS_REMOVEXATTRAT, dirfd, path, at_flags, name) as c_long };
     (rc as c_int, host_errno())
 }
 
@@ -146,8 +146,7 @@ fn host_open_tree_attr(
     size: usize,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { libc::syscall(SYS_OPEN_TREE_ATTR, dirfd, path, flags, attr, size) as c_long };
+    let rc = unsafe { libc::syscall(SYS_OPEN_TREE_ATTR, dirfd, path, flags, attr, size) as c_long };
     (rc as c_int, host_errno())
 }
 
@@ -173,22 +172,8 @@ fn xattrat_and_open_tree_attr_invalid_failures_match_host_syscall() {
     assert_eq!(fl, host, "setxattrat(invalid fd): fl={fl:?} host={host:?}");
     assert_eq!(fl.0, -1);
 
-    let host = host_getxattrat(
-        -1,
-        path.as_ptr(),
-        0,
-        name.as_ptr(),
-        ptr::null_mut(),
-        0,
-    );
-    let fl = fl_getxattrat(
-        -1,
-        path.as_ptr(),
-        0,
-        name.as_ptr(),
-        ptr::null_mut(),
-        0,
-    );
+    let host = host_getxattrat(-1, path.as_ptr(), 0, name.as_ptr(), ptr::null_mut(), 0);
+    let fl = fl_getxattrat(-1, path.as_ptr(), 0, name.as_ptr(), ptr::null_mut(), 0);
     assert_eq!(fl, host, "getxattrat(invalid fd): fl={fl:?} host={host:?}");
     assert_eq!(fl.0, -1);
 

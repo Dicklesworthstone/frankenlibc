@@ -49,9 +49,13 @@ fn vals() -> Vec<f128> {
     }
     let mut st: u64 = 0x1357_2468_acef_bd09;
     for _ in 0..400 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3e80 + (hi % 0x0200)) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -61,7 +65,12 @@ fn vals() -> Vec<f128> {
     v
 }
 
-fn check1(name: &str, g: unsafe extern "C" fn(f128) -> f128, f: unsafe extern "C" fn(f128) -> f128, mism: &mut Vec<String>) {
+fn check1(
+    name: &str,
+    g: unsafe extern "C" fn(f128) -> f128,
+    f: unsafe extern "C" fn(f128) -> f128,
+    mism: &mut Vec<String>,
+) {
     for &x in &vals() {
         unsafe { *el() = 0 };
         let gv = unsafe { g(x) }.to_bits();
@@ -70,7 +79,10 @@ fn check1(name: &str, g: unsafe extern "C" fn(f128) -> f128, f: unsafe extern "C
         let fv = unsafe { f(x) }.to_bits();
         let fe = unsafe { *el() };
         if gv != fv || ge != fe {
-            mism.push(format!("{name}({:#034x}): glibc=({gv:#034x},e={ge}) fl=({fv:#034x},e={fe})", x.to_bits()));
+            mism.push(format!(
+                "{name}({:#034x}): glibc=({gv:#034x},e={ge}) fl=({fv:#034x},e={fe})",
+                x.to_bits()
+            ));
         }
     }
 }

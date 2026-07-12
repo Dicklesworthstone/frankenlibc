@@ -155,7 +155,11 @@ where
 }
 
 fn report(label: &str, fl_ns: &[f64], glibc_ns: &[f64]) -> String {
-    let ratio: Vec<f64> = fl_ns.iter().zip(glibc_ns.iter()).map(|(f, g)| f / g).collect();
+    let ratio: Vec<f64> = fl_ns
+        .iter()
+        .zip(glibc_ns.iter())
+        .map(|(f, g)| f / g)
+        .collect();
     let (fm, gm) = (median(fl_ns), median(glibc_ns));
     let line = format!(
         "{label}: fl {:.1}ns  glibc {:.1}ns  paired fl/glibc median {:.3}x  cv={:.1}%  (fl cv {:.1}%, glibc cv {:.1}%)",
@@ -190,9 +194,10 @@ fn kernel_remove_insert(p: *mut c_void) -> u64 {
 fn kernel_update(p: *mut c_void) -> u64 {
     let mut acc = 0u64;
     for _ in 0..KERNEL_REPS {
-        acc = acc
-            .wrapping_add(unsafe { fl::bench_fallback_update_size(black_box(p), black_box(512)) }
-                as u64);
+        acc =
+            acc.wrapping_add(
+                unsafe { fl::bench_fallback_update_size(black_box(p), black_box(512)) } as u64,
+            );
     }
     black_box(acc)
 }

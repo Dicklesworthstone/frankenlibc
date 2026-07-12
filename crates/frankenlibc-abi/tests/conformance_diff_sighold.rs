@@ -34,10 +34,15 @@ fn is_ignored(sig: c_int) -> bool {
 }
 
 /// (hold_rc, blocked_after_hold, relse_rc, blocked_after_relse)
-fn mask_seq(hold: unsafe extern "C" fn(c_int) -> c_int, relse: unsafe extern "C" fn(c_int) -> c_int) -> (c_int, bool, c_int, bool) {
+fn mask_seq(
+    hold: unsafe extern "C" fn(c_int) -> c_int,
+    relse: unsafe extern "C" fn(c_int) -> c_int,
+) -> (c_int, bool, c_int, bool) {
     let sig = libc::SIGUSR1;
     // ensure released first
-    unsafe { sigrelse(sig); }
+    unsafe {
+        sigrelse(sig);
+    }
     let hr = unsafe { hold(sig) };
     let b1 = blocked(sig);
     let rr = unsafe { relse(sig) };
@@ -53,8 +58,13 @@ fn sighold_sigrelse_match_glibc() {
         s.assume_init()
     };
     let g = mask_seq(sighold, sigrelse);
-    let f = mask_seq(frankenlibc_abi::signal_abi::sighold, frankenlibc_abi::signal_abi::sigrelse);
-    unsafe { libc::sigprocmask(libc::SIG_SETMASK, &save, std::ptr::null_mut()); }
+    let f = mask_seq(
+        frankenlibc_abi::signal_abi::sighold,
+        frankenlibc_abi::signal_abi::sigrelse,
+    );
+    unsafe {
+        libc::sigprocmask(libc::SIG_SETMASK, &save, std::ptr::null_mut());
+    }
     assert_eq!(f, g, "sighold/sigrelse: fl={f:?} glibc={g:?}");
     assert_eq!(g, (0, true, 0, false), "glibc: hold blocks, relse unblocks");
 }

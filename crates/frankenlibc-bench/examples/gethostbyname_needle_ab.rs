@@ -247,11 +247,7 @@ fn main() {
         "(ns/op)",
     ));
 
-    let (dpo, dpc) = paired(
-        DEPLOYED_SAMPLES,
-        || deployed_orig(np),
-        || deployed_cand(np),
-    );
+    let (dpo, dpc) = paired(DEPLOYED_SAMPLES, || deployed_orig(np), || deployed_cand(np));
     summary.push(report(
         "DEPLOYED gethostbyname",
         DEPLOYED_REPS as f64,

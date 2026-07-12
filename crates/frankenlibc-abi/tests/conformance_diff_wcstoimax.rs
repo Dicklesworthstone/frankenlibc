@@ -57,7 +57,11 @@ fn wcstoimax_matches_glibc() {
         };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "wcstoimax({s:?},{base}) value");
-        assert_eq!(consumed(fe, w.as_ptr()), consumed(ge, w.as_ptr()), "wcstoimax({s:?}) endptr");
+        assert_eq!(
+            consumed(fe, w.as_ptr()),
+            consumed(ge, w.as_ptr()),
+            "wcstoimax({s:?}) endptr"
+        );
         assert_eq!(ferr, gerr, "wcstoimax({s:?}) errno: fl={ferr} glibc={gerr}");
     }
 }
@@ -67,8 +71,8 @@ fn wcstoumax_matches_glibc() {
     let cases: &[(&str, c_int)] = &[
         ("123", 10),
         ("0xFFFFFFFFFFFFFFFF", 0),
-        ("-1", 10),                    // wraparound
-        ("18446744073709551616", 10),  // overflow -> ERANGE
+        ("-1", 10),                   // wraparound
+        ("18446744073709551616", 10), // overflow -> ERANGE
         ("zz", 36),
     ];
     for &(s, base) in cases {
@@ -88,7 +92,11 @@ fn wcstoumax_matches_glibc() {
         };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "wcstoumax({s:?},{base}) value");
-        assert_eq!(consumed(fe, w.as_ptr()), consumed(ge, w.as_ptr()), "wcstoumax({s:?}) endptr");
+        assert_eq!(
+            consumed(fe, w.as_ptr()),
+            consumed(ge, w.as_ptr()),
+            "wcstoumax({s:?}) endptr"
+        );
         assert_eq!(ferr, gerr, "wcstoumax({s:?}) errno: fl={ferr} glibc={gerr}");
     }
 }

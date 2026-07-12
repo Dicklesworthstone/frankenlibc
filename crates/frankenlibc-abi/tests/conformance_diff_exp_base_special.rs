@@ -53,7 +53,10 @@ fn exp2_exp10_special_match_glibc() {
 
         // pow10 is an alias of exp10 (fl-internal identity).
         let fp10 = unsafe { frankenlibc_abi::math_abi::pow10(x) };
-        assert!(same64(fp10, f10), "pow10==exp10 at {x:?}: {fp10:?} vs {f10:?}");
+        assert!(
+            same64(fp10, f10),
+            "pow10==exp10 at {x:?}: {fp10:?} vs {f10:?}"
+        );
     }
 }
 

@@ -12,7 +12,7 @@ use std::ffi::{c_char, c_int, c_void};
 use std::hint::black_box;
 use std::sync::OnceLock;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_abi::inet_abi as fl;
 
 type InetPtonFn = unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> c_int;

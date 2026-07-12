@@ -86,16 +86,25 @@ fn sched_and_clone3_invalid_failures_match_host_syscall() {
     let args = clone_args.as_mut_ptr().cast::<c_void>();
     let host = host_clone3(args, 0);
     let fl = fl_clone3(args, 0);
-    assert_eq!(fl, host, "clone3(non-null, size 0): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "clone3(non-null, size 0): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 
     let host = host_sched_setattr(0, ptr::null_mut(), 0);
     let fl = fl_sched_setattr(0, ptr::null_mut(), 0);
-    assert_eq!(fl, host, "sched_setattr(NULL attr): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "sched_setattr(NULL attr): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 
     let host = host_sched_getattr(0, ptr::null_mut(), 0, 0);
     let fl = fl_sched_getattr(0, ptr::null_mut(), 0, 0);
-    assert_eq!(fl, host, "sched_getattr(NULL attr): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "sched_getattr(NULL attr): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 }

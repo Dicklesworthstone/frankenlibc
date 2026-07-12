@@ -65,7 +65,10 @@ fn hypot_special_cases_match_glibc() {
         assert!(same64(f, g), "hypot({x:?},{y:?}): fl={f:?} glibc={g:?}");
         // symmetry (fl-internal invariant)
         let fs = unsafe { frankenlibc_abi::math_abi::hypot(y, x) };
-        assert!(same64(f, fs), "hypot symmetry ({x:?},{y:?}): {f:?} vs {fs:?}");
+        assert!(
+            same64(f, fs),
+            "hypot symmetry ({x:?},{y:?}): {f:?} vs {fs:?}"
+        );
     }
 }
 

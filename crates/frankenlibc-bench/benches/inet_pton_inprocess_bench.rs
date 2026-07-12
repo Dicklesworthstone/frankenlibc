@@ -17,7 +17,7 @@
 use std::ffi::{c_char, c_int, c_void};
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_core::inet as core_inet;
 
 const AF_INET: c_int = 2;
@@ -45,10 +45,19 @@ fn bench(c: &mut Criterion) {
     let mut core_out = [0u8; 4];
     let rc_core = core_inet::inet_pton(AF_INET, src_bytes, &mut core_out);
     let mut gl_out = [0u8; 4];
-    let rc_gl = unsafe { inet_pton(AF_INET, src_cstr.as_ptr(), gl_out.as_mut_ptr().cast::<c_void>()) };
+    let rc_gl = unsafe {
+        inet_pton(
+            AF_INET,
+            src_cstr.as_ptr(),
+            gl_out.as_mut_ptr().cast::<c_void>(),
+        )
+    };
     assert_eq!(rc_core, 1, "core inet_pton should succeed");
     assert_eq!(rc_gl, 1, "glibc inet_pton should succeed");
-    assert_eq!(core_out, gl_out, "core vs real-glibc inet_pton byte mismatch");
+    assert_eq!(
+        core_out, gl_out,
+        "core vs real-glibc inet_pton byte mismatch"
+    );
 
     let mut group = c.benchmark_group("inet_pton_inprocess_ipv4");
     group.bench_function("frankenlibc_core", |b| {
@@ -62,7 +71,11 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             let mut out = [0u8; 4];
             let rc = unsafe {
-                inet_pton(AF_INET, black_box(src_cstr.as_ptr()), out.as_mut_ptr().cast::<c_void>())
+                inet_pton(
+                    AF_INET,
+                    black_box(src_cstr.as_ptr()),
+                    out.as_mut_ptr().cast::<c_void>(),
+                )
             };
             black_box((rc, out));
         });
@@ -77,11 +90,20 @@ fn bench(c: &mut Criterion) {
     let mut net_core = [0u8; 4];
     let net_core_rc = core_inet::net_pton::parse(net_bytes, &mut net_core);
     let mut net_gl = [0u8; 4];
-    let net_gl_rc =
-        unsafe { inet_net_pton(AF_INET, net_cstr.as_ptr(), net_gl.as_mut_ptr().cast::<c_void>(), 4) };
+    let net_gl_rc = unsafe {
+        inet_net_pton(
+            AF_INET,
+            net_cstr.as_ptr(),
+            net_gl.as_mut_ptr().cast::<c_void>(),
+            4,
+        )
+    };
     assert_eq!(net_core_rc, Ok(24), "core net_pton should yield /24");
     assert_eq!(net_gl_rc, 24, "glibc inet_net_pton should yield /24");
-    assert_eq!(net_core, net_gl, "core vs real-glibc inet_net_pton byte mismatch");
+    assert_eq!(
+        net_core, net_gl,
+        "core vs real-glibc inet_net_pton byte mismatch"
+    );
     let mut netg = c.benchmark_group("inet_net_pton_inprocess_ipv4");
     netg.bench_function("frankenlibc_core", |b| {
         b.iter(|| {
@@ -94,7 +116,12 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             let mut out = [0u8; 4];
             let rc = unsafe {
-                inet_net_pton(AF_INET, black_box(net_cstr.as_ptr()), out.as_mut_ptr().cast::<c_void>(), 4)
+                inet_net_pton(
+                    AF_INET,
+                    black_box(net_cstr.as_ptr()),
+                    out.as_mut_ptr().cast::<c_void>(),
+                    4,
+                )
             };
             black_box((rc, out));
         });
@@ -137,8 +164,15 @@ fn bench(c: &mut Criterion) {
         let rcc = core_inet::inet_pton(AF_INET6, txt.as_bytes(), &mut cc);
         let mut gg = [0u8; 16];
         let rcg = unsafe { inet_pton(AF_INET6, cs.as_ptr(), gg.as_mut_ptr().cast::<c_void>()) };
-        assert_eq!(rcc == 1, expect_ok, "core inet_pton6 accept/reject wrong for {txt:?}");
-        assert_eq!(rcc, rcg, "core vs glibc rc mismatch for {txt:?} (core={rcc}, glibc={rcg})");
+        assert_eq!(
+            rcc == 1,
+            expect_ok,
+            "core inet_pton6 accept/reject wrong for {txt:?}"
+        );
+        assert_eq!(
+            rcc, rcg,
+            "core vs glibc rc mismatch for {txt:?} (core={rcc}, glibc={rcg})"
+        );
         if rcc == 1 {
             assert_eq!(cc, gg, "core vs glibc bytes mismatch for {txt:?}");
         }
@@ -156,7 +190,11 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             let mut out = [0u8; 16];
             let rc = unsafe {
-                inet_pton(AF_INET6, black_box(v6_cstr.as_ptr()), out.as_mut_ptr().cast::<c_void>())
+                inet_pton(
+                    AF_INET6,
+                    black_box(v6_cstr.as_ptr()),
+                    out.as_mut_ptr().cast::<c_void>(),
+                )
             };
             black_box((rc, out));
         });
@@ -170,14 +208,23 @@ fn bench(c: &mut Criterion) {
     let n_core = core_inet::inet_ntop_into(AF_INET6, &addr6, &mut nt_core).expect("core ntop6");
     let mut nt_gl = [0i8; 46];
     let p_gl = unsafe {
-        inet_ntop(AF_INET6, addr6.as_ptr().cast::<c_void>(), nt_gl.as_mut_ptr(), 46)
+        inet_ntop(
+            AF_INET6,
+            addr6.as_ptr().cast::<c_void>(),
+            nt_gl.as_mut_ptr(),
+            46,
+        )
     };
     assert!(!p_gl.is_null(), "glibc inet_ntop6 returned NULL");
     let gl_bytes: &[u8] = unsafe {
         let cs = std::ffi::CStr::from_ptr(nt_gl.as_ptr());
         cs.to_bytes()
     };
-    assert_eq!(&nt_core[..n_core], gl_bytes, "core vs glibc inet_ntop6 text mismatch");
+    assert_eq!(
+        &nt_core[..n_core],
+        gl_bytes,
+        "core vs glibc inet_ntop6 text mismatch"
+    );
 
     let mut n6group = c.benchmark_group("inet_ntop_inprocess_ipv6");
     n6group.bench_function("frankenlibc_core", |b| {
@@ -191,7 +238,12 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             let mut out = [0i8; 46];
             let p = unsafe {
-                inet_ntop(AF_INET6, black_box(addr6.as_ptr()).cast::<c_void>(), out.as_mut_ptr(), 46)
+                inet_ntop(
+                    AF_INET6,
+                    black_box(addr6.as_ptr()).cast::<c_void>(),
+                    out.as_mut_ptr(),
+                    46,
+                )
             };
             black_box((p, out));
         });

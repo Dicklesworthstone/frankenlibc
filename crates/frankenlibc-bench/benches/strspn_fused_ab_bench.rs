@@ -10,7 +10,7 @@
 use std::ffi::c_char;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 unsafe extern "C" {
     fn strspn(s: *const c_char, accept: *const c_char) -> usize;
@@ -83,10 +83,18 @@ fn bench(c: &mut Criterion) {
     let digits = "0123456789";
     let cases: &[(&str, String, &str)] = &[
         ("run16", "aaaaaaaaaaaaaaaaXYZ".into(), "abcdefghijklmnop"),
-        ("early", "Xaaaaaaaaaaaaaaaaaaaaaaaa".into(), "abcdefghijklmnop"),
+        (
+            "early",
+            "Xaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            "abcdefghijklmnop",
+        ),
         ("longrun", "a".repeat(256) + "X", "abcdefghijklmnop"),
         ("digits8", "12345678abc".into(), digits),
-        ("early_long", "Z".to_string() + &"a".repeat(512), "abcdefghijklmnop"),
+        (
+            "early_long",
+            "Z".to_string() + &"a".repeat(512),
+            "abcdefghijklmnop",
+        ),
     ];
     for (name, s, accept) in cases {
         let sv = cs(s);
@@ -100,9 +108,15 @@ fn bench(c: &mut Criterion) {
         assert_eq!(o, g, "old vs glibc {name}");
 
         let mut grp = c.benchmark_group(format!("strspn_{name}"));
-        grp.bench_function("old_4pass", |b| b.iter(|| black_box(unsafe { strspn_old(black_box(ps), black_box(pa)) })));
-        grp.bench_function("new_fused", |b| b.iter(|| black_box(unsafe { strspn_fused(black_box(ps), black_box(pa)) })));
-        grp.bench_function("host_glibc", |b| b.iter(|| black_box(unsafe { strspn(black_box(ps.cast()), black_box(pa.cast())) })));
+        grp.bench_function("old_4pass", |b| {
+            b.iter(|| black_box(unsafe { strspn_old(black_box(ps), black_box(pa)) }))
+        });
+        grp.bench_function("new_fused", |b| {
+            b.iter(|| black_box(unsafe { strspn_fused(black_box(ps), black_box(pa)) }))
+        });
+        grp.bench_function("host_glibc", |b| {
+            b.iter(|| black_box(unsafe { strspn(black_box(ps.cast()), black_box(pa.cast())) }))
+        });
         grp.finish();
     }
 }

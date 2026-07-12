@@ -14,17 +14,32 @@ unsafe extern "C" {
 
 fn parts() -> Vec<f128> {
     let mut v = vec![
-        0.0, -0.0f128, 1.0, -1.0, 2.0, -2.0, 0.5, 3.0, 0.25, 10.0, -0.5,
-        1.5, 1e-10f128,
+        0.0,
+        -0.0f128,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        0.5,
+        3.0,
+        0.25,
+        10.0,
+        -0.5,
+        1.5,
+        1e-10f128,
         f128::from_bits(0x7fff_u128 << 112),
         f128::from_bits(0xffff_u128 << 112),
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)),
     ];
     let mut st: u64 = 0x63_70_6f_77_31_32_38_ee;
     for _ in 0..14 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3ff0 + (hi % 0x0020)) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -59,5 +74,11 @@ fn f128_cpow_matches_glibc() {
             }
         }
     }
-    assert!(mism.is_empty(), "cpowf128 diverged ({}/{}):\n{}", mism.len(), n, mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "cpowf128 diverged ({}/{}):\n{}",
+        mism.len(),
+        n,
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

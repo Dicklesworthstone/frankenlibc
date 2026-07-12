@@ -33,9 +33,8 @@ fn glibc_aton_r(g: AtonRFn, s: &[u8]) -> Option<[u8; 6]> {
 }
 fn fl_aton_r(s: &[u8]) -> Option<[u8; 6]> {
     let mut out = [0u8; 6];
-    let r = unsafe {
-        fl::ether_aton_r(s.as_ptr() as *const c_char, out.as_mut_ptr() as *mut c_void)
-    };
+    let r =
+        unsafe { fl::ether_aton_r(s.as_ptr() as *const c_char, out.as_mut_ptr() as *mut c_void) };
     if r.is_null() { None } else { Some(out) }
 }
 
@@ -51,20 +50,20 @@ fn ether_aton_trailing_matches_glibc() {
     let inputs: &[&[u8]] = &[
         b"01:02:03:04:05:06\0",
         b"1:2:3:4:5:6\0",
-        b"1:2:3:4:5:6 \0",        // trailing space
-        b"1:2:3:4:5:6\t\0",       // tab
-        b"1:2:3:4:5:6\x0b\0",     // vertical tab (glibc isspace, Rust not)
-        b"1:2:3:4:5:6\n\0",       // newline
-        b"01:02:03:04:05:06x\0",  // 2-digit last + junk -> OK
-        b"1:2:3:4:5:6x\0",        // 1-digit last + non-hex junk -> NULL
-        b"1:2:3:4:5:6a\0",        // 1-digit last + hex -> reads 6a
-        b"01:02:03:04:05:06:07\0",// trailing :07 after 2-digit -> OK (…:06)
-        b"1:2:3:4:5:6:\0",        // 1-digit + ':' -> NULL
-        b"01:02:03:04:05:0\0",    // 1-digit last at end
-        b"1:2:3:4:5:\0",          // missing last octet -> NULL
-        b"1:2:3:4:5:6  junk\0",   // space then junk -> OK
-        b"1:2:3:4:5\0",           // only 5 octets -> NULL
-        b"gg:00:00:00:00:00\0",   // bad hex -> NULL
+        b"1:2:3:4:5:6 \0",         // trailing space
+        b"1:2:3:4:5:6\t\0",        // tab
+        b"1:2:3:4:5:6\x0b\0",      // vertical tab (glibc isspace, Rust not)
+        b"1:2:3:4:5:6\n\0",        // newline
+        b"01:02:03:04:05:06x\0",   // 2-digit last + junk -> OK
+        b"1:2:3:4:5:6x\0",         // 1-digit last + non-hex junk -> NULL
+        b"1:2:3:4:5:6a\0",         // 1-digit last + hex -> reads 6a
+        b"01:02:03:04:05:06:07\0", // trailing :07 after 2-digit -> OK (…:06)
+        b"1:2:3:4:5:6:\0",         // 1-digit + ':' -> NULL
+        b"01:02:03:04:05:0\0",     // 1-digit last at end
+        b"1:2:3:4:5:\0",           // missing last octet -> NULL
+        b"1:2:3:4:5:6  junk\0",    // space then junk -> OK
+        b"1:2:3:4:5\0",            // only 5 octets -> NULL
+        b"gg:00:00:00:00:00\0",    // bad hex -> NULL
     ];
 
     let mut div = Vec::new();
@@ -76,5 +75,10 @@ fn ether_aton_trailing_matches_glibc() {
             div.push(format!("{disp:?}: fl={fv:?} glibc={gv:?}"));
         }
     }
-    assert!(div.is_empty(), "ether_aton divergences ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "ether_aton divergences ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

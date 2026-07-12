@@ -13,9 +13,24 @@ unsafe extern "C" {
 
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
-        0.0, -0.0f128, 0.5, -0.5, 0.6743316650390625f128, 0.7853981633974483096f128,
-        1.0, 1.5707963267948966192f128, 2.0, 3.0, 10.0, 100.0, 1e6f128, 1e30f128,
-        1e300f128, 1e4000f128, 1e-20f128, 1e-40f128,
+        0.0,
+        -0.0f128,
+        0.5,
+        -0.5,
+        0.6743316650390625f128,
+        0.7853981633974483096f128,
+        1.0,
+        1.5707963267948966192f128,
+        2.0,
+        3.0,
+        10.0,
+        100.0,
+        1e6f128,
+        1e30f128,
+        1e300f128,
+        1e4000f128,
+        1e-20f128,
+        1e-40f128,
         f128::from_bits(1),
         f128::from_bits(0x7fff_u128 << 112),
         f128::from_bits(0xffff_u128 << 112),
@@ -28,9 +43,13 @@ fn values() -> Vec<f128> {
     }
     let mut st: u64 = 0x54_61_6e_31_32_38_ff_aa;
     for _ in 0..8000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (hi % 0x7fff) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -49,8 +68,17 @@ fn f128_tan_matches_glibc() {
         let f = unsafe { ma::tanf128(x) }.to_bits();
         n += 1;
         if g != f {
-            mism.push(format!("tan({:#034x}): glibc={g:#034x} fl={f:#034x}", x.to_bits()));
+            mism.push(format!(
+                "tan({:#034x}): glibc={g:#034x} fl={f:#034x}",
+                x.to_bits()
+            ));
         }
     }
-    assert!(mism.is_empty(), "tanf128 diverged ({}/{}):\n{}", mism.len(), n, mism.iter().take(40).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "tanf128 diverged ({}/{}):\n{}",
+        mism.len(),
+        n,
+        mism.iter().take(40).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

@@ -40,7 +40,15 @@ fn cstr_opt(p: *const c_char) -> Option<String> {
     }
 }
 
-fn mk(year: c_int, mon: c_int, mday: c_int, hour: c_int, min: c_int, sec: c_int, wday: c_int) -> libc::tm {
+fn mk(
+    year: c_int,
+    mon: c_int,
+    mday: c_int,
+    hour: c_int,
+    min: c_int,
+    sec: c_int,
+    wday: c_int,
+) -> libc::tm {
     let mut t: libc::tm = unsafe { core::mem::zeroed() };
     t.tm_year = year;
     t.tm_mon = mon;
@@ -67,9 +75,18 @@ fn asctime_range_matches_glibc() {
         ("wday=8 out of range", mk(125, 0, 2, 3, 4, 5, 8)),
         ("mon=13 out of range", mk(125, 13, 2, 3, 4, 5, 3)),
         ("wday=-1", mk(125, 0, 2, 3, 4, 5, -1)),
-        ("year overflow tm_year=INT_MAX", mk(c_int::MAX, 0, 2, 3, 4, 5, 3)),
-        ("year just-overflow", mk(c_int::MAX - 1900 + 1, 0, 2, 3, 4, 5, 3)),
-        ("year max non-overflow", mk(c_int::MAX - 1900, 0, 2, 3, 4, 5, 3)),
+        (
+            "year overflow tm_year=INT_MAX",
+            mk(c_int::MAX, 0, 2, 3, 4, 5, 3),
+        ),
+        (
+            "year just-overflow",
+            mk(c_int::MAX - 1900 + 1, 0, 2, 3, 4, 5, 3),
+        ),
+        (
+            "year max non-overflow",
+            mk(c_int::MAX - 1900, 0, 2, 3, 4, 5, 3),
+        ),
     ];
 
     let mut div = Vec::new();
@@ -89,7 +106,12 @@ fn asctime_range_matches_glibc() {
             div.push(format!("asctime_r[{name}]: fl={fr:?} glibc={gr:?}"));
         }
     }
-    assert!(div.is_empty(), "asctime divergences ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "asctime divergences ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }
 
 #[test]
@@ -104,8 +126,8 @@ fn ctime_range_matches_glibc() {
     let epochs: [i64; 6] = [
         0,
         1_700_000_000,
-        253_402_300_799,    // 9999-12-31T23:59:59Z
-        253_402_300_800,    // 10000-01-01T00:00:00Z (year 10000 — was NULL in fl)
+        253_402_300_799, // 9999-12-31T23:59:59Z
+        253_402_300_800, // 10000-01-01T00:00:00Z (year 10000 — was NULL in fl)
         usize::MAX as i64 / 4,
         -1,
     ];
@@ -124,5 +146,10 @@ fn ctime_range_matches_glibc() {
             div.push(format!("ctime[{e}]: fl={fv:?} glibc={gv:?}"));
         }
     }
-    assert!(div.is_empty(), "ctime divergences ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "ctime divergences ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

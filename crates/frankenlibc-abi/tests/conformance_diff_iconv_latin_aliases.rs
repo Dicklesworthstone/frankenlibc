@@ -15,7 +15,8 @@ unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
 type OpenFn = extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
-type ConvFn = extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
+type ConvFn =
+    extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
 
 fn g_funcs() -> (OpenFn, ConvFn) {
     unsafe {

@@ -8,7 +8,7 @@
 //! getutxline(ut_line) search, and a getutxid(ut_type) search vs glibc by the
 //! resolved (ut_type, ut_pid, ut_line, ut_user) fields. No mocks.
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const USER_PROCESS: i16 = 7;
@@ -31,7 +31,10 @@ struct Utmpx {
     ut_addr_v6: [i32; 4],
     __reserved: [u8; 20],
 }
-const _: () = assert!(std::mem::size_of::<Utmpx>() == 384, "struct utmpx must be 384 bytes on x86-64");
+const _: () = assert!(
+    std::mem::size_of::<Utmpx>() == 384,
+    "struct utmpx must be 384 bytes on x86-64"
+);
 
 mod g {
     use super::*;
@@ -49,7 +52,9 @@ use frankenlibc_abi::unistd_abi as fl;
 static CNT: AtomicU64 = AtomicU64::new(0);
 
 fn set_arr(dst: &mut [c_char], s: &str) {
-    for (d, b) in dst.iter_mut().zip(s.bytes()) { *d = b as c_char; }
+    for (d, b) in dst.iter_mut().zip(s.bytes()) {
+        *d = b as c_char;
+    }
 }
 fn rec(typ: i16, pid: i32, line: &str, id: &str, user: &str) -> Utmpx {
     let mut u: Utmpx = unsafe { std::mem::zeroed() };
@@ -61,7 +66,11 @@ fn rec(typ: i16, pid: i32, line: &str, id: &str, user: &str) -> Utmpx {
     u
 }
 fn fields(u: &Utmpx) -> (i16, i32, String, String) {
-    let s = |a: &[c_char]| unsafe { CStr::from_ptr(a.as_ptr()) }.to_string_lossy().into_owned();
+    let s = |a: &[c_char]| {
+        unsafe { CStr::from_ptr(a.as_ptr()) }
+            .to_string_lossy()
+            .into_owned()
+    };
     (u.ut_type, u.ut_pid, s(&u.ut_line), s(&u.ut_user))
 }
 
@@ -76,20 +85,36 @@ fn write_utmpx() -> (std::path::PathBuf, CString) {
     ];
     let mut bytes = Vec::new();
     for r in &recs {
-        bytes.extend_from_slice(unsafe { std::slice::from_raw_parts(r as *const Utmpx as *const u8, std::mem::size_of::<Utmpx>()) });
+        bytes.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(r as *const Utmpx as *const u8, std::mem::size_of::<Utmpx>())
+        });
     }
     std::fs::write(&p, &bytes).unwrap();
-    (p.clone(), CString::new(p.to_string_lossy().as_bytes()).unwrap())
+    (
+        p.clone(),
+        CString::new(p.to_string_lossy().as_bytes()).unwrap(),
+    )
 }
 
-type Probe = (i32, Vec<(i16, i32, String, String)>, Option<(i16, i32, String, String)>, Option<(i16, i32, String, String)>);
+type Probe = (
+    i32,
+    Vec<(i16, i32, String, String)>,
+    Option<(i16, i32, String, String)>,
+    Option<(i16, i32, String, String)>,
+);
 
 fn glibc_probe(path: &CString) -> Probe {
     unsafe {
         let un = g::utmpxname(path.as_ptr());
         let mut all = Vec::new();
         g::setutxent();
-        loop { let e = g::getutxent(); if e.is_null() { break; } all.push(fields(&*e)); }
+        loop {
+            let e = g::getutxent();
+            if e.is_null() {
+                break;
+            }
+            all.push(fields(&*e));
+        }
         g::setutxent();
         let q = rec(USER_PROCESS, 0, "pts/1", "", "");
         let l = g::getutxline(&q);
@@ -107,7 +132,13 @@ fn fl_probe(path: &CString) -> Probe {
         let un = fl::utmpxname(path.as_ptr());
         let mut all = Vec::new();
         fl::setutxent();
-        loop { let e = fl::getutxent() as *mut Utmpx; if e.is_null() { break; } all.push(fields(&*e)); }
+        loop {
+            let e = fl::getutxent() as *mut Utmpx;
+            if e.is_null() {
+                break;
+            }
+            all.push(fields(&*e));
+        }
         fl::setutxent();
         let q = rec(USER_PROCESS, 0, "pts/1", "", "");
         let l = fl::getutxline(&q as *const Utmpx as *const libc::utmpx) as *mut Utmpx;
@@ -128,8 +159,16 @@ fn utmpx_accessors_match_glibc() {
     let fp = fl_probe(&c);
     let _ = std::fs::remove_file(&path);
     assert_eq!(fp.0, gp.0, "utmpxname rc: fl={} glibc={}", fp.0, gp.0);
-    assert_eq!(fp.1, gp.1, "getutxent enumeration: fl={:?} glibc={:?}", fp.1, gp.1);
-    assert_eq!(fp.2, gp.2, "getutxline(pts/1): fl={:?} glibc={:?}", fp.2, gp.2);
+    assert_eq!(
+        fp.1, gp.1,
+        "getutxent enumeration: fl={:?} glibc={:?}",
+        fp.1, gp.1
+    );
+    assert_eq!(
+        fp.2, gp.2,
+        "getutxline(pts/1): fl={:?} glibc={:?}",
+        fp.2, gp.2
+    );
     assert_eq!(fp.3, gp.3, "getutxid: fl={:?} glibc={:?}", fp.3, gp.3);
     assert_eq!(gp.1.len(), 3, "glibc should enumerate all 3 records");
 }

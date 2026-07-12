@@ -36,8 +36,16 @@ fn fgetpos_fsetpos_roundtrip() {
 
     // Save position (offset 3).
     let mut pos: libc::fpos_t = unsafe { std::mem::zeroed() };
-    assert_eq!(unsafe { fl::fgetpos(f, &mut pos) }, 0, "fgetpos should succeed");
-    assert_eq!(unsafe { fl::ftell(f) }, 3, "position should be 3 after reading ABC");
+    assert_eq!(
+        unsafe { fl::fgetpos(f, &mut pos) },
+        0,
+        "fgetpos should succeed"
+    );
+    assert_eq!(
+        unsafe { fl::ftell(f) },
+        3,
+        "position should be 3 after reading ABC"
+    );
 
     // Read "DEF".
     assert_eq!(unsafe { fl::fread(buf.as_mut_ptr().cast(), 1, 3, f) }, 3);
@@ -70,7 +78,10 @@ fn fsetpos_to_start_rereads_whole_file() {
     assert_eq!(unsafe { fl::fsetpos(f, &start) }, 0);
     let mut five = [0u8; 5];
     assert_eq!(unsafe { fl::fread(five.as_mut_ptr().cast(), 1, 5, f) }, 5);
-    assert_eq!(&five, b"hello", "fsetpos to start must re-read from the beginning");
+    assert_eq!(
+        &five, b"hello",
+        "fsetpos to start must re-read from the beginning"
+    );
 
     unsafe { fl::fclose(f) };
     let _ = std::fs::remove_file(&path);

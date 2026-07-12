@@ -9,7 +9,7 @@
 //! slot in non-standalone builds). strtof_l compared bit-for-bit (NaN-aware).
 //! No mocks.
 
-use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
 
 unsafe extern "C" {
     fn strtoul_l(p: *const c_char, e: *mut *mut c_char, b: c_int, l: *mut c_void) -> c_ulong;
@@ -42,8 +42,8 @@ fn narrow_strto_l_family_matches_glibc() {
         ("0", 0),
         ("abc", 10),
         ("18446744073709551616", 10), // u64 overflow
-        ("-1", 10),                    // unsigned wraparound
-        ("9223372036854775808", 10),   // i64 overflow (for ll)
+        ("-1", 10),                   // unsigned wraparound
+        ("9223372036854775808", 10),  // i64 overflow (for ll)
     ];
 
     for &(s, base) in int_cases {
@@ -55,36 +55,62 @@ fn narrow_strto_l_family_matches_glibc() {
         let g = unsafe { strtoul_l(c.as_ptr(), &mut ge, base, loc) };
         let gerr = unsafe { *__errno_location() };
         unsafe { *__errno_location() = 0 };
-        let f = unsafe { frankenlibc_abi::stdlib_abi::strtoul_l(c.as_ptr(), &mut fe, base, loc as *mut c_void) };
+        let f = unsafe {
+            frankenlibc_abi::stdlib_abi::strtoul_l(c.as_ptr(), &mut fe, base, loc as *mut c_void)
+        };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "strtoul_l({s:?},{base}) value");
-        assert_eq!(consumed(fe, c.as_ptr()), consumed(ge, c.as_ptr()), "strtoul_l({s:?}) endptr");
+        assert_eq!(
+            consumed(fe, c.as_ptr()),
+            consumed(ge, c.as_ptr()),
+            "strtoul_l({s:?}) endptr"
+        );
         assert_eq!(ferr, gerr, "strtoul_l({s:?}) errno");
 
         // strtoll_l (i64)
         let mut ge2: *mut c_char = std::ptr::null_mut();
         let mut fe2: *mut c_char = std::ptr::null_mut();
         let g2 = unsafe { strtoll_l(c.as_ptr(), &mut ge2, base, loc) };
-        let f2 = unsafe { frankenlibc_abi::stdlib_abi::strtoll_l(c.as_ptr(), &mut fe2, base, loc as *mut c_void) };
+        let f2 = unsafe {
+            frankenlibc_abi::stdlib_abi::strtoll_l(c.as_ptr(), &mut fe2, base, loc as *mut c_void)
+        };
         assert_eq!(f2, g2, "strtoll_l({s:?},{base}) value");
 
         // strtoull_l (u64)
         let mut ge3: *mut c_char = std::ptr::null_mut();
         let mut fe3: *mut c_char = std::ptr::null_mut();
         let g3 = unsafe { strtoull_l(c.as_ptr(), &mut ge3, base, loc) };
-        let f3 = unsafe { frankenlibc_abi::stdlib_abi::strtoull_l(c.as_ptr(), &mut fe3, base, loc as *mut c_void) };
+        let f3 = unsafe {
+            frankenlibc_abi::stdlib_abi::strtoull_l(c.as_ptr(), &mut fe3, base, loc as *mut c_void)
+        };
         assert_eq!(f3, g3, "strtoull_l({s:?},{base}) value");
     }
 
     // strtof_l: value parity bit-for-bit
-    for s in ["1.5", "  -3.25xy", "0x1.8p1", "inf", "-inf", "nan", "1e38", "1e40", "abc"] {
+    for s in [
+        "1.5",
+        "  -3.25xy",
+        "0x1.8p1",
+        "inf",
+        "-inf",
+        "nan",
+        "1e38",
+        "1e40",
+        "abc",
+    ] {
         let c = CString::new(s).unwrap();
         let mut ge: *mut c_char = std::ptr::null_mut();
         let mut fe: *mut c_char = std::ptr::null_mut();
         let g = unsafe { strtof_l(c.as_ptr(), &mut ge, loc) };
-        let f = unsafe { frankenlibc_abi::stdlib_abi::strtof_l(c.as_ptr(), &mut fe, loc as *mut c_void) };
+        let f = unsafe {
+            frankenlibc_abi::stdlib_abi::strtof_l(c.as_ptr(), &mut fe, loc as *mut c_void)
+        };
         assert!(same32(f, g), "strtof_l({s:?}): fl={f:?} glibc={g:?}");
-        assert_eq!(consumed(fe, c.as_ptr()), consumed(ge, c.as_ptr()), "strtof_l({s:?}) endptr");
+        assert_eq!(
+            consumed(fe, c.as_ptr()),
+            consumed(ge, c.as_ptr()),
+            "strtof_l({s:?}) endptr"
+        );
     }
 
     unsafe { freelocale(loc) };

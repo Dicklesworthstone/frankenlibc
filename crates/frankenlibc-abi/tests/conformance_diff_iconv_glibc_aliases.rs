@@ -223,14 +223,20 @@ fn glibc_aliases_open_and_match_both_directions() {
     for &name in ALIASES {
         let gd = g_decode(&gg, name);
         let fd = fl_decode(name);
-        assert_eq!(fd, gd, "decode signature for alias {name} differs from glibc");
+        assert_eq!(
+            fd, gd,
+            "decode signature for alias {name} differs from glibc"
+        );
 
         // Encode direction: every codepoint that decoded must re-encode to the
         // same bytes on fl and glibc.
         for cp in gd.iter().flatten().copied() {
             let ge = g_encode(&gg, name, cp);
             let fe = fl_encode(name, cp);
-            assert_eq!(fe, ge, "encode of U+{cp:04X} for alias {name} differs from glibc");
+            assert_eq!(
+                fe, ge,
+                "encode of U+{cp:04X} for alias {name} differs from glibc"
+            );
         }
     }
 }

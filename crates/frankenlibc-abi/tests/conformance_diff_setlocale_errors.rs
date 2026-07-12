@@ -8,7 +8,7 @@
 //! errno as host glibc; for "C" it must succeed. Only failing/query cases are
 //! exercised so the global locale is left unchanged. No mocks.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 
 unsafe extern "C" {
     fn setlocale(category: c_int, locale: *const c_char) -> *const c_char;
@@ -37,7 +37,10 @@ fn setlocale_invalid_category_matches_glibc() {
     let (gnull, ge) = glibc_setlocale(99, std::ptr::null());
     let (fnull, fe) = fl_setlocale(99, std::ptr::null());
     assert!(gnull, "glibc setlocale(99, NULL) should return NULL");
-    assert_eq!(fnull, gnull, "setlocale(invalid cat) NULL-ness: fl={fnull} glibc={gnull}");
+    assert_eq!(
+        fnull, gnull,
+        "setlocale(invalid cat) NULL-ness: fl={fnull} glibc={gnull}"
+    );
     assert_eq!(fe, ge, "setlocale(invalid cat) errno: fl={fe} glibc={ge}");
 }
 
@@ -47,7 +50,10 @@ fn setlocale_unavailable_locale_matches_glibc() {
     let (gnull, ge) = glibc_setlocale(libc::LC_ALL, bogus.as_ptr());
     let (fnull, fe) = fl_setlocale(libc::LC_ALL, bogus.as_ptr());
     assert!(gnull, "glibc setlocale(LC_ALL, bogus) should return NULL");
-    assert_eq!(fnull, gnull, "setlocale(bogus) NULL-ness: fl={fnull} glibc={gnull}");
+    assert_eq!(
+        fnull, gnull,
+        "setlocale(bogus) NULL-ness: fl={fnull} glibc={gnull}"
+    );
     assert_eq!(fe, ge, "setlocale(bogus) errno: fl={fe} glibc={ge}");
 }
 

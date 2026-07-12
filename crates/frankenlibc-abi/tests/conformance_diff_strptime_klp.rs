@@ -8,15 +8,18 @@
 //! glibc does (accept or reject), fl must match. This resolves the uncertain
 //! parity in the batch run. No mocks.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 
 unsafe extern "C" {
     fn strptime(s: *const c_char, format: *const c_char, tm: *mut libc::tm) -> *mut c_char;
 }
 
 /// (parsed-ok?, consumed-len, tm_hour) for one impl.
-fn run(strp: unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char,
-       input: &str, fmt: &str) -> (bool, isize, c_int) {
+fn run(
+    strp: unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char,
+    input: &str,
+    fmt: &str,
+) -> (bool, isize, c_int) {
     let ic = CString::new(input).unwrap();
     let fc = CString::new(fmt).unwrap();
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };

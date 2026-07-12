@@ -65,7 +65,8 @@ struct M {
 }
 
 type CompFn = unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_int;
-type ExecFn = unsafe extern "C" fn(*const c_void, *const c_char, usize, *mut c_void, c_int) -> c_int;
+type ExecFn =
+    unsafe extern "C" fn(*const c_void, *const c_char, usize, *mut c_void, c_int) -> c_int;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 
 #[repr(C, align(16))]
@@ -75,7 +76,13 @@ fn run(comp: CompFn, exec: ExecFn, free: FreeFn, pat: &str, inp: &str) -> (bool,
     let cp = CString::new(pat).unwrap();
     let ci = CString::new(inp).unwrap();
     let mut preg = Preg([0u8; 256]);
-    let c = unsafe { comp(preg.0.as_mut_ptr() as *mut c_void, cp.as_ptr(), REG_EXTENDED) };
+    let c = unsafe {
+        comp(
+            preg.0.as_mut_ptr() as *mut c_void,
+            cp.as_ptr(),
+            REG_EXTENDED,
+        )
+    };
     assert_eq!(c, 0, "regcomp failed for {pat:?}");
     let mut pm = vec![M::default(); 6];
     let e = unsafe {
@@ -115,26 +122,61 @@ fn nested_submatch_fl_is_posix_principled_and_glibc_diverges() {
     }
     let cases = [
         // glibc g1=[0,5] is impossible: `(.(b*)*)` matches 1 char/iteration.
-        Case { pat: "(.(b*)*)*", subj: "aaaa.", fl_expect: [m(0,5), m(4,5), m(5,5)], glibc_artifact: [m(0,5), m(0,5), m(1,1)] },
+        Case {
+            pat: "(.(b*)*)*",
+            subj: "aaaa.",
+            fl_expect: [m(0, 5), m(4, 5), m(5, 5)],
+            glibc_artifact: [m(0, 5), m(0, 5), m(1, 1)],
+        },
         // glibc g1=[0,4] impossible: one iteration of `((a*)+b?)` matches <=1 char here.
-        Case { pat: "((a*)+b?)*", subj: "bbbb", fl_expect: [m(0,4), m(3,4), m(3,3)], glibc_artifact: [m(0,4), m(0,4), m(0,0)] },
+        Case {
+            pat: "((a*)+b?)*",
+            subj: "bbbb",
+            fl_expect: [m(0, 4), m(3, 4), m(3, 3)],
+            glibc_artifact: [m(0, 4), m(0, 4), m(0, 0)],
+        },
         // glibc g1=[0,2] impossible: `(a(b?)+)` matches one 'a' per iteration here.
-        Case { pat: "(a(b?)+)*.a*", subj: "aaa", fl_expect: [m(0,3), m(1,2), m(2,2)], glibc_artifact: [m(0,3), m(0,2), m(1,1)] },
+        Case {
+            pat: "(a(b?)+)*.a*",
+            subj: "aaa",
+            fl_expect: [m(0, 3), m(1, 2), m(2, 2)],
+            glibc_artifact: [m(0, 3), m(0, 2), m(1, 1)],
+        },
         // glibc g1=[0,4] impossible: `(b(a?)+)` matches "ba" (2 chars) max per iteration.
-        Case { pat: "(b(a?)+)*", subj: "babb", fl_expect: [m(0,4), m(3,4), m(4,4)], glibc_artifact: [m(0,4), m(0,4), m(1,2)] },
+        Case {
+            pat: "(b(a?)+)*",
+            subj: "babb",
+            fl_expect: [m(0, 4), m(3, 4), m(4, 4)],
+            glibc_artifact: [m(0, 4), m(0, 4), m(1, 2)],
+        },
         // glibc g1=[0,2] impossible: `(.(b*b*)*)` matches 1 char per iteration.
-        Case { pat: "(.(b*b*)*)*.b*", subj: "aa.", fl_expect: [m(0,3), m(1,2), m(2,2)], glibc_artifact: [m(0,3), m(0,2), m(1,1)] },
+        Case {
+            pat: "(.(b*b*)*)*.b*",
+            subj: "aa.",
+            fl_expect: [m(0, 3), m(1, 2), m(2, 2)],
+            glibc_artifact: [m(0, 3), m(0, 2), m(1, 1)],
+        },
         // Tie-break (both spans are valid single iterations): glibc keeps the
         // trailing EMPTY inner iteration [3,3]; fl keeps the non-empty [2,3]
         // (POSIX leftmost-longest prefers the longer inner match).
-        Case { pat: "((b*)+a)+", subj: "baba", fl_expect: [m(0,4), m(2,4), m(2,3)], glibc_artifact: [m(0,4), m(2,4), m(3,3)] },
+        Case {
+            pat: "((b*)+a)+",
+            subj: "baba",
+            fl_expect: [m(0, 4), m(2, 4), m(2, 3)],
+            glibc_artifact: [m(0, 4), m(2, 4), m(3, 3)],
+        },
     ];
 
     for c in &cases {
         let (fm, fpm) = fl_run(c.pat, c.subj);
         let (gm, gpm) = glibc_run(c.pat, c.subj);
         // (a) whole-match parity with live glibc — the invariant that always holds.
-        assert!(fm && gm, "both engines must match {:?} on {:?}", c.pat, c.subj);
+        assert!(
+            fm && gm,
+            "both engines must match {:?} on {:?}",
+            c.pat,
+            c.subj
+        );
         assert_eq!(
             fpm[0], gpm[0],
             "whole-match (group 0) must agree with glibc for {:?} on {:?}",
@@ -145,7 +187,8 @@ fn nested_submatch_fl_is_posix_principled_and_glibc_diverges() {
             &fpm[0..3],
             &c.fl_expect,
             "frankenlibc nested submatch drifted for {:?} on {:?}",
-            c.pat, c.subj
+            c.pat,
+            c.subj
         );
         // (c) sanity: glibc indeed diverges on the submatch slots (so this stays
         // a real "document-don't-mirror" record, not a stale no-op). We don't
@@ -157,7 +200,8 @@ fn nested_submatch_fl_is_posix_principled_and_glibc_diverges() {
             &gpm[1..3],
             "expected glibc to diverge on submatch for {:?} on {:?} (artifact); \
              if this fires, glibc changed and the determination should be revisited",
-            c.pat, c.subj
+            c.pat,
+            c.subj
         );
     }
 }
@@ -168,11 +212,11 @@ fn nested_submatch_fl_is_posix_principled_and_glibc_diverges() {
 #[test]
 fn single_level_and_once_matched_groups_match_glibc_exactly() {
     let cases = [
-        ("(.(b*)*)*", "a"),     // outer matches once
-        ("((a*)*a)", "abaaa"),  // inner repeat, outer not repeated
+        ("(.(b*)*)*", "a"),    // outer matches once
+        ("((a*)*a)", "abaaa"), // inner repeat, outer not repeated
         ("((a*)*)", "aaa"),
-        ("(a*)*", "aaa"),       // single-level empty iteration (the fixed case)
-        (".()*a", "ba"),        // documented single-level reproducer
+        ("(a*)*", "aaa"), // single-level empty iteration (the fixed case)
+        (".()*a", "ba"),  // documented single-level reproducer
         ("(a*)*b?", "b"),
     ];
     for (pat, subj) in cases {

@@ -9,18 +9,27 @@
 //! combined %c/%x/%X, and literals. %s/%Z/%z omitted (architectural timezone
 //! axis). No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
 use libc::wchar_t;
+use std::ffi::{CString, c_char, c_int, c_void};
 
 unsafe extern "C" {
-    fn wcsftime_l(s: *mut wchar_t, max: usize, fmt: *const wchar_t, tm: *const libc::tm, loc: *mut c_void) -> usize;
+    fn wcsftime_l(
+        s: *mut wchar_t,
+        max: usize,
+        fmt: *const wchar_t,
+        tm: *const libc::tm,
+        loc: *mut c_void,
+    ) -> usize;
     fn newlocale(mask: c_int, name: *const c_char, base: *mut c_void) -> *mut c_void;
     fn freelocale(loc: *mut c_void);
     fn timegm(tm: *mut libc::tm) -> libc::time_t;
 }
 
 fn wide(s: &str) -> Vec<wchar_t> {
-    s.chars().map(|c| c as wchar_t).chain(std::iter::once(0)).collect()
+    s.chars()
+        .map(|c| c as wchar_t)
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 fn base_tm() -> libc::tm {
@@ -36,9 +45,31 @@ fn base_tm() -> libc::tm {
 }
 
 const FORMATS: &[&str] = &[
-    "%Y-%m-%d", "%H:%M:%S", "%A", "%a", "%B", "%b", "%p", "%I:%M %p",
-    "%j", "%U", "%W", "%V", "%w", "%u", "%C", "%y", "%e", "%D", "%F",
-    "%R", "%T", "%c", "%x", "%X", "lit %% %Y end",
+    "%Y-%m-%d",
+    "%H:%M:%S",
+    "%A",
+    "%a",
+    "%B",
+    "%b",
+    "%p",
+    "%I:%M %p",
+    "%j",
+    "%U",
+    "%W",
+    "%V",
+    "%w",
+    "%u",
+    "%C",
+    "%y",
+    "%e",
+    "%D",
+    "%F",
+    "%R",
+    "%T",
+    "%c",
+    "%x",
+    "%X",
+    "lit %% %Y end",
 ];
 
 #[test]
@@ -62,8 +93,15 @@ fn wcsftime_l_matches_glibc() {
                 loc as *mut c_void,
             )
         };
-        assert_eq!(fln, gn, "wcsftime_l({f:?}) return length: fl={fln} glibc={gn}");
-        assert_eq!(&fbuf[..fln], &gbuf[..gn], "wcsftime_l({f:?}) wide bytes differ");
+        assert_eq!(
+            fln, gn,
+            "wcsftime_l({f:?}) return length: fl={fln} glibc={gn}"
+        );
+        assert_eq!(
+            &fbuf[..fln],
+            &gbuf[..gn],
+            "wcsftime_l({f:?}) wide bytes differ"
+        );
     }
     unsafe { freelocale(loc) };
 }

@@ -3,7 +3,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use frankenlibc_core::time::{broken_down_to_epoch, epoch_to_broken_down, BrokenDownTime};
+use frankenlibc_core::time::{BrokenDownTime, broken_down_to_epoch, epoch_to_broken_down};
 
 fn main() {
     unsafe {
@@ -51,6 +51,9 @@ fn main() {
             black_box(gl_gmtime_r(black_box(&epoch), black_box(&mut tm)));
         }
         let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-        println!("GMTIME epoch={epoch} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x", fl / gl);
+        println!(
+            "GMTIME epoch={epoch} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x",
+            fl / gl
+        );
     }
 }

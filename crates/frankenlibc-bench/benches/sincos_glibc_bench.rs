@@ -13,7 +13,7 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 unsafe extern "C" {
     fn sincos(x: f64, s: *mut f64, c: *mut f64);
@@ -85,7 +85,10 @@ fn bench(c: &mut Criterion) {
         }
     }
     eprintln!("sincos band fl-vs-glibc worst ULP = {worst} at x={worst_x}");
-    assert!(worst <= 2, "sincos band exceeds 2 ULP vs glibc (worst {worst} at x={worst_x})");
+    assert!(
+        worst <= 2,
+        "sincos band exceeds 2 ULP vs glibc (worst {worst} at x={worst_x})"
+    );
 
     let mut g = c.benchmark_group("sincos_band");
     g.bench_function("frankenlibc_core", |b| {

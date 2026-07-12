@@ -62,7 +62,11 @@ fn run_seq(types: &[c_int]) -> (Vec<c_int>, Vec<c_int>) {
 fn fsetlocking_default_is_internal() {
     let (g, f) = run_seq(&[QUERY]);
     assert_eq!(f, g, "query default: fl={f:?} glibc={g:?}");
-    assert_eq!(f, vec![INTERNAL], "default locking mode must be INTERNAL(1)");
+    assert_eq!(
+        f,
+        vec![INTERNAL],
+        "default locking mode must be INTERNAL(1)"
+    );
 }
 
 #[test]

@@ -28,7 +28,8 @@ unsafe extern "C" fn cmp_dir(a: *const c_void, b: *const c_void, arg: *mut c_voi
 }
 
 fn sorted(v: &[i32], dir: i32) -> bool {
-    v.windows(2).all(|w| if dir > 0 { w[0] <= w[1] } else { w[0] >= w[1] })
+    v.windows(2)
+        .all(|w| if dir > 0 { w[0] <= w[1] } else { w[0] >= w[1] })
 }
 
 #[test]
@@ -63,7 +64,10 @@ fn qsort_r_threads_context_like_glibc() {
                 );
             }
             assert_eq!(ff, gf, "qsort_r(dir={dir}) input={inp:?}: fl != glibc");
-            assert!(sorted(&ff, dir), "qsort_r(dir={dir}) result not sorted: {ff:?}");
+            assert!(
+                sorted(&ff, dir),
+                "qsort_r(dir={dir}) result not sorted: {ff:?}"
+            );
         }
     }
 }
@@ -92,6 +96,10 @@ fn qsort_r_arg_pointer_is_delivered_verbatim() {
             ctx_ptr,
         );
     }
-    assert_eq!(SEEN.load(Ordering::Relaxed), ctx_ptr as usize, "qsort_r must pass arg verbatim");
+    assert_eq!(
+        SEEN.load(Ordering::Relaxed),
+        ctx_ptr as usize,
+        "qsort_r must pass arg verbatim"
+    );
     assert_eq!(arr, [1, 3, 7, 9]);
 }

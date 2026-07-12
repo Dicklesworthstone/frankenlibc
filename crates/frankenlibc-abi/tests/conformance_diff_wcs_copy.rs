@@ -81,7 +81,11 @@ fn wcscpy_wcpcpy_match_glibc() {
         // wcscpy returns dst.
         let gr = unsafe { g::wcscpy(gd.as_mut_ptr(), src.as_ptr()) };
         let fr = unsafe { fl::wcscpy(u(fd.as_mut_ptr()), uc(src.as_ptr())) };
-        assert_eq!(woff(fr.cast(), fd.as_ptr()), woff(gr, gd.as_ptr()), "wcscpy ret");
+        assert_eq!(
+            woff(fr.cast(), fd.as_ptr()),
+            woff(gr, gd.as_ptr()),
+            "wcscpy ret"
+        );
         assert_eq!(fd, gd, "wcscpy content src={src:?}");
 
         // wcpcpy returns dst + wcslen (pointer to the written NUL).
@@ -89,7 +93,11 @@ fn wcscpy_wcpcpy_match_glibc() {
         let mut fd2 = vec![FILL; cap];
         let gr2 = unsafe { g::wcpcpy(gd2.as_mut_ptr(), src.as_ptr()) };
         let fr2 = unsafe { fl::wcpcpy(u(fd2.as_mut_ptr()), uc(src.as_ptr())) };
-        assert_eq!(woff(fr2.cast(), fd2.as_ptr()), woff(gr2, gd2.as_ptr()), "wcpcpy ret");
+        assert_eq!(
+            woff(fr2.cast(), fd2.as_ptr()),
+            woff(gr2, gd2.as_ptr()),
+            "wcpcpy ret"
+        );
         assert_eq!(fd2, gd2, "wcpcpy content");
         assert_eq!(
             woff(fr2.cast(), fd2.as_ptr()),
@@ -111,14 +119,22 @@ fn wcsncpy_wcpncpy_match_glibc() {
         let mut fd = vec![FILL; cap];
         let gr = unsafe { g::wcsncpy(gd.as_mut_ptr(), src.as_ptr(), n) };
         let fr = unsafe { fl::wcsncpy(u(fd.as_mut_ptr()), uc(src.as_ptr()), n) };
-        assert_eq!(woff(fr.cast(), fd.as_ptr()), woff(gr, gd.as_ptr()), "wcsncpy ret");
+        assert_eq!(
+            woff(fr.cast(), fd.as_ptr()),
+            woff(gr, gd.as_ptr()),
+            "wcsncpy ret"
+        );
         assert_eq!(fd, gd, "wcsncpy content src={src:?} n={n}");
 
         let mut gd2 = vec![FILL; cap];
         let mut fd2 = vec![FILL; cap];
         let gr2 = unsafe { g::wcpncpy(gd2.as_mut_ptr(), src.as_ptr(), n) };
         let fr2 = unsafe { fl::wcpncpy(u(fd2.as_mut_ptr()), uc(src.as_ptr()), n) };
-        assert_eq!(woff(fr2.cast(), fd2.as_ptr()), woff(gr2, gd2.as_ptr()), "wcpncpy ret n={n}");
+        assert_eq!(
+            woff(fr2.cast(), fd2.as_ptr()),
+            woff(gr2, gd2.as_ptr()),
+            "wcpncpy ret n={n}"
+        );
         assert_eq!(fd2, gd2, "wcpncpy content src={src:?} n={n}");
     }
 }
@@ -135,7 +151,11 @@ fn wmemcpy_wmemset_match_glibc() {
         let mut fd = vec![FILL; cap];
         let gr = unsafe { g::wmemcpy(gd.as_mut_ptr(), src.as_ptr(), n) };
         let fr = unsafe { fl::wmemcpy(u(fd.as_mut_ptr()), uc(src.as_ptr()), n) };
-        assert_eq!(woff(fr.cast(), fd.as_ptr()), woff(gr, gd.as_ptr()), "wmemcpy ret");
+        assert_eq!(
+            woff(fr.cast(), fd.as_ptr()),
+            woff(gr, gd.as_ptr()),
+            "wmemcpy ret"
+        );
         assert_eq!(fd, gd, "wmemcpy content n={n}");
 
         // wmemset
@@ -144,7 +164,11 @@ fn wmemcpy_wmemset_match_glibc() {
         let mut fs = vec![FILL; cap];
         let grs = unsafe { g::wmemset(gs.as_mut_ptr(), c, n) };
         let frs = unsafe { fl::wmemset(u(fs.as_mut_ptr()), c as u32, n) };
-        assert_eq!(woff(frs.cast(), fs.as_ptr()), woff(grs, gs.as_ptr()), "wmemset ret");
+        assert_eq!(
+            woff(frs.cast(), fs.as_ptr()),
+            woff(grs, gs.as_ptr()),
+            "wmemset ret"
+        );
         assert_eq!(fs, gs, "wmemset content n={n} c={c}");
         assert!(fs[..n].iter().all(|&w| w == c), "wmemset filled prefix");
     }
@@ -161,12 +185,8 @@ fn wmemmove_overlap_matches_glibc() {
         let dom = rng.below(len - n + 1); // overlapping dst/src within one buffer
         let mut gb = base.clone();
         let mut fb = base.clone();
-        let gr = unsafe {
-            g::wmemmove(gb.as_mut_ptr().add(dom), gb.as_ptr().add(so), n)
-        };
-        let fr = unsafe {
-            fl::wmemmove(u(fb.as_mut_ptr().add(dom)), uc(fb.as_ptr().add(so)), n)
-        };
+        let gr = unsafe { g::wmemmove(gb.as_mut_ptr().add(dom), gb.as_ptr().add(so), n) };
+        let fr = unsafe { fl::wmemmove(u(fb.as_mut_ptr().add(dom)), uc(fb.as_ptr().add(so)), n) };
         assert_eq!(
             woff(fr.cast(), fb.as_ptr()),
             woff(gr, gb.as_ptr()),
@@ -197,7 +217,11 @@ fn wcscat_wcsncat_match_glibc() {
         let mut fd = mk();
         let gr = unsafe { g::wcscat(gd.as_mut_ptr(), src.as_ptr()) };
         let fr = unsafe { fl::wcscat(u(fd.as_mut_ptr()), uc(src.as_ptr())) };
-        assert_eq!(woff(fr.cast(), fd.as_ptr()), woff(gr, gd.as_ptr()), "wcscat ret");
+        assert_eq!(
+            woff(fr.cast(), fd.as_ptr()),
+            woff(gr, gd.as_ptr()),
+            "wcscat ret"
+        );
         assert_eq!(fd, gd, "wcscat content init={init:?} src={src:?}");
 
         // wcsncat with n spanning <, ==, > slen
@@ -212,7 +236,11 @@ fn wcscat_wcsncat_match_glibc() {
         let mut fd2 = mk2();
         let gr2 = unsafe { g::wcsncat(gd2.as_mut_ptr(), src.as_ptr(), n) };
         let fr2 = unsafe { fl::wcsncat(u(fd2.as_mut_ptr()), uc(src.as_ptr()), n) };
-        assert_eq!(woff(fr2.cast(), fd2.as_ptr()), woff(gr2, gd2.as_ptr()), "wcsncat ret n={n}");
+        assert_eq!(
+            woff(fr2.cast(), fd2.as_ptr()),
+            woff(gr2, gd2.as_ptr()),
+            "wcsncat ret n={n}"
+        );
         assert_eq!(fd2, gd2, "wcsncat content init={init:?} src={src:?} n={n}");
     }
 }

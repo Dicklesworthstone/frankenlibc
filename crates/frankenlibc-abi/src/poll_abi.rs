@@ -198,7 +198,10 @@ pub unsafe extern "C" fn ppoll(
     // The kernel ppoll WRITES the remaining time back into the timeout struct.
     // POSIX (and glibc) require ppoll to leave the caller's timeout unmodified,
     // so we pass a local copy to the syscall — never the caller's pointer.
-    let mut local_ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut local_ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     let ts_ptr = if timeout_ts.is_null() {
         std::ptr::null::<u8>()
     } else {
@@ -411,7 +414,10 @@ pub unsafe extern "C" fn pselect(
     // The kernel pselect6 WRITES the remaining time back into the timeout
     // struct. POSIX (and glibc) require pselect to leave the caller's timeout
     // unmodified, so we pass a local copy — never the caller's pointer.
-    let mut local_ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut local_ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     let ts_ptr = if timeout.is_null() {
         std::ptr::null::<u8>()
     } else {

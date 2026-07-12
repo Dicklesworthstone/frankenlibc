@@ -69,7 +69,13 @@ fn pvalloc_zero_edge_matches_glibc() {
     // glibc pvalloc(0) returns a usable, page-aligned 1-page block (not NULL).
     let gp = unsafe { g::pvalloc(0) };
     let fp = unsafe { fl::pvalloc(0) };
-    assert_eq!(fp.is_null(), gp.is_null(), "pvalloc(0) null-ness: fl={} glibc={}", fp.is_null(), gp.is_null());
+    assert_eq!(
+        fp.is_null(),
+        gp.is_null(),
+        "pvalloc(0) null-ness: fl={} glibc={}",
+        fp.is_null(),
+        gp.is_null()
+    );
     if !gp.is_null() {
         assert_eq!(gp as usize % ps, 0, "glibc pvalloc(0) page-aligned");
         assert_eq!(fp as usize % ps, 0, "fl pvalloc(0) page-aligned");

@@ -15,10 +15,20 @@ use frankenlibc_abi::search_abi::{lfind as fl_lfind, lsearch as fl_lsearch};
 type Cmp = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
 
 unsafe extern "C" {
-    fn lfind(key: *const c_void, base: *const c_void, nelp: *mut usize, width: usize, c: Cmp)
-        -> *mut c_void;
-    fn lsearch(key: *const c_void, base: *mut c_void, nelp: *mut usize, width: usize, c: Cmp)
-        -> *mut c_void;
+    fn lfind(
+        key: *const c_void,
+        base: *const c_void,
+        nelp: *mut usize,
+        width: usize,
+        c: Cmp,
+    ) -> *mut c_void;
+    fn lsearch(
+        key: *const c_void,
+        base: *mut c_void,
+        nelp: *mut usize,
+        width: usize,
+        c: Cmp,
+    ) -> *mut c_void;
 }
 
 unsafe extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
@@ -62,7 +72,11 @@ fn lfind_matches_glibc() {
                 cmp_i32,
             )
         };
-        assert_eq!(idx(rf, arr_f.as_ptr()), idx(rg, arr_g.as_ptr()), "lfind key={key}");
+        assert_eq!(
+            idx(rf, arr_f.as_ptr()),
+            idx(rg, arr_g.as_ptr()),
+            "lfind key={key}"
+        );
         assert_eq!(nf, ng, "lfind must not change count (key={key})");
         assert_eq!(nf, data.len(), "lfind count unchanged");
     }
@@ -96,7 +110,11 @@ fn lsearch_appends_like_glibc() {
             )
         };
         assert_eq!(nf, ng, "lsearch count agreement (key={key})");
-        assert_eq!(idx(rf, arr_f.as_ptr()), idx(rg, arr_g.as_ptr()), "lsearch offset (key={key})");
+        assert_eq!(
+            idx(rf, arr_f.as_ptr()),
+            idx(rg, arr_g.as_ptr()),
+            "lsearch offset (key={key})"
+        );
         assert_eq!(arr_f, arr_g, "lsearch array contents (key={key})");
         // Present keys leave count at 3; absent keys append and bump to 4.
         if key == 10 || key == 20 {
@@ -115,12 +133,24 @@ fn lsearch_idempotent_after_append() {
     let key = 42i32;
     // First lsearch appends.
     unsafe {
-        fl_lsearch(&key as *const i32 as *const c_void, arr.as_mut_ptr() as *mut c_void, &mut n, 4, cmp_i32)
+        fl_lsearch(
+            &key as *const i32 as *const c_void,
+            arr.as_mut_ptr() as *mut c_void,
+            &mut n,
+            4,
+            cmp_i32,
+        )
     };
     assert_eq!(n, 4);
     // Second lsearch for the same key finds it — no second append.
     unsafe {
-        fl_lsearch(&key as *const i32 as *const c_void, arr.as_mut_ptr() as *mut c_void, &mut n, 4, cmp_i32)
+        fl_lsearch(
+            &key as *const i32 as *const c_void,
+            arr.as_mut_ptr() as *mut c_void,
+            &mut n,
+            4,
+            cmp_i32,
+        )
     };
     assert_eq!(n, 4, "lsearch must not append a key it already inserted");
     assert_eq!(arr[3], 42);

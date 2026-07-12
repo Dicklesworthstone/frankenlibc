@@ -30,12 +30,7 @@ unsafe extern "C" {
     // does not surface this, so bind the host symbol directly.
     fn getc_unlocked(stream: *mut libc::FILE) -> c_int;
     #[link_name = "swprintf"]
-    fn host_swprintf(
-        s: *mut libc::wchar_t,
-        n: usize,
-        format: *const libc::wchar_t,
-        ...
-    ) -> c_int;
+    fn host_swprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, ...) -> c_int;
 }
 
 const N: usize = 4096;
@@ -155,12 +150,7 @@ fn bench_snprintf_s_newline(c: &mut Criterion) {
         b.iter(|| {
             let mut buf = [0i8; 128];
             let rc = unsafe {
-                fl::snprintf(
-                    buf.as_mut_ptr(),
-                    buf.len(),
-                    fmt.as_ptr(),
-                    payload.as_ptr(),
-                )
+                fl::snprintf(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), payload.as_ptr())
             };
             black_box((rc, buf[0]));
         });
@@ -169,14 +159,7 @@ fn bench_snprintf_s_newline(c: &mut Criterion) {
     group.bench_function("host_glibc", |b| {
         b.iter(|| {
             let mut buf = [0i8; 128];
-            let rc = unsafe {
-                host(
-                    buf.as_mut_ptr(),
-                    buf.len(),
-                    fmt.as_ptr(),
-                    payload.as_ptr(),
-                )
-            };
+            let rc = unsafe { host(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), payload.as_ptr()) };
             black_box((rc, buf[0]));
         });
     });
@@ -194,12 +177,7 @@ fn bench_snprintf_s_bare(c: &mut Criterion) {
         b.iter(|| {
             let mut buf = [0i8; 128];
             let rc = unsafe {
-                fl::snprintf(
-                    buf.as_mut_ptr(),
-                    buf.len(),
-                    fmt.as_ptr(),
-                    payload.as_ptr(),
-                )
+                fl::snprintf(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), payload.as_ptr())
             };
             black_box((rc, buf[0]));
         });
@@ -208,14 +186,7 @@ fn bench_snprintf_s_bare(c: &mut Criterion) {
     group.bench_function("host_glibc", |b| {
         b.iter(|| {
             let mut buf = [0i8; 128];
-            let rc = unsafe {
-                host(
-                    buf.as_mut_ptr(),
-                    buf.len(),
-                    fmt.as_ptr(),
-                    payload.as_ptr(),
-                )
-            };
+            let rc = unsafe { host(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), payload.as_ptr()) };
             black_box((rc, buf[0]));
         });
     });
@@ -280,14 +251,8 @@ fn bench_swprintf_wide_format(c: &mut Criterion) {
     group.bench_function("host_glibc", |b| {
         b.iter(|| {
             let mut buf = [0 as libc::wchar_t; 32];
-            let rc = unsafe {
-                host_swprintf(
-                    buf.as_mut_ptr(),
-                    buf.len(),
-                    fmt.as_ptr(),
-                    12345 as c_int,
-                )
-            };
+            let rc =
+                unsafe { host_swprintf(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 12345 as c_int) };
             black_box((rc, buf[0]));
         });
     });

@@ -1282,7 +1282,10 @@ impl Profiles {
     }
 
     fn push(&mut self, p: AddrinfoProfile) {
-        debug_assert!(self.len < self.buf.len(), "getaddrinfo profile list exceeded 3");
+        debug_assert!(
+            self.len < self.buf.len(),
+            "getaddrinfo profile list exceeded 3"
+        );
         if self.len < self.buf.len() {
             self.buf[self.len] = p;
             self.len += 1;
@@ -2913,9 +2916,7 @@ pub unsafe extern "C" fn getnameinfo(
     // of pure observability here) buys nothing. Skip straight to the load-bearing work — same lever
     // `inet_pton`/`inet_ntop` already take. Byte-identical (gate: getnameinfo_differential_fuzz).
     if runtime_policy::strict_passthrough_active() {
-        return unsafe {
-            getnameinfo_strict_fast(sa, salen, host, hostlen, serv, servlen, flags)
-        };
+        return unsafe { getnameinfo_strict_fast(sa, salen, host, hostlen, serv, servlen, flags) };
     }
     unsafe { getnameinfo_full(sa, salen, host, hostlen, serv, servlen, flags) }
 }
@@ -3459,8 +3460,7 @@ pub(crate) unsafe fn gethostbyname_r_impl(
     };
 
     // SAFETY: all pointers/length validated within helper.
-    match unsafe { write_reentrant_hostent(resolved_name, addr, result_buf, buf, buflen, result) }
-    {
+    match unsafe { write_reentrant_hostent(resolved_name, addr, result_buf, buf, buflen, result) } {
         Ok(()) => {
             // SAFETY: optional h_errno pointer from caller.
             unsafe { set_h_errnop(h_errnop, 0) };

@@ -19,10 +19,24 @@ fn el() -> *mut c_int {
 
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
-        0.0, -0.0f128, 1.0, -1.0, 10.0, 100.0, 1000.0, 0.1, 0.01,
-        0.7071067811865475244f128, 1.4142135623730951f128,
-        1e30f128, 1e-30f128, 1e300f128, 1e4000f128, 1e-4000f128,
-        f128::MIN_POSITIVE, f128::MAX,
+        0.0,
+        -0.0f128,
+        1.0,
+        -1.0,
+        10.0,
+        100.0,
+        1000.0,
+        0.1,
+        0.01,
+        0.7071067811865475244f128,
+        1.4142135623730951f128,
+        1e30f128,
+        1e-30f128,
+        1e300f128,
+        1e4000f128,
+        1e-4000f128,
+        f128::MIN_POSITIVE,
+        f128::MAX,
         f128::from_bits(1),
         f128::from_bits(0x7fff_u128 << 112),
         f128::from_bits(0xffff_u128 << 112),
@@ -35,9 +49,13 @@ fn values() -> Vec<f128> {
     }
     let mut st: u64 = 0x9090_a0a0_b0b0_c0c0;
     for _ in 0..6000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (hi % 0x7fff) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -60,8 +78,17 @@ fn f128_log10_matches_glibc() {
         let fe = unsafe { *el() };
         n += 1;
         if g != f || ge != fe {
-            mism.push(format!("log10({:#034x}): glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})", x.to_bits()));
+            mism.push(format!(
+                "log10({:#034x}): glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})",
+                x.to_bits()
+            ));
         }
     }
-    assert!(mism.is_empty(), "log10f128 diverged ({}/{}):\n{}", mism.len(), n, mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "log10f128 diverged ({}/{}):\n{}",
+        mism.len(),
+        n,
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

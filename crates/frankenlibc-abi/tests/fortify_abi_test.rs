@@ -521,7 +521,13 @@ fn wcscpy_chk_src_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wcscpy_chk src over real buffer", || {
         let src: [WcharT; 4] = [b'H' as WcharT, b'i' as WcharT, b'!' as WcharT, 0];
         let mut dest = [0 as WcharT; 2];
-        unsafe { __wcscpy_chk(dest.as_mut_ptr(), src.as_ptr(), std::mem::size_of_val(&dest)) };
+        unsafe {
+            __wcscpy_chk(
+                dest.as_mut_ptr(),
+                src.as_ptr(),
+                std::mem::size_of_val(&dest),
+            )
+        };
     });
 }
 
@@ -543,7 +549,14 @@ fn wcsncpy_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wcsncpy_chk n over real buffer", || {
         let src: [WcharT; 4] = [b'A' as WcharT, b'B' as WcharT, b'C' as WcharT, 0];
         let mut dest = [0 as WcharT; 2];
-        unsafe { __wcsncpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, std::mem::size_of_val(&dest)) };
+        unsafe {
+            __wcsncpy_chk(
+                dest.as_mut_ptr(),
+                src.as_ptr(),
+                3,
+                std::mem::size_of_val(&dest),
+            )
+        };
     });
 }
 
@@ -567,7 +580,13 @@ fn wcscat_chk_src_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wcscat_chk src over real buffer", || {
         let mut dest = [b'A' as WcharT, 0];
         let src: [WcharT; 2] = [b'B' as WcharT, 0];
-        unsafe { __wcscat_chk(dest.as_mut_ptr(), src.as_ptr(), std::mem::size_of_val(&dest)) };
+        unsafe {
+            __wcscat_chk(
+                dest.as_mut_ptr(),
+                src.as_ptr(),
+                std::mem::size_of_val(&dest),
+            )
+        };
     });
 }
 
@@ -592,7 +611,14 @@ fn wcsncat_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wcsncat_chk n over real buffer", || {
         let mut dest = [b'A' as WcharT, 0];
         let src: [WcharT; 2] = [b'B' as WcharT, 0];
-        unsafe { __wcsncat_chk(dest.as_mut_ptr(), src.as_ptr(), 1, std::mem::size_of_val(&dest)) };
+        unsafe {
+            __wcsncat_chk(
+                dest.as_mut_ptr(),
+                src.as_ptr(),
+                1,
+                std::mem::size_of_val(&dest),
+            )
+        };
     });
 }
 
@@ -610,7 +636,14 @@ fn wmemcpy_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wmemcpy_chk n over real buffer", || {
         let src: [WcharT; 3] = [100, 200, 300];
         let mut dest = [0 as WcharT; 2];
-        unsafe { __wmemcpy_chk(dest.as_mut_ptr(), src.as_ptr(), 3, std::mem::size_of_val(&dest)) };
+        unsafe {
+            __wmemcpy_chk(
+                dest.as_mut_ptr(),
+                src.as_ptr(),
+                3,
+                std::mem::size_of_val(&dest),
+            )
+        };
     });
 }
 
@@ -634,7 +667,14 @@ fn wmemmove_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wmemmove_chk n over real buffer", || {
         let src: [WcharT; 3] = [1, 2, 3];
         let mut dest = [0 as WcharT; 2];
-        unsafe { __wmemmove_chk(dest.as_mut_ptr(), src.as_ptr(), 3, std::mem::size_of_val(&dest)) };
+        unsafe {
+            __wmemmove_chk(
+                dest.as_mut_ptr(),
+                src.as_ptr(),
+                3,
+                std::mem::size_of_val(&dest),
+            )
+        };
     });
 }
 
@@ -703,12 +743,7 @@ fn sprintf_chk_overflow_aborts_child_process() {
         let mut buf = [0u8; 4];
         let fmt = CString::new("longstring").unwrap();
         unsafe {
-            __sprintf_chk(
-                buf.as_mut_ptr().cast(),
-                0,
-                buf.len(),
-                fmt.as_ptr(),
-            );
+            __sprintf_chk(buf.as_mut_ptr().cast(), 0, buf.len(), fmt.as_ptr());
         }
     });
 }
@@ -1115,7 +1150,13 @@ fn openat_2_safe() {
 fn openat_2_creat_without_mode_aborts_child_process() {
     assert_child_sigabrt("openat_2 O_CREAT without mode", || {
         let path = CString::new("/tmp").unwrap();
-        unsafe { __openat_2(libc::AT_FDCWD, path.as_ptr(), libc::O_CREAT | libc::O_RDONLY) };
+        unsafe {
+            __openat_2(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                libc::O_CREAT | libc::O_RDONLY,
+            )
+        };
     });
 }
 
@@ -1131,7 +1172,13 @@ fn openat64_2_safe() {
 fn openat64_2_creat_without_mode_aborts_child_process() {
     assert_child_sigabrt("openat64_2 O_CREAT without mode", || {
         let path = CString::new("/tmp").unwrap();
-        unsafe { __openat64_2(libc::AT_FDCWD, path.as_ptr(), libc::O_CREAT | libc::O_RDONLY) };
+        unsafe {
+            __openat64_2(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                libc::O_CREAT | libc::O_RDONLY,
+            )
+        };
     });
 }
 
@@ -1227,8 +1274,7 @@ fn poll_chk_nfds_byte_count_overflow_aborts_child_process() {
             events: 0,
             revents: 0,
         };
-        let overflowing_nfds =
-            (usize::MAX / std::mem::size_of::<libc::pollfd>() + 1) as u64;
+        let overflowing_nfds = (usize::MAX / std::mem::size_of::<libc::pollfd>() + 1) as u64;
         unsafe {
             __poll_chk(
                 (&mut pfd as *mut libc::pollfd).cast(),
@@ -1301,8 +1347,7 @@ fn ppoll_chk_nfds_byte_count_overflow_aborts_child_process() {
             events: 0,
             revents: 0,
         };
-        let overflowing_nfds =
-            (usize::MAX / std::mem::size_of::<libc::pollfd>() + 1) as u64;
+        let overflowing_nfds = (usize::MAX / std::mem::size_of::<libc::pollfd>() + 1) as u64;
         unsafe {
             __ppoll_chk(
                 (&mut pfd as *mut libc::pollfd).cast(),
@@ -1726,7 +1771,10 @@ fn gets_chk_line_over_real_buffer_aborts_child_process() {
             input.len() as isize
         );
         unsafe { libc::close(fds[1]) };
-        assert_eq!(unsafe { libc::dup2(fds[0], libc::STDIN_FILENO) }, libc::STDIN_FILENO);
+        assert_eq!(
+            unsafe { libc::dup2(fds[0], libc::STDIN_FILENO) },
+            libc::STDIN_FILENO
+        );
         unsafe { libc::close(fds[0]) };
 
         let mut buf = [0u8; 4];

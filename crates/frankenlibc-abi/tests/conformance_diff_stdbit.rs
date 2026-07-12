@@ -45,13 +45,45 @@ const CASES: &[c_uint] = &[
 fn stdbit_ui_match_glibc() {
     use frankenlibc_abi::stdbit_abi as s;
     for &v in CASES {
-        assert_eq!(s::stdc_leading_zeros_ui(v), unsafe { stdc_leading_zeros_ui(v) }, "leading_zeros({v:#x})");
-        assert_eq!(s::stdc_trailing_zeros_ui(v), unsafe { stdc_trailing_zeros_ui(v) }, "trailing_zeros({v:#x})");
-        assert_eq!(s::stdc_count_ones_ui(v), unsafe { stdc_count_ones_ui(v) }, "count_ones({v:#x})");
-        assert_eq!(s::stdc_first_leading_one_ui(v), unsafe { stdc_first_leading_one_ui(v) }, "first_leading_one({v:#x})");
-        assert_eq!(s::stdc_bit_width_ui(v), unsafe { stdc_bit_width_ui(v) }, "bit_width({v:#x})");
-        assert_eq!(s::stdc_bit_floor_ui(v), unsafe { stdc_bit_floor_ui(v) }, "bit_floor({v:#x})");
-        assert_eq!(s::stdc_bit_ceil_ui(v), unsafe { stdc_bit_ceil_ui(v) }, "bit_ceil({v:#x})");
-        assert_eq!(s::stdc_has_single_bit_ui(v), unsafe { stdc_has_single_bit_ui(v) }, "has_single_bit({v:#x})");
+        assert_eq!(
+            s::stdc_leading_zeros_ui(v),
+            unsafe { stdc_leading_zeros_ui(v) },
+            "leading_zeros({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_trailing_zeros_ui(v),
+            unsafe { stdc_trailing_zeros_ui(v) },
+            "trailing_zeros({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_count_ones_ui(v),
+            unsafe { stdc_count_ones_ui(v) },
+            "count_ones({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_first_leading_one_ui(v),
+            unsafe { stdc_first_leading_one_ui(v) },
+            "first_leading_one({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_bit_width_ui(v),
+            unsafe { stdc_bit_width_ui(v) },
+            "bit_width({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_bit_floor_ui(v),
+            unsafe { stdc_bit_floor_ui(v) },
+            "bit_floor({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_bit_ceil_ui(v),
+            unsafe { stdc_bit_ceil_ui(v) },
+            "bit_ceil({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_has_single_bit_ui(v),
+            unsafe { stdc_has_single_bit_ui(v) },
+            "has_single_bit({v:#x})"
+        );
     }
 }

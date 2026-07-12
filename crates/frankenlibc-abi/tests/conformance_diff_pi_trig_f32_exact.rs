@@ -52,9 +52,18 @@ fn forward_pi_trig_f32_matches_glibc() {
     // Fine sweep including the near-zero / near-pole danger zones.
     for i in 0..=400_000i64 {
         let x = -200.0f32 + 0.001f32 * (i as f32);
-        note(same_bits(unsafe { fl::sinpif(x) }, g_sinpif(x)), format!("sinpif({x})"));
-        note(same_bits(unsafe { fl::cospif(x) }, g_cospif(x)), format!("cospif({x})"));
-        note(same_bits(unsafe { fl::tanpif(x) }, g_tanpif(x)), format!("tanpif({x})"));
+        note(
+            same_bits(unsafe { fl::sinpif(x) }, g_sinpif(x)),
+            format!("sinpif({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::cospif(x) }, g_cospif(x)),
+            format!("cospif({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::tanpif(x) }, g_tanpif(x)),
+            format!("tanpif({x})"),
+        );
     }
 
     // Large magnitudes + specials.
@@ -77,10 +86,22 @@ fn forward_pi_trig_f32_matches_glibc() {
         f32::NAN,
     ];
     for &x in &specials {
-        note(same_bits(unsafe { fl::sinpif(x) }, g_sinpif(x)), format!("sinpif({x})"));
-        note(same_bits(unsafe { fl::cospif(x) }, g_cospif(x)), format!("cospif({x})"));
-        note(same_bits(unsafe { fl::tanpif(x) }, g_tanpif(x)), format!("tanpif({x})"));
+        note(
+            same_bits(unsafe { fl::sinpif(x) }, g_sinpif(x)),
+            format!("sinpif({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::cospif(x) }, g_cospif(x)),
+            format!("cospif({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::tanpif(x) }, g_tanpif(x)),
+            format!("tanpif({x})"),
+        );
     }
 
-    assert_eq!(mism, 0, "forward pi-trig f32 diverged from glibc; first: {first}");
+    assert_eq!(
+        mism, 0,
+        "forward pi-trig f32 diverged from glibc; first: {first}"
+    );
 }

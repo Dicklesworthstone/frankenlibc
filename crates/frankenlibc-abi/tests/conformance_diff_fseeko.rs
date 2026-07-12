@@ -8,8 +8,8 @@
 //! sequence of (seek-rc, ftell-position, read-byte) is compared vs glibc; the
 //! *64 variants are checked the same way. No mocks.
 
-use std::ffi::{c_int, c_void};
 use std::ffi::c_long as off_t;
+use std::ffi::{c_int, c_void};
 
 const SEEK_SET: c_int = 0;
 const SEEK_CUR: c_int = 1;
@@ -33,7 +33,10 @@ use frankenlibc_abi::stdio_abi as fl;
 /// Returns the (rc, position, byte) observations for a SET/CUR/END walk.
 type Walk = Vec<(c_int, i64, i32)>;
 
-fn read_byte(f: *mut c_void, fread: unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize) -> i32 {
+fn read_byte(
+    f: *mut c_void,
+    fread: unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
+) -> i32 {
     let mut b = [0u8; 1];
     let n = unsafe { fread(b.as_mut_ptr() as *mut c_void, 1, 1, f) };
     if n == 1 { b[0] as i32 } else { -1 }
@@ -73,16 +76,52 @@ fn walk(
 
 #[test]
 fn fseeko_ftello_match_glibc() {
-    let gw = walk(g::tmpfile, g::fwrite, g::fread, g::fclose, &|f, o, w| unsafe { g::fseeko(f, o, w) }, &|f| unsafe { g::ftello(f) });
-    let fw = walk(fl::tmpfile, fl::fwrite, fl::fread, fl::fclose, &|f, o, w| unsafe { fl::fseeko(f, o, w) }, &|f| unsafe { fl::ftello(f) });
+    let gw = walk(
+        g::tmpfile,
+        g::fwrite,
+        g::fread,
+        g::fclose,
+        &|f, o, w| unsafe { g::fseeko(f, o, w) },
+        &|f| unsafe { g::ftello(f) },
+    );
+    let fw = walk(
+        fl::tmpfile,
+        fl::fwrite,
+        fl::fread,
+        fl::fclose,
+        &|f, o, w| unsafe { fl::fseeko(f, o, w) },
+        &|f| unsafe { fl::ftello(f) },
+    );
     assert_eq!(fw, gw, "fseeko/ftello walk: fl={fw:?} glibc={gw:?}");
-    assert_eq!(gw, vec![(0, 50, 50), (0, 60, 60), (0, 80, 80), (0, 100, -1)], "glibc reference walk");
+    assert_eq!(
+        gw,
+        vec![(0, 50, 50), (0, 60, 60), (0, 80, 80), (0, 100, -1)],
+        "glibc reference walk"
+    );
 }
 
 #[test]
 fn fseeko64_ftello64_match_glibc() {
-    let gw = walk(g::tmpfile, g::fwrite, g::fread, g::fclose, &|f, o, w| unsafe { g::fseeko64(f, o, w) }, &|f| unsafe { g::ftello64(f) });
-    let fw = walk(fl::tmpfile, fl::fwrite, fl::fread, fl::fclose, &|f, o, w| unsafe { fl::fseeko64(f, o, w) }, &|f| unsafe { fl::ftello64(f) });
+    let gw = walk(
+        g::tmpfile,
+        g::fwrite,
+        g::fread,
+        g::fclose,
+        &|f, o, w| unsafe { g::fseeko64(f, o, w) },
+        &|f| unsafe { g::ftello64(f) },
+    );
+    let fw = walk(
+        fl::tmpfile,
+        fl::fwrite,
+        fl::fread,
+        fl::fclose,
+        &|f, o, w| unsafe { fl::fseeko64(f, o, w) },
+        &|f| unsafe { fl::ftello64(f) },
+    );
     assert_eq!(fw, gw, "fseeko64/ftello64 walk: fl={fw:?} glibc={gw:?}");
-    assert_eq!(gw, vec![(0, 50, 50), (0, 60, 60), (0, 80, 80), (0, 100, -1)], "glibc reference walk (64)");
+    assert_eq!(
+        gw,
+        vec![(0, 50, 50), (0, 60, 60), (0, 80, 80), (0, 100, -1)],
+        "glibc reference walk (64)"
+    );
 }

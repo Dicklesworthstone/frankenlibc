@@ -27,7 +27,13 @@ fn mempcpy_matches_glibc() {
     for n in [0usize, 1, 5, 16, 31, 32] {
         let mut gd = [FILL; 40];
         let mut fd = [FILL; 40];
-        let rg = unsafe { mempcpy(gd.as_mut_ptr() as *mut c_void, src.as_ptr() as *const c_void, n) };
+        let rg = unsafe {
+            mempcpy(
+                gd.as_mut_ptr() as *mut c_void,
+                src.as_ptr() as *const c_void,
+                n,
+            )
+        };
         let rf = unsafe {
             frankenlibc_abi::string_abi::mempcpy(
                 fd.as_mut_ptr() as *mut c_void,
@@ -35,8 +41,16 @@ fn mempcpy_matches_glibc() {
                 n,
             )
         };
-        assert_eq!(off(rf, fd.as_ptr()), off(rg, gd.as_ptr()), "mempcpy(n={n}) return");
-        assert_eq!(off(rg, gd.as_ptr()), n as isize, "mempcpy must return dst+n");
+        assert_eq!(
+            off(rf, fd.as_ptr()),
+            off(rg, gd.as_ptr()),
+            "mempcpy(n={n}) return"
+        );
+        assert_eq!(
+            off(rg, gd.as_ptr()),
+            n as isize,
+            "mempcpy must return dst+n"
+        );
         assert_eq!(fd, gd, "mempcpy(n={n}) buffer");
     }
 }

@@ -23,7 +23,11 @@ fn pctl(s: &[f64], q: f64) -> f64 {
 
 fn main() {
     let h = unsafe {
-        libc::dlmopen(libc::LM_ID_NEWLM, b"libc.so.6\0".as_ptr().cast(), libc::RTLD_LAZY | libc::RTLD_LOCAL)
+        libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        )
     };
     assert!(!h.is_null());
     let g: StrcmpFn = unsafe { dl(h, b"strcmp\0") };
@@ -34,7 +38,9 @@ fn main() {
         for align in 0..40usize {
             for len in 0..200usize {
                 let mut a = vec![0u8; align + len + 1 + 96];
-                for k in 0..len { a[align + k] = b'a' + ((align + k) % 25) as u8; }
+                for k in 0..len {
+                    a[align + k] = b'a' + ((align + k) % 25) as u8;
+                }
                 a[align + len] = 0;
                 let ap = unsafe { a.as_ptr().add(align) as *const i8 };
                 // equal
@@ -49,7 +55,11 @@ fn main() {
                         b[align + k] = b[align + k].wrapping_add(1).max(1);
                         let f2 = unsafe { frankenlibc_abi::string_abi::strcmp(ap, bp) };
                         let g2 = unsafe { g(ap, bp) };
-                        assert_eq!(f2.signum(), g2.signum(), "differ align={align} len={len} k={k}");
+                        assert_eq!(
+                            f2.signum(),
+                            g2.signum(),
+                            "differ align={align} len={len} k={k}"
+                        );
                         b[align + k] = a[align + k];
                     }
                 }
@@ -61,7 +71,8 @@ fn main() {
 
     let sizes = [32usize, 64, 128, 256, 512, 1024, 4096];
     for &l in &sizes {
-        let mut a = vec![b'x'; l + 16]; a[l] = 0;
+        let mut a = vec![b'x'; l + 16];
+        a[l] = 0;
         let b = a.clone();
         let ap = a.as_ptr() as *const i8;
         let bp = b.as_ptr() as *const i8;
@@ -70,22 +81,33 @@ fn main() {
         for r in 0..100 {
             if r % 2 == 0 {
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { frankenlibc_abi::string_abi::strcmp(ap, bp) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { frankenlibc_abi::string_abi::strcmp(ap, bp) });
+                }
                 fl.push(t.elapsed().as_nanos() as f64 / lit as f64);
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { g(ap, bp) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { g(ap, bp) });
+                }
                 gl.push(t.elapsed().as_nanos() as f64 / lit as f64);
             } else {
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { g(ap, bp) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { g(ap, bp) });
+                }
                 gl.push(t.elapsed().as_nanos() as f64 / lit as f64);
                 let t = Instant::now();
-                for _ in 0..lit { black_box(unsafe { frankenlibc_abi::string_abi::strcmp(ap, bp) }); }
+                for _ in 0..lit {
+                    black_box(unsafe { frankenlibc_abi::string_abi::strcmp(ap, bp) });
+                }
                 fl.push(t.elapsed().as_nanos() as f64 / lit as f64);
             }
         }
         let (f10, g10) = (pctl(&fl, 0.1), pctl(&gl, 0.1));
-        println!("STRCMP l={l:<6} p10: fl={f10:.2} glibc={g10:.2} fl/glibc={:.3}  {}",
-            f10 / g10, if f10 <= g10 * 1.1 { "ok" } else { "LOSS" });
+        println!(
+            "STRCMP l={l:<6} p10: fl={f10:.2} glibc={g10:.2} fl/glibc={:.3}  {}",
+            f10 / g10,
+            if f10 <= g10 * 1.1 { "ok" } else { "LOSS" }
+        );
     }
 }

@@ -14,9 +14,24 @@ unsafe extern "C" {
 
 fn parts() -> Vec<f128> {
     let mut v = vec![
-        0.0, -0.0f128, 1.0, -1.0, 2.0, -2.0, 0.5, -0.5, 3.0, 4.0, -4.0, 0.25,
-        1e300f128, 1e-300f128, 1e4000f128, 1e-4000f128,
-        f128::MIN_POSITIVE, f128::MAX,
+        0.0,
+        -0.0f128,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        0.5,
+        -0.5,
+        3.0,
+        4.0,
+        -4.0,
+        0.25,
+        1e300f128,
+        1e-300f128,
+        1e4000f128,
+        1e-4000f128,
+        f128::MIN_POSITIVE,
+        f128::MAX,
         f128::from_bits(1),
         f128::from_bits(0x7fff_u128 << 112),
         f128::from_bits(0xffff_u128 << 112),
@@ -24,9 +39,13 @@ fn parts() -> Vec<f128> {
     ];
     let mut st: u64 = 0x6373_7172_7431_3238;
     for _ in 0..30 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3fc0 + (hi % 0x0080)) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -53,5 +72,10 @@ fn f128_csqrt_matches_glibc() {
             }
         }
     }
-    assert!(mism.is_empty(), "csqrtf128 diverged ({}):\n{}", mism.len(), mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "csqrtf128 diverged ({}):\n{}",
+        mism.len(),
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

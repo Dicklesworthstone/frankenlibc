@@ -47,16 +47,76 @@ fn main() {
 
         // (name, fl fn, glibc fn, input range lo, hi)
         let cases: &[(&str, F32Fn, F32Fn, f32, f32)] = &[
-            ("asinhf", frankenlibc_abi::math_abi::asinhf, g(b"asinhf\0"), 0.3, 8.0),
-            ("acoshf", frankenlibc_abi::math_abi::acoshf, g(b"acoshf\0"), 1.1, 8.0),
-            ("atanhf", frankenlibc_abi::math_abi::atanhf, g(b"atanhf\0"), -0.9, 0.9),
-            ("sinhf", frankenlibc_abi::math_abi::sinhf, g(b"sinhf\0"), 0.1, 3.0),
-            ("coshf", frankenlibc_abi::math_abi::coshf, g(b"coshf\0"), 0.1, 3.0),
-            ("tanhf", frankenlibc_abi::math_abi::tanhf, g(b"tanhf\0"), 0.1, 4.0),
-            ("erff", frankenlibc_abi::math_abi::erff, g(b"erff\0"), 0.1, 3.0),
-            ("erfcf", frankenlibc_abi::math_abi::erfcf, g(b"erfcf\0"), 0.1, 6.0),
-            ("expm1f", frankenlibc_abi::math_abi::expm1f, g(b"expm1f\0"), -1.0, 2.0),
-            ("log1pf", frankenlibc_abi::math_abi::log1pf, g(b"log1pf\0"), -0.5, 4.0),
+            (
+                "asinhf",
+                frankenlibc_abi::math_abi::asinhf,
+                g(b"asinhf\0"),
+                0.3,
+                8.0,
+            ),
+            (
+                "acoshf",
+                frankenlibc_abi::math_abi::acoshf,
+                g(b"acoshf\0"),
+                1.1,
+                8.0,
+            ),
+            (
+                "atanhf",
+                frankenlibc_abi::math_abi::atanhf,
+                g(b"atanhf\0"),
+                -0.9,
+                0.9,
+            ),
+            (
+                "sinhf",
+                frankenlibc_abi::math_abi::sinhf,
+                g(b"sinhf\0"),
+                0.1,
+                3.0,
+            ),
+            (
+                "coshf",
+                frankenlibc_abi::math_abi::coshf,
+                g(b"coshf\0"),
+                0.1,
+                3.0,
+            ),
+            (
+                "tanhf",
+                frankenlibc_abi::math_abi::tanhf,
+                g(b"tanhf\0"),
+                0.1,
+                4.0,
+            ),
+            (
+                "erff",
+                frankenlibc_abi::math_abi::erff,
+                g(b"erff\0"),
+                0.1,
+                3.0,
+            ),
+            (
+                "erfcf",
+                frankenlibc_abi::math_abi::erfcf,
+                g(b"erfcf\0"),
+                0.1,
+                6.0,
+            ),
+            (
+                "expm1f",
+                frankenlibc_abi::math_abi::expm1f,
+                g(b"expm1f\0"),
+                -1.0,
+                2.0,
+            ),
+            (
+                "log1pf",
+                frankenlibc_abi::math_abi::log1pf,
+                g(b"log1pf\0"),
+                -0.5,
+                4.0,
+            ),
         ];
 
         // 4096 inputs spread over [lo,hi].
@@ -70,8 +130,14 @@ fn main() {
             for &x in &xs {
                 let a = flf(x) as f64;
                 let b = glf(x) as f64;
-                let d = if b.abs() > 1e-30 { ((a - b) / b).abs() } else { (a - b).abs() };
-                if d > maxrel { maxrel = d; }
+                let d = if b.abs() > 1e-30 {
+                    ((a - b) / b).abs()
+                } else {
+                    (a - b).abs()
+                };
+                if d > maxrel {
+                    maxrel = d;
+                }
             }
             let time = |f: F32Fn| -> f64 {
                 let mut acc = 0.0f32;
@@ -99,21 +165,29 @@ fn main() {
         type F64Fn = unsafe extern "C" fn(f64) -> f64;
         let gl_log: F64Fn =
             std::mem::transmute::<*mut c_void, F64Fn>(libc::dlsym(h, b"log\0".as_ptr().cast()));
-        let xs: Vec<f64> = (0..4096).map(|i| 0.2 + 50.0 * (i as f64) / 4096.0).collect();
+        let xs: Vec<f64> = (0..4096)
+            .map(|i| 0.2 + 50.0 * (i as f64) / 4096.0)
+            .collect();
         let mut maxrel = 0.0f64;
         for &x in &xs {
             let a = frankenlibc_abi::math_abi::log(x);
             let b = gl_log(x);
             let d = ((a - b) / b).abs();
-            if d > maxrel { maxrel = d; }
+            if d > maxrel {
+                maxrel = d;
+            }
         }
         let time64 = |f: F64Fn| -> f64 {
             let mut acc = 0.0f64;
-            for k in 0..30_000_000usize { acc += f(xs[k & 4095]); }
+            for k in 0..30_000_000usize {
+                acc += f(xs[k & 4095]);
+            }
             std::hint::black_box(acc);
             let t = Instant::now();
             let mut acc = 0.0f64;
-            for k in 0..30_000_000usize { acc += f(xs[k & 4095]); }
+            for k in 0..30_000_000usize {
+                acc += f(xs[k & 4095]);
+            }
             std::hint::black_box(acc);
             t.elapsed().as_nanos() as f64 / 30_000_000.0
         };
@@ -132,7 +206,9 @@ fn main() {
             let a = frankenlibc_abi::math_abi::log10(x);
             let b = gl_log10(x);
             let d = ((a - b) / b).abs();
-            if d > maxrel { maxrel = d; }
+            if d > maxrel {
+                maxrel = d;
+            }
         }
         let fl_ns = time64(frankenlibc_abi::math_abi::log10);
         let gl_ns = time64(gl_log10);
@@ -143,47 +219,203 @@ fn main() {
 
         // f64 transform/special fns — find the next log10-style win.
         let f64cases: &[(&str, F64Fn, F64Fn, f64, f64)] = &[
-            ("log1p", frankenlibc_abi::math_abi::log1p, g64(h, b"log1p\0"), 0.1, 30.0),
-            ("exp10", frankenlibc_abi::math_abi::exp10, g64(h, b"exp10\0"), -2.0, 3.0),
-            ("erfc", frankenlibc_abi::math_abi::erfc, g64(h, b"erfc\0"), 0.1, 5.0),
-            ("tgamma", frankenlibc_abi::math_abi::tgamma, g64(h, b"tgamma\0"), 0.5, 8.0),
-            ("lgamma", frankenlibc_abi::math_abi::lgamma, g64(h, b"lgamma\0"), 0.5, 12.0),
-            ("exp", frankenlibc_abi::math_abi::exp, g64(h, b"exp\0"), -20.0, 20.0),
-            ("exp2", frankenlibc_abi::math_abi::exp2, g64(h, b"exp2\0"), -20.0, 20.0),
-            ("expm1", frankenlibc_abi::math_abi::expm1, g64(h, b"expm1\0"), -1.5, 3.0),
-            ("cbrt", frankenlibc_abi::math_abi::cbrt, g64(h, b"cbrt\0"), 0.1, 100.0),
-            ("sinh", frankenlibc_abi::math_abi::sinh, g64(h, b"sinh\0"), 0.1, 3.0),
-            ("cosh", frankenlibc_abi::math_abi::cosh, g64(h, b"cosh\0"), 0.1, 3.0),
-            ("tanhd", frankenlibc_abi::math_abi::tanh, g64(h, b"tanh\0"), 0.05, 25.0),
-            ("asinhd", frankenlibc_abi::math_abi::asinh, g64(h, b"asinh\0"), 0.2, 1.0e7),
-            ("acoshd", frankenlibc_abi::math_abi::acosh, g64(h, b"acosh\0"), 1.05, 1.0e7),
-            ("atanhd", frankenlibc_abi::math_abi::atanh, g64(h, b"atanh\0"), -0.95, 0.95),
-            ("sind", frankenlibc_abi::math_abi::sin, g64(h, b"sin\0"), -3.1, 3.1),
-            ("cosd", frankenlibc_abi::math_abi::cos, g64(h, b"cos\0"), -3.1, 3.1),
-            ("tand", frankenlibc_abi::math_abi::tan, g64(h, b"tan\0"), -1.5, 1.5),
-            ("logd", frankenlibc_abi::math_abi::log, g64(h, b"log\0"), 0.2, 50.0),
-            ("sqrtd", frankenlibc_abi::math_abi::sqrt, g64(h, b"sqrt\0"), 0.1, 1.0e6),
-            ("atand", frankenlibc_abi::math_abi::atan, g64(h, b"atan\0"), -8.0, 8.0),
-            ("asind", frankenlibc_abi::math_abi::asin, g64(h, b"asin\0"), -0.95, 0.95),
-            ("acosd", frankenlibc_abi::math_abi::acos, g64(h, b"acos\0"), -0.95, 0.95),
-            ("cbrtd", frankenlibc_abi::math_abi::cbrt, g64(h, b"cbrt\0"), 0.1, 1.0e6),
+            (
+                "log1p",
+                frankenlibc_abi::math_abi::log1p,
+                g64(h, b"log1p\0"),
+                0.1,
+                30.0,
+            ),
+            (
+                "exp10",
+                frankenlibc_abi::math_abi::exp10,
+                g64(h, b"exp10\0"),
+                -2.0,
+                3.0,
+            ),
+            (
+                "erfc",
+                frankenlibc_abi::math_abi::erfc,
+                g64(h, b"erfc\0"),
+                0.1,
+                5.0,
+            ),
+            (
+                "tgamma",
+                frankenlibc_abi::math_abi::tgamma,
+                g64(h, b"tgamma\0"),
+                0.5,
+                8.0,
+            ),
+            (
+                "lgamma",
+                frankenlibc_abi::math_abi::lgamma,
+                g64(h, b"lgamma\0"),
+                0.5,
+                12.0,
+            ),
+            (
+                "exp",
+                frankenlibc_abi::math_abi::exp,
+                g64(h, b"exp\0"),
+                -20.0,
+                20.0,
+            ),
+            (
+                "exp2",
+                frankenlibc_abi::math_abi::exp2,
+                g64(h, b"exp2\0"),
+                -20.0,
+                20.0,
+            ),
+            (
+                "expm1",
+                frankenlibc_abi::math_abi::expm1,
+                g64(h, b"expm1\0"),
+                -1.5,
+                3.0,
+            ),
+            (
+                "cbrt",
+                frankenlibc_abi::math_abi::cbrt,
+                g64(h, b"cbrt\0"),
+                0.1,
+                100.0,
+            ),
+            (
+                "sinh",
+                frankenlibc_abi::math_abi::sinh,
+                g64(h, b"sinh\0"),
+                0.1,
+                3.0,
+            ),
+            (
+                "cosh",
+                frankenlibc_abi::math_abi::cosh,
+                g64(h, b"cosh\0"),
+                0.1,
+                3.0,
+            ),
+            (
+                "tanhd",
+                frankenlibc_abi::math_abi::tanh,
+                g64(h, b"tanh\0"),
+                0.05,
+                25.0,
+            ),
+            (
+                "asinhd",
+                frankenlibc_abi::math_abi::asinh,
+                g64(h, b"asinh\0"),
+                0.2,
+                1.0e7,
+            ),
+            (
+                "acoshd",
+                frankenlibc_abi::math_abi::acosh,
+                g64(h, b"acosh\0"),
+                1.05,
+                1.0e7,
+            ),
+            (
+                "atanhd",
+                frankenlibc_abi::math_abi::atanh,
+                g64(h, b"atanh\0"),
+                -0.95,
+                0.95,
+            ),
+            (
+                "sind",
+                frankenlibc_abi::math_abi::sin,
+                g64(h, b"sin\0"),
+                -3.1,
+                3.1,
+            ),
+            (
+                "cosd",
+                frankenlibc_abi::math_abi::cos,
+                g64(h, b"cos\0"),
+                -3.1,
+                3.1,
+            ),
+            (
+                "tand",
+                frankenlibc_abi::math_abi::tan,
+                g64(h, b"tan\0"),
+                -1.5,
+                1.5,
+            ),
+            (
+                "logd",
+                frankenlibc_abi::math_abi::log,
+                g64(h, b"log\0"),
+                0.2,
+                50.0,
+            ),
+            (
+                "sqrtd",
+                frankenlibc_abi::math_abi::sqrt,
+                g64(h, b"sqrt\0"),
+                0.1,
+                1.0e6,
+            ),
+            (
+                "atand",
+                frankenlibc_abi::math_abi::atan,
+                g64(h, b"atan\0"),
+                -8.0,
+                8.0,
+            ),
+            (
+                "asind",
+                frankenlibc_abi::math_abi::asin,
+                g64(h, b"asin\0"),
+                -0.95,
+                0.95,
+            ),
+            (
+                "acosd",
+                frankenlibc_abi::math_abi::acos,
+                g64(h, b"acos\0"),
+                -0.95,
+                0.95,
+            ),
+            (
+                "cbrtd",
+                frankenlibc_abi::math_abi::cbrt,
+                g64(h, b"cbrt\0"),
+                0.1,
+                1.0e6,
+            ),
         ];
         for &(name, flf, glf, lo, hi) in f64cases {
-            let xs: Vec<f64> = (0..4096).map(|i| lo + (hi - lo) * (i as f64) / 4096.0).collect();
+            let xs: Vec<f64> = (0..4096)
+                .map(|i| lo + (hi - lo) * (i as f64) / 4096.0)
+                .collect();
             let mut maxrel = 0.0f64;
             for &x in &xs {
                 let a = flf(x);
                 let b = glf(x);
-                let d = if b.abs() > 1e-290 { ((a - b) / b).abs() } else { (a - b).abs() };
-                if d > maxrel { maxrel = d; }
+                let d = if b.abs() > 1e-290 {
+                    ((a - b) / b).abs()
+                } else {
+                    (a - b).abs()
+                };
+                if d > maxrel {
+                    maxrel = d;
+                }
             }
             let t = |f: F64Fn| -> f64 {
                 let mut acc = 0.0f64;
-                for k in 0..20_000_000usize { acc += f(xs[k & 4095]); }
+                for k in 0..20_000_000usize {
+                    acc += f(xs[k & 4095]);
+                }
                 std::hint::black_box(acc);
                 let s = Instant::now();
                 let mut acc = 0.0f64;
-                for k in 0..20_000_000usize { acc += f(xs[k & 4095]); }
+                for k in 0..20_000_000usize {
+                    acc += f(xs[k & 4095]);
+                }
                 std::hint::black_box(acc);
                 s.elapsed().as_nanos() as f64 / 20_000_000.0
             };

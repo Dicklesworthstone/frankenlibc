@@ -13,22 +13,38 @@ use frankenlibc_core::math;
 use std::hint::black_box;
 
 unsafe extern "C" {
-    #[link_name = "tanf"] fn h_tanf(x: f32) -> f32;
-    #[link_name = "asinf"] fn h_asinf(x: f32) -> f32;
-    #[link_name = "acosf"] fn h_acosf(x: f32) -> f32;
-    #[link_name = "atanf"] fn h_atanf(x: f32) -> f32;
-    #[link_name = "asinhf"] fn h_asinhf(x: f32) -> f32;
-    #[link_name = "acoshf"] fn h_acoshf(x: f32) -> f32;
-    #[link_name = "atanhf"] fn h_atanhf(x: f32) -> f32;
-    #[link_name = "expm1f"] fn h_expm1f(x: f32) -> f32;
-    #[link_name = "log1pf"] fn h_log1pf(x: f32) -> f32;
-    #[link_name = "cbrtf"] fn h_cbrtf(x: f32) -> f32;
-    #[link_name = "coshf"] fn h_coshf(x: f32) -> f32;
-    #[link_name = "sinhf"] fn h_sinhf(x: f32) -> f32;
-    #[link_name = "tanhf"] fn h_tanhf(x: f32) -> f32;
-    #[link_name = "j0f"] fn h_j0f(x: f32) -> f32;
-    #[link_name = "atan2f"] fn h_atan2f(y: f32, x: f32) -> f32;
-    #[link_name = "hypotf"] fn h_hypotf(x: f32, y: f32) -> f32;
+    #[link_name = "tanf"]
+    fn h_tanf(x: f32) -> f32;
+    #[link_name = "asinf"]
+    fn h_asinf(x: f32) -> f32;
+    #[link_name = "acosf"]
+    fn h_acosf(x: f32) -> f32;
+    #[link_name = "atanf"]
+    fn h_atanf(x: f32) -> f32;
+    #[link_name = "asinhf"]
+    fn h_asinhf(x: f32) -> f32;
+    #[link_name = "acoshf"]
+    fn h_acoshf(x: f32) -> f32;
+    #[link_name = "atanhf"]
+    fn h_atanhf(x: f32) -> f32;
+    #[link_name = "expm1f"]
+    fn h_expm1f(x: f32) -> f32;
+    #[link_name = "log1pf"]
+    fn h_log1pf(x: f32) -> f32;
+    #[link_name = "cbrtf"]
+    fn h_cbrtf(x: f32) -> f32;
+    #[link_name = "coshf"]
+    fn h_coshf(x: f32) -> f32;
+    #[link_name = "sinhf"]
+    fn h_sinhf(x: f32) -> f32;
+    #[link_name = "tanhf"]
+    fn h_tanhf(x: f32) -> f32;
+    #[link_name = "j0f"]
+    fn h_j0f(x: f32) -> f32;
+    #[link_name = "atan2f"]
+    fn h_atan2f(y: f32, x: f32) -> f32;
+    #[link_name = "hypotf"]
+    fn h_hypotf(x: f32, y: f32) -> f32;
 }
 
 fn p50(s: &mut [f64]) -> f64 {
@@ -63,13 +79,19 @@ fn survey(
         for _ in 0..200 {
             let t = Instant::now();
             black_box(one());
-            s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / inputs.len() as f64);
+            s.push(
+                t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / inputs.len() as f64,
+            );
         }
         p50(&mut s)
     };
     let (a, b) = (run(&fl), run(&gl));
     let ratio = a / b;
-    let flag = if ratio > 1.30 { "  <-- LIBM-SLOW: lever candidate" } else { "" };
+    let flag = if ratio > 1.30 {
+        "  <-- LIBM-SLOW: lever candidate"
+    } else {
+        ""
+    };
     println!("F32_SURVEY {name:8} fl_p50={a:7.3} glibc_p50={b:7.3} ratio={ratio:.3}{flag}");
     g.bench_function(name, |bb| bb.iter(|| black_box(fl(black_box(inputs[0])))));
 }
@@ -85,22 +107,118 @@ fn bench(c: &mut Criterion) {
 
     let mut g = c.benchmark_group("f32_survey");
     g.sample_size(10);
-    survey(&mut g, "tanf", &any, |x| math::tanf(x), |x| unsafe { h_tanf(x) });
-    survey(&mut g, "asinf", &unit, |x| math::asinf(x), |x| unsafe { h_asinf(x) });
-    survey(&mut g, "acosf", &unit, |x| math::acosf(x), |x| unsafe { h_acosf(x) });
-    survey(&mut g, "atanf", &any, |x| math::atanf(x), |x| unsafe { h_atanf(x) });
-    survey(&mut g, "asinhf", &any, |x| math::asinhf(x), |x| unsafe { h_asinhf(x) });
-    survey(&mut g, "acoshf", &pos1, |x| math::acoshf(x), |x| unsafe { h_acoshf(x) });
-    survey(&mut g, "atanhf", &unit, |x| math::atanhf(x), |x| unsafe { h_atanhf(x) });
-    survey(&mut g, "expm1f", &small, |x| math::expm1f(x), |x| unsafe { h_expm1f(x) });
-    survey(&mut g, "log1pf", &gtm1, |x| math::log1pf(x), |x| unsafe { h_log1pf(x) });
-    survey(&mut g, "cbrtf", &any, |x| math::cbrtf(x), |x| unsafe { h_cbrtf(x) });
-    survey(&mut g, "coshf", &mid, |x| math::coshf(x), |x| unsafe { h_coshf(x) });
-    survey(&mut g, "sinhf", &mid, |x| math::sinhf(x), |x| unsafe { h_sinhf(x) });
-    survey(&mut g, "tanhf", &mid, |x| math::tanhf(x), |x| unsafe { h_tanhf(x) });
-    survey(&mut g, "j0f", &posb, |x| math::j0f(x), |x| unsafe { h_j0f(x) });
-    survey(&mut g, "atan2f", &any, |x| math::atan2f(x, 1.7), |x| unsafe { h_atan2f(x, 1.7) });
-    survey(&mut g, "hypotf", &any, |x| math::hypotf(x, 1.7), |x| unsafe { h_hypotf(x, 1.7) });
+    survey(
+        &mut g,
+        "tanf",
+        &any,
+        |x| math::tanf(x),
+        |x| unsafe { h_tanf(x) },
+    );
+    survey(
+        &mut g,
+        "asinf",
+        &unit,
+        |x| math::asinf(x),
+        |x| unsafe { h_asinf(x) },
+    );
+    survey(
+        &mut g,
+        "acosf",
+        &unit,
+        |x| math::acosf(x),
+        |x| unsafe { h_acosf(x) },
+    );
+    survey(
+        &mut g,
+        "atanf",
+        &any,
+        |x| math::atanf(x),
+        |x| unsafe { h_atanf(x) },
+    );
+    survey(
+        &mut g,
+        "asinhf",
+        &any,
+        |x| math::asinhf(x),
+        |x| unsafe { h_asinhf(x) },
+    );
+    survey(
+        &mut g,
+        "acoshf",
+        &pos1,
+        |x| math::acoshf(x),
+        |x| unsafe { h_acoshf(x) },
+    );
+    survey(
+        &mut g,
+        "atanhf",
+        &unit,
+        |x| math::atanhf(x),
+        |x| unsafe { h_atanhf(x) },
+    );
+    survey(
+        &mut g,
+        "expm1f",
+        &small,
+        |x| math::expm1f(x),
+        |x| unsafe { h_expm1f(x) },
+    );
+    survey(
+        &mut g,
+        "log1pf",
+        &gtm1,
+        |x| math::log1pf(x),
+        |x| unsafe { h_log1pf(x) },
+    );
+    survey(
+        &mut g,
+        "cbrtf",
+        &any,
+        |x| math::cbrtf(x),
+        |x| unsafe { h_cbrtf(x) },
+    );
+    survey(
+        &mut g,
+        "coshf",
+        &mid,
+        |x| math::coshf(x),
+        |x| unsafe { h_coshf(x) },
+    );
+    survey(
+        &mut g,
+        "sinhf",
+        &mid,
+        |x| math::sinhf(x),
+        |x| unsafe { h_sinhf(x) },
+    );
+    survey(
+        &mut g,
+        "tanhf",
+        &mid,
+        |x| math::tanhf(x),
+        |x| unsafe { h_tanhf(x) },
+    );
+    survey(
+        &mut g,
+        "j0f",
+        &posb,
+        |x| math::j0f(x),
+        |x| unsafe { h_j0f(x) },
+    );
+    survey(
+        &mut g,
+        "atan2f",
+        &any,
+        |x| math::atan2f(x, 1.7),
+        |x| unsafe { h_atan2f(x, 1.7) },
+    );
+    survey(
+        &mut g,
+        "hypotf",
+        &any,
+        |x| math::hypotf(x, 1.7),
+        |x| unsafe { h_hypotf(x, 1.7) },
+    );
     g.finish();
 }
 

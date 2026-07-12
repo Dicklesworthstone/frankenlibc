@@ -71,7 +71,13 @@ fn c23_pow_matches_glibc() {
             if !ulp_ok(fv, gv) || ff != gff {
                 div.push(format!(
                     "{}({},{}): fl={:016x}/fl{:#x} glibc={:016x}/fl{:#x}",
-                    $name, x, n, fv.to_bits(), ff, gv.to_bits(), gff
+                    $name,
+                    x,
+                    n,
+                    fv.to_bits(),
+                    ff,
+                    gv.to_bits(),
+                    gff
                 ));
             }
         }};
@@ -89,7 +95,13 @@ fn c23_pow_matches_glibc() {
             if !ulp_ok(fv, gv) || ff != gff {
                 div.push(format!(
                     "{}({},{}): fl={:016x}/fl{:#x} glibc={:016x}/fl{:#x}",
-                    $name, x, y, fv.to_bits(), ff, gv.to_bits(), gff
+                    $name,
+                    x,
+                    y,
+                    fv.to_bits(),
+                    ff,
+                    gv.to_bits(),
+                    gff
                 ));
             }
         }};
@@ -97,33 +109,86 @@ fn c23_pow_matches_glibc() {
 
     // rootn
     for &(x, n) in &[
-        (-8.0, 3), (-27.0, 3), (8.0, 3), (-4.0, 2), (16.0, 4), (-1.0, 3), (0.0, 3),
-        (-0.0, 3), (2.0, 0), (-0.0, -3), (0.0, -3), (-0.0, -2), (8.0, -3), (-8.0, -3),
-        (nan, 3), (inf, 3), (-inf, 3), (-inf, 2), (0.0, 5), (-32.0, 5), (1024.0, 5),
-        (-0.0, 2), (3.0, 1), (-3.0, 1), (2.0, -1),
+        (-8.0, 3),
+        (-27.0, 3),
+        (8.0, 3),
+        (-4.0, 2),
+        (16.0, 4),
+        (-1.0, 3),
+        (0.0, 3),
+        (-0.0, 3),
+        (2.0, 0),
+        (-0.0, -3),
+        (0.0, -3),
+        (-0.0, -2),
+        (8.0, -3),
+        (-8.0, -3),
+        (nan, 3),
+        (inf, 3),
+        (-inf, 3),
+        (-inf, 2),
+        (0.0, 5),
+        (-32.0, 5),
+        (1024.0, 5),
+        (-0.0, 2),
+        (3.0, 1),
+        (-3.0, 1),
+        (2.0, -1),
     ] {
         cmp_n!("rootn", fl::rootn, g_rootn, x, n);
     }
     // compoundn
     for &(x, n) in &[
-        (-2.0, 2), (-3.0, 1), (1.0, 3), (-1.0, 2), (-1.0, -1), (0.5, 0), (-5.0, 0),
-        (nan, 0), (nan, 5), (inf, 0), (inf, 2), (-1.0, 0), (0.0, 0), (-0.5, 4),
-        (2.0, -3), (-1.0, 3), (-inf, 2), (0.25, 10),
+        (-2.0, 2),
+        (-3.0, 1),
+        (1.0, 3),
+        (-1.0, 2),
+        (-1.0, -1),
+        (0.5, 0),
+        (-5.0, 0),
+        (nan, 0),
+        (nan, 5),
+        (inf, 0),
+        (inf, 2),
+        (-1.0, 0),
+        (0.0, 0),
+        (-0.5, 4),
+        (2.0, -3),
+        (-1.0, 3),
+        (-inf, 2),
+        (0.25, 10),
     ] {
         cmp_n!("compoundn", fl::compoundn, g_compoundn, x, n);
     }
     // powr
     for &(x, y) in &[
-        (0.0, 0.0), (-0.0, 0.0), (2.0, 3.0), (-1.0, 2.0), (1.0, inf), (0.0, -1.0),
-        (0.0, 2.0), (inf, 0.0), (1.0, 0.0), (1.0, -inf), (nan, 0.0), (2.0, nan),
-        (inf, 2.0), (0.0, inf), (3.0, 0.0), (-2.0, 0.5), (4.0, 0.5), (2.0, 0.5),
-        (10.0, -2.0), (0.5, 3.0),
+        (0.0, 0.0),
+        (-0.0, 0.0),
+        (2.0, 3.0),
+        (-1.0, 2.0),
+        (1.0, inf),
+        (0.0, -1.0),
+        (0.0, 2.0),
+        (inf, 0.0),
+        (1.0, 0.0),
+        (1.0, -inf),
+        (nan, 0.0),
+        (2.0, nan),
+        (inf, 2.0),
+        (0.0, inf),
+        (3.0, 0.0),
+        (-2.0, 0.5),
+        (4.0, 0.5),
+        (2.0, 0.5),
+        (10.0, -2.0),
+        (0.5, 3.0),
     ] {
         cmp_y!("powr", fl::powr, g_powr, x, y);
     }
 
     // --- f32 variants (same logic; <=4 ULP tolerance) ---
-    let g_rootnf: extern "C" fn(f32, i64) -> f32 = unsafe { core::mem::transmute(sym(h, c"rootnf")) };
+    let g_rootnf: extern "C" fn(f32, i64) -> f32 =
+        unsafe { core::mem::transmute(sym(h, c"rootnf")) };
     let g_compoundnf: extern "C" fn(f32, i64) -> f32 =
         unsafe { core::mem::transmute(sym(h, c"compoundnf")) };
     let g_powrf: extern "C" fn(f32, f32) -> f32 = unsafe { core::mem::transmute(sym(h, c"powrf")) };
@@ -152,7 +217,16 @@ fn c23_pow_matches_glibc() {
             let gv = $gf(x, n);
             let gff = unsafe { fetestexcept(HARD) } & HARD;
             if !ulp_ok_f32(fv, gv) || ff != gff {
-                div.push(format!("{}({},{}): fl={:08x}/fl{:#x} glibc={:08x}/fl{:#x}", $name, x, n, fv.to_bits(), ff, gv.to_bits(), gff));
+                div.push(format!(
+                    "{}({},{}): fl={:08x}/fl{:#x} glibc={:08x}/fl{:#x}",
+                    $name,
+                    x,
+                    n,
+                    fv.to_bits(),
+                    ff,
+                    gv.to_bits(),
+                    gff
+                ));
             }
         }};
     }
@@ -167,25 +241,57 @@ fn c23_pow_matches_glibc() {
             let gv = $gf(x, y);
             let gff = unsafe { fetestexcept(HARD) } & HARD;
             if !ulp_ok_f32(fv, gv) || ff != gff {
-                div.push(format!("{}({},{}): fl={:08x}/fl{:#x} glibc={:08x}/fl{:#x}", $name, x, y, fv.to_bits(), ff, gv.to_bits(), gff));
+                div.push(format!(
+                    "{}({},{}): fl={:08x}/fl{:#x} glibc={:08x}/fl{:#x}",
+                    $name,
+                    x,
+                    y,
+                    fv.to_bits(),
+                    ff,
+                    gv.to_bits(),
+                    gff
+                ));
             }
         }};
     }
     for &(x, n) in &[
-        (-8.0f32, 3i64), (8.0, 3), (-4.0, 2), (-0.0, 3), (0.0, 3), (2.0, 0), (-8.0, -3),
-        (-27.0, 3), (16.0, 4), (nanf, 3), (-inff, 2),
+        (-8.0f32, 3i64),
+        (8.0, 3),
+        (-4.0, 2),
+        (-0.0, 3),
+        (0.0, 3),
+        (2.0, 0),
+        (-8.0, -3),
+        (-27.0, 3),
+        (16.0, 4),
+        (nanf, 3),
+        (-inff, 2),
     ] {
         cmp_nf!("rootnf", fl::rootnf, g_rootnf, x, n);
     }
     for &(x, n) in &[
-        (-2.0f32, 2i64), (-3.0, 1), (1.0, 3), (-1.0, 2), (-1.0, -1), (0.5, 0), (-5.0, 0),
-        (nanf, 0), (inff, 2),
+        (-2.0f32, 2i64),
+        (-3.0, 1),
+        (1.0, 3),
+        (-1.0, 2),
+        (-1.0, -1),
+        (0.5, 0),
+        (-5.0, 0),
+        (nanf, 0),
+        (inff, 2),
     ] {
         cmp_nf!("compoundnf", fl::compoundnf, g_compoundnf, x, n);
     }
     for &(x, y) in &[
-        (0.0f32, 0.0f32), (2.0, 3.0), (-1.0, 2.0), (1.0, inff), (0.0, -1.0), (0.0, 2.0),
-        (inff, 0.0), (nanf, 0.0), (4.0, 0.5),
+        (0.0f32, 0.0f32),
+        (2.0, 3.0),
+        (-1.0, 2.0),
+        (1.0, inff),
+        (0.0, -1.0),
+        (0.0, 2.0),
+        (inff, 0.0),
+        (nanf, 0.0),
+        (4.0, 0.5),
     ] {
         cmp_yf!("powrf", fl::powrf, g_powrf, x, y);
     }

@@ -1,7 +1,7 @@
 // strcoll head-to-head: fl strcoll vs host glibc strcoll (dlmopen, C locale). In the C
 // locale strcoll == strcmp, but glibc's strcoll carries locale-dispatch overhead. Sign
 // verified equal.
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -16,8 +16,10 @@ fn main() {
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type StrcollFn = unsafe extern "C" fn(*const libc::c_char, *const libc::c_char) -> i32;
-        let gl_strcoll: StrcollFn =
-            std::mem::transmute::<*mut c_void, StrcollFn>(libc::dlsym(h, b"strcoll\0".as_ptr().cast()));
+        let gl_strcoll: StrcollFn = std::mem::transmute::<*mut c_void, StrcollFn>(libc::dlsym(
+            h,
+            b"strcoll\0".as_ptr().cast(),
+        ));
 
         // Differ near the end -> a (near) full-length compare.
         let a = "the quick brown fox jumps over the lazy dog A";
@@ -31,7 +33,11 @@ fn main() {
 
         let fl_r = strcoll(&ab, &bb);
         let gl_r = gl_strcoll(ca.as_ptr(), cb.as_ptr());
-        assert_eq!(fl_r.signum(), gl_r.signum(), "strcoll sign: fl={fl_r} glibc={gl_r}");
+        assert_eq!(
+            fl_r.signum(),
+            gl_r.signum(),
+            "strcoll sign: fl={fl_r} glibc={gl_r}"
+        );
 
         let iters = 2_000_000usize;
         let t0 = Instant::now();
@@ -44,6 +50,10 @@ fn main() {
             black_box(gl_strcoll(black_box(ca.as_ptr()), black_box(cb.as_ptr())));
         }
         let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-        println!("STRCOLL len={} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x", a.len(), fl / gl);
+        println!(
+            "STRCOLL len={} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x",
+            a.len(),
+            fl / gl
+        );
     }
 }

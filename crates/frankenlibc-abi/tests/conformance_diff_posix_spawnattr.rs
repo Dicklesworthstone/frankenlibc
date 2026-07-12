@@ -76,7 +76,9 @@ macro_rules! round_trip {
             rc[5] = $m::posix_spawnattr_setschedpolicy(a, SCHED_FIFO);
             let mut pol: c_int = -1;
             $m::posix_spawnattr_getschedpolicy(ac, &mut pol);
-            let sp = libc::sched_param { sched_priority: PRIO };
+            let sp = libc::sched_param {
+                sched_priority: PRIO,
+            };
             rc[6] = $m::posix_spawnattr_setschedparam(a, &sp);
             let mut osp = MaybeUninit::<libc::sched_param>::zeroed();
             $m::posix_spawnattr_getschedparam(ac, osp.as_mut_ptr());
@@ -92,6 +94,10 @@ fn posix_spawnattr_round_trips_match_glibc() {
     let g: R = round_trip!(g);
     let f: R = round_trip!(fl);
     assert_eq!(f, g, "posix_spawnattr round-trips: fl={f:?} glibc={g:?}");
-    assert_eq!((g.0, g.1, g.2, g.3, g.4, g.5), (FLAGS, PGRP, 1, 1, SCHED_FIFO, PRIO), "glibc reference values");
+    assert_eq!(
+        (g.0, g.1, g.2, g.3, g.4, g.5),
+        (FLAGS, PGRP, 1, 1, SCHED_FIFO, PRIO),
+        "glibc reference values"
+    );
     assert_eq!(g.6, [0; 7], "glibc: all setters/init/destroy return 0");
 }

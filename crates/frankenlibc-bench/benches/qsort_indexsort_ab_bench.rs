@@ -15,7 +15,7 @@ use std::cmp::Ordering;
 use std::ffi::c_void;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 
 const W: usize = 12;
 
@@ -63,7 +63,9 @@ fn index_sort(base: &mut [u8], width: usize, num: usize, compare: impl Fn(&[u8],
 fn make(n: usize) -> Vec<u8> {
     let mut s: u64 = 0x0BAD_F00D_DEAD_BEEF;
     let mut next = || {
-        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        s = s
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         s
     };
     (0..n * W).map(|_| (next() >> 24) as u8).collect()
@@ -71,55 +73,55 @@ fn make(n: usize) -> Vec<u8> {
 
 fn bench(c: &mut Criterion) {
     for n in [64usize, 256, 4096, 20000] {
-    let data = make(n);
+        let data = make(n);
 
-    // parity: all three produce the same sorted-by-key order (distinct keys w.h.p.;
-    // verify sortedness rather than exact bytes since ties are unspecified).
-    {
-        let mut a = data.clone();
-        frankenlibc_core::stdlib::sort::qsort(&mut a, W, cmp_i32);
-        let mut b = data.clone();
-        index_sort(&mut b, W, n, cmp_i32);
-        let mut g = data.clone();
-        unsafe { qsort(g.as_mut_ptr().cast(), n, W, cmp_c) };
-        let sorted = |v: &[u8]| {
-            (1..n).all(|k| cmp_i32(&v[(k - 1) * W..k * W], &v[k * W..k * W + W]) <= 0)
-        };
-        assert!(sorted(&a) && sorted(&b) && sorted(&g), "not sorted");
-    }
+        // parity: all three produce the same sorted-by-key order (distinct keys w.h.p.;
+        // verify sortedness rather than exact bytes since ties are unspecified).
+        {
+            let mut a = data.clone();
+            frankenlibc_core::stdlib::sort::qsort(&mut a, W, cmp_i32);
+            let mut b = data.clone();
+            index_sort(&mut b, W, n, cmp_i32);
+            let mut g = data.clone();
+            unsafe { qsort(g.as_mut_ptr().cast(), n, W, cmp_c) };
+            let sorted = |v: &[u8]| {
+                (1..n).all(|k| cmp_i32(&v[(k - 1) * W..k * W], &v[k * W..k * W + W]) <= 0)
+            };
+            assert!(sorted(&a) && sorted(&b) && sorted(&g), "not sorted");
+        }
 
-    let mut grp = c.benchmark_group(format!("idxsort_w{W}_n{n}"));
-    grp.bench_function("fl_pdqsort", |bn| {
-        bn.iter_batched(
-            || data.clone(),
-            |mut v| {
-                frankenlibc_core::stdlib::sort::qsort(&mut v, W, cmp_i32);
-                black_box(v.len())
-            },
-            BatchSize::LargeInput,
-        )
-    });
-    grp.bench_function("index_sort", |bn| {
-        bn.iter_batched(
-            || data.clone(),
-            |mut v| {
-                index_sort(&mut v, W, n, cmp_i32);
-                black_box(v.len())
-            },
-            BatchSize::LargeInput,
-        )
-    });
-    grp.bench_function("host_glibc_qsort", |bn| {
-        bn.iter_batched(
-            || data.clone(),
-            |mut v| {
-                unsafe { qsort(v.as_mut_ptr().cast(), n, W, cmp_c) };
-                black_box(v.len())
-            },
-            BatchSize::LargeInput,
-        )
-    });
-    grp.finish();
+        let mut grp = c.benchmark_group(format!("idxsort_w{W}_n{n}"));
+        grp.bench_function("fl_pdqsort", |bn| {
+            bn.iter_batched(
+                || data.clone(),
+                |mut v| {
+                    frankenlibc_core::stdlib::sort::qsort(&mut v, W, cmp_i32);
+                    black_box(v.len())
+                },
+                BatchSize::LargeInput,
+            )
+        });
+        grp.bench_function("index_sort", |bn| {
+            bn.iter_batched(
+                || data.clone(),
+                |mut v| {
+                    index_sort(&mut v, W, n, cmp_i32);
+                    black_box(v.len())
+                },
+                BatchSize::LargeInput,
+            )
+        });
+        grp.bench_function("host_glibc_qsort", |bn| {
+            bn.iter_batched(
+                || data.clone(),
+                |mut v| {
+                    unsafe { qsort(v.as_mut_ptr().cast(), n, W, cmp_c) };
+                    black_box(v.len())
+                },
+                BatchSize::LargeInput,
+            )
+        });
+        grp.finish();
     }
     let _ = Ordering::Equal;
 }

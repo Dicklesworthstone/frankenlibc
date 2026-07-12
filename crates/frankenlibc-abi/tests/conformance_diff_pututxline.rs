@@ -8,7 +8,7 @@
 //! glibc keep independent utmp state (separate utmpxname paths), so the two are
 //! driven on separate temp files. No mocks.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod g {
@@ -55,7 +55,9 @@ fn fl_run(seq: &[(&[u8], &[u8], c_int)]) -> u64 {
         unsafe { fl::pututxline(&rec(id, line, *pid)) };
     }
     unsafe { fl::endutxent() };
-    let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(u64::MAX);
+    let len = std::fs::metadata(&path)
+        .map(|m| m.len())
+        .unwrap_or(u64::MAX);
     let _ = std::fs::remove_file(&path);
     len
 }
@@ -68,7 +70,9 @@ fn glibc_run(seq: &[(&[u8], &[u8], c_int)]) -> u64 {
         unsafe { g::pututxline(&rec(id, line, *pid)) };
     }
     unsafe { g::endutxent() };
-    let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(u64::MAX);
+    let len = std::fs::metadata(&path)
+        .map(|m| m.len())
+        .unwrap_or(u64::MAX);
     let _ = std::fs::remove_file(&path);
     len
 }
@@ -80,7 +84,13 @@ fn pututxline_overwrites_same_id() {
     let f = fl_run(seq);
     let gg = glibc_run(seq);
     assert_eq!(gg, RS, "glibc: same-id must overwrite (1 record)");
-    assert_eq!(f, gg, "fl produced {} records, glibc {} (RS={RS})", f / RS, gg / RS);
+    assert_eq!(
+        f,
+        gg,
+        "fl produced {} records, glibc {} (RS={RS})",
+        f / RS,
+        gg / RS
+    );
 }
 
 #[test]

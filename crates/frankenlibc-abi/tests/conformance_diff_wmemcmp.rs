@@ -26,7 +26,9 @@ fn wmemcmp_matches_glibc() {
 
     for len in 0usize..70 {
         // Base buffer of a repeating pattern.
-        let base: Vec<u32> = (0..len).map(|k| (k as u32).wrapping_mul(2654435761)).collect();
+        let base: Vec<u32> = (0..len)
+            .map(|k| (k as u32).wrapping_mul(2654435761))
+            .collect();
 
         // Equal case.
         let a = base.clone();

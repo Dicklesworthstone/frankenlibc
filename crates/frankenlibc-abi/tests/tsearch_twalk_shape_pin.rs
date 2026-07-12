@@ -95,7 +95,11 @@ fn fl_twalk_shape_for_1_to_7_is_balanced() {
     );
 
     // Root is at depth 0 with key 4 (balanced), not glibc's skewed key 2.
-    assert_eq!(trace[0], (0, PRE, 4), "fl root must be the balanced median key 4");
+    assert_eq!(
+        trace[0],
+        (0, PRE, 4),
+        "fl root must be the balanced median key 4"
+    );
     // Max depth of fl's balanced 7-node tree is 2 (glibc's skewed tree reaches 3).
     let max_depth = trace.iter().map(|&(lvl, _, _)| lvl).max().unwrap();
     assert_eq!(max_depth, 2, "balanced 7-node LLRB must be depth-2");

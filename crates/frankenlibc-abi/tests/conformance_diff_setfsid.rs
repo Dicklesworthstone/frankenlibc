@@ -5,9 +5,7 @@
 //! or `(gid_t)-1` returns the current filesystem credential without changing it,
 //! which makes these checks safe to run in-process.
 
-use frankenlibc_abi::glibc_internal_abi::{
-    setfsgid as fl_setfsgid, setfsuid as fl_setfsuid,
-};
+use frankenlibc_abi::glibc_internal_abi::{setfsgid as fl_setfsgid, setfsuid as fl_setfsuid};
 use std::ffi::c_int;
 
 unsafe extern "C" {
@@ -33,7 +31,10 @@ fn setfsuid_minus_one_queries_current_fsuid_like_glibc() {
         host_after, host_before,
         "setfsuid((uid_t)-1) must not change the current fsuid"
     );
-    assert!(fl_result >= 0, "setfsuid query must return a nonnegative fsuid");
+    assert!(
+        fl_result >= 0,
+        "setfsuid query must return a nonnegative fsuid"
+    );
 }
 
 #[test]
@@ -52,5 +53,8 @@ fn setfsgid_minus_one_queries_current_fsgid_like_glibc() {
         host_after, host_before,
         "setfsgid((gid_t)-1) must not change the current fsgid"
     );
-    assert!(fl_result >= 0, "setfsgid query must return a nonnegative fsgid");
+    assert!(
+        fl_result >= 0,
+        "setfsgid query must return a nonnegative fsgid"
+    );
 }

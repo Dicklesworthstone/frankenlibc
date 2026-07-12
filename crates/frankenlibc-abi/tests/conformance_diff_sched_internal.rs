@@ -7,10 +7,8 @@
 use frankenlibc_abi::errno_abi::__errno_location as fl_errno_location;
 use frankenlibc_abi::glibc_internal_abi::{
     __sched_get_priority_max as fl_sched_get_priority_max,
-    __sched_get_priority_min as fl_sched_get_priority_min,
-    __sched_getparam as fl_sched_getparam,
-    __sched_getscheduler as fl_sched_getscheduler,
-    __sched_setscheduler as fl_sched_setscheduler,
+    __sched_get_priority_min as fl_sched_get_priority_min, __sched_getparam as fl_sched_getparam,
+    __sched_getscheduler as fl_sched_getscheduler, __sched_setscheduler as fl_sched_setscheduler,
     __sched_yield as fl_sched_yield,
 };
 use std::ffi::{c_int, c_void};
@@ -25,11 +23,8 @@ unsafe extern "C" {
     #[link_name = "__sched_getscheduler"]
     fn host_sched_getscheduler(pid: c_int) -> c_int;
     #[link_name = "__sched_setscheduler"]
-    fn host_sched_setscheduler(
-        pid: c_int,
-        policy: c_int,
-        param: *const libc::sched_param,
-    ) -> c_int;
+    fn host_sched_setscheduler(pid: c_int, policy: c_int, param: *const libc::sched_param)
+    -> c_int;
     #[link_name = "__sched_yield"]
     fn host_sched_yield() -> c_int;
 }
@@ -153,9 +148,8 @@ fn internal_sched_getparam_invalid_pid_matches_host_errno() {
     let host_err = host_errno();
 
     clear_fl_errno();
-    let fl_result = unsafe {
-        fl_sched_getparam(-1, (&mut fl_param as *mut libc::sched_param).cast())
-    };
+    let fl_result =
+        unsafe { fl_sched_getparam(-1, (&mut fl_param as *mut libc::sched_param).cast()) };
     let fl_err = fl_errno();
 
     assert_eq!(

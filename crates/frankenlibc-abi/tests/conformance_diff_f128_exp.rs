@@ -36,17 +36,17 @@ fn values() -> Vec<f128> {
         -100.0,
         709.0,
         -709.0,
-        11356.0,                 // near himark
-        11357.0,                 // over → overflow
+        11356.0, // near himark
+        11357.0, // over → overflow
         11356.523406294143949f128,
-        -11433.0,                // near lomark
-        -11434.0,                // under → 0
+        -11433.0, // near lomark
+        -11434.0, // under → 0
         1e-30f128,
         -1e-30f128,
-        f128::from_bits(1),                                     // smallest subnormal
+        f128::from_bits(1), // smallest subnormal
         f128::MIN_POSITIVE,
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf → +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf → 0
+        f128::from_bits(0x7fff_u128 << 112), // +inf → +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf → 0
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     // Dense sweep across the whole finite domain incl over/underflow edges.
@@ -58,9 +58,13 @@ fn values() -> Vec<f128> {
     // PRNG within the in-range band and a bit beyond.
     let mut st: u64 = 0xf0e1_d2c3_b4a5_9687;
     for _ in 0..6000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3fc0 + (hi % 0x0040)) as u128; // exponents around 1..~16k
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);

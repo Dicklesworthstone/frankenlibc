@@ -77,14 +77,14 @@ pub mod wchar_abi;
 
 // Phase 2 ABI modules — pure Rust delegates (safe in test mode)
 pub mod ctype_abi;
+mod erf_tables;
 pub mod errno_abi;
+mod expl_table;
 pub mod locale_abi;
 pub mod math_abi;
-mod expl_table;
-mod trig_tables;
-mod erf_tables;
 pub mod startup_helpers;
 pub mod stdbit_abi;
+mod trig_tables;
 
 #[cfg(all(not(test), target_os = "linux"))]
 #[used]

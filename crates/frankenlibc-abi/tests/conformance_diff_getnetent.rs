@@ -60,7 +60,12 @@ fn snap(p: *const NetEnt) -> Option<Snap> {
         return None;
     }
     let s = unsafe { &*p };
-    Some((cstr(s.n_name), s.n_addrtype, s.n_net, alias_vec(s.n_aliases)))
+    Some((
+        cstr(s.n_name),
+        s.n_addrtype,
+        s.n_net,
+        alias_vec(s.n_aliases),
+    ))
 }
 
 #[test]

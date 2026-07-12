@@ -4,7 +4,9 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use frankenlibc_core::time::{broken_down_to_epoch, epoch_to_broken_down, format_asctime, BrokenDownTime};
+use frankenlibc_core::time::{
+    BrokenDownTime, broken_down_to_epoch, epoch_to_broken_down, format_asctime,
+};
 
 fn main() {
     unsafe {
@@ -14,7 +16,8 @@ fn main() {
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
-        type AsctimeRFn = unsafe extern "C" fn(*const libc::tm, *mut libc::c_char) -> *mut libc::c_char;
+        type AsctimeRFn =
+            unsafe extern "C" fn(*const libc::tm, *mut libc::c_char) -> *mut libc::c_char;
         let gl_asctime_r: AsctimeRFn = std::mem::transmute::<*mut std::ffi::c_void, AsctimeRFn>(
             libc::dlsym(h, b"asctime_r\0".as_ptr().cast()),
         );
@@ -58,6 +61,9 @@ fn main() {
             black_box(gl_asctime_r(black_box(&tm), black_box(gl_buf.as_mut_ptr())));
         }
         let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-        println!("ASCTIME fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x", fl / gl);
+        println!(
+            "ASCTIME fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x",
+            fl / gl
+        );
     }
 }

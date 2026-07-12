@@ -10,7 +10,7 @@
 //! >= n the C standard leaves dest contents INDETERMINATE, so the buffer is not
 //! compared in that case (only the length). No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 
 use libc::wchar_t;
 
@@ -61,13 +61,22 @@ fn wcsxfrm_l_matches_glibc() {
     assert!(!loc.is_null());
 
     for s in ["abc", "wide str", ""] {
-        let src: Vec<wchar_t> = s.chars().map(|c| c as wchar_t).chain(std::iter::once(0)).collect();
+        let src: Vec<wchar_t> = s
+            .chars()
+            .map(|c| c as wchar_t)
+            .chain(std::iter::once(0))
+            .collect();
         for n in [0usize, 1, 3, s.len() + 1, 32] {
             let mut gd = vec![0x7e7e_i32 as wchar_t; 40];
             let mut fd = vec![0x7e7e_i32 as wchar_t; 40];
             let g = unsafe { wcsxfrm_l(gd.as_mut_ptr(), src.as_ptr(), n, loc) };
             let f = unsafe {
-                frankenlibc_abi::wchar_abi::wcsxfrm_l(fd.as_mut_ptr(), src.as_ptr(), n, loc as *mut c_void)
+                frankenlibc_abi::wchar_abi::wcsxfrm_l(
+                    fd.as_mut_ptr(),
+                    src.as_ptr(),
+                    n,
+                    loc as *mut c_void,
+                )
             };
             assert_eq!(f, g, "wcsxfrm_l({s:?}, n={n}) return");
             // Determinate only when the result + NUL fit (return < n).

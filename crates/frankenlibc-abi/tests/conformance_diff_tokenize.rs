@@ -145,7 +145,9 @@ fn rand_input(rng: &mut Rng) -> (Vec<u8>, Vec<u8>) {
     // Input alphabet: letters a/b/c plus the delimiter chars (so they appear).
     let alphabet = [b'a', b'b', b'c', b',', b';', b' '];
     let len = rng.below(24);
-    let s: Vec<u8> = (0..len).map(|_| alphabet[rng.below(alphabet.len())]).collect();
+    let s: Vec<u8> = (0..len)
+        .map(|_| alphabet[rng.below(alphabet.len())])
+        .collect();
     (s, delim)
 }
 
@@ -158,9 +160,15 @@ fn strtok_r_matches_glibc() {
         let ft = unsafe { toks_strtok_r(&s, &d, false) };
         assert_eq!(ft, gt, "strtok_r seq mismatch s={s:?} delim={d:?}");
         // METAMORPHIC: no empty tokens, and strtok_r == strtok (global).
-        assert!(ft.iter().all(|t| !t.is_empty()), "strtok_r emitted empty token");
+        assert!(
+            ft.iter().all(|t| !t.is_empty()),
+            "strtok_r emitted empty token"
+        );
         let gl = unsafe { toks_strtok_global(&s, &d, false) };
-        assert_eq!(ft, gl, "fl strtok_r vs fl strtok disagree s={s:?} delim={d:?}");
+        assert_eq!(
+            ft, gl,
+            "fl strtok_r vs fl strtok disagree s={s:?} delim={d:?}"
+        );
     }
 }
 
@@ -205,13 +213,13 @@ fn strsep_matches_glibc_and_reconstructs() {
 #[test]
 fn edge_cases_match_glibc() {
     let cases: &[(&[u8], &[u8])] = &[
-        (b"", b","),                 // empty input
-        (b",,,", b","),              // all delimiters
-        (b",a,", b","),              // leading + trailing delimiter
-        (b"a,,b", b","),             // consecutive delimiters
-        (b"abc", b","),              // no delimiter present
-        (b"a;b,c d", b",; "),        // multi-char delimiter set
-        (b"  ", b" "),               // only spaces
+        (b"", b","),          // empty input
+        (b",,,", b","),       // all delimiters
+        (b",a,", b","),       // leading + trailing delimiter
+        (b"a,,b", b","),      // consecutive delimiters
+        (b"abc", b","),       // no delimiter present
+        (b"a;b,c d", b",; "), // multi-char delimiter set
+        (b"  ", b" "),        // only spaces
     ];
     for (s, d) in cases {
         let gt_r = unsafe { toks_strtok_r(s, d, true) };

@@ -7,10 +7,11 @@
 //! Range capped at |v| < 1e15 — beyond ~17 sig digits glibc's deprecated fcvt is
 //! imprecise (fl rounds the exact integer, more correct; same disposition as the
 //! ecvt rounding surface).
-use std::ffi::{CStr, c_char, c_int};
 use frankenlibc_abi::stdlib_abi as fl;
+use std::ffi::{CStr, c_char, c_int};
 unsafe extern "C" {
-    fn fcvt_r(v: f64, n: c_int, dp: *mut c_int, sg: *mut c_int, b: *mut c_char, bl: usize) -> c_int;
+    fn fcvt_r(v: f64, n: c_int, dp: *mut c_int, sg: *mut c_int, b: *mut c_char, bl: usize)
+    -> c_int;
 }
 fn run(host: bool, v: f64, n: c_int) -> (String, c_int, c_int) {
     let mut dp: c_int = -9;
@@ -29,8 +30,8 @@ fn run(host: bool, v: f64, n: c_int) -> (String, c_int, c_int) {
 #[test]
 fn fcvt_r_negative_ndigit_matches_glibc() {
     let vals: &[f64] = &[
-        123456.0, 999.0, 9999.0, 12.0, 5.0, 99.0, 123.0, 150.0, 9500.0, 0.5, 7.0,
-        0.0, -999.0, -150.0, 45.0, 55.0, 250.0, 2500.0, 49999.0, 50000.0, 1.0, 999999.0,
+        123456.0, 999.0, 9999.0, 12.0, 5.0, 99.0, 123.0, 150.0, 9500.0, 0.5, 7.0, 0.0, -999.0,
+        -150.0, 45.0, 55.0, 250.0, 2500.0, 49999.0, 50000.0, 1.0, 999999.0,
     ];
     let mut div = Vec::new();
     for &v in vals {
@@ -45,5 +46,9 @@ fn fcvt_r_negative_ndigit_matches_glibc() {
             }
         }
     }
-    assert!(div.is_empty(), "fcvt_r negative-ndigit divergences:\n{}", div.join("\n"));
+    assert!(
+        div.is_empty(),
+        "fcvt_r negative-ndigit divergences:\n{}",
+        div.join("\n")
+    );
 }

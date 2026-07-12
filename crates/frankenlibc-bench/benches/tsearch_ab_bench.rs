@@ -26,7 +26,13 @@ type CompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
 // closure) and glibc pay per comparison.
 unsafe extern "C" fn cmp_i64(a: *const c_void, b: *const c_void) -> c_int {
     let (x, y) = unsafe { (*(a as *const i64), *(b as *const i64)) };
-    if x < y { -1 } else if x > y { 1 } else { 0 }
+    if x < y {
+        -1
+    } else if x > y {
+        1
+    } else {
+        0
+    }
 }
 
 #[inline]
@@ -34,7 +40,12 @@ fn rust_cmp_via_cb(a: &i64, b: &i64) -> Ordering {
     // Route through the SAME C callback (black-boxed fn pointer) so the fl arms pay the
     // identical indirect-call cost glibc pays — the comparison is fair.
     let f: CompareFn = black_box(cmp_i64);
-    let r = unsafe { f(a as *const i64 as *const c_void, b as *const i64 as *const c_void) };
+    let r = unsafe {
+        f(
+            a as *const i64 as *const c_void,
+            b as *const i64 as *const c_void,
+        )
+    };
     r.cmp(&0)
 }
 
@@ -53,7 +64,9 @@ fn keys(n: usize) -> Vec<i64> {
 
 fn p50(s: &mut [f64]) -> f64 {
     s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-    if s.is_empty() { return 0.0; }
+    if s.is_empty() {
+        return 0.0;
+    }
     let r = 0.5 * (s.len() - 1) as f64;
     let (lo, hi) = (r.floor() as usize, r.ceil() as usize);
     s[lo] * (1.0 - (r - lo as f64)) + s[hi] * (r - lo as f64)
@@ -99,18 +112,36 @@ fn build_glibc(ks: &[i64]) -> usize {
     acc
 }
 
-fn run(g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>, name: &str, ks: &[i64], f: impl Fn(&[i64]) -> usize) {
-    for _ in 0..10 { black_box(f(black_box(ks))); }
+fn run(
+    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &str,
+    ks: &[i64],
+    f: impl Fn(&[i64]) -> usize,
+) {
+    for _ in 0..10 {
+        black_box(f(black_box(ks)));
+    }
     let mut s = Vec::new();
-    for _ in 0..200 { let t = Instant::now(); black_box(f(black_box(ks))); s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / ks.len() as f64); }
-    println!("TSEARCH_BENCH impl={name} p50_ns_per_key={:.4}", p50(&mut s));
+    for _ in 0..200 {
+        let t = Instant::now();
+        black_box(f(black_box(ks)));
+        s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / ks.len() as f64);
+    }
+    println!(
+        "TSEARCH_BENCH impl={name} p50_ns_per_key={:.4}",
+        p50(&mut s)
+    );
     g.bench_function(name, |b| b.iter(|| black_box(f(black_box(ks)))));
 }
 
 fn bench(c: &mut Criterion) {
     let ks = keys(2000);
     // parity: old and new must agree on the retained-key value for every key.
-    assert_eq!(build_old(&ks), build_new(&ks), "insert_find disagrees with insert+find");
+    assert_eq!(
+        build_old(&ks),
+        build_new(&ks),
+        "insert_find disagrees with insert+find"
+    );
 
     let mut g = c.benchmark_group("tsearch_2000");
     g.sample_size(30);

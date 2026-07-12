@@ -9,7 +9,7 @@
 //! prefix variants (NULL / empty / text), out-of-range "Unknown signal N", and
 //! real-time signal naming. No mocks.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 use std::io::Read;
 use std::os::unix::io::FromRawFd;
 use std::sync::Mutex;
@@ -47,7 +47,8 @@ fn assert_match(sig: c_int, msg: Option<&str>) {
     let f = capture(|| unsafe { frankenlibc_abi::string_abi::psignal(sig, mptr) });
 
     assert_eq!(
-        f, g,
+        f,
+        g,
         "psignal({sig}, {msg:?}): fl={:?} glibc={:?}",
         String::from_utf8_lossy(&f),
         String::from_utf8_lossy(&g),

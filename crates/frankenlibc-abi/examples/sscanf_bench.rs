@@ -28,19 +28,42 @@ fn main() {
                 let (mut ga, mut gb, mut gc) = (0i32, 0i32, 0i32);
                 let fr = sscanf(inp, fmt, &mut a, &mut b, &mut c);
                 let gr = gl(inp, fmt, &mut ga, &mut gb, &mut gc);
-                assert_eq!((fr, a, b, c), (gr, ga, gb, gc), "sscanf {} mismatch", $label);
+                assert_eq!(
+                    (fr, a, b, c),
+                    (gr, ga, gb, gc),
+                    "sscanf {} mismatch",
+                    $label
+                );
                 let iters = 3_000_000usize;
                 let t0 = Instant::now();
                 for _ in 0..iters {
-                    black_box(sscanf(black_box(inp), black_box(fmt), &mut a, &mut b, &mut c));
+                    black_box(sscanf(
+                        black_box(inp),
+                        black_box(fmt),
+                        &mut a,
+                        &mut b,
+                        &mut c,
+                    ));
                 }
                 let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
                 let t1 = Instant::now();
                 for _ in 0..iters {
-                    black_box(gl(black_box(inp), black_box(fmt), &mut ga, &mut gb, &mut gc));
+                    black_box(gl(
+                        black_box(inp),
+                        black_box(fmt),
+                        &mut ga,
+                        &mut gb,
+                        &mut gc,
+                    ));
                 }
                 let g = t1.elapsed().as_nanos() as f64 / iters as f64;
-                println!("SSCANF {} fl={:.1}ns glibc={:.1}ns fl/glibc={:.3}x", $label, fl, g, fl / g);
+                println!(
+                    "SSCANF {} fl={:.1}ns glibc={:.1}ns fl/glibc={:.3}x",
+                    $label,
+                    fl,
+                    g,
+                    fl / g
+                );
             }};
         }
 
@@ -67,7 +90,10 @@ fn main() {
                 black_box(gl(black_box(inp), black_box(fmt), &mut ga, &mut gb));
             }
             let g = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("SSCANF float fl={fl:.1}ns glibc={g:.1}ns fl/glibc={:.3}x", fl / g);
+            println!(
+                "SSCANF float fl={fl:.1}ns glibc={g:.1}ns fl/glibc={:.3}x",
+                fl / g
+            );
         }
     }
 }

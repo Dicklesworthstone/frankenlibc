@@ -17,8 +17,27 @@ unsafe extern "C" {
 }
 
 const XS: &[f64] = &[
-    0.0, -0.0, 0.5, -0.5, 1.5, 2.5, 0.1, -0.1, 0.9, -0.9, 100.5, 123456.7, 1.0 / 3.0, 3.0, -3.0,
-    f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 1e300, f64::MIN_POSITIVE, 2.4999999999999996,
+    0.0,
+    -0.0,
+    0.5,
+    -0.5,
+    1.5,
+    2.5,
+    0.1,
+    -0.1,
+    0.9,
+    -0.9,
+    100.5,
+    123456.7,
+    1.0 / 3.0,
+    3.0,
+    -3.0,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    f64::NAN,
+    1e300,
+    f64::MIN_POSITIVE,
+    2.4999999999999996,
 ];
 
 fn veq(a: f64, b: f64) -> bool {
@@ -40,17 +59,49 @@ fn diff_exact_unary_flags() {
     let mut div = Vec::new();
 
     // Unary f64
-    let u64s: &[(&str, unsafe extern "C" fn(f64) -> f64, extern "C" fn(f64) -> f64)] = &[
-        ("floor", fl::floor, sym!(c"floor", extern "C" fn(f64) -> f64)),
+    let u64s: &[(
+        &str,
+        unsafe extern "C" fn(f64) -> f64,
+        extern "C" fn(f64) -> f64,
+    )] = &[
+        (
+            "floor",
+            fl::floor,
+            sym!(c"floor", extern "C" fn(f64) -> f64),
+        ),
         ("ceil", fl::ceil, sym!(c"ceil", extern "C" fn(f64) -> f64)),
-        ("trunc", fl::trunc, sym!(c"trunc", extern "C" fn(f64) -> f64)),
+        (
+            "trunc",
+            fl::trunc,
+            sym!(c"trunc", extern "C" fn(f64) -> f64),
+        ),
         ("fabs", fl::fabs, sym!(c"fabs", extern "C" fn(f64) -> f64)),
     ];
-    let u32s: &[(&str, unsafe extern "C" fn(f32) -> f32, extern "C" fn(f32) -> f32)] = &[
-        ("floorf", fl::floorf, sym!(c"floorf", extern "C" fn(f32) -> f32)),
-        ("ceilf", fl::ceilf, sym!(c"ceilf", extern "C" fn(f32) -> f32)),
-        ("truncf", fl::truncf, sym!(c"truncf", extern "C" fn(f32) -> f32)),
-        ("fabsf", fl::fabsf, sym!(c"fabsf", extern "C" fn(f32) -> f32)),
+    let u32s: &[(
+        &str,
+        unsafe extern "C" fn(f32) -> f32,
+        extern "C" fn(f32) -> f32,
+    )] = &[
+        (
+            "floorf",
+            fl::floorf,
+            sym!(c"floorf", extern "C" fn(f32) -> f32),
+        ),
+        (
+            "ceilf",
+            fl::ceilf,
+            sym!(c"ceilf", extern "C" fn(f32) -> f32),
+        ),
+        (
+            "truncf",
+            fl::truncf,
+            sym!(c"truncf", extern "C" fn(f32) -> f32),
+        ),
+        (
+            "fabsf",
+            fl::fabsf,
+            sym!(c"fabsf", extern "C" fn(f32) -> f32),
+        ),
     ];
     for &x in XS {
         for &(name, ff, gf) in u64s {
@@ -61,7 +112,13 @@ fn diff_exact_unary_flags() {
             let gv = gf(x);
             let gg = unsafe { fetestexcept(ALL) } & ALL;
             if !veq(fv, gv) || flf != gg {
-                div.push(format!("{name}({x}): fl={:#x}/f{:#x} g={:#x}/f{:#x}", fv.to_bits(), flf, gv.to_bits(), gg));
+                div.push(format!(
+                    "{name}({x}): fl={:#x}/f{:#x} g={:#x}/f{:#x}",
+                    fv.to_bits(),
+                    flf,
+                    gv.to_bits(),
+                    gg
+                ));
             }
         }
         for &(name, ff, gf) in u32s {
@@ -73,7 +130,13 @@ fn diff_exact_unary_flags() {
             let gv = gf(xf);
             let gg = unsafe { fetestexcept(ALL) } & ALL;
             if !veqf(fv, gv) || flf != gg {
-                div.push(format!("{name}({xf}): fl={:#x}/f{:#x} g={:#x}/f{:#x}", fv.to_bits(), flf, gv.to_bits(), gg));
+                div.push(format!(
+                    "{name}({xf}): fl={:#x}/f{:#x} g={:#x}/f{:#x}",
+                    fv.to_bits(),
+                    flf,
+                    gv.to_bits(),
+                    gg
+                ));
             }
         }
     }
@@ -104,7 +167,11 @@ fn diff_exact_unary_flags() {
     for (x, y) in pairs {
         let (xf, yf) = (x as f32, y as f32);
         for (name, ff, gf) in [
-            ("fdimf", fl::fdimf as unsafe extern "C" fn(f32, f32) -> f32, g_fdimf),
+            (
+                "fdimf",
+                fl::fdimf as unsafe extern "C" fn(f32, f32) -> f32,
+                g_fdimf,
+            ),
             ("fmaxf", fl::fmaxf, g_fmaxf),
             ("fminf", fl::fminf, g_fminf),
             ("copysignf", fl::copysignf, g_copysignf),
@@ -116,13 +183,23 @@ fn diff_exact_unary_flags() {
             let gv = gf(xf, yf);
             let gg = unsafe { fetestexcept(ALL) } & ALL;
             if !veqf(fv, gv) || flf != gg {
-                div.push(format!("{name}({xf},{yf}): fl={:#x}/f{:#x} g={:#x}/f{:#x}", fv.to_bits(), flf, gv.to_bits(), gg));
+                div.push(format!(
+                    "{name}({xf},{yf}): fl={:#x}/f{:#x} g={:#x}/f{:#x}",
+                    fv.to_bits(),
+                    flf,
+                    gv.to_bits(),
+                    gg
+                ));
             }
         }
     }
     for (x, y) in pairs {
         for (name, ff, gf) in [
-            ("fdim", fl::fdim as unsafe extern "C" fn(f64, f64) -> f64, g_fdim),
+            (
+                "fdim",
+                fl::fdim as unsafe extern "C" fn(f64, f64) -> f64,
+                g_fdim,
+            ),
             ("fmax", fl::fmax, g_fmax),
             ("fmin", fl::fmin, g_fmin),
             ("copysign", fl::copysign, g_copysign),
@@ -134,10 +211,21 @@ fn diff_exact_unary_flags() {
             let gv = gf(x, y);
             let gg = unsafe { fetestexcept(ALL) } & ALL;
             if !veq(fv, gv) || flf != gg {
-                div.push(format!("{name}({x},{y}): fl={:#x}/f{:#x} g={:#x}/f{:#x}", fv.to_bits(), flf, gv.to_bits(), gg));
+                div.push(format!(
+                    "{name}({x},{y}): fl={:#x}/f{:#x} g={:#x}/f{:#x}",
+                    fv.to_bits(),
+                    flf,
+                    gv.to_bits(),
+                    gg
+                ));
             }
         }
     }
 
-    assert!(div.is_empty(), "exact-unary flag divergences ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "exact-unary flag divergences ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

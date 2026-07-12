@@ -28,11 +28,16 @@
 use std::hint::black_box;
 use std::os::raw::c_char;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 /// Previous deployed kernel: fused scalar NUL-scan + copy with a per-byte bound
 /// branch. Exact mirror of the pre-change `strict_direct_snprintf_s`.
-unsafe fn old_strict_s(str_buf: *mut c_char, size: usize, arg: *const c_char, newline: bool) -> i32 {
+unsafe fn old_strict_s(
+    str_buf: *mut c_char,
+    size: usize,
+    arg: *const c_char,
+    newline: bool,
+) -> i32 {
     let mut len = 0usize;
     if size == 0 || str_buf.is_null() {
         if arg.is_null() {
@@ -85,8 +90,8 @@ fn swar_word_has_zero(w: u64) -> bool {
 /// unbounded (None) branch. An 8-aligned 8-byte load never straddles a 4096-byte
 /// page, so it cannot fault past the NUL's own mapped page.
 unsafe fn swar_strlen(ptr: *const c_char) -> usize {
-    use core::simd::cmp::SimdPartialEq;
     use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
     let p = ptr.cast::<u8>();
     let mut i = 0usize;
     let head = (p as usize).wrapping_neg() & 7;
@@ -98,7 +103,8 @@ unsafe fn swar_strlen(ptr: *const c_char) -> usize {
     }
     loop {
         if (p as usize + i) & 0xFFF <= 0x1000 - 32 {
-            let v = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+            let v =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
             if !v.simd_eq(Simd::splat(0)).any() {
                 i += 32;
                 continue;
@@ -118,7 +124,12 @@ unsafe fn swar_strlen(ptr: *const c_char) -> usize {
 
 /// Shipped kernel: page-safe SWAR/SIMD strlen + `memcpy`, no membrane lookup.
 /// Exact mirror of the post-change `strict_direct_snprintf_s`.
-unsafe fn new_strict_s(str_buf: *mut c_char, size: usize, arg: *const c_char, newline: bool) -> i32 {
+unsafe fn new_strict_s(
+    str_buf: *mut c_char,
+    size: usize,
+    arg: *const c_char,
+    newline: bool,
+) -> i32 {
     let src: &[u8] = if arg.is_null() {
         b"(null)"
     } else {
@@ -168,12 +179,22 @@ fn verify() {
         let mut b = [0x7fi8; 32];
         let ra = unsafe { old_strict_s(a.as_mut_ptr(), size, argp, newline) };
         let rb = unsafe { new_strict_s(b.as_mut_ptr(), size, argp, newline) };
-        assert_eq!(ra, rb, "rc mismatch old vs new for {arg:?} size={size} nl={newline}");
-        assert_eq!(a, b, "bytes mismatch old vs new for {arg:?} size={size} nl={newline}");
+        assert_eq!(
+            ra, rb,
+            "rc mismatch old vs new for {arg:?} size={size} nl={newline}"
+        );
+        assert_eq!(
+            a, b,
+            "bytes mismatch old vs new for {arg:?} size={size} nl={newline}"
+        );
     }
     // new == glibc for the plain "%s" cases glibc supports (non-null, no newline).
     let fmt = c"%s";
-    for &(arg, size) in &[(b"hello\0".as_slice(), 128usize), (b"abcdefgh\0", 4), (b"abc\0", 4)] {
+    for &(arg, size) in &[
+        (b"hello\0".as_slice(), 128usize),
+        (b"abcdefgh\0", 4),
+        (b"abc\0", 4),
+    ] {
         let argp = arg.as_ptr() as *const c_char;
         let mut g = [0x7fi8; 32];
         let mut n = [0x7fi8; 32];
@@ -201,18 +222,24 @@ fn bench(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("old_byteloop", name), &arg, |b, &arg| {
             b.iter(|| {
                 let mut buf = [0i8; 256];
-                let rc = unsafe { old_strict_s(buf.as_mut_ptr(), buf.len(), black_box(arg), false) };
+                let rc =
+                    unsafe { old_strict_s(buf.as_mut_ptr(), buf.len(), black_box(arg), false) };
                 black_box((rc, buf[0]));
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("new_swar_memcpy", name), &arg, |b, &arg| {
-            b.iter(|| {
-                let mut buf = [0i8; 256];
-                let rc = unsafe { new_strict_s(buf.as_mut_ptr(), buf.len(), black_box(arg), false) };
-                black_box((rc, buf[0]));
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("new_swar_memcpy", name),
+            &arg,
+            |b, &arg| {
+                b.iter(|| {
+                    let mut buf = [0i8; 256];
+                    let rc =
+                        unsafe { new_strict_s(buf.as_mut_ptr(), buf.len(), black_box(arg), false) };
+                    black_box((rc, buf[0]));
+                });
+            },
+        );
 
         group.bench_with_input(BenchmarkId::new("host_glibc", name), &arg, |b, &arg| {
             b.iter(|| {

@@ -134,7 +134,10 @@ fn ascii_widen_mixed_with_non_ascii_transitions() {
             ] {
                 let got = fl_convert(tb, b"UTF-8\0", &src);
                 let want = ref_encode(&cps, t);
-                assert_eq!(got, want, "mixed widen mismatch lead={lead} trail={trail} to={t}");
+                assert_eq!(
+                    got, want,
+                    "mixed widen mismatch lead={lead} trail={trail} to={t}"
+                );
             }
         }
     }
@@ -161,6 +164,10 @@ fn ascii_widen_e2big_midrun_is_exact() {
     let produced = dst.len() - outleft;
     assert_eq!(produced, 74, "should fill the buffer exactly");
     assert_eq!(consumed, 37, "should consume exactly 37 ASCII bytes");
-    assert_eq!(&dst[..74], &ref_encode(&cps[..37], "UTF-16LE")[..], "partial output diverged");
+    assert_eq!(
+        &dst[..74],
+        &ref_encode(&cps[..37], "UTF-16LE")[..],
+        "partial output diverged"
+    );
     unsafe { iconv_close(cd) };
 }

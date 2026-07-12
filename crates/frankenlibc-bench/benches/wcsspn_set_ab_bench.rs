@@ -13,7 +13,7 @@ use std::ffi::c_int;
 use std::hint::black_box;
 use std::sync::OnceLock;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 type WcsspnFn = unsafe extern "C" fn(*const u32, *const u32) -> usize;
 
@@ -62,7 +62,11 @@ impl<'a> OldSet<'a> {
             }
         }
         let rest = unsafe { std::slice::from_raw_parts(set, len) };
-        Self { ascii, rest, has_nonascii }
+        Self {
+            ascii,
+            rest,
+            has_nonascii,
+        }
     }
     #[inline]
     fn contains(&self, c: u32) -> bool {
@@ -93,7 +97,11 @@ impl<'a> NewSet<'a> {
             }
         }
         let rest = unsafe { std::slice::from_raw_parts(set, len) };
-        Self { ascii, rest, has_nonascii }
+        Self {
+            ascii,
+            rest,
+            has_nonascii,
+        }
     }
     #[inline]
     fn contains(&self, c: u32) -> bool {

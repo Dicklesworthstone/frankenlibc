@@ -13,7 +13,7 @@ use std::ffi::{c_char, c_void};
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 type TokFn = unsafe extern "C" fn(*mut c_char, *const c_char, *mut *mut c_char) -> *mut c_char;
 

@@ -9,7 +9,7 @@
 //! vs glibc; a bad-mode case (fdopen of an O_WRONLY fd with "r") is included.
 //! No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 
 const O_RDONLY: c_int = 0;
 const O_WRONLY: c_int = 1;
@@ -36,7 +36,10 @@ fn tmp() -> (std::path::PathBuf, CString) {
     let mut p = std::env::temp_dir();
     p.push(format!("fl-fdopen-{}-{}", std::process::id(), n));
     std::fs::write(&p, CONTENT).unwrap();
-    (p.clone(), CString::new(p.to_string_lossy().as_bytes()).unwrap())
+    (
+        p.clone(),
+        CString::new(p.to_string_lossy().as_bytes()).unwrap(),
+    )
 }
 
 /// (non_null, fileno_matches, bytes_read, content_matches)
@@ -81,16 +84,26 @@ fn fdopen_bad_mode_matches_glibc() {
     // fdopen of an O_WRONLY fd with read mode "r": glibc accepts it (mode/flag
     // mismatch is not validated by fdopen on Linux), so just compare behavior.
     let (p, c) = tmp();
-    let probe = |fdopen: unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void, fclose: unsafe extern "C" fn(*mut c_void) -> c_int| unsafe {
+    let probe = |fdopen: unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void,
+                 fclose: unsafe extern "C" fn(*mut c_void) -> c_int| unsafe {
         let fd = g::open(c.as_ptr(), O_WRONLY);
-        if fd < 0 { return None; }
+        if fd < 0 {
+            return None;
+        }
         let f = fdopen(fd, c"r".as_ptr());
         let nn = !f.is_null();
-        if nn { fclose(f); } else { g::close(fd); }
+        if nn {
+            fclose(f);
+        } else {
+            g::close(fd);
+        }
         Some(nn)
     };
     let gr = probe(g::fdopen, g::fclose);
     let fr = probe(fl::fdopen, fl::fclose);
     let _ = std::fs::remove_file(&p);
-    assert_eq!(fr, gr, "fdopen(O_WRONLY fd, \"r\") acceptance: fl={fr:?} glibc={gr:?}");
+    assert_eq!(
+        fr, gr,
+        "fdopen(O_WRONLY fd, \"r\") acceptance: fl={fr:?} glibc={gr:?}"
+    );
 }

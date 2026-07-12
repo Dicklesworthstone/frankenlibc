@@ -66,7 +66,11 @@ fn main() {
             let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
             let t1 = Instant::now();
             for _ in 0..iters {
-                black_box(gl_mbstowcs(std::ptr::null_mut(), black_box(src_c.as_ptr()), 0));
+                black_box(gl_mbstowcs(
+                    std::ptr::null_mut(),
+                    black_box(src_c.as_ptr()),
+                    0,
+                ));
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
             println!(

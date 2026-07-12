@@ -19,10 +19,23 @@ fn el() -> *mut c_int {
 
 fn vals() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
-        0.0, -0.0f128, 1.0, -1.0, 2.0, -2.0, 0.5, 3.0, 10.0, 0.1, 1.5, 100.0,
-        2.5, -3.0, 7.0,
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        0.0,
+        -0.0f128,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        0.5,
+        3.0,
+        10.0,
+        0.1,
+        1.5,
+        100.0,
+        2.5,
+        -3.0,
+        7.0,
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     for k in -8i64..=8 {
@@ -45,9 +58,18 @@ fn f128_powr_matches_glibc() {
             let f = unsafe { ma::powrf128(x, y) }.to_bits();
             let fe = unsafe { *el() };
             if g != f || ge != fe {
-                mism.push(format!("powr({:#034x},{:#034x}): glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})", x.to_bits(), y.to_bits()));
+                mism.push(format!(
+                    "powr({:#034x},{:#034x}): glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})",
+                    x.to_bits(),
+                    y.to_bits()
+                ));
             }
         }
     }
-    assert!(mism.is_empty(), "powrf128 diverged ({}):\n{}", mism.len(), mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "powrf128 diverged ({}):\n{}",
+        mism.len(),
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

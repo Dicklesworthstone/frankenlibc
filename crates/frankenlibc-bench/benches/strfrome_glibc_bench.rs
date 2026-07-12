@@ -8,7 +8,7 @@
 use std::ffi::{c_char, c_int};
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 unsafe extern "C" {
     fn strfromd(str: *mut c_char, n: usize, format: *const c_char, fp: f64) -> c_int;
@@ -26,7 +26,10 @@ fn gl_strfrome(value: f64, prec: usize) -> Vec<u8> {
     let fmt = std::ffi::CString::new(format!("%.{prec}e")).unwrap();
     let mut buf = [0i8; 64];
     unsafe { strfromd(buf.as_mut_ptr(), 64, fmt.as_ptr(), value) };
-    buf.iter().take_while(|&&b| b != 0).map(|&b| b as u8).collect()
+    buf.iter()
+        .take_while(|&&b| b != 0)
+        .map(|&b| b as u8)
+        .collect()
 }
 
 fn bench(c: &mut Criterion) {
@@ -46,12 +49,19 @@ fn bench(c: &mut Criterion) {
         let fmt = std::ffi::CString::new(format!("%.{prec}e")).unwrap();
         let mut g = c.benchmark_group(format!("strfrome_{name}"));
         g.bench_function("frankenlibc_core", |b| {
-            b.iter(|| black_box(frankenlibc_core::stdlib::ecvt::render_pct_e(black_box(*value), *prec)))
+            b.iter(|| {
+                black_box(frankenlibc_core::stdlib::ecvt::render_pct_e(
+                    black_box(*value),
+                    *prec,
+                ))
+            })
         });
         g.bench_function("host_glibc_inprocess", |b| {
             b.iter(|| {
                 let mut buf = [0i8; 64];
-                black_box(unsafe { strfromd(buf.as_mut_ptr(), 64, fmt.as_ptr(), black_box(*value)) });
+                black_box(unsafe {
+                    strfromd(buf.as_mut_ptr(), 64, fmt.as_ptr(), black_box(*value))
+                });
             })
         });
         g.finish();

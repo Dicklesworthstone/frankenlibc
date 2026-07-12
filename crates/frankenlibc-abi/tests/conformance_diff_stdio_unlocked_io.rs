@@ -9,7 +9,7 @@
 //! to its own temp file (bytes compared), then reads a known file via all three
 //! readers (read values + return codes compared) vs glibc. No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod g {
@@ -79,9 +79,29 @@ macro_rules! read_path {
 
 #[test]
 fn unlocked_write_path_matches_glibc() {
-    let gb = write_path!(g::fopen, g::fclose, g::fputc_unlocked, g::fputs_unlocked, g::fwrite_unlocked, "g");
-    let fb = write_path!(fl::fopen, fl::fclose, fl::fputc_unlocked, fl::fputs_unlocked, fl::fwrite_unlocked, "fl");
-    assert_eq!(fb, gb, "unlocked write path: fl={:?} glibc={:?}", String::from_utf8_lossy(&fb), String::from_utf8_lossy(&gb));
+    let gb = write_path!(
+        g::fopen,
+        g::fclose,
+        g::fputc_unlocked,
+        g::fputs_unlocked,
+        g::fwrite_unlocked,
+        "g"
+    );
+    let fb = write_path!(
+        fl::fopen,
+        fl::fclose,
+        fl::fputc_unlocked,
+        fl::fputs_unlocked,
+        fl::fwrite_unlocked,
+        "fl"
+    );
+    assert_eq!(
+        fb,
+        gb,
+        "unlocked write path: fl={:?} glibc={:?}",
+        String::from_utf8_lossy(&fb),
+        String::from_utf8_lossy(&gb)
+    );
     assert_eq!(&gb, b"Hi\nline2\nBLOCK", "glibc wrote the expected payload");
 }
 
@@ -90,8 +110,22 @@ fn unlocked_read_path_matches_glibc() {
     // Prepare a known file.
     let (path, c) = tmp("src");
     std::fs::write(&path, b"abcdef\nXYZ\n0123456789").unwrap();
-    let gr = read_path!(g::fopen, g::fclose, g::fgetc_unlocked, g::fgets_unlocked, g::fread_unlocked, c);
-    let fr = read_path!(fl::fopen, fl::fclose, fl::fgetc_unlocked, fl::fgets_unlocked, fl::fread_unlocked, c);
+    let gr = read_path!(
+        g::fopen,
+        g::fclose,
+        g::fgetc_unlocked,
+        g::fgets_unlocked,
+        g::fread_unlocked,
+        c
+    );
+    let fr = read_path!(
+        fl::fopen,
+        fl::fclose,
+        fl::fgetc_unlocked,
+        fl::fgets_unlocked,
+        fl::fread_unlocked,
+        c
+    );
     let _ = std::fs::remove_file(&path);
     assert_eq!(fr, gr, "unlocked read path: fl={fr:?} glibc={gr:?}");
 }

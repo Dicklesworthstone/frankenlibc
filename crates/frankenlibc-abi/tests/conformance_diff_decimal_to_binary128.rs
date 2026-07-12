@@ -66,7 +66,9 @@ fn decimal_to_binary128_matches_glibc() {
     // range (covers normal, subnormal, overflow, and many rounding boundaries).
     let mut state: u64 = 0xdead_beef_1234_5678;
     let mut rng = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         state
     };
     for _ in 0..1200 {
@@ -84,5 +86,10 @@ fn decimal_to_binary128_matches_glibc() {
         }
     }
 
-    assert!(mism.is_empty(), "decimal_to_binary128 diverged ({}):\n{}", mism.len(), mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "decimal_to_binary128 diverged ({}):\n{}",
+        mism.len(),
+        mism.join("\n")
+    );
 }

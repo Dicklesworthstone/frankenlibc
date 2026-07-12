@@ -50,8 +50,8 @@ fn bare_f_fastpath_matches_glibc() {
     // Mix of fast-path triggers (precision>=1, no width) and deliberate
     // fall-backs (precision 0, width, force/space sign, %e/%g).
     let fmts = [
-        "%f", "%.2f", "%.6f", "%.1f", "%.0f", "%+.2f", "% .2f", "%8.2f", "%-8.2f",
-        "%012.3f", "%.10f", "%e", "%.3e", "%g", "%.3g",
+        "%f", "%.2f", "%.6f", "%.1f", "%.0f", "%+.2f", "% .2f", "%8.2f", "%-8.2f", "%012.3f",
+        "%.10f", "%e", "%.3e", "%g", "%.3g",
     ];
     let vals: &[f64] = &[
         0.0,
@@ -90,7 +90,13 @@ fn bare_f_fastpath_matches_glibc() {
 
 #[test]
 fn bare_s_fastpath_matches_glibc() {
-    let strings = ["hello", "", "x", "a longer string with spaces", "tab\tand\nnewline"];
+    let strings = [
+        "hello",
+        "",
+        "x",
+        "a longer string with spaces",
+        "tab\tand\nnewline",
+    ];
     // Exact "%s" (fast path) plus surrounding-literal forms (general path).
     let fmts = ["%s", "[%s]", "%s\n", "prefix %s", "%10s", "%-10s", "%.3s"];
     for f in fmts {

@@ -23,10 +23,10 @@ fn parts() -> Vec<f128> {
         3.5,
         -7.25,
         1e300f128,
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
-        f128::from_bits(1),                                     // subnormal
+        f128::from_bits(1),                  // subnormal
     ]
 }
 
@@ -38,13 +38,27 @@ fn f128_complex_accessors_match_glibc() {
         for &im in &p {
             let z = C { re, im };
             // creal / cimag
-            let (gr, fr) = (unsafe { crealf128(z) }.to_bits(), unsafe { ma::crealf128(z) }.to_bits());
+            let (gr, fr) = (
+                unsafe { crealf128(z) }.to_bits(),
+                unsafe { ma::crealf128(z) }.to_bits(),
+            );
             if gr != fr {
-                mism.push(format!("creal re={:#034x} im={:#034x}: glibc={gr:#034x} fl={fr:#034x}", re.to_bits(), im.to_bits()));
+                mism.push(format!(
+                    "creal re={:#034x} im={:#034x}: glibc={gr:#034x} fl={fr:#034x}",
+                    re.to_bits(),
+                    im.to_bits()
+                ));
             }
-            let (gi, fi) = (unsafe { cimagf128(z) }.to_bits(), unsafe { ma::cimagf128(z) }.to_bits());
+            let (gi, fi) = (
+                unsafe { cimagf128(z) }.to_bits(),
+                unsafe { ma::cimagf128(z) }.to_bits(),
+            );
             if gi != fi {
-                mism.push(format!("cimag re={:#034x} im={:#034x}: glibc={gi:#034x} fl={fi:#034x}", re.to_bits(), im.to_bits()));
+                mism.push(format!(
+                    "cimag re={:#034x} im={:#034x}: glibc={gi:#034x} fl={fi:#034x}",
+                    re.to_bits(),
+                    im.to_bits()
+                ));
             }
             // conj
             let (g, f) = (unsafe { conjf128(z) }, unsafe { ma::conjf128(z) });
@@ -58,5 +72,10 @@ fn f128_complex_accessors_match_glibc() {
             }
         }
     }
-    assert!(mism.is_empty(), "f128 complex accessors diverged ({}):\n{}", mism.len(), mism.iter().take(20).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "f128 complex accessors diverged ({}):\n{}",
+        mism.len(),
+        mism.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

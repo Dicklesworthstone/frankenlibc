@@ -23,10 +23,10 @@ fn parts() -> Vec<f128> {
         -0.5,
         1e300f128,
         1e-300f128,
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
-        f128::from_bits(1),                                     // subnormal
+        f128::from_bits(1),                  // subnormal
     ]
 }
 
@@ -40,9 +40,18 @@ fn f128_carg_matches_glibc() {
             let g = unsafe { cargf128(z) }.to_bits();
             let f = unsafe { ma::cargf128(z) }.to_bits();
             if g != f {
-                mism.push(format!("carg(re={:#034x},im={:#034x}): glibc={g:#034x} fl={f:#034x}", re.to_bits(), im.to_bits()));
+                mism.push(format!(
+                    "carg(re={:#034x},im={:#034x}): glibc={g:#034x} fl={f:#034x}",
+                    re.to_bits(),
+                    im.to_bits()
+                ));
             }
         }
     }
-    assert!(mism.is_empty(), "cargf128 diverged ({}):\n{}", mism.len(), mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "cargf128 diverged ({}):\n{}",
+        mism.len(),
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

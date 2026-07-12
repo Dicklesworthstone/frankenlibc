@@ -63,7 +63,11 @@ fn sync_file_range_invalid_flags_and_ranges_match_host_syscall() {
             libc::O_RDONLY | libc::O_CLOEXEC,
         )
     };
-    assert!(fd >= 0, "open(/dev/null) failed with errno {}", host_errno());
+    assert!(
+        fd >= 0,
+        "open(/dev/null) failed with errno {}",
+        host_errno()
+    );
 
     let cases = [
         ("invalid flags", 0, 1, SYNC_FILE_RANGE_INVALID_FLAGS),
@@ -75,10 +79,7 @@ fn sync_file_range_invalid_flags_and_ranges_match_host_syscall() {
         let host = host_sync_file_range(fd, offset, nbytes, flags);
         let fl = fl_sync_file_range(fd, offset, nbytes, flags);
 
-        assert_eq!(
-            fl, host,
-            "sync_file_range({name}): fl={fl:?} host={host:?}"
-        );
+        assert_eq!(fl, host, "sync_file_range({name}): fl={fl:?} host={host:?}");
         assert_eq!(fl, (-1, libc::EINVAL), "sync_file_range({name})");
     }
 

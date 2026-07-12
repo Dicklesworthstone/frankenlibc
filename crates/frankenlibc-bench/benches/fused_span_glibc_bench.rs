@@ -19,7 +19,7 @@ use std::ffi::{c_char, c_void};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 type SpnFn = unsafe extern "C" fn(*const c_char, *const c_char) -> usize;
 type PbrkFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char;
@@ -143,7 +143,9 @@ fn bench(c: &mut Criterion) {
             );
             timeit(
                 "strspn",
-                &|| unsafe { frankenlibc_abi::string_abi::strspn(black_box(sp), black_box(accept)) },
+                &|| unsafe {
+                    frankenlibc_abi::string_abi::strspn(black_box(sp), black_box(accept))
+                },
                 &|| unsafe { g_strspn(black_box(sp), black_box(accept)) },
             );
             let _ = Duration::from_secs(0);

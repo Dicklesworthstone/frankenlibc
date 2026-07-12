@@ -17,7 +17,7 @@
 use frankenlibc_abi::errno_abi;
 use frankenlibc_abi::stdlib_abi as sa;
 use frankenlibc_abi::wchar_abi as wa;
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 
 const ERANGE: c_int = 34;
 

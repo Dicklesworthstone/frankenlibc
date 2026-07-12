@@ -64,12 +64,19 @@ fn g_raw(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Raw {
     let r = (g.conv)(cd, &mut ip, &mut il, &mut op, &mut ol);
     (g.close)(cd);
     let w = out.len() - ol;
-    Raw { errored: r == INVALID, in_left: il, out: out[..w].to_vec() }
+    Raw {
+        errored: r == INVALID,
+        in_left: il,
+        out: out[..w].to_vec(),
+    }
 }
 fn f_raw(to: &str, from: &str, input: &[u8]) -> Raw {
     let (ct, cf) = (CString::new(to).unwrap(), CString::new(from).unwrap());
     let cd = unsafe { fl::iconv_open(ct.as_ptr(), cf.as_ptr()) };
-    assert!(cd as usize != INVALID && !cd.is_null(), "fl rejects {from}->{to}");
+    assert!(
+        cd as usize != INVALID && !cd.is_null(),
+        "fl rejects {from}->{to}"
+    );
     let mut inb = input.to_vec();
     let mut out = vec![0u8; 8192];
     let mut ip = inb.as_mut_ptr() as *mut c_char;
@@ -79,7 +86,11 @@ fn f_raw(to: &str, from: &str, input: &[u8]) -> Raw {
     let r = unsafe { fl::iconv(cd, &mut ip, &mut il, &mut op, &mut ol) };
     unsafe { fl::iconv_close(cd) };
     let w = out.len() - ol;
-    Raw { errored: r == INVALID, in_left: il, out: out[..w].to_vec() }
+    Raw {
+        errored: r == INVALID,
+        in_left: il,
+        out: out[..w].to_vec(),
+    }
 }
 fn g_full(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
     let (ct, cf) = (CString::new(to).unwrap(), CString::new(from).unwrap());
@@ -98,7 +109,13 @@ fn g_full(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
         (g.close)(cd);
         return None;
     }
-    let r2 = (g.conv)(cd, std::ptr::null_mut(), std::ptr::null_mut(), &mut op, &mut ol);
+    let r2 = (g.conv)(
+        cd,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        &mut op,
+        &mut ol,
+    );
     (g.close)(cd);
     if r2 == INVALID {
         return None;
@@ -122,7 +139,15 @@ fn f_full(to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
         unsafe { fl::iconv_close(cd) };
         return None;
     }
-    let r2 = unsafe { fl::iconv(cd, std::ptr::null_mut(), std::ptr::null_mut(), &mut op, &mut ol) };
+    let r2 = unsafe {
+        fl::iconv(
+            cd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut op,
+            &mut ol,
+        )
+    };
     unsafe { fl::iconv_close(cd) };
     if r2 == INVALID {
         return None;
@@ -146,7 +171,9 @@ fn iso2022jp3_encode_per_codepoint() {
     let mut mism = Vec::new();
     let mut checked = 0u32;
     for &cp in &cps {
-        let Some(ch) = char::from_u32(cp) else { continue };
+        let Some(ch) = char::from_u32(cp) else {
+            continue;
+        };
         let u = ch.to_string();
         let ge = g_full(&g, NAME, "UTF-8", u.as_bytes());
         let fe = f_full(NAME, "UTF-8", u.as_bytes());
@@ -155,7 +182,12 @@ fn iso2022jp3_encode_per_codepoint() {
             mism.push(format!("U+{cp:04X}: glibc={ge:02x?} fl={fe:02x?}"));
         }
     }
-    assert!(mism.is_empty(), "JP-3 per-codepoint encode diverged ({} of {checked}):\n{}", mism.len(), mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "JP-3 per-codepoint encode diverged ({} of {checked}):\n{}",
+        mism.len(),
+        mism.join("\n")
+    );
 }
 
 #[test]
@@ -165,7 +197,7 @@ fn iso2022jp3_encode_roundtrip_samples() {
         "",
         "Hello \u{00A5}",
         "日本語のテキスト",
-        "\u{4FF1}日\u{4FF1}",        // 2004 (Q) + 0208 lazy-stay
+        "\u{4FF1}日\u{4FF1}",         // 2004 (Q) + 0208 lazy-stay
         "\u{304B}\u{309A}日\u{3402}", // combining + 0208 + ext-A
         "\u{20089}漢字\u{2A6B2}",     // astral plane-2 + kanji
         "ｱｲｳ kana ＡＢＣ",
@@ -196,7 +228,12 @@ fn iso2022jp3_encode_roundtrip_samples() {
             mism.push(format!("ALIAS {alias}"));
         }
     }
-    assert!(mism.is_empty(), "JP-3 encode/roundtrip diverged ({}):\n{}", mism.len(), mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "JP-3 encode/roundtrip diverged ({}):\n{}",
+        mism.len(),
+        mism.join("\n")
+    );
 }
 
 #[test]
@@ -215,7 +252,9 @@ fn iso2022jp3_decode_structured_and_fuzz() {
             for b1 in 0x21u8..=0x7E {
                 let mut inp = desig.to_vec();
                 inp.extend_from_slice(&[b0, b1, 0x1B, 0x28, 0x42]);
-                if g_raw(&g, "UTF-32LE", NAME, &inp) != f_raw("UTF-32LE", NAME, &inp) && mism.len() < 40 {
+                if g_raw(&g, "UTF-32LE", NAME, &inp) != f_raw("UTF-32LE", NAME, &inp)
+                    && mism.len() < 40
+                {
                     mism.push(format!("{name} {b0:02x}{b1:02x}"));
                 }
             }
@@ -227,11 +266,14 @@ fn iso2022jp3_decode_structured_and_fuzz() {
             mism.push(format!("kana {b:02x}"));
         }
         let roman = [0x1B, 0x28, 0x4A, b as u8];
-        if g_raw(&g, "UTF-32LE", NAME, &roman) != f_raw("UTF-32LE", NAME, &roman) && mism.len() < 80 {
+        if g_raw(&g, "UTF-32LE", NAME, &roman) != f_raw("UTF-32LE", NAME, &roman) && mism.len() < 80
+        {
             mism.push(format!("roman {b:02x}"));
         }
         let ascii = [b as u8];
-        if g_raw(&g, "UTF-32LE", NAME, &ascii) != f_raw("UTF-32LE", NAME, &ascii) && mism.len() < 100 {
+        if g_raw(&g, "UTF-32LE", NAME, &ascii) != f_raw("UTF-32LE", NAME, &ascii)
+            && mism.len() < 100
+        {
             mism.push(format!("ascii {b:02x}"));
         }
     }
@@ -242,7 +284,9 @@ fn iso2022jp3_decode_structured_and_fuzz() {
     ];
     let mut state: u64 = 0x2022_4a_50_03;
     let mut next = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (state >> 33) as usize
     };
     for _ in 0..30_000 {
@@ -252,5 +296,10 @@ fn iso2022jp3_decode_structured_and_fuzz() {
             mism.push(format!("{inp:02x?}"));
         }
     }
-    assert!(mism.is_empty(), "JP-3 decode diverged ({}):\n{}", mism.len(), mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "JP-3 decode diverged ({}):\n{}",
+        mism.len(),
+        mism.join("\n")
+    );
 }

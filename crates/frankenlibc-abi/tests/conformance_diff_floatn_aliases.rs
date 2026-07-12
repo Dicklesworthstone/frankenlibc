@@ -51,8 +51,21 @@ fn floatn_f32_aliases_match_base() {
         (m::lgammaf32, m::lgammaf, "lgamma"),
     ];
     let xs = [
-        0.0f32, -0.0, 1.0, -1.0, 0.5, -0.5, 2.0, 3.14159, 100.0, -100.0, 1e-20, 1e20,
-        f32::NAN, f32::INFINITY, f32::NEG_INFINITY,
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        -0.5,
+        2.0,
+        3.14159,
+        100.0,
+        -100.0,
+        1e-20,
+        1e20,
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
     ];
     for &(alias, base, name) in pairs {
         for &x in &xs {
@@ -101,8 +114,21 @@ fn floatn_f64_aliases_match_base() {
         (m::lgammaf64, m::lgamma, "lgamma"),
     ];
     let xs = [
-        0.0f64, -0.0, 1.0, -1.0, 0.5, -0.5, 2.0, 3.141592653589793, 100.0, -100.0, 1e-200,
-        1e200, f64::NAN, f64::INFINITY, f64::NEG_INFINITY,
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        -0.5,
+        2.0,
+        3.141592653589793,
+        100.0,
+        -100.0,
+        1e-200,
+        1e200,
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
     ];
     for &(alias, base, name) in pairs {
         for &x in &xs {

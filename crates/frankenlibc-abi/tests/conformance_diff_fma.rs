@@ -59,7 +59,15 @@ fn fma_matches_glibc_double_rounding_cases() {
 
 #[test]
 fn fma_matches_glibc_special_values() {
-    let sv = [0.0f64, -0.0, 1.0, -1.0, f64::INFINITY, f64::NEG_INFINITY, f64::NAN];
+    let sv = [
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+    ];
     for &x in &sv {
         for &y in &sv {
             for &z in &sv {

@@ -53,7 +53,10 @@ fn check(label: &str, x: f64, flf: impl Fn(f64) -> i64, gf: unsafe extern "C" fn
     let gv = unsafe { gf(x) };
     let g_inv = unsafe { fetestexcept(FE_INVALID) } & FE_INVALID;
 
-    assert_eq!(f_inv, g_inv, "{label}({x:?}) FE_INVALID: fl={f_inv:#x} glibc={g_inv:#x}");
+    assert_eq!(
+        f_inv, g_inv,
+        "{label}({x:?}) FE_INVALID: fl={f_inv:#x} glibc={g_inv:#x}"
+    );
     // Result value is specified only when in range (glibc raised no FE_INVALID).
     if g_inv == 0 {
         assert_eq!(fv, gv, "{label}({x:?}) value: fl={fv} glibc={gv}");

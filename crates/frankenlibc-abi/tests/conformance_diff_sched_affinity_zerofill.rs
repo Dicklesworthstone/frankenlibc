@@ -46,5 +46,9 @@ fn sched_getaffinity_zerofills_mask_like_glibc() {
             ));
         }
     }
-    assert!(mism.is_empty(), "sched_getaffinity diverged:\n{}", mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "sched_getaffinity diverged:\n{}",
+        mism.join("\n")
+    );
 }

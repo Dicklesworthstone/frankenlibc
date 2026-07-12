@@ -52,7 +52,10 @@ fn glibc_dir(mode: &str, op: Op) -> (bool, bool) {
             unsafe { g::fwrite(b"x".as_ptr().cast(), 1, 1, s) };
         }
     }
-    let r = (unsafe { g::__freading(s) } != 0, unsafe { g::__fwriting(s) } != 0);
+    let r = (
+        unsafe { g::__freading(s) } != 0,
+        unsafe { g::__fwriting(s) } != 0,
+    );
     unsafe { g::fclose(s) };
     r
 }
@@ -90,15 +93,15 @@ enum Op {
 #[test]
 fn freading_fwriting_match_glibc() {
     let cases: &[(&str, Op)] = &[
-        ("r", Op::None),    // read-only -> reading
-        ("w", Op::None),    // write-only -> writing
-        ("a", Op::None),    // write-only -> writing
-        ("r+", Op::None),   // neither yet
-        ("w+", Op::None),   // neither yet
-        ("r+", Op::Read),   // last op read
-        ("r+", Op::Write),  // last op write
-        ("w+", Op::Read),   // (file truncated; read at EOF still counts as a read op)
-        ("w+", Op::Write),  // last op write
+        ("r", Op::None),   // read-only -> reading
+        ("w", Op::None),   // write-only -> writing
+        ("a", Op::None),   // write-only -> writing
+        ("r+", Op::None),  // neither yet
+        ("w+", Op::None),  // neither yet
+        ("r+", Op::Read),  // last op read
+        ("r+", Op::Write), // last op write
+        ("w+", Op::Read),  // (file truncated; read at EOF still counts as a read op)
+        ("w+", Op::Write), // last op write
         ("a+", Op::Read),
         ("a+", Op::Write),
     ];
@@ -119,6 +122,14 @@ fn freading_fwriting_match_glibc() {
     // Spec invariants on the unambiguous cases.
     assert_eq!(fl_dir("r", Op::None), (true, false), "r is read-only");
     assert_eq!(fl_dir("w", Op::None), (false, true), "w is write-only");
-    assert_eq!(fl_dir("r+", Op::Read), (true, false), "r+ after read -> reading");
-    assert_eq!(fl_dir("r+", Op::Write), (false, true), "r+ after write -> writing");
+    assert_eq!(
+        fl_dir("r+", Op::Read),
+        (true, false),
+        "r+ after read -> reading"
+    );
+    assert_eq!(
+        fl_dir("r+", Op::Write),
+        (false, true),
+        "r+ after write -> writing"
+    );
 }

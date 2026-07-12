@@ -144,9 +144,15 @@ fn getmntent_r_decode_matches_glibc() {
     let g = read_glibc(h, &cpath);
     let f = read_fl(&cpath);
     let _ = std::fs::remove_file(&path);
-    assert_eq!(f, g, "getmntent_r decode divergence\n fl={f:#?}\n glibc={g:#?}");
+    assert_eq!(
+        f, g,
+        "getmntent_r decode divergence\n fl={f:#?}\n glibc={g:#?}"
+    );
     // sanity: the escapes were actually exercised
-    assert!(g.iter().any(|e| e.0.contains(' ')), "oracle decoded a space");
+    assert!(
+        g.iter().any(|e| e.0.contains(' ')),
+        "oracle decoded a space"
+    );
 }
 
 #[test]

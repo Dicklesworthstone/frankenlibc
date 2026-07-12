@@ -85,7 +85,13 @@ fn bsearch_matches_glibc() {
         let key: i32 = rng.i32v(34) - 2; // sometimes out of range
         let gr = unsafe { g::bsearch(&key as *const i32 as _, arr.as_ptr().cast(), n, 4, cmp_i32) };
         let fr = unsafe {
-            fl_bsearch(&key as *const i32 as _, arr.as_ptr().cast(), n, 4, Some(cmp_i32))
+            fl_bsearch(
+                &key as *const i32 as _,
+                arr.as_ptr().cast(),
+                n,
+                4,
+                Some(cmp_i32),
+            )
         };
         // Both must agree on whether a match was found and that the element
         // equals the key (bsearch may return any equal element; assert equality
@@ -94,8 +100,16 @@ fn bsearch_matches_glibc() {
         let f_found = !fr.is_null();
         assert_eq!(f_found, g_found, "bsearch found-ness key={key} arr={arr:?}");
         if f_found {
-            assert_eq!(unsafe { *(fr as *const i32) }, key, "bsearch fl element != key");
-            assert_eq!(unsafe { *(gr as *const i32) }, key, "bsearch glibc element != key");
+            assert_eq!(
+                unsafe { *(fr as *const i32) },
+                key,
+                "bsearch fl element != key"
+            );
+            assert_eq!(
+                unsafe { *(gr as *const i32) },
+                key,
+                "bsearch glibc element != key"
+            );
         }
         // PROPERTY: found ⟺ key present in the array.
         assert_eq!(f_found, arr.contains(&key), "bsearch found ⟺ present");
@@ -111,10 +125,22 @@ fn lfind_matches_glibc() {
         let key: i32 = rng.i32v(28);
         let mut nel = n;
         let gr = unsafe {
-            g::lfind(&key as *const i32 as _, arr.as_ptr().cast(), &nel, 4, cmp_i32)
+            g::lfind(
+                &key as *const i32 as _,
+                arr.as_ptr().cast(),
+                &nel,
+                4,
+                cmp_i32,
+            )
         };
         let fr = unsafe {
-            fl_lfind(&key as *const i32 as _, arr.as_ptr().cast(), &mut nel, 4, cmp_i32)
+            fl_lfind(
+                &key as *const i32 as _,
+                arr.as_ptr().cast(),
+                &mut nel,
+                4,
+                cmp_i32,
+            )
         };
         // lfind returns the FIRST matching element — offset must match exactly.
         assert_eq!(
@@ -151,10 +177,22 @@ fn lsearch_matches_glibc_and_appends() {
         let mut gnel = n;
         let mut fnel = n;
         let gr = unsafe {
-            g::lsearch(&key as *const i32 as _, gv.as_mut_ptr().cast(), &mut gnel, 4, cmp_i32)
+            g::lsearch(
+                &key as *const i32 as _,
+                gv.as_mut_ptr().cast(),
+                &mut gnel,
+                4,
+                cmp_i32,
+            )
         };
         let fr = unsafe {
-            fl_lsearch(&key as *const i32 as _, fv.as_mut_ptr().cast(), &mut fnel, 4, cmp_i32)
+            fl_lsearch(
+                &key as *const i32 as _,
+                fv.as_mut_ptr().cast(),
+                &mut fnel,
+                4,
+                cmp_i32,
+            )
         };
         // Resulting count, returned offset, and the live portion of the array
         // must all agree with glibc.
@@ -173,7 +211,11 @@ fn lsearch_matches_glibc_and_appends() {
         } else {
             assert_eq!(fnel, n + 1, "lsearch must append when absent");
         }
-        assert_eq!(unsafe { *(fr as *const i32) }, key, "lsearch returns the key element");
+        assert_eq!(
+            unsafe { *(fr as *const i32) },
+            key,
+            "lsearch returns the key element"
+        );
         assert!(fv[..fnel].contains(&key), "lsearch: key present after call");
     }
 }
@@ -184,19 +226,41 @@ fn edge_cases() {
     let key: i32 = 7;
     let arr: Vec<i32> = vec![];
     let mut nel0 = 0usize;
-    assert!(unsafe {
-        fl_bsearch(&key as *const i32 as _, arr.as_ptr().cast(), 0, 4, Some(cmp_i32))
-    }
-    .is_null());
-    assert!(unsafe {
-        fl_lfind(&key as *const i32 as _, arr.as_ptr().cast(), &mut nel0, 4, cmp_i32)
-    }
-    .is_null());
+    assert!(
+        unsafe {
+            fl_bsearch(
+                &key as *const i32 as _,
+                arr.as_ptr().cast(),
+                0,
+                4,
+                Some(cmp_i32),
+            )
+        }
+        .is_null()
+    );
+    assert!(
+        unsafe {
+            fl_lfind(
+                &key as *const i32 as _,
+                arr.as_ptr().cast(),
+                &mut nel0,
+                4,
+                cmp_i32,
+            )
+        }
+        .is_null()
+    );
     // lsearch into an empty (capacity-1) buffer appends.
     let mut buf = vec![0i32; 1];
     let mut nel = 0usize;
     let r = unsafe {
-        fl_lsearch(&key as *const i32 as _, buf.as_mut_ptr().cast(), &mut nel, 4, cmp_i32)
+        fl_lsearch(
+            &key as *const i32 as _,
+            buf.as_mut_ptr().cast(),
+            &mut nel,
+            4,
+            cmp_i32,
+        )
     };
     assert_eq!(nel, 1, "lsearch empty -> append");
     assert_eq!(unsafe { *(r as *const i32) }, key);
@@ -204,12 +268,28 @@ fn edge_cases() {
     let one = [42i32];
     let hit: i32 = 42;
     let miss: i32 = 7;
-    assert!(!unsafe {
-        fl_bsearch(&hit as *const i32 as _, one.as_ptr().cast(), 1, 4, Some(cmp_i32))
-    }
-    .is_null());
-    assert!(unsafe {
-        fl_bsearch(&miss as *const i32 as _, one.as_ptr().cast(), 1, 4, Some(cmp_i32))
-    }
-    .is_null());
+    assert!(
+        !unsafe {
+            fl_bsearch(
+                &hit as *const i32 as _,
+                one.as_ptr().cast(),
+                1,
+                4,
+                Some(cmp_i32),
+            )
+        }
+        .is_null()
+    );
+    assert!(
+        unsafe {
+            fl_bsearch(
+                &miss as *const i32 as _,
+                one.as_ptr().cast(),
+                1,
+                4,
+                Some(cmp_i32),
+            )
+        }
+        .is_null()
+    );
 }

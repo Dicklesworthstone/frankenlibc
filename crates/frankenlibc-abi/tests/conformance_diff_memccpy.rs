@@ -28,15 +28,15 @@ fn off(ret: *mut c_void, base: *const u8) -> isize {
 fn memccpy_matches_glibc() {
     // (src bytes, stop byte, n)
     let cases: &[(&[u8], u8, usize)] = &[
-        (b"hello", b'l', 10),  // stop at first 'l' (idx 2) -> copy 3, ret 3
-        (b"hello", b'h', 10),  // stop at idx 0 -> copy 1, ret 1
-        (b"hello", b'o', 10),  // stop at last -> copy 5, ret 5
-        (b"hello", b'z', 5),   // not found -> copy all 5, ret NULL
-        (b"hello", b'o', 3),   // 'o' not in first 3 -> copy 3, ret NULL
-        (b"hello", b'l', 4),   // 'l' at idx 2 within n=4 -> copy 3, ret 3
-        (b"", b'x', 0),        // n=0 -> NULL, nothing copied
-        (b"aaaa", b'a', 4),    // first byte matches -> copy 1, ret 1
-        (b"\x00bc", 0, 4),     // stop byte is NUL at idx 0 -> copy 1, ret 1
+        (b"hello", b'l', 10), // stop at first 'l' (idx 2) -> copy 3, ret 3
+        (b"hello", b'h', 10), // stop at idx 0 -> copy 1, ret 1
+        (b"hello", b'o', 10), // stop at last -> copy 5, ret 5
+        (b"hello", b'z', 5),  // not found -> copy all 5, ret NULL
+        (b"hello", b'o', 3),  // 'o' not in first 3 -> copy 3, ret NULL
+        (b"hello", b'l', 4),  // 'l' at idx 2 within n=4 -> copy 3, ret 3
+        (b"", b'x', 0),       // n=0 -> NULL, nothing copied
+        (b"aaaa", b'a', 4),   // first byte matches -> copy 1, ret 1
+        (b"\x00bc", 0, 4),    // stop byte is NUL at idx 0 -> copy 1, ret 1
     ];
     for &(src, c, n) in cases {
         let mut gd = [FILL; 16];
@@ -45,7 +45,14 @@ fn memccpy_matches_glibc() {
         let mut sbuf = [FILL; 16];
         sbuf[..src.len()].copy_from_slice(src);
 
-        let rg = unsafe { memccpy(gd.as_mut_ptr() as *mut c_void, sbuf.as_ptr() as *const c_void, c as c_int, n) };
+        let rg = unsafe {
+            memccpy(
+                gd.as_mut_ptr() as *mut c_void,
+                sbuf.as_ptr() as *const c_void,
+                c as c_int,
+                n,
+            )
+        };
         let rf = unsafe {
             frankenlibc_abi::string_abi::memccpy(
                 fd.as_mut_ptr() as *mut c_void,

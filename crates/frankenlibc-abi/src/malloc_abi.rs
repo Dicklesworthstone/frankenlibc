@@ -1899,7 +1899,9 @@ impl FlatCombiningStats {
             s.free_events = s.free_events.saturating_add(delta.free_events);
             s.total_allocated = s.total_allocated.saturating_add(delta.total_allocated);
             s.total_freed = s.total_freed.saturating_add(delta.total_freed);
-            s.active_allocations = s.active_allocations.saturating_add(delta.active_allocations);
+            s.active_allocations = s
+                .active_allocations
+                .saturating_add(delta.active_allocations);
             s.live_bytes = s.live_bytes.saturating_add(delta.live_bytes);
             s.peak_usage = s.peak_usage.max(s.live_bytes).max(delta.peak_usage);
             for i in 0..MALLOC_STATS_BIN_COUNT {
@@ -2061,7 +2063,12 @@ fn record_stats(slot: Option<&AllocatorReentrySlot>, op: usize, size: usize) {
         if !MULTI_THREADED.load(Ordering::Relaxed) {
             // SAFETY: guard held (caller passed its guard slot) + single-threaded => exclusive.
             unsafe {
-                FlatCombiningStats::apply_locked(&mut (*slot.segment_local.get()).stats, op, size, bin);
+                FlatCombiningStats::apply_locked(
+                    &mut (*slot.segment_local.get()).stats,
+                    op,
+                    size,
+                    bin,
+                );
             }
             return;
         }

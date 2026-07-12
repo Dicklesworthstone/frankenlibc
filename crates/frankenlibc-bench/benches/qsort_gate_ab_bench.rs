@@ -12,7 +12,7 @@
 use std::ffi::c_void;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 
 const W: usize = 8;
 
@@ -53,7 +53,9 @@ unsafe extern "C" fn cmp_c(a: *const c_void, b: *const c_void) -> i32 {
 fn make(n: usize) -> Vec<u8> {
     let mut s: u64 = 0x1234_5678_9ABC_DEF0;
     let mut next = || {
-        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        s = s
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         s
     };
     (0..n * W).map(|_| (next() >> 24) as u8).collect()
@@ -69,8 +71,12 @@ fn bench(c: &mut Criterion) {
             let mut v = data.clone();
             let attempted =
                 frankenlibc_core::stdlib::sort::__bench_integer_radix_attempt(&mut v, W, &cmp_rs);
-            let gate = frankenlibc_core::stdlib::sort::__bench_integer_order_gate(&data, W, &cmp_rs);
-            assert!(!attempted, "radix lane unexpectedly committed (data is non-integer)");
+            let gate =
+                frankenlibc_core::stdlib::sort::__bench_integer_order_gate(&data, W, &cmp_rs);
+            assert!(
+                !attempted,
+                "radix lane unexpectedly committed (data is non-integer)"
+            );
             assert!(!gate, "gate should skip a non-integer comparator");
         }
 
@@ -79,9 +85,11 @@ fn bench(c: &mut Criterion) {
             b.iter_batched(
                 || data.clone(),
                 |mut v| {
-                    black_box(frankenlibc_core::stdlib::sort::__bench_integer_radix_attempt(
-                        &mut v, W, &cmp_rs,
-                    ))
+                    black_box(
+                        frankenlibc_core::stdlib::sort::__bench_integer_radix_attempt(
+                            &mut v, W, &cmp_rs,
+                        ),
+                    )
                 },
                 BatchSize::LargeInput,
             )

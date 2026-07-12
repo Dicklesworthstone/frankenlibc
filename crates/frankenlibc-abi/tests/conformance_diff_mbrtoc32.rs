@@ -9,7 +9,7 @@
 //! invalid lead bytes, the embedded NUL, and n==0. Asserts the (return value,
 //! *pc32) pair matches glibc byte-for-byte. Requires a UTF-8 locale. No mocks.
 
-use std::ffi::{c_char, c_void, CString};
+use std::ffi::{CString, c_char, c_void};
 
 unsafe extern "C" {
     fn mbrtoc32(pc32: *mut u32, s: *const c_char, n: usize, ps: *mut c_void) -> usize;
@@ -53,17 +53,17 @@ fn mbrtoc32_matches_glibc() {
     unsafe { setlocale(LC_ALL, utf8.as_ptr()) };
 
     let cases: &[(&[u8], usize)] = &[
-        (b"A", 1),                       // ASCII
-        (b"\x00", 1),                    // embedded NUL -> 0
-        ("é".as_bytes(), 2),             // U+00E9, 2-byte
-        ("€".as_bytes(), 3),             // U+20AC, 3-byte
-        ("😀".as_bytes(), 4),            // U+1F600, 4-byte (above BMP)
-        ("😀".as_bytes(), 2),            // incomplete 4-byte (only 2 of 4 bytes) -> (size_t)-2
-        (&[0xFF], 1),                    // invalid lead byte -> (size_t)-1
-        (&[0xC3], 1),                    // incomplete 2-byte -> (size_t)-2
-        (&[0xE2, 0x82], 2),              // incomplete 3-byte -> (size_t)-2
-        (b"A", 0),                       // n==0 -> (size_t)-2
-        (&[0x80], 1),                    // stray continuation byte -> (size_t)-1
+        (b"A", 1),            // ASCII
+        (b"\x00", 1),         // embedded NUL -> 0
+        ("é".as_bytes(), 2),  // U+00E9, 2-byte
+        ("€".as_bytes(), 3),  // U+20AC, 3-byte
+        ("😀".as_bytes(), 4), // U+1F600, 4-byte (above BMP)
+        ("😀".as_bytes(), 2), // incomplete 4-byte (only 2 of 4 bytes) -> (size_t)-2
+        (&[0xFF], 1),         // invalid lead byte -> (size_t)-1
+        (&[0xC3], 1),         // incomplete 2-byte -> (size_t)-2
+        (&[0xE2, 0x82], 2),   // incomplete 3-byte -> (size_t)-2
+        (b"A", 0),            // n==0 -> (size_t)-2
+        (&[0x80], 1),         // stray continuation byte -> (size_t)-1
     ];
 
     for &(bytes, n) in cases {
@@ -73,9 +73,17 @@ fn mbrtoc32_matches_glibc() {
         // *pc32 untouched; only compare the code point when a character was
         // actually produced (ret is the byte count 0..=4; errors are huge).
         let produced = g.0 <= 4;
-        assert_eq!(f.0, g.0, "mbrtoc32({bytes:02x?}, {n}) ret: fl={} glibc={}", f.0 as isize, g.0 as isize);
+        assert_eq!(
+            f.0, g.0,
+            "mbrtoc32({bytes:02x?}, {n}) ret: fl={} glibc={}",
+            f.0 as isize, g.0 as isize
+        );
         if produced {
-            assert_eq!(f.1, g.1, "mbrtoc32({bytes:02x?}, {n}) *pc32: fl={:#x} glibc={:#x}", f.1, g.1);
+            assert_eq!(
+                f.1, g.1,
+                "mbrtoc32({bytes:02x?}, {n}) *pc32: fl={:#x} glibc={:#x}",
+                f.1, g.1
+            );
         }
     }
 }

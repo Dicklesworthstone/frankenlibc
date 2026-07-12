@@ -13,7 +13,7 @@ use std::ffi::{c_char, c_void};
 use std::hint::black_box;
 use std::sync::OnceLock;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 type InetAddrFn = unsafe extern "C" fn(*const c_char) -> u32;
 

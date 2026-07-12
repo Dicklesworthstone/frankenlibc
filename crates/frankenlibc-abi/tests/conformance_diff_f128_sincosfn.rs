@@ -13,8 +13,20 @@ unsafe extern "C" {
 
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
-        0.0, -0.0f128, 0.5, 1.0, 2.0, 3.0, 10.0, 100.0, 1e6f128, 1e30f128,
-        1e300f128, 1e4000f128, 0.1484375f128, 1e-20f128,
+        0.0,
+        -0.0f128,
+        0.5,
+        1.0,
+        2.0,
+        3.0,
+        10.0,
+        100.0,
+        1e6f128,
+        1e30f128,
+        1e300f128,
+        1e4000f128,
+        0.1484375f128,
+        1e-20f128,
         f128::from_bits(1),
         f128::from_bits(0x7fff_u128 << 112),
         f128::from_bits(0xffff_u128 << 112),
@@ -27,9 +39,13 @@ fn values() -> Vec<f128> {
     }
     let mut st: u64 = 0x53_43_66_6e_31_32_38_ff;
     for _ in 0..4000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (hi % 0x7fff) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -52,9 +68,18 @@ fn f128_sincos_fn_matches_glibc() {
         if gs.to_bits() != fs.to_bits() || gc.to_bits() != fc.to_bits() {
             mism.push(format!(
                 "sincos({:#034x}): glibc=({:#034x},{:#034x}) fl=({:#034x},{:#034x})",
-                x.to_bits(), gs.to_bits(), gc.to_bits(), fs.to_bits(), fc.to_bits()
+                x.to_bits(),
+                gs.to_bits(),
+                gc.to_bits(),
+                fs.to_bits(),
+                fc.to_bits()
             ));
         }
     }
-    assert!(mism.is_empty(), "sincosf128 diverged ({}):\n{}", mism.len(), mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "sincosf128 diverged ({}):\n{}",
+        mism.len(),
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

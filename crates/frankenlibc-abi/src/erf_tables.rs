@@ -1,7 +1,11 @@
 //! Generated verbatim from glibc sysdeps/ieee754/ldbl-128/s_erfl.c —
 //! the erf/erfc rational-approximation coefficient tables (bd-9z5ikz).
 //! DO NOT hand-edit; values are correctly-rounded f128.
-#![allow(clippy::excessive_precision, clippy::approx_constant, clippy::unreadable_literal)]
+#![allow(
+    clippy::excessive_precision,
+    clippy::approx_constant,
+    clippy::unreadable_literal
+)]
 
 #[rustfmt::skip]
 pub static TN1: [f128; 9] = [
@@ -485,4 +489,3 @@ pub static RDr8: [f128; 9] = [
     9.394035530179705051609070428036834496942E2f128,
     6.147019596150394577984175188032707343615E1f128,
 ];
-

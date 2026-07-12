@@ -70,10 +70,17 @@ fn sequence(fl_impl: bool) -> (c_int, c_int) {
 fn feholdexcept_feupdateenv_match_glibc() {
     let g_res = sequence(false);
     let fl_res = sequence(true);
-    assert_eq!(fl_res, g_res, "hold/update flag outcome: fl={fl_res:?} glibc={g_res:?}");
+    assert_eq!(
+        fl_res, g_res,
+        "hold/update flag outcome: fl={fl_res:?} glibc={g_res:?}"
+    );
     // Sanity: feholdexcept clears, feupdateenv re-raises INVALID|OVERFLOW.
     assert_eq!(g_res.0, 0, "feholdexcept must clear raised flags");
-    assert_eq!(g_res.1, FE_INVALID | FE_OVERFLOW, "feupdateenv must restore+re-raise");
+    assert_eq!(
+        g_res.1,
+        FE_INVALID | FE_OVERFLOW,
+        "feupdateenv must restore+re-raise"
+    );
     // restore a clean fenv for sibling tests
     unsafe { g::feclearexcept(FE_ALL) };
 }

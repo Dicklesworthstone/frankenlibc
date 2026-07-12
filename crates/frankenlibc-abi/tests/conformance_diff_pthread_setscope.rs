@@ -41,7 +41,15 @@ fn fl_setscope(scope: c_int) -> c_int {
 
 #[test]
 fn pthread_attr_setscope_matches_glibc() {
-    for scope in [PTHREAD_SCOPE_SYSTEM, PTHREAD_SCOPE_PROCESS, 2, 3, -1, 99, c_int::MAX] {
+    for scope in [
+        PTHREAD_SCOPE_SYSTEM,
+        PTHREAD_SCOPE_PROCESS,
+        2,
+        3,
+        -1,
+        99,
+        c_int::MAX,
+    ] {
         let g = glibc_setscope(scope);
         let f = fl_setscope(scope);
         assert_eq!(f, g, "pthread_attr_setscope({scope}): fl={f} glibc={g}");

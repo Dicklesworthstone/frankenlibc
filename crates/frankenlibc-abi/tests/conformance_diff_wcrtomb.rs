@@ -154,23 +154,31 @@ fn fl_wcrtomb_high_codepoints_match_glibc() {
             0x10_FFFFu32, // last Unicode scalar
             0x11_0000,    // first non-Unicode (still encoded, RFC 2279)
             0x12_3456,
-            0x1F_FFFF,    // last 4-byte
-            0x20_0000,    // first 5-byte
-            0x3FF_FFFF,   // last 5-byte
-            0x400_0000,   // first 6-byte
-            0x7FFF_FFFF,  // last encodable
-            0x8000_0000,  // first rejected
-            0xFFFF_FFFF,  // rejected
-            0xD800,       // surrogate, rejected
-            0xDFFF,       // surrogate, rejected
+            0x1F_FFFF,   // last 4-byte
+            0x20_0000,   // first 5-byte
+            0x3FF_FFFF,  // last 5-byte
+            0x400_0000,  // first 6-byte
+            0x7FFF_FFFF, // last encodable
+            0x8000_0000, // first rejected
+            0xFFFF_FFFF, // rejected
+            0xD800,      // surrogate, rejected
+            0xDFFF,      // surrogate, rejected
         ] {
             let mut fl_buf = [0u8; 8];
             let mut gl_buf = [0u8; 8];
             let fl_n = unsafe {
-                fl::wcrtomb(fl_buf.as_mut_ptr() as *mut c_char, wc as i32, std::ptr::null_mut())
+                fl::wcrtomb(
+                    fl_buf.as_mut_ptr() as *mut c_char,
+                    wc as i32,
+                    std::ptr::null_mut(),
+                )
             };
             let gl_n = unsafe {
-                wcrtomb(gl_buf.as_mut_ptr() as *mut c_char, wc as libc::wchar_t, std::ptr::null_mut())
+                wcrtomb(
+                    gl_buf.as_mut_ptr() as *mut c_char,
+                    wc as libc::wchar_t,
+                    std::ptr::null_mut(),
+                )
             };
             assert_eq!(
                 fl_n, gl_n,

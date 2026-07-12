@@ -15,8 +15,22 @@ unsafe extern "C" {
 
 fn parts() -> Vec<f128> {
     let mut v = vec![
-        0.0, -0.0f128, 1.0, -1.0, 0.5, -0.5, 2.0, 3.0, 10.0, 100.0, 5677.0,
-        5678.0, 12000.0, -2.0, 0.7853981633974483096f128, 1e-20f128,
+        0.0,
+        -0.0f128,
+        1.0,
+        -1.0,
+        0.5,
+        -0.5,
+        2.0,
+        3.0,
+        10.0,
+        100.0,
+        5677.0,
+        5678.0,
+        12000.0,
+        -2.0,
+        0.7853981633974483096f128,
+        1e-20f128,
         f128::from_bits(1),
         f128::from_bits(0x7fff_u128 << 112),
         f128::from_bits(0xffff_u128 << 112),
@@ -24,9 +38,13 @@ fn parts() -> Vec<f128> {
     ];
     let mut st: u64 = 0x63_74_61_6e_31_32_38_dd;
     for _ in 0..40 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3ff0 + (hi % 0x0030)) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -41,7 +59,11 @@ fn f128_ctan_matches_glibc() {
     let p = parts();
     let mut mism = Vec::new();
     for (name, g, f) in [
-        ("ctan", ctanf128 as unsafe extern "C" fn(C) -> C, ma::ctanf128 as unsafe extern "C" fn(C) -> C),
+        (
+            "ctan",
+            ctanf128 as unsafe extern "C" fn(C) -> C,
+            ma::ctanf128 as unsafe extern "C" fn(C) -> C,
+        ),
         ("ctanh", ctanhf128, ma::ctanhf128),
     ] {
         for &re in &p {
@@ -58,5 +80,10 @@ fn f128_ctan_matches_glibc() {
             }
         }
     }
-    assert!(mism.is_empty(), "ctan/ctanh diverged ({}):\n{}", mism.len(), mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "ctan/ctanh diverged ({}):\n{}",
+        mism.len(),
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

@@ -65,12 +65,19 @@ fn g_raw(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Raw {
     let r = (g.conv)(cd, &mut ip, &mut il, &mut op, &mut ol);
     (g.close)(cd);
     let written = out.len() - ol;
-    Raw { errored: r == INVALID, in_left: il, out: out[..written].to_vec() }
+    Raw {
+        errored: r == INVALID,
+        in_left: il,
+        out: out[..written].to_vec(),
+    }
 }
 fn f_raw(to: &str, from: &str, input: &[u8]) -> Raw {
     let (ct, cf) = (CString::new(to).unwrap(), CString::new(from).unwrap());
     let cd = unsafe { fl::iconv_open(ct.as_ptr(), cf.as_ptr()) };
-    assert!(cd as usize != INVALID && !cd.is_null(), "fl rejects {from}->{to}");
+    assert!(
+        cd as usize != INVALID && !cd.is_null(),
+        "fl rejects {from}->{to}"
+    );
     let mut inb = input.to_vec();
     let mut out = vec![0u8; 4096];
     let mut ip = inb.as_mut_ptr() as *mut c_char;
@@ -80,7 +87,11 @@ fn f_raw(to: &str, from: &str, input: &[u8]) -> Raw {
     let r = unsafe { fl::iconv(cd, &mut ip, &mut il, &mut op, &mut ol) };
     unsafe { fl::iconv_close(cd) };
     let written = out.len() - ol;
-    Raw { errored: r == INVALID, in_left: il, out: out[..written].to_vec() }
+    Raw {
+        errored: r == INVALID,
+        in_left: il,
+        out: out[..written].to_vec(),
+    }
 }
 fn g_full(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
     let (ct, cf) = (CString::new(to).unwrap(), CString::new(from).unwrap());
@@ -99,7 +110,13 @@ fn g_full(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
         (g.close)(cd);
         return None;
     }
-    let r2 = (g.conv)(cd, std::ptr::null_mut(), std::ptr::null_mut(), &mut op, &mut ol);
+    let r2 = (g.conv)(
+        cd,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        &mut op,
+        &mut ol,
+    );
     (g.close)(cd);
     if r2 == INVALID {
         return None;
@@ -123,7 +140,15 @@ fn f_full(to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
         unsafe { fl::iconv_close(cd) };
         return None;
     }
-    let r2 = unsafe { fl::iconv(cd, std::ptr::null_mut(), std::ptr::null_mut(), &mut op, &mut ol) };
+    let r2 = unsafe {
+        fl::iconv(
+            cd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut op,
+            &mut ol,
+        )
+    };
     unsafe { fl::iconv_close(cd) };
     if r2 == INVALID {
         return None;
@@ -171,7 +196,9 @@ fn tscii_decode_all_bytes_and_streams() {
     special.extend([0x30, 0x41, 0x20, 0x0a]); // ascii
     let mut state: u64 = 0x7343_4949_0001;
     let mut next = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (state >> 33) as usize
     };
     for _ in 0..50_000 {
@@ -191,7 +218,12 @@ fn tscii_decode_all_bytes_and_streams() {
             mism.push(format!("{inp:02x?}: glibc={gr:02x?} fl={fr:02x?}"));
         }
     }
-    assert!(mism.is_empty(), "TSCII decode diverged ({}):\n{}", mism.len(), mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "TSCII decode diverged ({}):\n{}",
+        mism.len(),
+        mism.join("\n")
+    );
 }
 
 #[test]
@@ -207,7 +239,9 @@ fn tscii_encode_roundtrip_and_munch() {
             let ge = g_full(&g, "TSCII", "UTF-8", &u8s);
             let fe = f_full("TSCII", "UTF-8", &u8s);
             if ge != fe && mism.len() < 40 {
-                mism.push(format!("reencode byte {b:02x} (u8={u8s:02x?}): glibc={ge:02x?} fl={fe:02x?}"));
+                mism.push(format!(
+                    "reencode byte {b:02x} (u8={u8s:02x?}): glibc={ge:02x?} fl={fe:02x?}"
+                ));
             }
         }
     }
@@ -218,7 +252,9 @@ fn tscii_encode_roundtrip_and_munch() {
         .collect();
     let mut state: u64 = 0x7343_4949_4f55;
     let mut next = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (state >> 33) as usize
     };
     for _ in 0..20_000 {
@@ -234,8 +270,15 @@ fn tscii_encode_roundtrip_and_munch() {
         let ge = g_full(&g, "TSCII", "UTF-8", u);
         let fe = f_full("TSCII", "UTF-8", u);
         if ge != fe && mism.len() < 60 {
-            mism.push(format!("encode {s:?} ({u:02x?}): glibc={ge:02x?} fl={fe:02x?}"));
+            mism.push(format!(
+                "encode {s:?} ({u:02x?}): glibc={ge:02x?} fl={fe:02x?}"
+            ));
         }
     }
-    assert!(mism.is_empty(), "TSCII encode diverged ({}):\n{}", mism.len(), mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "TSCII encode diverged ({}):\n{}",
+        mism.len(),
+        mism.join("\n")
+    );
 }

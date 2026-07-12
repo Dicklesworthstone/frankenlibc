@@ -14,7 +14,7 @@ use std::ffi::c_int;
 use std::hint::black_box;
 use std::sync::OnceLock;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use frankenlibc_abi::wchar_abi::{
     bench_scan_wcscmp_simd, wcscat, wcscmp, wcscpy, wcsncat, wcsncpy, wcsspn, wmemchr, wmemset,
@@ -47,8 +47,9 @@ fn host_sym(name: &[u8]) -> usize {
 /// `n` where the fixed membrane tax dominates if still present.
 fn bench_wmemchr(c: &mut Criterion) {
     static G: OnceLock<usize> = OnceLock::new();
-    let glibc: WmemchrFn =
-        unsafe { std::mem::transmute::<usize, WmemchrFn>(*G.get_or_init(|| host_sym(b"wmemchr\0"))) };
+    let glibc: WmemchrFn = unsafe {
+        std::mem::transmute::<usize, WmemchrFn>(*G.get_or_init(|| host_sym(b"wmemchr\0")))
+    };
     for &n in &[8usize, 64] {
         // miss case: needle not present -> full scan of n
         let buf = vec![b'a' as u32; n];
@@ -160,7 +161,9 @@ fn bench(c: &mut Criterion) {
         });
         grp.bench_function("fl_core_fastpath", |bb| {
             bb.iter(|| {
-                black_box(unsafe { bench_scan_wcscmp_simd(black_box(pa), black_box(pb), usize::MAX) })
+                black_box(unsafe {
+                    bench_scan_wcscmp_simd(black_box(pa), black_box(pb), usize::MAX)
+                })
             })
         });
         grp.bench_function("host_glibc", |bb| {
@@ -174,8 +177,9 @@ fn bench(c: &mut Criterion) {
 /// the fixed membrane tax dominates if still present.
 fn bench_wmemset(c: &mut Criterion) {
     static G: OnceLock<usize> = OnceLock::new();
-    let glibc: WmemsetFn =
-        unsafe { std::mem::transmute::<usize, WmemsetFn>(*G.get_or_init(|| host_sym(b"wmemset\0"))) };
+    let glibc: WmemsetFn = unsafe {
+        std::mem::transmute::<usize, WmemsetFn>(*G.get_or_init(|| host_sym(b"wmemset\0")))
+    };
     for &n in &[4usize, 32] {
         let mut a = vec![0u32; n];
         let mut b = vec![0u32; n];
@@ -233,8 +237,9 @@ fn bench_builders(c: &mut Criterion) {
     static GCAT: OnceLock<usize> = OnceLock::new();
     static GNCPY: OnceLock<usize> = OnceLock::new();
     static GNCAT: OnceLock<usize> = OnceLock::new();
-    let g_cat: WcscatFn =
-        unsafe { std::mem::transmute::<usize, WcscatFn>(*GCAT.get_or_init(|| host_sym(b"wcscat\0"))) };
+    let g_cat: WcscatFn = unsafe {
+        std::mem::transmute::<usize, WcscatFn>(*GCAT.get_or_init(|| host_sym(b"wcscat\0")))
+    };
     let g_ncpy: WcsncpyFn = unsafe {
         std::mem::transmute::<usize, WcsncpyFn>(*GNCPY.get_or_init(|| host_sym(b"wcsncpy\0")))
     };

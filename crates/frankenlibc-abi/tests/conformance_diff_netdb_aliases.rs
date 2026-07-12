@@ -72,14 +72,24 @@ fn snap_serv(p: *const Servent) -> Option<Snap> {
         return None;
     }
     let s = unsafe { &*p };
-    Some((cstr(s.s_name), s.s_port, cstr(s.s_proto), alias_vec(s.s_aliases)))
+    Some((
+        cstr(s.s_name),
+        s.s_port,
+        cstr(s.s_proto),
+        alias_vec(s.s_aliases),
+    ))
 }
 fn snap_proto(p: *const Protoent) -> Option<Snap> {
     if p.is_null() {
         return None;
     }
     let s = unsafe { &*p };
-    Some((cstr(s.p_name), s.p_proto, Vec::new(), alias_vec(s.p_aliases)))
+    Some((
+        cstr(s.p_name),
+        s.p_proto,
+        Vec::new(),
+        alias_vec(s.p_aliases),
+    ))
 }
 
 #[test]
@@ -135,19 +145,19 @@ fn getservby_and_getprotoby_match_glibc() {
         let cp = CString::new(proto.clone()).unwrap();
         // by name + proto
         let g = snap_serv(g_sbyname(cn.as_ptr(), cp.as_ptr()));
-        let f = snap_serv(unsafe {
-            fl::getservbyname(cn.as_ptr(), cp.as_ptr()).cast::<Servent>()
-        });
+        let f = snap_serv(unsafe { fl::getservbyname(cn.as_ptr(), cp.as_ptr()).cast::<Servent>() });
         if g != f {
-            mismatches.push(format!("getservbyname({name:?},{proto:?}): glibc={g:?} fl={f:?}"));
+            mismatches.push(format!(
+                "getservbyname({name:?},{proto:?}): glibc={g:?} fl={f:?}"
+            ));
         }
         // by port + proto
         let g = snap_serv(g_sbyport(*port_nbo, cp.as_ptr()));
-        let f = snap_serv(unsafe {
-            fl::getservbyport(*port_nbo, cp.as_ptr()).cast::<Servent>()
-        });
+        let f = snap_serv(unsafe { fl::getservbyport(*port_nbo, cp.as_ptr()).cast::<Servent>() });
         if g != f {
-            mismatches.push(format!("getservbyport({port_nbo},{proto:?}): glibc={g:?} fl={f:?}"));
+            mismatches.push(format!(
+                "getservbyport({port_nbo},{proto:?}): glibc={g:?} fl={f:?}"
+            ));
         }
     }
 

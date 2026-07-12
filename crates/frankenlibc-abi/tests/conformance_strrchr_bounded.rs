@@ -64,9 +64,9 @@ fn bounded_last_byte_matches_scalar_reference() {
                 // Bias toward 'a' with occasional NULs and targets, like real C strings.
                 let r = next(&mut state);
                 *b = match r % 16 {
-                    0 => 0u8,        // NUL
-                    1 => b'Z',       // a common target
-                    2 => 0xFFu8,     // high byte
+                    0 => 0u8,    // NUL
+                    1 => b'Z',   // a common target
+                    2 => 0xFFu8, // high byte
                     _ => b'a' + (r % 5) as u8,
                 };
             }

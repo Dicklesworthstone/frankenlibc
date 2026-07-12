@@ -72,7 +72,11 @@ fn mempcpy_matches_glibc() {
         );
         assert_eq!(fd, gd, "mempcpy content n={n}");
         // METAMORPHIC: returns dst+n; copied prefix == src; tail untouched.
-        assert_eq!(off(fr, fd.as_ptr().cast()), n as isize, "mempcpy must return dst+n");
+        assert_eq!(
+            off(fr, fd.as_ptr().cast()),
+            n as isize,
+            "mempcpy must return dst+n"
+        );
         assert_eq!(&fd[..n], &src[..], "mempcpy prefix");
         assert!(fd[n..].iter().all(|&b| b == FILL), "mempcpy tail untouched");
     }
@@ -107,7 +111,11 @@ fn memccpy_matches_glibc() {
         let found = src[..n].iter().position(|&b| b as c_int == c);
         match found {
             Some(i) => {
-                assert_eq!(off(fr, fd.as_ptr().cast()), (i + 1) as isize, "memccpy stop+1");
+                assert_eq!(
+                    off(fr, fd.as_ptr().cast()),
+                    (i + 1) as isize,
+                    "memccpy stop+1"
+                );
                 assert_eq!(&fd[..=i], &src[..=i], "memccpy copied through sentinel");
             }
             None => {
@@ -174,10 +182,7 @@ fn strlcat_matches_glibc() {
         let mut fd = mk_dst();
         let gr = unsafe { g::strlcat(gd.as_mut_ptr(), src.as_ptr(), size) };
         let fr = unsafe { fl::strlcat(fd.as_mut_ptr(), src.as_ptr(), size) };
-        assert_eq!(
-            fr, gr,
-            "strlcat return dlen={dlen} slen={slen} size={size}"
-        );
+        assert_eq!(fr, gr, "strlcat return dlen={dlen} slen={slen} size={size}");
         assert_eq!(
             fd, gd,
             "strlcat content dlen={dlen} slen={slen} size={size} init={init:?}"

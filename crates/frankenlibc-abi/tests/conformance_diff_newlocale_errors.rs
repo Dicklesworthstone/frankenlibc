@@ -8,7 +8,7 @@
 //! locale_t, which is then freed). newlocale builds a fresh locale object and
 //! does not touch the global locale, so this is side-effect-free. No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 
 unsafe extern "C" {
     fn newlocale(category_mask: c_int, locale: *const c_char, base: *mut c_void) -> *mut c_void;
@@ -50,7 +50,10 @@ fn newlocale_invalid_mask_matches_glibc() {
     let (gnull, ge) = glibc_new(bad_mask, &c);
     let (fnull, fe) = fl_new(bad_mask, &c);
     assert!(gnull, "glibc newlocale(invalid mask) should return NULL");
-    assert_eq!(fnull, gnull, "newlocale(invalid mask) NULL-ness: fl={fnull} glibc={gnull}");
+    assert_eq!(
+        fnull, gnull,
+        "newlocale(invalid mask) NULL-ness: fl={fnull} glibc={gnull}"
+    );
     assert_eq!(fe, ge, "newlocale(invalid mask) errno: fl={fe} glibc={ge}");
 }
 
@@ -59,8 +62,14 @@ fn newlocale_unsupported_locale_matches_glibc() {
     let bogus = CString::new("fl_no_such_locale_zzqq.UTF-8").unwrap();
     let (gnull, ge) = glibc_new(libc::LC_ALL_MASK, &bogus);
     let (fnull, fe) = fl_new(libc::LC_ALL_MASK, &bogus);
-    assert!(gnull, "glibc newlocale(LC_ALL_MASK, bogus) should return NULL");
-    assert_eq!(fnull, gnull, "newlocale(bogus) NULL-ness: fl={fnull} glibc={gnull}");
+    assert!(
+        gnull,
+        "glibc newlocale(LC_ALL_MASK, bogus) should return NULL"
+    );
+    assert_eq!(
+        fnull, gnull,
+        "newlocale(bogus) NULL-ness: fl={fnull} glibc={gnull}"
+    );
     assert_eq!(fe, ge, "newlocale(bogus) errno: fl={fe} glibc={ge}");
 }
 

@@ -144,7 +144,9 @@ impl<K> RbTree<K> {
         };
         match cmp(&key, &h.key) {
             Ordering::Less => h.left = Self::insert_find_rec(h.left.take(), key, cmp, len, found),
-            Ordering::Greater => h.right = Self::insert_find_rec(h.right.take(), key, cmp, len, found),
+            Ordering::Greater => {
+                h.right = Self::insert_find_rec(h.right.take(), key, cmp, len, found)
+            }
             Ordering::Equal => {
                 // Key already present; retain existing and report its stable address.
                 *found = &h.key as *const K;

@@ -40,8 +40,8 @@ fn values() -> Vec<f128> {
         -1e-20f128,
         1e-40f128,
         f128::from_bits(1),
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     let mut q: i64 = -3000;
@@ -51,9 +51,13 @@ fn values() -> Vec<f128> {
     }
     let mut st: u64 = 0x7a7a_b3b3_c1c1_d0d0;
     for _ in 0..5000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3f80 + (hi % 0x0120)) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -68,7 +72,11 @@ fn f128_invhyp_matches_glibc() {
     let mut mism = Vec::new();
     for &x in &values() {
         for (name, g, f) in [
-            ("asinh", asinhf128 as unsafe extern "C" fn(f128) -> f128, ma::asinhf128 as unsafe extern "C" fn(f128) -> f128),
+            (
+                "asinh",
+                asinhf128 as unsafe extern "C" fn(f128) -> f128,
+                ma::asinhf128 as unsafe extern "C" fn(f128) -> f128,
+            ),
             ("acosh", acoshf128, ma::acoshf128),
             ("atanh", atanhf128, ma::atanhf128),
         ] {
@@ -79,7 +87,10 @@ fn f128_invhyp_matches_glibc() {
             let fv = unsafe { f(x) }.to_bits();
             let fe = unsafe { *el() };
             if gv != fv || ge != fe {
-                mism.push(format!("{name}({:#034x}): glibc=({gv:#034x},e={ge}) fl=({fv:#034x},e={fe})", x.to_bits()));
+                mism.push(format!(
+                    "{name}({:#034x}): glibc=({gv:#034x},e={ge}) fl=({fv:#034x},e={fe})",
+                    x.to_bits()
+                ));
             }
         }
     }

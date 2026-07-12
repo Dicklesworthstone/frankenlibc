@@ -8,7 +8,7 @@
 //! enumeration, a getutline(ut_line) search, and a getutid(ut_type) search vs
 //! glibc — by the resolved (ut_type, ut_pid, ut_line, ut_user) fields. No mocks.
 
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const USER_PROCESS: i16 = 7;
@@ -31,7 +31,10 @@ struct Utmp {
     ut_addr_v6: [i32; 4],
     __reserved: [u8; 20],
 }
-const _: () = assert!(std::mem::size_of::<Utmp>() == 384, "struct utmp must be 384 bytes on x86-64");
+const _: () = assert!(
+    std::mem::size_of::<Utmp>() == 384,
+    "struct utmp must be 384 bytes on x86-64"
+);
 
 mod g {
     use super::*;
@@ -79,16 +82,26 @@ fn write_utmp() -> (std::path::PathBuf, CString) {
     ];
     let mut bytes = Vec::new();
     for r in &recs {
-        let b = unsafe { std::slice::from_raw_parts(r as *const Utmp as *const u8, std::mem::size_of::<Utmp>()) };
+        let b = unsafe {
+            std::slice::from_raw_parts(r as *const Utmp as *const u8, std::mem::size_of::<Utmp>())
+        };
         bytes.extend_from_slice(b);
     }
     std::fs::write(&p, &bytes).unwrap();
-    (p.clone(), CString::new(p.to_string_lossy().as_bytes()).unwrap())
+    (
+        p.clone(),
+        CString::new(p.to_string_lossy().as_bytes()).unwrap(),
+    )
 }
 
 static CNT: AtomicU64 = AtomicU64::new(0);
 
-type Probe = (i32, Vec<(i16, i32, String, String)>, Option<(i16, i32, String, String)>, Option<(i16, i32, String, String)>);
+type Probe = (
+    i32,
+    Vec<(i16, i32, String, String)>,
+    Option<(i16, i32, String, String)>,
+    Option<(i16, i32, String, String)>,
+);
 
 fn glibc_probe(path: &CString) -> Probe {
     unsafe {
@@ -97,7 +110,9 @@ fn glibc_probe(path: &CString) -> Probe {
         g::setutent();
         loop {
             let e = g::getutent();
-            if e.is_null() { break; }
+            if e.is_null() {
+                break;
+            }
             all.push(fields(&*e));
         }
         // getutline by ut_line "tty2"
@@ -121,7 +136,9 @@ fn fl_probe(path: &CString) -> Probe {
         fl::setutent();
         loop {
             let e = fl::getutent() as *mut Utmp;
-            if e.is_null() { break; }
+            if e.is_null() {
+                break;
+            }
             all.push(fields(&*e));
         }
         fl::setutent();
@@ -144,8 +161,20 @@ fn utmp_accessors_match_glibc() {
     let fp = fl_probe(&c);
     let _ = std::fs::remove_file(&path);
     assert_eq!(fp.0, gp.0, "utmpname rc: fl={} glibc={}", fp.0, gp.0);
-    assert_eq!(fp.1, gp.1, "getutent enumeration: fl={:?} glibc={:?}", fp.1, gp.1);
-    assert_eq!(fp.2, gp.2, "getutline(tty2): fl={:?} glibc={:?}", fp.2, gp.2);
-    assert_eq!(fp.3, gp.3, "getutid(USER_PROCESS): fl={:?} glibc={:?}", fp.3, gp.3);
+    assert_eq!(
+        fp.1, gp.1,
+        "getutent enumeration: fl={:?} glibc={:?}",
+        fp.1, gp.1
+    );
+    assert_eq!(
+        fp.2, gp.2,
+        "getutline(tty2): fl={:?} glibc={:?}",
+        fp.2, gp.2
+    );
+    assert_eq!(
+        fp.3, gp.3,
+        "getutid(USER_PROCESS): fl={:?} glibc={:?}",
+        fp.3, gp.3
+    );
     assert_eq!(gp.1.len(), 3, "glibc should enumerate all 3 records");
 }

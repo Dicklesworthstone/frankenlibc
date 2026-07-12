@@ -13,7 +13,12 @@ use frankenlibc_abi::unistd_abi as u;
 
 #[test]
 fn getrlimit64_matches_getrlimit() {
-    for res in [libc::RLIMIT_NOFILE, libc::RLIMIT_STACK, libc::RLIMIT_NPROC, libc::RLIMIT_AS] {
+    for res in [
+        libc::RLIMIT_NOFILE,
+        libc::RLIMIT_STACK,
+        libc::RLIMIT_NPROC,
+        libc::RLIMIT_AS,
+    ] {
         let mut a: libc::rlimit = unsafe { std::mem::zeroed() };
         let mut b: libc::rlimit = unsafe { std::mem::zeroed() };
         let ra = unsafe { resource_abi::getrlimit(res as c_int, &mut a) };
@@ -31,9 +36,18 @@ fn statfs64_matches_statfs() {
     let path = c"/";
     let mut a: libc::statfs = unsafe { std::mem::zeroed() };
     let mut b: libc::statfs64 = unsafe { std::mem::zeroed() };
-    let ra = unsafe { u::statfs(path.as_ptr() as *const c_char, &mut a as *mut _ as *mut c_void) };
-    let rb =
-        unsafe { u::statfs64(path.as_ptr() as *const c_char, &mut b as *mut _ as *mut c_void) };
+    let ra = unsafe {
+        u::statfs(
+            path.as_ptr() as *const c_char,
+            &mut a as *mut _ as *mut c_void,
+        )
+    };
+    let rb = unsafe {
+        u::statfs64(
+            path.as_ptr() as *const c_char,
+            &mut b as *mut _ as *mut c_void,
+        )
+    };
     assert_eq!(ra, rb, "statfs/statfs64 rc differ");
     if ra == 0 {
         assert_eq!(a.f_type, b.f_type, "f_type differs");

@@ -47,8 +47,12 @@ fn snap(p: *const Sgrp) -> Option<(String, String, Vec<String>, Vec<String>)> {
     }
     let s = unsafe { &*p };
     Some((
-        unsafe { CStr::from_ptr(s.sg_namp) }.to_string_lossy().into_owned(),
-        unsafe { CStr::from_ptr(s.sg_passwd) }.to_string_lossy().into_owned(),
+        unsafe { CStr::from_ptr(s.sg_namp) }
+            .to_string_lossy()
+            .into_owned(),
+        unsafe { CStr::from_ptr(s.sg_passwd) }
+            .to_string_lossy()
+            .into_owned(),
         list(s.sg_adm),
         list(s.sg_mem),
     ))
@@ -64,15 +68,15 @@ fn sgetsgent_matches_glibc() {
 
     let lines: &[&CStr] = &[
         c"sudo:!:admin1,admin2:user1,user2",
-        c"dev:x:alice:a,b,",     // trailing comma in members
-        c"dev:x:a1,,a2:m",       // empty admin token
-        c"g:x:adm",              // 3 fields
-        c"g:x:a:b:c",            // 5 fields (colon absorb)
-        c"g:x",                  // 2 fields
-        c"root",                 // 1 field (name only)
-        c"g:x:a,b:c,d",          // normal
-        c"g:x::,m",              // empty admins, leading-comma member
-        c"root:*:::extra",       // colon-absorbed member ":extra"
+        c"dev:x:alice:a,b,", // trailing comma in members
+        c"dev:x:a1,,a2:m",   // empty admin token
+        c"g:x:adm",          // 3 fields
+        c"g:x:a:b:c",        // 5 fields (colon absorb)
+        c"g:x",              // 2 fields
+        c"root",             // 1 field (name only)
+        c"g:x:a,b:c,d",      // normal
+        c"g:x::,m",          // empty admins, leading-comma member
+        c"root:*:::extra",   // colon-absorbed member ":extra"
     ];
 
     let mut div = Vec::new();
@@ -80,8 +84,16 @@ fn sgetsgent_matches_glibc() {
         let fv = snap(unsafe { fl::sgetsgent(line.as_ptr()).cast::<Sgrp>() });
         let gv = snap(unsafe { g(line.as_ptr()) });
         if fv != gv {
-            div.push(format!("{:?}: fl={fv:?} glibc={gv:?}", line.to_str().unwrap()));
+            div.push(format!(
+                "{:?}: fl={fv:?} glibc={gv:?}",
+                line.to_str().unwrap()
+            ));
         }
     }
-    assert!(div.is_empty(), "sgetsgent divergences ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "sgetsgent divergences ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

@@ -10,7 +10,7 @@
 //! dir/shell) and a gecos with commas. Strings copied before static-buffer
 //! reuse. No mocks.
 
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod g {
@@ -43,7 +43,11 @@ struct Pw {
 }
 
 unsafe fn s(p: *const c_char) -> String {
-    if p.is_null() { String::new() } else { unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned() }
+    if p.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    }
 }
 
 unsafe fn rec(pw: &libc::passwd) -> Pw {
@@ -65,7 +69,9 @@ fn parse_fl(path: &CStr) -> Vec<Pw> {
         assert!(!f.is_null(), "fl fopen");
         loop {
             let p = flu::fgetpwent(f) as *mut libc::passwd;
-            if p.is_null() { break; }
+            if p.is_null() {
+                break;
+            }
             out.push(rec(&*p));
         }
         fls::fclose(f);
@@ -80,7 +86,9 @@ fn parse_glibc(path: &CStr) -> Vec<Pw> {
         assert!(!f.is_null(), "glibc fopen");
         loop {
             let p = g::fgetpwent(f);
-            if p.is_null() { break; }
+            if p.is_null() {
+                break;
+            }
             out.push(rec(&*p));
         }
         g::fclose(f);
@@ -100,7 +108,13 @@ fn fgetpwent_matches_glibc() {
     let g_entries = parse_glibc(&cpath);
     let _ = std::fs::remove_file(&p);
 
-    assert_eq!(fl_entries.len(), g_entries.len(), "entry count: fl={} glibc={}", fl_entries.len(), g_entries.len());
+    assert_eq!(
+        fl_entries.len(),
+        g_entries.len(),
+        "entry count: fl={} glibc={}",
+        fl_entries.len(),
+        g_entries.len()
+    );
     for (i, (f, gg)) in fl_entries.iter().zip(g_entries.iter()).enumerate() {
         assert_eq!(f, gg, "fgetpwent entry {i}: fl={f:?} glibc={gg:?}");
     }

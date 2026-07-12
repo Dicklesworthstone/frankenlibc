@@ -125,5 +125,8 @@ fn main() {
     report("LEVER decide fast-path (slow->fast)", &do_, &dc);
 
     let s = paired(stage, stage).0;
-    println!("  reference: resolver_stage_context+record median {:.1}ns", median(&s));
+    println!(
+        "  reference: resolver_stage_context+record median {:.1}ns",
+        median(&s)
+    );
 }

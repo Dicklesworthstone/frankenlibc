@@ -2,7 +2,7 @@
 // bails on the string order -> pdqsort) vs glibc (merge). BOTH use the same C-ABI
 // comparator (a byte-loop strcmp), so the comparator cost is identical and only the SORT
 // algorithm differs. The common "sort filenames/words/log-lines" workload. Output verified.
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -50,7 +50,8 @@ fn main() {
             .collect();
         let ptrs: Vec<*const u8> = strings.iter().map(|s| s.as_ptr().cast::<u8>()).collect();
 
-        let fl_cmp = |a: &[u8], b: &[u8]| unsafe { cmp_strptr(a.as_ptr().cast(), b.as_ptr().cast()) };
+        let fl_cmp =
+            |a: &[u8], b: &[u8]| unsafe { cmp_strptr(a.as_ptr().cast(), b.as_ptr().cast()) };
 
         // Correctness: fl and glibc produce the same pointer order.
         let mut vf = ptrs.clone();
@@ -60,7 +61,12 @@ fn main() {
         }
         let mut vg = ptrs.clone();
         gl_qsort(vg.as_mut_ptr().cast(), n, 8, cmp_strptr);
-        assert!(vf.iter().zip(&vg).all(|(a, b)| libc::strcmp(a.cast(), b.cast()) == 0), "strsort order");
+        assert!(
+            vf.iter()
+                .zip(&vg)
+                .all(|(a, b)| libc::strcmp(a.cast(), b.cast()) == 0),
+            "strsort order"
+        );
 
         let iters = 200usize;
         let t0 = Instant::now();
@@ -78,6 +84,9 @@ fn main() {
             black_box(v.as_ptr());
         }
         let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-        println!("STRSORT n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x", fl / gl);
+        println!(
+            "STRSORT n={n} fl={fl:.0}ns glibc={gl:.0}ns fl/glibc={:.3}x",
+            fl / gl
+        );
     }
 }

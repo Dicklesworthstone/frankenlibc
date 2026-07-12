@@ -31,15 +31,33 @@ fn getpayload_matches_glibc() {
         let g = unsafe { getpayloadf128(v) }.to_bits();
         let f = unsafe { ma::getpayloadf128(v) }.to_bits();
         if g != f {
-            mism.push(format!("getpayload({:#034x}): glibc={g:#034x} fl={f:#034x}", v.to_bits()));
+            mism.push(format!(
+                "getpayload({:#034x}): glibc={g:#034x} fl={f:#034x}",
+                v.to_bits()
+            ));
         }
     }
-    assert!(mism.is_empty(), "getpayloadf128 diverged:\n{}", mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "getpayloadf128 diverged:\n{}",
+        mism.join("\n")
+    );
 }
 
 #[test]
 fn nan_matches_glibc() {
-    let tags = ["", "0", "1", "123", "0x1f", "0xABCDEF", "0777", "abc", "12x", "999999999"];
+    let tags = [
+        "",
+        "0",
+        "1",
+        "123",
+        "0x1f",
+        "0xABCDEF",
+        "0777",
+        "abc",
+        "12x",
+        "999999999",
+    ];
     let mut mism = Vec::new();
     for t in tags {
         let c = CString::new(t).unwrap();

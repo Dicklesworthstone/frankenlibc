@@ -114,7 +114,8 @@ fn exp2m1_exp10m1_matches_glibc() {
     let g_exp2m1: extern "C" fn(f64) -> f64 = unsafe { core::mem::transmute(sym(h, c"exp2m1")) };
     let g_exp10m1: extern "C" fn(f64) -> f64 = unsafe { core::mem::transmute(sym(h, c"exp10m1")) };
     let g_exp2m1f: extern "C" fn(f32) -> f32 = unsafe { core::mem::transmute(sym(h, c"exp2m1f")) };
-    let g_exp10m1f: extern "C" fn(f32) -> f32 = unsafe { core::mem::transmute(sym(h, c"exp10m1f")) };
+    let g_exp10m1f: extern "C" fn(f32) -> f32 =
+        unsafe { core::mem::transmute(sym(h, c"exp10m1f")) };
 
     let mut div: Vec<String> = Vec::new();
 
@@ -170,6 +171,10 @@ fn exp2m1_exp10m1_matches_glibc() {
         div.is_empty(),
         "exp2m1/exp10m1 divergences vs glibc ({}, showing first 20):\n  {}",
         div.len(),
-        div.iter().take(20).cloned().collect::<Vec<_>>().join("\n  ")
+        div.iter()
+            .take(20)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n  ")
     );
 }

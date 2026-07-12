@@ -8,9 +8,9 @@
 //! 1.17x). 300000 random pairs (small alphabet so equal strings and shared
 //! prefixes are frequent) agree with host glibc strcoll on the comparison sign.
 
+use frankenlibc_abi::string_abi as fa;
 use std::ffi::CString;
 use std::os::raw::c_char;
-use frankenlibc_abi::string_abi as fa;
 
 unsafe extern "C" {
     fn strcoll(a: *const c_char, b: *const c_char) -> i32;

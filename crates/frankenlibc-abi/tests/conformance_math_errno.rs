@@ -54,7 +54,12 @@ fn math_errno_matches_glibc() {
             let _ = unsafe { $call };
             let got = rd();
             if got != $want {
-                div.push(format!("{}: fl={} want(glibc)={}", $lbl, name(got), name($want)));
+                div.push(format!(
+                    "{}: fl={} want(glibc)={}",
+                    $lbl,
+                    name(got),
+                    name($want)
+                ));
             }
         }};
     }
@@ -73,23 +78,43 @@ fn math_errno_matches_glibc() {
     chk!("fmod(1,0)", EDOM, fa::fmod(1.0, 0.0));
     // fmod EDOM edges (same glibc rule as drem): inf%inf is EDOM, NaN operand is not.
     chk!("fmod(inf,5)", EDOM, fa::fmod(f64::INFINITY, 5.0));
-    chk!("fmod(inf,inf)", EDOM, fa::fmod(f64::INFINITY, f64::INFINITY));
+    chk!(
+        "fmod(inf,inf)",
+        EDOM,
+        fa::fmod(f64::INFINITY, f64::INFINITY)
+    );
     chk!("fmod(nan,0)", 0, fa::fmod(f64::NAN, 0.0));
     chk!("fmod(inf,nan)", 0, fa::fmod(f64::INFINITY, f64::NAN));
     chk!("fmod(5,inf)", 0, fa::fmod(5.0, f64::INFINITY));
-    chk!("fmodf(inf,inf)", EDOM, fa::fmodf(f32::INFINITY, f32::INFINITY));
+    chk!(
+        "fmodf(inf,inf)",
+        EDOM,
+        fa::fmodf(f32::INFINITY, f32::INFINITY)
+    );
     chk!("fmodf(nan,0)", 0, fa::fmodf(f32::NAN, 0.0));
     chk!("remainder(1,0)", EDOM, fa::remainder(1.0, 0.0));
-    chk!("remainder(inf,inf)", EDOM, fa::remainder(f64::INFINITY, f64::INFINITY));
+    chk!(
+        "remainder(inf,inf)",
+        EDOM,
+        fa::remainder(f64::INFINITY, f64::INFINITY)
+    );
     chk!("remainder(nan,0)", 0, fa::remainder(f64::NAN, 0.0));
-    chk!("remainderf(inf,inf)", EDOM, fa::remainderf(f32::INFINITY, f32::INFINITY));
+    chk!(
+        "remainderf(inf,inf)",
+        EDOM,
+        fa::remainderf(f32::INFINITY, f32::INFINITY)
+    );
     chk!("remainderf(nan,0)", 0, fa::remainderf(f32::NAN, 0.0));
     // remquo/remquof: C99, NO errno wrapper in glibc -> errno 0 even for domain inputs.
     {
         let mut q: c_int = 0;
         chk!("remquo(5,0)", 0, fa::remquo(5.0, 0.0, &mut q));
         chk!("remquo(inf,5)", 0, fa::remquo(f64::INFINITY, 5.0, &mut q));
-        chk!("remquo(inf,inf)", 0, fa::remquo(f64::INFINITY, f64::INFINITY, &mut q));
+        chk!(
+            "remquo(inf,inf)",
+            0,
+            fa::remquo(f64::INFINITY, f64::INFINITY, &mut q)
+        );
         chk!("remquof(5,0)", 0, fa::remquof(5.0, 0.0, &mut q));
         chk!("remquof(inf,5)", 0, fa::remquof(f32::INFINITY, 5.0, &mut q));
     }
@@ -142,14 +167,38 @@ fn math_errno_matches_glibc() {
 
     // --- nextafter / nexttoward range errors (glibc rule) ---
     // overflow: finite -> infinite result
-    chk!("nextafter(dmax,inf)", ERANGE, fa::nextafter(f64::MAX, f64::INFINITY));
-    chk!("nextafter(-dmax,-inf)", ERANGE, fa::nextafter(-f64::MAX, f64::NEG_INFINITY));
-    chk!("nextafterf(fmax,inf)", ERANGE, fa::nextafterf(f32::MAX, f32::INFINITY));
-    chk!("nexttoward(dmax,inf)", ERANGE, fa::nexttoward(f64::MAX, f64::INFINITY));
-    chk!("nexttowardf(fmax,inf)", ERANGE, fa::nexttowardf(f32::MAX, f64::INFINITY));
+    chk!(
+        "nextafter(dmax,inf)",
+        ERANGE,
+        fa::nextafter(f64::MAX, f64::INFINITY)
+    );
+    chk!(
+        "nextafter(-dmax,-inf)",
+        ERANGE,
+        fa::nextafter(-f64::MAX, f64::NEG_INFINITY)
+    );
+    chk!(
+        "nextafterf(fmax,inf)",
+        ERANGE,
+        fa::nextafterf(f32::MAX, f32::INFINITY)
+    );
+    chk!(
+        "nexttoward(dmax,inf)",
+        ERANGE,
+        fa::nexttoward(f64::MAX, f64::INFINITY)
+    );
+    chk!(
+        "nexttowardf(fmax,inf)",
+        ERANGE,
+        fa::nexttowardf(f32::MAX, f64::INFINITY)
+    );
     // underflow: magnitude decreases into subnormal/zero
     chk!("nextafter(5e-324,0)", ERANGE, fa::nextafter(5e-324, 0.0));
-    chk!("nextafter(min_norm,0)", ERANGE, fa::nextafter(2.2250738585072014e-308, 0.0));
+    chk!(
+        "nextafter(min_norm,0)",
+        ERANGE,
+        fa::nextafter(2.2250738585072014e-308, 0.0)
+    );
     chk!("nexttoward(5e-324,0)", ERANGE, fa::nexttoward(5e-324, 0.0));
     // NOT a range error: nextafter(0, y) grows from 0 to smallest subnormal
     chk!("nextafter(0,1)", 0, fa::nextafter(0.0, 1.0));
@@ -168,8 +217,16 @@ fn math_errno_matches_glibc() {
     chk!("drem(1,0)", EDOM, fa::drem(1.0, 0.0));
     chk!("drem(inf,1)", EDOM, fa::drem(f64::INFINITY, 1.0));
     // Previously MISSED: both operands infinite (old guard required y finite).
-    chk!("drem(inf,inf)", EDOM, fa::drem(f64::INFINITY, f64::INFINITY));
-    chk!("drem(-inf,-inf)", EDOM, fa::drem(f64::NEG_INFINITY, f64::NEG_INFINITY));
+    chk!(
+        "drem(inf,inf)",
+        EDOM,
+        fa::drem(f64::INFINITY, f64::INFINITY)
+    );
+    chk!(
+        "drem(-inf,-inf)",
+        EDOM,
+        fa::drem(f64::NEG_INFINITY, f64::NEG_INFINITY)
+    );
     // Previously WRONG: a NaN operand must leave errno 0, even with y==0.
     chk!("drem(nan,0)", 0, fa::drem(f64::NAN, 0.0));
     chk!("drem(5,nan)", 0, fa::drem(5.0, f64::NAN));
@@ -179,7 +236,11 @@ fn math_errno_matches_glibc() {
     // dremf previously set NO errno at all.
     chk!("dremf(1,0)", EDOM, fa::dremf(1.0, 0.0));
     chk!("dremf(inf,1)", EDOM, fa::dremf(f32::INFINITY, 1.0));
-    chk!("dremf(inf,inf)", EDOM, fa::dremf(f32::INFINITY, f32::INFINITY));
+    chk!(
+        "dremf(inf,inf)",
+        EDOM,
+        fa::dremf(f32::INFINITY, f32::INFINITY)
+    );
     chk!("dremf(nan,0)", 0, fa::dremf(f32::NAN, 0.0));
     chk!("dremf(5,nan)", 0, fa::dremf(5.0, f32::NAN));
     chk!("dremf(5,3)", 0, fa::dremf(5.0, 3.0));

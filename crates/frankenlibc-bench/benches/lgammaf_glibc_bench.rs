@@ -101,7 +101,12 @@ fn bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("lgammaf_f32");
     group.sample_size(60);
     run(&mut group, "fl_libm", &inputs, |x| math::lgammaf(x));
-    run(&mut group, "candidate_log_tgamma", &inputs, lgammaf_via_tgamma);
+    run(
+        &mut group,
+        "candidate_log_tgamma",
+        &inputs,
+        lgammaf_via_tgamma,
+    );
     run(&mut group, "glibc", &inputs, |x| unsafe { host_lgammaf(x) });
     group.finish();
 }

@@ -18,23 +18,51 @@ fn el() -> *mut c_int {
 
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
-        0.0, -0.0f128, 1.0, -1.0, 2.0, -2.0, 5.0, -5.0, 7.0, 8.0, 17.0, -17.0, 2.5, -2.5, 0.5, 10.0,
-        47.0, 3.0, 1e300f128, 1e-300f128, 0.1, -0.1, 100.0, 0.3333f128,
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        0.0,
+        -0.0f128,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        5.0,
+        -5.0,
+        7.0,
+        8.0,
+        17.0,
+        -17.0,
+        2.5,
+        -2.5,
+        0.5,
+        10.0,
+        47.0,
+        3.0,
+        1e300f128,
+        1e-300f128,
+        0.1,
+        -0.1,
+        100.0,
+        0.3333f128,
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
-        f128::from_bits(1),                                     // smallest subnormal
-        f128::from_bits(1u128 << 112),                          // smallest normal
+        f128::from_bits(1),                  // smallest subnormal
+        f128::from_bits(1u128 << 112),       // smallest normal
     ];
     let mut st: u64 = 0x5151_5151_2323_2323;
     for _ in 0..24 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         // keep exponents moderate so fmod/remainder reductions are well-exercised
         let ef = 0x3fc0u128 + (hi as u128 % 0x80);
         let mant = (((hi as u128) << 64) | st as u128) & ((1u128 << 112) - 1);
-        v.push(f128::from_bits(((hi as u128 >> 7 & 1) << 127) | (ef << 112) | mant));
+        v.push(f128::from_bits(
+            ((hi as u128 >> 7 & 1) << 127) | (ef << 112) | mant,
+        ));
     }
     v
 }
@@ -46,7 +74,11 @@ fn f128_fmod_remainder_match_glibc() {
     for &x in &vals {
         for &y in &vals {
             for (name, gf, ff) in [
-                ("fmod", fmodf128 as unsafe extern "C" fn(f128, f128) -> f128, ma::fmodf128 as unsafe extern "C" fn(f128, f128) -> f128),
+                (
+                    "fmod",
+                    fmodf128 as unsafe extern "C" fn(f128, f128) -> f128,
+                    ma::fmodf128 as unsafe extern "C" fn(f128, f128) -> f128,
+                ),
                 ("remainder", remainderf128, ma::remainderf128),
             ] {
                 unsafe { *el() = 0 };
@@ -79,5 +111,10 @@ fn f128_fmod_remainder_match_glibc() {
         }
     }
 
-    assert!(mism.is_empty(), "f128 fmod/remainder diverged ({}):\n{}", mism.len(), mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "f128 fmod/remainder diverged ({}):\n{}",
+        mism.len(),
+        mism.iter().take(30).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

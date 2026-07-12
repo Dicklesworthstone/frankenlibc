@@ -27,10 +27,10 @@ const CASES: &[c_ulonglong] = &[
     1,
     2,
     0xFF,
-    0x1_0000_0000,            // bit 32 — beyond the 32-bit range
+    0x1_0000_0000, // bit 32 — beyond the 32-bit range
     0x7FFF_FFFF_FFFF_FFFF,
-    0x8000_0000_0000_0000,    // bit 63
-    0xFFFF_FFFF_FFFF_FFFF,    // all 64 ones
+    0x8000_0000_0000_0000, // bit 63
+    0xFFFF_FFFF_FFFF_FFFF, // all 64 ones
     0xDEAD_BEEF_CAFE_BABE,
     0x5555_5555_5555_5555,
     0xAAAA_AAAA_AAAA_AAAA,
@@ -42,13 +42,45 @@ const CASES: &[c_ulonglong] = &[
 fn stdbit_ull_match_glibc() {
     use frankenlibc_abi::stdbit_abi as s;
     for &v in CASES {
-        assert_eq!(s::stdc_leading_zeros_ull(v), unsafe { stdc_leading_zeros_ull(v) }, "leading_zeros_ull({v:#018x})");
-        assert_eq!(s::stdc_trailing_zeros_ull(v), unsafe { stdc_trailing_zeros_ull(v) }, "trailing_zeros_ull({v:#018x})");
-        assert_eq!(s::stdc_count_ones_ull(v), unsafe { stdc_count_ones_ull(v) }, "count_ones_ull({v:#018x})");
-        assert_eq!(s::stdc_first_leading_one_ull(v), unsafe { stdc_first_leading_one_ull(v) }, "first_leading_one_ull({v:#018x})");
-        assert_eq!(s::stdc_bit_width_ull(v), unsafe { stdc_bit_width_ull(v) }, "bit_width_ull({v:#018x})");
-        assert_eq!(s::stdc_bit_floor_ull(v), unsafe { stdc_bit_floor_ull(v) }, "bit_floor_ull({v:#018x})");
-        assert_eq!(s::stdc_bit_ceil_ull(v), unsafe { stdc_bit_ceil_ull(v) }, "bit_ceil_ull({v:#018x})");
-        assert_eq!(s::stdc_has_single_bit_ull(v), unsafe { stdc_has_single_bit_ull(v) }, "has_single_bit_ull({v:#018x})");
+        assert_eq!(
+            s::stdc_leading_zeros_ull(v),
+            unsafe { stdc_leading_zeros_ull(v) },
+            "leading_zeros_ull({v:#018x})"
+        );
+        assert_eq!(
+            s::stdc_trailing_zeros_ull(v),
+            unsafe { stdc_trailing_zeros_ull(v) },
+            "trailing_zeros_ull({v:#018x})"
+        );
+        assert_eq!(
+            s::stdc_count_ones_ull(v),
+            unsafe { stdc_count_ones_ull(v) },
+            "count_ones_ull({v:#018x})"
+        );
+        assert_eq!(
+            s::stdc_first_leading_one_ull(v),
+            unsafe { stdc_first_leading_one_ull(v) },
+            "first_leading_one_ull({v:#018x})"
+        );
+        assert_eq!(
+            s::stdc_bit_width_ull(v),
+            unsafe { stdc_bit_width_ull(v) },
+            "bit_width_ull({v:#018x})"
+        );
+        assert_eq!(
+            s::stdc_bit_floor_ull(v),
+            unsafe { stdc_bit_floor_ull(v) },
+            "bit_floor_ull({v:#018x})"
+        );
+        assert_eq!(
+            s::stdc_bit_ceil_ull(v),
+            unsafe { stdc_bit_ceil_ull(v) },
+            "bit_ceil_ull({v:#018x})"
+        );
+        assert_eq!(
+            s::stdc_has_single_bit_ull(v),
+            unsafe { stdc_has_single_bit_ull(v) },
+            "has_single_bit_ull({v:#018x})"
+        );
     }
 }

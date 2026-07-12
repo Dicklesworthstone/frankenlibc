@@ -57,7 +57,8 @@ fn snap(rc: c_int, res: *mut Protoent) -> Option<Snap> {
     Some((cstr(s.p_name), s.p_proto, alias_vec(s.p_aliases)))
 }
 
-type ByNameR = extern "C" fn(*const c_char, *mut Protoent, *mut c_char, usize, *mut *mut Protoent) -> c_int;
+type ByNameR =
+    extern "C" fn(*const c_char, *mut Protoent, *mut c_char, usize, *mut *mut Protoent) -> c_int;
 type ByNumR = extern "C" fn(c_int, *mut Protoent, *mut c_char, usize, *mut *mut Protoent) -> c_int;
 type EntR = extern "C" fn(*mut Protoent, *mut c_char, usize, *mut *mut Protoent) -> c_int;
 type Ent = extern "C" fn() -> *mut Protoent;
@@ -77,7 +78,11 @@ fn protoent_reentrant_matches_glibc() {
 
     let mk = || -> (Protoent, [c_char; 1024]) {
         (
-            Protoent { p_name: std::ptr::null_mut(), p_aliases: std::ptr::null_mut(), p_proto: 0 },
+            Protoent {
+                p_name: std::ptr::null_mut(),
+                p_aliases: std::ptr::null_mut(),
+                p_proto: 0,
+            },
             [0; 1024],
         )
     };

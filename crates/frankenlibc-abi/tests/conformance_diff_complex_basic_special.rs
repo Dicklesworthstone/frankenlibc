@@ -60,10 +60,16 @@ fn cabs_carg_match_glibc() {
         let z = C { re, im };
         let ga = unsafe { cabs(z) };
         let fa = unsafe { fl::cabs(z) };
-        assert!(same64(fa, ga), "cabs({re:?},{im:?}): fl={fa:?} glibc={ga:?}");
+        assert!(
+            same64(fa, ga),
+            "cabs({re:?},{im:?}): fl={fa:?} glibc={ga:?}"
+        );
         let gg = unsafe { carg(z) };
         let fg = unsafe { fl::carg(z) };
-        assert!(same64(fg, gg), "carg({re:?},{im:?}): fl={fg:?} glibc={gg:?}");
+        assert!(
+            same64(fg, gg),
+            "carg({re:?},{im:?}): fl={fg:?} glibc={gg:?}"
+        );
     }
 }
 
@@ -73,9 +79,23 @@ fn cproj_conj_match_glibc() {
         let z = C { re, im };
         let gp = unsafe { cproj(z) };
         let fp = unsafe { fl::cproj(z) };
-        assert!(samec(fp, gp), "cproj({re:?},{im:?}): fl=({:?},{:?}) glibc=({:?},{:?})", fp.re, fp.im, gp.re, gp.im);
+        assert!(
+            samec(fp, gp),
+            "cproj({re:?},{im:?}): fl=({:?},{:?}) glibc=({:?},{:?})",
+            fp.re,
+            fp.im,
+            gp.re,
+            gp.im
+        );
         let gc = unsafe { conj(z) };
         let fc = unsafe { fl::conj(z) };
-        assert!(samec(fc, gc), "conj({re:?},{im:?}): fl=({:?},{:?}) glibc=({:?},{:?})", fc.re, fc.im, gc.re, gc.im);
+        assert!(
+            samec(fc, gc),
+            "conj({re:?},{im:?}): fl=({:?},{:?}) glibc=({:?},{:?})",
+            fc.re,
+            fc.im,
+            gc.re,
+            gc.im
+        );
     }
 }

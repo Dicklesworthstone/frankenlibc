@@ -828,7 +828,12 @@ fn main() {
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
-            n, old, new, gl, old / new, gl / new,
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
         );
     }
 
@@ -856,7 +861,12 @@ fn main() {
         });
         println!(
             "{:>8} | {:>12.1} | {:>12.1} | {:>12.1} | {:>9.2}x | {:>9.2}x",
-            n, old, new, gl, old / new, gl / new,
+            n,
+            old,
+            new,
+            gl,
+            old / new,
+            gl / new,
         );
     }
 }

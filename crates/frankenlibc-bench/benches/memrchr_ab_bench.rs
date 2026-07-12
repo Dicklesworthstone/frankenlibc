@@ -9,10 +9,10 @@
 
 use std::ffi::{c_int, c_void};
 use std::hint::black_box;
-use std::simd::cmp::SimdPartialEq;
 use std::simd::Simd;
+use std::simd::cmp::SimdPartialEq;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 const LANES: usize = 32;
 const FOLD: usize = 128;
@@ -128,16 +128,28 @@ fn bench(c: &mut Criterion) {
         let o = memrchr_old(&buf, b'X');
         let nw = memrchr_new(&buf, b'X');
         let g = unsafe { memrchr(buf.as_ptr().cast(), b'X' as c_int, buf.len()) };
-        let goff = if g.is_null() { None } else { Some(g as usize - buf.as_ptr() as usize) };
+        let goff = if g.is_null() {
+            None
+        } else {
+            Some(g as usize - buf.as_ptr() as usize)
+        };
         assert_eq!(o, Some(*at));
         assert_eq!(nw, Some(*at));
         assert_eq!(goff, Some(*at));
 
         let mut grp = c.benchmark_group(format!("memrchr_{name}"));
-        grp.bench_function("old_fold", |b| b.iter(|| black_box(memrchr_old(black_box(&buf), b'X'))));
-        grp.bench_function("new_direct", |b| b.iter(|| black_box(memrchr_new(black_box(&buf), b'X'))));
+        grp.bench_function("old_fold", |b| {
+            b.iter(|| black_box(memrchr_old(black_box(&buf), b'X')))
+        });
+        grp.bench_function("new_direct", |b| {
+            b.iter(|| black_box(memrchr_new(black_box(&buf), b'X')))
+        });
         grp.bench_function("host_glibc", |b| {
-            b.iter(|| black_box(unsafe { memrchr(black_box(buf.as_ptr().cast()), b'X' as c_int, buf.len()) }))
+            b.iter(|| {
+                black_box(unsafe {
+                    memrchr(black_box(buf.as_ptr().cast()), b'X' as c_int, buf.len())
+                })
+            })
         });
         grp.finish();
     }

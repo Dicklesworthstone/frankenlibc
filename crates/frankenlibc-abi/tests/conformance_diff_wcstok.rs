@@ -94,9 +94,13 @@ fn rand_input(rng: &mut Rng) -> (Vec<Wc>, Vec<Wc>) {
             delim.push(c);
         }
     }
-    let alphabet: [Wc; 6] = [b'a' as Wc, b'b' as Wc, 0x4E2D, b',' as Wc, b';' as Wc, 0x1_F4A9];
+    let alphabet: [Wc; 6] = [
+        b'a' as Wc, b'b' as Wc, 0x4E2D, b',' as Wc, b';' as Wc, 0x1_F4A9,
+    ];
     let len = rng.below(24);
-    let s: Vec<Wc> = (0..len).map(|_| alphabet[rng.below(alphabet.len())]).collect();
+    let s: Vec<Wc> = (0..len)
+        .map(|_| alphabet[rng.below(alphabet.len())])
+        .collect();
     (s, delim)
 }
 
@@ -121,20 +125,29 @@ fn wcstok_matches_glibc() {
         // removed (since wcstok keeps every non-delimiter char exactly once).
         let joined: Vec<Wc> = ft.iter().flatten().copied().collect();
         let stripped: Vec<Wc> = s.iter().copied().filter(|c| !d.contains(c)).collect();
-        assert_eq!(joined, stripped, "wcstok tokens must cover all non-delims s={s:?}");
+        assert_eq!(
+            joined, stripped,
+            "wcstok tokens must cover all non-delims s={s:?}"
+        );
     }
 }
 
 #[test]
 fn edge_cases_match_glibc() {
     let cases: &[(&[Wc], &[Wc])] = &[
-        (&[], &[b',' as Wc]),                                  // empty
-        (&[b',' as Wc, b',' as Wc], &[b',' as Wc]),            // all delimiters
+        (&[], &[b',' as Wc]),                                   // empty
+        (&[b',' as Wc, b',' as Wc], &[b',' as Wc]),             // all delimiters
         (&[b',' as Wc, b'a' as Wc, b',' as Wc], &[b',' as Wc]), // lead+trail
-        (&[b'a' as Wc, b',' as Wc, b',' as Wc, b'b' as Wc], &[b',' as Wc]), // consecutive
+        (
+            &[b'a' as Wc, b',' as Wc, b',' as Wc, b'b' as Wc],
+            &[b',' as Wc],
+        ), // consecutive
         (&[b'a' as Wc, b'b' as Wc, b'c' as Wc], &[b',' as Wc]), // no delimiter
         (&[0x1_F4A9, b'x' as Wc, 0x1_F4A9], &[0x1_F4A9]),       // astral delimiter
-        (&[b'a' as Wc, 0x4E2D, b';' as Wc, b'b' as Wc], &[b';' as Wc, b' ' as Wc]), // multi-set
+        (
+            &[b'a' as Wc, 0x4E2D, b';' as Wc, b'b' as Wc],
+            &[b';' as Wc, b' ' as Wc],
+        ), // multi-set
     ];
     for (s, d) in cases {
         let gt = unsafe { tokens(s, d, true) };

@@ -23,20 +23,38 @@ fn el() -> *mut c_int {
 
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
-        0.0, -0.0f128, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0, 2.5, -2.5, 0.5, 1e300f128, -1e300f128,
-        1e-300f128, 123.456f128, -789.0f128,
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        0.0,
+        -0.0f128,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        3.0,
+        -3.0,
+        2.5,
+        -2.5,
+        0.5,
+        1e300f128,
+        -1e300f128,
+        1e-300f128,
+        123.456f128,
+        -789.0f128,
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
-        f128::from_bits(1),                                     // smallest subnormal
-        f128::from_bits(1u128 << 112),                          // smallest normal
-        f128::from_bits(0x7ffe_u128 << 112),                    // near-largest finite
+        f128::from_bits(1),                  // smallest subnormal
+        f128::from_bits(1u128 << 112),       // smallest normal
+        f128::from_bits(0x7ffe_u128 << 112), // near-largest finite
     ];
     let mut st: u64 = 0xc0ffee_1234_5678;
     for _ in 0..30 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         v.push(f128::from_bits(((hi as u128) << 64) | st as u128));
     }
     v
@@ -55,7 +73,12 @@ fn f128_minmax_dim_nextafter_match_glibc() {
                     let g = unsafe { $g(x, y) }.to_bits();
                     let f = unsafe { $f(x, y) }.to_bits();
                     if g != f {
-                        mism.push(format!("{} x={:#034x} y={:#034x}: glibc={g:#034x} fl={f:#034x}", $name, x.to_bits(), y.to_bits()));
+                        mism.push(format!(
+                            "{} x={:#034x} y={:#034x}: glibc={g:#034x} fl={f:#034x}",
+                            $name,
+                            x.to_bits(),
+                            y.to_bits()
+                        ));
                     }
                 }
             }
@@ -105,9 +128,17 @@ fn f128_minmax_dim_nextafter_match_glibc() {
         let g = unsafe { frexpf128(x, &mut ge) }.to_bits();
         let f = unsafe { ma::frexpf128(x, &mut fe) }.to_bits();
         if g != f || ge != fe {
-            mism.push(format!("frexp x={:#034x}: glibc=(m={g:#034x},e={ge}) fl=(m={f:#034x},e={fe})", x.to_bits()));
+            mism.push(format!(
+                "frexp x={:#034x}: glibc=(m={g:#034x},e={ge}) fl=(m={f:#034x},e={fe})",
+                x.to_bits()
+            ));
         }
     }
 
-    assert!(mism.is_empty(), "f128 minmax/dim/nextafter diverged ({}):\n{}", mism.len(), mism.iter().take(25).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "f128 minmax/dim/nextafter diverged ({}):\n{}",
+        mism.len(),
+        mism.iter().take(25).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

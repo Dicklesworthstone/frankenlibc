@@ -18,7 +18,8 @@ unsafe extern "C" {
     fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
-type DnCompFn = unsafe extern "C" fn(*const c_char, *mut u8, c_int, *mut *mut u8, *mut *mut u8) -> c_int;
+type DnCompFn =
+    unsafe extern "C" fn(*const c_char, *mut u8, c_int, *mut *mut u8, *mut *mut u8) -> c_int;
 
 /// Build a message by packing `names` in sequence through one dnptrs array.
 /// Returns (message bytes written, per-call return values).
@@ -93,7 +94,13 @@ fn ns_name_compress_matches_glibc() {
     let f: NsCompressFn = unsafe {
         std::mem::transmute::<_, NsCompressFn>(
             frankenlibc_abi::glibc_internal_abi::ns_name_compress
-                as unsafe extern "C" fn(*const c_char, *mut c_void, usize, *mut *const c_void, *mut *const c_void) -> c_int,
+                as unsafe extern "C" fn(
+                    *const c_char,
+                    *mut c_void,
+                    usize,
+                    *mut *const c_void,
+                    *mut *const c_void,
+                ) -> c_int,
         )
     };
 
@@ -108,10 +115,16 @@ fn ns_name_compress_matches_glibc() {
         let (gm, gr) = build_compress(g, seq);
         let (fm, fr) = build_compress(f, seq);
         if gr != fr || gm != fm {
-            mismatches.push(format!("seq#{i} {seq:?}: rets g={gr:?} f={fr:?}\n g={gm:02x?}\n f={fm:02x?}"));
+            mismatches.push(format!(
+                "seq#{i} {seq:?}: rets g={gr:?} f={fr:?}\n g={gm:02x?}\n f={fm:02x?}"
+            ));
         }
     }
-    assert!(mismatches.is_empty(), "ns_name_compress diverged:\n{}", mismatches.join("\n"));
+    assert!(
+        mismatches.is_empty(),
+        "ns_name_compress diverged:\n{}",
+        mismatches.join("\n")
+    );
 }
 
 #[test]
@@ -131,7 +144,11 @@ fn dn_comp_matches_glibc() {
         &["a.com", "b.org", "c.net"],
         &["WWW.Example.COM", "mail.example.com"],
         &["one.two.three.four", "two.three.four", "three.four", "four"],
-        &["host.sub.domain.example.org", "other.example.org", "example.org"],
+        &[
+            "host.sub.domain.example.org",
+            "other.example.org",
+            "example.org",
+        ],
         &["."],
         &["a", "a.", "a"],
         &["x.y", "z.x.y", "y"],
@@ -143,7 +160,9 @@ fn dn_comp_matches_glibc() {
         let (gmsg, grets) = build(g, seq);
         let (fmsg, frets) = build(flu::dn_comp, seq);
         if grets != frets {
-            mismatches.push(format!("seq#{i} {seq:?}: rets glibc={grets:?} fl={frets:?}"));
+            mismatches.push(format!(
+                "seq#{i} {seq:?}: rets glibc={grets:?} fl={frets:?}"
+            ));
         }
         if gmsg != fmsg {
             mismatches.push(format!(
@@ -155,10 +174,14 @@ fn dn_comp_matches_glibc() {
     // Deterministic pseudo-random fuzz: random sequences of names assembled
     // from a tiny label pool so suffixes collide constantly (the regime where
     // compression actually fires). Seeded LCG keeps it reproducible.
-    let pool = ["a", "b", "c", "example", "com", "net", "www", "mail", "x", "y"];
+    let pool = [
+        "a", "b", "c", "example", "com", "net", "www", "mail", "x", "y",
+    ];
     let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
     let mut next = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (state >> 33) as usize
     };
     for round in 0..400 {

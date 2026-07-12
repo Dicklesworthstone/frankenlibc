@@ -69,8 +69,16 @@ fn host_futex_waitv(
     clockid: libc::clockid_t,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { libc::syscall(SYS_FUTEX_WAITV, waiters, nr_futexes, flags, timeout, clockid) };
+    let rc = unsafe {
+        libc::syscall(
+            SYS_FUTEX_WAITV,
+            waiters,
+            nr_futexes,
+            flags,
+            timeout,
+            clockid,
+        )
+    };
     (rc as c_int, host_errno())
 }
 
@@ -102,20 +110,8 @@ fn openat2_and_futex_waitv_invalid_failures_match_host_syscall() {
     );
     assert_eq!(fl.0, -1);
 
-    let host = host_futex_waitv(
-        ptr::null(),
-        0,
-        0,
-        ptr::null(),
-        libc::CLOCK_MONOTONIC,
-    );
-    let fl = fl_futex_waitv(
-        ptr::null(),
-        0,
-        0,
-        ptr::null(),
-        libc::CLOCK_MONOTONIC,
-    );
+    let host = host_futex_waitv(ptr::null(), 0, 0, ptr::null(), libc::CLOCK_MONOTONIC);
+    let fl = fl_futex_waitv(ptr::null(), 0, 0, ptr::null(), libc::CLOCK_MONOTONIC);
     assert_eq!(
         fl, host,
         "futex_waitv(zero waiters): fl={fl:?} host={host:?}"

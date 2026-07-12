@@ -7,7 +7,7 @@
 //! For each needle fl must return the same offset into mnt_opts as host glibc.
 //! No mocks.
 
-use std::ffi::{c_char, c_void, CString};
+use std::ffi::{CString, c_char, c_void};
 
 unsafe extern "C" {
     fn hasmntopt(mnt: *const libc::mntent, opt: *const c_char) -> *mut c_char;
@@ -80,6 +80,9 @@ fn hasmntopt_value_option_is_found() {
             key.as_ptr(),
         )
     };
-    assert!(!f.is_null(), "hasmntopt must find 'uid' in 'defaults,uid=0,gid=0'");
+    assert!(
+        !f.is_null(),
+        "hasmntopt must find 'uid' in 'defaults,uid=0,gid=0'"
+    );
     assert_eq!(offset(f, ent.mnt_opts), "defaults,".len() as isize);
 }

@@ -9,8 +9,8 @@
 //! bytes compared), then reads a known UTF-8 file via the wide readers (decoded
 //! wide values + return codes compared) vs glibc. No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
 use libc::wchar_t;
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod g {
@@ -32,7 +32,10 @@ fn tmp(tag: &str) -> (std::path::PathBuf, CString) {
     let n = CNT.fetch_add(1, Ordering::Relaxed);
     let mut p = std::env::temp_dir();
     p.push(format!("fl-wulio-{}-{}-{}", std::process::id(), tag, n));
-    (p.clone(), CString::new(p.to_string_lossy().as_bytes()).unwrap())
+    (
+        p.clone(),
+        CString::new(p.to_string_lossy().as_bytes()).unwrap(),
+    )
 }
 fn wstr(s: &str) -> Vec<wchar_t> {
     let mut v: Vec<wchar_t> = s.chars().map(|c| c as wchar_t).collect();
@@ -48,8 +51,8 @@ macro_rules! write_path {
             let f = $fopen(c.as_ptr().cast(), c"w".as_ptr().cast());
             assert!(!f.is_null());
             $fputwc('A' as wchar_t, f.cast());
-            $fputwc('é' as wchar_t, f.cast());     // 2-byte UTF-8
-            $fputwc('€' as wchar_t, f.cast());     // 3-byte UTF-8
+            $fputwc('é' as wchar_t, f.cast()); // 2-byte UTF-8
+            $fputwc('€' as wchar_t, f.cast()); // 3-byte UTF-8
             $fputwc('\n' as wchar_t, f.cast());
             $fputws(ws.as_ptr(), f.cast());
             $fclose(f.cast());
@@ -80,9 +83,27 @@ macro_rules! read_path {
 #[test]
 fn wide_unlocked_write_matches_glibc() {
     unsafe { g::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
-    let gb = write_path!(g::fopen, g::fclose, g::fputwc_unlocked, g::fputws_unlocked, "g");
-    let fb = write_path!(fls::fopen, fls::fclose, flw::fputwc_unlocked, flw::fputws_unlocked, "fl");
-    assert_eq!(fb, gb, "wide unlocked write: fl={:?} glibc={:?}", String::from_utf8_lossy(&fb), String::from_utf8_lossy(&gb));
+    let gb = write_path!(
+        g::fopen,
+        g::fclose,
+        g::fputwc_unlocked,
+        g::fputws_unlocked,
+        "g"
+    );
+    let fb = write_path!(
+        fls::fopen,
+        fls::fclose,
+        flw::fputwc_unlocked,
+        flw::fputws_unlocked,
+        "fl"
+    );
+    assert_eq!(
+        fb,
+        gb,
+        "wide unlocked write: fl={:?} glibc={:?}",
+        String::from_utf8_lossy(&fb),
+        String::from_utf8_lossy(&gb)
+    );
     assert_eq!(gb, "Aé€\nwíde\n".as_bytes(), "glibc wrote expected UTF-8");
 }
 
@@ -91,8 +112,20 @@ fn wide_unlocked_read_matches_glibc() {
     unsafe { g::setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()) };
     let (path, c) = tmp("src");
     std::fs::write(&path, "Zé€\nαβγ\n".as_bytes()).unwrap();
-    let gr = read_path!(g::fopen, g::fclose, g::fgetwc_unlocked, g::fgetws_unlocked, c);
-    let fr = read_path!(fls::fopen, fls::fclose, flw::fgetwc_unlocked, flw::fgetws_unlocked, c);
+    let gr = read_path!(
+        g::fopen,
+        g::fclose,
+        g::fgetwc_unlocked,
+        g::fgetws_unlocked,
+        c
+    );
+    let fr = read_path!(
+        fls::fopen,
+        fls::fclose,
+        flw::fgetwc_unlocked,
+        flw::fgetws_unlocked,
+        c
+    );
     let _ = std::fs::remove_file(&path);
     assert_eq!(fr, gr, "wide unlocked read: fl={fr:?} glibc={gr:?}");
 }

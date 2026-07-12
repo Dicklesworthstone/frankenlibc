@@ -51,7 +51,10 @@ fn run(sys: SystemFn) -> (i32, c_int) {
 fn system_ignores_sigint_in_caller_like_glibc() {
     // glibc reference.
     let (g_fired, g_status) = run(libc::system);
-    assert_eq!(g_fired, 0, "glibc system() should keep SIGINT ignored in the caller");
+    assert_eq!(
+        g_fired, 0,
+        "glibc system() should keep SIGINT ignored in the caller"
+    );
     assert!(
         libc::WIFEXITED(g_status) && libc::WEXITSTATUS(g_status) == 7,
         "glibc system() should return exit status 7, got {g_status:#x}"
@@ -67,6 +70,7 @@ fn system_ignores_sigint_in_caller_like_glibc() {
         libc::WEXITSTATUS(f_status),
         libc::WEXITSTATUS(g_status),
         "fl system() exit status diverged: fl={:#x} glibc={:#x}",
-        f_status, g_status
+        f_status,
+        g_status
     );
 }

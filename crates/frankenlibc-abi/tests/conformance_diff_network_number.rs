@@ -67,8 +67,8 @@ fn parse_network_number_matches_glibc_inet_network() {
         "999",
         "0x10.020.8",
         "0xff",
-        "08",       // invalid octal digit
-        "0xg",      // invalid hex digit
+        "08",  // invalid octal digit
+        "0xg", // invalid hex digit
         "",
         "192.168.1",
         "10.0",
@@ -91,9 +91,7 @@ fn parse_network_number_matches_glibc_inet_network() {
             None => host_val == INADDR_NONE,
         };
         if !ok {
-            mismatches.push(format!(
-                "{s:?}: glibc=0x{host_val:08x} fl={fl_val:?}"
-            ));
+            mismatches.push(format!("{s:?}: glibc=0x{host_val:08x} fl={fl_val:?}"));
         }
     }
 

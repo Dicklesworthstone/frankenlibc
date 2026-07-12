@@ -30,7 +30,14 @@ static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
 
 /// Build a siginfo_t with controlled si_signo/si_code and union payload words
 /// (offsets match the LP64 kernel layout: payload union begins at byte 16).
-fn make_info(signo: i32, code: i32, w16_lo: i32, w20: u32, w24: i32, w16_full: i64) -> libc::siginfo_t {
+fn make_info(
+    signo: i32,
+    code: i32,
+    w16_lo: i32,
+    w20: u32,
+    w24: i32,
+    w16_full: i64,
+) -> libc::siginfo_t {
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     let base = &mut info as *mut libc::siginfo_t as *mut u8;
     unsafe {
@@ -72,7 +79,10 @@ fn assert_match(tag: &str, info: &libc::siginfo_t, msg: Option<&str>) {
 
     let g = capture(|| unsafe { psiginfo(info, mp) });
     let f = capture(|| unsafe { frankenlibc_abi::signal_abi::psiginfo(info, mp) });
-    assert_eq!(g, f, "[{tag}] psiginfo mismatch\n  glibc={g:?}\n  fl   ={f:?}");
+    assert_eq!(
+        g, f,
+        "[{tag}] psiginfo mismatch\n  glibc={g:?}\n  fl   ={f:?}"
+    );
 }
 
 #[test]
@@ -90,7 +100,11 @@ fn fault_signals_with_address() {
     for signo in [libc::SIGILL, libc::SIGFPE, libc::SIGSEGV, libc::SIGBUS] {
         for addr in [0i64, 0x1234, 0x7fff_dead_beefi64] {
             let info = make_info(signo, 0, 0, 0, 0, addr);
-            assert_match(&format!("fault signo={signo} addr={addr:#x}"), &info, Some("p"));
+            assert_match(
+                &format!("fault signo={signo} addr={addr:#x}"),
+                &info,
+                Some("p"),
+            );
         }
     }
 }
@@ -145,7 +159,14 @@ fn sigchld_payload_and_poll() {
 fn realtime_signals() {
     let rtmin = unsafe { libc::SIGRTMIN() };
     let rtmax = unsafe { libc::SIGRTMAX() };
-    for signo in [rtmin, rtmin + 1, rtmin + 5, rtmax - 1, rtmax, (rtmin + rtmax) / 2] {
+    for signo in [
+        rtmin,
+        rtmin + 1,
+        rtmin + 5,
+        rtmax - 1,
+        rtmax,
+        (rtmin + rtmax) / 2,
+    ] {
         let info = make_info(signo, 0, 1, 2, 0, 0);
         assert_match(&format!("rt signo={signo}"), &info, Some("rt"));
     }

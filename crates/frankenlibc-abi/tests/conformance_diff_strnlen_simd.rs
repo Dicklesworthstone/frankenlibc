@@ -8,9 +8,9 @@
 //! 32-byte panel and NULs at every offset — agree exactly with host glibc
 //! strnlen; a golden sha256 of the length stream pins the behavior.
 
-use std::os::raw::c_char;
 use frankenlibc_abi::string_abi as fa;
 use sha2::{Digest, Sha256};
+use std::os::raw::c_char;
 
 unsafe extern "C" {
     fn strnlen(s: *const c_char, n: usize) -> usize;
@@ -50,8 +50,7 @@ fn strnlen_matches_glibc() {
     eprintln!("strnlen golden sha256: {hex}");
     assert_eq!(div, 0, "strnlen diverged from glibc in {div} cases");
     assert_eq!(
-        hex,
-        "fc35325dad341a14ff0be7d64af0a429f9695a9d4ae7d5e8aed982e040848efe",
+        hex, "fc35325dad341a14ff0be7d64af0a429f9695a9d4ae7d5e8aed982e040848efe",
         "strnlen golden changed"
     );
 }

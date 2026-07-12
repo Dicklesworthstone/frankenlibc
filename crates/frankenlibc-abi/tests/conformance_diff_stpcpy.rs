@@ -9,9 +9,9 @@
 //! exactly with host glibc strcpy AND stpcpy on both the destination bytes and
 //! the return pointer; a golden sha256 of the stpcpy end offsets pins it.
 
-use std::os::raw::c_char;
 use frankenlibc_abi::string_abi as fa;
 use sha2::{Digest, Sha256};
+use std::os::raw::c_char;
 
 unsafe extern "C" {
     fn strcpy(d: *mut c_char, s: *const c_char) -> *mut c_char;
@@ -73,8 +73,7 @@ fn strcpy_stpcpy_match_glibc() {
     eprintln!("strcpy/stpcpy golden sha256: {hex}");
     assert_eq!(div, 0, "strcpy/stpcpy diverged from glibc in {div} cases");
     assert_eq!(
-        hex,
-        "a87a0b80a8df7dde132406974923f9b1c689d9af4619a6d75e420005ce088eb0",
+        hex, "a87a0b80a8df7dde132406974923f9b1c689d9af4619a6d75e420005ce088eb0",
         "strcpy/stpcpy golden changed"
     );
 }

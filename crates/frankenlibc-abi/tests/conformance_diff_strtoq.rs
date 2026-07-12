@@ -6,7 +6,7 @@
 //! For each (input, base) fl must match host glibc on the value, the endptr
 //! consumed-length, AND errno (ERANGE on overflow). No mocks.
 
-use std::ffi::{c_char, c_int, c_long, c_ulong, CString};
+use std::ffi::{CString, c_char, c_int, c_long, c_ulong};
 
 unsafe extern "C" {
     fn strtoq(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_long;
@@ -44,7 +44,11 @@ fn strtoq_matches_glibc() {
         let f = unsafe { frankenlibc_abi::stdlib_abi::strtoq(c.as_ptr(), &mut fe, base) };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "strtoq({s:?},{base}) value");
-        assert_eq!(consumed(fe, c.as_ptr()), consumed(ge, c.as_ptr()), "strtoq({s:?}) endptr");
+        assert_eq!(
+            consumed(fe, c.as_ptr()),
+            consumed(ge, c.as_ptr()),
+            "strtoq({s:?}) endptr"
+        );
         assert_eq!(ferr, gerr, "strtoq({s:?}) errno: fl={ferr} glibc={gerr}");
     }
 }
@@ -54,7 +58,7 @@ fn strtouq_matches_glibc() {
     let cases: &[(&str, c_int)] = &[
         ("123", 10),
         ("0xFFFFFFFFFFFFFFFF", 0),
-        ("-1", 10), // strtoul wraparound semantics
+        ("-1", 10),                   // strtoul wraparound semantics
         ("18446744073709551616", 10), // ULLONG_MAX + 1 -> ERANGE
         ("  99", 10),
         ("zz", 36),
@@ -71,7 +75,11 @@ fn strtouq_matches_glibc() {
         let f = unsafe { frankenlibc_abi::stdlib_abi::strtouq(c.as_ptr(), &mut fe, base) };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "strtouq({s:?},{base}) value");
-        assert_eq!(consumed(fe, c.as_ptr()), consumed(ge, c.as_ptr()), "strtouq({s:?}) endptr");
+        assert_eq!(
+            consumed(fe, c.as_ptr()),
+            consumed(ge, c.as_ptr()),
+            "strtouq({s:?}) endptr"
+        );
         assert_eq!(ferr, gerr, "strtouq({s:?}) errno: fl={ferr} glibc={gerr}");
     }
 }

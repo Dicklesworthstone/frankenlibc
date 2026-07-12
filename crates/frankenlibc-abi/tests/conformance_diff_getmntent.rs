@@ -10,7 +10,7 @@
 //! compares fl's parsed entries field-by-field against glibc. Strings are
 //! copied before the next getmntent overwrites the buffer. No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[repr(C)]
@@ -35,8 +35,7 @@ use frankenlibc_abi::unistd_abi as fl;
 
 static CNT: AtomicU64 = AtomicU64::new(0);
 
-const MTAB: &str =
-    "/dev/sda1 / ext4 rw,relatime 0 1\n\
+const MTAB: &str = "/dev/sda1 / ext4 rw,relatime 0 1\n\
      proc /proc proc rw,nosuid,nodev 0 0\n\
      # this is a comment line, must be skipped\n\
      tmpfs /tmp\\040dir tmpfs rw,size=1G 0 0\n\
@@ -65,8 +64,12 @@ fn parse_fl(path: &CStr) -> Vec<Entry> {
             }
             let e = &*e;
             out.push((
-                cstr(e.mnt_fsname), cstr(e.mnt_dir), cstr(e.mnt_type),
-                cstr(e.mnt_opts), e.mnt_freq, e.mnt_passno,
+                cstr(e.mnt_fsname),
+                cstr(e.mnt_dir),
+                cstr(e.mnt_type),
+                cstr(e.mnt_opts),
+                e.mnt_freq,
+                e.mnt_passno,
             ));
         }
         fl::endmntent(s);
@@ -86,8 +89,12 @@ fn parse_glibc(path: &CStr) -> Vec<Entry> {
             }
             let e = &*e;
             out.push((
-                cstr(e.mnt_fsname), cstr(e.mnt_dir), cstr(e.mnt_type),
-                cstr(e.mnt_opts), e.mnt_freq, e.mnt_passno,
+                cstr(e.mnt_fsname),
+                cstr(e.mnt_dir),
+                cstr(e.mnt_type),
+                cstr(e.mnt_opts),
+                e.mnt_freq,
+                e.mnt_passno,
             ));
         }
         g::endmntent(s);
@@ -107,11 +114,24 @@ fn getmntent_matches_glibc() {
     let g_entries = parse_glibc(&cpath);
     let _ = std::fs::remove_file(&p);
 
-    assert_eq!(fl_entries.len(), g_entries.len(), "entry count: fl={} glibc={}", fl_entries.len(), g_entries.len());
+    assert_eq!(
+        fl_entries.len(),
+        g_entries.len(),
+        "entry count: fl={} glibc={}",
+        fl_entries.len(),
+        g_entries.len()
+    );
     for (i, (f, gg)) in fl_entries.iter().zip(g_entries.iter()).enumerate() {
         assert_eq!(f, gg, "mntent entry {i}: fl={f:?} glibc={gg:?}");
     }
     // sanity: comment skipped, escape decoded, short line defaults to 0/0.
-    assert!(g_entries.iter().any(|e| e.1 == "/tmp dir"), "octal escape \\040 should decode to space");
-    assert_eq!(g_entries.len(), 5, "comment line must be skipped (5 real entries)");
+    assert!(
+        g_entries.iter().any(|e| e.1 == "/tmp dir"),
+        "octal escape \\040 should decode to space"
+    );
+    assert_eq!(
+        g_entries.len(),
+        5,
+        "comment line must be skipped (5 real entries)"
+    );
 }

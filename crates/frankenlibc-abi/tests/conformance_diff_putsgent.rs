@@ -98,7 +98,10 @@ fn putsgent_matches_glibc() {
         let gr = run(g, &sg);
         let fr = run(fl_fn, &sg);
         if gr != fr {
-            mism.push(format!("{name:?}: glibc=({},{:02x?}) fl=({},{:02x?})", gr.0, gr.1, fr.0, fr.1));
+            mism.push(format!(
+                "{name:?}: glibc=({},{:02x?}) fl=({},{:02x?})",
+                gr.0, gr.1, fr.0, fr.1
+            ));
         }
     }
     assert!(mism.is_empty(), "putsgent diverged:\n{}", mism.join("\n"));

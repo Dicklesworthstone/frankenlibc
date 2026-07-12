@@ -30,7 +30,14 @@ fn seq(f: unsafe extern "C" fn(c_int) -> c_int) -> [c_int; 3] {
 fn setlogmask_round_trip_matches_glibc() {
     let g = seq(setlogmask);
     let f = seq(frankenlibc_abi::unistd_abi::setlogmask);
-    assert_eq!(f, g, "setlogmask sequence [query,prev,query]: fl={f:?} glibc={g:?}");
+    assert_eq!(
+        f, g,
+        "setlogmask sequence [query,prev,query]: fl={f:?} glibc={g:?}"
+    );
     // glibc default mask is 0xFF (all 8 priorities), and query-on-0 returns the set value.
-    assert_eq!(g, [0xFF, 0xFF, 0x07], "glibc reference: default 0xFF, then set 0x07");
+    assert_eq!(
+        g,
+        [0xFF, 0xFF, 0x07],
+        "glibc reference: default 0xFF, then set 0x07"
+    );
 }

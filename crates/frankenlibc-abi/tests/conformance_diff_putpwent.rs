@@ -9,7 +9,7 @@
 //! FILE* streams (fl writes via fl's stdio, glibc via glibc's) and compares the
 //! resulting files. No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod g {
@@ -97,19 +97,24 @@ fn putpwent_matches_glibc() {
         pw.pw_shell = empty.as_ptr() as *mut c_char;
         let f = fl_write_pw(&pw);
         let gg = g_write_pw(&pw);
-        assert_eq!(f, gg, "putpwent(name={name:?}) fl={:?} glibc={:?}",
-            String::from_utf8_lossy(&f), String::from_utf8_lossy(&gg));
+        assert_eq!(
+            f,
+            gg,
+            "putpwent(name={name:?}) fl={:?} glibc={:?}",
+            String::from_utf8_lossy(&f),
+            String::from_utf8_lossy(&gg)
+        );
     }
 }
 
 #[test]
 fn putgrent_matches_glibc() {
     let cases: &[(&str, u32)] = &[
-        ("staff", 50),  // ordinary
-        ("+", 0),       // NIS: gid empty
-        ("+nis", 0),    // NIS: gid empty
-        ("-blk", 0),    // NIS minus
-        ("+keep", 9),   // NIS: gid kept
+        ("staff", 50), // ordinary
+        ("+", 0),      // NIS: gid empty
+        ("+nis", 0),   // NIS: gid empty
+        ("-blk", 0),   // NIS minus
+        ("+keep", 9),  // NIS: gid kept
     ];
     for &(name, gid) in cases {
         let nm = CString::new(name).unwrap();
@@ -122,7 +127,12 @@ fn putgrent_matches_glibc() {
         gr.gr_mem = members.as_mut_ptr();
         let f = fl_write_gr(&gr);
         let gg = g_write_gr(&gr);
-        assert_eq!(f, gg, "putgrent(name={name:?}) fl={:?} glibc={:?}",
-            String::from_utf8_lossy(&f), String::from_utf8_lossy(&gg));
+        assert_eq!(
+            f,
+            gg,
+            "putgrent(name={name:?}) fl={:?} glibc={:?}",
+            String::from_utf8_lossy(&f),
+            String::from_utf8_lossy(&gg)
+        );
     }
 }

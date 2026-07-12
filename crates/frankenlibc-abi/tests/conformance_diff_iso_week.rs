@@ -10,7 +10,7 @@
 //! year-straddling weeks) deterministically: fl's "%G-W%V-%u" / "%g" must equal
 //! glibc byte-for-byte. No mocks.
 
-use std::ffi::{c_char, CString};
+use std::ffi::{CString, c_char};
 
 unsafe extern "C" {
     fn strftime(s: *mut c_char, max: usize, fmt: *const c_char, tm: *const libc::tm) -> usize;
@@ -50,18 +50,18 @@ fn fmt_fl(tm: &libc::tm, f: &str) -> Vec<u8> {
 fn strftime_iso_week_boundaries_match_glibc() {
     // (year, month, day) at/around ISO-week year boundaries.
     let dates = [
-        (2021, 1, 1),  // -> 2020-W53-5
+        (2021, 1, 1),   // -> 2020-W53-5
         (2020, 12, 31), // -> 2020-W53-4
-        (2023, 1, 1),  // -> 2022-W52-7
+        (2023, 1, 1),   // -> 2022-W52-7
         (2024, 12, 30), // -> 2025-W01-1
         (2018, 12, 31), // -> 2019-W01-1
-        (2016, 1, 1),  // -> 2015-W53-5
-        (2024, 1, 1),  // -> 2024-W01-1
+        (2016, 1, 1),   // -> 2015-W53-5
+        (2024, 1, 1),   // -> 2024-W01-1
         (2025, 12, 31), // -> 2026-W01-3
         (2015, 12, 31), // -> 2015-W53-4
-        (2017, 1, 1),  // -> 2016-W52-7
-        (2026, 1, 1),  // -> 2026-W01-4
-        (2000, 1, 1),  // -> 1999-W52-6
+        (2017, 1, 1),   // -> 2016-W52-7
+        (2026, 1, 1),   // -> 2026-W01-4
+        (2000, 1, 1),   // -> 1999-W52-6
     ];
     for &(y, m, d) in &dates {
         let tm = tm_for(y, m, d);
@@ -69,7 +69,8 @@ fn strftime_iso_week_boundaries_match_glibc() {
             let g = fmt_glibc(&tm, f);
             let fl = fmt_fl(&tm, f);
             assert_eq!(
-                fl, g,
+                fl,
+                g,
                 "strftime({f:?}) for {y}-{m:02}-{d:02}: fl={:?} glibc={:?}",
                 String::from_utf8_lossy(&fl),
                 String::from_utf8_lossy(&g),

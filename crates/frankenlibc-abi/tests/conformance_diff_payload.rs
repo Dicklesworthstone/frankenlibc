@@ -90,32 +90,83 @@ fn payload_matches_glibc() {
     for &(pb, ret, out) in SP64 {
         let mut o = f64::from_bits(0x1234567890abcdef);
         let r = unsafe { fl::setpayload(&mut o, f64::from_bits(pb)) };
-        if r != ret || o.to_bits() != out { div.push(format!("setpayload(0x{:016x}): fl=ret{}/0x{:016x} glibc=ret{}/0x{:016x}", pb, r, o.to_bits(), ret, out)); }
+        if r != ret || o.to_bits() != out {
+            div.push(format!(
+                "setpayload(0x{:016x}): fl=ret{}/0x{:016x} glibc=ret{}/0x{:016x}",
+                pb,
+                r,
+                o.to_bits(),
+                ret,
+                out
+            ));
+        }
     }
     for &(pb, ret, out) in SS64 {
         let mut o = f64::from_bits(0x1234567890abcdef);
         let r = unsafe { fl::setpayloadsig(&mut o, f64::from_bits(pb)) };
-        if r != ret || o.to_bits() != out { div.push(format!("setpayloadsig(0x{:016x}): fl=ret{}/0x{:016x} glibc=ret{}/0x{:016x}", pb, r, o.to_bits(), ret, out)); }
+        if r != ret || o.to_bits() != out {
+            div.push(format!(
+                "setpayloadsig(0x{:016x}): fl=ret{}/0x{:016x} glibc=ret{}/0x{:016x}",
+                pb,
+                r,
+                o.to_bits(),
+                ret,
+                out
+            ));
+        }
     }
     for &(pb, ret, out) in SP32 {
         let mut o = f32::from_bits(0xdeadbeef);
         let r = unsafe { fl::setpayloadf(&mut o, f32::from_bits(pb)) };
-        if r != ret || o.to_bits() != out { div.push(format!("setpayloadf(0x{:08x}): fl=ret{}/0x{:08x} glibc=ret{}/0x{:08x}", pb, r, o.to_bits(), ret, out)); }
+        if r != ret || o.to_bits() != out {
+            div.push(format!(
+                "setpayloadf(0x{:08x}): fl=ret{}/0x{:08x} glibc=ret{}/0x{:08x}",
+                pb,
+                r,
+                o.to_bits(),
+                ret,
+                out
+            ));
+        }
     }
     for &(pb, ret, out) in SS32 {
         let mut o = f32::from_bits(0xdeadbeef);
         let r = unsafe { fl::setpayloadsigf(&mut o, f32::from_bits(pb)) };
-        if r != ret || o.to_bits() != out { div.push(format!("setpayloadsigf(0x{:08x}): fl=ret{}/0x{:08x} glibc=ret{}/0x{:08x}", pb, r, o.to_bits(), ret, out)); }
+        if r != ret || o.to_bits() != out {
+            div.push(format!(
+                "setpayloadsigf(0x{:08x}): fl=ret{}/0x{:08x} glibc=ret{}/0x{:08x}",
+                pb,
+                r,
+                o.to_bits(),
+                ret,
+                out
+            ));
+        }
     }
     for &(xb, pl) in GP64 {
         let x = f64::from_bits(xb);
         let g = unsafe { fl::getpayload(&x) }.to_bits();
-        if g != pl { div.push(format!("getpayload(0x{:016x}): fl=0x{:016x} glibc=0x{:016x}", xb, g, pl)); }
+        if g != pl {
+            div.push(format!(
+                "getpayload(0x{:016x}): fl=0x{:016x} glibc=0x{:016x}",
+                xb, g, pl
+            ));
+        }
     }
     for &(xb, pl) in GP32 {
         let x = f32::from_bits(xb);
         let g = unsafe { fl::getpayloadf(&x) }.to_bits();
-        if g != pl { div.push(format!("getpayloadf(0x{:08x}): fl=0x{:08x} glibc=0x{:08x}", xb, g, pl)); }
+        if g != pl {
+            div.push(format!(
+                "getpayloadf(0x{:08x}): fl=0x{:08x} glibc=0x{:08x}",
+                xb, g, pl
+            ));
+        }
     }
-    assert!(div.is_empty(), "payload divergences vs glibc ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "payload divergences vs glibc ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

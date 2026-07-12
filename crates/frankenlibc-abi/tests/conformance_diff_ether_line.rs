@@ -68,7 +68,11 @@ fn ether_line_matches_glibc() {
 
         let mut g_addr = [0u8; 6];
         let mut g_host = [0u8; 256];
-        let g_rc = g_ether_line(cl.as_ptr(), g_addr.as_mut_ptr(), g_host.as_mut_ptr() as *mut c_char);
+        let g_rc = g_ether_line(
+            cl.as_ptr(),
+            g_addr.as_mut_ptr(),
+            g_host.as_mut_ptr() as *mut c_char,
+        );
 
         let mut f_addr = [0u8; 6];
         let mut f_host = [0u8; 256];
@@ -82,16 +86,36 @@ fn ether_line_matches_glibc() {
 
         // On failure, only the return code is contractually defined; the
         // address/hostname buffers are scratch. On success, compare fully.
-        let g_norm = (g_rc, if g_rc == 0 { g_addr } else { [0; 6] }, if g_rc == 0 { hostname(&g_host) } else { Vec::new() });
-        let f_norm = (f_rc.signum(), if f_rc == 0 { f_addr } else { [0; 6] }, if f_rc == 0 { hostname(&f_host) } else { Vec::new() });
+        let g_norm = (
+            g_rc,
+            if g_rc == 0 { g_addr } else { [0; 6] },
+            if g_rc == 0 {
+                hostname(&g_host)
+            } else {
+                Vec::new()
+            },
+        );
+        let f_norm = (
+            f_rc.signum(),
+            if f_rc == 0 { f_addr } else { [0; 6] },
+            if f_rc == 0 {
+                hostname(&f_host)
+            } else {
+                Vec::new()
+            },
+        );
         // glibc returns -1; fl returns -1 too — normalize glibc rc sign as well.
         let g_norm = (g_norm.0.signum(), g_norm.1, g_norm.2);
 
         if g_norm != f_norm {
             mismatches.push(format!(
                 "{case:?}: glibc=(rc={},addr={:x?},host={:?}) fl=(rc={},addr={:x?},host={:?})",
-                g_rc, g_norm.1, String::from_utf8_lossy(&g_norm.2),
-                f_rc, f_norm.1, String::from_utf8_lossy(&f_norm.2),
+                g_rc,
+                g_norm.1,
+                String::from_utf8_lossy(&g_norm.2),
+                f_rc,
+                f_norm.1,
+                String::from_utf8_lossy(&f_norm.2),
             ));
         }
     }

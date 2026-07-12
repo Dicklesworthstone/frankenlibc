@@ -2719,8 +2719,7 @@ struct ArgpVersionGlobalsGuard {
 
 impl ArgpVersionGlobalsGuard {
     fn set(version: *const c_char, hook: *mut c_void) -> Self {
-        let previous_version =
-            unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_version };
+        let previous_version = unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_version };
         let previous_hook =
             unsafe { frankenlibc_abi::glibc_internal_abi::argp_program_version_hook };
         unsafe {
@@ -2820,7 +2819,10 @@ fn capture_argp_stdout_child_status(
 
     let mut status: c_int = 0;
     assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
-    assert!(libc::WIFEXITED(status), "child did not exit normally: {status}");
+    assert!(
+        libc::WIFEXITED(status),
+        "child did not exit normally: {status}"
+    );
     assert_eq!(libc::WEXITSTATUS(status), expected_status);
 
     let mut output = String::new();
@@ -2859,7 +2861,10 @@ fn capture_argp_child_exit(
 
     let mut status: c_int = 0;
     assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
-    assert!(libc::WIFEXITED(status), "child did not exit normally: {status}");
+    assert!(
+        libc::WIFEXITED(status),
+        "child did not exit normally: {status}"
+    );
     assert_eq!(libc::WEXITSTATUS(status), expected_status);
 
     let mut output = String::new();
@@ -2987,10 +2992,8 @@ fn abi_argp_parse_version_prints_configured_version_and_exits() {
 fn abi_argp_parse_version_hook_overrides_version_string_without_exit_when_requested() {
     let _guard = ARGP_GLOBAL_LOCK.lock().unwrap();
     let version = CString::new("ignored-version").unwrap();
-    let _globals = ArgpVersionGlobalsGuard::set(
-        version.as_ptr(),
-        argp_test_version_hook as *mut c_void,
-    );
+    let _globals =
+        ArgpVersionGlobalsGuard::set(version.as_ptr(), argp_test_version_hook as *mut c_void);
 
     let output = capture_argp_stdout_child_status(0, 125, || unsafe {
         let argp_struct = empty_argp_storage();
@@ -3326,7 +3329,10 @@ fn abi_argp_failure_exits_with_status_in_child() {
     })
     .unwrap();
 
-    assert_eq!(output, "failure-demo: failed item: No such file or directory\n");
+    assert_eq!(
+        output,
+        "failure-demo: failed item: No such file or directory\n"
+    );
 }
 
 #[test]
@@ -5470,7 +5476,9 @@ fn cuserid_null_uses_internal_stable_buffer() {
 
 #[test]
 fn cuserid_resolves_current_uid_from_passwd_backend() {
-    let _lock = PASSWD_ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let _lock = PASSWD_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
     let uid = unsafe { getuid() };
     let gid = unsafe { getgid() };
     let path = temp_path("cuserid_passwd");

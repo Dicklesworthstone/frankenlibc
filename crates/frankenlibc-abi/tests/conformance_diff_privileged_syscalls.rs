@@ -79,7 +79,8 @@ fn host_kexec_load(
     flags: c_ulong,
 ) -> (c_long, c_int) {
     set_host_errno(0);
-    let rc = unsafe { libc::syscall(SYS_KEXEC_LOAD, entry, nr_segments, segments, flags) as c_long };
+    let rc =
+        unsafe { libc::syscall(SYS_KEXEC_LOAD, entry, nr_segments, segments, flags) as c_long };
     (rc, host_errno())
 }
 
@@ -131,7 +132,10 @@ fn fl_kexec_file_load(
 fn privileged_control_invalid_failures_match_host_syscall() {
     let host = host_finit_module(-1, ptr::null(), 0);
     let fl = fl_finit_module(-1, ptr::null(), 0);
-    assert_eq!(fl, host, "finit_module(invalid fd): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "finit_module(invalid fd): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 
     let host = host_quotactl_fd(c_uint::MAX, 0, 0, ptr::null_mut());
@@ -146,7 +150,10 @@ fn privileged_control_invalid_failures_match_host_syscall() {
 
     let host = host_bpf(0, ptr::null_mut(), 16);
     let fl = fl_bpf(0, ptr::null_mut(), 16);
-    assert_eq!(fl, host, "bpf(null attr positive size): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "bpf(null attr positive size): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 
     let host = host_kexec_load(0, 1, ptr::null(), 0);

@@ -15,8 +15,17 @@ use std::ffi::{c_int, c_void};
 mod g {
     use super::*;
     unsafe extern "C" {
-        pub fn timer_create(clockid: libc::clockid_t, sevp: *mut libc::sigevent, t: *mut libc::timer_t) -> c_int;
-        pub fn timer_settime(t: libc::timer_t, flags: c_int, new: *const libc::itimerspec, old: *mut libc::itimerspec) -> c_int;
+        pub fn timer_create(
+            clockid: libc::clockid_t,
+            sevp: *mut libc::sigevent,
+            t: *mut libc::timer_t,
+        ) -> c_int;
+        pub fn timer_settime(
+            t: libc::timer_t,
+            flags: c_int,
+            new: *const libc::itimerspec,
+            old: *mut libc::itimerspec,
+        ) -> c_int;
         pub fn timer_gettime(t: libc::timer_t, cur: *mut libc::itimerspec) -> c_int;
         pub fn timer_getoverrun(t: libc::timer_t) -> c_int;
         pub fn timer_delete(t: libc::timer_t) -> c_int;
@@ -38,8 +47,14 @@ fn glibc_flow() -> (c_int, c_int, c_int, i64, c_int, c_int) {
         let mut tid: libc::timer_t = std::mem::zeroed();
         let c = g::timer_create(libc::CLOCK_MONOTONIC, &mut sev, &mut tid);
         let its = libc::itimerspec {
-            it_interval: libc::timespec { tv_sec: 0, tv_nsec: 0 },
-            it_value: libc::timespec { tv_sec: 100, tv_nsec: 0 },
+            it_interval: libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            },
+            it_value: libc::timespec {
+                tv_sec: 100,
+                tv_nsec: 0,
+            },
         };
         let s = g::timer_settime(tid, 0, &its, std::ptr::null_mut());
         let mut cur: libc::itimerspec = std::mem::zeroed();
@@ -54,12 +69,27 @@ fn fl_flow() -> (c_int, c_int, c_int, i64, c_int, c_int) {
     unsafe {
         let mut sev = zeroed_sev_none();
         let mut tid: libc::timer_t = std::mem::zeroed();
-        let c = fl::timer_create(libc::CLOCK_MONOTONIC, &mut sev as *mut _ as *mut c_void, &mut tid as *mut _ as *mut c_void);
+        let c = fl::timer_create(
+            libc::CLOCK_MONOTONIC,
+            &mut sev as *mut _ as *mut c_void,
+            &mut tid as *mut _ as *mut c_void,
+        );
         let its = libc::itimerspec {
-            it_interval: libc::timespec { tv_sec: 0, tv_nsec: 0 },
-            it_value: libc::timespec { tv_sec: 100, tv_nsec: 0 },
+            it_interval: libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            },
+            it_value: libc::timespec {
+                tv_sec: 100,
+                tv_nsec: 0,
+            },
         };
-        let s = fl::timer_settime(tid as *mut c_void, 0, &its as *const _ as *const c_void, std::ptr::null_mut());
+        let s = fl::timer_settime(
+            tid as *mut c_void,
+            0,
+            &its as *const _ as *const c_void,
+            std::ptr::null_mut(),
+        );
         let mut cur: libc::itimerspec = std::mem::zeroed();
         let gt = fl::timer_gettime(tid as *mut c_void, &mut cur as *mut _ as *mut c_void);
         let ov = fl::timer_getoverrun(tid as *mut c_void);
@@ -74,10 +104,17 @@ fn timer_flow_matches_glibc() {
     let f = fl_flow();
     // Return codes + overrun must match; remaining time must be plausibly in
     // (95, 100] for both (timing differs, so not cross-equal).
-    assert_eq!((f.0, f.1, f.2, f.4, f.5), (g.0, g.1, g.2, g.4, g.5), "timer flow rcs: fl={f:?} glibc={g:?}");
+    assert_eq!(
+        (f.0, f.1, f.2, f.4, f.5),
+        (g.0, g.1, g.2, g.4, g.5),
+        "timer flow rcs: fl={f:?} glibc={g:?}"
+    );
     assert_eq!(g.0, 0, "glibc timer_create should succeed");
     for (who, secs) in [("glibc", g.3), ("fl", f.3)] {
-        assert!((95..=100).contains(&secs), "{who} remaining {secs}s not in (95,100]");
+        assert!(
+            (95..=100).contains(&secs),
+            "{who} remaining {secs}s not in (95,100]"
+        );
     }
 }
 
@@ -95,7 +132,11 @@ fn timer_create_invalid_clockid_matches_glibc() {
         let mut sev = zeroed_sev_none();
         let mut tid: libc::timer_t = std::mem::zeroed();
         *g::__errno_location() = 0;
-        let rc = fl::timer_create(bad, &mut sev as *mut _ as *mut c_void, &mut tid as *mut _ as *mut c_void);
+        let rc = fl::timer_create(
+            bad,
+            &mut sev as *mut _ as *mut c_void,
+            &mut tid as *mut _ as *mut c_void,
+        );
         (rc, *g::__errno_location())
     };
     assert_eq!(f, g, "timer_create(bad clockid): fl={f:?} glibc={g:?}");

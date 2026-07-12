@@ -9,11 +9,19 @@
 //! controls. Bit-for-bit NaN-aware vs host glibc. No mocks.
 
 unsafe extern "C" {
-    fn floor(x: f64) -> f64; fn ceil(x: f64) -> f64; fn trunc(x: f64) -> f64;
-    fn round(x: f64) -> f64; fn roundeven(x: f64) -> f64; fn nearbyint(x: f64) -> f64;
+    fn floor(x: f64) -> f64;
+    fn ceil(x: f64) -> f64;
+    fn trunc(x: f64) -> f64;
+    fn round(x: f64) -> f64;
+    fn roundeven(x: f64) -> f64;
+    fn nearbyint(x: f64) -> f64;
     fn rint(x: f64) -> f64;
-    fn floorf(x: f32) -> f32; fn ceilf(x: f32) -> f32; fn truncf(x: f32) -> f32;
-    fn roundf(x: f32) -> f32; fn roundevenf(x: f32) -> f32; fn nearbyintf(x: f32) -> f32;
+    fn floorf(x: f32) -> f32;
+    fn ceilf(x: f32) -> f32;
+    fn truncf(x: f32) -> f32;
+    fn roundf(x: f32) -> f32;
+    fn roundevenf(x: f32) -> f32;
+    fn nearbyintf(x: f32) -> f32;
     fn rintf(x: f32) -> f32;
 }
 
@@ -25,8 +33,20 @@ fn same32(a: f32, b: f32) -> bool {
 }
 
 const CASES: &[f64] = &[
-    0.0, -0.0, f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
-    2.5, -2.5, 0.5, -0.5, 3.5, -3.5, 2.4, -2.6, 0.0e0,
+    0.0,
+    -0.0,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    f64::NAN,
+    2.5,
+    -2.5,
+    0.5,
+    -0.5,
+    3.5,
+    -3.5,
+    2.4,
+    -2.6,
+    0.0e0,
 ];
 
 macro_rules! ck64 {

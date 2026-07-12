@@ -7,7 +7,7 @@
 //! each wide input + base fl must match host glibc on value, endptr consumed-
 //! length (in wide chars), and errno. No mocks.
 
-use std::ffi::{c_char, c_int, c_long, c_ulong, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_long, c_ulong, c_void};
 
 use libc::wchar_t;
 
@@ -22,7 +22,10 @@ unsafe extern "C" {
 }
 
 fn wide(s: &str) -> Vec<wchar_t> {
-    s.chars().map(|c| c as wchar_t).chain(std::iter::once(0)).collect()
+    s.chars()
+        .map(|c| c as wchar_t)
+        .chain(std::iter::once(0))
+        .collect()
 }
 fn consumed(end: *mut wchar_t, base: *const wchar_t) -> isize {
     (end as isize - base as isize) / std::mem::size_of::<wchar_t>() as isize
@@ -65,7 +68,11 @@ fn wcstol_l_family_matches_glibc() {
         };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "wcstol_l({s:?},{base}) value");
-        assert_eq!(consumed(fe, w.as_ptr()), consumed(ge, w.as_ptr()), "wcstol_l({s:?}) endptr");
+        assert_eq!(
+            consumed(fe, w.as_ptr()),
+            consumed(ge, w.as_ptr()),
+            "wcstol_l({s:?}) endptr"
+        );
         assert_eq!(ferr, gerr, "wcstol_l({s:?}) errno");
 
         // wcstoll_l (i64) — same i64 width on x86-64.
@@ -93,7 +100,11 @@ fn wcstol_l_family_matches_glibc() {
         };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "wcstoul_l({s:?},{base}) value");
-        assert_eq!(consumed(fe, w.as_ptr()), consumed(ge, w.as_ptr()), "wcstoul_l({s:?}) endptr");
+        assert_eq!(
+            consumed(fe, w.as_ptr()),
+            consumed(ge, w.as_ptr()),
+            "wcstoul_l({s:?}) endptr"
+        );
         assert_eq!(ferr, gerr, "wcstoul_l({s:?}) errno");
 
         let mut ge2: *mut wchar_t = std::ptr::null_mut();

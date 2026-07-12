@@ -85,15 +85,13 @@ fn gettext_unknown_domain_matches_host_passthrough() {
     assert_eq!(text(fl_dcn_many), text(host_dcn_many), "dcngettext n=2");
     assert_eq!(text(fl_dcn_many), plural.to_bytes());
 
-    let host_dn_one =
-        unsafe { dngettext(domain.as_ptr(), singular.as_ptr(), plural.as_ptr(), 1) };
+    let host_dn_one = unsafe { dngettext(domain.as_ptr(), singular.as_ptr(), plural.as_ptr(), 1) };
     let fl_dn_one =
         unsafe { fl::dngettext(domain.as_ptr(), singular.as_ptr(), plural.as_ptr(), 1) };
     assert_eq!(text(fl_dn_one), text(host_dn_one), "dngettext n=1");
     assert_eq!(text(fl_dn_one), singular.to_bytes());
 
-    let host_dn_many =
-        unsafe { dngettext(domain.as_ptr(), singular.as_ptr(), plural.as_ptr(), 2) };
+    let host_dn_many = unsafe { dngettext(domain.as_ptr(), singular.as_ptr(), plural.as_ptr(), 2) };
     let fl_dn_many =
         unsafe { fl::dngettext(domain.as_ptr(), singular.as_ptr(), plural.as_ptr(), 2) };
     assert_eq!(text(fl_dn_many), text(host_dn_many), "dngettext n=2");

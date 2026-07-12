@@ -9,7 +9,7 @@
 //! valid names are used to minimise interference on the shared process environ.
 //! No mocks.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 
 mod g {
     use super::*;
@@ -64,8 +64,16 @@ fn setenv_validation_matches_glibc() {
     // valid names (distinct so the two impls don't fight over one var)
     let fn_ok = CString::new("FL_SETENV_OK").unwrap();
     let gn_ok = CString::new("G_SETENV_OK").unwrap();
-    assert_eq!(f_setenv(fn_ok.as_ptr(), val.as_ptr(), 1).0, 0, "fl setenv valid");
-    assert_eq!(g_setenv(gn_ok.as_ptr(), val.as_ptr(), 1).0, 0, "glibc setenv valid");
+    assert_eq!(
+        f_setenv(fn_ok.as_ptr(), val.as_ptr(), 1).0,
+        0,
+        "fl setenv valid"
+    );
+    assert_eq!(
+        g_setenv(gn_ok.as_ptr(), val.as_ptr(), 1).0,
+        0,
+        "glibc setenv valid"
+    );
 }
 
 #[test]
@@ -84,5 +92,9 @@ fn unsetenv_validation_matches_glibc() {
     // valid unsetenv (a name not necessarily present) returns 0 on both
     let ok = CString::new("FL_UNSET_OK").unwrap();
     assert_eq!(unsafe { fl::unsetenv(ok.as_ptr()) }, 0, "fl unsetenv valid");
-    assert_eq!(unsafe { g::unsetenv(ok.as_ptr()) }, 0, "glibc unsetenv valid");
+    assert_eq!(
+        unsafe { g::unsetenv(ok.as_ptr()) },
+        0,
+        "glibc unsetenv valid"
+    );
 }

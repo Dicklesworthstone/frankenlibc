@@ -47,5 +47,9 @@ fn clock_getcpuclockid_matches_glibc() {
             mism.push(format!("pid={pid}: clock_id glibc={gc:#x} fl={fc:#x}"));
         }
     }
-    assert!(mism.is_empty(), "clock_getcpuclockid diverged:\n{}", mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "clock_getcpuclockid diverged:\n{}",
+        mism.join("\n")
+    );
 }

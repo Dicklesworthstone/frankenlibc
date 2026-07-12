@@ -2388,7 +2388,10 @@ fn wcsstr_fused_untracked_guard_page() {
         );
         assert_ne!(base, libc::MAP_FAILED, "mmap failed");
         let base = base.cast::<u8>();
-        assert_eq!(libc::mprotect(base.add(page).cast(), page, libc::PROT_NONE), 0);
+        assert_eq!(
+            libc::mprotect(base.add(page).cast(), page, libc::PROT_NONE),
+            0
+        );
         let a = b'a' as u32;
         let b = b'b' as u32;
         let c = b'c' as u32;
@@ -2409,9 +2412,20 @@ fn wcsstr_fused_untracked_guard_page() {
             for ndl in &needles {
                 let gp = wcsstr(start.cast(), ndl.as_ptr().cast());
                 let fp = fl::wcsstr(start, ndl.as_ptr());
-                let go = if gp.is_null() { -1 } else { gp.cast::<u32>().offset_from(start) };
-                let fo = if fp.is_null() { -1 } else { fp.offset_from(start) };
-                assert_eq!(fo, go, "wcsstr fused mismatch/overread back_w={back_w} ndl={ndl:?}");
+                let go = if gp.is_null() {
+                    -1
+                } else {
+                    gp.cast::<u32>().offset_from(start)
+                };
+                let fo = if fp.is_null() {
+                    -1
+                } else {
+                    fp.offset_from(start)
+                };
+                assert_eq!(
+                    fo, go,
+                    "wcsstr fused mismatch/overread back_w={back_w} ndl={ndl:?}"
+                );
             }
         }
         libc::munmap(base.cast(), page * 2);

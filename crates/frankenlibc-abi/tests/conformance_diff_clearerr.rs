@@ -9,7 +9,7 @@
 //! eof_after_clear, err_set, eof_after_err, err_after_clear) state is compared
 //! vs glibc. No mocks.
 
-use std::ffi::{c_char, c_int, c_long, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_long, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod g {
@@ -33,9 +33,14 @@ fn wpath() -> (std::path::PathBuf, CString) {
     let n = CNT.fetch_add(1, Ordering::Relaxed);
     let mut p = std::env::temp_dir();
     p.push(format!("fl-clearerr-{}-{}", std::process::id(), n));
-    (p.clone(), CString::new(p.to_string_lossy().as_bytes()).unwrap())
+    (
+        p.clone(),
+        CString::new(p.to_string_lossy().as_bytes()).unwrap(),
+    )
 }
-fn norm(v: c_int) -> i32 { (v != 0) as i32 }
+fn norm(v: c_int) -> i32 {
+    (v != 0) as i32
+}
 
 type S = (i32, i32, i32, i32, i32, i32);
 
@@ -60,7 +65,14 @@ fn glibc_scenario(wp: &CStr) -> S {
         g::clearerr(wf);
         let err_after_clear = norm(g::ferror(wf));
         g::fclose(wf);
-        (eof_set, err_after_eof, eof_after_clear, err_set, eof_after_err, err_after_clear)
+        (
+            eof_set,
+            err_after_eof,
+            eof_after_clear,
+            err_set,
+            eof_after_err,
+            err_after_clear,
+        )
     }
 }
 
@@ -83,7 +95,14 @@ fn fl_scenario(wp: &CStr) -> S {
         fl::clearerr(wf);
         let err_after_clear = norm(fl::ferror(wf));
         fl::fclose(wf);
-        (eof_set, err_after_eof, eof_after_clear, err_set, eof_after_err, err_after_clear)
+        (
+            eof_set,
+            err_after_eof,
+            eof_after_clear,
+            err_set,
+            eof_after_err,
+            err_after_clear,
+        )
     }
 }
 

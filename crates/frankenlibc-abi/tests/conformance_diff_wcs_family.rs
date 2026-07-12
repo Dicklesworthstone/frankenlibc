@@ -60,7 +60,9 @@ impl Rng {
 /// NUL-terminated wide string drawn from `alphabet`.
 fn rand_wstr(rng: &mut Rng, max_len: usize, alphabet: &[Wc]) -> Vec<Wc> {
     let len = rng.below(max_len + 1);
-    let mut v: Vec<Wc> = (0..len).map(|_| alphabet[rng.below(alphabet.len())]).collect();
+    let mut v: Vec<Wc> = (0..len)
+        .map(|_| alphabet[rng.below(alphabet.len())])
+        .collect();
     v.push(0);
     v
 }
@@ -76,8 +78,8 @@ fn wcsncmp_wcsncasecmp_match_glibc() {
     let mut rng = Rng(0x57AB_1E00_DEAD_BEEF);
     // Alphabet mixes ASCII case pairs (for casefold), a couple BMP and astral.
     let alpha: Vec<Wc> = vec![
-        b'a' as Wc, b'A' as Wc, b'b' as Wc, b'B' as Wc, b'z' as Wc, b'Z' as Wc,
-        0x00E9, 0x4E2D, 0x1_0348,
+        b'a' as Wc, b'A' as Wc, b'b' as Wc, b'B' as Wc, b'z' as Wc, b'Z' as Wc, 0x00E9, 0x4E2D,
+        0x1_0348,
     ];
     for _ in 0..8000 {
         let a = rand_wstr(&mut rng, 24, &alpha);
@@ -97,7 +99,11 @@ fn wcsncmp_wcsncasecmp_match_glibc() {
 
         let gc = unsafe { g::wcsncmp(a.as_ptr(), b.as_ptr(), n) };
         let fc = unsafe { fl::wcsncmp(u32p(a.as_ptr()), u32p(b.as_ptr()), n) };
-        assert_eq!(sgn(fc), sgn(gc), "wcsncmp sign a={a:?} b={b:?} n={n}: fl={fc} g={gc}");
+        assert_eq!(
+            sgn(fc),
+            sgn(gc),
+            "wcsncmp sign a={a:?} b={b:?} n={n}: fl={fc} g={gc}"
+        );
 
         let gci = unsafe { g::wcsncasecmp(a.as_ptr(), b.as_ptr(), n) };
         let fci = unsafe { fl::wcsncasecmp(u32p(a.as_ptr()), u32p(b.as_ptr()), n) };
@@ -141,7 +147,11 @@ fn wcspbrk_wcscspn_match_glibc() {
         // METAMORPHIC: wcspbrk hit index == wcscspn (first reject char), else NULL.
         let slen = s.len() - 1;
         if fspn < slen {
-            assert_eq!(woff(fp.cast(), s.as_ptr()), fspn as isize, "wcspbrk==wcscspn idx");
+            assert_eq!(
+                woff(fp.cast(), s.as_ptr()),
+                fspn as isize,
+                "wcspbrk==wcscspn idx"
+            );
         } else {
             assert!(fp.is_null(), "no reject -> wcspbrk NULL");
         }
@@ -166,7 +176,11 @@ fn wmemchr_wcschrnul_match_glibc() {
         let n = slen + 1;
         let gm = unsafe { g::wmemchr(s.as_ptr(), c, n) };
         let fm = unsafe { fl::wmemchr(u32p(s.as_ptr()), c as u32, n) };
-        assert_eq!(woff(fm.cast(), s.as_ptr()), woff(gm, s.as_ptr()), "wmemchr s={s:?} c={c}");
+        assert_eq!(
+            woff(fm.cast(), s.as_ptr()),
+            woff(gm, s.as_ptr()),
+            "wmemchr s={s:?} c={c}"
+        );
 
         // wcschrnul: never NULL; returns terminator when absent.
         let gn = unsafe { g::wcschrnul(s.as_ptr(), c) };
@@ -215,7 +229,10 @@ fn edge_cases_match_glibc() {
     let s = mk(&[1, 2, 3]);
     let empty = mk(&[]);
     assert!(unsafe { fl::wcspbrk(u32p(s.as_ptr()), u32p(empty.as_ptr())) }.is_null());
-    assert_eq!(unsafe { fl::wcscspn(u32p(s.as_ptr()), u32p(empty.as_ptr())) }, 3);
+    assert_eq!(
+        unsafe { fl::wcscspn(u32p(s.as_ptr()), u32p(empty.as_ptr())) },
+        3
+    );
     // wmemchr n==0 -> NULL
     assert!(unsafe { fl::wmemchr(u32p(s.as_ptr()), 1, 0) }.is_null());
 }

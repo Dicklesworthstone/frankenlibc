@@ -67,7 +67,13 @@ fn diff_fmod_rem_flags() {
             if !veq(fv, gv) || ff != gg {
                 div.push(format!(
                     "{}({},{}): fl={:#x}/f{:#x} g={:#x}/f{:#x}",
-                    $name, $x, $y, fv.to_bits(), ff, gv.to_bits(), gg
+                    $name,
+                    $x,
+                    $y,
+                    fv.to_bits(),
+                    ff,
+                    gv.to_bits(),
+                    gg
                 ));
             }
         }};
@@ -84,7 +90,13 @@ fn diff_fmod_rem_flags() {
             if !veqf(fv, gv) || ff != gg {
                 div.push(format!(
                     "{}({},{}): fl={:#x}/f{:#x} g={:#x}/f{:#x}",
-                    $name, xf, yf, fv.to_bits(), ff, gv.to_bits(), gg
+                    $name,
+                    xf,
+                    yf,
+                    fv.to_bits(),
+                    ff,
+                    gv.to_bits(),
+                    gg
                 ));
             }
         }};

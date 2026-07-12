@@ -37,8 +37,9 @@ fn dn_expand_matches_glibc() {
     };
 
     // (message bytes, offset of the name to expand within the message)
-    let www_example_com: Vec<u8> =
-        vec![3, b'w', b'w', b'w', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0];
+    let www_example_com: Vec<u8> = vec![
+        3, b'w', b'w', b'w', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0,
+    ];
 
     // A message with a compression pointer: "mail" + ptr->offset 0 (the
     // www.example.com name above lives at offset 0 of this message).
@@ -66,11 +67,23 @@ fn dn_expand_matches_glibc() {
         let comp = unsafe { msg.as_ptr().add(off) };
 
         let mut gt = [0u8; 1024];
-        let grc = g(msg.as_ptr(), eom, comp, gt.as_mut_ptr() as *mut c_char, gt.len() as c_int);
+        let grc = g(
+            msg.as_ptr(),
+            eom,
+            comp,
+            gt.as_mut_ptr() as *mut c_char,
+            gt.len() as c_int,
+        );
 
         let mut ft = [0u8; 1024];
         let frc = unsafe {
-            flu::dn_expand(msg.as_ptr(), eom, comp, ft.as_mut_ptr() as *mut c_char, ft.len() as c_int)
+            flu::dn_expand(
+                msg.as_ptr(),
+                eom,
+                comp,
+                ft.as_mut_ptr() as *mut c_char,
+                ft.len() as c_int,
+            )
         };
 
         if grc != frc {

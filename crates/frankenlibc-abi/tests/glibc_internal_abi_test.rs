@@ -86,9 +86,6 @@ use frankenlibc_abi::glibc_internal_abi::{
     __woverflow,
     __wuflow,
     __wunderflow,
-    bdflush,
-    chflags,
-    create_module,
     _dl_find_object,
     _dl_mcount_wrapper,
     _dl_mcount_wrapper_check,
@@ -103,6 +100,9 @@ use frankenlibc_abi::glibc_internal_abi::{
     _pthread_cleanup_pop_restore,
     _pthread_cleanup_push,
     _pthread_cleanup_push_defer,
+    bdflush,
+    chflags,
+    create_module,
     dysize,
     fattach,
     fchflags,
@@ -144,8 +144,8 @@ use frankenlibc_abi::glibc_internal_abi::{
     printf_size_info,
     profil,
     pthread_kill_other_threads_np,
-    putmsg,
     putgrent,
+    putmsg,
     putpmsg,
     putpwent,
     query_module,
@@ -167,14 +167,14 @@ use frankenlibc_abi::glibc_internal_abi::{
     res_ownok,
     res_querydomain,
     res_send,
+    revoke,
     rexec,
     rexec_af,
-    revoke,
     ruserok,
     ruserok_af,
     ruserpass,
-    sgetspent_r,
     setlogin,
+    sgetspent_r,
     sprofil,
     sstk,
     stty,
@@ -243,12 +243,8 @@ unsafe extern "C" {
     #[link_name = "isastream"]
     fn host_isastream(fd: c_int) -> c_int;
     #[link_name = "putmsg"]
-    fn host_putmsg(
-        fd: c_int,
-        ctlptr: *const c_void,
-        dataptr: *const c_void,
-        flags: c_int,
-    ) -> c_int;
+    fn host_putmsg(fd: c_int, ctlptr: *const c_void, dataptr: *const c_void, flags: c_int)
+    -> c_int;
     #[link_name = "putpmsg"]
     fn host_putpmsg(
         fd: c_int,
@@ -414,10 +410,7 @@ fn bsd_path_and_login_stubs_match_host_enosys() {
             (fl_setlogin_result, fl_setlogin_errno),
             (host_setlogin_result, host_setlogin_errno)
         );
-        assert_eq!(
-            (fl_setlogin_result, fl_setlogin_errno),
-            (-1, libc::ENOSYS)
-        );
+        assert_eq!((fl_setlogin_result, fl_setlogin_errno), (-1, libc::ENOSYS));
     }
 }
 
@@ -456,10 +449,7 @@ fn obsolete_linux_stubs_match_host_enosys() {
             (fl_bdflush_result, fl_bdflush_errno),
             (host_bdflush_result, host_bdflush_errno)
         );
-        assert_eq!(
-            (fl_bdflush_result, fl_bdflush_errno),
-            (-1, libc::ENOSYS)
-        );
+        assert_eq!((fl_bdflush_result, fl_bdflush_errno), (-1, libc::ENOSYS));
 
         *libc::__errno_location() = 0;
         let host_sstk_result = host_sstk(0);
@@ -515,24 +505,14 @@ fn obsolete_module_syscall_stubs_match_host_enosys() {
         assert_eq!((fl_syms_result, fl_syms_errno), (-1, libc::ENOSYS));
 
         *libc::__errno_location() = 0;
-        let host_query_result = host_query_module(
-            module_name.as_ptr(),
-            0,
-            ptr::null_mut(),
-            0,
-            &mut ret_size,
-        );
+        let host_query_result =
+            host_query_module(module_name.as_ptr(), 0, ptr::null_mut(), 0, &mut ret_size);
         let host_query_errno = *libc::__errno_location();
 
         clear_errno();
         *libc::__errno_location() = 0;
-        let fl_query_result = query_module(
-            module_name.as_ptr(),
-            0,
-            ptr::null_mut(),
-            0,
-            &mut ret_size,
-        );
+        let fl_query_result =
+            query_module(module_name.as_ptr(), 0, ptr::null_mut(), 0, &mut ret_size);
         let fl_query_errno = errno_value();
 
         assert_eq!(
@@ -604,10 +584,7 @@ fn obsolete_kernel_accounting_stubs_match_host_enosys() {
             (fl_sprofil_result, fl_sprofil_errno),
             (host_sprofil_result, host_sprofil_errno)
         );
-        assert_eq!(
-            (fl_sprofil_result, fl_sprofil_errno),
-            (-1, libc::ENOSYS)
-        );
+        assert_eq!((fl_sprofil_result, fl_sprofil_errno), (-1, libc::ENOSYS));
 
         *libc::__errno_location() = 0;
         let host_sysctl_result = host_sysctl(
@@ -660,10 +637,7 @@ fn streams_compatibility_stubs_match_host_enosys() {
             (fl_fattach_result, fl_fattach_errno),
             (host_fattach_result, host_fattach_errno)
         );
-        assert_eq!(
-            (fl_fattach_result, fl_fattach_errno),
-            (-1, libc::ENOSYS)
-        );
+        assert_eq!((fl_fattach_result, fl_fattach_errno), (-1, libc::ENOSYS));
 
         *libc::__errno_location() = 0;
         let host_fdetach_result = host_fdetach(path.as_ptr());
@@ -678,10 +652,7 @@ fn streams_compatibility_stubs_match_host_enosys() {
             (fl_fdetach_result, fl_fdetach_errno),
             (host_fdetach_result, host_fdetach_errno)
         );
-        assert_eq!(
-            (fl_fdetach_result, fl_fdetach_errno),
-            (-1, libc::ENOSYS)
-        );
+        assert_eq!((fl_fdetach_result, fl_fdetach_errno), (-1, libc::ENOSYS));
 
         *libc::__errno_location() = 0;
         let host_getmsg_result = host_getmsg(0, ptr::null_mut(), ptr::null_mut(), &mut flags);
@@ -712,10 +683,7 @@ fn streams_compatibility_stubs_match_host_enosys() {
             (fl_getpmsg_result, fl_getpmsg_errno),
             (host_getpmsg_result, host_getpmsg_errno)
         );
-        assert_eq!(
-            (fl_getpmsg_result, fl_getpmsg_errno),
-            (-1, libc::ENOSYS)
-        );
+        assert_eq!((fl_getpmsg_result, fl_getpmsg_errno), (-1, libc::ENOSYS));
 
         *libc::__errno_location() = 0;
         let host_putmsg_result = host_putmsg(0, ptr::null(), ptr::null(), 0);
@@ -745,10 +713,7 @@ fn streams_compatibility_stubs_match_host_enosys() {
             (fl_putpmsg_result, fl_putpmsg_errno),
             (host_putpmsg_result, host_putpmsg_errno)
         );
-        assert_eq!(
-            (fl_putpmsg_result, fl_putpmsg_errno),
-            (-1, libc::ENOSYS)
-        );
+        assert_eq!((fl_putpmsg_result, fl_putpmsg_errno), (-1, libc::ENOSYS));
     }
 }
 
@@ -878,7 +843,10 @@ fn assert_core_vlimit_child(label: &str, use_host: bool, value: c_int, expected:
 
     let mut status: c_int = 0;
     assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
-    assert!(libc::WIFEXITED(status), "{label} child did not exit normally");
+    assert!(
+        libc::WIFEXITED(status),
+        "{label} child did not exit normally"
+    );
     assert_eq!(libc::WEXITSTATUS(status), 0, "{label} child failed");
 }
 
@@ -970,7 +938,12 @@ fn res_mailok_matches_host_mailbox_labels() {
 
 #[test]
 fn res_ownok_matches_host_owner_names() {
-    for raw in ["_srv.example.com", "example.com", "user@example.com", "bad name"] {
+    for raw in [
+        "_srv.example.com",
+        "example.com",
+        "user@example.com",
+        "bad name",
+    ] {
         let name = CString::new(raw).unwrap();
         let host = unsafe { host_res_ownok(name.as_ptr()) };
         let fl = unsafe { res_ownok(name.as_ptr()) };

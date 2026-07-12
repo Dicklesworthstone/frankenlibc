@@ -16,24 +16,45 @@ use std::ffi::CString;
 
 // (pattern, string, glibc re_exec result: 1=match, 0=no match)
 const CASES: &[(&str, &str, i32)] = &[
-    ("a.c", "abc", 1), ("a.c", "axc", 1), ("a.c", "ac", 0),
-    ("^foo$", "foo", 1), ("^foo$", "foobar", 0),
-    ("[0-9]+", "abc123", 1), ("[0-9]+", "abcdef", 0),
-    ("a*", "bbb", 1), ("\\(ab\\)*", "ababab", 1), ("hello", "world", 0),
-    ("a+", "aaa", 1), ("a+", "b", 0),
-    ("a?b", "b", 1), ("a?b", "ab", 1), ("a?b", "xb", 1),
-    ("[a+]", "+", 1), ("[a+]", "x", 0),
-    ("a\\+", "a+", 1), ("a\\+", "aa", 0),
-    ("a\\?", "a?", 1), ("a\\?", "ab", 0),
-    ("+a", "+a", 1), ("+a", "a", 0),
-    ("\\(a\\)+", "aaa", 1), ("\\(ab\\)+c", "ababc", 1),
-    ("colou?r", "color", 1), ("colou?r", "colour", 1),
-    ("a?", "x", 1), ("go+gle", "gooogle", 1), ("go+gle", "gogle", 1),
-    ("[]a]", "]", 1), ("x[]a]y", "x]y", 1),
+    ("a.c", "abc", 1),
+    ("a.c", "axc", 1),
+    ("a.c", "ac", 0),
+    ("^foo$", "foo", 1),
+    ("^foo$", "foobar", 0),
+    ("[0-9]+", "abc123", 1),
+    ("[0-9]+", "abcdef", 0),
+    ("a*", "bbb", 1),
+    ("\\(ab\\)*", "ababab", 1),
+    ("hello", "world", 0),
+    ("a+", "aaa", 1),
+    ("a+", "b", 0),
+    ("a?b", "b", 1),
+    ("a?b", "ab", 1),
+    ("a?b", "xb", 1),
+    ("[a+]", "+", 1),
+    ("[a+]", "x", 0),
+    ("a\\+", "a+", 1),
+    ("a\\+", "aa", 0),
+    ("a\\?", "a?", 1),
+    ("a\\?", "ab", 0),
+    ("+a", "+a", 1),
+    ("+a", "a", 0),
+    ("\\(a\\)+", "aaa", 1),
+    ("\\(ab\\)+c", "ababc", 1),
+    ("colou?r", "color", 1),
+    ("colou?r", "colour", 1),
+    ("a?", "x", 1),
+    ("go+gle", "gooogle", 1),
+    ("go+gle", "gogle", 1),
+    ("[]a]", "]", 1),
+    ("x[]a]y", "x]y", 1),
     // glibc syntax-0 has NO intervals: \{n,m\} and bare {n,m} are literal braces.
-    ("a\\{2,3\\}", "a{2,3}", 1), ("a\\{2,3\\}", "aaa", 0),
-    ("a{2}", "a{2}", 1), ("a{2}", "aa", 0),
-    ("x\\{1\\}y", "x{1}y", 1), ("x\\{1\\}y", "xy", 0),
+    ("a\\{2,3\\}", "a{2,3}", 1),
+    ("a\\{2,3\\}", "aaa", 0),
+    ("a{2}", "a{2}", 1),
+    ("a{2}", "aa", 0),
+    ("x\\{1\\}y", "x{1}y", 1),
+    ("x\\{1\\}y", "xy", 0),
 ];
 
 #[test]
@@ -43,13 +64,17 @@ fn recomp_matches_glibc() {
         let cp = CString::new(pat).unwrap();
         let e = unsafe { g::re_comp(cp.as_ptr()) };
         if !e.is_null() {
-            div.push(format!("re_comp({pat:?}) returned an error (want match={want})"));
+            div.push(format!(
+                "re_comp({pat:?}) returned an error (want match={want})"
+            ));
             continue;
         }
         let cs = CString::new(s).unwrap();
         let got = unsafe { g::re_exec(cs.as_ptr()) };
         if got != want {
-            div.push(format!("re_comp({pat:?}); re_exec({s:?}) = {got}, glibc = {want}"));
+            div.push(format!(
+                "re_comp({pat:?}); re_exec({s:?}) = {got}, glibc = {want}"
+            ));
         }
     }
     // NULL pattern reuse: compile "z", then re_comp(NULL) reuses it.
@@ -62,5 +87,10 @@ fn recomp_matches_glibc() {
     if unsafe { g::re_exec(cs.as_ptr()) } != 1 {
         div.push("re_exec after NULL-reuse should match".into());
     }
-    assert!(div.is_empty(), "re_comp/re_exec divergences vs glibc ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "re_comp/re_exec divergences vs glibc ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

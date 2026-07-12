@@ -50,9 +50,9 @@ fn values() -> Vec<f128> {
         1e-4000f128,
         f128::MIN_POSITIVE,
         f128::MAX,
-        f128::from_bits(1),                                     // smallest subnormal
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(1),                  // smallest subnormal
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
         // Half-ULP-ish at f64/f32 boundaries: 1 + 2^-53, 1 + 2^-24, plus tiny.
         f128::from_bits((16383u128 << 112) | (1u128 << (112 - 53))),
@@ -60,9 +60,13 @@ fn values() -> Vec<f128> {
     ];
     let mut st: u64 = 0xa5a5_1234_dead_c0de;
     for _ in 0..200 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         // Bias exponent toward the f64/f32-representable range so casts mostly
         // produce finite results that exercise rounding, plus some extremes.
@@ -86,7 +90,12 @@ fn f128_narrow_matches_glibc() {
                     let g = unsafe { $g(x, y) }.to_bits();
                     let f = unsafe { $f(x, y) }.to_bits();
                     if g != f {
-                        mism.push(format!("{} x={:#034x} y={:#034x}: g={g:#018x} f={f:#018x}", $name, x.to_bits(), y.to_bits()));
+                        mism.push(format!(
+                            "{} x={:#034x} y={:#034x}: g={g:#018x} f={f:#018x}",
+                            $name,
+                            x.to_bits(),
+                            y.to_bits()
+                        ));
                     }
                 }
             }
@@ -99,7 +108,12 @@ fn f128_narrow_matches_glibc() {
                     let g = unsafe { $g(x, y) }.to_bits();
                     let f = unsafe { $f(x, y) }.to_bits();
                     if g != f {
-                        mism.push(format!("{} x={:#034x} y={:#034x}: g={g:#010x} f={f:#010x}", $name, x.to_bits(), y.to_bits()));
+                        mism.push(format!(
+                            "{} x={:#034x} y={:#034x}: g={g:#010x} f={f:#010x}",
+                            $name,
+                            x.to_bits(),
+                            y.to_bits()
+                        ));
                     }
                 }
             }
@@ -123,14 +137,26 @@ fn f128_narrow_matches_glibc() {
         let g = unsafe { f32sqrtf128(x) }.to_bits();
         let f = unsafe { ma::f32sqrtf128(x) }.to_bits();
         if g != f {
-            mism.push(format!("f32sqrt x={:#034x}: g={g:#010x} f={f:#010x}", x.to_bits()));
+            mism.push(format!(
+                "f32sqrt x={:#034x}: g={g:#010x} f={f:#010x}",
+                x.to_bits()
+            ));
         }
         for (gv, fv) in [
-            (unsafe { f32xsqrtf128(x) }.to_bits(), unsafe { ma::f32xsqrtf128(x) }.to_bits()),
-            (unsafe { f64sqrtf128(x) }.to_bits(), unsafe { ma::f64sqrtf128(x) }.to_bits()),
+            (
+                unsafe { f32xsqrtf128(x) }.to_bits(),
+                unsafe { ma::f32xsqrtf128(x) }.to_bits(),
+            ),
+            (
+                unsafe { f64sqrtf128(x) }.to_bits(),
+                unsafe { ma::f64sqrtf128(x) }.to_bits(),
+            ),
         ] {
             if gv != fv {
-                mism.push(format!("sqrt64 x={:#034x}: g={gv:#018x} f={fv:#018x}", x.to_bits()));
+                mism.push(format!(
+                    "sqrt64 x={:#034x}: g={gv:#018x} f={fv:#018x}",
+                    x.to_bits()
+                ));
             }
         }
     }
@@ -143,17 +169,32 @@ fn f128_narrow_matches_glibc() {
                 let g = unsafe { f32fmaf128(x, y, z) }.to_bits();
                 let f = unsafe { ma::f32fmaf128(x, y, z) }.to_bits();
                 if g != f {
-                    mism.push(format!("f32fma x={:#034x} y={:#034x} z={:#034x}: g={g:#010x} f={f:#010x}", x.to_bits(), y.to_bits(), z.to_bits()));
+                    mism.push(format!(
+                        "f32fma x={:#034x} y={:#034x} z={:#034x}: g={g:#010x} f={f:#010x}",
+                        x.to_bits(),
+                        y.to_bits(),
+                        z.to_bits()
+                    ));
                 }
                 let g2 = unsafe { f64fmaf128(x, y, z) }.to_bits();
                 let f2 = unsafe { ma::f64fmaf128(x, y, z) }.to_bits();
                 if g2 != f2 {
-                    mism.push(format!("f64fma x={:#034x} y={:#034x} z={:#034x}: g={g2:#018x} f={f2:#018x}", x.to_bits(), y.to_bits(), z.to_bits()));
+                    mism.push(format!(
+                        "f64fma x={:#034x} y={:#034x} z={:#034x}: g={g2:#018x} f={f2:#018x}",
+                        x.to_bits(),
+                        y.to_bits(),
+                        z.to_bits()
+                    ));
                 }
                 let g3 = unsafe { f32xfmaf128(x, y, z) }.to_bits();
                 let f3 = unsafe { ma::f32xfmaf128(x, y, z) }.to_bits();
                 if g3 != f3 {
-                    mism.push(format!("f32xfma x={:#034x} y={:#034x} z={:#034x}: g={g3:#018x} f={f3:#018x}", x.to_bits(), y.to_bits(), z.to_bits()));
+                    mism.push(format!(
+                        "f32xfma x={:#034x} y={:#034x} z={:#034x}: g={g3:#018x} f={f3:#018x}",
+                        x.to_bits(),
+                        y.to_bits(),
+                        z.to_bits()
+                    ));
                 }
             }
         }

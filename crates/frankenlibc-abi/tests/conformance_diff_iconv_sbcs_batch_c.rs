@@ -144,7 +144,11 @@ fn sbcs_batch_c_decode_encode_matches_glibc() {
         }
         // Each alias opens on fl and decodes byte-identically to glibc + canonical.
         for &a in *aliases {
-            assert_eq!(fl_decode(a), gd, "alias {a} decodes differently from {canon}");
+            assert_eq!(
+                fl_decode(a),
+                gd,
+                "alias {a} decodes differently from {canon}"
+            );
             assert_eq!(fl_decode(a), g_decode(&gg, a), "alias {a} vs glibc");
         }
     }

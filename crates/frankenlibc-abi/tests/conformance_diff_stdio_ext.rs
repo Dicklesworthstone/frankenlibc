@@ -77,7 +77,11 @@ fn freadable_fwritable_match_glibc_per_mode() {
 #[test]
 fn flbf_matches_glibc_after_setvbuf() {
     // _IOLBF -> line-buffered (nonzero); _IOFBF/_IONBF -> not line-buffered.
-    for (vmode, want_lbf) in [(libc::_IOLBF, true), (libc::_IOFBF, false), (libc::_IONBF, false)] {
+    for (vmode, want_lbf) in [
+        (libc::_IOLBF, true),
+        (libc::_IOFBF, false),
+        (libc::_IONBF, false),
+    ] {
         let cm = c"w";
         let gp = temp_path("glbf");
         let fp = temp_path("flbf");
@@ -122,7 +126,11 @@ fn fpending_matches_glibc_for_buffered_writes() {
     let gp_n = unsafe { g::__fpending(gs) };
     let fp_n = unsafe { fle::__fpending(fs) };
     assert_eq!(fp_n, gp_n, "__fpending after write: fl={fp_n} glibc={gp_n}");
-    assert_eq!(fp_n, data.len(), "__fpending must equal buffered byte count");
+    assert_eq!(
+        fp_n,
+        data.len(),
+        "__fpending must equal buffered byte count"
+    );
 
     // After flush, nothing pending.
     unsafe {

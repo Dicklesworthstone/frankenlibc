@@ -10,13 +10,20 @@
 //! consecutive-duplicate suppression (error_one_per_line) is left off (default
 //! 0) so each call prints. No mocks.
 
-use std::ffi::{c_char, c_int, c_uint, CString};
+use std::ffi::{CString, c_char, c_int, c_uint};
 use std::io::Read;
 use std::os::unix::io::FromRawFd;
 use std::sync::Mutex;
 
 unsafe extern "C" {
-    fn error_at_line(status: c_int, errnum: c_int, file: *const c_char, line: c_uint, fmt: *const c_char, ...);
+    fn error_at_line(
+        status: c_int,
+        errnum: c_int,
+        file: *const c_char,
+        line: c_uint,
+        fmt: *const c_char,
+        ...
+    );
 }
 
 static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
@@ -63,8 +70,29 @@ fn error_at_line_matches_glibc() {
     both!("plain, no errno", 0, "parse.c", 12u32, "syntax error");
     both!("EINVAL suffix", libc::EINVAL, "io.c", 99u32, "bad value");
     both!("ENOENT suffix", libc::ENOENT, "open.c", 1u32, "missing");
-    both!("%s arg", 0, "read.c", 256u32, "cannot read %s", foo.as_ptr());
-    both!("%s + errno", libc::EACCES, "read.c", 257u32, "cannot read %s", foo.as_ptr());
-    both!("%d arg + errno", libc::EINVAL, "x.c", 0u32, "code %d", 42 as c_int);
+    both!(
+        "%s arg",
+        0,
+        "read.c",
+        256u32,
+        "cannot read %s",
+        foo.as_ptr()
+    );
+    both!(
+        "%s + errno",
+        libc::EACCES,
+        "read.c",
+        257u32,
+        "cannot read %s",
+        foo.as_ptr()
+    );
+    both!(
+        "%d arg + errno",
+        libc::EINVAL,
+        "x.c",
+        0u32,
+        "code %d",
+        42 as c_int
+    );
     both!("empty fmt + errno", libc::ENOENT, "y.c", 7u32, "");
 }

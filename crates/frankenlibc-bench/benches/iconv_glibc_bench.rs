@@ -381,7 +381,10 @@ fn main() {
     // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
     let big5_utf8 = {
         let cd = unsafe { (host.open)(b"UTF-8\0".as_ptr().cast(), b"BIG5\0".as_ptr().cast()) };
-        assert!(cd as isize != -1 && !cd.is_null(), "BIG5->UTF-8 open failed");
+        assert!(
+            cd as isize != -1 && !cd.is_null(),
+            "BIG5->UTF-8 open failed"
+        );
         let mut dst = vec![0u8; big5_src.len() * 4 + 16];
         let mut inp = big5_src.as_ptr() as *mut c_char;
         let mut inl = big5_src.len();
@@ -453,4 +456,3 @@ fn main() {
         &latin1_src,
     );
 }
-

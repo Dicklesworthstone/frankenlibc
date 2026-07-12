@@ -27,10 +27,29 @@ fn same32(a: f32, b: f32) -> bool {
 
 // atan accepts all reals; asin/acos only [-1,1] (others -> NaN).
 const ATAN_CASES: &[f64] = &[
-    0.0, -0.0, f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 1.0, -1.0, 0.5, -0.5, 1.0e300,
+    0.0,
+    -0.0,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    f64::NAN,
+    1.0,
+    -1.0,
+    0.5,
+    -0.5,
+    1.0e300,
 ];
 const ASIN_ACOS_CASES: &[f64] = &[
-    0.0, -0.0, 1.0, -1.0, 0.5, -0.5, 0.25, f64::NAN, 2.0, -2.0, f64::INFINITY,
+    0.0,
+    -0.0,
+    1.0,
+    -1.0,
+    0.5,
+    -0.5,
+    0.25,
+    f64::NAN,
+    2.0,
+    -2.0,
+    f64::INFINITY,
 ];
 
 #[test]
@@ -45,7 +64,11 @@ fn atan_special_match_glibc() {
         }
         let gf = unsafe { atanf(x as f32) };
         let ff = unsafe { frankenlibc_abi::math_abi::atanf(x as f32) };
-        assert!(same32(ff, gf), "atanf({:?}): fl={ff:?} glibc={gf:?}", x as f32);
+        assert!(
+            same32(ff, gf),
+            "atanf({:?}): fl={ff:?} glibc={gf:?}",
+            x as f32
+        );
     }
 }
 

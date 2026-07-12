@@ -41,12 +41,12 @@ fn wide_printf_n_counts_wide_chars_like_glibc() {
     // (format, the wide-char count %n should report). Each format takes exactly
     // one vararg — the `int*` for %n — so the call shape is uniform.
     let cases = [
-        ("ééé%n", 3),       // 2 UTF-8 bytes each
-        ("中中%n", 2),       // 3 UTF-8 bytes each
-        ("abc%n", 3),        // ASCII (regression guard)
-        ("a😀b%n", 3),       // 4-byte emoji + 2 ASCII
-        ("mix€é%n", 5),      // ASCII + 3-byte euro + 2-byte é
-        ("%n", 0),           // count at offset 0
+        ("ééé%n", 3),   // 2 UTF-8 bytes each
+        ("中中%n", 2),  // 3 UTF-8 bytes each
+        ("abc%n", 3),   // ASCII (regression guard)
+        ("a😀b%n", 3),  // 4-byte emoji + 2 ASCII
+        ("mix€é%n", 5), // ASCII + 3-byte euro + 2-byte é
+        ("%n", 0),      // count at offset 0
     ];
 
     let mut div = Vec::new();
@@ -64,5 +64,10 @@ fn wide_printf_n_counts_wide_chars_like_glibc() {
             div.push(format!("{f:?}: fl_n={fn_n} glibc_n={g_n} expect={expect}"));
         }
     }
-    assert!(div.is_empty(), "wide %n divergences ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "wide %n divergences ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

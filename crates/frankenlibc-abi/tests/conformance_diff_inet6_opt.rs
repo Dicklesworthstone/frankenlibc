@@ -18,7 +18,8 @@ unsafe extern "C" {
 }
 
 type InitFn = unsafe extern "C" fn(*mut c_void, u32) -> c_int;
-type AppendFn = unsafe extern "C" fn(*mut c_void, u32, c_int, u8, u32, u8, *mut *mut c_void) -> c_int;
+type AppendFn =
+    unsafe extern "C" fn(*mut c_void, u32, c_int, u8, u32, u8, *mut *mut c_void) -> c_int;
 type FinishFn = unsafe extern "C" fn(*mut c_void, u32, c_int) -> c_int;
 type SetValFn = unsafe extern "C" fn(*mut c_void, c_int, *const c_void, u32) -> c_int;
 type NextFn =
@@ -48,7 +49,7 @@ fn glibc() -> G {
 
 // (option type, data bytes, alignment)
 const OPTS: &[(u8, &[u8], u8)] = &[
-    (0x05, &[0x00, 0x00], 2),       // a 2-byte option, align 2
+    (0x05, &[0x00, 0x00], 2), // a 2-byte option, align 2
     (0xC2, &[0x11, 0x22, 0x33, 0x44], 4),
     (0x07, &[0xAB], 1),
     (0xEE, &[1, 2, 3, 4, 5, 6, 7, 8], 8),
@@ -64,7 +65,15 @@ fn build_glibc(g: &G, extlen: u32) -> Option<Vec<u8>> {
     for (typ, data, align) in OPTS {
         let mut dbuf: *mut c_void = std::ptr::null_mut();
         off = unsafe {
-            (g.append)(buf.as_mut_ptr().cast(), extlen, off, *typ, data.len() as u32, *align, &mut dbuf)
+            (g.append)(
+                buf.as_mut_ptr().cast(),
+                extlen,
+                off,
+                *typ,
+                data.len() as u32,
+                *align,
+                &mut dbuf,
+            )
         };
         if off < 0 {
             return None;
@@ -103,7 +112,8 @@ fn build_fl(extlen: u32) -> Option<Vec<u8>> {
         if off < 0 {
             return None;
         }
-        if unsafe { fl::inet6_opt_set_val(dbuf, 0, data.as_ptr().cast(), data.len() as c_int) } < 0 {
+        if unsafe { fl::inet6_opt_set_val(dbuf, 0, data.as_ptr().cast(), data.len() as c_int) } < 0
+        {
             return None;
         }
     }
@@ -122,7 +132,10 @@ fn build_byte_exact() {
     let extlen = 64u32;
     let gb = build_glibc(&g, extlen);
     let fb = build_fl(extlen);
-    assert_eq!(gb, fb, "inet6_opt build diverged: glibc={gb:02x?} fl={fb:02x?}");
+    assert_eq!(
+        gb, fb,
+        "inet6_opt build diverged: glibc={gb:02x?} fl={fb:02x?}"
+    );
     assert!(gb.is_some(), "glibc build unexpectedly failed");
 }
 
@@ -162,7 +175,10 @@ fn parse_walk_byte_exact() {
     let fw = walk(Box::new(move |b, off, t, l, d| unsafe {
         fl::inet6_opt_next(b, elen as c_int, off, t, l as *mut u32, d)
     }));
-    assert_eq!(gw, fw, "inet6_opt_next walk diverged: glibc={gw:?} fl={fw:?}");
+    assert_eq!(
+        gw, fw,
+        "inet6_opt_next walk diverged: glibc={gw:?} fl={fw:?}"
+    );
 }
 
 #[test]
@@ -177,7 +193,10 @@ fn next_writes_only_4_byte_lenp() {
         len: u32,
         sentinel: u32,
     }
-    let mut p = Probe { len: 0, sentinel: 0xDEAD_BEEF };
+    let mut p = Probe {
+        len: 0,
+        sentinel: 0xDEAD_BEEF,
+    };
     let mut typ: u8 = 0;
     let mut dbuf: *mut c_void = std::ptr::null_mut();
     let rc = unsafe {
@@ -191,6 +210,9 @@ fn next_writes_only_4_byte_lenp() {
         )
     };
     assert!(rc >= 0, "expected a first option");
-    assert_eq!(p.sentinel, 0xDEAD_BEEF, "inet6_opt_next over-wrote past the 4-byte socklen_t");
+    assert_eq!(
+        p.sentinel, 0xDEAD_BEEF,
+        "inet6_opt_next over-wrote past the 4-byte socklen_t"
+    );
     assert_eq!(p.len, OPTS[0].1.len() as u32, "first option length wrong");
 }

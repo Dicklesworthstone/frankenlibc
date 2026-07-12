@@ -48,10 +48,18 @@ fn nice_permission_failure_is_eperm_like_glibc() {
 
     if g_rc == -1 && g_errno != 0 {
         // Permission path exercised — this is the bug-relevant case.
-        assert_eq!(g_errno, libc::EPERM, "glibc nice should map permission failure to EPERM");
-        assert_eq!(f_rc, -1, "fl nice should also fail (rc): glibc=-1 fl={f_rc}");
         assert_eq!(
-            f_errno, libc::EPERM,
+            g_errno,
+            libc::EPERM,
+            "glibc nice should map permission failure to EPERM"
+        );
+        assert_eq!(
+            f_rc, -1,
+            "fl nice should also fail (rc): glibc=-1 fl={f_rc}"
+        );
+        assert_eq!(
+            f_errno,
+            libc::EPERM,
             "fl nice errno should be EPERM (was EACCES={} before the fix)",
             libc::EACCES
         );

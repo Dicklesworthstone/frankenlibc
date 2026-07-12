@@ -133,9 +133,12 @@ unsafe fn chr_old(p: *const u8, target: u8) -> usize {
             let tv = Simd::<u8, 32>::splat(target);
             let zv = Simd::<u8, 32>::splat(0);
             let v0 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
-            let v1 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 32), 32) });
-            let v2 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 64), 32) });
-            let v3 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 96), 32) });
+            let v1 =
+                Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 32), 32) });
+            let v2 =
+                Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 64), 32) });
+            let v3 =
+                Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 96), 32) });
             let any = (v0.simd_eq(tv) | v0.simd_eq(zv))
                 | (v1.simd_eq(tv) | v1.simd_eq(zv))
                 | (v2.simd_eq(tv) | v2.simd_eq(zv))
@@ -185,9 +188,12 @@ unsafe fn chr_new(p: *const u8, target: u8) -> usize {
             let tv = Simd::<u8, 32>::splat(target);
             let zv = Simd::<u8, 32>::splat(0);
             let v1 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i), 32) });
-            let v2 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 32), 32) });
-            let v3 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 64), 32) });
-            let v4 = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 96), 32) });
+            let v2 =
+                Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 32), 32) });
+            let v3 =
+                Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 64), 32) });
+            let v4 =
+                Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p.add(i + 96), 32) });
             let any = (v1.simd_eq(tv) | v1.simd_eq(zv))
                 | (v2.simd_eq(tv) | v2.simd_eq(zv))
                 | (v3.simd_eq(tv) | v3.simd_eq(zv))
@@ -303,7 +309,9 @@ unsafe fn rchr_new(p: *const u8, target: u8) -> Option<usize> {
 
 #[inline]
 unsafe fn eq16(a: *const u8, b: *const u8) -> bool {
-    unsafe { std::ptr::read_unaligned(a.cast::<u128>()) == std::ptr::read_unaligned(b.cast::<u128>()) }
+    unsafe {
+        std::ptr::read_unaligned(a.cast::<u128>()) == std::ptr::read_unaligned(b.cast::<u128>())
+    }
 }
 #[inline]
 unsafe fn eq32(a: *const u8, b: *const u8) -> bool {
@@ -486,7 +494,8 @@ unsafe fn scasecmp_new(p1: *const u8, p2: *const u8, bound: usize) -> (i32, usiz
         if i + 32 <= bound && page_ok32(p1 as usize + i) && page_ok32(p2 as usize + i) {
             let va = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p1.add(i), 32) });
             let vb = Simd::<u8, 32>::from_slice(unsafe { slice::from_raw_parts(p2.add(i), 32) });
-            let flagged = (fold32(va).simd_ne(fold32(vb)) | va.simd_eq(Simd::splat(0))).to_bitmask();
+            let flagged =
+                (fold32(va).simd_ne(fold32(vb)) | va.simd_eq(Simd::splat(0))).to_bitmask();
             if flagged == 0 {
                 i += 32;
                 continue;
@@ -806,7 +815,8 @@ unsafe fn wmcmp_old(a: *const u32, b: *const u32, count: usize) -> i32 {
         base += 16;
     }
     while base < count {
-        let (x, y) = (unsafe { *a.add(base) } as i32, unsafe { *b.add(base) } as i32);
+        let (x, y) = (unsafe { *a.add(base) } as i32, unsafe { *b.add(base) }
+            as i32);
         if x != y {
             return if x < y { -1 } else { 1 };
         }
@@ -978,7 +988,12 @@ unsafe fn wnlen_new(s: *const u32, limit: usize) -> usize {
 
 #[inline]
 unsafe fn cp16(dst: *mut u8, src: *const u8) {
-    unsafe { std::ptr::write_unaligned(dst.cast::<u128>(), std::ptr::read_unaligned(src.cast::<u128>())) };
+    unsafe {
+        std::ptr::write_unaligned(
+            dst.cast::<u128>(),
+            std::ptr::read_unaligned(src.cast::<u128>()),
+        )
+    };
 }
 #[inline]
 unsafe fn cp32(dst: *mut u8, src: *const u8) {
@@ -1100,11 +1115,23 @@ unsafe fn memcpy_new(dst: *mut u8, src: *const u8, n: usize) {
     unsafe {
         if n < 16 {
             if n >= 8 {
-                std::ptr::write_unaligned(dst.cast::<u64>(), std::ptr::read_unaligned(src.cast::<u64>()));
-                std::ptr::write_unaligned(dst.add(n - 8).cast::<u64>(), std::ptr::read_unaligned(src.add(n - 8).cast::<u64>()));
+                std::ptr::write_unaligned(
+                    dst.cast::<u64>(),
+                    std::ptr::read_unaligned(src.cast::<u64>()),
+                );
+                std::ptr::write_unaligned(
+                    dst.add(n - 8).cast::<u64>(),
+                    std::ptr::read_unaligned(src.add(n - 8).cast::<u64>()),
+                );
             } else if n >= 4 {
-                std::ptr::write_unaligned(dst.cast::<u32>(), std::ptr::read_unaligned(src.cast::<u32>()));
-                std::ptr::write_unaligned(dst.add(n - 4).cast::<u32>(), std::ptr::read_unaligned(src.add(n - 4).cast::<u32>()));
+                std::ptr::write_unaligned(
+                    dst.cast::<u32>(),
+                    std::ptr::read_unaligned(src.cast::<u32>()),
+                );
+                std::ptr::write_unaligned(
+                    dst.add(n - 4).cast::<u32>(),
+                    std::ptr::read_unaligned(src.add(n - 4).cast::<u32>()),
+                );
             } else {
                 *dst = *src;
                 if n > 1 {
@@ -1133,7 +1160,7 @@ unsafe fn memcpy_new(dst: *mut u8, src: *const u8, n: usize) {
 #[inline(never)]
 unsafe fn memset_avx(dst: *mut u8, value: u8, n: usize) {
     #[cfg(target_arch = "x86_64")]
-    use std::arch::x86_64::{__m128i, _mm256_set1_epi8, _mm_set1_epi8, _mm_storeu_si128};
+    use std::arch::x86_64::{__m128i, _mm_set1_epi8, _mm_storeu_si128, _mm256_set1_epi8};
     #[cfg(target_arch = "x86_64")]
     unsafe {
         let v = _mm256_set1_epi8(value as i8);
@@ -1588,7 +1615,12 @@ unsafe fn strstr_naive(hay: *const u8, hlen: usize, ndl: *const u8, nlen: usize)
 
 /// Naive wide substring match (the deployed wcsstr's O(hay*needle) worst case).
 #[inline(never)]
-unsafe fn wcsstr_naive(hay: *const u32, hlen: usize, ndl: *const u32, nlen: usize) -> Option<usize> {
+unsafe fn wcsstr_naive(
+    hay: *const u32,
+    hlen: usize,
+    ndl: *const u32,
+    nlen: usize,
+) -> Option<usize> {
     if nlen == 0 {
         return Some(0);
     }
@@ -1723,8 +1755,16 @@ fn bench(c: &mut Criterion) {
             buf[off + len] = 0;
             let p = unsafe { buf.as_ptr().add(off) };
             // Byte-identity guard: both kernels return the NUL index on absence; glibc returns NULL.
-            assert_eq!(unsafe { chr_old(p, absent) }, len, "chr_old wrong off={off} len={len}");
-            assert_eq!(unsafe { chr_new(p, absent) }, len, "chr_new wrong off={off} len={len}");
+            assert_eq!(
+                unsafe { chr_old(p, absent) },
+                len,
+                "chr_old wrong off={off} len={len}"
+            );
+            assert_eq!(
+                unsafe { chr_new(p, absent) },
+                len,
+                "chr_new wrong off={off} len={len}"
+            );
             assert!(
                 unsafe { g_chr(p.cast(), absent as i32) }.is_null(),
                 "glibc strchr should miss off={off} len={len}"
@@ -1748,8 +1788,7 @@ fn bench(c: &mut Criterion) {
 
     // strrchr A/B: target PRESENT near the END (exercises last-match resolution &
     // full scan to NUL). glibc strrchr returns a pointer to the last match.
-    let g_rchr =
-        unsafe { std::mem::transmute::<usize, ChrFn>(host_sym(b"strrchr\0")) };
+    let g_rchr = unsafe { std::mem::transmute::<usize, ChrFn>(host_sym(b"strrchr\0")) };
     for &len in &[7usize, 15, 23, 31, 47, 63, 256, 1024, 4096] {
         let mut buf = backing.clone();
         let mut old_t = 0.0;
@@ -1768,8 +1807,16 @@ fn bench(c: &mut Criterion) {
             buf[off + len] = 0;
             let p = unsafe { buf.as_ptr().add(off) };
             let want = if len >= 4 { Some(len - 2) } else { None };
-            assert_eq!(unsafe { rchr_old(p, tgt) }, want, "rchr_old wrong off={off} len={len}");
-            assert_eq!(unsafe { rchr_new(p, tgt) }, want, "rchr_new wrong off={off} len={len}");
+            assert_eq!(
+                unsafe { rchr_old(p, tgt) },
+                want,
+                "rchr_old wrong off={off} len={len}"
+            );
+            assert_eq!(
+                unsafe { rchr_new(p, tgt) },
+                want,
+                "rchr_new wrong off={off} len={len}"
+            );
             let gp = unsafe { g_rchr(p.cast(), tgt as i32) };
             let g_idx = if gp.is_null() {
                 None
@@ -1797,8 +1844,7 @@ fn bench(c: &mut Criterion) {
     // memcmp A/B: EQUAL buffers (full-scan worst case, the family-bench regime). Also
     // a correctness sweep with a single differing byte at every position vs glibc sign.
     type McmpFn = unsafe extern "C" fn(*const c_void, *const c_void, usize) -> i32;
-    let g_mcmp =
-        unsafe { std::mem::transmute::<usize, McmpFn>(host_sym(b"memcmp\0")) };
+    let g_mcmp = unsafe { std::mem::transmute::<usize, McmpFn>(host_sym(b"memcmp\0")) };
     // Correctness: for several n, flip one byte at each position and check sign agreement.
     for &n in &[1usize, 3, 4, 7, 8, 15, 16, 23, 31, 32, 47, 63] {
         let mut a = vec![b'a' + 0u8; n + 1];
@@ -1823,7 +1869,11 @@ fn bench(c: &mut Criterion) {
             );
         }
         // equal buffers => 0
-        assert_eq!(unsafe { memcmp_new(a.as_ptr(), a.as_ptr(), n) }, 0, "memcmp_new eq n={n}");
+        assert_eq!(
+            unsafe { memcmp_new(a.as_ptr(), a.as_ptr(), n) },
+            0,
+            "memcmp_new eq n={n}"
+        );
     }
     for &len in &[7usize, 15, 23, 31, 47, 63] {
         let mut a = backing.clone();
@@ -1834,9 +1884,13 @@ fn bench(c: &mut Criterion) {
         }
         let ap = a.as_ptr();
         let bp = bb.as_ptr();
-        let old_t = measure(|| unsafe { memcmp_old(black_box(ap), black_box(bp), len) } as i64 as u64);
-        let new_t = measure(|| unsafe { memcmp_new(black_box(ap), black_box(bp), len) } as i64 as u64);
-        let g_t = measure(|| unsafe { g_mcmp(black_box(ap.cast()), black_box(bp.cast()), len) } as i64 as u64);
+        let old_t =
+            measure(|| unsafe { memcmp_old(black_box(ap), black_box(bp), len) } as i64 as u64);
+        let new_t =
+            measure(|| unsafe { memcmp_new(black_box(ap), black_box(bp), len) } as i64 as u64);
+        let g_t = measure(
+            || unsafe { g_mcmp(black_box(ap.cast()), black_box(bp.cast()), len) } as i64 as u64,
+        );
         println!(
             "MCMP_AB len={len:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
@@ -1848,8 +1902,7 @@ fn bench(c: &mut Criterion) {
 
     // strcmp A/B: EQUAL strings (NUL in first 32B panel = the case where the old scan
     // flags then re-scans with SWAR). bound large (NUL-terminated). glibc returns 0.
-    let g_scmp =
-        unsafe { std::mem::transmute::<usize, CmpFn>(host_sym(b"strcmp\0")) };
+    let g_scmp = unsafe { std::mem::transmute::<usize, CmpFn>(host_sym(b"strcmp\0")) };
     for &len in &[7usize, 15, 23, 31, 47, 63] {
         let mut a = backing.clone();
         let mut bb = backing.clone();
@@ -1862,12 +1915,25 @@ fn bench(c: &mut Criterion) {
         let p1 = a.as_ptr();
         let p2 = bb.as_ptr();
         let bound = backing.len();
-        assert_eq!(unsafe { scmp_old(p1, p2, bound) }, len, "scmp_old off len={len}");
-        assert_eq!(unsafe { scmp_new(p1, p2, bound) }, len, "scmp_new off len={len}");
-        assert_eq!(unsafe { g_scmp(p1.cast(), p2.cast()) }, 0, "glibc strcmp eq len={len}");
+        assert_eq!(
+            unsafe { scmp_old(p1, p2, bound) },
+            len,
+            "scmp_old off len={len}"
+        );
+        assert_eq!(
+            unsafe { scmp_new(p1, p2, bound) },
+            len,
+            "scmp_new off len={len}"
+        );
+        assert_eq!(
+            unsafe { g_scmp(p1.cast(), p2.cast()) },
+            0,
+            "glibc strcmp eq len={len}"
+        );
         let old_t = measure(|| unsafe { scmp_old(black_box(p1), black_box(p2), bound) } as u64);
         let new_t = measure(|| unsafe { scmp_new(black_box(p1), black_box(p2), bound) } as u64);
-        let g_t = measure(|| unsafe { g_scmp(black_box(p1.cast()), black_box(p2.cast())) } as i64 as u64);
+        let g_t =
+            measure(|| unsafe { g_scmp(black_box(p1.cast()), black_box(p2.cast())) } as i64 as u64);
         println!(
             "SCMP_AB len={len:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
@@ -1879,8 +1945,7 @@ fn bench(c: &mut Criterion) {
 
     // memchr A/B: ABSENT byte in [16,32)-byte buffers (full scan = the small-n floor).
     type MchrFn = unsafe extern "C" fn(*const c_void, i32, usize) -> *mut c_void;
-    let g_mchr =
-        unsafe { std::mem::transmute::<usize, MchrFn>(host_sym(b"memchr\0")) };
+    let g_mchr = unsafe { std::mem::transmute::<usize, MchrFn>(host_sym(b"memchr\0")) };
     let absent = 0x01u8;
     for &len in &[16usize, 19, 23, 27, 31] {
         let mut buf = backing.clone();
@@ -1892,20 +1957,36 @@ fn bench(c: &mut Criterion) {
                 buf[off + k] = b'a' + (k % 26) as u8;
             }
             let p = unsafe { buf.as_ptr().add(off) };
-            assert_eq!(unsafe { mchr_old(p, absent, len) }, None, "mchr_old off={off} len={len}");
-            assert_eq!(unsafe { mchr_new(p, absent, len) }, None, "mchr_new off={off} len={len}");
+            assert_eq!(
+                unsafe { mchr_old(p, absent, len) },
+                None,
+                "mchr_old off={off} len={len}"
+            );
+            assert_eq!(
+                unsafe { mchr_new(p, absent, len) },
+                None,
+                "mchr_new off={off} len={len}"
+            );
             assert!(unsafe { g_mchr(p.cast(), absent as i32, len) }.is_null());
             // also a present-byte correctness check at a couple positions
             for &pos in &[0usize, len / 2, len - 1] {
                 buf[off + pos] = absent;
-                assert_eq!(unsafe { mchr_new(p, absent, len) }, Some(pos), "mchr_new present off={off} len={len} pos={pos}");
+                assert_eq!(
+                    unsafe { mchr_new(p, absent, len) },
+                    Some(pos),
+                    "mchr_new present off={off} len={len} pos={pos}"
+                );
                 let gp = unsafe { g_mchr(p.cast(), absent as i32, len) };
                 assert_eq!(gp as usize - p as usize, pos, "glibc present");
                 buf[off + pos] = b'a' + (pos % 26) as u8;
             }
-            old_t += measure(|| unsafe { mchr_old(black_box(p), absent, len) }.unwrap_or(99) as u64);
-            new_t += measure(|| unsafe { mchr_new(black_box(p), absent, len) }.unwrap_or(99) as u64);
-            g_t += measure(|| unsafe { g_mchr(black_box(p.cast()), absent as i32, len) } as usize as u64);
+            old_t +=
+                measure(|| unsafe { mchr_old(black_box(p), absent, len) }.unwrap_or(99) as u64);
+            new_t +=
+                measure(|| unsafe { mchr_new(black_box(p), absent, len) }.unwrap_or(99) as u64);
+            g_t += measure(
+                || unsafe { g_mchr(black_box(p.cast()), absent as i32, len) } as usize as u64,
+            );
         }
         println!(
             "MCHR_AB len={len:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
@@ -1920,8 +2001,7 @@ fn bench(c: &mut Criterion) {
     }
 
     // memrchr A/B: ABSENT byte in [16,32)-byte buffers (full reverse scan). glibc memrchr.
-    let g_mrchr =
-        unsafe { std::mem::transmute::<usize, MchrFn>(host_sym(b"memrchr\0")) };
+    let g_mrchr = unsafe { std::mem::transmute::<usize, MchrFn>(host_sym(b"memrchr\0")) };
     let absent2 = 0x01u8;
     for &len in &[16usize, 19, 23, 27, 31] {
         let mut buf = backing.clone();
@@ -1933,8 +2013,16 @@ fn bench(c: &mut Criterion) {
                 buf[off + k] = b'a' + (k % 26) as u8;
             }
             let p = unsafe { buf.as_ptr().add(off) };
-            assert_eq!(unsafe { mrchr_old(p, absent2, len) }, None, "mrchr_old off={off} len={len}");
-            assert_eq!(unsafe { mrchr_new(p, absent2, len) }, None, "mrchr_new off={off} len={len}");
+            assert_eq!(
+                unsafe { mrchr_old(p, absent2, len) },
+                None,
+                "mrchr_old off={off} len={len}"
+            );
+            assert_eq!(
+                unsafe { mrchr_new(p, absent2, len) },
+                None,
+                "mrchr_new off={off} len={len}"
+            );
             assert!(unsafe { g_mrchr(p.cast(), absent2 as i32, len) }.is_null());
             // present-byte LAST-match correctness (two matches; want the higher)
             for &(lo, hi) in &[(0usize, len - 1), (1, len / 2), (len / 3, len - 2)] {
@@ -1943,15 +2031,23 @@ fn bench(c: &mut Criterion) {
                 }
                 buf[off + lo] = absent2;
                 buf[off + hi] = absent2;
-                assert_eq!(unsafe { mrchr_new(p, absent2, len) }, Some(hi), "mrchr_new last off={off} len={len}");
+                assert_eq!(
+                    unsafe { mrchr_new(p, absent2, len) },
+                    Some(hi),
+                    "mrchr_new last off={off} len={len}"
+                );
                 let gp = unsafe { g_mrchr(p.cast(), absent2 as i32, len) };
                 assert_eq!(gp as usize - p as usize, hi, "glibc memrchr last");
                 buf[off + lo] = b'a' + (lo % 26) as u8;
                 buf[off + hi] = b'a' + (hi % 26) as u8;
             }
-            old_t += measure(|| unsafe { mrchr_old(black_box(p), absent2, len) }.unwrap_or(99) as u64);
-            new_t += measure(|| unsafe { mrchr_new(black_box(p), absent2, len) }.unwrap_or(99) as u64);
-            g_t += measure(|| unsafe { g_mrchr(black_box(p.cast()), absent2 as i32, len) } as usize as u64);
+            old_t +=
+                measure(|| unsafe { mrchr_old(black_box(p), absent2, len) }.unwrap_or(99) as u64);
+            new_t +=
+                measure(|| unsafe { mrchr_new(black_box(p), absent2, len) }.unwrap_or(99) as u64);
+            g_t += measure(
+                || unsafe { g_mrchr(black_box(p.cast()), absent2 as i32, len) } as usize as u64,
+            );
         }
         println!(
             "MRCHR_AB len={len:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
@@ -1967,8 +2063,7 @@ fn bench(c: &mut Criterion) {
 
     // strnlen A/B: NO NUL in [0,limit) (full scan to limit = worst case). glibc strnlen.
     type SnlenFn = unsafe extern "C" fn(*const c_char, usize) -> usize;
-    let g_snlen =
-        unsafe { std::mem::transmute::<usize, SnlenFn>(host_sym(b"strnlen\0")) };
+    let g_snlen = unsafe { std::mem::transmute::<usize, SnlenFn>(host_sym(b"strnlen\0")) };
     for &limit in &[16usize, 19, 23, 27, 31] {
         let mut buf = backing.clone();
         let mut old_t = 0.0;
@@ -1980,14 +2075,34 @@ fn bench(c: &mut Criterion) {
                 buf[off + k] = b'a' + (k % 26) as u8;
             }
             let p = unsafe { buf.as_ptr().add(off) };
-            assert_eq!(unsafe { snlen_old(p, limit) }, limit, "snlen_old off={off} limit={limit}");
-            assert_eq!(unsafe { snlen_new(p, limit) }, limit, "snlen_new off={off} limit={limit}");
-            assert_eq!(unsafe { g_snlen(p.cast(), limit) }, limit, "glibc strnlen full");
+            assert_eq!(
+                unsafe { snlen_old(p, limit) },
+                limit,
+                "snlen_old off={off} limit={limit}"
+            );
+            assert_eq!(
+                unsafe { snlen_new(p, limit) },
+                limit,
+                "snlen_new off={off} limit={limit}"
+            );
+            assert_eq!(
+                unsafe { g_snlen(p.cast(), limit) },
+                limit,
+                "glibc strnlen full"
+            );
             // present-NUL FIRST-occurrence correctness at a couple positions
             for &pos in &[0usize, limit / 2, limit - 1] {
                 buf[off + pos] = 0;
-                assert_eq!(unsafe { snlen_new(p, limit) }, pos, "snlen_new first off={off} limit={limit} pos={pos}");
-                assert_eq!(unsafe { g_snlen(p.cast(), limit) }, pos, "glibc strnlen first");
+                assert_eq!(
+                    unsafe { snlen_new(p, limit) },
+                    pos,
+                    "snlen_new first off={off} limit={limit} pos={pos}"
+                );
+                assert_eq!(
+                    unsafe { g_snlen(p.cast(), limit) },
+                    pos,
+                    "glibc strnlen first"
+                );
                 buf[off + pos] = b'a' + (pos % 26) as u8;
             }
             old_t += measure(|| unsafe { snlen_old(black_box(p), limit) } as u64);
@@ -2008,8 +2123,7 @@ fn bench(c: &mut Criterion) {
 
     // wcsnlen A/B: NO NUL in [0,limit) wchars (full scan). glibc wcsnlen (wchar_t=u32).
     type WNlenFn = unsafe extern "C" fn(*const u32, usize) -> usize;
-    let g_wnlen =
-        unsafe { std::mem::transmute::<usize, WNlenFn>(host_sym(b"wcsnlen\0")) };
+    let g_wnlen = unsafe { std::mem::transmute::<usize, WNlenFn>(host_sym(b"wcsnlen\0")) };
     let mut wbuf = vec![0x41u32; 4096];
     for &limit in &[4usize, 6, 8, 12, 15, 16, 23, 31] {
         let mut old_t = 0.0;
@@ -2020,12 +2134,24 @@ fn bench(c: &mut Criterion) {
                 wbuf[off + k] = 0x41 + (k as u32 % 26);
             }
             let p = unsafe { wbuf.as_ptr().add(off) };
-            assert_eq!(unsafe { wnlen_old(p, limit) }, limit, "wnlen_old off={off} limit={limit}");
-            assert_eq!(unsafe { wnlen_new(p, limit) }, limit, "wnlen_new off={off} limit={limit}");
+            assert_eq!(
+                unsafe { wnlen_old(p, limit) },
+                limit,
+                "wnlen_old off={off} limit={limit}"
+            );
+            assert_eq!(
+                unsafe { wnlen_new(p, limit) },
+                limit,
+                "wnlen_new off={off} limit={limit}"
+            );
             assert_eq!(unsafe { g_wnlen(p, limit) }, limit, "glibc wcsnlen full");
             for &pos in &[0usize, limit / 2, limit - 1] {
                 wbuf[off + pos] = 0;
-                assert_eq!(unsafe { wnlen_new(p, limit) }, pos, "wnlen_new first off={off} limit={limit} pos={pos}");
+                assert_eq!(
+                    unsafe { wnlen_new(p, limit) },
+                    pos,
+                    "wnlen_new first off={off} limit={limit} pos={pos}"
+                );
                 assert_eq!(unsafe { g_wnlen(p, limit) }, pos, "glibc wcsnlen first");
                 wbuf[off + pos] = 0x41 + (pos as u32 % 26);
             }
@@ -2047,8 +2173,7 @@ fn bench(c: &mut Criterion) {
 
     // wmemchr A/B: ABSENT target in [8,32) wchars (full scan). glibc wmemchr.
     type WMchrFn = unsafe extern "C" fn(*const u32, u32, usize) -> *mut u32;
-    let g_wmchr =
-        unsafe { std::mem::transmute::<usize, WMchrFn>(host_sym(b"wmemchr\0")) };
+    let g_wmchr = unsafe { std::mem::transmute::<usize, WMchrFn>(host_sym(b"wmemchr\0")) };
     let needle = 0x0000_0001u32;
     for &count in &[8usize, 12, 15, 16, 23, 31] {
         let mut old_t = 0.0;
@@ -2059,18 +2184,32 @@ fn bench(c: &mut Criterion) {
                 wbuf[off + k] = 0x41 + (k as u32 % 26);
             }
             let p = unsafe { wbuf.as_ptr().add(off) };
-            assert_eq!(unsafe { wmchr_old(p, needle, count) }, None, "wmchr_old off={off} count={count}");
-            assert_eq!(unsafe { wmchr_new(p, needle, count) }, None, "wmchr_new off={off} count={count}");
+            assert_eq!(
+                unsafe { wmchr_old(p, needle, count) },
+                None,
+                "wmchr_old off={off} count={count}"
+            );
+            assert_eq!(
+                unsafe { wmchr_new(p, needle, count) },
+                None,
+                "wmchr_new off={off} count={count}"
+            );
             assert!(unsafe { g_wmchr(p, needle, count) }.is_null());
             for &pos in &[0usize, count / 2, count - 1] {
                 wbuf[off + pos] = needle;
-                assert_eq!(unsafe { wmchr_new(p, needle, count) }, Some(pos), "wmchr_new first off={off} count={count} pos={pos}");
+                assert_eq!(
+                    unsafe { wmchr_new(p, needle, count) },
+                    Some(pos),
+                    "wmchr_new first off={off} count={count} pos={pos}"
+                );
                 let gp = unsafe { g_wmchr(p, needle, count) };
                 assert_eq!((gp as usize - p as usize) / 4, pos, "glibc wmemchr first");
                 wbuf[off + pos] = 0x41 + (pos as u32 % 26);
             }
-            old_t += measure(|| unsafe { wmchr_old(black_box(p), needle, count) }.unwrap_or(99) as u64);
-            new_t += measure(|| unsafe { wmchr_new(black_box(p), needle, count) }.unwrap_or(99) as u64);
+            old_t +=
+                measure(|| unsafe { wmchr_old(black_box(p), needle, count) }.unwrap_or(99) as u64);
+            new_t +=
+                measure(|| unsafe { wmchr_new(black_box(p), needle, count) }.unwrap_or(99) as u64);
             g_t += measure(|| unsafe { g_wmchr(black_box(p), needle, count) } as usize as u64);
         }
         println!(
@@ -2087,8 +2226,7 @@ fn bench(c: &mut Criterion) {
 
     // strcasecmp A/B: case-insensitively EQUAL strings (NUL in first 32B panel = the
     // re-scan case). bound large (NUL-terminated). glibc strcasecmp returns 0.
-    let g_scasecmp =
-        unsafe { std::mem::transmute::<usize, CmpFn>(host_sym(b"strcasecmp\0")) };
+    let g_scasecmp = unsafe { std::mem::transmute::<usize, CmpFn>(host_sym(b"strcasecmp\0")) };
     for &len in &[7usize, 15, 23, 31, 47, 63] {
         let mut a = backing.clone();
         let mut bb = backing.clone();
@@ -2102,21 +2240,47 @@ fn bench(c: &mut Criterion) {
         let p1 = a.as_ptr();
         let p2 = bb.as_ptr();
         let bound = backing.len();
-        assert_eq!(unsafe { scasecmp_old(p1, p2, bound) }.0, 0, "scasecmp_old eq len={len}");
-        assert_eq!(unsafe { scasecmp_new(p1, p2, bound) }.0, 0, "scasecmp_new eq len={len}");
-        assert_eq!(unsafe { g_scasecmp(p1.cast(), p2.cast()) }, 0, "glibc strcasecmp eq len={len}");
+        assert_eq!(
+            unsafe { scasecmp_old(p1, p2, bound) }.0,
+            0,
+            "scasecmp_old eq len={len}"
+        );
+        assert_eq!(
+            unsafe { scasecmp_new(p1, p2, bound) }.0,
+            0,
+            "scasecmp_new eq len={len}"
+        );
+        assert_eq!(
+            unsafe { g_scasecmp(p1.cast(), p2.cast()) },
+            0,
+            "glibc strcasecmp eq len={len}"
+        );
         // a differing byte at a couple positions: signs must agree with glibc
         for &pos in &[0usize, len / 2, len - 1] {
             let save = bb[pos];
             bb[pos] = b'a' + ((pos + 5) % 26) as u8;
             let want = unsafe { g_scasecmp(p1.cast(), p2.cast()) }.signum();
-            assert_eq!(unsafe { scasecmp_old(p1, p2, bound) }.0.signum(), want, "old sign len={len} pos={pos}");
-            assert_eq!(unsafe { scasecmp_new(p1, p2, bound) }.0.signum(), want, "new sign len={len} pos={pos}");
+            assert_eq!(
+                unsafe { scasecmp_old(p1, p2, bound) }.0.signum(),
+                want,
+                "old sign len={len} pos={pos}"
+            );
+            assert_eq!(
+                unsafe { scasecmp_new(p1, p2, bound) }.0.signum(),
+                want,
+                "new sign len={len} pos={pos}"
+            );
             bb[pos] = save;
         }
-        let old_t = measure(|| unsafe { scasecmp_old(black_box(p1), black_box(p2), bound) }.0 as i64 as u64);
-        let new_t = measure(|| unsafe { scasecmp_new(black_box(p1), black_box(p2), bound) }.0 as i64 as u64);
-        let g_t = measure(|| unsafe { g_scasecmp(black_box(p1.cast()), black_box(p2.cast())) } as i64 as u64);
+        let old_t = measure(
+            || unsafe { scasecmp_old(black_box(p1), black_box(p2), bound) }.0 as i64 as u64,
+        );
+        let new_t = measure(
+            || unsafe { scasecmp_new(black_box(p1), black_box(p2), bound) }.0 as i64 as u64,
+        );
+        let g_t = measure(
+            || unsafe { g_scasecmp(black_box(p1.cast()), black_box(p2.cast())) } as i64 as u64,
+        );
         println!(
             "SCASE_AB len={len:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
@@ -2128,8 +2292,7 @@ fn bench(c: &mut Criterion) {
 
     // wmemcmp A/B: EQUAL buffers (full scan worst case) + a differing-position sweep.
     type WMcmpFn = unsafe extern "C" fn(*const u32, *const u32, usize) -> i32;
-    let g_wmcmp =
-        unsafe { std::mem::transmute::<usize, WMcmpFn>(host_sym(b"wmemcmp\0")) };
+    let g_wmcmp = unsafe { std::mem::transmute::<usize, WMcmpFn>(host_sym(b"wmemcmp\0")) };
     let mut wa = vec![0x41u32; 4096];
     let mut wbb = vec![0x41u32; 4096];
     for &count in &[4usize, 6, 8, 12, 15, 16, 23, 31] {
@@ -2144,13 +2307,27 @@ fn bench(c: &mut Criterion) {
             let save = wbb[pos];
             wbb[pos] = wa[pos] + 1;
             let want = unsafe { g_wmcmp(p1, p2, count) }.signum();
-            assert_eq!(unsafe { wmcmp_old(p1, p2, count) }.signum(), want, "wmcmp_old n={count} pos={pos}");
-            assert_eq!(unsafe { wmcmp_new(p1, p2, count) }.signum(), want, "wmcmp_new n={count} pos={pos}");
+            assert_eq!(
+                unsafe { wmcmp_old(p1, p2, count) }.signum(),
+                want,
+                "wmcmp_old n={count} pos={pos}"
+            );
+            assert_eq!(
+                unsafe { wmcmp_new(p1, p2, count) }.signum(),
+                want,
+                "wmcmp_new n={count} pos={pos}"
+            );
             wbb[pos] = save;
         }
-        assert_eq!(unsafe { wmcmp_new(p1, p2, count) }, 0, "wmcmp_new eq n={count}");
-        let old_t = measure(|| unsafe { wmcmp_old(black_box(p1), black_box(p2), count) } as i64 as u64);
-        let new_t = measure(|| unsafe { wmcmp_new(black_box(p1), black_box(p2), count) } as i64 as u64);
+        assert_eq!(
+            unsafe { wmcmp_new(p1, p2, count) },
+            0,
+            "wmcmp_new eq n={count}"
+        );
+        let old_t =
+            measure(|| unsafe { wmcmp_old(black_box(p1), black_box(p2), count) } as i64 as u64);
+        let new_t =
+            measure(|| unsafe { wmcmp_new(black_box(p1), black_box(p2), count) } as i64 as u64);
         let g_t = measure(|| unsafe { g_wmcmp(black_box(p1), black_box(p2), count) } as i64 as u64);
         println!(
             "WMCMP_AB cnt={count:<3} old_p50_ns={old_t:.3} new_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
@@ -2163,8 +2340,7 @@ fn bench(c: &mut Criterion) {
 
     // memset A/B: small-n fill. OLD volatile u64 vs NEW overlapping _mm_storeu vs glibc.
     type MemsetFn = unsafe extern "C" fn(*mut c_void, i32, usize) -> *mut c_void;
-    let g_memset =
-        unsafe { std::mem::transmute::<usize, MemsetFn>(host_sym(b"memset\0")) };
+    let g_memset = unsafe { std::mem::transmute::<usize, MemsetFn>(host_sym(b"memset\0")) };
     let mut dbuf = vec![0u8; 4096];
     for &n in &[7usize, 15, 16, 23, 31, 32, 47, 63] {
         let mut old_t = 0.0;
@@ -2177,11 +2353,26 @@ fn bench(c: &mut Criterion) {
             unsafe { memset_old(p, 0x5A, n) };
             refb[..n].copy_from_slice(unsafe { slice::from_raw_parts(p, n) });
             unsafe { memset_new(p, 0x3C, n) };
-            assert!(unsafe { slice::from_raw_parts(p, n) }.iter().all(|&b| b == 0x3C), "new fill n={n}");
+            assert!(
+                unsafe { slice::from_raw_parts(p, n) }
+                    .iter()
+                    .all(|&b| b == 0x3C),
+                "new fill n={n}"
+            );
             unsafe { g_memset(p.cast(), 0x5A, n) };
-            assert_eq!(unsafe { slice::from_raw_parts(p, n) }, &refb[..n], "new vs glibc bytes n={n}");
-            old_t += measure(|| { unsafe { memset_old(black_box(p), 0x11, n) }; black_box(p) as u64 });
-            new_t += measure(|| { unsafe { memset_new(black_box(p), 0x22, n) }; black_box(p) as u64 });
+            assert_eq!(
+                unsafe { slice::from_raw_parts(p, n) },
+                &refb[..n],
+                "new vs glibc bytes n={n}"
+            );
+            old_t += measure(|| {
+                unsafe { memset_old(black_box(p), 0x11, n) };
+                black_box(p) as u64
+            });
+            new_t += measure(|| {
+                unsafe { memset_new(black_box(p), 0x22, n) };
+                black_box(p) as u64
+            });
             g_t += measure(|| unsafe { g_memset(black_box(p.cast()), 0x33, n) } as u64);
         }
         println!(
@@ -2202,14 +2393,27 @@ fn bench(c: &mut Criterion) {
         for &n in &[128usize, 192, 256, 512, 1024, 2048] {
             let p = mdbuf.as_mut_ptr();
             unsafe { memset_avx(p, 0x6D, n) };
-            assert!(unsafe { slice::from_raw_parts(p, n) }.iter().all(|&b| b == 0x6D), "avx set n={n}");
-            let old_t = measure(|| { unsafe { memset_old(black_box(p), 0x11, n) }; black_box(p) as u64 });
-            let avx_t = measure(|| { unsafe { memset_avx(black_box(p), 0x22, n) }; black_box(p) as u64 });
+            assert!(
+                unsafe { slice::from_raw_parts(p, n) }
+                    .iter()
+                    .all(|&b| b == 0x6D),
+                "avx set n={n}"
+            );
+            let old_t = measure(|| {
+                unsafe { memset_old(black_box(p), 0x11, n) };
+                black_box(p) as u64
+            });
+            let avx_t = measure(|| {
+                unsafe { memset_avx(black_box(p), 0x22, n) };
+                black_box(p) as u64
+            });
             let g_t = measure(|| unsafe { g_memset(black_box(p.cast()), 0x33, n) } as u64);
             println!(
                 "MEMSETMED_AB n={n:<5} old_p50_ns={:.3} avx_p50_ns={:.3} glibc_p50_ns={:.3} \
                  avx/old={:.3} avx/glibc={:.3} old/glibc={:.3}",
-                old_t, avx_t, g_t,
+                old_t,
+                avx_t,
+                g_t,
                 avx_t / old_t,
                 avx_t / g_t,
                 old_t / g_t
@@ -2222,14 +2426,27 @@ fn bench(c: &mut Criterion) {
     for &n in &[64usize, 128, 256, 1024, 4096, 16384, 65536] {
         let p = bigbuf.as_mut_ptr();
         unsafe { memset_repstos(p, 0x7E, n) };
-        assert!(unsafe { slice::from_raw_parts(p, n) }.iter().all(|&b| b == 0x7E), "repstos n={n}");
-        let old_t = measure(|| { unsafe { memset_old(black_box(p), 0x11, n) }; black_box(p) as u64 });
-        let new_t = measure(|| { unsafe { memset_repstos(black_box(p), 0x22, n) }; black_box(p) as u64 });
+        assert!(
+            unsafe { slice::from_raw_parts(p, n) }
+                .iter()
+                .all(|&b| b == 0x7E),
+            "repstos n={n}"
+        );
+        let old_t = measure(|| {
+            unsafe { memset_old(black_box(p), 0x11, n) };
+            black_box(p) as u64
+        });
+        let new_t = measure(|| {
+            unsafe { memset_repstos(black_box(p), 0x22, n) };
+            black_box(p) as u64
+        });
         let g_t = measure(|| unsafe { g_memset(black_box(p.cast()), 0x33, n) } as u64);
         println!(
             "MEMSETBIG_AB n={n:<6} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
-            old_t, new_t, g_t,
+            old_t,
+            new_t,
+            g_t,
             new_t / old_t,
             new_t / g_t,
             old_t / g_t
@@ -2238,8 +2455,7 @@ fn bench(c: &mut Criterion) {
 
     // memcpy A/B: small-n copy. OLD copy_unaligned+volatile-tail vs NEW overlapping vs glibc.
     type MemcpyFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void;
-    let g_memcpy =
-        unsafe { std::mem::transmute::<usize, MemcpyFn>(host_sym(b"memcpy\0")) };
+    let g_memcpy = unsafe { std::mem::transmute::<usize, MemcpyFn>(host_sym(b"memcpy\0")) };
     let src: Vec<u8> = (0..4096).map(|k| (k % 251) as u8 + 1).collect();
     let mut cdst = vec![0u8; 4096];
     for &n in &[3usize, 7, 15, 16, 23, 31, 32, 47, 63] {
@@ -2250,13 +2466,29 @@ fn bench(c: &mut Criterion) {
             let sp = unsafe { src.as_ptr().add(off) };
             let dp = unsafe { cdst.as_mut_ptr().add(off) };
             unsafe { memcpy_new(dp, sp, n) };
-            assert_eq!(unsafe { slice::from_raw_parts(dp, n) }, unsafe { slice::from_raw_parts(sp, n) }, "new copy n={n}");
+            assert_eq!(
+                unsafe { slice::from_raw_parts(dp, n) },
+                unsafe { slice::from_raw_parts(sp, n) },
+                "new copy n={n}"
+            );
             unsafe { cdst.as_mut_ptr().add(off).write_bytes(0, n) };
             unsafe { memcpy_old(dp, sp, n) };
-            assert_eq!(unsafe { slice::from_raw_parts(dp, n) }, unsafe { slice::from_raw_parts(sp, n) }, "old copy n={n}");
-            old_t += measure(|| { unsafe { memcpy_old(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
-            new_t += measure(|| { unsafe { memcpy_new(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
-            g_t += measure(|| unsafe { g_memcpy(black_box(dp.cast()), black_box(sp.cast()), n) } as u64);
+            assert_eq!(
+                unsafe { slice::from_raw_parts(dp, n) },
+                unsafe { slice::from_raw_parts(sp, n) },
+                "old copy n={n}"
+            );
+            old_t += measure(|| {
+                unsafe { memcpy_old(black_box(dp), black_box(sp), n) };
+                black_box(dp) as u64
+            });
+            new_t += measure(|| {
+                unsafe { memcpy_new(black_box(dp), black_box(sp), n) };
+                black_box(dp) as u64
+            });
+            g_t += measure(
+                || unsafe { g_memcpy(black_box(dp.cast()), black_box(sp.cast()), n) } as u64,
+            );
         }
         println!(
             "MEMCPY_AB n={n:<3} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
@@ -2286,9 +2518,17 @@ fn bench(c: &mut Criterion) {
             unsafe { g_wcsncpy(d3.as_mut_ptr(), sp, n) };
             assert_eq!(d1, d2, "scalar vs simd n={n}");
             assert_eq!(d1, d3, "scalar vs glibc n={n}");
-            let sc_t = measure(|| { unsafe { wcsncpy_scalar(black_box(d1.as_mut_ptr()), black_box(sp), n) }; black_box(d1.as_ptr()) as u64 });
-            let si_t = measure(|| { unsafe { wcsncpy_simd(black_box(d2.as_mut_ptr()), black_box(sp), n) }; black_box(d2.as_ptr()) as u64 });
-            let g_t = measure(|| unsafe { g_wcsncpy(black_box(d3.as_mut_ptr()), black_box(sp), n) } as u64);
+            let sc_t = measure(|| {
+                unsafe { wcsncpy_scalar(black_box(d1.as_mut_ptr()), black_box(sp), n) };
+                black_box(d1.as_ptr()) as u64
+            });
+            let si_t = measure(|| {
+                unsafe { wcsncpy_simd(black_box(d2.as_mut_ptr()), black_box(sp), n) };
+                black_box(d2.as_ptr()) as u64
+            });
+            let g_t = measure(
+                || unsafe { g_wcsncpy(black_box(d3.as_mut_ptr()), black_box(sp), n) } as u64,
+            );
             println!(
                 "WCSNCPY n={n:<5} scalar_p50_ns={sc_t:.3} simd_p50_ns={si_t:.3} glibc_p50_ns={g_t:.3} \
                  simd/scalar={:.3} simd/glibc={:.3} scalar/glibc={:.3}",
@@ -2319,10 +2559,26 @@ fn bench(c: &mut Criterion) {
             let np = ndl.as_ptr();
             let want = Some(npos);
             assert_eq!(unsafe { strstr_naive(hp, hn + 1, np, 8) }, want, "tnaive");
-            assert_eq!(frankenlibc_core::string::mem::memmem(&hay[..hn + 1], hn + 1, &ndl[..8], 8), want, "tcore");
-            let naive_t = measure(|| unsafe { strstr_naive(black_box(hp), hn + 1, black_box(np), 8) }.unwrap_or(0) as u64);
-            let mm_t = measure(|| frankenlibc_core::string::mem::memmem(black_box(&hay[..hn + 1]), hn + 1, black_box(&ndl[..8]), 8).unwrap_or(0) as u64);
-            let g_t = measure(|| unsafe { g_strstr(black_box(hp.cast()), black_box(np.cast())) } as usize as u64);
+            assert_eq!(
+                frankenlibc_core::string::mem::memmem(&hay[..hn + 1], hn + 1, &ndl[..8], 8),
+                want,
+                "tcore"
+            );
+            let naive_t = measure(|| {
+                unsafe { strstr_naive(black_box(hp), hn + 1, black_box(np), 8) }.unwrap_or(0) as u64
+            });
+            let mm_t = measure(|| {
+                frankenlibc_core::string::mem::memmem(
+                    black_box(&hay[..hn + 1]),
+                    hn + 1,
+                    black_box(&ndl[..8]),
+                    8,
+                )
+                .unwrap_or(0) as u64
+            });
+            let g_t = measure(
+                || unsafe { g_strstr(black_box(hp.cast()), black_box(np.cast())) } as usize as u64,
+            );
             println!(
                 "STRSTR_TYP hn={hn:<5} naive_p50_ns={naive_t:.3} memmem_p50_ns={mm_t:.3} glibc_p50_ns={g_t:.3} \
                  memmem/naive={:.3} memmem/glibc={:.3}",
@@ -2346,10 +2602,23 @@ fn bench(c: &mut Criterion) {
             let hp = hay.as_ptr();
             let np = ndl.as_ptr();
             assert_eq!(unsafe { wcsstr_naive(hp, hn + 1, np, 17) }, None, "wnaive");
-            assert_eq!(frankenlibc_core::string::wide::wcsstr(&hay[..hn + 1], &ndl[..17]), None, "wcore");
+            assert_eq!(
+                frankenlibc_core::string::wide::wcsstr(&hay[..hn + 1], &ndl[..17]),
+                None,
+                "wcore"
+            );
             assert!(unsafe { g_wcsstr(hp, np) }.is_null(), "wglibc");
-            let naive_t = measure(|| unsafe { wcsstr_naive(black_box(hp), hn + 1, black_box(np), 17) }.unwrap_or(0) as u64);
-            let tw_t = measure(|| frankenlibc_core::string::wide::wcsstr(black_box(&hay[..hn + 1]), black_box(&ndl[..17])).unwrap_or(0) as u64);
+            let naive_t = measure(|| {
+                unsafe { wcsstr_naive(black_box(hp), hn + 1, black_box(np), 17) }.unwrap_or(0)
+                    as u64
+            });
+            let tw_t = measure(|| {
+                frankenlibc_core::string::wide::wcsstr(
+                    black_box(&hay[..hn + 1]),
+                    black_box(&ndl[..17]),
+                )
+                .unwrap_or(0) as u64
+            });
             let g_t = measure(|| unsafe { g_wcsstr(black_box(hp), black_box(np)) } as usize as u64);
             println!(
                 "WCSSTR_PATHO hn={hn:<6} naive_p50_ns={naive_t:.3} twoway_p50_ns={tw_t:.3} glibc_p50_ns={g_t:.3} \
@@ -2375,12 +2644,36 @@ fn bench(c: &mut Criterion) {
             ndl.push(0);
             let hp = hay.as_ptr();
             let np = ndl.as_ptr();
-            assert_eq!(unsafe { strstr_naive(hp, hn + 1, np, 17) }, None, "naive path");
-            assert_eq!(frankenlibc_core::string::mem::memmem(&hay[..hn + 1], hn + 1, &ndl[..17], 17), None, "memmem path");
-            assert!(unsafe { g_strstr(hp.cast(), np.cast()) }.is_null(), "glibc path");
-            let naive_t = measure(|| unsafe { strstr_naive(black_box(hp), hn + 1, black_box(np), 17) }.unwrap_or(0) as u64);
-            let mm_t = measure(|| frankenlibc_core::string::mem::memmem(black_box(&hay[..hn + 1]), hn + 1, black_box(&ndl[..17]), 17).unwrap_or(0) as u64);
-            let g_t = measure(|| unsafe { g_strstr(black_box(hp.cast()), black_box(np.cast())) } as usize as u64);
+            assert_eq!(
+                unsafe { strstr_naive(hp, hn + 1, np, 17) },
+                None,
+                "naive path"
+            );
+            assert_eq!(
+                frankenlibc_core::string::mem::memmem(&hay[..hn + 1], hn + 1, &ndl[..17], 17),
+                None,
+                "memmem path"
+            );
+            assert!(
+                unsafe { g_strstr(hp.cast(), np.cast()) }.is_null(),
+                "glibc path"
+            );
+            let naive_t = measure(|| {
+                unsafe { strstr_naive(black_box(hp), hn + 1, black_box(np), 17) }.unwrap_or(0)
+                    as u64
+            });
+            let mm_t = measure(|| {
+                frankenlibc_core::string::mem::memmem(
+                    black_box(&hay[..hn + 1]),
+                    hn + 1,
+                    black_box(&ndl[..17]),
+                    17,
+                )
+                .unwrap_or(0) as u64
+            });
+            let g_t = measure(
+                || unsafe { g_strstr(black_box(hp.cast()), black_box(np.cast())) } as usize as u64,
+            );
             println!(
                 "STRSTR_PATHO hn={hn:<6} naive_p50_ns={naive_t:.3} memmem_p50_ns={mm_t:.3} glibc_p50_ns={g_t:.3} \
                  memmem/naive={:.4} memmem/glibc={:.3} naive/glibc={:.1}",
@@ -2396,19 +2689,40 @@ fn bench(c: &mut Criterion) {
         type WspnFn = unsafe extern "C" fn(*const u32, *const u32) -> usize;
         let g_wcsspn = unsafe { std::mem::transmute::<usize, WspnFn>(host_sym(b"wcsspn\0")) };
         // accept set = 16 ASCII chars; string = all-accept (full span).
-        let accept: Vec<u32> = (b'a'..b'a' + 16).map(|x| x as u32).chain(std::iter::once(0)).collect();
+        let accept: Vec<u32> = (b'a'..b'a' + 16)
+            .map(|x| x as u32)
+            .chain(std::iter::once(0))
+            .collect();
         for &(slen, alen) in &[(64usize, 8usize), (256, 16), (1024, 16), (4096, 8)] {
-            let acc: Vec<u32> = (b'a'..b'a' + alen as u8).map(|x| x as u32).chain(std::iter::once(0)).collect();
+            let acc: Vec<u32> = (b'a'..b'a' + alen as u8)
+                .map(|x| x as u32)
+                .chain(std::iter::once(0))
+                .collect();
             let _ = &accept;
-            let mut sb: Vec<u32> = (0..slen).map(|i| b'a' as u32 + (i as u32 % alen as u32)).collect();
+            let mut sb: Vec<u32> = (0..slen)
+                .map(|i| b'a' as u32 + (i as u32 % alen as u32))
+                .collect();
             sb.push(0);
             let sp = sb.as_ptr();
             let ap = acc.as_ptr();
-            assert_eq!(unsafe { wcsspn_scalar(sp, slen, ap, alen) }, slen, "scalar span");
-            assert_eq!(unsafe { wcsspn_table(sp, slen, ap, alen) }, slen, "table span");
+            assert_eq!(
+                unsafe { wcsspn_scalar(sp, slen, ap, alen) },
+                slen,
+                "scalar span"
+            );
+            assert_eq!(
+                unsafe { wcsspn_table(sp, slen, ap, alen) },
+                slen,
+                "table span"
+            );
             assert_eq!(unsafe { g_wcsspn(sp, ap) }, slen, "glibc span");
-            let cur_t = measure(|| unsafe { wcsspn_scalar(black_box(sp), slen, black_box(ap), alen) } as u64);
-            let new_t = measure(|| unsafe { wcsspn_table(black_box(sp), slen, black_box(ap), alen) } as u64);
+            let cur_t =
+                measure(
+                    || unsafe { wcsspn_scalar(black_box(sp), slen, black_box(ap), alen) } as u64,
+                );
+            let new_t = measure(
+                || unsafe { wcsspn_table(black_box(sp), slen, black_box(ap), alen) } as u64,
+            );
             let g_t = measure(|| unsafe { g_wcsspn(black_box(sp), black_box(ap)) } as u64);
             println!(
                 "WCSSPN slen={slen:<5} alen={alen} scalar_p50_ns={cur_t:.3} table_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
@@ -2428,20 +2742,37 @@ fn bench(c: &mut Criterion) {
         // last 40 u32 of page 1; scan from several starts in the tail — must not fault.
         let pg = 4096usize;
         let m = unsafe {
-            libc::mmap(std::ptr::null_mut(), 2 * pg, libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0)
+            libc::mmap(
+                std::ptr::null_mut(),
+                2 * pg,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
         };
         assert_ne!(m, libc::MAP_FAILED, "mmap");
-        unsafe { assert_eq!(libc::mprotect((m as *mut u8).add(pg).cast(), pg, libc::PROT_NONE), 0) };
+        unsafe {
+            assert_eq!(
+                libc::mprotect((m as *mut u8).add(pg).cast(), pg, libc::PROT_NONE),
+                0
+            )
+        };
         let words = pg / 4; // u32 per page
         let buf = m as *mut u32;
-        for k in 0..words { unsafe { *buf.add(k) = 0x41 }; }
+        for k in 0..words {
+            unsafe { *buf.add(k) = 0x41 };
+        }
         for nul_at in (words - 40)..words {
             unsafe { *buf.add(nul_at) = 0 };
             for start in (words - 40)..=nul_at {
                 let q = unsafe { buf.add(start) };
                 let got = unsafe { wcslen_pagesafe(q) };
-                assert_eq!(got, nul_at - start, "pagesafe guard nul_at={nul_at} start={start}");
+                assert_eq!(
+                    got,
+                    nul_at - start,
+                    "pagesafe guard nul_at={nul_at} start={start}"
+                );
             }
             unsafe { *buf.add(nul_at) = 0x41 };
         }
@@ -2452,7 +2783,11 @@ fn bench(c: &mut Criterion) {
             for off in 0..8usize {
                 wl[off + len] = 0;
                 let q = unsafe { wl.as_ptr().add(off) };
-                assert_eq!(unsafe { wcslen_pagesafe(q) }, len, "pagesafe off={off} len={len}");
+                assert_eq!(
+                    unsafe { wcslen_pagesafe(q) },
+                    len,
+                    "pagesafe off={off} len={len}"
+                );
                 wl[off + len] = 0x41;
             }
             wl[len] = 0;
@@ -2478,14 +2813,28 @@ fn bench(c: &mut Criterion) {
         let needle = 0x0000_0001u32;
         for &n in &[256usize, 1024, 4096, 16384, 65536] {
             let p = wb.as_ptr();
-            assert_eq!(unsafe { wmchr_cur64(p, needle, n) }, None, "wmchr_cur64 n={n}");
-            assert_eq!(unsafe { wmchr_minc(p, needle, n) }, None, "wmchr_minc n={n}");
+            assert_eq!(
+                unsafe { wmchr_cur64(p, needle, n) },
+                None,
+                "wmchr_cur64 n={n}"
+            );
+            assert_eq!(
+                unsafe { wmchr_minc(p, needle, n) },
+                None,
+                "wmchr_minc n={n}"
+            );
             // present-target correctness
             wb[n / 2] = needle;
-            assert_eq!(unsafe { wmchr_minc(p, needle, n) }, Some(n / 2), "wmchr_minc present n={n}");
+            assert_eq!(
+                unsafe { wmchr_minc(p, needle, n) },
+                Some(n / 2),
+                "wmchr_minc present n={n}"
+            );
             wb[n / 2] = 0x41;
-            let cur_t = measure(|| unsafe { wmchr_cur64(black_box(p), needle, n) }.unwrap_or(0) as u64);
-            let new_t = measure(|| unsafe { wmchr_minc(black_box(p), needle, n) }.unwrap_or(0) as u64);
+            let cur_t =
+                measure(|| unsafe { wmchr_cur64(black_box(p), needle, n) }.unwrap_or(0) as u64);
+            let new_t =
+                measure(|| unsafe { wmchr_minc(black_box(p), needle, n) }.unwrap_or(0) as u64);
             let g_t = measure(|| unsafe { g_wmc(black_box(p), needle, n) } as usize as u64);
             println!(
                 "WMCHRBIG n={n:<6} cur64_p50_ns={cur_t:.3} minc_p50_ns={new_t:.3} glibc_p50_ns={g_t:.3} \
@@ -2506,7 +2855,8 @@ fn bench(c: &mut Criterion) {
             rb[len] = 0;
             let p = rb.as_ptr();
             let cur_t = measure(|| unsafe { rchr_new(black_box(p), b'Z') }.unwrap_or(0) as u64);
-            let g_t = measure(|| unsafe { g_srchr(black_box(p.cast()), b'Z' as i32) } as usize as u64);
+            let g_t =
+                measure(|| unsafe { g_srchr(black_box(p.cast()), b'Z' as i32) } as usize as u64);
             rb[len] = b'a';
             println!(
                 "STRRCHRBIG len={len:<7} cur_p50_ns={cur_t:.3} glibc_p50_ns={g_t:.3} cur/glibc={:.3}",
@@ -2523,7 +2873,11 @@ fn bench(c: &mut Criterion) {
             for off in 0..32usize {
                 lb[off + len] = 0;
                 let q = unsafe { lb.as_ptr().add(off) };
-                assert_eq!(unsafe { scan_unroll128(q) }, len, "unroll128 off={off} len={len}");
+                assert_eq!(
+                    unsafe { scan_unroll128(q) },
+                    len,
+                    "unroll128 off={off} len={len}"
+                );
                 assert_eq!(unsafe { scan_new(q) }, len, "scan_new off={off} len={len}");
                 lb[off + len] = b'a';
             }
@@ -2547,22 +2901,34 @@ fn bench(c: &mut Criterion) {
     // memmove DISJOINT A/B: OLD copy_unaligned+volatile vs NEW (raw_overlap_copy dispatch)
     // vs glibc memmove. Disjoint src/dst (the common memmove case).
     type MemmoveFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void;
-    let g_memmove =
-        unsafe { std::mem::transmute::<usize, MemmoveFn>(host_sym(b"memmove\0")) };
+    let g_memmove = unsafe { std::mem::transmute::<usize, MemmoveFn>(host_sym(b"memmove\0")) };
     let mvsrc: Vec<u8> = (0..(1usize << 17)).map(|k| (k % 251) as u8 + 1).collect();
     let mut mvdst = vec![0u8; 1 << 17];
     for &n in &[15usize, 31, 64, 256, 1024, 4096, 16384] {
         let sp = mvsrc.as_ptr();
         let dp = mvdst.as_mut_ptr();
         unsafe { memmove_disjoint_new(dp, sp, n) };
-        assert_eq!(unsafe { slice::from_raw_parts(dp, n) }, &mvsrc[..n], "mv new n={n}");
-        let old_t = measure(|| { unsafe { memcpy_old(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
-        let new_t = measure(|| { unsafe { memmove_disjoint_new(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
-        let g_t = measure(|| unsafe { g_memmove(black_box(dp.cast()), black_box(sp.cast()), n) } as u64);
+        assert_eq!(
+            unsafe { slice::from_raw_parts(dp, n) },
+            &mvsrc[..n],
+            "mv new n={n}"
+        );
+        let old_t = measure(|| {
+            unsafe { memcpy_old(black_box(dp), black_box(sp), n) };
+            black_box(dp) as u64
+        });
+        let new_t = measure(|| {
+            unsafe { memmove_disjoint_new(black_box(dp), black_box(sp), n) };
+            black_box(dp) as u64
+        });
+        let g_t =
+            measure(|| unsafe { g_memmove(black_box(dp.cast()), black_box(sp.cast()), n) } as u64);
         println!(
             "MEMMOVE_AB n={n:<6} old_p50_ns={:.3} new_p50_ns={:.3} glibc_p50_ns={:.3} \
              new/old={:.3} new/glibc={:.3} old/glibc={:.3}",
-            old_t, new_t, g_t,
+            old_t,
+            new_t,
+            g_t,
             new_t / old_t,
             new_t / g_t,
             old_t / g_t
@@ -2577,14 +2943,28 @@ fn bench(c: &mut Criterion) {
             let sp = medsrc.as_ptr();
             let dp = meddst.as_mut_ptr();
             unsafe { memcpy_avx(dp, sp, n) };
-            assert_eq!(unsafe { slice::from_raw_parts(dp, n) }, &medsrc[..n], "avx copy n={n}");
-            let cur_t = measure(|| { unsafe { memcpy_new(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
-            let avx_t = measure(|| { unsafe { memcpy_avx(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
-            let g_t = measure(|| unsafe { g_memcpy(black_box(dp.cast()), black_box(sp.cast()), n) } as u64);
+            assert_eq!(
+                unsafe { slice::from_raw_parts(dp, n) },
+                &medsrc[..n],
+                "avx copy n={n}"
+            );
+            let cur_t = measure(|| {
+                unsafe { memcpy_new(black_box(dp), black_box(sp), n) };
+                black_box(dp) as u64
+            });
+            let avx_t = measure(|| {
+                unsafe { memcpy_avx(black_box(dp), black_box(sp), n) };
+                black_box(dp) as u64
+            });
+            let g_t = measure(
+                || unsafe { g_memcpy(black_box(dp.cast()), black_box(sp.cast()), n) } as u64,
+            );
             println!(
                 "MEMCPYMED_AB n={n:<5} cur_p50_ns={:.3} avx_p50_ns={:.3} glibc_p50_ns={:.3} \
                  avx/cur={:.3} avx/glibc={:.3} cur/glibc={:.3}",
-                cur_t, avx_t, g_t,
+                cur_t,
+                avx_t,
+                g_t,
                 avx_t / cur_t,
                 avx_t / g_t,
                 cur_t / g_t
@@ -2599,14 +2979,27 @@ fn bench(c: &mut Criterion) {
         let sp = bigsrc.as_ptr();
         let dp = bigdst.as_mut_ptr();
         unsafe { memcpy_repmovs(dp, sp, n) };
-        assert_eq!(unsafe { slice::from_raw_parts(dp, n) }, &bigsrc[..n], "repmovs n={n}");
-        let cur_t = measure(|| { unsafe { memcpy_new(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
-        let new_t = measure(|| { unsafe { memcpy_repmovs(black_box(dp), black_box(sp), n) }; black_box(dp) as u64 });
-        let g_t = measure(|| unsafe { g_memcpy(black_box(dp.cast()), black_box(sp.cast()), n) } as u64);
+        assert_eq!(
+            unsafe { slice::from_raw_parts(dp, n) },
+            &bigsrc[..n],
+            "repmovs n={n}"
+        );
+        let cur_t = measure(|| {
+            unsafe { memcpy_new(black_box(dp), black_box(sp), n) };
+            black_box(dp) as u64
+        });
+        let new_t = measure(|| {
+            unsafe { memcpy_repmovs(black_box(dp), black_box(sp), n) };
+            black_box(dp) as u64
+        });
+        let g_t =
+            measure(|| unsafe { g_memcpy(black_box(dp.cast()), black_box(sp.cast()), n) } as u64);
         println!(
             "MEMCPYBIG_AB n={n:<6} cur_p50_ns={:.3} rep_p50_ns={:.3} glibc_p50_ns={:.3} \
              rep/cur={:.3} rep/glibc={:.3} cur/glibc={:.3}",
-            cur_t, new_t, g_t,
+            cur_t,
+            new_t,
+            g_t,
             new_t / cur_t,
             new_t / g_t,
             cur_t / g_t

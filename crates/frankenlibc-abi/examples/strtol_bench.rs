@@ -1,6 +1,6 @@
 // strtol head-to-head: fl core integer parser vs host glibc strtol (dlmopen). Decimal,
 // negative, max, hex (base 16), octal (base 8). Value-exact check vs glibc on every case.
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -16,8 +16,10 @@ fn main() {
         assert!(!h.is_null(), "dlmopen libc failed");
         type StrtolFn =
             unsafe extern "C" fn(*const libc::c_char, *mut *mut libc::c_char, i32) -> i64;
-        let gl_strtol: StrtolFn =
-            std::mem::transmute::<*mut c_void, StrtolFn>(libc::dlsym(h, b"strtol\0".as_ptr().cast()));
+        let gl_strtol: StrtolFn = std::mem::transmute::<*mut c_void, StrtolFn>(libc::dlsym(
+            h,
+            b"strtol\0".as_ptr().cast(),
+        ));
 
         let cases: [(&str, i32); 9] = [
             ("42", 10),
@@ -35,7 +37,10 @@ fn main() {
             let (fl_v, _, _) = strtol_impl(bytes, base);
             let cs = CString::new(s).unwrap();
             let gl_v = gl_strtol(cs.as_ptr(), std::ptr::null_mut(), base);
-            assert_eq!(fl_v, gl_v, "strtol {s:?} base {base}: fl={fl_v} glibc={gl_v}");
+            assert_eq!(
+                fl_v, gl_v,
+                "strtol {s:?} base {base}: fl={fl_v} glibc={gl_v}"
+            );
             let iters = 200_000usize;
             let t0 = Instant::now();
             for _ in 0..iters {
@@ -44,10 +49,17 @@ fn main() {
             let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
             let t1 = Instant::now();
             for _ in 0..iters {
-                black_box(gl_strtol(black_box(cs.as_ptr()), std::ptr::null_mut(), base));
+                black_box(gl_strtol(
+                    black_box(cs.as_ptr()),
+                    std::ptr::null_mut(),
+                    base,
+                ));
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("STRTOL {s:?} base={base} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x", fl / gl);
+            println!(
+                "STRTOL {s:?} base={base} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x",
+                fl / gl
+            );
         }
 
         // strtoull (unsigned) — MULTI-DIGIT inputs only, where the SWAR work dominates the
@@ -61,26 +73,39 @@ fn main() {
         let ucases: [(&str, i32); 3] = [
             ("12345678901234567890", 10),
             ("18446744073709551615", 10), // u64::MAX
-            ("0xFFFFFFFFFFFFFFFF", 16),    // u64::MAX hex
+            ("0xFFFFFFFFFFFFFFFF", 16),   // u64::MAX hex
         ];
         for &(s, base) in ucases.iter() {
             let bytes = s.as_bytes();
             let (fl_v, _, _) = frankenlibc_core::stdlib::conversion::strtoull_impl(bytes, base);
             let cs = CString::new(s).unwrap();
             let gl_v = gl_strtoull(cs.as_ptr(), std::ptr::null_mut(), base);
-            assert_eq!(fl_v, gl_v, "strtoull {s:?} base {base}: fl={fl_v} glibc={gl_v}");
+            assert_eq!(
+                fl_v, gl_v,
+                "strtoull {s:?} base {base}: fl={fl_v} glibc={gl_v}"
+            );
             let iters = 200_000usize;
             let t0 = Instant::now();
             for _ in 0..iters {
-                black_box(frankenlibc_core::stdlib::conversion::strtoull_impl(black_box(bytes), base));
+                black_box(frankenlibc_core::stdlib::conversion::strtoull_impl(
+                    black_box(bytes),
+                    base,
+                ));
             }
             let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
             let t1 = Instant::now();
             for _ in 0..iters {
-                black_box(gl_strtoull(black_box(cs.as_ptr()), std::ptr::null_mut(), base));
+                black_box(gl_strtoull(
+                    black_box(cs.as_ptr()),
+                    std::ptr::null_mut(),
+                    base,
+                ));
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("STRTOULL {s:?} base={base} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x", fl / gl);
+            println!(
+                "STRTOULL {s:?} base={base} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x",
+                fl / gl
+            );
         }
     }
 }

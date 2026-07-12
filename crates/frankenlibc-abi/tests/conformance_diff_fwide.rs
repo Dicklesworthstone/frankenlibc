@@ -79,7 +79,11 @@ fn fwide_sets_wide_and_is_sticky() {
 fn fwide_sets_byte_and_is_sticky() {
     let (g, f) = run_seq(&[-1, 0, 1, -9]);
     assert_eq!(f, g, "byte-sticky seq: fl={f:?} glibc={g:?}");
-    assert_eq!(f, vec![-1, -1, -1, -1], "orientation must stay byte once set");
+    assert_eq!(
+        f,
+        vec![-1, -1, -1, -1],
+        "orientation must stay byte once set"
+    );
 }
 
 #[test]

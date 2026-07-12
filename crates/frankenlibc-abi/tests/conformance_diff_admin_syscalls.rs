@@ -82,12 +82,7 @@ fn host_quotactl(
     (rc as c_int, host_errno())
 }
 
-fn fl_quotactl(
-    cmd: c_int,
-    special: *const c_char,
-    id: c_int,
-    addr: *mut c_void,
-) -> (c_int, c_int) {
+fn fl_quotactl(cmd: c_int, special: *const c_char, id: c_int, addr: *mut c_void) -> (c_int, c_int) {
     set_fl_errno(0);
     let rc = unsafe { fl::quotactl(cmd, special, id, addr) };
     (rc, fl_errno())

@@ -35,17 +35,36 @@ fn candidate(x: f32) -> f32 {
 
 fn p50(s: &mut [f64]) -> f64 {
     s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    if s.is_empty() { return 0.0; }
+    if s.is_empty() {
+        return 0.0;
+    }
     let r = 0.5 * (s.len() - 1) as f64;
     let (lo, hi) = (r.floor() as usize, r.ceil() as usize);
     s[lo] * (1.0 - (r - lo as f64)) + s[hi] * (r - lo as f64)
 }
 
-fn run<F: Fn(f32) -> f32>(g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>, name: &str, inp: &[f32], f: F) {
-    let one = || { let mut a = 0.0f32; for &x in inp { a += f(black_box(x)); } a };
-    for _ in 0..50 { black_box(one()); }
+fn run<F: Fn(f32) -> f32>(
+    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &str,
+    inp: &[f32],
+    f: F,
+) {
+    let one = || {
+        let mut a = 0.0f32;
+        for &x in inp {
+            a += f(black_box(x));
+        }
+        a
+    };
+    for _ in 0..50 {
+        black_box(one());
+    }
     let mut s = Vec::new();
-    for _ in 0..200 { let t = Instant::now(); black_box(one()); s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / inp.len() as f64); }
+    for _ in 0..200 {
+        let t = Instant::now();
+        black_box(one());
+        s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / inp.len() as f64);
+    }
     println!("ACOSHF_BENCH impl={name} p50_ns_op={:.4}", p50(&mut s));
     g.bench_function(name, |b| b.iter(|| black_box(f(black_box(inp[0])))));
 }
@@ -58,13 +77,27 @@ fn bench(c: &mut Criterion) {
         let cand = candidate(x);
         let g = unsafe { host_acoshf(x) };
         let u = ((cand.to_bits() as i64) - (g.to_bits() as i64)).unsigned_abs();
-        if u > worst { worst = u; wx = x; }
+        if u > worst {
+            worst = u;
+            wx = x;
+        }
     }
     eprintln!("acoshf candidate vs glibc worst ULP over [1,21] = {worst} at x={wx}");
     // x=1 -> acosh(1)=0; inf -> inf
-    assert_eq!(candidate(1.0).to_bits(), unsafe { host_acoshf(1.0) }.to_bits(), "acoshf(1)");
-    assert_eq!(candidate(f32::INFINITY).to_bits(), unsafe { host_acoshf(f32::INFINITY) }.to_bits(), "acoshf(inf)");
-    assert!(worst <= 4, "acoshf candidate exceeds 4 ULP vs glibc (worst {worst} at x={wx})");
+    assert_eq!(
+        candidate(1.0).to_bits(),
+        unsafe { host_acoshf(1.0) }.to_bits(),
+        "acoshf(1)"
+    );
+    assert_eq!(
+        candidate(f32::INFINITY).to_bits(),
+        unsafe { host_acoshf(f32::INFINITY) }.to_bits(),
+        "acoshf(inf)"
+    );
+    assert!(
+        worst <= 4,
+        "acoshf candidate exceeds 4 ULP vs glibc (worst {worst} at x={wx})"
+    );
 
     let inp: Vec<f32> = (0..64).map(|k| 1.01 + k as f32 * 0.5).collect();
     let mut g = c.benchmark_group("acoshf");

@@ -9,7 +9,7 @@
 //! fopen/read so the streams never cross. fd VALUES legitimately differ across
 //! impls, so fileno is only checked for validity (>= 0). No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod g {
@@ -52,7 +52,10 @@ fn glibc_probe(path: &CString) -> (bool, bool, bool) {
         let err = g::ferror_unlocked(f) != 0;
         assert_eq!(err, g::ferror(f) != 0, "glibc ferror_unlocked != ferror");
         g::clearerr_unlocked(f);
-        assert!(g::feof_unlocked(f) == 0 && g::ferror_unlocked(f) == 0, "glibc clearerr_unlocked");
+        assert!(
+            g::feof_unlocked(f) == 0 && g::ferror_unlocked(f) == 0,
+            "glibc clearerr_unlocked"
+        );
         g::fclose(f);
         (eof, err, fno_valid)
     }
@@ -69,7 +72,10 @@ fn fl_probe(path: &CString) -> (bool, bool, bool) {
         let err = fl::ferror_unlocked(f) != 0;
         assert_eq!(err, fl::ferror(f) != 0, "fl ferror_unlocked != ferror");
         fl::clearerr_unlocked(f);
-        assert!(fl::feof_unlocked(f) == 0 && fl::ferror_unlocked(f) == 0, "fl clearerr_unlocked");
+        assert!(
+            fl::feof_unlocked(f) == 0 && fl::ferror_unlocked(f) == 0,
+            "fl clearerr_unlocked"
+        );
         fl::fclose(f);
         (eof, err, fno_valid)
     }
@@ -82,7 +88,10 @@ fn stdio_unlocked_query_matches_glibc() {
         let gp = glibc_probe(&c);
         let fp = fl_probe(&c);
         let _ = std::fs::remove_file(&path);
-        assert_eq!(fp, gp, "unlocked query state for {contents:?}: fl={fp:?} glibc={gp:?}");
+        assert_eq!(
+            fp, gp,
+            "unlocked query state for {contents:?}: fl={fp:?} glibc={gp:?}"
+        );
         assert!(gp.0, "reading past end should set EOF");
         assert!(gp.2 && fp.2, "fileno_unlocked should be valid");
     }

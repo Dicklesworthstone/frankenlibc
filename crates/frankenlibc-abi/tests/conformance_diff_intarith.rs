@@ -49,9 +49,22 @@ unsafe extern "C" {
 #[test]
 fn div_matches_glibc() {
     let cases: &[(c_int, c_int)] = &[
-        (7, 2), (-7, 2), (7, -2), (-7, -2), (0, 5), (1, 1), (10, 3), (-10, 3),
-        (i32::MAX, 7), (i32::MIN, 7), (i32::MIN, 2), (i32::MAX, -3), (i32::MIN, 1),
-        (5, 1), (123456, 789), (-123456, 789),
+        (7, 2),
+        (-7, 2),
+        (7, -2),
+        (-7, -2),
+        (0, 5),
+        (1, 1),
+        (10, 3),
+        (-10, 3),
+        (i32::MAX, 7),
+        (i32::MIN, 7),
+        (i32::MIN, 2),
+        (i32::MAX, -3),
+        (i32::MIN, 1),
+        (5, 1),
+        (123456, 789),
+        (-123456, 789),
     ];
     for &(num, den) in cases {
         let g = unsafe { div(num, den) };
@@ -60,19 +73,33 @@ fn div_matches_glibc() {
             (f.quot, f.rem),
             (g.quot, g.rem),
             "div({num},{den}): fl=({},{}) glibc=({},{})",
-            f.quot, f.rem, g.quot, g.rem
+            f.quot,
+            f.rem,
+            g.quot,
+            g.rem
         );
         // C99: quot truncates toward zero, rem has the sign of the dividend,
         // and quot*den + rem == num.
-        assert_eq!(f.quot * den + f.rem, num, "div identity broken for ({num},{den})");
+        assert_eq!(
+            f.quot * den + f.rem,
+            num,
+            "div identity broken for ({num},{den})"
+        );
     }
 }
 
 #[test]
 fn ldiv_lldiv_match_glibc() {
     let lcases: &[(c_long, c_long)] = &[
-        (7, 2), (-7, 2), (7, -2), (-7, -2), (0, 9),
-        (i64::MAX, 11), (i64::MIN, 11), (i64::MIN, 1), (i64::MAX, -13),
+        (7, 2),
+        (-7, 2),
+        (7, -2),
+        (-7, -2),
+        (0, 9),
+        (i64::MAX, 11),
+        (i64::MIN, 11),
+        (i64::MIN, 1),
+        (i64::MAX, -13),
     ];
     for &(num, den) in lcases {
         let g = unsafe { ldiv(num, den) };
@@ -96,7 +123,11 @@ fn abs_family_matches_glibc_including_int_min() {
         assert_eq!(f, g, "abs({n}): fl={f} glibc={g}");
     }
     // INT_MIN wraps to INT_MIN in both (UB in C; glibc + fl both wrap).
-    assert_eq!(unsafe { fl::abs(i32::MIN) }, i32::MIN, "abs(INT_MIN) must wrap, not panic");
+    assert_eq!(
+        unsafe { fl::abs(i32::MIN) },
+        i32::MIN,
+        "abs(INT_MIN) must wrap, not panic"
+    );
 
     for &n in &[0i64, 1, -1, i64::MAX, i64::MIN, i64::MIN + 1, -123456789] {
         let g = unsafe { labs(n) };
@@ -109,6 +140,14 @@ fn abs_family_matches_glibc_including_int_min() {
         let fi = unsafe { fl::imaxabs(n) };
         assert_eq!(fi, gi, "imaxabs({n})");
     }
-    assert_eq!(unsafe { fl::labs(i64::MIN) }, i64::MIN, "labs(LONG_MIN) must wrap");
-    assert_eq!(unsafe { fl::imaxabs(i64::MIN) }, i64::MIN, "imaxabs(INTMAX_MIN) must wrap");
+    assert_eq!(
+        unsafe { fl::labs(i64::MIN) },
+        i64::MIN,
+        "labs(LONG_MIN) must wrap"
+    );
+    assert_eq!(
+        unsafe { fl::imaxabs(i64::MIN) },
+        i64::MIN,
+        "imaxabs(INTMAX_MIN) must wrap"
+    );
 }

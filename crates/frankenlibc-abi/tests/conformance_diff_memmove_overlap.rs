@@ -43,7 +43,13 @@ impl Arena {
         let sym = unsafe { libc::dlsym(h, b"memmove\0".as_ptr().cast()) };
         assert!(!sym.is_null(), "dlsym memmove failed");
         let glibc: MFn = unsafe { std::mem::transmute(sym) };
-        Arena { f, g, cap, layout, glibc }
+        Arena {
+            f,
+            g,
+            cap,
+            layout,
+            glibc,
+        }
     }
 
     #[inline]

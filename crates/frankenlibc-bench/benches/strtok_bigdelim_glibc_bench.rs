@@ -12,7 +12,7 @@ use std::ffi::{c_char, c_void};
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 type TokFn = unsafe extern "C" fn(*mut c_char, *const c_char, *mut *mut c_char) -> *mut c_char;
 
@@ -37,7 +37,11 @@ fn pctl(samples: &[f64], q: f64) -> f64 {
     s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let r = q * (s.len() - 1) as f64;
     let (lo, hi) = (r.floor() as usize, r.ceil() as usize);
-    if lo == hi { s[lo] } else { s[lo] * (1.0 - (r - lo as f64)) + s[hi] * (r - lo as f64) }
+    if lo == hi {
+        s[lo]
+    } else {
+        s[lo] * (1.0 - (r - lo as f64)) + s[hi] * (r - lo as f64)
+    }
 }
 
 /// `k` tokens each `tok_len` bytes, separated by a single space (a delim member).
@@ -62,7 +66,9 @@ unsafe fn run_host(f: TokFn, template: &[u8], delim: *const c_char) -> usize {
     let mut n = 0usize;
     loop {
         let tok = unsafe { f(cur, delim, &mut save) };
-        if tok.is_null() { break; }
+        if tok.is_null() {
+            break;
+        }
         cur = std::ptr::null_mut();
         n += 1;
     }
@@ -77,7 +83,9 @@ unsafe fn run_fl(template: &[u8], delim: *const c_char) -> usize {
     let mut n = 0usize;
     loop {
         let tok = unsafe { frankenlibc_abi::string_abi::strtok_r(cur, delim, &mut save) };
-        if tok.is_null() { break; }
+        if tok.is_null() {
+            break;
+        }
         cur = std::ptr::null_mut();
         n += 1;
     }
@@ -94,8 +102,11 @@ fn bench(c: &mut Criterion) {
     group.sample_size(30);
 
     // (label, k tokens, tok_len) — common = many short; adversarial = few long.
-    let cases: &[(&str, usize, usize)] =
-        &[("common_k512x7", 512, 7), ("common_k2048x7", 2048, 7), ("adversarial_k4x4000", 4, 4000)];
+    let cases: &[(&str, usize, usize)] = &[
+        ("common_k512x7", 512, 7),
+        ("common_k2048x7", 2048, 7),
+        ("adversarial_k4x4000", 4, 4000),
+    ];
 
     for &(label, k, tl) in cases {
         let template = make_buf(k, tl);

@@ -24,7 +24,11 @@ type CloseFn = extern "C" fn(*mut c_void) -> c_int;
 type ConvFn =
     extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
 
-struct G { open: OpenFn, close: CloseFn, conv: ConvFn }
+struct G {
+    open: OpenFn,
+    close: CloseFn,
+    conv: ConvFn,
+}
 fn g() -> G {
     unsafe {
         let h = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
@@ -58,7 +62,9 @@ fn g_decode_byte(gg: &G, name: &str, b: u8) -> Vec<u32> {
         return vec![]; // EILSEQ / EINVAL on the byte itself
     }
     let n = 64 - ol;
-    (0..n / 4).map(|i| u32::from_le_bytes([out[i*4], out[i*4+1], out[i*4+2], out[i*4+3]])).collect()
+    (0..n / 4)
+        .map(|i| u32::from_le_bytes([out[i * 4], out[i * 4 + 1], out[i * 4 + 2], out[i * 4 + 3]]))
+        .collect()
 }
 fn fl_decode_byte(name: &str, b: u8) -> Vec<u32> {
     let cn = CString::new(name).unwrap();
@@ -76,7 +82,9 @@ fn fl_decode_byte(name: &str, b: u8) -> Vec<u32> {
         return vec![];
     }
     let n = 64 - ol;
-    (0..n / 4).map(|i| u32::from_le_bytes([out[i*4], out[i*4+1], out[i*4+2], out[i*4+3]])).collect()
+    (0..n / 4)
+        .map(|i| u32::from_le_bytes([out[i * 4], out[i * 4 + 1], out[i * 4 + 2], out[i * 4 + 3]]))
+        .collect()
 }
 
 fn g_encode(gg: &G, name: &str, cp: u32) -> Option<Vec<u8>> {

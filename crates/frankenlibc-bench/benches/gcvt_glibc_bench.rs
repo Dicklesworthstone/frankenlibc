@@ -13,7 +13,7 @@ use std::ffi::c_char;
 use std::ffi::c_int;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 unsafe extern "C" {
     fn gcvt(value: f64, ndigit: c_int, buf: *mut c_char) -> *mut c_char;
@@ -65,7 +65,9 @@ fn bench(c: &mut Criterion) {
     {
         let mut s: u64 = 0x9E3779B97F4A7C15;
         let mut next = || {
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             s
         };
         let mut checked = 0u64;
@@ -89,7 +91,11 @@ fn bench(c: &mut Criterion) {
             let nn = fl_gcvt(v, ndigit, &mut flb);
             let mut glb = [0i8; 64];
             unsafe { gcvt(v, ndigit as c_int, glb.as_mut_ptr()) };
-            let gl: Vec<u8> = glb.iter().take_while(|&&b| b != 0).map(|&b| b as u8).collect();
+            let gl: Vec<u8> = glb
+                .iter()
+                .take_while(|&&b| b != 0)
+                .map(|&b| b as u8)
+                .collect();
             assert_eq!(
                 &flb[..nn],
                 gl.as_slice(),
@@ -115,7 +121,11 @@ fn bench(c: &mut Criterion) {
             let mut buf = [0i8; 64];
             b.iter(|| {
                 black_box(unsafe {
-                    gcvt(black_box(*value), black_box(*ndigit as c_int), buf.as_mut_ptr())
+                    gcvt(
+                        black_box(*value),
+                        black_box(*ndigit as c_int),
+                        buf.as_mut_ptr(),
+                    )
                 });
             })
         });

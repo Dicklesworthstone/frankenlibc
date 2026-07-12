@@ -41,9 +41,9 @@ fn values() -> Vec<f128> {
         1e-4000f128,
         f128::MIN_POSITIVE,
         f128::MAX,
-        f128::from_bits(1),                                     // smallest subnormal
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(1),                  // smallest subnormal
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     // Dense sweep near 1 (table-skip interval + boundaries) and across decades.
@@ -55,9 +55,13 @@ fn values() -> Vec<f128> {
     // PRNG across the full positive exponent range, both signs of input.
     let mut st: u64 = 0x0123_4567_89ab_cdef;
     for _ in 0..6000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (hi % 0x7fff) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);

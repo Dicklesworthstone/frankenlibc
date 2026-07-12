@@ -20,12 +20,33 @@ fn el() -> *mut c_int {
 
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
-        0.0, -0.0f128, 1.0, -1.0, 2.0, -2.0, 0.5, -0.5, 3.0, -3.0, 10.0, 0.1,
-        1.5, -1.5, 4.0, 0.25, 100.0, -100.0, 1e10f128, 1e-10f128,
-        2.5, -2.5, 7.0, 0.3333333333333333f128,
+        0.0,
+        -0.0f128,
+        1.0,
+        -1.0,
+        2.0,
+        -2.0,
+        0.5,
+        -0.5,
+        3.0,
+        -3.0,
+        10.0,
+        0.1,
+        1.5,
+        -1.5,
+        4.0,
+        0.25,
+        100.0,
+        -100.0,
+        1e10f128,
+        1e-10f128,
+        2.5,
+        -2.5,
+        7.0,
+        0.3333333333333333f128,
         f128::from_bits(1),
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     // integer and half-integer exponents, both signs
@@ -36,9 +57,13 @@ fn values() -> Vec<f128> {
     // PRNG bases/exps
     let mut st: u64 = 0x70_77_65_72_5f_66_31_32;
     for _ in 0..120 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (0x3ff0 + (hi % 0x0030)) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -63,9 +88,19 @@ fn f128_pow_matches_glibc() {
             let fe = unsafe { *el() };
             n += 1;
             if g != f || ge != fe {
-                mism.push(format!("pow({:#034x},{:#034x}): glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})", x.to_bits(), y.to_bits()));
+                mism.push(format!(
+                    "pow({:#034x},{:#034x}): glibc=({g:#034x},e={ge}) fl=({f:#034x},e={fe})",
+                    x.to_bits(),
+                    y.to_bits()
+                ));
             }
         }
     }
-    assert!(mism.is_empty(), "powf128 diverged ({}/{}):\n{}", mism.len(), n, mism.iter().take(40).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        mism.is_empty(),
+        "powf128 diverged ({}/{}):\n{}",
+        mism.len(),
+        n,
+        mism.iter().take(40).cloned().collect::<Vec<_>>().join("\n")
+    );
 }

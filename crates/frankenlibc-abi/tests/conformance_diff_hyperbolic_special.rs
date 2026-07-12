@@ -34,9 +34,9 @@ const CASES: &[f64] = &[
     1.0,
     -1.0,
     0.5,
-    20.0,   // tanh saturates to ~1
+    20.0, // tanh saturates to ~1
     -20.0,
-    710.0,  // sinh/cosh overflow -> +inf
+    710.0, // sinh/cosh overflow -> +inf
     -710.0,
     1.0e-10, // small: sinh(x)~x, tanh(x)~x, cosh(x)~1
 ];
@@ -57,7 +57,11 @@ fn sinh_cosh_tanh_special_match_glibc() {
             let fs_n = unsafe { frankenlibc_abi::math_abi::sinh(-x) };
             let fc_n = unsafe { frankenlibc_abi::math_abi::cosh(-x) };
             let ft_n = unsafe { frankenlibc_abi::math_abi::tanh(-x) };
-            assert!(same64(fs_n, -fs), "sinh odd at {x:?}: sinh(-x)={fs_n:?} -sinh(x)={:?}", -fs);
+            assert!(
+                same64(fs_n, -fs),
+                "sinh odd at {x:?}: sinh(-x)={fs_n:?} -sinh(x)={:?}",
+                -fs
+            );
             assert!(same64(fc_n, fc), "cosh even at {x:?}");
             assert!(same64(ft_n, -ft), "tanh odd at {x:?}");
         }

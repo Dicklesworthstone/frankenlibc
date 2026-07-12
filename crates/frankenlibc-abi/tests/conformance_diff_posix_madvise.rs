@@ -16,7 +16,14 @@ use std::ffi::{c_int, c_void};
 unsafe extern "C" {
     fn dlopen(filename: *const i8, flag: c_int) -> *mut c_void;
     fn dlsym(handle: *mut c_void, symbol: *const i8) -> *mut c_void;
-    fn mmap(addr: *mut c_void, len: usize, prot: c_int, flags: c_int, fd: c_int, off: i64) -> *mut c_void;
+    fn mmap(
+        addr: *mut c_void,
+        len: usize,
+        prot: c_int,
+        flags: c_int,
+        fd: c_int,
+        off: i64,
+    ) -> *mut c_void;
     fn munmap(addr: *mut c_void, len: usize) -> c_int;
 }
 type MadvFn = unsafe extern "C" fn(*mut c_void, usize, c_int) -> c_int;
@@ -41,7 +48,14 @@ fn glibc_posix_madvise() -> MadvFn {
 /// (rc, value-after).
 fn cycle(f: MadvFn) -> (c_int, u32) {
     unsafe {
-        let p = mmap(std::ptr::null_mut(), PS, PROT_RW, MAP_PRIVATE | MAP_ANON, -1, 0);
+        let p = mmap(
+            std::ptr::null_mut(),
+            PS,
+            PROT_RW,
+            MAP_PRIVATE | MAP_ANON,
+            -1,
+            0,
+        );
         assert!(p as isize != -1, "mmap failed");
         *(p as *mut u32) = MARKER;
         let rc = f(p, PS, POSIX_MADV_DONTNEED);
@@ -59,7 +73,10 @@ fn posix_madvise_dontneed_is_nondestructive_like_glibc() {
     assert_eq!(gc.0, 0, "glibc posix_madvise(DONTNEED) rc");
     assert_eq!(gc.1, MARKER, "glibc must not destroy the page");
     assert_eq!(fc.0, gc.0, "rc: glibc={} fl={}", gc.0, fc.0);
-    assert_eq!(fc.1, MARKER, "fl posix_madvise(DONTNEED) destroyed the page (was the bug)");
+    assert_eq!(
+        fc.1, MARKER,
+        "fl posix_madvise(DONTNEED) destroyed the page (was the bug)"
+    );
 
     // A bogus address with DONTNEED must still return 0 (glibc issues no syscall).
     unsafe {
@@ -74,7 +91,14 @@ fn posix_madvise_dontneed_is_nondestructive_like_glibc() {
 
     // A non-DONTNEED advice on a valid mapping still succeeds on both.
     unsafe {
-        let p = mmap(std::ptr::null_mut(), PS, PROT_RW, MAP_PRIVATE | MAP_ANON, -1, 0);
+        let p = mmap(
+            std::ptr::null_mut(),
+            PS,
+            PROT_RW,
+            MAP_PRIVATE | MAP_ANON,
+            -1,
+            0,
+        );
         assert!(p as isize != -1);
         assert_eq!(
             g(p, PS, POSIX_MADV_WILLNEED),

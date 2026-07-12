@@ -25,7 +25,9 @@ fn fl(msg: &[u8]) -> c_int {
 fn dn_skipname_matches_glibc() {
     let cases: Vec<Vec<u8>> = vec![
         // "example.com" uncompressed: 7 'example' 3 'com' 0  -> 13
-        vec![7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0],
+        vec![
+            7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0,
+        ],
         // root name (single 0 byte) -> 1
         vec![0],
         // bare compression pointer 0xC00C -> 2

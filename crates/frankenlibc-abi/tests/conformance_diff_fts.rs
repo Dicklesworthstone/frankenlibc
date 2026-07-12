@@ -10,9 +10,9 @@
 //! files once (FTS_F=8). fl's pub FTSENT layout is used to read both impls'
 //! results (a misread would itself surface a layout divergence). No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CStr, CString};
-use std::sync::atomic::{AtomicU64, Ordering};
 use frankenlibc_abi::unistd_abi::{self as fl, FTSENT};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const FTS_PHYSICAL: c_int = 0x0010;
 static CNT: AtomicU64 = AtomicU64::new(0);
@@ -20,7 +20,11 @@ static CNT: AtomicU64 = AtomicU64::new(0);
 mod g {
     use super::*;
     unsafe extern "C" {
-        pub fn fts_open(path_argv: *const *const c_char, options: c_int, compar: *const c_void) -> *mut c_void;
+        pub fn fts_open(
+            path_argv: *const *const c_char,
+            options: c_int,
+            compar: *const c_void,
+        ) -> *mut c_void;
         pub fn fts_read(ftsp: *mut c_void) -> *mut FTSENT;
         pub fn fts_close(ftsp: *mut c_void) -> c_int;
     }
@@ -59,7 +63,11 @@ fn walk(
             }
             let full = CStr::from_ptr((*e).fts_path).to_string_lossy().into_owned();
             // Make relative to root so the (random) temp prefix doesn't matter.
-            let rel = full.strip_prefix(root).unwrap_or(&full).trim_start_matches('/').to_string();
+            let rel = full
+                .strip_prefix(root)
+                .unwrap_or(&full)
+                .trim_start_matches('/')
+                .to_string();
             out.push((rel, (*e).fts_info, (*e).fts_level));
         }
         close(ftsp);
@@ -81,6 +89,12 @@ fn fts_traversal_matches_glibc() {
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(f, g, "fts traversal entry set:\n fl={f:#?}\n glibc={g:#?}");
     // sanity: glibc must visit each dir twice (D + DP) and 3 files once.
-    assert!(g.iter().filter(|(_, info, _)| *info == 8).count() == 3, "expected 3 files (FTS_F)");
-    assert!(g.iter().filter(|(_, info, _)| *info == 1).count() == 2, "expected 2 preorder dirs (root+sub)");
+    assert!(
+        g.iter().filter(|(_, info, _)| *info == 8).count() == 3,
+        "expected 3 files (FTS_F)"
+    );
+    assert!(
+        g.iter().filter(|(_, info, _)| *info == 1).count() == 2,
+        "expected 2 preorder dirs (root+sub)"
+    );
 }

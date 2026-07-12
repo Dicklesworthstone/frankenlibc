@@ -57,7 +57,10 @@ fn sigsetops_reserved_signals_match_glibc() {
     // glibc oracle); the glibc-via-dlsym side's errno is not observable here.
     let check_fl_errno = |rc: c_int, e: c_int, label: &str, div: &mut Vec<String>| {
         if rc == -1 && e != libc::EINVAL {
-            div.push(format!("{label}: fl rc=-1 but errno={e} (want EINVAL {})", libc::EINVAL));
+            div.push(format!(
+                "{label}: fl rc=-1 but errno={e} (want EINVAL {})",
+                libc::EINVAL
+            ));
         }
     };
 
@@ -70,7 +73,11 @@ fn sigsetops_reserved_signals_match_glibc() {
         let fe = unsafe { *__errno_location() };
         let gr = unsafe { g_add(&mut gs, sig) };
         if fr != gr || word0(&fs) != word0(&gs) {
-            div.push(format!("sigaddset({sig}): fl=(rc{fr},w{:#x}) glibc=(rc{gr},w{:#x})", word0(&fs), word0(&gs)));
+            div.push(format!(
+                "sigaddset({sig}): fl=(rc{fr},w{:#x}) glibc=(rc{gr},w{:#x})",
+                word0(&fs),
+                word0(&gs)
+            ));
         }
         check_fl_errno(fr, fe, &format!("sigaddset({sig})"), &mut div);
 
@@ -83,7 +90,11 @@ fn sigsetops_reserved_signals_match_glibc() {
         let fe = unsafe { *__errno_location() };
         let gr = unsafe { g_del(&mut gd, sig) };
         if fr != gr || word0(&fd) != word0(&gd) {
-            div.push(format!("sigdelset({sig}): fl=(rc{fr},w{:#x}) glibc=(rc{gr},w{:#x})", word0(&fd), word0(&gd)));
+            div.push(format!(
+                "sigdelset({sig}): fl=(rc{fr},w{:#x}) glibc=(rc{gr},w{:#x})",
+                word0(&fd),
+                word0(&gd)
+            ));
         }
         check_fl_errno(fr, fe, &format!("sigdelset({sig})"), &mut div);
 
@@ -96,7 +107,9 @@ fn sigsetops_reserved_signals_match_glibc() {
         let fe = unsafe { *__errno_location() };
         let gr = unsafe { g_mem(&mut gf, sig) };
         if fr != gr {
-            div.push(format!("sigismember({sig}) on full: fl=rc{fr} glibc=rc{gr}"));
+            div.push(format!(
+                "sigismember({sig}) on full: fl=rc{fr} glibc=rc{gr}"
+            ));
         }
         check_fl_errno(fr, fe, &format!("sigismember({sig})"), &mut div);
     }
@@ -106,8 +119,17 @@ fn sigsetops_reserved_signals_match_glibc() {
     unsafe { fl::sigfillset(&mut ff) };
     unsafe { g_fill(&mut gf) };
     if word0(&ff) != word0(&gf) {
-        div.push(format!("sigfillset word0: fl={:#018x} glibc={:#018x}", word0(&ff), word0(&gf)));
+        div.push(format!(
+            "sigfillset word0: fl={:#018x} glibc={:#018x}",
+            word0(&ff),
+            word0(&gf)
+        ));
     }
 
-    assert!(div.is_empty(), "sigsetops divergences ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "sigsetops divergences ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

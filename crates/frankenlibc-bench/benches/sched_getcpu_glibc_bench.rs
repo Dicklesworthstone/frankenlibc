@@ -78,7 +78,11 @@ fn main() {
     let fl_p50 = measure(41, iters, || unsafe { fl::sched_getcpu() });
     let host_p50 = measure(41, iters, || unsafe { host() });
     let raw_p50 = measure(41, iters, raw_syscall_getcpu);
-    let fl_over_host = if host_p50 > 0.0 { fl_p50 / host_p50 } else { 0.0 };
+    let fl_over_host = if host_p50 > 0.0 {
+        fl_p50 / host_p50
+    } else {
+        0.0
+    };
     let raw_over_fl = if fl_p50 > 0.0 { raw_p50 / fl_p50 } else { 0.0 };
     println!(
         "GETCPU fl_ns={fl_p50:.1} host_glibc_ns={host_p50:.1} raw_syscall_ns={raw_p50:.1} \

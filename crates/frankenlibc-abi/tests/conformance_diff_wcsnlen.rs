@@ -31,7 +31,10 @@ fn wcsnlen_matches_glibc() {
         let g = unsafe { wcsnlen(nonul.as_ptr(), maxlen) };
         let f = unsafe { frankenlibc_abi::wchar_abi::wcsnlen(nonul.as_ptr(), maxlen) };
         assert_eq!(f, g, "wcsnlen(no NUL, maxlen={maxlen}): fl={f} glibc={g}");
-        assert_eq!(f, maxlen, "wcsnlen must return maxlen when no NUL within bound");
+        assert_eq!(
+            f, maxlen,
+            "wcsnlen must return maxlen when no NUL within bound"
+        );
     }
 
     // Empty string -> 0 regardless of maxlen.

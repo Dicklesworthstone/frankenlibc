@@ -13,11 +13,11 @@
 //!
 //! Run: `cargo bench -p frankenlibc-bench --bench fputs_glibc_bench --features abi-bench`
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::hint::black_box;
 use std::sync::OnceLock;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_abi::stdio_abi as fl;
 
 type FmemopenFn = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
@@ -71,14 +71,18 @@ fn bench(c: &mut Criterion) {
         let mut fl_buf = vec![0u8; cap];
         let fl_fp = unsafe { fl::fmemopen(fl_buf.as_mut_ptr() as *mut c_void, cap, mode.as_ptr()) };
         assert!(!fl_fp.is_null(), "fl::fmemopen NULL");
-        group.bench_with_input(BenchmarkId::new("frankenlibc_abi", name), &arg, |b, &arg| {
-            b.iter(|| {
-                unsafe { fl::rewind(fl_fp) };
-                for _ in 0..K {
-                    black_box(unsafe { fl::fputs(black_box(arg), fl_fp) });
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("frankenlibc_abi", name),
+            &arg,
+            |b, &arg| {
+                b.iter(|| {
+                    unsafe { fl::rewind(fl_fp) };
+                    for _ in 0..K {
+                        black_box(unsafe { fl::fputs(black_box(arg), fl_fp) });
+                    }
+                });
+            },
+        );
         unsafe { fl::fclose(fl_fp) };
 
         // host glibc (own fmemopen FILE*)

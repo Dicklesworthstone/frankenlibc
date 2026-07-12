@@ -31,13 +31,31 @@ fn main() {
                 let want = slen.min(n);
                 let mut d1 = vec![0x55u8; n + 96];
                 let mut d2 = vec![0x55u8; n + 96];
-                let l1 = if n == 0 { 0 } else { unsafe { s::bench_strncpy_two_pass(d1.as_mut_ptr(), sp, n) } };
-                let l2 = if n == 0 { 0 } else { unsafe { s::bench_strncpy_fused(d2.as_mut_ptr(), sp, n) } };
-                assert_eq!(l1, want, "two-pass copy_len align={align} slen={slen} n={n}");
+                let l1 = if n == 0 {
+                    0
+                } else {
+                    unsafe { s::bench_strncpy_two_pass(d1.as_mut_ptr(), sp, n) }
+                };
+                let l2 = if n == 0 {
+                    0
+                } else {
+                    unsafe { s::bench_strncpy_fused(d2.as_mut_ptr(), sp, n) }
+                };
+                assert_eq!(
+                    l1, want,
+                    "two-pass copy_len align={align} slen={slen} n={n}"
+                );
                 assert_eq!(l2, want, "fused copy_len align={align} slen={slen} n={n}");
-                assert_eq!(&d1[..want], &d2[..want], "bytes align={align} slen={slen} n={n}");
+                assert_eq!(
+                    &d1[..want],
+                    &d2[..want],
+                    "bytes align={align} slen={slen} n={n}"
+                );
                 // fused must not write beyond copy_len (strncpy pads separately)
-                assert_eq!(d2[want], 0x55, "fused overwrote past copy_len align={align} slen={slen} n={n}");
+                assert_eq!(
+                    d2[want], 0x55,
+                    "fused overwrote past copy_len align={align} slen={slen} n={n}"
+                );
                 checks += 1;
             }
         }
@@ -45,7 +63,14 @@ fn main() {
     println!("correctness: {checks} (align×slen×n) fused==two-pass, no over-write ✓");
 
     // Timing A/B: strlen==n (buffer-filling: max double-read savings) and strlen<<n.
-    let cases: [(usize, usize); 6] = [(16, 16), (32, 32), (64, 64), (128, 128), (8, 128), (16, 256)];
+    let cases: [(usize, usize); 6] = [
+        (16, 16),
+        (32, 32),
+        (64, 64),
+        (128, 128),
+        (8, 128),
+        (16, 256),
+    ];
     for (slen, n) in cases {
         let mut src: Vec<u8> = (0..slen).map(|i| b'a' + (i % 26) as u8).collect();
         src.push(0);
@@ -58,20 +83,31 @@ fn main() {
             let two_first = r % 2 == 0;
             let mut run_two = || {
                 let t = Instant::now();
-                for _ in 0..iters { black_box(unsafe { s::bench_strncpy_two_pass(dp, sp, n) }); }
+                for _ in 0..iters {
+                    black_box(unsafe { s::bench_strncpy_two_pass(dp, sp, n) });
+                }
                 tv.push(t.elapsed().as_nanos() as f64 / iters as f64);
             };
             let mut run_fused = || {
                 let t = Instant::now();
-                for _ in 0..iters { black_box(unsafe { s::bench_strncpy_fused(dp, sp, n) }); }
+                for _ in 0..iters {
+                    black_box(unsafe { s::bench_strncpy_fused(dp, sp, n) });
+                }
                 fv.push(t.elapsed().as_nanos() as f64 / iters as f64);
             };
-            if two_first { run_two(); run_fused(); } else { run_fused(); run_two(); }
+            if two_first {
+                run_two();
+                run_fused();
+            } else {
+                run_fused();
+                run_two();
+            }
         }
         let (t10, f10) = (pctl(&tv, 0.1), pctl(&fv, 0.1));
         println!(
             "STRNCPY slen={slen:<4} n={n:<4} p10: twopass={t10:.2} fused={f10:.2} ratio={:.3}  {}",
-            f10 / t10, if f10 < t10 { "FUSED WINS" } else { "two-pass" }
+            f10 / t10,
+            if f10 < t10 { "FUSED WINS" } else { "two-pass" }
         );
     }
 }

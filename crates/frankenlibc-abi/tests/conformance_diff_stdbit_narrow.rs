@@ -33,20 +33,54 @@ unsafe extern "C" {
 }
 
 const UC: &[c_uchar] = &[0, 1, 2, 0x0F, 0x10, 0x55, 0xAA, 0x7F, 0x80, 0xFF];
-const US: &[c_ushort] = &[0, 1, 0xFF, 0x100, 0x5555, 0xAAAA, 0x7FFF, 0x8000, 0xFFFF, 0x0001];
+const US: &[c_ushort] = &[
+    0, 1, 0xFF, 0x100, 0x5555, 0xAAAA, 0x7FFF, 0x8000, 0xFFFF, 0x0001,
+];
 
 #[test]
 fn stdbit_uc_match_glibc() {
     use frankenlibc_abi::stdbit_abi as s;
     for &v in UC {
-        assert_eq!(s::stdc_leading_zeros_uc(v), unsafe { stdc_leading_zeros_uc(v) }, "leading_zeros_uc({v:#x})");
-        assert_eq!(s::stdc_trailing_zeros_uc(v), unsafe { stdc_trailing_zeros_uc(v) }, "trailing_zeros_uc({v:#x})");
-        assert_eq!(s::stdc_count_ones_uc(v), unsafe { stdc_count_ones_uc(v) }, "count_ones_uc({v:#x})");
-        assert_eq!(s::stdc_first_leading_one_uc(v), unsafe { stdc_first_leading_one_uc(v) }, "first_leading_one_uc({v:#x})");
-        assert_eq!(s::stdc_bit_width_uc(v), unsafe { stdc_bit_width_uc(v) }, "bit_width_uc({v:#x})");
-        assert_eq!(s::stdc_bit_floor_uc(v), unsafe { stdc_bit_floor_uc(v) }, "bit_floor_uc({v:#x})");
-        assert_eq!(s::stdc_bit_ceil_uc(v), unsafe { stdc_bit_ceil_uc(v) }, "bit_ceil_uc({v:#x})");
-        assert_eq!(s::stdc_has_single_bit_uc(v), unsafe { stdc_has_single_bit_uc(v) }, "has_single_bit_uc({v:#x})");
+        assert_eq!(
+            s::stdc_leading_zeros_uc(v),
+            unsafe { stdc_leading_zeros_uc(v) },
+            "leading_zeros_uc({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_trailing_zeros_uc(v),
+            unsafe { stdc_trailing_zeros_uc(v) },
+            "trailing_zeros_uc({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_count_ones_uc(v),
+            unsafe { stdc_count_ones_uc(v) },
+            "count_ones_uc({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_first_leading_one_uc(v),
+            unsafe { stdc_first_leading_one_uc(v) },
+            "first_leading_one_uc({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_bit_width_uc(v),
+            unsafe { stdc_bit_width_uc(v) },
+            "bit_width_uc({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_bit_floor_uc(v),
+            unsafe { stdc_bit_floor_uc(v) },
+            "bit_floor_uc({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_bit_ceil_uc(v),
+            unsafe { stdc_bit_ceil_uc(v) },
+            "bit_ceil_uc({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_has_single_bit_uc(v),
+            unsafe { stdc_has_single_bit_uc(v) },
+            "has_single_bit_uc({v:#x})"
+        );
     }
 }
 
@@ -54,13 +88,45 @@ fn stdbit_uc_match_glibc() {
 fn stdbit_us_match_glibc() {
     use frankenlibc_abi::stdbit_abi as s;
     for &v in US {
-        assert_eq!(s::stdc_leading_zeros_us(v), unsafe { stdc_leading_zeros_us(v) }, "leading_zeros_us({v:#x})");
-        assert_eq!(s::stdc_trailing_zeros_us(v), unsafe { stdc_trailing_zeros_us(v) }, "trailing_zeros_us({v:#x})");
-        assert_eq!(s::stdc_count_ones_us(v), unsafe { stdc_count_ones_us(v) }, "count_ones_us({v:#x})");
-        assert_eq!(s::stdc_first_leading_one_us(v), unsafe { stdc_first_leading_one_us(v) }, "first_leading_one_us({v:#x})");
-        assert_eq!(s::stdc_bit_width_us(v), unsafe { stdc_bit_width_us(v) }, "bit_width_us({v:#x})");
-        assert_eq!(s::stdc_bit_floor_us(v), unsafe { stdc_bit_floor_us(v) }, "bit_floor_us({v:#x})");
-        assert_eq!(s::stdc_bit_ceil_us(v), unsafe { stdc_bit_ceil_us(v) }, "bit_ceil_us({v:#x})");
-        assert_eq!(s::stdc_has_single_bit_us(v), unsafe { stdc_has_single_bit_us(v) }, "has_single_bit_us({v:#x})");
+        assert_eq!(
+            s::stdc_leading_zeros_us(v),
+            unsafe { stdc_leading_zeros_us(v) },
+            "leading_zeros_us({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_trailing_zeros_us(v),
+            unsafe { stdc_trailing_zeros_us(v) },
+            "trailing_zeros_us({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_count_ones_us(v),
+            unsafe { stdc_count_ones_us(v) },
+            "count_ones_us({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_first_leading_one_us(v),
+            unsafe { stdc_first_leading_one_us(v) },
+            "first_leading_one_us({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_bit_width_us(v),
+            unsafe { stdc_bit_width_us(v) },
+            "bit_width_us({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_bit_floor_us(v),
+            unsafe { stdc_bit_floor_us(v) },
+            "bit_floor_us({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_bit_ceil_us(v),
+            unsafe { stdc_bit_ceil_us(v) },
+            "bit_ceil_us({v:#x})"
+        );
+        assert_eq!(
+            s::stdc_has_single_bit_us(v),
+            unsafe { stdc_has_single_bit_us(v) },
+            "has_single_bit_us({v:#x})"
+        );
     }
 }

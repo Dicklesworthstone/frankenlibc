@@ -42,7 +42,13 @@ fn snapshot(p: *const Spwd) -> Option<(c_long, c_long, c_long, c_long, c_long, c
     }
     let s = unsafe { &*p };
     Some((
-        s.sp_lstchg, s.sp_min, s.sp_max, s.sp_warn, s.sp_inact, s.sp_expire, s.sp_flag,
+        s.sp_lstchg,
+        s.sp_min,
+        s.sp_max,
+        s.sp_warn,
+        s.sp_inact,
+        s.sp_expire,
+        s.sp_flag,
     ))
 }
 
@@ -58,15 +64,15 @@ fn sgetspent_matches_glibc() {
         c"alice:!locked:19500:0:99999:7:::",
         c"u:x:19000:0:::::42",
         c"u:*:::::::",
-        c"u:x:19000:0:99999:7:::",     // empty lstchg/etc edges
-        c"u:x::0:99999:7:::",          // empty lstchg -> -1
-        c"u:x:+5:0:99999:7:::",        // leading +
-        c"u:x: 5:0:99999:7:::",        // leading space
-        c"u:x:-1:0:99999:7:::",        // literal -1 -> NULL
-        c"u:x:5x:0:99999:7:::",        // trailing junk -> NULL
-        c"u:x:abc:0:99999:7:::",       // garbage -> NULL
-        c"u:x:5:0:99999:7:8:9:abc",    // garbage flag -> NULL
-        c"u:x:5:0:99999:7:8:9:+3",     // +flag
+        c"u:x:19000:0:99999:7:::",  // empty lstchg/etc edges
+        c"u:x::0:99999:7:::",       // empty lstchg -> -1
+        c"u:x:+5:0:99999:7:::",     // leading +
+        c"u:x: 5:0:99999:7:::",     // leading space
+        c"u:x:-1:0:99999:7:::",     // literal -1 -> NULL
+        c"u:x:5x:0:99999:7:::",     // trailing junk -> NULL
+        c"u:x:abc:0:99999:7:::",    // garbage -> NULL
+        c"u:x:5:0:99999:7:8:9:abc", // garbage flag -> NULL
+        c"u:x:5:0:99999:7:8:9:+3",  // +flag
     ];
 
     let mut div = Vec::new();
@@ -74,8 +80,16 @@ fn sgetspent_matches_glibc() {
         let fv = snapshot(unsafe { fl::sgetspent(line.as_ptr()).cast::<Spwd>() });
         let gv = snapshot(unsafe { g(line.as_ptr()) });
         if fv != gv {
-            div.push(format!("{:?}: fl={fv:?} glibc={gv:?}", line.to_str().unwrap()));
+            div.push(format!(
+                "{:?}: fl={fv:?} glibc={gv:?}",
+                line.to_str().unwrap()
+            ));
         }
     }
-    assert!(div.is_empty(), "sgetspent divergences ({}):\n  {}", div.len(), div.join("\n  "));
+    assert!(
+        div.is_empty(),
+        "sgetspent divergences ({}):\n  {}",
+        div.len(),
+        div.join("\n  ")
+    );
 }

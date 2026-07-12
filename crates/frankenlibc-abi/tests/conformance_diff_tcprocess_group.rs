@@ -63,7 +63,11 @@ fn set_fl_errno(value: c_int) {
 
 fn open_dev_null() -> c_int {
     let fd = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
-    assert!(fd >= 0, "open(/dev/null) failed with errno {}", host_errno());
+    assert!(
+        fd >= 0,
+        "open(/dev/null) failed with errno {}",
+        host_errno()
+    );
     fd
 }
 

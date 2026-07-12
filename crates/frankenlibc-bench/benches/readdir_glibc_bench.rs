@@ -13,11 +13,11 @@
 //! Run: `cargo bench -p frankenlibc-bench --bench readdir_glibc_bench --features abi-bench`
 //! (PENDING: authored during the disk-low window; to be RUN when disk recovers.)
 
-use std::ffi::{c_char, c_void, CString};
+use std::ffi::{CString, c_char, c_void};
 use std::hint::black_box;
 use std::sync::OnceLock;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_abi::dirent_abi as fl;
 
 type OpendirFn = unsafe extern "C" fn(*const c_char) -> *mut c_void;
@@ -83,8 +83,14 @@ fn bench(c: &mut Criterion) {
         }
         n
     };
-    assert!(fl_count > 1, "{DIR_PATH} should have entries (got {fl_count})");
-    assert_eq!(fl_count, gl_count, "fl vs glibc readdir entry-count mismatch");
+    assert!(
+        fl_count > 1,
+        "{DIR_PATH} should have entries (got {fl_count})"
+    );
+    assert_eq!(
+        fl_count, gl_count,
+        "fl vs glibc readdir entry-count mismatch"
+    );
 
     let mut group = c.benchmark_group("readdir_drain");
     group.bench_function("frankenlibc_abi", |b| {

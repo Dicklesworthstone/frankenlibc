@@ -73,12 +73,19 @@ fn g_raw(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Raw {
     let r = (g.conv)(cd, &mut ip, &mut il, &mut op, &mut ol);
     (g.close)(cd);
     let written = out.len() - ol;
-    Raw { errored: r == INVALID, in_left: il, out: out[..written].to_vec() }
+    Raw {
+        errored: r == INVALID,
+        in_left: il,
+        out: out[..written].to_vec(),
+    }
 }
 fn f_raw(to: &str, from: &str, input: &[u8]) -> Raw {
     let (ct, cf) = (CString::new(to).unwrap(), CString::new(from).unwrap());
     let cd = unsafe { fl::iconv_open(ct.as_ptr(), cf.as_ptr()) };
-    assert!(cd as usize != INVALID && !cd.is_null(), "fl rejects {from}->{to}");
+    assert!(
+        cd as usize != INVALID && !cd.is_null(),
+        "fl rejects {from}->{to}"
+    );
     let mut inb = input.to_vec();
     let mut out = vec![0u8; 4096];
     let mut ip = inb.as_mut_ptr() as *mut c_char;
@@ -88,7 +95,11 @@ fn f_raw(to: &str, from: &str, input: &[u8]) -> Raw {
     let r = unsafe { fl::iconv(cd, &mut ip, &mut il, &mut op, &mut ol) };
     unsafe { fl::iconv_close(cd) };
     let written = out.len() - ol;
-    Raw { errored: r == INVALID, in_left: il, out: out[..written].to_vec() }
+    Raw {
+        errored: r == INVALID,
+        in_left: il,
+        out: out[..written].to_vec(),
+    }
 }
 
 /// Full conversion with a trailing flush (NULL inbuf), returning None on error.
@@ -109,7 +120,13 @@ fn g_full(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
         (g.close)(cd);
         return None;
     }
-    let r2 = (g.conv)(cd, std::ptr::null_mut(), std::ptr::null_mut(), &mut op, &mut ol);
+    let r2 = (g.conv)(
+        cd,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        &mut op,
+        &mut ol,
+    );
     (g.close)(cd);
     if r2 == INVALID {
         return None;
@@ -133,7 +150,15 @@ fn f_full(to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
         unsafe { fl::iconv_close(cd) };
         return None;
     }
-    let r2 = unsafe { fl::iconv(cd, std::ptr::null_mut(), std::ptr::null_mut(), &mut op, &mut ol) };
+    let r2 = unsafe {
+        fl::iconv(
+            cd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut op,
+            &mut ol,
+        )
+    };
     unsafe { fl::iconv_close(cd) };
     if r2 == INVALID {
         return None;
@@ -174,7 +199,9 @@ fn iso2022jp_encode_and_roundtrip_match_glibc() {
             let gd = g_full(&g, "UTF-8", "ISO-2022-JP", &enc);
             let fd = f_full("UTF-8", "ISO-2022-JP", &enc);
             if gd != fd {
-                mism.push(format!("DEC {s:?} ({enc:02x?}): glibc={gd:02x?} fl={fd:02x?}"));
+                mism.push(format!(
+                    "DEC {s:?} ({enc:02x?}): glibc={gd:02x?} fl={fd:02x?}"
+                ));
             }
             if fd.as_deref() != Some(u) {
                 mism.push(format!("ROUNDTRIP {s:?}: fl decoded={fd:02x?}"));
@@ -188,7 +215,12 @@ fn iso2022jp_encode_and_roundtrip_match_glibc() {
             mism.push(format!("ALIAS {alias}: fl={fe:02x?} glibc={ge:02x?}"));
         }
     }
-    assert!(mism.is_empty(), "ISO-2022-JP encode/roundtrip diverged ({}):\n{}", mism.len(), mism.join("\n"));
+    assert!(
+        mism.is_empty(),
+        "ISO-2022-JP encode/roundtrip diverged ({}):\n{}",
+        mism.len(),
+        mism.join("\n")
+    );
 }
 
 #[test]
@@ -261,7 +293,9 @@ fn iso2022jp_decode_random_fuzz() {
     ];
     let mut state: u64 = 0x2022_00_4a_50_u64;
     let mut next = || {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (state >> 33) as usize
     };
     let mut mism = Vec::new();

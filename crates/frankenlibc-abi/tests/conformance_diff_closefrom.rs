@@ -31,7 +31,11 @@ fn closefrom_closes_fds_at_or_above_lowfd() {
         let b_closed = unsafe { libc::fcntl(b, libc::F_GETFD) } < 0;
         let c_closed = unsafe { libc::fcntl(c, libc::F_GETFD) } < 0;
 
-        let code: c_int = if ok_setup && a_open && b_closed && c_closed { 0 } else { 1 };
+        let code: c_int = if ok_setup && a_open && b_closed && c_closed {
+            0
+        } else {
+            1
+        };
         unsafe { libc::_exit(code) };
     }
 

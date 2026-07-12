@@ -13,11 +13,16 @@ use std::mem::MaybeUninit;
 unsafe extern "C" {
     fn __errno_location() -> *mut c_int;
 }
-fn errno() -> c_int { unsafe { *__errno_location() } }
+fn errno() -> c_int {
+    unsafe { *__errno_location() }
+}
 
 /// Query a socket via the given getsockname/getpeername-shaped fn; capture
 /// (rc, errno, sa_family, port_be, addr_be, addrlen).
-fn query(fd: c_int, f: unsafe extern "C" fn(c_int, *mut libc::sockaddr, *mut u32) -> c_int) -> (c_int, c_int, u16, u16, u32, u32) {
+fn query(
+    fd: c_int,
+    f: unsafe extern "C" fn(c_int, *mut libc::sockaddr, *mut u32) -> c_int,
+) -> (c_int, c_int, u16, u16, u32, u32) {
     unsafe {
         let mut sa = MaybeUninit::<libc::sockaddr_in>::zeroed();
         let mut len = std::mem::size_of::<libc::sockaddr_in>() as u32;
@@ -37,10 +42,16 @@ fn getsockname_matches_glibc_same_socket() {
         let sa = libc::sockaddr_in {
             sin_family: libc::AF_INET as u16,
             sin_port: 0, // kernel assigns
-            sin_addr: libc::in_addr { s_addr: u32::from_ne_bytes([127, 0, 0, 1]) },
+            sin_addr: libc::in_addr {
+                s_addr: u32::from_ne_bytes([127, 0, 0, 1]),
+            },
             sin_zero: [0; 8],
         };
-        let r = libc::bind(fd, &sa as *const _ as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_in>() as u32);
+        let r = libc::bind(
+            fd,
+            &sa as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as u32,
+        );
         assert_eq!(r, 0, "bind() failed");
 
         // Both impls query the SAME bound socket -> everything must match.
@@ -64,7 +75,15 @@ fn getpeername_unconnected_matches_glibc() {
         let f = query(fd, frankenlibc_abi::socket_abi::getpeername);
         libc::close(fd);
         // rc/-1 and errno must match (ENOTCONN on an unconnected socket).
-        assert_eq!((f.0, f.1), (g.0, g.1), "getpeername(unconnected): fl=(rc{},errno{}) glibc=(rc{},errno{})", f.0, f.1, g.0, g.1);
+        assert_eq!(
+            (f.0, f.1),
+            (g.0, g.1),
+            "getpeername(unconnected): fl=(rc{},errno{}) glibc=(rc{},errno{})",
+            f.0,
+            f.1,
+            g.0,
+            g.1
+        );
         assert_eq!((g.0, g.1), (-1, libc::ENOTCONN), "glibc: -1/ENOTCONN");
     }
 }

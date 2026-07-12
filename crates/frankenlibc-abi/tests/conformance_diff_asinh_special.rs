@@ -65,11 +65,11 @@ const CASES: &[f64] = &[
     2.0,
     100.0,
     -100.0,
-    1.0e-10,   // small: asinh(x) ~ x
+    1.0e-10, // small: asinh(x) ~ x
     -1.0e-10,
-    1.0e150,   // large: asinh(x) ~ ln(2x), no overflow
+    1.0e150, // large: asinh(x) ~ ln(2x), no overflow
     -1.0e150,
-    5.0e-324,  // smallest subnormal
+    5.0e-324, // smallest subnormal
     0.347,
 ];
 
@@ -86,7 +86,11 @@ fn asinh_special_cases_match_glibc() {
         );
         if !x.is_nan() {
             let fneg = unsafe { frankenlibc_abi::math_abi::asinh(-x) };
-            assert!(same64(fneg, -f), "asinh odd-function at {x:?}: asinh(-x)={fneg:?} -asinh(x)={:?}", -f);
+            assert!(
+                same64(fneg, -f),
+                "asinh odd-function at {x:?}: asinh(-x)={fneg:?} -asinh(x)={:?}",
+                -f
+            );
         }
     }
 }

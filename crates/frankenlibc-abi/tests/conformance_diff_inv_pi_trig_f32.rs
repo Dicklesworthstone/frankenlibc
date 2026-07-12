@@ -105,9 +105,18 @@ fn inv_pi_trig_f32_matches_glibc() {
         -2.0,
     ];
     for &x in &specials {
-        note(same_bits(unsafe { fl::acospif(x) }, g_acospif(x)), format!("acospif({x})"));
-        note(same_bits(unsafe { fl::asinpif(x) }, g_asinpif(x)), format!("asinpif({x})"));
-        note(same_bits(unsafe { fl::atanpif(x) }, g_atanpif(x)), format!("atanpif({x})"));
+        note(
+            same_bits(unsafe { fl::acospif(x) }, g_acospif(x)),
+            format!("acospif({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::asinpif(x) }, g_asinpif(x)),
+            format!("asinpif({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::atanpif(x) }, g_atanpif(x)),
+            format!("atanpif({x})"),
+        );
         for &y in &specials {
             note(
                 same_bits(unsafe { fl::atan2pif(x, y) }, g_atan2pif(x, y)),
@@ -116,5 +125,8 @@ fn inv_pi_trig_f32_matches_glibc() {
         }
     }
 
-    assert_eq!(mismatches, 0, "inverse pi-trig f32 diverged from glibc; first: {first}");
+    assert_eq!(
+        mismatches, 0,
+        "inverse pi-trig f32 diverged from glibc; first: {first}"
+    );
 }

@@ -27,8 +27,30 @@ unsafe extern "C" {
 // In-range arguments only (the FE_INVALID-on-overflow behavior is a separate
 // concern); covers ties (always away from zero), sub-half, and signed values.
 const XS: &[f64] = &[
-    0.0, -0.0, 0.5, -0.5, 1.5, -1.5, 2.5, -2.5, 3.5, 0.1, -0.1, 0.4, -0.4, 0.9, -0.9,
-    100.5, -100.5, 101.5, 123456.7, -123456.7, 1.0 / 3.0, 2.0, -2.0, 1e6 + 0.5,
+    0.0,
+    -0.0,
+    0.5,
+    -0.5,
+    1.5,
+    -1.5,
+    2.5,
+    -2.5,
+    3.5,
+    0.1,
+    -0.1,
+    0.4,
+    -0.4,
+    0.9,
+    -0.9,
+    100.5,
+    -100.5,
+    101.5,
+    123456.7,
+    -123456.7,
+    1.0 / 3.0,
+    2.0,
+    -2.0,
+    1e6 + 0.5,
 ];
 
 #[test]

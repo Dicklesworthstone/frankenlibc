@@ -23,11 +23,18 @@ mod g {
         pub fn pthread_attr_init(a: *mut libc::pthread_attr_t) -> c_int;
         pub fn pthread_attr_destroy(a: *mut libc::pthread_attr_t) -> c_int;
         pub fn pthread_attr_setinheritsched(a: *mut libc::pthread_attr_t, v: c_int) -> c_int;
-        pub fn pthread_attr_getinheritsched(a: *const libc::pthread_attr_t, v: *mut c_int) -> c_int;
+        pub fn pthread_attr_getinheritsched(a: *const libc::pthread_attr_t, v: *mut c_int)
+        -> c_int;
         pub fn pthread_attr_setschedpolicy(a: *mut libc::pthread_attr_t, v: c_int) -> c_int;
         pub fn pthread_attr_getschedpolicy(a: *const libc::pthread_attr_t, v: *mut c_int) -> c_int;
-        pub fn pthread_attr_setschedparam(a: *mut libc::pthread_attr_t, p: *const libc::sched_param) -> c_int;
-        pub fn pthread_attr_getschedparam(a: *const libc::pthread_attr_t, p: *mut libc::sched_param) -> c_int;
+        pub fn pthread_attr_setschedparam(
+            a: *mut libc::pthread_attr_t,
+            p: *const libc::sched_param,
+        ) -> c_int;
+        pub fn pthread_attr_getschedparam(
+            a: *const libc::pthread_attr_t,
+            p: *mut libc::sched_param,
+        ) -> c_int;
         pub fn pthread_attr_setscope(a: *mut libc::pthread_attr_t, v: c_int) -> c_int;
         pub fn pthread_attr_getscope(a: *const libc::pthread_attr_t, v: *mut c_int) -> c_int;
     }
@@ -51,7 +58,9 @@ macro_rules! round_trip {
             rc[2] = $m::pthread_attr_setschedpolicy(a, SCHED_FIFO);
             let mut pol = -1;
             $m::pthread_attr_getschedpolicy(ac, &mut pol);
-            let sp = libc::sched_param { sched_priority: PRIO };
+            let sp = libc::sched_param {
+                sched_priority: PRIO,
+            };
             rc[3] = $m::pthread_attr_setschedparam(a, &sp);
             let mut osp = MaybeUninit::<libc::sched_param>::zeroed();
             $m::pthread_attr_getschedparam(ac, osp.as_mut_ptr());
@@ -70,6 +79,15 @@ fn pthread_attr_sched_round_trips_match_glibc() {
     let g: R = round_trip!(g);
     let f: R = round_trip!(fl);
     assert_eq!(f, g, "pthread_attr sched round-trips: fl={f:?} glibc={g:?}");
-    assert_eq!((g.0, g.1, g.2, g.3), (PTHREAD_EXPLICIT_SCHED, SCHED_FIFO, PRIO, PTHREAD_SCOPE_SYSTEM), "glibc reference");
+    assert_eq!(
+        (g.0, g.1, g.2, g.3),
+        (
+            PTHREAD_EXPLICIT_SCHED,
+            SCHED_FIFO,
+            PRIO,
+            PTHREAD_SCOPE_SYSTEM
+        ),
+        "glibc reference"
+    );
     assert_eq!(g.4, [0; 6], "glibc: all init/setters/destroy return 0");
 }

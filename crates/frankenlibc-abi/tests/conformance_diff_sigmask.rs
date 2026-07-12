@@ -39,12 +39,20 @@ fn sigblock_sigsetmask_siggetmask_roundtrip() {
     // sigblock(m2): ORs in SIGUSR2, returns previous (m1).
     let prev2 = unsafe { u::sigblock(m2) };
     assert_eq!(prev2, m1, "sigblock returns prior mask (m1)");
-    assert_eq!(unsafe { u::siggetmask() }, m1 | m2, "both USR1+USR2 blocked");
+    assert_eq!(
+        unsafe { u::siggetmask() },
+        m1 | m2,
+        "both USR1+USR2 blocked"
+    );
 
     // sigsetmask(m2): REPLACES the mask with just m2, returns previous (m1|m2).
     let prev3 = unsafe { u::sigsetmask(m2) };
     assert_eq!(prev3, m1 | m2, "sigsetmask returns prior full mask");
-    assert_eq!(unsafe { u::siggetmask() }, m2, "sigsetmask replaced, not OR'd");
+    assert_eq!(
+        unsafe { u::siggetmask() },
+        m2,
+        "sigsetmask replaced, not OR'd"
+    );
 
     // Restore the original mask.
     let _ = unsafe { u::sigsetmask(orig) };

@@ -36,7 +36,10 @@ fn host_allocator() -> &'static HostAllocator {
         assert!(!handle.is_null(), "failed to dlmopen host libc.so.6");
         let pm = libc::dlsym(handle, b"posix_memalign\0".as_ptr().cast());
         let free = libc::dlsym(handle, b"free\0".as_ptr().cast());
-        assert!(!pm.is_null() && !free.is_null(), "failed to resolve host symbols");
+        assert!(
+            !pm.is_null() && !free.is_null(),
+            "failed to resolve host symbols"
+        );
         HostAllocator {
             posix_memalign: std::mem::transmute::<*mut libc::c_void, PosixMemalignFn>(pm),
             free: std::mem::transmute::<*mut libc::c_void, FreeFn>(free),

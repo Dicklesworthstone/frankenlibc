@@ -25,8 +25,28 @@ fn quo_key(q: c_int) -> c_int {
 #[test]
 fn remquo_matches_glibc() {
     let vals = [
-        0.0f64, -0.0, 1.0, -1.0, 2.5, -2.5, 3.0, 5.0, -5.0, 7.5, 10.0, 0.1, -0.1, 100.0,
-        1234.5, -1234.5, 1e10, 1e-10, 0.3333333333333333, 2.0, 4.0, 8.0,
+        0.0f64,
+        -0.0,
+        1.0,
+        -1.0,
+        2.5,
+        -2.5,
+        3.0,
+        5.0,
+        -5.0,
+        7.5,
+        10.0,
+        0.1,
+        -0.1,
+        100.0,
+        1234.5,
+        -1234.5,
+        1e10,
+        1e-10,
+        0.3333333333333333,
+        2.0,
+        4.0,
+        8.0,
     ];
     for &x in &vals {
         for &y in &vals {
@@ -38,14 +58,21 @@ fn remquo_matches_glibc() {
             let gr = unsafe { remquo(x, y, &mut gq) };
             let fr = unsafe { frankenlibc_abi::math_abi::remquo(x, y, &mut fq) };
             assert_eq!(fr.to_bits(), gr.to_bits(), "remquo({x},{y}) remainder bits");
-            assert_eq!(quo_key(fq), quo_key(gq), "remquo({x},{y}) quo (low3+sign) fl={fq} glibc={gq}");
+            assert_eq!(
+                quo_key(fq),
+                quo_key(gq),
+                "remquo({x},{y}) quo (low3+sign) fl={fq} glibc={gq}"
+            );
         }
     }
 }
 
 #[test]
 fn remquof_matches_glibc() {
-    let vals = [0.0f32, -0.0, 1.0, -1.0, 2.5, -2.5, 3.0, 5.0, -5.0, 7.5, 10.0, 0.25, 100.0, -100.0, 1e6, 2.0];
+    let vals = [
+        0.0f32, -0.0, 1.0, -1.0, 2.5, -2.5, 3.0, 5.0, -5.0, 7.5, 10.0, 0.25, 100.0, -100.0, 1e6,
+        2.0,
+    ];
     for &x in &vals {
         for &y in &vals {
             if y == 0.0 {
@@ -55,8 +82,16 @@ fn remquof_matches_glibc() {
             let mut fq: c_int = 0x5a5a;
             let gr = unsafe { remquof(x, y, &mut gq) };
             let fr = unsafe { frankenlibc_abi::math_abi::remquof(x, y, &mut fq) };
-            assert_eq!(fr.to_bits(), gr.to_bits(), "remquof({x},{y}) remainder bits");
-            assert_eq!(quo_key(fq), quo_key(gq), "remquof({x},{y}) quo fl={fq} glibc={gq}");
+            assert_eq!(
+                fr.to_bits(),
+                gr.to_bits(),
+                "remquof({x},{y}) remainder bits"
+            );
+            assert_eq!(
+                quo_key(fq),
+                quo_key(gq),
+                "remquof({x},{y}) quo fl={fq} glibc={gq}"
+            );
         }
     }
 }

@@ -34,23 +34,13 @@ fn set_fl_errno(value: c_int) {
     unsafe { *fl_errno_location() = value };
 }
 
-fn host_futex_wake(
-    uaddr: *mut c_void,
-    mask: c_ulong,
-    nr: c_int,
-    flags: c_uint,
-) -> (c_int, c_int) {
+fn host_futex_wake(uaddr: *mut c_void, mask: c_ulong, nr: c_int, flags: c_uint) -> (c_int, c_int) {
     set_host_errno(0);
     let rc = unsafe { libc::syscall(SYS_FUTEX_WAKE, uaddr, mask, nr, flags) as c_long };
     (rc as c_int, host_errno())
 }
 
-fn fl_futex_wake(
-    uaddr: *mut c_void,
-    mask: c_ulong,
-    nr: c_int,
-    flags: c_uint,
-) -> (c_int, c_int) {
+fn fl_futex_wake(uaddr: *mut c_void, mask: c_ulong, nr: c_int, flags: c_uint) -> (c_int, c_int) {
     set_fl_errno(0);
     let rc = unsafe { fl::futex_wake(uaddr, mask, nr, flags) };
     (rc, fl_errno())
@@ -65,8 +55,7 @@ fn host_futex_wait(
     clockid: libc::clockid_t,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { libc::syscall(SYS_FUTEX_WAIT, uaddr, val, mask, flags, timeout, clockid) };
+    let rc = unsafe { libc::syscall(SYS_FUTEX_WAIT, uaddr, val, mask, flags, timeout, clockid) };
     (rc as c_int, host_errno())
 }
 
@@ -90,8 +79,7 @@ fn host_futex_requeue(
     nr_requeue: c_int,
 ) -> (c_int, c_int) {
     set_host_errno(0);
-    let rc =
-        unsafe { libc::syscall(SYS_FUTEX_REQUEUE, waiters, flags, nr_wake, nr_requeue) };
+    let rc = unsafe { libc::syscall(SYS_FUTEX_REQUEUE, waiters, flags, nr_wake, nr_requeue) };
     (rc as c_int, host_errno())
 }
 
@@ -110,7 +98,10 @@ fn fl_futex_requeue(
 fn futex2_invalid_failures_match_host_syscall() {
     let host = host_futex_wake(ptr::null_mut(), 0, 0, c_uint::MAX);
     let fl = fl_futex_wake(ptr::null_mut(), 0, 0, c_uint::MAX);
-    assert_eq!(fl, host, "futex_wake(invalid flags): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "futex_wake(invalid flags): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 
     let host = host_futex_wait(
@@ -129,7 +120,10 @@ fn futex2_invalid_failures_match_host_syscall() {
         ptr::null(),
         libc::CLOCK_MONOTONIC,
     );
-    assert_eq!(fl, host, "futex_wait(invalid flags): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "futex_wait(invalid flags): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 
     let host = host_futex_requeue(ptr::null(), c_uint::MAX, 0, 0);

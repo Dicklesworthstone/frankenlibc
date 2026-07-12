@@ -8,7 +8,7 @@
 //! case-folded, differing, and prefix cases (and the n bound for the bounded
 //! form), using a real C locale_t. No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 
 unsafe extern "C" {
     fn strcasecmp_l(a: *const c_char, b: *const c_char, loc: *mut c_void) -> c_int;
@@ -42,7 +42,11 @@ fn strcasecmp_l_matches_glibc() {
         let f = unsafe {
             frankenlibc_abi::string_abi::strcasecmp_l(a.as_ptr(), b.as_ptr(), loc as *mut c_void)
         };
-        assert_eq!(f.signum(), g.signum(), "strcasecmp_l({sa:?},{sb:?}): fl={f} glibc={g}");
+        assert_eq!(
+            f.signum(),
+            g.signum(),
+            "strcasecmp_l({sa:?},{sb:?}): fl={f} glibc={g}"
+        );
 
         for n in [0usize, 1, 3, 10] {
             let gn = unsafe { strncasecmp_l(a.as_ptr(), b.as_ptr(), n, loc) };

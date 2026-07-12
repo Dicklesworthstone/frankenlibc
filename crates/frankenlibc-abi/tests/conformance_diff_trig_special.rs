@@ -92,9 +92,18 @@ fn sin_cos_tan_special_match_glibc() {
         let fs = unsafe { frankenlibc_abi::math_abi::sin(x) };
         let fc = unsafe { frankenlibc_abi::math_abi::cos(x) };
         let ft = unsafe { frankenlibc_abi::math_abi::tan(x) };
-        assert!(close64(fs, gs), "sin({x:?}): fl={fs:?} glibc={gs:?} (>4 ULP)");
-        assert!(close64(fc, gc), "cos({x:?}): fl={fc:?} glibc={gc:?} (>4 ULP)");
-        assert!(close64(ft, gt), "tan({x:?}): fl={ft:?} glibc={gt:?} (>4 ULP)");
+        assert!(
+            close64(fs, gs),
+            "sin({x:?}): fl={fs:?} glibc={gs:?} (>4 ULP)"
+        );
+        assert!(
+            close64(fc, gc),
+            "cos({x:?}): fl={fc:?} glibc={gc:?} (>4 ULP)"
+        );
+        assert!(
+            close64(ft, gt),
+            "tan({x:?}): fl={ft:?} glibc={gt:?} (>4 ULP)"
+        );
 
         // Parity (fl-internal): sin/tan odd, cos even.
         if !x.is_nan() && x.is_finite() {
@@ -118,6 +127,9 @@ fn sinf_cosf_tanf_special_match_glibc() {
         let ft = unsafe { frankenlibc_abi::math_abi::tanf(xf) };
         assert!(same32(fs, gs), "sinf({xf:?}): fl={fs:?} glibc={gs:?}");
         assert!(same32(fc, gc), "cosf({xf:?}): fl={fc:?} glibc={gc:?}");
-        assert!(close32(ft, gt), "tanf({xf:?}): fl={ft:?} glibc={gt:?} (>4 ULP)");
+        assert!(
+            close32(ft, gt),
+            "tanf({xf:?}): fl={ft:?} glibc={gt:?} (>4 ULP)"
+        );
     }
 }

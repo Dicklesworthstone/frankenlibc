@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 use std::ffi::c_void;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 
 const W: usize = 16;
 
@@ -46,7 +46,9 @@ fn cmp_rs(a: &[u8; W], b: &[u8; W]) -> Ordering {
 fn make(n: usize) -> Vec<[u8; W]> {
     let mut s: u64 = 0xDEAD_BEEF_1234_5678;
     let mut next = || {
-        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        s = s
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         s
     };
     (0..n)

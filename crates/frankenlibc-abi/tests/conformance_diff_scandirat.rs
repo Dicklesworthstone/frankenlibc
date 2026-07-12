@@ -9,7 +9,7 @@
 //! the count must match. Each impl's namelist is freed with its own allocator.
 //! No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const AT_FDCWD: c_int = -100;
@@ -34,7 +34,9 @@ static CNT: AtomicU64 = AtomicU64::new(0);
 fn d_name(entry: *mut c_void) -> String {
     // struct dirent: d_ino(8) d_off(8) d_reclen(2) d_type(1) d_name[]@19
     let name_ptr = unsafe { (entry as *const u8).add(19) as *const c_char };
-    unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(name_ptr) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Collect (count, sorted names) and free the namelist with `freefn`.
@@ -68,21 +70,36 @@ fn scandirat_matches_glibc() {
     // glibc
     let mut gnl: *mut *mut c_void = std::ptr::null_mut();
     let gn = unsafe {
-        g::scandirat(AT_FDCWD, cdir.as_ptr(), &mut gnl, std::ptr::null_mut(), std::ptr::null_mut())
+        g::scandirat(
+            AT_FDCWD,
+            cdir.as_ptr(),
+            &mut gnl,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
     };
     let (gc, gnames) = collect(gnl, gn, |p| unsafe { g::free(p) });
 
     // fl
     let mut fnl: *mut *mut c_void = std::ptr::null_mut();
     let fnn = unsafe {
-        flg::scandirat(AT_FDCWD, cdir.as_ptr(), &mut fnl, std::ptr::null_mut(), std::ptr::null_mut())
+        flg::scandirat(
+            AT_FDCWD,
+            cdir.as_ptr(),
+            &mut fnl,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
     };
     let (fc, fnames) = collect(fnl, fnn, |p| unsafe { flm::free(p) });
 
     let _ = std::fs::remove_dir_all(&dir);
 
     assert_eq!(fc, gc, "scandirat count: fl={fc} glibc={gc}");
-    assert_eq!(fnames, gnames, "scandirat entry set: fl={fnames:?} glibc={gnames:?}");
+    assert_eq!(
+        fnames, gnames,
+        "scandirat entry set: fl={fnames:?} glibc={gnames:?}"
+    );
     // sanity: must include the entries we created plus "." and ".."
     assert!(gnames.contains(&"alpha.txt".to_string()) && gnames.contains(&"subdir".to_string()));
     assert!(gnames.contains(&".".to_string()) && gnames.contains(&"..".to_string()));

@@ -118,7 +118,10 @@ fn fl_encode(name: &str, cp: u32) -> Option<Vec<u8>> {
 
 // (canonical, [aliases]) for each new batch-A codec.
 const CODECS: &[(&str, &[&str])] = &[
-    ("ISO_10367-BOX", &["ISO_10367BOX", "CSISO10367BOX", "ISO-IR-155"]),
+    (
+        "ISO_10367-BOX",
+        &["ISO_10367BOX", "CSISO10367BOX", "ISO-IR-155"],
+    ),
     ("IEC_P27-1", &["IEC_P271", "CSISO143IECP271", "ISO-IR-143"]),
     ("WIN-SAMI-2", &["WINSAMI2", "WS2"]),
     ("ISO-IR-209", &[]),
@@ -144,7 +147,11 @@ fn sbcs_batch_a_decode_encode_matches_glibc() {
         }
         // Each alias opens on fl and decodes byte-identically to glibc + canonical.
         for &a in *aliases {
-            assert_eq!(fl_decode(a), gd, "alias {a} decodes differently from {canon}");
+            assert_eq!(
+                fl_decode(a),
+                gd,
+                "alias {a} decodes differently from {canon}"
+            );
             assert_eq!(fl_decode(a), g_decode(&gg, a), "alias {a} vs glibc");
         }
     }

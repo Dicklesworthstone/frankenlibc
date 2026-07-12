@@ -86,11 +86,17 @@ fn fl_file_setattr(
 fn file_attr_invalid_fd_failures_match_host_syscall() {
     let host = host_file_getattr(-1, c".".as_ptr(), ptr::null_mut(), 0, 0);
     let fl = fl_file_getattr(-1, c".".as_ptr(), ptr::null_mut(), 0, 0);
-    assert_eq!(fl, host, "file_getattr(invalid fd): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "file_getattr(invalid fd): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 
     let host = host_file_setattr(-1, c".".as_ptr(), ptr::null(), 0, 0);
     let fl = fl_file_setattr(-1, c".".as_ptr(), ptr::null(), 0, 0);
-    assert_eq!(fl, host, "file_setattr(invalid fd): fl={fl:?} host={host:?}");
+    assert_eq!(
+        fl, host,
+        "file_setattr(invalid fd): fl={fl:?} host={host:?}"
+    );
     assert_eq!(fl.0, -1);
 }

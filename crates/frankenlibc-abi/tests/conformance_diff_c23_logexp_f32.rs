@@ -51,26 +51,68 @@ fn c23_logexp_f32_matches_glibc() {
     // log*p1f domain is (-1, +inf); sweep around the -1 pole and out.
     for i in 0..=400_000i64 {
         let x = -0.999f32 + 3.0f32 * (i as f32) / 400_000.0f32;
-        note(same_bits(unsafe { fl::log2p1f(x) }, g_log2p1f(x)), format!("log2p1f({x})"));
-        note(same_bits(unsafe { fl::log10p1f(x) }, g_log10p1f(x)), format!("log10p1f({x})"));
+        note(
+            same_bits(unsafe { fl::log2p1f(x) }, g_log2p1f(x)),
+            format!("log2p1f({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::log10p1f(x) }, g_log10p1f(x)),
+            format!("log10p1f({x})"),
+        );
     }
     // exp*m1f across underflow→overflow.
     for i in 0..=400_000i64 {
         let x = -160.0f32 + 320.0f32 * (i as f32) / 400_000.0f32;
-        note(same_bits(unsafe { fl::exp2m1f(x) }, g_exp2m1f(x)), format!("exp2m1f({x})"));
-        note(same_bits(unsafe { fl::exp10m1f(x) }, g_exp10m1f(x)), format!("exp10m1f({x})"));
+        note(
+            same_bits(unsafe { fl::exp2m1f(x) }, g_exp2m1f(x)),
+            format!("exp2m1f({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::exp10m1f(x) }, g_exp10m1f(x)),
+            format!("exp10m1f({x})"),
+        );
     }
 
     let specials = [
-        0.0f32, -0.0, 1.0, -1.0, -0.5, 0.5, 2.0, 1e30, -1e30, 7.0, 38.0, 39.0, 128.0, -150.0,
-        f32::INFINITY, f32::NEG_INFINITY, f32::NAN,
+        0.0f32,
+        -0.0,
+        1.0,
+        -1.0,
+        -0.5,
+        0.5,
+        2.0,
+        1e30,
+        -1e30,
+        7.0,
+        38.0,
+        39.0,
+        128.0,
+        -150.0,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
     ];
     for &x in &specials {
-        note(same_bits(unsafe { fl::log2p1f(x) }, g_log2p1f(x)), format!("log2p1f({x})"));
-        note(same_bits(unsafe { fl::log10p1f(x) }, g_log10p1f(x)), format!("log10p1f({x})"));
-        note(same_bits(unsafe { fl::exp2m1f(x) }, g_exp2m1f(x)), format!("exp2m1f({x})"));
-        note(same_bits(unsafe { fl::exp10m1f(x) }, g_exp10m1f(x)), format!("exp10m1f({x})"));
+        note(
+            same_bits(unsafe { fl::log2p1f(x) }, g_log2p1f(x)),
+            format!("log2p1f({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::log10p1f(x) }, g_log10p1f(x)),
+            format!("log10p1f({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::exp2m1f(x) }, g_exp2m1f(x)),
+            format!("exp2m1f({x})"),
+        );
+        note(
+            same_bits(unsafe { fl::exp10m1f(x) }, g_exp10m1f(x)),
+            format!("exp10m1f({x})"),
+        );
     }
 
-    assert_eq!(mism, 0, "C23 log/exp f32 diverged from glibc; first: {first}");
+    assert_eq!(
+        mism, 0,
+        "C23 log/exp f32 diverged from glibc; first: {first}"
+    );
 }

@@ -28,8 +28,12 @@ fn main() {
             let mut gl_buf = [0i8; 64];
             frankenlibc_abi::stdlib_abi::gcvt(v, nd, fl_buf.as_mut_ptr());
             gl_gcvt(v, nd, gl_buf.as_mut_ptr());
-            let fl_s = CStr::from_ptr(fl_buf.as_ptr()).to_string_lossy().into_owned();
-            let gl_s = CStr::from_ptr(gl_buf.as_ptr()).to_string_lossy().into_owned();
+            let fl_s = CStr::from_ptr(fl_buf.as_ptr())
+                .to_string_lossy()
+                .into_owned();
+            let gl_s = CStr::from_ptr(gl_buf.as_ptr())
+                .to_string_lossy()
+                .into_owned();
             assert_eq!(fl_s, gl_s, "gcvt {label}: fl={fl_s:?} glibc={gl_s:?}");
 
             let iters = 2_000_000usize;
@@ -47,7 +51,10 @@ fn main() {
                 black_box(gl_gcvt(black_box(v), nd, black_box(gl_buf.as_mut_ptr())));
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("GCVT {label} nd={nd} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x", fl / gl);
+            println!(
+                "GCVT {label} nd={nd} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x",
+                fl / gl
+            );
         }
     }
 }

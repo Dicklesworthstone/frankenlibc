@@ -57,7 +57,13 @@ fn ptrace_peekdata_returns_word_like_glibc() {
         }
         if child == 0 {
             // Child: opt into tracing, then stop so the parent can peek.
-            if ptrace(PTRACE_TRACEME, 0, std::ptr::null_mut(), std::ptr::null_mut()) != 0 {
+            if ptrace(
+                PTRACE_TRACEME,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            ) != 0
+            {
                 _exit(2);
             }
             kill(std::process::id() as c_int, SIGSTOP);
@@ -68,7 +74,12 @@ fn ptrace_peekdata_returns_word_like_glibc() {
         let mut status: c_int = 0;
         if waitpid(child, &mut status, 0) != child || !wifstopped(status) {
             // ptrace likely restricted (yama/container); clean up and skip.
-            ptrace(PTRACE_KILL, child, std::ptr::null_mut(), std::ptr::null_mut());
+            ptrace(
+                PTRACE_KILL,
+                child,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
             let _ = waitpid(child, &mut status, 0);
             eprintln!("child did not stop under ptrace (restricted?); skipping");
             return;
@@ -79,10 +90,18 @@ fn ptrace_peekdata_returns_word_like_glibc() {
         let fw = fl::ptrace(PTRACE_PEEKDATA, child, addr, std::ptr::null_mut());
 
         // Tear the child down before asserting.
-        ptrace(PTRACE_KILL, child, std::ptr::null_mut(), std::ptr::null_mut());
+        ptrace(
+            PTRACE_KILL,
+            child,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
         let _ = waitpid(child, &mut status, 0);
 
         assert_eq!(gw, fw, "ptrace PEEKDATA: glibc={gw:#x} fl={fw:#x}");
-        assert_eq!(gw as u64, MARKER, "PEEKDATA did not read the marker: {gw:#x}");
+        assert_eq!(
+            gw as u64, MARKER,
+            "PEEKDATA did not read the marker: {gw:#x}"
+        );
     }
 }

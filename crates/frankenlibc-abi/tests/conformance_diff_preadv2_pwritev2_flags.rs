@@ -14,8 +14,20 @@ use frankenlibc_abi::io_abi as fl;
 use std::ffi::{c_int, c_void};
 
 unsafe extern "C" {
-    fn preadv2(fd: c_int, iov: *const libc::iovec, iovcnt: c_int, offset: libc::off_t, flags: c_int) -> libc::ssize_t;
-    fn pwritev2(fd: c_int, iov: *const libc::iovec, iovcnt: c_int, offset: libc::off_t, flags: c_int) -> libc::ssize_t;
+    fn preadv2(
+        fd: c_int,
+        iov: *const libc::iovec,
+        iovcnt: c_int,
+        offset: libc::off_t,
+        flags: c_int,
+    ) -> libc::ssize_t;
+    fn pwritev2(
+        fd: c_int,
+        iov: *const libc::iovec,
+        iovcnt: c_int,
+        offset: libc::off_t,
+        flags: c_int,
+    ) -> libc::ssize_t;
 }
 
 // An undefined RWF_* bit — far above any supported flag, so the kernel rejects
@@ -30,17 +42,27 @@ fn errno() -> c_int {
 fn make_file(content: &[u8]) -> c_int {
     let path = format!("/tmp/fl_preadv2_{}\0", std::process::id());
     let fd = unsafe {
-        libc::open(path.as_ptr().cast(), libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC, 0o600)
+        libc::open(
+            path.as_ptr().cast(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+            0o600,
+        )
     };
     assert!(fd >= 0, "open temp");
     // Unlink immediately; the open fd keeps it alive.
     unsafe { libc::unlink(path.as_ptr().cast()) };
-    assert_eq!(unsafe { libc::pwrite(fd, content.as_ptr().cast(), content.len(), 0) }, content.len() as isize);
+    assert_eq!(
+        unsafe { libc::pwrite(fd, content.as_ptr().cast(), content.len(), 0) },
+        content.len() as isize
+    );
     fd
 }
 
 fn iov_of(buf: &mut [u8]) -> libc::iovec {
-    libc::iovec { iov_base: buf.as_mut_ptr() as *mut c_void, iov_len: buf.len() }
+    libc::iovec {
+        iov_base: buf.as_mut_ptr() as *mut c_void,
+        iov_len: buf.len(),
+    }
 }
 
 #[test]
@@ -75,7 +97,10 @@ fn preadv2_unsupported_flag_matches_glibc() {
     let fe = errno();
 
     assert_eq!(gr, -1, "glibc should reject the unsupported flag");
-    assert_eq!(fr, gr, "rc on unsupported flag: glibc={gr} fl={fr} (fl dropped the flag before the fix)");
+    assert_eq!(
+        fr, gr,
+        "rc on unsupported flag: glibc={gr} fl={fr} (fl dropped the flag before the fix)"
+    );
     assert_eq!(fe, ge, "errno on unsupported flag: glibc={ge} fl={fe}");
     unsafe { libc::close(fd) };
 }
@@ -116,9 +141,18 @@ fn pwritev2_writes_at_offset_with_valid_flags() {
 
     let mut gout = [0u8; 16];
     let mut fout = [0u8; 16];
-    assert_eq!(unsafe { libc::pread(gfd, gout.as_mut_ptr().cast(), 16, 0) }, 16);
-    assert_eq!(unsafe { libc::pread(ffd, fout.as_mut_ptr().cast(), 16, 0) }, 16);
+    assert_eq!(
+        unsafe { libc::pread(gfd, gout.as_mut_ptr().cast(), 16, 0) },
+        16
+    );
+    assert_eq!(
+        unsafe { libc::pread(ffd, fout.as_mut_ptr().cast(), 16, 0) },
+        16
+    );
     assert_eq!(fout, gout, "file contents diverged after pwritev2");
     assert_eq!(&gout, b"01XYZ56789ABCDEF", "glibc wrote at offset 2");
-    unsafe { libc::close(gfd); libc::close(ffd) };
+    unsafe {
+        libc::close(gfd);
+        libc::close(ffd)
+    };
 }

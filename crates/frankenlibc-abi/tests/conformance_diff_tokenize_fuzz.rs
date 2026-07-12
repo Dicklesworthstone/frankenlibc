@@ -179,7 +179,10 @@ fn strtok_pshufb_does_not_overread_past_guard_page() {
                 }
                 got.push(CStr::from_ptr(t).to_bytes().to_vec());
             }
-            assert_eq!(got, want, "strtok_r PSHUFB wrong/overread near guard (back={back})");
+            assert_eq!(
+                got, want,
+                "strtok_r PSHUFB wrong/overread near guard (back={back})"
+            );
         }
         libc::munmap(base.cast(), page * 2);
     }

@@ -54,20 +54,20 @@ impl Rng {
 /// Curated UTF-8 byte sequences exercising every mbrlen return class.
 fn curated() -> Vec<Vec<u8>> {
     vec![
-        b"A".to_vec(),                    // 1-byte ASCII -> 1
-        vec![0xC3, 0xA9],                 // é (2-byte) -> 2
-        vec![0xE4, 0xB8, 0xAD],           // 中 (3-byte) -> 3
-        vec![0xF0, 0x9F, 0x98, 0x80],     // 😀 (4-byte) -> 4
-        vec![0xC3],                       // incomplete 2-byte
-        vec![0xE4, 0xB8],                 // incomplete 3-byte
-        vec![0xF0, 0x9F, 0x98],           // incomplete 4-byte
-        vec![0x80],                       // lone continuation -> EILSEQ
-        vec![0xFF],                       // invalid lead -> EILSEQ
-        vec![0xC0, 0x80],                 // overlong -> EILSEQ
-        vec![0xED, 0xA0, 0x80],           // UTF-16 surrogate -> EILSEQ
-        vec![0xE4, 0x28],                 // bad continuation -> EILSEQ
-        vec![0x00],                       // NUL -> 0
-        vec![],                           // empty (n==0)
+        b"A".to_vec(),                // 1-byte ASCII -> 1
+        vec![0xC3, 0xA9],             // é (2-byte) -> 2
+        vec![0xE4, 0xB8, 0xAD],       // 中 (3-byte) -> 3
+        vec![0xF0, 0x9F, 0x98, 0x80], // 😀 (4-byte) -> 4
+        vec![0xC3],                   // incomplete 2-byte
+        vec![0xE4, 0xB8],             // incomplete 3-byte
+        vec![0xF0, 0x9F, 0x98],       // incomplete 4-byte
+        vec![0x80],                   // lone continuation -> EILSEQ
+        vec![0xFF],                   // invalid lead -> EILSEQ
+        vec![0xC0, 0x80],             // overlong -> EILSEQ
+        vec![0xED, 0xA0, 0x80],       // UTF-16 surrogate -> EILSEQ
+        vec![0xE4, 0x28],             // bad continuation -> EILSEQ
+        vec![0x00],                   // NUL -> 0
+        vec![],                       // empty (n==0)
     ]
 }
 
@@ -95,11 +95,11 @@ fn mbrlen_matches_glibc() {
         let mut seq: Vec<u8> = Vec::with_capacity(len);
         for i in 0..len {
             let b = match rng.below(5) {
-                0 => (b'a' + (rng.below(26) as u8)),         // ASCII
-                1 => 0xC0 | (rng.below(0x20) as u8),         // 2-byte lead-ish
-                2 => 0xE0 | (rng.below(0x10) as u8),         // 3-byte lead-ish
-                3 => 0x80 | (rng.below(0x40) as u8),         // continuation
-                _ => rng.below(256) as u8,                   // anything
+                0 => (b'a' + (rng.below(26) as u8)), // ASCII
+                1 => 0xC0 | (rng.below(0x20) as u8), // 2-byte lead-ish
+                2 => 0xE0 | (rng.below(0x10) as u8), // 3-byte lead-ish
+                3 => 0x80 | (rng.below(0x40) as u8), // continuation
+                _ => rng.below(256) as u8,           // anything
             };
             // avoid an embedded NUL except as the only/first byte
             seq.push(if b == 0 && i > 0 { 0x41 } else { b });
@@ -111,7 +111,10 @@ fn mbrlen_matches_glibc() {
         let mut fs = fresh_state();
         let gr = unsafe { g::mbrlen(p, nn, (&mut gs as *mut libc::mbstate_t).cast()) };
         let fr = unsafe { fl::mbrlen(p, nn, (&mut fs as *mut libc::mbstate_t).cast()) };
-        assert_eq!(fr, gr, "mbrlen random seq={seq:?} n={nn}: fl={fr} glibc={gr}");
+        assert_eq!(
+            fr, gr,
+            "mbrlen random seq={seq:?} n={nn}: fl={fr} glibc={gr}"
+        );
     }
 }
 
@@ -199,5 +202,8 @@ fn mbsinit_agrees_on_initial_vs_partial() {
     let g_init = unsafe { g::mbsinit((&gs as *const libc::mbstate_t).cast()) } != 0;
     let f_init = unsafe { fl::mbsinit((&fs as *const libc::mbstate_t).cast()) } != 0;
     assert_eq!(g_init, f_init, "mbsinit after partial must agree");
-    assert!(!f_init, "fl mbsinit must report non-initial after a partial sequence");
+    assert!(
+        !f_init,
+        "fl mbsinit must report non-initial after a partial sequence"
+    );
 }

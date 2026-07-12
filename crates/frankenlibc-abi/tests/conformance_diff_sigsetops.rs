@@ -13,8 +13,16 @@ use std::ffi::c_int;
 unsafe extern "C" {
     fn sigemptyset(set: *mut libc::sigset_t) -> c_int;
     fn sigaddset(set: *mut libc::sigset_t, sig: c_int) -> c_int;
-    fn sigandset(dest: *mut libc::sigset_t, l: *const libc::sigset_t, r: *const libc::sigset_t) -> c_int;
-    fn sigorset(dest: *mut libc::sigset_t, l: *const libc::sigset_t, r: *const libc::sigset_t) -> c_int;
+    fn sigandset(
+        dest: *mut libc::sigset_t,
+        l: *const libc::sigset_t,
+        r: *const libc::sigset_t,
+    ) -> c_int;
+    fn sigorset(
+        dest: *mut libc::sigset_t,
+        l: *const libc::sigset_t,
+        r: *const libc::sigset_t,
+    ) -> c_int;
     fn sigisemptyset(set: *const libc::sigset_t) -> c_int;
 }
 
@@ -35,11 +43,11 @@ fn bytes(s: &libc::sigset_t) -> Vec<u8> {
 #[test]
 fn sigandset_sigorset_match_glibc() {
     let pairs: &[(&[c_int], &[c_int])] = &[
-        (&[2, 11], &[11, 15]),       // overlap on SIGSEGV
-        (&[1, 2, 3], &[4, 5, 6]),    // disjoint
-        (&[34, 64], &[34, 50, 64]),  // real-time signals
-        (&[], &[2, 9]),              // empty vs non-empty
-        (&[9], &[9]),                // identical
+        (&[2, 11], &[11, 15]),      // overlap on SIGSEGV
+        (&[1, 2, 3], &[4, 5, 6]),   // disjoint
+        (&[34, 64], &[34, 50, 64]), // real-time signals
+        (&[], &[2, 9]),             // empty vs non-empty
+        (&[9], &[9]),               // identical
     ];
     for &(a, b) in pairs {
         let sa = make_set(a);

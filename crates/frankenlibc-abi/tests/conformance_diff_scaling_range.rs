@@ -66,7 +66,12 @@ fn scaling_range_matches_glibc() {
     chk64!("scalbln(1,LMAX)", inf, true, fa::scalbln(1.0, i64::MAX));
     chk64!("scalbln(1,LMIN)", 0u64, true, fa::scalbln(1.0, i64::MIN));
     chk64!("scalbln(1,2^31)", inf, true, fa::scalbln(1.0, 2147483648));
-    chk64!("scalbln(1,-2^31-1)", 0u64, true, fa::scalbln(1.0, -2147483649));
+    chk64!(
+        "scalbln(1,-2^31-1)",
+        0u64,
+        true,
+        fa::scalbln(1.0, -2147483649)
+    );
     chk64!("scalbln(0,LMAX)", 0u64, false, fa::scalbln(0.0, i64::MAX)); // 0 stays 0, no err
     chk64!(
         "scalbln(inf,LMIN)",
@@ -75,7 +80,12 @@ fn scaling_range_matches_glibc() {
         fa::scalbln(f64::INFINITY, i64::MIN) // inf stays inf, no err
     );
     chk32!("scalblnf(1,LMAX)", inff, true, fa::scalblnf(1.0, i64::MAX));
-    chk32!("scalblnf(1,2^31)", inff, true, fa::scalblnf(1.0, 2147483648));
+    chk32!(
+        "scalblnf(1,2^31)",
+        inff,
+        true,
+        fa::scalblnf(1.0, 2147483648)
+    );
     chk32!("scalblnf(1,LMIN)", 0u32, true, fa::scalblnf(1.0, i64::MIN));
 
     // --- (2) underflow ERANGE only on result==0, never on subnormal ---
@@ -86,12 +96,7 @@ fn scaling_range_matches_glibc() {
     // 2^-1075: underflows to 0 -> ERANGE.
     chk64!("scalbn(1,-1075)", 0u64, true, fa::scalbn(1.0, -1075));
     // 1.5*2^-1074: INEXACT subnormal (rounds to 2^-1073), still NO ERANGE.
-    chk64!(
-        "scalbn(1.5,-1074)",
-        2u64,
-        false,
-        fa::scalbn(1.5, -1074)
-    );
+    chk64!("scalbn(1.5,-1074)", 2u64, false, fa::scalbn(1.5, -1074));
     // smallest normal, exact, no ERANGE.
     chk64!(
         "scalbn(1,-1022)",
@@ -103,12 +108,7 @@ fn scaling_range_matches_glibc() {
     chk64!("scalbn(1,1024)", inf, true, fa::scalbn(1.0, 1024));
     // ldexp shares the path.
     chk64!("ldexp(1,-1075)", 0u64, true, fa::ldexp(1.0, -1075));
-    chk64!(
-        "ldexp(1,-1074)",
-        1u64,
-        false,
-        fa::ldexp(1.0, -1074)
-    );
+    chk64!("ldexp(1,-1074)", 1u64, false, fa::ldexp(1.0, -1074));
 
     // f32 subnormal boundary: 2^-149 smallest subnormal, exact, no ERANGE; 2^-150 -> 0.
     chk32!("scalbnf(1,-149)", 1u32, false, fa::scalbnf(1.0, -149));

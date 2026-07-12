@@ -10,7 +10,7 @@
 //! Each impl writes with its own fopen/putspent to a temp file; bytes compared.
 //! No mocks.
 
-use std::ffi::{c_char, c_long, c_void, CString};
+use std::ffi::{CString, c_char, c_long, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod g {
@@ -45,7 +45,11 @@ fn make(name: &str, pwd: &str, f: [c_long; 6], flag: u64) -> Owned {
         sp_expire: f[5],
         sp_flag: flag,
     };
-    Owned { _namp: namp, _pwdp: pwdp, sp }
+    Owned {
+        _namp: namp,
+        _pwdp: pwdp,
+        sp,
+    }
 }
 
 fn tmp(tag: &str) -> (std::path::PathBuf, CString) {

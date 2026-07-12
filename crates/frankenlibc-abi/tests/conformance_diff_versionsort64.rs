@@ -40,16 +40,18 @@ fn versionsort64_matches_glibc_sign() {
         let b = make(nb);
         let pa: *const libc::dirent64 = &a;
         let pb: *const libc::dirent64 = &b;
-        let g = unsafe {
-            versionsort64(&pa as *const _ as *mut _, &pb as *const _ as *mut _)
-        };
+        let g = unsafe { versionsort64(&pa as *const _ as *mut _, &pb as *const _ as *mut _) };
         let f = unsafe {
             frankenlibc_abi::unistd_abi::versionsort64(
                 &pa as *const _ as *mut *const libc::dirent,
                 &pb as *const _ as *mut *const libc::dirent,
             )
         };
-        assert_eq!(f.signum(), g.signum(), "versionsort64({na:?},{nb:?}): fl={f} glibc={g}");
+        assert_eq!(
+            f.signum(),
+            g.signum(),
+            "versionsort64({na:?},{nb:?}): fl={f} glibc={g}"
+        );
     }
 }
 
@@ -67,6 +69,10 @@ fn alphasort64_matches_glibc_sign() {
                 &pb as *const _ as *mut *const c_void,
             )
         };
-        assert_eq!(f.signum(), g.signum(), "alphasort64({na:?},{nb:?}): fl={f} glibc={g}");
+        assert_eq!(
+            f.signum(),
+            g.signum(),
+            "alphasort64({na:?},{nb:?}): fl={f} glibc={g}"
+        );
     }
 }

@@ -32,7 +32,11 @@ fn seteuid_minus_one_is_einval_like_glibc() {
     assert_eq!(f, g, "seteuid(-1) rc: fl={f} glibc={g}");
     assert_eq!(g, -1, "glibc seteuid(-1) must fail");
     assert_eq!(f_err, g_err, "seteuid(-1) errno: fl={f_err} glibc={g_err}");
-    assert_eq!(g_err, libc::EINVAL, "glibc seteuid(-1) errno must be EINVAL");
+    assert_eq!(
+        g_err,
+        libc::EINVAL,
+        "glibc seteuid(-1) errno must be EINVAL"
+    );
 }
 
 #[test]
@@ -47,7 +51,11 @@ fn setegid_minus_one_is_einval_like_glibc() {
     assert_eq!(f, g, "setegid(-1) rc: fl={f} glibc={g}");
     assert_eq!(g, -1, "glibc setegid(-1) must fail");
     assert_eq!(f_err, g_err, "setegid(-1) errno: fl={f_err} glibc={g_err}");
-    assert_eq!(g_err, libc::EINVAL, "glibc setegid(-1) errno must be EINVAL");
+    assert_eq!(
+        g_err,
+        libc::EINVAL,
+        "glibc setegid(-1) errno must be EINVAL"
+    );
 }
 
 #[test]

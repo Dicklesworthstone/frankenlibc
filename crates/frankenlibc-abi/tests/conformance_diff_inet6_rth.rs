@@ -86,7 +86,10 @@ fn build_byte_exact() {
         };
         let gb = build(g.init, g.add);
         let fb = build(fl::inet6_rth_init, fl::inet6_rth_add);
-        assert_eq!(gb, fb, "rth build nseg={nseg}: glibc={gb:02x?} fl={fb:02x?}");
+        assert_eq!(
+            gb, fb,
+            "rth build nseg={nseg}: glibc={gb:02x?} fl={fb:02x?}"
+        );
 
         // One extra add() past capacity must fail on both.
         if nseg > 0 {
@@ -98,12 +101,17 @@ fn build_byte_exact() {
             let over = addr(0xFF);
             let g_over = unsafe { (g.add)(bp, over.as_ptr().cast()) };
             let mut fbuf = vec![0u8; blen as usize];
-            let fbp = unsafe { fl::inet6_rth_init(fbuf.as_mut_ptr().cast(), blen, 0, nseg as c_int) };
+            let fbp =
+                unsafe { fl::inet6_rth_init(fbuf.as_mut_ptr().cast(), blen, 0, nseg as c_int) };
             for s in 0..nseg {
                 unsafe { fl::inet6_rth_add(fbp, addr(s as u8).as_ptr().cast()) };
             }
             let f_over = unsafe { fl::inet6_rth_add(fbp, over.as_ptr().cast()) };
-            assert_eq!(g_over.signum(), f_over.signum(), "over-capacity add nseg={nseg}");
+            assert_eq!(
+                g_over.signum(),
+                f_over.signum(),
+                "over-capacity add nseg={nseg}"
+            );
         }
     }
 }
@@ -118,7 +126,10 @@ fn segments_getaddr_reverse_match() {
     let bp = unsafe { (g.init)(buf.as_mut_ptr().cast(), blen, 0, nseg as c_int) };
     assert!(!bp.is_null());
     for s in 0..nseg {
-        assert_eq!(unsafe { (g.add)(bp, addr(s as u8 * 16 + 3).as_ptr().cast()) }, 0);
+        assert_eq!(
+            unsafe { (g.add)(bp, addr(s as u8 * 16 + 3).as_ptr().cast()) },
+            0
+        );
     }
 
     // segments
@@ -146,5 +157,8 @@ fn segments_getaddr_reverse_match() {
     let gr = unsafe { (g.rev)(buf.as_ptr().cast(), gout.as_mut_ptr().cast()) };
     let fr = unsafe { fl::inet6_rth_reverse(buf.as_ptr().cast(), fout.as_mut_ptr().cast()) };
     assert_eq!(gr.signum(), fr.signum(), "reverse rc");
-    assert_eq!(gout, fout, "reverse bytes: glibc={gout:02x?} fl={fout:02x?}");
+    assert_eq!(
+        gout, fout,
+        "reverse bytes: glibc={gout:02x?} fl={fout:02x?}"
+    );
 }

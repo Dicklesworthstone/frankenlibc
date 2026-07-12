@@ -16,8 +16,11 @@ use std::ffi::c_int;
 unsafe extern "C" {
     // Bind the host glibc symbols directly (GNU extensions, not in the libc crate).
     fn group_member(gid: libc::gid_t) -> c_int;
-    fn wmempcpy(dest: *mut libc::wchar_t, src: *const libc::wchar_t, n: libc::size_t)
-    -> *mut libc::wchar_t;
+    fn wmempcpy(
+        dest: *mut libc::wchar_t,
+        src: *const libc::wchar_t,
+        n: libc::size_t,
+    ) -> *mut libc::wchar_t;
 }
 
 fn fl_group_member(gid: libc::gid_t) -> c_int {
@@ -55,9 +58,22 @@ fn group_member_matches_glibc_for_real_group_set() {
 
     // A spread of gids the process is (almost certainly) NOT a member of,
     // including boundary values. Whatever glibc reports, fl must match.
-    let members: std::collections::HashSet<libc::gid_t> =
-        groups.iter().copied().chain(std::iter::once(egid)).collect();
-    for cand in [0u32, 1, 2, 12345, 65533, 65534, 99999, 0x7fff_ffff, 0xffff_ffff] {
+    let members: std::collections::HashSet<libc::gid_t> = groups
+        .iter()
+        .copied()
+        .chain(std::iter::once(egid))
+        .collect();
+    for cand in [
+        0u32,
+        1,
+        2,
+        12345,
+        65533,
+        65534,
+        99999,
+        0x7fff_ffff,
+        0xffff_ffff,
+    ] {
         if members.contains(&cand) {
             continue;
         }

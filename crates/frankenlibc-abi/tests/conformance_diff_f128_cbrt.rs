@@ -37,10 +37,10 @@ fn values() -> Vec<f128> {
         1e4000f128,
         1e-4000f128, // subnormal-range magnitudes
         3.141592653589793238462643383279f128,
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
-        f128::from_bits(1),                                     // smallest subnormal
+        f128::from_bits(1),                  // smallest subnormal
         f128::MIN_POSITIVE,
         f128::MAX,
         f128::MIN,
@@ -48,9 +48,13 @@ fn values() -> Vec<f128> {
     // Pseudo-random spread across the exponent range, both signs.
     let mut st: u64 = 0x1234_5678_9abc_def0;
     for _ in 0..4000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         // exponent field anywhere in the normal range, random mantissa + sign.
         let ef = (hi % 0x7fff) as u128; // 0..=0x7ffe
@@ -70,7 +74,10 @@ fn f128_cbrt_matches_glibc() {
         let f = unsafe { ma::cbrtf128(x) }.to_bits();
         n += 1;
         if g != f {
-            mism.push(format!("cbrt({:#034x}): glibc={g:#034x} fl={f:#034x}", x.to_bits()));
+            mism.push(format!(
+                "cbrt({:#034x}): glibc={g:#034x} fl={f:#034x}",
+                x.to_bits()
+            ));
         }
     }
     assert!(

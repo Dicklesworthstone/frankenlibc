@@ -18,7 +18,8 @@ unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
 type OpenFn = extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
-type ConvFn = extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
+type ConvFn =
+    extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
 type CloseFn = extern "C" fn(*mut c_void) -> c_int;
 
 struct Glibc {
@@ -61,7 +62,13 @@ fn g_convert(g: &Glibc, to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     // flush
-    let r2 = (g.conv)(cd, std::ptr::null_mut(), std::ptr::null_mut(), &mut op, &mut ol);
+    let r2 = (g.conv)(
+        cd,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        &mut op,
+        &mut ol,
+    );
     (g.close)(cd);
     if r2 == INVALID {
         return None;
@@ -89,7 +96,15 @@ fn f_convert(to: &str, from: &str, input: &[u8]) -> Option<Vec<u8>> {
         unsafe { fl::iconv_close(cd) };
         return None;
     }
-    let r2 = unsafe { fl::iconv(cd, std::ptr::null_mut(), std::ptr::null_mut(), &mut op, &mut ol) };
+    let r2 = unsafe {
+        fl::iconv(
+            cd,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut op,
+            &mut ol,
+        )
+    };
     unsafe { fl::iconv_close(cd) };
     if r2 == INVALID {
         return None;
@@ -130,7 +145,9 @@ fn iso2022kr_matches_glibc_both_directions() {
             let gd = g_convert(&g, "UTF-8", "ISO-2022-KR", &enc);
             let fd = f_convert("UTF-8", "ISO-2022-KR", &enc);
             if gd != fd {
-                mismatches.push(format!("DEC {s:?} (bytes {enc:02x?}): glibc={gd:02x?} fl={fd:02x?}"));
+                mismatches.push(format!(
+                    "DEC {s:?} (bytes {enc:02x?}): glibc={gd:02x?} fl={fd:02x?}"
+                ));
             }
             // round-trip must recover the original UTF-8.
             if fd.as_deref() != Some(u) {

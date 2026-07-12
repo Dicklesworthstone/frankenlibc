@@ -35,9 +35,25 @@ fn inet_nsap_addr_matches_glibc() {
     };
 
     let cases = [
-        "1234abcd", "0x1234", "0x12.34.56", "ab/cd", "1.2", "123", "1234", "12 34",
-        "1+2+3+4", "", "...", "g", "12.3", "0xAB.CD", "deadbeef", "DE.AD.BE.EF",
-        "ff", "f", "00112233445566778899aabbccddeeff",
+        "1234abcd",
+        "0x1234",
+        "0x12.34.56",
+        "ab/cd",
+        "1.2",
+        "123",
+        "1234",
+        "12 34",
+        "1+2+3+4",
+        "",
+        "...",
+        "g",
+        "12.3",
+        "0xAB.CD",
+        "deadbeef",
+        "DE.AD.BE.EF",
+        "ff",
+        "f",
+        "00112233445566778899aabbccddeeff",
     ];
 
     let mut mismatches = Vec::new();
@@ -57,7 +73,11 @@ fn inet_nsap_addr_matches_glibc() {
             ));
         }
     }
-    assert!(mismatches.is_empty(), "inet_nsap_addr diverged:\n{}", mismatches.join("\n"));
+    assert!(
+        mismatches.is_empty(),
+        "inet_nsap_addr diverged:\n{}",
+        mismatches.join("\n")
+    );
 }
 
 #[test]
@@ -81,7 +101,11 @@ fn inet_nsap_ntoa_matches_glibc() {
     let mut mismatches = Vec::new();
     for &inp in inputs {
         let mut gout = [0u8; 256];
-        let gp = g(inp.len() as c_int, inp.as_ptr(), gout.as_mut_ptr() as *mut c_char);
+        let gp = g(
+            inp.len() as c_int,
+            inp.as_ptr(),
+            gout.as_mut_ptr() as *mut c_char,
+        );
         let gs = if gp.is_null() {
             Vec::new()
         } else {
@@ -110,5 +134,9 @@ fn inet_nsap_ntoa_matches_glibc() {
             ));
         }
     }
-    assert!(mismatches.is_empty(), "inet_nsap_ntoa diverged:\n{}", mismatches.join("\n"));
+    assert!(
+        mismatches.is_empty(),
+        "inet_nsap_ntoa diverged:\n{}",
+        mismatches.join("\n")
+    );
 }

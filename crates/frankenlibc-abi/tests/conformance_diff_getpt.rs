@@ -42,7 +42,10 @@ fn getpt_open_flags_match_glibc() {
 
         let g_cloexec = fcntl(gfd, F_GETFD) & FD_CLOEXEC;
         let f_cloexec = fcntl(ffd, F_GETFD) & FD_CLOEXEC;
-        assert_eq!(g_cloexec, f_cloexec, "FD_CLOEXEC: glibc={g_cloexec} fl={f_cloexec}");
+        assert_eq!(
+            g_cloexec, f_cloexec,
+            "FD_CLOEXEC: glibc={g_cloexec} fl={f_cloexec}"
+        );
         assert_eq!(g_cloexec, 0, "glibc getpt fd should not be close-on-exec");
 
         let g_acc = fcntl(gfd, F_GETFL) & O_ACCMODE;

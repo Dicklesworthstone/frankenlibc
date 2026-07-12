@@ -45,8 +45,17 @@ fn reallocarray_overflow_matches_glibc() {
         unsafe { *g::__errno_location() = 0 };
         let fp = unsafe { fls::reallocarray(std::ptr::null_mut(), n, s) };
         let fe = unsafe { *g::__errno_location() };
-        assert!(gp.is_null(), "glibc reallocarray({n},{s}) must fail on overflow");
-        assert_eq!(fp.is_null(), gp.is_null(), "reallocarray({n},{s}) null-ness: fl={} glibc={}", fp.is_null(), gp.is_null());
+        assert!(
+            gp.is_null(),
+            "glibc reallocarray({n},{s}) must fail on overflow"
+        );
+        assert_eq!(
+            fp.is_null(),
+            gp.is_null(),
+            "reallocarray({n},{s}) null-ness: fl={} glibc={}",
+            fp.is_null(),
+            gp.is_null()
+        );
         assert_eq!(fe, ge, "reallocarray({n},{s}) errno: fl={fe} glibc={ge}");
         assert_eq!(ge, ENOMEM, "glibc overflow errno should be ENOMEM");
     }
@@ -63,7 +72,10 @@ fn reallocarray_success_returns_usable_memory() {
             for i in 0..bytes {
                 *((fp as *mut u8).add(i)) = (i & 0xFF) as u8;
             }
-            assert!(flm::malloc_usable_size(fp) >= bytes, "usable_size >= requested");
+            assert!(
+                flm::malloc_usable_size(fp) >= bytes,
+                "usable_size >= requested"
+            );
             flm::free(fp);
         }
         let gp = unsafe { g::reallocarray(std::ptr::null_mut(), n, s) };
@@ -75,17 +87,31 @@ fn reallocarray_success_returns_usable_memory() {
 #[test]
 fn malloc_usable_size_contract_matches_glibc() {
     // NULL -> 0 (both)
-    assert_eq!(unsafe { flm::malloc_usable_size(std::ptr::null_mut()) }, 0, "fl usable_size(NULL)");
-    assert_eq!(unsafe { g::malloc_usable_size(std::ptr::null_mut()) }, 0, "glibc usable_size(NULL)");
+    assert_eq!(
+        unsafe { flm::malloc_usable_size(std::ptr::null_mut()) },
+        0,
+        "fl usable_size(NULL)"
+    );
+    assert_eq!(
+        unsafe { g::malloc_usable_size(std::ptr::null_mut()) },
+        0,
+        "glibc usable_size(NULL)"
+    );
     // usable >= requested (both); exact value is allocator-specific so not compared
     for &n in &[1usize, 24, 1000, 65536] {
         let fp = unsafe { flm::malloc(n) };
         assert!(!fp.is_null());
-        assert!(unsafe { flm::malloc_usable_size(fp) } >= n, "fl usable_size({n}) >= n");
+        assert!(
+            unsafe { flm::malloc_usable_size(fp) } >= n,
+            "fl usable_size({n}) >= n"
+        );
         unsafe { flm::free(fp) };
         let gp = unsafe { g::malloc(n) };
         assert!(!gp.is_null());
-        assert!(unsafe { g::malloc_usable_size(gp) } >= n, "glibc usable_size({n}) >= n");
+        assert!(
+            unsafe { g::malloc_usable_size(gp) } >= n,
+            "glibc usable_size({n}) >= n"
+        );
         unsafe { g::free(gp) };
     }
 }

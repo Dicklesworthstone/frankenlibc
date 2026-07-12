@@ -4,7 +4,9 @@ use std::ffi::CString;
 use std::hint::black_box;
 use std::time::Instant;
 
-use frankenlibc_core::time::{broken_down_to_epoch, epoch_to_broken_down, format_strftime, BrokenDownTime};
+use frankenlibc_core::time::{
+    BrokenDownTime, broken_down_to_epoch, epoch_to_broken_down, format_strftime,
+};
 
 fn main() {
     unsafe {
@@ -14,8 +16,12 @@ fn main() {
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
-        type StrftimeFn =
-            unsafe extern "C" fn(*mut libc::c_char, usize, *const libc::c_char, *const libc::tm) -> usize;
+        type StrftimeFn = unsafe extern "C" fn(
+            *mut libc::c_char,
+            usize,
+            *const libc::c_char,
+            *const libc::tm,
+        ) -> usize;
         let gl_strftime: StrftimeFn = std::mem::transmute::<*mut std::ffi::c_void, StrftimeFn>(
             libc::dlsym(h, b"strftime\0".as_ptr().cast()),
         );
@@ -58,15 +64,27 @@ fn main() {
             let iters = 1_000_000usize;
             let t0 = Instant::now();
             for _ in 0..iters {
-                black_box(format_strftime(black_box(fmt_b), black_box(&bd), black_box(&mut fl_buf)));
+                black_box(format_strftime(
+                    black_box(fmt_b),
+                    black_box(&bd),
+                    black_box(&mut fl_buf),
+                ));
             }
             let fl = t0.elapsed().as_nanos() as f64 / iters as f64;
             let t1 = Instant::now();
             for _ in 0..iters {
-                black_box(gl_strftime(black_box(gl_buf.as_mut_ptr()), 64, black_box(fmt_c.as_ptr()), black_box(&tm)));
+                black_box(gl_strftime(
+                    black_box(gl_buf.as_mut_ptr()),
+                    64,
+                    black_box(fmt_c.as_ptr()),
+                    black_box(&tm),
+                ));
             }
             let gl = t1.elapsed().as_nanos() as f64 / iters as f64;
-            println!("STRFTIME {fmt:?} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x", fl / gl);
+            println!(
+                "STRFTIME {fmt:?} fl={fl:.1}ns glibc={gl:.1}ns fl/glibc={:.3}x",
+                fl / gl
+            );
         }
     }
 }

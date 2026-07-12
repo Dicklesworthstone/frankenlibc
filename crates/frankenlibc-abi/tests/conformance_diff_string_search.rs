@@ -59,7 +59,10 @@ fn strstr_fused_untracked_guard_page() {
         );
         assert_ne!(base, libc::MAP_FAILED, "mmap failed");
         let base = base.cast::<u8>();
-        assert_eq!(libc::mprotect(base.add(page).cast(), page, libc::PROT_NONE), 0);
+        assert_eq!(
+            libc::mprotect(base.add(page).cast(), page, libc::PROT_NONE),
+            0
+        );
 
         let needles: &[&[u8]] = &[b"ab\0", b"xyz\0", b"aab\0", b"zzz\0"];
         for back in 2..=48usize {
@@ -373,11 +376,17 @@ fn fused_span_long_strings_match_glibc() {
 
         let g_spn = unsafe { g::strspn(s.cast(), set.as_ptr().cast()) };
         let f_spn = unsafe { fl::strspn(s.cast(), set.as_ptr().cast()) };
-        assert_eq!(f_spn, g_spn, "strspn(long) mismatch head={head} blen={blen} set={set:?}");
+        assert_eq!(
+            f_spn, g_spn,
+            "strspn(long) mismatch head={head} blen={blen} set={set:?}"
+        );
 
         let g_csp = unsafe { g::strcspn(s.cast(), set.as_ptr().cast()) };
         let f_csp = unsafe { fl::strcspn(s.cast(), set.as_ptr().cast()) };
-        assert_eq!(f_csp, g_csp, "strcspn(long) mismatch head={head} blen={blen} set={set:?}");
+        assert_eq!(
+            f_csp, g_csp,
+            "strcspn(long) mismatch head={head} blen={blen} set={set:?}"
+        );
 
         let gp = unsafe { g::strpbrk(s.cast(), set.as_ptr().cast()) };
         let fp = unsafe { fl::strpbrk(s.cast(), set.as_ptr().cast()) };

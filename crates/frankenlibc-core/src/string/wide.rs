@@ -1162,8 +1162,9 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
         while base + 64 <= count {
             let mut folded = Simd::<u32, 8>::from_slice(&scan[base..base + 8]) ^ t8;
             for k in 1..8 {
-                folded = folded
-                    .simd_min(Simd::<u32, 8>::from_slice(&scan[base + k * 8..base + (k + 1) * 8]) ^ t8);
+                folded = folded.simd_min(
+                    Simd::<u32, 8>::from_slice(&scan[base + k * 8..base + (k + 1) * 8]) ^ t8,
+                );
             }
             if folded.simd_eq(z8).any() {
                 for k in 0..8 {

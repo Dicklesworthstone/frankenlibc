@@ -8,7 +8,7 @@
 //! before the call; the captured stderr is compared byte-for-byte across the
 //! NETDB_* codes and prefix variants. No mocks.
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
 use std::io::Read;
 use std::os::unix::io::FromRawFd;
 use std::sync::Mutex;
@@ -57,7 +57,8 @@ fn assert_match(code: c_int, msg: Option<&str>) {
         flu::herror(mptr);
     });
     assert_eq!(
-        f, g,
+        f,
+        g,
         "herror(h_errno={code}, {msg:?}): fl={:?} glibc={:?}",
         String::from_utf8_lossy(&f),
         String::from_utf8_lossy(&g),

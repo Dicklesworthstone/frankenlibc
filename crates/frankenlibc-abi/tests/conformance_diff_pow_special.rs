@@ -71,7 +71,12 @@ fn pow_special_cases_match_glibc() {
     for &(x, y) in CASES {
         let g = unsafe { pow(x, y) };
         let f = unsafe { frankenlibc_abi::math_abi::pow(x, y) };
-        assert!(same64(f, g), "pow({x:?},{y:?}): fl={f:?} (bits {:#018x}) glibc={g:?} (bits {:#018x})", f.to_bits(), g.to_bits());
+        assert!(
+            same64(f, g),
+            "pow({x:?},{y:?}): fl={f:?} (bits {:#018x}) glibc={g:?} (bits {:#018x})",
+            f.to_bits(),
+            g.to_bits()
+        );
     }
 }
 

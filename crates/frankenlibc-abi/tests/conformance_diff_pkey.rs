@@ -145,16 +145,12 @@ fn pkey_alloc_free_mprotect_invalid_arguments_match_glibc() {
     );
 
     clear_errnos();
-    let glibc_ret =
-        unsafe { pkey_mprotect(std::ptr::null_mut(), 4096, libc::PROT_READ, -1) };
+    let glibc_ret = unsafe { pkey_mprotect(std::ptr::null_mut(), 4096, libc::PROT_READ, -1) };
     let glibc_err = host_errno();
     clear_errnos();
     let fl_ret = unsafe { fl::pkey_mprotect(std::ptr::null_mut(), 4096, libc::PROT_READ, -1) };
     let fl_err = fl_errno();
-    assert_eq!(
-        fl_ret, -1,
-        "pkey_mprotect(NULL, invalid pkey) should fail"
-    );
+    assert_eq!(fl_ret, -1, "pkey_mprotect(NULL, invalid pkey) should fail");
     assert_eq!(
         glibc_ret, -1,
         "host pkey_mprotect(NULL, invalid pkey) should fail"

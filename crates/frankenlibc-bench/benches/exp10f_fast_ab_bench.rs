@@ -30,17 +30,36 @@ fn candidate(x: f32) -> f32 {
 
 fn p50(s: &mut [f64]) -> f64 {
     s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    if s.is_empty() { return 0.0; }
+    if s.is_empty() {
+        return 0.0;
+    }
     let r = 0.5 * (s.len() - 1) as f64;
     let (lo, hi) = (r.floor() as usize, r.ceil() as usize);
     s[lo] * (1.0 - (r - lo as f64)) + s[hi] * (r - lo as f64)
 }
 
-fn run<F: Fn(f32) -> f32>(g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>, name: &str, inp: &[f32], f: F) {
-    let one = || { let mut a = 0.0f32; for &x in inp { a += f(black_box(x)); } a };
-    for _ in 0..50 { black_box(one()); }
+fn run<F: Fn(f32) -> f32>(
+    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &str,
+    inp: &[f32],
+    f: F,
+) {
+    let one = || {
+        let mut a = 0.0f32;
+        for &x in inp {
+            a += f(black_box(x));
+        }
+        a
+    };
+    for _ in 0..50 {
+        black_box(one());
+    }
     let mut s = Vec::new();
-    for _ in 0..200 { let t = Instant::now(); black_box(one()); s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / inp.len() as f64); }
+    for _ in 0..200 {
+        let t = Instant::now();
+        black_box(one());
+        s.push(t.elapsed().max(Duration::from_nanos(1)).as_nanos() as f64 / inp.len() as f64);
+    }
     println!("EXP10F_FAST impl={name} p50_ns_op={:.4}", p50(&mut s));
     g.bench_function(name, |b| b.iter(|| black_box(f(black_box(inp[0])))));
 }
@@ -54,19 +73,36 @@ fn bench(c: &mut Criterion) {
     let mut worst_self = 0u64;
     for k in 0..200000u32 {
         let x = -37.0 + (k as f32) * (74.0 / 200000.0) + 0.123_4; // off-integer
-        if (0.5..=2.5).contains(&x) { continue; }
+        if (0.5..=2.5).contains(&x) {
+            continue;
+        }
         let cand = candidate(x);
         let g = unsafe { host_exp10f(x) };
-        if cand.is_infinite() && g.is_infinite() { continue; }
+        if cand.is_infinite() && g.is_infinite() {
+            continue;
+        }
         let u = ((cand.to_bits() as i64) - (g.to_bits() as i64)).unsigned_abs();
-        if u > worst_g { worst_g = u; wx = x; }
+        if u > worst_g {
+            worst_g = u;
+            wx = x;
+        }
         let us = ((cand.to_bits() as i64) - (old_libm(x).to_bits() as i64)).unsigned_abs();
-        if us > worst_self { worst_self = us; }
+        if us > worst_self {
+            worst_self = us;
+        }
     }
-    eprintln!("exp10f candidate vs glibc worst ULP = {worst_g} at x={wx}; vs old_libm worst = {worst_self}");
-    assert!(worst_g <= 4, "exp10f candidate exceeds 4 ULP vs glibc (worst {worst_g} at x={wx})");
+    eprintln!(
+        "exp10f candidate vs glibc worst ULP = {worst_g} at x={wx}; vs old_libm worst = {worst_self}"
+    );
+    assert!(
+        worst_g <= 4,
+        "exp10f candidate exceeds 4 ULP vs glibc (worst {worst_g} at x={wx})"
+    );
 
-    let inp: Vec<f32> = (0..64).map(|k| -20.0 + k as f32 * 0.6234).filter(|x| !(0.5..=2.5).contains(x)).collect();
+    let inp: Vec<f32> = (0..64)
+        .map(|k| -20.0 + k as f32 * 0.6234)
+        .filter(|x| !(0.5..=2.5).contains(x))
+        .collect();
     let mut g = c.benchmark_group("exp10f_fast");
     g.sample_size(40);
     run(&mut g, "old_libm", &inp, old_libm);

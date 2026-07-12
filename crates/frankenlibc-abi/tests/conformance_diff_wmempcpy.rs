@@ -38,8 +38,16 @@ fn wmempcpy_matches_glibc() {
                 n,
             ) as *mut Wch
         };
-        assert_eq!(off(rf, fd.as_ptr()), off(rg, gd.as_ptr()), "wmempcpy(n={n}) return");
-        assert_eq!(off(rg, gd.as_ptr()), n as isize, "wmempcpy must return dst+n");
+        assert_eq!(
+            off(rf, fd.as_ptr()),
+            off(rg, gd.as_ptr()),
+            "wmempcpy(n={n}) return"
+        );
+        assert_eq!(
+            off(rg, gd.as_ptr()),
+            n as isize,
+            "wmempcpy must return dst+n"
+        );
         assert_eq!(fd, gd, "wmempcpy(n={n}) buffer contents");
     }
 }

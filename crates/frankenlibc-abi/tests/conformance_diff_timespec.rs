@@ -28,8 +28,15 @@ fn timespec_get_return_contract_matches_glibc() {
         if base == TIME_UTC {
             assert_eq!(g, TIME_UTC, "glibc timespec_get(TIME_UTC) returns the base");
             // Both must have populated a plausible wall-clock time (post-2020).
-            assert!(ft.tv_sec > 1_577_836_800, "fl ts not populated: {}", ft.tv_sec);
-            assert!((0..1_000_000_000).contains(&ft.tv_nsec), "fl tv_nsec out of range");
+            assert!(
+                ft.tv_sec > 1_577_836_800,
+                "fl ts not populated: {}",
+                ft.tv_sec
+            );
+            assert!(
+                (0..1_000_000_000).contains(&ft.tv_nsec),
+                "fl tv_nsec out of range"
+            );
         } else {
             assert_eq!(g, 0, "glibc timespec_get(invalid base) returns 0");
         }
@@ -50,7 +57,10 @@ fn timespec_getres_matches_glibc() {
                 (ft.tv_sec, ft.tv_nsec),
                 (gt.tv_sec, gt.tv_nsec),
                 "timespec_getres resolution: fl=({},{}) glibc=({},{})",
-                ft.tv_sec, ft.tv_nsec, gt.tv_sec, gt.tv_nsec,
+                ft.tv_sec,
+                ft.tv_nsec,
+                gt.tv_sec,
+                gt.tv_nsec,
             );
         }
     }

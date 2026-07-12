@@ -1079,13 +1079,14 @@ fn parse_nan_payload(seq: &[u8]) -> u128 {
     if seq.is_empty() {
         return 0;
     }
-    let (base, digits): (u128, &[u8]) = if seq.len() >= 2 && seq[0] == b'0' && (seq[1] | 0x20) == b'x' {
-        (16, &seq[2..])
-    } else if seq[0] == b'0' && seq.len() > 1 {
-        (8, &seq[1..])
-    } else {
-        (10, seq)
-    };
+    let (base, digits): (u128, &[u8]) =
+        if seq.len() >= 2 && seq[0] == b'0' && (seq[1] | 0x20) == b'x' {
+            (16, &seq[2..])
+        } else if seq[0] == b'0' && seq.len() > 1 {
+            (8, &seq[1..])
+        } else {
+            (10, seq)
+        };
     let mut v: u128 = 0;
     for &c in digits {
         match (c as char).to_digit(base as u32) {

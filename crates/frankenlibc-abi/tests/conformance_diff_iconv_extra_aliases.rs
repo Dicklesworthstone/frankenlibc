@@ -24,7 +24,11 @@ type CloseFn = extern "C" fn(*mut c_void) -> c_int;
 type ConvFn =
     extern "C" fn(*mut c_void, *mut *mut c_char, *mut usize, *mut *mut c_char, *mut usize) -> usize;
 
-struct G { open: OpenFn, close: CloseFn, conv: ConvFn }
+struct G {
+    open: OpenFn,
+    close: CloseFn,
+    conv: ConvFn,
+}
 fn g() -> G {
     unsafe {
         let h = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
@@ -40,27 +44,47 @@ fn g_decode(gg: &G, name: &str) -> Vec<Option<u32>> {
     let cn = CString::new(name).unwrap();
     let cd = (gg.open)(c"UTF-32LE".as_ptr(), cn.as_ptr());
     assert!(cd as usize != INVALID, "glibc rejects {name}");
-    let v = (0u16..256).map(|b| {
-        let mut inb = [b as u8]; let mut out = [0u8; 8];
-        let mut ip = inb.as_mut_ptr() as *mut c_char; let mut il = 1usize;
-        let mut op = out.as_mut_ptr() as *mut c_char; let mut ol = 8usize;
-        let r = (gg.conv)(cd, &mut ip, &mut il, &mut op, &mut ol);
-        if r == INVALID || il != 0 { None } else { Some(u32::from_le_bytes([out[0],out[1],out[2],out[3]])) }
-    }).collect();
-    (gg.close)(cd); v
+    let v = (0u16..256)
+        .map(|b| {
+            let mut inb = [b as u8];
+            let mut out = [0u8; 8];
+            let mut ip = inb.as_mut_ptr() as *mut c_char;
+            let mut il = 1usize;
+            let mut op = out.as_mut_ptr() as *mut c_char;
+            let mut ol = 8usize;
+            let r = (gg.conv)(cd, &mut ip, &mut il, &mut op, &mut ol);
+            if r == INVALID || il != 0 {
+                None
+            } else {
+                Some(u32::from_le_bytes([out[0], out[1], out[2], out[3]]))
+            }
+        })
+        .collect();
+    (gg.close)(cd);
+    v
 }
 fn fl_decode(name: &str) -> Vec<Option<u32>> {
     let cn = CString::new(name).unwrap();
     let cd = unsafe { fl::iconv_open(c"UTF-32LE".as_ptr(), cn.as_ptr()) };
     assert!(cd as usize != INVALID && !cd.is_null(), "fl rejects {name}");
-    let v = (0u16..256).map(|b| {
-        let mut inb = [b as u8]; let mut out = [0u8; 8];
-        let mut ip = inb.as_mut_ptr() as *mut c_char; let mut il = 1usize;
-        let mut op = out.as_mut_ptr() as *mut c_char; let mut ol = 8usize;
-        let r = unsafe { fl::iconv(cd, &mut ip, &mut il, &mut op, &mut ol) };
-        if r == INVALID || il != 0 { None } else { Some(u32::from_le_bytes([out[0],out[1],out[2],out[3]])) }
-    }).collect();
-    unsafe { fl::iconv_close(cd) }; v
+    let v = (0u16..256)
+        .map(|b| {
+            let mut inb = [b as u8];
+            let mut out = [0u8; 8];
+            let mut ip = inb.as_mut_ptr() as *mut c_char;
+            let mut il = 1usize;
+            let mut op = out.as_mut_ptr() as *mut c_char;
+            let mut ol = 8usize;
+            let r = unsafe { fl::iconv(cd, &mut ip, &mut il, &mut op, &mut ol) };
+            if r == INVALID || il != 0 {
+                None
+            } else {
+                Some(u32::from_le_bytes([out[0], out[1], out[2], out[3]]))
+            }
+        })
+        .collect();
+    unsafe { fl::iconv_close(cd) };
+    v
 }
 
 const ALIASES: &[(&str, &str)] = &[
@@ -119,8 +143,16 @@ fn extra_aliases_resolve_to_canonical() {
     let gg = g();
     for &(alias, canon) in ALIASES {
         // glibc: alias and canonical are the same codec (semantic correctness).
-        assert_eq!(g_decode(&gg, alias), g_decode(&gg, canon), "glibc: {alias} != {canon}");
+        assert_eq!(
+            g_decode(&gg, alias),
+            g_decode(&gg, canon),
+            "glibc: {alias} != {canon}"
+        );
         // fl: opening the alias resolves to the same codec as the canonical.
-        assert_eq!(fl_decode(alias), fl_decode(canon), "fl: alias {alias} != canonical {canon}");
+        assert_eq!(
+            fl_decode(alias),
+            fl_decode(canon),
+            "fl: alias {alias} != canonical {canon}"
+        );
     }
 }

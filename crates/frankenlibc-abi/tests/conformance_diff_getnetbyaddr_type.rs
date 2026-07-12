@@ -60,8 +60,7 @@ fn name_of(p: *mut NetEnt) -> Option<Vec<u8>> {
 fn getnetbyaddr_type_matches_glibc() {
     let lib = unsafe { dlopen(c"libc.so.6".as_ptr(), RTLD_NOW) };
     assert!(!lib.is_null(), "dlopen libc.so.6 failed");
-    let g_getbyaddr: GetByAddrFn =
-        unsafe { std::mem::transmute(sym(lib, c"getnetbyaddr")) };
+    let g_getbyaddr: GetByAddrFn = unsafe { std::mem::transmute(sym(lib, c"getnetbyaddr")) };
     let g_getent: GetEntFn = unsafe { std::mem::transmute(sym(lib, c"getnetent")) };
     let g_setent: SetEntFn = unsafe { std::mem::transmute(sym(lib, c"setnetent")) };
     let g_endent: EndEntFn = unsafe { std::mem::transmute(sym(lib, c"endnetent")) };
@@ -91,9 +90,7 @@ fn getnetbyaddr_type_matches_glibc() {
             let g = name_of(g_getbyaddr(net, ty));
             let f = name_of(unsafe { fl::getnetbyaddr(net, ty).cast::<NetEnt>() });
             if g != f {
-                mismatches.push(format!(
-                    "net=0x{net:08x} type={ty}: glibc={g:?} fl={f:?}"
-                ));
+                mismatches.push(format!("net=0x{net:08x} type={ty}: glibc={g:?} fl={f:?}"));
             }
         }
     }

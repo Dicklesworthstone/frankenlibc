@@ -12,7 +12,7 @@
 use std::ffi::{c_char, c_int, c_void};
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_core::string::str as core_str;
 
 unsafe extern "C" {
@@ -70,7 +70,12 @@ fn bench(c: &mut Criterion) {
     );
     let mut g = c.benchmark_group("survey_strspn");
     g.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strspn(black_box(span.to_bytes()), accept.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strspn(
+                black_box(span.to_bytes()),
+                accept.to_bytes(),
+            ))
+        })
     });
     g.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strspn(black_box(span.as_ptr()), accept.as_ptr()) }))
@@ -84,7 +89,12 @@ fn bench(c: &mut Criterion) {
     assert_eq!(core_str::strspn(span60.to_bytes(), accept3.to_bytes()), 60);
     let mut gsp = c.benchmark_group("survey_strspn_set3_60");
     gsp.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strspn(black_box(span60.to_bytes()), accept3.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strspn(
+                black_box(span60.to_bytes()),
+                accept3.to_bytes(),
+            ))
+        })
     });
     gsp.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strspn(black_box(span60.as_ptr()), accept3.as_ptr()) }))
@@ -97,7 +107,12 @@ fn bench(c: &mut Criterion) {
     assert_eq!(core_str::strspn(span60.to_bytes(), accept1.to_bytes()), 60);
     let mut gsp1 = c.benchmark_group("survey_strspn_set1_60");
     gsp1.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strspn(black_box(span60.to_bytes()), accept1.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strspn(
+                black_box(span60.to_bytes()),
+                accept1.to_bytes(),
+            ))
+        })
     });
     gsp1.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strspn(black_box(span60.as_ptr()), accept1.as_ptr()) }))
@@ -111,7 +126,12 @@ fn bench(c: &mut Criterion) {
     assert_eq!(core_str::strspn(span64.to_bytes(), accept6.to_bytes()), 64);
     let mut gsp6 = c.benchmark_group("survey_strspn_set6_64");
     gsp6.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strspn(black_box(span64.to_bytes()), accept6.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strspn(
+                black_box(span64.to_bytes()),
+                accept6.to_bytes(),
+            ))
+        })
     });
     gsp6.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strspn(black_box(span64.as_ptr()), accept6.as_ptr()) }))
@@ -128,7 +148,12 @@ fn bench(c: &mut Criterion) {
     );
     let mut gc = c.benchmark_group("survey_strcspn");
     gc.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strcspn(black_box(cspan.to_bytes()), reject.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strcspn(
+                black_box(cspan.to_bytes()),
+                reject.to_bytes(),
+            ))
+        })
     });
     gc.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strcspn(black_box(cspan.as_ptr()), reject.as_ptr()) }))
@@ -148,7 +173,12 @@ fn bench(c: &mut Criterion) {
     assert_eq!(core_str::strcspn(cspan6.to_bytes(), reject6.to_bytes()), 64);
     let mut gc6 = c.benchmark_group("survey_strcspn_set6");
     gc6.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strcspn(black_box(cspan6.to_bytes()), reject6.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strcspn(
+                black_box(cspan6.to_bytes()),
+                reject6.to_bytes(),
+            ))
+        })
     });
     gc6.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strcspn(black_box(cspan6.as_ptr()), reject6.as_ptr()) }))
@@ -161,10 +191,18 @@ fn bench(c: &mut Criterion) {
     // chunks with zero remainder and would NOT test the fix.)
     let cspan60 = c"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; // 60 'a'
     let reject3 = c"XYZ";
-    assert_eq!(core_str::strcspn(cspan60.to_bytes(), reject3.to_bytes()), 60);
+    assert_eq!(
+        core_str::strcspn(cspan60.to_bytes(), reject3.to_bytes()),
+        60
+    );
     let mut gc3 = c.benchmark_group("survey_strcspn_set3_60");
     gc3.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strcspn(black_box(cspan60.to_bytes()), reject3.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strcspn(
+                black_box(cspan60.to_bytes()),
+                reject3.to_bytes(),
+            ))
+        })
     });
     gc3.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strcspn(black_box(cspan60.as_ptr()), reject3.as_ptr()) }))
@@ -175,10 +213,18 @@ fn bench(c: &mut Criterion) {
     // 28-byte remainder. Exercises the find_byte_or_nul overlapping-tail (strchr/
     // memchr/strcspn-1 share this scanner).
     let reject1 = c"X";
-    assert_eq!(core_str::strcspn(cspan60.to_bytes(), reject1.to_bytes()), 60);
+    assert_eq!(
+        core_str::strcspn(cspan60.to_bytes(), reject1.to_bytes()),
+        60
+    );
     let mut gc1 = c.benchmark_group("survey_strcspn_set1_60");
     gc1.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strcspn(black_box(cspan60.to_bytes()), reject1.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strcspn(
+                black_box(cspan60.to_bytes()),
+                reject1.to_bytes(),
+            ))
+        })
     });
     gc1.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strcspn(black_box(cspan60.as_ptr()), reject1.as_ptr()) }))
@@ -190,10 +236,19 @@ fn bench(c: &mut Criterion) {
     let pacc = c"XYZ";
     let core_pb = core_str::strpbrk(pstr.to_bytes(), pacc.to_bytes());
     let gl_pb = unsafe { strpbrk(pstr.as_ptr(), pacc.as_ptr()) };
-    assert_eq!(core_pb.is_some(), !gl_pb.is_null(), "strpbrk found-ness mismatch");
+    assert_eq!(
+        core_pb.is_some(),
+        !gl_pb.is_null(),
+        "strpbrk found-ness mismatch"
+    );
     let mut gp = c.benchmark_group("survey_strpbrk");
     gp.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strpbrk(black_box(pstr.to_bytes()), pacc.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strpbrk(
+                black_box(pstr.to_bytes()),
+                pacc.to_bytes(),
+            ))
+        })
     });
     gp.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strpbrk(black_box(pstr.as_ptr()), pacc.as_ptr()) }))
@@ -211,7 +266,12 @@ fn bench(c: &mut Criterion) {
     );
     let mut gs = c.benchmark_group("survey_strcspn_set6");
     gs.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strcspn(black_box(cspan6.to_bytes()), reject6.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strcspn(
+                black_box(cspan6.to_bytes()),
+                reject6.to_bytes(),
+            ))
+        })
     });
     gs.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strcspn(black_box(cspan6.as_ptr()), reject6.as_ptr()) }))
@@ -223,10 +283,19 @@ fn bench(c: &mut Criterion) {
     let needle = c"needle_here";
     let core_pos = core_str::strstr(hay.to_bytes(), needle.to_bytes());
     let gl = unsafe { strstr(hay.as_ptr(), needle.as_ptr()) };
-    assert_eq!(core_pos.is_some(), !gl.is_null(), "strstr found-ness mismatch");
+    assert_eq!(
+        core_pos.is_some(),
+        !gl.is_null(),
+        "strstr found-ness mismatch"
+    );
     let mut g2 = c.benchmark_group("survey_strstr");
     g2.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strstr(black_box(hay.to_bytes()), needle.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strstr(
+                black_box(hay.to_bytes()),
+                needle.to_bytes(),
+            ))
+        })
     });
     g2.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strstr(black_box(hay.as_ptr()), needle.as_ptr()) }))
@@ -236,13 +305,24 @@ fn bench(c: &mut Criterion) {
     // ---- strcasestr (case-insensitive search) ----
     let core_cp = core_str::strcasestr(hay.to_bytes(), c"NEEDLE_HERE".to_bytes());
     let gl2 = unsafe { strcasestr(hay.as_ptr(), c"NEEDLE_HERE".as_ptr()) };
-    assert_eq!(core_cp.is_some(), !gl2.is_null(), "strcasestr found-ness mismatch");
+    assert_eq!(
+        core_cp.is_some(),
+        !gl2.is_null(),
+        "strcasestr found-ness mismatch"
+    );
     let mut g3 = c.benchmark_group("survey_strcasestr");
     g3.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strcasestr(black_box(hay.to_bytes()), c"NEEDLE_HERE".to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strcasestr(
+                black_box(hay.to_bytes()),
+                c"NEEDLE_HERE".to_bytes(),
+            ))
+        })
     });
     g3.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { strcasestr(black_box(hay.as_ptr()), c"NEEDLE_HERE".as_ptr()) }))
+        b.iter(|| {
+            black_box(unsafe { strcasestr(black_box(hay.as_ptr()), c"NEEDLE_HERE".as_ptr()) })
+        })
     });
     g3.finish();
 
@@ -254,7 +334,12 @@ fn bench(c: &mut Criterion) {
     assert!(core_str::strcasestr(hay60.to_bytes(), needle_z.to_bytes()).is_none());
     let mut g3b = c.benchmark_group("survey_strcasestr_absent60");
     g3b.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(core_str::strcasestr(black_box(hay60.to_bytes()), needle_z.to_bytes())))
+        b.iter(|| {
+            black_box(core_str::strcasestr(
+                black_box(hay60.to_bytes()),
+                needle_z.to_bytes(),
+            ))
+        })
     });
     g3b.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { strcasestr(black_box(hay60.as_ptr()), needle_z.as_ptr()) }))
@@ -269,14 +354,32 @@ fn bench(c: &mut Criterion) {
     };
     let core_mr = frankenlibc_core::string::mem::memrchr(&mbuf, b'X', mbuf.len());
     let gl_mr = unsafe { memrchr(mbuf.as_ptr().cast::<c_void>(), b'X' as c_int, mbuf.len()) };
-    assert_eq!(core_mr.is_some(), !gl_mr.is_null(), "memrchr found-ness mismatch");
+    assert_eq!(
+        core_mr.is_some(),
+        !gl_mr.is_null(),
+        "memrchr found-ness mismatch"
+    );
     assert_eq!(core_mr, Some(100), "memrchr position wrong");
     let mut gm = c.benchmark_group("survey_memrchr");
     gm.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::mem::memrchr(black_box(&mbuf), b'X', mbuf.len())))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::mem::memrchr(
+                black_box(&mbuf),
+                b'X',
+                mbuf.len(),
+            ))
+        })
     });
     gm.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { memrchr(black_box(mbuf.as_ptr().cast::<c_void>()), b'X' as c_int, mbuf.len()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                memrchr(
+                    black_box(mbuf.as_ptr().cast::<c_void>()),
+                    b'X' as c_int,
+                    mbuf.len(),
+                )
+            })
+        })
     });
     gm.finish();
 
@@ -291,10 +394,19 @@ fn bench(c: &mut Criterion) {
     let core_wc = frankenlibc_core::string::wide::wcschr(&wbuf, b'X' as u32);
     let gl_wc = unsafe { wcschr(wbuf.as_ptr().cast::<i32>(), b'X' as i32) };
     assert_eq!(core_wc, Some(30), "wcschr core position wrong");
-    assert_eq!(!gl_wc.is_null(), core_wc.is_some(), "wcschr found-ness mismatch");
+    assert_eq!(
+        !gl_wc.is_null(),
+        core_wc.is_some(),
+        "wcschr found-ness mismatch"
+    );
     let mut gw = c.benchmark_group("survey_wcschr");
     gw.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcschr(black_box(&wbuf), b'X' as u32)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcschr(
+                black_box(&wbuf),
+                b'X' as u32,
+            ))
+        })
     });
     gw.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { wcschr(black_box(wbuf.as_ptr().cast::<i32>()), b'X' as i32) }))
@@ -308,7 +420,12 @@ fn bench(c: &mut Criterion) {
     assert_eq!(core_wa, None, "wcschr absent should be None");
     let mut gwa = c.benchmark_group("survey_wcschr_absent");
     gwa.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcschr(black_box(&wbuf), b'Z' as u32)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcschr(
+                black_box(&wbuf),
+                b'Z' as u32,
+            ))
+        })
     });
     gwa.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { wcschr(black_box(wbuf.as_ptr().cast::<i32>()), b'Z' as i32) }))
@@ -326,13 +443,24 @@ fn bench(c: &mut Criterion) {
     let core_wr = frankenlibc_core::string::wide::wcsrchr(&wrbuf, b'X' as u32);
     let gl_wr = unsafe { wcsrchr(wrbuf.as_ptr().cast::<i32>(), b'X' as i32) };
     assert_eq!(core_wr, Some(100), "wcsrchr core position wrong");
-    assert_eq!(!gl_wr.is_null(), core_wr.is_some(), "wcsrchr found-ness mismatch");
+    assert_eq!(
+        !gl_wr.is_null(),
+        core_wr.is_some(),
+        "wcsrchr found-ness mismatch"
+    );
     let mut gwr = c.benchmark_group("survey_wcsrchr");
     gwr.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcsrchr(black_box(&wrbuf), b'X' as u32)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcsrchr(
+                black_box(&wrbuf),
+                b'X' as u32,
+            ))
+        })
     });
     gwr.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wcsrchr(black_box(wrbuf.as_ptr().cast::<i32>()), b'X' as i32) }))
+        b.iter(|| {
+            black_box(unsafe { wcsrchr(black_box(wrbuf.as_ptr().cast::<i32>()), b'X' as i32) })
+        })
     });
     gwr.finish();
 
@@ -349,14 +477,34 @@ fn bench(c: &mut Criterion) {
         v
     };
     let core_nc = frankenlibc_core::string::str::strncmp(&s1n, &s2n, 64);
-    let gl_nc = unsafe { strncmp(s1n.as_ptr().cast::<c_char>(), s2n.as_ptr().cast::<c_char>(), 64) };
+    let gl_nc = unsafe {
+        strncmp(
+            s1n.as_ptr().cast::<c_char>(),
+            s2n.as_ptr().cast::<c_char>(),
+            64,
+        )
+    };
     assert_eq!(core_nc.signum(), gl_nc.signum(), "strncmp sign mismatch");
     let mut gn = c.benchmark_group("survey_strncmp");
     gn.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::str::strncmp(black_box(&s1n), &s2n, 64)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::str::strncmp(
+                black_box(&s1n),
+                &s2n,
+                64,
+            ))
+        })
     });
     gn.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { strncmp(black_box(s1n.as_ptr().cast::<c_char>()), s2n.as_ptr().cast::<c_char>(), 64) }))
+        b.iter(|| {
+            black_box(unsafe {
+                strncmp(
+                    black_box(s1n.as_ptr().cast::<c_char>()),
+                    s2n.as_ptr().cast::<c_char>(),
+                    64,
+                )
+            })
+        })
     });
     gn.finish();
 
@@ -383,7 +531,14 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(frankenlibc_core::string::str::strcmp(black_box(&s1c), &s2c)))
     });
     gsc.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { strcmp(black_box(s1c.as_ptr().cast::<c_char>()), s2c.as_ptr().cast::<c_char>()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                strcmp(
+                    black_box(s1c.as_ptr().cast::<c_char>()),
+                    s2c.as_ptr().cast::<c_char>(),
+                )
+            })
+        })
     });
     gsc.finish();
 
@@ -400,14 +555,38 @@ fn bench(c: &mut Criterion) {
         v
     };
     let core_ic = frankenlibc_core::string::str::strncasecmp(&s1ic, &s2ic, 64);
-    let gl_ic = unsafe { strncasecmp(s1ic.as_ptr().cast::<c_char>(), s2ic.as_ptr().cast::<c_char>(), 64) };
-    assert_eq!(core_ic.signum(), gl_ic.signum(), "strncasecmp sign mismatch");
+    let gl_ic = unsafe {
+        strncasecmp(
+            s1ic.as_ptr().cast::<c_char>(),
+            s2ic.as_ptr().cast::<c_char>(),
+            64,
+        )
+    };
+    assert_eq!(
+        core_ic.signum(),
+        gl_ic.signum(),
+        "strncasecmp sign mismatch"
+    );
     let mut gic = c.benchmark_group("survey_strncasecmp");
     gic.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::str::strncasecmp(black_box(&s1ic), &s2ic, 64)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::str::strncasecmp(
+                black_box(&s1ic),
+                &s2ic,
+                64,
+            ))
+        })
     });
     gic.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { strncasecmp(black_box(s1ic.as_ptr().cast::<c_char>()), s2ic.as_ptr().cast::<c_char>(), 64) }))
+        b.iter(|| {
+            black_box(unsafe {
+                strncasecmp(
+                    black_box(s1ic.as_ptr().cast::<c_char>()),
+                    s2ic.as_ptr().cast::<c_char>(),
+                    64,
+                )
+            })
+        })
     });
     gic.finish();
 
@@ -424,7 +603,13 @@ fn bench(c: &mut Criterion) {
         v
     };
     let core_mc = frankenlibc_core::string::mem::memcmp(&m1, &m2, 64);
-    let gl_mc = unsafe { memcmp(m1.as_ptr().cast::<c_void>(), m2.as_ptr().cast::<c_void>(), 64) };
+    let gl_mc = unsafe {
+        memcmp(
+            m1.as_ptr().cast::<c_void>(),
+            m2.as_ptr().cast::<c_void>(),
+            64,
+        )
+    };
     assert_eq!(
         core_mc == std::cmp::Ordering::Less,
         gl_mc < 0,
@@ -432,10 +617,24 @@ fn bench(c: &mut Criterion) {
     );
     let mut gm = c.benchmark_group("survey_memcmp");
     gm.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::mem::memcmp(black_box(&m1), &m2, 64)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::mem::memcmp(
+                black_box(&m1),
+                &m2,
+                64,
+            ))
+        })
     });
     gm.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { memcmp(black_box(m1.as_ptr().cast::<c_void>()), m2.as_ptr().cast::<c_void>(), 64) }))
+        b.iter(|| {
+            black_box(unsafe {
+                memcmp(
+                    black_box(m1.as_ptr().cast::<c_void>()),
+                    m2.as_ptr().cast::<c_void>(),
+                    64,
+                )
+            })
+        })
     });
     gm.finish();
 
@@ -460,7 +659,14 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(frankenlibc_core::string::wide::wcscmp(black_box(&w1), &w2)))
     });
     gwc.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wcscmp(black_box(w1.as_ptr().cast::<i32>()), w2.as_ptr().cast::<i32>()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                wcscmp(
+                    black_box(w1.as_ptr().cast::<i32>()),
+                    w2.as_ptr().cast::<i32>(),
+                )
+            })
+        })
     });
     gwc.finish();
 
@@ -470,10 +676,24 @@ fn bench(c: &mut Criterion) {
     assert_eq!(core_wnc.signum(), gl_wnc.signum(), "wcsncmp sign mismatch");
     let mut gwn = c.benchmark_group("survey_wcsncmp");
     gwn.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcsncmp(black_box(&w1), &w2, 64)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcsncmp(
+                black_box(&w1),
+                &w2,
+                64,
+            ))
+        })
     });
     gwn.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wcsncmp(black_box(w1.as_ptr().cast::<i32>()), w2.as_ptr().cast::<i32>(), 64) }))
+        b.iter(|| {
+            black_box(unsafe {
+                wcsncmp(
+                    black_box(w1.as_ptr().cast::<i32>()),
+                    w2.as_ptr().cast::<i32>(),
+                    64,
+                )
+            })
+        })
     });
     gwn.finish();
 
@@ -482,10 +702,24 @@ fn bench(c: &mut Criterion) {
     assert_eq!(core_wm.signum(), gl_wm.signum(), "wmemcmp sign mismatch");
     let mut gwm = c.benchmark_group("survey_wmemcmp");
     gwm.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wmemcmp(black_box(&w1), &w2, 64)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wmemcmp(
+                black_box(&w1),
+                &w2,
+                64,
+            ))
+        })
     });
     gwm.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wmemcmp(black_box(w1.as_ptr().cast::<i32>()), w2.as_ptr().cast::<i32>(), 64) }))
+        b.iter(|| {
+            black_box(unsafe {
+                wmemcmp(
+                    black_box(w1.as_ptr().cast::<i32>()),
+                    w2.as_ptr().cast::<i32>(),
+                    64,
+                )
+            })
+        })
     });
     gwm.finish();
 
@@ -505,13 +739,29 @@ fn bench(c: &mut Criterion) {
     };
     let core_wic = frankenlibc_core::string::wide::wcscasecmp(&wic1, &wic2);
     let gl_wic = unsafe { wcscasecmp(wic1.as_ptr().cast::<i32>(), wic2.as_ptr().cast::<i32>()) };
-    assert_eq!(core_wic.signum(), gl_wic.signum(), "wcscasecmp sign mismatch");
+    assert_eq!(
+        core_wic.signum(),
+        gl_wic.signum(),
+        "wcscasecmp sign mismatch"
+    );
     let mut gwic = c.benchmark_group("survey_wcscasecmp");
     gwic.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcscasecmp(black_box(&wic1), &wic2)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcscasecmp(
+                black_box(&wic1),
+                &wic2,
+            ))
+        })
     });
     gwic.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wcscasecmp(black_box(wic1.as_ptr().cast::<i32>()), wic2.as_ptr().cast::<i32>()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                wcscasecmp(
+                    black_box(wic1.as_ptr().cast::<i32>()),
+                    wic2.as_ptr().cast::<i32>(),
+                )
+            })
+        })
     });
     gwic.finish();
 
@@ -544,13 +794,25 @@ fn bench(c: &mut Criterion) {
     let core_wmc = frankenlibc_core::string::wide::wmemchr(&wm2, b'X' as u32, 300);
     let gl_wmc = unsafe { wmemchr(wm2.as_ptr().cast::<i32>(), b'X' as i32, 300) };
     assert_eq!(core_wmc, Some(250), "wmemchr core wrong");
-    assert_eq!(core_wmc.is_some(), !gl_wmc.is_null(), "wmemchr found-ness mismatch");
+    assert_eq!(
+        core_wmc.is_some(),
+        !gl_wmc.is_null(),
+        "wmemchr found-ness mismatch"
+    );
     let mut gwm2 = c.benchmark_group("survey_wmemchr_long");
     gwm2.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wmemchr(black_box(&wm2), b'X' as u32, 300)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wmemchr(
+                black_box(&wm2),
+                b'X' as u32,
+                300,
+            ))
+        })
     });
     gwm2.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wmemchr(black_box(wm2.as_ptr().cast::<i32>()), b'X' as i32, 300) }))
+        b.iter(|| {
+            black_box(unsafe { wmemchr(black_box(wm2.as_ptr().cast::<i32>()), b'X' as i32, 300) })
+        })
     });
     gwm2.finish();
 
@@ -568,10 +830,22 @@ fn bench(c: &mut Criterion) {
     assert_eq!(core_sp, gl_sp, "wcsspn vs glibc mismatch");
     let mut gsp = c.benchmark_group("survey_wcsspn");
     gsp.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcsspn(black_box(&wsp), &wacc)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcsspn(
+                black_box(&wsp),
+                &wacc,
+            ))
+        })
     });
     gsp.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wcsspn(black_box(wsp.as_ptr().cast::<i32>()), wacc.as_ptr().cast::<i32>()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                wcsspn(
+                    black_box(wsp.as_ptr().cast::<i32>()),
+                    wacc.as_ptr().cast::<i32>(),
+                )
+            })
+        })
     });
     gsp.finish();
 
@@ -589,10 +863,22 @@ fn bench(c: &mut Criterion) {
     assert_eq!(core_csp, gl_csp, "wcscspn vs glibc mismatch");
     let mut gcsp = c.benchmark_group("survey_wcscspn");
     gcsp.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcscspn(black_box(&wcsp), &wrej)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcscspn(
+                black_box(&wcsp),
+                &wrej,
+            ))
+        })
     });
     gcsp.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wcscspn(black_box(wcsp.as_ptr().cast::<i32>()), wrej.as_ptr().cast::<i32>()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                wcscspn(
+                    black_box(wcsp.as_ptr().cast::<i32>()),
+                    wrej.as_ptr().cast::<i32>(),
+                )
+            })
+        })
     });
     gcsp.finish();
 
@@ -607,13 +893,29 @@ fn bench(c: &mut Criterion) {
     let core_pb = frankenlibc_core::string::wide::wcspbrk(&wpb, &wpacc);
     let gl_pb = unsafe { wcspbrk(wpb.as_ptr().cast::<i32>(), wpacc.as_ptr().cast::<i32>()) };
     assert_eq!(core_pb, Some(30), "wcspbrk core wrong");
-    assert_eq!(core_pb.is_some(), !gl_pb.is_null(), "wcspbrk vs glibc found-ness mismatch");
+    assert_eq!(
+        core_pb.is_some(),
+        !gl_pb.is_null(),
+        "wcspbrk vs glibc found-ness mismatch"
+    );
     let mut gpb = c.benchmark_group("survey_wcspbrk");
     gpb.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcspbrk(black_box(&wpb), &wpacc)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcspbrk(
+                black_box(&wpb),
+                &wpacc,
+            ))
+        })
     });
     gpb.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wcspbrk(black_box(wpb.as_ptr().cast::<i32>()), wpacc.as_ptr().cast::<i32>()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                wcspbrk(
+                    black_box(wpb.as_ptr().cast::<i32>()),
+                    wpacc.as_ptr().cast::<i32>(),
+                )
+            })
+        })
     });
     gpb.finish();
 
@@ -623,11 +925,16 @@ fn bench(c: &mut Criterion) {
     {
         frankenlibc_core::string::wide::wmemset(&mut wset_dst, b'q' as u32, 256);
         unsafe { wmemset(wset_gl.as_mut_ptr(), b'q' as i32, 256) };
-        assert!(wset_dst.iter().all(|&x| x == b'q' as u32), "wmemset core wrong");
+        assert!(
+            wset_dst.iter().all(|&x| x == b'q' as u32),
+            "wmemset core wrong"
+        );
     }
     let mut gws = c.benchmark_group("survey_wmemset");
     gws.bench_function("frankenlibc_core", |b| {
-        b.iter(|| frankenlibc_core::string::wide::wmemset(black_box(&mut wset_dst), b'q' as u32, 256))
+        b.iter(|| {
+            frankenlibc_core::string::wide::wmemset(black_box(&mut wset_dst), b'q' as u32, 256)
+        })
     });
     gws.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| unsafe { wmemset(black_box(wset_gl.as_mut_ptr()), b'q' as i32, 256) })
@@ -652,14 +959,41 @@ fn bench(c: &mut Criterion) {
     let mmhay = b"the quick brown fox jumps over the lazy dog and then some more text needle_here";
     let mmndl = b"needle_here";
     let core_mm = frankenlibc_core::string::mem::memmem(mmhay, mmhay.len(), mmndl, mmndl.len());
-    let gl_mm = unsafe { memmem(mmhay.as_ptr().cast(), mmhay.len(), mmndl.as_ptr().cast(), mmndl.len()) };
-    assert_eq!(core_mm.is_some(), !gl_mm.is_null(), "memmem found-ness mismatch");
+    let gl_mm = unsafe {
+        memmem(
+            mmhay.as_ptr().cast(),
+            mmhay.len(),
+            mmndl.as_ptr().cast(),
+            mmndl.len(),
+        )
+    };
+    assert_eq!(
+        core_mm.is_some(),
+        !gl_mm.is_null(),
+        "memmem found-ness mismatch"
+    );
     let mut gmm = c.benchmark_group("survey_memmem");
     gmm.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::mem::memmem(black_box(mmhay), mmhay.len(), mmndl, mmndl.len())))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::mem::memmem(
+                black_box(mmhay),
+                mmhay.len(),
+                mmndl,
+                mmndl.len(),
+            ))
+        })
     });
     gmm.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { memmem(black_box(mmhay.as_ptr().cast()), mmhay.len(), mmndl.as_ptr().cast(), mmndl.len()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                memmem(
+                    black_box(mmhay.as_ptr().cast()),
+                    mmhay.len(),
+                    mmndl.as_ptr().cast(),
+                    mmndl.len(),
+                )
+            })
+        })
     });
     gmm.finish();
 
@@ -669,10 +1003,26 @@ fn bench(c: &mut Criterion) {
     let mm_rl_ndl = b"needle_herX"; // last byte 'X' occurs only at the match
     let mut grl = c.benchmark_group("survey_memmem_rarelast");
     grl.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::mem::memmem(black_box(mm_rl_hay), mm_rl_hay.len(), mm_rl_ndl, mm_rl_ndl.len())))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::mem::memmem(
+                black_box(mm_rl_hay),
+                mm_rl_hay.len(),
+                mm_rl_ndl,
+                mm_rl_ndl.len(),
+            ))
+        })
     });
     grl.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { memmem(black_box(mm_rl_hay.as_ptr().cast()), mm_rl_hay.len(), mm_rl_ndl.as_ptr().cast(), mm_rl_ndl.len()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                memmem(
+                    black_box(mm_rl_hay.as_ptr().cast()),
+                    mm_rl_hay.len(),
+                    mm_rl_ndl.as_ptr().cast(),
+                    mm_rl_ndl.len(),
+                )
+            })
+        })
     });
     grl.finish();
 
@@ -686,10 +1036,26 @@ fn bench(c: &mut Criterion) {
     let mm_tw_ndl = b"aaaaaaaaab";
     let mut gtw = c.benchmark_group("survey_memmem_twoway");
     gtw.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::mem::memmem(black_box(&mm_tw_hay), mm_tw_hay.len(), mm_tw_ndl, mm_tw_ndl.len())))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::mem::memmem(
+                black_box(&mm_tw_hay),
+                mm_tw_hay.len(),
+                mm_tw_ndl,
+                mm_tw_ndl.len(),
+            ))
+        })
     });
     gtw.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { memmem(black_box(mm_tw_hay.as_ptr().cast()), mm_tw_hay.len(), mm_tw_ndl.as_ptr().cast(), mm_tw_ndl.len()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                memmem(
+                    black_box(mm_tw_hay.as_ptr().cast()),
+                    mm_tw_hay.len(),
+                    mm_tw_ndl.as_ptr().cast(),
+                    mm_tw_ndl.len(),
+                )
+            })
+        })
     });
     gtw.finish();
 
@@ -708,35 +1074,83 @@ fn bench(c: &mut Criterion) {
     };
     let cand1 = mk(&[]); // only the match's 'q' at 60
     let cand4 = mk(&[0, 20, 40]); // 3 decoy 'q's + the match
-    assert_eq!(frankenlibc_core::string::mem::memmem(&cand1, 70, mmc_ndl, 10), Some(60));
-    assert_eq!(frankenlibc_core::string::mem::memmem(&cand4, 70, mmc_ndl, 10), Some(60));
+    assert_eq!(
+        frankenlibc_core::string::mem::memmem(&cand1, 70, mmc_ndl, 10),
+        Some(60)
+    );
+    assert_eq!(
+        frankenlibc_core::string::mem::memmem(&cand4, 70, mmc_ndl, 10),
+        Some(60)
+    );
     let mut gc1 = c.benchmark_group("survey_memmem_cand1");
     gc1.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::mem::memmem(black_box(&cand1), 70, mmc_ndl, 10)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::mem::memmem(
+                black_box(&cand1),
+                70,
+                mmc_ndl,
+                10,
+            ))
+        })
     });
     gc1.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { memmem(black_box(cand1.as_ptr().cast()), 70, mmc_ndl.as_ptr().cast(), 10) }))
+        b.iter(|| {
+            black_box(unsafe {
+                memmem(
+                    black_box(cand1.as_ptr().cast()),
+                    70,
+                    mmc_ndl.as_ptr().cast(),
+                    10,
+                )
+            })
+        })
     });
     gc1.finish();
     let mut gc4 = c.benchmark_group("survey_memmem_cand4");
     gc4.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::mem::memmem(black_box(&cand4), 70, mmc_ndl, 10)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::mem::memmem(
+                black_box(&cand4),
+                70,
+                mmc_ndl,
+                10,
+            ))
+        })
     });
     gc4.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { memmem(black_box(cand4.as_ptr().cast()), 70, mmc_ndl.as_ptr().cast(), 10) }))
+        b.iter(|| {
+            black_box(unsafe {
+                memmem(
+                    black_box(cand4.as_ptr().cast()),
+                    70,
+                    mmc_ndl.as_ptr().cast(),
+                    10,
+                )
+            })
+        })
     });
     gc4.finish();
 
     // ---- fnmatch (pure, non-ifunc) — typical glob + a backtrack-heavy star pattern.
-    use frankenlibc_core::string::fnmatch::{fnmatch_match, FnmatchFlags};
+    use frankenlibc_core::string::fnmatch::{FnmatchFlags, fnmatch_match};
     let fm_pat = c"*_2024_*.txt";
     let fm_txt = c"report_2024_final.txt";
-    let core_fm = fnmatch_match(b"*_2024_*.txt", b"report_2024_final.txt", FnmatchFlags::NONE);
+    let core_fm = fnmatch_match(
+        b"*_2024_*.txt",
+        b"report_2024_final.txt",
+        FnmatchFlags::NONE,
+    );
     let gl_fm = unsafe { fnmatch(fm_pat.as_ptr(), fm_txt.as_ptr(), 0) };
     assert_eq!(core_fm, gl_fm == 0, "fnmatch mismatch");
     let mut gfm = c.benchmark_group("survey_fnmatch_glob");
     gfm.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(fnmatch_match(black_box(b"*_2024_*.txt"), b"report_2024_final.txt", FnmatchFlags::NONE)))
+        b.iter(|| {
+            black_box(fnmatch_match(
+                black_box(b"*_2024_*.txt"),
+                b"report_2024_final.txt",
+                FnmatchFlags::NONE,
+            ))
+        })
     });
     gfm.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { fnmatch(black_box(fm_pat.as_ptr()), fm_txt.as_ptr(), 0) }))
@@ -748,7 +1162,13 @@ fn bench(c: &mut Criterion) {
     let fm_txt2 = c"xxaxxbxxcxxdxxexxxxxxxxxxxxxxxxxxxxxxxxxxxxend";
     let mut gfm2 = c.benchmark_group("survey_fnmatch_stars");
     gfm2.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(fnmatch_match(black_box(b"*a*b*c*d*e*"), b"xxaxxbxxcxxdxxexxxxxxxxxxxxxxxxxxxxxxxxxxxxend", FnmatchFlags::NONE)))
+        b.iter(|| {
+            black_box(fnmatch_match(
+                black_box(b"*a*b*c*d*e*"),
+                b"xxaxxbxxcxxdxxexxxxxxxxxxxxxxxxxxxxxxxxxxxxend",
+                FnmatchFlags::NONE,
+            ))
+        })
     });
     gfm2.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { fnmatch(black_box(fm_pat2.as_ptr()), fm_txt2.as_ptr(), 0) }))
@@ -756,32 +1176,81 @@ fn bench(c: &mut Criterion) {
     gfm2.finish();
 
     // ---- wcsstr (wide substring, non-ifunc) — same text as the strstr survey.
-    let wss_hay: Vec<u32> = "the quick brown fox jumps over the lazy dog and then some more text needle_here"
-        .bytes().map(|b| b as u32).chain(std::iter::once(0)).collect();
-    let wss_ndl: Vec<u32> = "needle_here".bytes().map(|b| b as u32).chain(std::iter::once(0)).collect();
+    let wss_hay: Vec<u32> =
+        "the quick brown fox jumps over the lazy dog and then some more text needle_here"
+            .bytes()
+            .map(|b| b as u32)
+            .chain(std::iter::once(0))
+            .collect();
+    let wss_ndl: Vec<u32> = "needle_here"
+        .bytes()
+        .map(|b| b as u32)
+        .chain(std::iter::once(0))
+        .collect();
     let core_wss = frankenlibc_core::string::wide::wcsstr(&wss_hay, &wss_ndl);
-    let gl_wss = unsafe { wcsstr(wss_hay.as_ptr().cast::<i32>(), wss_ndl.as_ptr().cast::<i32>()) };
-    assert_eq!(core_wss.is_some(), !gl_wss.is_null(), "wcsstr found-ness mismatch");
+    let gl_wss = unsafe {
+        wcsstr(
+            wss_hay.as_ptr().cast::<i32>(),
+            wss_ndl.as_ptr().cast::<i32>(),
+        )
+    };
+    assert_eq!(
+        core_wss.is_some(),
+        !gl_wss.is_null(),
+        "wcsstr found-ness mismatch"
+    );
     let mut gwss = c.benchmark_group("survey_wcsstr");
     gwss.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcsstr(black_box(&wss_hay), &wss_ndl)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcsstr(
+                black_box(&wss_hay),
+                &wss_ndl,
+            ))
+        })
     });
     gwss.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wcsstr(black_box(wss_hay.as_ptr().cast::<i32>()), wss_ndl.as_ptr().cast::<i32>()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                wcsstr(
+                    black_box(wss_hay.as_ptr().cast::<i32>()),
+                    wss_ndl.as_ptr().cast::<i32>(),
+                )
+            })
+        })
     });
     gwss.finish();
 
     // wcsstr rare-last guard (needle ends in rare 'X') — must NOT regress vs the
     // last-anchor path (the commonness gate should still pick last here).
-    let wss_hay2: Vec<u32> = "the quick brown fox jumps over the lazy dog and then text needle_herX"
-        .bytes().map(|b| b as u32).chain(std::iter::once(0)).collect();
-    let wss_ndl2: Vec<u32> = "needle_herX".bytes().map(|b| b as u32).chain(std::iter::once(0)).collect();
+    let wss_hay2: Vec<u32> =
+        "the quick brown fox jumps over the lazy dog and then text needle_herX"
+            .bytes()
+            .map(|b| b as u32)
+            .chain(std::iter::once(0))
+            .collect();
+    let wss_ndl2: Vec<u32> = "needle_herX"
+        .bytes()
+        .map(|b| b as u32)
+        .chain(std::iter::once(0))
+        .collect();
     let mut gwss2 = c.benchmark_group("survey_wcsstr_rarelast");
     gwss2.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcsstr(black_box(&wss_hay2), &wss_ndl2)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcsstr(
+                black_box(&wss_hay2),
+                &wss_ndl2,
+            ))
+        })
     });
     gwss2.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wcsstr(black_box(wss_hay2.as_ptr().cast::<i32>()), wss_ndl2.as_ptr().cast::<i32>()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                wcsstr(
+                    black_box(wss_hay2.as_ptr().cast::<i32>()),
+                    wss_ndl2.as_ptr().cast::<i32>(),
+                )
+            })
+        })
     });
     gwss2.finish();
 
@@ -791,8 +1260,13 @@ fn bench(c: &mut Criterion) {
     // scan: fl's scalar DelimSet loop vs glibc's (SIMD strspn/strcspn-based).
     let tok_template: &[u8] = b"this_is_a_fairly_long_token_without_any_delimiters_here,tail\0";
     let mut tok_buf = tok_template.to_vec();
-    let r0 = frankenlibc_core::string::strtok::strtok_r(&mut tok_buf[..tok_template.len() - 1], b",", 0);
-    assert_eq!(r0.map(|(s, l, _)| (s, l)), Some((0usize, 55usize)), "strtok_r core wrong");
+    let r0 =
+        frankenlibc_core::string::strtok::strtok_r(&mut tok_buf[..tok_template.len() - 1], b",", 0);
+    assert_eq!(
+        r0.map(|(s, l, _)| (s, l)),
+        Some((0usize, 55usize)),
+        "strtok_r core wrong"
+    );
     let mut gtk = c.benchmark_group("survey_strtok_r");
     gtk.bench_function("frankenlibc_core", |b| {
         b.iter(|| {
@@ -810,7 +1284,11 @@ fn bench(c: &mut Criterion) {
             gtk_buf.copy_from_slice(tok_template);
             let mut sp: *mut c_char = std::ptr::null_mut();
             black_box(unsafe {
-                strtok_r(black_box(gtk_buf.as_mut_ptr().cast::<c_char>()), c",".as_ptr(), &mut sp)
+                strtok_r(
+                    black_box(gtk_buf.as_mut_ptr().cast::<c_char>()),
+                    c",".as_ptr(),
+                    &mut sp,
+                )
             })
         })
     });
@@ -819,10 +1297,17 @@ fn bench(c: &mut Criterion) {
     // ---- wcstok — wide first token is a long delimiter-free run then ','. Reset
     // each iter (both write NUL → reset cost cancels).
     let wtok_template: Vec<u32> = "this_is_a_fairly_long_wide_token_without_any_delims,tail"
-        .bytes().map(|b| b as u32).chain(std::iter::once(0)).collect();
+        .bytes()
+        .map(|b| b as u32)
+        .chain(std::iter::once(0))
+        .collect();
     let mut wtok_buf = wtok_template.clone();
     let wdelim: Vec<u32> = vec![b',' as u32, 0];
-    let r0 = frankenlibc_core::string::wide::wcstok(&mut wtok_buf[..wtok_template.len() - 1], &wdelim, 0);
+    let r0 = frankenlibc_core::string::wide::wcstok(
+        &mut wtok_buf[..wtok_template.len() - 1],
+        &wdelim,
+        0,
+    );
     assert_eq!(r0.map(|(s, _)| s), Some(0usize), "wcstok core wrong");
     let mut gwtk = c.benchmark_group("survey_wcstok");
     gwtk.bench_function("frankenlibc_core", |b| {
@@ -844,21 +1329,36 @@ fn bench(c: &mut Criterion) {
             // the reset cost cancels in the ratio (was a slower per-element loop).
             gwtk_buf.copy_from_slice(&wtok_template_i);
             let mut sp: *mut i32 = std::ptr::null_mut();
-            black_box(unsafe { wcstok(black_box(gwtk_buf.as_mut_ptr()), wdelim_i.as_ptr(), &mut sp) })
+            black_box(unsafe {
+                wcstok(black_box(gwtk_buf.as_mut_ptr()), wdelim_i.as_ptr(), &mut sp)
+            })
         })
     });
     gwtk.finish();
 
     // ---- asctime (fixed 26-byte formatter, pure/non-ifunc, English-only). fl uses
     // core::fmt::write into a stack buffer; glibc uses a manual sprintf.
-    use frankenlibc_core::time::{format_asctime, BrokenDownTime};
+    use frankenlibc_core::time::{BrokenDownTime, format_asctime};
     let bd = BrokenDownTime {
-        tm_sec: 45, tm_min: 30, tm_hour: 14, tm_mday: 21, tm_mon: 5,
-        tm_year: 126, tm_wday: 0, tm_yday: 171, ..Default::default()
+        tm_sec: 45,
+        tm_min: 30,
+        tm_hour: 14,
+        tm_mday: 21,
+        tm_mon: 5,
+        tm_year: 126,
+        tm_wday: 0,
+        tm_yday: 171,
+        ..Default::default()
     };
     let mut atm: libc::tm = unsafe { std::mem::zeroed() };
-    atm.tm_sec = 45; atm.tm_min = 30; atm.tm_hour = 14; atm.tm_mday = 21;
-    atm.tm_mon = 5; atm.tm_year = 126; atm.tm_wday = 0; atm.tm_yday = 171;
+    atm.tm_sec = 45;
+    atm.tm_min = 30;
+    atm.tm_hour = 14;
+    atm.tm_mday = 21;
+    atm.tm_mon = 5;
+    atm.tm_year = 126;
+    atm.tm_wday = 0;
+    atm.tm_yday = 171;
     {
         let mut cb = [0u8; 32];
         let n = format_asctime(&bd, &mut cb);
@@ -898,7 +1398,11 @@ fn bench(c: &mut Criterion) {
     }
     let mut ggt = c.benchmark_group("survey_gmtime");
     ggt.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::time::epoch_to_broken_down(black_box(g_epoch))))
+        b.iter(|| {
+            black_box(frankenlibc_core::time::epoch_to_broken_down(black_box(
+                g_epoch,
+            )))
+        })
     });
     ggt.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| {
@@ -932,13 +1436,19 @@ fn bench(c: &mut Criterion) {
     let core_rr = core_str::strrchr(&rr, b'/');
     let gl_rr = unsafe { strrchr(rr.as_ptr().cast::<c_char>(), b'/' as c_int) };
     assert_eq!(core_rr, Some(100), "strrchr core wrong");
-    assert_eq!(core_rr.is_some(), !gl_rr.is_null(), "strrchr found-ness mismatch");
+    assert_eq!(
+        core_rr.is_some(),
+        !gl_rr.is_null(),
+        "strrchr found-ness mismatch"
+    );
     let mut grr = c.benchmark_group("survey_strrchr");
     grr.bench_function("frankenlibc_core", |b| {
         b.iter(|| black_box(core_str::strrchr(black_box(&rr), b'/')))
     });
     grr.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { strrchr(black_box(rr.as_ptr().cast::<c_char>()), b'/' as c_int) }))
+        b.iter(|| {
+            black_box(unsafe { strrchr(black_box(rr.as_ptr().cast::<c_char>()), b'/' as c_int) })
+        })
     });
     grr.finish();
 
@@ -958,7 +1468,9 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(core_str::strchrnul(black_box(&cn), b'q')))
     });
     gcn.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { strchrnul(black_box(cn.as_ptr().cast::<c_char>()), b'q' as c_int) }))
+        b.iter(|| {
+            black_box(unsafe { strchrnul(black_box(cn.as_ptr().cast::<c_char>()), b'q' as c_int) })
+        })
     });
     gcn.finish();
 
@@ -980,7 +1492,9 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(core_str::strspn(black_box(&sp1), sp1_acc)))
     });
     gsp1.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { strspn(black_box(sp1.as_ptr().cast::<c_char>()), c"a".as_ptr()) }))
+        b.iter(|| {
+            black_box(unsafe { strspn(black_box(sp1.as_ptr().cast::<c_char>()), c"a".as_ptr()) })
+        })
     });
     gsp1.finish();
 
@@ -1002,7 +1516,14 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(core_str::strspn(black_box(&spr), spr_acc)))
     });
     gspr.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { strspn(black_box(spr.as_ptr().cast::<c_char>()), c"0123456789".as_ptr()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                strspn(
+                    black_box(spr.as_ptr().cast::<c_char>()),
+                    c"0123456789".as_ptr(),
+                )
+            })
+        })
     });
     gspr.finish();
 
@@ -1032,8 +1553,9 @@ fn bench(c: &mut Criterion) {
     };
     let off_scalar = scalar_rawmemchr(&rmc, b'Z');
     let off_simd = frankenlibc_core::string::mem::memchr(&rmc, b'Z', rmc.len()).unwrap();
-    let off_gl =
-        unsafe { rawmemchr(rmc.as_ptr().cast::<c_void>(), b'Z' as c_int) as usize - rmc.as_ptr() as usize };
+    let off_gl = unsafe {
+        rawmemchr(rmc.as_ptr().cast::<c_void>(), b'Z' as c_int) as usize - rmc.as_ptr() as usize
+    };
     assert_eq!(off_scalar, 900, "rawmemchr scalar replica wrong");
     assert_eq!(off_simd, 900, "rawmemchr simd proxy wrong");
     assert_eq!(off_gl, 900, "rawmemchr glibc wrong");
@@ -1042,10 +1564,18 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(scalar_rawmemchr(black_box(&rmc), b'Z')))
     });
     grm.bench_function("frankenlibc_simd_fix_proxy", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::mem::memchr(black_box(&rmc), b'Z', rmc.len())))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::mem::memchr(
+                black_box(&rmc),
+                b'Z',
+                rmc.len(),
+            ))
+        })
     });
     grm.bench_function("host_glibc", |b| {
-        b.iter(|| black_box(unsafe { rawmemchr(black_box(rmc.as_ptr().cast::<c_void>()), b'Z' as c_int) }))
+        b.iter(|| {
+            black_box(unsafe { rawmemchr(black_box(rmc.as_ptr().cast::<c_void>()), b'Z' as c_int) })
+        })
     });
     grm.finish();
 
@@ -1084,10 +1614,17 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(scalar_wcschrnul(black_box(&wcn), b'Z' as u32)))
     });
     gwcn.bench_function("frankenlibc_simd_fix_proxy", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcschr(black_box(&wcn), b'Z' as u32)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcschr(
+                black_box(&wcn),
+                b'Z' as u32,
+            ))
+        })
     });
     gwcn.bench_function("host_glibc", |b| {
-        b.iter(|| black_box(unsafe { wcschrnul(black_box(wcn.as_ptr().cast::<i32>()), b'Z' as i32) }))
+        b.iter(|| {
+            black_box(unsafe { wcschrnul(black_box(wcn.as_ptr().cast::<i32>()), b'Z' as i32) })
+        })
     });
     gwcn.finish();
 
@@ -1100,16 +1637,32 @@ fn bench(c: &mut Criterion) {
     };
     let wmc_core = frankenlibc_core::string::wide::wmemchr(&wmc, b'Z' as u32, wmc.len()).unwrap();
     let wmc_gl = unsafe {
-        (wmemchr(wmc.as_ptr().cast::<i32>(), b'Z' as i32, wmc.len()) as usize - wmc.as_ptr() as usize) / 4
+        (wmemchr(wmc.as_ptr().cast::<i32>(), b'Z' as i32, wmc.len()) as usize
+            - wmc.as_ptr() as usize)
+            / 4
     };
     assert_eq!(wmc_core, 900, "wmemchr core wrong");
     assert_eq!(wmc_gl, 900, "wmemchr glibc wrong");
     let mut gwmc = c.benchmark_group("survey_wmemchr");
     gwmc.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wmemchr(black_box(&wmc), b'Z' as u32, wmc.len())))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wmemchr(
+                black_box(&wmc),
+                b'Z' as u32,
+                wmc.len(),
+            ))
+        })
     });
     gwmc.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { wmemchr(black_box(wmc.as_ptr().cast::<i32>()), b'Z' as i32, wmc.len()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                wmemchr(
+                    black_box(wmc.as_ptr().cast::<i32>()),
+                    b'Z' as i32,
+                    wmc.len(),
+                )
+            })
+        })
     });
     gwmc.finish();
 
@@ -1126,7 +1679,12 @@ fn bench(c: &mut Criterion) {
     assert_eq!(wnl_core, wnl_gl, "wcsnlen vs glibc mismatch");
     let mut gwnl = c.benchmark_group("survey_wcsnlen");
     gwnl.bench_function("frankenlibc_core", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::wide::wcsnlen(black_box(&wnl), 2000)))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::wide::wcsnlen(
+                black_box(&wnl),
+                2000,
+            ))
+        })
     });
     gwnl.bench_function("host_glibc_inprocess", |b| {
         b.iter(|| black_box(unsafe { wcsnlen(black_box(wnl.as_ptr().cast::<i32>()), 2000) }))
@@ -1177,10 +1735,17 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(frankenlibc_core::string::str::strchr(black_box(&sc), b'Z')))
     });
     gsc.bench_function("strchrnul_lowerbound_proxy", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::str::strchrnul(black_box(&sc), b'Z')))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::str::strchrnul(
+                black_box(&sc),
+                b'Z',
+            ))
+        })
     });
     gsc.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { strchr(black_box(sc.as_ptr().cast::<c_char>()), b'Z' as c_int) }))
+        b.iter(|| {
+            black_box(unsafe { strchr(black_box(sc.as_ptr().cast::<c_char>()), b'Z' as c_int) })
+        })
     });
     gsc.finish();
 
@@ -1192,8 +1757,10 @@ fn bench(c: &mut Criterion) {
         v
     };
     let mc_core = frankenlibc_core::string::mem::memchr(&mc, b'Z', mc.len()).unwrap();
-    let mc_gl =
-        unsafe { memchr(mc.as_ptr().cast::<c_void>(), b'Z' as c_int, mc.len()) as usize - mc.as_ptr() as usize };
+    let mc_gl = unsafe {
+        memchr(mc.as_ptr().cast::<c_void>(), b'Z' as c_int, mc.len()) as usize
+            - mc.as_ptr() as usize
+    };
     assert_eq!(mc_core, 900, "memchr core wrong");
     assert_eq!(mc_gl, 900, "memchr glibc wrong");
     // strchrnul on this NUL-free buffer is a DIRECT 64-lane c-scan (NUL check never
@@ -1205,13 +1772,32 @@ fn bench(c: &mut Criterion) {
     assert_eq!(mc_direct, 900, "memchr direct proxy wrong");
     let mut gmc = c.benchmark_group("survey_memchr");
     gmc.bench_function("frankenlibc_core_fold", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::mem::memchr(black_box(&mc), b'Z', mc.len())))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::mem::memchr(
+                black_box(&mc),
+                b'Z',
+                mc.len(),
+            ))
+        })
     });
     gmc.bench_function("frankenlibc_direct_proxy", |b| {
-        b.iter(|| black_box(frankenlibc_core::string::str::strchrnul(black_box(&mc), b'Z')))
+        b.iter(|| {
+            black_box(frankenlibc_core::string::str::strchrnul(
+                black_box(&mc),
+                b'Z',
+            ))
+        })
     });
     gmc.bench_function("host_glibc_inprocess", |b| {
-        b.iter(|| black_box(unsafe { memchr(black_box(mc.as_ptr().cast::<c_void>()), b'Z' as c_int, mc.len()) }))
+        b.iter(|| {
+            black_box(unsafe {
+                memchr(
+                    black_box(mc.as_ptr().cast::<c_void>()),
+                    b'Z' as c_int,
+                    mc.len(),
+                )
+            })
+        })
     });
     gmc.finish();
 

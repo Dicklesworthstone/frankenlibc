@@ -13,7 +13,7 @@ use std::ffi::{c_char, c_int, c_void};
 use std::hint::black_box;
 use std::sync::OnceLock;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_abi::inet_abi as fl;
 
 const AF_INET: c_int = 2;
@@ -43,8 +43,22 @@ fn bench(c: &mut Criterion) {
     // Sanity: fl and glibc produce the same text.
     let mut fl_buf = [0i8; 16];
     let mut gl_buf = [0i8; 16];
-    let fr = unsafe { fl::inet_ntop(AF_INET, src.as_ptr() as *const c_void, fl_buf.as_mut_ptr(), 16) };
-    let gr = unsafe { host(AF_INET, src.as_ptr() as *const c_void, gl_buf.as_mut_ptr(), 16) };
+    let fr = unsafe {
+        fl::inet_ntop(
+            AF_INET,
+            src.as_ptr() as *const c_void,
+            fl_buf.as_mut_ptr(),
+            16,
+        )
+    };
+    let gr = unsafe {
+        host(
+            AF_INET,
+            src.as_ptr() as *const c_void,
+            gl_buf.as_mut_ptr(),
+            16,
+        )
+    };
     assert!(!fr.is_null() && !gr.is_null(), "inet_ntop returned NULL");
     assert_eq!(fl_buf, gl_buf, "fl::inet_ntop != glibc inet_ntop");
 
@@ -53,7 +67,12 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             let mut buf = [0i8; 16];
             let r = unsafe {
-                fl::inet_ntop(AF_INET, black_box(src.as_ptr()) as *const c_void, buf.as_mut_ptr(), 16)
+                fl::inet_ntop(
+                    AF_INET,
+                    black_box(src.as_ptr()) as *const c_void,
+                    buf.as_mut_ptr(),
+                    16,
+                )
             };
             black_box((r, buf));
         });
@@ -62,7 +81,12 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             let mut buf = [0i8; 16];
             let r = unsafe {
-                host(AF_INET, black_box(src.as_ptr()) as *const c_void, buf.as_mut_ptr(), 16)
+                host(
+                    AF_INET,
+                    black_box(src.as_ptr()) as *const c_void,
+                    buf.as_mut_ptr(),
+                    16,
+                )
             };
             black_box((r, buf));
         });

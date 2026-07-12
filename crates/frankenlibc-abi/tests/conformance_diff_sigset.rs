@@ -29,7 +29,13 @@ fn cur_action(sig: c_int) -> libc::sigaction {
 
 fn signal_blocked(sig: c_int) -> bool {
     let mut cur: libc::sigset_t = unsafe { std::mem::zeroed() };
-    unsafe { sigprocmask(0 /*SIG_SETMASK query via 0 set=null*/, std::ptr::null(), &mut cur) };
+    unsafe {
+        sigprocmask(
+            0, /*SIG_SETMASK query via 0 set=null*/
+            std::ptr::null(),
+            &mut cur,
+        )
+    };
     unsafe { sigismember(&cur, sig) == 1 }
 }
 
@@ -57,18 +63,34 @@ fn sigset_installs_persistent_handler_and_handles_hold() {
     // sigset(SIGUSR1, SIG_HOLD) blocks the signal; with the prior disposition
     // installed (not previously blocked) it returns the previous handler.
     let r = unsafe { frankenlibc_abi::unistd_abi::sigset(SIGUSR1, SIG_HOLD) };
-    assert!(signal_blocked(SIGUSR1), "sigset(SIG_HOLD) must block the signal");
-    assert_eq!(r, SIG_IGN, "sigset(SIG_HOLD) returns the previous (non-blocked) handler");
+    assert!(
+        signal_blocked(SIGUSR1),
+        "sigset(SIG_HOLD) must block the signal"
+    );
+    assert_eq!(
+        r, SIG_IGN,
+        "sigset(SIG_HOLD) returns the previous (non-blocked) handler"
+    );
 
     // A second SIG_HOLD while already blocked reports SIG_HOLD.
     let r2 = unsafe { frankenlibc_abi::unistd_abi::sigset(SIGUSR1, SIG_HOLD) };
-    assert_eq!(r2, SIG_HOLD as usize, "sigset(SIG_HOLD) on an already-blocked signal returns SIG_HOLD");
+    assert_eq!(
+        r2, SIG_HOLD as usize,
+        "sigset(SIG_HOLD) on an already-blocked signal returns SIG_HOLD"
+    );
 
     // ---- restore original state ----
     unsafe { sigaction(SIGUSR1, &saved, std::ptr::null_mut()) };
     let mut one: libc::sigset_t = unsafe { std::mem::zeroed() };
-    unsafe { libc::sigemptyset(&mut one); libc::sigaddset(&mut one, SIGUSR1) };
-    let how = if was_blocked { libc::SIG_BLOCK } else { libc::SIG_UNBLOCK };
+    unsafe {
+        libc::sigemptyset(&mut one);
+        libc::sigaddset(&mut one, SIGUSR1)
+    };
+    let how = if was_blocked {
+        libc::SIG_BLOCK
+    } else {
+        libc::SIG_UNBLOCK
+    };
     unsafe { sigprocmask(how, &one, std::ptr::null_mut()) };
 }
 

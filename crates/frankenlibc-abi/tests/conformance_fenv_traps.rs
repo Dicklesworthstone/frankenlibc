@@ -25,20 +25,49 @@ unsafe extern "C" {
 #[test]
 fn fenv_trap_extensions_match_glibc() {
     let mut d: Vec<String> = Vec::new();
-    macro_rules! eq { ($l:literal, $got:expr, $want:expr) => {
-        let (g, w) = ($got, $want); if g != w { d.push(format!("{}: got {} want {}", $l, g, w)); }
-    };}
+    macro_rules! eq {
+        ($l:literal, $got:expr, $want:expr) => {
+            let (g, w) = ($got, $want);
+            if g != w {
+                d.push(format!("{}: got {} want {}", $l, g, w));
+            }
+        };
+    }
     unsafe {
         // start from a clean, fully-masked state
         fe::fedisableexcept(FE_ALL);
         eq!("init fegetexcept", fe::fegetexcept(), 0);
 
-        eq!("feenableexcept(INV|OVF) ret", fe::feenableexcept(FE_INVALID | FE_OVERFLOW), 0);
-        eq!("fegetexcept after", fe::fegetexcept(), FE_INVALID | FE_OVERFLOW); // 9
-        eq!("feenableexcept(DBZ) ret", fe::feenableexcept(FE_DIVBYZERO), FE_INVALID | FE_OVERFLOW); // 9
-        eq!("fegetexcept after2", fe::fegetexcept(), FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO); // 13
-        eq!("fedisableexcept(INV) ret", fe::fedisableexcept(FE_INVALID), 13);
-        eq!("fegetexcept after3", fe::fegetexcept(), FE_OVERFLOW | FE_DIVBYZERO); // 12
+        eq!(
+            "feenableexcept(INV|OVF) ret",
+            fe::feenableexcept(FE_INVALID | FE_OVERFLOW),
+            0
+        );
+        eq!(
+            "fegetexcept after",
+            fe::fegetexcept(),
+            FE_INVALID | FE_OVERFLOW
+        ); // 9
+        eq!(
+            "feenableexcept(DBZ) ret",
+            fe::feenableexcept(FE_DIVBYZERO),
+            FE_INVALID | FE_OVERFLOW
+        ); // 9
+        eq!(
+            "fegetexcept after2",
+            fe::fegetexcept(),
+            FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO
+        ); // 13
+        eq!(
+            "fedisableexcept(INV) ret",
+            fe::fedisableexcept(FE_INVALID),
+            13
+        );
+        eq!(
+            "fegetexcept after3",
+            fe::fegetexcept(),
+            FE_OVERFLOW | FE_DIVBYZERO
+        ); // 12
 
         // CRITICAL: re-mask everything so no later FP op traps.
         fe::fedisableexcept(FE_ALL);
@@ -46,21 +75,57 @@ fn fenv_trap_extensions_match_glibc() {
 
         // fesetexcept sets flags without trapping.
         feclearexcept(FE_ALL);
-        eq!("fesetexcept ret", fe::fesetexcept(FE_INEXACT | FE_UNDERFLOW), 0);
-        eq!("fetestexcept(INX)", (fetestexcept(FE_INEXACT) != 0) as c_int, 1);
-        eq!("fetestexcept(UND)", (fetestexcept(FE_UNDERFLOW) != 0) as c_int, 1);
-        eq!("fetestexcept(INV)", (fetestexcept(FE_INVALID) != 0) as c_int, 0);
+        eq!(
+            "fesetexcept ret",
+            fe::fesetexcept(FE_INEXACT | FE_UNDERFLOW),
+            0
+        );
+        eq!(
+            "fetestexcept(INX)",
+            (fetestexcept(FE_INEXACT) != 0) as c_int,
+            1
+        );
+        eq!(
+            "fetestexcept(UND)",
+            (fetestexcept(FE_UNDERFLOW) != 0) as c_int,
+            1
+        );
+        eq!(
+            "fetestexcept(INV)",
+            (fetestexcept(FE_INVALID) != 0) as c_int,
+            0
+        );
 
         // fetestexceptflag on a saved fexcept_t.
         feclearexcept(FE_ALL);
         feraiseexcept(FE_OVERFLOW | FE_INVALID);
         let mut saved: u16 = 0;
         fegetexceptflag(&mut saved, FE_ALL);
-        eq!("fetestexceptflag(OVF)", fe::fetestexceptflag(&saved, FE_OVERFLOW), FE_OVERFLOW);
-        eq!("fetestexceptflag(INV)", fe::fetestexceptflag(&saved, FE_INVALID), FE_INVALID);
-        eq!("fetestexceptflag(DBZ)", fe::fetestexceptflag(&saved, FE_DIVBYZERO), 0);
-        eq!("fetestexceptflag(ALL)", fe::fetestexceptflag(&saved, FE_ALL), FE_OVERFLOW | FE_INVALID); // 9
-        eq!("fetestexceptflag(null)", fe::fetestexceptflag(std::ptr::null(), FE_ALL), 0);
+        eq!(
+            "fetestexceptflag(OVF)",
+            fe::fetestexceptflag(&saved, FE_OVERFLOW),
+            FE_OVERFLOW
+        );
+        eq!(
+            "fetestexceptflag(INV)",
+            fe::fetestexceptflag(&saved, FE_INVALID),
+            FE_INVALID
+        );
+        eq!(
+            "fetestexceptflag(DBZ)",
+            fe::fetestexceptflag(&saved, FE_DIVBYZERO),
+            0
+        );
+        eq!(
+            "fetestexceptflag(ALL)",
+            fe::fetestexceptflag(&saved, FE_ALL),
+            FE_OVERFLOW | FE_INVALID
+        ); // 9
+        eq!(
+            "fetestexceptflag(null)",
+            fe::fetestexceptflag(std::ptr::null(), FE_ALL),
+            0
+        );
         fe::fedisableexcept(FE_ALL);
         feclearexcept(FE_ALL);
 
@@ -81,12 +146,20 @@ fn fenv_trap_extensions_match_glibc() {
         // restore
         eq!("fesetmode ret", fe::fesetmode(saved.as_ptr()), 0);
         eq!("fesetmode round restored", fe::fegetround(), FE_UPWARD);
-        eq!("fesetmode en restored", fe::fegetexcept(), FE_INVALID | FE_OVERFLOW);
+        eq!(
+            "fesetmode en restored",
+            fe::fegetexcept(),
+            FE_INVALID | FE_OVERFLOW
+        );
         // fesetmode must NOT clear a raised status flag
         feclearexcept(FE_ALL);
         feraiseexcept(FE_INEXACT);
         fe::fesetmode(saved.as_ptr());
-        eq!("fesetmode preserves INEXACT", (fetestexcept(FE_INEXACT) != 0) as c_int, 1);
+        eq!(
+            "fesetmode preserves INEXACT",
+            (fetestexcept(FE_INEXACT) != 0) as c_int,
+            1
+        );
         // FE_DFL_MODE resets to round-nearest, all masked
         fe::fesetround(FE_DOWNWARD);
         fe::feenableexcept(FE_OVERFLOW);
@@ -97,5 +170,10 @@ fn fenv_trap_extensions_match_glibc() {
         fe::fedisableexcept(FE_ALL);
         feclearexcept(FE_ALL);
     }
-    assert!(d.is_empty(), "fenv trap-extension divergences ({}):\n  {}", d.len(), d.join("\n  "));
+    assert!(
+        d.is_empty(),
+        "fenv trap-extension divergences ({}):\n  {}",
+        d.len(),
+        d.join("\n  ")
+    );
 }

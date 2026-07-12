@@ -7,7 +7,7 @@
 //! glibc for the C locale. Asserts fl's result sign matches host glibc across
 //! equal/ordered/prefix pairs, using a real C locale_t. No mocks.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 
 use libc::wchar_t;
 
@@ -49,7 +49,11 @@ fn strcoll_l_wcscoll_l_match_glibc() {
         let f = unsafe {
             frankenlibc_abi::unistd_abi::strcoll_l(a.as_ptr(), b.as_ptr(), loc as *mut c_void)
         };
-        assert_eq!(f.signum(), g.signum(), "strcoll_l({sa:?},{sb:?}): fl={f} glibc={g}");
+        assert_eq!(
+            f.signum(),
+            g.signum(),
+            "strcoll_l({sa:?},{sb:?}): fl={f} glibc={g}"
+        );
 
         let wa = wide(sa);
         let wb = wide(sb);
@@ -57,7 +61,11 @@ fn strcoll_l_wcscoll_l_match_glibc() {
         let fw = unsafe {
             frankenlibc_abi::wchar_abi::wcscoll_l(wa.as_ptr(), wb.as_ptr(), loc as *mut c_void)
         };
-        assert_eq!(fw.signum(), gw.signum(), "wcscoll_l({sa:?},{sb:?}): fl={fw} glibc={gw}");
+        assert_eq!(
+            fw.signum(),
+            gw.signum(),
+            "wcscoll_l({sa:?},{sb:?}): fl={fw} glibc={gw}"
+        );
     }
 
     unsafe { freelocale(loc) };

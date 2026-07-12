@@ -9,7 +9,7 @@
 //! leave the target unchanged; on a regular file lchmod still changes the mode.
 //! No mocks — real files + real glibc.
 
-use std::ffi::{c_char, c_int, c_uint, CString};
+use std::ffi::{CString, c_char, c_int, c_uint};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -55,11 +55,20 @@ fn run(lchmod_fn: impl Fn(*const c_char, c_uint) -> c_int, tag: &str) -> (c_int,
 #[test]
 fn lchmod_on_symlink_matches_glibc_and_spares_target() {
     let g = run(|p, m| unsafe { lchmod(p, m) }, "g");
-    let f = run(|p, m| unsafe { frankenlibc_abi::glibc_internal_abi::lchmod(p, m) }, "f");
+    let f = run(
+        |p, m| unsafe { frankenlibc_abi::glibc_internal_abi::lchmod(p, m) },
+        "f",
+    );
 
     // The target's mode must be untouched in BOTH (lchmod must not follow).
-    assert_eq!(g.2, 0o644, "glibc lchmod must not change the symlink target mode");
-    assert_eq!(f.2, 0o644, "fl lchmod must not change the symlink target mode (bd-f29d1s)");
+    assert_eq!(
+        g.2, 0o644,
+        "glibc lchmod must not change the symlink target mode"
+    );
+    assert_eq!(
+        f.2, 0o644,
+        "fl lchmod must not change the symlink target mode (bd-f29d1s)"
+    );
     // Return code agreement (both fail to chmod a symlink).
     assert_eq!(f.0, g.0, "lchmod(symlink) rc: fl={} glibc={}", f.0, g.0);
     if f.0 != 0 {
@@ -78,5 +87,8 @@ fn lchmod_on_regular_file_changes_mode() {
     let mode = mode_of(&file);
     let _ = std::fs::remove_file(&file);
     assert_eq!(rc, 0, "lchmod on a regular file should succeed");
-    assert_eq!(mode, 0o600, "lchmod on a regular file should change the mode");
+    assert_eq!(
+        mode, 0o600,
+        "lchmod on a regular file should change the mode"
+    );
 }

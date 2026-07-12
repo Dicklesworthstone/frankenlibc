@@ -27,7 +27,7 @@ fn values() -> Vec<f128> {
         -0.5,
         0.5,
         2.0,
-        -2.0,    // < -1 → NaN
+        -2.0, // < -1 → NaN
         -1.5,
         0.41421356f128, // ~sqrt2-1
         1e-30f128,
@@ -37,8 +37,8 @@ fn values() -> Vec<f128> {
         1e300f128,
         1e4000f128,
         f128::from_bits(1),
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     let mut q: i64 = -1100;
@@ -48,9 +48,13 @@ fn values() -> Vec<f128> {
     }
     let mut st: u64 = 0xabcd_1234_5678_9f0e;
     for _ in 0..5000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         let ef = (hi % 0x7fff) as u128;
         let mant = (((hi as u128) << 64) | lo as u128) & ((1u128 << 112) - 1);
@@ -65,7 +69,11 @@ fn f128_log1p_matches_glibc() {
     let mut mism = Vec::new();
     for &x in &values() {
         for (name, g, f) in [
-            ("log1p", log1pf128 as unsafe extern "C" fn(f128) -> f128, ma::log1pf128 as unsafe extern "C" fn(f128) -> f128),
+            (
+                "log1p",
+                log1pf128 as unsafe extern "C" fn(f128) -> f128,
+                ma::log1pf128 as unsafe extern "C" fn(f128) -> f128,
+            ),
             ("logp1", logp1f128, ma::logp1f128),
         ] {
             unsafe { *el() = 0 };
@@ -75,7 +83,10 @@ fn f128_log1p_matches_glibc() {
             let fv = unsafe { f(x) }.to_bits();
             let fe = unsafe { *el() };
             if gv != fv || ge != fe {
-                mism.push(format!("{name}({:#034x}): glibc=({gv:#034x},e={ge}) fl=({fv:#034x},e={fe})", x.to_bits()));
+                mism.push(format!(
+                    "{name}({:#034x}): glibc=({gv:#034x},e={ge}) fl=({fv:#034x},e={fe})",
+                    x.to_bits()
+                ));
             }
         }
     }

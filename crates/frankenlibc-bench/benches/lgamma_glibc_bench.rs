@@ -105,7 +105,12 @@ fn bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("lgamma_f64");
     group.sample_size(60);
     run(&mut group, "fl_libm", &inputs, |x| math::lgamma(x));
-    run(&mut group, "candidate_log_tgamma", &inputs, lgamma_via_tgamma);
+    run(
+        &mut group,
+        "candidate_log_tgamma",
+        &inputs,
+        lgamma_via_tgamma,
+    );
     run(&mut group, "glibc", &inputs, |x| unsafe { host_lgamma(x) });
     group.finish();
 }

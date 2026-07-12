@@ -65,9 +65,16 @@ fn fchmodat_symlink_nofollow_matches_glibc() {
     let g = call(fchmodat, &gl, 0o600, libc::AT_SYMLINK_NOFOLLOW);
     let f = call(fl::fchmodat, &flk, 0o600, libc::AT_SYMLINK_NOFOLLOW);
     assert_eq!(g.0, -1, "glibc should fail chmod-on-symlink");
-    assert_eq!(f, g, "rc/errno: glibc={g:?} fl={f:?} (fl followed the symlink before the fix)");
+    assert_eq!(
+        f, g,
+        "rc/errno: glibc={g:?} fl={f:?} (fl followed the symlink before the fix)"
+    );
     assert_eq!(mode_of(&gt), 0o644, "glibc left the target unchanged");
-    assert_eq!(mode_of(&ft), mode_of(&gt), "fl changed the symlink target (followed the link)");
+    assert_eq!(
+        mode_of(&ft),
+        mode_of(&gt),
+        "fl changed the symlink target (followed the link)"
+    );
 }
 
 #[test]

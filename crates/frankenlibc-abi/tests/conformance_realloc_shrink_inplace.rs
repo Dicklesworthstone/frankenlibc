@@ -46,7 +46,11 @@ fn realloc_shrink_is_in_place_and_preserves_data() {
             *r.add(i) = 0xA5;
         }
         for i in 0..32usize {
-            assert_eq!(*r.add(i), 0xA5, "byte {i} not writable after in-place shrink");
+            assert_eq!(
+                *r.add(i),
+                0xA5,
+                "byte {i} not writable after in-place shrink"
+            );
         }
 
         fl::free(r as *mut c_void);

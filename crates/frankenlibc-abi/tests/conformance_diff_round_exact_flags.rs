@@ -35,10 +35,39 @@ fn libm() -> *mut c_void {
 }
 
 const XS: &[f64] = &[
-    0.0, -0.0, 0.5, -0.5, 1.5, -1.5, 2.5, -2.5, 3.5, 0.1, -0.1, 0.9, -0.9, 0.25, 0.75,
-    100.5, -100.5, 101.5, 123456.7, -123456.7, 1e15, 1e16, 1.0 / 3.0, -1.0 / 3.0,
-    4503599627370495.5, 9007199254740992.0, f64::MIN_POSITIVE, -f64::MIN_POSITIVE,
-    f64::MAX, f64::MIN, f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
+    0.0,
+    -0.0,
+    0.5,
+    -0.5,
+    1.5,
+    -1.5,
+    2.5,
+    -2.5,
+    3.5,
+    0.1,
+    -0.1,
+    0.9,
+    -0.9,
+    0.25,
+    0.75,
+    100.5,
+    -100.5,
+    101.5,
+    123456.7,
+    -123456.7,
+    1e15,
+    1e16,
+    1.0 / 3.0,
+    -1.0 / 3.0,
+    4503599627370495.5,
+    9007199254740992.0,
+    f64::MIN_POSITIVE,
+    -f64::MIN_POSITIVE,
+    f64::MAX,
+    f64::MIN,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    f64::NAN,
 ];
 
 #[test]
@@ -71,7 +100,11 @@ fn round_family_exact_and_flag_parity() {
                 if !veq || ff != gg {
                     div.push(format!(
                         "{}({x:.4e}): fl={:016x}/f{:#x} glibc={:016x}/f{:#x}",
-                        $n, fv.to_bits(), ff, gv.to_bits(), gg
+                        $n,
+                        fv.to_bits(),
+                        ff,
+                        gv.to_bits(),
+                        gg
                     ));
                 }
             }
@@ -92,7 +125,11 @@ fn round_family_exact_and_flag_parity() {
                 if !veq || ff != gg {
                     div.push(format!(
                         "{}({x:.4e}): fl={:08x}/f{:#x} glibc={:08x}/f{:#x}",
-                        $n, fv.to_bits(), ff, gv.to_bits(), gg
+                        $n,
+                        fv.to_bits(),
+                        ff,
+                        gv.to_bits(),
+                        gg
                     ));
                 }
             }

@@ -37,9 +37,9 @@ fn values() -> Vec<f128> {
         1e4000f128,
         f128::MIN_POSITIVE,
         f128::MAX,
-        f128::from_bits(1),                                     // smallest subnormal
-        f128::from_bits(0x7fff_u128 << 112),                    // +inf
-        f128::from_bits(0xffff_u128 << 112),                    // -inf
+        f128::from_bits(1),                  // smallest subnormal
+        f128::from_bits(0x7fff_u128 << 112), // +inf
+        f128::from_bits(0xffff_u128 << 112), // -inf
         f128::from_bits((0x7fff_u128 << 112) | (1u128 << 111)), // qNaN
     ];
     // Dense sweep over the table-reduction range [0, 10.25] (k = 0..82), both
@@ -56,9 +56,13 @@ fn values() -> Vec<f128> {
     // PRNG spread across magnitudes and signs.
     let mut st: u64 = 0xa7a7_1357_9bdf_0246;
     for _ in 0..6000 {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let hi = st;
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let lo = st;
         // Bias exponent around 1.0 so most values exercise the reduction.
         let ef = (0x3f00 + (hi % 0x0300)) as u128;
@@ -78,7 +82,10 @@ fn f128_atan_matches_glibc() {
         let f = unsafe { ma::atanf128(x) }.to_bits();
         n += 1;
         if g != f {
-            mism.push(format!("atan({:#034x}): glibc={g:#034x} fl={f:#034x}", x.to_bits()));
+            mism.push(format!(
+                "atan({:#034x}): glibc={g:#034x} fl={f:#034x}",
+                x.to_bits()
+            ));
         }
     }
     assert!(

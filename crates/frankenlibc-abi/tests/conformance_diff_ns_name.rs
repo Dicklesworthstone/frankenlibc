@@ -45,10 +45,10 @@ fn ns_name_pton_ntop_match_glibc() {
         "com.",
         "single",
         "single.",
-        "foo\\046bar.com",   // \DDD escape for '.'
-        "host\\255.net",     // \DDD non-printable
-        "x\\.",              // escaped trailing dot -> not FQDN
-        "x\\\\.",            // escaped backslash then real dot -> FQDN
+        "foo\\046bar.com", // \DDD escape for '.'
+        "host\\255.net",   // \DDD non-printable
+        "x\\.",            // escaped trailing dot -> not FQDN
+        "x\\\\.",          // escaped backslash then real dot -> FQDN
         "sub.domain.example.org",
         "a.very.long.multi.label.name.example.test.",
         "UPPER.Case.Domain",
@@ -63,7 +63,8 @@ fn ns_name_pton_ntop_match_glibc() {
         let mut gw = [0u8; 256];
         let mut fw = [0u8; 256];
         let grc = g_pton(cn.as_ptr(), gw.as_mut_ptr(), gw.len());
-        let frc = unsafe { fl::ns_name_pton(cn.as_ptr(), fw.as_mut_ptr() as *mut c_void, fw.len()) };
+        let frc =
+            unsafe { fl::ns_name_pton(cn.as_ptr(), fw.as_mut_ptr() as *mut c_void, fw.len()) };
         if grc != frc {
             mismatches.push(format!("ns_name_pton({name:?}) rc: glibc={grc} fl={frc}"));
         }
@@ -80,11 +81,15 @@ fn ns_name_pton_ntop_match_glibc() {
             let mut gt = [0u8; 1024];
             let mut ft = [0u8; 1024];
             let grc2 = g_ntop(gw.as_ptr(), gt.as_mut_ptr() as *mut c_char, gt.len());
-            let frc2 = unsafe { fl::ns_name_ntop(gw.as_ptr() as *const c_void, ft.as_mut_ptr() as *mut c_char, ft.len()) };
+            let frc2 = unsafe {
+                fl::ns_name_ntop(
+                    gw.as_ptr() as *const c_void,
+                    ft.as_mut_ptr() as *mut c_char,
+                    ft.len(),
+                )
+            };
             if grc2 != frc2 {
-                mismatches.push(format!(
-                    "ns_name_ntop({name:?}) rc: glibc={grc2} fl={frc2}"
-                ));
+                mismatches.push(format!("ns_name_ntop({name:?}) rc: glibc={grc2} fl={frc2}"));
             }
             if grc2 >= 0 && frc2 >= 0 {
                 let gs = cstr_text(&gt);

@@ -18,10 +18,8 @@ fn main() {
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type SnFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
-        let gl: SnFn = std::mem::transmute::<*mut c_void, SnFn>(libc::dlsym(
-            h,
-            b"snprintf\0".as_ptr().cast(),
-        ));
+        let gl: SnFn =
+            std::mem::transmute::<*mut c_void, SnFn>(libc::dlsym(h, b"snprintf\0".as_ptr().cast()));
 
         let mut fl_buf = [0i8; 128];
         let mut gl_buf = [0i8; 128];
@@ -31,8 +29,12 @@ fn main() {
                 let fmt = concat!($fmt, "\0").as_ptr() as *const c_char;
                 let fln = $run_fl(fl_buf.as_mut_ptr(), fmt);
                 let gln = $run_gl(gl, gl_buf.as_mut_ptr(), fmt);
-                let fls = CStr::from_ptr(fl_buf.as_ptr()).to_string_lossy().into_owned();
-                let gls = CStr::from_ptr(gl_buf.as_ptr()).to_string_lossy().into_owned();
+                let fls = CStr::from_ptr(fl_buf.as_ptr())
+                    .to_string_lossy()
+                    .into_owned();
+                let gls = CStr::from_ptr(gl_buf.as_ptr())
+                    .to_string_lossy()
+                    .into_owned();
                 assert_eq!((fln, &fls), (gln, &gls), "snprintf {} mismatch", $label);
                 let iters = 3_000_000usize;
                 let t0 = Instant::now();
@@ -45,21 +47,39 @@ fn main() {
                     black_box($run_gl(gl, black_box(gl_buf.as_mut_ptr()), black_box(fmt)));
                 }
                 let g = t1.elapsed().as_nanos() as f64 / iters as f64;
-                println!("SNPRINTF {} fl={:.1}ns glibc={:.1}ns fl/glibc={:.3}x", $label, fl, g, fl / g);
+                println!(
+                    "SNPRINTF {} fl={:.1}ns glibc={:.1}ns fl/glibc={:.3}x",
+                    $label,
+                    fl,
+                    g,
+                    fl / g
+                );
             }};
         }
 
-        probe!("literal", "the quick brown fox jumps",
+        probe!(
+            "literal",
+            "the quick brown fox jumps",
             |b, f| snprintf(b, 128, f),
-            |gl: SnFn, b, f| gl(b, 128, f));
-        probe!("int", "%d",
+            |gl: SnFn, b, f| gl(b, 128, f)
+        );
+        probe!(
+            "int",
+            "%d",
             |b, f| snprintf(b, 128, f, 12345i32),
-            |gl: SnFn, b, f| gl(b, 128, f, 12345i32));
-        probe!("mixed", "x=%d y=%d z=%d",
+            |gl: SnFn, b, f| gl(b, 128, f, 12345i32)
+        );
+        probe!(
+            "mixed",
+            "x=%d y=%d z=%d",
             |b, f| snprintf(b, 128, f, 10i32, 20i32, 30i32),
-            |gl: SnFn, b, f| gl(b, 128, f, 10i32, 20i32, 30i32));
-        probe!("str", "hello, %s!",
+            |gl: SnFn, b, f| gl(b, 128, f, 10i32, 20i32, 30i32)
+        );
+        probe!(
+            "str",
+            "hello, %s!",
             |b, f| snprintf(b, 128, f, b"world\0".as_ptr() as *const c_char),
-            |gl: SnFn, b, f| gl(b, 128, f, b"world\0".as_ptr() as *const c_char));
+            |gl: SnFn, b, f| gl(b, 128, f, b"world\0".as_ptr() as *const c_char)
+        );
     }
 }
