@@ -17475,3 +17475,22 @@ toolchain is fixed.
   fix had to land in CORE, not just the ABI wrapper. First clean WIN after a string of frontier-wall REJECTs
   (strcoll/memccpy/regex/gcvt) — loss-scanning FRESH unbenched-in-full surfaces (strftime) still finds real
   levers. See [[strftime-eo-percent-modifier]].
+
+## cc-strptime-numeric-2026-07-12 — SURFACE (real 2.5-3.3x loss; distributed, deep fix deferred)
+
+- **THE LOSS (fresh profile, new strptime_bench).** strptime on NUMERIC date/time formats loses 2.5-3.3x to
+  glibc: datetime "%Y-%m-%d %H:%M:%S" 3.32x (fl 125ns), date "%Y-%m-%d" 2.57x, time "%H:%M:%S" 3.22x.
+  Byte-identical (tm fields asserted == glibc). NAMED "%a %b %d %Y" already WINS 0.23x (glibc's name lookup
+  is slow). Common surface (log/CSV/date parsing).
+- **CAUSE — distributed, not a hotspot.** Cost is ~linear in format elements (~20ns/directive, ~11ns/element
+  incl. literals) vs glibc's ~7ns/dir. `parse_digits`/`parse_digits_bounded` are tight (not it); the tax is
+  the per-element dispatch of the giant safe-Rust `match` (bounds-checked `fmt[fi]`/`input[si]`, the flags/
+  width probe + E/O check per directive, the literal-else branch per separator) — the exact opposite of the
+  strftime literal WIN, which was ONE clear slow path. NO clean one-liner.
+- **WHY the cheap levers don't apply.** (1) No strict fast path here, BUT the membrane lookups
+  (tracked_required_object_fits + 2x known_remaining) are FAST MISSES for untracked stack/system-malloc
+  pointers, so a strict path is within-noise (cf. gcvt). (2) The upfront `scan_c_string` input pass is a
+  second O(n) read but ~5-10ns on short inputs. The real lever is `get_unchecked` across the hot parse loop
+  (unsafe, risky, whole-loop) or a dispatch restructure — DEFERRED. See [[strptime-parse-vein]].
+- **CONTRAST.** strftime literal WIN (b823a5333) landed because it was a single slow path for a common input;
+  strptime's loss has no such single site. Lesson: loss-scanning finds real gaps, but not all are one-liners.
