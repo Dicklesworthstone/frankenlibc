@@ -6671,6 +6671,51 @@ pub unsafe extern "C" fn wcsnrtombs(
     let source_bound = known_remaining(s as usize).map(bytes_to_wchars);
     let max_wchars = source_bound.map(|bound| bound.min(nwc)).unwrap_or(nwc);
 
+    // Count-only mode (dst == NULL): SIMD-sum the UTF-8 byte length over the
+    // bounded char window instead of the scalar per-char `wcrtomb` count loop
+    // below (which only bulk-counted the ASCII prefix and paid `wcrtomb` per
+    // multibyte wchar — 2.2-4.6x LOSS vs glibc on non-Latin text). `max_wchars`
+    // already folds in `nwc` and the known source bound; a bounded SIMD NUL scan
+    // ends the window at the first NUL within it (NUL is neither counted nor
+    // consumed). Byte-identical: `wcs_encoded_len` returns the same total and the
+    // same EILSEQ (`None`) at the first unrepresentable wchar as the scalar loop,
+    // and the tracked-source-underrun EILSEQ (bd-2g7oyh) is reproduced explicitly.
+    // This is the same lever wcstombs/wcsrtombs count mode already ship. POSIX
+    // leaves `*src` untouched when dst is NULL, so we return without updating it.
+    if dst.is_null() {
+        let (count_len, terminated) = unsafe { scan_w_string(s as *const u32, Some(max_wchars)) };
+        // SAFETY: `count_len <= max_wchars` readable wide chars — the same window
+        // the scalar loop below reads (its first iteration forms an identical
+        // `remaining_wc == max_wchars` slice, and it stops at this NUL).
+        let window = unsafe { std::slice::from_raw_parts(s as *const u32, count_len) };
+        // Bulk-count the leading ASCII run (each 0x01..=0x7F wchar is exactly one
+        // byte, so the run length IS its byte count) with the cheap single-pass
+        // `wcs_ascii_prefix_len`, then SIMD length-sum only the multibyte
+        // remainder. This keeps the flagship pure-ASCII count a single scan
+        // (`wcs_encoded_len`'s 6 per-window threshold popcounts are ~10x that scan
+        // — routing all-ASCII through it regressed the 18x ASCII win to ~1.7x);
+        // byte-identical since `a` equals the prefix's exact byte total.
+        let a = wchar_core::wcs_ascii_prefix_len(window);
+        let counted = match wchar_core::wcs_encoded_len(&window[a..]) {
+            Some(bytes) => a + bytes,
+            None => {
+                // Unrepresentable wchar (surrogate / out-of-range): EILSEQ, exactly
+                // as the scalar `wcrtomb` step reports. `wcrtomb` sets errno itself;
+                // set it here since `wcs_encoded_len` does not.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                return usize::MAX;
+            }
+        };
+        if !terminated && source_bound.is_some_and(|bound| bound < nwc) {
+            // Consumed the whole known source without reaching a NUL and the source
+            // is shorter than nwc → the tracked-source-underrun EILSEQ (bd-2g7oyh),
+            // matching the post-loop check on the write path.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return usize::MAX;
+        }
+        return counted;
+    }
+
     while wchars_consumed < max_wchars {
         // SIMD-narrow the leading ASCII wide-char run (each 0x01..=0x7F wchar
         // encodes to exactly one byte), bounded by the source wchar window and
@@ -6682,25 +6727,19 @@ pub unsafe extern "C" fn wcsnrtombs(
         let remaining_wc = max_wchars - wchars_consumed;
         // SAFETY: `s` points to at least `remaining_wc` readable wide chars.
         let src_window = unsafe { std::slice::from_raw_parts(s as *const u32, remaining_wc) };
-        let (chars, bytes) = if dst.is_null() {
-            // Count mode: bulk-count the ASCII run (1 byte / wchar); multibyte is
-            // counted by the scalar `wcrtomb` step below.
-            let k = wchar_core::wcs_ascii_prefix_len(src_window);
-            (k, k)
-        } else {
-            // SAFETY: `dst` has >= `len` bytes; `written <= len`.
-            let dst_window = unsafe {
-                std::slice::from_raw_parts_mut(dst.add(written) as *mut u8, len - written)
-            };
-            // Encode the leading run of whole clean windows (ASCII + 2/3/4-byte,
-            // gated) via the shared SIMD lever `wcstombs`/`wcsrtombs` use, so
-            // contiguous multibyte runs vectorise, not just the ASCII prefix.
-            // `chars` (wide chars consumed) and `bytes` (output bytes written)
-            // differ for multibyte; the helper only emits whole validated windows
-            // bounded by the source window and `len - written`, so it stays
-            // byte-for-byte identical to the scalar `wcrtomb` loop.
-            wchar_core::wcs_simd_prefix(dst_window, src_window)
-        };
+        // Count mode (dst == NULL) returned above via the SIMD `wcs_encoded_len`
+        // fast path, so `dst` is non-null here — this is the write path.
+        // SAFETY: `dst` has >= `len` bytes; `written <= len`.
+        let dst_window =
+            unsafe { std::slice::from_raw_parts_mut(dst.add(written) as *mut u8, len - written) };
+        // Encode the leading run of whole clean windows (ASCII + 2/3/4-byte,
+        // gated) via the shared SIMD lever `wcstombs`/`wcsrtombs` use, so
+        // contiguous multibyte runs vectorise, not just the ASCII prefix.
+        // `chars` (wide chars consumed) and `bytes` (output bytes written)
+        // differ for multibyte; the helper only emits whole validated windows
+        // bounded by the source window and `len - written`, so it stays
+        // byte-for-byte identical to the scalar `wcrtomb` loop.
+        let (chars, bytes) = wchar_core::wcs_simd_prefix(dst_window, src_window);
         if chars > 0 {
             written += bytes; // one byte per ASCII wchar; 2/3/4 for multibyte
             wchars_consumed += chars;
