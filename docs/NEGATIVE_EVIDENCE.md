@@ -77,7 +77,7 @@ the full measured detail.
 
 ## ============================================================================================
 
-## 2026-07-11 (cod_fl / Codex) — SURFACE: indexed `getaddrinfo` named-service profile gather is a same-worker **1.47x median win**, but RCH had no admissible correctness-test slot; source is NOT shipped
+## 2026-07-11 (cod_fl / Codex) — WIN: indexed `getaddrinfo` named-service profile gather is correctness-cleared and shipped after a same-worker **1.47x median win**
 
 - **PROFILE-FIRST / DIFFERENT LANE.** Excluded cc-owned allocator/string and the just-landed adjacent
   trig seam. The remote-only resolver profile on worker `vmi1227854` found that
@@ -154,14 +154,17 @@ the full measured detail.
   lever also requires a strict-remote profile and median gate, so the autonomous chain is genuinely
   blocked. No retry, benchmark, local fallback, source edit, or second lever followed; the 1.47x
   candidate remains **SURFACED, NOT SHIPPED**.
-- **NEXT SAFE ACTION.** The isolated candidate remains in
-  `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-4e4f` (with prior copies preserved at
-  `/data/projects/.scratch/frankenlibc-cod-resolv-candidate-a4f0` and
-  `/data/projects/.scratch/frankenlibc-codex-resolv-20260711`). When a remote slot exists, run
-  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-abi --test resolv_abi_test --test conformance_diff_getaddrinfo --test conformance_diff_netdb_aliases -- --nocapture --test-threads=1`.
-  If green, run remote fmt/check/clippy for the touched ABI surface, re-run the same median row, then ship
-  the source + this row as a measured keep. If any parity gate fails, manually restore the source hunk and
-  retain this row as the rejection boundary. Do not re-profile or retry backend cloning/per-line parsing.
+- **2026-07-12 RESOLUTION / SHIPPED.** A strict-remote slot became available on the original worker
+  `vmi1227854`. The exact focused bundle cleared the blocker: `resolv_abi_test` **184 passed / 0 failed /
+  31 ignored**, `conformance_diff_getaddrinfo` **7/0**, and `conformance_diff_netdb_aliases` **1/0**.
+  The added regression exercised case-folded canonical/alias matches, canonical-plus-alias record
+  deduplication, original TCP/UDP backend order, and generation refresh after rewriting the services
+  backend. The exact Criterion row then reran remotely on the same worker: current p50 was **3170.000
+  ns/op** versus the surfaced pre-change **4223.594 ns/op**, or **0.751x time / 1.33x faster / -24.9%**.
+  The same-binary durable legacy scan arm measured **200504.549 ns/op**, confirming that the indexed path
+  was exercised. The source, focused regression, and this resolved evidence row are shipped together.
+- **CLOSED BOUNDARY.** Do not retry backend cloning, per-line parsing, or the all-record parsed-index walk
+  for named-service profile gathering. The retained scratch worktrees are historical evidence only.
 
 ## 2026-07-10 (cc_fl / BlackThrush) — ALLOCATOR frontier CONFIRMED by implementation: single-threaded slot-local stats shipped correctly but the win is **1.63 ns (sub-floor)** — the STATS cost is `apply_locked` field-updates, NOT the combiner CAS
 
@@ -17889,3 +17892,25 @@ SVID alphabet, 6-bit little-endian accumulation, truncate-u32-then-sign-extend).
 - ⚠️Full (hardened/test) path kept as-is (scan_c_string for membrane bounds); only the deployed fast path inlined.
 - ⚠️ENV: rch artifact transfer was flaky + target dir disk-cleaned mid-turn — copy the built binary to the
   scratchpad IMMEDIATELY post-build, then run, to beat the churn. See [[double-membrane-delegating-wrappers]].
+
+## cc-ecvt-alloc-elim-2026-07-12 — WIN (per-call Vec alloc → ecvt_into buffer write; ~1.6x, near glibc parity)
+
+Profiling ecvt/fcvt (1.58-2.33x slower than glibc) found the root cause: core `ecvt`/`fcvt` return a per-call
+`Vec<u8>` that the ABI copies into a static buffer and drops — glibc writes digits straight into its static
+buffer, no alloc. In the DEPLOYED dylib that Vec routes through fl's own interposed allocator (~130-250ns), a
+hidden cost ([[interposed-alloc-is-the-hidden-cost]]) the bench (system malloc) under-states. Added
+`ecvt_into(value, ndigit, out: &mut [u8]) -> (len, decpt, neg)` — a mechanical Vec→slice transform of the exact
+digit-gen logic; core `ecvt` is now a thin allocating wrapper. Wired the ABI `ecvt` to write straight into its
+static BUF via `ecvt_into` (no Vec, no copy), and added the `stdlib_membrane_fastpath()` bypass in the same pass.
+- **MEASURED (ecvt_alloc_bench, pinned taskset -c 63):** ecvt17 207→**115-140ns** (1.5-1.8x; 1.83x → 1.02-1.23x
+  vs glibc); ecvt6 182→**92-98ns** (2.33x → 1.17-1.23x). Near-parity. Bench uses system malloc so this is a
+  LOWER BOUND on the deployed win (interposed malloc is far dearer). fcvt UNCHANGED (see below).
+- **CORRECTNESS:** core --lib ecvt 11/11 (main digit path), conformance_ecvt_byte_stable 31/31,
+  conformance_diff_cvt_specials 1/1 (inf/nan/0), conformance_diff_ecvt_ndigit0 1/1. ⚠️conformance_diff_ecvt_rounding
+  is `#[ignore]`'d PRE-EXISTING (glibc-2.42 rewrote ecvt/fcvt to shortest-representation; fl rewrite pending,
+  bd-2g7oyh.101) — NOT this change.
+- ⚠️**fcvt DEFERRED (next lever):** same per-call Vec issue but MUCH more complex (negative-ndigit rounding,
+  sub-1-magnitude stripping, round_int_decimal, multiple `format!().into_bytes()`/Vec sources). Needs an
+  `fcvt_into` with careful path-by-path buffer transform + the ecvt_rounding gate is ignored so lean on
+  conformance_diff_ecvt_ndigit0 + core unit tests. gcvt likely routes through these too. See
+  [[double-membrane-delegating-wrappers]], [[cvt-family-and-perf-frontier]].

@@ -31,7 +31,7 @@ pub use conversion::{
     atof, atoi, atol, atoll, strtod, strtof, strtoimax, strtol, strtoll, strtoul, strtoull,
     strtoumax,
 };
-pub use ecvt::{ecvt, fcvt, gcvt};
+pub use ecvt::{ecvt, ecvt_into, fcvt, gcvt};
 pub use env::{entry_matches, entry_value, valid_env_name, valid_env_value};
 pub use exit::{atexit, exit, run_atexit_handlers};
 pub use math::{

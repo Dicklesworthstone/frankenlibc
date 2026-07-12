@@ -4381,22 +4381,31 @@ pub unsafe extern "C" fn ecvt(
     // Static buffer (matching glibc's thread-unsafe static buffer).
     static mut BUF: [u8; 384] = [0; 384];
 
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
-        unsafe {
-            let p = std::ptr::addr_of_mut!(BUF);
-            (*p)[0] = 0;
-            return p as *mut u8 as *mut c_char;
+    // Deployed fast path: no pointer arg → always-Allow → skip decide+observe
+    // (like drand48/l64a). `profile` is Some only on the full (test) path.
+    let profile = if runtime_policy::stdlib_membrane_fastpath() {
+        None
+    } else {
+        let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+            unsafe {
+                let p = std::ptr::addr_of_mut!(BUF);
+                (*p)[0] = 0;
+                return p as *mut u8 as *mut c_char;
+            }
         }
-    }
+        Some(decision.profile)
+    };
 
-    let (digits, dp, neg) = frankenlibc_core::stdlib::ecvt(value, ndigit);
     unsafe {
         let p = std::ptr::addr_of_mut!(BUF);
         let buf = &mut *p;
-        let len = digits.len().min(383);
-        buf[..len].copy_from_slice(&digits[..len]);
+        // Write digits straight into BUF (reserve the last byte for the NUL) via
+        // ecvt_into — no per-call Vec (which in the deployed dylib routes through
+        // the interposed allocator). Byte-identical to the old core::ecvt→copy.
+        let (len, dp, neg) =
+            frankenlibc_core::stdlib::ecvt_into(value, ndigit, &mut buf[..383]);
         buf[len] = 0;
         if !decpt.is_null() {
             *decpt = dp;
@@ -4404,7 +4413,9 @@ pub unsafe extern "C" fn ecvt(
         if !sign.is_null() {
             *sign = if neg { 1 } else { 0 };
         }
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
+        if let Some(pr) = profile {
+            runtime_policy::observe(ApiFamily::Stdlib, pr, 8, false);
+        }
         p as *mut u8 as *mut c_char
     }
 }

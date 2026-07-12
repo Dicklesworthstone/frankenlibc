@@ -102,31 +102,57 @@ fn round_int_decimal(s: &[u8], drop: usize, has_fraction: bool) -> Vec<u8> {
 /// `decpt` indicates where the decimal point goes relative to the start.
 /// For example, 123.456 with ndigit=6 gives digits="123456", decpt=3.
 pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
+    // Thin allocating wrapper over `ecvt_into` for callers wanting an owned Vec.
+    // The hot ABI path uses `ecvt_into` directly with a static buffer (no alloc).
+    let mut buf = [0u8; MAX_LEGACY_CVT_DIGITS + 8];
+    let (len, decpt, negative) = ecvt_into(value, ndigit, &mut buf);
+    (buf[..len].to_vec(), decpt, negative)
+}
+
+/// Digit-generating core of [`ecvt`] that writes into a caller-provided buffer
+/// instead of allocating a `Vec` — glibc writes digits straight into its static
+/// buffer, so the per-call Vec was pure overhead (and, in the deployed dylib,
+/// routes through the interposed allocator). Writes up to `min(ndigit,
+/// MAX_LEGACY_CVT_DIGITS, out.len())` digit bytes into `out` and returns
+/// `(len, decpt, negative)`. Byte-identical to the old Vec-returning `ecvt`.
+pub fn ecvt_into(value: f64, ndigit: i32, out: &mut [u8]) -> (usize, i32, bool) {
     let negative = value.is_sign_negative() && !value.is_nan();
     let abs_val = value.abs();
 
     if !value.is_finite() {
-        return nonfinite_cvt(value);
+        // Mirror `nonfinite_cvt`: sign + "inf"/"nan", decpt 0, negative == false.
+        let mut len = 0usize;
+        if value.is_sign_negative() && len < out.len() {
+            out[len] = b'-';
+            len += 1;
+        }
+        let body: &[u8] = if value.is_nan() { b"nan" } else { b"inf" };
+        for &b in body {
+            if len < out.len() {
+                out[len] = b;
+                len += 1;
+            }
+        }
+        return (len, 0, false);
     }
 
     let ndigit = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
 
     if abs_val == 0.0 {
         // Zero: `ndigit` zero digits (none for ndigit==0) with decpt=1.
-        return (vec![b'0'; ndigit], 1, negative);
+        let len = ndigit.min(out.len());
+        out[..len].fill(b'0');
+        return (len, 1, negative);
     }
 
     if ndigit == 0 {
-        // No significant digits requested: glibc returns an empty digit string
-        // but still reports where the decimal point falls — decpt =
-        // floor(log10(|value|)) + 1, the UNROUNDED magnitude (so ecvt(9.99,0)
-        // gives decpt 1, NOT 2). (Old behavior hardcoded decpt 0 — bd-2g7oyh.101.)
-        return (Vec::new(), decimal_exponent(abs_val) + 1, negative);
+        // No significant digits requested: empty digit string, decpt =
+        // floor(log10(|value|)) + 1 (UNROUNDED magnitude, bd-2g7oyh.101).
+        return (0, decimal_exponent(abs_val) + 1, negative);
     }
 
-    // Use Rust's formatting to get digits into a stack buffer (byte-identical
-    // to the old heap `format!`, no per-call allocation; `heap` stays unused on
-    // the common path and only materializes on the impossible >384-byte overflow).
+    // Use Rust's formatting to get digits into a stack buffer (`heap` only
+    // materializes on the impossible >384-byte overflow).
     use core::fmt::Write as _;
     let prec = ndigit.saturating_sub(1);
     let mut sb = StackStr::new();
@@ -137,11 +163,8 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
         let _ = write!(heap, "{abs_val:.prec$e}");
         heap.as_str()
     };
-    // Parse the scientific notation: "d.dddde+dd". The exponent is accumulated
-    // inline into an i32 (no per-call `String` heap allocation — glibc writes into
-    // a static buffer with no alloc, so the old `exp_str` String was a pure
-    // overhead vs glibc; byte-identical result, same digits/exponent arithmetic).
-    let mut digits = Vec::with_capacity(ndigit);
+    // Parse "d.dddde+dd" straight into `out`, accumulating the exponent inline.
+    let mut len = 0usize;
     let mut exp_mag: i32 = 0;
     let mut in_exp = false;
     let mut exp_sign: i32 = 1;
@@ -159,23 +182,22 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
             in_exp = true;
         } else if c == b'.' {
             // skip decimal point
-        } else if c.is_ascii_digit() {
-            digits.push(c);
+        } else if c.is_ascii_digit() && len < out.len() && len < ndigit {
+            out[len] = c;
+            len += 1;
         }
     }
 
     let exponent = exp_mag * exp_sign;
 
-    // Trim or pad to exactly ndigit digits.
-    while digits.len() < ndigit {
-        digits.push(b'0');
+    // Pad to exactly ndigit digits (the loop above already truncated at ndigit).
+    while len < ndigit && len < out.len() {
+        out[len] = b'0';
+        len += 1;
     }
-    digits.truncate(ndigit);
 
     // decpt = exponent + 1 (position of decimal point from left).
-    let decpt = exponent + 1;
-
-    (digits, decpt, negative)
+    (len, exponent + 1, negative)
 }
 
 /// `fcvt` — convert double to string in fixed-point form.
