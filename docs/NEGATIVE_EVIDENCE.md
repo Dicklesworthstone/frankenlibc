@@ -17995,3 +17995,19 @@ test builds retained the full path.
 - **DECISION / DO-NOT-RETRY:** reverted the source and benchmark additions; ledger only. Do not retry the
   membrane bypass alone for this four-token hit. The residual is in bounded segment/token scanning and
   candidate comparison, not the common-path decision bookkeeping.
+
+## cc-gcvt-alloc-elim-CONFIRMED-2026-07-12 — WIN measured (after the peer-WIP revert unblocked the abi build)
+
+The cc-gcvt-alloc-elim-DONE change (render_gcvt_into) is now BENCHED (the peer's broken getsubopt WIP that
+blocked the abi lib was reverted in 3969df102, restoring a buildable main).
+- **MEASURED (gcvt_alloc_bench, pinned taskset -c 63, stable x2):** g_pi17 ~257→**142ns** (2.37x→**1.24x** vs
+  glibc, ~1.8x self); g_pi6 ~221→**112ns** (2.55-3.18x→**1.61x**, ~2.0x self); g_big **142ns** vs glibc 220 =
+  **0.64x, BEATS glibc** (was ~1.0x). The per-call String is gone on the common path.
+- **CORRECTNESS:** gcvt_differential_fuzz vs live glibc 1/1 + core --lib ecvt 11/11 (gcvt_matches_glibc_reference_outputs
+  main path). **cvt-family alloc-elim FULLY COMPLETE: ecvt (1.6x), fcvt (1.4x), gcvt (~1.8-2.0x) all shipped.**
+- ⚠️**INCIDENT (lesson):** committing my core-only gcvt change, a prior `git stash pop` of a concurrent peer's
+  getsubopt WIP had RE-STAGED their files, so `git add <mine>` + `git commit` accidentally published their broken
+  (E0506) WIP → broke main (edb1d29fb). Caught via `git show --stat HEAD`, reverted their 2 files to ce1feaca1
+  (3969df102). **LESSON: after `stash pop`, the index may hold the popped changes STAGED — use `git commit -- <paths>`
+  (pathspec) or `git reset` first, and ALWAYS `git show --stat HEAD` to verify commit scope.** Peer WIP preserved
+  in edb1d29fb for recovery. See [[frankenlibc-tooling-hazards]].
