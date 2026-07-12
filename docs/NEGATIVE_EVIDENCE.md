@@ -17128,3 +17128,27 @@ Byte-identical (conformance_diff_wchar 44/0, wcsrtombs_differential_probe 2/0, n
 follow-on: wcsnrtombs count (interwoven with its dst loop + n/NUL bound); mbs* DECODE count (harder).
 The wide→multibyte ENCODE vein is now comprehensively mined: write paths (wcstombs/wcsrtombs/wcsnrtombs)
 AND count paths (wcstombs/wcsrtombs) all SIMD + clean.
+
+## cc-iconv-sbcs-utf8-2026-07-11 — SURFACE (profile-first killed a decode lever, characterized the encode)
+
+Profiled the SBCS <-> UTF-8 surface (the most common Western-European iconv) via a dlmopen probe,
+since the convert loop has NO 1->multibyte fast path for SBCS->UTF-8 high bytes (fast_ascii is 1->1,
+sb_translation byte->byte). Both directions MEASURED (remote, p50, 1KiB all-high-byte source):
+
+- **SBCS -> UTF-8 decode: fl already WINS big — NO lever.** koi8r 0.20x, iso88595 0.23x, latin1 0.25x
+  (fl 3-5x FASTER than glibc). glibc's gconv is slow here; fl's per-char decode+encode already beats it.
+  Do NOT add a SIMD SBCS->UTF-8 fast path — it would optimize an already-won path.
+- **UTF-8 -> SBCS encode: parity-ish, ALREADY has a SIMD tier.** utf8_to_koi8r 0.736x WIN,
+  utf8_to_iso88595 0.963x parity, utf8_to_latin1 **1.267x LOSS**. The convert loop (mod.rs ~46605) has a
+  SIMD 2-byte-UTF-8 decode window + a SCALAR per-char `SingleByteReverse::lookup` (O(1) direct-page). The
+  scalar 8x reverse-lookup is the residual cost. Only latin1 (identity reverse) clearly loses.
+- **POTENTIAL LEVER (marginal + complex, NOT taken):** SIMD-gather the reverse lookup — flatten
+  `direct_page_byte` to `[u8; 8*256]`, gather `slot*256 + (cp&0xFF)` for 8 lanes, scalar-fallback lanes
+  whose gathered byte is 0 (undefined / high_cp binary-search tail). Would push latin1 toward parity and
+  trim the others. REJECTED for now: the gain is mixed/small (only latin1 clearly loses, by ~27%), and
+  the change is a delicate 2D gather + representability fallback inside the iconv convert loop's strict
+  EILSEQ-vs-E2BIG ordering — high byte-identity risk for a marginal win. A targeted latin1-only path
+  (cp<0x100 => byte=cp SIMD-narrow) is narrower still. RETRY only if UTF-8->SBCS encode becomes a
+  measured hot path or a quiet worker allows a careful multi-turn swing.
+- **NOTE:** `SingleByteReverse` reverse lookup is already O(1) (direct_page_slot/byte, 8 pages) — the old
+  ledger "binary search bottleneck" (iconv-nonascii-perf-gap memory) is STALE / closed.
