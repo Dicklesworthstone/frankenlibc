@@ -18011,3 +18011,23 @@ blocked the abi lib was reverted in 3969df102, restoring a buildable main).
   (3969df102). **LESSON: after `stash pop`, the index may hold the popped changes STAGED — use `git commit -- <paths>`
   (pathspec) or `git reset` first, and ALWAYS `git show --stat HEAD` to verify commit scope.** Peer WIP preserved
   in edb1d29fb for recovery. See [[frankenlibc-tooling-hazards]].
+
+## cc-printf-float-alloc-2026-07-12 — SCOPED (measured 2-4.5x gap; printf %g/%e String-alloc = big hot lever)
+
+Applied the "core returns String/Vec = per-call alloc" lesson to printf floats (the stdio read path is already
+_into-optimized). Core `format_float` writes into the printf accumulator, but its GENERAL path does
+`let body = format_g/format_e(...)` — each returns a `String` — then `buf.extend_from_slice(body.as_bytes())`
+and drops it. `%f` has integer/dyadic fast paths that skip the String; `%e`/`%g` ALWAYS take the general String
+path (deployed→interposed malloc per conversion).
+- **MEASURED (sprintf_float_bench, pinned taskset -c 63, stable x2):** %.15g fl **443ns**/glibc 99 = **4.49x**;
+  %.15e fl **324ns**/glibc 98 = **3.32x**; %.10f fl **173ns**/glibc 84 = **2.05x**. printf is one of the hottest
+  libc fns — this is a big lever.
+- **TWO cost sources:** (1) %g/%e per-call String (format_g→render_pct_g / format_e→render_pct_e, both alloc
+  Strings; format_g adds uppercase/alt_form/special-case allocs). Eliminating it should bring %g 4.5x→~2x. (2) A
+  ~2x BASE printf-pipeline overhead even on fast-pathed %f (String-free) — separate/harder (spec parse + ABI
+  snprintf wrapper + buffer mgmt).
+- **DEFERRED (not a rushed end-of-turn job):** the fix is a multi-fn refactor — `render_pct_g_into`/
+  `render_pct_e_into` (buffer-writing, like render_gcvt_into) + `format_g_into`/`format_e_into` (uppercase/
+  alt_form/special cases) + a `format_float` width==0 fast path (mirrors the existing %f fast path) that appends
+  straight into `buf`. Gate-verifiable via the printf conformance/differential tests. Kept `sprintf_float_bench`.
+  See [[printf-scanf-perf-campaign]], [[cvt-family-and-perf-frontier]], [[interposed-alloc-is-the-hidden-cost]].
