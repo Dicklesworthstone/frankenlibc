@@ -17641,3 +17641,25 @@ already carries desc32/desc64 across 2047..65537 and stayed green).
   (later-added) stdlib fixed-width fallback for width 8 — its wins were measured vs glibc / the in-house
   pdqsort, not vs `std_sort_unstable_fixed_width`. Do NOT extend radix (up/down/desc) without an
   FFI-realistic vs-stdlib-fallback A/B. See [[qsort-i64-fastlane]].
+
+## cc-qsort-radix-vs-stdlib-audit-2026-07-12 — NEGATIVE/INCONCLUSIVE (radix lane is NOT a clean removable regression)
+
+Followed the cc-qsort-radix-descending corollary: is the shipped ASCENDING integer radix lane actually faster
+than the stdlib fixed-width fallback (`std_sort_unstable_fixed_width`) it preempts for width {2,4,8}? Built
+`qsort_radix_vs_stdlib_bench` isolating radix (`__bench_integer_radix_attempt`) vs stdlib `[u8;N]`
+`sort_unstable_by` vs glibc, SAME data, SAME extern-C raw-pointer comparator (the deployed `compare` closure —
+NOT from_ne_bytes/try_into, which inflates the higher-comparison arm and inverted an early run).
+- **radix/stdlib (this run, FFI comparator):** w2 rand 0.22-0.23x / dups 0.56-0.76x (radix WINS — matches the
+  radix16 claim); w4 rand 0.37-0.48x (WINS) but sorted 5.8-11.7x (LOSES); w8 rand 0.88-1.00x (parity), dups
+  1.19-1.64x, sorted 5.06-15.48x (LOSES). glibc/stdlib 2.4-24x throughout (stdlib fixed-width beats glibc big).
+- **ROBUST signal:** radix WINS on random narrow-width (w2/w4), LOSES badly on SORTED/nearly-sorted every width
+  (pdqsort is O(n) on runs; LSD radix is always O(n·k) cache-missing scatter), and loses on wide-key dups.
+- **⚠️MEASUREMENT UNSTABLE:** an earlier same-methodology run put w8 rand radix/stdlib at 2.4-3.3x; this run
+  0.88-1.00x. These are absolute timings on a load-varying box — the *magnitude* is not trustworthy from a
+  single run. Within-run cross-distribution ratios (sorted-loss) are self-consistent and trustworthy.
+- **VERDICT: do NOT disable/narrow the radix lane on this evidence.** It genuinely wins on random narrow-width
+  data, so removal would regress those; the losses are on sorted/dups/wide where a confident threshold change
+  needs a LOAD-CONTROLLED multi-run min-of-N study (isolated core, taskset, ≥5 runs) — a deep multi-turn task,
+  not a single-turn lever. Diagnostic bench kept for that follow-up. No code change this turn.
+- ⚠️Correct baseline for ANY qsort lever = stdlib fixed-width fallback with a raw-pointer extern-C comparator;
+  glibc overstates wins (its own sort is 2-24x slower than fl's stdlib fallback). See [[qsort-i64-fastlane]].
