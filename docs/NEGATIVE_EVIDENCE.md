@@ -17663,3 +17663,28 @@ NOT from_ne_bytes/try_into, which inflates the higher-comparison arm and inverte
   not a single-turn lever. Diagnostic bench kept for that follow-up. No code change this turn.
 - ⚠️Correct baseline for ANY qsort lever = stdlib fixed-width fallback with a raw-pointer extern-C comparator;
   glibc overstates wins (its own sort is 2-24x slower than fl's stdlib fallback). See [[qsort-i64-fastlane]].
+
+## cc-fresh-loss-scan-unprofiled-2026-07-12 — NEGATIVE (unprofiled hot candidates all already-optimal)
+
+After the qsort vein was mined (unsigned+desc comparison-lane WINS; radix-desc REJECT; radix-vs-stdlib audit
+INCONCLUSIVE), a profile-first pass over the June-13 glibc-baseline confirmed every RESIDUAL fl-slower profile
+is a documented wall (pow/powf fusion 1.74-1.90x parked; memcmp/memchr/strchr/strncmp/memmove 1.16-1.48x
+AVX2-codegen ceiling — don't-rehammer; log10f/log2f/erf/erfc transcendental; strtol_short 1.15x wrapper-setup).
+Spot-checked UNPROFILED hot candidates for a fresh gap — ALL already optimal, DON'T re-check:
+- **ffs/ffsl/ffsll** (core stdlib/math.rs) — `trailing_zeros()+1` with a zero-guard = one `tzcnt`/`bsf`. Optimal.
+- **strxfrm** (string_abi.rs:8259) — strict fast path: `scan_c_string` SWAR scan + `copy_nonoverlapping`,
+  explicitly avoids the core's redundant second strlen. Optimal.
+- **wcsxfrm** (wchar_abi.rs:5807) — direct `wcslen` + `wide_copy_n` SIMD (no membrane path). Only theoretical
+  flaw = one EXPORTED-`wcslen` PLT hop per call; but `cc-strcoll-plt-hop` already measured a single PLT hop
+  NEUTRAL/within-noise, so this is a confirmed NON-lever (a wcsxfrm→core-scanner reroute would be unmeasurable).
+- **getdelim/getline** (stdio_abi.rs:8024/8110) + `read_until_delim` (core stdio/file.rs) — ST write-cache
+  (lock-free), single registry lock, thread-local scratch reuse, SIMD `memchr` delimiter scan. Optimal.
+- **strtol** (stdlib_abi.rs:1349) — strict membrane bypass (`stdlib_membrane_fastpath`) + `parse_strtol_c_string_fast`
+  direct-parse (documented ~28→12ns); core has 1-2-digit fast path + SWAR 8-digit. Residual 1.15x = irreducible
+  wrapper setup (null/fastpath/endptr/errno), NOT a lever.
+**VERDICT:** clean single-turn lever surface is EXHAUSTED for the compute/parse/format/search/stdio-line
+surface. Remaining EV is ALL deep multi-turn levers requiring explicit scope: (1) fully-fused single-routine
+pow (bd-e4jb7k, ARM optimized-routines inline-exp2-minimax); (2) hand-AVX2 intrinsic kernels to close the
+memcmp/memchr/strchr small-n codegen ceiling (unsafe, ~1.2-1.5x); (3) stdio MT registry-lock shard (authorized,
+scoped); (4) the qsort radix-vs-stdlib-fixed-width load-controlled study. See [[qsort-i64-fastlane]],
+[[cc-lane-structural-frontier-2026-07-10]], [[perf-saturated-regex-singlepass-done]].
