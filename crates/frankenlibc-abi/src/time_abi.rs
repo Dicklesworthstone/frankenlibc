@@ -522,8 +522,7 @@ unsafe fn parse_vdso(
             clock_gettime =
                 Some(unsafe { core::mem::transmute::<usize, VdsoClockGettimeFn>(addr) });
         } else if clock_getres.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_clock_getres") } {
-            clock_getres =
-                Some(unsafe { core::mem::transmute::<usize, VdsoClockGetresFn>(addr) });
+            clock_getres = Some(unsafe { core::mem::transmute::<usize, VdsoClockGetresFn>(addr) });
         } else if gettimeofday.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_gettimeofday") } {
             gettimeofday = Some(unsafe { core::mem::transmute::<usize, VdsoGettimeofdayFn>(addr) });
         } else if time.is_none() && unsafe { vdso_cstr_eq(name, b"__vdso_time") } {
@@ -1224,6 +1223,29 @@ pub unsafe extern "C" fn strftime(
         return 0;
     }
     let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
+
+    // Pure-literal format (no conversion): copy it straight to the output, skipping
+    // the `read_tm` + `read_tm_zone` struct reads and the format loop — none of the
+    // tm fields are used, and glibc likewise never dereferences tm for a literal
+    // format. Mirrors the strict fast path's literal shortcut; byte-identical to
+    // running `format_strftime` on a `%`-free format (same copy, same
+    // `fmt_len >= maxsize` truncation-to-0). This is the full/hardened path's
+    // analogue: without it a literal format paid ~14x glibc (tm reads dominate when
+    // there is no conversion work to amortise them).
+    if !fmt.contains(&b'%') {
+        if fmt_len >= maxsize {
+            runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
+            return 0;
+        }
+        // SAFETY: validated `s` writable for `maxsize` bytes; `fmt_len < maxsize`
+        // leaves room for the NUL terminator.
+        unsafe {
+            std::ptr::copy_nonoverlapping(format as *const u8, s as *mut u8, fmt_len);
+            *(s as *mut u8).add(fmt_len) = 0;
+        }
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 6, false);
+        return fmt_len;
+    }
 
     // Read the broken-down time. strftime additionally reads tm_zone for %Z
     // (its contract permits dereferencing it, unlike mktime/timegm).

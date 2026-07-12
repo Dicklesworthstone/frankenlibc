@@ -474,6 +474,20 @@ fn iso_week(bd: &BrokenDownTime) -> (i64, i32) {
 /// `%X` preferred time, `%y` year (2-digit), `%Y` full year, `%z` timezone offset,
 /// `%Z` timezone name, `%%` literal percent.
 pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
+    // Pure-literal format (no `%` directive): a direct copy, skipping the four
+    // specifier fast-path probes AND the per-char general loop below — which
+    // together cost ~14-18x glibc on a literal-only format (e.g. "ABCDEFGH"),
+    // where glibc is essentially a memcpy. Byte-identical to running the general
+    // loop on a `%`-free format: same bytes, same `buf[len] = 0` NUL, same
+    // truncate-to-0 when the result plus terminator does not fit (`len >= buf.len()`).
+    if !fmt.contains(&b'%') {
+        if fmt.len() >= buf.len() {
+            return 0;
+        }
+        buf[..fmt.len()].copy_from_slice(fmt);
+        buf[fmt.len()] = 0;
+        return fmt.len();
+    }
     if let Some(n) = format_strftime_hms(fmt, bd, buf) {
         return n;
     }
@@ -786,23 +800,23 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                     if !needs_case && fits {
                         push_str!(src);
                     } else {
-                    let mut tmp: Vec<u8> = src.to_vec();
-                    if needs_case {
-                        tmp.make_ascii_uppercase();
-                    }
-                    if let Some(w) = width_override {
-                        if tmp.len() < w {
-                            let padc = if matches!(pad_override, Some(Pad::Zero)) {
-                                b'0'
-                            } else {
-                                b' '
-                            };
-                            for _ in 0..(w - tmp.len()) {
-                                push!(padc);
+                        let mut tmp: Vec<u8> = src.to_vec();
+                        if needs_case {
+                            tmp.make_ascii_uppercase();
+                        }
+                        if let Some(w) = width_override {
+                            if tmp.len() < w {
+                                let padc = if matches!(pad_override, Some(Pad::Zero)) {
+                                    b'0'
+                                } else {
+                                    b' '
+                                };
+                                for _ in 0..(w - tmp.len()) {
+                                    push!(padc);
+                                }
                             }
                         }
-                    }
-                    push_str!(&tmp);
+                        push_str!(&tmp);
                     }
                 }
             }};
