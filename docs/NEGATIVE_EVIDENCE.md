@@ -17769,8 +17769,8 @@ Fix = delegate to `explicit_bzero(dest, len)` after the (unchanged) destlen over
 - **CORRECTNESS:** byte-identical for all valid inputs — both zero exactly `len` bytes; the zeroing primitive
   (`raw_memset_bytes`) is golden-gated (conformance_diff_memset.rs, 1568 cases); the `__chk_fail` overflow path
   is UNCHANGED; inline all-zero assert green for 16/64/256/1024/4096/65536. Only divergence: null dest becomes a
-  safe no-op (bzero null-guards) vs the old loop's crash — benign. ⚠️Formal `fortify_abi_test` gate could not be
-  re-run THIS turn (rch fleet build stuck ~stalled); the change is trivially correct + inline-verified, but
-  re-confirm `cargo test -p frankenlibc-abi --test fortify_abi_test` when rch recovers.
+  safe no-op (bzero null-guards) vs the old loop's crash — benign. ✅Formal `fortify_abi_test` gate CONFIRMED
+  green: `explicit_bzero_chk_{zeroes,partial,overflow_aborts_child_process}` 3/3 pass in 1.1s (the overflow
+  test's "buffer overflow detected: terminated" is the expected `__chk_fail` abort in a forked child).
 - Extends [[abi-raw-mem-byteloops]] into the fortify layer. Other `__*_chk` fns already delegate to the fast
   exported ops (memcpy/memmove/memset/strcpy) — this was the one reimplementing a byte loop.
