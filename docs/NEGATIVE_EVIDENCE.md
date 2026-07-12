@@ -17417,3 +17417,23 @@ toolchain is fixed.
   A size-tiered hybrid (fused for small, memchr+memcpy for >~16KB) COULD close the huge-n case but large-n
   memccpy is rare and it needs threshold tuning — deferred, low value. ⚠️Corrects the stale
   [[abi-raw-mem-byteloops]] claim "memccpy already SIMD via core (NOT a gap)": it IS SIMD but still loses.
+
+## cc-regex-nosub-closure-match-2026-07-12 — REJECT (real 12x loss, but routing isn't the bottleneck)
+
+- **THE LOSS (found by loss-scan).** `regexec` (REG_NOSUB) on a closure-heavy pattern `a*a*a*a*a*a*a*a*b`
+  against a MATCHING short input (39 'a'+ 'b') loses ~10.9-12.5x to glibc (fl ~1500-1925ns, glibc ~140-162ns).
+  All other regex arms WIN (no-match 0.16-0.18x via required-byte fast-reject; substr 0.46x; submatch 0.17x).
+  Every OTHER scanned bench wins: sort 0.19-0.45x, all others prior.
+- **HYPOTHESIS + FIX (measured, byte-identical, REJECTED).** For REG_NOSUB, `regex_is_match_bytes` routes
+  `prefilter`-bearing patterns to the O(n*m) slot-producing `execute()` (leftmost_start+run_from) instead of
+  the exact `any_match` lazy-DFA. Rerouting prefilter-only patterns (no literal_prefix/anchored/dotstar) to
+  `any_match`: conformance_diff_regex_nosub 8/0, conformance_diff_regex 1/0, stacked_quant 2/0 (byte-ident).
+  But the bench stayed ~10.9x — no win.
+- **ROOT CAUSE (why the fix didn't help).** `any_match_dfa` does NOT hit its 4096-state cap here (the 8 `a*`
+  converge to a few closure states), but for a 40-BYTE input the per-call lazy-DFA BUILD overhead — fresh
+  `HashMap` interner + a `dfa_frontier` Vec allocation per new state + `trans` table resize — dominates, so
+  any_match is ~as slow as the NFA. BOTH fl engines (DFA + NFA) are ~10x glibc on SHORT closure-heavy inputs;
+  the routing was never the bottleneck.
+- **REAL FIX (deferred, deeper):** reduce the DFA-build allocation (reuse interner/scratch across calls, or
+  precompute the DFA onto `CompiledRegex` at compile time so short matches skip the build). Reverted the
+  routing change; kept in-code NOTE. Related: [[regex-perf-vein]], [[perf-saturated-regex-singlepass-done]].

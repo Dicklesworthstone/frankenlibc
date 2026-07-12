@@ -387,7 +387,9 @@ fn leading_literal_prefix(ast: &Ast) -> Vec<u8> {
 fn is_all_literal(ast: &Ast) -> bool {
     match ast {
         Ast::Literal(_) => true,
-        Ast::Concat(items) => !items.is_empty() && items.iter().all(|it| matches!(it, Ast::Literal(_))),
+        Ast::Concat(items) => {
+            !items.is_empty() && items.iter().all(|it| matches!(it, Ast::Literal(_)))
+        }
         _ => false,
     }
 }
@@ -399,7 +401,10 @@ fn is_all_literal(ast: &Ast) -> bool {
 /// or any non-literal tail.
 fn anchored_literal_bytes(ast: &Ast) -> Option<Vec<u8>> {
     let Ast::Concat(items) = ast else { return None };
-    if !matches!(items.first(), Some(Ast::Anchor(AnchorKind::Start { line: false }))) {
+    if !matches!(
+        items.first(),
+        Some(Ast::Anchor(AnchorKind::Start { line: false }))
+    ) {
         return None;
     }
     let mut out = Vec::with_capacity(items.len());
@@ -428,7 +433,11 @@ fn lit_dotstar_lit_bytes(ast: &Ast) -> Option<(Vec<u8>, Vec<u8>)> {
     }
     // The `.*`: Repeat over AnyChar, min 0, unbounded.
     match items.get(i) {
-        Some(Ast::Repeat { inner, min: 0, max: None }) if matches!(**inner, Ast::AnyChar) => i += 1,
+        Some(Ast::Repeat {
+            inner,
+            min: 0,
+            max: None,
+        }) if matches!(**inner, Ast::AnyChar) => i += 1,
         _ => return None,
     }
     let mut suffix = Vec::new();
@@ -3826,6 +3835,17 @@ pub fn regex_is_match_bytes(compiled: &CompiledRegex, input: &[u8], eflags: i32)
         return false;
     }
 
+    // NOTE (2026-07-12, cc-regex-nosub-closure-match REJECT): a closure-heavy nosub
+    // pattern with a `prefilter` but no literal prefix (`a*a*..a*b`) loses ~12x glibc
+    // on a MATCHING short input once the required-byte fast-reject passes — it routes
+    // here to `regex_exec_byte_slots` (O(n*m) leftmost_start+run_from). Rerouting
+    // prefilter-only patterns to the exact `any_match` DFA below was byte-identical
+    // (conformance_diff_regex_nosub 8/0) but did NOT win: for a 40-byte input the
+    // lazy-DFA BUILD overhead (per-call HashMap interner + per-state frontier Vec
+    // allocations) dominates, so any_match is ~as slow as the NFA path — both fl
+    // engines are ~10x glibc on SHORT closure-heavy inputs. The real fix is reducing
+    // the DFA-build allocation (reusable interner/scratch) or precompiling it onto
+    // CompiledRegex — deeper, deferred. Kept the original routing.
     if compiled.backtrack_ast.is_some()
         || compiled.literal_prefix.is_some()
         || compiled.prefilter.is_some()
@@ -3992,7 +4012,10 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
         compiled.icase,
         compiled.literal_is_whole,
         compiled.anchored_literal.as_deref(),
-        compiled.dotstar_lits.as_ref().map(|(p, s)| (p.as_slice(), s.as_slice())),
+        compiled
+            .dotstar_lits
+            .as_ref()
+            .map(|(p, s)| (p.as_slice(), s.as_slice())),
     );
 
     // REG_NOSUB fast path: only the boolean match/no-match decision is
