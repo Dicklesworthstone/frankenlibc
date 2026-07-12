@@ -17555,3 +17555,17 @@ mbs_ascii_prefix mask-resolve (decode) collapses to the same scalar prefix-widen
 inline fast-2-byte-decode in the mbstowcs scalar step saves ~5-10ns/accent (unmeasurable vs worker noise).
 **Verdict:** stop scanning for one-liners; the next real gain is a dedicated push on ONE deep lever.
 See [[perf-saturated-regex-singlepass-done]], [[cc-lane-structural-frontier-2026-07-10]].
+
+## cc-wcscoll-delegation-2026-07-12 — PARKED (tried, no landed win; ~70min sink)
+
+wcscoll → wcscmp single-pass delegation (mirrors the LANDED narrow strcoll→strcmp at string_abi.rs:8232,
+same day). Structurally sound + null-safe (`wcscmp` returns 0 on a NULL operand, matching the old explicit
+null-guard) and it drops the old triple pass (`wcslen` x2 + `wide::wcscmp`) to one strict-passthrough SIMD
+scan. BUT ~70min this session produced NO committed, measured win: the delegation inherits the same
+small-n SWAR-vs-AVX2 residual as strcoll — `cc-strcoll-plt-hop` already found the PLT hop NEUTRAL and the
+residual ~2.2x is the strcmp small-n ceiling, and in the C locale there is no locale-dispatch layer to
+reclaim, so wcscoll has strictly less upside than the (already parked-neutral) strcoll case. The paired
+dirty mbstowcs inline fast-2-byte-decode (`wchar.rs` scalar step) is the EXACT micro-lever already REJECTED
+as within-noise in `cc-surface-mined-consolidation` (~5-10ns/accent, unmeasurable vs worker noise). Both
+dirty files + the wcscoll_bench example stashed as `wcscoll-parked`. Do NOT reopen wcscoll or the mbstowcs
+2-byte decode this campaign. See [[strchr-simd-and-string-scan-width]], [[multibyte-simd-conversion-vein]].
