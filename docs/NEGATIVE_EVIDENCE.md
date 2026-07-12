@@ -17456,3 +17456,22 @@ toolchain is fixed.
   change, NOT a claimed perf win. FOLLOW-ON: same fast path for fcvt/ecvt/qgcvt (siblings, same pattern).
 - **VERDICT.** Float-formatting is the same class as the other frontier walls (portable-SIMD mem, Rust-vs-glibc
   primitive gap). A Ryū `%g` is the real lever — high-effort, own focused effort. See [[cvt-family-and-perf-frontier]].
+
+## cc-strftime-literal-fastpath-2026-07-12 — WIN (SHIPPED b823a5333)
+
+- **THE LOSS (found by loss-scan, strftime_bench).** A `%`-free strftime format ("ABCDEFGH") lost 17.8x to
+  glibc (fl ~250ns vs ~14ns): core `format_strftime` ran its 4 specifier fast-path probes + the per-char
+  general loop on pure literal text, where glibc is a memcpy. (Other arms already WIN: %Y-%m-%d 0.19x,
+  %H:%M:%S 0.13-0.17x, %H parity.)
+- **THE LEVER.** Literal fast path at the top of `format_strftime`: `!fmt.contains(&b'%')` -> copy `fmt`
+  straight to `buf` (+ NUL, + truncate-to-0 when `len >= buf.len()`). Also mirrored into the ABI strftime
+  FULL/hardened path (strict path already had it) so a literal format skips the wasted `read_tm` +
+  `read_tm_zone`.
+- **BYTE-IDENTICAL.** conformance_diff_time 1/0, strftime_specifier_differential_fuzz 12/0,
+  conformance_diff_strftime_zone 1/0; bench asserts fl==glibc bytes.
+- **MEASURED (remote -j2):** "ABCDEFGH" 17.8x LOSS -> 0.72x WIN (250 -> 8.7ns); %-formats unchanged.
+- **LESSON.** The loss was a real deployed gap (any direct `format_strftime` caller + the hardened ABI path).
+  ⚠️the ABI STRICT path already shortcut literals — the bench calls CORE `format_strftime` directly, so the
+  fix had to land in CORE, not just the ABI wrapper. First clean WIN after a string of frontier-wall REJECTs
+  (strcoll/memccpy/regex/gcvt) — loss-scanning FRESH unbenched-in-full surfaces (strftime) still finds real
+  levers. See [[strftime-eo-percent-modifier]].
