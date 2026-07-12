@@ -432,24 +432,26 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
 pub fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
     let mut si = 0usize;
     let mut count = 0usize;
-    const LANES: usize = 16;
-    let zero = Simd::<u8, LANES>::splat(0);
-    let ascii_max = Simd::<u8, LANES>::splat(0x80);
     loop {
-        // ASCII run: 16 code points per clean 16-byte window.
-        while si + LANES <= src.len() && src[si] < 0x80 {
-            let bytes: [u8; LANES] = src[si..si + LANES].try_into().unwrap();
-            let chunk = Simd::<u8, LANES>::from_array(bytes);
-            if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
-                break;
-            }
-            si += LANES;
-            count += LANES;
-        }
+        // Bulk-count the leading ASCII run (each byte 0x01..=0x7F is one code
+        // point). `ascii_prefix_len`'s scalar tail handles short interleaved runs
+        // cheaply, so a lone accent between ASCII words (café) never pays a failed
+        // 16-byte window probe — unlike an inline all-or-nothing ASCII vector.
+        let a = ascii_prefix_len(&src[si..]);
+        si += a;
+        count += a;
 
         // 2-byte run: 8 code points per clean 16-byte window (lead 0xC2..=0xDF +
-        // continuation 0x80..=0xBF ⇒ never overlong, never a surrogate).
-        while si + 16 <= src.len() && (0xC2..=0xDF).contains(&src[si]) {
+        // continuation 0x80..=0xBF ⇒ never overlong, never a surrogate). The
+        // `src[si+2]` contiguity gate requires the NEXT char to also be a 2-byte
+        // lead, so an isolated accent skips the SIMD probe and drops straight to
+        // the scalar step (no failed-probe overhead on interleaved text) while
+        // contiguous 2-byte scripts (Cyrillic/Greek/Hebrew) still vectorise. It
+        // only chooses window-vs-scalar, so the count stays identical.
+        while si + 16 <= src.len()
+            && (0xC2..=0xDF).contains(&src[si])
+            && (0xC2..=0xDF).contains(&src[si + 2])
+        {
             let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
             let v = Simd::<u8, 16>::from_array(bytes);
             let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
@@ -464,8 +466,12 @@ pub fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
         }
 
         // 3-byte run: 4 code points per clean 12-byte window (E0..EF lead, both
-        // continuations 80..BF, no E0 overlong <A0, no ED surrogate >9F).
-        while si + 16 <= src.len() && (0xE0..=0xEF).contains(&src[si]) {
+        // continuations 80..BF, no E0 overlong <A0, no ED surrogate >9F). The
+        // `src[si+3]` contiguity gate skips the probe for an isolated 3-byte char.
+        while si + 16 <= src.len()
+            && (0xE0..=0xEF).contains(&src[si])
+            && (0xE0..=0xEF).contains(&src[si + 3])
+        {
             let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
             let v = Simd::<u8, 16>::from_array(bytes);
             let leads = std::simd::simd_swizzle!(v, [0, 3, 6, 9]);
@@ -485,8 +491,12 @@ pub fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
 
         // 4-byte run: 4 code points per clean 16-byte window (F0..F7 lead, plain
         // continuations, no F0 overlong <0x90; F5..F7 still accepted, matching the
-        // scalar path's glibc-compatible contract).
-        while si + 16 <= src.len() && (0xF0..=0xF7).contains(&src[si]) {
+        // scalar path's glibc-compatible contract). The `src[si+4]` contiguity
+        // gate skips the probe for an isolated 4-byte char.
+        while si + 16 <= src.len()
+            && (0xF0..=0xF7).contains(&src[si])
+            && (0xF0..=0xF7).contains(&src[si + 4])
+        {
             let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
             let v = Simd::<u8, 16>::from_array(bytes);
             let leads = std::simd::simd_swizzle!(v, [0, 4, 8, 12]);

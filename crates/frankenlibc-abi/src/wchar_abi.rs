@@ -3272,32 +3272,20 @@ pub unsafe extern "C" fn mbsrtowcs(
     // SAFETY: bounded by strlen + NUL.
     let src_bytes = unsafe { std::slice::from_raw_parts(src_ptr as *const u8, src_len_with_nul) };
 
-    // Count-only mode.
+    // Count-only mode: SIMD-decode-and-count via `mbs_decoded_len` (the write
+    // path's validated ASCII/2/3/4-byte windows, tallying code points) — was an
+    // ASCII-prefix bulk plus a scalar `mbtowc` per multibyte char, so contiguous
+    // non-Latin runs lost ~2-3x to glibc. Byte-identical: same validation, same
+    // EILSEQ at the first invalid sequence; count mode leaves *src untouched.
     if dst.is_null() {
-        let mut i = 0usize;
-        let mut count = 0usize;
-        while i < src_bytes.len() {
-            // SIMD fast-forward the leading ASCII run (each ASCII byte is one
-            // wide char), then resolve the NUL / multibyte boundary scalar-side.
-            let k = wchar_core::ascii_prefix_len(&src_bytes[i..]);
-            i += k;
-            count += k;
-            if src_bytes[i] == 0 {
-                return count;
+        return match wchar_core::mbs_decoded_len(src_bytes) {
+            Some(count) => count,
+            None => {
+                // SAFETY: setting thread-local errno through libc ABI helper.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                usize::MAX
             }
-            match wchar_core::mbtowc(&src_bytes[i..]) {
-                Some((_, used)) => {
-                    i += used;
-                    count += 1;
-                }
-                None => {
-                    // SAFETY: setting thread-local errno through libc ABI helper.
-                    unsafe { set_abi_errno(libc::EILSEQ) };
-                    return usize::MAX;
-                }
-            }
-        }
-        return count;
+        };
     }
 
     // SAFETY: caller guarantees writable destination of at least `len` wchar_t elements.
