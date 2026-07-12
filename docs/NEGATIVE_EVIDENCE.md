@@ -17532,3 +17532,26 @@ toolchain is fixed.
   find the DOMINANT per-element cost before gating. This is the core-mbstowcs analogue of the mbs_decode_prefix
   work (mbsrtowcs/mbsnrtowcs already had `mbs_ascii_prefix`); the residual ~2x is the inherent per-accent
   scalar `mbtowc` (interleaved-decode wall). See [[multibyte-simd-conversion-vein]].
+
+## cc-surface-mined-consolidation-2026-07-12 — NEGATIVE-LEDGER (fresh-surface loss-scan exhausted)
+
+Post-strftime/mbstowcs wins, a systematic loss-scan of the remaining fresh + common functions confirms the
+quick/one-liner lever surface is comprehensively mined. Confirmed ALREADY-OPTIMIZED (parity or WIN, no lever):
+- **wcstod / wcstol** — fast-integer path + bounded zero-alloc projection + narrow-strtod fast path (prior work).
+- **wcstombs / core mbstowcs (now)** — both route through the mask-resolving `wcs_simd_prefix` /
+  `mbs_ascii_prefix`; encode/decode interleaved symmetry complete (mbstowcs mixed fixed f81692ac2, 4.5x->2.0x).
+- **snprintf 0.84-0.97x, sscanf 0.84-1.02x** — printf/scanf core well-optimized (literal + int + mixed + float).
+- **inet_ntop, getenv, wcsftime** — strict/hot fast paths present.
+- **strcmp** — `scan_strcmp` has a 128-byte-unrolled `Simd<u8,32>` path + 32B loop + page-guards (the memory's
+  "u64-SWAR" note is STALE); small-n ~2.2x is the hand-AVX2 ceiling / page-alignment of the 128B window, not a
+  missing SIMD tier. strcmp is unbounded (NUL-terminated) so the memchr overlapping-probe small-n trick does
+  NOT transfer.
+
+**Remaining REAL losses are ALL deep multi-turn levers** (documented above): interleaved-decode floor
+(per-accent scalar mbtowc ~2x — shuffle-table transcode); strcmp/memcmp/memchr small-n (~2-2.5x hand-AVX2
+ceiling); Ryū `%g/%e/%f` (gcvt/fcvt/ecvt + printf floats); regex short-closure DFA-build alloc (12x);
+strptime dispatch restructure (2.5-3.3x). ⚠️Marginal micro-levers CONSIDERED + rejected as within-noise:
+mbs_ascii_prefix mask-resolve (decode) collapses to the same scalar prefix-widen as the scalar tail; an
+inline fast-2-byte-decode in the mbstowcs scalar step saves ~5-10ns/accent (unmeasurable vs worker noise).
+**Verdict:** stop scanning for one-liners; the next real gain is a dedicated push on ONE deep lever.
+See [[perf-saturated-regex-singlepass-done]], [[cc-lane-structural-frontier-2026-07-10]].
