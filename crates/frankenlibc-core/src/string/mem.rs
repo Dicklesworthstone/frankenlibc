@@ -319,7 +319,10 @@ pub fn memchr_medium_32bloop_for_bench(hs: &[u8], needle: u8) -> Option<usize> {
         }
         base += SIMD_LANES;
     }
-    hs[base..].iter().position(|&b| b == needle).map(|j| base + j)
+    hs[base..]
+        .iter()
+        .position(|&b| b == needle)
+        .map(|j| base + j)
 }
 
 /// Bench hook: NEW medium-range scan (64-lane combined tier + 32B tail).
@@ -330,7 +333,8 @@ pub fn memchr_medium_64lane_for_bench(hs: &[u8], needle: u8) -> Option<usize> {
     while count - base >= MEMCHR_WIDE_LANES {
         let nv = Simd::<u8, SIMD_LANES>::splat(needle);
         let a = Simd::<u8, SIMD_LANES>::from_slice(&hs[base..base + SIMD_LANES]);
-        let b = Simd::<u8, SIMD_LANES>::from_slice(&hs[base + SIMD_LANES..base + MEMCHR_WIDE_LANES]);
+        let b =
+            Simd::<u8, SIMD_LANES>::from_slice(&hs[base + SIMD_LANES..base + MEMCHR_WIDE_LANES]);
         let m = a.simd_eq(nv).to_bitmask() | (b.simd_eq(nv).to_bitmask() << SIMD_LANES);
         if m != 0 {
             return Some(base + m.trailing_zeros() as usize);
@@ -343,7 +347,10 @@ pub fn memchr_medium_64lane_for_bench(hs: &[u8], needle: u8) -> Option<usize> {
         }
         base += SIMD_LANES;
     }
-    hs[base..].iter().position(|&b| b == needle).map(|j| base + j)
+    hs[base..]
+        .iter()
+        .position(|&b| b == needle)
+        .map(|j| base + j)
 }
 
 #[inline(always)]
@@ -500,7 +507,8 @@ pub fn memchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     while count - base >= MEMCHR_WIDE_LANES {
         let nv = Simd::<u8, SIMD_LANES>::splat(needle);
         let a = Simd::<u8, SIMD_LANES>::from_slice(&hs[base..base + SIMD_LANES]);
-        let b = Simd::<u8, SIMD_LANES>::from_slice(&hs[base + SIMD_LANES..base + MEMCHR_WIDE_LANES]);
+        let b =
+            Simd::<u8, SIMD_LANES>::from_slice(&hs[base + SIMD_LANES..base + MEMCHR_WIDE_LANES]);
         let m = a.simd_eq(nv).to_bitmask() | (b.simd_eq(nv).to_bitmask() << SIMD_LANES);
         if m != 0 {
             return Some(base + m.trailing_zeros() as usize);
@@ -1012,11 +1020,19 @@ pub fn memccpy(dest: &mut [u8], src: &[u8], c: u8, n: usize) -> Option<usize> {
 
     // Fused single-pass SIMD scan+copy: copy each lane-width chunk to `dest` while testing
     // it for `c`, stopping at the chunk that contains `c`. One pass over the data (~2n
-    // memory traffic: read src once, write dest once) instead of memchr-then-memcpy's ~3n
-    // (the memchr re-reads src). Behaviour is identical: if `c` occurs at index `p`, bytes
-    // `0..=p` are copied and `Some(p + 1)` is returned; otherwise all `count` bytes are
-    // copied and `None` is returned. All loads/stores are within the bounded
-    // `count`-length slices, so there is no page-crossing concern.
+    // memory traffic) instead of memchr-then-memcpy's ~3n. Behaviour is identical: if `c`
+    // occurs at index `p`, bytes `0..=p` are copied and `Some(p + 1)` is returned;
+    // otherwise all `count` bytes are copied and `None` is returned. All loads/stores are
+    // within the bounded `count`-length slices, so there is no page-crossing concern.
+    //
+    // NOTE (2026-07-12, cc-memccpy-copy-throughput REJECT): this loop loses ~1.15-1.5x to
+    // glibc (grows with size, copies-all-n worst case). Two rewrites were measured and
+    // REJECTED via same-fleet A/B: (a) `memchr` + `copy_from_slice` bulk — helps huge
+    // (65536 1.43x->1.13x) but REGRESSES small badly (256 1.19x->5.9x, two-call overhead);
+    // (b) storing the already-loaded vector via `chunk.copy_to_slice` — WORSE at every
+    // size (portable-SIMD store lowers worse than `copy_from_slice`'s memcpy; 4096
+    // 81ns->103ns). LLVM already CSE'd the src re-read, so 3n->2n was NOT the lever. The
+    // residual is the portable-SIMD-vs-glibc-hand-tuned-memccpy ceiling — kept as-is.
     let needle = Simd::<u8, SIMD_LANES>::splat(c);
     let mut i = 0;
     while i + SIMD_LANES <= count {

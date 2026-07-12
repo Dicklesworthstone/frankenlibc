@@ -17398,3 +17398,22 @@ toolchain is fixed.
   (strcoll->strcmp) is a cheap resolved jump — do NOT chase those. ⚠️The "fl 11.6->7.7ns" cross-fleet
   numbers that suggested a win were pure worker variance; the same-fleet A/B is the truth.
 - **REAL strcoll gap = strcmp small-n AVX2 ceiling** (n<64 full-scan), an existing known wall, not a fresh lever.
+
+## cc-memccpy-copy-throughput-2026-07-12 — REJECT (real 1.15-1.5x loss, but no converging fix)
+
+- **THE LOSS (found by loss-scan).** core `memccpy` (fused per-32B SIMD scan+copy) loses ~1.15-1.5x to
+  glibc, GROWING with size (256 ~1.19-1.27x, 4096 ~1.39-1.52x, 65536 ~1.13-1.43x), worst on copies-all-n
+  (stop byte at end). All other scanned benches WIN: gmtime 1.01x (parity), asctime 0.08x, timegm 0.12x,
+  fnmatch 0.27-0.36x, strtod 0.22-0.88x.
+- **TWO FIXES MEASURED + REJECTED (same-fleet A/B, stash before/after):**
+  1. `memchr(&src,c)` + `copy_from_slice` bulk (glibc's approach): helps HUGE (65536 1.43x->1.13x) but
+     REGRESSES small badly (256 1.19x->5.9x) — the memchr-call + memcpy-call overhead dominates small copies.
+  2. Store the already-loaded vector via `chunk.copy_to_slice` (true 2n pass, no src re-read): WORSE at
+     EVERY size (4096 fl 81ns->103ns, 65536 1313ns->1503ns) — the portable-SIMD store lowers worse than
+     `copy_from_slice`'s `@llvm.memcpy`. LLVM had already CSE'd the src re-read, so the 3n->2n traffic
+     argument was moot.
+- **VERDICT.** Residual is the portable-SIMD-vs-glibc-hand-tuned-memccpy ceiling (same family as the
+  strcmp/memcmp small-n AVX2 wall, [[memcmp-avx2-kernel]]). Kept the original fused loop; added in-code NOTE.
+  A size-tiered hybrid (fused for small, memchr+memcpy for >~16KB) COULD close the huge-n case but large-n
+  memccpy is rare and it needs threshold tuning — deferred, low value. ⚠️Corrects the stale
+  [[abi-raw-mem-byteloops]] claim "memccpy already SIMD via core (NOT a gap)": it IS SIMD but still loses.
