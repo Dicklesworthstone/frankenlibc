@@ -17152,3 +17152,43 @@ sb_translation byte->byte). Both directions MEASURED (remote, p50, 1KiB all-high
   measured hot path or a quiet worker allows a careful multi-turn swing.
 - **NOTE:** `SingleByteReverse` reverse lookup is already O(1) (direct_page_slot/byte, 8 pages) — the old
   ledger "binary search bottleneck" (iconv-nonascii-perf-gap memory) is STALE / closed.
+
+## cc-wcsnrtombs-count-simd-2026-07-11 — WIN (SHIPPED 28c457484) — completes the wide->multibyte count vein
+
+- **THE LEVER (profile-first).** wcsnrtombs(NULL, src, nwc, ..) count mode — the n-bounded "measure then
+  allocate" length probe — bulk-counted only the ASCII prefix (`wcs_ascii_prefix_len`) and fell to a
+  scalar per-char `wcrtomb` for every multibyte wchar. Profiled (remote dlmopen, self-normalized) 2.180x
+  (mixed), 4.574x (cyrillic), 3.358x (cjk) LOSS vs glibc; ascii already 0.055x WIN (the pre-existing
+  single-pass ASCII bulk). Short-circuited count mode through the shared `wcs_encoded_len` (the
+  wcstombs/wcsrtombs count lever), bounding the char window with a bounded SIMD NUL scan
+  (`scan_w_string(.., Some(max_wchars))`).
+- **HYBRID to preserve the flagship ASCII win — the non-obvious part.** wcsnrtombs count is UNLIKE its
+  siblings: its ASCII path was ALREADY excellent (0.055x, one `wcs_ascii_prefix_len` compare-scan).
+  Routing pure ASCII through `wcs_encoded_len` (6 per-8-lane threshold popcounts) REGRESSED it to
+  ~0.60-0.69x (75ns -> ~760ns, a ~10x relative slowdown — still a "win" but a flagged WIN->smaller-WIN
+  regression). Fix: bulk-count the leading ASCII run with `wcs_ascii_prefix_len` (a == its exact byte
+  total, 1 byte/char), then `wcs_encoded_len(&window[a..])` only the multibyte remainder. Restores ASCII
+  to ~0.09x. LESSON: `wcs_encoded_len` is the right lever for scalar-`wctomb`-count paths, but do NOT
+  route an already-ASCII-bulk-counted path wholesale through it — split off the ASCII prefix first.
+- **BYTE-IDENTICAL.** `wcs_encoded_len` returns the same total and same EILSEQ (`None`) at the first
+  unrepresentable wchar; the tracked-source-underrun EILSEQ (bd-2g7oyh, `!terminated && source_bound<nwc`)
+  is reproduced explicitly; POSIX leaves *src untouched when dst is NULL (the differential probe's
+  `src_offset` already ignores *src in count mode). n_bounded_wchar_differential_probe 2/0
+  (dst_null x surrogate x 5-byte-form x nwc{0,1,2,3,64} x len grid vs LIVE glibc),
+  conformance_diff_wchar 44/0, wchar_abi_test 118/0, golden_wchar_nrt_simd 1/0.
+- **MEASURED (remote, median of 2, same-fleet before/after, self-normalized):**
+
+  | arm | BEFORE | AFTER | verdict |
+  |---|---|---|---|
+  | ascii | ~0.055x WIN | ~0.09x WIN | preserved (~11x vs glibc; hybrid kept it, un-hybrid'd was ~0.65x) |
+  | mixed | 2.180x LOSS | ~0.51x WIN | flip |
+  | cyrillic | 4.574x LOSS | ~0.26x WIN | flip |
+  | cjk | 3.358x LOSS | ~0.19x WIN | flip |
+
+- **VEIN STATUS.** wide->multibyte CONVERSION is now comprehensively mined on BOTH write and count paths:
+  write (wcstombs had it / wcsrtombs cc65da573 / wcsnrtombs ad83dde5d) AND count
+  (wcstombs 8db4e7990 / wcsrtombs 869e9b13d / wcsnrtombs 28c457484) all SIMD + clean. The DECODE side
+  (mbstowcs had it; mbsrtowcs/mbsnrtowcs) stays SURFACED — the contiguity gate is encode-specific
+  (cc-mbsrtowcs-gate-retry-2026-07-11). Remaining follow-on: mbs* DECODE count (dst==NULL) is the last
+  unmined multibyte-conversion sub-path (harder — variable-width validation). See
+  [[multibyte-simd-conversion-vein]].
