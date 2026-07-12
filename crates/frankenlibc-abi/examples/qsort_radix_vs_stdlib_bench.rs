@@ -39,11 +39,38 @@ fn make(n: usize, width: usize, dist: &str) -> Vec<u8> {
             "sorted" => i as i64,
             "reverse" => (n - i) as i64,
             "dups" => (lcg(&mut s) % 16) as i64,
+            // Realistic partially-ordered data: ascending with ~1% of positions
+            // perturbed by a bounded jitter (append log, timestamps, mostly-sorted
+            // ids). pdqsort exploits the runs; LSD radix cannot.
+            "nearly" => {
+                if lcg(&mut s) % 100 == 0 {
+                    i as i64 + (lcg(&mut s) % 64) as i64 - 32
+                } else {
+                    i as i64
+                }
+            }
             _ => unreachable!(),
         };
         out.extend_from_slice(&v.to_ne_bytes()[..width]);
     }
     out
+}
+
+// Run `f` `k` times and return the fastest per-op ns (min = the least
+// interfered-with run — the closest estimate of true compute cost on a shared box).
+fn best_of<F: FnMut()>(k: usize, iters: usize, reset: f64, mut f: F) -> f64 {
+    let mut best = f64::INFINITY;
+    for _ in 0..k {
+        let t = Instant::now();
+        for _ in 0..iters {
+            f();
+        }
+        let ns = t.elapsed().as_nanos() as f64 / iters as f64 - reset;
+        if ns < best {
+            best = ns;
+        }
+    }
+    best.max(0.0)
 }
 
 fn stdlib_sort(buf: &mut [u8], width: usize, cmp: fn(&[u8], &[u8]) -> i32) {
@@ -79,50 +106,66 @@ fn bench(
         assert_eq!(r, sb, "radix vs stdlib mismatch w{width} {dist} n={n}");
     }
 
-    let iters = (80_000_000usize / (n * width)).max(400);
+    let iters = (120_000_000usize / (n * width)).max(60);
+    const K: usize = 6; // min-of-K per arm to reject transient interference
     let mut buf = pristine.clone();
 
-    let t = Instant::now();
-    for _ in 0..iters {
-        buf.copy_from_slice(&pristine);
-        black_box(&buf);
-    }
-    let reset = t.elapsed().as_nanos() as f64 / iters as f64;
+    // Reset (memcpy) baseline, also min-of-K, subtracted from every arm.
+    let reset = {
+        let mut best = f64::INFINITY;
+        for _ in 0..K {
+            let t = Instant::now();
+            for _ in 0..iters {
+                buf.copy_from_slice(&pristine);
+                black_box(&buf);
+            }
+            let ns = t.elapsed().as_nanos() as f64 / iters as f64;
+            if ns < best {
+                best = ns;
+            }
+        }
+        best
+    };
 
-    let t = Instant::now();
-    for _ in 0..iters {
+    let radix = best_of(K, iters, reset, || {
         buf.copy_from_slice(&pristine);
         black_box(frankenlibc_core::stdlib::sort::__bench_integer_radix_attempt(
             black_box(&mut buf),
             width,
             &fl_cmp,
         ));
-    }
-    let radix = (t.elapsed().as_nanos() as f64 / iters as f64 - reset).max(0.0);
-
-    let t = Instant::now();
-    for _ in 0..iters {
+    });
+    let stdlib = best_of(K, iters, reset, || {
         buf.copy_from_slice(&pristine);
         stdlib_sort(black_box(&mut buf), width, fl_cmp);
         black_box(&buf);
-    }
-    let stdlib = (t.elapsed().as_nanos() as f64 / iters as f64 - reset).max(0.0);
-
-    let t = Instant::now();
-    for _ in 0..iters {
+    });
+    let gl = best_of(K, iters, reset, || {
         buf.copy_from_slice(&pristine);
-        unsafe {
-            libc::qsort(black_box(buf.as_mut_ptr()) as *mut c_void, n, width, Some(gl_cmp))
-        };
+        unsafe { libc::qsort(black_box(buf.as_mut_ptr()) as *mut c_void, n, width, Some(gl_cmp)) };
         black_box(&buf);
-    }
-    let gl = (t.elapsed().as_nanos() as f64 / iters as f64 - reset).max(0.0);
+    });
+    // Full deployed qsort path (INCLUDES the new already-ordered guard): the metric
+    // that actually ships. On sorted input it should now route to pdqsort (≈ stdlib)
+    // instead of radix; on random it should still ≈ radix.
+    let qfull = best_of(K, iters, reset, || {
+        buf.copy_from_slice(&pristine);
+        frankenlibc_core::stdlib::qsort(black_box(&mut buf), width, fl_cmp);
+        black_box(&buf);
+    });
 
+    let verdict = if radix / stdlib > 1.10 {
+        "RADIX-LOSES"
+    } else if radix / stdlib < 0.90 {
+        "radix-wins"
+    } else {
+        "~parity"
+    };
     println!(
-        "RADIXvsSTDLIB w{width} {dist:>7} n={n:>6} radix={radix:>9.0} stdlib={stdlib:>9.0} glibc={gl:>9.0}  \
-         radix/stdlib={:.2}x  glibc/stdlib={:.2}x",
+        "RADIXvsSTDLIB w{width} {dist:>7} n={n:>6} radix={radix:>9.0} stdlib={stdlib:>9.0} qfull={qfull:>9.0} glibc={gl:>9.0}  \
+         radix/stdlib={:.2}x  qfull/stdlib={:.2}x  {verdict}",
         radix / stdlib,
-        gl / stdlib,
+        qfull / stdlib,
     );
 }
 
@@ -144,7 +187,7 @@ fn main() {
     let widths: [(usize, fn(&[u8], &[u8]) -> i32, extern "C" fn(*const c_void, *const c_void) -> i32); 3] =
         [(2, cmp16, gl_cmp_i16), (4, cmp32, gl_cmp_i32), (8, cmp64, gl_cmp_i64)];
     for (w, fl, gl) in widths {
-        for &dist in &["rand", "dups", "sorted"] {
+        for &dist in &["rand", "dups", "nearly", "sorted"] {
             for &n in &[16384usize, 262144] {
                 bench(n, w, dist, fl, gl);
             }

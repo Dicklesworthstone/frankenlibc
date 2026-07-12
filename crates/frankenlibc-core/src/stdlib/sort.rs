@@ -212,9 +212,20 @@ where
     // wasted radix. It is conservative in the skip direction: genuine integer data
     // is always consistent with one order, so it never diverts (no regression),
     // and a false "proceed" just hits the existing verify-then-commit as before.
+    // Second pre-gate: skip radix when the data is ALREADY monotonic (fully non-
+    // decreasing or non-increasing) under the comparator. There the generic
+    // pdqsort fallback runs in O(n) run-detected passes, while the LSD radix always
+    // pays O(n·width) cache-missing scatter passes — a measured 6-14x LOSS on
+    // sorted/reverse input at every width (load-controlled min-of-K study). The
+    // check early-exits once BOTH directions are ruled out, so random data costs
+    // O(1) comparator calls (a couple of pairs) and still takes the radix lane;
+    // only genuinely ordered input is scanned in full, and that scan is dwarfed by
+    // the radix pass it avoids. Realistic mostly-sorted data (a few % perturbed) is
+    // NOT monotonic, so it keeps the radix lane (where radix also measured faster).
     if (width == 2 || width == 4 || width == 8)
         && num > radix_min
         && qsort_prefix_consistent_with_integer_order(&base[..num * width], width, compare)
+        && !qsort_data_already_ordered(&base[..num * width], width, compare)
         && try_qsort_integer_radix_lane(base, num, width, compare)
     {
         return true;
@@ -762,6 +773,42 @@ where
         }
     }
     unsigned_ok || signed_ok
+}
+
+/// Radix-lane skip gate: is the data ALREADY monotonic (fully non-decreasing OR
+/// fully non-increasing) under the caller's comparator? Such input is the one
+/// case where the LSD radix lane loses decisively — the generic pdqsort fallback
+/// detects the runs and sorts it in O(n), while radix always pays O(n·width)
+/// cache-missing passes (measured 6-14x slower on sorted/reverse input, every
+/// width). Returns as soon as BOTH directions are ruled out, so random data costs
+/// only a couple of comparator calls (then takes the radix lane as before); only
+/// genuinely ordered input is scanned in full, and that O(n) scan is far cheaper
+/// than the radix pass it saves. This is a pure performance-routing decision — the
+/// data is untouched and every downstream path is still a correct sort.
+fn qsort_data_already_ordered<F>(active: &[u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let n = active.len() / width;
+    if n < 2 {
+        return true;
+    }
+    let (mut asc, mut desc) = (true, true);
+    let mut prev = &active[..width];
+    for k in 1..n {
+        let cur = &active[k * width..(k + 1) * width];
+        let c = compare(prev, cur);
+        if c > 0 {
+            asc = false;
+        } else if c < 0 {
+            desc = false;
+        }
+        if !asc && !desc {
+            return false;
+        }
+        prev = cur;
+    }
+    true
 }
 
 /// Conservative IEEE-754 float-order probe over a short prefix, used to gate the

@@ -17688,3 +17688,26 @@ pow (bd-e4jb7k, ARM optimized-routines inline-exp2-minimax); (2) hand-AVX2 intri
 memcmp/memchr/strchr small-n codegen ceiling (unsafe, ~1.2-1.5x); (3) stdio MT registry-lock shard (authorized,
 scoped); (4) the qsort radix-vs-stdlib-fixed-width load-controlled study. See [[qsort-i64-fastlane]],
 [[cc-lane-structural-frontier-2026-07-10]], [[perf-saturated-regex-singlepass-done]].
+
+## cc-qsort-radix-sorted-guard-2026-07-12 — WIN (skip radix on already-ordered data; fixes the 5-14x sorted loss)
+
+Resolution of cc-qsort-radix-vs-stdlib-audit via a LOAD-CONTROLLED study (min-of-K=6, `taskset -c 63`,
+`nearly`=1%-perturbed dist added). Stable verdict (radix vs stdlib fixed-width, FFI raw-ptr comparator):
+radix WINS on rand/dups/**nearly-sorted** (w2/w4 0.23-0.82x; w8 nearly 0.42-0.63x, w8 rand ~parity) and LOSES
+DECISIVELY **only on fully-sorted/monotonic** input — w4 5.2-10.1x, w8 6.7-14.5x — because pdqsort detects the
+runs and is O(n) while LSD radix always pays O(n·width) cache-missing passes.
+- **LEVER (landed):** `qsort_data_already_ordered` — a second pre-gate before the integer radix lane that
+  early-exits as soon as the data is neither non-decreasing nor non-increasing under the comparator. Random
+  costs O(1) comparator calls (a couple pairs) → radix still runs; only genuinely monotonic input scans in
+  full → skips radix → generic pdqsort fallback. Pure performance-routing (data untouched; every path is a
+  correct sort). Also covers `heapsort` (shares `try_integer_unstable_lanes`).
+- **MEASURED (guarded full-qsort path `qfull`, same pinned min-of-K bench):** sorted qfull/stdlib **2.3-2.5x**
+  (was radix 5.2-14.5x) — a 2.6-5.7x improvement; rand/dups/nearly qfull≈radix (ALL wins preserved, incl.
+  nearly-sorted 0.32-0.61x). Gates: conformance_diff_qsort_radix (tests sorted/reverse — now routes to
+  pdqsort, byte==glibc) + radix16 + heapsort + i64_fastlane + core --lib sort(35) all green.
+- **RESIDUAL (follow-up):** sorted is 2.3x not ~1.0x because the guard's O(n) COMPARATOR scan is redundant
+  with pdqsort's own run detection. A RAW-INTEGER monotonic guard (no FFI per element; check signed+unsigned
+  ×asc/desc by native int) would cut the sorted case to ~1.1x — deferred (needs width-specialised 4-flag scan
+  + the exotic "int-sorted-by-unsigned + signed-cmp" corner). Also unaddressed: w8-dups large-N ~1.4x (radix
+  mild loss; dups aren't monotonic so the guard doesn't touch it — would need dup-density detection). See
+  [[qsort-i64-fastlane]].
