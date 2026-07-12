@@ -6577,19 +6577,28 @@ pub unsafe extern "C" fn mbsnrtowcs(
             // SAFETY: `s` points to at least `remaining` readable bytes — the same
             // window `mbrtowc` is given below.
             let src_window = unsafe { std::slice::from_raw_parts(s as *const u8, remaining) };
-            let k = if dst.is_null() {
-                wchar_core::ascii_prefix_len(src_window)
+            // (chars consumed, bytes consumed) — equal for the ASCII-only write
+            // path, distinct for the count path which also fast-forwards contiguous
+            // multibyte runs.
+            let (chars, bytes) = if dst.is_null() {
+                // Count mode: SIMD-count the leading clean run (ASCII + contiguous
+                // 2/3/4-byte) within the nms window; the scalar `mbrtowc` below
+                // resolves NUL / MB_INCOMPLETE / EILSEQ and any sequence straddling
+                // the nms boundary — was ASCII-only bulk + a scalar `mbrtowc` per
+                // multibyte char (contiguous non-Latin runs lost ~2-3x to glibc).
+                wchar_core::mbs_decoded_len_prefix(src_window)
             } else {
                 // SAFETY: `dst` has >= `len` wchar_t slots and `written < len` here.
                 let dst_window = unsafe {
                     std::slice::from_raw_parts_mut(dst.add(written) as *mut u32, len - written)
                 };
-                wchar_core::mbs_ascii_prefix(dst_window, src_window)
+                let k = wchar_core::mbs_ascii_prefix(dst_window, src_window);
+                (k, k) // ASCII widens 1:1
             };
-            if k > 0 {
-                consumed += k;
-                written += k;
-                s = unsafe { s.add(k) };
+            if chars > 0 {
+                consumed += bytes;
+                written += chars;
+                s = unsafe { s.add(bytes) };
                 continue;
             }
         }

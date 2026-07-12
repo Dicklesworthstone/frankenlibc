@@ -433,21 +433,48 @@ pub fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
     let mut si = 0usize;
     let mut count = 0usize;
     loop {
-        // Bulk-count the leading ASCII run (each byte 0x01..=0x7F is one code
-        // point). `ascii_prefix_len`'s scalar tail handles short interleaved runs
-        // cheaply, so a lone accent between ASCII words (café) never pays a failed
-        // 16-byte window probe — unlike an inline all-or-nothing ASCII vector.
+        // Count the leading run of clean validated windows (ASCII + contiguous
+        // 2/3/4-byte), then resolve the first non-clean position — NUL / end /
+        // isolated multibyte / malformed — with the authoritative scalar `mbtowc`.
+        let (c, b) = mbs_decoded_len_prefix(&src[si..]);
+        si += b;
+        count += c;
+        if si >= src.len() || src[si] == 0 {
+            return Some(count);
+        }
+        let (_, n) = mbtowc(&src[si..])?;
+        si += n;
+        count += 1;
+    }
+}
+
+/// Count the leading run of *clean* multibyte windows in `src`, returning
+/// `(code_points, bytes_consumed)`. Consumes only whole RFC-3629-validated
+/// windows — ASCII (16 cp / 16 B) plus contiguous 2-byte (8 cp / 16 B), 3-byte
+/// (4 cp / 12 B), and 4-byte (4 cp / 16 B) runs — and STOPS at the first NUL,
+/// isolated / mixed-width multibyte lead, malformed byte, or window that would
+/// exceed `src`, leaving that position (and any sequence straddling the end of
+/// `src`) for a scalar decoder. Never errors and never consumes a partial
+/// boundary sequence, so a byte-bounded caller (`mbsnrtowcs`) can hand it its
+/// `nms` window and resolve NUL / MB_INCOMPLETE / EILSEQ with the scalar step.
+///
+/// Each multibyte window carries a NEXT-char contiguity gate (a 2-byte window
+/// fires only when `src[si+2]` is also a 2-byte lead, etc.) so an isolated accent
+/// in ASCII text (café) drops straight to the caller's scalar step instead of
+/// paying a failed SIMD probe, while contiguous non-Latin scripts still vectorise.
+/// The gate only chooses window-vs-scalar, so the count is exact / byte-identical.
+pub fn mbs_decoded_len_prefix(src: &[u8]) -> (usize, usize) {
+    let mut si = 0usize;
+    let mut count = 0usize;
+    loop {
+        let start = si;
+        // ASCII run (scalar tail handles short interleaved runs cheaply).
         let a = ascii_prefix_len(&src[si..]);
         si += a;
         count += a;
 
         // 2-byte run: 8 code points per clean 16-byte window (lead 0xC2..=0xDF +
-        // continuation 0x80..=0xBF ⇒ never overlong, never a surrogate). The
-        // `src[si+2]` contiguity gate requires the NEXT char to also be a 2-byte
-        // lead, so an isolated accent skips the SIMD probe and drops straight to
-        // the scalar step (no failed-probe overhead on interleaved text) while
-        // contiguous 2-byte scripts (Cyrillic/Greek/Hebrew) still vectorise. It
-        // only chooses window-vs-scalar, so the count stays identical.
+        // continuation 0x80..=0xBF ⇒ never overlong, never a surrogate).
         while si + 16 <= src.len()
             && (0xC2..=0xDF).contains(&src[si])
             && (0xC2..=0xDF).contains(&src[si + 2])
@@ -466,8 +493,7 @@ pub fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
         }
 
         // 3-byte run: 4 code points per clean 12-byte window (E0..EF lead, both
-        // continuations 80..BF, no E0 overlong <A0, no ED surrogate >9F). The
-        // `src[si+3]` contiguity gate skips the probe for an isolated 3-byte char.
+        // continuations 80..BF, no E0 overlong <A0, no ED surrogate >9F).
         while si + 16 <= src.len()
             && (0xE0..=0xEF).contains(&src[si])
             && (0xE0..=0xEF).contains(&src[si + 3])
@@ -491,8 +517,7 @@ pub fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
 
         // 4-byte run: 4 code points per clean 16-byte window (F0..F7 lead, plain
         // continuations, no F0 overlong <0x90; F5..F7 still accepted, matching the
-        // scalar path's glibc-compatible contract). The `src[si+4]` contiguity
-        // gate skips the probe for an isolated 4-byte char.
+        // scalar path's glibc-compatible contract).
         while si + 16 <= src.len()
             && (0xF0..=0xF7).contains(&src[si])
             && (0xF0..=0xF7).contains(&src[si + 4])
@@ -515,14 +540,11 @@ pub fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
             count += 4;
         }
 
-        // One scalar step (the authority for NUL / end / error / mixed-width /
-        // boundary-straddling bytes), then re-attempt the SIMD runs.
-        if si >= src.len() || src[si] == 0 {
-            return Some(count);
+        // A full round made no progress ⇒ the next byte is NUL / isolated / mixed
+        // / malformed / a window-straddling boundary: hand it back to the caller.
+        if si == start {
+            return (count, si);
         }
-        let (_, n) = mbtowc(&src[si..])?;
-        si += n;
-        count += 1;
     }
 }
 
