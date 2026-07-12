@@ -203,32 +203,36 @@ where
         return true;
     }
 
-    // Cheap pre-gate: only ENTER the integer radix lane if a short prefix sample
-    // is consistent with signed OR unsigned integer order. A non-integer-order
-    // comparator (e.g. `char*` sorted by `strcmp`, or a struct sorted by a key
-    // field) otherwise pays TWO full build+radix+verify passes that both fail
-    // before falling to pdqsort. The gate samples ≤8 adjacent pairs (≤8 comparator
-    // calls) and skips the lane when NEITHER integer order matches — saving the
-    // wasted radix. It is conservative in the skip direction: genuine integer data
-    // is always consistent with one order, so it never diverts (no regression),
-    // and a false "proceed" just hits the existing verify-then-commit as before.
-    // Second pre-gate: skip radix when the data is ALREADY monotonic (fully non-
-    // decreasing or non-increasing) under the comparator. There the generic
-    // pdqsort fallback runs in O(n) run-detected passes, while the LSD radix always
-    // pays O(n·width) cache-missing scatter passes — a measured 6-14x LOSS on
-    // sorted/reverse input at every width (load-controlled min-of-K study). The
-    // check early-exits once BOTH directions are ruled out, so random data costs
-    // O(1) comparator calls (a couple of pairs) and still takes the radix lane;
-    // only genuinely ordered input is scanned in full, and that scan is dwarfed by
-    // the radix pass it avoids. Realistic mostly-sorted data (a few % perturbed) is
-    // NOT monotonic, so it keeps the radix lane (where radix also measured faster).
-    if (width == 2 || width == 4 || width == 8)
-        && num > radix_min
-        && qsort_prefix_consistent_with_integer_order(&base[..num * width], width, compare)
-        && !qsort_data_already_ordered(&base[..num * width], width)
-        && try_qsort_integer_radix_lane(base, num, width, compare)
-    {
-        return true;
+    // Radix-eligible widths above the threshold. First scan for an already-monotonic
+    // run under the comparator: sorted/reverse input is the one case the LSD radix
+    // loses decisively (6-14x — pdqsort is O(n) on runs while radix always pays
+    // O(n·width) cache-missing scatter passes), and it needs no sorting at all. The
+    // scan early-exits once BOTH directions are ruled out, so random/perturbed data
+    // costs only a couple of comparator calls and proceeds to the radix lane; a
+    // definitive Ascending/Descending result is a FULL O(n) verification under the
+    // real comparator, so committing the data as-is (already sorted) or reversed
+    // (non-increasing → reverse is non-decreasing) is a correct, glibc-identical sort
+    // for integer keys — one comparator pass total, versus the two the previous
+    // skip-to-pdqsort guard paid.
+    if (width == 2 || width == 4 || width == 8) && num > radix_min {
+        match qsort_scan_order(&base[..num * width], width, compare) {
+            QsortOrder::Ascending => return true,
+            QsortOrder::Descending => {
+                reverse_fixed_width_elements(&mut base[..num * width], width);
+                return true;
+            }
+            QsortOrder::Unordered => {
+                // Only ENTER the radix lane if a short prefix sample is consistent
+                // with signed OR unsigned integer order — a non-integer comparator
+                // (`char*` by `strcmp`, struct key) otherwise pays two wasted
+                // build+radix+verify passes before falling to pdqsort.
+                if qsort_prefix_consistent_with_integer_order(&base[..num * width], width, compare)
+                    && try_qsort_integer_radix_lane(base, num, width, compare)
+                {
+                    return true;
+                }
+            }
+        }
     }
 
     if width == 16
@@ -775,60 +779,70 @@ where
     unsigned_ok || signed_ok
 }
 
-/// Radix-lane skip gate: is the data ALREADY monotonic (fully non-decreasing OR
-/// fully non-increasing) as a native-width integer? Such input is the one case
-/// where the LSD radix lane loses decisively — the generic pdqsort fallback
-/// detects the runs and sorts it in O(n), while radix always pays O(n·width)
-/// cache-missing passes (measured 6-14x slower on sorted/reverse input, every
-/// width). Checks BOTH signed and unsigned order (the radix lane only runs once
-/// the prefix gate found the comparator consistent with one of them), and returns
-/// as soon as all four candidate orders are ruled out — so random data costs a
-/// handful of integer compares. Uses RAW integer compares, not the caller's
-/// comparator: that keeps the check FFI-free (an ordered scan of already-sorted
-/// input is otherwise as costly as the pdqsort it saves), and it is only a
-/// performance-routing decision — the data is untouched and every downstream path
-/// (radix or pdqsort) is a correct sort, so an imperfect match with the exact
-/// comparator order is harmless.
-fn qsort_data_already_ordered(active: &[u8], width: usize) -> bool {
-    macro_rules! scan {
-        ($ty:ty) => {{
-            const W: usize = core::mem::size_of::<$ty>();
-            let sign: $ty = 1 << (W * 8 - 1);
-            let mut prev = <$ty>::from_ne_bytes(active[..W].try_into().unwrap());
-            // asc/desc under unsigned order, and under signed order (sign-bit-flip
-            // maps two's-complement order onto unsigned order).
-            let (mut u_asc, mut u_desc, mut s_asc, mut s_desc) = (true, true, true, true);
-            let mut i = W;
-            while i + W <= active.len() {
-                let cur = <$ty>::from_ne_bytes(active[i..i + W].try_into().unwrap());
-                if cur < prev {
-                    u_asc = false;
-                } else if cur > prev {
-                    u_desc = false;
-                }
-                let (ps, cs) = (prev ^ sign, cur ^ sign);
-                if cs < ps {
-                    s_asc = false;
-                } else if cs > ps {
-                    s_desc = false;
-                }
-                if !u_asc && !u_desc && !s_asc && !s_desc {
-                    return false;
-                }
-                prev = cur;
-                i += W;
-            }
-            true
-        }};
+/// Result of [`qsort_scan_order`].
+enum QsortOrder {
+    /// Every adjacent pair is non-decreasing under the comparator (all-equal too).
+    Ascending,
+    /// Every adjacent pair is non-increasing under the comparator.
+    Descending,
+    /// Neither — a genuine sort is needed.
+    Unordered,
+}
+
+/// Scan the data for an already-monotonic run under the caller's comparator.
+/// Returns `Ascending` iff every adjacent pair is non-decreasing, `Descending`
+/// iff every pair is non-increasing (an all-equal run reports `Ascending`), and
+/// `Unordered` otherwise — early-exiting the instant BOTH directions are ruled
+/// out, so random/perturbed data costs only a couple of comparator calls.
+///
+/// A definitive `Ascending`/`Descending` verdict is a FULL O(n) verification
+/// against the real comparator, so the caller may commit the input as-is
+/// (`Ascending`) or reversed (`Descending` — reversing a non-increasing sequence
+/// yields a non-decreasing one) as a correct sorted arrangement. For an integer
+/// comparator, equal keys are byte-identical, so that arrangement is bit-identical
+/// to glibc's; for an exotic partial-key comparator the C standard leaves tie
+/// order unspecified, so it remains conformant.
+fn qsort_scan_order<F>(active: &[u8], width: usize, compare: &F) -> QsortOrder
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let n = active.len() / width;
+    if n < 2 {
+        return QsortOrder::Ascending;
     }
-    if active.len() < 2 * width {
-        return true;
+    let (mut asc, mut desc) = (true, true);
+    let mut prev = &active[..width];
+    for k in 1..n {
+        let cur = &active[k * width..(k + 1) * width];
+        let c = compare(prev, cur);
+        if c > 0 {
+            asc = false;
+        } else if c < 0 {
+            desc = false;
+        }
+        if !asc && !desc {
+            return QsortOrder::Unordered;
+        }
+        prev = cur;
     }
-    match width {
-        2 => scan!(u16),
-        4 => scan!(u32),
-        8 => scan!(u64),
-        _ => false,
+    if asc {
+        QsortOrder::Ascending
+    } else {
+        QsortOrder::Descending
+    }
+}
+
+/// Reverse the order of the `width`-byte elements in `active` in place.
+fn reverse_fixed_width_elements(active: &mut [u8], width: usize) {
+    let n = active.len() / width;
+    let (mut lo, mut hi) = (0usize, n.wrapping_sub(1));
+    while lo < hi {
+        let (a, b) = (lo * width, hi * width);
+        for k in 0..width {
+            active.swap(a + k, b + k);
+        }
+        lo += 1;
+        hi -= 1;
     }
 }
 

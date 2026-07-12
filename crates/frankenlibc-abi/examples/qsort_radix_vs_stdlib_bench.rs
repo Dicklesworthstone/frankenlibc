@@ -104,6 +104,12 @@ fn bench(
         let mut sb = pristine.clone();
         stdlib_sort(&mut sb, width, fl_cmp);
         assert_eq!(r, sb, "radix vs stdlib mismatch w{width} {dist} n={n}");
+        // The DEPLOYED full-qsort path (incl. the already-ordered commit-lane, which
+        // commits sorted input as-is and reverses descending input) must match the
+        // reference sort byte-for-byte — the load-bearing check for the commit-lane.
+        let mut qf = pristine.clone();
+        frankenlibc_core::stdlib::qsort(&mut qf, width, fl_cmp);
+        assert_eq!(qf, sb, "qsort(full) vs reference mismatch w{width} {dist} n={n}");
     }
 
     let iters = (120_000_000usize / (n * width)).max(60);

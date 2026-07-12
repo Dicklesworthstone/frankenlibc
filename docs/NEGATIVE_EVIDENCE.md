@@ -17731,3 +17731,26 @@ PURE ROUTING (skip radix → pdqsort, both correct), so any proxy imperfection i
   that makes the guard load-bearing for correctness (not pure routing), higher risk; deferred. w8-dups large-N
   ~1.5-1.9x radix mild-loss still untouched (dups aren't monotonic; needs dup-density detection). See
   [[qsort-i64-fastlane]].
+
+## cc-qsort-radix-sorted-commit-lane-2026-07-12 — WIN (already-ordered COMMIT lane; sorted ~1.85x → ~1.5x, one pass)
+
+Final refinement of the radix sorted-guard arc (cc-qsort-radix-sorted-guard → -rawint → this). The prior guards
+DETECTED already-ordered input then routed it to pdqsort — a second O(n) pass. Replaced the raw-int skip guard
+with a COMMIT lane: `qsort_scan_order` scans adjacent pairs under the real comparator, early-exiting to
+Unordered the instant both directions are ruled out (random costs a couple of calls → radix as before); a
+definitive Ascending verdict commits the input AS-IS (it is a full O(n) verification that it is non-decreasing
+under the comparator → already a correct sort), and Descending reverses it in place (reverse of non-increasing =
+non-decreasing). One comparator pass, no pdqsort, for sorted/reverse input.
+- **MEASURED (pinned min-of-K, deployed full-qsort path):** sorted qfull/stdlib **1.48-1.49x (w4) / 1.51-1.69x
+  (w8)** — down from the raw-int guard's ~1.60/1.85x, and from radix's 4.7-13.4x LOSS. rand/dups/nearly
+  qfull≈radix (ALL wins preserved). Correctness: 4 gates (radix, radix16, heapsort, i64_fastlane) + an INLINE
+  qfull-vs-reference assert in the bench (every width×dist) all green — the load-bearing check for committing
+  as-is / reversed.
+- **WHY only ~1.5x, not ~1.0x:** a SAFE commit needs a full comparator (FFI) verification scan, whose
+  per-element cost (~indirect call + branches) is comparable to pdqsort's entire sorted run — so eliminating
+  pdqsort's pass only nets ~10-18% over the raw-int guard. The theoretical 1.0x would need a non-FFI commit,
+  which isn't safe (raw-int monotonic ≠ comparator-sorted). This is the floor for a correct commit lane.
+- ⚠️This lane is verify-then-commit (like the radix lane itself), NOT pure routing — `qsort_scan_order` is
+  load-bearing for output correctness. Kept simple (a 10-line adjacent-pair loop + symmetric-swap reverse),
+  gate-covered on sorted/reverse/mixed-sign/all-equal. w8-dups large-N ~1.8x radix mild-loss still untouched
+  (needs dup-density detection). See [[qsort-i64-fastlane]].
