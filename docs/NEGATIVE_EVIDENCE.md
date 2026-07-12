@@ -17494,3 +17494,22 @@ toolchain is fixed.
   (unsafe, risky, whole-loop) or a dispatch restructure — DEFERRED. See [[strptime-parse-vein]].
 - **CONTRAST.** strftime literal WIN (b823a5333) landed because it was a single slow path for a common input;
   strptime's loss has no such single site. Lesson: loss-scanning finds real gaps, but not all are one-liners.
+
+## cc-strptime-getunchecked-2026-07-12 — REJECT (bounds-check elision within noise; loss is dispatch, not bounds)
+
+- **FOLLOW-UP to cc-strptime-numeric.** Hypothesis: the 2.5-3.3x numeric-strptime loss is Rust bounds-check
+  overhead in the parse loop. Tried the smallest targeted attack: `get_unchecked` on the three most-executed
+  in-bounds accesses (`parse_digits`/`parse_digits_bounded` inner-loop `input[p]`, main-loop `fmt[fi]`) —
+  all provably safe (loop condition guarantees the index).
+- **BYTE-IDENTICAL.** strptime_differential_probe 12/0, strptime_edge_differential_fuzz 3/0,
+  conformance_diff_time 1/0.
+- **RESULT — WITHIN NOISE (couldn't isolate).** rch picks a random worker PER bench exec, so the A/B's two
+  arms ran on different-speed workers (glibc datetime 58ns vs 33ns, ~1.75x). Self-normalized ratios were
+  INCONSISTENT: datetime 2.74x->1.84x (looks improved) but date 2.67x->2.87x and time 2.95x->3.16x (looks
+  regressed). The glibc denominator is itself noisy, so neither raw nor ratio isolates the change. Most
+  likely the compiler ALREADY elides these redundant bounds checks (index adjacent to the guard), making
+  `get_unchecked` neutral. REVERTED (no measured win to justify adding unsafe).
+- **CONFIRMS the deep-fix assessment (cc-strptime-numeric).** The loss is the per-element DISPATCH structure
+  (giant match, per-directive %-prefix/E-O probes), not simple bounds checks. A real fix needs a dispatch
+  restructure, not point unsafe. ⚠️MEASUREMENT: rch's per-exec worker choice makes stash A/B unreliable for
+  <1.3x deltas on sub-100ns functions — need worker-pinning or min-of-many. See [[strptime-parse-vein]].
