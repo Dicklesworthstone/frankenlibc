@@ -17881,6 +17881,11 @@ SVID alphabet, 6-bit little-endian accumulation, truncate-u32-then-sign-extend).
 - **CORRECTNESS:** a64l_l64a_differential_fuzz 1/1 (vs live glibc) + the bench's inline `original_a64l==glibc`
   and `fl a64l==glibc` asserts. Residual 1.84x vs glibc = the stdlib_membrane_fastpath gate branch + extern-C
   boundary (glibc is a bare loop) — near the ABI floor, not chased further.
+- **STRICT-REMOTE REPLAY (cod_fl / Codex).** Exact command:
+  `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run -j 4 --profile release -p frankenlibc-abi --example a64l_l64a_tax_bench`.
+  The same-binary ORIG/CAND gate on `vmi1227854` measured **13.48 -> 6.95 ns**, candidate/original
+  **0.516x (1.94x faster)**; host glibc was **3.39 ns**. The focused remote test command passed **5/5**
+  tests, including **400,000 live-glibc differential comparisons with 0 divergences**.
 - ⚠️Full (hardened/test) path kept as-is (scan_c_string for membrane bounds); only the deployed fast path inlined.
 - ⚠️ENV: rch artifact transfer was flaky + target dir disk-cleaned mid-turn — copy the built binary to the
   scratchpad IMMEDIATELY post-build, then run, to beat the churn. See [[double-membrane-delegating-wrappers]].
