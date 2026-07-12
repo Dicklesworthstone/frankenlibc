@@ -6692,7 +6692,7 @@ pub unsafe extern "C" fn wcsnrtombs(
     src: *mut *const libc::wchar_t,
     nwc: usize,
     len: usize,
-    ps: *mut c_void,
+    _ps: *mut c_void,
 ) -> usize {
     if src.is_null() || unsafe { (*src).is_null() } {
         return 0;
@@ -6804,12 +6804,23 @@ pub unsafe extern "C" fn wcsnrtombs(
         // (The previous `written + 4 <= len` direct-write assumed a 4-byte max
         // and could overflow `dst` by up to 2 bytes for a 5/6-byte UTF-8 form —
         // fl's encoder emits up to MB_CUR_MAX==6 bytes. bd-2g7oyh.186)
-        let ret = unsafe { wcrtomb(buf.as_mut_ptr() as *mut c_char, wc, ps) };
-        if ret == usize::MAX {
-            // un-encodable wide char (EILSEQ): leave *src at the offending char.
-            unsafe { *src = s };
-            return usize::MAX;
-        }
+        // Encode via the inlinable core `wctomb` instead of the exported extern "C"
+        // `wcrtomb` (a PLT call that never inlines + re-runs the null/ASCII guards) —
+        // this scalar step fires once per isolated wide char in interleaved text,
+        // the "mixed" encode hot path. Byte-identical: for the stateless UTF-8
+        // locale `wcrtomb` is exactly `wctomb` + an ASCII shortcut that `wctomb`
+        // also takes + errno-on-EILSEQ; `ps` carries no shift state. (cf. the
+        // mbsnrtowcs decode fast-path, 50fe148ac.)
+        let ret = match wchar_core::wctomb(wc as u32, &mut buf) {
+            Some(n) => n,
+            None => {
+                // un-encodable wide char (EILSEQ): leave *src at the offending char.
+                // `wcrtomb` sets errno on EILSEQ; set it here since `wctomb` does not.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                unsafe { *src = s };
+                return usize::MAX;
+            }
+        };
         if !dst.is_null() {
             if written + ret > len {
                 break; // the whole character does not fit — never split it
