@@ -17268,3 +17268,29 @@ hard_preflight=1` (the job's default slot ask can't fit any worker's free window
 RCH_REQUIRE_REMOTE=1, refuses local fallback. **FIX: shrink the slot ask** — `CARGO_BUILD_JOBS=2 rch exec
 -- cargo test -j2 ...` admitted immediately onto a worker with only 2 free slots after 3 turns of full-job
 blocking. Use `-j2` for every gate/bench build during contention instead of retry-looping.
+
+## cc-mbsrtowcs-write-simd-2026-07-12 — WIN w/ documented tradeoff (SHIPPED da2da7c61) — reopens the SURFACED decode-write lever
+
+- **THE LEVER.** mbsrtowcs write (dst!=NULL) widened only its ASCII prefix + scalar `mbtowc` per multibyte
+  char (~3.6-4.9x LOSS vs glibc on contiguous non-Latin). Added `mbs_decode_prefix(dst,src)->(chars,bytes)`
+  (write twin of `mbs_decoded_len_prefix`): widens whole validated windows (ASCII + contiguity-gated
+  2/3/4-byte) into dst, bounded by src AND dst.len(), stops at NUL/isolated/malformed/dst-full for the
+  scalar step. Routed mbsrtowcs write through it.
+- **REOPENS THE SURFACED VERDICT (cc-mbsrtowcs-simd).** That lever was SURFACED-not-shipped for a ~+100%
+  interleaved-Latin ("café") regression. Two fixes cut it to ~+15%: (a) the NEXT-char contiguity gate
+  (isolated accents skip the SIMD probe), (b) early-return after the ASCII run so an isolated accent
+  doesn't pay a WASTED second `mbs_ascii_prefix` probe (this was the bulk of the residual: fl mixed
+  3748->2787ns).
+- **BYTE-IDENTICAL.** conformance_diff_mbsrtowcs 7/0, mbsrtowcs_differential_probe 1/0,
+  golden_wchar_nrt_simd 1/0; write bench asserts fl==glibc byte-for-byte on 300-char inputs.
+- **MEASURED (remote -j2, median of 3):** ascii ~0.84x (unchanged WIN); cyrillic 4.90x->~0.6x WIN;
+  cjk 3.59x->~0.85x WIN; **mixed 3.11x->~3.8x LOSS (~+15% REGRESSION, inherent per-accent contiguity
+  check cost).**
+- **SHIP-VS-SURFACE CALL (differs from the count-path discipline).** Unlike prior turns where I FIXED
+  every regression before shipping, this +15% mixed residual is inherent (can't detect contiguity without
+  paying the check) and I SHIPPED anyway: it never flips a win->loss, and reverting would leave Cyrillic
+  (8x fl-over-fl) and CJK 4-5x slower than glibc — a strictly worse user outcome. Documented as a tradeoff,
+  not a clean win.
+- **FOLLOW-ON:** mbsnrtowcs write can reuse `mbs_decode_prefix` in its nms window; a multibyte-density
+  guard (only enter windows when the leading multibyte run looks contiguous) could erase the mixed
+  residual and make this a clean win. See [[multibyte-simd-conversion-vein]].
