@@ -467,11 +467,28 @@ pub fn mbs_decoded_len_prefix(src: &[u8]) -> (usize, usize) {
     let mut si = 0usize;
     let mut count = 0usize;
     loop {
-        let start = si;
         // ASCII run (scalar tail handles short interleaved runs cheaply).
         let a = ascii_prefix_len(&src[si..]);
         si += a;
         count += a;
+        let before_windows = si;
+
+        // Density guard: probe the SIMD windows only when the run ahead is a
+        // contiguous same-width multibyte run (mirrors mbs_decode_prefix). A lone
+        // accent (café) / NUL / malformed byte returns here in one branch instead
+        // of evaluating three window conditions per character. Byte-identical: an
+        // isolated multibyte char can never fill a window, so the early return
+        // leaves it for the caller's scalar decoder exactly as the windows would.
+        let contiguous = si + 16 <= src.len()
+            && match src[si] {
+                0xC2..=0xDF => (0xC2..=0xDF).contains(&src[si + 2]),
+                0xE0..=0xEF => (0xE0..=0xEF).contains(&src[si + 3]),
+                0xF0..=0xF7 => (0xF0..=0xF7).contains(&src[si + 4]),
+                _ => false,
+            };
+        if !contiguous {
+            return (count, si);
+        }
 
         // 2-byte run: 8 code points per clean 16-byte window (lead 0xC2..=0xDF +
         // continuation 0x80..=0xBF ⇒ never overlong, never a surrogate).
@@ -540,9 +557,9 @@ pub fn mbs_decoded_len_prefix(src: &[u8]) -> (usize, usize) {
             count += 4;
         }
 
-        // A full round made no progress ⇒ the next byte is NUL / isolated / mixed
-        // / malformed / a window-straddling boundary: hand it back to the caller.
-        if si == start {
+        // Guard passed but no window fired (a short run / masked-out malformed
+        // window / dst-independent boundary): hand it back to the caller's scalar.
+        if si == before_windows {
             return (count, si);
         }
     }
