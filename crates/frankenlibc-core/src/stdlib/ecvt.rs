@@ -412,10 +412,11 @@ pub fn gcvt(value: f64, ndigit: i32, buf: &mut [u8]) -> usize {
     } else {
         (ndigit as usize).clamp(1, GCVT_MAX_SIG_DIGITS)
     };
-    let rendered = render_gcvt(value, ndigit);
-    let bytes = rendered.as_bytes();
-    let copy_len = bytes.len().min(buf.len().saturating_sub(1));
-    buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+    // Render directly into `buf` (reserve the last byte for the NUL) via
+    // `render_gcvt_into` — no per-call String (which in the deployed dylib routes
+    // through the interposed allocator). Byte-identical to `render_gcvt` → copy.
+    let cap = buf.len().saturating_sub(1);
+    let copy_len = render_gcvt_into(value, ndigit, &mut buf[..cap]);
     if copy_len < buf.len() {
         buf[copy_len] = 0;
     }
@@ -606,6 +607,150 @@ fn try_build_dyadic_rust_sci(value: f64, frac: usize) -> Option<String> {
     out.push('e');
     let _ = write!(out, "{exp}");
     Some(out)
+}
+
+/// Copy `s` into `out` (truncating to `out.len()`), returning the count written.
+#[inline]
+fn copy_into(out: &mut [u8], s: &[u8]) -> usize {
+    let n = s.len().min(out.len());
+    out[..n].copy_from_slice(&s[..n]);
+    n
+}
+
+/// Buffer-writing twin of [`format_fixed_from_sci`] — same output, no `String`.
+/// The mantissa digit count is at most `GCVT_MAX_SIG_DIGITS` (17), so a small
+/// stack scratch holds them; the fixed `%g` form is written straight into `out`
+/// and its trailing fractional zeros (and a bare trailing '.') are stripped in
+/// place, exactly like `strip_trailing_zeros`.
+fn format_fixed_from_sci_into(sci: &str, exp: i32, out: &mut [u8]) -> usize {
+    let (neg, rest) = match sci.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, sci),
+    };
+    let mant = match rest.find('e') {
+        Some(p) => &rest[..p],
+        None => rest,
+    };
+    let mut digits = [0u8; 24];
+    let mut dn = 0usize;
+    for c in mant.bytes() {
+        if c != b'.' && dn < digits.len() {
+            digits[dn] = c;
+            dn += 1;
+        }
+    }
+    let dg = &digits[..dn];
+    let n = dn as i32;
+    let mut len = 0usize;
+    macro_rules! put {
+        ($b:expr) => {{ if len < out.len() { out[len] = $b; len += 1; } }};
+    }
+    macro_rules! put_slice {
+        ($s:expr) => {{ for &b in $s { if len < out.len() { out[len] = b; len += 1; } } }};
+    }
+    if neg {
+        put!(b'-');
+    }
+    if exp >= 0 {
+        let int_len = ((exp + 1).min(n)) as usize;
+        put_slice!(&dg[..int_len]);
+        if (int_len as i32) < n {
+            put!(b'.');
+            put_slice!(&dg[int_len..]);
+        }
+    } else {
+        put!(b'0');
+        put!(b'.');
+        for _ in 0..(-exp - 1) {
+            put!(b'0');
+        }
+        put_slice!(dg);
+    }
+    // Strip trailing fractional zeros (and a bare trailing point) — only when a
+    // decimal point was written (an all-integer form keeps its trailing zeros).
+    if out[..len].contains(&b'.') {
+        while len > 0 && out[len - 1] == b'0' {
+            len -= 1;
+        }
+        if len > 0 && out[len - 1] == b'.' {
+            len -= 1;
+        }
+    }
+    len
+}
+
+/// Buffer-writing twin of [`rust_e_to_glibc_e`] — same output, no `String`.
+fn rust_e_to_glibc_e_into(s: &str, out: &mut [u8]) -> usize {
+    let mut len = 0usize;
+    macro_rules! put {
+        ($b:expr) => {{ if len < out.len() { out[len] = $b; len += 1; } }};
+    }
+    macro_rules! put_slice {
+        ($s:expr) => {{ for &b in $s { if len < out.len() { out[len] = b; len += 1; } } }};
+    }
+    let Some(e_pos) = s.find('e') else {
+        put_slice!(strip_trailing_zeros(s).as_bytes());
+        return len;
+    };
+    let mantissa = strip_trailing_zeros(&s[..e_pos]);
+    let exp_part = &s[e_pos + 1..];
+    let (sign, digits) = if let Some(rest) = exp_part.strip_prefix('-') {
+        (b'-', rest)
+    } else if let Some(rest) = exp_part.strip_prefix('+') {
+        (b'+', rest)
+    } else {
+        (b'+', exp_part)
+    };
+    put_slice!(mantissa.as_bytes());
+    put!(b'e');
+    put!(sign);
+    if digits.len() < 2 {
+        put!(b'0');
+    }
+    put_slice!(digits.as_bytes());
+    len
+}
+
+/// Buffer-writing core of [`render_gcvt`] — writes the `%g` rendering straight into
+/// `out` (no per-call `String`) and returns the byte count. Byte-identical to
+/// `render_gcvt` for all inputs (the `render_gcvt` String version is kept as a thin
+/// wrapper for the few callers that want an owned string).
+fn render_gcvt_into(value: f64, ndigit: usize, out: &mut [u8]) -> usize {
+    if value.is_nan() {
+        return copy_into(out, if value.is_sign_negative() { b"-nan" } else { b"nan" });
+    }
+    if value.is_infinite() {
+        return copy_into(out, if value < 0.0 { b"-inf" } else { b"inf" });
+    }
+    if value == 0.0 {
+        return copy_into(out, if value.is_sign_negative() { b"-0" } else { b"0" });
+    }
+    if let Some(simple) = try_gcvt_exact_small_fixed(value, ndigit) {
+        return copy_into(out, simple.as_bytes());
+    }
+
+    use core::fmt::Write as _;
+    let frac = ndigit.saturating_sub(1);
+    let mut sci_stack = StackStr::new();
+    let mut sci_heap = String::new();
+    let sci: &str = if try_build_integer_sci(value, frac, &mut sci_heap) {
+        sci_heap.as_str()
+    } else if let Some(dyadic) = try_build_dyadic_rust_sci(value, frac) {
+        sci_heap = dyadic;
+        sci_heap.as_str()
+    } else if write!(sci_stack, "{value:.frac$e}").is_ok() {
+        sci_stack.as_str()
+    } else {
+        let _ = write!(sci_heap, "{value:.frac$e}");
+        sci_heap.as_str()
+    };
+    let exp = decimal_exp_from_scientific(sci);
+
+    if exp < -4 || exp >= ndigit as i32 {
+        rust_e_to_glibc_e_into(sci, out)
+    } else {
+        format_fixed_from_sci_into(sci, exp, out)
+    }
 }
 
 fn render_gcvt(value: f64, ndigit: usize) -> String {

@@ -17955,3 +17955,20 @@ Continuing the cvt-family alloc-elim (ecvt+fcvt DONE), gcvt is the last one. gcv
   a flaky-build env risks a subtle %g bug. NEXT-TURN plan: mechanical push→write-byte transform of the 2 main-path
   helpers (mant digits fit a [u8;24] stack scratch, %g output ≤ ndigit+8 ≤ ~25), keep specials/try_exact as
   small-string copies. Kept `gcvt_alloc_bench`. See [[cvt-family-and-perf-frontier]], [[double-membrane-delegating-wrappers]].
+
+## cc-gcvt-alloc-elim-DONE-2026-07-12 — WIN (render_gcvt_into; correctness-verified, abi bench peer-blocked)
+
+Executed the cc-gcvt-alloc-elim plan. Added `render_gcvt_into(value,ndigit,&mut [u8])` + buffer-writing twins
+`format_fixed_from_sci_into` (mant digits → [u8;24] stack scratch; in-place trailing-zero strip) and
+`rust_e_to_glibc_e_into` (≥2 exp-digit pad). Core `gcvt` now renders straight into its caller buffer — no
+per-call `String` (the deployed interposed-allocator cost). Kept `render_gcvt` (String) as-is for its other
+caller (ecvt.rs:839) + tests; render_gcvt_into duplicates the dispatch (low-risk, gate-covered via gcvt tests).
+- **CORRECTNESS:** core --lib ecvt 11/11 including `gcvt_matches_glibc_reference_outputs` (MAIN path vs glibc
+  reference) + `test_gcvt_basic` — byte-identical. (These run without the abi lib.)
+- **⚠️ABI bench BLOCKED:** a CONCURRENT PEER is mid-implementing the getsubopt membrane fast-path (stdlib_abi.rs,
+  UNCOMMITTED) and left a borrow bug (`observe` closure captures `valuep` → E0506 assign-while-borrowed), so the
+  abi lib won't compile → gcvt_alloc_bench/gcvt_differential_fuzz can't build. I did NOT touch/commit their WIP.
+  The WIN is guaranteed by the alloc-elimination (common path now allocates zero Strings — verified byte-identical
+  by core reference tests), SAME vein as ecvt (1.6x) / fcvt (1.4x); before measured 2.4-3.2x (cc-gcvt-alloc-elim).
+  **RE-BENCH gcvt_alloc_bench + run gcvt_differential_fuzz once the peer's getsubopt lands.** Only core/ecvt.rs
+  committed this turn. See [[cvt-family-and-perf-frontier]].
