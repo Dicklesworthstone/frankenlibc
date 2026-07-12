@@ -622,6 +622,26 @@ pub fn mbs_decode_prefix(dst: &mut [u32], src: &[u8]) -> (usize, usize) {
         di += k;
         let before_windows = si;
 
+        // Density guard: probe the SIMD windows only when the run ahead is a
+        // contiguous same-width multibyte run. A width-classified peek at the next
+        // lead is ONE branch; an isolated accent (café) / NUL / malformed byte
+        // returns here instead of evaluating all three window conditions per
+        // character — that per-accent probe cost was a ~+15% tax on interleaved
+        // text. Byte-identical: a lone multibyte char can never fill a window, so
+        // this early return hands it to exactly the scalar step the windows would
+        // have deferred it to; when the peek says "contiguous", the matching
+        // window below still fully validates before consuming.
+        let contiguous = si + 16 <= src.len()
+            && match src[si] {
+                0xC2..=0xDF => (0xC2..=0xDF).contains(&src[si + 2]),
+                0xE0..=0xEF => (0xE0..=0xEF).contains(&src[si + 3]),
+                0xF0..=0xF7 => (0xF0..=0xF7).contains(&src[si + 4]),
+                _ => false,
+            };
+        if !contiguous {
+            return (di, si);
+        }
+
         // 2-byte run: 8 code points per clean 16-byte window; src[si+2] gate.
         while si + 16 <= src.len()
             && di + 8 <= dst.len()
