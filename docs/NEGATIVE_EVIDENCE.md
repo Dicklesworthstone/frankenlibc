@@ -162,7 +162,11 @@ the full measured detail.
   backend. The exact Criterion row then reran remotely on the same worker: current p50 was **3170.000
   ns/op** versus the surfaced pre-change **4223.594 ns/op**, or **0.751x time / 1.33x faster / -24.9%**.
   The same-binary durable legacy scan arm measured **200504.549 ns/op**, confirming that the indexed path
-  was exercised. The source, focused regression, and this resolved evidence row are shipped together.
+  was exercised. Focused remote `cargo check` passed. The `-D warnings` clippy gate reached only the
+  pre-existing `frankenlibc-core` warning backlog (58 errors; none in the touched resolver files), while
+  strict-remote formatting was fail-closed as `RCH-E301` because RCH does not offload `cargo fmt`; local
+  fallback was not used and `git diff --check` passed. The evidence row and source land in adjacent main
+  commits because the shared checkout advanced during remote verification.
 - **CLOSED BOUNDARY.** Do not retry backend cloning, per-line parsing, or the all-record parsed-index walk
   for named-service profile gathering. The retained scratch worktrees are historical evidence only.
 

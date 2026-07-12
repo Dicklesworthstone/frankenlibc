@@ -430,6 +430,46 @@ impl ServiceLookupCache {
         best_entry_index.map(|index| &self.entries[index])
     }
 
+    /// Visit every record whose canonical name or alias equals `name`, in the
+    /// original backend order. A record is visited once even if both its
+    /// canonical name and one of its aliases match.
+    fn visit_by_name<E>(
+        &mut self,
+        generation: u64,
+        content: &[u8],
+        name: &[u8],
+        mut visit: impl FnMut(&frankenlibc_core::resolv::ServiceEntry) -> Result<(), E>,
+    ) -> Result<(), E> {
+        self.rebuild_if_needed(generation, content);
+
+        let name_hash = ascii_casefold_hash(name);
+        let start = self
+            .name_keys
+            .partition_point(|key| key.name_hash < name_hash);
+        let end = self
+            .name_keys
+            .partition_point(|key| key.name_hash <= name_hash);
+        let mut last_entry_index = None;
+
+        // `sort_by_key` is stable, and keys are appended in record order, so
+        // this hash bucket retains the backend's first-to-last ordering.
+        for key in &self.name_keys[start..end] {
+            // Hash equality only narrows the search; exact comparison is the
+            // collision guard and remains ASCII case-insensitive.
+            if !key.name.eq_ignore_ascii_case(name)
+                || last_entry_index == Some(key.entry_index)
+            {
+                continue;
+            }
+
+            debug_assert!(last_entry_index.is_none_or(|last| last < key.entry_index));
+            last_entry_index = Some(key.entry_index);
+            visit(&self.entries[key.entry_index])?;
+        }
+
+        Ok(())
+    }
+
     /// Port lookup for `getservbyport`. `port` is in HOST order. Returns the
     /// lowest-`entry_index` record whose port matches and whose protocol satisfies
     /// `proto_filter` (ASCII case-insensitive) — i.e. the first matching line in file
@@ -900,20 +940,14 @@ pub(crate) fn with_service_entry_by_port<R>(
     })
 }
 
-/// Run `f` over ALL parsed `/etc/services` records, in file order, borrowed from the
-/// generation-stamped index. Equivalent by construction to
-/// `content.split('\n').filter_map(parse_services_line)` — that is literally how
-/// `ServiceLookupCache::rebuild_if_needed` builds `entries` — so a caller that needs to visit
-/// every record (rather than look one up) gets identical order and identical entries with no
-/// backend clone and no per-line `ServiceEntry` allocation.
-pub(crate) fn with_service_entries<R>(
-    f: impl FnOnce(&[frankenlibc_core::resolv::ServiceEntry]) -> R,
-) -> std::io::Result<R> {
+/// Visit every parsed `/etc/services` record matching `name`, borrowed from the
+/// generation-stamped name index and in original backend order.
+fn with_service_entries_by_name<E>(
+    name: &[u8],
+    f: impl FnMut(&frankenlibc_core::resolv::ServiceEntry) -> Result<(), E>,
+) -> std::io::Result<Result<(), E>> {
     with_services_backend_snapshot(|content, generation| {
-        with_service_lookup_cache(|cache| {
-            cache.rebuild_if_needed(generation, content);
-            f(&cache.entries)
-        })
+        with_service_lookup_cache(|cache| cache.visit_by_name(generation, content, name, f))
     })
 }
 
@@ -1515,36 +1549,26 @@ fn lookup_service_profiles(
     service: &[u8],
     hints: Option<&libc::addrinfo>,
 ) -> Result<Option<Profiles>, c_int> {
-    // Walk the parsed index instead of cloning the backend and re-parsing every line.
-    // `cache.entries` IS `content.split('\n').filter_map(parse_services_line)`, so the visit
-    // order, the entries, the `service_entry_matches` test, the `service_entry_profile` error
-    // propagation and the profile dedup are all unchanged. What is gone is the per-call owned
-    // clone of `/etc/services` plus one `ServiceEntry` allocation (name `Vec`, protocol `Vec`,
-    // `Vec<Vec<u8>>` of aliases) for EVERY line of the file — tens of thousands of malloc/free
-    // pairs per call through the interposed allocator (bd-qds9jk / bd-xmng5n frame tables put
-    // ~91-92% of resolver self time in allocator bookkeeping).
-    let scanned = with_service_entries(|entries| {
-        let mut profiles = Profiles::new();
-        for entry in entries {
-            if !service_entry_matches(entry, service) {
-                continue;
-            }
-            if let Some(profile) = service_entry_profile(entry, hints)?
-                && !profiles.contains(&profile)
-            {
-                profiles.push(profile);
-            }
+    // Narrow the generation-stamped name index before visiting records. This preserves the
+    // old file-order profile collection while reducing the hot per-call walk from O(records)
+    // to O(log indexed names + matching records).
+    let mut profiles = Profiles::new();
+    let scanned = with_service_entries_by_name(service, |entry| {
+        if let Some(profile) = service_entry_profile(entry, hints)?
+            && !profiles.contains(&profile)
+        {
+            profiles.push(profile);
         }
-        Ok(profiles)
+        Ok::<(), c_int>(())
     });
 
     // A backend read error still reports "no such service" rather than an error, exactly as
     // the previous `read_services_backend()` / `Err(_) => return Ok(None)` did.
-    let profiles = match scanned {
-        Ok(Ok(profiles)) => profiles,
+    match scanned {
+        Ok(Ok(())) => {}
         Ok(Err(err)) => return Err(err),
         Err(_) => return Ok(None),
-    };
+    }
 
     if profiles.is_empty() {
         Ok(None)

@@ -1183,6 +1183,52 @@ fn getaddrinfo_service_name_uses_service_protocol_profiles() {
 }
 
 #[test]
+fn getaddrinfo_service_name_bucket_preserves_profiles_and_refreshes() {
+    with_resolver_backends(
+        None,
+        Some(b"first 4242/tcp dual\nDUAL 4242/udp dual\nother 9090/tcp\n"),
+        |paths| {
+            let node = CString::new("127.0.0.1").unwrap();
+            let service = CString::new("dUaL").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            assert_eq!(
+                unsafe { collect_addrinfo_profiles(res) },
+                vec![
+                    (libc::SOCK_STREAM, libc::IPPROTO_TCP, 4242),
+                    (libc::SOCK_DGRAM, libc::IPPROTO_UDP, 4242),
+                ]
+            );
+            unsafe { resolv_abi::freeaddrinfo(res) };
+
+            std::fs::write(&paths.services, b"dual 5252/udp\n")
+                .expect("rewrite temp services fixture");
+            let mut refreshed: *mut libc::addrinfo = ptr::null_mut();
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(
+                    node.as_ptr(),
+                    service.as_ptr(),
+                    ptr::null(),
+                    &mut refreshed,
+                )
+            };
+            assert_eq!(rc, 0);
+            assert!(!refreshed.is_null());
+            assert_eq!(
+                unsafe { collect_addrinfo_profiles(refreshed) },
+                vec![(libc::SOCK_DGRAM, libc::IPPROTO_UDP, 5252)]
+            );
+            unsafe { resolv_abi::freeaddrinfo(refreshed) };
+        },
+    );
+}
+
+#[test]
 fn getaddrinfo_null_node_and_null_service_returns_noname() {
     let mut res: *mut libc::addrinfo = ptr::null_mut();
 
