@@ -17774,3 +17774,22 @@ Fix = delegate to `explicit_bzero(dest, len)` after the (unchanged) destlen over
   test's "buffer overflow detected: terminated" is the expected `__chk_fail` abort in a forked child).
 - Extends [[abi-raw-mem-byteloops]] into the fortify layer. Other `__*_chk` fns already delegate to the fast
   exported ops (memcpy/memmove/memset/strcpy) — this was the one reimplementing a byte loop.
+
+## cc-fortify-nonvolatile-chk-loops-2026-07-12 — NEGATIVE (non-volatile wide _chk loops auto-vectorize; NOT levers)
+
+Follow-up sweep after cc-explicit-bzero-chk (the fortify byte-loop win): grepped fortify_abi.rs for other
+reimplement-instead-of-delegate loops. Found two — `__wmemset_chk` (`for i {*dest.add(i)=c}` scalar u32 fill,
+:917) and `__wcscat_chk` (`for i {*dest.add(dlen+i)=*src.add(i)}` scalar u32 copy, :869) — while the adjacent
+`__wmemcpy_chk`/`__wmemmove_chk` delegate to SIMD memcpy/memmove. Hypothesis: same win as explicit_bzero_chk.
+- **MEASURED (wmemset_chk_bench, pinned taskset -c 63, C=0x12345678 non-byte-repeating):** chk(scalar) vs
+  `wmemset` (slice.fill) = **0.85-1.02x = PARITY** across 16..65536 (scalar even slightly FASTER at n=64/256);
+  both already beat glibc wmemset ~2x (wmemset/glibc 0.51-1.20x).
+- **WHY (vs explicit_bzero which WON 6-41x):** explicit_bzero's loop is `write_volatile` — volatile blocks the
+  loop-idiom recognizer + vectorizer, forcing one store/byte. These `_chk` loops are NON-volatile, so LLVM
+  auto-vectorizes the u32 fill and idiom-recognizes the u32 copy into `@llvm.memcpy` (→ the fast interposed
+  memcpy) on its own. No delegation needed. `__wcscat_chk` not separately benched — identical mechanism
+  (non-volatile copy → memcpy idiom); the wmemset result + the raw-mem note that non-volatile ops lower to
+  intrinsics settle it.
+- **VERDICT:** explicit_bzero_chk was the LONE genuine fortify byte-loop (volatile-forced). The volatile
+  byte-loop vein is the tell — non-volatile reimplementations are already compiler-optimized, DON'T chase them.
+  See [[abi-raw-mem-byteloops]].
