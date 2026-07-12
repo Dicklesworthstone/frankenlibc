@@ -17832,3 +17832,21 @@ decide+observe and delegates straight to realloc in deployed (always-Allow) mode
 - ⚠️Contradicts my prior "membrane vein mined" claim — reallocarray was a genuine miss (it's in stdlib_abi but
   delegates to a malloc-family fn that self-handles the membrane; the double-membrane is the tell). Sweep other
   stdlib→malloc/other-family delegators for the same redundant decide+observe. See [[syscall-wrapper-semantics-vein]].
+
+## cc-erand48-family-membrane-tax-2026-07-12 — WIN (explicit-state PRNG membrane bypass; 1.5-1.7x)
+
+Sweep after cc-reallocarray-membrane-tax: the explicit-state drand48 PRNGs `erand48`/`nrand48`/`jrand48`
+(caller-supplied `xsubi` state) paid the `runtime_policy::decide+observe` membrane tax per call, while their
+internal-state siblings `drand48`/`lrand48`/`mrand48` already bypass it via `stdlib_membrane_fastpath()`. On a
+~5ns LCG the ~5ns tax made them ~2x slower than glibc. Added the same fast path, keeping the EXACT strict-mode
+guards (`xsubi.is_null() || !tracked_region_fits(...)` → 0) so it is byte-identical (in deployed always-Allow
+mode `decide` never Denies, so only those guards gate the result) — just skips decide+observe.
+- **MEASURED (erand48_tax_bench, pinned taskset -c 63, before/after 2 builds, stable x2):** erand48 9.94→**6.64ns**
+  (1.50x self; 2.05x→1.38x vs glibc); nrand48 9.64→**5.68ns** (1.70x self; 2.24x→1.31x vs glibc). Residual ~1.3x =
+  the kept `tracked_region_fits` (known_remaining lookup) + abi→core call, deliberately NOT dropped (safe/byte-id).
+- **CORRECTNESS:** conformance_diff_stdlib_random 11/11 (covers erand48/nrand48); the drand48 differential fuzz's
+  first 299690 comparisons pass (incl. these fns). ⚠️The fuzz PANICS on a **PRE-EXISTING lcong48 divergence** (global
+  state, untouched by this change) — CONFIRMED pre-existing by stash-rebuild-run of clean code: diverges identically
+  at "299690 compared" WITHOUT my change. Recorded in [[frankenlibc-preexisting-failures]].
+- Extends the double-membrane / missing-fast-path vein ([[double-membrane-delegating-wrappers]]). ⚠️Sweep the OTHER
+  no-fast-path stdlib fns found earlier (a64l/l64a, ecvt/fcvt, getsubopt) — pure-computation, may pay the same tax.

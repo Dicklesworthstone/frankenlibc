@@ -3852,6 +3852,18 @@ pub unsafe extern "C" fn drand48() -> c_double {
 /// `erand48` — return a double in [0.0, 1.0) using caller-supplied state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn erand48(xsubi: *mut u16) -> c_double {
+    // Deployed fast path: skip the redundant decide+observe membrane tax (~5ns,
+    // ~2x on the ~5ns LCG). In deployed always-Allow mode `decide` never Denies, so
+    // the full path's result is gated only by `null || !tracked_region_fits` — which
+    // this keeps — making it byte-identical. Mirrors the drand48/lrand48/mrand48 fast
+    // path (which have no pointer arg); the explicit-state RNGs keep the fit guard.
+    if runtime_policy::stdlib_membrane_fastpath() {
+        if xsubi.is_null() || !tracked_region_fits(xsubi.cast(), RAND48_STATE_BYTES) {
+            return 0.0;
+        }
+        let state = unsafe { &mut *(xsubi as *mut [u16; 3]) };
+        return frankenlibc_core::stdlib::erand48(state);
+    }
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         xsubi as usize,
@@ -3893,6 +3905,14 @@ pub unsafe extern "C" fn lrand48() -> c_long {
 /// `nrand48` — return non-negative long using caller-supplied state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nrand48(xsubi: *mut u16) -> c_long {
+    // Deployed fast path: skip the redundant decide+observe tax (see erand48).
+    if runtime_policy::stdlib_membrane_fastpath() {
+        if xsubi.is_null() || !tracked_region_fits(xsubi.cast(), RAND48_STATE_BYTES) {
+            return 0;
+        }
+        let state = unsafe { &mut *(xsubi as *mut [u16; 3]) };
+        return frankenlibc_core::stdlib::nrand48(state) as c_long;
+    }
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         xsubi as usize,
@@ -3934,6 +3954,14 @@ pub unsafe extern "C" fn mrand48() -> c_long {
 /// `jrand48` — return signed long using caller-supplied state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn jrand48(xsubi: *mut u16) -> c_long {
+    // Deployed fast path: skip the redundant decide+observe tax (see erand48).
+    if runtime_policy::stdlib_membrane_fastpath() {
+        if xsubi.is_null() || !tracked_region_fits(xsubi.cast(), RAND48_STATE_BYTES) {
+            return 0;
+        }
+        let state = unsafe { &mut *(xsubi as *mut [u16; 3]) };
+        return frankenlibc_core::stdlib::jrand48(state) as c_long;
+    }
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         xsubi as usize,
