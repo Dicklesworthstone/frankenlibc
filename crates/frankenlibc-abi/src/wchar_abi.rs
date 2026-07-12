@@ -6599,8 +6599,14 @@ pub unsafe extern "C" fn mbsnrtowcs(
                 let dst_window = unsafe {
                     std::slice::from_raw_parts_mut(dst.add(written) as *mut u32, len - written)
                 };
-                let k = wchar_core::mbs_ascii_prefix(dst_window, src_window);
-                (k, k) // ASCII widens 1:1
+                // Write mode: SIMD-widen the leading clean run (ASCII + contiguous
+                // 2/3/4-byte) within the nms window straight into `dst`; the scalar
+                // `mbrtowc` below resolves NUL / MB_INCOMPLETE / EILSEQ / dst-full
+                // and any sequence straddling the nms boundary — was ASCII-only,
+                // leaving contiguous non-Latin runs scalar (~3-5x LOSS vs glibc).
+                // `chars` != `bytes` for multibyte, so advance the two cursors
+                // independently below.
+                wchar_core::mbs_decode_prefix(dst_window, src_window)
             };
             if chars > 0 {
                 consumed += bytes;
