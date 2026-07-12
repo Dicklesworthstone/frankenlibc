@@ -17365,3 +17365,19 @@ toolchain is fixed.
   (wcsrtombs/mbsrtowcs) already used the core fn. Both n-bounded now fixed. GENERAL follow-on: sweep other
   ABI fns for hot-loop calls to exported string/wchar/mem symbols (grep hot loops for `unsafe { <exported>(`).
   See [[htm-tax-and-nomangle-probe-vein]], [[interposed-symbol-recursion]], [[multibyte-simd-conversion-vein]].
+
+## cc-mbs-decoded-len-prefix-density-guard-2026-07-12 — WIN (SHIPPED 14029c21b) — count-mode twin of the write density guard
+
+- **THE LEVER.** The decode-COUNT prefix `mbs_decoded_len_prefix` (mbstowcs/mbsrtowcs/mbsnrtowcs count)
+  still lacked the density guard the write prefix got (290ab9280) AND returned on `si == start` (only when
+  a full round made zero progress) — so an isolated accent paid a WASTED second iteration (redundant
+  ascii_prefix_len probe + 3 more window checks). Mirrored the guard + `si == before_windows` return.
+- **BYTE-IDENTICAL** (lone char can't fill a window ⇒ same scalar deferral). conformance_diff_mbsrtowcs 7/0,
+  conformance_diff_mbstowcs_simd 1/0, conformance_diff_wchar 44/0, n_bounded 2/0.
+- **MEASURED (remote -j2, SAME-FLEET before/after via stash):** mbstowcs count mixed fl 2859 -> 1911ns
+  (~-33%), 3.17x -> 1.99x. cyrillic/cjk/ascii unchanged. Same helper serves all 3 count converters.
+- **NOTE.** Bigger win than the write guard (-33% vs -7%) because the count prefix ALSO had the
+  wasted-iteration bug (`si==start`), which the guard's `si==before_windows` fixes. Both decode prefixes
+  (count+write) now carry the guard. ⚠️MEASUREMENT: cross-turn fl numbers are UNRELIABLE (worker variance
+  ±30%); a single-worker run showed 2.44x that looked like a regression — the SAME-FLEET stash comparison
+  (2859→1911) is the truth. Always same-fleet for <2x deltas. See [[multibyte-simd-conversion-vein]].
