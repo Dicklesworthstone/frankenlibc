@@ -17972,3 +17972,26 @@ caller (ecvt.rs:839) + tests; render_gcvt_into duplicates the dispatch (low-risk
   by core reference tests), SAME vein as ecvt (1.6x) / fcvt (1.4x); before measured 2.4-3.2x (cc-gcvt-alloc-elim).
   **RE-BENCH gcvt_alloc_bench + run gcvt_differential_fuzz once the peer's getsubopt lands.** Only core/ecvt.rs
   committed this turn. See [[cvt-family-and-perf-frontier]].
+
+## cod-getsubopt-membrane-fastpath-2026-07-12 — REJECT (same-worker null; parser dominates)
+
+Negative-ledger follow-up to the remaining `getsubopt` candidate in
+[[double-membrane-delegating-wrappers]]. Tried bypassing `runtime_policy::decide` and successful-call
+`observe` under the deployed `stdlib_membrane_fastpath()`, while retaining every null, tracked-bound,
+termination and overflow guard. Adverse exits lazily retained their original decision and audit event;
+test builds retained the full path.
+- **STRICT REMOTE SAME-WORKER A/B:** on `vmi1227854`, Criterion `getsubopt_4token_hit` (four tokens,
+  fourth-token hit, `gamma=42,alpha`) moved **92.776 ns baseline -> 94.001 ns candidate** at the interval
+  center, **p=0.37** (`[86.580,99.539]` -> `[90.111,97.778]`): no statistically detectable win. The
+  same-binary host-glibc control moved **19.765 -> 18.891 ns**, so the candidate/host ratio worsened
+  **4.69x -> 4.98x**. The auxiliary telemetry p50 moved 98.838 -> 85.568 ns, but disagreed with the
+  Criterion estimator and the host-normalized control, so it is not keep evidence.
+- **PARITY GATE:** before either timed arm, the benchmark asserted exact agreement with private-namespace
+  host glibc for return index, mutated input bytes, cursor offset and value-pointer offset. The release
+  candidate built and ran successfully under strict remote-only RCH.
+- **COMMAND:** `RCH_WORKER=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR
+  rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench
+  glibc_baseline_bench getsubopt_4token_hit -- --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`.
+- **DECISION / DO-NOT-RETRY:** reverted the source and benchmark additions; ledger only. Do not retry the
+  membrane bypass alone for this four-token hit. The residual is in bounded segment/token scanning and
+  candidate comparison, not the common-path decision bookkeeping.
