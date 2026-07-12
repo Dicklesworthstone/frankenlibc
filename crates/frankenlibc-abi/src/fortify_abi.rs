@@ -209,10 +209,13 @@ pub unsafe extern "C" fn __explicit_bzero_chk(dest: *mut c_void, len: usize, des
     if destlen != usize::MAX && len > destlen {
         unsafe { __chk_fail() }
     }
-    let p = dest as *mut u8;
-    for i in 0..len {
-        unsafe { std::ptr::write_volatile(p.add(i), 0) };
-    }
+    // Route to explicit_bzero (→ bzero → raw_memset_bytes) instead of a byte-by-byte
+    // write_volatile loop. raw_memset_bytes zeroes with 32B-unrolled write_volatile::<u64>
+    // stores, which the loop-idiom recognizer also refuses to coalesce into an elidable
+    // @llvm.memset — so the security guarantee (the zeroing cannot be dead-store-eliminated)
+    // is preserved while moving 8 bytes per store instead of 1. Byte-identical: both zero
+    // exactly `len` bytes; explicit_bzero's null / zero-length guards are a harmless superset.
+    unsafe { crate::string_abi::explicit_bzero(dest, len) };
 }
 
 // ── String operations ──────────────────────────────────────────────────────

@@ -17754,3 +17754,23 @@ non-decreasing). One comparator pass, no pdqsort, for sorted/reverse input.
   load-bearing for output correctness. Kept simple (a 10-line adjacent-pair loop + symmetric-swap reverse),
   gate-covered on sorted/reverse/mixed-sign/all-equal. w8-dups large-N ~1.8x radix mild-loss still untouched
   (needs dup-density detection). See [[qsort-i64-fastlane]].
+
+## cc-explicit-bzero-chk-wide-volatile-2026-07-12 — WIN (fortify secure-zero: byte-loop → wide-volatile, up to 41x)
+
+`__explicit_bzero_chk` (fortify_abi.rs — the `_FORTIFY_SOURCE` variant of explicit_bzero, hot on distros that
+default-fortify) zeroed its buffer with a BYTE-BY-BYTE `write_volatile` loop (one store/byte) — the raw-mem
+byte-loop anti-pattern. The volatile is mandatory (explicit_bzero must not be dead-store-eliminated), but a
+*wide* volatile store is equally uncoalescable. The non-chk `explicit_bzero` already routes through
+`bzero`→`raw_memset_bytes` (32B-unrolled `write_volatile::<u64>`); the _chk variant just didn't delegate.
+Fix = delegate to `explicit_bzero(dest, len)` after the (unchanged) destlen overflow check.
+- **MEASURED (explicit_bzero_chk_bench, pinned taskset -c 63, all-zero output asserted inline every size):**
+  old/new (byte-loop → wide-volatile) = **1.47x@16B, 6.06x@64B, 25.1x@256B, 33.7x@1KB, 40.9x@4KB, 29.9x@64KB**;
+  new/glibc = 1.01-1.34x (near parity — glibc hand-asm marginally ahead, wide-volatile-vs-asm noise).
+- **CORRECTNESS:** byte-identical for all valid inputs — both zero exactly `len` bytes; the zeroing primitive
+  (`raw_memset_bytes`) is golden-gated (conformance_diff_memset.rs, 1568 cases); the `__chk_fail` overflow path
+  is UNCHANGED; inline all-zero assert green for 16/64/256/1024/4096/65536. Only divergence: null dest becomes a
+  safe no-op (bzero null-guards) vs the old loop's crash — benign. ⚠️Formal `fortify_abi_test` gate could not be
+  re-run THIS turn (rch fleet build stuck ~stalled); the change is trivially correct + inline-verified, but
+  re-confirm `cargo test -p frankenlibc-abi --test fortify_abi_test` when rch recovers.
+- Extends [[abi-raw-mem-byteloops]] into the fortify layer. Other `__*_chk` fns already delegate to the fast
+  exported ops (memcpy/memmove/memset/strcpy) — this was the one reimplementing a byte loop.
