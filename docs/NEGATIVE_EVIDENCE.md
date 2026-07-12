@@ -17614,3 +17614,30 @@ any-top-bit-set. Verify-then-commit keeps parity absolute.
 - Fast-lane window `[64,2048]` now covers all four natural integer orderings for both widths; >2048 the radix
   lanes cover asc (desc radix is a separate untried follow-on — reverse of the radix output, same idea). See
   [[qsort-i64-fastlane]].
+
+## cc-qsort-radix-descending-2026-07-12 — REJECT (radix descending is a net REGRESSION vs the stdlib fallback)
+
+Tried extending the DESCENDING lane win (comparison window, cc-qsort-descending-fastlane) to the radix regime
+(num>2048): admit descending comparators through `qsort_prefix_consistent_with_integer_order` (added the two
+descending consistency checks) and commit them in `try_radix_lane_for!` by writing the radix-sorted ranks back
+in REVERSE (O(n), no second radix pass). Byte-correct (verify-then-commit; existing conformance_diff_qsort_radix
+already carries desc32/desc64 across 2047..65537 and stayed green).
+- **MEASURED (qsort_radix_descending_bench, FFI-realistic `old` arm — the pre-change fallback is stdlib
+  `std_sort_unstable_fixed_width` driven by an extern-"C" comparator per compare):** `old/new` = **0.37–0.73x**
+  at n=4096..65536, i.e. the radix descending lane is 1.4–2.7x SLOWER than the fallback it would replace. It
+  DOES beat glibc (Score 1.19–1.62x i64desc, 0.87–1.22x u64desc) — but glibc is the wrong baseline here: the
+  code WITHOUT this change already routes descending large-N to the stdlib pdqsort fallback, which beats both
+  glibc AND radix. So the change is a pure regression; REVERTED in full (tree back to HEAD, no trace).
+- **ROOT CAUSE.** For width 8 the fallback is `std_sort_unstable_fixed_width` (stdlib pdqsort over `[u8;8]`),
+  which is extremely fast even paying an extern-C indirect call per comparison; the LSD radix does 8
+  cache-missing scatter passes over the array, and that memory traffic costs more than pdqsort's
+  comparison-heavy-but-cache-friendly partitioning at these N. u64desc is worst (0.37–0.50x) because the
+  `signed_first` prefix probe is ascending-biased and MISPICKS signed-first for descending-unsigned data → TWO
+  full radix passes.
+- **KEY LESSON.** The comparison-lane descending win (native-typed sort with ZERO per-compare calls + O(n)
+  verify) does NOT transfer to the radix regime: radix still does 8 full passes, so beating the stdlib
+  fixed-width fallback needs the fallback to be the SLOW in-house `pdqsort_recurse`, not the fast stdlib sort.
+  ⚠️Corollary worth a later profile: the shipped ASCENDING radix lane may itself be only marginal vs the
+  (later-added) stdlib fixed-width fallback for width 8 — its wins were measured vs glibc / the in-house
+  pdqsort, not vs `std_sort_unstable_fixed_width`. Do NOT extend radix (up/down/desc) without an
+  FFI-realistic vs-stdlib-fallback A/B. See [[qsort-i64-fastlane]].
