@@ -17513,3 +17513,22 @@ toolchain is fixed.
   (giant match, per-directive %-prefix/E-O probes), not simple bounds checks. A real fix needs a dispatch
   restructure, not point unsafe. ⚠️MEASUREMENT: rch's per-exec worker choice makes stash A/B unreliable for
   <1.3x deltas on sub-100ns functions — need worker-pinning or min-of-many. See [[strptime-parse-vein]].
+
+## cc-mbstowcs-interleaved-ascii-window-2026-07-12 — WIN (SHIPPED)
+
+- **THE LOSS (loss-scan, mbstowcs_bench).** mbstowcs "mixed" (interleaved "café résumé …") lost ~4.5-4.95x
+  to glibc. Root cause: core `mbstowcs`'s inline ALL-OR-NOTHING 16-byte ASCII window loaded 16 bytes and
+  FAILED once PER ascii char on interleaved text — an accent is always within the next 16 bytes, so every
+  chunk broke and advanced a single char via the scalar step (R failed probes for an R-char ascii run).
+- **THE LEVER.** Replace the inline window with `mbs_ascii_prefix` (SIMD chunks + a SCALAR TAIL for the <16
+  remainder), keeping the `src[si] < 0x80` guard so CJK/Cyrillic still skip the probe. The whole short ascii
+  run now widens in the scalar tail after ONE failed probe, not R. Also added the NEXT-char contiguity gate
+  to the 2/3/4-byte windows (matching `mbs_decode_prefix`). Byte-identical (both widen ASCII 1:1, stop at
+  NUL / non-ASCII / dest-full). conformance_diff_mbstowcs_simd 1/0, conformance_diff_wchar 44/0,
+  conformance_diff_mbsrtowcs 7/0.
+- **MEASURED (remote -j2):** mixed 4.5x -> 2.03x (fl ~3765 -> 2006ns, ~-47%); ascii unchanged WIN (~0.09x).
+- **KEY DIAGNOSTIC.** A 2/3/4-byte contiguity gate ALONE was NEUTRAL/slightly-negative (same-fleet A/B) — it
+  gated the wrong thing; the dominant interleaved cost was the ASCII window, not the multibyte probe. Lesson:
+  find the DOMINANT per-element cost before gating. This is the core-mbstowcs analogue of the mbs_decode_prefix
+  work (mbsrtowcs/mbsnrtowcs already had `mbs_ascii_prefix`); the residual ~2x is the inherent per-accent
+  scalar `mbtowc` (interleaved-decode wall). See [[multibyte-simd-conversion-vein]].

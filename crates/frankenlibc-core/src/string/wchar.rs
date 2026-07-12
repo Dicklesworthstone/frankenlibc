@@ -268,9 +268,6 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
     // every terminator / multibyte / error path stays in the unchanged scalar
     // code below. Output is therefore byte-for-byte identical to the pure
     // scalar conversion.
-    const LANES: usize = 16;
-    let zero = Simd::<u8, LANES>::splat(0);
-    let ascii_max = Simd::<u8, LANES>::splat(0x80);
     // SIMD ASCII runs and scalar multibyte steps are INTERLEAVED: after each
     // scalar character the outer loop re-attempts the SIMD fast path, so a long
     // ASCII tail following an early multibyte char (e.g. "café" + a paragraph of
@@ -281,25 +278,19 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
     // ever consumes whole ASCII chunks, and every NUL / multibyte / error case is
     // handled by the unchanged scalar step below.
     loop {
-        // The `src[si] < 0x80` guard skips the SIMD load+compare entirely when the
-        // current byte is a multibyte lead (>= 0x80): the chunk would contain that
-        // byte and break on the first iteration anyway, so probing it is pure waste
-        // on multibyte-heavy text (e.g. CJK / Cyrillic). Identical result — the run
-        // only ever advances on whole ASCII chunks. (Bounds check first: `si +
-        // LANES <= src.len()` guarantees `si < src.len()`, so `src[si]` is in range.)
-        while si + LANES <= src.len() && src[si] < 0x80 && di + LANES <= dest.len() {
-            let bytes: [u8; LANES] = src[si..si + LANES].try_into().unwrap();
-            let chunk = Simd::<u8, LANES>::from_array(bytes);
-            // Any NUL (terminator) or any byte >= 0x80 (multibyte lead) ends the run.
-            if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
-                break;
-            }
-            // Zero-extend each ASCII byte to its u32 codepoint; LLVM lowers the
-            // `as u32` map to a vector widening (e.g. vpmovzxbd).
-            let widened = Simd::<u32, LANES>::from_array(bytes.map(|b| b as u32));
-            widened.copy_to_slice(&mut dest[di..di + LANES]);
-            si += LANES;
-            di += LANES;
+        // Widen the leading ASCII run via `mbs_ascii_prefix` (SIMD 16-byte chunks
+        // plus a scalar tail for the <16 remainder). The `src[si] < 0x80` guard
+        // keeps multibyte-heavy text (CJK / Cyrillic) skipping the probe entirely
+        // (unchanged). The old inline all-or-nothing 16-byte window failed a probe
+        // PER ascii char on INTERLEAVED text (café) — an accent is always within the
+        // next 16 bytes, so every chunk broke and advanced a single char via the
+        // scalar step below. `mbs_ascii_prefix` widens the whole short run in its
+        // scalar tail after ONE failed probe. Byte-identical: both widen each ASCII
+        // byte 1:1 to its codepoint and stop at the first NUL / non-ASCII / dest-full.
+        if si < src.len() && src[si] < 0x80 {
+            let k = mbs_ascii_prefix(&mut dest[di..], &src[si..]);
+            si += k;
+            di += k;
         }
 
         // SIMD 2-byte fast path: a run of >= 8 well-formed 2-byte UTF-8 sequences
@@ -313,7 +304,11 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
         // (Cyrillic / Greek / Hebrew / Arabic / Latin-extended). Any non-clean
         // window (ASCII, 3/4-byte, malformed, NUL, or a sequence straddling the
         // 16-byte boundary) fails the mask test and drops to the scalar step.
-        while si + 16 <= src.len() && di + 8 <= dest.len() && (0xC2..=0xDF).contains(&src[si]) {
+        while si + 16 <= src.len()
+            && di + 8 <= dest.len()
+            && (0xC2..=0xDF).contains(&src[si])
+            && (0xC2..=0xDF).contains(&src[si + 2])
+        {
             let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
             let v = Simd::<u8, 16>::from_array(bytes);
             let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
@@ -337,7 +332,11 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
         // below A0, and no ED surrogate second byte above 9F. Any mixed-width,
         // malformed, NUL, or boundary-straddling input drops to the scalar
         // `mbtowc` path, preserving the exact success/error contract.
-        while si + 16 <= src.len() && di + 4 <= dest.len() && (0xE0..=0xEF).contains(&src[si]) {
+        while si + 16 <= src.len()
+            && di + 4 <= dest.len()
+            && (0xE0..=0xEF).contains(&src[si])
+            && (0xE0..=0xEF).contains(&src[si + 3])
+        {
             let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
             let v = Simd::<u8, 16>::from_array(bytes);
             let leads = std::simd::simd_swizzle!(v, [0, 3, 6, 9]);
@@ -365,7 +364,11 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
         // F0..=F7 leads, plain continuation bytes, and no overlong F0 sequence.
         // Code points above U+10FFFF are intentionally still accepted here when
         // encoded by F5..=F7, matching the existing glibc-compatible scalar path.
-        while si + 16 <= src.len() && di + 4 <= dest.len() && (0xF0..=0xF7).contains(&src[si]) {
+        while si + 16 <= src.len()
+            && di + 4 <= dest.len()
+            && (0xF0..=0xF7).contains(&src[si + 4])
+            && (0xF0..=0xF7).contains(&src[si])
+        {
             let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
             let v = Simd::<u8, 16>::from_array(bytes);
             let leads = std::simd::simd_swizzle!(v, [0, 4, 8, 12]);
