@@ -2861,19 +2861,15 @@ pub unsafe extern "C" fn mbstowcs(dst: *mut u32, src: *const u8, n: usize) -> us
     };
     let src_slice = unsafe { std::slice::from_raw_parts(src, src_len.saturating_add(1)) }; // include NUL
     if dst.is_null() {
-        // Count mode
-        let mut count = 0usize;
-        let mut i = 0;
-        while i < src_slice.len() && src_slice[i] != 0 {
-            match wchar_core::mbtowc(&src_slice[i..]) {
-                Some((_, len)) => {
-                    count += 1;
-                    i += len;
-                }
-                None => return usize::MAX,
-            }
-        }
-        return count;
+        // Count mode: SIMD-decode-and-count via `mbs_decoded_len` (mirrors the
+        // write path's validated ASCII/2/3/4-byte windows, tallying code points
+        // instead of widening) — was a scalar per-char `mbtowc` loop, 2.4-3.5x
+        // LOSS vs glibc. Byte-identical: same validation, same `None` at the first
+        // invalid sequence.
+        return match wchar_core::mbs_decoded_len(src_slice) {
+            Some(count) => count,
+            None => usize::MAX,
+        };
     }
     let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst, n) };
     match wchar_core::mbstowcs(dst_slice, src_slice) {

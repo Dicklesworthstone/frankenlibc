@@ -414,6 +414,108 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
     }
 }
 
+/// Number of wide chars a multibyte (UTF-8) string decodes to — the count-mode
+/// answer of `mbstowcs`/`mbsrtowcs`/`mbsnrtowcs` when the destination is NULL —
+/// or `None` if any sequence is invalid, exactly as a per-char [`mbtowc`] count
+/// loop returns.
+///
+/// Mirrors [`mbstowcs`]'s SIMD fast paths (ASCII / 2 / 3 / 4-byte, each with the
+/// SAME full RFC 3629 validation — lead ranges, continuation bytes, overlong and
+/// surrogate rejection) but accumulates a code-point count instead of widening
+/// into a destination, so it is byte-for-byte identical to the scalar loop while
+/// vectorising every clean run. Each clean window contributes a known count
+/// (16 ASCII / 8 two-byte / 4 three-byte / 4 four-byte code points); any window
+/// that fails its mask, plus every NUL / error / boundary-straddling case, drops
+/// to the authoritative scalar `mbtowc` step. `src` must include its terminating
+/// NUL (the scan stops there); there is no destination bound, so — like glibc's
+/// count mode — the whole string is measured.
+pub fn mbs_decoded_len(src: &[u8]) -> Option<usize> {
+    let mut si = 0usize;
+    let mut count = 0usize;
+    const LANES: usize = 16;
+    let zero = Simd::<u8, LANES>::splat(0);
+    let ascii_max = Simd::<u8, LANES>::splat(0x80);
+    loop {
+        // ASCII run: 16 code points per clean 16-byte window.
+        while si + LANES <= src.len() && src[si] < 0x80 {
+            let bytes: [u8; LANES] = src[si..si + LANES].try_into().unwrap();
+            let chunk = Simd::<u8, LANES>::from_array(bytes);
+            if chunk.simd_eq(zero).any() || chunk.simd_ge(ascii_max).any() {
+                break;
+            }
+            si += LANES;
+            count += LANES;
+        }
+
+        // 2-byte run: 8 code points per clean 16-byte window (lead 0xC2..=0xDF +
+        // continuation 0x80..=0xBF ⇒ never overlong, never a surrogate).
+        while si + 16 <= src.len() && (0xC2..=0xDF).contains(&src[si]) {
+            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
+            let v = Simd::<u8, 16>::from_array(bytes);
+            let leads = std::simd::simd_swizzle!(v, [0, 2, 4, 6, 8, 10, 12, 14]);
+            let conts = std::simd::simd_swizzle!(v, [1, 3, 5, 7, 9, 11, 13, 15]);
+            let leads_ok = leads.simd_ge(Simd::splat(0xC2)) & leads.simd_le(Simd::splat(0xDF));
+            let conts_ok = conts.simd_ge(Simd::splat(0x80)) & conts.simd_le(Simd::splat(0xBF));
+            if !(leads_ok & conts_ok).all() {
+                break;
+            }
+            si += 16;
+            count += 8;
+        }
+
+        // 3-byte run: 4 code points per clean 12-byte window (E0..EF lead, both
+        // continuations 80..BF, no E0 overlong <A0, no ED surrogate >9F).
+        while si + 16 <= src.len() && (0xE0..=0xEF).contains(&src[si]) {
+            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
+            let v = Simd::<u8, 16>::from_array(bytes);
+            let leads = std::simd::simd_swizzle!(v, [0, 3, 6, 9]);
+            let cont1 = std::simd::simd_swizzle!(v, [1, 4, 7, 10]);
+            let cont2 = std::simd::simd_swizzle!(v, [2, 5, 8, 11]);
+            let leads_ok = leads.simd_ge(Simd::splat(0xE0)) & leads.simd_le(Simd::splat(0xEF));
+            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
+            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
+            let overlong_ok = !leads.simd_eq(Simd::splat(0xE0)) | cont1.simd_ge(Simd::splat(0xA0));
+            let surrogate_ok = !leads.simd_eq(Simd::splat(0xED)) | cont1.simd_le(Simd::splat(0x9F));
+            if !(leads_ok & cont1_ok & cont2_ok & overlong_ok & surrogate_ok).all() {
+                break;
+            }
+            si += 12;
+            count += 4;
+        }
+
+        // 4-byte run: 4 code points per clean 16-byte window (F0..F7 lead, plain
+        // continuations, no F0 overlong <0x90; F5..F7 still accepted, matching the
+        // scalar path's glibc-compatible contract).
+        while si + 16 <= src.len() && (0xF0..=0xF7).contains(&src[si]) {
+            let bytes: [u8; 16] = src[si..si + 16].try_into().unwrap();
+            let v = Simd::<u8, 16>::from_array(bytes);
+            let leads = std::simd::simd_swizzle!(v, [0, 4, 8, 12]);
+            let cont1 = std::simd::simd_swizzle!(v, [1, 5, 9, 13]);
+            let cont2 = std::simd::simd_swizzle!(v, [2, 6, 10, 14]);
+            let cont3 = std::simd::simd_swizzle!(v, [3, 7, 11, 15]);
+            let leads_ok = leads.simd_ge(Simd::splat(0xF0)) & leads.simd_le(Simd::splat(0xF7));
+            let cont1_ok = cont1.simd_ge(Simd::splat(0x80)) & cont1.simd_le(Simd::splat(0xBF));
+            let cont2_ok = cont2.simd_ge(Simd::splat(0x80)) & cont2.simd_le(Simd::splat(0xBF));
+            let cont3_ok = cont3.simd_ge(Simd::splat(0x80)) & cont3.simd_le(Simd::splat(0xBF));
+            let overlong_ok = !leads.simd_eq(Simd::splat(0xF0)) | cont1.simd_ge(Simd::splat(0x90));
+            if !(leads_ok & cont1_ok & cont2_ok & cont3_ok & overlong_ok).all() {
+                break;
+            }
+            si += 16;
+            count += 4;
+        }
+
+        // One scalar step (the authority for NUL / end / error / mixed-width /
+        // boundary-straddling bytes), then re-attempt the SIMD runs.
+        if si >= src.len() || src[si] == 0 {
+            return Some(count);
+        }
+        let (_, n) = mbtowc(&src[si..])?;
+        si += n;
+        count += 1;
+    }
+}
+
 /// Length of the leading plain-ASCII run of `src`: the count of bytes `b` with
 /// `0 < b < 0x80`, stopping at the first NUL or byte `>= 0x80`. SIMD-scanned a
 /// vector at a time. Identical to counting those bytes one at a time.
