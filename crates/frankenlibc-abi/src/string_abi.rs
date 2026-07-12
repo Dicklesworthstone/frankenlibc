@@ -923,7 +923,11 @@ unsafe fn fused_strncpy_prefix(dst: *mut u8, src: *const u8, n: usize) -> usize 
         if i + 32 > n {
             // Final partial window: fewer than 32 bytes remain before the n cap.
             let rem = n - i;
-            let stop = if m != 0 { (m.trailing_zeros() as usize).min(rem) } else { rem };
+            let stop = if m != 0 {
+                (m.trailing_zeros() as usize).min(rem)
+            } else {
+                rem
+            };
             if stop > 0 {
                 unsafe { raw_overlap_copy(dst.add(i), src.add(i), stop) };
             }
@@ -1101,7 +1105,7 @@ unsafe fn raw_strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_c
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx")]
 unsafe fn raw_avx_memset(dst: *mut u8, value: u8, n: usize) {
-    use core::arch::x86_64::{__m128i, _mm256_set1_epi8, _mm_set1_epi8, _mm_storeu_si128};
+    use core::arch::x86_64::{__m128i, _mm_set1_epi8, _mm_storeu_si128, _mm256_set1_epi8};
     unsafe {
         let v = _mm256_set1_epi8(value as i8);
         let mut d = dst;
@@ -1489,7 +1493,8 @@ unsafe fn raw_lane_memcmp_bytes(
                     return memcmp_first_diff(s1, s2, off, n);
                 }
             } else if r >= 8 {
-                if core::ptr::read_unaligned(s1.add(i).cast::<u64>()) != core::ptr::read_unaligned(s2.add(i).cast::<u64>())
+                if core::ptr::read_unaligned(s1.add(i).cast::<u64>())
+                    != core::ptr::read_unaligned(s2.add(i).cast::<u64>())
                 {
                     return memcmp_first_diff(s1, s2, i, i + 8);
                 }
@@ -1500,7 +1505,8 @@ unsafe fn raw_lane_memcmp_bytes(
                     return memcmp_first_diff(s1, s2, off, n);
                 }
             } else if r >= 4 {
-                if core::ptr::read_unaligned(s1.add(i).cast::<u32>()) != core::ptr::read_unaligned(s2.add(i).cast::<u32>())
+                if core::ptr::read_unaligned(s1.add(i).cast::<u32>())
+                    != core::ptr::read_unaligned(s2.add(i).cast::<u32>())
                 {
                     return memcmp_first_diff(s1, s2, i, i + 4);
                 }
@@ -1928,9 +1934,7 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
             // if empty, every NUL position < 16 is ruled out so probe 1's lowest set bit
             // is the true first NUL ≥ 16. Benefits strnlen + every bounded scan caller.
             if (16..32).contains(&limit) {
-                let v0 = Simd::<u8, 16>::from_slice(unsafe {
-                    core::slice::from_raw_parts(p, 16)
-                });
+                let v0 = Simd::<u8, 16>::from_slice(unsafe { core::slice::from_raw_parts(p, 16) });
                 let m0 = v0.simd_eq(Simd::splat(0)).to_bitmask();
                 if m0 != 0 {
                     return (m0.trailing_zeros() as usize, true);
@@ -1956,10 +1960,18 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
                 use core::simd::cmp::{SimdOrd, SimdPartialEq};
                 let z = Simd::<u8, 32>::splat(0);
                 // SAFETY: [i, i+128) ⊆ [0, limit); `limit` bytes are readable.
-                let a = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
-                let b = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 32), 32) });
-                let c = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 64), 32) });
-                let d = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 96), 32) });
+                let a = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i), 32)
+                });
+                let b = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 32), 32)
+                });
+                let c = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 64), 32)
+                });
+                let d = Simd::<u8, 32>::from_slice(unsafe {
+                    core::slice::from_raw_parts(p.add(i + 96), 32)
+                });
                 if a.simd_min(b).simd_min(c.simd_min(d)).simd_eq(z).any() {
                     break;
                 }
@@ -2047,9 +2059,7 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
             // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31
             // bytes); the full 32-byte aligned window is in that page.
             let base = unsafe { p.sub(align) };
-            let v0 = Simd::<u8, 32>::from_slice(unsafe {
-                core::slice::from_raw_parts(base, 32)
-            });
+            let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
             // Clear the low `align` bits so head bytes before `p` can't match.
             let mask0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & !((1u64 << align) - 1);
             if mask0 != 0 {
@@ -2131,7 +2141,10 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
                     if mc != 0 {
                         return (i + 64 + mc.trailing_zeros() as usize, true);
                     }
-                    return (i + 96 + d.simd_eq(z).to_bitmask().trailing_zeros() as usize, true);
+                    return (
+                        i + 96 + d.simd_eq(z).to_bitmask().trailing_zeros() as usize,
+                        true,
+                    );
                 }
                 i += 128;
             }
@@ -2205,9 +2218,7 @@ unsafe fn scan_c_string_for_byte(
             let align = (p as usize) & 31;
             // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31).
             let base = unsafe { p.sub(align) };
-            let v0 = Simd::<u8, 32>::from_slice(unsafe {
-                core::slice::from_raw_parts(base, 32)
-            });
+            let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
             let headclear = !((1u64 << align) - 1);
             let nul0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & headclear;
             let tgt0 = v0.simd_eq(Simd::splat(target)).to_bitmask() & headclear;
@@ -2394,9 +2405,13 @@ unsafe fn scan_c_string_pshufb(
         let align = (p as usize) & 31;
         let base = p.sub(align);
         let v0 = _mm256_loadu_si256(base.cast());
-        let head_clear = if align == 0 { u32::MAX } else { !((1u32 << align) - 1) };
-        let bits0 =
-            window_stop_bits(v0, lo_table, hi_table, zero, low_mask, ones, stop_in_set) & head_clear;
+        let head_clear = if align == 0 {
+            u32::MAX
+        } else {
+            !((1u32 << align) - 1)
+        };
+        let bits0 = window_stop_bits(v0, lo_table, hi_table, zero, low_mask, ones, stop_in_set)
+            & head_clear;
         if bits0 != 0 {
             return bits0.trailing_zeros() as usize - align;
         }
@@ -2452,7 +2467,11 @@ unsafe fn scan_c_string_for_set4(ptr: *const c_char, set: [u8; 4], complement: b
     // Computes the 32-lane "stop here" bitmask for a loaded window.
     let stop_bits = |v: Simd<u8, 32>| -> u64 {
         let member = v.simd_eq(s0) | v.simd_eq(s1) | v.simd_eq(s2) | v.simd_eq(s3);
-        let stop = if complement { !member } else { member | v.simd_eq(zv) };
+        let stop = if complement {
+            !member
+        } else {
+            member | v.simd_eq(zv)
+        };
         stop.to_bitmask()
     };
 
@@ -2477,13 +2496,17 @@ unsafe fn scan_c_string_for_set4(ptr: *const c_char, set: [u8; 4], complement: b
         // the 32B tier, which resolves the exact first stop index unchanged.
         if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
             // SAFETY: [i, i+128) stays within the current mapped page.
-            let w1 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
-            let w2 =
-                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 32), 32) });
-            let w3 =
-                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 64), 32) });
-            let w4 =
-                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i + 96), 32) });
+            let w1 =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+            let w2 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 32), 32)
+            });
+            let w3 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 64), 32)
+            });
+            let w4 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 96), 32)
+            });
             if (stop_bits(w1) | stop_bits(w2) | stop_bits(w3) | stop_bits(w4)) == 0 {
                 i += 128;
                 continue;
@@ -2600,9 +2623,7 @@ unsafe fn scan_c_string_last_byte(
             // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31).
             let base = unsafe { p.sub(align) };
             let headclear = !((1u64 << align) - 1);
-            let v0 = Simd::<u8, 32>::from_slice(unsafe {
-                core::slice::from_raw_parts(base, 32)
-            });
+            let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
             let nul0 = v0.simd_eq(Simd::splat(0)).to_bitmask() & headclear;
             let tgt0 = v0.simd_eq(Simd::splat(target)).to_bitmask() & headclear;
             if nul0 != 0 {
@@ -5396,7 +5417,10 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
             let hay_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len);
             let needle_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
             match frankenlibc_core::string::mem::memmem(
-                hay_slice, hay_len, needle_slice, needle_len,
+                hay_slice,
+                hay_len,
+                needle_slice,
+                needle_len,
             ) {
                 Some(idx) => {
                     out_local = haystack.add(idx) as *mut c_char;
@@ -5562,7 +5586,11 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
                 return current.add(start) as *mut c_char;
             }
             let (scan_limit, terminated) = scan_c_string(current, None);
-            let slice_len = if terminated { scan_limit + 1 } else { scan_limit };
+            let slice_len = if terminated {
+                scan_limit + 1
+            } else {
+                scan_limit
+            };
             let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
             let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_len + 1);
             return match frankenlibc_core::string::strtok::strtok(s_slice, delim_slice) {
@@ -5810,7 +5838,11 @@ pub unsafe extern "C" fn strtok_r(
                 return current.add(start) as *mut c_char;
             }
             let (scan_limit, terminated) = scan_c_string(current, None);
-            let slice_len = if terminated { scan_limit + 1 } else { scan_limit };
+            let slice_len = if terminated {
+                scan_limit + 1
+            } else {
+                scan_limit
+            };
             let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
             let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_len + 1);
             return match frankenlibc_core::string::strtok::strtok_r(s_slice, delim_slice, 0) {
@@ -6205,7 +6237,11 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
             }
             let (s_len, s_terminated) = scan_c_string(s, None);
             let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
-            let accept_slice_len = if accept_terminated { accept_len + 1 } else { accept_len };
+            let accept_slice_len = if accept_terminated {
+                accept_len + 1
+            } else {
+                accept_len
+            };
             let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
             let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_slice_len);
             frankenlibc_core::string::str::strspn(s_slice, accept_slice)
@@ -6333,7 +6369,11 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
             }
             let (s_len, s_terminated) = scan_c_string(s, None);
             let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
-            let reject_slice_len = if reject_terminated { reject_len + 1 } else { reject_len };
+            let reject_slice_len = if reject_terminated {
+                reject_len + 1
+            } else {
+                reject_len
+            };
             let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
             let reject_slice = std::slice::from_raw_parts(reject.cast::<u8>(), reject_slice_len);
             frankenlibc_core::string::str::strcspn(s_slice, reject_slice)
@@ -6475,7 +6515,11 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
             }
             let (s_len, s_terminated) = scan_c_string(s, None);
             let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
-            let accept_slice_len = if accept_terminated { accept_len + 1 } else { accept_len };
+            let accept_slice_len = if accept_terminated {
+                accept_len + 1
+            } else {
+                accept_len
+            };
             let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
             let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_slice_len);
             match frankenlibc_core::string::str::strpbrk(s_slice, accept_slice) {
@@ -6837,7 +6881,8 @@ pub unsafe extern "C" fn memmem(
         return unsafe {
             let h_bytes = std::slice::from_raw_parts(haystack.cast::<u8>(), haystack_len);
             let n_bytes = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len);
-            match frankenlibc_core::string::mem::memmem(h_bytes, haystack_len, n_bytes, needle_len) {
+            match frankenlibc_core::string::mem::memmem(h_bytes, haystack_len, n_bytes, needle_len)
+            {
                 Some(idx) => (haystack as *mut u8).add(idx).cast::<c_void>(),
                 None => std::ptr::null_mut(),
             }
@@ -7078,7 +7123,11 @@ pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_ch
             }
             let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
             let h_slice_len = if hay_terminated { hay_len + 1 } else { hay_len };
-            let n_slice_len = if needle_terminated { needle_len + 1 } else { needle_len };
+            let n_slice_len = if needle_terminated {
+                needle_len + 1
+            } else {
+                needle_len
+            };
             let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), h_slice_len);
             let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), n_slice_len);
             match frankenlibc_core::string::str::strcasestr(h_slice, n_slice) {
@@ -7926,7 +7975,10 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: 
     // scan src, copy `min(strlen, dstsize-1)` + NUL via the core, return strlen(src).
     // Skips stage_context + decide + observe + stage-trace. The null/zero-size edges
     // fall through to the full path (which returns strlen(src) per BSD contract).
-    if !dst.is_null() && !src.is_null() && dstsize != 0 && runtime_policy::strict_passthrough_active()
+    if !dst.is_null()
+        && !src.is_null()
+        && dstsize != 0
+        && runtime_policy::strict_passthrough_active()
     {
         return unsafe {
             // Inline core strlcpy using the already-scanned src_len (dstsize != 0
@@ -8048,7 +8100,10 @@ pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: 
     // full body — scan src, core strlcat into `dst[..dstsize]`, return the BSD total
     // length. Skips stage_context + decide + observe + stage-trace. null/zero-size
     // edges fall through to the full path.
-    if !dst.is_null() && !src.is_null() && dstsize != 0 && runtime_policy::strict_passthrough_active()
+    if !dst.is_null()
+        && !src.is_null()
+        && dstsize != 0
+        && runtime_policy::strict_passthrough_active()
     {
         return unsafe {
             // Inline core strlcat using the already-scanned src_len + a BOUNDED dst
@@ -8181,6 +8236,10 @@ pub unsafe extern "C" fn strcoll(s1: *const c_char, s2: *const c_char) -> c_int 
     // SWAR/32-byte-SIMD scan with early exit, instead of the old two full
     // length scans (scan_c_string x2) plus a separate compare pass — that triple
     // pass made strcoll ~4.4x slower than glibc strcoll on equal strings.
+    // NOTE (2026-07-12): inlining strcmp's strict fast path here to drop the PLT
+    // hop was measured NEUTRAL (same-fleet A/B: fl ~8.3ns both) — the residual
+    // ~2.2x vs glibc on a 45-byte differ-at-end compare is the strcmp SWAR-vs-AVX2
+    // ceiling at small n, NOT the call. Kept the simple delegation.
     unsafe { strcmp(s1, s2) }
 }
 
@@ -12087,7 +12146,6 @@ pub unsafe extern "C" fn strnstr(
         None => std::ptr::null_mut(),
     }
 }
-
 
 /// Bench-only A/B for the deployed-strlen gate reorder: the OLD prologue gate
 /// (`string_raw_passthrough_active()` 5-check fan-out, then strict) vs the NEW gate

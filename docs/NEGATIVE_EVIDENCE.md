@@ -17381,3 +17381,20 @@ toolchain is fixed.
   (count+write) now carry the guard. ⚠️MEASUREMENT: cross-turn fl numbers are UNRELIABLE (worker variance
   ±30%); a single-worker run showed 2.44x that looked like a regression — the SAME-FLEET stash comparison
   (2859→1911) is the truth. Always same-fleet for <2x deltas. See [[multibyte-simd-conversion-vein]].
+
+## cc-strcoll-plt-hop-2026-07-12 — REJECT (measured non-win; PLT hop is NOT the loss)
+
+- **HYPOTHESIS.** strcoll delegates to the exported `strcmp` (extern-C PLT hop); profiled 2.2x vs glibc on a
+  45-byte differ-at-end compare. Guessed the PLT hop was the tax (cf. the mbsnrtowcs/wcsnrtombs PLT-tax wins).
+- **TESTED.** Inlined strcmp's strict-passthrough fast path (`scan_strcmp` + diff) directly into strcoll,
+  bypassing the exported symbol. Byte-identical: conformance_diff_strcoll_fast 2/0,
+  conformance_diff_strcoll_strxfrm 1/0, conformance_diff_strcmp 3/0.
+- **RESULT — NEUTRAL (SAME-FLEET A/B, stash before/after):** fl BEFORE ~8.3ns, AFTER ~8.2ns — no change.
+  The exported `strcmp` call is a resolved in-.so direct jump (cheap), NOT a slow PLT lookup. The residual
+  2.2x is the strcmp SWAR-vs-glibc-AVX2 ceiling at small n (45-byte FULL scan, differ-at-end) — same wall as
+  memcmp/wcscmp at n<64 (see [[memcmp-avx2-kernel.md]], [[abi-raw-mem-byteloops]]). REVERTED (kept in-code NOTE).
+- **LESSON — narrows the PLT-tax vein ([[extern-c-plt-tax-in-hot-loops]]):** the tax is real only for
+  PER-ELEMENT hot-loop calls (mbrtowc/wcrtomb per char). A SINGLE exported-symbol call per invocation
+  (strcoll->strcmp) is a cheap resolved jump — do NOT chase those. ⚠️The "fl 11.6->7.7ns" cross-fleet
+  numbers that suggested a win were pure worker variance; the same-fleet A/B is the truth.
+- **REAL strcoll gap = strcmp small-n AVX2 ceiling** (n<64 full-scan), an existing known wall, not a fresh lever.
