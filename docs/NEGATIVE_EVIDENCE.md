@@ -17192,3 +17192,34 @@ sb_translation byte->byte). Both directions MEASURED (remote, p50, 1KiB all-high
   (cc-mbsrtowcs-gate-retry-2026-07-11). Remaining follow-on: mbs* DECODE count (dst==NULL) is the last
   unmined multibyte-conversion sub-path (harder — variable-width validation). See
   [[multibyte-simd-conversion-vein]].
+
+## cc-mbstowcs-count-simd-2026-07-11 — WIN (SHIPPED 31e9a50e5) — opens the decode-count vein
+
+- **THE LEVER (profile-first).** mbstowcs(NULL, src, n) count mode tallied code points with a scalar
+  per-char `mbtowc` loop — NO SIMD even for ASCII. Profiled (remote dlmopen, median of 2) ~3.7x (ascii),
+  ~2.9x (mixed), ~3.0x (cyrillic), ~2.4x (cjk) LOSS vs glibc. Added `wchar_core::mbs_decoded_len`: a
+  count-only mirror of the write-path `mbstowcs` SIMD windows (ASCII 16cp/16B, 2-byte 8cp/16B, 3-byte
+  4cp/12B, 4-byte 4cp/16B) with the SAME RFC-3629 validation, accumulating a count instead of widening.
+  Faithful mechanical transform of an already-differential-proven decoder ⇒ low byte-identity risk.
+- **BYTE-IDENTICAL.** The count bench asserts fl==glibc on all four arms (incl. mixed) before timing,
+  3 reps, 0 divergences vs LIVE glibc (dlmopen). Same validation ⇒ same `None`/EILSEQ at the first
+  invalid sequence.
+- **MEASURED (remote, median of 3, same-fleet before/after, self-normalized):**
+
+  | arm | BEFORE | AFTER | verdict |
+  |---|---|---|---|
+  | ascii | ~3.7x LOSS | ~0.73x WIN | flip |
+  | cyrillic | ~3.0x LOSS | ~0.62x WIN | flip |
+  | cjk | ~2.4x LOSS | ~0.64x WIN | flip |
+  | mixed (café interleaved) | ~2.9x LOSS | ~unchanged (fl ~3.2us) | NO material regression |
+
+- **KEY LIMIT — interleaved isolated multibyte can't vectorise.** "café résumé…" has lone 2-byte accents
+  surrounded by ASCII: neither the ASCII window (accent within 16 B) nor the 2-byte window (needs 8
+  contiguous 2-byte chars) ever fills, so mixed stays on the scalar `mbtowc` step. fl's absolute time is
+  ~unchanged (~3.2us); the ratio looks worse only from glibc timing variance. Same isolated-multibyte
+  asymmetry as the SURFACED mbsrtowcs decode WRITE path (cc-mbsrtowcs-simd). Contiguous/pure multibyte
+  (cyrillic/cjk) and ASCII all flip cleanly.
+- **FOLLOW-ON (de-risked — helper exists):** route mbsrtowcs / mbsnrtowcs count branches through
+  `mbs_decoded_len` (mbsrtowcs is a straight reuse preserving its EILSEQ/no-*src; mbsnrtowcs needs its
+  `nms` byte-bound honored — a bounded variant). Then the multibyte-conversion count surface is fully
+  mined both directions. See [[multibyte-simd-conversion-vein]].
