@@ -17294,3 +17294,20 @@ blocking. Use `-j2` for every gate/bench build during contention instead of retr
 - **FOLLOW-ON:** mbsnrtowcs write can reuse `mbs_decode_prefix` in its nms window; a multibyte-density
   guard (only enter windows when the leading multibyte run looks contiguous) could erase the mixed
   residual and make this a clean win. See [[multibyte-simd-conversion-vein]].
+
+## cc-mbsnrtowcs-write-simd-2026-07-12 — WIN w/ documented tradeoff (SHIPPED 1f22f17c5) — completes decode-write vein
+
+- **THE LEVER.** mbsnrtowcs write (dst!=NULL) widened only its ASCII prefix + scalar `mbrtowc` per
+  multibyte char (~3-5x LOSS on contiguous non-Latin). Routed its write branch through the shipped
+  `mbs_decode_prefix` (da2da7c61) — same helper as mbsrtowcs write, bounded by BOTH the nms window and
+  dst.len(); scalar `mbrtowc` still resolves NUL / MB_INCOMPLETE / EILSEQ / dst-full / *src.
+- **BYTE-IDENTICAL.** n_bounded_wchar_differential_probe 2/0 (write mode, nms{0,1,2,3,64} x 3/4-byte/invalid
+  incl. mid-char truncation vs live glibc), golden_wchar_nrt_simd 1/0, write bench asserts fl==glibc.
+- **MEASURED (remote -j2):** ascii ~0.13x, cyrillic ~0.34x, cjk ~0.50x WIN; mixed ~6.2x LOSS (same inherent
+  ~+15% window-check tradeoff as mbsrtowcs write — scalar mbrtowc per accent dominates mixed). Clean BEFORE
+  blocked by contention; residual matches mbsrtowcs write (same helper/mechanism).
+- **VEIN STATUS.** Decode-WRITE now mined for both restartable converters (mbsrtowcs da2da7c61 + mbsnrtowcs
+  1f22f17c5). Multibyte-conversion surface — encode/decode × count/write × plain/restartable/n-bounded — is
+  now comprehensively SIMD, modulo the interleaved-isolated-multibyte residual (inherent scalar-per-accent).
+  FOLLOW-ON: a multibyte-DENSITY guard in `mbs_decode_prefix`/`mbs_decoded_len_prefix` could erase the mixed
+  residual family-wide → clean wins. See [[multibyte-simd-conversion-vein]].
