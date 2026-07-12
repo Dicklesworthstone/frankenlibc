@@ -391,7 +391,9 @@ unsafe fn parse_strtol_c_string_fast(
 /// decimals (`3.14159`) hand the already-scanned token to Rust's
 /// correctly-rounded parser without the full core parser's extra NUL scan.
 #[inline]
-pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(ptr: *const c_char) -> Option<(f64, usize)> {
+pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(
+    ptr: *const c_char,
+) -> Option<(f64, usize)> {
     const MAX_EXACT_INTEGER: u64 = 1u64 << f64::MANTISSA_DIGITS;
     const MAX_FIXED_SIGNIFICANT_DIGITS: u32 = 15;
 
@@ -4133,7 +4135,11 @@ pub unsafe extern "C" fn qsort_r(
         // SAFETY: caller guarantees `base` is `nmemb*size` writable bytes.
         let slice = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, total) };
         frankenlibc_core::stdlib::qsort(slice, size, |a, b| unsafe {
-            cmp_fn(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void, arg)
+            cmp_fn(
+                a.as_ptr() as *const c_void,
+                b.as_ptr() as *const c_void,
+                arg,
+            )
         });
         return;
     }
@@ -4361,6 +4367,24 @@ pub unsafe extern "C" fn fcvt(
 /// `gcvt` — convert double to string using general format.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gcvt(value: c_double, ndigit: c_int, buf: *mut c_char) -> *mut c_char {
+    // Strict-mode fast path (DEFAULT deployed): strict passthrough always Allows, so
+    // skip the decide + observe membrane bookkeeping and go straight to the same
+    // clamped `known_remaining` slice + core render the full path builds — the
+    // decide never denies and `observe` is telemetry, so this is byte-identical.
+    // gcvt is a per-call float formatter; the ~decide/observe overhead was pure tax.
+    if runtime_policy::strict_passthrough_active() {
+        if buf.is_null() {
+            return buf;
+        }
+        let assumed_size = (ndigit.max(0) as usize).saturating_add(32).min(512);
+        let buf_size = known_remaining(buf as usize)
+            .map(|remaining| remaining.min(assumed_size))
+            .unwrap_or(assumed_size);
+        let slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buf_size) };
+        frankenlibc_core::stdlib::gcvt(value, ndigit, slice);
+        return buf;
+    }
+
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Stdlib, buf as usize, 0, true, buf.is_null(), 0);
     if matches!(decision.action, MembraneAction::Deny) || buf.is_null() {

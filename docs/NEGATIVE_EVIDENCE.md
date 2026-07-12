@@ -17437,3 +17437,22 @@ toolchain is fixed.
 - **REAL FIX (deferred, deeper):** reduce the DFA-build allocation (reuse interner/scratch across calls, or
   precompute the DFA onto `CompiledRegex` at compile time so short matches skip the build). Reverted the
   routing change; kept in-code NOTE. Related: [[regex-perf-vein]], [[perf-saturated-regex-singlepass-done]].
+
+## cc-gcvt-flt2dec-2026-07-12 — PARTIAL (real 1.3-2.7x loss; deep fix deferred, small strict fast-path SHIPPED)
+
+- **THE LOSS (found by fresh profile, new gcvt_bench).** `gcvt` (float->string) loses 1.3-2.7x to glibc on
+  every input (pi 2.36x, big 1.33x, small 1.91x, e20 2.67x, neg 1.60x, round 1.78x), byte-identical output.
+  fl ~324ns near-constant vs glibc 87-253ns.
+- **ROOT CAUSE (deep).** core `render_gcvt` DOUBLE-FORMATS: Rust `write!("{:.16e}")` (flt2dec Grisu/Dragon)
+  -> scientific String -> reparse -> `%g` reformat, with String allocations. glibc formats to the buffer in
+  ONE pass with a tuned dtoa. Rust's EXACT float formatter (flt2dec) is inherently slower than glibc's dtoa;
+  the real fix is a single-pass Ryū-style `%g` formatter writing straight to the buffer — a major rewrite,
+  DEFERRED. (The String allocs are secondary: the bench links the fast system allocator, so they're cheap
+  in-bench; they'd bite more on the interposed-malloc deployed path.)
+- **SHIPPED (small, byte-identical): gcvt strict_passthrough fast path.** The ABI wrapper always ran the
+  membrane decide+observe+adverse bookkeeping; added the strict fast path (same clamped slice + core render,
+  skip the telemetry) that every other hot fn has. Byte-identical (decide always Allows in strict; observe is
+  telemetry; bench asserts fl==glibc). Win is ~3% (within cross-fleet bench noise) — a consistency/tax-removal
+  change, NOT a claimed perf win. FOLLOW-ON: same fast path for fcvt/ecvt/qgcvt (siblings, same pattern).
+- **VERDICT.** Float-formatting is the same class as the other frontier walls (portable-SIMD mem, Rust-vs-glibc
+  primitive gap). A Ryū `%g` is the real lever — high-effort, own focused effort. See [[cvt-family-and-perf-frontier]].
