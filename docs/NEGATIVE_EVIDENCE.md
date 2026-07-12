@@ -17331,3 +17331,20 @@ blocking. Use `-j2` for every gate/bench build during contention instead of retr
 ### INFRA — disabled worker ovh-b (2026-07-12): `blake3` build script exit 101 (broken C toolchain); it was
 failing every `cargo run --example` build routed to it. `rch workers disable ovh-b -y`. Re-enable once its
 toolchain is fixed.
+
+## cc-mbsnrtowcs-scalar-mbtowc-fastpath-2026-07-12 — WIN (SHIPPED 50fe148ac) — trims interleaved scalar decode
+
+- **THE LEVER (profile-first).** Observed while benching: mbsnrtowcs write "mixed" (fl ~4534ns) ran ~1.8us
+  slower than mbsrtowcs write "mixed" (fl ~2726ns) on IDENTICAL input. Root cause: mbsnrtowcs's scalar step
+  called the exported extern "C" `mbrtowc` per lone accent (PLT call, never inlines, re-runs null/ASCII/n==0
+  guards), while mbsrtowcs uses the inlinable core `mbtowc`. Added a mbtowc fast-path in the mbsnrtowcs
+  scalar step for the state-initial complete-char case; NUL / nms-truncation / EILSEQ defer to `mbrtowc`.
+- **BYTE-IDENTICAL** (shared `utf8_decode_step`; window capped at `remaining` ⇒ `used <= remaining`; NUL
+  excluded; state stays initial). n_bounded_wchar_differential_probe 2/0 (café/€/😀/invalid/nms-truncation
+  vs live glibc), golden_wchar_nrt_simd 1/0.
+- **MEASURED (remote -j2):** mbsnrtowcs write mixed fl ~4534 -> ~2841-3625ns (~-30%, 4.63x -> ~3.2-4.2x);
+  cyrillic/cjk/ascii wins unchanged. The arm STAYS a loss (glibc's tuned interleaved decode) — ~30% closer.
+- **NOTE.** This is the extern-"C"-PLT-call tax again (cf. [[interposed-symbol-recursion]],
+  [[htm-tax-and-nomangle-probe-vein]]): an ABI symbol calling another ABI symbol pays the boundary; routing
+  hot internal calls to the inlinable core fn recovers it. Same pattern likely applies to any ABI fn whose
+  hot loop calls another exported wchar/string symbol. See [[multibyte-simd-conversion-vein]].
