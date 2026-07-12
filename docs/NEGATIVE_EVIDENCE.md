@@ -17348,3 +17348,20 @@ toolchain is fixed.
   [[htm-tax-and-nomangle-probe-vein]]): an ABI symbol calling another ABI symbol pays the boundary; routing
   hot internal calls to the inlinable core fn recovers it. Same pattern likely applies to any ABI fn whose
   hot loop calls another exported wchar/string symbol. See [[multibyte-simd-conversion-vein]].
+
+## cc-wcsnrtombs-scalar-wctomb-fastpath-2026-07-12 — WIN (SHIPPED dffd26759) — encode twin of the PLT-tax fix
+
+- **THE LEVER (PLT-tax pattern, 2nd hit).** wcsnrtombs's scalar step encoded each isolated wide char via
+  the exported extern "C" `wcrtomb` (PLT call, never inlines) — its sibling wcsrtombs already uses core
+  `wctomb`. Swapped to core `wctomb` (+ errno=EILSEQ on the un-encodable case). `ps` is unused for stateless
+  UTF-8 encode ⇒ renamed `_ps`.
+- **BYTE-IDENTICAL** (`wcrtomb` == `wctomb` + ASCII shortcut for UTF-8; no shift state). conformance_diff_wchar
+  44/0, n_bounded_wchar_differential_probe 2/0.
+- **MEASURED (remote -j2, SAME-FLEET before/after via stash):** wcsnrtombs write mixed 4.510x -> 3.518x
+  (fl 4236 -> 3344ns, ~-21%); ascii/cyrillic/cjk WINs unchanged (~0.12x/0.15x/0.20x).
+- **PATTERN CONFIRMED (vein).** 2nd win from the extern-"C"-PLT-call tax (after mbsnrtowcs decode 50fe148ac).
+  RULE: an ABI symbol whose HOT LOOP calls another exported symbol should call the inlinable core fn instead.
+  n-bounded variants (wcsnrtombs/mbsnrtowcs) were the offenders; the plain restartable siblings
+  (wcsrtombs/mbsrtowcs) already used the core fn. Both n-bounded now fixed. GENERAL follow-on: sweep other
+  ABI fns for hot-loop calls to exported string/wchar/mem symbols (grep hot loops for `unsafe { <exported>(`).
+  See [[htm-tax-and-nomangle-probe-vein]], [[interposed-symbol-recursion]], [[multibyte-simd-conversion-vein]].
