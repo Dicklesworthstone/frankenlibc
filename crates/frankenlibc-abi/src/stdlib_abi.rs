@@ -4719,57 +4719,27 @@ pub unsafe extern "C" fn getsubopt(
     tokens: *const *mut c_char,
     valuep: *mut *mut c_char,
 ) -> c_int {
-    // Deployed fast path: Stdlib decisions are always-Allow, while every pointer,
-    // tracked-bound, termination and overflow guard remains in the parser below.
-    // Skip only the common successful-call decision/telemetry tax. Tests retain
-    // the full path, and deployed adverse exits lazily retain their audit event.
-    let optionp_addr = optionp as usize;
-    let null_args = optionp.is_null() || tokens.is_null() || valuep.is_null();
-    let profile = if runtime_policy::stdlib_membrane_fastpath() {
-        None
-    } else {
-        let (_, decision) = runtime_policy::decide(
-            ApiFamily::Stdlib,
-            optionp_addr,
-            0,
-            true,
-            null_args,
-            0,
-        );
-        if matches!(decision.action, MembraneAction::Deny) {
-            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
-            return -1;
-        }
-        Some(decision.profile)
-    };
-    let observe = |cost: u64, adverse: bool| {
-        let profile = match profile {
-            Some(profile) => profile,
-            None if !adverse => return,
-            None => {
-                let (_, decision) = runtime_policy::decide(
-                    ApiFamily::Stdlib,
-                    optionp_addr,
-                    0,
-                    true,
-                    null_args,
-                    0,
-                );
-                decision.profile
-            }
-        };
-        runtime_policy::observe(ApiFamily::Stdlib, profile, cost, adverse);
-    };
-
-    if null_args {
-        observe(8, true);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        optionp as usize,
+        0,
+        true,
+        optionp.is_null() || tokens.is_null() || valuep.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny)
+        || optionp.is_null()
+        || tokens.is_null()
+        || valuep.is_null()
+    {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
         return -1;
     }
 
     let opt_ptr = unsafe { *optionp };
     if opt_ptr.is_null() {
         unsafe { *valuep = ptr::null_mut() };
-        observe(4, false);
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
         return -1;
     }
 
@@ -4779,11 +4749,11 @@ pub unsafe extern "C" fn getsubopt(
             *valuep = ptr::null_mut();
             set_abi_errno(libc::EINVAL);
         }
-        observe(8, true);
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
         return -1;
     };
     if end == opt_ptr && !at_comma {
-        observe(4, false);
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
         return -1;
     }
 
@@ -4822,7 +4792,7 @@ pub unsafe extern "C" fn getsubopt(
                 *valuep = ptr::null_mut();
                 set_abi_errno(libc::EINVAL);
             }
-            observe(8, true);
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
             return -1;
         }
         let candidate = unsafe { *tokens.add(token_offset) };
@@ -4832,7 +4802,7 @@ pub unsafe extern "C" fn getsubopt(
         if unsafe { candidate_matches_name(candidate.cast_const(), opt_ptr.cast_const(), name_len) }
         {
             unsafe { *valuep = value_ptr };
-            observe(8, false);
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
             return idx;
         }
         if idx == i32::MAX {
@@ -4840,7 +4810,7 @@ pub unsafe extern "C" fn getsubopt(
                 *valuep = ptr::null_mut();
                 set_abi_errno(libc::EINVAL);
             }
-            observe(8, true);
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
             return -1;
         }
         token_offset += 1;
@@ -4848,7 +4818,7 @@ pub unsafe extern "C" fn getsubopt(
     }
 
     unsafe { *valuep = opt_ptr };
-    observe(8, false);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
     -1
 }
 

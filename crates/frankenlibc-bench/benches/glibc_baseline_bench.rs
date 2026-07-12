@@ -405,126 +405,6 @@ fn bench_getenv_miss(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "abi-bench")]
-type GetSuboptFn = unsafe extern "C" fn(
-    *mut *mut libc::c_char,
-    *const *mut libc::c_char,
-    *mut *mut libc::c_char,
-) -> libc::c_int;
-
-#[cfg(feature = "abi-bench")]
-fn host_getsubopt() -> GetSuboptFn {
-    static H: OnceLock<usize> = OnceLock::new();
-    let symbol = *H.get_or_init(|| unsafe {
-        let handle = libc::dlmopen(
-            libc::LM_ID_NEWLM,
-            c"libc.so.6".as_ptr(),
-            libc::RTLD_LAZY | libc::RTLD_LOCAL,
-        );
-        assert!(!handle.is_null(), "dlmopen libc.so.6 failed");
-        let symbol = libc::dlsym(handle, c"getsubopt".as_ptr());
-        assert!(!symbol.is_null(), "dlsym getsubopt failed");
-        symbol as usize
-    });
-    unsafe { mem::transmute::<usize, GetSuboptFn>(symbol) }
-}
-
-fn bench_getsubopt_4token_hit(c: &mut Criterion) {
-    let group = c.benchmark_group("glibc_baseline_getsubopt");
-    #[cfg(feature = "abi-bench")]
-    let mut group = group;
-
-    #[cfg(feature = "abi-bench")]
-    {
-        const COMMA: usize = 8;
-        let mut alpha = b"alpha\0".to_vec();
-        let mut beta = b"beta\0".to_vec();
-        let mut delta = b"delta\0".to_vec();
-        let mut gamma = b"gamma\0".to_vec();
-        let tokens = [
-            alpha.as_mut_ptr().cast::<libc::c_char>(),
-            beta.as_mut_ptr().cast::<libc::c_char>(),
-            delta.as_mut_ptr().cast::<libc::c_char>(),
-            gamma.as_mut_ptr().cast::<libc::c_char>(),
-            std::ptr::null_mut(),
-        ];
-        let host = host_getsubopt();
-        let mut fl_input = *b"gamma=42,alpha\0";
-        let mut host_input = fl_input;
-
-        let mut fl_cursor = fl_input.as_mut_ptr().cast::<libc::c_char>();
-        let mut fl_value = std::ptr::null_mut();
-        let fl_result = unsafe {
-            frankenlibc_abi::stdlib_abi::getsubopt(
-                &mut fl_cursor,
-                tokens.as_ptr(),
-                &mut fl_value,
-            )
-        };
-        let mut host_cursor = host_input.as_mut_ptr().cast::<libc::c_char>();
-        let mut host_value = std::ptr::null_mut();
-        let host_result = unsafe { host(&mut host_cursor, tokens.as_ptr(), &mut host_value) };
-        assert_eq!(fl_result, host_result, "getsubopt return parity");
-        assert_eq!(fl_result, 3, "fourth token must match");
-        assert_eq!(fl_input, host_input, "getsubopt buffer mutation parity");
-        assert_eq!(
-            unsafe { fl_cursor.offset_from(fl_input.as_ptr().cast()) },
-            unsafe { host_cursor.offset_from(host_input.as_ptr().cast()) },
-            "getsubopt cursor parity"
-        );
-        assert_eq!(
-            unsafe { fl_value.offset_from(fl_input.as_ptr().cast()) },
-            unsafe { host_value.offset_from(host_input.as_ptr().cast()) },
-            "getsubopt value pointer parity"
-        );
-
-        bench_op(
-            &mut group,
-            BenchMeta {
-                profile_id: "getsubopt_4token_hit",
-                impl_label: "frankenlibc_abi",
-                api_family: "stdlib",
-                symbol: "getsubopt",
-                workload: "four-token hit with value",
-                parity_proof_ref: "crates/frankenlibc-abi/tests/conformance_diff_getsubopt.rs",
-            },
-            || {
-                fl_input[COMMA] = b',';
-                let mut cursor = fl_input.as_mut_ptr().cast::<libc::c_char>();
-                let mut value = std::ptr::null_mut();
-                let result = unsafe {
-                    frankenlibc_abi::stdlib_abi::getsubopt(
-                        &mut cursor,
-                        tokens.as_ptr(),
-                        &mut value,
-                    )
-                };
-                black_box((result, cursor, value));
-            },
-        );
-        bench_op(
-            &mut group,
-            BenchMeta {
-                profile_id: "getsubopt_4token_hit",
-                impl_label: "host_glibc",
-                api_family: "stdlib",
-                symbol: "getsubopt",
-                workload: "four-token hit with value",
-                parity_proof_ref: "crates/frankenlibc-abi/tests/conformance_diff_getsubopt.rs",
-            },
-            || {
-                host_input[COMMA] = b',';
-                let mut cursor = host_input.as_mut_ptr().cast::<libc::c_char>();
-                let mut value = std::ptr::null_mut();
-                let result = unsafe { host(&mut cursor, tokens.as_ptr(), &mut value) };
-                black_box((result, cursor, value));
-            },
-        );
-    }
-
-    group.finish();
-}
-
 /// Host glibc's reentrant servent lookups. The `libc` crate does not declare these, and a
 /// bare `extern "C"` block would bind to FrankenLibC's own `#[no_mangle]` `getservbyname_r`
 /// in this same binary — silently turning the "host_glibc" arm into a second fl arm. Resolve
@@ -4016,7 +3896,6 @@ criterion_group! {
         bench_strlen_4096,
         bench_strcmp_256_equal,
         bench_getenv_miss,
-        bench_getsubopt_4token_hit,
         bench_resolv_services_protocols_abi,
         bench_grp_lookup_abi,
         bench_memcmp,
