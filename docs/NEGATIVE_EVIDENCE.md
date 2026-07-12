@@ -17711,3 +17711,23 @@ runs and is O(n) while LSD radix always pays O(n·width) cache-missing passes.
   + the exotic "int-sorted-by-unsigned + signed-cmp" corner). Also unaddressed: w8-dups large-N ~1.4x (radix
   mild loss; dups aren't monotonic so the guard doesn't touch it — would need dup-density detection). See
   [[qsort-i64-fastlane]].
+
+## cc-qsort-radix-sorted-guard-rawint-2026-07-12 — WIN (refines the sorted-guard: comparator scan → raw-int, 2.3→1.6x)
+
+Follow-up refinement of cc-qsort-radix-sorted-guard. The shipped guard scanned monotonicity with the caller's
+extern-C comparator (n FFI calls on sorted input), redundant with pdqsort's own run detection → sorted stuck at
+2.3-2.5x. Replaced it with a RAW-INTEGER monotonic scan (native u16/u32/u64 reads, no FFI/element; tracks all
+four native orders {signed,unsigned}×{asc,desc} with early-exit). The radix lane runs only after the prefix
+gate found the comparator integer-order-consistent, so a raw-int check is an accurate proxy; and it is still
+PURE ROUTING (skip radix → pdqsort, both correct), so any proxy imperfection is a harmless perf-only corner.
+- **MEASURED (pinned min-of-K, guarded full-qsort path):** sorted qfull/stdlib **1.60-1.61x (w4) / 1.84-1.85x
+  (w8)** — down from the comparator guard's 2.3-2.5x (a further ~30%); the guard is now also FFI-free on the hot
+  RANDOM path (qfull≈radix within noise, all rand/dups/nearly wins preserved). Gates: conformance_diff_qsort_radix
+  (sorted+reverse+mixed-sign+all-equal, byte==glibc) + radix16 + heapsort green. ⚠️Reverse-sorted data (descending
+  values, ascending comparator) DOES reach the guard — passes the ascending prefix gate — and is caught by the
+  desc flags; the radix gate's "reverse" case confirms it.
+- **RESIDUAL:** sorted is 1.6-1.85x not ~1.0x because guard-scan + pdqsort-scan is still TWO O(n) passes. Closing
+  to ~1.0x needs a COMMIT-lane (detect monotonic → return as-is / reverse-in-place, no pdqsort) — one pass — but
+  that makes the guard load-bearing for correctness (not pure routing), higher risk; deferred. w8-dups large-N
+  ~1.5-1.9x radix mild-loss still untouched (dups aren't monotonic; needs dup-density detection). See
+  [[qsort-i64-fastlane]].
