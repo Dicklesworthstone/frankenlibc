@@ -17936,3 +17936,22 @@ rare; zero/main-|value|≥1/sub-1 write straight into `out`, no alloc). Core `fc
 - **cvt-family alloc-elim COMPLETE: ecvt + fcvt done, gcvt already buffer-based** — but ⚠️gcvt still allocs a
   `String` internally via `render_gcvt` (ecvt.rs:373); a `render_gcvt_into`/`&mut impl fmt::Write` sink would
   close it (next lever). See [[cvt-family-and-perf-frontier]], [[interposed-alloc-is-the-hidden-cost]].
+
+## cc-gcvt-alloc-elim-2026-07-12 — SCOPED/DEFERRED (measured 2.4-3.2x gap; render_gcvt String-alloc refactor is a multi-helper %g job)
+
+Continuing the cvt-family alloc-elim (ecvt+fcvt DONE), gcvt is the last one. gcvt already takes a caller buffer
++ has the membrane bypass, but core `gcvt` calls `render_gcvt` (ecvt.rs:611) which returns a per-call `String`
+(deployed→interposed malloc) that gcvt copies out.
+- **MEASURED (gcvt_alloc_bench, pinned taskset -c 63):** g_pi17 fl≈257ns/glibc≈108ns = **2.37x**; g_pi6
+  fl≈221ns/glibc≈78ns = **2.55-3.18x**; g_big ≈1.0x (large-magnitude, flt2dec dominates). Real, sizeable gap.
+- **ROOT CAUSE:** render_gcvt's COMMON path allocs the final result String via `rust_e_to_glibc_e(sci)` or
+  `format_fixed_from_sci(sci)` (the `sci` intermediate is already StackStr, no alloc). `try_gcvt_exact_small_fixed`
+  (Option<String>) allocs only on a small-fixed match (rare). So ~1 String alloc/common call + the flt2dec format.
+- **WHY DEFERRED (not a clean single-turn increment):** the fix needs `render_gcvt_into(value,ndigit,&mut [u8])`
+  + buffer-writing variants of `format_fixed_from_sci` (has an intermediate `digits` String + in-place
+  strip_trailing_zeros) and `rust_e_to_glibc_e` (≥2-exponent-digit C padding) — 3-4 delicate %g helpers with
+  edge cases (leading "0." zeros, trailing-zero strip, exp padding, sign). Gate-verifiable via
+  gcvt_differential_fuzz + gcvt_matches_glibc_reference_outputs + conformance_gcvt_byte_stable, but rushing it in
+  a flaky-build env risks a subtle %g bug. NEXT-TURN plan: mechanical push→write-byte transform of the 2 main-path
+  helpers (mant digits fit a [u8;24] stack scratch, %g output ≤ ndigit+8 ≤ ~25), keep specials/try_exact as
+  small-string copies. Kept `gcvt_alloc_bench`. See [[cvt-family-and-perf-frontier]], [[double-membrane-delegating-wrappers]].
