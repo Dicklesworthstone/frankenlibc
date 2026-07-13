@@ -92,7 +92,6 @@ pub struct BravoRwLockDiagnostics {
 }
 
 struct BravoDiagCounters {
-    reads: AtomicU64,
     fast_path_reads: AtomicU64,
     slow_path_reads: AtomicU64,
     fast_path_attempts: AtomicU64,
@@ -108,7 +107,6 @@ struct BravoDiagCounters {
 impl Default for BravoDiagCounters {
     fn default() -> Self {
         Self {
-            reads: AtomicU64::new(0),
             fast_path_reads: AtomicU64::new(0),
             slow_path_reads: AtomicU64::new(0),
             fast_path_attempts: AtomicU64::new(0),
@@ -182,8 +180,6 @@ impl<T: Send + Sync> BravoRwLock<T> {
 
     /// Acquire a shared read guard.
     pub fn read(&self) -> BravoReadGuard<'_, T> {
-        self.diag.reads.fetch_add(1, Ordering::Relaxed);
-
         if let Some(slot_index) = self.try_fast_path() {
             self.diag.fast_path_reads.fetch_add(1, Ordering::Relaxed);
             return BravoReadGuard {
@@ -258,6 +254,9 @@ impl<T: Send + Sync> BravoRwLock<T> {
     /// Snapshot the current diagnostics.
     #[must_use]
     pub fn diagnostics(&self) -> BravoRwLockDiagnostics {
+        let fast_path_reads = self.diag.fast_path_reads.load(Ordering::Relaxed);
+        let slow_path_reads = self.diag.slow_path_reads.load(Ordering::Relaxed);
+        let reads = fast_path_reads.wrapping_add(slow_path_reads);
         let fast_path_attempts = self.diag.fast_path_attempts.load(Ordering::Relaxed);
         let slot_collisions = self.diag.slot_collisions.load(Ordering::Relaxed);
         let active_slots = self
@@ -267,9 +266,9 @@ impl<T: Send + Sync> BravoRwLock<T> {
             .count();
 
         BravoRwLockDiagnostics {
-            reads: self.diag.reads.load(Ordering::Relaxed),
-            fast_path_reads: self.diag.fast_path_reads.load(Ordering::Relaxed),
-            slow_path_reads: self.diag.slow_path_reads.load(Ordering::Relaxed),
+            reads,
+            fast_path_reads,
+            slow_path_reads,
             fast_path_attempts,
             fast_path_aborts: self.diag.fast_path_aborts.load(Ordering::Relaxed),
             slot_collisions,
@@ -490,6 +489,27 @@ mod tests {
         assert_eq!(diag.fast_path_reads, 2);
         assert_eq!(diag.slow_path_reads, 0);
         assert_eq!(diag.writes, 1);
+    }
+
+    #[test]
+    fn diagnostics_partition_fast_and_nested_slow_reads() {
+        let lock = BravoRwLock::new(7_u64);
+        let first = lock.read();
+        let second = lock.read();
+
+        assert_eq!(first.path(), BravoReadPath::Fast);
+        assert_eq!(second.path(), BravoReadPath::Slow);
+        drop(second);
+        drop(first);
+
+        let diag = lock.diagnostics();
+        assert_eq!(diag.reads, 2);
+        assert_eq!(diag.fast_path_reads, 1);
+        assert_eq!(diag.slow_path_reads, 1);
+        assert_eq!(
+            diag.reads,
+            diag.fast_path_reads.wrapping_add(diag.slow_path_reads)
+        );
     }
 
     #[test]

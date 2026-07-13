@@ -6,6 +6,46 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / CoralCastle) — WIN (SHIPPED): derived BRAVO completed-read diagnostics remove one hot-path RMW; single-thread read **23.167 -> 18.453 ns (1.26x)**
+
+- **NEGATIVE-LEDGER-FIRST / SEPARATE OBLIGATION.** The preceding SeqLock row explicitly excluded any
+  automatic counter-family generalization and required BRAVO to carry its own concurrency and benchmark
+  proof. All-ref history contains only the original `BravoDiagCounters::reads` introduction, not a prior
+  derivation/removal attempt. This iteration therefore treats BRAVO as a new primitive-specific lane,
+  not as a retry or an inference from the SeqLock result.
+- **ONE LEVER / CERTIFIED COMPLETION PARTITION.** `BravoRwLock::read()` is the sole counter entrypoint;
+  `with_read()` delegates to it, and every normally completed call increments exactly one mutually
+  exclusive path counter: `fast_path_reads` or `slow_path_reads`. The dedicated aggregate atomic and its
+  read-entry increment are removed; `diagnostics()` now returns
+  `reads = fast_path_reads.wrapping_add(slow_path_reads)`. Wrapping addition preserves `u64` rollover.
+  The public diagnostics schema, guards, visible-reader protocol, lock ordering, path selection, memory
+  ordering, and protected data are unchanged.
+- **DECLARED LIVE-SNAPSHOT SEMANTICS.** The public field documents “reads completed.” The old aggregate
+  increment happened before path acquisition, while three independent relaxed loads already prevented a
+  linearizable live snapshot. The derived snapshot is partition-consistent and counts a read only after
+  fast/slow classification; an in-flight blocked read or a call unwinding before classification is no
+  longer reported as completed. Quiescent normally returning behavior is exact modulo `2^64`.
+- **STRICT-REMOTE SAME-WORKER GATE.** Identical baseline/candidate command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'bravo_read/single_thread' --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`.
+  On actual worker `vmi1293453`, the interval moved **[22.816, 23.167, 23.523] ns ->
+  [18.084, 18.453, 18.887] ns**: candidate/baseline center **0.7965x**, **1.2555x faster**.
+  Criterion's change interval was **-21.612% to -16.817%**, central **-19.333%**, `p=0.00`.
+- **PROOF SURFACE.** The new `diagnostics_partition_fast_and_nested_slow_reads` unit forces one visible
+  fast reader plus one nested slow reader, then pins `(reads, fast, slow) == (2, 1, 1)` and the wrapping
+  partition identity after both guards drop. The existing basic cycle and writer/collision stress tests
+  cover the same public diagnostics and fallback protocol without changing the concurrency algorithm.
+- **REMOTE QUALITY-GATE BOUNDARY.** Focused membrane Clippy passes with `-D warnings`. The focused unit
+  command was stopped after 10m17s before test execution while still compiling the unrelated
+  `asupersync` dev-dependency stack; it emitted no source or test failure. RCH refuses non-compilation
+  `cargo fmt --all -- --check` fail-closed as `RCH-E301`; no local fallback was used, and
+  `git diff --check` is clean. UBS ran with Rust lint/build/dependency categories disabled to preserve
+  remote-only Cargo; after excluding triaged pre-existing test/assert, clone, token-equality, and index
+  heuristics, the static scan passed with zero criticals and zero warnings. Peer-owned `iconv/mod.rs`
+  work remained outside the staged scope.
+- **CLOSED BOUNDARY.** Do not restore the aggregate BRAVO read atomic. LeftRight remains a different
+  primitive with separate cache semantics, proof obligations, and benchmark evidence; this row does not
+  authorize a third counter-family rewrite.
+
 ## 2026-07-13 (cod / MagentaStork) — WIN (SHIPPED): derived `SeqLock` read diagnostics remove one hot-path RMW; cached read **11.374 -> 6.5540 ns (1.74x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH LANE.** The ledger and Git history contained no attempt to remove
