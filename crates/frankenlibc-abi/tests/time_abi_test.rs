@@ -1011,6 +1011,74 @@ fn strptime_time_24h() {
 }
 
 #[test]
+fn strptime_exact_numeric_paths_preserve_fields_suffixes_and_fallback() {
+    let mut date_tm: libc::tm = unsafe { std::mem::zeroed() };
+    date_tm.tm_hour = 7;
+    date_tm.tm_min = 8;
+    date_tm.tm_sec = 9;
+    date_tm.tm_isdst = 3;
+    let date = b"2023-02-31tail\0";
+    let date_fmt = b"%Y-%m-%d\0";
+    let date_end = unsafe {
+        time_abi::strptime(
+            date.as_ptr().cast(),
+            date_fmt.as_ptr().cast(),
+            &mut date_tm,
+        )
+    };
+    assert!(!date_end.is_null());
+    assert_eq!(unsafe { date_end.offset_from(date.as_ptr().cast()) }, 10);
+    assert_eq!(
+        (date_tm.tm_year, date_tm.tm_mon, date_tm.tm_mday),
+        (123, 1, 31)
+    );
+    assert_eq!(
+        (date_tm.tm_hour, date_tm.tm_min, date_tm.tm_sec),
+        (7, 8, 9)
+    );
+    assert_eq!(date_tm.tm_isdst, 3);
+
+    let mut time_tm: libc::tm = unsafe { std::mem::zeroed() };
+    time_tm.tm_year = 77;
+    time_tm.tm_mon = 6;
+    time_tm.tm_mday = 5;
+    time_tm.tm_wday = 4;
+    time_tm.tm_yday = 123;
+    let time = b"23:59:61tail\0";
+    let time_fmt = b"%H:%M:%S\0";
+    let time_end = unsafe {
+        time_abi::strptime(
+            time.as_ptr().cast(),
+            time_fmt.as_ptr().cast(),
+            &mut time_tm,
+        )
+    };
+    assert!(!time_end.is_null());
+    assert_eq!(unsafe { time_end.offset_from(time.as_ptr().cast()) }, 8);
+    assert_eq!(
+        (time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec),
+        (23, 59, 61)
+    );
+    assert_eq!(
+        (time_tm.tm_year, time_tm.tm_mon, time_tm.tm_mday),
+        (77, 6, 5)
+    );
+    assert_eq!((time_tm.tm_wday, time_tm.tm_yday), (4, 123));
+
+    let mut fallback_tm: libc::tm = unsafe { std::mem::zeroed() };
+    let invalid = b"12:60:00\0";
+    let invalid_end = unsafe {
+        time_abi::strptime(
+            invalid.as_ptr().cast(),
+            time_fmt.as_ptr().cast(),
+            &mut fallback_tm,
+        )
+    };
+    assert!(invalid_end.is_null());
+    assert_eq!((fallback_tm.tm_hour, fallback_tm.tm_min), (12, 6));
+}
+
+#[test]
 fn strptime_rejects_invalid_minute() {
     let fmt = b"%H:%M:%S\0";
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };

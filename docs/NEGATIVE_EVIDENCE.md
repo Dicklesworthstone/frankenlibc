@@ -18083,3 +18083,34 @@ bounded bytes when absent); below it, the existing fused portable-SIMD scan-copy
   `cargo test -j 1 --profile release -p frankenlibc-abi --test conformance_diff_memccpy`.
 - **BOUNDARY:** do not retry a global `memchr` + copy route or portable-SIMD `copy_to_slice`; both are recorded
   losses. Keep the fused loop below 16 KiB and the two-pass bulk route only where its fixed overhead amortizes.
+
+## cod-strptime-exact-numeric-dispatch-2026-07-12 — WIN (datetime 1.30x and time 1.16x host-normalized)
+
+Closed the dispatch residual in `cc-strptime-numeric-2026-07-12` without retrying the rejected
+`get_unchecked` bounds-elision lever. Added a transactional exact-prefix parser for the three common fixed
+numeric formats (`%Y-%m-%d`, `%H:%M:%S`, and `%Y-%m-%d %H:%M:%S`), bypassing the general parser's repeated
+directive/flag/literal dispatch only when every digit, separator, and field range is canonical.
+- **STRICT REMOTE SAME-WORKER A/B (`vmi1227854`):** datetime moved **109.5 -> 74.0 ns** and the
+  FrankenLibC/glibc ratio narrowed **2.341x -> 1.794x** (**1.30x host-normalized**); time moved
+  **69.4 -> 44.0 ns**, narrowing **3.181x -> 2.742x** (**1.16x host-normalized**); date moved
+  **78.4 -> 64.7 ns**, narrowing **2.729x -> 2.623x**. The named-format control stayed on the general path
+  and its ratio moved 0.208x -> 0.191x. That control shift makes the standalone date delta inconclusive,
+  but datetime and time remain above the null-control floor and justify the shared exact-numeric route.
+- **CORRECTNESS / PROOF:** the fast path parses entirely into locals before mutating `tm`; accepted date
+  prefixes preserve non-date fields and recompute `tm_wday`/`tm_yday`, accepted time prefixes preserve date
+  and xday fields, noncivil dates remain accepted, seconds retain the existing 0..=61 range, and trailing
+  input returns the exact consumed pointer. Every noncanonical or invalid prefix falls through before any
+  fast-path mutation, preserving the general parser's whitespace, numeric-backoff, and partial-write quirks.
+  Remote release gates passed the live-glibc roundtrip corpus (**182,784 comparisons, 0 divergences**), edge
+  differential fuzz (**300,000 comparisons, 0 divergences**), time conformance **1/1**, and filtered unit
+  tests **15/15** (3 hardened-only tests ignored); the new focused suffix/preservation/fallback test passed
+  **1/1** in a separate staged-snapshot run.
+- **COMMANDS:** benchmark: `RCH_WORKER=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u
+  CARGO_TARGET_DIR rch exec -- cargo run -j 1 --profile release -p frankenlibc-abi --example
+  strptime_bench`; tests used the same fail-closed prefix with explicit `time_abi_test`,
+  `strptime_differential_probe`, `strptime_edge_differential_fuzz`, and `conformance_diff_time` targets.
+  A broad name-filtered ABI test attempt was blocked before execution by the unrelated pre-existing
+  `zz_scratch_divmin` trait errors, so the explicit-target command was used to avoid that broken target.
+- **BOUNDARY:** keep the general parser for every other format and for all noncanonical prefixes. Do not
+  broaden this into an early failure path: inputs such as `12:60:00` require the generic parser's numeric
+  backoff and observable partial mutation. Do not retry `get_unchecked`; dispatch removal is the measured lever.

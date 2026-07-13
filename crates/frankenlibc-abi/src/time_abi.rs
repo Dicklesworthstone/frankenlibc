@@ -1637,6 +1637,80 @@ fn strptime_day_of_year(tm_year: i64, tm_mon: i64, tm_mday: i64) -> i64 {
     T[leap][tm_mon.clamp(0, 11) as usize] + (tm_mday - 1)
 }
 
+struct ExactNumericStrptime {
+    consumed: usize,
+    date: Option<(i32, i32, i32)>,
+    time: Option<(i32, i32, i32)>,
+}
+
+#[inline]
+fn parse_fixed_decimal(input: &[u8], start: usize, digits: usize) -> Option<i32> {
+    let end = start.checked_add(digits)?;
+    let mut value = 0i32;
+    for &digit in input.get(start..end)? {
+        if !digit.is_ascii_digit() {
+            return None;
+        }
+        value = value * 10 + i32::from(digit - b'0');
+    }
+    Some(value)
+}
+
+#[inline]
+fn parse_exact_numeric_date(input: &[u8], start: usize) -> Option<(i32, i32, i32)> {
+    if input.get(start + 4) != Some(&b'-') || input.get(start + 7) != Some(&b'-') {
+        return None;
+    }
+    let year = parse_fixed_decimal(input, start, 4)?;
+    let month = parse_fixed_decimal(input, start + 5, 2)?;
+    let day = parse_fixed_decimal(input, start + 8, 2)?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    Some((year - 1900, month - 1, day))
+}
+
+#[inline]
+fn parse_exact_numeric_time(input: &[u8], start: usize) -> Option<(i32, i32, i32)> {
+    if input.get(start + 2) != Some(&b':') || input.get(start + 5) != Some(&b':') {
+        return None;
+    }
+    let hour = parse_fixed_decimal(input, start, 2)?;
+    let minute = parse_fixed_decimal(input, start + 3, 2)?;
+    let second = parse_fixed_decimal(input, start + 6, 2)?;
+    if hour > 23 || minute > 59 || second > 61 {
+        return None;
+    }
+    Some((hour, minute, second))
+}
+
+/// Recognize only canonical fixed-width prefixes for the three common numeric
+/// formats. Any miss falls through to the general parser before touching `tm`,
+/// preserving its whitespace, variable-width, backoff, and partial-write quirks.
+#[inline]
+fn parse_exact_numeric_strptime(input: &[u8], fmt: &[u8]) -> Option<ExactNumericStrptime> {
+    match fmt.len() {
+        8 if fmt == b"%H:%M:%S" => Some(ExactNumericStrptime {
+            consumed: 8,
+            date: None,
+            time: Some(parse_exact_numeric_time(input, 0)?),
+        }),
+        10 if fmt == b"%Y-%m-%d" => Some(ExactNumericStrptime {
+            consumed: 10,
+            date: Some(parse_exact_numeric_date(input, 0)?),
+            time: None,
+        }),
+        17 if fmt == b"%Y-%m-%d %H:%M:%S" && input.get(10) == Some(&b' ') => {
+            Some(ExactNumericStrptime {
+                consumed: 19,
+                date: Some(parse_exact_numeric_date(input, 0)?),
+                time: Some(parse_exact_numeric_time(input, 11)?),
+            })
+        }
+        _ => None,
+    }
+}
+
 /// POSIX `strptime` — parse date/time string into broken-down time.
 ///
 /// Supports format specifiers: `%Y`, `%m`, `%d`, `%H`, `%M`, `%S`,
@@ -1670,6 +1744,29 @@ pub unsafe extern "C" fn strptime(
     let input_ptr = s as *const u8;
     let input = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
     let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
+
+    if let Some(exact) = parse_exact_numeric_strptime(input, fmt) {
+        // SAFETY: `tm` was checked non-null and large enough above. The exact
+        // parser validates every field into locals before this commit point.
+        unsafe {
+            if let Some((year, month, day)) = exact.date {
+                (*tm).tm_year = year;
+                (*tm).tm_mon = month;
+                (*tm).tm_mday = day;
+                (*tm).tm_wday =
+                    strptime_day_of_week(i64::from(year), i64::from(month), i64::from(day)) as i32;
+                (*tm).tm_yday =
+                    strptime_day_of_year(i64::from(year), i64::from(month), i64::from(day)) as i32;
+            }
+            if let Some((hour, minute, second)) = exact.time {
+                (*tm).tm_hour = hour;
+                (*tm).tm_min = minute;
+                (*tm).tm_sec = second;
+            }
+            return input_ptr.add(exact.consumed) as *mut std::ffi::c_char;
+        }
+    }
+
     let mut si = 0usize; // position in input
     let mut fi = 0usize; // position in format
     let mut century: Option<i32> = None;
