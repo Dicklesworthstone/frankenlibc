@@ -18059,3 +18059,27 @@ key appears. Heapsort leaves the guard disabled, preserving its existing in-plac
 - **BOUNDARY:** keep radix for random/nearly-sorted and smaller duplicate inputs. Do not retry global radix
   narrowing or descending-special handling; this guard is intentionally limited to very large width-8 qsort
   inputs with direct evidence of a small key domain.
+
+## cod-memccpy-large-bulk-tier-2026-07-12 — WIN (64 KiB 1.50x; fused controls preserved)
+
+Closed the explicit residual in `cc-memccpy-copy-throughput`: its global `memchr` + bulk-copy rewrite helped
+large inputs but badly regressed small ones. Added one 16 KiB crossover guard. At or above it, the existing
+tuned `memchr` finds the first stop byte and one `copy_from_slice` copies exactly through that byte (or all
+bounded bytes when absent); below it, the existing fused portable-SIMD scan-copy loop remains the destination.
+- **STRICT REMOTE SAME-WORKER A/B (`vmi1227854`):** the copies-all `n=65536` row moved **1883 ns -> 1259 ns =
+  1.50x faster / 33.1% lower**; FrankenLibC/glibc narrowed **1.662x -> 1.108x** (glibc 1134 -> 1136 ns).
+  The first candidate run independently measured 1336 ns / 1.158x glibc, confirming the direction and size.
+  Below-threshold controls retained the fused route: `n=256` was **12 -> 12 ns** and the replayed `n=4096`
+  was **95 -> 81 ns**. An intervening 125 ns sample on the structurally unchanged 4 KiB path was timer noise;
+  the replay was required before keeping the lever.
+- **CORRECTNESS / PROOF:** let `count=min(n,dest.len,src.len)`. If `memchr` returns first index `p`, copying
+  `0..p+1` and returning `Some(p+1)` is exactly the scalar/fused contract; if absent, copying `0..count` and
+  returning `None` is identical. Bytes after the copied prefix remain untouched. Remote release gates passed
+  **5/5** focused unit tests (including large found/absent boundaries), **2/2** property/golden tests, and
+  live-glibc `conformance_diff_memccpy` **1/1**.
+- **COMMAND:** `RCH_WORKER=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR
+  rch exec -- cargo run -j 1 --profile release -p frankenlibc-abi --example memccpy_bench`; focused tests used
+  the same fail-closed prefix with `cargo test -j 1 --profile release -p frankenlibc-core memccpy` and
+  `cargo test -j 1 --profile release -p frankenlibc-abi --test conformance_diff_memccpy`.
+- **BOUNDARY:** do not retry a global `memchr` + copy route or portable-SIMD `copy_to_slice`; both are recorded
+  losses. Keep the fused loop below 16 KiB and the two-pass bulk route only where its fixed overhead amortizes.

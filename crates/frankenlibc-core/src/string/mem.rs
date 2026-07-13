@@ -264,6 +264,9 @@ const MEMCMP_EXACT_256_BYTES: usize = SIMD_FOLD_BYTES * 2;
 const MEMCMP_EXACT_4096_BYTES: usize = 4096;
 const MEMMOVE_EXACT_4096_BYTES: usize = 4096;
 const MEMCHR_EXACT_4096_BYTES: usize = 4096;
+/// Above this point, the tuned `memchr` scan plus one bulk copy amortizes its
+/// extra call/dispatch cost and beats the fused portable-SIMD scan-copy loop.
+const MEMCCPY_BULK_COPY_MIN: usize = 16 * 1024;
 const MEMCHR_WIDE_LANES: usize = 64;
 const MEMCHR_FOLD_PANELS: usize = 8;
 const MEMCHR_FOLD_BYTES: usize = SIMD_LANES * MEMCHR_FOLD_PANELS;
@@ -1008,6 +1011,16 @@ pub fn mempcpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 pub fn memccpy(dest: &mut [u8], src: &[u8], c: u8, n: usize) -> Option<usize> {
     let count = n.min(dest.len()).min(src.len());
 
+    if count >= MEMCCPY_BULK_COPY_MIN {
+        if let Some(index) = memchr(&src[..count], c, count) {
+            let copied = index + 1;
+            dest[..copied].copy_from_slice(&src[..copied]);
+            return Some(copied);
+        }
+        dest[..count].copy_from_slice(&src[..count]);
+        return None;
+    }
+
     if count < SIMD_LANES {
         for i in 0..count {
             dest[i] = src[i];
@@ -1025,14 +1038,11 @@ pub fn memccpy(dest: &mut [u8], src: &[u8], c: u8, n: usize) -> Option<usize> {
     // otherwise all `count` bytes are copied and `None` is returned. All loads/stores are
     // within the bounded `count`-length slices, so there is no page-crossing concern.
     //
-    // NOTE (2026-07-12, cc-memccpy-copy-throughput REJECT): this loop loses ~1.15-1.5x to
-    // glibc (grows with size, copies-all-n worst case). Two rewrites were measured and
-    // REJECTED via same-fleet A/B: (a) `memchr` + `copy_from_slice` bulk — helps huge
-    // (65536 1.43x->1.13x) but REGRESSES small badly (256 1.19x->5.9x, two-call overhead);
-    // (b) storing the already-loaded vector via `chunk.copy_to_slice` — WORSE at every
-    // size (portable-SIMD store lowers worse than `copy_from_slice`'s memcpy; 4096
-    // 81ns->103ns). LLVM already CSE'd the src re-read, so 3n->2n was NOT the lever. The
-    // residual is the portable-SIMD-vs-glibc-hand-tuned-memccpy ceiling — kept as-is.
+    // NOTE (2026-07-12, cc-memccpy-copy-throughput): applying `memchr` +
+    // `copy_from_slice` at every size regressed 256-byte inputs badly, while helping
+    // 65536-byte inputs. The large-only route above captures that crossover; this fused
+    // loop remains the small/medium fallback. A portable-SIMD `copy_to_slice` rewrite
+    // was slower at every measured size and remains a do-not-retry boundary.
     let needle = Simd::<u8, SIMD_LANES>::splat(c);
     let mut i = 0;
     while i + SIMD_LANES <= count {
@@ -1619,6 +1629,31 @@ mod tests {
                 assert_eq!(dest[len - 1], 0xA7);
             }
         }
+    }
+
+    #[test]
+    fn test_memccpy_large_bulk_lane_copies_through_first_match_only() {
+        let len = MEMCCPY_BULK_COPY_MIN + 64;
+        let stop = MEMCCPY_BULK_COPY_MIN + 7;
+        let mut src = vec![0x51; len];
+        src[stop] = 0x42;
+        src[stop + 1] = 0x42;
+        let mut dest = vec![0xA7; len];
+
+        assert_eq!(memccpy(&mut dest, &src, 0x42, len), Some(stop + 1));
+        assert_eq!(&dest[..=stop], &src[..=stop]);
+        assert!(dest[stop + 1..].iter().all(|byte| *byte == 0xA7));
+    }
+
+    #[test]
+    fn test_memccpy_large_bulk_lane_copies_all_when_absent() {
+        let len = MEMCCPY_BULK_COPY_MIN + 64;
+        let src = vec![0x51; len];
+        let mut dest = vec![0xA7; len + 1];
+
+        assert_eq!(memccpy(&mut dest, &src, 0x42, len), None);
+        assert_eq!(&dest[..len], &src);
+        assert_eq!(dest[len], 0xA7);
     }
 
     #[test]
