@@ -4292,16 +4292,14 @@ pub unsafe extern "C" fn a64l(s: *const c_char) -> c_long {
             // SAFETY: the non-null C input must be readable through its terminator
             // or through the six-byte maximum. This loop stops at either boundary.
             let c = unsafe { *(s.add(i) as *const u8) };
-            let val = match c {
-                0 => break,
-                b'.' => 0u64,
-                b'/' => 1,
-                b'0'..=b'9' => (c - b'0') as u64 + 2,
-                b'A'..=b'Z' => (c - b'A') as u64 + 12,
-                b'a'..=b'z' => (c - b'a') as u64 + 38,
-                _ => break,
-            };
-            result |= val << shift;
+            // Single table load instead of the SVID-alphabet range-match cascade;
+            // `< 0` is the terminator sentinel for NUL and any non-alphabet byte
+            // (byte-identical to the old `0 => break` / `_ => break`).
+            let v = frankenlibc_core::stdlib::base64::A64L_DECODE[c as usize];
+            if v < 0 {
+                break;
+            }
+            result |= (v as u64) << shift;
             shift += 6;
         }
         return ((result as u32) as i64) as c_long;

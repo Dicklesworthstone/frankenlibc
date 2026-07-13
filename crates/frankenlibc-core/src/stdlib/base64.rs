@@ -7,6 +7,23 @@
 /// Index 0 = '.', 1 = '/', 2-11 = '0'-'9', 12-37 = 'A'-'Z', 38-63 = 'a'-'z'
 const ALPHABET: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
+/// Reverse of [`ALPHABET`]: byte value → its 6-bit index (0..=63), or `-1` for any
+/// byte outside the SVID base-64 alphabet (including NUL). A single table load per
+/// character replaces `a64l`'s per-char range-match cascade (which does up to six
+/// comparisons for the common `a`-`z` case). `-1` doubles as the terminator sentinel:
+/// glibc's `a64l` stops at the first non-alphabet byte, exactly as the old `match`'s
+/// `0 => break` / `_ => break` arms did. Shared by the ABI `a64l` inline fast path
+/// (crates/frankenlibc-abi/src/stdlib_abi.rs) so both decode identically.
+pub const A64L_DECODE: [i8; 256] = {
+    let mut t = [-1i8; 256];
+    let mut i = 0usize;
+    while i < 64 {
+        t[ALPHABET[i] as usize] = i as i8;
+        i += 1;
+    }
+    t
+};
+
 /// `a64l` — convert a base-64 ASCII string to a long.
 ///
 /// Per glibc man page: encodes a **32-bit** value. Reads up to 6 input
@@ -19,18 +36,13 @@ pub fn a64l(s: &[u8]) -> i64 {
     let mut shift = 0u32;
 
     for &c in s.iter().take(6) {
-        if c == 0 {
+        // `A64L_DECODE[c] < 0` covers both NUL and any non-alphabet byte, which
+        // glibc treats as the terminator (was `c == 0` + a range-match `_ => break`).
+        let v = A64L_DECODE[c as usize];
+        if v < 0 {
             break;
         }
-        let val = match c {
-            b'.' => 0u64,
-            b'/' => 1,
-            b'0'..=b'9' => (c - b'0') as u64 + 2,
-            b'A'..=b'Z' => (c - b'A') as u64 + 12,
-            b'a'..=b'z' => (c - b'a') as u64 + 38,
-            _ => break, // invalid character terminates
-        };
-        result |= val << shift;
+        result |= (v as u64) << shift;
         shift += 6;
     }
 
