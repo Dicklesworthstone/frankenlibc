@@ -47104,6 +47104,25 @@ fn iso2022jp3_decode(
     })
 }
 
+/// Sorted unique set of the code points that START a `JP3_MULTI_ENC` combining
+/// sequence. The encoder must try a multi-char combining match first, but only a
+/// handful of base scalars can begin one — so this lets the hot loop skip the
+/// full O(table) `JP3_MULTI_ENC` scan for the overwhelming majority of chars
+/// (Kana/Kanji/ASCII never start a sequence). Byte-identical: a cp absent here has
+/// no matching sequence, exactly what the full scan would conclude.
+fn jp3_multi_first_cps() -> &'static [u32] {
+    static S: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        let mut v: Vec<u32> = iso2022jp3_tables::JP3_MULTI_ENC
+            .iter()
+            .map(|&(seq, ..)| seq[0])
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    })
+}
+
 /// ISO-2022-JP-3 ENCODE (`to == Iso2022Jp3`): per-scalar designator + ku-ten
 /// from `JP3_ENC`, with glibc's lazy set switching — a scalar already
 /// representable in the current set stays there (JIS X 0208 stays in a plane-1
@@ -47161,25 +47180,29 @@ fn iso2022jp3_convert(
             };
             let cp = ch as u32;
             // 1. Combining sequences (base + combining mark) -> one plane-1 cell.
+            // Prefilter: only a handful of base scalars start a JP3_MULTI_ENC
+            // sequence, so skip the O(table) scan entirely for any other char.
             let mut matched: Option<(u8, u8, u8, usize)> = None;
-            for &(seq, cid, b0, b1) in iso2022jp3_tables::JP3_MULTI_ENC.iter() {
-                if seq.first() != Some(&cp) {
-                    continue;
-                }
-                let mut p = in_pos + consumed;
-                let mut ok = true;
-                for &want in &seq[1..] {
-                    match decode_char(cd.from, &input[p..]) {
-                        Ok((c2, n2)) if c2 as u32 == want => p += n2,
-                        _ => {
-                            ok = false;
-                            break;
+            if jp3_multi_first_cps().binary_search(&cp).is_ok() {
+                for &(seq, cid, b0, b1) in iso2022jp3_tables::JP3_MULTI_ENC.iter() {
+                    if seq.first() != Some(&cp) {
+                        continue;
+                    }
+                    let mut p = in_pos + consumed;
+                    let mut ok = true;
+                    for &want in &seq[1..] {
+                        match decode_char(cd.from, &input[p..]) {
+                            Ok((c2, n2)) if c2 as u32 == want => p += n2,
+                            _ => {
+                                ok = false;
+                                break;
+                            }
                         }
                     }
-                }
-                if ok {
-                    matched = Some((cid, b0, b1, p));
-                    break;
+                    if ok {
+                        matched = Some((cid, b0, b1, p));
+                        break;
+                    }
                 }
             }
             if let Some((cid, b0, b1, end)) = matched {
