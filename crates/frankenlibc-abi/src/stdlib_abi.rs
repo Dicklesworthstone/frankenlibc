@@ -6275,9 +6275,9 @@ pub unsafe extern "C" fn setstate_r(statebuf: *mut c_char, buf: *mut c_void) -> 
 // ===========================================================================
 
 #[inline]
-fn ecvt_r_required_capacity(value: c_double, requested: c_int, digits_len: usize) -> usize {
+fn ecvt_r_required_capacity(value: c_double, requested: c_int) -> usize {
     if value.is_nan() || value.is_infinite() {
-        return digits_len.saturating_add(1);
+        return 4 + usize::from(value.is_sign_negative());
     }
     match requested.max(0) as usize {
         0 => 1,
@@ -6369,9 +6369,15 @@ pub unsafe extern "C" fn ecvt_r(
         }
     };
     let requested = ndigit.max(0).min(MAX_LEGACY_CVT_DIGITS as i32);
-    let (digits, dp, _neg) = frankenlibc_core::stdlib::ecvt(value, requested);
-    let required = ecvt_r_required_capacity(value, requested, digits.len());
-    unsafe { copy_legacy_cvt_digits(buf, effective_buflen, &digits) };
+    let required = ecvt_r_required_capacity(value, requested);
+    let digit_capacity = effective_buflen - 1;
+    // SAFETY: `buf` is non-null and `digit_capacity` is bounded by the caller's
+    // `buflen` and, for tracked allocations, the known remaining allocation.
+    let digits = unsafe { std::slice::from_raw_parts_mut(buf.cast::<u8>(), digit_capacity) };
+    let (len, dp, _neg) = frankenlibc_core::stdlib::ecvt_into(value, requested, digits);
+    // SAFETY: ecvt_into returns at most `digit_capacity` bytes, leaving the
+    // final byte within `effective_buflen` available for the terminator.
+    unsafe { *buf.add(len) = 0 };
     if effective_buflen < required {
         return -1;
     }

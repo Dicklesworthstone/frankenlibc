@@ -18169,3 +18169,28 @@ The per-stream mutex, kernel refill, parser, entry order, and TLS result buffer 
 - **COMMAND:** `RCH_WORKER=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR
   rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench
   readdir_glibc_bench -- --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`.
+
+## cod-ecvt-r-direct-buffer-2026-07-12 — WIN (1.74–1.90x faster; near glibc parity)
+
+Closed the reentrant seam left behind by `cc-ecvt-alloc-elim-2026-07-12`. Although non-reentrant `ecvt`
+already wrote through `ecvt_into`, `ecvt_r` still called the allocating `Vec` wrapper and copied those digits
+into its caller-owned buffer. It now renders directly into the bounded caller slice, reserves one byte for NUL,
+and computes non-finite capacity independently so truncated `-inf`/`-nan` writes retain the old failure contract.
+`qecvt` and `qecvt_r` inherit the same path without separate state or routing.
+- **STRICT REMOTE SAME-WORKER A/B (`vmi1293453`):** `ecvt_r17` moved **266.3 -> 153.2 ns = 1.74x faster**
+  and narrowed from **1.80x glibc -> 1.03x**; `ecvt_r6` moved **224.1 -> 118.2 ns = 1.90x faster** and
+  narrowed from **2.01x glibc -> 1.04x**. Host controls were stable (`147.9 -> 149.3 ns` and
+  `111.3 -> 113.5 ns`), while the unchanged non-reentrant rows remained near parity.
+- **CORRECTNESS / PROOF:** `ecvt_into` is the already-conformance-pinned digit generator used by `ecvt`.
+  The only transform is sink substitution: its returned length is capped by `effective_buflen - 1`, so the NUL
+  stays in bounds; the capacity check remains before `decpt` publication; sign is still published before the
+  write; and the required size for non-finite values is exactly three letters plus optional sign plus NUL.
+  Focused release gates cover the live-glibc `ecvt_r` corpus, small-buffer failure, huge precision, non-finite
+  sign/buffer behavior, and the shared `qecvt` surface: **15/15 passed**, with 8 pre-existing hardened-only
+  tracked-allocation tests ignored.
+- **COMMANDS:** benchmark: `RCH_WORKER=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u
+  CARGO_TARGET_DIR rch exec -- cargo run -j 4 --profile release -p frankenlibc-abi --example
+  ecvt_alloc_bench`; focused tests used the same fail-closed prefix with explicit `stdlib_abi_test` and
+  `conformance_diff_stdlib_numeric` targets filtered by `cvt_`.
+- **BOUNDARY:** this closes `ecvt_r` only. Do not fold `fcvt_r` into this result: its negative-digit behavior
+  and `fcvt_r_required_capacity` formatting allocation require a separate lever and proof bundle.
