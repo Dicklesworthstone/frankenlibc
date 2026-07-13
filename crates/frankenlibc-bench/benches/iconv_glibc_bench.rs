@@ -526,6 +526,15 @@ fn main() {
     // DBCS -> UTF-16 probe: Shift-JIS (CP932) -> UTF-16LE. The DBCS legacy->UTF-16/32
     // path decodes each char then writes a unit — probe if un-dominated (un-benched).
     run_conv(c, "cp932_to_utf16le", b"UTF-16LE\0", b"CP932\0", &cp932_src);
+    // Same vpgatherdd-vs-scalar question for the fast-glibc EUC-JP/-MS -> UTF-16 path.
+    run_conv(c, "eucjp_to_utf16le", b"UTF-16LE\0", b"EUC-JP\0", &eucjp_src);
+    run_conv(
+        c,
+        "eucjpms_to_utf16le",
+        b"UTF-16LE\0",
+        b"EUC-JP-MS\0",
+        &eucjpms_src,
+    );
     // SBCS -> UTF-32 probe: Latin-1 high bytes -> UTF-32LE (the tw==4 leg left scalar
     // by the SBCS->UTF-16 SIMD fix) — probe if un-dominated.
     run_conv(

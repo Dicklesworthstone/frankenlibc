@@ -18315,3 +18315,25 @@ glibc baselines swung ~15% run-to-run. Any strcat/strcpy sub-ratio needs a QUIET
 DEFERRED (real lever for a quiet-host turn): the strcat composition gap needs a genuinely FUSED
 scan+copy (single loop that finds dst NUL then continues copying src without re-entering a second
 SIMD body's prologue), or accepting it as a safe-Rust-vs-monolithic-asm floor. Not a small increment.
+
+## cc-dbcs-utf16-scalar-run-2026-07-13 — REJECT (wash vs the gather; DBCS->UTF-16 gap is decode-table speed, not the gather)
+
+Extending the EUC-JP->UTF-8 vpgatherdd fix (f98e851fe), tried a scalar DBCS-2 -> UTF-16 run
+(`emit_dbcs2_bmp_utf16_run`, direct cp lookup + one 2-byte write per cell) dispatched before the
+DBCS->UTF-16 gather for the fast-glibc codecs (Cp932/EUC-JP/-MS), hypothesising the same
+vpgatherdd-loses story as UTF-8. WRONG for UTF-16.
+
+MEASURED (iconv_glibc_bench, added eucjp/eucjpms_to_utf16le on the honest jp_full source):
+scalar-run vs gather were a WASH (cp932 1.89x both; eucjp 1.89 scalar / 1.73 gather; eucjpms 2.04
+scalar / 2.67 gather) — no reliable win, within the ~50% run-to-run iconv noise. Unlike DBCS->UTF-8
+(where the gather's 3-byte-triple swizzle-pack is expensive, so the scalar run wins), the UTF-16
+gather's per-cell pack is cheap (lo/hi split + one interleave), so the gather is already efficient.
+
+ROOT CAUSE of the DBCS->UTF-16 ~1.7-2.7x loss is NOT the gather: fl's cp932 path costs ~510ns
+regardless of target (utf8 ~510ns, utf16 ~503ns), but glibc's DBCS->UTF-16 (267ns) is ~2x faster
+than its DBCS->UTF-8 (535ns) because UTF-16 encode is trivial and glibc's *decode* is a compact
+arithmetic/small-table path. fl's 256KB flat `dbcs_direct[key]` lookup (~1ns/char) is what glibc's
+decode beats; it's the same table that WINS DBCS->UTF-8 only because glibc's UTF-8 path is slower.
+Closing this needs a more compact/faster DBCS decode (a big rewrite), not a gather/scalar swap.
+Reverted the core change; kept the two diagnostic bench cases. Same iconv run-to-run noise hazard
+as cc-strcat / the EUC-JP source-truncation note.
