@@ -1426,6 +1426,34 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         return;
     }
 
+    // Fast path: `%e`/`%E` with no field width and no `#` alt-form — render straight into
+    // `buf` with no per-call String (mirrors the `%f`/`%g` fast paths). `format_e`'s
+    // !alt_form body is exactly `render_pct_e` + a `%E` uppercase fold (the only lowercase
+    // byte it emits is the `'e'`), so `render_pct_e_into` gives byte-identical output
+    // without the heap allocation. At width 0 there is no padding = byte-identical to the
+    // general path below.
+    if resolve_width(spec) == 0
+        && !spec.flags.alt_form
+        && matches!(
+            spec.raw_render_kind(),
+            Some(RawValueRenderKind::Float(FloatFormatKind::Exp))
+        )
+    {
+        if negative {
+            buf.push(b'-');
+        } else if spec.flags.force_sign {
+            buf.push(b'+');
+        } else if spec.flags.space_sign {
+            buf.push(b' ');
+        }
+        let start = buf.len();
+        crate::stdlib::ecvt::render_pct_e_into(abs, precision, buf);
+        if spec.conversion.is_ascii_uppercase() {
+            buf[start..].make_ascii_uppercase();
+        }
+        return;
+    }
+
     // Generate digit string.
     let body = match spec.raw_render_kind() {
         Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)) => {

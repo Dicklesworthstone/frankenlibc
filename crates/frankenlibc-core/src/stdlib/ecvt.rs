@@ -1079,6 +1079,167 @@ pub fn render_pct_e(value: f64, ndigit: usize) -> String {
     rust_e_to_glibc_e_no_strip(rust_form)
 }
 
+/// Append the printf `%e` rendering of `value` to `buf`. Byte-identical to
+/// `render_pct_e(value, ndigit)` but with NO per-call String — it appends straight into
+/// the growable `buf`. Unlike the `%g` `_into` (which renders into a FIXED stack scratch
+/// and so must clamp precision — see [`render_gcvt_into`] and [[into-refactor-buffer-truncation]]),
+/// every intermediate here is either unbounded (`buf`, `heap`) or overflow-safe
+/// (`StackStr::write_str` errs to `heap`; the integer/dyadic digit scratches hold a full
+/// u64/u128), so ALL precisions are safe with no truncation. Mirrors `render_pct_e`'s
+/// three branches (exact-integer, dyadic, `{:e}` reshape) exactly.
+pub fn render_pct_e_into(value: f64, ndigit: usize, buf: &mut Vec<u8>) {
+    use core::fmt::Write as _;
+    // Exact-integer fast path (no rounding); mirrors render_pct_e.
+    if value.fract() == 0.0 && value.abs() < 18446744073709551616.0 {
+        let mag = value.abs() as u64;
+        let mut tmp = [0u8; 20];
+        let mut n = mag;
+        let mut i = tmp.len();
+        loop {
+            i -= 1;
+            tmp[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+            if n == 0 {
+                break;
+            }
+        }
+        let digits = &tmp[i..];
+        let l = digits.len();
+        if l - 1 <= ndigit {
+            let exp = l as i32 - 1;
+            if value.is_sign_negative() {
+                buf.push(b'-');
+            }
+            buf.push(digits[0]);
+            if ndigit > 0 {
+                buf.push(b'.');
+                buf.extend_from_slice(&digits[1..]);
+                for _ in 0..ndigit - (l - 1) {
+                    buf.push(b'0');
+                }
+            }
+            push_c_exp_tail(buf, exp);
+            return;
+        }
+    }
+    if try_build_dyadic_sci_into(value, ndigit, buf) {
+        return;
+    }
+    let mut sb = StackStr::new();
+    let mut heap = String::new();
+    let rust_form: &str = if write!(sb, "{value:.ndigit$e}").is_ok() {
+        sb.as_str()
+    } else {
+        let _ = write!(heap, "{value:.ndigit$e}");
+        heap.as_str()
+    };
+    rust_e_to_glibc_e_no_strip_into(rust_form, buf);
+}
+
+/// Append a C-style `e±dd` exponent tail (signed, >= 2 decimal digits) for decimal
+/// exponent `exp` to `buf`. Shared by the buffer-writing `%e` fast paths; byte-identical
+/// to the `out.push('e'); ...; write!("{abs_exp}")` tail in `render_pct_e` /
+/// `try_build_dyadic_sci`. Callers here keep `|exp|` small (integer path <= 19, dyadic
+/// <= ~38), well within the 3-digit scratch.
+fn push_c_exp_tail(buf: &mut Vec<u8>, exp: i32) {
+    buf.push(b'e');
+    buf.push(if exp < 0 { b'-' } else { b'+' });
+    let abs_exp = exp.unsigned_abs();
+    let mut tmp = [0u8; 3];
+    let mut n = abs_exp;
+    let mut i = tmp.len();
+    loop {
+        i -= 1;
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    let d = &tmp[i..];
+    if d.len() < 2 {
+        buf.push(b'0');
+    }
+    buf.extend_from_slice(d);
+}
+
+/// Buffer-writing twin of [`try_build_dyadic_sci`] — appends to `buf` and returns `true`
+/// iff it handled `value`. Byte-identical to the String version's `Some(..)` case.
+fn try_build_dyadic_sci_into(value: f64, frac: usize, buf: &mut Vec<u8>) -> bool {
+    if frac > 19 || !value.is_finite() || value == 0.0 || value.fract() == 0.0 {
+        return false;
+    }
+    let Some(decimal_scale) = dyadic_decimal_scale(value) else {
+        return false;
+    };
+    if decimal_scale > 19 {
+        return false;
+    }
+    let binary_scale = f64::from_bits((1023u64 + decimal_scale as u64) << 52);
+    let scaled = value.abs() * binary_scale;
+    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+        return false;
+    }
+    let Some(decimal) = (scaled as u128).checked_mul(5u128.pow(decimal_scale as u32)) else {
+        return false;
+    };
+    let mut tmp = [0u8; 40];
+    let mut n = decimal;
+    let mut i = tmp.len();
+    loop {
+        i -= 1;
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    let digits = &tmp[i..];
+    let target_digits = frac + 1;
+    if digits.len() > target_digits {
+        return false;
+    }
+    let zero_pad = target_digits - digits.len();
+    let exp = frac as i32 - (decimal_scale + zero_pad) as i32;
+    if value.is_sign_negative() {
+        buf.push(b'-');
+    }
+    buf.push(digits[0]);
+    if frac > 0 {
+        buf.push(b'.');
+        buf.extend_from_slice(&digits[1..]);
+        for _ in 0..zero_pad {
+            buf.push(b'0');
+        }
+    }
+    push_c_exp_tail(buf, exp);
+    true
+}
+
+/// Buffer-writing twin of [`rust_e_to_glibc_e_no_strip`] — appends to `buf`, no String.
+fn rust_e_to_glibc_e_no_strip_into(s: &str, buf: &mut Vec<u8>) {
+    let Some(e_pos) = s.find('e') else {
+        buf.extend_from_slice(s.as_bytes());
+        return;
+    };
+    let mantissa = &s[..e_pos];
+    let exp_part = &s[e_pos + 1..];
+    let (sign, digits) = if let Some(rest) = exp_part.strip_prefix('-') {
+        (b'-', rest)
+    } else if let Some(rest) = exp_part.strip_prefix('+') {
+        (b'+', rest)
+    } else {
+        (b'+', exp_part)
+    };
+    buf.extend_from_slice(mantissa.as_bytes());
+    buf.push(b'e');
+    buf.push(sign);
+    if digits.len() < 2 {
+        buf.push(b'0');
+    }
+    buf.extend_from_slice(digits.as_bytes());
+}
+
 /// Like `rust_e_to_glibc_e` but does NOT strip trailing zeros from
 /// the mantissa — `%e` callers want full padding, `%g` callers don't.
 fn rust_e_to_glibc_e_no_strip(s: &str) -> String {
