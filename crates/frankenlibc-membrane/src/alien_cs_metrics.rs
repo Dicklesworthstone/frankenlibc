@@ -17,6 +17,7 @@ use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};
 use crate::seqlock::SeqLockDiagnostics;
 use crate::util::NoPoisonMutex;
 use crate::util::now_utc_iso_like;
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -247,7 +248,7 @@ pub struct MetricEvent {
 
 /// Ring buffer for metric events (fixed capacity, overwrites oldest).
 pub struct MetricRing {
-    events: NoPoisonMutex<Vec<MetricEvent>>,
+    events: NoPoisonMutex<VecDeque<MetricEvent>>,
     capacity: usize,
     total_emitted: AtomicU64,
     epoch_start: Instant,
@@ -258,7 +259,7 @@ impl MetricRing {
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
-            events: NoPoisonMutex::new(Vec::with_capacity(capacity.min(4096))),
+            events: NoPoisonMutex::new(VecDeque::with_capacity(capacity.min(4096))),
             capacity,
             total_emitted: AtomicU64::new(0),
             epoch_start: Instant::now(),
@@ -276,9 +277,9 @@ impl MetricRing {
 
         let mut events = self.events.lock();
         if events.len() >= self.capacity {
-            events.remove(0);
+            let _ = events.pop_front();
         }
-        events.push(event);
+        events.push_back(event);
         self.total_emitted.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -309,7 +310,7 @@ impl MetricRing {
     /// Snapshot the current events without draining.
     #[must_use]
     pub fn snapshot(&self) -> Vec<MetricEvent> {
-        self.events.lock().clone()
+        self.events.lock().iter().cloned().collect()
     }
 
     /// Count events of a specific kind.
