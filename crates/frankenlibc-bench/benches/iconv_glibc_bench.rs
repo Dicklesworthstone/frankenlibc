@@ -519,6 +519,10 @@ fn main() {
     let gb_utf8 = host_from(b"GB2312\0", &gb2312_valid);
     let iso2022cn_src = host_to(b"ISO-2022-CN\0", &gb_utf8);
     run_conv(c, "iso2022cn_to_utf8", b"UTF-8\0", b"ISO-2022-CN\0", &iso2022cn_src);
+    // ENCODE direction: UTF-8 -> ISO-2022-CN. `gb_utf8` is GB2312 Hanzi, so the stateful
+    // encoder emits ESC $ ) A designator + SO + double-byte cells. Probes iso2022cn_convert
+    // (was Vec-two-pass, now single-pass).
+    run_conv(c, "utf8_to_iso2022cn", b"ISO-2022-CN\0", b"UTF-8\0", &gb_utf8);
     // TSCII (Tamil, visual-order maximal-munch decode): honest single-byte source
     // (a contiguous Tamil host_to truncated on unassigned/non-TSCII cps).
     let tscii_src = build_sbcs_source(b"TSCII\0", 512);

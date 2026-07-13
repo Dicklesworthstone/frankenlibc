@@ -44050,6 +44050,152 @@ fn iso2022cn_convert(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Single-pass fast path: write the ISO-2022-CN stream directly into outbuf,
+    // skipping the `Vec<u8>` accumulator + final copy (2 heap allocs/call — an
+    // interposed-malloc tax in the deployed path). Worst case per char is a G2/SS2
+    // CNS-plane-2 cell = 4-byte designator + 2-byte SS2 + 2 data = 8, so gating on
+    // `outbuf.len() >= input.len()*8` makes E2BIG unreachable here and leaves the
+    // tight-buffer all-or-nothing E2BIG path (below) exactly as it was. Byte-identical:
+    // the SAME decode + designation/shift/SS2 logic, the SAME g1/g2/shifted saved on
+    // every return, the SAME partial out_written on a mid-stream EILSEQ/EINVAL.
+    if outbuf.len() >= input.len().saturating_mul(8) {
+        fn emit_g1(
+            outbuf: &mut [u8],
+            out_pos: &mut usize,
+            set: u8,
+            bytes: [u8; 2],
+            g1: &mut u8,
+            shifted: &mut bool,
+        ) {
+            if *g1 != set {
+                let desig: &[u8] = if set == 1 {
+                    &[0x1B, 0x24, 0x29, 0x41]
+                } else {
+                    &[0x1B, 0x24, 0x29, 0x47]
+                };
+                outbuf[*out_pos..*out_pos + 4].copy_from_slice(desig);
+                *out_pos += 4;
+                *g1 = set;
+            }
+            if !*shifted {
+                outbuf[*out_pos] = 0x0E;
+                *out_pos += 1;
+                *shifted = true;
+            }
+            outbuf[*out_pos] = bytes[0];
+            outbuf[*out_pos + 1] = bytes[1];
+            *out_pos += 2;
+        }
+        let gb = |ch: char| -> Option<[u8; 2]> {
+            let mut t = [0u8; 8];
+            match encode_gb2312(ch, &mut t) {
+                Ok(2) if (0xA1..=0xFE).contains(&t[0]) && (0xA1..=0xFE).contains(&t[1]) => {
+                    Some([t[0] & 0x7F, t[1] & 0x7F])
+                }
+                _ => None,
+            }
+        };
+        let cns1 = |ch: char| -> Option<[u8; 2]> {
+            let mut t = [0u8; 8];
+            match encode_euctw(ch, &mut t) {
+                Ok(2) if (0xA1..=0xFE).contains(&t[0]) && (0xA1..=0xFE).contains(&t[1]) => {
+                    Some([t[0] & 0x7F, t[1] & 0x7F])
+                }
+                _ => None,
+            }
+        };
+        let cns2 = |ch: char| -> Option<[u8; 2]> {
+            let mut t = [0u8; 8];
+            match encode_euctw(ch, &mut t) {
+                Ok(4) if t[0] == 0x8E && t[1] == 0xA2 => Some([t[2] & 0x7F, t[3] & 0x7F]),
+                _ => None,
+            }
+        };
+        let mut g1 = cd.iso2022cn_out_g1;
+        let mut g2 = cd.iso2022cn_out_g2;
+        let mut shifted = cd.iso2022cn_out_shifted;
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        let mut err: Option<(i32, usize)> = None;
+        while in_pos < input.len() {
+            let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    err = Some((ICONV_EINVAL, in_pos));
+                    break;
+                }
+                Err(DecodeError::Invalid) => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            };
+            let cp = ch as u32;
+            if cp < 0x80 {
+                if shifted {
+                    outbuf[out_pos] = 0x0F;
+                    out_pos += 1;
+                    shifted = false;
+                }
+                outbuf[out_pos] = cp as u8;
+                out_pos += 1;
+                if cp == 0x0A {
+                    g1 = 0;
+                    g2 = false;
+                }
+                in_pos += consumed;
+                continue;
+            }
+            if g1 == 1 {
+                if let Some(b) = gb(ch) {
+                    emit_g1(outbuf, &mut out_pos, 1, b, &mut g1, &mut shifted);
+                    in_pos += consumed;
+                    continue;
+                }
+            } else if g1 == 2 {
+                if let Some(b) = cns1(ch) {
+                    emit_g1(outbuf, &mut out_pos, 2, b, &mut g1, &mut shifted);
+                    in_pos += consumed;
+                    continue;
+                }
+            }
+            if let Some(b) = gb(ch) {
+                emit_g1(outbuf, &mut out_pos, 1, b, &mut g1, &mut shifted);
+            } else if let Some(b) = cns1(ch) {
+                emit_g1(outbuf, &mut out_pos, 2, b, &mut g1, &mut shifted);
+            } else if let Some(b) = cns2(ch) {
+                if !g2 {
+                    outbuf[out_pos..out_pos + 4].copy_from_slice(&[0x1B, 0x24, 0x2A, 0x48]);
+                    out_pos += 4;
+                    g2 = true;
+                }
+                outbuf[out_pos..out_pos + 2].copy_from_slice(&[0x1B, 0x4E]);
+                out_pos += 2;
+                outbuf[out_pos] = b[0];
+                outbuf[out_pos + 1] = b[1];
+                out_pos += 2;
+            } else {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+            in_pos += consumed;
+        }
+        cd.iso2022cn_out_g1 = g1;
+        cd.iso2022cn_out_g2 = g2;
+        cd.iso2022cn_out_shifted = shifted;
+        if let Some((code, pos)) = err {
+            return Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: out_pos,
+            });
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
     let mut out: Vec<u8> = Vec::new();
     let mut g1 = cd.iso2022cn_out_g1; // 0 none, 1 GB2312, 2 CNS plane 1
     let mut g2 = cd.iso2022cn_out_g2; // CNS plane 2 designated (ESC $ * H)
