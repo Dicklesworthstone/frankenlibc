@@ -6,6 +6,40 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / MagentaStork) — WIN (SHIPPED): derived `SeqLock` read diagnostics remove one hot-path RMW; cached read **11.374 -> 6.5540 ns (1.74x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH LANE.** The ledger and Git history contained no attempt to remove
+  `SeqLockDiagCounters::reads`; the freshest resolver routes remain admission-blocked, while allocator,
+  exact-format, deployed-string, and surveyed-math families are already closed or owned. Inspection of
+  the checked-in `seqlock_read/cached_single_thread` benchmark found that each cached read paid two
+  shared relaxed atomic increments even though one counter was algebraically redundant.
+- **ONE LEVER / CERTIFIED COUNTER REWRITE.** Every counted read takes exactly one mutually exclusive
+  diagnostics branch: cache hit or cache miss. The dedicated `reads` atomic and its four increment sites
+  are removed, and `diagnostics()` derives `reads = cache_hits.wrapping_add(cache_misses)`. Wrapping
+  addition preserves the old `u64` rollover contract; the public diagnostics schema, hit-ratio formula,
+  data snapshots, versions, lock ordering, and cache behavior are unchanged. At quiescence the observable
+  identity is exact. The old independent relaxed loads were not a linearizable live snapshot; during an
+  in-flight read the derived value now counts only reads whose hit/miss outcome has been classified.
+- **STRICT-REMOTE SAME-WORKER GATE.** Identical baseline/candidate command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'seqlock_read/cached_single_thread' --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`.
+  On `vmi1293453`, the interval moved **[11.156, 11.374, 11.624] ns ->
+  [6.2508, 6.5540, 7.0445] ns**: candidate/baseline center **0.5762x**, **1.7354x faster**.
+  Criterion's change interval was **-44.606% to -35.768%**, central **-40.956%**, `p=0.00`.
+- **PROOF SURFACE.** Existing diagnostics units pin zero-state behavior, constructor miss accounting,
+  cached hits, post-write misses, and write counts. Sustained-pressure tests inspect diagnostics only
+  after all reader/writer joins. Thus every asserted snapshot is quiescent and preserves the exact
+  `reads == cache_hits + cache_misses` partition used by the rewrite.
+- **REMOTE QUALITY-GATE BOUNDARY.** The Criterion candidate compiled and executed remotely, and focused
+  `cargo clippy -j 1 -p frankenlibc-membrane --lib -- -D warnings` passed. The corrected focused unit
+  command was stopped after 11m28s before test execution while still compiling the unrelated
+  `asupersync` dev-dependency stack; it emitted no source or test failure. RCH refuses non-compilation
+  `cargo fmt --all -- --check` fail-closed as `RCH-E301`; no local fallback was used for that gate, and
+  `git diff --check` is clean. Focused UBS found no critical issue in the touched source; its warnings
+  are pre-existing test/assert and clone heuristics outside this lever.
+- **CLOSED BOUNDARY.** Do not restore a separately maintained aggregate read counter. BRAVO and
+  LeftRight diagnostics are separate primitives with separate concurrency and benchmark obligations;
+  no broader counter-family rewrite is implied by this result.
+
 ## 2026-07-13 (cod / BeigeHorse) — WIN (SHIPPED): O(1) `MetricRing` eviction cuts steady-state EBR pin/unpin median **3.4285 us -> 112.02 ns (30.61x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH LANE.** The known resolver, allocator, exact-format, deployed-string,

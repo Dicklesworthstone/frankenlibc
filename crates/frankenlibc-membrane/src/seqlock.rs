@@ -51,7 +51,6 @@ pub struct SeqLock<T: Clone + Send + Sync> {
 
 /// Internal atomic diagnostic counters.
 struct SeqLockDiagCounters {
-    reads: AtomicU64,
     cache_hits: AtomicU64,
     cache_misses: AtomicU64,
     writes: AtomicU64,
@@ -61,7 +60,6 @@ struct SeqLockDiagCounters {
 impl Default for SeqLockDiagCounters {
     fn default() -> Self {
         Self {
-            reads: AtomicU64::new(0),
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             writes: AtomicU64::new(0),
@@ -220,7 +218,6 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
     where
         F: FnOnce(&T) -> R,
     {
-        self.diag.reads.fetch_add(1, Ordering::Relaxed);
         self.diag.cache_misses.fetch_add(1, Ordering::Relaxed);
         let snapshot = self.load();
         f(&snapshot)
@@ -235,9 +232,9 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
     /// Read current diagnostics snapshot.
     #[must_use]
     pub fn diagnostics(&self) -> SeqLockDiagnostics {
-        let reads = self.diag.reads.load(Ordering::Relaxed);
         let cache_hits = self.diag.cache_hits.load(Ordering::Relaxed);
         let cache_misses = self.diag.cache_misses.load(Ordering::Relaxed);
+        let reads = cache_hits.wrapping_add(cache_misses);
         let writes = self.diag.writes.load(Ordering::Relaxed);
         let contention_events = self.diag.contention_events.load(Ordering::Relaxed);
         let pending_writers = self.pending_writers();
@@ -326,7 +323,6 @@ impl<'a, T: Clone + Send + Sync> SeqLockReader<'a, T> {
     #[must_use]
     pub fn new(lock: &'a SeqLock<T>) -> Self {
         let (version, snapshot) = lock.load_versioned();
-        lock.diag.reads.fetch_add(1, Ordering::Relaxed);
         lock.diag.cache_misses.fetch_add(1, Ordering::Relaxed);
         Self {
             lock,
@@ -340,7 +336,6 @@ impl<'a, T: Clone + Send + Sync> SeqLockReader<'a, T> {
     /// **Hot path** (version match): 1 atomic load + comparison → cached reference.
     /// **Cold path** (version mismatch): Mutex lock + Arc clone + version load.
     pub fn read(&mut self) -> &T {
-        self.lock.diag.reads.fetch_add(1, Ordering::Relaxed);
         let current_version = self.lock.version();
         if current_version == self.cached_version {
             self.lock.diag.cache_hits.fetch_add(1, Ordering::Relaxed);
@@ -364,7 +359,6 @@ impl<'a, T: Clone + Send + Sync> SeqLockReader<'a, T> {
     ///
     /// Returns `Some(&T)` if a new version was loaded, `None` if unchanged.
     pub fn read_if_changed(&mut self) -> Option<&T> {
-        self.lock.diag.reads.fetch_add(1, Ordering::Relaxed);
         let current_version = self.lock.version();
         if current_version == self.cached_version {
             self.lock.diag.cache_hits.fetch_add(1, Ordering::Relaxed);
