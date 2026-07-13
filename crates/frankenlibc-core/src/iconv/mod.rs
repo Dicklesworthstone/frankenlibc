@@ -42625,6 +42625,96 @@ fn iso2022kr_decode(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Fast path (to == UTF-8): single-pass decode+emit straight into outbuf — no
+    // intermediate Vec<char>/Vec<u8> (the two heap allocs + double iteration that made
+    // this the same Vec-two-pass class as the ISO-2022-JP family, ~5-15x slower than
+    // glibc). Mirrors the two-pass machine byte-for-byte (the KSC 5601 designator, the
+    // SO/SI shift state `ksc`, ASCII passthrough, and the decode_euckr double-byte cell)
+    // but emits UTF-8 via emit_utf8_cp. Gated on outbuf holding the whole worst-case
+    // output (<=4 UTF-8 bytes per source byte) so it never runs out of space;
+    // cd.iso2022kr_in_ksc is saved on every return exactly as the two-pass does. The
+    // two-pass body runs only on a tight buffer / non-UTF-8 target.
+    if cd.to == Encoding::Utf8 && outbuf.len() >= input.len().saturating_mul(4) {
+        let mut ksc = cd.iso2022kr_in_ksc;
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut consumed_end = 0usize;
+        let mut err: Option<i32> = None;
+        while i < input.len() {
+            let b = input[i];
+            if b == 0x1B {
+                let rest = &input[i..];
+                if rest.len() < ISO2022KR_DESIGNATOR.len() {
+                    err = Some(if ISO2022KR_DESIGNATOR.starts_with(rest) {
+                        ICONV_EINVAL
+                    } else {
+                        ICONV_EILSEQ
+                    });
+                    break;
+                }
+                if rest[..4] == ISO2022KR_DESIGNATOR {
+                    i += 4;
+                    consumed_end = i;
+                    continue;
+                }
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+            if b == 0x0E {
+                ksc = true;
+                i += 1;
+                consumed_end = i;
+                continue;
+            }
+            if b == 0x0F {
+                ksc = false;
+                i += 1;
+                consumed_end = i;
+                continue;
+            }
+            if !ksc {
+                if b < 0x80 {
+                    o += emit_utf8_cp(outbuf, o, b as u32);
+                    i += 1;
+                    consumed_end = i;
+                } else {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+            } else {
+                if i + 1 >= input.len() {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let euc = [input[i] | 0x80, input[i + 1] | 0x80];
+                match decode_euckr(&euc) {
+                    Ok((ch, 2)) => {
+                        o += emit_utf8_cp(outbuf, o, ch as u32);
+                        i += 2;
+                        consumed_end = i;
+                    }
+                    _ => {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+            }
+        }
+        cd.iso2022kr_in_ksc = ksc;
+        return match err {
+            Some(code) => Err(IconvError {
+                code,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+            None => Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+        };
+    }
+
     let mut chars: Vec<char> = Vec::new();
     let mut ksc = cd.iso2022kr_in_ksc;
     let mut i = 0usize;

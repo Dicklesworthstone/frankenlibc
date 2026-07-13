@@ -302,6 +302,23 @@ fn main() {
         dst.truncate(n);
         dst
     };
+    // Reverse of host_to: decode `from`-encoded bytes to UTF-8 via host glibc. Used to
+    // derive a guaranteed-encodable UTF-8 corpus for a codec (round-trip: build valid
+    // legacy bytes -> host_from -> UTF-8 that host_to can then re-encode fully).
+    let host_from = |from: &[u8], src: &[u8]| -> Vec<u8> {
+        let cd = unsafe { (host.open)(b"UTF-8\0".as_ptr().cast(), from.as_ptr().cast()) };
+        assert!(cd as isize != -1 && !cd.is_null());
+        let mut dst = vec![0u8; src.len() * 4 + 16];
+        let mut inp = src.as_ptr() as *mut c_char;
+        let mut inl = src.len();
+        let mut outp = dst.as_mut_ptr() as *mut c_char;
+        let mut outl = dst.len();
+        unsafe { (host.convert)(cd, &mut inp, &mut inl, &mut outp, &mut outl) };
+        unsafe { (host.close)(cd) };
+        let n = dst.len() - outl;
+        dst.truncate(n);
+        dst
+    };
     // Build a VALID, non-degenerate DBCS source for codecs whose code points are a
     // scattered subset (Big5/EucTw/Gb2312): enumerate lead/trail pairs and keep only
     // those glibc decodes cleanly (fully consumes the 2 bytes). Defeats the
@@ -417,7 +434,12 @@ fn main() {
     // IBM930 (EBCDIC Japanese Katakana+Kanji, SO/SI DBCS) -> UTF-8. cjk = U+4E00 Kanji.
     let ibm930_src = host_to(b"IBM930\0", &cjk);
     run_conv(c, "ibm930_to_utf8", b"UTF-8\0", b"IBM930\0", &ibm930_src);
-    let iso2022kr_src = host_to(b"ISO-2022-KR\0", &hangul);
+    // ISO-2022-KR uses KSC 5601 = the EUC-KR charset. Build a KSC-encodable UTF-8 corpus
+    // by round-tripping valid EUC-KR Wansung Hangul (host_from), so host_to yields a full
+    // ISO-2022-KR source (plain `hangul` has non-KSC syllables that truncate the encode).
+    let euckr_valid = build_dbcs_source(b"EUC-KR\0", 0xB0..=0xC8, 0xA1..=0xFE, 512);
+    let ksc_utf8 = host_from(b"EUC-KR\0", &euckr_valid);
+    let iso2022kr_src = host_to(b"ISO-2022-KR\0", &ksc_utf8);
     run_conv(c, "iso2022kr_to_utf8", b"UTF-8\0", b"ISO-2022-KR\0", &iso2022kr_src);
     let iso2022cn_src = host_to(b"ISO-2022-CN\0", &cjk);
     run_conv(c, "iso2022cn_to_utf8", b"UTF-8\0", b"ISO-2022-CN\0", &iso2022cn_src);
