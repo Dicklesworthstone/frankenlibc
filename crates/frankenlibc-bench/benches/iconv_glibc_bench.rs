@@ -441,7 +441,11 @@ fn main() {
     let ksc_utf8 = host_from(b"EUC-KR\0", &euckr_valid);
     let iso2022kr_src = host_to(b"ISO-2022-KR\0", &ksc_utf8);
     run_conv(c, "iso2022kr_to_utf8", b"UTF-8\0", b"ISO-2022-KR\0", &iso2022kr_src);
-    let iso2022cn_src = host_to(b"ISO-2022-CN\0", &cjk);
+    // ISO-2022-CN's default G1 is GB2312; round-trip a GB2312-encodable UTF-8 corpus so
+    // host_to yields a full source (plain `cjk` has U+4E00 cps outside GB2312 that truncate).
+    let gb2312_valid = build_dbcs_source(b"GB2312\0", 0xB0..=0xF7, 0xA1..=0xFE, 512);
+    let gb_utf8 = host_from(b"GB2312\0", &gb2312_valid);
+    let iso2022cn_src = host_to(b"ISO-2022-CN\0", &gb_utf8);
     run_conv(c, "iso2022cn_to_utf8", b"UTF-8\0", b"ISO-2022-CN\0", &iso2022cn_src);
     // TSCII (Tamil, visual-order maximal-munch decode). Tamil block U+0B80..U+0BFF.
     let tamil_cps: Vec<u32> = (0..512u32).map(|k| 0x0B85 + (k % 0x50)).collect();

@@ -43922,6 +43922,166 @@ fn iso2022cn_decode(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Fast path (to == UTF-8): single-pass decode+emit straight into outbuf — no
+    // intermediate Vec<char>/Vec<u8> (the Vec-two-pass class shared with the ISO-2022-JP
+    // family + ISO-2022-KR). Mirrors the two-pass machine byte-for-byte: the g1 designation
+    // (1=GB2312 / 2=CNS plane 1), the SO/SI `shifted` state, the ESC $ ) A/G and ESC $ * H
+    // designators, the ESC N SS2 into CNS plane 2 (decode_euctw), the unrecognized-escape
+    // literal, the GB2312/CNS G1 double-byte cell, and the newline-resets-g1 quirk — but
+    // emits UTF-8 via emit_utf8_cp. Gated on outbuf holding the whole worst-case output
+    // (<=4 UTF-8 bytes per source byte) so it never runs out of space; cd.iso2022cn_in_g1
+    // and _in_shifted are saved on every return exactly as the two-pass does. The two-pass
+    // body runs only on a tight buffer / non-UTF-8 target.
+    if cd.to == Encoding::Utf8 && outbuf.len() >= input.len().saturating_mul(4) {
+        let mut g1 = cd.iso2022cn_in_g1;
+        let mut shifted = cd.iso2022cn_in_shifted;
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut consumed_end = 0usize;
+        let mut err: Option<i32> = None;
+        while i < input.len() {
+            let b = input[i];
+            if b == 0x1B {
+                let have = input.len() - i;
+                if have < 2 {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let b1 = input[i + 1];
+                if b1 == 0x4E {
+                    if have < 4 {
+                        err = Some(ICONV_EINVAL);
+                        break;
+                    }
+                    let (c0, c1) = (input[i + 2], input[i + 3]);
+                    if !(0x21..=0x7E).contains(&c0) || !(0x21..=0x7E).contains(&c1) {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                    match decode_euctw(&[0x8E, 0xA2, c0 | 0x80, c1 | 0x80]) {
+                        Ok((ch, 4)) => {
+                            o += emit_utf8_cp(outbuf, o, ch as u32);
+                            i += 4;
+                            consumed_end = i;
+                            continue;
+                        }
+                        _ => {
+                            err = Some(ICONV_EILSEQ);
+                            break;
+                        }
+                    }
+                }
+                if shifted {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                if b1 == 0x24 {
+                    if have < 3 {
+                        err = Some(ICONV_EINVAL);
+                        break;
+                    }
+                    let b2 = input[i + 2];
+                    if b2 == 0x29 || b2 == 0x2A {
+                        if have < 4 {
+                            err = Some(ICONV_EINVAL);
+                            break;
+                        }
+                        match (b2, input[i + 3]) {
+                            (0x29, 0x41) => g1 = 1,
+                            (0x29, 0x47) => g1 = 2,
+                            (0x2A, 0x48) => {}
+                            _ => {
+                                o += emit_utf8_cp(outbuf, o, 0x1B);
+                                i += 1;
+                                consumed_end = i;
+                                continue;
+                            }
+                        }
+                        i += 4;
+                        consumed_end = i;
+                        continue;
+                    }
+                    o += emit_utf8_cp(outbuf, o, 0x1B);
+                    i += 1;
+                    consumed_end = i;
+                    continue;
+                }
+                o += emit_utf8_cp(outbuf, o, 0x1B);
+                i += 1;
+                consumed_end = i;
+                continue;
+            }
+            if b == 0x0E {
+                shifted = true;
+                i += 1;
+                consumed_end = i;
+                continue;
+            }
+            if b == 0x0F {
+                shifted = false;
+                i += 1;
+                consumed_end = i;
+                continue;
+            }
+            if shifted {
+                if !(0x21..=0x7E).contains(&b) {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                if i + 1 >= input.len() {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let b1 = input[i + 1];
+                if !(0x21..=0x7E).contains(&b1) {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                let euc = [b | 0x80, b1 | 0x80];
+                let decoded = if g1 == 2 {
+                    decode_euctw(&euc)
+                } else {
+                    decode_gb2312(&euc)
+                };
+                match decoded {
+                    Ok((ch, 2)) => {
+                        o += emit_utf8_cp(outbuf, o, ch as u32);
+                        i += 2;
+                        consumed_end = i;
+                    }
+                    _ => {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+            } else if b < 0x7F {
+                o += emit_utf8_cp(outbuf, o, b as u32);
+                i += 1;
+                consumed_end = i;
+                if b == 0x0A {
+                    g1 = 1;
+                }
+            } else {
+                err = Some(ICONV_EILSEQ);
+                break;
+            }
+        }
+        cd.iso2022cn_in_g1 = g1;
+        cd.iso2022cn_in_shifted = shifted;
+        return match err {
+            Some(code) => Err(IconvError {
+                code,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+            None => Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+        };
+    }
+
     let mut chars: Vec<char> = Vec::new();
     let mut g1 = cd.iso2022cn_in_g1; // 1 GB2312 (default), 2 CNS plane 1
     let mut shifted = cd.iso2022cn_in_shifted;
