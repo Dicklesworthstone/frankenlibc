@@ -42894,6 +42894,86 @@ fn iso2022jp_convert(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Single-pass fast path: write ISO-2022-JP directly into outbuf, skipping the
+    // `Vec<u8>` accumulator + final copy (2 heap allocs/call — an interposed-malloc
+    // tax in the deployed path). Worst case per char is a 3-byte set designator
+    // escape + 2 data bytes = 5, so gating on `outbuf.len() >= input.len()*5` makes
+    // E2BIG unreachable here and leaves the tight-buffer all-or-nothing E2BIG path
+    // (below) exactly as it was. Byte-identical: the SAME decode + set-switch/escape
+    // branches, the SAME `set` saved on every return, the SAME partial out_written
+    // on a mid-stream EILSEQ/EINVAL.
+    if outbuf.len() >= input.len().saturating_mul(5) {
+        let mut set = cd.iso2022jp_out_set;
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        let mut err: Option<(i32, usize)> = None;
+        while in_pos < input.len() {
+            let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    err = Some((ICONV_EINVAL, in_pos));
+                    break;
+                }
+                Err(DecodeError::Invalid) => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            };
+            let cp = ch as u32;
+            if cp == 0xA5 || cp == 0x203E {
+                if set != 1 {
+                    outbuf[out_pos..out_pos + 3].copy_from_slice(&[0x1B, 0x28, 0x4A]);
+                    out_pos += 3;
+                    set = 1;
+                }
+                outbuf[out_pos] = if cp == 0xA5 { 0x5C } else { 0x7E };
+                out_pos += 1;
+            } else if cp < 0x80 {
+                let b = cp as u8;
+                let roman_ok = set == 1 && (0x21..=0x7E).contains(&b) && b != 0x5C && b != 0x7E;
+                if !roman_ok && set != 0 {
+                    outbuf[out_pos..out_pos + 3].copy_from_slice(&[0x1B, 0x28, 0x42]);
+                    out_pos += 3;
+                    set = 0;
+                }
+                outbuf[out_pos] = b;
+                out_pos += 1;
+            } else {
+                let mut tmp = [0u8; 8];
+                match encode_eucjp(ch, &mut tmp) {
+                    Ok(2) if (0xA1..=0xFE).contains(&tmp[0]) && (0xA1..=0xFE).contains(&tmp[1]) => {
+                        if set != 2 {
+                            outbuf[out_pos..out_pos + 3].copy_from_slice(&[0x1B, 0x24, 0x42]);
+                            out_pos += 3;
+                            set = 2;
+                        }
+                        outbuf[out_pos] = tmp[0] & 0x7F;
+                        outbuf[out_pos + 1] = tmp[1] & 0x7F;
+                        out_pos += 2;
+                    }
+                    _ => {
+                        err = Some((ICONV_EILSEQ, in_pos));
+                        break;
+                    }
+                }
+            }
+            in_pos += consumed;
+        }
+        cd.iso2022jp_out_set = set;
+        if let Some((code, pos)) = err {
+            return Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: out_pos,
+            });
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
     let mut out: Vec<u8> = Vec::new();
     let mut set = cd.iso2022jp_out_set; // 0 = ASCII, 1 = JIS-Roman, 2 = JIS X 0208
     let mut in_pos = 0usize;

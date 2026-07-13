@@ -490,6 +490,9 @@ fn main() {
     // Stateful ISO-2022-* built authoritatively by host glibc from real script sources.
     let iso2022jp_src = host_to(b"ISO-2022-JP\0", &jp_full);
     run_conv(c, "iso2022jp_to_utf8", b"UTF-8\0", b"ISO-2022-JP\0", &iso2022jp_src);
+    // ENCODE direction: UTF-8 -> ISO-2022-JP. `jp_full` Hiragana is JIS X 0208, so the
+    // stateful encoder emits ESC $ B ... runs. Probes iso2022jp_convert (was Vec-two-pass).
+    run_conv(c, "utf8_to_iso2022jp", b"ISO-2022-JP\0", b"UTF-8\0", &jp_full);
     // ISO-2022-JP-2 / JP-3 (supersets, still Vec-two-pass decoders). Hiragana is JIS X 0208
     // (JP-2) / JIS X 0213 plane 1 (JP-3), so host_to yields a full-length source.
     let iso2022jp2_src = host_to(b"ISO-2022-JP-2\0", &jp_full);
