@@ -377,6 +377,11 @@ fn main() {
     // accepted Level-1/2 lead/trail pairs (defeats the contiguous-range source block).
     let big5_src = build_dbcs_source(b"BIG5\0", 0xA4..=0xF9, 0xA1..=0xFE, 512);
     run_conv(c, "big5_to_utf8", b"UTF-8\0", b"BIG5\0", &big5_src);
+    // EUC-TW (Traditional Chinese, CNS-11643 plane 1) -> UTF-8: 2-byte pairs, lead/trail
+    // 0xA1..=0xFE. Exercises decode_euctw's scalar 2-byte path (now an O(1) direct table,
+    // was a binary_search over 5867 sorted pairs). EUC-TW is excluded from the SIMD gather.
+    let euctw_src = build_dbcs_source(b"EUC-TW\0", 0xA1..=0xFE, 0xA1..=0xFE, 512);
+    run_conv(c, "euctw_to_utf8", b"UTF-8\0", b"EUC-TW\0", &euctw_src);
     // ENCODE direction: UTF-8 -> BIG5. Source = big5_src decoded back to UTF-8 (host BIG5->UTF-8),
     // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
     let big5_utf8 = {

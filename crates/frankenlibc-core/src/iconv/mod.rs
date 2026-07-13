@@ -40124,6 +40124,18 @@ fn encode_eucjpms(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
 /// as soon as it is seen (2 bytes), but cell bytes are NOT validated until all
 /// four bytes are present — a truncated SS2 with a valid plane is EINVAL
 /// regardless of the (so-far) cell bytes.
+/// Direct `(b0<<8)|b1 -> code point` table for EUC-TW's 2-byte (CNS plane 1) form,
+/// so `decode_euctw`'s hot 2-byte path does one O(1) index instead of a
+/// `binary_search_by_key` (~13 cache-missing probes over 5867 entries) per character.
+/// Byte-identical: `EUC_TW_DBCS2` maps each key to the same code point, and no DBCS
+/// pair decodes to U+0000, so 0 is a safe "not a valid pair" sentinel. EUC-TW is
+/// intentionally excluded from the SIMD gather (non-BMP cells break 4-unit windows,
+/// measured 1.92x loss), but the scalar 2-byte lookup is still a plain table hit.
+fn euctw_dbcs2_decode_direct() -> &'static [u32] {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    DIRECT.get_or_init(|| build_dbcs_direct(&euctw_tables::EUC_TW_DBCS2))
+}
+
 fn decode_euctw(input: &[u8]) -> Result<(char, usize), DecodeError> {
     let Some(&b0) = input.first() else {
         return Err(DecodeError::Incomplete);
@@ -40162,12 +40174,13 @@ fn decode_euctw(input: &[u8]) -> Result<(char, usize), DecodeError> {
         return Err(DecodeError::Incomplete);
     };
     let key = (u16::from(b0) << 8) | u16::from(b1);
-    match euctw_tables::EUC_TW_DBCS2.binary_search_by_key(&key, |&(k, _)| k) {
-        Ok(i) => char::from_u32(euctw_tables::EUC_TW_DBCS2[i].1)
-            .map(|c| (c, 2))
-            .ok_or(DecodeError::Invalid),
-        Err(_) => Err(DecodeError::Invalid),
+    // O(1) direct table (was a binary search over 5867 sorted pairs). `cp == 0` means
+    // "no such pair" (no DBCS char decodes to U+0000) — byte-identical to the `Err` arm.
+    let cp = euctw_dbcs2_decode_direct()[key as usize];
+    if cp == 0 {
+        return Err(DecodeError::Invalid);
     }
+    char::from_u32(cp).map(|c| (c, 2)).ok_or(DecodeError::Invalid)
 }
 
 /// EUC-TW encoder, glibc-exact via the `code point -> packed` table
@@ -40506,6 +40519,17 @@ fn cp932_decode_direct() -> &'static [u32] {
 fn cp932_bmp3_utf8_direct() -> &'static [u32] {
     static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     DIRECT.get_or_init(|| build_dbcs_bmp3_utf8_direct(&cp932_tables::CP932_DBCS))
+}
+
+/// Pre-encoded UTF-8 for EUC-TW's 2-byte (CNS plane 1) cells that map to a BMP
+/// (`0x0800..=0xFFFF`, non-surrogate) code point. Lets `decode_euctw`'s common Hanzi
+/// run emit UTF-8 directly (like Cp932/Gb18030) instead of the per-char generic body,
+/// which left EUC-TW→UTF-8 6.2x slower than glibc. Non-BMP cells, the SS2 (`0x8E`)
+/// 4-byte form, single-byte, and invalid pairs are absent from this table (`packed==0`),
+/// so they fall through to the unchanged scalar decoder — byte-identical.
+fn euctw_bmp3_utf8_direct() -> &'static [u32] {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    DIRECT.get_or_init(|| build_dbcs_bmp3_utf8_direct(&euctw_tables::EUC_TW_DBCS2))
 }
 
 fn decode_cp932(input: &[u8]) -> Result<(char, usize), DecodeError> {
@@ -46932,6 +46956,18 @@ pub fn iconv(
                     outbuf,
                     &mut out_pos,
                     ibm932_bmp3_utf8_direct(),
+                ),
+                // EUC-TW: SIMD-gather-excluded (non-BMP breaks 4-unit windows), but the
+                // per-char scalar run IS safe — its 2-byte CNS-plane-1 Hanzi cells emit a
+                // BMP 3-byte UTF-8 triple; SS2/single-byte/non-BMP fall through (packed==0)
+                // to the generic body. Was 6.2x slower than glibc; this is the same fix as
+                // Cp932/Gb18030 above.
+                Encoding::EucTw => emit_dbcs2_bmp3_utf8_run(
+                    input,
+                    &mut in_pos,
+                    outbuf,
+                    &mut out_pos,
+                    euctw_bmp3_utf8_direct(),
                 ),
                 _ => {}
             }
