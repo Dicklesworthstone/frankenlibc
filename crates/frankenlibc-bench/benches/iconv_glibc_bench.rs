@@ -437,6 +437,22 @@ fn main() {
     // was a binary_search over 5867 sorted pairs). EUC-TW is excluded from the SIMD gather.
     let euctw_src = build_dbcs_source(b"EUC-TW\0", 0xA1..=0xFE, 0xA1..=0xFE, 512);
     run_conv(c, "euctw_to_utf8", b"UTF-8\0", b"EUC-TW\0", &euctw_src);
+    // ENCODE-DIRECTION SCAN (fresh honest re-scan of the UNBENCHED encode paths — the
+    // string-wide/iconv notes flag encode as far less explored than decode). Each source
+    // is a fully-encodable UTF-8 corpus derived by round-tripping the codec's own valid
+    // bytes through host glibc (host_from), so host_to never truncates (the tiny-source
+    // artifact). Baselines whether the O(log n) encode search loses to glibc's O(1) reverse.
+    //   utf8_to_euctw:  EUC_TW_ENC 55569-entry binary_search (~16 probes/char).
+    let euctw_utf8 = host_from(b"EUC-TW\0", &euctw_src);
+    run_conv(c, "utf8_to_euctw", b"EUC-TW\0", b"UTF-8\0", &euctw_utf8);
+    //   utf8_to_cp037:  encode_sbcs_full EBCDIC (~256-entry binary_search).
+    let cp037_bytes = build_sbcs_source(b"CP037\0", 512);
+    let cp037_utf8 = host_from(b"CP037\0", &cp037_bytes);
+    run_conv(c, "utf8_to_cp037", b"CP037\0", b"UTF-8\0", &cp037_utf8);
+    //   utf8_to_cp1258: encode_sbcs_mb Vietnamese (precomposed -> base+combining decompose).
+    let cp1258_bytes = build_sbcs_source(b"CP1258\0", 512);
+    let cp1258_utf8 = host_from(b"CP1258\0", &cp1258_bytes);
+    run_conv(c, "utf8_to_cp1258", b"CP1258\0", b"UTF-8\0", &cp1258_utf8);
     // BIG5-HKSCS (Hong Kong Traditional Chinese) -> UTF-8: routed to the dedicated
     // dbcs_x_decode per-char converter (Vec<char>+Vec<u8> two-pass), same slow-body
     // class as EUC-TW was. Level-1/2 Big5 leads 0xA4..=0xF9, trails 0x40..=0xFE

@@ -3055,6 +3055,12 @@ const REVERSE_DIRECT_MISSING: u8 = u8::MAX;
 /// for unusually wide page spreads and non-BMP codepoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SingleByteReverse {
+    /// `true` when bytes `0x00..=0x7F` decode to the identical ASCII scalar, so a
+    /// `cp < 0x80` lookup is the ASCII identity (`byte == cp`) and those entries
+    /// are not stored. `false` for low-remapping single-byte codecs (EBCDIC): the
+    /// `cp < 0x80` mappings are stored in direct page 0 like any other codepoint,
+    /// so those codecs get the O(1) reverse instead of `encode_char`'s binary search.
+    ascii_low: bool,
     direct_page_slot: [u8; 256],
     direct_page_byte: [[u8; 256]; REVERSE_DIRECT_PAGES],
     high_cp: [u32; 128],
@@ -3069,7 +3075,7 @@ impl SingleByteReverse {
     /// per-codec error ordering is preserved).
     fn lookup(&self, ch: char) -> Option<u8> {
         let cp = ch as u32;
-        if cp < 0x80 {
+        if self.ascii_low && cp < 0x80 {
             return Some(cp as u8);
         }
         if cp <= u32::from(u16::MAX) {
@@ -40894,14 +40900,12 @@ fn build_from_decode(from: Encoding) -> Option<SingleByteToUtf8> {
 }
 
 fn build_to_reverse(to: Encoding) -> Option<SingleByteReverse> {
-    // The reverse map (and SingleByteReverse::lookup) assume the low half is
-    // ASCII identity (cp < 0x80 -> the same byte). Codecs that remap the low
-    // range (EBCDIC, ISO-646 national variants) must NOT use this fast path —
-    // disable it so encode_one falls through to encode_char (encode_sbcs_full).
-    if !sbcs_low_is_ascii(to) {
-        return None;
-    }
-    let mut entries: Vec<(u32, u8)> = Vec::with_capacity(128);
+    // Codecs that remap the low range (EBCDIC, ISO-646 national variants) can NOT
+    // use the ASCII-identity shortcut in `lookup`; instead their `cp < 0x80`
+    // mappings are stored in the direct page table like any other codepoint, so
+    // they still get the O(1) reverse (was: fall to `encode_char`'s binary search).
+    let ascii_low = sbcs_low_is_ascii(to);
+    let mut entries: Vec<(u32, u8)> = Vec::with_capacity(256);
     let mut buf = [0u8; 8];
     for b in 0u8..=0xFF {
         let ch = match decode_char(to, &[b]) {
@@ -40911,7 +40915,7 @@ fn build_to_reverse(to: Encoding) -> Option<SingleByteReverse> {
             Err(DecodeError::Invalid) => continue,
         };
         let cp = ch as u32;
-        if cp < 0x80 {
+        if ascii_low && cp < 0x80 {
             continue; // handled by the ASCII shortcut in `lookup`
         }
         // Keep only the canonical byte `encode_*` would emit for this cp.
@@ -40921,41 +40925,52 @@ fn build_to_reverse(to: Encoding) -> Option<SingleByteReverse> {
     }
     entries.sort_unstable_by_key(|&(cp, _)| cp);
     entries.dedup_by_key(|&mut (cp, _)| cp);
-    if entries.len() > 128 {
-        return None; // single-byte codec cannot exceed 128 high entries
-    }
-    let mut high_cp = [0u32; 128];
-    let mut high_byte = [0u8; 128];
-    for (i, &(cp, b)) in entries.iter().enumerate() {
-        high_cp[i] = cp;
-        high_byte[i] = b;
-    }
+
+    // Place each codepoint in its direct page; codepoints whose page budget is
+    // exhausted (or that map to output byte 0, unrepresentable in the `0 == absent`
+    // page table) overflow to the sorted binary-search fallback. `lookup` probes
+    // the direct page before the fallback, so a direct-covered cp is never in
+    // `high_*` — keeping the fallback overflow-only is byte-identical and lets a
+    // low-remapping codec (up to ~256 mostly page-0 cps) fit where the old
+    // "all entries in high_cp, cap 128" form returned None.
     let mut direct_page_slot = [REVERSE_DIRECT_MISSING; 256];
     let mut direct_page_byte = [[0u8; 256]; REVERSE_DIRECT_PAGES];
     let mut direct_page_count = 0u8;
+    let mut high: Vec<(u32, u8)> = Vec::new();
     for &(cp, b) in &entries {
-        if cp > u32::from(u16::MAX) {
-            continue;
-        }
-        debug_assert_ne!(b, 0);
-        let page = (cp >> 8) as usize;
-        let mut slot = direct_page_slot[page];
-        if slot == REVERSE_DIRECT_MISSING {
-            if usize::from(direct_page_count) == REVERSE_DIRECT_PAGES {
+        if cp <= u32::from(u16::MAX) && b != 0 {
+            let page = (cp >> 8) as usize;
+            let mut slot = direct_page_slot[page];
+            if slot == REVERSE_DIRECT_MISSING
+                && usize::from(direct_page_count) < REVERSE_DIRECT_PAGES
+            {
+                slot = direct_page_count;
+                direct_page_slot[page] = slot;
+                direct_page_count += 1;
+            }
+            if slot != REVERSE_DIRECT_MISSING {
+                direct_page_byte[slot as usize][(cp & 0xFF) as usize] = b;
                 continue;
             }
-            slot = direct_page_count;
-            direct_page_slot[page] = slot;
-            direct_page_count += 1;
         }
-        direct_page_byte[slot as usize][(cp & 0xFF) as usize] = b;
+        high.push((cp, b));
+    }
+    if high.len() > 128 {
+        return None; // fallback capacity exceeded — keep the binary-search encode path
+    }
+    let mut high_cp = [0u32; 128];
+    let mut high_byte = [0u8; 128];
+    for (i, &(cp, b)) in high.iter().enumerate() {
+        high_cp[i] = cp;
+        high_byte[i] = b;
     }
     Some(SingleByteReverse {
+        ascii_low,
         direct_page_slot,
         direct_page_byte,
         high_cp,
         high_byte,
-        high_len: entries.len() as u16,
+        high_len: high.len() as u16,
     })
 }
 
