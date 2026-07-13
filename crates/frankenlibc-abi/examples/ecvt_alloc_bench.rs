@@ -29,6 +29,10 @@ fn main() {
             h,
             b"ecvt_r\0".as_ptr().cast(),
         ));
+        let gl_fcvt_r: CvtR = std::mem::transmute::<*mut c_void, CvtR>(libc::dlsym(
+            h,
+            b"fcvt_r\0".as_ptr().cast(),
+        ));
 
         let iters = 5_000_000usize;
         let val = 3.141592653589793f64;
@@ -82,6 +86,33 @@ fn main() {
             let t = Instant::now();
             for _ in 0..iters {
                 black_box(gl_ecvt_r(
+                    black_box(val),
+                    ndigit,
+                    &mut dp,
+                    &mut sg,
+                    gl_buf.as_mut_ptr(),
+                    gl_buf.len(),
+                ));
+            }
+            let gl = t.elapsed().as_nanos() as f64 / iters as f64;
+            println!("{name} fl={fl:.1}ns glibc={gl:.1}ns  fl/glibc={:.2}x", fl / gl);
+        }
+        for (name, ndigit) in [("fcvt_r10", 10)] {
+            let t = Instant::now();
+            for _ in 0..iters {
+                black_box(frankenlibc_abi::stdlib_abi::fcvt_r(
+                    black_box(val),
+                    ndigit,
+                    &mut dp,
+                    &mut sg,
+                    fl_buf.as_mut_ptr(),
+                    fl_buf.len(),
+                ));
+            }
+            let fl = t.elapsed().as_nanos() as f64 / iters as f64;
+            let t = Instant::now();
+            for _ in 0..iters {
+                black_box(gl_fcvt_r(
                     black_box(val),
                     ndigit,
                     &mut dp,

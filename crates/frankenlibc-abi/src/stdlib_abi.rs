@@ -6287,28 +6287,17 @@ fn ecvt_r_required_capacity(value: c_double, requested: c_int) -> usize {
 }
 
 #[inline]
-fn fcvt_r_required_capacity(value: c_double, requested: c_int, digits_len: usize) -> usize {
+fn fcvt_r_required_capacity(value: c_double, requested: c_int, decpt: c_int) -> usize {
     if value.is_nan() || value.is_infinite() {
-        return digits_len.saturating_add(1);
+        return 4 + usize::from(value.is_sign_negative());
     }
-    let requested = requested.max(0) as usize;
-    if requested == 0 {
-        return digits_len.saturating_add(1);
+    let precision = requested.max(0) as usize;
+    if precision == 0 {
+        return (decpt.max(0) as usize).saturating_add(1);
     }
-    format!("{:.prec$}", value.abs(), prec = requested)
-        .len()
-        .saturating_add(1)
-}
-
-#[inline]
-unsafe fn copy_legacy_cvt_digits(buf: *mut c_char, effective_buflen: usize, digits: &[u8]) {
-    let copy_len = digits.len().min(effective_buflen.saturating_sub(1));
-    if copy_len != 0 {
-        unsafe { std::ptr::copy_nonoverlapping(digits.as_ptr(), buf as *mut u8, copy_len) };
-    }
-    if effective_buflen != 0 {
-        unsafe { *buf.add(copy_len) = 0 };
-    }
+    (decpt.max(1) as usize)
+        .saturating_add(precision)
+        .saturating_add(2)
 }
 
 fn with_qecvt_buf<R>(f: impl FnOnce(&RefCell<[u8; 128]>) -> R) -> R {
@@ -6419,14 +6408,20 @@ pub unsafe extern "C" fn fcvt_r(
     // the rounding and diverge from both fcvt and glibc; this also fixes qfcvt,
     // which delegates here). bd-2g7oyh.101.
     let requested = ndigit.min(MAX_LEGACY_CVT_DIGITS as i32);
-    // Delegate to the corrected core fcvt: handles leading-zero
-    // stripping for sub-1 magnitudes (digits="1" decpt=-3 for
-    // 0.0001234 with ndigit=4), the rounded-to-zero case (digits=""
-    // decpt=-ndigit when |value| < 0.5e-ndigit), and negative-ndigit
-    // integer rounding.
-    let (digits, dp, _neg) = frankenlibc_core::stdlib::fcvt(value, requested);
-    let required = fcvt_r_required_capacity(value, requested, digits.len());
-    unsafe { copy_legacy_cvt_digits(buf, effective_buflen, &digits) };
+    // Render directly into the caller-owned buffer. The core preserves
+    // leading-zero stripping, rounded-to-zero, and negative-ndigit semantics;
+    // deriving the required capacity from its full decimal-point position
+    // avoids both the outer Vec and a second formatting pass.
+    let digit_capacity =
+        (effective_buflen - 1).min(MAX_LEGACY_CVT_DIGITS.saturating_add(320));
+    // SAFETY: `buf` is non-null and `digit_capacity` is bounded by both the
+    // caller's available space and fcvt_into's maximum finite f64 output.
+    let digits = unsafe { std::slice::from_raw_parts_mut(buf.cast::<u8>(), digit_capacity) };
+    let (len, dp, _neg) = frankenlibc_core::stdlib::fcvt_into(value, requested, digits);
+    let required = fcvt_r_required_capacity(value, requested, dp);
+    // SAFETY: fcvt_into returns at most `digit_capacity` bytes, leaving the
+    // final byte within `effective_buflen` available for the terminator.
+    unsafe { *buf.add(len) = 0 };
     if effective_buflen < required {
         return -1;
     }

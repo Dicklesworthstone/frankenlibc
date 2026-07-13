@@ -4794,6 +4794,25 @@ fn ecvt_fcvt_nonfinite_match_glibc_sign_convention() {
         let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
         assert_eq!(s.to_str().unwrap(), expected, "ecvt_r({value})");
         assert_eq!(sign, 0, "ecvt_r({value}) sign");
+
+        let mut decpt: libc::c_int = -7;
+        let mut sign: libc::c_int = -7;
+        let mut buf = [0 as libc::c_char; 16];
+        let rc = unsafe {
+            fcvt_r(
+                value,
+                6,
+                &mut decpt,
+                &mut sign,
+                buf.as_mut_ptr(),
+                16,
+            )
+        };
+        assert_eq!(rc, 0, "fcvt_r({value}) rc");
+        let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+        assert_eq!(s.to_str().unwrap(), expected, "fcvt_r({value})");
+        assert_eq!(sign, 0, "fcvt_r({value}) sign");
+        assert_eq!(decpt, 0, "fcvt_r({value}) decpt");
     }
 }
 

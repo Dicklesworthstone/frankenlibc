@@ -18194,3 +18194,26 @@ and computes non-finite capacity independently so truncated `-inf`/`-nan` writes
   `conformance_diff_stdlib_numeric` targets filtered by `cvt_`.
 - **BOUNDARY:** this closes `ecvt_r` only. Do not fold `fcvt_r` into this result: its negative-digit behavior
   and `fcvt_r_required_capacity` formatting allocation require a separate lever and proof bundle.
+
+## cod-fcvt-r-direct-buffer-2026-07-13 — WIN (2.93x faster; near glibc parity)
+
+Closed the explicit `fcvt_r` residual from `cod-ecvt-r-direct-buffer-2026-07-12`. The reentrant path now
+renders through `fcvt_into` directly into a caller-owned slice capped at the formatter's proven 832-byte
+maximum, removing its outer `Vec`, redundant positive-precision formatting pass, and digit copy. Required
+capacity is derived algebraically from the full `decpt`; `qfcvt` and `qfcvt_r` inherit the same path.
+- **STRICT REMOTE SAME-WORKER A/B (`vmi1293453`):** `fcvt_r10` moved **407.2 -> 138.8 ns = 2.93x
+  faster / 65.9% lower** and narrowed from **3.32x glibc -> 1.04x**. Host control moved **122.7 ->
+  133.6 ns**, so the host-normalized improvement was 3.19x and remains far above the run's control drift.
+- **CORRECTNESS / PROOF:** for non-finite values, required capacity is three letters plus optional embedded
+  sign plus NUL. For finite precision zero or below, `decpt` is the full digit width; for positive precision,
+  fixed-format width is `max(decpt, 1) + precision + 1`, plus NUL. `fcvt_into` returns full `decpt` even when
+  its sink truncates, so failure, prefix, NUL, sign publication, and delayed `decpt` publication match the old
+  path. Remote release gates passed live-glibc positive and negative precision, small-buffer, huge-precision,
+  non-finite, and shared `qfcvt` coverage: **16/16 passed**, with 8 pre-existing hardened-only tests ignored.
+- **COMMANDS:** benchmark: `RCH_WORKER=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u
+  CARGO_TARGET_DIR rch exec -- cargo run -j 4 --profile release -p frankenlibc-abi --example
+  ecvt_alloc_bench`; focused tests used the same fail-closed prefix with explicit `stdlib_abi_test`,
+  `conformance_diff_stdlib_numeric`, and `conformance_diff_fcvt_r_neg` targets filtered by `cvt`.
+- **BOUNDARY:** common finite non-negative precision is allocation-free at this wrapper seam. Negative
+  precision still allocates inside `fcvt_into` for exact integer-decimal rounding; do not claim or retry it as
+  part of this result without a separate same-worker proof bundle.
