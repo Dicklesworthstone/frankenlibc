@@ -68,6 +68,37 @@ fn bench(c: &mut Criterion) {
             fp / gp
         );
     }
+    // FREQUENT-target: all-'a' buffer searched for 'a' (every char is a match). The
+    // pathological case for a folded skip tier — every window contains the target.
+    for &size in &[1024usize, 65536] {
+        let mut buf = vec![b'a'; size];
+        buf.push(0);
+        let p = buf.as_ptr().cast::<c_char>();
+        let fp = unsafe { frankenlibc_abi::string_abi::strrchr(p, b'a' as c_int) };
+        let gp = unsafe { g(p, b'a' as c_int) };
+        assert_eq!(fp as usize, gp as usize, "strrchr freq fl!=glibc size={size}");
+        let it = 2000u64;
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..100 {
+            let t = Instant::now();
+            for _ in 0..it {
+                black_box(unsafe {
+                    frankenlibc_abi::string_abi::strrchr(black_box(p), black_box(b'a' as c_int))
+                });
+            }
+            fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now();
+            for _ in 0..it {
+                black_box(unsafe { g(black_box(p), black_box(b'a' as c_int)) });
+            }
+            gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        let (fp, gp) = (pctl(&fs, 0.50), pctl(&gs, 0.50));
+        println!(
+            "STRRCHR_FREQ size={size} fl_p50={fp:.2}ns glibc_p50={gp:.2}ns ratio_fl_over_glibc={:.2}",
+            fp / gp
+        );
+    }
     grp.bench_function("noop", |b| b.iter(|| black_box(1u8)));
     grp.finish();
 }
