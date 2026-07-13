@@ -42944,6 +42944,32 @@ fn iso2022jp_convert(
 /// each `0x21..=0x7E` byte begins a ku-ten pair (looked up through the EUC-JP
 /// code-set-1 table with the high bit set on both bytes); other `< 0x80` bytes
 /// (controls, space, DEL) pass through literally; `>= 0x80` is EILSEQ.
+///
+/// Pre-encoded UTF-8 for the JIS X 0208 double-byte cells keyed by the RAW 7-bit ku-ten
+/// pair `(b<<8)|b1` (both bytes `0x21..=0x7E`), so `emit_dbcs2_bmp3_utf8_run` can drive
+/// the ISO-2022-JP set-2 run straight from the 7-bit escape stream — no per-byte range
+/// check, no `decode_eucjp` slice build, no `emit_utf8_cp`. Built from `EUC_JP_DBCS2`
+/// (the SAME table `decode_eucjp` uses) with the high bit cleared on both key bytes, so
+/// it is byte-identical to `decode_eucjp(&[b|0x80, b1|0x80])` for every BMP cell. Non-BMP
+/// / sub-U+0800 / undefined cells stay `0` and defer to the per-char body — as do any
+/// bytes `< 0x21` (ESC/control/space) or `>= 0x80`, whose key is absent from the table.
+fn iso2022jp_0208_bmp3_utf8_direct() -> &'static [u32] {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    DIRECT.get_or_init(|| {
+        let mut t = vec![0u32; 0x8000];
+        for &(k, cp) in cjk_tables::EUC_JP_DBCS2.iter() {
+            if (0x0800..=0xFFFF).contains(&cp) && !(0xD800..=0xDFFF).contains(&cp) {
+                let b0 = 0xE0u8 | ((cp >> 12) as u8);
+                let b1 = 0x80u8 | (((cp >> 6) & 0x3F) as u8);
+                let b2 = 0x80u8 | ((cp & 0x3F) as u8);
+                t[(k & 0x7F7F) as usize] =
+                    u32::from(b0) | (u32::from(b1) << 8) | (u32::from(b2) << 16);
+            }
+        }
+        t
+    })
+}
+
 fn iso2022jp_decode(
     cd: &mut IconvDescriptor,
     input: &[u8],
@@ -43012,6 +43038,25 @@ fn iso2022jp_decode(
                     consumed_end = i;
                 }
                 _ => {
+                    // Unrolled set-2 (JIS X 0208) run: emit UTF-8 triples for the run of
+                    // consecutive valid BMP double-byte cells straight from the pre-encoded
+                    // 7-bit table, amortizing the per-char range/escape/decode_eucjp/emit
+                    // overhead (the residual per-char-loop floor). A byte < 0x21 (ESC handled
+                    // by the outer loop, plus control/space) or a non-BMP/undefined cell
+                    // gives packed==0 and stops the run, deferring to the per-char body below
+                    // — byte-identical to decode_eucjp(&[b|0x80,b1|0x80]) + emit_utf8_cp.
+                    let run_start = i;
+                    emit_dbcs2_bmp3_utf8_run(
+                        input,
+                        &mut i,
+                        outbuf,
+                        &mut o,
+                        iso2022jp_0208_bmp3_utf8_direct(),
+                    );
+                    if i != run_start {
+                        consumed_end = i;
+                        continue;
+                    }
                     if (0x21..=0x7E).contains(&b) {
                         if i + 1 >= input.len() {
                             err = Some(ICONV_EINVAL);
