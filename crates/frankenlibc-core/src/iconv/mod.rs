@@ -46722,6 +46722,41 @@ fn jp3_enc_map() -> &'static std::collections::HashMap<u32, (u8, u8, u8)> {
     })
 }
 
+/// BMP `cp -> (cid,b0,b1)` reverse index for the JP-3 encoder, replacing a
+/// SipHash `HashMap::get(&cp)` per char with one O(1) array index. Each slot
+/// packs `(1<<24) | (cid<<16) | (b0<<8) | b1`; the bit-24 present flag makes
+/// `slot == 0` an unambiguous "absent" sentinel (a real entry always has it set).
+/// Exhaustive for `cp < 0x10000`; astral JIS X 0213 plane-2 code points (CJK Ext B,
+/// cp >= 0x10000, rare) keep the HashMap fallback. Last-write-wins on a duplicate
+/// cp, exactly like the map's `collect()`.
+fn jp3_enc_bmp_direct() -> &'static [u32] {
+    static T: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let mut t = vec![0u32; 0x10000];
+        for &(cp, id, b0, b1) in iso2022jp3_tables::JP3_ENC_TBL.iter() {
+            if cp < 0x10000 {
+                t[cp as usize] =
+                    (1 << 24) | ((id as u32) << 16) | ((b0 as u32) << 8) | (b1 as u32);
+            }
+        }
+        t
+    })
+}
+
+/// `(cid,b0,b1)` for a scalar under the JP-3 encoder — O(1) BMP index, HashMap
+/// only for astral. Byte-identical to `jp3_enc_map().get(&cp).copied()`.
+#[inline]
+fn jp3_enc_lookup(cp: u32) -> Option<(u8, u8, u8)> {
+    if cp < 0x10000 {
+        let slot = jp3_enc_bmp_direct()[cp as usize];
+        if slot == 0 {
+            return None;
+        }
+        return Some(((slot >> 16) as u8, (slot >> 8) as u8, slot as u8));
+    }
+    jp3_enc_map().get(&cp).copied()
+}
+
 /// ISO-2022-JP-3 DECODE (`from == Iso2022Jp3`): escape state machine over ASCII,
 /// JIS-Roman, JIS X 0208 (`ESC $ B`), JIS X 0213 plane 1 (`ESC $ ( O` / `Q`, both
 /// mapped through the EUC-JISX0213 plane-1 tables), plane 2 (`ESC $ ( P`, astral)
@@ -47142,7 +47177,6 @@ fn iso2022jp3_convert(
     // the SAME combining-sequence match + lazy target_set + designator logic, the SAME
     // `set` saved on every return, the SAME partial out_written on a mid EILSEQ/EINVAL.
     if outbuf.len() >= input.len().saturating_mul(8) {
-        let enc = jp3_enc_map();
         let target_set = |cur: u8, cid: u8| -> u8 {
             match cid {
                 2 => {
@@ -47237,7 +47271,7 @@ fn iso2022jp3_convert(
                 }
                 outbuf[out_pos] = b;
                 out_pos += 1;
-            } else if let Some(&(cid, b0, b1)) = enc.get(&cp) {
+            } else if let Some((cid, b0, b1)) = jp3_enc_lookup(cp) {
                 let t = target_set(set, cid);
                 if set != t {
                     let d = jp3_designator(t);
