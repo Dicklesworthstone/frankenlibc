@@ -497,6 +497,9 @@ fn main() {
     // (JP-2) / JIS X 0213 plane 1 (JP-3), so host_to yields a full-length source.
     let iso2022jp2_src = host_to(b"ISO-2022-JP-2\0", &jp_full);
     run_conv(c, "iso2022jp2_to_utf8", b"UTF-8\0", b"ISO-2022-JP-2\0", &iso2022jp2_src);
+    // ENCODE direction: UTF-8 -> ISO-2022-JP-2. `jp_full` Hiragana is JIS X 0208 (G0 set 2).
+    // Probes iso2022jp2_convert (was Vec-two-pass, now single-pass).
+    run_conv(c, "utf8_to_iso2022jp2", b"ISO-2022-JP-2\0", b"UTF-8\0", &jp_full);
     let iso2022jp3_src = host_to(b"ISO-2022-JP-3\0", &jp_full);
     run_conv(c, "iso2022jp3_to_utf8", b"UTF-8\0", b"ISO-2022-JP-3\0", &iso2022jp3_src);
     // IBM930 (EBCDIC Japanese Katakana+Kanji, SO/SI DBCS) -> UTF-8. cjk = U+4E00 Kanji.

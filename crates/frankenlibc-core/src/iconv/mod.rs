@@ -43503,6 +43503,125 @@ fn iso2022jp2_convert(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Single-pass fast path: write the ISO-2022-JP-2 stream directly into outbuf,
+    // skipping the `Vec<u8>` accumulator + final copy (2 heap allocs/call — an
+    // interposed-malloc tax in the deployed path). Worst case per char is a G0-set
+    // designator (<=4 bytes) + 2 data, or a G2 SS2 (ESC . x = 3 + ESC N = 2 + 1 data) =
+    // 6, so gating on `outbuf.len() >= input.len()*6` makes E2BIG unreachable here and
+    // leaves the tight-buffer all-or-nothing E2BIG path (below) exactly as it was.
+    // Byte-identical: the SAME jp2_g0_encode priority scan + G2/SS2 logic, the SAME
+    // g0/g2 saved on every return, the SAME partial out_written on a mid EILSEQ/EINVAL.
+    if outbuf.len() >= input.len().saturating_mul(6) {
+        let mut g0 = cd.iso2022jp2_out_g0;
+        let mut g2 = cd.iso2022jp2_out_g2;
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        let mut err: Option<(i32, usize)> = None;
+        while in_pos < input.len() {
+            let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    err = Some((ICONV_EINVAL, in_pos));
+                    break;
+                }
+                Err(DecodeError::Invalid) => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            };
+            let cp = ch as u32;
+            // 1. Stay in the current G0 set if it can represent the scalar.
+            if let Some(bytes) = jp2_g0_encode(g0, ch, cp) {
+                outbuf[out_pos] = bytes[0];
+                out_pos += 1;
+                if g0 >= 2 {
+                    outbuf[out_pos] = bytes[1];
+                    out_pos += 1;
+                }
+                in_pos += consumed;
+                continue;
+            }
+            // 2. Priority scan: G0 sets ASCII..GB2312.
+            let mut placed = false;
+            for set in 0u8..=4 {
+                if let Some(bytes) = jp2_g0_encode(set, ch, cp) {
+                    let d = jp2_g0_designator(set);
+                    outbuf[out_pos..out_pos + d.len()].copy_from_slice(d);
+                    out_pos += d.len();
+                    g0 = set;
+                    outbuf[out_pos] = bytes[0];
+                    out_pos += 1;
+                    if set >= 2 {
+                        outbuf[out_pos] = bytes[1];
+                        out_pos += 1;
+                    }
+                    placed = true;
+                    break;
+                }
+            }
+            if placed {
+                in_pos += consumed;
+                continue;
+            }
+            // 3. G2 single-shift: ISO-8859-1 then ISO-8859-7.
+            if (0xA0..=0xFF).contains(&cp) {
+                if g2 != 1 {
+                    outbuf[out_pos..out_pos + 3].copy_from_slice(&[0x1B, 0x2E, 0x41]);
+                    out_pos += 3;
+                    g2 = 1;
+                }
+                outbuf[out_pos..out_pos + 2].copy_from_slice(&[0x1B, 0x4E]);
+                out_pos += 2;
+                outbuf[out_pos] = (cp & 0x7F) as u8;
+                out_pos += 1;
+                in_pos += consumed;
+                continue;
+            }
+            let mut gtmp = [0u8; 4];
+            if matches!(encode_iso88597(ch, &mut gtmp), Ok(1) if gtmp[0] >= 0xA0) {
+                if g2 != 2 {
+                    outbuf[out_pos..out_pos + 3].copy_from_slice(&[0x1B, 0x2E, 0x46]);
+                    out_pos += 3;
+                    g2 = 2;
+                }
+                outbuf[out_pos..out_pos + 2].copy_from_slice(&[0x1B, 0x4E]);
+                out_pos += 2;
+                outbuf[out_pos] = gtmp[0] & 0x7F;
+                out_pos += 1;
+                in_pos += consumed;
+                continue;
+            }
+            // 4. KSC 5601 last.
+            if let Some(bytes) = jp2_g0_encode(5, ch, cp) {
+                let d = jp2_g0_designator(5);
+                outbuf[out_pos..out_pos + d.len()].copy_from_slice(d);
+                out_pos += d.len();
+                g0 = 5;
+                outbuf[out_pos] = bytes[0];
+                outbuf[out_pos + 1] = bytes[1];
+                out_pos += 2;
+                in_pos += consumed;
+                continue;
+            }
+            err = Some((ICONV_EILSEQ, in_pos));
+            break;
+        }
+        cd.iso2022jp2_out_g0 = g0;
+        cd.iso2022jp2_out_g2 = g2;
+        if let Some((code, pos)) = err {
+            return Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: out_pos,
+            });
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
     let mut out: Vec<u8> = Vec::new();
     let mut g0 = cd.iso2022jp2_out_g0;
     let mut g2 = cd.iso2022jp2_out_g2;
