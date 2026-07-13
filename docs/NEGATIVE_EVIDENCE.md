@@ -6,6 +6,42 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / BeigeHorse) — WIN (SHIPPED): O(1) `MetricRing` eviction cuts steady-state EBR pin/unpin median **3.4285 us -> 112.02 ns (30.61x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH LANE.** The known resolver, allocator, exact-format, deployed-string,
+  and surveyed-math routes were closed or actively owned, and the ledger/history contained no
+  `MetricRing`, `remove(0)`, or `VecDeque` attempt. Code inspection of the checked-in `alien_cs_bench`
+  path found the global 4,096-event ring shifting every retained `MetricEvent` with `Vec::remove(0)`
+  on each steady-state EBR pin and unpin emission: an explicit **O(capacity)** hot-path defect.
+- **ONE LEVER / CERTIFIED FIFO REWRITE.** `MetricRing` now stores `VecDeque<MetricEvent>`, evicts with
+  `pop_front`, and appends with `push_back`; snapshot collection iterates front-to-back into the same
+  public `Vec`. For positive capacity `C`, if the pre-state is the newest `C` events in insertion order,
+  `pop_front; push_back(x)` is exactly the newest `C` events after `x`. Drain order, kind/concept counts,
+  timestamps, total-emitted accounting, capacity, and event schema are unchanged.
+- **STRICT-REMOTE SAME-WORKER GATE.** Identical baseline/candidate command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'ebr_pin/pin_unpin' --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`.
+  On `vmi1293453`, the interval moved **[3.3408, 3.4285, 3.5376] us ->
+  [111.05, 112.02, 113.04] ns**: candidate/baseline center **0.03267x**, **30.61x faster**.
+  Criterion's paired change interval was **-96.775% to -96.597%**, central **-96.687%**, `p=0.00`.
+- **PROOF SURFACE.** The existing `metric_ring_capacity_overflow` test fixes exact last-N eviction
+  order and `total_emitted`; the neighboring lifecycle, drain, snapshot, count, monotonic-timestamp,
+  JSONL, and cross-primitive tests exercise every observable adapted to the deque representation.
+- **REMOTE QUALITY-GATE BOUNDARY.** Workspace `cargo check --workspace --all-targets` reaches unrelated
+  checked-in bench example `strcmp_largen_ab.rs` and fails on four unresolved `frankenlibc_abi`
+  references. Workspace Clippy likewise reaches unrelated existing `frankenlibc-core` debt and fails
+  with 61 errors under `-D warnings`; neither failure names `alien_cs_metrics.rs`. RCH refuses
+  non-compilation `cargo fmt --check` fail-closed as `RCH-E301`; `git diff --check` is clean. The
+  focused `cargo test -p frankenlibc-membrane --lib metric_ring` remote job was stopped after 18m49s
+  before test execution while still compiling the unrelated `asupersync` dev-dependency stack; the
+  measured candidate itself compiled and executed successfully in the Criterion gate above.
+- **SHARED-MAIN LANDING.** While the strict-remote proof was running, the shared checkout advanced with
+  the byte-identical source patch as commit `e7708b84e` (stable patch ID
+  `dea108adc432f98d24ed2febe468c4f04df11f47`). This row records the independently measured result rather
+  than duplicating the already-landed code commit.
+- **CLOSED BOUNDARY.** Do not retry shifting a `Vec` or rotating/copying the full ring on emission.
+  Snapshot remains intentionally O(N) because it is an explicit read-side export, not the concurrency
+  hot path; any snapshot optimization needs separate profile evidence.
+
 ## 2026-07-11 (cod_fl / Codex) — WIN (SHIPPED): bounded numeric `strftime` transducer cuts `%H:%M` median **417.50 -> 30.009 ns (13.91x)**; 1,108,400 host-glibc comparisons clean
 
 - **PROFILE-FIRST / ONE LEVER.** Stayed outside cc-owned allocator/string. Math's focused survey was
