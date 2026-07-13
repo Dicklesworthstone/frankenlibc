@@ -713,8 +713,11 @@ fn rust_e_to_glibc_e_into(s: &str, out: &mut [u8]) -> usize {
 
 /// Buffer-writing core of [`render_gcvt`] — writes the `%g` rendering straight into
 /// `out` (no per-call `String`) and returns the byte count. Byte-identical to
-/// `render_gcvt` for all inputs (the `render_gcvt` String version is kept as a thin
-/// wrapper for the few callers that want an owned string).
+/// `render_gcvt` for `ndigit <= GCVT_MAX_SIG_DIGITS` (17), the `gcvt()` contract this is
+/// built for; `format_fixed_from_sci_into` gathers the mantissa into a fixed 24-digit
+/// scratch and `out` is a small caller buffer, so a larger `ndigit` (only reachable via
+/// unbounded `%g` precision) would SILENTLY TRUNCATE — callers with unbounded `ndigit`
+/// (e.g. `render_pct_g_into`) must clamp or fall back to the `render_gcvt` String version.
 fn render_gcvt_into(value: f64, ndigit: usize, out: &mut [u8]) -> usize {
     if value.is_nan() {
         return copy_into(out, if value.is_sign_negative() { b"-nan" } else { b"nan" });
@@ -982,6 +985,29 @@ fn format_fixed_from_sci(sci: &str, exp: i32) -> String {
 /// duplicating it.
 pub fn render_pct_g(value: f64, ndigit: usize) -> String {
     render_gcvt(value, ndigit.max(1))
+}
+
+/// Append the `%g` rendering of `value` to `buf`. Byte-identical to
+/// `render_pct_g(value, ndigit)`, but with NO heap allocation for the common small
+/// `ndigit` case (routes through `render_gcvt_into` via a stack scratch).
+///
+/// The `render_gcvt_into` family (specifically `format_fixed_from_sci_into`'s 24-digit
+/// scratch and the 48-byte `tmp` below) is sized for the `gcvt()` contract, which clamps
+/// significant digits to `GCVT_MAX_SIG_DIGITS` (17). `%g` precision is UNBOUNDED (up to
+/// 319 in practice), and an f64's exact decimal expansion can run to hundreds of digits;
+/// beyond `GCVT_MAX_SIG_DIGITS` those fixed scratches would silently truncate. So for
+/// large `ndigit` fall back to the heap `render_pct_g` (which grows as needed and is what
+/// the general printf path already uses), keeping byte-identity at every precision while
+/// staying allocation-free for the hot precisions (default 6, round-trip 17).
+pub fn render_pct_g_into(value: f64, ndigit: usize, buf: &mut Vec<u8>) {
+    let nd = ndigit.max(1);
+    if nd <= GCVT_MAX_SIG_DIGITS {
+        let mut tmp = [0u8; 48];
+        let len = render_gcvt_into(value, nd, &mut tmp);
+        buf.extend_from_slice(&tmp[..len]);
+    } else {
+        buf.extend_from_slice(render_pct_g(value, ndigit).as_bytes());
+    }
 }
 
 /// Render `value` as printf-style `%.<ndigit>e` (always scientific,
