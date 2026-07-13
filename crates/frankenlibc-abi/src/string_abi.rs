@@ -7915,16 +7915,28 @@ pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char)
             if !delim_term {
                 return std::ptr::null_mut();
             }
-            // Small delim set (1..=4): FUSED single early-stopping pass over `s`
+            // 1-char delim (the common CSV/path case): a dedicated `scan_c_string_for_byte`
+            // scan — its None path now ORs target|NUL into ONE combined movemask per window
+            // with just 2 splats, vs set4's 5 (four redundant `==d` splats for `[d;4]`). The
+            // stale note below claimed for_byte did two separate movemasks; it no longer does.
+            if delim_len == 1 {
+                let dc = *delim.cast::<u8>();
+                let (idx, found, _) = scan_c_string_for_byte(s, dc, None);
+                let stop = s.add(idx).cast::<u8>();
+                if found {
+                    *stop = 0;
+                    *stringp = s.add(idx + 1);
+                } else {
+                    *stringp = std::ptr::null_mut();
+                }
+                return s;
+            }
+            // Small delim set (2..=4): FUSED single early-stopping pass over `s`
             // instead of the full `scan_c_string(s)` pre-scan + core membership
             // pass. Byte-identical to `core::str::strsep` (first delim → NUL-write
             // it, advance `*stringp` past it; no delim → NUL stop → `*stringp` null;
-            // returned token = original `s` either way). NOTE: a 1-char delim is
-            // routed through set4 (`[d;4]`) too, NOT `scan_c_string_for_byte` — the
-            // set4 scan ORs target|NUL in SIMD and does ONE movemask per window,
-            // whereas for_byte takes two (nul, target) separately and MEASURED ~2x
-            // worse fl/glibc here.
-            if (1..=4).contains(&delim_len) {
+            // returned token = original `s` either way).
+            if (2..=4).contains(&delim_len) {
                 let d = delim.cast::<u8>();
                 let set = match delim_len {
                     1 => [*d, *d, *d, *d],
