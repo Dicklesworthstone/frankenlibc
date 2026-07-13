@@ -2452,6 +2452,71 @@ unsafe fn scan_c_string_pshufb(
 /// up to and including the NUL's page. The 128-byte folded tier keeps the same
 /// page-cross guard as `scan_c_string_for_byte`.
 ///
+/// `strspn` fast path for a single-char accept: the index of the first byte that is
+/// NOT `c`. For any valid accept the char `c != 0`, so the terminating NUL is itself
+/// `!= c` and stops the scan — exactly `scan_c_string_for_set4([c;4], complement=true)`
+/// but with ONE splat / ONE `simd_eq` per window instead of four, cutting the fixed
+/// SIMD-setup floor that made 1-char `strspn` lose to glibc's early-stopping scan on
+/// short leading runs. Same aligned-head-mask + 128 B folded-tier page-safety
+/// discipline as [`scan_c_string_for_set4`] (a 32-aligned window stays within one
+/// page; the NUL is always a stop lane, so the scan never reads past its page).
+///
+/// # Safety
+///
+/// `ptr` must be a valid NUL-terminated C string; `c != 0`.
+unsafe fn scan_c_string_first_not_byte(ptr: *const c_char, c: u8) -> usize {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+    let p = ptr.cast::<u8>();
+    let cv = Simd::<u8, 32>::splat(c);
+    // "stop here" bitmask for a window: lanes that are NOT `c` (incl. the NUL).
+    // `simd_ne` (not `!...to_bitmask()`) so only the 32 real lane bits are set — a
+    // u64-level `!` would flip the upper 32 non-lane bits and make an all-`c` window
+    // (the absent case) report a spurious stop at bit 32.
+    let ne = |v: Simd<u8, 32>| -> u64 { v.simd_ne(cv).to_bitmask() };
+    let align = (p as usize) & 31;
+    // SAFETY: `base` is in the same mapped page as `p` (aligned down ≤ 31 bytes).
+    let base = unsafe { p.sub(align) };
+    let v0 = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+    // Clear the head bytes before `p` so they can't be reported as the stop.
+    let bits0 = ne(v0) & !((1u64 << align) - 1);
+    if bits0 != 0 {
+        return bits0.trailing_zeros() as usize - align;
+    }
+    let mut i = 32 - align;
+    loop {
+        // 128-byte folded skip tier for long all-`c` runs; gated on i >= 128 and a
+        // page-cross guard (same as scan_c_string_for_set4). A folded hit falls to the
+        // 32B tier, which resolves the exact first-not-`c` index unchanged.
+        if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
+            // SAFETY: [i, i+128) stays within the current mapped page.
+            let w1 =
+                Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+            let w2 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 32), 32)
+            });
+            let w3 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 64), 32)
+            });
+            let w4 = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(p.add(i + 96), 32)
+            });
+            if (ne(w1) | ne(w2) | ne(w3) | ne(w4)) == 0 {
+                i += 128;
+                continue;
+            }
+        }
+        // SAFETY: p+i is 32-aligned ⇒ the 32-byte window stays in one page; the NUL is
+        // a stop lane, so the scan stops at/before it — never reading a faulting page.
+        let v = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(p.add(i), 32) });
+        let bits = ne(v);
+        if bits != 0 {
+            return i + bits.trailing_zeros() as usize;
+        }
+        i += 32;
+    }
+}
+
 /// # Safety
 ///
 /// `ptr` must be a valid NUL-terminated C string.
@@ -6211,6 +6276,15 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
     // Skips stage_context + decide + observe + stage-trace.
     if !s.is_null() && !accept.is_null() && runtime_policy::strict_passthrough_active() {
         return unsafe {
+            // 1-char accept (the common single-char run-skip): intercept with a lean
+            // scalar length probe (2 byte reads) + the single-splat scan, BEFORE the
+            // full SIMD strlen on `accept`. This is the case glibc's early-stopping scan
+            // beat us on (fixed 4-way-set setup floor). Byte-identical to the (1..=4)
+            // set4 path with set=[c;4], complement=true.
+            let a0 = *(accept.cast::<u8>());
+            if a0 != 0 && *(accept.cast::<u8>().add(1)) == 0 {
+                return scan_c_string_first_not_byte(s, a0);
+            }
             let (accept_len, accept_terminated) = scan_c_string(accept, None);
             // Small accept set (1..=4): FUSED single early-stopping pass — stop at the
             // first byte NOT in the set (or NUL) — instead of a full pre-scan of `s` +
