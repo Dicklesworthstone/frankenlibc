@@ -408,6 +408,15 @@ fn main() {
     // Stateful ISO-2022-* built authoritatively by host glibc from real script sources.
     let iso2022jp_src = host_to(b"ISO-2022-JP\0", &jp);
     run_conv(c, "iso2022jp_to_utf8", b"UTF-8\0", b"ISO-2022-JP\0", &iso2022jp_src);
+    // ISO-2022-JP-2 / JP-3 (supersets, still Vec-two-pass decoders). Hiragana is JIS X 0208
+    // (JP-2) / JIS X 0213 plane 1 (JP-3), so host_to yields a full-length source.
+    let iso2022jp2_src = host_to(b"ISO-2022-JP-2\0", &jp);
+    run_conv(c, "iso2022jp2_to_utf8", b"UTF-8\0", b"ISO-2022-JP-2\0", &iso2022jp2_src);
+    let iso2022jp3_src = host_to(b"ISO-2022-JP-3\0", &jp);
+    run_conv(c, "iso2022jp3_to_utf8", b"UTF-8\0", b"ISO-2022-JP-3\0", &iso2022jp3_src);
+    // IBM930 (EBCDIC Japanese Katakana+Kanji, SO/SI DBCS) -> UTF-8. cjk = U+4E00 Kanji.
+    let ibm930_src = host_to(b"IBM930\0", &cjk);
+    run_conv(c, "ibm930_to_utf8", b"UTF-8\0", b"IBM930\0", &ibm930_src);
     let iso2022kr_src = host_to(b"ISO-2022-KR\0", &hangul);
     run_conv(c, "iso2022kr_to_utf8", b"UTF-8\0", b"ISO-2022-KR\0", &iso2022kr_src);
     let iso2022cn_src = host_to(b"ISO-2022-CN\0", &cjk);

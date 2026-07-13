@@ -45573,6 +45573,185 @@ fn iso2022jp3_decode(
 ) -> Result<IconvResult, IconvError> {
     let p1 = eucjx_p1_direct();
     let p2 = eucjx_p2_direct();
+    // Fast path (to == UTF-8): single-pass decode+emit straight into outbuf — no
+    // intermediate Vec<char>/Vec<u8> (the two heap allocs + double iteration that left
+    // this ~5.6x slower than glibc). Mirrors the two-pass state machine byte-for-byte
+    // (sets 0=ASCII/1=JIS-Roman/2=JIS X 0208/3=JIS X 0213 plane 1 [+EUCJX_P1_MULTI]/
+    // 4=plane 2/5=half-width kana, the 3- and 4-byte ESC designators, the unrecognized-
+    // escape literal, and the same consumed_end / error tuple) but emits UTF-8 via
+    // emit_utf8_cp. Gated on outbuf holding the whole worst-case output (<=4 UTF-8 bytes
+    // per source byte) so it never runs out of space; cd.iso2022jp3_in_set is saved on
+    // every return exactly as the two-pass does. The two-pass body runs only on a tight
+    // buffer / non-UTF-8 target.
+    if cd.to == Encoding::Utf8 && outbuf.len() >= input.len().saturating_mul(4) {
+        let mut set = cd.iso2022jp3_in_set;
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut consumed_end = 0usize;
+        let mut err: Option<i32> = None;
+        while i < input.len() {
+            let b = input[i];
+            if b == 0x1B {
+                if i + 3 > input.len() {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let (b1, b2) = (input[i + 1], input[i + 2]);
+                if b1 == 0x24 && b2 == 0x28 {
+                    if i + 4 > input.len() {
+                        err = Some(ICONV_EINVAL);
+                        break;
+                    }
+                    match input[i + 3] {
+                        0x4F | 0x51 => set = 3,
+                        0x50 => set = 4,
+                        _ => {
+                            o += emit_utf8_cp(outbuf, o, 0x1B);
+                            i += 1;
+                            consumed_end = i;
+                            continue;
+                        }
+                    }
+                    i += 4;
+                    consumed_end = i;
+                    continue;
+                }
+                match (b1, b2) {
+                    (0x28, 0x42) => set = 0,
+                    (0x28, 0x4A) => set = 1,
+                    (0x28, 0x49) => set = 5,
+                    (0x24, 0x40) | (0x24, 0x42) => set = 2,
+                    _ => {
+                        o += emit_utf8_cp(outbuf, o, 0x1B);
+                        i += 1;
+                        consumed_end = i;
+                        continue;
+                    }
+                }
+                i += 3;
+                consumed_end = i;
+                continue;
+            }
+            match set {
+                0 => {
+                    if b < 0x80 {
+                        o += emit_utf8_cp(outbuf, o, b as u32);
+                        i += 1;
+                        consumed_end = i;
+                    } else {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+                1 => {
+                    let cp = match b {
+                        0x5C => 0xA5,
+                        0x7E => 0x203E,
+                        _ if b < 0x80 => b as u32,
+                        _ => {
+                            err = Some(ICONV_EILSEQ);
+                            break;
+                        }
+                    };
+                    o += emit_utf8_cp(outbuf, o, cp);
+                    i += 1;
+                    consumed_end = i;
+                }
+                5 => {
+                    if (0x21..=0x5F).contains(&b) {
+                        o += emit_utf8_cp(outbuf, o, 0xFF61 + (b as u32 - 0x21));
+                        i += 1;
+                        consumed_end = i;
+                    } else if b <= 0x20 || b == 0x7F {
+                        o += emit_utf8_cp(outbuf, o, b as u32);
+                        i += 1;
+                        consumed_end = i;
+                    } else {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+                _ => {
+                    if (0x21..=0x7E).contains(&b) {
+                        if i + 1 >= input.len() {
+                            err = Some(ICONV_EINVAL);
+                            break;
+                        }
+                        let b1 = input[i + 1];
+                        if !(0x21..=0x7E).contains(&b1) {
+                            err = Some(ICONV_EILSEQ);
+                            break;
+                        }
+                        let euc_key = (((b | 0x80) as u16) << 8) | (b1 | 0x80) as u16;
+                        let ok = match set {
+                            2 => match decode_eucjp(&[b | 0x80, b1 | 0x80]) {
+                                Ok((ch, 2)) => {
+                                    o += emit_utf8_cp(outbuf, o, ch as u32);
+                                    true
+                                }
+                                _ => false,
+                            },
+                            3 => {
+                                if let Some(&(_, cps)) = eucjisx0213_tables::EUCJX_P1_MULTI
+                                    .iter()
+                                    .find(|&&(k, _)| k == euc_key)
+                                {
+                                    for &cp in cps {
+                                        o += emit_utf8_cp(outbuf, o, cp);
+                                    }
+                                    true
+                                } else {
+                                    let cp = p1[euc_key as usize];
+                                    if cp != 0 {
+                                        o += emit_utf8_cp(outbuf, o, cp);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                            }
+                            _ => {
+                                let cp = p2[euc_key as usize];
+                                if cp != 0 {
+                                    o += emit_utf8_cp(outbuf, o, cp);
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                        };
+                        if !ok {
+                            err = Some(ICONV_EILSEQ);
+                            break;
+                        }
+                        i += 2;
+                        consumed_end = i;
+                    } else if b < 0x80 {
+                        o += emit_utf8_cp(outbuf, o, b as u32);
+                        i += 1;
+                        consumed_end = i;
+                    } else {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+            }
+        }
+        cd.iso2022jp3_in_set = set;
+        return match err {
+            Some(code) => Err(IconvError {
+                code,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+            None => Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+        };
+    }
+
     let mut chars: Vec<char> = Vec::new();
     let mut set = cd.iso2022jp3_in_set;
     let mut i = 0usize;
