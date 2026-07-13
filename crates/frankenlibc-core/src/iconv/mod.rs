@@ -43299,6 +43299,184 @@ fn iso2022jp2_decode(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Fast path (to == UTF-8): single-pass decode+emit straight into outbuf — no
+    // intermediate Vec<char>/Vec<u8> (the two heap allocs + double iteration that left
+    // this ~5.8x slower than glibc). Mirrors the two-pass machine byte-for-byte: the two
+    // persisted designations g0 (0=ASCII/1=JIS-Roman/2=JISX0208/3=JISX0212/4=GB2312/
+    // 5=KSC5601) and g2 (0=none/1=ISO-8859-1/2=ISO-8859-7), the 3/4-byte ESC designators,
+    // the ESC N SS2 single-shift into G2, the unrecognized-escape literal, and jp2_g0_decode_pair
+    // — but emits UTF-8 via emit_utf8_cp. Gated on outbuf holding the whole worst-case output
+    // (<=4 UTF-8 bytes per source byte) so it never runs out of space; cd.iso2022jp2_in_g0/g2
+    // are saved on every return exactly as the two-pass does. The two-pass body runs only on a
+    // tight buffer / non-UTF-8 target.
+    if cd.to == Encoding::Utf8 && outbuf.len() >= input.len().saturating_mul(4) {
+        let mut g0 = cd.iso2022jp2_in_g0;
+        let mut g2 = cd.iso2022jp2_in_g2;
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut consumed_end = 0usize;
+        let mut err: Option<i32> = None;
+        while i < input.len() {
+            let b = input[i];
+            if b == 0x1B {
+                let have = input.len() - i;
+                if have < 3 {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let b1 = input[i + 1];
+                let b2 = input[i + 2];
+                if b1 == 0x24 && b2 == 0x28 && have < 4 {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let mut literal = false;
+                match (b1, b2) {
+                    (0x28, 0x42) => {
+                        g0 = 0;
+                        i += 3;
+                    }
+                    (0x28, 0x4A) => {
+                        g0 = 1;
+                        i += 3;
+                    }
+                    (0x24, 0x40) | (0x24, 0x42) => {
+                        g0 = 2;
+                        i += 3;
+                    }
+                    (0x24, 0x41) => {
+                        g0 = 4;
+                        i += 3;
+                    }
+                    (0x24, 0x28) => match input[i + 3] {
+                        0x43 => {
+                            g0 = 5;
+                            i += 4;
+                        }
+                        0x44 => {
+                            g0 = 3;
+                            i += 4;
+                        }
+                        _ => literal = true,
+                    },
+                    (0x2E, 0x41) => {
+                        g2 = 1;
+                        i += 3;
+                    }
+                    (0x2E, 0x46) => {
+                        g2 = 2;
+                        i += 3;
+                    }
+                    (0x4E, _) => {
+                        if g2 == 0 {
+                            err = Some(ICONV_EILSEQ);
+                            break;
+                        }
+                        let c = input[i + 2];
+                        let cp = match g2 {
+                            1 => Some((c | 0x80) as char),
+                            _ if (0x20..=0x7E).contains(&c) => match decode_iso88597(&[c | 0x80]) {
+                                Ok((ch, 1)) => Some(ch),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        match cp {
+                            Some(ch) => {
+                                o += emit_utf8_cp(outbuf, o, ch as u32);
+                                i += 3;
+                                consumed_end = i;
+                                continue;
+                            }
+                            None => {
+                                err = Some(ICONV_EILSEQ);
+                                break;
+                            }
+                        }
+                    }
+                    _ => literal = true,
+                }
+                if literal {
+                    o += emit_utf8_cp(outbuf, o, 0x1B);
+                    i += 1;
+                }
+                consumed_end = i;
+                continue;
+            }
+            match g0 {
+                0 => {
+                    if b < 0x80 {
+                        o += emit_utf8_cp(outbuf, o, b as u32);
+                        i += 1;
+                        consumed_end = i;
+                    } else {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+                1 => {
+                    let cp = match b {
+                        0x5C => 0xA5,
+                        0x7E => 0x203E,
+                        _ if b < 0x80 => b as u32,
+                        _ => {
+                            err = Some(ICONV_EILSEQ);
+                            break;
+                        }
+                    };
+                    o += emit_utf8_cp(outbuf, o, cp);
+                    i += 1;
+                    consumed_end = i;
+                }
+                _ => {
+                    if (0x21..=0x7E).contains(&b) {
+                        if i + 1 >= input.len() {
+                            err = Some(ICONV_EINVAL);
+                            break;
+                        }
+                        let b1 = input[i + 1];
+                        if !(0x21..=0x7E).contains(&b1) {
+                            err = Some(ICONV_EILSEQ);
+                            break;
+                        }
+                        match jp2_g0_decode_pair(g0, b, b1) {
+                            Some(ch) => {
+                                o += emit_utf8_cp(outbuf, o, ch as u32);
+                                i += 2;
+                                consumed_end = i;
+                            }
+                            None => {
+                                err = Some(ICONV_EILSEQ);
+                                break;
+                            }
+                        }
+                    } else if b < 0x80 {
+                        o += emit_utf8_cp(outbuf, o, b as u32);
+                        i += 1;
+                        consumed_end = i;
+                    } else {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+            }
+        }
+        cd.iso2022jp2_in_g0 = g0;
+        cd.iso2022jp2_in_g2 = g2;
+        return match err {
+            Some(code) => Err(IconvError {
+                code,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+            None => Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+        };
+    }
+
     let mut chars: Vec<char> = Vec::new();
     let mut g0 = cd.iso2022jp2_in_g0;
     let mut g2 = cd.iso2022jp2_in_g2;
