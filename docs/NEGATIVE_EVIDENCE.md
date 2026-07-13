@@ -18031,3 +18031,31 @@ path (deployed→interposed malloc per conversion).
   alt_form/special cases) + a `format_float` width==0 fast path (mirrors the existing %f fast path) that appends
   straight into `buf`. Gate-verifiable via the printf conformance/differential tests. Kept `sprintf_float_bench`.
   See [[printf-scanf-perf-campaign]], [[cvt-family-and-perf-frontier]], [[interposed-alloc-is-the-hidden-cost]].
+
+## cod-qsort-u64-duplicate-density-2026-07-12 — WIN (large duplicate qsort 1.92x; radix controls preserved)
+
+Followed the explicit residual in `cc-qsort-radix-sorted-commit-lane`: eight radix passes still lost badly on
+very large, low-cardinality width-8 inputs. Added a qsort-only admission guard after the ascending/descending
+commit check: when `num >= 65,536`, a bounded 32-key native-u64 sample with at most 16 distinct raw keys routes
+to the existing fixed-width stdlib sort. Random/high-cardinality samples reject as soon as the 17th distinct
+key appears. Heapsort leaves the guard disabled, preserving its existing in-place/radix behavior.
+- **STRICT REMOTE SAME-WORKER A/B (`vmi1227854`, min-of-3 per arm):** `w8/dups/n262144` qsort-full moved
+  **4,083,623 ns -> 2,121,673 ns = 1.92x faster / 48.0% lower**; qsort-full/stdlib narrowed **1.82x -> 1.04x**.
+  The below-threshold duplicate control was structurally unchanged (`n16384`: 130,576 -> 123,766 ns).
+  Untargeted large controls preserved the existing route: random 10,268,944 -> 9,465,993 ns and nearly sorted
+  5,823,311 -> 5,868,831 ns (~0.8% change). The focused benchmark's per-row preflight asserted byte-exact
+  qsort output against its Rust reference before timing; the full checked-in harness was restored unchanged.
+- **CORRECTNESS / PROOF:** routing alone changes: both destinations implement conformant unstable qsort, so
+  comparator ordering and equal-key semantics are unchanged. The ordered commit precedes the new guard, so
+  all-equal/ascending inputs retain their O(n) commit. Remote release core sort tests passed **35/35** on
+  `vmi1152480`, including the new density-gate boundaries and the existing golden/isomorphism corpus; live-glibc
+  `conformance_diff_qsort_radix` passed **1/1** on the same worker (golden SHA-256
+  `58476694b71197edca053aa5005549084f0d7be5046ac029697565bbfaac4127`).
+- **COMMANDS:** benchmark: `RCH_WORKER=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u
+  CARGO_TARGET_DIR rch exec -- cargo run -j 1 --profile release -p frankenlibc-abi --example
+  qsort_radix_vs_stdlib_bench`; focused tests used the same fail-closed prefix with `cargo test -j 1 --profile
+  release -p frankenlibc-core --lib sort_variant_tests` and `cargo test -j 1 --profile release -p
+  frankenlibc-abi --test conformance_diff_qsort_radix`.
+- **BOUNDARY:** keep radix for random/nearly-sorted and smaller duplicate inputs. Do not retry global radix
+  narrowing or descending-special handling; this guard is intentionally limited to very large width-8 qsort
+  inputs with direct evidence of a small key domain.

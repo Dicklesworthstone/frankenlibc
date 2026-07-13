@@ -13,6 +13,10 @@ const I64_FAST_LANE_MAX: usize = 2048;
 /// comparison-lane window: radix's fixed per-pass overhead (256-bucket
 /// histogram + a full ping-pong scatter) only amortizes once N is large.
 const INTEGER_RADIX_LANE_MIN: usize = 2048;
+/// At this size, eight radix passes lose to fixed-width pdqsort when a short
+/// sample shows a very small key domain. Below it, radix still wins even on
+/// the same duplicate-heavy distribution.
+const U64_DUPLICATE_FALLBACK_MIN: usize = 65_536;
 /// 2-byte integer keys take the radix lane at a far lower threshold: they have
 /// no comparison fast lane and a 2-pass radix has negligible fixed cost, so it
 /// overtakes pdqsort early.
@@ -58,7 +62,7 @@ where
         return;
     }
 
-    if try_integer_unstable_lanes(base, width, num, &compare) {
+    if try_integer_unstable_lanes(base, width, num, &compare, true) {
         return;
     }
 
@@ -151,7 +155,13 @@ where
 /// back with zero behavioral difference. Because equal integer keys are
 /// byte-identical, a committed result is byte-identical to any correct sort.
 /// Both callers are unstable, so the lanes' tie order is conformant for both.
-fn try_integer_unstable_lanes<F>(base: &mut [u8], width: usize, num: usize, compare: &F) -> bool
+fn try_integer_unstable_lanes<F>(
+    base: &mut [u8],
+    width: usize,
+    num: usize,
+    compare: &F,
+    prefer_fixed_width_duplicate_fallback: bool,
+) -> bool
 where
     F: Fn(&[u8], &[u8]) -> i32,
 {
@@ -222,6 +232,18 @@ where
                 return true;
             }
             QsortOrder::Unordered => {
+                // Eight radix scatter passes are a net loss for very large,
+                // low-cardinality u64 inputs. A bounded raw-key sample can only
+                // change routing: qsort falls through to its conformant stdlib
+                // fixed-width sort, while heapsort leaves this disabled to retain
+                // its existing in-place/radix behavior.
+                if prefer_fixed_width_duplicate_fallback
+                    && width == 8
+                    && num >= U64_DUPLICATE_FALLBACK_MIN
+                    && qsort_u64_prefix_is_duplicate_dense(&base[..num * width])
+                {
+                    return false;
+                }
                 // Only ENTER the radix lane if a short prefix sample is consistent
                 // with signed OR unsigned integer order — a non-integer comparator
                 // (`char*` by `strcmp`, struct key) otherwise pays two wasted
@@ -243,6 +265,31 @@ where
     }
 
     false
+}
+
+/// Return true when a 32-key prefix contains at most 16 distinct raw u64 keys.
+/// Random/high-cardinality data returns as soon as the 17th distinct key appears,
+/// bounding the admission cost independently of `num`.
+#[inline]
+fn qsort_u64_prefix_is_duplicate_dense(active: &[u8]) -> bool {
+    const SAMPLE_KEYS: usize = 32;
+    const MAX_UNIQUE: usize = 16;
+
+    let mut unique = [0u64; MAX_UNIQUE];
+    let mut unique_len = 0usize;
+    let mut sampled = 0usize;
+    for chunk in active.chunks_exact(8).take(SAMPLE_KEYS) {
+        sampled += 1;
+        let key = u64::from_ne_bytes(chunk.try_into().unwrap());
+        if !unique[..unique_len].contains(&key) {
+            if unique_len == MAX_UNIQUE {
+                return false;
+            }
+            unique[unique_len] = key;
+            unique_len += 1;
+        }
+    }
+    sampled == SAMPLE_KEYS
 }
 
 /// Element index helper: borrows the `i`-th element as a byte slice.
@@ -1522,7 +1569,7 @@ where
     // comparison) into an O(n) radix/counting pass; non-integer or non-natural
     // comparators fall back to the in-place heap sort below with no behavioral
     // difference.
-    if try_integer_unstable_lanes(base, width, num, &compare) {
+    if try_integer_unstable_lanes(base, width, num, &compare, false) {
         return;
     }
 
@@ -1647,6 +1694,24 @@ mod sort_variant_tests {
             out.extend_from_slice(&v.to_le_bytes());
         }
         out
+    }
+
+    #[test]
+    fn u64_duplicate_prefix_gate_accepts_half_unique_sample() {
+        let mut bytes = Vec::with_capacity(32 * 8);
+        for i in 0..32u64 {
+            bytes.extend_from_slice(&(i % 16).to_ne_bytes());
+        }
+        assert!(qsort_u64_prefix_is_duplicate_dense(&bytes));
+    }
+
+    #[test]
+    fn u64_duplicate_prefix_gate_rejects_high_cardinality_sample() {
+        let mut bytes = Vec::with_capacity(32 * 8);
+        for i in 0..32u64 {
+            bytes.extend_from_slice(&i.to_ne_bytes());
+        }
+        assert!(!qsort_u64_prefix_is_duplicate_dense(&bytes));
     }
 
     fn cmp_i32_ne(a: &[u8], b: &[u8]) -> i32 {
