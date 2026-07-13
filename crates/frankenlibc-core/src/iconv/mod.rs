@@ -48033,6 +48033,11 @@ pub fn iconv(
                     | Encoding::Cp949
                     | Encoding::Gb2312
                     | Encoding::Johab
+                    // EUC-TW is excluded from the SIMD DBCS pack above (its 4-byte SS2
+                    // form breaks the uniform-2-byte swizzle), but the SCALAR tight loop
+                    // handles variable-width output — so it belongs here, skipping the
+                    // per-char outer-loop re-entry the generic UTF-8 path paid.
+                    | Encoding::EucTw
             )
         {
             while in_pos < input.len() {
@@ -48062,6 +48067,7 @@ pub fn iconv(
                     Encoding::Cp949 => encode_cp949(ch, out),
                     Encoding::Gb2312 => encode_gb2312(ch, out),
                     Encoding::Johab => encode_johab(ch, out),
+                    Encoding::EucTw => encode_euctw(ch, out),
                     _ => unreachable!(),
                 };
                 let Ok(w) = r else {
