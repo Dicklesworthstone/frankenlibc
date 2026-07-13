@@ -2711,6 +2711,39 @@ unsafe fn scan_c_string_last_byte(
             };
             let mut i = 32 - align;
             loop {
+                // 128-byte folded skip tier: ONE `.any()` reduction per 128 B (vs per 32 B
+                // below) for the long target/NUL-free runs, the same structure strlen's 128B
+                // tier used to reach glibc parity. Gated on a page-cross guard; a 128 B run
+                // with NEITHER the target NOR a NUL cannot change `last` or terminate, so it
+                // is advanced whole. Any panel with a target/NUL drops to the 32B resolve,
+                // which updates `last` and the NUL position exactly — byte-identical. Gated
+                // on i >= 128 so short/medium strings (NUL < 128) never pay a wasted 128 B
+                // read — they terminate in the 32B loop below.
+                if i >= 128 && (p as usize + i) & 0xFFF <= 0x1000 - 128 {
+                    // SAFETY: the page-cross guard keeps [i, i+128) inside one mapped page.
+                    let a = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i), 32)
+                    });
+                    let b = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i + 32), 32)
+                    });
+                    let c = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i + 64), 32)
+                    });
+                    let d = Simd::<u8, 32>::from_slice(unsafe {
+                        core::slice::from_raw_parts(p.add(i + 96), 32)
+                    });
+                    let z = Simd::<u8, 32>::splat(0);
+                    let t = Simd::<u8, 32>::splat(target);
+                    let hit4 = (a.simd_eq(t) | a.simd_eq(z))
+                        | (b.simd_eq(t) | b.simd_eq(z))
+                        | (c.simd_eq(t) | c.simd_eq(z))
+                        | (d.simd_eq(t) | d.simd_eq(z));
+                    if !hit4.any() {
+                        i += 128;
+                        continue;
+                    }
+                }
                 // SAFETY: p+i is 32-aligned ⇒ the 32-byte window stays in one page.
                 let v = Simd::<u8, 32>::from_slice(unsafe {
                     core::slice::from_raw_parts(p.add(i), 32)
