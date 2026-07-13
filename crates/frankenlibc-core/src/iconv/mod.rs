@@ -47114,6 +47114,141 @@ fn iso2022jp3_convert(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Single-pass fast path: write the ISO-2022-JP-3 stream directly into outbuf,
+    // skipping the `Vec<u8>` accumulator + final copy (2 heap allocs/call — an
+    // interposed-malloc tax in the deployed path). Worst case per char is a set
+    // designator (<=4 bytes: JIS X 0213 `ESC $ ( O/Q/P`) + 2 data = 6, so gating on
+    // `outbuf.len() >= input.len()*8` (margin) makes E2BIG unreachable here and leaves
+    // the tight-buffer all-or-nothing E2BIG path (below) exactly as it was. Byte-identical:
+    // the SAME combining-sequence match + lazy target_set + designator logic, the SAME
+    // `set` saved on every return, the SAME partial out_written on a mid EILSEQ/EINVAL.
+    if outbuf.len() >= input.len().saturating_mul(8) {
+        let enc = jp3_enc_map();
+        let target_set = |cur: u8, cid: u8| -> u8 {
+            match cid {
+                2 => {
+                    if cur == 2 || cur == 3 || cur == 4 {
+                        cur
+                    } else {
+                        2
+                    }
+                }
+                3 => {
+                    if cur == 3 || cur == 4 {
+                        cur
+                    } else {
+                        3
+                    }
+                }
+                other => other,
+            }
+        };
+        let mut set = cd.iso2022jp3_out_set;
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        let mut err: Option<(i32, usize)> = None;
+        while in_pos < input.len() {
+            let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    err = Some((ICONV_EINVAL, in_pos));
+                    break;
+                }
+                Err(DecodeError::Invalid) => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            };
+            let cp = ch as u32;
+            // 1. Combining sequences (base + combining mark) -> one plane-1 cell.
+            let mut matched: Option<(u8, u8, u8, usize)> = None;
+            for &(seq, cid, b0, b1) in iso2022jp3_tables::JP3_MULTI_ENC.iter() {
+                if seq.first() != Some(&cp) {
+                    continue;
+                }
+                let mut p = in_pos + consumed;
+                let mut ok = true;
+                for &want in &seq[1..] {
+                    match decode_char(cd.from, &input[p..]) {
+                        Ok((c2, n2)) if c2 as u32 == want => p += n2,
+                        _ => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                if ok {
+                    matched = Some((cid, b0, b1, p));
+                    break;
+                }
+            }
+            if let Some((cid, b0, b1, end)) = matched {
+                let t = target_set(set, cid);
+                if set != t {
+                    let d = jp3_designator(t);
+                    outbuf[out_pos..out_pos + d.len()].copy_from_slice(d);
+                    out_pos += d.len();
+                    set = t;
+                }
+                outbuf[out_pos] = b0;
+                outbuf[out_pos + 1] = b1;
+                out_pos += 2;
+                in_pos = end;
+                continue;
+            }
+            if cp == 0xA5 || cp == 0x203E {
+                if set != 1 {
+                    outbuf[out_pos..out_pos + 3].copy_from_slice(&[0x1B, 0x28, 0x4A]);
+                    out_pos += 3;
+                    set = 1;
+                }
+                outbuf[out_pos] = if cp == 0xA5 { 0x5C } else { 0x7E };
+                out_pos += 1;
+            } else if cp < 0x80 {
+                let b = cp as u8;
+                let roman_ok = set == 1 && (0x21..=0x7E).contains(&b) && b != 0x5C && b != 0x7E;
+                if !roman_ok && set != 0 {
+                    outbuf[out_pos..out_pos + 3].copy_from_slice(&[0x1B, 0x28, 0x42]);
+                    out_pos += 3;
+                    set = 0;
+                }
+                outbuf[out_pos] = b;
+                out_pos += 1;
+            } else if let Some(&(cid, b0, b1)) = enc.get(&cp) {
+                let t = target_set(set, cid);
+                if set != t {
+                    let d = jp3_designator(t);
+                    outbuf[out_pos..out_pos + d.len()].copy_from_slice(d);
+                    out_pos += d.len();
+                    set = t;
+                }
+                outbuf[out_pos] = b0;
+                out_pos += 1;
+                if matches!(cid, 2 | 3 | 4 | 5) {
+                    outbuf[out_pos] = b1;
+                    out_pos += 1;
+                }
+            } else {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+            in_pos += consumed;
+        }
+        cd.iso2022jp3_out_set = set;
+        if let Some((code, pos)) = err {
+            return Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: out_pos,
+            });
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
     let enc = jp3_enc_map();
     let mut out: Vec<u8> = Vec::new();
     let mut set = cd.iso2022jp3_out_set;
