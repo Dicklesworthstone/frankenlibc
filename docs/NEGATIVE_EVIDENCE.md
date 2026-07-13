@@ -18114,3 +18114,33 @@ directive/flag/literal dispatch only when every digit, separator, and field rang
 - **BOUNDARY:** keep the general parser for every other format and for all noncanonical prefixes. Do not
   broaden this into an early failure path: inputs such as `12:60:00` require the generic parser's numeric
   backoff and observable partial mutation. Do not retry `get_unchecked`; dispatch removal is the measured lever.
+
+## cod-regex-nosub-precompiled-membership-dfa-2026-07-12 — WIN (matching closure case 17.5x)
+
+Closed the explicit residual in `cc-regex-nosub-closure-match-2026-07-12` without retrying its neutral
+per-call routing change. Eligible closure-heavy `REG_NOSUB` patterns now build one immutable exact membership
+DFA at `regcomp` time; positive calls scan a dense `u16` transition table instead of rebuilding a HashMap,
+frontier vectors, and transitions on every `regexec`.
+- **STRICT REMOTE SAME-WORKER A/B (`vmi1227854`):** matching `a*a*a*a*a*a*a*a*b` moved **1591 -> 91 ns =
+  17.5x faster / 94.3% lower**; FrankenLibC/glibc moved from **9.971x slower** to **0.611x**, a 16.3x
+  host-normalized improvement. The required-byte no-match control kept its pre-DFA route (15 -> 24 ns,
+  still 0.173x glibc); capture/submatch remained off-lane (27 -> 24 ns), and the 6000-byte substring no-match
+  control remained off-lane (19,363 -> 16,918 ns). The tiny no-match medians varied with the host, but the
+  target's structural route change and order-of-magnitude gain are decisive.
+- **CORRECTNESS / PROOF:** each state is a canonical epsilon-closed NFA PC set. With `S0=eclose({0})`, the
+  transition is `delta(S,b)=eclose({0} union {pc+1 | pc in S, nfa[pc]=Match(k), k matches b})`; re-seeding
+  PC 0 preserves unanchored search, and a state accepts exactly when it contains `Accept`. State sorting can
+  discard NFA priority only because this table is consulted solely for boolean `REG_NOSUB` membership; every
+  capture/offset-producing path retains the established engine. Remote release gates passed the focused
+  final-snapshot unit proof **1/1** and live-glibc regex differentials **11/11** with **0 divergences**.
+- **BOUNDS / FALLBACK:** admission requires a position-independent, prefilter-only `REG_NOSUB` NFA with
+  16..=256 instructions and no backreferences or literal specialization. Construction is transactional and
+  capped at 4096 states, 65,536 stored frontier PCs, one million conservatively charged PC inspections, and
+  a 2 MiB dense table; any cap/overflow returns `None`, `regcomp` still succeeds, and the old engine runs.
+- **COMMANDS:** benchmark: `RCH_WORKER=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u
+  CARGO_TARGET_DIR rch exec -- cargo run -j 1 --profile release -p frankenlibc-abi --example regex_bench`;
+  tests used the same fail-closed prefix with the focused core unit plus explicit
+  `conformance_diff_regex_nosub`, `conformance_diff_regex`, and `conformance_diff_regex_stacked_quant` targets.
+- **BOUNDARY:** keep captures, offsets, anchors/assertions, backreferences, literal-specialized patterns,
+  small NFAs, and every over-budget compile on the existing engines. Do not retry a per-call lazy-DFA build;
+  the measured win comes from paying bounded determinization once and sharing the immutable table.

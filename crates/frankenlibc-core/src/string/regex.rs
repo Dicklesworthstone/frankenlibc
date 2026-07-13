@@ -726,6 +726,38 @@ fn sets_disjoint(a: &[u64; 4], b: &[u64; 4]) -> bool {
 // Compiled regex
 // ---------------------------------------------------------------------------
 
+struct MembershipDfa {
+    /// Complete transition table: `transitions[state * 256 + byte]`.
+    transitions: Box<[u16]>,
+    accepting: Box<[bool]>,
+}
+
+impl core::fmt::Debug for MembershipDfa {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MembershipDfa")
+            .field("states", &self.accepting.len())
+            .field("transitions", &self.transitions.len())
+            .finish()
+    }
+}
+
+impl MembershipDfa {
+    #[inline]
+    fn is_match(&self, input: &[u8]) -> bool {
+        let mut state = 0usize;
+        if self.accepting[state] {
+            return true;
+        }
+        for &byte in input {
+            state = usize::from(self.transitions[state * 256 + usize::from(byte)]);
+            if self.accepting[state] {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 #[derive(Debug)]
 pub struct CompiledRegex {
     nfa: Vec<NfaInstr>,
@@ -779,6 +811,10 @@ pub struct CompiledRegex {
     /// patterns over natural text). Checked with one SIMD `memmem`. Empty when ICASE, when
     /// a `literal_prefix` already drives the search, or when no >= 2-byte run exists.
     required_substring: Vec<u8>,
+    /// Precomputed exact membership automaton for closure-heavy `REG_NOSUB`
+    /// patterns whose first-byte prefilter cannot answer a positive match.
+    /// Construction is bounded; `None` preserves the existing NFA path.
+    nosub_prefilter_dfa: Option<MembershipDfa>,
 }
 
 impl CompiledRegex {
@@ -2069,6 +2105,96 @@ impl<'a> PikeVm<'a> {
         state_accepts.push(accepts);
         interner.insert(key, id);
         id
+    }
+
+    /// Build a complete immutable membership DFA once at `regcomp` time for the
+    /// bounded closure-heavy lane. States are canonical epsilon-closure PC sets;
+    /// every byte transition re-seeds PC 0, exactly matching the unanchored lazy
+    /// DFA below. Any state/work/frontier budget exhaustion returns `None`, so
+    /// regex compilation still succeeds and execution uses the existing engine.
+    fn precompute_membership_dfa(&self) -> Option<MembershipDfa> {
+        const MIN_NFA_INSTRS: usize = 16;
+        const MAX_NFA_INSTRS: usize = 256;
+        const MAX_STATES: usize = 4096;
+        const MAX_FRONTIER_PCS: usize = 65_536;
+        const MAX_PC_INSPECTIONS: usize = 1_000_000;
+
+        if !(MIN_NFA_INSTRS..=MAX_NFA_INSTRS).contains(&self.nfa.len())
+            || !self.is_pos_independent()
+        {
+            return None;
+        }
+
+        let mut scratch: Vec<Thread> = Vec::new();
+        let mut visited = vec![0u64; self.nfa.len()];
+        let mut generation = 0u64;
+        let mut interner: std::collections::HashMap<Box<[usize]>, u32> =
+            std::collections::HashMap::new();
+        let mut state_pcs: Vec<Box<[usize]>> = Vec::new();
+        let mut accepting: Vec<bool> = Vec::new();
+        let mut transitions: Vec<u16> = Vec::new();
+
+        let start = self.dfa_frontier(&[0], &mut scratch, &mut visited, &mut generation);
+        let start_id = self.dfa_intern(start, &mut interner, &mut state_pcs, &mut accepting);
+        debug_assert_eq!(start_id, 0);
+
+        let mut frontier_pcs = state_pcs[0].len();
+        let mut pc_inspections = 0usize;
+        let mut entries: Vec<usize> = Vec::new();
+        let mut state = 0usize;
+        while state < state_pcs.len() {
+            if state_pcs.len() > MAX_STATES {
+                return None;
+            }
+            let pcs = state_pcs[state].clone();
+            let row = state * 256;
+            transitions.resize(row + 256, 0);
+
+            for byte in u8::MIN..=u8::MAX {
+                // `dfa_frontier` can visit every NFA instruction while walking
+                // epsilon edges. Charge that conservative upper bound as well
+                // as the consuming frontier scan so the advertised work budget
+                // bounds the dominant closure work, not just its cheap prelude.
+                let transition_work = pcs.len().checked_add(self.nfa.len())?;
+                pc_inspections = pc_inspections.checked_add(transition_work)?;
+                if pc_inspections > MAX_PC_INSPECTIONS {
+                    return None;
+                }
+
+                entries.clear();
+                entries.push(0);
+                for &pc in pcs.iter() {
+                    if let NfaInstr::Match(mk) = &self.nfa[pc]
+                        && self.matches_byte(mk, byte)
+                    {
+                        entries.push(pc + 1);
+                    }
+                }
+
+                let frontier =
+                    self.dfa_frontier(&entries, &mut scratch, &mut visited, &mut generation);
+                let old_len = state_pcs.len();
+                let next = self.dfa_intern(
+                    frontier,
+                    &mut interner,
+                    &mut state_pcs,
+                    &mut accepting,
+                );
+                if state_pcs.len() != old_len {
+                    frontier_pcs = frontier_pcs.checked_add(state_pcs.last()?.len())?;
+                    if state_pcs.len() > MAX_STATES || frontier_pcs > MAX_FRONTIER_PCS {
+                        return None;
+                    }
+                }
+                transitions[row + usize::from(byte)] = u16::try_from(next).ok()?;
+            }
+            state += 1;
+        }
+
+        Some(MembershipDfa {
+            transitions: transitions.into_boxed_slice(),
+            accepting: accepting.into_boxed_slice(),
+        })
     }
 
     /// Lazy-DFA membership scan for position-independent patterns: does the
@@ -3725,7 +3851,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
 
     let backtrack_ast = if has_backref { Some(ast) } else { None };
 
-    Ok(Box::new(CompiledRegex {
+    let mut compiled = Box::new(CompiledRegex {
         nfa,
         backtrack_ast,
         num_groups,
@@ -3741,7 +3867,40 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         dotstar_lits,
         required_bytes,
         required_substring,
-    }))
+        nosub_prefilter_dfa: None,
+    });
+
+    // The documented closure-heavy REG_NOSUB residual is a prefilter-only
+    // pattern: negative inputs fast-reject, but positive inputs otherwise rebuild
+    // a lazy DFA/NFA frontier on every call. Move that bounded, exact membership
+    // automaton to regcomp. Every ineligible or over-budget pattern keeps the old
+    // execution path, and no offset-producing path ever consults this table.
+    if compiled.nosub
+        && compiled.backtrack_ast.is_none()
+        && compiled.prefilter.is_some()
+        && compiled.literal_prefix.is_none()
+        && compiled.anchored_literal.is_none()
+        && compiled.dotstar_lits.is_none()
+    {
+        let membership_dfa = {
+            let vm = PikeVm::new(
+                &compiled.nfa,
+                &[],
+                compiled.num_slots(),
+                0,
+                compiled.prefilter,
+                None,
+                compiled.icase,
+                false,
+                None,
+                None,
+            );
+            vm.precompute_membership_dfa()
+        };
+        compiled.nosub_prefilter_dfa = membership_dfa;
+    }
+
+    Ok(compiled)
 }
 
 /// Execute a compiled regex against input.
@@ -3835,17 +3994,13 @@ pub fn regex_is_match_bytes(compiled: &CompiledRegex, input: &[u8], eflags: i32)
         return false;
     }
 
-    // NOTE (2026-07-12, cc-regex-nosub-closure-match REJECT): a closure-heavy nosub
-    // pattern with a `prefilter` but no literal prefix (`a*a*..a*b`) loses ~12x glibc
-    // on a MATCHING short input once the required-byte fast-reject passes — it routes
-    // here to `regex_exec_byte_slots` (O(n*m) leftmost_start+run_from). Rerouting
-    // prefilter-only patterns to the exact `any_match` DFA below was byte-identical
-    // (conformance_diff_regex_nosub 8/0) but did NOT win: for a 40-byte input the
-    // lazy-DFA BUILD overhead (per-call HashMap interner + per-state frontier Vec
-    // allocations) dominates, so any_match is ~as slow as the NFA path — both fl
-    // engines are ~10x glibc on SHORT closure-heavy inputs. The real fix is reducing
-    // the DFA-build allocation (reusable interner/scratch) or precompiling it onto
-    // CompiledRegex — deeper, deferred. Kept the original routing.
+    if let Some(dfa) = &compiled.nosub_prefilter_dfa {
+        return dfa.is_match(input);
+    }
+
+    // Patterns outside the bounded precompiled-DFA lane keep the established
+    // routing: backreferences and literal/prefilter searches may need captures,
+    // offsets, or specialized SIMD jumps that a membership table cannot provide.
     if compiled.backtrack_ast.is_some()
         || compiled.literal_prefix.is_some()
         || compiled.prefilter.is_some()
@@ -4341,6 +4496,39 @@ mod tests {
                 input.len()
             );
         }
+    }
+
+    #[test]
+    fn nosub_prefilter_dfa_preserves_closure_membership() {
+        let flags = REG_EXTENDED | REG_NOSUB;
+        let matching = regex_compile(b"a*a*a*a*a*a*a*a*b", flags).unwrap();
+        assert!(matching.nosub_prefilter_dfa.is_some());
+        let mut no_matches: [RegMatch; 0] = [];
+        assert_eq!(
+            regex_exec(
+                &matching,
+                b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
+                &mut no_matches,
+                0,
+            ),
+            0
+        );
+
+        // Both mandatory bytes are present, so the required-byte reject cannot
+        // answer this case; the cached DFA must prove the ordering mismatch.
+        let nonmatching = regex_compile(b"a*a*a*a*a*a*a*a*ab", flags).unwrap();
+        assert!(nonmatching.nosub_prefilter_dfa.is_some());
+        assert_eq!(
+            regex_exec(&nonmatching, b"ba", &mut no_matches, 0),
+            REG_NOMATCH
+        );
+
+        // The compile budget is a performance guard, never a new rejection:
+        // an oversized but valid pattern keeps the established engine.
+        let oversized_pattern = format!("{}b", "a?".repeat(130));
+        let oversized = regex_compile(oversized_pattern.as_bytes(), flags).unwrap();
+        assert!(oversized.nosub_prefilter_dfa.is_none());
+        assert_eq!(regex_exec(&oversized, b"b", &mut no_matches, 0), 0);
     }
 
     #[test]
