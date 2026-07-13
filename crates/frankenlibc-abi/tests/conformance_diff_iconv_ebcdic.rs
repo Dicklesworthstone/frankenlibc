@@ -276,3 +276,71 @@ fn more_ebcdic_pages_match_glibc() {
         }
     }
 }
+
+/// Whole-STRING UTF-8 -> CP037 encode vs glibc. The per-cp tests above only feed
+/// 1-char sources, so they never exercise the 16-wide SIMD ASCII-run gather added
+/// to the UTF-8 -> single-byte fast path (it needs a >=16-byte window). These
+/// multi-char corpora do: a long pure-ASCII run (steady-state gather), ASCII
+/// interleaved with 2-byte Latin-1 (gather breaks mid-window to the scalar path),
+/// and a run containing an unrepresentable position, all compared byte-for-byte.
+fn fl_encode_str(name: &str, src: &[u8]) -> Option<Vec<u8>> {
+    let cn = CString::new(name).unwrap();
+    let cd = unsafe { fl::iconv_open(cn.as_ptr(), c"UTF-8".as_ptr()) };
+    assert!(cd as usize != INVALID && !cd.is_null());
+    let mut buf = src.to_vec();
+    let mut out = vec![0u8; src.len() * 4 + 16];
+    let mut ip = buf.as_mut_ptr() as *mut c_char;
+    let mut il = buf.len();
+    let mut op = out.as_mut_ptr() as *mut c_char;
+    let mut ol = out.len();
+    let r = unsafe { fl::iconv(cd, &mut ip, &mut il, &mut op, &mut ol) };
+    unsafe { fl::iconv_close(cd) };
+    (r != INVALID && il == 0).then(|| out[..out.len() - ol].to_vec())
+}
+fn g_encode_str(gg: &G, name: &str, src: &[u8]) -> Option<Vec<u8>> {
+    let cn = CString::new(name).unwrap();
+    let cd = (gg.open)(cn.as_ptr(), c"UTF-8".as_ptr());
+    assert!(cd as usize != INVALID);
+    let mut buf = src.to_vec();
+    let mut out = vec![0u8; src.len() * 4 + 16];
+    let mut ip = buf.as_mut_ptr() as *mut c_char;
+    let mut il = buf.len();
+    let mut op = out.as_mut_ptr() as *mut c_char;
+    let mut ol = out.len();
+    let r = (gg.conv)(cd, &mut ip, &mut il, &mut op, &mut ol);
+    (gg.close)(cd);
+    (r != INVALID && il == 0).then(|| out[..out.len() - ol].to_vec())
+}
+
+#[test]
+fn cp037_encode_whole_strings_match_glibc() {
+    let gg = g();
+    // Long pure ASCII (steady-state 16-wide gather + tail).
+    let long_ascii: Vec<u8> = b"The quick brown fox jumps over the lazy dog 0123456789, "
+        .iter()
+        .copied()
+        .cycle()
+        .take(1000)
+        .collect();
+    // ASCII interleaved with 2-byte Latin-1 (gather breaks mid-window).
+    let mut mixed = Vec::new();
+    for i in 0..500u32 {
+        mixed.push(b'A' + (i % 26) as u8);
+        let cp = 0x00A0 + (i % 0x40); // U+00A0..=U+00DF, 2-byte UTF-8, CP037-encodable
+        let mut b = [0u8; 4];
+        mixed.extend_from_slice(char::from_u32(cp).unwrap().encode_utf8(&mut b).as_bytes());
+    }
+    // ASCII including a NUL (U+0000 -> EBCDIC 0x00, the page-0 zero-slot break case).
+    let with_nul: Vec<u8> = (0..64u8).map(|i| i % 0x60).collect();
+    for (label, src) in [
+        ("long_ascii", &long_ascii),
+        ("mixed", &mixed),
+        ("with_nul", &with_nul),
+    ] {
+        assert_eq!(
+            fl_encode_str("CP037", src),
+            g_encode_str(&gg, "CP037", src),
+            "CP037 whole-string encode differs from glibc: {label}"
+        );
+    }
+}

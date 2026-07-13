@@ -449,6 +449,17 @@ fn main() {
     let cp037_bytes = build_sbcs_source(b"CP037\0", 512);
     let cp037_utf8 = host_from(b"CP037\0", &cp037_bytes);
     run_conv(c, "utf8_to_cp037", b"CP037\0", b"UTF-8\0", &cp037_utf8);
+    //   utf8_to_cp037_text: realistic ASCII-heavy English text -> CP037 (the dominant
+    //   real EBCDIC-encode workload; the enumerate-all-bytes source above interleaves
+    //   1-byte ASCII with 2-byte Latin-1 so its ASCII runs are short). Exercises the
+    //   SIMD ASCII-run gather for low-remapping single-byte targets.
+    let cp037_text: Vec<u8> = b"The quick brown fox jumps over the lazy dog 0123456789, "
+        .iter()
+        .copied()
+        .cycle()
+        .take(1024)
+        .collect();
+    run_conv(c, "utf8_to_cp037_text", b"CP037\0", b"UTF-8\0", &cp037_text);
     //   utf8_to_cp1258: encode_sbcs_mb Vietnamese (precomposed -> base+combining decompose).
     let cp1258_bytes = build_sbcs_source(b"CP1258\0", 512);
     let cp1258_utf8 = host_from(b"CP1258\0", &cp1258_bytes);

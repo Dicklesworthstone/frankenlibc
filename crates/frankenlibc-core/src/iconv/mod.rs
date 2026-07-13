@@ -47848,6 +47848,44 @@ pub fn iconv(
             && !cd.emit_bom
             && let Some(rev) = cd.to_reverse.as_ref()
         {
+            // SIMD ASCII run (low-remapping targets only, i.e. EBCDIC / ISO-646
+            // national variants — `ascii_low` targets map ASCII to itself and are
+            // served by the ASCII bulk-copy path above). Their ASCII code points
+            // (cp == byte < 0x80) all live in reverse page 0, so a 16-wide gather
+            // over that page maps 16 input bytes to 16 output bytes at once — the
+            // ASCII-heavy encode the scalar loop below does one char at a time
+            // (EBCDIC text is dominated by ASCII letters/digits). A non-ASCII byte,
+            // a full window, or an unrepresentable slot (output byte 0: U+0000, or
+            // an ISO-646 remapped-away position) breaks to the scalar/generic body
+            // for the exact EILSEQ/E2BIG ordering. Byte-for-byte isomorphic to
+            // `rev.lookup` (which reads the same page 0 for cp < 0x80).
+            if !rev.ascii_low {
+                let slot0 = rev.direct_page_slot[0];
+                if slot0 != REVERSE_DIRECT_MISSING {
+                    let page0 = &rev.direct_page_byte[slot0 as usize];
+                    while in_pos + 16 <= input.len()
+                        && out_pos + 16 <= outbuf.len()
+                        && input[in_pos] < 0x80
+                    {
+                        let bytes: [u8; 16] = input[in_pos..in_pos + 16].try_into().unwrap();
+                        let v = Simd::<u8, 16>::from_array(bytes);
+                        if !v.simd_lt(Simd::splat(0x80)).all() {
+                            break; // a non-ASCII byte in the window — scalar path handles it
+                        }
+                        let mapped =
+                            Simd::<u8, 16>::gather_or(page0, v.cast::<usize>(), Simd::splat(0));
+                        if mapped.simd_eq(Simd::splat(0)).any() {
+                            break; // unrepresentable ASCII cp (page byte 0) — scalar/generic
+                        }
+                        mapped.copy_to_slice(&mut outbuf[out_pos..out_pos + 16]);
+                        in_pos += 16;
+                        out_pos += 16;
+                    }
+                    if in_pos >= input.len() {
+                        break;
+                    }
+                }
+            }
             // SIMD 2-byte run: decode 8 clean 2-byte chars, reverse-map all 8,
             // and commit the window only if every one is representable.
             while in_pos + 16 <= input.len()
