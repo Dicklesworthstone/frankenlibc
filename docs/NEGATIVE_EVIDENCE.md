@@ -18270,3 +18270,22 @@ getdents buffer, so both buffered and refill return paths perform the same copy 
   `readdir_r`, `readdir64`, and reserved aliases inherit the parser improvement through delegation. Do not retry
   the rejected one-entry handle cache or claim the syscall/refill residual is closed; any follow-on needs
   separate evidence for TLS zero/copy, state locking, or refill behavior.
+
+## cc-iso2022jp-jis0208-table-2026-07-13 — REJECT (marginal 14%, poor ROI; does not clear ledger)
+
+Follow-on attempt to close the residual on `iso2022jp_to_utf8` after the single-pass win landed it at
+1.55x (commit 44d1af708, 5.67x -> 1.55x). Hypothesis: the residual is the per-char `decode_eucjp` call on
+the all-double-byte set-2 (JIS X 0208) hot path — it builds a `[b|0x80,b1|0x80]` slice and re-runs
+`char::from_u32` in `emit_utf8_cp`. FIX TRIED: a `(b<<8)|b1 -> packed-UTF-8-triple` direct table
+(`iso2022jp_0208_bmp3_utf8_direct`, `[u32; 0x8000]`, built FROM `decode_eucjp` so byte-identical; sub-U+0800
+symbol cells + invalid pairs stay 0 and fall back to the scalar path) hit in the set-2 branch: one lookup +
+`write_packed_utf8_triple` instead of the slice-build/decode/re-encode.
+- **MEASURED (iconv_glibc_bench, all-Hiragana source):** fl **801ns -> 687ns** (glibc ~501-516ns), i.e.
+  **1.55x -> 1.37x** — only ~14% faster and STILL a net loss. The `decode_eucjp` call was NOT the dominant
+  residual; what's left is fixed per-char loop overhead (the `0x1B` escape check + `match set` + two
+  `0x21..=0x7E` range tests + bounds checks) that glibc's mode-specialized inner loop avoids. The 32KB static
+  table + 8836-entry one-time build cost + ~40 LOC do not justify a 14% shave that leaves the codec losing.
+- **DISPOSITION:** reverted (stashed `stash@{0}` "iso2022jp JIS0208 direct table (marginal 14%, reverted)"),
+  working tree kept at the committed single-pass. The remaining ~1.4x is a per-char-loop-shape floor; closing
+  it would need a mode-specialized loop (hoist the escape/set dispatch out of the per-char path), a separate,
+  riskier change — not attempted here.
