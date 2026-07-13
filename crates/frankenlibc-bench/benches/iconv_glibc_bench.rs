@@ -358,12 +358,17 @@ fn main() {
     let cp932_src = host_to(b"CP932\0", &jp);
     run_conv(c, "cp932_to_utf8", b"UTF-8\0", b"CP932\0", &cp932_src);
     // EUC-JP (Japanese) -> UTF-8: probe glibc speed + source validity (Hiragana is 2-byte).
-    let eucjp_src = host_to(b"EUC-JP\0", &jp);
+    // `jp` (U+3041 + k%0x5E) cycles into the UNASSIGNED U+3097/U+3098, so host_to(EUC-JP,jp)
+    // TRUNCATES there (~86 chars) and yields a bogus tiny-source ratio. Use a fully-assigned
+    // Hiragana range (U+3041..=U+3096, 86 cps, all JIS X 0208) for an honest full-length source.
+    let jp_full_cps: Vec<u32> = (0..512u32).map(|k| 0x3041 + (k % 86)).collect();
+    let jp_full = u8enc(&jp_full_cps);
+    let eucjp_src = host_to(b"EUC-JP\0", &jp_full);
     run_conv(c, "eucjp_to_utf8", b"UTF-8\0", b"EUC-JP\0", &eucjp_src);
     // ENCODE direction: UTF-8 -> EUC-JP (Japanese). `jp` is Hiragana (2-byte JIS X 0208 in EUC-JP).
     run_conv(c, "utf8_to_eucjp", b"EUC-JP\0", b"UTF-8\0", &jp);
     // EUC-JP-MS (MS EUC-JP variant, same SS structure) -> UTF-8: gather generalization.
-    let eucjpms_src = host_to(b"EUC-JP-MS\0", &jp);
+    let eucjpms_src = host_to(b"EUC-JP-MS\0", &jp_full);
     run_conv(
         c,
         "eucjpms_to_utf8",

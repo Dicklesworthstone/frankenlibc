@@ -40543,6 +40543,25 @@ fn euctw_bmp3_utf8_direct() -> &'static [u32] {
     DIRECT.get_or_init(|| build_dbcs_bmp3_utf8_direct(&euctw_tables::EUC_TW_DBCS2))
 }
 
+/// Pre-encoded UTF-8 for EUC-JP's 2-byte (JIS X 0208 plane-1) cells that map to a BMP
+/// code point. EUC-JP was in the SIMD DBCS gather, but `vpgatherdd`'s latency made it
+/// 1.47x SLOWER than glibc's lean EUC-JP scalar decode (while the gather still beats
+/// glibc's slower Cp932/GB2312). Routing EUC-JP through `emit_dbcs2_bmp3_utf8_run`
+/// instead (a direct table hit + triple write, no gather) matches Cp932/EUC-TW.
+/// The SS2 (`0x8E`) / SS3 (`0x8F`) single-shift forms, single bytes, and non-BMP cells
+/// are absent (`packed==0`) and fall through to the per-char decoder — byte-identical.
+fn eucjp_bmp3_utf8_direct() -> &'static [u32] {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    DIRECT.get_or_init(|| build_dbcs_bmp3_utf8_direct(&cjk_tables::EUC_JP_DBCS2))
+}
+
+/// Pre-encoded UTF-8 for EUC-JP-MS's 2-byte plane-1 cells (same rationale as
+/// [`eucjp_bmp3_utf8_direct`]; EUC-JP-MS measured 1.27x slower through the gather).
+fn eucjpms_bmp3_utf8_direct() -> &'static [u32] {
+    static DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    DIRECT.get_or_init(|| build_dbcs_bmp3_utf8_direct(&euc_jp_ms_tables::EUC_JP_MS_DBCS2))
+}
+
 fn decode_cp932(input: &[u8]) -> Result<(char, usize), DecodeError> {
     let direct = cp932_decode_direct();
     decode_dbcs2(
@@ -47880,6 +47899,24 @@ pub fn iconv(
                     outbuf,
                     &mut out_pos,
                     euctw_bmp3_utf8_direct(),
+                ),
+                // EUC-JP / EUC-JP-MS: in the SIMD gather, but vpgatherdd latency made them
+                // 1.47x / 1.27x slower than glibc's lean scalar EUC-JP decode. The scalar run
+                // (direct table + triple write) is faster for the plain 2-byte JIS X 0208 run;
+                // SS2/SS3/single-byte/non-BMP fall through (packed==0) — same as Cp932/EUC-TW.
+                Encoding::EucJp => emit_dbcs2_bmp3_utf8_run(
+                    input,
+                    &mut in_pos,
+                    outbuf,
+                    &mut out_pos,
+                    eucjp_bmp3_utf8_direct(),
+                ),
+                Encoding::EucJpMs => emit_dbcs2_bmp3_utf8_run(
+                    input,
+                    &mut in_pos,
+                    outbuf,
+                    &mut out_pos,
+                    eucjpms_bmp3_utf8_direct(),
                 ),
                 _ => {}
             }
