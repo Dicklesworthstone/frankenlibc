@@ -44931,6 +44931,83 @@ fn ibm_ebcdic_decode(
     t: &EbcdicTables,
 ) -> Result<IconvResult, IconvError> {
     let direct = t.dbcs_direct;
+    // Fast path (to == UTF-8): single-pass decode+emit straight into outbuf — no
+    // intermediate Vec<char>/Vec<u8> (the two heap allocs + double iteration that left
+    // IBM EBCDIC -> UTF-8 ~6.5x slower than glibc). Mirrors the two-pass machine
+    // byte-for-byte: the SO/SI `shifted` state, single-byte `t.sbcs` (invalid cp<0 =>
+    // EILSEQ, else char::from_u32(..).unwrap_or(FFFD)), the DBCS multi-cp cells, and the
+    // DBCS `direct[key]` cell (cp==0 OR char::from_u32==None => EILSEQ — note the DBCS
+    // path errors on an unmappable scalar where the single-byte path folds to U+FFFD).
+    // Gated on outbuf holding the whole worst-case output (<=4 UTF-8 bytes per source
+    // byte); cd.ibm930_in_shifted is saved on every return exactly as the two-pass does.
+    if cd.to == Encoding::Utf8 && outbuf.len() >= input.len().saturating_mul(4) {
+        let mut shifted = cd.ibm930_in_shifted;
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut consumed_end = 0usize;
+        let mut err: Option<i32> = None;
+        while i < input.len() {
+            let b = input[i];
+            if b == 0x0E {
+                shifted = true;
+                i += 1;
+                consumed_end = i;
+                continue;
+            }
+            if b == 0x0F {
+                shifted = false;
+                i += 1;
+                consumed_end = i;
+                continue;
+            }
+            if shifted {
+                if i + 1 >= input.len() {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let key = ((b as u16) << 8) | input[i + 1] as u16;
+                if let Some(&(_, cps)) = t.dbcs_multi.iter().find(|&&(k, _)| k == key) {
+                    for &cp in cps {
+                        o += emit_utf8_cp(outbuf, o, cp);
+                    }
+                    i += 2;
+                    consumed_end = i;
+                    continue;
+                }
+                let cp = direct[key as usize];
+                if cp == 0 || char::from_u32(cp).is_none() {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                o += emit_utf8_cp(outbuf, o, cp);
+                i += 2;
+                consumed_end = i;
+            } else {
+                let cp = t.sbcs[b as usize];
+                if cp < 0 {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                o += emit_utf8_cp(outbuf, o, cp as u32);
+                i += 1;
+                consumed_end = i;
+            }
+        }
+        cd.ibm930_in_shifted = shifted;
+        return match err {
+            Some(code) => Err(IconvError {
+                code,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+            None => Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+        };
+    }
+
     let mut chars: Vec<char> = Vec::new();
     let mut shifted = cd.ibm930_in_shifted;
     let mut i = 0usize;

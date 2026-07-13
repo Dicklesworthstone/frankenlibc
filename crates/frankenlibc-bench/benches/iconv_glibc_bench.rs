@@ -355,6 +355,36 @@ fn main() {
         unsafe { (host.close)(cd) };
         out
     };
+    // Single-byte-source variant: enumerate 0x00..=0xFF, keep the bytes glibc decodes
+    // cleanly (1 byte in, >=1 byte out), repeat to `target`. For codecs (TSCII, EBCDIC)
+    // where a contiguous-Unicode-range host_to truncates on the first unencodable cp,
+    // giving a bogus tiny-source ratio.
+    let build_sbcs_source = |codec: &[u8], target: usize| -> Vec<u8> {
+        let cd = unsafe { (host.open)(b"UTF-8\0".as_ptr().cast(), codec.as_ptr().cast()) };
+        assert!(cd as isize != -1 && !cd.is_null(), "build_sbcs_source open failed");
+        let mut valid = Vec::new();
+        for bv in 0u16..=0xFF {
+            let b = bv as u8;
+            let src = [b];
+            let mut dst = [0u8; 8];
+            let mut inp = src.as_ptr() as *mut c_char;
+            let mut inl = 1usize;
+            let mut outp = dst.as_mut_ptr() as *mut c_char;
+            let mut outl = 8usize;
+            let r = unsafe { (host.convert)(cd, &mut inp, &mut inl, &mut outp, &mut outl) };
+            if r != usize::MAX && inl == 0 && (8 - outl) > 0 {
+                valid.push(b);
+            }
+        }
+        unsafe { (host.close)(cd) };
+        let mut out = Vec::with_capacity(target);
+        if !valid.is_empty() {
+            for i in 0..target {
+                out.push(valid[i % valid.len()]);
+            }
+        }
+        out
+    };
     let cp932_src = host_to(b"CP932\0", &jp);
     run_conv(c, "cp932_to_utf8", b"UTF-8\0", b"CP932\0", &cp932_src);
     // EUC-JP (Japanese) -> UTF-8: probe glibc speed + source validity (Hiragana is 2-byte).
@@ -437,7 +467,7 @@ fn main() {
     let iso2022jp3_src = host_to(b"ISO-2022-JP-3\0", &jp_full);
     run_conv(c, "iso2022jp3_to_utf8", b"UTF-8\0", b"ISO-2022-JP-3\0", &iso2022jp3_src);
     // IBM930 (EBCDIC Japanese Katakana+Kanji, SO/SI DBCS) -> UTF-8. cjk = U+4E00 Kanji.
-    let ibm930_src = host_to(b"IBM930\0", &cjk);
+    let ibm930_src = build_sbcs_source(b"IBM930\0", 512);
     run_conv(c, "ibm930_to_utf8", b"UTF-8\0", b"IBM930\0", &ibm930_src);
     // ISO-2022-KR uses KSC 5601 = the EUC-KR charset. Build a KSC-encodable UTF-8 corpus
     // by round-tripping valid EUC-KR Wansung Hangul (host_from), so host_to yields a full
@@ -452,10 +482,9 @@ fn main() {
     let gb_utf8 = host_from(b"GB2312\0", &gb2312_valid);
     let iso2022cn_src = host_to(b"ISO-2022-CN\0", &gb_utf8);
     run_conv(c, "iso2022cn_to_utf8", b"UTF-8\0", b"ISO-2022-CN\0", &iso2022cn_src);
-    // TSCII (Tamil, visual-order maximal-munch decode). Tamil block U+0B80..U+0BFF.
-    let tamil_cps: Vec<u32> = (0..512u32).map(|k| 0x0B85 + (k % 0x50)).collect();
-    let tamil = u8enc(&tamil_cps);
-    let tscii_src = host_to(b"TSCII\0", &tamil);
+    // TSCII (Tamil, visual-order maximal-munch decode): honest single-byte source
+    // (a contiguous Tamil host_to truncated on unassigned/non-TSCII cps).
+    let tscii_src = build_sbcs_source(b"TSCII\0", 512);
     run_conv(c, "tscii_to_utf8", b"UTF-8\0", b"TSCII\0", &tscii_src);
     // ENCODE direction: UTF-8 -> BIG5. Source = big5_src decoded back to UTF-8 (host BIG5->UTF-8),
     // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
