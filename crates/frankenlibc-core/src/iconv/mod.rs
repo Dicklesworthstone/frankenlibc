@@ -40194,10 +40194,34 @@ fn decode_euctw(input: &[u8]) -> Result<(char, usize), DecodeError> {
 /// plane 15 maps into CJK Ext B). `packed < 0x100` is 1 byte, `< 0x10000` is
 /// 2 bytes `(b0<<8)|b1`, otherwise a 4-byte SS2 form whose top byte is `0x8E`.
 fn encode_euctw(ch: char, out: &mut [u8]) -> Result<usize, EncodeError> {
+    // O(1) BMP reverse index — was a binary search over 55,569 sorted entries
+    // (~16 cache-missing probes/char). `packed + 1` is stored so 0 = "not in the
+    // BMP table"; the BMP slice is exhaustive for cp < 0x10000, so a miss there is
+    // Unrepresentable. Astral CNS-plane-15 code points (CJK Ext B, cp >= 0x10000,
+    // rare) keep the binary-search fallback since the table stays BMP-sized. Same
+    // idiom as the EUC-JP encoder above; byte-identical results.
+    static ENC_DIRECT: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    let direct = ENC_DIRECT.get_or_init(|| {
+        let mut t = vec![0u32; 0x10000];
+        for &(cp, packed) in euctw_tables::EUC_TW_ENC.iter() {
+            if cp < 0x10000 {
+                t[cp as usize] = packed + 1;
+            }
+        }
+        t
+    });
     let cp = ch as u32;
-    let packed = match euctw_tables::EUC_TW_ENC.binary_search_by_key(&cp, |&(c, _)| c) {
-        Ok(i) => euctw_tables::EUC_TW_ENC[i].1,
-        Err(_) => return Err(EncodeError::Unrepresentable),
+    let packed = if cp < 0x10000 {
+        let d = direct[cp as usize];
+        if d == 0 {
+            return Err(EncodeError::Unrepresentable);
+        }
+        d - 1
+    } else {
+        match euctw_tables::EUC_TW_ENC.binary_search_by_key(&cp, |&(c, _)| c) {
+            Ok(i) => euctw_tables::EUC_TW_ENC[i].1,
+            Err(_) => return Err(EncodeError::Unrepresentable),
+        }
     };
     if packed < 0x100 {
         if out.is_empty() {
