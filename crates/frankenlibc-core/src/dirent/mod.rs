@@ -6,7 +6,7 @@
 
 /// A single directory entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DirEntry {
+pub struct DirEntry<'a> {
     /// Inode number.
     pub d_ino: u64,
     /// Offset to the next `linux_dirent64` structure.
@@ -14,7 +14,7 @@ pub struct DirEntry {
     /// File type (`DT_REG`, `DT_DIR`, etc.).
     pub d_type: u8,
     /// Entry name (without NUL terminator).
-    pub d_name: Vec<u8>,
+    pub d_name: &'a [u8],
 }
 
 /// Parse a single `linux_dirent64` record from a raw buffer.
@@ -29,7 +29,7 @@ pub struct DirEntry {
 /// ```
 ///
 /// Returns `Some((entry, next_offset))` on success, `None` if buffer too small.
-pub fn parse_dirent64(buffer: &[u8], offset: usize) -> Option<(DirEntry, usize)> {
+pub fn parse_dirent64(buffer: &[u8], offset: usize) -> Option<(DirEntry<'_>, usize)> {
     // Minimum header: 8 + 8 + 2 + 1 + 1 = 20 bytes (1 byte name + NUL)
     if offset + 20 > buffer.len() {
         return None;
@@ -52,7 +52,7 @@ pub fn parse_dirent64(buffer: &[u8], offset: usize) -> Option<(DirEntry, usize)>
         .iter()
         .position(|&b| b == 0)
         .unwrap_or(name_area.len());
-    let d_name = name_area[..name_len].to_vec();
+    let d_name = &name_area[..name_len];
 
     Some((
         DirEntry {
@@ -91,6 +91,7 @@ mod tests {
         assert_eq!(entry.d_off, 100);
         assert_eq!(entry.d_type, 8);
         assert_eq!(entry.d_name, b"hello.txt");
+        assert!(std::ptr::eq(entry.d_name.as_ptr(), buf[19..].as_ptr()));
         assert_eq!(next, buf.len());
     }
 

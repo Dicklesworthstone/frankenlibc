@@ -18242,3 +18242,31 @@ Effective precision 1..=17 now reuses the core `gcvt` sink; precision 18..=512 r
   keeps `render_pct_g` because the fixed scratch is certified only through `DBL_DECIMAL_DIG`; some underlying
   exact-small/dyadic conversion branches may still allocate, and shared non-integral flt2dec cost remains the
   deeper floor. Do not fold `gcvt`, `qecvt`, or `qfcvt` into this result; each was closed separately.
+
+## cod-readdir-borrowed-name-2026-07-13 — WIN (1.38x faster; glibc ratio 1.66x -> 1.22x)
+
+Followed the parse/copy residual left open by `cod-readdir-tls-state-cache-2026-07-12` without retrying its
+rejected handle cache. `parse_dirent64` allocated a `Vec` for every returned `d_name`, and `readdir` immediately
+copied that name into its existing TLS `dirent`. `DirEntry` now borrows the name bytes from the stream's locked
+getdents buffer, so both buffered and refill return paths perform the same copy without per-entry ownership.
+- **STRICT REMOTE SAME-WORKER A/B (`vmi1227854`):** the identical `readdir_drain` Criterion row moved from
+  **[27.744, 28.959, 30.028] us -> [20.651, 21.026, 21.423] us = 1.38x faster / 27.4% lower** at the
+  interval center. Criterion's paired change interval was wholly negative at **[-27.145%, -21.639%]**,
+  `p < 0.05`. The host-glibc control stayed stable (**17.402 -> 17.190 us**, `p=0.23`), while FrankenLibC/host
+  narrowed from **1.66x -> 1.22x**, a 1.36x host-normalized improvement.
+- **CORRECTNESS / PROOF:** the stream mutex pins the backing `Vec` until the borrowed raw name has been copied
+  into TLS. Inode, offset, type, kernel `d_reclen`, entry ordering, raw/non-UTF8 bytes, missing-NUL acceptance,
+  TLS zero/truncate/NUL behavior, stream-position updates, and telemetry ordering are unchanged. A core oracle
+  additionally proves the parsed name aliases the input buffer. Strict remote release gates passed **5/5 core
+  parser tests**, **18/18 live-glibc dirent differentials with 0 divergences**, and **35/35 ABI lifecycle,
+  concurrency, seek/rewind, reentrant, 64-bit, and reserved-alias tests**: **58/58 total**.
+- **COMMANDS:** benchmark: `RCH_WORKER=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u
+  CARGO_TARGET_DIR rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench
+  --bench readdir_glibc_bench -- --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`; focused
+  tests used the same fail-closed prefix for core `dirent::tests` and the ABI `dirent_abi_test` plus
+  `conformance_diff_dirent` targets (the latter ran remotely on `vmi1153651` after the preferred worker filled).
+- **BOUNDARY:** this closes only the per-entry owned-name allocation. The global handle registry, per-stream
+  mutex, 4096-byte `getdents64` refill, TLS result object, whole-struct zeroing, and name copy remain unchanged.
+  `readdir_r`, `readdir64`, and reserved aliases inherit the parser improvement through delegation. Do not retry
+  the rejected one-entry handle cache or claim the syscall/refill residual is closed; any follow-on needs
+  separate evidence for TLS zero/copy, state locking, or refill behavior.

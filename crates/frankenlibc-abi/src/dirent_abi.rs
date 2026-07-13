@@ -61,7 +61,11 @@ pub struct DIR {
 
 const GETDENTS_BUF_SIZE: usize = 4096;
 
-fn write_dirent(dst: *mut libc::dirent, entry: &dirent_core::DirEntry, d_reclen: libc::c_ushort) {
+fn write_dirent(
+    dst: *mut libc::dirent,
+    entry: &dirent_core::DirEntry<'_>,
+    d_reclen: libc::c_ushort,
+) {
     // SAFETY: caller provides a valid writable dirent slot.
     unsafe {
         std::ptr::write_bytes(dst, 0, 1);
@@ -201,17 +205,27 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
     };
     let mut state = lock_state(&state);
 
-    if state.offset < state.valid_bytes
-        && let Some((entry, next_off)) =
-            dirent_core::parse_dirent64(&state.buffer[..state.valid_bytes], state.offset)
     {
-        let d_reclen = (next_off - state.offset) as libc::c_ushort;
-        state.last_d_off = entry.d_off;
-        state.offset = next_off;
-        return with_readdir_entry(|ptr| {
-            write_dirent(ptr, &entry, d_reclen);
-            ptr
-        });
+        let DirState {
+            buffer,
+            offset,
+            valid_bytes,
+            last_d_off,
+            ..
+        } = &mut *state;
+        let current_offset = *offset;
+        if current_offset < *valid_bytes
+            && let Some((entry, next_off)) =
+                dirent_core::parse_dirent64(&buffer[..*valid_bytes], current_offset)
+        {
+            let d_reclen = (next_off - current_offset) as libc::c_ushort;
+            *last_d_off = entry.d_off;
+            *offset = next_off;
+            return with_readdir_entry(|ptr| {
+                write_dirent(ptr, &entry, d_reclen);
+                ptr
+            });
+        }
     }
 
     if state.eof {
@@ -239,17 +253,26 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
     state.valid_bytes = nread;
     state.offset = 0;
 
-    if let Some((entry, next_off)) =
-        dirent_core::parse_dirent64(&state.buffer[..state.valid_bytes], 0)
     {
-        let d_reclen = next_off as libc::c_ushort;
-        state.last_d_off = entry.d_off;
-        state.offset = next_off;
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
-        return with_readdir_entry(|ptr| {
-            write_dirent(ptr, &entry, d_reclen);
-            ptr
-        });
+        let DirState {
+            buffer,
+            offset,
+            valid_bytes,
+            last_d_off,
+            ..
+        } = &mut *state;
+        if let Some((entry, next_off)) =
+            dirent_core::parse_dirent64(&buffer[..*valid_bytes], 0)
+        {
+            let d_reclen = next_off as libc::c_ushort;
+            *last_d_off = entry.d_off;
+            *offset = next_off;
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            return with_readdir_entry(|ptr| {
+                write_dirent(ptr, &entry, d_reclen);
+                ptr
+            });
+        }
     }
 
     unsafe { set_abi_errno(errno::EIO) };
