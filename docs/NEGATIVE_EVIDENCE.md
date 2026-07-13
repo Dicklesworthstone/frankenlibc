@@ -18144,3 +18144,28 @@ frontier vectors, and transitions on every `regexec`.
 - **BOUNDARY:** keep captures, offsets, anchors/assertions, backreferences, literal-specialized patterns,
   small NFAs, and every over-budget compile on the existing engines. Do not retry a per-call lazy-DFA build;
   the measured win comes from paying bounded determinization once and sharing the immutable table.
+
+## cod-readdir-tls-state-cache-2026-07-12 — REJECT (paired no-change; code reverted)
+
+Followed the measured `readdir_drain` residual rather than retrying the ledger-closed string/iconv/stdio
+families. The candidate memoized the most recent immutable `DIR` handle-to-state mapping in a one-entry TLS
+cache, removing the global `DIR_REGISTRY` mutex and hash lookup from consecutive buffered `readdir` calls.
+The per-stream mutex, kernel refill, parser, entry order, and TLS result buffer were unchanged.
+- **STRICT REMOTE SAME-WORKER A/B (`vmi1227854`, identical Criterion command):** baseline FrankenLibC was
+  **[25.770, 26.561, 27.392] us** and host glibc **[15.804, 16.283, 16.801] us**. Candidate FrankenLibC was
+  **[24.358, 25.255, 26.091] us** and host glibc **[15.788, 16.194, 16.691] us**. The interval centers suggest
+  only **1.052x / 4.9%** self improvement and move the host-normalized ratio **1.631x -> 1.560x**. Criterion's
+  paired change interval was **[-5.09%, +3.03%]**, `p=0.62`, explicitly **No change in performance detected**;
+  this does not clear the null/noise floor.
+- **CANDIDATE SAFETY SHAPE:** a cached `Arc` released the TLS borrow before locking stream state; `closedir`
+  removed the registry entry, then set a `closed` flag under the same stream mutex before `sys_close`, so a
+  cross-thread cached reference could only linearize before close or return `EBADF`. The slot was bounded to
+  one state per thread and feature-gated through `OwnedTlsCache` for the standalone TLS-removal build. The
+  benchmark's preflight confirmed identical directory entry counts and the release candidate compiled.
+- **DECISION:** reverted all source and test changes; ledger only. The global registry lookup is not a dominant
+  enough part of this workload to justify new TLS state, an `Arc` retention boundary, and close-race machinery.
+  Do not retry a one-entry handle lookup cache alone. Any further `readdir` effort needs fresh evidence against
+  the retained per-state mutex, dirent parse/copy, or getdents refill costs.
+- **COMMAND:** `RCH_WORKER=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR
+  rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench
+  readdir_glibc_bench -- --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`.
