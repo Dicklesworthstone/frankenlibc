@@ -82,7 +82,10 @@ unsafe fn convert_once(f: IconvFn, cd: *mut c_void, src: &[u8], dst: &mut [u8]) 
 
 fn run_conv(_c: &mut Bencher, conv: &str, to: &[u8], from: &[u8], src: &[u8]) {
     let host = host_iconv();
-    let mut dst = vec![0u8; src.len() * 4 + 16];
+    // *12 (not *4): TSCII decodes one byte to up to 4 Tamil scalars = 12 UTF-8 bytes,
+    // so the tscii single-pass fast path needs outbuf >= input*12. Harmless for the
+    // other codecs (bigger scratch, same written region).
+    let mut dst = vec![0u8; src.len() * 12 + 16];
 
     // Iteration count scaled to keep each sample ~cheap even for the catastrophic converters.
     const ITERS: u64 = 200;

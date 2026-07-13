@@ -45589,6 +45589,120 @@ fn tscii_decode(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Fast path (to == UTF-8): single-pass decode+emit straight into outbuf — no
+    // intermediate Vec<char>/Vec<u8> (the two heap allocs + double iteration that left
+    // TSCII -> UTF-8 ~6.2x slower than glibc). The visual-order reorder (the pending /
+    // bit3 buffer) produces `chars` in OUTPUT order, so emitting each with emit_utf8_cp
+    // in that same order is byte-identical to push()+encode_char(Utf8). Gated on outbuf
+    // holding the whole worst-case output (a byte decodes to <=4 Tamil BMP scalars = 12
+    // UTF-8 bytes; plus the one end-of-input pending flush) so E2BIG is unreachable. TSCII
+    // carries no cd state (pending/bit3 are local, flushed at end), so a re-run is safe.
+    if cd.to == Encoding::Utf8 && outbuf.len() >= input.len().saturating_mul(12).saturating_add(16) {
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut consumed_end = 0usize;
+        let mut err: Option<i32> = None;
+        let mut pending: u32 = 0;
+        let mut bit3 = false;
+        while i < input.len() {
+            let ch = input[i] as u32;
+            if pending != 0 {
+                let last = pending;
+                if last == 0x0BCD && bit3 {
+                    if ch == 0xa4 || ch == 0xa5 {
+                        o += emit_utf8_cp(outbuf, o, ch + 0xb1d);
+                        pending = 0;
+                        bit3 = false;
+                        i += 1;
+                        consumed_end = i;
+                        continue;
+                    }
+                } else if (0x0BC6..=0x0BC8).contains(&last) {
+                    if (last == 0x0BC6 && ch == 0xa1)
+                        || (last == 0x0BC7 && (ch == 0xa1 || ch == 0xaa))
+                    {
+                        o += emit_utf8_cp(outbuf, o, last + 4 + if ch != 0xa1 { 1 } else { 0 });
+                        pending = 0;
+                        bit3 = false;
+                        i += 1;
+                        consumed_end = i;
+                        continue;
+                    }
+                    if (0xb8..=0xc9).contains(&ch) && !bit3 {
+                        o += emit_utf8_cp(outbuf, o, tscii_tables::TSCII_DECODE[ch as usize][0]);
+                        bit3 = true;
+                        i += 1;
+                        consumed_end = i;
+                        continue;
+                    }
+                }
+                o += emit_utf8_cp(outbuf, o, last);
+                pending = 0;
+                bit3 = false;
+                continue;
+            }
+            if ch < 0x80 {
+                o += emit_utf8_cp(outbuf, o, ch);
+                i += 1;
+                consumed_end = i;
+                continue;
+            }
+            match ch {
+                0xa6..=0xa8 => {
+                    pending = ch + 0x0b20;
+                    bit3 = false;
+                }
+                0x8a..=0x8b => {
+                    o += emit_utf8_cp(outbuf, o, ch + 0x0b2e);
+                    pending = 0x0BCD;
+                    bit3 = true;
+                }
+                0x82 => {
+                    for &cp in &[0x0BB8u32, 0x0BCD, 0x0BB0, 0x0BC0] {
+                        o += emit_utf8_cp(outbuf, o, cp);
+                    }
+                }
+                0x87 => {
+                    for &cp in &[0x0B95u32, 0x0BCD, 0x0BB7] {
+                        o += emit_utf8_cp(outbuf, o, cp);
+                    }
+                }
+                0x8c => {
+                    for &cp in &[0x0B95u32, 0x0BCD, 0x0BB7, 0x0BCD] {
+                        o += emit_utf8_cp(outbuf, o, cp);
+                    }
+                }
+                _ => {
+                    let cps = tscii_tables::TSCII_DECODE[ch as usize];
+                    if cps.is_empty() {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                    for &cp in cps {
+                        o += emit_utf8_cp(outbuf, o, cp);
+                    }
+                }
+            }
+            i += 1;
+            consumed_end = i;
+        }
+        if err.is_none() && pending != 0 {
+            o += emit_utf8_cp(outbuf, o, pending);
+        }
+        return match err {
+            Some(code) => Err(IconvError {
+                code,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+            None => Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+        };
+    }
+
     let mut chars: Vec<char> = Vec::new();
     let mut i = 0usize;
     let mut consumed_end = 0usize;
