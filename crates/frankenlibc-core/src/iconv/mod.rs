@@ -43583,6 +43583,24 @@ fn iso2022jp2_decode(
                     consumed_end = i;
                 }
                 _ => {
+                    // g0==2 (JIS X 0208): unrolled run via the shared 7-bit ku-ten table,
+                    // exactly as ISO-2022-JP — jp2_g0_decode_pair(2,b,b1) IS
+                    // decode_eucjp(&[b|0x80,b1|0x80]), so byte-identical. g0 3/4/5
+                    // (JISX0212/GB2312/KSC5601) and non-BMP/undefined cells fall to per-char.
+                    if g0 == 2 {
+                        let run_start = i;
+                        emit_dbcs2_bmp3_utf8_run(
+                            input,
+                            &mut i,
+                            outbuf,
+                            &mut o,
+                            iso2022jp_0208_bmp3_utf8_direct(),
+                        );
+                        if i != run_start {
+                            consumed_end = i;
+                            continue;
+                        }
+                    }
                     if (0x21..=0x7E).contains(&b) {
                         if i + 1 >= input.len() {
                             err = Some(ICONV_EINVAL);
