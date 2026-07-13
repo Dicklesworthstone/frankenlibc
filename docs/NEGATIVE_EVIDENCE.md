@@ -18289,3 +18289,29 @@ symbol cells + invalid pairs stay 0 and fall back to the scalar path) hit in the
   working tree kept at the committed single-pass. The remaining ~1.4x is a per-char-loop-shape floor; closing
   it would need a mode-specialized loop (hoist the escape/set dispatch out of the per-char path), a separate,
   riskier change — not attempted here.
+
+## cc-strcat-copy-widen-2026-07-13 — REJECT (no reliable benefit; gap is scan+copy composition, not the copy)
+
+`strcat_glibc_bench` (extended to dlen up to 4096 + isolation cases) shows strcat reliably behind
+glibc in the medium/large range: dlen=256 ~1.34-1.48x, dlen=1024 ~1.69-1.79x, dlen=4096 ~1.34-1.44x
+(fl ~13-38ns vs glibc ~10-27ns). ROOT-CAUSE ISOLATION (added (4096,0) = scan-only and (8,4096) =
+copy-only cases): the dst-scan ALONE is ~1.11-1.46x and the src-copy ALONE is ~1.08-1.19x — i.e.
+each half is near-parity, but the SCAN+COPY COMBINED is 1.3-1.8x. The gap is a composition/interaction
+effect (glibc's `__strcat_avx2` is one fused asm routine; fl inlines two separate large SIMD bodies —
+`scan_c_string` then `fused_strcpy_bytes` — and the boundary doesn't optimize away), NOT a slow scan
+or slow copy.
+
+FIX TRIED → REJECTED: added a 128-byte folded tier (4×32B combined NUL-check + 4×32B stores, mirroring
+`scan_c_string`'s tiers) to `fused_strcpy_bytes` to widen the bulk copy. Byte-identical (strcat bench
+assert + string conformance pass), but **no reliable strcat improvement** (dlen=256/1024/4096 unchanged
+within noise) — expected, since the copy is only slen (<=256) at large dlen and the 128B tier barely
+fires. On the isolated large-copy (8,4096) the fl ABSOLUTE was unchanged/slightly worse (70.3 -> 72.8ns
+across runs; the ratio 1.19->1.08 was glibc run-to-run variance, 59->67ns). Reverted.
+
+MEASUREMENT HAZARD: these 10-70ns string ops are NOISY under fleet load (~4-5): the SAME (4096,0)
+scan-only case measured 1.11x and 1.46x on two runs (the copy-widening doesn't touch the scan), and
+glibc baselines swung ~15% run-to-run. Any strcat/strcpy sub-ratio needs a QUIET host + min-of-many.
+
+DEFERRED (real lever for a quiet-host turn): the strcat composition gap needs a genuinely FUSED
+scan+copy (single loop that finds dst NUL then continues copying src without re-entering a second
+SIMD body's prologue), or accepting it as a safe-Rust-vs-monolithic-asm floor. Not a small increment.

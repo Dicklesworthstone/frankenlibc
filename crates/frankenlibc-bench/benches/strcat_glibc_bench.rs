@@ -34,7 +34,16 @@ fn bench(c: &mut Criterion) {
     let mut grp = c.benchmark_group("strcat");
     grp.sample_size(30);
     // dst prefix len, src len
-    for &(dlen, slen) in &[(8usize, 8usize), (16, 16), (64, 32), (256, 64)] {
+    for &(dlen, slen) in &[
+        (8usize, 8usize),
+        (16, 16),
+        (64, 32),
+        (256, 64),
+        (1024, 128),
+        (4096, 256),
+        (4096, 0),   // isolate the dst-scan (empty src ⇒ strcat ≈ strlen(dst) + NUL)
+        (8, 4096),   // isolate the src-copy (tiny dst ⇒ strcat ≈ strcpy of a large src)
+    ] {
         let src: Vec<u8> = std::iter::repeat(b'x')
             .take(slen)
             .chain(std::iter::once(0))
