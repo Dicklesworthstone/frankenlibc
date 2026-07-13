@@ -404,6 +404,19 @@ fn main() {
         b"EUC-JISX0213\0",
         &eucjisx_src,
     );
+    // PROBE the remaining dedicated Vec-two-pass decoders (-> UTF-8) for negative ledger.
+    // Stateful ISO-2022-* built authoritatively by host glibc from real script sources.
+    let iso2022jp_src = host_to(b"ISO-2022-JP\0", &jp);
+    run_conv(c, "iso2022jp_to_utf8", b"UTF-8\0", b"ISO-2022-JP\0", &iso2022jp_src);
+    let iso2022kr_src = host_to(b"ISO-2022-KR\0", &hangul);
+    run_conv(c, "iso2022kr_to_utf8", b"UTF-8\0", b"ISO-2022-KR\0", &iso2022kr_src);
+    let iso2022cn_src = host_to(b"ISO-2022-CN\0", &cjk);
+    run_conv(c, "iso2022cn_to_utf8", b"UTF-8\0", b"ISO-2022-CN\0", &iso2022cn_src);
+    // TSCII (Tamil, visual-order maximal-munch decode). Tamil block U+0B80..U+0BFF.
+    let tamil_cps: Vec<u32> = (0..512u32).map(|k| 0x0B85 + (k % 0x50)).collect();
+    let tamil = u8enc(&tamil_cps);
+    let tscii_src = host_to(b"TSCII\0", &tamil);
+    run_conv(c, "tscii_to_utf8", b"UTF-8\0", b"TSCII\0", &tscii_src);
     // ENCODE direction: UTF-8 -> BIG5. Source = big5_src decoded back to UTF-8 (host BIG5->UTF-8),
     // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
     let big5_utf8 = {

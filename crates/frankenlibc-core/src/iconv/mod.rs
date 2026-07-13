@@ -42840,6 +42840,116 @@ fn iso2022jp_decode(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Fast path (to == UTF-8): single-pass decode+emit straight into outbuf — no
+    // intermediate Vec<char>/Vec<u8> (the two heap allocs + double iteration that left
+    // this ~5.7x slower than glibc). Mirrors the two-pass state machine byte-for-byte
+    // (set 0=ASCII / 1=JIS-Roman / 2=JIS X 0208, ESC designators, the unrecognized-escape
+    // literal, and the same consumed_end / error tuple) but writes UTF-8 via emit_utf8_cp.
+    // Gated on outbuf holding the whole worst-case output (<=4 UTF-8 bytes per source byte)
+    // so it never runs out of space; the two-pass body below runs only on a tight buffer.
+    // cd.iso2022jp_in_set is saved on every return, exactly as the two-pass does (the E2BIG
+    // early-out that skips the save is unreachable here since the buffer is ample).
+    if cd.to == Encoding::Utf8 && outbuf.len() >= input.len().saturating_mul(4) {
+        let mut set = cd.iso2022jp_in_set;
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut consumed_end = 0usize;
+        let mut err: Option<i32> = None;
+        while i < input.len() {
+            let b = input[i];
+            if b == 0x1B {
+                if i + 3 > input.len() {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                match (input[i + 1], input[i + 2]) {
+                    (0x28, 0x42) => set = 0,
+                    (0x28, 0x4A) => set = 1,
+                    (0x24, 0x40) | (0x24, 0x42) => set = 2,
+                    _ => {
+                        o += emit_utf8_cp(outbuf, o, 0x1B);
+                        i += 1;
+                        consumed_end = i;
+                        continue;
+                    }
+                }
+                i += 3;
+                consumed_end = i;
+                continue;
+            }
+            match set {
+                0 => {
+                    if b < 0x80 {
+                        o += emit_utf8_cp(outbuf, o, b as u32);
+                        i += 1;
+                        consumed_end = i;
+                    } else {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+                1 => {
+                    let cp = match b {
+                        0x5C => 0xA5,
+                        0x7E => 0x203E,
+                        _ if b < 0x80 => b as u32,
+                        _ => {
+                            err = Some(ICONV_EILSEQ);
+                            break;
+                        }
+                    };
+                    o += emit_utf8_cp(outbuf, o, cp);
+                    i += 1;
+                    consumed_end = i;
+                }
+                _ => {
+                    if (0x21..=0x7E).contains(&b) {
+                        if i + 1 >= input.len() {
+                            err = Some(ICONV_EINVAL);
+                            break;
+                        }
+                        let b1 = input[i + 1];
+                        if !(0x21..=0x7E).contains(&b1) {
+                            err = Some(ICONV_EILSEQ);
+                            break;
+                        }
+                        match decode_eucjp(&[b | 0x80, b1 | 0x80]) {
+                            Ok((ch, 2)) => {
+                                o += emit_utf8_cp(outbuf, o, ch as u32);
+                                i += 2;
+                                consumed_end = i;
+                            }
+                            _ => {
+                                err = Some(ICONV_EILSEQ);
+                                break;
+                            }
+                        }
+                    } else if b < 0x80 {
+                        o += emit_utf8_cp(outbuf, o, b as u32);
+                        i += 1;
+                        consumed_end = i;
+                    } else {
+                        err = Some(ICONV_EILSEQ);
+                        break;
+                    }
+                }
+            }
+        }
+        cd.iso2022jp_in_set = set;
+        return match err {
+            Some(code) => Err(IconvError {
+                code,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+            None => Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+        };
+    }
+
     let mut chars: Vec<char> = Vec::new();
     let mut set = cd.iso2022jp_in_set;
     let mut i = 0usize;
