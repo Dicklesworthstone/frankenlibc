@@ -4670,6 +4670,37 @@ fn qgcvt_basic_conversion() {
 }
 
 #[test]
+fn qgcvt_matches_shared_percent_g_renderer_across_precision_boundary() {
+    let values = [
+        0.0,
+        -0.0,
+        3.141592653589793,
+        9.9999e-5,
+        999_999.5,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
+        -f64::NAN,
+    ];
+    let precisions = [-2, 0, 1, 6, 17, 18, 512, libc::c_int::MAX];
+
+    for value in values {
+        for ndigit in precisions {
+            let prec = (ndigit.max(0) as usize).min(512);
+            let expected = frankenlibc_core::stdlib::ecvt::render_pct_g(value, prec);
+            let mut buf = [0 as libc::c_char; 640];
+            let result = unsafe { qgcvt(value, ndigit, buf.as_mut_ptr()) };
+            let actual = unsafe { std::ffi::CStr::from_ptr(result) };
+            assert_eq!(
+                actual.to_bytes(),
+                expected.as_bytes(),
+                "qgcvt({value:?}, {ndigit})"
+            );
+        }
+    }
+}
+
+#[test]
 fn qecvt_and_qfcvt_keep_separate_reused_static_buffers() {
     let _guard = ecvt_fcvt_lock();
     let mut decpt: libc::c_int = 0;

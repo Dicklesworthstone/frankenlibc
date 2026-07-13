@@ -6492,8 +6492,21 @@ pub unsafe extern "C" fn qgcvt(value: c_double, ndigit: c_int, buf: *mut c_char)
     // gcvt before its 58ac3c7f rewrite. Delegate to the now-correct
     // shared %g renderer in frankenlibc-core.
     let prec = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
-    let rendered = frankenlibc_core::stdlib::ecvt::render_pct_g(value, prec);
-    let bytes = rendered.as_bytes();
+    // DBL_DECIMAL_DIG (17) and below fit the core gcvt renderer's proven
+    // 48-byte scratch. Reuse that allocation-free sink for the common qgcvt
+    // precisions; larger precision retains render_pct_g's growable String.
+    // Passing `prec` rather than the original `ndigit` also preserves qgcvt's
+    // existing negative-precision behavior (effective precision 1, not gcvt's
+    // default precision 6).
+    let mut stack_rendered = [0u8; 48];
+    let heap_rendered;
+    let bytes = if prec <= 17 {
+        let len = frankenlibc_core::stdlib::gcvt(value, prec as i32, &mut stack_rendered);
+        &stack_rendered[..len]
+    } else {
+        heap_rendered = frankenlibc_core::stdlib::ecvt::render_pct_g(value, prec);
+        heap_rendered.as_bytes()
+    };
     let tracked_remaining = known_remaining(buf as usize);
     let copy_len = tracked_remaining
         .map(|remaining| bytes.len().min(remaining.saturating_sub(1)))

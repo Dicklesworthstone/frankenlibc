@@ -18217,3 +18217,28 @@ capacity is derived algebraically from the full `decpt`; `qfcvt` and `qfcvt_r` i
 - **BOUNDARY:** common finite non-negative precision is allocation-free at this wrapper seam. Negative
   precision still allocates inside `fcvt_into` for exact integer-decimal rounding; do not claim or retry it as
   part of this result without a separate same-worker proof bundle.
+
+## cod-qgcvt-common-stack-render-2026-07-13 — WIN (1.75x faster; gcvt-control parity)
+
+Closed the `qgcvt` residual left by `cc-gcvt-alloc-elim-DONE`. Base `gcvt` already rendered through a proven
+48-byte stack sink, but `qgcvt` still built an unconditional `String` and copied it into the caller buffer.
+Effective precision 1..=17 now reuses the core `gcvt` sink; precision 18..=512 retains the growable renderer.
+- **STRICT REMOTE SAME-WORKER A/B (`vmi1293453`):** `qgcvt17` moved **323.7 -> 184.6 ns = 1.75x
+  faster / 43.0% lower**. Its same-renderer `gcvt` control moved only **185.4 -> 178.9 ns**, while the target's
+  `qgcvt/gcvt` ratio collapsed from **1.75x -> 1.03x**. The structural allocation removal and 1.70x
+  control-normalized improvement are decisive.
+- **CORRECTNESS / PROOF:** qgcvt's precision clamp still maps negative and zero requests to `%g` effective
+  precision 1; the fast branch therefore passes the clamped precision rather than `gcvt`'s distinct negative
+  default. The 48-byte sink is the existing `gcvt` proof boundary through `DBL_DECIMAL_DIG` (17). Caller
+  capacity lookup, truncating copy, NUL placement, and return value are unchanged. Remote release gates passed
+  the **100,432-case byte-stable oracle**, **200,000-case live-glibc differential with zero divergences**, and
+  qgcvt coverage across signed zero, finite rounding/exponent boundaries, infinities, signed NaN, negative/zero
+  precision, the 17/18 crossover, 512, and `INT_MAX`: **5/5 passed**, with 6 hardened-only tests ignored.
+- **COMMANDS:** benchmark: `RCH_WORKER=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 env -u
+  CARGO_TARGET_DIR rch exec -- cargo run -j 4 --profile release -p frankenlibc-abi --example
+  gcvt_alloc_bench`; focused tests used the same fail-closed prefix with explicit `stdlib_abi_test`,
+  `gcvt_differential_fuzz`, and `conformance_gcvt_byte_stable` targets filtered by `gcvt`.
+- **BOUNDARY:** this closes only qgcvt's common effective-precision 1..=17 wrapper seam. Precision above 17
+  keeps `render_pct_g` because the fixed scratch is certified only through `DBL_DECIMAL_DIG`; some underlying
+  exact-small/dyadic conversion branches may still allocate, and shared non-integral flt2dec cost remains the
+  deeper floor. Do not fold `gcvt`, `qecvt`, or `qfcvt` into this result; each was closed separately.

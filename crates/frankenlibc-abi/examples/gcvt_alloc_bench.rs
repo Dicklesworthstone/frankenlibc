@@ -1,7 +1,7 @@
-// gcvt (%g float->string) takes a caller buffer but core render_gcvt still returns
-// a per-call String (deployed→interposed malloc) that gcvt copies out. Measure fl
-// vs host glibc to size an alloc-elimination refactor.
-use std::ffi::c_void;
+// Base gcvt writes through the core's stack renderer, while qgcvt still materializes
+// a per-call String before copying to its caller buffer. Keep gcvt as qgcvt's
+// same-renderer control alongside the existing host-glibc rows.
+use std::ffi::{CStr, c_void};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -40,5 +40,32 @@ fn main() {
             let gl = t.elapsed().as_nanos() as f64 / iters as f64;
             println!("{name} fl={fl:.1}ns glibc={gl:.1}ns  fl/glibc={:.2}x", fl / gl);
         }
+
+        frankenlibc_abi::stdlib_abi::qgcvt(3.141592653589793, 17, fbuf.as_mut_ptr());
+        frankenlibc_abi::stdlib_abi::gcvt(3.141592653589793, 17, gbuf.as_mut_ptr());
+        assert_eq!(CStr::from_ptr(fbuf.as_ptr()), CStr::from_ptr(gbuf.as_ptr()));
+
+        let t = Instant::now();
+        for _ in 0..iters {
+            black_box(frankenlibc_abi::stdlib_abi::qgcvt(
+                black_box(3.141592653589793),
+                17,
+                fbuf.as_mut_ptr(),
+            ));
+        }
+        let qgcvt = t.elapsed().as_nanos() as f64 / iters as f64;
+        let t = Instant::now();
+        for _ in 0..iters {
+            black_box(frankenlibc_abi::stdlib_abi::gcvt(
+                black_box(3.141592653589793),
+                17,
+                gbuf.as_mut_ptr(),
+            ));
+        }
+        let gcvt = t.elapsed().as_nanos() as f64 / iters as f64;
+        println!(
+            "qgcvt17 qgcvt={qgcvt:.1}ns gcvt_control={gcvt:.1}ns  qgcvt/gcvt={:.2}x",
+            qgcvt / gcvt
+        );
     }
 }
