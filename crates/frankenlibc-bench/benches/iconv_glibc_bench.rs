@@ -382,6 +382,28 @@ fn main() {
     // was a binary_search over 5867 sorted pairs). EUC-TW is excluded from the SIMD gather.
     let euctw_src = build_dbcs_source(b"EUC-TW\0", 0xA1..=0xFE, 0xA1..=0xFE, 512);
     run_conv(c, "euctw_to_utf8", b"UTF-8\0", b"EUC-TW\0", &euctw_src);
+    // BIG5-HKSCS (Hong Kong Traditional Chinese) -> UTF-8: routed to the dedicated
+    // dbcs_x_decode per-char converter (Vec<char>+Vec<u8> two-pass), same slow-body
+    // class as EUC-TW was. Level-1/2 Big5 leads 0xA4..=0xF9, trails 0x40..=0xFE
+    // (build_dbcs_source keeps only glibc-accepted pairs).
+    let big5hkscs_src = build_dbcs_source(b"BIG5-HKSCS\0", 0xA4..=0xF9, 0x40..=0xFE, 512);
+    run_conv(
+        c,
+        "big5hkscs_to_utf8",
+        b"UTF-8\0",
+        b"BIG5-HKSCS\0",
+        &big5hkscs_src,
+    );
+    // EUC-JISX0213 (Japanese JIS X 0213 plane 1) -> UTF-8: dedicated eucjisx0213_decode
+    // per-char converter, same two-pass slow-body class. Plane-1 leads/trails 0xA1..=0xFE.
+    let eucjisx_src = build_dbcs_source(b"EUC-JISX0213\0", 0xA1..=0xFE, 0xA1..=0xFE, 512);
+    run_conv(
+        c,
+        "eucjisx0213_to_utf8",
+        b"UTF-8\0",
+        b"EUC-JISX0213\0",
+        &eucjisx_src,
+    );
     // ENCODE direction: UTF-8 -> BIG5. Source = big5_src decoded back to UTF-8 (host BIG5->UTF-8),
     // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
     let big5_utf8 = {

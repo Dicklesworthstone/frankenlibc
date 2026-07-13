@@ -44518,6 +44518,7 @@ fn sjisx0213_enc2() -> &'static std::collections::HashMap<u32, u16> {
 /// single bytes via `one_byte`, lead bytes via `is_lead` + the `direct` cell map
 /// (astral u32 values supported), with a `multi` exception table for cells that
 /// produce more than one scalar. Whole-buffer; the scalars encode to `cd.to`.
+#[allow(clippy::too_many_arguments)]
 fn dbcs_x_decode(
     cd: &mut IconvDescriptor,
     input: &[u8],
@@ -44526,7 +44527,56 @@ fn dbcs_x_decode(
     is_lead: &[bool; 256],
     direct: &[u32],
     multi: &[(u16, &'static [u32])],
+    bmp3_utf8: &[u32],
 ) -> Result<IconvResult, IconvError> {
+    // Fast path (to == UTF-8): emit ASCII single bytes and BMP-single-cp 2-byte cells
+    // straight into outbuf (the Cp932/EUC-TW scalar-run trick), deferring multi cells,
+    // non-BMP cells, remapped high single-bytes, and every error edge to the generic
+    // two-pass body below. Gated on the buffer holding the whole worst-case output
+    // (<=4 UTF-8 bytes per source byte) so E2BIG — whose all-or-nothing (0,0) return
+    // differs from a streaming split — can never fire here, making the fast/generic
+    // split byte-identical to the pure generic path.
+    let mut base_in = 0usize;
+    let mut base_out = 0usize;
+    if cd.to == Encoding::Utf8 && outbuf.len() >= input.len().saturating_mul(4) {
+        let mut i = 0usize;
+        let mut o = 0usize;
+        while i < input.len() {
+            let b = input[i];
+            if is_lead[b as usize] {
+                if i + 1 >= input.len() {
+                    break;
+                }
+                let packed = bmp3_utf8[(((b as u16) << 8) | input[i + 1] as u16) as usize];
+                if packed == 0 {
+                    break;
+                }
+                write_packed_utf8_triple(outbuf, o, packed);
+                i += 2;
+                o += 3;
+            } else {
+                let cp = one_byte[b as usize];
+                if !(0..0x80).contains(&cp) {
+                    break;
+                }
+                outbuf[o] = cp as u8;
+                i += 1;
+                o += 1;
+            }
+        }
+        if i == input.len() {
+            return Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: i,
+                out_written: o,
+            });
+        }
+        base_in = i;
+        base_out = o;
+    }
+    let input = &input[base_in..];
+    let outbuf = &mut outbuf[base_out..];
+
     let mut chars: Vec<char> = Vec::new();
     let mut i = 0usize;
     let mut consumed_end = 0usize;
@@ -44580,22 +44630,22 @@ fn dbcs_x_decode(
     if out.len() > outbuf.len() {
         return Err(IconvError {
             code: ICONV_E2BIG,
-            in_consumed: 0,
-            out_written: 0,
+            in_consumed: base_in,
+            out_written: base_out,
         });
     }
     outbuf[..out.len()].copy_from_slice(&out);
     if let Some(code) = err {
         return Err(IconvError {
             code,
-            in_consumed: consumed_end,
-            out_written: out.len(),
+            in_consumed: base_in + consumed_end,
+            out_written: base_out + out.len(),
         });
     }
     Ok(IconvResult {
         non_reversible: 0,
-        in_consumed: consumed_end,
-        out_written: out.len(),
+        in_consumed: base_in + consumed_end,
+        out_written: base_out + out.len(),
     })
 }
 
@@ -44687,6 +44737,19 @@ fn dbcs_x_convert(
     })
 }
 
+/// Pre-encoded UTF-8 for SHIFT_JISX0213's 2-byte BMP-single-cp cells, with the ~25
+/// combining (`SJISX_DBCS_MULTI`) keys zeroed so the fast run defers them to the
+/// generic body. Powers `dbcs_x_decode`'s to-UTF-8 scalar run.
+fn sjisx0213_bmp3_utf8_direct() -> &'static Vec<u32> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    D.get_or_init(|| {
+        let mut t = build_dbcs_bmp3_utf8_direct(&sjisx0213_tables::SJISX_DBCS);
+        for &(k, _) in sjisx0213_tables::SJISX_DBCS_MULTI.iter() {
+            t[k as usize] = 0;
+        }
+        t
+    })
+}
 fn sjisx0213_decode(
     cd: &mut IconvDescriptor,
     input: &[u8],
@@ -44700,6 +44763,7 @@ fn sjisx0213_decode(
         &sjisx0213_tables::SJISX_IS_LEAD,
         sjisx0213_dbcs_direct(),
         &sjisx0213_tables::SJISX_DBCS_MULTI,
+        sjisx0213_bmp3_utf8_direct(),
     )
 }
 fn sjisx0213_convert(
@@ -44720,6 +44784,19 @@ fn sjisx0213_convert(
 fn big5hkscs_dbcs_direct() -> &'static Vec<u32> {
     static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     D.get_or_init(|| build_dbcs_direct(&big5hkscs_tables::BIG5HKSCS_DBCS))
+}
+/// Pre-encoded UTF-8 for BIG5-HKSCS's 2-byte BMP-single-cp cells, with the 4 combining
+/// (`BIG5HKSCS_DBCS_MULTI`) keys zeroed so the fast run defers them to the generic body.
+/// Powers `dbcs_x_decode`'s to-UTF-8 scalar run (was per-char two-pass, ~6x slower class).
+fn big5hkscs_bmp3_utf8_direct() -> &'static Vec<u32> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    D.get_or_init(|| {
+        let mut t = build_dbcs_bmp3_utf8_direct(&big5hkscs_tables::BIG5HKSCS_DBCS);
+        for &(k, _) in big5hkscs_tables::BIG5HKSCS_DBCS_MULTI.iter() {
+            t[k as usize] = 0;
+        }
+        t
+    })
 }
 fn big5hkscs_enc1() -> &'static std::collections::HashMap<u32, u8> {
     static M: std::sync::OnceLock<std::collections::HashMap<u32, u8>> = std::sync::OnceLock::new();
@@ -44742,6 +44819,7 @@ fn big5hkscs_decode(
         &big5hkscs_tables::BIG5HKSCS_IS_LEAD,
         big5hkscs_dbcs_direct(),
         &big5hkscs_tables::BIG5HKSCS_DBCS_MULTI,
+        big5hkscs_bmp3_utf8_direct(),
     )
 }
 fn big5hkscs_convert(
