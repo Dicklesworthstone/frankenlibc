@@ -40306,6 +40306,17 @@ fn write_packed_utf8_triple(outbuf: &mut [u8], pos: usize, packed: u32) {
     outbuf[pos + 2] = (packed >> 16) as u8;
 }
 
+/// Encode one code point as UTF-8 into `outbuf[pos..]`, returning the byte count.
+/// Mirrors the generic `push` + `encode_char(Utf8, ..)` path byte-for-byte (invalid
+/// scalars fold to U+FFFD). Callers must ensure `outbuf[pos..]` holds up to 4 bytes.
+#[inline(always)]
+fn emit_utf8_cp(outbuf: &mut [u8], pos: usize, cp: u32) -> usize {
+    let ch = char::from_u32(cp).unwrap_or('\u{FFFD}');
+    let n = ch.len_utf8();
+    ch.encode_utf8(&mut outbuf[pos..pos + n]);
+    n
+}
+
 fn emit_dbcs2_bmp3_utf8_run(
     input: &[u8],
     in_pos: &mut usize,
@@ -45095,6 +45106,20 @@ fn eucjx_p2_direct() -> &'static Vec<u32> {
     static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     D.get_or_init(|| build_dbcs_direct(&eucjisx0213_tables::EUCJX_P2))
 }
+/// Pre-encoded UTF-8 for EUC-JISX0213 plane-1's 2-byte BMP-single-cp cells, with the 25
+/// combining (`EUCJX_P1_MULTI`) keys zeroed so the fast run defers them to the generic
+/// body. Powers `eucjisx0213_decode`'s to-UTF-8 scalar run (was per-char two-pass, ~4.4x
+/// slower than glibc). SS2/SS3/non-BMP/multi/invalid fall through (packed==0).
+fn eucjx_p1_bmp3_utf8_direct() -> &'static Vec<u32> {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    D.get_or_init(|| {
+        let mut t = build_dbcs_bmp3_utf8_direct(&eucjisx0213_tables::EUCJX_P1);
+        for &(k, _) in eucjisx0213_tables::EUCJX_P1_MULTI.iter() {
+            t[k as usize] = 0;
+        }
+        t
+    })
+}
 fn eucjx_enc() -> &'static std::collections::HashMap<u32, (u8, u8, u8, u8)> {
     static M: std::sync::OnceLock<std::collections::HashMap<u32, (u8, u8, u8, u8)>> =
         std::sync::OnceLock::new();
@@ -45116,6 +45141,98 @@ fn eucjisx0213_decode(
 ) -> Result<IconvResult, IconvError> {
     let p1 = eucjx_p1_direct();
     let p2 = eucjx_p2_direct();
+    // Fast path (to == UTF-8): single-pass decode+emit straight into outbuf — no
+    // intermediate Vec<char>/Vec<u8> (the two heap allocs + double iteration that left
+    // this ~4.4x slower than glibc). Plane-1 BMP-single-cp cells emit a 3-byte triple
+    // from the pre-encoded table; ASCII/SS2/SS3/sub-BMP/astral/combining cells encode
+    // inline. Gated on outbuf holding the whole worst-case output (<=4 UTF-8 bytes per
+    // source byte) so it never runs out of space, and returns directly (the two-pass
+    // body below runs only on a too-tight buffer). Byte-identical: same decode branches,
+    // same char::from_u32(..).unwrap_or(FFFD) + UTF-8 encode, and the same error
+    // (code, in_consumed=error pos, out_written) as the generic path.
+    if cd.to == Encoding::Utf8 && outbuf.len() >= input.len().saturating_mul(4) {
+        let bmp3 = eucjx_p1_bmp3_utf8_direct();
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let err: Option<(i32, usize)> = loop {
+            if i >= input.len() {
+                break None;
+            }
+            let b = input[i];
+            if b < 0x80 {
+                let cp = eucjisx0213_tables::EUCJX_ONE_BYTE[b as usize];
+                if cp < 0 {
+                    break Some((ICONV_EILSEQ, i));
+                }
+                o += emit_utf8_cp(outbuf, o, cp as u32);
+                i += 1;
+            } else if b == 0x8E {
+                if i + 1 >= input.len() {
+                    break Some((ICONV_EINVAL, i));
+                }
+                let cp = eucjisx0213_tables::EUCJX_SS2[input[i + 1] as usize];
+                if cp < 0 {
+                    break Some((ICONV_EILSEQ, i));
+                }
+                o += emit_utf8_cp(outbuf, o, cp as u32);
+                i += 2;
+            } else if b == 0x8F {
+                if i + 2 >= input.len() {
+                    break Some((ICONV_EINVAL, i));
+                }
+                let key = ((input[i + 1] as u16) << 8) | input[i + 2] as u16;
+                let cp = p2[key as usize];
+                if cp == 0 {
+                    break Some((ICONV_EILSEQ, i));
+                }
+                o += emit_utf8_cp(outbuf, o, cp);
+                i += 3;
+            } else if (0xA1..=0xFE).contains(&b) {
+                if i + 1 >= input.len() {
+                    break Some((ICONV_EINVAL, i));
+                }
+                let key = ((b as u16) << 8) | input[i + 1] as u16;
+                let packed = bmp3[key as usize];
+                if packed != 0 {
+                    write_packed_utf8_triple(outbuf, o, packed);
+                    i += 2;
+                    o += 3;
+                    continue;
+                }
+                if let Some(&(_, cps)) = eucjisx0213_tables::EUCJX_P1_MULTI
+                    .iter()
+                    .find(|&&(k, _)| k == key)
+                {
+                    for &cp in cps {
+                        o += emit_utf8_cp(outbuf, o, cp);
+                    }
+                    i += 2;
+                    continue;
+                }
+                let cp = p1[key as usize];
+                if cp == 0 {
+                    break Some((ICONV_EILSEQ, i));
+                }
+                o += emit_utf8_cp(outbuf, o, cp);
+                i += 2;
+            } else {
+                break Some((ICONV_EILSEQ, i));
+            }
+        };
+        return match err {
+            Some((code, pos)) => Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: o,
+            }),
+            None => Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: i,
+                out_written: o,
+            }),
+        };
+    }
+
     let mut chars: Vec<char> = Vec::new();
     let mut i = 0usize;
     let mut consumed_end = 0usize;
