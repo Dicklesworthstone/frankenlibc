@@ -509,6 +509,10 @@ fn main() {
     let ksc_utf8 = host_from(b"EUC-KR\0", &euckr_valid);
     let iso2022kr_src = host_to(b"ISO-2022-KR\0", &ksc_utf8);
     run_conv(c, "iso2022kr_to_utf8", b"UTF-8\0", b"ISO-2022-KR\0", &iso2022kr_src);
+    // ENCODE direction: UTF-8 -> ISO-2022-KR. `ksc_utf8` is Wansung Hangul (KSC 5601),
+    // so the stateful encoder emits SO + double-byte cells. Probes iso2022kr_convert
+    // (was Vec-two-pass, now single-pass).
+    run_conv(c, "utf8_to_iso2022kr", b"ISO-2022-KR\0", b"UTF-8\0", &ksc_utf8);
     // ISO-2022-CN's default G1 is GB2312; round-trip a GB2312-encodable UTF-8 corpus so
     // host_to yields a full source (plain `cjk` has U+4E00 cps outside GB2312 that truncate).
     let gb2312_valid = build_dbcs_source(b"GB2312\0", 0xB0..=0xF7, 0xA1..=0xFE, 512);

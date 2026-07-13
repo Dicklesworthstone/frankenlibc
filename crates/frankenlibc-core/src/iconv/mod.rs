@@ -42604,6 +42604,81 @@ fn iso2022kr_convert(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Single-pass fast path: write the ISO-2022-KR shift stream directly into outbuf,
+    // skipping the `Vec<u8>` accumulator + final copy (2 heap allocs/call — an
+    // interposed-malloc tax in the deployed path). Worst case is the 4-byte designator
+    // (emitted once) plus, per char, an SO/SI shift (1) + a 2-byte KSC cell = 3, so
+    // gating on `outbuf.len() >= input.len()*3 + 4` makes E2BIG unreachable here and
+    // leaves the tight-buffer all-or-nothing E2BIG path (below) exactly as it was.
+    // Byte-identical: the SAME decode + SO/SI + designator logic, the SAME
+    // designated/ksc saved on every return, the SAME partial out_written on a
+    // mid-stream EILSEQ/EINVAL.
+    if outbuf.len() >= input.len().saturating_mul(3).saturating_add(4) {
+        let mut designated = cd.iso2022kr_designated;
+        let mut ksc = cd.iso2022kr_out_ksc;
+        let mut out_pos = 0usize;
+        if !designated {
+            outbuf[..ISO2022KR_DESIGNATOR.len()].copy_from_slice(&ISO2022KR_DESIGNATOR);
+            out_pos += ISO2022KR_DESIGNATOR.len();
+            designated = true;
+        }
+        let mut in_pos = 0usize;
+        let mut err: Option<(i32, usize)> = None;
+        while in_pos < input.len() {
+            let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    err = Some((ICONV_EINVAL, in_pos));
+                    break;
+                }
+                Err(DecodeError::Invalid) => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            };
+            let cp = ch as u32;
+            if cp < 0x80 {
+                if ksc {
+                    outbuf[out_pos] = 0x0F;
+                    out_pos += 1;
+                    ksc = false;
+                }
+                outbuf[out_pos] = cp as u8;
+                out_pos += 1;
+            } else {
+                let mut tmp = [0u8; 8];
+                if matches!(encode_euckr(ch, &mut tmp), Ok(2)) {
+                    if !ksc {
+                        outbuf[out_pos] = 0x0E;
+                        out_pos += 1;
+                        ksc = true;
+                    }
+                    outbuf[out_pos] = tmp[0] & 0x7F;
+                    outbuf[out_pos + 1] = tmp[1] & 0x7F;
+                    out_pos += 2;
+                } else {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            }
+            in_pos += consumed;
+        }
+        cd.iso2022kr_designated = designated;
+        cd.iso2022kr_out_ksc = ksc;
+        if let Some((code, pos)) = err {
+            return Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: out_pos,
+            });
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
     let mut out: Vec<u8> = Vec::new();
     let mut designated = cd.iso2022kr_designated;
     let mut ksc = cd.iso2022kr_out_ksc;
