@@ -142,8 +142,29 @@ unsafe fn spn_new(s: *const u32, accept: *const u32) -> usize {
     count
 }
 
+// Fixed algorithm (matches the deployed ABI wcsspn after the pre-scan removal): lazy
+// early-stopping scan, NO full-haystack scan_w_string(s) pre-scan.
+unsafe fn spn_lazy(s: *const u32, accept: *const u32) -> usize {
+    let alen = wlen(accept);
+    let set = unsafe { OldSet::new(accept, alen) };
+    let mut i = 0usize;
+    while set.contains(unsafe { *s.add(i) }) {
+        i += 1;
+    }
+    i
+}
+
 fn wstr(n: usize) -> Vec<u32> {
     let mut v = vec![b'a' as u32; n];
+    v.push(0);
+    v
+}
+
+// Early-stop on a LONG haystack: `head` members then all non-members ('z') to `len`.
+// wcsspn returns `head`, but the pre-scan variant still walks the whole `len`.
+fn wstr_early(head: usize, len: usize) -> Vec<u32> {
+    let mut v = vec![b'a' as u32; head];
+    v.extend(std::iter::repeat(b'z' as u32).take(len - head));
     v.push(0);
     v
 }
@@ -168,6 +189,26 @@ fn bench(c: &mut Criterion) {
         });
         grp.bench_function("new_bitmap", |b| {
             b.iter(|| black_box(unsafe { spn_new(black_box(ps), black_box(pset)) }))
+        });
+        grp.bench_function("host_glibc", |b| {
+            b.iter(|| black_box(unsafe { glibc(black_box(ps), black_box(pset)) }))
+        });
+        grp.finish();
+    }
+    // Early-stop on a long haystack (span=8, len=4096): the pre-scan variant is O(len),
+    // the lazy variant and glibc are O(span).
+    {
+        let s = wstr_early(8, 4096);
+        let ps = s.as_ptr();
+        assert_eq!(unsafe { spn_old(ps, pset) }, 8);
+        assert_eq!(unsafe { spn_lazy(ps, pset) }, 8);
+        assert_eq!(unsafe { glibc(ps, pset) }, 8);
+        let mut grp = c.benchmark_group("wcsspn_early_span8_len4096");
+        grp.bench_function("old_prescan", |b| {
+            b.iter(|| black_box(unsafe { spn_old(black_box(ps), black_box(pset)) }))
+        });
+        grp.bench_function("new_lazy", |b| {
+            b.iter(|| black_box(unsafe { spn_lazy(black_box(ps), black_box(pset)) }))
         });
         grp.bench_function("host_glibc", |b| {
             b.iter(|| black_box(unsafe { glibc(black_box(ps), black_box(pset)) }))

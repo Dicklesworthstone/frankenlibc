@@ -2376,17 +2376,25 @@ pub unsafe extern "C" fn wcsspn(s: *const u32, accept: *const u32) -> usize {
     if runtime_policy::strict_passthrough_active() {
         return unsafe {
             let (accept_len, _) = scan_w_string(accept, None);
-            let set = WideCharSet::new(accept, accept_len);
-            let (s_len, _) = scan_w_string(s, None);
-            let mut count = 0usize;
-            for i in 0..s_len {
-                if set.contains(*s.add(i)) {
-                    count += 1;
-                } else {
-                    break;
+            // LAZY early-stopping scan — stop at the first non-member (or NUL, which is
+            // never in the accept set), with NO full-haystack pre-scan. The old body did
+            // scan_w_string(s) over the WHOLE string first, making an early stop O(n)
+            // instead of O(span) (glibc stops early); this matches the narrow strspn.
+            if accept_len == 1 {
+                // 1-char accept: direct compare, no WideCharSet build (the 128-bool init).
+                let c = *accept;
+                let mut i = 0usize;
+                while *s.add(i) == c {
+                    i += 1;
                 }
+                return i;
             }
-            count
+            let set = WideCharSet::new(accept, accept_len);
+            let mut i = 0usize;
+            while set.contains(*s.add(i)) {
+                i += 1;
+            }
+            i
         };
     }
 
@@ -2454,16 +2462,32 @@ pub unsafe extern "C" fn wcscspn(s: *const u32, reject: *const u32) -> usize {
     if runtime_policy::strict_passthrough_active() {
         return unsafe {
             let (reject_len, _) = scan_w_string(reject, None);
+            // LAZY early-stopping scan — stop at the first reject member OR the NUL, with
+            // NO full-haystack pre-scan (the old scan_w_string(s) made an early stop O(n)
+            // instead of O(span)). NB: unlike wcsspn, the NUL is NOT a reject member, so
+            // the NUL terminator must be tested explicitly.
+            if reject_len == 1 {
+                let c = *reject;
+                let mut i = 0usize;
+                loop {
+                    let x = *s.add(i);
+                    if x == 0 || x == c {
+                        break;
+                    }
+                    i += 1;
+                }
+                return i;
+            }
             let set = WideCharSet::new(reject, reject_len);
-            let (s_len, _) = scan_w_string(s, None);
-            let mut count = 0usize;
-            for i in 0..s_len {
-                if set.contains(*s.add(i)) {
+            let mut i = 0usize;
+            loop {
+                let x = *s.add(i);
+                if x == 0 || set.contains(x) {
                     break;
                 }
-                count += 1;
+                i += 1;
             }
-            count
+            i
         };
     }
 
@@ -2530,16 +2554,35 @@ pub unsafe extern "C" fn wcspbrk(s: *const u32, accept: *const u32) -> *mut u32 
     if runtime_policy::strict_passthrough_active() {
         return unsafe {
             let (accept_len, _) = scan_w_string(accept, None);
-            let set = WideCharSet::new(accept, accept_len);
-            let (s_len, _) = scan_w_string(s, None);
-            let mut found: *mut u32 = std::ptr::null_mut();
-            for i in 0..s_len {
-                if set.contains(*s.add(i)) {
-                    found = s.add(i) as *mut u32;
-                    break;
+            // LAZY early-stopping scan — return at the first accept member, null at the
+            // NUL, with NO full-haystack pre-scan (the old scan_w_string(s) made an early
+            // hit O(n) instead of O(span)).
+            if accept_len == 1 {
+                let c = *accept;
+                let mut i = 0usize;
+                loop {
+                    let x = *s.add(i);
+                    if x == 0 {
+                        return std::ptr::null_mut();
+                    }
+                    if x == c {
+                        return s.add(i) as *mut u32;
+                    }
+                    i += 1;
                 }
             }
-            found
+            let set = WideCharSet::new(accept, accept_len);
+            let mut i = 0usize;
+            loop {
+                let x = *s.add(i);
+                if x == 0 {
+                    return std::ptr::null_mut();
+                }
+                if set.contains(x) {
+                    return s.add(i) as *mut u32;
+                }
+                i += 1;
+            }
         };
     }
 
