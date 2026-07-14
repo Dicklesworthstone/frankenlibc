@@ -6,6 +6,44 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: paired-bootstrap segment-membership gate never reached timing (`bd-t43kz2`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / LIVE OWNERSHIP.** `bv --robot-triage`
+  (data hash `4ead698c5f1cdf5e`) showed Swing-2 actively owned by `cod_fl`, the broad
+  no-gaps bead assigned to `cod-b`, and `bd-t43kz2` as the highest-priority unowned
+  measured-perf leaf. Exact ledger and history review rejected two stale routes before
+  editing: the `fgetc` registry collapse already landed in `ad7d6770f`, and shared f64
+  `sincos` reduction already landed in `b43b6ca2d` with its common-band follow-up rejected.
+- **PROFILE / ATTRIBUTION FIRST.** This did not re-profile a settled primitive. The retained
+  remote profile assigns `malloc_bench::segment_bitmap_profile_batch` **96.67% self-time**
+  over 1,507 samples, while the final pinned paired run measured bitmap membership at
+  **0.985 ns**, lookup-only fallback-table membership at **6.083 ns**, and candidate/table
+  **0.1610**. Its rejection came only from a denominator-sensitive all-CV rule: bitmap
+  absolute jitter was **0.097 ns**, below the table's **0.168 ns**.
+- **ONE METHOD LEVER PREPARED, NOT EXECUTED.** The candidate kept CV as a diagnostic but
+  replaced it as the verdict: it added an order-balanced bitmap/bitmap A/A null arm, a
+  deterministic 4,096-resample bootstrap interval for both paired medians, and an absolute
+  bitmap-jitter bound. Admission required the candidate interval to sit wholly below the
+  null interval, bitmap p50 below the historical 9.79 ns bar, and absolute jitter below
+  0.25 ns. The existing execution-profile artifact was explicitly reused so ordinary
+  `release` did not pretend to provide stripped-symbol `perf` evidence.
+- **ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE INVALID BENCH.** The sole command was
+  `RCH_WORKER=hz2 RCH_WORKERS=hz2 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1
+  RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,FRANKENLIBC_SEGMENT_REUSE_PROFILE
+  FRANKENLIBC_SEGMENT_REUSE_PROFILE=1 rch exec -- cargo bench -j 1 --profile release -p
+  frankenlibc-bench --features abi-bench --bench malloc_bench -- segment_bitmap_integrity
+  --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2 --noplot`, under a **295 s**
+  hard wall. RCH treated the requested worker as a preference, selected `vmi1227854`, and
+  remapped the requested warm target to cold pool
+  `52cb8389992c89401e7474ec3f19ef5a`. It spent about 44 s synchronizing, downloaded and
+  rebuilt dependencies, and expired while compiling `frankenlibc-abi`/Criterion. No
+  executable, A/A oracle, bootstrap interval, or timing line appeared.
+- **DISPOSITION / RETRY CONDITION.** Restored the benchmark exactly; only this evidence row
+  and tracker closeout ship. This is infrastructure-invalid and neither accepts nor rejects
+  the paired-bootstrap gate. Retry only with an already-linked ordinary-release `malloc_bench`
+  on the admitted worker. No `release-perf`, local Cargo fallback, stash creation, or stash
+  drop occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: exact rand48 dyadic bit construction never reached its oracle (`bd-vya7yn`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH RANDOM48 CORE REGIME.**
