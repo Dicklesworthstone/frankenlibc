@@ -570,6 +570,13 @@ fn main() {
     let cp1255_bytes = build_sbcs_source(b"CP1255\0", 512);
     let cp1255_utf8 = host_from(b"CP1255\0", &cp1255_bytes);
     run_conv(c, "utf8_to_cp1255", b"CP1255\0", b"UTF-8\0", &cp1255_utf8);
+    // DECODE-DIRECTION SCAN (->UTF-16): the dedicated decoders (dbcs_x_decode /
+    // eucjisx0213_decode / tscii_decode) single-pass ONLY for to==UTF-8; a UTF-16
+    // target falls to the Vec<char>+Vec<u8> two-pass body (the ~6x class the ->UTF-8
+    // single-pass cleared). Probe whether ->UTF-16 is still catastrophic + fixable.
+    run_conv(c, "big5hkscs_to_utf16", b"UTF-16LE\0", b"BIG5-HKSCS\0", &big5hkscs_src);
+    run_conv(c, "eucjisx0213_to_utf16", b"UTF-16LE\0", b"EUC-JISX0213\0", &eucjisx_src);
+    run_conv(c, "tscii_to_utf16", b"UTF-16LE\0", b"TSCII\0", &tscii_src);
     // ENCODE direction: UTF-8 -> BIG5. Source = big5_src decoded back to UTF-8 (host BIG5->UTF-8),
     // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
     let big5_utf8 = {
