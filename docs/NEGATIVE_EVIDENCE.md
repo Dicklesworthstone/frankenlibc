@@ -6,6 +6,39 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): `wcswidth` 128-wide ASCII fold misses its first-active-tier floor; **7.0843 -> 6.9341 ns at 128 code points**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found the
+  shipped 16-wide printable-ASCII fast-forward (`f58f644a8`) and its 64-wide extrema fold
+  (`dffa88c88`), but no 128-wide certificate or rejection. The candidate was therefore a fresh
+  follow-up in a previously winning wchar function, distinct from the excluded and closed `strsep`,
+  `bzero`, BRAVO, FlatCombiner, and `wcscoll` families.
+- **ONE LEVER EVALUATED AND RESTORED.** The candidate added one eight-panel extrema reduction ahead
+  of the deployed four-panel fold. For each of 16 lane positions, the minimum across eight source
+  panels is at least `0x20` and the maximum is at most `0x7e` iff all 128 original code points are
+  printable ASCII. A failed certificate advanced nothing and fell through to the unchanged 64- and
+  16-wide tiers, preserving first-NUL/nonprintable ordering; successful `saturating_add(128)` is
+  equivalent to 128 positive unit additions. Before timing, the checked-in A/B matched the deployed
+  64-wide control and candidate against the scalar `wcwidth` oracle at every 16/64/128 boundary,
+  representative failure positions, and NUL/control/zero-width/wide/invalid code-point classes.
+- **ONE STRICT-REMOTE SAME-PROCESS A/B REJECT.** The sole foreground timing command was
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strsep_two rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench wchar_bench -- wcswidth_ascii_fold128_ab --sample-size 30 --warm-up-time 1 --measurement-time 2 --noplot`.
+  RCH selected actual worker `vmi1293453`; both scanners ran in the same release binary and process.
+  At the first active size, 128 code points, intervals moved
+  **[6.6568, 7.0843, 7.4281] ns -> [6.5473, 6.9341, 7.3660] ns**: candidate/control center
+  **0.9788x**, only **2.12% less time**, with overlapping intervals and below the 5% keep floor. The
+  inactive 64-code-point control was likewise noise-sized at **4.8776 -> 4.7809 ns** (**1.98% less**,
+  overlapping intervals). The 1024-code-point row was a real long-input improvement,
+  **[38.683, 40.327, 41.804] ns -> [35.432, 36.506, 37.624] ns** (**0.9053x; 9.47% less time**), but
+  it does not justify shipping the 128-threshold tier after its decisive entry row missed the floor.
+  The release build completed with existing unrelated workspace warnings; no local Cargo command ran.
+- **RESTORATION / CLOSED BOUNDARY.** Production `wide.rs` and the temporary Criterion control in
+  `wchar_bench.rs` were restored exactly; only this evidence row ships. Do not retry the unchanged
+  128-code-point threshold: it adds a large certificate tier for a noise-sized first-active gain.
+  Reopening requires a materially later long-input gate (for example 512 or 1024 code points) plus an
+  end-to-end workload proving that the separated 1024-row win survives the added dispatch/code-size
+  cost.
+
 ## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): `strsep` exact-two-delimiter scanner misses the short-token floor; **4.6575 -> 5.3914 ns at 64 B**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found the
