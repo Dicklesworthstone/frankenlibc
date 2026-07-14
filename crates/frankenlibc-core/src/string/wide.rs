@@ -439,6 +439,34 @@ pub fn wcswidth(s: &[u32], n: usize) -> i32 {
     let mut total = 0_i32;
     let mut i = 0usize;
 
+    // Fold four 16-wide panels into one 64-wide printable-ASCII certificate.
+    // Lane-wise min/max preserves the exact range predicate: every source lane
+    // is in 0x20..=0x7e iff every folded minimum is >= 0x20 and every folded
+    // maximum is <= 0x7e. A failed certificate advances nothing, so the
+    // existing 16-wide loop below retains the precise first-special handoff.
+    const ASCII_FOLD_LANES: usize = WIDE_NUL_SIMD_LANES * 4;
+    while i + ASCII_FOLD_LANES <= scan.len() {
+        let panel = &scan[i..i + ASCII_FOLD_LANES];
+        let a = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(&panel[..WIDE_NUL_SIMD_LANES]);
+        let b = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(
+            &panel[WIDE_NUL_SIMD_LANES..WIDE_NUL_SIMD_LANES * 2],
+        );
+        let c = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(
+            &panel[WIDE_NUL_SIMD_LANES * 2..WIDE_NUL_SIMD_LANES * 3],
+        );
+        let d = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(
+            &panel[WIDE_NUL_SIMD_LANES * 3..ASCII_FOLD_LANES],
+        );
+        let lo = a.simd_min(b).simd_min(c.simd_min(d));
+        let hi = a.simd_max(b).simd_max(c.simd_max(d));
+        let printable_ascii = lo.simd_ge(Simd::splat(0x20)) & hi.simd_le(Simd::splat(0x7e));
+        if !printable_ascii.all() {
+            break;
+        }
+        total = total.saturating_add(ASCII_FOLD_LANES as i32);
+        i += ASCII_FOLD_LANES;
+    }
+
     // Printable ASCII has width exactly one. Certify 16 code points at once so
     // long paths, identifiers, and terminal text skip the per-codepoint
     // `wcwidth` table/OnceLock lookup. A panel containing NUL, a control, or any

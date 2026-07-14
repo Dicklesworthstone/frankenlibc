@@ -5,7 +5,10 @@
 //! the dominant real-world case (ASCII-heavy text) plus a mixed-UTF-8 case
 //! that mostly falls back to the scalar path (regression guard).
 
+#![feature(portable_simd)]
+
 use std::hint::black_box;
+use std::simd::{Simd, cmp::SimdPartialOrd};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::string::{mbstowcs, wcstombs, wcswidth, wcwidth};
@@ -29,6 +32,90 @@ fn wcswidth_scalar(s: &[u32], n: usize) -> i32 {
 #[inline(never)]
 fn wcswidth_ascii_run(s: &[u32], n: usize) -> i32 {
     wcswidth(s, n)
+}
+
+#[inline(never)]
+fn wcswidth_ascii_run16(s: &[u32], n: usize) -> i32 {
+    const LANES: usize = 16;
+
+    let scan = &s[..n.min(s.len())];
+    let mut total = 0_i32;
+    let mut i = 0usize;
+    while i + LANES <= scan.len() {
+        let lanes = Simd::<u32, LANES>::from_slice(&scan[i..i + LANES]);
+        let printable_ascii = lanes.simd_ge(Simd::splat(0x20)) & lanes.simd_le(Simd::splat(0x7e));
+        if !printable_ascii.all() {
+            break;
+        }
+        total = total.saturating_add(LANES as i32);
+        i += LANES;
+    }
+
+    for &wc in &scan[i..] {
+        if wc == 0 {
+            break;
+        }
+        let width = wcwidth(wc);
+        if width < 0 {
+            return -1;
+        }
+        total = total.saturating_add(width);
+    }
+    total
+}
+
+fn bench_wcswidth_ascii_fold64_ab(c: &mut Criterion) {
+    // The candidate may fail its 64-wide certificate at any lane and must then
+    // hand the untouched suffix to the pre-lever 16-wide path. Exercise those
+    // boundaries and width classes before entering a timer.
+    for len in [0usize, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129] {
+        let ascii = vec![b'x' as u32; len];
+        assert_eq!(
+            wcswidth_ascii_run16(&ascii, len),
+            wcswidth_scalar(&ascii, len)
+        );
+        assert_eq!(
+            wcswidth_ascii_run(&ascii, len),
+            wcswidth_scalar(&ascii, len)
+        );
+        for &pos in &[0usize, 15, 16, 31, 32, 47, 48, 63, 64, 127, 128] {
+            if pos >= len {
+                continue;
+            }
+            for special in [0, 0x07, 0x0301, 0x4e16, 0x11_0000] {
+                let mut input = ascii.clone();
+                input[pos] = special;
+                let expected = wcswidth_scalar(&input, len);
+                assert_eq!(
+                    wcswidth_ascii_run16(&input, len),
+                    expected,
+                    "fold16 mismatch len={len} pos={pos} special={special:#x}",
+                );
+                assert_eq!(
+                    wcswidth_ascii_run(&input, len),
+                    expected,
+                    "fold64 mismatch len={len} pos={pos} special={special:#x}",
+                );
+            }
+        }
+    }
+
+    black_box(wcwidth(b'x' as u32));
+
+    let mut group = c.benchmark_group("wcswidth_ascii_fold64_ab");
+    for size in [64usize, 256, 1024] {
+        let input: Vec<u32> = (0..size).map(|i| (b' ' + (i % 95) as u8) as u32).collect();
+        assert_eq!(wcswidth_ascii_run16(&input, size), size as i32);
+        assert_eq!(wcswidth_ascii_run(&input, size), size as i32);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("fold16", size), &input, |b, input| {
+            b.iter(|| black_box(wcswidth_ascii_run16(black_box(input), black_box(size))));
+        });
+        group.bench_with_input(BenchmarkId::new("fold64", size), &input, |b, input| {
+            b.iter(|| black_box(wcswidth_ascii_run(black_box(input), black_box(size))));
+        });
+    }
+    group.finish();
 }
 
 fn bench_wcswidth_ascii_run_ab(c: &mut Criterion) {
@@ -163,6 +250,7 @@ criterion_group!(
     benches,
     bench_mbstowcs,
     bench_wcstombs,
-    bench_wcswidth_ascii_run_ab
+    bench_wcswidth_ascii_run_ab,
+    bench_wcswidth_ascii_fold64_ab
 );
 criterion_main!(benches);
