@@ -282,3 +282,41 @@ fn tscii_encode_roundtrip_and_munch() {
         mism.join("\n")
     );
 }
+
+/// TSCII -> UTF-16LE, exhaustively vs glibc. tscii_decode's single-pass fast path was
+/// gated to==UTF-8 only (a UTF-16 target fell to the ~8x-slower Vec-two-pass); it now
+/// serves marked UTF-16 via emit_unicode_cp. The 1-2 byte inputs here all satisfy the
+/// single-pass size gate (4096 outbuf >> input*12), so this exercises the new path.
+#[test]
+fn tscii_decode_to_utf16le_matches_glibc() {
+    let g = glibc();
+    let mut mism = Vec::new();
+    for b in 0u16..256 {
+        let inp = [b as u8];
+        if g_full(&g, "UTF-16LE", "TSCII", &inp) != f_full("UTF-16LE", "TSCII", &inp)
+            && mism.len() < 40
+        {
+            mism.push(format!("byte {b:02x}"));
+        }
+    }
+    let all: Vec<u8> = (0u16..256).map(|b| b as u8).collect();
+    if g_full(&g, "UTF-16LE", "TSCII", &all) != f_full("UTF-16LE", "TSCII", &all) {
+        mism.push("full 0..256 stream differs".into());
+    }
+    for b0 in 0u16..256 {
+        for b1 in 0u16..256 {
+            let inp = [b0 as u8, b1 as u8];
+            if g_full(&g, "UTF-16LE", "TSCII", &inp) != f_full("UTF-16LE", "TSCII", &inp)
+                && mism.len() < 60
+            {
+                mism.push(format!("2byte {b0:02x}{b1:02x}"));
+            }
+        }
+    }
+    assert!(
+        mism.is_empty(),
+        "TSCII -> UTF-16LE diverged from glibc ({}):\n{}",
+        mism.len(),
+        mism.join("\n")
+    );
+}

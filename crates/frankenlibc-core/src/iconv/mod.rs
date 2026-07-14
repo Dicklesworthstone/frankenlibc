@@ -40347,6 +40347,31 @@ fn emit_utf8_cp(outbuf: &mut [u8], pos: usize, cp: u32) -> usize {
     n
 }
 
+/// Emit one scalar to a Unicode target (`to` is Utf8 / Utf16Le / Utf16Be), returning
+/// the bytes written. Lets a decoder's single-pass fast path serve UTF-16 (marked LE/BE)
+/// as well as UTF-8 — byte-identical to `encode_char(to, ch)` on the two-pass path (the
+/// same `char::from_u32(..).unwrap_or(FFFD)` substitution + `char::encode_utf16` surrogate
+/// pack the rest of this module uses). UTF-32 / unmarked-UTF-16 (BOM) stay on the two-pass.
+fn emit_unicode_cp(outbuf: &mut [u8], pos: usize, cp: u32, to: Encoding) -> usize {
+    match to {
+        Encoding::Utf16Le | Encoding::Utf16Be => {
+            let ch = char::from_u32(cp).unwrap_or('\u{FFFD}');
+            let be = matches!(to, Encoding::Utf16Be);
+            let mut units = [0u16; 2];
+            let enc = ch.encode_utf16(&mut units);
+            let mut o = pos;
+            for &u in enc.iter() {
+                let b = if be { u.to_be_bytes() } else { u.to_le_bytes() };
+                outbuf[o] = b[0];
+                outbuf[o + 1] = b[1];
+                o += 2;
+            }
+            enc.len() * 2
+        }
+        _ => emit_utf8_cp(outbuf, pos, cp),
+    }
+}
+
 fn emit_dbcs2_bmp3_utf8_run(
     input: &[u8],
     in_pos: &mut usize,
@@ -46520,7 +46545,13 @@ fn tscii_decode(
     // holding the whole worst-case output (a byte decodes to <=4 Tamil BMP scalars = 12
     // UTF-8 bytes; plus the one end-of-input pending flush) so E2BIG is unreachable. TSCII
     // carries no cd state (pending/bit3 are local, flushed at end), so a re-run is safe.
-    if cd.to == Encoding::Utf8 && outbuf.len() >= input.len().saturating_mul(12).saturating_add(16) {
+    if matches!(cd.to, Encoding::Utf8 | Encoding::Utf16Le | Encoding::Utf16Be)
+        && outbuf.len() >= input.len().saturating_mul(12).saturating_add(16)
+    {
+        // UTF-16 (marked LE/BE) shares this path via emit_unicode_cp; all TSCII scalars
+        // are Tamil BMP, so UTF-16 output (2 B/scalar) <= UTF-8 output (3 B/scalar) and the
+        // *12 gate already covers it. Emit order (visual-reorder) is unchanged.
+        let to = cd.to;
         let mut i = 0usize;
         let mut o = 0usize;
         let mut consumed_end = 0usize;
@@ -46533,7 +46564,7 @@ fn tscii_decode(
                 let last = pending;
                 if last == 0x0BCD && bit3 {
                     if ch == 0xa4 || ch == 0xa5 {
-                        o += emit_utf8_cp(outbuf, o, ch + 0xb1d);
+                        o += emit_unicode_cp(outbuf, o, ch + 0xb1d, to);
                         pending = 0;
                         bit3 = false;
                         i += 1;
@@ -46544,7 +46575,7 @@ fn tscii_decode(
                     if (last == 0x0BC6 && ch == 0xa1)
                         || (last == 0x0BC7 && (ch == 0xa1 || ch == 0xaa))
                     {
-                        o += emit_utf8_cp(outbuf, o, last + 4 + if ch != 0xa1 { 1 } else { 0 });
+                        o += emit_unicode_cp(outbuf, o, last + 4 + if ch != 0xa1 { 1 } else { 0 }, to);
                         pending = 0;
                         bit3 = false;
                         i += 1;
@@ -46552,20 +46583,20 @@ fn tscii_decode(
                         continue;
                     }
                     if (0xb8..=0xc9).contains(&ch) && !bit3 {
-                        o += emit_utf8_cp(outbuf, o, tscii_tables::TSCII_DECODE[ch as usize][0]);
+                        o += emit_unicode_cp(outbuf, o, tscii_tables::TSCII_DECODE[ch as usize][0], to);
                         bit3 = true;
                         i += 1;
                         consumed_end = i;
                         continue;
                     }
                 }
-                o += emit_utf8_cp(outbuf, o, last);
+                o += emit_unicode_cp(outbuf, o, last, to);
                 pending = 0;
                 bit3 = false;
                 continue;
             }
             if ch < 0x80 {
-                o += emit_utf8_cp(outbuf, o, ch);
+                o += emit_unicode_cp(outbuf, o, ch, to);
                 i += 1;
                 consumed_end = i;
                 continue;
@@ -46576,23 +46607,23 @@ fn tscii_decode(
                     bit3 = false;
                 }
                 0x8a..=0x8b => {
-                    o += emit_utf8_cp(outbuf, o, ch + 0x0b2e);
+                    o += emit_unicode_cp(outbuf, o, ch + 0x0b2e, to);
                     pending = 0x0BCD;
                     bit3 = true;
                 }
                 0x82 => {
                     for &cp in &[0x0BB8u32, 0x0BCD, 0x0BB0, 0x0BC0] {
-                        o += emit_utf8_cp(outbuf, o, cp);
+                        o += emit_unicode_cp(outbuf, o, cp, to);
                     }
                 }
                 0x87 => {
                     for &cp in &[0x0B95u32, 0x0BCD, 0x0BB7] {
-                        o += emit_utf8_cp(outbuf, o, cp);
+                        o += emit_unicode_cp(outbuf, o, cp, to);
                     }
                 }
                 0x8c => {
                     for &cp in &[0x0B95u32, 0x0BCD, 0x0BB7, 0x0BCD] {
-                        o += emit_utf8_cp(outbuf, o, cp);
+                        o += emit_unicode_cp(outbuf, o, cp, to);
                     }
                 }
                 _ => {
@@ -46602,7 +46633,7 @@ fn tscii_decode(
                         break;
                     }
                     for &cp in cps {
-                        o += emit_utf8_cp(outbuf, o, cp);
+                        o += emit_unicode_cp(outbuf, o, cp, to);
                     }
                 }
             }
@@ -46610,7 +46641,7 @@ fn tscii_decode(
             consumed_end = i;
         }
         if err.is_none() && pending != 0 {
-            o += emit_utf8_cp(outbuf, o, pending);
+            o += emit_unicode_cp(outbuf, o, pending, to);
         }
         return match err {
             Some(code) => Err(IconvError {
