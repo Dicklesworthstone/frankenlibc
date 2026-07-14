@@ -177,9 +177,9 @@ impl EbrCollector {
             for item in items_to_clean {
                 (item.cleanup)();
             }
-            self.total_reclaimed.fetch_add(count, Ordering::Relaxed);
 
             if count > 0 {
+                self.total_reclaimed.fetch_add(count, Ordering::Relaxed);
                 crate::alien_cs_metrics::emit_alien_cs_event(
                     crate::alien_cs_metrics::MetricEventKind::EbrReclaim,
                     count,
@@ -489,6 +489,7 @@ mod tests {
         let e = c.try_advance();
         assert_eq!(e, Some(1));
         assert_eq!(c.epoch(), 1);
+        assert_eq!(c.diagnostics().total_reclaimed, 0);
     }
 
     #[test]

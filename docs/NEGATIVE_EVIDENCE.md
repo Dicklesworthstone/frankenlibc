@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / SageBadger) — WIN (SHIPPED): skip the empty EBR reclaim-counter RMW; advance **74.022 -> 67.969 ns (1.089x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH LANE.** Exact ledger searches found no empty-reclaim,
+  `total_reclaimed`, zero-RMW, or `ebr_retire/advance` attempt. All-ref history contains only the
+  original unconditional counter update in `613e5b416`; the recent EBR result concerns `MetricRing`
+  eviction, not reclaim accounting. This row therefore owns a new one-line obligation.
+- **ONE LEVER / CERTIFIED ZERO-UPDATE ELISION.** `EbrCollector::try_advance()` now executes
+  `total_reclaimed.fetch_add(count, Relaxed)` inside its existing `count > 0` branch. For positive
+  batches, the observable order remains cleanup closures, reclaimed-counter update, then `EbrReclaim`
+  event. For an empty batch, the removed operation added zero, discarded its return, and provided no
+  synchronization under `Relaxed`; the counter value, epoch publication, bucket selection/drain, event
+  stream, and return value are identical. Quarantine and non-empty reclaim updates are untouched.
+- **STRICT-REMOTE NAMED-BASELINE GATE.** Baseline command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'ebr_retire/advance' --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline ebr_zero_reclaim_0bda10fc`.
+  The candidate used the identical command with `--baseline ebr_zero_reclaim_0bda10fc`. Both executed
+  on actual worker `vmi1293453`, so Criterion compared this turn's explicit artifact rather than stale
+  pool history. The interval moved **[73.563, 74.022, 74.577] ns ->
+  [66.643, 67.969, 69.294] ns**: candidate/baseline center **0.918227x**, **8.177% less time**
+  (**1.0891x faster**). The named change interval was **-10.368% to -8.0116%**, central
+  **-9.1999%**, `p=0.00`. The row pre-fills 100 retired items before warmup; warmup reclaims that sole
+  non-empty bucket, so every measured iteration exercises the deployed empty-reclaim branch directly.
+- **REMOTE PROOF / QUALITY GATES.** The focused empty-advance assertion passed remotely
+  (**1 passed, 0 failed**) and pins `total_reclaimed == 0`; the existing non-empty test pins five retired
+  items becoming five reclaimed items. Membrane-only Clippy passed remotely with `-D warnings`.
+  `cargo fmt --all -- --check` was attempted through strict RCH and correctly refused local execution as
+  `RCH-E301`; the edit is rustfmt-stable and `git diff --check` is clean. Staged UBS reported zero
+  criticals and zero warnings; its three info items are pre-existing wildcard-import/workspace heuristics.
+  Baseline and candidate both
+  retained the same peer-owned `iconv/mod.rs` binary-diff hash
+  `24d3bb6f680e84b68db293f9972b1910d9aedf76d2f335896b0fc7a913d51c40`; subsequent peer iconv work
+  remained untouched and outside the staged scope.
+- **CLOSED BOUNDARY.** Keep the `count > 0` guard around both accounting and event emission. Do not
+  remove or defer the counter update for non-empty batches, and do not generalize this result to EBR pin,
+  retire, quarantine, or epoch-publication atomics without separate proof and deployed measurements.
+
 ## 2026-07-13 (cod / OrangePelican) — REJECTED (NOT SHIPPED): replacing the mutex-serialized `RcuCell` epoch RMW is neutral; **75.608 -> 76.220 ns**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH LANE.** The ledger and all-ref history contained the original
