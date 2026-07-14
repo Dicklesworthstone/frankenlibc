@@ -6,6 +6,37 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: `localeconv` strict static-return bypass never reached its timed path (`bd-6pypop`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH LOCALE REGIME.** `bv --robot-triage`
+  (data hash `cb2747d10983a55d`) found the allocator Swing-2 bead actively owned and
+  ranked regex rehabilitation bead `bd-fw52ov`; exact history showed that bead's bulk-table
+  lever already landed in `c2b997fcf`, so it was closed without a duplicate retry. Locale was
+  then selected as a fresh subsystem with no recorded attempt at this exact entrypoint cut.
+- **PROFILE / ATTRIBUTION / ONE CERTIFIED REWRITE.** `localeconv` always returns the same immutable
+  C-locale `LCONV`, but its deployed strict path still entered `runtime_policy::decide` and
+  `runtime_policy::observe`. Strict observation already forces this input-free API to `Allow`, and
+  there is no caller pointer, repair, or locale-dependent mutation at this entrypoint. The candidate
+  returned `&LCONV` directly only when `strict_passthrough_active()` was true; hardened mode and tests
+  retained the incumbent policy path.
+- **PREPARED PROOF, NOT EXECUTED.** A temporary same-binary incumbent hook checked old/new pointer
+  identity, all 10 string and 14 numeric `lconv` fields, and a private-namespace host-glibc C-locale
+  snapshot before paired timing. The harness also prepared an order-rotated candidate/candidate null
+  control. Targeted `rustfmt` and `git diff --check` passed, but the executable oracle never ran, so no
+  equivalence or conformance result is claimed.
+- **ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE INVALID BENCH.** The sole command was
+  `RCH_REQUIRE_REMOTE=1 RCH_QUEUE_WHEN_BUSY=1 rch exec -- cargo run -j 1 --profile release -p
+  frankenlibc-bench --features abi-bench --example stdio_st_probe -- localeconv`, under a **295 s**
+  hard wall. RCH selected actual worker `vmi1152480`, spent about 76 s synchronizing, then rewrote
+  `CARGO_TARGET_DIR` to fresh worker pool `52cb8389992c89401e7474ec3f19ef5a`. The cap expired while
+  dependencies and `frankenlibc-abi` were still compiling, before the binary, 24-field oracle, null
+  control, host arm, or any timing executed. No candidate/control ratio exists.
+- **DISPOSITION / RETRY CONDITION.** Manually restored production and temporary harness changes;
+  only this evidence row and closed bead ship. This is an infrastructure-invalid hold, not evidence
+  for or against the strict bypass. Retry only with a demonstrably warm, already-linked ordinary-
+  release `stdio_st_probe` on the admitted worker. No `release-perf`, local Cargo fallback, stash
+  creation, or stash drop occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: `tdelete` single-walk candidate never reached its timed path (`bd-87fps4`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH SEARCH REGIME.** `bv --robot-triage`
