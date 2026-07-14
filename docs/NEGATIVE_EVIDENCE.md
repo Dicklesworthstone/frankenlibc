@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — REJECTED (NOT SHIPPED): finite `hypot` zero-axis shortcut halves axis latency but taxes general calls; **9.96 -> 11.74 ns** (`bd-n0ab79`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH MATH REGIME.** `bv --robot-triage` surfaced the
+  global perf directive plus stale or already-mined stdio, allocator, and sort leaves. The ledger
+  closed those nearby shapes and the recent `scalbn(x, 0)` rejection, while exact ledger and all-ref
+  history searches found no measured `hypot(x, +/-0)` / `hypot(+/-0, y)` specialization. This took
+  one fresh libm regime rather than reopening a rejected scanner or formatting micro-path.
+- **PROFILE / ONE CERTIFIED PARTITION.** Source attribution found deployed `hypot` entering libm's
+  magnitude normalization, operand ordering, exponent classification, and scaling path even when
+  one finite argument is signed zero. The candidate returned the absolute value of the other finite
+  argument for either zero axis and retained the byte-identical incumbent body for all non-axis,
+  infinity, and NaN inputs. The identity is exact under C99, cannot overflow, and bitwise absolute
+  value introduces no floating-point exception.
+- **EXECUTABLE EQUIVALENCE ORACLE.** Before timing, the same release binary compared candidate,
+  incumbent, and host glibc bit-for-bit on eight axis cases spanning both argument positions, both
+  zero signs, minimum positive normal, and maximum finite magnitude. It also proved old/new equality
+  on **1,022** generated nonzero fallback pairs and equivalent results on six NaN/infinity cases:
+  `HYPOT_AXIS_EQ axis=8 fallback=1022 exceptional=6 status=PASS`.
+- **ONE FOREGROUND STRICT-REMOTE RELEASE REJECT.** The sole benchmark command was
+  `RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 rch exec --
+  cargo run -j 1 --profile release -p frankenlibc-abi --example math_survey -- hypot-axis-ab`.
+  RCH admitted actual worker **`vmi1152480`** and used the ordinary `release` profile, never
+  `release-perf`. Across 60 order-rotated median samples of 1,000,000 calls, the target zero-axis
+  regime improved from **5.99 ns** to **2.99 ns** (**0.500x; 50.0% less time; 2.00x faster**) and was
+  **0.887x** host glibc's **3.38 ns**. However, the decisive unchanged general-case control regressed
+  from **9.96 ns** to **11.74 ns** (**1.179x; 17.9% more time**), far outside the `0.95..=1.05`
+  validity/ship band.
+- **ATTRIBUTED REJECTION / RESTORATION.** `math_membrane_fastpath()` is an inlined compile-time
+  predicate in deployed builds, so the fallback loss is not duplicate membrane bookkeeping: it is
+  the cost of the two additional axis predicates ahead of an approximately 10 ns general kernel.
+  Both source and the temporary same-binary probe were restored exactly; only this evidence row and
+  closed bead ship. Do not retry the symmetric pre-kernel zero checks. Reopen only with profile
+  evidence that zero-axis calls dominate a real workload, or a structural kernel rewrite that
+  recognizes zero without adding a prelude branch to every general `hypot` call.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN (CERTIFIED): `/etc/gshadow` `splitn(4)` parser; **86.391 -> 59.204 ns (1.46x faster)** (`bd-2g7oyh.483`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST.** `bv --robot-triage` identified the global no-gaps perf
