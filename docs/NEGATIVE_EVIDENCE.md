@@ -6,6 +6,53 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): decompose serialized SeqLock write-counter RMW; **108.72 -> 98.812 ns (1.100x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found no
+  prior decomposition of `SeqLock`'s write-commit diagnostic RMW; the counter originates in
+  `ac9be987c`. The recent pending-writer win changed only failed-try-lock waiting and explicitly left
+  write-commit diagnostics open to separate proof and measurement. This lever had EV `(impact 4 *
+  confidence 5) / effort 1 = 20` and relevance 4.9/5 for the checked-in write row.
+- **ONE LEVER / SERIALIZED RMW DECOMPOSITION.** `SeqLock::commit()` replaces the discarded-return
+  `writes.fetch_add(1, Relaxed)` with `load(Relaxed).wrapping_add(1)` followed by `store(Relaxed)`.
+  Every production commit still occurs while its private `writer_lock` guard is held, so no second
+  writer can modify `writes` between the load and store. Diagnostic readers are load-only and can still
+  observe only the same old or new modulo-`u64` value; the data publication, release version bump,
+  diagnostic update, commit event, mutation batching, lock lifetime, and public schema are unchanged.
+  The checked-in `seqlock_write/write_with` row constructs the lock outside timing and executes exactly
+  one otherwise-uncontended commit per iteration, crossing the replaced locked RMW once.
+- **CERTIFIED EDGE PROOF / FALLBACK.** The first measured draft derived `writes` from the new version,
+  but proof review rejected it before commit: if the version RMW wraps under overflow checking, its
+  following `+ 1` can panic before `writes` changes; after that panic is caught, the independent counters
+  remain offset. Loading the serialized write counter itself preserves the old recovery sequence exactly,
+  including wrapping. The new oracle simulates that post-panic state and pins `MAX-1 -> MAX -> 0`; normal
+  sequential and four-writer assertions pin the initial-offset identity and absence of lost stores.
+  The declared fallback was exact source restoration plus this evidence row unless the named same-worker
+  95% interval was wholly negative and raw point improvement reached 5%.
+- **STRICT-REMOTE SAME-WORKER KEEP.** Baseline command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- seqlock_write/write_with --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline seqlock_commit_store_03553124`.
+  The exact-preserving candidate used the identical command with `--baseline
+  seqlock_commit_store_03553124`; both ran on actual worker `vmi1293453`. Intervals moved
+  **[107.05, 108.72, 111.55] ns -> [98.018, 98.812, 99.720] ns**: raw point ratio **0.9089x**,
+  **9.11% less time** (**1.1003x faster**). Criterion's named change interval was
+  **-14.767% to -8.0855%**, central **-10.957%**, `p=0.00`; both keep gates passed.
+- **REMOTE QUALITY / SHARED-TREE BOUNDARY.** The full SeqLock unit module passed through strict RCH on
+  `vmi1293453` (**35 passed, 0 failed**), including the new wrap-recovery oracle. Membrane-lib Clippy
+  passed remotely with `-D warnings` on actual worker `vmi1152480`; an earlier routed worker,
+  `vmi1264463`, surfaced that the pinned nightly's Clippy component was absent, and no local fallback
+  ran. Strict-remote `cargo fmt --all -- --check` correctly refused local fallback as `RCH-E301`;
+  `git diff --check` is clean. Staged UBS exited 0 with zero criticals; its 78 warnings are the expected
+  inventory of nine existing test thread-join `expect` calls, one required guard snapshot clone, 67 test
+  assertions (including the new proof oracle), and one fixed-size test index. Final `seqlock.rs` is
+  `19949826235eef5efd45bf624fec40b413f7b24ffc35f02a8d69e9c08b7286e9`; the benchmark stayed
+  byte-identical at `5b2309748b746a04a484e5c1a51e008d5372fb2a1e3a9ac3518e01917b583a03`
+  across the A/B pair. Concurrent peer iconv work stayed outside this benchmark's source and row.
+- **DEPLOYMENT / CLOSED BOUNDARY.** Keep this decomposition only while `writer_lock` serializes the
+  entire guard lifetime through `commit()` and diagnostic consumers remain observers. Reopen if any
+  commit path bypasses that lock, another writer can update the counter concurrently, or the counter
+  becomes a synchronization/admission primitive. Do not generalize this result to version publication,
+  contention events, pending writers, or other primitives without their own proof and measurement.
+
 ## 2026-07-14 (cod / TanPelican) — WIN (SHIPPED): derive BRAVO fast-path attempts from terminal counters; **18.565 -> 12.494 ns (1.486x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found no

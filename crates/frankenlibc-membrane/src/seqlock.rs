@@ -261,7 +261,12 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
         let mut guard = self.data.lock();
         *guard = Arc::new(new_value);
         let new_version = self.version.fetch_add(1, Ordering::Release) + 1;
-        self.diag.writes.fetch_add(1, Ordering::Relaxed);
+        let new_writes = self
+            .diag
+            .writes
+            .load(Ordering::Relaxed)
+            .wrapping_add(1);
+        self.diag.writes.store(new_writes, Ordering::Relaxed);
         crate::alien_cs_metrics::emit_alien_cs_event(
             crate::alien_cs_metrics::MetricEventKind::SeqLockWriteCommit,
             new_version,
@@ -583,6 +588,25 @@ mod tests {
         sl.write_with(|d| *d = 2);
         let d = sl.diagnostics();
         assert_eq!(d.writes, 2);
+        assert_eq!(d.writes, sl.version().wrapping_sub(1));
+    }
+
+    #[test]
+    fn write_diagnostics_preserve_independent_wrap_recovery() {
+        let sl = SeqLock::new(0u64);
+
+        // This is the state left if the version RMW wraps and the overflow-checking
+        // `+ 1` overflow panic is caught before the write counter is updated.
+        sl.version.store(0, Ordering::Relaxed);
+        sl.diag.writes.store(u64::MAX - 1, Ordering::Relaxed);
+
+        sl.write_with(|d| *d = 1);
+        assert_eq!(sl.version(), 1);
+        assert_eq!(sl.diagnostics().writes, u64::MAX);
+
+        sl.write_with(|d| *d = 2);
+        assert_eq!(sl.version(), 2);
+        assert_eq!(sl.diagnostics().writes, 0);
     }
 
     #[test]
@@ -830,6 +854,7 @@ mod tests {
         assert_eq!(*sl.load(), 400);
         let d = sl.diagnostics();
         assert_eq!(d.writes, 400);
+        assert_eq!(d.writes, sl.version().wrapping_sub(1));
     }
 
     // ──────────────── Edge cases ────────────────
