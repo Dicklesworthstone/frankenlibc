@@ -31,7 +31,177 @@ use std::time::Instant;
 
 type F32Fn = unsafe extern "C" fn(f32) -> f32;
 
+type F64BinaryFn = unsafe extern "C" fn(f64, f64) -> f64;
+
+fn median(samples: &[f64]) -> f64 {
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    sorted[sorted.len() / 2]
+}
+
+fn time_atan2_axis(mut f: impl FnMut(f64, f64) -> f64, iterations: usize) -> f64 {
+    let axes = [
+        (0.0, 1.0),
+        (-0.0, 2.0),
+        (0.0, f64::MIN_POSITIVE),
+        (-0.0, f64::INFINITY),
+    ];
+    let start = Instant::now();
+    let mut bits = 0u64;
+    for i in 0..iterations {
+        let (y, x) = axes[i & 3];
+        bits ^= f(std::hint::black_box(y), std::hint::black_box(x)).to_bits();
+    }
+    std::hint::black_box(bits);
+    start.elapsed().as_nanos() as f64 / iterations as f64
+}
+
+fn time_atan2_general(mut f: impl FnMut(f64, f64) -> f64, iterations: usize) -> f64 {
+    let general = [(0.25, 1.5), (-0.75, 2.25), (1.5, -0.5), (-2.0, -3.0)];
+    let start = Instant::now();
+    let mut sum = 0.0f64;
+    for i in 0..iterations {
+        let (y, x) = general[i & 3];
+        sum += f(std::hint::black_box(y), std::hint::black_box(x));
+    }
+    std::hint::black_box(sum);
+    start.elapsed().as_nanos() as f64 / iterations as f64
+}
+
+fn run_atan2_axis_ab() {
+    let handle = unsafe {
+        libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libm.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        )
+    };
+    assert!(!handle.is_null(), "dlmopen libm failed");
+    let host: F64BinaryFn = unsafe {
+        let symbol = libc::dlsym(handle, b"atan2\0".as_ptr().cast());
+        assert!(!symbol.is_null(), "dlsym atan2 failed");
+        std::mem::transmute(symbol)
+    };
+
+    let axes = [
+        (0.0, 1.0),
+        (-0.0, 2.0),
+        (0.0, f64::MIN_POSITIVE),
+        (-0.0, f64::INFINITY),
+    ];
+    for (y, x) in axes {
+        let old = frankenlibc_abi::math_abi::bench_atan2_oldpath(y, x);
+        let new = unsafe { frankenlibc_abi::math_abi::atan2(y, x) };
+        let glibc = unsafe { host(y, x) };
+        assert_eq!(
+            new.to_bits(),
+            old.to_bits(),
+            "new/old mismatch at ({y}, {x})"
+        );
+        assert_eq!(
+            new.to_bits(),
+            glibc.to_bits(),
+            "new/glibc mismatch at ({y}, {x})"
+        );
+    }
+    let mut fallback_cases = 0usize;
+    for i in 1..=1024 {
+        let y = (i as f64).mul_add(0.001_953_125, -1.0);
+        let x = (i as f64).mul_add(0.003_906_25, -1.5);
+        if y != 0.0 && x != 0.0 {
+            let old = frankenlibc_abi::math_abi::bench_atan2_oldpath(y, x);
+            let new = unsafe { frankenlibc_abi::math_abi::atan2(y, x) };
+            assert_eq!(
+                new.to_bits(),
+                old.to_bits(),
+                "fallback mismatch at ({y}, {x})"
+            );
+            fallback_cases += 1;
+        }
+    }
+
+    let iterations = 1_000_000usize;
+    let mut old_axis = Vec::new();
+    let mut new_axis = Vec::new();
+    let mut host_axis = Vec::new();
+    let mut old_control = Vec::new();
+    let mut new_control = Vec::new();
+    for sample in 0..60 {
+        let mut push_old_axis = || {
+            old_axis.push(time_atan2_axis(
+                frankenlibc_abi::math_abi::bench_atan2_oldpath,
+                iterations,
+            ));
+        };
+        let mut push_new_axis = || {
+            new_axis.push(time_atan2_axis(
+                |y, x| unsafe { frankenlibc_abi::math_abi::atan2(y, x) },
+                iterations,
+            ));
+        };
+        let mut push_host_axis = || {
+            host_axis.push(time_atan2_axis(|y, x| unsafe { host(y, x) }, iterations));
+        };
+        match sample % 3 {
+            0 => {
+                push_old_axis();
+                push_new_axis();
+                push_host_axis();
+            }
+            1 => {
+                push_new_axis();
+                push_host_axis();
+                push_old_axis();
+            }
+            _ => {
+                push_host_axis();
+                push_old_axis();
+                push_new_axis();
+            }
+        }
+
+        if sample & 1 == 0 {
+            old_control.push(time_atan2_general(
+                frankenlibc_abi::math_abi::bench_atan2_oldpath,
+                iterations,
+            ));
+            new_control.push(time_atan2_general(
+                |y, x| unsafe { frankenlibc_abi::math_abi::atan2(y, x) },
+                iterations,
+            ));
+        } else {
+            new_control.push(time_atan2_general(
+                |y, x| unsafe { frankenlibc_abi::math_abi::atan2(y, x) },
+                iterations,
+            ));
+            old_control.push(time_atan2_general(
+                frankenlibc_abi::math_abi::bench_atan2_oldpath,
+                iterations,
+            ));
+        }
+    }
+
+    let (old_axis, new_axis, host_axis) =
+        (median(&old_axis), median(&new_axis), median(&host_axis));
+    let (old_control, new_control) = (median(&old_control), median(&new_control));
+    println!("ATAN2_AXIS_EQ axis=4 fallback={fallback_cases} status=PASS");
+    println!(
+        "ATAN2_AXIS_AB old={old_axis:.2}ns new={new_axis:.2}ns host={host_axis:.2}ns new/old={:.3} new/host={:.3}",
+        new_axis / old_axis,
+        new_axis / host_axis,
+    );
+    println!(
+        "ATAN2_GENERAL_NULL old={old_control:.2}ns new={new_control:.2}ns new/old={:.3}",
+        new_control / old_control,
+    );
+}
+
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("atan2-axis-ab") {
+        run_atan2_axis_ab();
+        return;
+    }
+
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,

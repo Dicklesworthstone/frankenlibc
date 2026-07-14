@@ -413,6 +413,19 @@ pub unsafe extern "C" fn atan(x: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
+    // Exact C99 axis regime: atan2(±0, positive) is the input signed zero.
+    // Returning it directly avoids the binary membrane and generic libm kernel while
+    // preserving the sign bit. Every other quadrant/special case keeps the old path.
+    if y == 0.0 && x > 0.0 && runtime_policy::math_membrane_fastpath() {
+        return y;
+    }
+    binary_entry(y, x, 6, frankenlibc_core::math::atan2)
+}
+
+/// Same-binary benchmark hook for the pre-axis-specialization `atan2` body.
+#[doc(hidden)]
+#[inline(never)]
+pub fn bench_atan2_oldpath(y: f64, x: f64) -> f64 {
     binary_entry(y, x, 6, frankenlibc_core::math::atan2)
 }
 

@@ -6,6 +6,38 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `atan2(±0, x>0)` axis return; **5.43 -> 2.23 ns (2.44x faster)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH MATH-LIBM AXIS REGIME.** Before source inspection, the ledger
+  closed the broad transcendental survey, the shipped f64 `sincos` shared reduction, the rejected
+  f32 `sincos` reduction and f64 common-band FMA follow-up, qsort's integer/adaptive wins and
+  rejected comparator/index-sort variants, and allocator magazine/micro-framing follow-ups. Exact
+  ledger and all-ref history searches found no `atan2` signed-zero positive-axis specialization or
+  measured rejection, so this is one fresh ABI math lever rather than another scanner or kernel
+  approximation.
+- **CERTIFIED REGIME PARTITION / FALLBACK.** In deployed non-test builds, C99's exact
+  `atan2(±0, x>0) = ±0` regime now returns `y` directly, preserving its sign bit while avoiding
+  `binary_entry` and the generic libm kernel. The strict inequality excludes both signed zero and
+  every negative `x`; NaNs cannot satisfy it, while positive infinity correctly belongs to the
+  exact regime. Unit-test builds retain the full membrane path, and every other deployed quadrant,
+  infinity, NaN, and ordinary finite pair executes the byte-identical incumbent body.
+- **EXECUTABLE EQUIVALENCE ORACLE.** Before timing, the retained same-binary probe compared the old
+  body, new ABI entrypoint, and host glibc bit-for-bit for four positive-axis cases spanning both
+  zero signs, minimum positive normal `x`, and positive infinity. It also compared old and new
+  bit-for-bit across **1,022** ordinary fallback pairs. Output was
+  `ATAN2_AXIS_EQ axis=4 fallback=1022 status=PASS`.
+- **ONE STRICT-REMOTE SAME-PROCESS WIN.** The sole foreground command was
+  `RCH_REQUIRE_REMOTE=1 rch exec -- cargo run --profile release -p frankenlibc-abi --example
+  math_survey -- atan2-axis-ab`; RCH admitted actual worker **`vmi1149989`** and transported the
+  selector in the remote argv. Across 60 order-rotated median samples of 1,000,000 calls, the exact
+  axis target moved from **5.43 ns** to **2.23 ns** (**0.411x; 58.9% less time; 2.44x faster**),
+  versus host glibc at **4.97 ns** (**0.449x host; 2.23x faster**). The ordinary-quadrant null
+  control stayed within its 5% gate at **11.88 -> 12.24 ns (1.030x)**. The release build completed
+  with existing unrelated warnings; no local Cargo command ran.
+- **BOUNDARY.** This ships only the positive-x signed-zero axis identity. Do not generalize the
+  return to `x <= 0` (where signed pi/zero-quadrant rules differ) or to nonzero `y`; any additional
+  `atan2` special-value partition needs its own bit/fenv proof and target plus fallback null control.
+
 ## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): finite `scalbn(x, 0)` core shortcut wins the kernel but regresses the deployed ABI; **2.9523 -> 3.2182 ns**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH MATH-LIBM LANE.** The ledger closed the broad f64/f32
