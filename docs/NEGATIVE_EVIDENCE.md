@@ -19038,3 +19038,24 @@ decode beats; it's the same table that WINS DBCS->UTF-8 only because glibc's UTF
 Closing this needs a more compact/faster DBCS decode (a big rewrite), not a gather/scalar swap.
 Reverted the core change; kept the two diagnostic bench cases. Same iconv run-to-run noise hazard
 as cc-strcat / the EUC-JP source-truncation note.
+
+## cod-bzero-core-memset-2026-07-14 — REJECT (1.1%, overlapping intervals; iterator already lowers to bulk zero)
+
+Negative-ledger-first inspection found a narrow open seam behind the deployed `bzero` fast path: core
+`bzero` still used an iterator store loop followed by `black_box`, while the strict ABI path bypasses it
+with `raw_memset_bytes`. Tried replacing only that iterator with the tuned safe-core `memset(dest, 0,
+count)`, retaining the identical post-write `black_box` observability barrier. The rewrite is behavior-
+identical: both clamp to `min(n, dest.len())`, zero exactly that prefix, leave the suffix untouched, and
+make the written prefix observable after the store.
+
+- **ONE FOREGROUND SAME-PROCESS A/B:** `bzero_core_ab`, 4096 bytes, Criterion 30 samples / 1 s warm-up /
+  3 s measurement, fail-closed remote-only on pinned worker `vmi1293453` via
+  `RCH_REQUIRE_REMOTE=1 rch exec`.
+- **RESULT:** candidate `memset` **[22.058, 22.464, 22.914] ns** versus faithful old iterator
+  **[22.171, 22.710, 23.158] ns**. Center improvement is only **1.08%** and the intervals overlap almost
+  completely, far below the 5% keep floor.
+- **DISPOSITION:** restored production source and temporary benchmark apparatus exactly; docs-only reject.
+  LLVM already recognizes the non-volatile iterator as a bulk zero, so routing through `memset` merely
+  expresses the same lowering. The residual cost is the mandatory observability barrier / call shape, not
+  the source-level loop. Do not retry iterator-to-`fill`/`memset`; a future core/explicit-zero lever would
+  need a materially different wide-volatile primitive and its own security-semantics proof.
