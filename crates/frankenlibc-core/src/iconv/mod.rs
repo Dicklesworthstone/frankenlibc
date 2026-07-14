@@ -46456,11 +46456,136 @@ fn tscii_decode(
 /// TSCII ENCODE (`to == Tscii`): decode the source to scalars, then maximal-munch
 /// the code-point stream (longest matching 4..1-cp key wins) into the visual-order
 /// byte string via `TSCII_ENCODE`.
+/// BMP `cp -> TSCII bytes` for the length-1 (single-scalar) TSCII_ENCODE entries, so
+/// the common non-ligature char skips the maximal-munch peek + u128 HashMap probes.
+/// Empty slice = absent. All TSCII scalars are BMP, so this is exhaustive for len-1.
+/// Last-write-wins on a dup cp, exactly like the encode map's `collect()`.
+fn tscii_enc1_direct() -> &'static [&'static [u8]] {
+    static D: std::sync::OnceLock<Vec<&'static [u8]>> = std::sync::OnceLock::new();
+    D.get_or_init(|| {
+        let mut t: Vec<&'static [u8]> = vec![&[]; 0x10000];
+        for &(cps, bytes) in tscii_tables::TSCII_ENCODE.iter() {
+            if cps.len() == 1 && cps[0] < 0x10000 {
+                t[cps[0] as usize] = bytes;
+            }
+        }
+        t
+    })
+}
+/// Sorted unique first-cps of the length>=2 (ligature/combining) TSCII_ENCODE entries,
+/// for the maximal-munch prefilter — only these scalars can begin a multi-cp cell.
+fn tscii_multi_first_cps() -> &'static [u32] {
+    static S: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        let mut v: Vec<u32> = tscii_tables::TSCII_ENCODE
+            .iter()
+            .filter(|&&(cps, _)| cps.len() >= 2)
+            .map(|&(cps, _)| cps[0])
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    })
+}
 fn tscii_convert(
     cd: &mut IconvDescriptor,
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Single-pass fast path: write directly into outbuf, skipping the `Vec<u8>`
+    // accumulator + final copy (2 heap allocs/call), the always-4-cp peek, and the up-to-4
+    // `HashMap<u128>` SipHash munch probes per char (~14x slower than glibc). A char that
+    // can't START a multi-cp ligature (prefiltered) goes straight to the O(1) single-scalar
+    // direct table; only a genuine ligature base runs the peek + munch. Worst char = a 3-byte
+    // cell, so gating on `outbuf.len() >= input.len()*4` makes E2BIG unreachable here and
+    // leaves the tight-buffer all-or-nothing E2BIG path (below) exactly as it was.
+    // Byte-identical: same maximal-munch longest-first result, same emitted bytes.
+    if outbuf.len() >= input.len().saturating_mul(4) {
+        let enc = tscii_encode_map();
+        let enc1 = tscii_enc1_direct();
+        let multi_first = tscii_multi_first_cps();
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        let mut err: Option<(i32, usize)> = None;
+        while in_pos < input.len() {
+            let (c0, consumed0) = match decode_char(cd.from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    err = Some((ICONV_EINVAL, in_pos));
+                    break;
+                }
+                Err(DecodeError::Invalid) => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            };
+            let cp0 = c0 as u32;
+            // Maximal munch (l>=2) only if this scalar can begin a ligature.
+            let mut matched: Option<(&'static [u8], usize)> = None;
+            if multi_first.binary_search(&cp0).is_ok() {
+                let mut peek_cps = [0u32; 4];
+                let mut peek_end = [0usize; 4];
+                peek_cps[0] = cp0;
+                peek_end[0] = in_pos + consumed0;
+                let mut n_peek = 1usize;
+                let mut p = in_pos + consumed0;
+                while n_peek < 4 && p < input.len() {
+                    match decode_char(cd.from, &input[p..]) {
+                        Ok((c, consumed)) => {
+                            peek_cps[n_peek] = c as u32;
+                            p += consumed;
+                            peek_end[n_peek] = p;
+                            n_peek += 1;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                for l in (2..=n_peek).rev() {
+                    if let Some(&bytes) = enc.get(&tscii_pack(&peek_cps[..l])) {
+                        matched = Some((bytes, peek_end[l - 1]));
+                        break;
+                    }
+                }
+            }
+            if let Some((bytes, end)) = matched {
+                outbuf[out_pos..out_pos + bytes.len()].copy_from_slice(bytes);
+                out_pos += bytes.len();
+                in_pos = end;
+                continue;
+            }
+            // Single scalar: O(1) BMP direct table (astral -> HashMap; none for TSCII).
+            let single: Option<&'static [u8]> = if cp0 < 0x10000 {
+                let b = enc1[cp0 as usize];
+                if b.is_empty() { None } else { Some(b) }
+            } else {
+                enc.get(&tscii_pack(&[cp0])).copied()
+            };
+            match single {
+                Some(bytes) => {
+                    outbuf[out_pos..out_pos + bytes.len()].copy_from_slice(bytes);
+                    out_pos += bytes.len();
+                    in_pos += consumed0;
+                }
+                None => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            }
+        }
+        if let Some((code, pos)) = err {
+            return Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: out_pos,
+            });
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
     let enc = tscii_encode_map();
     let mut out: Vec<u8> = Vec::new();
     let mut in_pos = 0usize;

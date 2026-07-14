@@ -553,6 +553,13 @@ fn main() {
     // (a contiguous Tamil host_to truncated on unassigned/non-TSCII cps).
     let tscii_src = build_sbcs_source(b"TSCII\0", 512);
     run_conv(c, "tscii_to_utf8", b"UTF-8\0", b"TSCII\0", &tscii_src);
+    // ENCODE-DIRECTION SCAN of the remaining dedicated Vec-two-pass converters
+    // (tscii_convert / ibm_ebcdic_convert). Round-trip codec-valid bytes via host_from
+    // so host_to never truncates.
+    let tscii_utf8 = host_from(b"TSCII\0", &tscii_src);
+    run_conv(c, "utf8_to_tscii", b"TSCII\0", b"UTF-8\0", &tscii_utf8);
+    let ibm930_utf8 = host_from(b"IBM930\0", &ibm930_src);
+    run_conv(c, "utf8_to_ibm930", b"IBM930\0", b"UTF-8\0", &ibm930_utf8);
     // ENCODE direction: UTF-8 -> BIG5. Source = big5_src decoded back to UTF-8 (host BIG5->UTF-8),
     // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
     let big5_utf8 = {
