@@ -6,6 +6,32 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `snprintf("%p")` stack formatter; **216.91 -> 15.96 ns (13.59x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH POINTER-FORMAT CONVERSION.** The ledger closed qsort/search,
+  unlocked stdio, the exp/log family, quick allocator framing, and narrow bare integers before source
+  inspection. Exact ledger and all-ref history searches found `%p` correctness/fuzz work but no exact
+  `snprintf("%p")` fast path or rejection. This is one pointer-format lever, not another character path.
+- **CERTIFIED REWRITE / SCOPE.** In strict mode only, exact narrow `"%p"` consumes the promoted
+  `void *` and formats directly into a fixed stack buffer: NULL is `(nil)`; non-NULL is lowercase `0x`
+  plus the minimal hexadecimal address digits. It then applies `snprintf`'s full-length return,
+  truncation, and final-NUL rules without format parsing, argument planning, heap-backed rendering, or
+  copy-out framing. Width, flags, precision, positional formats, every other conversion, and hardened
+  repair behavior retain the unchanged generic path.
+- **EXECUTABLE EQUIVALENCE ORACLE.** Before timing, the retained benchmark compared exact `%p`, the
+  semantics-equivalent generic `%1p` pipeline control, and host glibc over five addresses (NULL, `1`,
+  `0x1234`, `0xdeadbeef`, and `usize::MAX`) and eight output sizes (0/1/2/5/6/8/19/24). All **40 cases**
+  matched on return value and the complete destination buffer, covering NULL spelling, full-width
+  pointers, every relevant truncation boundary, termination, and untouched tail bytes.
+- **ONE STRICT-REMOTE SAME-PROCESS WIN.** The sole foreground command was
+  `RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strverscmp_raw rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench stdio_glibc_baseline_bench -- stdio_glibc_baseline_snprintf_p_bare --sample-size 30 --warm-up-time 1 --measurement-time 2 --noplot`.
+  RCH selected actual worker `vmi1149989`. The generic control interval was
+  **[203.82, 216.91, 234.13] ns**, exact `%p` was **[15.327, 15.961, 16.535] ns**
+  (**0.0736x; 92.6% less time; 13.59x faster**), and host glibc was
+  **[29.215, 31.047, 32.821] ns**. The candidate is **0.5141x glibc**, or **1.95x faster**, clearing
+  both the 20% generic-control floor and the no-slower-than-glibc gate with disjoint intervals. The
+  release build completed with existing unrelated workspace warnings; no local Cargo command ran.
+
 ## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `sprintf("%c")` bypasses the generic renderer; **106.67 -> 5.34 ns (19.99x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH PRINTF ENTRYPOINT.** Exact ledger and all-ref history searches found

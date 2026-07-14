@@ -4825,6 +4825,14 @@ unsafe fn exact_direct_c_format(format: *const c_char) -> bool {
     unsafe { *f == b'%' && *f.add(1) == b'c' && *f.add(2) == 0 }
 }
 
+#[inline]
+unsafe fn exact_direct_p_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and C's printf contract requires a
+    // NUL-terminated format string, so these three bytes are readable.
+    unsafe { *f == b'%' && *f.add(1) == b'p' && *f.add(2) == 0 }
+}
+
 fn read_only_mappings() -> &'static [(usize, usize)] {
     READ_ONLY_MAPPINGS
         .get_or_init(|| {
@@ -5073,6 +5081,54 @@ unsafe fn strict_direct_snprintf_c(str_buf: *mut c_char, size: usize, arg: c_int
 }
 
 #[inline]
+unsafe fn strict_direct_snprintf_p(str_buf: *mut c_char, size: usize, arg: *mut c_void) -> c_int {
+    let mut rendered = [0u8; 2 + usize::BITS as usize / 4];
+    let (start, len) = if arg.is_null() {
+        rendered[..5].copy_from_slice(b"(nil)");
+        (0, 5)
+    } else {
+        let mut value = arg as usize;
+        let mut pos = rendered.len();
+        loop {
+            pos -= 1;
+            let digit = (value & 0xf) as u8;
+            rendered[pos] = if digit < 10 {
+                b'0' + digit
+            } else {
+                b'a' + digit - 10
+            };
+            value >>= 4;
+            if value == 0 {
+                break;
+            }
+        }
+        pos -= 2;
+        rendered[pos] = b'0';
+        rendered[pos + 1] = b'x';
+        (pos, rendered.len() - pos)
+    };
+
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: snprintf's contract provides `size` writable destination
+            // bytes; `copy_len <= size - 1` and the local source has `len` bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, so the terminator is within the caller's
+        // writable snprintf destination region.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+#[inline]
 unsafe fn strict_direct_sprintf_c(str_buf: *mut c_char, arg: c_int) -> c_int {
     unsafe { *str_buf = (arg as u8) as c_char };
     unsafe { *str_buf.add(1) = 0 };
@@ -5217,6 +5273,15 @@ pub unsafe extern "C" fn snprintf(
     if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_c_format(format) } {
         let arg = unsafe { args.next_arg::<c_int>() };
         return unsafe { strict_direct_snprintf_c(str_buf, size, arg) };
+    }
+    // SAFETY: `format` is non-null and valid through its NUL terminator under
+    // the printf-family C contract checked by `exact_direct_p_format`.
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
+        // SAFETY: exact `%p` consumes one promoted `void *` variadic argument.
+        let arg = unsafe { args.next_arg::<*mut c_void>() };
+        // SAFETY: snprintf's C contract supplies `size` writable bytes when
+        // `size > 0`; the helper bounds every write to that region.
+        return unsafe { strict_direct_snprintf_p(str_buf, size, arg) };
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("snprintf");
