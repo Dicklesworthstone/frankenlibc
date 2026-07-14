@@ -6,6 +6,50 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / WhitePike) — REJECTED (NOT SHIPPED): removing FlatCombiner's write-only active flag is below the deployed floor; **206.85 -> 203.57 ns**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH LANE.** Exact ledger searches found no prior
+  `combiner_active`, dead advisory-state, or `flat_combining/single_thread_increment` attempt. All-ref
+  history finds the private field, initialization, and four static Release-store sites only in the
+  original FlatCombiner introduction (`ac9be987c`); the generic primitive has no reader, getter,
+  diagnostic export, FFI projection, layout assertion, or later historical consumer. Allocator
+  `FlatCombiningStats` is a separate production primitive with live atomic election and is excluded.
+- **ONE LEVER EVALUATED AND RESTORED.** The candidate removed the unused `AtomicBool` field/import and
+  both mutually exclusive true/false store pairs. The direct single-thread row takes immediate combiner
+  election, so each timed iteration crossed exactly one removed pair (two stores), not all four static
+  sites. Removing the field also permits an internal Rust-layout shift; `FlatCombiner` is non-`repr(C)`,
+  its fields are private, and no stable layout contract exists. The source experiment was restored
+  byte-for-byte after the performance gate failed.
+- **PROOF OBLIGATION / FALLBACK.** Combiner election and pass exclusivity remain solely under
+  `combiner_lock`; request/result publication remains under each slot mutex; shared state remains under
+  its state mutex. No acquire load reads either Release store, so it supplies no happens-before edge.
+  Counters, events, slot transitions, return values, panic points, guard drops, and fallback selection
+  are unchanged. EV was `(impact 2 * confidence 5) / effort 1 = 10`; relevance was 4.7/5 because the
+  checked-in row executes the removed immediate-election pair on every iteration. The declared fallback
+  was source restoration plus this ledger row unless the 95% change interval was wholly negative and
+  the raw center improved by at least 5%.
+- **STRICT-REMOTE SAME-WORKER REJECT.** Baseline command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'flat_combining/single_thread_increment' --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline flat_active_ca10f81c`.
+  RCH ignored the baseline hint and admitted actual worker `vmi1264463`; the candidate therefore requested
+  that actual worker and used the identical Criterion parameters with `--baseline flat_active_ca10f81c`.
+  Both timed runs executed on `vmi1264463`. Intervals moved **[203.48, 206.85, 210.36] ns ->
+  [201.49, 203.57, 205.85] ns**: candidate/baseline center **0.9841x**, only **1.586% less time**
+  (**1.0161x faster**). Criterion's named change interval crossed zero at **-2.4204% to +0.3224%**,
+  central **-1.0534%**, `p=0.15`; it reported no detectable change and the raw center missed the 5% floor.
+- **QUALITY / SHARED-TREE BOUNDARY.** Both release builds and timed runs completed through strict RCH;
+  no local Cargo fallback ran. Because no candidate source survives, this row claims no candidate-only
+  test or Clippy pass. The restored source hash is
+  `6132832a52d6ffef6d06cf0939044d7a9043458a91d768e0422fc1ef54465914`; `git diff --check` is clean.
+  Peer-owned `crates/frankenlibc-core/src/iconv/mod.rs` remained untouched and unstaged, with the same
+  post-baseline/pre-candidate and post-candidate hash
+  `0223be96e421128ebc83b8d338c78f0a4c389ed3a5798ba0d8f5f5d56dfe33ff`. Both builds emitted the same
+  warning set, while the timed bench imports only the membrane primitive and standard library.
+- **CLOSED BOUNDARY.** Do not retry dead `combiner_active` removal against
+  `flat_combining/single_thread_increment`: the exact rewrite is sound but below the whole-path noise and
+  shipping floors. Reopening requires a distinct deployed workload or contended per-pass gate that can
+  price field layout/cache effects separately; do not generalize this result to the allocator's live
+  `FlatCombiningStats` election atomic.
+
 ## 2026-07-13 (cod / IcyReef) — WIN (SHIPPED): count only blocked SeqLock writers; write **124.48 -> 113.41 ns (1.098x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH LANE.** Exact ledger searches found no prior
