@@ -19292,3 +19292,27 @@ make the written prefix observable after the store.
   expresses the same lowering. The residual cost is the mandatory observability barrier / call shape, not
   the source-level loop. Do not retry iterator-to-`fill`/`memset`; a future core/explicit-zero lever would
   need a materially different wide-volatile primitive and its own security-semantics proof.
+
+## cod-fflush-pointer-cache-2026-07-14 — NO-SHIP / INVALID BENCH (RCH selector was not transported)
+
+Negative-ledger-first inspection found one omitted member of the otherwise-complete single-threaded stdio
+cache campaign: after `fwrite`/`fputc` populates the generation-validated pointer-keyed fd-stream cache,
+`fflush(stream)` still performs repeated FILE canonicalization, registry membership/lookup locking, and
+strict policy framing before reaching `flush_stream`. Tried a cache-hit path that called the identical
+`flush_stream` tail directly for owned non-memory, non-cookie fd streams; MT, cache misses, host/special
+streams, and `fflush(NULL)` retained the full path. A same-binary probe included empty-buffer and one-byte-
+pending A/B arms, a cache-disabled null control, and a pipe visibility oracle.
+
+- **ONE FOREGROUND REMOTE ATTEMPT:** `RCH_REQUIRE_REMOTE=1 FFLUSH_AB=1 rch exec -- cargo run --profile
+  release -p frankenlibc-bench --example stdio_st_probe --features abi-bench` was admitted strictly remotely
+  on `vmi1153651`; the candidate and probe compiled in release mode.
+- **INVALIDATION:** RCH did not transport the leading `FFLUSH_AB=1` selector into the remote command. It ran
+  the probe's broad default suite instead (first output was `__libc_single_threaded`, `FPUTS_ST`, then the
+  historical fputs/feof/interleave/fputws arms), so none of `FFLUSH_EQ`, `FFLUSH_EMPTY_AB`,
+  `FFLUSH_PENDING1_AB`, or `FFLUSH_NULL_CONTROL` executed. The unintended suite was interrupted after the
+  routing error became observable (exit 130). Its unrelated rows are not evidence for this candidate.
+- **DISPOSITION:** obeyed the one-bench boundary: no rerun and no inference from cross-run stdio history.
+  Restored both production source and temporary probe apparatus exactly; docs-only surfaced blocker. This is
+  **not a performance rejection** of the cache transition—the candidate remains unmeasured—but it cannot ship
+  without a fresh turn using a selector that is part of the remote command (or a dedicated probe target),
+  followed by the pipe oracle, target A/B, and null-control output from that same admitted worker.
