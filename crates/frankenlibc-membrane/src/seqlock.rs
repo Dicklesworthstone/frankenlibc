@@ -169,25 +169,27 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
     /// Writers are serialized via the data `Mutex`. If another writer holds
     /// the lock, this call blocks and increments the contention counter.
     pub fn write(&self) -> SeqLockWriteGuard<'_, T> {
-        self.pending_writers.fetch_add(1, Ordering::Relaxed);
-
         // Acquire the writer lock first — this serializes all writers.
         let writer_guard = if let Some(guard) = self.writer_lock.try_lock() {
             guard
         } else {
+            // Only failed immediate acquisition is pending. Keeping this off
+            // the uncontended path also makes the counter match its public
+            // "writers waiting" contract instead of counting the lock holder.
+            self.pending_writers.fetch_add(1, Ordering::Relaxed);
             self.diag.contention_events.fetch_add(1, Ordering::Relaxed);
             crate::alien_cs_metrics::emit_alien_cs_event(
                 crate::alien_cs_metrics::MetricEventKind::SeqLockContention,
                 self.diag.contention_events.load(Ordering::Relaxed),
                 "seqlock",
             );
-            self.writer_lock.lock()
+            let guard = self.writer_lock.lock();
+            self.pending_writers.fetch_sub(1, Ordering::Relaxed);
+            guard
         };
 
         // Now safely clone the current data while holding the writer lock.
         let current = (**self.data.lock()).clone();
-
-        self.pending_writers.fetch_sub(1, Ordering::Relaxed);
 
         SeqLockWriteGuard {
             lock: self,
@@ -861,6 +863,35 @@ mod tests {
     fn pending_writers_zero_when_idle() {
         let sl = SeqLock::new(0u64);
         assert_eq!(sl.pending_writers(), 0);
+    }
+
+    #[test]
+    fn pending_writers_counts_only_blocked_writers() {
+        let sl = StdArc::new(SeqLock::new(0u64));
+        let first_writer = sl.write();
+        assert_eq!(sl.pending_writers(), 0, "the lock holder is not waiting");
+
+        let waiter = StdArc::clone(&sl);
+        let barrier = StdArc::new(Barrier::new(2));
+        let waiter_barrier = StdArc::clone(&barrier);
+        let handle = thread::spawn(move || {
+            waiter_barrier.wait();
+            waiter.write_with(|value| *value = 1);
+        });
+
+        barrier.wait();
+        for _ in 0..100_000 {
+            if sl.pending_writers() == 1 {
+                break;
+            }
+            thread::yield_now();
+        }
+        assert_eq!(sl.pending_writers(), 1, "the blocked writer is pending");
+
+        drop(first_writer);
+        handle.join().expect("blocked writer panicked");
+        assert_eq!(sl.pending_writers(), 0);
+        assert_eq!(*sl.load(), 1);
     }
 
     // ═══════════════════════════════════════════════════════════════

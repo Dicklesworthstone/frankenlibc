@@ -6,6 +6,51 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / IcyReef) — WIN (SHIPPED): count only blocked SeqLock writers; write **124.48 -> 113.41 ns (1.098x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH LANE.** Exact ledger searches found no prior
+  `pending_writers` or SeqLock-write accounting attempt; all-ref history finds the two unconditional
+  RMWs only in the original SeqLock introduction (`ac9be987c`). The shipped SeqLock row below removes
+  a redundant read aggregate and explicitly requires primitive/path-specific proof before another
+  counter rewrite, so this writer-wait obligation was measured independently.
+- **ONE LEVER / DECLARED-STATE REFINEMENT.** `SeqLock::write()` now increments
+  `pending_writers` only after immediate `writer_lock.try_lock()` fails, and decrements it immediately
+  after blocking acquisition succeeds. An uncontended writer therefore avoids both relaxed atomic RMWs.
+  On the contended path, every failed try-lock still contributes exactly one increment while blocked and
+  one decrement on acquisition; `contention_events` is unchanged. The writer lock, data clone/publication,
+  guard lifetime, version/write accounting, commit events, mutation ordering, and returned values are
+  untouched. This intentionally narrows the diagnostic to its public contract ("writers waiting") instead
+  of transiently counting an uncontended lock holder while it cloned the current value; diagnostic
+  exporters consequently stop reporting that false pressure state.
+- **PROOF OBLIGATION / FALLBACK.** The transition invariant is `pending = failed immediate acquisitions
+  not yet admitted by writer_lock`: immediate success contributes zero; failure contributes `+1`, then
+  the blocking acquisition contributes `-1`. The same relaxed ordering remains appropriate because the
+  counter is observational and never admits a writer or publishes protected data. The focused
+  `pending_writers_counts_only_blocked_writers` test holds the first guard, observes exactly one blocked
+  waiter, releases it, and pins zero after admission. Primary risk was losing contended-path visibility;
+  the explicit branch-local pair plus this fixture is the countermeasure. EV score was `(impact 4 *
+  confidence 5) / effort 2 = 10`; relevance was 4.8/5 because the direct row exercises both removed RMWs.
+- **STRICT-REMOTE NAMED-BASELINE GATE.** Baseline command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'seqlock_write/write_with' --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline seqlock_writes_a652f694`.
+  The candidate used the identical command with `--baseline seqlock_writes_a652f694`. Both executed on
+  actual worker `vmi1293453`. The interval moved **[122.36, 124.48, 126.99] ns ->
+  [110.45, 113.41, 116.09] ns**: raw center ratio **0.9111x**, **8.89% less time**
+  (**1.0976x faster**). Criterion's named change interval was **-13.609% to -7.4474%**, central
+  **-10.390%**, `p=0.00`. Construction is outside timing; every iteration performs one otherwise
+  uncontended `write_with`, so it crosses both removed baseline RMWs exactly once.
+- **REMOTE QUALITY / SHARED-TREE BOUNDARY.** Membrane-only Clippy passed remotely with
+  `-D warnings`; the release benchmark compiled and ran the candidate remotely. The focused test was
+  stopped after about 14 minutes before test execution while the cold worker was still compiling the
+  unrelated `asupersync` dev-dependency stack; it emitted no source or test failure, so this row does not
+  claim a test pass. Strict-remote `cargo fmt --all -- --check` correctly refused local execution as
+  `RCH-E301`; `git diff --check` is clean. Staged UBS reported zero criticals and zero warnings. Peer-owned
+  iconv changes remained untouched and unstaged. One core iconv diff appeared between the two runs, but
+  `alien_cs_bench.rs` imports only `frankenlibc_membrane` and `std` and has no core/iconv reference, so it
+  is outside the timed target's source closure.
+- **CLOSED BOUNDARY.** Keep the increment/decrement around failed-try-lock waiting only. Do not remove
+  `pending_writers`, skip its contended accounting, or generalize this result to `contention_events`, the
+  writer lock, version publication, or write-commit diagnostics without separate proof and measurement.
+
 ## 2026-07-13 (cod / SageBadger) — WIN (SHIPPED): skip the empty EBR reclaim-counter RMW; advance **74.022 -> 67.969 ns (1.089x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH LANE.** Exact ledger searches found no empty-reclaim,
