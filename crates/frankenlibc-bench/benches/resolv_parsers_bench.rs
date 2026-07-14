@@ -122,6 +122,7 @@ const ALIASES_LINE: &[u8] = b"postmaster: root, admin, oncall@example.com";
 const GROUP_LINE: &[u8] = b"adm:x:4:syslog,ubuntu,operator";
 const PASSWD_LINE: &[u8] = b"ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash";
 const SHADOW_LINE: &[u8] = b"ubuntu:$y$j9T$rounds=100000$salt$hash:19800:0:99999:7:::";
+const GSHADOW_LINE: &[u8] = b"sudo:!:root,admin:alice,bob";
 const RPC_LINE: &[u8] = b"portmapper      100000  portmap sunrpc rpcbind";
 const PROC_MAPS_LINE: &str =
     "7f1234500000-7f1234600000 r-xp 00010000 fd:01 12345 /usr/lib/libfoo.so";
@@ -237,6 +238,118 @@ fn bench_parse_shadow_line() {
     );
 }
 
+#[inline(never)]
+fn parse_gshadow_line_old(line: &[u8]) -> Option<pwd::gshadow::Gshadow> {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    if line.is_empty() || line.starts_with(b"#") {
+        return None;
+    }
+
+    let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
+    if fields[0].is_empty() {
+        return None;
+    }
+
+    let sg_passwd = fields.get(1).copied().unwrap_or(b"").to_vec();
+    let sg_adm = fields.get(2).copied().unwrap_or(b"").to_vec();
+    let sg_mem = if fields.len() > 3 {
+        fields[3..].join(b":".as_slice())
+    } else {
+        Vec::new()
+    };
+
+    Some(pwd::gshadow::Gshadow {
+        sg_namp: fields[0].to_vec(),
+        sg_passwd,
+        sg_adm,
+        sg_mem,
+    })
+}
+
+#[inline(never)]
+fn parse_gshadow_line_current(line: &[u8]) -> Option<pwd::gshadow::Gshadow> {
+    pwd::gshadow::parse_gshadow_line(line)
+}
+
+fn time_gshadow_parser(parser: fn(&[u8]) -> Option<pwd::gshadow::Gshadow>, iters: u64) -> f64 {
+    let start = Instant::now();
+    for _ in 0..iters {
+        black_box(parser(black_box(GSHADOW_LINE)));
+    }
+    start.elapsed().as_nanos() as f64 / iters as f64
+}
+
+fn median(mut samples: Vec<f64>) -> f64 {
+    samples.sort_by(f64::total_cmp);
+    samples[samples.len() / 2]
+}
+
+fn bench_parse_gshadow_line_ab() {
+    let parity_cases: &[&[u8]] = &[
+        b"sudo:!:root,admin:alice,bob",
+        b"root:*::",
+        b"wheel",
+        b"wheel:::",
+        b"wheel:!:root::alice:bob",
+        b"g:x:a:b:c\r\n",
+        b":*::",
+        b"# comment",
+        b"",
+    ];
+    for &line in parity_cases {
+        assert_eq!(
+            parse_gshadow_line_current(line),
+            parse_gshadow_line_old(line),
+            "gshadow parser mismatch for {line:?}"
+        );
+    }
+
+    const AB_SAMPLES: usize = 60;
+    const AB_ITERS: u64 = 10_000;
+    let mut old = Vec::with_capacity(AB_SAMPLES);
+    let mut new = Vec::with_capacity(AB_SAMPLES);
+    let mut null_a = Vec::with_capacity(AB_SAMPLES);
+    let mut null_b = Vec::with_capacity(AB_SAMPLES);
+
+    for sample in 0..AB_SAMPLES {
+        match sample % 3 {
+            0 => {
+                old.push(time_gshadow_parser(parse_gshadow_line_old, AB_ITERS));
+                new.push(time_gshadow_parser(parse_gshadow_line_current, AB_ITERS));
+                null_a.push(time_gshadow_parser(parse_gshadow_line_current, AB_ITERS));
+                null_b.push(time_gshadow_parser(parse_gshadow_line_current, AB_ITERS));
+            }
+            1 => {
+                new.push(time_gshadow_parser(parse_gshadow_line_current, AB_ITERS));
+                null_b.push(time_gshadow_parser(parse_gshadow_line_current, AB_ITERS));
+                old.push(time_gshadow_parser(parse_gshadow_line_old, AB_ITERS));
+                null_a.push(time_gshadow_parser(parse_gshadow_line_current, AB_ITERS));
+            }
+            _ => {
+                null_a.push(time_gshadow_parser(parse_gshadow_line_current, AB_ITERS));
+                old.push(time_gshadow_parser(parse_gshadow_line_old, AB_ITERS));
+                null_b.push(time_gshadow_parser(parse_gshadow_line_current, AB_ITERS));
+                new.push(time_gshadow_parser(parse_gshadow_line_current, AB_ITERS));
+            }
+        }
+    }
+
+    let old = median(old);
+    let new = median(new);
+    let null_a = median(null_a);
+    let null_b = median(null_b);
+    println!("GSHADOW_PARSE_EQ cases={} status=PASS", parity_cases.len());
+    println!(
+        "GSHADOW_PARSE_AB old={old:.3}ns new={new:.3}ns new/old={:.4}",
+        new / old
+    );
+    println!(
+        "GSHADOW_PARSE_NULL a={null_a:.3}ns b={null_b:.3}ns b/a={:.4}",
+        null_b / null_a
+    );
+}
+
 fn bench_parse_rpc_line() {
     measure("parse_rpc_line_typical", SAMPLES, ITERS_PER_SAMPLE, || {
         let r = rpc::parse_rpc_line(black_box(RPC_LINE));
@@ -314,6 +427,11 @@ fn bench_parse_netgroup_triples() {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("gshadow-ab") {
+        bench_parse_gshadow_line_ab();
+        return;
+    }
+
     bench_parse_hosts_line();
     bench_parse_services_line();
     bench_parse_protocols_line();

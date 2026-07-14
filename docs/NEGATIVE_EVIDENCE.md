@@ -6,6 +6,39 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN (CERTIFIED): `/etc/gshadow` `splitn(4)` parser; **86.391 -> 59.204 ns (1.46x faster)** (`bd-2g7oyh.483`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST.** `bv --robot-triage` identified the global no-gaps perf
+  directive, but it was already owned by `cod-b`. The next unowned stdio double-lock bead was stale:
+  that exact collapse shipped as `ad7d6770f`, and the later pointer-keyed cache campaign superseded
+  its single-thread path. The ledger also explicitly killed stdio registry sharding after profile
+  attribution and closed the adjacent allocator slab/hot-slot shapes. The selected actionable leaf,
+  `bd-2g7oyh.483`, had a code-first `gshadow` parser rewrite on `main` but still lacked its required
+  focused keep/reject verdict.
+- **PROFILE / ATTRIBUTION.** The exact pre-change parser split every colon, collected all borrowed
+  fields into a heap `Vec<&[u8]>`, and rebuilt the member tail with `join`. The current certified body
+  uses `splitn(4)`: it stops after the third colon, borrows the absorbed tail, and allocates only the
+  four owned fields required by `Gshadow`. The retained A/B therefore measures one precise allocation
+  and tail-scan removal, not a lookup-cache or ABI change.
+- **CERTIFIED REWRITE / FALLBACK OBLIGATIONS.** Before timing, the same binary compared the old and
+  current `Option<Gshadow>` values across nine cases covering a typical line, short/empty optional
+  fields, an extra-colon tail, CRLF stripping, empty-name rejection, comments, and blank input:
+  `GSHADOW_PARSE_EQ cases=9 status=PASS`. Field order and bytes, optional-field defaults, first-three-
+  colon partitioning, malformed-line rejection, and lookup behavior are unchanged.
+- **FOREGROUND STRICT-REMOTE RELEASE WIN.** The focused command was
+  `RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 rch exec --
+  cargo bench -j 1 --profile release -p frankenlibc-bench --bench resolv_parsers_bench -- gshadow-ab`.
+  RCH ran on actual worker **`vmi1149989`** using the ordinary `release` profile (never
+  `release-perf`). Across 60 order-rotated median samples of 10,000 parses, the faithful old body was
+  **86.391 ns/op** and current `splitn(4)` was **59.204 ns/op** (**0.6853x; 31.5% less time; 1.46x
+  faster**). The identical-current A/A control was **60.012 -> 57.214 ns/op (0.9534x)**, inside the
+  `0.95..=1.05` validity band; the target delta is 6.8x larger than the 4.66% control drift.
+- **CORRECTNESS / BOUNDARY.** The same remote worker passed **15/15** focused gshadow tests via
+  `cargo test -j 1 --profile release -p frankenlibc-core pwd::gshadow::tests -- --nocapture`; existing
+  unrelated warnings remained, and no local Cargo ran. This closes only the line-parser temporary
+  field-vector/tail-rejoin cost. It does not claim lookup caching, output-allocation removal, ABI
+  database-I/O gains, or a host-glibc comparison; those require separate profile-backed levers.
+
 ## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `atan2(±0, x>0)` axis return; **5.43 -> 2.23 ns (2.44x faster)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH MATH-LIBM AXIS REGIME.** Before source inspection, the ledger

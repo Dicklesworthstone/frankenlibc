@@ -4,8 +4,25 @@
 
 - `bd-2g7oyh.483`
 - Title: `perf: single-pass /etc/gshadow colon-tail parser`
-- Assignee: `cod-b`
-- Status after this batch: `in_progress`
+- Assignee at measured closure: `BlackThrush`
+- Status after measured closure: `closed`
+
+## Measured Closure (2026-07-14)
+
+The pending source lever is now a measured keep. A retained, focused mode in
+`resolv_parsers_bench` runs the exact pre-change body and current `splitn(4)` body in the
+same process with rotated ordering, checks nine edge cases for structural equality before
+timing, and runs an identical-current-body A/A null control.
+
+- Remote worker: `vmi1149989` (`RCH_REQUIRE_REMOTE=1`).
+- Ordinary `release` profile; no `release-perf` build and no local Cargo command.
+- Old parser: `86.391 ns/op` median.
+- Current parser: `59.204 ns/op` median.
+- Current/old: `0.6853x` (**31.5% less time; 1.46x faster**).
+- A/A null control: `60.012 -> 57.214 ns/op`, `0.9534x`, inside the declared
+  `0.95..=1.05` validity band.
+- Parity oracle: `GSHADOW_PARSE_EQ cases=9 status=PASS`.
+- Focused release tests: **15 passed, 0 failed**.
 
 ## Routing Evidence
 
@@ -56,9 +73,9 @@ Added guard:
 | `parse_group_line` colon-tail splitn | Already landed as `bd-2g7oyh.481`; this bead applies the same allocation-removal shape to the distinct gshadow parser. | Not duplicated. |
 | `parse_passwd_line` field scanner | Already landed as `bd-2g7oyh.482` by a swarm mate before this turn. | Not duplicated. |
 | `calloc` fresh-mmap zero skip and `fwrite` direct bypass | `bv` surfaced these, but both are assigned to `cc` and documented as test-capable turns, not cargo-check-only leaves. | Not claimed. |
-| `parse_gshadow_line` colon-field Vec plus tail join removal | This batch. | Pending focused benchmark verdict. |
+| `parse_gshadow_line` colon-field Vec plus tail join removal | This batch. | **KEEP:** `86.391 -> 59.204 ns`, `0.6853x`; parity 9/9 and focused tests 15/15. |
 
-## Validation
+## Initial Code-First Validation
 
 Campaign instruction for this batch permits only:
 
@@ -83,3 +100,18 @@ Keep only if a later same-worker benchmark adds or runs a
 parser conformance/unit regression. Reject and revert or route deeper if the
 row is neutral/slower, if the effect is noise, or if any parser behavior
 diverges.
+
+Final verdict: **KEEP**. The target improvement is 31.5%, materially larger than the
+4.66% A/A drift, and all executable equivalence/test gates passed.
+
+Commands used for closure:
+
+```text
+RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 \
+RCH_REQUIRE_REMOTE=1 rch exec -- cargo bench -j 1 --profile release \
+  -p frankenlibc-bench --bench resolv_parsers_bench -- gshadow-ab
+
+RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 \
+RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -j 1 --profile release \
+  -p frankenlibc-core pwd::gshadow::tests -- --nocapture
+```
