@@ -1,6 +1,6 @@
 # bd-43e21q: parse_hosts_line IPv4 byte validator
 
-Status: code-first batch-test pending.
+Status: certified keep on 2026-07-14.
 
 ## Target
 
@@ -84,6 +84,40 @@ Result after implementation: passed. Existing unrelated `iconv` warnings
 remain (`unused_mut` in `iconv/mod.rs` and dead `EUCJX_P2_MULTI` table), plus
 the build-script notice that no SMT solver was found for the stdio proof.
 
+## Focused Certification Verdict (2026-07-14)
+
+The retained pre-lever parser and current production parser matched exactly on
+2,246 complete-result cases. The corpus exhausts each legal IPv4 octet value in
+each component, adds every leading-zero spelling and a dense 256..300 overflow
+band, and covers malformed IPv4, IPv6, comments/CRLF, missing hostnames, and
+non-UTF-8 input.
+
+The sole foreground benchmark was:
+
+```bash
+RCH_WORKER=vmi1153651 RCH_WORKERS=vmi1153651 RCH_QUEUE_WHEN_BUSY=1 \
+RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR \
+CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strverscmp_raw \
+rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench \
+  --bench resolv_parsers_bench -- hosts-ipv4-ab
+```
+
+Actual worker `vmi1153651`, 60 order-rotated samples, 10,000 full parser calls
+per arm and sample:
+
+| arm | p50 ns | mean ns |
+|---|---:|---:|
+| exact incumbent parser | 222.603 | 287.778 |
+| byte-validator candidate | 184.970 | 227.328 |
+| candidate null A | 183.355 | 230.605 |
+| candidate null B | 179.620 | 245.275 |
+
+Candidate/incumbent was `0.8309x` at p50 (16.9% less time, 1.20x faster) and
+`0.7899x` by mean (21.0% less time). The null p50 ratio was `0.9796x`, placing
+the target win well beyond paired noise. RCH rotated the requested warm identity
+to a fresh pool target, so the ordinary `release` build took 5m35s; no
+`release-perf`, second benchmark, or local Cargo ran.
+
 ## Batch Verdict Predicate
 
 Later batch classification must run `resolv_parsers_bench` on the same worker
@@ -95,3 +129,8 @@ and same target-dir discipline used for the baseline.
   hosts parser conformance guard fails.
 - If rejected, do not retry nearby IPv4 parser variants unless a profile shows
   UTF-8/std parser validation remains top-5 after this exact helper is restored.
+
+Verdict: **KEEP**. The focused current-binary target cleared both p50 and mean,
+the complete-result certificate passed, and no other resolver parser source is
+part of the lever. The broader table was intentionally not rerun under the
+one-foreground-benchmark constraint.

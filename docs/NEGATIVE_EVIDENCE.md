@@ -6,6 +6,44 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN (CERTIFIED): byte-level IPv4 hosts validation; **222.603 -> 184.970 ns (1.20x faster)** (`bd-43e21q`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH NSS-RESOLVER REGIME.**
+  `bv --robot-triage` (data hash `92c46d5a2a463268`) surfaced the owned no-gaps umbrella and several
+  stale or actively owned stdio/allocator/string leaves. The unowned `bd-43e21q` was the concrete
+  unresolved perf leaf: its byte-level IPv4 hosts validator had landed code-first as `01fe06bbf`, but
+  both its bead and evidence artifact still required a measured keep/reject verdict. Exact ledger and
+  all-ref history searches found no prior benchmark verdict for that lever.
+- **PROFILE / ATTRIBUTION / CERTIFIED PARTITION.** The existing parser profile recorded
+  `parse_hosts_line_typical` at **114.4 ns p50 / 116.5 ns mean** and attributed the row to IP
+  validation plus owned field copies. Source attribution isolated this lever: the incumbent first
+  validated the address bytes as UTF-8, then tried generic `Ipv4Addr` parsing before the IPv6 parser;
+  typical `/etc/hosts` rows are dotted-decimal IPv4. The candidate changes only the IPv4 validation
+  predicate to a four-octet byte fold. Comment stripping, field splitting, allocation, output order,
+  IPv6 fallback, and invalid-input rejection remain the incumbent path. Historical absolute timings
+  are routing evidence only; the verdict below uses current same-binary controls.
+- **EXECUTABLE REWRITE CERTIFICATE.** The release benchmark retained the exact pre-lever parser body
+  and compared its complete `Option<(Vec<u8>, Vec<Vec<u8>>)>` result with the production candidate on
+  **2,246 cases** before any timer. The corpus covered every legal octet value in every component,
+  every corresponding leading-zero spelling, 256..300 overflow values in every component, malformed
+  component counts/signs/empty fields/suffixes, comments/CRLF/missing hostnames, valid IPv6 including
+  mapped IPv4, generic invalid-address tokens, and non-UTF-8 address bytes. All results matched exactly.
+- **ONE FOREGROUND STRICT-REMOTE RELEASE WIN.** The sole benchmark command was
+  `RCH_WORKER=vmi1153651 RCH_WORKERS=vmi1153651 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strverscmp_raw rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench resolv_parsers_bench -- hosts-ipv4-ab`.
+  Actual worker **`vmi1153651`** ran ordinary `release`, never `release-perf`. Across 60 order-rotated
+  samples of 10,000 full parser calls, the incumbent was **222.603 ns p50 / 287.778 ns mean** and the
+  candidate was **184.970 ns p50 / 227.328 ns mean**: **0.8309x p50 (16.9% less time; 1.20x faster)**
+  and **0.7899x mean (21.0% less time; 1.27x faster)**. The independent candidate/candidate null was
+  **183.355 -> 179.620 ns p50 (0.9796x)**; its tail-sensitive mean moved **1.0636x**, still far below
+  the candidate's 21.0% mean gain.
+- **VERDICT / REMOTE DISCLOSURE / BOUNDARY.** Keep and certify the already-landed byte validator; this
+  turn ships the reproducible same-binary proof and closes its pending bead. RCH rotated the requested
+  warm target identity to fresh pool path `2e4cba3fadfae9af98dac7851bc7fbe6`, so the ordinary-release
+  build took 5m35s; no second benchmark and no local Cargo ran. Existing unrelated core warnings and
+  the absent-SMT-solver notice remained. This result claims only plain IPv4 validation inside
+  `parse_hosts_line`; IPv6 parsing, owned-field allocation, lookup caching, and other resolver rows
+  need independent profiles and gates.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN (SHIPPED): strict `bsearch` raw-pointer loop; **31.009 -> 24.035 ns (1.29x faster)** (`bd-6g91n6`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH STDLIB REGIME.** `bv --robot-triage`

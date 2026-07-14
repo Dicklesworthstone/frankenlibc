@@ -12,6 +12,7 @@
 //! No host-glibc dependency — pure FrankenLibC core.
 
 use std::hint::black_box;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::{Duration, Instant};
 
 use frankenlibc_core::aliases;
@@ -151,6 +152,182 @@ fn bench_parse_hosts_line() {
             let r = resolv::parse_hosts_line(black_box(HOSTS_LINE));
             black_box(r);
         },
+    );
+}
+
+type HostsParser = fn(&[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)>;
+
+/// Exact pre-`bd-43e21q` parser body retained as a same-binary control.
+#[inline(never)]
+fn parse_hosts_line_incumbent(line: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
+    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+        &line[..pos]
+    } else {
+        line
+    };
+
+    let mut fields = line
+        .split(|&b| b.is_ascii_whitespace())
+        .filter(|field| !field.is_empty());
+    let addr_field = fields.next()?;
+    let hostnames: Vec<Vec<u8>> = fields.map(|field| field.to_vec()).collect();
+    if hostnames.is_empty() {
+        return None;
+    }
+
+    let addr = core::str::from_utf8(addr_field).ok()?;
+    if addr.parse::<Ipv4Addr>().is_ok() || addr.parse::<Ipv6Addr>().is_ok() {
+        Some((addr_field.to_vec(), hostnames))
+    } else {
+        None
+    }
+}
+
+#[inline(never)]
+fn parse_hosts_line_candidate(line: &[u8]) -> Option<(Vec<u8>, Vec<Vec<u8>>)> {
+    resolv::parse_hosts_line(line)
+}
+
+fn time_hosts_parser(parser: HostsParser, line: &[u8], iters: u64) -> f64 {
+    let start = Instant::now();
+    for _ in 0..iters {
+        black_box(parser(black_box(line)));
+    }
+    start.elapsed().as_nanos() as f64 / iters as f64
+}
+
+fn mean(samples: &[f64]) -> f64 {
+    samples.iter().sum::<f64>() / samples.len() as f64
+}
+
+fn hosts_ipv4_parity_cases() -> Vec<Vec<u8>> {
+    let mut cases = vec![
+        b"".to_vec(),
+        b"   ".to_vec(),
+        b"# comment".to_vec(),
+        b"127.0.0.1".to_vec(),
+        b"127.0.0.1 localhost".to_vec(),
+        b"192.168.1.1 host alias # comment".to_vec(),
+        b"255.255.255.255 broadcast\r".to_vec(),
+        b"::1 localhost6".to_vec(),
+        b"2001:db8::1 host6 alias6".to_vec(),
+        b"::ffff:192.0.2.128 mapped".to_vec(),
+        b"not-an-ip host".to_vec(),
+        b"1.2.3 host".to_vec(),
+        b"1.2.3.4.5 host".to_vec(),
+        b"1..2.3 host".to_vec(),
+        b"+1.2.3.4 host".to_vec(),
+        b"-1.2.3.4 host".to_vec(),
+        b"1.2.3.4x host".to_vec(),
+        vec![b'1', b'2', 0xff, b' ', b'h', b'o', b's', b't'],
+    ];
+
+    // Exercise every legal octet value in every position, all leading-zero
+    // spellings, and a dense band immediately above the legal range.
+    for part in 0..4 {
+        for value in 0..=255u16 {
+            let mut octets = [1u16, 2, 3, 4];
+            octets[part] = value;
+            cases.push(
+                format!(
+                    "{}.{}.{}.{} host alias",
+                    octets[0], octets[1], octets[2], octets[3]
+                )
+                .into_bytes(),
+            );
+
+            let mut fields = [
+                "1".to_owned(),
+                "2".to_owned(),
+                "3".to_owned(),
+                "4".to_owned(),
+            ];
+            fields[part] = format!("0{value}");
+            cases.push(format!("{} host", fields.join(".")).into_bytes());
+        }
+        for value in 256..=300u16 {
+            let mut octets = [1u16, 2, 3, 4];
+            octets[part] = value;
+            cases.push(
+                format!(
+                    "{}.{}.{}.{} host",
+                    octets[0], octets[1], octets[2], octets[3]
+                )
+                .into_bytes(),
+            );
+        }
+    }
+    cases
+}
+
+fn bench_parse_hosts_ipv4_ab() {
+    let parity_cases = hosts_ipv4_parity_cases();
+    for line in &parity_cases {
+        assert_eq!(
+            parse_hosts_line_candidate(line),
+            parse_hosts_line_incumbent(line),
+            "hosts parser mismatch for {line:?}"
+        );
+    }
+
+    const AB_SAMPLES: usize = 60;
+    const AB_ITERS: u64 = 10_000;
+    for _ in 0..2_000 {
+        black_box(parse_hosts_line_incumbent(black_box(HOSTS_LINE)));
+        black_box(parse_hosts_line_candidate(black_box(HOSTS_LINE)));
+    }
+
+    let mut incumbent = Vec::with_capacity(AB_SAMPLES);
+    let mut candidate = Vec::with_capacity(AB_SAMPLES);
+    let mut null_a = Vec::with_capacity(AB_SAMPLES);
+    let mut null_b = Vec::with_capacity(AB_SAMPLES);
+    #[derive(Clone, Copy)]
+    enum Arm {
+        Incumbent,
+        Candidate,
+        NullA,
+        NullB,
+    }
+    let orders = [
+        [Arm::Incumbent, Arm::Candidate, Arm::NullA, Arm::NullB],
+        [Arm::Candidate, Arm::NullB, Arm::Incumbent, Arm::NullA],
+        [Arm::NullA, Arm::Incumbent, Arm::NullB, Arm::Candidate],
+        [Arm::NullB, Arm::NullA, Arm::Candidate, Arm::Incumbent],
+    ];
+    for sample in 0..AB_SAMPLES {
+        for arm in orders[sample % orders.len()] {
+            let parser: HostsParser = match arm {
+                Arm::Incumbent => parse_hosts_line_incumbent,
+                Arm::Candidate | Arm::NullA | Arm::NullB => parse_hosts_line_candidate,
+            };
+            let elapsed = time_hosts_parser(parser, HOSTS_LINE, AB_ITERS);
+            match arm {
+                Arm::Incumbent => incumbent.push(elapsed),
+                Arm::Candidate => candidate.push(elapsed),
+                Arm::NullA => null_a.push(elapsed),
+                Arm::NullB => null_b.push(elapsed),
+            }
+        }
+    }
+
+    let incumbent_p50 = median(incumbent.clone());
+    let candidate_p50 = median(candidate.clone());
+    let null_a_p50 = median(null_a.clone());
+    let null_b_p50 = median(null_b.clone());
+    println!("HOSTS_IPV4_EQ cases={} status=PASS", parity_cases.len());
+    println!(
+        "HOSTS_IPV4_AB incumbent_p50={incumbent_p50:.3}ns candidate_p50={candidate_p50:.3}ns candidate/incumbent={:.4} incumbent_mean={:.3}ns candidate_mean={:.3}ns mean_ratio={:.4}",
+        candidate_p50 / incumbent_p50,
+        mean(&incumbent),
+        mean(&candidate),
+        mean(&candidate) / mean(&incumbent)
+    );
+    println!(
+        "HOSTS_IPV4_NULL a_p50={null_a_p50:.3}ns b_p50={null_b_p50:.3}ns b/a={:.4} a_mean={:.3}ns b_mean={:.3}ns mean_ratio={:.4}",
+        null_b_p50 / null_a_p50,
+        mean(&null_a),
+        mean(&null_b),
+        mean(&null_b) / mean(&null_a)
     );
 }
 
@@ -427,6 +604,10 @@ fn bench_parse_netgroup_triples() {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("hosts-ipv4-ab") {
+        bench_parse_hosts_ipv4_ab();
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("gshadow-ab") {
         bench_parse_gshadow_line_ab();
         return;
