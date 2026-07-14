@@ -486,6 +486,10 @@ pub fn evaluate_thread_safety_barrier(
 
 #[inline]
 fn evaluate_size_class_barrier_from_basis(basis: &[i64; SIZE_CLASS_CERT_DIM]) -> i64 {
+    if *basis == [0; SIZE_CLASS_CERT_DIM] {
+        return SIZE_CLASS_BARRIER_BUDGET_MILLI;
+    }
+
     let q = &SIZE_CLASS_GRAM_MATRIX;
     let b0 = i128::from(basis[0]);
     let b1 = i128::from(basis[1]);

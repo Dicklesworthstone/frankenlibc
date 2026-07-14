@@ -6,6 +6,53 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / TanPelican) — WIN (SHIPPED): short-circuit the SOS size-class zero basis; **11.813 -> 10.773 ns (1.097x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH LANE.** Exact ledger searches found no prior
+  zero-basis, `Q(0)`, or size-class SOS early-return attempt. All-ref history finds the fixed 4x4
+  quadratic fast path in `7119c9cf7`, which unrolled the generic certificate evaluator but retained all
+  sixteen saturating terms for a zero basis. This row measures the separate algebraic identity rather
+  than retrying that earlier unroll.
+- **ONE LEVER / DIRECT WORKLOAD.** `evaluate_size_class_barrier_from_basis` now returns the certified
+  budget immediately when all four basis coordinates are zero; the nonzero path is byte-for-byte the
+  original unrolled quadratic. The checked-in row constructs requests `1..=4096`, performs the size-class
+  lookup inside timing, and maps every request to basis `[0, 0, 0, 0]`. Membership, range, and underflow
+  coordinates are therefore zero; the maximum waste is `882352 ppm` at `17 -> 32`, below the `900000 ppm`
+  budget. Warmup is outside timing, while modulo/indexing, lookup, basis construction, and stats remain
+  inside. EV was `(impact 4 * confidence 5) / effort 1 = 20`; relevance was 4.7/5 for this direct row.
+- **CERTIFIED REWRITE / FALLBACK.** For `b = 0`, every Gram-matrix term is exactly zero even under the
+  existing saturating arithmetic, so `score = Q(0) / scale = 0` and `budget.saturating_sub(score)` is the
+  returned budget. For `b != 0`, evaluation order, overflow behavior, score clamp, and return value are
+  unchanged. The existing `size_class_fast_path_matches_generic_certificate_eval` oracle compares the
+  fast and generic evaluators over all `5^4 = 625` basis combinations, including zero. The declared
+  fallback was byte-for-byte source restoration plus this ledger row unless the named 95% change interval
+  was wholly negative and the displayed center improved by at least 5%.
+- **STRICT-REMOTE SAME-WORKER KEEP.** Baseline command:
+  `RCH_WORKER=vmi1264463 RCH_WORKERS=vmi1264463 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,FRANKENLIBC_BENCH_PIN,FRANKENLIBC_MODE CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE=strict rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench runtime_math_kernels_bench -- 'runtime_math_kernels/sos_barrier_size_class_eval_with_lookup/strict' --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline sos_zero_basis_998cc72a`.
+  RCH admitted actual worker `vmi1227854`; the candidate requested that worker and used the identical
+  command with `--baseline sos_zero_basis_998cc72a`. Both timed runs executed pinned to CPU 0 on the same
+  reported AMD EPYC model. Intervals moved **[11.504, 11.813, 12.118] ns ->
+  [10.485, 10.773, 11.034] ns**: raw center ratio **0.9120x**, **8.80% less time**
+  (**1.0965x faster**). Criterion's named change interval was **-15.312% to -10.722%**, central
+  **-13.112%**, `p=0.00`; both the interval and raw-center shipping gates passed.
+- **REMOTE QUALITY / DEPLOYMENT BOUNDARY.** Both release benchmark builds and timed runs completed
+  through strict RCH, and membrane-only Clippy passed remotely with `-D warnings` on `vmi1293453` after
+  an initial remote worker lacked the pinned nightly's Clippy component. The focused 625-case
+  fast-vs-generic oracle passed remotely (**1 passed, 0 failed**). Strict-remote `cargo fmt --all --
+  --check` correctly refused local execution as `RCH-E301`; the edit is rustfmt-stable and
+  `git diff --check` is clean. Staged UBS reported zero criticals; its one warning is a pre-existing
+  test-only `format!` inside a three-item loop. No local Cargo fallback ran. Peer-owned
+  `crates/frankenlibc-bench/benches/iconv_glibc_bench.rs` remained untouched and unstaged with hash
+  `215d4092e30259c0f6d71070467ce62c3d27f1eac96407cad5d23aecd48b4f0f` across the A/B pair. A later
+  peer-owned `crates/frankenlibc-core/src/iconv/mod.rs` edit appeared only after both timed runs; it stayed
+  untouched and unstaged. This win applies to trace/direct evaluator and controller paths: default-Warn
+  allocator mappings already skip successful certificate evaluation through
+  `size_class_certificate_may_violate`, so this row does not claim a default malloc-throughput improvement.
+- **CLOSED BOUNDARY.** Keep the early return restricted to the all-zero size-class basis. Do not
+  generalize this result to the generic SOS evaluator, nonzero bases, or other certificates without a
+  separate measured row. Re-establish the proof if the size-class polynomial gains constant/linear terms,
+  evaluation side effects, or a constant-time input contract.
+
 ## 2026-07-13 (cod / WhitePike) — REJECTED (NOT SHIPPED): removing FlatCombiner's write-only active flag is below the deployed floor; **206.85 -> 203.57 ns**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH LANE.** Exact ledger searches found no prior
