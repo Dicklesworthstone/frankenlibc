@@ -24,6 +24,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_abi::stdio_abi as fl;
 
 type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
+type SprintfFn = unsafe extern "C" fn(*mut c_char, *const c_char, ...) -> c_int;
 
 unsafe extern "C" {
     // Host glibc inline-fast-path getc (skips the per-FILE lock). The libc crate
@@ -49,6 +50,22 @@ fn host_snprintf() -> SnprintfFn {
         sym as usize
     });
     unsafe { std::mem::transmute::<*mut c_void, SnprintfFn>(addr as *mut c_void) }
+}
+
+fn host_sprintf() -> SprintfFn {
+    static HOST_SPRINTF: OnceLock<usize> = OnceLock::new();
+    let addr = *HOST_SPRINTF.get_or_init(|| unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(!handle.is_null(), "dlmopen libc.so.6 failed");
+        let sym = libc::dlsym(handle, b"sprintf\0".as_ptr().cast());
+        assert!(!sym.is_null(), "dlsym sprintf failed");
+        sym as usize
+    });
+    unsafe { std::mem::transmute::<*mut c_void, SprintfFn>(addr as *mut c_void) }
 }
 
 fn bench_fgetc(c: &mut Criterion) {
@@ -299,6 +316,71 @@ fn bench_snprintf_c_bare(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_sprintf_c_bare(c: &mut Criterion) {
+    let host = host_sprintf();
+    let exact_fmt = c"%c";
+    let generic_fmt = c"%1c";
+
+    // Width one is semantically identical to bare %c but deliberately misses
+    // the exact-format route, retaining the deployed generic pipeline as the
+    // same-binary control. Prove embedded NUL and int-to-byte conversion before
+    // entering any timer.
+    for value in [0, b'A' as c_int, 0xff, 0x1234, -1] {
+        let mut exact = [0x55_i8; 8];
+        let mut generic = [0x55_i8; 8];
+        let mut glibc = [0x55_i8; 8];
+        let exact_rc = unsafe { fl::sprintf(exact.as_mut_ptr(), exact_fmt.as_ptr(), value) };
+        let generic_rc = unsafe { fl::sprintf(generic.as_mut_ptr(), generic_fmt.as_ptr(), value) };
+        let glibc_rc = unsafe { host(glibc.as_mut_ptr(), exact_fmt.as_ptr(), value) };
+        assert_eq!(exact_rc, generic_rc, "exact/generic rc: value={value}");
+        assert_eq!(exact, generic, "exact/generic bytes: value={value}");
+        assert_eq!(exact_rc, glibc_rc, "exact/glibc rc: value={value}");
+        assert_eq!(exact, glibc, "exact/glibc bytes: value={value}");
+    }
+
+    let mut group = c.benchmark_group("stdio_glibc_baseline_sprintf_c_bare");
+    group.bench_function("generic_width1_control", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 8];
+            let rc = unsafe {
+                fl::sprintf(
+                    buf.as_mut_ptr(),
+                    generic_fmt.as_ptr(),
+                    black_box(b'A' as c_int),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+    group.bench_function("exact_c_candidate", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 8];
+            let rc = unsafe {
+                fl::sprintf(
+                    buf.as_mut_ptr(),
+                    exact_fmt.as_ptr(),
+                    black_box(b'A' as c_int),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+    group.bench_function("host_glibc", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 8];
+            let rc = unsafe {
+                host(
+                    buf.as_mut_ptr(),
+                    exact_fmt.as_ptr(),
+                    black_box(b'A' as c_int),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+    group.finish();
+}
+
 fn bench_swprintf_wide_format(c: &mut Criterion) {
     let mut group = c.benchmark_group("stdio_glibc_baseline_swprintf_wide_format");
     let fmt: [libc::wchar_t; 10] = [
@@ -349,6 +431,6 @@ criterion_group! {
         .measurement_time(Duration::from_millis(400));
     targets = bench_fgetc, bench_fgetc_unlocked, bench_snprintf_s_newline,
         bench_snprintf_s_bare, bench_snprintf_literal, bench_snprintf_c_bare,
-        bench_swprintf_wide_format
+        bench_sprintf_c_bare, bench_swprintf_wide_format
 }
 criterion_main!(benches);

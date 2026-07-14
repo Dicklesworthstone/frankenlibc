@@ -6,6 +6,30 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `sprintf("%c")` bypasses the generic renderer; **106.67 -> 5.34 ns (19.99x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH PRINTF ENTRYPOINT.** Exact ledger and all-ref history searches found
+  the shipped pure-literal `sprintf` route and a reverted exact `sprintf("%s")` attempt, but no exact
+  `sprintf("%c")` fast path or rejection. This stays in the requested fresh formatting subsystem and
+  is one new ABI-entrypoint lever, not another string/wchar scanner.
+- **CERTIFIED REWRITE / SCOPE.** In strict mode only, exact narrow `"%c"` now consumes the promoted
+  `c_int`, converts it to one `unsigned char` payload byte, writes the trailing NUL, and returns the
+  invariant length `1`. This skips runtime-policy framing, format parsing, argument planning,
+  render-buffer construction, and copy-out. Flags, width, precision, positional formats, `%lc`, all
+  other conversions, and hardened-mode repair behavior still use the unchanged generic path.
+- **EXECUTABLE EQUIVALENCE ORACLE.** Before timing, the retained benchmark compared exact `%c`, the
+  semantics-equivalent generic `%1c` pipeline control, and host glibc over five promoted integers
+  (`0`, ASCII, `0xff`, `0x1234`, and `-1`). All **5 cases** matched on return value and the complete
+  destination buffer, covering embedded NUL payloads and modulo-256 integer conversion.
+- **ONE STRICT-REMOTE SAME-PROCESS WIN.** The sole foreground command was
+  `RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strverscmp_raw rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench stdio_glibc_baseline_bench -- stdio_glibc_baseline_sprintf_c_bare --sample-size 30 --warm-up-time 1 --measurement-time 2 --noplot`.
+  RCH selected actual worker `vmi1149989`. The generic control interval was
+  **[100.43, 106.67, 111.20] ns**, exact `%c` was **[5.1717, 5.3362, 5.5664] ns**
+  (**0.0500x; 95.0% less time; 19.99x faster**), and host glibc was
+  **[17.827, 18.473, 19.256] ns**. The candidate is **0.2889x glibc**, or **3.46x faster**, clearing
+  both the 20% generic-control floor and the no-slower-than-glibc gate with disjoint intervals. The
+  release build completed with existing unrelated workspace warnings; no local Cargo command ran.
+
 ## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `snprintf("%c")` bypasses the generic renderer; **113.46 -> 7.91 ns (14.34x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH STDIO LANE.** Exact ledger and all-ref history searches found the
