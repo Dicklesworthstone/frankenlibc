@@ -6,6 +6,57 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): decompose mutex-serialized `MetricRing` emission-counter RMW; **114.10 -> 106.11 ns (1.075x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** The prior `MetricRing` win replaced O(N) `Vec`
+  eviction with `VecDeque` and explicitly preserved `total_emitted`; its closed boundary forbids only
+  retrying full-ring shifts. Exact ledger and all-ref history searches found no prior decomposition of
+  the emission counter, whose only write site originates in `80eba3874`. RCU epoch decomposition is
+  already ledger-rejected, EBR empty-reclaim accounting is closed, and the adjacent EBR active-slot
+  load lacks comparable impact. This lever had EV `(impact 4 * confidence 5) / effort 1 = 20` and
+  relevance 4.9/5 for the checked-in pin/unpin row.
+- **ONE LEVER / SERIALIZED RMW DECOMPOSITION.** `MetricRing::emit()` replaces the discarded-return
+  `total_emitted.fetch_add(1, Relaxed)` with `load(Relaxed).wrapping_add(1)` followed by
+  `store(Relaxed)` while the existing `events` mutex guard is still held. The checked-in
+  `ebr_pin/pin_unpin` row constructs its collector and handle outside timing, then crosses exactly two
+  steady-state global-ring emissions per iteration (`EbrPin` and guard-drop `EbrUnpin`). Event creation,
+  FIFO eviction/append, mutex lifetime, timestamps, capacity, and public counter schema are unchanged;
+  the benchmark source was not edited.
+- **CERTIFIED MODULO / CONCURRENCY PROOF.** `emit()` is the sole counter writer and every call holds the
+  same per-ring event mutex through publication, so no writer can intervene between the relaxed load and
+  store. Counter readers are load-only observers and can still see only the same old or new modulo-`u64`
+  value. `wrapping_add(1)` exactly preserves `fetch_add` rollover, and the event append still precedes the
+  counter publication. New focused oracles pin `u64::MAX -> 0` and exact 4-thread accounting across
+  4,000 concurrent emissions. The declared fallback was exact source restoration plus this evidence row
+  unless the same-worker named 95% interval was wholly negative and the raw center improved by at least
+  5%.
+- **STRICT-REMOTE SAME-WORKER KEEP.** Baseline command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'ebr_pin/pin_unpin' --exact --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline metric_emit_store_36300544`.
+  The candidate used the identical command with `--baseline metric_emit_store_36300544`; both timed runs
+  executed on actual worker `vmi1293453`. Intervals moved **[111.37, 114.10, 116.84] ns ->
+  [103.95, 106.11, 108.85] ns**: raw point ratio **0.92997x**, **7.00% less time**
+  (**1.0753x faster**). Criterion's named change interval was **-8.2035% to -2.9633%**, central
+  **-5.7174%**, `p=0.00`; both keep gates passed.
+- **REMOTE PROOF / SHARED-TREE BOUNDARY.** The two new proof tests passed through strict RCH on the
+  exact benchmark worker (**2 passed, 0 failed**, 1,392 filtered); the cold release tooling build took
+  17m25s while the tests completed in 0.00s. Both A/B builds emitted the same existing warnings from
+  unrelated core iconv/inet/string/math code. Membrane-lib Clippy passed remotely with `-D warnings` on
+  actual worker `vmi1152480`. Strict-remote `cargo fmt --all -- --check` correctly refused local
+  fallback as `RCH-E301`; `git diff --check` is clean, and no local Cargo command ran. Final
+  `alien_cs_metrics.rs` is `8a4939008ecb505f17ad22c4f110179efddf4fda31f2d714b11e22e6fece2661`;
+  the benchmark remained byte-identical at
+  `5b2309748b746a04a484e5c1a51e008d5372fb2a1e3a9ac3518e01917b583a03`. Peer-owned untracked
+  `wcsrchr_fold128_ab.rs` appeared after the timed A/B and stayed untouched and unstaged. Staged UBS
+  exited 0 with zero criticals; its warnings are the expected file-wide inventory of test assertions
+  and JSON parse expectations, explicitly bounded casts, and existing diagnostic clones/imports, with
+  no actionable production finding in this rewrite.
+- **DEPLOYMENT / CLOSED BOUNDARY.** Keep this decomposition only while every emission holds the same
+  event mutex through the counter store, `emit()` remains the sole writer, and counter consumers remain
+  observers rather than synchronization or admission logic. Reopen if an alternate writer appears,
+  counter publication moves outside the guard, or exact in-flight linearization becomes a contract. Do
+  not generalize this result to other Alien-CS counters without their own serialization proof and direct
+  measurement.
+
 ## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): decompose serialized SeqLock write-counter RMW; **108.72 -> 98.812 ns (1.100x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found no

@@ -280,7 +280,9 @@ impl MetricRing {
             let _ = events.pop_front();
         }
         events.push_back(event);
-        self.total_emitted.fetch_add(1, Ordering::Relaxed);
+        // Every emitter still holds `events`, so counter writers are serialized.
+        let next_total = self.total_emitted.load(Ordering::Relaxed).wrapping_add(1);
+        self.total_emitted.store(next_total, Ordering::Relaxed);
     }
 
     /// Drain all events from the ring, returning them.
@@ -821,6 +823,48 @@ mod tests {
 
         assert_eq!(ring.len(), 2);
         assert_eq!(ring.total_emitted(), 2);
+    }
+
+    #[test]
+    fn metric_ring_total_emitted_wraps() {
+        let ring = MetricRing::new(1);
+        ring.total_emitted.store(u64::MAX, Ordering::Relaxed);
+
+        ring.emit(MetricEventKind::EbrPin, 1, "ebr");
+
+        assert_eq!(ring.total_emitted(), 0);
+        assert_eq!(ring.len(), 1);
+    }
+
+    #[test]
+    fn metric_ring_total_emitted_is_exact_under_concurrency() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const THREADS: usize = 4;
+        const EMITS_PER_THREAD: usize = 1_000;
+
+        let ring = Arc::new(MetricRing::new(64));
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let ring = Arc::clone(&ring);
+                thread::spawn(move || {
+                    for value in 0..EMITS_PER_THREAD as u64 {
+                        ring.emit(MetricEventKind::EbrPin, value, "ebr");
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            assert!(handle.join().is_ok(), "emitter thread panicked");
+        }
+
+        assert_eq!(
+            ring.total_emitted(),
+            (THREADS * EMITS_PER_THREAD) as u64
+        );
+        assert_eq!(ring.len(), 64);
     }
 
     #[test]
