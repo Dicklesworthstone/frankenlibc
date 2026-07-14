@@ -45247,6 +45247,13 @@ struct EbcdicTables {
     dbcs_enc: &'static std::collections::HashMap<u32, u16>,
     dbcs_multi: &'static [(u16, &'static [u32])],
     dbcs_multi_enc: &'static [(&'static [u32], u16)],
+    /// Merged BMP `cp -> cell` reverse index (single-byte `sbcs_enc` + double-byte
+    /// `dbcs_enc`), replacing the two per-char SipHash `HashMap::get`s with one O(1)
+    /// index. Same slot layout as [`build_dbcs_x_enc_direct`] (bit24 present, bit25
+    /// double); `sbcs_enc` wins a shared cp. Astral keeps the HashMaps.
+    enc_direct: &'static Vec<u32>,
+    /// Sorted first-cps of `dbcs_multi_enc`, for the combining-scan prefilter.
+    enc_multi_first: &'static [u32],
 }
 
 /// Generate a per-page accessor that builds (once) the DBCS direct-decode map
@@ -45264,6 +45271,8 @@ macro_rules! ebcdic_page {
                 std::sync::OnceLock::new();
             static DE: std::sync::OnceLock<std::collections::HashMap<u32, u16>> =
                 std::sync::OnceLock::new();
+            static ENCD: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+            static MF: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
             EbcdicTables {
                 sbcs: &$m::$sbcs,
                 dbcs_direct: DIRECT.get_or_init(|| build_dbcs_direct(&$m::$dbcs)),
@@ -45271,6 +45280,8 @@ macro_rules! ebcdic_page {
                 dbcs_enc: DE.get_or_init(|| $m::$denc.iter().copied().collect()),
                 dbcs_multi: $mult,
                 dbcs_multi_enc: $multenc,
+                enc_direct: ENCD.get_or_init(|| build_dbcs_x_enc_direct(&$m::$senc, &$m::$denc)),
+                enc_multi_first: MF.get_or_init(|| build_dbcs_x_multi_first_cps($multenc)),
             }
         }
     };
@@ -45570,6 +45581,129 @@ fn ibm_ebcdic_convert(
     outbuf: &mut [u8],
     t: &EbcdicTables,
 ) -> Result<IconvResult, IconvError> {
+    // Single-pass fast path: write directly into outbuf, skipping the `Vec<u8>`
+    // accumulator + final copy (2 heap allocs/call), the two per-char SipHash
+    // `HashMap::get`s (now one O(1) BMP index), and the combining scan for non-base
+    // chars (prefiltered). Worst char = SO shift + a 2-byte DBCS cell = 3, so gating on
+    // `outbuf.len() >= input.len()*4` makes E2BIG unreachable here and leaves the
+    // tight-buffer all-or-nothing E2BIG path (below) exactly as it was. Byte-identical:
+    // the SAME combining match, the SAME sbcs-then-dbcs precedence + SO/SI shift, the
+    // SAME `shifted` saved on every return, the SAME partial out_written on a mid error.
+    if outbuf.len() >= input.len().saturating_mul(4) {
+        let direct = t.enc_direct;
+        let mut shifted = cd.ibm930_out_shifted;
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        let mut err: Option<(i32, usize)> = None;
+        while in_pos < input.len() {
+            let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    err = Some((ICONV_EINVAL, in_pos));
+                    break;
+                }
+                Err(DecodeError::Invalid) => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            };
+            let cp = ch as u32;
+            if t.enc_multi_first.binary_search(&cp).is_ok() {
+                let mut matched: Option<(u16, usize)> = None;
+                for &(seq, k) in t.dbcs_multi_enc.iter() {
+                    if seq.first() != Some(&cp) {
+                        continue;
+                    }
+                    let mut p = in_pos + consumed;
+                    let mut ok = true;
+                    for &want in &seq[1..] {
+                        match decode_char(cd.from, &input[p..]) {
+                            Ok((c2, n2)) if c2 as u32 == want => p += n2,
+                            _ => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if ok {
+                        matched = Some((k, p));
+                        break;
+                    }
+                }
+                if let Some((k, end)) = matched {
+                    if !shifted {
+                        outbuf[out_pos] = 0x0E;
+                        out_pos += 1;
+                        shifted = true;
+                    }
+                    outbuf[out_pos] = (k >> 8) as u8;
+                    outbuf[out_pos + 1] = (k & 0xFF) as u8;
+                    out_pos += 2;
+                    in_pos = end;
+                    continue;
+                }
+            }
+            // sbcs (single, priority) then dbcs (double): BMP direct index, astral -> maps.
+            let slot = if cp < 0x10000 { direct[cp as usize] } else { 0 };
+            let cell: Option<(bool, u16)> = if slot != 0 {
+                if slot & (1 << 25) != 0 {
+                    Some((true, (slot & 0xFFFF) as u16))
+                } else {
+                    Some((false, (slot & 0xFF) as u16))
+                }
+            } else if cp >= 0x10000 {
+                if let Some(&b) = t.sbcs_enc.get(&cp) {
+                    Some((false, u16::from(b)))
+                } else if let Some(&k) = t.dbcs_enc.get(&cp) {
+                    Some((true, k))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            match cell {
+                Some((false, b)) => {
+                    if shifted {
+                        outbuf[out_pos] = 0x0F;
+                        out_pos += 1;
+                        shifted = false;
+                    }
+                    outbuf[out_pos] = b as u8;
+                    out_pos += 1;
+                }
+                Some((true, k)) => {
+                    if !shifted {
+                        outbuf[out_pos] = 0x0E;
+                        out_pos += 1;
+                        shifted = true;
+                    }
+                    outbuf[out_pos] = (k >> 8) as u8;
+                    outbuf[out_pos + 1] = (k & 0xFF) as u8;
+                    out_pos += 2;
+                }
+                None => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            }
+            in_pos += consumed;
+        }
+        cd.ibm930_out_shifted = shifted;
+        if let Some((code, pos)) = err {
+            return Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: out_pos,
+            });
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
     let se = t.sbcs_enc;
     let de = t.dbcs_enc;
     let mut out: Vec<u8> = Vec::new();
