@@ -6,6 +6,40 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / MossyLynx) — REJECTED (NOT SHIPPED): deriving LeftRight reads from cache classifications is neutral and loses retry telemetry; **15.470 -> 15.623 ns**
+
+- **NEGATIVE-LEDGER-FIRST / SEPARATE OBLIGATION.** The preceding SeqLock and BRAVO rows explicitly
+  forbid generalizing their aggregate-counter rewrites to LeftRight without primitive-specific cache,
+  concurrency, and benchmark proof. All-ref history contains only the original
+  `LeftRightDiagCounters::reads` introduction in `9c9225d05`; no earlier removal or derivation attempt
+  exists. The candidate therefore received its own proof and same-worker gate rather than inheriting a
+  result from either neighboring primitive.
+- **ONE LEVER EVALUATED.** The temporary candidate removed the independent `reads` atomic, its
+  constructor/read-loop increments, and derived the public value with
+  `cache_hits.wrapping_add(cache_misses)`. This removes one relaxed shared RMW from the steady cached-read
+  path. The source experiment was restored byte-for-byte after the gates below failed; no runtime code is
+  shipped by this row.
+- **REWRITE-SOUNDNESS COUNTEREXAMPLE.** LeftRight's current transitions, modulo `2^64`, are reader
+  construction `(reads,hits,misses) += (1,0,1)`, successful cached read `(1,1,0)`, successful refreshed
+  read `(1,0,1)`, and side-flip retry `(1,0,0)`. A writer can flip `active_side` between the reader's two
+  validation loads, causing that last transition before the loop retries. The durable quiescent identity
+  is therefore `reads = cache_hits + cache_misses + side_flip_retries`, but no retry counter exists.
+  Derivation would discard persistent contention history and change `hit_ratio` from hits per attempt to
+  hits per completed classification; this is not merely a non-linearizable live-snapshot difference.
+- **STRICT-REMOTE SAME-WORKER REJECT.** Identical baseline/candidate command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'metadata_read_comparison/left_right' --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`.
+  Both runs executed on actual worker `vmi1293453`. The interval moved
+  **[15.182, 15.470, 15.828] ns -> [15.216, 15.623, 16.068] ns**; raw center ratio was
+  **1.0099x** (about **0.99% slower**). Criterion's change interval crossed zero at
+  **-4.5516% to +4.3858%**, central **-0.0124%**, `p=1.00`: no detectable improvement. The checked-in
+  row includes a warm 256-entry `HashMap` lookup, which dilutes a small fixed read-side change, but reader
+  setup is outside timing and the timed path has no writers, allocations, or scheduler noise.
+- **CLOSED BOUNDARY.** Do not retry `reads = cache_hits + cache_misses`: it fails exact diagnostics parity
+  and the deployed benchmark floor independently. A future LeftRight diagnostics rewrite would need an
+  explicit retry counter or an intentionally revised public contract plus a deterministic forced-retry
+  proof; saving the version load only on side-change misses also needs a dedicated miss-after-write row.
+  Peer-owned `crates/frankenlibc-bench/benches/iconv_glibc_bench.rs` work remained untouched and unstaged.
+
 ## 2026-07-13 (cod / CoralCastle) — WIN (SHIPPED): derived BRAVO completed-read diagnostics remove one hot-path RMW; single-thread read **23.167 -> 18.453 ns (1.26x)**
 
 - **NEGATIVE-LEDGER-FIRST / SEPARATE OBLIGATION.** The preceding SeqLock row explicitly excluded any
