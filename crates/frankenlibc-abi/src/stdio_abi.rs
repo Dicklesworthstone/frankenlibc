@@ -4819,6 +4819,12 @@ unsafe fn exact_direct_s_format(format: *const c_char) -> Option<bool> {
     }
 }
 
+#[inline]
+unsafe fn exact_direct_c_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    unsafe { *f == b'%' && *f.add(1) == b'c' && *f.add(2) == 0 }
+}
+
 fn read_only_mappings() -> &'static [(usize, usize)] {
     READ_ONLY_MAPPINGS
         .get_or_init(|| {
@@ -5054,6 +5060,19 @@ unsafe fn strict_direct_snprintf_s(
 }
 
 #[inline]
+unsafe fn strict_direct_snprintf_c(str_buf: *mut c_char, size: usize, arg: c_int) -> c_int {
+    if size > 0 && !str_buf.is_null() {
+        if size > 1 {
+            unsafe { *str_buf = (arg as u8) as c_char };
+            unsafe { *str_buf.add(1) = 0 };
+        } else {
+            unsafe { *str_buf = 0 };
+        }
+    }
+    1
+}
+
+#[inline]
 unsafe fn copy_literal_bytes(dst: *mut c_char, src: *const c_char, len: usize) {
     let dst = dst.cast::<u8>();
     let src = src.cast::<u8>();
@@ -5187,6 +5206,10 @@ pub unsafe extern "C" fn snprintf(
     {
         let arg = unsafe { args.next_arg::<*const c_char>() };
         return unsafe { strict_direct_snprintf_s(str_buf, size, arg, append_newline) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_c_format(format) } {
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_snprintf_c(str_buf, size, arg) };
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("snprintf");

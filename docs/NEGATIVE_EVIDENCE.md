@@ -6,6 +6,32 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `snprintf("%c")` bypasses the generic renderer; **113.46 -> 7.91 ns (14.34x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH STDIO LANE.** Exact ledger and all-ref history searches found the
+  shipped strict pure-literal and exact `%s`/`%s\n` routes plus integer/float formatter work, but no
+  exact `%c` fast path or rejection. This is a different libc subsystem from the closed string/wchar
+  scanner vein and a single formatting-pipeline lever.
+- **CERTIFIED REWRITE / SCOPE.** In strict mode only, exact narrow `"%c"` now consumes the promoted
+  `c_int`, converts it to one `unsigned char` byte, applies `snprintf`'s size-0/size-1 truncation and
+  final-NUL rules directly, and returns the invariant full length `1`. This skips runtime-policy
+  framing, format parsing, argument planning, render-buffer construction, and copy-out. Flags, width,
+  precision, positional formats, `%lc`, all other conversions, and hardened-mode repair behavior still
+  use the unchanged generic path.
+- **EXECUTABLE EQUIVALENCE ORACLE.** Before timing, the retained benchmark compared exact `%c`, the
+  semantics-equivalent generic `%1c` pipeline control, and host glibc over five promoted integers
+  (`0`, ASCII, `0xff`, `0x1234`, and `-1`) and output sizes 0/1/2/8. All **20 cases** matched on return
+  value and the complete destination buffer, covering embedded NUL payloads, byte truncation, and
+  modulo-256 integer conversion.
+- **ONE STRICT-REMOTE SAME-PROCESS WIN.** The sole foreground command was
+  `RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strverscmp_raw rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench stdio_glibc_baseline_bench -- stdio_glibc_baseline_snprintf_c_bare --sample-size 30 --warm-up-time 1 --measurement-time 2 --noplot`.
+  RCH selected actual worker `vmi1149989`. The generic control interval was
+  **[98.618, 113.46, 126.80] ns**, exact `%c` was **[6.9852, 7.9107, 8.9422] ns**
+  (**0.0697x; 93.0% less time; 14.34x faster**), and host glibc was
+  **[27.915, 30.598, 33.703] ns**. The candidate is **0.2585x glibc**, or **3.87x faster**, clearing
+  both the 20% generic-control floor and the no-slower-than-glibc gate with disjoint intervals. The
+  release build completed with existing unrelated workspace warnings; no local Cargo command ran.
+
 ## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): direct-pointer `strverscmp` removes prescans but regresses equal long strings; **258.06 -> 282.64 ns**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found the

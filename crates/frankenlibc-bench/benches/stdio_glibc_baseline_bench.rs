@@ -218,6 +218,87 @@ fn bench_snprintf_literal(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_snprintf_c_bare(c: &mut Criterion) {
+    let host = host_snprintf();
+    let exact_fmt = c"%c";
+    let generic_fmt = c"%1c";
+
+    // Width one is semantically identical to bare %c but deliberately misses
+    // the exact-format route, retaining the deployed generic pipeline as the
+    // same-binary control. Check truncation, embedded NUL, and int-to-byte
+    // conversion before entering any timer.
+    for value in [0, b'A' as c_int, 0xff, 0x1234, -1] {
+        for size in [0usize, 1, 2, 8] {
+            let mut exact = [0x55_i8; 8];
+            let mut generic = [0x55_i8; 8];
+            let mut glibc = [0x55_i8; 8];
+            let exact_rc =
+                unsafe { fl::snprintf(exact.as_mut_ptr(), size, exact_fmt.as_ptr(), value) };
+            let generic_rc =
+                unsafe { fl::snprintf(generic.as_mut_ptr(), size, generic_fmt.as_ptr(), value) };
+            let glibc_rc = unsafe { host(glibc.as_mut_ptr(), size, exact_fmt.as_ptr(), value) };
+            assert_eq!(
+                exact_rc, generic_rc,
+                "exact/generic rc: value={value} size={size}"
+            );
+            assert_eq!(
+                exact, generic,
+                "exact/generic bytes: value={value} size={size}"
+            );
+            assert_eq!(
+                exact_rc, glibc_rc,
+                "exact/glibc rc: value={value} size={size}"
+            );
+            assert_eq!(exact, glibc, "exact/glibc bytes: value={value} size={size}");
+        }
+    }
+
+    let mut group = c.benchmark_group("stdio_glibc_baseline_snprintf_c_bare");
+    group.bench_function("generic_width1_control", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 8];
+            let rc = unsafe {
+                fl::snprintf(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    generic_fmt.as_ptr(),
+                    black_box(b'A' as c_int),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+    group.bench_function("exact_c_candidate", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 8];
+            let rc = unsafe {
+                fl::snprintf(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    exact_fmt.as_ptr(),
+                    black_box(b'A' as c_int),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+    group.bench_function("host_glibc", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 8];
+            let rc = unsafe {
+                host(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    exact_fmt.as_ptr(),
+                    black_box(b'A' as c_int),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+    group.finish();
+}
+
 fn bench_swprintf_wide_format(c: &mut Criterion) {
     let mut group = c.benchmark_group("stdio_glibc_baseline_swprintf_wide_format");
     let fmt: [libc::wchar_t; 10] = [
@@ -267,6 +348,7 @@ criterion_group! {
         .warm_up_time(Duration::from_millis(150))
         .measurement_time(Duration::from_millis(400));
     targets = bench_fgetc, bench_fgetc_unlocked, bench_snprintf_s_newline,
-        bench_snprintf_s_bare, bench_snprintf_literal, bench_swprintf_wide_format
+        bench_snprintf_s_bare, bench_snprintf_literal, bench_snprintf_c_bare,
+        bench_swprintf_wide_format
 }
 criterion_main!(benches);
