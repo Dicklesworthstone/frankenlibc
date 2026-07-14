@@ -252,6 +252,119 @@ unsafe fn scan_fold_p0r(s: *const u32, c: u32) -> (Option<usize>, usize) {
     }
 }
 
+// ---- fl LEVER v3 (FOLD-FORWARD LAST-BLOCK TRACKING): the deferred design. Align UP to 128B (8-lane
+// ramp, deployed resolve into `last`), then a pure 128B-ALIGNED fold loop — structurally page-safe
+// (128|4096, no guard) like wide_strlen_unbounded. The fold does ONLY .any() work per 128B, tracking
+// the START index of the last nul-free block that holds a c (`last_c_block`); ALL per-lane extraction
+// is DEFERRED to the NUL block. So the dense path pays no per-panel extraction at all (unlike deployed
+// 8-lane and always-on's per-block combined extraction), which is why it can win every density.
+unsafe fn scan_fold_track(s: *const u32, c: u32) -> (Option<usize>, usize) {
+    const L: usize = 8;
+    let cv = Simd::<u32, L>::splat(c);
+    let zv = Simd::<u32, L>::splat(0);
+    let mut last: Option<usize> = None;
+    let pb = s as usize;
+    // Head: scalar to 32B alignment (== deployed).
+    let head = ((32 - (pb & 31)) & 31) / 4;
+    let mut i = 0;
+    while i < head {
+        let ch = unsafe { *s.add(i) };
+        if ch == c {
+            last = Some(i);
+        }
+        if ch == 0 {
+            return (last, i + 1);
+        }
+        i += 1;
+    }
+    // Ramp: 8-lane (32B, page-safe) deployed resolve into `last` until s+i is 128B aligned.
+    while (pb + i * 4) & 127 != 0 {
+        let v = Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i).cast::<[u32; L]>()) });
+        let eqc = v.simd_eq(cv);
+        let eqz = v.simd_eq(zv);
+        if (eqc | eqz).any() {
+            let zm = eqz.to_bitmask();
+            if zm != 0 {
+                let p = zm.trailing_zeros() as usize;
+                let cmb = eqc.to_bitmask() & ((1u64 << p) - 1);
+                if cmb != 0 {
+                    last = Some(i + (63 - cmb.leading_zeros() as usize));
+                }
+                return (last, i + p + 1);
+            }
+            last = Some(i + (63 - eqc.to_bitmask().leading_zeros() as usize));
+        }
+        i += L;
+    }
+    // 128B-aligned fold loop (page-safe by alignment). Track the last nul-free block with a c.
+    let mut last_c_block: Option<usize> = None;
+    loop {
+        let v0 = Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i).cast::<[u32; L]>()) });
+        let v1 =
+            Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i + 8).cast::<[u32; L]>()) });
+        let v2 =
+            Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i + 16).cast::<[u32; L]>()) });
+        let v3 =
+            Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i + 24).cast::<[u32; L]>()) });
+        let (c0, c1, c2, c3) = (
+            v0.simd_eq(cv),
+            v1.simd_eq(cv),
+            v2.simd_eq(cv),
+            v3.simd_eq(cv),
+        );
+        let (z0, z1, z2, z3) = (
+            v0.simd_eq(zv),
+            v1.simd_eq(zv),
+            v2.simd_eq(zv),
+            v3.simd_eq(zv),
+        );
+        if !((z0 | z1) | (z2 | z3)).any() {
+            // No NUL in this 128B block: if any c, remember the block; defer extraction.
+            if ((c0 | c1) | (c2 | c3)).any() {
+                last_c_block = Some(i);
+            }
+            i += 32;
+            continue;
+        }
+        // NUL is in this block. c != 0 here, so a NUL lane is never a c lane.
+        let zm = z0.to_bitmask()
+            | (z1.to_bitmask() << 8)
+            | (z2.to_bitmask() << 16)
+            | (z3.to_bitmask() << 24);
+        let cm = c0.to_bitmask()
+            | (c1.to_bitmask() << 8)
+            | (c2.to_bitmask() << 16)
+            | (c3.to_bitmask() << 24);
+        let p = zm.trailing_zeros() as usize;
+        let cmb = cm & ((1u64 << p) - 1);
+        if cmb != 0 {
+            // Last c lies before the NUL within THIS block — it dominates any earlier block.
+            return (Some(i + (63 - cmb.leading_zeros() as usize)), i + p + 1);
+        }
+        // No c before the NUL in this block: the answer is the last c in the last remembered
+        // nul-free block (later than `last`), else the head/ramp `last`.
+        if let Some(b) = last_c_block {
+            let b0 =
+                Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(b).cast::<[u32; L]>()) });
+            let b1 = Simd::<u32, L>::from_array(unsafe {
+                core::ptr::read(s.add(b + 8).cast::<[u32; L]>())
+            });
+            let b2 = Simd::<u32, L>::from_array(unsafe {
+                core::ptr::read(s.add(b + 16).cast::<[u32; L]>())
+            });
+            let b3 = Simd::<u32, L>::from_array(unsafe {
+                core::ptr::read(s.add(b + 24).cast::<[u32; L]>())
+            });
+            let bcm = b0.simd_eq(cv).to_bitmask()
+                | (b1.simd_eq(cv).to_bitmask() << 8)
+                | (b2.simd_eq(cv).to_bitmask() << 16)
+                | (b3.simd_eq(cv).to_bitmask() << 24);
+            return (Some(b + (63 - bcm.leading_zeros() as usize)), i + p + 1);
+        }
+        return (last, i + p + 1);
+    }
+}
+
 // ---- ALWAYS-ON combined-mask fold (== wcsrchr_wide_ab scan32): folds 128B at the loop top every
 // iteration. Included to confirm the deployed note's frequent-c regression claim. ----
 unsafe fn scan_fold_always(s: *const u32, c: u32) -> (Option<usize>, usize) {
@@ -362,6 +475,11 @@ fn main() {
             assert_eq!(unsafe { scan_fold_p0(sp, c) }, ref_, "p0 mismatch n={n} {tag}");
             assert_eq!(unsafe { scan_fold_p0r(sp, c) }, ref_, "p0r mismatch n={n} {tag}");
             assert_eq!(
+                unsafe { scan_fold_track(sp, c) },
+                ref_,
+                "track mismatch n={n} {tag}"
+            );
+            assert_eq!(
                 unsafe { scan_fold_always(sp, c) },
                 ref_,
                 "always mismatch n={n} {tag}"
@@ -377,8 +495,8 @@ fn main() {
 
             // Scale iters inversely with scan length so each timing sample is ~1-20ms.
             let iters: u64 = (8_000_000u64 / n as u64).max(1500);
-            let (mut cur, mut p0, mut p0r, mut al, mut gl) =
-                (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            let (mut cur, mut tr, mut al, mut gl) =
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new());
             let time = |f: &dyn Fn()| {
                 let t = Instant::now();
                 for _ in 0..iters {
@@ -390,11 +508,8 @@ fn main() {
                 let fc = || {
                     black_box(unsafe { scan8(black_box(sp), c) });
                 };
-                let fp = || {
-                    black_box(unsafe { scan_fold_p0(black_box(sp), c) });
-                };
-                let fpr = || {
-                    black_box(unsafe { scan_fold_p0r(black_box(sp), c) });
+                let ft = || {
+                    black_box(unsafe { scan_fold_track(black_box(sp), c) });
                 };
                 let fa = || {
                     black_box(unsafe { scan_fold_always(black_box(sp), c) });
@@ -405,32 +520,28 @@ fn main() {
                 // Rotate order each round so no variant is systematically favored by warmup.
                 if r % 2 == 0 {
                     cur.push(time(&fc));
-                    p0.push(time(&fp));
-                    p0r.push(time(&fpr));
+                    tr.push(time(&ft));
                     al.push(time(&fa));
                     gl.push(time(&fg));
                 } else {
                     gl.push(time(&fg));
                     al.push(time(&fa));
-                    p0r.push(time(&fpr));
-                    p0.push(time(&fp));
+                    tr.push(time(&ft));
                     cur.push(time(&fc));
                 }
             }
-            let (cur, p0, p0r, al, gl) = (
+            let (cur, tr, al, gl) = (
                 pctl(&cur, 0.1),
-                pctl(&p0, 0.1),
-                pctl(&p0r, 0.1),
+                pctl(&tr, 0.1),
                 pctl(&al, 0.1),
                 pctl(&gl, 0.1),
             );
             println!(
-                "n={n:<6} {tag:<8} glibc={gl:7.1} cur={cur:7.1} p0r={p0r:7.1} always={al:7.1}ns | \
-                 cur/gl={:.2}x  p0r/gl={:.2}x  p0r/cur={:.3}  p0/cur={:.3}  always/cur={:.3}",
+                "n={n:<6} {tag:<8} glibc={gl:7.1} cur={cur:7.1} track={tr:7.1} always={al:7.1}ns | \
+                 cur/gl={:.2}x  track/gl={:.2}x  track/cur={:.3}  always/cur={:.3}",
                 cur / gl,
-                p0r / gl,
-                p0r / cur,
-                p0 / cur,
+                tr / gl,
+                tr / cur,
                 al / cur,
             );
         }

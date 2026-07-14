@@ -1342,10 +1342,28 @@ unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, us
         return (Some(idx), idx.saturating_add(1));
     }
 
+    // c != 0 here, so a NUL lane is never a `c` lane. Find the LAST `c` before the NUL with a
+    // fold-forward pass: align UP to 128 bytes (an 8-lane ramp resolving into `last`), then a pure
+    // 128-byte-ALIGNED fold loop that is page-safe by alignment (128 | 4096 ⇒ every 128-byte read
+    // stays in one page, no per-iter guard — same discipline as `wide_strlen_unbounded`). The fold
+    // does ONLY a `.any()` per 128 bytes, remembering the START of the last nul-free block that
+    // holds a `c` (`last_c_block`); ALL per-lane extraction is DEFERRED to the block containing the
+    // NUL. So the dense path pays no per-panel extraction at all — the old 8-lane loop's per-block
+    // mask extraction on a frequent `c` was what left it 2.3-2.8x slower than glibc.
+    // Measured (examples/wcsrchr_fold128_ab.rs, byte-identical (last,span)): 0.32-0.83x of the old
+    // 8-lane scan across absent/frequent/periodic-`c` densities at n=256..65536, closing the glibc
+    // gap from 1.4-2.8x to ~0.9-1.2x (parity, beating glibc on frequent `c`). An always-on 128B
+    // fold (extraction per block) regressed the periodic case, and a panel-0-first fold regressed
+    // the dense path via loop bloat — both rejected in the same probe.
     const LANES: usize = 8;
+    let cv = Simd::<u32, LANES>::splat(c);
+    let zv = Simd::<u32, LANES>::splat(0);
     let mut last = None;
+    let pb = s as usize;
     let mut i = 0usize;
-    let head = ((32 - ((s as usize) & 31)) & 31) / 4;
+
+    // Head: scalar to 32-byte alignment.
+    let head = ((32 - (pb & 31)) & 31) / 4;
     while i < head {
         // SAFETY: caller guarantees a valid NUL-terminated string.
         let ch = unsafe { *s.add(i) };
@@ -1358,27 +1376,18 @@ unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, us
         i += 1;
     }
 
-    let cv = Simd::<u32, LANES>::splat(c);
-    let zv = Simd::<u32, LANES>::splat(0);
-    loop {
-        // SAFETY: `s + i` is 32-byte aligned, so this 32-byte load stays inside
-        // the current page; the string is NUL-terminated within a mapped page.
-        let words = unsafe { core::ptr::read(s.add(i).cast::<[u32; LANES]>()) };
-        let v = Simd::<u32, LANES>::from_array(words);
+    // Ramp: 8-lane (32-byte, in-page) resolve into `last` until `s + i` is 128-byte aligned.
+    while (pb + i * 4) & 127 != 0 {
+        // SAFETY: `s + i` is 32-byte aligned, so this 32-byte load stays inside the current page;
+        // the string is NUL-terminated within a mapped page.
+        let v = Simd::<u32, LANES>::from_array(unsafe {
+            core::ptr::read(s.add(i).cast::<[u32; LANES]>())
+        });
         let eqc = v.simd_eq(cv);
         let eqz = v.simd_eq(zv);
-        // Cheap skip test: nothing of interest in this 8-lane chunk ⇒ advance a full
-        // panel. Only when a `c` or the terminator is present do we extract the exact
-        // position(s) from the SIMD bitmasks — NEVER a scalar per-lane rescan. That
-        // per-block rescan was what made wcsrchr 3-5x slower than glibc after the host
-        // glibc 2.42 bump (the frequent-`c` case rescanned every block scalar); the
-        // mask extraction removes it. Measured 1.28-2.35x over the old scan
-        // (wcsrchr_fold_ab, in-process, byte-identical (last,span)). A folded 128B tier
-        // was tried and lost (frequent-`c` degenerates to whole-string scalar rescan).
         if (eqc | eqz).any() {
             let zm = eqz.to_bitmask();
             if zm != 0 {
-                // NUL present: the last `c` (if any) must lie strictly before it.
                 let p = zm.trailing_zeros() as usize;
                 let cm_before = eqc.to_bitmask() & ((1u64 << p) - 1);
                 if cm_before != 0 {
@@ -1386,10 +1395,88 @@ unsafe fn wide_last_before_nul_simd(s: *const u32, c: u32) -> (Option<usize>, us
                 }
                 return (last, i + p + 1);
             }
-            // No NUL in this chunk ⇒ a `c` match is present; take its highest lane.
             last = Some(i + (63 - eqc.to_bitmask().leading_zeros() as usize));
         }
         i += LANES;
+    }
+
+    // 128-byte-aligned fold loop (page-safe by alignment). Track the last nul-free block with a
+    // `c`; defer per-lane extraction to the NUL block.
+    let mut last_c_block: Option<usize> = None;
+    loop {
+        // SAFETY: `s + i` is 128-byte aligned, so [i, i+32) u32 (128 bytes) stays within one 4 KiB
+        // page; the NUL is within a mapped page so the scan stops at/before it.
+        let v0 = Simd::<u32, LANES>::from_array(unsafe {
+            core::ptr::read(s.add(i).cast::<[u32; LANES]>())
+        });
+        let v1 = Simd::<u32, LANES>::from_array(unsafe {
+            core::ptr::read(s.add(i + 8).cast::<[u32; LANES]>())
+        });
+        let v2 = Simd::<u32, LANES>::from_array(unsafe {
+            core::ptr::read(s.add(i + 16).cast::<[u32; LANES]>())
+        });
+        let v3 = Simd::<u32, LANES>::from_array(unsafe {
+            core::ptr::read(s.add(i + 24).cast::<[u32; LANES]>())
+        });
+        let (c0, c1, c2, c3) = (
+            v0.simd_eq(cv),
+            v1.simd_eq(cv),
+            v2.simd_eq(cv),
+            v3.simd_eq(cv),
+        );
+        let (z0, z1, z2, z3) = (
+            v0.simd_eq(zv),
+            v1.simd_eq(zv),
+            v2.simd_eq(zv),
+            v3.simd_eq(zv),
+        );
+        if !((z0 | z1) | (z2 | z3)).any() {
+            // No NUL in this 128-byte block: remember it if it holds a `c`; defer extraction.
+            if ((c0 | c1) | (c2 | c3)).any() {
+                last_c_block = Some(i);
+            }
+            i += 32;
+            continue;
+        }
+        // NUL is in this block. Resolve the exact answer now (combined 32-bit masks).
+        let zm = z0.to_bitmask()
+            | (z1.to_bitmask() << 8)
+            | (z2.to_bitmask() << 16)
+            | (z3.to_bitmask() << 24);
+        let cm = c0.to_bitmask()
+            | (c1.to_bitmask() << 8)
+            | (c2.to_bitmask() << 16)
+            | (c3.to_bitmask() << 24);
+        let p = zm.trailing_zeros() as usize;
+        let cm_before = cm & ((1u64 << p) - 1);
+        if cm_before != 0 {
+            // A `c` before the NUL in THIS block dominates any earlier block.
+            return (Some(i + (63 - cm_before.leading_zeros() as usize)), i + p + 1);
+        }
+        // No `c` before the NUL here: the answer is the last `c` in the last remembered nul-free
+        // block (later than the ramp `last`), else the head/ramp `last`.
+        if let Some(b) = last_c_block {
+            // SAFETY: `b` is a 128-byte-aligned, nul-free block earlier than the NUL block, so
+            // [b, b+32) u32 stays within one mapped page.
+            let b0 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(s.add(b).cast::<[u32; LANES]>())
+            });
+            let b1 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(s.add(b + 8).cast::<[u32; LANES]>())
+            });
+            let b2 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(s.add(b + 16).cast::<[u32; LANES]>())
+            });
+            let b3 = Simd::<u32, LANES>::from_array(unsafe {
+                core::ptr::read(s.add(b + 24).cast::<[u32; LANES]>())
+            });
+            let bcm = b0.simd_eq(cv).to_bitmask()
+                | (b1.simd_eq(cv).to_bitmask() << 8)
+                | (b2.simd_eq(cv).to_bitmask() << 16)
+                | (b3.simd_eq(cv).to_bitmask() << 24);
+            return (Some(b + (63 - bcm.leading_zeros() as usize)), i + p + 1);
+        }
+        return (last, i + p + 1);
     }
 }
 
