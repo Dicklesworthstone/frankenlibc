@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN (SHIPPED): exact `snprintf("%u")` stack decimal emitter; **323.81 -> 38.48 ns (8.42x faster)** (`bd-gldi10`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH FORMATTING REGIME.** `bv --robot-triage`
+  surfaced the global perf directive, but the nearby qsort byte-swap bead was stale because the live
+  implementation already uses slice swapping, and the exact `sscanf("%d")` route had already shipped.
+  Exact ledger and all-ref history searches found no measured bare unsigned-decimal `snprintf("%u")`
+  fast path or rejection, so this took one unmined conversion regime rather than reopening the
+  exhausted scanner or earlier character/pointer-format shapes.
+- **PROFILE / ATTRIBUTION / CERTIFIED PARTITION.** The deployed bare `%u` call still entered format
+  parsing, argument planning, heap-backed segment rendering, and bounded copy-out. In strict mode
+  only, exact `"%u"` now consumes one promoted `unsigned int`, emits its at-most-ten decimal digits
+  backwards into a fixed stack array, and applies `snprintf`'s full-length, truncation, and final-NUL
+  contract directly. Width, flags, precision, positional arguments, signed/hex/octal conversions,
+  every non-exact format, and hardened repair behavior retain the byte-identical generic path.
+- **EXECUTABLE ABI EQUIVALENCE ORACLE.** Before entering any timer, the retained release benchmark
+  compared exact `%u`, the semantically equivalent generic `%1u` pipeline control, and host glibc
+  across nine values (`0`, every early decimal-width transition, `65535`, `1000000`, and `u32::MAX`)
+  and nine destination sizes (0/1/2/3/5/8/10/11/16). All **81 cases** matched on return value and the
+  complete destination array, proving unsigned variadic extraction, every relevant truncation/NUL
+  boundary, maximum-width conversion, and untouched tail bytes on the actual ABI entrypoint.
+- **ONE FOREGROUND STRICT-REMOTE RELEASE WIN.** The sole benchmark command was
+  `RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strverscmp_raw rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench stdio_glibc_baseline_bench -- stdio_glibc_baseline_snprintf_u_bare --sample-size 30 --warm-up-time 1 --measurement-time 2 --noplot`.
+  RCH admitted actual worker **`vmi1153651`** and used ordinary `release`, never `release-perf`.
+  The generic `%1u` control was **[306.34, 323.81, 340.15] ns**, exact `%u` was
+  **[37.259, 38.476, 39.712] ns** (**0.1188x; 88.1% less time; 8.42x faster**), and host glibc was
+  **[78.593, 82.547, 87.154] ns**. The candidate is **0.4661x glibc**, or **2.15x faster**, with
+  disjoint intervals against both comparators.
+- **REMOTE GATE DISCLOSURE / BOUNDARY.** A follow-up release test command first hit the repository's
+  existing `stdio_abi_test` compile defect: it imports three `IO_2_1_STD*` symbols that are gated out
+  when debug assertions are disabled. A narrowed remote `--lib` invocation compiled successfully but
+  selected zero tests, so neither command is claimed as test evidence; the 81-case live benchmark
+  oracle above is the correctness gate. Existing unrelated warnings remained and no local Cargo ran.
+  This result claims only exact narrow bare `%u`; any other unsigned format needs its own profile,
+  equivalence oracle, and focused A/B.
+
 ## 2026-07-14 (cod / BlackThrush) — REJECTED (NOT SHIPPED): finite `hypot` zero-axis shortcut halves axis latency but taxes general calls; **9.96 -> 11.74 ns** (`bd-n0ab79`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH MATH REGIME.** `bv --robot-triage` surfaced the

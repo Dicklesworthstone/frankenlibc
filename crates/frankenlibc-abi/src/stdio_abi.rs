@@ -12,7 +12,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::{CStr, c_char, c_int, c_long, c_void};
+use std::ffi::{CStr, c_char, c_int, c_long, c_uint, c_void};
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -4826,6 +4826,14 @@ unsafe fn exact_direct_c_format(format: *const c_char) -> bool {
 }
 
 #[inline]
+unsafe fn exact_direct_u_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and C's printf contract requires a
+    // NUL-terminated format string, so these three bytes are readable.
+    unsafe { *f == b'%' && *f.add(1) == b'u' && *f.add(2) == 0 }
+}
+
+#[inline]
 unsafe fn exact_direct_p_format(format: *const c_char) -> bool {
     let f = format.cast::<u8>();
     // SAFETY: `format` is non-null and C's printf contract requires a
@@ -5081,6 +5089,43 @@ unsafe fn strict_direct_snprintf_c(str_buf: *mut c_char, size: usize, arg: c_int
 }
 
 #[inline]
+unsafe fn strict_direct_snprintf_u(str_buf: *mut c_char, size: usize, arg: c_uint) -> c_int {
+    // A promoted unsigned int has at most ten decimal digits. Build backwards
+    // into a fixed stack buffer, then apply snprintf's full-length/truncation
+    // contract directly without format parsing or a heap-backed render buffer.
+    let mut rendered = [0u8; 10];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` is writable by snprintf's caller,
+            // and the local source contains exactly `len` initialized bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, so the terminator is in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+#[inline]
 unsafe fn strict_direct_snprintf_p(str_buf: *mut c_char, size: usize, arg: *mut c_void) -> c_int {
     let mut rendered = [0u8; 2 + usize::BITS as usize / 4];
     let (start, len) = if arg.is_null() {
@@ -5273,6 +5318,13 @@ pub unsafe extern "C" fn snprintf(
     if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_c_format(format) } {
         let arg = unsafe { args.next_arg::<c_int>() };
         return unsafe { strict_direct_snprintf_c(str_buf, size, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_u_format(format) } {
+        // SAFETY: exact `%u` consumes one promoted `unsigned int` argument.
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        // SAFETY: snprintf's caller provides `size` writable bytes whenever
+        // `size > 0`; the helper bounds every write and appends the terminator.
+        return unsafe { strict_direct_snprintf_u(str_buf, size, arg) };
     }
     // SAFETY: `format` is non-null and valid through its NUL terminator under
     // the printf-family C contract checked by `exact_direct_p_format`.
@@ -11219,6 +11271,30 @@ mod tests {
             copy_direct_printf_payload(truncated.as_mut_ptr().cast(), b"abcdef", true, 3);
         }
         assert_eq!(&truncated, b"abc\0");
+    }
+
+    #[test]
+    fn printf_direct_unsigned_decimal_preserves_full_length_and_truncation() {
+        for (value, expected) in [
+            (0u32, "0"),
+            (9, "9"),
+            (10, "10"),
+            (1_000_000, "1000000"),
+            (u32::MAX, "4294967295"),
+        ] {
+            for size in 0..=12 {
+                let mut buf = [0x55u8; 12];
+                let rc = unsafe {
+                    strict_direct_snprintf_u(buf.as_mut_ptr().cast(), size, value as c_uint)
+                };
+                assert_eq!(rc as usize, expected.len());
+                if size > 0 {
+                    let copied = expected.len().min(size - 1);
+                    assert_eq!(&buf[..copied], &expected.as_bytes()[..copied]);
+                    assert_eq!(buf[copied], 0);
+                }
+            }
+        }
     }
 
     #[test]

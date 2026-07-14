@@ -413,6 +413,90 @@ fn bench_snprintf_p_bare(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_snprintf_u_bare(c: &mut Criterion) {
+    let host = host_snprintf();
+    let exact_fmt = c"%u";
+    let generic_fmt = c"%1u";
+
+    // Width one is semantically identical to bare %u but deliberately misses
+    // the exact-format route, retaining the deployed generic renderer as the
+    // same-binary control. Prove every decimal-width transition, u32::MAX, and
+    // all relevant truncation boundaries before entering any timer.
+    for value in [0u32, 1, 9, 10, 99, 100, 65_535, 1_000_000, u32::MAX] {
+        for size in [0usize, 1, 2, 3, 5, 8, 10, 11, 16] {
+            let mut exact = [0x55_i8; 16];
+            let mut generic = [0x55_i8; 16];
+            let mut glibc = [0x55_i8; 16];
+            // SAFETY: each destination has at least `size` bytes, both formats
+            // are NUL-terminated, and `%u` consumes the supplied unsigned int.
+            let exact_rc =
+                unsafe { fl::snprintf(exact.as_mut_ptr(), size, exact_fmt.as_ptr(), value) };
+            let generic_rc =
+                unsafe { fl::snprintf(generic.as_mut_ptr(), size, generic_fmt.as_ptr(), value) };
+            let glibc_rc = unsafe { host(glibc.as_mut_ptr(), size, exact_fmt.as_ptr(), value) };
+            assert_eq!(
+                exact_rc, generic_rc,
+                "exact/generic rc: value={value} size={size}"
+            );
+            assert_eq!(
+                exact, generic,
+                "exact/generic bytes: value={value} size={size}"
+            );
+            assert_eq!(
+                exact_rc, glibc_rc,
+                "exact/glibc rc: value={value} size={size}"
+            );
+            assert_eq!(exact, glibc, "exact/glibc bytes: value={value} size={size}");
+        }
+    }
+
+    let value = 1_234_567_890u32;
+    let mut group = c.benchmark_group("stdio_glibc_baseline_snprintf_u_bare");
+    group.bench_function("generic_width1_control", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 16];
+            let rc = unsafe {
+                fl::snprintf(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    generic_fmt.as_ptr(),
+                    black_box(value),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+    group.bench_function("exact_u_candidate", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 16];
+            let rc = unsafe {
+                fl::snprintf(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    exact_fmt.as_ptr(),
+                    black_box(value),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+    group.bench_function("host_glibc", |b| {
+        b.iter(|| {
+            let mut buf = [0i8; 16];
+            let rc = unsafe {
+                host(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    exact_fmt.as_ptr(),
+                    black_box(value),
+                )
+            };
+            black_box((rc, buf[0]));
+        });
+    });
+    group.finish();
+}
+
 fn bench_sprintf_c_bare(c: &mut Criterion) {
     let host = host_sprintf();
     let exact_fmt = c"%c";
@@ -528,6 +612,7 @@ criterion_group! {
         .measurement_time(Duration::from_millis(400));
     targets = bench_fgetc, bench_fgetc_unlocked, bench_snprintf_s_newline,
         bench_snprintf_s_bare, bench_snprintf_literal, bench_snprintf_c_bare,
-        bench_snprintf_p_bare, bench_sprintf_c_bare, bench_swprintf_wide_format
+        bench_snprintf_p_bare, bench_snprintf_u_bare, bench_sprintf_c_bare,
+        bench_swprintf_wide_format
 }
 criterion_main!(benches);
