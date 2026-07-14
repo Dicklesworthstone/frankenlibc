@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: eager `__ctype_*_loc` TLS table pointers never reached their oracle (`bd-m4czbr`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH CTYPE ACCESSOR REGIME.**
+  `bv --robot-triage` (data hash `0e6ffb8ba8785d52`) showed allocator Swing-2 actively
+  owned by `cod_fl` and the broad no-gaps directive assigned to `cod-b`; the ranked hosts
+  remeasurement bead offered no implementation lever. Exact ledger and all-ref history searches
+  found no prior `__ctype_b_loc` / `__ctype_toupper_loc` / `__ctype_tolower_loc` optimization or
+  rejection. The checked-in uncovered-hotpath manifest independently ranks these strict-hotpath
+  symbols 7–9 and marks their symbol benchmark missing.
+- **PROFILE / ATTRIBUTION / ONE CERTIFIED REWRITE.** In the default TLS configuration, all three
+  accessors lazily wrote an immutable `static` table pointer into a per-thread `Cell`. After the first
+  call, every macro-expanded ctype lookup still loaded the cell and tested it for null even though no
+  supported operation can clear or retarget it. The candidate initialized each TLS cell directly to
+  its final table-plus-128 address and returned the same stable outer slot without that impossible
+  steady-state branch; the separate `owned-tls-cache` feature remained unchanged.
+- **PREPARED PROOF, NOT EXECUTED.** The temporary same-binary probe reconstructed the exact lazy
+  branch in separate TLS cells, asserted candidate outer-slot stability and incumbent/candidate inner-
+  pointer identity, and prepared byte-for-byte checks against private-namespace host glibc for all
+  three tables over EOF plus every unsigned-char value (257 entries each). It also prepared an order-
+  rotated candidate/candidate null control. Targeted `rustfmt` and `git diff --check` passed, but the
+  executable oracle never ran, so no equivalence or conformance result is claimed.
+- **ONE FOREGROUND PINNED STRICT-REMOTE ORDINARY-RELEASE INVALID BENCH.** The sole command was
+  `RCH_WORKER=vmi1152480 RCH_WORKERS=vmi1152480 RCH_REQUIRE_REMOTE=1 RCH_QUEUE_WHEN_BUSY=1 rch exec --
+  cargo run -j 1 --profile release -p frankenlibc-bench --features abi-bench --example stdio_st_probe
+  -- ctype-loc`, under a **295 s** hard wall. RCH selected `vmi1152480`, synchronized in about 50 s,
+  and mapped `/data/tmp/cargo-target` to the same pool `52cb8389992c89401e7474ec3f19ef5a`
+  used by the immediately preceding capped run. Despite that identical path, it re-downloaded and
+  rebuilt dependencies; the cap expired during the release build before linking, the 771-entry table
+  oracle, null control, host arm, or any timing executed. No candidate/control ratio exists.
+- **DISPOSITION / RETRY CONDITION.** Manually restored production and temporary harness changes;
+  only this evidence row and closed bead ship. This is an infrastructure-invalid hold, not evidence
+  for or against eager TLS initialization. Retry only after RCH demonstrates persistent artifacts and
+  an already-linked ordinary-release probe on the admitted worker. No `release-perf`, local Cargo
+  fallback, stash creation, or stash drop occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: `localeconv` strict static-return bypass never reached its timed path (`bd-6pypop`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH LOCALE REGIME.** `bv --robot-triage`
