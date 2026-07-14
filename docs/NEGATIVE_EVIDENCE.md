@@ -19552,3 +19552,31 @@ pending A/B arms, a cache-disabled null control, and a pipe visibility oracle.
   **not a performance rejection** of the cache transition—the candidate remains unmeasured—but it cannot ship
   without a fresh turn using a selector that is part of the remote command (or a dedicated probe target),
   followed by the pipe oracle, target A/B, and null-control output from that same admitted worker.
+
+## cod-getsubopt-single-pass-token-2026-07-14 — NO-SHIP / INVALID BENCH (cold remote release build exceeded the hard cap)
+
+Negative-ledger-first routing started from `cod-getsubopt-membrane-fastpath-2026-07-12`: bypassing
+policy bookkeeping was statistically null on the 92.776 ns four-token-hit frame, and that row explicitly
+attributed the residual to bounded segment/token scanning and candidate comparison. Source attribution
+found that `candidate_matches_name` fully NUL-scanned every candidate and then traversed an equal-length
+candidate again for equality. Tried one certified rewrite: compare bytes once with early mismatch/NUL
+exit, retain the exact `known_remaining` guard, and accept only when byte `name_len` is NUL.
+
+- **EQUIVALENCE GATE PASSED REMOTELY:** on `vmi1153651`, ordinary `--profile release` tests passed
+  `conformance_diff_getsubopt` **4/4** and randomized live-glibc differential fuzz **150,000 comparisons,
+  0 divergences**. The remote command itself exited 0; the local 300-second wrapper interrupted only
+  subsequent artifact retrieval.
+- **ONE FOREGROUND BENCH ATTEMPT:** pinned-worker, fail-closed
+  `RCH_REQUIRE_REMOTE=1 RCH_WORKER=vmi1153651 rch exec -- cargo bench -j 4 --profile release
+  -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench getsubopt --
+  --sample-size 10 --warm-up-time 0.1 --measurement-time 0.3 --noplot`, under a 295-second hard cap.
+- **INVALIDATION:** RCH selected a different worker-scoped target pool from the preceding test and spent
+  54 seconds syncing, about 117 seconds waiting before remote execution, then cold-built Criterion and
+  the ordinary release graph. The hard cap returned exit 124 during compilation, before the benchmark
+  binary or any `getsubopt` timing arm ran. Therefore there is no candidate/control ratio and no
+  performance verdict.
+- **DISPOSITION / RETRY CONDITION:** manually restored production source and temporary benchmark
+  apparatus; ledger-only surfaced row. Do not infer a win from the equivalence proof and do not rerun this
+  turn. Retry only when the exact ordinary-release `glibc_baseline_bench` binary/target pool is demonstrably
+  warm enough to enter Criterion within two minutes; retain the same two-pass/single-pass in-binary control,
+  full deployed fl/glibc arm, and live-glibc parity oracle.
