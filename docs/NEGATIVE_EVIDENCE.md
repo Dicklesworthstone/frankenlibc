@@ -6,6 +6,42 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): finite `scalbn(x, 0)` core shortcut wins the kernel but regresses the deployed ABI; **2.9523 -> 3.2182 ns**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH MATH-LIBM LANE.** The ledger closed the broad f64/f32
+  transcendental survey, `log2f` series lowering, hyperbolic composition, `fmod`/`remainder`,
+  `pow(1.337)`, and quick allocator hot-cycle families before source inspection. Exact ledger and
+  all-ref history searches found `scalbn` conformance work but no measured finite `n == 0` shortcut
+  or rejection, so this was a fresh decomposition/scaling primitive rather than another exp/log
+  approximation.
+- **ONE CERTIFIED REWRITE EVALUATED.** The candidate returned `x` directly when `n == 0` and `x`
+  was finite, avoiding libm's generic exponent-range machinery and multiplication by synthesized
+  `1.0`. This is bit-exact for signed zero, subnormal, normal, and maximum finite inputs and cannot
+  raise a scaling range error. NaNs retained the original libm arithmetic path so signaling-NaN
+  quieting and exception behavior could not change; every nonzero exponent also retained the exact
+  original path.
+- **EXECUTABLE EQUIVALENCE ORACLE.** Before timing, the same release binary compared legacy core,
+  candidate core, modeled legacy ABI, deployed ABI, and host glibc over ten zero-exponent inputs
+  spanning signed zero, minimum subnormal, minimum normal, finite normal/max, infinities, and a
+  payload NaN. All old/new results matched bit-for-bit; non-NaN ABI results also matched glibc.
+  Sixteen additional finite `(x, n)` pairs with `n in {-17,-1,1,17}` proved the nonzero fallback
+  bit-identical to the original.
+- **ONE STRICT-REMOTE SAME-PROCESS REJECT.** The sole foreground command was
+  `RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strverscmp_raw rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench glibc_baseline_bench -- glibc_baseline_scalbn_zero --sample-size 30 --warm-up-time 1 --measurement-time 2 --noplot`.
+  RCH selected actual worker `vmi1149989`. The isolated core target improved from
+  **[2.1839, 2.2440, 2.3138] ns** to **[0.84205, 0.89193, 0.95544] ns**
+  (**0.3975x; 60.3% less time; 2.52x faster**), but the decisive deployed-call model regressed from
+  **[2.8277, 2.9523, 3.0890] ns** to **[3.0609, 3.2182, 3.4241] ns**
+  (**1.090x; 9.0% more time**). Host glibc was **[3.7659, 3.9746, 4.1844] ns**; beating host does
+  not excuse losing to FrankenLibC's incumbent. The nonzero null control also moved nominally from
+  **[2.0782, 2.1330, 2.1886] ns** to **[2.0928, 2.1921, 2.3021] ns**
+  (**1.028x; 2.8% more time**, overlapping intervals). The release build completed with existing
+  unrelated workspace warnings; no local Cargo command ran.
+- **RESTORATION / CLOSED BOUNDARY.** `math/float.rs` and the temporary focused benchmark changes
+  were restored exactly; only this evidence row ships. Do not retry the same finite no-op branch in
+  the core wrapper. Reopening requires an identical out-of-line exported-symbol A/B or an ABI-level
+  design that clears the deployed old/new gate while holding a nonzero-exponent null control flat.
+
 ## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): exact `snprintf("%p")` stack formatter; **216.91 -> 15.96 ns (13.59x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH POINTER-FORMAT CONVERSION.** The ledger closed qsort/search,
