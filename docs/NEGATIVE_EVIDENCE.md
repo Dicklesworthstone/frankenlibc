@@ -6,6 +6,37 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: `tdelete` single-walk candidate never reached its timed path (`bd-87fps4`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH SEARCH REGIME.** `bv --robot-triage`
+  (data hash `92a8b168498155f8`) found the global no-gaps bead owned by `cod-b` and allocator
+  Swing-2 actively owned by `cod_fl`; the ledger already closed math, qsort, and bounded stdio
+  micro-paths. Exact ledger and all-ref searches found only the earlier `tsearch` single-walk keep,
+  whose evidence explicitly left `tdelete` unchanged, and no measured `tdelete` attempt.
+- **PROFILE / ATTRIBUTION / ONE LEVER.** `RbTree::delete` first called `find(needle, cmp)` and then
+  performed the top-down LLRB deletion, so every successful POSIX `tdelete` repeated an `O(log n)`
+  indirect C-comparator traversal. The candidate removed only that preflight walk. Its temporary
+  same-binary harness reconstructed the incumbent as `find + candidate`, counted comparator calls,
+  compared old/candidate/host deletion checksums, and checked that absent deletes preserved the set.
+- **CERTIFIED REWRITE OBLIGATIONS PREPARED, BUT NOT EXECUTED.** The candidate added missing-key set,
+  length, and LLRB-invariant checks alongside the existing ascending, descending, and randomized
+  deletion tests. `rustfmt` and `git diff --check` passed locally without compiling. Two strict-remote
+  focused test commands were capped at **295 s** and **240 s**; RCH routed them to `vmi1227854` and
+  then `vmi1149989`, and both spent the cap cold-building before any test executed. Therefore no
+  correctness result is claimed.
+- **ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE INVALID BENCH.** The sole timed command was
+  `RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 rch exec --
+  cargo bench -j 1 --profile release -p frankenlibc-bench --bench tsearch_ab_bench -- tdelete_2000
+  --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2 --noplot`, under a **295 s** hard wall.
+  RCH admitted `vmi1149989` but rewrote the requested target to fresh pool
+  `2e4cba3fadfae9af98dac7851bc7fbe6`; the cap expired while compiling Criterion, before the binary,
+  equivalence oracle, comparator counts, or any timing arm ran. No candidate/control ratio exists.
+- **DISPOSITION / RETRY CONDITION.** Manually restored both production and temporary benchmark
+  changes exactly; only this evidence row and closed bead ship. This is an infrastructure-invalid
+  hold, not evidence against single-walk deletion. Retry only with a demonstrably warm, already-linked
+  ordinary-release `tsearch_ab_bench` binary on the admitted worker. No local Cargo fallback ran, and
+  no stash was created or dropped.
+
 ## 2026-07-14 (cod / BlackThrush) — REJECT: skip per-entry `dirent` TLS clear; **22.047 -> 22.441 us (1.018x)** (`bd-6x0mrj`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH DIRENT REGIME.** `bv --robot-triage`
