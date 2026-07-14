@@ -577,6 +577,18 @@ fn main() {
     run_conv(c, "big5hkscs_to_utf16", b"UTF-16LE\0", b"BIG5-HKSCS\0", &big5hkscs_src);
     run_conv(c, "eucjisx0213_to_utf16", b"UTF-16LE\0", b"EUC-JISX0213\0", &eucjisx_src);
     run_conv(c, "tscii_to_utf16", b"UTF-16LE\0", b"TSCII\0", &tscii_src);
+    // SINGLE-BYTE -> UTF-16 (COMMON on Windows): NO GAP — fl already wins (the
+    // from_decode.cp fast path at ~50050 emits one UTF-16 unit/byte). koi8r/latin1/cp1251
+    // -> UTF-16 all ~0.65-0.72x. (Scanned 2026-07-14; sb -> UTF-8 real-text also wins, e.g.
+    // koi8r_to_utf8 0.335x above; the from_decode -> UTF-8 SIMD 2-byte run just doesn't fire
+    // on a build_sbcs_source enumerate-all-bytes corpus whose 1/2/3-byte widths are scattered
+    // — a pathological source, NOT a gap.)
+    let koi8r_bytes = build_sbcs_source(b"KOI8-R\0", 512);
+    run_conv(c, "koi8r_to_utf16", b"UTF-16LE\0", b"KOI8-R\0", &koi8r_bytes);
+    let latin1_bytes = build_sbcs_source(b"ISO-8859-1\0", 512);
+    run_conv(c, "latin1_to_utf16", b"UTF-16LE\0", b"ISO-8859-1\0", &latin1_bytes);
+    let cp1251_bytes = build_sbcs_source(b"CP1251\0", 512);
+    run_conv(c, "cp1251_to_utf16", b"UTF-16LE\0", b"CP1251\0", &cp1251_bytes);
     // ENCODE direction: UTF-8 -> BIG5. Source = big5_src decoded back to UTF-8 (host BIG5->UTF-8),
     // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
     let big5_utf8 = {
