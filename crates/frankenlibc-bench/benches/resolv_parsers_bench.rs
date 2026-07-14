@@ -403,6 +403,112 @@ fn bench_parse_passwd_line() {
     );
 }
 
+#[inline(never)]
+fn parse_passwd_line_old(line: &[u8]) -> Option<pwd::Passwd> {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    if line.is_empty() || line.starts_with(b"#") {
+        return None;
+    }
+
+    let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
+    if fields.len() < 4 || fields[0].is_empty() {
+        return None;
+    }
+    let parse_id = |field: &[u8]| {
+        let mut text = std::str::from_utf8(field).ok()?;
+        text = text.trim_start_matches(|c| c == ' ' || ('\t'..='\r').contains(&c));
+        if let Some(rest) = text.strip_prefix('+') {
+            text = rest;
+        }
+        if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        text.parse::<u32>().ok()
+    };
+
+    Some(pwd::Passwd {
+        pw_name: fields[0].to_vec(),
+        pw_passwd: fields[1].to_vec(),
+        pw_uid: parse_id(fields[2])?,
+        pw_gid: parse_id(fields[3])?,
+        pw_gecos: fields.get(4).copied().unwrap_or(b"").to_vec(),
+        pw_dir: fields.get(5).copied().unwrap_or(b"").to_vec(),
+        pw_shell: if fields.len() > 6 {
+            fields[6..].join(b":".as_slice())
+        } else {
+            Vec::new()
+        },
+    })
+}
+
+#[inline(never)]
+fn parse_passwd_line_current(line: &[u8]) -> Option<pwd::Passwd> {
+    pwd::parse_passwd_line(line)
+}
+
+fn time_passwd_parser(parser: fn(&[u8]) -> Option<pwd::Passwd>, iters: u64) -> f64 {
+    let start = Instant::now();
+    for _ in 0..iters {
+        black_box(parser(black_box(PASSWD_LINE)));
+    }
+    start.elapsed().as_nanos() as f64 / iters as f64
+}
+
+fn bench_parse_passwd_line_ab() {
+    let parity_cases: &[&[u8]] = &[
+        b"ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash",
+        b"u:x:1:2",
+        b"u:x:1:2:::",
+        b"u:x:+1: 2:g:/h:/bin/sh:arg:tail\r\n",
+        b"root:x:0",
+        b":x:0:0::/:/bin/sh",
+        b"# comment",
+        b"",
+    ];
+    for &line in parity_cases {
+        assert_eq!(
+            parse_passwd_line_current(line),
+            parse_passwd_line_old(line),
+            "passwd parser mismatch for {line:?}"
+        );
+    }
+
+    const AB_SAMPLES: usize = 60;
+    const AB_ITERS: u64 = 10_000;
+    let mut old = Vec::with_capacity(AB_SAMPLES);
+    let mut new = Vec::with_capacity(AB_SAMPLES);
+    let mut null_a = Vec::with_capacity(AB_SAMPLES);
+    let mut null_b = Vec::with_capacity(AB_SAMPLES);
+    for sample in 0..AB_SAMPLES {
+        if sample % 2 == 0 {
+            old.push(time_passwd_parser(parse_passwd_line_old, AB_ITERS));
+            new.push(time_passwd_parser(parse_passwd_line_current, AB_ITERS));
+            null_a.push(time_passwd_parser(parse_passwd_line_current, AB_ITERS));
+            null_b.push(time_passwd_parser(parse_passwd_line_current, AB_ITERS));
+        } else {
+            null_b.push(time_passwd_parser(parse_passwd_line_current, AB_ITERS));
+            new.push(time_passwd_parser(parse_passwd_line_current, AB_ITERS));
+            old.push(time_passwd_parser(parse_passwd_line_old, AB_ITERS));
+            null_a.push(time_passwd_parser(parse_passwd_line_current, AB_ITERS));
+        }
+    }
+
+    let old = median(old);
+    let new = median(new);
+    let null_a = median(null_a);
+    let null_b = median(null_b);
+    println!("PASSWD_PARSE_EQ cases={} status=PASS", parity_cases.len());
+    println!(
+        "PASSWD_PARSE_AB old={old:.3}ns new={new:.3}ns new/old={:.4}",
+        new / old
+    );
+    println!(
+        "PASSWD_PARSE_NULL a={null_a:.3}ns b={null_b:.3}ns b/a={:.4}",
+        null_b / null_a
+    );
+}
+
 fn bench_parse_shadow_line() {
     measure(
         "parse_shadow_line_typical",
@@ -610,6 +716,10 @@ fn main() {
     }
     if std::env::args().nth(1).as_deref() == Some("gshadow-ab") {
         bench_parse_gshadow_line_ab();
+        return;
+    }
+    if std::env::args().nth(1).as_deref() == Some("passwd-ab") {
+        bench_parse_passwd_line_ab();
         return;
     }
 

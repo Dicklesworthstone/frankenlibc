@@ -65,28 +65,23 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
     // glibc requires only the first four fields (name:passwd:uid:gid); gecos,
     // dir, and shell are optional and default to empty. Keep the compatibility
     // shape where extra colons are absorbed into the shell field.
-    let fields: Vec<&[u8]> = line.split(|&b| b == b':').collect();
-    if fields.len() < 4 {
-        return None;
-    }
-
-    let name = fields[0];
-    let passwd = fields[1];
-    let uid = parse_u32_decimal(fields[2])?;
-    let gid = parse_u32_decimal(fields[3])?;
+    // Seven is the semantic field count: `splitn` leaves any additional colons
+    // in the shell tail, exactly matching the old `fields[6..].join(":")`, but
+    // avoids allocating a temporary `Vec<&[u8]>` on every parsed line.
+    let mut fields = line.splitn(7, |&b| b == b':');
+    let name = fields.next()?;
+    let passwd = fields.next()?;
+    let uid = parse_u32_decimal(fields.next()?)?;
+    let gid = parse_u32_decimal(fields.next()?)?;
 
     // Name must be non-empty
     if name.is_empty() {
         return None;
     }
 
-    let gecos = fields.get(4).copied().unwrap_or(b"");
-    let dir = fields.get(5).copied().unwrap_or(b"");
-    let shell = if fields.len() > 6 {
-        fields[6..].join(&b":"[..])
-    } else {
-        Vec::new()
-    };
+    let gecos = fields.next().unwrap_or(b"");
+    let dir = fields.next().unwrap_or(b"");
+    let shell = fields.next().unwrap_or(b"");
 
     Some(Passwd {
         pw_name: name.to_vec(),
@@ -95,7 +90,7 @@ pub fn parse_passwd_line(line: &[u8]) -> Option<Passwd> {
         pw_gid: gid,
         pw_gecos: gecos.to_vec(),
         pw_dir: dir.to_vec(),
-        pw_shell: shell,
+        pw_shell: shell.to_vec(),
     })
 }
 
