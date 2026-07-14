@@ -6,6 +6,65 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / TanPelican) — WIN (SHIPPED): derive BRAVO fast-path attempts from terminal counters; **18.565 -> 12.494 ns (1.486x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found no
+  prior removal or derivation of BRAVO's `fast_path_attempts` counter. The prior aggregate-read-counter
+  win closed over a different counter and explicitly required a separate proof and measurement before
+  generalizing. This lever had EV `(impact 4 * confidence 5) / effort 1 = 20` and relevance 4.9/5 for
+  the checked-in BRAVO single-reader row.
+- **ONE LEVER / DIRECT HOT PATH.** `try_fast_path` no longer performs a relaxed
+  `fast_path_attempts.fetch_add(1)` on every admitted read attempt. `diagnostics()` preserves the public
+  field and collision-rate schema by deriving attempts as
+  `fast_path_reads + fast_path_aborts + slot_collisions` with wrapping arithmetic. The checked-in
+  `bravo_read/single_thread` row constructs one lock outside timing, then times `read`, dereference, and
+  guard drop; every iteration takes the successful fast path and crossed exactly the removed atomic RMW.
+  The benchmark source was not edited.
+- **PARTITION PROOF / DECLARED SNAPSHOT REFINEMENT.** Calls rejected by the initial bias or pending-writer
+  gates did not increment the old attempt counter and increment none of the three terminal counters.
+  After those gates, every attempt terminates in exactly one disjoint class: published reader success,
+  post-publication writer abort, or same-token/two-slot collision fallback. A primary collision followed
+  by secondary success or abort is classified by that terminal outcome because `slot_collisions` changes
+  only after both candidates fail. Therefore the identity is exact modulo `u64`; `wrapping_add` preserves
+  the old rollover domain. A live diagnostic snapshot now means "terminally classified attempts," not
+  "attempts started," and independently relaxed snapshots were never linearizable. Reusing the same
+  loaded success/abort/collision values makes the returned partition and collision-rate denominator
+  internally consistent; quiescent diagnostics retain exact old semantics. The added oracle covers an
+  initial bias-disabled slow read plus deterministic two-slot exhaustion, while existing success and
+  nested-collision assertions cover the other ordinary partitions.
+- **STRICT-REMOTE SAME-WORKER KEEP.** Baseline command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_bravo_attempts rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- bravo_read/single_thread --exact --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline bravo_attempt_partition_7c02745c`.
+  The candidate used the identical command with `--baseline bravo_attempt_partition_7c02745c`. Both
+  release builds and timed runs executed on actual worker `vmi1293453`. Intervals moved
+  **[17.879, 18.565, 19.257] ns -> [12.270, 12.494, 12.797] ns**: raw point ratio **0.6730x**,
+  **32.70% less time** (**1.486x faster**). Criterion's named change interval was
+  **-33.137% to -28.926%**, point estimate **-31.015%**, `p=0.00`; both gates passed decisively.
+- **REMOTE QUALITY / SHARED-TREE BOUNDARY.** The focused partition oracle passed through strict RCH on
+  the exact benchmark worker `vmi1293453` (**1 passed, 0 failed**); its cold tooling-dependency build took
+  9m17s, while the test itself completed in 0.00s. Membrane-lib Clippy passed remotely with `-D warnings`
+  on `vmi1227854`; the first routed worker, `vmi1149989`, surfaced that the pinned nightly's Clippy
+  component was absent, so no local fallback was attempted. Initial staged UBS emitted two critical
+  false positives for pre-existing non-secret thread-token/slot-index equality; after triage, the rescan
+  exited 0 with zero criticals while Cargo-backed categories stayed disabled. Its 72 warnings are the
+  expected inventory of 20 test `expect`/`unwrap` sites, 43 test assertions (including the new oracle),
+  eight protocol-bounded slot indexes, and one existing test-only clone in a loop; none is actionable in
+  this patch. Strict-remote
+  `cargo fmt --all -- --check` correctly refused local fallback as `RCH-E301`; the edit is
+  rustfmt-shaped and `git diff --check` is clean. No local Cargo fallback ran. Final `bravo.rs` is
+  `24c4cdad1b8945e4594693a2311955a4f079c1060a805f98afbc223d8890cb56`; the benchmark source stayed
+  byte-identical at `5b2309748b746a04a484e5c1a51e008d5372fb2a1e3a9ac3518e01917b583a03` across the A/B pair.
+  Peer-owned Big5-HKSCS and Shift-JISX0213 conformance files stayed untouched at
+  `df28aa6abc13c86cccff748de360bab9f9de7723fcab237b69b377b9483fad3d` and
+  `a9a62900843fae41bfce84d8cef56dd3903d3aa8c3f2a33b39dfd2bf8bc6fd2f`. Peer-owned iconv work was
+  also untouched and unstaged; its hash changed only after the decisive A/B pair as that owner continued
+  its separate lane.
+- **DEPLOYMENT / CLOSED BOUNDARY.** Keep the public attempts field derived only from the proven terminal
+  partition; do not restore its per-attempt atomic RMW. Do not infer approval to remove or derive the
+  success, abort, collision, slow-read, or write counters: they have different update protocols and
+  consumers. Reopen this result if a new early-exit path appears after the attempt gate, a terminal class
+  stops incrementing exactly once, snapshots require in-flight-attempt visibility, or modulo-`u64`
+  diagnostics cease to be acceptable.
+
 ## 2026-07-13 (cod / TanPelican) — REJECTED (NOT SHIPPED): lazy Bloom `hash2` is below the deployed foreign-miss floor; **20.283 -> 19.944 ns**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH LANE.** Exact ledger searches found no prior lazy-secondary-hash,

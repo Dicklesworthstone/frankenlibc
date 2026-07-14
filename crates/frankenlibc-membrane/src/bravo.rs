@@ -94,7 +94,6 @@ pub struct BravoRwLockDiagnostics {
 struct BravoDiagCounters {
     fast_path_reads: AtomicU64,
     slow_path_reads: AtomicU64,
-    fast_path_attempts: AtomicU64,
     fast_path_aborts: AtomicU64,
     slot_collisions: AtomicU64,
     writes: AtomicU64,
@@ -109,7 +108,6 @@ impl Default for BravoDiagCounters {
         Self {
             fast_path_reads: AtomicU64::new(0),
             slow_path_reads: AtomicU64::new(0),
-            fast_path_attempts: AtomicU64::new(0),
             fast_path_aborts: AtomicU64::new(0),
             slot_collisions: AtomicU64::new(0),
             writes: AtomicU64::new(0),
@@ -257,8 +255,11 @@ impl<T: Send + Sync> BravoRwLock<T> {
         let fast_path_reads = self.diag.fast_path_reads.load(Ordering::Relaxed);
         let slow_path_reads = self.diag.slow_path_reads.load(Ordering::Relaxed);
         let reads = fast_path_reads.wrapping_add(slow_path_reads);
-        let fast_path_attempts = self.diag.fast_path_attempts.load(Ordering::Relaxed);
+        let fast_path_aborts = self.diag.fast_path_aborts.load(Ordering::Relaxed);
         let slot_collisions = self.diag.slot_collisions.load(Ordering::Relaxed);
+        let fast_path_attempts = fast_path_reads
+            .wrapping_add(fast_path_aborts)
+            .wrapping_add(slot_collisions);
         let active_slots = self
             .visible_readers
             .iter()
@@ -270,7 +271,7 @@ impl<T: Send + Sync> BravoRwLock<T> {
             fast_path_reads,
             slow_path_reads,
             fast_path_attempts,
-            fast_path_aborts: self.diag.fast_path_aborts.load(Ordering::Relaxed),
+            fast_path_aborts,
             slot_collisions,
             writes: self.diag.writes.load(Ordering::Relaxed),
             revocations: self.diag.revocations.load(Ordering::Relaxed),
@@ -296,7 +297,6 @@ impl<T: Send + Sync> BravoRwLock<T> {
             return None;
         }
 
-        self.diag.fast_path_attempts.fetch_add(1, Ordering::Relaxed);
         let token = current_thread_token();
         let [primary, secondary] = self.slot_candidates(token);
         let mut collided = false;
@@ -488,6 +488,9 @@ mod tests {
         assert_eq!(diag.reads, 2);
         assert_eq!(diag.fast_path_reads, 2);
         assert_eq!(diag.slow_path_reads, 0);
+        assert_eq!(diag.fast_path_attempts, 2);
+        assert_eq!(diag.fast_path_aborts, 0);
+        assert_eq!(diag.slot_collisions, 0);
         assert_eq!(diag.writes, 1);
     }
 
@@ -506,9 +509,61 @@ mod tests {
         assert_eq!(diag.reads, 2);
         assert_eq!(diag.fast_path_reads, 1);
         assert_eq!(diag.slow_path_reads, 1);
+        assert_eq!(diag.fast_path_attempts, 2);
+        assert_eq!(diag.fast_path_aborts, 0);
+        assert_eq!(diag.slot_collisions, 1);
         assert_eq!(
             diag.reads,
             diag.fast_path_reads.wrapping_add(diag.slow_path_reads)
+        );
+        assert_eq!(
+            diag.fast_path_attempts,
+            diag.fast_path_reads
+                .wrapping_add(diag.fast_path_aborts)
+                .wrapping_add(diag.slot_collisions)
+        );
+    }
+
+    #[test]
+    fn fast_path_attempts_partition_bias_disabled_and_slot_collision() {
+        let lock = BravoRwLock::new(7_u64);
+
+        lock.reader_bias_enabled.store(false, Ordering::Release);
+        let bias_disabled = lock.read();
+        assert_eq!(bias_disabled.path(), BravoReadPath::Slow);
+        drop(bias_disabled);
+        lock.reader_bias_enabled.store(true, Ordering::Release);
+
+        let before_collision = lock.diagnostics();
+        assert_eq!(before_collision.reads, 1);
+        assert_eq!(before_collision.slow_path_reads, 1);
+        assert_eq!(before_collision.fast_path_attempts, 0);
+
+        let token = current_thread_token();
+        let [primary, secondary] = lock.slot_candidates(token);
+        let foreign_token = token.wrapping_add(1).max(1);
+        assert_ne!(foreign_token, token);
+        lock.visible_readers[primary].store(foreign_token, Ordering::Release);
+        lock.visible_readers[secondary].store(foreign_token, Ordering::Release);
+
+        let collided = lock.read();
+        assert_eq!(collided.path(), BravoReadPath::Slow);
+        drop(collided);
+        lock.visible_readers[primary].store(EMPTY_SLOT, Ordering::Release);
+        lock.visible_readers[secondary].store(EMPTY_SLOT, Ordering::Release);
+
+        let diag = lock.diagnostics();
+        assert_eq!(diag.reads, 2);
+        assert_eq!(diag.fast_path_reads, 0);
+        assert_eq!(diag.slow_path_reads, 2);
+        assert_eq!(diag.fast_path_attempts, 1);
+        assert_eq!(diag.fast_path_aborts, 0);
+        assert_eq!(diag.slot_collisions, 1);
+        assert_eq!(
+            diag.fast_path_attempts,
+            diag.fast_path_reads
+                .wrapping_add(diag.fast_path_aborts)
+                .wrapping_add(diag.slot_collisions)
         );
     }
 
