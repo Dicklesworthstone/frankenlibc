@@ -6,6 +6,32 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — BLOCKED (NOT SHIPPED): `wmemrchr` mask resolver did not reach the timed path
+
+- **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and history searches found the shipped
+  scalar-to-SIMD reverse-scan win, but no measured result for replacing the current hit-panel scalar
+  rescan with direct equality-mask resolution. The existing narrow `memrchr` result establishes this
+  rewrite class, while the `wcsrchr` mask rows have a distinct NUL-boundary obligation. The lever was
+  therefore fresh with respect to the excluded and closed `bzero`, BRAVO, FlatCombiner, and `wcscoll`
+  families.
+- **ONE LEVER IMPLEMENTED, THEN RESTORED.** The candidate replaced only the 64- and 16-wide
+  `wmemrchr` hit-panel resolvers: `.any()` plus a descending scalar lane loop became one equality
+  bitmask plus `ilog2()` for the highest set lane. Reverse panel order selects the rear-most matching
+  panel, and the highest set bit selects its rear-most matching element; the front scalar remainder,
+  `n.min(s.len())` bound, and all no-hit behavior were unchanged. The checked-in A/B asserted current,
+  candidate, and host results before entering any timer.
+- **STRICT-REMOTE RUN INVALID BEFORE TIMING.** The only foreground command was
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_wmemrchr_mask rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --example wmemrchr_resolve_ab`.
+  RCH selected actual worker `vmi1293453`, and the release build completed, but the comparator aborted
+  before its first timed sample with `dlsym wmemrchr failed`: this worker's host libc does not export
+  the GNU symbol. There are therefore **no admissible performance numbers** and no keep claim. Existing
+  unrelated core warnings remained; no local Cargo command ran.
+- **RESTORATION / HOLD BOUNDARY.** Production `wide.rs`, the checked-in A/B example, and its manifest
+  registration were restored exactly; only this evidence row is shipped. Do not rerun the unchanged
+  three-arm harness on `vmi1293453`. The optimization itself is **not performance-rejected**: reopening
+  requires a same-process old-vs-new harness that treats unavailable glibc as optional, or a remote
+  worker proven to export `wmemrchr`, followed by a fresh timed gate.
+
 ## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): lazy BRAVO secondary-slot hash is below the direct-read floor; **12.410 -> 12.345 ns**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger, all-ref, reflog, and stash searches
