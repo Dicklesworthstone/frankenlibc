@@ -6,6 +6,59 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / TanPelican) — WIN (SHIPPED): short-circuit generic SOS zero bases; **54.172 -> 9.6469 ns (5.616x)**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH GENERIC OBLIGATION.** The immediately preceding size-class SOS win
+  explicitly closed over only its specialized evaluator and required a separate measured row before
+  generalizing to the generic certificate path. Exact ledger searches found no generic zero-basis,
+  `Q(0)`, or `evaluate_quadratic_form` early return; all-ref history finds the original generic evaluator
+  in `7f22a7c59`, with no later zero-basis specialization. This row therefore measures the named open
+  boundary instead of retrying the size-class lever.
+- **ONE LEVER / DIRECT ZERO-HEAVY WORKLOAD.** `SosCertificate::evaluate_quadratic_form` now returns zero
+  when every basis coordinate is zero, before entering its nested Gram-matrix loops. The checked-in
+  `sos_barrier_fragmentation_eval/strict` row constructs a deterministic 10,000-sample fragmentation
+  sawtooth; exact input inspection shows only indices 0 and 2 exceed the budget, so **9,998/10,000**
+  timed evaluations use `[0, 0, 0, 0]`. Warmup and construction are outside timing; sawtooth indexing,
+  sample unpacking, basis construction, and `evaluate_fragmentation_barrier` remain inside. EV was
+  `(impact 4 * confidence 5) / effort 1 = 20`; relevance was 4.8/5 for this direct generic path.
+- **CERTIFIED REWRITE / FALLBACK.** For `basis = 0` and any const dimension `D` (including zero), every
+  existing `coeff * bi * bj` term is exactly zero under the same saturating `i128` operations. Therefore
+  `acc = 0`, division by `scale.max(1)` remains zero, and the final clamp/cast returns zero. For every
+  nonzero basis, evaluation order, saturation, scaling, clamp, return value, and all surrounding policy
+  behavior are byte-for-byte the original path. The evaluator is pure: there are no RNG, logging,
+  atomic, ordering, or secret-dependent constant-time contracts to preserve. The declared fallback was
+  exact source restoration plus this ledger row unless the named 95% change interval was wholly negative
+  and the raw interval center improved by at least 5%.
+- **STRICT-REMOTE SAME-WORKER KEEP.** Baseline command:
+  `RCH_WORKER=vmi1227854 RCH_WORKERS=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,FRANKENLIBC_BENCH_PIN,FRANKENLIBC_MODE CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE=strict rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench runtime_math_kernels_bench -- 'runtime_math_kernels/sos_barrier_fragmentation_eval/strict' --exact --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline sos_generic_zero_0a986b9c`.
+  RCH ignored the hint and admitted actual worker `vmi1149989`; the candidate requested that worker and
+  used the identical command with `--baseline sos_generic_zero_0a986b9c`. Both timed runs were pinned to
+  CPU 0 on the same reported AMD EPYC model. Intervals moved **[53.018, 54.172, 55.515] ns ->
+  [8.9928, 9.6469, 10.152] ns**: raw center ratio **0.1781x**, **82.19% less time**
+  (**5.616x faster**). Criterion's named change interval was **-84.945% to -82.888%**, central
+  **-83.981%**, `p=0.00`; both shipping gates passed decisively. Three transient SSH status timeouts
+  preceded baseline synchronization, but both release builds and timed runs completed remotely before
+  any samples were collected.
+- **REMOTE QUALITY / SHARED-TREE BOUNDARY.** Membrane-only Clippy passed remotely with `-D warnings` on
+  `vmi1293453`. The targeted fixed-point fragmentation oracle passed through strict RCH on the exact
+  benchmark worker `vmi1149989` (**1 passed, 0 failed**), covering the zero input and a representative
+  nonzero grid against the ideal floating-point result; its cold tooling-dependency build took 9m09s,
+  while the test itself completed in 0.01s. Strict-remote `cargo fmt --all -- --check` correctly refused
+  local execution as `RCH-E301`; the four-line edit is rustfmt-stable and `git diff --check` is clean.
+  Staged UBS reported zero criticals; its sole warning is a pre-existing test-only `format!` inside a
+  small loop. No local Cargo fallback ran. Peer-owned
+  `crates/frankenlibc-bench/benches/iconv_glibc_bench.rs` remained untouched and unstaged with hash
+  `1614c87d1f85167141e817f6c00e71ea07f6f130a68d30b34f27c707e0da6243` across the A/B pair; a peer
+  committed that already-present bench edit only after both timed runs. A later peer-owned
+  `crates/frankenlibc-core/src/iconv/mod.rs` edit also remained untouched and unstaged, with hash
+  `6ecb69b58ba3e127bf10717a495b6b8cbd9fbef04e8eee3fe0a4a79d4629d4bb` at the final scope check.
+- **DEPLOYMENT / CLOSED BOUNDARY.** This keep applies to generic SOS certificates whose runtime basis is
+  often zero, including the fragmentation row. Nonzero inputs now pay one `D`-coordinate equality scan;
+  do not generalize the gain to nonzero-heavy distributions without a separate deployed measurement.
+  Do not special-case nonzero bases or alter Gram arithmetic, saturation, scaling, policy budgets, or
+  certificate semantics without new proof and A/B evidence. Re-establish the identity if the polynomial
+  gains constant or linear terms, evaluation side effects, or a constant-time input contract.
+
 ## 2026-07-13 (cod / TanPelican) — WIN (SHIPPED): short-circuit the SOS size-class zero basis; **11.813 -> 10.773 ns (1.097x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH LANE.** Exact ledger searches found no prior

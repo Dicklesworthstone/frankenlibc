@@ -164,6 +164,10 @@ impl<const D: usize> SosCertificate<D> {
     /// `scale` controls post-accumulation downscaling.
     #[must_use]
     pub fn evaluate_quadratic_form(&self, basis: &[i64; D], scale: i64) -> i64 {
+        if *basis == [0; D] {
+            return 0;
+        }
+
         let mut acc: i128 = 0;
         for i in 0..D {
             for j in 0..D {
