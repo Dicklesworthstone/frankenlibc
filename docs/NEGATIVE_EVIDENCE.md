@@ -6,6 +6,50 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): lazy BRAVO secondary-slot hash is below the direct-read floor; **12.410 -> 12.345 ns**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger, all-ref, reflog, and stash searches
+  found no prior lazy secondary-slot hash in `BravoRwLock`; `try_fast_path` and its two-candidate mapping
+  originate in `31a6de705` and were unchanged by the later BRAVO diagnostic-counter wins. Those rows
+  close only their aggregate counters. The rejected lazy Bloom `hash2` experiment is a distinct
+  primitive and workload. This candidate had EV `(impact 4 * confidence 4) / effort 1 = 16` and
+  relevance 4.9/5 because the checked-in single-reader row always claims an empty primary slot after
+  eagerly computing both dependent hash finalizers.
+- **ONE LEVER EVALUATED AND RESTORED.** The candidate split primary and secondary candidate derivation,
+  probing the primary after the first `mix` and computing the exact old secondary formula only after a
+  foreign-token primary collision. The checked-in `bravo_read/single_thread` row constructs one lock
+  outside timing, then times read, dereference, and guard drop; every iteration claims and later clears
+  the primary slot, so the secondary is never semantically needed. The public mapping, visible-reader
+  table, benchmark source, diagnostics schema, and lock data were unchanged.
+- **CERTIFIED TRANSITION / PARTITION PROOF.** The candidate retained the same primary and secondary
+  formulas, power-of-two mask, distinct-slot correction, `AcqRel` CAS, `Acquire` post-publication
+  rechecks, and `Release` cleanup. Primary same-token collision still terminated without probing the
+  secondary; only a foreign primary occupant enabled the second probe. Secondary success remained a
+  fast read rather than a collision, post-publication revocation remained one abort, and either a
+  same-token terminal failure or two occupied slots still incremented `slot_collisions` exactly once.
+  Thus derived `fast_path_attempts = fast_path_reads + fast_path_aborts + slot_collisions` remained an
+  exact terminal partition. The declared fallback was exact source restoration plus this row unless
+  the same-worker named 95% interval was wholly negative and the raw center improved by at least 5%.
+- **STRICT-REMOTE SAME-WORKER REJECT.** Baseline command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_bravo_lazy rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'bravo_read/single_thread' --exact --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline bravo_lazy_secondary_41cb3275`.
+  The candidate used the identical command with `--baseline bravo_lazy_secondary_41cb3275`; both
+  builds and timed runs executed on actual worker `vmi1293453`. Intervals moved
+  **[12.241, 12.410, 12.575] ns -> [12.000, 12.345, 12.814] ns**: candidate/baseline center
+  **0.99476x**, only **0.524% less time** (**1.0053x faster**). Criterion's named change interval
+  crossed zero at **-1.8661% to +4.0203%**, central **+0.9464%**, `p=0.54`; it reported no detectable
+  change and both keep gates failed.
+- **RESTORATION / SHARED-TREE BOUNDARY.** The experiment was restored byte-for-byte: `bravo.rs` is
+  `24c4cdad1b8945e4594693a2311955a4f079c1060a805f98afbc223d8890cb56`, and the benchmark remained
+  `5b2309748b746a04a484e5c1a51e008d5372fb2a1e3a9ac3518e01917b583a03`. Both strict-RCH builds
+  emitted the same existing unrelated core warnings; no local Cargo command ran. Peer-owned untracked
+  `wmemrchr_resolve_ab.rs` appeared after the baseline, remained outside the selected bench target, and
+  was untouched and unstaged.
+- **CLOSED BOUNDARY.** Do not retry this lazy BRAVO secondary-hash rewrite against
+  `bravo_read/single_thread`: the source-level arithmetic deferral was far below the deployed and
+  significance floors. Reopening requires a materially different code-generation target or evidence
+  that surrounding primary-hit costs have fallen enough to expose this seam. This result does not close
+  changes to the candidate mapping, collision policy, diagnostic counters, or other primitives.
+
 ## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): decompose FlatCombiner pass-counter RMW pair; **171.22 -> 176.30 ns**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found no
