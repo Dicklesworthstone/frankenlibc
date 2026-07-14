@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: exact rand48 dyadic bit construction never reached its oracle (`bd-vya7yn`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH RANDOM48 CORE REGIME.**
+  `bv --robot-triage` (data hash `526482aecd8bcdd9`) showed allocator Swing-2 actively
+  owned by `cod_fl`, the broad no-gaps directive assigned to `cod-b`, and only methodology/
+  rehabilitation beads among its quick wins. The runtime-math lane was also densely worked.
+  Exact ledger and all-ref history searches found the rand48 membrane bypass but no prior
+  IEEE-754 significand-construction attempt, so this selected the self-contained PRNG core.
+- **PROFILE / ATTRIBUTION / ONE CERTIFIED REWRITE.** The prior deployed `erand48` result left
+  the explicit-state path at about **6.64 ns** and **1.38x glibc** after removing its redundant
+  membrane tax. Source attribution found both `drand48` and `erand48` still converted each
+  masked 48-bit state to `f64` and divided by `2^48`. The candidate instead formed
+  `f64::from_bits(1.0_bits | state << 4) - 1.0`: the significand represents exactly
+  `1 + state/2^48`, and Sterbenz subtraction by 1 is exact throughout `[1,2)`. No state
+  transition, packing, atomic, parameter, or integer-returning rand48 path changed.
+- **PREPARED PROOF, NOT EXECUTED.** The temporary same-binary example retained the exact
+  incumbent LCG and conversion, called the production candidate, and prepared bit/result plus
+  three-word state equality over 11 boundary states and one million consecutive transitions
+  (**1,000,011 cases**). Its order-rotated timing used legacy, candidate, and an identical
+  candidate null arm over 21 short rounds. Targeted `rustfmt` and `git diff --check` passed,
+  but the executable never linked, so no equivalence or conformance result is claimed.
+- **ONE FOREGROUND PINNED STRICT-REMOTE ORDINARY-RELEASE INVALID BENCH.** The sole command was
+  `RCH_WORKER=vmi1227854 RCH_WORKERS=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1
+  RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_rand48_bits
+  rch exec -- cargo run -j 1 --profile release -p frankenlibc-abi --example erand48_tax_bench`,
+  under a **295 s** hard wall. RCH ran remotely on `vmi1227854`, synchronized for about 48 s,
+  remapped the requested target to cold pool `2e4cba3fadfae9af98dac7851bc7fbe6`, downloaded
+  dependencies, and expired while compiling/linking `frankenlibc-abi`. The oracle and all
+  three timing arms produced no output; no candidate/control ratio exists.
+- **DISPOSITION / RETRY CONDITION.** Manually restored production and temporary harness
+  changes; only this evidence row and closed bead ship. This is an infrastructure-invalid hold,
+  not evidence for or against exact dyadic bit construction. Retry only with a demonstrably warm,
+  already-linked ordinary-release `erand48_tax_bench` on the admitted worker. No `release-perf`,
+  local Cargo fallback, stash creation, or stash drop occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: eager `__ctype_*_loc` TLS table pointers never reached their oracle (`bd-m4czbr`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH CTYPE ACCESSOR REGIME.**
