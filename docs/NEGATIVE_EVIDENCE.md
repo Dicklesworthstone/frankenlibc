@@ -19580,3 +19580,25 @@ exit, retain the exact `known_remaining` guard, and accept only when byte `name_
   turn. Retry only when the exact ordinary-release `glibc_baseline_bench` binary/target pool is demonstrably
   warm enough to enter Criterion within two minutes; retain the same two-pass/single-pass in-binary control,
   full deployed fl/glibc arm, and live-glibc parity oracle.
+
+## cod-passwd-splitn-fields-2026-07-14 — WIN (1.89x parser speedup; rehabilitates bd-alkove)
+
+Negative-ledger-first triage selected the passwd-parser half of `bd-alkove`, whose original rejection was
+decided inside the noise floor of a 31.5 us file-scan frame. Direct attribution showed that every accepted
+line first allocated a `Vec<&[u8]>` containing all colon-separated fields, even though the grammar has six
+fixed prefixes and one shell remainder. Replaced that scratch vector with `splitn(7, ':')`; the seventh
+item retains every later colon by construction, exactly matching the former `fields[6..].join(":")` result.
+
+- **ONE FOREGROUND SAME-BINARY A/B:** ordinary `--profile release`, fail-closed remote-only on pinned worker
+  `vmi1227854`, using `resolv_parsers_bench passwd-ab`. The binary alternated a faithful old implementation,
+  the candidate, and current/current null arms for 60 samples of 10,000 parses each.
+- **RESULT:** faithful old **235.785 ns**, candidate **124.767 ns**, candidate/old **0.5292** = **1.89x
+  faster**. The paired null was **127.446 -> 127.075 ns = 0.9971x**, so the improvement is far outside the
+  same-run noise floor. Remote execute/build time was 49.38 s; total RCH wall time including sync was 190.9 s.
+- **EQUIVALENCE:** the benchmark replayed eight valid/invalid/minimal/CRLF/extra-colon cases against the
+  faithful old parser, all equal. Focused remote release tests passed **34/34**, including existing empty
+  optional-field and colon-containing shell-tail invariants. The rewrite keeps all four required-field,
+  numeric UID/GID, empty-name, comment, newline, and allocation-result semantics unchanged.
+- **DISPOSITION:** shipped as `7d5b90bf2`. This closes the passwd half of `bd-alkove`; its stat-fingerprint
+  sibling was independently closed by `bd-alkove.1`. Do not reintroduce an unbounded field collection for
+  passwd parsing; future lookup work must profile outside this now-allocation-minimized parser primitive.
