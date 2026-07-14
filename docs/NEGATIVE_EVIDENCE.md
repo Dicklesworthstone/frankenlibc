@@ -6,6 +6,60 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / TanPelican) — REJECTED (NOT SHIPPED): lazy Bloom `hash2` is below the deployed foreign-miss floor; **20.283 -> 19.944 ns**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH LANE.** Exact ledger searches found no prior lazy-secondary-hash,
+  first-probe, `hash2`, or `stage_bloom` experiment. All-ref history shows `812640e15` only replacing
+  modulo with a mask and `5191b36ba` adding saturation/rebuild support plus a larger default; neither
+  changed the eager secondary hash. This row is separate from PageOracle negative filters and from the
+  untried, behavior-changing proposal to reduce Bloom probe count.
+- **ONE LEVER EVALUATED AND RESTORED.** The candidate evaluated probe zero as `hash1(ptr) & mask`,
+  returned immediately when that bit was absent, and computed `hash2` only after probe zero survived.
+  Remaining indices used the recurrence `r(0)=h1`, `r(i+1)=r(i)+h2`. The decisive checked-in
+  `membrane/validate_foreign/strict` row constructs an empty `ValidationPipeline`, performs 10,000
+  warmup validations outside Criterion, then times the deployed foreign-pointer fast path; its empty
+  Bloom guarantees a probe-zero miss on every measured iteration. `stage_bloom_hit/strict` was the
+  positive-hit regression control. EV was `(impact 4 * confidence 4) / effort 1 = 16`; relevance was
+  4.9/5 for the direct deployed miss.
+- **CERTIFIED REWRITE / FALLBACK.** The old first index is
+  `(h1 + 0 * h2) & mask = h1 & mask`. In wrapping integer arithmetic, induction on
+  `r(i+1)=r(i)+h2` gives exactly `r(i)=h1+i*h2`, so every later index, word, bit, relaxed load, load
+  order, and early-return boundary is identical. `hash1`/`hash2` are pure and total; moving secondary
+  arithmetic after the first relaxed load does not change the Bloom mapping, false-positive set,
+  zero-false-negative contract, or post-join concurrent-insert guarantee. The candidate included an
+  unexecuted edge oracle over 0, 1, the high-bit boundary, and `usize::MAX`; the failed perf gate made a
+  candidate test run unnecessary. The declared fallback was byte-for-byte source restoration
+  plus this ledger row unless the miss interval was wholly negative with at least 5% raw-center gain and
+  the hit control regressed by no more than 3%.
+- **STRICT-REMOTE SAME-WORKER REJECT.** Baseline command:
+  `RCH_WORKER=vmi1149989 RCH_WORKERS=vmi1149989 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,FRANKENLIBC_BENCH_PIN,FRANKENLIBC_MODE CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_bloom_lazy FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE=strict rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench membrane_bench -- '(membrane/(stage_bloom_hit|validate_foreign)/strict)$' --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline bloom_lazy_h2_cc663e29`.
+  The candidate used the identical command with `--baseline bloom_lazy_h2_cc663e29`. Both executed on
+  actual worker `vmi1149989`, pinned to CPU 0 on the same reported AMD EPYC model. The decisive miss
+  interval moved **[19.964, 20.283, 20.575] ns -> [19.637, 19.944, 20.344] ns**: raw center ratio
+  **0.9833x**, only **1.671% less time** (**1.0170x faster**). Criterion's named change interval crossed
+  zero at **-7.3000% to +1.9456%**, central **-2.4803%**, `p=0.35`; it reported no detectable change
+  and the raw center missed the 5% floor.
+- **CONTROL / QUALITY / SHARED-TREE BOUNDARY.** The hit control moved
+  **[10.816, 11.444, 11.907] ns -> [9.7382, 9.9315, 10.145] ns**, but its named interval also touched
+  zero at **-9.3121% to +0.0100%**, `p=0.06`; that non-decisive secondary movement cannot override the
+  deployed miss gate. Both release builds and timed runs completed through strict RCH; no local Cargo
+  fallback ran. Because the candidate source was restored, this row claims no candidate-only test or
+  Clippy pass. Staged UBS found no supported source language in the docs-only commit and explicitly did
+  not claim a scanner pass. `bloom.rs` is byte-for-byte restored at
+  `a329dc81022bc83a9b8f242870e498b6b833a6d0059ea362a116841a15b46fcb`, and `git diff --check` is clean.
+  Peer-owned `conformance_diff_iconv_tscii.rs` and `iconv/mod.rs`, plus the benchmark source, retained
+  identical hashes across both timed runs: respectively
+  `82a51266457aeb7569af9d7c56c5f6c9563b1ca2de8c010fbeb44a40e0ca89c9`,
+  `6ecb69b58ba3e127bf10717a495b6b8cbd9fbef04e8eee3fe0a4a79d4629d4bb`, and
+  `49d03d49631edc48ed02feda1c0fda384eb5e4d08c5cad7ce7cfa1085e5aa2d1`. The peer committed those
+  already-present iconv changes only after the A/B pair.
+- **CLOSED BOUNDARY.** Do not retry this exact lazy-`hash2` rewrite against
+  `membrane/validate_foreign/strict`: the compiler-visible arithmetic removal is real but below the
+  whole deployed path's noise and shipping floors. Reopening requires a direct checked-in first-probe
+  Bloom-miss row, a materially different code-generation target, or evidence that downstream pipeline
+  costs have fallen enough to expose the hash seam. Do not infer approval for reducing `num_hashes`;
+  that changes the false-positive set and requires a separate configured-bound proof and measurement.
+
 ## 2026-07-13 (cod / TanPelican) — WIN (SHIPPED): short-circuit generic SOS zero bases; **54.172 -> 9.6469 ns (5.616x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH GENERIC OBLIGATION.** The immediately preceding size-class SOS win
