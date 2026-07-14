@@ -486,6 +486,26 @@ fn main() {
         b"EUC-JISX0213\0",
         &eucjisx_src,
     );
+    // ENCODE-DIRECTION SCAN of the dbcs_x converters (utf8 -> big5hkscs / eucjisx0213):
+    // their ->UTF-8 DECODE side was ~6x before single-passing; the ENCODE side is
+    // UNBENCHED (dbcs_x_convert Vec-two-pass? binary-search enc?). Round-trip a codec-
+    // valid corpus via host_from so host_to never truncates.
+    let big5hkscs_utf8 = host_from(b"BIG5-HKSCS\0", &big5hkscs_src);
+    run_conv(
+        c,
+        "utf8_to_big5hkscs",
+        b"BIG5-HKSCS\0",
+        b"UTF-8\0",
+        &big5hkscs_utf8,
+    );
+    let eucjisx_utf8 = host_from(b"EUC-JISX0213\0", &eucjisx_src);
+    run_conv(
+        c,
+        "utf8_to_eucjisx0213",
+        b"EUC-JISX0213\0",
+        b"UTF-8\0",
+        &eucjisx_utf8,
+    );
     // PROBE the remaining dedicated Vec-two-pass decoders (-> UTF-8) for negative ledger.
     // Stateful ISO-2022-* built authoritatively by host glibc from real script sources.
     let iso2022jp_src = host_to(b"ISO-2022-JP\0", &jp_full);

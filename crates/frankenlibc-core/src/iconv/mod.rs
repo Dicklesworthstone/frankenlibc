@@ -46401,6 +46401,61 @@ fn eucjx_enc() -> &'static std::collections::HashMap<u32, (u8, u8, u8, u8)> {
     })
 }
 
+/// BMP `cp -> (len,a,b,c)` reverse index for the EUC-JISX0213 encoder, replacing a
+/// SipHash `HashMap::get(&cp)` per char with one O(1) array index. Each slot packs
+/// `(l<<24)|(a<<16)|(b<<8)|c`; since a real entry always has `l >= 1`, `slot == 0`
+/// is an unambiguous "absent" sentinel. Exhaustive for `cp < 0x10000`; astral plane-2
+/// code points (CJK Ext B, cp >= 0x10000, rare) keep the HashMap fallback. Last-write-
+/// wins on a duplicate cp, exactly like the map's `collect()`.
+fn eucjx_enc_bmp_direct() -> &'static [u32] {
+    static T: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let mut t = vec![0u32; 0x10000];
+        for &(cp, l, a, b, c) in eucjisx0213_tables::EUCJX_ENC.iter() {
+            if cp < 0x10000 {
+                t[cp as usize] =
+                    ((l as u32) << 24) | ((a as u32) << 16) | ((b as u32) << 8) | (c as u32);
+            }
+        }
+        t
+    })
+}
+
+/// `(len,a,b,c)` for a scalar under the EUC-JISX0213 encoder — O(1) BMP index,
+/// HashMap only for astral. Byte-identical to `eucjx_enc().get(&cp).copied()`.
+#[inline]
+fn eucjx_enc_lookup(cp: u32) -> Option<(u8, u8, u8, u8)> {
+    if cp < 0x10000 {
+        let slot = eucjx_enc_bmp_direct()[cp as usize];
+        if slot == 0 {
+            return None;
+        }
+        return Some((
+            (slot >> 24) as u8,
+            (slot >> 16) as u8,
+            (slot >> 8) as u8,
+            slot as u8,
+        ));
+    }
+    eucjx_enc().get(&cp).copied()
+}
+
+/// Sorted unique set of the code points that START an `EUCJX_MULTI_ENC` combining
+/// sequence, so the encoder can skip the O(table) scan for the vast majority of
+/// chars that never begin one. Byte-identical: a cp absent here has no matching seq.
+fn eucjx_multi_first_cps() -> &'static [u32] {
+    static S: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        let mut v: Vec<u32> = eucjisx0213_tables::EUCJX_MULTI_ENC
+            .iter()
+            .map(|&(seq, _)| seq[0])
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    })
+}
+
 /// EUC-JISX0213 DECODE (`from == EucJisx0213`): ASCII; SS2 (0x8E)+half-width
 /// kana; plane 1 (`EUCJX_P1`, 0xA1-0xFE pairs); SS3 (0x8F)+plane 2 (`EUCJX_P2`,
 /// astral). 25 plane-1 cells produce two code points (`EUCJX_P1_MULTI`).
@@ -46618,6 +46673,92 @@ fn eucjisx0213_convert(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Single-pass fast path: write EUC-JISX0213 directly into outbuf, skipping the
+    // `Vec<u8>` accumulator + final copy (2 heap allocs/call), the per-char SipHash
+    // `HashMap::get` (now an O(1) BMP index), and the O(table) combining scan for
+    // non-base chars (prefiltered). Worst char = a plane-2 SS3 cell = 3 bytes, so
+    // gating on `outbuf.len() >= input.len()*3` (using *4 for margin) makes E2BIG
+    // unreachable here and leaves the tight-buffer all-or-nothing E2BIG path (below)
+    // exactly as it was. Byte-identical: same combining match + same emitted bytes.
+    if outbuf.len() >= input.len().saturating_mul(4) {
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        let mut err: Option<(i32, usize)> = None;
+        while in_pos < input.len() {
+            let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    err = Some((ICONV_EINVAL, in_pos));
+                    break;
+                }
+                Err(DecodeError::Invalid) => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            };
+            let cp = ch as u32;
+            // Combining sequences (base + combining mark) -> one cell. Prefiltered:
+            // only a handful of base scalars start one.
+            let mut matched: Option<(&'static [u8], usize)> = None;
+            if eucjx_multi_first_cps().binary_search(&cp).is_ok() {
+                for &(seq, bytes) in eucjisx0213_tables::EUCJX_MULTI_ENC.iter() {
+                    if seq.first() != Some(&cp) {
+                        continue;
+                    }
+                    let mut p = in_pos + consumed;
+                    let mut ok = true;
+                    for &want in &seq[1..] {
+                        match decode_char(cd.from, &input[p..]) {
+                            Ok((c2, n2)) if c2 as u32 == want => p += n2,
+                            _ => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if ok {
+                        matched = Some((bytes, p));
+                        break;
+                    }
+                }
+            }
+            if let Some((bytes, end)) = matched {
+                outbuf[out_pos..out_pos + bytes.len()].copy_from_slice(bytes);
+                out_pos += bytes.len();
+                in_pos = end;
+                continue;
+            }
+            if let Some((l, a, b, c)) = eucjx_enc_lookup(cp) {
+                outbuf[out_pos] = a;
+                out_pos += 1;
+                if l >= 2 {
+                    outbuf[out_pos] = b;
+                    out_pos += 1;
+                }
+                if l >= 3 {
+                    outbuf[out_pos] = c;
+                    out_pos += 1;
+                }
+            } else {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+            in_pos += consumed;
+        }
+        if let Some((code, pos)) = err {
+            return Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: out_pos,
+            });
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
     let enc = eucjx_enc();
     let mut out: Vec<u8> = Vec::new();
     let mut in_pos = 0usize;
