@@ -6,6 +6,34 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — REJECT: direct `newfstatat` group fingerprint probe; **1149.296 -> 1287.188 ns (1.120x)** (`bd-alkove.1`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER REHABILITATION.** `bv --robot-triage` (data hash
+  `523c0e7849b229b6`) found no clean unowned micro-bead in the mined string/stdio/math/allocator
+  families. The ranked void-row queue surfaced `bd-alkove` L6713. The old default-source stat skip
+  was not retried because it can miss live `/etc/group` changes; this child tested a fresh,
+  behavior-preserving route that retained per-call invalidation.
+- **PROFILE / ATTRIBUTION / ONE LEVER.** The hot `getgrgid` cache hit calls
+  `GrpStorage::file_fingerprint_cstr` every time, and that helper entered the public `stat` ABI before
+  reaching `newfstatat`. The candidate called the same core syscall wrapper directly, changing only
+  dispatch overhead while preserving the exact `(size,mtime)` fingerprint and reload policy.
+- **CERTIFIED REWRITE GUARD.** In the release binary, old and new probes produced identical
+  `(st_size, st_mtime, st_mtime_nsec)` for `/etc/group` and both classified a missing path as failure.
+  The benchmark kept old, candidate, and an identical candidate null in one invocation, with deployed
+  `getgrgid(0)` as a guard.
+- **ONE FOREGROUND STRICT-REMOTE RELEASE REJECT.** Actual worker `vmi1153651`, ordinary
+  `--profile release`, no `release-perf`: legacy public stat was **1149.296 ns p50 / 1654.008 ns
+  mean**; raw `newfstatat` was **1287.188 / 1903.546 ns** (**1.120x p50, 1.151x mean**); the identical
+  raw-syscall null was **1198.350 / 1342.606 ns**. Candidate/null was already **1.074x**, so the
+  candidate has no win outside its measured floor; Criterion intervals also overlapped. Deployed
+  `getgrgid(0)` was **2454.018 ns p50**, recorded only as a guard because no old deployed arm was timed.
+- **VERDICT / PROVENANCE / BOUNDARY.** Revert production and harness changes; land evidence only.
+  RCH remapped the requested cache and spent 9m03s rebuilding ordinary release; no second benchmark
+  and no local Cargo ran. It did not retrieve the executable, so binary SHA-256 is explicitly
+  unavailable. Full command, worker/pool identity, raw intervals, and proof details:
+  `tests/artifacts/perf/bd-alkove.1-grp-raw-stat-reject.md`. This closes only the direct-syscall child;
+  the parent passwd-parser half remains open.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN (CERTIFIED): byte-level IPv4 hosts validation; **222.603 -> 184.970 ns (1.20x faster)** (`bd-43e21q`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH NSS-RESOLVER REGIME.**
