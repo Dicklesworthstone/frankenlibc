@@ -6,6 +6,40 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-13 (cod / OrangePelican) — REJECTED (NOT SHIPPED): replacing the mutex-serialized `RcuCell` epoch RMW is neutral; **75.608 -> 76.220 ns**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH LANE.** The ledger and all-ref history contained the original
+  `RcuCell` epoch `fetch_add` and later consumers of its returned value, but no prior attempt to replace
+  that RMW with a serialized load/store publication. This is a separate writer-side obligation from the
+  preceding read-diagnostics rows and received its own proof and measured gate.
+- **ONE LEVER EVALUATED AND RESTORED.** The temporary candidate changed only the epoch publication in
+  `RcuCell::update` and `RcuCell::update_with`: under their shared private `current` mutex, a relaxed
+  epoch load plus release store replaced `fetch_add(1, Release)`. Both production writers hold that mutex,
+  so the transition cannot lose an increment; the RMW's load half was already relaxed, and the release
+  store preserves acquire-reader visibility. The candidate used `wrapping_add` for the stored epoch and a
+  subsequent plain `+ 1` return so debug overflow still published zero before panicking, matching the
+  old expression exactly. `QsbrRegistry::advance_epoch` was deliberately excluded because its writers
+  are not serialized. The source experiment was restored byte-for-byte after the performance gate failed.
+- **STRICT-REMOTE SAME-WORKER REJECT.** Identical baseline/candidate command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'rcu_update/single_thread' --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot`.
+  Both valid runs executed on actual worker `vmi1293453`; one intervening placement on `vmi1227854` was
+  stopped before timing. The explicit intervals moved **[75.003, 75.608, 76.361] ns ->
+  [74.847, 76.220, 77.481] ns**: candidate/baseline center **1.0081x**, about **0.81% slower**, with
+  overlapping intervals. Criterion's candidate `change` block claimed a contradictory improvement
+  because it compared against cached history in the selected RCH worker-pool target rather than this
+  turn's explicit baseline; it is excluded from the decision. Only the displayed same-worker A/B
+  estimates are admissible here.
+- **QUALITY / SHARED-TREE BOUNDARY.** The measured candidate compiled and ran successfully through RCH;
+  no local Cargo fallback was used. Because no source survives, no candidate-only test or Clippy claim is
+  carried into the repository. `git diff --check` is clean. Peer-owned
+  `crates/frankenlibc-bench/benches/iconv_glibc_bench.rs` and
+  `crates/frankenlibc-core/src/iconv/mod.rs` remained untouched and unstaged; their combined binary-diff
+  hash stayed `6a4ea0e17352d928c477266ad6482c7ffdff48c79be592f66a8a86db68852814` across the experiment.
+- **CLOSED BOUNDARY.** Do not retry this load/store rewrite against `rcu_update/single_thread`: removing
+  the serialized RMW does not clear the noise floor once mutex, `Arc`, and metric-event costs are included.
+  Reopening requires a distinct deployed workload plus an explicitly saved paired baseline, and the
+  all-writers-serialized proof must be re-established if the writer topology changes.
+
 ## 2026-07-13 (cod / MossyLynx) — REJECTED (NOT SHIPPED): deriving LeftRight reads from cache classifications is neutral and loses retry telemetry; **15.470 -> 15.623 ns**
 
 - **NEGATIVE-LEDGER-FIRST / SEPARATE OBLIGATION.** The preceding SeqLock and BRAVO rows explicitly
