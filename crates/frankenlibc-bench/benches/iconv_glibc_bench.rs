@@ -560,6 +560,16 @@ fn main() {
     run_conv(c, "utf8_to_tscii", b"TSCII\0", b"UTF-8\0", &tscii_utf8);
     let ibm930_utf8 = host_from(b"IBM930\0", &ibm930_src);
     run_conv(c, "utf8_to_ibm930", b"IBM930\0", b"UTF-8\0", &ibm930_utf8);
+    // ENCODE-DIRECTION SCAN #3: the last unbenched encode paths — iso2022cnext_convert
+    // (Vec-two-pass, flagged "likely false-gap glibc-CN-slow"), + encode_sbcs_mb (TCVN /
+    // CP1255, multibyte-decompose; cp1258 was loop-floor — confirm TCVN/CP1255).
+    run_conv(c, "utf8_to_iso2022cnext", b"ISO-2022-CN-EXT\0", b"UTF-8\0", &gb_utf8);
+    let tcvn_bytes = build_sbcs_source(b"TCVN\0", 512);
+    let tcvn_utf8 = host_from(b"TCVN\0", &tcvn_bytes);
+    run_conv(c, "utf8_to_tcvn", b"TCVN\0", b"UTF-8\0", &tcvn_utf8);
+    let cp1255_bytes = build_sbcs_source(b"CP1255\0", 512);
+    let cp1255_utf8 = host_from(b"CP1255\0", &cp1255_bytes);
+    run_conv(c, "utf8_to_cp1255", b"CP1255\0", b"UTF-8\0", &cp1255_utf8);
     // ENCODE direction: UTF-8 -> BIG5. Source = big5_src decoded back to UTF-8 (host BIG5->UTF-8),
     // so every char is guaranteed Big5-encodable; exercises the SIMD encode gather for Big5.
     let big5_utf8 = {

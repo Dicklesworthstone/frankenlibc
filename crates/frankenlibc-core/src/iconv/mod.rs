@@ -45067,6 +45067,173 @@ fn iso2022cnext_convert(
     input: &[u8],
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
+    // Single-pass fast path: write directly into outbuf, skipping the `Vec<u8>`
+    // accumulator + final copy (2 heap allocs/call — an interposed-malloc tax in the
+    // deployed path). Worst char = a 4-byte designator + a 2-byte SS3 shift + 2 data = 8,
+    // so gating on `outbuf.len() >= input.len()*8` makes E2BIG unreachable here and leaves
+    // the tight-buffer all-or-nothing E2BIG path (below) exactly as it was. Byte-identical:
+    // the SAME repr_in selection + designation/shift logic, the SAME set/ann_* saved on
+    // every return, the SAME partial out_written on a mid-stream EILSEQ/EINVAL. (The
+    // per-char escape-minimizing selection floor remains — glibc's CN-EXT encoder is tuned,
+    // like iso2022cn — so this is an alloc-removal deployed win, not a microbench win.)
+    if outbuf.len() >= input.len().saturating_mul(8) {
+        let mut set = cd.iso2022cnext_out_set;
+        let mut ann_so = cd.iso2022cnext_out_ann_so;
+        let mut ann_ss2 = cd.iso2022cnext_out_ann_ss2;
+        let mut ann_ss3 = cd.iso2022cnext_out_ann_ss3;
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        let mut err: Option<(i32, usize)> = None;
+        let repr_in = |setcode: u8, ch: char| -> Option<[u8; 2]> {
+            let mut t = [0u8; 8];
+            match setcode {
+                1 => match encode_gb2312(ch, &mut t) {
+                    Ok(2) if (0xA1..=0xFE).contains(&t[0]) && (0xA1..=0xFE).contains(&t[1]) => {
+                        Some([t[0] & 0x7F, t[1] & 0x7F])
+                    }
+                    _ => None,
+                },
+                3 => encode_isoir165(ch),
+                2 => match encode_euctw(ch, &mut t) {
+                    Ok(2) if (0xA1..=0xFE).contains(&t[0]) && (0xA1..=0xFE).contains(&t[1]) => {
+                        Some([t[0] & 0x7F, t[1] & 0x7F])
+                    }
+                    _ => None,
+                },
+                4..=9 => {
+                    let want_plane = if setcode == 4 { 2 } else { setcode - 2 };
+                    match encode_euctw(ch, &mut t) {
+                        Ok(4) if t[0] == 0x8E && t[1] == 0xA1 + (want_plane - 1) => {
+                            Some([t[2] & 0x7F, t[3] & 0x7F])
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+        while in_pos < input.len() {
+            let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    err = Some((ICONV_EINVAL, in_pos));
+                    break;
+                }
+                Err(DecodeError::Invalid) => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            };
+            let cp = ch as u32;
+            if cp < 0x80 {
+                if set != 0 {
+                    outbuf[out_pos] = 0x0F;
+                    out_pos += 1;
+                    set = 0;
+                }
+                outbuf[out_pos] = cp as u8;
+                out_pos += 1;
+                if cp == 0x0A {
+                    ann_so = 0;
+                    ann_ss2 = false;
+                    ann_ss3 = 0;
+                }
+                in_pos += consumed;
+                continue;
+            }
+            let primary = if set == 1 || (ann_so != 2 && ann_so != 3) {
+                1
+            } else if set == 3 {
+                3
+            } else {
+                2
+            };
+            let mut uset = 0u8;
+            let mut bytes = [0u8; 2];
+            if let Some(b) = repr_in(primary, ch) {
+                uset = primary;
+                bytes = b;
+            } else if let Some(b) = repr_in(4, ch) {
+                uset = 4;
+                bytes = b;
+            } else {
+                for sc in [1u8, 3, 2, 5, 6, 7, 8, 9] {
+                    if sc == primary && sc <= 3 {
+                        continue;
+                    }
+                    if let Some(b) = repr_in(sc, ch) {
+                        uset = sc;
+                        bytes = b;
+                        break;
+                    }
+                }
+                if uset == 0 {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            }
+            if set != uset {
+                if (1..=3).contains(&uset) {
+                    if ann_so != uset {
+                        let f = match uset {
+                            1 => 0x41,
+                            2 => 0x47,
+                            _ => 0x45,
+                        };
+                        outbuf[out_pos..out_pos + 4].copy_from_slice(&[0x1B, 0x24, 0x29, f]);
+                        out_pos += 4;
+                        ann_so = uset;
+                    }
+                } else if uset == 4 {
+                    if !ann_ss2 {
+                        outbuf[out_pos..out_pos + 4].copy_from_slice(&[0x1B, 0x24, 0x2A, 0x48]);
+                        out_pos += 4;
+                        ann_ss2 = true;
+                    }
+                } else {
+                    let plane = uset - 2;
+                    if ann_ss3 != plane {
+                        let f = 0x49 + (plane - 3);
+                        outbuf[out_pos..out_pos + 4].copy_from_slice(&[0x1B, 0x24, 0x2B, f]);
+                        out_pos += 4;
+                        ann_ss3 = plane;
+                    }
+                }
+                if uset == 4 {
+                    outbuf[out_pos..out_pos + 2].copy_from_slice(&[0x1B, 0x4E]);
+                    out_pos += 2;
+                } else if uset >= 5 {
+                    outbuf[out_pos..out_pos + 2].copy_from_slice(&[0x1B, 0x4F]);
+                    out_pos += 2;
+                } else if set == 0 {
+                    outbuf[out_pos] = 0x0E;
+                    out_pos += 1;
+                }
+                set = uset;
+            }
+            outbuf[out_pos] = bytes[0];
+            outbuf[out_pos + 1] = bytes[1];
+            out_pos += 2;
+            in_pos += consumed;
+        }
+        cd.iso2022cnext_out_set = set;
+        cd.iso2022cnext_out_ann_so = ann_so;
+        cd.iso2022cnext_out_ann_ss2 = ann_ss2;
+        cd.iso2022cnext_out_ann_ss3 = ann_ss3;
+        if let Some((code, pos)) = err {
+            return Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: out_pos,
+            });
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
     let mut out: Vec<u8> = Vec::new();
     let mut set = cd.iso2022cnext_out_set;
     let mut ann_so = cd.iso2022cnext_out_ann_so; // 0 none, 1 GB, 2 CNS-1, 3 IR165
