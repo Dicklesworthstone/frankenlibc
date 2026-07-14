@@ -6,6 +6,37 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — REJECT: skip per-entry `dirent` TLS clear; **22.047 -> 22.441 us (1.018x)** (`bd-6x0mrj`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH DIRENT REGIME.** `bv --robot-triage`
+  found no unowned concrete perf leaf; allocator Swing-2 and the broad no-gaps umbrella were actively
+  owned, while the passwd/resolver parser vein was exhausted. The prior borrowed-name `readdir` win
+  explicitly left TLS result-object zeroing as a separate residual, with no recorded attempt to remove it.
+- **PROFILE / ATTRIBUTION / ONE LEVER.** Every buffered `readdir` entry called `write_dirent`, which
+  zeroed the complete 280-byte TLS `libc::dirent` before overwriting `d_ino`, `d_off`, `d_reclen`,
+  `d_type`, all name bytes, and the first trailing NUL. The candidate removed only that whole-record
+  clear. The TLS slot remained zero-initialized once; record padding and bytes after the first name NUL
+  are unspecified, while every observable field retained the incumbent writes.
+- **CERTIFIED REWRITE GATE.** An `abi-bench`-only selector retained the exact legacy clear in the same
+  release binary. Before timing, it drained `/usr/lib` under legacy and candidate modes and asserted
+  exact equality of every returned `(d_ino,d_off,d_reclen,d_type,d_name)` record. Strict remote release
+  tests also passed live-glibc `conformance_diff_dirent` **18/18** and ABI lifecycle/concurrency/
+  seek/reentrant/reserved-alias coverage **35/35** on `vmi1227854`.
+- **ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE REJECT.** The sole timed command was
+  `RCH_WORKER=vmi1227854 RCH_WORKERS=vmi1227854 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 rch exec --
+  cargo bench -j 4 --profile release -p frankenlibc-bench --features abi-bench --bench
+  readdir_glibc_bench -- readdir_drain --sample-size 20 --warm-up-time 0.5 --measurement-time 1 --noplot`.
+  On actual worker `vmi1227854`, legacy was **[21.320, 22.047, 23.090] us**, field-only was
+  **[21.311, 22.441, 23.491] us** (**1.018x**, overlapping intervals), and host glibc was
+  **[19.118, 19.190, 19.255] us**. The candidate did not improve the target and nominally worsened the
+  FrankenLibC/host ratio from **1.149x -> 1.169x**.
+- **VERDICT / RESTORATION / BOUNDARY.** Reverted production, benchmark, and temporary feature wiring;
+  evidence only. RCH used ordinary `release` throughout and never fell back locally, but rebuilt the
+  same worker-scoped pool despite an immediately preceding exact-target prebuild; the timed command still
+  returned inside its 295-second cap, and no second benchmark ran. Do not retry removal of the whole-record
+  clear alone. Any further `readdir` work needs fresh attribution to the retained registry/state locks,
+  name copy, or refill path rather than another TLS-record initialization micro-lever.
+
 ## 2026-07-14 (cod / BlackThrush) — REJECT: direct `newfstatat` group fingerprint probe; **1149.296 -> 1287.188 ns (1.120x)** (`bd-alkove.1`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER REHABILITATION.** `bv --robot-triage` (data hash
