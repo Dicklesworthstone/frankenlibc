@@ -47240,6 +47240,89 @@ fn eucjisx0213_decode(
             }),
         };
     }
+    // Fast path (to == UTF-16 marked LE/BE): same decode as above but emit each scalar via
+    // emit_unicode_cp (the UTF-8 packed-triple bulk run is UTF-8-only). The plane-1 BMP-single
+    // `bmp3` shortcut is skipped — a single-BMP key is never in EUCJX_P1_MULTI (those keys are
+    // zeroed in bmp3), so `multi then p1[key]` yields the identical scalar. Gate input*4 (a
+    // 2-byte plane-1 multi cell -> <=2 scalars, <=4 B each) => E2BIG unreachable; a tight buffer
+    // falls to the generic body. Byte-identical to the generic decode + encode_char(Utf16*).
+    if matches!(cd.to, Encoding::Utf16Le | Encoding::Utf16Be)
+        && outbuf.len() >= input.len().saturating_mul(4)
+    {
+        let to = cd.to;
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let err: Option<(i32, usize)> = loop {
+            if i >= input.len() {
+                break None;
+            }
+            let b = input[i];
+            if b < 0x80 {
+                let cp = eucjisx0213_tables::EUCJX_ONE_BYTE[b as usize];
+                if cp < 0 {
+                    break Some((ICONV_EILSEQ, i));
+                }
+                o += emit_unicode_cp(outbuf, o, cp as u32, to);
+                i += 1;
+            } else if b == 0x8E {
+                if i + 1 >= input.len() {
+                    break Some((ICONV_EINVAL, i));
+                }
+                let cp = eucjisx0213_tables::EUCJX_SS2[input[i + 1] as usize];
+                if cp < 0 {
+                    break Some((ICONV_EILSEQ, i));
+                }
+                o += emit_unicode_cp(outbuf, o, cp as u32, to);
+                i += 2;
+            } else if b == 0x8F {
+                if i + 2 >= input.len() {
+                    break Some((ICONV_EINVAL, i));
+                }
+                let key = ((input[i + 1] as u16) << 8) | input[i + 2] as u16;
+                let cp = p2[key as usize];
+                if cp == 0 {
+                    break Some((ICONV_EILSEQ, i));
+                }
+                o += emit_unicode_cp(outbuf, o, cp, to);
+                i += 3;
+            } else if (0xA1..=0xFE).contains(&b) {
+                if i + 1 >= input.len() {
+                    break Some((ICONV_EINVAL, i));
+                }
+                let key = ((b as u16) << 8) | input[i + 1] as u16;
+                if let Some(&(_, cps)) = eucjisx0213_tables::EUCJX_P1_MULTI
+                    .iter()
+                    .find(|&&(k, _)| k == key)
+                {
+                    for &cp in cps {
+                        o += emit_unicode_cp(outbuf, o, cp, to);
+                    }
+                    i += 2;
+                    continue;
+                }
+                let cp = p1[key as usize];
+                if cp == 0 {
+                    break Some((ICONV_EILSEQ, i));
+                }
+                o += emit_unicode_cp(outbuf, o, cp, to);
+                i += 2;
+            } else {
+                break Some((ICONV_EILSEQ, i));
+            }
+        };
+        return match err {
+            Some((code, pos)) => Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: o,
+            }),
+            None => Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: i,
+                out_written: o,
+            }),
+        };
+    }
 
     let mut chars: Vec<char> = Vec::new();
     let mut i = 0usize;

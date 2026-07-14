@@ -254,3 +254,58 @@ fn eucjisx0213_encode_roundtrip_matches_glibc() {
         mism.join(" ")
     );
 }
+
+/// EUC-JISX0213 -> UTF-16LE vs glibc. eucjisx0213_decode's single-pass was gated to==UTF-8
+/// only (UTF-16 fell to the ~6x-slower Vec-two-pass); it now serves marked UTF-16 via
+/// emit_unicode_cp. Same corpus as the ->UTF-32 test: single/SS2/plane-1/SS3-plane-2 (the
+/// plane-2 cells are astral, exercising the surrogate-pair path) + random fuzz.
+#[test]
+fn eucjisx0213_decode_to_utf16le_matches_glibc() {
+    let g = glibc();
+    let mut mism = Vec::new();
+    let mut cases: Vec<Vec<u8>> = Vec::new();
+    for b in 0u16..256 {
+        cases.push(vec![b as u8]);
+        cases.push(vec![0x8E, b as u8]);
+    }
+    for b0 in 0xA1u16..=0xFE {
+        for b1 in 0xA1u16..=0xFE {
+            cases.push(vec![b0 as u8, b1 as u8]);
+            cases.push(vec![0x8F, b0 as u8, b1 as u8]);
+        }
+    }
+    for c in &cases {
+        if g_raw(&g, "UTF-16LE", NAME, c) != f_raw("UTF-16LE", NAME, c) && mism.len() < 60 {
+            mism.push(format!("{c:02x?}"));
+        }
+    }
+    let mut state: u64 = 0xE_C_4a_2004;
+    let mut next = || {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (state >> 33) as usize
+    };
+    let alpha: &[u8] = &[0x41, 0x8e, 0x8f, 0xa1, 0xa4, 0xf7, 0xfe, 0xc0, 0x40, 0x00, 0xdf];
+    for _ in 0..15_000 {
+        let len = 1 + next() % 8;
+        let inp: Vec<u8> = (0..len)
+            .map(|_| {
+                if next() & 1 == 0 {
+                    alpha[next() % alpha.len()]
+                } else {
+                    (next() & 0xFF) as u8
+                }
+            })
+            .collect();
+        if g_raw(&g, "UTF-16LE", NAME, &inp) != f_raw("UTF-16LE", NAME, &inp) && mism.len() < 90 {
+            mism.push(format!("{inp:02x?}"));
+        }
+    }
+    assert!(
+        mism.is_empty(),
+        "EUC-JISX0213 -> UTF-16LE diverged from glibc ({}): {}",
+        mism.len(),
+        mism.join(" ")
+    );
+}
