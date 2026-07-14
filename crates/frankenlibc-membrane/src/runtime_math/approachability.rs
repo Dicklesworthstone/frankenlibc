@@ -168,6 +168,27 @@ impl ApproachabilityController {
             return;
         }
 
+        // The target is a convex axis-aligned box. Once the cumulative
+        // average is inside it, adding another point from the same box keeps
+        // the new weighted average inside. Preserve the existing arm and
+        // zero deviation without paying for three integer divisions and the
+        // projection on the nominal path. At the calibration boundary we
+        // still compute the first average because the initial zero deviation
+        // is not yet an inside-set witness. The sum comparisons exclude the
+        // single wrapping-add transition where modular arithmetic would break
+        // the convex-combination identity.
+        if self.count > CALIBRATION_THRESHOLD
+            && self.prev_deviation_sq == 0
+            && lat <= self.target[0]
+            && risk <= self.target[1]
+            && cov >= self.target[2]
+            && self.sum_latency >= lat
+            && self.sum_risk >= risk
+            && self.sum_coverage >= cov
+        {
+            return;
+        }
+
         // Compute average payoff (integer division; count > 0 guaranteed by guard above).
         let avg_lat = self.sum_latency.checked_div(self.count).unwrap_or(0);
         let avg_risk = self.sum_risk.checked_div(self.count).unwrap_or(0);
@@ -429,6 +450,49 @@ mod tests {
             chosen_arm,
             "controller keeps the last recommendation while averages remain inside the safe set"
         );
+    }
+
+    #[test]
+    fn convex_safe_updates_preserve_exact_summary_and_arm() {
+        for (mode, points) in [
+            (
+                SafetyLevel::Strict,
+                [[0, 0, 150], [350, 500, 1000], [200, 300, 400]],
+            ),
+            (
+                SafetyLevel::Hardened,
+                [[0, 0, 500], [700, 200, 1000], [400, 100, 600]],
+            ),
+        ] {
+            let mut ctrl = ApproachabilityController::new(mode);
+            for _ in 0..CALIBRATION_THRESHOLD {
+                ctrl.observe(points[2][0], points[2][1], points[2][2]);
+            }
+            assert_eq!(ctrl.state(), ApproachabilityState::Approaching);
+            let arm = ctrl.recommended_arm();
+
+            let mut sums = [points[2][0], points[2][1], points[2][2]];
+            for _ in 1..CALIBRATION_THRESHOLD {
+                for (sum, value) in sums.iter_mut().zip(points[2]) {
+                    *sum += value;
+                }
+            }
+
+            for point in points.into_iter().cycle().take(4096) {
+                ctrl.observe(point[0], point[1], point[2]);
+                for (sum, value) in sums.iter_mut().zip(point) {
+                    *sum += value;
+                }
+            }
+
+            let summary = ctrl.summary();
+            assert_eq!(summary.state, ApproachabilityState::Approaching);
+            assert_eq!(summary.deviation_sq_milli, 0);
+            assert_eq!(summary.recommended_arm, arm);
+            assert_eq!(summary.avg_latency_milli, sums[0] / summary.count);
+            assert_eq!(summary.avg_risk_milli, sums[1] / summary.count);
+            assert_eq!(summary.avg_coverage_milli, sums[2] / summary.count);
+        }
     }
 
     #[test]
