@@ -45996,7 +45996,16 @@ fn ibm_ebcdic_convert(
 
 fn sjisx0213_dbcs_direct() -> &'static Vec<u32> {
     static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    D.get_or_init(|| build_dbcs_direct(&sjisx0213_tables::SJISX_DBCS))
+    D.get_or_init(|| {
+        let direct = build_dbcs_direct(&sjisx0213_tables::SJISX_DBCS);
+        debug_assert!(
+            sjisx0213_tables::SJISX_DBCS_MULTI
+                .iter()
+                .all(|&(key, _)| direct[key as usize] == 0),
+            "SHIFT_JISX0213 scalar and multi-cell tables must be disjoint"
+        );
+        direct
+    })
 }
 fn sjisx0213_enc1() -> &'static std::collections::HashMap<u32, u8> {
     static M: std::sync::OnceLock<std::collections::HashMap<u32, u8>> = std::sync::OnceLock::new();
@@ -46090,20 +46099,17 @@ fn dbcs_x_decode(
                     break;
                 }
                 let key = ((b as u16) << 8) | input[i + 1] as u16;
-                if let Some(&(_, cps)) = multi.iter().find(|&&(k, _)| k == key) {
+                let cp = direct[key as usize];
+                if cp != 0 {
+                    o += emit_unicode_cp(outbuf, o, cp, to);
+                } else if let Some(&(_, cps)) = multi.iter().find(|&&(k, _)| k == key) {
                     for &cp in cps {
                         o += emit_unicode_cp(outbuf, o, cp, to);
                     }
-                    i += 2;
-                    consumed_end = i;
-                    continue;
-                }
-                let cp = direct[key as usize];
-                if cp == 0 {
+                } else {
                     err = Some(ICONV_EILSEQ);
                     break;
                 }
-                o += emit_unicode_cp(outbuf, o, cp, to);
                 i += 2;
                 consumed_end = i;
             } else {
@@ -46145,20 +46151,17 @@ fn dbcs_x_decode(
                 break;
             }
             let key = ((b as u16) << 8) | input[i + 1] as u16;
-            if let Some(&(_, cps)) = multi.iter().find(|&&(k, _)| k == key) {
+            let cp = direct[key as usize];
+            if cp != 0 {
+                chars.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+            } else if let Some(&(_, cps)) = multi.iter().find(|&&(k, _)| k == key) {
                 for &cp in cps {
                     chars.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
                 }
-                i += 2;
-                consumed_end = i;
-                continue;
-            }
-            let cp = direct[key as usize];
-            if cp == 0 {
+            } else {
                 err = Some(ICONV_EILSEQ);
                 break;
             }
-            chars.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
             i += 2;
             consumed_end = i;
         } else {
@@ -46487,7 +46490,16 @@ fn sjisx0213_convert(
 
 fn big5hkscs_dbcs_direct() -> &'static Vec<u32> {
     static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
-    D.get_or_init(|| build_dbcs_direct(&big5hkscs_tables::BIG5HKSCS_DBCS))
+    D.get_or_init(|| {
+        let direct = build_dbcs_direct(&big5hkscs_tables::BIG5HKSCS_DBCS);
+        debug_assert!(
+            big5hkscs_tables::BIG5HKSCS_DBCS_MULTI
+                .iter()
+                .all(|&(key, _)| direct[key as usize] == 0),
+            "BIG5-HKSCS scalar and multi-cell tables must be disjoint"
+        );
+        direct
+    })
 }
 /// Pre-encoded UTF-8 for BIG5-HKSCS's 2-byte BMP-single-cp cells, with the 4 combining
 /// (`BIG5HKSCS_DBCS_MULTI`) keys zeroed so the fast run defers them to the generic body.
