@@ -45819,6 +45819,36 @@ fn dbcs_x_decode(
 /// Generic encode for a direct 2-byte DBCS codec: maximal-munch the combining
 /// sequences first, otherwise emit the single-byte (`e1`) or 2-byte (`e2`,
 /// including astral source scalars) cell.
+/// Combined BMP `cp -> encoded cell` reverse index for a dbcs_x codec (Big5-HKSCS /
+/// Shift-JISX0213): merges the single-byte `e1` and double-byte `e2` encode tables
+/// into one O(1) array, replacing two per-char SipHash `HashMap::get`s. Slot layout:
+/// bit24 = present, bit25 = double; the low 16 bits hold the u16 key (double) or the
+/// u8 byte (single). `e1` is inserted AFTER `e2` so it wins on any shared cp — matching
+/// the `e1.get else e2.get` priority. Exhaustive for cp<0x10000; astral code points
+/// keep the HashMap fallback. Last-write-wins on a dup cp, exactly like the maps.
+fn build_dbcs_x_enc_direct(e1: &[(u32, u8)], e2: &[(u32, u16)]) -> Vec<u32> {
+    let mut t = vec![0u32; 0x10000];
+    for &(cp, k) in e2 {
+        if cp < 0x10000 {
+            t[cp as usize] = (1 << 24) | (1 << 25) | (k as u32);
+        }
+    }
+    for &(cp, b) in e1 {
+        if cp < 0x10000 {
+            t[cp as usize] = (1 << 24) | (b as u32);
+        }
+    }
+    t
+}
+
+/// Sorted unique first-cps of a dbcs_x combining-encode table, for the scan prefilter.
+fn build_dbcs_x_multi_first_cps(multi: &[(&'static [u32], u16)]) -> Vec<u32> {
+    let mut v: Vec<u32> = multi.iter().map(|&(seq, _)| seq[0]).collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
 fn dbcs_x_convert(
     cd: &mut IconvDescriptor,
     input: &[u8],
@@ -45826,7 +45856,110 @@ fn dbcs_x_convert(
     e1: &std::collections::HashMap<u32, u8>,
     e2: &std::collections::HashMap<u32, u16>,
     multi_enc: &[(&'static [u32], u16)],
+    direct: &[u32],
+    multi_first: &[u32],
 ) -> Result<IconvResult, IconvError> {
+    // Single-pass fast path: write directly into outbuf, skipping the `Vec<u8>`
+    // accumulator + final copy (2 heap allocs/call), the two per-char SipHash
+    // `HashMap::get`s (now one O(1) BMP index), and the O(table) combining scan for
+    // non-base chars (prefiltered). Worst char = a 2-byte DBCS cell, so gating on
+    // `outbuf.len() >= input.len()*2` makes E2BIG unreachable here and leaves the
+    // tight-buffer all-or-nothing E2BIG path (below) exactly as it was. Byte-identical:
+    // the SAME combining match, the SAME e1-then-e2 precedence, the SAME emitted bytes.
+    if outbuf.len() >= input.len().saturating_mul(2) {
+        let mut in_pos = 0usize;
+        let mut out_pos = 0usize;
+        let mut err: Option<(i32, usize)> = None;
+        while in_pos < input.len() {
+            let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
+                Ok(v) => v,
+                Err(DecodeError::Incomplete) => {
+                    err = Some((ICONV_EINVAL, in_pos));
+                    break;
+                }
+                Err(DecodeError::Invalid) => {
+                    err = Some((ICONV_EILSEQ, in_pos));
+                    break;
+                }
+            };
+            let cp = ch as u32;
+            let mut matched: Option<(u16, usize)> = None;
+            if multi_first.binary_search(&cp).is_ok() {
+                for &(seq, k) in multi_enc.iter() {
+                    if seq.first() != Some(&cp) {
+                        continue;
+                    }
+                    let mut p = in_pos + consumed;
+                    let mut ok = true;
+                    for &want in &seq[1..] {
+                        match decode_char(cd.from, &input[p..]) {
+                            Ok((c2, n2)) if c2 as u32 == want => p += n2,
+                            _ => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if ok {
+                        matched = Some((k, p));
+                        break;
+                    }
+                }
+            }
+            if let Some((k, end)) = matched {
+                outbuf[out_pos] = (k >> 8) as u8;
+                outbuf[out_pos + 1] = (k & 0xFF) as u8;
+                out_pos += 2;
+                in_pos = end;
+                continue;
+            }
+            let done = if cp < 0x10000 {
+                let slot = direct[cp as usize];
+                if slot == 0 {
+                    false
+                } else if slot & (1 << 25) != 0 {
+                    let k = (slot & 0xFFFF) as u16;
+                    outbuf[out_pos] = (k >> 8) as u8;
+                    outbuf[out_pos + 1] = (k & 0xFF) as u8;
+                    out_pos += 2;
+                    true
+                } else {
+                    outbuf[out_pos] = (slot & 0xFF) as u8;
+                    out_pos += 1;
+                    true
+                }
+            } else if let Some(&b) = e1.get(&cp) {
+                outbuf[out_pos] = b;
+                out_pos += 1;
+                true
+            } else if let Some(&k) = e2.get(&cp) {
+                outbuf[out_pos] = (k >> 8) as u8;
+                outbuf[out_pos + 1] = (k & 0xFF) as u8;
+                out_pos += 2;
+                true
+            } else {
+                false
+            };
+            if !done {
+                err = Some((ICONV_EILSEQ, in_pos));
+                break;
+            }
+            in_pos += consumed;
+        }
+        if let Some((code, pos)) = err {
+            return Err(IconvError {
+                code,
+                in_consumed: pos,
+                out_written: out_pos,
+            });
+        }
+        return Ok(IconvResult {
+            non_reversible: 0,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+
     let mut out: Vec<u8> = Vec::new();
     let mut in_pos = 0usize;
     let mut err: Option<(i32, usize)> = None;
@@ -45933,6 +46066,19 @@ fn sjisx0213_decode(
         sjisx0213_bmp3_utf8_direct(),
     )
 }
+fn sjisx0213_enc_direct() -> &'static [u32] {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    D.get_or_init(|| {
+        build_dbcs_x_enc_direct(
+            &sjisx0213_tables::SJISX_ENC1,
+            &sjisx0213_tables::SJISX_ENC2,
+        )
+    })
+}
+fn sjisx0213_multi_first_cps() -> &'static [u32] {
+    static S: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    S.get_or_init(|| build_dbcs_x_multi_first_cps(&sjisx0213_tables::SJISX_MULTI_ENC))
+}
 fn sjisx0213_convert(
     cd: &mut IconvDescriptor,
     input: &[u8],
@@ -45945,6 +46091,8 @@ fn sjisx0213_convert(
         sjisx0213_enc1(),
         sjisx0213_enc2(),
         &sjisx0213_tables::SJISX_MULTI_ENC,
+        sjisx0213_enc_direct(),
+        sjisx0213_multi_first_cps(),
     )
 }
 
@@ -45989,6 +46137,19 @@ fn big5hkscs_decode(
         big5hkscs_bmp3_utf8_direct(),
     )
 }
+fn big5hkscs_enc_direct() -> &'static [u32] {
+    static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    D.get_or_init(|| {
+        build_dbcs_x_enc_direct(
+            &big5hkscs_tables::BIG5HKSCS_ENC1,
+            &big5hkscs_tables::BIG5HKSCS_ENC2,
+        )
+    })
+}
+fn big5hkscs_multi_first_cps() -> &'static [u32] {
+    static S: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
+    S.get_or_init(|| build_dbcs_x_multi_first_cps(&big5hkscs_tables::BIG5HKSCS_MULTI_ENC))
+}
 fn big5hkscs_convert(
     cd: &mut IconvDescriptor,
     input: &[u8],
@@ -46001,6 +46162,8 @@ fn big5hkscs_convert(
         big5hkscs_enc1(),
         big5hkscs_enc2(),
         &big5hkscs_tables::BIG5HKSCS_MULTI_ENC,
+        big5hkscs_enc_direct(),
+        big5hkscs_multi_first_cps(),
     )
 }
 
