@@ -6,6 +6,37 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): direct-pointer `strverscmp` removes prescans but regresses equal long strings; **258.06 -> 282.64 ns**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found the
+  shipped change that replaced two owned `Vec` copies with borrowed `CStr` slices (`386974711`), but
+  no direct-pointer state machine or measured rejection of one. This was therefore a fresh hot-string
+  follow-up, distinct from the excluded and closed `wcswidth` 128-fold, `strsep`, `bzero`, BRAVO,
+  FlatCombiner, and `wcscoll` families.
+- **ONE LEVER EVALUATED AND RESTORED.** The candidate removed both up-front `CStr::from_ptr(...)
+  .to_bytes()` length scans and ran the unchanged version-comparison state machine directly over the
+  two NUL-terminated pointers. An index advances only after observing a non-NUL byte, while digit-run
+  lengths advance only after observing a digit, so every load remains at or before the first NUL and
+  byte ordering, leading-zero handling, and null-input behavior are unchanged. Before timing, the
+  same release binary checked **625 pairwise cases**: old and candidate results matched exactly, and
+  every candidate result matched host glibc's sign.
+- **ONE STRICT-REMOTE SAME-PROCESS A/B REJECT.** The sole foreground timing command was
+  `RCH_REQUIRE_REMOTE=1 RCH_QUEUE_WHEN_BUSY=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strverscmp_raw rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --example strverscmp_ab`.
+  RCH selected actual worker `vmi1149989`; old, candidate, and glibc comparators ran in rotated order
+  in one process. Median old -> candidate results were: short numeric **17.32 -> 9.68 ns**
+  (**0.559x; 44.1% less time**), dotted numeric **26.54 -> 20.40 ns** (**0.769x; 23.1% less**), date
+  numeric **39.31 -> 28.79 ns** (**0.732x; 26.8% less**), early 256-byte mismatch
+  **11.78 -> 2.54 ns** (**0.216x; 78.4% less**), and late numeric **275.04 -> 268.35 ns**
+  (**0.976x; 2.4% less**). However, equal 256-byte strings regressed **258.06 -> 282.64 ns**
+  (**1.095x; 9.5% more time**), violating the declared no-regression gate. The release build completed
+  with existing unrelated workspace warnings; no local Cargo command ran.
+- **RESTORATION / CLOSED BOUNDARY.** Production `string_abi.rs`, the existing `strverscmp_ab.rs`
+  example, and its temporary manifest registration were restored exactly; only this evidence row
+  ships. Do not retry the unchanged unconditional scalar direct-pointer state machine. Reopening
+  requires a materially different hybrid that retains the early-mismatch wins while proving equal
+  long strings non-regressing, for example a word/SIMD equality scan integrated with numeric-run
+  handoff rather than merely deleting the two prescans.
+
 ## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): `wcswidth` 128-wide ASCII fold misses its first-active-tier floor; **7.0843 -> 6.9341 ns at 128 code points**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found the
