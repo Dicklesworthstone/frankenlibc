@@ -46067,6 +46067,69 @@ fn dbcs_x_decode(
         base_in = i;
         base_out = o;
     }
+    // Fast path (to == UTF-16 marked LE/BE): decode each cell and emit its scalar(s)
+    // straight into outbuf via emit_unicode_cp — no Vec<char>/Vec<u8> (the two-pass that
+    // left ->UTF-16 ~4-6x slower than glibc). Byte-identical to the generic body's
+    // decode + encode_char(Utf16*): same is_lead/multi/direct/one_byte decode, same FFFD
+    // substitution, same mid-stream error result (encode never fails for a Unicode target),
+    // and the *4 gate (a 2-byte cell -> <=2 scalars, <=4 B each) makes E2BIG unreachable so
+    // the tight-buffer all-or-nothing path (generic body) stays exact.
+    if matches!(cd.to, Encoding::Utf16Le | Encoding::Utf16Be)
+        && outbuf.len() >= input.len().saturating_mul(4)
+    {
+        let to = cd.to;
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut consumed_end = 0usize;
+        let mut err: Option<i32> = None;
+        while i < input.len() {
+            let b = input[i];
+            if is_lead[b as usize] {
+                if i + 1 >= input.len() {
+                    err = Some(ICONV_EINVAL);
+                    break;
+                }
+                let key = ((b as u16) << 8) | input[i + 1] as u16;
+                if let Some(&(_, cps)) = multi.iter().find(|&&(k, _)| k == key) {
+                    for &cp in cps {
+                        o += emit_unicode_cp(outbuf, o, cp, to);
+                    }
+                    i += 2;
+                    consumed_end = i;
+                    continue;
+                }
+                let cp = direct[key as usize];
+                if cp == 0 {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                o += emit_unicode_cp(outbuf, o, cp, to);
+                i += 2;
+                consumed_end = i;
+            } else {
+                let cp = one_byte[b as usize];
+                if cp < 0 {
+                    err = Some(ICONV_EILSEQ);
+                    break;
+                }
+                o += emit_unicode_cp(outbuf, o, cp as u32, to);
+                i += 1;
+                consumed_end = i;
+            }
+        }
+        return match err {
+            Some(code) => Err(IconvError {
+                code,
+                in_consumed: consumed_end,
+                out_written: o,
+            }),
+            None => Ok(IconvResult {
+                non_reversible: 0,
+                in_consumed: i,
+                out_written: o,
+            }),
+        };
+    }
     let input = &input[base_in..];
     let outbuf = &mut outbuf[base_out..];
 
