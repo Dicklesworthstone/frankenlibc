@@ -6,6 +6,48 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: convex nominal approachability fast path never reached its oracle (`bd-1jb9s5`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH CONTROL-KERNEL LANE.**
+  `bv --robot-triage` found the broad no-gaps directive owned by `cod-b`, allocator
+  Swing work either unowned-but-architectural or actively peer-owned, and stdio/qsort
+  leaves assigned to `cc`. Exact ledger and all-ref history searches found no prior
+  convex-safe-set shortcut for `ApproachabilityController::observe`, so this pivoted
+  away from the mined string/wide scanners and the repeatedly cold ABI benchmark path.
+- **PROFILE / ATTRIBUTION FIRST.** The checked-in
+  `runtime_math_kernels/approachability_observe` row directly exercises the
+  post-calibration update. Source attribution showed that every update computed three
+  integer divisions, a box projection, squared deviation, and potentially four arm
+  dot products. Production invokes the controller from the high-order runtime-math
+  resample path every 512 decisions. Nominal strict inputs are naturally inside the
+  target box (`latency <= 350`, `risk <= 500`, `coverage >= 150`), making the divisions
+  the direct removable work on that sampled path.
+- **ONE CERTIFIED REWRITE PREPARED, NOT EXECUTED.** After the first computed
+  post-calibration average, the candidate returned immediately when the previous
+  deviation was zero and the new clamped observation was also inside the mode's target
+  box. A convex combination of two points in an axis-aligned box remains in the box;
+  the integer-floor upper-bound invariant also holds because
+  `sum < (bound + 1) * count`, while the lower-bound coordinate composes directly.
+  Thus sums, count, recommended arm, zero deviation, state, and summary averages remain
+  identical. The temporary same-binary harness reconstructed the incumbent exactly and
+  prepared strict+hardened equality checks after every step of 500,000 mixed-regime
+  observations, followed by order-rotated incumbent/candidate/candidate-null timing.
+- **ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE INVALID BENCH.** The sole command was
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1
+  RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR,FRANKENLIBC_APPROACHABILITY_AB
+  CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_metric_ring
+  FRANKENLIBC_APPROACHABILITY_AB=1 rch exec -- cargo run -j 1 --profile release -p
+  frankenlibc-membrane --example standalone_membrane`, under a **295 s** hard wall.
+  RCH stayed remote on `vmi1293453` but remapped the requested warm target to cold pool
+  `2e4cba3fadfae9af98dac7851bc7fbe6`. After about 46 s of synchronization it downloaded
+  and rebuilt the dependency graph; exit 124 occurred while compiling dependencies,
+  before the example linked or emitted its equality oracle, null control, or any timing.
+- **DISPOSITION / RETRY CONDITION.** Manually restored the production controller, test,
+  and temporary harness exactly; only this evidence row and tracker closeout ship. This
+  is infrastructure-invalid, neither acceptance nor rejection of the convex shortcut.
+  Retry only with an already-linked ordinary-release membrane example on the admitted
+  worker. No `release-perf`, local Cargo fallback, stash creation, or stash drop occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: paired-bootstrap segment-membership gate never reached timing (`bd-t43kz2`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / LIVE OWNERSHIP.** `bv --robot-triage`

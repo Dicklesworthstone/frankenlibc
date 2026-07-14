@@ -22,7 +22,6 @@ use frankenlibc_membrane::{
     DecisionId, EvidenceCategory, EvidenceLedger, HealingAction, HealingPolicy, MembraneMetrics,
     PolicyId, RedactionPolicy, SafetyLevel, SafetyState, TraceId, ValidationEvidence,
 };
-
 fn main() {
     println!("=== FrankenLibC Membrane — Standalone Demo ===\n");
 
