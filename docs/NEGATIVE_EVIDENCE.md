@@ -6,6 +6,50 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): decompose FlatCombiner pass-counter RMW pair; **171.22 -> 176.30 ns**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found no
+  prior decomposition of `FlatCombiner`'s `total_ops` or `total_passes` updates; both RMWs originate in
+  `ac9be987c`. The prior FlatCombiner rejection closes only removal of the write-only
+  `combiner_active` stores. The shipped SeqLock and MetricRing decompositions are primitive-specific
+  precedents whose closed boundaries require a new serialization proof and measurement here. This
+  paired pass-counter rewrite had EV `(impact 3 * confidence 4) / effort 1 = 12` and relevance 4.9/5
+  because the checked-in single-thread row crosses both RMWs once per iteration.
+- **ONE LEVER EVALUATED AND RESTORED.** Inside a nonempty `run_combining_pass`, the candidate replaced
+  `total_ops.fetch_add(batch_size, Relaxed)` and `total_passes.fetch_add(1, Relaxed)` with ordered
+  relaxed loads, `wrapping_add`, and relaxed stores. The direct
+  `flat_combining/single_thread_increment` row constructs the combiner outside timing, then performs
+  one immediate pass with `batch_size == 1`, crossing both changed updates exactly once. The direct
+  fallback counter remained unchanged because this row never exercises it. Slot publication, state
+  mutation, pass election, maximum-batch accounting, event emission, and the benchmark source were
+  unchanged.
+- **CERTIFIED MODULO / SERIALIZATION PROOF.** Every `total_ops` writer, including the unchanged direct
+  fallback, holds the same `state` mutex; `total_passes` has only the pass-local writer under that mutex
+  and `combiner_lock`. No writer can intervene between either candidate load/store pair.
+  `wrapping_add` preserves `fetch_add` rollover, update order remained `total_ops` then
+  `total_passes`, and relaxed diagnostic readers could still observe only complete old or new atomic
+  values. The declared fallback was exact source restoration plus this evidence row unless the
+  same-worker named 95% interval was wholly negative and the raw center improved by at least 5%.
+- **STRICT-REMOTE SAME-WORKER REJECT.** Baseline command:
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_flat_diag_pair rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench alien_cs_bench -- 'flat_combining/single_thread_increment' --exact --sample-size 30 --warm-up-time 1 --measurement-time 3 --noplot --save-baseline flat_diag_pair_8ed49fc`.
+  The candidate used the identical command with `--baseline flat_diag_pair_8ed49fc`; both builds and
+  timed runs executed on actual worker `vmi1293453`. Intervals moved **[163.78, 171.22, 182.97] ns ->
+  [169.22, 176.30, 185.46] ns**: candidate/baseline center **1.0297x**, **2.967% more time**
+  (**0.9712x throughput**). Criterion's named change interval crossed zero at **-1.4663% to
+  +16.918%**, central **+6.8599%**, `p=0.15`; it reported no detectable change and both keep gates
+  failed.
+- **RESTORATION / SHARED-TREE BOUNDARY.** The production experiment was restored byte-for-byte:
+  `flat_combining.rs` is `6132832a52d6ffef6d06cf0939044d7a9043458a91d768e0422fc1ef54465914`, and
+  the checked-in benchmark remained `5b2309748b746a04a484e5c1a51e008d5372fb2a1e3a9ac3518e01917b583a03`.
+  Both strict-RCH builds emitted the same existing unrelated core warnings; no local Cargo command ran.
+  Concurrent peer `wcsrchr` work touched only an ABI source behind the unused `abi-bench` feature and a
+  standalone example, never the selected benchmark or membrane dependency, and was left untouched.
+- **CLOSED BOUNDARY.** Do not retry this pass-local `total_ops` plus `total_passes` decomposition against
+  `flat_combining/single_thread_increment`: it regressed at the raw center and was indistinguishable
+  from noise. Reopening requires a distinct deployed pass-heavy workload or a lower-noise harness.
+  This result neither measures nor closes the direct-fallback counter and does not generalize to other
+  FlatCombiner atomics or other primitives.
+
 ## 2026-07-14 (cod / CloudyCliff) — WIN (SHIPPED): decompose mutex-serialized `MetricRing` emission-counter RMW; **114.10 -> 106.11 ns (1.075x)**
 
 - **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** The prior `MetricRing` win replaced O(N) `Vec`
