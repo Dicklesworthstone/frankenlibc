@@ -2239,6 +2239,71 @@ pub unsafe extern "C" fn sradixsort(
 // bsearch
 // ---------------------------------------------------------------------------
 
+#[inline]
+unsafe fn strict_bsearch_raw(
+    key: *const c_void,
+    base: *const c_void,
+    nmemb: usize,
+    size: usize,
+    compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+) -> *mut c_void {
+    let base = base.cast::<u8>();
+    let mut low = 0usize;
+    let mut high = nmemb;
+    while low < high {
+        let mid = low + (high - low) / 2;
+        // SAFETY: the caller supplied `nmemb * size` readable bytes, that
+        // product was checked by `bsearch`, and `mid < nmemb`.
+        let elem = unsafe { base.add(mid * size) };
+        // SAFETY: C's bsearch contract permits the comparator to read the key
+        // and the selected `size`-byte element.
+        let ordering = unsafe { compar(key, elem.cast()) };
+        if ordering == 0 {
+            return elem.cast_mut().cast();
+        }
+        if ordering < 0 {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    ptr::null_mut()
+}
+
+/// Reconstructs the pre-raw-pointer strict body for same-binary performance
+/// evidence. Production calls use [`bsearch`].
+#[doc(hidden)]
+#[inline(never)]
+pub unsafe extern "C" fn bsearch_strict_slice_for_bench(
+    key: *const c_void,
+    base: *const c_void,
+    nmemb: usize,
+    size: usize,
+    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>,
+) -> *mut c_void {
+    if key.is_null() || base.is_null() || nmemb == 0 || size == 0 {
+        return ptr::null_mut();
+    }
+    let Some(total_bytes) = nmemb.checked_mul(size) else {
+        return ptr::null_mut();
+    };
+    let Some(compar_fn) = compar else {
+        return ptr::null_mut();
+    };
+    let wrapper = |a: &[u8], b: &[u8]| -> i32 {
+        // SAFETY: the slices cover the caller-provided key and one element.
+        unsafe { compar_fn(a.as_ptr().cast(), b.as_ptr().cast()) }
+    };
+    // SAFETY: this helper has the same valid-input contract as `bsearch`.
+    let slice = unsafe { std::slice::from_raw_parts(base.cast::<u8>(), total_bytes) };
+    // SAFETY: this helper has the same valid-input contract as `bsearch`.
+    let key_slice = unsafe { std::slice::from_raw_parts(key.cast::<u8>(), size) };
+    match frankenlibc_core::stdlib::sort::bsearch(key_slice, slice, size, wrapper) {
+        Some(found) => found.as_ptr().cast_mut().cast(),
+        None => ptr::null_mut(),
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn bsearch(
     key: *const c_void,
@@ -2265,17 +2330,9 @@ pub unsafe extern "C" fn bsearch(
     // not validate the region). Mirrors the string/inet_strict strict fast paths. Hardened mode
     // (`strict_passthrough_active() == false`) keeps the full validating path below.
     if runtime_policy::strict_passthrough_active() {
-        let wrapper = |a: &[u8], b: &[u8]| -> i32 {
-            // SAFETY: slices are `size` bytes into the caller-provided (C-contract valid) arrays.
-            unsafe { compar_fn(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void) }
-        };
-        // SAFETY: caller guarantees `base` is `nmemb*size` bytes and `key` is `size` bytes.
-        let slice = unsafe { std::slice::from_raw_parts(base as *const u8, total_bytes) };
-        let key_slice = unsafe { std::slice::from_raw_parts(key as *const u8, size) };
-        return match frankenlibc_core::stdlib::sort::bsearch(key_slice, slice, size, wrapper) {
-            Some(s) => s.as_ptr() as *mut c_void,
-            None => ptr::null_mut(),
-        };
+        // SAFETY: the checked product above proves every `mid * size` offset is
+        // representable and C's valid-input contract supplies both regions.
+        return unsafe { strict_bsearch_raw(key, base, nmemb, size, compar_fn) };
     }
 
     if !tracked_region_fits(base, total_bytes) || !tracked_region_fits(key, size) {

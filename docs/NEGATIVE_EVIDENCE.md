@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN (SHIPPED): strict `bsearch` raw-pointer loop; **31.009 -> 24.035 ns (1.29x faster)** (`bd-6g91n6`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH STDLIB REGIME.** `bv --robot-triage`
+  surfaced the global perf directive, but its nearby qsort leaf was stale because slice swapping had
+  already shipped, allocator Swing-2 was actively owned, and the ledger closed the recently mined
+  stdio formatting shapes. Exact ledger plus all-ref history searches found no measured strict
+  `bsearch` raw-pointer loop or rejection, so this took a fresh search primitive after the earlier
+  strict membrane-bypass win rather than reopening an exhausted micro-path.
+- **PROFILE / ATTRIBUTION / CERTIFIED PARTITION.** The prior focused `bsearch` result attributed the
+  remaining strict cost to the safe-core representation: the ABI path built whole-array/key slices,
+  then the core loop built an element range slice at every binary-search probe even though the C
+  comparator consumes only two raw pointers. The certified rewrite is strict-only and preserves the
+  incumbent `low`, `high`, `mid`, comparator-call, and branch sequence while computing the probed
+  element pointer directly. The outer null/zero/comparator and checked-`nmemb * size` guards remain;
+  hardened mode retains the byte-identical validating safe-core path.
+- **EXECUTABLE EQUIVALENCE ORACLE.** Before any timer, the same release binary compared the retained
+  incumbent slice body, the deployed raw-pointer candidate, and host glibc on **105 exact-pointer
+  cases** spanning element widths 4/8/17, counts 0/1/2/3/255/256/257, and five hit/miss keys per
+  shape. It also proved exact incumbent/candidate comparator visitation traces for five representative
+  hits/misses and exact returned-pointer plus trace parity on duplicate records. Every assertion
+  passed, including odd-width/unaligned records and power-of-two-adjacent counts.
+- **ONE FOREGROUND STRICT-REMOTE RELEASE WIN.** The sole benchmark command was
+  `RCH_WORKER=vmi1153651 RCH_WORKERS=vmi1153651 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strverscmp_raw rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench bsearch_glibc_bench -- bsearch --sample-size 30 --warm-up-time 1 --measurement-time 2 --noplot`.
+  RCH admitted actual worker **`vmi1153651`** and used ordinary `release`, never `release-perf`.
+  The incumbent slice control was **[29.952, 31.009, 32.147] ns**, the raw-pointer candidate was
+  **[23.542, 24.035, 24.574] ns** (**0.7751x; 22.5% less time; 1.29x faster**), and host glibc was
+  **[21.997, 22.668, 23.611] ns**. Candidate/incumbent intervals are disjoint; the candidate remains
+  **1.060x glibc** by median. The independent manual p50 cross-check agreed on direction at
+  **31.1113 -> 28.5469 ns** (**0.9176x; 8.2% less time**).
+- **REMOTE DISCLOSURE / BOUNDARY.** RCH rewrote the requested warm target to a fresh worker-pool
+  target, so the ordinary-release build took 6m21s before the short foreground measurement; no
+  second benchmark and no local Cargo ran. This result claims only valid-input strict `bsearch`.
+  Hardened validation, invalid-input repair, qsort, and alternate search algorithms remain outside
+  the certified partition and require independent evidence.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN (SHIPPED): exact `snprintf("%u")` stack decimal emitter; **323.81 -> 38.48 ns (8.42x faster)** (`bd-gldi10`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH FORMATTING REGIME.** `bv --robot-triage`
