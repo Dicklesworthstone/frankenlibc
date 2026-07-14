@@ -6,6 +6,37 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / CloudyCliff) — REJECTED (NOT SHIPPED): `strsep` exact-two-delimiter scanner misses the short-token floor; **4.6575 -> 5.3914 ns at 64 B**
+
+- **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and all-ref history searches found the
+  shipped generic two-to-four-delimiter SIMD route (`50b33a1ef`) and the later one-character
+  specialization (`8c887e8a4`), but no dedicated exact-two scanner or measured rejection of one. The
+  lever was therefore fresh with respect to those closed boundaries and to the excluded `bzero`,
+  BRAVO, FlatCombiner, and `wcscoll` families.
+- **ONE LEVER EVALUATED AND RESTORED.** For delimiter strings of length exactly two, the candidate
+  replaced `scan_c_string_for_set4([d0, d1, d0, d1], false)` with a dedicated portable-SIMD scanner
+  comparing each panel only with `d0`, `d1`, and NUL. The aligned-down head mask, guarded 128-byte
+  fold, first-stop resolution, delimiter overwrite, returned token, and `*stringp` update remained
+  unchanged. The checked-in A/B ran an exact-index oracle before timing over all 32 head alignments,
+  NUL and both delimiter stop classes, and lengths spanning the 32- and 128-byte boundaries; every
+  old/candidate assertion passed.
+- **ONE STRICT-REMOTE SAME-PROCESS A/B REJECT.** The sole foreground timing command was
+  `RCH_WORKER=vmi1293453 RCH_WORKERS=vmi1293453 RCH_QUEUE_WHEN_BUSY=1 RCH_REQUIRE_REMOTE=1 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_cod_strsep_two rch exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench strsep_glibc_bench -- strsep_two_delim_scan_ab --sample-size 30 --warm-up-time 1 --measurement-time 2 --noplot`.
+  RCH selected actual worker `vmi1293453`; old and candidate scanners ran in the same release binary
+  and process on absent-delimiter strings. At 64 bytes the intervals moved
+  **[4.3528, 4.6575, 4.9387] ns -> [4.9001, 5.3914, 6.0314] ns**: candidate/control center
+  **1.1576x**, or **15.8% more time**, failing the short/hot keep floor. At 1024 bytes they moved
+  **[31.005, 32.475, 34.170] ns -> [21.090, 22.180, 23.288] ns**: **0.6830x**, or **31.7% less
+  time**. The long-scan win does not redeem the decisive short-token regression for an unconditional
+  `strsep` route. The release build completed with existing unrelated workspace warnings; no local
+  Cargo command ran.
+- **RESTORATION / CLOSED BOUNDARY.** Production `string_abi.rs` and the temporary checked-in Criterion
+  A/B in `strsep_glibc_bench.rs` were restored exactly; only this evidence row ships. Do not retry the
+  unchanged unconditional exact-two scanner: fewer SIMD comparisons lose at the hot 64-byte scale.
+  Reopening requires a materially different long-input-only dispatch with an end-to-end `strsep`
+  workload proving that its extra length/routing cost is recovered, not this scanner substitution by
+  itself.
+
 ## 2026-07-14 (cod / CloudyCliff) — BLOCKED (NOT SHIPPED): `wmemrchr` mask resolver did not reach the timed path
 
 - **NEGATIVE-LEDGER-FIRST / FRESH OBLIGATION.** Exact ledger and history searches found the shipped
