@@ -8,7 +8,72 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use frankenlibc_core::string::{mbstowcs, wcstombs};
+use frankenlibc_core::string::{mbstowcs, wcstombs, wcswidth, wcwidth};
+
+#[inline(never)]
+fn wcswidth_scalar(s: &[u32], n: usize) -> i32 {
+    let mut total = 0_i32;
+    for &wc in s.iter().take(n) {
+        if wc == 0 {
+            break;
+        }
+        let width = wcwidth(wc);
+        if width < 0 {
+            return -1;
+        }
+        total = total.saturating_add(width);
+    }
+    total
+}
+
+#[inline(never)]
+fn wcswidth_ascii_run(s: &[u32], n: usize) -> i32 {
+    wcswidth(s, n)
+}
+
+fn bench_wcswidth_ascii_run_ab(c: &mut Criterion) {
+    // Exercise every boundary at which the SIMD prefix may hand back to the
+    // scalar reference before timing the all-printable hot row.
+    for len in [0usize, 1, 15, 16, 17, 31, 32, 33, 65] {
+        let ascii = vec![b'x' as u32; len];
+        assert_eq!(
+            wcswidth_ascii_run(&ascii, len),
+            wcswidth_scalar(&ascii, len)
+        );
+        for &pos in &[0usize, 15, 16, 31, 32, 64] {
+            if pos >= len {
+                continue;
+            }
+            for special in [0, 0x07, 0x0301, 0x4e16, 0x11_0000] {
+                let mut input = ascii.clone();
+                input[pos] = special;
+                assert_eq!(
+                    wcswidth_ascii_run(&input, len),
+                    wcswidth_scalar(&input, len),
+                    "wcswidth mismatch len={len} pos={pos} special={special:#x}",
+                );
+            }
+        }
+    }
+
+    // Initialize the canonical BMP table outside all timed regions.
+    black_box(wcwidth(b'x' as u32));
+
+    let mut group = c.benchmark_group("wcswidth_ascii_run_ab");
+    for size in [16usize, 64, 256, 1024] {
+        let input: Vec<u32> = (0..size).map(|i| (b' ' + (i % 95) as u8) as u32).collect();
+        assert_eq!(wcswidth_scalar(&input, size), size as i32);
+        assert_eq!(wcswidth_ascii_run(&input, size), size as i32);
+        group.throughput(Throughput::Elements(size as u64));
+        group.bench_with_input(BenchmarkId::new("scalar", size), &input, |b, input| {
+            b.iter(|| black_box(wcswidth_scalar(black_box(input), black_box(size))));
+        });
+        group.bench_with_input(BenchmarkId::new("ascii_run", size), &input, |b, input| {
+            b.iter(|| black_box(wcswidth_ascii_run(black_box(input), black_box(size))));
+        });
+    }
+    group.finish();
+}
 
 fn bench_mbstowcs(c: &mut Criterion) {
     // ~1 KiB of ASCII (typical for paths, log lines, identifiers).
@@ -94,5 +159,10 @@ fn bench_wcstombs(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_mbstowcs, bench_wcstombs);
+criterion_group!(
+    benches,
+    bench_mbstowcs,
+    bench_wcstombs,
+    bench_wcswidth_ascii_run_ab
+);
 criterion_main!(benches);

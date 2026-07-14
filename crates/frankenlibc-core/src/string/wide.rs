@@ -435,8 +435,27 @@ pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
 ///
 /// Equivalent to C `wcswidth`. Returns `-1` if any character is non-printable.
 pub fn wcswidth(s: &[u32], n: usize) -> i32 {
+    let scan = &s[..n.min(s.len())];
     let mut total = 0_i32;
-    for &wc in s.iter().take(n) {
+    let mut i = 0usize;
+
+    // Printable ASCII has width exactly one. Certify 16 code points at once so
+    // long paths, identifiers, and terminal text skip the per-codepoint
+    // `wcwidth` table/OnceLock lookup. A panel containing NUL, a control, or any
+    // non-ASCII code point is not advanced and falls through to the exact scalar
+    // path below. Sixteen saturating +1 steps are equivalent to one saturating
+    // +16 step because every certified lane has the same positive width.
+    while i + WIDE_NUL_SIMD_LANES <= scan.len() {
+        let lanes = Simd::<u32, WIDE_NUL_SIMD_LANES>::from_slice(&scan[i..i + WIDE_NUL_SIMD_LANES]);
+        let printable_ascii = lanes.simd_ge(Simd::splat(0x20)) & lanes.simd_le(Simd::splat(0x7e));
+        if !printable_ascii.all() {
+            break;
+        }
+        total = total.saturating_add(WIDE_NUL_SIMD_LANES as i32);
+        i += WIDE_NUL_SIMD_LANES;
+    }
+
+    for &wc in &scan[i..] {
         if wc == 0 {
             break;
         }
