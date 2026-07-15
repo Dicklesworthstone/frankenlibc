@@ -709,15 +709,18 @@ unsafe fn candidate_matches_name(
     if candidate.is_null() {
         return false;
     }
-    let (candidate_len, terminated) =
-        unsafe { scan_c_string(candidate, known_remaining(candidate as usize)) };
-    if !terminated || candidate_len != name_len {
+    let candidate_bound = known_remaining(candidate as usize);
+    if candidate_bound.is_some_and(|remaining| remaining <= name_len) {
         return false;
     }
-    let candidate_bytes =
-        unsafe { core::slice::from_raw_parts(candidate.cast::<u8>(), candidate_len) };
-    let name_bytes = unsafe { core::slice::from_raw_parts(name.cast::<u8>(), name_len) };
-    candidate_bytes == name_bytes
+    for offset in 0..name_len {
+        let candidate_byte = unsafe { *candidate.cast::<u8>().add(offset) };
+        let name_byte = unsafe { *name.cast::<u8>().add(offset) };
+        if candidate_byte != name_byte {
+            return false;
+        }
+    }
+    unsafe { *candidate.add(name_len) == 0 }
 }
 
 unsafe extern "C" {
