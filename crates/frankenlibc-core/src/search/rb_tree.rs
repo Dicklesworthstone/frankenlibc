@@ -197,14 +197,13 @@ impl<K> RbTree<K> {
     /// Delete the key matching `needle`. Returns the removed key on
     /// success; returns `None` if the key was not present.
     pub fn delete<F: Fn(&K, &K) -> Ordering>(&mut self, needle: &K, cmp: &F) -> Option<K> {
-        self.find(needle, cmp)?;
         let prev_len = self.len;
         let (new_root, removed) = Self::delete_rec(self.root.take(), needle, cmp, &mut self.len);
         self.root = new_root;
         if let Some(ref mut r) = self.root {
             r.color = Color::Black;
         }
-        debug_assert_eq!(self.len, prev_len - 1);
+        debug_assert_eq!(self.len + usize::from(removed.is_some()), prev_len);
         removed
     }
 
@@ -603,6 +602,24 @@ mod tests {
         }
         assert_eq!(t.delete(&99, &cmp_i32), None);
         assert_eq!(t.len(), 3);
+    }
+
+    #[test]
+    fn missing_deletes_preserve_set_and_llrb_invariants() {
+        let mut t = RbTree::new();
+        let expected: Vec<i32> = (0..512).step_by(2).collect();
+        for &k in &expected {
+            t.insert(k, &cmp_i32);
+        }
+
+        for missing in [-1, 1, 127, 255, 511, 512, 513] {
+            assert_eq!(t.delete(&missing, &cmp_i32), None);
+            assert_eq!(t.len(), expected.len());
+            let mut seen = Vec::new();
+            t.walk(RbWalkOrder::InOrder, |k, _| seen.push(*k));
+            assert_eq!(seen, expected);
+            assert_llrb_invariants(&t);
+        }
     }
 
     #[test]
