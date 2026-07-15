@@ -183,6 +183,13 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
 /// Returns a pointer to a static `struct lconv` with C-locale defaults.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn localeconv() -> *const LConv {
+    // Deployed strict mode can only return Allow for Locale, and this
+    // input-free entrypoint always returns the same immutable C-locale table.
+    // Skip the observation-only policy round trip; hardened mode and tests keep
+    // the full path below.
+    if runtime_policy::strict_passthrough_active() {
+        return &LCONV;
+    }
     let (_, decision) = runtime_policy::decide(ApiFamily::Locale, 0, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 4, true);
