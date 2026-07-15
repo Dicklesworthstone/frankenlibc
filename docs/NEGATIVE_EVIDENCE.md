@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: convex-safe approachability updates skip recomputation (`bd-1jb9s5`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` exposed no
+  narrow unowned perf leaf ahead of the broad peer-owned work. The immediately
+  preceding row left this approachability lever infrastructure-invalid rather than
+  rejected: its cold executable timed out before either the oracle or timing. This
+  retry kept the same one-lever scope and followed the corrected cold-target rule.
+- **PROFILE / ONE CERTIFIED REWRITE.** Source attribution showed that every
+  post-calibration `ApproachabilityController::observe` update paid three integer
+  divisions plus box projection/deviation work, while production resamples this
+  controller every 512 decisions. Once the prior integer-floor average is inside the
+  mode target box and the next clamped point is also inside, convexity guarantees the
+  new average remains inside. The candidate therefore preserves sums/count and returns
+  with the existing arm and zero deviation; explicit monotonic-sum guards retain the
+  incumbent behavior on wrapping-add transitions.
+- **CORRECTNESS ORACLE.** Before Criterion timing, a temporary same-binary incumbent
+  reconstruction compared count, recommended arm, deviation, state, and every summary
+  average after each of **500,000** mixed nominal/adversarial transitions across strict
+  and hardened modes. All comparisons passed. A durable unit test additionally covers
+  strict/hardened interior and boundary points for 4,096 post-calibration updates.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** The exact
+  Criterion target was first linked without a timeout via `RCH_REQUIRE_REMOTE=1 rch
+  exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench
+  runtime_math_kernels_bench --no-run` on `vmi1293453`. The subsequent measurement used
+  the same admitted worker and worker-pool path with `--sample-size 30 --warm-up-time
+  0.2 --measurement-time 1 --noplot`. RCH unexpectedly discarded the warm pool and
+  rebuilt it, but no timeout was imposed and the real A/B completed: incumbent
+  **5.7495 ns** midpoint `[5.6231, 5.8781]`, candidate **2.6915 ns**
+  `[2.5810, 2.8011]`, a **53.2% latency reduction**. The identical candidate-null arm
+  measured **2.7125 ns** `[2.5759, 2.8568]`, only **0.8%** from candidate and therefore
+  below the noise-control floor.
+- **DISPOSITION.** Kept the fast path and durable proof in `8f78654cd`; restored the
+  temporary A/B harness byte-for-byte. No `release-perf`, local Cargo fallback, stash
+  creation, stash drop, or timeout-based verdict occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — INVALID / NOT SHIPPED: convex nominal approachability fast path never reached its oracle (`bd-1jb9s5`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST / FRESH CONTROL-KERNEL LANE.**
