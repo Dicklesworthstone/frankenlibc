@@ -6,6 +6,43 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: `getsubopt` matches each token in one pass (`bd-3ollh0.1`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` exposed only
+  peer-owned concrete perf leaves. This retried
+  `cod-getsubopt-single-pass-token-2026-07-14`, whose prior result was explicitly
+  infrastructure-invalid: a cold build hit its wall cap before Criterion ran, so it
+  contained no performance evidence against the candidate.
+- **PROFILE / ONE CERTIFIED REWRITE.** The earlier measured four-token hit left a
+  **92.776 ns** frame after policy-bypass proved null. Source attribution found that
+  `candidate_matches_name` fully NUL-scanned every candidate and then traversed an
+  equal-length candidate again for equality. The shipped rewrite compares the first
+  `name_len` bytes once with early mismatch exit, preserves the tracked-region bound,
+  and accepts only an exact NUL at `name_len`. Null, shorter, longer, prefix-mismatch,
+  cursor, mutation, value-pointer, and return-index semantics are unchanged.
+- **CORRECTNESS ORACLE.** Before timing, a temporary same-binary selector compared the
+  incumbent and candidate through the deployed ABI on five representative inputs
+  (fourth-token hit with value, first-token hit with remainder, unknown token,
+  longer-prefix mismatch, and empty input), checking return code, cursor/value offsets,
+  and mutated bytes; all **5/5** passed. The identical rewrite had already passed the
+  remote `conformance_diff_getsubopt` gate **4/4** and a randomized live-glibc
+  differential oracle with **150,000 comparisons and zero divergences**.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** The exact
+  target was first linked without a timeout via `RCH_REQUIRE_REMOTE=1 rch exec -- cargo
+  bench -j 1 --profile release -p frankenlibc-bench --features abi-bench --bench
+  glibc_baseline_bench --no-run` on `vmi1153651`. The sole measurement used the same
+  worker and target request with `getsubopt_single_pass --sample-size 30 --warm-up-time
+  0.2 --measurement-time 1 --noplot`. RCH again discarded the nominally warm pool and
+  rebuilt, but no timeout was imposed and no build duration entered the verdict.
+  Incumbent two-pass matching measured **266.86 ns** midpoint `[257.92, 275.77]`;
+  candidate one-pass matching measured **132.07 ns** `[126.03, 138.93]`, a **50.5%
+  latency reduction (2.02x throughput)** with non-overlapping intervals. The identical
+  candidate-null arm measured **130.20 ns** `[124.27, 136.51]`, only **1.4%** from the
+  candidate midpoint and overlapping it.
+- **DISPOSITION.** Kept the one-pass matcher in `3dc58abe9`; restored the temporary
+  selector/oracle harness byte-for-byte. No `release-perf`, local Cargo fallback, stash
+  creation/drop, or timeout-based verdict occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: `tdelete` removes the redundant lookup walk (`bd-87fps4`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` exposed only
