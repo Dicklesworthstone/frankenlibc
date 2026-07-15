@@ -936,7 +936,7 @@ fn is_managed_condvar(cond: *mut libc::pthread_cond_t) -> bool {
     condvar.magic.load(Ordering::Acquire) == MANAGED_CONDVAR_MAGIC
 }
 
-#[inline]
+#[inline(always)]
 fn native_pthread_self() -> libc::pthread_t {
     // Per-thread cache: pthread_self() is constant for the life of a thread, so
     // the first computed value is cached in pthread TLS and every later call

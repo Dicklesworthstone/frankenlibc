@@ -6,6 +6,40 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: force-inline the `thrd_current` identity-cache path (`bd-832e1c`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` exposed only
+  peer-owned broad performance work. The random/syscall seam had just produced a
+  no-ship, while current-head inspection showed that the open stdio double-lock bead
+  was stale behind newer pointer-keyed character caches and that qsort/bsearch plus
+  exp/log/pow were explicitly mined in this ledger. The bead database and ledger had
+  no prior `thrd_current` attempt.
+- **PROFILE / ONE CERTIFIED REWRITE.** Ordinary-release disassembly showed
+  `thrd_equal` already collapsed to a compare, and exported `pthread_self` already
+  embedded `native_pthread_self`, but `thrd_current` still emitted a
+  `push; call native_pthread_self; pop; ret` boundary. Changing the unchanged native
+  helper from `#[inline]` to `#[inline(always)]` removes only that redundant C11
+  wrapper call; thread-token selection, TLS-cache semantics, forced-native behavior,
+  and every cold path remain identical.
+- **EQUIVALENCE ORACLE.** The same release binary retained the exact pre-candidate
+  call shape behind an inline-never benchmark hook. Before timing, incumbent,
+  candidate, and candidate-null returned the same nonzero main-thread token.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** Both
+  commands pinned `vmi1293453` with `RCH_REQUIRE_REMOTE=1` and `--profile release`.
+  The untimed warm-up succeeded; RCH then rematerialized the identical worker-scoped
+  target for the measurement command, so its cold rebuild remained outside
+  Criterion's timed region. Criterion used 30 samples, 0.2s warm-up, and 0.5s
+  measurement per arm. The retained incumbent measured **3.2890 ns**
+  `[3.1751, 3.4023]`; the force-inline candidate measured **2.5085 ns**
+  `[2.4030, 2.6256]`, a **23.7% latency reduction / 1.31x speedup**; and the
+  identical candidate-null measured **2.6246 ns** `[2.5264, 2.7329]`.
+- **DISPOSITION.** Keep. The candidate's complete interval clears the incumbent and
+  overlaps the identical-code null-control floor. The temporary old-path hook and
+  benchmark arm were restored after proof, leaving only the production inlining
+  directive. Remote compilation emitted only pre-existing warnings in untouched
+  files. No local Cargo fallback, stash change, timeout, or timeout-based verdict
+  occurred.
+
 ## 2026-07-15 (cod / BlackThrush) — NO-SHIP: strict `getentropy` tracked-capacity bypass did not clear noise (`bd-lxm38p`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` surfaced a
