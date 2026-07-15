@@ -6,6 +6,40 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: strict `sigaddset` skips the Signal policy round trip (`bd-6i9yyr`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST CONTINUATION.** `bv --robot-triage`
+  exposed only a peer-owned performance directive. The preceding `sigismember` result
+  showed that the fresh signal-set vein was not thinning, while this ledger and the bead
+  database contained no prior `sigaddset` bypass rejection. The latency manifest
+  classifies `sigaddset` as cold/pending but attributes the shared strict
+  `runtime_math_decide_observe` reference at **205.5 ns** around a null/range/reserved
+  check and one bit OR.
+- **ONE CERTIFIED REWRITE.** In deployed strict mode Signal decisions are forced to
+  `Allow`. The shipped branch keeps the exact null, 1..=64, and reserved-signal 32/33
+  checks, preserves `EINVAL`, and applies the same bit update directly. Hardened mode
+  retains the incumbent decide/deny/observe path. No other signal-set function changed.
+- **EQUIVALENCE ORACLE.** A temporary retained incumbent helper compared return value,
+  errno, and all bytes of a patterned `sigset_t` against the candidate for every signal
+  **1..=64**. It separately covered out-of-range 0/65, reserved 32/33, and a null set
+  pointer: **64 signal cases + 5 invalid classes passed** before timing.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** Both
+  commands requested `vmi1293453` with `RCH_REQUIRE_REMOTE=1` and `--profile release`.
+  The uncapped warm-up linked `glibc_baseline_bench`; RCH then reaped that pool and rebuilt
+  the same target for the sole measurement, so the **4m10s** cold build remained outside
+  Criterion's samples and no timeout verdict was used. With 30 samples, 0.2s warm-up,
+  and 1s measurement per arm, incumbent policy midpoint was **1.4867 us**
+  `[1.4264, 1.5342]`, strict direct was **2.4000 ns** `[2.3177, 2.4704]`, a **99.84%
+  latency reduction / 619.5x throughput**, and the identical candidate-null midpoint was
+  **2.3251 ns** `[2.2383, 2.4096]`. Harness p50s were **1521.418 ns**, **2.396 ns**, and
+  **2.500 ns** respectively; candidate was only **3.2%** from the null midpoint.
+- **DISPOSITION.** Kept the strict-only branch in `531a1fcdd`; restored the temporary
+  incumbent/oracle harness byte-for-byte. A focused remote release gate passed all
+  **3/3** `sigaddset_*` integration tests. The builds emitted only pre-existing warnings
+  in untouched files. No `release-perf`, local Cargo fallback, stash change, or
+  timeout-based verdict occurred. The win remains honestly scoped to a
+  manifest-classified cold helper.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: strict `sigismember` skips the Signal policy round trip (`bd-ot4ots`)
 
 - **ROBOT TRIAGE / FRESH SUBSYSTEM.** `bv --robot-triage` exposed only a peer-owned
