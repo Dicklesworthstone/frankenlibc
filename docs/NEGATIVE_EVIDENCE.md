@@ -6,6 +6,45 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / BlackThrush) — REJECTED: compiler-TLS kernel-TID cache for `pthread_getspecific` (`bd-2of7hb`)
+
+- **ROBOT TRIAGE / FRESH SUBSYSTEM.** `bv --robot-triage` exposed only the
+  peer-owned allocator Swing-2 bead, so this turn left the thinning signal-set
+  vein for pthread TSD. The symbol-latency capture queue ranks `tss_get` as a
+  strict hot path at priority 170. Source attribution and release disassembly
+  showed the core `pthread_getspecific` lookup resolving the calling kernel TID
+  with `gettid` on every read; no prior ledger row had tested caching that TID.
+- **ONE CERTIFIED CANDIDATE.** The temporary candidate split the existing core
+  lookup into an explicit-TID helper and cached a positive kernel TID in compiler
+  TLS only for normal host-backed threads. Force-native/standalone paths retained
+  the raw syscall because those clone-created threads may lack `CLONE_SETTLS`.
+  Key ID, sequence validation, per-thread value lookup, policy guard, sensitive
+  context behavior, and the first-call syscall were unchanged.
+- **CORRECTNESS / ATTRIBUTION PROOF.** A remote ordinary-release core round-trip
+  test passed **1/1** on `vmi1293453`, including legacy and explicit-TID lookup
+  of the same `0xDEAD_BEEF` value. The same-binary benchmark also asserted the
+  retained legacy and candidate ABI paths returned the identical sentinel before
+  timing. The ABI integration binary compiled successfully; its force-native test
+  execution then aborted in the unrelated thread-harness join path with
+  `failed to join thread: No such process (os error 3)`, so that invalid runtime
+  result was not used as evidence.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** An
+  uncapped `--profile release` warm-up built `glibc_baseline_bench` on pinned
+  worker `vmi1293453` with `RCH_REQUIRE_REMOTE=1`. RCH rematerialized the same
+  worker-scoped target for the measurement command despite the completed warm-up;
+  that cold build was not timed or interrupted. Criterion then used 30 samples,
+  0.2s warm-up, and 0.5s measurement per arm. Retained legacy measured
+  **79.395 ns** `[76.724, 82.026]`; cached-TID candidate measured **102.59 ns**
+  `[90.936, 116.36]`, a **29.2% regression**, while the identical candidate-null
+  arm measured **123.56 ns** `[106.02, 139.02]`. Harness p50s independently
+  ordered legacy/candidate/null at **79.336 / 89.965 / 91.880 ns**.
+- **DISPOSITION.** Rejected: both candidate observations were slower than the
+  incumbent, and the candidate confidence interval did not overlap the legacy
+  interval. Compiler-TLS lookup and cache bookkeeping cost more here than the
+  removed `gettid` syscall. Production and temporary benchmark changes were
+  restored; only this negative-evidence row is retained. No `release-perf`, local
+  Cargo fallback, stash change, or timeout-based verdict occurred.
+
 ## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: strict `sigdelset` skips the Signal policy round trip (`bd-b3rc9i`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST CONTINUATION.** `bv --robot-triage`
