@@ -6,6 +6,42 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: strict `localeconv` returns its static table directly (`bd-6pypop`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` returned
+  only a peer-owned perf directive while allocator Swing-2 remained actively owned.
+  This retried the closed locale bead whose prior result was infrastructure-invalid:
+  its capped cold build never linked, so neither its oracle nor any timing ran.
+- **PROFILE / ONE CERTIFIED REWRITE.** Source attribution showed that post-startup
+  strict `localeconv` still entered `runtime_policy::decide_strict_observation` and
+  `observe` before returning the immutable C-locale `LCONV`. Strict mode forces this
+  input-free `ApiFamily::Locale` call to `Allow`; it has no caller pointer, mutation,
+  locale-dependent branch, denial, or repair result. The shipped rewrite returns
+  `&LCONV` directly only when `strict_passthrough_active()` is true. Hardened mode and
+  unit-test builds retain the incumbent policy path.
+- **EQUIVALENCE ORACLE.** Before timing, a temporary same-binary incumbent hook proved
+  exact old/new static-pointer identity and repeated-call pointer stability. Snapshots
+  matched for all **10 string fields and 14 numeric fields**, and the candidate snapshot
+  also matched `localeconv` from a private-namespace host glibc forced to the C locale.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** The
+  modified `glibc_baseline_bench` target was first linked without a timeout through
+  `RCH_REQUIRE_REMOTE=1 rch exec -- cargo bench -j 1 --profile release -p
+  frankenlibc-bench --features abi-bench --bench glibc_baseline_bench --no-run` on
+  `vmi1153651`. The sole measurement requested the same worker and target with
+  `localeconv_strict_bypass --sample-size 30 --warm-up-time 0.2 --measurement-time 1
+  --noplot`. RCH discarded the just-linked pool and cold-built again, but no timeout was
+  imposed and build duration did not enter the result. Criterion midpoint was **930.08
+  ns** `[502.65, 1683.8]` for the incumbent policy path versus **3.3920 ns** `[3.1558,
+  3.6408]` for the direct return: a **99.64% latency reduction / 274.2x throughput**.
+  The identical candidate-null midpoint was **3.0425 ns** `[2.9387, 3.1498]`. The
+  harness's per-iteration sample p50s were **439.636 ns**, **3.169 ns**, and **3.041 ns**
+  respectively, putting candidate only **4.2%** from its identical null arm while the
+  incumbent/candidate ratio remained **0.0072**, far outside the 0.905–1.105 null floor.
+- **DISPOSITION.** Kept the strict-only bypass in `a443b00ac`; restored the temporary
+  incumbent/oracle harness byte-for-byte. The ordinary-release build emitted only
+  pre-existing warnings in untouched code. No `release-perf`, local Cargo fallback,
+  stash creation/drop, or timeout-based verdict occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: eager `__ctype_*_loc` TLS table slots (`bd-m4czbr`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` returned
