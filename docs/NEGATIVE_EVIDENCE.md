@@ -6,6 +6,43 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / BlackThrush) — NO-SHIP: force-inline 64-bit `ldiv`/`lldiv` stayed below the deployed floor (`bd-n7hoex`)
+
+- **ROBOT TRIAGE / FRESH PIVOT.** `bv --robot-triage` exposed only broad
+  correctness work and peer-owned performance beads. The allocator lane was already
+  diffuse in this ledger, so this turn moved to the fresh stdlib integer-math seam;
+  neither the ledger nor the bead database contained an earlier `ldiv`/`lldiv`
+  inlining attempt.
+- **PROFILE FIRST / ONE CERTIFIED REWRITE.** Ordinary-release disassembly showed
+  exported `ldiv` as a 15-byte `push; call *GOT; pop; ret` wrapper around the core
+  quotient/remainder kernel; `lldiv`/`imaxdiv` had the same redundant boundary. The
+  candidate added only `#[inline(always)]` to the core `ldiv` and `lldiv` functions.
+  The zero-divisor guard, signed-overflow handling, quotient/remainder calculation,
+  and ABI result layout were unchanged.
+- **EQUIVALENCE ORACLES.** Before timing, the same binary compared the retained
+  no-inline incumbent, force-inline candidate, and identical candidate-null over 72
+  numerator/divisor edge pairs, including zero divisors and `i64::MIN / -1`; every
+  result matched exactly. The focused remote glibc differential suite also passed
+  all 3 tests (`abs` family, `ldiv`/`lldiv`, and `div`).
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** The
+  warm-up and measurement pinned worker `vmi1293453`, set
+  `RCH_REQUIRE_REMOTE=1`, and used `--profile release`. RCH rematerialized the target
+  before the measurement command, but that build completed outside Criterion's
+  timed region. With 30 samples, 0.2s warm-up, and 0.5s measurement per arm, the
+  retained incumbent measured **2.6914 ns** `[2.6541, 2.7394]`; the force-inline
+  candidate measured **2.7164 ns** `[2.6908, 2.7516]`; and the identical
+  candidate-null measured **2.7751 ns** `[2.7222, 2.8323]`.
+- **DISPOSITION.** Reject and restore source. The candidate was **0.93% slower** at
+  the point estimate, its interval overlapped the incumbent, and its delta was
+  smaller than the **2.16%** candidate-to-null drift. The cross-crate call boundary
+  is below this benchmark's divider/loop floor. Do not retry annotation-only
+  inlining for this family; a future attempt must change the division kernel or use
+  a materially different subsystem. The temporary A/B hook was also removed.
+- **TOOLING NOTE.** Remote-only `cargo fmt --all -- --check` was refused by RCH as
+  non-compilation command `RCH-E301`; no local Cargo or formatter fallback was used.
+  Compilation, differential testing, and the benchmark all ran remotely. No stash
+  was modified, and no timeout was treated as evidence.
+
 ## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: force-inline the `thrd_current` identity-cache path (`bd-832e1c`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` exposed only
