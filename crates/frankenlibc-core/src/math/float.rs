@@ -806,16 +806,26 @@ pub const FP_NORMAL: i32 = 4;
 /// Classify a double-precision float (glibc `__fpclassify`).
 #[inline]
 pub fn fpclassify(x: f64) -> i32 {
-    if x.is_nan() {
-        FP_NAN
-    } else if x.is_infinite() {
-        FP_INFINITE
-    } else if x == 0.0 {
-        FP_ZERO
-    } else if x.is_subnormal() {
-        FP_SUBNORMAL
-    } else {
-        FP_NORMAL
+    const ABS_MASK: u64 = 0x7fff_ffff_ffff_ffff;
+    const EXP_MASK: u64 = 0x7ff0_0000_0000_0000;
+
+    let magnitude = x.to_bits() & ABS_MASK;
+    match magnitude & EXP_MASK {
+        0 => {
+            if magnitude == 0 {
+                FP_ZERO
+            } else {
+                FP_SUBNORMAL
+            }
+        }
+        EXP_MASK => {
+            if magnitude == EXP_MASK {
+                FP_INFINITE
+            } else {
+                FP_NAN
+            }
+        }
+        _ => FP_NORMAL,
     }
 }
 
@@ -1214,6 +1224,18 @@ mod tests {
         assert_eq!(fpclassify(f64::NEG_INFINITY), FP_INFINITE);
         assert_eq!(fpclassify(f64::NAN), FP_NAN);
         assert_eq!(fpclassify(5e-324), FP_SUBNORMAL); // smallest positive subnormal
+
+        for (bits, expected) in [
+            (0x0000_0000_0000_0001, FP_SUBNORMAL),
+            (0x000f_ffff_ffff_ffff, FP_SUBNORMAL),
+            (0x0010_0000_0000_0000, FP_NORMAL),
+            (0x7fef_ffff_ffff_ffff, FP_NORMAL),
+            (0x7ff0_0000_0000_0001, FP_NAN),
+            (0x7ff8_0000_0000_0000, FP_NAN),
+        ] {
+            assert_eq!(fpclassify(f64::from_bits(bits)), expected);
+            assert_eq!(fpclassify(f64::from_bits(bits | (1_u64 << 63))), expected);
+        }
     }
 
     #[test]
