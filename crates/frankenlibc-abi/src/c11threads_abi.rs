@@ -270,7 +270,10 @@ pub unsafe extern "C" fn mtx_lock(mtx: *mut MtxT) -> c_int {
 /// C11 `mtx_trylock` — try to lock a mutex without blocking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mtx_trylock(mtx: *mut MtxT) -> c_int {
-    if !tracked_required_object_fits(mtx) {
+    // Strict mode trusts caller-owned object bounds, while the delegated pthread
+    // implementation still rejects null and misaligned mutex pointers. Hardened
+    // mode retains the tracked-allocation size check before any object access.
+    if !crate::runtime_policy::strict_passthrough_active() && !tracked_required_object_fits(mtx) {
         return THRD_ERROR;
     }
     pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_trylock(mtx) })
