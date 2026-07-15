@@ -6,6 +6,43 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: eager `__ctype_*_loc` TLS table slots (`bd-m4czbr`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` returned
+  only a peer-owned perf directive while allocator Swing-2 remained actively owned.
+  This retried the closed ctype bead whose prior result was infrastructure-invalid:
+  its capped cold build never linked, so neither its oracle nor any timing ran.
+- **PROFILE / ONE CERTIFIED REWRITE.** The retained uncovered-hotpath manifest ranks
+  `__ctype_b_loc`, `__ctype_tolower_loc`, and `__ctype_toupper_loc` **7–9** among
+  strict hot paths needing a symbol gate. Current-source attribution confirmed that
+  their default TLS `Cell`s were initialized lazily: every steady-state macro lookup
+  still loaded the immutable pointer and tested an impossible null. The candidate
+  initializes each per-thread cell directly to its final static table-plus-128 pointer
+  and removes only those three null branches. The mutable outer slot, table layout,
+  signed-char/EOF indexing, and separate `owned-tls-cache` path are unchanged.
+- **EQUIVALENCE ORACLE.** A temporary same-binary reconstruction exercised the exact
+  incumbent lazy cells to steady state. Incumbent and candidate outer slots were stable,
+  their inner pointers were identical, and classification/toupper/tolower values matched
+  both the incumbent and private-namespace glibc for EOF plus every unsigned character:
+  **3 tables x 257 entries = 771 comparisons, all passing**.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** The
+  modified `glibc_baseline_bench` target was first linked without a timeout through
+  `RCH_REQUIRE_REMOTE=1 rch exec -- cargo bench -j 1 --profile release -p
+  frankenlibc-bench --features abi-bench --bench glibc_baseline_bench --no-run` on
+  `vmi1153651`. The sole measurement used the same worker request and target with
+  `ctype_loc_eager --sample-size 30 --warm-up-time 0.2 --measurement-time 1 --noplot`.
+  RCH discarded the just-linked pool and rebuilt, but no timeout was imposed and build
+  duration did not enter the result. For one aggregate of the three accessors, incumbent
+  lazy steady state measured **9.1324 ns** midpoint `[8.0626, 10.205]`; eager candidate
+  measured **7.6274 ns** `[7.2388, 8.1199]`, a **16.5% latency reduction (1.20x
+  throughput)** and ratio **0.835**, outside the ledger's 0.905–1.105 null floor. The
+  identical candidate-null arm measured **7.3217 ns** `[7.0243, 7.7015]`, only **4.2%**
+  from candidate and overlapping it.
+- **DISPOSITION.** Kept the eager TLS initialization in `696aae52d`; restored the
+  temporary incumbent/oracle harness byte-for-byte. The ordinary-release build emitted
+  only pre-existing warnings in untouched code. No `release-perf`, local Cargo fallback,
+  stash creation/drop, or timeout-based verdict occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: `getsubopt` matches each token in one pass (`bd-3ollh0.1`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` exposed only
