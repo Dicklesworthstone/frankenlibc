@@ -1489,16 +1489,26 @@ pub const FP_NORMAL_F32: i32 = 4;
 /// Classify a single-precision float (glibc `__fpclassifyf`).
 #[inline]
 pub fn fpclassifyf(x: f32) -> i32 {
-    if x.is_nan() {
-        FP_NAN_F32
-    } else if x.is_infinite() {
-        FP_INFINITE_F32
-    } else if x == 0.0 {
-        FP_ZERO_F32
-    } else if x.is_subnormal() {
-        FP_SUBNORMAL_F32
-    } else {
-        FP_NORMAL_F32
+    const ABS_MASK: u32 = 0x7fff_ffff;
+    const EXP_MASK: u32 = 0x7f80_0000;
+
+    let magnitude = x.to_bits() & ABS_MASK;
+    match magnitude & EXP_MASK {
+        0 => {
+            if magnitude == 0 {
+                FP_ZERO_F32
+            } else {
+                FP_SUBNORMAL_F32
+            }
+        }
+        EXP_MASK => {
+            if magnitude == EXP_MASK {
+                FP_INFINITE_F32
+            } else {
+                FP_NAN_F32
+            }
+        }
+        _ => FP_NORMAL_F32,
     }
 }
 
@@ -2335,9 +2345,24 @@ mod tests {
     fn fpclassifyf_sanity() {
         assert_eq!(fpclassifyf(1.0), FP_NORMAL_F32);
         assert_eq!(fpclassifyf(0.0), FP_ZERO_F32);
+        assert_eq!(fpclassifyf(-0.0), FP_ZERO_F32);
         assert_eq!(fpclassifyf(f32::INFINITY), FP_INFINITE_F32);
+        assert_eq!(fpclassifyf(f32::NEG_INFINITY), FP_INFINITE_F32);
         assert_eq!(fpclassifyf(f32::NAN), FP_NAN_F32);
         assert_eq!(fpclassifyf(1e-45), FP_SUBNORMAL_F32); // smallest positive subnormal f32
+
+        let boundary_cases = [
+            (0x0000_0001, FP_SUBNORMAL_F32),
+            (0x007f_ffff, FP_SUBNORMAL_F32),
+            (0x0080_0000, FP_NORMAL_F32),
+            (0x7f7f_ffff, FP_NORMAL_F32),
+            (0x7f80_0001, FP_NAN_F32),
+            (0x7fc0_0000, FP_NAN_F32),
+        ];
+        for (bits, expected) in boundary_cases {
+            assert_eq!(fpclassifyf(f32::from_bits(bits)), expected);
+            assert_eq!(fpclassifyf(f32::from_bits(bits | (1_u32 << 31))), expected);
+        }
     }
 
     #[test]
