@@ -1086,8 +1086,34 @@ pub unsafe extern "C" fn sigdelset(set: *mut libc::sigset_t, signum: c_int) -> c
 // sigismember
 // ---------------------------------------------------------------------------
 
+#[inline(always)]
+unsafe fn sigismember_valid(set: *const libc::sigset_t, signum: c_int) -> c_int {
+    let idx = (signum - 1) as usize;
+    let bits_per_word = std::mem::size_of::<libc::c_ulong>() * 8;
+    let word = idx / bits_per_word;
+    let bit = idx % bits_per_word;
+    let words = set as *const libc::c_ulong;
+    // SAFETY: the caller established a non-null `sigset_t` and a signal in
+    // 1..=64, so `word` selects storage within that object.
+    let val = unsafe { *words.add(word) };
+    i32::from((val & (1usize.wrapping_shl(bit as u32) as libc::c_ulong)) != 0)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigismember(set: *const libc::sigset_t, signum: c_int) -> c_int {
+    // In strict mode `decide()` always overrides Signal decisions to Allow and
+    // `observe()` cannot change this pure lookup. Keep the explicit ABI input
+    // checks, but avoid the runtime-kernel evidence round trip. Hardened mode
+    // retains the full pointer-validation and observation path below.
+    if runtime_policy::strict_passthrough_active() {
+        if set.is_null() || !signal_core::valid_signal(signum) {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
+        // SAFETY: null and signal-range checks are complete above.
+        return unsafe { sigismember_valid(set, signum) };
+    }
+
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Signal,
         set as usize,
@@ -1107,17 +1133,8 @@ pub unsafe extern "C" fn sigismember(set: *const libc::sigset_t, signum: c_int) 
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
-    let idx = (signum - 1) as usize;
-    let bits_per_word = std::mem::size_of::<libc::c_ulong>() * 8;
-    let word = idx / bits_per_word;
-    let bit = idx % bits_per_word;
-    let words = set as *const libc::c_ulong;
-    let val = unsafe { *words.add(word) };
-    let result = if (val & (1usize.wrapping_shl(bit as u32) as libc::c_ulong)) != 0 {
-        1
-    } else {
-        0
-    };
+    // SAFETY: null and signal-range checks are complete above.
+    let result = unsafe { sigismember_valid(set, signum) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
     result
 }
