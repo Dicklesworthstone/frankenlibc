@@ -6,6 +6,39 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — REJECTED / NOT SHIPPED: rand48 exact dyadic bit construction (`bd-vya7yn`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` returned
+  only a broad perf directive owned by another agent; allocator Swing was actively
+  peer-owned, while concrete stdio/qsort leaves were stale or assigned. This retried
+  the fresh self-contained `rand48` conversion bead whose prior result was
+  infrastructure-invalid because its cold build never reached either oracle or timing.
+- **PROFILE / ONE CERTIFIED REWRITE.** Source attribution isolated the remaining
+  explicit-state `erand48` work to converting its 48-bit LCG state to `f64` and scaling
+  by `2^-48`. The candidate placed the state in the high 48 IEEE-754 fraction bits,
+  constructed `1.0 + state * 2^-48`, and subtracted `1.0`. Sterbenz exactness made this
+  a bit-preserving replacement for the incumbent integer conversion and power-of-two
+  scale, without changing the LCG transition or state layout.
+- **CORRECTNESS ORACLE.** Before timing, a temporary same-binary oracle compared the
+  incumbent conversion, candidate conversion, production `erand48` result, and all
+  three state words across **1,000,011** deterministic LCG transitions. Every output
+  bit and state comparison passed.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** The
+  exact target was first linked without a timeout via `RCH_REQUIRE_REMOTE=1 rch exec
+  -- cargo bench -j 1 --profile release -p frankenlibc-bench --features abi-bench
+  --bench rng_membrane_ab_bench --no-run` on `vmi1293453`. The sole measurement used
+  the same worker and target request with `--sample-size 30 --warm-up-time 0.2
+  --measurement-time 1 --noplot`. RCH discarded the nominally warm pool and rebuilt
+  it, but no timeout or build duration entered the verdict. Legacy measured **5.4710
+  ns** midpoint `[5.3549, 5.6097]`; candidate measured **5.8770 ns** `[5.6747,
+  6.0626]`, a **7.42% regression** with non-overlapping intervals. The identical
+  candidate-null arm measured **6.1151 ns** `[5.6866, 6.6724]` and overlapped the
+  candidate, confirming the candidate distribution rather than a legacy-only outlier.
+- **DISPOSITION.** Rejected and restored both production and temporary benchmark
+  source. This exact significand-construction micro-lever should not be retried without
+  materially different code generation or target evidence. No `release-perf`, local
+  Cargo fallback, stash creation/drop, or timeout-based verdict occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: convex-safe approachability updates skip recomputation (`bd-1jb9s5`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` exposed no
