@@ -6,6 +6,39 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: `tdelete` removes the redundant lookup walk (`bd-87fps4`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` exposed only
+  peer-owned concrete perf leaves. This retried the self-contained search bead whose
+  prior result was infrastructure-invalid: its cold build timed out before reaching
+  either the oracle or timing, so it had never produced negative performance evidence.
+- **PROFILE / ONE STRUCTURAL LEVER.** Source attribution showed that every successful
+  `RbTree::delete` first called `find(needle)` and then traversed the LLRB again in
+  `delete_rec`, paying two indirect comparator walks for the POSIX `tdelete` hot path.
+  The candidate makes `delete_rec` the sole walk and derives success from its returned
+  key. No balancing primitive, comparator contract, node layout, or ABI result changed.
+- **CORRECTNESS AND WORK ORACLE.** Before timing, a temporary same-binary oracle
+  compared incumbent `find`-then-delete with the candidate through **2,000 distinct
+  successful deletions**, checking removed keys, lengths, and checkpointed in-order
+  sets. Missing keys below, inside, and above the populated range preserved the exact
+  set. Comparator calls fell from **60,967** to **43,966** (**27.9%**). A durable unit
+  test also checks absent-delete set preservation and every LLRB invariant.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** The
+  corrected target was first linked without a timeout using `RCH_REQUIRE_REMOTE=1 rch
+  exec -- cargo bench -j 1 --profile release -p frankenlibc-bench --bench
+  tsearch_ab_bench --no-run` on `vmi1293453`. The sole measurement was pinned to the
+  same worker with `--sample-size 30 --warm-up-time 0.2 --measurement-time 1 --noplot`.
+  RCH discarded the nominally warm pool and rebuilt before running, but no build time
+  entered the result and no timeout was imposed. The incumbent measured **663.12 us**
+  midpoint `[619.48, 702.54]`; the candidate measured **484.08 us** `[450.63,
+  519.20]`, a **27.0% latency reduction** with non-overlapping intervals. The
+  identical candidate-null arm measured **535.85 us** `[493.41, 586.01]` and
+  overlapped the candidate; the measured win remains roughly 16 percentage points
+  beyond that run-order/null-control median spread.
+- **DISPOSITION.** Kept the one-walk deletion and durable invariant proof in
+  `9c5b116b1`; restored the temporary A/B harness byte-for-byte. No `release-perf`,
+  local Cargo fallback, stash creation/drop, or timeout-based verdict occurred.
+
 ## 2026-07-14 (cod / BlackThrush) — REJECTED / NOT SHIPPED: rand48 exact dyadic bit construction (`bd-vya7yn`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` returned
