@@ -6,6 +6,44 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: strict `getrandom` bypasses redundant membrane bookkeeping (`bd-maq8lp`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` exposed only
+  the peer-owned allocator Swing-2 performance bead, so this turn left it untouched
+  and pivoted to the fresh random/syscall subsystem. The ledger and bead database
+  contained no prior `getrandom` performance attempt. Release disassembly attributed
+  the 303-byte wrapper to out-of-line `runtime_policy::decide`, allocation-capacity
+  lookup, raw `SYS_getrandom`, and `runtime_policy::observe`; in deployed strict mode,
+  successful `IoFd` calls are unconditionally allowed and their non-adverse observation
+  immediately returns.
+- **ONE CERTIFIED REWRITE.** For deployed strict mode, `getrandom` now passes the
+  caller's valid buffer and requested length directly to the same raw syscall. Kernel
+  return values and errno propagation are unchanged, and syscall errors still emit the
+  incumbent adverse `IoFd` observation. Hardened mode and tests retain the complete
+  incumbent decision, denial, tracked-capacity, and observation path.
+- **EQUIVALENCE ORACLE.** A temporary `#[inline(never)]` copy of the exact incumbent
+  lived in the same release binary as the candidate. Before timing, both paths filled
+  independent writable 32-byte buffers and returned exactly 32, and both returned zero
+  for the Linux zero-length/null-pointer boundary. The random payload itself was
+  intentionally not compared; the proof obligation is equal syscall contract and
+  buffer extent, not identical CSPRNG output.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** Both
+  commands pinned `vmi1293453` with `RCH_REQUIRE_REMOTE=1` and `--profile release`.
+  The untimed warm-up completed successfully in 4m19s. RCH then unexpectedly
+  rematerialized the same worker-scoped target, causing a second 4m13s build outside
+  Criterion's timed region; neither command used a timeout or local fallback, and the
+  worker never crossed two minutes without output. Criterion used 30 samples, 0.2s
+  warm-up, and 0.5s measurement per arm for successful 32-byte requests. The retained
+  incumbent measured **292.73 ns** `[258.75, 343.22]`; the strict direct syscall
+  measured **242.08 ns** `[230.22, 256.56]`, a **17.3% latency reduction / 1.21x
+  throughput**; and the identical candidate-null control measured **237.85 ns**
+  `[232.43, 243.92]`.
+- **DISPOSITION.** Kept the strict direct-syscall path in `022d329d4`; its complete
+  confidence interval clears the incumbent interval and overlaps the identical-code
+  null-control floor. The temporary incumbent/oracle harness was restored byte-for-byte.
+  Remote compilation emitted only pre-existing warnings in untouched files. No
+  `release-perf`, local Cargo fallback, stash change, or timeout-based verdict occurred.
+
 ## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: `fpclassifyf` classifies `f32` from exponent and fraction bits (`bd-a3vxfu`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` exposed only
