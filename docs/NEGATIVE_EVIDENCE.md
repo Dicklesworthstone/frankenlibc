@@ -6,6 +6,43 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: strict `mtx_trylock` skips redundant allocation-bounds lookup (`bd-d8f9sm`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` exposed only
+  the peer-owned allocator Swing-2 performance bead, so this turn pivoted to the
+  fresh C11 mutex subsystem. The symbol-latency capture queue ranks `mtx_trylock`
+  as fixture-covered, strict-hotpath priority 170, and this ledger contained no
+  prior attempt on it. Release disassembly attributed the first post-null call to
+  out-of-line `known_remaining`, ahead of the delegated pthread mutex validation
+  and atomic try-lock path.
+- **ONE CERTIFIED REWRITE.** In deployed strict mode, `mtx_trylock` now trusts
+  caller-owned object bounds and delegates directly to `pthread_mutex_trylock`,
+  which still rejects null/misaligned pointers and maps success/busy/error through
+  the same C11 return-code conversion. Hardened and test builds retain the complete
+  tracked-allocation size check before object access; no sibling C11 entrypoint was
+  changed.
+- **EQUIVALENCE ORACLE.** A temporary retained-incumbent function lived in the same
+  release binary as the candidate. Before timing, the harness asserted identical
+  C11 results for null, misaligned, unlocked-success, and already-owned-busy cases.
+  All assertions passed; the temporary helper and benchmark were then restored
+  byte-for-byte.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** Both
+  commands pinned `vmi1293453` with `RCH_REQUIRE_REMOTE=1` and `--profile release`.
+  The uncapped warm-up completed in 4m15s. RCH rematerialized the identical
+  worker-scoped target for the measurement command, causing another 4m01s build;
+  neither build was timed or interrupted. Criterion then used 30 samples, 0.2s
+  warm-up, and 0.5s measurement per arm. On an already-owned normal mutex, retained
+  incumbent measured **7.7396 ns** `[7.6320, 7.8730]`; strict direct measured
+  **6.2225 ns** `[6.1348, 6.3141]`, a **19.6% latency reduction / 1.24x throughput**;
+  and the identical candidate-null midpoint was **6.4698 ns** `[6.3257, 6.6961]`.
+  Harness p50s independently ordered incumbent/candidate/null at
+  **8.088 / 6.254 / 6.464 ns**.
+- **DISPOSITION.** Kept the strict-only branch in `87fc6d7b7`; the candidate
+  confidence interval is fully below the incumbent interval and sits at the
+  identical-candidate measurement floor. The remote build emitted only pre-existing
+  warnings in untouched files. No `release-perf`, local Cargo fallback, stash
+  change, or timeout-based verdict occurred.
+
 ## 2026-07-15 (cod / BlackThrush) — REJECTED: compiler-TLS kernel-TID cache for `pthread_getspecific` (`bd-2of7hb`)
 
 - **ROBOT TRIAGE / FRESH SUBSYSTEM.** `bv --robot-triage` exposed only the
