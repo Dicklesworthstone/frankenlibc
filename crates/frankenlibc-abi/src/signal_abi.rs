@@ -1070,8 +1070,36 @@ pub unsafe extern "C" fn sigaddset(set: *mut libc::sigset_t, signum: c_int) -> c
 // sigdelset
 // ---------------------------------------------------------------------------
 
+#[inline(always)]
+unsafe fn sigdelset_valid(set: *mut libc::sigset_t, signum: c_int) {
+    let idx = (signum - 1) as usize;
+    let bits_per_word = std::mem::size_of::<libc::c_ulong>() * 8;
+    let word = idx / bits_per_word;
+    let bit = idx % bits_per_word;
+    let words = set as *mut libc::c_ulong;
+    // SAFETY: the caller established a non-null `sigset_t`, a signal in
+    // 1..=64, and excluded glibc's reserved signals 32 and 33.
+    unsafe { *words.add(word) &= !(1usize.wrapping_shl(bit as u32) as libc::c_ulong) };
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigdelset(set: *mut libc::sigset_t, signum: c_int) -> c_int {
+    // Strict mode forces Signal decisions to Allow. Preserve every ABI input
+    // check and the exact bit update, but skip the runtime-kernel evidence
+    // round trip. Hardened mode retains the full policy path below.
+    if runtime_policy::strict_passthrough_active() {
+        if set.is_null()
+            || !signal_core::valid_signal(signum)
+            || signal_core::glibc_reserved_signal(signum)
+        {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
+        // SAFETY: null, range, and reserved-signal checks are complete above.
+        unsafe { sigdelset_valid(set, signum) };
+        return 0;
+    }
+
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Signal,
         set as usize,
@@ -1096,12 +1124,8 @@ pub unsafe extern "C" fn sigdelset(set: *mut libc::sigset_t, signum: c_int) -> c
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
-    let idx = (signum - 1) as usize;
-    let bits_per_word = std::mem::size_of::<libc::c_ulong>() * 8;
-    let word = idx / bits_per_word;
-    let bit = idx % bits_per_word;
-    let words = set as *mut libc::c_ulong;
-    unsafe { *words.add(word) &= !(1usize.wrapping_shl(bit as u32) as libc::c_ulong) };
+    // SAFETY: null, range, and reserved-signal checks are complete above.
+    unsafe { sigdelset_valid(set, signum) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
     0
 }
