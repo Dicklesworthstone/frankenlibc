@@ -15,6 +15,8 @@
 //! Bead: CONFORMANCE: libc semaphore.h diff matrix.
 
 use std::ffi::{c_int, c_uint, c_void};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use frankenlibc_abi::unistd_abi as fl;
 
@@ -29,6 +31,9 @@ unsafe extern "C" {
 }
 
 const SEM_T_BYTES: usize = 64; // glibc sem_t is 32 bytes; pad for safety
+
+#[repr(align(8))]
+struct AlignedSem([u8; SEM_T_BYTES]);
 
 #[derive(Debug)]
 struct Divergence {
@@ -164,6 +169,46 @@ fn diff_sem_wait_decrements_value() {
         "sem_wait divergences:\n{}",
         render_divs(&divs)
     );
+}
+
+#[test]
+fn sem_post_wakes_a_registered_waiter() {
+    let mut sem = Box::new(AlignedSem([0; SEM_T_BYTES]));
+    let sem_addr = sem.0.as_mut_ptr() as usize;
+    assert_eq!(unsafe { fl::sem_init(sem_addr as *mut c_void, 0, 0) }, 0);
+
+    let waiter = std::thread::spawn(move || unsafe { fl::sem_wait(sem_addr as *mut c_void) });
+
+    // The second sem_t word is FrankenLibC's waiter registration count. Waiting
+    // for it makes this a deterministic test of the actual sleeping/wake path.
+    // SAFETY: `sem` remains allocated and 8-byte aligned until after join.
+    let waiter_count = unsafe {
+        &*((sem_addr as *const u8).add(std::mem::size_of::<i32>()) as *const AtomicU32)
+    };
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut registered = false;
+    while Instant::now() < deadline {
+        if waiter_count.load(Ordering::SeqCst) != 0 {
+            registered = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+
+    // Posting also guarantees cleanup if registration did not become visible
+    // before the deadline, so a failed assertion cannot strand the test thread.
+    assert_eq!(unsafe { fl::sem_post(sem_addr as *mut c_void) }, 0);
+    assert_eq!(waiter.join().expect("sem_wait thread panicked"), 0);
+    assert!(registered, "sem_wait did not register before sleeping");
+    assert_eq!(waiter_count.load(Ordering::SeqCst), 0);
+
+    let mut value = -1;
+    assert_eq!(
+        unsafe { fl::sem_getvalue(sem_addr as *mut c_void, &mut value) },
+        0
+    );
+    assert_eq!(value, 0);
+    assert_eq!(unsafe { fl::sem_destroy(sem_addr as *mut c_void) }, 0);
 }
 
 #[test]

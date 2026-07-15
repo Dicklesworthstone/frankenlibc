@@ -6,6 +6,49 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: waiter registration skips uncontended `sem_post` futex wakes (`bd-dy770g`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
+  exposed broad correctness work and peer-owned performance lanes. Recent string,
+  math, stdio, allocator, and integer-division seams were already represented in
+  this ledger, while neither the ledger nor the bead database contained a POSIX
+  semaphore performance attempt, so this turn moved to the fresh semaphore
+  subsystem.
+- **PROFILE-FIRST ATTRIBUTION / ONE LEVER.** Before editing, the exported
+  `sem_post` path was traced from its atomic count increment directly into an
+  unconditional `FUTEX_WAKE_PRIVATE` syscall, even when no thread could be asleep.
+  The candidate uses the spare second 32-bit word of Linux `sem_t` as a registered
+  waiter count and enters the kernel only when that count is nonzero. The first-word
+  value representation, overflow contract, fast `sem_wait`/`sem_trywait` behavior,
+  and named-semaphore mapping size are unchanged.
+- **NO-LOST-WAKE PROOF / CONFORMANCE ORACLE.** A slow waiter registers before
+  rechecking the value. Registration, the recheck, the post increment, and the
+  poster's waiter-count load are sequentially consistent: in the global order,
+  either the poster sees the registration and wakes the futex, or the waiter sees
+  the posted token and never sleeps. An RAII registration removes the count on every
+  success/error exit. The focused remote semaphore differential suite passed all
+  **8/8** tests, including a deterministic blocked-waiter wake and post-join
+  waiter-count/value cleanup.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** The
+  build, test, warm-up, and measurement pinned worker `vmi1293453`, set
+  `RCH_REQUIRE_REMOTE=1`, and used `--profile release`. The untimed Criterion
+  warm-up build completed first. RCH rematerialized the target for the measurement
+  and rebuilt it outside Criterion's timed region; no build was timeout-wrapped.
+  Criterion then ran only the uncontended `sem_post` + `sem_trywait` cycle with 10
+  samples, 0.1s warm-up, and 0.2s measurement per arm. The exact retained
+  unconditional-wake incumbent measured **94.533 ns** `[89.446, 99.698]`; the
+  waiter-gated candidate measured **11.487 ns** `[11.399, 11.550]`; and the
+  identical candidate-null measured **11.592 ns** `[11.387, 12.070]`.
+- **DISPOSITION.** Keep: the candidate is an **87.8% latency reduction / 8.23x
+  speedup**, its complete interval clears the incumbent by a wide margin, and it
+  overlaps the identical-code null-control floor. The temporary incumbent hook and
+  benchmark arms were removed after proof. Direct execution of the warm remote
+  binary was attempted but RCH correctly refused the non-compilation command with
+  `RCH-E301`; it did not run locally and was not treated as evidence. Remote builds
+  emitted only pre-existing warnings in untouched files. No stash was modified,
+  no `release-perf` profile or local fallback was used, and no timeout informed the
+  verdict.
+
 ## 2026-07-15 (cod / BlackThrush) — NO-SHIP: force-inline 64-bit `ldiv`/`lldiv` stayed below the deployed floor (`bd-n7hoex`)
 
 - **ROBOT TRIAGE / FRESH PIVOT.** `bv --robot-triage` exposed only broad

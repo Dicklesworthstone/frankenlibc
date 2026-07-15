@@ -5071,6 +5071,35 @@ unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI
     unsafe { &*(sem as *const std::sync::atomic::AtomicI32) }
 }
 
+/// Interpret the second word of `sem_t` as the number of registered waiters.
+///
+/// Keeping this count lets `sem_post` avoid entering the kernel when no thread
+/// can be asleep on the futex. The value word remains at offset zero, preserving
+/// the existing representation and the Linux `sem_t` layout.
+unsafe fn sem_waiters_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicU32 {
+    // SAFETY: callers provide a valid, suitably aligned Linux sem_t, which is
+    // at least 32 bytes. Offset four is therefore an aligned AtomicU32 slot.
+    unsafe {
+        &*((sem as *const u8).add(std::mem::size_of::<i32>())
+            as *const std::sync::atomic::AtomicU32)
+    }
+}
+
+struct SemWaiterRegistration(&'static std::sync::atomic::AtomicU32);
+
+impl Drop for SemWaiterRegistration {
+    fn drop(&mut self) {
+        self.0
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+unsafe fn sem_register_waiter(sem: *mut c_void) -> SemWaiterRegistration {
+    let waiters = unsafe { sem_waiters_as_atomic(sem) };
+    waiters.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    SemWaiterRegistration(waiters)
+}
+
 fn sem_futex_wait(word: *mut c_void, expected: i32) -> c_int {
     match unsafe {
         syscall::sys_futex(
@@ -5292,6 +5321,7 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, mut args: .
     // If we just created the semaphore, initialize the futex word.
     if created {
         let atom = unsafe { &*(ptr as *const std::sync::atomic::AtomicI32) };
+        unsafe { sem_waiters_as_atomic(ptr) }.store(0, std::sync::atomic::Ordering::Relaxed);
         atom.store(initial_value as i32, std::sync::atomic::Ordering::Release);
     }
 
@@ -5347,6 +5377,7 @@ pub unsafe extern "C" fn sem_init(sem: *mut c_void, _pshared: c_int, value: c_ui
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
+    unsafe { sem_waiters_as_atomic(sem) }.store(0, std::sync::atomic::Ordering::Relaxed);
     atom.store(value as i32, std::sync::atomic::Ordering::Release);
     0
 }
@@ -5370,15 +5401,16 @@ pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
-    let old = atom.fetch_add(1, std::sync::atomic::Ordering::Release);
+    let old = atom.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if old < 0 || old == i32::MAX {
         // Overflow protection
         atom.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         unsafe { set_abi_errno(libc::EOVERFLOW) };
         return -1;
     }
-    // Wake one waiter
-    sem_futex_wake(sem, 1);
+    if unsafe { sem_waiters_as_atomic(sem) }.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+        sem_futex_wake(sem, 1);
+    }
     0
 }
 
@@ -5405,6 +5437,30 @@ pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
             return 0;
         }
         if val <= 0 {
+            break;
+        }
+    }
+
+    // Register before rechecking the value. With the matching SeqCst value
+    // increment and waiter load in sem_post, either the poster observes this
+    // registration and wakes us, or this thread observes the posted token and
+    // never sleeps. This rules out the lost-wake store-buffering execution.
+    let _registration = unsafe { sem_register_waiter(sem) };
+    loop {
+        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
+        if val > 0
+            && atom
+                .compare_exchange_weak(
+                    val,
+                    val - 1,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .is_ok()
+        {
+            return 0;
+        }
+        if val <= 0 {
             let ret = sem_futex_wait(sem, val);
             if ret < 0 {
                 let err = -ret;
@@ -5416,7 +5472,7 @@ pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
                     unsafe { set_abi_errno(err) };
                     return -1;
                 }
-                // EAGAIN is spurious wakeup or value mismatch — retry.
+                // EAGAIN is a value mismatch or spurious wakeup — retry.
             }
         }
     }
@@ -5480,6 +5536,26 @@ pub unsafe extern "C" fn sem_timedwait(
                 unsafe { set_abi_errno(libc::EINVAL) };
                 return -1;
             }
+            break;
+        }
+    }
+
+    let _registration = unsafe { sem_register_waiter(sem) };
+    loop {
+        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
+        if val > 0
+            && atom
+                .compare_exchange_weak(
+                    val,
+                    val - 1,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .is_ok()
+        {
+            return 0;
+        }
+        if val <= 0 {
             let ret = sem_futex_wait_timed(sem, val, abs_timeout);
             if ret < 0 {
                 let err = -ret;
@@ -5487,7 +5563,7 @@ pub unsafe extern "C" fn sem_timedwait(
                     unsafe { set_abi_errno(err) };
                     return -1;
                 }
-                // EAGAIN is spurious wakeup or value mismatch — retry.
+                // EAGAIN is a value mismatch or spurious wakeup — retry.
             }
         }
     }
