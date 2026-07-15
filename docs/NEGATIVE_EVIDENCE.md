@@ -6,6 +6,44 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / BlackThrush) — NO-SHIP: strict `getentropy` tracked-capacity bypass did not clear noise (`bd-lxm38p`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` surfaced a
+  peer-owned broad allocator performance bead, so this turn left that lane untouched.
+  Allocator, time, and math candidates were vetoed by existing negative evidence or
+  already-compact release code. The ledger and bead database contained no prior
+  `getentropy` performance attempt. Release disassembly attributed the 246-byte
+  wrapper to the 256-byte cap, an out-of-line tracked-capacity lookup, raw
+  `SYS_getrandom`, and return/errno mapping.
+- **ONE CERTIFIED REWRITE TESTED.** The candidate skipped only the tracked-capacity
+  lookup in deployed strict mode. The length cap, raw syscall, success/short-read
+  handling, and errno mapping were unchanged; hardened and test builds retained the
+  incumbent bounds validation.
+- **EQUIVALENCE ORACLE.** A temporary `#[inline(never)]` copy of the exact incumbent
+  lived in the same release binary as the candidate. Before timing, both paths
+  returned success for independent writable buffers of 0, 1, 32, and 256 bytes, and
+  both returned `-1` with `EIO` for 257 bytes. Random payload bytes were intentionally
+  not compared because separate CSPRNG calls need not return identical data.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** Both
+  commands pinned `vmi1293453` with `RCH_REQUIRE_REMOTE=1` and `--profile release`.
+  The untimed warm-up completed its Cargo build in 4m18s. RCH unexpectedly
+  rematerialized the identical worker-scoped target for the measurement command,
+  causing a second 4m29s build outside Criterion's timed region; neither command used
+  a timeout or local fallback, and the worker never crossed two minutes without
+  output. Criterion used 30 samples, 0.2s warm-up, and 0.5s measurement per arm for
+  successful 32-byte requests. The retained incumbent measured **204.22 ns**
+  `[198.91, 209.98]`; the strict bypass measured **209.42 ns** `[203.72, 215.27]`, a
+  **2.5% slower midpoint**; and the identical candidate-null control measured
+  **222.70 ns** `[214.88, 230.70]`. Harness p50s were **202.589 / 201.910 / 228.482
+  ns**, exposing ordering drift rather than a stable candidate win.
+- **DISPOSITION.** Rejected and restored the production source plus temporary
+  incumbent/oracle harness. The candidate interval overlaps the incumbent, its
+  midpoint is slower, and the repeated candidate arm does not establish a lower
+  noise floor. Do not retry this exact strict `getentropy` capacity-bypass shape
+  without a structural measurement or implementation change. Remote compilation
+  emitted only pre-existing warnings in untouched files. No `release-perf`, local
+  Cargo fallback, stash change, or timeout-based verdict occurred.
+
 ## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: strict `getrandom` bypasses redundant membrane bookkeeping (`bd-maq8lp`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` exposed only
