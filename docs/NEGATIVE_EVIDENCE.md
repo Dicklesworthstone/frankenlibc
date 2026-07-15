@@ -6,6 +6,41 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: strict `sigismember` skips the Signal policy round trip (`bd-ot4ots`)
+
+- **ROBOT TRIAGE / FRESH SUBSYSTEM.** `bv --robot-triage` exposed only a peer-owned
+  allocator performance leaf, so this turn pivoted to the unowned signal subsystem.
+  The latency manifest classifies `sigismember` as cold and pending a symbol benchmark,
+  but attributes a shared strict `runtime_math_decide_observe` reference of **205.5 ns**
+  to a function whose post-policy work is one signal-range check and one bit load.
+- **ONE CERTIFIED REWRITE.** The deployed strict policy always overrides Signal decisions
+  to `Allow`; `observe` cannot alter this pure query. The shipped branch therefore keeps
+  the exact null/range checks and `EINVAL`, then reads the same bit directly when
+  `strict_passthrough_active()` is true. Hardened mode retains the incumbent
+  `decide`/deny/observe path unchanged. This is intentionally per-symbol: syscall and
+  mutation members of `ApiFamily::Signal` still require their policy evidence.
+- **EQUIVALENCE ORACLE.** Before timing, a retained same-binary incumbent helper compared
+  old/new results for every Linux signal **1..=64** over a patterned `sigset_t`, then
+  compared `(return value, errno)` for signal 0, signal 65, and a null set pointer. All
+  **64 valid + 3 invalid classes** matched.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** The
+  `glibc_baseline_bench` target was linked without a timeout on `vmi1153651` using
+  `RCH_REQUIRE_REMOTE=1 rch exec -- cargo bench -j 1 --profile release -p
+  frankenlibc-bench --features abi-bench --bench glibc_baseline_bench --no-run`. The
+  measurement used the same worker request and target with `sigismember_strict_policy
+  --sample-size 30 --warm-up-time 0.2 --measurement-time 1 --noplot`. RCH reaped the
+  warmed pool and rebuilt it, but no timeout or local fallback was used and build time
+  did not enter Criterion's samples. Incumbent policy midpoint was **2.2717 us**
+  `[2.2122, 2.3216]`; strict direct was **4.1185 ns** `[3.8485, 4.3910]`, a **99.82%
+  latency reduction / 551.6x throughput**. The identical candidate-null midpoint was
+  **4.3850 ns** `[4.2183, 4.6056]`. Harness p50s were **2324.885 ns**, **4.377 ns**, and
+  **4.319 ns** respectively, placing candidate **1.3%** from its null arm.
+- **DISPOSITION.** Kept the strict-only branch in `bed29a218`; restored the temporary
+  incumbent/oracle harness byte-for-byte. The build emitted only pre-existing warnings
+  in untouched files. No `release-perf`, local Cargo fallback, stash change, or
+  timeout-based verdict occurred. The win is large per call but remains honestly scoped
+  to a manifest-classified cold symbol.
+
 ## 2026-07-14 (cod / BlackThrush) — WIN / SHIPPED: strict `localeconv` returns its static table directly (`bd-6pypop`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST RETRY.** `bv --robot-triage` returned
