@@ -6,6 +6,45 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: `fpclassifyf` classifies `f32` from exponent and fraction bits (`bd-a3vxfu`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` exposed only
+  the peer-owned allocator Swing-2 performance bead, so this turn left it untouched.
+  The preceding `f64` classifier win made its unattempted `f32` sibling a high-EV
+  seam: the symbol-latency manifest ranks `__fpclassifyf` as fixture-covered,
+  strict-hotpath priority 170, while this ledger and the bead database contained no
+  prior attempt. Release disassembly attributed the incumbent to floating unordered
+  and zero comparisons (`vucomiss`) plus separate infinity and subnormal branches.
+- **ONE CERTIFIED REWRITE.** `fpclassifyf` now masks the sign bit once and classifies
+  raw IEEE-754 exponent/fraction fields. Exponent zero distinguishes zero from
+  subnormal by the remaining magnitude bits; exponent all-ones distinguishes
+  infinity from NaN by the fraction; every other exponent is normal. Return
+  constants and signed boundary semantics are unchanged, and no sibling function
+  changed.
+- **EQUIVALENCE ORACLE.** A temporary retained incumbent lived in the same release
+  binary as the candidate. Before timing, it asserted identical results for both
+  signs of zero, the smallest/largest subnormal, smallest/largest normal, infinity,
+  signaling NaN, and quiet NaN, then for **100,000 deterministic raw `u32` bit
+  patterns**. Every comparison passed; focused production tests retain the exact
+  signed class boundaries.
+- **UNTIMED WARM-UP, THEN ONE FOREGROUND STRICT-REMOTE ORDINARY-RELEASE A/B.** Both
+  commands pinned `vmi1293453` with `RCH_REQUIRE_REMOTE=1` and `--profile release`.
+  The uncapped warm-up completed its Cargo build in 4m25s. RCH rematerialized the
+  same worker-scoped target for the measurement command, causing another 4m28s Cargo
+  build outside the timed region; neither command was timed out, interrupted, or
+  silent for two minutes. Criterion then used 30 samples, 0.2s warm-up, and 0.5s
+  measurement per arm on four normal finite classifications. The retained
+  floating-predicate incumbent measured **8.2109 ns** `[7.3374, 9.3561]`; the bit
+  classifier measured **3.1117 ns** `[2.7392, 3.8273]`, a **62.1% latency reduction /
+  2.64x throughput**; and the identical candidate-null midpoint was **3.2647 ns**
+  `[3.1958, 3.3115]`. Harness p50s independently ordered incumbent/candidate/null at
+  **6.907 / 3.126 / 3.133 ns**.
+- **DISPOSITION.** Kept the exponent/fraction classifier in `2f2393f19`; its complete
+  confidence interval is below the incumbent interval and overlaps the identical-code
+  null-control floor. The temporary incumbent/oracle harness was restored byte-for-byte.
+  Remote builds emitted only pre-existing warnings in untouched files. No
+  `release-perf`, local Cargo fallback, stash change, or timeout-based verdict occurred.
+
 ## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: `fpclassify` classifies `f64` from exponent and fraction bits (`bd-a60wfn`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage` exposed only
