@@ -2061,6 +2061,12 @@ fn format_e(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     // `printf_float_differential_fuzz`). `alt_form` keeps the path below (it forces
     // a trailing point at precision 0).
     if !alt_form {
+        if let Some(mut s) = try_format_e_fixed_scaled(value, precision) {
+            if uppercase {
+                s.make_ascii_uppercase();
+            }
+            return s;
+        }
         let mut s = crate::stdlib::ecvt::render_pct_e(value, precision);
         if uppercase {
             s.make_ascii_uppercase();
@@ -2251,6 +2257,62 @@ fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<String> {
     }
     push_fixed_scaled_digits_string(&mut s, ds, frac_digits);
     strip_trailing_zeros(&mut s);
+    Some(s)
+}
+
+/// Fast path for `%e`/`%E` (no `#`): compute the `precision + 1` significant
+/// mantissa digits by EXACT integer scaling — `rounded_scaled_fixed`, the same
+/// correctly-rounded (ties-to-even, exact big-integer) machinery the `%g` fast
+/// path uses — instead of the general dyadic `try_build_dyadic_sci` inside
+/// `render_pct_e`. For `|value|` in `[10^E, 10^(E+1))` the mantissa digits are
+/// `round(|value| * 10^(precision - E))`: rounding to `precision - E` decimal
+/// places is exactly rounding to `precision + 1` significant digits, yielding a
+/// `precision+1`-digit integer (or `precision+2` when a tie carries into the next
+/// decade, e.g. `9.9999995e-01` -> `1.000000e+00`). Byte-identical to
+/// `render_pct_e` (guarded by `printf_float_differential_fuzz`); returns `None`
+/// outside the range the exact scaling covers so the caller falls back.
+fn try_format_e_fixed_scaled(value: f64, precision: usize) -> Option<String> {
+    use core::fmt::Write as _;
+    if precision == 0 || !value.is_finite() || value == 0.0 {
+        return None;
+    }
+    let negative = value.is_sign_negative();
+    let abs = value.abs();
+    let pre_exp = decimal_exp_for_fixed_g(abs)?;
+    let k = precision as i32 - pre_exp;
+    if !(1..=9).contains(&k) {
+        return None;
+    }
+    let scaled = rounded_scaled_fixed(abs, k as usize)?;
+    let mut tmp = [0u8; 40];
+    let ds = decimal_digits_u128(scaled, &mut tmp);
+    // `scaled` lies in `[10^precision, 10^(precision+1)]`, so it has exactly
+    // `precision+1` digits — or `precision+2` when the round carried to
+    // `10^(precision+1)` ("1" followed by zeros), which bumps the exponent.
+    let (sig, exp) = if ds.len() == precision + 1 {
+        (ds, pre_exp)
+    } else if ds.len() == precision + 2 {
+        (&ds[..precision + 1], pre_exp + 1)
+    } else {
+        return None;
+    };
+
+    let mut s = String::with_capacity(precision + 7 + usize::from(negative));
+    if negative {
+        s.push('-');
+    }
+    s.push(sig[0] as char);
+    s.push('.');
+    for &c in &sig[1..] {
+        s.push(c as char);
+    }
+    s.push('e');
+    s.push(if exp < 0 { '-' } else { '+' });
+    let abs_exp = exp.unsigned_abs();
+    if abs_exp < 10 {
+        s.push('0');
+    }
+    let _ = write!(s, "{abs_exp}");
     Some(s)
 }
 
