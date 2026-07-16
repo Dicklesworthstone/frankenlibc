@@ -20,6 +20,26 @@ use frankenlibc_core::string::wchar as wchar_core;
 
 type StrftimeFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, *const libc::tm) -> usize;
 type StrptimeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char;
+type WcscollFn =
+    unsafe extern "C" fn(*const libc::wchar_t, *const libc::wchar_t) -> libc::c_int;
+
+/// Host glibc `wcscoll` via dlmopen so frankenlibc's exported symbol cannot
+/// shadow the baseline. C/POSIX locale = code-point order (locale-independent).
+fn host_wcscoll() -> WcscollFn {
+    static H: OnceLock<usize> = OnceLock::new();
+    let addr = *H.get_or_init(|| unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(!handle.is_null(), "dlmopen libc.so.6 failed");
+        let sym = libc::dlsym(handle, b"wcscoll\0".as_ptr().cast());
+        assert!(!sym.is_null(), "dlsym wcscoll failed");
+        sym as usize
+    });
+    unsafe { std::mem::transmute::<*mut c_void, WcscollFn>(addr as *mut c_void) }
+}
 
 /// Host glibc `strptime` via dlmopen so frankenlibc's exported symbol cannot
 /// shadow the baseline. Numeric-only formats keep this locale-independent.
@@ -422,6 +442,26 @@ fn bench(c: &mut Criterion) {
         });
         group.finish();
     }
+
+    // wcscoll: in the C/POSIX locale it's wcscmp; equal strings are the worst case
+    // for the old wcslen(s1)+wcslen(s2)+separate-compare triple pass vs the fused
+    // single-pass wcscmp delegation (mirror of the strcoll fix).
+    let wc_host = host_wcscoll();
+    let ws: Vec<libc::wchar_t> = wide_cstr("the quick brown fox jumps over the lazy dog 0123");
+    let mut group = c.benchmark_group("wcscoll_equal_48");
+    group.bench_function("frankenlibc_abi", |bencher| {
+        bencher.iter(|| {
+            black_box(unsafe {
+                fl_wchar::wcscoll(black_box(ws.as_ptr()), black_box(ws.as_ptr()))
+            });
+        });
+    });
+    group.bench_function("host_glibc", |bencher| {
+        bencher.iter(|| {
+            black_box(unsafe { wc_host(black_box(ws.as_ptr()), black_box(ws.as_ptr())) });
+        });
+    });
+    group.finish();
 }
 
 criterion_group! {

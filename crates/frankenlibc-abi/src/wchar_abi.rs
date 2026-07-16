@@ -5947,19 +5947,13 @@ pub unsafe extern "C" fn wcsftime(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcscoll(s1: *const libc::wchar_t, s2: *const libc::wchar_t) -> c_int {
-    if s1.is_null() || s2.is_null() {
-        return 0;
-    }
-
-    // SAFETY: both strings are scanned until NUL.
-    let len1 = unsafe { wcslen(s1 as *const u32) };
-    // SAFETY: both strings are scanned until NUL.
-    let len2 = unsafe { wcslen(s2 as *const u32) };
-    // SAFETY: include NUL terminators for comparison semantics.
-    let lhs = unsafe { std::slice::from_raw_parts(s1 as *const u32, len1 + 1) };
-    // SAFETY: include NUL terminators for comparison semantics.
-    let rhs = unsafe { std::slice::from_raw_parts(s2 as *const u32, len2 + 1) };
-    wide_core::wcscmp(lhs, rhs) as c_int
+    // C/POSIX locale: collation order IS code-point order, so wcscoll == wcscmp.
+    // Delegate to the wcscmp ABI (fused single-pass 128-byte-SIMD scan with early
+    // exit) instead of the old 2× wcslen length scans + a separate
+    // `wide_core::wcscmp` compare pass — that triple pass made wcscoll slower than
+    // glibc wcscoll on equal strings. Mirrors the narrow strcoll -> strcmp fix
+    // (string_abi.rs). `wcscmp` returns 0 on a NULL operand, matching the old guard.
+    unsafe { wcscmp(s1 as *const u32, s2 as *const u32) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
