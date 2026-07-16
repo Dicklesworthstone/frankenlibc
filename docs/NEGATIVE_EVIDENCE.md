@@ -6,6 +6,63 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / codex-root) — WIN / SHIPPED: `getauxval` publishes one bootstrap-safe auxv snapshot (`bd-92b6bz`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
+  surfaced broad correctness work, a peer-owned malloc swing, and resolver
+  methodology rows in a ledger-dense vein. This turn moved to the unmeasured
+  process-bootstrap surface. The important negative anchor was commit
+  `087677f56`: loader-time blocking one-time initialization can deadlock under
+  re-entry, and host `getauxval` delegation can recurse through the interposed
+  symbol. The retained design therefore uses neither `OnceLock` nor host libc.
+- **PROFILE FIRST / ONE LEVER.** Ordinary-release disassembly of the incumbent
+  `getauxval` showed a 4096-byte stack frame and `memset`, followed by raw
+  `openat("/proc/self/auxv")`, `read`, `close`, and a linear pair scan on every
+  call. The one production lever snapshots one successful, AT_NULL-terminated
+  auxv read into 64 fixed atomic value slots plus a presence bitmap. Warm keys
+  below 64 become an acquire state load, a bitmap test, and one value load;
+  future keys at or above 64 retain the exact raw path.
+- **CERTIFIED REWRITE / BOOTSTRAP BOUNDARY.** The equivalence relation is the
+  first value associated with a requested type in the process's immutable auxv.
+  A separate presence bit preserves present-zero versus absent-key semantics;
+  duplicate types keep the first value; successful lookups leave errno intact;
+  misses still set `ENOENT`. Only a complete snapshot is published, while open,
+  read, and truncated-snapshot failures reset to retryable EMPTY. Publication is
+  a non-waiting `EMPTY -> INITIALIZING -> READY` atomic state machine: READY is
+  release-published/acquire-read, and INITIALIZING callers use the incumbent raw
+  path. Re-entry cannot self-wait, and a child that inherits INITIALIZING across
+  `fork` remains correct (conservatively uncached) until exec resets the image.
+- **REMOTE-ONLY ROUTING / COLD BUILD.** An untimed release warm-up completed on
+  `vmi1227854`, but its capped profile immediately rematerialized the release
+  graph and was interrupted before timing. `vmi1293453` likewise completed an
+  untimed `--no-run` benchmark warm-up, then evicted that cache on the immediate
+  refresh; that rebuild was also interrupted and supplied no evidence. The
+  final fail-closed command pinned `vmi1152480`, set `AGENT_NAME=codex-root` and
+  `RCH_REQUIRE_REMOTE=1`, and ran `cargo bench --profile release` in the
+  foreground. Its cold Cargo build was uncapped and completed before the target
+  runner's 60-second measurement cap. The LTO-enabled Cargo bench profile,
+  local fallback, and `force_local` were never used.
+- **ONE FOREGROUND SAME-BINARY A/B.** Criterion used 10 samples, 100 ms warm-up,
+  and 300 ms measurement per arm for repeated `AT_PAGESZ` queries. The exact
+  retained incumbent measured **1.9178 us** `[1.8843, 1.9515 us]`; the atomic
+  snapshot measured **2.0420 ns** `[1.9974, 2.1028 ns]`: **939.18x faster /
+  99.8935% lower latency**. Even incumbent-low/candidate-high is **896.09x**.
+  An identical candidate null control measured **2.2684 ns**
+  `[1.9339, 2.7821 ns]`; its interval overlaps the candidate, and their direct
+  per-operation p50s were 2.095 ns and 2.016 ns (3.92% apart). That floor noise
+  cannot explain the three-orders-of-magnitude incumbent separation.
+- **EXECUTABLE ORACLE / DISPOSITION.** Before timing, the same release binary
+  parsed every live `/proc/self/auxv` entry through AT_NULL and proved both the
+  incumbent and candidate returned the exact stored scalar or pointer value for
+  every type. It separately proved a present-zero entry preserved preloaded
+  `EBUSY`, while a missing type returned zero and set `ENOENT` in both arms.
+  Compilation completed with only the repository's pre-existing warnings. The
+  temporary incumbent wrapper and all benchmark arms were removed; the shipped
+  diff is production-only. `git diff --check` passes. Direct whole-file
+  `rustfmt --check` remains blocked solely by three pre-existing line wraps in
+  untouched `ecvt`/`fcvt` code; the added region itself matches rustfmt. No
+  stash was modified.
+
 ## 2026-07-15 (cod / codex-root) — WIN / SHIPPED: strict `cfgetospeed` skips the observation-only Termios policy round trip (`bd-re05x5`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`

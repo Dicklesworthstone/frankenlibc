@@ -5358,11 +5358,25 @@ pub unsafe extern "C" fn tdestroy(root: *mut c_void, freefn: unsafe extern "C" f
 // Batch: getauxval — Implemented
 // ===========================================================================
 
-/// `getauxval` — retrieve a value from the auxiliary vector.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
-    // Read from /proc/self/auxv using raw syscalls to avoid recursion
-    // (libc::getauxval goes through our interposed getauxval).
+const AUXV_CACHE_SLOTS: usize = 64;
+const AUXV_CACHE_EMPTY: u8 = 0;
+const AUXV_CACHE_INITIALIZING: u8 = 1;
+const AUXV_CACHE_READY: u8 = 2;
+
+// `getauxval` is used while the loader and allocator are still coming up, so a
+// blocking one-time primitive is not admissible here.  In particular, a
+// re-entrant call must not wait on the thread that it interrupted, and a child
+// may inherit INITIALIZING across `fork`.  Such callers retain the raw-syscall
+// path below; READY is the only state that reads the snapshot.
+static AUXV_CACHE_STATE: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(AUXV_CACHE_EMPTY);
+static AUXV_CACHE_PRESENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static AUXV_CACHE_VALUES: [std::sync::atomic::AtomicUsize; AUXV_CACHE_SLOTS] =
+    [const { std::sync::atomic::AtomicUsize::new(0) }; AUXV_CACHE_SLOTS];
+
+#[inline]
+unsafe fn read_process_auxv(buf: &mut [u8; 4096]) -> Option<usize> {
+    // Raw syscalls avoid recursion through the interposed libc surface.
     let fd = unsafe {
         raw_syscall::sys_openat(
             libc::AT_FDCWD,
@@ -5370,33 +5384,32 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
             libc::O_RDONLY,
             0,
         )
-    };
-    let fd = match fd {
-        Ok(f) => f as c_int,
-        Err(_) => {
-            unsafe { set_abi_errno(libc::ENOENT) };
-            return 0;
-        }
-    };
-    // auxv is pairs of (type: ulong, value: ulong)
-    let entry_size = 2 * std::mem::size_of::<c_ulong>();
-    let mut buf = [0u8; 4096];
-    let n = match unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr(), buf.len()) } {
-        Ok(bytes) => bytes as isize,
-        Err(_) => -1,
-    };
+    }
+    .ok()? as c_int;
+    let read = unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr(), buf.len()) };
     let _ = raw_syscall::sys_close(fd);
-    if n <= 0 {
+    read.ok().filter(|bytes| *bytes > 0)
+}
+
+#[inline]
+fn auxv_pair(buf: &[u8; 4096], offset: usize) -> (c_ulong, c_ulong) {
+    let at = c_ulong::from_ne_bytes(buf[offset..offset + 8].try_into().unwrap_or([0; 8]));
+    let av = c_ulong::from_ne_bytes(buf[offset + 8..offset + 16].try_into().unwrap_or([0; 8]));
+    (at, av)
+}
+
+#[inline(never)]
+unsafe fn getauxval_uncached(type_: c_ulong) -> c_ulong {
+    let mut buf = [0u8; 4096];
+    let Some(bytes) = (unsafe { read_process_auxv(&mut buf) }) else {
         unsafe { set_abi_errno(libc::ENOENT) };
         return 0;
-    }
-    let entries = n as usize / entry_size;
-    for i in 0..entries {
-        let offset = i * entry_size;
-        let at = c_ulong::from_ne_bytes(buf[offset..offset + 8].try_into().unwrap_or([0; 8]));
-        let av = c_ulong::from_ne_bytes(buf[offset + 8..offset + 16].try_into().unwrap_or([0; 8]));
+    };
+    let entry_size = 2 * std::mem::size_of::<c_ulong>();
+    for i in 0..bytes / entry_size {
+        let (at, av) = auxv_pair(&buf, i * entry_size);
         if at == 0 {
-            break; // AT_NULL terminates
+            break;
         }
         if at == type_ {
             return av;
@@ -5404,6 +5417,103 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
     }
     unsafe { set_abi_errno(libc::ENOENT) };
     0
+}
+
+#[cold]
+unsafe fn initialize_auxv_cache(type_: c_ulong) -> c_ulong {
+    let mut buf = [0u8; 4096];
+    let Some(bytes) = (unsafe { read_process_auxv(&mut buf) }) else {
+        AUXV_CACHE_STATE.store(AUXV_CACHE_EMPTY, std::sync::atomic::Ordering::Release);
+        unsafe { set_abi_errno(libc::ENOENT) };
+        return 0;
+    };
+
+    let entry_size = 2 * std::mem::size_of::<c_ulong>();
+    let mut requested = None;
+    let mut present = 0u64;
+    let mut complete = false;
+    for i in 0..bytes / entry_size {
+        let (at, av) = auxv_pair(&buf, i * entry_size);
+        if at == 0 {
+            complete = true;
+            break;
+        }
+        if requested.is_none() && at == type_ {
+            requested = Some(av);
+        }
+        if at < AUXV_CACHE_SLOTS as c_ulong {
+            let bit = 1u64 << at;
+            if present & bit == 0 {
+                AUXV_CACHE_VALUES[at as usize]
+                    .store(av as usize, std::sync::atomic::Ordering::Relaxed);
+                present |= bit;
+            }
+        }
+    }
+
+    if complete {
+        AUXV_CACHE_PRESENT.store(present, std::sync::atomic::Ordering::Relaxed);
+        // Publishes all value and presence stores to READY readers.
+        AUXV_CACHE_STATE.store(AUXV_CACHE_READY, std::sync::atomic::Ordering::Release);
+    } else {
+        // Preserve the incumbent result for this call, but retry a truncated
+        // snapshot on a later call rather than caching it permanently.
+        AUXV_CACHE_STATE.store(AUXV_CACHE_EMPTY, std::sync::atomic::Ordering::Release);
+    }
+
+    match requested {
+        Some(value) => value,
+        None => {
+            unsafe { set_abi_errno(libc::ENOENT) };
+            0
+        }
+    }
+}
+
+#[inline]
+fn cached_auxv_value(type_: c_ulong) -> Option<c_ulong> {
+    let bit = 1u64 << type_;
+    let present = AUXV_CACHE_PRESENT.load(std::sync::atomic::Ordering::Relaxed);
+    (present & bit != 0).then(|| {
+        AUXV_CACHE_VALUES[type_ as usize].load(std::sync::atomic::Ordering::Relaxed) as c_ulong
+    })
+}
+
+/// `getauxval` — retrieve a value from the auxiliary vector.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
+    loop {
+        match AUXV_CACHE_STATE.load(std::sync::atomic::Ordering::Acquire) {
+            AUXV_CACHE_READY if type_ < AUXV_CACHE_SLOTS as c_ulong => {
+                return match cached_auxv_value(type_) {
+                    Some(value) => value,
+                    None => {
+                        unsafe { set_abi_errno(libc::ENOENT) };
+                        0
+                    }
+                };
+            }
+            AUXV_CACHE_READY | AUXV_CACHE_INITIALIZING => {
+                // Large/future AT_* keys are not represented in the dense
+                // cache. INITIALIZING is also the re-entrant/fork-safe path.
+                return unsafe { getauxval_uncached(type_) };
+            }
+            AUXV_CACHE_EMPTY => {
+                if AUXV_CACHE_STATE
+                    .compare_exchange(
+                        AUXV_CACHE_EMPTY,
+                        AUXV_CACHE_INITIALIZING,
+                        std::sync::atomic::Ordering::AcqRel,
+                        std::sync::atomic::Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    return unsafe { initialize_auxv_cache(type_) };
+                }
+            }
+            _ => return unsafe { getauxval_uncached(type_) },
+        }
+    }
 }
 
 // ===========================================================================
