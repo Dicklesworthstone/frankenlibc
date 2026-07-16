@@ -6,6 +6,53 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-16 (cod / codex-root) — REJECTED: fused BSD IPv4 component scan regressed `inet_addr` (`bd-us7dho`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
+  found the only active perf bead in the peer-owned allocator lane. Exact
+  ledger and history searches found earlier inet byte-parser, policy, and
+  direct-C-string wins but no attempt to combine delimiter discovery with BSD
+  radix accumulation, so this turn moved to that fresh inet seam without
+  touching allocator work.
+- **PROFILE FIRST / ONE LEVER.** An untouched ordinary-release Criterion
+  profile of `inet_addr_ipv4/frankenlibc_abi` completed before editing. For the
+  representative `192.168.1.100` input, source attribution found 13
+  delimiter/terminator visits followed by 10 revisited digits in
+  `parse_bsd_part_bytes`. The sole candidate accumulated each component while
+  finding its delimiter, preserving the existing checked `u32`
+  decimal/octal/hex grammar and unchanged 1/2/3/4-part packing.
+- **CERTIFIED REWRITE / ORACLE.** Before timing, one release binary compared
+  the retained and fused parsers across 18 accepted and rejected spellings:
+  empty and zero inputs, abbreviated BSD forms, decimal/octal/hex forms,
+  whitespace termination, malformed separators and prefixes, component-count
+  overflow, digit/radix errors, and `u32` overflow. Every return value matched.
+- **REMOTE-ONLY / NON-LTO ROUTING.** Untimed, uncapped release warm builds
+  completed before the cold profile and measurement attempts, but workers
+  repeatedly discarded their warmed release graphs. `vmi1152480` returned the
+  profile, then reset its SSH preflight before the A/B; replacement
+  `vmi1227854` returned the foreground same-binary measurement. Every admitted
+  command set `AGENT_NAME=codex-root`, `RCH_REQUIRE_REMOTE=1`, and
+  `CARGO_PROFILE_RELEASE_LTO=false`, and used `cargo bench --profile release
+  --config profile.release.lto=false`. Compilation was uncapped; only the
+  Criterion executable had a 60-second runner cap. No LTO, local fallback, or
+  `force_local` route was used.
+- **REAL SAME-BINARY A/B / NULL CONTROL.** With 20 samples, 200 ms warm-up, and
+  500 ms measurement, the retained component rescan measured **23.402 ns**
+  `[22.457, 24.607 ns]`; the fused scan measured **32.302 ns** `[29.456, 36.458
+  ns]`. Candidate/retained was **1.380309x**, a **38.0309% latency
+  regression** (only **0.724475x** retained/candidate throughput). A
+  source-identical fused repeat measured **30.095 ns** `[27.890, 31.750 ns]`, a
+  **7.3334%** center shift; averaging the two candidate centers still yields
+  **31.19850 ns**, **1.333155x / 33.3155% slower** than retained. The deployed
+  fused ABI arm was **31.491 ns** and host glibc was **53.100 ns**, so the
+  candidate remained faster than the host but clearly regressed FrankenLibC's
+  incumbent.
+- **DISPOSITION: REJECT / RESTORE.** Folding radix state into the delimiter
+  loop enlarged and slowed this tiny parser despite eliminating digit revisits.
+  The production source and temporary Criterion A/B hooks were restored
+  byte-for-byte before commit; only this measured rejection and bead closeout
+  remain. No stash or peer file was modified.
+
 ## 2026-07-16 (cod / codex-root) — REJECTED: 32 KiB `getdents64` refill regressed `readdir` drain (`bd-wv6wzk`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
