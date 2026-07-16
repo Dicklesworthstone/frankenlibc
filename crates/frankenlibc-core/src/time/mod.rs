@@ -518,6 +518,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     if let Some(n) = format_strftime_numeric_19(fmt, bd, buf) {
         return n;
     }
+    if let Some(n) = format_strftime_ymdhm(fmt, bd, buf) {
+        return n;
+    }
     if let Some(n) = format_strftime_ymd(fmt, bd, buf) {
         return n;
     }
@@ -1153,6 +1156,46 @@ fn format_strftime_ymd(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     write_two_digits(&mut buf[5..7], (bd.tm_mon + 1) as u32);
     buf[7] = b'-';
     write_two_digits(&mut buf[8..10], bd.tm_mday as u32);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+#[inline]
+fn format_strftime_ymdhm(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
+    // "%Y-%m-%d %H:%M" — the seconds-less log-timestamp form, extremely common.
+    // Like `%H:%M` it otherwise fell to the two-pass `simple_numeric` and ran
+    // ~1.6x its own `%Y-%m-%d %H:%M:%S` exact path despite LESS output (an
+    // inversion). Single-pass exact match, same 4-digit-year domain as
+    // numeric_19; byte-identical (out-of-range -> None -> same prior path).
+    if fmt != b"%Y-%m-%d %H:%M" {
+        return None;
+    }
+    let year = bd.tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year)
+        || !(0..=11).contains(&bd.tm_mon)
+        || !(1..=31).contains(&bd.tm_mday)
+        || !(0..=23).contains(&bd.tm_hour)
+        || !(0..=59).contains(&bd.tm_min)
+    {
+        return None;
+    }
+    const OUT_LEN: usize = 16;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+    let year = year as u32;
+    buf[0] = b'0' + ((year / 1000) % 10) as u8;
+    buf[1] = b'0' + ((year / 100) % 10) as u8;
+    buf[2] = b'0' + ((year / 10) % 10) as u8;
+    buf[3] = b'0' + (year % 10) as u8;
+    buf[4] = b'-';
+    write_two_digits(&mut buf[5..7], (bd.tm_mon + 1) as u32);
+    buf[7] = b'-';
+    write_two_digits(&mut buf[8..10], bd.tm_mday as u32);
+    buf[10] = b' ';
+    write_two_digits(&mut buf[11..13], bd.tm_hour as u32);
+    buf[13] = b':';
+    write_two_digits(&mut buf[14..16], bd.tm_min as u32);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }

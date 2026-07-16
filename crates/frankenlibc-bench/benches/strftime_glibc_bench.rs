@@ -140,6 +140,7 @@ fn bench(c: &mut Criterion) {
     let fmt = c"%Y-%m-%d %H:%M:%S";
     let fmt_hms = c"%H:%M:%S";
     let fmt_hm = c"%H:%M";
+    let fmt_ymdhm = c"%Y-%m-%d %H:%M";
     let wfmt = wide_cstr("%Y-%m-%d %H:%M:%S");
     let tm = make_tm();
     let host = host_strftime();
@@ -242,6 +243,26 @@ fn bench(c: &mut Criterion) {
                     black_box(&tm),
                 )
             };
+            black_box((n, buf[0]));
+        });
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("strftime_ymd_hm");
+    group.bench_function("frankenlibc_abi", |bencher| {
+        bencher.iter(|| {
+            let mut buf = [0i8; 64];
+            let n = unsafe {
+                fl::strftime(buf.as_mut_ptr(), buf.len(), fmt_ymdhm.as_ptr(), black_box(&tm))
+            };
+            black_box((n, buf[0]));
+        });
+    });
+    group.bench_function("host_glibc", |bencher| {
+        bencher.iter(|| {
+            let mut buf = [0i8; 64];
+            let n =
+                unsafe { host(buf.as_mut_ptr(), buf.len(), fmt_ymdhm.as_ptr(), black_box(&tm)) };
             black_box((n, buf[0]));
         });
     });
