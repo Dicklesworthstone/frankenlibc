@@ -6,6 +6,63 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-16 (cod / codex-root) — REJECTED: consolidated native `dlerror` TLS stayed below the null-adjusted floor (`bd-msbxng`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** A new
+  `bv --robot-triage` run followed the resource closeout. The active allocator
+  swing remained peer-owned, and dlfcn had no dedicated prior perf row, so this
+  turn moved to the fresh loader-error state path.
+- **PROFILE FIRST / ONE LEVER.** Default-feature source and call-graph
+  attribution showed that a non-null `dlerror()` consumed `PENDING_PTR` through
+  one native TLS lookup and then published the same static pointer through a
+  second `STABLE_PTR` TLS lookup. The owned-TLS feature already stores those two
+  fields together. The sole candidate gave the default path the same
+  consolidated state shape, leaving pending consume, stable publish, static
+  message storage, and the owned-TLS lane unchanged.
+- **CERTIFIED REWRITE / ORACLE BOUNDARY.** The retained two-TLS state machine
+  and candidate matched the exact static pointer, NUL-terminated bytes,
+  consume-once/null-on-second-read behavior, and independent state in a second
+  thread. The first production-linked oracle passed its same-thread transitions
+  before exposing a harness error: it seeded the parent before
+  `std::thread::spawn`, although any intervening dlfcn call is allowed to clear
+  the pending error. After moving the seed past thread creation, the exact
+  low-level state-machine oracle passed **8/8 transitions across two threads**.
+  No mismatch in the candidate was observed.
+- **REMOTE-ONLY / NON-LTO ROUTING.** `vmi1149989` completed an uncapped,
+  untimed release warm-up and then evicted the graph before measurement.
+  A preference for `hz2` was routed to `ovh-b`, where `zerocopy`'s build script
+  died with worker-side `SIGILL`; that supplied no evidence. Replacement
+  `vmi1153651` completed another uncapped warm-up and also discarded its graph
+  immediately. `vmi1264463` completed the full production-linked release build;
+  after the oracle correction, a newly introduced peer compile error in
+  `stdio/printf.rs` blocked that broad graph. Rather than touch or stash the peer
+  file, the final command reproduced the exact TLS operations in the existing
+  small membrane benchmark surface and omitted the unrelated core dependency
+  for that temporary measurement only. Every command set
+  `AGENT_NAME=codex-root`, `RCH_REQUIRE_REMOTE=1`, and
+  `CARGO_PROFILE_RELEASE_LTO=false` and used `cargo bench --profile release` in
+  the foreground. Builds were uncapped; only benchmark executables had a
+  60-second runner cap. No local fallback, LTO, or `force_local` route was used.
+- **REAL SAME-BINARY A/B / NULL CONTROL.** On `vmi1264463`, Criterion used 30
+  samples, 200 ms warm-up, and 1 second measurement per arm. The retained
+  two-TLS cycle measured **5.8250 ns** `[5.6030, 6.0860 ns]`; the consolidated
+  cycle measured **5.1650 ns** `[5.0698, 5.2740 ns]`: an apparent **1.127783x /
+  11.3305% lower latency**. The source-identical candidate null repeat was
+  **5.4332 ns** `[5.3147, 5.5845 ns]`, a **5.1926%** shift. Averaging the two
+  candidate repeats gives **5.2991 ns**, only **1.099243x / 9.0283%** below the
+  incumbent and therefore inside the repository's **1.105x** null floor. The
+  harness p50s were still weaker: **5.656 ns**, **5.404 ns**, and **5.307 ns**
+  (only **4.456%** incumbent-to-candidate separation).
+- **DISPOSITION: REJECT / RESTORE.** The claimed gain is not robust after its
+  identical-run control and is too small to justify changing loader-time TLS
+  state. The production consolidation, retained incumbent hooks, both temporary
+  benchmark surfaces, and the temporary manifest narrowing were restored
+  completely. This real ratio is ledgered so the seam is retried only with a
+  stable above-floor result. The production-linked release build compiled the
+  candidate before timing; the final exact-operation release benchmark exited
+  zero. Remaining warnings were pre-existing, peer dirt was preserved, and no
+  stash was modified.
+
 ## 2026-07-16 (cod / codex-root) — REJECTED: strict `getrlimit` policy bypass stayed below the null-control floor (`bd-16jorw`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
