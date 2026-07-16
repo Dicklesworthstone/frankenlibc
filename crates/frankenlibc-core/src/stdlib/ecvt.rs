@@ -731,6 +731,16 @@ fn render_gcvt_into(value: f64, ndigit: usize, out: &mut [u8]) -> usize {
     if let Some(simple) = try_gcvt_exact_small_fixed(value, ndigit) {
         return copy_into(out, simple.as_bytes());
     }
+    // Fixed-scaled fast path: non-exact values in the integer-scaling range (e.g.
+    // 12345.678901) get their `%g` digits directly, skipping the `{:e}` flt2dec
+    // reshape below. Placed AFTER the exact-small probe so terminating/small values
+    // keep their lighter route (same ordering rule as the %e fast path). This is the
+    // path `format_g` already takes; routing `render_gcvt_into` through it makes the
+    // DEPLOYED printf %g match the raw formatter. Byte-identical (guarded by
+    // printf_float_differential_fuzz, which drives format_float -> this fn).
+    if let Some(fast) = crate::stdio::printf::try_format_g_fixed_scaled(value, ndigit) {
+        return copy_into(out, fast.as_bytes());
+    }
 
     use core::fmt::Write as _;
     let frac = ndigit.saturating_sub(1);

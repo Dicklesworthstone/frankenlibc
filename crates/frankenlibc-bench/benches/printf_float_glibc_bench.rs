@@ -138,5 +138,43 @@ fn bench_deployed_e(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench, bench_deployed_e);
+/// DEPLOYED `%g` path A/B: `render_pct_g_into` (what real `printf("%g", ..)` runs)
+/// vs in-process glibc. The fixed-scaled fast path now lives inside `render_gcvt_into`
+/// after its exact-small probe; the pre-change baseline (~124ns for the pi/mid case)
+/// is captured in the commit ledger from the same pinned setup.
+fn bench_deployed_g(c: &mut Criterion) {
+    use frankenlibc_core::stdlib::ecvt::render_pct_g_into;
+    const G_CASES: &[(&str, f64, usize)] = &[
+        ("dep_g_mid_p6", 12345.678901, 6),
+        ("dep_g_pi_p6", 3.141592653589793, 6),
+        ("dep_g_simple_p6", 2.5, 6),
+    ];
+    for (name, value, prec) in G_CASES {
+        let mut neu = Vec::new();
+        render_pct_g_into(*value, *prec, &mut neu);
+        let g = gl(*value, *prec, 'g');
+        assert_eq!(neu.as_slice(), g.as_slice(), "{name}: != glibc");
+
+        let fmt = std::ffi::CString::new(format!("%.{prec}g")).unwrap();
+        let mut grp = c.benchmark_group(name.to_string());
+        grp.bench_function("frankenlibc_core", |b| {
+            b.iter(|| {
+                let mut buf = Vec::with_capacity(32);
+                render_pct_g_into(black_box(*value), *prec, &mut buf);
+                black_box(buf)
+            })
+        });
+        grp.bench_function("host_glibc_inprocess", |b| {
+            b.iter(|| {
+                let mut buf = [0i8; 64];
+                black_box(unsafe {
+                    strfromd(buf.as_mut_ptr(), 64, fmt.as_ptr(), black_box(*value))
+                });
+            })
+        });
+        grp.finish();
+    }
+}
+
+criterion_group!(benches, bench, bench_deployed_e, bench_deployed_g);
 criterion_main!(benches);

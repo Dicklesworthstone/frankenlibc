@@ -2230,7 +2230,7 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     format_g_exp_from_scientific(mantissa, exp, uppercase, alt_form)
 }
 
-fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<String> {
+pub(crate) fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<String> {
     let p = if precision == 0 { 1 } else { precision };
     if p > 9 || value == 0.0 {
         return None;
