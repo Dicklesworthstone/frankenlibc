@@ -49941,6 +49941,85 @@ pub fn iconv(
             }
         }
 
+        // Fast path: DBCS -> UTF-16LE/BE scalar run — the mixed-text sibling of the
+        // UTF-16 SIMD gather above (which only covers PURE 2-byte BMP windows) and the
+        // UTF-8 scalar run below. Real CJK text interleaves ASCII / SS2/SS3 single
+        // bytes that break the gather window, which otherwise fell to the generic
+        // per-char decode_char+encode_char body (cp932_to_utf16le 1.58x /
+        // eucjp_to_utf16le 1.46x vs glibc). Inline the SAME per-codec decoder as the
+        // UTF-8 scalar run + `emit_unicode_cp` — the exact `encode_char(Utf16*)` =
+        // `char::encode_utf16` the generic body (and the gather + dbcs_x_decode UTF-16
+        // paths) use, so byte-for-byte identical. Any decode error / insufficient room
+        // (< 4 bytes = a surrogate pair) drops to the generic body for the exact
+        // EILSEQ/EINVAL/E2BIG ordering.
+        if matches!(cd.to, Encoding::Utf16Le | Encoding::Utf16Be)
+            && !cd.emit_bom
+            && matches!(
+                from_enc,
+                Encoding::Gb18030
+                    | Encoding::ShiftJis
+                    | Encoding::Cp932
+                    | Encoding::Ibm943
+                    | Encoding::Ibm932
+                    | Encoding::Big5
+                    | Encoding::Gbk
+                    | Encoding::EucJp
+                    | Encoding::EucKr
+                    | Encoding::Cp949
+                    | Encoding::Gb2312
+                    | Encoding::Johab
+            )
+        {
+            let be = matches!(cd.to, Encoding::Utf16Be);
+            while in_pos < input.len() && out_pos + 4 <= outbuf.len() {
+                let decoded = match from_enc {
+                    Encoding::Gb18030 => decode_gb18030(&input[in_pos..]),
+                    Encoding::ShiftJis => decode_shiftjis(&input[in_pos..]),
+                    Encoding::Cp932 => decode_cp932(&input[in_pos..]),
+                    Encoding::Ibm943 => decode_ibm943(&input[in_pos..]),
+                    Encoding::Ibm932 => decode_ibm932(&input[in_pos..]),
+                    Encoding::Big5 => decode_big5(&input[in_pos..]),
+                    Encoding::Gbk => decode_gbk(&input[in_pos..]),
+                    Encoding::EucJp => decode_eucjp(&input[in_pos..]),
+                    Encoding::EucKr => decode_euckr(&input[in_pos..]),
+                    Encoding::Cp949 => decode_cp949(&input[in_pos..]),
+                    Encoding::Gb2312 => decode_gb2312(&input[in_pos..]),
+                    Encoding::Johab => decode_johab(&input[in_pos..]),
+                    _ => unreachable!(),
+                };
+                let Ok((ch, consumed)) = decoded else {
+                    break;
+                };
+                // Lean inline `ch.encode_utf16` (a `char` is never a surrogate, so
+                // this is byte-identical to encode_char(Utf16*)) — skips the redundant
+                // `char::from_u32` revalidation in `emit_unicode_cp` that made a
+                // decode_char+encode_char generic body faster than the scalar run.
+                let cp = ch as u32;
+                if cp <= 0xFFFF {
+                    let u = cp as u16;
+                    let bytes = if be { u.to_be_bytes() } else { u.to_le_bytes() };
+                    outbuf[out_pos] = bytes[0];
+                    outbuf[out_pos + 1] = bytes[1];
+                    out_pos += 2;
+                } else {
+                    let v = cp - 0x10000;
+                    let hi = (0xD800 | (v >> 10)) as u16;
+                    let lo = (0xDC00 | (v & 0x3FF)) as u16;
+                    let hb = if be { hi.to_be_bytes() } else { hi.to_le_bytes() };
+                    let lb = if be { lo.to_be_bytes() } else { lo.to_le_bytes() };
+                    outbuf[out_pos] = hb[0];
+                    outbuf[out_pos + 1] = hb[1];
+                    outbuf[out_pos + 2] = lb[0];
+                    outbuf[out_pos + 3] = lb[1];
+                    out_pos += 4;
+                }
+                in_pos += consumed;
+            }
+            if in_pos >= input.len() {
+                break;
+            }
+        }
+
         // Fast path: DBCS -> UTF-8. Inline the (now direct-table O(1)) per-codec
         // decoder + a direct UTF-8 encode, so the steady state skips both 100-arm
         // dispatches (decode_char + encode_char) and the encode_one wrapper. The

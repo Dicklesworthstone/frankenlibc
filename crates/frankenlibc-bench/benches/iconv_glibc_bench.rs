@@ -658,6 +658,32 @@ fn main() {
     // DBCS -> UTF-16 probe: Shift-JIS (CP932) -> UTF-16LE. The DBCS legacy->UTF-16/32
     // path decodes each char then writes a unit — probe if un-dominated (un-benched).
     run_conv(c, "cp932_to_utf16le", b"UTF-16LE\0", b"CP932\0", &cp932_src);
+    // REALISTIC MIXED CJK text: kana interleaved with ASCII (every 4th char), which
+    // real Japanese/Chinese text always has. The 2-byte SIMD gather can only stride
+    // PURE 2-byte windows, so the ASCII bytes break it every few chars and the
+    // remainder fell to the generic per-char decode_char+encode_char body — the case
+    // the new DBCS->UTF-16 scalar run fixes (the pure-2-byte arms above never exercise
+    // the post-gather-break tail).
+    let jp_mixed_cps: Vec<u32> = (0..512u32)
+        .map(|k| if k % 4 == 0 { 0x41 + (k % 26) } else { 0x3041 + (k % 0x5E) })
+        .collect();
+    let jp_mixed = u8enc(&jp_mixed_cps);
+    let cp932_mixed_src = host_to(b"CP932\0", &jp_mixed);
+    run_conv(
+        c,
+        "cp932_mixed_to_utf16le",
+        b"UTF-16LE\0",
+        b"CP932\0",
+        &cp932_mixed_src,
+    );
+    let eucjp_mixed_src = host_to(b"EUC-JP\0", &jp_mixed);
+    run_conv(
+        c,
+        "eucjp_mixed_to_utf16le",
+        b"UTF-16LE\0",
+        b"EUC-JP\0",
+        &eucjp_mixed_src,
+    );
     // Same vpgatherdd-vs-scalar question for the fast-glibc EUC-JP/-MS -> UTF-16 path.
     run_conv(c, "eucjp_to_utf16le", b"UTF-16LE\0", b"EUC-JP\0", &eucjp_src);
     run_conv(
