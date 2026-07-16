@@ -6,6 +6,57 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-16 (cod / codex-root) — REJECTED: cached-name `cuserid` copy stayed inside the null floor (`bd-sl1c12`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
+  reported the only active perf bead in the allocator lane, owned by `cod_fl`.
+  Recent ledger rows also closed the adjacent resource and dlfcn seams. No prior
+  `cuserid` perf row existed, so this turn moved to the fresh deprecated-login /
+  passwd-cache path without touching the peer-owned allocator or printf work.
+- **PROFILE FIRST / ONE LEVER.** Source and call-graph attribution showed that a
+  hot `cuserid(current_uid)` refreshes the existing `/etc/passwd` fingerprint,
+  finds the generation-stamped cached UID record, clones the entire owned
+  `Passwd` (`name`, password, gecos, home, and shell), and then consumes only
+  `pw_name`. The sole candidate added an in-cache name copy and made `cuserid`
+  write that slice directly into its existing caller/TLS buffer. UID lookup,
+  source-path selection, stat fingerprinting, generation invalidation,
+  truncation, NUL termination, and root/non-root fallback selection remained
+  unchanged.
+- **CERTIFIED REWRITE / ORACLE.** Before timing, one release binary asserted
+  that retained incumbent, candidate, and host glibc returned their supplied
+  caller buffers and produced byte-identical current-user names. The candidate
+  and incumbent shared the same `getuid`, freshness probe, cache generation,
+  fallback, 31-byte truncation, and terminator contracts; only full-record clone
+  versus borrowed-name copy differed. The oracle passed.
+- **REMOTE-ONLY / NON-LTO ROUTING.** An uncapped, untimed release warm-up request
+  for idle `hz1` was routed to `vmi1153651` and completed, but that worker
+  immediately discarded the warmed graph when measurement began. After
+  cancellation, replacement `vmi1264463` completed another uncapped warm-up and
+  likewise evicted the graph. The final proof therefore used a single
+  same-binary foreground build/run on `vmi1264463`; it returned exit zero.
+  Every command set `AGENT_NAME=codex-root`, `RCH_REQUIRE_REMOTE=1`, and
+  `CARGO_PROFILE_RELEASE_LTO=false` and used `cargo bench --profile release`.
+  Compilation was uncapped; only the Criterion executable had a 60-second
+  runner cap. No local fallback, LTO, or `force_local` route was used.
+- **REAL SAME-BINARY A/B / NULL CONTROL.** With 10 samples, 100 ms warm-up, and
+  300 ms measurement per arm, Criterion reported incumbent full-record clone
+  **2.5807 us** `[2.3936, 2.8047 us]`, candidate name copy **2.5468 us**
+  `[2.3875, 2.7949 us]`, and a source-identical candidate null repeat
+  **2.1762 us** `[2.1148, 2.2739 us]`. The raw separation was only
+  **1.013311x / 1.3136% lower latency**, while the identical repeat shifted
+  **1.170297x**. Averaging candidate repeats gives **2.3615 us** and only
+  **1.092822x / 8.4938%** versus incumbent, inside the repository's **1.105x**
+  floor. The independent harness p50 was actively red: incumbent
+  **2298.639 ns**, candidate **2419.500 ns**, null **2320.625 ns**, or a
+  **5.2579% candidate regression**. Host glibc's Criterion center was
+  **6.5910 us**, so this was not an upstream gap worth trading stability for.
+- **DISPOSITION: REJECT / RESTORE.** The clone removal is semantically sound but
+  invisible beside the mandatory passwd freshness probe, and its measured delta
+  is dominated by same-binary drift. The production helper, `cuserid` rewrite,
+  retained incumbent hook, host comparator, null arm, and benchmark registration
+  were restored completely. Only this real ratio and the closed bead remain;
+  no stash or peer file was modified.
+
 ## 2026-07-16 (cod / codex-root) — REJECTED: consolidated native `dlerror` TLS stayed below the null-adjusted floor (`bd-msbxng`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** A new
