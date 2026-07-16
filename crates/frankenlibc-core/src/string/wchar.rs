@@ -406,6 +406,49 @@ pub fn mbstowcs(dest: &mut [u32], src: &[u8]) -> Option<usize> {
             }
             return Some(di);
         }
+        // Lone 2/3-byte fast decode: on INTERLEAVED text (ASCII words + a stray
+        // accent/symbol, e.g. "café", "résumé", "5€") the SIMD run paths above
+        // require a RUN of 8 (2-byte) / 4 (3-byte) and so never fire, leaving each
+        // lone multibyte char to the full `mbtowc` dispatch (~7ns). These two inline
+        // arms decode the single char with the SAME validation the SIMD windows use
+        // (2-byte: lead 0xC2..=0xDF never overlong/surrogate; 3-byte: RFC-3629 shape
+        // + no E0-overlong / ED-surrogate), so they are byte-for-byte what `mbtowc`
+        // returns; anything else (incl. a truncated lead at the buffer end) falls
+        // through to `mbtowc`, which yields the identical result.
+        let b0 = src[si];
+        if (0xC2..=0xDF).contains(&b0) && si + 1 < src.len() && src[si + 1] & 0xC0 == 0x80 {
+            let wc = (((b0 & 0x1F) as u32) << 6) | ((src[si + 1] & 0x3F) as u32);
+            if di < dest.len() {
+                dest[di] = wc;
+            } else {
+                return Some(di);
+            }
+            si += 2;
+            di += 1;
+            continue;
+        }
+        if (0xE0..=0xEF).contains(&b0) && si + 2 < src.len() {
+            let c1 = src[si + 1];
+            let c2 = src[si + 2];
+            if c1 & 0xC0 == 0x80
+                && c2 & 0xC0 == 0x80
+                && (b0 != 0xE0 || c1 >= 0xA0)
+                && (b0 != 0xED || c1 <= 0x9F)
+            {
+                let wc = (((b0 & 0x0F) as u32) << 12)
+                    | (((c1 & 0x3F) as u32) << 6)
+                    | ((c2 & 0x3F) as u32);
+                if di < dest.len() {
+                    dest[di] = wc;
+                } else {
+                    return Some(di);
+                }
+                si += 3;
+                di += 1;
+                continue;
+            }
+        }
+
         let (wc, n) = mbtowc(&src[si..])?;
         if di < dest.len() {
             dest[di] = wc;
