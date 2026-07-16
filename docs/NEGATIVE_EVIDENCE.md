@@ -6,6 +6,62 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / codex-root) — WIN / SHIPPED: strict `cfgetospeed` skips the observation-only Termios policy round trip (`bd-re05x5`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
+  surfaced a resolver methodology bead, but the recent resolver vein was already
+  ledger-dense. This turn moved to the previously unmeasured Termios accessor
+  path. The old family-wide ledger bound correctly says that Termios validation
+  is meaningful; this symbol-scoped exception retains the null and complete
+  tracked-object extent checks and removes only the deployed-strict policy and
+  observation round trip for a pure field read.
+- **PROFILE FIRST / ONE LEVER.** Ordinary-release disassembly showed
+  `cfgetispeed` doing only `known_remaining` plus its field load, while
+  `cfgetospeed` called `runtime_policy::decide`, then `known_remaining`, loaded
+  `c_ospeed`, and called `runtime_policy::observe`. The one production change is
+  a strict-only early path in `cfgetospeed`; hardened mode and test builds retain
+  the complete incumbent body.
+- **EQUIVALENCE ORACLE / PROOF BOUNDARY.** In deployed strict mode the policy
+  result is forced to `Allow`, so the incumbent return value is determined by
+  the same null check, the same `tracked_object_fits` check, and the same exact
+  `c_ospeed` load now performed directly. Before timing, the same release binary
+  proved incumbent/candidate equality for `B0`, `B9600`, `B115200`, and
+  `B4000000`, null, and a deliberately tracked allocation one byte too short;
+  both paths returned zero for the two rejected-pointer cases. Process mode is
+  immutable, so skipping strict observations cannot alter a later hardened
+  decision in the same process.
+- **COLD ROUTING / ONE FOREGROUND ORDINARY-RELEASE A/B.** Untimed `--no-run`
+  warm-ups completed on `vmi1264463` and `vmi1156319`, but their follow-up jobs
+  rematerialized release dependencies and were interrupted before timing; an
+  earlier inadmissible preference routed to `ovh-b` and hit its known dependency
+  `SIGILL`. None informed the verdict. Per the one-retry instruction, the final
+  command pinned alternate worker `vmi1293453`, set `AGENT_NAME=codex-root` and
+  `RCH_REQUIRE_REMOTE=1`, and ran `cargo bench --profile release` in the
+  foreground. Its cold Cargo build completed outside Criterion's timed region;
+  only the benchmark executable had a 60-second runner cap. The LTO-enabled
+  Cargo bench profile, local fallback, and `force_local` were never used.
+- **REAL SAME-BINARY A/B.** Criterion used 30 samples, 0.2s warm-up, and 0.5s
+  measurement per arm. The exact retained incumbent measured **1.3386 us**
+  `[1.2701, 1.3976 us]`; the strict direct path measured **5.6715 ns**
+  `[5.2965, 6.1067 ns]`: **236.02x faster / 99.576% lower latency**. Even the
+  conservative incumbent-low/candidate-high edge is **207.98x**. A
+  source-identical direct-path control measured **4.9198 ns**
+  `[4.5942, 5.2599 ns]`. Its narrower sequential interval sits below the
+  candidate interval, exposing order/frequency drift at the roughly 5 ns floor;
+  the independent per-operation p50s were 5.007 ns and 4.974 ns (**0.66%**
+  apart). That floor noise is over two orders of magnitude smaller than the
+  incumbent/candidate separation and cannot account for the keep.
+- **DISPOSITION / RELEASE GATE.** Keep the 13-line strict-only branch. The
+  temporary incumbent helper and all benchmark arms were removed. On the same
+  alternate worker, ordinary-release `termios_abi_test`,
+  `conformance_diff_termios`, and `conformance_diff_cfspeed` passed **45/45**,
+  including tracked-short rejection and host-glibc speed round trips. Remote
+  compilation emitted only pre-existing warnings in untouched files, and direct
+  `rustfmt --check` passed for the touched source. The scoped remote
+  `clippy -D warnings` gate stopped in `frankenlibc-core` on 62 pre-existing
+  errors before reaching this ABI change; no reported path belongs to this
+  bead. No stash was modified.
+
 ## 2026-07-15 (cod / codex-root) — NO-SHIP: strict `mtx_lock` tracked-bounds bypass did not clear the identical-code floor (`bd-20umin`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage`

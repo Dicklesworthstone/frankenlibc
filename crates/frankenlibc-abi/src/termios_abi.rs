@@ -808,6 +808,19 @@ pub unsafe extern "C" fn cfgetispeed(termios_p: *const libc::termios) -> u32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfgetospeed(termios_p: *const libc::termios) -> u32 {
+    // Strict mode forces Termios decisions to Allow. Preserve the pointer and
+    // tracked-extent checks, but skip the observation-only policy round trip
+    // for this pure field accessor. Hardened and test builds retain the full
+    // policy path below.
+    if runtime_policy::strict_passthrough_active() {
+        if termios_p.is_null() || !tracked_object_fits(termios_p) {
+            return 0;
+        }
+        // SAFETY: the pointer is non-null and any tracked allocation has room
+        // for the complete termios object.
+        return unsafe { (*termios_p).c_ospeed };
+    }
+
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Termios,
         termios_p as usize,
