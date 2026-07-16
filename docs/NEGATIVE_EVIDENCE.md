@@ -6,6 +6,50 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-16 (cod / codex-root) — REJECTED: 32 KiB `getdents64` refill regressed `readdir` drain (`bd-wv6wzk`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
+  reported broad correctness work while the only active perf bead was in the
+  peer-owned allocator lane. The newest shipped `readdir` row left the 4 KiB
+  `getdents64` refill explicitly unchanged, and exact ledger/history searches
+  found no prior larger-refill attempt, so this turn stayed out of allocator and
+  concurrent printf work and tested that open dirent boundary.
+- **PROFILE FIRST / ONE LEVER.** The untouched 4 KiB implementation measured
+  **23.927 us** `[22.289, 26.701 us]` against host glibc **17.469 us**
+  `[16.642, 18.539 us]`, a **1.369683x** residual. The sole production lever
+  changed `GETDENTS_BUF_SIZE` from 4 KiB to 32 KiB for both `opendir` and
+  `fdopendir`, allowing each unchanged `getdents64` refill to batch up to eight
+  times as many bytes. Parsing, record order, `d_off`, stream position,
+  rewind/seek behavior, locking, error propagation, and TLS result copying were
+  untouched; the tradeoff was 28 KiB more heap storage per open `DIR`.
+- **REMOTE-ONLY / NON-LTO ROUTING.** Untimed, uncapped release warm-ups completed
+  first on `vmi1293453` and then replacement `vmi1227854`; both workers
+  discarded the warmed release graph before their immediate follow-up. Those
+  rebuilds were interrupted and supplied no timing evidence. Direct execution
+  of the warmed artifact was correctly refused by remote-required RCH rather
+  than falling back locally. The admitted retained and candidate measurements
+  therefore used separate cold-build/foreground-run commands pinned to
+  `vmi1227854`, with `AGENT_NAME=codex-root`, `RCH_REQUIRE_REMOTE=1`,
+  `CARGO_PROFILE_RELEASE_LTO=false`, and `cargo bench --profile release
+  --config profile.release.lto=false`. Compilation was uncapped; only each
+  Criterion executable had a 60-second runner cap. No LTO, local fallback, or
+  `force_local` route was used.
+- **REAL SAME-WORKER A/B / HOST NULL CONTROL.** With 20 samples, 200 ms warm-up,
+  and 500 ms measurement, retained 4 KiB was **23.927 us** `[22.289, 26.701
+  us]`; 32 KiB was **26.898 us** `[23.543, 31.265 us]`. The raw ratio was only
+  **0.889546x** retained/candidate, or a **12.4169% latency regression**.
+  Criterion's change interval crossed zero at **-15.008% to +13.615%**
+  (`p=0.89`) and detected no improvement. Host glibc shifted from **17.469 us**
+  `[16.642, 18.539 us]` to **18.109 us** `[16.982, 19.218 us]`, only **3.6636%**;
+  normalizing by that control worsened FrankenLibC's residual from **1.369683x**
+  to **1.485339x**, an **8.4439% regression**. The benchmark's pre-timing oracle
+  confirmed equal nontrivial FrankenLibC/glibc entry counts in both binaries.
+- **DISPOSITION: REJECT / RESTORE.** The larger allocation did not amortize the
+  drain path on `/usr/lib`, widened uncertainty, and lost even after host-control
+  normalization. The constant was restored byte-for-byte to 4096 before commit;
+  only this measured rejection and bead closeout remain. No stash or peer file
+  was modified.
+
 ## 2026-07-16 (cod / codex-root) — WIN / SHIPPED: PageOracle L1 XOR fold removes the serial multiplier chain (`bd-28aeab`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
