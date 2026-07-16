@@ -1941,7 +1941,7 @@ const POW5_FIXED: [u128; 10] = [
 /// using integer arithmetic. The fast path is deliberately capped to precision <= 9
 /// and a 64-bit result so the downstream decimal emission is tiny and the fallback
 /// remains responsible for large/edge dtoa cases.
-fn rounded_scaled_fixed(value: f64, precision: usize) -> Option<u128> {
+pub(crate) fn rounded_scaled_fixed(value: f64, precision: usize) -> Option<u128> {
     if precision == 0 || precision > 9 {
         return None;
     }
@@ -1996,7 +1996,7 @@ fn round_shift_right_ties_even(n: u128, shift: u32) -> Option<u128> {
     q.checked_add(round_up as u128)
 }
 
-fn decimal_digits_u128(mut value: u128, tmp: &mut [u8; 40]) -> &[u8] {
+pub(crate) fn decimal_digits_u128(mut value: u128, tmp: &mut [u8; 40]) -> &[u8] {
     let mut i = tmp.len();
     loop {
         i -= 1;
@@ -2061,12 +2061,6 @@ fn format_e(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     // `printf_float_differential_fuzz`). `alt_form` keeps the path below (it forces
     // a trailing point at precision 0).
     if !alt_form {
-        if let Some(mut s) = try_format_e_fixed_scaled(value, precision) {
-            if uppercase {
-                s.make_ascii_uppercase();
-            }
-            return s;
-        }
         let mut s = crate::stdlib::ecvt::render_pct_e(value, precision);
         if uppercase {
             s.make_ascii_uppercase();
@@ -2120,6 +2114,16 @@ pub fn __bench_format_g_legacy(value: f64, precision: usize) -> String {
 #[doc(hidden)]
 pub fn __bench_format_e(value: f64, precision: usize) -> String {
     format_e(value, precision, false, false)
+}
+/// Deployed `%e` path (width-0, no `#`): `render_pct_e_into`, exactly the function
+/// `format_float` calls for real `printf("%e", ..)`. The fixed-scaled fast path now
+/// lives inside it (after its exact-integer/dyadic paths), so this hook measures the
+/// deployed win. Bench hook.
+#[doc(hidden)]
+pub fn __bench_render_pct_e_into(value: f64, precision: usize) -> alloc::vec::Vec<u8> {
+    let mut buf = alloc::vec::Vec::new();
+    crate::stdlib::ecvt::render_pct_e_into(value, precision, &mut buf);
+    buf
 }
 #[doc(hidden)]
 pub fn __bench_format_f(value: f64, precision: usize) -> String {
@@ -2263,60 +2267,75 @@ fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<String> {
 /// Fast path for `%e`/`%E` (no `#`): compute the `precision + 1` significant
 /// mantissa digits by EXACT integer scaling — `rounded_scaled_fixed`, the same
 /// correctly-rounded (ties-to-even, exact big-integer) machinery the `%g` fast
-/// path uses — instead of the general dyadic `try_build_dyadic_sci` inside
-/// `render_pct_e`. For `|value|` in `[10^E, 10^(E+1))` the mantissa digits are
-/// `round(|value| * 10^(precision - E))`: rounding to `precision - E` decimal
-/// places is exactly rounding to `precision + 1` significant digits, yielding a
-/// `precision+1`-digit integer (or `precision+2` when a tie carries into the next
-/// decade, e.g. `9.9999995e-01` -> `1.000000e+00`). Byte-identical to
-/// `render_pct_e` (guarded by `printf_float_differential_fuzz`); returns `None`
-/// outside the range the exact scaling covers so the caller falls back.
-fn try_format_e_fixed_scaled(value: f64, precision: usize) -> Option<String> {
-    use core::fmt::Write as _;
+/// path uses — and append the C `d.ddde±dd` form straight into `buf` with no
+/// per-call String. Returns `true` iff it handled `value`. For `|value|` in
+/// `[10^E, 10^(E+1))` the mantissa digits are `round(|value| * 10^(precision-E))`:
+/// rounding to `precision-E` decimal places is exactly rounding to `precision+1`
+/// significant digits, yielding a `precision+1`-digit integer (or `precision+2`
+/// when a tie carries to the next decade, e.g. `9.9999995e-01` -> `1.000000e+00`).
+///
+/// Called from `render_pct_e`/`render_pct_e_into` (ecvt) AFTER their exact-integer
+/// and dyadic fast paths — those already handle integral and terminating-decimal
+/// values (e.g. `2.5`) with lighter arithmetic, so this only fires for the
+/// non-dyadic values (like pi) that would otherwise fall to the slow `{:e}`
+/// flt2dec reshape. Byte-identical to that reshape for accepted inputs (guarded by
+/// `printf_float_differential_fuzz`, which drives `format_float`).
+pub(crate) fn try_pct_e_fixed_scaled_into(value: f64, precision: usize, buf: &mut Vec<u8>) -> bool {
     if precision == 0 || !value.is_finite() || value == 0.0 {
-        return None;
+        return false;
     }
-    let negative = value.is_sign_negative();
     let abs = value.abs();
-    let pre_exp = decimal_exp_for_fixed_g(abs)?;
+    let Some(pre_exp) = decimal_exp_for_fixed_g(abs) else {
+        return false;
+    };
     let k = precision as i32 - pre_exp;
     if !(1..=9).contains(&k) {
-        return None;
+        return false;
     }
-    let scaled = rounded_scaled_fixed(abs, k as usize)?;
+    let Some(scaled) = rounded_scaled_fixed(abs, k as usize) else {
+        return false;
+    };
     let mut tmp = [0u8; 40];
     let ds = decimal_digits_u128(scaled, &mut tmp);
-    // `scaled` lies in `[10^precision, 10^(precision+1)]`, so it has exactly
-    // `precision+1` digits — or `precision+2` when the round carried to
-    // `10^(precision+1)` ("1" followed by zeros), which bumps the exponent.
     let (sig, exp) = if ds.len() == precision + 1 {
         (ds, pre_exp)
     } else if ds.len() == precision + 2 {
         (&ds[..precision + 1], pre_exp + 1)
     } else {
-        return None;
+        return false;
     };
 
-    let mut s = String::with_capacity(precision + 7 + usize::from(negative));
-    if negative {
-        s.push('-');
+    if value.is_sign_negative() {
+        buf.push(b'-');
     }
-    s.push(sig[0] as char);
-    s.push('.');
-    for &c in &sig[1..] {
-        s.push(c as char);
-    }
-    s.push('e');
-    s.push(if exp < 0 { '-' } else { '+' });
+    buf.push(sig[0]);
+    buf.push(b'.');
+    buf.extend_from_slice(&sig[1..]);
+    // C `e±dd` tail (sign, >= 2 digits). `pre_exp` comes from decimal_exp_for_fixed_g
+    // (range [-4, 8]) with an optional +1 carry, so `abs_exp` is always a single digit
+    // here — the `< 10` pad emits exactly two exponent digits.
+    buf.push(b'e');
+    buf.push(if exp < 0 { b'-' } else { b'+' });
     let abs_exp = exp.unsigned_abs();
     if abs_exp < 10 {
-        s.push('0');
+        buf.push(b'0');
     }
-    let _ = write!(s, "{abs_exp}");
-    Some(s)
+    let mut etmp = [0u8; 3];
+    let mut n = abs_exp;
+    let mut ei = etmp.len();
+    loop {
+        ei -= 1;
+        etmp[ei] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    buf.extend_from_slice(&etmp[ei..]);
+    true
 }
 
-fn decimal_exp_for_fixed_g(value: f64) -> Option<i32> {
+pub(crate) fn decimal_exp_for_fixed_g(value: f64) -> Option<i32> {
     const POW10_POS: [f64; 10] = [
         1.0,
         10.0,

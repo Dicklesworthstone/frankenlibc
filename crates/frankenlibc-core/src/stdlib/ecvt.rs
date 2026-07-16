@@ -1066,6 +1066,17 @@ pub fn render_pct_e(value: f64, ndigit: usize) -> String {
     if let Some(dyadic) = try_build_dyadic_sci(value, ndigit) {
         return dyadic;
     }
+    // Non-dyadic values (e.g. pi): exact integer-scaling fast path renders the
+    // `precision+1` significant digits directly, skipping the `{:e}` flt2dec reshape
+    // below. Placed AFTER the dyadic path so terminating decimals keep their lighter
+    // route. The bytes it writes are pure ASCII (digits/`.`/`e`/sign). Byte-identical
+    // (guarded by printf_float_differential_fuzz, which exercises this via format_e).
+    {
+        let mut fbuf = Vec::new();
+        if crate::stdio::printf::try_pct_e_fixed_scaled_into(value, ndigit, &mut fbuf) {
+            return String::from_utf8(fbuf).expect("fixed-scaled %e output is ASCII");
+        }
+    }
     // Render the `%e` form into a stack buffer (no per-call heap alloc for the
     // intermediate, mirroring `render_gcvt`); only the returned String allocates.
     let mut sb = StackStr::new();
@@ -1123,6 +1134,13 @@ pub fn render_pct_e_into(value: f64, ndigit: usize, buf: &mut Vec<u8>) {
         }
     }
     if try_build_dyadic_sci_into(value, ndigit, buf) {
+        return;
+    }
+    // Non-dyadic values (e.g. pi) reach here; the exact integer-scaling fast path
+    // renders them without the `{:e}` flt2dec reshape below. Placed AFTER the dyadic
+    // path so terminating decimals keep their lighter route. Byte-identical (guarded
+    // by printf_float_differential_fuzz, which drives format_float -> this fn).
+    if crate::stdio::printf::try_pct_e_fixed_scaled_into(value, ndigit, buf) {
         return;
     }
     let mut sb = StackStr::new();

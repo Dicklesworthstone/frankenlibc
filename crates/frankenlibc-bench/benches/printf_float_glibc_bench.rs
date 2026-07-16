@@ -101,5 +101,42 @@ fn bench(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench);
+/// DEPLOYED `%e` path A/B: `render_pct_e_into` fed by the zero-alloc fixed-scaled
+/// fast path (what real `printf("%e", ..)` runs) vs the legacy `render_pct_e_into`
+/// alone vs in-process glibc. This is the path last change did NOT cover (only the
+/// String `format_e` hook), so it measures the actual deployed win.
+fn bench_deployed_e(c: &mut Criterion) {
+    use frankenlibc_core::stdio::printf::__bench_render_pct_e_into;
+    // `render_pct_e_into` is the real deployed `printf("%e", ..)` renderer; the
+    // fixed-scaled fast path now lives inside it (after its dyadic path). Compare
+    // vs glibc; the pre-change baseline is captured in the commit ledger from the
+    // same pinned setup (legacy render_pct_e_into, glibc control stable).
+    const E_CASES: &[(&str, f64, usize)] = &[
+        ("dep_e_pi_p6", 3.141592653589793, 6),
+        ("dep_e_simple_p6", 2.5, 6),
+        ("dep_e_frac_p8", 0.0123456789, 8),
+    ];
+    for (name, value, prec) in E_CASES {
+        let neu = __bench_render_pct_e_into(*value, *prec);
+        let g = gl(*value, *prec, 'e');
+        assert_eq!(neu.as_slice(), g.as_slice(), "{name}: != glibc");
+
+        let fmt = std::ffi::CString::new(format!("%.{prec}e")).unwrap();
+        let mut grp = c.benchmark_group(name.to_string());
+        grp.bench_function("frankenlibc_core", |b| {
+            b.iter(|| black_box(__bench_render_pct_e_into(black_box(*value), *prec)))
+        });
+        grp.bench_function("host_glibc_inprocess", |b| {
+            b.iter(|| {
+                let mut buf = [0i8; 64];
+                black_box(unsafe {
+                    strfromd(buf.as_mut_ptr(), 64, fmt.as_ptr(), black_box(*value))
+                });
+            })
+        });
+        grp.finish();
+    }
+}
+
+criterion_group!(benches, bench, bench_deployed_e);
 criterion_main!(benches);
