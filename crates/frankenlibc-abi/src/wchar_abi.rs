@@ -5558,6 +5558,8 @@ unsafe fn try_wcsftime_numeric_fast(
     const HMS: u8 = 1;
     const HM: u8 = 2;
     const YMD: u8 = 3;
+    const YMDHM: u8 = 4;
+    const MDY: u8 = 5;
 
     let mode = if wide_ascii_eq(format, b"%Y-%m-%d %H:%M:%S") {
         YMD_HMS
@@ -5567,6 +5569,10 @@ unsafe fn try_wcsftime_numeric_fast(
         HM
     } else if wide_ascii_eq(format, b"%Y-%m-%d") {
         YMD
+    } else if wide_ascii_eq(format, b"%Y-%m-%d %H:%M") {
+        YMDHM
+    } else if wide_ascii_eq(format, b"%m/%d/%Y") {
+        MDY
     } else {
         return None;
     };
@@ -5575,9 +5581,14 @@ unsafe fn try_wcsftime_numeric_fast(
     // formats only need the scalar fields below and do not read tm_zone.
     let tm = unsafe { &*tm };
     let year = i64::from(tm.tm_year) + 1900;
-    let needs_date = matches!(mode, YMD_HMS | YMD);
-    let needs_time = matches!(mode, YMD_HMS | HMS | HM);
-    if needs_date
+    // `has_date` = the y/m/d fields are read (ISO `%Y-%m-%d...` OR the US `%m/%d/%Y`);
+    // `needs_date` = the ISO `YYYY-MM-DD` prefix is written (MDY writes its own order).
+    let has_date = matches!(mode, YMD_HMS | YMD | YMDHM | MDY);
+    let needs_date = matches!(mode, YMD_HMS | YMD | YMDHM);
+    let needs_time = matches!(mode, YMD_HMS | HMS | HM | YMDHM);
+    // No-seconds modes: `%H:%M` and `%Y-%m-%d %H:%M`.
+    let no_secs = matches!(mode, HM | YMDHM);
+    if has_date
         && (!(1000..=9999).contains(&year)
             || !(0..=11).contains(&tm.tm_mon)
             || !(1..=31).contains(&tm.tm_mday))
@@ -5587,7 +5598,7 @@ unsafe fn try_wcsftime_numeric_fast(
     if needs_time
         && (!(0..=23).contains(&tm.tm_hour)
             || !(0..=59).contains(&tm.tm_min)
-            || (mode != HM && !(0..=60).contains(&tm.tm_sec)))
+            || (!no_secs && !(0..=60).contains(&tm.tm_sec)))
     {
         return None;
     }
@@ -5597,6 +5608,8 @@ unsafe fn try_wcsftime_numeric_fast(
         HMS => 8,
         HM => 5,
         YMD => 10,
+        YMDHM => 16,
+        MDY => 10,
         _ => unreachable!(),
     };
     if maxsize <= out_len {
@@ -5605,6 +5618,22 @@ unsafe fn try_wcsftime_numeric_fast(
 
     let mut out = [0u8; 19];
     let mut pos = 0usize;
+    if mode == MDY {
+        // "MM/DD/YYYY" — US order/separator, distinct from the ISO `needs_date` prefix.
+        let month = (tm.tm_mon + 1) as u32;
+        out[0] = b'0' + (month / 10) as u8;
+        out[1] = b'0' + (month % 10) as u8;
+        out[2] = b'/';
+        let day = tm.tm_mday as u32;
+        out[3] = b'0' + (day / 10) as u8;
+        out[4] = b'0' + (day % 10) as u8;
+        out[5] = b'/';
+        let y = year as u32;
+        out[6] = b'0' + ((y / 1000) % 10) as u8;
+        out[7] = b'0' + ((y / 100) % 10) as u8;
+        out[8] = b'0' + ((y / 10) % 10) as u8;
+        out[9] = b'0' + (y % 10) as u8;
+    }
     if needs_date {
         let year = year as u32;
         out[pos] = b'0' + ((year / 1000) % 10) as u8;
@@ -5620,7 +5649,7 @@ unsafe fn try_wcsftime_numeric_fast(
         out[pos + 8] = b'0' + (day / 10) as u8;
         out[pos + 9] = b'0' + (day % 10) as u8;
         pos += 10;
-        if mode == YMD_HMS {
+        if mode == YMD_HMS || mode == YMDHM {
             out[pos] = b' ';
             pos += 1;
         }
@@ -5633,7 +5662,7 @@ unsafe fn try_wcsftime_numeric_fast(
         let minute = tm.tm_min as u32;
         out[pos + 3] = b'0' + (minute / 10) as u8;
         out[pos + 4] = b'0' + (minute % 10) as u8;
-        if mode != HM {
+        if !no_secs {
             out[pos + 5] = b':';
             let second = tm.tm_sec as u32;
             out[pos + 6] = b'0' + (second / 10) as u8;

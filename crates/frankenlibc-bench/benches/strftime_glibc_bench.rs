@@ -143,6 +143,8 @@ fn bench(c: &mut Criterion) {
     let fmt_ymdhm = c"%Y-%m-%d %H:%M";
     let fmt_mdy = c"%m/%d/%Y";
     let wfmt = wide_cstr("%Y-%m-%d %H:%M:%S");
+    let wfmt_ymdhm = wide_cstr("%Y-%m-%d %H:%M");
+    let wfmt_mdy = wide_cstr("%m/%d/%Y");
     let tm = make_tm();
     let host = host_strftime();
     let host_wide = host_wcsftime();
@@ -340,6 +342,36 @@ fn bench(c: &mut Criterion) {
         });
     });
     group.finish();
+
+    for (name, wf) in [
+        ("wcsftime_wide_ymd_hm", &wfmt_ymdhm),
+        ("wcsftime_wide_mdy", &wfmt_mdy),
+    ] {
+        let mut group = c.benchmark_group(name);
+        group.bench_function("frankenlibc_abi", |bencher| {
+            bencher.iter(|| {
+                let mut buf = [0 as libc::wchar_t; 64];
+                let n = unsafe {
+                    fl_wchar::wcsftime(
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        wf.as_ptr(),
+                        black_box(&tm) as *const libc::tm as *const c_void,
+                    )
+                };
+                black_box((n, buf[0]));
+            });
+        });
+        group.bench_function("host_glibc", |bencher| {
+            bencher.iter(|| {
+                let mut buf = [0 as libc::wchar_t; 64];
+                let n =
+                    unsafe { host_wide(buf.as_mut_ptr(), buf.len(), wf.as_ptr(), black_box(&tm)) };
+                black_box((n, buf[0]));
+            });
+        });
+        group.finish();
+    }
 }
 
 criterion_group! {
