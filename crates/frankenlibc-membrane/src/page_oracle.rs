@@ -209,12 +209,13 @@ impl PageOracle {
     }
 
     fn mix_l1_index(value: usize) -> usize {
-        let mut value = value as u64;
-        value ^= value >> 33;
-        value = value.wrapping_mul(0xff51_afd7_ed55_8ccd);
-        value ^= value >> 33;
-        value = value.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-        (value ^ (value >> 33)) as usize
+        let value = value as u64;
+        // The filter consumes only the low 16 bits. XOR-folding every 16-bit
+        // lane is balanced over each 2^16-sized block: with the upper lanes
+        // fixed, the low lane remains a bijection onto all filter buckets.
+        // That gives the monotone presence filter the dispersion it needs
+        // without two dependent 64-bit multiplies on every negative query.
+        (value ^ (value >> 16) ^ (value >> 32) ^ (value >> 48)) as usize
     }
 }
 
@@ -300,6 +301,19 @@ mod tests {
         oracle.remove(base, 4096);
         assert!(oracle.l1_chunk_may_be_present(l1_idx));
         assert!(!oracle.query(base));
+    }
+
+    #[test]
+    fn l1_filter_fold_is_balanced_for_each_low_lane() {
+        for upper_lanes in [0usize, 0x1234_5678_9abc_0000_u64 as usize] {
+            let mut seen = [false; L1_FILTER_BITS];
+            for low_lane in 0..L1_FILTER_BITS {
+                let bit = PageOracle::mix_l1_index(upper_lanes | low_lane) & (L1_FILTER_BITS - 1);
+                assert!(!seen[bit], "duplicate filter bucket {bit}");
+                seen[bit] = true;
+            }
+            assert!(seen.into_iter().all(|present| present));
+        }
     }
 
     #[test]

@@ -6,6 +6,58 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-16 (cod / codex-root) — WIN / SHIPPED: PageOracle L1 XOR fold removes the serial multiplier chain (`bd-28aeab`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
+  reported broad correctness work while the only active perf bead remained in
+  the peer-owned allocator lane. Exact ledger and history searches found no
+  prior `mix_l1_index` or 16-bit fold attempt, so this turn moved to the fresh
+  membrane PageOracle filter without touching allocator or concurrent printf
+  work.
+- **PROFILE FIRST / ONE LEVER.** The focused ordinary-release profile measured
+  `stage_page_oracle_foreign_nonempty/strict` at **3.306 ns p50** and attributed
+  every fast-negative query to one owned-pages load, page decomposition, a
+  Murmur-style mixer containing two dependent 64-bit multiplications, and one
+  L1-filter load. The sole production lever replaces only that mixer with an
+  XOR fold of its four 16-bit lanes; filter shape, atomics, exact-map fallback,
+  insert/remove accounting, and query ordering are unchanged.
+- **CERTIFIED REWRITE / PROOF BOUNDARY.** The filter consumes only the low 16
+  result bits. With any three upper input lanes fixed, XOR with the varying low
+  lane is a bijection over all 65,536 buckets. Insert and query use the same
+  mapping, so the rewrite cannot create a false negative; additional collisions
+  can only create a filter false positive that falls through to the unchanged
+  exact page map. A focused exhaustive unit oracle records that permutation
+  property for two upper-lane patterns, alongside the existing no-false-negative,
+  remove, monotonicity, empty-oracle, and address-space saturation tests.
+- **REMOTE-ONLY / NON-LTO ROUTING.** `ovh-b` failed an untimed warm-up when a
+  `zerocopy` build script hit worker-side `SIGILL`; `vmi1264463` completed an
+  uncapped warm-up and then evicted its release graph. Replacement
+  `vmi1227854` completed the uncapped, untimed cold warm build, and all admitted
+  profile and A/B evidence below came from that worker in foreground
+  `cargo bench --profile release` runs. Every build set `AGENT_NAME=codex-root`,
+  `RCH_REQUIRE_REMOTE=1`, and `CARGO_PROFILE_RELEASE_LTO=false`; compilation was
+  uncapped and only the Criterion executable had a 60-second runner cap. No
+  local fallback, LTO, or `force_local` route was used.
+- **REAL SAME-WORKER A/B / SAME-BINARY NULL CONTROL.** With 30 samples, 200 ms
+  warm-up, and 500 ms measurement, the retained multiplier mixer measured
+  **2.9901 ns** `[2.8662, 3.1057 ns]`; the XOR fold measured **2.6178 ns**
+  `[2.5203, 2.7167 ns]`, and Criterion's change interval was entirely favorable
+  at **-15.799% to -6.9342%** (`p=0.00`). That raw separation is **1.142219x /
+  12.4511% lower latency**. A source-identical candidate repeat in the same
+  release binary measured **2.7607 ns** `[2.5978, 2.8838 ns]`, a **5.4588%**
+  center shift. Averaging the two candidate centers gives **2.68925 ns** and a
+  null-adjusted **1.111871x / 10.0615% lower latency**, clearing the repository's
+  **1.105x** floor. Independent harness p50s were **3.055 ns** retained,
+  **2.597 ns** candidate, and **2.660 ns** null.
+- **VALIDATION / DISPOSITION: KEEP.** The release benchmark compiled and ran the
+  production candidate successfully. A subsequent focused unit-test build was
+  blocked before FrankenLibC compiled by a pre-existing type-inference error in
+  `/data/projects/asupersync/src/lab/runtime.rs:1768`; no peer dependency was
+  modified. The exhaustive fold oracle remains with the production rewrite for
+  the next unblocked test run. The adjusted gain clears the noise floor, the
+  bijection proof preserves the monotone filter contract, and the multiplier-free
+  fold ships.
+
 ## 2026-07-16 (cod / codex-root) — REJECTED: cached-name `cuserid` copy stayed inside the null floor (`bd-sl1c12`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
