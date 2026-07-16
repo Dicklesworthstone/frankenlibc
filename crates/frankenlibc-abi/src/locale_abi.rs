@@ -203,22 +203,9 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
 // nl_langinfo
 // ---------------------------------------------------------------------------
 
-/// POSIX `nl_langinfo`.
-///
-/// Bootstrap supports a minimal C-locale subset:
-/// - `CODESET` -> `"ANSI_X3.4-1968"`
-/// - `RADIXCHAR` -> `"."`
-/// - `THOUSEP` -> `""`
-///   Unsupported items return `""`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
-    let (_, decision) = runtime_policy::decide(ApiFamily::Locale, item as usize, 0, false, true, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
-        return std::ptr::null();
-    }
-
-    let value = match item {
+#[inline]
+fn c_locale_langinfo_value(item: libc::nl_item) -> &'static [u8] {
+    match item {
         libc::CODESET => C_LOCALE_CODESET,
         libc::RADIXCHAR => C_LOCALE_RADIX,
         libc::THOUSEP => C_LOCALE_THOUSEP,
@@ -292,9 +279,38 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
         //   P_SIGN_POSN=262157, N_SIGN_POSN=262158.
         262151..=262158 => b"\xff\0",
         _ => EMPTY_LOCALE_STR,
-    };
+    }
+}
+
+#[inline]
+fn nl_langinfo_with_policy(item: libc::nl_item) -> *const c_char {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Locale, item as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
+        return std::ptr::null();
+    }
+
+    let value = c_locale_langinfo_value(item);
     runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
     value.as_ptr() as *const c_char
+}
+
+/// POSIX `nl_langinfo`.
+///
+/// Bootstrap supports a minimal C-locale subset:
+/// - `CODESET` -> `"ANSI_X3.4-1968"`
+/// - `RADIXCHAR` -> `"."`
+/// - `THOUSEP` -> `""`
+///   Unsupported items return `""`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
+    // Strict mode cannot repair or deny this scalar selector, and every result
+    // points into the immutable C-locale table above. Hardened mode and tests
+    // retain the full policy path.
+    if runtime_policy::strict_passthrough_active() {
+        return c_locale_langinfo_value(item).as_ptr() as *const c_char;
+    }
+    nl_langinfo_with_policy(item)
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,48 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-16 (cod / codex-root) — WIN / SHIPPED: strict `nl_langinfo` reads the immutable C-locale table directly (`bd-ak6fvz`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
+  surfaced broad correctness work and a peer-owned malloc bead. The initial
+  stdio and inet candidates were abandoned before code or Cargo because their
+  exact families were already ledgered as floor-bound; locale had no prior
+  `nl_langinfo` row. This turn therefore took one fresh locale lever.
+- **PROFILE FIRST / ONE LEVER.** The ordinary-release source/disassembly profile
+  showed an immutable selector-to-static-string match wrapped by
+  `runtime_policy::decide` and `observe`. In deployed strict mode this scalar
+  selector cannot be repaired or denied. The one production change extracts
+  that match and lets strict mode return its static pointer directly; hardened
+  mode and test builds retain the complete incumbent policy path.
+- **CERTIFIED REWRITE / EXECUTABLE ORACLE.** The same release benchmark binary
+  compared the retained incumbent and candidate over every supported day,
+  month, format, expression, currency, and numeric monetary selector, plus two
+  unsupported selectors. Every case proved non-null output, identical static
+  pointer identity, identical C-string bytes, and identical preservation of a
+  caller-seeded `EBUSY`. The oracle completed before timing.
+- **REMOTE-ONLY / NON-LTO / COLD BUILD.** The first pinned worker
+  (`vmi1153651`) completed an untimed `--no-run` warm-up but evicted its release
+  target before measurement; that rebuild was interrupted and supplied no
+  result. A replacement route to `ovh-b` failed cold with worker-side `SIGILL`
+  and likewise supplied no evidence. The final foreground command pinned
+  `vmi1227854`, set `AGENT_NAME=codex-root`, `RCH_REQUIRE_REMOTE=1`,
+  `CARGO_PROFILE_RELEASE_LTO=false`, and used `cargo bench --profile release`.
+  Its cold release build was uncapped; only the benchmark executable was capped
+  at 60 seconds through Cargo's foreground target runner. No LTO, local
+  fallback, or `force_local` path was used.
+- **ONE FOREGROUND SAME-BINARY A/B.** Criterion used 30 samples, 200 ms warm-up,
+  and 1 second measurement per arm for `CODESET`. The retained policy path was
+  **317.82 ns** `[311.78, 323.81 ns]`; the direct strict path was **2.6941 ns**
+  `[2.5700, 2.8502 ns]`: **117.97x faster / 99.1523% lower latency**. Even
+  incumbent-low/candidate-high is **109.39x**. The direct-operation p50s were
+  330.893 ns and 2.934 ns (**112.78x**).
+- **NULL CONTROL / DISPOSITION.** A source-identical candidate null control was
+  **2.8045 ns** `[2.7519, 2.8541 ns]`, 3.94% from the candidate midpoint with
+  overlapping intervals; floor noise cannot explain the incumbent separation.
+  The temporary incumbent wrapper and benchmark arms were removed, leaving a
+  production-only diff. The release build completed with only pre-existing
+  warnings; focused `rustfmt --check` and `git diff --check` pass.
+
 ## 2026-07-15 (cod / codex-root) — WIN / SHIPPED: `getauxval` publishes one bootstrap-safe auxv snapshot (`bd-92b6bz`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
