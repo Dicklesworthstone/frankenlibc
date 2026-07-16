@@ -10,6 +10,15 @@ const ARM_COUNT: usize = 2;
 const ARM_FAST: usize = 0;
 const ARM_FULL: usize = 1;
 
+// `profile_state` encodes both initial exploration and the warmed UCB choice so
+// `select_profile` needs one atomic load in every non-gated state. Values 0/1
+// deliberately match the arm indices returned by `compute_ucb_profile`.
+const STATE_CACHED_FAST: u8 = ARM_FAST as u8;
+const STATE_CACHED_FULL: u8 = ARM_FULL as u8;
+const STATE_EXPLORE_NONE: u8 = 2;
+const STATE_EXPLORE_FAST_ONLY: u8 = 3;
+const STATE_EXPLORE_FULL_ONLY: u8 = 4;
+
 /// Cadence at which UCB scores are recomputed per family.
 /// Every 64 observations per family, the expensive ln+sqrt computation
 /// runs once and the preferred profile is cached for the hot path.
@@ -26,9 +35,9 @@ pub struct ConstrainedBanditRouter {
     utility_milli: [AtomicI64; ApiFamily::COUNT * ARM_COUNT],
     /// Total pulls per family (sum of fast + full), for cadenced recomputation.
     family_pulls: [AtomicU64; ApiFamily::COUNT],
-    /// Cached UCB-preferred profile per family: 0 = Fast, 1 = Full.
-    /// Updated on cadence in `observe()`.
-    cached_ucb_profile: [AtomicU8; ApiFamily::COUNT],
+    /// Exploration state or cached UCB-preferred profile per family.
+    /// Updated during initial exploration and on cadence in `observe()`.
+    profile_state: [AtomicU8; ApiFamily::COUNT],
 }
 
 impl ConstrainedBanditRouter {
@@ -38,8 +47,7 @@ impl ConstrainedBanditRouter {
             pulls: std::array::from_fn(|_| AtomicU64::new(0)),
             utility_milli: std::array::from_fn(|_| AtomicI64::new(0)),
             family_pulls: std::array::from_fn(|_| AtomicU64::new(0)),
-            // Default to Full until we have enough data (conservative).
-            cached_ucb_profile: std::array::from_fn(|_| AtomicU8::new(1)),
+            profile_state: std::array::from_fn(|_| AtomicU8::new(STATE_EXPLORE_NONE)),
         }
     }
 
@@ -64,19 +72,12 @@ impl ConstrainedBanditRouter {
             return ValidationProfile::Full;
         }
 
-        let family_idx = usize::from(family as u8);
-        // Ensure initial exploration of both arms without running the expensive
-        // ln+sqrt UCB computation on the hot path.
-        let fast_pulls = self.pulls[idx(family_idx, ARM_FAST)].load(Ordering::Relaxed);
-        if fast_pulls == 0 {
-            return ValidationProfile::Fast;
-        }
-        let full_pulls = self.pulls[idx(family_idx, ARM_FULL)].load(Ordering::Relaxed);
-        if full_pulls == 0 {
-            return ValidationProfile::Full;
-        }
-        match self.cached_ucb_profile[family_idx].load(Ordering::Relaxed) {
-            0 => ValidationProfile::Fast,
+        // The state byte includes initial exploration, so both cold and warmed
+        // selection require one atomic load. Unknown states fail conservatively.
+        match self.profile_state[usize::from(family as u8)].load(Ordering::Relaxed) {
+            STATE_CACHED_FAST | STATE_EXPLORE_NONE | STATE_EXPLORE_FULL_ONLY => {
+                ValidationProfile::Fast
+            }
             _ => ValidationProfile::Full,
         }
     }
@@ -103,6 +104,8 @@ impl ConstrainedBanditRouter {
         self.pulls[slot].fetch_add(1, Ordering::Relaxed);
         let total = self.family_pulls[family_idx].fetch_add(1, Ordering::Relaxed) + 1;
 
+        self.record_exploration(family_idx, arm);
+
         // Utility model:
         // - latency penalty in milli-units
         // - heavy penalty for adverse outcomes
@@ -117,7 +120,45 @@ impl ConstrainedBanditRouter {
         // Cadenced UCB recomputation.
         if total >= 2 && total.is_multiple_of(UCB_RECOMPUTE_CADENCE) {
             let ucb_profile = self.compute_ucb_profile(family_idx);
-            self.cached_ucb_profile[family_idx].store(ucb_profile, Ordering::Relaxed);
+            // A cadence containing only one arm must not skip exploration of
+            // the missing arm. Once both have been seen, the state is cached.
+            let state = self.profile_state[family_idx].load(Ordering::Relaxed);
+            if state <= STATE_CACHED_FULL {
+                self.profile_state[family_idx].store(ucb_profile, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Advance the one-byte exploration automaton after observing `arm`.
+    ///
+    /// The first observation of each arm is order-independent. Once both arms
+    /// have appeared, the conservative cached default is Full until the next
+    /// UCB cadence recomputes a preference. As with the incumbent's separate
+    /// relaxed pull counters, a concurrent select/observe race does not promise
+    /// a transactionally identical intermediate exploration choice; the state
+    /// converges after both first observations and hard gates always run first.
+    fn record_exploration(&self, family_idx: usize, arm: usize) {
+        let state = &self.profile_state[family_idx];
+        let mut current = state.load(Ordering::Relaxed);
+        loop {
+            let next = match (current, arm) {
+                (STATE_EXPLORE_NONE, ARM_FAST) => STATE_EXPLORE_FAST_ONLY,
+                (STATE_EXPLORE_NONE, ARM_FULL) => STATE_EXPLORE_FULL_ONLY,
+                (STATE_EXPLORE_FAST_ONLY, ARM_FULL) | (STATE_EXPLORE_FULL_ONLY, ARM_FAST) => {
+                    STATE_CACHED_FULL
+                }
+                (STATE_EXPLORE_FAST_ONLY, ARM_FAST)
+                | (STATE_EXPLORE_FULL_ONLY, ARM_FULL)
+                | (STATE_CACHED_FAST | STATE_CACHED_FULL, _) => return,
+                // No valid transition emits another value. Repair unexpected
+                // state conservatively rather than selecting Fast from it.
+                _ => STATE_CACHED_FULL,
+            };
+
+            match state.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => return,
+                Err(observed) => current = observed,
+            }
         }
     }
 
@@ -171,6 +212,47 @@ const fn idx(family_idx: usize, arm: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn incumbent_select_profile(
+        router: &ConstrainedBanditRouter,
+        family: ApiFamily,
+        mode: SafetyLevel,
+        risk_upper_bound_ppm: u32,
+        contention_hint: u16,
+    ) -> ValidationProfile {
+        if mode.heals_enabled() && (risk_upper_bound_ppm >= 100_000 || contention_hint >= 96) {
+            return ValidationProfile::Full;
+        }
+        if risk_upper_bound_ppm >= 300_000 {
+            return ValidationProfile::Full;
+        }
+
+        let family_idx = usize::from(family as u8);
+        if router.pulls[idx(family_idx, ARM_FAST)].load(Ordering::Relaxed) == 0 {
+            return ValidationProfile::Fast;
+        }
+        if router.pulls[idx(family_idx, ARM_FULL)].load(Ordering::Relaxed) == 0 {
+            return ValidationProfile::Full;
+        }
+        match router.profile_state[family_idx].load(Ordering::Relaxed) {
+            STATE_CACHED_FAST => ValidationProfile::Fast,
+            _ => ValidationProfile::Full,
+        }
+    }
+
+    fn assert_matches_incumbent(router: &ConstrainedBanditRouter, family: ApiFamily) {
+        for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+            for risk in [99_999, 100_000, 299_999, 300_000] {
+                for contention in [95, 96] {
+                    assert_eq!(
+                        router.select_profile(family, mode, risk, contention),
+                        incumbent_select_profile(router, family, mode, risk, contention),
+                        "selection drifted for mode={mode:?} risk={risk} contention={contention}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn high_risk_prefers_full() {
@@ -229,6 +311,126 @@ mod tests {
     }
 
     #[test]
+    fn encoded_state_matches_incumbent_for_both_orders_and_cadence_boundaries() {
+        let family = ApiFamily::Allocator;
+
+        for first in [ValidationProfile::Fast, ValidationProfile::Full] {
+            let router = ConstrainedBanditRouter::new();
+            assert_matches_incumbent(&router, family);
+
+            router.observe(family, first, 10, false);
+            assert_matches_incumbent(&router, family);
+
+            // A repeated first-arm observation must not suppress exploration
+            // of the other arm.
+            router.observe(family, first, 11, false);
+            assert_matches_incumbent(&router, family);
+
+            let other = match first {
+                ValidationProfile::Fast => ValidationProfile::Full,
+                ValidationProfile::Full => ValidationProfile::Fast,
+            };
+            router.observe(family, other, 120, false);
+            assert_matches_incumbent(&router, family);
+
+            for total in 4..=128 {
+                let profile = if total % 2 == 0 {
+                    ValidationProfile::Fast
+                } else {
+                    ValidationProfile::Full
+                };
+                router.observe(family, profile, 20 + total, total % 17 == 0);
+                if matches!(total, 63 | 64 | 127 | 128) {
+                    assert_matches_incumbent(&router, family);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn one_arm_only_past_cadence_still_explores_the_missing_arm() {
+        let family = ApiFamily::Allocator;
+
+        let full_only = ConstrainedBanditRouter::new();
+        for _ in 0..UCB_RECOMPUTE_CADENCE {
+            full_only.observe(family, ValidationProfile::Full, 100, false);
+        }
+        assert_eq!(
+            full_only.profile_state[usize::from(family as u8)].load(Ordering::Relaxed),
+            STATE_EXPLORE_FULL_ONLY
+        );
+        assert_matches_incumbent(&full_only, family);
+        assert_eq!(
+            full_only.select_profile(family, SafetyLevel::Strict, 0, 0),
+            ValidationProfile::Fast
+        );
+
+        let fast_only = ConstrainedBanditRouter::new();
+        for _ in 0..UCB_RECOMPUTE_CADENCE {
+            fast_only.observe(family, ValidationProfile::Fast, 10, false);
+        }
+        assert_eq!(
+            fast_only.profile_state[usize::from(family as u8)].load(Ordering::Relaxed),
+            STATE_EXPLORE_FAST_ONLY
+        );
+        assert_matches_incumbent(&fast_only, family);
+        assert_eq!(
+            fast_only.select_profile(family, SafetyLevel::Strict, 0, 0),
+            ValidationProfile::Full
+        );
+    }
+
+    #[test]
+    fn concurrent_first_observations_reach_a_cached_safe_state() {
+        use std::sync::{Arc, Barrier};
+
+        let family = ApiFamily::Allocator;
+        let router = Arc::new(ConstrainedBanditRouter::new());
+        let start = Arc::new(Barrier::new(3));
+        let mut threads = Vec::new();
+
+        for profile in [ValidationProfile::Fast, ValidationProfile::Full] {
+            let router = Arc::clone(&router);
+            let start = Arc::clone(&start);
+            threads.push(std::thread::spawn(move || {
+                start.wait();
+                router.observe(family, profile, 20, false);
+            }));
+        }
+        start.wait();
+        for thread in threads {
+            thread.join().expect("observation thread panicked");
+        }
+
+        assert_eq!(
+            router.profile_state[usize::from(family as u8)].load(Ordering::Relaxed),
+            STATE_CACHED_FULL
+        );
+        assert_eq!(
+            router.select_profile(family, SafetyLevel::Strict, 0, 0),
+            ValidationProfile::Full
+        );
+    }
+
+    #[test]
+    fn unknown_state_fails_full_and_is_repaired_on_observation() {
+        let router = ConstrainedBanditRouter::new();
+        let family = ApiFamily::Allocator;
+        let family_idx = usize::from(family as u8);
+        router.profile_state[family_idx].store(u8::MAX, Ordering::Relaxed);
+
+        assert_eq!(
+            router.select_profile(family, SafetyLevel::Strict, 0, 0),
+            ValidationProfile::Full
+        );
+        router.observe(family, ValidationProfile::Fast, 10, false);
+        assert_eq!(
+            router.profile_state[family_idx].load(Ordering::Relaxed),
+            STATE_CACHED_FULL
+        );
+    }
+
+    #[test]
     fn extreme_cost_does_not_wrap_to_positive_utility() {
         let router = ConstrainedBanditRouter::new();
         let family = ApiFamily::Allocator;
@@ -262,7 +464,7 @@ mod tests {
 
         let family_idx = usize::from(family as u8);
         assert_eq!(
-            router.cached_ucb_profile[family_idx].load(Ordering::Relaxed),
+            router.profile_state[family_idx].load(Ordering::Relaxed),
             ARM_FAST as u8,
             "cadenced UCB recompute should cache Fast when its utility dominates"
         );
@@ -281,7 +483,7 @@ mod tests {
         router.observe(family, ValidationProfile::Fast, 8, false);
         router.observe(family, ValidationProfile::Full, 180, false);
         assert_eq!(
-            router.cached_ucb_profile[family_idx].load(Ordering::Relaxed),
+            router.profile_state[family_idx].load(Ordering::Relaxed),
             ARM_FULL as u8
         );
 
@@ -296,7 +498,7 @@ mod tests {
             UCB_RECOMPUTE_CADENCE - 2
         );
         assert_eq!(
-            router.cached_ucb_profile[family_idx].load(Ordering::Relaxed),
+            router.profile_state[family_idx].load(Ordering::Relaxed),
             ARM_FULL as u8,
             "cached UCB choice should remain frozen until the cadence boundary is reached"
         );
@@ -322,13 +524,13 @@ mod tests {
         let fast_idx = usize::from(fast_family as u8);
         let untouched_idx = usize::from(untouched_family as u8);
         assert_eq!(
-            router.cached_ucb_profile[fast_idx].load(Ordering::Relaxed),
+            router.profile_state[fast_idx].load(Ordering::Relaxed),
             ARM_FAST as u8
         );
         assert_eq!(
-            router.cached_ucb_profile[untouched_idx].load(Ordering::Relaxed),
-            ARM_FULL as u8,
-            "families that never hit cadence should retain the conservative default cache"
+            router.profile_state[untouched_idx].load(Ordering::Relaxed),
+            STATE_EXPLORE_NONE,
+            "families that were never observed should retain the initial exploration state"
         );
         assert_eq!(
             router.select_profile(untouched_family, SafetyLevel::Strict, 10_000, 0),

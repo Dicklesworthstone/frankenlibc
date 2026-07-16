@@ -6,6 +6,61 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-16 (cod / codex-root) — WIN / SHIPPED: bandit selection reads one encoded profile-state atom (`bd-l02db5`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
+  exposed broad correctness work and a peer-owned allocator bead. The recent
+  stdio, string, time, resolver, and allocator lanes were already ledger-dense,
+  so this turn moved to the unmeasured runtime-math bandit selection path.
+- **PROFILE FIRST / ONE LEVER.** The focused ordinary-release profile and source
+  attribution showed that the steady-state `select_profile` path still loaded
+  both arm-pull counters before loading the cached profile byte, despite its
+  documented one-load warmed contract. The sole production lever encodes the
+  cold exploration states and warmed UCB choice in that existing `AtomicU8`,
+  reducing non-gated selection from three relaxed atomic loads to one.
+- **CERTIFIED REWRITE / PROOF BOUNDARY.** The hard hardened-mode
+  risk/contention gate and unconditional high-risk gate remain ahead of the
+  encoded state. The UCB score math and 64-observation cadence are unchanged;
+  a one-arm-only cadence cannot suppress exploration of the missing arm, and an
+  unknown state fails closed to `Full`. A retained incumbent oracle proved the
+  candidate's sequential choice for both first-observation orders, strict and
+  hardened modes, both sides of every risk/contention threshold, and totals 63,
+  64, 127, and 128. Concurrent-first-observation and corrupt-state repair tests
+  prove convergence to conservative `Full` after both observations and repair
+  of an invalid state. They do not claim interleaving-by-interleaving identity:
+  both the incumbent counters and candidate automaton are relaxed online
+  telemetry, while the hard gates remain invariant. The remote focused library
+  run passed **13/13** tests.
+- **REMOTE-ONLY / NON-LTO ROUTING.** A preference that landed on `ovh-b` failed
+  cold in a dependency build script with worker-side `SIGILL` and supplied no
+  evidence. `vmi1227854` completed an untimed release warm-up, then evicted its
+  release cache before the follow-up and was abandoned. Both admissible A/B
+  commands pinned `vmi1264463`, set `AGENT_NAME=codex-root`,
+  `RCH_REQUIRE_REMOTE=1`, and `CARGO_PROFILE_RELEASE_LTO=false`, and ran
+  `cargo bench --profile release` in the foreground. Cold Cargo compilation was
+  uncapped and outside the timed region; only benchmark execution was capped.
+  No LTO, local fallback, or `force_local` route was used.
+- **REAL SAME-WORKER A/B / DISPOSITION.** With the existing warmed strict-mode
+  `bandit_select_profile` benchmark, 20 samples, 300 ms warm-up, and 1 second
+  measurement, the incumbent measured **3.0820 ns** `[2.9912, 3.1701 ns]` and
+  the candidate **2.3037 ns** `[2.2252, 2.3836 ns]`: **1.3378x faster / 25.253%
+  lower latency** by the directly paired centers. Criterion's persisted-change
+  analysis independently reported `[-22.637%, -17.771%, -12.886%]`, `p=0.00`,
+  “Performance has improved.” Harness p50 improved from **2.911 ns** to
+  **2.301 ns** (**1.2651x / 20.955% lower**) and throughput rose from
+  **326,264,843.619** to **431,752,466.567 ops/s**. Keep the state encoding.
+- **COST ACCOUNTING / RELEASE GATE.** Warm `observe` adds one relaxed state load
+  (only exploration or corrupt-state repair performs a CAS), so the normal
+  select-plus-observe cycle still removes one relaxed load net; the measured
+  surface is selection itself. The ordinary release benchmark compiled the
+  production crate twice.
+  The normal test graph remains blocked by a pre-existing type-inference error
+  in peer-owned `asupersync/src/lab/runtime.rs`; a verification-only temporary
+  narrowing of unused membrane dev-dependency declarations isolated the 13
+  library tests and was restored byte-for-byte. The worker reported test exit 0
+  before an agent interrupt stopped only silent artifact retrieval. Focused
+  `rustfmt --check` and `git diff --check` pass; no stash was modified.
+
 ## 2026-07-16 (cod / codex-root) — WIN / SHIPPED: strict `nl_langinfo` reads the immutable C-locale table directly (`bd-ak6fvz`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
