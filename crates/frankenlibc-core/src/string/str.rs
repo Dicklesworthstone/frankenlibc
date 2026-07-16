@@ -103,6 +103,75 @@ fn block_has_nul_512(chunk: &[u8]) -> bool {
     folded.simd_eq(Simd::splat(0)).any()
 }
 
+/// Returns `true` if any byte in a `STRLEN_BLOCK`-wide chunk equals `needle` or NUL.
+///
+/// Two-target sibling of [`block_has_nul_256`] for `find_byte_or_nul`: `min(v ^
+/// needle, v)` is `0` in a lane iff that byte is `needle` (`v ^ needle == 0`) or
+/// NUL (`v == 0`), because `min(a, b) == 0` iff either operand is `0`. Folding the
+/// per-panel results with `simd_min` then pays ONE zero-compare reduction per 256
+/// bytes instead of a movemask+branch every 64. The caller's SIMD fine loop
+/// resolves the exact first index, so the widened detection never changes it.
+#[inline(always)]
+fn block_has_byte_or_nul_256(chunk: &[u8], needle: u8) -> bool {
+    debug_assert_eq!(chunk.len(), STRLEN_BLOCK);
+    let n = Simd::<u8, STRLEN_SIMD_LANES>::splat(needle);
+    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[0..STRLEN_SIMD_LANES]);
+    let v1 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
+    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
+    );
+    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES * 3..STRLEN_BLOCK]);
+    let p0 = (v0 ^ n).simd_min(v0);
+    let p1 = (v1 ^ n).simd_min(v1);
+    let p2 = (v2 ^ n).simd_min(v2);
+    let p3 = (v3 ^ n).simd_min(v3);
+    let folded = p0.simd_min(p1).simd_min(p2.simd_min(p3));
+    folded.simd_eq(Simd::splat(0)).any()
+}
+
+/// Returns `true` if any byte in a `STRLEN_NUL_BLOCK`-wide chunk equals `needle`
+/// or NUL — the 512-byte sibling of [`block_has_byte_or_nul_256`] (same
+/// `min(v ^ needle, v)` trick, eight panels, one reduction per 512 bytes).
+#[inline(always)]
+fn block_has_byte_or_nul_512(chunk: &[u8], needle: u8) -> bool {
+    debug_assert_eq!(chunk.len(), STRLEN_NUL_BLOCK);
+    let n = Simd::<u8, STRLEN_SIMD_LANES>::splat(needle);
+    let v0 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[0..STRLEN_SIMD_LANES]);
+    let v1 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES..STRLEN_SIMD_LANES * 2]);
+    let v2 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 2..STRLEN_SIMD_LANES * 3],
+    );
+    let v3 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 3..STRLEN_SIMD_LANES * 4],
+    );
+    let v4 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 4..STRLEN_SIMD_LANES * 5],
+    );
+    let v5 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 5..STRLEN_SIMD_LANES * 6],
+    );
+    let v6 = Simd::<u8, STRLEN_SIMD_LANES>::from_slice(
+        &chunk[STRLEN_SIMD_LANES * 6..STRLEN_SIMD_LANES * 7],
+    );
+    let v7 =
+        Simd::<u8, STRLEN_SIMD_LANES>::from_slice(&chunk[STRLEN_SIMD_LANES * 7..STRLEN_NUL_BLOCK]);
+    let p0 = (v0 ^ n).simd_min(v0);
+    let p1 = (v1 ^ n).simd_min(v1);
+    let p2 = (v2 ^ n).simd_min(v2);
+    let p3 = (v3 ^ n).simd_min(v3);
+    let p4 = (v4 ^ n).simd_min(v4);
+    let p5 = (v5 ^ n).simd_min(v5);
+    let p6 = (v6 ^ n).simd_min(v6);
+    let p7 = (v7 ^ n).simd_min(v7);
+    let folded = p0
+        .simd_min(p1)
+        .simd_min(p2.simd_min(p3))
+        .simd_min(p4.simd_min(p5).simd_min(p6.simd_min(p7)));
+    folded.simd_eq(Simd::splat(0)).any()
+}
+
 #[inline(always)]
 fn copy_nul_free_block_512(dest: &mut [u8], src: &[u8]) -> bool {
     debug_assert_eq!(dest.len(), STRLEN_NUL_BLOCK);
@@ -715,11 +784,32 @@ pub fn strchrnul(s: &[u8], c: u8) -> usize {
 
 #[allow(unsafe_code)]
 fn find_byte_or_nul(s: &[u8], needle: u8) -> usize {
-    // Direct mask scan for the first `needle`-or-NUL lane via trailing_zeros — one
-    // movemask per 64-byte panel, no coarse-check-then-rescan double-load. The prior
-    // folded-coarse + SCALAR byte re-scan of the flagged block made strchrnul/
-    // strcspn(1) ~16x slower than glibc; the mask alone is glibc-class (bd-2g7oyh).
     let mut i = 0;
+
+    // Coarse min-fold tiers (512B then 256B), mirroring `strlen`'s block scan: over
+    // a needle/NUL-free span they pay ONE horizontal reduction per block instead of
+    // a movemask+branch every 64 bytes. `min(v ^ needle, v)` is `0` iff v==needle or
+    // v==0, so the fold detects a hit in the block; the SIMD fine loop below then
+    // resolves the exact first index from the flagged block start (byte-identical).
+    // This differs from the reverted coarse+SCALAR-rescan (which made the flagged
+    // block ~16x slow): the re-scan here stays SIMD, so needle/NUL-free spans get
+    // strlen-class throughput (strchr_absent 1.87x -> ~parity; bd-4iaexa lineage).
+    while i + STRLEN_NUL_BLOCK <= s.len() {
+        if block_has_byte_or_nul_512(&s[i..i + STRLEN_NUL_BLOCK], needle) {
+            break;
+        }
+        i += STRLEN_NUL_BLOCK;
+    }
+    while i + STRLEN_BLOCK <= s.len() {
+        if block_has_byte_or_nul_256(&s[i..i + STRLEN_BLOCK], needle) {
+            break;
+        }
+        i += STRLEN_BLOCK;
+    }
+
+    // Fine mask scan for the exact first `needle`-or-NUL lane via trailing_zeros —
+    // one movemask per 64-byte panel. Resolves the position inside the block the
+    // coarse tiers flagged (or scans a short sub-512B input directly).
     let n64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(needle);
     let z64 = Simd::<u8, STRLEN_SIMD_LANES>::splat(0);
     while i + STRLEN_SIMD_LANES <= s.len() {
