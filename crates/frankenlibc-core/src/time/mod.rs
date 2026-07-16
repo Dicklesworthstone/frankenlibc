@@ -524,6 +524,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     if let Some(n) = format_strftime_ymd(fmt, bd, buf) {
         return n;
     }
+    if let Some(n) = format_strftime_mdy(fmt, bd, buf) {
+        return n;
+    }
     if let Some(n) = format_strftime_simple_numeric(fmt, bd, buf) {
         return n;
     }
@@ -1196,6 +1199,40 @@ fn format_strftime_ymdhm(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Opt
     write_two_digits(&mut buf[11..13], bd.tm_hour as u32);
     buf[13] = b':';
     write_two_digits(&mut buf[14..16], bd.tm_min as u32);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+#[inline]
+fn format_strftime_mdy(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
+    // "%m/%d/%Y" — US-style date, extremely common. Numeric-only so it fell to the
+    // two-pass simple_numeric and ran ~2x its exact-match sibling `%Y-%m-%d` for the
+    // same 10-char output — leaving fl only at PARITY with glibc (0.95x) instead of
+    // ~0.45x. Single-pass exact match; byte-identical (out-of-range -> None -> the
+    // same prior path).
+    if fmt != b"%m/%d/%Y" {
+        return None;
+    }
+    let year = bd.tm_year as i64 + 1900;
+    if !(1000..=9999).contains(&year)
+        || !(0..=11).contains(&bd.tm_mon)
+        || !(1..=31).contains(&bd.tm_mday)
+    {
+        return None;
+    }
+    const OUT_LEN: usize = 10;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+    write_two_digits(&mut buf[0..2], (bd.tm_mon + 1) as u32);
+    buf[2] = b'/';
+    write_two_digits(&mut buf[3..5], bd.tm_mday as u32);
+    buf[5] = b'/';
+    let year = year as u32;
+    buf[6] = b'0' + ((year / 1000) % 10) as u8;
+    buf[7] = b'0' + ((year / 100) % 10) as u8;
+    buf[8] = b'0' + ((year / 10) % 10) as u8;
+    buf[9] = b'0' + (year % 10) as u8;
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
