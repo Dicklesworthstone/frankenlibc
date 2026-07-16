@@ -6,6 +6,56 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-15 (cod / codex-root) — NO-SHIP: strict `mtx_lock` tracked-bounds bypass did not clear the identical-code floor (`bd-20umin`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST PIVOT.** `bv --robot-triage`
+  exposed broad correctness work and peer-owned performance lanes. The first
+  core-condvar candidate was vetoed before editing: existing ledger artifacts
+  already put the no-waiter signal path at its deployed floor, while changing
+  waiter sequencing would reopen a lost-wake proof obligation. This turn therefore
+  moved to the unattempted C11 `mtx_lock` sibling of the shipped `mtx_trylock`
+  strict-path optimization.
+- **PROFILE FIRST / ONE LEVER.** Ordinary-release disassembly showed exported
+  `mtx_lock` calling out-of-line `known_remaining` before delegating to
+  `pthread_mutex_lock`. The candidate skipped only
+  `tracked_required_object_fits(mtx)` in deployed strict mode; hardened mode and
+  tests retained the complete tracked-allocation bounds lookup. No sibling
+  entrypoint changed.
+- **EQUIVALENCE ORACLE / PROOF BOUNDARY.** The same release binary retained the
+  exact incumbent path and a source-identical candidate-null arm. Before timing,
+  all three arms returned `THRD_ERROR` for null and successfully completed an
+  initialized lock/unlock cycle. For a live, aligned, full-size `mtx_t`, the
+  rewrite removes only the lookup before the common pthread delegate and C11
+  return mapping. Review also found that the delegate does not independently
+  prove the extent of a tracked short allocation, so the candidate could not
+  inherit FrankenLibC's stronger invalid-pointer safety contract without another
+  guard.
+- **REMOTE-ONLY ROUTING / COLD BUILD.** `vmi1227854` completed the uncapped
+  `--no-run` warm-up, then rematerialized common release dependencies for the
+  measurement; that job was interrupted before timing. RCH refused a shell-wrapped
+  warm-up plus measurement with `RCH-E301` and did not fall back locally. The
+  `hz1` preference failed project-root admissibility and routed to `ovh-b`, where
+  a dependency build died with `SIGILL`; neither failure informed the verdict.
+  The final foreground command selected `vmi1152480`, used
+  `RCH_REQUIRE_REMOTE=1`, and ran `cargo bench --profile release`; its cold Cargo
+  build completed untimed before Criterion launched in the same process. This
+  avoided the LTO-enabled Cargo bench profile and any between-job cache eviction.
+- **ONE FOREGROUND A/B.** Criterion measured the full uncontended lock/unlock
+  cycle with 30 samples, 0.2s warm-up, and 0.5s measurement per arm. The retained
+  incumbent measured **14.484 ns** `[14.348, 14.676]`; the strict candidate
+  measured **13.158 ns** `[12.854, 13.409]`, an observed **9.15% latency reduction
+  / 1.101x speedup**; and the source-identical candidate-null measured
+  **12.228 ns** `[11.914, 12.591]`.
+- **DISPOSITION.** Reject and restore all production and benchmark source. Although
+  the candidate interval cleared the incumbent, it did not overlap the
+  source-identical null-control interval; the null was another **7.07%** below the
+  candidate, exposing address/order noise large enough to invalidate attribution.
+  The unresolved tracked-short proof obligation independently prevents this exact
+  rewrite from shipping. The temporary incumbent helper, null-control helper, and
+  benchmark arms were removed. Remote compilation emitted only pre-existing
+  warnings in untouched files. No stash was modified, no local Cargo fallback or
+  timeout-based verdict occurred, and no source change remains to validate.
+
 ## 2026-07-15 (cod / BlackThrush) — WIN / SHIPPED: waiter registration skips uncontended `sem_post` futex wakes (`bd-dy770g`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
