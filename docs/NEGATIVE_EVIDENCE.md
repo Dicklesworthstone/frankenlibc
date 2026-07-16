@@ -6,6 +6,54 @@ old-vs-new rows are explicitly labeled when no host-glibc comparator exists.
 Records **every** result — win, loss, or neutral — so dead ends are never
 retried and real wins are confirmed with numbers.
 
+## 2026-07-16 (cod / codex-root) — REJECTED: strict `getrlimit` policy bypass stayed below the null-control floor (`bd-16jorw`)
+
+- **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
+  exposed broad correctness work plus a peer-owned allocator bead. The recent
+  string, stdio, time, locale, iconv, and runtime-math veins were already
+  ledger-dense or actively peer-owned, so this turn moved to the previously
+  unmeasured resource-query path.
+- **PROFILE FIRST / ONE LEVER.** Ordinary-release source and call-graph
+  attribution showed deployed-strict `getrlimit` calling
+  `runtime_policy::decide` and `runtime_policy::observe` around the unchanged
+  null, tracked-object-extent, resource-number, and raw `prlimit64` checks. The
+  sole candidate bypassed only that policy bookkeeping in strict mode;
+  hardened and test-mode behavior retained the complete incumbent path.
+- **CERTIFIED REWRITE / EXECUTABLE ORACLE.** A retained, non-inlined incumbent
+  body in the same release benchmark binary matched the candidate for all 16
+  Linux `RLIMIT_*` selectors, including returned limits and preservation of a
+  caller-seeded `EBUSY`. Three negative cases separately proved the existing
+  validation order and errno contracts: valid-resource/null and
+  invalid-resource/null both returned `EFAULT`, while invalid-resource/non-null
+  returned `EINVAL`. The **19/19** oracle completed before timing.
+- **REMOTE-ONLY / NON-LTO ROUTING.** The inode-starved `vmi1167313` route was
+  never used. `vmi1264463` and then `vmi1152480` each completed an uncapped,
+  untimed release warm-up but evicted the release graph before their immediate
+  measurements, so those rebuilds were abandoned without claiming evidence.
+  `vmi1227854` failed its remote SSH preflight and supplied no evidence. The
+  returned foreground A/B pinned replacement worker `vmi1149989`, set
+  `AGENT_NAME=codex-root`, `RCH_REQUIRE_REMOTE=1`, and
+  `CARGO_PROFILE_RELEASE_LTO=false`, and ran `cargo bench --profile release`.
+  Its cold Cargo build was uncapped; only the benchmark executable had a
+  60-second runner cap. No LTO, local fallback, or `force_local` route was used.
+- **REAL SAME-BINARY A/B / NULL CONTROL.** With 30 samples, 200 ms warm-up, and
+  1 second measurement per arm, the retained policy path measured **156.24 ns**
+  `[130.61, 181.24 ns]` and the strict-direct candidate **148.50 ns**
+  `[129.75, 169.58 ns]`: an apparent **1.0521x / 4.954% lower latency**, with
+  heavily overlapping intervals. The source-identical candidate null repeat
+  then measured **179.03 ns** `[122.62, 256.65 ns]`, a **20.559%** center shift
+  from the first candidate run and more than four times the claimed reduction.
+  The harness p50 independently moved the other way, from **111.552 ns** to
+  **112.750 ns** (**1.074% slower**), while the null p50 was **108.753 ns**.
+- **DISPOSITION: REJECT / RESTORE.** The syscall-dominated surface did not
+  produce a signal above same-binary floor noise. The strict bypass, retained
+  incumbent, and temporary benchmark arms were restored completely; no
+  production or benchmark change ships. This row records the real A/B ratio so
+  the policy-bypass seam is not retried without a lower-noise batched-syscall
+  fixture. The returned release build completed with only pre-existing
+  warnings; the remaining change is documentation/tracker-only, and
+  `git diff --check` passes. No stash was modified.
+
 ## 2026-07-16 (cod / codex-root) — WIN / SHIPPED: bandit selection reads one encoded profile-state atom (`bd-l02db5`)
 
 - **ROBOT TRIAGE / NEGATIVE-LEDGER-FIRST FRESH PIVOT.** `bv --robot-triage`
