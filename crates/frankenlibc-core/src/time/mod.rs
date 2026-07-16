@@ -512,6 +512,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     if let Some(n) = format_strftime_hms(fmt, bd, buf) {
         return n;
     }
+    if let Some(n) = format_strftime_hm(fmt, bd, buf) {
+        return n;
+    }
     if let Some(n) = format_strftime_numeric_19(fmt, bd, buf) {
         return n;
     }
@@ -1091,6 +1094,31 @@ fn format_strftime_hms(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     write_two_digits(&mut buf[3..5], minute);
     buf[5] = b':';
     write_two_digits(&mut buf[6..8], second);
+    buf[OUT_LEN] = 0;
+    Some(OUT_LEN)
+}
+
+#[inline]
+fn format_strftime_hm(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Option<usize> {
+    // "%H:%M" (== the `%R` expansion) — a very common clock/log format. Without
+    // this it fell to the two-pass `#[inline(never)]` `format_strftime_simple_numeric`
+    // and ran ~1.6x its own `%H:%M:%S` fast path (and lost ~1.2x to glibc), even
+    // though it produces LESS output. Single-pass exact match, mirroring
+    // `format_strftime_hms`; byte-identical (out-of-range fields -> None -> the
+    // same simple_numeric/general path as before).
+    if fmt != b"%H:%M" {
+        return None;
+    }
+    if !(0..=23).contains(&bd.tm_hour) || !(0..=59).contains(&bd.tm_min) {
+        return None;
+    }
+    const OUT_LEN: usize = 5;
+    if buf.len() <= OUT_LEN {
+        return Some(0);
+    }
+    write_two_digits(&mut buf[0..2], bd.tm_hour as u32);
+    buf[2] = b':';
+    write_two_digits(&mut buf[3..5], bd.tm_min as u32);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
 }
