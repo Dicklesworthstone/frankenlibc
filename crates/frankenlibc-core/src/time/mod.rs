@@ -134,20 +134,36 @@ pub fn epoch_to_broken_down_checked(epoch_secs: i64) -> Option<BrokenDownTime> {
     // ±EPOCH_RANGE_LIMIT cutoff, which rejected years (e.g. tm_year ≈ -2147483510)
     // that glibc still represents. (Found by gmtime_r_wide_range_differential_fuzz.)
     let days = epoch_secs.div_euclid(86400);
-    let (year, _, _) = civil_from_days(days);
+    // Single civil computation shared with the assembly below (was: one here for
+    // the overflow test + a second inside `epoch_to_broken_down`).
+    let (year, month_1based, day) = civil_from_days(days);
     let tm_year = year - 1900;
     if tm_year < i32::MIN as i64 || tm_year > i32::MAX as i64 {
         return None;
     }
-    Some(epoch_to_broken_down(epoch_secs))
+    let rem = epoch_secs - days * 86400;
+    Some(build_broken_down(rem, days, year, month_1based, day))
 }
 
 pub fn epoch_to_broken_down(epoch_secs: i64) -> BrokenDownTime {
     // Seconds within the day. Use Euclidean division so negative epochs
     // (pre-1970) round toward -∞ correctly.
     let days = epoch_secs.div_euclid(86400);
-    let rem = epoch_secs.rem_euclid(86400);
+    // `rem` == `epoch_secs.rem_euclid(86400)`: derive it from `days` with one
+    // multiply+subtract instead of a second euclidean division.
+    let rem = epoch_secs - days * 86400;
+    // O(1) civil-from-days for year / month / day.
+    let (year, month_1based, day) = civil_from_days(days);
+    build_broken_down(rem, days, year, month_1based, day)
+}
 
+/// Assemble a [`BrokenDownTime`] from an already-computed day count, intra-day
+/// remainder, and civil (year, month, day). Shared by [`epoch_to_broken_down`]
+/// and [`epoch_to_broken_down_checked`] so `gmtime_r` runs `civil_from_days`
+/// exactly once (the checked path used to compute it twice — once for the
+/// tm_year overflow test, once inside `epoch_to_broken_down`).
+#[inline]
+fn build_broken_down(rem: i64, days: i64, year: i64, month_1based: i64, day: i64) -> BrokenDownTime {
     let tm_sec = (rem % 60) as i32;
     let tm_min = ((rem / 60) % 60) as i32;
     let tm_hour = (rem / 3600) as i32;
@@ -155,11 +171,16 @@ pub fn epoch_to_broken_down(epoch_secs: i64) -> BrokenDownTime {
     // Day of week: Jan 1 1970 was Thursday (4). Euclidean mod 7.
     let tm_wday = ((days + 4).rem_euclid(7)) as i32;
 
-    // O(1) civil-from-days for year / month / day.
-    let (year, month_1based, day) = civil_from_days(days);
     let mon = (month_1based - 1) as i32;
-    // tm_yday = days from Jan 1 of `year` to today.
-    let tm_yday = (days - days_from_civil(year, 1, 1)) as i32;
+    // tm_yday = days from Jan 1 of `year` to today. Byte-identical to
+    // `days - days_from_civil(year, 1, 1)` but via a cumulative-days table + a
+    // proleptic-Gregorian leap test, avoiding a second full civil computation.
+    // (`year % k == 0` divisibility tests are sign-agnostic, so this is correct
+    // for negative/pre-epoch years too.)
+    const CUM_DAYS: [i32; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let tm_yday =
+        CUM_DAYS[mon as usize] + (day as i32 - 1) + (month_1based > 2 && is_leap) as i32;
 
     BrokenDownTime {
         tm_sec,
