@@ -19,6 +19,25 @@ use frankenlibc_abi::{time_abi as fl, wchar_abi as fl_wchar};
 use frankenlibc_core::string::wchar as wchar_core;
 
 type StrftimeFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, *const libc::tm) -> usize;
+type StrptimeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char;
+
+/// Host glibc `strptime` via dlmopen so frankenlibc's exported symbol cannot
+/// shadow the baseline. Numeric-only formats keep this locale-independent.
+fn host_strptime() -> StrptimeFn {
+    static H: OnceLock<usize> = OnceLock::new();
+    let addr = *H.get_or_init(|| unsafe {
+        let handle = libc::dlmopen(
+            libc::LM_ID_NEWLM,
+            b"libc.so.6\0".as_ptr().cast(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        assert!(!handle.is_null(), "dlmopen libc.so.6 failed");
+        let sym = libc::dlsym(handle, b"strptime\0".as_ptr().cast());
+        assert!(!sym.is_null(), "dlsym strptime failed");
+        sym as usize
+    });
+    unsafe { std::mem::transmute::<*mut c_void, StrptimeFn>(addr as *mut c_void) }
+}
 type WcsftimeFn =
     unsafe extern "C" fn(*mut libc::wchar_t, usize, *const libc::wchar_t, *const libc::tm) -> usize;
 
@@ -368,6 +387,37 @@ fn bench(c: &mut Criterion) {
                 let n =
                     unsafe { host_wide(buf.as_mut_ptr(), buf.len(), wf.as_ptr(), black_box(&tm)) };
                 black_box((n, buf[0]));
+            });
+        });
+        group.finish();
+    }
+
+    // strptime (date PARSING) — mirror of the strftime fast-path roster. The
+    // parse_exact_numeric_strptime fast path covers %Y-%m-%d %H:%M:%S / %H:%M:%S /
+    // %Y-%m-%d but NOT %Y-%m-%d %H:%M / %m/%d/%Y / %H:%M (which fall to the general
+    // per-directive parse loop). ymd_hms is the covered control.
+    let sp_host = host_strptime();
+    for (name, input, sfmt) in [
+        ("strptime_ymd_hms", c"2024-03-15 14:30:45", c"%Y-%m-%d %H:%M:%S"),
+        ("strptime_ymd_hm", c"2024-03-15 14:30", c"%Y-%m-%d %H:%M"),
+        ("strptime_mdy", c"03/15/2024", c"%m/%d/%Y"),
+        ("strptime_hm", c"14:30", c"%H:%M"),
+    ] {
+        let mut group = c.benchmark_group(name);
+        group.bench_function("frankenlibc_abi", |bencher| {
+            bencher.iter(|| {
+                let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+                let r = unsafe {
+                    fl::strptime(black_box(input.as_ptr()), sfmt.as_ptr(), &mut tm)
+                };
+                black_box((r, tm.tm_hour, tm.tm_min));
+            });
+        });
+        group.bench_function("host_glibc", |bencher| {
+            bencher.iter(|| {
+                let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+                let r = unsafe { sp_host(black_box(input.as_ptr()), sfmt.as_ptr(), &mut tm) };
+                black_box((r, tm.tm_hour, tm.tm_min));
             });
         });
         group.finish();

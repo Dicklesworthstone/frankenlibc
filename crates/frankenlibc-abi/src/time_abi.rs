@@ -1640,7 +1640,9 @@ fn strptime_day_of_year(tm_year: i64, tm_mon: i64, tm_mday: i64) -> i64 {
 struct ExactNumericStrptime {
     consumed: usize,
     date: Option<(i32, i32, i32)>,
-    time: Option<(i32, i32, i32)>,
+    // `(hour, minute, Option<second>)` — a no-seconds format (`%H:%M`,
+    // `%Y-%m-%d %H:%M`) leaves `tm_sec` untouched, exactly like glibc.
+    time: Option<(i32, i32, Option<i32>)>,
 }
 
 #[inline]
@@ -1684,27 +1686,81 @@ fn parse_exact_numeric_time(input: &[u8], start: usize) -> Option<(i32, i32, i32
     Some((hour, minute, second))
 }
 
-/// Recognize only canonical fixed-width prefixes for the three common numeric
+/// Fixed-width `HH:MM` (no seconds) at `start`; leaves `tm_sec` untouched.
+#[inline]
+fn parse_exact_numeric_time_hm(input: &[u8], start: usize) -> Option<(i32, i32)> {
+    if input.get(start + 2) != Some(&b':') {
+        return None;
+    }
+    let hour = parse_fixed_decimal(input, start, 2)?;
+    let minute = parse_fixed_decimal(input, start + 3, 2)?;
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some((hour, minute))
+}
+
+/// Fixed-width US date `MM/DD/YYYY` at `start` -> `(tm_year, tm_mon, tm_mday)`.
+#[inline]
+fn parse_exact_numeric_mdy(input: &[u8], start: usize) -> Option<(i32, i32, i32)> {
+    if input.get(start + 2) != Some(&b'/') || input.get(start + 5) != Some(&b'/') {
+        return None;
+    }
+    let month = parse_fixed_decimal(input, start, 2)?;
+    let day = parse_fixed_decimal(input, start + 3, 2)?;
+    let year = parse_fixed_decimal(input, start + 6, 4)?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    Some((year - 1900, month - 1, day))
+}
+
+/// Recognize only canonical fixed-width prefixes for the common numeric
 /// formats. Any miss falls through to the general parser before touching `tm`,
 /// preserving its whitespace, variable-width, backoff, and partial-write quirks.
 #[inline]
 fn parse_exact_numeric_strptime(input: &[u8], fmt: &[u8]) -> Option<ExactNumericStrptime> {
     match fmt.len() {
-        8 if fmt == b"%H:%M:%S" => Some(ExactNumericStrptime {
-            consumed: 8,
-            date: None,
-            time: Some(parse_exact_numeric_time(input, 0)?),
+        5 if fmt == b"%H:%M" => {
+            let (hour, minute) = parse_exact_numeric_time_hm(input, 0)?;
+            Some(ExactNumericStrptime {
+                consumed: 5,
+                date: None,
+                time: Some((hour, minute, None)),
+            })
+        }
+        8 if fmt == b"%H:%M:%S" => {
+            let (h, m, s) = parse_exact_numeric_time(input, 0)?;
+            Some(ExactNumericStrptime {
+                consumed: 8,
+                date: None,
+                time: Some((h, m, Some(s))),
+            })
+        }
+        8 if fmt == b"%m/%d/%Y" => Some(ExactNumericStrptime {
+            consumed: 10,
+            date: Some(parse_exact_numeric_mdy(input, 0)?),
+            time: None,
         }),
         10 if fmt == b"%Y-%m-%d" => Some(ExactNumericStrptime {
             consumed: 10,
             date: Some(parse_exact_numeric_date(input, 0)?),
             time: None,
         }),
+        14 if fmt == b"%Y-%m-%d %H:%M" && input.get(10) == Some(&b' ') => {
+            let (hour, minute) = parse_exact_numeric_time_hm(input, 11)?;
+            Some(ExactNumericStrptime {
+                consumed: 16,
+                date: Some(parse_exact_numeric_date(input, 0)?),
+                time: Some((hour, minute, None)),
+            })
+        }
         17 if fmt == b"%Y-%m-%d %H:%M:%S" && input.get(10) == Some(&b' ') => {
+            let (h, m, s) = parse_exact_numeric_time(input, 11)?;
             Some(ExactNumericStrptime {
                 consumed: 19,
                 date: Some(parse_exact_numeric_date(input, 0)?),
-                time: Some(parse_exact_numeric_time(input, 11)?),
+                time: Some((h, m, Some(s))),
             })
         }
         _ => None,
@@ -1761,7 +1817,9 @@ pub unsafe extern "C" fn strptime(
             if let Some((hour, minute, second)) = exact.time {
                 (*tm).tm_hour = hour;
                 (*tm).tm_min = minute;
-                (*tm).tm_sec = second;
+                if let Some(second) = second {
+                    (*tm).tm_sec = second;
+                }
             }
             return input_ptr.add(exact.consumed) as *mut std::ffi::c_char;
         }
