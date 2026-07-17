@@ -52,6 +52,9 @@ fn bench(c: &mut Criterion) {
     let g_cg: CgFn = dl(b"clock_gettime\0");
     let g_cgr: CgrFn = dl(b"clock_getres\0");
     let g_gtod: GtodFn = dl(b"gettimeofday\0");
+    let g_time: unsafe extern "C" fn(*mut i64) -> i64 = dl(b"time\0");
+    let g_tsget: unsafe extern "C" fn(*mut libc::timespec, c_int) -> c_int = dl(b"timespec_get\0");
+    let mut tsec: i64 = 0;
     let mut grp = c.benchmark_group("clock_gettime");
     grp.sample_size(10);
     let it = 20000u64;
@@ -153,6 +156,48 @@ fn bench(c: &mut Criterion) {
         }
         println!(
             "GETTIMEOFDAY fl={:.2} glibc={:.2} fl/glibc={:.3}",
+            pctl(&fs, 0.5),
+            pctl(&gs, 0.5),
+            pctl(&fs, 0.5) / pctl(&gs, 0.5)
+        );
+    }
+    {
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..100 {
+            let t = Instant::now();
+            for _ in 0..it {
+                black_box(unsafe { frankenlibc_abi::time_abi::time(black_box(&mut tsec)) });
+            }
+            fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now();
+            for _ in 0..it {
+                black_box(unsafe { g_time(black_box(&mut tsec)) });
+            }
+            gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        println!(
+            "TIME_WITHPTR fl={:.2} glibc={:.2} fl/glibc={:.3}",
+            pctl(&fs, 0.5),
+            pctl(&gs, 0.5),
+            pctl(&fs, 0.5) / pctl(&gs, 0.5)
+        );
+    }
+    {
+        let (mut fs, mut gs) = (Vec::new(), Vec::new());
+        for _ in 0..100 {
+            let t = Instant::now();
+            for _ in 0..it {
+                black_box(unsafe { frankenlibc_abi::time_abi::timespec_get(&mut ts, 1) });
+            }
+            fs.push(t.elapsed().as_nanos() as f64 / it as f64);
+            let t = Instant::now();
+            for _ in 0..it {
+                black_box(unsafe { g_tsget(&mut ts, 1) });
+            }
+            gs.push(t.elapsed().as_nanos() as f64 / it as f64);
+        }
+        println!(
+            "TIMESPEC_GET fl={:.2} glibc={:.2} fl/glibc={:.3}",
             pctl(&fs, 0.5),
             pctl(&gs, 0.5),
             pctl(&fs, 0.5) / pctl(&gs, 0.5)

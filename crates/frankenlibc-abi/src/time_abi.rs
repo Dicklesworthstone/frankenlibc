@@ -584,7 +584,12 @@ fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn time(tloc: *mut i64) -> i64 {
-    if !tracked_optional_object_fits(tloc.cast_const()) {
+    // Hot output-fit check: `tloc` (when non-null) is virtually always a caller stack
+    // local, so `likely_current_stack_object` skips the `tracked_region_fits` arena
+    // lookup — glibc's `time()` is a ~2ns vvar read, so that lookup dominated fl's
+    // overhead. NULL-permitting (time(NULL) is the common form). Byte-identical; this
+    // check remains the sole validator before the store below.
+    if !tracked_optional_hot_output_fits(tloc.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
@@ -2702,7 +2707,9 @@ pub unsafe extern "C" fn timespec_get(ts: *mut libc::timespec, base: c_int) -> c
     if ts.is_null() || base != TIME_UTC {
         return 0;
     }
-    if !tracked_required_object_fits(ts.cast_const()) {
+    // Hot output-fit check (stack-local `ts` skips the arena lookup); same vein as
+    // clock_gettime/clock_getres.
+    if !tracked_required_hot_output_fits(ts.cast_const()) {
         return 0;
     }
     let rc = unsafe { raw_clock_gettime(libc::CLOCK_REALTIME, ts) };
