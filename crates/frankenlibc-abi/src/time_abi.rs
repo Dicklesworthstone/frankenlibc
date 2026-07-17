@@ -67,6 +67,17 @@ fn tracked_required_hot_output_fits<T>(ptr: *const T) -> bool {
             || tracked_region_fits(ptr.cast::<c_void>(), core::mem::size_of::<T>()))
 }
 
+/// NULL-permitting twin of [`tracked_required_hot_output_fits`]: a null pointer is
+/// accepted (some syscalls — e.g. `clock_getres(clk, NULL)` — treat a null output as
+/// "validate only"), and a non-null pointer takes the cheap `likely_current_stack_object`
+/// fast-path before the arena lookup. Mirrors `tracked_optional_object_fits` but with the
+/// hot stack probe, so a stack-based output (the overwhelmingly common case) skips
+/// `tracked_region_fits`.
+#[inline]
+fn tracked_optional_hot_output_fits<T>(ptr: *const T) -> bool {
+    ptr.is_null() || tracked_required_hot_output_fits(ptr)
+}
+
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VdsoCallOutcome {
@@ -961,7 +972,10 @@ pub unsafe extern "C" fn gettimeofday(tv: *mut libc::timeval, tz: *mut c_void) -
         return -1;
     }
 
-    if !tracked_required_object_fits(tv.cast_const()) {
+    // Hot output-fit check (same as clock_gettime/clock_getres): `tv` is virtually
+    // always a caller stack local, so `likely_current_stack_object` skips the
+    // `tracked_region_fits` arena lookup. Byte-identical for valid inputs.
+    if !tracked_required_hot_output_fits(tv.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
@@ -986,7 +1000,12 @@ pub unsafe extern "C" fn clock_getres(clock_id: c_int, res: *mut libc::timespec)
         return -1;
     }
 
-    if !tracked_optional_object_fits(res.cast_const()) {
+    // Hot output-fit check: `res` is virtually always a caller stack local, so the
+    // `likely_current_stack_object` fast-path avoids the `tracked_region_fits` arena
+    // lookup that `tracked_optional_object_fits` always paid — the same pattern
+    // `clock_gettime` uses. NULL-permitting (clock_getres(clk, NULL) is valid: the
+    // kernel/vDSO just validates the clock and writes nothing). Byte-identical.
+    if !tracked_optional_hot_output_fits(res.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
