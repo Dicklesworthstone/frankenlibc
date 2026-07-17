@@ -9,6 +9,12 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
+// INTEGRITY GUARD: this bench is valid ONLY while it references core-only functions
+// (frankenlibc_core::stdio::printf::*). Do NOT add any arm that references a
+// `frankenlibc_abi::*` function: doing so links fl's no_mangle allocator into the binary,
+// which interposes malloc process-wide and inflates EVERY arm (core included) ~20-30x, AND
+// flips this `strfromd` symbol from real host glibc to fl's own strfromd (both measured
+// 2026-07-16). The comparison here is fl core formatter vs REAL glibc strfromd; keep it so.
 unsafe extern "C" {
     fn strfromd(str: *mut c_char, n: usize, format: *const c_char, fp: f64) -> c_int;
 }
