@@ -1454,6 +1454,35 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         return;
     }
 
+    // Fast path: `%a`/`%A` (hex float) with no field width — render straight into `buf`
+    // via `render_pct_a_into`, skipping the general path's `format_a` String + copy.
+    // `render_pct_a_into` emits the correct case (`0X`/`P`/`A-F`) and honours `#`
+    // (alt_form forces the point), so unlike `%e`/`%g` this needs no alt-form exclusion
+    // or uppercase fold. At width 0 there is no padding — byte-identical to the general
+    // path below.
+    if resolve_width(spec) == 0
+        && matches!(
+            spec.raw_render_kind(),
+            Some(RawValueRenderKind::Float(FloatFormatKind::Hex))
+        )
+    {
+        if negative {
+            buf.push(b'-');
+        } else if spec.flags.force_sign {
+            buf.push(b'+');
+        } else if spec.flags.space_sign {
+            buf.push(b' ');
+        }
+        render_pct_a_into(
+            abs,
+            hex_float_precision(spec),
+            spec.conversion.is_ascii_uppercase(),
+            spec.flags.alt_form,
+            buf,
+        );
+        return;
+    }
+
     // Generate digit string.
     let body = match spec.raw_render_kind() {
         Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)) => {
@@ -2497,23 +2526,44 @@ fn format_g_exp_from_scientific(
 /// Produces output of the form `0xh.hhhhp±d` where `h` are hex digits and
 /// `d` is the binary exponent in decimal.
 fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: bool) -> String {
-    let p_char = if uppercase { 'P' } else { 'p' };
+    let mut out = Vec::new();
+    render_pct_a_into(value, precision, uppercase, alt_form, &mut out);
+    // Output is pure ASCII (0x prefix, hex digits, '.', p/P, sign, decimal exponent).
+    String::from_utf8(out).expect("hex-float output is ASCII")
+}
+
+/// Buffer-writing core of `%a`/`%A` (hex float): appends the C hex-float form straight
+/// into `out` with no per-call String. `format_a` is the String wrapper; the DEPLOYED
+/// printf `%a` path (format_float's width-0 fast branch) calls this to skip the String +
+/// copy the general path paid. `%a` is exact bit-slicing (13 mantissa nibbles into a stack
+/// array + round-half-to-even only when dropping digits), so this is alloc-free. Byte-
+/// identical (printf_float_differential_fuzz's spec set `b"eEfFgGaA"` fuzzes %a/%A).
+pub(crate) fn render_pct_a_into(
+    value: f64,
+    precision: Option<usize>,
+    uppercase: bool,
+    alt_form: bool,
+    out: &mut Vec<u8>,
+) {
+    let p_byte = if uppercase { b'P' } else { b'p' };
     let hex_alpha = if uppercase { b'A' } else { b'a' };
+    let prefix: &[u8] = if uppercase { b"0X" } else { b"0x" };
 
     if value == 0.0 {
-        let prefix = if uppercase { "0X" } else { "0x" };
+        out.extend_from_slice(prefix);
+        out.push(b'0');
         let prec = precision.unwrap_or(0);
-        if prec == 0 && !alt_form {
-            return alloc::format!("{prefix}0{p_char}+0");
+        if prec > 0 {
+            out.push(b'.');
+            out.extend(core::iter::repeat_n(b'0', prec));
+        } else if alt_form {
+            out.push(b'.');
         }
-        if prec == 0 {
-            return alloc::format!("{prefix}0.{p_char}+0");
-        }
-        let zeros: String = core::iter::repeat_n('0', prec).collect();
-        return alloc::format!("{prefix}0.{zeros}{p_char}+0");
+        out.push(p_byte);
+        out.extend_from_slice(b"+0");
+        return;
     }
 
-    use core::fmt::Write as _;
     let bits = value.to_bits();
     let mantissa_bits = bits & 0x000F_FFFF_FFFF_FFFF;
     let biased_exp = ((bits >> 52) & 0x7FF) as i32;
@@ -2530,17 +2580,12 @@ fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: boo
     const DEFAULT_PREC: usize = 13;
     let prec = precision.unwrap_or_else(|| exact_hex_fraction_digits(mantissa_bits, DEFAULT_PREC));
 
-    // Extract the 13 mantissa nibbles into a stack array (was a heap Vec via
-    // rounded_hex_components) — %a is exact bit-slicing, so this is a lean single-alloc
-    // (the returned String) render instead of the old Vec + fraction-String + format!
-    // triple-alloc. Byte-identical (printf_float_differential_fuzz covers %a/%A).
     let mut nib = [0u8; DEFAULT_PREC];
     for (i, n) in nib.iter_mut().enumerate() {
         *n = ((mantissa_bits >> (48 - i * 4)) & 0xF) as u8;
     }
-    // Round to `prec` fraction digits (round-half-to-even) only when dropping real
-    // digits — mirrors the old rounded_hex_components. `prec >= DEFAULT_PREC` keeps all
-    // 13 nibbles (the excess are trailing zeros).
+    // Round to `prec` fraction digits (round-half-to-even) only when dropping real digits.
+    // `prec >= DEFAULT_PREC` keeps all 13 nibbles (the excess are trailing zeros).
     if prec < DEFAULT_PREC {
         let first_discarded = nib[prec];
         let lower_nibbles = DEFAULT_PREC - (prec + 1);
@@ -2575,9 +2620,6 @@ fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: boo
         }
     }
 
-    let prefix = if uppercase { "0X" } else { "0x" };
-    let sign = if bin_exp < 0 { '-' } else { '+' };
-    let abs_exp = bin_exp.unsigned_abs();
     let hex_char = |n: u8| -> u8 {
         if n < 10 {
             b'0' + n
@@ -2586,24 +2628,22 @@ fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: boo
         }
     };
 
-    let mut out = String::with_capacity(prefix.len() + prec + 8);
-    out.push_str(prefix);
-    out.push(hex_char(lead_digit) as char);
+    out.reserve(prefix.len() + prec + 8);
+    out.extend_from_slice(prefix);
+    out.push(hex_char(lead_digit));
     if prec > 0 || alt_form {
-        out.push('.');
+        out.push(b'.');
     }
     // Fraction: the first `min(prec, 13)` real nibbles, then any excess as zeros.
     let kept = prec.min(DEFAULT_PREC);
     for &n in &nib[..kept] {
-        out.push(hex_char(n) as char);
+        out.push(hex_char(n));
     }
-    for _ in kept..prec {
-        out.push('0');
-    }
-    out.push(p_char);
-    out.push(sign);
-    let _ = write!(out, "{abs_exp}");
-    out
+    out.extend(core::iter::repeat_n(b'0', prec - kept));
+    out.push(p_byte);
+    out.push(if bin_exp < 0 { b'-' } else { b'+' });
+    let mut tmp = [0u8; 40];
+    out.extend_from_slice(decimal_digits_u128(bin_exp.unsigned_abs() as u128, &mut tmp));
 }
 
 fn exact_hex_fraction_digits(mantissa_bits: u64, default_prec: usize) -> usize {

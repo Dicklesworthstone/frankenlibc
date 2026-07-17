@@ -179,7 +179,17 @@ fn bench_deployed_g(c: &mut Criterion) {
 /// Diagnostic: is `%a` (hex float, no precision) a loss vs glibc? fl format_a allocs a
 /// String and has no deployed width-0 fast branch (only %e/%g do).
 fn bench_diag_a(c: &mut Criterion) {
-    use frankenlibc_core::stdio::printf::__bench_format_a;
+    use frankenlibc_core::stdio::printf::{
+        FormatSegment, __bench_format_a, format_float, parse_format_string,
+    };
+    let a_spec = parse_format_string(b"%a")
+        .as_slice()
+        .iter()
+        .find_map(|s| match s {
+            FormatSegment::Spec(sp) => Some(*sp),
+            _ => None,
+        })
+        .unwrap();
     for (name, value) in [("dbl", 12345.678901_f64), ("pi", std::f64::consts::PI)] {
         let fl = __bench_format_a(value);
         let g = {
@@ -189,10 +199,21 @@ fn bench_diag_a(c: &mut Criterion) {
             buf.iter().take_while(|&&b| b != 0).map(|&b| b as u8).collect::<Vec<u8>>()
         };
         assert_eq!(fl.as_bytes(), g.as_slice(), "%a {name} mismatch vs glibc");
+        // deployed path parity check
+        let mut dbuf = Vec::new();
+        format_float(value, &a_spec, &mut dbuf);
+        assert_eq!(dbuf.as_slice(), g.as_slice(), "%a {name} deployed mismatch");
         let fmt = std::ffi::CString::new("%a").unwrap();
         let mut grp = c.benchmark_group(format!("diag_a_{name}"));
         grp.bench_function("frankenlibc_core", |b| {
             b.iter(|| black_box(__bench_format_a(black_box(value))))
+        });
+        grp.bench_function("deployed_format_float", |b| {
+            b.iter(|| {
+                let mut buf = Vec::with_capacity(32);
+                format_float(black_box(value), black_box(&a_spec), &mut buf);
+                black_box(buf)
+            })
         });
         grp.bench_function("host_glibc_inprocess", |b| {
             b.iter(|| {
