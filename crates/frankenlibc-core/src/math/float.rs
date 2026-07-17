@@ -39,7 +39,49 @@ pub fn fmod(x: f64, y: f64) -> f64 {
 
 #[inline]
 pub fn remainder(x: f64, y: f64) -> f64 {
-    libm::remainder(x, y)
+    // fdlibm `__ieee754_remainder`, fmod-based (reuses fl's `fmod`), replacing
+    // `libm::remainder`'s remquo-based quotient-bit tracking. `remainder` does not
+    // need the quotient, so tracking it bit-by-bit is wasted work on large-quotient
+    // inputs (remainder(1e300, 3) etc.). glibc's remainder is likewise fdlibm/fmod-
+    // based, so this is bit-identical — `remainder_glibc_bench` asserts a 0-mismatch
+    // sweep vs live glibc, and `math_special_differential_probe` covers the poles.
+    let xbits = x.to_bits();
+    let pbits = y.to_bits();
+    let sx = xbits & 0x8000_0000_0000_0000;
+    let axb = xbits & 0x7fff_ffff_ffff_ffff; // |x| bits
+    let apb = pbits & 0x7fff_ffff_ffff_ffff; // |y| bits
+    // y == 0, or x non-finite, or y NaN -> NaN (raising the invalid flag via 0/0).
+    if apb == 0 || axb >= 0x7ff0_0000_0000_0000 || apb > 0x7ff0_0000_0000_0000 {
+        return (x * y) / (x * y);
+    }
+    let ap = f64::from_bits(apb);
+    let mut xv = x;
+    // Reduce x mod 2|y| first when y+y cannot overflow (y exponent below max).
+    if apb <= 0x7fdf_ffff_ffff_ffff {
+        xv = fmod(xv, ap + ap);
+    }
+    // |x| == |y| exactly -> signed zero.
+    if axb == apb {
+        return 0.0 * xv;
+    }
+    let mut xa = xv.abs();
+    if apb < 0x0020_0000_0000_0000 {
+        if xa + xa > ap {
+            xa -= ap;
+            if xa + xa >= ap {
+                xa -= ap;
+            }
+        }
+    } else {
+        let p_half = 0.5 * ap;
+        if xa > p_half {
+            xa -= ap;
+            if xa >= p_half {
+                xa -= ap;
+            }
+        }
+    }
+    f64::from_bits(xa.to_bits() ^ sx)
 }
 
 #[inline]
