@@ -176,5 +176,33 @@ fn bench_deployed_g(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench, bench_deployed_e, bench_deployed_g);
+/// Diagnostic: is `%a` (hex float, no precision) a loss vs glibc? fl format_a allocs a
+/// String and has no deployed width-0 fast branch (only %e/%g do).
+fn bench_diag_a(c: &mut Criterion) {
+    use frankenlibc_core::stdio::printf::__bench_format_a;
+    for (name, value) in [("dbl", 12345.678901_f64), ("pi", std::f64::consts::PI)] {
+        let fl = __bench_format_a(value);
+        let g = {
+            let fmt = std::ffi::CString::new("%a").unwrap();
+            let mut buf = [0i8; 64];
+            unsafe { strfromd(buf.as_mut_ptr(), 64, fmt.as_ptr(), value) };
+            buf.iter().take_while(|&&b| b != 0).map(|&b| b as u8).collect::<Vec<u8>>()
+        };
+        assert_eq!(fl.as_bytes(), g.as_slice(), "%a {name} mismatch vs glibc");
+        let fmt = std::ffi::CString::new("%a").unwrap();
+        let mut grp = c.benchmark_group(format!("diag_a_{name}"));
+        grp.bench_function("frankenlibc_core", |b| {
+            b.iter(|| black_box(__bench_format_a(black_box(value))))
+        });
+        grp.bench_function("host_glibc_inprocess", |b| {
+            b.iter(|| {
+                let mut buf = [0i8; 64];
+                black_box(unsafe { strfromd(buf.as_mut_ptr(), 64, fmt.as_ptr(), black_box(value)) });
+            })
+        });
+        grp.finish();
+    }
+}
+
+criterion_group!(benches, bench, bench_deployed_e, bench_deployed_g, bench_diag_a);
 criterion_main!(benches);

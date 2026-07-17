@@ -2115,6 +2115,10 @@ pub fn __bench_format_g_legacy(value: f64, precision: usize) -> String {
 pub fn __bench_format_e(value: f64, precision: usize) -> String {
     format_e(value, precision, false, false)
 }
+#[doc(hidden)]
+pub fn __bench_format_a(value: f64) -> String {
+    format_a(value, None, false, false)
+}
 /// Deployed `%e` path (width-0, no `#`): `render_pct_e_into`, exactly the function
 /// `format_float` calls for real `printf("%e", ..)`. The fixed-scaled fast path now
 /// lives inside it (after its exact-integer/dyadic paths), so this hook measures the
@@ -2509,11 +2513,12 @@ fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: boo
         return alloc::format!("{prefix}0.{zeros}{p_char}+0");
     }
 
+    use core::fmt::Write as _;
     let bits = value.to_bits();
     let mantissa_bits = bits & 0x000F_FFFF_FFFF_FFFF;
     let biased_exp = ((bits >> 52) & 0x7FF) as i32;
 
-    let (lead_digit, bin_exp) = if biased_exp == 0 {
+    let (mut lead_digit, bin_exp) = if biased_exp == 0 {
         // Subnormal: leading digit is 0, exponent is -1022.
         (0u8, -1022i32)
     } else {
@@ -2522,101 +2527,83 @@ fn format_a(value: f64, precision: Option<usize>, uppercase: bool, alt_form: boo
     };
 
     // The 52-bit mantissa gives 13 hex digits of fractional part.
-    let default_prec = 13;
-    let prec = precision.unwrap_or_else(|| exact_hex_fraction_digits(mantissa_bits, default_prec));
+    const DEFAULT_PREC: usize = 13;
+    let prec = precision.unwrap_or_else(|| exact_hex_fraction_digits(mantissa_bits, DEFAULT_PREC));
+
+    // Extract the 13 mantissa nibbles into a stack array (was a heap Vec via
+    // rounded_hex_components) — %a is exact bit-slicing, so this is a lean single-alloc
+    // (the returned String) render instead of the old Vec + fraction-String + format!
+    // triple-alloc. Byte-identical (printf_float_differential_fuzz covers %a/%A).
+    let mut nib = [0u8; DEFAULT_PREC];
+    for (i, n) in nib.iter_mut().enumerate() {
+        *n = ((mantissa_bits >> (48 - i * 4)) & 0xF) as u8;
+    }
+    // Round to `prec` fraction digits (round-half-to-even) only when dropping real
+    // digits — mirrors the old rounded_hex_components. `prec >= DEFAULT_PREC` keeps all
+    // 13 nibbles (the excess are trailing zeros).
+    if prec < DEFAULT_PREC {
+        let first_discarded = nib[prec];
+        let lower_nibbles = DEFAULT_PREC - (prec + 1);
+        let lower_nonzero = if lower_nibbles == 0 {
+            false
+        } else {
+            let lower_mask = (1_u64 << (lower_nibbles * 4)) - 1;
+            mantissa_bits & lower_mask != 0
+        };
+        let last_kept_odd = if prec == 0 {
+            lead_digit & 1 != 0
+        } else {
+            nib[prec - 1] & 1 != 0
+        };
+        if first_discarded > 8 || (first_discarded == 8 && (lower_nonzero || last_kept_odd)) {
+            if prec == 0 {
+                lead_digit = lead_digit.saturating_add(1);
+            } else {
+                let mut carry = true;
+                for j in (0..prec).rev() {
+                    if nib[j] < 0xF {
+                        nib[j] += 1;
+                        carry = false;
+                        break;
+                    }
+                    nib[j] = 0;
+                }
+                if carry {
+                    lead_digit = lead_digit.saturating_add(1);
+                }
+            }
+        }
+    }
 
     let prefix = if uppercase { "0X" } else { "0x" };
     let sign = if bin_exp < 0 { '-' } else { '+' };
     let abs_exp = bin_exp.unsigned_abs();
-
-    let (lead_digit, frac_digits) =
-        rounded_hex_components(lead_digit, mantissa_bits, prec, default_prec);
-
-    if prec == 0 {
-        let dot = if alt_form { "." } else { "" };
-        let lead_hex = if lead_digit < 10 {
-            (b'0' + lead_digit) as char
+    let hex_char = |n: u8| -> u8 {
+        if n < 10 {
+            b'0' + n
         } else {
-            (hex_alpha + (lead_digit - 10)) as char
-        };
-        alloc::format!("{prefix}{lead_hex}{dot}{p_char}{sign}{abs_exp}")
-    } else {
-        let mut frac = String::with_capacity(prec);
-        for nibble in frac_digits {
-            let ch = if nibble < 10 {
-                (b'0' + nibble) as char
-            } else {
-                (hex_alpha + (nibble - 10)) as char
-            };
-            frac.push(ch);
+            hex_alpha + (n - 10)
         }
-        let lead_hex = if lead_digit < 10 {
-            (b'0' + lead_digit) as char
-        } else {
-            (hex_alpha + (lead_digit - 10)) as char
-        };
-        alloc::format!("{prefix}{lead_hex}.{frac}{p_char}{sign}{abs_exp}")
-    }
-}
-
-fn rounded_hex_components(
-    mut lead_digit: u8,
-    mantissa_bits: u64,
-    precision: usize,
-    default_prec: usize,
-) -> (u8, Vec<u8>) {
-    let mut frac: Vec<u8> = (0..precision)
-        .map(|i| hex_fraction_nibble(mantissa_bits, i, default_prec))
-        .collect();
-    if precision >= default_prec {
-        return (lead_digit, frac);
-    }
-
-    let first_discarded = hex_fraction_nibble(mantissa_bits, precision, default_prec);
-    let lower_nibbles = default_prec.saturating_sub(precision + 1);
-    let lower_nonzero = if lower_nibbles == 0 {
-        false
-    } else {
-        let lower_mask = (1_u64 << (lower_nibbles * 4)) - 1;
-        mantissa_bits & lower_mask != 0
     };
-    let last_kept_odd = if precision == 0 {
-        lead_digit & 1 != 0
-    } else {
-        frac[precision - 1] & 1 != 0
-    };
-    let round_up =
-        first_discarded > 8 || (first_discarded == 8 && (lower_nonzero || last_kept_odd));
-    if !round_up {
-        return (lead_digit, frac);
-    }
 
-    if precision == 0 {
-        lead_digit = lead_digit.saturating_add(1);
-        return (lead_digit, frac);
+    let mut out = String::with_capacity(prefix.len() + prec + 8);
+    out.push_str(prefix);
+    out.push(hex_char(lead_digit) as char);
+    if prec > 0 || alt_form {
+        out.push('.');
     }
-
-    let mut carry = true;
-    for nibble in frac.iter_mut().rev() {
-        if *nibble < 0xF {
-            *nibble += 1;
-            carry = false;
-            break;
-        }
-        *nibble = 0;
+    // Fraction: the first `min(prec, 13)` real nibbles, then any excess as zeros.
+    let kept = prec.min(DEFAULT_PREC);
+    for &n in &nib[..kept] {
+        out.push(hex_char(n) as char);
     }
-    if carry {
-        lead_digit = lead_digit.saturating_add(1);
+    for _ in kept..prec {
+        out.push('0');
     }
-    (lead_digit, frac)
-}
-
-fn hex_fraction_nibble(mantissa_bits: u64, index: usize, default_prec: usize) -> u8 {
-    if index < default_prec {
-        ((mantissa_bits >> (48 - index * 4)) & 0xF) as u8
-    } else {
-        0
-    }
+    out.push(p_char);
+    out.push(sign);
+    let _ = write!(out, "{abs_exp}");
+    out
 }
 
 fn exact_hex_fraction_digits(mantissa_bits: u64, default_prec: usize) -> usize {
