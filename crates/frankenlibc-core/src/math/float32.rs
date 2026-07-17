@@ -969,7 +969,49 @@ pub fn fmodf(x: f32, y: f32) -> f32 {
 
 #[inline]
 pub fn remainderf(x: f32, y: f32) -> f32 {
-    libm::remainderf(x, y)
+    // fdlibm `__ieee754_remainderf`, fmodf-based (reuses fl's `fmodf`), replacing
+    // `libm::remainderf`'s remquof-based quotient-bit tracking — `remainderf` never
+    // needs the quotient, so tracking it bit-by-bit wastes work on large-quotient
+    // inputs. The exact f32 mirror of the f64 `remainder` fix (bd-remainder-fdlibm-
+    // fmod). glibc's remainderf is likewise fdlibm/fmodf-based, so this is bit-
+    // identical (conformance_diff_math_exact + conformance_diff_fmod_rem_flags cover it).
+    let xbits = x.to_bits();
+    let pbits = y.to_bits();
+    let sx = xbits & 0x8000_0000;
+    let axb = xbits & 0x7fff_ffff; // |x| bits
+    let apb = pbits & 0x7fff_ffff; // |y| bits
+    // y == 0, or x non-finite, or y NaN -> NaN (raising invalid via 0/0 or inf/inf).
+    if apb == 0 || axb >= 0x7f80_0000 || apb > 0x7f80_0000 {
+        return (x * y) / (x * y);
+    }
+    let ap = f32::from_bits(apb);
+    let mut xv = x;
+    // Reduce x mod 2|y| first when y+y cannot overflow (y exponent below max).
+    if apb <= 0x7eff_ffff {
+        xv = fmodf(xv, ap + ap);
+    }
+    // |x| == |y| exactly -> signed zero.
+    if axb == apb {
+        return 0.0 * xv;
+    }
+    let mut xa = xv.abs();
+    if apb < 0x0100_0000 {
+        if xa + xa > ap {
+            xa -= ap;
+            if xa + xa >= ap {
+                xa -= ap;
+            }
+        }
+    } else {
+        let p_half = 0.5 * ap;
+        if xa > p_half {
+            xa -= ap;
+            if xa >= p_half {
+                xa -= ap;
+            }
+        }
+    }
+    f32::from_bits(xa.to_bits() ^ sx)
 }
 
 #[inline]
