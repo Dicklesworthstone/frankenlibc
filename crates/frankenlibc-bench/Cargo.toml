@@ -320,6 +320,12 @@ path = "examples/wcsftime_ab.rs"
 harness = false
 required-features = ["abi-bench"]
 
+[[bench]]
+name = "textdomain_ab"
+path = "examples/textdomain_ab.rs"
+harness = false
+required-features = ["abi-bench"]
+
 [[example]]
 name = "wcsftime_l_ab"
 harness = false

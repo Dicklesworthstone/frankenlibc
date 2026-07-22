@@ -21566,3 +21566,27 @@ item retains every later colon by construction, exactly matching the former `fie
   at least 500 ms per arm; production may be touched only if both NULL raw arms, NULL paired,
   ORIG/candidate raw arms, candidate/ORIG paired, glibc raw, and candidate/glibc paired CVs are
   independently below 5%.
+
+## 2026-07-22 (cod / pane 3) — REJECT (INVALID-CV): RCU snapshot for `textdomain(NULL)` query (`bd-bl39l2`)
+
+- **GATE / ALIEN PRIMITIVE.** The ledger and recent history were searched for `textdomain`,
+  `bindtextdomain`, gettext-domain locking, RCU, and atomic publication. The already-shipped locale
+  fast paths cover immutable `localeconv`/`nl_langinfo` tables and collation, but no result covered
+  the read-only `textdomain(NULL)` query, which still locks `TextDomainState`. The selected graveyard
+  primitive was RCU/QSBR-style read-mostly publication: publish the append-only domain pointer for a
+  lock-free query while preserving the mutex for rare writes. Only the profiler was added; the
+  production hypothesis was not implemented because the measurement gate failed.
+- **REMOTE PROFILE.** After one fail-closed RCH preflight with no admissible worker (no local
+  fallback), the exact required bench ran on `vmi1149989`: 64 retained samples after 16 warmups and
+  **25,000,000 calls per arm**. Deployed FrankenLibC was **11.16 ns/call** (mean **11.16**, CV
+  **4.80%**) versus host glibc **1.99 ns/call** (mean **1.98**, CV **7.69%**), for a paired median
+  **5.5969** and paired CV **8.91%**.
+- **NULL / BEHAVIOR.** The source-identical deployed/deployed NULL median was **1.0016**, paired CV
+  **4.60%**, with raw-arm CVs **4.61%/5.03%**. The pre-timing oracle proved both implementations
+  returned non-null pointers to the identical default domain string (`"messages"`).
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** REJECT as INVALID-CV: the large center gap is routing
+  evidence only because the host raw arm, deployed/glibc paired ratio, and one NULL raw arm exceeded
+  5%. Retry only on an idle explicitly pinned worker with no competing jobs for the full run, at
+  least 64 retained interleaved samples, and at least 500 ms per arm; production RCU/atomic
+  publication may be attempted only when deployed raw, glibc raw, both NULL raw arms, NULL paired,
+  and deployed/glibc paired CVs are each independently below 5%.
