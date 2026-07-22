@@ -21187,3 +21187,53 @@ item retains every later colon by construction, exactly matching the former `fie
   not reproducible performance proof, unless a row's concrete retry predicate is satisfied and a
   fresh same-worker, null-controlled measurement supplies the missing provenance. No source or
   benchmark code changed for this audit.
+
+## 2026-07-22 (cc_fl / MagentaCondor) — RETRY EXECUTED → REJECT (lever stays parked): fread-fmemopen cursor cache unresolvable by this instrument even on an idle worker; NULL CONTROL FAILED; + NEW CRASH SURFACED: fl malloc returns NULL under 8t fmemopen churn in abi-bench binaries (cc-fread-mem-2026-07-11 retry)
+
+- **RETRY PREDICATE WAS MET, SO THE RETRY RAN.** The cc-fread-mem-2026-07-11 row parked the
+  pointer-keyed fmemopen `fread` cursor lever with "RETRY ONLY IF a QUIET dedicated worker is
+  available: before/after at BOTH 1t and 8t; ship only if 1t ≥ neutral vs old fl AND 8t is a
+  genuine contention win." SSH-direct worker access (bd-3dxo1a recipe, previous row) provides the
+  quiet worker: vmi1152480, idle apart from the bench. Banked patch
+  (`fread_fmemopen_lever.patch`, +136/-0, survives in session scratchpads) applied CLEAN to HEAD
+  `48b38787b`; conformance re-proven on current code REMOTELY before measuring:
+  `fread_partial_differential_test` 3/0, `fmemopen_write_differential_test` 2/0,
+  `conformance_diff_stdio_ext` 2/0, `conformance_diff_stdio_unlocked_io` 1/0, `stdio_abi_test`
+  **256/0** (44 ignored hardened). Correctness remains a non-issue.
+- **METHOD.** Two binaries from one scratch clone on the worker (clone of the pooled mirror at
+  `dc3cdc24d`, code-identical to HEAD): `cand` = lever + STDIO_MT_FREAD bench arm; `base` = bench
+  arm only (sha256 1f1a84bc… vs 732aa185…, release profile). 12 alternated rounds base/cand
+  (process-level interleave), per-run p50s from the bench's internal 41×10 sampler; the untouched
+  fgetc arm (STDIO_MT_BENCH, identical code in both binaries) is the null control; per-run
+  fl/glibc ratios are the substrate canary. Runner + log + analyzer in session scratchpad
+  (`fread_ab_run.log`, `analyze_fread_ab.py`).
+- **NULL CONTROL FAILED ⇒ REJECT regardless of the lever's numbers.** fgetc cand/base (should be
+  1.000): **0.9842 @1t, 0.9165 @8t**, with per-arm CVs **32.9-42.5%**. An identical-code arm
+  "improved" 8.4% at 8t ⇒ the instrument cannot resolve anything under ~10% here. Lever arms:
+  fread cand/base **0.9507 @1t** (CV 22.7-23.1%), **1.1031 @8t** (CV 11.9-13.5%) — both inside
+  the demonstrated noise band. glibc-arm drift cand/base 0.95-1.18 confirms. The CV<5% gate is
+  unreachable with this harness (fresh `thread::scope` spawn + fmemopen+fclose churn + Vec alloc
+  per ITERATION — the exact instrument trap the 2026-07-09 row documented), even with zero
+  external load. Fleet quietness was NOT the real blocker; the harness is.
+- **NEW CRASH SURFACED (the more valuable output): fl malloc NULL under MT churn.** In the A/B,
+  **7/12 base runs and 1/12 cand runs died between the fread-1t and fread-8t print** — invisible
+  under `2>/dev/null`. Captured signature (rerun, 1/6 reproduction): **exit=134 SIGABRT, core
+  dumped, stderr `memory allocation of 2048 bytes failed`** = Rust `handle_alloc_error`: the
+  binary's Rust-side allocation got NULL from the interposed fl `malloc` during the 8-thread
+  fmemopen churn phase. UNMODIFIED HEAD code (base). Same hazard CLASS as the known
+  "realloc(): invalid pointer in criterion's analysis phase" abort, but a distinct signature
+  (malloc returns NULL vs corrupts), and it fires in a plain manual-timing binary with NO
+  criterion analysis. Base>cand asymmetry is consistent with the old fread path's much higher
+  per-call slow-path/allocator traffic. OPEN QUESTION (severity-defining): does it reproduce
+  under production LD_PRELOAD, or only in abi-bench-linked binaries? Filed as a malloc-lane bead
+  (see .beads) with repro paths on vmi1152480 (`/data/tmp/fread_ab/{base,b_2.err}`, core dumped).
+  Not dug further — malloc is cod's lane; stayed out of `malloc_abi.rs`.
+- **DISPOSITION.** Working tree restored via `git apply --reverse` (patch stays banked in
+  scratchpads `cdf182d7…` and `7e088bf1…`). Lever remains PARKED. **NEW RETRY PREDICATE
+  (replaces the quiet-worker one, which is now proven insufficient):** retry only with BOTH
+  (a) a persistent-thread harness (threads spawned ONCE + Barrier-synced rounds + streams opened
+  ONCE per thread, arms interleaved in-process — the `stdio_mapper_mt_ab.rs` pattern) so per-run
+  CV <5% is actually attainable, AND (b) the malloc NULL-return abort fixed or excluded (it
+  survivor-biases every base MT sample). The 1t signal (cand 0.95, consistent sign) suggests the
+  1t-economics fear from 07-11 may be unfounded on this substrate, but it is not shippable
+  through a failed null control.
