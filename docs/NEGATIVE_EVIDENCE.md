@@ -21388,3 +21388,22 @@ item retains every later colon by construction, exactly matching the former `fie
   the open/close lifecycle floor (allocator-bound; blocked on/adjacent to bd-ummyux).
   Reproducer: two-binary alternation of `--example stdio_fread_mem_mt_ab` (FGETS_MEM_AB
   lines; FREAD arm doubles as the null control).
+
+## 2026-07-22 (cc_fl / MagentaCondor) — SURFACE (profile-first scoping, lane handoff): the fmemopen lifecycle floor is an ALLOCATOR lever, not a stdio one — reentry guard 12.81% + record_stats 8.30% dominate (cc-fmemopen-lifecycle-scope-2026-07-22)
+
+- **CONTEXT.** After the fgetc/fread/fgets cursor family (8cc0aced9 + 8f700f04b + 35d16412f),
+  the residual vs glibc on fmemopen drains (fgets 2.82x@1t, fread 1.72x@1t) was attributed to
+  the open/close lifecycle. Perf on the shipped-lever binary (mem_cand2, full run, DSO-relative,
+  worker vmi1152480 via the bd-3dxo1a recipe):
+  `malloc_abi::enter_allocator_reentry_guard` **12.81%**, `malloc_abi::record_stats` **8.30%**,
+  `free` **7.77%**, `raw_overlap_copy` 5.77%, futex `lock_contended` 4.50% + parking_lot
+  `lock_slow` 1.52%, `fclose` 1.41%, bloom insert 0.92%, registry `HashMap::insert` 0.66% +
+  `RandomState::hash_one` 0.80%, `segment_free` 0.60%. The read-path frames are now SMALL
+  (try_fgets TLS probe 4.71%, `fgets` 1.01%, `fread` 1.00%) — the cursor levers did their job.
+- **READING.** Per open/close cycle the dominant cost is fl's own allocator bookkeeping:
+  guard + stats alone ≈ **21%** of DSO cycles, plus the free path ≈ 8%. The stdio-side share
+  (registry insert per fmemopen) is ~2.5% — no stdio lever left here worth a cycle. The
+  `enter_allocator_reentry_guard` + `record_stats` pair is a per-malloc-op fixed tax and is
+  MALLOC LANE; it is also the natural neighborhood of bd-ummyux (malloc NULL under 8t churn).
+- **DISPOSITION.** stdio-mem vein CLOSED for cc lane (read cursors complete; lifecycle floor
+  handed to malloc lane via agent mail with this frame table). No code change in this entry.
