@@ -21313,3 +21313,78 @@ item retains every later colon by construction, exactly matching the former `fie
   harness pattern. Reproducer: `cargo run --release -p frankenlibc-bench --features abi-bench
   --example stdio_fread_mem_mt_ab` (two-binary alternation for old-vs-new; within-binary
   fl/glibc ratio for substrate-robust reads).
+
+## 2026-07-22 (cod / pane 3) — REJECT (INVALID-CV): exact `strftime("%A")` finite-state transducer leaf (`bd-agegst`)
+
+- **LEDGER/HISTORY GATE + PROFILE.** The ledger and recent history were searched before source
+  work. The exact narrow `%A` residual was still explicitly open: prior profiling put the general
+  `strftime` loop near **200 ns/call**, while the separate wide `wcsftime("%A")` direct-name leaf
+  was already closed and was not re-mined. A fresh wide control confirmed that separation. The
+  attempted alien primitive was a finite-state format-transducer leaf: recognize the exact
+  three-byte `%A\0` format before the generic C-string scan/full-`tm` materialization and emit one
+  of seven C-locale names directly from safe core Rust.
+- **BEHAVIOR PROOF.** Before timing, the harness compared FrankenLibC with `dlmopen` host glibc for
+  every valid weekday and capacities **1, 2, 6, 7, 8, 9, 10, 16, 64**; all lengths and successful
+  bytes matched. Focused safe-core tests covered all seven names, invalid weekday preservation,
+  and short-buffer partial-write isomorphism (**2/2 passed**). The existing ABI differential fuzz
+  then completed **200,000 comparisons with 0 divergences** (**1/1 passed**, remote
+  `vmi1264463`). Thus behavior was proven; measurement admissibility alone rejected the lever.
+- **INTERLEAVED A/B + SOURCE-IDENTICAL NULL.** Required remote release bench, 64 retained samples
+  after 16 warmups, **10,000,000 calls per arm**, arm order alternated within every sample.
+  On `ovh-a`, candidate **12.45 ns/call** (mean 12.47, raw CV **4.77%**) versus host glibc
+  **21.80 ns/call** (mean 21.75, raw CV **3.42%**), paired candidate/host median **0.5705**
+  (**1.75x apparent win**, paired CV **3.71%**). The FL/FL NULL center was **0.9982** and both
+  raw NULL arms passed (**4.51%/4.43%**), but NULL paired CV was **5.10%**: 0.10 point over the
+  mandatory gate. No rounding waiver was taken.
+- **CONFIRMATION RUN.** Current-head rerun on `vmi1149989` again had a strongly favorable center:
+  candidate **8.67 ns/call** versus glibc **16.34 ns/call**, paired median **0.5415** (**1.85x
+  apparent win**). It independently failed admission: candidate/glibc raw CVs **13.39%/13.26%**,
+  NULL median **1.0181** with paired CV **11.32%** and raw arms **12.43%/12.07%**, candidate pair
+  CV **13.23%**.
+- **DISPOSITION / RETRY CONDITION.** REJECTED and the production source patch was removed; only
+  the reusable profiler remains. Do not ship or quote the favorable centers as a win. Retry this
+  exact transducer leaf only on an SSH-pinned isolated CPU with each arm auto-calibrated to at
+  least **500 ms**, at least **128 retained interleaved samples**, and the same source-identical
+  FL/FL control; require candidate raw arms, candidate paired ratio, both NULL raw arms, and NULL
+  paired ratio all independently **<5% CV**. If that substrate is unavailable, dig a different
+  printf/time/locale/wchar primitive rather than repeating the pooled-worker run.
+
+## 2026-07-22 (cc_fl / MagentaCondor) — WIN (SHIPPED): fgets-fmemopen pointer-cursor line fast path — 1t 1.81x (DISJOINT, decisive CVs UNDER 5%), 8t 90.9µs→20.2µs/drain; the parked "other follow-on" lands (cc-fgets-mem-2026-07-22)
+
+- **THE LEVER (the fgets sibling of the fread win one commit back).** `FastFixedMemRead::
+  read_line` (stop after first `\n` inclusive or at capacity; CAS cursor advance; EOF iff ran
+  off end without newline while wanting more — incl. the 0-byte NULL-return read) +
+  `try_fgets_fast_fixed_mem_by_stream` (shares `FGETC_MEM_PTR_CACHE`; probe sits pre-
+  `canonical_stream_id`, mirroring fgetc/fread) + the slow-path populate branch. The OLD mem
+  branch did `sync_and_unregister` on EVERY fgets — each line paid the native lock + decide +
+  registry lock AND tore down the fgetc/fread cursor. Read-only mem streams only; writable mem
+  streams keep the old path. `fgets_unlocked` delegates ⇒ inherits.
+- **CONFORMANCE (remote, current HEAD + lever).** `fgets_differential_test` **6/0** (the exact
+  gate: fmemopen lines vs glibc — binary-NUL, tail-without-newline, EOF, n==0/1 degeneracies,
+  ftell), `fread_partial_differential_test` 3/0, `fmemopen_write_differential_test` 2/0,
+  `conformance_diff_stdio_ext` 2/0, `conformance_diff_stdio_unlocked_io` 1/0,
+  `conformance_diff_getline` 1/0, `stdio_abi_test` **256/0**; plus in-harness `verify_gets`
+  (fl vs dlmopen-glibc dispositions + bytes at n=128 AND n=7 capacity stops, lined data and
+  no-trailing-newline tail) in BOTH A/B binaries.
+- **MEASURED (15 alternated runs, idle vmi1152480, harness extended with an FGETS_MEM_AB
+  phase: 64-byte lines, fgets(buf,128) drain-until-NULL; binaries mem_base2 2ab39395…/
+  mem_cand2 12bf21fb…; 30/30 exit-0).** Round 3's design upgrade: the FREAD arm is a TRUE
+  null control (fread code identical in both binaries).
+  - **NULL CONTROL PASSED: fread 1t cand2/base2 = 0.9917 raw / 0.9927 normalized.** (8t null
+    1.11-1.19 = the known contended-arm wobble; discount 8t levers by it.)
+  - **1t: base 9654.4 ns/drain (cv 4.01%) → cand 5328.8 (cv 4.68%) = 0.5520 raw / 0.5514
+    normalized — DISJOINT per-run medians AND both decisive CVs UNDER the 5% gate.** The
+    formally cleanest result of this campaign: gate met by the letter, not just in spirit.
+  - **8t: base 90924.1 → cand 20187.2 = 0.2220 raw / 0.2211 normalized (4.5x)** — vastly
+    beyond the 8t null wobble. glibc canary arms agree across binaries to 0.06% (8t) / 1.9%
+    (1t).
+  - vs glibc absolute: 1t 5.21x → **2.82x** loss; 8t 30.1x → **6.68x**. Residual = the same
+    fmemopen/fclose lifecycle cost named in the fread row (fl allocator + registry per
+    open/close) — the next distinct lever on this surface, NOT closable by read-path caching.
+- **DISPOSITION.** SHIPPED (lever + harness FGETS phase, one commit). The 07-11 "fgets faces
+  the same 1t economics, lower priority" parking is RESOLVED the same way fread's was: the
+  1t economics fear was the OLD path's own cost. fmemopen read-path cursor family now
+  COMPLETE: fgetc (8cc0aced9) + fread (8f700f04b) + fgets (this). Remaining stdio-mem vein:
+  the open/close lifecycle floor (allocator-bound; blocked on/adjacent to bd-ummyux).
+  Reproducer: two-binary alternation of `--example stdio_fread_mem_mt_ab` (FGETS_MEM_AB
+  lines; FREAD arm doubles as the null control).

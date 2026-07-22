@@ -47,11 +47,13 @@ const WARMUP: usize = 5;
 
 type FmemopenFn = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
 type FreadFn = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
+type FgetsFn = unsafe extern "C" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char;
 type FcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 
 struct HostStdio {
     fmemopen: FmemopenFn,
     fread: FreadFn,
+    fgets: FgetsFn,
     fclose: FcloseFn,
 }
 
@@ -72,6 +74,7 @@ fn host() -> &'static HostStdio {
         HostStdio {
             fmemopen: std::mem::transmute::<*mut c_void, FmemopenFn>(sym(b"fmemopen\0")),
             fread: std::mem::transmute::<*mut c_void, FreadFn>(sym(b"fread\0")),
+            fgets: std::mem::transmute::<*mut c_void, FgetsFn>(sym(b"fgets\0")),
             fclose: std::mem::transmute::<*mut c_void, FcloseFn>(sym(b"fclose\0")),
         }
     })
@@ -103,6 +106,86 @@ fn drain_glibc(data: &mut [u8], h: &'static HostStdio) -> usize {
     }
     unsafe { (h.fclose)(fp) };
     got
+}
+
+/// Fill `data` with 64-byte lines: 63 payload bytes + '\n', so an fgets drain with a
+/// 128-byte dst consumes exactly one line per call.
+fn make_lines(data: &mut [u8]) {
+    for (i, b) in data.iter_mut().enumerate() {
+        *b = if i % 64 == 63 { b'\n' } else { b'x' };
+    }
+}
+
+/// fgets drain cycle: open, read lines until NULL, close. Returns lines read (must be N/64).
+fn drain_fl_gets(data: &mut [u8]) -> usize {
+    let fp = unsafe { fl::fmemopen(data.as_mut_ptr().cast(), N, c"r".as_ptr()) };
+    assert!(!fp.is_null(), "fl fmemopen failed");
+    let mut buf = [0u8; 128];
+    let mut lines = 0usize;
+    while !unsafe { fl::fgets(buf.as_mut_ptr().cast(), 128, fp) }.is_null() {
+        lines += 1;
+        black_box(&buf);
+    }
+    unsafe { fl::fclose(fp) };
+    lines
+}
+
+fn drain_glibc_gets(data: &mut [u8], h: &'static HostStdio) -> usize {
+    let fp = unsafe { (h.fmemopen)(data.as_mut_ptr().cast(), N, c"r".as_ptr()) };
+    assert!(!fp.is_null(), "glibc fmemopen failed");
+    let mut buf = [0u8; 128];
+    let mut lines = 0usize;
+    while !unsafe { (h.fgets)(buf.as_mut_ptr().cast(), 128, fp) }.is_null() {
+        lines += 1;
+        black_box(&buf);
+    }
+    unsafe { (h.fclose)(fp) };
+    lines
+}
+
+/// fgets differential before timing: over lined data AND a no-trailing-newline tail, fl and
+/// glibc must agree on every return disposition and every buffer prefix, at n=128 and the
+/// awkward n=7 (mid-line capacity stops).
+fn verify_gets(h: &'static HostStdio) {
+    for tail_newline in [true, false] {
+        let mut data = vec![0u8; 300];
+        make_lines(&mut data);
+        if !tail_newline {
+            let last = data.len() - 1;
+            data[last] = b'y';
+        }
+        let mut d1 = data.clone();
+        let mut d2 = data.clone();
+        let ns: [c_int; 2] = [128, 7];
+        for n in ns {
+            let fp_f = unsafe { fl::fmemopen(d1.as_mut_ptr().cast(), d1.len(), c"r".as_ptr()) };
+            let fp_g =
+                unsafe { (h.fmemopen)(d2.as_mut_ptr().cast(), d2.len(), c"r".as_ptr()) };
+            assert!(!fp_f.is_null() && !fp_g.is_null());
+            loop {
+                let mut bf = [0x5au8; 130];
+                let mut bg = [0x5au8; 130];
+                let rf = unsafe { fl::fgets(bf.as_mut_ptr().cast(), n, fp_f) };
+                let rg = unsafe { (h.fgets)(bg.as_mut_ptr().cast(), n, fp_g) };
+                assert_eq!(
+                    rf.is_null(),
+                    rg.is_null(),
+                    "fgets disposition diverged (n={n} tail_newline={tail_newline})"
+                );
+                assert_eq!(
+                    &bf[..n as usize],
+                    &bg[..n as usize],
+                    "fgets bytes diverged (n={n} tail_newline={tail_newline})"
+                );
+                if rf.is_null() {
+                    break;
+                }
+            }
+            unsafe { fl::fclose(fp_f) };
+            unsafe { (h.fclose)(fp_g) };
+        }
+    }
+    println!("verify_gets: OK (fl fgets == glibc fgets, dispositions + bytes, n=128 and n=7)");
 }
 
 /// Byte-identity proof before any timing: fl and glibc drains over identical content must
@@ -145,7 +228,7 @@ fn cv_pct(xs: &[f64]) -> f64 {
 /// Run one arm at `threads`: workers spawned once, `ROUNDS` barrier-synced rounds, each
 /// thread times its own K drains per round. Returns per-round ns/drain, averaged across
 /// threads, warmup discarded.
-fn run_arm(threads: usize, use_glibc: bool, h: &'static HostStdio) -> Vec<f64> {
+fn run_arm(threads: usize, use_glibc: bool, gets: bool, h: &'static HostStdio) -> Vec<f64> {
     let barrier = Barrier::new(threads);
     let mut per_thread: Vec<Vec<f64>> = Vec::new();
 
@@ -155,22 +238,27 @@ fn run_arm(threads: usize, use_glibc: bool, h: &'static HostStdio) -> Vec<f64> {
             let barrier = &barrier;
             handles.push(s.spawn(move || {
                 let mut data = vec![b'x'; N]; // allocated ONCE per thread
+                if gets {
+                    make_lines(&mut data);
+                }
                 let mut rounds = Vec::with_capacity(ROUNDS);
                 let mut got_total = 0usize;
                 for _ in 0..ROUNDS {
                     barrier.wait();
                     let start = Instant::now();
                     for _ in 0..K {
-                        got_total += if use_glibc {
-                            drain_glibc(&mut data, h)
-                        } else {
-                            drain_fl(&mut data)
+                        got_total += match (use_glibc, gets) {
+                            (false, false) => drain_fl(&mut data),
+                            (true, false) => drain_glibc(&mut data, h),
+                            (false, true) => drain_fl_gets(&mut data),
+                            (true, true) => drain_glibc_gets(&mut data, h),
                         };
                     }
                     rounds.push(start.elapsed().as_nanos() as f64 / K as f64);
                 }
-                // Execution proof: every drain returned all N bytes.
-                assert_eq!(got_total, N * K * ROUNDS, "short drain detected");
+                // Execution proof: every drain returned all N bytes (fread) / all lines (fgets).
+                let expect = if gets { (N / 64) * K * ROUNDS } else { N * K * ROUNDS };
+                assert_eq!(got_total, expect, "short drain detected");
                 rounds
             }));
         }
@@ -189,25 +277,25 @@ fn run_arm(threads: usize, use_glibc: bool, h: &'static HostStdio) -> Vec<f64> {
 fn main() {
     let h = host();
     verify(h);
+    verify_gets(h);
     let maxt: usize = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(8);
-    for &threads in &[1usize, maxt] {
-        // Warm both arms once (first-touch, dlmopen init, allocator warm).
-        run_arm(threads, false, h);
-        run_arm(threads, true, h);
-        let fl_r = run_arm(threads, false, h);
-        let gl_r = run_arm(threads, true, h);
-        let (fm, gm) = (median(&fl_r), median(&gl_r));
-        println!(
-            "FREAD_MEM_AB threads={threads} arm=fl ns_drain={fm:.1} cv={:.2}",
-            cv_pct(&fl_r)
-        );
-        println!(
-            "FREAD_MEM_AB threads={threads} arm=glibc ns_drain={gm:.1} cv={:.2}",
-            cv_pct(&gl_r)
-        );
-        println!(
-            "FREAD_MEM_AB threads={threads} ratio_fl_over_glibc={:.4}",
-            fm / gm
-        );
+    for &(gets, tag) in &[(false, "FREAD_MEM_AB"), (true, "FGETS_MEM_AB")] {
+        for &threads in &[1usize, maxt] {
+            // Warm both arms once (first-touch, dlmopen init, allocator warm).
+            run_arm(threads, false, gets, h);
+            run_arm(threads, true, gets, h);
+            let fl_r = run_arm(threads, false, gets, h);
+            let gl_r = run_arm(threads, true, gets, h);
+            let (fm, gm) = (median(&fl_r), median(&gl_r));
+            println!(
+                "{tag} threads={threads} arm=fl ns_drain={fm:.1} cv={:.2}",
+                cv_pct(&fl_r)
+            );
+            println!(
+                "{tag} threads={threads} arm=glibc ns_drain={gm:.1} cv={:.2}",
+                cv_pct(&gl_r)
+            );
+            println!("{tag} threads={threads} ratio_fl_over_glibc={:.4}", fm / gm);
+        }
     }
 }

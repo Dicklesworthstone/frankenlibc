@@ -709,6 +709,43 @@ impl FastFixedMemRead {
         }
     }
 
+    /// Line sibling of `read_bytes` for `fgets`: copies bytes from the current position into
+    /// `dst`, stopping after the first `\n` (inclusive) or at `dst.len()` bytes, whichever is
+    /// first; advances the atomic cursor by the amount copied and returns it. `None` iff the
+    /// cursor is closed (⇒ caller falls through to the registry slow path). EOF flag mirrors
+    /// the byte-loop `fgets` semantics: set iff the scan ran off the end of the data WITHOUT
+    /// finding a newline while more bytes were wanted (this includes the 0-byte read at end,
+    /// which is fgets's NULL-return case); a newline stop or a capacity stop leaves it false —
+    /// neither can race a previously-set EOF because a set flag implies pos == data.len(),
+    /// where no newline/capacity stop is reachable. Content is immutable (read-only mem
+    /// streams only), so the post-CAS copy is valid under concurrent readers.
+    #[inline]
+    fn read_line(&self, dst: &mut [u8]) -> Option<usize> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let want = dst.len();
+        loop {
+            let pos = self.pos.load(Ordering::Acquire);
+            let avail = self.data.len().saturating_sub(pos);
+            let lim = want.min(avail);
+            let nl = self.data[pos..pos + lim].iter().position(|&b| b == b'\n');
+            let n = match nl {
+                Some(i) => i + 1,
+                None => lim,
+            };
+            if self
+                .pos
+                .compare_exchange_weak(pos, pos + n, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                dst[..n].copy_from_slice(&self.data[pos..pos + n]);
+                self.eof.store(nl.is_none() && want > avail, Ordering::Release);
+                return Some(n);
+            }
+        }
+    }
+
     #[inline]
     fn seek(&self, offset: i64, whence: c_int) -> Option<usize> {
         if self.closed.load(Ordering::Acquire) {
@@ -836,6 +873,23 @@ fn try_fread_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Op
             return None;
         }
         cursor.read_bytes(dst)
+    })
+}
+
+/// Pointer-keyed fmemopen line-read fast path — the `fgets` sibling of
+/// `try_fread_fast_fixed_mem_by_stream`, sharing the same `FGETC_MEM_PTR_CACHE` slot and
+/// cursor. `Some(bytes_written)` on a gen-valid, open cached cursor; `None` on any miss ⇒
+/// caller falls through to `canonical_stream_id` and re-caches on the registry slow path.
+fn try_fgets_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    FGETC_MEM_PTR_CACHE.with(|c| {
+        let cache = c.borrow();
+        let (cp, cg, cursor) = cache.as_ref()?;
+        if *cp != key || *cg != cur_gen {
+            return None;
+        }
+        cursor.read_line(dst)
     })
 }
 
@@ -2984,6 +3038,23 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
         unsafe { *buf.add(written) = 0 };
         return buf;
     }
+    // Pointer-keyed fmemopen line fast path (the fd cache above EXCLUDES mem streams, so
+    // fmemopen `fgets` otherwise pays `canonical_stream_id`'s native lock + `decide` + the
+    // registry lock per LINE — and the old mem branch even unregistered the cursor, tearing
+    // down the fgetc/fread fast paths). MT-safe (atomic cursor CAS). Miss ⇒ falls through
+    // and re-caches. size >= 2 is guaranteed here (size <= 0 and size == 1 returned above).
+    {
+        let max = (size - 1) as usize;
+        // SAFETY: caller contract — `buf` valid for `size` bytes; max == size-1.
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
+        if let Some(n) = try_fgets_fast_fixed_mem_by_stream(stream, dst) {
+            if n == 0 {
+                return std::ptr::null_mut();
+            }
+            unsafe { *buf.add(n) = 0 };
+            return buf;
+        }
+    }
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
@@ -3078,6 +3149,29 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
         return buf;
     }
     if s.is_mem_backed() {
+        // fmemopen line read via the atomic cursor (registered only for read-only mem
+        // streams ⇒ content immutable). Populate the pointer cache so subsequent
+        // `fgets`/`fgetc`/`fread` skip `canonical_stream_id` + `decide` + the registry
+        // lock. Replaces the former `sync_and_unregister` + fill for read-only streams —
+        // that path tore down the cursor on EVERY fgets. Writable mem streams register
+        // no cursor ⇒ old path below unchanged. Byte-identical: same stop-at-newline /
+        // capacity / EOF semantics as the fill loop over the same content snapshot.
+        if let Some(cursor) = fast_fixed_mem_read(id) {
+            store_fgetc_mem_ptr_cache(stream, &cursor);
+            let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
+            let n = cursor.read_line(dst).unwrap_or(0);
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(10, n.max(1)),
+                n == 0,
+            );
+            if n == 0 {
+                return std::ptr::null_mut();
+            }
+            unsafe { *buf.add(n) = 0 };
+            return buf;
+        }
         sync_and_unregister_fast_fixed_mem_read(id, s);
     } else {
         // Cache this non-cookie, non-mem fd stream so subsequent fgets/fgetc/fread hit the
