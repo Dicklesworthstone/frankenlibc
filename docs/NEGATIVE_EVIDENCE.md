@@ -21431,3 +21431,47 @@ item retains every later colon by construction, exactly matching the former `fie
   MALLOC LANE; it is also the natural neighborhood of bd-ummyux (malloc NULL under 8t churn).
 - **DISPOSITION.** stdio-mem vein CLOSED for cc lane (read cursors complete; lifecycle floor
   handed to malloc lane via agent mail with this frame table). No code change in this entry.
+
+## 2026-07-22 (cc_fl / MagentaCondor) — WIN (SHIPPED) + SURVEY: zero-cursor fast-out kills the per-byte mem-map probe on fd streams (1t 0.89 / 8t 0.67, both DISJOINT); FD-stream MT gap measured on a sound instrument for the first time: 4.06x@1t, 63.3x@8t (cc-fd-mt-survey-2026-07-22)
+
+- **THE SURVEY (replaces the 2.96x/8.6x folklore).** New FGETC_FD_AB phase in
+  `stdio_fread_mem_mt_ab.rs`: per-thread /dev/shm file, FILE* opened ONCE, drain = fseek(0) +
+  4096 fgetc; `verify_fd` gates bytes+EOF+rewind vs dlmopen glibc. 5 runs, idle vmi1152480:
+  **1t fl 193.5µs vs glibc 47.2µs (CVs 5.3/5.2%) = median ratio 4.06x; 8t fl 3640.6µs vs
+  58.6µs (CVs 6.7/13.0%) = median 63.3x** — glibc degrades 1.12x 1t→8t (per-FILE locks), fl
+  15.4x (every fgetc through the ONE registry mutex; all fd fast paths are
+  `__libc_single_threaded`-gated, and harness threads make 1t run in the flag-off state, i.e.
+  the any-program-that-ever-spawned-a-thread state). The 2026-07-11 "contention is only 1.11x"
+  verdict was CORRECT for its fmemopen workload (which never takes the registry lock per byte)
+  and WRONG as a general stdio-MT claim — fd streams were never measured until now. perf:
+  `RawMutex::lock_slow` 26.13% + word-lock/unlock/sched_yield ≈30% pure lock machinery, and
+  **`fast_fixed_mem_read` 12.89%** — the fgetc/fread/fgets slow paths probe the fmemopen-cursor
+  map BY ID on every call, so fd streams paid a TLS borrow + a SECOND global lock per byte for
+  a guaranteed miss. Big-refactor successor bead (per-FILE `Arc<Mutex<StdioStream>>` registry):
+  **bd-h0n1mf**, design scoped there.
+- **THE LEVER (shipped this row): `FIXED_MEM_CURSOR_COUNT` zero-cursor fast-out.** Global
+  `AtomicUsize`; `fast_fixed_mem_read` returns `None` on `count==0` with a single Acquire
+  load. Over-approximation invariant: inc BEFORE map insert (with a dec on displaced-entry
+  insert), dec only AFTER successful remove ⇒ count==0 PROVES the map is empty and `None` is
+  exactly what the probe would have returned; transient over-count merely re-adds today's
+  probe. With no fmemopen open (the common program state), the per-call mem probe collapses
+  to one atomic load; sync_/unregister helpers inherit the fast-out.
+- **MEASURED (12 alternated runs, fd_survey 737242e1… vs fd_cand adbd4597…, 24/24 exit-0).**
+  - **FGETC_FD 1t: 184,608 → 164,625 ns/drain = 0.8918 raw / 0.8806 normalized, DISJOINT**
+    (CVs 3.36/5.71%) — the 12.9% probe tax gone, plus map-lock removal.
+  - **FGETC_FD 8t: 3,356,608 → 2,242,678 = 0.6681 raw / 0.6443 normalized, DISJOINT** (CVs
+    17.85/10.95%, intrinsic to the still-contended registry arm) — removing the SECOND global
+    lock cuts a third of MT wall; the registry mutex remains dominant (still ~38x vs glibc ⇒
+    bd-h0n1mf is the remaining swing).
+  - **Null controls: FGETS_MEM 1t 0.9929/0.9985, FREAD_MEM 1t 0.9679/0.9899** (mem workloads
+    keep count>0 ⇒ only the extra atomic load; sub-noise ✓). 8t mem nulls wobble both
+    directions (1.26/1.01 raw, CVs 29-63%) and OVERLAP — while the lever arms are DISJOINT;
+    disjointness is the discriminator, stated as ever.
+- **CONFORMANCE.** Same-tree remote: `fgets_differential_test` 1/0, `fread_partial` 3/0,
+  `fmemopen_write` 2/0, `stdio_ext` 2/0, `unlocked_io` 1/0, `stdio_abi_test` **256/0**.
+  ⚠️CORRECTION to the 35d16412f row: `fgets_differential_test` is ONE table-driven test fn
+  (covering binary-NUL/tail/EOF/n==0/1), not 6 — the "6/0" there misattributed a batch line;
+  the binary passed in both runs, the coverage claim itself stands.
+- **DISPOSITION.** SHIPPED (count gate + FD instrument phase, one commit). Next swing in this
+  vein = bd-h0n1mf (atomic per-FILE registry refactor; do NOT partial-commit), now with a
+  sound baseline instrument and this row's numbers as the before-state.
