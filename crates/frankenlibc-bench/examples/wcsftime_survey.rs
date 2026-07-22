@@ -1,4 +1,4 @@
-//! Same-worker, truly interleaved `%A` strftime profiler against host glibc.
+//! Same-worker, truly interleaved `%j` strftime profiler against host glibc.
 //!
 //! The source-identical FL/FL null control is measured once per paired sample and
 //! assigned opposite labels on alternating samples. The FL/glibc pair is likewise
@@ -14,7 +14,7 @@ use std::time::Instant;
 
 const SAMPLES: usize = 80;
 const WARMUP: usize = 16;
-const REPS: usize = 10_000_000;
+const REPS: usize = 2_500_000;
 
 type StrftimeFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, *const libc::tm) -> usize;
 
@@ -68,28 +68,28 @@ fn run_host(host: StrftimeFn, out: *mut c_char, fmt: *const c_char, tm: *const l
 
 fn verify(host: StrftimeFn, fmt: *const c_char) {
     use frankenlibc_abi::time_abi as fl;
-    for wday in 0..=6 {
+    for yday in [0, 1, 8, 9, 98, 99, 364, 365] {
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-        tm.tm_wday = wday;
-        for capacity in [1usize, 2, 6, 7, 8, 9, 10, 16, 64] {
+        tm.tm_yday = yday;
+        for capacity in [1usize, 2, 3, 4, 5, 64] {
             let mut a = [0x55 as c_char; 64];
             let mut b = [0x55 as c_char; 64];
             let fl_n = unsafe { fl::strftime(a.as_mut_ptr(), capacity, fmt, &tm) };
             let host_n = unsafe { host(b.as_mut_ptr(), capacity, fmt, &tm) };
             assert_eq!(
                 fl_n, host_n,
-                "length mismatch for tm_wday={wday}, cap={capacity}"
+                "length mismatch for tm_yday={yday}, cap={capacity}"
             );
             if fl_n != 0 {
                 assert_eq!(
                     &a[..=fl_n],
                     &b[..=host_n],
-                    "output mismatch for tm_wday={wday}, cap={capacity}"
+                    "output mismatch for tm_yday={yday}, cap={capacity}"
                 );
             }
         }
     }
-    println!("verify: OK (FL == host glibc for all valid %A weekdays and fit boundaries)");
+    println!("verify: OK (FL == host glibc for valid %j day-of-year and fit boundaries)");
 }
 
 fn main() {
@@ -111,11 +111,11 @@ fn main() {
         assert!(!symbol.is_null());
         std::mem::transmute(symbol)
     };
-    let fmt = c"%A";
+    let fmt = c"%j";
     verify(host, fmt.as_ptr());
 
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    tm.tm_wday = 3;
+    tm.tm_yday = 172;
     let tm_ptr = &tm;
     let mut fl_out = [0 as c_char; 64];
     let mut host_out = [0 as c_char; 64];
@@ -176,7 +176,7 @@ fn main() {
         .map(|(b_ns, a_ns)| b_ns / a_ns)
         .collect();
     println!(
-        "STRFTIME_FULL_WEEKDAY_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
+        "STRFTIME_YDAY_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
         fl.len()
     );
     println!(

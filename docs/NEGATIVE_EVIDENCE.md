@@ -21590,3 +21590,24 @@ item retains every later colon by construction, exactly matching the former `fie
   least 64 retained interleaved samples, and at least 500 ms per arm; production RCU/atomic
   publication may be attempted only when deployed raw, glibc raw, both NULL raw arms, NULL paired,
   and deployed/glibc paired CVs are each independently below 5%.
+
+## 2026-07-22 (cod / pane 3) — BLOCKED (UNTIMED): exact `%j` `strftime` finite-state emitter (`bd-2d2hrk`)
+
+- **LEDGER/HISTORY GATE + READY PROFILER.** Before touching production, the ledger and recent
+  history were searched for exact `%j`, day-of-year formatting, and the general `strftime` loop.
+  `%j` remains explicitly recorded as a general-loop loss, distinct from the closed exact numeric
+  formats and the rejected `%A` leaf. The existing interleaved/null profiler was retargeted to
+  `%j`, with valid `tm_yday` boundaries, fit capacities, 64 retained samples after 16 warmups, and
+  2,500,000 calls per arm. It is registered as the `strftime_exact_ab` bench. Production time code
+  was not changed.
+- **REMOTE-ONLY BLOCKER.** Two consecutive invocations of the required exact command failed before
+  compilation or timing: `RCH_REQUIRE_REMOTE=1 RCH_WORKER=w rch exec -- cargo bench -j4 --profile
+  release -p frankenlibc-bench --features abi-bench --bench strftime_exact_ab -- --noplot` returned
+  `[RCH-I001] requested worker set [w] refused (unavailable); 'w' is not a configured worker` and
+  then refused local fallback because `RCH_REQUIRE_REMOTE=1`. The remote-perf unblock belongs to
+  cc's lane, so no worker configuration or local substitution was attempted.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** BLOCKED and explicitly UNTIMED, not a REJECT and not
+  performance evidence. Resume only when the required `w` worker selector is configured and the
+  exact command receives a remote assignment. The production `%j` emitter remains forbidden until
+  the prepared behavior oracle passes and deployed/glibc raw, paired, both source-identical NULL
+  raw arms, and NULL paired CVs are each independently below 5% on one remote worker.

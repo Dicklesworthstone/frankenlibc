@@ -326,6 +326,12 @@ path = "examples/textdomain_ab.rs"
 harness = false
 required-features = ["abi-bench"]
 
+[[bench]]
+name = "strftime_exact_ab"
+path = "examples/wcsftime_survey.rs"
+harness = false
+required-features = ["abi-bench"]
+
 [[example]]
 name = "wcsftime_l_ab"
 harness = false
