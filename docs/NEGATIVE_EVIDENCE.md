@@ -21475,3 +21475,33 @@ item retains every later colon by construction, exactly matching the former `fie
 - **DISPOSITION.** SHIPPED (count gate + FD instrument phase, one commit). Next swing in this
   vein = bd-h0n1mf (atomic per-FILE registry refactor; do NOT partial-commit), now with a
   sound baseline instrument and this row's numbers as the before-state.
+
+## 2026-07-22 (cc_fl / MagentaCondor) — SCOPE COMPLETE (bd-h0n1mf shovel-ready): per-FILE registry refactor site census; sharding rejected as an intermediate (same 73-site atomic surface, half the payoff)
+
+- **SITE CENSUS (HEAD fbbae3c64).** **73** `registry().lock()` sites across ~50 fns. Exactly
+  **4 global-iteration sites** (`sorted_stream_ids` callers): `fflush_managed_only_for_abort`
+  L2509, `fflush(NULL)` L2570, `fcloseall` L9846, test helper L11428 — under per-FILE these
+  snapshot ids under a short map lock then lock streams ONE AT A TIME in sorted order (no more
+  whole-registry hold across flushes). All remaining sites are id-scoped. Delicate fns (multi-
+  site): `maybe_unregister_dynamic_native_stream` (4), `bench_fgets_newpath` (4, bench hook),
+  `freopen` (3), `fclose` (3, registry→cookie_registry lock order must be preserved).
+- **DESIGN DELTAS confirmed by census:** (a) `Arc<Mutex<StdioStream>>` contents do NOT move on
+  HashMap rehash ⇒ the `insert_stream`/`REGISTRY_GEN` *mut-invalidation hazard disappears for
+  the new Arc caches (gen still guards close/id-reuse); (b) hot ops (fgetc/fgets/fread/fputc/
+  fputs/fwrite/ftell/fseek/ungetc) get a TLS `(FILE*,gen)→Arc` cache = zero map-lock on hits;
+  (c) OPEN DECISION to measure, not assume: keep the ST-gated raw `*mut` write caches (sound
+  while single-threaded, violates mutex discipline stylistically) vs convert to Arc +
+  uncontended parking_lot lock (~10-20ns on 50-500ns ops) — gate with `fputs_glibc_bench` +
+  the snprintf fast-path benches so the shipped ST wins don't regress.
+- **WHY NOT SHARDING FIRST (negative-evidence note).** The FD survey overturns the 07-11
+  "contention is 1.11x" basis (fd streams: 26% `lock_slow`, 63.3x@8t), which would legitimize
+  a sharding retry — but sharding touches the SAME 73 sites atomically for a divide-by-N
+  where per-FILE eliminates the per-op map lock outright and enables the Arc TLS caches.
+  Paying the 73-site atomic risk twice is the wrong plan; do bd-h0n1mf once. (If bd-h0n1mf is
+  ever REJECTED on measurement, sharding becomes the recorded fallback with this row as its
+  justification.)
+- **DISPOSITION.** bd-h0n1mf is now measurement-backed (63.3x baseline, FGETC_FD_AB
+  instrument, this census) and execution-scoped. It is a single ATOMIC multi-hour pass —
+  starting it at the tail of this session risks the partial-commit failure its own
+  constraint forbids; parked ready-to-claim as this session's ledgered stopping point.
+
