@@ -314,6 +314,12 @@ name = "wcsftime_ab"
 harness = false
 required-features = ["abi-bench"]
 
+[[bench]]
+name = "wcsftime_ab"
+path = "examples/wcsftime_ab.rs"
+harness = false
+required-features = ["abi-bench"]
+
 [[example]]
 name = "wcsftime_l_ab"
 harness = false

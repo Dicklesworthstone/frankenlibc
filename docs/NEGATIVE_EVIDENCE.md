@@ -21505,3 +21505,39 @@ item retains every later colon by construction, exactly matching the former `fie
   starting it at the tail of this session risks the partial-commit failure its own
   constraint forbids; parked ready-to-claim as this session's ledgered stopping point.
 
+## 2026-07-22 (cod / pane 3) — WIN (KEEP): exact ISO-T `wcsftime` finite-state emitter, 74.45→17.16 ns and 3.09x faster than glibc (`bd-b64nvb`)
+
+- **NEGATIVE-EVIDENCE + ALIEN GATE.** Before source work, the ledger and recent history were
+  searched for `wcsftime`, `%Y-%m-%dT%H:%M:%S`, `%FT%T`, and ISO-T. Adjacent exact wide numeric
+  formats were shipped, but the literal ISO-T format was still forced through the general
+  wide-format narrowing, narrow `strftime`, and output widening bridge. The selected alien
+  primitive is the graveyard's format/locale weighted-VPA/semiring transducer specialization:
+  compile one exact common format into a bounded deterministic emitter while retaining the
+  general bridge as the fallback. EV = impact 4 × confidence 5 × reuse 3 / (effort 2 × friction
+  1) = **30**; the behavior budget is exactly 19 wide characters plus NUL.
+- **PROFILE FIRST.** Required remote release bench on `ovh-a`, 64 retained samples after 16
+  warmups, **5,000,000 calls per arm**, all arms interleaved and order-alternated. Before the
+  production edit, reconstructed general bridge was **72.26 ns/call** (CV **1.74%**), deployed
+  FrankenLibC **82.10 ns/call** (CV **1.96%**), and host glibc **53.65 ns/call** (CV **1.43%**).
+  The source-identical deployed/deployed NULL was **0.9997**, paired CV **1.83%**, raw arms
+  **1.26%/1.52%**. Deployed/general was **1.1349** (paired CV **2.32%**) and deployed/glibc
+  **1.5289** (paired CV **1.88%**): a measured 1.53x function-level gap with every gate <5%.
+- **LEVER / ISOMORPHISM.** `try_wcsftime_numeric_fast` now recognizes exact wide
+  `%Y-%m-%dT%H:%M:%S` and reuses its safe fixed-array digit emitter with a `T` separator. The
+  existing 1000..=9999 year, month/day, hour/minute/second validity checks are unchanged and now
+  cover the ISO-T mode; invalid fields return `None` to the untouched general bridge. Buffers of
+  19 or fewer wide slots return zero exactly as before. The harness proves candidate == glibc for
+  capacities **1..=24**, the ordinary case, and **12 valid field extrema**; it separately proves
+  candidate == reconstructed-old for **12 invalid-field fallbacks**.
+- **SAME-WORKER A/B + NULL KEEP PROOF.** Post-lever on the same `ovh-a` worker and identical
+  64×5,000,000 protocol: ORIG general bridge **74.45 ns/call** (mean **74.38**, CV **1.16%**),
+  CAND **17.16 ns/call** (mean **17.26**, CV **1.33%**), host glibc **53.13 ns/call** (mean
+  **53.28**, CV **1.21%**). CAND/ORIG median **0.2321 / 4.31x faster**, paired CV **1.56%**;
+  CAND/glibc **0.3238 / 3.09x faster**, paired CV **1.52%**. Source-identical CAND/CAND NULL
+  median **0.9998**, paired CV **1.44%**, raw arms **1.10%/1.38%**. Every mandatory raw,
+  candidate-paired, host-paired, and NULL gate is independently below 5%.
+- **CONFORMANCE / DISPOSITION.** Remote release `conformance_diff_wcsftime` passed **11/11**,
+  including the existing ISO-8601 case; `wcsftime_differential_fuzz` compared **200,000** cases
+  with **0 divergences** against host glibc. KEEP and SHIP the single ISO-T mode plus its reusable
+  interleaved/null profiler. Retry condition is unnecessary because this row cleared all gates;
+  future exact formats remain separate levers and must repeat the same profile-first proof.
