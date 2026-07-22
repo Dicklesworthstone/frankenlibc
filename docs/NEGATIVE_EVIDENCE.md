@@ -21063,3 +21063,67 @@ item retains every later colon by construction, exactly matching the former `fie
 - **DISPOSITION:** shipped as `7d5b90bf2`. This closes the passwd half of `bd-alkove`; its stat-fingerprint
   sibling was independently closed by `bd-alkove.1`. Do not reintroduce an unbounded field collection for
   passwd parsing; future lookup work must profile outside this now-allocation-minimized parser primitive.
+
+## 2026-07-22 (cc_fl / MagentaCondor) — BLOCKER RESOLVED (bd-3dxo1a): remote-perf attribution path established; 3 legacy rows backfilled with measured self-time; abi-bench criterion interposition tax QUANTIFIED (~2/3 of process cycles)
+
+- **THE BLOCKER.** bd-3dxo1a: legacy REJECT rows carry no self-time % because `perf` needs a
+  `--profile release-perf` debuginfo build, and the local no-cargo disk constraint forbids it.
+  The recorded unblock option (ii) at L17652 was "a remote-perf path". Delivered exactly that —
+  no rch code change, no local constraint relaxation.
+- **THE RECIPE (repeatable; ~4 min cold on an idle 10-core vmi).** (1) `rch workers probe --all`,
+  pick an IDLE worker (`uptime` load < 1) — all vmi*/hz* carry `/usr/bin/perf`, and as root
+  `perf_event_paranoid` is moot. The pooled mirror `/data/projects/frankenlibc` on workers tracks
+  HEAD (verify `git log --oneline -1` matches). (2) Build ON the worker via a heredoc-written
+  script (inline ssh one-liners silently dropped my `cd` three times — write the script, `bash -n`
+  it, then `nohup` it): `cd /data/projects/frankenlibc; export PATH=/root/.cargo/bin:$PATH;
+  CARGO_TARGET_DIR=/data/tmp/perf_<bead> cargo bench --no-run -j8 --locked --profile release-perf
+  -p frankenlibc-bench --features abi-bench --bench <b> --example <e>`. release-perf =
+  line-tables-only + strip=false ⇒ full symbolization. Use a SCRATCH target dir: rch pool targets
+  can be ISA/staleness-poisoned (an ovh-b pooled release-perf target SIGILL'd zerocopy's stale
+  build-script binary when rch routed my first attempt there). (3) `perf record -F 3997 -o x.perf
+  -- <bin> --bench`; for tiny workloads aggregate: `perf record -- bash -c 'for i in {1..300};
+  do <bin> >/dev/null; done'`. (4) `perf report --stdio [--dsos=<bin>] --percent-limit 0.05`;
+  scp back TEXT only. **NOTE:** `RCH_WORKER=<w>` is NOT an rch env var (checked the binary's
+  env-var table; my first attempt with it silently routed to ovh-b) — admission-scored routing
+  cannot be pinned by env; SSH-direct IS the pin. Substrate here: worker vmi1152480 (load 0.63,
+  10 cores), workspace at HEAD `dc3cdc24d`, artifacts on worker `/data/tmp/{strrchr,hostent,
+  hostsrev}.perf` (34.7M/2.0M/5.7M; 267,739/13,990/43,623 samples) + `*_report.txt`, text mirrored
+  to session scratchpad.
+- **BACKFILL 1 — strrchr 128B-unroll REJECT (L16468) + audit row (B) (L17631).** Under the exact
+  row harness (`strrchr_glibc_bench`, whole run, flat profile): deployed fl `[.] strrchr` **0.15%**
+  self-time vs glibc `libc.so.6 [.] __strrchr_avx2` **0.06%** — equal interleaved call counts ⇒
+  2.5:1 cycle ratio, consistent with the SAME run's p50 ratios (size 8/16/64/1024/65536 =
+  1.74/1.93/1.90/1.85/1.35; FREQ 1024/65536 = 2.39/2.63; cycle mass sits in the 65536+FREQ arms).
+  The harness reaches the DEPLOYED symbol with measurable self-time — dead-code-bench rule
+  satisfied; the 2026-07-04 rejection stands, now with attribution attached.
+- **BACKFILL 2 — `_gethtent` borrow WIN row (L17944, "self-time: NOT MEASURED" at L17950).**
+  300 aggregated runs of `hostent_iter_ab`, within-DSO: `runtime_policy::entrypoint_scope` 1.52%,
+  `resolv::parse_hosts_line` 1.49%, `resolv_abi::next_hosts_ipv4_entry` 1.30%, then interposed-
+  allocator frames (`free` 0.98, `memcpy` 0.81, `segment_free` 0.75, `allocate_from_local_class`
+  0.71, `malloc` 0.63) + `getenv` 0.78 / `native_getenv_raw` 0.75. Same-run PAIRED cand/orig
+  median 0.6451 (1.55x), cand/glibc 0.423x — the shipped win reproduces on this substrate (13-line
+  /etc/hosts; cv 54.8% on the tiny workload, attribution unaffected).
+- **BACKFILL 3 — hosts_reverse per-arm self-time (L17741/L17886 family).** Within-DSO:
+  `resolv::first_reverse_hosts_hostname` **5.91%** (dominant deployed frame),
+  `resolv::reverse_lookup_hosts` 1.89%, `entrypoint_scope` 1.44%, `getenv` 1.34 +
+  `native_getenv_raw` 1.16, allocator ~4% spread. Same-run PAIRED cand/orig 0.3993 (2.50x),
+  cand/glibc 0.256x. CAVEAT for 2+3: percentages are relative to the example's own DSO; process-
+  wide mass from 300 spawns sits in kernel exec/page-zero frames (`memset_orig` 4-6%,
+  `__d_lookup_rcu` ~3%).
+- **NEW QUANTIFICATION — abi-bench criterion interposition tax (extends the abi-malloc
+  interposition hazard).** Whole-process `strrchr_glibc_bench` flat profile:
+  `ChangepointController::observe` **26.28%**, `RuntimeMathKernel::observe_validation_result_enabled`
+  **9.82%**, futex `lock_contended` 5.49% + kernel `__pv_queued_spin_lock_slowpath` 4.26%,
+  `bandit::observe` 3.13%, conformal-threshold sort 3.00%, exp/log kernels ~4.3%, plus a ~10%
+  tail of runtime_math monitors ⇒ **runtime_math observation ≈52% + math kernels ~4% + lock
+  contention ~10% ≈ two-thirds of ALL process cycles**, while libc.so.6 totals 0.34% and the
+  measured A/B loops ≈1.5%. Flat profile (no call graph), so caller provenance is inferred, not
+  proven: the measured loops are far too small to generate this mass, and the futex/rayon-KDE
+  frames mark criterion's multi-threaded analysis phase hitting the interposed fl allocator.
+  Practical rule reaffirmed with numbers: criterion-analysis output from abi-bench processes is
+  ~98% infrastructure; only in-loop timing is signal. This also explains the historical
+  criterion-analysis SIGABRT/noise pathologies on abi-bench.
+- **DISPOSITION.** bd-3dxo1a CLOSED (path exists, exercised end-to-end, 3 rows backfilled).
+  Malloc header-proof rows (C at L17640) are cod's lane — recipe handed over via agent mail, not
+  backfilled here. No production code changed; no candidate levers touched; attribution
+  infrastructure only.
