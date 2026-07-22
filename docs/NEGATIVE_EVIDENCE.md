@@ -21611,3 +21611,26 @@ item retains every later colon by construction, exactly matching the former `fie
   exact command receives a remote assignment. The production `%j` emitter remains forbidden until
   the prepared behavior oracle passes and deployed/glibc raw, paired, both source-identical NULL
   raw arms, and NULL paired CVs are each independently below 5% on one remote worker.
+
+### 2026-07-22 continuation — retry predicate remains false
+
+- **RETRY + READ-ONLY PROVENANCE.** A third invocation of the same required exact command again
+  failed before Cargo with `[RCH-I001] requested worker set [w] refused (unavailable); 'w' is not a
+  configured worker`; remote-required mode again refused local fallback. Read-only fleet diagnosis
+  reported **12/12 configured workers ready**, but the configured IDs are `ovh-*`, `vmi*`, and
+  `hz*`—none is `w`. `rch admit` independently classified the exact Cargo bench as offload-eligible.
+  The blocker is therefore the mandated selector's absence, not bench ineligibility, fleet outage,
+  or saturation. Per lane ownership, no worker configuration was changed and no alternate selector
+  was substituted.
+- **ALIEN CONTRACT HELD BEHIND THE GATE.** The graveyard's Tier-A finite-state transducer pattern
+  and the FrankenSuite R9 format/locale mapping to weighted-VPA/semiring transducers support a
+  bounded exact `%j` emitter with the general formatter as fallback. Recommendation score:
+  impact **4** × confidence **4** × reuse **3** / (effort **2** × friction **1**) = **24**. The
+  behavior budget is exactly three ASCII digits plus NUL; invalid fields and non-exact formats stay
+  on the unchanged general path. Proof remains the prepared boundary/capacity oracle followed by
+  one-worker interleaved deployed/glibc A/B and source-identical NULL arms.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** Still **BLOCKED (UNTIMED)**; this continuation adds no
+  performance verdict and no production edit. Retry only after `RCH_WORKER=w` resolves to a
+  configured remote worker and the exact command obtains a remote assignment. Only then may `%j`
+  advance, and only if the behavior oracle passes and every deployed, glibc, paired, and NULL CV is
+  independently below **5%**.
