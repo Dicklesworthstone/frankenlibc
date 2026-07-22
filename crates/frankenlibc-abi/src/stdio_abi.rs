@@ -679,6 +679,36 @@ impl FastFixedMemRead {
         }
     }
 
+    /// Bulk sibling of `read_byte` for `fread`: copies up to `dst.len()` bytes from the current
+    /// position into `dst`, advances the atomic cursor by the amount copied, and returns that
+    /// count. `None` iff the cursor is closed (⇒ caller falls through to the pushback-aware slow
+    /// path, mirroring `read_byte`). The EOF flag is left exactly as the per-byte `read_byte`
+    /// loop would leave it: `true` iff the request exceeded the bytes available (a read that
+    /// reached end-of-buffer), `false` otherwise. Content is immutable (the cursor is registered
+    /// only for read-only mem streams), so the post-CAS copy from `[pos, pos+n)` is always valid
+    /// even under a concurrent reader on the same stream.
+    #[inline]
+    fn read_bytes(&self, dst: &mut [u8]) -> Option<usize> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let want = dst.len();
+        loop {
+            let pos = self.pos.load(Ordering::Acquire);
+            let avail = self.data.len().saturating_sub(pos);
+            let n = want.min(avail);
+            if self
+                .pos
+                .compare_exchange_weak(pos, pos + n, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                dst[..n].copy_from_slice(&self.data[pos..pos + n]);
+                self.eof.store(want > avail, Ordering::Release);
+                return Some(n);
+            }
+        }
+    }
+
     #[inline]
     fn seek(&self, offset: i64, whence: c_int) -> Option<usize> {
         if self.closed.load(Ordering::Acquire) {
@@ -790,6 +820,23 @@ fn store_fgetc_mem_ptr_cache(stream: *mut c_void, cursor: &Arc<FastFixedMemRead>
     FGETC_MEM_PTR_CACHE.with(|c| {
         *c.borrow_mut() = Some((stream as usize, cur_gen, Arc::clone(cursor)));
     });
+}
+
+/// Pointer-keyed fmemopen bulk-read fast path — the `fread` sibling of
+/// `try_fgetc_fast_fixed_mem_by_stream`, sharing the same `FGETC_MEM_PTR_CACHE` slot and cursor.
+/// `Some(bytes_read)` on a gen-valid, open cached cursor for `stream`; `None` on any miss
+/// (uncached / different stream / gen-stale / closed) ⇒ caller falls through and re-caches.
+fn try_fread_fast_fixed_mem_by_stream(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    FGETC_MEM_PTR_CACHE.with(|c| {
+        let cache = c.borrow();
+        let (cp, cg, cursor) = cache.as_ref()?;
+        if *cp != key || *cg != cur_gen {
+            return None;
+        }
+        cursor.read_bytes(dst)
+    })
 }
 
 fn sync_fast_fixed_mem_read_to_stream(id: usize, stream: &mut StdioStream) -> bool {
@@ -3311,6 +3358,14 @@ pub unsafe extern "C" fn fread(
         if try_fread_fast_by_stream(stream, dst) {
             return nmemb;
         }
+        // Pointer-keyed fmemopen bulk-read fast path (the fd cache above EXCLUDES mem streams,
+        // so fmemopen `fread` otherwise pays `canonical_stream_id`'s native lock + `decide` + the
+        // `fast_fixed_mem_reads` map lock per call — the per-op floor, ST and MT). MT-safe (atomic
+        // cursor). Miss ⇒ falls through and re-caches. Mirrors the `fgetc` fast path. `total > 0`
+        // ⇒ `size >= 1`, so `n / size` is the complete-element count (as the slow path returns).
+        if let Some(n) = try_fread_fast_fixed_mem_by_stream(stream, dst) {
+            return n / size;
+        }
     }
 
     let id = canonical_stream_id(stream);
@@ -3338,6 +3393,25 @@ pub unsafe extern "C" fn fread(
         return 0;
     }
     let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
+
+    // fmemopen bulk read via the atomic cursor (registered only for read-only mem streams ⇒
+    // content immutable). Populate the pointer cache so subsequent `fread`/`fgetc` skip
+    // `canonical_stream_id` + `decide` + the map lock. Replaces the former `sync_and_unregister`
+    // + `mem_read_into` for read-only streams: the cursor stays alive and `feof`/`ftell`/`fseek`/
+    // `ungetc` sync it (the same invariant `fgetc` relies on). Writable mem streams register no
+    // cursor ⇒ this is skipped and the `s.is_mem_backed()` branch below still handles them.
+    // Byte-identical: reads the same bytes fgetc's cursor reads, over the same content snapshot.
+    if let Some(cursor) = fast_fixed_mem_read(id) {
+        store_fgetc_mem_ptr_cache(stream, &cursor);
+        let n = cursor.read_bytes(dst).unwrap_or(0);
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(15, total),
+            n < total,
+        );
+        return n.checked_div(size).unwrap_or(0);
+    }
 
     if is_cookie_stream(id) {
         if !stream_exists(id) {

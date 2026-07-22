@@ -38,11 +38,13 @@ use frankenlibc_abi::stdio_abi as fl;
 
 type FmemopenFn = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
 type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FreadFn = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
 type FcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 
 struct HostStdio {
     fmemopen: FmemopenFn,
     fgetc: FgetcFn,
+    fread: FreadFn,
     fclose: FcloseFn,
 }
 
@@ -64,12 +66,14 @@ fn host() -> &'static HostStdio {
         HostStdio {
             fmemopen: std::mem::transmute::<*mut c_void, FmemopenFn>(sym(b"fmemopen\0")),
             fgetc: std::mem::transmute::<*mut c_void, FgetcFn>(sym(b"fgetc\0")),
+            fread: std::mem::transmute::<*mut c_void, FreadFn>(sym(b"fread\0")),
             fclose: std::mem::transmute::<*mut c_void, FcloseFn>(sym(b"fclose\0")),
         }
     })
 }
 
 const N: usize = 4096; // bytes drained per stream per thread
+const CHUNK: usize = 64; // fread element size ⇒ N/CHUNK = 64 fread calls per stream
 
 /// One workload iteration: `nthreads` threads, each opens its OWN fmemopen stream and
 /// drains N bytes via fgetc, then closes. Concurrent ops on DIFFERENT streams contend on
@@ -110,6 +114,50 @@ fn glibc_workload(nthreads: usize, h: &'static HostStdio) {
     });
 }
 
+/// `fread` variant: each thread opens its OWN fmemopen read stream and drains N bytes via
+/// `N/CHUNK` calls to `fread(buf, 1, CHUNK, fp)`. Exposes the fmemopen `fread` per-op floor
+/// (`canonical_stream_id` lock + `decide` + map lock per call) the pointer-keyed cursor cache
+/// removes.
+fn fl_fread_workload(nthreads: usize) {
+    std::thread::scope(|s| {
+        for _ in 0..nthreads {
+            s.spawn(|| {
+                let data = vec![b'x'; N];
+                let fp = unsafe { fl::fmemopen(data.as_ptr() as *mut c_void, N, c"r".as_ptr()) };
+                let mut buf = [0u8; CHUNK];
+                let mut got = 0usize;
+                for _ in 0..(N / CHUNK) {
+                    got += unsafe { fl::fread(buf.as_mut_ptr() as *mut c_void, 1, CHUNK, fp) };
+                }
+                unsafe { fl::fclose(fp) };
+                black_box(got);
+                black_box(buf);
+                black_box(data.as_ptr());
+            });
+        }
+    });
+}
+
+fn glibc_fread_workload(nthreads: usize, h: &'static HostStdio) {
+    std::thread::scope(|s| {
+        for _ in 0..nthreads {
+            s.spawn(|| {
+                let data = vec![b'x'; N];
+                let fp = unsafe { (h.fmemopen)(data.as_ptr() as *mut c_void, N, c"r".as_ptr()) };
+                let mut buf = [0u8; CHUNK];
+                let mut got = 0usize;
+                for _ in 0..(N / CHUNK) {
+                    got += unsafe { (h.fread)(buf.as_mut_ptr() as *mut c_void, 1, CHUNK, fp) };
+                }
+                unsafe { (h.fclose)(fp) };
+                black_box(got);
+                black_box(buf);
+                black_box(data.as_ptr());
+            });
+        }
+    });
+}
+
 /// Manual timing (no criterion — its HTML render SIGABRTs under `abi-bench` symbol
 /// interposition). Returns p50 ns per workload iteration.
 fn measure(samples: usize, iters: u64, mut op: impl FnMut()) -> f64 {
@@ -143,6 +191,20 @@ fn main() {
         let ratio = if gl_p50 > 0.0 { fl_p50 / gl_p50 } else { 0.0 };
         println!(
             "STDIO_MT_BENCH threads={nthreads} fl_ns_op={fl_p50:.1} glibc_ns_op={gl_p50:.1} \
+             ratio_fl_over_glibc={ratio:.3}"
+        );
+    }
+    // fread arm: same fmemopen streams, drained via N/CHUNK fread calls instead of N fgetc.
+    for &nthreads in &[1usize, maxt] {
+        for _ in 0..8 {
+            fl_fread_workload(nthreads);
+            glibc_fread_workload(nthreads, h);
+        }
+        let fl_p50 = measure(41, 10, || fl_fread_workload(nthreads));
+        let gl_p50 = measure(41, 10, || glibc_fread_workload(nthreads, h));
+        let ratio = if gl_p50 > 0.0 { fl_p50 / gl_p50 } else { 0.0 };
+        println!(
+            "STDIO_MT_FREAD threads={nthreads} fl_ns_op={fl_p50:.1} glibc_ns_op={gl_p50:.1} \
              ratio_fl_over_glibc={ratio:.3}"
         );
     }

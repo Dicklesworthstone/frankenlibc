@@ -33,6 +33,11 @@ harness = false
 required-features = ["abi-bench"]
 
 [[example]]
+name = "stdio_fread_mem_mt_ab"
+harness = false
+required-features = ["abi-bench"]
+
+[[example]]
 name = "hosts_lookup_ab"
 harness = false
 required-features = ["abi-bench"]
