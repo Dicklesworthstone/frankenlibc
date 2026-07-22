@@ -21161,3 +21161,29 @@ item retains every later colon by construction, exactly matching the former `fie
   an already-linked ordinary-release ABI bench graph and a source-identical per-function NULL run
   clears **CV <5%** on both raw arms and the paired ratio; only then may the candidate/retained
   result be interpreted. No production code changed and no performance claim is made.
+
+## 2026-07-22 (cod / pane 3) — LEDGER-INTEGRITY CLOSEOUT: the advertised 53-row REJECT census was 54; historical row-level provenance remains absent (`bd-v0psen`)
+
+- **IMMUTABLE AUDIT TARGET.** This audit used the ledger immediately before the phase-1 audit was
+  committed: Git object `8ba788f838f72cfa17107b8fd90249608fe5b9d4`, 14,730 lines, file SHA-256
+  `14661c17afdaf24f2f08a883791492f9c145d105351902801dd79c2d919c4288`. Section boundaries were
+  `^## ` and the original population definition was reproduced literally as an uppercase `REJECT`
+  substring in the heading. The scan was read-only; no historical row was rewritten.
+- **COUNT CORRECTION.** The snapshot has **443** `##` sections and **54**, not 53, headings matching
+  `^## .*REJECT`. The phase-1 file-wide counts also need one correction: `sha256` appears on 8
+  lines and `cv_pct|cv=` on 0, as recorded, but `self[- ]?time|self%` appears on **27** lines, not
+  20. File-wide occurrences are not row provenance and must not be presented as such.
+- **PER-REJECT-ROW RESULTS (54 section bodies).** Binary SHA-256: **0/54**. CV evidence
+  (`cv_pct`, `cv=`, or an explicit coefficient-of-variation phrase): **4/54**. Self-time mention:
+  **4/54**. Worker mention: **33/54**. Any explicit retry/revisit predicate (`retry`, `revisit`,
+  `reopen`, `only if`, or `unless`): **29/54**. Thus the original conclusion was directionally
+  right but its population and two file-wide/row-level implications were not exact.
+- **PROVENANCE BOUNDARY.** The newly established remote-perf route can profile a reproducible
+  current binary; it cannot recover hashes, worker identity, CV, or self-time for deleted
+  historical candidate binaries. Those fields remain unknown rather than being fabricated.
+  Later phase-2 ledger work already broadened the taxonomy beyond uppercase `REJECT`; this
+  closeout intentionally answers the narrower population named by `bd-v0psen`.
+- **DISPOSITION.** Audit complete. Treat these 54 historical rows as routing/negative guidance,
+  not reproducible performance proof, unless a row's concrete retry predicate is satisfied and a
+  fresh same-worker, null-controlled measurement supplies the missing provenance. No source or
+  benchmark code changed for this audit.
