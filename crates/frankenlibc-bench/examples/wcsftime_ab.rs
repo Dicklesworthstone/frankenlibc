@@ -1,4 +1,4 @@
-//! Same-worker interleaved A/B for exact ISO-T `wcsftime`.
+//! Same-worker interleaved A/B for exact `%FT%T` `wcsftime`.
 //!
 //! `orig_wcsftime` reconstructs the deployed general wide->narrow->wide bridge.
 //! The candidate is the deployed symbol. A source-identical candidate/candidate
@@ -14,7 +14,7 @@ use frankenlibc_core::string::wchar as wchar_core;
 const SAMPLES: usize = 80;
 const WARMUP: usize = 16;
 const REPS: usize = 5_000_000;
-const FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
+const FORMAT: &str = "%FT%T";
 
 type WcsftimeFn =
     unsafe extern "C" fn(*mut libc::wchar_t, usize, *const libc::wchar_t, *const libc::tm) -> usize;
@@ -339,7 +339,7 @@ fn verify(host: WcsftimeFn, fmt: *const libc::wchar_t) -> libc::tm {
         assert_case(host, fmt, tm, 64, false);
     }
     println!(
-        "verify: OK (candidate == host glibc for valid ISO-T boundaries; candidate == ORIG for invalid-field fallbacks)"
+        "verify: OK (candidate == host glibc for valid %FT%T boundaries; candidate == ORIG for invalid-field fallbacks)"
     );
     valid
 }
@@ -416,7 +416,7 @@ fn main() {
         .map(|(b_ns, a_ns)| b_ns / a_ns)
         .collect();
     println!(
-        "WCSFTIME_ISO_T_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
+        "WCSFTIME_FT_T_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
         orig.len()
     );
     println!(

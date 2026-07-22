@@ -21541,3 +21541,28 @@ item retains every later colon by construction, exactly matching the former `fie
   with **0 divergences** against host glibc. KEEP and SHIP the single ISO-T mode plus its reusable
   interleaved/null profiler. Retry condition is unnecessary because this row cleared all gates;
   future exact formats remain separate levers and must repeat the same profile-first proof.
+
+## 2026-07-22 (cod / pane 3) — REJECT (INVALID-CV): exact `%FT%T` `wcsftime` alias emitter baseline (`bd-vihwy9`)
+
+- **GATE / NO PRODUCTION EDIT.** The ledger and recent history were searched for `wcsftime`,
+  `%FT%T`, compound ISO aliases, and exact wide formats before changing the profiler. Narrow
+  `strftime` has a shipped `%F`/`%T` composite optimization, but no exact wide `%FT%T` emitter was
+  recorded. The existing interleaved `wcsftime_ab` profiler was retargeted to the alias; production
+  `wchar_abi.rs` remained untouched because the profile gate did not become admissible.
+- **REMOTE BASELINE.** Required release bench on `vmi1149989`, 64 retained samples after 16
+  warmups and **5,000,000 calls per arm**: reconstructed ORIG general bridge **267.52 ns/call**
+  (mean **281.88**, CV **15.81%**), deployed candidate/general path **255.20 ns/call** (mean
+  **268.40**, CV **18.47%**), and host glibc **134.28 ns/call** (mean **142.72**, CV **21.85%**).
+  Candidate/ORIG median **0.9563** (1.05x center), paired CV **11.31%**; candidate/glibc median
+  **1.8540**, paired CV **11.01%**.
+- **NULL / BEHAVIOR.** The source-identical candidate/candidate NULL median was **0.9986**, but
+  paired CV was **15.84%** and raw-arm CVs were **17.64%/17.74%**. The pre-timing oracle passed:
+  deployed candidate == host glibc across capacities 1..=24 and 12 valid extrema, and candidate ==
+  reconstructed ORIG for 12 invalid-field fallbacks.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** REJECT this run as INVALID-CV: every raw, paired,
+  host-paired, and NULL dispersion gate exceeded the mandatory 5% ceiling despite a favorable
+  function-gap center. Retry this exact alias only on an idle, explicitly pinned worker after
+  proving no competing jobs for the full run, with at least 64 retained interleaved samples and
+  at least 500 ms per arm; production may be touched only if both NULL raw arms, NULL paired,
+  ORIG/candidate raw arms, candidate/ORIG paired, glibc raw, and candidate/glibc paired CVs are
+  independently below 5%.
