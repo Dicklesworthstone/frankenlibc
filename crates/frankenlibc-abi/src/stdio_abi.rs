@@ -791,15 +791,32 @@ fn fast_fixed_mem_reads() -> &'static FastRegistryMutex<FastFixedMemReadMap> {
     MAP.get_or_init(|| FastRegistryMutex::new(stream_map()))
 }
 
+/// Live fixed-mem cursor count — the `fast_fixed_mem_read` zero-cursor fast-out. Every
+/// `fgetc`/`fread`/`fgets` SLOW path probes the cursor map by id; for fd streams (no
+/// fmemopen open — the common program state) that was a guaranteed miss costing a TLS
+/// borrow + the map's global lock PER CALL (perf: 12.9% of cycles + a second contended
+/// lock in the MT fd path). Over-approximates by construction: incremented BEFORE the map
+/// insert and decremented AFTER a successful remove, so `0` PROVES the map is empty and
+/// `None` is exactly what the probe would return; a transient over-count merely re-adds
+/// today's probe cost.
+static FIXED_MEM_CURSOR_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 fn register_fast_fixed_mem_read(id: usize, data: Vec<u8>) {
     let cursor = Arc::new(FastFixedMemRead::new(data));
+    FIXED_MEM_CURSOR_COUNT.fetch_add(1, Ordering::Release);
     let mut map = fast_fixed_mem_reads()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    map.insert(id, cursor);
+    if map.insert(id, cursor).is_some() {
+        // Replaced an existing cursor for a reused id: keep the count exact-or-over.
+        FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
+    }
 }
 
 fn fast_fixed_mem_read(id: usize) -> Option<Arc<FastFixedMemRead>> {
+    if FIXED_MEM_CURSOR_COUNT.load(Ordering::Acquire) == 0 {
+        return None;
+    }
     FAST_FIXED_MEM_READ_CACHE.with(|cache| {
         if let Some((cached_id, cursor)) = cache.borrow().as_ref()
             && *cached_id == id
@@ -909,6 +926,9 @@ fn unregister_fast_fixed_mem_read(id: usize) {
         map.remove(&id)
     };
     if let Some(cursor) = cursor {
+        // Decrement AFTER the successful remove (see FIXED_MEM_CURSOR_COUNT: the count may
+        // transiently over-approximate but must never hit 0 while a cursor is live).
+        FIXED_MEM_CURSOR_COUNT.fetch_sub(1, Ordering::Release);
         cursor.closed.store(true, Ordering::Release);
     }
     FAST_FIXED_MEM_READ_CACHE.with(|cache| {

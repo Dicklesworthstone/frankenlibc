@@ -46,14 +46,20 @@ const ROUNDS: usize = 60;
 const WARMUP: usize = 5;
 
 type FmemopenFn = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
+type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
 type FreadFn = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
 type FgetsFn = unsafe extern "C" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char;
+type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FseekFn = unsafe extern "C" fn(*mut c_void, libc::c_long, c_int) -> c_int;
 type FcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 
 struct HostStdio {
     fmemopen: FmemopenFn,
+    fopen: FopenFn,
     fread: FreadFn,
     fgets: FgetsFn,
+    fgetc: FgetcFn,
+    fseek: FseekFn,
     fclose: FcloseFn,
 }
 
@@ -73,8 +79,11 @@ fn host() -> &'static HostStdio {
         };
         HostStdio {
             fmemopen: std::mem::transmute::<*mut c_void, FmemopenFn>(sym(b"fmemopen\0")),
+            fopen: std::mem::transmute::<*mut c_void, FopenFn>(sym(b"fopen\0")),
             fread: std::mem::transmute::<*mut c_void, FreadFn>(sym(b"fread\0")),
             fgets: std::mem::transmute::<*mut c_void, FgetsFn>(sym(b"fgets\0")),
+            fgetc: std::mem::transmute::<*mut c_void, FgetcFn>(sym(b"fgetc\0")),
+            fseek: std::mem::transmute::<*mut c_void, FseekFn>(sym(b"fseek\0")),
             fclose: std::mem::transmute::<*mut c_void, FcloseFn>(sym(b"fclose\0")),
         }
     })
@@ -188,6 +197,71 @@ fn verify_gets(h: &'static HostStdio) {
     println!("verify_gets: OK (fl fgets == glibc fgets, dispositions + bytes, n=128 and n=7)");
 }
 
+/// FD-stream drain: rewind, then N fgetc through the buffered fd path. Returns bytes read
+/// (must equal N). This is the path that loses ALL `__libc_single_threaded`-gated fast
+/// paths once a second thread exists: every fgetc pays canonical_stream_id + the ONE global
+/// registry mutex + HashMap get_mut. The FILE* is opened once per thread (no open/close
+/// churn); each drain costs one fseek + one buffer refill + N userspace byte reads.
+fn drain_fl_fd(fp: *mut c_void) -> usize {
+    assert_eq!(unsafe { fl::fseek(fp, 0, 0) }, 0, "fl fseek failed");
+    let mut got = 0usize;
+    for _ in 0..N {
+        if unsafe { fl::fgetc(fp) } >= 0 {
+            got += 1;
+        }
+    }
+    got
+}
+
+fn drain_glibc_fd(fp: *mut c_void, h: &'static HostStdio) -> usize {
+    assert_eq!(unsafe { (h.fseek)(fp, 0, 0) }, 0, "glibc fseek failed");
+    let mut got = 0usize;
+    for _ in 0..N {
+        if unsafe { (h.fgetc)(fp) } >= 0 {
+            got += 1;
+        }
+    }
+    got
+}
+
+/// Write the per-thread backing file and return its NUL-terminated path.
+fn make_fd_file(tag: &str) -> std::ffi::CString {
+    use std::sync::atomic::{AtomicUsize, Ordering as AOrd};
+    static SEQ: AtomicUsize = AtomicUsize::new(0);
+    let mut data = vec![0u8; N];
+    make_lines(&mut data);
+    let path = format!(
+        "/dev/shm/fl_stdio_fd_ab_{}_{}_{}",
+        std::process::id(),
+        tag,
+        SEQ.fetch_add(1, AOrd::Relaxed)
+    );
+    std::fs::write(&path, &data).expect("write backing file");
+    std::ffi::CString::new(path).expect("path nul")
+}
+
+/// FD differential before timing: fl and glibc fgetc over the same file must agree on every
+/// byte, the EOF transition, and a mid-stream rewind.
+fn verify_fd(h: &'static HostStdio) {
+    let path = make_fd_file("verify");
+    let fp_f = unsafe { fl::fopen(path.as_ptr(), c"r".as_ptr()) };
+    let fp_g = unsafe { (h.fopen)(path.as_ptr(), c"r".as_ptr()) };
+    assert!(!fp_f.is_null() && !fp_g.is_null(), "fopen failed");
+    for pass in 0..2 {
+        assert_eq!(unsafe { fl::fseek(fp_f, 0, 0) }, 0);
+        assert_eq!(unsafe { (h.fseek)(fp_g, 0, 0) }, 0);
+        for i in 0..=N {
+            let cf = unsafe { fl::fgetc(fp_f) };
+            let cg = unsafe { (h.fgetc)(fp_g) };
+            assert_eq!(cf, cg, "fgetc diverged at byte {i} pass {pass}");
+        }
+    }
+    unsafe { fl::fclose(fp_f) };
+    unsafe { (h.fclose)(fp_g) };
+    let _ = std::fs::remove_file(path.to_str().expect("utf8 path"));
+    println!("verify_fd: OK (fl fgetc == glibc fgetc over fd stream, bytes + EOF + rewind)");
+}
+
 /// Byte-identity proof before any timing: fl and glibc drains over identical content must
 /// return the same bytes with the same per-call counts (incl. a partial tail read).
 fn verify(h: &'static HostStdio) {
@@ -228,7 +302,14 @@ fn cv_pct(xs: &[f64]) -> f64 {
 /// Run one arm at `threads`: workers spawned once, `ROUNDS` barrier-synced rounds, each
 /// thread times its own K drains per round. Returns per-round ns/drain, averaged across
 /// threads, warmup discarded.
-fn run_arm(threads: usize, use_glibc: bool, gets: bool, h: &'static HostStdio) -> Vec<f64> {
+#[derive(Clone, Copy, PartialEq)]
+enum Work {
+    FreadMem,
+    FgetsMem,
+    FgetcFd,
+}
+
+fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -> Vec<f64> {
     let barrier = Barrier::new(threads);
     let mut per_thread: Vec<Vec<f64>> = Vec::new();
 
@@ -238,26 +319,54 @@ fn run_arm(threads: usize, use_glibc: bool, gets: bool, h: &'static HostStdio) -
             let barrier = &barrier;
             handles.push(s.spawn(move || {
                 let mut data = vec![b'x'; N]; // allocated ONCE per thread
-                if gets {
+                if work == Work::FgetsMem {
                     make_lines(&mut data);
                 }
+                // FD workload: file written + FILE* opened ONCE per thread (no churn).
+                let (fd_path, fd_fp) = if work == Work::FgetcFd {
+                    let path = make_fd_file(if use_glibc { "glibc" } else { "fl" });
+                    let fp = if use_glibc {
+                        unsafe { (h.fopen)(path.as_ptr(), c"r".as_ptr()) }
+                    } else {
+                        unsafe { fl::fopen(path.as_ptr(), c"r".as_ptr()) }
+                    };
+                    assert!(!fp.is_null(), "fopen failed for fd workload");
+                    (Some(path), fp)
+                } else {
+                    (None, std::ptr::null_mut())
+                };
                 let mut rounds = Vec::with_capacity(ROUNDS);
                 let mut got_total = 0usize;
                 for _ in 0..ROUNDS {
                     barrier.wait();
                     let start = Instant::now();
                     for _ in 0..K {
-                        got_total += match (use_glibc, gets) {
-                            (false, false) => drain_fl(&mut data),
-                            (true, false) => drain_glibc(&mut data, h),
-                            (false, true) => drain_fl_gets(&mut data),
-                            (true, true) => drain_glibc_gets(&mut data, h),
+                        got_total += match (use_glibc, work) {
+                            (false, Work::FreadMem) => drain_fl(&mut data),
+                            (true, Work::FreadMem) => drain_glibc(&mut data, h),
+                            (false, Work::FgetsMem) => drain_fl_gets(&mut data),
+                            (true, Work::FgetsMem) => drain_glibc_gets(&mut data, h),
+                            (false, Work::FgetcFd) => drain_fl_fd(fd_fp),
+                            (true, Work::FgetcFd) => drain_glibc_fd(fd_fp, h),
                         };
                     }
                     rounds.push(start.elapsed().as_nanos() as f64 / K as f64);
                 }
-                // Execution proof: every drain returned all N bytes (fread) / all lines (fgets).
-                let expect = if gets { (N / 64) * K * ROUNDS } else { N * K * ROUNDS };
+                if let Some(path) = fd_path {
+                    if use_glibc {
+                        unsafe { (h.fclose)(fd_fp) };
+                    } else {
+                        unsafe { fl::fclose(fd_fp) };
+                    }
+                    let _ = std::fs::remove_file(path.to_str().expect("utf8 path"));
+                }
+                // Execution proof: every drain returned all N bytes (fread/fgetc-fd) /
+                // all lines (fgets).
+                let expect = if work == Work::FgetsMem {
+                    (N / 64) * K * ROUNDS
+                } else {
+                    N * K * ROUNDS
+                };
                 assert_eq!(got_total, expect, "short drain detected");
                 rounds
             }));
@@ -278,14 +387,19 @@ fn main() {
     let h = host();
     verify(h);
     verify_gets(h);
+    verify_fd(h);
     let maxt: usize = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(8);
-    for &(gets, tag) in &[(false, "FREAD_MEM_AB"), (true, "FGETS_MEM_AB")] {
+    for &(work, tag) in &[
+        (Work::FreadMem, "FREAD_MEM_AB"),
+        (Work::FgetsMem, "FGETS_MEM_AB"),
+        (Work::FgetcFd, "FGETC_FD_AB"),
+    ] {
         for &threads in &[1usize, maxt] {
             // Warm both arms once (first-touch, dlmopen init, allocator warm).
-            run_arm(threads, false, gets, h);
-            run_arm(threads, true, gets, h);
-            let fl_r = run_arm(threads, false, gets, h);
-            let gl_r = run_arm(threads, true, gets, h);
+            run_arm(threads, false, work, h);
+            run_arm(threads, true, work, h);
+            let fl_r = run_arm(threads, false, work, h);
+            let gl_r = run_arm(threads, true, work, h);
             let (fm, gm) = (median(&fl_r), median(&gl_r));
             println!(
                 "{tag} threads={threads} arm=fl ns_drain={fm:.1} cv={:.2}",
