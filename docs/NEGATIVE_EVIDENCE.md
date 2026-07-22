@@ -21274,6 +21274,30 @@ item retains every later colon by construction, exactly matching the former `fie
   CV, both NULL raw-arm CVs, and candidate paired CV are independently **<5%**. Otherwise the
   current INVALID-CV verdict stands.
 
+## 2026-07-22 (cod / pane 3) — REJECT (INVALID-CV): `hosts_reverse` long-block NULL-control retry still exceeds the 5% gate (`bd-9x1jcx`)
+
+- **RETRY PREDICATE + METHOD.** The ledger and recent history were searched before touching the
+  harness. This operator-directed retry exercised the closest prior row only; no resolver
+  production source changed. On remote worker `hz1`, the required release bench used 16 warmups,
+  64 retained interleaved samples, alternating arm order, **50,000 calls per arm per sample**, the
+  same source-identical deployed/deployed NULL pair, and the pre-timing behavior oracle. The oracle
+  confirmed FrankenLibC and host glibc both returned `"localhost"` for
+  `gethostbyaddr(127.0.0.1)`. At the observed medians the candidate/NULL arms were about **103 ms**
+  and the reconstructed-old arm about **235 ms**, satisfying the prior >=10 ms block predicate.
+- **NUMBERS.** Reconstructed ORIG was **4706.99 ns/call** (mean **4800.11**, CV **4.95%**),
+  CAND **2060.98 ns/call** (mean **2123.83**, CV **6.54%**), and host glibc **8964.05 ns/call**
+  (mean **9064.94**, CV **4.05%**). The apparent CAND/ORIG median was **0.4397 / 2.27x** with
+  paired CV **6.62%**, and CAND/glibc was **0.230x**. The source-identical CAND/CAND NULL median
+  was **1.0049**, but paired CV was **8.27%** and its raw-arm CVs were **5.85%/7.46%**. Thus the
+  original and glibc raw arms stabilized, but every candidate/null dispersion gate still failed.
+- **DISPOSITION / CONCRETE RETRY CONDITION.** REJECTED as inadmissible measurement; the favorable
+  centers do not revise the historical performance claim. Do not repeat this row on an ordinary
+  pooled worker. Retry only on an SSH-pinned idle worker with CPU isolation, at least **128**
+  retained interleaved samples, and auto-calibrated blocks of at least **500 ms per arm**; require
+  CAND and ORIG raw CVs, CAND/ORIG paired CV, both NULL raw-arm CVs, and NULL paired CV all
+  independently **<5%**. Until that complete predicate holds, move to a different frontier
+  primitive.
+
 ## 2026-07-22 (cc_fl / MagentaCondor) — WIN (SHIPPED): fread-fmemopen pointer-cursor fast path lands on retry round 2 — old-fl 1t cost HALVED (disjoint distributions), 8t contention collapse 39.1µs→8.5µs/drain (cc-fread-mem-2026-07-11 RESOLVED)
 
 - **THE LEVER (unchanged from the banked patch).** `FastFixedMemRead::read_bytes` (atomic bulk

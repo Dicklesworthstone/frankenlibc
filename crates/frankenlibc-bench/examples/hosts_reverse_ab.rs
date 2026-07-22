@@ -19,9 +19,9 @@ use std::time::Instant;
 
 use frankenlibc_abi::resolv_abi as fl;
 
-const SAMPLES: usize = 240;
-const WARMUP: usize = 40;
-const REPS: usize = 500;
+const SAMPLES: usize = 80;
+const WARMUP: usize = 16;
+const REPS: usize = 50_000;
 
 fn median(xs: &[f64]) -> f64 {
     let mut v = xs.to_vec();
