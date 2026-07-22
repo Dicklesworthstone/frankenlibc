@@ -10,18 +10,18 @@
 //! it, so no arm can be dead-code-eliminated. `verify()` asserts fl == host glibc on the resolved
 //! canonical name before any timing — a DCE'd arm cannot satisfy that.
 //!
-//! Run: `RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo run --release \
-//!       -p frankenlibc-bench --features abi-bench --example hosts_reverse_ab`
+//! Run: `RCH_REQUIRE_REMOTE=1 RCH_WORKER=<worker> rch exec -- cargo bench -j4 --profile release \
+//!       -p frankenlibc-bench --features abi-bench --bench hosts_reverse_ab -- --noplot`
 
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{CStr, c_int, c_void};
 use std::hint::black_box;
 use std::time::Instant;
 
 use frankenlibc_abi::resolv_abi as fl;
 
-const SAMPLES: usize = 2000;
-const WARMUP: usize = 100;
-const REPS: usize = 20;
+const SAMPLES: usize = 240;
+const WARMUP: usize = 40;
+const REPS: usize = 500;
 
 fn median(xs: &[f64]) -> f64 {
     let mut v = xs.to_vec();
@@ -163,8 +163,27 @@ fn main() {
     let mut o = Vec::with_capacity(SAMPLES);
     let mut c = Vec::with_capacity(SAMPLES);
     let mut g = Vec::with_capacity(SAMPLES);
+    let mut null_a = Vec::with_capacity(SAMPLES);
+    let mut null_b = Vec::with_capacity(SAMPLES);
 
     for i in 0..SAMPLES {
+        let (t_null_a, t_null_b) = if i % 2 == 0 {
+            let s = Instant::now();
+            black_box(cand());
+            let a = s.elapsed();
+            let s = Instant::now();
+            black_box(cand());
+            let b = s.elapsed();
+            (a, b)
+        } else {
+            let s = Instant::now();
+            black_box(cand());
+            let b = s.elapsed();
+            let s = Instant::now();
+            black_box(cand());
+            let a = s.elapsed();
+            (a, b)
+        };
         let (t_o, t_c) = if i % 2 == 0 {
             let s = Instant::now();
             black_box(orig());
@@ -190,10 +209,17 @@ fn main() {
             o.push(t_o.as_nanos() as f64 / REPS as f64);
             c.push(t_c.as_nanos() as f64 / REPS as f64);
             g.push(t_g.as_nanos() as f64 / REPS as f64);
+            null_a.push(t_null_a.as_nanos() as f64 / REPS as f64);
+            null_b.push(t_null_b.as_nanos() as f64 / REPS as f64);
         }
     }
 
     let paired: Vec<f64> = c.iter().zip(o.iter()).map(|(cc, oo)| cc / oo).collect();
+    let null_paired: Vec<f64> = null_b
+        .iter()
+        .zip(null_a.iter())
+        .map(|(bb, aa)| bb / aa)
+        .collect();
 
     println!(
         "HOSTS_REVERSE_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
@@ -216,6 +242,13 @@ fn main() {
         median(&g),
         mean(&g),
         cv_pct(&g)
+    );
+    println!(
+        "  NULL cand/cand: median {:.4}  cv={:.2}%  arms cv={:.2}%/{:.2}%",
+        median(&null_paired),
+        cv_pct(&null_paired),
+        cv_pct(&null_a),
+        cv_pct(&null_b)
     );
     println!(
         "  PAIRED cand/orig: median {:.4} ({:.2}x faster)  cv={:.2}%",

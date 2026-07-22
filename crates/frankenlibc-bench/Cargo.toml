@@ -78,6 +78,24 @@ harness = false
 required-features = ["abi-bench"]
 
 [[bench]]
+name = "hosts_lookup_ab"
+path = "examples/hosts_lookup_ab.rs"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
+name = "hosts_reverse_ab"
+path = "examples/hosts_reverse_ab.rs"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
+name = "hostent_iter_ab"
+path = "examples/hostent_iter_ab.rs"
+harness = false
+required-features = ["abi-bench"]
+
+[[bench]]
 name = "string_bench"
 harness = false
 

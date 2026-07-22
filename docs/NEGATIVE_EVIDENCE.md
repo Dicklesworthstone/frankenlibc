@@ -21127,3 +21127,37 @@ item retains every later colon by construction, exactly matching the former `fie
   Malloc header-proof rows (C at L17640) are cod's lane — recipe handed over via agent mail, not
   backfilled here. No production code changed; no candidate levers touched; attribution
   infrastructure only.
+
+## 2026-07-22 (cod / pane 3) — INVALID/BLOCKED: per-function NULL controls cannot adjudicate the three sub-2x hosts rows on the admitted remote substrate (`bd-9x1jcx`)
+
+- **NEGATIVE-EVIDENCE FIRST / METHOD ONLY.** The ledger and recent history were searched before
+  touching the existing `hosts_lookup_ab`, `hosts_reverse_ab`, or `hostent_iter_ab` samplers. The
+  three shipped resolver levers were not changed. This turn only made those existing samplers
+  invocable through the required `cargo bench --profile release --bench NAME -- --noplot` form,
+  lengthened each timed block, and added a source-identical deployed-function/deployed-function
+  NULL arm with alternating labels. Every admitted invocation set `RCH_REQUIRE_REMOTE=1` and used
+  the exact remote-only command form; no local Cargo fallback ran.
+- **`hosts_lookup_ab` — INVALID, not a KEEP/REJECT.** Worker `vmi1153651`; 200 retained samples,
+  500 calls per arm per sample. The pre-timing oracle passed: FrankenLibC and host glibc agreed on
+  `gethostbyname("localhost")`. ORIG was **9707.65 ns/call** (mean 16079.65, CV **144.59%**), CAND
+  **2611.00 ns/call** (mean 3502.84, CV **94.53%**), and host glibc **11696.49 ns/call** (mean
+  19273.06, CV **201.24%**). The apparent paired CAND/ORIG median was **0.2710 / 3.69x** with CV
+  **66.94%**. Crucially, the source-identical CAND/CAND NULL median was **0.9959** but its ratio CV
+  was **85.57%** (raw-arm CVs 104.35% / 82.86%). The null center is unbiased, but its dispersion
+  makes the candidate ratio inadmissible.
+- **`hosts_reverse_ab` — INVALID, not a KEEP/REJECT.** Same worker `vmi1153651`; 200 retained
+  samples, 500 calls per arm per sample. The pre-timing oracle passed: FrankenLibC and host glibc
+  agreed on `gethostbyaddr(127.0.0.1) == "localhost"`. ORIG was **6583.95 ns/call** (mean
+  10146.75, CV **205.61%**), CAND **2463.32 ns/call** (mean 6108.47, CV **475.35%**), and host
+  glibc **10152.69 ns/call** (mean 14578.05, CV **173.24%**). The apparent paired CAND/ORIG
+  median was **0.3802 / 2.63x** with CV **140.27%**. Its CAND/CAND NULL median was **0.9996** but
+  ratio CV was **82.20%** (raw-arm CVs 350.54% / 99.10%), again invalidating the candidate ratio.
+- **`hostent_iter_ab` — REMOTE-ADMISSION BLOCKER.** The required fail-closed invocation returned
+  `[RCH] local (no admissible workers: insufficient_slots=8,hard_preflight=4)` followed by
+  `[RCH] remote required; refusing local fallback (no worker assigned)`. It produced no timing,
+  and no local substitute was attempted.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** The historical 1.67x/1.96x/2.08x shipped rows are
+  neither revalidated nor overturned by these runs. Retry all three only when one idle worker has
+  an already-linked ordinary-release ABI bench graph and a source-identical per-function NULL run
+  clears **CV <5%** on both raw arms and the paired ratio; only then may the candidate/retained
+  result be interpreted. No production code changed and no performance claim is made.

@@ -12,7 +12,8 @@
 //! through `black_box`, so no arm can be dead-code-eliminated. `verify()` additionally asserts
 //! the arms agree before any timing runs — a DCE'd arm cannot satisfy that.
 //!
-//! Run: `rch exec -- cargo run --release -p frankenlibc-bench --features abi-bench --example hosts_lookup_ab`
+//! Run: `RCH_REQUIRE_REMOTE=1 RCH_WORKER=<worker> rch exec -- cargo bench -j4 --profile release \
+//!       -p frankenlibc-bench --features abi-bench --bench hosts_lookup_ab -- --noplot`
 
 use std::ffi::{CStr, c_char, c_void};
 use std::hint::black_box;
@@ -21,11 +22,11 @@ use std::time::Instant;
 use frankenlibc_abi::resolv_abi as fl;
 
 /// Paired samples. Each sample times ORIG once and CAND once, alternating which goes first.
-const SAMPLES: usize = 2000;
+const SAMPLES: usize = 240;
 /// Leading samples discarded (page-cache / branch warm-up).
-const WARMUP: usize = 100;
+const WARMUP: usize = 40;
 /// Calls per arm per sample.
-const REPS: usize = 20;
+const REPS: usize = 500;
 
 fn median(xs: &[f64]) -> f64 {
     let mut v = xs.to_vec();
@@ -141,8 +142,29 @@ fn main() {
     let mut o = Vec::with_capacity(SAMPLES);
     let mut c = Vec::with_capacity(SAMPLES);
     let mut g = Vec::with_capacity(SAMPLES);
+    let mut null_a = Vec::with_capacity(SAMPLES);
+    let mut null_b = Vec::with_capacity(SAMPLES);
 
     for i in 0..SAMPLES {
+        // Per-function NULL CONTROL: time the deployed function against itself. Swap which
+        // observation owns the first slot so drift cannot systematically favor one label.
+        let (t_null_a, t_null_b) = if i % 2 == 0 {
+            let s = Instant::now();
+            black_box(cand(name));
+            let a = s.elapsed();
+            let s = Instant::now();
+            black_box(cand(name));
+            let b = s.elapsed();
+            (a, b)
+        } else {
+            let s = Instant::now();
+            black_box(cand(name));
+            let b = s.elapsed();
+            let s = Instant::now();
+            black_box(cand(name));
+            let a = s.elapsed();
+            (a, b)
+        };
         // Alternate arm order every sample so neither arm systematically leads.
         let (t_o, t_c) = if i % 2 == 0 {
             let s = Instant::now();
@@ -169,11 +191,18 @@ fn main() {
             o.push(t_o.as_nanos() as f64 / REPS as f64);
             c.push(t_c.as_nanos() as f64 / REPS as f64);
             g.push(t_g.as_nanos() as f64 / REPS as f64);
+            null_a.push(t_null_a.as_nanos() as f64 / REPS as f64);
+            null_b.push(t_null_b.as_nanos() as f64 / REPS as f64);
         }
     }
 
     // Per-sample paired ratio: drift within a sample hits both arms, so the ratio cancels it.
     let paired: Vec<f64> = c.iter().zip(o.iter()).map(|(cc, oo)| cc / oo).collect();
+    let null_paired: Vec<f64> = null_b
+        .iter()
+        .zip(null_a.iter())
+        .map(|(bb, aa)| bb / aa)
+        .collect();
 
     println!(
         "HOSTS_LOOKUP_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
@@ -196,6 +225,13 @@ fn main() {
         median(&g),
         mean(&g),
         cv_pct(&g)
+    );
+    println!(
+        "  NULL cand/cand: median {:.4}  cv={:.2}%  arms cv={:.2}%/{:.2}%",
+        median(&null_paired),
+        cv_pct(&null_paired),
+        cv_pct(&null_a),
+        cv_pct(&null_b)
     );
     println!(
         "  PAIRED cand/orig: median {:.4} ({:.2}x faster)  cv={:.2}%",
