@@ -21802,3 +21802,32 @@ item retains every later colon by construction, exactly matching the former `fie
   fd-stream stdio ops now skip the registry map lock under threads via the gen-guarded
   STREAM_CELL_CACHE; each was a 4-63x@8t convoy, each closed to near-parity, each DISJOINT.
   Remaining: fputc (single-byte write, own entry). Lane [[stdio-mt-swing-inprogress]].
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): fputc cell-cache write fast path — fd-stream MT fputc 53.27x → 2.46x vs glibc (8t 0.043 cand/base DISJOINT); the family-completer (cc-fputc-cell-cache-2026-07-23)
+
+- **THE LEVER (the last fd-stream op).** fputc reuses `try_write_fast_cell(stream, &[byte])`
+  (fast_write of one byte ≡ fast_putc) — wired after the ST `try_fputc_fast_by_stream`, before
+  `canonical_stream_id`; the cell is populated by the shared write slow path
+  (`write_bytes_without_runtime_policy`). +6 lines. Baseline (HEAD) **fputc on an fd stream is
+  5.17x@1t → 53.27x@8t vs glibc** — the LARGEST convoy (single-byte writes, N=4096 fputc calls
+  per drain, each paying `canonical_stream_id` + the registry map lock), the write mirror of
+  fgetc's 63x.
+- **MEASURED (12 alternated pc_base/pc_cand runs, idle vmi1152480, 24/24 exit-0; binaries
+  f518c53f…/fe9775bc…).**
+  - **FPUTC_FD 1t: cand/base 0.5163 raw / 0.495 normalized, DISJOINT** (base [243140..264767],
+    cand [115543..144650]). fl/glibc 5.17x → 2.56x.
+  - **FPUTC_FD 8t: cand/base 0.0431 raw / 0.046 normalized, DISJOINT** (base [2928707..3964295],
+    cand [134973..207660]). fl/glibc **53.27x → 2.46x** (23x faster) — near-flat 1t→8t scaling.
+  - **NULL CONTROLS (unchanged in both binaries): FGETC_FD, FGETS_FD, FPUTS_FD, FREAD_FD, mem
+    arms all 0.83-1.06, overlap 9-12/12, NONE disjoint** while the lever is disjoint at both
+    thread counts (sign-test p≈2^-12/thread-count).
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_stdio_ext` 11/0,
+  `conformance_diff_stdio_printf` 3/0; harness FPUTC arm `got_total` execution assert.
+  `fast_write` of 1 byte is the byte-identical single-byte case of the proven fputs/fwrite path.
+- **DISPOSITION.** SHIPPED (fputc cell cache, one commit). **THE fd-stream MT cell-cache family
+  is now COMPLETE across ALL 6 common stdio ops: fgetc + fgets + fread + fputc + fputs + fwrite.**
+  Each was a map-lock convoy (fgetc 63x, fputc 53x, fread 24x, fputs/fwrite 19x, fgets 16x @8t),
+  each closed to near-parity (2.4-4.6x @8t = the fill/copy floor, not lock), each DISJOINT with
+  non-disjoint null controls. The bd-n7dpzr "MT stdio 2.96x behind" swing is fully resolved and
+  then some. **NEXT: the stdio-MT vein is EXHAUSTED — diversify to printf/time/locale/wchar per
+  marching orders.** Lane [[stdio-mt-swing-inprogress]].

@@ -51,6 +51,7 @@ type FreadFn = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> u
 type FgetsFn = unsafe extern "C" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char;
 type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FputsFn = unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int;
+type FputcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
 type FseekFn = unsafe extern "C" fn(*mut c_void, libc::c_long, c_int) -> c_int;
 type FcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 
@@ -61,6 +62,7 @@ struct HostStdio {
     fgets: FgetsFn,
     fgetc: FgetcFn,
     fputs: FputsFn,
+    fputc: FputcFn,
     fseek: FseekFn,
     fclose: FcloseFn,
 }
@@ -86,6 +88,7 @@ fn host() -> &'static HostStdio {
             fgets: std::mem::transmute::<*mut c_void, FgetsFn>(sym(b"fgets\0")),
             fgetc: std::mem::transmute::<*mut c_void, FgetcFn>(sym(b"fgetc\0")),
             fputs: std::mem::transmute::<*mut c_void, FputsFn>(sym(b"fputs\0")),
+            fputc: std::mem::transmute::<*mut c_void, FputcFn>(sym(b"fputc\0")),
             fseek: std::mem::transmute::<*mut c_void, FseekFn>(sym(b"fseek\0")),
             fclose: std::mem::transmute::<*mut c_void, FcloseFn>(sym(b"fclose\0")),
         }
@@ -297,6 +300,27 @@ fn drain_glibc_fputs(fp: *mut c_void, h: &'static HostStdio) -> usize {
     n
 }
 
+/// FD fputc drain: fputc N single bytes. Returns bytes written (must == N).
+fn drain_fl_fputc(fp: *mut c_void) -> usize {
+    let mut n = 0usize;
+    for _ in 0..N {
+        if unsafe { fl::fputc(b'x' as c_int, fp) } >= 0 {
+            n += 1;
+        }
+    }
+    n
+}
+
+fn drain_glibc_fputc(fp: *mut c_void, h: &'static HostStdio) -> usize {
+    let mut n = 0usize;
+    for _ in 0..N {
+        if unsafe { (h.fputc)(b'x' as c_int, fp) } >= 0 {
+            n += 1;
+        }
+    }
+    n
+}
+
 /// Write the per-thread backing file and return its NUL-terminated path.
 fn make_fd_file(tag: &str) -> std::ffi::CString {
     use std::sync::atomic::{AtomicUsize, Ordering as AOrd};
@@ -383,6 +407,7 @@ enum Work {
     FputsFd,
     FgetsFd,
     FreadFd,
+    FputcFd,
 }
 
 fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -> Vec<f64> {
@@ -412,7 +437,7 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                         assert!(!fp.is_null(), "fopen r failed for fd workload");
                         (Some(path), fp)
                     }
-                    Work::FputsFd => {
+                    Work::FputsFd | Work::FputcFd => {
                         let fp = if use_glibc {
                             unsafe { (h.fopen)(c"/dev/null".as_ptr(), c"w".as_ptr()) }
                         } else {
@@ -442,6 +467,8 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                             (true, Work::FgetsFd) => drain_glibc_fgets_fd(fd_fp, h),
                             (false, Work::FreadFd) => drain_fl_fread_fd(fd_fp),
                             (true, Work::FreadFd) => drain_glibc_fread_fd(fd_fp, h),
+                            (false, Work::FputcFd) => drain_fl_fputc(fd_fp),
+                            (true, Work::FputcFd) => drain_glibc_fputc(fd_fp, h),
                         };
                     }
                     rounds.push(start.elapsed().as_nanos() as f64 / K as f64);
@@ -492,6 +519,7 @@ fn main() {
         (Work::FputsFd, "FPUTS_FD_AB"),
         (Work::FgetsFd, "FGETS_FD_AB"),
         (Work::FreadFd, "FREAD_FD_AB"),
+        (Work::FputcFd, "FPUTC_FD_AB"),
     ] {
         for &threads in &[1usize, maxt] {
             // Warm both arms once (first-touch, dlmopen init, allocator warm).

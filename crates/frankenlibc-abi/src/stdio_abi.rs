@@ -2933,6 +2933,12 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     if let Some(rc) = try_fputc_fast_by_stream(stream, byte) {
         return rc;
     }
+    // MT-safe cell-cache write fast path: the ST cache above is `__libc_single_threaded`-gated,
+    // so a THREADED fputc otherwise pays canonical_stream_id + the registry map lock per byte.
+    // Gen-valid hit ⇒ append the byte under this stream's lock only (fast_write of 1 byte).
+    if try_write_fast_cell(stream, &[byte]) {
+        return byte as c_int;
+    }
 
     let id = canonical_stream_id(stream);
 
