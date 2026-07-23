@@ -1078,6 +1078,22 @@ fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
     None
 }
 
+/// MT-safe fd-stream write fast path (fputs/fwrite/fputc): gen-valid cell-cache hit ⇒
+/// lock ONLY this stream and append `bytes` inline IFF it is a Full-buffered fd stream
+/// with room (the no-flush `fast_write` case). `true` on inline success; `false` on any
+/// miss (not cached / not Full / would flush / mem / cookie) ⇒ caller falls through to the
+/// full per-stream-locked path. Mirrors `try_fgetc_fast_cell` on the write side; cached
+/// cells are stored only for non-cookie non-mem fd streams (see the write slow path), so
+/// `fast_write`'s own Full-buffer+room predicate is the exact soundness gate the ST
+/// `try_fwrite_fast` relies on — just reached under the per-stream lock instead of the
+/// `__libc_single_threaded` cache.
+fn try_write_fast_cell(stream: *mut c_void, bytes: &[u8]) -> bool {
+    match stream_cell_cache_lookup(stream) {
+        Some(cell) => cell.lock().fast_write(bytes),
+        None => false,
+    }
+}
+
 /// Monotonic generation bumped on every runtime registry insert/remove (via
 /// `insert_stream`/`remove_stream`). The single-threaded write fast-path caches a
 /// `*mut StdioStream` together with the gen at which it was resolved; a mismatch on a
@@ -1965,6 +1981,9 @@ unsafe fn write_bytes_without_runtime_policy(
     // writes hit the inline fast path (try_fputc_fast). This is the COMMON deployed path
     // (heals disabled), so the cache must be populated here, not only on the membrane path.
     write_cache_store(id, stream_obj as *mut StdioStream);
+    // Also populate the MT-safe cell cache so THREADED writers skip the map lock per call
+    // (try_write_fast_cell). Mirrors the fgetc slow path.
+    stream_cell_cache_store(_stream, &cell);
 
     let write_result = match stream_obj.buffer_write(bytes) {
         Some(result) => result,
@@ -3353,6 +3372,17 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
             return 0;
         }
     }
+    // MT-safe cell-cache write fast path: the ST cache above is `__libc_single_threaded`-
+    // gated, so a THREADED fputs otherwise pays canonical_stream_id + the registry map lock
+    // per call (measured 5.5x@1t → 13.3x@8t vs glibc on fd streams). Gen-valid hit ⇒ append
+    // under this stream's lock only.
+    {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        if try_write_fast_cell(stream, bytes) {
+            return 0;
+        }
+    }
 
     let id = canonical_stream_id(stream);
 
@@ -3799,6 +3829,11 @@ pub unsafe extern "C" fn fwrite(
     // all fits (skip membrane + lock + lookup). Pointer-keyed so a hit also skips
     // `canonical_stream_id`'s native lock; `id` computed lazily on miss.
     if try_fwrite_fast_by_stream(stream, src) {
+        return nmemb;
+    }
+    // MT-safe cell-cache write fast path (see fputs): threaded fwrite otherwise pays the
+    // registry map lock per call. Gen-valid hit ⇒ append under this stream's lock only.
+    if try_write_fast_cell(stream, src) {
         return nmemb;
     }
 

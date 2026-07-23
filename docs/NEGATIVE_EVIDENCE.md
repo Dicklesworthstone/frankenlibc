@@ -21692,3 +21692,46 @@ item retains every later colon by construction, exactly matching the former `fie
   fgets/fread/fputc/fputs/fwrite (same pattern, measurable with the same harness);
   (2) the fmemopen open/close lifecycle floor remains allocator-bound (bd-ummyux
   neighborhood). The 2026-07-09 "residual = the real swing-1" note is RESOLVED.
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): MT-safe cell-cache write fast path — fd-stream MT fputs/fwrite 19.3x → 4.6x vs glibc (8t 0.239 cand/base DISJOINT); the bd-h0n1mf follow-up lever (cc-write-cell-cache-2026-07-23)
+
+- **PROFILE-FIRST (post-bd-h0n1mf).** With the per-FILE registry shipped, extended the MT
+  harness (`stdio_fread_mem_mt_ab.rs`) with an `FPUTS_FD_AB` arm (each thread fopen's
+  `/dev/null` "w" ONCE, then K×N/64 `fputs` of a 64B line — Full-buffered, rare flush,
+  isolates the registry cost from fd-write cost). Baseline (HEAD = bd-h0n1mf): **fputs on an
+  fd stream is 5.46x@1t → 13.28x@8t vs glibc** — the gap GROWS with threads = the same global
+  map-lock convoy fgetc had before bd-h0n1mf. The per-FILE split alone did NOT fix writes:
+  every threaded `fputs` still paid `canonical_stream_id` + one registry map-lock per call to
+  resolve the cell (the ST write cache is `__libc_single_threaded`-gated ⇒ off under threads).
+- **THE LEVER.** `try_write_fast_cell(stream, bytes)` — the write sibling of
+  `try_fgetc_fast_cell`: a gen-valid `STREAM_CELL_CACHE` hit locks ONLY this stream and calls
+  the existing `fast_write` (Full-buffer + room, no-flush) — the exact soundness predicate the
+  ST `try_fwrite_fast` relies on, reached under the per-stream lock instead of the ST cache.
+  Wired into `fputs` and `fwrite` after their ST fast paths, before `canonical_stream_id`;
+  the write slow path (`write_bytes_without_runtime_policy`) now also `stream_cell_cache_store`s
+  the resolved cell (mirrors the fgetc slow path), so a threaded write loop warms the cache
+  once then skips the map lock. +35 lines, non-cookie non-mem fd streams only.
+- **MEASURED (12 alternated pw_base/pw_cand runs, idle vmi1152480, 24/24 exit-0; binaries
+  a3221b23…/ae31d352…).**
+  - **FPUTS_FD 1t: cand/base 0.7647 raw / 0.751 normalized, DISJOINT** (base [5568..6262],
+    cand [3838..5499]... every cand run < every base run). fl/glibc 4.77x → 3.58x.
+  - **FPUTS_FD 8t: cand/base 0.2385 raw / 0.239 normalized, DISJOINT** (base [13728..57831],
+    cand [4911..8365]). fl/glibc **19.31x → 4.61x** — the convoy is gone (the residual 4.6x is
+    the per-op `fast_write` buffer copy + the cache lookup, not lock contention).
+  - **NULL CONTROLS (unchanged code paths in both binaries): FGETC_FD 1t 0.955 / 8t 1.05
+    (overlap 5/12, 12/12), FGETS_MEM/FREAD_MEM 0.98-1.39 (all overlap 11-12/12) — NONE
+    disjoint**, while the lever is disjoint at BOTH thread counts ⇒ the effect is the write
+    cache, not worker drift. Per-round CVs are high (90-143%: /dev/null writes are ~20ns/op,
+    timer/flush noise dominates), so the gate is met by DISJOINTNESS (sign-test p≈2^-12 at each
+    thread count) rather than CV<5% — the effect (4.2x@8t) is far larger than the noise band,
+    the same standard as the fgetc/fread/fgets wins.
+- **CONFORMANCE.** `stdio_abi_test` **256/0** (comprehensive fputs/fwrite/fgetc across mem+fd+
+  cookie), `conformance_diff_stdio_ext` 11/0, `conformance_diff_stdio_unlocked_io` 2/0,
+  `conformance_diff_stdio_printf` 3/0, `conformance_diff_wide_stdio_write` 1/0,
+  `fmemopen_write_differential_test` 1/0, `conformance_diff_stdio_rwdir` 2/0; harness FPUTS arm
+  `got_total` execution assert (every fputs returned success). fast_write's Full-buffer+room
+  predicate is byte-identical to the ST path under the lock.
+- **DISPOSITION.** SHIPPED (fputs + fwrite cell cache, one commit). Follow-ups: fputc
+  (single-byte, separate entry — lower throughput priority); fgets/fread FD MT (the read
+  siblings; fgetc already done, fgets/fread on fd streams pay the same map lock — measurable
+  with an `FGETS_FD`/`FREAD_FD` harness arm). Lane [[stdio-mt-swing-inprogress]].
