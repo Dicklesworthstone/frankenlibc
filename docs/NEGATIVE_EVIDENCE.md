@@ -21846,3 +21846,19 @@ item retains every later colon by construction, exactly matching the former `fie
   op measured slow in MT would indicate a NON-delegating path, not a missing wide cache.)
 - Verified by code inspection (wchar_abi.rs fgetwc L4758 / fputwc L4824 / fputws L4972 / fgetws
   L4875). Lane [[stdio-mt-swing-inprogress]].
+
+## 2026-07-23 (cc_fl / MagentaCondor) — STALE-BLOCKER RETIRED: the 2026-07-04 swprintf "4.9x/15.8x loss, narrow-render round-trip architectural" BLOCKER is RESOLVED — deployed swprintf now BEATS glibc
+
+- Re-measured the 2026-07-04 swprintf blocker (`swprintf_survey.rs`, deployed
+  `wchar_abi::swprintf` vs dlmopen glibc, idle vmi1152480). The documented 4.9x (%d) / 15.8x
+  (%ls) losses are GONE — the narrow-render transcode round-trip was replaced (by the
+  printf/wchar campaign since 2026-07-04) with a fast wide path:
+  - `%d` 12345: deployed fl **13.24ns** vs glibc **27.32ns** = **0.485x (fl WINS 2x)**, match=true
+    (bench "old" slow-path baseline `old_exact_d` = 225.86ns, so the deployed path is 17x faster
+    than the old round-trip).
+  - `%ls` L"hello world": deployed fl **14.86ns** vs glibc **18.65ns** = **0.797x (fl WINS)**,
+    match=true (old round-trip baseline 363.59ns).
+- **NO-RETRY: the swprintf wide-render gap is CLOSED.** Do not reopen the "native wide render
+  path" swing — it exists and wins. The 2026-07-04 "PEER-CONTESTED, coordinate before touching"
+  caveat is moot (resolved + cod capped until Jul 29). Lane [[stdio-mt-swing-inprogress]] /
+  printf campaign.
