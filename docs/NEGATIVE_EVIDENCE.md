@@ -21862,3 +21862,19 @@ item retains every later colon by construction, exactly matching the former `fie
   path" swing — it exists and wins. The 2026-07-04 "PEER-CONTESTED, coordinate before touching"
   caveat is moot (resolved + cod capped until Jul 29). Lane [[stdio-mt-swing-inprogress]] /
   printf campaign.
+
+## 2026-07-23 (cc_fl / MagentaCondor) — FRONTIER SURVEY (printf/time/wchar common ops are par-or-winning): the readily-accessible gaps in these domains are CLOSED; next gap needs DEEP profiling, not broad survey
+
+- After the stdio-MT cell-cache family completed, surveyed the marching-orders domains
+  (printf/time/wchar) for a fresh gap. Idle vmi1152480, deployed-vs-dlmopen-glibc:
+  - **swprintf** `%d` 0.485x / `%ls` 0.797x — **fl WINS** (2026-07-04 blocker stale, retired above).
+  - **strftime** literal-text 0.984x vs glibc — **par** (`strftime_survey`).
+  - **gmtime_r** 1.017x **par**; **timegm** 0.392x **WIN**; **mktime** 0.186x **WIN** (`time_survey`).
+  - wcsftime: cod shipped exact finite-state emitters through 2026-07-22 (`bd-b64nvb` %FT%T 3.09x
+    faster; %A/%j attempts REJECTED on invalid-CV / RCH-blocked, not on being slow).
+- **READING:** the common/obvious ops in printf/time/wchar are already at parity or winning from
+  the prior printf/scanf + time + wchar campaigns. There is no broad-survey gap left here. A fresh
+  WIN in these domains now requires DEEP per-function profiling (remote release-perf flamegraph via
+  the bd-3dxo1a recipe) to find a non-obvious hotspot, OR picking a rarer format/function not yet
+  swept — a multi-turn investigation, not a quick survey hit. Recorded so the next cycle profiles
+  deep rather than re-running these surveys. Lane [[stdio-mt-swing-inprogress]].
