@@ -21735,3 +21735,38 @@ item retains every later colon by construction, exactly matching the former `fie
   (single-byte, separate entry — lower throughput priority); fgets/fread FD MT (the read
   siblings; fgetc already done, fgets/fread on fd streams pay the same map lock — measurable
   with an `FGETS_FD`/`FREAD_FD` harness arm). Lane [[stdio-mt-swing-inprogress]].
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): fgets cell-cache read fast path — fd-stream MT fgets 15.89x → 1.97x vs glibc (8t 0.131 cand/base DISJOINT); the read sibling of the write cell cache (cc-fgets-cell-cache-2026-07-23)
+
+- **PROFILE-FIRST.** After fgetc (bd-h0n1mf) + fputs/fwrite (`54665b92e`), the last-common
+  fd-stream read op without an MT cell cache was `fgets`. New `FGETS_FD_AB` harness arm (each
+  thread fopen's the backing file "r" ONCE, then K×(fseek 0 + fgets-until-NULL)): baseline
+  (HEAD) **fgets on an fd stream is 5.00x@1t → 15.89x@8t vs glibc** — the map-lock convoy, same
+  as fgetc/fputs before their caches (fgets went through `stream_cell(id)` + lock per LINE).
+- **THE LEVER.** `try_fgets_fast_cell(stream, dst)` — the line-read sibling of
+  `try_fgetc_fast_cell`: a gen-valid `STREAM_CELL_CACHE` hit locks ONLY this stream and runs the
+  EXISTING shared `fgets_fill_stream` (bulk read + fd refill under this stream's lock) —
+  byte-identical to the slow path (same fn). Wired into `fgets` after the ST cache + fmemopen
+  cursor checks, before `canonical_stream_id`; the fgets fd-stream slow path now also
+  `stream_cell_cache_store`s the cell so a pure fgets loop warms it once (fseek does not bump
+  REGISTRY_GEN ⇒ the cache survives each per-drain rewind). +28 lines, non-cookie non-mem fd only.
+  (fread deferred: its non-mem read is a tangled inline loop with no shared fill fn — needs a
+  `fread_fill_stream` extraction first; follow-up.)
+- **MEASURED (12 alternated fg_base/fg_cand runs, idle vmi1152480, 24/24 exit-0; binaries
+  b5c435d6…/9964d6af…).**
+  - **FGETS_FD 1t: cand/base 0.3706 raw / 0.375 normalized, DISJOINT** (base [8084..9438],
+    cand [2970..4512]). fl/glibc 5.00x → 1.88x.
+  - **FGETS_FD 8t: cand/base 0.1311 raw / 0.124 normalized, DISJOINT** (base [13552..63548],
+    cand [3577..6558]). fl/glibc **15.89x → 1.97x** (7.6x faster) — fgets on fd streams now
+    NEAR PARITY with glibc under contention; the 1.97x residual is fill-loop + lock, not convoy.
+  - **NULL CONTROLS (unchanged in both binaries): FGETC_FD 1.02-1.03, FPUTS_FD 0.98-1.02, mem
+    arms 0.73-0.99 — ALL overlap 10-12/12, NONE disjoint**, while the lever is disjoint at both
+    thread counts ⇒ the effect is the fgets cache. (Gate met by disjointness, sign-test
+    p≈2^-12/thread-count.)
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `fgets_differential_test` 6/0,
+  `conformance_diff_stdio_ext` 2/0, `conformance_diff_stdio_unlocked_io` 1/0,
+  `conformance_diff_getline` 3/0; harness FGETS arm `got_total` execution assert.
+  `fgets_fill_stream` is the same shared fn the ST fast path and slow path use ⇒ byte-identical.
+- **DISPOSITION.** SHIPPED (fgets cell cache, one commit). fd-stream MT read/write cell-cache
+  family now: fgetc + fputs/fwrite + fgets. Remaining: fread (needs fill extraction), fputc
+  (single-byte). Lane [[stdio-mt-swing-inprogress]].

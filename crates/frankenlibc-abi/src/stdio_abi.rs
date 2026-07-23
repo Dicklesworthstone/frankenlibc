@@ -1094,6 +1094,21 @@ fn try_write_fast_cell(stream: *mut c_void, bytes: &[u8]) -> bool {
     }
 }
 
+/// MT-safe fd-stream `fgets` fast path: gen-valid cell-cache hit ⇒ lock ONLY this stream and
+/// run the shared `fgets_fill_stream` (bulk read + fd refill under this stream's lock).
+/// `Some((written, had_error))` when handled; `None` on a miss (not cached / mem) ⇒ caller
+/// falls through. Cached cells are non-cookie non-mem fd (both store sites), so the fill is
+/// byte-identical to the slow path over the same stream.
+fn try_fgets_fast_cell(stream: *mut c_void, dst: &mut [u8]) -> Option<(usize, bool)> {
+    let cell = stream_cell_cache_lookup(stream)?;
+    let mut s = cell.lock();
+    if s.is_mem_backed() {
+        return None;
+    }
+    // SAFETY: the cell lock gives unique access to this stream for the fill's duration.
+    Some(unsafe { fgets_fill_stream(&mut s, dst) })
+}
+
 /// Monotonic generation bumped on every runtime registry insert/remove (via
 /// `insert_stream`/`remove_stream`). The single-threaded write fast-path caches a
 /// `*mut StdioStream` together with the gen at which it was resolved; a mismatch on a
@@ -3193,6 +3208,17 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
             unsafe { *buf.add(n) = 0 };
             return buf;
         }
+        // MT-safe cell-cache line fast path: the ST cache above is `__libc_single_threaded`-
+        // gated and the mem cursor only serves fmemopen — a THREADED fgets on an fd stream
+        // otherwise pays canonical_stream_id + the registry map lock per line. Gen-valid hit
+        // ⇒ fill under this stream's lock only. Byte-identical (same `fgets_fill_stream`).
+        if let Some((written, had_error)) = try_fgets_fast_cell(stream, dst) {
+            if (written == 0 && max > 0) || had_error {
+                return std::ptr::null_mut();
+            }
+            unsafe { *buf.add(written) = 0 };
+            return buf;
+        }
     }
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
@@ -3319,6 +3345,8 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
         // pointer-keyed fast path — a pure `fgets` loop (read a file line by line) otherwise
         // never populates the cache and pays the per-line locks forever. Mirrors fgetc/fread.
         write_cache_store(id, s as *mut StdioStream);
+        // MT-safe cell cache: a threaded fgets loop warms this once then skips the map lock.
+        stream_cell_cache_store(stream, &cell);
     }
 
     // Fill the destination under the SINGLE registry lock + policy decision
