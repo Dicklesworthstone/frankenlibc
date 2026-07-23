@@ -21831,3 +21831,18 @@ item retains every later colon by construction, exactly matching the former `fie
   non-disjoint null controls. The bd-n7dpzr "MT stdio 2.96x behind" swing is fully resolved and
   then some. **NEXT: the stdio-MT vein is EXHAUSTED — diversify to printf/time/locale/wchar per
   marching orders.** Lane [[stdio-mt-swing-inprogress]].
+
+## 2026-07-23 (cc_fl / MagentaCondor) — SURFACE / NO-RETRY (saves work): wide stdio MT (fgetwc/fputwc/fgetws/fputws) is ALREADY covered transitively by the narrow-op cell caches — do NOT add a separate wide cell cache
+
+- After the fd-stream MT cell-cache family completed for the 6 narrow ops (fgetc/fgets/fread/
+  fputc/fputs/fwrite, commits `09af4759d`→`27dca22f0`), checked whether the WIDE stdio ops need
+  the same treatment. They do NOT: every wide op delegates to a narrow op that is now cell-cached.
+  - `fgetwc` → `stdio_abi::fgetc` per byte (1-6 bytes/wchar) ⇒ inherits the fgetc cell cache.
+  - `fputwc` → `stdio_abi::fputc` per byte ⇒ inherits the fputc cell cache.
+  - `fputws` → bulk `wcstombs` + ONE `fwrite` ⇒ inherits the fwrite cell cache.
+  - `fgetws` → cached ASCII-line reader / `fgetwc` ⇒ inherits fgetc.
+  So the wide stdio MT convoy was closed the moment the narrow ops were. **NO-RETRY: do not add a
+  wide-specific `try_*_fast_cell`; it would duplicate what delegation already provides.** (A wide
+  op measured slow in MT would indicate a NON-delegating path, not a missing wide cache.)
+- Verified by code inspection (wchar_abi.rs fgetwc L4758 / fputwc L4824 / fputws L4972 / fgetws
+  L4875). Lane [[stdio-mt-swing-inprogress]].
