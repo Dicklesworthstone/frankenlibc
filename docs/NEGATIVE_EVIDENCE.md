@@ -21770,3 +21770,35 @@ item retains every later colon by construction, exactly matching the former `fie
 - **DISPOSITION.** SHIPPED (fgets cell cache, one commit). fd-stream MT read/write cell-cache
   family now: fgetc + fputs/fwrite + fgets. Remaining: fread (needs fill extraction), fputc
   (single-byte). Lane [[stdio-mt-swing-inprogress]].
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): fread cell-cache read fast path (+ fread_fill_stream extraction) — fd-stream MT fread 24.22x → 2.64x vs glibc (8t 0.116 cand/base DISJOINT) (cc-fread-cell-cache-2026-07-23)
+
+- **THE LEVER (the last common fd-stream read op).** Extracted the fread non-mem read loop
+  (buffered_read_into + one-block refill + direct fd read + policy) into a shared
+  `fread_fill_stream(s, dst) -> bytes` — pure stream mutation, the read analog of
+  `fgets_fill_stream`; the slow path now calls it (behavior-identical) and so does the new
+  `try_fread_fast_cell` (gen-valid `STREAM_CELL_CACHE` hit ⇒ lock only this stream ⇒ fill).
+  Wired into `fread` after the ST cache + fmemopen cursor checks, before `canonical_stream_id`;
+  the fread fd-stream slow path now `stream_cell_cache_store`s the cell. Non-cookie non-mem fd
+  only. Baseline (HEAD) **fread on an fd stream is 4.18x@1t → 24.22x@8t vs glibc** — the same
+  map-lock convoy (fread went through `stream_cell(id)` + lock per call).
+- **MEASURED (12 alternated rd_base/rd_cand runs, idle vmi1152480, 24/24 exit-0; binaries
+  884ece8d…/c912ff80…).**
+  - **FREAD_FD 1t: cand/base 0.5540 raw / 0.567 normalized, DISJOINT** (base [4419..5693],
+    cand [2326..3068]). fl/glibc 4.18x → 2.37x.
+  - **FREAD_FD 8t: cand/base 0.1160 raw / 0.109 normalized, DISJOINT** (base [8778..53866],
+    cand [2934..4824]). fl/glibc **24.22x → 2.64x** (8.6x faster) — near-flat 1t→8t scaling,
+    the convoy is gone.
+  - **NULL CONTROLS (unchanged in both binaries): FGETC_FD 1.01-1.02, FGETS_FD 1.02-1.07,
+    FPUTS_FD 1.00-1.02, mem arms 0.69-1.00 — ALL overlap 9-12/12, NONE disjoint** while the
+    lever is disjoint at both thread counts ⇒ the effect is the fread cache (sign-test
+    p≈2^-12/thread-count).
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `fread_partial_differential_test` 3/0 (the exact
+  partial-element / EOF / size==0 / nmemb==0 gate — proves the `fread_fill_stream` extraction is
+  behavior-identical), `conformance_diff_stdio_ext` 2/0, `conformance_diff_stdio_unlocked_io`
+  1/0; harness FREAD arm `got_total` execution assert + in-harness fl==glibc `verify`.
+- **DISPOSITION.** SHIPPED (fread extraction + cell cache, one commit). **fd-stream MT
+  read/write cell-cache family COMPLETE: fgetc + fgets + fread + fputs + fwrite.** All 5 common
+  fd-stream stdio ops now skip the registry map lock under threads via the gen-guarded
+  STREAM_CELL_CACHE; each was a 4-63x@8t convoy, each closed to near-parity, each DISJOINT.
+  Remaining: fputc (single-byte write, own entry). Lane [[stdio-mt-swing-inprogress]].

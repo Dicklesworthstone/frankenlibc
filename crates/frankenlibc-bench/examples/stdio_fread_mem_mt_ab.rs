@@ -250,6 +250,29 @@ fn drain_glibc_fgets_fd(fp: *mut c_void, h: &'static HostStdio) -> usize {
     got
 }
 
+/// FD fread drain: rewind, then fread(buf, 1, 64) × N/64. Returns bytes read (must == N).
+fn drain_fl_fread_fd(fp: *mut c_void) -> usize {
+    assert_eq!(unsafe { fl::fseek(fp, 0, 0) }, 0, "fl fseek failed");
+    let mut buf = [0u8; 64];
+    let mut got = 0usize;
+    for _ in 0..(N / 64) {
+        got += unsafe { fl::fread(buf.as_mut_ptr().cast(), 1, 64, fp) };
+        black_box(&buf);
+    }
+    got
+}
+
+fn drain_glibc_fread_fd(fp: *mut c_void, h: &'static HostStdio) -> usize {
+    assert_eq!(unsafe { (h.fseek)(fp, 0, 0) }, 0, "glibc fseek failed");
+    let mut buf = [0u8; 64];
+    let mut got = 0usize;
+    for _ in 0..(N / 64) {
+        got += unsafe { (h.fread)(buf.as_mut_ptr().cast(), 1, 64, fp) };
+        black_box(&buf);
+    }
+    got
+}
+
 /// A single 64-byte line (63 'x' + '\n') as a NUL-terminated C string for fputs.
 const FPUTS_LINE: &[u8] = b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\0";
 
@@ -359,6 +382,7 @@ enum Work {
     FgetcFd,
     FputsFd,
     FgetsFd,
+    FreadFd,
 }
 
 fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -> Vec<f64> {
@@ -378,7 +402,7 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                 // pre-written backing file "r"; writes open /dev/null "w" (isolates the
                 // registry-lock cost from real fd-write cost — Full-buffered, rare flush).
                 let (fd_path, fd_fp) = match work {
-                    Work::FgetcFd | Work::FgetsFd => {
+                    Work::FgetcFd | Work::FgetsFd | Work::FreadFd => {
                         let path = make_fd_file(if use_glibc { "glibc" } else { "fl" });
                         let fp = if use_glibc {
                             unsafe { (h.fopen)(path.as_ptr(), c"r".as_ptr()) }
@@ -416,6 +440,8 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                             (true, Work::FputsFd) => drain_glibc_fputs(fd_fp, h),
                             (false, Work::FgetsFd) => drain_fl_fgets_fd(fd_fp),
                             (true, Work::FgetsFd) => drain_glibc_fgets_fd(fd_fp, h),
+                            (false, Work::FreadFd) => drain_fl_fread_fd(fd_fp),
+                            (true, Work::FreadFd) => drain_glibc_fread_fd(fd_fp, h),
                         };
                     }
                     rounds.push(start.elapsed().as_nanos() as f64 / K as f64);
@@ -465,6 +491,7 @@ fn main() {
         (Work::FgetcFd, "FGETC_FD_AB"),
         (Work::FputsFd, "FPUTS_FD_AB"),
         (Work::FgetsFd, "FGETS_FD_AB"),
+        (Work::FreadFd, "FREAD_FD_AB"),
     ] {
         for &threads in &[1usize, maxt] {
             // Warm both arms once (first-touch, dlmopen init, allocator warm).

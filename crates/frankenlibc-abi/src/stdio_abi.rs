@@ -1109,6 +1109,20 @@ fn try_fgets_fast_cell(stream: *mut c_void, dst: &mut [u8]) -> Option<(usize, bo
     Some(unsafe { fgets_fill_stream(&mut s, dst) })
 }
 
+/// MT-safe fd-stream `fread` fast path: gen-valid cell-cache hit ⇒ lock ONLY this stream and
+/// bulk-read up to `dst.len()` bytes via the shared `fread_fill_stream`. `Some(bytes_read)`
+/// when handled; `None` on a miss (not cached / mem) ⇒ caller falls through. Byte-identical to
+/// the slow path (same fill fn).
+fn try_fread_fast_cell(stream: *mut c_void, dst: &mut [u8]) -> Option<usize> {
+    let cell = stream_cell_cache_lookup(stream)?;
+    let mut s = cell.lock();
+    if s.is_mem_backed() {
+        return None;
+    }
+    // SAFETY: the cell lock gives unique access to this stream for the read's duration.
+    Some(unsafe { fread_fill_stream(&mut s, dst) })
+}
+
 /// Monotonic generation bumped on every runtime registry insert/remove (via
 /// `insert_stream`/`remove_stream`). The single-threaded write fast-path caches a
 /// `*mut StdioStream` together with the gen at which it was resolved; a mismatch on a
@@ -3132,6 +3146,68 @@ unsafe fn fgets_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> (usize, bool
     (written, had_error)
 }
 
+/// Shared fread read loop: fill `dst` from `s` via buffered reads + fd refill/direct reads
+/// until full, EOF, or error. Returns bytes read. Pure stream mutation (no registry/membrane),
+/// so identical bytes whether the caller holds the registry lock (slow path), a per-stream cell
+/// lock (MT cell cache), or has ST-unique access to a cached stream.
+///
+/// # Safety
+/// `s` must be uniquely borrowed for this call (registry/cell lock held, or ST cache-gated).
+unsafe fn fread_fill_stream(s: &mut StdioStream, dst: &mut [u8]) -> usize {
+    let total = dst.len();
+    let mut read_total = 0usize;
+    while read_total < total {
+        let n = s.buffered_read_into(&mut dst[read_total..total]);
+        if n > 0 {
+            read_total += n;
+            continue;
+        }
+        if s.is_error() {
+            break;
+        }
+        // Small remaining request on a buffered stream: refill in one block (like glibc/fgetc)
+        // instead of a per-call direct fd read. Large requests (>= capacity) keep the direct
+        // read below (buffering would just add a copy).
+        let cap = s.buffer_capacity();
+        if cap > 0 && (total - read_total) < cap && !s.is_eof() {
+            let rc = unsafe { refill_stream(s) };
+            if rc > 0 {
+                continue;
+            }
+            break;
+        }
+        // Direct fd read (avoids recursive memcpy interposition through buffered internals).
+        let fd = s.fd();
+        let to_read = total - read_total;
+        let rc = unsafe { sys_read_fd(fd, dst[read_total..].as_mut_ptr().cast(), to_read) };
+        let errno_val = if rc < 0 {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        } else {
+            0
+        };
+        match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
+            StreamPolicyAction::Retry => continue,
+            StreamPolicyAction::Buffer | StreamPolicyAction::Flush => {
+                let bytes_read = rc as usize;
+                read_total += bytes_read;
+                s.set_offset(s.offset().saturating_add(bytes_read as i64));
+                continue;
+            }
+            StreamPolicyAction::Yield => {
+                if rc == 0 {
+                    s.set_eof();
+                }
+                break;
+            }
+            StreamPolicyAction::Escalate => {
+                s.set_error();
+                break;
+            }
+        }
+    }
+    read_total
+}
+
 /// Cached-stream ASCII wide-line reader used by `fgetws`. A cache hit is the
 /// same ST/non-cookie/non-mem fd-stream proof used by `fgets`; the stream method
 /// only consumes when buffered bytes are all ASCII through newline or destination
@@ -3641,6 +3717,13 @@ pub unsafe extern "C" fn fread(
         if let Some(n) = try_fread_fast_fixed_mem_by_stream(stream, dst) {
             return n / size;
         }
+        // MT-safe cell-cache bulk-read fast path: the ST cache above is
+        // `__libc_single_threaded`-gated and the mem cursor only serves fmemopen — a THREADED
+        // fread on an fd stream otherwise pays canonical_stream_id + the registry map lock per
+        // call. Gen-valid hit ⇒ read under this stream's lock only. `total > 0` ⇒ `size >= 1`.
+        if let Some(n) = try_fread_fast_cell(stream, dst) {
+            return n / size;
+        }
     }
 
     let id = canonical_stream_id(stream);
@@ -3756,8 +3839,6 @@ pub unsafe extern "C" fn fread(
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
 
-    let mut read_total = 0usize;
-
     // Memory-backed streams: read directly from the backing.
     if s.is_mem_backed() {
         sync_and_unregister_fast_fixed_mem_read(id, s);
@@ -3775,63 +3856,10 @@ pub unsafe extern "C" fn fread(
     // Cache this non-cookie, non-mem fd stream so subsequent single-threaded reads hit the
     // inline fast path (try_fread_fast / try_fgetc_fast).
     write_cache_store(id, s as *mut StdioStream);
+    // MT-safe cell cache: a threaded fread loop warms this once then skips the map lock.
+    stream_cell_cache_store(stream, &cell);
 
-    while read_total < total {
-        let n = s.buffered_read_into(&mut dst[read_total..total]);
-        if n > 0 {
-            read_total += n;
-            continue;
-        }
-        if s.is_error() {
-            break;
-        }
-
-        // Small remaining request on a buffered stream: refill the read buffer in one
-        // block (like glibc / fgetc) instead of a per-call direct fd read — without this,
-        // a loop of small `fread`s did one syscall EACH (~131x slower than glibc). The
-        // refill (sys_read_fd into a tmp + fill_read_buffer copy) is the same mechanism
-        // fgetc uses, so it carries no extra LD_PRELOAD recursion risk. Large requests
-        // (>= capacity) keep the direct read below (buffering would just add a copy).
-        let cap = s.buffer_capacity();
-        if cap > 0 && (total - read_total) < cap && !s.is_eof() {
-            let rc = unsafe { refill_stream(s) };
-            if rc > 0 {
-                continue; // next buffered_read_into serves from the refilled buffer
-            }
-            break; // EOF (0) or error (<0, flagged on the stream by refill_stream)
-        }
-
-        // Prefer direct fd reads to avoid recursive memcpy interposition through
-        // buffered internals under LD_PRELOAD.
-        let fd = s.fd();
-        let to_read = total - read_total;
-        let rc = unsafe { sys_read_fd(fd, dst[read_total..].as_mut_ptr().cast(), to_read) };
-        let errno_val = if rc < 0 {
-            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-        } else {
-            0
-        };
-        match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
-            StreamPolicyAction::Retry => continue,
-            StreamPolicyAction::Buffer | StreamPolicyAction::Flush => {
-                let bytes_read = rc as usize;
-                read_total += bytes_read;
-                s.set_offset(s.offset().saturating_add(bytes_read as i64));
-                continue;
-            }
-            StreamPolicyAction::Yield => {
-                if rc == 0 {
-                    s.set_eof();
-                }
-                break;
-            }
-            StreamPolicyAction::Escalate => {
-                s.set_error();
-                break;
-            }
-        }
-    }
-
+    let read_total = unsafe { fread_fill_stream(s, &mut dst[..total]) };
     read_total.checked_div(size).unwrap_or(0)
 }
 
