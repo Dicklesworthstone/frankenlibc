@@ -211,4 +211,31 @@ fn main() {
         "SNPRINTF_LD fl={snld:.2}ns cv={snld_cv:.2} glibc={gsnld:.2}ns cv={gsnld_cv:.2} fl/glibc={:.3}",
         snld / gsnld
     );
+
+    // %zu (size_t) — reuses the %lu helper. Byte-identity over the usize edge set.
+    type SnZu = unsafe extern "C" fn(*mut c_char, usize, *const c_char, usize) -> c_int;
+    let fmt_zu = c"%zu";
+    let fl_zu: SnZu = unsafe {
+        std::mem::transmute::<*const (), SnZu>(frankenlibc_abi::stdio_abi::snprintf as *const ())
+    };
+    let g_zu: SnZu = unsafe { std::mem::transmute::<*mut c_void, SnZu>(g) };
+    for &n in &[0usize, 1, 12345, usize::MAX, 9_000_000_000, 4096] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let fr = unsafe { fl_zu(fb.as_mut_ptr().cast(), 32, fmt_zu.as_ptr(), n) };
+        let gr = unsafe { g_zu(gb.as_mut_ptr().cast(), 32, fmt_zu.as_ptr(), n) };
+        assert_eq!(fr, gr, "snprintf %zu return diverged for {n}");
+        assert_eq!(fb, gb, "snprintf %zu bytes diverged for {n}");
+    }
+    println!("verify: OK (fl snprintf %zu == glibc)");
+    let (snzu, snzu_cv) = collect(&|| {
+        black_box(unsafe { fl_zu(black_box(bp).cast(), 32, fmt_zu.as_ptr(), black_box(9_000_000_000usize)) });
+    });
+    let (gsnzu, gsnzu_cv) = collect(&|| {
+        black_box(unsafe { g_zu(black_box(bp).cast(), 32, fmt_zu.as_ptr(), black_box(9_000_000_000usize)) });
+    });
+    println!(
+        "SNPRINTF_ZU fl={snzu:.2}ns cv={snzu_cv:.2} glibc={gsnzu:.2}ns cv={gsnzu_cv:.2} fl/glibc={:.3}",
+        snzu / gsnzu
+    );
 }

@@ -21980,3 +21980,25 @@ item retains every later colon by construction, exactly matching the former `fie
   all ~2.7-3.6x→~0.4-0.56x**. `%zu`/`%zd` (size_t) render identically to `%lu`/`%ld` on LP64 (add
   the matchers, reuse the helpers — trivial follow-up); then `%X`/`%lx` (hex), `%o` (octal),
   sprintf %s/%p, vsnprintf/printf/fprintf. Reproducer: `--example snprintf_d_ab` (LD arm).
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): snprintf+sprintf exact `%zu`/`%zd` strict fast paths — size_t (the most common width) reuses the `%lu`/`%ld` helpers; 3.02x LOSS → 0.557x WIN (cc-printf-zu-2026-07-23)
+
+- **THE GAP + ZERO-COST FIX.** `%zu`/`%zd` (`size_t`/`ssize_t` — arguably the most common integer
+  width: every length/count/offset) hit the full render. On LP64 they render IDENTICALLY to
+  `%lu`/`%ld` (both u64/i64), so this adds ONLY the `exact_direct_zu_format`/`exact_direct_zd_format`
+  matchers (`%zu\0`/`%zd\0`) and REUSES the proven `strict_direct_snprintf_lu`/`_ld` + sprintf
+  variants — +34 lines, no new render code.
+- **MEASURED (10 alternated x_base/x_cand runs, idle vmi1152480, 20/20 exit-0).**
+  - **SNPRINTF_ZU: base 136.1ns → cand 25.4ns = cand/base 0.187, DISJOINT** (5.4x faster; base cv
+    5.7%, cand cv 13.0%). **fl/glibc 3.016x LOSS → 0.557x WIN.**
+  - **NULL CONTROLS (unchanged): SNPRINTF_LD 0.968 (ov 9/10), SNPRINTF_D 0.929 (ov 8/10),
+    SNPRINTF_U 1.034 (ov 9/10), SNPRINTF_X 1.039 (ov 9/10)** — all overlapping.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_printf_fastpaths` 3/0; bench
+  `verify()` byte-identity for snprintf `%zu` over 0 / 1 / 12345 / `usize::MAX` / 9e9 / 4096.
+- **DISPOSITION.** SHIPPED. **The printf integer-DECIMAL + %x coverage is now COMPLETE for
+  snprintf+sprintf: %d, %u, %ld, %lu, %zu, %zd, %x** — 5 commits (cc-snprintf-d / sprintf-d /
+  printf-x / printf-ld / printf-zu), every one DISJOINT with overlapping null controls, each
+  ~2.7-3.6x LOSS → ~0.4-0.56x WIN. REMAINING (lower frequency / different shape): `%X`/`%lx`/`%llx`
+  (hex variants), `%o` (octal), `%lld`/`%llu` (long long), sprintf `%s`/`%p`, and the va_list/stream
+  functions (vsnprintf/vsprintf/printf/fprintf). [[printf-d-family-fastpath-vein]]. Reproducer:
+  `--example snprintf_d_ab` (ZU arm).

@@ -5257,6 +5257,20 @@ unsafe fn exact_direct_lu_format(format: *const c_char) -> bool {
 }
 
 #[inline]
+unsafe fn exact_direct_zu_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: as `exact_direct_ld_format`. `%zu` (size_t) == u64 decimal on LP64.
+    unsafe { *f == b'%' && *f.add(1) == b'z' && *f.add(2) == b'u' && *f.add(3) == 0 }
+}
+
+#[inline]
+unsafe fn exact_direct_zd_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: as `exact_direct_ld_format`. `%zd` (ssize_t) == i64 decimal on LP64.
+    unsafe { *f == b'%' && *f.add(1) == b'z' && *f.add(2) == b'd' && *f.add(3) == 0 }
+}
+
+#[inline]
 unsafe fn exact_direct_p_format(format: *const c_char) -> bool {
     let f = format.cast::<u8>();
     // SAFETY: `format` is non-null and C's printf contract requires a
@@ -6051,6 +6065,16 @@ pub unsafe extern "C" fn snprintf(
         let arg = unsafe { args.next_arg::<u64>() };
         return unsafe { strict_direct_snprintf_lu(str_buf, size, arg) };
     }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_zu_format(format) } {
+        // SAFETY: exact `%zu` consumes one `size_t` (u64 on LP64) — same render as `%lu`.
+        let arg = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_snprintf_lu(str_buf, size, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_zd_format(format) } {
+        // SAFETY: exact `%zd` consumes one `ssize_t` (i64 on LP64) — same render as `%ld`.
+        let arg = unsafe { args.next_arg::<i64>() };
+        return unsafe { strict_direct_snprintf_ld(str_buf, size, arg) };
+    }
     // SAFETY: `format` is non-null and valid through its NUL terminator under
     // the printf-family C contract checked by `exact_direct_p_format`.
     if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
@@ -6206,6 +6230,16 @@ pub unsafe extern "C" fn sprintf(
         // SAFETY: exact `%lu` consumes one `unsigned long`; unbounded sprintf buffer.
         let arg = unsafe { args.next_arg::<u64>() };
         return unsafe { strict_direct_sprintf_lu(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_zu_format(format) } {
+        // SAFETY: exact `%zu` (size_t == u64 on LP64) — same render as `%lu`.
+        let arg = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_sprintf_lu(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_zd_format(format) } {
+        // SAFETY: exact `%zd` (ssize_t == i64 on LP64) — same render as `%ld`.
+        let arg = unsafe { args.next_arg::<i64>() };
+        return unsafe { strict_direct_sprintf_ld(str_buf, arg) };
     }
 
     let (mode, decision) =
