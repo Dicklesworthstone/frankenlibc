@@ -5235,6 +5235,14 @@ unsafe fn exact_direct_d_format(format: *const c_char) -> bool {
 }
 
 #[inline]
+unsafe fn exact_direct_x_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and C's printf contract requires a
+    // NUL-terminated format string, so these three bytes are readable.
+    unsafe { *f == b'%' && *f.add(1) == b'x' && *f.add(2) == 0 }
+}
+
+#[inline]
 unsafe fn exact_direct_p_format(format: *const c_char) -> bool {
     let f = format.cast::<u8>();
     // SAFETY: `format` is non-null and C's printf contract requires a
@@ -5568,6 +5576,73 @@ unsafe fn strict_direct_snprintf_d(str_buf: *mut c_char, size: usize, arg: c_int
     printf_result_to_c_int(len)
 }
 
+/// Lowercase-hex sibling for the ubiquitous exact `%x` (no `0x` prefix, no leading zeros,
+/// `0` → "0"). A promoted unsigned int is at most 8 hex digits. Byte-identical to the render
+/// engine's plain `%x`.
+unsafe fn strict_direct_snprintf_x(str_buf: *mut c_char, size: usize, arg: c_uint) -> c_int {
+    let mut rendered = [0u8; 8];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        let digit = (value & 0xf) as u8;
+        rendered[start] = if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        };
+        value >>= 4;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` writable; source has `len` init bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, terminator in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+/// Unbounded `%x` for `sprintf`. Same rendering as `strict_direct_snprintf_x`, no truncation.
+unsafe fn strict_direct_sprintf_x(str_buf: *mut c_char, arg: c_uint) -> c_int {
+    let mut rendered = [0u8; 8];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        let digit = (value & 0xf) as u8;
+        rendered[start] = if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        };
+        value >>= 4;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+    // SAFETY: sprintf's C contract gives a buffer large enough; `rendered[start..]` has `len`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
 #[inline]
 unsafe fn strict_direct_snprintf_p(str_buf: *mut c_char, size: usize, arg: *mut c_void) -> c_int {
     let mut rendered = [0u8; 2 + usize::BITS as usize / 4];
@@ -5828,6 +5903,11 @@ pub unsafe extern "C" fn snprintf(
         let arg = unsafe { args.next_arg::<c_int>() };
         return unsafe { strict_direct_snprintf_d(str_buf, size, arg) };
     }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_x_format(format) } {
+        // SAFETY: exact `%x` consumes one promoted `unsigned int`; the helper bounds writes.
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_snprintf_x(str_buf, size, arg) };
+    }
     // SAFETY: `format` is non-null and valid through its NUL terminator under
     // the printf-family C contract checked by `exact_direct_p_format`.
     if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
@@ -5968,6 +6048,11 @@ pub unsafe extern "C" fn sprintf(
         // SAFETY: exact `%u` consumes one promoted `unsigned int`; unbounded sprintf buffer.
         let arg = unsafe { args.next_arg::<c_uint>() };
         return unsafe { strict_direct_sprintf_u(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_x_format(format) } {
+        // SAFETY: exact `%x` consumes one promoted `unsigned int`; unbounded sprintf buffer.
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_sprintf_x(str_buf, arg) };
     }
 
     let (mode, decision) =

@@ -21932,3 +21932,28 @@ item retains every later colon by construction, exactly matching the former `fie
   literal/none; printf/fprintf/vfprintf/dprintf write to STREAMS (need format + the write path —
   more complex).** Ledger cc-sprintf-d-2026-07-23. Reproducer: `--example snprintf_d_ab` (SPRINTF
   arms).
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): snprintf+sprintf exact `%x` strict fast path — hex (addresses/flags/hashes) hit the FULL render like `%d` did; 3.57x LOSS → 0.514x WIN (cc-printf-x-2026-07-23)
+
+- **THE GAP.** `%x` (unsigned lowercase hex) had NO fast path anywhere and `direct_printf_string_payload`
+  returns `None` for it ⇒ full `parse_format_string` + `render_segments` = the same 3.3x class as
+  `%d`. Very common (pointers-as-hex, bitflags, colors, hashes). Measured base snprintf `%x` fl
+  **146.0ns** vs glibc 41ns = **3.572x LOSS**.
+- **THE LEVER.** `exact_direct_x_format` (`%x\0`) + `strict_direct_snprintf_x` (bounded) +
+  `strict_direct_sprintf_x` (unbounded) — nibble loop, `b'0'+d` / `b'a'+d-10`, no `0x` prefix / no
+  leading zeros / `0`→"0", 8-digit u32 buffer. Wired into snprintf (after `%d`) and sprintf (after
+  `%u`). +76 lines.
+- **MEASURED (10 alternated x_base/x_cand runs, idle vmi1152480, 20/20 exit-0; via full-file
+  dc3cdc24d→state patches to avoid stack drift).**
+  - **SNPRINTF_X: base 146.0ns → cand 20.2ns = cand/base 0.139, DISJOINT** (7.2x faster; base cv
+    4.4%, cand cv 9.0%). **fl/glibc 3.572x LOSS → 0.514x WIN.**
+  - **NULL CONTROLS (unchanged this commit): SNPRINTF_D 1.095 (ov 9/10), SNPRINTF_U 0.973 (ov
+    8/10), SPRINTF_D 0.969 (ov 8/10)** — all overlapping ⇒ effect is the `%x` fast path.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_printf_fastpaths` 3/0; bench
+  `verify()` byte-identity for snprintf+sprintf `%x` over 0 / 1 / 0xff / 0xdeadbeef / u32::MAX /
+  0x12345678.
+- **DISPOSITION.** SHIPPED (snprintf+sprintf `%x`). Printf-`%d`-family vein
+  ([[printf-d-family-fastpath-vein]]) now: snprintf %d, sprintf %d/%u, snprintf+sprintf %x — 3
+  commits, all DISJOINT, all ~3.3-3.6x→~0.4-0.5x. REMAINING full-render formats: `%X` (uppercase),
+  `%ld`/`%lu`/`%lx` (long), `%o` (octal); plus sprintf %s/%p, vsnprintf/vsprintf, printf/fprintf.
+  Reproducer: `--example snprintf_d_ab` (X arms).

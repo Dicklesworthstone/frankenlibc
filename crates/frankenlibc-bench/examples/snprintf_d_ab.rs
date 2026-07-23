@@ -152,4 +152,36 @@ fn main() {
         spd / gspd
     );
     println!("SPRINTF_U fl={spu:.2}ns cv={spu_cv:.2} (fl-only, was also missing)");
+
+    // %x (unsigned hex) — snprintf + sprintf. Byte-identity over the hex edge set.
+    let fmt_x = c"%x";
+    for &n in &[0u32, 1, 0xff, 0xdead_beef, u32::MAX, 0x1234_5678] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let fr = unsafe { fl_u(fb.as_mut_ptr().cast(), 32, fmt_x.as_ptr(), n) };
+        let gr = unsafe { g_u(gb.as_mut_ptr().cast(), 32, fmt_x.as_ptr(), n) };
+        assert_eq!(fr, gr, "snprintf %x return diverged for {n:#x}");
+        assert_eq!(fb, gb, "snprintf %x bytes diverged for {n:#x}");
+        let mut fb2 = [0u8; 32];
+        let mut gb2 = [0u8; 32];
+        let fr2 = unsafe { fl_sp_u(fb2.as_mut_ptr().cast(), fmt_x.as_ptr(), n) };
+        let gr2 = unsafe { g_sp_d(gb2.as_mut_ptr().cast(), fmt_x.as_ptr(), n as c_int) };
+        assert_eq!(fr2, gr2, "sprintf %x return diverged for {n:#x}");
+        assert_eq!(fb2, gb2, "sprintf %x bytes diverged for {n:#x}");
+    }
+    println!("verify: OK (fl snprintf/sprintf %x == glibc)");
+    let (snx, snx_cv) = collect(&|| {
+        black_box(unsafe { fl_u(black_box(bp).cast(), 32, fmt_x.as_ptr(), black_box(0xdead_beefu32)) });
+    });
+    let (gsnx, gsnx_cv) = collect(&|| {
+        black_box(unsafe { g_u(black_box(bp).cast(), 32, fmt_x.as_ptr(), black_box(0xdead_beefu32)) });
+    });
+    let (spx, spx_cv) = collect(&|| {
+        black_box(unsafe { fl_sp_u(black_box(bp).cast(), fmt_x.as_ptr(), black_box(0xdead_beefu32)) });
+    });
+    println!(
+        "SNPRINTF_X fl={snx:.2}ns cv={snx_cv:.2} glibc={gsnx:.2}ns cv={gsnx_cv:.2} fl/glibc={:.3}",
+        snx / gsnx
+    );
+    println!("SPRINTF_X fl={spx:.2}ns cv={spx_cv:.2} (fl-only)");
 }
