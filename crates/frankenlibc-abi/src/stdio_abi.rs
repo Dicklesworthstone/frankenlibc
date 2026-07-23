@@ -5271,6 +5271,13 @@ unsafe fn exact_direct_zd_format(format: *const c_char) -> bool {
 }
 
 #[inline]
+unsafe fn exact_direct_lx_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: as `exact_direct_ld_format`. `%lx` == u64 lowercase hex on LP64.
+    unsafe { *f == b'%' && *f.add(1) == b'l' && *f.add(2) == b'x' && *f.add(3) == 0 }
+}
+
+#[inline]
 unsafe fn exact_direct_p_format(format: *const c_char) -> bool {
     let f = format.cast::<u8>();
     // SAFETY: `format` is non-null and C's printf contract requires a
@@ -5741,6 +5748,70 @@ unsafe fn strict_direct_sprintf_ld(str_buf: *mut c_char, arg: i64) -> c_int {
     len as c_int
 }
 
+/// 64-bit lowercase hex `%lx` (bounded). Promoted `unsigned long`, at most 16 hex digits.
+unsafe fn strict_direct_snprintf_lx(str_buf: *mut c_char, size: usize, arg: u64) -> c_int {
+    let mut rendered = [0u8; 16];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        let digit = (value & 0xf) as u8;
+        rendered[start] = if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        };
+        value >>= 4;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` writable; source has `len` init bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, terminator in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
+/// Unbounded `%lx` for `sprintf`. Same rendering as `strict_direct_snprintf_lx`.
+unsafe fn strict_direct_sprintf_lx(str_buf: *mut c_char, arg: u64) -> c_int {
+    let mut rendered = [0u8; 16];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        let digit = (value & 0xf) as u8;
+        rendered[start] = if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        };
+        value >>= 4;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+    // SAFETY: sprintf buffer large enough; `rendered[start..]` has `len` bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
 /// Unbounded `%lu` for `sprintf`.
 unsafe fn strict_direct_sprintf_lu(str_buf: *mut c_char, arg: u64) -> c_int {
     let mut rendered = [0u8; 20];
@@ -6075,6 +6146,11 @@ pub unsafe extern "C" fn snprintf(
         let arg = unsafe { args.next_arg::<i64>() };
         return unsafe { strict_direct_snprintf_ld(str_buf, size, arg) };
     }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_lx_format(format) } {
+        // SAFETY: exact `%lx` consumes one `unsigned long` (64-bit on LP64).
+        let arg = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_snprintf_lx(str_buf, size, arg) };
+    }
     // SAFETY: `format` is non-null and valid through its NUL terminator under
     // the printf-family C contract checked by `exact_direct_p_format`.
     if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
@@ -6240,6 +6316,11 @@ pub unsafe extern "C" fn sprintf(
         // SAFETY: exact `%zd` (ssize_t == i64 on LP64) — same render as `%ld`.
         let arg = unsafe { args.next_arg::<i64>() };
         return unsafe { strict_direct_sprintf_ld(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_lx_format(format) } {
+        // SAFETY: exact `%lx` consumes one `unsigned long`; unbounded sprintf buffer.
+        let arg = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_sprintf_lx(str_buf, arg) };
     }
 
     let (mode, decision) =

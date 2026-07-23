@@ -238,4 +238,26 @@ fn main() {
         "SNPRINTF_ZU fl={snzu:.2}ns cv={snzu_cv:.2} glibc={gsnzu:.2}ns cv={gsnzu_cv:.2} fl/glibc={:.3}",
         snzu / gsnzu
     );
+
+    // %lx (64-bit lowercase hex) — reuses SnZu signature shape (usize arg == u64). Byte-identity.
+    let fmt_lx = c"%lx";
+    for &n in &[0usize, 1, 0xff, 0xdead_beef, 0xdead_beef_cafe_babe, usize::MAX, 4096] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let fr = unsafe { fl_zu(fb.as_mut_ptr().cast(), 32, fmt_lx.as_ptr(), n) };
+        let gr = unsafe { g_zu(gb.as_mut_ptr().cast(), 32, fmt_lx.as_ptr(), n) };
+        assert_eq!(fr, gr, "snprintf %lx return diverged for {n:#x}");
+        assert_eq!(fb, gb, "snprintf %lx bytes diverged for {n:#x}");
+    }
+    println!("verify: OK (fl snprintf %lx == glibc)");
+    let (snlx, snlx_cv) = collect(&|| {
+        black_box(unsafe { fl_zu(black_box(bp).cast(), 32, fmt_lx.as_ptr(), black_box(0xdead_beef_cafe_babeusize)) });
+    });
+    let (gsnlx, gsnlx_cv) = collect(&|| {
+        black_box(unsafe { g_zu(black_box(bp).cast(), 32, fmt_lx.as_ptr(), black_box(0xdead_beef_cafe_babeusize)) });
+    });
+    println!(
+        "SNPRINTF_LX fl={snlx:.2}ns cv={snlx_cv:.2} glibc={gsnlx:.2}ns cv={gsnlx_cv:.2} fl/glibc={:.3}",
+        snlx / gsnlx
+    );
 }

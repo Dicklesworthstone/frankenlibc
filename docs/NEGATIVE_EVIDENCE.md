@@ -22002,3 +22002,25 @@ item retains every later colon by construction, exactly matching the former `fie
   (hex variants), `%o` (octal), `%lld`/`%llu` (long long), sprintf `%s`/`%p`, and the va_list/stream
   functions (vsnprintf/vsprintf/printf/fprintf). [[printf-d-family-fastpath-vein]]. Reproducer:
   `--example snprintf_d_ab` (ZU arm).
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): snprintf+sprintf exact `%lx` strict fast path — 64-bit hex (addresses/masks/hashes); 3.35x LOSS → 0.710x WIN (cc-printf-lx-2026-07-23)
+
+- **THE GAP.** `%lx` (64-bit lowercase hex — pointers/masks/hashes in 64-bit code) hit the full
+  render. Measured base snprintf `%lx` fl **148.9ns** vs glibc 44ns = **3.353x LOSS**.
+- **THE LEVER.** `exact_direct_lx_format` (`%lx\0`) + `strict_direct_snprintf_lx` (bounded, u64,
+  16-digit buffer) + `strict_direct_sprintf_lx` (unbounded). Nibble loop, lowercase, no `0x`/leading
+  zeros. Wired into snprintf + sprintf. +80 lines.
+- **MEASURED (10 alternated x_base/x_cand runs, idle vmi1152480, 20/20 exit-0).**
+  - **SNPRINTF_LX: base 148.9ns → cand 31.9ns = cand/base 0.214, DISJOINT** (4.7x faster; base cv
+    11.6%, cand cv 8.8%). **fl/glibc 3.353x LOSS → 0.710x WIN.** (cand 31.9ns / 0.710x — higher than
+    %x's 20ns/0.514x because the test value 0xdeadbeefcafebabe is 16 hex digits vs %x's 8; still
+    DISJOINT and a clear win.)
+  - **NULL CONTROLS (unchanged): SNPRINTF_ZU 0.955 (ov 8/10), SNPRINTF_LD 1.002 (ov 10/10),
+    SNPRINTF_D 1.081 (ov 10/10), SNPRINTF_X 1.097 (ov 10/10)** — all overlapping.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_printf_fastpaths` 3/0; bench
+  `verify()` byte-identity for snprintf `%lx` over 0/1/0xff/0xdeadbeef/0xdeadbeefcafebabe/usize::MAX.
+- **DISPOSITION.** SHIPPED. **printf integer coverage now COMPLETE for snprintf+sprintf: decimal
+  (%d %u %ld %lu %zu %zd) + hex (%x %lx)** — 6 commits, all DISJOINT, all ~2.7-3.6x→~0.4-0.71x.
+  REMAINING (lower freq): `%X`/`%lX` (uppercase hex), `%o` (octal), `%lld`/`%llu` (long long, but
+  == %ld/%lu on LP64 — trivial), sprintf `%s`/`%p`, vsnprintf/vsprintf/printf/fprintf.
+  [[printf-d-family-fastpath-vein]]. Reproducer: `--example snprintf_d_ab` (LX arm).
