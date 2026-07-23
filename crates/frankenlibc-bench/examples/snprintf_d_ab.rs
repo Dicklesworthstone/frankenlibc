@@ -12,7 +12,7 @@ use std::time::Instant;
 type SnD = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_int) -> c_int;
 type SnU = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_uint) -> c_int;
 
-fn glibc_snprintf() -> *mut c_void {
+fn glibc_handle() -> *mut c_void {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
@@ -20,9 +20,7 @@ fn glibc_snprintf() -> *mut c_void {
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen failed");
-        let s = libc::dlsym(h, c"snprintf".as_ptr());
-        assert!(!s.is_null(), "dlsym snprintf failed");
-        s
+        h
     }
 }
 
@@ -48,7 +46,9 @@ fn main() {
     let fl_u: SnU = unsafe {
         std::mem::transmute::<*const (), SnU>(frankenlibc_abi::stdio_abi::snprintf as *const ())
     };
-    let g = glibc_snprintf();
+    let h = glibc_handle();
+    let g = unsafe { libc::dlsym(h, c"snprintf".as_ptr()) };
+    assert!(!g.is_null(), "dlsym snprintf failed");
     let g_d: SnD = unsafe { std::mem::transmute::<*mut c_void, SnD>(g) };
     let g_u: SnU = unsafe { std::mem::transmute::<*mut c_void, SnU>(g) };
 
@@ -115,4 +115,41 @@ fn main() {
         "SNPRINTF_U fl={flu:.2}ns cv={flu_cv:.2} glibc={glu:.2}ns cv={glu_cv:.2} fl/glibc={:.3} (already-fast reference)",
         flu / glu
     );
+
+    // sprintf %d/%u (unbounded). glibc sprintf via the same dlmopen handle.
+    type SpD = unsafe extern "C" fn(*mut c_char, *const c_char, c_int) -> c_int;
+    type SpU = unsafe extern "C" fn(*mut c_char, *const c_char, c_uint) -> c_int;
+    let fl_sp_d: SpD = unsafe {
+        std::mem::transmute::<*const (), SpD>(frankenlibc_abi::stdio_abi::sprintf as *const ())
+    };
+    let fl_sp_u: SpU = unsafe {
+        std::mem::transmute::<*const (), SpU>(frankenlibc_abi::stdio_abi::sprintf as *const ())
+    };
+    let gsp = unsafe { libc::dlsym(h, c"sprintf".as_ptr()) };
+    assert!(!gsp.is_null());
+    let g_sp_d: SpD = unsafe { std::mem::transmute::<*mut c_void, SpD>(gsp) };
+    // sprintf byte-identity over the signed edge set.
+    for &n in &[0i32, -1, 12345, -12345, i32::MIN, i32::MAX] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let fr = unsafe { fl_sp_d(fb.as_mut_ptr().cast(), fmt_d.as_ptr(), n) };
+        let gr = unsafe { g_sp_d(gb.as_mut_ptr().cast(), fmt_d.as_ptr(), n) };
+        assert_eq!(fr, gr, "sprintf %d return diverged for {n}");
+        assert_eq!(fb, gb, "sprintf %d bytes diverged for {n}");
+    }
+    println!("verify: OK (fl sprintf %d == glibc)");
+    let (spd, spd_cv) = collect(&|| {
+        black_box(unsafe { fl_sp_d(black_box(bp).cast(), fmt_d.as_ptr(), black_box(-12345)) });
+    });
+    let (spu, spu_cv) = collect(&|| {
+        black_box(unsafe { fl_sp_u(black_box(bp).cast(), fmt_u.as_ptr(), black_box(12345u32)) });
+    });
+    let (gspd, gspd_cv) = collect(&|| {
+        black_box(unsafe { g_sp_d(black_box(bp).cast(), fmt_d.as_ptr(), black_box(-12345)) });
+    });
+    println!(
+        "SPRINTF_D fl={spd:.2}ns cv={spd_cv:.2} glibc={gspd:.2}ns cv={gspd_cv:.2} fl/glibc={:.3}",
+        spd / gspd
+    );
+    println!("SPRINTF_U fl={spu:.2}ns cv={spu_cv:.2} (fl-only, was also missing)");
 }

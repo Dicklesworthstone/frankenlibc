@@ -5623,6 +5623,57 @@ unsafe fn strict_direct_sprintf_c(str_buf: *mut c_char, arg: c_int) -> c_int {
     1
 }
 
+/// Unbounded signed-decimal `%d` for `sprintf` (no `size` — writes the full output + NUL).
+/// Same rendering as `strict_direct_snprintf_d`; `i32::MIN` handled via `unsigned_abs`.
+unsafe fn strict_direct_sprintf_d(str_buf: *mut c_char, arg: c_int) -> c_int {
+    let mut rendered = [0u8; 11];
+    let neg = arg < 0;
+    let mut value = (arg as i64).unsigned_abs();
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if neg {
+        start -= 1;
+        rendered[start] = b'-';
+    }
+    let len = rendered.len() - start;
+    // SAFETY: sprintf's C contract gives an output buffer large enough for the full result;
+    // `rendered[start..]` holds exactly `len` initialized bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
+/// Unbounded `%u` for `sprintf`. Same rendering as `strict_direct_snprintf_u`, no truncation.
+unsafe fn strict_direct_sprintf_u(str_buf: *mut c_char, arg: c_uint) -> c_int {
+    let mut rendered = [0u8; 10];
+    let mut value = arg;
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let len = rendered.len() - start;
+    // SAFETY: as `strict_direct_sprintf_d`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
 #[inline]
 unsafe fn copy_literal_bytes(dst: *mut c_char, src: *const c_char, len: usize) {
     let dst = dst.cast::<u8>();
@@ -5907,6 +5958,16 @@ pub unsafe extern "C" fn sprintf(
     if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_c_format(format) } {
         let arg = unsafe { args.next_arg::<c_int>() };
         return unsafe { strict_direct_sprintf_c(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_d_format(format) } {
+        // SAFETY: exact `%d` consumes one promoted `int`; unbounded sprintf buffer.
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_sprintf_d(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_u_format(format) } {
+        // SAFETY: exact `%u` consumes one promoted `unsigned int`; unbounded sprintf buffer.
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_sprintf_u(str_buf, arg) };
     }
 
     let (mode, decision) =

@@ -21905,3 +21905,30 @@ item retains every later colon by construction, exactly matching the former `fie
   strict fast paths — it misses BOTH `%d` AND `%u`** (line ~5907); adding them mirrors this win.
   printf/fprintf/vsnprintf/dprintf strict blocks should be audited for the same `%d` omission.
   Lane: printf campaign. Reproducer: `--example snprintf_d_ab`.
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): sprintf exact `%d`/`%u` strict fast paths — sprintf had ONLY `%c`, missing both integer formats; 3.27x LOSS → 0.417x WIN (cc-sprintf-d-2026-07-23)
+
+- **THE GAP (family audit follow-up to cc-snprintf-d).** Audited the whole printf family's strict
+  fast-path coverage: **snprintf** was the ONLY richly-covered fn (literal/%s/%c/%u/%p + now %d);
+  **sprintf** had ONLY literal + `%c` (missed `%d`, `%u`, `%s`, `%p`); printf/fprintf/vsnprintf/
+  vsprintf/vfprintf/dprintf have essentially none. sprintf is the closest analog to snprintf
+  (formats into a caller buffer, no stream). Measured base `%d` fl **131.5ns** vs glibc 40ns =
+  **3.270x LOSS**.
+- **THE LEVER.** Added `strict_direct_sprintf_d` + `strict_direct_sprintf_u` (unbounded siblings of
+  the snprintf `_d`/`_u` helpers — no `size`, write full output + NUL), reusing the
+  `exact_direct_d_format`/`exact_direct_u_format` matchers from cc-snprintf-d, wired into sprintf's
+  strict block after `%c`. +48 lines.
+- **MEASURED (10 alternated spd_base/spd_cand runs, idle vmi1152480, 10/10 exit-0; binaries
+  cbbabc28…/b4eb3522…).**
+  - **SPRINTF_D: fl base 131.5ns → cand 17.3ns = cand/base 0.132, DISJOINT** (7.6x faster; base
+    cv 10.9%, cand cv 12.2%). **fl/glibc 3.270x LOSS → 0.417x WIN.**
+  - **NULL CONTROLS (snprintf, unchanged this commit): SNPRINTF_D cand/base 0.930 (ov 6/10),
+    SNPRINTF_U 0.984 (ov 7/10)** — overlapping ⇒ the effect is the sprintf fast path.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_printf_fastpaths` 3/0 (with both
+  snprintf+sprintf %d patches stacked); bench `verify()` byte-identity for sprintf %d over 0 /
+  negatives / `i32::MIN` / `i32::MAX`.
+- **DISPOSITION.** SHIPPED. **REMAINING printf-family gaps (next levers): sprintf still misses
+  `%s`/`%p` (snprintf has them); vsnprintf/vsprintf (buffer-format, clean analogs) have only
+  literal/none; printf/fprintf/vfprintf/dprintf write to STREAMS (need format + the write path —
+  more complex).** Ledger cc-sprintf-d-2026-07-23. Reproducer: `--example snprintf_d_ab` (SPRINTF
+  arms).
