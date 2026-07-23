@@ -21957,3 +21957,26 @@ item retains every later colon by construction, exactly matching the former `fie
   commits, all DISJOINT, all ~3.3-3.6x→~0.4-0.5x. REMAINING full-render formats: `%X` (uppercase),
   `%ld`/`%lu`/`%lx` (long), `%o` (octal); plus sprintf %s/%p, vsnprintf/vsprintf, printf/fprintf.
   Reproducer: `--example snprintf_d_ab` (X arms).
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): snprintf+sprintf exact `%ld`/`%lu` strict fast paths — 64-bit long integers hit the full render; 2.73x LOSS → 0.554x WIN (cc-printf-ld-2026-07-23)
+
+- **THE GAP.** `%ld`/`%lu` (64-bit `long`/`unsigned long` — sizes/offsets/counts, ubiquitous in
+  64-bit code) had no fast path and hit full `parse_format_string` + `render_segments`. Measured
+  base snprintf `%ld` fl **135.2ns** vs glibc 50ns = **2.725x LOSS**.
+- **THE LEVER.** `exact_direct_ld_format`/`exact_direct_lu_format` (4-byte `%ld\0`/`%lu\0`) +
+  `strict_direct_snprintf_ld`/`_lu` (bounded, i64/u64; `i64::MIN` via `unsigned_abs`, 20-byte
+  buffer fits "-9223372036854775808") + `strict_direct_sprintf_ld`/`_lu` (unbounded). Wired into
+  snprintf (after `%x`) and sprintf (after `%x`). +140 lines.
+- **MEASURED (10 alternated x_base/x_cand runs, idle vmi1152480, 20/20 exit-0; full-file patches).**
+  - **SNPRINTF_LD: base 135.2ns → cand 25.7ns = cand/base 0.190, DISJOINT** (5.3x faster; base cv
+    10.8%, cand cv 10.2%). **fl/glibc 2.725x LOSS → 0.554x WIN.** (cand 25.7ns vs %d's 19ns = the
+    64-bit division; still DISJOINT.)
+  - **NULL CONTROLS (unchanged): SNPRINTF_D 1.010 (ov 10/10), SNPRINTF_U 1.046 (ov 9/10),
+    SNPRINTF_X 1.058 (ov 8/10)** — all overlapping ⇒ effect is the `%ld`/`%lu` fast path.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_printf_fastpaths` 3/0; bench
+  `verify()` byte-identity for snprintf `%ld` over 0 / negatives / `i64::MIN` / `i64::MAX` / ±9e9.
+- **DISPOSITION.** SHIPPED. Printf-`%d`-family vein ([[printf-d-family-fastpath-vein]]): snprintf
+  %d, sprintf %d/%u, snprintf+sprintf %x, snprintf+sprintf %ld/%lu — **4 commits, all DISJOINT,
+  all ~2.7-3.6x→~0.4-0.56x**. `%zu`/`%zd` (size_t) render identically to `%lu`/`%ld` on LP64 (add
+  the matchers, reuse the helpers — trivial follow-up); then `%X`/`%lx` (hex), `%o` (octal),
+  sprintf %s/%p, vsnprintf/printf/fprintf. Reproducer: `--example snprintf_d_ab` (LD arm).

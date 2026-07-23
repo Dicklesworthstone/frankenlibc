@@ -184,4 +184,31 @@ fn main() {
         snx / gsnx
     );
     println!("SPRINTF_X fl={spx:.2}ns cv={spx_cv:.2} (fl-only)");
+
+    // %ld (64-bit signed long) — snprintf. Byte-identity over the i64 edge set.
+    type SnLd = unsafe extern "C" fn(*mut c_char, usize, *const c_char, i64) -> c_int;
+    let fmt_ld = c"%ld";
+    let fl_ld: SnLd = unsafe {
+        std::mem::transmute::<*const (), SnLd>(frankenlibc_abi::stdio_abi::snprintf as *const ())
+    };
+    let g_ld: SnLd = unsafe { std::mem::transmute::<*mut c_void, SnLd>(g) };
+    for &n in &[0i64, -1, 12345, -12345, i64::MIN, i64::MAX, 9_000_000_000, -9_000_000_000] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let fr = unsafe { fl_ld(fb.as_mut_ptr().cast(), 32, fmt_ld.as_ptr(), n) };
+        let gr = unsafe { g_ld(gb.as_mut_ptr().cast(), 32, fmt_ld.as_ptr(), n) };
+        assert_eq!(fr, gr, "snprintf %ld return diverged for {n}");
+        assert_eq!(fb, gb, "snprintf %ld bytes diverged for {n}");
+    }
+    println!("verify: OK (fl snprintf %ld == glibc)");
+    let (snld, snld_cv) = collect(&|| {
+        black_box(unsafe { fl_ld(black_box(bp).cast(), 32, fmt_ld.as_ptr(), black_box(-9_000_000_000i64)) });
+    });
+    let (gsnld, gsnld_cv) = collect(&|| {
+        black_box(unsafe { g_ld(black_box(bp).cast(), 32, fmt_ld.as_ptr(), black_box(-9_000_000_000i64)) });
+    });
+    println!(
+        "SNPRINTF_LD fl={snld:.2}ns cv={snld_cv:.2} glibc={gsnld:.2}ns cv={gsnld_cv:.2} fl/glibc={:.3}",
+        snld / gsnld
+    );
 }
