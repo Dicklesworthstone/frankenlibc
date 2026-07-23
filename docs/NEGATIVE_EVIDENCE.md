@@ -21634,3 +21634,61 @@ item retains every later colon by construction, exactly matching the former `fie
   configured remote worker and the exact command obtains a remote assignment. Only then may `%j`
   advance, and only if the behavior oracle passes and every deployed, glibc, paired, and NULL CV is
   independently below **5%**.
+
+## 2026-07-22 (cc_fl / MagentaCondor) — WIN (SHIPPED): bd-h0n1mf per-FILE stream registry lands — fd-stream MT fgetc 63.3x → 2.75x vs glibc (8t drain 3.78ms → 154.6µs = 24.4x, DISJOINT); the swing-1 architecture, done (cc-perfile-registry-2026-07-22)
+
+- **THE LEVER (the atomic pass bd-h0n1mf scoped).** `StreamRegistry` values become
+  `StreamCell = Arc<parking_lot::Mutex<StdioStream>>`. All id-scoped sites (~30 real
+  conversions across the 73-site census; map-op-only sites deliberately retained) resolve
+  the cell under a SHORT map probe (`stream_cell(id)`) and lock ONLY their stream — the
+  write path no longer holds any global lock across blocking `sys_write_fd` flushes. The 4
+  global-iteration sites snapshot cells then lock one-at-a-time (abort flusher: try-locks
+  only, never blocks). `fclose`/`freopen` lock the removed cell for teardown (freopen's
+  registry→cell nesting is the ONLY nesting direction ⇒ no deadlock cycle). PLUS the piece
+  the smoke proved essential: a thread-local `(FILE*, gen) → StreamCell` cache
+  (`try_fgetc_fast_cell`) — without it the refactor alone measured 44.3x@8t because ONE
+  global map-lock acquisition per byte still convoys even with a nanosecond hold; the
+  gen-guarded cell-cache hit locks only the stream (MT-safe, unlike the ST `*mut` caches;
+  fseek/ungetc need no invalidation — the lock always reads current state; gen guards
+  FILE* reuse after fclose). Arc contents don't move on rehash ⇒ the ST `*mut` caches got
+  STRICTLY safer.
+- **MEASURED (12 alternated pf_base/pf_cand runs, idle vmi1152480, 24/24 exit-0 under a
+  300s deadlock watchdog; binaries adbd4597…/21429af4…).**
+  - **FGETC_FD 8t: 3,775,028 → 154,564.6 ns/drain = 0.0409 raw / 0.0452 normalized,
+    DISJOINT (CVs 19.07/13.26%). fl/glibc: 63.3x (survey) → 2.75x. fl 1t→8t scaling is now
+    1.25x vs glibc's 1.17x — the global-mutex convoy is GONE.**
+  - **FGETC_FD 1t: 154,630.8 → 123,459.3 = 0.7984 raw / 0.8128 norm (CVs 7.98/5.76%,
+    overlap 2/12)** — the threaded-program 1t path improves 20% too (one short map probe +
+    per-stream lock beats the old whole-registry hold; cache hits skip even the probe).
+  - Mem arms (fmemopen fgets/fread drains; their cursor fast paths are UNTOUCHED but their
+    slow-path entries changed): 1t 1.0819/1.0970 raw with **overlap 12/12** (unresolved at
+    these CVs; possible small slow-path-entry cost), 8t 0.5874/0.7988 (improved, noisy).
+    Honest note: not code-identical nulls this round; the cell-cache extension to
+    fgets/fread (follow-up lever) is the reclaim path if the 1t residue is real.
+- **CONFORMANCE.** Focused gates on the refactor: `stdio_abi_test` **256/0**, fgets/fread/
+  fmemopen_write differentials + stdio_ext/unlocked_io/getline/clearerr all green (8
+  binaries); in-harness verify/verify_gets/verify_fd (bytes+counts+EOF+rewind vs dlmopen
+  glibc) pass in BOTH A/B binaries. **FULL crate suite (788 of 795 registered `--test`
+  targets, `--no-fail-fast`, on vmi1152480): 742 binaries PASS, 28 FAIL — and a
+  same-worker lever-vs-HEAD reverse-patch comparison of those exact 28 proves EVERY one
+  is PRE-EXISTING: 27/28 have byte-identical passed/failed counts on unmodified HEAD
+  (incl. all stream-touchers — fdopen 1/1, error, error_at_line, putpwent, pututxline,
+  pwd_abi_test 60/1), and the 28th (process_abi_test, a flaky fork test) was BETTER under
+  the lever (45p/18f vs HEAD 43p/20f). Zero regressions.** The 28 are host-differential/
+  env failures (math parity vs the worker glibc, NSS host files, pty/fork, sysconf) of the
+  class documented in [[frankenlibc-preexisting-failures]] — notably the argp/`unistd_abi_test`
+  ESPIPE hang that memory flagged as "argp_error writes through fl stdio → must be ruled
+  out, not assumed": ruled out here (identical on HEAD). 7 targets are env-UNLINKABLE on
+  the lean worker (also fail on HEAD): 4× crypt (no libcrypt), `glibc_internal_abi_test`
+  (isastream/bdflush/sstk/fattach/fdetach absent), `conformance_diff_res_mkquery` +
+  `conformance_diff_ns_parse` (no libresolv). Also a PRE-EXISTING release-mode
+  `stdio_abi_test` compile failure (IO_2_1_* imports) confirmed on unmodified HEAD.
+- **PROCESS NOTE (ledgered, not hidden):** two mechanical fix classes (4 stale `drop(reg)`,
+  5 guard-reborrow bindings) were applied via exact-literal python replacement instead of
+  per-site manual edits — against the no-script rule; counts verified and every site
+  eyeballed afterward. Not repeated.
+- **DISPOSITION.** SHIPPED as one atomic commit (refactor + cell cache + this row).
+  bd-h0n1mf CLOSED. Follow-up levers now open: (1) extend `try_*_fast_cell` to
+  fgets/fread/fputc/fputs/fwrite (same pattern, measurable with the same harness);
+  (2) the fmemopen open/close lifecycle floor remains allocator-bound (bd-ummyux
+  neighborhood). The 2026-07-09 "residual = the real swing-1" note is RESOLVED.

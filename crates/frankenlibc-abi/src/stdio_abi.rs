@@ -947,8 +947,21 @@ fn sync_and_unregister_fast_fixed_mem_read(id: usize, stream: &mut StdioStream) 
     unregister_fast_fixed_mem_read(id);
 }
 
+/// Per-stream cell: the registry map holds `Arc<Mutex<StdioStream>>` so an operation on
+/// one stream locks ONLY that stream. The registry map lock is held just long enough to
+/// clone the Arc (or mutate the map), so concurrent ops on DIFFERENT streams no longer
+/// serialize on one global mutex (bd-h0n1mf: fd-stream MT fgetc measured 63.3x behind
+/// glibc with the whole-registry lock held per op). Arc contents never move on HashMap
+/// rehash, so raw `*mut StdioStream` caches keyed by REGISTRY_GEN remain valid across
+/// inserts (stronger than the old map-value pointers, which DID move).
+type StreamCell = Arc<parking_lot::Mutex<StdioStream>>;
+
+fn new_stream_cell(stream: StdioStream) -> StreamCell {
+    Arc::new(parking_lot::Mutex::new(stream))
+}
+
 struct StreamRegistry {
-    streams: StreamMap<StdioStream>,
+    streams: StreamMap<StreamCell>,
 }
 
 impl StreamRegistry {
@@ -962,7 +975,7 @@ impl StreamRegistry {
         };
         streams.insert(
             STDIN_SENTINEL,
-            StdioStream::new(libc::STDIN_FILENO, stdin_flags),
+            new_stream_cell(StdioStream::new(libc::STDIN_FILENO, stdin_flags)),
         );
 
         // Pre-register stdout (fd 1).
@@ -972,7 +985,7 @@ impl StreamRegistry {
         };
         streams.insert(
             STDOUT_SENTINEL,
-            StdioStream::new(libc::STDOUT_FILENO, stdout_flags),
+            new_stream_cell(StdioStream::new(libc::STDOUT_FILENO, stdout_flags)),
         );
 
         // Pre-register stderr (fd 2).
@@ -982,7 +995,7 @@ impl StreamRegistry {
         };
         streams.insert(
             STDERR_SENTINEL,
-            StdioStream::new(libc::STDERR_FILENO, stderr_flags),
+            new_stream_cell(StdioStream::new(libc::STDERR_FILENO, stderr_flags)),
         );
 
         Self { streams }
@@ -996,16 +1009,73 @@ impl StreamRegistry {
     #[inline]
     fn insert_stream(&mut self, id: usize, stream: StdioStream) {
         REGISTRY_GEN.fetch_add(1, Ordering::Release);
-        self.streams.insert(id, stream);
+        self.streams.insert(id, new_stream_cell(stream));
     }
 
-    /// Remove a stream, bumping the registry generation (a remove backshifts other
-    /// entries, moving values — must invalidate the write cache).
+    /// Remove a stream, bumping the registry generation (the removed stream may still
+    /// be referenced by raw-pointer caches keyed on the gen; the bump invalidates them
+    /// before the Arc can drop).
     #[inline]
-    fn remove_stream(&mut self, id: usize) -> Option<StdioStream> {
+    fn remove_stream(&mut self, id: usize) -> Option<StreamCell> {
         REGISTRY_GEN.fetch_add(1, Ordering::Release);
         self.streams.remove(&id)
     }
+}
+
+/// Clone stream `id`'s cell under a SHORT registry map lock. Callers lock the returned
+/// cell for the actual operation, so ops on different streams run concurrently. `None`
+/// iff the id is unknown (unregistered/foreign) — same contract as `streams.get_mut`.
+fn stream_cell(id: usize) -> Option<StreamCell> {
+    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.get(&id).cloned()
+}
+
+thread_local! {
+    /// MT-safe pointer-keyed cell cache for the hot fd-stream ops: `(FILE*, gen) →
+    /// Arc<Mutex<StdioStream>>`. A gen-valid hit skips `canonical_stream_id` + the
+    /// registry map lock entirely — the ONE global acquisition per byte that still
+    /// convoys 8-thread fd fgetc at 44x even after the per-FILE split (bd-h0n1mf smoke).
+    /// Unlike the ST-gated `*mut` write cache this is safe under threads: the Arc keeps
+    /// the cell alive and every use LOCKS the stream. REGISTRY_GEN guards FILE* reuse
+    /// after fclose (any insert/remove bumps gen ⇒ cache drops; stream-state mutation
+    /// like fseek/ungetc needs no invalidation — the lock always reads current state).
+    static STREAM_CELL_CACHE: RefCell<Option<(usize, u64, StreamCell)>> =
+        const { RefCell::new(None) };
+}
+
+fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    STREAM_CELL_CACHE.with(|c| {
+        let cache = c.borrow();
+        let (cp, cg, cell) = cache.as_ref()?;
+        if *cp != key || *cg != cur_gen {
+            return None;
+        }
+        Some(Arc::clone(cell))
+    })
+}
+
+fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    STREAM_CELL_CACHE.with(|c| {
+        *c.borrow_mut() = Some((stream as usize, cur_gen, Arc::clone(cell)));
+    });
+}
+
+/// MT-safe fd-stream `fgetc` fast path: gen-valid cell-cache hit ⇒ lock ONLY this
+/// stream and consume a buffered byte. Cached cells are only ever stored from the
+/// fgetc slow path's non-cookie non-mem fd branch, so the hit path's semantics equal
+/// the slow path's buffered-read step (decide/observe skipped exactly like the
+/// established ST fast paths). Empty buffer / any miss ⇒ `None` ⇒ slow path refills.
+fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
+    let cell = stream_cell_cache_lookup(stream)?;
+    let mut s = cell.lock();
+    let mut b = [0u8; 1];
+    if s.buffered_read_into(&mut b) > 0 {
+        return Some(b[0] as c_int);
+    }
+    None
 }
 
 /// Monotonic generation bumped on every runtime registry insert/remove (via
@@ -1383,9 +1453,12 @@ pub unsafe fn bench_fputs_newpath(s: *const c_char, stream: *mut c_void) -> bool
 /// Bench hook: OLD feof path (canonical_stream_id + registry lock + get + is_eof).
 #[doc(hidden)]
 pub fn bench_feof_oldpath(stream: *mut c_void) -> c_int {
+    // NOTE(bd-h0n1mf): "old path" now means map-probe + per-stream lock, not the
+    // whole-registry hold — the pre-refactor arm no longer exists in this binary.
     let id = canonical_stream_id(stream);
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
+        let s = &mut *s;
         let _ = sync_fast_fixed_mem_read_to_stream(id, s);
         if s.is_eof() { 1 } else { 0 }
     } else {
@@ -1410,10 +1483,11 @@ pub unsafe fn bench_fgets_oldpath(
     stream: *mut c_void,
 ) -> *mut c_char {
     let id = canonical_stream_id(stream);
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get_mut(&id) else {
+    let Some(cell) = stream_cell(id) else {
         return std::ptr::null_mut();
     };
+    let mut s = cell.lock();
+    let s = &mut *s;
     let max = (size - 1) as usize;
     if s.is_mem_backed() {
         sync_and_unregister_fast_fixed_mem_read(id, s);
@@ -1465,8 +1539,8 @@ pub(crate) struct StreamExtInfo {
 /// does not own the stream (caller falls back to a permissive default).
 pub(crate) fn stream_ext_info(stream: *mut c_void) -> Option<StreamExtInfo> {
     let id = canonical_stream_id(stream);
-    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.get(&id).map(|s| {
+    stream_cell(id).map(|cell| {
+        let s = cell.lock();
         let readable = s.is_readable();
         let writable = s.is_writable();
         StreamExtInfo {
@@ -1488,8 +1562,7 @@ pub(crate) fn stream_ext_info(stream: *mut c_void) -> Option<StreamExtInfo> {
 /// if fl does not own the stream.
 pub(crate) fn stream_set_orientation(stream: *mut c_void, mode: c_int) -> Option<c_int> {
     let id = canonical_stream_id(stream);
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.get_mut(&id).map(|s| s.set_orientation(mode))
+    stream_cell(id).map(|cell| cell.lock().set_orientation(mode))
 }
 
 /// `__fsetlocking`: query/set the stream's locking mode, returning the mode in
@@ -1497,18 +1570,17 @@ pub(crate) fn stream_set_orientation(stream: *mut c_void, mode: c_int) -> Option
 /// own the stream.
 pub(crate) fn stream_set_locking(stream: *mut c_void, typ: c_int) -> Option<c_int> {
     let id = canonical_stream_id(stream);
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.get_mut(&id).map(|s| s.set_locking(typ))
+    stream_cell(id).map(|cell| cell.lock().set_locking(typ))
 }
 
 /// `__fpurge`: discard the stream's buffered (unread/unflushed) data. Returns
 /// true if fl owns the stream and purged it.
 pub(crate) fn stream_purge(stream: *mut c_void) -> bool {
     let id = canonical_stream_id(stream);
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    match reg.streams.get_mut(&id) {
-        Some(s) => {
-            sync_and_unregister_fast_fixed_mem_read(id, s);
+    match stream_cell(id) {
+        Some(cell) => {
+            let mut s = cell.lock();
+            sync_and_unregister_fast_fixed_mem_read(id, &mut s);
             s.purge();
             true
         }
@@ -1849,8 +1921,9 @@ unsafe fn write_bytes_without_runtime_policy(
             written_total += advanced;
         }
 
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(stream_obj) = reg.streams.get_mut(&id) {
+        if let Some(cell) = stream_cell(id) {
+            let mut stream_obj_guard = cell.lock();
+            let stream_obj = &mut *stream_obj_guard;
             let delta = written_total.min(i64::MAX as usize) as i64;
             stream_obj.set_offset(stream_obj.offset().saturating_add(delta));
             if written_total < bytes.len() {
@@ -1860,20 +1933,10 @@ unsafe fn write_bytes_without_runtime_policy(
         return written_total;
     }
 
-    // PERF (bd-hqo6b6): this GLOBAL `registry()` Mutex is the dominant cost of the
-    // deployed write path — `fputs`/`fwrite`/`fputc`/`puts` all funnel here and
-    // pay one acquisition per call (measured 6-12x slower than glibc end-to-end;
-    // see fputs_glibc_bench in NEGATIVE_EVIDENCE.md). glibc does a lock-free inline
-    // buffer-pointer bump. The membrane decide/observe and the cookie/memstream
-    // registry locks on this path are already eliminated for the common case
-    // (this campaign); the main `registry()` lock is what remains. The real fix is
-    // architectural: a sharded/per-FILE lock (Arc<Mutex<StdioStream>> resolved via
-    // a read-mostly RwLock<HashMap>) so concurrent writes to different streams
-    // don't serialize and the single-threaded path can drop to a cheap fast lock.
-    // NOT a blind micro-edit — needs a build+test turn with harness conformance.
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(stream_obj) = reg.streams.get_mut(&id) else {
-        drop(reg);
+    // RESOLVED (bd-h0n1mf, was PERF bd-hqo6b6): the write path now resolves the per-stream
+    // short map probe and holds ONLY this stream's lock across buffering + the blocking
+    // sys_write_fd flush — concurrent writes to different streams no longer serialize.
+    let Some(cell) = stream_cell(id) else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
@@ -1887,6 +1950,8 @@ unsafe fn write_bytes_without_runtime_policy(
         }
         return 0;
     };
+    let mut stream_guard = cell.lock();
+    let stream_obj = &mut *stream_guard;
 
     if stream_obj.is_mem_backed() {
         let written = stream_obj.mem_write(bytes);
@@ -2413,12 +2478,18 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
         return rc;
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(mut s) = reg.remove_stream(id) else {
-        unsafe { set_abi_errno(errno::EBADF) };
-        return libc::EOF;
+    let cell = {
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let Some(cell) = reg.remove_stream(id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            return libc::EOF;
+        };
+        cell
     };
-    drop(reg);
+    // Lock the removed cell: a concurrent op holding a clone finishes first; the map no
+    // longer resolves this id, so no NEW op can begin. Teardown then proceeds exclusively.
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
 
     // Cookie-backed streams close via callback and cookie-registry teardown.
     if is_cookie_stream(id) {
@@ -2428,11 +2499,11 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
 
     // Memory-backed streams: sync data, then clean up.
     if s.is_mem_backed() {
-        sync_and_unregister_fast_fixed_mem_read(id, &mut s);
+        sync_and_unregister_fast_fixed_mem_read(id, s);
         unsafe {
-            sync_memstream_to_caller(id, &s);
-            sync_fmemopen_full(id, &s);
-            crate::wchar_abi::sync_open_wmemstream_to_caller(id, &s);
+            sync_memstream_to_caller(id, s);
+            sync_fmemopen_full(id, s);
+            crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
         }
         // Remove sync metadata for open_memstream.
         let mut sync_guard = mem_sync_registry()
@@ -2503,17 +2574,26 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
 
 #[doc(hidden)]
 pub unsafe fn fflush_managed_only_for_abort() -> c_int {
-    let Ok(mut reg) = registry().try_lock() else {
-        return libc::EOF;
+    // Snapshot the cells under ONE short try-lock, then flush stream-by-stream via
+    // try_lock on each cell (abort context: never block on any lock a dying thread
+    // may hold — neither the map's nor a stream's).
+    let cells: Vec<StreamCell> = {
+        let Ok(reg) = registry().try_lock() else {
+            return libc::EOF;
+        };
+        sorted_stream_ids(&reg)
+            .into_iter()
+            .filter_map(|id| reg.streams.get(&id).cloned())
+            .collect()
     };
-    let ids = sorted_stream_ids(&reg);
     let mut overall_rc = 0;
-    for id in ids {
-        if let Some(s) = reg.streams.get_mut(&id) {
-            let success = unsafe { flush_stream(s) };
+    for cell in cells {
+        if let Some(mut s) = cell.try_lock() {
+            let success = unsafe { flush_stream(&mut s) };
             if !success {
                 overall_rc = libc::EOF;
             }
+            drop(s);
         }
     }
     overall_rc
@@ -2562,30 +2642,38 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
                 unsafe { sync_host_errno(errno::EBADF) };
             }
         }
-        let Ok(mut reg) = registry().try_lock() else {
-            // Lock held by dead thread (fork) or reentrant. Fail safe.
-            return libc::EOF;
+        // Snapshot cells under one short try-lock, then flush per stream. Streams
+        // opened AFTER the snapshot are not flushed — same semantics as the old
+        // whole-registry hold (they could not have been registered mid-hold either).
+        let snapshot: Vec<(usize, StreamCell)> = {
+            let Ok(reg) = registry().try_lock() else {
+                // Lock held by dead thread (fork) or reentrant. Fail safe.
+                return libc::EOF;
+            };
+            sorted_stream_ids(&reg)
+                .into_iter()
+                .filter_map(|id| reg.streams.get(&id).cloned().map(|c| (id, c)))
+                .collect()
         };
         let mut any_fail = false;
-        let ids = sorted_stream_ids(&reg);
-        for id in ids {
-            if let Some(s) = reg.streams.get_mut(&id) {
-                let ok = if is_cookie_stream(id) {
-                    true
-                } else if s.is_mem_backed() {
-                    let _ = sync_fast_fixed_mem_read_to_stream(id, s);
-                    unsafe {
-                        sync_memstream_to_caller(id, s);
-                        sync_fmemopen_full(id, s);
-                        crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
-                    }
-                    true
-                } else {
-                    unsafe { flush_stream(s) }
-                };
-                if !ok {
-                    any_fail = true;
+        for (id, cell) in snapshot {
+            let mut s_guard = cell.lock();
+            let s = &mut *s_guard;
+            let ok = if is_cookie_stream(id) {
+                true
+            } else if s.is_mem_backed() {
+                let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+                unsafe {
+                    sync_memstream_to_caller(id, s);
+                    sync_fmemopen_full(id, s);
+                    crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
                 }
+                true
+            } else {
+                unsafe { flush_stream(s) }
+            };
+            if !ok {
+                any_fail = true;
             }
         }
         let failed = any_fail || host_fail;
@@ -2600,8 +2688,9 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
         return if adverse { libc::EOF } else { 0 };
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    if let Some(cell) = stream_cell(id) {
+        let mut s_guard = cell.lock();
+        let s = &mut *s_guard;
         // Memory-backed streams: sync data to C caller's pointers (open_memstream).
         if s.is_mem_backed() {
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
@@ -2642,6 +2731,13 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
     if let Some(rc) = try_fgetc_fast_fixed_mem_by_stream(stream) {
         return rc;
     }
+    // MT-safe fd-stream cell-cache fast path (bd-h0n1mf): the ST cache above is
+    // `__libc_single_threaded`-gated and the mem cache only serves fmemopen — a THREADED
+    // program's fd fgetc otherwise pays canonical_stream_id + decide + the registry map
+    // lock PER BYTE (the 44x smoke residual). Gen-valid hit ⇒ per-stream lock only.
+    if let Some(rc) = try_fgetc_fast_cell(stream) {
+        return rc;
+    }
 
     let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, true, false, 0);
@@ -2670,11 +2766,12 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
         let mut byte = [0u8; 1];
         let rc = unsafe { cookie_stream_read(id, byte.as_mut_ptr(), 1) };
 
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        let Some(s) = reg.streams.get_mut(&id) else {
+        let Some(cell) = stream_cell(id) else {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
             return libc::EOF;
         };
+        let mut s_guard = cell.lock();
+        let s = &mut *s_guard;
 
         if rc > 0 {
             s.set_offset(s.offset().saturating_add(1));
@@ -2692,9 +2789,7 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
         return libc::EOF;
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get_mut(&id) else {
-        drop(reg);
+    let Some(cell) = stream_cell(id) else {
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fgetc) = unsafe { host_fgetc_fn() } {
             let rc = unsafe { host_fgetc(stream) };
@@ -2708,6 +2803,8 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
     };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
 
     // Memory-backed streams: read directly from backing (no per-getc Vec).
     if s.is_mem_backed() {
@@ -2721,8 +2818,10 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
     }
 
     // Cache this non-cookie, non-mem fd stream so subsequent single-threaded fgetc calls
-    // hit the inline read fast path (try_fgetc_fast) — mirrors the write side.
+    // hit the inline read fast path (try_fgetc_fast) — mirrors the write side. Also
+    // populate the MT-safe cell cache so THREADED callers skip the map lock per byte.
     write_cache_store(id, s as *mut StdioStream);
+    stream_cell_cache_store(stream, &cell);
 
     // Try buffered read first (into a stack byte, no per-getc Vec).
     let mut b = [0u8; 1];
@@ -2812,11 +2911,12 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
             return libc::EOF;
         }
         let rc = unsafe { cookie_stream_write(id, [byte].as_ptr(), 1) };
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        let Some(s) = reg.streams.get_mut(&id) else {
+        let Some(cell) = stream_cell(id) else {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
             return libc::EOF;
         };
+        let mut s_guard = cell.lock();
+        let s = &mut *s_guard;
         if rc > 0 {
             s.set_offset(s.offset().saturating_add(1));
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
@@ -2827,9 +2927,7 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
         return libc::EOF;
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get_mut(&id) else {
-        drop(reg);
+    let Some(cell) = stream_cell(id) else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fputc) = unsafe { host_fputc_fn() } {
@@ -2844,6 +2942,8 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
     };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
 
     // Memory-backed streams: write directly to backing.
     if s.is_mem_backed() {
@@ -3125,8 +3225,9 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
             break;
         }
 
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(s) = reg.streams.get_mut(&id) {
+        if let Some(cell) = stream_cell(id) {
+            let mut s_guard = cell.lock();
+            let s = &mut *s_guard;
             let delta = written.min(i64::MAX as usize) as i64;
             s.set_offset(s.offset().saturating_add(delta));
             if reached_eof {
@@ -3157,11 +3258,12 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
         return buf;
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get_mut(&id) else {
+    let Some(cell) = stream_cell(id) else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return std::ptr::null_mut();
     };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
 
     if max == 0 {
         unsafe { *buf = 0 };
@@ -3317,8 +3419,9 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
         }
 
         let adverse = written < bytes.len();
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(stream_obj) = reg.streams.get_mut(&id) {
+        if let Some(cell) = stream_cell(id) {
+            let mut stream_obj_guard = cell.lock();
+            let stream_obj = &mut *stream_obj_guard;
             let delta = written.min(i64::MAX as usize) as i64;
             stream_obj.set_offset(stream_obj.offset().saturating_add(delta));
             if adverse {
@@ -3335,9 +3438,7 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
         return if adverse { libc::EOF } else { 0 };
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(stream_obj) = reg.streams.get_mut(&id) else {
-        drop(reg);
+    let Some(cell) = stream_cell(id) else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fputs) = unsafe { host_fputs_fn() } {
@@ -3352,6 +3453,8 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return libc::EOF;
     };
+    let mut stream_guard = cell.lock();
+    let stream_obj = &mut *stream_guard;
 
     if stream_obj.is_mem_backed() {
         let written = stream_obj.mem_write(bytes);
@@ -3573,8 +3676,9 @@ pub unsafe extern "C" fn fread(
             break;
         }
 
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(s) = reg.streams.get_mut(&id) {
+        if let Some(cell) = stream_cell(id) {
+            let mut s_guard = cell.lock();
+            let s = &mut *s_guard;
             let delta = read_total.min(i64::MAX as usize) as i64;
             s.set_offset(s.offset().saturating_add(delta));
             if reached_eof {
@@ -3588,10 +3692,11 @@ pub unsafe extern "C" fn fread(
         return read_total.checked_div(size).unwrap_or(0);
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get_mut(&id) else {
+    let Some(cell) = stream_cell(id) else {
         return 0;
     };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
 
     let mut read_total = 0usize;
 
@@ -3747,8 +3852,9 @@ pub unsafe extern "C" fn fwrite(
         }
 
         let adverse = written_total < total;
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(s) = reg.streams.get_mut(&id) {
+        if let Some(cell) = stream_cell(id) {
+            let mut s_guard = cell.lock();
+            let s = &mut *s_guard;
             let delta = written_total.min(i64::MAX as usize) as i64;
             s.set_offset(s.offset().saturating_add(delta));
             if adverse {
@@ -3765,9 +3871,7 @@ pub unsafe extern "C" fn fwrite(
         return complete_items;
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get_mut(&id) else {
-        drop(reg);
+    let Some(cell) = stream_cell(id) else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
@@ -3782,6 +3886,8 @@ pub unsafe extern "C" fn fwrite(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return 0;
     };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
 
     // Memory-backed streams: write directly to the backing.
     if s.is_mem_backed() {
@@ -3919,12 +4025,13 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
         let mut cookie_off = offset;
         let rc = unsafe { cookie_stream_seek(id, &mut cookie_off as *mut i64, whence) };
 
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        let Some(s) = reg.streams.get_mut(&id) else {
+        let Some(cell) = stream_cell(id) else {
             unsafe { set_abi_errno(errno::EBADF) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
             return -1;
         };
+        let mut s_guard = cell.lock();
+        let s = &mut *s_guard;
 
         if rc != 0 {
             s.set_error();
@@ -3937,12 +4044,13 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
         return 0;
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get_mut(&id) else {
+    let Some(cell) = stream_cell(id) else {
         unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return -1;
     };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
 
     // Memory-backed streams: seek within the backing buffer.
     if s.is_mem_backed() {
@@ -4062,12 +4170,13 @@ pub unsafe extern "C" fn ftell(stream: *mut c_void) -> c_long {
         return -1;
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get_mut(&id) else {
+    let Some(cell) = stream_cell(id) else {
         unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return -1;
     };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
 
     let _ = sync_fast_fixed_mem_read_to_stream(id, s);
     let off = s.offset();
@@ -4094,8 +4203,8 @@ pub unsafe extern "C" fn rewind(stream: *mut c_void) {
     unsafe { fseek(stream, 0, libc::SEEK_SET) };
 
     let id = canonical_stream_id(stream);
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
         s.clear_err();
         if let Some(cursor) = fast_fixed_mem_read(id) {
             cursor.eof.store(false, Ordering::Release);
@@ -4130,9 +4239,9 @@ pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
     {
         return unsafe { host_feof(stream) };
     }
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
-        let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
+        let _ = sync_fast_fixed_mem_read_to_stream(id, &mut s);
         if s.is_eof() { 1 } else { 0 }
     } else {
         0
@@ -4159,8 +4268,8 @@ pub unsafe extern "C" fn ferror(stream: *mut c_void) -> c_int {
     {
         return unsafe { host_ferror(stream) };
     }
-    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get(&id) {
+    if let Some(cell) = stream_cell(id) {
+        let s = cell.lock();
         if s.is_error() { 1 } else { 0 }
     } else {
         0
@@ -4190,8 +4299,8 @@ pub unsafe extern "C" fn clearerr(stream: *mut c_void) {
         }
         return;
     }
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
         s.clear_err();
         if let Some(cursor) = fast_fixed_mem_read(id) {
             cursor.eof.store(false, Ordering::Release);
@@ -4232,9 +4341,9 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
         }
         return rc;
     }
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
-        sync_and_unregister_fast_fixed_mem_read(id, s);
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
+        sync_and_unregister_fast_fixed_mem_read(id, &mut s);
         if s.ungetc(c as u8) { c } else { libc::EOF }
     } else {
         libc::EOF
@@ -4268,8 +4377,8 @@ pub unsafe extern "C" fn fileno(stream: *mut c_void) -> c_int {
         }
         return rc;
     }
-    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get(&id) {
+    if let Some(cell) = stream_cell(id) {
+        let s = cell.lock();
         if s.is_mem_backed() { -1 } else { s.fd() }
     } else {
         unsafe { set_abi_errno(errno::EBADF) };
@@ -4294,8 +4403,8 @@ pub unsafe extern "C" fn setvbuf(
     };
 
     let id = canonical_stream_id(stream);
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    if let Some(cell) = stream_cell(id) {
+        let mut s = cell.lock();
         // Note: we ignore the caller's buffer pointer; we always use internal allocation.
         if s.set_buffering(buf_mode, size) {
             sync_native_stdio_buffering(stream, buf_mode, _buf, size);
@@ -4304,7 +4413,6 @@ pub unsafe extern "C" fn setvbuf(
             -1
         }
     } else {
-        drop(reg);
         #[cfg(not(feature = "standalone"))]
         if host_stream_io_started(id) {
             unsafe { set_abi_errno(errno::EINVAL) };
@@ -5414,8 +5522,9 @@ unsafe fn strict_direct_sprintf_literal(
 
 unsafe fn try_write_direct_s_newline_stream(id: usize, payload: &[u8]) -> Option<bool> {
     let total_len = payload.len().saturating_add(1);
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let s = reg.streams.get_mut(&id)?;
+    let cell = stream_cell(id)?;
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
 
     if s.is_mem_backed() {
         let mut written = s.mem_write(payload);
@@ -5802,8 +5911,9 @@ pub unsafe extern "C" fn fprintf(
         return printf_result_to_c_int(total_len);
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    let cell_opt = stream_cell(id);
+    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
+    if let Some(s) = s_guard.as_deref_mut() {
         if s.is_mem_backed() {
             let written = s.mem_write(bytes);
             let adverse = written < total_len;
@@ -5901,7 +6011,6 @@ pub unsafe extern "C" fn fprintf(
             }
         }
     } else {
-        drop(reg);
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
@@ -6006,8 +6115,9 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
         return printf_result_to_c_int(total_len);
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    let cell_opt = stream_cell(id);
+    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
+    if let Some(s) = s_guard.as_deref_mut() {
         if s.is_mem_backed() {
             let written = s.mem_write(bytes);
             let adverse = written < total_len;
@@ -6104,7 +6214,6 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
             }
         }
     } else {
-        drop(reg);
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
@@ -6652,8 +6761,9 @@ pub unsafe extern "C" fn vfprintf(
         return printf_result_to_c_int(total_len);
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    let cell_opt = stream_cell(id);
+    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
+    if let Some(s) = s_guard.as_deref_mut() {
         if s.is_mem_backed() {
             let written = s.mem_write(bytes);
             let adverse = written < total_len;
@@ -6750,7 +6860,6 @@ pub unsafe extern "C" fn vfprintf(
             }
         }
     } else {
-        drop(reg);
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
@@ -6852,8 +6961,9 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
         return printf_result_to_c_int(total_len);
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    let cell_opt = stream_cell(id);
+    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
+    if let Some(s) = s_guard.as_deref_mut() {
         if s.is_mem_backed() {
             let written = s.mem_write(bytes);
             let adverse = written < total_len;
@@ -6950,7 +7060,6 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
             }
         }
     } else {
-        drop(reg);
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
@@ -7379,10 +7488,11 @@ pub(crate) enum ScanfReadState {
 /// streams and non-seekable fds over-read into memory and finalize by restoring
 /// the unread suffix to the backing or stream read queue.
 pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (Vec<u8>, ScanfReadState) {
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get_mut(&id) else {
+    let Some(cell) = stream_cell(id) else {
         return (Vec::new(), ScanfReadState::Memory);
     };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
 
     // Memory-backed streams: read directly (rewind handled by scanf_rewind_mem).
     if s.is_mem_backed() {
@@ -7454,8 +7564,8 @@ pub(crate) fn scanf_finish_consume(
     let consumed = consumed.min(input.len());
     match read_state {
         ScanfReadState::SeekableFd { base } => {
-            let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(s) = reg.streams.get_mut(&id) {
+            if let Some(cell) = stream_cell(id) {
+                let mut s = cell.lock();
                 let target = base.saturating_add(consumed as i64);
                 let fd = s.fd();
                 if raw_syscall::sys_lseek(fd, target, libc::SEEK_SET).is_ok() {
@@ -7477,8 +7587,9 @@ fn rewind_unconsumed_scanf_mem(id: usize, unconsumed: usize) {
     if unconsumed == 0 {
         return;
     }
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    let cell_opt = stream_cell(id);
+    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
+    if let Some(s) = s_guard.as_deref_mut() {
         s.scanf_rewind_mem(unconsumed);
     }
 }
@@ -7486,8 +7597,9 @@ fn rewind_unconsumed_scanf_mem(id: usize, unconsumed: usize) {
 /// Stage unread bytes from a non-seekable fd bulk scanf read.
 fn stage_unconsumed_scanf_fd(id: usize, base: i64, input: &[u8], consumed: usize) {
     let consumed = consumed.min(input.len());
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = reg.streams.get_mut(&id) {
+    let cell_opt = stream_cell(id);
+    let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
+    if let Some(s) = s_guard.as_deref_mut() {
         s.pushback_read_bytes(&input[consumed..]);
         s.set_offset(base.saturating_add(consumed as i64));
     }
@@ -7913,12 +8025,13 @@ pub unsafe extern "C" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) ->
         return rc;
     }
 
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = reg.streams.get_mut(&id) else {
+    let Some(cell) = stream_cell(id) else {
         unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return -1;
     };
+    let mut s_guard = cell.lock();
+    let s = &mut *s_guard;
     let _ = sync_fast_fixed_mem_read_to_stream(id, s);
 
     // fpos_t is opaque; we store the offset as i64 at the start of the struct.
@@ -8124,15 +8237,18 @@ pub unsafe extern "C" fn freopen(
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
 
-    // Close the old stream.
+    // Close the old stream. Lock ordering: registry → cell (freopen only); no path
+    // acquires the registry while holding a cell lock, so this nesting cannot deadlock.
     let mut target_fd = -1;
-    if let Some(mut old) = reg.remove_stream(id) {
+    if let Some(old_cell) = reg.remove_stream(id) {
+        let mut old_guard = old_cell.lock();
+        let old = &mut *old_guard;
         if old.is_mem_backed() {
-            sync_and_unregister_fast_fixed_mem_read(id, &mut old);
+            sync_and_unregister_fast_fixed_mem_read(id, old);
             unsafe {
-                sync_memstream_to_caller(id, &old);
-                sync_fmemopen_full(id, &old);
-                crate::wchar_abi::sync_open_wmemstream_to_caller(id, &old);
+                sync_memstream_to_caller(id, old);
+                sync_fmemopen_full(id, old);
+                crate::wchar_abi::sync_open_wmemstream_to_caller(id, old);
             }
             let mut sync_guard = mem_sync_registry()
                 .lock()
@@ -8418,14 +8534,15 @@ pub unsafe extern "C" fn getdelim(
     let buf = &mut scratch.0;
     buf.clear();
 
-    // Read the whole line under a SINGLE registry lock + the policy decision above (bulk
+    // Read the whole line under the stream's OWN lock + the policy decision above (bulk
     // read_until_delim, not per-char fgetc; the ABI layer owns descriptor refill).
     {
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        let Some(s) = reg.streams.get_mut(&id) else {
+        let Some(cell) = stream_cell(id) else {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
             return -1;
         };
+        let mut s_guard = cell.lock();
+        let s = &mut *s_guard;
         if s.is_mem_backed() {
             sync_and_unregister_fast_fixed_mem_read(id, s);
         } else if !is_cookie_stream(id) {
@@ -8433,7 +8550,7 @@ pub unsafe extern "C" fn getdelim(
             // fast path — a pure getline loop otherwise never populates the cache. See fgets.
             write_cache_store(id, s as *mut StdioStream);
         }
-        // SAFETY: `s` uniquely borrowed under the registry lock.
+        // SAFETY: `s` uniquely borrowed under the stream lock.
         unsafe { getdelim_fill_stream(s, delim_byte, buf) };
     }
 
@@ -11497,11 +11614,11 @@ mod tests {
             unsafe { try_write_direct_s_newline_stream(full_id, b"status=ok") },
             Some(true)
         );
-        let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        let stream = reg.streams.get(&full_id).expect("registered full stream");
+        let cell = stream_cell(full_id).expect("registered full stream");
+        let stream = cell.lock();
         assert_eq!(stream.pending_flush(), b"status=ok\n");
         assert_eq!(stream.offset(), 10);
-        drop(reg);
+        drop(stream);
 
         let line_id = register_stream(StdioStream::with_mode(-1, writable, BufMode::Line));
         assert_eq!(
