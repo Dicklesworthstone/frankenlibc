@@ -21878,3 +21878,30 @@ item retains every later colon by construction, exactly matching the former `fie
   the bd-3dxo1a recipe) to find a non-obvious hotspot, OR picking a rarer format/function not yet
   swept — a multi-turn investigation, not a quick survey hit. Recorded so the next cycle profiles
   deep rather than re-running these surveys. Lane [[stdio-mt-swing-inprogress]].
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): snprintf exact `%d` strict fast path — the most common integer format was missing the membrane bypass `%u`/`%c`/`%p` had; 3.36x LOSS → 0.466x WIN (cc-snprintf-d-2026-07-23)
+
+- **THE GAP (found by reading, confirmed by measure).** snprintf's strict-passthrough block had
+  exact fast paths for literal / `%s` / `%c` / `%u` / `%p` (each bypasses `entrypoint_scope` +
+  `runtime_policy::decide` + `parse_format_string` + `render_segments`) — but **`%d`, the single
+  most common integer format, was OMITTED**, falling through to the full membrane + render path.
+  Measured (snprintf_d_ab, deployed fl vs dlmopen glibc): base `%d` fl **136.1ns** vs glibc 45ns
+  = **3.362x LOSS**, while base `%u` fl 17.7ns = **0.449x (already 2x WIN)** — the smoking gun.
+- **THE LEVER.** Added `exact_direct_d_format` (matches `%d\0`) + `strict_direct_snprintf_d`
+  (signed sibling of `strict_direct_snprintf_u`: `unsigned_abs` on the i64-widened arg handles
+  `i32::MIN`, 11-byte stack buffer fits "-2147483648", sign then magnitude), wired into snprintf's
+  strict block right after `%u`. +57 lines, no alloc, no render.
+- **MEASURED (10 alternated snd_base/snd_cand runs, idle vmi1152480, 10/10 exit-0; binaries
+  960e734a…/0e0741d6…).**
+  - **SNPRINTF_D: fl base 136.1ns → cand 19.0ns = cand/base 0.140, DISJOINT** (7.2x faster; base
+    cv 5.4%, cand cv 6.2%). **fl/glibc 3.362x LOSS → 0.466x WIN** — `%d` now as fast as `%u`.
+  - **NULL CONTROL SNPRINTF_U (unchanged code): cand/base 1.054, overlap 9/10, fl/glibc
+    0.449→0.448** — flat ⇒ the effect is the `%d` fast path, not noise.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_printf_fastpaths` 2/0,
+  `conformance_diff_printf_positional` 3/0, `conformance_diff_printf_zt_length` 3/0,
+  `conformance_diff_dprintf` 1/0, `conformance_diff_asprintf` 1/0; plus the bench's `verify()`
+  byte-identity over 0 / ±values / `i32::MIN` / `i32::MAX` / truncation (size=4 on -12345).
+- **DISPOSITION.** SHIPPED. **FOLLOW-UP (clear next lever): `sprintf` has ONLY literal + `%c`
+  strict fast paths — it misses BOTH `%d` AND `%u`** (line ~5907); adding them mirrors this win.
+  printf/fprintf/vsnprintf/dprintf strict blocks should be audited for the same `%d` omission.
+  Lane: printf campaign. Reproducer: `--example snprintf_d_ab`.

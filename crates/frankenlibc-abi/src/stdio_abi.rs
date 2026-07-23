@@ -5227,6 +5227,14 @@ unsafe fn exact_direct_u_format(format: *const c_char) -> bool {
 }
 
 #[inline]
+unsafe fn exact_direct_d_format(format: *const c_char) -> bool {
+    let f = format.cast::<u8>();
+    // SAFETY: `format` is non-null and C's printf contract requires a
+    // NUL-terminated format string, so these three bytes are readable.
+    unsafe { *f == b'%' && *f.add(1) == b'd' && *f.add(2) == 0 }
+}
+
+#[inline]
 unsafe fn exact_direct_p_format(format: *const c_char) -> bool {
     let f = format.cast::<u8>();
     // SAFETY: `format` is non-null and C's printf contract requires a
@@ -5518,6 +5526,48 @@ unsafe fn strict_direct_snprintf_u(str_buf: *mut c_char, size: usize, arg: c_uin
     printf_result_to_c_int(len)
 }
 
+/// Signed-decimal sibling of `strict_direct_snprintf_u` for the ubiquitous exact `%d`.
+/// A promoted signed int renders to at most "-2147483648" = 11 bytes. `unsigned_abs`
+/// on the i64-widened value handles `i32::MIN` without overflow. Byte-identical to the
+/// render engine's `%d` output (sign then magnitude, no flags/width/precision).
+unsafe fn strict_direct_snprintf_d(str_buf: *mut c_char, size: usize, arg: c_int) -> c_int {
+    let mut rendered = [0u8; 11];
+    let neg = arg < 0;
+    let mut value = (arg as i64).unsigned_abs();
+    let mut start = rendered.len();
+    loop {
+        start -= 1;
+        rendered[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if neg {
+        start -= 1;
+        rendered[start] = b'-';
+    }
+    let len = rendered.len() - start;
+
+    if size > 0 && !str_buf.is_null() {
+        let copy_len = len.min(size - 1);
+        if copy_len > 0 {
+            // SAFETY: `copy_len <= size - 1` is writable by snprintf's caller,
+            // and the local source contains exactly `len` initialized bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    rendered.as_ptr().add(start),
+                    str_buf.cast::<u8>(),
+                    copy_len,
+                )
+            };
+        }
+        // SAFETY: `copy_len < size`, so the terminator is in bounds.
+        unsafe { *str_buf.add(copy_len) = 0 };
+    }
+    printf_result_to_c_int(len)
+}
+
 #[inline]
 unsafe fn strict_direct_snprintf_p(str_buf: *mut c_char, size: usize, arg: *mut c_void) -> c_int {
     let mut rendered = [0u8; 2 + usize::BITS as usize / 4];
@@ -5719,6 +5769,13 @@ pub unsafe extern "C" fn snprintf(
         // SAFETY: snprintf's caller provides `size` writable bytes whenever
         // `size > 0`; the helper bounds every write and appends the terminator.
         return unsafe { strict_direct_snprintf_u(str_buf, size, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_d_format(format) } {
+        // SAFETY: exact `%d` consumes one promoted `int` argument. `%d` is the most common
+        // integer format and previously fell through to the full membrane decide + render
+        // path (the `%u`/`%c`/`%p` bypass omitted it); the helper bounds every write.
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_snprintf_d(str_buf, size, arg) };
     }
     // SAFETY: `format` is non-null and valid through its NUL terminator under
     // the printf-family C contract checked by `exact_direct_p_format`.
