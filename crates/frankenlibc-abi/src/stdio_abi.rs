@@ -5277,6 +5277,81 @@ unsafe fn exact_direct_lx_format(format: *const c_char) -> bool {
     unsafe { *f == b'%' && *f.add(1) == b'l' && *f.add(2) == b'x' && *f.add(3) == 0 }
 }
 
+/// Match exact `"%d"` (→ `Some(false)`) or `"%d\n"` (→ `Some(true)`) for the printf/fprintf
+/// stream fast path. `None` otherwise. `"%d\n"` (printf a signed int + newline) is the single
+/// most common formatted-output pattern.
+#[inline]
+unsafe fn exact_direct_d_stream_format(format: *const c_char) -> Option<bool> {
+    let f = format.cast::<u8>();
+    // SAFETY: NUL-terminated; reads stop at the first non-matching / NUL byte.
+    unsafe {
+        if *f != b'%' || *f.add(1) != b'd' {
+            return None;
+        }
+        match *f.add(2) {
+            0 => Some(false),
+            b'\n' if *f.add(3) == 0 => Some(true),
+            _ => None,
+        }
+    }
+}
+
+/// Render a signed `%d` (optionally with a trailing newline) into `buf` (needs 12 bytes:
+/// 11 for "-2147483648" + 1 for '\n'). Returns the byte length. `i32::MIN` via `unsigned_abs`.
+#[inline]
+fn render_d_into_buf(arg: c_int, newline: bool, buf: &mut [u8; 12]) -> usize {
+    let mut digits = [0u8; 11];
+    let neg = arg < 0;
+    let mut value = (arg as i64).unsigned_abs();
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if neg {
+        start -= 1;
+        digits[start] = b'-';
+    }
+    let dlen = digits.len() - start;
+    buf[..dlen].copy_from_slice(&digits[start..]);
+    if newline {
+        buf[dlen] = b'\n';
+        dlen + 1
+    } else {
+        dlen
+    }
+}
+
+/// Strict stream `%d`/`%d\n` fast path for fprintf/printf: renders the int into a small buffer,
+/// then writes via the fast write caches (ST `try_fwrite_fast`, MT `try_write_fast_cell`) or the
+/// shared `write_bytes_without_runtime_policy` fallback — ALWAYS completes the write (the caller
+/// has already consumed the one variadic arg, so it must never fall through to re-extract).
+/// Returns the fprintf char count (bytes written) or -1 on a short write. Byte-identical to the
+/// render engine's plain `%d`(+`\n`).
+unsafe fn strict_direct_stream_d(
+    id: usize,
+    stream: *mut c_void,
+    arg: c_int,
+    newline: bool,
+) -> c_int {
+    let mut buf = [0u8; 12];
+    let len = render_d_into_buf(arg, newline, &mut buf);
+    let bytes = &buf[..len];
+    if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
+        return printf_result_to_c_int(len);
+    }
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
+    if written == len {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
 #[inline]
 unsafe fn exact_direct_p_format(format: *const c_char) -> bool {
     let f = format.cast::<u8>();
@@ -6432,6 +6507,15 @@ pub unsafe extern "C" fn fprintf(
     if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
         return printf_result_to_c_int(fmt_bytes.len());
     }
+    // Strict exact `%d`/`%d\n` fast path (the most common formatted-output pattern): render the
+    // int inline and write via the fast caches, skipping parse + render_segments. Extracts the
+    // one arg and ALWAYS completes the write (never falls through to re-extract). Byte-identical.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_stream_d(id, stream, arg, newline) };
+    }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
@@ -6635,6 +6719,14 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     // any miss (not cached / not Full / has '%') falls through to the normal path.
     if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
         return printf_result_to_c_int(fmt_bytes.len());
+    }
+    // Strict exact `%d`/`%d\n` fast path (see fprintf): render + fast-write, one arg consumed,
+    // always completes. printf == fprintf(stdout, ...).
+    if runtime_policy::strict_passthrough_active()
+        && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_stream_d(id, stdout_ptr, arg, newline) };
     }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);

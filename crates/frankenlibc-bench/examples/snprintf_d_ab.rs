@@ -260,4 +260,59 @@ fn main() {
         "SNPRINTF_LX fl={snlx:.2}ns cv={snlx_cv:.2} glibc={gsnlx:.2}ns cv={gsnlx_cv:.2} fl/glibc={:.3}",
         snlx / gsnlx
     );
+
+    // PROFILE-FIRST: fprintf("%d\n") to a Full-buffered /dev/null stream. Measures the printf/
+    // fprintf full-render gap (they have no integer fast path). fl vs glibc, each its own stream.
+    type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
+    type FprintfD = unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_int;
+    let fl_fopen: FopenFn = unsafe {
+        std::mem::transmute::<*const (), FopenFn>(frankenlibc_abi::stdio_abi::fopen as *const ())
+    };
+    let fl_fprintf: FprintfD = unsafe {
+        std::mem::transmute::<*const (), FprintfD>(frankenlibc_abi::stdio_abi::fprintf as *const ())
+    };
+    let g_fopen: FopenFn = unsafe { std::mem::transmute::<*mut c_void, FopenFn>(libc::dlsym(h, c"fopen".as_ptr())) };
+    let g_fprintf: FprintfD = unsafe { std::mem::transmute::<*mut c_void, FprintfD>(libc::dlsym(h, c"fprintf".as_ptr())) };
+    // Byte-identity: fl fprintf vs glibc fprintf into fmemopen "w" buffers, over the edge set +
+    // both "%d" and "%d\n". Proves the stream fast path emits the exact bytes.
+    type FmemFn = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
+    type FcloseFn2 = unsafe extern "C" fn(*mut c_void) -> c_int;
+    let fl_fmem: FmemFn = unsafe {
+        std::mem::transmute::<*const (), FmemFn>(frankenlibc_abi::stdio_abi::fmemopen as *const ())
+    };
+    let g_fmem: FmemFn = unsafe { std::mem::transmute::<*mut c_void, FmemFn>(libc::dlsym(h, c"fmemopen".as_ptr())) };
+    let fl_fclose2: FcloseFn2 = unsafe {
+        std::mem::transmute::<*const (), FcloseFn2>(frankenlibc_abi::stdio_abi::fclose as *const ())
+    };
+    let g_fclose2: FcloseFn2 = unsafe { std::mem::transmute::<*mut c_void, FcloseFn2>(libc::dlsym(h, c"fclose".as_ptr())) };
+    for &nl in &[c"%d".as_ptr(), c"%d\n".as_ptr()] {
+        for &n in &[0i32, -1, 12345, -12345, i32::MIN, i32::MAX] {
+            let mut flbuf = [0u8; 32];
+            let mut gbuf = [0u8; 32];
+            let fmp = unsafe { fl_fmem(flbuf.as_mut_ptr().cast(), 32, c"w".as_ptr()) };
+            let gmp = unsafe { g_fmem(gbuf.as_mut_ptr().cast(), 32, c"w".as_ptr()) };
+            let fr = unsafe { fl_fprintf(fmp, nl, n) };
+            let gr = unsafe { g_fprintf(gmp, nl, n) };
+            unsafe { fl_fclose2(fmp) };
+            unsafe { g_fclose2(gmp) };
+            assert_eq!(fr, gr, "fprintf return diverged for {n}");
+            assert_eq!(flbuf, gbuf, "fprintf bytes diverged for {n}");
+        }
+    }
+    println!("verify: OK (fl fprintf %d/%d\\n == glibc, values + bytes)");
+
+    let fl_fp = unsafe { fl_fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) };
+    let g_fp = unsafe { g_fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) };
+    assert!(!fl_fp.is_null() && !g_fp.is_null(), "fopen /dev/null failed");
+    let fmt_dn = c"%d\n";
+    let (fprd, fprd_cv) = collect(&|| {
+        black_box(unsafe { fl_fprintf(fl_fp, fmt_dn.as_ptr(), black_box(-12345)) });
+    });
+    let (gfprd, gfprd_cv) = collect(&|| {
+        black_box(unsafe { g_fprintf(g_fp, fmt_dn.as_ptr(), black_box(-12345)) });
+    });
+    println!(
+        "FPRINTF_DN fl={fprd:.2}ns cv={fprd_cv:.2} glibc={gfprd:.2}ns cv={gfprd_cv:.2} fl/glibc={:.3}",
+        fprd / gfprd
+    );
 }

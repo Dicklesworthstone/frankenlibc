@@ -22024,3 +22024,33 @@ item retains every later colon by construction, exactly matching the former `fie
   REMAINING (lower freq): `%X`/`%lX` (uppercase hex), `%o` (octal), `%lld`/`%llu` (long long, but
   == %ld/%lu on LP64 — trivial), sprintf `%s`/`%p`, vsnprintf/vsprintf/printf/fprintf.
   [[printf-d-family-fastpath-vein]]. Reproducer: `--example snprintf_d_ab` (LX arm).
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): printf+fprintf strict `%d`/`%d\n` stream fast path — the most common formatted-OUTPUT pattern; 2.96x LOSS → 0.718x WIN (cc-printf-fprintf-d-2026-07-23)
+
+- **THE GAP.** `fprintf(fp, "%d\n", n)` / `printf("%d\n", n)` — THE most common formatted-output
+  call — had no integer fast path: parse + `render_segments` + stream write, vs glibc's direct
+  format+buffer. Measured base `fprintf("%d\n")` to a Full-buffered /dev/null stream: fl **153.7ns**
+  vs glibc 52ns = **2.955x LOSS** (bigger than the buffer functions — stream path on top of render).
+- **THE LEVER (the family's first STREAM fast path).** `exact_direct_d_stream_format` (matches
+  `%d` → `Some(false)` / `%d\n` → `Some(true)`) + `render_d_into_buf` (12-byte buffer: 11 for
+  "-2147483648" + '\n') + `strict_direct_stream_d(id, stream, arg, newline)`. Wired into fprintf
+  and printf after their pure-literal fast paths. **KEY SAFETY:** the variadic double-extract
+  hazard (extract-then-fall-through would re-read the va cursor) is avoided by extracting the one
+  arg ONCE and ALWAYS completing the write — render bytes → `try_fwrite_fast` (ST Full-buf) OR
+  `try_write_fast_cell` (MT) OR `write_bytes_without_runtime_policy` (the shared correct fallback:
+  handles Line-buffered flush-on-\n, mem/cookie, all modes). try_fwrite_fast fires only for
+  Full-buffered, so Line-buffered stdout still flushes `\n` via the fallback — matching glibc.
+- **MEASURED (10 alternated x_base/x_cand runs, idle vmi1152480, 20/20 exit-0).**
+  - **FPRINTF_DN: base 153.7ns → cand 35.4ns = cand/base 0.230, DISJOINT** (4.3x faster; base cv
+    5.4%, cand cv 9.2%). **fl/glibc 2.955x LOSS → 0.718x WIN.**
+  - **NULL CONTROLS (buffer formats, unchanged): SNPRINTF_D 0.989 (ov 9/10), SNPRINTF_ZU 0.980
+    (ov 7/10), SNPRINTF_LX 1.030 (ov 10/10)** — all overlapping.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_printf_fastpaths` 3/0,
+  `conformance_diff_dprintf` 1/0, `conformance_diff_printf_positional` 3/0,
+  `conformance_diff_printf_null_string` 1/0; **plus 20/20 in-bench byte-identity verifies** — fl
+  fprintf vs glibc fprintf into fmemopen "w" buffers, both `%d` and `%d\n`, over 0/±/i32::MIN/MAX
+  (the critical gate for a stream-output change).
+- **DISPOSITION.** SHIPPED (fprintf + printf `%d`/`%d\n`). First stream-writing member of the
+  [[printf-d-family-fastpath-vein]]. FOLLOW-UPS: extend the stream fast path to `%s\n` is already
+  done; add `%u`/`%x`/`%ld` stream variants (reuse render helpers); vfprintf/vprintf (va_list,
+  same pattern via ap extraction). Reproducer: `--example snprintf_d_ab` (FPRINTF_DN arm).
