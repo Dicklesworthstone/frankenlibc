@@ -22555,3 +22555,28 @@ item retains every later colon by construction, exactly matching the former `fie
   types:** BUFFER (snprintf/sprintf/vsnprintf/vsprintf), STREAM (fprintf/printf/vfprintf/vprintf), FD
   (dprintf/vdprintf) — %d/%u/%x/%ld/%lu/%lx/%p as applicable; %s correctly rejected (cheap kernel).
   [[printf-d-family-fastpath-vein]]. Reproducer: `--example snprintf_d_ab` (DPRINTF_DN/VDPRINTF_DN).
+
+## 2026-07-24 (cc_fl / MagentaCondor) — SCOPED LEVER CANDIDATE (code-analysis, NOT a cell-cache): stream scanf (fscanf/scanf/vfscanf) bulk-read+seek-back architecture (cc-scanf-arch-scope-2026-07-24)
+
+- **CONTEXT.** After the MT stdio cell-cache family (9 wins) + printf family (5 wins) saturated, and
+  time/string/locale confirmed ledger-saturated (audit: asctime 0.08x, timegm 0.12x, mktime 66x, gmtime
+  parity — "no algorithmic gap in this layer"), I checked the STREAM scanf family for an uncovered MT
+  convoy. It is NOT a clean cell-cache lever — the dominant cost is architectural.
+- **CODE ANALYSIS (stdio_abi.rs `read_stream_for_scanf` @~8633 + `scanf_finish_consume`).** Per
+  fscanf/scanf CALL: `canonical_stream_id` (map lock) + `stream_cell(id)` ×2 (map locks) + a BULK
+  `sys_read_fd` of up to 8192 bytes + `sys_lseek(SEEK_CUR)` + `sys_lseek(SEEK_SET, base)` (before read)
+  + `sys_lseek(SEEK_SET, consumed)` (finish_consume seek-back of the unparsed tail). i.e. read-a-big-
+  chunk / parse-a-little / seek-back-the-rest, EVERY call. glibc parses incrementally from the FILE
+  buffer with no per-call bulk-read or seek-back.
+- **WHY A CELL-CACHE WON'T FIX IT.** The cell cache would elide the 3 map lookups, but the 3 lseeks +
+  8192-byte read per call (the architecture) remain and dominate — est. cand still ~20x behind glibc
+  vs the ~2-4x residual the cell-cache achieves for the simple ops. A `while(fscanf("%d"))` config-parse
+  loop is the hot pattern (threaded ingestion). SSCANF/vsscanf are FINE (caller string, no stream —
+  strlen+parse-dominated, [[return-contract-and-pure-parser-vein]]); only the STREAM scanf hits this.
+- **THE REAL LEVER (bigger, dedicated turn — do NOT attempt as a tail edit).** Refactor stream scanf to
+  parse INCREMENTALLY from the stream's existing read buffer (consume only what's parsed, no bulk-read
+  + seek-back), reusing the buffered_read machinery the cell-cache read ops already use. This removes
+  the per-call lseek×3 + over-read. RETRY PREDICATE / FIRST STEP: build an FSCANF_FD MT arm (number fd
+  file + `while(fscanf(fp,"%d",&x))`) + a 1t fscanf-vs-glibc micro-bench to quantify the loss (est.
+  10-90x), THEN the incremental-parse refactor gated on `scanf_*_differential` conformance. Filed as a
+  scoped follow-on; NOT shipped (architectural, not a cell-cache one-liner). [[stdio-mt-swing-inprogress]].
