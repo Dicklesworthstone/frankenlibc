@@ -1039,13 +1039,17 @@ thread_local! {
     /// the cell alive and every use LOCKS the stream. REGISTRY_GEN guards FILE* reuse
     /// after fclose (any insert/remove bumps gen ⇒ cache drops; stream-state mutation
     /// like fseek/ungetc needs no invalidation — the lock always reads current state).
-    /// 2-way (most-recent-first), exactly like the ST `WRITE_CACHE`: a loop interleaving
-    /// TWO streams — the stream-to-stream copy `for { c=fgetc(in); fputc(c,out); }` (cp/cat/
-    /// tee/pipelines) — otherwise thrashes a single entry (each op evicts the other ⇒ BOTH
-    /// miss the map lock EVERY call: measured 33-51x@8t vs glibc, vs ~2.7x for single-stream).
-    /// 2-way keeps both `in` and `out` resolved lock-free.
-    static STREAM_CELL_CACHE: RefCell<[Option<(usize, u64, StreamCell)>; 2]> =
-        const { RefCell::new([None, None]) };
+    /// 3-way (most-recent-first): a loop interleaving up to THREE streams resolves all lock-free.
+    /// The copy `for { c=fgetc(in); fputc(c,out); }` (2 streams) and the tee/broadcast
+    /// `for { c=fgetc(in); fputc(c,out1); fputc(c,out2); }` (3 streams: in + 2 outs — the `tee`
+    /// command, dual logging, 3-way merge) otherwise thrash a narrower cache (each op evicts an
+    /// earlier stream ⇒ misses the map lock EVERY call: measured copy 55x@8t, tee 33x@8t vs glibc,
+    /// vs ~2.7x single-stream). Lookup early-returns on the first hit, so single-stream (slot 0)
+    /// and copy (slots 0-1) pay nothing for the extra width; only genuine 3-stream fan-out reaches
+    /// slot 2. (The ST `WRITE_CACHE` is 2-way; the MT path is the one that matters for threaded
+    /// programs — see the copy A/B, where even the "1t" arm uses it since abi-bench is threaded.)
+    static STREAM_CELL_CACHE: RefCell<[Option<(usize, u64, StreamCell)>; 3]> =
+        const { RefCell::new([None, None, None]) };
 }
 
 fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
@@ -1068,10 +1072,12 @@ fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
 fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     STREAM_CELL_CACHE.with(|c| {
-        // Insert-at-front (most-recent-first), shifting the previous head to slot 1. `store`
-        // only runs on a full cache miss (lookup checks BOTH slots and returns before storing),
-        // so `stream` is not already resident — no duplicate slot. Mirrors `write_cache_store`.
+        // Insert-at-front (most-recent-first), shifting the previous entries down one slot (the
+        // oldest, slot 2, is dropped). `store` only runs on a full cache miss (lookup checks ALL
+        // slots and returns before storing), so `stream` is not already resident — no duplicate
+        // slot. Mirrors `write_cache_store`.
         let mut cache = c.borrow_mut();
+        cache[2] = cache[1].take();
         cache[1] = cache[0].take();
         cache[0] = Some((stream as usize, cur_gen, Arc::clone(cell)));
     });

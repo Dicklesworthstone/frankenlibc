@@ -365,6 +365,44 @@ fn drain_glibc_copy(inp: *mut c_void, out: *mut c_void, h: &'static HostStdio) -
     got
 }
 
+/// TEE loop drain: `for { c=fgetc(in); fputc(c,out1); fputc(c,out2); }` — 3 distinct streams (the
+/// `tee` command / dual logging / broadcast). With a 2-way cell cache, `in` is evicted each round
+/// (out1,out2 fill both slots) so fgetc(in) always misses. A 3-way cache holds all three.
+fn drain_fl_tee(inp: *mut c_void, out1: *mut c_void, out2: *mut c_void) -> usize {
+    assert_eq!(unsafe { fl::fseek(inp, 0, 0) }, 0, "fl fseek failed");
+    let mut got = 0usize;
+    for _ in 0..N {
+        let c = unsafe { fl::fgetc(inp) };
+        if c < 0 {
+            break;
+        }
+        unsafe { fl::fputc(c, out1) };
+        unsafe { fl::fputc(c, out2) };
+        got += 1;
+    }
+    got
+}
+
+fn drain_glibc_tee(
+    inp: *mut c_void,
+    out1: *mut c_void,
+    out2: *mut c_void,
+    h: &'static HostStdio,
+) -> usize {
+    assert_eq!(unsafe { (h.fseek)(inp, 0, 0) }, 0, "glibc fseek failed");
+    let mut got = 0usize;
+    for _ in 0..N {
+        let c = unsafe { (h.fgetc)(inp) };
+        if c < 0 {
+            break;
+        }
+        unsafe { (h.fputc)(c, out1) };
+        unsafe { (h.fputc)(c, out2) };
+        got += 1;
+    }
+    got
+}
+
 /// FGETPOS loop drain: the backtracking-parser save pattern `for { fgetc; fgetpos(fp,&pos); }`.
 /// fgetc is cell-cached in both arms; the delta isolates fgetpos's MT cost (map lock vs cell cache;
 /// fgetpos is ftell with an out-param). FGETC_FD is the null control. Returns bytes read (== N).
@@ -671,6 +709,7 @@ enum Work {
     FseekFd,
     FflushFd,
     CopyFd,
+    TeeFd,
     GetlineFd,
     FputsFd,
     FgetsFd,
@@ -704,6 +743,7 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                     | Work::UngetcFd
                     | Work::FseekFd
                     | Work::CopyFd
+                    | Work::TeeFd
                     | Work::GetlineFd => {
                         let path = make_fd_file(if use_glibc { "glibc" } else { "fl" });
                         let fp = if use_glibc {
@@ -743,14 +783,24 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                 // COPY workload needs a SECOND stream (the /dev/null write target). The read stream
                 // (fd_fp) + this write stream alternate in the copy loop — the single-entry cell
                 // cache thrashes (each op evicts the other), so both miss and pay the map lock.
-                let copy_out: *mut c_void = if work == Work::CopyFd {
+                let open_devnull_w = || {
                     let fp = if use_glibc {
                         unsafe { (h.fopen)(c"/dev/null".as_ptr(), c"w".as_ptr()) }
                     } else {
                         unsafe { fl::fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) }
                     };
-                    assert!(!fp.is_null(), "fopen /dev/null w failed for copy workload");
+                    assert!(!fp.is_null(), "fopen /dev/null w failed");
                     fp
+                };
+                // COPY needs one /dev/null (out); TEE needs two (out1 + out2) — with the read
+                // stream that's 3 distinct streams, which thrashes even a 2-way cache.
+                let copy_out: *mut c_void = if work == Work::CopyFd || work == Work::TeeFd {
+                    open_devnull_w()
+                } else {
+                    std::ptr::null_mut()
+                };
+                let copy_out2: *mut c_void = if work == Work::TeeFd {
+                    open_devnull_w()
                 } else {
                     std::ptr::null_mut()
                 };
@@ -777,6 +827,8 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                             (true, Work::FseekFd) => drain_glibc_fseek(fd_fp, h),
                             (false, Work::CopyFd) => drain_fl_copy(fd_fp, copy_out),
                             (true, Work::CopyFd) => drain_glibc_copy(fd_fp, copy_out, h),
+                            (false, Work::TeeFd) => drain_fl_tee(fd_fp, copy_out, copy_out2),
+                            (true, Work::TeeFd) => drain_glibc_tee(fd_fp, copy_out, copy_out2, h),
                             (false, Work::GetlineFd) => {
                                 drain_fl_getline(fd_fp, &mut gl_line, &mut gl_n)
                             }
@@ -806,11 +858,13 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                         unsafe { fl::fclose(fd_fp) };
                     }
                 }
-                if !copy_out.is_null() {
-                    if use_glibc {
-                        unsafe { (h.fclose)(copy_out) };
-                    } else {
-                        unsafe { fl::fclose(copy_out) };
+                for out in [copy_out, copy_out2] {
+                    if !out.is_null() {
+                        if use_glibc {
+                            unsafe { (h.fclose)(out) };
+                        } else {
+                            unsafe { fl::fclose(out) };
+                        }
                     }
                 }
                 if let Some(path) = fd_path {
@@ -864,6 +918,7 @@ fn main() {
         (Work::FseekFd, "FSEEK_FD_AB"),
         (Work::FflushFd, "FFLUSH_FD_AB"),
         (Work::CopyFd, "COPY_FD_AB"),
+        (Work::TeeFd, "TEE_FD_AB"),
         (Work::GetlineFd, "GETLINE_FD_AB"),
         (Work::FputsFd, "FPUTS_FD_AB"),
         (Work::FgetsFd, "FGETS_FD_AB"),

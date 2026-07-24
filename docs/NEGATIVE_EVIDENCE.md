@@ -22407,3 +22407,31 @@ item retains every later colon by construction, exactly matching the former `fie
   workloads, not just single-stream. FOLLOW-ON PROBE: 3-4 way for merge-K / tee-to-many (K>2 streams
   still thrash a 2-way cache) — profile if a hot K-stream pattern surfaces. [[stdio-mt-swing-inprogress]].
   Reproducer: COPY_FD_AB arm.
+
+## 2026-07-24 (cc_fl / MagentaCondor) — WIN (SHIPPED): 3-way STREAM_CELL_CACHE — the tee/broadcast 3-stream thrash; 50.11x → 2.29x vs glibc @8t, both DISJOINT (cc-cellcache-3way-2026-07-24)
+
+- **ARCHITECTURAL LANE, follow-on to the 2-way widening (cc-cellcache-2way).** 2-way fixed copy (2
+  streams) but a tee/broadcast `for { c=fgetc(in); fputc(c,out1); fputc(c,out2); }` uses THREE streams
+  (in + 2 outs — the `tee` command, dual logging, 3-way merge). With 2-way, `in` is evicted every
+  round (out1,out2 fill both slots) ⇒ fgetc(in) always misses the map lock.
+- **PROFILED FIRST (TEE_FD_AB on the 2-way base, /dev/null outs, 3 runs): 8t tee fl/glibc 33-58x** —
+  the 3-stream loop thrashes the 2-way cache (vs copy's now-fixed 2.4-2.7x, single-stream ~2.7x).
+- **THE LEVER.** Widened STREAM_CELL_CACHE from 2-way to **3-way** (`RefCell<[Option<..>;3]>`,
+  most-recent-first, insert-at-front shift dropping the oldest). Lookup early-returns on the first
+  hit, so single-stream (slot 0) and copy (slots 0-1) pay NOTHING for the extra width; only genuine
+  3-distinct-stream fan-out reaches slot 2. Byte-identical.
+- **MEASURED (10 alternated tee_base/tee_cand pairs, idle vmi1152480, 20/20 exit-0; TEE_FD_AB =
+  `for{fgetc(in);fputc(out1);fputc(out2)}`. The last 2 of 12 iterations were cut by the run timeout —
+  TEE base thrashing is ~10.7ms/drain@8t — leaving 10 clean pairs, cleanly DISJOINT).**
+  - **8t: base 10,728,468 → cand 501,998 ns/drain = cand/base 0.047, DISJOINT** (21x; base 9.6M–11.5M
+    vs cand 0.43M–0.67M, zero overlap). **fl/glibc 50.11x LOSS → 2.29x WIN.**
+  - **1t: base 832,094 → cand 369,558 = 0.444, DISJOINT** (2.25x). CV 1.9/4.3%. fl/glibc 5.43x → 2.55x.
+  - **NULL CONTROLS (must NOT regress under 3-way): COPY_FD_AB (2-stream, already fixed by 2-way)
+    overlapping** 1.000 (ov 10/10) / 1.014 (ov 10/10); **FGETC_FD_AB (single-stream)** 1.025 / 0.947
+    (ov 10/10) ⇒ 3-way adds nothing to ≤2-stream workloads (early-return); the win is exactly the
+    3-stream thrash.
+- **CONFORMANCE (hot path of ALL cell-cached ops).** `stdio_abi_test` **256/0** +
+  conformance_diff_{getline,stdio_ext,stdio_unlocked_io,clearerr} + getline_getdelim_differential_fuzz.
+- **DISPOSITION.** SHIPPED. Multi-stream fan-out now covered to 3 streams (copy + tee-to-2 + 3-merge).
+  4-way (tee-to-3 / 4-merge) is a near-free follow-on if a hot 4-stream pattern surfaces (same
+  early-return economics). [[stdio-mt-swing-inprogress]]. Reproducer: TEE_FD_AB arm.
