@@ -7647,6 +7647,20 @@ pub unsafe extern "C" fn vsprintf(
     if format.is_null() || str_buf.is_null() {
         return -1;
     }
+    // Exact single-arg va_list fast paths (unbounded twins of vsnprintf's): pull ONE gp arg and
+    // render directly, skipping decide + parse + extract + render. Return immediately (ap advanced).
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_d_format(format) } {
+        let arg = unsafe { va_read_one_gp(ap) } as c_int;
+        return unsafe { strict_direct_sprintf_d(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_x_format(format) } {
+        let arg = unsafe { va_read_one_gp(ap) } as c_uint;
+        return unsafe { strict_direct_sprintf_x(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
+        let arg = unsafe { va_read_one_gp(ap) } as usize as *mut c_void;
+        return unsafe { strict_direct_sprintf_p(str_buf, arg) };
+    }
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Stdio, str_buf as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {

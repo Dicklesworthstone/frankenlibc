@@ -22520,3 +22520,17 @@ item retains every later colon by construction, exactly matching the former `fie
   the identical helpers. FOLLOW-ON: vsprintf/vdprintf (buffer/fd va_list — reuse va_read_one_gp +
   strict_direct_sprintf_*), and vfprintf %ld/%lu/%lx already covered by the shared helper's l-branch.
   [[printf-d-family-fastpath-vein]]. Reproducer: `--example snprintf_d_ab` (VFPRINTF_DN/XN).
+
+## 2026-07-24 (cc_fl / MagentaCondor) — WIN (SHIPPED): vsprintf %d/%x/%p exact-format va_list fast paths (unbounded twin of vsnprintf) — ~5-12x → ~0.5x, DISJOINT (cc-vsprintf-2026-07-24)
+
+- **FRONTIER LANE.** vsprintf is the unbounded-buffer va_list formatter; exact `%d/%x/%p` paid the full
+  decide+parse+extract+render slow path. Added the dispatch before decide: `va_read_one_gp` (cc-vsnprintf)
+  + the shipped `strict_direct_sprintf_d/x/p` (sprintf's unbounded renderers). Byte-identical by
+  construction (same extraction + same renderers as sprintf/vsnprintf).
+- **MEASURED (8 alternated vsp_base/vsp_cand runs, idle vmi1152480; snprintf_d_ab VSPRINTF arms via the
+  c_variadic wrapper `fl_vsp`).** %d base 141.6 → cand 16.7 ns = cand/base 0.118 DISJOINT (fl/glibc
+  0.411); %p base 316.3 → cand 22.8 = 0.072 DISJOINT (fl/glibc 0.542). CV base 4.3–6.3%. verify() over
+  0/±/i32::MIN/MAX + null/low/full/usize::MAX before timing.
+- **DISPOSITION.** SHIPPED. VA_LIST v-formatter family now COMPLETE for the high-value members:
+  vsnprintf (bounded buf) + vsprintf (unbounded buf) + vfprintf/vprintf (stream). Only vdprintf (fd,
+  own render→fd-write path) remains, lower value. [[printf-d-family-fastpath-vein]].

@@ -31,6 +31,13 @@ unsafe extern "C" fn fl_vf(stream: *mut c_void, fmt: *const c_char, mut args: ..
     }
 }
 
+/// Variadic wrapper → fl `vsprintf` (unbounded buffer v-formatter). Same va_list bridge.
+unsafe extern "C" fn fl_vsp(buf: *mut c_char, fmt: *const c_char, mut args: ...) -> c_int {
+    unsafe {
+        frankenlibc_abi::stdio_abi::vsprintf(buf, fmt, &mut args as *mut _ as *mut c_void)
+    }
+}
+
 type SnD = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_int) -> c_int;
 type SnU = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_uint) -> c_int;
 
@@ -288,6 +295,41 @@ fn main() {
     println!(
         "VSNPRINTF_P fl={vsnp:.2}ns cv={vsnp_cv:.2} (vs glibc sprintf_p {gspp:.2}ns fl/glibc={:.3})",
         vsnp / gspp
+    );
+
+    // vsprintf %d/%x/%p — unbounded va_list buffer twin of vsnprintf. Verify vs glibc sprintf
+    // (identical output) over edge values, then time. base = slow path, cand = fast path.
+    for &n in &[0i32, -1, 12345, -12345, i32::MIN, i32::MAX] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let fr = unsafe { fl_vsp(fb.as_mut_ptr().cast(), fmt_d.as_ptr(), n) };
+        let gr = unsafe { g_sp_d(gb.as_mut_ptr().cast(), fmt_d.as_ptr(), n) };
+        assert_eq!(fr, gr, "vsprintf %d return diverged for {n}");
+        assert_eq!(fb, gb, "vsprintf %d bytes diverged for {n}");
+    }
+    for &n in &[0usize, 0xff, 0x7fff_1234_5678, usize::MAX] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let p = n as *mut c_void;
+        let fr = unsafe { fl_vsp(fb.as_mut_ptr().cast(), fmt_p.as_ptr(), p) };
+        let gr = unsafe { g_sp_p(gb.as_mut_ptr().cast(), fmt_p.as_ptr(), p) };
+        assert_eq!(fr, gr, "vsprintf %p return diverged for {n:#x}");
+        assert_eq!(fb, gb, "vsprintf %p bytes diverged for {n:#x}");
+    }
+    println!("verify: OK (fl vsprintf %d/%p == glibc, va_list)");
+    let (vspd, vspd_cv) = collect(&|| {
+        black_box(unsafe { fl_vsp(black_box(bp).cast(), fmt_d.as_ptr(), black_box(-12345)) });
+    });
+    let (vspp, vspp_cv) = collect(&|| {
+        black_box(unsafe { fl_vsp(black_box(bp).cast(), fmt_p.as_ptr(), black_box(pv)) });
+    });
+    println!(
+        "VSPRINTF_D fl={vspd:.2}ns cv={vspd_cv:.2} (vs glibc sprintf_d {gspd:.2}ns fl/glibc={:.3})",
+        vspd / gspd
+    );
+    println!(
+        "VSPRINTF_P fl={vspp:.2}ns cv={vspp_cv:.2} (vs glibc sprintf_p {gspp:.2}ns fl/glibc={:.3})",
+        vspp / gspp
     );
 
     // %ld (64-bit signed long) — snprintf. Byte-identity over the i64 edge set.
