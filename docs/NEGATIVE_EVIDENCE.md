@@ -22154,3 +22154,37 @@ item retains every later colon by construction, exactly matching the former `fie
   clearerr / fileno / ftell — all have the `__libc_single_threaded`-gated ST fast path + a
   `stream_cell(id)` MT slow path. [[stdio-mt-swing-inprogress]]. Reproducer: `--example
   stdio_fread_mem_mt_ab` (FEOF_FD_AB arm).
+
+## 2026-07-23 (cod / DustySquirrel) — BLOCKED (UNTIMED): remote scheduler refuses the prepared exact `%j` `strftime` frontier bench despite nominal four-slot capacity (`cod-strftime-j-rch-admission-2026-07-23`)
+
+- **PREREQUISITES CLOSED / NEGATIVE-EVIDENCE FIRST.** The `bd-9x1jcx` null-control reruns and
+  `bd-v0psen` immutable-object provenance audit remain closed and authoritative; their evidence
+  was read before selecting another lever. Recent history and this ledger were then searched for
+  printf/time/locale/wchar gaps. The actively modified, exclusively reserved `stdio_abi.rs` was
+  left untouched. The next non-overlapping frontier was the already prepared but still untimed
+  exact `%j` `strftime` finite-state emitter: the committed `strftime_exact_ab` harness verifies
+  valid `tm_yday` boundaries and output capacities against live glibc, retains 64 samples after
+  16 warmups, alternates pair order, and reports deployed/glibc plus two source-identical
+  deployed/deployed NULL arms.
+- **THREE REMOTE-REQUIRED ATTEMPTS; ZERO CARGO STARTS.** Three unchanged invocations of
+  `RCH_REQUIRE_REMOTE=1 rch exec -- cargo bench -j4 --profile release -p frankenlibc-bench
+  --features abi-bench --bench strftime_exact_ab -- --noplot` were refused before compilation or
+  timing with exactly `no admissible workers: critical_pressure=1,insufficient_slots=4,
+  insufficient_total_slots=1,hard_preflight=4`; remote-required mode correctly refused local
+  fallback. No production or benchmark source was edited, so there is no candidate, timing
+  result, KEEP, or REJECT to infer.
+- **ADMISSION CONTRADICTION / SCOPE.** Read-only diagnosis after the failures reported the command
+  `offload-eligible (family=cargo_bench)`, 10/12 healthy workers and 37/76 nominally available
+  slots; `vmi1167313` was healthy at 0/4 and `vmi1152480`, `hz2`, and `vmi1293453` each showed at
+  least four free slots. A live `rch workers probe --all` reached 12/12 workers, and
+  `rch workers capabilities --refresh` confirmed remote Rust toolchains. The queue still held
+  eight cross-project jobs plus one queued job, while the scheduler refused rather than queueing
+  this four-slot bench. Cancelling peer jobs, changing fleet policy, direct-SSH timing, reducing
+  `-j4`, or local Cargo are outside this measured-frontier contract and were not attempted.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** BLOCKED and explicitly **UNTIMED**. Resume only when
+  the exact command above obtains a remote assignment without changing its `-j4`, release
+  profile, feature, bench target, or `--noplot` shape. Production `%j` remains forbidden until
+  the existing boundary/capacity oracle passes and deployed raw, glibc raw, deployed/glibc paired,
+  both NULL raw arms, and NULL paired CVs are each independently below **5%** on that one worker.
+  A KEEP then requires a same-worker post-lever rerun plus focused time conformance; a failed
+  candidate must be reverted and recorded as a dated REJECT with its own retry predicate.
