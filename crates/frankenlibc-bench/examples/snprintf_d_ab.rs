@@ -38,6 +38,13 @@ unsafe extern "C" fn fl_vsp(buf: *mut c_char, fmt: *const c_char, mut args: ...)
     }
 }
 
+/// Variadic wrapper → fl `vdprintf` (fd v-formatter). Same va_list bridge.
+unsafe extern "C" fn fl_vd(fd: c_int, fmt: *const c_char, mut args: ...) -> c_int {
+    unsafe {
+        frankenlibc_abi::stdio_abi::vdprintf(fd, fmt, &mut args as *mut _ as *mut c_void)
+    }
+}
+
 type SnD = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_int) -> c_int;
 type SnU = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_uint) -> c_int;
 
@@ -566,5 +573,46 @@ fn main() {
     println!(
         "VFPRINTF_XN fl={vfprx:.2}ns cv={vfprx_cv:.2} (vs glibc fprintf_xn {gfprx:.2}ns fl/glibc={:.3})",
         vfprx / gfprx
+    );
+
+    // dprintf/vdprintf %d\n — fd v-formatters (direct-fd / syslog logging). Verify fl==glibc via a
+    // pipe (both write to it, compare the two halves), then time to /dev/null. base=slow, cand=fast.
+    type DprintfD = unsafe extern "C" fn(c_int, *const c_char, c_int) -> c_int;
+    let fl_dpr: DprintfD =
+        unsafe { std::mem::transmute::<*const (), DprintfD>(frankenlibc_abi::stdio_abi::dprintf as *const ()) };
+    let g_dpr: DprintfD =
+        unsafe { std::mem::transmute::<*mut c_void, DprintfD>(libc::dlsym(h, c"dprintf".as_ptr())) };
+    for &nv in &[0i32, -1, 12345, -12345, i32::MIN, i32::MAX] {
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
+        let fr = unsafe { fl_dpr(fds[1], c"%d\n".as_ptr(), nv) };
+        let gr = unsafe { g_dpr(fds[1], c"%d\n".as_ptr(), nv) };
+        unsafe { libc::close(fds[1]) };
+        let mut rb = [0u8; 64];
+        let _ = unsafe { libc::read(fds[0], rb.as_mut_ptr().cast(), 64) };
+        unsafe { libc::close(fds[0]) };
+        assert_eq!(fr, gr, "dprintf %d return diverged for {nv}");
+        let hl = fr as usize;
+        assert_eq!(&rb[..hl], &rb[hl..hl * 2], "dprintf %d bytes diverged for {nv}");
+    }
+    println!("verify: OK (fl dprintf %d\\n == glibc, via pipe)");
+    let devnull = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY) };
+    assert!(devnull >= 0, "open /dev/null failed");
+    let (dprd, dprd_cv) = collect(&|| {
+        black_box(unsafe { fl_dpr(black_box(devnull), c"%d\n".as_ptr(), black_box(-12345)) });
+    });
+    let (gdprd, gdprd_cv) = collect(&|| {
+        black_box(unsafe { g_dpr(black_box(devnull), c"%d\n".as_ptr(), black_box(-12345)) });
+    });
+    let (vdprd, vdprd_cv) = collect(&|| {
+        black_box(unsafe { fl_vd(black_box(devnull), c"%d\n".as_ptr(), black_box(-12345)) });
+    });
+    println!(
+        "DPRINTF_DN fl={dprd:.2}ns cv={dprd_cv:.2} glibc={gdprd:.2}ns cv={gdprd_cv:.2} fl/glibc={:.3}",
+        dprd / gdprd
+    );
+    println!(
+        "VDPRINTF_DN fl={vdprd:.2}ns cv={vdprd_cv:.2} (vs glibc dprintf {gdprd:.2}ns fl/glibc={:.3})",
+        vdprd / gdprd
     );
 }

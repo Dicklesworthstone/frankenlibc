@@ -7253,9 +7253,49 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
 
 /// POSIX `dprintf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Exact `%d` (±\n) direct-fd render+write for dprintf/vdprintf: render into a stack buffer and
+/// `write_all_fd`, skipping parse+extract+render. Byte-identical to the slow path (same render
+/// helper; dprintf writes straight to the fd unbuffered so there is no stream state to sync).
+#[inline]
+unsafe fn strict_direct_fd_d(fd: c_int, arg: c_int, newline: bool) -> c_int {
+    let mut buf = [0u8; 12];
+    let len = render_d_into_buf(arg, newline, &mut buf);
+    if unsafe { write_all_fd(fd, &buf[..len]) } {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
+/// Exact `%x`/`%u` (±\n) direct-fd render+write sibling of [`strict_direct_fd_d`].
+#[inline]
+unsafe fn strict_direct_fd_ux(fd: c_int, arg: c_uint, hex: bool, newline: bool) -> c_int {
+    let mut buf = [0u8; 11];
+    let len = render_ux_into_buf(arg, hex, newline, &mut buf);
+    if unsafe { write_all_fd(fd, &buf[..len]) } {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
 pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...) -> c_int {
     if format.is_null() {
         return -1;
+    }
+    // Exact %d/%x/%u (±\n) fast paths — render inline + write straight to the fd, skipping
+    // decide + parse + extract + render_segments. Extract-once, return immediately.
+    if runtime_policy::strict_passthrough_active()
+        && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_int>() };
+        return unsafe { strict_direct_fd_d(fd, arg, newline) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_fd_ux(fd, arg, hex, newline) };
     }
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
@@ -8186,6 +8226,20 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
 pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_void) -> c_int {
     if format.is_null() {
         return -1;
+    }
+    // Exact %d/%x/%u (±\n) va_list fast paths — the va_list twin of dprintf's: pull ONE gp arg,
+    // render inline + write straight to the fd. Return immediately (ap advanced).
+    if runtime_policy::strict_passthrough_active()
+        && let Some(newline) = unsafe { exact_direct_d_stream_format(format) }
+    {
+        let arg = unsafe { va_read_one_gp(ap) } as c_int;
+        return unsafe { strict_direct_fd_d(fd, arg, newline) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
+    {
+        let arg = unsafe { va_read_one_gp(ap) } as c_uint;
+        return unsafe { strict_direct_fd_ux(fd, arg, hex, newline) };
     }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {

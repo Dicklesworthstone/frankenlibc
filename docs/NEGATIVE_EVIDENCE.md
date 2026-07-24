@@ -22534,3 +22534,24 @@ item retains every later colon by construction, exactly matching the former `fie
 - **DISPOSITION.** SHIPPED. VA_LIST v-formatter family now COMPLETE for the high-value members:
   vsnprintf (bounded buf) + vsprintf (unbounded buf) + vfprintf/vprintf (stream). Only vdprintf (fd,
   own render→fd-write path) remains, lower value. [[printf-d-family-fastpath-vein]].
+
+## 2026-07-24 (cc_fl / MagentaCondor) — WIN (SHIPPED): dprintf + vdprintf %d/%x/%u (±\n) fd fast paths — 2x, DISJOINT — COMPLETES the printf family (buffer+stream+fd) (cc-dprintf-2026-07-24)
+
+- **FRONTIER LANE.** dprintf/vdprintf are the DIRECT-FD formatters (syslog / raw-fd / pipe logging).
+  Exact `%d/%x/%u` paid decide+parse+extract+render. Added `strict_direct_fd_d`/`strict_direct_fd_ux`
+  (cod's `render_d_into_buf`/`render_ux_into_buf` + `write_all_fd`) + dispatch in dprintf (variadic
+  `args.next_arg`) AND vdprintf (`va_read_one_gp`). Byte-identical by construction (same render helpers
+  as fprintf; dprintf writes straight to the fd unbuffered so no stream state to sync).
+- **MEASURED (10 alternated dp_base/dp_cand runs, idle vmi1152480; snprintf_d_ab DPRINTF/VDPRINTF arms
+  time to /dev/null, verify fl==glibc via a PIPE — both write, compare the two halves).**
+  - **dprintf %d\n: base 302.4 → cand 157.9 ns = cand/base 0.522, DISJOINT** (1.9x; base 269–309 vs
+    cand 141–171). vdprintf %d\n: base 298.1 → cand 152.7 = 0.512, DISJOINT (2x). CV base 3.8–6.8%.
+  - NOTE: an early LOCAL run showed only ~0.89 (my box's /dev/null write() was ~620ns, swamping the
+    render savings); the idle worker's fast /dev/null write shows the true 2x — always trust the
+    remote idle-worker A/B over a loaded local box for syscall-bound paths.
+  - verify() over 0/±/i32::MIN/MAX via the pipe (return + byte identity) before timing.
+- **CONFORMANCE.** `conformance_diff_dprintf` 3/0, `stdio_abi_test` 256/0.
+- **DISPOSITION.** SHIPPED. **The printf exact-format fast-path family is now COMPLETE across all sink
+  types:** BUFFER (snprintf/sprintf/vsnprintf/vsprintf), STREAM (fprintf/printf/vfprintf/vprintf), FD
+  (dprintf/vdprintf) — %d/%u/%x/%ld/%lu/%lx/%p as applicable; %s correctly rejected (cheap kernel).
+  [[printf-d-family-fastpath-vein]]. Reproducer: `--example snprintf_d_ab` (DPRINTF_DN/VDPRINTF_DN).
