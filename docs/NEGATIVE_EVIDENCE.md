@@ -22219,3 +22219,36 @@ item retains every later colon by construction, exactly matching the former `fie
 - **DISPOSITION.** SHIPPED (ftell + clearerr + fileno). The MT-map-lock convoy on the status/position
   op family is now fully eliminated (feof/ferror + ftell/clearerr/fileno). [[stdio-mt-swing-inprogress]].
   Reproducer: `--example stdio_fread_mem_mt_ab` (FTELL_FD_AB arm).
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): MT cell-cache for getline/getdelim — the line-reader convoy; 5.76x → 2.91x vs glibc @1t DISJOINT, 38x → 10x @8t (cc-getline-cell-cache-2026-07-23)
+
+- **ARCHITECTURAL LANE, line-reader sibling of feof/ftell.** getdelim (getline delegates) had an ST
+  `write_cache_lookup_by_stream` fast path (getdelim_fill_stream, decide/observe skipped) but NO MT
+  path — a threaded `while(getline(&l,&n,fp)!=-1)` loop paid the registry map lock + decide/observe
+  PER LINE. Also, getdelim's slow path only primed the ST cache (`write_cache_store`), not the MT
+  cell cache, so a pure getline loop never populated it.
+- **THE LEVER (two coordinated edits).** (1) MT fast path after the ST one: a gen-valid
+  `stream_cell_cache_lookup` hit (non-mem fd) runs `getdelim_fill_stream` under this stream's lock —
+  byte-identical to the slow path (decide/observe elided exactly as the ST path elides them). (2)
+  Slow path now also `stream_cell_cache_store(stream, &cell)` alongside `write_cache_store` (mirrors
+  fgets), so the loop's first line primes the cell cache and lines 2+ hit the fast path.
+- **MEASURED (12 alternated getline_base/getline_cand runs, idle vmi1152480, 24/24 exit-0;
+  GETLINE_FD_AB = `while(getline)` over the fd file, one 256B buffer per thread allocated with the
+  arm's MATCHING allocator so getline never reallocs/frees — ownership unambiguous).**
+  - **1t: base 9126 → cand 4516 ns/drain = cand/base 0.495, DISJOINT** (2.0x; base 8157–9796 vs cand
+    4201–5229, zero overlap). CV 5.1% / 6.2%. **fl/glibc 5.76x LOSS → 2.91x.**
+  - **8t: base 69515 → cand 17628 = 0.254** (3.9x median). CV 37.8% / 55.3% (HIGH — getline+fd MT
+    jitter). ov:3/12 (9 of 12 cand runs below ALL base runs — strong sign-test, not a clean DISJOINT).
+    fl/glibc 38.25x → 10.01x. Directional corroboration of the clean 1t DISJOINT result.
+  - **NULL CONTROLS: FGETC_FD_AB overlapping** 1t 0.986 (ov 9/12), 8t 0.933 (ov 11/12); **FTELL_FD_AB
+    overlapping** 1.002/1.083 (already shipped, both arms) ⇒ the effect is the getdelim cell cache.
+    (The 8t effect 0.254 dwarfs the null's 0.933 residual drift.)
+- **CONFORMANCE.** `conformance_diff_getline` 6/0, `getline_getdelim_differential_fuzz` 1/0 (fuzz),
+  `stdio_abi_test` 256/0, clearerr/stdio_ext/unlocked_io. getline delegates to getdelim.
+- **HARNESS NOTE (bd-relevant).** First GETLINE harness attempt aborted all 24 runs with `free():
+  invalid size` — freeing a getline-*allocated* buffer through the interposed abi-bench malloc doesn't
+  round-trip. FIX: pre-allocate one 256B buffer per thread with the arm's matching allocator
+  (malloc_abi::malloc for fl, dlmopen-glibc malloc for glibc), size it so getline never reallocs a
+  64B line, free with the same allocator. Correct-by-construction. [[bench-abi-malloc-interposition-hazard]].
+- **DISPOSITION.** SHIPPED. Line-reader convoy closed. [[stdio-mt-swing-inprogress]]. Reproducer:
+  `--example stdio_fread_mem_mt_ab` (GETLINE_FD_AB arm).

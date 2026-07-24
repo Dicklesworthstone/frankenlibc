@@ -52,6 +52,9 @@ type FgetsFn = unsafe extern "C" fn(*mut c_char, c_int, *mut c_void) -> *mut c_c
 type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FeofFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FtellFn = unsafe extern "C" fn(*mut c_void) -> libc::c_long;
+type GetlineFn = unsafe extern "C" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize;
+type FreeFn = unsafe extern "C" fn(*mut c_void);
+type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type FputsFn = unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int;
 type FputcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
 type FseekFn = unsafe extern "C" fn(*mut c_void, libc::c_long, c_int) -> c_int;
@@ -65,6 +68,9 @@ struct HostStdio {
     fgetc: FgetcFn,
     feof: FeofFn,
     ftell: FtellFn,
+    getline: GetlineFn,
+    free: FreeFn,
+    malloc: MallocFn,
     fputs: FputsFn,
     fputc: FputcFn,
     fseek: FseekFn,
@@ -93,6 +99,9 @@ fn host() -> &'static HostStdio {
             fgetc: std::mem::transmute::<*mut c_void, FgetcFn>(sym(b"fgetc\0")),
             feof: std::mem::transmute::<*mut c_void, FeofFn>(sym(b"feof\0")),
             ftell: std::mem::transmute::<*mut c_void, FtellFn>(sym(b"ftell\0")),
+            getline: std::mem::transmute::<*mut c_void, GetlineFn>(sym(b"getline\0")),
+            free: std::mem::transmute::<*mut c_void, FreeFn>(sym(b"free\0")),
+            malloc: std::mem::transmute::<*mut c_void, MallocFn>(sym(b"malloc\0")),
             fputs: std::mem::transmute::<*mut c_void, FputsFn>(sym(b"fputs\0")),
             fputc: std::mem::transmute::<*mut c_void, FputcFn>(sym(b"fputc\0")),
             fseek: std::mem::transmute::<*mut c_void, FseekFn>(sym(b"fseek\0")),
@@ -290,6 +299,43 @@ fn drain_glibc_ftell(fp: *mut c_void, h: &'static HostStdio) -> usize {
     got
 }
 
+/// GETLINE loop drain: the idiomatic `while (getline(&line,&n,fp) != -1)` file-line reader. The
+/// `line`/`n` buffer is allocated ONCE per thread (with the arm's matching allocator) and reused
+/// across every drain — sized (256B) so getline never reallocs a 64B line, so getline never
+/// touches the allocator and the buffer's ownership is unambiguous (freed once at thread end with
+/// the same allocator). base pays the registry map lock + decide/observe PER LINE; cand hits the
+/// cell cache (primed by the slow path). Returns bytes read (must == N).
+fn drain_fl_getline(fp: *mut c_void, line: &mut *mut c_char, n: &mut usize) -> usize {
+    assert_eq!(unsafe { fl::fseek(fp, 0, 0) }, 0, "fl fseek failed");
+    let mut got = 0usize;
+    loop {
+        let rc = unsafe { fl::getline(line, n, fp) };
+        if rc < 0 {
+            break;
+        }
+        got += rc as usize;
+    }
+    got
+}
+
+fn drain_glibc_getline(
+    fp: *mut c_void,
+    h: &'static HostStdio,
+    line: &mut *mut c_char,
+    n: &mut usize,
+) -> usize {
+    assert_eq!(unsafe { (h.fseek)(fp, 0, 0) }, 0, "glibc fseek failed");
+    let mut got = 0usize;
+    loop {
+        let rc = unsafe { (h.getline)(line, n, fp) };
+        if rc < 0 {
+            break;
+        }
+        got += rc as usize;
+    }
+    got
+}
+
 /// FD fgets drain: rewind, then fgets(buf, 128) until NULL → N/64 lines. Returns bytes read.
 fn drain_fl_fgets_fd(fp: *mut c_void) -> usize {
     assert_eq!(unsafe { fl::fseek(fp, 0, 0) }, 0, "fl fseek failed");
@@ -466,6 +512,7 @@ enum Work {
     FgetcFd,
     FeofFd,
     FtellFd,
+    GetlineFd,
     FputsFd,
     FgetsFd,
     FreadFd,
@@ -489,7 +536,12 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                 // pre-written backing file "r"; writes open /dev/null "w" (isolates the
                 // registry-lock cost from real fd-write cost — Full-buffered, rare flush).
                 let (fd_path, fd_fp) = match work {
-                    Work::FgetcFd | Work::FgetsFd | Work::FreadFd | Work::FeofFd | Work::FtellFd => {
+                    Work::FgetcFd
+                    | Work::FgetsFd
+                    | Work::FreadFd
+                    | Work::FeofFd
+                    | Work::FtellFd
+                    | Work::GetlineFd => {
                         let path = make_fd_file(if use_glibc { "glibc" } else { "fl" });
                         let fp = if use_glibc {
                             unsafe { (h.fopen)(path.as_ptr(), c"r".as_ptr()) }
@@ -510,6 +562,21 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                     }
                     _ => (None, std::ptr::null_mut()),
                 };
+                // getline buffer: one per thread, allocated with the arm's matching allocator,
+                // sized (256B) so getline never reallocs a 64B line — getline never touches the
+                // allocator, so ownership is unambiguous and the free below always matches.
+                let (mut gl_line, mut gl_n): (*mut c_char, usize) = if work == Work::GetlineFd {
+                    const GL_BUF: usize = 256;
+                    let p = if use_glibc {
+                        unsafe { (h.malloc)(GL_BUF) }
+                    } else {
+                        unsafe { frankenlibc_abi::malloc_abi::malloc(GL_BUF) }
+                    };
+                    assert!(!p.is_null(), "getline buffer alloc failed");
+                    (p.cast(), GL_BUF)
+                } else {
+                    (std::ptr::null_mut(), 0)
+                };
                 let mut rounds = Vec::with_capacity(ROUNDS);
                 let mut got_total = 0usize;
                 for _ in 0..ROUNDS {
@@ -525,6 +592,12 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                             (true, Work::FeofFd) => drain_glibc_feof(fd_fp, h),
                             (false, Work::FtellFd) => drain_fl_ftell(fd_fp),
                             (true, Work::FtellFd) => drain_glibc_ftell(fd_fp, h),
+                            (false, Work::GetlineFd) => {
+                                drain_fl_getline(fd_fp, &mut gl_line, &mut gl_n)
+                            }
+                            (true, Work::GetlineFd) => {
+                                drain_glibc_getline(fd_fp, h, &mut gl_line, &mut gl_n)
+                            }
                             (false, Work::FgetcFd) => drain_fl_fd(fd_fp),
                             (true, Work::FgetcFd) => drain_glibc_fd(fd_fp, h),
                             (false, Work::FputsFd) => drain_fl_fputs(fd_fp),
@@ -548,6 +621,14 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                 }
                 if let Some(path) = fd_path {
                     let _ = std::fs::remove_file(path.to_str().expect("utf8 path"));
+                }
+                // Free the getline buffer with the SAME allocator that allocated it.
+                if !gl_line.is_null() {
+                    if use_glibc {
+                        unsafe { (h.free)(gl_line.cast()) };
+                    } else {
+                        unsafe { frankenlibc_abi::malloc_abi::free(gl_line.cast()) };
+                    }
                 }
                 // Execution proof: every drain returned all N bytes (fread/fgetc-fd) /
                 // all lines (fgets).
@@ -584,6 +665,7 @@ fn main() {
         (Work::FgetcFd, "FGETC_FD_AB"),
         (Work::FeofFd, "FEOF_FD_AB"),
         (Work::FtellFd, "FTELL_FD_AB"),
+        (Work::GetlineFd, "GETLINE_FD_AB"),
         (Work::FputsFd, "FPUTS_FD_AB"),
         (Work::FgetsFd, "FGETS_FD_AB"),
         (Work::FreadFd, "FREAD_FD_AB"),

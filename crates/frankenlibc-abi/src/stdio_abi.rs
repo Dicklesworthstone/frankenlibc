@@ -9376,6 +9376,22 @@ pub unsafe extern "C" fn getdelim(
         unsafe { getdelim_fill_stream(&mut *p, delim_byte, buf) };
         return unsafe { getdelim_finish(buf, lineptr, n) };
     }
+    // MT-safe cell-cache fast path (see fgets): the ST cache above is `__libc_single_threaded`-
+    // gated, so a threaded getline/getdelim loop otherwise pays the registry map lock +
+    // decide/observe PER LINE. A gen-valid cell hit is a non-cookie non-mem fd stream (both store
+    // sites, incl. this fn's slow path below), so `getdelim_fill_stream` under this stream's lock
+    // is byte-identical to the slow path.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        let mut s = cell.lock();
+        if !s.is_mem_backed() {
+            let mut scratch = GetdelimScratchGuard(GETDELIM_SCRATCH.with(|c| c.take()));
+            let buf = &mut scratch.0;
+            buf.clear();
+            // SAFETY: the cell lock gives unique access to this stream for the fill's duration.
+            unsafe { getdelim_fill_stream(&mut s, delim_byte, buf) };
+            return unsafe { getdelim_finish(buf, lineptr, n) };
+        }
+    }
 
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
@@ -9425,6 +9441,8 @@ pub unsafe extern "C" fn getdelim(
             // Cache the non-cookie non-mem fd stream so subsequent getdelim/getline hit the
             // fast path — a pure getline loop otherwise never populates the cache. See fgets.
             write_cache_store(id, s as *mut StdioStream);
+            // MT-safe cell cache: a threaded getline loop warms this once then skips the map lock.
+            stream_cell_cache_store(stream, &cell);
         }
         // SAFETY: `s` uniquely borrowed under the stream lock.
         unsafe { getdelim_fill_stream(s, delim_byte, buf) };
