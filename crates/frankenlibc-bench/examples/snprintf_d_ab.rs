@@ -185,6 +185,36 @@ fn main() {
     );
     println!("SPRINTF_X fl={spx:.2}ns cv={spx_cv:.2} (fl-only)");
 
+    // %p (pointer) — sprintf. THE LEVER UNDER TEST (cc-sprintf-p): unblocks cod's RCH-blocked
+    // sprintf("%p"). Byte-identity over null / low / full-width / usize::MAX pointers first.
+    type SpP = unsafe extern "C" fn(*mut c_char, *const c_char, *mut c_void) -> c_int;
+    let fl_sp_p: SpP = unsafe {
+        std::mem::transmute::<*const (), SpP>(frankenlibc_abi::stdio_abi::sprintf as *const ())
+    };
+    let g_sp_p: SpP = unsafe { std::mem::transmute::<*mut c_void, SpP>(gsp) };
+    let fmt_p = c"%p";
+    for &n in &[0usize, 1, 0xff, 0x7fff_1234_5678, usize::MAX, 0xdead_beef] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let p = n as *mut c_void;
+        let fr = unsafe { fl_sp_p(fb.as_mut_ptr().cast(), fmt_p.as_ptr(), p) };
+        let gr = unsafe { g_sp_p(gb.as_mut_ptr().cast(), fmt_p.as_ptr(), p) };
+        assert_eq!(fr, gr, "sprintf %p return diverged for {n:#x}");
+        assert_eq!(fb, gb, "sprintf %p bytes diverged for {n:#x}");
+    }
+    println!("verify: OK (fl sprintf %p == glibc, null/low/full/MAX)");
+    let pv = 0x7fff_1234_5678usize as *mut c_void;
+    let (spp, spp_cv) = collect(&|| {
+        black_box(unsafe { fl_sp_p(black_box(bp).cast(), fmt_p.as_ptr(), black_box(pv)) });
+    });
+    let (gspp, gspp_cv) = collect(&|| {
+        black_box(unsafe { g_sp_p(black_box(bp).cast(), fmt_p.as_ptr(), black_box(pv)) });
+    });
+    println!(
+        "SPRINTF_P fl={spp:.2}ns cv={spp_cv:.2} glibc={gspp:.2}ns cv={gspp_cv:.2} fl/glibc={:.3}",
+        spp / gspp
+    );
+
     // %ld (64-bit signed long) — snprintf. Byte-identity over the i64 edge set.
     type SnLd = unsafe extern "C" fn(*mut c_char, usize, *const c_char, i64) -> c_int;
     let fmt_ld = c"%ld";

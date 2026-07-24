@@ -6212,6 +6212,45 @@ unsafe fn strict_direct_sprintf_x(str_buf: *mut c_char, arg: c_uint) -> c_int {
     len as c_int
 }
 
+/// Unbounded (`sprintf`) sibling of [`strict_direct_snprintf_p`]: render `(nil)` for a null
+/// pointer or lowercase `0x…` hex, then copy every rendered byte + NUL into `str_buf` (no size
+/// bound — sprintf's C contract guarantees the buffer fits). Byte-identical to the bounded helper
+/// for the unbounded case, and to glibc `%p`.
+#[inline]
+unsafe fn strict_direct_sprintf_p(str_buf: *mut c_char, arg: *mut c_void) -> c_int {
+    let mut rendered = [0u8; 2 + usize::BITS as usize / 4];
+    let (start, len) = if arg.is_null() {
+        rendered[..5].copy_from_slice(b"(nil)");
+        (0usize, 5usize)
+    } else {
+        let mut value = arg as usize;
+        let mut pos = rendered.len();
+        loop {
+            pos -= 1;
+            let digit = (value & 0xf) as u8;
+            rendered[pos] = if digit < 10 {
+                b'0' + digit
+            } else {
+                b'a' + digit - 10
+            };
+            value >>= 4;
+            if value == 0 {
+                break;
+            }
+        }
+        pos -= 2;
+        rendered[pos] = b'0';
+        rendered[pos + 1] = b'x';
+        (pos, rendered.len() - pos)
+    };
+    // SAFETY: sprintf's C contract gives a buffer large enough; `rendered[start..]` has `len`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr().add(start), str_buf.cast::<u8>(), len);
+        *str_buf.add(len) = 0;
+    }
+    len as c_int
+}
+
 #[inline]
 unsafe fn strict_direct_snprintf_p(str_buf: *mut c_char, size: usize, arg: *mut c_void) -> c_int {
     let mut rendered = [0u8; 2 + usize::BITS as usize / 4];
@@ -6672,6 +6711,12 @@ pub unsafe extern "C" fn sprintf(
         // SAFETY: exact `%lx` consumes one `unsigned long`; unbounded sprintf buffer.
         let arg = unsafe { args.next_arg::<u64>() };
         return unsafe { strict_direct_sprintf_lx(str_buf, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
+        // SAFETY: exact `%p` consumes one promoted `void *`; unbounded sprintf buffer. Renders
+        // the same lowercase `0x…` / `(nil)` as the shipped snprintf `%p`, byte-identical.
+        let arg = unsafe { args.next_arg::<*mut c_void>() };
+        return unsafe { strict_direct_sprintf_p(str_buf, arg) };
     }
 
     let (mode, decision) =

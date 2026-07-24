@@ -22435,3 +22435,33 @@ item retains every later colon by construction, exactly matching the former `fie
 - **DISPOSITION.** SHIPPED. Multi-stream fan-out now covered to 3 streams (copy + tee-to-2 + 3-merge).
   4-way (tee-to-3 / 4-merge) is a near-free follow-on if a hot 4-stream pattern surfaces (same
   early-return economics). [[stdio-mt-swing-inprogress]]. Reproducer: TEE_FD_AB arm.
+
+## 2026-07-24 (cc_fl / MagentaCondor) — WIN (SHIPPED): exact sprintf("%p") strict fast path — 7.194x → 0.661x vs glibc, DISJOINT — UNBLOCKS cod-sprintf-p-rch-blocker (cc-sprintf-p-2026-07-24)
+
+- **FRONTIER LANE (sole producer — cod capped until Jul 29).** Directly unblocks
+  `cod-sprintf-p-rch-blocker-2026-07-23` (cod could not run the bench: `RCH_WORKER=w` refused, 'w' not
+  a configured worker). RETRY PREDICATE ("run on a valid worker") NOW HOLDS via my SSH-to-vmi1152480
+  remote-perf recipe [[remote-perf-attribution-recipe]] — no rch selector needed. Ledger/history gate:
+  the old exact `sprintf("%s")` REJECTION (variadic floor offsets a cheap strlen+memcpy kernel, 1.3x
+  loss) does NOT transfer — `%p` is a HEX render like `%x` (which shipped 3.57x→0.514x): glibc's
+  parse+render for hex dominates, so the membrane bypass wins.
+- **THE LEVER.** sprintf `%p` still entered `runtime_policy::decide` + format parsing + `render_segments`
+  (cod's source inspection, confirmed). Added `strict_direct_sprintf_p` (unbounded sibling of the shipped
+  `strict_direct_snprintf_p`: `(nil)` for null / lowercase `0x…` hex, copy all bytes + NUL) + the
+  `exact_direct_p_format` dispatch in sprintf (after `%lx`), consuming one promoted `void*`. Byte-identical.
+- **MEASURED (8 alternated sprintfp_base/sprintfp_cand runs, idle vmi1152480, ST formatter bench
+  `snprintf_d_ab` SPRINTF_P arm = real VARIADIC `fl::sprintf("%p", ptr)` vs dlmopen-glibc — the path
+  the `%s` rejection warned the kernel A/B never sees).**
+  - **base (no fast path): fl 306.69 ns, fl/glibc 7.194x LOSS** (decide+parse+render slow path).
+  - **cand (fast path): fl 26.80 ns, fl/glibc 0.661x WIN** (1.5x faster than glibc). CV base 4.0% /
+    cand 5.3%.
+  - **LEVER cand/base = 0.087, DISJOINT** (11.5x fl-over-fl; base 290–330 ns vs cand 24.6–29.8 ns,
+    zero overlap). SPRINTF_X (fl-only reference) unchanged between arms.
+- **CONFORMANCE.** `conformance_diff_printf_pointer` 1/0, `conformance_diff_printf_fastpaths` 3/0,
+  `conformance_diff_asprintf` 2/0, `stdio_abi_test` 256/0, `conformance_diff_stdio_printf` 11/0; the
+  bench `verify()` asserts fl==glibc over null / low / full-width / usize::MAX pointers before timing
+  (cod's proof obligation, met).
+- **DISPOSITION.** SHIPPED. sprintf exact-format coverage now: c/d/u/x/ld/lu/lx/zd/zu/**p** (only `%s`
+  remains, correctly rejected). [[printf-d-family-fastpath-vein]]. Reproducer: `--example snprintf_d_ab`
+  (SPRINTF_P). NEXT frontier: vsnprintf/vsprintf (va_list variants — logging wrappers; need va_list
+  extraction) or a fresh time/locale/wchar profile.
