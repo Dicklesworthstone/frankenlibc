@@ -302,6 +302,31 @@ fn drain_glibc_ftell(fp: *mut c_void, h: &'static HostStdio) -> usize {
     got
 }
 
+/// FSEEK loop drain (PROFILE-ONLY): `for i { fseek(fp, (i&1)*64, SEEK_SET); }` — alternate two
+/// offsets to force a real position change each call in both arms. Measures fseek's per-call cost;
+/// compare fl 1t-vs-8t scaling (map-lock convoy signal) against glibc. No cell-cache exists yet.
+fn drain_fl_fseek(fp: *mut c_void) -> usize {
+    let mut got = 0usize;
+    for i in 0..N {
+        let off = ((i & 1) * 64) as libc::c_long;
+        if unsafe { fl::fseek(fp, off, 0) } == 0 {
+            got += 1;
+        }
+    }
+    got
+}
+
+fn drain_glibc_fseek(fp: *mut c_void, h: &'static HostStdio) -> usize {
+    let mut got = 0usize;
+    for i in 0..N {
+        let off = ((i & 1) * 64) as libc::c_long;
+        if unsafe { (h.fseek)(fp, off, 0) } == 0 {
+            got += 1;
+        }
+    }
+    got
+}
+
 /// UNGETC loop drain: the parser lookahead `for { c=fgetc(fp); ungetc(c,fp); }` oscillation. fgetc
 /// is cell-cached in both arms (and reads the pushed-back byte via buffered_read_into), so the
 /// base-vs-cand delta isolates ungetc's MT cost (registry map lock per call vs cell cache). The
@@ -548,6 +573,7 @@ enum Work {
     FeofFd,
     FtellFd,
     UngetcFd,
+    FseekFd,
     GetlineFd,
     FputsFd,
     FgetsFd,
@@ -578,6 +604,7 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                     | Work::FeofFd
                     | Work::FtellFd
                     | Work::UngetcFd
+                    | Work::FseekFd
                     | Work::GetlineFd => {
                         let path = make_fd_file(if use_glibc { "glibc" } else { "fl" });
                         let fp = if use_glibc {
@@ -631,6 +658,8 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                             (true, Work::FtellFd) => drain_glibc_ftell(fd_fp, h),
                             (false, Work::UngetcFd) => drain_fl_ungetc(fd_fp),
                             (true, Work::UngetcFd) => drain_glibc_ungetc(fd_fp, h),
+                            (false, Work::FseekFd) => drain_fl_fseek(fd_fp),
+                            (true, Work::FseekFd) => drain_glibc_fseek(fd_fp, h),
                             (false, Work::GetlineFd) => {
                                 drain_fl_getline(fd_fp, &mut gl_line, &mut gl_n)
                             }
@@ -705,6 +734,7 @@ fn main() {
         (Work::FeofFd, "FEOF_FD_AB"),
         (Work::FtellFd, "FTELL_FD_AB"),
         (Work::UngetcFd, "UNGETC_FD_AB"),
+        (Work::FseekFd, "FSEEK_FD_AB"),
         (Work::GetlineFd, "GETLINE_FD_AB"),
         (Work::FputsFd, "FPUTS_FD_AB"),
         (Work::FgetsFd, "FGETS_FD_AB"),

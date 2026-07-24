@@ -22281,3 +22281,36 @@ item retains every later colon by construction, exactly matching the former `fie
   LOW-VALUE: fseek/rewind (lseek-syscall-dominated, map lock a small fraction, no ST precedent),
   fflush (not tight-looped), fgetpos/fsetpos (niche). MT cell-cache convoy vein ≈ FRONTIER for
   long-lived streams in hot loops. [[stdio-mt-swing-inprogress]]. Reproducer: UNGETC_FD_AB arm.
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): MT cell-cache for fseek — random-access convoy; 9.33x → 1.02x vs glibc @8t (PARITY), both DISJOINT (cc-fseek-cell-cache-2026-07-23)
+
+- **ARCHITECTURAL LANE, profile-first.** fseek shares the same 2 registry map locks (canonical_stream_id
+  + stream_cell) that feof/ftell/ungetc paid, but its lseek syscall dilutes the convoy — so I PROFILED
+  first (single-binary, 3 runs) before investing in the riskier mutating-seek extraction:
+  - fl fseek per-op 160ns@1t → 1340ns@8t (8.4x inflation = the 2 map locks under contention); glibc
+    flat (~122–166ns, per-thread lseek). **8t fl/glibc 7.0–9.3x** confirmed the convoy is real and
+    worth attacking (1t only 1.27–1.30x — syscall-bound, so the win is all at 8t).
+- **THE LEVER (careful extraction).** Extracted the non-cookie non-mem fd seek core into
+  `fd_seek_locked(s, offset, whence) -> Result<(), SeekErr>` (flush pending writes / discard read
+  buffer / lseek / set offset), shared by the slow path and a new `stream_cell_cache_lookup` fast
+  path. `SeekErr` distinguishes `WriteFailed` (flush syscall's errno already set — caller must NOT
+  overwrite, matching the original inline path) from `Errno(e)` (EOVERFLOW / lseek error). Slow path
+  now also `stream_cell_cache_store` so a pure seek loop primes+hits. Byte-identical (decide/observe
+  elided by the fast path exactly as the other cached fast paths elide them; the CELL cache doc
+  explicitly blesses fseek — the lock reads current state so mutation needs no invalidation).
+- **MEASURED (12 alternated fseek_base/fseek_cand runs, idle vmi1152480, 24/24 exit-0; FSEEK_FD_AB =
+  `for i { fseek(fp, (i&1)*64, SEEK_SET) }`, cand primed by the first fseek's slow path).**
+  - **8t: base 5,438,113 → cand 630,891 ns/drain = cand/base 0.116, DISJOINT** (8.6x; base 5.08M–7.14M
+    vs cand 0.57M–0.80M, zero overlap). **fl/glibc 9.33x LOSS → 1.02x — PARITY** (only the shared
+    lseek remains).
+  - **1t: base 654,368 → cand 546,893 = 0.836, DISJOINT.** CV **2.1% / 2.3%** (well under the 5% gate).
+    fl/glibc 1.27x → 1.07x.
+  - **NULL CONTROLS: FREAD_MEM_AB (no fseek, clean) overlapping** 1.042 (ov 12/12) / 1.082 (ov 9/12);
+    FGETC_FD 0.977/0.921, FTELL_FD 0.987/0.983 (ov 11-12/12) ⇒ the effect is the fseek cell cache.
+- **CONFORMANCE.** `stdio_abi_test` **256/0** (50 fseek/fseeko/rewind refs), `conformance_diff_fseeko`
+  2/0, `conformance_diff_stdio_rwdir` 1/0, stdio_ext 3/0 — the fd_seek_locked extraction is
+  byte-identical.
+- **DISPOSITION.** SHIPPED. fseeko/rewind delegate to fseek ⇒ transitively covered. This is the
+  best residual of the MT cell-cache family (parity, since the lseek is the only irreducible cost).
+  Remaining ops (fflush cold-path, fgetpos/fsetpos niche) are low-value. [[stdio-mt-swing-inprogress]].
+  Reproducer: FSEEK_FD_AB arm.

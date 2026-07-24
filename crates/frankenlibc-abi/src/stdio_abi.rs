@@ -4086,12 +4086,87 @@ pub unsafe extern "C" fn fwrite(
 // fseek / ftell / rewind
 // ---------------------------------------------------------------------------
 
+/// Failure of [`fd_seek_locked`]. `WriteFailed` means the pending-write flush failed and the
+/// syscall's errno is already set (caller must NOT overwrite it, matching the original inline
+/// path); `Errno(e)` means the caller should `set_abi_errno(e)`.
+enum SeekErr {
+    Errno(i32),
+    WriteFailed,
+}
+
+/// Non-cookie non-mem fd-stream seek core, shared by `fseek`'s slow path and its MT cell-cache
+/// fast path: flush pending writes, discard the read buffer, `lseek`, and update the tracked
+/// offset. No `decide`/`observe` — the callers own membrane accounting (the fast path elides it
+/// exactly as the other cached fast paths do). `s` must be a non-cookie non-mem fd stream (both
+/// call sites guarantee this). Byte-identical to the original inline block.
+unsafe fn fd_seek_locked(s: &mut StdioStream, offset: c_long, whence: c_int) -> Result<(), SeekErr> {
+    // Flush pending writes and discard read buffer.
+    let pending = s.prepare_seek();
+    let fd = s.fd();
+    if !pending.is_empty() {
+        let mut written = 0usize;
+        while written < pending.len() {
+            let rc = unsafe {
+                sys_write_fd(fd, pending[written..].as_ptr().cast(), pending.len() - written)
+            };
+            if rc < 0 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if e == errno::EINTR {
+                    continue;
+                }
+                s.set_error();
+                return Err(SeekErr::WriteFailed);
+            } else if rc == 0 {
+                s.set_error();
+                return Err(SeekErr::WriteFailed);
+            }
+            written += rc as usize;
+        }
+    }
+
+    let (target_off, target_whence) = if whence == libc::SEEK_CUR {
+        match s.offset().checked_add(offset) {
+            Some(off) => (off, libc::SEEK_SET),
+            None => return Err(SeekErr::Errno(errno::EOVERFLOW)),
+        }
+    } else {
+        (offset, whence)
+    };
+
+    let new_off = match raw_syscall::sys_lseek(fd, target_off, target_whence) {
+        Ok(off) => off,
+        Err(e) => return Err(SeekErr::Errno(e)),
+    };
+
+    s.set_offset(new_off);
+    Ok(())
+}
+
 /// POSIX `fseek`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_int) -> c_int {
     if stream.is_null() {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
+    }
+    // MT-safe cell-cache fast path (see feof; the cache doc explicitly blesses fseek — the lock
+    // reads current state so mutation needs no invalidation). A gen-valid hit is a non-cookie
+    // non-mem fd stream, so fd_seek_locked under this stream's lock is byte-identical to the slow
+    // path's non-cookie fd branch (decide/observe elided as the other fast paths elide them —
+    // decide()==Allow in strict for a normal fd stream). A threaded seek loop otherwise pays the
+    // registry map lock(s) per call: fl fseek 160ns→1340ns/op from 1t→8t (8.4x) vs glibc flat.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        let mut s = cell.lock();
+        if !s.is_mem_backed() {
+            return match unsafe { fd_seek_locked(&mut s, offset, whence) } {
+                Ok(()) => 0,
+                Err(SeekErr::WriteFailed) => -1,
+                Err(SeekErr::Errno(e)) => {
+                    unsafe { set_abi_errno(e) };
+                    -1
+                }
+            };
+        }
     }
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
@@ -4176,61 +4251,26 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
         return 0;
     }
 
-    // Flush pending writes and discard read buffer.
-    let pending = s.prepare_seek();
-    let fd = s.fd();
-    if !pending.is_empty() {
-        let mut written = 0usize;
-        while written < pending.len() {
-            let rc = unsafe {
-                sys_write_fd(
-                    fd,
-                    pending[written..].as_ptr().cast(),
-                    pending.len() - written,
-                )
-            };
-            if rc < 0 {
-                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                if e == errno::EINTR {
-                    continue;
-                }
-                s.set_error();
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-                return -1;
-            } else if rc == 0 {
-                s.set_error();
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-                return -1;
-            }
-            written += rc as usize;
+    // Cache this non-cookie non-mem fd stream so subsequent fseek/read hit the MT fast path — a
+    // pure seek loop (random-access I/O) otherwise never populates the cache and pays the map
+    // lock(s) per call forever. Mirrors fgets/getdelim.
+    stream_cell_cache_store(stream, &cell);
+    // SAFETY: `s` uniquely borrowed under the stream lock; non-cookie non-mem fd (checked above).
+    match unsafe { fd_seek_locked(s, offset, whence) } {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
+            0
         }
-    }
-
-    let (target_off, target_whence) = if whence == libc::SEEK_CUR {
-        match s.offset().checked_add(offset) {
-            Some(off) => (off, libc::SEEK_SET),
-            None => {
-                unsafe { set_abi_errno(errno::EOVERFLOW) };
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-                return -1;
-            }
+        Err(SeekErr::WriteFailed) => {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            -1
         }
-    } else {
-        (offset, whence)
-    };
-
-    let new_off = match raw_syscall::sys_lseek(fd, target_off, target_whence) {
-        Ok(off) => off,
-        Err(e) => {
+        Err(SeekErr::Errno(e)) => {
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-            return -1;
+            -1
         }
-    };
-
-    s.set_offset(new_off);
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    0
+    }
 }
 
 /// POSIX `ftell`.
