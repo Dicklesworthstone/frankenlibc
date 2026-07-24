@@ -22314,3 +22314,33 @@ item retains every later colon by construction, exactly matching the former `fie
   best residual of the MT cell-cache family (parity, since the lseek is the only irreducible cost).
   Remaining ops (fflush cold-path, fgetpos/fsetpos niche) are low-value. [[stdio-mt-swing-inprogress]].
   Reproducer: FSEEK_FD_AB arm.
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): MT cell-cache for fflush — durability-flush convoy; 7.81x → 1.10x vs glibc @8t (near parity), both DISJOINT (cc-fflush-cell-cache-2026-07-23)
+
+- **ARCHITECTURAL LANE, profile-first (6th win).** fflush's single-stream path does
+  `canonical_stream_id` ×3 (host-check + decide + single-stream) + `stream_cell` + `flush_stream`,
+  hot in the durability-logging `fprintf(log,…); fflush(log);` pattern. Profiled first (the flush
+  WRITE dilutes like fseek's lseek): 1t fl/glibc 1.25–1.30 (syscall-bound) but **8t 6.4–6.9x** (fl
+  per-op 221ns→1370ns 1t→8t = 6.2x = the map locks under contention; glibc flat) ⇒ real convoy,
+  worth building.
+- **THE LEVER.** Added a `stream_cell_cache_lookup` fast path at the TOP of fflush (before the
+  triple canonical_stream_id): a gen-valid hit (primed by the loop's fputc/write) is a non-cookie
+  non-mem fd stream, so the slow path reduces to `flush_stream(s)` under this stream's lock —
+  byte-identical (decide/observe elided as the other cached fast paths elide them). Slow path also
+  `stream_cell_cache_store` in its non-mem fd branch (pure-fflush-loop prime; mirrors fgets/fseek).
+- **MEASURED (12 alternated fflush_base/fflush_cand runs, idle vmi1152480, 24/24 exit-0; FFLUSH_FD_AB
+  = `for { fputc('x',fp); fflush(fp); }` on /dev/null "w", fputc cell-cached in both so the delta
+  isolates fflush).**
+  - **8t: base 6,251,055 → cand 892,072 ns/drain = cand/base 0.143, DISJOINT** (7.0x; base 5.33M–6.96M
+    vs cand 0.82M–1.04M, zero overlap). **fl/glibc 7.81x LOSS → 1.10x — near PARITY** (the flush
+    write is the residual).
+  - **1t: base 909,597 → cand 780,233 = 0.858, DISJOINT.** CV **2.8% / 3.8%** (under the 5% gate).
+    fl/glibc 1.30x → 1.12x.
+  - **NULL CONTROLS: FREAD_MEM_AB (no fflush, clean) overlapping** 1.023 (ov 12/12) / 0.915 (ov
+    11/12); FPUTC_FD_AB 1.004 / 1.043 (ov 10-12/12) ⇒ the effect is the fflush cell cache.
+- **CONFORMANCE.** `stdio_abi_test` **256/0** (45 fflush refs), `conformance_diff_stdio_ext` 3/0,
+  `conformance_diff_stdio_unlocked_io` 2/0. fflush_unlocked delegates ⇒ covered.
+- **DISPOSITION.** SHIPPED. **This closes the narrow-stdio MT cell-cache family** across read/write/
+  status/position/line/pushback/seek/flush. Wide ops delegate to cell-cached narrow ops (covered).
+  Remaining: fgetpos/fsetpos (own map-locked paths but NICHE save/restore, rarely hot-looped) —
+  candidate follow-ons if a hot pattern surfaces. [[stdio-mt-swing-inprogress]]. Reproducer: FFLUSH_FD_AB.

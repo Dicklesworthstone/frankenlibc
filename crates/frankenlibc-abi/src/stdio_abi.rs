@@ -2650,6 +2650,19 @@ pub unsafe fn fflush_managed_only_for_abort() -> c_int {
 /// POSIX `fflush`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
+    // MT-safe cell-cache fast path (see feof): a threaded fflush-per-write (durability-logging)
+    // loop otherwise pays `canonical_stream_id` (×3) + decide + `stream_cell` PER CALL. A gen-valid
+    // hit is a non-cookie non-mem fd stream (primed by the loop's fputc/write), so the slow path's
+    // single-stream branch reduces to `flush_stream(s)` — byte-identical (decide/observe elided as
+    // the other cached fast paths elide them). fl fflush per-op 221ns→1370ns 1t→8t (6.2x) vs glibc.
+    if !stream.is_null()
+        && let Some(cell) = stream_cell_cache_lookup(stream)
+    {
+        let mut s = cell.lock();
+        if !s.is_mem_backed() {
+            return if unsafe { flush_stream(&mut s) } { 0 } else { libc::EOF };
+        }
+    }
     if !stream.is_null() {
         let _id = canonical_stream_id(stream);
         // Host delegation path - not available in standalone mode
@@ -2750,6 +2763,9 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, false);
             return 0;
         }
+        // Cache this non-cookie non-mem fd stream so subsequent fflush/read/write hit the MT fast
+        // path — a pure fflush loop otherwise never populates the cache. Mirrors fgets/fseek.
+        stream_cell_cache_store(stream, &cell);
         let ok = unsafe { flush_stream(s) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !ok);
         if ok { 0 } else { libc::EOF }

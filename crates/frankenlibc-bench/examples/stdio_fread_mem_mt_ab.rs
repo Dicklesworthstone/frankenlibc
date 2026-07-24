@@ -53,6 +53,7 @@ type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FeofFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FtellFn = unsafe extern "C" fn(*mut c_void) -> libc::c_long;
 type UngetcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
+type FflushFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type GetlineFn = unsafe extern "C" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
@@ -70,6 +71,7 @@ struct HostStdio {
     feof: FeofFn,
     ftell: FtellFn,
     ungetc: UngetcFn,
+    fflush: FflushFn,
     getline: GetlineFn,
     free: FreeFn,
     malloc: MallocFn,
@@ -102,6 +104,7 @@ fn host() -> &'static HostStdio {
             feof: std::mem::transmute::<*mut c_void, FeofFn>(sym(b"feof\0")),
             ftell: std::mem::transmute::<*mut c_void, FtellFn>(sym(b"ftell\0")),
             ungetc: std::mem::transmute::<*mut c_void, UngetcFn>(sym(b"ungetc\0")),
+            fflush: std::mem::transmute::<*mut c_void, FflushFn>(sym(b"fflush\0")),
             getline: std::mem::transmute::<*mut c_void, GetlineFn>(sym(b"getline\0")),
             free: std::mem::transmute::<*mut c_void, FreeFn>(sym(b"free\0")),
             malloc: std::mem::transmute::<*mut c_void, MallocFn>(sym(b"malloc\0")),
@@ -477,6 +480,31 @@ fn drain_fl_fputc(fp: *mut c_void) -> usize {
     n
 }
 
+/// FFLUSH loop drain (PROFILE-ONLY): the durability-logging `for { fputc; fflush(fp); }` pattern
+/// on a /dev/null "w" stream. fputc is cell-cached in both arms (buffers 1 byte); fflush writes it
+/// + exercises fflush's map locks. Compare fl 1t-vs-8t scaling (map-lock convoy) against glibc.
+fn drain_fl_fflush(fp: *mut c_void) -> usize {
+    let mut n = 0usize;
+    for _ in 0..N {
+        unsafe { fl::fputc(b'x' as c_int, fp) };
+        if unsafe { fl::fflush(fp) } == 0 {
+            n += 1;
+        }
+    }
+    n
+}
+
+fn drain_glibc_fflush(fp: *mut c_void, h: &'static HostStdio) -> usize {
+    let mut n = 0usize;
+    for _ in 0..N {
+        unsafe { (h.fputc)(b'x' as c_int, fp) };
+        if unsafe { (h.fflush)(fp) } == 0 {
+            n += 1;
+        }
+    }
+    n
+}
+
 fn drain_glibc_fputc(fp: *mut c_void, h: &'static HostStdio) -> usize {
     let mut n = 0usize;
     for _ in 0..N {
@@ -574,6 +602,7 @@ enum Work {
     FtellFd,
     UngetcFd,
     FseekFd,
+    FflushFd,
     GetlineFd,
     FputsFd,
     FgetsFd,
@@ -615,7 +644,7 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                         assert!(!fp.is_null(), "fopen r failed for fd workload");
                         (Some(path), fp)
                     }
-                    Work::FputsFd | Work::FputcFd => {
+                    Work::FputsFd | Work::FputcFd | Work::FflushFd => {
                         let fp = if use_glibc {
                             unsafe { (h.fopen)(c"/dev/null".as_ptr(), c"w".as_ptr()) }
                         } else {
@@ -676,6 +705,8 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                             (true, Work::FreadFd) => drain_glibc_fread_fd(fd_fp, h),
                             (false, Work::FputcFd) => drain_fl_fputc(fd_fp),
                             (true, Work::FputcFd) => drain_glibc_fputc(fd_fp, h),
+                            (false, Work::FflushFd) => drain_fl_fflush(fd_fp),
+                            (true, Work::FflushFd) => drain_glibc_fflush(fd_fp, h),
                         };
                     }
                     rounds.push(start.elapsed().as_nanos() as f64 / K as f64);
@@ -735,6 +766,7 @@ fn main() {
         (Work::FtellFd, "FTELL_FD_AB"),
         (Work::UngetcFd, "UNGETC_FD_AB"),
         (Work::FseekFd, "FSEEK_FD_AB"),
+        (Work::FflushFd, "FFLUSH_FD_AB"),
         (Work::GetlineFd, "GETLINE_FD_AB"),
         (Work::FputsFd, "FPUTS_FD_AB"),
         (Work::FgetsFd, "FGETS_FD_AB"),
