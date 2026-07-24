@@ -4325,6 +4325,13 @@ pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
         // SAFETY: ST-gated (unique access) + gen-valid ⇒ pointer live, shared read only.
         return if unsafe { (*p).is_eof() } { 1 } else { 0 };
     }
+    // MT-safe cell-cache fast path: the ST cache above is `__libc_single_threaded`-gated, so a
+    // THREADED `while(!feof)` loop otherwise pays the registry map lock PER CALL. The cell cache
+    // holds non-cookie non-mem fd streams only (so the mem-sync is a no-op), so reading
+    // `is_eof()` under this stream's lock is byte-identical to the slow path.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        return if cell.lock().is_eof() { 1 } else { 0 };
+    }
     let id = canonical_stream_id(stream);
     if id == 0 {
         return 0;
@@ -4353,6 +4360,10 @@ pub unsafe extern "C" fn ferror(stream: *mut c_void) -> c_int {
     if let Some(p) = write_cache_lookup_by_stream(stream) {
         // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
         return if unsafe { (*p).is_error() } { 1 } else { 0 };
+    }
+    // MT-safe cell-cache fast path (see feof): threaded loops otherwise pay the map lock per call.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        return if cell.lock().is_error() { 1 } else { 0 };
     }
     let id = canonical_stream_id(stream);
     if id == 0 {

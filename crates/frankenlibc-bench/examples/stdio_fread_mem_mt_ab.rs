@@ -50,6 +50,7 @@ type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void
 type FreadFn = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
 type FgetsFn = unsafe extern "C" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char;
 type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FeofFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FputsFn = unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int;
 type FputcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
 type FseekFn = unsafe extern "C" fn(*mut c_void, libc::c_long, c_int) -> c_int;
@@ -61,6 +62,7 @@ struct HostStdio {
     fread: FreadFn,
     fgets: FgetsFn,
     fgetc: FgetcFn,
+    feof: FeofFn,
     fputs: FputsFn,
     fputc: FputcFn,
     fseek: FseekFn,
@@ -87,6 +89,7 @@ fn host() -> &'static HostStdio {
             fread: std::mem::transmute::<*mut c_void, FreadFn>(sym(b"fread\0")),
             fgets: std::mem::transmute::<*mut c_void, FgetsFn>(sym(b"fgets\0")),
             fgetc: std::mem::transmute::<*mut c_void, FgetcFn>(sym(b"fgetc\0")),
+            feof: std::mem::transmute::<*mut c_void, FeofFn>(sym(b"feof\0")),
             fputs: std::mem::transmute::<*mut c_void, FputsFn>(sym(b"fputs\0")),
             fputc: std::mem::transmute::<*mut c_void, FputcFn>(sym(b"fputc\0")),
             fseek: std::mem::transmute::<*mut c_void, FseekFn>(sym(b"fseek\0")),
@@ -215,6 +218,32 @@ fn drain_fl_fd(fp: *mut c_void) -> usize {
         if unsafe { fl::fgetc(fp) } >= 0 {
             got += 1;
         }
+    }
+    got
+}
+
+/// FEOF loop drain: the realistic `while(!feof(fp)) fgetc(fp)` pattern. fgetc is cell-cached in
+/// both arms, so the base-vs-cand delta isolates feof's MT cost (map lock per call vs cell cache).
+fn drain_fl_feof(fp: *mut c_void) -> usize {
+    assert_eq!(unsafe { fl::fseek(fp, 0, 0) }, 0, "fl fseek failed");
+    let mut got = 0usize;
+    while unsafe { fl::feof(fp) } == 0 {
+        if unsafe { fl::fgetc(fp) } < 0 {
+            break;
+        }
+        got += 1;
+    }
+    got
+}
+
+fn drain_glibc_feof(fp: *mut c_void, h: &'static HostStdio) -> usize {
+    assert_eq!(unsafe { (h.fseek)(fp, 0, 0) }, 0, "glibc fseek failed");
+    let mut got = 0usize;
+    while unsafe { (h.feof)(fp) } == 0 {
+        if unsafe { (h.fgetc)(fp) } < 0 {
+            break;
+        }
+        got += 1;
     }
     got
 }
@@ -404,6 +433,7 @@ enum Work {
     FreadMem,
     FgetsMem,
     FgetcFd,
+    FeofFd,
     FputsFd,
     FgetsFd,
     FreadFd,
@@ -427,7 +457,7 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                 // pre-written backing file "r"; writes open /dev/null "w" (isolates the
                 // registry-lock cost from real fd-write cost — Full-buffered, rare flush).
                 let (fd_path, fd_fp) = match work {
-                    Work::FgetcFd | Work::FgetsFd | Work::FreadFd => {
+                    Work::FgetcFd | Work::FgetsFd | Work::FreadFd | Work::FeofFd => {
                         let path = make_fd_file(if use_glibc { "glibc" } else { "fl" });
                         let fp = if use_glibc {
                             unsafe { (h.fopen)(path.as_ptr(), c"r".as_ptr()) }
@@ -459,6 +489,8 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                             (true, Work::FreadMem) => drain_glibc(&mut data, h),
                             (false, Work::FgetsMem) => drain_fl_gets(&mut data),
                             (true, Work::FgetsMem) => drain_glibc_gets(&mut data, h),
+                            (false, Work::FeofFd) => drain_fl_feof(fd_fp),
+                            (true, Work::FeofFd) => drain_glibc_feof(fd_fp, h),
                             (false, Work::FgetcFd) => drain_fl_fd(fd_fp),
                             (true, Work::FgetcFd) => drain_glibc_fd(fd_fp, h),
                             (false, Work::FputsFd) => drain_fl_fputs(fd_fp),
@@ -516,6 +548,7 @@ fn main() {
         (Work::FreadMem, "FREAD_MEM_AB"),
         (Work::FgetsMem, "FGETS_MEM_AB"),
         (Work::FgetcFd, "FGETC_FD_AB"),
+        (Work::FeofFd, "FEOF_FD_AB"),
         (Work::FputsFd, "FPUTS_FD_AB"),
         (Work::FgetsFd, "FGETS_FD_AB"),
         (Work::FreadFd, "FREAD_FD_AB"),

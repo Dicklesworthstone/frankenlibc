@@ -22126,3 +22126,31 @@ item retains every later colon by construction, exactly matching the former `fie
   benchmark; do not touch production unless the behavior oracle passes and deployed, host,
   deployed/host paired, both NULL raw arms, and NULL paired CVs are each independently below 5%
   on that same worker. A KEEP additionally requires focused printf conformance before commit.
+
+## 2026-07-24 (cc_fl / MagentaCondor) — WIN (SHIPPED): MT cell-cache for feof/ferror status ops — the `while(!feof)` convoy; 40.37x → 2.44x vs glibc @8t (cc-feof-cell-cache-2026-07-24)
+
+- **ARCHITECTURAL LANE (cod back on printf/wchar).** The per-FILE registry + cell-cache family
+  (bd-h0n1mf + 09af4759d..) covered the 6 hot read/write ops, but the STATUS ops feof/ferror still
+  fell to `stream_cell(id)` + registry map lock PER CALL in MT (their ST `write_cache_lookup_by_stream`
+  fast path is `__libc_single_threaded`-gated). feof/ferror are called in tight `while(!feof(fp))`
+  loops — the same convoy fgetc had.
+- **THE LEVER.** Added a `stream_cell_cache_lookup` fast path to feof and ferror (after the ST cache,
+  before `canonical_stream_id`): a gen-valid hit — populated by the loop's own fgetc — locks ONLY this
+  stream and reads `is_eof()`/`is_error()`. Byte-identical: the cell cache holds non-cookie non-mem fd
+  streams only (so the slow path's mem-sync is a no-op), exactly the ST fast path's own reasoning.
+- **MEASURED (12 alternated feof_base/feof_cand runs, idle vmi1152480, 24/24 exit-0; FEOF_FD_AB =
+  the realistic `while(!feof(fp)) fgetc(fp)` loop, fgetc cell-cached in BOTH arms so the delta
+  isolates feof).**
+  - **8t: base 5,348,069 → cand 293,093 ns/drain = cand/base 0.055, DISJOINT** (18x faster).
+    **fl/glibc 40.37x LOSS → 2.44x WIN** — the feof map-lock convoy is gone.
+  - **1t: base 323,134 → cand 223,460 = cand/base 0.692** (1.4x faster; ov 1/12 — nearly disjoint).
+    fl/glibc 3.38x → 2.38x.
+  - **NULL CONTROL FGETC_FD_AB (fgetc unchanged): 1t 0.969 (ov 9/12), 8t 1.081 (ov 11/12)** —
+    overlapping ⇒ the effect is the feof cell cache.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_stdio_ext` 3/0,
+  `conformance_diff_clearerr` 1/0, `conformance_diff_stdio_unlocked_io` 2/0; harness `verify_fd`
+  byte-identity. ferror shares feof's exact pattern (is_error vs is_eof).
+- **DISPOSITION.** SHIPPED (feof + ferror). IMMEDIATE FOLLOW-UP (same convoy, same lever):
+  clearerr / fileno / ftell — all have the `__libc_single_threaded`-gated ST fast path + a
+  `stream_cell(id)` MT slow path. [[stdio-mt-swing-inprogress]]. Reproducer: `--example
+  stdio_fread_mem_mt_ab` (FEOF_FD_AB arm).
