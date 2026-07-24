@@ -5,9 +5,24 @@
 //!
 //! Run: `cargo run --release -p frankenlibc-bench --features abi-bench --example snprintf_d_ab`
 
+#![feature(c_variadic)]
 use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::hint::black_box;
 use std::time::Instant;
+
+/// Variadic wrapper that builds a real SysV va_list and calls fl `vsnprintf` — the only way to
+/// exercise the exact-format va_list fast paths. `&mut args` is the `*mut c_void` `vsnprintf`
+/// decodes (VaListImpl has the x86_64 `__va_list_tag` layout: gp_offset/fp_offset/overflow/reg_save).
+unsafe extern "C" fn fl_vsn(
+    buf: *mut c_char,
+    size: usize,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
+    unsafe {
+        frankenlibc_abi::stdio_abi::vsnprintf(buf, size, fmt, &mut args as *mut _ as *mut c_void)
+    }
+}
 
 type SnD = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_int) -> c_int;
 type SnU = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_uint) -> c_int;
@@ -213,6 +228,59 @@ fn main() {
     println!(
         "SPRINTF_P fl={spp:.2}ns cv={spp_cv:.2} glibc={gspp:.2}ns cv={gspp_cv:.2} fl/glibc={:.3}",
         spp / gspp
+    );
+
+    // vsnprintf %d/%x/%p — THE LEVER (cc-vsnprintf): exact-format va_list fast paths. Verify
+    // fl vsnprintf output == glibc snprintf/sprintf (identical bytes) over edge values, then time
+    // via the c_variadic wrapper. base binary = slow path (parse+extract+render); cand = fast path.
+    for &n in &[0i32, -1, 12345, -12345, i32::MIN, i32::MAX] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let fr = unsafe { fl_vsn(fb.as_mut_ptr().cast(), 32, fmt_d.as_ptr(), n) };
+        let gr = unsafe { g_d(gb.as_mut_ptr().cast(), 32, fmt_d.as_ptr(), n) };
+        assert_eq!(fr, gr, "vsnprintf %d return diverged for {n}");
+        assert_eq!(fb, gb, "vsnprintf %d bytes diverged for {n}");
+    }
+    for &n in &[0u32, 0xff, 0xdead_beef, u32::MAX] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let fr = unsafe { fl_vsn(fb.as_mut_ptr().cast(), 32, fmt_x.as_ptr(), n) };
+        let gr = unsafe { g_u(gb.as_mut_ptr().cast(), 32, fmt_x.as_ptr(), n) };
+        assert_eq!(fr, gr, "vsnprintf %x return diverged for {n:#x}");
+        assert_eq!(fb, gb, "vsnprintf %x bytes diverged for {n:#x}");
+    }
+    for &n in &[0usize, 0xff, 0x7fff_1234_5678, usize::MAX] {
+        let mut fb = [0u8; 32];
+        let mut gb = [0u8; 32];
+        let p = n as *mut c_void;
+        let fr = unsafe { fl_vsn(fb.as_mut_ptr().cast(), 32, fmt_p.as_ptr(), p) };
+        let gr = unsafe { g_sp_p(gb.as_mut_ptr().cast(), fmt_p.as_ptr(), p) };
+        assert_eq!(fr, gr, "vsnprintf %p return diverged for {n:#x}");
+        assert_eq!(fb, gb, "vsnprintf %p bytes diverged for {n:#x}");
+    }
+    println!("verify: OK (fl vsnprintf %d/%x/%p == glibc, va_list)");
+    let (vsnd, vsnd_cv) = collect(&|| {
+        black_box(unsafe { fl_vsn(black_box(bp).cast(), 32, fmt_d.as_ptr(), black_box(-12345)) });
+    });
+    let (vsnx, vsnx_cv) = collect(&|| {
+        black_box(unsafe {
+            fl_vsn(black_box(bp).cast(), 32, fmt_x.as_ptr(), black_box(0xdead_beefu32))
+        });
+    });
+    let (vsnp, vsnp_cv) = collect(&|| {
+        black_box(unsafe { fl_vsn(black_box(bp).cast(), 32, fmt_p.as_ptr(), black_box(pv)) });
+    });
+    println!(
+        "VSNPRINTF_D fl={vsnd:.2}ns cv={vsnd_cv:.2} (vs glibc snprintf_d {gld:.2}ns fl/glibc={:.3})",
+        vsnd / gld
+    );
+    println!(
+        "VSNPRINTF_X fl={vsnx:.2}ns cv={vsnx_cv:.2} (vs glibc snprintf_x {gsnx:.2}ns fl/glibc={:.3})",
+        vsnx / gsnx
+    );
+    println!(
+        "VSNPRINTF_P fl={vsnp:.2}ns cv={vsnp_cv:.2} (vs glibc sprintf_p {gspp:.2}ns fl/glibc={:.3})",
+        vsnp / gspp
     );
 
     // %ld (64-bit signed long) — snprintf. Byte-identity over the i64 edge set.

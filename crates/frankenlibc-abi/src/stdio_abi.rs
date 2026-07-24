@@ -7494,6 +7494,19 @@ pub(crate) unsafe fn vprintf_extract_and_render(fmt: &str, ap: *mut c_void) -> S
     String::from_utf8_lossy(&rendered).into_owned()
 }
 
+/// Read a single general-purpose (integer/pointer) argument from a SysV AMD64 `va_list` `ap`,
+/// advancing it — for the exact-format v-printf fast paths that consume exactly ONE arg without
+/// parsing the format. Reuses `vprintf_read_gp` (the same decode `vprintf_extract_args` uses:
+/// gp_offset @0, overflow_arg_area @8, reg_save_area @16). The caller must return immediately
+/// after (no fall-through to the slow path, which would re-read from the now-advanced `ap`).
+#[inline]
+unsafe fn va_read_one_gp(ap: *mut c_void) -> u64 {
+    let gp_offset_ptr = ap as *mut u32;
+    let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
+    let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
+    unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) }
+}
+
 /// POSIX `vsnprintf` — format at most `size` bytes from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vsnprintf(
@@ -7509,6 +7522,25 @@ pub unsafe extern "C" fn vsnprintf(
         && let Some(literal_len) = unsafe { strict_literal_format_len(format) }
     {
         return unsafe { strict_direct_snprintf_literal(str_buf, size, format, literal_len) };
+    }
+    // Exact single-arg fast paths (mirror snprintf's): match the whole format, pull ONE gp arg from
+    // the va_list, render directly — skipping decide + parse_format_string + vprintf_extract_args +
+    // render_segments. Return immediately (never fall through: `ap` is now advanced). Expensive-
+    // render formats (int/hex/pointer) win; %s is left to the post-parse direct_printf_string_payload.
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_d_format(format) } {
+        // SAFETY: exact `%d` consumes one promoted `int`; low 32 bits of the gp arg.
+        let arg = unsafe { va_read_one_gp(ap) } as c_int;
+        return unsafe { strict_direct_snprintf_d(str_buf, size, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_x_format(format) } {
+        // SAFETY: exact `%x` consumes one promoted `unsigned int`.
+        let arg = unsafe { va_read_one_gp(ap) } as c_uint;
+        return unsafe { strict_direct_snprintf_x(str_buf, size, arg) };
+    }
+    if runtime_policy::strict_passthrough_active() && unsafe { exact_direct_p_format(format) } {
+        // SAFETY: exact `%p` consumes one promoted `void *` (full 64-bit gp arg).
+        let arg = unsafe { va_read_one_gp(ap) } as usize as *mut c_void;
+        return unsafe { strict_direct_snprintf_p(str_buf, size, arg) };
     }
     let _trace_scope = runtime_policy::entrypoint_scope("vsnprintf");
     let (mode, decision) =

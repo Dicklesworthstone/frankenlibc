@@ -22465,3 +22465,32 @@ item retains every later colon by construction, exactly matching the former `fie
   remains, correctly rejected). [[printf-d-family-fastpath-vein]]. Reproducer: `--example snprintf_d_ab`
   (SPRINTF_P). NEXT frontier: vsnprintf/vsprintf (va_list variants — logging wrappers; need va_list
   extraction) or a fresh time/locale/wchar profile.
+
+## 2026-07-24 (cc_fl / MagentaCondor) — WIN (SHIPPED): vsnprintf %d/%x/%p exact-format va_list fast paths — ~5-13x LOSS → ~0.5x WIN, all DISJOINT (cc-vsnprintf-2026-07-24)
+
+- **FRONTIER LANE (sole producer).** vsnprintf is the core v-formatter (every custom vlog/verror
+  wrapper). It had only a literal fast path + a POST-parse `%s` fast path; exact `%d/%x/%p` still paid
+  the full `decide` + `parse_format_string` + `vprintf_extract_args` + `render_segments` slow path.
+- **THE LEVER.** Added `va_read_one_gp(ap)` — reads ONE general-purpose (int/pointer) arg from the SysV
+  AMD64 va_list, reusing `vprintf_read_gp` with the IDENTICAL decode `vprintf_extract_args` uses
+  (gp_offset @0, overflow @8, reg_save @16). For an exact `%d`/`%x`/`%p` (no width/precision/positional),
+  `vprintf_extract_args` makes exactly this one call ⇒ byte-identical-BY-CONSTRUCTION. Added the
+  matcher dispatch (`exact_direct_d/x/p_format` + `strict_direct_snprintf_d/x/p`) before decide/parse,
+  returning immediately (never falls through — `ap` is advanced). %s left to the post-parse
+  `direct_printf_string_payload` (cheap-kernel, would parity like sprintf %s).
+- **MEASURED (8 alternated vsn_base/vsn_cand runs, idle vmi1152480; snprintf_d_ab VSNPRINTF_* arms use
+  a `#![feature(c_variadic)]` wrapper `fl_vsn` that builds a REAL va_list — `&mut args` IS the
+  `*mut c_void` vsnprintf decodes, VaListImpl == x86_64 __va_list_tag). base = slow path, cand = fast.**
+  - **%d: base 147.4 → cand 18.5 ns = cand/base 0.125, DISJOINT** (8x; base 128–153 vs cand 16–21).
+    Local vs-glibc: cand fl/glibc **0.492** (base ~5.4x LOSS → 0.49x WIN).
+  - **%x: base 155.6 → cand 19.2 = 0.123, DISJOINT** (8x). fl/glibc 0.531.
+  - **%p: base 346.6 → cand 25.9 = 0.075, DISJOINT** (13x). fl/glibc 0.611.
+  - CV base 4.4–5.5% / cand 7.1–13.4%.
+- **CONFORMANCE.** The bench `verify()` asserts fl vsnprintf `%d/%x/%p` == glibc over
+  0/±/i32::MIN/MAX (%d), 0/0xff/0xdeadbeef/u32::MAX (%x), null/low/full/usize::MAX (%p) via the real
+  va_list BEFORE timing — the va_list extraction proof. `stdio_abi_test` 256/0 +
+  conformance_diff_{stdio_printf 11/0, printf_fastpaths 3/0, printf_pointer 1/0}.
+- **DISPOSITION.** SHIPPED. `va_read_one_gp` is REUSABLE — vsprintf / vfprintf / vprintf / vdprintf
+  (all take a va_list, all hit the same expensive slow path) are the natural follow-on with the
+  identical mechanism. [[printf-d-family-fastpath-vein]]. Reproducer: `--example snprintf_d_ab`
+  (VSNPRINTF_D/X/P).
