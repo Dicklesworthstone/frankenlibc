@@ -22097,3 +22097,32 @@ item retains every later colon by construction, exactly matching the former `fie
   printf %d-family vein symmetrically (buffer: snprintf/sprintf 8 formats; stream: printf/fprintf 6
   integer formats + strings). REMAINING (lower value): stream `%zu`/`%zd` (== %lu/%ld matcher),
   vfprintf/vprintf (va_list), sprintf `%s`/`%p`. [[printf-d-family-fastpath-vein]].
+
+## 2026-07-23 (cod / YellowFinch) — BLOCKED (UNTIMED): exact `sprintf("%p")` strict formatter (`cod-sprintf-p-rch-blocker-2026-07-23`)
+
+- **LEDGER/HISTORY GATE + FRESH GAP.** The negative ledger and all-ref history were searched before
+  selecting a lever. The old exact `sprintf("%s")` candidate remains REJECTED and was not retried.
+  Exact `snprintf("%p")` is already a shipped stack formatter, but source inspection confirms
+  `sprintf("%p")` still misses the strict pre-membrane block and enters
+  `runtime_policy::decide` + format parsing + `render_segments`. No prior `sprintf("%p")`
+  benchmark, keep, or reject exists. The bounded `snprintf` helper supplies a narrow certified
+  rewrite shape, but no benchmark or production source was edited while the remote gate was false.
+- **REMOTE-ONLY BLOCKER.** Fleet status reported 8/12 workers healthy and 32/76 slots available,
+  so this was not a fleet-wide outage. Nevertheless, the required exact command
+  `RCH_REQUIRE_REMOTE=1 RCH_WORKER=w rch exec -- cargo bench -j4 --profile release -p
+  frankenlibc-bench --features abi-bench --bench stdio_glibc_baseline_bench --
+  stdio_glibc_baseline_snprintf_p_bare --noplot` failed before Cargo with
+  `[RCH-I001] requested worker set [w] refused (unavailable); 'w' is not a configured worker`;
+  remote-required mode refused local fallback. No alternate worker selector was substituted.
+- **PROOF OBLIGATION IF UNBLOCKED.** An exact `%p` match may reuse the established lowercase
+  `0x...` / null `(nil)` rendering only after the same binary proves return and byte identity
+  against the generic FrankenLibC path and host glibc over null, low, full-width, and
+  `usize::MAX` pointers. Width, flags, precision, hardened mode, and every non-exact format must
+  retain the existing path. Ordering, floating-point, RNG, and stream-state behavior are N/A.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** BLOCKED and explicitly UNTIMED, not a REJECT and not
+  performance evidence. Resume only after `RCH_WORKER=w` resolves to a configured remote worker
+  and the exact Cargo bench receives a remote assignment. First add an end-to-end
+  `sprintf("%p")` arm plus a source-identical unchanged-function NULL control to the existing
+  benchmark; do not touch production unless the behavior oracle passes and deployed, host,
+  deployed/host paired, both NULL raw arms, and NULL paired CVs are each independently below 5%
+  on that same worker. A KEEP additionally requires focused printf conformance before commit.
