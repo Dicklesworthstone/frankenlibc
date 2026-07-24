@@ -22373,3 +22373,37 @@ item retains every later colon by construction, exactly matching the former `fie
   excluded from the cell cache by design, rare), and the fopen/fclose LIFECYCLE floor (allocator
   guard+stats per open/close — malloc lane, [[interposed-alloc-is-the-hidden-cost]]).
   [[stdio-mt-swing-inprogress]]. Reproducer: FGETPOS_FD_AB arm.
+
+## 2026-07-24 (cc_fl / MagentaCondor) — WIN (SHIPPED): 2-way STREAM_CELL_CACHE — the multi-stream COPY thrash; 55.47x → 2.44x vs glibc @8t, both DISJOINT (cc-cellcache-2way-2026-07-24) — BIGGEST convoy of the campaign
+
+- **ARCHITECTURAL LANE, NEW PRIMITIVE (not the per-op cell-cache adds — the cache STRUCTURE).** After
+  the per-op narrow-stdio vein saturated (7 wins), the remaining flaw was that STREAM_CELL_CACHE was
+  SINGLE-ENTRY (`RefCell<Option<(ptr,gen,cell)>>`). A stream-to-stream COPY loop
+  `for { c=fgetc(in); fputc(c,out); }` (cp/cat/tee/pipelines — extremely common) ALTERNATES two
+  streams ⇒ each op evicts the other ⇒ BOTH always miss the map lock EVERY call. The cell cache gave
+  copy loops ZERO benefit.
+- **PROFILED FIRST (COPY_FD_AB, single-entry cache, /dev/null out, 3 runs):** **8t COPY fl/glibc
+  33-51x** — the BIGGEST convoy in the whole campaign (2 pure-buffer ops both thrashing under
+  contention) vs single-stream FGETC/FPUTC ~2.7x; 1t 5.6x (the abi-bench process is multi-threaded
+  throughout, so `__libc_single_threaded` is false and even the 1t arm uses the MT cell path).
+- **THE LEVER.** Made STREAM_CELL_CACHE **2-WAY** — `RefCell<[Option<(ptr,gen,cell)>; 2]>`,
+  most-recent-first, insert-at-front shift on store (store only runs on a full 2-slot miss ⇒ no
+  duplicate). This is EXACTLY the design the ST `WRITE_CACHE` already uses (its comment: "2-way so a
+  loop interleaving TWO streams keeps BOTH resolved lock-free"; they'd measured 1.58x ST thrash on
+  the old single entry). Single-stream hits slot 0 (no added cost). Byte-identical.
+- **MEASURED (12 alternated copy_base/copy_cand runs, idle vmi1152480, 24/24 exit-0; COPY_FD_AB =
+  `for{fgetc(in);fputc(c,out)}`, in=fd file / out=/dev/null "w").**
+  - **8t: base 7,104,595 → cand 317,985 ns/drain = cand/base 0.045, DISJOINT** (22x; base 6.57M–7.95M
+    vs cand 0.29M–0.46M, zero overlap). **fl/glibc 55.47x LOSS → 2.44x WIN** (near the single-op
+    residual — both streams now resolve lock-free).
+  - **1t: base 546,504 → cand 252,481 = 0.462, DISJOINT** (2.2x). CV 3.3/6.2%. fl/glibc 5.60x → 2.58x.
+  - **NULL CONTROLS (single-stream — must NOT regress under 2-way): FGETC_FD_AB overlapping** 0.995
+    (ov 12/12) / 1.035 (ov 12/12); **FPUTC_FD_AB** 0.949 / 0.936 (ov 9-11/12) ⇒ no single-stream
+    regression; the win is exactly the 2-stream thrash elimination.
+- **CONFORMANCE (touches the hot path of ALL cell-cached ops).** `stdio_abi_test` **256/0** +
+  conformance_diff_{getline,stdio_ext,stdio_unlocked_io,clearerr,fseeko,stdio_rwdir} +
+  getline_getdelim_differential_fuzz — all green.
+- **DISPOSITION.** SHIPPED. Every cell-cached op (all 15+ narrow ops) now benefits on 2-stream
+  workloads, not just single-stream. FOLLOW-ON PROBE: 3-4 way for merge-K / tee-to-many (K>2 streams
+  still thrash a 2-way cache) — profile if a hot K-stream pattern surfaces. [[stdio-mt-swing-inprogress]].
+  Reproducer: COPY_FD_AB arm.

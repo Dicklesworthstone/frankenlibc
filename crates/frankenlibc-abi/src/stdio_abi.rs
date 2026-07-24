@@ -1039,8 +1039,13 @@ thread_local! {
     /// the cell alive and every use LOCKS the stream. REGISTRY_GEN guards FILE* reuse
     /// after fclose (any insert/remove bumps gen ⇒ cache drops; stream-state mutation
     /// like fseek/ungetc needs no invalidation — the lock always reads current state).
-    static STREAM_CELL_CACHE: RefCell<Option<(usize, u64, StreamCell)>> =
-        const { RefCell::new(None) };
+    /// 2-way (most-recent-first), exactly like the ST `WRITE_CACHE`: a loop interleaving
+    /// TWO streams — the stream-to-stream copy `for { c=fgetc(in); fputc(c,out); }` (cp/cat/
+    /// tee/pipelines) — otherwise thrashes a single entry (each op evicts the other ⇒ BOTH
+    /// miss the map lock EVERY call: measured 33-51x@8t vs glibc, vs ~2.7x for single-stream).
+    /// 2-way keeps both `in` and `out` resolved lock-free.
+    static STREAM_CELL_CACHE: RefCell<[Option<(usize, u64, StreamCell)>; 2]> =
+        const { RefCell::new([None, None]) };
 }
 
 fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
@@ -1048,18 +1053,27 @@ fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     STREAM_CELL_CACHE.with(|c| {
         let cache = c.borrow();
-        let (cp, cg, cell) = cache.as_ref()?;
-        if *cp != key || *cg != cur_gen {
-            return None;
+        for slot in cache.iter() {
+            if let Some((cp, cg, cell)) = slot
+                && *cp == key
+                && *cg == cur_gen
+            {
+                return Some(Arc::clone(cell));
+            }
         }
-        Some(Arc::clone(cell))
+        None
     })
 }
 
 fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     STREAM_CELL_CACHE.with(|c| {
-        *c.borrow_mut() = Some((stream as usize, cur_gen, Arc::clone(cell)));
+        // Insert-at-front (most-recent-first), shifting the previous head to slot 1. `store`
+        // only runs on a full cache miss (lookup checks BOTH slots and returns before storing),
+        // so `stream` is not already resident — no duplicate slot. Mirrors `write_cache_store`.
+        let mut cache = c.borrow_mut();
+        cache[1] = cache[0].take();
+        cache[0] = Some((stream as usize, cur_gen, Arc::clone(cell)));
     });
 }
 
