@@ -4248,6 +4248,14 @@ pub unsafe extern "C" fn ftell(stream: *mut c_void) -> c_long {
         // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
         return unsafe { (*p).offset() } as c_long;
     }
+    // MT-safe cell-cache fast path (see feof): the ST cache above is `__libc_single_threaded`-
+    // gated, so a threaded position-tracking loop otherwise pays the registry map lock per call.
+    // Cached cells are non-mem fd (sync is a no-op) and decide()==Allow in strict, so returning
+    // `offset()` under this stream's lock is byte-identical to the slow path (same reasoning the
+    // ST fast path uses to skip decide/observe).
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        return cell.lock().offset() as c_long;
+    }
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
@@ -4395,6 +4403,13 @@ pub unsafe extern "C" fn clearerr(stream: *mut c_void) {
         unsafe { (*p).clear_err() };
         return;
     }
+    // MT-safe cell-cache fast path (see feof): threaded loops otherwise pay the map lock per
+    // call. Cached cells are non-mem fd (the slow path's `fast_fixed_mem_read` cursor reset is a
+    // no-op), so `clear_err()` under this stream's lock is byte-identical.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        cell.lock().clear_err();
+        return;
+    }
     let id = canonical_stream_id(stream);
     if id == 0 {
         return;
@@ -4468,6 +4483,12 @@ pub unsafe extern "C" fn fileno(stream: *mut c_void) -> c_int {
     if let Some(p) = write_cache_lookup_by_stream(stream) {
         // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
         return unsafe { (*p).fd() };
+    }
+    // MT-safe cell-cache fast path (see feof): threaded loops otherwise pay the map lock per
+    // call. Cached cells are non-mem fd (is_mem_backed()==false), so the slow path returns
+    // `s.fd()` — read it under this stream's lock. Byte-identical.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        return cell.lock().fd();
     }
     let id = canonical_stream_id(stream);
     if id == 0 {

@@ -22188,3 +22188,34 @@ item retains every later colon by construction, exactly matching the former `fie
   both NULL raw arms, and NULL paired CVs are each independently below **5%** on that one worker.
   A KEEP then requires a same-worker post-lever rerun plus focused time conformance; a failed
   candidate must be reverted and recorded as a dated REJECT with its own retry predicate.
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): MT cell-cache for ftell/clearerr/fileno — the position/status convoy; 32.12x → 1.79x vs glibc @8t (cc-ftell-cell-cache-2026-07-23)
+
+- **ARCHITECTURAL LANE follow-up to feof/ferror (dc775e551).** The remaining `__libc_single_threaded`-
+  gated ops — ftell/clearerr/fileno — still fell to `stream_cell(id)` + registry map lock PER CALL in
+  MT. ftell is hot in position-tracking read loops (tokenizers recording token offsets:
+  `for { c=fgetc(fp); off=ftell(fp); }`), the same convoy feof/fgetc had.
+- **THE LEVER.** Added a `stream_cell_cache_lookup` fast path to each (after the ST cache, before
+  `canonical_stream_id`): a gen-valid hit — populated by the loop's own fgetc — locks ONLY this
+  stream and reads `offset()`/`fd()` or does `clear_err()`. Byte-identical: the cell cache holds
+  non-cookie non-mem fd streams only, so ftell's `sync_fast_fixed_mem_read_to_stream` + decide/observe
+  are elided exactly as the ST fast path already elides them; clearerr's mem-cursor reset is a no-op;
+  fileno's `is_mem_backed()` is false ⇒ `s.fd()`.
+- **MEASURED (12 alternated ftell_base/ftell_cand runs, idle vmi1152480, 24/24 exit-0; FTELL_FD_AB =
+  the realistic `for { fgetc; ftell }` position-tracking loop, fgetc cell-cached in BOTH arms so the
+  delta isolates ftell; base = 58da1265e = feof/ferror already shipped, so feof is a null too).**
+  - **8t: base 5,017,270 → cand 289,785 ns/drain = cand/base 0.058, DISJOINT** (17x faster; base
+    range 4.32M–6.73M vs cand 0.25M–0.40M, zero overlap). **fl/glibc 32.12x LOSS → 1.79x WIN.**
+  - **1t: base 337,480 → cand 223,934 = 0.664, DISJOINT** (1.5x; base 320.8k–367.6k vs cand
+    214.4k–258.8k). fl/glibc 3.21x → 2.12x. baseCV 4.0% / candCV 5.3%.
+  - **NULL CONTROLS: FGETC_FD_AB (fgetc unchanged) overlapping** 1t 1.026 (ov 12/12), 8t 1.018
+    (ov 9/12); **FEOF_FD_AB overlapping** 1.001/1.070 (feof cell-cache present in both arms ⇒ already
+    shipped) ⇒ the effect is the ftell cell cache. High 8t CV (~13%, inherent MT contention) is
+    gated by fully DISJOINT per-run ranges (sign-test), per the established methodology.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_clearerr` 1/0,
+  `conformance_diff_stdio_ext` 3/0, `conformance_diff_stdio_unlocked_io` 2/0; harness `verify_fd`
+  byte-identity. clearerr/fileno share ftell's exact cell-cache mechanism (single lock + one
+  field access), conformance-covered.
+- **DISPOSITION.** SHIPPED (ftell + clearerr + fileno). The MT-map-lock convoy on the status/position
+  op family is now fully eliminated (feof/ferror + ftell/clearerr/fileno). [[stdio-mt-swing-inprogress]].
+  Reproducer: `--example stdio_fread_mem_mt_ab` (FTELL_FD_AB arm).
