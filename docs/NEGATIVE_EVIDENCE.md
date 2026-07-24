@@ -22494,3 +22494,29 @@ item retains every later colon by construction, exactly matching the former `fie
   (all take a va_list, all hit the same expensive slow path) are the natural follow-on with the
   identical mechanism. [[printf-d-family-fastpath-vein]]. Reproducer: `--example snprintf_d_ab`
   (VSNPRINTF_D/X/P).
+
+## 2026-07-24 (cc_fl / MagentaCondor) — WIN (SHIPPED): vfprintf + vprintf %d/%x/%u/%ld/%lu/%lx (±\n) va_list STREAM fast paths — ~2.2x LOSS → ~0.78x WIN, DISJOINT (cc-vfprintf-2026-07-24)
+
+- **FRONTIER LANE (sole producer).** vfprintf/vprintf are the core STREAM v-formatters (every
+  fprintf-style vlog to a file/stderr, and stdout). Exact `%d/%x/%u/%ld/%lu/%lx` still paid the full
+  decide+`parse_format_string`+`vprintf_extract_args`+`render_segments` slow path.
+- **THE LEVER.** Factored `try_vprintf_exact_stream(id, stream, format, ap)` — the va_list twin of
+  fprintf's exact stream fast paths: pull ONE gp arg via `va_read_one_gp` (cc-vsnprintf) and reuse
+  cod's SHIPPED `strict_direct_stream_d/ux/long(id, stream, …)` render+write helpers, skipping
+  parse+extract+render. Called from vfprintf (with `stream`) AND vprintf (with `stdout_ptr`) after
+  their literal fast paths — one DRY helper, two entrypoints. Byte-identical to fprintf's fast path
+  (same helpers), just va_list-sourced. Extract-once, always complete the write, return immediately.
+- **MEASURED (8 alternated vf_base/vf_cand runs, idle vmi1152480; snprintf_d_ab VFPRINTF arms via the
+  `#![feature(c_variadic)]` wrapper `fl_vf` → real va_list; time to /dev/null "w", verify to fmemopen).**
+  - **%d\n: base 166.8 → cand 41.2 ns = cand/base 0.247, DISJOINT** (4x; base 159–189 vs cand 37–46).
+    Local vs-glibc fprintf: cand fl/glibc **0.783** (~2.2x LOSS → 0.78x WIN).
+  - **%x\n: base 169.6 → cand 39.4 = 0.232, DISJOINT** (4.3x). fl/glibc 0.816.
+  - CV base 6.3–7.0% / cand 7.2–8.0%.
+- **CONFORMANCE.** The bench `verify()` asserts fl vfprintf `%d\n`/`%x\n` == glibc fprintf into
+  fmemopen buffers over 0/±/i32::MIN/MAX + 0/0xff/0xdeadbeef/u32::MAX (the va_list STREAM extraction
+  proof). `stdio_abi_test` 256/0 + conformance_diff_{stdio_printf 11/0, printf_fastpaths 3/0, dprintf
+  3/0}.
+- **DISPOSITION.** SHIPPED (vfprintf + vprintf). Matches cod's fprintf stream fast path (0.736x) via
+  the identical helpers. FOLLOW-ON: vsprintf/vdprintf (buffer/fd va_list — reuse va_read_one_gp +
+  strict_direct_sprintf_*), and vfprintf %ld/%lu/%lx already covered by the shared helper's l-branch.
+  [[printf-d-family-fastpath-vein]]. Reproducer: `--example snprintf_d_ab` (VFPRINTF_DN/XN).

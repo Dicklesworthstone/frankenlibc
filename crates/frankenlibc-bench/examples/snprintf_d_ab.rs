@@ -24,6 +24,13 @@ unsafe extern "C" fn fl_vsn(
     }
 }
 
+/// Variadic wrapper → fl `vfprintf` (stream v-formatter). Same va_list bridge as `fl_vsn`.
+unsafe extern "C" fn fl_vf(stream: *mut c_void, fmt: *const c_char, mut args: ...) -> c_int {
+    unsafe {
+        frankenlibc_abi::stdio_abi::vfprintf(stream, fmt, &mut args as *mut _ as *mut c_void)
+    }
+}
+
 type SnD = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_int) -> c_int;
 type SnU = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_uint) -> c_int;
 
@@ -475,5 +482,47 @@ fn main() {
     println!(
         "FPRINTF_LDN fl={fprl:.2}ns cv={fprl_cv:.2} glibc={gfprl:.2}ns cv={gfprl_cv:.2} fl/glibc={:.3}",
         fprl / gfprl
+    );
+
+    // vfprintf %d\n / %x\n — THE LEVER (cc-vfprintf): va_list STREAM fast paths (fprintf twin).
+    // Verify fl vfprintf == glibc fprintf (identical output) into fmemopen, then time to /dev/null.
+    for &n in &[0i32, -1, 12345, -12345, i32::MIN, i32::MAX] {
+        let mut flbuf = [0u8; 40];
+        let mut gbuf = [0u8; 40];
+        let fmp = unsafe { fl_fmem(flbuf.as_mut_ptr().cast(), 40, c"w".as_ptr()) };
+        let gmp = unsafe { g_fmem(gbuf.as_mut_ptr().cast(), 40, c"w".as_ptr()) };
+        let fr = unsafe { fl_vf(fmp, c"%d\n".as_ptr(), n) };
+        let gr = unsafe { g_fprintf(gmp, c"%d\n".as_ptr(), n) };
+        unsafe { fl_fclose2(fmp) };
+        unsafe { g_fclose2(gmp) };
+        assert_eq!(fr, gr, "vfprintf %d return diverged for {n}");
+        assert_eq!(flbuf, gbuf, "vfprintf %d bytes diverged for {n}");
+    }
+    for &n in &[0u32, 0xff, 0xdead_beef, u32::MAX] {
+        let mut flbuf = [0u8; 40];
+        let mut gbuf = [0u8; 40];
+        let fmp = unsafe { fl_fmem(flbuf.as_mut_ptr().cast(), 40, c"w".as_ptr()) };
+        let gmp = unsafe { g_fmem(gbuf.as_mut_ptr().cast(), 40, c"w".as_ptr()) };
+        let fr = unsafe { fl_vf(fmp, c"%x\n".as_ptr(), n) };
+        let gr = unsafe { g_fprintf_u(gmp, c"%x\n".as_ptr(), n) };
+        unsafe { fl_fclose2(fmp) };
+        unsafe { g_fclose2(gmp) };
+        assert_eq!(fr, gr, "vfprintf %x return diverged for {n:#x}");
+        assert_eq!(flbuf, gbuf, "vfprintf %x bytes diverged for {n:#x}");
+    }
+    println!("verify: OK (fl vfprintf %d\\n/%x\\n == glibc fprintf, va_list stream)");
+    let (vfprd, vfprd_cv) = collect(&|| {
+        black_box(unsafe { fl_vf(fl_fp, c"%d\n".as_ptr(), black_box(-12345)) });
+    });
+    let (vfprx, vfprx_cv) = collect(&|| {
+        black_box(unsafe { fl_vf(fl_fp, c"%x\n".as_ptr(), black_box(0xdead_beefu32)) });
+    });
+    println!(
+        "VFPRINTF_DN fl={vfprd:.2}ns cv={vfprd_cv:.2} (vs glibc fprintf_dn {gfprd:.2}ns fl/glibc={:.3})",
+        vfprd / gfprd
+    );
+    println!(
+        "VFPRINTF_XN fl={vfprx:.2}ns cv={vfprx_cv:.2} (vs glibc fprintf_xn {gfprx:.2}ns fl/glibc={:.3})",
+        vfprx / gfprx
     );
 }

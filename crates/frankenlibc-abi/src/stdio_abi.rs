@@ -7729,6 +7729,36 @@ pub unsafe extern "C" fn vsprintf(
 
 /// POSIX `vfprintf` — format to stream from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// Exact `%d`/`%x`/`%u`/`%ld`/`%lu`/`%lx` (±\n) va_list STREAM fast path shared by vfprintf/vprintf:
+/// pull ONE gp arg from the va_list and reuse fprintf's render+write helpers, skipping
+/// parse_format_string + vprintf_extract_args + render_segments. `Some(result)` when handled (caller
+/// returns it IMMEDIATELY — `ap` is advanced, never fall through), `None` to fall through.
+/// Byte-identical to fprintf's shipped fast path (same helpers), just va_list-sourced args.
+#[inline]
+unsafe fn try_vprintf_exact_stream(
+    id: usize,
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> Option<c_int> {
+    if !runtime_policy::strict_passthrough_active() {
+        return None;
+    }
+    if let Some(newline) = unsafe { exact_direct_d_stream_format(format) } {
+        let arg = unsafe { va_read_one_gp(ap) } as c_int;
+        return Some(unsafe { strict_direct_stream_d(id, stream, arg, newline) });
+    }
+    if let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) } {
+        let arg = unsafe { va_read_one_gp(ap) } as c_uint;
+        return Some(unsafe { strict_direct_stream_ux(id, stream, arg, hex, newline) });
+    }
+    if let Some((conv, newline)) = unsafe { exact_direct_l_stream_format(format) } {
+        let bits = unsafe { va_read_one_gp(ap) };
+        return Some(unsafe { strict_direct_stream_long(id, stream, conv, bits, newline) });
+    }
+    None
+}
+
 pub unsafe extern "C" fn vfprintf(
     stream: *mut c_void,
     format: *const c_char,
@@ -7750,6 +7780,10 @@ pub unsafe extern "C" fn vfprintf(
     // any miss (not cached / not Full / has '%') falls through to the normal path.
     if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
         return printf_result_to_c_int(fmt_bytes.len());
+    }
+    // Exact %d/%x/%u/%ld/%lu/%lx (±\n) va_list stream fast paths — the twins of fprintf's.
+    if let Some(r) = unsafe { try_vprintf_exact_stream(id, stream, format, ap) } {
+        return r;
     }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
@@ -7950,6 +7984,10 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
     // any miss (not cached / not Full / has '%') falls through to the normal path.
     if !fmt_bytes.contains(&b'%') && try_fwrite_fast(id, fmt_bytes) {
         return printf_result_to_c_int(fmt_bytes.len());
+    }
+    // Exact %d/%x/%u/%ld/%lu/%lx (±\n) va_list stream fast paths (to stdout) — twins of fprintf's.
+    if let Some(r) = unsafe { try_vprintf_exact_stream(id, stdout_ptr, format, ap) } {
+        return r;
     }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
