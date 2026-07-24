@@ -22252,3 +22252,32 @@ item retains every later colon by construction, exactly matching the former `fie
   64B line, free with the same allocator. Correct-by-construction. [[bench-abi-malloc-interposition-hazard]].
 - **DISPOSITION.** SHIPPED. Line-reader convoy closed. [[stdio-mt-swing-inprogress]]. Reproducer:
   `--example stdio_fread_mem_mt_ab` (GETLINE_FD_AB arm).
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): MT cell-cache for ungetc — the parser-lookahead convoy; 45.60x → 2.20x vs glibc @8t, BOTH thread counts DISJOINT (cc-ungetc-cell-cache-2026-07-23)
+
+- **ARCHITECTURAL LANE, read-side family completion.** ungetc had an ST `write_cache_lookup_by_stream`
+  fast path (whose own comment notes "the common ungetc-after-fgetc parser pattern leaves the stream
+  cached") but NO MT path — a threaded lookahead `for { c=fgetc(fp); ungetc(c,fp); }` loop paid the
+  registry map lock PER CALL (the ST cache is `__libc_single_threaded`-gated).
+- **THE LEVER.** Added a `stream_cell_cache_lookup` fast path after the ST one: a gen-valid hit
+  (primed by the loop's fgetc) is a non-cookie non-mem fd stream, so the slow path's
+  `sync_and_unregister_fast_fixed_mem_read` is a no-op — `s.ungetc(c)` under this stream's lock is
+  byte-identical to the slow path (exactly as the ST fast path reduces it). The cell-cached fgetc
+  correctly returns the pushed-back byte: `buffered_read_into` reads the ungetc byte + pushback queue
+  BEFORE the buffer (file.rs:812).
+- **MEASURED (12 alternated ungetc_base/ungetc_cand runs, idle vmi1152480, 24/24 exit-0; UNGETC_FD_AB
+  = the `for{fgetc;ungetc}` oscillation, fgetc cell-cached in BOTH arms so the delta isolates ungetc).
+  THE CLEANEST WIN OF THE FAMILY — both thread counts fully DISJOINT.**
+  - **8t: base 5,701,224 → cand 267,186 ns/drain = cand/base 0.047, DISJOINT** (21x faster; base
+    4.81M–7.43M vs cand 0.235M–0.340M, zero overlap). **fl/glibc 45.60x LOSS → 2.20x WIN.**
+  - **1t: base 386,522 → cand 221,813 = 0.574, DISJOINT** (1.7x). **CV 4.6% / 3.4% — both under the
+    strict 5% gate.** fl/glibc 3.82x → 2.21x.
+  - **NULL CONTROLS: FGETC_FD_AB overlapping** 1.026 (ov 11/12) / 0.981 (ov 11/12); **FTELL_FD_AB
+    overlapping** 0.984 / 0.959 (ov 12/12, already shipped) ⇒ the effect is the ungetc cell cache.
+- **CONFORMANCE.** `stdio_abi_test` **256/0** (10 ungetc cases), plus the harness's got==N execution
+  proof (validates fgetc reads the pushback under the MT cell cache).
+- **DISPOSITION.** SHIPPED. This closes the READ-SIDE cell-cache family (fgetc/fgets/fread + feof/
+  ferror/ftell/clearerr/fileno + getline/getdelim + ungetc). Remaining MT-map-locked stdio ops are
+  LOW-VALUE: fseek/rewind (lseek-syscall-dominated, map lock a small fraction, no ST precedent),
+  fflush (not tight-looped), fgetpos/fsetpos (niche). MT cell-cache convoy vein ≈ FRONTIER for
+  long-lived streams in hot loops. [[stdio-mt-swing-inprogress]]. Reproducer: UNGETC_FD_AB arm.

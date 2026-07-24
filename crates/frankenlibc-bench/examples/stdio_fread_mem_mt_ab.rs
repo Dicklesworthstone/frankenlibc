@@ -52,6 +52,7 @@ type FgetsFn = unsafe extern "C" fn(*mut c_char, c_int, *mut c_void) -> *mut c_c
 type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FeofFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FtellFn = unsafe extern "C" fn(*mut c_void) -> libc::c_long;
+type UngetcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
 type GetlineFn = unsafe extern "C" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
@@ -68,6 +69,7 @@ struct HostStdio {
     fgetc: FgetcFn,
     feof: FeofFn,
     ftell: FtellFn,
+    ungetc: UngetcFn,
     getline: GetlineFn,
     free: FreeFn,
     malloc: MallocFn,
@@ -99,6 +101,7 @@ fn host() -> &'static HostStdio {
             fgetc: std::mem::transmute::<*mut c_void, FgetcFn>(sym(b"fgetc\0")),
             feof: std::mem::transmute::<*mut c_void, FeofFn>(sym(b"feof\0")),
             ftell: std::mem::transmute::<*mut c_void, FtellFn>(sym(b"ftell\0")),
+            ungetc: std::mem::transmute::<*mut c_void, UngetcFn>(sym(b"ungetc\0")),
             getline: std::mem::transmute::<*mut c_void, GetlineFn>(sym(b"getline\0")),
             free: std::mem::transmute::<*mut c_void, FreeFn>(sym(b"free\0")),
             malloc: std::mem::transmute::<*mut c_void, MallocFn>(sym(b"malloc\0")),
@@ -295,6 +298,38 @@ fn drain_glibc_ftell(fp: *mut c_void, h: &'static HostStdio) -> usize {
             got += 1;
         }
         black_box(unsafe { (h.ftell)(fp) });
+    }
+    got
+}
+
+/// UNGETC loop drain: the parser lookahead `for { c=fgetc(fp); ungetc(c,fp); }` oscillation. fgetc
+/// is cell-cached in both arms (and reads the pushed-back byte via buffered_read_into), so the
+/// base-vs-cand delta isolates ungetc's MT cost (registry map lock per call vs cell cache). The
+/// FGETC_FD arm is the null control. Position oscillates (never EOF); returns bytes read (== N).
+fn drain_fl_ungetc(fp: *mut c_void) -> usize {
+    assert_eq!(unsafe { fl::fseek(fp, 0, 0) }, 0, "fl fseek failed");
+    let mut got = 0usize;
+    for _ in 0..N {
+        let c = unsafe { fl::fgetc(fp) };
+        if c < 0 {
+            break;
+        }
+        got += 1;
+        unsafe { fl::ungetc(c, fp) };
+    }
+    got
+}
+
+fn drain_glibc_ungetc(fp: *mut c_void, h: &'static HostStdio) -> usize {
+    assert_eq!(unsafe { (h.fseek)(fp, 0, 0) }, 0, "glibc fseek failed");
+    let mut got = 0usize;
+    for _ in 0..N {
+        let c = unsafe { (h.fgetc)(fp) };
+        if c < 0 {
+            break;
+        }
+        got += 1;
+        unsafe { (h.ungetc)(c, fp) };
     }
     got
 }
@@ -512,6 +547,7 @@ enum Work {
     FgetcFd,
     FeofFd,
     FtellFd,
+    UngetcFd,
     GetlineFd,
     FputsFd,
     FgetsFd,
@@ -541,6 +577,7 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                     | Work::FreadFd
                     | Work::FeofFd
                     | Work::FtellFd
+                    | Work::UngetcFd
                     | Work::GetlineFd => {
                         let path = make_fd_file(if use_glibc { "glibc" } else { "fl" });
                         let fp = if use_glibc {
@@ -592,6 +629,8 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                             (true, Work::FeofFd) => drain_glibc_feof(fd_fp, h),
                             (false, Work::FtellFd) => drain_fl_ftell(fd_fp),
                             (true, Work::FtellFd) => drain_glibc_ftell(fd_fp, h),
+                            (false, Work::UngetcFd) => drain_fl_ungetc(fd_fp),
+                            (true, Work::UngetcFd) => drain_glibc_ungetc(fd_fp, h),
                             (false, Work::GetlineFd) => {
                                 drain_fl_getline(fd_fp, &mut gl_line, &mut gl_n)
                             }
@@ -665,6 +704,7 @@ fn main() {
         (Work::FgetcFd, "FGETC_FD_AB"),
         (Work::FeofFd, "FEOF_FD_AB"),
         (Work::FtellFd, "FTELL_FD_AB"),
+        (Work::UngetcFd, "UNGETC_FD_AB"),
         (Work::GetlineFd, "GETLINE_FD_AB"),
         (Work::FputsFd, "FPUTS_FD_AB"),
         (Work::FgetsFd, "FGETS_FD_AB"),

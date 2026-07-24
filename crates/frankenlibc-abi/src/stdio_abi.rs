@@ -4450,6 +4450,14 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
             libc::EOF
         };
     }
+    // MT-safe cell-cache fast path (see feof): a threaded ungetc-after-fgetc parser loop otherwise
+    // pays the map lock per call (the ST cache above is `__libc_single_threaded`-gated). A gen-valid
+    // hit is a non-cookie non-mem fd stream, so the slow path's sync_and_unregister_fast_fixed_mem_read
+    // is a no-op — `s.ungetc()` under this stream's lock is byte-identical.
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        let mut s = cell.lock();
+        return if s.ungetc(c as u8) { c } else { libc::EOF };
+    }
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
     #[cfg(not(feature = "standalone"))]
