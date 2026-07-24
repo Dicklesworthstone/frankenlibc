@@ -22054,3 +22054,24 @@ item retains every later colon by construction, exactly matching the former `fie
   [[printf-d-family-fastpath-vein]]. FOLLOW-UPS: extend the stream fast path to `%s\n` is already
   done; add `%u`/`%x`/`%ld` stream variants (reuse render helpers); vfprintf/vprintf (va_list,
   same pattern via ap extraction). Reproducer: `--example snprintf_d_ab` (FPRINTF_DN arm).
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): printf+fprintf strict `%u`/`%x` (±`\n`) stream fast paths — 3.11x LOSS → 0.768x WIN (cc-printf-fprintf-ux-2026-07-23)
+
+- **THE LEVER (extends the %d\n stream win).** `exact_direct_ux_stream_format` (matches `%u`/`%u\n`/
+  `%x`/`%x\n` → `(is_hex, newline)`) + `render_ux_into_buf` (11-byte buffer: 10 digits + `\n`) +
+  `strict_direct_stream_ux` (same extract-once-always-write discipline as `strict_direct_stream_d`).
+  Wired into fprintf + printf after the `%d` stream block. Base `fprintf("%x\n")` fl **159.7ns** vs
+  glibc 51ns = **3.113x LOSS**.
+- **MEASURED (10 alternated x_base/x_cand runs, idle vmi1152480, 20/20 exit-0).**
+  - **FPRINTF_XN: base 159.7ns → cand 35.1ns = cand/base 0.220, DISJOINT** (4.5x faster; base cv
+    11.4%, cand cv 10.8%). **fl/glibc 3.113x LOSS → 0.768x WIN.**
+  - **NULL CONTROLS: FPRINTF_DN 0.926 (ov 9/10, the %d stream path — unchanged), SNPRINTF_D 0.980
+    (ov 9/10), SNPRINTF_LX 1.059 (ov 8/10)** — all overlapping.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_printf_fastpaths` 3/0,
+  `conformance_diff_dprintf` 1/0; **20/20 in-bench fmemopen byte-identity** — fl vs glibc fprintf
+  for `%u`/`%u\n`/`%x`/`%x\n` over 0/1/0xff/0xdeadbeef/u32::MAX.
+- **DISPOSITION.** SHIPPED (fprintf+printf `%u`/`%x` ±`\n`). printf/fprintf STREAM output now covers
+  `%s`/`%s\n` (prior), `%d`/`%d\n`, `%u`/`%x` (±`\n`). REMAINING: stream `%ld`/`%lu`/`%lx`/`%zu`
+  (64-bit — reuse the pattern with u64 render + a `next_arg::<i64/u64>`); vfprintf/vprintf (va_list
+  extraction via `vprintf_extract_args` or a one-arg helper). [[printf-d-family-fastpath-vein]].
+  Reproducer: `--example snprintf_d_ab` (FPRINTF_XN arm).

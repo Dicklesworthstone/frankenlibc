@@ -300,6 +300,25 @@ fn main() {
         }
     }
     println!("verify: OK (fl fprintf %d/%d\\n == glibc, values + bytes)");
+    // fprintf %u/%x byte-identity (unsigned).
+    type FprintfU = unsafe extern "C" fn(*mut c_void, *const c_char, c_uint) -> c_int;
+    let fl_fprintf_u: FprintfU = unsafe { std::mem::transmute::<*const (), FprintfU>(frankenlibc_abi::stdio_abi::fprintf as *const ()) };
+    let g_fprintf_u: FprintfU = unsafe { std::mem::transmute::<*mut c_void, FprintfU>(libc::dlsym(h, c"fprintf".as_ptr())) };
+    for &uf in &[c"%u".as_ptr(), c"%u\n".as_ptr(), c"%x".as_ptr(), c"%x\n".as_ptr()] {
+        for &n in &[0u32, 1, 0xff, 0xdead_beef, u32::MAX, 12345] {
+            let mut flbuf = [0u8; 32];
+            let mut gbuf = [0u8; 32];
+            let fmp = unsafe { fl_fmem(flbuf.as_mut_ptr().cast(), 32, c"w".as_ptr()) };
+            let gmp = unsafe { g_fmem(gbuf.as_mut_ptr().cast(), 32, c"w".as_ptr()) };
+            let fr = unsafe { fl_fprintf_u(fmp, uf, n) };
+            let gr = unsafe { g_fprintf_u(gmp, uf, n) };
+            unsafe { fl_fclose2(fmp) };
+            unsafe { g_fclose2(gmp) };
+            assert_eq!(fr, gr, "fprintf %u/%x return diverged for {n:#x}");
+            assert_eq!(flbuf, gbuf, "fprintf %u/%x bytes diverged for {n:#x}");
+        }
+    }
+    println!("verify: OK (fl fprintf %u/%x == glibc)");
 
     let fl_fp = unsafe { fl_fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) };
     let g_fp = unsafe { g_fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) };
@@ -314,5 +333,16 @@ fn main() {
     println!(
         "FPRINTF_DN fl={fprd:.2}ns cv={fprd_cv:.2} glibc={gfprd:.2}ns cv={gfprd_cv:.2} fl/glibc={:.3}",
         fprd / gfprd
+    );
+    let fmt_xn = c"%x\n";
+    let (fprx, fprx_cv) = collect(&|| {
+        black_box(unsafe { fl_fprintf_u(fl_fp, fmt_xn.as_ptr(), black_box(0xdead_beefu32)) });
+    });
+    let (gfprx, gfprx_cv) = collect(&|| {
+        black_box(unsafe { g_fprintf_u(g_fp, fmt_xn.as_ptr(), black_box(0xdead_beefu32)) });
+    });
+    println!(
+        "FPRINTF_XN fl={fprx:.2}ns cv={fprx_cv:.2} glibc={gfprx:.2}ns cv={gfprx_cv:.2} fl/glibc={:.3}",
+        fprx / gfprx
     );
 }

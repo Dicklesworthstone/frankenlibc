@@ -5326,6 +5326,83 @@ fn render_d_into_buf(arg: c_int, newline: bool, buf: &mut [u8; 12]) -> usize {
     }
 }
 
+/// Match exact `%u`/`%u\n`/`%x`/`%x\n` for the printf/fprintf stream fast path. Returns
+/// `Some((is_hex, newline))`; `None` otherwise. Both take a promoted `unsigned int`.
+#[inline]
+unsafe fn exact_direct_ux_stream_format(format: *const c_char) -> Option<(bool, bool)> {
+    let f = format.cast::<u8>();
+    // SAFETY: NUL-terminated; reads stop at the first non-matching / NUL byte.
+    unsafe {
+        if *f != b'%' {
+            return None;
+        }
+        let is_hex = match *f.add(1) {
+            b'u' => false,
+            b'x' => true,
+            _ => return None,
+        };
+        match *f.add(2) {
+            0 => Some((is_hex, false)),
+            b'\n' if *f.add(3) == 0 => Some((is_hex, true)),
+            _ => None,
+        }
+    }
+}
+
+/// Render an unsigned `%u` (decimal) or `%x` (lowercase hex), optional trailing newline, into
+/// `buf` (needs 11 bytes: 10 decimal digits + '\n'). Returns the byte length.
+#[inline]
+fn render_ux_into_buf(arg: c_uint, hex: bool, newline: bool, buf: &mut [u8; 11]) -> usize {
+    let mut digits = [0u8; 10];
+    let mut value = arg;
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        if hex {
+            let d = (value & 0xf) as u8;
+            digits[start] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            value >>= 4;
+        } else {
+            digits[start] = b'0' + (value % 10) as u8;
+            value /= 10;
+        }
+        if value == 0 {
+            break;
+        }
+    }
+    let dlen = digits.len() - start;
+    buf[..dlen].copy_from_slice(&digits[start..]);
+    if newline {
+        buf[dlen] = b'\n';
+        dlen + 1
+    } else {
+        dlen
+    }
+}
+
+/// Strict stream `%u`/`%x` (± newline) fast path — the unsigned/hex sibling of
+/// `strict_direct_stream_d`. Same extract-once-always-write discipline.
+unsafe fn strict_direct_stream_ux(
+    id: usize,
+    stream: *mut c_void,
+    arg: c_uint,
+    hex: bool,
+    newline: bool,
+) -> c_int {
+    let mut buf = [0u8; 11];
+    let len = render_ux_into_buf(arg, hex, newline, &mut buf);
+    let bytes = &buf[..len];
+    if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
+        return printf_result_to_c_int(len);
+    }
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
+    if written == len {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
 /// Strict stream `%d`/`%d\n` fast path for fprintf/printf: renders the int into a small buffer,
 /// then writes via the fast write caches (ST `try_fwrite_fast`, MT `try_write_fast_cell`) or the
 /// shared `write_bytes_without_runtime_policy` fallback — ALWAYS completes the write (the caller
@@ -6516,6 +6593,12 @@ pub unsafe extern "C" fn fprintf(
         let arg = unsafe { args.next_arg::<c_int>() };
         return unsafe { strict_direct_stream_d(id, stream, arg, newline) };
     }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_stream_ux(id, stream, arg, hex, newline) };
+    }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
@@ -6727,6 +6810,12 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     {
         let arg = unsafe { args.next_arg::<c_int>() };
         return unsafe { strict_direct_stream_d(id, stdout_ptr, arg, newline) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((hex, newline)) = unsafe { exact_direct_ux_stream_format(format) }
+    {
+        let arg = unsafe { args.next_arg::<c_uint>() };
+        return unsafe { strict_direct_stream_ux(id, stdout_ptr, arg, hex, newline) };
     }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
