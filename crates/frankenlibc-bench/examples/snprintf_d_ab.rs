@@ -319,6 +319,28 @@ fn main() {
         }
     }
     println!("verify: OK (fl fprintf %u/%x == glibc)");
+    // fprintf 64-bit %ld/%lu/%lx byte-identity.
+    type FprintfL = unsafe extern "C" fn(*mut c_void, *const c_char, u64) -> c_int;
+    let fl_fprintf_l: FprintfL = unsafe { std::mem::transmute::<*const (), FprintfL>(frankenlibc_abi::stdio_abi::fprintf as *const ()) };
+    let g_fprintf_l: FprintfL = unsafe { std::mem::transmute::<*mut c_void, FprintfL>(libc::dlsym(h, c"fprintf".as_ptr())) };
+    let lfmts: [(&core::ffi::CStr, u64); 6] = [
+        (c"%ld", (-9_000_000_000i64) as u64), (c"%ld\n", i64::MIN as u64),
+        (c"%lu", u64::MAX), (c"%lu\n", 9_000_000_000u64),
+        (c"%lx", 0xdead_beef_cafe_babeu64), (c"%lx\n", u64::MAX),
+    ];
+    for &(lf, n) in &lfmts {
+        let mut flbuf = [0u8; 40];
+        let mut gbuf = [0u8; 40];
+        let fmp = unsafe { fl_fmem(flbuf.as_mut_ptr().cast(), 40, c"w".as_ptr()) };
+        let gmp = unsafe { g_fmem(gbuf.as_mut_ptr().cast(), 40, c"w".as_ptr()) };
+        let fr = unsafe { fl_fprintf_l(fmp, lf.as_ptr(), n) };
+        let gr = unsafe { g_fprintf_l(gmp, lf.as_ptr(), n) };
+        unsafe { fl_fclose2(fmp) };
+        unsafe { g_fclose2(gmp) };
+        assert_eq!(fr, gr, "fprintf 64-bit return diverged for {n:#x}");
+        assert_eq!(flbuf, gbuf, "fprintf 64-bit bytes diverged for {n:#x}");
+    }
+    println!("verify: OK (fl fprintf %ld/%lu/%lx == glibc)");
 
     let fl_fp = unsafe { fl_fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) };
     let g_fp = unsafe { g_fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) };
@@ -344,5 +366,16 @@ fn main() {
     println!(
         "FPRINTF_XN fl={fprx:.2}ns cv={fprx_cv:.2} glibc={gfprx:.2}ns cv={gfprx_cv:.2} fl/glibc={:.3}",
         fprx / gfprx
+    );
+    let fmt_ldn = c"%ld\n";
+    let (fprl, fprl_cv) = collect(&|| {
+        black_box(unsafe { fl_fprintf_l(fl_fp, fmt_ldn.as_ptr(), black_box((-9_000_000_000i64) as u64)) });
+    });
+    let (gfprl, gfprl_cv) = collect(&|| {
+        black_box(unsafe { g_fprintf_l(g_fp, fmt_ldn.as_ptr(), black_box((-9_000_000_000i64) as u64)) });
+    });
+    println!(
+        "FPRINTF_LDN fl={fprl:.2}ns cv={fprl_cv:.2} glibc={gfprl:.2}ns cv={gfprl_cv:.2} fl/glibc={:.3}",
+        fprl / gfprl
     );
 }

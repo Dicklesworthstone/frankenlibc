@@ -5403,6 +5403,89 @@ unsafe fn strict_direct_stream_ux(
     }
 }
 
+/// Match exact 64-bit `%ld`/`%lu`/`%lx` (± `\n`) for the printf/fprintf stream fast path.
+/// Returns `Some((conv, newline))` where `conv` is `b'd'` / `b'u'` / `b'x'`; `None` otherwise.
+/// All three consume one 64-bit `long`/`unsigned long` on LP64.
+#[inline]
+unsafe fn exact_direct_l_stream_format(format: *const c_char) -> Option<(u8, bool)> {
+    let f = format.cast::<u8>();
+    // SAFETY: NUL-terminated; reads stop at the first non-matching / NUL byte.
+    unsafe {
+        if *f != b'%' || *f.add(1) != b'l' {
+            return None;
+        }
+        let conv = match *f.add(2) {
+            b'd' => b'd',
+            b'u' => b'u',
+            b'x' => b'x',
+            _ => return None,
+        };
+        match *f.add(3) {
+            0 => Some((conv, false)),
+            b'\n' if *f.add(4) == 0 => Some((conv, true)),
+            _ => None,
+        }
+    }
+}
+
+/// Strict stream 64-bit `%ld`/`%lu`/`%lx` (± newline) fast path. The one variadic arg is read
+/// as raw `u64` bits (register-identical for signed/unsigned `long`); `conv` selects the render:
+/// `b'd'` = signed decimal (bits as i64, `unsigned_abs` handles `i64::MIN`), `b'u'` = unsigned
+/// decimal, `b'x'` = lowercase hex. Same extract-once-always-write discipline as the 32-bit path.
+unsafe fn strict_direct_stream_long(
+    id: usize,
+    stream: *mut c_void,
+    conv: u8,
+    bits: u64,
+    newline: bool,
+) -> c_int {
+    let mut buf = [0u8; 21]; // 20 for "-9223372036854775808" + '\n'
+    let mut digits = [0u8; 20];
+    let mut start = digits.len();
+    let neg = conv == b'd' && (bits as i64) < 0;
+    let mut value = if conv == b'd' {
+        (bits as i64).unsigned_abs()
+    } else {
+        bits
+    };
+    loop {
+        start -= 1;
+        if conv == b'x' {
+            let d = (value & 0xf) as u8;
+            digits[start] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            value >>= 4;
+        } else {
+            digits[start] = b'0' + (value % 10) as u8;
+            value /= 10;
+        }
+        if value == 0 {
+            break;
+        }
+    }
+    if neg {
+        start -= 1;
+        digits[start] = b'-';
+    }
+    let dlen = digits.len() - start;
+    buf[..dlen].copy_from_slice(&digits[start..]);
+    let len = if newline {
+        buf[dlen] = b'\n';
+        dlen + 1
+    } else {
+        dlen
+    };
+    let bytes = &buf[..len];
+    if try_fwrite_fast(id, bytes) || try_write_fast_cell(stream, bytes) {
+        return printf_result_to_c_int(len);
+    }
+    let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
+    if written == len {
+        printf_result_to_c_int(len)
+    } else {
+        -1
+    }
+}
+
 /// Strict stream `%d`/`%d\n` fast path for fprintf/printf: renders the int into a small buffer,
 /// then writes via the fast write caches (ST `try_fwrite_fast`, MT `try_write_fast_cell`) or the
 /// shared `write_bytes_without_runtime_policy` fallback — ALWAYS completes the write (the caller
@@ -6599,6 +6682,12 @@ pub unsafe extern "C" fn fprintf(
         let arg = unsafe { args.next_arg::<c_uint>() };
         return unsafe { strict_direct_stream_ux(id, stream, arg, hex, newline) };
     }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((conv, newline)) = unsafe { exact_direct_l_stream_format(format) }
+    {
+        let bits = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_stream_long(id, stream, conv, bits, newline) };
+    }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);
     let mut arg_buf = [0u64; MAX_VA_ARGS];
@@ -6816,6 +6905,12 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     {
         let arg = unsafe { args.next_arg::<c_uint>() };
         return unsafe { strict_direct_stream_ux(id, stdout_ptr, arg, hex, newline) };
+    }
+    if runtime_policy::strict_passthrough_active()
+        && let Some((conv, newline)) = unsafe { exact_direct_l_stream_format(format) }
+    {
+        let bits = unsafe { args.next_arg::<u64>() };
+        return unsafe { strict_direct_stream_long(id, stdout_ptr, conv, bits, newline) };
     }
     let segments = parse_format_string(fmt_bytes);
     let extract_count = core_count_printf_args(&segments).min(MAX_VA_ARGS);

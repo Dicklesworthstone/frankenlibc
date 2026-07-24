@@ -22075,3 +22075,25 @@ item retains every later colon by construction, exactly matching the former `fie
   (64-bit — reuse the pattern with u64 render + a `next_arg::<i64/u64>`); vfprintf/vprintf (va_list
   extraction via `vprintf_extract_args` or a one-arg helper). [[printf-d-family-fastpath-vein]].
   Reproducer: `--example snprintf_d_ab` (FPRINTF_XN arm).
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): printf+fprintf strict 64-bit `%ld`/`%lu`/`%lx` (±`\n`) stream fast paths — 2.69x LOSS → 0.736x WIN (cc-printf-fprintf-long-2026-07-23)
+
+- **THE LEVER (completes stream integer coverage).** `exact_direct_l_stream_format` (matches
+  `%ld`/`%lu`/`%lx` ±`\n` → `(conv, newline)`) + `strict_direct_stream_long` — reads the one arg as
+  raw `u64` bits (register-identical for signed/unsigned long), `conv` selects i64-signed-dec /
+  u64-dec / u64-hex render into a 21-byte buffer (`i64::MIN` via `unsigned_abs`). Same
+  extract-once-always-write discipline. Wired into fprintf + printf after the 32-bit `%u`/`%x` block.
+  Base `fprintf("%ld\n")` fl **150.8ns** vs glibc 56ns = **2.687x LOSS**.
+- **MEASURED (10 alternated x_base/x_cand runs, idle vmi1152480, 20/20 exit-0).**
+  - **FPRINTF_LDN: base 150.8ns → cand 41.4ns = cand/base 0.275, DISJOINT** (3.6x faster; base cv
+    7.8%, cand cv 10.1%). **fl/glibc 2.687x LOSS → 0.736x WIN.**
+  - **NULL CONTROLS: FPRINTF_XN 1.080 (ov 8/8), FPRINTF_DN 1.077 (ov 7/8), SNPRINTF_D 0.952 (ov
+    8/8)** — all overlapping.
+- **CONFORMANCE.** `stdio_abi_test` **256/0**, `conformance_diff_printf_fastpaths` 3/0,
+  `conformance_diff_dprintf` 1/0; **in-bench fmemopen byte-identity** — fl vs glibc fprintf for
+  `%ld`/`%ld\n`/`%lu`/`%lu\n`/`%lx`/`%lx\n` over `i64::MIN`/`u64::MAX`/`0xdeadbeefcafebabe`/±9e9.
+- **DISPOSITION.** SHIPPED. **printf/fprintf STREAM integer output now COMPLETE: %d %u %x %ld %lu
+  %lx (±`\n`) + %s/%s\n** — 3 stream commits, all DISJOINT, ~2.7-3.1x→~0.72-0.81x. This closes the
+  printf %d-family vein symmetrically (buffer: snprintf/sprintf 8 formats; stream: printf/fprintf 6
+  integer formats + strings). REMAINING (lower value): stream `%zu`/`%zd` (== %lu/%ld matcher),
+  vfprintf/vprintf (va_list), sprintf `%s`/`%p`. [[printf-d-family-fastpath-vein]].
