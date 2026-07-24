@@ -54,6 +54,7 @@ type FeofFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type FtellFn = unsafe extern "C" fn(*mut c_void) -> libc::c_long;
 type UngetcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
 type FflushFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FgetposFn = unsafe extern "C" fn(*mut c_void, *mut libc::fpos_t) -> c_int;
 type GetlineFn = unsafe extern "C" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
@@ -72,6 +73,7 @@ struct HostStdio {
     ftell: FtellFn,
     ungetc: UngetcFn,
     fflush: FflushFn,
+    fgetpos: FgetposFn,
     getline: GetlineFn,
     free: FreeFn,
     malloc: MallocFn,
@@ -105,6 +107,7 @@ fn host() -> &'static HostStdio {
             ftell: std::mem::transmute::<*mut c_void, FtellFn>(sym(b"ftell\0")),
             ungetc: std::mem::transmute::<*mut c_void, UngetcFn>(sym(b"ungetc\0")),
             fflush: std::mem::transmute::<*mut c_void, FflushFn>(sym(b"fflush\0")),
+            fgetpos: std::mem::transmute::<*mut c_void, FgetposFn>(sym(b"fgetpos\0")),
             getline: std::mem::transmute::<*mut c_void, GetlineFn>(sym(b"getline\0")),
             free: std::mem::transmute::<*mut c_void, FreeFn>(sym(b"free\0")),
             malloc: std::mem::transmute::<*mut c_void, MallocFn>(sym(b"malloc\0")),
@@ -326,6 +329,37 @@ fn drain_glibc_fseek(fp: *mut c_void, h: &'static HostStdio) -> usize {
         if unsafe { (h.fseek)(fp, off, 0) } == 0 {
             got += 1;
         }
+    }
+    got
+}
+
+/// FGETPOS loop drain: the backtracking-parser save pattern `for { fgetc; fgetpos(fp,&pos); }`.
+/// fgetc is cell-cached in both arms; the delta isolates fgetpos's MT cost (map lock vs cell cache;
+/// fgetpos is ftell with an out-param). FGETC_FD is the null control. Returns bytes read (== N).
+fn drain_fl_fgetpos(fp: *mut c_void) -> usize {
+    assert_eq!(unsafe { fl::fseek(fp, 0, 0) }, 0, "fl fseek failed");
+    let mut pos: libc::fpos_t = unsafe { std::mem::zeroed() };
+    let mut got = 0usize;
+    for _ in 0..N {
+        if unsafe { fl::fgetc(fp) } >= 0 {
+            got += 1;
+        }
+        unsafe { fl::fgetpos(fp, &mut pos) };
+        black_box(&pos);
+    }
+    got
+}
+
+fn drain_glibc_fgetpos(fp: *mut c_void, h: &'static HostStdio) -> usize {
+    assert_eq!(unsafe { (h.fseek)(fp, 0, 0) }, 0, "glibc fseek failed");
+    let mut pos: libc::fpos_t = unsafe { std::mem::zeroed() };
+    let mut got = 0usize;
+    for _ in 0..N {
+        if unsafe { (h.fgetc)(fp) } >= 0 {
+            got += 1;
+        }
+        unsafe { (h.fgetpos)(fp, &mut pos) };
+        black_box(&pos);
     }
     got
 }
@@ -600,6 +634,7 @@ enum Work {
     FgetcFd,
     FeofFd,
     FtellFd,
+    FgetposFd,
     UngetcFd,
     FseekFd,
     FflushFd,
@@ -632,6 +667,7 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                     | Work::FreadFd
                     | Work::FeofFd
                     | Work::FtellFd
+                    | Work::FgetposFd
                     | Work::UngetcFd
                     | Work::FseekFd
                     | Work::GetlineFd => {
@@ -685,6 +721,8 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
                             (true, Work::FeofFd) => drain_glibc_feof(fd_fp, h),
                             (false, Work::FtellFd) => drain_fl_ftell(fd_fp),
                             (true, Work::FtellFd) => drain_glibc_ftell(fd_fp, h),
+                            (false, Work::FgetposFd) => drain_fl_fgetpos(fd_fp),
+                            (true, Work::FgetposFd) => drain_glibc_fgetpos(fd_fp, h),
                             (false, Work::UngetcFd) => drain_fl_ungetc(fd_fp),
                             (true, Work::UngetcFd) => drain_glibc_ungetc(fd_fp, h),
                             (false, Work::FseekFd) => drain_fl_fseek(fd_fp),
@@ -764,6 +802,7 @@ fn main() {
         (Work::FgetcFd, "FGETC_FD_AB"),
         (Work::FeofFd, "FEOF_FD_AB"),
         (Work::FtellFd, "FTELL_FD_AB"),
+        (Work::FgetposFd, "FGETPOS_FD_AB"),
         (Work::UngetcFd, "UNGETC_FD_AB"),
         (Work::FseekFd, "FSEEK_FD_AB"),
         (Work::FflushFd, "FFLUSH_FD_AB"),

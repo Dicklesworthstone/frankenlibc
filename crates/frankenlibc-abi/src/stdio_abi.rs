@@ -8945,6 +8945,18 @@ pub unsafe extern "C" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) ->
         return -1;
     }
 
+    // MT-safe cell-cache fast path (see ftell — fgetpos is ftell with an out-param): a threaded
+    // backtracking-parser save loop otherwise pays the registry map lock per call. A gen-valid hit
+    // is a non-mem fd stream (sync_fast_fixed_mem_read_to_stream is a no-op), so writing `s.offset()`
+    // into `*pos` (the __pos field) is byte-identical to the slow path (decide/observe elided as the
+    // other cached fast paths elide them). (fsetpos delegates to fseek ⇒ already cell-cached.)
+    if let Some(cell) = stream_cell_cache_lookup(stream) {
+        let off = cell.lock().offset();
+        // SAFETY: pos is non-null (checked) and points to a valid fpos_t; the first 8 bytes are __pos.
+        unsafe { std::ptr::write(pos as *mut i64, off) };
+        return 0;
+    }
+
     let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {

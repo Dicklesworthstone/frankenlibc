@@ -22344,3 +22344,32 @@ item retains every later colon by construction, exactly matching the former `fie
   status/position/line/pushback/seek/flush. Wide ops delegate to cell-cached narrow ops (covered).
   Remaining: fgetpos/fsetpos (own map-locked paths but NICHE save/restore, rarely hot-looped) —
   candidate follow-ons if a hot pattern surfaces. [[stdio-mt-swing-inprogress]]. Reproducer: FFLUSH_FD_AB.
+
+## 2026-07-23 (cc_fl / MagentaCondor) — WIN (SHIPPED): MT cell-cache for fgetpos — position-save convoy; 45.73x → 2.15x vs glibc @8t, both DISJOINT (cc-fgetpos-cell-cache-2026-07-23) — CLOSES the narrow-stdio MT family
+
+- **ARCHITECTURAL LANE, final narrow-stdio lever.** fgetpos is ftell-with-an-out-param (reads
+  `s.offset()` after a no-op mem-sync, writes it to `*pos`'s __pos field); its slow path paid the
+  registry map lock per call — hot in backtracking parsers (`fgetpos` save / parse / `fsetpos`
+  restore). **fsetpos DELEGATES to fseek (`fseek(stream, offset, SEEK_SET)`) ⇒ ALREADY cell-cached
+  by cc-fseek-cell-cache — a free transitive win, no code needed.**
+- **THE LEVER.** Added the identical ftell-style `stream_cell_cache_lookup` fast path: a gen-valid
+  hit (primed by the loop's fgetc) reads `cell.lock().offset()` and writes it to `*pos` —
+  byte-identical (non-mem fd ⇒ sync no-op; decide/observe elided as the other cached fast paths do).
+- **MEASURED (12 alternated fgetpos_base/fgetpos_cand runs, idle vmi1152480, 24/24 exit-0; FGETPOS_FD_AB
+  = `for { fgetc; fgetpos(fp,&pos); }`, fgetc cell-cached in both so the delta isolates fgetpos).**
+  - **8t: base 5,639,093 → cand 267,173 ns/drain = cand/base 0.047, DISJOINT** (21x; base 4.08M–7.19M
+    vs cand 0.245M–0.321M, zero overlap). **fl/glibc 45.73x LOSS → 2.15x WIN** (pure position read, no
+    syscall dilution ⇒ the full ftell/ungetc-class convoy).
+  - **1t: base 339,243 → cand 219,969 = 0.648, DISJOINT.** CV 3.6% / 6.1%. fl/glibc 3.34x → 2.15x.
+  - **NULL CONTROLS: FGETC_FD_AB overlapping** 1.005 (ov 12/12) / 0.964 (ov 10/12); FTELL_FD_AB
+    0.996 / 1.004 (ov 12/12, already shipped) ⇒ the effect is the fgetpos cell cache.
+- **CONFORMANCE.** `stdio_abi_test` **256/0** (25 fgetpos/fsetpos refs).
+- **DISPOSITION.** SHIPPED. **This CLOSES the narrow-stdio MT cell-cache family** — read (fgetc/fgets/
+  fread), write (fputc/fputs/fwrite), status (feof/ferror), position (ftell/clearerr/fileno/fgetpos),
+  line (getline/getdelim), pushback (ungetc), seek (fseek+fsetpos), flush (fflush) — plus the whole
+  *_unlocked family and wide ops (fgetwc/fputwc/getwc) transitively (they delegate to cell-cached
+  narrow ops). Every op that went through `stream_cell(id)` per call in an MT hot loop is now
+  cell-cached to near-parity/parity. REMAINING (NOT convoy levers): cookie-stream ops (fopencookie —
+  excluded from the cell cache by design, rare), and the fopen/fclose LIFECYCLE floor (allocator
+  guard+stats per open/close — malloc lane, [[interposed-alloc-is-the-hidden-cost]]).
+  [[stdio-mt-swing-inprogress]]. Reproducer: FGETPOS_FD_AB arm.
