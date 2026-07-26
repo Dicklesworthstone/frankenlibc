@@ -5564,7 +5564,7 @@ unsafe fn try_wcsftime_numeric_fast(
 
     let mode = if wide_ascii_eq(format, b"%Y-%m-%d %H:%M:%S") {
         YMD_HMS
-    } else if wide_ascii_eq(format, b"%Y-%m-%dT%H:%M:%S") {
+    } else if wide_ascii_eq(format, b"%Y-%m-%dT%H:%M:%S") || wide_ascii_eq(format, b"%FT%T") {
         ISO_T
     } else if wide_ascii_eq(format, b"%H:%M:%S") {
         HMS

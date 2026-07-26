@@ -23065,3 +23065,43 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   control arm inside its null, AND (2) it replicates on a second such host. A repeat of the
   `vmi1264463` result alone does not qualify — first establish why that host is 2x slower for identical
   binaries, because until that is explained its ratios measure something the other hosts do not have.
+
+## 2026-07-25 (cod / SwiftCastle) — VOID resurrection rank 4 KEEP: exact `%FT%T` `wcsftime` alias reuses the fixed ISO-T emitter (`bd-vihwy9`)
+
+- **NEGATIVE-EVIDENCE FIRST / RETRY PREDICATE SATISFIED.** The complete L21545 row and all
+  `wcsftime`, `%FT%T`, alias, and exact-wide-format ledger hits were read before editing. The old
+  single-value run found only a 1.05x center inside its instrument floor and explicitly required a
+  different workload. This rerun rotates **32 distinct valid timestamps and 32 output slots**, so
+  the branch sees changing fields and addresses rather than one repeated value. It is the ranked
+  fourth decision-defective VOID row from `docs/LEDGER_RESURRECTION.md`.
+- **META-LEVER 2 CONTRACT / PROVENANCE.** Both runs were pinned to remote worker `vmi1293453`.
+  The baseline binary self-reported ELF SHA-256
+  `9a344376378aba11cf0b36b88b1cfbbd70abd3e0a2eec255b853ea575858efed`; the candidate reported
+  `c77816cc2d38dfe27a27641f06a70dfad97a3835965bd7ce01d0c344169aa342`. Each invocation ran a
+  source-identical candidate/candidate A/A before the interleaved candidate/original A/B, alternated
+  label order, retained 33 samples after four warm-ups, and executed 1,000,000 calls per arm per
+  sample. Bootstrap median CIs and the 2x null-half-width rule decide the row. CV is printed only as
+  descriptive telemetry and is never a gate.
+- **BASELINE.** With production untouched, the deployed general bridge measured **270.42 ns/call**
+  versus reconstructed original **265.80 ns/call** and host glibc **169.45 ns/call**.
+  Candidate/original was **1.025134**, CI **[0.981920, 1.071849]**, against a null median
+  **0.996087**, CI **[0.980533, 1.046532]**: correctly UNDECIDABLE.
+- **ONE ISOMORPHIC LEVER.** Exact wide `%FT%T` now maps to the existing exact
+  `%Y-%m-%dT%H:%M:%S` mode. The fixed-array digit emitter, year/month/day/hour/minute/second
+  validation, exact-fit return-zero behavior, `T` separator, NUL termination, and invalid-field
+  fallback are unchanged. No new parser or state machine was added.
+- **SAME-WORKER KEEP PROOF.** The candidate measured **17.10 ns/call**, reconstructed general
+  original **253.67 ns/call**, and host glibc **152.55 ns/call**. Candidate/original median was
+  **0.067613** (14.79x faster), CI **[0.064222, 0.070854]**. The same-invocation null was
+  **1.021089**, CI **[0.959509, 1.077104]**, giving null half-width **0.077104**; the effect's
+  distance from 1.0 clears twice that floor. Candidate/glibc was **0.111264**, CI
+  **[0.106929, 0.116409]**. The null ratio CV (**16.211%**) and raw CVs are descriptive only and
+  do not override the decisive median-CI result.
+- **BEHAVIOR PROOF.** The harness matched host glibc across capacities, valid extrema, and the
+  rotating batch, and matched the reconstructed general bridge on invalid-field fallbacks. The
+  focused exact-fit/rendering test passed **1/1**; live glibc conformance passed **11/11**; the
+  randomized `wcsftime` differential compared **200,000 cases with zero divergences**.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP and ship the one exact alias recognition.
+  Do not retry `%FT%T` under the current C-locale contract. Reopen only if locale-specific
+  `%F`/`%T` semantics are introduced, or a differential oracle produces an input for which the
+  alias and its expanded ISO-T form diverge.

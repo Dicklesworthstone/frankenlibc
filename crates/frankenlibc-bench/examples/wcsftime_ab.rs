@@ -1,19 +1,27 @@
 //! Same-worker interleaved A/B for exact `%FT%T` `wcsftime`.
 //!
 //! `orig_wcsftime` reconstructs the deployed general wide->narrow->wide bridge.
-//! The candidate is the deployed symbol. A source-identical candidate/candidate
-//! NULL control is timed in every retained sample.
+//! The candidate is the deployed symbol. The workload rotates through a batch
+//! of distinct timestamps and output slots rather than repeating one value.
+//! A source-identical candidate/candidate NULL control is timed in every sample.
+//! Bootstrap median CIs and the 2x null-half-width rule decide the result; CV
+//! is descriptive only.
 
 use std::ffi::{c_char, c_void};
+use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use frankenlibc_abi::{time_abi, wchar_abi};
 use frankenlibc_core::string::wchar as wchar_core;
+use sha2::{Digest, Sha256};
 
-const SAMPLES: usize = 80;
-const WARMUP: usize = 16;
-const REPS: usize = 5_000_000;
+const SAMPLES: usize = 37;
+const WARMUP: usize = 4;
+const REPS: usize = 1_000_000;
+const BATCH: usize = 32;
+const OUT_CAP: usize = 64;
+const BOOTSTRAP_RESAMPLES: usize = 4096;
 const FORMAT: &str = "%FT%T";
 
 type WcsftimeFn =
@@ -21,7 +29,7 @@ type WcsftimeFn =
 
 fn median(xs: &[f64]) -> f64 {
     let mut values = xs.to_vec();
-    values.sort_by(|a, b| a.partial_cmp(b).expect("no NaN timings"));
+    values.sort_by(f64::total_cmp);
     let mid = values.len() / 2;
     if values.len() % 2 == 0 {
         (values[mid - 1] + values[mid]) / 2.0
@@ -30,8 +38,51 @@ fn median(xs: &[f64]) -> f64 {
     }
 }
 
+fn self_identity() -> String {
+    let Ok(path) = std::env::current_exe() else {
+        return "unavailable".into();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return "unavailable".into();
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let mut digest_hex = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        write!(&mut digest_hex, "{byte:02x}").expect("write SHA-256 hex");
+    }
+    format!("{} ({} bytes) {}", digest_hex, bytes.len(), path.display())
+}
+
 fn mean(xs: &[f64]) -> f64 {
     xs.iter().sum::<f64>() / xs.len() as f64
+}
+
+fn median_absolute_deviation(xs: &[f64], center: f64) -> f64 {
+    median(
+        &xs.iter()
+            .map(|value| (value - center).abs())
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn bootstrap_median_ci95(xs: &[f64]) -> (f64, f64) {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ xs.len() as u64;
+    let mut medians = Vec::with_capacity(BOOTSTRAP_RESAMPLES);
+    let mut resample = vec![0.0; xs.len()];
+    for _ in 0..BOOTSTRAP_RESAMPLES {
+        for value in &mut resample {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *value = xs[(state as usize) % xs.len()];
+        }
+        medians.push(median(&resample));
+    }
+    medians.sort_by(f64::total_cmp);
+    let low = (BOOTSTRAP_RESAMPLES * 25) / 1000;
+    let high = ((BOOTSTRAP_RESAMPLES * 975) / 1000).min(BOOTSTRAP_RESAMPLES - 1);
+    (medians[low], medians[high])
 }
 
 fn cv_pct(xs: &[f64]) -> f64 {
@@ -170,15 +221,16 @@ unsafe fn orig_wcsftime(
 }
 
 #[inline(never)]
-fn run_orig(out: *mut libc::wchar_t, fmt: *const libc::wchar_t, tm: *const libc::tm) -> usize {
+fn run_orig(out: *mut libc::wchar_t, fmt: *const libc::wchar_t, tms: *const libc::tm) -> usize {
     let mut total = 0usize;
-    for _ in 0..REPS {
+    for index in 0..REPS {
+        let slot = index & (BATCH - 1);
         total = total.wrapping_add(black_box(unsafe {
             orig_wcsftime(
-                black_box(out),
-                64,
+                black_box(out.add(slot * OUT_CAP)),
+                OUT_CAP,
                 black_box(fmt),
-                black_box(tm.cast::<c_void>()),
+                black_box(tms.add(slot).cast::<c_void>()),
             )
         }));
     }
@@ -186,15 +238,20 @@ fn run_orig(out: *mut libc::wchar_t, fmt: *const libc::wchar_t, tm: *const libc:
 }
 
 #[inline(never)]
-fn run_candidate(out: *mut libc::wchar_t, fmt: *const libc::wchar_t, tm: *const libc::tm) -> usize {
+fn run_candidate(
+    out: *mut libc::wchar_t,
+    fmt: *const libc::wchar_t,
+    tms: *const libc::tm,
+) -> usize {
     let mut total = 0usize;
-    for _ in 0..REPS {
+    for index in 0..REPS {
+        let slot = index & (BATCH - 1);
         total = total.wrapping_add(black_box(unsafe {
             wchar_abi::wcsftime(
-                black_box(out),
-                64,
+                black_box(out.add(slot * OUT_CAP)),
+                OUT_CAP,
                 black_box(fmt),
-                black_box(tm.cast::<c_void>()),
+                black_box(tms.add(slot).cast::<c_void>()),
             )
         }));
     }
@@ -206,12 +263,18 @@ fn run_host(
     host: WcsftimeFn,
     out: *mut libc::wchar_t,
     fmt: *const libc::wchar_t,
-    tm: *const libc::tm,
+    tms: *const libc::tm,
 ) -> usize {
     let mut total = 0usize;
-    for _ in 0..REPS {
+    for index in 0..REPS {
+        let slot = index & (BATCH - 1);
         total = total.wrapping_add(black_box(unsafe {
-            host(black_box(out), 64, black_box(fmt), black_box(tm))
+            host(
+                black_box(out.add(slot * OUT_CAP)),
+                OUT_CAP,
+                black_box(fmt),
+                black_box(tms.add(slot)),
+            )
         }));
     }
     black_box(total)
@@ -270,7 +333,7 @@ fn assert_case(
     }
 }
 
-fn verify(host: WcsftimeFn, fmt: *const libc::wchar_t) -> libc::tm {
+fn verify(host: WcsftimeFn, fmt: *const libc::wchar_t) -> Vec<libc::tm> {
     let mut valid: libc::tm = unsafe { std::mem::zeroed() };
     valid.tm_year = 123;
     valid.tm_mon = 10;
@@ -338,13 +401,27 @@ fn verify(host: WcsftimeFn, fmt: *const libc::wchar_t) -> libc::tm {
     for tm in &cases {
         assert_case(host, fmt, tm, 64, false);
     }
+
+    let mut batch = Vec::with_capacity(BATCH);
+    for index in 0..BATCH {
+        let mut tm = valid;
+        tm.tm_year = 100 + (index % 24) as i32;
+        tm.tm_mon = (index % 12) as i32;
+        tm.tm_mday = 1 + (index % 28) as i32;
+        tm.tm_hour = (index % 24) as i32;
+        tm.tm_min = ((index * 7) % 60) as i32;
+        tm.tm_sec = ((index * 11) % 61) as i32;
+        assert_case(host, fmt, &tm, OUT_CAP, true);
+        batch.push(tm);
+    }
     println!(
-        "verify: OK (candidate == host glibc for valid %FT%T boundaries; candidate == ORIG for invalid-field fallbacks)"
+        "verify: OK (candidate == host glibc for valid %FT%T boundaries and rotating batch; candidate == ORIG for invalid-field fallbacks)"
     );
-    valid
+    batch
 }
 
 fn main() {
+    println!("BENCH_ELF_SHA256 {}", self_identity());
     let libc_handle = unsafe {
         libc::dlmopen(
             libc::LM_ID_NEWLM,
@@ -360,12 +437,12 @@ fn main() {
     };
     let format = wide_cstr(FORMAT);
     let fmt = format.as_ptr();
-    let tm = verify(host, fmt);
-    let tm_ptr = std::ptr::from_ref(&tm);
+    let tms = verify(host, fmt);
+    let tm_ptr = tms.as_ptr();
 
-    let mut orig_out = [0 as libc::wchar_t; 64];
-    let mut candidate_out = [0 as libc::wchar_t; 64];
-    let mut host_out = [0 as libc::wchar_t; 64];
+    let mut orig_out = vec![0 as libc::wchar_t; BATCH * OUT_CAP];
+    let mut candidate_out = vec![0 as libc::wchar_t; BATCH * OUT_CAP];
+    let mut host_out = vec![0 as libc::wchar_t; BATCH * OUT_CAP];
     let mut orig = Vec::with_capacity(SAMPLES - WARMUP);
     let mut candidate = Vec::with_capacity(SAMPLES - WARMUP);
     let mut glibc = Vec::with_capacity(SAMPLES - WARMUP);
@@ -415,8 +492,25 @@ fn main() {
         .zip(&null_a)
         .map(|(b_ns, a_ns)| b_ns / a_ns)
         .collect();
+    let paired_median = median(&paired);
+    let host_median = median(&host_paired);
+    let null_median = median(&null_paired);
+    let (paired_low, paired_high) = bootstrap_median_ci95(&paired);
+    let (host_low, host_high) = bootstrap_median_ci95(&host_paired);
+    let (null_low, null_high) = bootstrap_median_ci95(&null_paired);
+    let null_half_width = (1.0 - null_low).abs().max((null_high - 1.0).abs());
+    let paired_clears_null = (paired_median - 1.0).abs() > 2.0 * null_half_width;
+    let paired_excludes_one = paired_high < 1.0 || paired_low > 1.0;
+    let verdict = if paired_clears_null && paired_excludes_one && paired_median < 1.0 {
+        "KEEP"
+    } else if paired_clears_null && paired_excludes_one {
+        "REJECT"
+    } else {
+        "UNDECIDABLE"
+    };
     println!(
-        "WCSFTIME_FT_T_AB samples={} reps/arm={REPS} (interleaved, order alternated)",
+        "WCSFTIME_FT_T_BATCH_AB samples={} reps/arm={REPS} batch={BATCH} \
+         (rotating timestamps/outputs, interleaved, order alternated)",
         orig.len()
     );
     println!(
@@ -438,26 +532,25 @@ fn main() {
         cv_pct(&glibc)
     );
     println!(
-        "  NULL candidate/candidate: median {:.4}  cv={:.2}%  arms cv={:.2}%/{:.2}%",
-        median(&null_paired),
+        "WCSFTIME_FT_T_BATCH_CONTRACT kind=null_candidate_candidate \
+         ratio_median={null_median:.6} ratio_ci95=[{null_low:.6},{null_high:.6}] \
+         ratio_cv_pct={:.3} ratio_mad={:.6}",
         cv_pct(&null_paired),
-        cv_pct(&null_a),
-        cv_pct(&null_b)
+        median_absolute_deviation(&null_paired, null_median),
     );
     println!(
-        "  PAIRED candidate/orig: median {:.4} ({:.2}x faster)  cv={:.2}%",
-        median(&paired),
-        1.0 / median(&paired),
-        cv_pct(&paired)
+        "WCSFTIME_FT_T_BATCH_CONTRACT kind=candidate_orig \
+         ratio_median={paired_median:.6} ratio_ci95=[{paired_low:.6},{paired_high:.6}] \
+         ratio_cv_pct={:.3} ratio_mad={:.6} null_half_width={null_half_width:.6} \
+         clears_2x_null={paired_clears_null} verdict={verdict}",
+        cv_pct(&paired),
+        median_absolute_deviation(&paired, paired_median),
     );
     println!(
-        "  PAIRED candidate/glibc: median {:.4}  cv={:.2}%  verdict={}",
-        median(&host_paired),
+        "WCSFTIME_FT_T_BATCH_CONTRACT kind=candidate_glibc \
+         ratio_median={host_median:.6} ratio_ci95=[{host_low:.6},{host_high:.6}] \
+         ratio_cv_pct={:.3} ratio_mad={:.6}",
         cv_pct(&host_paired),
-        if median(&host_paired) <= 1.0 {
-            "WIN"
-        } else {
-            "LOSS"
-        }
+        median_absolute_deviation(&host_paired, host_median),
     );
 }
