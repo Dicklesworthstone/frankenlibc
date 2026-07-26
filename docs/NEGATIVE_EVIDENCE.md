@@ -22963,6 +22963,38 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   same-invocation null half-width. Any future locale implementation that requires domain reclamation
   must first replace the append-only lifetime proof with an equally explicit reader-lifetime proof.
 
+## 2026-07-25 (cod / SwiftCastle) — SURFACE (contract rerun): VOID resurrection #3 confirms the `strftime` fixed floor survives only on the non-exact general path (L16566)
+
+- **NEGATIVE-EVIDENCE FIRST.** L16566 rejected a literal-run bulk-copy sub-lever as ~0-gain while
+  separately identifying a ~200 ns fixed cost for formats that missed all exact recognizers. Later
+  commits added literal, `%H:%M`, and numeric exact paths, so the historical reproducer was rebuilt
+  before proposing any new source lever.
+- **HARNESS CONTRACT / BEHAVIOR.** The existing `strftime_litrun_ab` now self-reports its ELF
+  SHA-256, measures an order-alternated source-identical FL/FL null pair and FL/glibc pair in each
+  invocation, and gates bootstrap median CIs rather than CV. Every format and output capacity
+  **1..=128** matched host glibc before timing.
+- **MEASURED** (`RCH_REQUIRE_REMOTE=1`, worker `vmi1293453`, release profile): ELF SHA-256
+  **`4fd10a27e9ca3741ff6fd655e0f48df116736ddaa8406c7e788dd12e28c91dfa`**
+  (21,456,088 bytes).
+
+  | format class | FL ns | glibc ns | paired median | bootstrap 95% CI | null 95% CI | decision |
+  |---|---:|---:|---:|---:|---:|---|
+  | short literal | 24.143 | 23.744 | 1.031595 | [0.993889, 1.079465] | [0.978176, 1.005672] | undecidable / parity |
+  | exact `%H:%M` | 16.360 | 29.733 | 0.571386 | [0.550098, 0.599827] | [0.983511, 1.010737] | FL faster |
+  | long literal | 28.623 | 56.354 | 0.485827 | [0.459584, 0.513230] | [0.978945, 1.034574] | FL faster |
+  | exact numeric-19 | 27.138 | 83.443 | 0.338118 | [0.328889, 0.344999] | [0.988561, 1.014667] | FL faster |
+  | non-exact `prefix %A suffix` | **269.085** | **29.021** | **9.277820** | **[9.204705, 9.552748]** | **[0.978942, 1.066469]** | **FL slower** |
+
+- **VERDICT.** The old claim was too broad: the floor no longer applies to literal or recognized
+  exact shapes. It remains real, decisive, and roughly the same size on the generic mixed-format
+  path. No production code changed in this rerun, so this is a **SURFACE**, not a reject or a keep.
+- **CONCRETE RETRY PREDICATE.** Do not add another exact-format leaf from this row. First capture a
+  matched-settings, no-call-graph profile of the `mixed_general` arm. A structural general-loop
+  lever is admissible only if that profile attributes at least **5% self-time** to a named
+  `format_strftime` frame or helper, and it must preserve the full specifier differential suite.
+  Keep it only when its bootstrap median CI excludes 1.0 and the effect exceeds **2×** the
+  same-invocation null half-width.
+
 ## 2026-07-25 (cc_fl / MagentaCondor) — REJECT (NOT SHIPPED, does not reproduce): `entrypoint_scope` hot/cold split — 0.813x on ONE host, null on two others; same shape defect as the PCC gate but the evidence does not survive replication (cc-entrypoint-scope-split-2026-07-25)
 
 - **LEDGER-FIRST.** This is the second instance of the shape defect found in
