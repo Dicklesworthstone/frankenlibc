@@ -8,7 +8,10 @@ A row is **VOID** when the answer is no. VOID is not a claim that the lever work
 claim that **the ledger does not contain evidence that it doesn't**, so the design work is
 unpaid-for inventory rather than a closed door.
 
-Four rows in this ledger have now been resurrected and all four paid: see §4.
+Seven lever families in this ledger have now been rerun under corrected evidence:
+**six paid as keeps and one surfaced a valid residual frontier**. See §4 and §7.
+The portable procedure extracted from this proof case is
+[`LEDGER_RESURRECTION_METHOD.md`](LEDGER_RESURRECTION_METHOD.md).
 
 ---
 
@@ -101,11 +104,11 @@ is itself the finding: **88% of this ledger's rejections never checked whether t
 code under test.** Rows tagged `provenance` may therefore still be `decision`-defective under V3. The
 27 is a **lower bound.**
 
-## 4. Already-resurrected rows — four proof cases
+## 4. Resurrection outcomes — seven reruns, six keeps, one surface
 
 The first two were found by the earlier phase-1/phase-2 audits (L17605, L18230, L18322).
-The next two are ranks 1 and 2 from this audit's §5 queue, rerun under the 2026-07-25
-self-identifying, same-invocation null-control, bootstrap-median-CI contract:
+The next five are the complete top-five queue from this audit's §5, rerun under the
+2026-07-25 self-identifying, same-invocation null-control, bootstrap-median-CI contract:
 
 | row | lever | why it was VOID | outcome |
 |---|---|---|---|
@@ -113,6 +116,9 @@ self-identifying, same-invocation null-control, bootstrap-median-CI contract:
 | **L18406 / L18455 / L18490** | per-thread segment magazines + address-derived segment ownership | CAND/ORIG **0.775–0.854 across 4 sizes × 3 runs** (12/12 favorable), binary shas recorded, allocator self-time 19.7–20.2% — rejected because an all-six-CV gate included raw arms and an ORIG/glibc contrast *that do not contain the candidate* — V4 | gate corrected → **`15f58c419` shipped, 18.7–19.4% vs ORIG** |
 | **L21341** `bd-agegst` | exact `strftime("%A")` finite-state transducer leaf | V4: the old gate rejected a 0.5415 ratio because null CV was 5.10% | rerun on `vmi1293453`, ELF `949b2064…d67c`: null median **0.996870**, CI **[0.983412, 1.009033]**; FL/glibc median **0.540615**, CI **[0.537130, 0.549644]**, clears 2× null → **`ac74b07bc` shipped** |
 | **L21570** `bd-bl39l2` | append-only atomic publication for `textdomain(NULL)` | V4: the old row had a decisive 5.5969 ratio and a 1.0016 null but rejected raw-arm CV | baseline ELF `21274b1a…ef763`: **11.32 ns** FL; candidate ELF `aef6adcf…1e12f`: **2.58 ns** FL on the same worker, a **4.39× self-speedup**. Candidate null CI **[0.986901, 1.047500]**; residual FL/glibc median **1.192201**, CI **[1.152714, 1.250319]** → **`8320a0b4a` shipped**, residual retained as frontier |
+| **L16566** | general-loop `strftime` fixed floor | V1+V2: a literal-push sub-lever was called ~0-gain while the named ~200 ns general-loop cost was never attacked | contract rerun separated exact/literal shapes from `prefix %A suffix`; the latter remains **9.277820×** slower, CI **[9.204705, 9.552748]**, null CI **[0.978942, 1.066469]** → **SURFACE**, profile-attributed frontier recorded in `a7b93d691` |
+| **L21545** `bd-vihwy9` | exact `%FT%T` `wcsftime` alias emitter | V1+V4: the old 1.05 center sat inside the null floor and the raw-arm CV gate rejected it | rotating 32-timestamp workload: candidate/original **0.067613**, CI **[0.064222, 0.070854]**, null CI **[0.959509, 1.077104]** → **`3c03993b1` shipped** |
+| **L21131 / L21277** `bd-9x1jcx` | allocation-free in-memory hosts scanner | V4: file-backed ABI noise obscured the scanner mechanism | immutable snapshot isolates allocating original vs borrowed walk: candidate/original **0.428468**, CI **[0.411170, 0.444882]**, null CI **[0.952074, 1.043635]** → scanner **KEEP**, proof published in `3aedb3f69`; file-backed ABI frontier remains separate |
 
 The L18406 family is the cleaner proof: the lever was never in doubt (12 of 12 size×run points
 favorable, with a recorded binary SHA-256), and it sat rejected for the length of time it took
@@ -292,10 +298,11 @@ recorded binary SHA-256 and an A/A null control at the decision's own unit of an
 | — decision-defective (the re-attack pool) | 27 |
 | — provenance-only | 103 |
 | already resurrected before this audit | 2 families (L6150; L18406/L18455/L18490) |
-| **resurrected from this audit's queue** | **2** — §5 ranks 1 and 2, both landed same-day |
-| re-won | **4** (see below) |
-| queued for re-run | 1 remaining of ranks 1–3 (L16566, the `strftime` general-loop fixed cost) |
-| adjudicated undecidable, not re-queued | 2 (ranks 4–5 of §5) |
+| **rerun from this audit's queue** | **5 / 5** — four keeps, one surface |
+| total rerun | **7** |
+| re-won / kept | **6** (see below) |
+| surfaced with no production keep | **1** (L16566 general-loop residual) |
+| queued for re-run among ranks 1–5 | **0** |
 
 | # | row | lever | result | commit |
 |---|---|---|---|---|
@@ -303,14 +310,17 @@ recorded binary SHA-256 and an A/A null control at the decision's own unit of an
 | prior | L18406 family | per-thread segment magazines | allocator **18.7–19.4%** vs ORIG | `15f58c419` |
 | **§5 rank 1** | **L21341** `bd-agegst` | exact `strftime("%A")` FST leaf | FL **8.41 ns** vs glibc **15.49 ns**, FL/glibc median **0.5406** CI [0.5371, 0.5496], FL/FL null **0.9969** CI [0.9834, 1.0090] — clears the 2× null-half-width margin | `ac74b07bc` |
 | **§5 rank 2** | **L21570** `bd-bl39l2` | append-only release/acquire publication removes the `textdomain(NULL)` mutex | **11.32 ns → 2.58 ns**; FL/glibc **5.79× → 1.19×** | `8320a0b4a` |
+| **§5 rank 3** | **L16566** | general-loop `strftime` fixed floor | exact/literal shapes cleared; non-exact mixed-name path still **9.2778× slower** — **SURFACE**, no source keep | `a7b93d691` |
+| **§5 rank 4** | **L21545** `bd-vihwy9` | exact `%FT%T` `wcsftime` alias | candidate/original **0.067613**, CI [0.064222, 0.070854] | `3c03993b1` |
+| **§5 rank 5** | **L21131 / L21277** `bd-9x1jcx` | allocation-free hosts scanner | candidate/original **0.428468**, CI [0.411170, 0.444882] | `3aedb3f69` |
 
-Yield: **4 of 27 decision-defective rows re-run, 4 of 4 re-won.** Two of those four came from this
-audit's own ranked queue and landed the same day it was published, on the exact rows it put first and
-second. Both had been rejected for the same reason — a CV gate the campaign has since retired — and in
-both cases the *lever* had never been in doubt: rank 1's behavior was already proven over 200,000
-differential comparisons before it was thrown away.
+Yield: **7 lever families rerun, 6 of 7 kept; the audit's entire top-five queue is complete at
+4 keeps / 1 surface.** Ranks 1–2 had been rejected by the same retired CV gate. Ranks 4–5 required
+the retry workloads their old rows asked for, rather than another attempt to squeeze meaning from
+the original noisy fixture. Rank 3 is the useful non-win: the rerun disproved the broad historical
+claim for exact/literal shapes while preserving a decisive, profile-attributed general-loop frontier.
 
-That is not a projection for the remaining 23. But the failure mode is real, the ranking finds it, and
+That is not a projection for the remaining 20. But the failure mode is real, the ranking finds it, and
 the cost of the re-run is a fraction of the cost of the original design work.
 
 ## 8. Reproducing this audit
