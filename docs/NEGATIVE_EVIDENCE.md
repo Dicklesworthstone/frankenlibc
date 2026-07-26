@@ -23137,3 +23137,34 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   Retry end-to-end ABI throughput only when a benchmark can inject an immutable backend generation
   without per-call environment or metadata work, and require its own same-invocation A/A plus a
   candidate/original median CI that excludes 1.0 and clears twice the null half-width.
+
+## 2026-07-25 (cod / SwiftCastle) — SURFACE / PAUSED: `strftime` mixed-name general path is profile-attributed, but Lane B superseded candidate measurement
+
+- **LEDGER-FIRST / PREDICATE MET.** Before proposing a lever, the ledger was searched for
+  `mixed_general`, `prefix %A suffix`, the general loop, `format_strftime`, and weekday/month-name
+  directives. The preceding VOID-resurrection row required a matched-settings no-call-graph profile
+  attributing at least 5% self-time to a named formatter frame.
+- **ATTRIBUTION.** On pinned remote worker `vmi1293453`, the release-perf harness self-reported ELF
+  SHA-256 `e60bf0e0d238681c0b3a3d2906bef371db883210d611c0d180e5c4b52c24912d`
+  (42,012,840 bytes). `perf record -F 4999`, attached to the benchmark process with no call graph,
+  captured 4,747 cycles samples with zero losses. `frankenlibc_core::time::format_strftime` was
+  **85.45% self-time**; the next named formatter helper was only 2.89%. The 5% attribution predicate
+  therefore cleared decisively.
+- **CURRENT CONTRACT BASELINE.** The non-profiled release binary self-reported ELF SHA-256
+  `7f01b5282e30ec2d929ac291bc8bffabfd7c305efbebb381844f09d1c035e9a6`
+  (21,510,032 bytes), and every case/capacity 1..=128 matched host glibc before timing. For
+  `prefix %A suffix`, FL measured **231.872 ns** versus glibc **26.074 ns**. The paired FL/glibc
+  median was **9.513581**, bootstrap 95% CI **[9.195781, 10.161075]**; the same-invocation FL/FL
+  null was **1.008976**, CI **[0.987295, 1.031215]**. CV was descriptive only.
+- **INTERRUPTED CANDIDATE / HONEST DISPOSITION.** A finite family path for literals plus unmodified
+  `%a`/`%A`/`%b`/`%B`/`%h` was implemented and its three focused unit tests passed remotely, but no
+  candidate timing completed: the first attempt failed closed at RCH dependency preflight
+  (`RCH-E410`, missing asupersync probe status), and the allocation addendum then reassigned this
+  repo to Lane B with no measurement rights. The second remote attempt was cancelled before Cargo
+  execution, all unmeasured source/harness changes were reverted manually, and no performance
+  verdict is claimed.
+- **CONCRETE RETRY PREDICATE.** Reopen only after the campaign explicitly rotates frankenlibc into a
+  measurement window and `bd-ummyux` is closed. Rebuild the family candidate from this attributed
+  surface, run the full strftime differential suite, and keep it only if the same-worker
+  candidate/baseline bootstrap median CI excludes 1.0 and the effect clears twice the
+  same-invocation A/A null half-width. Do not gate on CV.
