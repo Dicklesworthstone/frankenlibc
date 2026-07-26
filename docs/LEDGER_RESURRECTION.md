@@ -2,6 +2,74 @@
 
 Fleet campaign 2026-07-25, Meta-Lever #1. **cc lane deliverable.**
 
+## 2026-07-26 fleet correction — frankenfs taxonomy adopted verbatim
+
+This section supersedes the earlier campaign-specific classification below. The audit target was
+`docs/NEGATIVE_EVIDENCE.md` at commit `0bad50199470b42c15fcc0d35bef8b4fdf6dd9ad`, SHA-256
+`b5dcc5c4c798a98d949fbb2b1a7ef82dae7c269d7bcb154d90d871be300ac49f`, with 527 dated `##` entries.
+The mechanical screen found 130 REJECT-verdict rows. Every one was then read against its complete
+heading/body span; the screen is triage, not the adjudication.
+
+The six classes are exactly:
+
+| Class | Meaning |
+|---|---|
+| `VALID-PROFILE` | Rejected before source edit on a named frame with non-zero self-time and a computed Amdahl ceiling. |
+| `VALID-MECHANISM` | No A/A null, but refuted on a counted mechanism: instructions, cycles, syscalls, allocations, or faults unchanged. |
+| `VALID-AB` | A/B with a recorded A/A null and the effect inside that null. |
+| `VOID-CV` | Killed only by a `cv < 5` gate. |
+| `VOID-ZEROSELF` | Target frame had approximately zero self-time in the executed profile. |
+| `VOID-NONULL` | Near-1.0 A/B wall result with no A/A null and no counted mechanism. |
+
+### Current census
+
+| Class | Mechanical screen | Hand disposition |
+|---|---:|---|
+| `VALID-PROFILE` | 0 | no row met the full named-frame + non-zero-self-time + Amdahl-ceiling contract |
+| `VALID-MECHANISM` | 27 | sound counted-mechanism rejections; do not resurrect without a changed mechanism |
+| `VALID-AB` | 2 | sound null-bounded rejections |
+| `VOID-CV` | 8 | corrected harness work is reusable; CV never decides |
+| `VOID-ZEROSELF` | 0 | no explicit zero-self target was recorded |
+| `VOID-NONULL` | 93 | dominant undecidable class; near-neutral A/B rows lack a null/mechanism |
+| **VOID total** | **101 / 130 = 77.7%** | **not evidence that the levers work; evidence that the rows could not distinguish lever from harness** |
+
+Only **13/130** rows carry a binary SHA-256; **23/130** carry a null-control marker. The epidemic is
+therefore `VOID-NONULL`, not `VOID-CV`. Several infrastructure-only `INVALID`, `SURFACE`, `EMPTY`,
+and audit closeout headings were read but excluded from the resurrection queue because they never
+produced an A/B rejection.
+
+### Top-five VOID ranking and hand adjudication
+
+The queue is ranked by the named target frame's recorded self-time, excluding audit/meta headings.
+These five were read in full and their later evidence was checked before deciding whether another
+run would add information:
+
+| Rank | Row | Self-time | Class | Hand disposition |
+|---:|---|---:|---|---|
+| 1 | L17797 lookup-only segment bitmap | 99.56% | `VOID-NONULL` | superseded by the corrected bitmap/production sequence; do not repeat the old harness |
+| 2 | L17758 exact segment membership bitmap | 98.83% | `VOID-NONULL` | superseded by L17903 and the shipped segment integration; no new lever remains in this row |
+| 3 | L17903 pinned 134M-op segment bitmap | 96.67% | `VOID-CV` | harness repair is now landed in `0bad50199`; rerun only under the authorized remote predicate below |
+| 4 | L18455 quiet-CPU segment production | 20.23% | `VOID-CV` | later corrected production run kept the segment lever in `15f58c419`; no duplicate rerun |
+| 5 | L18490 noisy-worker segment production | 19.69% | `VOID-CV` | later corrected production run kept the segment lever; the noisy-worker row stays non-admissible |
+
+Thus the top-five queue has been re-decided by later corrected evidence where a rerun could add
+information; the only still-actionable item is L17903, whose source/harness repair is committed but
+whose new worker run is deliberately deferred until a quiet remote window. The exact retry is:
+`RCH_REQUIRE_REMOTE=1 env -u CARGO_TARGET_DIR rch exec -- cargo bench -p frankenlibc-bench --features abi-bench --bench malloc_bench --profile release-perf -- segment_bitmap_integrity --noplot`.
+
+The complete per-row machine screen is reproducible offline with
+`python3 scripts/check_perf_ledger_integrity.py report`; every row's heading line is the hand-review
+anchor. No row was promoted to a KEEP by this audit.
+
+### Institutionalized gate
+
+`scripts/check_perf_ledger_integrity.py` now uses this six-class taxonomy. `preflight <terms>` greps
+the ledger and prints matching retry predicates; exit **2** blocks a sound prior rejection. `lint`
+refuses newly staged undecidable REJECT rows and newly staged KEEP rows without a 64-hex SHA-256
+from the executing ELF. `scripts/install_perf_ledger_hook.py` installs that lint into the existing
+Agent Mail pre-commit chain as `40-perf-ledger.py`; the hook is installed in this checkout. This is
+an enforcement gate, not a reminder.
+
 This audits every REJECT-class row in `docs/NEGATIVE_EVIDENCE.md` and asks one question per
 row: *could the measurement that produced this rejection have detected the lever at all?*
 A row is **VOID** when the answer is no. VOID is not a claim that the lever works — it is a

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Perf-ledger integrity gate — institutionalises the ledger-resurrection audit.
+"""Perf-ledger integrity gate — institutionalises the frankenfs taxonomy.
 
 Ledger integrity DECAYS. The fleet's 2026-07-26 finding: repos that audited once and
 then enforced the check mechanically sit at ~1.7% void; repos that audited once and
@@ -16,9 +16,9 @@ Two modes, both cheap and offline (no build, no worker):
              counted mechanism. This is the rule that makes the dominant void class
              (VOID-NONULL) unwriteable going forward.
 
-Classification follows the fleet taxonomy (frankenfs, adopted 2026-07-26):
-VALID-PROFILE / VALID-MECHANISM / VALID-AB / VALID-DECISIVE / VOID-CV /
-VOID-ZEROSELF / VOID-NONULL. See docs/LEDGER_RESURRECTION_METHOD.md.
+Classification follows frankenfs verbatim: VALID-PROFILE / VALID-MECHANISM /
+VALID-AB / VOID-CV / VOID-ZEROSELF / VOID-NONULL. Screening is triage; every
+row in the audit document is hand-adjudicated before it enters the queue.
 
   scripts/check_perf_ledger_integrity.py preflight strspn pcmpistri
   scripts/check_perf_ledger_integrity.py lint --since origin/main
@@ -43,8 +43,9 @@ EXIT_BLOCKED = 2
 # Worst A/A (source-identical arm vs itself) median ever measured in this repo.
 NULL_LO, NULL_HI = 0.905, 1.105
 
-# Three heading grammars are in use across this ledger's history. Parsing only the
-# newest found 270 of 514 entries; parse all three or half the population is invisible.
+# The ledger uses dated `##` headings with `###` evidence subsections. Subsections
+# stay attached to their parent row; splitting them loses the evidence that makes a
+# rejection admissible.
 HEADING = re.compile(r"^## (\d{4}-\d{2}-\d{2})\s*(?:\(([^)]*)\))?\s*[-—]+\s*(.*)$")
 
 # Word-boundary matching matters: "fast-reject" contains "REJECT" and was pulling
@@ -79,13 +80,16 @@ SELFTIME_PCT = re.compile(
     re.I,
 )
 CV_GATE = re.compile(r"cv\s*<\s*5|all-CV|CV gate|INVALID-CV|<5% .{0,12}CV", re.I)
+PROFILE_FIRST = re.compile(
+    r"before (?:any )?source edit|profile-first|Amdahl ceiling|"
+    r"rejected before source|no source (?:or harness )?changed",
+    re.I,
+)
+SHA256 = re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", re.I)
 ZERO_GAIN = re.compile(
     r"~0-gain|~0 gain|no change in performance|within noise|inside the null|"
     r"indistinguishable|no measurable|below the noise|inside the floor|no gain",
     re.I,
-)
-PROBE = re.compile(
-    r"\bEMPTY\b|no lever built|STRUCTURAL PROBE|SURVEY|KILLED BY PROFILE|SCOPED", re.I
 )
 
 
@@ -116,6 +120,15 @@ class Row:
             re.search(r"(?<![A-Z-])" + re.escape(t), h) for t in REJECT_TOKENS
         )
 
+    def is_keep(self) -> bool:
+        h = self.title.upper()
+        if any(h.startswith(w) for w in WIN_TOKENS):
+            return True
+        return bool(re.search(r"\b(?:KEEP|SHIPPED|LANDED|WIN)\b", h))
+
+    def has_binary_sha256(self) -> bool:
+        return bool(SHA256.search(self.text))
+
     def classify(self) -> str:
         body = self.text
         ratios = [float(x) for x in RATIO.findall(body)]
@@ -134,29 +147,37 @@ class Row:
             except (TypeError, ValueError):
                 st_val = None
 
-        # Decision language outranks any ratio the row happens to quote: rows routinely
-        # cite large vs-upstream CONTEXT numbers next to a neutral verdict.
-        if PROBE.search(self.title):
+        # Decision language outranks context ratios: rows routinely quote a large
+        # candidate-vs-glibc number next to a neutral candidate-vs-base result.
+        if PROFILE_FIRST.search(self.title + "\n" + body) and st_val is not None and st_val >= 0.5:
             return "VALID-PROFILE"
-        if zero_gain and not has_null and not has_mech:
-            return "VOID-NONULL"
+        cv_only = bool(
+            re.search(
+                r"INVALID-CV|EVIDENCE GATE ONLY|ALL-SIX-CV|WORKER STABILITY|"
+                r"rejected (?:because|on|by) .*CV|CV .*reject",
+                self.title + "\n" + body,
+                re.I,
+            )
+        )
+        if cv_only and not has_mech:
+            return "VOID-CV"
+        if has_null and near and not outside:
+            return "VALID-AB"
+        if has_mech:
+            return "VALID-MECHANISM"
         if st_val is not None and st_val < 0.5:
             return "VOID-ZEROSELF"
         if cv and not outside:
             return "VOID-CV"
-        if has_null and near and not outside:
-            return "VALID-AB"
-        if not has_null and has_mech and not outside:
-            return "VALID-MECHANISM"
-        if st_val is not None and st_val >= 0.5 and not ratios:
-            return "VALID-PROFILE"
-        if outside:
-            # Rejected on a ratio far outside any observed null. The six fleet classes
-            # have no home for this; a null control cannot change the fact that the
-            # candidate was measurably slower, so it counts as sound.
-            return "VALID-DECISIVE"
-        if has_null:
-            return "VALID-AB"
+        # A near-one wall result without a null, counted mechanism, or profile
+        # attribution is the dominant epidemic: it cannot distinguish lever from
+        # harness. Keep this fallback conservative for rows with no usable ratio too.
+        if zero_gain or not outside:
+            return "VOID-NONULL"
+        # The six-class taxonomy has no VALID-DECISIVE bucket. A decisive A/B that
+        # carries no admissibility basis is still not a VOID-NONULL near-one result;
+        # classify it as VALID-AB only when an A/A was actually recorded, otherwise
+        # require a mechanism/profile row before treating it as sound.
         return "VOID-NONULL"
 
 
@@ -203,8 +224,10 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
     for r in sound:
         print(f"BLOCKED  L{r.line}  [{r.cls}]  {r.title[:100]}")
+        print(f"         retry: {_retry_predicate(r)}")
     for r in void:
         print(f"VOID     L{r.line}  [{r.cls}]  {r.title[:100]}")
+        print(f"         retry: {_retry_predicate(r)}")
 
     if sound:
         print()
@@ -241,31 +264,70 @@ def _added_heading_lines(since: str) -> set[str]:
     }
 
 
+def _added_heading_lines_staged() -> set[str]:
+    """Return newly staged dated ledger headings, without consulting a remote ref."""
+    try:
+        diff = subprocess.run(
+            ["git", "diff", "--cached", "--unified=0", "--", str(LEDGER)],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        print(f"lint: cannot inspect staged ledger diff: {exc}", file=sys.stderr)
+        raise SystemExit(EXIT_USAGE) from exc
+    return {
+        ln[1:].strip()
+        for ln in diff.split("\n")
+        if ln.startswith("+## ")
+    }
+
+
+def _retry_predicate(row: Row) -> str:
+    match = re.search(
+        r"(?:retry predicate|retry condition|retry only|reopen only|reopen when)[^\n.]{0,360}",
+        row.text,
+        re.I,
+    )
+    return match.group(0).strip() if match else "(no concrete retry predicate recorded)"
+
+
 def cmd_lint(args: argparse.Namespace) -> int:
-    """Refuse a new REJECT row that records neither an A/A null nor a counted mechanism."""
-    rows = [r for r in parse(LEDGER) if r.is_reject()]
-    if args.since:
+    """Refuse undecidable new REJECT rows and KEEP rows without an in-process SHA."""
+    rows = parse(LEDGER)
+    if args.staged:
+        added = _added_heading_lines_staged()
+        rows = [r for r in rows if r.raw in added]
+        scope = "staged ledger rows"
+    elif args.since:
         added = _added_heading_lines(args.since)
         rows = [r for r in rows if r.raw in added]
         scope = f"rows added since {args.since}"
     else:
-        scope = "all reject rows"
+        scope = "all ledger rows"
 
-    if not rows:
-        print(f"LINT OK — no reject rows in scope ({scope}).")
-        return EXIT_OK
-
-    bad = [r for r in rows if r.cls == "VOID-NONULL"]
+    rejects = [r for r in rows if r.is_reject()]
+    keeps = [r for r in rows if r.is_keep()]
+    bad = [r for r in rejects if r.cls in {"VOID-NONULL", "VOID-CV", "VOID-ZEROSELF"}]
+    bad_keeps = [r for r in keeps if not r.has_binary_sha256()]
     for r in bad:
         print(f"REFUSED  L{r.line}  {r.title[:100]}")
         print(
-            "         no A/A null control and no counted mechanism — this row cannot"
-            " distinguish the lever from the harness."
+            f"         [{r.cls}] lacks an admissibility basis; record an A/A null or"
+            " counted mechanism (VALID-PROFILE also requires named non-zero self-time"
+            " plus an Amdahl ceiling)."
         )
+    for r in bad_keeps:
+        print(f"REFUSED  L{r.line}  {r.title[:100]}")
+        print("         KEEP rows must carry the 64-hex SHA-256 reported by the executing ELF.")
 
     print()
-    print(f"LINT: {len(rows)} reject row(s) in scope ({scope}); {len(bad)} refused.")
-    if bad:
+    print(
+        f"LINT: {len(rejects)} REJECT row(s), {len(keeps)} KEEP row(s) in scope ({scope}); "
+        f"{len(bad) + len(bad_keeps)} refused."
+    )
+    if bad or bad_keeps:
         print()
         print("  A reject row must record ONE of:")
         print("    - an A/A null control measured in the SAME invocation, or")
@@ -273,6 +335,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
         print("      (instructions / cycles / syscalls / allocations / faults), or")
         print("    - a profile frame with non-zero self-time, if you rejected before editing source.")
         print("  A near-1.0 wall ratio on its own is not evidence — it is an unmeasured claim.")
+        print("  A KEEP row must record the executing ELF's 64-hex SHA-256.")
         return EXIT_BLOCKED
     return EXIT_OK
 
@@ -294,7 +357,6 @@ def cmd_report(args: argparse.Namespace) -> int:
         "VALID-AB",
         "VALID-PROFILE",
         "VALID-MECHANISM",
-        "VALID-DECISIVE",
         "VOID-NONULL",
         "VOID-CV",
         "VOID-ZEROSELF",
@@ -315,11 +377,15 @@ def main() -> int:
     p.add_argument("terms", nargs="*", help="keywords describing the lever")
     p.set_defaults(fn=cmd_preflight)
 
-    p = sub.add_parser("lint", help="refuse new reject rows with no null and no mechanism")
+    p = sub.add_parser("lint", help="refuse undecidable REJECTs and KEEP rows without SHA")
     p.add_argument("--since", help="git ref; lint only rows added since it")
+    p.add_argument("--staged", action="store_true", help="lint only staged ledger rows")
     p.set_defaults(fn=cmd_lint)
 
     p = sub.add_parser("report", help="class census over the whole ledger")
+    p.set_defaults(fn=cmd_report)
+
+    p = sub.add_parser("audit", help="alias for report: mechanical taxonomy census")
     p.set_defaults(fn=cmd_report)
 
     args = ap.parse_args()
