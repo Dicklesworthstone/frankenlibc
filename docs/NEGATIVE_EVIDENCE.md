@@ -22837,3 +22837,66 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   `thread_local!` accesses) is inlined into the same body, forcing five callee-saved pushes onto every
   ABI entry. `perf annotate` puts **99.17% of its samples on the epilogue `ret`** and the rest on the
   `pop`s. Same hot/cold split applies.
+
+## 2026-07-25 (cc_fl / MagentaCondor) — STRUCTURAL SCOPE (measured attribution, lever NOT built): the deployed allocator's residual is TWO full-barrier atomic RMWs per malloc/free pair, both load-bearing for safety — the swing is "can one atomic carry both contracts?" (cc-alloc-two-atomics-2026-07-25)
+
+- **SUPERSEDES my own cc-alloc-layer-split row**, which was corrected earlier today for a
+  `--call-graph dwarf` attribution error. All numbers here come from the corrected, matched-settings
+  capture (no call-graph, `-F 3997`, `taskset -c 3`, base binary
+  `acbd9732b44fe6d0225d84f063f20851fb627b736646ffb0366be2a7d6f32fe3`, worker `vmi1293453`).
+- **WHERE THE TIME ACTUALLY IS.** The two largest *production* frames are not algorithms, and
+  `perf annotate` localises each to a single instruction:
+
+  | frame | self-time | hottest instruction | share of that frame |
+  |---|---|---|---|
+  | `segment_free` | **22.85%** | `lock xchg`-class RMW feeding `test %r10w,%r10w` | **91.27%** |
+  | `enter_allocator_reentry_guard` | **8.72%** | `lock cmpxchg %ecx,0x754(%rbx)` feeding `jne` | **95.18%** |
+
+  Source-level: `segment_free` does
+  `view.meta.requested_size.swap(SEGMENT_SLOT_FREE, Ordering::AcqRel)` on an `AtomicU16`, and
+  `enter_allocator_reentry_guard` does `allocator_depth.compare_exchange(0, 1, AcqRel, Acquire)`.
+  **Roughly 31% of process self-time is two locked read-modify-writes, one per guard-entry and one per
+  free.** Everything else in the allocator — bump cursors, magazines, the segment bitmap, size-class
+  lookup — is already cheap (`segment_slot_view` 6.69%, `record_stats` 2.09%,
+  `allocate_from_local_class` 1.19%, `bin_index` 1.14%, `segment_allocate` 0.29%).
+- **BOTH ATOMICS ARE LOAD-BEARING — this is why the obvious deletions are inadmissible.**
+  - The guard CAS establishes thread-exclusive allocator entry **against signal delivery as well as
+    against threads**. A `load`+`store` pair is not a substitute: a signal arriving between them lets
+    the handler observe `depth == 0` and re-enter the allocator recursively, which is exactly the
+    condition the guard exists to detect. A single instruction cannot be split by signal delivery.
+  - The `segment_free` swap is the **double-free linearisation point**: the swap's returned previous
+    value *is* the double-free / interior-free / never-allocated test (`previous == 0`,
+    `== SEGMENT_SLOT_FREE`, or `> class_size`), and it is what returns the exact requested size for
+    `record_free_stats`. Split it into load-then-store and two threads freeing the same pointer both
+    read a live value and both proceed.
+  - Weakening either ordering (`AcqRel` -> `Relaxed`) buys **nothing on x86-64**: the same `lock`-
+    prefixed instruction is emitted either way; the annotation only constrains compiler motion.
+- **THE ACTUAL STRUCTURAL QUESTION (well-posed, unbuilt).** Not "which free-list algorithm" — the
+  free-list work is already done and cheap (`15f58c419` magazines). The question is:
+  **can one atomic RMW discharge both the reentrancy contract and the double-free contract?**
+  Sketch worth costing: fold the per-slot liveness into a **per-chunk 64-slot bitmap word** and make
+  `free`'s linearisation point a `lock btr` on that word (double-free = bit already clear, identical
+  detection power). The exact requested size then becomes a **plain relaxed load** of the `u16`,
+  because exclusivity is already established by the winning `btr` — removing one full barrier from
+  every free without weakening either contract. Whether the guard CAS can be folded into the same word
+  is the harder half and is **not** obviously yes: the guard protects allocator *entry* (before any
+  pointer is known) while the bitmap protects a *specific slot*, so they linearise different things.
+- **WHY IT IS NOT BUILT THIS TURN — and the exact blocker.** A change to the double-free
+  linearisation point must be validated multi-threaded, and **multi-threaded validation on this repo
+  is currently untrustworthy**: `bd-uj3sg7` (bump-heap mmap-fallback returns a headerless pointer that
+  `free()` hands to host glibc, plus a monotonic VMA leak) makes >= 4-thread abi-bench runs abort
+  intermittently — the banked `bd-ummyux` signature. Building a new allocator linearisation point
+  against a harness that dies at random is how a real race gets shipped. **bd-uj3sg7 is the gate.**
+- **CONCRETE RETRY PREDICATE (all three must hold before building this):**
+  1. `bd-uj3sg7` closed or falsified, and a >= 4-thread deployed-allocator churn run completes 20/20
+     without an abort.
+  2. A matched-settings (no call-graph) MT profile still shows `segment_free` >= 15% self-time with
+     >= 80% of that frame on the atomic RMW — i.e. the ST finding transfers.
+  3. A written double-free/interior-free/cross-thread-free equivalence argument for the bitmap
+     linearisation point, gated by the existing allocator conformance set (59 allocator tests, 16
+     focused conformance, host-getline segment growth) **plus** a new adversarial concurrent
+     double-free test that fails against a deliberately non-atomic implementation. If that test cannot
+     be made to fail against the broken version, it does not prove anything and the swing stops.
+- **PROVENANCE.** Attribution only; no candidate built, so no A/B, no candidate sha, no null control,
+  and none is claimed. Evidence is the matched-settings capture named above plus the two `perf
+  annotate` instruction-level reads quoted inline.
