@@ -163,7 +163,13 @@ pub fn epoch_to_broken_down(epoch_secs: i64) -> BrokenDownTime {
 /// exactly once (the checked path used to compute it twice — once for the
 /// tm_year overflow test, once inside `epoch_to_broken_down`).
 #[inline]
-fn build_broken_down(rem: i64, days: i64, year: i64, month_1based: i64, day: i64) -> BrokenDownTime {
+fn build_broken_down(
+    rem: i64,
+    days: i64,
+    year: i64,
+    month_1based: i64,
+    day: i64,
+) -> BrokenDownTime {
     let tm_sec = (rem % 60) as i32;
     let tm_min = ((rem / 60) % 60) as i32;
     let tm_hour = (rem / 3600) as i32;
@@ -179,8 +185,7 @@ fn build_broken_down(rem: i64, days: i64, year: i64, month_1based: i64, day: i64
     // for negative/pre-epoch years too.)
     const CUM_DAYS: [i32; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
     let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let tm_yday =
-        CUM_DAYS[mon as usize] + (day as i32 - 1) + (month_1based > 2 && is_leap) as i32;
+    let tm_yday = CUM_DAYS[mon as usize] + (day as i32 - 1) + (month_1based > 2 && is_leap) as i32;
 
     BrokenDownTime {
         tm_sec,
@@ -529,6 +534,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
     }
     if let Some(n) = format_strftime_simple_numeric(fmt, bd, buf) {
         return n;
+    }
+    if fmt == b"%A" {
+        return format_strftime_full_weekday(bd.tm_wday, buf);
     }
 
     let mut pos = 0usize;
@@ -1102,6 +1110,29 @@ fn format_strftime_hms(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> Optio
     write_two_digits(&mut buf[6..8], second);
     buf[OUT_LEN] = 0;
     Some(OUT_LEN)
+}
+
+/// Emit one C-locale full weekday name for the exact `%A` transducer leaf.
+#[inline]
+pub fn format_strftime_full_weekday(wday: i32, buf: &mut [u8]) -> usize {
+    // `%A` is a finite-state leaf in the format transducer: the general parser's
+    // flags, width, modifier, case, and allocation branches cannot affect this
+    // exact format. Map the seven weekday states directly to their C-locale names.
+    let name = if (0..=6).contains(&wday) {
+        WDAY_FULL_NAMES[wday as usize].as_bytes()
+    } else {
+        b"?"
+    };
+    if name.len() >= buf.len() {
+        // Preserve the general path's observable partial-write behavior even
+        // though POSIX leaves the buffer unspecified when strftime returns zero.
+        let prefix_len = buf.len().saturating_sub(1);
+        buf[..prefix_len].copy_from_slice(&name[..prefix_len]);
+        return 0;
+    }
+    buf[..name.len()].copy_from_slice(name);
+    buf[name.len()] = 0;
+    name.len()
 }
 
 #[inline]
@@ -1684,6 +1715,42 @@ mod tests {
         let mut buf = [0u8; 64];
         let n = format_strftime(b"%F %T", &bd, &mut buf);
         assert_eq!(&buf[..n], b"2024-01-01 00:00:00");
+    }
+
+    #[test]
+    fn strftime_full_weekday_exact_all_states() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        let expected = [
+            b"Sunday".as_slice(),
+            b"Monday",
+            b"Tuesday",
+            b"Wednesday",
+            b"Thursday",
+            b"Friday",
+            b"Saturday",
+        ];
+        for (wday, name) in expected.into_iter().enumerate() {
+            bd.tm_wday = wday as i32;
+            let mut buf = [0x55u8; 16];
+            let n = format_strftime(b"%A", &bd, &mut buf);
+            assert_eq!(n, name.len());
+            assert_eq!(&buf[..n], name);
+            assert_eq!(buf[n], 0);
+        }
+    }
+
+    #[test]
+    fn strftime_full_weekday_preserves_malformed_and_short_buffer_behavior() {
+        let mut bd = epoch_to_broken_down(1_704_067_200);
+        bd.tm_wday = -1;
+        let mut malformed = [0x55u8; 2];
+        assert_eq!(format_strftime(b"%A", &bd, &mut malformed), 1);
+        assert_eq!(&malformed, b"?\0");
+
+        bd.tm_wday = 3;
+        let mut short = [0x55u8; 5];
+        assert_eq!(format_strftime(b"%A", &bd, &mut short), 0);
+        assert_eq!(&short, b"WednU");
     }
 
     #[test]

@@ -1191,6 +1191,22 @@ pub unsafe extern "C" fn strftime(
         if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
             return 0;
         }
+        // Exact `%A\0` is a three-byte C-format transducer leaf. Recognize it
+        // before the generic NUL scan so this common one-directive format pays
+        // neither a scan nor full `tm` materialization. Short-circuiting means
+        // byte 2 is read only after bytes 0/1 prove the string is at least `%A`.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'A'
+                && *format.cast::<u8>().add(2) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let wday = unsafe { (*tm).tm_wday };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            return time_core::format_strftime_full_weekday(wday, buf);
+        }
         // SAFETY: strict trusts the caller's NUL-terminated `format` (C contract).
         let (fmt_len, terminated) = unsafe { scan_c_string(format, None) };
         if !terminated {
