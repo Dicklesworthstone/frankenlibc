@@ -292,13 +292,26 @@ recorded binary SHA-256 and an A/A null control at the decision's own unit of an
 | — decision-defective (the re-attack pool) | 27 |
 | — provenance-only | 103 |
 | already resurrected before this audit | 2 families (L6150; L18406/L18455/L18490) |
-| re-won | **2** — `ad465633f` (MT `fgetc` 17.5–18.7×), `15f58c419` (allocator 18.7–19.4% vs ORIG) |
-| queued for re-run | 3 (ranks 1–3 of §5) |
+| **resurrected from this audit's queue** | **2** — §5 ranks 1 and 2, both landed same-day |
+| re-won | **4** (see below) |
+| queued for re-run | 1 remaining of ranks 1–3 (L16566, the `strftime` general-loop fixed cost) |
 | adjudicated undecidable, not re-queued | 2 (ranks 4–5 of §5) |
 
-Yield so far: **2 of 27 decision-defective rows re-run, 2 of 2 re-won.** That is not a projection for
-the remaining 25 — the two that were re-run were also the two largest frames, chosen by exactly the
-ranking in §5 — but it does establish that the failure mode is real and that the ranking finds it.
+| # | row | lever | result | commit |
+|---|---|---|---|---|
+| prior | L6150 | lock-free `native_stdio` FILE\*-cache | MT `fgetc` **17.5–18.7×** | `ad465633f` |
+| prior | L18406 family | per-thread segment magazines | allocator **18.7–19.4%** vs ORIG | `15f58c419` |
+| **§5 rank 1** | **L21341** `bd-agegst` | exact `strftime("%A")` FST leaf | FL **8.41 ns** vs glibc **15.49 ns**, FL/glibc median **0.5406** CI [0.5371, 0.5496], FL/FL null **0.9969** CI [0.9834, 1.0090] — clears the 2× null-half-width margin | `ac74b07bc` |
+| **§5 rank 2** | **L21570** `bd-bl39l2` | append-only release/acquire publication removes the `textdomain(NULL)` mutex | **11.32 ns → 2.58 ns**; FL/glibc **5.79× → 1.19×** | `8320a0b4a` |
+
+Yield: **4 of 27 decision-defective rows re-run, 4 of 4 re-won.** Two of those four came from this
+audit's own ranked queue and landed the same day it was published, on the exact rows it put first and
+second. Both had been rejected for the same reason — a CV gate the campaign has since retired — and in
+both cases the *lever* had never been in doubt: rank 1's behavior was already proven over 200,000
+differential comparisons before it was thrown away.
+
+That is not a projection for the remaining 23. But the failure mode is real, the ranking finds it, and
+the cost of the re-run is a fraction of the cost of the original design work.
 
 ## 8. Reproducing this audit
 
