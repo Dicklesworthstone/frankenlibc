@@ -23217,3 +23217,41 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   Reopen `bd-ummyux` immediately if the abort survives, if live mappings grow after quiescence, if
   created-minus-released grows with completed churn, or if an abort occurs while
   `static_bytes_used` is materially below 256 MiB (which refutes this root-cause link).
+
+## 2026-07-26 (cod / SwiftCastle) — HARNESS FIX / UNTIMED: malloc production gate adopts the in-process ELF + same-invocation A/A + median-CI contract
+
+- **NEGATIVE-EVIDENCE FIRST.** Before editing, the ledger was searched for
+  `MALLOC_SEGMENT_PRODUCTION`, `cv_gate_pass`, segment-production nulls, and same-invocation
+  controls. The historical sequence at L18287 and L18406–L18566 records the exact defect: the
+  production segment harness had no A/A null, then kept accepting or rejecting runs through
+  `<5%` CV gates even when candidate medians won every size and raw/paired CV told contradictory
+  stories. The shipped harness still exposed `cv_gate_pass()` as its acceptance instrument.
+- **ELF SELF-REPORT.** The benchmark now reads and SHA-256-hashes its own `current_exe()` in Rust,
+  caches that identity, and prints `bench_elf_sha256=...` before Criterion can emit any output.
+  The retrievable `executable.sha256` artifact is written from that same cached identity; the
+  external `sha256sum` side process is gone.
+- **MATCHED A/A NULL.** Every raw size sample now contains an exact ORIG/ORIG pair using the same
+  batch function and allocator pair. Its arms alternate order, receive exactly the same operation
+  count as each ORIG/CAND/GLIBC arm, and produce one `null_b/null_a` ratio for every
+  `candidate/orig` ratio. The outer null-versus-real block order also alternates. This preserves
+  the decision's unit of analysis instead of comparing a microblock null with a whole-sample
+  claim.
+- **MEDIAN-CI GATE, NEVER CV.** The artifact now reports raw samples, ratio medians, MAD, CV, and
+  deterministic 4,096-resample bootstrap 95% CIs for both the exact null and the real contrasts.
+  The sole keep gate is: CAND/ORIG median below 1.0 and its distance from 1.0 greater than twice
+  the wider A/A null-CI half-width. Every CV remains provenance and cannot accept or reject a
+  result. The obsolete `cv_gate_pass`, `all_size_cv_gate_pass`, and `cv_gate_scope` surfaces no
+  longer exist.
+- **LANE-B VALIDATION / NO VERDICT.** No benchmark, worker, or performance verdict was used.
+  `rustfmt --edition 2024 --check`, `git diff --check`, and the focused UBS scan pass with zero
+  critical findings. UBS's shadow-workspace Cargo summaries are not treated as an authorized
+  project build or test gate.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** KEEP this benchmark-contract repair. When the
+  campaign explicitly rotates frankenlibc into a measurement lane, run exactly
+  `RCH_REQUIRE_REMOTE=1 RCH_WORKER=<fully-reserved-quiet-worker> rch exec -- cargo bench -p
+  frankenlibc-bench --bench malloc_bench --features abi-bench -- segment_allocator_3way`.
+  Admit the run only if the first benchmark-process line self-reports a 64-hex ELF digest, the
+  artifact repeats that digest, all behavior preflights pass, every size prints its A/A samples
+  and bootstrap CI, and the final decision is derived only from
+  `all_size_median_ci_gate_pass`. Reopen the harness immediately if either null arm is missing,
+  the null and claim operation counts differ, or changing any CV alone can change the verdict.
