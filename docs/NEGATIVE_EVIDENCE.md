@@ -22580,3 +22580,124 @@ item retains every later colon by construction, exactly matching the former `fie
   file + `while(fscanf(fp,"%d",&x))`) + a 1t fscanf-vs-glibc micro-bench to quantify the loss (est.
   10-90x), THEN the incremental-parse refactor gated on `scanf_*_differential` conformance. Filed as a
   scoped follow-on; NOT shipped (architectural, not a cell-cache one-liner). [[stdio-mt-swing-inprogress]].
+
+## 2026-07-25 (cc_fl / MagentaCondor) — WIN (SHIPPED): PCC gate hot/cold split — the one-shot SHA-256 verifier was inlined into the hot check, giving every gated call a 376-byte frame; deployed malloc+free 0.9463x, control arm null (cc-pcc-gate-split-2026-07-25)
+
+- **LEDGER-FIRST.** Grepped this ledger for `ffi_pcc`, `proof_carried`, `PCC`, `runtime_policy`,
+  `ensure_ffi_pcc`, `hot/cold`, `cold split`, and `inline(always)`. No prior row touches the FFI
+  proof-carrying-certificate gate's *shape*; the existing PCC rows are about certificate coverage
+  (`bd-14baix`) and about `decide`/`observe` policy, not about the gate's call cost. New surface.
+- **PROFILE-FIRST ATTRIBUTION (this is what selected the lever).** Worker `vmi1293453` (load
+  0.21/8, 8 cores), release-perf `examples/malloc_st_probe` sha256
+  `0141e44f1bce0bea1f6506e2a60484f13f1c3113fdf73d7d62d5bc66f440d7b6`, `perf record -F 3997
+  --call-graph dwarf,4096`, `taskset -c 3`, 3K samples / 2.03e9 cycles. Flat self-time:
+
+  | frame | self-time |
+  |---|---|
+  | `bench_free_null_old_strict_path` (BENCH-ONLY arm, not production) | 32.37% |
+  | **`runtime_policy::ensure_ffi_pcc_verified`** | **22.18%** |
+  | `malloc_abi::enter_allocator_reentry_guard` | 12.74% |
+  | `free` (exported) | 12.52% |
+  | `malloc_abi::segment_free` | 4.77% |
+  | `runtime_policy::entrypoint_scope` | 2.80% |
+  | `malloc_abi::segment_slot_view` | 1.35% |
+  | `runtime_policy::mode` / `malloc_abi::record_stats` | 0.58% / 0.32% |
+
+  Excluding the bench-only arm and `main`, fl production frames total ~57%, so the gate is ~39% of
+  fl allocator cycles — larger than the entire exported `free` body and 4.6x `segment_free`. It is
+  not allocator logic at all.
+- **THE DEFECT (perf annotate, same capture).** 99.00% of the symbol's samples sit on ONE
+  instruction: the epilogue `ret` at +0x519. The prologue is `push rbp; push r15; push r14; push
+  r13; push r12; push rbx; sub $0x178,rsp` — six callee-saved pushes and a **376-byte stack frame**
+  — because the one-shot verifier `ffi_pcc_verify_and_hash` (a SHA-256 over the 24-row certificate
+  table; the ymm spills are visible in the disassembly) is inlined into the *same* function body.
+  The steady-state answer needs exactly one acquire byte load, but the function is ~1.3 KB, so LLVM
+  will not inline it, and every gated call builds and tears down the cold path's frame to read one
+  byte. The `ret` concentration is partly sampling skid, which is why the shipped effect is smaller
+  than 22.18% would naively predict — stated here rather than buried.
+- **CALL MULTIPLICITY (why it is worth more than one call site).** The gate is reached from
+  `proof_carried_fast_path_active` (the explicit malloc gate), `decide()` (L2163), `observe()`
+  (L2366-2367, **twice** in one condition), `check_ordering()` (L2399) and
+  `note_check_order_outcome()` (L2449). A deployed strict `malloc` therefore pays it ~4x. The
+  strict `free` fast path (segment hit) pays it 0x — consistent with the effect being an
+  allocation-side, not free-side, saving.
+- **THE ONE LEVER.** `#[inline(always)] ensure_ffi_pcc_verified()` = one acquire load + compare,
+  delegating to `#[cold] #[inline(never)] ffi_pcc_verify_once()` which holds the original body
+  verbatim. Blast radius is the 24 certified symbols: malloc, calloc, realloc, posix_memalign,
+  memalign, aligned_alloc, free, memcmp, strlen, memcpy, snprintf, vsnprintf, strcmp, strncmp,
+  strchr, strrchr, strstr, memchr, memrchr, strnlen, memmove, memset, strcpy, strncpy.
+- **BEHAVIOR-PRESERVATION PROOF.** The state machine is monotonic in production: `UNVERIFIED ->
+  VERIFYING -> {VERIFIED, REJECTED}`, both terminal; the only store back to `UNVERIFIED` is
+  `reset_ffi_pcc_state_for_tests`, a `#[cfg(test)]` helper holding `runtime_policy_test_lock()`.
+  Single-threaded the two forms are identical. Multi-threaded, the split performs a second acquire
+  load inside the cold half; monotonicity means that load observes the same state or a later one,
+  so the only reachable divergence is returning `true` where the unsplit form returned `false` for
+  a state that had just become VERIFIED — precisely the answer the unsplit form gives if its single
+  load lands one instant later. No ordering is weakened (both halves Acquire; CAS and terminal
+  stores untouched). This is double-checked locking over a monotonic flag.
+- **BEHAVIOR GATE (run on BOTH arms, debug profile, worker `vmi1264463`).**
+  `cargo test -p frankenlibc-abi --lib ffi_pcc`: **base 8 passed / 0 failed / 1 ignored**, **cand 8
+  passed / 0 failed / 1 ignored** — identical, including
+  `ffi_pcc_decide_uses_certificate_gate_for_{malloc,memcpy,snprintf}`,
+  `ffi_pcc_pointer_validation_bypass_only_applies_to_certified_read_symbols`,
+  `ffi_pcc_stage_ordering_bypasses_kernel_for_certified_symbols`,
+  `ffi_pcc_active_certificate_uses_trace_index_hint`, `ffi_pcc_manifest_exports_verified_rows`,
+  `ffi_pcc_trace_index_matches_certificate_table_order`.
+  **PRE-EXISTING FAILURES (present on the BASE tree too, not caused by this lever, proven by running
+  the identical command on both):** `cargo clippy -p frankenlibc-core` fails E0133 (3 errors), and
+  `cargo test --release -p frankenlibc-abi` cannot build `stdio_abi_test` (E0432 — `IO_2_1_STDOUT`
+  is `#[cfg(debug_assertions)]`, so that test is release-incompatible at HEAD).
+- **MEASUREMENT DESIGN — whole-binary A/B, and why it had to be.** The win *is* the inlining, so an
+  in-binary candidate arm would be inlined into the bench loop and overstate it (the banked
+  candidate-inlining artifact rule). Two pristine `git archive HEAD` trees, identical except
+  `runtime_policy.rs` — verified with `diff -rq`: **exactly one differing file** — both carrying the
+  upgraded probe. base sha256 `acbd9732b44fe6d0225d84f063f20851fb627b736646ffb0366be2a7d6f32fe3`
+  (41,860,968 B), cand sha256 `b428cca8aa9dc019fbef1cefccefe0d7c20e1893c9bee711d3d89ed37fb0655d`
+  (41,885,552 B). Different shas *and* sizes confirm codegen changed. **32 alternating invocations
+  per arm**, `taskset -c 3`, worker `vmi1293453`. Each binary self-reports its ELF sha256 as stdout
+  line 1 (harness contract part 1) and both shas were checked in the log.
+- **THE NULL THAT MATTERS — and the one that would have lied.** The probe measures an
+  in-invocation A/A (fl-vs-fl, identical code, same process): n=256, median **0.9999**, range
+  [0.9606, 1.0361]. That floor is **too tight for this decision** — a two-binary A/B is decided
+  *across* invocations, where whole-process nuisance terms (layout, ASLR, page colouring) live.
+  Gating on the in-invocation floor would have scored this lever 2.4x margin; the correct
+  cross-invocation floor scores it 2.03x. Both happen to pass here, but the discipline is the
+  point: **match the null's unit of analysis to the decision's unit of analysis.**
+- **DECISION — permutation null on the ratio of medians** (relabel the pooled per-invocation
+  samples 20,000x; seed 20260725; exchangeable under H0 because the arms were alternated):
+
+  | arm | pooled ratio | perm-null 95% | p | margin |
+  |---|---|---|---|---|
+  | **fl malloc+free (the lever arm)** | **0.9463** | [0.9743, 1.0265] | **0.0000** | **2.03x** |
+  | glibc via dlmopen (**byte-identical code in both binaries**) | 1.0206 | [0.9662, 1.0355] | 0.2640 | 0.58x |
+
+  Per-size fl: **0.9959 / 0.9333 / 0.9621 / 0.9301** at 16/64/256/1024 B — one-sided, every size
+  <= 1. Per-size control: 1.1004 / 0.9728 / 1.0497 / 0.9976 — mixed sign, no direction. That
+  asymmetry is the evidence: the arm the lever touches moves consistently down and clears its null;
+  the arm it cannot touch does not move (p=0.26). Absolute: fl malloc+free
+  **42.6 -> 39.7 ns (64 B)** and **43.4 -> 40.4 ns (1024 B)**. The within-invocation fl/glibc paired
+  median moves **10.766x -> 10.010x** (per size: 10.898->9.986, 10.610->9.981, 10.907->10.107,
+  10.638->9.990). That framing reads 0.9298 pooled — better than the headline — but it inherits the
+  control arm's +2.1% drift, so **the conservative fl-absolute 0.9463 is what is claimed here.**
+- **INDEPENDENT REPLICATION (different instrument, `setarch -R` = ASLR disabled).** Whole-process
+  address layout is the dominant nuisance term in a two-binary A/B, so the run was repeated with
+  randomisation off, 20 alternating invocations per arm, same pinned core and binaries: pooled
+  **cand/base = 0.9434**, perm-null 95% [0.9618, 1.0388], **p = 0.0026**, margin 1.46x. The point
+  estimate matches the primary run's 0.9463 to within 0.3 percentage points. Disabling ASLR did not
+  tighten the null (the wider intervals here are the smaller n=20, and the 4 ns control arm is
+  intrinsically noisy) — so **the value of this run is replication, not precision.** Primary claim
+  rests on the n=32 run, which clears the 2x margin bar and has the verified-null control arm; this
+  one confirms direction and magnitude independently.
+- **HONEST LIMITS.** (1) sz=16 is uninformative in this run — its *control* arm moved 10.0%
+  (p=0.062), so that size's cand binary saw a layout perturbation; the pooled test absorbs it, and
+  the per-size sz=16 fl figure (0.9959) should not be quoted alone. (2) Only 2 of 4 sizes clear
+  p<0.01 individually; the claim rests on the pooled test, which is why the control-arm pooled test
+  is published beside it. (3) Worker load rose from 0.96 to ~2.7 mid-run (a neighbour job);
+  alternation is the defence and the control arm is the check that it worked.
+- **DISPOSITION: KEEP / SHIPPED.** Strictly less work on the hot path, behavior-identical by
+  construction and by an 8/8 gate on both arms, decidable at 2.03x margin with the control arm
+  null.
+- **NEXT (do not re-derive):** the #2 frame is `enter_allocator_reentry_guard` at **12.74%**, which
+  the bd-dcrhgl notes already class as safety-critical and not removable — but nothing has yet asked
+  whether it has the *same shape defect* (a cold path forcing a frame onto the hot one). That is the
+  next lever in this vein, and it is a shape question, not a safety question.

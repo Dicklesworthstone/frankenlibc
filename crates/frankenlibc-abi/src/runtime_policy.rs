@@ -640,7 +640,42 @@ fn ffi_pcc_verify_and_hash() -> Result<u64, &'static str> {
     Ok(u64::from_le_bytes(prefix))
 }
 
+/// Steady-state gate check: is the FFI proof-carrying-certificate table verified?
+///
+/// PERF (cc-pcc-gate-split): the table is verified at most once per process, so
+/// after startup this is a single acquire byte load — but it sits on the deployed
+/// `malloc`/`free`/`str*`/`mem*` entrypoints via [`proof_carried_fast_path_active`],
+/// so its *shape* matters more than its logic. Previously the one-shot verifier
+/// (which inlines a SHA-256 over the whole certificate table) lived in this same
+/// function body, which forced LLVM to give every call a 376-byte stack frame and
+/// six callee-saved pushes before it could read one byte. On a deployed
+/// malloc/free probe that cost **22.18% of process self-time**, ~99% of it landing
+/// on the epilogue `ret` — pure prologue/epilogue for the cold path's frame.
+///
+/// Splitting the verifier into a `#[cold]` out-of-line callee leaves this function
+/// small enough to inline into its callers, so the hot path is the load and the
+/// compare and nothing else.
+#[inline(always)]
 fn ensure_ffi_pcc_verified() -> bool {
+    if FFI_PCC_STATE.load(AtomicOrdering::Acquire) == FFI_PCC_STATE_VERIFIED {
+        return true;
+    }
+    ffi_pcc_verify_once()
+}
+
+/// One-shot verification half of [`ensure_ffi_pcc_verified`].
+///
+/// Reached only while the table is `UNVERIFIED`/`VERIFYING`, or permanently after
+/// a `REJECTED` verdict. Re-reads the state and then reproduces the original
+/// dispatch exactly: the extra load is benign because the state machine is
+/// monotonic (`UNVERIFIED -> VERIFYING -> VERIFIED|REJECTED`, both terminal; the
+/// only store back to `UNVERIFIED` is a `#[cfg(test)]` helper holding the runtime
+/// policy test lock). A concurrent completion observed between the two loads can
+/// only turn a `false` into a `true`, which is the answer the unsplit function
+/// would have produced had its single load happened a moment later.
+#[cold]
+#[inline(never)]
+fn ffi_pcc_verify_once() -> bool {
     let state = FFI_PCC_STATE.load(AtomicOrdering::Acquire);
     if state == FFI_PCC_STATE_VERIFIED {
         return true;
