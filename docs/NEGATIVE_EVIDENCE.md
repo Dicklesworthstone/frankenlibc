@@ -23105,3 +23105,35 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   Do not retry `%FT%T` under the current C-locale contract. Reopen only if locale-specific
   `%F`/`%T` semantics are introduced, or a differential oracle produces an input for which the
   alias and its expanded ISO-T form diverge.
+
+## 2026-07-25 (cod / SwiftCastle) — VOID resurrection rank 5 KEEP at scanner boundary: in-memory hosts lookup proves the borrowed walk (`bd-9x1jcx`)
+
+- **NEGATIVE-EVIDENCE FIRST / DIFFERENT WORKLOAD.** The complete L21131 and L21277 rows and all
+  `hosts_lookup`, `hosts_reverse`, `hostent_iter`, `/etc/hosts`, and resolver ledger hits were read
+  before changing the existing profiler. The old deployed-ABI retries mixed the target scanner with
+  environment lookup, metadata syscalls, cache refresh, and file-backed state; even 500 ms blocks
+  left the source-identical null dispersed. The resurrection audit therefore required an immutable,
+  in-memory hosts workload rather than another quiet-worker retry.
+- **ISOLATED MECHANISM / BEHAVIOR ORACLE.** The existing `hosts_lookup_ab` now uses one fixed
+  23-line hosts snapshot and rotates eight queries covering IPv4, IPv6, aliases, multiple matches,
+  ASCII case folding, malformed rows, rows without names, and a miss. The original arm calls the
+  pre-lever allocating `lookup_hosts`; the candidate calls the shipped allocation-free
+  `for_each_hosts_match`. Before timing, their ordered address vectors, counts, and consumed
+  fingerprints match for every query and for the complete rotating batch. No production source
+  changed.
+- **META-LEVER 2 CONTRACT / PROVENANCE.** Remote worker `vmi1293453`; self-reported ELF SHA-256
+  `1e7bcb2500df0bb7276d3a80cbdd818c019054c51d9352bf28305d383ddc76bf`. One invocation retained
+  33 samples after four warm-ups, ran 50,000 lookups per arm per sample, alternated order, and
+  measured candidate/candidate A/A before candidate/original A/B. Bootstrap median CIs and the 2x
+  null-half-width rule decide the row; CV remains descriptive only.
+- **RESULT / KEEP.** Allocating original measured **1852.71 ns/lookup**; allocation-free candidate
+  measured **781.64 ns/lookup**. Candidate/original median was **0.428468** (2.33x faster), CI
+  **[0.411170, 0.444882]**. The same-invocation null was **0.994113**, CI
+  **[0.952074, 1.043635]**, for null half-width **0.047926**; the effect clears twice that floor.
+  Null/effect CVs (**13.410% / 11.849%**) are reported but do not gate the median-CI verdict.
+- **BOUNDARY / CONCRETE RETRY PREDICATE.** KEEP the historical allocation-free scanner lever; this
+  result does not relabel the file-backed `gethostbyname`, `gethostbyaddr`, or iterator rows.
+  Do not rerun the isolated scanner unless its implementation or parser fixture semantics change.
+  Retry end-to-end ABI throughput only when a benchmark can inject an immutable backend generation
+  without per-call environment or metadata work, and require its own same-invocation A/A plus a
+  candidate/original median CI that excludes 1.0 and clears twice the null half-width.
