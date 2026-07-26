@@ -21,6 +21,7 @@ frankenlibc-abi = { workspace = true, optional = true }
 criterion = { workspace = true }
 libc = { workspace = true }
 libm = "0.2.16"
+sha2 = { workspace = true }
 
 [[example]]
 name = "wmemrchr_strict_ab"
