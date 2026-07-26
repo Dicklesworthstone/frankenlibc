@@ -22701,3 +22701,75 @@ item retains every later colon by construction, exactly matching the former `fie
   the bd-dcrhgl notes already class as safety-critical and not removable — but nothing has yet asked
   whether it has the *same shape defect* (a cold path forcing a frame onto the hot one). That is the
   next lever in this vein, and it is a shape question, not a safety question.
+
+## 2026-07-25 (cc_fl / MagentaCondor) — SURFACE / STRUCTURAL REDIRECTION (measured, no lever built): the deployed allocator's ~10x small-churn gap is membrane-FRAMING-bound, not allocator-data-structure-bound — 38.3% vs 6.4% of process self-time (cc-alloc-layer-split-2026-07-25)
+
+- **WHY THIS ROW EXISTS.** The fleet campaign assigned the cc/STRUCTURAL lane "the allocator: 9.7x is
+  not a memory-safety tax, it is a design choice", naming graveyard **§14.2 flat combining** for the
+  allocator fast path, **§7.9 modern allocators** (TLSF / slab / mimalloc-style sharded free lists),
+  and **§14.11 elimination backoff** for the free list. Profiling before building says those primitives
+  are aimed at the wrong layer for the quoted number. Recorded so nobody spends a turn implementing
+  TLSF against a 6.4% frame.
+- **THE MEASUREMENT.** Same capture as the PCC-gate row: worker `vmi1293453` (load 0.21/8),
+  release-perf `malloc_st_probe` sha256 `0141e44f…d7b6`, `perf -F 3997`, `taskset -c 3`, 3K samples.
+  Deployed fl malloc+free measured **39.7-44.1 ns vs glibc 3.8-4.3 ns = ~9.9-10.7x**, i.e. this
+  profile *is* the workload behind the campaign's "9.7x" headline. Self-time splits by layer:
+
+  | layer | frames | self-time |
+  |---|---|---|
+  | **membrane / runtime-policy framing** | `ensure_ffi_pcc_verified` 22.18 + `enter_allocator_reentry_guard` 12.74 + `entrypoint_scope` 2.80 + `runtime_policy::mode` 0.58 | **38.30%** |
+  | **allocator data structures** | `segment_free` 4.77 + `segment_slot_view` 1.35 + `record_stats` 0.32 | **6.44%** |
+  | exported `free` dispatch/glue (mixed) | `free` | 12.52% |
+
+  **The framing outweighs the data structures ~6:1.** A *perfect* allocator — one whose
+  `segment_allocate`/`segment_free`/shadow bookkeeping cost literally zero — removes at most ~6.4% of
+  process cycles. That cannot move a 10x gap. The address-derived segment ownership + per-thread
+  magazine design already landed (`15f58c419`, bd-dcrhgl, 18.7-19.4% vs ORIG) and is *why* the
+  allocator layer is already this cheap.
+- **AND THE FRAMING IS NOT ONE UNIFORM COST — the two big frames fail for different reasons.**
+  - `ensure_ffi_pcc_verified` (22.18%) was a **shape** defect: a 376-byte stack frame forced onto a
+    one-byte-load hot path by an inlined SHA-256 verifier. Fixed this turn, hot/cold split, deployed
+    malloc+free **0.9463x** (see cc-pcc-gate-split-2026-07-25). Shape defects are cheap to fix and
+    there may be more of them.
+  - `enter_allocator_reentry_guard` (12.74%) is **not** a shape defect and this is measured, not
+    assumed: its prologue is a single `push %rbx`, and `perf annotate` puts **95.18% of its samples on
+    one instruction** — the `jne` at +0x16f consuming the flags of
+    `lock cmpxchg %ecx,0x754(%rbx)`, the `allocator_depth.compare_exchange(0, 1, AcqRel, Acquire)`.
+    The whole frame is one uncontended atomic RMW and its full barrier.
+- **WHY THE OBVIOUS FIX TO THAT CAS IS NOT ADMISSIBLE.** Replacing the CAS with a
+  `load(Relaxed)` + `store(Relaxed)` pair on a thread-owned slot looks free and is **wrong**: a signal
+  delivered between the load and the store lets the handler observe `depth == 0` and enter the
+  allocator recursively, which is precisely the reentrancy the guard exists to catch. The CAS is a
+  single instruction and therefore cannot be split by signal delivery. Weakening the *ordering*
+  (AcqRel -> Relaxed) buys nothing on x86-64, where `lock cmpxchg` is the same instruction and the
+  ordering annotation only constrains the compiler. bd-dcrhgl already banked this frame as
+  "safety-critical, NOT safely removable"; this row adds the instruction-level reason and closes the
+  cheap-looking variants.
+- **HONEST SCOPE LIMIT — what this row does NOT refute.** This is a **single-threaded** probe
+  (`MULTI_THREADED` never latches, so the ST fast paths are live and there is no lock contention
+  anywhere in it). Flat combining and elimination backoff are **contention** primitives; they cannot
+  be evaluated by this profile at all, and nothing here says they are useless on the *multi-threaded*
+  allocator path. What this profile does establish is that they are irrelevant to the ~10x
+  **single-threaded small-churn** number the campaign quoted, because that number contains no
+  contention to combine.
+- **CONCRETE RETRY PREDICATE (three separate doors, do not conflate them).**
+  1. **Framing shape sweep (open, cheapest, in-vein):** re-profile after the PCC split and look for
+     any *other* hot entrypoint helper whose samples concentrate on a prologue/epilogue rather than on
+     real work. Retry condition: a frame >= 3% self-time whose `perf annotate` puts >= 50% of its
+     samples on `push`/`sub $N,%rsp`/`pop`/`ret`. That is the signature the PCC gate had.
+  2. **Flat combining / elimination backoff (blocked on evidence, not on design):** retry only with a
+     **multi-threaded** deployed-allocator profile (>= 4 threads, churn workload) showing a named
+     contention frame — futex, spin, or a `lock`-prefixed instruction in the allocator path — at
+     >= 5% self-time. Until such a profile exists, an MT allocator redesign has no attributed target.
+     Note this must wait on **bd-uj3sg7 / bd-ummyux**: the bump-heap mmap-fallback corruption makes
+     multi-threaded abi-bench runs abort intermittently, so the required profile cannot be trusted
+     until that is fixed.
+  3. **TLSF / slab / sharded free lists (effectively closed for this workload):** retry only if the
+     allocator-data-structure layer exceeds ~15% self-time on some workload. At 6.44% it is bounded
+     above by a factor that cannot close the measured gap, and the magazine design already banked the
+     easy part.
+- **PROVENANCE.** No candidate code was built for this row — it is a profile-attribution finding, so
+  there is no A/B, no candidate binary sha, and no null control to report, and none is claimed. The
+  evidence is the perf capture named above (profiled binary sha256
+  `0141e44f1bce0bea1f6506e2a60484f13f1c3113fdf73d7d62d5bc66f440d7b6`) plus the two `perf annotate`
+  instruction-level reads quoted inline.
