@@ -7,14 +7,16 @@ use frankenlibc_abi::htm_fast_path::{
     htm_swap_test_mode_for_tests,
 };
 use frankenlibc_abi::malloc_abi::{
-    __libc_freeres, aligned_alloc, calloc, cfree, free, mallinfo, mallinfo2, malloc,
-    malloc_bump_allocation_size_for_tests, malloc_bump_overflow_alloc_for_tests,
-    malloc_bump_overflow_header_valid_for_tests, malloc_bump_overflow_stats,
-    malloc_current_reentry_slot_index_for_tests, malloc_fallback_range_for_tests,
-    malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests, malloc_info,
-    malloc_is_bump_ptr_for_tests, malloc_known_remaining_for_tests,
+    __libc_freeres, aligned_alloc, calloc, cfree, export_alloc_stats_snapshot_jsonl, free,
+    mallinfo, mallinfo2, malloc, malloc_bump_allocation_size_for_tests,
+    malloc_bump_overflow_alloc_for_tests, malloc_bump_overflow_header_valid_for_tests,
+    malloc_bump_overflow_stats, malloc_current_reentry_slot_index_for_tests,
+    malloc_fallback_range_for_tests, malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests,
+    malloc_info, malloc_is_bump_ptr_for_tests, malloc_known_remaining_for_tests,
     malloc_reentry_multithreaded_latched_for_tests, malloc_restore_reentry_depth_for_tests,
     malloc_segment_owned_for_tests, malloc_stats, malloc_stats_init_for_tests,
+    malloc_stats_record_alloc_for_harness, malloc_stats_record_free_for_harness,
+    malloc_stats_reset_for_harness, malloc_stats_snapshot_jsonl_for_tests,
     malloc_swap_reentry_depth_for_tests, malloc_trim, malloc_usable_size, mallopt, memalign,
     posix_memalign, pvalloc, realloc, signal_runtime_ready_for_tests,
     take_last_decision_gate_for_tests, valloc,
@@ -1373,4 +1375,73 @@ fn non_bump_pointers_are_not_misclassified() {
     assert!(!malloc_is_bump_ptr_for_tests(heap.cast::<c_void>()));
     // SAFETY: reclaiming the Box allocation created immediately above.
     drop(unsafe { Box::from_raw(heap) });
+}
+
+// ---------------------------------------------------------------------------
+// bd-7s4j33 — rehomed from malloc_abi.rs, where they never ran
+// ---------------------------------------------------------------------------
+//
+// Both of these sat in a `#[cfg(test)] mod tests` inside `src/malloc_abi.rs`. That
+// module is declared `#[cfg(not(test))]` in lib.rs, so it is compiled out of the
+// `--lib` test target entirely and neither test had ever executed. Moved here, where
+// they link the real surface and run. `malloc_abi_no_dead_unit_tests.rs` keeps them
+// from drifting back.
+
+#[test]
+fn allocator_metrics_snapshot_jsonl_exports_dashboard_fields() {
+    let row: serde_json::Value = serde_json::from_str(
+        malloc_stats_snapshot_jsonl_for_tests(
+            // allocation_events, free_events, total_allocated, total_freed,
+            // active_allocations, live_bytes, peak_usage
+            [9, 4, 16_384, 6_144, 5, 10_240, 12_288],
+            "bd-282v",
+            "smoke",
+            "hardened",
+        )
+        .trim(),
+    )
+    .expect("allocator metrics snapshot should parse");
+
+    assert_eq!(row["event"].as_str(), Some("allocator_metrics_snapshot"));
+    assert_eq!(row["api_family"].as_str(), Some("allocator"));
+    assert_eq!(row["symbol"].as_str(), Some("malloc::stats"));
+    assert_eq!(row["allocations_total"].as_u64(), Some(9));
+    assert_eq!(row["frees_total"].as_u64(), Some(4));
+    assert_eq!(row["active_allocations"].as_u64(), Some(5));
+    assert_eq!(row["bytes_allocated"].as_u64(), Some(10_240));
+    assert_eq!(row["total_allocated_bytes"].as_u64(), Some(16_384));
+    assert_eq!(row["total_freed_bytes"].as_u64(), Some(6_144));
+    assert_eq!(row["peak_usage_bytes"].as_u64(), Some(12_288));
+    assert_eq!(row["bead_id"].as_str(), Some("bd-282v"));
+    assert_eq!(row["scenario_id"].as_str(), Some("smoke"));
+}
+
+#[test]
+fn malloc_stats_reset_for_harness_clears_exported_snapshot() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+
+    malloc_stats_reset_for_harness();
+    malloc_stats_record_alloc_for_harness(256);
+    malloc_stats_record_alloc_for_harness(128);
+    malloc_stats_record_free_for_harness(128);
+
+    let seeded: serde_json::Value = serde_json::from_str(
+        export_alloc_stats_snapshot_jsonl("bd-282v", "seeded", "hardened").trim(),
+    )
+    .expect("seeded allocator snapshot should parse");
+    assert_eq!(seeded["allocations_total"].as_u64(), Some(2));
+    assert_eq!(seeded["frees_total"].as_u64(), Some(1));
+    assert_eq!(seeded["active_allocations"].as_u64(), Some(1));
+    assert_eq!(seeded["bytes_allocated"].as_u64(), Some(256));
+
+    malloc_stats_reset_for_harness();
+
+    let cleared: serde_json::Value = serde_json::from_str(
+        export_alloc_stats_snapshot_jsonl("bd-282v", "cleared", "hardened").trim(),
+    )
+    .expect("cleared allocator snapshot should parse");
+    assert_eq!(cleared["allocations_total"].as_u64(), Some(0));
+    assert_eq!(cleared["frees_total"].as_u64(), Some(0));
+    assert_eq!(cleared["active_allocations"].as_u64(), Some(0));
+    assert_eq!(cleared["bytes_allocated"].as_u64(), Some(0));
 }

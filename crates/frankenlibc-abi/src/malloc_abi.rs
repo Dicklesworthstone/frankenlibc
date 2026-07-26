@@ -2578,6 +2578,38 @@ fn sanitize_trace_component(component: &str) -> String {
     }
 }
 
+/// Test hook (bd-7s4j33): render the stats JSONL from an explicit snapshot.
+///
+/// Exists so the schema test can live in `tests/malloc_abi_test.rs`, where it
+/// actually runs. It takes the seven counters positionally rather than exposing
+/// `MallocStatsSnapshot`, so the internal record stays private.
+///
+/// Order: allocation_events, free_events, total_allocated, total_freed,
+/// active_allocations, live_bytes, peak_usage.
+#[doc(hidden)]
+#[must_use]
+pub fn malloc_stats_snapshot_jsonl_for_tests(
+    counters: [usize; 7],
+    bead_id: &str,
+    run_id: &str,
+    mode: &str,
+) -> String {
+    export_alloc_stats_snapshot_jsonl_from_snapshot(
+        MallocStatsSnapshot {
+            allocation_events: counters[0],
+            free_events: counters[1],
+            total_allocated: counters[2],
+            total_freed: counters[3],
+            active_allocations: counters[4],
+            live_bytes: counters[5],
+            peak_usage: counters[6],
+        },
+        bead_id,
+        run_id,
+        mode,
+    )
+}
+
 fn export_alloc_stats_snapshot_jsonl_from_snapshot(
     snapshot: MallocStatsSnapshot,
     bead_id: &str,
@@ -4982,70 +5014,15 @@ fn page_size() -> usize {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_freeres() {}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn allocator_metrics_snapshot_jsonl_exports_dashboard_fields() {
-        let row: serde_json::Value = serde_json::from_str(
-            export_alloc_stats_snapshot_jsonl_from_snapshot(
-                MallocStatsSnapshot {
-                    allocation_events: 9,
-                    free_events: 4,
-                    total_allocated: 16_384,
-                    total_freed: 6_144,
-                    active_allocations: 5,
-                    live_bytes: 10_240,
-                    peak_usage: 12_288,
-                },
-                "bd-282v",
-                "smoke",
-                "hardened",
-            )
-            .trim(),
-        )
-        .expect("allocator metrics snapshot should parse");
-
-        assert_eq!(row["event"].as_str(), Some("allocator_metrics_snapshot"));
-        assert_eq!(row["api_family"].as_str(), Some("allocator"));
-        assert_eq!(row["symbol"].as_str(), Some("malloc::stats"));
-        assert_eq!(row["allocations_total"].as_u64(), Some(9));
-        assert_eq!(row["frees_total"].as_u64(), Some(4));
-        assert_eq!(row["active_allocations"].as_u64(), Some(5));
-        assert_eq!(row["bytes_allocated"].as_u64(), Some(10_240));
-        assert_eq!(row["total_allocated_bytes"].as_u64(), Some(16_384));
-        assert_eq!(row["total_freed_bytes"].as_u64(), Some(6_144));
-        assert_eq!(row["peak_usage_bytes"].as_u64(), Some(12_288));
-        assert_eq!(row["bead_id"].as_str(), Some("bd-282v"));
-        assert_eq!(row["scenario_id"].as_str(), Some("smoke"));
-    }
-
-    #[test]
-    fn malloc_stats_reset_for_harness_clears_exported_snapshot() {
-        malloc_stats_reset_for_harness();
-        malloc_stats_record_alloc_for_harness(256);
-        malloc_stats_record_alloc_for_harness(128);
-        malloc_stats_record_free_for_harness(128);
-
-        let seeded: serde_json::Value = serde_json::from_str(
-            export_alloc_stats_snapshot_jsonl("bd-282v", "seeded", "hardened").trim(),
-        )
-        .expect("seeded allocator snapshot should parse");
-        assert_eq!(seeded["allocations_total"].as_u64(), Some(2));
-        assert_eq!(seeded["frees_total"].as_u64(), Some(1));
-        assert_eq!(seeded["active_allocations"].as_u64(), Some(1));
-        assert_eq!(seeded["bytes_allocated"].as_u64(), Some(256));
-
-        malloc_stats_reset_for_harness();
-
-        let cleared: serde_json::Value = serde_json::from_str(
-            export_alloc_stats_snapshot_jsonl("bd-282v", "cleared", "hardened").trim(),
-        )
-        .expect("cleared allocator snapshot should parse");
-        assert_eq!(cleared["allocations_total"].as_u64(), Some(0));
-        assert_eq!(cleared["frees_total"].as_u64(), Some(0));
-        assert_eq!(cleared["active_allocations"].as_u64(), Some(0));
-        assert_eq!(cleared["bytes_allocated"].as_u64(), Some(0));
-    }
-}
+// NO UNIT TESTS IN THIS FILE — they would never run (bd-7s4j33).
+//
+// `pub mod malloc_abi` is declared `#[cfg(not(test))]` in lib.rs, because this
+// module exports #[no_mangle] malloc/free/memcpy/strlen that would shadow the system
+// allocator inside a test binary and deadlock it. That gate excludes the WHOLE module
+// from the `--lib` test target, so any `#[cfg(test)] mod tests` here is compiled out
+// and silently never executes. Two tests sat here doing exactly that until 2026-07-26;
+// `cargo test -p frankenlibc-abi --lib` reported success without running either.
+//
+// Put allocator tests in `tests/malloc_abi_test.rs` instead, where they link the real
+// cdylib surface and actually run. `tests/malloc_abi_no_dead_unit_tests.rs` enforces
+// this mechanically — it fails if a `#[cfg(test)]` block reappears in this file.
