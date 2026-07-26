@@ -4,20 +4,39 @@
 //! source-identical FrankenLibC arms form the mandatory NULL control.
 
 use std::ffi::c_char;
+use std::fmt::Write as _;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use frankenlibc_abi::locale_abi;
+use sha2::{Digest, Sha256};
 
-const SAMPLES: usize = 80;
-const WARMUP: usize = 16;
-const REPS: usize = 25_000_000;
+const SAMPLES: usize = 45;
+const WARMUP: usize = 4;
+const REPS: usize = 2_000_000;
+const BOOTSTRAP_RESAMPLES: usize = 4096;
 
 type TextdomainFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 
+fn self_identity() -> String {
+    let Ok(path) = std::env::current_exe() else {
+        return "unavailable".into();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return "unavailable".into();
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let mut digest_hex = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        write!(&mut digest_hex, "{byte:02x}").expect("write SHA-256 hex");
+    }
+    format!("{} ({} bytes) {}", digest_hex, bytes.len(), path.display())
+}
+
 fn median(xs: &[f64]) -> f64 {
     let mut values = xs.to_vec();
-    values.sort_by(|a, b| a.partial_cmp(b).expect("no NaN timings"));
+    values.sort_by(f64::total_cmp);
     let mid = values.len() / 2;
     if values.len() % 2 == 0 {
         (values[mid - 1] + values[mid]) / 2.0
@@ -38,6 +57,33 @@ fn cv_pct(xs: &[f64]) -> f64 {
         .sum::<f64>()
         / xs.len() as f64;
     100.0 * variance.sqrt() / avg
+}
+
+fn median_absolute_deviation(xs: &[f64], center: f64) -> f64 {
+    median(
+        &xs.iter()
+            .map(|value| (value - center).abs())
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn bootstrap_median_ci95(xs: &[f64]) -> (f64, f64) {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ xs.len() as u64;
+    let mut medians = Vec::with_capacity(BOOTSTRAP_RESAMPLES);
+    let mut resample = vec![0.0; xs.len()];
+    for _ in 0..BOOTSTRAP_RESAMPLES {
+        for value in &mut resample {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *value = xs[(state as usize) % xs.len()];
+        }
+        medians.push(median(&resample));
+    }
+    medians.sort_by(f64::total_cmp);
+    let low = (BOOTSTRAP_RESAMPLES * 25) / 1000;
+    let high = ((BOOTSTRAP_RESAMPLES * 975) / 1000).min(BOOTSTRAP_RESAMPLES - 1);
+    (medians[low], medians[high])
 }
 
 #[inline(never)]
@@ -68,6 +114,7 @@ fn timed(f: impl FnOnce() -> usize) -> Duration {
 }
 
 fn main() {
+    println!("BENCH_ELF_SHA256 {}", self_identity());
     let handle = unsafe {
         libc::dlmopen(
             libc::LM_ID_NEWLM,
@@ -131,6 +178,21 @@ fn main() {
         .map(|(b_ns, a_ns)| b_ns / a_ns)
         .collect();
 
+    let effect_median = median(&host_paired);
+    let null_median = median(&null_paired);
+    let (effect_ci_low, effect_ci_high) = bootstrap_median_ci95(&host_paired);
+    let (null_ci_low, null_ci_high) = bootstrap_median_ci95(&null_paired);
+    let null_half_width = (1.0 - null_ci_low).abs().max((null_ci_high - 1.0).abs());
+    let effect_clears_null = (effect_median - 1.0).abs() > 2.0 * null_half_width;
+    let effect_ci_excludes_one = effect_ci_high < 1.0 || effect_ci_low > 1.0;
+    let comparison = if effect_clears_null && effect_ci_excludes_one && effect_median < 1.0 {
+        "FL_FASTER"
+    } else if effect_clears_null && effect_ci_excludes_one {
+        "FL_SLOWER"
+    } else {
+        "UNDECIDABLE"
+    };
+
     println!(
         "TEXTDOMAIN_QUERY_BASELINE samples={} reps/arm={REPS} (interleaved, order alternated)",
         deployed.len()
@@ -148,20 +210,19 @@ fn main() {
         cv_pct(&glibc)
     );
     println!(
-        "  NULL deployed/deployed: median {:.4}  cv={:.2}%  arms cv={:.2}%/{:.2}%",
-        median(&null_paired),
+        "TEXTDOMAIN_BENCH_CONTRACT kind=null_fl_fl ratio_median={null_median:.6} \
+         ratio_ci95=[{null_ci_low:.6},{null_ci_high:.6}] ratio_cv_pct={:.3} \
+         ratio_mad={:.6}",
         cv_pct(&null_paired),
-        cv_pct(&null_a),
-        cv_pct(&null_b)
+        median_absolute_deviation(&null_paired, null_median),
     );
     println!(
-        "  PAIRED deployed/glibc: median {:.4}  cv={:.2}%  verdict={}",
-        median(&host_paired),
+        "TEXTDOMAIN_BENCH_CONTRACT kind=fl_glibc ratio_median={effect_median:.6} \
+         ratio_ci95=[{effect_ci_low:.6},{effect_ci_high:.6}] ratio_cv_pct={:.3} \
+         ratio_mad={:.6} null_half_width={null_half_width:.6} \
+         clears_2x_null={} comparison={comparison}",
         cv_pct(&host_paired),
-        if median(&host_paired) <= 1.0 {
-            "WIN"
-        } else {
-            "LOSS"
-        }
+        median_absolute_deviation(&host_paired, effect_median),
+        effect_clears_null,
     );
 }

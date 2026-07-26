@@ -11,7 +11,7 @@ use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::ptr;
-use std::sync::Mutex;
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::locale_abi::{
@@ -298,6 +298,51 @@ fn textdomain_empty_resets_to_default() {
     let result = unsafe { textdomain(empty.as_ptr()) };
     let domain = unsafe { CStr::from_ptr(result) };
     assert_eq!(domain.to_bytes(), b"messages");
+}
+
+#[test]
+fn textdomain_queries_observe_live_published_storage() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
+
+    const READERS: usize = 4;
+    const ITERATIONS: usize = 10_000;
+    const ALLOWED: [&[u8]; 4] = [b"messages", b"alpha", b"beta", b"gamma"];
+
+    let start = Arc::new(Barrier::new(READERS + 1));
+    let writer_start = Arc::clone(&start);
+    let writer = std::thread::spawn(move || {
+        let domains = ["alpha", "beta", "gamma"];
+        writer_start.wait();
+        for index in 0..ITERATIONS {
+            let domain = CString::new(domains[index % domains.len()]).unwrap();
+            let published = unsafe { textdomain(domain.as_ptr()) };
+            assert!(!published.is_null());
+        }
+    });
+
+    let readers = (0..READERS)
+        .map(|_| {
+            let reader_start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                reader_start.wait();
+                for _ in 0..ITERATIONS {
+                    let published = unsafe { textdomain(ptr::null()) };
+                    assert!(!published.is_null());
+                    let value = unsafe { CStr::from_ptr(published) }.to_bytes();
+                    assert!(
+                        ALLOWED.contains(&value),
+                        "query observed an invalid published domain: {value:?}"
+                    );
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    writer.join().unwrap();
+    for reader in readers {
+        reader.join().unwrap();
+    }
 }
 
 #[test]
