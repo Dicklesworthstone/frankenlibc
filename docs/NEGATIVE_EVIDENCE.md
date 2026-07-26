@@ -22900,3 +22900,65 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
 - **PROVENANCE.** Attribution only; no candidate built, so no A/B, no candidate sha, no null control,
   and none is claimed. Evidence is the matched-settings capture named above plus the two `perf
   annotate` instruction-level reads quoted inline.
+
+## 2026-07-25 (cod / SwiftCastle) — WIN (SHIPPED): VOID resurrection #1, exact `strftime("%A")` leaf clears the bootstrap median-CI gate (`bd-agegst`)
+
+- **NEGATIVE-EVIDENCE FIRST.** This reopens L21341 exactly as ranked by
+  `docs/LEDGER_RESURRECTION.md`. The 2026-07-22 candidate had already produced FL/glibc paired
+  medians **0.5705** and **0.5415**, with FL/FL null medians **0.9982** and **1.0181**, but was
+  rejected because a null-control CV was 5.10%. The campaign rule makes CV descriptive only.
+- **LEVER.** The strict ABI path recognizes the exact three-byte `%A\0` format before the generic
+  C-string scan and full `tm` projection. A safe core leaf maps the finite C-locale weekday state to
+  its immutable byte string and preserves the generic formatter's malformed-weekday `"?"` behavior
+  and exact buffer-capacity contract.
+- **BEHAVIOR PROOF.** Remote focused core tests passed **2/2**. The live
+  `strftime_specifier_differential_fuzz` compared **200,000** cases with host glibc and reported
+  **0 divergences**. The bench separately verified every valid weekday and every capacity
+  **1..=64** byte-for-byte.
+- **MEASURED** (`RCH_REQUIRE_REMOTE=1`, worker `vmi1293453`, release profile, same invocation,
+  alternating order): bench ELF SHA-256
+  **`949b2064f8802edb0a17284fc52cbf0fea12bf2eb68f1070be570c4763cbd67c`**
+  (21,454,568 bytes). FL median **8.41 ns**, glibc median **15.49 ns**. FL/FL null median
+  **0.996870**, bootstrap 95% CI **[0.983412, 1.009033]**. FL/glibc median **0.540615**,
+  CI **[0.537130, 0.549644]**; null half-width **0.016588**, so the effect clears the mandatory
+  **2× null** margin. CV (**17.512%** on the paired null) is recorded only as dispersion and does
+  not gate the decision.
+- **VERDICT / RETRY PREDICATE.** **KEEP, shipped as `ac74b07bc`.** Reopen this exact leaf only if a
+  same-worker, self-identifying rerun makes the FL/glibc median CI overlap 1.0 or fail the 2×
+  null-half-width margin, or when non-C locale support makes the finite English table semantically
+  incomplete.
+
+## 2026-07-25 (cod / SwiftCastle) — WIN (SHIPPED): VOID resurrection #2, append-only release/acquire publication removes the `textdomain(NULL)` mutex (`bd-bl39l2`)
+
+- **NEGATIVE-EVIDENCE FIRST.** This reopens L21570. The old row measured a decisive **5.5969×**
+  FL/glibc query gap with a **1.0016** FL/FL null, then rejected the surface because raw-arm CVs
+  exceeded 5%. The current contract gates only bootstrap median CIs relative to the same-invocation
+  null.
+- **LEVER AND SAFETY INVARIANT.** Writers still serialize through `TextDomainState`, allocate an
+  immutable `CString`, retain it permanently in the state's append-only pool, then publish its
+  pointer with `AtomicPtr::store(Release)`. A null query performs one `load(Acquire)` and never
+  locks. Published allocations are not reclaimed, so a concurrent or later reader cannot observe a
+  dangling pointer; release/acquire ordering makes the initialized bytes visible before publication.
+- **BEHAVIOR PROOF.** Remote focused `locale_abi_test` passed **11/11**, including four concurrent
+  lock-free readers racing a writer for 10,000 iterations each and accepting only the default or a
+  fully published domain. Existing default, set, query-after-set, empty-reset, and per-domain binding
+  contracts remained green.
+- **BASELINE** (`vmi1293453`, same-invocation alternating A/A and FL/glibc): ELF SHA-256
+  **`21274b1a41c377c9445a31a0b68d4986bc1cad055f645b94a500802a021ef763`**
+  (21,454,576 bytes). FL median **11.32 ns**, glibc **1.95 ns**. Null median **1.001121**,
+  CI **[0.992887, 1.011437]**. FL/glibc median **5.786473**, CI
+  **[5.697972, 6.066335]**, null half-width **0.011437**.
+- **CANDIDATE** (same worker and command; compile parallelism reduced from `-j4` to `-j2` only to
+  fit the worker's two available slots): ELF SHA-256
+  **`aef6adcf666e374259873128c6b22986079121df38f458795ff693a79941e12f`**
+  (21,452,008 bytes). FL median **2.58 ns**, glibc **2.12 ns**. Null median **1.009902**,
+  CI **[0.986901, 1.047500]**. FL/glibc median **1.192201**, CI
+  **[1.152714, 1.250319]**, null half-width **0.047500**. The same-worker cross-ELF FL self-time
+  moves **11.32 → 2.58 ns (4.39× faster; 0.228×)**. The residual 19% glibc gap is reported
+  explicitly; it is not called parity.
+- **VERDICT / RETRY PREDICATE.** **KEEP, shipped as `8320a0b4a`.** Do not retry another mutex or
+  reclamation scheme. Reopen the residual query frontier only after a no-call-graph profile of this
+  candidate attributes at least **3% self-time** to the atomic query/ABI wrapper, and only keep a
+  new candidate whose bootstrap median CI excludes 1.0 and whose effect exceeds **2×** its
+  same-invocation null half-width. Any future locale implementation that requires domain reclamation
+  must first replace the append-only lifetime proof with an equally explicit reader-lifetime proof.

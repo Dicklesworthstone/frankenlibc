@@ -8,7 +8,7 @@ A row is **VOID** when the answer is no. VOID is not a claim that the lever work
 claim that **the ledger does not contain evidence that it doesn't**, so the design work is
 unpaid-for inventory rather than a closed door.
 
-Two rows in this ledger have already been resurrected and both paid: see §4.
+Four rows in this ledger have now been resurrected and all four paid: see §4.
 
 ---
 
@@ -101,14 +101,18 @@ is itself the finding: **88% of this ledger's rejections never checked whether t
 code under test.** Rows tagged `provenance` may therefore still be `decision`-defective under V3. The
 27 is a **lower bound.**
 
-## 4. Already-resurrected rows — the two proof cases
+## 4. Already-resurrected rows — four proof cases
 
-Both were found by the earlier phase-1/phase-2 audits (L17605, L18230, L18322) and both paid:
+The first two were found by the earlier phase-1/phase-2 audits (L17605, L18230, L18322).
+The next two are ranks 1 and 2 from this audit's §5 queue, rerun under the 2026-07-25
+self-identifying, same-invocation null-control, bootstrap-median-CI contract:
 
 | row | lever | why it was VOID | outcome |
 |---|---|---|---|
 | **L6150** | lock-free `native_stdio` FILE\*-cache | rejected on `~0-gain` (56.7 → 60.4 ms against its own 15–74 ms spread) — V1, no null, no sha | reopened → **`ad465633f`, MT `fgetc` 17.5–18.7× faster**, fl-vs-glibc 55× → 2.96× |
 | **L18406 / L18455 / L18490** | per-thread segment magazines + address-derived segment ownership | CAND/ORIG **0.775–0.854 across 4 sizes × 3 runs** (12/12 favorable), binary shas recorded, allocator self-time 19.7–20.2% — rejected because an all-six-CV gate included raw arms and an ORIG/glibc contrast *that do not contain the candidate* — V4 | gate corrected → **`15f58c419` shipped, 18.7–19.4% vs ORIG** |
+| **L21341** `bd-agegst` | exact `strftime("%A")` finite-state transducer leaf | V4: the old gate rejected a 0.5415 ratio because null CV was 5.10% | rerun on `vmi1293453`, ELF `949b2064…d67c`: null median **0.996870**, CI **[0.983412, 1.009033]**; FL/glibc median **0.540615**, CI **[0.537130, 0.549644]**, clears 2× null → **`ac74b07bc` shipped** |
+| **L21570** `bd-bl39l2` | append-only atomic publication for `textdomain(NULL)` | V4: the old row had a decisive 5.5969 ratio and a 1.0016 null but rejected raw-arm CV | baseline ELF `21274b1a…ef763`: **11.32 ns** FL; candidate ELF `aef6adcf…1e12f`: **2.58 ns** FL on the same worker, a **4.39× self-speedup**. Candidate null CI **[0.986901, 1.047500]**; residual FL/glibc median **1.192201**, CI **[1.152714, 1.250319]** → **`8320a0b4a` shipped**, residual retained as frontier |
 
 The L18406 family is the cleaner proof: the lever was never in doubt (12 of 12 size×run points
 favorable, with a recorded binary SHA-256), and it sat rejected for the length of time it took
@@ -122,8 +126,8 @@ before being ranked; the machine table in §6 is a candidate list, this is the a
 
 | # | row | lever | measured | why VOID | disposition |
 |---|---|---|---|---|---|
-| **1** | **L21341** `bd-agegst` | exact `strftime("%A")` finite-state transducer leaf | **0.5705** on `ovh-a` and **0.5415** on `vmi1149989` — two independent runs, 1.75× and 1.85×; FL/FL null **0.9982** / 1.0181 | V4 — rejected because the *null* paired CV was **5.10%**, i.e. 0.10 points over an unreachable gate | **RE-RUN FIRST.** Behavior was already proven before timing: 200,000 differential comparisons, 0 divergences, all capacities 1…64 byte-matched vs dlmopen glibc. The production patch was **written and then deleted**. Under median-CI gating 0.54 is ~8× outside the null floor. |
-| **2** | **L21570** `bd-bl39l2` | RCU/atomic publication for the `textdomain(NULL)` query | fl **11.16 ns/call** vs glibc **1.99 ns/call**, paired median **5.5969**; FL/FL null **1.0016** at 4.60% paired CV | V4 — rejected because raw-arm CVs exceeded 5%, though the effect is 5.6× | **IMPLEMENT.** The *measurement* is decisive (null 1.0016 vs effect 5.5969); only the lever was never built. `textdomain(NULL)` still takes the `TextDomainState` mutex for a read-only query. |
+| **1** | **L21341** `bd-agegst` | exact `strftime("%A")` finite-state transducer leaf | **0.5705** on `ovh-a` and **0.5415** on `vmi1149989` — two independent runs, 1.75× and 1.85×; FL/FL null **0.9982** / 1.0181 | V4 — rejected because the *null* paired CV was **5.10%**, i.e. 0.10 points over an unreachable gate | **DONE / KEEP (`ac74b07bc`).** New contract rerun: null CI **[0.983412, 1.009033]**, FL/glibc CI **[0.537130, 0.549644]**, all-capacity behavior and 200,000-case differential gates green. |
+| **2** | **L21570** `bd-bl39l2` | RCU/atomic publication for the `textdomain(NULL)` query | fl **11.16 ns/call** vs glibc **1.99 ns/call**, paired median **5.5969**; FL/FL null **1.0016** at 4.60% paired CV | V4 — rejected because raw-arm CVs exceeded 5%, though the effect is 5.6× | **DONE / KEEP (`8320a0b4a`).** Same-worker FL self-time **11.32 → 2.58 ns (4.39×)**; candidate null CI **[0.986901, 1.047500]**. Residual **1.192201×** FL/glibc remains an attributed frontier, not hidden as parity. |
 | **3** | **L16566** | `strftime` general-loop **~200 ns fixed per-call overhead** | no ratio; recorded as a LOSS/DROP blocker | V1+V2 — dropped on "~0-gain" for the *literal-push* sub-lever, while naming a 200 ns fixed cost it did not attack | Same frame as #1 and strictly larger. If the `%A` leaf is worth 1.8×, the fixed per-call overhead behind *every* format is the structural target. |
 | **4** | **L21545** `bd-vihwy9` | exact `%FT%T` `wcsftime` alias emitter | 1.05, frame 267 ns/call | V1+V4 — the ratio is *inside* the floor | Honest null. Retry only on a workload where the emitter is not 1.05×; do not re-run as-is. |
 | **5** | **L21131 / L21277** `bd-9x1jcx` | three sub-2× `hosts_*` resolver rows | CAND/ORIG 0.2710 / 0.3802 but **raw-arm CVs 82–475%** | V4 nominally | **Genuinely undecidable, not a harness bug.** These are file+network paths; the dispersion is real. Needs a different workload shape (warm-cache, in-memory `/etc/hosts`), not a quieter worker. |
