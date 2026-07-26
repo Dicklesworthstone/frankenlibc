@@ -1215,6 +1215,12 @@ pub(crate) unsafe fn prepare_host_realloc_buffer(
         if host.is_null() {
             return None;
         }
+        if is_bump_ptr(host) {
+            // SAFETY: release a reclaiming overflow mapping if host resolution
+            // itself fell back; static bump storage remains process-lifetime.
+            unsafe { native_libc_free(host) };
+            return None;
+        }
         // SAFETY: both buffers are live; a valid getdelim/getline capacity
         // describes the caller-accessible prefix of the source allocation.
         unsafe {
@@ -1230,6 +1236,37 @@ pub(crate) unsafe fn prepare_host_realloc_buffer(
             unsafe { native_libc_free(host) };
             return None;
         }
+        return Some(host);
+    }
+
+    if let Some(requested) = unsafe { bump_allocation_size(ptr) } {
+        // A host API may call realloc internally, so an overflow mapping cannot
+        // cross this boundary under its mmap ownership. Move the live prefix to
+        // a host allocation first, then retire the old mapping.
+        // SAFETY: this allocation is intentionally host-owned for the upcoming
+        // host realloc operation.
+        let host = unsafe { native_libc_malloc(capacity.max(1)) };
+        if host.is_null() {
+            return None;
+        }
+        if is_bump_ptr(host) {
+            // SAFETY: release a reclaiming overflow mapping if host resolution
+            // itself fell back; static bump storage remains process-lifetime.
+            unsafe { native_libc_free(host) };
+            return None;
+        }
+        // SAFETY: both allocations are live for the copied prefix.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                ptr.cast::<u8>(),
+                host.cast::<u8>(),
+                requested.min(capacity),
+            );
+        }
+        let _ = fallback_remove_sized(ptr);
+        // SAFETY: exact overflow mappings are reclaimed; static bump pointers
+        // intentionally remain process-lifetime allocations.
+        let _ = unsafe { bump_mmap_release(ptr) };
         return Some(host);
     }
 
@@ -1254,8 +1291,8 @@ unsafe fn bump_alloc(size: usize) -> *mut c_void {
         let aligned_pos = (pos + BUMP_ALIGN - 1) & !(BUMP_ALIGN - 1);
         let new_pos = aligned_pos.saturating_add(total);
         if new_pos > BUMP_SIZE {
-            // Static bump heap exhausted — fall back to mmap.
-            return unsafe { mmap_alloc(total) };
+            // Static bump heap exhausted — create a reclaimable overflow mapping.
+            return unsafe { bump_alloc_overflow(request, BUMP_ALIGN) };
         }
         if BUMP_POS
             .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
@@ -1276,7 +1313,9 @@ unsafe fn bump_alloc(size: usize) -> *mut c_void {
 #[cold]
 unsafe fn bump_alloc_aligned(size: usize, alignment: usize) -> *mut c_void {
     let request = size.max(1);
-    let alignment = alignment.max(BUMP_ALIGN).next_power_of_two();
+    let Some(alignment) = alignment.max(BUMP_ALIGN).checked_next_power_of_two() else {
+        return std::ptr::null_mut();
+    };
     let total = request
         .saturating_add(alignment)
         .saturating_add(BUMP_HEADER_SIZE);
@@ -1285,7 +1324,10 @@ unsafe fn bump_alloc_aligned(size: usize, alignment: usize) -> *mut c_void {
         let aligned_pos = (pos + BUMP_ALIGN - 1) & !(BUMP_ALIGN - 1);
         let new_pos = aligned_pos.saturating_add(total);
         if new_pos > BUMP_SIZE {
-            return std::ptr::null_mut();
+            // Static bump heap exhausted — create a reclaimable overflow mapping.
+            // (bd-ummyux: this used to return NULL, while the unaligned sibling
+            // returned an unmanaged mmap. Both now share one owned lifecycle.)
+            return unsafe { bump_alloc_overflow(request, alignment) };
         }
         if BUMP_POS
             .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
@@ -1307,16 +1349,26 @@ unsafe fn bump_alloc_aligned(size: usize, alignment: usize) -> *mut c_void {
     }
 }
 
-/// Fallback allocator using raw mmap syscall.  Used when the static bump
-/// heap is exhausted.  No symbol resolution or libc calls — pure syscall.
+/// Map one anonymous region.  No symbol resolution or libc calls — pure
+/// syscall, so it is usable during early bootstrap and from inside the
+/// allocator's own reentrancy guard.
+#[inline]
+fn mmap_allocation_len(size: usize) -> Option<usize> {
+    const MIN_LINUX_PAGE_SIZE: usize = 4096;
+    size.max(1)
+        .checked_add(MIN_LINUX_PAGE_SIZE - 1)
+        .map(|value| value & !(MIN_LINUX_PAGE_SIZE - 1))
+}
+
 #[cold]
 unsafe fn mmap_alloc(size: usize) -> *mut c_void {
     // Hard-coded 4096: this runs during early bootstrap before sysconf is
     // available.  4096 is the minimum page size on all Linux architectures,
     // so rounding up to it is always safe (just potentially wastes alignment
     // headroom on 16K/64K page systems).
-    let page_size = 4096usize;
-    let alloc_size = (size + page_size - 1) & !(page_size - 1);
+    let Some(alloc_size) = mmap_allocation_len(size) else {
+        return std::ptr::null_mut();
+    };
     let result = unsafe {
         raw_syscall::sys_mmap(
             std::ptr::null_mut(),
@@ -1333,8 +1385,395 @@ unsafe fn mmap_alloc(size: usize) -> *mut c_void {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Reclaiming bump-overflow mappings (bd-ummyux / bd-uj3sg7)
+// ---------------------------------------------------------------------------
+//
+// INVARIANTS RESTORED:
+//   1. Every pointer returned after the static bump heap fills has an explicit
+//      ownership record, so no free/realloc path can hand it to host glibc.
+//   2. Every successful free/realloc retires that record and munmaps exactly the
+//      region created for it. Cumulative churn therefore cannot consume the VMA
+//      limit or an immortal byte cap; capacity is bounded by the simultaneous
+//      live overflow set.
+//   3. Record publication is claim -> metadata -> release-published key. Readers
+//      that acquire-load a live key always observe a complete record.
+//
+// The previous exhaustion path broke the invariant: it returned `mmap_alloc(total)`,
+// i.e. the RAW mmap base as the user pointer, with no `BUMP_MAGIC` header and an
+// address outside the static heap. `is_bump_ptr` therefore rejected it, and the
+// pointer flowed onward to host glibc `free()` — freeing an `mmap(MAP_ANONYMOUS)`
+// block glibc never allocated. Worse, nothing ever unmapped those regions, so the
+// process leaked one VMA per allocation until `vm.max_map_count` was reached, at
+// which point both `mmap` and glibc's own heap extension start failing and a
+// 2048-byte Rust allocation aborts with `handle_alloc_error`.
+//
+// A first revision fixed the invalid host-free by allocating from 32 immortal
+// 64-MiB chunks. Review caught that it only moved the monotone NULL point from
+// 256 MiB to 2.25 GiB. These records implement the stronger lifecycle prescribed
+// by bd-uj3sg7: one mapping per live overflow allocation, reclaimed on free.
+
+const BUMP_MMAP_HEADER_WORDS: usize = 4;
+const BUMP_MMAP_HEADER_SIZE: usize = std::mem::size_of::<usize>() * BUMP_MMAP_HEADER_WORDS;
+const BUMP_MMAP_MAGIC: usize = 0x4652_414E_4B4D_4D50;
+
+// One slot per allocator reentry slot is enough for one live nested allocation
+// per concurrently active allocator thread. A full registry is an honest bound
+// on simultaneous live demand, not a failure accumulated from historical churn.
+const BUMP_MMAP_RECORD_SLOTS: usize = ALLOCATOR_REENTRY_SLOT_COUNT;
+const BUMP_MMAP_RECORD_MASK: usize = BUMP_MMAP_RECORD_SLOTS - 1;
+const BUMP_MMAP_RECORD_EMPTY: usize = 0;
+const BUMP_MMAP_RECORD_BUSY: usize = 1;
+const BUMP_MMAP_RECORD_TOMBSTONE: usize = 2;
+
+struct BumpMmapRecordSlot {
+    // EMPTY | BUSY | TOMBSTONE | exact user pointer.
+    key: AtomicUsize,
+    mapping_base: AtomicUsize,
+    mapping_len: AtomicUsize,
+    requested: AtomicUsize,
+}
+
+impl BumpMmapRecordSlot {
+    const fn new() -> Self {
+        Self {
+            key: AtomicUsize::new(BUMP_MMAP_RECORD_EMPTY),
+            mapping_base: AtomicUsize::new(0),
+            mapping_len: AtomicUsize::new(0),
+            requested: AtomicUsize::new(0),
+        }
+    }
+}
+
+static BUMP_MMAP_RECORDS: [BumpMmapRecordSlot; BUMP_MMAP_RECORD_SLOTS] =
+    [const { BumpMmapRecordSlot::new() }; BUMP_MMAP_RECORD_SLOTS];
+/// One-way publication gate. It is a correctness gate, so readers use Acquire.
+static BUMP_OVERFLOW_ACTIVE: AtomicBool = AtomicBool::new(false);
+static BUMP_MMAP_MAPPINGS_CREATED: AtomicUsize = AtomicUsize::new(0);
+static BUMP_MMAP_MAPPINGS_RELEASED: AtomicUsize = AtomicUsize::new(0);
+static BUMP_MMAP_LIVE: AtomicUsize = AtomicUsize::new(0);
+static BUMP_OVERFLOW_FAILURES: AtomicUsize = AtomicUsize::new(0);
+
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BumpOverflowStats {
+    pub mappings_created: usize,
+    pub mappings_released: usize,
+    pub live_mappings: usize,
+    pub failures: usize,
+    pub static_bytes_used: usize,
+}
+
+#[derive(Clone, Copy)]
+struct BumpMmapRecord {
+    index: usize,
+    mapping_base: usize,
+    mapping_len: usize,
+    requested: usize,
+}
+
+/// Create one reclaimable overflow mapping with a distinct header and publish
+/// its ownership record before returning the user pointer.
+#[cold]
+unsafe fn bump_alloc_overflow(request: usize, alignment: usize) -> *mut c_void {
+    let Some(alignment) = alignment.max(BUMP_ALIGN).checked_next_power_of_two() else {
+        BUMP_OVERFLOW_FAILURES.fetch_add(1, Ordering::Relaxed);
+        return std::ptr::null_mut();
+    };
+    let Some(span) = BUMP_MMAP_HEADER_SIZE
+        .checked_add(alignment - 1)
+        .and_then(|v| v.checked_add(request))
+    else {
+        BUMP_OVERFLOW_FAILURES.fetch_add(1, Ordering::Relaxed);
+        return std::ptr::null_mut();
+    };
+    let Some(mapping_len) = mmap_allocation_len(span) else {
+        BUMP_OVERFLOW_FAILURES.fetch_add(1, Ordering::Relaxed);
+        return std::ptr::null_mut();
+    };
+    // SAFETY: anonymous private mapping, with no fd or allocator dependency.
+    let mapping = unsafe { mmap_alloc(span) };
+    if mapping.is_null() {
+        BUMP_OVERFLOW_FAILURES.fetch_add(1, Ordering::Relaxed);
+        return mapping;
+    }
+    let mapping_base = mapping as usize;
+    let Some(user_addr) = mapping_base
+        .checked_add(BUMP_MMAP_HEADER_SIZE)
+        .and_then(|value| value.checked_add(alignment - 1))
+        .map(|value| value & !(alignment - 1))
+    else {
+        // SAFETY: this mapping has not been published or returned.
+        let _ = unsafe { raw_syscall::sys_munmap(mapping.cast::<u8>(), mapping_len) };
+        BUMP_OVERFLOW_FAILURES.fetch_add(1, Ordering::Relaxed);
+        return std::ptr::null_mut();
+    };
+
+    // The header is diagnostic integrity evidence; registry membership remains
+    // authoritative so caller underruns cannot make an owned pointer reach glibc.
+    // SAFETY: `span` reserved header + alignment slack + request bytes.
+    unsafe {
+        let header = (user_addr - BUMP_MMAP_HEADER_SIZE) as *mut usize;
+        header.write(BUMP_MMAP_MAGIC);
+        header.add(1).write(request);
+        header.add(2).write(mapping_base);
+        header.add(3).write(mapping_len);
+    }
+
+    if !bump_mmap_register(user_addr, mapping_base, mapping_len, request) {
+        // SAFETY: registration failed, so no reader can own this mapping.
+        let _ = unsafe { raw_syscall::sys_munmap(mapping.cast::<u8>(), mapping_len) };
+        BUMP_OVERFLOW_FAILURES.fetch_add(1, Ordering::Relaxed);
+        return std::ptr::null_mut();
+    }
+    user_addr as *mut c_void
+}
+
 #[inline]
-fn is_bump_ptr(ptr: *mut c_void) -> bool {
+fn bump_mmap_record_start(key: usize) -> usize {
+    (key >> BUMP_ALIGN.trailing_zeros()).wrapping_mul(0x9e37_79b9_7f4a_7c15) & BUMP_MMAP_RECORD_MASK
+}
+
+/// Publish a complete record under the exact user pointer.
+///
+/// The key has three states. A writer first CASes an EMPTY/TOMBSTONE slot to
+/// BUSY, writes all metadata, sets the one-way active gate, then release-stores
+/// the user key. This claim-before-metadata order is load-bearing: publishing
+/// metadata before claiming lets two writers cross-wire mappings and unmap the
+/// region described by the winning slot.
+#[cold]
+fn bump_mmap_register(
+    user_key: usize,
+    mapping_base: usize,
+    mapping_len: usize,
+    requested: usize,
+) -> bool {
+    if user_key <= BUMP_MMAP_RECORD_TOMBSTONE {
+        return false;
+    }
+    let start = bump_mmap_record_start(user_key);
+    for probe in 0..BUMP_MMAP_RECORD_SLOTS {
+        let slot = &BUMP_MMAP_RECORDS[(start + probe) & BUMP_MMAP_RECORD_MASK];
+        let observed = slot.key.load(Ordering::Acquire);
+        if observed == user_key {
+            return false;
+        }
+        if observed != BUMP_MMAP_RECORD_EMPTY && observed != BUMP_MMAP_RECORD_TOMBSTONE {
+            continue;
+        }
+        if slot
+            .key
+            .compare_exchange(
+                observed,
+                BUMP_MMAP_RECORD_BUSY,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            continue;
+        }
+        slot.mapping_base.store(mapping_base, Ordering::Relaxed);
+        slot.mapping_len.store(mapping_len, Ordering::Relaxed);
+        slot.requested.store(requested, Ordering::Relaxed);
+        BUMP_OVERFLOW_ACTIVE.store(true, Ordering::Release);
+        slot.key.store(user_key, Ordering::Release);
+        BUMP_MMAP_MAPPINGS_CREATED.fetch_add(1, Ordering::Relaxed);
+        BUMP_MMAP_LIVE.fetch_add(1, Ordering::Relaxed);
+        return true;
+    }
+    false
+}
+
+#[inline]
+fn bump_mmap_record(ptr: *mut c_void) -> Option<BumpMmapRecord> {
+    if !BUMP_OVERFLOW_ACTIVE.load(Ordering::Acquire) {
+        return None;
+    }
+    let key = ptr as usize;
+    if key <= BUMP_MMAP_RECORD_TOMBSTONE {
+        return None;
+    }
+    let start = bump_mmap_record_start(key);
+    for probe in 0..BUMP_MMAP_RECORD_SLOTS {
+        let index = (start + probe) & BUMP_MMAP_RECORD_MASK;
+        let slot = &BUMP_MMAP_RECORDS[index];
+        let observed = slot.key.load(Ordering::Acquire);
+        if observed == key {
+            return Some(BumpMmapRecord {
+                index,
+                mapping_base: slot.mapping_base.load(Ordering::Relaxed),
+                mapping_len: slot.mapping_len.load(Ordering::Relaxed),
+                requested: slot.requested.load(Ordering::Relaxed),
+            });
+        }
+        if observed == BUMP_MMAP_RECORD_EMPTY {
+            return None;
+        }
+        if observed == BUMP_MMAP_RECORD_BUSY || observed == BUMP_MMAP_RECORD_TOMBSTONE {
+            continue;
+        }
+    }
+    None
+}
+
+/// Return remaining bytes for an exact or interior overflow address.
+#[inline]
+fn bump_mmap_remaining(addr: usize) -> Option<usize> {
+    if !BUMP_OVERFLOW_ACTIVE.load(Ordering::Acquire) {
+        return None;
+    }
+    for slot in BUMP_MMAP_RECORDS.iter() {
+        let base = slot.key.load(Ordering::Acquire);
+        if base <= BUMP_MMAP_RECORD_TOMBSTONE {
+            continue;
+        }
+        let requested = slot.requested.load(Ordering::Relaxed);
+        let end = base.checked_add(requested)?;
+        if base <= addr && addr < end {
+            return Some(end - addr);
+        }
+    }
+    None
+}
+
+/// Claim and retire an exact live overflow record.
+///
+/// Returning `Some` means the pointer is allocator-owned even if `munmap`
+/// unexpectedly failed; in that case the record is restored and the caller must
+/// still never hand the pointer to host glibc.
+#[cold]
+unsafe fn bump_mmap_release(ptr: *mut c_void) -> Option<usize> {
+    let key = ptr as usize;
+    let record = bump_mmap_record(ptr)?;
+    let slot = &BUMP_MMAP_RECORDS[record.index];
+    slot.key
+        .compare_exchange(
+            key,
+            BUMP_MMAP_RECORD_BUSY,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .ok()?;
+    Some(unsafe { bump_mmap_release_claimed(key, slot, record) })
+}
+
+#[cold]
+unsafe fn bump_mmap_release_claimed(
+    key: usize,
+    slot: &BumpMmapRecordSlot,
+    record: BumpMmapRecord,
+) -> usize {
+    // SAFETY: the BUSY claim makes this thread the sole lifecycle writer.
+    if unsafe { raw_syscall::sys_munmap(record.mapping_base as *mut u8, record.mapping_len) }
+        .is_err()
+    {
+        BUMP_OVERFLOW_FAILURES.fetch_add(1, Ordering::Relaxed);
+        slot.key.store(key, Ordering::Release);
+        return record.requested;
+    }
+
+    slot.mapping_base.store(0, Ordering::Relaxed);
+    slot.mapping_len.store(0, Ordering::Relaxed);
+    slot.requested.store(0, Ordering::Relaxed);
+    slot.key
+        .store(BUMP_MMAP_RECORD_TOMBSTONE, Ordering::Release);
+    BUMP_MMAP_MAPPINGS_RELEASED.fetch_add(1, Ordering::Relaxed);
+    BUMP_MMAP_LIVE.fetch_sub(1, Ordering::Relaxed);
+    record.requested
+}
+
+/// Diagnostics for falsifying the bd-ummyux root-cause inference without timing.
+#[doc(hidden)]
+#[must_use]
+pub fn malloc_bump_overflow_stats() -> BumpOverflowStats {
+    BumpOverflowStats {
+        mappings_created: BUMP_MMAP_MAPPINGS_CREATED.load(Ordering::Relaxed),
+        mappings_released: BUMP_MMAP_MAPPINGS_RELEASED.load(Ordering::Relaxed),
+        live_mappings: BUMP_MMAP_LIVE.load(Ordering::Relaxed),
+        failures: BUMP_OVERFLOW_FAILURES.load(Ordering::Relaxed),
+        static_bytes_used: BUMP_POS.load(Ordering::Relaxed),
+    }
+}
+
+/// Test hook (bd-ummyux): allocate directly from the overflow-mmap path.
+///
+/// Exercising the path this way rather than by driving `BUMP_POS` to 256 MiB keeps
+/// the regression test deterministic and side-effect-free for other tests sharing
+/// the process — the static heap cursor is untouched.
+///
+/// # Safety
+///
+/// Returns a live allocator-owned mapping of `request` bytes, or null on mapping
+/// or simultaneous-live-record exhaustion. The caller must eventually free it.
+#[doc(hidden)]
+#[must_use]
+pub unsafe fn malloc_bump_overflow_alloc_for_tests(
+    request: usize,
+    alignment: usize,
+) -> *mut c_void {
+    // SAFETY: delegating to the allocator's own overflow path.
+    unsafe { bump_alloc_overflow(request, alignment) }
+}
+
+/// Verify the distinct mmap header against the authoritative live record.
+///
+/// # Safety
+///
+/// `ptr` must be a pointer previously returned by the allocator. A retired
+/// pointer is accepted and returns false without dereferencing it.
+#[doc(hidden)]
+#[must_use]
+pub unsafe fn malloc_bump_overflow_header_valid_for_tests(ptr: *mut c_void) -> bool {
+    let Some(record) = bump_mmap_record(ptr) else {
+        return false;
+    };
+    let user = ptr as usize;
+    let Some(header_addr) = user.checked_sub(BUMP_MMAP_HEADER_SIZE) else {
+        return false;
+    };
+    let Some(mapping_end) = record.mapping_base.checked_add(record.mapping_len) else {
+        return false;
+    };
+    let Some(requested_end) = user.checked_add(record.requested) else {
+        return false;
+    };
+    if header_addr < record.mapping_base || requested_end > mapping_end {
+        return false;
+    }
+    // SAFETY: the authoritative live record proves the full header is mapped.
+    let header = header_addr as *const usize;
+    unsafe {
+        header.read() == BUMP_MMAP_MAGIC
+            && header.add(1).read() == record.requested
+            && header.add(2).read() == record.mapping_base
+            && header.add(3).read() == record.mapping_len
+    }
+}
+
+/// Test hook (bd-ummyux): the predicate every free path uses to decide that a
+/// pointer is bump-owned and must NEVER be handed to the host allocator.
+#[doc(hidden)]
+#[must_use]
+pub fn malloc_is_bump_ptr_for_tests(ptr: *mut c_void) -> bool {
+    is_bump_ptr(ptr)
+}
+
+/// Test hook (bd-ummyux): exact requested size recorded in a bump allocation's
+/// header, or `None` when the pointer is not bump-owned.
+///
+/// # Safety
+///
+/// `ptr` must be a pointer previously returned by the allocator.
+#[doc(hidden)]
+#[must_use]
+pub unsafe fn malloc_bump_allocation_size_for_tests(ptr: *mut c_void) -> Option<usize> {
+    // SAFETY: delegating to the allocator's ownership-aware size reader.
+    unsafe { bump_allocation_size(ptr) }
+}
+
+#[inline]
+fn is_static_bump_ptr(ptr: *mut c_void) -> bool {
     let addr = ptr as usize;
     let base = BUMP_HEAP.0.get() as usize;
     if addr < base + BUMP_HEADER_SIZE || addr >= base + BUMP_SIZE {
@@ -1342,26 +1781,25 @@ fn is_bump_ptr(ptr: *mut c_void) -> bool {
     }
     // Verify magic sentinel to prevent false positives if a host pointer
     // happens to fall in the bump heap address range.
+    // SAFETY: the range check proves the header lies inside the static heap.
     let header = unsafe { (ptr as *mut u8).sub(BUMP_HEADER_SIZE).cast::<usize>() };
-    let magic = unsafe { header.read() };
-    magic == BUMP_MAGIC
+    unsafe { header.read() == BUMP_MAGIC }
+}
+
+#[inline]
+fn is_bump_ptr(ptr: *mut c_void) -> bool {
+    is_static_bump_ptr(ptr) || bump_mmap_record(ptr).is_some()
 }
 
 #[inline]
 unsafe fn bump_allocation_size(ptr: *mut c_void) -> Option<usize> {
-    if !is_bump_ptr(ptr) {
-        return None;
+    if is_static_bump_ptr(ptr) {
+        // SAFETY: the static ownership check proved this header is mapped.
+        let header = unsafe { (ptr as *mut u8).sub(BUMP_HEADER_SIZE).cast::<usize>() };
+        // SAFETY: second header word stores the requested user size.
+        return Some(unsafe { header.add(1).read() });
     }
-    // SAFETY: bump allocations reserve a fixed-size header immediately before
-    // the user pointer.
-    let header = unsafe { (ptr as *mut u8).sub(BUMP_HEADER_SIZE).cast::<usize>() };
-    // SAFETY: header points into the bump heap allocation record.
-    let magic = unsafe { header.read() };
-    if magic != BUMP_MAGIC {
-        return None;
-    }
-    // SAFETY: second header word stores the requested user size.
-    Some(unsafe { header.add(1).read() })
+    bump_mmap_record(ptr).map(|record| record.requested)
 }
 
 #[inline]
@@ -1618,6 +2056,9 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             unsafe {
                 std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
             }
+            // SAFETY: successful realloc transfers ownership to `out`; retire an
+            // mmap-backed old pointer. Static bump pointers remain no-op frees.
+            let _ = unsafe { bump_mmap_release(ptr) };
         }
         return out;
     }
@@ -1663,7 +2104,12 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
 #[inline]
 #[allow(clippy::needless_return)]
 unsafe fn native_libc_free(ptr: *mut c_void) {
-    if is_bump_ptr(ptr) {
+    // SAFETY: exact registry membership prevents arbitrary pointers from being
+    // unmapped or handed to the host allocator.
+    if unsafe { bump_mmap_release(ptr) }.is_some() {
+        return;
+    }
+    if is_static_bump_ptr(ptr) {
         return; // Bump allocator: free is a no-op.
     }
     // In standalone mode, free is a no-op (bump allocator doesn't support freeing)
@@ -1683,7 +2129,12 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
 #[inline]
 #[allow(clippy::needless_return)]
 unsafe fn native_libc_free_with_slot(slot: &'static AllocatorReentrySlot, ptr: *mut c_void) {
-    if is_bump_ptr(ptr) {
+    // SAFETY: exact registry membership prevents arbitrary pointers from being
+    // unmapped or handed to the host allocator.
+    if unsafe { bump_mmap_release(ptr) }.is_some() {
+        return;
+    }
+    if is_static_bump_ptr(ptr) {
         return; // Bump allocator: free is a no-op.
     }
     // In standalone mode, free is a no-op (bump allocator doesn't support freeing)
@@ -2677,7 +3128,12 @@ pub unsafe extern "C" fn bench_free_orig_strict_path(ptr: *mut c_void) {
         unsafe { bootstrap_free_passthrough(ptr) };
         return;
     }
-    if is_bump_ptr(ptr) {
+    // SAFETY: exact registry membership owns and retires overflow mappings.
+    if unsafe { bump_mmap_release(ptr) }.is_some() {
+        let _ = fallback_remove(ptr);
+        return;
+    }
+    if is_static_bump_ptr(ptr) {
         let _ = fallback_remove(ptr);
         return;
     }
@@ -3159,7 +3615,9 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
     // fallback bookkeeping is still cheap and required for bounded C-string
     // scans that must reject unterminated tracked buffers before host passthrough.
     if runtime_policy::strict_passthrough_active() {
-        return segment_remaining(addr).or_else(|| fallback_remaining(addr));
+        return bump_mmap_remaining(addr)
+            .or_else(|| segment_remaining(addr))
+            .or_else(|| fallback_remaining(addr));
     }
 
     if runtime_policy::in_policy_reentry_context()
@@ -3167,14 +3625,18 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
         || crate::membrane_state::pipeline_initialization_active()
         || frankenlibc_membrane::ptr_validator::in_validation_context()
     {
-        return segment_remaining(addr).or_else(|| fallback_remaining(addr));
+        return bump_mmap_remaining(addr)
+            .or_else(|| segment_remaining(addr))
+            .or_else(|| fallback_remaining(addr));
     }
 
-    segment_remaining(addr).or_else(|| {
-        validate_ptr(addr)
-            .and_then(|abs| abs.remaining)
-            .or_else(|| fallback_remaining(addr))
-    })
+    bump_mmap_remaining(addr)
+        .or_else(|| segment_remaining(addr))
+        .or_else(|| {
+            validate_ptr(addr)
+                .and_then(|abs| abs.remaining)
+                .or_else(|| fallback_remaining(addr))
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -3339,7 +3801,12 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         SegmentFreeResult::OwnedInvalid => return,
         SegmentFreeResult::NotOwned => {}
     }
-    if is_bump_ptr(ptr) {
+    // SAFETY: exact registry membership owns and retires overflow mappings.
+    if unsafe { bump_mmap_release(ptr) }.is_some() {
+        let _ = fallback_remove(ptr);
+        return;
+    }
+    if is_static_bump_ptr(ptr) {
         let _ = fallback_remove(ptr);
         return;
     }
@@ -3606,16 +4073,17 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         return unsafe { realloc_segment_owned(Some(reentry_guard.slot), ptr, size.max(1)) };
     }
 
-    if is_bump_ptr(ptr) {
+    if let Some(old_size) = unsafe { bump_allocation_size(ptr) } {
         let out = unsafe { native_libc_malloc(size.max(1)) };
-        if !out.is_null()
-            && let Some(old_size) = unsafe { bump_allocation_size(ptr) }
-        {
-            let copy_size = old_size.min(size);
-            unsafe {
-                std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
-            }
+        if out.is_null() {
+            return out; // POSIX: failure leaves the old allocation live.
         }
+        let copy_size = old_size.min(size);
+        unsafe {
+            std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
+        }
+        // SAFETY: ownership transferred successfully to `out`.
+        let _ = unsafe { bump_mmap_release(ptr) };
         let _ = fallback_remove(ptr);
         fallback_insert_sized(out, size.max(1));
         return out;
@@ -4297,9 +4765,9 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
         return 0;
     }
 
-    // Bump/mmap allocations: size is unknown, return 0.
-    if is_bump_ptr(ptr) {
-        return 0;
+    // Static bump and reclaiming overflow mappings carry exact requested sizes.
+    if let Some(size) = unsafe { bump_allocation_size(ptr) } {
+        return size;
     }
 
     if let Some((_, requested)) = segment_exact_live_view(ptr) {

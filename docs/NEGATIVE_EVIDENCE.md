@@ -23168,3 +23168,52 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   surface, run the full strftime differential suite, and keep it only if the same-worker
   candidate/baseline bootstrap median CI excludes 1.0 and the effect clears twice the
   same-invocation A/A null half-width. Do not gate on CV.
+
+## 2026-07-25 (cod / SwiftCastle, root cause by MagentaCondor) — FIX / NO-WORKER PROOF: reclaiming mmap ownership closes the monotone bump-overflow corruption mechanism (`bd-ummyux`, `bd-uj3sg7`)
+
+- **CRASH FIRST / NEGATIVE EVIDENCE.** The banked signature is an unmodified-head
+  `stdio_mt_contention_bench` abort during 8-thread `fmemopen` churn: exit **134** with
+  `memory allocation of 2048 bytes failed`. Code inspection found a concrete allocator defect with
+  the same cumulative shape: after the 256 MiB static reentry bump heap filled, `bump_alloc`
+  returned a raw anonymous-mmap base with no header or ownership record. `free`/`realloc` therefore
+  classified it as foreign and could pass it to glibc, while successful frees never called
+  `munmap`. Historical churn monotonically accumulated mappings until `vm.max_map_count`, after
+  which a small Rust allocation could receive NULL.
+- **REJECTED INTERMEDIATE DESIGN.** The first uncommitted fix used 32 immortal 64 MiB chunks. It was
+  rejected in review for two independent reasons: registration wrote `end`/`pos` before winning the
+  publication CAS, so competing publishers could pair one mapping's base with another mapping's
+  metadata and then unmap it; after claim-before-publish repaired that race, the 32-chunk cap still
+  merely moved the monotone NULL point from 256 MiB to about 2.25 GiB. **Retry predicate:** do not
+  revive immortal chunks unless a process-lifetime proof bounds all post-exhaustion bump traffic
+  below the chosen cap and every slot is claimed before any metadata write. The reclaiming design
+  makes that retry unnecessary.
+- **SHIPPABLE MECHANISM.** Overflow now creates one page-rounded mapping per simultaneously live
+  allocation, writes a distinct mmap header (`magic`, requested size, mapping base, mapping length),
+  and release-publishes an exact user-pointer record in a fixed lock-free table. `free` claims the
+  record, `munmap`s the exact region, and tombstones the reusable slot. Successful `realloc` copies
+  before retiring the old record; failure leaves it live. `malloc_usable_size`, interior
+  `known_remaining`, native/bootstrap frees, the public/retained free paths, and host-realloc buffer
+  conversion all consult the same authoritative ownership record. Caller-writable header bytes are
+  diagnostic only and can never make an owned pointer reach glibc.
+- **FORMAL LIFECYCLE.** A record moves
+  `EMPTY|TOMBSTONE -> BUSY -> LIVE(pointer) -> BUSY -> TOMBSTONE`. Only the BUSY claimant may write
+  metadata or unmap. Release-publishing the live pointer orders all metadata before readers;
+  acquire lookup makes the record complete before classification. Registry exhaustion is now a
+  bound on **simultaneously live** reentry allocations (4,096), never on cumulative churn.
+- **NO-WORKER REGRESSION CONTRACT.** Four integration tests pin distinct-header integrity,
+  ownership, exact usable/interior sizes, alignment, free reclamation, realloc copy-before-release,
+  host-pointer non-classification, and 8-thread churn. The churn contract performs **5,120**
+  allocation/free lifecycles—more than the table's cumulative capacity—with at most eight live,
+  touches both ends of each mapping, requires zero NULLs/failures, and requires created/released
+  deltas to match. In Lane B no Cargo or benchmark worker was used. Direct Rust formatting and
+  whitespace gates pass. UBS reported no new critical production finding; its four critical hits
+  are the pre-existing `panic!` assertion in
+  `reentry_slots_stay_single_owner_under_thread_churn`.
+- **DISPOSITION / CONCRETE RETRY PREDICATE.** **KEEP the correctness fix; the link from this real
+  defect to the banked abort remains an explicit inference until measurement rights return.** At
+  the next authorized window, first run the focused overflow lifecycle tests remotely, then rerun
+  at least the banked 12-round 8-thread `fmemopen` churn under the production preload path while
+  recording `static_bytes_used`, mappings created/released/live, failures, and `/proc/$pid/maps`.
+  Reopen `bd-ummyux` immediately if the abort survives, if live mappings grow after quiescence, if
+  created-minus-released grows with completed churn, or if an abort occurs while
+  `static_bytes_used` is materially below 256 MiB (which refutes this root-cause link).

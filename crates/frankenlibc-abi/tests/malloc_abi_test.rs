@@ -8,13 +8,16 @@ use frankenlibc_abi::htm_fast_path::{
 };
 use frankenlibc_abi::malloc_abi::{
     __libc_freeres, aligned_alloc, calloc, cfree, free, mallinfo, mallinfo2, malloc,
+    malloc_bump_allocation_size_for_tests, malloc_bump_overflow_alloc_for_tests,
+    malloc_bump_overflow_header_valid_for_tests, malloc_bump_overflow_stats,
     malloc_current_reentry_slot_index_for_tests, malloc_fallback_range_for_tests,
     malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests, malloc_info,
-    malloc_known_remaining_for_tests, malloc_reentry_multithreaded_latched_for_tests,
-    malloc_restore_reentry_depth_for_tests, malloc_segment_owned_for_tests, malloc_stats,
-    malloc_stats_init_for_tests, malloc_swap_reentry_depth_for_tests, malloc_trim,
-    malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc,
-    signal_runtime_ready_for_tests, take_last_decision_gate_for_tests, valloc,
+    malloc_is_bump_ptr_for_tests, malloc_known_remaining_for_tests,
+    malloc_reentry_multithreaded_latched_for_tests, malloc_restore_reentry_depth_for_tests,
+    malloc_segment_owned_for_tests, malloc_stats, malloc_stats_init_for_tests,
+    malloc_swap_reentry_depth_for_tests, malloc_trim, malloc_usable_size, mallopt, memalign,
+    posix_memalign, pvalloc, realloc, signal_runtime_ready_for_tests,
+    take_last_decision_gate_for_tests, valloc,
 };
 use frankenlibc_abi::unistd_abi::mprobe;
 use std::collections::HashMap;
@@ -1194,3 +1197,180 @@ fn reentry_slots_stay_single_owner_under_thread_churn() {
 // binary links against glibc, so malloc() calls here go to glibc's allocator,
 // not our membrane arena. Use E2E tests (scripts/check_pcc_double_free_e2e.sh)
 // to verify PCC behavior and double-free healing.
+
+// ---------------------------------------------------------------------------
+// bd-ummyux / bd-uj3sg7 — reclaiming bump-overflow mmap records
+// ---------------------------------------------------------------------------
+//
+// These live here rather than in `malloc_abi.rs` because `pub mod malloc_abi` is
+// `#[cfg(not(test))]` — the module is deliberately excluded from the lib test
+// binary (its exported malloc/free symbols would shadow the system allocator).
+
+/// An overflow allocation must carry the distinct mmap header, be classified as
+/// allocator-owned, report its exact size, honor alignment, and be unmapped by
+/// the ordinary public `free` path. This pins both sides of bd-uj3sg7: never hand
+/// a raw mapping to glibc, and never retain mappings monotonically across churn.
+#[test]
+fn bump_overflow_lifecycle_is_owned_sized_aligned_and_reclaimed() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let before = malloc_bump_overflow_stats();
+    let cases = [(1usize, 16usize), (2048, 16), (48, 64), (4096, 256)];
+
+    for (request, alignment) in cases {
+        // SAFETY: direct test hook for one live overflow mapping.
+        let p = unsafe { malloc_bump_overflow_alloc_for_tests(request, alignment) };
+        assert!(
+            !p.is_null(),
+            "overflow allocation of {request} bytes returned NULL"
+        );
+        assert!(malloc_is_bump_ptr_for_tests(p));
+        // SAFETY: `p` is a live overflow allocation returned immediately above.
+        assert!(unsafe { malloc_bump_overflow_header_valid_for_tests(p) });
+        // SAFETY: same live allocation.
+        assert_eq!(
+            unsafe { malloc_bump_allocation_size_for_tests(p) },
+            Some(request)
+        );
+        // SAFETY: same live allocation.
+        assert_eq!(unsafe { malloc_usable_size(p) }, request);
+        assert_eq!(p as usize % alignment, 0);
+        let interior = request / 2;
+        // SAFETY: `interior < request`, so this stays within the allocation.
+        let interior_ptr = unsafe { p.cast::<u8>().add(interior) };
+        assert_eq!(
+            malloc_known_remaining_for_tests(interior_ptr.cast()),
+            Some(request - interior)
+        );
+
+        // SAFETY: this allocation owns [p, p+request).
+        unsafe { ptr::write_bytes(p.cast::<u8>(), 0xA5, request) };
+        // SAFETY: the public allocator owns this live pointer.
+        unsafe { free(p) };
+        assert!(
+            !malloc_is_bump_ptr_for_tests(p),
+            "free must retire the mmap ownership record"
+        );
+    }
+
+    let after = malloc_bump_overflow_stats();
+    assert_eq!(
+        after.mappings_created - before.mappings_created,
+        cases.len()
+    );
+    assert_eq!(
+        after.mappings_released - before.mappings_released,
+        cases.len()
+    );
+    assert_eq!(after.live_mappings, before.live_mappings);
+    assert_eq!(after.failures, before.failures);
+}
+
+/// `realloc` must copy the old payload and retire the old mapping only after the
+/// replacement allocation succeeds.
+#[test]
+fn bump_overflow_realloc_preserves_payload_and_releases_old_mapping() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    const OLD: usize = 2048;
+    const NEW: usize = 4096;
+
+    // SAFETY: direct test hook for one live overflow mapping.
+    let old = unsafe { malloc_bump_overflow_alloc_for_tests(OLD, 64) };
+    assert!(!old.is_null());
+    for i in 0..OLD {
+        // SAFETY: `old` owns OLD writable bytes.
+        unsafe { old.cast::<u8>().add(i).write((i % 251) as u8) };
+    }
+
+    let before = malloc_bump_overflow_stats();
+    // SAFETY: `old` is live and NEW is non-zero.
+    let new = unsafe { realloc(old, NEW) };
+    assert!(!new.is_null(), "realloc of overflow mapping failed");
+    for i in 0..OLD {
+        // SAFETY: successful realloc preserves the OLD-byte prefix.
+        assert_eq!(unsafe { new.cast::<u8>().add(i).read() }, (i % 251) as u8);
+    }
+    assert!(
+        !malloc_is_bump_ptr_for_tests(old),
+        "successful realloc must retire the old mmap record"
+    );
+    let after = malloc_bump_overflow_stats();
+    assert_eq!(
+        after.mappings_released - before.mappings_released,
+        1,
+        "successful realloc must munmap the old overflow mapping"
+    );
+
+    // SAFETY: `new` is the live replacement allocation.
+    unsafe { free(new) };
+}
+
+/// More cumulative allocations than the fixed record-table capacity must
+/// succeed when the simultaneous live set is small. This is the regression
+/// contract the immortal-chunk design could not provide: exhaustion depends on
+/// live demand, never on historical churn.
+#[test]
+fn bump_overflow_multithreaded_churn_reuses_records_without_null() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    const THREADS: usize = 8;
+    const ROUNDS: usize = 640;
+    let before = malloc_bump_overflow_stats();
+    let barrier = Arc::new(Barrier::new(THREADS));
+    let mut handles = Vec::with_capacity(THREADS);
+
+    for thread_index in 0..THREADS {
+        let barrier = Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            for round in 0..ROUNDS {
+                let request = 2048 + ((thread_index + round) & 63);
+                // SAFETY: direct test hook for one live overflow mapping.
+                let p = unsafe { malloc_bump_overflow_alloc_for_tests(request, 16) };
+                assert!(
+                    !p.is_null(),
+                    "overflow churn returned NULL at thread={thread_index} round={round}"
+                );
+                // Touch both ends so a publication or premature-unmap defect faults
+                // at the point it is introduced.
+                // SAFETY: `p` owns `request` writable bytes.
+                unsafe {
+                    let bytes = p.cast::<u8>();
+                    bytes.write_volatile(0xC3);
+                    bytes.add(request - 1).write_volatile(0x3C);
+                    assert_eq!(bytes.read_volatile(), 0xC3);
+                    assert_eq!(bytes.add(request - 1).read_volatile(), 0x3C);
+                    free(p);
+                }
+            }
+        }));
+    }
+
+    for handle in handles {
+        handle.join().expect("overflow churn thread panicked");
+    }
+
+    let after = malloc_bump_overflow_stats();
+    let expected = THREADS * ROUNDS;
+    assert_eq!(after.mappings_created - before.mappings_created, expected);
+    assert_eq!(after.mappings_released - before.mappings_released, expected);
+    assert_eq!(after.live_mappings, before.live_mappings);
+    assert_eq!(after.failures, before.failures);
+}
+
+/// A pointer that is not allocator-owned must never be captured by the mmap
+/// registry; otherwise a real host allocation could be munmapped.
+#[test]
+fn non_bump_pointers_are_not_misclassified() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    assert!(!malloc_is_bump_ptr_for_tests(ptr::null_mut()));
+
+    let on_stack = 0u64;
+    assert!(!malloc_is_bump_ptr_for_tests(
+        (&raw const on_stack) as *mut c_void
+    ));
+
+    let boxed = Box::new(0u64);
+    let heap = Box::into_raw(boxed);
+    assert!(!malloc_is_bump_ptr_for_tests(heap.cast::<c_void>()));
+    // SAFETY: reclaiming the Box allocation created immediately above.
+    drop(unsafe { Box::from_raw(heap) });
+}
