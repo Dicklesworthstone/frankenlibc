@@ -22773,3 +22773,67 @@ item retains every later colon by construction, exactly matching the former `fie
   evidence is the perf capture named above (profiled binary sha256
   `0141e44f1bce0bea1f6506e2a60484f13f1c3113fdf73d7d62d5bc66f440d7b6`) plus the two `perf annotate`
   instruction-level reads quoted inline.
+
+## 2026-07-25 (cc_fl / MagentaCondor) — CORRECTION (self-issued, same session): the 22.18% and the "framing outweighs data structures 6:1" claim were `--call-graph dwarf` attribution artifacts; matched-settings re-profile says 6.68% and roughly EVEN (cc-alloc-layer-split-CORRECTION-2026-07-25)
+
+**This row corrects two rows committed earlier today by me: `cc-pcc-gate-split-2026-07-25` (`7c9d0d8c2`)
+and `cc-alloc-layer-split-2026-07-25` (`529df86c0`). Neither original row is deleted.** The shipped
+lever and its A/B stand; the *profile attribution* used to motivate and to generalise them does not.
+
+- **WHAT WENT WRONG.** The profile that selected the lever was captured with
+  `perf record -F 3997 -g --call-graph=dwarf,4096`. DWARF unwinding distorts flat self-time
+  attribution badly on this workload: it charged `ensure_ffi_pcc_verified` **22.18%** with 99% of
+  those samples on the epilogue `ret`. Re-profiling the **same binary, same workload, same pinned
+  core, same `-F 3997`, but with no call-graph collection** gives **6.68%**. The 22.18% was measuring
+  the unwinder as much as the function. I published it without a matched control.
+- **THE CORRECTED NUMBERS (base binary `acbd9732…fe3`, no call-graph, `taskset -c 3`, worker
+  `vmi1293453`).**
+
+  | frame | corrected self-time | as published (dwarf) |
+  |---|---|---|
+  | `segment_free` | **22.85%** | 4.77% |
+  | `free` (exported) | 18.98% | 12.52% |
+  | `entrypoint_scope` | **14.61%** | 2.80% |
+  | `enter_allocator_reentry_guard` | 8.72% | 12.74% |
+  | `bench_free_null_old_strict_path` (BENCH-ONLY) | 8.68% | 32.37% |
+  | `segment_slot_view` | 6.69% | 1.35% |
+  | `ensure_ffi_pcc_verified` | **6.68%** | **22.18%** |
+  | `record_stats` | 2.09% | 0.32% |
+  | `allocate_from_local_class` | 1.19% | — |
+  | `size_class::bin_index` | 1.14% | — |
+
+- **THE LAYER SPLIT IS THEREFORE WRONG, AND THE CONCLUSION REVERSES.** Corrected:
+  membrane/runtime-policy framing = `entrypoint_scope` 14.61 + reentry guard 8.72 + PCC gate 6.68 +
+  `mode` 0.27 = **30.28%**. Allocator data structures = `segment_free` 22.85 + `segment_slot_view`
+  6.69 + `record_stats` 2.09 + `allocate_from_local_class` 1.19 + `bin_index` 1.14 = **33.96%**.
+  Those are **roughly even — not the 6:1 I published.** `segment_free` is in fact the single largest
+  production frame in the whole profile.
+  **So the campaign's original assignment to this lane was correctly aimed and my redirection of it
+  was not.** §7.9 modern-allocator work (TLSF / slab / sharded free lists) lands on a ~34% layer whose
+  largest single frame is `segment_free` at 22.85%. bd-9j6h0d is corrected to say so.
+- **WHAT SURVIVES UNCHANGED.** The shipped lever and every number used to *decide* it. The A/B never
+  depended on the profile: it measured wall time over 32 alternating invocations per arm with a
+  permutation null (fl pooled **0.9463**, p=0.0000, margin 2.03x; byte-identical glibc control 1.0206,
+  p=0.2640). The behavior gate (8/8 identical on both arms) is likewise untouched.
+- **AND THE CORRECTED NUMBER IS THE ONE THAT ACTUALLY PREDICTS THE RESULT — a coherence check I should
+  have run before publishing.** 6.68% of whole-process cycles, on a process where the fl arm is only
+  part of the work, predicts a low-single-digit improvement to fl malloc+free. Measured: **5.4%**.
+  The 22.18% figure never reconciled with a 5.4% result and I did not notice; the corrected one does,
+  immediately. **A profile attribution that cannot be reconciled with the A/B it motivated is itself
+  evidence that the profile is wrong.**
+- **DIRECT CONFIRMATION THE LEVER DID WHAT IT CLAIMED.** In the candidate binary
+  (`b428cca8…655d`), profiled with the same matched settings, `ensure_ffi_pcc_verified` is **absent
+  from the profile entirely** — zero symbols matched at a 0.01% threshold, down from 6.68%. The
+  function was inlined into its callers exactly as intended.
+- **METHOD RULE ADDED (this is the transferable part).** `--call-graph dwarf` is for finding *callers*.
+  It must not be used to rank *flat self-time*, and a self-time number that motivates a lever must be
+  captured with no call-graph collection — or, if a call-graph is needed, published alongside a
+  matched no-call-graph capture of the same binary. Every self-time figure in this ledger captured
+  under `--call-graph dwarf` should be treated as unranked until re-measured.
+- **NEXT LEVER, now selected off the corrected profile:** `entrypoint_scope` at **14.61%** — more than
+  twice the corrected PCC gate — with the identical shape defect: its fast path is
+  `if strict_passthrough_active() { return guard }` (three instructions), while the cold path
+  (`next_trace_seq` + a 24-arm string match in `ffi_pcc_certificate_index_for_symbol` + two
+  `thread_local!` accesses) is inlined into the same body, forcing five callee-saved pushes onto every
+  ABI entry. `perf annotate` puts **99.17% of its samples on the epilogue `ret`** and the rest on the
+  `pop`s. Same hot/cold split applies.
