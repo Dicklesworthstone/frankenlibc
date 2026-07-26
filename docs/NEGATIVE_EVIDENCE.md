@@ -22962,3 +22962,74 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   new candidate whose bootstrap median CI excludes 1.0 and whose effect exceeds **2×** its
   same-invocation null half-width. Any future locale implementation that requires domain reclamation
   must first replace the append-only lifetime proof with an equally explicit reader-lifetime proof.
+
+## 2026-07-25 (cc_fl / MagentaCondor) — REJECT (NOT SHIPPED, does not reproduce): `entrypoint_scope` hot/cold split — 0.813x on ONE host, null on two others; same shape defect as the PCC gate but the evidence does not survive replication (cc-entrypoint-scope-split-2026-07-25)
+
+- **LEDGER-FIRST.** This is the second instance of the shape defect found in
+  `cc-pcc-gate-split-2026-07-25`, selected off the **corrected** (matched-settings) profile — see
+  `cc-alloc-layer-split-CORRECTION-2026-07-25` for why the first profile's numbers were retracted. The
+  ledger was re-grepped for `entrypoint_scope`, `trace context`, `strict_passthrough_active` and
+  `hot/cold`: one prior row (2026-06-19, BlackThrush) tried *hoisting `strlen` above* `entrypoint_scope`
+  and measured neutral — that is a different lever (skip the call from one caller) and does not cover
+  splitting the callee itself.
+- **THE DEFECT (matched-settings profile, base binary `acbd9732…fe3`, no call-graph, `taskset -c 3`).**
+  `entrypoint_scope` = **14.61% self-time**, the largest membrane-framing frame after the PCC split
+  landed. Its fast path is three instructions — `if strict_passthrough_active() { return
+  EntrypointTraceGuard { previous: None, skipped: true } }` — but the body also contains the cold path:
+  `next_trace_seq()`, the **24-arm string match** `ffi_pcc_certificate_index_for_symbol`, and two
+  `thread_local!` trace-context accesses. LLVM therefore gives the whole function **five callee-saved
+  pushes and a frame**, and `perf annotate` puts **99.17% of the samples on the epilogue `ret`** with the
+  remainder on the `pop`s. `Drop for EntrypointTraceGuard` has the identical shape
+  (`if self.skipped { return }` then a TLS write). Since the guard is constructed on EVERY deployed ABI
+  entry, both halves are pure per-call overhead in strict passthrough.
+- **THE ONE LEVER.** `#[inline(always)]` on `entrypoint_scope` and on `Drop::drop`, delegating to
+  `#[cold] #[inline(never)] entrypoint_scope_traced(symbol)` and
+  `#[cold] #[inline(never)] EntrypointTraceGuard::restore_trace_context()`. Bodies moved verbatim.
+- **BEHAVIOR-PRESERVATION.** Pure code motion — unlike the PCC gate there is no state machine and no
+  concurrency argument to make: the same statements run in the same order on the same values; only
+  their address changes. Gate: `cargo test -p frankenlibc-abi --lib runtime_policy` = **37 passed / 0
+  failed / 1 ignored, identical on BOTH arms**, including
+  `scoped_trace_context_carries_symbol_into_explainability` and `missing_scope_uses_fallback_context`,
+  which are exactly the tests that would catch a lost or misordered trace context.
+- **MEASUREMENT.** Incremental whole-binary A/B on top of the shipped PCC split: base2 = HEAD + PCC
+  split, cand2 = base2 + this lever. Two pristine trees, `diff -rq` shows **exactly one differing file**.
+  base2 sha256 `386d0ed2b68ccc9dd8fc614da9b1779082b083d0d79cf942511fa18e71181bcf`, cand2 sha256
+  `10ef1212f143581e8841caf12be388dd8cb72200c8e1f3f30372efa49584eb65`. 32 alternating invocations per
+  arm, pinned core, permutation null (20k relabels, seed 20260725), each binary self-reporting its ELF
+  sha as stdout line 1.
+- **RESULT — THE EFFECT DOES NOT REPRODUCE ACROSS HOSTS. Three independent within-worker A/Bs, same two
+  binaries, same protocol, 32 alternating invocations per arm each:**
+
+  | worker | worker load | base p50 (64 B) | pooled cand/base | perm-null 95% | p | verdict |
+  |---|---|---|---|---|---|---|
+  | `vmi1293453` | **3.7–5.2 (contaminated)** | 38.6 ns | 1.0044 | [0.9729, 1.0278] | 0.8490 | null |
+  | `vmi1264463` | 0.9–1.6 (quiet) | **96.9 ns** | **0.8130** | [0.8869, 1.1283] | **0.0000** | strong win |
+  | `vmi1152480` | 0.5–1.0 (quiet) | 46.3 ns | 0.9934 | [0.9875, 1.0123] | 0.1449 | null |
+
+  Per-size on `vmi1264463`: 0.8273 / 0.8114 / 0.8111 / 0.8130 — flat, one-sided, every size, with a
+  control arm that barely moved (0.988–1.020). It is an entirely well-behaved measurement. It is also
+  the **only** one, and it comes from the host whose *absolute* timings are anomalous: base fl
+  malloc+free 96.9 ns against 38.6 and 46.3 ns elsewhere, and its glibc control arm is 8.5 ns against
+  3.8 and 4.7 ns — the whole machine is ~2x slower for identical binaries. **Two quiet hosts say
+  nothing; the one that says 18.7% is the outlier host.**
+- **DISPOSITION: REJECT — not shipped.** Change stashed, not deleted
+  (`git stash` "cc-entrypoint-scope-split: NOT REPRODUCIBLE"). The design and both gate results are
+  preserved here so re-landing is cheap if the retry predicate is met. Shipping an 18.7% claim that two
+  of three hosts cannot see would be exactly the kind of row this campaign's §1 audit exists to find.
+- **WHY THIS IS NOT THE SAME AS THE PCC GATE (which DID ship).** Same defect shape, opposite evidence
+  quality. The PCC split was measured once but its A/B carried a **byte-identical control arm that
+  stayed inside its null** and it was **replicated under a changed instrument** (ASLR disabled, 0.9463
+  vs 0.9434). This lever was measured three times and **replicated nowhere**. Shape-defect plausibility
+  is not evidence; it is the reason to measure, not a substitute for it.
+- **HONEST NOTE ON WHAT I EXPECTED.** The corrected profile put `entrypoint_scope` at **14.61%** —
+  more than twice the PCC gate's corrected 6.68%, which *did* yield a measurable 5.4%. That prediction
+  failed. The most likely reading is that the 99.17%-on-`ret` concentration is largely **sampling skid**
+  on this hardware rather than recoverable frame cost, which would mean the frame's "self-time" was
+  never the removable quantity. That reading also retro-fits the PCC gate: its win (5.4%) was much
+  smaller than even its corrected share (6.68%). **Treat `ret`-concentrated self-time on small functions
+  as an upper bound that is probably far above the recoverable cost.**
+- **CONCRETE RETRY PREDICATE.** Re-land only if (1) a quiet-host A/B on a worker whose absolute fl
+  malloc+free p50 is in the normal 38–48 ns band shows pooled cand/base <= 0.97 with p < 0.01 and a
+  control arm inside its null, AND (2) it replicates on a second such host. A repeat of the
+  `vmi1264463` result alone does not qualify — first establish why that host is 2x slower for identical
+  binaries, because until that is explained its ratios measure something the other hosts do not have.
