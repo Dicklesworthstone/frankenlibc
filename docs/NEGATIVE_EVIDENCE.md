@@ -18319,7 +18319,16 @@ in the last two hours (`2ff083925`, `8ba788f83`).
   commit message, and (b) quotations from cod's rows L14063/L14546/L14585/L14691 with attribution.
   **self-time: blocked (bd-3dxo1a).**
 
-## 2026-07-10 (cc_fl / BlackThrush) — REHABILITATION under MEDIAN-GATING: the segment-membership REJECTs are VOID and the primitive **PASSES**; 39 of 93 REJECT rows are void by the same rule
+## 2026-07-10 (cc_fl / BlackThrush) — HISTORICAL segment-membership rehabilitation: primitive measurements stand; **RETRACTED CENSUS:** the “39 of 93” extension was not a six-class audit
+
+**MODEL-INTEGRITY CORRECTION (2026-07-27).** The segment-family measurements and their later
+superseding disposition stand. The extension from that family to “39 of 93”, the fixed global null
+floor, the operation-latency proxy ranking, and the `0/93` hash count are retracted. The authoritative
+hand audit screened and read 130 sections and found 47 classifiable experiments:
+`VALID-PROFILE=0`, `VALID-MECHANISM=1`, `VALID-AB=9`, `VOID-CV=8`, `VOID-ZEROSELF=0`, and
+`VOID-NONULL=29`; 29 sections were not rejection experiments and 54 remained triage-unresolved.
+See `docs/LEDGER_RESURRECTION.md`. The historical screen below is retained only as incident evidence
+and must not be used as a census or queue.
 
 Analysis-only: `rch` refused **five consecutive times**
 (`no admissible workers: insufficient_slots=10,active_project_exclusion=1`). No build/bench/test ran;
@@ -18359,12 +18368,13 @@ No null control was run on that harness (L14546/L14585/L14691 each contain **zer
   **The open question for Swing-2 is the wiring loss, not the bitmap.** (cod's lane; bd-r5bgws,
   bd-t43kz2.)
 
-### The same rule voids 39 of 93 REJECT rows
+### RETRACTED historical screen: the same rule appeared to void 39 of 93 rows
 
-Using the worst A/A median measured in this repo (**0.9048**) as the floor, any REJECT decided on a
-ratio inside **[0.905, 1.105]**, or on the words `~0-gain` / `no change in performance` / `within
-noise`, cannot be distinguished from an identical arm compared against itself. **39 of 93** REJECT-class
-rows meet that description. Ranked by the largest per-op time each row quotes (the frame it gates):
+This was a regex-produced historical candidate screen, not a taxonomy verdict. It used one global
+A/A median (**0.9048**) as a floor and treated ratios inside **[0.905, 1.105]** plus phrases such as
+`~0-gain` as equivalent evidence. That reasoning is retracted: it ignored counted mechanisms,
+profile-only refutations, workload routing, and the six mutually exclusive classes. The proxy ranking
+below is preserved only to show what propagated from the faulty screen:
 
 | rank | frame | row | quoted ratio | lever | lane |
 |---|---|---|---|---|---|
@@ -18386,12 +18396,11 @@ reopening it produced `ad465633f` — multi-threaded `fgetc` **17.5-18.7x faster
 family and the same margin class (1.050x, 1.106x, ~0-gain) — all inside the floor, none carrying a
 sha256, self-time, cv or null.
 
-- **CAVEAT (stated, not buried).** This table is a *candidate* list produced by pattern-matching row
-  text, not a per-row adjudication. L2877, for instance, also quotes a genuine **1.531x regression**
-  elsewhere in its body, which would survive median-gating; it is listed because the row *also* contains
-  `~0-gain` language. Each row must be read before it is re-attacked. What is not in doubt is the
-  aggregate: **0/93 carry a binary sha256, 1/93 a null control, and ~42% are decided on margins inside
-  the measured floor.**
+- **RETRACTED AGGREGATE.** This table was never a per-row adjudication. L2877, for instance, also
+  quotes a genuine **1.531x regression** elsewhere in its body and was selected only because it also
+  contains `~0-gain` language. The old `0/93`, `1/93`, and `~42%` statements are not current facts.
+  The pinned hand audit instead found 13/130 sections containing any 64-hex digest and only one
+  explicit in-process executing-ELF witness; its class counts are recorded above.
 - **NEXT ACTION (blocked on a worker slot, not on thinking).** Re-attack rank 6 (L3248, regex
   build-bulk-table-once-per-search, 98 µs frame) with the corrected method: paired interleaved arms in
   one binary/one invocation, `paired(base, base)` null control first, gate on the **median**, per-function
@@ -22702,7 +22711,14 @@ item retains every later colon by construction, exactly matching the former `fie
   whether it has the *same shape defect* (a cold path forcing a frame onto the hot one). That is the
   next lever in this vein, and it is a shape question, not a safety question.
 
-## 2026-07-25 (cc_fl / MagentaCondor) — SURFACE / STRUCTURAL REDIRECTION (measured, no lever built): the deployed allocator's ~10x small-churn gap is membrane-FRAMING-bound, not allocator-data-structure-bound — 38.3% vs 6.4% of process self-time (cc-alloc-layer-split-2026-07-25)
+## 2026-07-25 (cc_fl / MagentaCondor) — **RETRACTED** SURFACE / STRUCTURAL REDIRECTION: the “framing-bound, 38.3% vs 6.4%, ~6:1” conclusion was reversed by matched no-call-graph profiling (cc-alloc-layer-split-2026-07-25)
+
+**DO NOT CITE THIS SECTION'S NUMBERS OR RETRY DIRECTIONS.** The capture used
+`--call-graph dwarf,4096` and was invalid for ranking flat self-time. The matched no-call-graph
+profile measured framing at **30.28%** and allocator data structures at **33.96%**—roughly even,
+not 6:1—with `segment_free` the largest production frame at **22.85%**. The campaign's allocator
+data-structure direction was therefore correctly aimed. The original narrative is retained below
+only as incident evidence; the immediately following correction row is authoritative.
 
 - **WHY THIS ROW EXISTS.** The fleet campaign assigned the cc/STRUCTURAL lane "the allocator: 9.7x is
   not a memory-safety tax, it is a design choice", naming graveyard **§14.2 flat combining** for the
@@ -22752,7 +22768,7 @@ item retains every later colon by construction, exactly matching the former `fie
   allocator path. What this profile does establish is that they are irrelevant to the ~10x
   **single-threaded small-churn** number the campaign quoted, because that number contains no
   contention to combine.
-- **CONCRETE RETRY PREDICATE (three separate doors, do not conflate them).**
+- **RETRACTED RETRY PREDICATE — DO NOT USE.** These directions depended on the invalid 6:1 split:
   1. **Framing shape sweep (open, cheapest, in-vein):** re-profile after the PCC split and look for
      any *other* hot entrypoint helper whose samples concentrate on a prologue/epilogue rather than on
      real work. Retry condition: a frame >= 3% self-time whose `perf annotate` puts >= 50% of its
@@ -22838,14 +22854,14 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   ABI entry. `perf annotate` puts **99.17% of its samples on the epilogue `ret`** and the rest on the
   `pop`s. Same hot/cold split applies.
 
-## 2026-07-25 (cc_fl / MagentaCondor) — STRUCTURAL SCOPE (measured attribution, lever NOT built): the deployed allocator's residual is TWO full-barrier atomic RMWs per malloc/free pair, both load-bearing for safety — the swing is "can one atomic carry both contracts?" (cc-alloc-two-atomics-2026-07-25)
+## 2026-07-25 (cc_fl / MagentaCondor) — CORRECTED STRUCTURAL SCOPE (measured attribution, lever NOT built): two locked-RMW sites execute THREE times per malloc/free pair—entry CAS on malloc, entry CAS on free, and slot swap on free (cc-alloc-three-rmw-executions-2026-07-25)
 
 - **SUPERSEDES my own cc-alloc-layer-split row**, which was corrected earlier today for a
   `--call-graph dwarf` attribution error. All numbers here come from the corrected, matched-settings
   capture (no call-graph, `-F 3997`, `taskset -c 3`, base binary
   `acbd9732b44fe6d0225d84f063f20851fb627b736646ffb0366be2a7d6f32fe3`, worker `vmi1293453`).
-- **WHERE THE TIME ACTUALLY IS.** The two largest *production* frames are not algorithms, and
-  `perf annotate` localises each to a single instruction:
+- **WHERE THE TIME ACTUALLY IS.** The two largest *production* mechanism frames are not algorithms,
+  and `perf annotate` localises each to a single instruction:
 
   | frame | self-time | hottest instruction | share of that frame |
   |---|---|---|---|
@@ -22855,11 +22871,13 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   Source-level: `segment_free` does
   `view.meta.requested_size.swap(SEGMENT_SLOT_FREE, Ordering::AcqRel)` on an `AtomicU16`, and
   `enter_allocator_reentry_guard` does `allocator_depth.compare_exchange(0, 1, AcqRel, Acquire)`.
-  **Roughly 31% of process self-time is two locked read-modify-writes, one per guard-entry and one per
-  free.** Everything else in the allocator — bump cursors, magazines, the segment bitmap, size-class
-  lookup — is already cheap (`segment_slot_view` 6.69%, `record_stats` 2.09%,
+  The profile aggregates both guard invocations into one frame: an ordinary pair enters the allocator
+  once for `malloc` and once for `free`, then `free` performs the slot swap. Thus **roughly 31% of
+  process self-time is concentrated in two locked-RMW sites executed three times per pair**, not two
+  RMW executions. Everything else in the allocator — bump cursors, magazines, the segment bitmap,
+  size-class lookup — is already cheap (`segment_slot_view` 6.69%, `record_stats` 2.09%,
   `allocate_from_local_class` 1.19%, `bin_index` 1.14%, `segment_allocate` 0.29%).
-- **BOTH ATOMICS ARE LOAD-BEARING — this is why the obvious deletions are inadmissible.**
+- **BOTH RMW SITES ARE LOAD-BEARING — this is why the obvious deletions are inadmissible.**
   - The guard CAS establishes thread-exclusive allocator entry **against signal delivery as well as
     against threads**. A `load`+`store` pair is not a substitute: a signal arriving between them lets
     the handler observe `depth == 0` and re-enter the allocator recursively, which is exactly the
@@ -22871,25 +22889,19 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
     read a live value and both proceed.
   - Weakening either ordering (`AcqRel` -> `Relaxed`) buys **nothing on x86-64**: the same `lock`-
     prefixed instruction is emitted either way; the annotation only constrains compiler motion.
-- **THE ACTUAL STRUCTURAL QUESTION (well-posed, unbuilt).** Not "which free-list algorithm" — the
-  free-list work is already done and cheap (`15f58c419` magazines). The question is:
-  **can one atomic RMW discharge both the reentrancy contract and the double-free contract?**
-  Sketch worth costing: fold the per-slot liveness into a **per-chunk 64-slot bitmap word** and make
-  `free`'s linearisation point a `lock btr` on that word (double-free = bit already clear, identical
-  detection power). The exact requested size then becomes a **plain relaxed load** of the `u16`,
-  because exclusivity is already established by the winning `btr` — removing one full barrier from
-  every free without weakening either contract. Whether the guard CAS can be folded into the same word
-  is the harder half and is **not** obviously yes: the guard protects allocator *entry* (before any
-  pointer is known) while the bitmap protects a *specific slot*, so they linearise different things.
-- **WHY IT IS NOT BUILT THIS TURN — and the exact blocker.** A change to the double-free
-  linearisation point must be validated multi-threaded, and **multi-threaded validation on this repo
-  is currently untrustworthy**: `bd-uj3sg7` (bump-heap mmap-fallback returns a headerless pointer that
-  `free()` hands to host glibc, plus a monotonic VMA leak) makes >= 4-thread abi-bench runs abort
-  intermittently — the banked `bd-ummyux` signature. Building a new allocator linearisation point
-  against a harness that dies at random is how a real race gets shipped. **bd-uj3sg7 is the gate.**
+- **THE ACTUAL STRUCTURAL QUESTION (corrected, unbuilt).** One atomic cannot discharge both contracts:
+  the reentrancy guard linearises allocator entry before a pointer is known and runs on both
+  `malloc` and `free`; the slot RMW linearises one pointer's liveness and runs only on `free`.
+  Treat them as two independent surfaces. A per-chunk liveness bitmap could replace the slot swap
+  only if it preserves double-free/interior-free/cross-thread-free semantics and exact requested-size
+  accounting. Reducing the two entry CAS executions requires a separate proof that signal reentrancy
+  remains excluded across both ABI calls. Neither claim follows from the other.
+- **WHY IT IS NOT BUILT THIS TURN.** The former allocator-churn crash blocker (`bd-uj3sg7` /
+  `bd-ummyux`) is now fixed and closed. What remains is evidence: Lane B forbids benchmarking, and no
+  matched-settings multi-threaded profile yet shows that the single-threaded RMW attribution transfers.
 - **CONCRETE RETRY PREDICATE (all three must hold before building this):**
-  1. `bd-uj3sg7` closed or falsified, and a >= 4-thread deployed-allocator churn run completes 20/20
-     without an abort.
+  1. A >= 4-thread deployed-allocator churn run completes 20/20 without an abort on the fixed
+     overflow path.
   2. A matched-settings (no call-graph) MT profile still shows `segment_free` >= 15% self-time with
      >= 80% of that frame on the atomic RMW — i.e. the ST finding transfers.
   3. A written double-free/interior-free/cross-thread-free equivalence argument for the bitmap
@@ -23287,6 +23299,12 @@ lever and its A/B stand; the *profile attribution* used to motivate and to gener
   live peak, freed all mappings, and observed matched created/released deltas with zero failures.
   The prior strict-remote lifecycle, realloc, host-pointer, and 8-thread 5,120-lifecycle churn tests
   also remain green. No benchmark was run.
+- **PCC ATTRIBUTION CORRECTION.** The `7c9d0d8c2` hot/cold code, monotonic-state proof, behavior
+  gate, and wall A/B remain valid. Its original 22.18% flat-self-time narrative came from a DWARF
+  call-graph capture and is withdrawn. The matched no-call-graph capture attributes **6.68%** to
+  `ensure_ffi_pcc_verified`, which reconciles with the measured **5.4%** wall improvement. The
+  correction row `cc-alloc-layer-split-CORRECTION-2026-07-25`, `runtime_policy.rs`, and
+  `bd-q7b7xf` now agree.
 - **FORWARD GATE.** `scripts/check_perf_ledger_integrity.py` now refuses a new or modified
   undecidable REJECT, future or negated evidence masquerading as completed evidence, bare mechanism
   nouns, positive CV gates, adjacent hashes, timed KEEPs without both null/effect bootstrap median

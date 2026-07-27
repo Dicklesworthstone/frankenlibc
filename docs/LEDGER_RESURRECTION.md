@@ -114,6 +114,31 @@ own-number justification, and uncovered code quality.
 
 Result: **10 SOUND, 10 CORRECTED, 3 RETRACTED**.
 
+### Non-SOUND verdict-to-fix reconciliation
+
+Every CORRECTED or RETRACTED verdict has a concrete repository artifact. `LANDED` means the fix and
+its live dependents are present together in the model-integrity remediation history; it does not mean
+that a later note merely promised the work.
+
+| Commit | Verdict | Fix artifact | Status |
+|---|---|---|---|
+| `858dc7ae4` | RETRACTED | authoritative six-class census/manifest here; stale `39/93` claims quarantined in `NEGATIVE_EVIDENCE.md`, replaced in `PERF_FRONTIER_FINAL.md`, and removed from `bd-3ollh0` | **LANDED** |
+| `7c9d0d8c2` | CORRECTED | matched 6.68% correction row and `runtime_policy.rs`; `bd-q7b7xf` carries the same correction while the historical KEEP remains artifact evidence | **LANDED** |
+| `529df86c0` | RETRACTED | original ledger section is explicitly quarantined; matched 30.28%/33.96% reversal is authoritative and `bd-9j6h0d` no longer carries the old body | **LANDED** |
+| `b5de2730a` | RETRACTED | literal V1-V5/130-of-131 method moved below retraction markers in both resurrection documents; all live census summaries use six classes | **LANDED** |
+| `bd8a65351` | CORRECTED | structural ledger row and `bd-65p87u` state two RMW sites executed three times per ordinary pair and separate the contracts | **LANDED** |
+| `77e305c6f` | CORRECTED | artifact-backed KEEPs remain; their V1-V5 resurrection labels are confined to retracted history and excluded from the current yield | **LANDED** |
+| `46a783ea0` | CORRECTED | four artifact-backed results remain; the obsolete queue/yield classification is confined to retracted history | **LANDED** |
+| `9ab364ffa` | CORRECTED | `check_perf_ledger_integrity.py` rejects negated/future evidence, bare mechanism nouns, adjacent hashes, modified-row escapes, and false KEEP titles | **LANDED** |
+| `0c3c12e29` | CORRECTED | overflow registry documents 4,096 simultaneous live mappings and has a one-thread 64-live-mapping regression test | **LANDED** |
+| `c8775a018` | CORRECTED | `bd-ummyux` closeout records focused strict-remote tests and retains production fmemopen churn as an explicit reopen predicate | **LANDED** |
+| `83b760709` | CORRECTED | `LEDGER_RESURRECTION_METHOD.md` now leads with the exact six-class method and quarantines V1-V5 below it | **LANDED** |
+| `09b4ff404` | CORRECTED | `bd-3ollh0` was reopened and reclosed on the 130/130 hand audit, complete manifest, corrected queue, and published method | **LANDED** |
+| `8412380e1` | CORRECTED | forward gate enforces the full evidence contract; `ledger-self-check` exercises real ledger rows, this manifest, downstream corrections, and exit-2 blocking | **LANDED** |
+
+Reconciliation: **13/13 non-SOUND verdicts have landed fixes; zero open defects remain in this
+window.**
+
 ### Corrections banked by this turn
 
 - The allocator structural note is corrected from two to three locked RMWs per malloc/free pair.

@@ -649,8 +649,10 @@ fn ffi_pcc_verify_and_hash() -> Result<u64, &'static str> {
 /// (which inlines a SHA-256 over the whole certificate table) lived in this same
 /// function body, which forced LLVM to give every call a 376-byte stack frame and
 /// six callee-saved pushes before it could read one byte. On a deployed
-/// malloc/free probe that cost **22.18% of process self-time**, ~99% of it landing
-/// on the epilogue `ret` — pure prologue/epilogue for the cold path's frame.
+/// A matched no-call-graph malloc/free profile attributed **6.68% of process
+/// self-time** to this function. That reconciles with the shipped wall-time
+/// improvement of 5.4%. The earlier 22.18% DWARF-call-graph attribution was
+/// retracted because unwinding materially distorted flat self-time.
 ///
 /// Splitting the verifier into a `#[cold]` out-of-line callee leaves this function
 /// small enough to inline into its callers, so the hot path is the load and the

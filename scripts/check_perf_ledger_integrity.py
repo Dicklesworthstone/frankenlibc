@@ -6,7 +6,7 @@ then enforced the check mechanically sit at ~1.7% void; repos that audited once 
 banked the wins drift back to 25-91%. So this is not a one-time cleanup script — it is
 the thing that stops the void population regrowing.
 
-Four modes, all cheap and offline (no build, no worker):
+Five modes, all cheap and offline (no build, no worker):
 
   preflight  Before you touch source for a perf lever, name both the proposed
              mechanism and the target surface. Exit 2 = BLOCKED when a prior REJECT
@@ -24,6 +24,10 @@ Four modes, all cheap and offline (no build, no worker):
 
   self-test  Exercise the policy recognizers without Cargo or fixtures.
 
+  ledger-self-check
+             Exercise the same policy against this repository's real historical
+             rows, authoritative hand manifest, and live downstream citations.
+
 Classification follows frankenfs verbatim: VALID-PROFILE / VALID-MECHANISM /
 VALID-AB / VOID-CV / VOID-ZEROSELF / VOID-NONULL. Screening is triage; every
 row in the audit document is hand-adjudicated before it enters the queue.
@@ -33,11 +37,13 @@ row in the audit document is hand-adjudicated before it enters the queue.
   scripts/check_perf_ledger_integrity.py lint --since origin/main
   scripts/check_perf_ledger_integrity.py report
   scripts/check_perf_ledger_integrity.py self-test
+  scripts/check_perf_ledger_integrity.py ledger-self-check
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -45,6 +51,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 LEDGER = REPO / "docs" / "NEGATIVE_EVIDENCE.md"
+AUDIT = REPO / "docs" / "LEDGER_RESURRECTION.md"
+FRONTIER = REPO / "docs" / "PERF_FRONTIER_FINAL.md"
+RUNTIME_POLICY = REPO / "crates" / "frankenlibc-abi" / "src" / "runtime_policy.rs"
+BEADS = REPO / ".beads" / "issues.jsonl"
 
 EXIT_OK = 0
 EXIT_USAGE = 1
@@ -938,6 +948,283 @@ def cmd_self_test(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_ledger_self_check(args: argparse.Namespace) -> int:
+    """Run the hardened policy against real repository evidence and dependents."""
+    try:
+        ledger_text = LEDGER.read_text(encoding="utf-8", errors="replace")
+        audit_text = AUDIT.read_text(encoding="utf-8", errors="replace")
+        frontier_text = FRONTIER.read_text(encoding="utf-8", errors="replace")
+        runtime_policy_text = RUNTIME_POLICY.read_text(
+            encoding="utf-8", errors="replace"
+        )
+        issues = {
+            issue["id"]: issue
+            for line in BEADS.read_text(encoding="utf-8", errors="replace").splitlines()
+            if line.strip()
+            for issue in (json.loads(line),)
+        }
+    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        print(f"LEDGER SELF-CHECK infrastructure failure: {exc}", file=sys.stderr)
+        return EXIT_INFRA
+
+    rows = parse_text(ledger_text)
+    decisions = [row for row in rows if row.is_reject() or row.is_keep()]
+    refused = [
+        (row, violations)
+        for row in decisions
+        if (violations := row.contract_violations())
+    ]
+
+    def unique_row(marker: str) -> Row | None:
+        hits = [row for row in rows if marker in row.title]
+        return hits[0] if len(hits) == 1 else None
+
+    real_undecidable = unique_row("bd-us7dho")
+    adjacent_hash = next(
+        (
+            row
+            for row in decisions
+            if row.is_keep()
+            and SHA256_VALUE.search(row.completed_run_evidence())
+            and not row.has_executing_elf_sha256()
+        ),
+        None,
+    )
+    entrypoint = unique_row("cc-entrypoint-scope-split-2026-07-25")
+
+    manifest_match = re.search(
+        r"### Complete hand manifest\n(?P<body>.*?)"
+        r"\nThe strict provenance pass",
+        audit_text,
+        re.S,
+    )
+    manifest_anchors = (
+        re.findall(r"\bL\d+\b", manifest_match.group("body"))
+        if manifest_match
+        else []
+    )
+
+    verdict_match = re.search(
+        r"### 23-commit model-integrity audit\n(?P<body>.*?)"
+        r"\nResult: \*\*10 SOUND, 10 CORRECTED, 3 RETRACTED\*\*\.",
+        audit_text,
+        re.S,
+    )
+    verdict_body = verdict_match.group("body") if verdict_match else ""
+    verdict_counts = {
+        verdict: len(
+            re.findall(
+                rf"^\| `[0-9a-f]+` \| \*\*{verdict}\*\* \|",
+                verdict_body,
+                re.M,
+            )
+        )
+        for verdict in ("SOUND", "CORRECTED", "RETRACTED")
+    }
+
+    non_sound = (
+        "858dc7ae4",
+        "7c9d0d8c2",
+        "529df86c0",
+        "b5de2730a",
+        "bd8a65351",
+        "77e305c6f",
+        "46a783ea0",
+        "9ab364ffa",
+        "0c3c12e29",
+        "c8775a018",
+        "83b760709",
+        "09b4ff404",
+        "8412380e1",
+    )
+    reconciliation_match = re.search(
+        r"### Non-SOUND verdict-to-fix reconciliation\n(?P<body>.*?)"
+        r"\nReconciliation: \*\*13/13",
+        audit_text,
+        re.S,
+    )
+    reconciliation = (
+        reconciliation_match.group("body") if reconciliation_match else ""
+    )
+
+    expected_census = {
+        "VALID-PROFILE": 0,
+        "VALID-MECHANISM": 1,
+        "VALID-AB": 9,
+        "VOID-CV": 8,
+        "VOID-ZEROSELF": 0,
+        "VOID-NONULL": 29,
+    }
+    census_ok = all(
+        re.search(
+            rf"^\| `{re.escape(cls)}` \|.*\| {count} \|$",
+            audit_text,
+            re.M,
+        )
+        for cls, count in expected_census.items()
+    )
+    reconciliation_ok = all(
+        re.search(
+            rf"^\| `{commit}` \|.*\| \*\*LANDED\*\* \|$",
+            reconciliation,
+            re.M,
+        )
+        for commit in non_sound
+    )
+
+    bead_text = {
+        issue_id: "\n".join(
+            str(issues.get(issue_id, {}).get(field, ""))
+            for field in ("title", "description", "notes", "close_reason")
+        )
+        for issue_id in ("bd-3ollh0", "bd-q7b7xf", "bd-9j6h0d", "bd-65p87u")
+    }
+    preflight_match = (
+        _candidate_match(
+            entrypoint,
+            _terms("hot cold split"),
+            _terms("entrypoint_scope"),
+            2,
+        )
+        if entrypoint
+        else None
+    )
+
+    checks: list[tuple[str, bool]] = [
+        (
+            "real undecidable REJECT is refused",
+            bool(
+                real_undecidable
+                and any(
+                    "no counted mechanism" in violation
+                    for violation in real_undecidable.contract_violations()
+                )
+            ),
+        ),
+        (
+            "real adjacent hash is not execution proof",
+            bool(
+                adjacent_hash
+                and any(
+                    "executing ELF" in violation
+                    for violation in adjacent_hash.contract_violations()
+                )
+            ),
+        ),
+        (
+            "whole-ledger policy finds historical evidence debt",
+            len(refused) > 0,
+        ),
+        (
+            "preflight resolves a real prior surface and concrete retry",
+            bool(
+                entrypoint
+                and preflight_match
+                and _retry_predicate(entrypoint)
+                != "(no concrete retry predicate recorded)"
+            ),
+        ),
+        (
+            "six-class hand census is exact",
+            census_ok,
+        ),
+        (
+            "hand manifest has 130 unique anchors",
+            len(manifest_anchors) == 130
+            and len(set(manifest_anchors)) == 130,
+        ),
+        (
+            "23-commit verdict totals are exact",
+            verdict_counts
+            == {"SOUND": 10, "CORRECTED": 10, "RETRACTED": 3},
+        ),
+        (
+            "all 13 non-SOUND verdicts map to landed fixes",
+            reconciliation_ok,
+        ),
+        (
+            "39-of-93 census is quarantined and frontier is corrected",
+            "RETRACTED CENSUS" in ledger_text
+            and "39 of 93 REJECT rows decided INSIDE" not in frontier_text
+            and "VOID-NONULL 29" in frontier_text,
+        ),
+        (
+            "6-to-1 conclusion is quarantined",
+            bool(
+                unique_row("cc-alloc-layer-split-2026-07-25")
+                and "RETRACTED"
+                in unique_row("cc-alloc-layer-split-2026-07-25").title
+                and "38.3% vs 6.4%" not in bead_text["bd-9j6h0d"]
+            ),
+        ),
+        (
+            "PCC dependents use matched 6.68-percent attribution",
+            "22.18% of process self-time" not in runtime_policy_text
+            and "6.68% of process" in runtime_policy_text
+            and "22.18% self-time" not in bead_text["bd-q7b7xf"]
+            and "6.68%" in bead_text["bd-q7b7xf"],
+        ),
+        (
+            "three-RMW correction reached ledger and bead",
+            bool(
+                unique_row("cc-alloc-three-rmw-executions-2026-07-25")
+                and "THREE" in bead_text["bd-65p87u"]
+                and "two lock-prefixed RMWs per malloc/free pair"
+                not in bead_text["bd-65p87u"]
+            ),
+        ),
+        (
+            "resurrection bead no longer carries 39-of-93 title",
+            "39 of 93" not in bead_text["bd-3ollh0"]
+            and "six-class" in bead_text["bd-3ollh0"].lower(),
+        ),
+    ]
+
+    failures = [name for name, passed in checks if not passed]
+    if failures:
+        print("LEDGER SELF-CHECK BLOCKED", file=sys.stderr)
+        for name in failures:
+            print(f"  {name}", file=sys.stderr)
+        print(
+            f"  real decisions refused by forward contract: {len(refused)}",
+            file=sys.stderr,
+        )
+        return EXIT_BLOCKED
+
+    # Exercise the public preflight path last. A real prior row must produce the
+    # fleet-standard exit 2, and the outer self-check treats that block as success.
+    preflight_exit = cmd_preflight(
+        argparse.Namespace(
+            lever="hot cold split",
+            surface="entrypoint_scope",
+            threshold=2,
+        )
+    )
+    if preflight_exit != EXIT_BLOCKED:
+        print(
+            f"LEDGER SELF-CHECK BLOCKED: preflight returned {preflight_exit}, expected 2",
+            file=sys.stderr,
+        )
+        return EXIT_BLOCKED
+
+    print(
+        "LEDGER SELF-CHECK OK — "
+        f"{len(checks)} repository checks; "
+        f"{len(refused)} historical decisions refused; preflight exit 2 confirmed"
+    )
+    if real_undecidable:
+        print(
+            f"  real undecidable exemplar: L{real_undecidable.line} "
+            f"{real_undecidable.title}"
+        )
+    if adjacent_hash:
+        print(
+            f"  adjacent-hash exemplar: L{adjacent_hash.line} "
+            f"{adjacent_hash.title}"
+        )
+    return EXIT_OK
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -971,6 +1258,12 @@ def main() -> int:
 
     p = sub.add_parser("self-test", help="exercise policy predicates without Cargo")
     p.set_defaults(fn=cmd_self_test)
+
+    p = sub.add_parser(
+        "ledger-self-check",
+        help="exercise policy against the real ledger and remediation dependents",
+    )
+    p.set_defaults(fn=cmd_ledger_self_check)
 
     args = ap.parse_args()
     if not LEDGER.exists():
