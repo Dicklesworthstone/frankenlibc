@@ -293,18 +293,19 @@ A rehabilitated row has to clear a bar the original did not, or you have just mo
    inflate your margins if you get it wrong.
 5. **Behavior proof before timing**, not after.
 
-## 7. Three traps that cost frankenlibc real work — check for these before you publish
+## 7. Three measurement traps — check for these before you publish
 
 **`--call-graph dwarf` destroys flat self-time.** A `perf record -g --call-graph=dwarf` profile
-charged one function **22.18%** self-time, 99% of it on the epilogue `ret`. The same binary, workload,
-pinned core and sample rate with **no call-graph collection** said **6.68%**. Other frames moved just
-as far (`segment_free` 4.77 → 22.85). A published structural conclusion built on the first profile
-**fully reversed**. Use dwarf to find *callers*; never to rank self-time.
+charges attribution onto return instructions: one function measured **22.18%** self-time under dwarf,
+99% of it on the epilogue `ret`, and **6.68%** on the same binary, workload, pinned core and sample
+rate with **no call-graph collection**. Other frames move as far (`segment_free` 4.77 → 22.85), which
+is enough to invert a ranking and any structural conclusion drawn from one. Use dwarf to find
+*callers*; never to rank self-time.
 
 **Reconcile the profile against the A/B before publishing either.** 22.18% of process cycles cannot
-produce a measured 5.4% improvement. 6.68% can. *A profile attribution that cannot be reconciled with
-the A/B it motivated is evidence the profile is wrong* — that check costs one minute and would have
-caught the above immediately.
+produce a measured 5.4% improvement; 6.68% can. *A profile attribution that cannot be reconciled with
+the A/B it motivated is evidence the profile is wrong.* The check costs one minute and catches this
+entire class of error.
 
 **An A/A null has a unit of analysis.** For a two-binary A/B:
 

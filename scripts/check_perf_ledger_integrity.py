@@ -194,6 +194,40 @@ ZERO_GAIN = re.compile(
     re.I,
 )
 
+# --- Policy 2 (2026-07-27): self-speedup vs vs-incumbent -------------------------
+#
+# A campaign win is a measured ratio against the ACTUAL legacy incumbent, produced by
+# a harness that runs the incumbent side-by-side IN THE SAME INVOCATION. Our own code
+# before-vs-after is MAINTENANCE: still landable, still ledgered, but never quotable
+# as a competitive claim. Across the campaign ~60 self-speedups were produced against
+# only 3 vs-incumbent wins, and all 3 came from repos with a live incumbent arm — so
+# the distinction is the difference between output and motion.
+#
+# For this repo the incumbent is host glibc, and the only interposition-proof way to
+# hold it side-by-side is dlmopen(LM_ID_NEWLM) (see the abi-bench interposition
+# hazard) — a plain `extern "C"` symbol in an abi-bench binary resolves to OUR
+# no_mangle export, which would silently measure fl against fl.
+# Interposition-proof: a fresh-namespace handle cannot resolve back to our own
+# no_mangle exports. This is the only form that PROVES the incumbent was measured.
+INCUMBENT_ARM_VERIFIED = re.compile(
+    r"dlmopen|LM_ID_NEWLM|side[- ]by[- ]side|same invocation.{0,40}glibc|"
+    r"glibc.{0,40}same invocation",
+    re.I,
+)
+# Weaker: the row quotes a glibc-relative number but does not evidence how the
+# incumbent was held. In an abi-bench binary a plain `extern "C"` symbol resolves to
+# OUR export, so these cannot be trusted as competitive claims without reading the row.
+INCUMBENT_ARM_CLAIMED = re.compile(
+    r"host[- ]glibc|vs\.? glibc|glibc arm|fl/glibc|FL/glibc|candidate/host|"
+    r"cand/glibc|incumbent arm",
+    re.I,
+)
+SELF_SPEEDUP_LABEL = re.compile(
+    r"self[- ]speedup|self[- ]speed[- ]up|maintenance only|not a competitive claim|"
+    r"cand/base only|own-code before[- ]vs[- ]after|no incumbent arm",
+    re.I,
+)
+
 
 def decision_evidence(text: str) -> str:
     """Exclude future retry requirements from evidence about the completed run."""
@@ -252,6 +286,39 @@ class Row:
         if any(h.startswith(w) for w in WIN_TOKENS):
             return True
         return bool(re.search(r"\b(?:KEEP|SHIPPED|LANDED|WIN)\b", h))
+
+    def has_incumbent_arm(self, verified_only: bool = False) -> bool:
+        """Did this row measure the real incumbent side-by-side in the same invocation?
+
+        Policy 2: only such a ratio is a campaign win. Scans the whole row rather than
+        just the completed-run window, because the harness description that names the
+        `dlmopen` arm usually sits in the method paragraph.
+
+        `verified_only` demands an interposition-proof marker. A row that merely quotes
+        an `fl/glibc` number has not shown HOW it held the incumbent, and in an
+        abi-bench binary a plain `extern "C"` symbol resolves to our own export — so
+        the loose form is a triage signal, not proof.
+        """
+        blob = self.title + "\n" + self.text
+        if INCUMBENT_ARM_VERIFIED.search(blob):
+            return True
+        return not verified_only and bool(INCUMBENT_ARM_CLAIMED.search(blob))
+
+    def declares_self_speedup(self) -> bool:
+        """Does the row explicitly label itself maintenance rather than a win?"""
+        return bool(SELF_SPEEDUP_LABEL.search(self.title + "\n" + self.text))
+
+    def win_kind(self) -> str:
+        """`vs-incumbent` | `self-speedup` | `unlabelled` for a KEEP row."""
+        if not self.is_keep():
+            return ""
+        if self.has_incumbent_arm(verified_only=True):
+            return "vs-incumbent"
+        if self.declares_self_speedup():
+            return "self-speedup"
+        if self.has_incumbent_arm():
+            return "incumbent-claimed"
+        return "unlabelled"
 
     def completed_run_evidence(self) -> str:
         return decision_evidence(self.text)
@@ -344,6 +411,15 @@ class Row:
             elif not self.has_null_bootstrap_median_ci():
                 bad.append("numeric same-invocation A/A has no nearby bootstrap median CI")
         elif self.is_keep():
+            # Policy 2: a KEEP either measured the incumbent side-by-side in the same
+            # invocation (a campaign win) or it is a self-speedup and must say so.
+            # Refusing the unlabelled middle is what stops maintenance being quoted as
+            # a competitive claim later, when the row's context is gone.
+            if not self.has_incumbent_arm() and not self.declares_self_speedup():
+                bad.append(
+                    "KEEP has no same-invocation incumbent arm and is not labelled a "
+                    "self-speedup (Policy 2: only vs-incumbent ratios are campaign wins)"
+                )
             if not self.has_executing_elf_sha256():
                 bad.append("no in-process self-report of the executing ELF's SHA-256")
             if not self.has_same_invocation_null_control():
@@ -676,6 +752,31 @@ def cmd_report(args: argparse.Namespace) -> int:
         "numeric null:    "
         f"{sum(row.has_historical_null_control() for row in rows)} A/A witness(es)"
     )
+
+    # Policy 2 census: only vs-incumbent ratios are campaign output.
+    keeps = [r for r in all_rows if r.is_keep()]
+    kinds: dict[str, int] = {}
+    for r in keeps:
+        kinds[r.win_kind()] = kinds.get(r.win_kind(), 0) + 1
+    print()
+    print(f"KEEP rows:       {len(keeps)}")
+    print(
+        f"  vs-incumbent      {kinds.get('vs-incumbent', 0)}"
+        "   <- campaign wins (interposition-proof incumbent arm)"
+    )
+    print(
+        f"  incumbent-claimed {kinds.get('incumbent-claimed', 0)}"
+        "   <- quotes a glibc ratio but does not evidence the arm; read before quoting"
+    )
+    print(
+        f"  self-speedup      {kinds.get('self-speedup', 0)}"
+        "   <- maintenance, never quote competitively"
+    )
+    print(
+        f"  unlabelled        {kinds.get('unlabelled', 0)}"
+        "   <- lint refuses these going forward"
+    )
+
     print()
     print("Screening is TRIAGE, not a verdict — read and hand-adjudicate every row.")
     print("TRIAGE-UNRESOLVED is not a seventh class; it refuses to fabricate a verdict")
@@ -847,14 +948,48 @@ def cmd_self_test(args: argparse.Namespace) -> int:
             ),
         ),
         (
-            "KEEP with self-hash, A/A CI, and effect CI is admitted",
+            "KEEP with self-hash, A/A CI, effect CI, and a dlmopen incumbent arm is admitted",
             not row(
                 "KEEP: win",
-                f"bench_elf_sha256={sha}; A/A null control 1.004x in the same "
+                f"bench_elf_sha256={sha}; host glibc held via dlmopen(LM_ID_NEWLM) in "
+                "the same invocation; A/A null control 1.004x in the same "
                 "invocation with deterministic bootstrap median 95% CI "
                 "[0.998, 1.009]; candidate/original 0.900x with deterministic "
                 "bootstrap median 95% CI [0.88, 0.92].",
             ).contract_violations(),
+        ),
+        # Policy 2 (2026-07-27): only a vs-incumbent ratio is a campaign win.
+        (
+            "KEEP with full statistics but NO incumbent arm and no label is refused",
+            any(
+                "Policy 2" in v
+                for v in row(
+                    "KEEP: win",
+                    f"bench_elf_sha256={sha}; A/A null control 1.004x in the same "
+                    "invocation with deterministic bootstrap median 95% CI "
+                    "[0.998, 1.009]; candidate/original 0.900x with deterministic "
+                    "bootstrap median 95% CI [0.88, 0.92].",
+                ).contract_violations()
+            ),
+        ),
+        (
+            "KEEP labelled a self-speedup is admitted without an incumbent arm",
+            not row(
+                "KEEP: win",
+                f"bench_elf_sha256={sha}; self-speedup (maintenance only, not a "
+                "competitive claim); A/A null control 1.004x in the same invocation "
+                "with deterministic bootstrap median 95% CI [0.998, 1.009]; "
+                "candidate/original 0.900x with deterministic bootstrap median 95% "
+                "CI [0.88, 0.92].",
+            ).contract_violations(),
+        ),
+        (
+            "win_kind separates a dlmopen arm from a bare glibc mention",
+            row("KEEP: win", "held via dlmopen in the same invocation").win_kind()
+            == "vs-incumbent"
+            and row("KEEP: win", "still 10x vs glibc").win_kind() == "incumbent-claimed"
+            and row("KEEP: win", "self-speedup only").win_kind() == "self-speedup"
+            and row("KEEP: win", "nothing said").win_kind() == "unlabelled",
         ),
         (
             "positive CV gate is refused",
